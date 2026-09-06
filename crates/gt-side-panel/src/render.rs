@@ -2339,7 +2339,7 @@ mod coordinate_warning_tests {
     #[test]
     fn a_track_without_a_geometry_reports_no_valid_position() {
         let mut track = gt_test_utils::loaded_track_with_points(
-            gt_test_utils::nav_points_without_a_valid_position(3),
+            gt_test_utils::fixtures::nav_points_without_a_valid_position(3),
         );
         track.metadata.invalid_position_count = 3;
 

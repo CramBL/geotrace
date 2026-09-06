@@ -183,7 +183,7 @@ fn long_log_entry_timestamp(index: usize) -> String {
 /// A recording of ten minutes of walking from `first_lat_deg`, starting the
 /// moment the fixture log does.
 fn recording(filename: &str, first_lat_deg: f64) -> gt_types::LoadedFile {
-    let points = gt_test_utils::nav_points_walking_from(
+    let points = gt_test_utils::fixtures::nav_points_walking_from(
         log_start(),
         600,
         1,

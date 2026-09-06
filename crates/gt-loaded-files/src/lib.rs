@@ -543,7 +543,7 @@ mod tests {
         file.tracks = tracks
             .iter()
             .map(|(first_second, count)| {
-                gt_test_utils::loaded_track_with_points(gt_test_utils::nav_points_from(
+                gt_test_utils::loaded_track_with_points(gt_test_utils::fixtures::nav_points_from(
                     chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(*first_second),
                     *count,
                     1,

@@ -95,23 +95,35 @@ pub trait DayArchiveError: std::error::Error {
     /// The interrupted delete an open declined to recover, which left the
     /// file untouched, or [`None`] for any other failure.
     fn interrupted_delete_left_unrecovered(&self) -> Option<InterruptedDelete>;
+
+    /// The schema versions an open read out of a file that a newer build
+    /// wrote, or [`None`] for any other failure.
+    fn schema_too_new(&self) -> Option<SchemaVersions>;
+}
+
+/// The schema version an archive file states, beside the newest that this
+/// build reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SchemaVersions {
+    pub found: i64,
+    pub supported: i64,
 }
 
 /// Implements [`StoredDayArchive`] for each archive listed, [`DayArchiveError`]
-/// for its error type, which has a `HeldByAnotherProcess` and a
-/// `DeclinedRecovery` variant, and `EnvironmentArchive::file_name` over the
+/// for its error type, which has a `HeldByAnotherProcess`, a `SchemaTooNew` and
+/// a `DeclinedRecovery` variant, and `EnvironmentArchive::file_name` over the
 /// four variants.
 macro_rules! stored_day_archives {
     ($($writable:ty {
         archive: $variant:ident,
         error: $error:ty,
-        file_name: $file_name:expr,
         shared_from: $slot:ident,
     })+) => {
         impl EnvironmentArchive {
             const fn file_name(self) -> &'static str {
                 match self {
-                    $(Self::$variant => $file_name,)+
+                    $(Self::$variant => <<$writable as WritableDayArchive>::ReadOnly
+                        as crate::ReadOnlyDayArchive>::FILE_NAME,)+
                 }
             }
         }
@@ -130,6 +142,15 @@ macro_rules! stored_day_archives {
                     matches!(self, Self::HeldByAnotherProcess)
                 }
 
+                fn schema_too_new(&self) -> Option<SchemaVersions> {
+                    match *self {
+                        Self::SchemaTooNew { found, supported } => {
+                            Some(SchemaVersions { found, supported })
+                        }
+                        _ => None,
+                    }
+                }
+
                 fn interrupted_delete_left_unrecovered(&self) -> Option<InterruptedDelete> {
                     match self {
                         Self::DeclinedRecovery(DeclinedRecovery(interrupted)) => Some(*interrupted),
@@ -145,25 +166,21 @@ stored_day_archives! {
     JamStore {
         archive: AircraftInterference,
         error: JamStoreError,
-        file_name: gt_jam_store::FILE_NAME,
         shared_from: interference,
     }
     SolarStore {
         archive: GeomagneticIndices,
         error: SolarStoreError,
-        file_name: gt_solar_store::FILE_NAME,
         shared_from: geomagnetic_indices,
     }
     IonexStore {
         archive: IonosphericTec,
         error: IonexStoreError,
-        file_name: gt_ionex_store::FILE_NAME,
         shared_from: tec_maps,
     }
     FlareStore {
         archive: SolarFlares,
         error: FlareStoreError,
-        file_name: gt_flare_store::FILE_NAME,
         shared_from: solar_flares,
     }
 }
@@ -179,6 +196,39 @@ mod tests {
             err.is_held_by_another_process(),
             err.interrupted_delete_left_unrecovered(),
         )
+    }
+
+    #[test]
+    fn every_archive_reports_a_newer_schema_through_its_own_error() {
+        let versions = SchemaVersions {
+            found: 3,
+            supported: 2,
+        };
+        let too_new = Some(versions);
+
+        let each_archive: [Box<dyn DayArchiveError>; 4] = [
+            Box::new(JamStoreError::SchemaTooNew {
+                found: versions.found,
+                supported: versions.supported,
+            }),
+            Box::new(SolarStoreError::SchemaTooNew {
+                found: versions.found,
+                supported: versions.supported,
+            }),
+            Box::new(IonexStoreError::SchemaTooNew {
+                found: versions.found,
+                supported: versions.supported,
+            }),
+            Box::new(FlareStoreError::SchemaTooNew {
+                found: versions.found,
+                supported: versions.supported,
+            }),
+        ];
+
+        for err in &each_archive {
+            assert_eq!(err.schema_too_new(), too_new);
+        }
+        assert_eq!(JamStoreError::HeldByAnotherProcess.schema_too_new(), None);
     }
 
     #[test]

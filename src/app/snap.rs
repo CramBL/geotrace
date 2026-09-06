@@ -860,11 +860,11 @@ mod tests {
     }
 
     fn track(points: usize) -> LoadedTrack {
-        fixtures::loaded_track_from(
+        gt_test_utils::loaded_track_with_points(fixtures::nav_points_from(
             chrono::DateTime::from_timestamp(1_767_268_800, 0).unwrap_or_default(),
             points,
             1,
-        )
+        ))
     }
 
     fn scheduler() -> SnapScheduler {
@@ -923,9 +923,12 @@ mod tests {
             chrono::DateTime::from_timestamp(1_767_268_800, 0).unwrap_or_default(),
             10,
             1000,
-            |_| NavPointSpec::ghost(FixKind::GhostWithoutHeading),
+            |_| NavPointSpec {
+                fix: FixKind::GhostWithoutHeading,
+                ..Default::default()
+            },
         );
-        let track = fixtures::loaded_track_with_points(points);
+        let track = gt_test_utils::loaded_track_with_points(points);
 
         scheduler.request_snap(
             track_ref(),

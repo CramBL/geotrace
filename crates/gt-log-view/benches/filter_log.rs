@@ -17,11 +17,10 @@
 
 use std::{hint, sync::Arc};
 
-use chrono::{DateTime, Utc};
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use gt_log_view::FilterStack;
 use gt_logfile::ParsedLog;
-use gt_test_utils::log_fixtures::{self, SyntheticLogSpec, SyntheticLogTimestamps};
+use gt_test_utils::log_fixtures;
 
 const MIB: usize = 1024 * 1024;
 
@@ -33,18 +32,12 @@ const PLAIN_TERMS: &str = "navsyncd uploaded queue";
 /// alternation of two units, a digit run, and a suffix.
 const REGEX: &str = r"(gpsd|navsyncd)\[\d+\]: .*(fix|queue)\b";
 
-/// A moment past every generated timestamp, for stable year inference.
-fn now() -> DateTime<Utc> {
-    DateTime::from_timestamp(1_790_000_000, 0).expect("a valid moment")
-}
-
 fn fixture(approx_bytes: usize) -> Arc<ParsedLog> {
-    let text = log_fixtures::synthetic_journald_log(SyntheticLogSpec {
-        approx_bytes,
-        seed: 1,
-        timestamps: SyntheticLogTimestamps::SyslogShort,
-    });
-    Arc::new(gt_logfile::parse_log(text.into(), now()).expect("the fixture log parses"))
+    let text = log_fixtures::syslog_journald_log(approx_bytes, 1);
+    Arc::new(
+        gt_logfile::parse_log(text.into(), log_fixtures::after_the_synthetic_log())
+            .expect("the fixture log parses"),
+    )
 }
 
 /// One generation of the scan: a fresh stack takes the filter and blocks until

@@ -797,7 +797,7 @@ mod tests {
     use std::collections::HashMap;
 
     use chrono::{Duration, TimeZone as _};
-    use gt_test_utils::log_fixtures::{self, SyntheticLogSpec, SyntheticLogTimestamps};
+    use gt_test_utils::log_fixtures;
     use proptest::{prelude::*, proptest};
     use rstest::rstest;
 
@@ -1297,11 +1297,7 @@ mod tests {
     /// path to split all of them.
     #[test]
     fn a_chunked_parse_of_a_journald_sized_log_matches_the_one_chunk_parse() {
-        let text = log_fixtures::synthetic_journald_log(SyntheticLogSpec {
-            approx_bytes: 200 * 1024,
-            seed: 7,
-            timestamps: SyntheticLogTimestamps::SyslogShort,
-        });
+        let text = log_fixtures::syslog_journald_log(200 * 1024, 7);
         let chunk_target_bytes = chunk_bytes(4 * 1024);
         assert!(
             newline_aligned_chunks(&text, chunk_target_bytes).len() > 8,

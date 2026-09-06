@@ -83,6 +83,7 @@ pub(crate) fn select_sat_labels<'s, 'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gt_types::fixtures::MetricOffset;
     use gt_types::sat_label::SatLabelAnchor;
     use gt_types::{FileIdx, PointIdx, TrackIdx};
 
@@ -92,7 +93,9 @@ mod tests {
     ) -> LoadedTrack {
         let points = positions_m
             .iter()
-            .map(|&(x_m, y_m)| gt_test_utils::nav_point_at_meters(x_m, y_m, None))
+            .map(|&(east_m, north_m)| {
+                gt_test_utils::fixtures::nav_point_at_meters(MetricOffset { east_m, north_m }, None)
+            })
             .collect();
         let mut track = gt_test_utils::loaded_track_with_points(points);
         track.sat_label_anchors = anchors

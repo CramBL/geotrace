@@ -3,6 +3,7 @@ use egui_kittest::{Harness, SnapshotOptions};
 /// Re-exported so crates using [`TestHarness`] can query widgets, and read the
 /// nodes they match, without each taking a direct `egui_kittest`
 /// dev-dependency of their own.
+pub use egui_kittest::Node;
 pub use egui_kittest::kittest::{By, NodeT, Queryable};
 use std::path::{Path, PathBuf};
 

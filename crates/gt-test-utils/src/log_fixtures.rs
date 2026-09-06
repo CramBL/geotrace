@@ -35,6 +35,26 @@ pub fn synthetic_log_start() -> DateTime<Utc> {
     DateTime::from_timestamp(FIRST_LINE_UNIX_SECS, 0).unwrap_or(DateTime::UNIX_EPOCH)
 }
 
+/// 2026-09-21 05:33:20 UTC, past every timestamp [`synthetic_journald_log`]
+/// writes.
+const AFTER_THE_LOG_UNIX_SECS: i64 = 1_790_000_000;
+
+/// A moment past every timestamp [`syslog_journald_log`] writes, for a parse
+/// that infers the year of a syslog-short line from the clock.
+pub fn after_the_synthetic_log() -> DateTime<Utc> {
+    DateTime::from_timestamp(AFTER_THE_LOG_UNIX_SECS, 0).unwrap_or(DateTime::UNIX_EPOCH)
+}
+
+/// [`synthetic_journald_log`] of about `approx_bytes` in the year-less syslog
+/// short form, which is what a journald export writes.
+pub fn syslog_journald_log(approx_bytes: usize, seed: u64) -> String {
+    synthetic_journald_log(SyntheticLogSpec {
+        approx_bytes,
+        seed,
+        timestamps: SyntheticLogTimestamps::SyslogShort,
+    })
+}
+
 /// Milliseconds one line can advance the clock, so several lines share the
 /// second that the syslog-short format records them at.
 const MAX_LINE_INTERVAL_MILLIS: usize = 400;
@@ -324,15 +344,13 @@ mod tests {
 
     #[test]
     fn a_generated_log_is_the_same_text_for_the_same_seed() {
-        let spec = SyntheticLogSpec {
-            approx_bytes: 8 * 1024,
-            seed: 3,
-            timestamps: SyntheticLogTimestamps::SyslogShort,
-        };
-        assert_eq!(synthetic_journald_log(spec), synthetic_journald_log(spec));
+        assert_eq!(
+            syslog_journald_log(8 * 1024, 3),
+            syslog_journald_log(8 * 1024, 3)
+        );
         assert_ne!(
-            synthetic_journald_log(spec),
-            synthetic_journald_log(SyntheticLogSpec { seed: 4, ..spec })
+            syslog_journald_log(8 * 1024, 3),
+            syslog_journald_log(8 * 1024, 4)
         );
     }
 
@@ -357,11 +375,7 @@ mod tests {
     #[test]
     fn a_generated_log_fills_the_requested_size_with_journald_shaped_lines() {
         let approx_bytes = 256 * 1024;
-        let text = synthetic_journald_log(SyntheticLogSpec {
-            approx_bytes,
-            seed: 1,
-            timestamps: SyntheticLogTimestamps::SyslogShort,
-        });
+        let text = syslog_journald_log(approx_bytes, 1);
         assert!(text.len() >= approx_bytes);
 
         let lines: Vec<&str> = text.lines().collect();
