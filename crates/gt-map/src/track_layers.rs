@@ -34,10 +34,6 @@ use crate::viewport::{TrackEntry, TrackPlan};
 /// are active.  Below this the overlay is invisible and the normal path runs.
 const FADE_VISIBLE_THRESHOLD: f32 = 0.01;
 
-/// Margin around the viewport inside which per-fix icons are still drawn,
-/// so icons whose shape extends past the edge are not clipped visibly.
-const ICON_VIEW_MARGIN_PX: f32 = 50.0;
-
 /// Per-point styling key for the unified line passes: the trackline dashes
 /// ghost stretches. The quality line colors by fix quality and crossfade
 /// bucket. One key drives both layers, so each track's points are
@@ -73,12 +69,57 @@ struct TrackGeometry<'a> {
     paint_trackline: bool,
     need_blink: bool,
     path: VisiblePath<LinePointKey>,
-    /// Original indices of the LOD level's fixes drawn as hollow chevrons,
-    /// each paired with why it is one, collected during the geometry walk.
-    chevron_points: Vec<(usize, ChevronFix)>,
+    /// The point indices of the LOD level this frame's geometry walk covered,
+    /// in fix order. `None` where it covered the track's full point list.
+    /// [`TrackGeometry::chevrons_of`] keeps a viewport fix only when this
+    /// level holds it, so one decimation governs the line and the chevrons.
+    walked_level_indices: Option<&'a [u32]>,
 }
 
 impl TrackGeometry<'_> {
+    /// The chevrons the icon pass draws for this track, in fix order: those
+    /// fixes of `viewport_fixes` the walked LOD level keeps, whose time the
+    /// filter's window holds, that the query does not hide, and that the map
+    /// draws hollow ([`ChevronFix::for_fix`]).
+    ///
+    /// `viewport_fixes` are the R-tree's hits for this track, in the order
+    /// its nodes hold them.
+    fn chevrons_of(
+        &self,
+        viewport_fixes: &[usize],
+        filter: &GlobalFilter,
+        query_view: &TrackMatchView<'_>,
+    ) -> Vec<(usize, ChevronFix)> {
+        let Some(placed) = self.track.placed_points() else {
+            return Vec::new();
+        };
+        let mut chevrons: Vec<(usize, ChevronFix)> = viewport_fixes
+            .iter()
+            .filter(|&&pi| self.level_holds_the_fix_at(pi) && !query_view.is_hidden(pi))
+            .filter_map(|&pi| {
+                let point = placed.get(pi)?;
+                if !gt_filter::point_passes_time_filter(point.fix.tpv.time().utc(), filter) {
+                    return None;
+                }
+                Some((pi, ChevronFix::for_fix(point.fix)?))
+            })
+            .collect();
+        chevrons.sort_unstable_by_key(|&(pi, _)| pi);
+        chevrons
+    }
+
+    /// Whether the LOD level the walk covered holds the fix at `pi`. Every
+    /// fix passes where the walk covered the full point list. The level's
+    /// indices are in fix order.
+    fn level_holds_the_fix_at(&self, pi: usize) -> bool {
+        match self.walked_level_indices {
+            Some(indices) => {
+                u32::try_from(pi).is_ok_and(|index| indices.binary_search(&index).is_ok())
+            }
+            None => true,
+        }
+    }
+
     fn paints_quality_line(&self) -> bool {
         matches!(
             self.entry.fade,
@@ -249,10 +290,9 @@ impl Plugin for TrackLayers<'_> {
 
 impl<'a> TrackLayers<'a> {
     /// The single geometry walk for every visible track: LOD selection,
-    /// time filter, projection, culling, and the per-point styling key,
-    /// plus the indices for the chevron pass. The quality color
-    /// is keyed even when only the trackline draws - it is a cheap match,
-    /// and constant key components never split spans.
+    /// time filter, projection, culling, and the per-point styling key. The
+    /// quality color is keyed even when only the trackline draws - it is a
+    /// cheap match, and constant key components never split spans.
     fn prepare_track_geometries(
         &self,
         max_rect: egui::Rect,
@@ -310,7 +350,6 @@ impl<'a> TrackLayers<'a> {
                 }
 
                 let track_ref = TrackRef::new(fi, ti);
-                let mut chevron_points: Vec<(usize, ChevronFix)> = Vec::new();
                 let fade = entry.fade;
                 let hover_match = self
                     .highlight
@@ -320,11 +359,10 @@ impl<'a> TrackLayers<'a> {
                 let Some(placed) = track.placed_points() else {
                     continue;
                 };
-                let pts = lod_points(track, placed, transform, cull).map(|(pi, p)| {
+                let walk = lod_points(track, placed, transform, cull);
+                let walked_level_indices = walk.walked_level_indices();
+                let pts = walk.map(|(pi, p)| {
                     let screen_pos = transform.to_screen(p.merc());
-                    if paint_icons && let Some(chevron) = ChevronFix::for_fix(p.fix) {
-                        chevron_points.push((pi, chevron));
-                    }
                     let bucket = match fade {
                         None | Some(TrackIconFade::AllVisible) => 0,
                         Some(fade) => line_alpha_bucket(
@@ -357,7 +395,7 @@ impl<'a> TrackLayers<'a> {
                     paint_trackline,
                     need_blink,
                     path,
-                    chevron_points,
+                    walked_level_indices,
                 });
             }
         }
@@ -588,7 +626,7 @@ impl<'a> TrackLayers<'a> {
     ) where
         F: Fn(usize) -> bool,
     {
-        let icon_view_rect = max_rect.expand(ICON_VIEW_MARGIN_PX);
+        let icon_view_rect = tpv_renderer::icon_cull_rect(max_rect);
         for (i, geo) in geometries.iter().enumerate() {
             if !filter(i) {
                 continue;
@@ -616,19 +654,19 @@ impl<'a> TrackLayers<'a> {
                 // In keep/hide, drop the icons of hidden points too, so the
                 // arrows match the (broken) line.
                 let query_view = TrackMatchView::for_track(self.query_matches, track_ref);
-                let (filtered_tpv, filtered_chevrons);
-                let (tpv, chevrons) = if query_view.hides_any_point() {
-                    let shown = |pi: &usize| !query_view.is_hidden(*pi);
-                    filtered_tpv = tpv.map(|v| v.iter().copied().filter(shown).collect());
-                    filtered_chevrons = geo
-                        .chevron_points
-                        .iter()
-                        .copied()
-                        .filter(|(pi, _)| shown(pi))
-                        .collect::<Vec<_>>();
-                    (filtered_tpv.as_ref(), filtered_chevrons.as_slice())
+                let chevrons =
+                    geo.chevrons_of(tpv.map_or(&[], Vec::as_slice), self.filter, &query_view);
+                let filtered_tpv;
+                let tpv = if query_view.hides_any_point() {
+                    filtered_tpv = tpv.map(|v| {
+                        v.iter()
+                            .copied()
+                            .filter(|&pi| !query_view.is_hidden(pi))
+                            .collect()
+                    });
+                    filtered_tpv.as_ref()
                 } else {
-                    (tpv, geo.chevron_points.as_slice())
+                    tpv
                 };
                 tpv_renderer::draw_track_icons(
                     ui,
@@ -637,7 +675,7 @@ impl<'a> TrackLayers<'a> {
                     geo.ti,
                     geo.track,
                     tpv,
-                    chevrons,
+                    &chevrons,
                     style,
                     fade,
                     transform,
@@ -910,5 +948,290 @@ mod tests {
         assert_eq!(focus_scrim_alpha(false, 0.0), 0);
         // Clamped above 1.0 so the animation overshooting cannot exceed the peak.
         assert_eq!(focus_scrim_alpha(true, 2.0), focus_scrim_alpha(true, 1.0));
+    }
+
+    /// The chevrons the icon pass draws come from the fixes the viewport query
+    /// found. These cases hold that source and the geometry walk to the same set
+    /// of chevrons over the map rect.
+    mod chevrons {
+        use std::iter;
+        use std::ops::Range;
+
+        use chrono::{DateTime, TimeDelta, Utc};
+        use gt_filter::GlobalFilter;
+        use gt_types::{
+            FileIdx, GpsTime, Latitude, LoadedTrack, Longitude, NavPoint, TimePositionVelocity,
+            TrackIdx, TrackRef,
+        };
+        use gt_ui_types::{QueryMatches, TrackMatchView};
+        use rstest::rstest;
+        use uom::si::angle::degree;
+        use uom::si::f64::Angle;
+
+        use super::super::TrackGeometry;
+        use crate::polyline::{CULL_MARGIN_PX, VisiblePath};
+        use crate::tpv_renderer::{self, ChevronFix, TrackIconFade};
+        use crate::transform::{GeometryCull, MercTransform, lod_points};
+        use crate::viewport::TrackEntry;
+
+        /// The map rect every case frames the fixture in.
+        const MAP_RECT: egui::Rect = egui::Rect {
+            min: egui::pos2(0.0, 0.0),
+            max: egui::pos2(800.0, 600.0),
+        };
+
+        fn the_track() -> TrackRef {
+            TrackRef::new(FileIdx::new(0), TrackIdx::new(0))
+        }
+
+        const FIRST_FIX_TIME: DateTime<Utc> = DateTime::<Utc>::UNIX_EPOCH;
+
+        const FIX_COUNT: usize = 2_700;
+
+        /// The fixes the receiver dead-reckoned, which the map draws as chevrons.
+        const DEAD_RECKONED: Range<usize> = 100..2_600;
+
+        /// The dead-reckoned fixes the receiver wrote while it stood still. A walk
+        /// over the finest stored LOD level yields a handful of them: their
+        /// spacing sits far below that level's tolerance.
+        const PARKED: Range<usize> = 200..2_600;
+
+        /// Longitude between consecutive fixes of the moving stretches, about 13 m
+        /// at the fixture's latitude.
+        const MOVING_STEP_DEGREES: f64 = 0.000_2;
+
+        /// Longitude between consecutive fixes of the parked stretch, about 6 mm.
+        const PARKED_STEP_DEGREES: f64 = 0.000_000_1;
+
+        const LATITUDE_DEGREES: f64 = 55.0;
+
+        const FIRST_LONGITUDE_DEGREES: f64 = 12.0;
+
+        /// The fixture's positions: a stretch east, the parked stretch, then a
+        /// stretch east again.
+        fn positions() -> Vec<(Latitude, Longitude)> {
+            let mut longitude = FIRST_LONGITUDE_DEGREES;
+            (0..FIX_COUNT)
+                .map(|index| {
+                    let position = (Latitude::new(LATITUDE_DEGREES), Longitude::new(longitude));
+                    longitude += match PARKED.contains(&index) {
+                        true => PARKED_STEP_DEGREES,
+                        false => MOVING_STEP_DEGREES,
+                    };
+                    position
+                })
+                .collect()
+        }
+
+        /// A track of [`FIX_COUNT`] fixes one second apart, with the LOD levels
+        /// and chunks the track builder computes for it. The fixes of
+        /// [`DEAD_RECKONED`] have no heading, which is what the map draws hollow.
+        fn a_track_with_a_dead_reckoned_stretch() -> LoadedTrack {
+            let points: Vec<NavPoint> = positions()
+                .into_iter()
+                .enumerate()
+                .map(|(index, (lat, lon))| {
+                    let seconds = i64::try_from(index).unwrap_or(i64::MAX);
+                    let tpv = TimePositionVelocity::builder()
+                        .time(GpsTime::from_utc(
+                            FIRST_FIX_TIME + TimeDelta::seconds(seconds),
+                        ))
+                        .lat(lat)
+                        .lon(lon)
+                        .maybe_heading(
+                            (!DEAD_RECKONED.contains(&index)).then(|| Angle::new::<degree>(90.0)),
+                        )
+                        .build();
+                    NavPoint::new(tpv, None)
+                })
+                .collect();
+            let mut track = gt_test_utils::loaded_track_with_points(points);
+            let lod = track.placed_points().map(gt_track_builder::build_track_lod);
+            if let Some(lod) = lod {
+                track.lod = lod;
+            }
+            track
+        }
+
+        /// The viewports every case walks the fixture in: four map scales over the
+        /// first fix, over the parked stretch, and over the last fix. At 2^22 px
+        /// per world the walk covers a stored level while the moving stretches are
+        /// spaced wide enough for icons to draw.
+        fn viewports() -> Vec<MercTransform> {
+            let positions = positions();
+            let anchors = [
+                positions.first().copied(),
+                positions.get(PARKED.start + PARKED.len() / 2).copied(),
+                positions.last().copied(),
+            ];
+            [
+                2_f64.powi(19),
+                2_f64.powi(22),
+                2_f64.powi(25),
+                2_f64.powi(30),
+            ]
+            .into_iter()
+            .flat_map(|world_px| {
+                anchors.into_iter().flatten().map(move |(lat, lon)| {
+                    MercTransform::for_test_view(world_px, lat, lon, MAP_RECT.center())
+                })
+            })
+            .collect()
+        }
+
+        /// The prepared geometry of `track` as the walk leaves it, holding the LOD
+        /// level that walk covered. [`TrackGeometry::chevrons_of`] reads that level
+        /// and the track. The other fields are set for a track whose icons draw.
+        fn geometry_of<'a>(
+            track: &'a LoadedTrack,
+            transform: &MercTransform,
+            filter: &'a GlobalFilter,
+        ) -> TrackGeometry<'a> {
+            let placed = track.placed_points().unwrap_or_default();
+            let cull = GeometryCull::new(transform, MAP_RECT.expand(CULL_MARGIN_PX), filter);
+            TrackGeometry {
+                fi: the_track().fi,
+                ti: the_track().index,
+                track,
+                entry: TrackEntry {
+                    trackline: true,
+                    fade: Some(TrackIconFade::PerFix),
+                    sat_labels: false,
+                    sky_glyphs: false,
+                },
+                paint_trackline: true,
+                need_blink: false,
+                path: VisiblePath::OffScreen,
+                walked_level_indices: lod_points(track, placed, transform, cull)
+                    .walked_level_indices(),
+            }
+        }
+
+        /// The chevrons of a walk over the track's LOD level: one per point
+        /// the walk yields that the map draws hollow, without the points the
+        /// query hides.
+        fn chevrons_from_the_geometry_walk(
+            track: &LoadedTrack,
+            transform: &MercTransform,
+            filter: &GlobalFilter,
+            query_view: &TrackMatchView<'_>,
+        ) -> Vec<(usize, ChevronFix)> {
+            let placed = track.placed_points().unwrap_or_default();
+            let cull = GeometryCull::new(transform, MAP_RECT.expand(CULL_MARGIN_PX), filter);
+            lod_points(track, placed, transform, cull)
+                .filter_map(|(pi, point)| Some((pi, ChevronFix::for_fix(point.fix)?)))
+                .filter(|&(pi, _)| !query_view.is_hidden(pi))
+                .collect()
+        }
+
+        /// The fixes the viewport query hands the paint pass: those inside the map
+        /// rect the icon pass culls against, in the reverse of fix order,
+        /// since the R-tree yields its hits in the order its own nodes hold them.
+        fn fixes_the_viewport_query_finds(
+            track: &LoadedTrack,
+            transform: &MercTransform,
+        ) -> Vec<usize> {
+            let query_rect = tpv_renderer::icon_cull_rect(MAP_RECT);
+            let mut hits: Vec<usize> = track
+                .placed_points()
+                .unwrap_or_default()
+                .iter()
+                .enumerate()
+                .filter(|(_, point)| query_rect.contains(transform.to_screen(point.merc())))
+                .map(|(pi, _)| pi)
+                .collect();
+            hits.reverse();
+            hits
+        }
+
+        /// The chevrons of `chevrons` drawn inside the map rect, keeping their
+        /// order. Past the rect the two sources part: the walk yields the ends
+        /// of a chunk it skips, and the viewport query reaches to the rect the
+        /// icon pass culls against.
+        fn inside_the_map_rect(
+            chevrons: Vec<(usize, ChevronFix)>,
+            track: &LoadedTrack,
+            transform: &MercTransform,
+        ) -> Vec<(usize, ChevronFix)> {
+            let placed = track.placed_points().unwrap_or_default();
+            chevrons
+                .into_iter()
+                .filter(|&(pi, _)| {
+                    placed
+                        .get(pi)
+                        .is_some_and(|point| MAP_RECT.contains(transform.to_screen(point.merc())))
+                })
+                .collect()
+        }
+
+        /// A window over the parked stretch, which starts and ends inside it.
+        fn a_window_inside_the_parked_stretch() -> GlobalFilter {
+            let second = |index: usize| {
+                FIRST_FIX_TIME + TimeDelta::seconds(i64::try_from(index).unwrap_or(i64::MAX))
+            };
+            GlobalFilter {
+                time_start: Some(second(PARKED.start + 100)),
+                time_end: Some(second(PARKED.end - 100)),
+                ..GlobalFilter::default()
+            }
+        }
+
+        /// A run that hides the first half of the dead-reckoned stretch.
+        fn a_query_hiding_half_the_dead_reckoned_stretch() -> QueryMatches {
+            let first_half = DEAD_RECKONED.start..DEAD_RECKONED.start + DEAD_RECKONED.len() / 2;
+            QueryMatches {
+                hidden: iter::once((the_track(), Vec::from([first_half]))).collect(),
+                ..QueryMatches::default()
+            }
+        }
+
+        #[rstest]
+        #[case::the_whole_recording(GlobalFilter::default(), QueryMatches::default())]
+        #[case::a_time_window(a_window_inside_the_parked_stretch(), QueryMatches::default())]
+        #[case::a_query_hiding_points(
+            GlobalFilter::default(),
+            a_query_hiding_half_the_dead_reckoned_stretch()
+        )]
+        fn the_icon_pass_draws_the_chevrons_the_geometry_walk_collected(
+            #[case] filter: GlobalFilter,
+            #[case] matches: QueryMatches,
+        ) {
+            let track = a_track_with_a_dead_reckoned_stretch();
+            let query_view = TrackMatchView::for_track(Some(&matches), the_track());
+            let mut chevrons_drawn = 0_usize;
+            let mut hits_the_level_drops = 0_usize;
+
+            for transform in viewports() {
+                let geometry = geometry_of(&track, &transform, &filter);
+                let hits = fixes_the_viewport_query_finds(&track, &transform);
+                hits_the_level_drops += hits
+                    .iter()
+                    .filter(|&&pi| !geometry.level_holds_the_fix_at(pi))
+                    .count();
+                let from_the_viewport = inside_the_map_rect(
+                    geometry.chevrons_of(&hits, &filter, &query_view),
+                    &track,
+                    &transform,
+                );
+                let from_the_walk = inside_the_map_rect(
+                    chevrons_from_the_geometry_walk(&track, &transform, &filter, &query_view),
+                    &track,
+                    &transform,
+                );
+                assert_eq!(
+                    from_the_viewport,
+                    from_the_walk,
+                    "at {} px per world",
+                    transform.px_per_merc()
+                );
+                chevrons_drawn += from_the_viewport.len();
+            }
+
+            assert!(chevrons_drawn > 0, "no viewport of the case drew a chevron");
+            assert!(
+                hits_the_level_drops > 0,
+                "no viewport of the case held a fix the walked level drops"
+            );
+        }
     }
 }

@@ -54,6 +54,17 @@ const ICON_FADE_LO_SPACING_FACTOR: f32 = 0.2;
 const ICON_FADE_LO_MIN_SPACING_PX: f32 = 2.0;
 const ICON_FADE_HI_MIN_SPACING_PX: f32 = 5.0;
 
+/// How far past the map rect the icon of a fix reaches into it. A fix drawn
+/// this far outside paints part of its icon inside the rect.
+const ICON_VIEW_MARGIN_PX: f32 = 50.0;
+
+/// What the icon pass culls a fix against: `map_rect` grown by
+/// [`ICON_VIEW_MARGIN_PX`], so an icon whose shape crosses the edge draws.
+/// [`crate::viewport::collect_visible_points`] queries the fixes of this rect.
+pub(crate) fn icon_cull_rect(map_rect: egui::Rect) -> egui::Rect {
+    map_rect.expand(ICON_VIEW_MARGIN_PX)
+}
+
 /// Number of discrete opacity steps for the quality line's crossfade.
 /// Per-point line alphas are quantized to this many levels so that long
 /// stretches share one key and stay mergeable into single polyline spans.
@@ -232,9 +243,9 @@ pub(crate) fn draw_track_icons(
     // positions and headings during fix loss - the heading field is present but
     // unreliable as a "real" direction indicator, so we still show a hollow
     // chevron.
-    // `chevron_points` was collected on the LOD level during the geometry
-    // walk (time-filtered there). Chevron/arrow transitions survive every
-    // level, so faded stretches lose only sub-pixel interior chevrons.
+    // The caller builds `chevron_points` from the same viewport query as
+    // `real_fix_indices`, applying the time window and the query's hiding
+    // there.
     for (pi, chevron, point) in chevron_points
         .iter()
         .filter_map(|&(pi, chevron)| Some((pi, chevron, placed.get(pi)?)))

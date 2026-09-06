@@ -146,8 +146,10 @@ impl VisiblePoints {
 /// line draws in their place) are never drawn. Each marker category is gated by
 /// `display_mask`.
 ///
-/// The fix query walks the viewport narrowed to the bounds of the tracks whose
-/// icons draw.
+/// The fix query covers every fix whose icon reaches into the map rect, which
+/// is the rect [`tpv_renderer::icon_cull_rect`] gives the icon pass, narrowed
+/// to the bounds of the tracks whose icons draw. The marker query keeps the
+/// plain map rect.
 pub(crate) fn collect_visible_points(
     visible: &mut VisiblePoints,
     index: &SpatialIndex,
@@ -169,16 +171,18 @@ pub(crate) fn collect_visible_points(
     if collected.any_marker() {
         visible.collect_markers(&index.markers, viewport);
     }
+    let icon_cull_bounds = transform.viewport_merc_bounds(tpv_renderer::icon_cull_rect(map_rect));
+
     if collected.tpv
         && let Some(union) = plan.collectable_fix_bounds
-        && let Some(bounds) = union.clamped_within(viewport)
+        && let Some(bounds) = union.clamped_within(icon_cull_bounds)
     {
         debug_assert!(
-            bounds.x_min >= viewport.x_min
-                && bounds.x_max <= viewport.x_max
-                && bounds.y_min >= viewport.y_min
-                && bounds.y_max <= viewport.y_max,
-            "the fix query reaches outside the viewport"
+            bounds.x_min >= icon_cull_bounds.x_min
+                && bounds.x_max <= icon_cull_bounds.x_max
+                && bounds.y_min >= icon_cull_bounds.y_min
+                && bounds.y_max <= icon_cull_bounds.y_max,
+            "the fix query reaches outside the rect the icon pass culls against"
         );
         visible.collect_fixes(&index.fixes, plan, bounds);
     }
@@ -848,6 +852,32 @@ mod collection {
             collected_fixes(&visible, the_only_track()),
             Vec::<usize>::new()
         );
+    }
+
+    /// The longitude at the screen x `x` of [`VIEWPORT`], with the map
+    /// centred on [`TRACK_START`] at [`ZOOM`].
+    fn longitude_at_screen_x(x: f32) -> f64 {
+        let px_per_merc = MapScale::from_zoom(ZOOM).px_per_merc();
+        let merc_from_the_centre = f64::from(x - VIEWPORT.center().x) / px_per_merc;
+        TRACK_START.1 + merc_from_the_centre * 360.0
+    }
+
+    /// A fix drawn past the map rect keeps its icon as long as the icon
+    /// reaches into the rect: the query takes the rect
+    /// [`tpv_renderer::icon_cull_rect`] gives the icon pass. Further out the
+    /// query leaves the fix behind.
+    #[rstest]
+    #[case::inside_the_icon_cull_rect(tpv_renderer::icon_cull_rect(VIEWPORT).right() - 1.0, vec![0, 1])]
+    #[case::past_the_icon_cull_rect(tpv_renderer::icon_cull_rect(VIEWPORT).right() + 1.0, vec![0])]
+    fn a_fix_past_the_map_rect_is_collected_inside_the_icon_cull_rect(
+        #[case] x: f32,
+        #[case] expected: Vec<usize>,
+    ) {
+        let files = one_file_over(&[TRACK_START, (TRACK_START.0, longitude_at_screen_x(x))]);
+
+        let visible = collect(&files, mask_showing(&[DisplayCategory::TrackPoints]));
+
+        assert_eq!(collected_fixes(&visible, the_only_track()), expected);
     }
 
     /// A track across the antimeridian is bounded by a box whose two pieces

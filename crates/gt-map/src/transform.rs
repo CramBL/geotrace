@@ -375,6 +375,17 @@ pub(crate) enum LodPoints<'a> {
     },
 }
 
+impl<'a> LodPoints<'a> {
+    /// The point indices of the level this walk covers, in fix order. `None`
+    /// where it covers the track's full point list, which holds every fix.
+    pub(crate) fn walked_level_indices(&self) -> Option<&'a [u32]> {
+        match *self {
+            Self::Level { indices, .. } => Some(indices),
+            Self::Full { .. } => None,
+        }
+    }
+}
+
 impl<'a> Iterator for LodPoints<'a> {
     type Item = (usize, PlacedPoint<'a>);
 
