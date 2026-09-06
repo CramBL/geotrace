@@ -2,8 +2,10 @@
 #include <geotrace.h>
 #include <geotrace/geotrace.hpp>
 
+#include <chrono>
 #include <cstddef>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -48,6 +50,32 @@ TEST_CASE("FileBuilder: single nav fix produces a valid NavFile") {
     auto point = file.nav_point(0);
     CHECK(point.lat.as_degrees() == doctest::Approx(51.5074));
     CHECK(point.lon.as_degrees() == doctest::Approx(-0.1278));
+}
+
+TEST_CASE("FileBuilder: a satellite window wider than the default associates a late report") {
+    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(40.7128),
+                     Angle::degrees(-74.0060)};
+    const SatelliteReport report{
+        FixTime::receiver(Timestamp{FIRST_TIME.unix_micros + 1'500'000}),
+        {Satellite{Constellation::Gps, 7, true, 55.0F, 120.0F, 40.0F}},
+    };
+
+    const NavFile with_the_default_window =
+        FileBuilder{}.add_nav_fix(fix).add_satellite_report(report).finish();
+    CHECK(with_the_default_window.nav_point_count() == 2);
+
+    const NavFile with_a_two_second_window = FileBuilder{}
+                                                 .satellite_window(std::chrono::seconds{2})
+                                                 .add_nav_fix(fix)
+                                                 .add_satellite_report(report)
+                                                 .finish();
+    CHECK(with_a_two_second_window.nav_point_count() == 1);
+}
+
+TEST_CASE("FileBuilder: a negative satellite window is an invalid argument") {
+    FileBuilder builder;
+    CHECK_THROWS_AS(builder.satellite_window(std::chrono::seconds{-1}), std::invalid_argument);
+    CHECK(builder.status().code == GTD_ERR_INVALID_ARGUMENT);
 }
 
 TEST_CASE("FileBuilder: metadata is preserved") {

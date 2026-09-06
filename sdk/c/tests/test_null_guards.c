@@ -8,6 +8,7 @@ Test(null_guards, builder_null) {
     cr_assert_eq(gtd_builder_set_identity(NULL, "x"), GTD_ERR_NULL_ARGUMENT);
     cr_assert_eq(gtd_builder_set_travel_mode(NULL, GTD_TRAVEL_MODE_CAR), GTD_ERR_NULL_ARGUMENT);
     cr_assert_eq(gtd_builder_set_lenient(NULL), GTD_ERR_NULL_ARGUMENT);
+    cr_assert_eq(gtd_builder_set_satellite_window_us(NULL, 0), GTD_ERR_NULL_ARGUMENT);
 
     GtdTimestamp timestamp;
     cr_assert_eq(gtd_ts_from_seconds(0, &timestamp), GTD_OK);
@@ -28,6 +29,7 @@ Test(null_guards, nav_file_null) {
     cr_assert_eq(gtd_nav_file_event_marker_count(NULL), 0);
     cr_assert_eq(gtd_nav_file_marker_count(NULL), 0);
     cr_assert_eq(gtd_nav_file_event_marker_style_count(NULL), 0);
+    cr_assert_eq(gtd_nav_file_satellite_warning_count(NULL), 0);
     cr_assert_null(gtd_nav_file_title(NULL));
     cr_assert_null(gtd_nav_file_device(NULL));
     cr_assert_null(gtd_nav_file_notes(NULL));
@@ -48,6 +50,10 @@ Test(null_guards, nav_file_null) {
 
     GtdEventMarkerStyleInfo style;
     cr_assert_eq(gtd_nav_file_get_event_marker_style(NULL, 0, &style), GTD_ERR_NULL_ARGUMENT);
+
+    GtdSatelliteWarningInfo satellite_warning;
+    cr_assert_eq(gtd_nav_file_get_satellite_warning(NULL, 0, &satellite_warning),
+                 GTD_ERR_NULL_ARGUMENT);
 
     GtdChannelInfo channel;
     cr_assert_eq(gtd_nav_file_get_channel(NULL, 0, &channel), GTD_ERR_NULL_ARGUMENT);

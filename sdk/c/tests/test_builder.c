@@ -258,6 +258,45 @@ Test(builder, satellite_report) {
     gtd_nav_file_destroy(file);
 }
 
+/* Adds one fix and one satellite report 1.5 s later, past the 500 ms default
+   association window, and returns the nav point count of the resulting file:
+   one where the report is associated with the fix, two where it gets a nav
+   point of its own. */
+static size_t nav_point_count_of_a_report_1500ms_after_the_fix(GtdFileBuilder *builder) {
+    GtdTimestamp fix_time;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &fix_time), GTD_OK);
+    GtdTimestamp report_time;
+    cr_assert_eq(gtd_ts_from_millis(1700000001500, &report_time), GTD_OK);
+
+    cr_assert_eq(gtd_builder_add_nav_fix(builder, fix_time, gtd_ts_none(), 40.7128, -74.0060,
+                                         GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
+                 GTD_OK);
+
+    GtdSatellite sats[] = {
+        {GTD_CONSTELLATION_GPS, 7, 1, GTD_SOME_F32(55.0F), GTD_SOME_F32(120.0F),
+         GTD_SOME_F32(40.0F)},
+    };
+    cr_assert_eq(gtd_builder_add_satellite_report(builder, report_time, gtd_ts_none(), sats, 1),
+                 GTD_OK);
+
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_OK);
+    const size_t count = gtd_nav_file_nav_point_count(file);
+    gtd_nav_file_destroy(file);
+    return count;
+}
+
+Test(builder, a_satellite_window_wider_than_the_default_associates_a_late_report) {
+    GtdFileBuilder *with_the_default_window = gtd_builder_create();
+    cr_assert_not_null(with_the_default_window);
+    cr_assert_eq(nav_point_count_of_a_report_1500ms_after_the_fix(with_the_default_window), 2);
+
+    GtdFileBuilder *with_a_two_second_window = gtd_builder_create();
+    cr_assert_not_null(with_a_two_second_window);
+    cr_assert_eq(gtd_builder_set_satellite_window_us(with_a_two_second_window, 2000000), GTD_OK);
+    cr_assert_eq(nav_point_count_of_a_report_1500ms_after_the_fix(with_a_two_second_window), 1);
+}
+
 Test(builder, a_nav_point_reads_back_the_timestamps_of_its_satellite_report) {
     GtdFileBuilder *builder = gtd_builder_create();
     cr_assert_not_null(builder);

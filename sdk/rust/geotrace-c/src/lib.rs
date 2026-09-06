@@ -13,14 +13,15 @@
     unsafe_code,
     reason = "FFI crate - all extern C functions require unsafe"
 )]
-// `GtdStatus`, `GtdMarkerIcon` and `GtdChannelUnitMode` spell their variants as
-// the C constants (`GTD_OK`, `GTD_ICON_PIN`, `GTD_CHANNEL_UNIT_CUSTOM`), whose
-// prefix differs from the type name. `GtdConstellation` and `GtdTravelMode`
-// keep idiomatic variants: their C prefix is the type name, which the
+// `GtdStatus`, `GtdMarkerIcon`, `GtdChannelUnitMode` and `GtdLogLevel` spell
+// their variants as the C constants (`GTD_OK`, `GTD_ICON_PIN`,
+// `GTD_CHANNEL_UNIT_CUSTOM`, `GTD_LOG_WARN`), whose prefix differs from the type
+// name. `GtdConstellation` and `GtdTravelMode` keep idiomatic variants: their C
+// prefix is the type name, which the
 // `cbindgen:rename-all=QualifiedScreamingSnakeCase` annotation derives.
 #![expect(
     non_camel_case_types,
-    reason = "three enums are named for the C constants they declare"
+    reason = "four enums are named for the C constants they declare"
 )]
 
 #[macro_use]
@@ -31,6 +32,7 @@ mod channel;
 mod constellation;
 pub(crate) mod error;
 mod icon;
+mod log_callback;
 mod nav_file;
 mod optf32;
 mod optf64;
@@ -44,9 +46,10 @@ pub use channel::{GtdChannel, GtdChannelUnitMode};
 pub use constellation::GtdConstellation;
 pub use error::GtdStatus;
 pub use icon::GtdMarkerIcon;
+pub use log_callback::{GtdLogCallback, GtdLogLevel};
 pub use nav_file::{
     GtdChannelInfo, GtdEventMarkerInfo, GtdEventMarkerStyleInfo, GtdMarkerInfo, GtdNavFile,
-    GtdNavPointInfo,
+    GtdNavPointInfo, GtdSatelliteWarningInfo,
 };
 pub use optf32::GtdOptF32;
 pub use optf64::GtdOptF64;
