@@ -9,10 +9,11 @@
 
 use geotrace_sdk::{Angle, DateTime, Duration, Utc};
 use geotrace_sdk::{
-    Annotation, ChannelUnit, Constellation, Error, MarkerIcon, NavFile, NavFileBuilder, NavFix,
-    NavFixTime, Satellite, SatelliteReport,
+    Annotation, ChannelUnit, Constellation, Error, EventMarker, MarkerIcon, NavFile,
+    NavFileBuilder, NavFix, NavFixTime, Satellite, SatelliteReport,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
+use rstest::rstest;
 
 fn base() -> DateTime<Utc> {
     #[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
@@ -595,4 +596,137 @@ fn make_nav_points_file(time_us: i64, sys_time_us: u64, gps_time_us: Option<&[u6
     fb.add_group(np.finish());
     #[expect(clippy::expect_used, reason = "test helper")]
     fb.finish().expect("build")
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "test helper only called with valid input"
+)]
+fn instant(text: &str) -> DateTime<Utc> {
+    text.parse().expect("valid RFC 3339 timestamp")
+}
+
+/// The instant whose microsecond count is -1. Its two's complement bits are the
+/// value that marks an absent timestamp.
+fn absent_count_instant() -> DateTime<Utc> {
+    instant("1969-12-31T23:59:59.999999Z")
+}
+
+fn fix_at(time: NavFixTime) -> NavFix {
+    NavFix::builder()
+        .time(time)
+        .lat(Angle::degrees(0.0))
+        .lon(Angle::degrees(0.0))
+        .build()
+}
+
+#[expect(clippy::expect_used, reason = "test setup must succeed")]
+fn file_with_a_fix_at(time: NavFixTime) -> NavFile {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix_at(time));
+    recorder.finish().expect("build")
+}
+
+#[expect(clippy::expect_used, reason = "test setup must succeed")]
+fn file_with_a_satellite_report_at(time: NavFixTime) -> NavFile {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix_at(NavFixTime::Receiver(instant(
+        "1970-01-01T00:00:00Z",
+    ))));
+    recorder.add_satellite_report(
+        SatelliteReport::builder()
+            .time(time)
+            .tracked(vec![
+                Satellite::builder()
+                    .constellation(Constellation::Gps)
+                    .prn(1u32)
+                    .build(),
+            ])
+            .build(),
+    );
+    recorder.finish().expect("build")
+}
+
+#[expect(clippy::expect_used, reason = "test setup must succeed")]
+fn file_with_an_event_marker_at(sys_time: DateTime<Utc>) -> NavFile {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix_at(NavFixTime::Receiver(instant(
+        "1970-01-01T00:00:00Z",
+    ))));
+    recorder.add_event_marker(
+        EventMarker::builder()
+            .variant_path("power/boot")
+            .sys_time(sys_time)
+            .build()
+            .expect("valid variant path"),
+    );
+    recorder.finish().expect("build")
+}
+
+#[rstest]
+#[case::nav_point_gps_time(
+    file_with_a_fix_at(NavFixTime::Receiver(absent_count_instant())),
+    "nav_points",
+    "gps_time_us"
+)]
+#[case::nav_point_sys_time(
+    file_with_a_fix_at(NavFixTime::Host(absent_count_instant())),
+    "nav_points",
+    "sys_time_us"
+)]
+#[case::satellite_report_gps_time(
+    file_with_a_satellite_report_at(NavFixTime::Receiver(absent_count_instant())),
+    "sat_reports",
+    "gps_time_us"
+)]
+#[case::satellite_report_sys_time(
+    file_with_a_satellite_report_at(NavFixTime::Host(absent_count_instant())),
+    "sat_reports",
+    "sys_time_us"
+)]
+#[case::event_marker_sys_time(
+    file_with_an_event_marker_at(absent_count_instant()),
+    "event_markers",
+    "sys_time_us"
+)]
+fn a_timestamp_at_the_absent_count_fails_to_write(
+    #[case] nav_file: NavFile,
+    #[case] expected_group: &str,
+    #[case] expected_dataset: &str,
+) {
+    let mut bytes = Vec::new();
+    let err = nav_file
+        .write(&mut bytes)
+        .expect_err("the writer must reject the absent count");
+
+    match err {
+        Error::TimestampIsTheAbsentValue {
+            group,
+            dataset,
+            record,
+        } => assert_eq!(
+            (group, dataset, record),
+            (expected_group, expected_dataset, 0)
+        ),
+        other => panic!("expected a rejected timestamp, got: {other:?}"),
+    }
+}
+
+#[rstest]
+#[case::one_microsecond_before_the_absent_count(instant("1969-12-31T23:59:59.999998Z"))]
+#[case::ten_years_before_the_epoch(instant("1960-01-01T00:00:00Z"))]
+#[case::the_epoch(instant("1970-01-01T00:00:00Z"))]
+fn a_fix_reads_back_the_time_it_was_written_with(
+    #[case] time: DateTime<Utc>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let nav_file = file_with_a_fix_at(NavFixTime::Both {
+        gps: time,
+        sys: time,
+    });
+    let read_back = NavFile::read(to_bytes(&nav_file).as_slice())?;
+
+    let fix = &read_back.nav_points()[0].fix;
+    assert_eq!(fix.gps_time(), Some(time));
+    assert_eq!(fix.sys_time(), Some(time));
+    Ok(())
 }

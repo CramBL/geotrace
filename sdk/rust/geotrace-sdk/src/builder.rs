@@ -1,7 +1,7 @@
 use crate::{Angle, Velocity};
 use chrono::{DateTime, Duration, Utc};
 
-use crate::error::BuildError;
+use crate::error::{BuildError, Error, FieldLocation};
 use crate::time_types::{GpsTime, SysTime};
 use crate::types::{
     Annotation, Channel, Constellation, EventMarker, EventMarkerColor, EventMarkerIconChoice,
@@ -1481,18 +1481,42 @@ pub(crate) fn micros_to_datetime(us: i64) -> DateTime<Utc> {
     DateTime::from_timestamp_micros(us).unwrap_or_default()
 }
 
-/// Encode an optional `DateTime<Utc>` as u64 microseconds since Unix epoch.
-///
-/// `u64::MAX` is used as the sentinel value for `None`. It corresponds to year ~584,542
-/// which is impossible for real data.  All valid GPS/system timestamps are
-/// positive i64 values that fit safely in u64.
-pub(crate) fn opt_datetime_to_u64(dt: Option<DateTime<Utc>>) -> u64 {
-    dt.map_or(u64::MAX, |t| t.timestamp_micros().cast_unsigned())
+/// The value the optional timestamp datasets store for an absent timestamp.
+pub(crate) const ABSENT_TIMESTAMP_MICROS: u64 = u64::MAX;
+
+/// The writer stores a timestamp as the two's complement bits of its microsecond
+/// count. The one count whose bits equal [`ABSENT_TIMESTAMP_MICROS`] is rejected,
+/// since the reader takes that value for an absent timestamp.
+pub(crate) fn datetime_to_u64(
+    dt: DateTime<Utc>,
+    location: FieldLocation,
+    record: usize,
+) -> Result<u64, Error> {
+    let micros = dt.timestamp_micros().cast_unsigned();
+    if micros == ABSENT_TIMESTAMP_MICROS {
+        return Err(Error::TimestampIsTheAbsentValue {
+            group: location.group,
+            dataset: location.dataset,
+            record,
+        });
+    }
+    Ok(micros)
 }
 
-/// Decode a u64 microsecond value back to `Option<DateTime<Utc>>`, treating `u64::MAX` as absent.
+pub(crate) fn opt_datetime_to_u64(
+    dt: Option<DateTime<Utc>>,
+    location: FieldLocation,
+    record: usize,
+) -> Result<u64, Error> {
+    dt.map_or(Ok(ABSENT_TIMESTAMP_MICROS), |dt| {
+        datetime_to_u64(dt, location, record)
+    })
+}
+
+/// Decode a u64 microsecond value back to `Option<DateTime<Utc>>`, treating
+/// [`ABSENT_TIMESTAMP_MICROS`] as absent.
 pub(crate) fn u64_to_opt_datetime(v: u64) -> Option<DateTime<Utc>> {
-    if v == u64::MAX {
+    if v == ABSENT_TIMESTAMP_MICROS {
         None
     } else {
         Some(micros_to_datetime(v as i64))

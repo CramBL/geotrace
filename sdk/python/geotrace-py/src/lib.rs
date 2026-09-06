@@ -57,6 +57,7 @@ fn file_err(e: geotrace_sdk::Error) -> PyErr {
         | Error::UnreadableField { .. }
         | Error::FixWithoutTimestamp { .. }
         | Error::ReportWithoutTimestamp { .. }
+        | Error::TimestampIsTheAbsentValue { .. }
         | Error::DatasetSizePastFileLength { .. } => PyValueError::new_err(msg),
     }
 }

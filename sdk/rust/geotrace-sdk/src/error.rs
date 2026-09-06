@@ -221,6 +221,15 @@ pub enum Error {
         source: FixedWidthStringError,
     },
 
+    #[error(
+        "{group}/{dataset}: record {record} has the microsecond count reserved for an absent timestamp"
+    )]
+    TimestampIsTheAbsentValue {
+        group: &'static str,
+        dataset: &'static str,
+        record: usize,
+    },
+
     #[error("nav point {record} has neither a receiver nor a host timestamp")]
     FixWithoutTimestamp { record: usize },
 
@@ -237,8 +246,8 @@ pub enum Error {
     },
 }
 
-/// The group and dataset of one fixed-width string field, named by
-/// [`Error::UnwritableField`] and [`Error::UnreadableField`].
+/// The group and dataset of one field, stated by the [`Error`] variants that
+/// report where a value could not be written or read.
 #[derive(Clone, Copy)]
 pub(crate) struct FieldLocation {
     pub(crate) group: &'static str,
