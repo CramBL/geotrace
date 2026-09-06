@@ -1,9 +1,11 @@
 """Tests for `qa.lint_prose`: the parsing and formatting the prose gate is built from.
 
-No test runs Vale or reaches the network: `_VALE_JSON` is a captured reply.
+No test runs Vale or reaches the network: `_VALE_JSON` and `_CONTRASTIVE_JSON`
+are captured replies.
 """
 
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -30,6 +32,26 @@ _VALE_JSON = """\
   ]
 }
 """
+
+_CONTRASTIVE_JSON = """\
+{
+  "stdin.commit": [
+    {
+      "Span": [22, 32],
+      "Check": "GeoTrace.Contrastive",
+      "Message": "Contrastive 'rather than': state the current behaviour without the alternative.",
+      "Severity": "error",
+      "Line": 3
+    }
+  ]
+}
+"""
+
+_STUB_ENGINE = lint_prose.Engine(argv=["vale"], description="vale")
+
+_REPLACEMENT_MESSAGE = "a replacement subject\n\nA replacement body.\n"
+
+_BODY = "An appended note.\n"
 
 _JUST_SOURCE = """\
 # Lint the tracked Markdown files.
@@ -151,17 +173,22 @@ def test_summary_says_nothing_to_check_when_the_range_is_empty() -> None:
     )
 
 
+def _run_git(root: Path, args: Sequence[str]) -> None:
+    subprocess.run(
+        ["git", "-c", "user.email=qa@example.com", "-c", "user.name=QA", *args],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _commit_empty(root: Path, message: str) -> None:
+    _run_git(root, ["commit", "--quiet", "--allow-empty", "-m", message])
+
+
 def _repository_with_one_commit(root: Path) -> None:
-    for args in (
-        ["init", "--quiet"],
-        ["commit", "--quiet", "--allow-empty", "-m", "root"],
-    ):
-        subprocess.run(
-            ["git", "-c", "user.email=qa@example.com", "-c", "user.name=QA", *args],
-            cwd=root,
-            check=True,
-            capture_output=True,
-        )
+    _run_git(root, ["init", "--quiet"])
+    _commit_empty(root, "root")
 
 
 def test_merge_base_exits_with_one_line_when_the_base_ref_does_not_resolve(tmp_path: Path) -> None:
@@ -173,3 +200,75 @@ def test_merge_base_exits_with_one_line_when_the_base_ref_does_not_resolve(tmp_p
     assert str(raised.value) == (
         "error: base ref origin/trunk does not resolve: fetch it, or pass another base"
     )
+
+
+def test_commits_in_drops_a_fixup_subject_and_keeps_a_body_that_quotes_one(
+    tmp_path: Path,
+) -> None:
+    _repository_with_one_commit(tmp_path)
+    _commit_empty(tmp_path, "fixup! root")
+    _commit_empty(tmp_path, "quote a fixup subject\n\nfixup! root is what this body says.")
+    _commit_empty(tmp_path, f"squash! root\n\n{_BODY}")
+    _commit_empty(tmp_path, f"amend! root\n\n{_REPLACEMENT_MESSAGE}")
+
+    commits = lint_prose.commits_in(tmp_path, "HEAD")
+
+    assert [commit.subject for commit in commits] == [
+        "amend! root",
+        "squash! root",
+        "quote a fixup subject",
+        "root",
+    ]
+    assert commits[0].message == f"amend! root\n\n{_REPLACEMENT_MESSAGE}"
+    assert commits[-1].message == "root\n"
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (f"amend! root\n\n{_REPLACEMENT_MESSAGE}", _REPLACEMENT_MESSAGE),
+        ("amend! root\n", ""),
+        (f"squash! root\n\n{_BODY}", f"\n\n{_BODY}"),
+        (f"a plain subject\n\n{_BODY}", f"a plain subject\n\n{_BODY}"),
+    ],
+)
+def test_message_to_lint_returns_the_text_that_lands_on_the_branch(
+    message: str, expected: str
+) -> None:
+    assert lint_prose.Commit(hash="8250d2ea", message=message).message_to_lint() == expected
+
+
+def test_lint_commit_reads_an_amend_replacement_and_names_the_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commit = lint_prose.Commit(hash="8250d2ea", message=f"amend! root\n\n{_REPLACEMENT_MESSAGE}")
+    read_by_vale: list[str | None] = []
+
+    def stub_vale(
+        engine: lint_prose.Engine, root: Path, args: Sequence[str], stdin: str | None = None
+    ) -> str:
+        read_by_vale.append(stdin)
+        return _CONTRASTIVE_JSON
+
+    monkeypatch.setattr(lint_prose, "_run_vale", stub_vale)
+
+    alerts = lint_prose._lint_commit(_STUB_ENGINE, Path("."), commit)
+
+    assert read_by_vale == [_REPLACEMENT_MESSAGE]
+    assert [alert.annotation() for alert in alerts] == [
+        "::error title=commit 8250d2ea::GeoTrace.Contrastive: "
+        "Contrastive 'rather than': state the current behaviour without the alternative."
+    ]
+
+
+def test_lint_commit_runs_no_vale_on_an_amend_without_a_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_on_call(*args: object, **kwargs: object) -> str:
+        raise AssertionError("vale ran on a commit with no body")
+
+    monkeypatch.setattr(lint_prose, "_run_vale", fail_on_call)
+
+    commit = lint_prose.Commit(hash="ad2e0f4", message="amend! root\n")
+
+    assert lint_prose._lint_commit(_STUB_ENGINE, Path("."), commit) == []
