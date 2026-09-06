@@ -718,6 +718,59 @@ namespace detail {
     return icon ? to_c(*icon) : GTD_ICON_AUTO;
 }
 
+/**
+ * The @ref MarkerIcon value for @p icon, or `std::nullopt` for
+ * `GTD_ICON_AUTO`, where the application picks the icon.
+ */
+[[nodiscard]] constexpr std::optional<MarkerIcon> from_c(GtdMarkerIcon icon) noexcept {
+    switch (icon) {
+    case GTD_ICON_PIN:
+        return MarkerIcon::Pin;
+    case GTD_ICON_CROSS:
+        return MarkerIcon::Cross;
+    case GTD_ICON_CIRCLE:
+        return MarkerIcon::Circle;
+    case GTD_ICON_LIGHTNING:
+        return MarkerIcon::Lightning;
+    case GTD_ICON_WARNING:
+        return MarkerIcon::Warning;
+    case GTD_ICON_ERROR:
+        return MarkerIcon::Error;
+    case GTD_ICON_CHECK:
+        return MarkerIcon::Check;
+    case GTD_ICON_SATELLITE:
+        return MarkerIcon::Satellite;
+    case GTD_ICON_SATELLITE_LOST:
+        return MarkerIcon::SatelliteLost;
+    case GTD_ICON_GEAR:
+        return MarkerIcon::Gear;
+    case GTD_ICON_REFRESH:
+        return MarkerIcon::Refresh;
+    case GTD_ICON_DOWNLOAD:
+        return MarkerIcon::Download;
+    case GTD_ICON_UPLOAD:
+        return MarkerIcon::Upload;
+    case GTD_ICON_WRENCH:
+        return MarkerIcon::Wrench;
+    case GTD_ICON_AUTO:
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+/**
+ * The @ref MarkerIcon value for a `markers/icon` @p code, or `std::nullopt`
+ * for a code outside the set, which a newer writer can store.
+ *
+ * A code outside the set converts to `GtdMarkerIcon` and falls past the
+ * switch: every `GtdMarkerIcon` value fits a `std::uint8_t`, and the
+ * enumeration covers 0 to 255.
+ */
+[[nodiscard]] constexpr std::optional<MarkerIcon>
+marker_icon_from_code(std::uint8_t code) noexcept {
+    return from_c(static_cast<GtdMarkerIcon>(code));
+}
+
 [[nodiscard]] constexpr GtdTravelMode to_c(TravelMode mode) noexcept {
     switch (mode) {
     case TravelMode::Car:
@@ -1010,6 +1063,11 @@ struct NavPointView {
     std::optional<Velocity> speed;
     std::optional<double> eph_m;
     std::size_t satellite_count = 0;
+    // `std::nullopt` where the nav point has no satellite report, and where
+    // the report has no receiver timestamp (`satellite_report_gps_time`) or no
+    // host timestamp (`satellite_report_sys_time`).
+    std::optional<Timestamp> satellite_report_gps_time;
+    std::optional<Timestamp> satellite_report_sys_time;
 };
 
 /** Satellite data for one tracked satellite, returned by `NavFile::satellite()`. */
@@ -1033,6 +1091,36 @@ struct EventMarkerView {
     Angle lat = Angle::degrees(0.0);
     Angle lon = Angle::degrees(0.0);
     std::string annotation; // empty if none
+};
+
+/**
+ * Map marker data returned by `NavFile::marker()`.
+ *
+ * String fields are copies - they are valid regardless of the `NavFile`'s lifetime.
+ */
+struct MarkerView {
+    std::string label; // empty if none
+    // `std::nullopt` for an `icon_code` outside `MarkerIcon`, which the
+    // application draws as a pin.
+    std::optional<MarkerIcon> icon;
+    std::uint8_t icon_code = 0;
+    Timestamp time;
+    Angle lat = Angle::degrees(0.0);
+    Angle lon = Angle::degrees(0.0);
+};
+
+/**
+ * Event marker style data returned by `NavFile::event_marker_style()`.
+ *
+ * String fields are copies - they are valid regardless of the `NavFile`'s lifetime.
+ */
+struct EventMarkerStyleView {
+    std::string variant_path;
+    // `std::nullopt` where the style leaves the icon to the application, and
+    // for an `icon_name` outside `MarkerIcon`.
+    std::optional<MarkerIcon> icon;
+    std::string icon_name; // empty = the application picks the icon
+    std::string color_hex; // empty = auto (hash-derived). format: "#RRGGBB"
 };
 
 /**
@@ -1614,6 +1702,8 @@ class [[nodiscard]] NavFile {
         point.eph_m =
             info.eph_m.present != 0 ? std::optional<double>{info.eph_m.value} : std::nullopt;
         point.satellite_count = info.sat_count;
+        point.satellite_report_gps_time = detail::from_c(info.sat_report_gps_time);
+        point.satellite_report_sys_time = detail::from_c(info.sat_report_sys_time);
         return point;
     }
 
@@ -1683,6 +1773,74 @@ class [[nodiscard]] NavFile {
      */
     [[nodiscard]] EventMarkerView event_marker(std::size_t idx) const {
         return try_event_marker(idx).value_or_throw();
+    }
+
+    /** Number of map markers in the file. */
+    [[nodiscard]] std::size_t marker_count() const noexcept {
+        return ::gtd_nav_file_marker_count(impl_.get());
+    }
+
+    /** Return the map marker at @p idx, or an out-of-range error. */
+    Result<MarkerView> try_marker(std::size_t idx) const {
+        GtdMarkerInfo info{};
+        const GtdStatus status = ::gtd_nav_file_get_marker(impl_.get(), idx, &info);
+        if (status != GTD_OK) {
+            return Status::from(status);
+        }
+
+        // GtdMarkerInfo holds its label in a fixed C buffer, and the C SDK
+        // terminates it.
+        // NOLINTBEGIN(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
+        return MarkerView{
+            info.has_label != 0 ? std::string{info.label} : std::string{},
+            detail::marker_icon_from_code(info.icon_code),
+            info.icon_code,
+            detail::instant_from_c(info.time),
+            Angle::degrees(info.lat_deg),
+            Angle::degrees(info.lon_deg),
+        };
+        // NOLINTEND(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
+    }
+
+    /**
+     * Return the map marker at @p idx.
+     * @throws std::out_of_range if `idx >= marker_count()`.
+     */
+    [[nodiscard]] MarkerView marker(std::size_t idx) const {
+        return try_marker(idx).value_or_throw();
+    }
+
+    /** Number of event marker styles in the file. */
+    [[nodiscard]] std::size_t event_marker_style_count() const noexcept {
+        return ::gtd_nav_file_event_marker_style_count(impl_.get());
+    }
+
+    /** Return the event marker style at @p idx, or an out-of-range error. */
+    Result<EventMarkerStyleView> try_event_marker_style(std::size_t idx) const {
+        GtdEventMarkerStyleInfo info{};
+        const GtdStatus status = ::gtd_nav_file_get_event_marker_style(impl_.get(), idx, &info);
+        if (status != GTD_OK) {
+            return Status::from(status);
+        }
+
+        // GtdEventMarkerStyleInfo holds its strings in fixed C buffers, and the
+        // C SDK terminates each string.
+        // NOLINTBEGIN(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
+        return EventMarkerStyleView{
+            info.variant_path,
+            detail::from_c(info.icon),
+            info.icon_name,
+            info.has_color != 0 ? std::string{info.color_hex} : std::string{},
+        };
+        // NOLINTEND(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
+    }
+
+    /**
+     * Return the event marker style at @p idx.
+     * @throws std::out_of_range if `idx >= event_marker_style_count()`.
+     */
+    [[nodiscard]] EventMarkerStyleView event_marker_style(std::size_t idx) const {
+        return try_event_marker_style(idx).value_or_throw();
     }
 
     /** Number of channels in the file. */

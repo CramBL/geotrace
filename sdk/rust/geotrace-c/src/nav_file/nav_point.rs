@@ -1,5 +1,7 @@
 //! Nav point data and the accessors that fill it.
 
+use geotrace_sdk::SatelliteReport;
+
 use super::GtdNavFile;
 use crate::error::{self, GtdStatus};
 use crate::optf32;
@@ -38,6 +40,13 @@ pub struct GtdNavPointInfo {
     pub eph_m: GtdOptF64,
     /// Number of tracked satellites (0 when no satellite report present).
     pub sat_count: usize,
+    /// GPS time the satellite report was captured at. `gtd_ts_none()` when the
+    /// fix has no report, and when the report has no receiver timestamp.
+    pub sat_report_gps_time: GtdTimestamp,
+    /// System (wall-clock) time the satellite report was captured at.
+    /// `gtd_ts_none()` when the fix has no report, and when the report has no
+    /// host timestamp.
+    pub sat_report_sys_time: GtdTimestamp,
 }
 
 /// Return the number of navigation fixes in the file.
@@ -95,6 +104,16 @@ pub unsafe extern "C" fn gtd_nav_file_get_nav_point(
             .eph_m
             .map_or(optf64::opt_f64_none(), optf64::opt_f64_some);
         out.sat_count = point.satellites.as_ref().map_or(0, |r| r.tracked.len());
+        out.sat_report_gps_time = point
+            .satellites
+            .as_ref()
+            .and_then(SatelliteReport::gps_time)
+            .map_or(timestamp::gtd_ts_none(), timestamp::ts_from_datetime);
+        out.sat_report_sys_time = point
+            .satellites
+            .as_ref()
+            .and_then(SatelliteReport::sys_time)
+            .map_or(timestamp::gtd_ts_none(), timestamp::ts_from_datetime);
 
         GtdStatus::GTD_OK
     })

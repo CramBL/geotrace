@@ -16,6 +16,10 @@ FetchContent_MakeAvailable(doctest)
 set(GEOTRACE_CPP_FIXTURE "${CMAKE_CURRENT_SOURCE_DIR}/../../c/tests/fixtures/minimal.gtd")
 set(GEOTRACE_CPP_OUT_OF_RANGE_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../c/tests/fixtures/out_of_range_values.gtd")
+set(GEOTRACE_CPP_UNRECOGNIZED_MARKER_ICON_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../c/tests/fixtures/unrecognized_marker_icon.gtd")
+set(GEOTRACE_CPP_UNRECOGNIZED_STYLE_VALUES_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../c/tests/fixtures/unrecognized_style_values.gtd")
 
 function(add_cpp_test name)
     add_executable(${name} ${name}.cpp ${ARGN})
@@ -51,6 +55,16 @@ function(add_cpp_test name)
             GTD_OUT_OF_RANGE_FIXTURE_PATH="${GEOTRACE_CPP_OUT_OF_RANGE_FIXTURE}"
         )
     endif()
+    if(EXISTS "${GEOTRACE_CPP_UNRECOGNIZED_MARKER_ICON_FIXTURE}")
+        target_compile_definitions(${name} PRIVATE
+            GTD_UNRECOGNIZED_MARKER_ICON_FIXTURE_PATH="${GEOTRACE_CPP_UNRECOGNIZED_MARKER_ICON_FIXTURE}"
+        )
+    endif()
+    if(EXISTS "${GEOTRACE_CPP_UNRECOGNIZED_STYLE_VALUES_FIXTURE}")
+        target_compile_definitions(${name} PRIVATE
+            GTD_UNRECOGNIZED_STYLE_VALUES_FIXTURE_PATH="${GEOTRACE_CPP_UNRECOGNIZED_STYLE_VALUES_FIXTURE}"
+        )
+    endif()
 
     # On Unix, embed an RPATH so `ctest` can find the shared library without
     # LD_LIBRARY_PATH / DYLD_LIBRARY_PATH.  On Windows, GeoTrace::C is a
@@ -72,6 +86,7 @@ add_cpp_test(test_fix_time)
 add_cpp_test(test_timestamp)
 add_cpp_test(test_special_members)
 add_cpp_test(test_nav_file)
+add_cpp_test(test_markers)
 add_cpp_test(test_round_trip)
 add_cpp_test(test_value_ranges)
 add_cpp_test(test_channels)

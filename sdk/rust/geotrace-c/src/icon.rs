@@ -1,7 +1,8 @@
 //! The icon a map marker is drawn with.
 
-/// Icon for map markers. `GTD_ICON_AUTO` is accepted only by
-/// `gtd_builder_add_event_marker_style()`, where the application picks the icon.
+/// Icon for map markers. `GTD_ICON_AUTO` means the application picks the icon:
+/// `gtd_builder_add_event_marker_style()` accepts it, and
+/// `gtd_nav_file_get_event_marker_style()` returns it.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub enum GtdMarkerIcon {

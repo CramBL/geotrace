@@ -143,8 +143,9 @@ typedef enum {
 } GtdConstellation;
 
 /**
- * Icon for map markers. `GTD_ICON_AUTO` is accepted only by
- * `gtd_builder_add_event_marker_style()`, where the application picks the icon.
+ * Icon for map markers. `GTD_ICON_AUTO` means the application picks the icon:
+ * `gtd_builder_add_event_marker_style()` accepts it, and
+ * `gtd_nav_file_get_event_marker_style()` returns it.
  */
 typedef enum {
     /**
@@ -472,6 +473,45 @@ typedef struct {
 } GtdEventMarkerInfo;
 
 /**
+ * Map marker data returned by `gtd_nav_file_get_marker()`.
+ *
+ * All string fields are null-terminated.
+ */
+typedef struct {
+    /**
+     * Display label, when @ref has_label.
+     */
+    char label[256];
+    /**
+     * Non-zero if @ref label is set.
+     */
+    uint8_t has_label;
+    /**
+     * Icon the marker is drawn with. An @ref icon_code outside the
+     * `GtdMarkerIcon` set gives `GTD_ICON_PIN`. The application draws such a
+     * marker with the pin icon.
+     */
+    GtdMarkerIcon icon;
+    /**
+     * The icon code the file stores. A newer writer can store a code outside
+     * the `GtdMarkerIcon` set.
+     */
+    uint8_t icon_code;
+    /**
+     * Time the marker is placed at.
+     */
+    GtdTimestamp time;
+    /**
+     * WGS-84 latitude, interpolated from the surrounding nav fixes.
+     */
+    double lat_deg;
+    /**
+     * WGS-84 longitude, interpolated from the surrounding nav fixes.
+     */
+    double lon_deg;
+} GtdMarkerInfo;
+
+/**
  * Navigation fix data returned by `gtd_nav_file_get_nav_point()`.
  *
  * All fields are caller-owned (no pointers to SDK memory).
@@ -518,6 +558,17 @@ typedef struct {
      * Number of tracked satellites (0 when no satellite report present).
      */
     size_t sat_count;
+    /**
+     * GPS time the satellite report was captured at. `gtd_ts_none()` when the
+     * fix has no report, and when the report has no receiver timestamp.
+     */
+    GtdTimestamp sat_report_gps_time;
+    /**
+     * System (wall-clock) time the satellite report was captured at.
+     * `gtd_ts_none()` when the fix has no report, and when the report has no
+     * host timestamp.
+     */
+    GtdTimestamp sat_report_sys_time;
 } GtdNavPointInfo;
 
 /**
@@ -549,6 +600,40 @@ typedef struct {
      */
     GtdOptF32 snr_dbhz;
 } GtdSatInfo;
+
+/**
+ * Event marker style data returned by `gtd_nav_file_get_event_marker_style()`.
+ *
+ * All string fields are null-terminated.
+ */
+typedef struct {
+    /**
+     * Hierarchical event type path the style applies to, e.g. `"system/startup"`.
+     */
+    char variant_path[257];
+    /**
+     * Icon shape for the variant. `GTD_ICON_AUTO` where the style leaves the
+     * icon to the application, and where @ref icon_name is outside the
+     * `GtdMarkerIcon` set.
+     */
+    GtdMarkerIcon icon;
+    /**
+     * The icon name the file stores. Empty where the style leaves the icon
+     * to the application, and a name outside the `GtdMarkerIcon` set where a
+     * newer writer stored one.
+     */
+    char icon_name[32];
+    /**
+     * Non-zero if @ref color_hex is set.
+     */
+    uint8_t has_color;
+    /**
+     * Fill color, when @ref has_color: `#RRGGBB` unless a newer writer stored
+     * another notation. Without a color the application derives one from
+     * @ref variant_path.
+     */
+    char color_hex[8];
+} GtdEventMarkerStyleInfo;
 
 #ifdef __cplusplus
 extern "C" {
@@ -941,6 +1026,24 @@ GtdStatus gtd_nav_file_get_event_marker(const GtdNavFile *file,
                                         GtdEventMarkerInfo *out);
 
 /**
+ * Return the number of map markers in the file.
+ *
+ * @param file File handle. Returns 0 if NULL.
+ */
+size_t gtd_nav_file_marker_count(const GtdNavFile *file);
+
+/**
+ * Fill @p out with data for the map marker at @p index.
+ *
+ * @param file  File handle.
+ * @param index Zero-based index. Must be less than `gtd_nav_file_marker_count(file)`.
+ * @param out   Caller-allocated struct to fill.
+ *
+ * @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last map marker.
+ */
+GtdStatus gtd_nav_file_get_marker(const GtdNavFile *file, size_t index, GtdMarkerInfo *out);
+
+/**
  * Return the file title, or NULL if not set.
  *
  * The returned pointer is valid for the lifetime of @p file.
@@ -1060,6 +1163,27 @@ GtdStatus gtd_nav_file_open(const char *path, GtdNavFile **out);
  * @param out    Output parameter for the file handle.
  */
 GtdStatus gtd_nav_file_from_bytes(const uint8_t *data, size_t length, GtdNavFile **out);
+
+/**
+ * Return the number of event marker styles in the file.
+ *
+ * @param file File handle. Returns 0 if NULL.
+ */
+size_t gtd_nav_file_event_marker_style_count(const GtdNavFile *file);
+
+/**
+ * Fill @p out with data for the event marker style at @p index.
+ *
+ * @param file  File handle.
+ * @param index Zero-based index. Must be less than
+ *              `gtd_nav_file_event_marker_style_count(file)`.
+ * @param out   Caller-allocated struct to fill.
+ *
+ * @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last event marker style.
+ */
+GtdStatus gtd_nav_file_get_event_marker_style(const GtdNavFile *file,
+                                              size_t index,
+                                              GtdEventMarkerStyleInfo *out);
 
 /**
  * Write the navigation file to disk.

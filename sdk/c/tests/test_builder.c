@@ -1,10 +1,8 @@
 #include "../geotrace.h"
+#include "test_helpers.h"
 #include <criterion/criterion.h>
-#include <math.h>
 #include <stdio.h>
 #include <string.h>
-
-#define assert_near(a, b, eps) cr_assert(fabs((a) - (b)) < (eps))
 
 Test(builder, basic_write) {
     GtdFileBuilder *builder = gtd_builder_create();
@@ -256,6 +254,106 @@ Test(builder, satellite_report) {
     cr_assert_eq(satellite.in_fix, 1);
     cr_assert_eq(satellite.snr_dbhz.present, 1);
     cr_assert_eq(satellite.snr_dbhz.value, 40.0F);
+
+    gtd_nav_file_destroy(file);
+}
+
+Test(builder, a_nav_point_reads_back_the_timestamps_of_its_satellite_report) {
+    GtdFileBuilder *builder = gtd_builder_create();
+    cr_assert_not_null(builder);
+
+    GtdTimestamp first_fix;
+    GtdTimestamp report_sys_time;
+    GtdTimestamp second_fix;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &first_fix), GTD_OK);
+    cr_assert_eq(gtd_ts_from_seconds(1700000001, &report_sys_time), GTD_OK);
+    cr_assert_eq(gtd_ts_from_seconds(1700000010, &second_fix), GTD_OK);
+
+    GtdSatellite sats[] = {
+        {GTD_CONSTELLATION_GPS, 7, 1, GTD_SOME_F32(55.0F), GTD_SOME_F32(120.0F),
+         GTD_SOME_F32(40.0F)},
+    };
+
+    cr_assert_eq(gtd_builder_add_nav_fix(builder, first_fix, gtd_ts_none(), 40.7128, -74.0060,
+                                         GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
+                 GTD_OK);
+    cr_assert_eq(gtd_builder_add_satellite_report(builder, first_fix, report_sys_time, sats, 1),
+                 GTD_OK);
+    cr_assert_eq(gtd_builder_add_nav_fix(builder, second_fix, gtd_ts_none(), 40.7130, -74.0065,
+                                         GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
+                 GTD_OK);
+
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_OK);
+
+    GtdNavPointInfo with_report;
+    cr_assert_eq(gtd_nav_file_get_nav_point(file, 0, &with_report), GTD_OK);
+    cr_assert_eq(with_report.sat_report_gps_time.unix_micros, first_fix.unix_micros);
+    cr_assert_eq(with_report.sat_report_sys_time.unix_micros, report_sys_time.unix_micros);
+
+    GtdNavPointInfo without_report;
+    cr_assert_eq(gtd_nav_file_get_nav_point(file, 1, &without_report), GTD_OK);
+    cr_assert_eq(without_report.sat_count, 0);
+    cr_assert(gtd_ts_is_none(without_report.sat_report_gps_time));
+    cr_assert(gtd_ts_is_none(without_report.sat_report_sys_time));
+
+    gtd_nav_file_destroy(file);
+}
+
+Test(builder, a_report_with_only_a_receiver_time_reads_back_without_a_host_time) {
+    GtdFileBuilder *builder = gtd_builder_create();
+    cr_assert_not_null(builder);
+
+    GtdTimestamp fix_time;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &fix_time), GTD_OK);
+
+    GtdSatellite sats[] = {
+        {GTD_CONSTELLATION_GPS, 7, 1, GTD_NONE_F32, GTD_NONE_F32, GTD_NONE_F32},
+    };
+
+    cr_assert_eq(gtd_builder_add_nav_fix(builder, fix_time, gtd_ts_none(), 40.7128, -74.0060,
+                                         GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
+                 GTD_OK);
+    cr_assert_eq(gtd_builder_add_satellite_report(builder, fix_time, gtd_ts_none(), sats, 1),
+                 GTD_OK);
+
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_OK);
+
+    GtdNavPointInfo point;
+    cr_assert_eq(gtd_nav_file_get_nav_point(file, 0, &point), GTD_OK);
+    cr_assert_eq(point.sat_count, 1);
+    cr_assert_eq(point.sat_report_gps_time.unix_micros, fix_time.unix_micros);
+    cr_assert(gtd_ts_is_none(point.sat_report_sys_time));
+
+    gtd_nav_file_destroy(file);
+}
+
+Test(builder, a_report_with_only_a_host_time_reads_back_without_a_receiver_time) {
+    GtdFileBuilder *builder = gtd_builder_create();
+    cr_assert_not_null(builder);
+
+    GtdTimestamp fix_time;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &fix_time), GTD_OK);
+
+    GtdSatellite sats[] = {
+        {GTD_CONSTELLATION_GPS, 7, 1, GTD_NONE_F32, GTD_NONE_F32, GTD_NONE_F32},
+    };
+
+    cr_assert_eq(gtd_builder_add_nav_fix(builder, fix_time, fix_time, 40.7128, -74.0060,
+                                         GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
+                 GTD_OK);
+    cr_assert_eq(gtd_builder_add_satellite_report(builder, gtd_ts_none(), fix_time, sats, 1),
+                 GTD_OK);
+
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_OK);
+
+    GtdNavPointInfo point;
+    cr_assert_eq(gtd_nav_file_get_nav_point(file, 0, &point), GTD_OK);
+    cr_assert_eq(point.sat_count, 1);
+    cr_assert(gtd_ts_is_none(point.sat_report_gps_time));
+    cr_assert_eq(point.sat_report_sys_time.unix_micros, fix_time.unix_micros);
 
     gtd_nav_file_destroy(file);
 }

@@ -115,6 +115,73 @@ TEST_CASE("round-trip: satellite report survives write → from_bytes → read")
     CHECK_FALSE(s1_out.in_fix);
 }
 
+TEST_CASE("round-trip: a satellite report's timestamps survive write → from_bytes → read") {
+    const NavFix first_fix{FixTime::receiver(FIRST_TIME), Angle::degrees(LAT), Angle::degrees(LON)};
+    const NavFix second_fix{FixTime::receiver(SECOND_TIME), Angle::degrees(LAT2),
+                            Angle::degrees(LON2)};
+
+    Satellite satellite{};
+    satellite.constellation = Constellation::Gps;
+    satellite.prn = 7;
+    satellite.in_fix = true;
+
+    constexpr Timestamp REPORT_SYS_TIME{FIRST_TIME.unix_micros + 1'000'000};
+    const SatelliteReport report{FixTime::both(FIRST_TIME, REPORT_SYS_TIME), {satellite}};
+
+    auto file = FileBuilder{}
+                    .add_nav_fix(first_fix)
+                    .add_satellite_report(report)
+                    .add_nav_fix(second_fix)
+                    .finish();
+    auto reread = NavFile::from_bytes(file.to_bytes());
+
+    const auto with_report = reread.nav_point(0);
+    REQUIRE(with_report.satellite_report_gps_time.has_value());
+    CHECK(with_report.satellite_report_gps_time->unix_micros == FIRST_TIME.unix_micros);
+    REQUIRE(with_report.satellite_report_sys_time.has_value());
+    CHECK(with_report.satellite_report_sys_time->unix_micros == REPORT_SYS_TIME.unix_micros);
+
+    const auto without_report = reread.nav_point(1);
+    CHECK(without_report.satellite_count == 0);
+    CHECK_FALSE(without_report.satellite_report_gps_time.has_value());
+    CHECK_FALSE(without_report.satellite_report_sys_time.has_value());
+}
+
+TEST_CASE("round-trip: a report with only a receiver time reads back without a host time") {
+    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(LAT), Angle::degrees(LON)};
+
+    Satellite satellite{};
+    satellite.constellation = Constellation::Gps;
+    satellite.prn = 7;
+
+    const SatelliteReport report{FixTime::receiver(FIRST_TIME), {satellite}};
+    auto file = FileBuilder{}.add_nav_fix(fix).add_satellite_report(report).finish();
+    auto reread = NavFile::from_bytes(file.to_bytes());
+
+    const auto point = reread.nav_point(0);
+    REQUIRE(point.satellite_report_gps_time.has_value());
+    CHECK(point.satellite_report_gps_time->unix_micros == FIRST_TIME.unix_micros);
+    CHECK_FALSE(point.satellite_report_sys_time.has_value());
+}
+
+TEST_CASE("round-trip: a report with only a host time reads back without a receiver time") {
+    const NavFix fix{FixTime::both(FIRST_TIME, FIRST_TIME), Angle::degrees(LAT),
+                     Angle::degrees(LON)};
+
+    Satellite satellite{};
+    satellite.constellation = Constellation::Gps;
+    satellite.prn = 7;
+
+    const SatelliteReport report{FixTime::host(FIRST_TIME), {satellite}};
+    auto file = FileBuilder{}.add_nav_fix(fix).add_satellite_report(report).finish();
+    auto reread = NavFile::from_bytes(file.to_bytes());
+
+    const auto point = reread.nav_point(0);
+    CHECK_FALSE(point.satellite_report_gps_time.has_value());
+    REQUIRE(point.satellite_report_sys_time.has_value());
+    CHECK(point.satellite_report_sys_time->unix_micros == FIRST_TIME.unix_micros);
+}
+
 TEST_CASE("round-trip: satellite metrics survive write → from_bytes → read bit-exact") {
     const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(LAT), Angle::degrees(LON)};
 
