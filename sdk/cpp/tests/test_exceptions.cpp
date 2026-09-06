@@ -10,6 +10,7 @@ using geotrace::Angle;
 using geotrace::Annotation;
 using geotrace::AnnotationsOutOfRangeError;
 using geotrace::BuildError;
+using geotrace::CallOrderError;
 using geotrace::Channel;
 using geotrace::Error;
 using geotrace::EventMarker;
@@ -34,6 +35,7 @@ TEST_CASE("exception hierarchy: all types derive from geotrace::Error") {
     CHECK(std::is_base_of_v<Error, InvalidPathError>);
     CHECK(std::is_base_of_v<Error, FieldTooLongError>);
     CHECK(std::is_base_of_v<Error, InvalidChannelError>);
+    CHECK(std::is_base_of_v<Error, CallOrderError>);
     CHECK(std::is_base_of_v<BuildError, NoNavFixesError>);
     CHECK(std::is_base_of_v<BuildError, AnnotationsOutOfRangeError>);
 }
@@ -92,6 +94,18 @@ TEST_CASE("exception: InvalidChannelError is catchable as Error") {
     };
     CHECK_THROWS_AS(throw_it(), InvalidChannelError);
     CHECK_THROWS_AS(throw_it(), Error);
+}
+
+TEST_CASE("exception: lenient() after a nav fix throws CallOrderError") {
+    auto throw_it = [] {
+        FileBuilder builder;
+        builder.add_nav_fix(NavFix{FixTime::receiver(Timestamp::from_seconds(1700000000ULL)),
+                                   Angle::degrees(0.0), Angle::degrees(0.0)});
+        builder.lenient();
+    };
+    CHECK_THROWS_AS(throw_it(), CallOrderError);
+    CHECK_THROWS_AS(throw_it(), Error);
+    CHECK_NOTHROW(FileBuilder{}.lenient());
 }
 
 TEST_CASE("exception: IoError is catchable as Error") {

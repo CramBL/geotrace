@@ -34,6 +34,9 @@ the app).
 - C `gtd_builder_finish` returns `GTD_ERR_INVALID_ARGUMENT` where a ghost nav fix is past the range a UTC timestamp covers.
 - A satellite report before the first nav fix produces a ghost fix on the first fix.
 - A ghost fix after the last nav fix takes that fix's position when the fix has no heading.
+- C `gtd_nav_file_get_nav_point`, `gtd_nav_file_get_satellite`, `gtd_nav_file_get_event_marker`, `gtd_nav_file_get_channel`, `gtd_nav_file_get_channel_component`, `gtd_nav_file_get_channel_unit` and `gtd_channel_unit_parse` return the new `GTD_ERR_OUT_OF_RANGE` (13) for an index past the end or a short output buffer, where they returned `GTD_ERR_NULL_ARGUMENT`.
+- C `gtd_builder_set_title`, `gtd_builder_set_device`, `gtd_builder_set_notes`, `gtd_builder_set_identity`, `gtd_builder_set_travel_mode` and `gtd_builder_set_lenient` return the new `GTD_ERR_CALL_ORDER` (14) when data has already been added, where the first five returned `GTD_ERR_INTERNAL`. `gtd_builder_set_lenient` returns a `GtdStatus` in place of `void`.
+- C++ `FileBuilder::lenient()` records its status, an out-of-range accessor throws `std::out_of_range` through the new status, and `GTD_ERR_CALL_ORDER` throws the new `geotrace::CallOrderError`.
 
 ### Fixed
 

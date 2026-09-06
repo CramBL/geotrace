@@ -10,7 +10,7 @@ use crate::error::{self, GtdStatus};
 ///
 /// Must be called before the first `gtd_builder_add_*` call.
 ///
-/// @return `GTD_ERR_INTERNAL` if data has already been added.
+/// @return `GTD_ERR_CALL_ORDER` if data has already been added.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_set_title(
     builder: *mut GtdFileBuilder,
@@ -27,7 +27,7 @@ pub unsafe extern "C" fn gtd_builder_set_title(
 ///
 /// Must be called before the first `gtd_builder_add_*` call.
 ///
-/// @return `GTD_ERR_INTERNAL` if data has already been added.
+/// @return `GTD_ERR_CALL_ORDER` if data has already been added.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_set_device(
     builder: *mut GtdFileBuilder,
@@ -44,7 +44,7 @@ pub unsafe extern "C" fn gtd_builder_set_device(
 ///
 /// Must be called before the first `gtd_builder_add_*` call.
 ///
-/// @return `GTD_ERR_INTERNAL` if data has already been added.
+/// @return `GTD_ERR_CALL_ORDER` if data has already been added.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_set_notes(
     builder: *mut GtdFileBuilder,
@@ -61,7 +61,7 @@ pub unsafe extern "C" fn gtd_builder_set_notes(
 ///
 /// Must be called before the first `gtd_builder_add_*` call.
 ///
-/// @return `GTD_ERR_INTERNAL` if data has already been added.
+/// @return `GTD_ERR_CALL_ORDER` if data has already been added.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_set_identity(
     builder: *mut GtdFileBuilder,
@@ -78,7 +78,7 @@ pub unsafe extern "C" fn gtd_builder_set_identity(
 ///
 /// Must be called before the first `gtd_builder_add_*` call.
 ///
-/// @return `GTD_ERR_INTERNAL` if data has already been added.
+/// @return `GTD_ERR_CALL_ORDER` if data has already been added.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_set_travel_mode(
     builder: *mut GtdFileBuilder,
@@ -98,13 +98,11 @@ pub unsafe extern "C" fn gtd_builder_set_travel_mode(
 ///
 /// Must be called before the first `gtd_builder_add_*` call.
 ///
-/// @param builder Builder handle. No-op if NULL.
+/// @return `GTD_ERR_CALL_ORDER` if data has already been added.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gtd_builder_set_lenient(builder: *mut GtdFileBuilder) {
-    if builder.is_null() {
-        error::set_last_error("null pointer argument");
-        return;
-    }
-    // SAFETY: builder is non-null and valid for the call duration
-    unsafe { (*builder).set_lenient() };
+pub unsafe extern "C" fn gtd_builder_set_lenient(builder: *mut GtdFileBuilder) -> GtdStatus {
+    error::run_catching_panics(|| {
+        let builder = nonnull_mut!(builder);
+        builder.set_lenient()
+    })
 }

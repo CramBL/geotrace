@@ -9,6 +9,8 @@ use geotrace_sdk::{NavFileBuilder, NavRecorder, TravelMode};
 
 use crate::error::{self, GtdStatus};
 
+const METADATA_BEFORE_DATA: &str = "metadata must be set before adding data";
+
 /// Opaque handle for a file-under-construction.
 ///
 /// Created by `gtd_builder_create()`. Freed either by `gtd_builder_destroy()`
@@ -51,79 +53,46 @@ impl GtdFileBuilder {
         }
     }
 
-    fn set_title(&mut self, title: &str) -> GtdStatus {
+    fn configure_before_data(
+        &mut self,
+        call_order_message: &str,
+        configure: impl FnOnce(NavFileBuilder) -> NavFileBuilder,
+    ) -> GtdStatus {
         match self.builder.take() {
-            Some(b) => {
-                self.builder = Some(b.with_title(title));
+            Some(builder) => {
+                self.builder = Some(configure(builder));
                 GtdStatus::GTD_OK
             }
             None => {
-                error::set_last_error("metadata must be set before adding data");
-                GtdStatus::GTD_ERR_INTERNAL
+                error::set_last_error(call_order_message);
+                GtdStatus::GTD_ERR_CALL_ORDER
             }
         }
+    }
+
+    fn set_title(&mut self, title: &str) -> GtdStatus {
+        self.configure_before_data(METADATA_BEFORE_DATA, |b| b.with_title(title))
     }
 
     fn set_device(&mut self, device: &str) -> GtdStatus {
-        match self.builder.take() {
-            Some(b) => {
-                self.builder = Some(b.with_device(device));
-                GtdStatus::GTD_OK
-            }
-            None => {
-                error::set_last_error("metadata must be set before adding data");
-                GtdStatus::GTD_ERR_INTERNAL
-            }
-        }
+        self.configure_before_data(METADATA_BEFORE_DATA, |b| b.with_device(device))
     }
 
     fn set_notes(&mut self, notes: &str) -> GtdStatus {
-        match self.builder.take() {
-            Some(b) => {
-                self.builder = Some(b.with_notes(notes));
-                GtdStatus::GTD_OK
-            }
-            None => {
-                error::set_last_error("metadata must be set before adding data");
-                GtdStatus::GTD_ERR_INTERNAL
-            }
-        }
+        self.configure_before_data(METADATA_BEFORE_DATA, |b| b.with_notes(notes))
     }
 
     fn set_identity(&mut self, identity: &str) -> GtdStatus {
-        match self.builder.take() {
-            Some(b) => {
-                self.builder = Some(b.with_identity(identity));
-                GtdStatus::GTD_OK
-            }
-            None => {
-                error::set_last_error("metadata must be set before adding data");
-                GtdStatus::GTD_ERR_INTERNAL
-            }
-        }
+        self.configure_before_data(METADATA_BEFORE_DATA, |b| b.with_identity(identity))
     }
 
     fn set_travel_mode(&mut self, mode: TravelMode) -> GtdStatus {
-        match self.builder.take() {
-            Some(b) => {
-                self.builder = Some(b.with_travel_mode(mode));
-                GtdStatus::GTD_OK
-            }
-            None => {
-                error::set_last_error("metadata must be set before adding data");
-                GtdStatus::GTD_ERR_INTERNAL
-            }
-        }
+        self.configure_before_data(METADATA_BEFORE_DATA, |b| b.with_travel_mode(mode))
     }
 
-    fn set_lenient(&mut self) {
-        match self.builder.take() {
-            Some(b) => {
-                self.builder = Some(b.with_lenient_errors());
-            }
-            None => {
-                error::set_last_error("lenient mode must be set before adding data");
-            }
-        }
+    fn set_lenient(&mut self) -> GtdStatus {
+        self.configure_before_data("lenient mode must be set before adding data", |b| {
+            b.with_lenient_errors()
+        })
     }
 }

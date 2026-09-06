@@ -58,7 +58,7 @@ pub unsafe extern "C" fn gtd_nav_file_channel_count(file: *const GtdNavFile) -> 
 /// @param index Zero-based index. Must be less than `gtd_nav_file_channel_count(file)`.
 /// @param out   Caller-allocated struct to fill.
 ///
-/// @return `GTD_ERR_NULL_ARGUMENT` if @p index is out of range.
+/// @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last channel.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_get_channel(
     file: *const GtdNavFile,
@@ -71,7 +71,7 @@ pub unsafe extern "C" fn gtd_nav_file_get_channel(
 
         let Some(ch) = handle.file.channels().get(index) else {
             error::set_last_error(format!("channel index {index} is out of range"));
-            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
+            return GtdStatus::GTD_ERR_OUT_OF_RANGE;
         };
 
         // SAFETY: GtdChannelInfo is repr(C). Zeroing it is a valid initial state.
@@ -105,6 +105,8 @@ pub unsafe extern "C" fn gtd_nav_file_get_channel(
 /// this SDK reports verbatim and rejects on the write path: passing such a label
 /// to @ref gtd_builder_add_channel_with_unit_mode returns
 /// `GTD_ERR_INVALID_CHANNEL`.
+///
+/// @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last channel.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_get_channel_unit(
     file: *const GtdNavFile,
@@ -119,7 +121,7 @@ pub unsafe extern "C" fn gtd_nav_file_get_channel_unit(
         let required_length = nonnull_mut!(required_length);
         let Some(ch) = handle.file.channels().get(index) else {
             error::set_last_error(format!("channel index {index} is out of range"));
-            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
+            return GtdStatus::GTD_ERR_OUT_OF_RANGE;
         };
         let Some(unit) = ch.unit() else {
             *required_length = 0;
@@ -159,7 +161,8 @@ pub unsafe extern "C" fn gtd_nav_file_get_channel_unit(
 /// @param out             Caller-allocated buffer of @p out_capacity bytes.
 /// @param out_capacity    Capacity of @p out in bytes.
 ///
-/// @return `GTD_ERR_NULL_ARGUMENT` if an index is out of range or @p out is NULL.
+/// @return `GTD_ERR_OUT_OF_RANGE` if an index is past the end or @p out_capacity
+///         is zero, `GTD_ERR_NULL_ARGUMENT` if @p out is NULL.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_get_channel_component(
     file: *const GtdNavFile,
@@ -176,15 +179,15 @@ pub unsafe extern "C" fn gtd_nav_file_get_channel_component(
         }
         if out_capacity == 0 {
             error::set_last_error("out buffer capacity is zero");
-            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
+            return GtdStatus::GTD_ERR_OUT_OF_RANGE;
         }
         let Some(ch) = handle.file.channels().get(channel_index) else {
             error::set_last_error(format!("channel index {channel_index} is out of range"));
-            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
+            return GtdStatus::GTD_ERR_OUT_OF_RANGE;
         };
         let Some(label) = ch.components().get(component_index) else {
             error::set_last_error(format!("component index {component_index} is out of range"));
-            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
+            return GtdStatus::GTD_ERR_OUT_OF_RANGE;
         };
         // SAFETY: out points to `out_capacity` writable bytes (caller contract).
         let buffer = unsafe { std::slice::from_raw_parts_mut(out, out_capacity) };

@@ -42,6 +42,13 @@ TEST_CASE("builder accumulates the first error and surfaces it at try_finish") {
     CHECK(result.error().code == GTD_ERR_INVALID_PATH);
 }
 
+TEST_CASE("lenient() after a nav fix records the call-order status") {
+    FileBuilder builder;
+    builder.add(one_fix());
+    builder.lenient();
+    CHECK(builder.status().code == GTD_ERR_CALL_ORDER);
+}
+
 TEST_CASE("first error wins: a later valid call does not overwrite it") {
     FileBuilder builder;
     builder.add_event_marker(bad_marker()); // first error

@@ -44,7 +44,7 @@ pub unsafe extern "C" fn gtd_nav_file_event_marker_count(file: *const GtdNavFile
 /// @param index Zero-based index. Must be less than `gtd_nav_file_event_marker_count(file)`.
 /// @param out   Caller-allocated struct to fill.
 ///
-/// @return `GTD_ERR_NULL_ARGUMENT` if @p index is out of range.
+/// @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last event marker.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_get_event_marker(
     file: *const GtdNavFile,
@@ -57,7 +57,7 @@ pub unsafe extern "C" fn gtd_nav_file_get_event_marker(
 
         let Some(marker) = handle.file.event_markers().get(index) else {
             error::set_last_error(format!("event marker index {index} is out of range"));
-            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
+            return GtdStatus::GTD_ERR_OUT_OF_RANGE;
         };
 
         // SAFETY: GtdEventMarkerInfo is repr(C). Zeroing it is valid initial state
