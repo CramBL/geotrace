@@ -641,7 +641,7 @@ int main(int argc, char **argv) {
     }
 
     GtdFileBuilder *builder = gtd_builder_create();
-    gtd_builder_set_lenient(builder);
+    check_sdk_status(gtd_builder_set_lenient(builder), "set_lenient");
 
     load_meta(builder, base);
     load_event_styles(builder, base);

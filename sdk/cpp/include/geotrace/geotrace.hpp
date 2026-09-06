@@ -194,6 +194,11 @@ struct InvalidChannelError : Error {
     using Error::Error;
 };
 
+/** A `FileBuilder` setter was called after the first `add_*` call. */
+struct CallOrderError : Error {
+    using Error::Error;
+};
+
 namespace detail {
 
 [[noreturn]] inline void abort_with(const std::string &msg) {
@@ -209,9 +214,13 @@ namespace detail {
 #if GEOTRACE_CPP_EXCEPTIONS
     switch (status) {
     case GTD_ERR_NULL_ARGUMENT:
-        // The C++ wrapper never passes null pointers, so this only arises from
-        // an out-of-range accessor index.
+        // The caller reached the C API directly, bypassing the wrapper: the
+        // wrapper itself never passes a null pointer.
+        throw std::invalid_argument(msg);
+    case GTD_ERR_OUT_OF_RANGE:
         throw std::out_of_range(msg);
+    case GTD_ERR_CALL_ORDER:
+        throw CallOrderError(msg);
     case GTD_ERR_NO_NAV_FIXES:
         throw NoNavFixesError(msg);
     case GTD_ERR_ANNOTATIONS_OOB:
@@ -1151,8 +1160,8 @@ class FileBuilder {
     }
 
     /** Downgrade out-of-range annotation errors to warnings. */
-    FileBuilder &lenient() noexcept {
-        ::gtd_builder_set_lenient(impl_.get());
+    FileBuilder &lenient() {
+        record(::gtd_builder_set_lenient(impl_.get()));
         return *this;
     }
 

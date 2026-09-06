@@ -64,6 +64,11 @@ pub enum GtdStatus {
     GTD_ERR_FIELD_TOO_LONG = 11,
     /// An argument's value is not allowed.
     GTD_ERR_INVALID_ARGUMENT = 12,
+    /// An index is past the end of what it addresses, or an output buffer is
+    /// too small.
+    GTD_ERR_OUT_OF_RANGE = 13,
+    /// A call was made in an order the API does not allow.
+    GTD_ERR_CALL_ORDER = 14,
     /// Internal error (bug in the SDK).
     GTD_ERR_INTERNAL = 99,
 }
@@ -84,6 +89,8 @@ const _: () = {
     assert!(GtdStatus::GTD_ERR_INVALID_CHANNEL as u32 == 10);
     assert!(GtdStatus::GTD_ERR_FIELD_TOO_LONG as u32 == 11);
     assert!(GtdStatus::GTD_ERR_INVALID_ARGUMENT as u32 == 12);
+    assert!(GtdStatus::GTD_ERR_OUT_OF_RANGE as u32 == 13);
+    assert!(GtdStatus::GTD_ERR_CALL_ORDER as u32 == 14);
     assert!(GtdStatus::GTD_ERR_INTERNAL as u32 == 99);
 };
 

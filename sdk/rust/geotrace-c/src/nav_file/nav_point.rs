@@ -57,7 +57,7 @@ pub unsafe extern "C" fn gtd_nav_file_nav_point_count(file: *const GtdNavFile) -
 /// @param index Zero-based index. Must be less than `gtd_nav_file_nav_point_count(file)`.
 /// @param out   Caller-allocated struct to fill.
 ///
-/// @return `GTD_ERR_NULL_ARGUMENT` if @p index is out of range.
+/// @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last nav fix.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_get_nav_point(
     file: *const GtdNavFile,
@@ -70,7 +70,7 @@ pub unsafe extern "C" fn gtd_nav_file_get_nav_point(
 
         let Some(point) = handle.file.nav_points().get(index) else {
             error::set_last_error(format!("nav point index {index} is out of range"));
-            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
+            return GtdStatus::GTD_ERR_OUT_OF_RANGE;
         };
 
         out.gps_time = point
@@ -107,7 +107,7 @@ pub unsafe extern "C" fn gtd_nav_file_get_nav_point(
 ///                        `GtdNavPointInfo::sat_count`.
 /// @param out             Caller-allocated struct to fill.
 ///
-/// @return `GTD_ERR_NULL_ARGUMENT` if either index is out of range, or the nav
+/// @return `GTD_ERR_OUT_OF_RANGE` if either index is past the end, or the nav
 ///         fix has no satellite report.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_get_satellite(
@@ -122,19 +122,19 @@ pub unsafe extern "C" fn gtd_nav_file_get_satellite(
 
         let Some(point) = handle.file.nav_points().get(nav_point_index) else {
             error::set_last_error(format!("nav point index {nav_point_index} is out of range"));
-            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
+            return GtdStatus::GTD_ERR_OUT_OF_RANGE;
         };
 
         let Some(report) = &point.satellites else {
             error::set_last_error(format!(
                 "nav point {nav_point_index} has no satellite report"
             ));
-            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
+            return GtdStatus::GTD_ERR_OUT_OF_RANGE;
         };
 
         let Some(sat) = report.tracked.get(satellite_index) else {
             error::set_last_error(format!("satellite index {satellite_index} is out of range"));
-            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
+            return GtdStatus::GTD_ERR_OUT_OF_RANGE;
         };
 
         out.constellation = GtdConstellation::from(sat.constellation);

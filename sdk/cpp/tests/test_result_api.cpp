@@ -51,7 +51,7 @@ TEST_CASE("try_nav_point reports out-of-range without throwing; in-range is ok")
     const NavFile file = FileBuilder{}.add(one_fix()).finish();
     const Result<NavPointView> oob = file.try_nav_point(9999);
     CHECK(oob.is_err());
-    CHECK(oob.error().code == GTD_ERR_NULL_ARGUMENT);
+    CHECK(oob.error().code == GTD_ERR_OUT_OF_RANGE);
     CHECK(file.try_nav_point(0).is_ok());
 }
 

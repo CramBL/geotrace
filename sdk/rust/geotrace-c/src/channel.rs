@@ -95,7 +95,7 @@ pub struct GtdChannel {
 ///
 /// @return `GTD_ERR_INVALID_CHANNEL` if the label is invalid for @p unit_mode or
 ///         @p unit_mode is not a @ref GtdChannelUnitMode, `GTD_ERR_UTF8` if
-///         @p label is not UTF-8, `GTD_ERR_NULL_ARGUMENT` if @p out is too small
+///         @p label is not UTF-8, `GTD_ERR_OUT_OF_RANGE` if @p out is too small
 ///         for the canonical label.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_channel_unit_parse(
@@ -137,7 +137,7 @@ pub unsafe extern "C" fn gtd_channel_unit_parse(
         }
         if out_capacity <= bytes.len() {
             error::set_last_error("channel unit output buffer is too small");
-            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
+            return GtdStatus::GTD_ERR_OUT_OF_RANGE;
         }
         // SAFETY: out points to `out_capacity` bytes and the capacity was checked.
         // SAFETY: out points to at least bytes.len() writable bytes.

@@ -92,6 +92,15 @@ typedef enum {
      */
     GTD_ERR_INVALID_ARGUMENT = 12,
     /**
+     * An index is past the end of what it addresses, or an output buffer is
+     * too small.
+     */
+    GTD_ERR_OUT_OF_RANGE = 13,
+    /**
+     * A call was made in an order the API does not allow.
+     */
+    GTD_ERR_CALL_ORDER = 14,
+    /**
      * Internal error (bug in the SDK).
      */
     GTD_ERR_INTERNAL = 99,
@@ -723,7 +732,7 @@ void gtd_builder_destroy(GtdFileBuilder *builder);
  *
  * Must be called before the first `gtd_builder_add_*` call.
  *
- * @return `GTD_ERR_INTERNAL` if data has already been added.
+ * @return `GTD_ERR_CALL_ORDER` if data has already been added.
  */
 GtdStatus gtd_builder_set_title(GtdFileBuilder *builder, const char *title);
 
@@ -732,7 +741,7 @@ GtdStatus gtd_builder_set_title(GtdFileBuilder *builder, const char *title);
  *
  * Must be called before the first `gtd_builder_add_*` call.
  *
- * @return `GTD_ERR_INTERNAL` if data has already been added.
+ * @return `GTD_ERR_CALL_ORDER` if data has already been added.
  */
 GtdStatus gtd_builder_set_device(GtdFileBuilder *builder, const char *device);
 
@@ -741,7 +750,7 @@ GtdStatus gtd_builder_set_device(GtdFileBuilder *builder, const char *device);
  *
  * Must be called before the first `gtd_builder_add_*` call.
  *
- * @return `GTD_ERR_INTERNAL` if data has already been added.
+ * @return `GTD_ERR_CALL_ORDER` if data has already been added.
  */
 GtdStatus gtd_builder_set_notes(GtdFileBuilder *builder, const char *notes);
 
@@ -750,7 +759,7 @@ GtdStatus gtd_builder_set_notes(GtdFileBuilder *builder, const char *notes);
  *
  * Must be called before the first `gtd_builder_add_*` call.
  *
- * @return `GTD_ERR_INTERNAL` if data has already been added.
+ * @return `GTD_ERR_CALL_ORDER` if data has already been added.
  */
 GtdStatus gtd_builder_set_identity(GtdFileBuilder *builder, const char *identity);
 
@@ -759,7 +768,7 @@ GtdStatus gtd_builder_set_identity(GtdFileBuilder *builder, const char *identity
  *
  * Must be called before the first `gtd_builder_add_*` call.
  *
- * @return `GTD_ERR_INTERNAL` if data has already been added.
+ * @return `GTD_ERR_CALL_ORDER` if data has already been added.
  */
 GtdStatus gtd_builder_set_travel_mode(GtdFileBuilder *builder, GtdTravelMode mode);
 
@@ -772,9 +781,9 @@ GtdStatus gtd_builder_set_travel_mode(GtdFileBuilder *builder, GtdTravelMode mod
  *
  * Must be called before the first `gtd_builder_add_*` call.
  *
- * @param builder Builder handle. No-op if NULL.
+ * @return `GTD_ERR_CALL_ORDER` if data has already been added.
  */
-void gtd_builder_set_lenient(GtdFileBuilder *builder);
+GtdStatus gtd_builder_set_lenient(GtdFileBuilder *builder);
 
 /**
  * Validate and canonicalize a channel unit label.
@@ -797,7 +806,7 @@ void gtd_builder_set_lenient(GtdFileBuilder *builder);
  *
  * @return `GTD_ERR_INVALID_CHANNEL` if the label is invalid for @p unit_mode or
  *         @p unit_mode is not a @ref GtdChannelUnitMode, `GTD_ERR_UTF8` if
- *         @p label is not UTF-8, `GTD_ERR_NULL_ARGUMENT` if @p out is too small
+ *         @p label is not UTF-8, `GTD_ERR_OUT_OF_RANGE` if @p out is too small
  *         for the canonical label.
  */
 GtdStatus gtd_channel_unit_parse(const char *label,
@@ -827,7 +836,7 @@ size_t gtd_nav_file_channel_count(const GtdNavFile *file);
  * @param index Zero-based index. Must be less than `gtd_nav_file_channel_count(file)`.
  * @param out   Caller-allocated struct to fill.
  *
- * @return `GTD_ERR_NULL_ARGUMENT` if @p index is out of range.
+ * @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last channel.
  */
 GtdStatus gtd_nav_file_get_channel(const GtdNavFile *file, size_t index, GtdChannelInfo *out);
 
@@ -843,6 +852,8 @@ GtdStatus gtd_nav_file_get_channel(const GtdNavFile *file, size_t index, GtdChan
  * this SDK reports verbatim and rejects on the write path: passing such a label
  * to @ref gtd_builder_add_channel_with_unit_mode returns
  * `GTD_ERR_INVALID_CHANNEL`.
+ *
+ * @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last channel.
  */
 GtdStatus gtd_nav_file_get_channel_unit(const GtdNavFile *file,
                                         size_t index,
@@ -861,7 +872,8 @@ GtdStatus gtd_nav_file_get_channel_unit(const GtdNavFile *file,
  * @param out             Caller-allocated buffer of @p out_capacity bytes.
  * @param out_capacity    Capacity of @p out in bytes.
  *
- * @return `GTD_ERR_NULL_ARGUMENT` if an index is out of range or @p out is NULL.
+ * @return `GTD_ERR_OUT_OF_RANGE` if an index is past the end or @p out_capacity
+ *         is zero, `GTD_ERR_NULL_ARGUMENT` if @p out is NULL.
  */
 GtdStatus gtd_nav_file_get_channel_component(const GtdNavFile *file,
                                              size_t channel_index,
@@ -906,7 +918,7 @@ size_t gtd_nav_file_event_marker_count(const GtdNavFile *file);
  * @param index Zero-based index. Must be less than `gtd_nav_file_event_marker_count(file)`.
  * @param out   Caller-allocated struct to fill.
  *
- * @return `GTD_ERR_NULL_ARGUMENT` if @p index is out of range.
+ * @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last event marker.
  */
 GtdStatus gtd_nav_file_get_event_marker(const GtdNavFile *file,
                                         size_t index,
@@ -988,7 +1000,7 @@ size_t gtd_nav_file_nav_point_count(const GtdNavFile *file);
  * @param index Zero-based index. Must be less than `gtd_nav_file_nav_point_count(file)`.
  * @param out   Caller-allocated struct to fill.
  *
- * @return `GTD_ERR_NULL_ARGUMENT` if @p index is out of range.
+ * @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last nav fix.
  */
 GtdStatus gtd_nav_file_get_nav_point(const GtdNavFile *file, size_t index, GtdNavPointInfo *out);
 
@@ -1001,7 +1013,7 @@ GtdStatus gtd_nav_file_get_nav_point(const GtdNavFile *file, size_t index, GtdNa
  *                        `GtdNavPointInfo::sat_count`.
  * @param out             Caller-allocated struct to fill.
  *
- * @return `GTD_ERR_NULL_ARGUMENT` if either index is out of range, or the nav
+ * @return `GTD_ERR_OUT_OF_RANGE` if either index is past the end, or the nav
  *         fix has no satellite report.
  */
 GtdStatus gtd_nav_file_get_satellite(const GtdNavFile *file,
