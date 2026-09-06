@@ -1,5 +1,8 @@
-Checks: "clang-analyzer-*,bugprone-*,cert-*,cppcoreguidelines-*,hicpp-*,misc-*,modernize-*,\
-  performance-*,portability-*,readability-*,\
+# google-runtime-int is the one check enabled from the google- family. It
+# reports a `short`, `long` or `long long` declaration in a C++ translation
+# unit. The C sources have `qa::check-fixed-width-integers` for the same rule.
+Checks: "clang-analyzer-*,bugprone-*,cert-*,cppcoreguidelines-*,google-runtime-int,hicpp-*,\
+  misc-*,modernize-*,performance-*,portability-*,readability-*,\
   -clang-analyzer-cplusplus.NewDeleteLeaks,\
   -clang-diagnostic-c++20-designator,\
   -modernize-use-trailing-return-type"

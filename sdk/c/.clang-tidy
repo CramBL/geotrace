@@ -8,4 +8,4 @@ CheckOptions:
   # the file, conversion and formatting calls whose result an example checks or
   # discards with a `(void)` cast.
   cert-err33-c.CheckedFunctions: "^::remove$;^::fclose$;^::fopen$;^::fread$;^::fwrite$;\
-    ^::snprintf$;^::strtod$;^::strtol$;^::strtoul$;^::strtoll$;^::strtoull$"
+    ^::snprintf$;^::strtod$;^::strtoimax$;^::strtoumax$"

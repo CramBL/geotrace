@@ -6,6 +6,10 @@ check-all:
     {{ _QA }} check-all
 
 [group("qa")]
+check-fixed-width-integers:
+    {{ _QA }} check-fixed-width-integers
+
+[group("qa")]
 check-floating-comments:
     {{ _QA }} check-floating-comments
 

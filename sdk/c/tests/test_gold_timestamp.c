@@ -28,17 +28,26 @@ Test(gold_timestamp, rejects_malformed_input) {
     }
 }
 
-/* One past each end of int, which `strtoll` itself still converts. The negative
-   case sits on the seconds field: a year that far below INT_MIN wraps to
-   INT_MAX, which walks the day-count loop through two billion iterations. */
-Test(gold_timestamp, rejects_component_wider_than_int) {
+/* One past each end of int32_t, which `strtoimax` itself still converts. The
+   negative case sits on the seconds field: a year that far below INT32_MIN
+   wraps to INT32_MAX, which walks the day-count loop through two billion
+   iterations. */
+Test(gold_timestamp, rejects_component_wider_than_int32) {
     cr_assert(gtd_ts_is_none(gold_parse_timestamp("2147483648-02-01T15:00:00")));
     cr_assert(gtd_ts_is_none(gold_parse_timestamp("2026-02-01T15:00:-2147483649")));
 }
 
-Test(gold_timestamp, rejects_component_wider_than_long_long) {
+Test(gold_timestamp, rejects_component_wider_than_intmax) {
     cr_assert(gtd_ts_is_none(gold_parse_timestamp("99999999999999999999-02-01T15:00:00")));
     cr_assert(gtd_ts_is_none(gold_parse_timestamp("2026-99999999999999999999-01T15:00:00")));
+}
+
+Test(gold_timestamp, parses_a_date_past_2038) {
+    cr_assert_eq(gold_parse_timestamp("2039-01-01T00:00:00+00:00").unix_micros, 2177452800000000);
+}
+
+Test(gold_timestamp, rejects_a_year_past_the_range_a_timestamp_covers) {
+    cr_assert(gtd_ts_is_none(gold_parse_timestamp("300000-01-01T00:00:00+00:00")));
 }
 
 Test(gold_timestamp, leaves_unparsable_offset_unapplied) {

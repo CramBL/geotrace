@@ -7,6 +7,8 @@
  *   ./sdk/cpp/build/gold/examples/gold_dataset
  */
 
+#include "gold_timestamp.hpp"
+
 #include <geotrace/geotrace.hpp>
 
 #include <algorithm>
@@ -68,70 +70,6 @@ std::optional<std::array<std::string, N>> split_csv_fields(const std::string &li
     std::array<std::string, N> fields;
     std::move(cols.begin(), cols.begin() + static_cast<std::ptrdiff_t>(N), fields.begin());
     return fields;
-}
-
-bool is_leap(int year) noexcept {
-    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
-}
-
-int month_days(int month, int year) noexcept {
-    static constexpr std::array<int, 12> dom = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-    return (month == 2 && is_leap(year)) ? 29 : dom.at(static_cast<std::size_t>(month - 1));
-}
-
-/* Parse "YYYY-MM-DDTHH:MM:SS+HH:MM" to a Timestamp, or `std::nullopt` on failure. */
-std::optional<geotrace::Timestamp> parse_ts(const std::string &text) {
-    if (text.size() < 19) {
-        return std::nullopt;
-    }
-    try {
-        auto year = std::stoi(text.substr(0, 4));
-        auto month = std::stoi(text.substr(5, 2));
-        auto day = std::stoi(text.substr(8, 2));
-        auto hour = std::stoi(text.substr(11, 2));
-        auto minute = std::stoi(text.substr(14, 2));
-        auto second = std::stoi(text.substr(17, 2));
-        // Optional fractional seconds (".ffffff"), kept as microseconds.
-        std::size_t pos = 19;
-        long frac_us = 0;
-        if (pos < text.size() && text.at(pos) == '.') {
-            ++pos;
-            std::string digits;
-            while (pos < text.size() && text.at(pos) >= '0' && text.at(pos) <= '9') {
-                digits.push_back(text.at(pos));
-                ++pos;
-            }
-            digits.resize(6, '0'); // pad / truncate to microseconds
-            frac_us = std::stol(digits);
-        }
-        // Optional timezone offset ("+HH:MM" / "-HH:MM").
-        char sign = '+';
-        int tz_hours = 0;
-        int tz_minutes = 0;
-        if (pos < text.size() && (text.at(pos) == '+' || text.at(pos) == '-')) {
-            sign = text.at(pos);
-            if (pos + 6 <= text.size()) {
-                tz_hours = std::stoi(text.substr(pos + 1, 2));
-                tz_minutes = std::stoi(text.substr(pos + 4, 2));
-            }
-        }
-        long days = 0;
-        for (int y = 1970; y < year; y++) {
-            days += is_leap(y) ? 366 : 365;
-        }
-        for (int m = 1; m < month; m++) {
-            days += month_days(m, year);
-        }
-        days += day - 1;
-        long secs = (days * 86400L) + (hour * 3600L) + (minute * 60L) + second;
-        const long tz_seconds = ((static_cast<long>(tz_hours) * 60L) + tz_minutes) * 60L;
-        secs += (sign == '-') ? tz_seconds : -tz_seconds;
-        const std::int64_t micros =
-            (static_cast<std::int64_t>(secs) * 1000000LL) + static_cast<std::int64_t>(frac_us);
-        return geotrace::Timestamp::from_micros(micros);
-    } catch (const std::exception &) {
-        return std::nullopt;
-    }
 }
 
 geotrace::Constellation parse_constellation(const std::string &name) {
@@ -330,8 +268,8 @@ void load_fixes(geotrace::FileBuilder &builder, const fs::path &base,
                                       speed_kmh, eph_m] = *fields;
 
         geotrace::RecordedFixTimestamps recorded{};
-        recorded.gps_time = parse_ts(gps_time);
-        recorded.sys_time = parse_ts(sys_time);
+        recorded.gps_time = gold::parse_timestamp(gps_time);
+        recorded.sys_time = gold::parse_timestamp(sys_time);
         const auto time = required_fix_time(recorded, "fixes.csv row " + line);
 
         auto hdg = parse_opt_double(heading_deg);
@@ -368,8 +306,8 @@ void load_fixes(geotrace::FileBuilder &builder, const fs::path &base,
     }
     for (const auto &[times, tracked] : orphans) {
         geotrace::RecordedFixTimestamps recorded{};
-        recorded.gps_time = parse_ts(times.first);
-        recorded.sys_time = parse_ts(times.second);
+        recorded.gps_time = gold::parse_timestamp(times.first);
+        recorded.sys_time = gold::parse_timestamp(times.second);
 
         const auto time = required_fix_time(recorded, "satellites.csv row (" + times.first + ", " +
                                                           times.second + ")");
@@ -391,7 +329,7 @@ void load_markers(geotrace::FileBuilder &builder, const fs::path &base) {
             continue;
         }
         const auto &[time, label, icon] = *fields;
-        auto timestamp = parse_ts(time);
+        auto timestamp = gold::parse_timestamp(time);
         if (!timestamp) {
             throw geotrace::IoError("markers.csv: missing timestamp");
         }
@@ -414,7 +352,7 @@ void load_events(geotrace::FileBuilder &builder, const fs::path &base) {
             continue;
         }
         const auto &[sys_time, variant_path, annotation] = *fields;
-        auto timestamp = parse_ts(sys_time);
+        auto timestamp = gold::parse_timestamp(sys_time);
         if (!timestamp) {
             throw geotrace::IoError("events.csv: missing sys_time");
         }
@@ -468,7 +406,7 @@ void load_channels(geotrace::FileBuilder &builder, const fs::path &base) {
                                       values] = *fields;
 
         geotrace::Channel &channel = channel_for_row(channels, *fields);
-        auto timestamp = parse_ts(time);
+        auto timestamp = gold::parse_timestamp(time);
         if (!timestamp) {
             throw geotrace::IoError("channels.csv: invalid timestamp");
         }
