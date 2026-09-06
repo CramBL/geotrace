@@ -457,7 +457,7 @@ fn write_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> 
         times.push(datetime_to_micros(marker.annotation.time));
         lats.push(marker.lat.as_degrees());
         lons.push(marker.lon.as_degrees());
-        icons.push(marker.annotation.icon.to_u8());
+        icons.push(marker.annotation.icon.wire_code());
 
         label_flat.extend_from_slice(&encode_field_row(
             MARKER_LABEL_LOCATION,

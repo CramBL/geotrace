@@ -18,6 +18,7 @@
 - **Interface:** A track now keeps its number when an earlier track of the same recording is deleted permanently.
 - **Interface:** The "Delete shelved data?" confirmation now lists the recordings the delete removes from history whole, and counts them past the first five.
 - **Interface:** The "Track settings differ" prompt now states, for a recording with shelved or hidden tracks, that recalculating puts its shelved tracks back in the working set and shows its hidden tracks.
+- **Map & Tracks:** A recording with a custom marker whose icon code this version of GeoTrace does not have now draws that marker as a pin, with the code named in the data quality warnings.
 
 ### Fixed
 

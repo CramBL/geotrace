@@ -6,8 +6,8 @@
 
 use geotrace_sdk::{Angle, ChannelUnit, DateTime, Duration, Unit, Utc, Velocity};
 use geotrace_sdk::{
-    Annotation, Channel, Constellation, MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix,
-    NavFixTime, Satellite, SatelliteReport, TravelMode,
+    Annotation, AnnotationIcon, Channel, Constellation, MarkerIcon, Meta, NavFile, NavFileBuilder,
+    NavFix, NavFixTime, Satellite, SatelliteReport, TravelMode,
 };
 use rstest::rstest;
 
@@ -120,7 +120,10 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
     let m = &rt.markers()[0];
     assert_eq!(m.annotation.time(), tmid);
     assert_eq!(m.annotation.label(), Some("halfway"));
-    assert_eq!(m.annotation.icon(), MarkerIcon::Warning);
+    assert_eq!(
+        m.annotation.icon(),
+        AnnotationIcon::Icon(MarkerIcon::Warning)
+    );
     assert!((m.lat.as_degrees() - (51.5 + 51.6) / 2.0).abs() < 1e-10);
     assert!((m.lon.as_degrees() - (-0.1 + -0.2) / 2.0).abs() < 1e-10);
 
@@ -162,14 +165,57 @@ fn an_annotation_built_without_an_icon_reads_back_as_pin() -> Result<(), Box<dyn
         .time(base())
         .label("no icon")
         .build()?;
-    assert_eq!(annotation.icon(), MarkerIcon::Pin);
+    assert_eq!(annotation.icon(), AnnotationIcon::Icon(MarkerIcon::Pin));
     recorder.add_annotation(annotation);
 
     let nav_file = recorder.finish()?;
     let rt = round_trip(&nav_file)?;
 
-    assert_eq!(rt.markers()[0].annotation.icon(), MarkerIcon::Pin);
+    assert_eq!(
+        rt.markers()[0].annotation.icon(),
+        AnnotationIcon::Icon(MarkerIcon::Pin)
+    );
     assert_eq!(nav_file, rt);
+    Ok(())
+}
+
+/// A `markers/icon` code outside the set this build has, as a newer build
+/// could write it.
+const UNRECOGNIZED_ICON_CODE: u8 = 200;
+
+#[test]
+fn an_icon_code_outside_the_marker_icon_set_reads_back_and_writes_back_unchanged()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .time(NavFixTime::Receiver(base()))
+            .lat(Angle::degrees(0.0))
+            .lon(Angle::degrees(0.0))
+            .heading(Angle::degrees(0.0))
+            .build(),
+    );
+    recorder.add_annotation(
+        Annotation::builder()
+            .time(base())
+            .label("from a newer build")
+            .icon(AnnotationIcon::Unrecognized(UNRECOGNIZED_ICON_CODE))
+            .build()?,
+    );
+
+    let rt = round_trip(&recorder.finish()?)?;
+
+    assert_eq!(
+        rt.markers()[0].annotation.icon(),
+        AnnotationIcon::Unrecognized(UNRECOGNIZED_ICON_CODE)
+    );
+    let mut bytes = Vec::new();
+    rt.write(&mut bytes)?;
+    let file = hdf5_pure::File::from_bytes(bytes)?;
+    assert_eq!(
+        file.group("markers")?.dataset("icon")?.read_u8()?,
+        vec![UNRECOGNIZED_ICON_CODE]
+    );
     Ok(())
 }
 

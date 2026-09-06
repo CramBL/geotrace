@@ -12,9 +12,9 @@ use crate::fixed_width_string::{
 use crate::provenance;
 use crate::size_checked_file::SizeCheckedFile;
 use crate::types::{
-    Annotation, Channel, Constellation, EventMarkerColor, EventMarkerIconChoice, EventMarkerPoint,
-    EventMarkerStyle, Marker, MarkerIcon, Meta, NavFile, NavFix, NavFixTime, NavPoint,
-    RecordedFixTimestamps, Satellite, SatelliteReport, TravelMode,
+    Annotation, AnnotationIcon, Channel, Constellation, EventMarkerColor, EventMarkerIconChoice,
+    EventMarkerPoint, EventMarkerStyle, Marker, MarkerIcon, Meta, NavFile, NavFix, NavFixTime,
+    NavPoint, RecordedFixTimestamps, Satellite, SatelliteReport, TravelMode,
 };
 use crate::write;
 use crate::{Angle, Velocity};
@@ -376,6 +376,10 @@ fn read_markers(file: &SizeCheckedFile) -> Result<Vec<Marker>, Error> {
             },
             label_row,
         )?;
+        let icon = AnnotationIcon::from_wire_code(*icon_code);
+        if let AnnotationIcon::Unrecognized(code) = icon {
+            log::warn!("unrecognized markers/icon code {code}, preserving it as-is");
+        }
         markers.push(Marker {
             annotation: Annotation {
                 time: decode_timestamp(
@@ -387,7 +391,7 @@ fn read_markers(file: &SizeCheckedFile) -> Result<Vec<Marker>, Error> {
                     *time_us,
                 )?,
                 label: label.into_string_unless_empty(),
-                icon: MarkerIcon::from_u8(*icon_code),
+                icon,
             },
             lat: Angle::degrees(*lat_deg),
             lon: Angle::degrees(*lon_deg),
@@ -1086,9 +1090,9 @@ fn icon_histogram(codes: &[u8]) -> String {
         .iter()
         .enumerate()
         .filter(|&(_, &c)| c > 0)
-        .map(|(i, &c)| {
-            let name = MarkerIcon::from_u8(i as u8).name();
-            format!("{name} ×{c}")
+        .filter_map(|(i, &c)| {
+            let name = MarkerIcon::from_u8(i as u8)?.name();
+            Some(format!("{name} ×{c}"))
         })
         .collect();
     parts.join(", ")

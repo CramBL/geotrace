@@ -43,11 +43,12 @@ use std::sync::Arc;
 
 use chrono::Duration;
 use geotrace_sdk::{
-    Constellation as SdkConstellation, EventMarker as SdkEventMarker,
-    EventMarkerColor as SdkEventMarkerColor, EventMarkerIconChoice as SdkEventMarkerIconChoice,
-    EventMarkerPoint, EventMarkerStyle as SdkEventMarkerStyle, Marker as SdkMarker,
-    MarkerIcon as SdkMarkerIcon, NavFile, NavFileBuilder, NavFixTime, Satellite as SdkSatellite,
-    SatelliteReport, TravelMode as SdkTravelMode, collect_satellite_warnings,
+    AnnotationIcon as SdkAnnotationIcon, Constellation as SdkConstellation,
+    EventMarker as SdkEventMarker, EventMarkerColor as SdkEventMarkerColor,
+    EventMarkerIconChoice as SdkEventMarkerIconChoice, EventMarkerPoint,
+    EventMarkerStyle as SdkEventMarkerStyle, Marker as SdkMarker, MarkerIcon as SdkMarkerIcon,
+    NavFile, NavFileBuilder, NavFixTime, Satellite as SdkSatellite, SatelliteReport,
+    TravelMode as SdkTravelMode, collect_satellite_warnings,
 };
 use gt_types::coordinates::{CoordinateAxis, OutOfRange, RawDegrees};
 use gt_types::load_warning;
@@ -408,6 +409,22 @@ impl fmt::Display for UnrecognizedEventMarkerIcon {
     }
 }
 
+/// A custom marker whose icon code is outside the set this build draws.
+struct UnrecognizedCustomMarkerIcon {
+    label: String,
+    written_icon_code: u8,
+}
+
+impl fmt::Display for UnrecognizedCustomMarkerIcon {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            label,
+            written_icon_code,
+        } = self;
+        write!(f, "{label:?}: {written_icon_code}")
+    }
+}
+
 /// What the loader changed about a recording's event marker styles. The
 /// load-warnings dialog lists each change.
 #[derive(Default)]
@@ -521,6 +538,12 @@ const REPLACED_EVENT_MARKER_ICONS: AlterationWording = AlterationWording {
         of GeoTrace does not have.",
 };
 
+const REPLACED_CUSTOM_MARKER_ICONS: AlterationWording = AlterationWording {
+    issue: "custom marker icon(s) replaced with the pin",
+    consequence: "Those markers are drawn as a pin: the file holds an icon code this version \
+        of GeoTrace does not have.",
+};
+
 const REPLACED_EVENT_MARKER_COLORS: AlterationWording = AlterationWording {
     issue: "event marker color(s) replaced with gray",
     consequence: "Those markers are drawn mid-gray: the style holds a color that is not \
@@ -578,8 +601,9 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
 
     let mut markers = Vec::new();
     let mut dropped_markers = Vec::new();
+    let mut unrecognized_marker_icons = Vec::new();
     for marker in nav_file.markers() {
-        match convert_marker(marker) {
+        match convert_marker(marker, &mut unrecognized_marker_icons) {
             Ok(marker) => markers.push(marker),
             Err(dropped) => dropped_markers.push(dropped),
         }
@@ -621,6 +645,7 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
         MERGED_SATELLITE_ROWS
             .load_warning(&satellite_alterations.satellites_merged_from_several_rows),
         DISCARDED_SNR_SENTINELS.load_warning(&satellite_alterations.discarded_snr_sentinels),
+        REPLACED_CUSTOM_MARKER_ICONS.load_warning(&unrecognized_marker_icons),
         REPLACED_EVENT_MARKER_ICONS.load_warning(&style_alterations.unrecognized_icons),
         REPLACED_EVENT_MARKER_COLORS.load_warning(&style_alterations.unrecognized_colors),
         channels_with_backward_time_steps_warning(&channels_with_backward_time_steps),
@@ -810,19 +835,34 @@ struct IndexedMergedSatelliteRows {
     merged: MergedSatelliteRows,
 }
 
-fn convert_marker(m: &SdkMarker) -> Result<CustomMarker, DroppedMarker> {
+fn convert_marker(
+    m: &SdkMarker,
+    unrecognized_icons: &mut Vec<UnrecognizedCustomMarkerIcon>,
+) -> Result<CustomMarker, DroppedMarker> {
     let label = m.annotation.label().unwrap_or("").to_owned();
     match (
         Latitude::try_new(m.lat.as_degrees()),
         Longitude::try_new(m.lon.as_degrees()),
     ) {
-        (Ok(lat), Ok(lon)) => Ok(CustomMarker::new(
-            m.annotation.time(),
-            label,
-            convert_icon(m.annotation.icon()),
-            lat,
-            lon,
-        )),
+        (Ok(lat), Ok(lon)) => {
+            let icon = match m.annotation.icon() {
+                SdkAnnotationIcon::Icon(icon) => convert_icon(icon),
+                SdkAnnotationIcon::Unrecognized(code) => {
+                    unrecognized_icons.push(UnrecognizedCustomMarkerIcon {
+                        label: label.clone(),
+                        written_icon_code: code,
+                    });
+                    MarkerIcon::Pin
+                }
+            };
+            Ok(CustomMarker::new(
+                m.annotation.time(),
+                label,
+                icon,
+                lat,
+                lon,
+            ))
+        }
         (Err(out_of_range), _) | (Ok(_), Err(out_of_range)) => Err(DroppedMarker {
             label,
             out_of_range,
@@ -1516,7 +1556,7 @@ mod tests {
         };
 
         assert_eq!(
-            convert_marker(&marker)
+            convert_marker(&marker, &mut Vec::new())
                 .expect_err("latitude 91 is out of range")
                 .to_string(),
             "\"launch\": latitude 91 is outside -90..90"
