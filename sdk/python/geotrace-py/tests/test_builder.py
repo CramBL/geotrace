@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import struct
 from datetime import UTC, datetime
 
 import pytest
@@ -111,6 +112,11 @@ def test_satellite_all_fields() -> None:
     assert abs(sat.azimuth - 90.0) < 1e-4
     assert sat.snr is not None
     assert abs(sat.snr - 35.5) < 1e-4
+
+
+def test_satellite_metrics_are_stored_as_32_bit_floats() -> None:
+    sat = Satellite(Constellation.GPS, 12, snr=38.123456789)
+    assert sat.snr == struct.unpack("f", struct.pack("f", 38.123456789))[0]
 
 
 def test_satellite_eq() -> None:

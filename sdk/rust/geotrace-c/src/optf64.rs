@@ -1,6 +1,7 @@
 //! The optional double.
 
-/// An optional `double` value. Use the macros below to construct values.
+/// An optional `double` value. Use the `GTD_SOME_F64` and `GTD_NONE_F64`
+/// macros to construct values.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct GtdOptF64 {

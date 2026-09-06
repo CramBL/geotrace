@@ -36,7 +36,7 @@ header = """
  * Passing a destroyed handle is undefined behaviour (same contract as `FILE*`).
  */"""
 
-# The version macros and the two optional-double constructors have no Rust
+# The version macros and the optional-value constructors have no Rust
 # declaration: a C compound literal is not expressible as an `extern "C"` item.
 # `just qa::bump-sdk` rewrites the version numbers here and in the header.
 after_includes = """
@@ -51,7 +51,13 @@ after_includes = """
 #define GTD_NONE_F64 ((GtdOptF64){.value = 0.0, .present = 0})
 
 /** An optional double with value @p v. */
-#define GTD_SOME_F64(v) ((GtdOptF64){.value = (v), .present = 1})"""
+#define GTD_SOME_F64(v) ((GtdOptF64){.value = (v), .present = 1})
+
+/** An absent optional float. */
+#define GTD_NONE_F32 ((GtdOptF32){.value = 0.0f, .present = 0})
+
+/** An optional float with value @p v. */
+#define GTD_SOME_F32(v) ((GtdOptF32){.value = (v), .present = 1})"""
 
 [export]
 # No exported function takes a `GtdChannelUnitMode`: `gtd_channel_unit_parse`

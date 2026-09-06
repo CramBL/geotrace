@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <type_traits>
 #include <vector>
 
 using geotrace::Angle;
@@ -14,11 +15,19 @@ using geotrace::NavFile;
 using geotrace::NavFix;
 using geotrace::Satellite;
 using geotrace::SatelliteReport;
+using geotrace::SatelliteView;
 using geotrace::Timestamp;
 using geotrace::travel_mode_from_name;
 using geotrace::travel_mode_name;
 using geotrace::TravelMode;
 using geotrace::Velocity;
+
+static_assert(std::is_same_v<decltype(Satellite::elevation_deg), std::optional<float>>);
+static_assert(std::is_same_v<decltype(Satellite::azimuth_deg), std::optional<float>>);
+static_assert(std::is_same_v<decltype(Satellite::snr_dbhz), std::optional<float>>);
+static_assert(std::is_same_v<decltype(SatelliteView::elevation_deg), std::optional<float>>);
+static_assert(std::is_same_v<decltype(SatelliteView::azimuth_deg), std::optional<float>>);
+static_assert(std::is_same_v<decltype(SatelliteView::snr_dbhz), std::optional<float>>);
 
 static constexpr double LAT = 51.5074;
 static constexpr double LON = -0.1278;
@@ -72,15 +81,15 @@ TEST_CASE("round-trip: satellite report survives write → from_bytes → read")
     gps_satellite.constellation = Constellation::Gps;
     gps_satellite.prn = 12;
     gps_satellite.in_fix = true;
-    gps_satellite.elevation_deg = 60.0;
-    gps_satellite.azimuth_deg = 200.0;
-    gps_satellite.snr_dbhz = 42.0;
+    gps_satellite.elevation_deg = 60.0F;
+    gps_satellite.azimuth_deg = 200.0F;
+    gps_satellite.snr_dbhz = 42.0F;
 
     Satellite galileo_satellite{};
     galileo_satellite.constellation = Constellation::Galileo;
     galileo_satellite.prn = 5;
     galileo_satellite.in_fix = false;
-    galileo_satellite.snr_dbhz = 25.0;
+    galileo_satellite.snr_dbhz = 25.0F;
 
     const SatelliteReport report{FixTime::receiver(FIRST_TIME), {gps_satellite, galileo_satellite}};
 
@@ -104,6 +113,33 @@ TEST_CASE("round-trip: satellite report survives write → from_bytes → read")
     auto s1_out = file2.satellite(0, 1);
     CHECK(s1_out.constellation == Constellation::Galileo);
     CHECK_FALSE(s1_out.in_fix);
+}
+
+TEST_CASE("round-trip: satellite metrics survive write → from_bytes → read bit-exact") {
+    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(LAT), Angle::degrees(LON)};
+
+    Satellite satellite{};
+    satellite.constellation = Constellation::Gps;
+    satellite.prn = 7;
+    satellite.in_fix = true;
+    satellite.elevation_deg = 38.5F;
+    satellite.azimuth_deg = 359.9999F;
+    satellite.snr_dbhz = 38.123456789F;
+
+    const SatelliteReport report{FixTime::receiver(FIRST_TIME), {satellite}};
+
+    auto file = FileBuilder{}.add_nav_fix(fix).add_satellite_report(report).finish();
+
+    auto bytes = file.to_bytes();
+    auto reread = NavFile::from_bytes(bytes);
+
+    const auto view = reread.satellite(0, 0);
+    REQUIRE(view.elevation_deg.has_value());
+    REQUIRE(view.azimuth_deg.has_value());
+    REQUIRE(view.snr_dbhz.has_value());
+    CHECK(view.elevation_deg.value() == 38.5F);
+    CHECK(view.azimuth_deg.value() == 359.9999F);
+    CHECK(view.snr_dbhz.value() == 38.123456789F);
 }
 
 TEST_CASE("round-trip: event marker survives write → from_bytes → read") {

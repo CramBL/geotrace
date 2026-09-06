@@ -97,6 +97,14 @@ static GtdOptF64 parse_opt_f64(const char *text) {
     return GTD_SOME_F64(value);
 }
 
+static GtdOptF32 parse_opt_f32(const char *text) {
+    GtdOptF64 value = parse_opt_f64(text);
+    if (!value.present) {
+        return GTD_NONE_F32;
+    }
+    return GTD_SOME_F32((float)value.value);
+}
+
 static GtdConstellation parse_constellation(const char *name) {
     if (strcmp(name, "gps") == 0) {
         return GTD_CONSTELLATION_GPS;
@@ -274,9 +282,9 @@ static void load_satellites(const char *base) {
         row->sat.constellation = parse_constellation(cols[2]);
         row->sat.prn = (uint32_t)prn;
         row->sat.in_fix = (uint8_t)(strcmp(cols[4], "true") == 0);
-        row->sat.elevation_deg = parse_opt_f64(cols[5]);
-        row->sat.azimuth_deg = parse_opt_f64(cols[6]);
-        row->sat.snr_dbhz = parse_opt_f64(cols[7]);
+        row->sat.elevation_deg = parse_opt_f32(cols[5]);
+        row->sat.azimuth_deg = parse_opt_f32(cols[6]);
+        row->sat.snr_dbhz = parse_opt_f32(cols[7]);
     }
     (void)fclose(file);
 }

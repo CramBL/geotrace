@@ -46,6 +46,7 @@ builder.finish().write_to_file("track.gtd")
 ```
 
 `add()` also accepts satellite reports, map annotations, and event markers.
+A satellite's elevation, azimuth and SNR are stored as 32-bit floats: a value read back can differ from the value written in its eighth significant digit.
 
 ## Read a file
 
