@@ -41,9 +41,9 @@ use gt_store::{
 use gt_test_utils::day_archive::{self, GroupPath};
 use gt_test_utils::snapshot_harness;
 use gt_test_utils::{
-    By, DEMO_BYTES, GOLD_BYTES, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec,
-    SyntheticLogTimestamps, TestHarness, WindowFitAssertions as _, synthetic_gtd_bytes,
-    synthetic_journald_log, synthetic_log_start,
+    By, ControlLabel, DEMO_BYTES, GOLD_BYTES, HarnessInteraction as _, SyntheticGtdSpec,
+    SyntheticLogSpec, SyntheticLogTimestamps, TestHarness, WindowFitAssertions as _,
+    synthetic_gtd_bytes, synthetic_journald_log, synthetic_log_start,
 };
 use gt_types::{DataCategory, FileIdx, LoadWarning, TrackIdx, TrackRef};
 use gt_ui_theme::MIDDLE_DOT;
@@ -4759,10 +4759,7 @@ fn the_interface_page_gates_the_satellite_layer_on_a_token() {
 
 /// The guide as it shows while the user edits the template: the token list, an
 /// example, and both preview lines. The preview recording comes from history, so
-/// no track ink renders behind the window. Feature-gated like
-/// `snapshot_settings_window` - it captures the settings window the guide hangs
-/// off.
-#[cfg(feature = "self-update")]
+/// no track ink renders behind the window.
 #[test]
 fn snapshot_recording_name_template_guide() {
     let (mut harness, _config_path) = TestHarness::builder()
@@ -4883,20 +4880,50 @@ fn non_self_update_uses_badge_not_dialog() {
     assert_eq!(self_updatable.badge_version(), None);
 }
 
-/// Settles the pointer on the widget labelled `label` and clicks it, then runs
-/// the frames the click's effect needs to reach the app state.
-#[cfg(feature = "self-update")]
-fn click_settled(harness: &mut Harness<'_, App>, label: &str) {
-    harness.get_by_label(label).hover();
+#[derive(Clone, Copy)]
+struct WindowTitle<'a>(&'a str);
+
+const SETTINGS_WINDOW: WindowTitle<'static> = WindowTitle("Settings");
+const HISTORY_WINDOW: WindowTitle<'static> = WindowTitle("History");
+
+/// Runs frames until the window titled `title` shows the control labelled
+/// `label`, settles the pointer on it and clicks it, then runs the frames the
+/// click's effect needs to reach the app state.
+///
+/// The wait searches the window's own subtree because both windows draw the
+/// same storage controls, and
+/// [`gt_test_utils::HarnessInteraction::step_until`] tests its predicate on
+/// the accessibility tree of the previous frame. A search of the whole tree
+/// also matches the control in the window that the test closed one frame
+/// earlier, and ends the wait before the window named here has drawn.
+fn click_the_control_once_the_window_shows_it(
+    harness: &mut Harness<'_, App>,
+    WindowTitle(title): WindowTitle<'_>,
+    ControlLabel(label): ControlLabel<'_>,
+) {
+    assert!(
+        harness.step_until(|h| {
+            h.query_by_role_and_label(egui::accesskit::Role::Window, title)
+                .and_then(|window| window.query_by_label(label))
+                .is_some()
+        }),
+        "the {title} window shows the control labelled {label:?}"
+    );
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Window, title)
+        .get_by_label(label)
+        .hover();
     harness.run_steps(2);
-    harness.get_by_label(label).click();
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Window, title)
+        .get_by_label(label)
+        .click();
     harness.run_steps(3);
 }
 
 /// The storage controls appear in the History window and on the settings
 /// window's Application page, both driving the one setting: what one window
 /// writes, the other reads.
-#[cfg(feature = "self-update")]
 #[test]
 fn storage_controls_drive_one_setting_from_both_windows() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -4913,11 +4940,11 @@ fn storage_controls_drive_one_setting_from_both_windows() {
     // The Application page turns auto-pruning on.
     harness.state_mut().settings_open = true;
     harness.state_mut().settings_page = SettingsPage::Application;
-    assert!(
-        harness.step_until(|h| h.query_by_label("Auto-prune when over").is_some()),
-        "the Application page shows the auto-prune controls"
+    click_the_control_once_the_window_shows_it(
+        &mut harness,
+        SETTINGS_WINDOW,
+        ControlLabel("Auto-prune when over"),
     );
-    click_settled(&mut harness, "Auto-prune when over");
     assert!(
         harness.state().storage_settings.auto_prune_enabled,
         "the Application page's auto-prune switch writes the setting"
@@ -4928,11 +4955,11 @@ fn storage_controls_drive_one_setting_from_both_windows() {
     // only takes a click while auto-pruning is on.
     harness.state_mut().settings_open = false;
     harness.state_mut().history_window.open = true;
-    assert!(
-        harness.step_until(|h| h.query_by_label("Confirm before pruning").is_some()),
-        "the History window shows the auto-prune controls"
+    click_the_control_once_the_window_shows_it(
+        &mut harness,
+        HISTORY_WINDOW,
+        ControlLabel("Confirm before pruning"),
     );
-    click_settled(&mut harness, "Confirm before pruning");
     assert!(
         !harness.state().storage_settings.auto_prune_confirm,
         "the History window's confirmation toggle writes the setting"
@@ -4940,7 +4967,11 @@ fn storage_controls_drive_one_setting_from_both_windows() {
 
     // Auto-storing off in the History window empties the loader's database
     // path, the same live effect the Application page has.
-    click_settled(&mut harness, AUTO_STORE_LABEL);
+    click_the_control_once_the_window_shows_it(
+        &mut harness,
+        HISTORY_WINDOW,
+        ControlLabel(AUTO_STORE_LABEL),
+    );
     assert!(
         !harness.state().storage_settings.enabled,
         "the History window's auto-store checkbox writes the setting"
@@ -4951,11 +4982,11 @@ fn storage_controls_drive_one_setting_from_both_windows() {
     // checkbox turns storing back on, and the loader's path returns.
     harness.state_mut().history_window.open = false;
     harness.state_mut().settings_open = true;
-    assert!(
-        harness.step_until(|h| h.query_by_label(AUTO_STORE_LABEL).is_some()),
-        "the Application page shows the auto-store checkbox"
+    click_the_control_once_the_window_shows_it(
+        &mut harness,
+        SETTINGS_WINDOW,
+        ControlLabel(AUTO_STORE_LABEL),
     );
-    click_settled(&mut harness, AUTO_STORE_LABEL);
     assert!(
         harness.state().storage_settings.enabled,
         "the Application page's auto-store checkbox writes the setting"
@@ -12973,7 +13004,7 @@ fn every_app_window_fits_the_audit_viewports(
     if let Some(control) = window.reachable_control() {
         harness
             .inner
-            .assert_control_is_reachable(window.audited(), gt_test_utils::ControlLabel(control));
+            .assert_control_is_reachable(window.audited(), ControlLabel(control));
     }
 }
 
@@ -12999,7 +13030,7 @@ fn the_update_prompt_fits_the_audit_viewports(
     harness.inner.assert_window_fits_the_viewport(window);
     harness
         .inner
-        .assert_control_is_reachable(window, gt_test_utils::ControlLabel("Skip this version"));
+        .assert_control_is_reachable(window, ControlLabel("Skip this version"));
 }
 
 /// The popped-out match list stays inside the screen at any viewport: its rows
