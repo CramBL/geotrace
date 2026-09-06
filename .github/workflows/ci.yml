@@ -233,13 +233,44 @@ jobs:
       - name: Examples
         run: bash scripts/examples.sh
 
-      # Ubuntu alone checks the fixtures: the examples write platform-dependent bytes,
-      # and byte reproducibility of the `.gtd` writer is an open question.
       - name: Committed fixtures unchanged
         if: matrix.os == 'ubuntu-latest'
         run: |
           git diff --exit-code --stat -- tests/fixtures/demo_trip/demo_trip.gtd tests/fixtures/gold_dataset/gold.gtd \
               || { echo "error: an example rewrote a committed fixture, commit the new bytes" >&2; exit 1; }
+
+      # These two steps are diagnostic and neither fails the build. The collect
+      # step finds any difference that the gate above failed on, because it runs
+      # its own fixture diff.
+      - name: Collect the fixtures this platform regenerated
+        id: collect
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.os }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/regenerated-fixtures"
+          differed=false
+          for fixture in tests/fixtures/demo_trip/demo_trip.gtd tests/fixtures/gold_dataset/gold.gtd; do
+            name=$(basename "$fixture" .gtd)
+            if git diff --quiet -- "$fixture"; then
+              echo "$name: $PLATFORM wrote the committed bytes"
+              continue
+            fi
+            echo "$name: $PLATFORM wrote different bytes, uploading both files"
+            cp -- "$fixture" "$RUNNER_TEMP/regenerated-fixtures/$name.$PLATFORM.gtd"
+            git show "HEAD:$fixture" > "$RUNNER_TEMP/regenerated-fixtures/$name.committed.gtd"
+            differed=true
+          done
+          echo "differed=$differed" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the regenerated fixtures
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() && steps.collect.outputs.differed == 'true' }}
+        with:
+          name: regenerated-fixtures-${{ matrix.os }}
+          path: ${{ runner.temp }}/regenerated-fixtures
+          if-no-files-found: ignore
 
   quality:
     name: quality / ubuntu-latest
