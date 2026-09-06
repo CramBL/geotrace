@@ -33,6 +33,7 @@ the app).
 
 ### Fixed
 
+- Fixed a timestamp of exactly 1969-12-31T23:59:59.999999Z being written as absent: writing it fails with an error stating the dataset and the record.
 - Fixed an annotation or event marker timestamped exactly at the last nav fix being placed outside the nav fix time range: it is placed on that fix.
 - Fixed a marker, event marker or ghost fix interpolated between two fixes on either side of the antimeridian being placed near longitude 0: it is placed on the short arc between the two fixes.
 

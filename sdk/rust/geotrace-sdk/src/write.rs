@@ -1,7 +1,7 @@
 use chrono::SecondsFormat;
 use hdf5_pure::{AttrValue, FileBuilder};
 
-use crate::builder::{datetime_to_micros, opt_datetime_to_u64};
+use crate::builder::{datetime_to_micros, datetime_to_u64, opt_datetime_to_u64};
 use crate::error::{Error, FieldLocation, MARKER_LABEL_LOCATION};
 use crate::fixed_width_string::{
     AnnotationField, ColorHexField, FixedWidthString, FixedWidthStringError, IconNameField,
@@ -46,8 +46,8 @@ pub(crate) fn build_hdf5(nav_file: &NavFile) -> Result<Vec<u8>, Error> {
         );
     }
 
-    write_nav_points(nav_file, &mut fb);
-    write_satellite_data(nav_file, &mut fb);
+    write_nav_points(nav_file, &mut fb)?;
+    write_satellite_data(nav_file, &mut fb)?;
     write_markers(nav_file, &mut fb)?;
     write_event_markers(nav_file, &mut fb)?;
     write_channels(nav_file, &mut fb);
@@ -138,7 +138,7 @@ fn write_channels(nav_file: &NavFile, fb: &mut FileBuilder) {
     fb.add_group(root.finish());
 }
 
-fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) {
+fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> {
     let points = nav_file.nav_points();
     let n = points.len();
 
@@ -148,12 +148,32 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) {
         .collect();
     let gps_times: Vec<u64> = points
         .iter()
-        .map(|p| opt_datetime_to_u64(p.fix.gps_time()))
-        .collect();
+        .enumerate()
+        .map(|(record, p)| {
+            opt_datetime_to_u64(
+                p.fix.gps_time(),
+                FieldLocation {
+                    group: "nav_points",
+                    dataset: "gps_time_us",
+                },
+                record,
+            )
+        })
+        .collect::<Result<_, Error>>()?;
     let sys_times: Vec<u64> = points
         .iter()
-        .map(|p| opt_datetime_to_u64(p.fix.sys_time()))
-        .collect();
+        .enumerate()
+        .map(|(record, p)| {
+            opt_datetime_to_u64(
+                p.fix.sys_time(),
+                FieldLocation {
+                    group: "nav_points",
+                    dataset: "sys_time_us",
+                },
+                record,
+            )
+        })
+        .collect::<Result<_, Error>>()?;
     let lats: Vec<f64> = points.iter().map(|p| p.fix.lat.as_degrees()).collect();
     let lons: Vec<f64> = points.iter().map(|p| p.fix.lon.as_degrees()).collect();
     let headings: Vec<f64> = points
@@ -245,9 +265,11 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) {
         .with_deflate(6);
 
     fb.add_group(grp.finish());
+
+    Ok(())
 }
 
-fn write_satellite_data(nav_file: &NavFile, fb: &mut FileBuilder) {
+fn write_satellite_data(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> {
     let mut report_nav_point_idx: Vec<u64> = Vec::new();
     let mut report_gps_times: Vec<u64> = Vec::new();
     let mut report_sys_times: Vec<u64> = Vec::new();
@@ -260,7 +282,7 @@ fn write_satellite_data(nav_file: &NavFile, fb: &mut FileBuilder) {
     let mut tracked_azimuth: Vec<f32> = Vec::new();
     let mut tracked_snr: Vec<f32> = Vec::new();
 
-    let mut report_idx: u64 = 0;
+    let mut report_idx: usize = 0;
 
     for (nav_idx, nav_point) in nav_file.nav_points().iter().enumerate() {
         let Some(report) = &nav_point.satellites else {
@@ -268,11 +290,25 @@ fn write_satellite_data(nav_file: &NavFile, fb: &mut FileBuilder) {
         };
 
         report_nav_point_idx.push(nav_idx as u64);
-        report_gps_times.push(opt_datetime_to_u64(report.gps_time()));
-        report_sys_times.push(opt_datetime_to_u64(report.sys_time()));
+        report_gps_times.push(opt_datetime_to_u64(
+            report.gps_time(),
+            FieldLocation {
+                group: "sat_reports",
+                dataset: "gps_time_us",
+            },
+            report_idx,
+        )?);
+        report_sys_times.push(opt_datetime_to_u64(
+            report.sys_time(),
+            FieldLocation {
+                group: "sat_reports",
+                dataset: "sys_time_us",
+            },
+            report_idx,
+        )?);
 
         for sat in &report.tracked {
-            tracked_rep_idx.push(report_idx);
+            tracked_rep_idx.push(report_idx as u64);
             tracked_constellation.push(sat.constellation.to_u8());
             tracked_prn.push(sat.prn);
             tracked_in_fix.push(u8::from(sat.in_fix));
@@ -285,7 +321,7 @@ fn write_satellite_data(nav_file: &NavFile, fb: &mut FileBuilder) {
     }
 
     if report_nav_point_idx.is_empty() {
-        return;
+        return Ok(());
     }
 
     debug_assert!(
@@ -400,6 +436,8 @@ fn write_satellite_data(nav_file: &NavFile, fb: &mut FileBuilder) {
         .with_shuffle()
         .with_deflate(6);
     fb.add_group(ts_grp.finish());
+
+    Ok(())
 }
 
 fn write_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> {
@@ -503,8 +541,15 @@ fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), E
         let mut vp_flat: Vec<u8> = Vec::with_capacity(n * 256);
         let mut ann_flat: Vec<u8> = Vec::with_capacity(n * 512);
 
-        for m in em {
-            sys_times.push(m.sys_time.timestamp_micros().cast_unsigned());
+        for (record, m) in em.iter().enumerate() {
+            sys_times.push(datetime_to_u64(
+                m.sys_time,
+                FieldLocation {
+                    group: "event_markers",
+                    dataset: "sys_time_us",
+                },
+                record,
+            )?);
             lats.push(m.lat.as_degrees());
             lons.push(m.lon.as_degrees());
 

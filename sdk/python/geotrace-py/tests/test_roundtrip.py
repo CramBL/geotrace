@@ -21,6 +21,7 @@ from geotrace_sdk import (
     TravelMode,
 )
 
+ABSENT_COUNT_TIME = datetime(1969, 12, 31, 23, 59, 59, 999999, tzinfo=UTC)
 T0 = datetime(2024, 6, 1, 9, 0, 0, tzinfo=UTC)
 T1 = datetime(2024, 6, 1, 9, 1, 0, tzinfo=UTC)
 T2 = datetime(2024, 6, 1, 9, 2, 0, tzinfo=UTC)
@@ -205,6 +206,22 @@ def test_roundtrip_to_bytes() -> None:
         assert abs(reopened.points[0].lat - 51.5) < 1e-5
     finally:
         Path(path).unlink()
+
+
+def test_a_fix_at_the_absent_timestamp_count_is_rejected() -> None:
+    b = NavFileBuilder()
+    b.add(NavFix(lat=51.5, lon=-0.1, gps_time=ABSENT_COUNT_TIME))
+
+    with pytest.raises(ValueError, match="nav_points/gps_time_us: record 0"):
+        b.finish().to_bytes()
+
+
+def test_a_fix_one_microsecond_before_the_absent_timestamp_count_round_trips() -> None:
+    time = ABSENT_COUNT_TIME - timedelta(microseconds=1)
+    b = NavFileBuilder()
+    b.add(NavFix(lat=51.5, lon=-0.1, gps_time=time))
+
+    assert _write_and_read(b).points[0].gps_time == time
 
 
 def test_a_build_without_provenance_writes_only_the_sdk_version() -> None:
