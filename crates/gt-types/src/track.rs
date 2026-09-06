@@ -729,8 +729,8 @@ impl FileMetadata {
 }
 
 /// The [`FileMetadata`] figures aggregated over a recording's tracks. They
-/// cover the tracks the view holds: the loader recomputes them whenever it
-/// takes a track out of a recording.
+/// cover the tracks the view holds, and are computed again whenever a track
+/// leaves a loaded recording.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TrackAggregates {
     pub total_distance: TotalDistance,

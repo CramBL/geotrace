@@ -11,7 +11,7 @@ use gt_log_view::{LoadedLogs, RecordingKey};
 use gt_map::{MapLayer, NavMap};
 use gt_side_panel::{NodeKey, RecordingDetails, TreeState};
 use gt_store::{DatabaseRef, EnvironmentArchive};
-use gt_types::{LoadWarning, TrackRef};
+use gt_types::{LoadWarning, TrackAggregates, TrackRef};
 use gt_ui_theme::warning_amber;
 use strum::IntoEnumIterator as _;
 
@@ -579,6 +579,8 @@ pub fn remove_items_from_view(
                     file.tracks.remove(ti);
                 }
             }
+            file.metadata
+                .set_track_aggregates(TrackAggregates::over_tracks(&file.tracks));
         }
     }
 

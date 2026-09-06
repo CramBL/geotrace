@@ -22,6 +22,7 @@
 ### Fixed
 
 - **Interface:** Fixed a recording opened from history counting its shelved tracks in the distance, the recorded time, the time range and the fix stats it reports.
+- **Interface:** Fixed shelving or unloading a track leaving that track in the distance, the recorded time, the time range and the fix stats its recording reports.
 - **Interface:** Fixed a second permanent track delete in one session deleting a track the user chose to keep.
 - **Interface:** Fixed a permanent track delete announcing a track it had not deleted, when the recording in history no longer had that track: it now reports the failure, and a delete of several tracks with one of them already gone leaves all of them in place.
 - **Interface:** Fixed a permanent track delete removing the logs stored with the recording.
