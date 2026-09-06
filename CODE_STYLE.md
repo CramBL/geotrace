@@ -197,6 +197,15 @@ We group our `use` statements by module, e.g. `crate_name::module::{a, b, c}`. T
 
 Use the destructor syntax (`let Self { a, b, c} = self;`) whenever you're accessing most of (or all) of the fields of a struct.
 
+### Test helpers
+A crate's shared test module is `src/test_util.rs`, or a directory `src/test_util/` of submodules once it grows past one file, and the file opens with `#![cfg(test)]`. A feature that exposes those helpers to another crate is named `test-util`.
+
+A test-only crate is the shape for a harness that spans two crates without a dependency between them, as `gt-query-map-harness` drives a query run over gt-query-run and reads the result out of gt-map.
+
+`tests/support/mod.rs` is the shape for a module shared between one crate's test binaries.
+
+Fixture builders for nav points, satellite reports and channels that need gt-types alone live in `gt_types::fixtures`, behind gt-types' `fixtures` feature, and every crate in the workspace builds its fixtures on them.
+
 ### Misc
 Use debug-formatting (`{:?}`) when logging strings in logs and error messages. This will surround the string with quotes and escape newlines, tabs, etc. For instance: `log::warn!("Unknown key: {key:?}");`.
 

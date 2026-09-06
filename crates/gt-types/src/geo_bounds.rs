@@ -389,9 +389,7 @@ mod tests {
     use super::{FULL_CIRCLE_DEGREES, GeoBounds, LatRange, LonRange, PoleWinding};
     use crate::coordinates::{Latitude, Longitude};
     use crate::mercator;
-
-    /// 1e-9° is about 0.1 mm.
-    const DEGREES_TOLERANCE: f64 = 1e-9;
+    use crate::test_util;
 
     /// An eastbound track over the antimeridian, 1.5° wide.
     const ACROSS_THE_ANTIMERIDIAN: &[f64] = &[179.0, 179.5, -179.9, -179.5];
@@ -404,13 +402,6 @@ mod tests {
         fixes
             .iter()
             .map(|&(lat, lon)| (Latitude::new(lat), Longitude::new(lon)))
-    }
-
-    fn assert_degrees_close(actual: f64, expected: f64) {
-        assert!(
-            (actual - expected).abs() < DEGREES_TOLERANCE,
-            "expected {expected}°, got {actual}°"
-        );
     }
 
     fn range_over(degrees: &[f64]) -> LonRange {
@@ -432,8 +423,8 @@ mod tests {
         #[case] expected_span: f64,
     ) {
         let range = range_over(degrees);
-        assert_degrees_close(range.start().as_degrees(), expected_start);
-        assert_degrees_close(range.span_degrees(), expected_span);
+        test_util::assert_degrees_close(range.start().as_degrees(), expected_start);
+        test_util::assert_degrees_close(range.span_degrees(), expected_span);
     }
 
     #[rstest]
@@ -445,8 +436,8 @@ mod tests {
         #[case] expected_center: f64,
     ) {
         let range = range_over(degrees);
-        assert_degrees_close(range.end().as_degrees(), expected_end);
-        assert_degrees_close(range.center().as_degrees(), expected_center);
+        test_util::assert_degrees_close(range.end().as_degrees(), expected_end);
+        test_util::assert_degrees_close(range.center().as_degrees(), expected_center);
     }
 
     #[rstest]
@@ -491,8 +482,8 @@ mod tests {
     ) {
         let union = range_over(left_degrees).union(range_over(right_degrees));
 
-        assert_degrees_close(union.start().as_degrees(), expected_start);
-        assert_degrees_close(union.span_degrees(), expected_span);
+        test_util::assert_degrees_close(union.start().as_degrees(), expected_start);
+        test_util::assert_degrees_close(union.span_degrees(), expected_span);
         for &degrees in left_degrees.iter().chain(right_degrees) {
             assert!(union.contains(Longitude::new(degrees)), "{degrees}°");
         }
@@ -512,7 +503,7 @@ mod tests {
         let union = range_over(&[0.0, 120.0, -120.0]).union(range_over(&[120.0, -120.0, 0.0]));
 
         assert!(union.is_full_circle());
-        assert_degrees_close(union.span_degrees(), FULL_CIRCLE_DEGREES);
+        test_util::assert_degrees_close(union.span_degrees(), FULL_CIRCLE_DEGREES);
     }
 
     #[test]
@@ -523,10 +514,10 @@ mod tests {
             .expect("one position");
         let union = west.union(east);
 
-        assert_degrees_close(union.lat.south().as_degrees(), 58.0);
-        assert_degrees_close(union.lat.north().as_degrees(), 60.0);
-        assert_degrees_close(union.lon.start().as_degrees(), 179.0);
-        assert_degrees_close(union.lon.span_degrees(), 1.5);
+        test_util::assert_degrees_close(union.lat.south().as_degrees(), 58.0);
+        test_util::assert_degrees_close(union.lat.north().as_degrees(), 60.0);
+        test_util::assert_degrees_close(union.lon.start().as_degrees(), 179.0);
+        test_util::assert_degrees_close(union.lon.span_degrees(), 1.5);
     }
 
     #[test]
@@ -544,8 +535,8 @@ mod tests {
         .expect("at least one position");
         let (latitude, longitude) = bounds.center();
 
-        assert_degrees_close(latitude.as_degrees(), 60.0);
-        assert_degrees_close(longitude.as_degrees(), 179.75);
+        test_util::assert_degrees_close(latitude.as_degrees(), 60.0);
+        test_util::assert_degrees_close(longitude.as_degrees(), 179.75);
     }
 
     #[rstest]
@@ -615,8 +606,8 @@ mod tests {
             .extended_to_the_encircled_pole(winding);
 
         assert!(bounds.lon.is_full_circle());
-        assert_degrees_close(bounds.lat.south().as_degrees(), expected_south);
-        assert_degrees_close(bounds.lat.north().as_degrees(), expected_north);
+        test_util::assert_degrees_close(bounds.lat.south().as_degrees(), expected_south);
+        test_util::assert_degrees_close(bounds.lat.north().as_degrees(), expected_north);
     }
 
     #[test]
@@ -644,7 +635,7 @@ mod tests {
         let range = LatRange::from_latitudes([Latitude::new(south), Latitude::new(north)])
             .expect("two latitudes");
 
-        assert_degrees_close(range.arc_across_the_pole_degrees(), expected_degrees);
+        test_util::assert_degrees_close(range.arc_across_the_pole_degrees(), expected_degrees);
     }
 
     #[test]
@@ -653,7 +644,7 @@ mod tests {
 
         assert!(bounds.contains(Latitude::new(-33.9), Longitude::new(151.2)));
         assert!(!bounds.contains(Latitude::new(-33.9), Longitude::new(151.3)));
-        assert_degrees_close(bounds.lon.span_degrees(), 0.0);
+        test_util::assert_degrees_close(bounds.lon.span_degrees(), 0.0);
     }
 
     proptest::proptest! {
