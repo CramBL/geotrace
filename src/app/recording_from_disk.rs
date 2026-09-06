@@ -406,12 +406,12 @@ impl App {
                 }
             }
             Some(AlreadyInHistoryChoice::LoadFromDisk) => {
-                for recording in prompt.recordings {
-                    let RecordingAlreadyInHistory {
-                        from_disk,
-                        db_ref,
-                        stored_tracks,
-                    } = recording;
+                for RecordingAlreadyInHistory {
+                    from_disk,
+                    db_ref,
+                    stored_tracks,
+                } in prompt.recordings
+                {
                     let open = if leave_shelved_tracks_out {
                         Some(loader::HistoryOpen::ApplyShelved {
                             db_ref,
