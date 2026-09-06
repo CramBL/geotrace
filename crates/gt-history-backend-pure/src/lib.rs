@@ -3,8 +3,9 @@ use gt_history_types::{
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US, CURRENT_SCHEMA_VERSION,
     DatabaseRef, DbError, GTD_META_DEVICE_ATTR, GTD_META_NOTES_ATTR, GTD_META_TITLE_ATTR,
     GTD_META_TRAVEL_MODE_ATTR, HistoryDatabase, LogAttachment, LogAttachmentEntry, LogAttachmentId,
-    NavPointTimeRange, ReadOnlyHistoryDatabase, RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR,
-    StoredRecording, StoredSegmentation, TrackRange, TrackState, identity_from_group_name,
+    NavPointTimeRange, ReadOnlyHistoryDatabase, RecordingEntry, RecordingMeta, RecordingUiState,
+    SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation, TrackRange, TrackState,
+    UiStateVersionReporter, identity_from_group_name,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 use parking_lot::Mutex;
@@ -89,6 +90,15 @@ impl ReadOnlyHistoryDatabase for ReadOnlyPureDb {
     fn snap_blob(&self, db_ref: &DatabaseRef) -> Result<Option<Vec<u8>>, DbError> {
         let _guard = DB_LOCK.lock();
         copy::snap_blob(&self.path, &db_ref.identity, &db_ref.group_name).map_err(Into::into)
+    }
+
+    fn recording_ui_state(
+        &self,
+        db_ref: &DatabaseRef,
+        reporter: &UiStateVersionReporter,
+    ) -> Result<RecordingUiState, DbError> {
+        let _guard = DB_LOCK.lock();
+        copy::recording_ui_state(&self.path, db_ref, reporter).map_err(Into::into)
     }
 
     fn log_attachments(&self, db_ref: &DatabaseRef) -> Result<Vec<LogAttachmentEntry>, DbError> {
@@ -211,6 +221,14 @@ impl ReadOnlyHistoryDatabase for PureDb {
         self.read_only.snap_blob(db_ref)
     }
 
+    fn recording_ui_state(
+        &self,
+        db_ref: &DatabaseRef,
+        reporter: &UiStateVersionReporter,
+    ) -> Result<RecordingUiState, DbError> {
+        self.read_only.recording_ui_state(db_ref, reporter)
+    }
+
     fn log_attachments(&self, db_ref: &DatabaseRef) -> Result<Vec<LogAttachmentEntry>, DbError> {
         self.read_only.log_attachments(db_ref)
     }
@@ -317,6 +335,16 @@ impl HistoryDatabase for PureDb {
         let _guard = DB_LOCK.lock();
         copy::set_snap_blob(&self.path, &db_ref.identity, &db_ref.group_name, blob)
             .map_err(Into::into)
+    }
+
+    fn set_recording_ui_state(
+        &mut self,
+        db_ref: &DatabaseRef,
+        ui_state: &RecordingUiState,
+        reporter: &UiStateVersionReporter,
+    ) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        copy::set_recording_ui_state(&self.path, db_ref, ui_state, reporter).map_err(Into::into)
     }
 
     fn write_log_attachment_attribute(

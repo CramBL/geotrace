@@ -10,8 +10,10 @@ use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
     ATTR_SEG_GAP_US, ATTR_SEG_PLACEMENT_RULE, ATTR_SEG_SPLIT_RULE, ATTR_START_US,
-    CURRENT_SCHEMA_VERSION, GTD_VERSION_ATTR, LEGACY_TRACK_HIDDEN_DATASET, SCHEMA_VERSION_ATTR,
-    TRACK_END_DATASET, TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP,
+    CURRENT_SCHEMA_VERSION, CURRENT_UI_STATE_VERSION, GTD_VERSION_ATTR, HIDDEN_TRACKS_DATASET,
+    LEGACY_TRACK_HIDDEN_DATASET, RecordingUiState, SCHEMA_VERSION_ATTR, TRACK_END_DATASET,
+    TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, UI_STATE_GROUP, UI_STATE_VERSION_ATTR,
+    UiStateVersionReporter, UiStateVersionTooNew,
 };
 use rstest::rstest;
 
@@ -1626,25 +1628,23 @@ fn set_tracks_shelved_shelves_only_the_given_tracks() {
     assert_eq!(db.list_recordings().expect("list")[0].shelved_tracks, 2);
 }
 
-/// Write a database holding one recording of `state_column.len()` tracks, each
-/// covering one nav point, with the track table's state column written under
-/// `state_dataset`. `schema_version` is what the file records.
+/// Write a database holding one recording of `nav_point_count` nav points at
+/// the schema version `schema_version`, with `build_recording` adding the
+/// subgroups the test needs to the recording group.
 #[expect(
     clippy::expect_used,
     reason = "test helper; panicking on I/O failure is the right behaviour"
 )]
-fn write_pure_db_with_a_track_table(
+fn write_pure_db_with_a_recording(
     db_path: &std::path::Path,
     schema_version: i64,
-    state_dataset: &str,
-    state_column: &[u64],
+    nav_point_count: u64,
+    build_recording: impl FnOnce(&mut hdf5_pure::GroupBuilder),
 ) {
     use hdf5_pure::AttrValue;
 
-    let n = state_column.len() as u64;
+    let n = nav_point_count;
     let times: Vec<i64> = (0..n as i64).map(|i| 1_000 + i).collect();
-    let starts: Vec<u64> = (0..n).collect();
-    let ends: Vec<u64> = (1..=n).collect();
 
     let mut fb = hdf5_pure::FileBuilder::new();
     fb.set_attr(SCHEMA_VERSION_ATTR, AttrValue::I64(schema_version));
@@ -1671,22 +1671,62 @@ fn write_pure_db_with_a_track_table(
     time.with_i64_data(&times);
     rec.add_group(nav.finish());
 
-    let mut tracks = rec.create_group(TRACKS_GROUP);
-    for (name, column) in [
-        (TRACK_START_DATASET, &starts),
-        (TRACK_END_DATASET, &ends),
-        (state_dataset, &state_column.to_vec()),
-    ] {
-        let ds = tracks.create_dataset(name);
-        ds.with_shape(&[n]);
-        ds.with_u64_data(column);
-    }
-    rec.add_group(tracks.finish());
+    build_recording(&mut rec);
 
     id_grp.add_group(rec.finish());
     by_id.add_group(id_grp.finish());
     fb.add_group(by_id.finish());
     fb.write(db_path).expect("write db");
+}
+
+/// Write a database holding one recording of `state_column.len()` tracks, each
+/// covering one nav point, with the track table's state column written under
+/// `state_dataset`. `schema_version` is what the file records.
+fn write_pure_db_with_a_track_table(
+    db_path: &std::path::Path,
+    schema_version: i64,
+    state_dataset: &str,
+    state_column: &[u64],
+) {
+    let n = state_column.len() as u64;
+    let starts: Vec<u64> = (0..n).collect();
+    let ends: Vec<u64> = (1..=n).collect();
+
+    write_pure_db_with_a_recording(db_path, schema_version, n, |rec| {
+        let mut tracks = rec.create_group(TRACKS_GROUP);
+        for (name, column) in [
+            (TRACK_START_DATASET, &starts),
+            (TRACK_END_DATASET, &ends),
+            (state_dataset, &state_column.to_vec()),
+        ] {
+            let ds = tracks.create_dataset(name);
+            ds.with_shape(&[n]);
+            ds.with_u64_data(column);
+        }
+        rec.add_group(tracks.finish());
+    });
+}
+
+/// Write a database holding one recording whose UI state group holds
+/// `datasets`, with the version attribute set to `ui_state_version` where that
+/// is `Some`.
+fn write_pure_db_with_a_ui_state_group(
+    db_path: &std::path::Path,
+    ui_state_version: Option<i64>,
+    datasets: &[(&str, &[u64])],
+) {
+    write_pure_db_with_a_recording(db_path, CURRENT_SCHEMA_VERSION, 3, |rec| {
+        let mut ui_state = rec.create_group(UI_STATE_GROUP);
+        if let Some(version) = ui_state_version {
+            ui_state.set_attr(UI_STATE_VERSION_ATTR, hdf5_pure::AttrValue::I64(version));
+        }
+        for (name, rows) in datasets {
+            let ds = ui_state.create_dataset(name);
+            ds.with_shape(&[rows.len() as u64]);
+            ds.with_u64_data(rows);
+        }
+        rec.add_group(ui_state.finish());
+    });
 }
 
 /// Every database written before the state column holds a boolean `hidden`
@@ -2675,14 +2715,22 @@ fn replacing_a_recording_in_place_keeps_the_logs_attached_to_it() {
     assert_eq!(stored_log_count(&db_path), 1, "the log itself is kept too");
 }
 
-/// A stored snap run names point indices, which the new bytes renumber.
+/// A stored snap run and a stored hidden track number address points and
+/// tracks that the new bytes renumber.
 #[test_log::test]
-fn replacing_a_recording_in_place_drops_the_stored_snap_run() {
+fn replacing_a_recording_in_place_drops_its_snap_run_and_its_ui_state() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open");
     let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    let reporter = UiStateVersionReporter::default();
     db.set_snap_blob(&db_ref, &[1, 2, 3]).expect("store");
+    db.set_recording_ui_state(
+        &db_ref,
+        &RecordingUiState::with_hidden_track_numbers([1]),
+        &reporter,
+    )
+    .expect("store");
 
     let shorter = make_gtd_bytes(1_000_000_025, 25);
     let meta = extract_meta(&shorter).expect("meta");
@@ -2695,6 +2743,11 @@ fn replacing_a_recording_in_place_drops_the_stored_snap_run() {
         .expect("replace");
 
     assert_eq!(db.snap_blob(&db_ref).expect("read"), None);
+    assert_eq!(
+        db.recording_ui_state(&db_ref, &reporter).expect("read"),
+        RecordingUiState::default()
+    );
+    assert_eq!(stored_ui_state_group(&db_path, &db_ref), None);
 }
 
 #[test_log::test]
@@ -3037,6 +3090,285 @@ fn snap_blob_is_dropped_with_its_recording() {
         None,
         "a reinserted recording starts without a blob"
     );
+}
+
+/// The datasets and the version attribute of a recording's stored UI state
+/// group, read with the reference C library. Datasets sorted by name, `None`
+/// for a recording with no UI state group at all.
+#[expect(
+    clippy::expect_used,
+    reason = "test helper; panicking on I/O failure is the right behaviour"
+)]
+fn stored_ui_state_group(
+    db_path: &std::path::Path,
+    db_ref: &DatabaseRef,
+) -> Option<StoredUiStateGroup> {
+    let file = hdf5::File::open(db_path).expect("open with the reference C library");
+    let group = file
+        .group("by_identity")
+        .and_then(|by_id| by_id.group(&gt_history::identity_group_name(&db_ref.identity)))
+        .and_then(|id_grp| id_grp.group(&db_ref.group_name))
+        .and_then(|rec_grp| rec_grp.group(UI_STATE_GROUP))
+        .ok()?;
+    let version = group
+        .attr(UI_STATE_VERSION_ATTR)
+        .and_then(|attr| attr.read_scalar::<i64>())
+        .ok();
+    let mut datasets: Vec<(String, Vec<u64>)> = group
+        .member_names()
+        .expect("the UI state group's members")
+        .into_iter()
+        .map(|name| {
+            let rows = group
+                .dataset(&name)
+                .and_then(|dataset| dataset.read_1d::<u64>())
+                .expect("a UI state dataset");
+            (name, rows.to_vec())
+        })
+        .collect();
+    datasets.sort();
+    Some(StoredUiStateGroup { version, datasets })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct StoredUiStateGroup {
+    version: Option<i64>,
+    datasets: Vec<(String, Vec<u64>)>,
+}
+
+/// A write stores the hidden track numbers ascending and each of them once,
+/// whatever order the caller passed them in.
+#[test_log::test]
+fn ui_state_round_trips_the_hidden_track_numbers_of_a_recording() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    let reporter = UiStateVersionReporter::default();
+
+    db.set_recording_ui_state(
+        &db_ref,
+        &RecordingUiState::with_hidden_track_numbers([4, 1, 4]),
+        &reporter,
+    )
+    .expect("store");
+
+    assert_eq!(
+        db.recording_ui_state(&db_ref, &reporter).expect("read"),
+        RecordingUiState::with_hidden_track_numbers([1, 4])
+    );
+    assert_eq!(
+        stored_ui_state_group(&db_path, &db_ref),
+        Some(StoredUiStateGroup {
+            version: Some(CURRENT_UI_STATE_VERSION),
+            datasets: vec![(HIDDEN_TRACKS_DATASET.to_owned(), vec![1, 4])],
+        })
+    );
+    assert!(reporter.is_empty());
+}
+
+#[test_log::test]
+fn a_recording_with_no_ui_state_group_reads_as_the_default() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    let reporter = UiStateVersionReporter::default();
+
+    assert_eq!(
+        db.recording_ui_state(&db_ref, &reporter).expect("read"),
+        RecordingUiState::default()
+    );
+    assert_eq!(stored_ui_state_group(&db_path, &db_ref), None);
+    assert!(reporter.is_empty());
+}
+
+/// A write over a group written before the version attribute existed replaces
+/// the whole group, dropping the datasets of that older layout.
+#[test_log::test]
+fn writing_ui_state_over_an_older_version_drops_the_older_layout() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("older.h5");
+    write_pure_db_with_a_ui_state_group(&db_path, None, &[("hidden", &[7])]);
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = db.list_recordings().expect("list")[0].db_ref.clone();
+    let reporter = UiStateVersionReporter::default();
+
+    assert_eq!(
+        db.recording_ui_state(&db_ref, &reporter).expect("read"),
+        RecordingUiState::default()
+    );
+
+    db.set_recording_ui_state(
+        &db_ref,
+        &RecordingUiState::with_hidden_track_numbers([2]),
+        &reporter,
+    )
+    .expect("store");
+
+    assert_eq!(
+        stored_ui_state_group(&db_path, &db_ref),
+        Some(StoredUiStateGroup {
+            version: Some(CURRENT_UI_STATE_VERSION),
+            datasets: vec![(HIDDEN_TRACKS_DATASET.to_owned(), vec![2])],
+        })
+    );
+    assert!(reporter.is_empty());
+}
+
+/// A kind of UI state a later build adds sits in its own dataset at the
+/// current version, and a write of this build's own kinds keeps it.
+#[test_log::test]
+fn writing_ui_state_keeps_a_dataset_this_build_defines_none_of() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("current.h5");
+    write_pure_db_with_a_ui_state_group(
+        &db_path,
+        Some(CURRENT_UI_STATE_VERSION),
+        &[("map_viewport", &[9, 9])],
+    );
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = db.list_recordings().expect("list")[0].db_ref.clone();
+    let reporter = UiStateVersionReporter::default();
+
+    db.set_recording_ui_state(
+        &db_ref,
+        &RecordingUiState::with_hidden_track_numbers([3]),
+        &reporter,
+    )
+    .expect("store");
+
+    assert_eq!(
+        stored_ui_state_group(&db_path, &db_ref),
+        Some(StoredUiStateGroup {
+            version: Some(CURRENT_UI_STATE_VERSION),
+            datasets: vec![
+                (HIDDEN_TRACKS_DATASET.to_owned(), vec![3]),
+                ("map_viewport".to_owned(), vec![9, 9]),
+            ],
+        })
+    );
+    assert!(reporter.is_empty());
+}
+
+/// A read and a write both leave a group above this build's version exactly
+/// as stored, and the reporter lists the recording once for the two of them.
+#[test_log::test]
+fn ui_state_from_a_newer_build_stays_as_it_stands_and_reports_its_version() {
+    let newer = CURRENT_UI_STATE_VERSION + 1;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("newer.h5");
+    write_pure_db_with_a_ui_state_group(
+        &db_path,
+        Some(newer),
+        &[(HIDDEN_TRACKS_DATASET, &[5]), ("map_viewport", &[9])],
+    );
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = db.list_recordings().expect("list")[0].db_ref.clone();
+    let stored_before = stored_ui_state_group(&db_path, &db_ref);
+    let reporter = UiStateVersionReporter::default();
+
+    assert_eq!(
+        db.recording_ui_state(&db_ref, &reporter).expect("read"),
+        RecordingUiState::default()
+    );
+
+    db.set_recording_ui_state(
+        &db_ref,
+        &RecordingUiState::with_hidden_track_numbers([2]),
+        &reporter,
+    )
+    .expect("store");
+
+    assert_eq!(stored_ui_state_group(&db_path, &db_ref), stored_before);
+    assert_eq!(
+        reporter.versions_too_new(),
+        vec![UiStateVersionTooNew {
+            db_ref,
+            found: newer
+        }]
+    );
+}
+
+/// The recording a write addresses in
+/// [`writing_ui_state_for_a_recording_that_is_not_stored_writes_nothing`].
+#[derive(Debug, Clone, Copy)]
+enum AbsentRecording {
+    /// A group name under an identity that is new to the database.
+    UnderAnUnknownIdentity,
+    /// A recording deleted from an identity that still holds another.
+    DeletedFromAKnownIdentity,
+}
+
+/// A write for a recording the database no longer holds leaves every stored
+/// group as it is, in both backends.
+#[rstest]
+#[case::under_an_unknown_identity(AbsentRecording::UnderAnUnknownIdentity)]
+#[case::deleted_from_a_known_identity(AbsentRecording::DeletedFromAKnownIdentity)]
+fn writing_ui_state_for_a_recording_that_is_not_stored_writes_nothing(
+    #[case] absent: AbsentRecording,
+) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let stored = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    let reporter = UiStateVersionReporter::default();
+    db.set_recording_ui_state(
+        &stored,
+        &RecordingUiState::with_hidden_track_numbers([6]),
+        &reporter,
+    )
+    .expect("store");
+
+    let absent = match absent {
+        AbsentRecording::UnderAnUnknownIdentity => DatabaseRef {
+            identity: "workshop".to_owned(),
+            group_name: stored.group_name.clone(),
+        },
+        AbsentRecording::DeletedFromAKnownIdentity => {
+            let deleted = insert_two_track(&mut db, "dev", 2_000_000_000, 50);
+            db.delete_batch(std::slice::from_ref(&deleted))
+                .expect("delete");
+            deleted
+        }
+    };
+
+    db.set_recording_ui_state(
+        &absent,
+        &RecordingUiState::with_hidden_track_numbers([1]),
+        &reporter,
+    )
+    .expect("a write for an absent recording succeeds");
+
+    assert_eq!(stored_ui_state_group(&db_path, &absent), None);
+    assert_eq!(
+        db.recording_ui_state(&stored, &reporter).expect("read"),
+        RecordingUiState::with_hidden_track_numbers([6]),
+        "the database still holds the other recording's UI state"
+    );
+    assert!(reporter.is_empty());
+}
+
+/// A load leaves the UI state group out of the GTD file the recording is
+/// reconstructed into: the group is database bookkeeping.
+#[test_log::test]
+fn ui_state_stays_out_of_the_reconstructed_gtd() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut db = Database::open_or_create(&dir.path().join("geotrace.h5")).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    let reporter = UiStateVersionReporter::default();
+    db.set_recording_ui_state(
+        &db_ref,
+        &RecordingUiState::with_hidden_track_numbers([1]),
+        &reporter,
+    )
+    .expect("store");
+
+    let loaded = db.load_bytes(&db_ref).expect("load");
+
+    let file = hdf5_pure::File::from_bytes(loaded).expect("parse loaded bytes");
+    let groups = file.root().groups().expect("the reconstructed root groups");
+    assert!(!groups.iter().any(|name| name == UI_STATE_GROUP));
 }
 
 /// Rewriting a recording's snap blob many times must not grow the database

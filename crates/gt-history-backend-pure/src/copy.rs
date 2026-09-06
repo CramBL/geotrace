@@ -11,14 +11,16 @@ use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
     ATTR_SEG_GAP_US, ATTR_SEG_PLACEMENT_RULE, ATTR_SEG_SPLIT_RULE, ATTR_START_US,
-    CURRENT_SCHEMA_VERSION, ChannelSummary, DatabaseRef, DbError, GTD_CHANNEL_COMPONENTS_ATTR,
-    GTD_CHANNEL_DESCRIPTION_ATTR, GTD_CHANNEL_TIME_DATASET, GTD_CHANNEL_UNIT_ATTR,
-    GTD_CHANNELS_GROUP, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK, LogAttachment, LogAttachmentEntry,
-    LogAttachmentId, RecordingMeta, SCHEMA_VERSION_ATTR, SNAP_BLOB_DATASET, SNAP_GROUP,
-    StoredFixPlacementRule, StoredRecording, StoredSegmentation, StoredTrackSplitRule,
+    CURRENT_SCHEMA_VERSION, CURRENT_UI_STATE_VERSION, ChannelSummary, DatabaseRef, DbError,
+    GTD_CHANNEL_COMPONENTS_ATTR, GTD_CHANNEL_DESCRIPTION_ATTR, GTD_CHANNEL_TIME_DATASET,
+    GTD_CHANNEL_UNIT_ATTR, GTD_CHANNELS_GROUP, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
+    HIDDEN_TRACKS_DATASET, LogAttachment, LogAttachmentEntry, LogAttachmentId, RecordingMeta,
+    RecordingUiState, SCHEMA_VERSION_ATTR, SNAP_BLOB_DATASET, SNAP_GROUP, StoredFixPlacementRule,
+    StoredRecording, StoredSegmentation, StoredTrackSplitRule, StoredUiStateVersion,
     TRACK_END_DATASET, TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, TrackRange,
-    TrackState, identity_from_group_name, identity_group_name, is_db_internal_group,
-    is_db_recording_attr, log_attachment, make_group_name,
+    TrackState, UI_STATE_GROUP, UI_STATE_VERSION_ATTR, UiStateVersionReporter,
+    identity_from_group_name, identity_group_name, is_db_internal_group, is_db_recording_attr,
+    log_attachment, make_group_name,
 };
 use hdf5_pure::{AttrValue, DType, FileBuilder, Group, GroupBuilder};
 use thiserror::Error;
@@ -322,6 +324,29 @@ fn snap_blob_node(blob: &[u8]) -> GroupNode {
             data: DatasetData::U8(blob.to_vec()),
             attrs: Vec::new(),
         }],
+        groups: Vec::new(),
+    }
+}
+
+/// The `__geotrace_ui_state__` subgroup node at [`CURRENT_UI_STATE_VERSION`],
+/// holding the datasets this build defines followed by `kept_datasets`.
+fn ui_state_node(ui_state: &RecordingUiState, kept_datasets: Vec<DatasetNode>) -> GroupNode {
+    let hidden_track_numbers: Vec<u64> = ui_state.hidden_track_numbers().iter().copied().collect();
+    let n = hidden_track_numbers.len() as u64;
+    let mut datasets = vec![DatasetNode {
+        name: HIDDEN_TRACKS_DATASET.to_owned(),
+        shape: vec![n],
+        data: DatasetData::U64(hidden_track_numbers),
+        attrs: Vec::new(),
+    }];
+    datasets.extend(kept_datasets);
+    GroupNode {
+        name: UI_STATE_GROUP.to_owned(),
+        attrs: vec![(
+            UI_STATE_VERSION_ATTR.to_owned(),
+            AttrValue::I64(CURRENT_UI_STATE_VERSION),
+        )],
+        datasets,
         groups: Vec::new(),
     }
 }
@@ -833,6 +858,100 @@ pub(crate) fn snap_blob(
         return Ok(None);
     };
     Ok(dataset.read_u8().ok())
+}
+
+/// The UI state stored with a recording, and the default for one whose
+/// [`UI_STATE_GROUP`] is absent or was written at a higher version.
+pub(crate) fn recording_ui_state(
+    db_path: &std::path::Path,
+    db_ref: &DatabaseRef,
+    reporter: &UiStateVersionReporter,
+) -> Result<RecordingUiState, InternalError> {
+    let file = hdf5_pure::File::open(db_path)?;
+    let root = file.root();
+    let by_id = root.group("by_identity")?;
+    let id_grp = find_identity_group(&by_id, &db_ref.identity)?;
+    let rec_grp = id_grp.group(&db_ref.group_name)?;
+    let Ok(grp) = rec_grp.group(UI_STATE_GROUP) else {
+        return Ok(RecordingUiState::default());
+    };
+
+    let attrs = grp.attrs()?;
+    let version = attrs.get(UI_STATE_VERSION_ATTR).and_then(AttrValue::as_i64);
+    if let StoredUiStateVersion::Newer(found) = StoredUiStateVersion::from_attribute_value(version)
+    {
+        reporter.report_too_new(db_ref, found);
+        return Ok(RecordingUiState::default());
+    }
+
+    let hidden_track_numbers = grp
+        .dataset(HIDDEN_TRACKS_DATASET)
+        .and_then(|dataset| dataset.read_u64())
+        .unwrap_or_default();
+    Ok(RecordingUiState::with_hidden_track_numbers(
+        hidden_track_numbers,
+    ))
+}
+
+/// Store `ui_state` as the recording's UI state at
+/// [`CURRENT_UI_STATE_VERSION`]. A no-op when the recording is absent, like
+/// [`set_tracks`].
+pub(crate) fn set_recording_ui_state(
+    db_path: &std::path::Path,
+    db_ref: &DatabaseRef,
+    ui_state: &RecordingUiState,
+    reporter: &UiStateVersionReporter,
+) -> Result<(), InternalError> {
+    let existing_db = hdf5_pure::File::open(db_path)?;
+    let mut identity_nodes = snapshot_by_identity(&existing_db)?;
+    drop(existing_db);
+
+    let Some(rec) =
+        find_recording_node_mut(&mut identity_nodes, &db_ref.identity, &db_ref.group_name)
+    else {
+        return Ok(());
+    };
+
+    let stored_index = rec
+        .groups
+        .iter()
+        .position(|group| group.name == UI_STATE_GROUP);
+    let stored_version = stored_index
+        .and_then(|index| rec.groups.get(index))
+        .and_then(|group| {
+            group
+                .attrs
+                .iter()
+                .find(|(name, _)| name == UI_STATE_VERSION_ATTR)
+                .and_then(|(_, value)| value.as_i64())
+        });
+
+    let kept_datasets = match StoredUiStateVersion::from_attribute_value(stored_version) {
+        StoredUiStateVersion::Newer(found) => {
+            reporter.report_too_new(db_ref, found);
+            return Ok(());
+        }
+        StoredUiStateVersion::Current => match stored_index {
+            Some(index) => rec
+                .groups
+                .remove(index)
+                .datasets
+                .into_iter()
+                .filter(|dataset| dataset.name != HIDDEN_TRACKS_DATASET)
+                .collect(),
+            None => Vec::new(),
+        },
+        StoredUiStateVersion::Older(_) => {
+            if let Some(index) = stored_index {
+                rec.groups.remove(index);
+            }
+            Vec::new()
+        }
+    };
+    rec.groups.push(ui_state_node(ui_state, kept_datasets));
+
+    write_db(&identity_nodes, db_path)?;
+    Ok(())
 }
 
 /// Every row of a recording's stored track table, tombstones and all. Empty
