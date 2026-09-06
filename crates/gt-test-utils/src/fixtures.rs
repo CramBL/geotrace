@@ -4,7 +4,7 @@ use geo_types::Point;
 use geotrace_sdk as sdk;
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Length, Time as UomTime, Velocity};
-use uom::si::length::meter;
+use uom::si::length::{kilometer, meter};
 use uom::si::time::second;
 use uom::si::velocity::kilometer_per_hour;
 
@@ -422,6 +422,52 @@ pub fn loaded_track_with_points(points: Vec<NavPoint>) -> gt_types::LoadedTrack 
         generated_markers: Vec::new(),
         event_markers: Vec::new(),
         channels: Vec::new(),
+    }
+}
+
+/// How long each track of [`segmented_recording`] runs.
+pub const SEGMENTED_TRACK_DURATION: Duration = Duration::minutes(10);
+
+/// A recording of `track_count` tracks, numbered from one the way the track
+/// builder numbers a fresh segmentation. Track 1 starts at the Unix epoch and
+/// track `n` starts twenty minutes after track `n - 1`. Each track runs
+/// [`SEGMENTED_TRACK_DURATION`]. Track `n` measures `n` kilometres and reports
+/// `n` fix losses. The file's figures are
+/// [`gt_types::TrackAggregates::over_tracks`] over all of them.
+pub fn segmented_recording(track_count: usize) -> gt_types::LoadedFile {
+    let tracks: Vec<gt_types::LoadedTrack> = (0..track_count)
+        .map(|position| {
+            let number = u32::try_from(position).unwrap_or(0) + 1;
+            let start =
+                chrono::DateTime::UNIX_EPOCH + Duration::minutes(20 * i64::from(number - 1));
+            let mut track = loaded_track_with_points(nav_points_from(start, 2, 60));
+            if let gt_types::TrackGeometry::Measured(measured) = &mut track.geometry {
+                measured.distance_km = Length::new::<kilometer>(f64::from(number));
+            }
+            track.metadata = gt_types::TrackMetadata {
+                index: position + 1,
+                duration: SEGMENTED_TRACK_DURATION,
+                time_range: gt_types::TimeRange::new(start, start + SEGMENTED_TRACK_DURATION),
+                fix_stats: Some(gt_types::FixStats {
+                    time_with_fix: Duration::zero(),
+                    time_without_fix: Duration::zero(),
+                    fix_loss_count: number,
+                    max_continuous_no_fix: Duration::zero(),
+                }),
+                ..empty_track_metadata()
+            };
+            track
+        })
+        .collect();
+    let mut metadata = empty_file_metadata();
+    metadata.set_track_aggregates(gt_types::TrackAggregates::over_tracks(&tracks));
+    gt_types::LoadedFile {
+        metadata,
+        tracks,
+        event_marker_styles: Default::default(),
+        orphaned_event_markers: Vec::new(),
+        source: gt_types::FileSource::GtdPath(std::path::PathBuf::new()),
+        load_warnings: Vec::new(),
     }
 }
 

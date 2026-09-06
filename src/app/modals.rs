@@ -11,7 +11,7 @@ use gt_log_view::{LoadedLogs, RecordingKey};
 use gt_map::{MapLayer, NavMap};
 use gt_side_panel::{NodeKey, RecordingDetails, TreeState};
 use gt_store::{DatabaseRef, EnvironmentArchive};
-use gt_types::{LoadWarning, TrackRef};
+use gt_types::{LoadWarning, TrackAggregates, TrackRef};
 use gt_ui_theme::warning_amber;
 use strum::IntoEnumIterator as _;
 
@@ -579,6 +579,8 @@ pub fn remove_items_from_view(
                     file.tracks.remove(ti);
                 }
             }
+            file.metadata
+                .set_track_aggregates(TrackAggregates::over_tracks(&file.tracks));
         }
     }
 
@@ -1583,10 +1585,13 @@ mod tests {
     use std::cell::RefCell;
     use std::path::PathBuf;
 
+    use chrono::DateTime;
     use gt_types::{
-        FileIdx, FileSource, GeneratedMarkerKindTag, LoadedFile, LoadedTrack, TimeRange, TrackIdx,
-        TrackMetadata,
+        FileIdx, FileSource, GeneratedMarkerKindTag, LoadedFile, LoadedTrack, TimeRange,
+        TotalDistance, TrackIdx, TrackMetadata,
     };
+    use uom::si::f64::Length;
+    use uom::si::length::kilometer;
 
     use egui_kittest::kittest::{NodeT as _, Queryable as _};
     use gt_map::TileAccess;
@@ -2534,6 +2539,38 @@ mod tests {
             "the track the user shelved is the recording's third"
         );
         worker.shutdown();
+    }
+
+    /// Shelving a track and unloading one both take it out of the view through
+    /// [`remove_items_from_view`]. The recording then reports the distance, the
+    /// recorded time, the time range and the fix losses of its other two
+    /// tracks.
+    #[test]
+    fn a_recording_reports_the_figures_of_the_tracks_that_stay_loaded_after_a_removal() {
+        let mut loaded = LoadedFiles::new();
+        loaded.push(gt_test_utils::segmented_recording(3), FileHistory::None);
+        let mut tree = TreeState::new();
+        tree.sync_from_loaded_files(loaded.view());
+
+        remove_items_from_view(&[track_key(0, 0)], &mut loaded, &mut tree);
+
+        let metadata = &loaded.get(0).expect("the recording stays loaded").metadata;
+        assert_eq!(
+            metadata.total_distance,
+            TotalDistance::Measured(Length::new::<kilometer>(5.0))
+        );
+        assert_eq!(metadata.total_duration, chrono::Duration::minutes(20));
+        assert_eq!(
+            metadata.time_range,
+            Some(TimeRange::new(
+                DateTime::UNIX_EPOCH + chrono::Duration::minutes(20),
+                DateTime::UNIX_EPOCH + chrono::Duration::minutes(50),
+            ))
+        );
+        assert_eq!(
+            metadata.fix_stats.map(|stats| stats.fix_loss_count),
+            Some(5)
+        );
     }
 
     #[test]
