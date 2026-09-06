@@ -11,7 +11,7 @@ use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use egui_phosphor::regular::PUSH_PIN as ICON_PUSH_PIN;
 use egui_phosphor::regular::TERMINAL_WINDOW as ICON_TERMINAL_WINDOW;
 use egui_phosphor::regular::X as ICON_X;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::panic;
 use std::path::{Path, PathBuf};
@@ -255,10 +255,22 @@ fn transient_app_with_the_instance_lock(
     instance_lock: DataDirectoryLock,
     pending_writes: PendingWrites,
 ) -> App {
+    transient_app_with_the_settings_file(cc, paths, None, instance_lock, pending_writes)
+}
+
+/// [`transient_app_with_the_instance_lock`] reading and writing the settings
+/// file at `config_path`, and none where that is [`None`].
+fn transient_app_with_the_settings_file(
+    cc: &eframe::CreationContext<'_>,
+    paths: &[PathBuf],
+    config_path: Option<PathBuf>,
+    instance_lock: DataDirectoryLock,
+    pending_writes: PendingWrites,
+) -> App {
     App::new_with_config(
         cc,
         paths,
-        None,
+        config_path,
         super::StartupOptions {
             fading_enabled: false,
             offline: true,
@@ -3210,81 +3222,6 @@ fn plot_channel_toggles_persist_across_settings_roundtrip() {
     assert!(shared.plot_state.channel_vis.is_visible("incline"));
 }
 
-/// A track hidden in a recording that history holds reaches the settings file
-/// and comes back: opening the recording again hides that track and leaves the
-/// other one shown.
-#[test]
-fn hidden_tracks_persist_across_settings_roundtrip() {
-    let mut harness = Harness::builder()
-        .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    harness.step();
-
-    let db_ref = gt_store::DatabaseRef {
-        identity: "dev".to_owned(),
-        group_name: "2026-01-01T00:00:00Z_ride".to_owned(),
-    };
-    let history = || {
-        gt_loaded_files::FileHistory::recording(
-            "dev".to_owned(),
-            gt_store::RecordingMeta {
-                time_range: None,
-                nav_point_count: 0,
-                sat_report_count: 0,
-                marker_count: 0,
-                event_marker_count: 0,
-                gtd_size_bytes: 0,
-            },
-            Some(db_ref.clone()),
-        )
-    };
-    let points = gt_test_utils::fixtures::nav_data_with_gap(30, 30);
-    let fi = push_points_as(&mut harness, "ride.gtd", &points, None, history());
-    {
-        let state = harness.state_mut();
-        let mut shared = state.shared.borrow_mut();
-        shared
-            .tree
-            .hide_track(gt_types::TrackRef::new(fi, gt_types::TrackIdx::new(1)));
-    }
-
-    let flushed = harness.state().collect_settings_for_flush();
-    assert_eq!(flushed.ui.hidden_tracks.track_numbers(&db_ref), [2]);
-
-    // Through the actual wire format, not just the struct.
-    let toml = toml::to_string_pretty(&flushed).expect("settings serialize");
-    assert!(
-        toml.contains("[[ui.hidden_tracks]]"),
-        "the hidden tracks are listed per recording: {toml}"
-    );
-    let reloaded: crate::settings::Settings = toml::from_str(&toml).expect("settings parse");
-
-    // Simulate the next run: a tree with nothing in it, then the recording
-    // opened into it again.
-    {
-        let state = harness.state_mut();
-        let mut shared = state.shared.borrow_mut();
-        shared.tree = gt_side_panel::TreeState::new();
-    }
-    harness.state_mut().apply_startup_settings(&reloaded);
-    {
-        let state = harness.state_mut();
-        let mut shared = state.shared.borrow_mut();
-        shared.sync_tree_from_loaded_files();
-    }
-
-    let shared = harness.state().shared.borrow();
-    let visible = shared.tree.visible_tracks_by_file();
-    assert_eq!(
-        visible
-            .iter()
-            .flat_map(|group| group.tracks.iter().copied())
-            .collect::<Vec<_>>(),
-        [gt_types::TrackRef::new(fi, gt_types::TrackIdx::new(0))],
-        "the second track opens hidden and the first one shown"
-    );
-}
-
 /// The sparse<->dense component color conversions: empty stays empty, an
 /// index gap widens with unset slots, and only overridden slots are stored.
 #[test]
@@ -5146,17 +5083,48 @@ fn app_with_the_databases_still_opening_for<'a>(
     paths: &[PathBuf],
     write_access: WriteAccess,
 ) -> (Harness<'a, App>, mpsc::Sender<OpenStorage>) {
+    let paths = paths.to_vec();
+    app_with_the_databases_still_opening_built_by(move |cc| {
+        transient_app_with_the_instance_lock(
+            cc,
+            &paths,
+            DataDirectoryLock::marking_nothing(),
+            PendingWrites::new(write_access),
+        )
+    })
+}
+
+/// [`app_with_the_databases_still_opening`] for a session that reads and
+/// writes the settings file at `config_path`.
+fn app_with_the_databases_still_opening_reading<'a>(
+    config_path: PathBuf,
+    write_access: WriteAccess,
+) -> (Harness<'a, App>, mpsc::Sender<OpenStorage>) {
+    app_with_the_databases_still_opening_built_by(move |cc| {
+        transient_app_with_the_settings_file(
+            cc,
+            &[],
+            Some(config_path.clone()),
+            DataDirectoryLock::marking_nothing(),
+            PendingWrites::new(write_access),
+        )
+    })
+}
+
+/// The app `build` returns, holding back the databases it opens: the returned
+/// sender lands them, as [`land_the_databases`] does.
+fn app_with_the_databases_still_opening_built_by<'a, F>(
+    build: F,
+) -> (Harness<'a, App>, mpsc::Sender<OpenStorage>)
+where
+    F: FnOnce(&eframe::CreationContext<'_>) -> App + 'a,
+{
     let (sender_tx, sender_rx) = mpsc::channel();
     let harness = Harness::builder()
         .with_size(egui::vec2(1280.0, 800.0))
         .with_wait_for_pending_images(false)
         .build_eframe(|cc| {
-            let mut app = transient_app_with_the_instance_lock(
-                cc,
-                paths,
-                DataDirectoryLock::marking_nothing(),
-                PendingWrites::new(write_access),
-            );
+            let mut app = build(cc);
             sender_tx.send(app.storage_open.take_over_for_test()).ok();
             app
         });
@@ -5197,6 +5165,25 @@ fn land_the_databases(
 ) {
     let pending_writes = harness.state().pending_writes.clone();
     let opened = storage_opened_in(store, &harness.ctx, &pending_writes);
+    databases.send(opened).expect("the app holds the receiver");
+    harness.step();
+}
+
+/// Lands the databases of a run that opened no recording history, as a run
+/// whose database another process holds does.
+fn land_the_databases_without_a_recording_history(
+    harness: &mut Harness<'_, App>,
+    databases: &mpsc::Sender<OpenStorage>,
+) {
+    let opened = OpenStorage {
+        history: crate::app::history_db::HistoryWorker::disabled(),
+        history_failure: None,
+        archive: None,
+        geomagnetic_indices: None,
+        tec_maps: None,
+        solar_flares: None,
+        unavailable_archives: UnavailableArchives::default(),
+    };
     databases.send(opened).expect("the app holds the receiver");
     harness.step();
 }
@@ -7262,15 +7249,13 @@ fn app_showing_the_resegment_prompt_with(
     harness.inner.step();
     let mut prompt = resegment_prompt_named("ride.gtd");
     prompt.stored_tracks = stored_track_table_with_shelved_tracks(marks.shelved_tracks);
-    let mut hidden = gt_side_panel::HiddenTracksByRecording::default();
-    hidden.record(&prompt.db_ref, (0..marks.hidden_tracks).collect());
     harness
         .inner
         .state_mut()
         .shared
         .borrow_mut()
         .tree
-        .set_hidden_tracks(hidden);
+        .set_hidden_tracks_of_recording(prompt.db_ref.clone(), (1..=marks.hidden_tracks).collect());
     harness.inner.state_mut().pending_resegment = Some(prompt);
     harness.run();
     harness
@@ -7503,13 +7488,11 @@ fn app_with_a_stored_recording_on_disk() -> (Harness<'static, App>, tempfile::Te
     ])
 }
 
-/// [`app_with_a_stored_recording_on_disk`] with both of the stored tracks
-/// live.
-fn app_with_a_stored_recording_of_live_tracks()
--> (Harness<'static, App>, tempfile::TempDir, PathBuf) {
+/// The stored track table of [`two_track_gtd_bytes`], both tracks live.
+fn two_live_track_ranges() -> [gt_store::TrackRange; 2] {
     use gt_store::{TrackRange, TrackState};
 
-    app_with_a_stored_recording_of(&[
+    [
         TrackRange {
             start: 0,
             end: 10,
@@ -7520,7 +7503,29 @@ fn app_with_a_stored_recording_of_live_tracks()
             end: 20,
             state: TrackState::Live,
         },
-    ])
+    ]
+}
+
+/// [`app_with_a_stored_recording_on_disk`] with both of the stored tracks
+/// live.
+fn app_with_a_stored_recording_of_live_tracks()
+-> (Harness<'static, App>, tempfile::TempDir, PathBuf) {
+    app_with_a_stored_recording_of(&two_live_track_ranges())
+}
+
+/// Store `bytes` in the history database under `store`, cut into `tracks` and
+/// segmented under `settings`, and return the reference it is stored under.
+fn insert_recording_into(
+    store: &gt_store::Store,
+    bytes: &[u8],
+    tracks: &[gt_store::TrackRange],
+    settings: gt_store::StoredSegmentation,
+) -> gt_store::DatabaseRef {
+    let mut db =
+        Recordings::open_or_create(&store.recordings_path()).expect("open the history database");
+    let meta = gt_store::extract_meta(bytes).expect("the recording has metadata");
+    db.insert("dev", &meta, tracks, settings, bytes)
+        .expect("store the recording")
 }
 
 /// The app with `ride.gtd` in its history database under `tracks`, and the
@@ -7544,12 +7549,7 @@ fn app_with_a_stored_recording_of(
     // then reproduces its tracks without the "Track settings differ" prompt.
     let settings =
         crate::app::loader::stored_segmentation_from_config(&harness.state().processing_config);
-    let mut db =
-        Recordings::open_or_create(&store.recordings_path()).expect("open the history database");
-    let meta = gt_store::extract_meta(&bytes).expect("the recording has metadata");
-    db.insert("dev", &meta, tracks, settings, &bytes)
-        .expect("store the recording");
-    drop(db);
+    insert_recording_into(&store, &bytes, tracks, settings);
 
     land_the_databases(&mut harness, &databases, &store);
     (harness, dir, gtd_path)
@@ -7791,6 +7791,282 @@ fn the_tickbox_is_grayed_out_where_no_stored_recording_has_a_shelved_track() {
     );
 }
 
+/// Drop `gtd_path` on the window and open what the history database holds for
+/// it. The prompt over a stored recording offers that as one of its choices.
+fn open_the_stored_version_of(harness: &mut Harness<'_, App>, gtd_path: &Path) {
+    drop_paths(harness, std::slice::from_ref(&gtd_path.to_path_buf()));
+    step_until_the_prompt_over_stored_recordings_is_drawn(harness);
+    harness.get_by_label(OPEN_THE_STORED_VERSION_LABEL).click();
+}
+
+/// The tracks the map draws, in tree order.
+fn visible_tracks(harness: &Harness<'_, App>) -> Vec<TrackRef> {
+    let state = harness.state();
+    let shared = state.shared.borrow();
+    shared
+        .tree
+        .visible_tracks_by_file()
+        .iter()
+        .flat_map(|group| group.tracks.iter().copied())
+        .collect()
+}
+
+/// The app reads the hidden track from the database alone when the recording
+/// opens again. Stores `ride.gtd` of two live tracks in history. Hides its
+/// second track and stores that with the recording. Takes the recording out of
+/// the view and clears the tree.
+fn app_that_stored_the_second_track_of_a_recording_as_hidden()
+-> (Harness<'static, App>, tempfile::TempDir, PathBuf) {
+    let (mut harness, dir, gtd_path) = app_with_a_stored_recording_of_live_tracks();
+    open_the_stored_version_of(&mut harness, &gtd_path);
+    assert_eq!(step_until_one_recording_is_loaded(&mut harness), 2);
+
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .tree
+        .hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(1)));
+    harness.step();
+
+    harness.state_mut().shared.borrow_mut().tree.pending_unload =
+        Some(vec![gt_side_panel::NodeKey::File(FileIdx::new(0))]);
+    harness.step();
+    harness.state_mut().shared.borrow_mut().tree = gt_side_panel::TreeState::new();
+    (harness, dir, gtd_path)
+}
+
+/// A track hidden in a recording that history holds is stored with that
+/// recording: opening it again hides that track and leaves the other one
+/// shown.
+#[test]
+fn a_hidden_track_is_stored_with_its_recording_and_hidden_when_it_opens_again() {
+    let (mut harness, _dir, gtd_path) = app_that_stored_the_second_track_of_a_recording_as_hidden();
+
+    open_the_stored_version_of(&mut harness, &gtd_path);
+
+    assert_eq!(step_until_one_recording_is_loaded(&mut harness), 2);
+    assert_eq!(
+        visible_tracks(&harness),
+        [TrackRef::new(FileIdx::new(0), TrackIdx::new(0))],
+        "the second track opens hidden and the first one shown"
+    );
+}
+
+/// A recording the user reads from the file on disk hides the tracks its
+/// stored UI state holds, which arrives after its tracks reach the view.
+#[test]
+fn a_recording_loaded_from_disk_hides_the_tracks_stored_with_it_as_hidden() {
+    let (mut harness, _dir, gtd_path) = app_that_stored_the_second_track_of_a_recording_as_hidden();
+
+    drop_paths(&mut harness, std::slice::from_ref(&gtd_path));
+    step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
+    harness.get_by_label(LOAD_FROM_DISK_LABEL).click();
+
+    assert_eq!(step_until_one_recording_is_loaded(&mut harness), 2);
+    assert!(
+        harness
+            .step_until(|harness| visible_tracks(harness)
+                == [TrackRef::new(FileIdx::new(0), TrackIdx::new(0))]),
+        "the tracks the file on disk holds show whatever the database holds as hidden"
+    );
+}
+
+/// The app before its databases land, reading a settings file that lists the
+/// second track of the stored recording `db_ref` as hidden.
+struct AppReadingHiddenTracksFromTheSettingsFile {
+    harness: Harness<'static, App>,
+    dir: tempfile::TempDir,
+    store: gt_store::Store,
+    db_ref: gt_store::DatabaseRef,
+    databases: mpsc::Sender<OpenStorage>,
+}
+
+/// One recording of two live tracks in the history database under `store`.
+fn seed_a_two_track_recording(store: &gt_store::Store) -> gt_store::DatabaseRef {
+    let settings = crate::app::loader::stored_segmentation_from_config(
+        &gt_track_builder::SegmentationConfig::default(),
+    );
+    insert_recording_into(
+        store,
+        &two_track_gtd_bytes(),
+        &two_live_track_ranges(),
+        settings,
+    )
+}
+
+fn app_reading_hidden_tracks_from_the_settings_file(
+    write_access: WriteAccess,
+) -> AppReadingHiddenTracksFromTheSettingsFile {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path());
+    let db_ref = seed_a_two_track_recording(&store);
+
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        format!(
+            "[[ui.hidden_tracks]]\nidentity = {:?}\ngroup_name = {:?}\ntrack_numbers = [2]\n",
+            db_ref.identity, db_ref.group_name
+        ),
+    )
+    .expect("write the settings file");
+
+    let (mut harness, databases) =
+        app_with_the_databases_still_opening_reading(config_path, write_access);
+    harness.step();
+    AppReadingHiddenTracksFromTheSettingsFile {
+        harness,
+        dir,
+        store,
+        db_ref,
+        databases,
+    }
+}
+
+/// The hidden tracks of `db_ref` as this session holds them, and [`None`]
+/// where it has not read that recording's UI state.
+fn hidden_track_numbers_of(
+    harness: &Harness<'_, App>,
+    db_ref: &gt_store::DatabaseRef,
+) -> Option<BTreeSet<usize>> {
+    let state = harness.state();
+    let shared = state.shared.borrow();
+    shared.tree.hidden_track_numbers(db_ref).cloned()
+}
+
+/// The hidden tracks a settings file written before the history database held
+/// them are stored with their recording at startup, and the settings file this
+/// version writes lists none.
+#[test]
+fn the_hidden_tracks_the_settings_file_lists_are_stored_with_their_recording() {
+    let AppReadingHiddenTracksFromTheSettingsFile {
+        mut harness,
+        dir,
+        store,
+        db_ref,
+        databases,
+    } = app_reading_hidden_tracks_from_the_settings_file(WriteAccess::Owner);
+    land_the_databases(&mut harness, &databases, &store);
+
+    harness.state().history.open(db_ref.clone());
+
+    assert!(
+        harness.step_until(
+            |harness| hidden_track_numbers_of(harness, &db_ref) == Some(BTreeSet::from([2]))
+        ),
+        "the recording opened without the hidden track the settings file lists"
+    );
+    harness.state().flush_settings();
+    let written = std::fs::read_to_string(dir.path().join("config.toml"))
+        .expect("read the settings file back");
+    assert!(
+        !written.contains("hidden_tracks"),
+        "the settings file still lists hidden tracks: {written}"
+    );
+}
+
+/// A session that opened no recording history keeps the hidden tracks the
+/// settings file lists, and stores them with their recording once the user has
+/// a database open again.
+#[test]
+fn the_hidden_tracks_the_settings_file_lists_wait_for_a_recording_history() {
+    let AppReadingHiddenTracksFromTheSettingsFile {
+        mut harness,
+        dir: _dir,
+        store,
+        db_ref,
+        databases,
+    } = app_reading_hidden_tracks_from_the_settings_file(WriteAccess::Owner);
+    land_the_databases_without_a_recording_history(&mut harness, &databases);
+
+    harness
+        .state_mut()
+        .install_history_worker(crate::app::history_test_support::worker_on(
+            &store.recordings_path(),
+        ));
+    harness.state().history.open(db_ref.clone());
+
+    assert!(
+        harness.step_until(
+            |harness| hidden_track_numbers_of(harness, &db_ref) == Some(BTreeSet::from([2]))
+        ),
+        "the session that opened no recording history dropped the hidden tracks"
+    );
+}
+
+/// A read-only session stores none of them: the recording keeps the UI state
+/// the database holds, and the settings file keeps its list for a session with
+/// write access.
+#[test]
+fn a_read_only_session_stores_none_of_the_hidden_tracks_the_settings_file_lists() {
+    let AppReadingHiddenTracksFromTheSettingsFile {
+        mut harness,
+        dir,
+        store,
+        db_ref,
+        databases,
+    } = app_reading_hidden_tracks_from_the_settings_file(WriteAccess::ReadOnly);
+    land_the_databases(&mut harness, &databases, &store);
+
+    harness.state().history.open(db_ref.clone());
+
+    assert!(
+        harness.step_until(
+            |harness| hidden_track_numbers_of(harness, &db_ref) == Some(BTreeSet::new())
+        ),
+        "the read-only session stored the hidden tracks the settings file lists"
+    );
+    harness.state().flush_settings();
+    let written = std::fs::read_to_string(dir.path().join("config.toml"))
+        .expect("read the settings file back");
+    assert!(
+        written.contains("hidden_tracks"),
+        "the read-only session rewrote the settings file: {written}"
+    );
+}
+
+/// The version report covers the whole session: two recordings a newer version
+/// of GeoTrace stored UI state for raise one message between them.
+#[test]
+fn ui_state_a_newer_version_stored_raises_one_message_for_two_recordings() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path());
+    let (mut harness, databases) = app_with_the_databases_still_opening(&[]);
+    harness.step();
+    land_the_databases(&mut harness, &databases, &store);
+
+    assert_eq!(
+        harness.state().toasts.len(),
+        0,
+        "the session opened with a message about its UI state"
+    );
+
+    for group_name in ["2026-01-01T00:00:00Z_ride", "2026-01-02T00:00:00Z_ride"] {
+        harness.state().history.ui_state_versions().report_too_new(
+            &gt_store::DatabaseRef {
+                identity: "dev".to_owned(),
+                group_name: group_name.to_owned(),
+            },
+            2,
+        );
+    }
+    harness.run_steps(2);
+
+    assert_eq!(
+        harness.state().toasts.len(),
+        1,
+        "each recording raised a message of its own"
+    );
+
+    harness.run_steps(2);
+    assert_eq!(
+        harness.state().toasts.len(),
+        1,
+        "a later frame raised the message again"
+    );
+}
+
 /// The recordings one drop brought in that history already holds, as the
 /// prompt lists them.
 fn recordings_already_in_history(count: usize) -> RecordingsAlreadyInHistory {
@@ -7957,7 +8233,10 @@ fn opening_a_recording_stored_by_another_rule_raises_the_resegment_prompt(
                 identity: "auto:ride.gtd".to_owned(),
                 group_name: "2025-05-23T10:00:00Z_a1b2".to_owned(),
             },
-            result: Ok(stored),
+            result: Ok(crate::app::history_db::OpenedRecording {
+                stored,
+                ui_state: Ok(gt_store::RecordingUiState::default()),
+            }),
         });
 
     assert_eq!(harness.state().pending_resegment.is_some(), expected_prompt);

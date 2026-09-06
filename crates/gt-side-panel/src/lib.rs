@@ -1,12 +1,10 @@
 pub mod filter;
-mod hidden_tracks;
 mod render;
 mod track_columns;
 pub mod tree;
 pub mod widgets;
 
 pub use filter::{FilterPanelState, render_filter_panel};
-pub use hidden_tracks::HiddenTracksByRecording;
 pub use render::{
     EVERY_TRACK_PASSES_THE_FILTER_HOVER, ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER, PanelContext,
     RecordingDetails, SHELVE_FILTERED_DATA_LABEL, SHELVE_SELECTED_TRACKS_LABEL, SHELVE_TRACK_LABEL,

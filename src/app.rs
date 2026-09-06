@@ -38,6 +38,7 @@ mod read_only_session;
 mod recording_from_disk;
 mod recording_name_template;
 mod recording_names_cache;
+mod recording_ui_state;
 mod reference_window;
 mod settings_autosave;
 mod settings_ui;
@@ -334,6 +335,14 @@ pub struct App {
     /// Background worker that owns the history database. All reads and edits go
     /// through it so the UI thread never blocks on disk I/O.
     history: history_db::HistoryWorker,
+    /// The hidden tracks the settings file lists. An earlier version of
+    /// GeoTrace kept them there, before the history database held them.
+    /// Stored with their recordings once a database is open, and empty from
+    /// then on.
+    hidden_tracks_in_the_settings_file: Vec<recording_ui_state::HiddenTracksInTheSettingsFile>,
+    /// Whether the user was told that a newer version of GeoTrace wrote UI
+    /// state this version does not read.
+    warned_that_a_newer_version_stored_ui_state: bool,
     /// Queues and ingests interference days for loaded tracks.
     jamming: jamming::JammingScheduler,
     /// Where the receiver was over time, for the context lines whose value
@@ -488,6 +497,10 @@ impl App {
             .as_ref()
             .map(|p| crate::settings::load_settings_from(p))
             .unwrap_or_default();
+        let hidden_tracks_in_the_settings_file = config_path.as_deref().map_or_else(
+            Vec::new,
+            recording_ui_state::hidden_tracks_in_the_settings_file_at,
+        );
 
         // One-time migration: pick up `mapbox_token` and `map_layer` from the old
         // eframe storage when config.toml doesn't exist yet.
@@ -666,6 +679,8 @@ impl App {
             processing_config: SegmentationConfig::default(),
             assoc_config: AssociationConfig::default(),
             history: history_db::HistoryWorker::disabled(),
+            hidden_tracks_in_the_settings_file,
+            warned_that_a_newer_version_stored_ui_state: false,
             history_failure: None,
             storage: options.storage,
             instance_lock: options.instance_lock,
@@ -800,7 +815,6 @@ impl App {
             theme,
             recording_name_template: s.recording_name_template.clone(),
             visible_section_fraction: s.tree.visible_section_fraction().into(),
-            hidden_tracks_revision: s.tree.hidden_tracks_revision(),
             track_split_gap_seconds: self
                 .processing_config
                 .track_layout
@@ -930,6 +944,7 @@ impl App {
                 if let Some(db_ref) = history.db_ref() {
                     self.history.load_snap_runs(db_ref.clone());
                     self.history.load_attached_logs(db_ref.clone());
+                    self.read_the_ui_state_stored_with_a_loaded_recording(db_ref);
                 }
                 let track_ranges: Vec<gt_types::TimeRange> = file
                     .tracks

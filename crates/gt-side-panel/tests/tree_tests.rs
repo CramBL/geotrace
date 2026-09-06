@@ -3,7 +3,6 @@ use std::path::PathBuf;
 
 use gt_history_types::{DatabaseRef, RecordingMeta};
 use gt_loaded_files::{FileHistory, LoadedFiles};
-use gt_side_panel::HiddenTracksByRecording;
 use gt_side_panel::tree::{CheckState, NodeKey, TreeState};
 use gt_types::{
     DataCategory, FileIdx, FileMetadata, FileSource, LoadedFile, LoadedTrack, TrackIdx,
@@ -446,20 +445,22 @@ fn a_share_outside_the_region_leaves_the_visible_section_where_it_is(#[case] sha
     assert!((kept - 0.5).abs() < f32::EPSILON, "the share became {kept}");
 }
 
-/// A track hidden in a recording that history holds is remembered by its
-/// stored number, not by its position. A permanently deleted earlier track
-/// leaves a gap in that numbering, and the recording opens with the same track
-/// hidden.
+/// A track hidden in a recording that history holds is kept by its stored
+/// number, not by its position. A permanently deleted earlier track leaves a
+/// gap in that numbering, and the recording opens with the same track hidden.
 #[test]
-fn a_hidden_track_is_remembered_by_its_stored_number() {
+fn a_hidden_track_is_kept_by_its_stored_number() {
     let mut tree = TreeState::new();
     tree.sync_from_loaded_files(stored_recording(&[1, 2, 4]).view());
 
     tree.hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(2)));
-    assert_eq!(tree.hidden_tracks().track_numbers(&db_ref()), [4]);
+    assert_eq!(
+        tree.take_hidden_tracks_to_store(),
+        vec![(db_ref(), BTreeSet::from([4]))]
+    );
 
     let mut reopened = TreeState::new();
-    reopened.set_hidden_tracks(tree.hidden_tracks().clone());
+    reopened.set_hidden_tracks_of_recording(db_ref(), BTreeSet::from([4]));
     reopened.sync_from_loaded_files(stored_recording(&[1, 2, 4]).view());
 
     assert_eq!(track_check(&reopened, 0, 0), CheckState::On);
@@ -467,13 +468,45 @@ fn a_hidden_track_is_remembered_by_its_stored_number() {
     assert_eq!(track_check(&reopened, 0, 2), CheckState::Off);
 }
 
+/// The stored UI state of a recording arrives while its tracks are in the
+/// view where the user loaded that recording from disk.
 #[test]
-fn a_recording_outside_the_history_database_remembers_no_hidden_track() {
+fn stored_hidden_tracks_uncheck_the_tracks_already_in_the_view() {
+    let mut tree = TreeState::new();
+    tree.sync_from_loaded_files(stored_recording(&[1, 2, 3]).view());
+
+    tree.set_hidden_tracks_of_recording(db_ref(), BTreeSet::from([2]));
+
+    assert_eq!(track_check(&tree, 0, 0), CheckState::On);
+    assert_eq!(track_check(&tree, 0, 1), CheckState::Off);
+    assert_eq!(track_check(&tree, 0, 2), CheckState::On);
+    assert_eq!(file_check(&tree, 0), CheckState::Mixed);
+    assert!(
+        tree.take_hidden_tracks_to_store().is_empty(),
+        "the tracks the database holds as hidden are written back to it"
+    );
+}
+
+#[test]
+fn a_recording_outside_the_history_database_stores_no_hidden_track() {
     let mut tree = make_tree(1, 2);
 
     tree.hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(0)));
 
-    assert!(tree.hidden_tracks().is_empty());
+    assert!(tree.take_hidden_tracks_to_store().is_empty());
+}
+
+#[test]
+fn hiding_a_track_before_the_stored_ui_state_arrives_stores_that_track() {
+    let mut tree = TreeState::new();
+    tree.sync_from_loaded_files(stored_recording(&[1, 2]).view());
+
+    tree.hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(0)));
+
+    assert_eq!(
+        tree.take_hidden_tracks_to_store(),
+        vec![(db_ref(), BTreeSet::from([1]))]
+    );
 }
 
 #[test]
@@ -481,47 +514,59 @@ fn removing_a_recording_from_the_view_keeps_its_hidden_tracks() {
     let mut tree = TreeState::new();
     tree.sync_from_loaded_files(stored_recording(&[1, 2]).view());
     tree.hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(1)));
+    tree.take_hidden_tracks_to_store();
 
     tree.sync_from_loaded_files(LoadedFiles::new().view());
 
-    assert_eq!(tree.hidden_tracks().track_numbers(&db_ref()), [2]);
+    assert_eq!(
+        tree.hidden_track_numbers(&db_ref()),
+        Some(&BTreeSet::from([2]))
+    );
+    assert!(tree.take_hidden_tracks_to_store().is_empty());
 }
 
-/// A remembered number the recording no longer holds - from a shelve or a
-/// permanent delete - stays remembered. Every track of the recording shows
-/// until that number comes back.
+/// A stored number the recording no longer holds - from a shelve or a
+/// permanent delete - stays stored. Every track of the recording shows until
+/// that number comes back.
 #[test]
-fn a_remembered_track_the_recording_no_longer_has_stays_remembered() {
-    let mut hidden = HiddenTracksByRecording::default();
-    hidden.record(&db_ref(), BTreeSet::from([2, 7]));
+fn a_stored_track_the_recording_no_longer_has_stays_stored() {
     let mut tree = TreeState::new();
-    tree.set_hidden_tracks(hidden);
+    tree.set_hidden_tracks_of_recording(db_ref(), BTreeSet::from([2, 7]));
 
     tree.sync_from_loaded_files(stored_recording(&[1, 2, 3]).view());
 
     assert_eq!(track_check(&tree, 0, 0), CheckState::On);
     assert_eq!(track_check(&tree, 0, 1), CheckState::Off);
     assert_eq!(track_check(&tree, 0, 2), CheckState::On);
-    assert_eq!(tree.hidden_tracks().track_numbers(&db_ref()), [2, 7]);
+    assert_eq!(
+        tree.hidden_track_numbers(&db_ref()),
+        Some(&BTreeSet::from([2, 7]))
+    );
+    assert!(tree.take_hidden_tracks_to_store().is_empty());
 }
 
-/// The remembered numbers address other stretches of a re-segmented
-/// recording. Re-segmentation numbers its tracks over new boundaries.
+/// The stored numbers address other stretches of a re-segmented recording.
+/// Re-segmentation numbers its tracks over new boundaries.
 #[test]
-fn resegmenting_a_recording_forgets_its_hidden_tracks() {
+fn resegmenting_a_recording_stores_it_without_a_hidden_track() {
     let mut tree = TreeState::new();
     tree.sync_from_loaded_files(stored_recording(&[1, 2]).view());
     tree.hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(1)));
+    tree.take_hidden_tracks_to_store();
 
     tree.reset_for_resegmented_files(stored_recording(&[1, 2, 3]).view());
 
-    assert!(tree.hidden_tracks().is_empty());
+    assert_eq!(
+        tree.take_hidden_tracks_to_store(),
+        vec![(db_ref(), BTreeSet::new())]
+    );
+    assert_eq!(tree.hidden_track_numbers(&db_ref()), None);
 }
 
-/// Two loaded files of one recording write one entry, from the later of the
+/// Two loaded files of one recording leave one entry, from the later of the
 /// two in tree order.
 #[test]
-fn one_recording_loaded_twice_remembers_the_later_files_hidden_tracks() {
+fn one_recording_loaded_twice_stores_the_later_files_hidden_tracks() {
     let mut loaded = stored_recording(&[1, 2]);
     loaded.push(
         make_loaded_file("ride.gtd".to_owned(), &[1, 2]),
@@ -533,5 +578,8 @@ fn one_recording_loaded_twice_remembers_the_later_files_hidden_tracks() {
     tree.hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(0)));
     tree.hide_track(TrackRef::new(FileIdx::new(1), TrackIdx::new(1)));
 
-    assert_eq!(tree.hidden_tracks().track_numbers(&db_ref()), [2]);
+    assert_eq!(
+        tree.take_hidden_tracks_to_store(),
+        vec![(db_ref(), BTreeSet::from([2]))]
+    );
 }
