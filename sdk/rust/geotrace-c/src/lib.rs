@@ -44,7 +44,10 @@ pub use channel::{GtdChannel, GtdChannelUnitMode};
 pub use constellation::GtdConstellation;
 pub use error::GtdStatus;
 pub use icon::GtdMarkerIcon;
-pub use nav_file::{GtdChannelInfo, GtdEventMarkerInfo, GtdNavFile, GtdNavPointInfo};
+pub use nav_file::{
+    GtdChannelInfo, GtdEventMarkerInfo, GtdEventMarkerStyleInfo, GtdMarkerInfo, GtdNavFile,
+    GtdNavPointInfo,
+};
 pub use optf32::GtdOptF32;
 pub use optf64::GtdOptF64;
 pub use satellite::GtdSatellite;

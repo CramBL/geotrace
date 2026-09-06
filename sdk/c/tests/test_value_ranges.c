@@ -1,8 +1,7 @@
 #include "../geotrace.h"
+#include "test_helpers.h"
 #include <criterion/criterion.h>
 #include <math.h>
-
-#define assert_near(a, b, eps) cr_assert(fabs((a) - (b)) < (eps))
 
 #ifdef GTD_OUT_OF_RANGE_FIXTURE_PATH
 Test(value_ranges, out_of_range_coordinates_read_verbatim) {

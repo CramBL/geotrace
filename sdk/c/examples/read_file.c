@@ -32,6 +32,45 @@ static void print_nav_points(const GtdNavFile *file) {
     }
 }
 
+static void print_markers(const GtdNavFile *file) {
+    size_t count = gtd_nav_file_marker_count(file);
+    if (count == 0) {
+        return;
+    }
+
+    printf("Markers: %zu\n", count);
+    for (size_t i = 0; i < count; i++) {
+        GtdMarkerInfo marker;
+        if (gtd_nav_file_get_marker(file, i, &marker) != GTD_OK) {
+            continue;
+        }
+        printf("  [%zu] lat=%.6f lon=%.6f icon=%u", i, marker.lat_deg, marker.lon_deg,
+               marker.icon_code);
+        if (marker.has_label) {
+            printf(" - %s", marker.label);
+        }
+        printf("\n");
+    }
+}
+
+static void print_event_marker_styles(const GtdNavFile *file) {
+    size_t count = gtd_nav_file_event_marker_style_count(file);
+    if (count == 0) {
+        return;
+    }
+
+    printf("Event marker styles: %zu\n", count);
+    for (size_t i = 0; i < count; i++) {
+        GtdEventMarkerStyleInfo style;
+        if (gtd_nav_file_get_event_marker_style(file, i, &style) != GTD_OK) {
+            continue;
+        }
+        const char *icon = style.icon_name[0] == '\0' ? "auto" : style.icon_name;
+        const char *color = style.has_color ? style.color_hex : "auto";
+        printf("  [%zu] %s icon=%s color=%s\n", i, style.variant_path, icon, color);
+    }
+}
+
 static void print_event_markers(const GtdNavFile *file) {
     size_t count = gtd_nav_file_event_marker_count(file);
     if (count == 0) {
@@ -76,7 +115,9 @@ int main(int argc, char **argv) {
     }
 
     print_nav_points(file);
+    print_markers(file);
     print_event_markers(file);
+    print_event_marker_styles(file);
 
     gtd_nav_file_destroy(file);
     return 0;

@@ -2,9 +2,11 @@
 
 mod channel;
 mod event_marker;
+mod marker;
 mod metadata;
 mod nav_point;
 mod read;
+mod style;
 mod write;
 
 use std::ffi::{CString, c_char};
@@ -16,7 +18,9 @@ use crate::timestamp;
 
 pub use channel::GtdChannelInfo;
 pub use event_marker::GtdEventMarkerInfo;
+pub use marker::GtdMarkerInfo;
 pub use nav_point::GtdNavPointInfo;
+pub use style::GtdEventMarkerStyleInfo;
 
 /// Opaque handle for a parsed or freshly-built navigation file.
 pub struct GtdNavFile {

@@ -26,6 +26,8 @@ Test(null_guards, builder_null) {
 Test(null_guards, nav_file_null) {
     cr_assert_eq(gtd_nav_file_nav_point_count(NULL), 0);
     cr_assert_eq(gtd_nav_file_event_marker_count(NULL), 0);
+    cr_assert_eq(gtd_nav_file_marker_count(NULL), 0);
+    cr_assert_eq(gtd_nav_file_event_marker_style_count(NULL), 0);
     cr_assert_null(gtd_nav_file_title(NULL));
     cr_assert_null(gtd_nav_file_device(NULL));
     cr_assert_null(gtd_nav_file_notes(NULL));
@@ -38,8 +40,14 @@ Test(null_guards, nav_file_null) {
     GtdSatInfo satellite;
     cr_assert_eq(gtd_nav_file_get_satellite(NULL, 0, 0, &satellite), GTD_ERR_NULL_ARGUMENT);
 
-    GtdEventMarkerInfo marker;
-    cr_assert_eq(gtd_nav_file_get_event_marker(NULL, 0, &marker), GTD_ERR_NULL_ARGUMENT);
+    GtdEventMarkerInfo event_marker;
+    cr_assert_eq(gtd_nav_file_get_event_marker(NULL, 0, &event_marker), GTD_ERR_NULL_ARGUMENT);
+
+    GtdMarkerInfo marker;
+    cr_assert_eq(gtd_nav_file_get_marker(NULL, 0, &marker), GTD_ERR_NULL_ARGUMENT);
+
+    GtdEventMarkerStyleInfo style;
+    cr_assert_eq(gtd_nav_file_get_event_marker_style(NULL, 0, &style), GTD_ERR_NULL_ARGUMENT);
 
     GtdChannelInfo channel;
     cr_assert_eq(gtd_nav_file_get_channel(NULL, 0, &channel), GTD_ERR_NULL_ARGUMENT);

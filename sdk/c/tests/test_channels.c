@@ -1,11 +1,9 @@
 #include "../geotrace.h"
+#include "test_helpers.h"
 #include <criterion/criterion.h>
-#include <math.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
-
-#define assert_near(a, b, eps) cr_assert(fabs((a) - (b)) < (eps))
 
 typedef struct {
     const char *name;
