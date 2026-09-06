@@ -221,39 +221,60 @@ def _lint_comments(engine: Engine, root: Path, path: str) -> list[Alert]:
     return parse_alerts(output, where=path)
 
 
+# Per commit: short hash, tab, the whole message, NUL.
+_COMMIT_RECORD_FORMAT = "%h%x09%B%x00"
+
+
 @dataclass(frozen=True)
 class Commit:
-    """One commit of the range, by its short hash and subject."""
+    """One commit of the range, by its short hash and its whole message."""
 
     hash: str
-    subject: str
+    message: str
+
+    @property
+    def subject(self) -> str:
+        return self.message.partition("\n")[0]
+
+    def message_to_lint(self) -> str:
+        """The part of this commit's message that lands on the branch.
+
+        Under an `amend!` subject, linting starts at the replacement subject line:
+        `git rebase --autosquash` writes that message over the target's, and
+        `GeoTrace.CommitSubject` matches only at the start of the text vale reads.
+        Under a `squash!` subject, the generated line goes blank and the appended
+        body keeps the line numbers it has in this commit.
+        """
+        if self.subject.startswith("amend! "):
+            return self.message.partition("\n\n")[2]
+        if self.subject.startswith("squash! "):
+            _, newline, body = self.message.partition("\n")
+            return newline + body
+        return self.message
 
 
 def commits_in(root: Path, revision_range: str) -> list[Commit]:
-    """The commits of `revision_range`, without the merge, `fixup!`, `squash!` and
-    `amend!` commits: git and GitHub generate those subjects."""
+    """The commits of `revision_range`, without the merges and the `fixup!` commits:
+    `git rebase --autosquash` discards a `fixup!` message whole and no line of it
+    lands on the branch."""
     output = _git(
         root,
-        [
-            "log",
-            "--no-merges",
-            "--extended-regexp",
-            "--invert-grep",
-            "--grep=^(fixup|squash|amend)! ",
-            "--format=%h%x09%s",
-            revision_range,
-        ],
+        ["log", "--no-merges", f"--format={_COMMIT_RECORD_FORMAT}", revision_range],
     )
     found = []
-    for line in output.splitlines():
-        if line:
-            short_hash, _, subject = line.partition("\t")
-            found.append(Commit(short_hash, subject))
+    # The filter reads the subject here: `git log --grep` matches a body line too,
+    # and a body may quote a `fixup!` subject.
+    for record in output.split("\0"):
+        short_hash, tab, message = record.lstrip("\n").partition("\t")
+        if tab and not message.startswith("fixup! "):
+            found.append(Commit(short_hash, message))
     return found
 
 
 def _lint_commit(engine: Engine, root: Path, commit: Commit) -> list[Alert]:
-    message = _git(root, ["log", "-1", "--format=%B", commit.hash])
+    message = commit.message_to_lint()
+    if not message.strip():
+        return []
     output = _run_vale(
         engine, root, ["--no-exit", "--output=JSON", "--ext=.commit"], stdin=message
     )
