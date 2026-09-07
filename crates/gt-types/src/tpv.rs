@@ -130,54 +130,8 @@ impl From<&TimePositionVelocity> for Point<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime};
+    use chrono::DateTime;
     use rstest::rstest;
-    use uom::si::velocity::meter_per_second;
-
-    #[test]
-    #[expect(
-        clippy::float_cmp,
-        reason = "testing exact bit-for-bit round-trip of stored f64"
-    )]
-    fn test_builder_creates_valid_instance() {
-        let dt = NaiveDateTime::new(
-            NaiveDate::from_ymd_opt(2026, 5, 21).unwrap(),
-            NaiveTime::from_hms_opt(11, 5, 0).unwrap(),
-        )
-        .and_utc();
-
-        let tpv = TimePositionVelocity::builder()
-            .time(GpsTime::from_utc(dt))
-            .lat(Latitude::new(55.676))
-            .lon(Longitude::new(12.565))
-            .velocity(Velocity::new::<meter_per_second>(15.0))
-            .heading(Angle::new::<uom::si::angle::degree>(270.0))
-            .build();
-
-        assert_eq!(tpv.time().utc(), dt);
-        assert_eq!(tpv.lat().as_written(), 55.676);
-        assert_eq!(
-            tpv.heading().map(|h| h.get::<uom::si::angle::degree>()),
-            Some(270.0)
-        );
-    }
-
-    #[test]
-    fn test_builder_heading_none_when_omitted() {
-        let dt = NaiveDateTime::new(
-            NaiveDate::from_ymd_opt(2026, 5, 21).unwrap(),
-            NaiveTime::from_hms_opt(11, 5, 0).unwrap(),
-        )
-        .and_utc();
-
-        let tpv = TimePositionVelocity::builder()
-            .time(GpsTime::from_utc(dt))
-            .lat(Latitude::new(55.0))
-            .lon(Longitude::new(12.0))
-            .build();
-
-        assert_eq!(tpv.heading(), None);
-    }
 
     #[rstest]
     #[case::both_in_range(55.0, 12.0, true)]

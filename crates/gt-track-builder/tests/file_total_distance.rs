@@ -5,13 +5,10 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, Utc};
 use gt_track_builder::{FileMeta, SegmentationConfig, segment};
-use gt_types::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
+use gt_types::coordinates::{Latitude, Longitude};
+use gt_types::fixtures::{self, FixKind};
 use gt_types::nav_point::NavPoint;
-use gt_types::time_types::GpsTime;
-use gt_types::tpv::TimePositionVelocity;
 use gt_types::track::{FileSource, TotalDistance};
-use uom::si::angle::degree;
-use uom::si::f64::Angle;
 use uom::si::length::meter;
 
 const LATITUDE_DEGREES: f64 = 55.0;
@@ -22,16 +19,13 @@ const LAST_LONGITUDE_DEGREES: f64 = 12.002;
 /// haversine round trip.
 const METERS_TOLERANCE: f64 = 0.001;
 
-fn fix(seconds: i64, latitude: RecordedLatitude, longitude: RecordedLongitude) -> NavPoint {
-    let tpv = TimePositionVelocity::builder()
-        .time(GpsTime::from_utc(
-            DateTime::<Utc>::UNIX_EPOCH + Duration::seconds(seconds),
-        ))
-        .lat(latitude)
-        .lon(longitude)
-        .heading(Angle::new::<degree>(90.0))
-        .build();
-    NavPoint::new(tpv, None)
+fn fix(seconds: i64, longitude: Longitude, kind: FixKind) -> NavPoint {
+    fixtures::nav_point(
+        DateTime::<Utc>::UNIX_EPOCH + Duration::seconds(seconds),
+        Latitude::new(LATITUDE_DEGREES),
+        longitude,
+        kind,
+    )
 }
 
 fn total_distance_of(points: &[NavPoint]) -> TotalDistance {
@@ -57,8 +51,8 @@ fn a_recording_whose_only_track_has_no_geometry_measures_no_distance() {
         .map(|seconds| {
             fix(
                 seconds,
-                RecordedLatitude::from_degrees(91.0),
-                Longitude::new(FIRST_LONGITUDE_DEGREES).into(),
+                Longitude::new(FIRST_LONGITUDE_DEGREES),
+                FixKind::WithoutAPosition,
             )
         })
         .collect();
@@ -71,13 +65,13 @@ fn a_recording_of_one_measured_track_reports_the_length_of_its_polyline() {
     let points = vec![
         fix(
             0,
-            Latitude::new(LATITUDE_DEGREES).into(),
-            Longitude::new(FIRST_LONGITUDE_DEGREES).into(),
+            Longitude::new(FIRST_LONGITUDE_DEGREES),
+            FixKind::Measured,
         ),
         fix(
             10,
-            Latitude::new(LATITUDE_DEGREES).into(),
-            Longitude::new(LAST_LONGITUDE_DEGREES).into(),
+            Longitude::new(LAST_LONGITUDE_DEGREES),
+            FixKind::Measured,
         ),
     ];
 

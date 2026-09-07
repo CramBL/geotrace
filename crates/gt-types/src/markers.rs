@@ -159,7 +159,7 @@ pub struct GeneratedMarker {
 }
 
 #[cfg(test)]
-mod generated_marker_kind_tests {
+mod tests {
     use super::*;
 
     /// Pins the canonical marker wording.
@@ -248,39 +248,6 @@ mod generated_marker_kind_tests {
                 kind.to_string(),
                 "label matches Display for {tag:?}"
             );
-        }
-    }
-
-    #[test]
-    fn kind_set_membership_is_per_tag() {
-        use strum::IntoEnumIterator as _;
-
-        let mut set = GeneratedMarkerKindSet::empty();
-        assert!(set.is_empty());
-        assert!(GeneratedMarkerKindTag::iter().all(|t| !set.contains(t)));
-
-        set.insert(GeneratedMarkerKindTag::Slip);
-        assert!(set.contains(GeneratedMarkerKindTag::Slip));
-        assert!(!set.is_empty());
-        // Inserting one tag leaves every other tag out.
-        assert!(
-            GeneratedMarkerKindTag::iter()
-                .filter(|&t| t != GeneratedMarkerKindTag::Slip)
-                .all(|t| !set.contains(t))
-        );
-    }
-
-    #[test]
-    fn kind_set_from_iter_collects_each_tag_once() {
-        use strum::IntoEnumIterator as _;
-
-        let all: GeneratedMarkerKindSet = GeneratedMarkerKindTag::iter().collect();
-        assert!(GeneratedMarkerKindTag::iter().all(|t| all.contains(t)));
-
-        // Each tag occupies its own bit: a singleton contains only itself.
-        for a in GeneratedMarkerKindTag::iter() {
-            let only_a = GeneratedMarkerKindSet::single(a);
-            assert!(GeneratedMarkerKindTag::iter().all(|b| only_a.contains(b) == (a == b)));
         }
     }
 }

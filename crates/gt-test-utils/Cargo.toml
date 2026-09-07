@@ -6,6 +6,9 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[lib]
+doctest = false
+
 [features]
 default = ["tracks"]
 archive = ["dep:gt-hdf5-archive", "dep:hdf5"]

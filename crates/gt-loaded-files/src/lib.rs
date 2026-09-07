@@ -8,6 +8,7 @@ use gt_types::{
 };
 
 mod recording_names;
+mod test_util;
 
 pub use recording_names::RecordingNames;
 
@@ -465,25 +466,16 @@ impl<'a> IntoIterator for &'a mut LoadedFiles {
 mod tests {
     use rstest::rstest;
 
-    use rustc_hash::FxHashMap;
-
-    use super::{DatabaseRef, FileHistory, LoadedFiles, RecordingMeta, display_identity};
-    use gt_types::LoadedFile;
-
-    fn meta() -> RecordingMeta {
-        RecordingMeta {
-            time_range: None,
-            nav_point_count: 0,
-            sat_report_count: 0,
-            marker_count: 0,
-            event_marker_count: 0,
-            gtd_size_bytes: 0,
-        }
-    }
+    use super::{DatabaseRef, FileHistory, LoadedFiles};
+    use crate::test_util;
 
     #[test]
     fn identity_is_some_for_recordings_and_none_otherwise() {
-        let recording = FileHistory::recording("auto:ride.gtd".to_owned(), meta(), None);
+        let recording = FileHistory::recording(
+            "auto:ride.gtd".to_owned(),
+            test_util::empty_recording_meta(),
+            None,
+        );
         assert_eq!(recording.identity(), Some("auto:ride.gtd"));
         assert_eq!(FileHistory::None.identity(), None);
     }
@@ -491,21 +483,13 @@ mod tests {
     #[test]
     fn display_identity_strips_auto_prefix() {
         assert_eq!(
-            display_identity("auto:Morning ride"),
+            super::display_identity("auto:Morning ride"),
             ("Morning ride", true)
         );
-        assert_eq!(display_identity("explicit-id"), ("explicit-id", false));
-    }
-
-    fn empty_file() -> LoadedFile {
-        LoadedFile {
-            metadata: gt_test_utils::empty_file_metadata(),
-            tracks: Vec::new(),
-            event_marker_styles: FxHashMap::default(),
-            orphaned_event_markers: Vec::new(),
-            source: gt_types::FileSource::GtdPath(std::path::PathBuf::new()),
-            load_warnings: Vec::new(),
-        }
+        assert_eq!(
+            super::display_identity("explicit-id"),
+            ("explicit-id", false)
+        );
     }
 
     /// An id must name the same file for as long as it stays loaded, and must
@@ -514,12 +498,12 @@ mod tests {
     #[test]
     fn a_file_keeps_its_id_when_an_earlier_file_is_removed() {
         let mut files = LoadedFiles::new();
-        files.push(empty_file(), FileHistory::None);
-        files.push(empty_file(), FileHistory::None);
+        files.push(test_util::empty_file(), FileHistory::None);
+        files.push(test_util::empty_file(), FileHistory::None);
         let second = files.view().get(1).map(|entry| entry.id());
 
         files.remove_file(0);
-        files.push(empty_file(), FileHistory::None);
+        files.push(test_util::empty_file(), FileHistory::None);
 
         assert_eq!(files.view().get(0).map(|entry| entry.id()), second);
         assert_ne!(
@@ -539,7 +523,7 @@ mod tests {
         #[case] tracks: &[(i64, usize)],
         #[case] expected_seconds: &[i64],
     ) {
-        let mut file = empty_file();
+        let mut file = test_util::empty_file();
         file.tracks = tracks
             .iter()
             .map(|(first_second, count)| {
@@ -573,7 +557,7 @@ mod tests {
     /// generation. A cache over the files compares generations to skip
     /// recomputing while nothing changed.
     #[rstest]
-    #[case::push(|files: &mut LoadedFiles| files.push(empty_file(), FileHistory::None))]
+    #[case::push(|files: &mut LoadedFiles| files.push(test_util::empty_file(), FileHistory::None))]
     #[case::remove_file(|files: &mut LoadedFiles| {
         assert!(files.remove_file(0).is_some());
     })]
@@ -596,7 +580,7 @@ mod tests {
     #[case::index_mut(|files: &mut LoadedFiles| files[0].tracks.clear())]
     fn every_mutation_takes_a_new_generation(#[case] mutate: fn(&mut LoadedFiles)) {
         let mut files = LoadedFiles::new();
-        files.push(empty_file(), FileHistory::None);
+        files.push(test_util::empty_file(), FileHistory::None);
         let before = files.generation();
 
         mutate(&mut files);
@@ -607,7 +591,7 @@ mod tests {
     #[test]
     fn removing_a_file_that_is_not_loaded_keeps_the_generation() {
         let mut files = LoadedFiles::new();
-        files.push(empty_file(), FileHistory::None);
+        files.push(test_util::empty_file(), FileHistory::None);
         let before = files.generation();
 
         assert!(files.remove_file(1).is_none());
@@ -619,10 +603,10 @@ mod tests {
     fn rename_identity_repoints_matching_loaded_recordings() {
         let mut files = LoadedFiles::new();
         files.push(
-            empty_file(),
+            test_util::empty_file(),
             FileHistory::recording(
                 "auto:old".to_owned(),
-                meta(),
+                test_util::empty_recording_meta(),
                 Some(DatabaseRef {
                     identity: "auto:old".to_owned(),
                     group_name: "rec0".to_owned(),
@@ -631,8 +615,8 @@ mod tests {
         );
         // A different identity, left untouched.
         files.push(
-            empty_file(),
-            FileHistory::recording("other".to_owned(), meta(), None),
+            test_util::empty_file(),
+            FileHistory::recording("other".to_owned(), test_util::empty_recording_meta(), None),
         );
 
         files.rename_identity("auto:old", "Trip");

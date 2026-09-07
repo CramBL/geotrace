@@ -426,293 +426,258 @@ impl Satellites {
 }
 
 #[cfg(test)]
-mod constellation_tests {
+mod tests {
     use super::*;
 
-    /// The persisted names for each constellation. Pinned so a rename or a
-    /// reorder cannot silently invalidate saved settings that list folded
-    /// constellations by name.
-    #[test]
-    fn constellation_wire_names_are_stable() {
-        use serde::Deserialize as _;
-        use serde::de::IntoDeserializer as _;
-        use serde::de::value::{Error as DeError, StrDeserializer};
-        use strum::EnumCount as _;
+    mod constellation {
+        use super::*;
 
-        let expected = [
-            (Constellation::Gps, "gps"),
-            (Constellation::Glonass, "glonass"),
-            (Constellation::Galileo, "galileo"),
-            (Constellation::Beidou, "beidou"),
-            (Constellation::Navic, "navic"),
-            (Constellation::Qzss, "qzss"),
-        ];
-        assert_eq!(expected.len(), Constellation::COUNT);
-        for (constellation, wire) in expected {
-            let de: StrDeserializer<'_, DeError> = wire.into_deserializer();
-            assert_eq!(
-                Constellation::deserialize(de),
-                Ok(constellation),
-                "deserializing {wire:?}"
+        /// The persisted names for each constellation. Pinned so a rename or a
+        /// reorder cannot silently invalidate saved settings that list folded
+        /// constellations by name.
+        #[test]
+        fn constellation_wire_names_are_stable() {
+            use serde::Deserialize as _;
+            use serde::de::IntoDeserializer as _;
+            use serde::de::value::{Error as DeError, StrDeserializer};
+            use strum::EnumCount as _;
+
+            let expected = [
+                (Constellation::Gps, "gps"),
+                (Constellation::Glonass, "glonass"),
+                (Constellation::Galileo, "galileo"),
+                (Constellation::Beidou, "beidou"),
+                (Constellation::Navic, "navic"),
+                (Constellation::Qzss, "qzss"),
+            ];
+            assert_eq!(expected.len(), Constellation::COUNT);
+            for (constellation, wire) in expected {
+                let de: StrDeserializer<'_, DeError> = wire.into_deserializer();
+                assert_eq!(
+                    Constellation::deserialize(de),
+                    Ok(constellation),
+                    "deserializing {wire:?}"
+                );
+            }
+        }
+
+        /// Pins the canonical constellation display spelling. Keep in sync with
+        /// `geotrace_sdk::Constellation::display_name`'s identical assertions.
+        #[test]
+        fn display_name_is_canonical_spelling() {
+            use strum::EnumCount;
+            let expected = [
+                (Constellation::Gps, "GPS"),
+                (Constellation::Glonass, "GLONASS"),
+                (Constellation::Galileo, "Galileo"),
+                (Constellation::Beidou, "BeiDou"),
+                (Constellation::Navic, "NavIC"),
+                (Constellation::Qzss, "QZSS"),
+            ];
+            // Length-vs-COUNT guard: a new variant without a name entry fails here.
+            assert_eq!(expected.len(), Constellation::COUNT);
+            for (c, name) in expected {
+                assert_eq!(c.display_name(), name);
+            }
+        }
+
+        /// Single source of truth for RINEX PRN prefixes, COUNT-guarded like
+        /// `display_name_is_canonical_spelling`.
+        #[test]
+        fn prn_prefix_is_canonical() {
+            use strum::EnumCount;
+            let expected = [
+                (Constellation::Gps, "G"),
+                (Constellation::Glonass, "R"),
+                (Constellation::Galileo, "E"),
+                (Constellation::Beidou, "C"),
+                (Constellation::Navic, "I"),
+                (Constellation::Qzss, "J"),
+            ];
+            assert_eq!(expected.len(), Constellation::COUNT);
+            for (c, prefix) in expected {
+                assert_eq!(c.prn_prefix(), prefix);
+            }
+        }
+
+        #[test]
+        fn slip_cause_label_is_canonical() {
+            use strum::{EnumCount, IntoEnumIterator};
+            let expected = [
+                (SlipCause::LostLock, "lost lock"),
+                (SlipCause::SnrDrop, "SNR drop"),
+            ];
+            assert_eq!(expected.len(), SlipCause::COUNT);
+            for (cause, label) in expected {
+                assert_eq!(cause.label(), label);
+            }
+            // Every cause has a non-empty label.
+            assert!(
+                SlipCause::iter()
+                    .map(SlipCause::label)
+                    .all(|l| !l.is_empty())
             );
         }
     }
 
-    /// Pins the canonical constellation display spelling. Keep in sync with
-    /// `geotrace_sdk::Constellation::display_name`'s identical assertions.
-    #[test]
-    fn display_name_is_canonical_spelling() {
-        use strum::EnumCount;
-        let expected = [
-            (Constellation::Gps, "GPS"),
-            (Constellation::Glonass, "GLONASS"),
-            (Constellation::Galileo, "Galileo"),
-            (Constellation::Beidou, "BeiDou"),
-            (Constellation::Navic, "NavIC"),
-            (Constellation::Qzss, "QZSS"),
-        ];
-        // Length-vs-COUNT guard: a new variant without a name entry fails here.
-        assert_eq!(expected.len(), Constellation::COUNT);
-        for (c, name) in expected {
-            assert_eq!(c.display_name(), name);
+    mod snr {
+        use rstest::rstest;
+
+        use super::{Constellation, NO_DATA_SENTINEL_DB_HZ, Satellite, SignalQuality, Snr};
+
+        #[rstest]
+        #[case::excellent(44.0, SignalQuality::Excellent)]
+        #[case::at_the_excellent_threshold(40.0, SignalQuality::Excellent)]
+        #[case::good(37.0, SignalQuality::Good)]
+        #[case::moderate(32.0, SignalQuality::Moderate)]
+        #[case::weak(27.0, SignalQuality::Weak)]
+        #[case::very_weak(10.0, SignalQuality::VeryWeak)]
+        #[case::zero_is_a_measurement(0.0, SignalQuality::VeryWeak)]
+        #[case::the_no_data_value(99.0, SignalQuality::NoDataSentinel)]
+        #[case::inside_the_no_data_band(99.4, SignalQuality::NoDataSentinel)]
+        #[case::just_below_the_no_data_band(98.5, SignalQuality::Excellent)]
+        #[case::just_above_the_no_data_band(99.5, SignalQuality::Excellent)]
+        fn quality_classifies_a_reading(#[case] snr_db: f32, #[case] expected: SignalQuality) {
+            assert_eq!(Snr::new(snr_db).quality(), expected);
+        }
+
+        #[rstest]
+        #[case::the_no_data_value(NO_DATA_SENTINEL_DB_HZ, None)]
+        #[case::a_measurement(40.0, Some(40.0))]
+        fn measured_snr_drops_the_no_data_value(
+            #[case] snr_db: f32,
+            #[case] expected_db: Option<f32>,
+        ) {
+            let satellite = Satellite::new(Constellation::Gps, 7, None, None, Some(snr_db), false);
+
+            assert_eq!(satellite.measured_snr().map(Snr::value), expected_db);
+            assert_eq!(satellite.snr().map(Snr::value), Some(snr_db));
         }
     }
 
-    /// Single source of truth for RINEX PRN prefixes, COUNT-guarded like
-    /// `display_name_is_canonical_spelling`.
-    #[test]
-    fn prn_prefix_is_canonical() {
-        use strum::EnumCount;
-        let expected = [
-            (Constellation::Gps, "G"),
-            (Constellation::Glonass, "R"),
-            (Constellation::Galileo, "E"),
-            (Constellation::Beidou, "C"),
-            (Constellation::Navic, "I"),
-            (Constellation::Qzss, "J"),
-        ];
-        assert_eq!(expected.len(), Constellation::COUNT);
-        for (c, prefix) in expected {
-            assert_eq!(c.prn_prefix(), prefix);
-        }
-    }
+    mod satellite {
+        use rstest::rstest;
 
-    #[test]
-    fn constellation_set_membership() {
-        use strum::IntoEnumIterator;
+        use super::{Constellation, NO_DATA_SENTINEL_DB_HZ, Satellite};
 
-        let empty = ConstellationSet::empty();
-        assert!(empty.is_empty());
-        assert!(Constellation::iter().all(|c| !empty.contains(c)));
+        const PRN: u32 = 7;
 
-        let one = ConstellationSet::single(Constellation::Galileo);
-        assert!(!one.is_empty());
-        for c in Constellation::iter() {
-            assert_eq!(one.contains(c), c == Constellation::Galileo);
+        const FIRST_ELEVATION_DEG: f32 = 40.0;
+
+        const FIRST_AZIMUTH_DEG: f32 = 90.0;
+
+        const SECOND_ELEVATION_DEG: f32 = 10.0;
+
+        const SECOND_AZIMUTH_DEG: f32 = 200.0;
+
+        fn row_with_snr(snr_db: Option<f32>) -> Satellite {
+            Satellite::new(Constellation::Gps, PRN, None, None, snr_db, false)
         }
 
-        let two = one.with(Constellation::Gps);
-        assert!(two.contains(Constellation::Gps));
-        assert!(two.contains(Constellation::Galileo));
-        assert!(!two.contains(Constellation::Beidou));
-
-        let mut built = ConstellationSet::empty();
-        built.insert(Constellation::Gps);
-        built.insert(Constellation::Gps);
-        assert_eq!(built, ConstellationSet::single(Constellation::Gps));
-
-        built.set(Constellation::Galileo, true);
-        assert!(built.contains(Constellation::Galileo));
-        built.set(Constellation::Gps, false);
-        assert!(!built.contains(Constellation::Gps));
-        built.remove(Constellation::Galileo);
-        assert!(built.is_empty());
-
-        assert_eq!(
-            ConstellationSet::single(Constellation::Gps)
-                .union(ConstellationSet::single(Constellation::Galileo)),
-            two
-        );
-
-        let all = ConstellationSet::all();
-        assert!(Constellation::iter().all(|c| all.contains(c)));
-    }
-
-    #[test]
-    fn slip_cause_label_is_canonical() {
-        use strum::{EnumCount, IntoEnumIterator};
-        let expected = [
-            (SlipCause::LostLock, "lost lock"),
-            (SlipCause::SnrDrop, "SNR drop"),
-        ];
-        assert_eq!(expected.len(), SlipCause::COUNT);
-        for (cause, label) in expected {
-            assert_eq!(cause.label(), label);
+        fn row_with_geometry(elevation_deg: Option<f32>, azimuth_deg: Option<f32>) -> Satellite {
+            Satellite::new(
+                Constellation::Gps,
+                PRN,
+                elevation_deg,
+                azimuth_deg,
+                None,
+                false,
+            )
         }
-        // Every cause has a non-empty label.
-        assert!(
-            SlipCause::iter()
-                .map(SlipCause::label)
-                .all(|l| !l.is_empty())
-        );
-    }
-}
 
-#[cfg(test)]
-mod snr_tests {
-    use rstest::rstest;
-
-    use super::{Constellation, NO_DATA_SENTINEL_DB_HZ, Satellite, SignalQuality, Snr};
-
-    #[rstest]
-    #[case::excellent(44.0, SignalQuality::Excellent)]
-    #[case::at_the_excellent_threshold(40.0, SignalQuality::Excellent)]
-    #[case::good(37.0, SignalQuality::Good)]
-    #[case::moderate(32.0, SignalQuality::Moderate)]
-    #[case::weak(27.0, SignalQuality::Weak)]
-    #[case::very_weak(10.0, SignalQuality::VeryWeak)]
-    #[case::zero_is_a_measurement(0.0, SignalQuality::VeryWeak)]
-    #[case::the_no_data_value(99.0, SignalQuality::NoDataSentinel)]
-    #[case::inside_the_no_data_band(99.4, SignalQuality::NoDataSentinel)]
-    #[case::just_below_the_no_data_band(98.5, SignalQuality::Excellent)]
-    #[case::just_above_the_no_data_band(99.5, SignalQuality::Excellent)]
-    fn quality_classifies_a_reading(#[case] snr_db: f32, #[case] expected: SignalQuality) {
-        assert_eq!(Snr::new(snr_db).quality(), expected);
-    }
-
-    #[rstest]
-    #[case::the_no_data_value(NO_DATA_SENTINEL_DB_HZ, None)]
-    #[case::a_measurement(40.0, Some(40.0))]
-    fn measured_snr_drops_the_no_data_value(#[case] snr_db: f32, #[case] expected_db: Option<f32>) {
-        let satellite = Satellite::new(Constellation::Gps, 7, None, None, Some(snr_db), false);
-
-        assert_eq!(satellite.measured_snr().map(Snr::value), expected_db);
-        assert_eq!(satellite.snr().map(Snr::value), Some(snr_db));
-    }
-}
-
-#[cfg(test)]
-mod satellite_tests {
-    use rstest::rstest;
-
-    use super::{Constellation, NO_DATA_SENTINEL_DB_HZ, Satellite};
-
-    const PRN: u32 = 7;
-
-    const FIRST_ELEVATION_DEG: f32 = 40.0;
-
-    const FIRST_AZIMUTH_DEG: f32 = 90.0;
-
-    const SECOND_ELEVATION_DEG: f32 = 10.0;
-
-    const SECOND_AZIMUTH_DEG: f32 = 200.0;
-
-    fn row_with_snr(snr_db: Option<f32>) -> Satellite {
-        Satellite::new(Constellation::Gps, PRN, None, None, snr_db, false)
-    }
-
-    fn row_with_geometry(elevation_deg: Option<f32>, azimuth_deg: Option<f32>) -> Satellite {
-        Satellite::new(
-            Constellation::Gps,
-            PRN,
-            elevation_deg,
-            azimuth_deg,
+        #[rstest]
+        #[case::the_higher_snr_first(Some(45.0), Some(30.0), Some(45.0))]
+        #[case::the_higher_snr_second(Some(30.0), Some(45.0), Some(45.0))]
+        #[case::only_the_first_row_reports_an_snr(Some(45.0), None, Some(45.0))]
+        #[case::only_the_second_row_reports_an_snr(None, Some(45.0), Some(45.0))]
+        #[case::neither_row_reports_an_snr(None, None, None)]
+        #[case::the_first_row_holds_the_no_data_value(
+            Some(NO_DATA_SENTINEL_DB_HZ),
+            Some(30.0),
+            Some(30.0)
+        )]
+        #[case::the_second_row_holds_the_no_data_value(
+            Some(30.0),
+            Some(NO_DATA_SENTINEL_DB_HZ),
+            Some(30.0)
+        )]
+        #[case::both_rows_hold_the_no_data_value(
+            Some(NO_DATA_SENTINEL_DB_HZ),
+            Some(NO_DATA_SENTINEL_DB_HZ),
+            Some(NO_DATA_SENTINEL_DB_HZ)
+        )]
+        #[case::the_no_data_value_and_no_snr(
+            Some(NO_DATA_SENTINEL_DB_HZ),
             None,
-            false,
-        )
-    }
-
-    #[rstest]
-    #[case::the_higher_snr_first(Some(45.0), Some(30.0), Some(45.0))]
-    #[case::the_higher_snr_second(Some(30.0), Some(45.0), Some(45.0))]
-    #[case::only_the_first_row_reports_an_snr(Some(45.0), None, Some(45.0))]
-    #[case::only_the_second_row_reports_an_snr(None, Some(45.0), Some(45.0))]
-    #[case::neither_row_reports_an_snr(None, None, None)]
-    #[case::the_first_row_holds_the_no_data_value(
-        Some(NO_DATA_SENTINEL_DB_HZ),
-        Some(30.0),
-        Some(30.0)
-    )]
-    #[case::the_second_row_holds_the_no_data_value(
-        Some(30.0),
-        Some(NO_DATA_SENTINEL_DB_HZ),
-        Some(30.0)
-    )]
-    #[case::both_rows_hold_the_no_data_value(
-        Some(NO_DATA_SENTINEL_DB_HZ),
-        Some(NO_DATA_SENTINEL_DB_HZ),
-        Some(NO_DATA_SENTINEL_DB_HZ)
-    )]
-    #[case::the_no_data_value_and_no_snr(
-        Some(NO_DATA_SENTINEL_DB_HZ),
-        None,
-        Some(NO_DATA_SENTINEL_DB_HZ)
-    )]
-    #[case::no_snr_and_the_no_data_value(
-        None,
-        Some(NO_DATA_SENTINEL_DB_HZ),
-        Some(NO_DATA_SENTINEL_DB_HZ)
-    )]
-    fn absorb_repeated_row_keeps_the_highest_snr_measured_on_the_two_rows(
-        #[case] snr_db: Option<f32>,
-        #[case] absorbed_snr_db: Option<f32>,
-        #[case] expected_snr_db: Option<f32>,
-    ) {
-        let mut satellite = row_with_snr(snr_db);
-
-        satellite.absorb_repeated_row(row_with_snr(absorbed_snr_db));
-
-        assert_eq!(satellite.snr().map(|snr| snr.value()), expected_snr_db);
-    }
-
-    #[test]
-    fn absorb_repeated_row_keeps_the_elevation_and_azimuth_of_the_row_reporting_them_first() {
-        let mut satellite = row_with_geometry(Some(FIRST_ELEVATION_DEG), Some(FIRST_AZIMUTH_DEG));
-
-        satellite.absorb_repeated_row(row_with_geometry(
-            Some(SECOND_ELEVATION_DEG),
-            Some(SECOND_AZIMUTH_DEG),
-        ));
-
-        assert_eq!(
-            (satellite.elevation(), satellite.azimuth()),
-            (Some(FIRST_ELEVATION_DEG), Some(FIRST_AZIMUTH_DEG))
-        );
-    }
-
-    #[test]
-    fn absorb_repeated_row_takes_an_elevation_and_azimuth_the_satellite_has_none_of() {
-        let mut satellite = row_with_geometry(None, None);
-
-        satellite.absorb_repeated_row(row_with_geometry(
-            Some(SECOND_ELEVATION_DEG),
-            Some(SECOND_AZIMUTH_DEG),
-        ));
-
-        assert_eq!(
-            (satellite.elevation(), satellite.azimuth()),
-            (Some(SECOND_ELEVATION_DEG), Some(SECOND_AZIMUTH_DEG))
-        );
-    }
-
-    #[rstest]
-    #[case::the_satellite_is_in_the_fix(true, false)]
-    #[case::the_absorbed_row_is_in_the_fix(false, true)]
-    fn absorb_repeated_row_puts_the_satellite_in_the_fix_when_either_row_was(
-        #[case] in_fix: bool,
-        #[case] absorbed_in_fix: bool,
-    ) {
-        let mut satellite = Satellite::new(Constellation::Gps, PRN, None, None, None, in_fix);
-
-        satellite.absorb_repeated_row(Satellite::new(
-            Constellation::Gps,
-            PRN,
+            Some(NO_DATA_SENTINEL_DB_HZ)
+        )]
+        #[case::no_snr_and_the_no_data_value(
             None,
-            None,
-            None,
-            absorbed_in_fix,
-        ));
+            Some(NO_DATA_SENTINEL_DB_HZ),
+            Some(NO_DATA_SENTINEL_DB_HZ)
+        )]
+        fn absorb_repeated_row_keeps_the_highest_snr_measured_on_the_two_rows(
+            #[case] snr_db: Option<f32>,
+            #[case] absorbed_snr_db: Option<f32>,
+            #[case] expected_snr_db: Option<f32>,
+        ) {
+            let mut satellite = row_with_snr(snr_db);
 
-        assert!(satellite.in_fix());
+            satellite.absorb_repeated_row(row_with_snr(absorbed_snr_db));
+
+            assert_eq!(satellite.snr().map(|snr| snr.value()), expected_snr_db);
+        }
+
+        #[test]
+        fn absorb_repeated_row_keeps_the_elevation_and_azimuth_of_the_row_reporting_them_first() {
+            let mut satellite =
+                row_with_geometry(Some(FIRST_ELEVATION_DEG), Some(FIRST_AZIMUTH_DEG));
+
+            satellite.absorb_repeated_row(row_with_geometry(
+                Some(SECOND_ELEVATION_DEG),
+                Some(SECOND_AZIMUTH_DEG),
+            ));
+
+            assert_eq!(
+                (satellite.elevation(), satellite.azimuth()),
+                (Some(FIRST_ELEVATION_DEG), Some(FIRST_AZIMUTH_DEG))
+            );
+        }
+
+        #[test]
+        fn absorb_repeated_row_takes_an_elevation_and_azimuth_the_satellite_has_none_of() {
+            let mut satellite = row_with_geometry(None, None);
+
+            satellite.absorb_repeated_row(row_with_geometry(
+                Some(SECOND_ELEVATION_DEG),
+                Some(SECOND_AZIMUTH_DEG),
+            ));
+
+            assert_eq!(
+                (satellite.elevation(), satellite.azimuth()),
+                (Some(SECOND_ELEVATION_DEG), Some(SECOND_AZIMUTH_DEG))
+            );
+        }
+
+        #[rstest]
+        #[case::the_satellite_is_in_the_fix(true, false)]
+        #[case::the_absorbed_row_is_in_the_fix(false, true)]
+        fn absorb_repeated_row_puts_the_satellite_in_the_fix_when_either_row_was(
+            #[case] in_fix: bool,
+            #[case] absorbed_in_fix: bool,
+        ) {
+            let mut satellite = Satellite::new(Constellation::Gps, PRN, None, None, None, in_fix);
+
+            satellite.absorb_repeated_row(Satellite::new(
+                Constellation::Gps,
+                PRN,
+                None,
+                None,
+                None,
+                absorbed_in_fix,
+            ));
+
+            assert!(satellite.in_fix());
+        }
     }
 }

@@ -6,133 +6,90 @@
 //! measured. Satellites in fix are what tells the two apart. An event marker
 //! is placed over the positions the fixes around it are drawn at: the recorder
 //! interpolated the marker's coordinates over the recorded positions of those
-//! same fixes.
+//! same fixes. The map's spatial index holds a re-placed fix at the position
+//! it is drawn at.
 
 use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, Utc};
 use gt_track_builder::{FileMeta, FixPlacementRule, SegmentationConfig};
 use gt_types::coordinates::{Latitude, Longitude};
+use gt_types::fixtures::{self, FixKind};
 use gt_types::highlight::DataCategory;
 use gt_types::markers::EventMarker;
-use gt_types::mercator;
+use gt_types::mercator::{self, MercPoint};
 use gt_types::nav_point::NavPoint;
-use gt_types::satellites::{Constellation, Satellite, Satellites};
-use gt_types::time_types::GpsTime;
-use gt_types::tpv::TimePositionVelocity;
 use gt_types::track::{FileSource, LoadedFile};
 use rstest::rstest;
-use uom::si::angle::degree;
-use uom::si::f64::Angle;
-
-/// Satellites a receiver with a full solution reports in fix.
-const SATELLITES_IN_FIX: u32 = 12;
-
-/// Satellites a receiver reports it can see while none of them is in fix.
-const SATELLITES_IN_VIEW: u32 = 4;
 
 /// Two positions this close are one place on the map.
 const POSITION_TOLERANCE_METERS: f64 = 0.1;
 
 /// Two longitudes this close are one meridian to within a millimetre, which
 /// covers the great circle's departure from a straight line over the steps
-/// these fixtures take.
+/// these fixtures take, and the round trip through the Mercator projection.
 const POSITION_TOLERANCE_DEGREES: f64 = 1e-8;
 
 /// The longitudes alone distinguish the fixes: every fixture here shares this
 /// latitude unless it states another.
 const LATITUDE_DEGREES: f64 = 55.0;
 
-fn gps_time(millis: i64) -> GpsTime {
-    GpsTime::from_utc(utc_time(millis))
-}
-
 fn utc_time(millis: i64) -> DateTime<Utc> {
     DateTime::<Utc>::UNIX_EPOCH + Duration::milliseconds(millis)
 }
 
-/// A satellite report holding `in_fix` satellites in the solution and
-/// `in_view` further satellites it sees without using them.
-fn satellite_report(millis: i64, in_fix: u32, in_view: u32) -> Satellites {
-    let satellites = (0..in_fix + in_view)
-        .map(|index| {
-            Satellite::new(
-                Constellation::Gps,
-                index + 1,
-                None,
-                None,
-                None,
-                index < in_fix,
-            )
-        })
-        .collect();
-    Satellites::new(Some(gps_time(millis)), None, satellites)
-}
-
-fn fix(
-    millis: i64,
-    lat: Latitude,
-    lon: Longitude,
-    heading: Option<Angle>,
-    satellites: Option<Satellites>,
-) -> NavPoint {
-    let tpv = TimePositionVelocity::builder()
-        .time(gps_time(millis))
-        .lat(lat)
-        .lon(lon)
-        .maybe_heading(heading)
-        .build();
-    NavPoint::new(tpv, satellites)
-}
-
-fn heading_east() -> Option<Angle> {
-    Some(Angle::new::<degree>(90.0))
-}
-
 /// A fix the receiver measured: a heading and a full solution behind it.
 fn measured_fix(millis: i64, lon: Longitude) -> NavPoint {
-    fix(
-        millis,
+    fixtures::nav_point(
+        utc_time(millis),
         Latitude::new(LATITUDE_DEGREES),
         lon,
-        heading_east(),
-        Some(satellite_report(millis, SATELLITES_IN_FIX, 0)),
+        FixKind::Measured,
     )
 }
 
 /// An epoch the receiver dead-reckoned: no heading, and a satellite report
 /// with nothing in fix.
 fn dead_reckoned_fix(millis: i64, lat: Latitude, lon: Longitude) -> NavPoint {
-    fix(
-        millis,
+    fixtures::nav_point_heading(
+        utc_time(millis),
         lat,
         lon,
         None,
-        Some(satellite_report(millis, 0, SATELLITES_IN_VIEW)),
+        FixKind::GhostWithoutSatellitesInFix,
+    )
+}
+
+/// An epoch only the missing heading marks: the receiver dead-reckoned it and
+/// wrote no satellite report for it.
+fn fix_without_a_satellite_report(millis: i64, lon: Longitude) -> NavPoint {
+    fixtures::nav_point(
+        utc_time(millis),
+        Latitude::new(LATITUDE_DEGREES),
+        lon,
+        FixKind::GhostWithoutHeading,
     )
 }
 
 /// A fix a receiver reports while it stands still: a full solution behind it,
 /// and no heading, because a receiver at rest has no course to report.
 fn fix_without_a_heading(millis: i64, lon: Longitude) -> NavPoint {
-    fix(
-        millis,
+    fixtures::nav_point(
+        utc_time(millis),
         Latitude::new(LATITUDE_DEGREES),
         lon,
-        None,
-        Some(satellite_report(millis, SATELLITES_IN_FIX, 0)),
+        FixKind::MeasuredWithoutHeading,
     )
 }
 
 /// A fix the receiver reports with a course but nothing in fix, which
 /// [`NavPoint::is_ghost_fix`] calls a ghost and the map draws hollow.
 fn fix_with_a_heading_and_nothing_in_fix(millis: i64, lon: Longitude) -> NavPoint {
-    fix(
-        millis,
+    fixtures::nav_point(
+        utc_time(millis),
         Latitude::new(LATITUDE_DEGREES),
         lon,
-        heading_east(),
-        Some(satellite_report(millis, 0, SATELLITES_IN_VIEW)),
+        FixKind::GhostWithoutSatellitesInFix,
     )
 }
 
@@ -348,8 +305,7 @@ fn a_fix_with_satellites_in_fix_keeps_its_measured_position() {
 
     assert!(
         (longitude - 5.0).abs() < POSITION_TOLERANCE_DEGREES,
-        "the fix with {SATELLITES_IN_FIX} satellites in fix measured at lon 5.0 is drawn at \
-         lon {longitude}"
+        "the fix with satellites in fix measured at lon 5.0 is drawn at lon {longitude}"
     );
 }
 
@@ -433,13 +389,7 @@ fn a_track_without_a_satellite_report_keeps_every_recorded_position() {
         .into_iter()
         .zip(recorded_longitudes)
         .map(|(millis, longitude_degrees)| {
-            fix(
-                millis,
-                Latitude::new(LATITUDE_DEGREES),
-                Longitude::new(longitude_degrees),
-                None,
-                None,
-            )
+            fix_without_a_satellite_report(millis, Longitude::new(longitude_degrees))
         })
         .collect();
 
@@ -479,20 +429,18 @@ fn a_ghost_fix_between_anchors_on_opposite_sides_of_a_pole_is_placed_between_the
     const ANCHOR_LATITUDE_DEGREES: f64 = 89.9;
     let anchor_latitude = Latitude::new(ANCHOR_LATITUDE_DEGREES);
     let points = vec![
-        fix(
-            0,
+        fixtures::nav_point(
+            utc_time(0),
             anchor_latitude,
             Longitude::new(0.0),
-            heading_east(),
-            Some(satellite_report(0, SATELLITES_IN_FIX, 0)),
+            FixKind::Measured,
         ),
         dead_reckoned_fix(10_000, Latitude::new(0.0), Longitude::new(0.0)),
-        fix(
-            20_000,
+        fixtures::nav_point(
+            utc_time(20_000),
             anchor_latitude,
             Longitude::new(180.0),
-            heading_east(),
-            Some(satellite_report(20_000, SATELLITES_IN_FIX, 0)),
+            FixKind::Measured,
         ),
     ];
 
@@ -558,4 +506,103 @@ fn the_missing_heading_rule_draws_a_fix_stamped_before_its_anchors_outside_them(
          lon {FIRST_ANCHOR_LONGITUDE_DEGREES} to {SECOND_ANCHOR_LONGITUDE_DEGREES} its anchors \
          span"
     );
+}
+
+/// The index every test below writes its dead-reckoned fix at.
+const GHOST_INDEX: usize = 1;
+
+/// Where the map draws the ghost fix held in `file`, in normalized Web Mercator.
+fn drawn_ghost_merc(file: &LoadedFile) -> Option<MercPoint> {
+    let ghost = file
+        .tracks
+        .first()
+        .and_then(|track| track.placed_points()?.get(GHOST_INDEX))?;
+    Some(ghost.merc())
+}
+
+/// Longitude in degrees where the map draws the ghost fix of `points`.
+fn drawn_ghost_lon_degrees(points: &[NavPoint]) -> Option<f64> {
+    Some(mercator::denormalize(drawn_ghost_merc(&build(points, vec![]))?).1)
+}
+
+/// The ghost fix sits at t = 0.5 s between measured fixes at t = 0.0 s (lon 0)
+/// and t = 1.0 s (lon 1), so it belongs at lon 0.5. A fraction built from whole
+/// seconds collapses to 0 and snaps it onto the preceding fix.
+#[test]
+fn ghost_fix_between_sub_second_fixes_is_placed_halfway() {
+    let points = vec![
+        measured_fix(0, Longitude::new(0.0)),
+        fix_without_a_satellite_report(500, Longitude::new(9.0)),
+        measured_fix(1_000, Longitude::new(1.0)),
+    ];
+
+    let lon = drawn_ghost_lon_degrees(&points).expect("the ghost fix is in the file's only track");
+
+    assert!(
+        (lon - 0.5).abs() < POSITION_TOLERANCE_DEGREES,
+        "ghost fix drawn at lon {lon}, expected 0.5"
+    );
+}
+
+/// Two measured fixes at one instant span no time, so there is no fraction to
+/// place the ghost fix at and it keeps the position it was recorded with.
+#[test]
+fn ghost_fix_between_fixes_at_one_instant_keeps_its_recorded_position() {
+    let points = vec![
+        measured_fix(1_000, Longitude::new(0.0)),
+        fix_without_a_satellite_report(1_000, Longitude::new(9.0)),
+        measured_fix(1_000, Longitude::new(1.0)),
+    ];
+
+    let lon = drawn_ghost_lon_degrees(&points).expect("the ghost fix is in the file's only track");
+
+    assert!(
+        (lon - 9.0).abs() < POSITION_TOLERANCE_DEGREES,
+        "ghost fix drawn at lon {lon}, expected the recorded 9.0"
+    );
+}
+
+/// The measured fixes are 0.2 deg apart across the date line, so the great
+/// circle between them holds every position at |lon| >= 179.9.
+#[test]
+fn ghost_fix_between_fixes_across_the_antimeridian_stays_between_them() {
+    let points = vec![
+        measured_fix(0, Longitude::new(179.9)),
+        fix_without_a_satellite_report(10_000, Longitude::new(179.95)),
+        measured_fix(20_000, Longitude::new(-179.9)),
+    ];
+
+    let lon = drawn_ghost_lon_degrees(&points).expect("the ghost fix is in the file's only track");
+
+    assert!(
+        lon.abs() >= 179.9,
+        "ghost fix drawn at lon {lon}, expected it between 179.9 and -179.9 across the date line"
+    );
+}
+
+/// The spatial index must hold a ghost fix at the position it is drawn at:
+/// without an entry there, a user pointing at the chevron gets neither a
+/// tooltip nor a selection.
+#[test]
+fn a_ghost_fix_is_indexed_at_the_position_it_is_drawn_at() {
+    let points = vec![
+        measured_fix(0, Longitude::new(0.0)),
+        fix_without_a_satellite_report(500, Longitude::new(9.0)),
+        measured_fix(1_000, Longitude::new(1.0)),
+    ];
+    let files = vec![build(&points, vec![])];
+    let ghost_merc = files
+        .first()
+        .and_then(drawn_ghost_merc)
+        .expect("the ghost fix is in the file's only track");
+
+    let index = gt_track_builder::SpatialIndex::build(&files);
+    let nearest = index
+        .fixes
+        .nearest_neighbor([ghost_merc.x, ghost_merc.y])
+        .expect("the index holds the track's fixes");
+
+    assert_eq!(nearest.category, DataCategory::Tpv);
+    assert_eq!(nearest.point_index.as_usize(), GHOST_INDEX);
+    assert_eq!(nearest.merc, ghost_merc);
 }

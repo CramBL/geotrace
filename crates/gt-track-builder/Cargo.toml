@@ -21,6 +21,9 @@ uom.workspace = true
 vec1.workspace = true
 
 [dev-dependencies]
+# The fixture builders of `gt_types::fixtures`, which the tests build their nav
+# points with. The feature is off in a normal build of gt-types.
+gt-types = { path = "../gt-types", features = ["fixtures"] }
 proptest.workspace = true
 rstest.workspace = true
 

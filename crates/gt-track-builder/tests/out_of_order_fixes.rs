@@ -7,25 +7,20 @@ use std::path::PathBuf;
 use chrono::{DateTime, Duration, Utc};
 use gt_track_builder::{FileMeta, SegmentationConfig, TrackLayoutConfig};
 use gt_types::coordinates::{Latitude, Longitude};
+use gt_types::fixtures::{self, FixKind};
 use gt_types::markers::EventMarker;
 use gt_types::nav_point::NavPoint;
-use gt_types::time_types::GpsTime;
-use gt_types::tpv::TimePositionVelocity;
 use gt_types::track::{FileSource, LoadedFile};
-use uom::si::angle::degree;
-use uom::si::f64::Angle;
 
 /// A measured fix, distinguished only by its timestamp: every one of them
 /// shares a position.
 fn measured_fix_at(millis: i64) -> NavPoint {
-    let time = DateTime::<Utc>::UNIX_EPOCH + Duration::milliseconds(millis);
-    let tpv = TimePositionVelocity::builder()
-        .time(GpsTime::from_utc(time))
-        .lat(Latitude::new(55.0))
-        .lon(Longitude::new(12.0))
-        .heading(Angle::new::<degree>(90.0))
-        .build();
-    NavPoint::new(tpv, None)
+    fixtures::nav_point(
+        DateTime::<Utc>::UNIX_EPOCH + Duration::milliseconds(millis),
+        Latitude::new(55.0),
+        Longitude::new(12.0),
+        FixKind::Measured,
+    )
 }
 
 fn build(points: &[NavPoint], event_markers: Vec<EventMarker>) -> LoadedFile {

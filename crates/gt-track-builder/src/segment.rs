@@ -1247,7 +1247,6 @@ mod tests {
     use chrono::TimeZone;
     use geotrace_sdk_units::Unit;
     use gt_types::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
-    use gt_types::markers::{MarkerColor, MarkerIcon};
     use gt_types::satellites::{Constellation, Satellite, Satellites};
     use gt_types::time_types::{GpsTime, SysTime};
     use gt_types::tpv::TimePositionVelocity;
@@ -1256,200 +1255,7 @@ mod tests {
     use uom::si::f64::Angle;
 
     use super::*;
-
-    /// `points` taken as a track of their own, each fix with where the builder
-    /// places it. `None` for a track without a placed fix.
-    fn placed<'a>(points: &'a [NavPoint], geometry: &'a TrackGeometry) -> Option<PlacedPoints<'a>> {
-        geometry
-            .measured()
-            .and_then(|measured| PlacedPoints::new(points, &measured.resolved_positions))
-    }
-
-    fn generated_markers_of(
-        points: &[NavPoint],
-        config: &GeneratedMarkerConfig,
-    ) -> Vec<GeneratedMarker> {
-        let geometry = measure_track_geometry(points, FixPlacementRule::default());
-        placed(points, &geometry)
-            .map_or_else(Vec::new, |placed| detect_generated_markers(placed, config))
-    }
-
-    fn clock_discontinuities_of(points: &[NavPoint], sigmas: f64) -> Vec<GeneratedMarker> {
-        let geometry = measure_track_geometry(points, FixPlacementRule::default());
-        placed(points, &geometry).map_or_else(Vec::new, |placed| {
-            detect_clock_discontinuities(placed, sigmas, &[])
-        })
-    }
-
-    /// A point at GPS second `gps_secs` whose system clock is `sys_ahead_ms`
-    /// ahead of GPS (so the GPS−system offset is `-sys_ahead_ms`).
-    fn point_with_sys(gps_secs: i64, sys_ahead_ms: i64) -> NavPoint {
-        let gps = GpsTime::from_utc(Utc.timestamp_opt(gps_secs, 0).single().expect("valid"));
-        let sys = SysTime::from_utc(
-            Utc.timestamp_millis_opt(gps_secs * 1000 + sys_ahead_ms)
-                .single()
-                .expect("valid"),
-        );
-        let tpv = TimePositionVelocity::builder()
-            .time(gps)
-            .lat(Latitude::new(55.0))
-            .lon(Longitude::new(12.0))
-            .sys_time(sys)
-            .build();
-        NavPoint::new(tpv, None)
-    }
-
-    #[test]
-    fn clock_discontinuity_flags_suspend_boundary_once() {
-        // Steady ~300 ms offset, then one sample whose system clock has jumped
-        // ~2 h ahead (the device resumed from suspend) - the mortmobil.gtd case.
-        let two_hours_ms = 2 * 3600 * 1000;
-        let points = vec![
-            point_with_sys(1000, 300),
-            point_with_sys(1001, 300),
-            point_with_sys(1002, 300),
-            point_with_sys(1003, 300),
-            point_with_sys(1004, 300 + two_hours_ms),
-        ];
-        let markers = clock_discontinuities_of(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS);
-        assert_eq!(
-            markers.len(),
-            1,
-            "exactly one discontinuity at the boundary"
-        );
-        let marker = markers.first().expect("one marker");
-        assert!(matches!(
-            marker.kind,
-            GeneratedMarkerKind::ClockDiscontinuity { .. }
-        ));
-        if let GeneratedMarkerKind::ClockDiscontinuity { step } = marker.kind {
-            // System clock jumped 2 h ahead, so GPS−system dropped by 2 h.
-            assert_eq!(step.num_milliseconds(), -two_hours_ms);
-        }
-        assert_eq!(
-            marker.time,
-            Utc.timestamp_opt(1004, 0).single().expect("valid")
-        );
-    }
-
-    /// Steady 234 ms offset with one sample carrying a 1 h 09 m recording gap -
-    /// the `gnss.h5.gtd` case, where the receiver reported its pre-gap GPS epoch
-    /// for the first fix after resuming.
-    fn resume_from_gap_points() -> Vec<NavPoint> {
-        vec![
-            point_with_sys(1000, 210),
-            point_with_sys(1001, 227),
-            point_with_sys(1002, 240),
-            point_with_sys(1003, 234),
-            point_with_sys(1004, 4_127_054),
-            point_with_sys(1005, 240),
-            point_with_sys(1006, 215),
-            point_with_sys(1007, 235),
-        ]
-    }
-
-    #[test]
-    fn an_excursion_is_one_marker_not_a_pair_of_discontinuities() {
-        let markers =
-            generated_markers_of(&resume_from_gap_points(), &GeneratedMarkerConfig::default());
-        let [marker] = markers.as_slice() else {
-            panic!("expected exactly one marker, got {}", markers.len());
-        };
-        let GeneratedMarkerKind::ClockOffsetExcursion {
-            deviation,
-            offset,
-            samples,
-        } = marker.kind
-        else {
-            panic!("expected a clock offset excursion, got {:?}", marker.kind);
-        };
-        assert_eq!(offset.num_milliseconds(), -4_127_054);
-        assert_eq!(deviation.num_milliseconds(), -4_126_820);
-        assert_eq!(samples, 1);
-        assert_eq!(
-            marker.time,
-            Utc.timestamp_opt(1004, 0).single().expect("valid"),
-            "placed at the sample that departed furthest"
-        );
-    }
-
-    #[test]
-    fn excursion_detection_off_leaves_the_discontinuity_markers() {
-        let config = GeneratedMarkerConfig {
-            detect_clock_offset_excursions: false,
-            ..GeneratedMarkerConfig::default()
-        };
-        let markers = generated_markers_of(&resume_from_gap_points(), &config);
-        assert!(
-            markers.is_empty(),
-            "the excursion sample stays out of the step series either way, so the \
-             departure is never re-reported as a pair of jumps: {markers:?}"
-        );
-    }
-
-    #[test]
-    fn a_permanent_offset_step_stays_a_discontinuity() {
-        let mut points: Vec<NavPoint> = (0..6).map(|i| point_with_sys(1000 + i, 200)).collect();
-        points.extend((6..12).map(|i| point_with_sys(1000 + i, 3_600_000)));
-        let markers = generated_markers_of(&points, &GeneratedMarkerConfig::default());
-        let [marker] = markers.as_slice() else {
-            panic!("expected exactly one marker, got {}", markers.len());
-        };
-        assert!(matches!(
-            marker.kind,
-            GeneratedMarkerKind::ClockDiscontinuity { .. }
-        ));
-    }
-
-    #[test]
-    fn clock_discontinuity_ignores_normal_jitter() {
-        let points = vec![
-            point_with_sys(1000, 300),
-            point_with_sys(1001, 305),
-            point_with_sys(1002, 298),
-            point_with_sys(1003, 302),
-        ];
-        assert!(clock_discontinuities_of(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS).is_empty());
-    }
-
-    #[test]
-    fn clock_discontinuity_ignores_large_but_steady_offset() {
-        // A host clock that drifted far (e.g. parked underground for days) but
-        // is internally consistent across the track is NOT an outlier - the
-        // data-aware median makes that the norm, so nothing is flagged.
-        let big = 5 * 60 * 1000; // 5 minutes of steady offset
-        let points = vec![
-            point_with_sys(1000, big),
-            point_with_sys(1001, big + 4),
-            point_with_sys(1002, big - 3),
-            point_with_sys(1003, big + 2),
-            point_with_sys(1004, big - 5),
-        ];
-        assert!(clock_discontinuities_of(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS).is_empty());
-    }
-
-    #[test]
-    fn clock_discontinuity_needs_enough_samples() {
-        // Below MIN_CLOCK_SAMPLES, detection is skipped even with an obvious 2 h
-        // jump on the last sample - too few samples for a robust estimate.
-        let two_hours_ms = 2 * 3600 * 1000;
-        for count in 0..MIN_CLOCK_SAMPLES {
-            let points: Vec<NavPoint> = (0..count)
-                .map(|i| {
-                    let ahead = if i + 1 == count {
-                        300 + two_hours_ms
-                    } else {
-                        300
-                    };
-                    point_with_sys(1000 + i as i64, ahead)
-                })
-                .collect();
-            assert!(
-                clock_discontinuities_of(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS).is_empty(),
-                "detection must be skipped with {count} samples (< {MIN_CLOCK_SAMPLES})"
-            );
-        }
-    }
+    use crate::test_util;
 
     fn make_point_at(t: i64) -> NavPoint {
         let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().expect("valid timestamp"));
@@ -1460,394 +1266,6 @@ mod tests {
             .heading(Angle::new::<degree>(0.0))
             .build();
         NavPoint::new(tpv, None)
-    }
-
-    fn make_point_at_pos(t: i64, lat: f64, lon: f64) -> NavPoint {
-        let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().expect("valid timestamp"));
-        let tpv = TimePositionVelocity::builder()
-            .time(time)
-            .lat(Latitude::new(lat))
-            .lon(gt_types::coordinates::Longitude::new(lon))
-            .heading(Angle::new::<degree>(0.0))
-            .build();
-        NavPoint::new(tpv, None)
-    }
-
-    #[test]
-    fn segment_tracks_empty_input() {
-        assert!(segment_tracks(&[], &TrackLayoutConfig::default()).is_empty());
-    }
-
-    #[test]
-    fn segment_tracks_single_point() {
-        let pts = vec![make_point_at(0)];
-        let ranges = segment_tracks(&pts, &TrackLayoutConfig::default());
-        assert_eq!(ranges, vec![0..1]);
-    }
-
-    #[test]
-    fn segment_tracks_all_within_five_minutes() {
-        let pts: Vec<NavPoint> = (0..5).map(|i| make_point_at(i * 60)).collect();
-        let ranges = segment_tracks(&pts, &TrackLayoutConfig::default());
-        assert_eq!(ranges, vec![0..5]);
-    }
-
-    #[rstest]
-    #[case::forward_step_below_the_split_gap(TrackSplitRule::StepInEitherDirection, 299, vec![0..2])]
-    #[case::forward_step_at_the_split_gap(TrackSplitRule::StepInEitherDirection, 300, vec![0..1, 1..2])]
-    #[case::backward_step_below_the_split_gap(TrackSplitRule::StepInEitherDirection, -299, vec![0..2])]
-    #[case::backward_step_at_the_split_gap(TrackSplitRule::StepInEitherDirection, -300, vec![0..1, 1..2])]
-    #[case::forward_step_at_the_split_gap_under_forward_gaps_only(TrackSplitRule::ForwardGapOnly, 300, vec![0..1, 1..2])]
-    #[case::backward_step_at_the_split_gap_under_forward_gaps_only(TrackSplitRule::ForwardGapOnly, -300, vec![0..2])]
-    fn segment_tracks_applies_the_configured_split_rule(
-        #[case] track_split_rule: TrackSplitRule,
-        #[case] step_seconds: i64,
-        #[case] expected_ranges: Vec<Range<usize>>,
-    ) {
-        let pts = vec![make_point_at(1_000), make_point_at(1_000 + step_seconds)];
-        let config = TrackLayoutConfig {
-            track_split_rule,
-            ..TrackLayoutConfig::default()
-        };
-
-        let ranges = segment_tracks(&pts, &config);
-
-        assert_eq!(ranges, expected_ranges);
-    }
-
-    #[test]
-    fn segment_tracks_one_gap_gives_two_trips() {
-        let pts = vec![
-            make_point_at(0),
-            make_point_at(60),
-            make_point_at(3600), // +1 h gap
-            make_point_at(3660),
-        ];
-        let ranges = segment_tracks(&pts, &TrackLayoutConfig::default());
-        assert_eq!(ranges, vec![0..2, 2..4]);
-    }
-
-    #[test]
-    fn segment_tracks_multiple_gaps() {
-        let pts = vec![
-            make_point_at(0),
-            make_point_at(3600), // first gap
-            make_point_at(7200), // second gap
-        ];
-        let ranges = segment_tracks(&pts, &TrackLayoutConfig::default());
-        assert_eq!(ranges, vec![0..1, 1..2, 2..3]);
-    }
-
-    #[test]
-    fn compute_track_metadata_basic() {
-        let pts = vec1::vec1![
-            make_point_at_pos(0, 55.0, 12.0),
-            make_point_at_pos(3600, 55.1, 12.1), // 1 h later, ~13 km away
-        ];
-        let meta = compute_track_metadata(1, &pts, &[], &[]);
-        assert_eq!(meta.index, 1);
-        assert_eq!(meta.tpv_count, 2);
-        assert_eq!(meta.duration.num_seconds(), 3600);
-        assert!(!meta.has_custom_markers);
-        assert_eq!(meta.satellite_report_count, 0);
-
-        let distance_km = measure_track_geometry(&pts, FixPlacementRule::default())
-            .measured()
-            .expect("both fixes have a recorded position")
-            .distance_km;
-        assert!(
-            distance_km > Length::new::<kilometer>(5.0),
-            "expected > 5 km, got {distance_km:?}"
-        );
-    }
-
-    #[test]
-    fn compute_track_metadata_single_point_has_zero_duration() {
-        let pts = vec1::vec1![make_point_at_pos(0, 55.0, 12.0)];
-        let meta = compute_track_metadata(1, &pts, &[], &[]);
-        assert_eq!(meta.duration.num_seconds(), 0);
-
-        let distance_km = measure_track_geometry(&pts, FixPlacementRule::default())
-            .measured()
-            .expect("the fix has a recorded position")
-            .distance_km;
-        assert_eq!(distance_km, Length::new::<kilometer>(0.0));
-    }
-
-    #[test]
-    fn build_loaded_file_empty_points() {
-        let f = build_loaded_file(
-            "test.gtd".to_owned(),
-            &[],
-            &[],
-            vec![],
-            vec![],
-            &[],
-            &SegmentationConfig::default(),
-            FileSource::GtdPath(PathBuf::from("test.gtd")),
-            FileMeta::default(),
-            vec![],
-        );
-        assert!(f.tracks.is_empty());
-        assert_eq!(f.metadata.filename, "test.gtd");
-        assert_eq!(f.metadata.time_range, None);
-    }
-
-    const FIRST_STYLE_COLOR: MarkerColor = MarkerColor::new(0x11, 0x22, 0x33);
-    const SECOND_STYLE_COLOR: MarkerColor = MarkerColor::new(0x44, 0x55, 0x66);
-    const THIRD_STYLE_COLOR: MarkerColor = MarkerColor::new(0x77, 0x88, 0x99);
-
-    fn event_marker_style(variant_path: &str, color: MarkerColor) -> EventMarkerStyle {
-        EventMarkerStyle {
-            variant_path: variant_path.to_owned(),
-            icon: MarkerIcon::Pin,
-            color,
-        }
-    }
-
-    #[rstest]
-    #[case::two_styles(vec![FIRST_STYLE_COLOR, SECOND_STYLE_COLOR], SECOND_STYLE_COLOR)]
-    #[case::three_styles(
-        vec![FIRST_STYLE_COLOR, SECOND_STYLE_COLOR, THIRD_STYLE_COLOR],
-        THIRD_STYLE_COLOR
-    )]
-    fn several_event_marker_styles_for_one_variant_path_keep_the_last_and_warn(
-        #[case] written_colors: Vec<MarkerColor>,
-        #[case] expected_color: MarkerColor,
-    ) {
-        let written_count = written_colors.len();
-        let mut styles: Vec<EventMarkerStyle> = written_colors
-            .iter()
-            .map(|color| event_marker_style("power/boot", *color))
-            .collect();
-        styles.push(event_marker_style("power/shutdown", FIRST_STYLE_COLOR));
-
-        let file = build_loaded_file(
-            "test.gtd".to_owned(),
-            &[make_point_at(0), make_point_at(30)],
-            &[],
-            vec![],
-            styles,
-            &[],
-            &SegmentationConfig::default(),
-            FileSource::GtdPath(PathBuf::from("test.gtd")),
-            FileMeta::default(),
-            vec![],
-        );
-
-        assert_eq!(
-            file.event_marker_styles
-                .get("power/boot")
-                .map(|style| style.color),
-            Some(expected_color)
-        );
-        assert_eq!(
-            file.event_marker_styles
-                .get("power/shutdown")
-                .map(|style| style.color),
-            Some(FIRST_STYLE_COLOR)
-        );
-        let expected_description = format!(
-            "\"power/boot\": {written_count} styles. Every marker on those paths is drawn \
-             with the last style the recording holds for it: one style is kept per variant \
-             path."
-        );
-        assert_eq!(
-            file.load_warnings
-                .iter()
-                .map(|warning| (
-                    warning.count,
-                    warning.issue.as_str(),
-                    warning.description.as_str()
-                ))
-                .collect::<Vec<_>>(),
-            vec![(
-                1,
-                "event marker variant path(s) with several styles",
-                expected_description.as_str()
-            )]
-        );
-    }
-
-    #[test]
-    fn build_loaded_file_two_trips() {
-        let pts = vec![
-            make_point_at(0),
-            make_point_at(60),
-            make_point_at(3600), // gap → new track
-            make_point_at(3660),
-        ];
-        let f = build_loaded_file(
-            "ride.gtd".to_owned(),
-            &pts,
-            &[],
-            vec![],
-            vec![],
-            &[],
-            &SegmentationConfig::default(),
-            FileSource::GtdPath(PathBuf::from("ride.gtd")),
-            FileMeta::default(),
-            vec![],
-        );
-        assert_eq!(f.tracks.len(), 2);
-        assert_eq!(f.tracks[0].points.len(), 2);
-        assert_eq!(f.tracks[1].points.len(), 2);
-        assert_eq!(f.tracks[0].metadata.index, 1);
-        assert_eq!(f.tracks[1].metadata.index, 2);
-    }
-
-    fn utc(secs: i64) -> DateTime<Utc> {
-        Utc.timestamp_opt(secs, 0)
-            .single()
-            .expect("valid timestamp")
-    }
-
-    #[test]
-    fn channels_partition_to_tracks_by_timestamp() {
-        // Two tracks: [0, 60] and [3600, 3660]. A scalar channel with samples in
-        // track 1 (0, 30), the gap (1800), and track 2 (3600).
-        let pts = vec![
-            make_point_at(0),
-            make_point_at(60),
-            make_point_at(3600),
-            make_point_at(3660),
-        ];
-        let channel = Channel {
-            name: "incline".to_owned(),
-            unit: Some(Unit::DEG.into()),
-            period: None,
-            description: None,
-            components: vec![],
-            times: vec![utc(0), utc(30), utc(1800), utc(3600)],
-            values: vec![1.0, 2.0, 9.0, 3.0],
-        };
-        let f = build_loaded_file(
-            "ride.gtd".to_owned(),
-            &pts,
-            &[],
-            vec![],
-            vec![],
-            std::slice::from_ref(&channel),
-            &SegmentationConfig::default(),
-            FileSource::GtdPath(PathBuf::from("ride.gtd")),
-            FileMeta::default(),
-            vec![],
-        );
-        assert_eq!(f.tracks.len(), 2);
-
-        // Track 1 keeps the two in-range samples. The gap sample (1800) is
-        // dropped.
-        let t0 = &f.tracks[0].channels;
-        assert_eq!(t0.len(), 1);
-        assert_eq!(t0[0].name, "incline");
-        assert_eq!(t0[0].times, vec![utc(0), utc(30)]);
-        assert_eq!(t0[0].values, vec![1.0, 2.0]);
-
-        // Track 2 keeps its single sample.
-        let t1 = &f.tracks[1].channels;
-        assert_eq!(t1.len(), 1);
-        assert_eq!(t1[0].times, vec![utc(3600)]);
-
-        // Reassembly concatenates the per-track slices back in time order.
-        // The dropped gap sample stays dropped.
-        let reassembled = reassemble_channels(&f.tracks);
-        assert_eq!(reassembled.len(), 1);
-        assert_eq!(reassembled[0].times, vec![utc(0), utc(30), utc(3600)]);
-        assert_eq!(reassembled[0].values, vec![1.0, 2.0, 3.0]);
-
-        // The one gap sample (1800) that landed in no track is surfaced as a warning.
-        let warning = f
-            .load_warnings
-            .iter()
-            .find(|w| w.issue.contains("outside every track"))
-            .expect("dropped gap sample should be reported");
-        assert_eq!(warning.count, 1);
-    }
-
-    #[test]
-    fn a_vector_channel_partitions_and_reassembles_with_columns_aligned() {
-        // Two tracks split at the 3600s gap. A 3-component accel channel with two
-        // samples in track 1, one in the gap (dropped), and one in track 2.
-        let pts = vec![
-            make_point_at(0),
-            make_point_at(60),
-            make_point_at(3600),
-            make_point_at(3660),
-        ];
-        let channel = Channel {
-            name: "accel".to_owned(),
-            unit: Some(Unit::G.into()),
-            period: None,
-            description: None,
-            components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
-            times: vec![utc(0), utc(30), utc(1800), utc(3600)],
-            // Row-major: four samples of (x, y, z).
-            values: vec![
-                0.0, 0.1, 1.0, // t=0
-                1.0, 1.1, 2.0, // t=30
-                8.0, 8.1, 8.2, // t=1800 (gap, dropped)
-                3.0, 3.1, 4.0, // t=3600
-            ],
-        };
-        let f = build_loaded_file(
-            "ride.gtd".to_owned(),
-            &pts,
-            &[],
-            vec![],
-            vec![],
-            std::slice::from_ref(&channel),
-            &SegmentationConfig::default(),
-            FileSource::GtdPath(PathBuf::from("ride.gtd")),
-            FileMeta::default(),
-            vec![],
-        );
-
-        // Track 1 keeps rows 0 and 1 with their columns intact.
-        let t0 = &f.tracks[0].channels[0];
-        assert_eq!(t0.components, ["x", "y", "z"]);
-        assert_eq!(t0.times, vec![utc(0), utc(30)]);
-        assert_eq!(t0.values, vec![0.0, 0.1, 1.0, 1.0, 1.1, 2.0]);
-        // Track 2 keeps the last row.
-        assert_eq!(f.tracks[1].channels[0].values, vec![3.0, 3.1, 4.0]);
-
-        // Reassembly restores the surviving rows in time order, columns aligned.
-        let reassembled = reassemble_channels(&f.tracks);
-        assert_eq!(reassembled[0].components, ["x", "y", "z"]);
-        assert_eq!(reassembled[0].times, vec![utc(0), utc(30), utc(3600)]);
-        assert_eq!(
-            reassembled[0].values,
-            vec![0.0, 0.1, 1.0, 1.0, 1.1, 2.0, 3.0, 3.1, 4.0]
-        );
-    }
-
-    #[test]
-    fn a_channel_absent_from_a_track_is_not_attached() {
-        // Channel samples only in track 2's range. Track 1 has no channel.
-        let pts = vec![make_point_at(0), make_point_at(3600), make_point_at(3660)];
-        let channel = Channel {
-            name: "accel".to_owned(),
-            unit: None,
-            period: None,
-            description: None,
-            components: vec![],
-            times: vec![utc(3600), utc(3660)],
-            values: vec![1.0, 2.0],
-        };
-        let f = build_loaded_file(
-            "ride.gtd".to_owned(),
-            &pts,
-            &[],
-            vec![],
-            vec![],
-            std::slice::from_ref(&channel),
-            &SegmentationConfig::default(),
-            FileSource::GtdPath(PathBuf::from("ride.gtd")),
-            FileMeta::default(),
-            vec![],
-        );
-        assert_eq!(f.tracks.len(), 2);
-        assert!(f.tracks[0].channels.is_empty());
-        assert_eq!(f.tracks[1].channels.len(), 1);
     }
 
     fn make_point_with_fix(t: i64, fix_count_positive: bool) -> NavPoint {
@@ -1873,491 +1291,938 @@ mod tests {
         NavPoint::new(tpv, Some(sats))
     }
 
-    #[test]
-    fn compute_fix_stats_empty() {
-        assert!(compute_fix_stats(&[]).is_none());
-    }
+    mod clock_markers {
+        use super::*;
 
-    #[test]
-    fn compute_fix_stats_no_satellite_reports() {
-        // `make_point_at` produces points with no satellite data (`NavPoint::new(tpv, None)`)
-        let pts = vec![make_point_at(0), make_point_at(60)];
-        assert!(compute_fix_stats(&pts).is_none());
-    }
-
-    #[test]
-    fn compute_fix_stats_single_sat_point_is_none() {
-        let pts = vec![make_point_with_fix(0, true)];
-        assert!(compute_fix_stats(&pts).is_none());
-    }
-
-    #[test]
-    fn compute_fix_stats_all_with_fix() {
-        // Two consecutive sat points, both in fix → all `time_with_fix`, no losses
-        let pts = vec![make_point_with_fix(0, true), make_point_with_fix(60, true)];
-        let stats = compute_fix_stats(&pts).expect("has satellite data");
-        assert_eq!(stats.time_with_fix, Duration::seconds(60));
-        assert_eq!(stats.time_without_fix, Duration::zero());
-        assert_eq!(stats.fix_loss_count, 0);
-        assert_eq!(stats.max_continuous_no_fix, Duration::zero());
-    }
-
-    #[test]
-    fn compute_fix_stats_all_without_fix() {
-        let pts = vec![
-            make_point_with_fix(0, false),
-            make_point_with_fix(120, false),
-        ];
-        let stats = compute_fix_stats(&pts).expect("has satellite data");
-        assert_eq!(stats.time_with_fix, Duration::zero());
-        assert_eq!(stats.time_without_fix, Duration::seconds(120));
-        assert_eq!(stats.fix_loss_count, 0);
-        assert_eq!(stats.max_continuous_no_fix, Duration::seconds(120));
-    }
-
-    #[test]
-    fn compute_fix_stats_fix_then_lost() {
-        // fix 0→60, lost 60→180 → one loss, 120s without fix
-        let pts = vec![
-            make_point_with_fix(0, true),
-            make_point_with_fix(60, false),
-            make_point_with_fix(180, false),
-        ];
-        let stats = compute_fix_stats(&pts).expect("has satellite data");
-        assert_eq!(stats.time_with_fix, Duration::seconds(60));
-        assert_eq!(stats.time_without_fix, Duration::seconds(120));
-        assert_eq!(stats.fix_loss_count, 1);
-        assert_eq!(stats.max_continuous_no_fix, Duration::seconds(120));
-    }
-
-    #[test]
-    fn compute_fix_stats_multiple_losses() {
-        // fix→lost→fix→lost pattern. Two separate no-fix stretches
-        let pts = vec![
-            make_point_with_fix(0, true),    // fix
-            make_point_with_fix(100, false), // lost (100s with fix)
-            make_point_with_fix(200, false), // still lost (100s without fix, streak=100)
-            make_point_with_fix(300, true),  // regained (100s more without fix, streak=200)
-            make_point_with_fix(400, false), // lost again (100s with fix)
-            make_point_with_fix(450, false), // still lost (50s without fix, streak=50)
-        ];
-        let stats = compute_fix_stats(&pts).expect("has satellite data");
-        assert_eq!(stats.time_with_fix, Duration::seconds(200));
-        assert_eq!(stats.time_without_fix, Duration::seconds(250));
-        assert_eq!(stats.fix_loss_count, 2);
-        assert_eq!(stats.max_continuous_no_fix, Duration::seconds(200));
-    }
-
-    #[test]
-    fn compute_fix_stats_ignores_points_without_sat_data() {
-        // Gaps between sat-report points (no satellite data) are not counted in either bucket
-        let pts = vec![
-            make_point_with_fix(0, true),
-            make_point_at(30), // no satellite data - ignored
-            make_point_at(60), // no satellite data - ignored
-            make_point_with_fix(90, true),
-        ];
-        let stats = compute_fix_stats(&pts).expect("has satellite data");
-        // Interval 0→90 attributed to first sat point (has fix) = 90s with fix
-        assert_eq!(stats.time_with_fix, Duration::seconds(90));
-        assert_eq!(stats.time_without_fix, Duration::zero());
-        assert_eq!(stats.fix_loss_count, 0);
-    }
-
-    fn make_real_fix(t: i64, lat: Latitude, lon: Longitude) -> NavPoint {
-        let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().expect("valid timestamp"));
-        let tpv = TimePositionVelocity::builder()
-            .time(time)
-            .lat(lat)
-            .lon(lon)
-            .heading(Angle::new::<degree>(0.0))
-            .build();
-        let sats = Satellites::new(
-            Some(time),
-            None,
-            vec![Satellite::new(
-                Constellation::Gps,
-                1,
-                None,
-                None,
-                None,
-                true,
-            )],
-        );
-        NavPoint::new(tpv, Some(sats))
-    }
-
-    fn make_ghost(t: i64, lat: Latitude, lon: Longitude) -> NavPoint {
-        let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().expect("valid timestamp"));
-        let tpv = TimePositionVelocity::builder()
-            .time(time)
-            .lat(lat)
-            .lon(lon)
-            .build();
-        NavPoint::new(tpv, None)
-    }
-
-    /// Where the builder draws each fix of `points`, taken as a track of their
-    /// own. Empty for a track without a placed fix.
-    fn drawn_positions(points: &[NavPoint]) -> Vec<(Latitude, Longitude)> {
-        measure_track_geometry(points, FixPlacementRule::default())
-            .measured()
-            .map_or_else(Vec::new, |measured| {
-                measured
-                    .resolved_positions
-                    .iter()
-                    .map(|resolved| resolved.coordinates())
-                    .collect()
+        fn generated_markers_of(
+            points: &[NavPoint],
+            config: &GeneratedMarkerConfig,
+        ) -> Vec<GeneratedMarker> {
+            test_util::with_placed_points_of(points, |placed| {
+                placed.map_or_else(Vec::new, |placed| detect_generated_markers(placed, config))
             })
-    }
+        }
 
-    /// The recorded position of every fix, which is where a measured one is
-    /// drawn.
-    fn recorded_positions(points: &[NavPoint]) -> Vec<(Latitude, Longitude)> {
-        points
-            .iter()
-            .filter_map(|point| point.tpv.position())
-            .collect()
-    }
+        fn clock_discontinuities_of(points: &[NavPoint], sigmas: f64) -> Vec<GeneratedMarker> {
+            test_util::with_placed_points_of(points, |placed| {
+                placed.map_or_else(Vec::new, |placed| {
+                    detect_clock_discontinuities(placed, sigmas, &[])
+                })
+            })
+        }
 
-    #[test]
-    fn a_track_of_no_fixes_has_no_geometry() {
-        assert_eq!(
-            measure_track_geometry(&[], FixPlacementRule::default()),
-            TrackGeometry::NoValidPosition
-        );
-    }
-
-    #[test]
-    fn measured_fixes_stay_where_they_were_recorded() {
-        let points = vec![
-            make_real_fix(0, Latitude::new(55.0), Longitude::new(12.0)),
-            make_real_fix(1, Latitude::new(55.1), Longitude::new(12.1)),
-        ];
-
-        assert_eq!(drawn_positions(&points), recorded_positions(&points));
-    }
-
-    #[test]
-    fn a_ghost_fix_between_two_anchors_is_interpolated() {
-        // Real fixes on the equator at t=0 (lon=0) and t=10 (lon=1), ghost at
-        // t=5. The equator is a great circle, so the ghost lands at lon=0.5.
-        let points = vec![
-            make_real_fix(0, Latitude::new(0.0), Longitude::new(0.0)),
-            make_ghost(5, Latitude::new(10.0), Longitude::new(10.0)),
-            make_real_fix(10, Latitude::new(0.0), Longitude::new(1.0)),
-        ];
-
-        let (latitude, longitude) = drawn_positions(&points)[1];
-        assert!(
-            latitude.as_degrees().abs() < 1e-9,
-            "latitude mismatch: {} vs 0.0",
-            latitude.as_degrees(),
-        );
-        assert!(
-            (longitude.as_degrees() - 0.5).abs() < 1e-9,
-            "longitude mismatch: {} vs 0.5",
-            longitude.as_degrees(),
-        );
-        assert_eq!(
-            points[1].tpv.position(),
-            Some((Latitude::new(10.0), Longitude::new(10.0))),
-            "the recorded coordinates must survive interpolation"
-        );
-    }
-
-    #[test]
-    fn a_ghost_fix_before_the_first_anchor_snaps_to_it() {
-        let points = vec![
-            make_ghost(0, Latitude::new(10.0), Longitude::new(10.0)),
-            make_real_fix(10, Latitude::new(55.0), Longitude::new(12.0)),
-        ];
-
-        assert_eq!(
-            drawn_positions(&points)[0],
-            (Latitude::new(55.0), Longitude::new(12.0))
-        );
-    }
-
-    #[test]
-    fn a_ghost_fix_after_the_last_anchor_snaps_to_it() {
-        let points = vec![
-            make_real_fix(0, Latitude::new(55.0), Longitude::new(12.0)),
-            make_ghost(10, Latitude::new(10.0), Longitude::new(10.0)),
-        ];
-
-        assert_eq!(
-            drawn_positions(&points)[1],
-            (Latitude::new(55.0), Longitude::new(12.0))
-        );
-    }
-
-    /// Placement is read from longitude alone in the tests below: every fix
-    /// in them sits on the equator. 1e-9° is about 0.1 mm.
-    const PLACEMENT_TOLERANCE_DEGREES: f64 = 1e-9;
-
-    /// A fix with a position and a heading, but no satellite report: the
-    /// receiver reported where it was but not what it tracked.
-    fn measured_fix_without_a_satellite_report(secs: i64, lon_degrees: f64) -> NavPoint {
-        let time = GpsTime::from_utc(
-            Utc.timestamp_opt(secs, 0)
-                .single()
-                .expect("valid timestamp"),
-        );
-        let tpv = TimePositionVelocity::builder()
-            .time(time)
-            .lat(Latitude::new(0.0))
-            .lon(Longitude::new(lon_degrees))
-            .heading(Angle::new::<degree>(90.0))
-            .build();
-        NavPoint::new(tpv, None)
-    }
-
-    /// A fix the receiver wrote a latitude of NaN for. Its heading is present,
-    /// leaving the unusable coordinate as the only reason to place it. A
-    /// position kept as recorded is distinguishable from a placed one: its
-    /// longitude is far from the fixes around it.
-    fn fix_without_a_recorded_position(secs: i64) -> NavPoint {
-        let time = GpsTime::from_utc(
-            Utc.timestamp_opt(secs, 0)
-                .single()
-                .expect("valid timestamp"),
-        );
-        let tpv = TimePositionVelocity::builder()
-            .time(time)
-            .lat(RecordedLatitude::from_degrees(f64::NAN))
-            .lon(RecordedLongitude::from_degrees(88.0))
-            .heading(Angle::new::<degree>(90.0))
-            .build();
-        NavPoint::new(tpv, None)
-    }
-
-    #[rstest]
-    #[case::between_two_measured_fixes(
-        vec![
-            measured_fix_without_a_satellite_report(0, 0.0),
-            fix_without_a_recorded_position(5),
-            measured_fix_without_a_satellite_report(10, 10.0),
-        ],
-        vec![0.0, 5.0, 10.0]
-    )]
-    #[case::before_the_first_measured_fix(
-        vec![
-            fix_without_a_recorded_position(0),
-            measured_fix_without_a_satellite_report(10, 10.0),
-            measured_fix_without_a_satellite_report(20, 20.0),
-        ],
-        vec![10.0, 10.0, 20.0]
-    )]
-    #[case::after_the_last_measured_fix(
-        vec![
-            measured_fix_without_a_satellite_report(0, 0.0),
-            measured_fix_without_a_satellite_report(10, 10.0),
-            fix_without_a_recorded_position(20),
-        ],
-        vec![0.0, 10.0, 10.0]
-    )]
-    #[case::a_run_of_three_spreads_over_the_time_they_span(
-        vec![
-            measured_fix_without_a_satellite_report(0, 0.0),
-            fix_without_a_recorded_position(2),
-            fix_without_a_recorded_position(5),
-            fix_without_a_recorded_position(8),
-            measured_fix_without_a_satellite_report(10, 10.0),
-        ],
-        vec![0.0, 2.0, 5.0, 8.0, 10.0]
-    )]
-    fn a_fix_without_a_recorded_position_is_placed_from_the_fixes_around_it(
-        #[case] points: Vec<NavPoint>,
-        #[case] expected_longitudes: Vec<f64>,
-    ) {
-        let drawn_longitudes: Vec<f64> = drawn_positions(&points)
-            .into_iter()
-            .map(|(_, longitude)| longitude.as_degrees())
-            .collect();
-        assert_eq!(drawn_longitudes.len(), expected_longitudes.len());
-        for (index, (drawn, expected)) in drawn_longitudes
-            .iter()
-            .zip(&expected_longitudes)
-            .enumerate()
-        {
-            assert!(
-                (drawn - expected).abs() < PLACEMENT_TOLERANCE_DEGREES,
-                "fix {index} drawn at lon {drawn}, expected {expected}"
+        /// A point at GPS second `gps_secs` whose system clock is `sys_ahead_ms`
+        /// ahead of GPS (so the GPS−system offset is `-sys_ahead_ms`).
+        fn point_with_sys(gps_secs: i64, sys_ahead_ms: i64) -> NavPoint {
+            let gps = GpsTime::from_utc(Utc.timestamp_opt(gps_secs, 0).single().expect("valid"));
+            let sys = SysTime::from_utc(
+                Utc.timestamp_millis_opt(gps_secs * 1000 + sys_ahead_ms)
+                    .single()
+                    .expect("valid"),
             );
+            let tpv = TimePositionVelocity::builder()
+                .time(gps)
+                .lat(Latitude::new(55.0))
+                .lon(Longitude::new(12.0))
+                .sys_time(sys)
+                .build();
+            NavPoint::new(tpv, None)
+        }
+
+        #[test]
+        fn clock_discontinuity_flags_suspend_boundary_once() {
+            // Steady ~300 ms offset, then one sample whose system clock has jumped
+            // ~2 h ahead (the device resumed from suspend) - the mortmobil.gtd case.
+            let two_hours_ms = 2 * 3600 * 1000;
+            let points = vec![
+                point_with_sys(1000, 300),
+                point_with_sys(1001, 300),
+                point_with_sys(1002, 300),
+                point_with_sys(1003, 300),
+                point_with_sys(1004, 300 + two_hours_ms),
+            ];
+            let markers = clock_discontinuities_of(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS);
+            assert_eq!(
+                markers.len(),
+                1,
+                "exactly one discontinuity at the boundary"
+            );
+            let marker = markers.first().expect("one marker");
+            assert!(matches!(
+                marker.kind,
+                GeneratedMarkerKind::ClockDiscontinuity { .. }
+            ));
+            if let GeneratedMarkerKind::ClockDiscontinuity { step } = marker.kind {
+                // System clock jumped 2 h ahead, so GPS−system dropped by 2 h.
+                assert_eq!(step.num_milliseconds(), -two_hours_ms);
+            }
+            assert_eq!(
+                marker.time,
+                Utc.timestamp_opt(1004, 0).single().expect("valid")
+            );
+        }
+
+        /// Steady 234 ms offset with one sample carrying a 1 h 09 m recording gap -
+        /// the `gnss.h5.gtd` case, where the receiver reported its pre-gap GPS epoch
+        /// for the first fix after resuming.
+        fn resume_from_gap_points() -> Vec<NavPoint> {
+            vec![
+                point_with_sys(1000, 210),
+                point_with_sys(1001, 227),
+                point_with_sys(1002, 240),
+                point_with_sys(1003, 234),
+                point_with_sys(1004, 4_127_054),
+                point_with_sys(1005, 240),
+                point_with_sys(1006, 215),
+                point_with_sys(1007, 235),
+            ]
+        }
+
+        #[test]
+        fn an_excursion_is_one_marker_not_a_pair_of_discontinuities() {
+            let markers =
+                generated_markers_of(&resume_from_gap_points(), &GeneratedMarkerConfig::default());
+            let [marker] = markers.as_slice() else {
+                panic!("expected exactly one marker, got {}", markers.len());
+            };
+            let GeneratedMarkerKind::ClockOffsetExcursion {
+                deviation,
+                offset,
+                samples,
+            } = marker.kind
+            else {
+                panic!("expected a clock offset excursion, got {:?}", marker.kind);
+            };
+            assert_eq!(offset.num_milliseconds(), -4_127_054);
+            assert_eq!(deviation.num_milliseconds(), -4_126_820);
+            assert_eq!(samples, 1);
+            assert_eq!(
+                marker.time,
+                Utc.timestamp_opt(1004, 0).single().expect("valid"),
+                "placed at the sample that departed furthest"
+            );
+        }
+
+        #[test]
+        fn excursion_detection_off_leaves_the_discontinuity_markers() {
+            let config = GeneratedMarkerConfig {
+                detect_clock_offset_excursions: false,
+                ..GeneratedMarkerConfig::default()
+            };
+            let markers = generated_markers_of(&resume_from_gap_points(), &config);
+            assert!(
+                markers.is_empty(),
+                "the excursion sample stays out of the step series either way, so the \
+                 departure is never re-reported as a pair of jumps: {markers:?}"
+            );
+        }
+
+        #[test]
+        fn a_permanent_offset_step_stays_a_discontinuity() {
+            let mut points: Vec<NavPoint> = (0..6).map(|i| point_with_sys(1000 + i, 200)).collect();
+            points.extend((6..12).map(|i| point_with_sys(1000 + i, 3_600_000)));
+            let markers = generated_markers_of(&points, &GeneratedMarkerConfig::default());
+            let [marker] = markers.as_slice() else {
+                panic!("expected exactly one marker, got {}", markers.len());
+            };
+            assert!(matches!(
+                marker.kind,
+                GeneratedMarkerKind::ClockDiscontinuity { .. }
+            ));
+        }
+
+        /// Five minutes of host-clock offset, far past the jitter of a healthy
+        /// clock and steady across the track.
+        const FIVE_MINUTES_MS: i64 = 5 * 60 * 1000;
+
+        /// No sample of a host clock offset that stands far from GPS across
+        /// the whole track is an outlier: the median is taken over the track's
+        /// own offsets.
+        #[rstest]
+        #[case::jitter_around_a_300_ms_offset(vec![300, 305, 298, 302])]
+        #[case::jitter_around_a_five_minute_offset(vec![
+            FIVE_MINUTES_MS,
+            FIVE_MINUTES_MS + 4,
+            FIVE_MINUTES_MS - 3,
+            FIVE_MINUTES_MS + 2,
+            FIVE_MINUTES_MS - 5,
+        ])]
+        fn clock_discontinuity_ignores_an_offset_series_without_an_outlier(
+            #[case] sys_ahead_ms: Vec<i64>,
+        ) {
+            let points: Vec<NavPoint> = sys_ahead_ms
+                .iter()
+                .enumerate()
+                .map(|(index, &ahead)| point_with_sys(1000 + index as i64, ahead))
+                .collect();
+
+            assert!(clock_discontinuities_of(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS).is_empty());
+        }
+
+        #[test]
+        fn clock_discontinuity_needs_enough_samples() {
+            // Below MIN_CLOCK_SAMPLES, detection is skipped even with an obvious 2 h
+            // jump on the last sample - too few samples for a robust estimate.
+            let two_hours_ms = 2 * 3600 * 1000;
+            for count in 0..MIN_CLOCK_SAMPLES {
+                let points: Vec<NavPoint> = (0..count)
+                    .map(|i| {
+                        let ahead = if i + 1 == count {
+                            300 + two_hours_ms
+                        } else {
+                            300
+                        };
+                        point_with_sys(1000 + i as i64, ahead)
+                    })
+                    .collect();
+                assert!(
+                    clock_discontinuities_of(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS).is_empty(),
+                    "detection must be skipped with {count} samples (< {MIN_CLOCK_SAMPLES})"
+                );
+            }
         }
     }
 
-    /// A track whose every fix is out of range has no anchor of its own, and
-    /// the fixes of the recording's other tracks place it: 3610 s is halfway
-    /// between the fixes at 10 s (lon 10) and 7210 s (lon 20).
-    #[test]
-    fn a_track_without_a_position_is_placed_from_the_rest_of_the_recording() {
-        let points = vec![
-            measured_fix_without_a_satellite_report(0, 0.0),
-            measured_fix_without_a_satellite_report(10, 10.0),
-            fix_without_a_recorded_position(3610),
-            measured_fix_without_a_satellite_report(7210, 20.0),
-        ];
+    mod segmentation {
+        use super::*;
 
-        let file = build_loaded_file(
-            "out_of_range.gtd".to_owned(),
-            &points,
-            &[],
-            vec![],
-            vec![],
-            &[],
-            &SegmentationConfig::default(),
-            FileSource::GtdPath(PathBuf::from("out_of_range.gtd")),
-            FileMeta::default(),
-            vec![],
-        );
-
-        let drawn = file
-            .tracks
-            .get(1)
-            .and_then(|track| track.placed_points()?.get(0))
-            .expect("the middle fix is a track of its own");
-        let longitude = drawn.resolved_position().1.as_degrees();
-        assert!(
-            (longitude - 15.0).abs() < PLACEMENT_TOLERANCE_DEGREES,
-            "drawn at lon {longitude}, expected 15"
-        );
-    }
-
-    #[test]
-    fn track_metadata_counts_the_fixes_whose_recorded_position_is_out_of_range() {
-        let points = vec1::vec1![
-            measured_fix_without_a_satellite_report(0, 0.0),
-            fix_without_a_recorded_position(5),
-            measured_fix_without_a_satellite_report(10, 10.0),
-        ];
-
-        let metadata = compute_track_metadata(1, &points, &[], &[]);
-
-        assert_eq!(metadata.invalid_position_count, 1);
-    }
-
-    #[test]
-    fn ghost_fixes_with_no_anchor_stay_where_they_were_recorded() {
-        let points = vec![
-            make_ghost(0, Latitude::new(55.0), Longitude::new(12.0)),
-            make_ghost(5, Latitude::new(56.0), Longitude::new(13.0)),
-        ];
-
-        assert_eq!(drawn_positions(&points), recorded_positions(&points));
-    }
-
-    #[test]
-    fn build_loaded_file_file_fix_stats_aggregates_tracks() {
-        // Default split gap is 300 s, so consecutive points must be < 300 s apart to stay in
-        // the same track. Track 1: t=0 (fix)→t=60 (no-fix)→t=180 (no-fix). One loss, max=120s.
-        // Track 2 (after a 9820s gap): t=10000 (fix)→t=10060 (no-fix)→t=10120 (fix). One loss,
-        // max=60s.
-        // sum(120, 60) = 180s != max(120, 60) = 120s, so the assertion below distinguishes
-        // "max across tracks" from "sum across tracks".
-        let pts = vec![
-            make_point_with_fix(0, true),
-            make_point_with_fix(60, false),
-            make_point_with_fix(180, false),   // end of track 1
-            make_point_with_fix(10_000, true), // large gap → new track 2
-            make_point_with_fix(10_060, false),
-            make_point_with_fix(10_120, true),
-        ];
-        let f = build_loaded_file(
-            "test.gtd".to_owned(),
-            &pts,
-            &[],
-            vec![],
-            vec![],
-            &[],
-            &SegmentationConfig::default(),
-            FileSource::GtdPath(PathBuf::from("test.gtd")),
-            FileMeta::default(),
-            vec![],
-        );
-        assert_eq!(f.tracks.len(), 2, "expected two tracks");
-        let stats = f.metadata.fix_stats.expect("fix stats should be present");
-        assert_eq!(stats.time_with_fix, Duration::seconds(60 + 60));
-        assert_eq!(stats.time_without_fix, Duration::seconds(120 + 60));
-        assert_eq!(stats.fix_loss_count, 2);
-        // max taken across tracks, not summed
-        assert_eq!(stats.max_continuous_no_fix, Duration::seconds(120));
-    }
-
-    #[test]
-    fn build_loaded_file_carries_file_meta() {
-        let pts = vec![make_point_with_fix(0, true), make_point_with_fix(60, true)];
-        let file_meta = FileMeta {
-            title: Some("Morning ride".to_owned()),
-            device: Some("uBlox F9P".to_owned()),
-            notes: Some("cross-town".to_owned()),
-            travel_mode: Some(TravelMode::Bicycle),
-        };
-        let f = build_loaded_file(
-            "ride.gtd".to_owned(),
-            &pts,
-            &[],
-            vec![],
-            vec![],
-            &[],
-            &SegmentationConfig::default(),
-            FileSource::GtdPath(PathBuf::from("ride.gtd")),
-            file_meta,
-            vec![],
-        );
-        assert_eq!(f.metadata.title.as_deref(), Some("Morning ride"));
-        assert_eq!(f.metadata.device.as_deref(), Some("uBlox F9P"));
-        assert_eq!(f.metadata.notes.as_deref(), Some("cross-town"));
-        assert_eq!(f.metadata.travel_mode, Some(TravelMode::Bicycle));
-
-        // Round-trip: rebuilding from the built metadata (the re-segmentation
-        // path) preserves the fields.
-        let recovered = FileMeta::from(&f.metadata);
-        assert_eq!(recovered.title.as_deref(), Some("Morning ride"));
-        assert_eq!(recovered.device.as_deref(), Some("uBlox F9P"));
-        assert_eq!(recovered.notes.as_deref(), Some("cross-town"));
-        assert_eq!(recovered.travel_mode, Some(TravelMode::Bicycle));
-    }
-
-    proptest::proptest! {
-        /// Invariant: `time_with_fix + time_without_fix` equals the sum of all
-        /// intervals between consecutive satellite-report points, regardless of
-        /// fix pattern or gap sizes.
         #[test]
-        fn fix_stats_durations_sum_to_total_interval(
-            deltas_and_fixes in proptest::collection::vec(
-                (1i64..300i64, proptest::bool::ANY),
-                2..20usize,
-            )
+        fn segment_tracks_empty_input() {
+            assert!(segment_tracks(&[], &TrackLayoutConfig::default()).is_empty());
+        }
+
+        #[test]
+        fn segment_tracks_single_point() {
+            let pts = vec![make_point_at(0)];
+            let ranges = segment_tracks(&pts, &TrackLayoutConfig::default());
+            assert_eq!(ranges, vec![0..1]);
+        }
+
+        #[rstest]
+        #[case::forward_step_below_the_split_gap(TrackSplitRule::StepInEitherDirection, 299, vec![0..2])]
+        #[case::forward_step_at_the_split_gap(TrackSplitRule::StepInEitherDirection, 300, vec![0..1, 1..2])]
+        #[case::backward_step_below_the_split_gap(TrackSplitRule::StepInEitherDirection, -299, vec![0..2])]
+        #[case::backward_step_at_the_split_gap(TrackSplitRule::StepInEitherDirection, -300, vec![0..1, 1..2])]
+        #[case::forward_step_at_the_split_gap_under_forward_gaps_only(TrackSplitRule::ForwardGapOnly, 300, vec![0..1, 1..2])]
+        #[case::backward_step_at_the_split_gap_under_forward_gaps_only(TrackSplitRule::ForwardGapOnly, -300, vec![0..2])]
+        fn segment_tracks_applies_the_configured_split_rule(
+            #[case] track_split_rule: TrackSplitRule,
+            #[case] step_seconds: i64,
+            #[case] expected_ranges: Vec<Range<usize>>,
         ) {
-            let mut t: i64 = 0;
-            let points: Vec<NavPoint> = deltas_and_fixes
+            let pts = vec![make_point_at(1_000), make_point_at(1_000 + step_seconds)];
+            let config = TrackLayoutConfig {
+                track_split_rule,
+                ..TrackLayoutConfig::default()
+            };
+
+            let ranges = segment_tracks(&pts, &config);
+
+            assert_eq!(ranges, expected_ranges);
+        }
+
+        #[test]
+        fn segment_tracks_multiple_gaps() {
+            let pts = vec![
+                make_point_at(0),
+                make_point_at(3600), // first gap
+                make_point_at(7200), // second gap
+            ];
+            let ranges = segment_tracks(&pts, &TrackLayoutConfig::default());
+            assert_eq!(ranges, vec![0..1, 1..2, 2..3]);
+        }
+    }
+
+    mod track_metadata {
+        use super::*;
+
+        fn make_point_at_pos(t: i64, lat: f64, lon: f64) -> NavPoint {
+            let time =
+                GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().expect("valid timestamp"));
+            let tpv = TimePositionVelocity::builder()
+                .time(time)
+                .lat(Latitude::new(lat))
+                .lon(gt_types::coordinates::Longitude::new(lon))
+                .heading(Angle::new::<degree>(0.0))
+                .build();
+            NavPoint::new(tpv, None)
+        }
+
+        #[test]
+        fn compute_track_metadata_basic() {
+            let pts = vec1::vec1![
+                make_point_at_pos(0, 55.0, 12.0),
+                make_point_at_pos(3600, 55.1, 12.1), // 1 h later, ~13 km away
+            ];
+            let meta = compute_track_metadata(1, &pts, &[], &[]);
+            assert_eq!(meta.index, 1);
+            assert_eq!(meta.tpv_count, 2);
+            assert_eq!(meta.duration.num_seconds(), 3600);
+            assert!(!meta.has_custom_markers);
+            assert_eq!(meta.satellite_report_count, 0);
+
+            let distance_km = measure_track_geometry(&pts, FixPlacementRule::default())
+                .measured()
+                .expect("both fixes have a recorded position")
+                .distance_km;
+            assert!(
+                distance_km > Length::new::<kilometer>(5.0),
+                "expected > 5 km, got {distance_km:?}"
+            );
+        }
+
+        #[test]
+        fn compute_track_metadata_single_point_has_zero_duration() {
+            let pts = vec1::vec1![make_point_at_pos(0, 55.0, 12.0)];
+            let meta = compute_track_metadata(1, &pts, &[], &[]);
+            assert_eq!(meta.duration.num_seconds(), 0);
+
+            let distance_km = measure_track_geometry(&pts, FixPlacementRule::default())
+                .measured()
+                .expect("the fix has a recorded position")
+                .distance_km;
+            assert_eq!(distance_km, Length::new::<kilometer>(0.0));
+        }
+    }
+
+    mod file_assembly {
+        use super::*;
+
+        #[test]
+        fn build_loaded_file_empty_points() {
+            let f = build_loaded_file(
+                "test.gtd".to_owned(),
+                &[],
+                &[],
+                vec![],
+                vec![],
+                &[],
+                &SegmentationConfig::default(),
+                FileSource::GtdPath(PathBuf::from("test.gtd")),
+                FileMeta::default(),
+                vec![],
+            );
+            assert!(f.tracks.is_empty());
+            assert_eq!(f.metadata.filename, "test.gtd");
+            assert_eq!(f.metadata.time_range, None);
+        }
+
+        #[test]
+        fn build_loaded_file_numbers_two_tracks_from_one_recording() {
+            let pts = vec![
+                make_point_at(0),
+                make_point_at(60),
+                make_point_at(3600), // gap → new track
+                make_point_at(3660),
+            ];
+            let f = build_loaded_file(
+                "ride.gtd".to_owned(),
+                &pts,
+                &[],
+                vec![],
+                vec![],
+                &[],
+                &SegmentationConfig::default(),
+                FileSource::GtdPath(PathBuf::from("ride.gtd")),
+                FileMeta::default(),
+                vec![],
+            );
+            assert_eq!(f.tracks.len(), 2);
+            assert_eq!(f.tracks[0].points.len(), 2);
+            assert_eq!(f.tracks[1].points.len(), 2);
+            assert_eq!(f.tracks[0].metadata.index, 1);
+            assert_eq!(f.tracks[1].metadata.index, 2);
+        }
+
+        #[test]
+        fn build_loaded_file_carries_file_meta() {
+            let pts = vec![make_point_with_fix(0, true), make_point_with_fix(60, true)];
+            let file_meta = FileMeta {
+                title: Some("Morning ride".to_owned()),
+                device: Some("uBlox F9P".to_owned()),
+                notes: Some("cross-town".to_owned()),
+                travel_mode: Some(TravelMode::Bicycle),
+            };
+            let f = build_loaded_file(
+                "ride.gtd".to_owned(),
+                &pts,
+                &[],
+                vec![],
+                vec![],
+                &[],
+                &SegmentationConfig::default(),
+                FileSource::GtdPath(PathBuf::from("ride.gtd")),
+                file_meta,
+                vec![],
+            );
+            assert_eq!(f.metadata.title.as_deref(), Some("Morning ride"));
+            assert_eq!(f.metadata.device.as_deref(), Some("uBlox F9P"));
+            assert_eq!(f.metadata.notes.as_deref(), Some("cross-town"));
+            assert_eq!(f.metadata.travel_mode, Some(TravelMode::Bicycle));
+
+            // Round-trip: rebuilding from the built metadata (the re-segmentation
+            // path) preserves the fields.
+            let recovered = FileMeta::from(&f.metadata);
+            assert_eq!(recovered.title.as_deref(), Some("Morning ride"));
+            assert_eq!(recovered.device.as_deref(), Some("uBlox F9P"));
+            assert_eq!(recovered.notes.as_deref(), Some("cross-town"));
+            assert_eq!(recovered.travel_mode, Some(TravelMode::Bicycle));
+        }
+    }
+
+    mod channels {
+        use super::*;
+
+        fn utc(secs: i64) -> DateTime<Utc> {
+            Utc.timestamp_opt(secs, 0)
+                .single()
+                .expect("valid timestamp")
+        }
+
+        #[test]
+        fn channels_partition_to_tracks_by_timestamp() {
+            // Two tracks: [0, 60] and [3600, 3660]. A scalar channel with samples in
+            // track 1 (0, 30), the gap (1800), and track 2 (3600).
+            let pts = vec![
+                make_point_at(0),
+                make_point_at(60),
+                make_point_at(3600),
+                make_point_at(3660),
+            ];
+            let channel = Channel {
+                name: "incline".to_owned(),
+                unit: Some(Unit::DEG.into()),
+                period: None,
+                description: None,
+                components: vec![],
+                times: vec![utc(0), utc(30), utc(1800), utc(3600)],
+                values: vec![1.0, 2.0, 9.0, 3.0],
+            };
+            let f = build_loaded_file(
+                "ride.gtd".to_owned(),
+                &pts,
+                &[],
+                vec![],
+                vec![],
+                std::slice::from_ref(&channel),
+                &SegmentationConfig::default(),
+                FileSource::GtdPath(PathBuf::from("ride.gtd")),
+                FileMeta::default(),
+                vec![],
+            );
+            assert_eq!(f.tracks.len(), 2);
+
+            // Track 1 keeps the two in-range samples. The gap sample (1800) is
+            // dropped.
+            let t0 = &f.tracks[0].channels;
+            assert_eq!(t0.len(), 1);
+            assert_eq!(t0[0].name, "incline");
+            assert_eq!(t0[0].times, vec![utc(0), utc(30)]);
+            assert_eq!(t0[0].values, vec![1.0, 2.0]);
+
+            // Track 2 keeps its single sample.
+            let t1 = &f.tracks[1].channels;
+            assert_eq!(t1.len(), 1);
+            assert_eq!(t1[0].times, vec![utc(3600)]);
+
+            // Reassembly concatenates the per-track slices back in time order.
+            // The dropped gap sample stays dropped.
+            let reassembled = reassemble_channels(&f.tracks);
+            assert_eq!(reassembled.len(), 1);
+            assert_eq!(reassembled[0].times, vec![utc(0), utc(30), utc(3600)]);
+            assert_eq!(reassembled[0].values, vec![1.0, 2.0, 3.0]);
+
+            // The one gap sample (1800) that landed in no track is surfaced as a warning.
+            let warning = f
+                .load_warnings
                 .iter()
-                .map(|(dt, has_fix)| {
-                    t += dt;
-                    make_point_with_fix(t, *has_fix)
+                .find(|w| w.issue.contains("outside every track"))
+                .expect("dropped gap sample should be reported");
+            assert_eq!(warning.count, 1);
+        }
+
+        #[test]
+        fn a_vector_channel_partitions_and_reassembles_with_columns_aligned() {
+            // Two tracks split at the 3600s gap. A 3-component accel channel with two
+            // samples in track 1, one in the gap (dropped), and one in track 2.
+            let pts = vec![
+                make_point_at(0),
+                make_point_at(60),
+                make_point_at(3600),
+                make_point_at(3660),
+            ];
+            let channel = Channel {
+                name: "accel".to_owned(),
+                unit: Some(Unit::G.into()),
+                period: None,
+                description: None,
+                components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
+                times: vec![utc(0), utc(30), utc(1800), utc(3600)],
+                // Row-major: four samples of (x, y, z).
+                values: vec![
+                    0.0, 0.1, 1.0, // t=0
+                    1.0, 1.1, 2.0, // t=30
+                    8.0, 8.1, 8.2, // t=1800 (gap, dropped)
+                    3.0, 3.1, 4.0, // t=3600
+                ],
+            };
+            let f = build_loaded_file(
+                "ride.gtd".to_owned(),
+                &pts,
+                &[],
+                vec![],
+                vec![],
+                std::slice::from_ref(&channel),
+                &SegmentationConfig::default(),
+                FileSource::GtdPath(PathBuf::from("ride.gtd")),
+                FileMeta::default(),
+                vec![],
+            );
+
+            // Track 1 keeps rows 0 and 1 with their columns intact.
+            let t0 = &f.tracks[0].channels[0];
+            assert_eq!(t0.components, ["x", "y", "z"]);
+            assert_eq!(t0.times, vec![utc(0), utc(30)]);
+            assert_eq!(t0.values, vec![0.0, 0.1, 1.0, 1.0, 1.1, 2.0]);
+            // Track 2 keeps the last row.
+            assert_eq!(f.tracks[1].channels[0].values, vec![3.0, 3.1, 4.0]);
+
+            // Reassembly restores the surviving rows in time order, columns aligned.
+            let reassembled = reassemble_channels(&f.tracks);
+            assert_eq!(reassembled[0].components, ["x", "y", "z"]);
+            assert_eq!(reassembled[0].times, vec![utc(0), utc(30), utc(3600)]);
+            assert_eq!(
+                reassembled[0].values,
+                vec![0.0, 0.1, 1.0, 1.0, 1.1, 2.0, 3.0, 3.1, 4.0]
+            );
+        }
+
+        #[test]
+        fn a_channel_absent_from_a_track_is_not_attached() {
+            // Channel samples only in track 2's range. Track 1 has no channel.
+            let pts = vec![make_point_at(0), make_point_at(3600), make_point_at(3660)];
+            let channel = Channel {
+                name: "accel".to_owned(),
+                unit: None,
+                period: None,
+                description: None,
+                components: vec![],
+                times: vec![utc(3600), utc(3660)],
+                values: vec![1.0, 2.0],
+            };
+            let f = build_loaded_file(
+                "ride.gtd".to_owned(),
+                &pts,
+                &[],
+                vec![],
+                vec![],
+                std::slice::from_ref(&channel),
+                &SegmentationConfig::default(),
+                FileSource::GtdPath(PathBuf::from("ride.gtd")),
+                FileMeta::default(),
+                vec![],
+            );
+            assert_eq!(f.tracks.len(), 2);
+            assert!(f.tracks[0].channels.is_empty());
+            assert_eq!(f.tracks[1].channels.len(), 1);
+        }
+    }
+
+    mod fix_stats {
+        use super::*;
+
+        #[rstest]
+        #[case::no_fixes(vec![])]
+        #[case::no_satellite_reports(vec![make_point_at(0), make_point_at(60)])]
+        #[case::one_fix_with_a_report(vec![make_point_with_fix(0, true)])]
+        fn compute_fix_stats_needs_two_fixes_with_a_satellite_report(#[case] pts: Vec<NavPoint>) {
+            assert!(compute_fix_stats(&pts).is_none());
+        }
+
+        #[test]
+        fn compute_fix_stats_all_with_fix() {
+            // Two consecutive sat points, both in fix → all `time_with_fix`, no losses
+            let pts = vec![make_point_with_fix(0, true), make_point_with_fix(60, true)];
+            let stats = compute_fix_stats(&pts).expect("has satellite data");
+            assert_eq!(stats.time_with_fix, Duration::seconds(60));
+            assert_eq!(stats.time_without_fix, Duration::zero());
+            assert_eq!(stats.fix_loss_count, 0);
+            assert_eq!(stats.max_continuous_no_fix, Duration::zero());
+        }
+
+        #[test]
+        fn compute_fix_stats_all_without_fix() {
+            let pts = vec![
+                make_point_with_fix(0, false),
+                make_point_with_fix(120, false),
+            ];
+            let stats = compute_fix_stats(&pts).expect("has satellite data");
+            assert_eq!(stats.time_with_fix, Duration::zero());
+            assert_eq!(stats.time_without_fix, Duration::seconds(120));
+            assert_eq!(stats.fix_loss_count, 0);
+            assert_eq!(stats.max_continuous_no_fix, Duration::seconds(120));
+        }
+
+        #[test]
+        fn compute_fix_stats_fix_then_lost() {
+            // fix 0→60, lost 60→180 → one loss, 120s without fix
+            let pts = vec![
+                make_point_with_fix(0, true),
+                make_point_with_fix(60, false),
+                make_point_with_fix(180, false),
+            ];
+            let stats = compute_fix_stats(&pts).expect("has satellite data");
+            assert_eq!(stats.time_with_fix, Duration::seconds(60));
+            assert_eq!(stats.time_without_fix, Duration::seconds(120));
+            assert_eq!(stats.fix_loss_count, 1);
+            assert_eq!(stats.max_continuous_no_fix, Duration::seconds(120));
+        }
+
+        #[test]
+        fn compute_fix_stats_multiple_losses() {
+            // fix→lost→fix→lost pattern. Two separate no-fix stretches
+            let pts = vec![
+                make_point_with_fix(0, true),    // fix
+                make_point_with_fix(100, false), // lost (100s with fix)
+                make_point_with_fix(200, false), // still lost (100s without fix, streak=100)
+                make_point_with_fix(300, true),  // regained (100s more without fix, streak=200)
+                make_point_with_fix(400, false), // lost again (100s with fix)
+                make_point_with_fix(450, false), // still lost (50s without fix, streak=50)
+            ];
+            let stats = compute_fix_stats(&pts).expect("has satellite data");
+            assert_eq!(stats.time_with_fix, Duration::seconds(200));
+            assert_eq!(stats.time_without_fix, Duration::seconds(250));
+            assert_eq!(stats.fix_loss_count, 2);
+            assert_eq!(stats.max_continuous_no_fix, Duration::seconds(200));
+        }
+
+        #[test]
+        fn compute_fix_stats_ignores_points_without_sat_data() {
+            // Gaps between sat-report points (no satellite data) are not counted in either bucket
+            let pts = vec![
+                make_point_with_fix(0, true),
+                make_point_at(30), // no satellite data - ignored
+                make_point_at(60), // no satellite data - ignored
+                make_point_with_fix(90, true),
+            ];
+            let stats = compute_fix_stats(&pts).expect("has satellite data");
+            // Interval 0→90 attributed to first sat point (has fix) = 90s with fix
+            assert_eq!(stats.time_with_fix, Duration::seconds(90));
+            assert_eq!(stats.time_without_fix, Duration::zero());
+            assert_eq!(stats.fix_loss_count, 0);
+        }
+
+        #[test]
+        fn build_loaded_file_file_fix_stats_aggregates_tracks() {
+            // Default split gap is 300 s, so consecutive points must be < 300 s apart to stay in
+            // the same track. Track 1: t=0 (fix)→t=60 (no-fix)→t=180 (no-fix). One loss, max=120s.
+            // Track 2 (after a 9820s gap): t=10000 (fix)→t=10060 (no-fix)→t=10120 (fix). One loss,
+            // max=60s.
+            // sum(120, 60) = 180s != max(120, 60) = 120s, so the assertion below distinguishes
+            // "max across tracks" from "sum across tracks".
+            let pts = vec![
+                make_point_with_fix(0, true),
+                make_point_with_fix(60, false),
+                make_point_with_fix(180, false),   // end of track 1
+                make_point_with_fix(10_000, true), // large gap → new track 2
+                make_point_with_fix(10_060, false),
+                make_point_with_fix(10_120, true),
+            ];
+            let f = build_loaded_file(
+                "test.gtd".to_owned(),
+                &pts,
+                &[],
+                vec![],
+                vec![],
+                &[],
+                &SegmentationConfig::default(),
+                FileSource::GtdPath(PathBuf::from("test.gtd")),
+                FileMeta::default(),
+                vec![],
+            );
+            assert_eq!(f.tracks.len(), 2, "expected two tracks");
+            let stats = f.metadata.fix_stats.expect("fix stats should be present");
+            assert_eq!(stats.time_with_fix, Duration::seconds(60 + 60));
+            assert_eq!(stats.time_without_fix, Duration::seconds(120 + 60));
+            assert_eq!(stats.fix_loss_count, 2);
+            // max taken across tracks, not summed
+            assert_eq!(stats.max_continuous_no_fix, Duration::seconds(120));
+        }
+
+        proptest::proptest! {
+            /// Invariant: `time_with_fix + time_without_fix` equals the sum of all
+            /// intervals between consecutive satellite-report points, regardless of
+            /// fix pattern or gap sizes.
+            #[test]
+            fn fix_stats_durations_sum_to_total_interval(
+                deltas_and_fixes in proptest::collection::vec(
+                    (1i64..300i64, proptest::bool::ANY),
+                    2..20usize,
+                )
+            ) {
+                let mut t: i64 = 0;
+                let points: Vec<NavPoint> = deltas_and_fixes
+                    .iter()
+                    .map(|(dt, has_fix)| {
+                        t += dt;
+                        make_point_with_fix(t, *has_fix)
+                    })
+                    .collect();
+
+                // All points have satellite data, so fix stats must be Some.
+                let stats = compute_fix_stats(&points).expect("all points have satellite data");
+
+                // Compute expected total: sum of intervals between consecutive sat-report points.
+                let expected_total = points
+                    .windows(2)
+                    .map(|pair| {
+                        if let [a, b] = pair {
+                            b.tpv.time() - a.tpv.time()
+                        } else {
+                            Duration::zero()
+                        }
+                    })
+                    .fold(Duration::zero(), |acc, d| acc + d);
+
+                proptest::prop_assert_eq!(
+                    stats.time_with_fix + stats.time_without_fix,
+                    expected_total,
+                );
+            }
+        }
+    }
+
+    mod fix_placement {
+        use super::*;
+
+        fn make_real_fix(t: i64, lat: Latitude, lon: Longitude) -> NavPoint {
+            let time =
+                GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().expect("valid timestamp"));
+            let tpv = TimePositionVelocity::builder()
+                .time(time)
+                .lat(lat)
+                .lon(lon)
+                .heading(Angle::new::<degree>(0.0))
+                .build();
+            let sats = Satellites::new(
+                Some(time),
+                None,
+                vec![Satellite::new(
+                    Constellation::Gps,
+                    1,
+                    None,
+                    None,
+                    None,
+                    true,
+                )],
+            );
+            NavPoint::new(tpv, Some(sats))
+        }
+
+        fn make_ghost(t: i64, lat: Latitude, lon: Longitude) -> NavPoint {
+            let time =
+                GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().expect("valid timestamp"));
+            let tpv = TimePositionVelocity::builder()
+                .time(time)
+                .lat(lat)
+                .lon(lon)
+                .build();
+            NavPoint::new(tpv, None)
+        }
+
+        /// Where the builder draws each fix of `points`, taken as a track of their
+        /// own. Empty for a track without a placed fix.
+        fn drawn_positions(points: &[NavPoint]) -> Vec<(Latitude, Longitude)> {
+            measure_track_geometry(points, FixPlacementRule::default())
+                .measured()
+                .map_or_else(Vec::new, |measured| {
+                    measured
+                        .resolved_positions
+                        .iter()
+                        .map(|resolved| resolved.coordinates())
+                        .collect()
                 })
+        }
+
+        #[test]
+        fn a_track_of_no_fixes_has_no_geometry() {
+            assert_eq!(
+                measure_track_geometry(&[], FixPlacementRule::default()),
+                TrackGeometry::NoValidPosition
+            );
+        }
+
+        #[test]
+        fn a_ghost_fix_between_two_anchors_is_interpolated() {
+            // Real fixes on the equator at t=0 (lon=0) and t=10 (lon=1), ghost at
+            // t=5. The equator is a great circle, so the ghost lands at lon=0.5.
+            let points = vec![
+                make_real_fix(0, Latitude::new(0.0), Longitude::new(0.0)),
+                make_ghost(5, Latitude::new(10.0), Longitude::new(10.0)),
+                make_real_fix(10, Latitude::new(0.0), Longitude::new(1.0)),
+            ];
+
+            let (latitude, longitude) = drawn_positions(&points)[1];
+            assert!(
+                latitude.as_degrees().abs() < 1e-9,
+                "latitude mismatch: {} vs 0.0",
+                latitude.as_degrees(),
+            );
+            assert!(
+                (longitude.as_degrees() - 0.5).abs() < 1e-9,
+                "longitude mismatch: {} vs 0.5",
+                longitude.as_degrees(),
+            );
+            assert_eq!(
+                points[1].tpv.position(),
+                Some((Latitude::new(10.0), Longitude::new(10.0))),
+                "the recorded coordinates must survive interpolation"
+            );
+        }
+
+        #[test]
+        fn a_ghost_fix_after_the_last_anchor_snaps_to_it() {
+            let points = vec![
+                make_real_fix(0, Latitude::new(55.0), Longitude::new(12.0)),
+                make_ghost(10, Latitude::new(10.0), Longitude::new(10.0)),
+            ];
+
+            assert_eq!(
+                drawn_positions(&points)[1],
+                (Latitude::new(55.0), Longitude::new(12.0))
+            );
+        }
+
+        /// Placement is read from longitude alone in the tests below: every fix
+        /// in them sits on the equator. 1e-9° is about 0.1 mm.
+        const PLACEMENT_TOLERANCE_DEGREES: f64 = 1e-9;
+
+        /// A fix with a position and a heading, but no satellite report: the
+        /// receiver reported where it was but not what it tracked.
+        fn measured_fix_without_a_satellite_report(secs: i64, lon_degrees: f64) -> NavPoint {
+            let time = GpsTime::from_utc(
+                Utc.timestamp_opt(secs, 0)
+                    .single()
+                    .expect("valid timestamp"),
+            );
+            let tpv = TimePositionVelocity::builder()
+                .time(time)
+                .lat(Latitude::new(0.0))
+                .lon(Longitude::new(lon_degrees))
+                .heading(Angle::new::<degree>(90.0))
+                .build();
+            NavPoint::new(tpv, None)
+        }
+
+        /// A fix the receiver wrote a latitude of NaN for. Its heading is present,
+        /// leaving the unusable coordinate as the only reason to place it. A
+        /// position kept as recorded is distinguishable from a placed one: its
+        /// longitude is far from the fixes around it.
+        fn fix_without_a_recorded_position(secs: i64) -> NavPoint {
+            let time = GpsTime::from_utc(
+                Utc.timestamp_opt(secs, 0)
+                    .single()
+                    .expect("valid timestamp"),
+            );
+            let tpv = TimePositionVelocity::builder()
+                .time(time)
+                .lat(RecordedLatitude::from_degrees(f64::NAN))
+                .lon(RecordedLongitude::from_degrees(88.0))
+                .heading(Angle::new::<degree>(90.0))
+                .build();
+            NavPoint::new(tpv, None)
+        }
+
+        #[rstest]
+        #[case::between_two_measured_fixes(
+            vec![
+                measured_fix_without_a_satellite_report(0, 0.0),
+                fix_without_a_recorded_position(5),
+                measured_fix_without_a_satellite_report(10, 10.0),
+            ],
+            vec![0.0, 5.0, 10.0]
+        )]
+        #[case::before_the_first_measured_fix(
+            vec![
+                fix_without_a_recorded_position(0),
+                measured_fix_without_a_satellite_report(10, 10.0),
+                measured_fix_without_a_satellite_report(20, 20.0),
+            ],
+            vec![10.0, 10.0, 20.0]
+        )]
+        #[case::after_the_last_measured_fix(
+            vec![
+                measured_fix_without_a_satellite_report(0, 0.0),
+                measured_fix_without_a_satellite_report(10, 10.0),
+                fix_without_a_recorded_position(20),
+            ],
+            vec![0.0, 10.0, 10.0]
+        )]
+        #[case::a_run_of_three_spreads_over_the_time_they_span(
+            vec![
+                measured_fix_without_a_satellite_report(0, 0.0),
+                fix_without_a_recorded_position(2),
+                fix_without_a_recorded_position(5),
+                fix_without_a_recorded_position(8),
+                measured_fix_without_a_satellite_report(10, 10.0),
+            ],
+            vec![0.0, 2.0, 5.0, 8.0, 10.0]
+        )]
+        fn a_fix_without_a_recorded_position_is_placed_from_the_fixes_around_it(
+            #[case] points: Vec<NavPoint>,
+            #[case] expected_longitudes: Vec<f64>,
+        ) {
+            let drawn_longitudes: Vec<f64> = drawn_positions(&points)
+                .into_iter()
+                .map(|(_, longitude)| longitude.as_degrees())
                 .collect();
+            assert_eq!(drawn_longitudes.len(), expected_longitudes.len());
+            for (index, (drawn, expected)) in drawn_longitudes
+                .iter()
+                .zip(&expected_longitudes)
+                .enumerate()
+            {
+                assert!(
+                    (drawn - expected).abs() < PLACEMENT_TOLERANCE_DEGREES,
+                    "fix {index} drawn at lon {drawn}, expected {expected}"
+                );
+            }
+        }
 
-            // All points have satellite data, so fix stats must be Some.
-            let stats = compute_fix_stats(&points).expect("all points have satellite data");
+        /// A track whose every fix is out of range has no anchor of its own, and
+        /// the fixes of the recording's other tracks place it: 3610 s is halfway
+        /// between the fixes at 10 s (lon 10) and 7210 s (lon 20).
+        #[test]
+        fn a_track_without_a_position_is_placed_from_the_rest_of_the_recording() {
+            let points = vec![
+                measured_fix_without_a_satellite_report(0, 0.0),
+                measured_fix_without_a_satellite_report(10, 10.0),
+                fix_without_a_recorded_position(3610),
+                measured_fix_without_a_satellite_report(7210, 20.0),
+            ];
 
-            // Compute expected total: sum of intervals between consecutive sat-report points.
-            let expected_total = points
-                .windows(2)
-                .map(|pair| {
-                    if let [a, b] = pair {
-                        b.tpv.time() - a.tpv.time()
-                    } else {
-                        Duration::zero()
-                    }
-                })
-                .fold(Duration::zero(), |acc, d| acc + d);
+            let file = build_loaded_file(
+                "out_of_range.gtd".to_owned(),
+                &points,
+                &[],
+                vec![],
+                vec![],
+                &[],
+                &SegmentationConfig::default(),
+                FileSource::GtdPath(PathBuf::from("out_of_range.gtd")),
+                FileMeta::default(),
+                vec![],
+            );
 
-            proptest::prop_assert_eq!(
-                stats.time_with_fix + stats.time_without_fix,
-                expected_total,
+            let drawn = file
+                .tracks
+                .get(1)
+                .and_then(|track| track.placed_points()?.get(0))
+                .expect("the middle fix is a track of its own");
+            let longitude = drawn.resolved_position().1.as_degrees();
+            assert!(
+                (longitude - 15.0).abs() < PLACEMENT_TOLERANCE_DEGREES,
+                "drawn at lon {longitude}, expected 15"
             );
         }
     }
