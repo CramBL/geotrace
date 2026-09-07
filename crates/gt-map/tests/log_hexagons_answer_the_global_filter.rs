@@ -6,19 +6,14 @@
 //! hides that recording's hexagons the way it keeps or hides its fixes. The
 //! log's own filter chips still select which lines match.
 
-mod support;
-
 use chrono::Duration;
 use gt_filter::GlobalFilter;
 use gt_map::display_counts::{DisplayCounts, SuppliedCounts};
+use gt_map::test_util::{self, MapScene, RenderedMap, WALKING_STEP_DEGREES};
 use gt_types::LoadedFile;
 use gt_ui_types::{
     DisplayCategory, EventMarkerVisibility, GeneratedMarkerVisibility, LogMatchGlyph, LogMatches,
     TrackDataVisibility,
-};
-use support::{
-    FRAMES_TO_SETTLE, Frame, HeadlessMap, WALKING_STEP_DEGREES, a_log_over, a_recording_of, epoch,
-    fix_position, matches_over, window_ending_at,
 };
 
 /// Longitude between consecutive fixes of a recording made in one spot, about
@@ -28,22 +23,16 @@ const STANDING_STEP_DEGREES: f64 = 0.000_001;
 /// Fixes of the recording the cases draw, one a minute apart.
 const FIX_COUNT: usize = 30;
 
-/// The map every case drives: `files` framed with no filter active over
-/// `FRAMES_TO_SETTLE` frames, holding `matches`, with `filter` set after that.
+/// The map every case drives: `files` framed with no filter active over the
+/// settling frames, holding `matches`, with `filter` set after that.
 ///
 /// The app narrows the window the same way, while the user is looking at the
 /// track. The camera stays where those frames put it.
-fn map_framed_on(
-    files: &[LoadedFile],
-    matches: LogMatches,
-    filter: GlobalFilter,
-) -> HeadlessMap<'_> {
-    let mut map = HeadlessMap::new(files, GlobalFilter::default());
-    map.set_log_matches(matches);
-    for _ in 0..FRAMES_TO_SETTLE {
-        map.draw(&Frame::default());
-    }
-    map.set_filter(filter);
+fn map_framed_on(files: &[LoadedFile], matches: LogMatches, filter: GlobalFilter) -> RenderedMap {
+    let mut map = MapScene::of(files.to_vec())
+        .draw_state(|state| state.log_matches = matches)
+        .render();
+    map.draw_state().filter = filter;
     map
 }
 
@@ -59,7 +48,9 @@ struct PointedGlyphs {
 /// A layer that must draw nothing shows up as a difference against the same
 /// frame without it: the count is the whole frame's.
 fn shapes_with(files: &[LoadedFile], filter: GlobalFilter, matches: LogMatches) -> usize {
-    map_framed_on(files, matches, filter).draw(&Frame::default())
+    let mut map = map_framed_on(files, matches, filter);
+    map.render_one_more_frame();
+    map.shapes_painted()
 }
 
 /// Points at the hexagon sitting on the fix at `fix_index`, which the camera
@@ -73,27 +64,13 @@ fn pointing_at_the_hexagon_on_fix(
     filter: GlobalFilter,
     matches: LogMatches,
 ) -> PointedGlyphs {
-    let target = support::viewport_center();
+    let target = test_util::viewport_center();
     let mut map = map_framed_on(files, matches, filter);
-    map.center_on(fix_position(files, fix_index));
-    map.draw(&Frame {
-        events: vec![egui::Event::PointerMoved(target)],
-        ..Frame::default()
-    });
-    map.draw(&Frame::default());
+    map.draw_state().center_request = Some(test_util::fix_position(files, fix_index));
+    map.move_pointer_to(target);
+    map.render_one_more_frame();
     let hovered = map.hovered_log_glyph();
-    map.draw(&Frame {
-        events: [true, false]
-            .into_iter()
-            .map(|pressed| egui::Event::PointerButton {
-                pos: target,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::NONE,
-            })
-            .collect(),
-        ..Frame::default()
-    });
+    map.click_at(target);
     PointedGlyphs {
         hovered,
         clicked: map.clicked_log_glyph(),
@@ -104,7 +81,7 @@ fn pointing_at_the_hexagon_on_fix(
 /// the log anchored to it are part of that nothing: they sit on its fixes.
 #[rstest::rstest]
 #[case::the_time_window_is_disjoint_from_the_recording(GlobalFilter {
-    time_start: Some(epoch() + Duration::hours(5)),
+    time_start: Some(test_util::epoch() + Duration::hours(5)),
     ..GlobalFilter::default()
 })]
 #[case::the_recording_is_shorter_than_the_minimum_duration(GlobalFilter {
@@ -112,11 +89,15 @@ fn pointing_at_the_hexagon_on_fix(
     ..GlobalFilter::default()
 })]
 fn no_log_hexagon_is_drawn_for_a_recording_the_filter_rejects(#[case] filter: GlobalFilter) {
-    let files = a_recording_of(FIX_COUNT, STANDING_STEP_DEGREES);
-    let log = a_log_over(&files);
+    let files = test_util::a_recording_of(FIX_COUNT, STANDING_STEP_DEGREES);
+    let log = test_util::a_log_over(&files);
 
     assert_eq!(
-        shapes_with(&files, filter, matches_over(&files, &log, 0..FIX_COUNT)),
+        shapes_with(
+            &files,
+            filter,
+            test_util::matches_over(&files, &log, 0..FIX_COUNT)
+        ),
         shapes_with(&files, filter, LogMatches::default()),
         "the hexagons of a filtered-out recording put ink on the map"
     );
@@ -135,14 +116,14 @@ fn no_log_hexagon_is_hovered_for_an_entry_the_time_window_hides() {
     /// goes to.
     const LAST_KEPT: usize = 1;
 
-    let files = a_recording_of(WALKING_FIX_COUNT, WALKING_STEP_DEGREES);
-    let log = a_log_over(&files);
-    let matches = matches_over(&files, &log, 0..WALKING_FIX_COUNT);
+    let files = test_util::a_recording_of(WALKING_FIX_COUNT, WALKING_STEP_DEGREES);
+    let log = test_util::a_log_over(&files);
+    let matches = test_util::matches_over(&files, &log, 0..WALKING_FIX_COUNT);
 
     let pointed = pointing_at_the_hexagon_on_fix(
         &files,
         WALKING_FIX_COUNT - 1,
-        window_ending_at(LAST_KEPT),
+        test_util::window_ending_at(LAST_KEPT),
         matches,
     );
 
@@ -157,7 +138,7 @@ fn no_log_hexagon_is_hovered_for_an_entry_the_time_window_hides() {
 /// was leaves the log viewer as it is.
 #[rstest::rstest]
 #[case::the_time_window_is_disjoint_from_the_recording(GlobalFilter {
-    time_start: Some(epoch() + Duration::hours(5)),
+    time_start: Some(test_util::epoch() + Duration::hours(5)),
     ..GlobalFilter::default()
 })]
 #[case::the_recording_is_shorter_than_the_minimum_duration(GlobalFilter {
@@ -167,9 +148,9 @@ fn no_log_hexagon_is_hovered_for_an_entry_the_time_window_hides() {
 fn no_log_hexagon_is_hovered_or_clicked_on_a_recording_the_filter_rejects(
     #[case] filter: GlobalFilter,
 ) {
-    let files = a_recording_of(FIX_COUNT, STANDING_STEP_DEGREES);
-    let log = a_log_over(&files);
-    let matches = matches_over(&files, &log, 0..FIX_COUNT);
+    let files = test_util::a_recording_of(FIX_COUNT, STANDING_STEP_DEGREES);
+    let log = test_util::a_log_over(&files);
+    let matches = test_util::matches_over(&files, &log, 0..FIX_COUNT);
 
     let pointed = pointing_at_the_hexagon_on_fix(&files, 0, filter, matches);
 
@@ -190,11 +171,12 @@ fn a_hexagon_stands_for_no_entry_the_time_window_hides() {
     /// Entries the window keeps, from the first to this fix.
     const LAST_KEPT: usize = 14;
 
-    let files = a_recording_of(FIX_COUNT, STANDING_STEP_DEGREES);
-    let log = a_log_over(&files);
-    let matches = matches_over(&files, &log, 0..FIX_COUNT);
+    let files = test_util::a_recording_of(FIX_COUNT, STANDING_STEP_DEGREES);
+    let log = test_util::a_log_over(&files);
+    let matches = test_util::matches_over(&files, &log, 0..FIX_COUNT);
 
-    let pointed = pointing_at_the_hexagon_on_fix(&files, 0, window_ending_at(LAST_KEPT), matches);
+    let pointed =
+        pointing_at_the_hexagon_on_fix(&files, 0, test_util::window_ending_at(LAST_KEPT), matches);
 
     assert_eq!(
         pointed.hovered.map(|glyph| glyph.entry_indices),
@@ -210,14 +192,14 @@ fn a_hexagon_stands_for_no_entry_the_time_window_hides() {
     min_duration: Some(Duration::hours(5)),
     ..GlobalFilter::default()
 }, 0)]
-#[case::the_time_window_keeps_the_first_fifteen_entries(window_ending_at(14), 15)]
+#[case::the_time_window_keeps_the_first_fifteen_entries(test_util::window_ending_at(14), 15)]
 fn the_log_match_count_states_the_hexagons_the_filter_keeps(
     #[case] filter: GlobalFilter,
     #[case] expected: usize,
 ) {
-    let files = a_recording_of(FIX_COUNT, STANDING_STEP_DEGREES);
-    let log = a_log_over(&files);
-    let matches = matches_over(&files, &log, 0..FIX_COUNT);
+    let files = test_util::a_recording_of(FIX_COUNT, STANDING_STEP_DEGREES);
+    let log = test_util::a_log_over(&files);
+    let matches = test_util::matches_over(&files, &log, 0..FIX_COUNT);
 
     let counts = DisplayCounts::compute(
         &files,
@@ -239,14 +221,14 @@ fn the_log_match_count_states_the_hexagons_the_filter_keeps(
 /// keeps draws its hexagons, and the one under the cursor takes the pointer.
 #[test]
 fn a_log_hexagon_of_a_kept_recording_is_drawn() {
-    let files = a_recording_of(FIX_COUNT, STANDING_STEP_DEGREES);
-    let log = a_log_over(&files);
+    let files = test_util::a_recording_of(FIX_COUNT, STANDING_STEP_DEGREES);
+    let log = test_util::a_log_over(&files);
 
     assert!(
         shapes_with(
             &files,
             GlobalFilter::default(),
-            matches_over(&files, &log, 0..FIX_COUNT)
+            test_util::matches_over(&files, &log, 0..FIX_COUNT)
         ) > shapes_with(&files, GlobalFilter::default(), LogMatches::default()),
         "the hexagons of a kept recording put no ink on the map"
     );
@@ -256,9 +238,9 @@ fn a_log_hexagon_of_a_kept_recording_is_drawn() {
 /// centre of the viewport, and a click on it opens its log.
 #[test]
 fn a_log_hexagon_of_a_kept_recording_takes_the_pointer() {
-    let files = a_recording_of(FIX_COUNT, STANDING_STEP_DEGREES);
-    let log = a_log_over(&files);
-    let matches = matches_over(&files, &log, 0..FIX_COUNT);
+    let files = test_util::a_recording_of(FIX_COUNT, STANDING_STEP_DEGREES);
+    let log = test_util::a_log_over(&files);
+    let matches = test_util::matches_over(&files, &log, 0..FIX_COUNT);
 
     let pointed = pointing_at_the_hexagon_on_fix(&files, 0, GlobalFilter::default(), matches);
 

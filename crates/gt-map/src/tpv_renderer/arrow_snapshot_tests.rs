@@ -1,6 +1,7 @@
 use uom::si::angle::degree;
 
 use super::*;
+use crate::test_util;
 
 /// Navigation arrows across the zoom size range (3-12 pt), several
 /// headings, an outline fade, and a highlight - the parity grid used to
@@ -18,7 +19,7 @@ fn nav_arrow_grid_renders_correctly() {
     let height = margin * 2.0 + sizes.len() as f32 * cell;
 
     let library = crate::icon_mesh::IconMeshLibrary::embedded().ok();
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(width, height))
         .ui(move |ui| {
             ui.painter()

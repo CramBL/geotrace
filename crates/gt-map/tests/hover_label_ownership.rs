@@ -10,17 +10,11 @@
 //! tooltip out away from where it will be drawn until the frame after it
 //! opens.
 
-mod support;
-
 use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
 use egui_phosphor::regular::FLAG as ICON_FLAG;
+use gt_map::test_util::{self, MapScene, RenderedMap, VIEWPORT, WALKING_STEP_DEGREES};
 use gt_ui_theme::EM_DASH;
 use rstest::rstest;
-use support::{
-    RenderedMap, RenderedMapScene, WALKING_STEP_DEGREES, a_log_over, a_recording_of,
-    a_snapped_edge_through, an_interference_cell_around, fix_position, matches_over,
-    viewport_center, with_an_event_marker_on_a_fix,
-};
 
 /// Fixes of the walking recording every case but the last draws.
 const FIX_COUNT: usize = 30;
@@ -47,7 +41,7 @@ const HARNESS_OUTER_MARGIN_PT: f32 = 8.0;
 /// A point of bare map north of the track: out of reach of every fix, and
 /// inside the interference cell where a case draws one.
 fn bare_map_north_of_the_track() -> egui::Pos2 {
-    viewport_center() + egui::vec2(0.0, -NORTH_OF_THE_TRACK_OFFSET_PT)
+    test_util::viewport_center() + egui::vec2(0.0, -NORTH_OF_THE_TRACK_OFFSET_PT)
 }
 
 /// The label of the edge from [`a_snapped_edge_through`].
@@ -86,7 +80,7 @@ fn assert_the_snapped_edge_label_is_in_the_map_corner(map: &RenderedMap) {
         .map(|edge| (edge.rect.left(), edge.rect.bottom()));
     assert_eq!(
         drawn_at,
-        Some((HARNESS_OUTER_MARGIN_PT, support::VIEWPORT.y)),
+        Some((HARNESS_OUTER_MARGIN_PT, VIEWPORT.y)),
         "the edge label is drawn in the map's bottom-left corner"
     );
 }
@@ -117,24 +111,24 @@ fn snapshot_a_log_hexagon_stacks_its_label_over_the_label_of_the_layer_under_it(
     #[case] the_label_underneath: String,
     #[case] snapshot_name: &str,
 ) {
-    let files = a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES);
-    let centre = fix_position(&files, CENTRE_FIX);
-    let log = a_log_over(&files);
-    let matches = matches_over(&files, &log, CENTRE_FIX..CENTRE_FIX + 1);
-    let scene = RenderedMapScene::of(files)
-        .with_log_matches(matches)
+    let files = test_util::a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES);
+    let centre = test_util::fix_position(&files, CENTRE_FIX);
+    let log = test_util::a_log_over(&files);
+    let matches = test_util::matches_over(&files, &log, CENTRE_FIX..CENTRE_FIX + 1);
+    let scene = MapScene::of(files)
+        .draw_state(|state| state.log_matches = matches)
         .centred_on(centre);
     let mut map = match under {
         TheLayerUnderTheHexagon::InterferenceCell => scene
-            .showing_the_interference_layer(an_interference_cell_around(centre))
+            .showing_the_interference_layer(test_util::an_interference_cell_around(centre))
             .hiding_the_fix_icons(),
         TheLayerUnderTheHexagon::DrawnFix => scene,
     }
-    .draw();
+    .render();
 
-    map.move_pointer_to(viewport_center());
-    map.draw_one_more_frame();
-    map.draw_one_more_frame();
+    map.move_pointer_to(test_util::viewport_center());
+    map.render_one_more_frame();
+    map.render_one_more_frame();
 
     assert_eq!(
         map.hover_label_texts_top_to_bottom(),
@@ -147,16 +141,16 @@ fn snapshot_a_log_hexagon_stacks_its_label_over_the_label_of_the_layer_under_it(
 /// track line draws over the cells.
 #[test]
 fn snapshot_a_fix_stacks_its_table_over_the_label_of_the_interference_cell_under_it() {
-    let files = a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES);
-    let centre = fix_position(&files, CENTRE_FIX);
-    let mut map = RenderedMapScene::of(files)
-        .showing_the_interference_layer(an_interference_cell_around(centre))
+    let files = test_util::a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES);
+    let centre = test_util::fix_position(&files, CENTRE_FIX);
+    let mut map = MapScene::of(files)
+        .showing_the_interference_layer(test_util::an_interference_cell_around(centre))
         .centred_on(centre)
-        .draw();
+        .render();
 
-    map.move_pointer_to(viewport_center());
-    map.draw_one_more_frame();
-    map.draw_one_more_frame();
+    map.move_pointer_to(test_util::viewport_center());
+    map.render_one_more_frame();
+    map.render_one_more_frame();
 
     assert_eq!(
         map.hover_label_texts_top_to_bottom(),
@@ -181,17 +175,19 @@ fn snapshot_the_compound_label_stacks_over_the_label_of_the_interference_cell_un
          Heading\n{EM_DASH}\n\
          {ICON_FLAG}  power/boot"
     );
-    let files =
-        with_an_event_marker_on_a_fix(a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES), CENTRE_FIX);
-    let centre = fix_position(&files, CENTRE_FIX);
-    let mut map = RenderedMapScene::of(files)
-        .showing_the_interference_layer(an_interference_cell_around(centre))
+    let files = test_util::with_an_event_marker_on_a_fix(
+        test_util::a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES),
+        CENTRE_FIX,
+    );
+    let centre = test_util::fix_position(&files, CENTRE_FIX);
+    let mut map = MapScene::of(files)
+        .showing_the_interference_layer(test_util::an_interference_cell_around(centre))
         .centred_on(centre)
-        .draw();
+        .render();
 
-    map.move_pointer_to(viewport_center());
-    map.draw_one_more_frame();
-    map.draw_one_more_frame();
+    map.move_pointer_to(test_util::viewport_center());
+    map.render_one_more_frame();
+    map.render_one_more_frame();
 
     assert_eq!(
         map.hover_label_texts_top_to_bottom(),
@@ -232,27 +228,29 @@ fn snapshot_the_snapped_edge_labels_the_map_corner_while_the_layer_over_it_label
     #[case] the_label_at_the_pointer: String,
     #[case] snapshot_name: &str,
 ) {
-    let files = a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES);
-    let centre = fix_position(&files, CENTRE_FIX);
-    let log = a_log_over(&files);
-    let matches = matches_over(&files, &log, CENTRE_FIX..CENTRE_FIX + 1);
-    let scene = RenderedMapScene::of(files)
-        .with_snapped_tracks(a_snapped_edge_through(centre))
+    let files = test_util::a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES);
+    let centre = test_util::fix_position(&files, CENTRE_FIX);
+    let log = test_util::a_log_over(&files);
+    let matches = test_util::matches_over(&files, &log, CENTRE_FIX..CENTRE_FIX + 1);
+    let scene = MapScene::of(files)
+        .overlays(|overlays| {
+            overlays.snapped_tracks = Some(test_util::a_snapped_edge_through(centre))
+        })
         .centred_on(centre);
     let mut map = match over {
-        TheLayerOverTheSnappedEdge::LogHexagon => {
-            scene.with_log_matches(matches).hiding_the_fix_icons()
-        }
+        TheLayerOverTheSnappedEdge::LogHexagon => scene
+            .draw_state(|state| state.log_matches = matches)
+            .hiding_the_fix_icons(),
         TheLayerOverTheSnappedEdge::DrawnFix => scene,
         TheLayerOverTheSnappedEdge::InterferenceCell => scene
-            .showing_the_interference_layer(an_interference_cell_around(centre))
+            .showing_the_interference_layer(test_util::an_interference_cell_around(centre))
             .hiding_the_fix_icons(),
     }
-    .draw();
+    .render();
 
-    map.move_pointer_to(viewport_center());
-    map.draw_one_more_frame();
-    map.draw_one_more_frame();
+    map.move_pointer_to(test_util::viewport_center());
+    map.render_one_more_frame();
+    map.render_one_more_frame();
 
     assert_eq!(
         map.hover_label_texts_top_to_bottom(),
@@ -271,17 +269,19 @@ fn snapshot_the_snapped_edge_label_is_drawn_in_the_map_corner_and_not_beside_the
     /// bottom-left corner.
     const DISTANCE_FROM_THE_POINTER_PT: f32 = 300.0;
 
-    let files = a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES);
-    let centre = fix_position(&files, CENTRE_FIX);
-    let mut map = RenderedMapScene::of(files)
-        .with_snapped_tracks(a_snapped_edge_through(centre))
+    let files = test_util::a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES);
+    let centre = test_util::fix_position(&files, CENTRE_FIX);
+    let mut map = MapScene::of(files)
+        .overlays(|overlays| {
+            overlays.snapped_tracks = Some(test_util::a_snapped_edge_through(centre))
+        })
         .hiding_the_fix_icons()
         .centred_on(centre)
-        .draw();
+        .render();
 
-    let pointer = viewport_center();
+    let pointer = test_util::viewport_center();
     map.move_pointer_to(pointer);
-    map.draw_one_more_frame();
+    map.render_one_more_frame();
 
     assert_eq!(map.hover_label_texts(), [THE_SNAPPED_EDGE_LABEL]);
     assert_the_snapped_edge_label_is_in_the_map_corner(&map);
@@ -352,26 +352,28 @@ fn snapshot_no_hover_label_draws_while_a_popup_holds_the_map(
     #[case] on_the_escape_frame: LabelsOnTheEscapeFrame,
     #[case] snapshot_name: &str,
 ) {
-    let files =
-        with_an_event_marker_on_a_fix(a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES), CENTRE_FIX);
-    let centre = fix_position(&files, CENTRE_FIX);
-    let mut map = RenderedMapScene::of(files)
-        .showing_the_interference_layer(an_interference_cell_around(centre))
+    let files = test_util::with_an_event_marker_on_a_fix(
+        test_util::a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES),
+        CENTRE_FIX,
+    );
+    let centre = test_util::fix_position(&files, CENTRE_FIX);
+    let mut map = MapScene::of(files)
+        .showing_the_interference_layer(test_util::an_interference_cell_around(centre))
         .centred_on(centre)
-        .draw();
+        .render();
 
-    map.move_pointer_to(viewport_center());
-    map.draw_one_more_frame();
-    popup.open_on(&mut map, viewport_center());
-    map.draw_one_more_frame();
+    map.move_pointer_to(test_util::viewport_center());
+    map.render_one_more_frame();
+    popup.open_on(&mut map, test_util::viewport_center());
+    map.render_one_more_frame();
     assert!(popup.is_open(&map), "the click opened no popup");
 
     map.move_pointer_to(bare_map_north_of_the_track());
-    map.draw_one_more_frame();
+    map.render_one_more_frame();
     assert!(popup.is_open(&map), "the pointer move closed the popup");
     assert_eq!(map.hover_label_texts(), Vec::<String>::new());
 
-    map.draw_one_more_frame();
+    map.render_one_more_frame();
     assert_eq!(map.hover_label_texts(), Vec::<String>::new());
     map.snapshot(snapshot_name);
 
@@ -384,7 +386,7 @@ fn snapshot_no_hover_label_draws_while_a_popup_holds_the_map(
         }
     );
 
-    map.draw_one_more_frame();
+    map.render_one_more_frame();
     assert_eq!(map.hover_label_texts(), [THE_INTERFERENCE_CELL_LABEL]);
 }
 
@@ -393,24 +395,26 @@ fn snapshot_no_hover_label_draws_while_a_popup_holds_the_map(
 /// last fix, and the pointer then rests on the bare edge east of it.
 #[test]
 fn the_snapped_edge_label_hides_while_the_context_menu_is_open() {
-    let files = a_recording_of(SPARSE_FIX_COUNT, WALKING_STEP_DEGREES);
-    let centre = fix_position(&files, SPARSE_FIX_COUNT - 1);
-    let mut map = RenderedMapScene::of(files)
-        .with_snapped_tracks(a_snapped_edge_through(centre))
+    let files = test_util::a_recording_of(SPARSE_FIX_COUNT, WALKING_STEP_DEGREES);
+    let centre = test_util::fix_position(&files, SPARSE_FIX_COUNT - 1);
+    let mut map = MapScene::of(files)
+        .overlays(|overlays| {
+            overlays.snapped_tracks = Some(test_util::a_snapped_edge_through(centre))
+        })
         .centred_on(centre)
-        .draw();
+        .render();
 
-    map.secondary_click_at(viewport_center());
-    map.draw_one_more_frame();
+    map.secondary_click_at(test_util::viewport_center());
+    map.render_one_more_frame();
     assert!(map.any_popup_is_open(), "the click opened no context menu");
 
-    map.move_pointer_to(viewport_center() + egui::vec2(BARE_EDGE_OFFSET_PT, 0.0));
-    map.draw_one_more_frame();
+    map.move_pointer_to(test_util::viewport_center() + egui::vec2(BARE_EDGE_OFFSET_PT, 0.0));
+    map.render_one_more_frame();
     assert!(map.any_popup_is_open(), "the pointer move closed the menu");
     assert_eq!(map.hover_label_texts(), Vec::<String>::new());
 
     map.press_escape();
-    map.draw_one_more_frame();
+    map.render_one_more_frame();
     assert_eq!(map.hover_label_texts(), [THE_SNAPPED_EDGE_LABEL]);
 }
 
@@ -429,15 +433,17 @@ fn snapshot_the_compound_label_opens_the_frame_after_the_pointer_reaches_two_ele
          Heading\n{EM_DASH}\n\
          {ICON_FLAG}  power/boot"
     );
-    let files =
-        with_an_event_marker_on_a_fix(a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES), CENTRE_FIX);
-    let centre = fix_position(&files, CENTRE_FIX);
-    let mut map = RenderedMapScene::of(files).centred_on(centre).draw();
+    let files = test_util::with_an_event_marker_on_a_fix(
+        test_util::a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES),
+        CENTRE_FIX,
+    );
+    let centre = test_util::fix_position(&files, CENTRE_FIX);
+    let mut map = MapScene::of(files).centred_on(centre).render();
 
     map.move_pointer_to(bare_map_north_of_the_track());
-    map.draw_one_more_frame();
+    map.render_one_more_frame();
 
-    map.move_pointer_to(viewport_center());
+    map.move_pointer_to(test_util::viewport_center());
     assert_eq!(
         map.hover_label_texts(),
         Vec::<String>::new(),
@@ -445,10 +451,10 @@ fn snapshot_the_compound_label_opens_the_frame_after_the_pointer_reaches_two_ele
     );
     map.snapshot("hover_label_the_pointer_arrives_on_a_fix_and_a_marker");
 
-    map.draw_one_more_frame();
+    map.render_one_more_frame();
     assert_eq!(map.hover_label_texts(), [the_compound_label.as_str()]);
 
-    map.draw_one_more_frame();
+    map.render_one_more_frame();
     assert_eq!(map.hover_label_texts(), [the_compound_label.as_str()]);
     map.snapshot("hover_label_the_compound_label_over_a_fix_and_a_marker");
 }
@@ -465,27 +471,29 @@ fn snapshot_the_fix_table_opens_the_frame_after_the_pointer_reaches_a_fix_on_a_s
          Speed\n{EM_DASH}\n\
          Heading\n{EM_DASH}"
     );
-    let files = a_recording_of(SPARSE_FIX_COUNT, WALKING_STEP_DEGREES);
+    let files = test_util::a_recording_of(SPARSE_FIX_COUNT, WALKING_STEP_DEGREES);
     let last_fix = SPARSE_FIX_COUNT - 1;
-    let centre = fix_position(&files, last_fix);
-    let mut map = RenderedMapScene::of(files)
-        .with_snapped_tracks(a_snapped_edge_through(centre))
+    let centre = test_util::fix_position(&files, last_fix);
+    let mut map = MapScene::of(files)
+        .overlays(|overlays| {
+            overlays.snapped_tracks = Some(test_util::a_snapped_edge_through(centre))
+        })
         .centred_on(centre)
-        .draw();
+        .render();
 
-    map.move_pointer_to(viewport_center() + egui::vec2(BARE_EDGE_OFFSET_PT, 0.0));
-    map.draw_one_more_frame();
+    map.move_pointer_to(test_util::viewport_center() + egui::vec2(BARE_EDGE_OFFSET_PT, 0.0));
+    map.render_one_more_frame();
     assert_eq!(map.hover_label_texts(), [THE_SNAPPED_EDGE_LABEL]);
 
-    map.move_pointer_to(viewport_center());
+    map.move_pointer_to(test_util::viewport_center());
     assert_eq!(
         map.hover_label_texts(),
         [THE_SNAPPED_EDGE_LABEL],
         "the arrival frame already shows the fix's table"
     );
 
-    map.draw_one_more_frame();
-    map.draw_one_more_frame();
+    map.render_one_more_frame();
+    map.render_one_more_frame();
     assert_eq!(
         map.hover_label_texts_top_to_bottom(),
         [the_fix_label, THE_SNAPPED_EDGE_LABEL.to_owned()]

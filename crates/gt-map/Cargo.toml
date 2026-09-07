@@ -9,6 +9,11 @@ authors.workspace = true
 [lib]
 doctest = false
 
+[features]
+# Builds `gt_map::test_util`, the harness the crate's integration test binaries
+# draw a map through. A normal build leaves it off.
+test-util = ["dep:gt-test-utils"]
+
 [dependencies]
 bon.workspace = true
 bytemuck.workspace = true
@@ -24,6 +29,11 @@ gt-jam = { path = "../gt-jam" }
 gt-loaded-files = { path = "../gt-loaded-files" }
 gt-logfile = { path = "../gt-logfile" }
 gt-sky = { path = "../gt-sky" }
+# Builds the fixtures and drives the harness of `test_util`, which the
+# `test-util` feature exposes to the integration test binaries.
+gt-test-utils = { path = "../gt-test-utils", features = [
+    "snapshot",
+], optional = true }
 gt-track-builder = { path = "../gt-track-builder" }
 gt-types = { path = "../gt-types" }
 gt-ui-theme = { path = "../gt-ui-theme" }
@@ -49,6 +59,8 @@ postcard.workspace = true
 criterion.workspace = true
 egui_kittest.workspace = true
 gt-geo-math = { path = "../gt-geo-math" }
+# The crate's own harness, which the integration test binaries draw through.
+gt-map = { path = ".", features = ["test-util"] }
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
 # Reads back rendered frames in projection tests, encodes the reference
 # illustration asset, and writes the JPEG and PNG tiles the fixture tests

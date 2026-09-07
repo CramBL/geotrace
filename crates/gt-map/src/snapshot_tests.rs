@@ -2,49 +2,17 @@
 //! synthetic tiles, or the captured Mapbox tiles where the imagery under the
 //! track is part of what the baseline shows.
 
-use std::cell::Cell;
 use std::path::PathBuf;
 
 use egui_kittest::kittest::Queryable as _;
 use egui_phosphor::regular::CLOUD_LIGHTNING as ICON_CLOUD_LIGHTNING;
 
 use super::*;
+use crate::test_util::{self, MapScene};
 use gt_types::mercator::MercPoint;
-use gt_types::{DataCategory, DisplayMode, FileIdx, PointIdx, TrackIdx, TrackRef};
-use gt_ui_types::{DataPointRef, DisplayCategory, DisplayMask};
+use gt_types::{DataCategory, DisplayMode, FileIdx, PointIdx, TrackIdx};
+use gt_ui_types::{DisplayCategory, DisplayMask};
 use rustc_hash::FxHashMap;
-
-fn tpv_ref_in(file: FileIdx) -> DataPointRef {
-    DataPointRef {
-        track: TrackRef::new(file, TrackIdx::new(0)),
-        category: DataCategory::Tpv,
-        point_index: PointIdx::new(0),
-    }
-}
-
-fn event_ref() -> DataPointRef {
-    DataPointRef {
-        track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-        category: DataCategory::EventMarker,
-        point_index: PointIdx::new(0),
-    }
-}
-
-fn custom_ref() -> DataPointRef {
-    DataPointRef {
-        track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-        category: DataCategory::CustomMarker,
-        point_index: PointIdx::new(0),
-    }
-}
-
-fn gen_ref() -> DataPointRef {
-    DataPointRef {
-        track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-        category: DataCategory::GeneratedMarker,
-        point_index: PointIdx::new(0),
-    }
-}
 
 /// Where the map draws each fix of a fixture whose every fix records its
 /// position.
@@ -162,13 +130,13 @@ fn make_snapshot_file() -> gt_types::LoadedFile {
 fn snap_multi_hover_stacked_label() {
     let files = vec![make_snapshot_file()];
     let candidates = HoverCandidates {
-        tpv_or_satellite_report: Some(tpv_ref_in(FileIdx::new(0))),
-        event_marker: Some(event_ref()),
-        custom_marker: Some(custom_ref()),
+        tpv_or_satellite_report: Some(test_util::point_ref(DataCategory::Tpv, 0)),
+        event_marker: Some(test_util::point_ref(DataCategory::EventMarker, 0)),
+        custom_marker: Some(test_util::point_ref(DataCategory::CustomMarker, 0)),
         generated_marker: None,
     };
 
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(400.0, 800.0))
         .ui(move |ui| {
             let names = RecordingNames::default();
@@ -188,12 +156,12 @@ fn snap_multi_hover_stacked_label() {
 fn snap_multi_hover_tpv_and_generated_marker() {
     let files = vec![make_snapshot_file()];
     let candidates = HoverCandidates {
-        tpv_or_satellite_report: Some(tpv_ref_in(FileIdx::new(0))),
-        generated_marker: Some(gen_ref()),
+        tpv_or_satellite_report: Some(test_util::point_ref(DataCategory::Tpv, 0)),
+        generated_marker: Some(test_util::point_ref(DataCategory::GeneratedMarker, 0)),
         ..HoverCandidates::default()
     };
 
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(400.0, 800.0))
         .ui(move |ui| {
             let names = RecordingNames::default();
@@ -223,13 +191,17 @@ fn two_recordings_loaded() -> gt_loaded_files::LoadedFiles {
 fn snap_multi_hover_stacked_label_two_files() {
     let loaded = two_recordings_loaded();
     let candidates = HoverCandidates {
-        tpv_or_satellite_report: Some(tpv_ref_in(FileIdx::new(1))),
-        event_marker: Some(event_ref()),
-        custom_marker: Some(custom_ref()),
+        tpv_or_satellite_report: Some(test_util::point_ref_in(
+            FileIdx::new(1),
+            DataCategory::Tpv,
+            0,
+        )),
+        event_marker: Some(test_util::point_ref(DataCategory::EventMarker, 0)),
+        custom_marker: Some(test_util::point_ref(DataCategory::CustomMarker, 0)),
         generated_marker: None,
     };
 
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(400.0, 800.0))
         .ui(move |ui| {
             let names = RecordingNames::resolve(loaded.view(), "{filename}");
@@ -247,12 +219,16 @@ fn snap_multi_hover_stacked_label_two_files() {
 fn multi_hover_names_the_hovered_fixs_recording() {
     let loaded = two_recordings_loaded();
     let candidates = HoverCandidates {
-        tpv_or_satellite_report: Some(tpv_ref_in(FileIdx::new(1))),
-        event_marker: Some(event_ref()),
+        tpv_or_satellite_report: Some(test_util::point_ref_in(
+            FileIdx::new(1),
+            DataCategory::Tpv,
+            0,
+        )),
+        event_marker: Some(test_util::point_ref(DataCategory::EventMarker, 0)),
         ..HoverCandidates::default()
     };
 
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(400.0, 800.0))
         .ui(move |ui| {
             let names = RecordingNames::resolve(loaded.view(), "{filename}");
@@ -273,14 +249,14 @@ fn multi_hover_names_the_hovered_fixs_recording() {
 fn snap_disambig_popup_big_icons() {
     let files = vec![make_snapshot_file()];
     let candidates = [
-        Some(tpv_ref_in(FileIdx::new(0))),
-        Some(event_ref()),
+        Some(test_util::point_ref(DataCategory::Tpv, 0)),
+        Some(test_util::point_ref(DataCategory::EventMarker, 0)),
         None,
         None,
     ];
-    let sticky = Some(tpv_ref_in(FileIdx::new(0)));
+    let sticky = Some(test_util::point_ref(DataCategory::Tpv, 0));
 
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(300.0, 90.0))
         .ui(move |ui| {
             Frame::popup(ui.style()).show(ui, |ui| {
@@ -332,11 +308,10 @@ fn snapshot_nav_map_with_matches(
     capture: MatchCapture,
     tile_access: TileAccess,
 ) {
-    use gt_ui_types::{DrawLayer, QueryMatches, TrackDataVisibility, TrackRanges};
+    use gt_ui_types::{DrawLayer, QueryMatches, TrackRanges};
 
     let files = vec![make_snapshot_file()];
-    let visibility = TrackDataVisibility::from_loaded(&files);
-    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    let track = test_util::track0();
     let len = files
         .first()
         .and_then(|f| f.tracks.first())
@@ -374,50 +349,30 @@ fn snapshot_nav_map_with_matches(
     };
 
     let on_captured_tiles = matches!(tile_access, TileAccess::Fixture(_));
-    let mut harness = crate::test_harness::builder()
-        .size(egui::vec2(800.0, 600.0))
-        .ui_state(
-            move |ui, map: &mut Option<NavMap>| {
-                let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), tile_access.clone()));
-                let mut state = DrawState::default();
-                map.draw(
-                    ui,
-                    MapDrawContext {
-                        query_matches: Some(&matches),
-                        ..state.context(&files, &visibility)
-                    },
-                );
-            },
-            None,
-        );
-
-    match capture {
+    let scene = MapScene::of(files)
+        .tiles(tile_access)
+        .overlays(|overlays| overlays.query_matches = Some(matches));
+    let mut map = match capture {
         // The first frame zooms to fit the newly seen file. The rest let the
         // blink and fade animations settle before the snapshot.
-        MatchCapture::Settled => {
-            for _ in 0..5 {
-                harness.run();
-            }
-        }
+        MatchCapture::Settled => scene.render(),
         // One frame exactly, so the reveal is captured on the frame it starts.
-        MatchCapture::RevealStart => harness.step(),
-    }
+        MatchCapture::RevealStart => scene.render_one_frame(),
+    };
     if on_captured_tiles {
         // One more frame off a fresh record, so the check covers only the
         // frame the snapshot captures.
-        if let Some(map) = harness.state_mut().as_mut() {
+        if let Some(map) = map.map_mut() {
             map.forget_missing_fixture_tiles();
         }
-        harness.step();
-        let missing = harness
-            .state()
-            .as_ref()
+        map.render_one_more_frame();
+        let missing = map
+            .map()
             .and_then(NavMap::missing_fixture_tiles)
             .expect("the map draws the captured tiles");
         gt_test_utils::assert_map_tile_fixture_is_complete(name, missing);
     }
-    harness.snapshot_loose(name);
+    map.snapshot(name);
 }
 
 /// Interference cells around the snapshot fixture's track, tallied
@@ -463,40 +418,17 @@ fn snapshot_jamming_overlay(
     #[case] hover: Option<egui::Pos2>,
 ) {
     let files = vec![make_snapshot_file()];
-    let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
     let dataset = snapshot_jamming_dataset();
 
-    let mut harness = crate::test_harness::builder()
-        .size(egui::vec2(800.0, 600.0))
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
         .theme(dark_mode)
-        .ui_state(
-            move |ui, map: &mut Option<NavMap>| {
-                let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
-                let mut state = DrawState::default();
-                map.draw(
-                    ui,
-                    MapDrawContext {
-                        jamming_dataset: Some(&dataset),
-                        ..state.context(&files, &visibility)
-                    },
-                );
-            },
-            None,
-        );
-
-    // The first frame zooms to fit the file. The rest settle animations.
-    for _ in 0..5 {
-        harness.run();
-    }
+        .overlays(|overlays| overlays.jamming_dataset = Some(dataset))
+        .render();
     if let Some(pos) = hover {
-        harness.inner.hover_at(pos);
-        // Tooltips appear after egui's hover delay.
-        for _ in 0..60 {
-            harness.run();
-        }
+        map.hover_at_and_settle(pos);
     }
-    harness.snapshot_loose(name);
+    map.snapshot(name);
 }
 
 /// The levels the application lists, as the popup receives them.
@@ -584,50 +516,25 @@ fn snapshot_space_weather_warning(
     #[case] interaction: IndicatorInteraction,
 ) {
     let files = vec![make_snapshot_file()];
-    let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
-    let levels = snapshot_warning_levels();
 
-    let mut harness = crate::test_harness::builder()
-        .size(egui::vec2(800.0, 600.0))
-        .ui_state(
-            move |ui, map: &mut Option<NavMap>| {
-                let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
-                let mut state = DrawState::default();
-                map.draw(
-                    ui,
-                    MapDrawContext {
-                        space_weather: crate::SpaceWeatherIndicator {
-                            track_warnings: &warning,
-                            levels: &levels,
-                            tec_deviation_caveat: &gt_ionex::text::DEVIATION_REFERENCE_CAVEAT,
-                        },
-                        ..state.context(&files, &visibility)
-                    },
-                );
-            },
-            None,
-        );
-
-    // The first frame zooms to fit the file. The rest settle animations.
-    for _ in 0..5 {
-        harness.run();
-    }
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .draw_state(|state| {
+            state.space_weather_warnings = warning;
+            state.space_weather_levels = snapshot_warning_levels();
+        })
+        .render();
     match interaction {
         IndicatorInteraction::Hover => {
-            let glyph = harness.inner.get_by_label(ICON_CLOUD_LIGHTNING).rect();
-            harness.inner.hover_at(glyph.center());
-            // Tooltips appear after egui's hover delay.
-            for _ in 0..60 {
-                harness.run();
-            }
+            let glyph = map.harness.inner.get_by_label(ICON_CLOUD_LIGHTNING).rect();
+            map.hover_at_and_settle(glyph.center());
         }
         IndicatorInteraction::Click => {
-            harness.inner.get_by_label(ICON_CLOUD_LIGHTNING).click();
-            harness.inner.run_steps(2);
+            map.harness.inner.get_by_label(ICON_CLOUD_LIGHTNING).click();
+            map.harness.inner.run_steps(2);
         }
     }
-    harness.snapshot_loose(name);
+    map.snapshot(name);
 }
 
 /// Zoom at which the whole world fits the snapshot canvas: the world spans
@@ -647,58 +554,30 @@ fn snapshot_tec_heatmap(
     #[case] hover: Option<egui::Pos2>,
 ) {
     let files = vec![make_snapshot_file()];
-    let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
     let maps = gt_ionex::captured_maps(gt_ionex::STORM_CAPTURE).expect("the storm capture");
     let instant = chrono::NaiveDate::from_ymd_opt(2024, 5, 10)
         .and_then(|day| day.and_hms_opt(20, 0, 0))
         .map(|naive| naive.and_utc())
         .expect("an epoch of the captured day");
 
-    let mut harness = crate::test_harness::builder()
-        .size(egui::vec2(800.0, 600.0))
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
         .theme(dark_mode)
-        .ui_state(
-            move |ui, map: &mut Option<NavMap>| {
-                let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
-                map.map_memory.set_zoom(WORLD_ZOOM).expect("a valid zoom");
-                let mut state = DrawState::default();
-                state
-                    .display_mask
-                    .set_visible(DisplayCategory::TecHeatmap, true);
-                let mut shown =
-                    gt_ionex::TecInstantSelection::new(Some(instant), instant.date_naive());
-                map.draw(
-                    ui,
-                    MapDrawContext {
-                        tec: crate::TecLayer {
-                            snapshot: Some(crate::TecHeatmapSnapshot {
-                                maps: &maps,
-                                instant,
-                            }),
-                            instant: &mut shown,
-                            empty_reason: None,
-                        },
-                        center_request: Some((0.0, 0.0)),
-                        ..state.context(&files, &visibility)
-                    },
-                );
-            },
-            None,
-        );
-
-    // The first frame zooms to fit the file. The rest settle animations.
-    for _ in 0..5 {
-        harness.run();
-    }
+        .zoomed_to(WORLD_ZOOM)
+        .centred_on((0.0, 0.0))
+        .draw_state(|state| {
+            state
+                .display_mask
+                .set_visible(DisplayCategory::TecHeatmap, true);
+            state.tec_instant =
+                gt_ionex::TecInstantSelection::new(Some(instant), instant.date_naive());
+            state.tec_snapshot = Some((maps, instant));
+        })
+        .render();
     if let Some(pos) = hover {
-        harness.inner.hover_at(pos);
-        // Tooltips appear after egui's hover delay.
-        for _ in 0..60 {
-            harness.run();
-        }
+        map.hover_at_and_settle(pos);
     }
-    harness.snapshot_loose(name);
+    map.snapshot(name);
 }
 
 /// Nudge north (smaller Mercator y) by roughly ten pixels at the
@@ -718,53 +597,24 @@ fn snapshot_snapped_tracks_with(
 ) {
     use std::sync::Arc;
 
-    use gt_ui_types::{SnappedTracks, TrackDataVisibility};
+    use gt_ui_types::SnappedTracks;
 
     let files = vec![make_snapshot_file()];
-    let visibility = TrackDataVisibility::from_loaded(&files);
-    let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
-    let drawn: Vec<MercPoint> = files
-        .first()
-        .and_then(|f| f.tracks.first())
-        .and_then(gt_types::LoadedTrack::placed_points)
-        .map(|placed| placed.iter().map(|point| point.merc()).collect())
-        .unwrap_or_default();
     let mut snapped = SnappedTracks::default();
-    snapped.insert(track_ref, Arc::new(geometry_for(&drawn)));
+    snapped.insert(
+        test_util::track0(),
+        Arc::new(geometry_for(&test_util::drawn_positions(&files))),
+    );
 
-    let mut harness = crate::test_harness::builder()
-        .size(egui::vec2(800.0, 600.0))
-        .ui_state(
-            move |ui, map: &mut Option<NavMap>| {
-                let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
-                let mut state = DrawState {
-                    display_mask: mask,
-                    ..DrawState::default()
-                };
-                map.draw(
-                    ui,
-                    MapDrawContext {
-                        snapped_tracks: Some(&snapped),
-                        ..state.context(&files, &visibility)
-                    },
-                );
-            },
-            None,
-        );
-
-    for _ in 0..5 {
-        harness.run();
-    }
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .draw_state(|state| state.display_mask = mask)
+        .overlays(|overlays| overlays.snapped_tracks = Some(snapped))
+        .render();
     if let Some(pos) = hover {
-        harness.inner.hover_at(pos);
-        // Tooltips appear after egui's hover delay. Keep stepping until
-        // it elapsed and the tooltip laid itself out.
-        for _ in 0..60 {
-            harness.run();
-        }
+        map.hover_at_and_settle(pos);
     }
-    harness.snapshot_loose(name);
+    map.snapshot(name);
 }
 
 /// [`snapshot_snapped_tracks_with`] for bare polylines (no edge data,
@@ -1057,41 +907,20 @@ fn make_short_walk_file() -> gt_types::LoadedFile {
 fn snap_snapped_track_whiskers_at_high_zoom() {
     use std::sync::Arc;
 
-    use gt_ui_types::{SnappedTracks, TrackDataVisibility};
+    use gt_ui_types::SnappedTracks;
 
     let files = vec![make_short_walk_file()];
-    let visibility = TrackDataVisibility::from_loaded(&files);
-    let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
-    let drawn: Vec<MercPoint> = files
-        .first()
-        .and_then(|f| f.tracks.first())
-        .and_then(gt_types::LoadedTrack::placed_points)
-        .map(|placed| placed.iter().map(|point| point.merc()).collect())
-        .unwrap_or_default();
     let mut snapped = SnappedTracks::default();
-    snapped.insert(track_ref, Arc::new(whisker_geometry(&drawn)));
+    snapped.insert(
+        test_util::track0(),
+        Arc::new(whisker_geometry(&test_util::drawn_positions(&files))),
+    );
 
-    let mut harness = crate::test_harness::builder()
-        .size(egui::vec2(800.0, 600.0))
-        .ui_state(
-            move |ui, map: &mut Option<NavMap>| {
-                let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
-                let mut state = DrawState::default();
-                map.draw(
-                    ui,
-                    MapDrawContext {
-                        snapped_tracks: Some(&snapped),
-                        ..state.context(&files, &visibility)
-                    },
-                );
-            },
-            None,
-        );
-    for _ in 0..5 {
-        harness.run();
-    }
-    harness.snapshot_loose("snapped_track_whiskers");
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .overlays(|overlays| overlays.snapped_tracks = Some(snapped))
+        .render();
+    map.snapshot("snapped_track_whiskers");
 }
 
 /// Snapshot: below the scale gate (the standard km-scale fixture) the
@@ -1178,31 +1007,17 @@ fn snap_query_match_reveal() {
 #[test]
 fn snap_query_match_hover_halo() {
     let files = vec![make_snapshot_file()];
-    let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
-    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
 
-    let mut harness = crate::test_harness::builder()
-        .size(egui::vec2(800.0, 600.0))
-        .ui_state(
-            move |ui, map: &mut Option<NavMap>| {
-                let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
-                let mut state = DrawState {
-                    highlight: MapHighlight {
-                        hover_match: Some(gt_ui_types::MatchHighlight::new(track, &(150..300))),
-                        ..MapHighlight::default()
-                    },
-                    ..DrawState::default()
-                };
-                map.draw(ui, state.context(&files, &visibility));
-            },
-            None,
-        );
-
-    for _ in 0..5 {
-        harness.run();
-    }
-    harness.snapshot_loose("query_match_hover_halo");
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .draw_state(|state| {
+            state.highlight.hover_match = Some(gt_ui_types::MatchHighlight::new(
+                test_util::track0(),
+                &(150..300),
+            ));
+        })
+        .render();
+    map.snapshot("query_match_hover_halo");
 }
 
 /// The log the hexagon snapshots draw the matches of: one line per entry, in
@@ -1239,10 +1054,7 @@ fn log_layer(
     source: &gt_ui_types::LogMatchSource,
     positions: Vec<MercPoint>,
 ) -> gt_ui_types::LogMatchLayer {
-    let fix = gt_types::FixRef::new(
-        gt_types::TrackRef::new(gt_types::FileIdx::new(0), gt_types::TrackIdx::new(0)),
-        gt_types::PointIdx::new(0),
-    );
+    let fix = gt_types::FixRef::new(test_util::track0(), gt_types::PointIdx::new(0));
     gt_ui_types::LogMatchLayer {
         color,
         log: source.clone(),
@@ -1266,14 +1078,12 @@ fn snap_log_match_hexagons() {
     use gt_ui_types::{LogMatchColor, LogMatches};
 
     let files = vec![make_snapshot_file()];
-    let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
+    let positions = test_util::drawn_positions(&files);
     let merc_at = |index: usize| {
-        files
-            .first()
-            .and_then(|file| file.tracks.first())
-            .and_then(gt_types::LoadedTrack::placed_points)
-            .and_then(|placed| placed.get(index))
-            .map_or(MercPoint { x: 0.5, y: 0.5 }, |point| point.merc())
+        positions
+            .get(index)
+            .copied()
+            .unwrap_or(MercPoint { x: 0.5, y: 0.5 })
     };
     let spread = |every: usize, count: usize| {
         (0..count)
@@ -1304,25 +1114,11 @@ fn snap_log_match_hexagons() {
         log_layer(LogMatchColor::LiveFilter, &source, clustered),
     ]);
 
-    let mut harness = crate::test_harness::builder()
-        .size(egui::vec2(800.0, 600.0))
-        .ui_state(
-            move |ui, map: &mut Option<NavMap>| {
-                let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
-                let mut state = DrawState {
-                    log_matches: log_matches.clone(),
-                    ..DrawState::default()
-                };
-                map.draw(ui, state.context(&files, &visibility));
-            },
-            None,
-        );
-
-    for _ in 0..5 {
-        harness.run();
-    }
-    harness.snapshot_loose("log_match_hexagons");
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .draw_state(|state| state.log_matches = log_matches)
+        .render();
+    map.snapshot("log_match_hexagons");
 }
 
 /// A filter that matched every point of the track: its clusters draw evenly
@@ -1332,13 +1128,7 @@ fn snap_log_matches_along_a_dense_track() {
     use gt_ui_types::{LogMatchColor, LogMatches};
 
     let files = vec![make_snapshot_file()];
-    let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
-    let positions: Vec<MercPoint> = files
-        .first()
-        .and_then(|file| file.tracks.first())
-        .and_then(gt_types::LoadedTrack::placed_points)
-        .map(|placed| placed.iter().map(|point| point.merc()).collect())
-        .unwrap_or_default();
+    let positions = test_util::drawn_positions(&files);
     let source = snapshot_log_source(positions.len());
     let log_matches = LogMatches::from_layers(vec![log_layer(
         LogMatchColor::LayerSlot {
@@ -1349,25 +1139,11 @@ fn snap_log_matches_along_a_dense_track() {
         positions,
     )]);
 
-    let mut harness = crate::test_harness::builder()
-        .size(egui::vec2(800.0, 600.0))
-        .ui_state(
-            move |ui, map: &mut Option<NavMap>| {
-                let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
-                let mut state = DrawState {
-                    log_matches: log_matches.clone(),
-                    ..DrawState::default()
-                };
-                map.draw(ui, state.context(&files, &visibility));
-            },
-            None,
-        );
-
-    for _ in 0..5 {
-        harness.run();
-    }
-    harness.snapshot_loose("log_matches_along_a_dense_track");
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .draw_state(|state| state.log_matches = log_matches)
+        .render();
+    map.snapshot("log_matches_along_a_dense_track");
 }
 
 /// Two filters that matched the same run of lines: the layer on top covers the
@@ -1379,13 +1155,7 @@ fn snap_log_matches_of_overlapping_layers() {
     use gt_ui_types::{LogMatchColor, LogMatches};
 
     let files = vec![make_snapshot_file()];
-    let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
-    let track_positions: Vec<MercPoint> = files
-        .first()
-        .and_then(|file| file.tracks.first())
-        .and_then(gt_types::LoadedTrack::placed_points)
-        .map(|placed| placed.iter().map(|point| point.merc()).collect())
-        .unwrap_or_default();
+    let track_positions = test_util::drawn_positions(&files);
     let source = snapshot_log_source(track_positions.len() * 3);
     let covered = log_layer(
         LogMatchColor::LayerSlot {
@@ -1412,59 +1182,30 @@ fn snap_log_matches_of_overlapping_layers() {
     );
     let log_matches = LogMatches::from_layers(vec![covered, covering]);
 
-    let mut harness = crate::test_harness::builder()
-        .size(egui::vec2(800.0, 600.0))
-        .ui_state(
-            move |ui, map: &mut Option<NavMap>| {
-                let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
-                let mut state = DrawState {
-                    log_matches: log_matches.clone(),
-                    ..DrawState::default()
-                };
-                map.draw(ui, state.context(&files, &visibility));
-            },
-            None,
-        );
-
-    for _ in 0..5 {
-        harness.run();
-    }
-    harness.snapshot_loose("log_matches_of_overlapping_layers");
-}
-
-/// The map state a hover test drives across frames: the map itself, and the
-/// per-frame inputs it draws from, kept so the hexagon it found under the
-/// cursor can be read back after the frame.
-struct LogHoverState {
-    map: Option<NavMap>,
-    draw: DrawState,
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .draw_state(|state| state.log_matches = log_matches)
+        .render();
+    map.snapshot("log_matches_of_overlapping_layers");
 }
 
 /// Entries the live-filter layer's cluster at the centre of the fixture stands
 /// for: more than the tooltip writes out, leaving it a tail to state.
 const HOVERED_CLUSTER_ENTRIES: usize = 8;
 
-/// The canvas the log interaction tests draw the map on.
-const LOG_HOVER_CANVAS: egui::Vec2 = egui::vec2(800.0, 600.0);
-
 /// The map framed on the fixture recording, drawing the matches the caller
 /// puts at its centre. That centre is where the map frames the recording, so
-/// it lands at the centre of the canvas.
+/// it lands at the centre of the viewport.
 fn log_map_harness(
     matches_at_center: impl FnOnce(MercPoint) -> gt_ui_types::LogMatches,
-) -> (
-    gt_test_utils::TestHarness<'static, LogHoverState>,
-    MercPoint,
-) {
+) -> (crate::test_util::RenderedMap, MercPoint) {
     use gt_types::mercator;
     use gt_ui_types::TrackDataVisibility;
 
     let files = vec![make_snapshot_file()];
-    let visibility = TrackDataVisibility::from_loaded(&files);
     let bounds = crate::viewport::compute_visible_bounding_box(
         &files,
-        &visibility,
+        &TrackDataVisibility::from_loaded(&files),
         &gt_filter::GlobalFilter::default(),
         DisplayMask::default(),
     )
@@ -1472,43 +1213,21 @@ fn log_map_harness(
     let (center_lat, center_lon) = bounds.center();
     let center = mercator::normalize(center_lat, center_lon);
 
-    let mut harness = crate::test_harness::builder()
-        .size(LOG_HOVER_CANVAS)
-        .ui_state(
-            move |ui, state: &mut LogHoverState| {
-                let map = state
-                    .map
-                    .get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
-                map.draw(ui, state.draw.context(&files, &visibility));
-            },
-            LogHoverState {
-                map: None,
-                draw: DrawState {
-                    log_matches: matches_at_center(center),
-                    ..DrawState::default()
-                },
-            },
-        );
-    // The first frame frames the recording, the rest settle the animations.
-    for _ in 0..5 {
-        harness.run();
-    }
-    (harness, center)
-}
-
-/// The centre of the canvas, where the map draws the centre of the recording.
-fn log_hover_canvas_center() -> egui::Pos2 {
-    egui::Rect::from_min_size(egui::Pos2::ZERO, LOG_HOVER_CANVAS).center()
+    let map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .draw_state(|state| state.log_matches = matches_at_center(center))
+        .render();
+    (map, center)
 }
 
 /// The fixture the hover tests drive: a layer chip's three matches and the
 /// live filter's eight, all at the point the map centres on. The cursor at the
 /// centre of the canvas is then on the live filter's hexagon, with the chip's
 /// underneath it.
-fn log_hover_harness() -> gt_test_utils::TestHarness<'static, LogHoverState> {
+fn log_hover_harness() -> crate::test_util::RenderedMap {
     use gt_ui_types::{LogMatchColor, LogMatches};
 
-    let (mut harness, _) = log_map_harness(|center| {
+    let (mut map, _) = log_map_harness(|center| {
         let source = snapshot_log_source(HOVERED_CLUSTER_ENTRIES + 3);
         LogMatches::from_layers(vec![
             log_layer(
@@ -1526,33 +1245,37 @@ fn log_hover_harness() -> gt_test_utils::TestHarness<'static, LogHoverState> {
             ),
         ])
     });
-    harness.inner.hover_at(log_hover_canvas_center());
-    // Tooltips appear after egui's hover delay.
-    for _ in 0..60 {
-        harness.run();
-    }
-    harness
+    map.hover_at_and_settle(test_util::viewport_center());
+    map
 }
 
 /// The map rings the viewer's hovered row even where the filters selected
 /// nothing: the row has a position wherever its line was recorded.
 #[test]
 fn a_hovered_viewer_row_is_ringed_on_the_map() {
-    let (mut harness, center) = log_map_harness(|_| gt_ui_types::LogMatches::default());
-    let before = harness.inner.render().expect("the harness renders a frame");
+    let (mut map, center) = log_map_harness(|_| gt_ui_types::LogMatches::default());
+    let before = map
+        .harness
+        .inner
+        .render()
+        .expect("the harness renders a frame");
 
-    harness.state_mut().draw.log_hover.row_position = Some(center);
-    harness.run();
+    map.draw_state().log_hover.row_position = Some(center);
+    map.harness.run();
 
-    let after = harness.inner.render().expect("the harness renders a frame");
+    let after = map
+        .harness
+        .inner
+        .render()
+        .expect("the harness renders a frame");
     let around_the_centre =
-        egui::Rect::from_center_size(log_hover_canvas_center(), egui::Vec2::splat(40.0));
+        egui::Rect::from_center_size(test_util::viewport_center(), egui::Vec2::splat(40.0));
     assert!(
         gt_test_utils::snapshot_harness::pixels_differ(
             &before,
             &after,
             around_the_centre,
-            harness.inner.ctx.pixels_per_point()
+            map.harness.inner.ctx.pixels_per_point()
         ),
         "the ring draws where the hovered row's line was recorded"
     );
@@ -1563,14 +1286,10 @@ fn a_hovered_viewer_row_is_ringed_on_the_map() {
 /// of.
 #[test]
 fn hovering_a_hexagon_names_the_lines_of_the_topmost_layer_it_is_on() {
-    let harness = log_hover_harness();
+    let map = log_hover_harness();
 
-    let glyph = harness
-        .state()
-        .draw
-        .log_hover
-        .glyph
-        .as_ref()
+    let glyph = map
+        .hovered_log_glyph()
         .expect("the cursor is on the centre hexagon");
     assert_eq!(glyph.color, gt_ui_types::LogMatchColor::LiveFilter);
     assert_eq!(
@@ -1593,7 +1312,7 @@ fn a_hexagon_tooltip_shows_the_name_its_layer_was_built_with(
     #[case] display_name: Option<String>,
     #[case] shown: bool,
 ) {
-    let (mut harness, _) = log_map_harness(|center| {
+    let (mut map, _) = log_map_harness(|center| {
         let mut source = snapshot_log_source(HOVERED_CLUSTER_ENTRIES);
         source.display_name = display_name;
         gt_ui_types::LogMatches::from_layers(vec![log_layer(
@@ -1602,14 +1321,10 @@ fn a_hexagon_tooltip_shows_the_name_its_layer_was_built_with(
             vec![center; HOVERED_CLUSTER_ENTRIES],
         )])
     });
-    harness.inner.hover_at(log_hover_canvas_center());
-    // Tooltips appear after egui's hover delay.
-    for _ in 0..60 {
-        harness.run();
-    }
+    map.hover_at_and_settle(test_util::viewport_center());
 
     assert_eq!(
-        harness.inner.query_by_label(TOOLTIP_LOG_NAME).is_some(),
+        map.harness.inner.query_by_label(TOOLTIP_LOG_NAME).is_some(),
         shown
     );
 }
@@ -1619,26 +1334,21 @@ fn a_hexagon_tooltip_shows_the_name_its_layer_was_built_with(
 /// viewer shows alone.
 #[test]
 fn hovering_a_hexagon_leaves_the_clicked_glyph_unset() {
-    let harness = log_hover_harness();
+    let map = log_hover_harness();
 
-    assert_eq!(harness.state().draw.clicked_log_glyph, None);
+    assert_eq!(map.clicked_log_glyph(), None);
 }
 
 /// Clicking the hexagon under the cursor hands the viewer that hexagon's log
 /// and its lines, which the viewer opens on.
 #[test]
 fn clicking_a_hexagon_hands_its_log_and_lines_to_the_viewer() {
-    use gt_test_utils::HarnessInteraction as _;
+    let mut map = log_hover_harness();
 
-    let mut harness = log_hover_harness();
+    map.click_at(test_util::viewport_center());
 
-    harness.inner.click_at(log_hover_canvas_center());
-
-    let clicked = harness
-        .state()
-        .draw
-        .clicked_log_glyph
-        .as_ref()
+    let clicked = map
+        .clicked_log_glyph()
         .expect("the click landed on the centre hexagon");
     assert_eq!(clicked.log, gt_ui_types::LoadedLogId::new(0));
     assert_eq!(
@@ -1652,9 +1362,9 @@ fn clicking_a_hexagon_hands_its_log_and_lines_to_the_viewer() {
 /// count of the ones the tooltip left out.
 #[test]
 fn snap_log_match_hover() {
-    let mut harness = log_hover_harness();
+    let mut map = log_hover_harness();
 
-    harness.snapshot_loose("log_match_hover");
+    map.snapshot("log_match_hover");
 }
 
 /// The layer switches off with its display category, like every other kind of
@@ -1664,13 +1374,7 @@ fn snap_log_matches_hidden_by_display_mask() {
     use gt_ui_types::{LogMatchColor, LogMatches};
 
     let files = vec![make_snapshot_file()];
-    let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
-    let positions: Vec<gt_types::MercPoint> = files
-        .first()
-        .and_then(|file| file.tracks.first())
-        .and_then(gt_types::LoadedTrack::placed_points)
-        .map(|placed| placed.iter().map(|point| point.merc()).collect())
-        .unwrap_or_default();
+    let positions = test_util::drawn_positions(&files);
     let source = snapshot_log_source(positions.len());
     let log_matches = LogMatches::from_layers(vec![log_layer(
         LogMatchColor::LayerSlot {
@@ -1680,29 +1384,17 @@ fn snap_log_matches_hidden_by_display_mask() {
         &source,
         positions,
     )]);
-    let mut mask = DisplayMask::default();
-    mask.set_visible(DisplayCategory::LogMatches, false);
 
-    let mut harness = crate::test_harness::builder()
-        .size(egui::vec2(800.0, 600.0))
-        .ui_state(
-            move |ui, map: &mut Option<NavMap>| {
-                let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
-                let mut state = DrawState {
-                    log_matches: log_matches.clone(),
-                    display_mask: mask,
-                    ..DrawState::default()
-                };
-                map.draw(ui, state.context(&files, &visibility));
-            },
-            None,
-        );
-
-    for _ in 0..5 {
-        harness.run();
-    }
-    harness.snapshot_loose("log_matches_hidden_by_display_mask");
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .draw_state(|state| {
+            state.log_matches = log_matches;
+            state
+                .display_mask
+                .set_visible(DisplayCategory::LogMatches, false);
+        })
+        .render();
+    map.snapshot("log_matches_hidden_by_display_mask");
 }
 
 /// Snapshot: the display mask removes the marker ink (custom, generated,
@@ -1710,38 +1402,21 @@ fn snap_log_matches_hidden_by_display_mask() {
 /// Compare against the marker-bearing fixture in the other snapshots.
 #[test]
 fn snap_display_mask_hides_markers() {
-    use gt_ui_types::{DisplayCategory, DisplayMask, TrackDataVisibility};
-
     let files = vec![make_snapshot_file()];
-    let visibility = TrackDataVisibility::from_loaded(&files);
-    let mut mask = DisplayMask::default();
-    for category in [
-        DisplayCategory::CustomMarkers,
-        DisplayCategory::GeneratedMarkers,
-        DisplayCategory::EventMarkers,
-    ] {
-        mask.set_visible(category, false);
-    }
 
-    let mut harness = crate::test_harness::builder()
-        .size(egui::vec2(800.0, 600.0))
-        .ui_state(
-            move |ui, map: &mut Option<NavMap>| {
-                let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
-                let mut state = DrawState {
-                    display_mask: mask,
-                    ..DrawState::default()
-                };
-                map.draw(ui, state.context(&files, &visibility));
-            },
-            None,
-        );
-
-    for _ in 0..5 {
-        harness.run();
-    }
-    harness.snapshot_loose("display_mask_hides_markers");
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .draw_state(|state| {
+            for category in [
+                DisplayCategory::CustomMarkers,
+                DisplayCategory::GeneratedMarkers,
+                DisplayCategory::EventMarkers,
+            ] {
+                state.display_mask.set_visible(category, false);
+            }
+        })
+        .render();
+    map.snapshot("display_mask_hides_markers");
 }
 
 /// Fix stride along the close-up snapshot's road. Eleven fixes at this stride
@@ -1892,30 +1567,13 @@ fn make_accuracy_circle_walk_file() -> gt_types::LoadedFile {
 /// letting the tiles through.
 #[test]
 fn snap_accuracy_circles_close_up() {
-    use gt_ui_types::TrackDataVisibility;
-
     let files = vec![make_accuracy_circle_walk_file()];
-    let visibility = TrackDataVisibility::from_loaded(&files);
 
-    let mut harness = crate::test_harness::builder()
-        .size(egui::vec2(800.0, 600.0))
-        .ui_state(
-            move |ui, map: &mut Option<NavMap>| {
-                let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
-                let mut state = DrawState {
-                    sky_glyph_variant: gt_ui_types::SkyGlyphVariant::Disc,
-                    ..DrawState::default()
-                };
-                map.draw(ui, state.context(&files, &visibility));
-            },
-            None,
-        );
-
-    for _ in 0..5 {
-        harness.run();
-    }
-    harness.snapshot_loose("accuracy_circles_close_up");
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .draw_state(|state| state.sky_glyph_variant = gt_ui_types::SkyGlyphVariant::Disc)
+        .render();
+    map.snapshot("accuracy_circles_close_up");
 }
 
 /// Snapshot: with every category except sky glyphs hidden, the glyphs are
@@ -1926,42 +1584,25 @@ fn snap_accuracy_circles_close_up() {
 #[case::ring("sky_glyphs_only_ring", gt_ui_types::SkyGlyphVariant::Ring)]
 #[case::disc("sky_glyphs_only_disc", gt_ui_types::SkyGlyphVariant::Disc)]
 fn snap_sky_glyphs_only(#[case] name: &str, #[case] variant: gt_ui_types::SkyGlyphVariant) {
-    use gt_ui_types::{DisplayCategory, DisplayMask, TrackDataVisibility};
-
     let files = vec![make_snapshot_file()];
-    let visibility = TrackDataVisibility::from_loaded(&files);
-    let mut mask = DisplayMask::default();
-    for category in [
-        DisplayCategory::Tracks,
-        DisplayCategory::TrackPoints,
-        DisplayCategory::SatelliteLabels,
-        DisplayCategory::CustomMarkers,
-        DisplayCategory::GeneratedMarkers,
-        DisplayCategory::EventMarkers,
-    ] {
-        mask.set_visible(category, false);
-    }
 
-    let mut harness = crate::test_harness::builder()
-        .size(egui::vec2(800.0, 600.0))
-        .ui_state(
-            move |ui, map: &mut Option<NavMap>| {
-                let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
-                let mut state = DrawState {
-                    display_mask: mask,
-                    sky_glyph_variant: variant,
-                    ..DrawState::default()
-                };
-                map.draw(ui, state.context(&files, &visibility));
-            },
-            None,
-        );
-
-    for _ in 0..5 {
-        harness.run();
-    }
-    harness.snapshot_loose(name);
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .draw_state(|state| {
+            for category in [
+                DisplayCategory::Tracks,
+                DisplayCategory::TrackPoints,
+                DisplayCategory::SatelliteLabels,
+                DisplayCategory::CustomMarkers,
+                DisplayCategory::GeneratedMarkers,
+                DisplayCategory::EventMarkers,
+            ] {
+                state.display_mask.set_visible(category, false);
+            }
+            state.sky_glyph_variant = variant;
+        })
+        .render();
+    map.snapshot(name);
 }
 
 /// Snapshot: hovering the time-series plot draws the detailed sky disc at
@@ -1970,39 +1611,21 @@ fn snap_sky_glyphs_only(#[case] name: &str, #[case] variant: gt_ui_types::SkyGly
 /// overlay. The ring around the point is the existing cross-highlight.
 #[test]
 fn snap_plot_hover_sky_disc() {
-    use gt_ui_types::{DisplayCategory, DisplayMask, TrackDataVisibility};
-
     let files = vec![make_snapshot_file()];
-    let visibility = TrackDataVisibility::from_loaded(&files);
-    // Overlay off, so the only disc on the map is the plot-hover one.
-    let mut mask = DisplayMask::default();
-    mask.set_visible(DisplayCategory::SkyGlyphs, false);
     // A mid-track point that carries a satellite report in the fixture.
     let hovered = (FileIdx::new(0), TrackIdx::new(0), PointIdx::new(50));
 
-    let mut harness = crate::test_harness::builder()
-        .size(egui::vec2(800.0, 600.0))
-        .ui_state(
-            move |ui, map: &mut Option<NavMap>| {
-                let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
-                let mut state = DrawState {
-                    display_mask: mask,
-                    highlight: MapHighlight {
-                        plot_hover_point: Some(hovered),
-                        ..MapHighlight::default()
-                    },
-                    ..DrawState::default()
-                };
-                map.draw(ui, state.context(&files, &visibility));
-            },
-            None,
-        );
-
-    for _ in 0..5 {
-        harness.run();
-    }
-    harness.snapshot_loose("plot_hover_sky_disc");
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .draw_state(|state| {
+            // Overlay off, so the only disc on the map is the plot-hover one.
+            state
+                .display_mask
+                .set_visible(DisplayCategory::SkyGlyphs, false);
+            state.highlight.plot_hover_point = Some(hovered);
+        })
+        .render();
+    map.snapshot("plot_hover_sky_disc");
 }
 
 /// Snapshot: the clicked-point window itself - the resizable frame, the
@@ -2010,39 +1633,16 @@ fn snap_plot_hover_sky_disc() {
 /// the window floor. Guards the whole composition, not just the body.
 #[test]
 fn snap_sticky_point_window() {
-    use gt_ui_types::TrackDataVisibility;
-
     let files = vec![make_snapshot_file()];
-    let visibility = TrackDataVisibility::from_loaded(&files);
     // A mid-track point carrying a multi-constellation satellite report.
-    let clicked = gt_ui_types::DataPointRef {
-        track: gt_types::TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-        category: gt_types::DataCategory::Tpv,
-        point_index: PointIdx::new(50),
-    };
+    let clicked = test_util::point_ref(DataCategory::Tpv, 50);
 
-    let mut harness = crate::test_harness::builder()
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
         .size(egui::vec2(900.0, 700.0))
-        .ui_state(
-            move |ui, map: &mut Option<NavMap>| {
-                let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
-                let mut state = DrawState {
-                    highlight: MapHighlight {
-                        sticky: Some(clicked),
-                        ..MapHighlight::default()
-                    },
-                    ..DrawState::default()
-                };
-                map.draw(ui, state.context(&files, &visibility));
-            },
-            None,
-        );
-
-    for _ in 0..5 {
-        harness.run();
-    }
-    harness.snapshot_loose("sticky_point_window");
+        .draw_state(|state| state.highlight.sticky = Some(clicked))
+        .render();
+    map.snapshot("sticky_point_window");
 }
 
 /// Wheel points the scroll test sends over the sky column: several rows of the
@@ -2058,32 +1658,16 @@ const POINT_WINDOW_WHEEL_POINTS: f32 = 200.0;
 #[case::stacked(egui::vec2(360.0, 420.0))]
 fn scrolling_the_point_window_leaves_the_title_bar_untouched(#[case] viewport: egui::Vec2) {
     use gt_test_utils::HarnessInteraction as _;
-    use gt_ui_types::TrackDataVisibility;
 
     let files = vec![make_snapshot_file()];
-    let visibility = TrackDataVisibility::from_loaded(&files);
-    let clicked = DataPointRef {
-        track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-        category: DataCategory::Tpv,
-        point_index: PointIdx::new(50),
-    };
+    let clicked = test_util::point_ref(DataCategory::Tpv, 50);
 
-    let mut harness = crate::test_harness::builder().size(viewport).ui_state(
-        move |ui, map: &mut Option<NavMap>| {
-            let map =
-                map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
-            let mut state = DrawState {
-                highlight: MapHighlight {
-                    sticky: Some(clicked),
-                    ..MapHighlight::default()
-                },
-                ..DrawState::default()
-            };
-            map.draw(ui, state.context(&files, &visibility));
-        },
-        None,
-    );
-    harness.inner.run_steps(8);
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .size(viewport)
+        .draw_state(|state| state.highlight.sticky = Some(clicked))
+        .render();
+    let harness = &mut map.harness;
 
     let window = harness
         .inner
@@ -2130,58 +1714,34 @@ fn scrolling_the_point_window_leaves_the_title_bar_untouched(#[case] viewport: e
 #[test]
 fn the_point_window_button_returns_a_timed_sky_trails_action() {
     use egui_kittest::kittest::Queryable as _;
-    use gt_ui_types::TrackDataVisibility;
 
     let files = vec![make_snapshot_file()];
-    let visibility = TrackDataVisibility::from_loaded(&files);
-    let clicked = gt_ui_types::DataPointRef {
-        track: gt_types::TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-        category: gt_types::DataCategory::Tpv,
-        point_index: PointIdx::new(50),
-    };
+    let clicked = test_util::point_ref(DataCategory::Tpv, 50);
     let point_time = files
         .first()
         .and_then(|f| f.tracks.first())
         .and_then(|t| t.points.get(50))
         .map(|p| p.tpv.time())
         .expect("the fixture has a point 50");
-    let action = std::rc::Rc::new(Cell::new(None));
-    let seen = action.clone();
 
-    let mut harness = crate::test_harness::builder()
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
         .size(egui::vec2(900.0, 700.0))
-        .ui_state(
-            move |ui, map: &mut Option<NavMap>| {
-                let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
-                let mut state = DrawState {
-                    highlight: MapHighlight {
-                        sticky: Some(clicked),
-                        ..MapHighlight::default()
-                    },
-                    ..DrawState::default()
-                };
-                let returned = map.draw(ui, state.context(&files, &visibility));
-                if returned.is_some() {
-                    seen.set(returned);
-                }
-            },
-            None,
-        );
+        .draw_state(|state| state.highlight.sticky = Some(clicked))
+        .render();
+    assert!(
+        map.returned_action().is_none(),
+        "nothing requested before the click"
+    );
 
-    for _ in 0..5 {
-        harness.run();
-    }
-    assert!(action.get().is_none(), "nothing requested before the click");
-
-    harness
+    map.harness
         .inner
         .get_by_label(egui_phosphor::regular::ARROW_SQUARE_OUT)
         .click();
-    harness.inner.run_steps(2);
+    map.harness.inner.run_steps(2);
 
     assert_eq!(
-        action.get(),
+        map.returned_action(),
         Some(MapAction::ShowSkyTrails(
             gt_ui_types::SkyTrailsRequest::at_instant(clicked.track, point_time)
         ))
@@ -2235,34 +1795,17 @@ fn the_sticky_popup_fits_every_viewport(
     viewport: egui::Vec2,
 ) {
     use gt_test_utils::WindowFitAssertions as _;
-    use gt_ui_types::TrackDataVisibility;
 
     let files = vec![file_with_an_overlong_marker_label()];
-    let visibility = TrackDataVisibility::from_loaded(&files);
-    let clicked = DataPointRef {
-        track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-        category,
-        point_index,
-    };
+    let clicked = test_util::point_ref(category, point_index.as_usize());
 
-    let mut harness = crate::test_harness::builder().size(viewport).ui_state(
-        move |ui, map: &mut Option<NavMap>| {
-            let map =
-                map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
-            let mut state = DrawState {
-                highlight: MapHighlight {
-                    sticky: Some(clicked),
-                    ..MapHighlight::default()
-                },
-                ..DrawState::default()
-            };
-            map.draw(ui, state.context(&files, &visibility));
-        },
-        None,
-    );
-    harness.inner.run_steps(8);
+    let map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .size(viewport)
+        .draw_state(|state| state.highlight.sticky = Some(clicked))
+        .render();
 
-    harness
+    map.harness
         .inner
         .assert_window_fits_the_viewport(gt_test_utils::AuditedWindow::identified(
             "sticky popup",

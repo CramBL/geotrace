@@ -275,6 +275,7 @@ fn draw_event_icon(
 #[cfg(test)]
 mod snapshot_tests {
     use super::*;
+    use crate::test_util;
     use strum::IntoEnumIterator;
 
     #[test]
@@ -288,7 +289,7 @@ mod snapshot_tests {
         let height = margin * 2.0 + (rows - 1) as f32 * spacing;
 
         let library = IconMeshLibrary::embedded().unwrap();
-        let mut harness = crate::test_harness::builder()
+        let mut harness = test_util::harness_builder()
             .size(egui::vec2(width, height))
             .ui(move |ui| {
                 ui.painter()

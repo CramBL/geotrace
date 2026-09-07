@@ -6,12 +6,11 @@
 //! coordinates the recorder interpolated over the dead-reckoned ones, 222 m
 //! north of the line the receiver measured.
 
-mod support;
-
 use std::ops::Range;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, Utc};
+use gt_map::test_util::{self, MapScene};
 use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::{
@@ -55,7 +54,7 @@ const EAST_HEADING_DEGREES: f64 = 90.0;
 const SATELLITES_IN_FIX: u32 = 12;
 
 fn time_of(index: usize) -> DateTime<Utc> {
-    support::epoch() + Duration::seconds(index as i64 * SECONDS_BETWEEN_FIXES)
+    test_util::epoch() + Duration::seconds(index as i64 * SECONDS_BETWEEN_FIXES)
 }
 
 fn longitude_of(index: usize) -> Longitude {
@@ -127,6 +126,6 @@ fn a_recording_with_an_event_marker_among_dead_reckoned_fixes() -> Vec<LoadedFil
 #[test]
 fn snapshot_an_event_marker_among_dead_reckoned_fixes_is_drawn_on_the_dashed_track() {
     let files = a_recording_with_an_event_marker_among_dead_reckoned_fixes();
-    let mut map = support::RenderedMapScene::of(files).draw();
+    let mut map = MapScene::of(files).render();
     map.snapshot("event_marker_among_dead_reckoned_fixes");
 }
