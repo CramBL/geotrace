@@ -59,6 +59,14 @@ for point in nav_file.points:
     print(point.lat, point.lon, point.gps_time)
 ```
 
+`points` has a method per field that returns the value of every fix as a list, for plotting and analysis:
+
+```python
+lons = nav_file.points.longitudes()
+lats = nav_file.points.latitudes()
+speeds = nav_file.points.speeds_mps()  # None for a fix without one
+```
+
 ## Logging
 
 The SDK does not raise on unexpected data.
