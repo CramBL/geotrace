@@ -2,7 +2,7 @@
 source: sdk/rust/geotrace-sdk/tests/inspect_tests.rs
 expression: output
 ---
-GeoTrace Data File - version 1
+GeoTrace Data File - version 2
 ────────────────────────────────────────────────────────────
 Metadata
   title  : "Inspect test"

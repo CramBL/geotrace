@@ -7,6 +7,7 @@ use crate::fixed_width_string::{
     AnnotationField, ColorHexField, FixedWidthString, FixedWidthStringError, IconNameField,
     MarkerLabelField, VariantPathField,
 };
+use crate::format_version::WRITTEN_FORMAT_VERSION;
 use crate::provenance::{SDK_COMMIT_TIME_ATTR, SDK_GIT_COMMIT_ATTR, SDK_VERSION_ATTR};
 use crate::types::{Constellation, EventMarkerColor, Meta, NavFile};
 
@@ -25,7 +26,10 @@ pub(crate) fn build_hdf5(nav_file: &NavFile) -> Result<Vec<u8>, Error> {
     let mut fb = FileBuilder::new();
 
     // Root attributes
-    fb.set_attr("geotrace_version", AttrValue::String("1".into()));
+    fb.set_attr(
+        "geotrace_version",
+        AttrValue::String(WRITTEN_FORMAT_VERSION.to_string()),
+    );
     set_provenance_attrs(&mut fb, &nav_file.meta);
     if let Some(title) = &nav_file.meta.title {
         fb.set_attr("meta_title", AttrValue::String(title.clone()));
@@ -712,6 +716,26 @@ mod tests {
         set_provenance_attrs(&mut fb, meta);
         let file = File::from_bytes(fb.finish().expect("build")).expect("read");
         file.root().attrs().expect("attrs")
+    }
+
+    #[test]
+    fn a_written_file_stamps_format_version_2() {
+        let nav_file = NavFile {
+            meta: Meta::default(),
+            nav_points: Vec::new(),
+            markers: Vec::new(),
+            event_markers: Vec::new(),
+            event_marker_styles: Vec::new(),
+            channels: Vec::new(),
+        };
+
+        let file = File::from_bytes(build_hdf5(&nav_file).expect("build")).expect("read");
+        let attrs = file.root().attrs().expect("attrs");
+
+        assert_eq!(
+            attrs.get("geotrace_version").and_then(AttrValue::as_str),
+            Some("2")
+        );
     }
 
     #[test]
