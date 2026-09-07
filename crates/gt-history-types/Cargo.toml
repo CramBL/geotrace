@@ -10,6 +10,11 @@ authors.workspace = true
 [lib]
 doctest = false
 
+[features]
+# Builds `gt_history_types::fixtures`, which writes the stored values the
+# history tests read back. A normal build leaves it off.
+fixtures = []
+
 [dependencies]
 chrono.workspace = true
 log.workspace = true

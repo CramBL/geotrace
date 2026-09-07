@@ -3,8 +3,8 @@ use geotrace_sdk::NavFile;
 use gt_history::{
     Database, DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentId,
     LogContentHash, ReadOnlyDatabase, ReadOnlyHistoryDatabase, RecordingMeta,
-    StoredFixPlacementRule, StoredLogFilter, StoredLogFilterMode, StoredRecording,
-    StoredSegmentation, StoredTrackSplitRule, TrackRange, TrackState, extract_meta,
+    StoredFixPlacementRule, StoredRecording, StoredSegmentation, StoredTrackSplitRule, TrackRange,
+    TrackState, extract_meta,
 };
 use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
@@ -13,20 +13,9 @@ use gt_history_types::{
     CURRENT_SCHEMA_VERSION, CURRENT_UI_STATE_VERSION, GTD_VERSION_ATTR, HIDDEN_TRACKS_DATASET,
     LEGACY_TRACK_HIDDEN_DATASET, RecordingUiState, SCHEMA_VERSION_ATTR, TRACK_END_DATASET,
     TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, UI_STATE_GROUP, UI_STATE_VERSION_ATTR,
-    UiStateVersionReporter, UiStateVersionTooNew,
+    UiStateVersionReporter, UiStateVersionTooNew, fixtures,
 };
 use rstest::rstest;
-
-/// Default segmentation settings for tests (mirrors `SegmentationConfig::default`).
-fn test_settings() -> StoredSegmentation {
-    StoredSegmentation {
-        track_split_gap_us: 300_000_000,
-        track_split_rule: StoredTrackSplitRule::StepInEitherDirection,
-        fix_placement_rule: StoredFixPlacementRule::MissingHeadingAndNothingInFix,
-        detect_clock_discontinuities: true,
-        clock_discontinuity_sigmas: 5.0,
-    }
-}
 
 /// Single-track convenience wrappers over the per-track API.
 trait TestDbExt {
@@ -55,7 +44,13 @@ impl TestDbExt for Database {
             end: meta.nav_point_count,
             state: TrackState::Live,
         }];
-        self.insert(identity, meta, &tracks, test_settings(), bytes)
+        self.insert(
+            identity,
+            meta,
+            &tracks,
+            fixtures::default_segmentation(),
+            bytes,
+        )
     }
 
     fn load_bytes(&self, db_ref: &DatabaseRef) -> Result<Vec<u8>, DbError> {
@@ -1208,7 +1203,13 @@ fn set_tracks_shelved_shelves_tracks_and_is_reversible() {
         },
     ];
     let db_ref = db
-        .insert("dev", &meta, &tracks, test_settings(), &bytes)
+        .insert(
+            "dev",
+            &meta,
+            &tracks,
+            fixtures::default_segmentation(),
+            &bytes,
+        )
         .expect("insert");
 
     let entries = db.list_recordings().expect("list");
@@ -1571,14 +1572,26 @@ fn reinserting_a_recording_keeps_its_track_table() {
         },
     ];
     let db_ref = db
-        .insert("dev", &meta, &tracks, test_settings(), &bytes)
+        .insert(
+            "dev",
+            &meta,
+            &tracks,
+            fixtures::default_segmentation(),
+            &bytes,
+        )
         .expect("insert");
     db.set_tracks_shelved(&db_ref, &[0], true).expect("shelve");
 
     // Re-storing the same recording dedups, and must not clobber the track
     // table (the shelved mark is preserved).
     let db_ref2 = db
-        .insert("dev", &meta, &tracks, test_settings(), &bytes)
+        .insert(
+            "dev",
+            &meta,
+            &tracks,
+            fixtures::default_segmentation(),
+            &bytes,
+        )
         .expect("reinsert");
     assert_eq!(db_ref, db_ref2, "re-insert returns the existing reference");
     assert_eq!(db.list_recordings().expect("list").len(), 1, "no duplicate");
@@ -1615,7 +1628,13 @@ fn set_tracks_shelved_shelves_only_the_given_tracks() {
         },
     ];
     let db_ref = db
-        .insert("dev", &meta, &tracks, test_settings(), &bytes)
+        .insert(
+            "dev",
+            &meta,
+            &tracks,
+            fixtures::default_segmentation(),
+            &bytes,
+        )
         .expect("insert");
 
     db.set_tracks_shelved(&db_ref, &[0, 2], true)
@@ -2205,8 +2224,14 @@ fn pure_backend_database_is_readable_by_metno() {
             state: TrackState::Shelved,
         },
     ];
-    db.insert("device", &meta, &tracks, test_settings(), &bytes)
-        .expect("insert");
+    db.insert(
+        "device",
+        &meta,
+        &tracks,
+        fixtures::default_segmentation(),
+        &bytes,
+    )
+    .expect("insert");
 
     let file = hdf5::File::open(&db_path).expect("open with the reference C library");
     let by_id = file.group("by_identity").expect("by_identity missing");
@@ -2311,8 +2336,14 @@ fn insert_two_track(db: &mut Database, identity: &str, start_us: i64, n: u64) ->
             state: TrackState::Live,
         },
     ];
-    db.insert(identity, &meta, &tracks, test_settings(), &bytes)
-        .expect("insert")
+    db.insert(
+        identity,
+        &meta,
+        &tracks,
+        fixtures::default_segmentation(),
+        &bytes,
+    )
+    .expect("insert")
 }
 
 /// Exercises the whole API at scale: hundreds of recordings inserted, then
@@ -2549,8 +2580,14 @@ fn chunked_recordings_reuse_freed_space_on_interior_delete() {
                 state: TrackState::Live,
             },
         ];
-        db.insert("dev", &meta, &tracks, test_settings(), &bytes)
-            .expect("insert chunked")
+        db.insert(
+            "dev",
+            &meta,
+            &tracks,
+            fixtures::default_segmentation(),
+            &bytes,
+        )
+        .expect("insert chunked")
     };
 
     let refs: Vec<DatabaseRef> = (0..N).map(|i| insert(&mut db, i)).collect();
@@ -2595,7 +2632,7 @@ fn set_tracks_replaces_the_table_and_settings() {
         },
     ];
     let db_ref = db
-        .insert("dev", &meta, &two, test_settings(), &bytes)
+        .insert("dev", &meta, &two, fixtures::default_segmentation(), &bytes)
         .expect("insert");
     {
         let entry = &db.list_recordings().expect("list")[0];
@@ -2665,12 +2702,18 @@ fn replacing_a_recording_in_place_stores_the_new_bytes_under_the_same_reference(
         end: 25,
         state: TrackState::Shelved,
     }];
-    db.replace_recording_in_place(&db_ref, &meta, &tracks, test_settings(), &shorter)
-        .expect("replace");
+    db.replace_recording_in_place(
+        &db_ref,
+        &meta,
+        &tracks,
+        fixtures::default_segmentation(),
+        &shorter,
+    )
+    .expect("replace");
 
     let stored = db.load_full(&db_ref).expect("load");
     assert_eq!(stored.tracks, tracks.to_vec());
-    assert_eq!(stored.segmentation, Some(test_settings()));
+    assert_eq!(stored.segmentation, Some(fixtures::default_segmentation()));
     let reconstructed = extract_meta(&stored.bytes).expect("meta");
     assert_eq!(reconstructed.nav_point_count, 25);
     assert_eq!(reconstructed.time_range, meta.time_range);
@@ -2702,8 +2745,14 @@ fn replacing_a_recording_in_place_keeps_the_logs_attached_to_it() {
         end: 25,
         state: TrackState::Live,
     }];
-    db.replace_recording_in_place(&db_ref, &meta, &tracks, test_settings(), &shorter)
-        .expect("replace");
+    db.replace_recording_in_place(
+        &db_ref,
+        &meta,
+        &tracks,
+        fixtures::default_segmentation(),
+        &shorter,
+    )
+    .expect("replace");
 
     let attachments = db.log_attachments(&db_ref).expect("list the attachments");
     let [entry] = attachments.as_slice() else {
@@ -2711,7 +2760,7 @@ fn replacing_a_recording_in_place_keeps_the_logs_attached_to_it() {
     };
     assert_eq!(entry.id, id);
     assert_eq!(entry.attachment.name, "field-notes.log");
-    assert_eq!(entry.attachment.filters, log_filters());
+    assert_eq!(entry.attachment.filters, fixtures::log_filters());
     assert_eq!(stored_log_count(&db_path), 1, "the log itself is kept too");
 }
 
@@ -2739,8 +2788,14 @@ fn replacing_a_recording_in_place_drops_its_snap_run_and_its_ui_state() {
         end: 25,
         state: TrackState::Live,
     }];
-    db.replace_recording_in_place(&db_ref, &meta, &tracks, test_settings(), &shorter)
-        .expect("replace");
+    db.replace_recording_in_place(
+        &db_ref,
+        &meta,
+        &tracks,
+        fixtures::default_segmentation(),
+        &shorter,
+    )
+    .expect("replace");
 
     assert_eq!(db.snap_blob(&db_ref).expect("read"), None);
     assert_eq!(
@@ -2769,8 +2824,14 @@ fn replacing_a_recording_that_is_not_stored_reports_an_error() {
         group_name: "2001-01-01T00:00:00Z_no-such-recording".to_owned(),
     };
     assert!(
-        db.replace_recording_in_place(&missing, &meta, &tracks, test_settings(), &bytes)
-            .is_err()
+        db.replace_recording_in_place(
+            &missing,
+            &meta,
+            &tracks,
+            fixtures::default_segmentation(),
+            &bytes
+        )
+        .is_err()
     );
 
     let entries = db.list_recordings().expect("list");
@@ -2797,8 +2858,14 @@ fn replacing_a_recording_with_bytes_that_are_not_a_recording_keeps_the_stored_on
     }];
 
     assert!(
-        db.replace_recording_in_place(&db_ref, &meta, &tracks, test_settings(), b"not a recording")
-            .is_err()
+        db.replace_recording_in_place(
+            &db_ref,
+            &meta,
+            &tracks,
+            fixtures::default_segmentation(),
+            b"not a recording"
+        )
+        .is_err()
     );
 
     let stored = db.load_full(&db_ref).expect("load");
@@ -2856,8 +2923,14 @@ fn a_replacement_interrupted_before_it_was_linked_in_puts_the_recording_back() {
         end: 25,
         state: TrackState::Live,
     }];
-    db.replace_recording_in_place(&db_ref, &meta, &tracks, test_settings(), &shorter)
-        .expect("replace");
+    db.replace_recording_in_place(
+        &db_ref,
+        &meta,
+        &tracks,
+        fixtures::default_segmentation(),
+        &shorter,
+    )
+    .expect("replace");
 
     let entries = db.list_recordings().expect("list");
     let [entry] = entries.as_slice() else {
@@ -2929,7 +3002,7 @@ fn a_stored_recording_reads_back_the_rules_it_was_written_with(
     let settings = StoredSegmentation {
         track_split_rule,
         fix_placement_rule,
-        ..test_settings()
+        ..fixtures::default_segmentation()
     };
 
     let db_ref = db
@@ -3476,29 +3549,11 @@ fn a_write_locked_database_is_rejected_and_repaired_on_the_pure_backend() {
     assert_eq!(db.list_recordings().expect("list").len(), 1);
 }
 
-/// A stack with one chip of each mode, with and without a palette slot.
-fn log_filters() -> Vec<StoredLogFilter> {
-    vec![
-        StoredLogFilter {
-            text: "gnss".to_owned(),
-            regex: false,
-            enabled: true,
-            mode: StoredLogFilterMode::Layer { color_slot: 3 },
-        },
-        StoredLogFilter {
-            text: "hal-powerd|navsyncd".to_owned(),
-            regex: true,
-            enabled: false,
-            mode: StoredLogFilterMode::Refine,
-        },
-    ]
-}
-
 fn log_attachment(name: &str) -> LogAttachment {
     LogAttachment::new(
         name.to_owned(),
         LogContentHash::of_log_bytes(name.as_bytes()),
-        log_filters(),
+        fixtures::log_filters(),
     )
 }
 

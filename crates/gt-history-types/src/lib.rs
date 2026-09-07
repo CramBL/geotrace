@@ -4,6 +4,8 @@ use std::path::Path;
 
 use thiserror::Error;
 
+#[cfg(any(test, feature = "fixtures"))]
+pub mod fixtures;
 pub mod log_attachment;
 pub mod ui_state;
 
@@ -533,7 +535,11 @@ impl NavPointTimeRange {
 }
 
 /// Metadata for a recording - used for duplicate detection and indexing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+///
+/// The default is a recording with no nav point: every count is 0 and
+/// `time_range` is `None`, which is what
+/// [`NavPointTimeRange::from_stored_attributes`] reads back for it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RecordingMeta {
     /// The time the recording's nav points cover, `None` for a recording with
     /// no nav point and for one whose stored bounds are inverted (see

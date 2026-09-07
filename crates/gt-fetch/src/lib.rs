@@ -6,6 +6,9 @@
 //! [`HttpResponse`]s into its own outcome type via [`send_classified`], which
 //! retries a transient failure once, the same policy for every pipeline.
 
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
+
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -367,54 +370,10 @@ pub fn send_classified<B, T>(
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-
     use rstest::rstest;
 
     use super::*;
-
-    fn response(status: u16, body: &str) -> Result<HttpResponse, TransportError> {
-        Ok(HttpResponse {
-            status,
-            body: body.to_owned(),
-        })
-    }
-
-    fn transport_error(detail: &str) -> Result<HttpResponse, TransportError> {
-        Err(TransportError {
-            detail: detail.to_owned(),
-        })
-    }
-
-    /// Replays a scripted sequence and records the requests it was sent.
-    struct CannedTransport {
-        script: RefCell<Vec<Result<HttpResponse, TransportError>>>,
-        requests: RefCell<Vec<HttpRequest>>,
-    }
-
-    impl CannedTransport {
-        fn new(script: Vec<Result<HttpResponse, TransportError>>) -> Self {
-            Self {
-                script: RefCell::new(script),
-                requests: RefCell::new(Vec::new()),
-            }
-        }
-
-        fn sends(&self) -> usize {
-            self.requests.borrow().len()
-        }
-    }
-
-    impl Transport for CannedTransport {
-        fn send(&self, request: &HttpRequest) -> Result<HttpResponse, TransportError> {
-            self.requests.borrow_mut().push(request.clone());
-            let mut script = self.script.borrow_mut();
-            if script.is_empty() {
-                return transport_error("the test under-declared its requests");
-            }
-            script.remove(0)
-        }
-    }
+    use crate::test_util::{ScriptedTransport, TransportResponse, response, transport_error};
 
     /// The classifier every retry test runs: 2xx is a final `Ok`-like
     /// outcome, 5xx is transient, anything else fails outright.
@@ -428,8 +387,8 @@ mod tests {
         Classified::Outcome(Err(response.status_line()))
     }
 
-    fn send(script: Vec<Result<HttpResponse, TransportError>>) -> (Result<String, String>, usize) {
-        let transport = CannedTransport::new(script);
+    fn send(script: Vec<TransportResponse<String>>) -> (Result<String, String>, usize) {
+        let transport = ScriptedTransport::in_order(script);
         let request = HttpRequest::get("https://example.invalid/dataset");
         let outcome = send_classified(&transport, &request, classify, Err);
         (outcome, transport.sends())
@@ -568,49 +527,22 @@ mod tests {
         );
     }
 
+    /// This test takes one assertion per body type: [`OfflineTransport`]
+    /// implements [`Transport`] once for each.
     #[test]
     fn the_offline_source_rejects_every_request() {
         let transport = TransportSource::Offline
             .connect(None)
             .expect("the offline source connects");
-        let err = Transport::<String>::send(
-            &transport,
-            &HttpRequest::get("https://example.invalid/dataset"),
-        )
-        .expect_err("the offline transport rejects the request");
-        assert!(err.detail.contains(OFFLINE_DETAIL));
-    }
+        let request = HttpRequest::get("https://example.invalid/dataset");
 
-    #[test]
-    fn the_offline_source_rejects_a_bytes_request_too() {
-        let transport = TransportSource::Offline
-            .connect(None)
-            .expect("the offline source connects");
-        let err = Transport::<Vec<u8>>::send(
-            &transport,
-            &HttpRequest::get("https://example.invalid/file.gz"),
-        )
-        .expect_err("the offline transport rejects the request");
-        assert!(err.detail.contains(OFFLINE_DETAIL));
-    }
+        let text_failure = Transport::<String>::send(&transport, &request)
+            .expect_err("the offline transport rejects a request for text");
+        let bytes_failure = Transport::<Vec<u8>>::send(&transport, &request)
+            .expect_err("the offline transport rejects a request for bytes");
 
-    /// Replays one scripted bytes response.
-    struct CannedBytesTransport {
-        script: RefCell<Vec<Result<BytesResponse, TransportError>>>,
-        sends: RefCell<usize>,
-    }
-
-    impl Transport<Vec<u8>> for CannedBytesTransport {
-        fn send(&self, _request: &HttpRequest) -> Result<BytesResponse, TransportError> {
-            *self.sends.borrow_mut() += 1;
-            let mut script = self.script.borrow_mut();
-            if script.is_empty() {
-                return Err(TransportError {
-                    detail: "the test under-declared its requests".to_owned(),
-                });
-            }
-            script.remove(0)
-        }
+        assert!(text_failure.detail.contains(OFFLINE_DETAIL));
+        assert!(bytes_failure.detail.contains(OFFLINE_DETAIL));
     }
 
     /// A body no UTF-8 decode survives reaches the classifier unchanged, which
@@ -618,19 +550,10 @@ mod tests {
     #[test]
     fn a_bytes_body_reaches_the_classifier_undecoded() {
         let gzip_magic = vec![0x1f, 0x8b, 0x08, 0x00];
-        let transport = CannedBytesTransport {
-            script: RefCell::new(vec![
-                Ok(BytesResponse {
-                    status: 503,
-                    body: Vec::new(),
-                }),
-                Ok(BytesResponse {
-                    status: 200,
-                    body: gzip_magic.clone(),
-                }),
-            ]),
-            sends: RefCell::new(0),
-        };
+        let transport = ScriptedTransport::in_order(vec![
+            response(503, Vec::new()),
+            response(200, gzip_magic.clone()),
+        ]);
 
         let outcome = send_classified(
             &transport,
@@ -645,6 +568,6 @@ mod tests {
         );
 
         assert_eq!(outcome, Ok(gzip_magic));
-        assert_eq!(*transport.sends.borrow(), 2, "the 503 was retried once");
+        assert_eq!(transport.sends(), 2, "the 503 was retried once");
     }
 }

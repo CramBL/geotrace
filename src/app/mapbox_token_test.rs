@@ -198,8 +198,9 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use egui_kittest::kittest::{NodeT as _, Queryable as _};
+    use gt_fetch::test_util::{ScriptedTransport, TransportResponse};
     use gt_fetch::{BytesResponse, TransportError};
-    use gt_test_utils::{ScriptedTransport, TestHarness, TransportResponse};
+    use gt_test_utils::TestHarness;
     use rstest::rstest;
 
     use super::*;

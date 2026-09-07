@@ -60,11 +60,7 @@ fn entry(identity: &str, time_range: Option<NavPointTimeRange>) -> RecordingEntr
         },
         meta: RecordingMeta {
             time_range,
-            nav_point_count: 0,
-            sat_report_count: 0,
-            marker_count: 0,
-            event_marker_count: 0,
-            gtd_size_bytes: 0,
+            ..RecordingMeta::default()
         },
         total_tracks: 0,
         shelved_tracks: 0,

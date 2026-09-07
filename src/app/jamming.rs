@@ -699,10 +699,10 @@ mod tests {
     use tempfile::TempDir;
 
     use gt_fetch::HttpResponse;
+    use gt_fetch::test_util::ScriptedTransport;
     use gt_jam::DEFAULT_BASE_URL;
     use gt_pending_writes::{WriteAccess, WriteRejection};
     use gt_store::WritableDayArchive as _;
-    use gt_test_utils::ScriptedTransport;
     use gt_test_utils::pending_writes;
 
     use crate::app::backfill::BackfillProgress;
