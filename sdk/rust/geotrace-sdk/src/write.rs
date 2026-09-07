@@ -9,7 +9,7 @@ use crate::fixed_width_string::{
 };
 use crate::format_version::WRITTEN_FORMAT_VERSION;
 use crate::provenance::{SDK_COMMIT_TIME_ATTR, SDK_GIT_COMMIT_ATTR, SDK_VERSION_ATTR};
-use crate::types::{Constellation, EventMarkerColor, Meta, NavFile};
+use crate::types::{Constellation, EventMarkerColor, MarkerIcon, Meta, NavFile};
 
 /// Number of elements per chunk for 1-D compressed datasets.
 ///
@@ -391,7 +391,7 @@ fn write_satellite_data(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), 
         .with_shape(&[ts as u64])
         .set_attr(
             "encoding",
-            AttrValue::String("0=GPS,1=GLONASS,2=Galileo,3=BeiDou".into()),
+            AttrValue::String(Constellation::encoding_attribute()),
         )
         .with_chunks(&[ts_chunk])
         .with_deflate(6);
@@ -501,9 +501,7 @@ fn write_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> 
         .with_shape(&[k as u64])
         .set_attr(
             "encoding",
-            AttrValue::String(
-                "0=pin,1=cross,2=circle,3=lightning,4=warning,5=error,6=check".into(),
-            ),
+            AttrValue::String(MarkerIcon::encoding_attribute()),
         )
         .with_chunks(&[k_chunk])
         .with_deflate(6);

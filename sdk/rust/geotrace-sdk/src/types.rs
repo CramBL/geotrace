@@ -3,6 +3,7 @@ use std::{fs::File, io, path::Path};
 use chrono::{DateTime, Utc};
 use geotrace_sdk_units::snr;
 use geotrace_sdk_units::{ChannelUnit, PhysicalQuantity};
+use strum::IntoEnumIterator as _;
 
 use crate::error::{ChannelError, Error, EventMarkerError, MARKER_LABEL_LOCATION};
 use crate::fixed_width_string::{AnnotationField, MarkerLabelField};
@@ -246,6 +247,18 @@ impl Constellation {
                 name: s.to_owned(),
             })
     }
+
+    /// Every code and its display name, for the `encoding` attribute of the
+    /// `tracked_sats/constellation` dataset. Built from the variant list: a new
+    /// variant is added to this string with no separate list to update.
+    pub(crate) fn encoding_attribute() -> String {
+        Constellation::iter()
+            .map(|constellation| {
+                format!("{}={}", constellation.to_u8(), constellation.display_name())
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    }
 }
 
 /// A user-defined map annotation with an optional label and an icon.
@@ -423,6 +436,16 @@ impl MarkerIcon {
         s.parse()
             .map_err(|_err: strum::ParseError| Error::UnknownMarkerIcon { name: s.to_owned() })
     }
+
+    /// Every code and its wire name, for the `encoding` attribute of the
+    /// `markers/icon` dataset. Built from the variant list: a new variant is
+    /// added to this string with no separate list to update.
+    pub(crate) fn encoding_attribute() -> String {
+        MarkerIcon::iter()
+            .map(|icon| format!("{}={}", icon.to_u8(), icon.name()))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
 }
 
 #[cfg(test)]
@@ -458,6 +481,15 @@ mod marker_icon_tests {
     fn try_from_lower_case_rejects_unknown_strings() {
         let err = MarkerIcon::try_from_lower_case("not_an_icon").unwrap_err();
         assert!(matches!(err, Error::UnknownMarkerIcon { name } if name == "not_an_icon"));
+    }
+
+    #[test]
+    fn encoding_attribute_lists_every_variant() {
+        assert_eq!(
+            MarkerIcon::encoding_attribute(),
+            "0=pin,1=cross,2=circle,3=lightning,4=warning,5=error,6=check,7=satellite,\
+             8=satellite_lost,9=gear,10=refresh,11=download,12=upload,13=wrench"
+        );
     }
 }
 
@@ -594,6 +626,14 @@ mod constellation_tests {
         let err = Constellation::try_from_lower_case("not_a_constellation").unwrap_err();
         assert!(
             matches!(err, Error::UnknownConstellationName { name } if name == "not_a_constellation")
+        );
+    }
+
+    #[test]
+    fn encoding_attribute_lists_every_variant() {
+        assert_eq!(
+            Constellation::encoding_attribute(),
+            "0=GPS,1=GLONASS,2=Galileo,3=BeiDou,4=NavIC,5=QZSS"
         );
     }
 

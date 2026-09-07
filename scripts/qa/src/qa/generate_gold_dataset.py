@@ -45,7 +45,7 @@ def write_csv(dest_path: Path, data: list[dict[str, Any]], fieldnames: list[str]
 
 
 def multi_constellation_sats(t: str, gps_time: str | None = None) -> list[dict[str, Any]]:
-    """Generate a realistic modern-GNSS satellite set: 25 in-fix, 25 visible only = 50 total.
+    """Generate a realistic modern-GNSS satellite set: 25 in-fix, 24 visible only = 49 total.
 
     All four major constellations are represented (GPS, GLONASS, Galileo, BeiDou).
     Matches what a high-quality dual-frequency receiver reports.
@@ -97,7 +97,7 @@ def main() -> None:
 
     # Track 1: Straight line moving North
     # 10 points, 2m apart, speed 0 to 90 km/h (+10 each)
-    # Rich multi-constellation satellite data: 25 in-fix, 50 visible
+    # Rich multi-constellation satellite data: 49 per fix, 25 of them in the fix
     base_lat, base_lon = track_origin(1)
     for i in range(10):
         t = get_time(0, float(i))

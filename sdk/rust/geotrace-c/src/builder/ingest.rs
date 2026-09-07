@@ -37,8 +37,8 @@ fn nav_fix_time_or_invalid_argument(
 
 /// Add a GPS navigation fix.
 ///
-/// At least one nav fix is required before `gtd_builder_finish()`.
-/// Fixes must be added in ascending time order.
+/// At least one nav fix is required before `gtd_builder_finish()`, which sorts
+/// the fixes by time: a caller may add them in any order.
 ///
 /// The ranges named below are data quality expectations, not parse rules.
 /// The SDK records a value outside its range, NaN included, as given: a recorder
@@ -92,7 +92,8 @@ pub unsafe extern "C" fn gtd_builder_add_nav_fix(
 
 /// Add a satellite visibility report.
 ///
-/// The report is associated with the nearest preceding nav fix.
+/// The report is associated with the nearest nav fix before or after it, within
+/// the window set by `gtd_builder_set_satellite_window_us()`.
 /// Passing @p n_sats as zero with a NULL @p sats pointer records an empty report.
 ///
 /// @param builder  Builder handle.
@@ -191,8 +192,8 @@ pub unsafe extern "C" fn gtd_builder_add_annotation(
 /// Add a structured event marker.
 ///
 /// Event markers use a hierarchical variant path (e.g. `"system/startup"`) to
-/// identify the event type. Paths must be non-empty, consist of alphanumeric
-/// segments separated by `/`, and not exceed 255 bytes.
+/// identify the event type. Paths must be non-empty, consist of segments of
+/// ASCII letters, digits, `-` and `_` separated by `/`, and not exceed 255 bytes.
 ///
 /// @param builder      Builder handle.
 /// @param variant_path Hierarchical event type path.
@@ -237,8 +238,9 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker(
 
 /// Register a display style for an event marker variant.
 ///
-/// Styles are per-variant, not per-event. Calling this multiple times for the
-/// same path overwrites the previous style.
+/// Styles are per-variant, not per-event. The application draws a path's markers
+/// with the style of the last call for that path. Each call writes its own row,
+/// so two calls for one path write two.
 ///
 /// @param builder      Builder handle.
 /// @param variant_path Hierarchical event type path (same format as in
