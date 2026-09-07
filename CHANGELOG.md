@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.16.0 - 2026-09-07
+
 ### Added
 
 - **Interface:** The History window lists a recording's shelved tracks under its row, each with its track number and nav-point count, and unshelves one track or all of them.
