@@ -22,9 +22,9 @@ mod sky_trails_window;
 mod snapped_track_renderer;
 mod space_weather_indicator;
 mod tec_renderer;
-#[cfg(test)]
-mod test_harness;
 pub mod test_tiles;
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
 pub mod tpv_renderer;
 mod track_layers;
 pub mod track_renderer;
@@ -1593,96 +1593,6 @@ fn show_marker_window_body(ui: &mut egui::Ui, files: &[LoadedFile], sticky_ref: 
         }
         DataCategory::Tpv | DataCategory::SatelliteReport | DataCategory::Track => {}
     });
-}
-
-/// The per-frame state a [`MapDrawContext`] borrows, owned so a test can
-/// spell out only the inputs it is about and take the defaults for the rest.
-#[cfg(test)]
-struct DrawState {
-    recording_names: RecordingNames,
-    filter: GlobalFilter,
-    event_marker_visibility: EventMarkerVisibility,
-    generated_marker_visibility: GeneratedMarkerVisibility,
-    display_mask: DisplayMask,
-    sky_glyph_variant: SkyGlyphVariant,
-    point_window_folds: PointWindowFolds,
-    highlight: MapHighlight,
-    day_selection: DaySelection,
-    tec_instant: gt_ionex::TecInstantSelection,
-    log_matches: LogMatches,
-    log_hover: LogMatchHover,
-    clicked_log_glyph: Option<LogMatchGlyph>,
-    space_weather_warning: Vec<gt_ui_types::TrackSpaceWeatherWarning>,
-    space_weather_levels: Vec<gt_ui_types::WarningLevelExplanation>,
-}
-
-#[cfg(test)]
-impl Default for DrawState {
-    fn default() -> Self {
-        Self {
-            recording_names: RecordingNames::default(),
-            log_matches: LogMatches::default(),
-            log_hover: LogMatchHover::default(),
-            clicked_log_glyph: None,
-            space_weather_warning: Vec::new(),
-            space_weather_levels: Vec::new(),
-            filter: GlobalFilter::default(),
-            event_marker_visibility: EventMarkerVisibility::default(),
-            generated_marker_visibility: GeneratedMarkerVisibility::default(),
-            display_mask: DisplayMask::default(),
-            sky_glyph_variant: SkyGlyphVariant::default(),
-            point_window_folds: PointWindowFolds::default(),
-            highlight: MapHighlight::default(),
-            day_selection: DaySelection::new(None, gt_jam::calendar::today_utc()),
-            tec_instant: gt_ionex::TecInstantSelection::new(None, chrono::Utc::now().date_naive()),
-        }
-    }
-}
-
-#[cfg(test)]
-impl DrawState {
-    /// The context for one [`NavMap::draw`] call, with every optional input
-    /// absent. Override what a test is about with struct update syntax.
-    fn context<'a>(
-        &'a mut self,
-        files: &'a [LoadedFile],
-        visibility: &'a TrackDataVisibility,
-    ) -> MapDrawContext<'a> {
-        MapDrawContext {
-            files,
-            recording_names: &self.recording_names,
-            snapped_tracks: None,
-            jamming_dataset: None,
-            tec: TecLayer {
-                snapshot: None,
-                instant: &mut self.tec_instant,
-                empty_reason: None,
-            },
-            query_matches: None,
-            log_matches: &self.log_matches,
-            log_hover: &mut self.log_hover,
-            clicked_log_glyph: &mut self.clicked_log_glyph,
-            empty_reason: None,
-            space_weather: SpaceWeatherIndicator {
-                track_warnings: &self.space_weather_warning,
-                levels: &self.space_weather_levels,
-                tec_deviation_caveat: &gt_ionex::text::DEVIATION_REFERENCE_CAVEAT,
-            },
-            filter: &self.filter,
-            visibility,
-            event_marker_visibility: &self.event_marker_visibility,
-            generated_marker_visibility: &self.generated_marker_visibility,
-            display_mask: &mut self.display_mask,
-            day_selection: &mut self.day_selection,
-            highlight: &mut self.highlight,
-            sky_glyph_variant: &mut self.sky_glyph_variant,
-            point_window_folds: &mut self.point_window_folds,
-            center_request: None,
-            zoom_to_visible: false,
-            reveal_query_matches: None,
-            sticky_pos_override: None,
-        }
-    }
 }
 
 #[cfg(test)]

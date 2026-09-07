@@ -18,6 +18,7 @@ use gt_jam::wire::{self, ParseWarningReporter};
 use walkers::{MapMemory, Projector};
 
 use crate::tec_renderer::{TecHeatmapSnapshot, visible_cells};
+use crate::test_util;
 use crate::transform::MercTransform;
 
 /// Where the rendered TEC map lands, resolved from this crate's manifest dir.
@@ -139,7 +140,7 @@ fn asset_path(relative: &str) -> PathBuf {
 #[ignore = "writes a committed asset"]
 fn generate_tec_reference_illustration() {
     let maps = gt_ionex::captured_maps(gt_ionex::STORM_CAPTURE).expect("the storm capture");
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(CANVAS_SIZE)
         .theme(true)
         .ui(move |ui| draw_world_heatmap(ui, &maps));
@@ -157,7 +158,7 @@ fn generate_tec_reference_illustration() {
 #[ignore = "writes a committed asset"]
 fn generate_interference_reference_illustration() {
     let dataset = captured_interference_day();
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(INTERFERENCE_CANVAS_SIZE)
         .theme(true)
         .ui(move |ui| draw_world_interference(ui, &dataset));

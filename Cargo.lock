@@ -2829,6 +2829,7 @@ dependencies = [
  "gt-jam",
  "gt-loaded-files",
  "gt-logfile",
+ "gt-map",
  "gt-sky",
  "gt-test-utils",
  "gt-track-builder",

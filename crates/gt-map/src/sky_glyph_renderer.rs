@@ -458,6 +458,7 @@ fn draw_disc(
 
 #[cfg(test)]
 mod tests {
+    use crate::test_util;
     use egui::{pos2, vec2};
     use gt_types::fixtures::MetricOffset;
     use gt_types::satellites::{Constellation, Satellite, Satellites};
@@ -657,7 +658,7 @@ mod tests {
                 .map(|az| sat(Constellation::Galileo, az, true))
                 .collect(),
         );
-        let mut harness = crate::test_harness::builder()
+        let mut harness = test_util::harness_builder()
             .size(egui::vec2(360.0, 120.0))
             .theme(true)
             .ui(move |ui| {
@@ -706,7 +707,7 @@ mod tests {
                 .map(|(az, el)| sat_el(Constellation::Gps, az, el, false))
                 .collect(),
         );
-        let mut harness = crate::test_harness::builder()
+        let mut harness = test_util::harness_builder()
             .size(egui::vec2(300.0, 140.0))
             .theme(true)
             .ui(move |ui| {

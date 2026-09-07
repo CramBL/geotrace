@@ -83,40 +83,18 @@ impl Tiles for TestTileSource {
 
 #[cfg(test)]
 mod tests {
-    use gt_types::LoadedFile;
-    use gt_ui_types::TrackDataVisibility;
-
     use super::*;
-    use crate::{DrawState, NavMap};
+    use crate::test_util::MapScene;
 
     /// A map built on the synthetic source draws its frame through the same
     /// path the application's tile fetcher takes.
     #[test]
     fn the_map_draws_a_frame_over_the_synthetic_tiles() {
-        let files: Vec<LoadedFile> = Vec::new();
-        let visibility = TrackDataVisibility::from_loaded(&files);
-        let mut harness = crate::test_harness::builder()
+        let map = MapScene::of(Vec::new())
+            .tiles(TileAccess::Synthetic)
             .size(egui::vec2(400.0, 400.0))
-            .ui_state(
-                |ui, map: &mut Option<NavMap>| {
-                    let map = map.get_or_insert_with(|| {
-                        NavMap::new(ui.ctx().clone(), TileAccess::Synthetic)
-                    });
-                    let mut state = DrawState::default();
-                    map.draw(ui, state.context(&files, &visibility));
-                },
-                None,
-            );
+            .render();
 
-        harness.inner.run_steps(3);
-
-        assert!(
-            harness
-                .state()
-                .as_ref()
-                .and_then(NavMap::viewport_geo_bounds)
-                .is_some(),
-            "the map framed no viewport"
-        );
+        assert!(map.framed().is_some(), "the map framed no viewport");
     }
 }

@@ -3,6 +3,7 @@ use gt_test_utils::{By, HarnessInteraction as _};
 use rstest::rstest;
 
 use super::*;
+use crate::test_util;
 use egui::Color32;
 use gt_types::MercPoint;
 use gt_types::NavPoint;
@@ -195,7 +196,7 @@ fn dense_multi_constellation_packs_into_two_columns() {
     let point = make_point(Some(sats_dense_multi_constellation()));
     let mut folds = gt_ui_types::PointWindowFolds::default();
     let placement = placement_of(&point);
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(620.0, 560.0))
         .theme(true)
         .ui(move |ui| {
@@ -210,7 +211,7 @@ fn dense_multi_constellation_reflows_to_one_column_when_narrow() {
     let point = make_point(Some(sats_dense_multi_constellation()));
     let mut folds = gt_ui_types::PointWindowFolds::default();
     let placement = placement_of(&point);
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(330.0, 560.0))
         .theme(true)
         .ui(move |ui| {
@@ -261,7 +262,7 @@ fn folded_sections_keep_their_headers() {
     let placement = placement_of(&point);
     folds.toggle(Constellation::Gps);
     folds.toggle(Constellation::Beidou);
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(620.0, 380.0))
         .theme(true)
         .ui(move |ui| {
@@ -283,7 +284,7 @@ fn folding_a_constellation_hides_only_its_rows(#[case] fold_gps: bool, #[case] e
     if fold_gps {
         folds.toggle(Constellation::Gps);
     }
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(620.0, 560.0))
         .theme(true)
         .ui(move |ui| {
@@ -307,7 +308,7 @@ fn clicking_anywhere_on_the_header_folds() {
     let seen = folded.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
     let placement = placement_of(&point);
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(600.0, 440.0))
         .theme(true)
         .ui(move |ui| {
@@ -332,7 +333,7 @@ fn the_open_trails_button_does_not_fold_the_sky_plot() {
     let seen = state.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
     let placement = placement_of(&point);
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(600.0, 440.0))
         .theme(true)
         .ui(move |ui| {
@@ -367,7 +368,7 @@ fn each_header_folds_its_own_constellation() {
     let seen = state.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
     let placement = placement_of(&point);
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(600.0, 440.0))
         .theme(true)
         .ui(move |ui| {
@@ -398,7 +399,7 @@ fn the_gap_between_satellite_rows_keeps_the_highlight() {
     let cell = id_cell.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
     let placement = placement_of(&point);
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(600.0, 440.0))
         .theme(true)
         .ui(move |ui| {
@@ -441,7 +442,7 @@ fn satellite_badge(#[case] name: &str, #[case] dark_mode: bool) {
     let point = make_point(Some(sats_multi_constellation()));
     let mut folds = gt_ui_types::PointWindowFolds::default();
     let placement = placement_of(&point);
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(STICKY_CONTENT_CANVAS)
         .theme(dark_mode)
         .ui(move |ui| {
@@ -467,7 +468,7 @@ fn hovering_a_table_sets_the_sky_highlight(#[case] label: &str, #[case] expected
     let cell = id_cell.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
     let placement = placement_of(&point);
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(320.0, 920.0))
         .theme(true)
         .ui(move |ui| {
@@ -490,7 +491,7 @@ fn hovering_a_prn_row_shows_the_affordance_band() {
     let point = make_point(Some(sats_multi_constellation()));
     let mut folds = gt_ui_types::PointWindowFolds::default();
     let placement = placement_of(&point);
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(STICKY_CONTENT_CANVAS)
         .theme(true)
         .ui(move |ui| {
@@ -593,7 +594,7 @@ fn sats_with_sky() -> Satellites {
 #[case::light("hover_badge_own_report_light", false)]
 fn hover_badge_own_report(#[case] name: &str, #[case] dark_mode: bool) {
     let track = track_with_points(vec![point_at(0, Some(sats_with_sky()))]);
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(430.0, 260.0))
         .theme(dark_mode)
         .ui(move |ui| {
@@ -619,7 +620,7 @@ fn hover_badge_report_states(
         .map(|&(secs, has_report)| point_at(secs, has_report.then(sats_with_sky)))
         .collect();
     let track = track_with_points(points);
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(430.0, 260.0))
         .theme(true)
         .ui(move |ui| {
@@ -650,7 +651,7 @@ fn hover_badge_coordinate_out_of_range() {
     let track = track_with_points(
         gt_test_utils::fixtures::nav_points_with_a_latitude_out_of_range(3, PointIdx::new(1)),
     );
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(430.0, 260.0))
         .theme(true)
         .ui(move |ui| {
@@ -700,7 +701,7 @@ fn the_point_window_names_the_recorded_coordinates(
 ) {
     let track = track_with_points(points);
     let mut folds = gt_ui_types::PointWindowFolds::default();
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(430.0, 300.0))
         .theme(true)
         .ui(move |ui| {
@@ -740,7 +741,7 @@ fn hover_badge_recording_row(
     #[case] expect_row: bool,
 ) {
     let track = track_with_points(vec![point_at(0, Some(sats_with_sky()))]);
-    let mut harness = crate::test_harness::builder()
+    let mut harness = test_util::harness_builder()
         .size(egui::vec2(430.0, 260.0))
         .theme(true)
         .ui(move |ui| {
@@ -1331,7 +1332,7 @@ fn a_tracks_arrows_are_one_mesh_whatever_the_accuracy_circle_count() {
         egui::pos2(100.0, 100.0),
     );
 
-    let mut harness = crate::test_harness::TestHarness::builder()
+    let mut harness = gt_test_utils::TestHarness::builder()
         .size(egui::vec2(400.0, 200.0))
         .ui(move |ui| {
             draw_track_icons(

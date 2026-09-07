@@ -457,6 +457,7 @@ mod tests {
 mod gpu_projection_tests {
     use super::*;
     use crate::icon_mesh::IconMeshLibrary;
+    use crate::test_util;
 
     #[derive(Clone, Copy)]
     enum Backend {
@@ -473,7 +474,7 @@ mod gpu_projection_tests {
     /// viewport) is exactly `clip`.
     fn render_icon_grid(size: egui::Vec2, clip: egui::Rect, backend: Backend) -> image::RgbaImage {
         let library = IconMeshLibrary::embedded().unwrap();
-        let mut harness = crate::test_harness::builder().size(size).ui(move |ui| {
+        let mut harness = test_util::harness_builder().size(size).ui(move |ui| {
             ui.painter()
                 .rect_filled(ui.max_rect(), 0.0, Color32::from_rgb(30, 30, 30));
 
@@ -585,6 +586,8 @@ mod gpu_projection_tests {
 mod snapshot_tests {
     use std::f32::consts::FRAC_1_SQRT_2;
 
+    use crate::test_util;
+
     use strum::IntoEnumIterator as _;
 
     use super::*;
@@ -616,7 +619,7 @@ mod snapshot_tests {
         let width = margin * 2.0 + variants.len() as f32 * cell;
         let height = margin * 2.0 + icons.len() as f32 * cell;
 
-        let mut harness = crate::test_harness::builder()
+        let mut harness = test_util::harness_builder()
             .size(egui::vec2(width, height))
             .ui(move |ui| {
                 ui.painter()

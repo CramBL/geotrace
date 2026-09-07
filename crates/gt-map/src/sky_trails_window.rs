@@ -1020,6 +1020,7 @@ fn apply_scrub_highlight(highlight: &mut MapHighlight, track_ref: TrackRef, epoc
 
 #[cfg(test)]
 mod tests {
+    use crate::test_util;
     use chrono::{DateTime, Duration, Utc};
     use gt_test_utils::{HarnessInteraction as _, TestHarness};
 
@@ -1127,7 +1128,7 @@ mod tests {
     #[test]
     fn the_window_settles_at_a_size_instead_of_growing_every_frame() {
         let trails = demo_trails();
-        let mut harness = crate::test_harness::builder()
+        let mut harness = test_util::harness_builder()
             .size(egui::vec2(900.0, 700.0))
             .ui(move |ui| {
                 Window::new("Sky trails")
@@ -1192,7 +1193,7 @@ mod tests {
 
         let highlight = Rc::new(RefCell::new(MapHighlight::default()));
         let sink = Rc::clone(&highlight);
-        let mut harness = crate::test_harness::builder()
+        let mut harness = test_util::harness_builder()
             .size(egui::vec2(560.0, 440.0))
             .ui(move |ui| {
                 let mut h = sink.borrow_mut();
@@ -1231,7 +1232,7 @@ mod tests {
     }
 
     fn body_snapshot_with(name: &str, trails: SkyTrails, mut show_not_in_fix: bool) {
-        let mut harness = crate::test_harness::builder()
+        let mut harness = test_util::harness_builder()
             .size(egui::vec2(560.0, 440.0))
             .theme(true)
             .ui(move |ui| {
@@ -1260,7 +1261,7 @@ mod tests {
     /// and return the highlight afterwards.
     fn run_body_with_highlight(start: &MapHighlight) -> MapHighlight {
         let trails = demo_trails();
-        let mut harness = crate::test_harness::builder()
+        let mut harness = test_util::harness_builder()
             .size(egui::vec2(560.0, 440.0))
             .ui_state(
                 move |ui, highlight: &mut MapHighlight| {
@@ -1461,7 +1462,7 @@ mod tests {
         let trails = demo_trails();
         let state = std::rc::Rc::new(std::cell::Cell::new((4.0_f64, 60.0_f32)));
         let seen = state.clone();
-        let mut harness = crate::test_harness::builder()
+        let mut harness = test_util::harness_builder()
             .size(egui::vec2(560.0, 440.0))
             .ui(move |ui| {
                 let (mut scrub, mut speed) = seen.get();
@@ -1534,7 +1535,7 @@ mod tests {
         let total = track_total_secs(&trails).expect("has epochs");
         let state = std::rc::Rc::new(std::cell::Cell::new(0.0_f64));
         let seen = state.clone();
-        let mut harness = crate::test_harness::builder()
+        let mut harness = test_util::harness_builder()
             .size(egui::vec2(560.0, 440.0))
             .ui(move |ui| {
                 let mut scrub = seen.get();
@@ -1665,7 +1666,7 @@ mod tests {
     #[test]
     fn spacebar_toggles_play_regardless_of_hover() {
         let trails = demo_trails();
-        let mut harness = crate::test_harness::builder()
+        let mut harness = test_util::harness_builder()
             .size(egui::vec2(560.0, 440.0))
             .ui_state(
                 move |ui, playing: &mut bool| {
@@ -1729,7 +1730,7 @@ mod tests {
             speed: f32,
         }
         let trails = demo_trails();
-        let mut harness = crate::test_harness::builder()
+        let mut harness = test_util::harness_builder()
             .size(egui::vec2(560.0, 440.0))
             .step_dt(0.1)
             .ui_state(
@@ -1790,7 +1791,7 @@ mod tests {
         let trails = demo_trails();
         let state = std::rc::Rc::new(std::cell::Cell::new(0.0_f64));
         let seen = state.clone();
-        let mut harness = crate::test_harness::builder()
+        let mut harness = test_util::harness_builder()
             .size(egui::vec2(560.0, 440.0))
             .ui(move |ui| {
                 let mut scrub = seen.get();
@@ -1895,7 +1896,7 @@ mod tests {
     /// [`STATS_COL_WIDTH_PX`] when the rows overflow it.
     fn laid_out_stats_column_width(show_not_in_fix: bool) -> f32 {
         let trails = demo_trails_with_tracked_only();
-        let mut harness = crate::test_harness::builder()
+        let mut harness = test_util::harness_builder()
             .size(egui::vec2(560.0, 440.0))
             .ui_state(
                 move |ui, width: &mut f32| {
@@ -1946,7 +1947,7 @@ mod tests {
         use gt_test_utils::WindowFitAssertions as _;
 
         let trails = demo_trails();
-        let mut harness = crate::test_harness::builder().size(viewport).ui(move |ui| {
+        let mut harness = test_util::harness_builder().size(viewport).ui(move |ui| {
             Window::new("Sky trails")
                 .resizable(true)
                 .default_size(DEFAULT_WINDOW_SIZE)

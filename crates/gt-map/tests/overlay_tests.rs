@@ -1,16 +1,13 @@
 use egui::ComboBox;
 use egui::accesskit;
 use egui_kittest::kittest::Queryable as _;
+use gt_map::test_util;
 use gt_test_utils::TestHarness;
-use gt_types::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
+use gt_types::DataCategory;
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
 
 fn tpv_point(pi: usize) -> DataPointRef {
-    DataPointRef {
-        track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-        category: DataCategory::Tpv,
-        point_index: PointIdx::new(pi),
-    }
+    test_util::point_ref(DataCategory::Tpv, pi)
 }
 
 /// Every way an element under the pointer loses its own hover label, and the

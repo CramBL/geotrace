@@ -247,6 +247,7 @@ fn levels_ui(ui: &mut Ui, levels: &[WarningLevelExplanation]) -> Option<Referenc
 
 #[cfg(test)]
 mod tests {
+    use crate::test_util;
     use egui_kittest::kittest::{By, Queryable as _};
     use gt_test_utils::HarnessInteraction as _;
     use rstest::rstest;
@@ -322,7 +323,7 @@ mod tests {
         track_warnings: Vec<TrackSpaceWeatherWarning>,
     ) -> gt_test_utils::TestHarness<'static, IndicatorState> {
         let levels = levels();
-        let mut harness = crate::test_harness::builder()
+        let mut harness = test_util::harness_builder()
             .size(egui::vec2(600.0, 400.0))
             .ui_state(
                 move |ui, state: &mut IndicatorState| {

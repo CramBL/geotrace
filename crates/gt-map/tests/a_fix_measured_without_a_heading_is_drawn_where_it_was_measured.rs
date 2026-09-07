@@ -6,11 +6,10 @@
 //! holds twelve satellites in fix and no heading: the receiver stands still
 //! there.
 
-mod support;
-
 use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, Utc};
+use gt_map::test_util::{self, MapScene};
 use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::{
@@ -46,7 +45,7 @@ const WEST_HEADING_DEGREES: f64 = 270.0;
 const SATELLITES_IN_FIX: u32 = 12;
 
 fn time_of(index: usize) -> DateTime<Utc> {
-    support::epoch() + Duration::seconds(index as i64 * SECONDS_BETWEEN_FIXES)
+    test_util::epoch() + Duration::seconds(index as i64 * SECONDS_BETWEEN_FIXES)
 }
 
 /// The longitude of the fix at `step` steps up the street.
@@ -115,6 +114,6 @@ fn a_recording_that_turns_at_the_end_of_a_cul_de_sac() -> Vec<LoadedFile> {
 #[test]
 fn snapshot_a_fix_measured_without_a_heading_is_drawn_at_the_tip_of_the_track() {
     let files = a_recording_that_turns_at_the_end_of_a_cul_de_sac();
-    let mut map = support::RenderedMapScene::of(files).draw();
+    let mut map = MapScene::of(files).render();
     map.snapshot("fix_measured_without_a_heading");
 }

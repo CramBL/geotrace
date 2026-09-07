@@ -2,19 +2,14 @@
 //! recording the filter rejects, the snapped vertices and error whiskers its
 //! time window hides, and the fixes a fit frames.
 
-mod support;
-
 use std::sync::Arc;
 
 use chrono::Duration;
 use gt_filter::GlobalFilter;
+use gt_map::test_util::{self, CENTER_LON, MapScene, WALKING_STEP_DEGREES};
 use gt_types::mercator::MercPoint;
-use gt_types::{LoadedFile, LoadedTrack, PointIdx};
+use gt_types::{LoadedFile, PointIdx};
 use gt_ui_types::{SnappedSegment, SnappedTrackGeometry, SnappedTracks, WhiskerAnchor};
-use support::{
-    CENTER_LON, Frame, HeadlessMap, WALKING_STEP_DEGREES, a_recording_of, epoch, track0,
-    window_ending_at,
-};
 
 /// Longitude between consecutive fixes of a track recorded in one spot, about
 /// 6 cm. A fit over such a track reaches the maximum zoom, which is where the
@@ -25,20 +20,10 @@ const STANDING_STEP_DEGREES: f64 = 0.000_001;
 /// snapped geometry so it is its own ink beside the recorded track.
 const SNAPPED_OFFSET_MERC_Y: f64 = -1.5e-6;
 
-/// Where the map draws the fixes of track 0, in normalized Mercator.
-fn drawn_positions(files: &[LoadedFile]) -> Vec<MercPoint> {
-    files
-        .first()
-        .and_then(|file| file.tracks.first())
-        .and_then(LoadedTrack::placed_points)
-        .map(|placed| placed.iter().map(|point| point.merc()).collect())
-        .unwrap_or_default()
-}
-
 /// Snapped road geometry for track 0: one polyline beside the recorded fixes
 /// in `fixes`, one vertex per fix.
 fn snapped_polyline_over(files: &[LoadedFile], fixes: std::ops::Range<usize>) -> SnappedTracks {
-    let points: Vec<MercPoint> = drawn_positions(files)
+    let points: Vec<MercPoint> = test_util::drawn_positions(files)
         .get(fixes.clone())
         .unwrap_or_default()
         .iter()
@@ -49,7 +34,7 @@ fn snapped_polyline_over(files: &[LoadedFile], fixes: std::ops::Range<usize>) ->
         .collect();
     let mut snapped = SnappedTracks::default();
     snapped.insert(
-        track0(),
+        test_util::track0(),
         Arc::new(SnappedTrackGeometry {
             segments: vec![SnappedSegment {
                 points,
@@ -66,7 +51,7 @@ fn snapped_polyline_over(files: &[LoadedFile], fixes: std::ops::Range<usize>) ->
 /// Error whiskers for track 0: one per recorded fix in `fixes`, reaching from
 /// the fix to a snapped position north of it.
 fn whiskers_over(files: &[LoadedFile], fixes: std::ops::Range<usize>) -> SnappedTracks {
-    let whiskers: Vec<WhiskerAnchor> = drawn_positions(files)
+    let whiskers: Vec<WhiskerAnchor> = test_util::drawn_positions(files)
         .into_iter()
         .enumerate()
         .filter(|(index, _)| fixes.contains(index))
@@ -80,7 +65,7 @@ fn whiskers_over(files: &[LoadedFile], fixes: std::ops::Range<usize>) -> Snapped
         .collect();
     let mut snapped = SnappedTracks::default();
     snapped.insert(
-        track0(),
+        test_util::track0(),
         Arc::new(SnappedTrackGeometry {
             segments: Vec::new(),
             edges: Vec::new(),
@@ -95,12 +80,13 @@ fn whiskers_over(files: &[LoadedFile], fixes: std::ops::Range<usize>) -> Snapped
 fn shapes_with(
     files: &[LoadedFile],
     filter: GlobalFilter,
-    snapped: Option<&SnappedTracks>,
+    snapped: Option<SnappedTracks>,
 ) -> usize {
-    HeadlessMap::new(files, filter).draw(&Frame {
-        snapped_tracks: snapped,
-        ..Frame::default()
-    })
+    MapScene::of(files.to_vec())
+        .draw_state(|state| state.filter = filter)
+        .overlays(|overlays| overlays.snapped_tracks = snapped)
+        .render_one_frame()
+        .shapes_painted()
 }
 
 /// A recording the filter rejects puts nothing on the map, and the road
@@ -108,7 +94,7 @@ fn shapes_with(
 /// recording, drawn beside itself.
 #[rstest::rstest]
 #[case::the_time_window_is_disjoint_from_the_recording(GlobalFilter {
-    time_start: Some(epoch() + Duration::hours(5)),
+    time_start: Some(test_util::epoch() + Duration::hours(5)),
     ..GlobalFilter::default()
 })]
 #[case::the_recording_is_shorter_than_the_minimum_duration(GlobalFilter {
@@ -116,11 +102,10 @@ fn shapes_with(
     ..GlobalFilter::default()
 })]
 fn a_snapped_track_of_a_filtered_out_recording_is_not_drawn(#[case] filter: GlobalFilter) {
-    let files = a_recording_of(30, WALKING_STEP_DEGREES);
-    let snapped = snapped_polyline_over(&files, 0..30);
+    let files = test_util::a_recording_of(30, WALKING_STEP_DEGREES);
 
     assert_eq!(
-        shapes_with(&files, filter, Some(&snapped)),
+        shapes_with(&files, filter, Some(snapped_polyline_over(&files, 0..30))),
         shapes_with(&files, filter, None),
         "the snapped track of a filtered-out recording put ink on the map"
     );
@@ -131,12 +116,12 @@ fn a_snapped_track_of_a_filtered_out_recording_is_not_drawn(#[case] filter: Glob
 /// whole snapped geometry as for the stretch the window keeps.
 #[test]
 fn a_snapped_track_is_not_drawn_past_the_end_of_the_time_window() {
-    let files = a_recording_of(30, WALKING_STEP_DEGREES);
-    let filter = window_ending_at(14);
+    let files = test_util::a_recording_of(30, WALKING_STEP_DEGREES);
+    let filter = test_util::window_ending_at(14);
 
     assert_eq!(
-        shapes_with(&files, filter, Some(&snapped_polyline_over(&files, 0..30))),
-        shapes_with(&files, filter, Some(&snapped_polyline_over(&files, 0..15))),
+        shapes_with(&files, filter, Some(snapped_polyline_over(&files, 0..30))),
+        shapes_with(&files, filter, Some(snapped_polyline_over(&files, 0..15))),
         "the snapped track was drawn past the end of the time window"
     );
 }
@@ -145,12 +130,12 @@ fn a_snapped_track_is_not_drawn_past_the_end_of_the_time_window() {
 /// snapped.
 #[test]
 fn an_error_whisker_of_a_fix_outside_the_time_window_is_not_drawn() {
-    let files = a_recording_of(30, STANDING_STEP_DEGREES);
-    let filter = window_ending_at(14);
+    let files = test_util::a_recording_of(30, STANDING_STEP_DEGREES);
+    let filter = test_util::window_ending_at(14);
 
     assert_eq!(
-        shapes_with(&files, filter, Some(&whiskers_over(&files, 0..30))),
-        shapes_with(&files, filter, Some(&whiskers_over(&files, 0..15))),
+        shapes_with(&files, filter, Some(whiskers_over(&files, 0..30))),
+        shapes_with(&files, filter, Some(whiskers_over(&files, 0..15))),
         "a whisker was drawn at a fix the time window hides"
     );
 }
@@ -159,12 +144,14 @@ fn an_error_whisker_of_a_fix_outside_the_time_window_is_not_drawn() {
 /// keeps still draws its snapped track.
 #[test]
 fn a_snapped_track_of_a_kept_recording_is_drawn() {
-    let files = a_recording_of(30, WALKING_STEP_DEGREES);
-    let snapped = snapped_polyline_over(&files, 0..30);
+    let files = test_util::a_recording_of(30, WALKING_STEP_DEGREES);
 
     assert!(
-        shapes_with(&files, GlobalFilter::default(), Some(&snapped))
-            > shapes_with(&files, GlobalFilter::default(), None),
+        shapes_with(
+            &files,
+            GlobalFilter::default(),
+            Some(snapped_polyline_over(&files, 0..30))
+        ) > shapes_with(&files, GlobalFilter::default(), None),
         "the snapped track of a kept recording put no ink on the map"
     );
 }
@@ -173,10 +160,10 @@ fn a_snapped_track_of_a_kept_recording_is_drawn() {
 /// and fix 10 lies well outside it.
 #[test]
 fn a_fit_frames_the_fixes_inside_the_time_window() {
-    let files = a_recording_of(30, WALKING_STEP_DEGREES);
-    let mut map = HeadlessMap::new(&files, window_ending_at(4));
-
-    map.draw(&Frame::default());
+    let files = test_util::a_recording_of(30, WALKING_STEP_DEGREES);
+    let map = MapScene::of(files)
+        .draw_state(|state| state.filter = test_util::window_ending_at(4))
+        .render_one_frame();
 
     let framed = map.framed().expect("the map has drawn a frame");
     assert!(

@@ -617,6 +617,7 @@ pub(crate) fn popup_contents(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util;
 
     /// The counts a loaded recording and a downloaded day produce. The
     /// archive-supplied ones are given per case, so an empty-state case can
@@ -757,7 +758,7 @@ mod tests {
             if case.tec_empty.is_some() { 0 } else { 5183 },
         );
 
-        let mut harness = crate::test_harness::builder()
+        let mut harness = test_util::harness_builder()
             .size(egui::vec2(320.0, 360.0))
             .theme(case.dark_mode)
             .ui(move |ui| {
