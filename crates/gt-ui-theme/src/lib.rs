@@ -433,6 +433,10 @@ pub fn tec_color(tecu: f64) -> ThemedColor {
 
 /// The themed colour for a [`SignalQuality`](gt_types::SignalQuality) tier on a
 /// green → red scale.
+///
+/// [`SignalQuality::NoDataSentinel`](gt_types::SignalQuality::NoDataSentinel)
+/// is violet, off that scale: it marks a reading the receiver made no
+/// measurement for.
 pub const fn snr_themed_color(quality: gt_types::SignalQuality) -> ThemedColor {
     use gt_types::SignalQuality;
     match quality {
@@ -454,6 +458,10 @@ pub const fn snr_themed_color(quality: gt_types::SignalQuality) -> ThemedColor {
         SignalQuality::VeryWeak => {
             ThemedColor::new(Color32::from_rgb(220, 60, 0), Color32::from_rgb(188, 40, 8))
         }
+        SignalQuality::NoDataSentinel => ThemedColor::new(
+            Color32::from_rgb(190, 140, 255),
+            Color32::from_rgb(108, 45, 190),
+        ),
     }
 }
 

@@ -1,0 +1,11 @@
+# "the value firmware reports for no measurement" and "values for no point" put
+# a condition in a noun phrase after "for", where a clause states it: "the value
+# firmware sends when it has no measurement". "with no X", "without X" and
+# "whose X" stay: those modify a noun and read plainly.
+extends: existence
+message: "Condition after 'for no': state it as a clause, such as 'when it has no X'."
+level: error
+ignorecase: true
+nonword: true
+tokens:
+  - '\bfor\s+no\s+\w+'

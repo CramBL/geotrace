@@ -7,7 +7,7 @@ use egui::Color32;
 use gt_types::MercPoint;
 use gt_types::NavPoint;
 use gt_types::coordinates::{Latitude, Longitude, RecordedLatitude};
-use gt_types::satellites::{Constellation, Satellite, Satellites};
+use gt_types::satellites::{Constellation, NO_DATA_SENTINEL_DB_HZ, Satellite, Satellites};
 use gt_types::time_types::GpsTime;
 use gt_types::tpv::TimePositionVelocity;
 use uom::si::angle::degree;
@@ -71,9 +71,10 @@ fn sats_dense_multi_constellation() -> Satellites {
 
 /// A report spanning several constellations with a spread of SNR values,
 /// fix membership, and sky positions (two satellites without), so the
-/// satellite badge exercises every count tier, the full SNR gradient,
-/// both the in-fix and idle PRN colours, and the sky plot's placed and
-/// unplaceable satellites.
+/// satellite badge exercises every count tier, the full SNR gradient, a
+/// satellite whose receiver reported the no-data SNR value, both the in-fix
+/// and idle PRN colours, and the sky plot's placed and unplaceable
+/// satellites.
 fn sats_multi_constellation() -> Satellites {
     let satellites = vec![
         Satellite::new(
@@ -118,6 +119,14 @@ fn sats_multi_constellation() -> Satellites {
             false,
         ),
         Satellite::new(Constellation::Glonass, 7, None, None, None, false),
+        Satellite::new(
+            Constellation::Glonass,
+            8,
+            Some(45.0),
+            Some(240.0),
+            Some(NO_DATA_SENTINEL_DB_HZ),
+            true,
+        ),
         Satellite::new(
             Constellation::Beidou,
             8,

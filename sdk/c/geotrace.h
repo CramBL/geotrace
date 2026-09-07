@@ -772,7 +772,7 @@ GtdStatus gtd_builder_add_satellite_report(GtdFileBuilder *builder,
  *
  * @param builder Builder handle.
  * @param time    Timestamp of the annotation. Must not be `gtd_ts_none()`.
- * @param label   Human-readable label, or NULL for no label.
+ * @param label   Human-readable label, or NULL to leave the marker unlabelled.
  * @param icon    Icon to display.
  *
  * @return `GTD_ERR_FIELD_TOO_LONG` if @p label is longer than 255 bytes.

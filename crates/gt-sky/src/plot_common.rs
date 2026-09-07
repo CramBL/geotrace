@@ -4,7 +4,9 @@
 use egui::{Align, Layout, Pos2, RichText, Sense, Stroke, Vec2};
 
 use gt_types::GpsTime;
-use gt_types::satellites::{Constellation, Prn, Satellite};
+use gt_types::satellites::{
+    Constellation, NO_DATA_SNR_EXPLANATION, Prn, Satellite, SignalQuality, Snr,
+};
 
 /// Width of the tooltip's value column. Values are right-aligned in it.
 const TOOLTIP_VALUE_WIDTH_PX: f32 = 74.0;
@@ -67,6 +69,16 @@ pub(crate) fn satellite_tooltip(ui: &mut egui::Ui, satellite: &Satellite, at: Op
         tooltip_row(ui, "Azimuth", &degree(satellite.azimuth()));
         tooltip_row(ui, "SNR", &snr);
     });
+    if satellite.snr().is_some_and(Snr::is_no_data_sentinel) {
+        ui.label(
+            RichText::new(NO_DATA_SNR_EXPLANATION)
+                .color(gt_ui_theme::snr_color(
+                    SignalQuality::NoDataSentinel,
+                    ui.visuals().dark_mode,
+                ))
+                .small(),
+        );
+    }
     if let Some(at) = at {
         ui.label(
             RichText::new(format!("at {}", at.utc().format("%H:%M:%S")))

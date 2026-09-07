@@ -21,7 +21,8 @@ const SNR_CEIL_DBHZ: f32 = 48.0;
 /// The faintest an in-fix satellite glows.
 const MIN_WEIGHT: f32 = 0.15;
 
-/// Weight of an in-fix satellite whose report has no SNR.
+/// Weight of an in-fix satellite with a missing SNR, and of one whose
+/// receiver reported the no-data value.
 const NO_SNR_WEIGHT: f32 = 0.3;
 
 /// Standard deviation of a single satellite's glow, as a fraction of the disc
@@ -55,9 +56,10 @@ const RAMP: [(f32, [u8; 3]); 4] = [
 ];
 
 /// The heat weight of an in-fix satellite from its SNR, normalized to
-/// `[MIN_WEIGHT, 1]`. A satellite with no reported SNR gets [`NO_SNR_WEIGHT`].
+/// `[MIN_WEIGHT, 1]`. A satellite with no reported SNR gets [`NO_SNR_WEIGHT`],
+/// and so does one whose receiver reported the no-data value.
 pub fn snr_weight(snr: Option<Snr>) -> f32 {
-    match snr {
+    match snr.filter(|snr| !snr.is_no_data_sentinel()) {
         Some(snr) => {
             let t =
                 ((snr.value() - SNR_FLOOR_DBHZ) / (SNR_CEIL_DBHZ - SNR_FLOOR_DBHZ)).clamp(0.0, 1.0);
@@ -174,7 +176,7 @@ mod tests {
     use egui::pos2;
     use rstest::rstest;
 
-    use gt_types::satellites::Snr;
+    use gt_types::satellites::{NO_DATA_SENTINEL_DB_HZ, Snr};
 
     use super::{
         ALPHA_FULL_AT, GLOW_SIGMA_FRACTION, MIN_WEIGHT, NO_SNR_WEIGHT, field_intensity, heat_color,
@@ -186,6 +188,8 @@ mod tests {
     #[case::below_floor(Some(10.0), MIN_WEIGHT)]
     #[case::at_ceiling(Some(48.0), 1.0)]
     #[case::above_ceiling(Some(60.0), 1.0)]
+    // The no-data value weighs what a missing reading weighs.
+    #[case::the_no_data_value(Some(NO_DATA_SENTINEL_DB_HZ), NO_SNR_WEIGHT)]
     fn snr_weight_clamps_to_the_band(#[case] snr: Option<f32>, #[case] expected: f32) {
         let weight = snr_weight(snr.map(Snr::new));
         assert!((weight - expected).abs() < 1e-6, "{weight} != {expected}");

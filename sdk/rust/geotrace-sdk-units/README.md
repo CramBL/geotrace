@@ -1,6 +1,6 @@
 # geotrace-sdk-units
 
-Canonical channel units shared by the GeoTrace file SDK and query engine.
+Canonical channel units shared by the GeoTrace file SDK and query engine, with the SNR conventions of the `.gtd` format in the `snr` module.
 
 A channel declares an optional `ChannelUnit`, which is one of three kinds:
 

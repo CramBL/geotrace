@@ -1,6 +1,8 @@
 use egui::{Pos2, Sense, Stroke, Vec2};
 
-use gt_types::satellites::{Constellation, ConstellationSet, Prn, Satellite, Satellites};
+use gt_types::satellites::{
+    Constellation, ConstellationSet, Prn, Satellite, Satellites, SignalQuality, Snr,
+};
 
 use crate::projection;
 use crate::style;
@@ -307,10 +309,13 @@ fn paint_marks(
                 color
             }
         };
-        let color = dim(gt_ui_theme::constellation_color(
-            satellite.constellation(),
-            dark_mode,
-        ));
+        // A satellite whose receiver reported the no-data SNR value stands
+        // out: it takes that class's colour, not its constellation's.
+        let color = dim(if satellite.snr().is_some_and(Snr::is_no_data_sentinel) {
+            gt_ui_theme::snr_color(SignalQuality::NoDataSentinel, dark_mode)
+        } else {
+            gt_ui_theme::constellation_color(satellite.constellation(), dark_mode)
+        });
         let mark_radius =
             style::mark_radius(satellite.snr().map(|snr| snr.quality())) * size.mark_scale();
         if satellite.in_fix() {
@@ -332,12 +337,13 @@ mod snapshot_tests {
     use rstest::rstest;
 
     use gt_test_utils::TestHarness;
-    use gt_types::satellites::{Constellation, Satellite, Satellites};
+    use gt_types::satellites::{Constellation, NO_DATA_SENTINEL_DB_HZ, Satellite, Satellites};
 
     use super::{SkyHighlight, SkyPlot, SkyPlotSize};
 
     /// Several constellations, tracked-only satellites, the full
-    /// signal-quality spread, and two unplaceable satellites.
+    /// signal-quality spread, a satellite whose receiver reported the no-data
+    /// SNR value, and two unplaceable satellites.
     fn mixed_report() -> Satellites {
         let sat = |constellation, prn, elevation: f32, azimuth: f32, snr, in_fix| {
             Satellite::new(
@@ -364,6 +370,14 @@ mod snapshot_tests {
                 sat(Constellation::Galileo, 27, 25.0, 220.0, Some(33.0), true),
                 sat(Constellation::Glonass, 9, 48.0, 130.0, Some(40.0), true),
                 sat(Constellation::Glonass, 22, 30.0, 20.0, Some(35.0), false),
+                sat(
+                    Constellation::Glonass,
+                    14,
+                    45.0,
+                    240.0,
+                    Some(NO_DATA_SENTINEL_DB_HZ),
+                    true,
+                ),
                 sat(Constellation::Beidou, 14, 65.0, 275.0, Some(41.0), true),
                 sat(Constellation::Beidou, 31, 20.0, 185.0, Some(28.0), false),
                 Satellite::new(Constellation::Qzss, 1, Some(50.0), None, Some(36.0), false),
@@ -485,8 +499,9 @@ mod snapshot_tests {
         assert!(!const_fix.matches(&gal_fix));
     }
 
-    /// Snapshot: both fix states of the tooltip, an in-fix satellite with a
-    /// full set of measurements and a tracked one missing its SNR.
+    /// Snapshot: the three states of the tooltip, an in-fix satellite with a
+    /// full set of measurements, a tracked one missing its SNR, and one whose
+    /// receiver reported the no-data SNR value.
     ///
     /// Rendering two in one `Ui` also guards the tooltip grid's id. The grid
     /// keeps its column widths under that id, so a shared one leaves two
@@ -510,13 +525,23 @@ mod snapshot_tests {
             None,
             false,
         );
+        let no_data = Satellite::new(
+            Constellation::Galileo,
+            3,
+            Some(48.0),
+            Some(300.0),
+            Some(NO_DATA_SENTINEL_DB_HZ),
+            true,
+        );
         let mut harness = TestHarness::builder()
-            .size(egui::vec2(220.0, 220.0))
+            .size(egui::vec2(260.0, 320.0))
             .theme(true)
             .ui(move |ui| {
                 crate::plot_common::satellite_tooltip(ui, &full, None);
                 ui.separator();
                 crate::plot_common::satellite_tooltip(ui, &snr_less, None);
+                ui.separator();
+                crate::plot_common::satellite_tooltip(ui, &no_data, None);
             });
         harness.run();
         harness.snapshot("sky_mark_tooltip");
