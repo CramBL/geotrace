@@ -28,6 +28,7 @@ from qa._check import (
     python_files,
     repo_root,
     rs_files,
+    toml_files,
     yaml_files,
 )
 
@@ -167,7 +168,7 @@ _HASH_COMMENT = re.compile(r"^\s*#[ ]?(.*)$")
 def comment_text(source: str) -> str:
     """`source` with every line that is not a `#` comment or a just `[doc("...")]`
     attribute blanked: Vale then reads the comments alone and reports the file's
-    own line numbers. For justfiles, CMake files and YAML."""
+    own line numbers. For justfiles, CMake files, TOML files and YAML."""
     kept = []
     for line in source.splitlines():
         doc = _JUST_DOC.match(line)
@@ -196,12 +197,21 @@ def source_files(root: Path) -> list[str]:
 
 
 def script_files(root: Path) -> list[str]:
-    """The justfiles, CMake files and workflow files, read through `comment_text`."""
+    """The justfiles, CMake files, TOML files and workflow files, read through
+    `comment_text`.
+
+    A new tool's TOML file needs no entry here: every tracked TOML file is in
+    scope under one rule, cargo manifest and tool configuration alike.
+    `comment_text` takes any line whose first character is `#` as a comment,
+    including a `#` line inside a TOML multi-line string, such as the `#define`
+    block in `sdk/rust/geotrace-c/cbindgen.toml`.
+    """
     workflows = root / ".github" / "workflows"
     return _relative(
         root,
         itertools.chain(
             just_and_cmake_files(root),
+            toml_files(root),
             (path for path in yaml_files(root) if path.parent == workflows),
         ),
     )
@@ -496,7 +506,10 @@ def main() -> None:
     sub.add_parser("sync", help="download the style packages .vale.ini pins")
     sub.add_parser("docs", help="lint the tracked Markdown files")
     sub.add_parser("source", help="lint the comments of the Rust, Python, C and C++ sources")
-    sub.add_parser("scripts", help="lint the comments of justfiles, CMake files and workflows")
+    sub.add_parser(
+        "scripts",
+        help="lint the comments of justfiles, CMake files, TOML files and workflows",
+    )
     commits = sub.add_parser("commits", help="lint every commit message in RANGE")
     commits.add_argument("range", nargs="?", default=f"{_DEFAULT_BASE}..HEAD")
     added = sub.add_parser("added", help="the gate: lint the lines added since BASE")

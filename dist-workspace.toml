@@ -9,7 +9,7 @@ cargo-dist-version = "0.32.0"
 ci = "github"
 # The installers to generate for each app
 installers = ["shell", "powershell", "homebrew", "msi"]
-# Skip checking whether the specified configuration files are up to date
+# Skip the up-to-date check for dist's generated `msi` files
 allow-dirty = ["msi"]
 # The archive format to use for windows builds (defaults .zip)
 windows-archive = ".zip"
@@ -35,12 +35,13 @@ github-attestations = true
 tag-namespace = "app"
 github-build-setup = "../dist/build-setup.yml"
 
-# Use native ARM runners instead of cross/QEMU for the aarch64 targets.
+# The aarch64 targets build natively on ARM runners, not through
+# cross-compilation or QEMU.
 [dist.github-custom-runners]
 aarch64-unknown-linux-gnu = "ubuntu-24.04-arm"
 aarch64-pc-windows-msvc = "windows-11-arm"
 
-# Pin the actions dist emits to the same commit SHAs the rest of CI pins.
+# Pin dist's GitHub Actions to the same commit hashes as the rest of CI.
 [dist.github-action-commits]
 "actions/checkout" = "de0fac2e4500dabe0009e67214ff5f5447ce83dd"               # v6.0.2
 "actions/upload-artifact" = "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"         # v7.0.1
@@ -49,10 +50,10 @@ aarch64-pc-windows-msvc = "windows-11-arm"
 
 # TODO(signing): GeoTrace currently ships UNSIGNED. Users will hit Gatekeeper
 # (macOS) and SmartScreen (Windows) warnings on first launch (documented in the
-# README). To sign later, obtain certificates and enable dist's signing config
-# plus the corresponding GitHub secrets:
+# README). To sign later, obtain certificates, enable dist's signing config and
+# set these GitHub secrets:
 #   macOS (Developer ID + notarization):
 #     APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD,
-#     APPLE_TEAM_ID, APPLE_ID, APPLE_PASSWORD (notarytool app-specific password)
+#     APPLE_TEAM_ID, APPLE_ID, APPLE_PASSWORD (`notarytool` app-specific password)
 #   Windows (Authenticode, e.g. SSL.com or Azure Trusted Signing):
-#     the relevant signing cert/secret for dist's windows signing.
+#     the certificate and secret for dist's Windows signing.

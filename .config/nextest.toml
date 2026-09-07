@@ -1,8 +1,8 @@
 [profile.default]
 # The gt-snap live-API smoke test carries `#[ignore]`, so every runner skips
-# it by default; `just snap-live-test` (the `live` profile below) opts in.
+# it by default. `just snap-live-test` (the `live` profile below) opts in.
 # Print each failure's output as it happens and again in a summary at the end,
-# so failures stay visible at the bottom of long CI logs. Inherited by the ci
+# so failures stay visible at the bottom of long CI logs. Inherited by the `ci`
 # profile below.
 failure-output = "immediate-final"
 
