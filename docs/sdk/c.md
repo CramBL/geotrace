@@ -44,7 +44,7 @@ hash with those from the [releases page](https://github.com/CramBL/geotrace/rele
 ```cmake
 include(FetchContent)
 FetchContent_Declare(geotrace_c
-    URL      https://github.com/CramBL/geotrace/releases/download/geotrace-sdk-v0.2.0/geotrace-sdk-x86_64-unknown-linux-gnu.tar.gz
+    URL      https://github.com/CramBL/geotrace/releases/download/geotrace-sdk-v0.6.0/geotrace-sdk-x86_64-unknown-linux-gnu.tar.gz
     URL_HASH SHA256=<hash>)
 FetchContent_MakeAvailable(geotrace_c)
 list(APPEND CMAKE_PREFIX_PATH "${geotrace_c_SOURCE_DIR}")

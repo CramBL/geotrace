@@ -3,8 +3,8 @@
 A header-only C++17 wrapper over the `.gtd` C SDK, with RAII types and
 range-based iteration. MIT licensed.
 Headers: [`sdk/cpp/include/`](../../sdk/cpp/include/).
-Consuming via CMake requires CMake 3.21+. On Windows the released library is
-built with MSVC.
+Consuming via CMake requires CMake 3.21+.
+The released C library that these headers wrap is built with MSVC on Windows.
 
 ## Install
 

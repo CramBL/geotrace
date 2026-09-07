@@ -216,3 +216,25 @@ source = { editable = "." }
 
     assert versions._read(tmp_path, spot).value == "0.6.0"
     assert lock.read_text(encoding="utf-8").splitlines()[0] == "version = 1"
+
+
+def test_bump_sdk_rewrites_the_c_page_release_tag_and_keeps_the_archive_name(
+    tmp_path: Path,
+) -> None:
+    page = tmp_path / versions._C_DOC_PAGE
+    page.parent.mkdir(parents=True)
+    page.write_text(
+        """\
+    URL      https://github.com/CramBL/geotrace/releases/download/geotrace-sdk-v0.5.1/geotrace-sdk-x86_64-unknown-linux-gnu.tar.gz
+    URL_HASH SHA256=<hash>)
+""",
+        encoding="utf-8",
+    )
+    spot = next(s for s in versions._SDK_SPOTS if s.path == versions._C_DOC_PAGE)
+
+    versions._apply(tmp_path, [spot], "0.6.0", "0.6.0")
+
+    assert versions._read(tmp_path, spot).value == "0.6.0"
+    assert "geotrace-sdk-v0.6.0/geotrace-sdk-x86_64-unknown-linux-gnu.tar.gz" in page.read_text(
+        encoding="utf-8"
+    )

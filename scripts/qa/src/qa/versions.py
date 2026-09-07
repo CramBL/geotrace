@@ -12,8 +12,8 @@ in different places:
   (``GEOTRACE_C_VERSION`` / ``GEOTRACE_CPP_VERSION`` and their numeric parts),
   the C and C++ CMake ``project(... VERSION)`` declarations, the SDK-crate
   pins in both committed ``Cargo.lock`` files (the root workspace and the
-  isolated Python workspace), and the Python package pin in the committed
-  ``uv.lock``.
+  isolated Python workspace), the Python package pin in the committed
+  ``uv.lock``, and the release tag in ``docs/sdk/c.md``'s FetchContent snippet.
 
 Most spots contain the full version (``0.2.0`` or ``0.2.0-rc.1``). CMake project
 versions and the numeric ``*_MAJOR/MINOR/PATCH`` macros only hold the numeric
@@ -57,6 +57,11 @@ def _cmake_project(name: str) -> re.Pattern[str]:
     return re.compile(rf"(project\({name} VERSION )(\d+\.\d+\.\d+)")
 
 
+# The release tag in the FetchContent archive URL. The version token runs to the
+# next path separator, so the capture ends before the archive file name.
+_DOC_RELEASE_TAG = re.compile(r"(releases/download/geotrace-sdk-v)([^/]*)")
+
+
 def _lock_version(crate: str) -> re.Pattern[str]:
     # Cargo writes each [[package]] block with `name` immediately followed by
     # `version`, so anchoring on the exact (quote-terminated) crate name reads
@@ -98,6 +103,8 @@ _PY_LOCK = "sdk/python/geotrace-py/Cargo.lock"
 # `pyproject.toml` on every `just ci-sdks` run, leaving the tree dirty.
 _PY_UV_LOCK = "sdk/python/geotrace-py/uv.lock"
 
+_C_DOC_PAGE = "docs/sdk/c.md"
+
 _SDK_SPOTS: list[Spot] = [
     Spot("sdk/rust/geotrace-sdk/Cargo.toml", _TOML_VERSION),
     Spot("sdk/rust/geotrace-sdk/Cargo.toml", _MACRO_PIN, note="macro pin"),
@@ -126,6 +133,7 @@ _SDK_SPOTS: list[Spot] = [
     Spot(_PY_LOCK, _lock_version("geotrace-sdk-macros"), note="geotrace-sdk-macros lock"),
     Spot(_PY_LOCK, _lock_version("geotrace-sdk-units"), note="geotrace-sdk-units lock"),
     Spot(_PY_UV_LOCK, _lock_version("geotrace-sdk"), note="geotrace-sdk lock"),
+    Spot(_C_DOC_PAGE, _DOC_RELEASE_TAG, note="FetchContent release tag"),
 ]
 
 _APP_LOCK_CRATES: list[str] = [

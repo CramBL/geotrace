@@ -47,8 +47,12 @@ Unknown labels in existing files are matched against recognized aliases first an
 
 ## Examples
 
-- [**from_csv.rs**](examples/from_csv.rs) - Convert GPS data exported as CSV rows into a `.gtd` file.
-- [**from_multiple_sources.rs**](examples/from_multiple_sources.rs) - Aggregate a GPS track and event annotations from separate sources into a single `.gtd` file.
+Runnable examples are in
+[`sdk/rust/geotrace-sdk/examples`](https://github.com/CramBL/geotrace/tree/trunk/sdk/rust/geotrace-sdk/examples).
+Run one with `cargo run -p geotrace-sdk --example <name>`.
+
+The list, with a line on each:
+[`docs/sdk/rust.md`](https://github.com/CramBL/geotrace/blob/trunk/docs/sdk/rust.md).
 
 ## License
 

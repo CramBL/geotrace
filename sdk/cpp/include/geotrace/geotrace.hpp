@@ -1525,6 +1525,10 @@ class FileBuilder {
     /**
      * Register a display style for an event marker variant.
      *
+     * The application draws a path's markers with the style of the last call
+     * for that path. Each call writes its own row, so two calls for one path
+     * write two.
+     *
      * The style is checked when the file is written: a `variant_path` past 255
      * bytes or a `color_hex` past 7 bytes fails there with a
      * `FieldTooLongError`.
