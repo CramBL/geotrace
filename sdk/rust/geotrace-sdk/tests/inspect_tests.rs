@@ -115,7 +115,7 @@ fn empty_file() -> Result<(), Box<dyn std::error::Error>> {
     nav_file.write(tmp.as_file())?;
 
     let output = NavFile::inspect(tmp.path())?;
-    assert!(output.contains("version 1"), "missing version: {output}");
+    assert!(output.contains("version 2"), "missing version: {output}");
 
     Ok(())
 }

@@ -30,6 +30,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 mod builder;
 mod error;
 mod fixed_width_string;
+mod format_version;
 mod provenance;
 mod read;
 mod size_checked_file;

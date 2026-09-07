@@ -338,8 +338,8 @@ fn a_geotrace_version_outside_the_supported_set_fails_the_read(#[case] version: 
 }
 
 #[rstest]
-#[case::the_version_the_writer_stamps("1")]
-#[case::the_layout_with_the_microsecond_timestamps("2")]
+#[case::the_layout_with_one_time_axis("1")]
+#[case::the_version_the_writer_stamps("2")]
 fn a_supported_geotrace_version_reads(#[case] version: &str) {
     let bytes = make_file_with_version(version);
     let nav_file = NavFile::read(bytes.as_slice()).expect("a supported version reads");
