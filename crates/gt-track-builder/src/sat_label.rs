@@ -142,6 +142,7 @@ fn add_fill(anchors: &mut BTreeMap<usize, SatLabelTier>, points: PlacedPoints<'_
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util;
     use chrono::Utc;
     use gt_types::coordinates::{Latitude, Longitude};
     use gt_types::nav_point::NavPoint;
@@ -158,14 +159,9 @@ mod tests {
     /// The anchors of `points` taken as a track of their own, none for a track
     /// of no fixes.
     fn anchors_of(points: &[NavPoint]) -> Vec<SatLabelAnchor> {
-        let geometry = crate::segment::measure_track_geometry(
-            points,
-            crate::segment::FixPlacementRule::default(),
-        );
-        geometry
-            .measured()
-            .and_then(|measured| PlacedPoints::new(points, &measured.resolved_positions))
-            .map_or_else(Vec::new, build_sat_label_anchors)
+        test_util::with_placed_points_of(points, |placed| {
+            placed.map_or_else(Vec::new, build_sat_label_anchors)
+        })
     }
 
     /// A point `x_m` meters east of the origin. `fix_count: None` means no
@@ -325,29 +321,5 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn anchors_are_ascending_and_carry_satellite_reports() {
-        let points = track(&[
-            None,
-            Some(12),
-            Some(4),
-            None,
-            Some(4),
-            Some(2),
-            Some(4),
-            Some(12),
-        ]);
-        let anchors = anchors_of(&points);
-        assert!(anchors.windows(2).all(|w| match w {
-            [a, b] => a.point < b.point,
-            _ => true,
-        }));
-        assert!(
-            anchors
-                .iter()
-                .all(|a| a.point.get(&points).is_some_and(|p| p.satellites.is_some()))
-        );
     }
 }

@@ -193,6 +193,7 @@ fn decimate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util;
     use chrono::{DateTime, TimeDelta, Utc};
     use gt_types::coordinates::{Latitude, Longitude};
     use gt_types::nav_point::NavPoint;
@@ -219,15 +220,9 @@ mod tests {
 
     /// The LOD of `points` taken as a track of their own.
     fn lod_of(points: &[NavPoint]) -> TrackLod {
-        let geometry = crate::segment::measure_track_geometry(
-            points,
-            crate::segment::FixPlacementRule::default(),
-        );
-        let placed = geometry
-            .measured()
-            .and_then(|measured| PlacedPoints::new(points, &measured.resolved_positions))
-            .expect("every fixture fix has a recorded position");
-        build_track_lod(placed)
+        test_util::with_placed_points_of(points, |placed| {
+            build_track_lod(placed.expect("every fixture fix has a recorded position"))
+        })
     }
 
     fn point_at_meters(x_m: f64, fix_count: u32, time: DateTime<Utc>) -> NavPoint {

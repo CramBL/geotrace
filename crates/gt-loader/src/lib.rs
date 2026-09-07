@@ -875,58 +875,6 @@ fn convert_icon(icon: SdkMarkerIcon) -> MarkerIcon {
 }
 
 #[cfg(test)]
-mod identity_tests {
-    use super::derive_identity;
-
-    #[test]
-    fn explicit_identity_returned_as_is() {
-        assert_eq!(
-            derive_identity(Some("my-device"), Some("title"), Some("device"), "file.gtd"),
-            "my-device"
-        );
-    }
-
-    #[test]
-    fn both_title_and_device_combined() {
-        assert_eq!(
-            derive_identity(None, Some("MyTitle"), Some("MyDevice"), "file.gtd"),
-            "auto:MyTitle::MyDevice"
-        );
-    }
-
-    #[test]
-    fn title_only() {
-        assert_eq!(
-            derive_identity(None, Some("MyTitle"), None, "file.gtd"),
-            "auto:MyTitle"
-        );
-    }
-
-    #[test]
-    fn device_only() {
-        assert_eq!(
-            derive_identity(None, None, Some("MyDevice"), "file.gtd"),
-            "auto:MyDevice"
-        );
-    }
-
-    #[test]
-    fn filename_fallback() {
-        assert_eq!(
-            derive_identity(None, None, None, "recording.gtd"),
-            "auto:recording.gtd"
-        );
-    }
-
-    #[test]
-    fn derive_identity_is_deterministic() {
-        let a = derive_identity(None, Some("T"), Some("D"), "f.gtd");
-        let b = derive_identity(None, Some("T"), Some("D"), "f.gtd");
-        assert_eq!(a, b);
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use geotrace_sdk::{
@@ -958,980 +906,736 @@ mod tests {
         (contents.nav_points, contents.markers)
     }
 
-    #[test]
-    fn a_loaded_fix_keeps_which_clock_stamped_it() {
-        let receiver_stamp = base() + Duration::seconds(2);
-        let host_stamp = base() + Duration::seconds(1);
-        let mut recorder = NavFileBuilder::new().open();
-        recorder.add_nav_fix(
-            NavFix::builder()
-                .time(NavFixTime::Receiver(receiver_stamp))
-                .lat(Angle::degrees(55.0))
-                .lon(Angle::degrees(12.0))
-                .build(),
-        );
-        recorder.add_nav_fix(
-            NavFix::builder()
-                .time(NavFixTime::Host(host_stamp))
-                .lat(Angle::degrees(55.0))
-                .lon(Angle::degrees(12.0))
-                .build(),
-        );
+    mod identity {
+        use super::*;
 
-        let (points, _) = build(&recorder.finish().unwrap());
-
-        let stamped: Vec<(DateTime<Utc>, Option<DateTime<Utc>>)> = points
-            .iter()
-            .map(|p| (p.tpv.time().utc(), p.tpv.gps_time().map(GpsTime::utc)))
-            .collect();
-        assert_eq!(
-            stamped,
-            vec![(host_stamp, None), (receiver_stamp, Some(receiver_stamp))]
-        );
-    }
-
-    #[test]
-    fn loaded_file_carries_channels_on_its_track() {
-        let t0 = base();
-        let mut recorder = NavFileBuilder::new().open();
-        for i in 0..3i64 {
-            recorder.add_nav_fix(minimal_fix(t0 + Duration::seconds(i)));
-        }
-        recorder.add_channel(
-            geotrace_sdk::Channel::builder()
-                .name("orientation")
-                .unit(Unit::DEG)
-                .period(Angle::degrees(360.0))
-                .components(["x", "y", "z"].map(String::from).to_vec())
-                .times(vec![t0, t0 + Duration::seconds(2)])
-                .values(vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02])
-                .build()
-                .expect("valid channel"),
-        );
-        let mut bytes = Vec::new();
-        recorder.finish().unwrap().write(&mut bytes).unwrap();
-
-        let file = load_bytes(&bytes, "ride.gtd".to_owned()).unwrap();
-        // Three consecutive fixes form one track carrying the channel.
-        assert_eq!(file.tracks.len(), 1);
-        let channels = &file.tracks[0].channels;
-        assert_eq!(channels.len(), 1);
-        let orientation = &channels[0];
-        assert_eq!(orientation.name, "orientation");
-        assert!(orientation.is_vector());
-        assert_eq!(orientation.components, ["x", "y", "z"]);
-        assert_eq!(
-            orientation
-                .unit
-                .as_ref()
-                .map(ToString::to_string)
-                .as_deref(),
-            Some("deg")
-        );
-        assert_eq!(
-            orientation
-                .period
-                .map(|a| a.get::<uom::si::angle::degree>()),
-            Some(360.0)
-        );
-        assert_eq!(orientation.times.len(), 2);
-        assert_eq!(orientation.values, vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02]);
-    }
-
-    #[rstest]
-    #[case(
-        Some("Morning ride"),
-        Some("uBlox F9P"),
-        Some("cross-town commute"),
-        Some(SdkTravelMode::Bicycle),
-        Some(TravelMode::Bicycle)
-    )]
-    #[case(
-        None,
-        None,
-        None,
-        Some(SdkTravelMode::Unknown("hovercraft".to_owned())),
-        Some(TravelMode::Unknown("hovercraft".to_owned()))
-    )]
-    #[case(None, None, None, None, None)]
-    fn loaded_file_carries_sdk_metadata(
-        #[case] title: Option<&str>,
-        #[case] device: Option<&str>,
-        #[case] notes: Option<&str>,
-        #[case] sdk_travel_mode: Option<SdkTravelMode>,
-        #[case] travel_mode: Option<TravelMode>,
-    ) {
-        let t0 = base();
-        let mut builder = NavFileBuilder::new();
-        if let Some(title) = title {
-            builder = builder.with_title(title);
-        }
-        if let Some(device) = device {
-            builder = builder.with_device(device);
-        }
-        if let Some(notes) = notes {
-            builder = builder.with_notes(notes);
-        }
-        if let Some(mode) = sdk_travel_mode {
-            builder = builder.with_travel_mode(mode);
-        }
-        let mut recorder = builder.open();
-        for i in 0..3i64 {
-            recorder.add_nav_fix(minimal_fix(t0 + Duration::seconds(i)));
-        }
-        let mut bytes = Vec::new();
-        recorder.finish().unwrap().write(&mut bytes).unwrap();
-
-        let file = load_bytes(&bytes, "ride.gtd".to_owned()).unwrap();
-        assert_eq!(file.metadata.title.as_deref(), title);
-        assert_eq!(file.metadata.device.as_deref(), device);
-        assert_eq!(file.metadata.notes.as_deref(), notes);
-        assert_eq!(file.metadata.travel_mode, travel_mode);
-    }
-
-    /// The SDK and app travel-mode `enum` types are structurally identical. Every
-    /// SDK variant must map onto the app variant of the same name. Iterating the
-    /// app `enum` and converting its wire form back through the SDK type pins
-    /// the two variant sets together, so adding a variant to one without the
-    /// other fails here.
-    #[test]
-    fn convert_travel_mode_covers_every_variant() {
-        for app_mode in TravelMode::iter() {
-            let sdk_mode = SdkTravelMode::from_lower_case(app_mode.to_string());
-            assert_eq!(convert_travel_mode(&sdk_mode), app_mode);
+        /// The identity the recording states wins. Without one, the title and
+        /// the device identify it, then the filename, each under the `auto:`
+        /// prefix. A filename that already carries the prefix is returned as
+        /// it stands.
+        #[rstest]
+        #[case::the_identity_the_recording_states(
+            Some("my-device"),
+            Some("title"),
+            Some("device"),
+            "file.gtd",
+            "my-device"
+        )]
+        #[case::the_title_and_the_device(
+            None,
+            Some("MyTitle"),
+            Some("MyDevice"),
+            "file.gtd",
+            "auto:MyTitle::MyDevice"
+        )]
+        #[case::the_title_alone(None, Some("MyTitle"), None, "file.gtd", "auto:MyTitle")]
+        #[case::the_device_alone(None, None, Some("MyDevice"), "file.gtd", "auto:MyDevice")]
+        #[case::the_filename(None, None, None, "recording.gtd", "auto:recording.gtd")]
+        #[case::a_filename_already_prefixed(None, None, None, "auto:file.gtd", "auto:file.gtd")]
+        fn derive_identity_prefers_the_stated_identity_then_the_metadata_then_the_filename(
+            #[case] explicit: Option<&str>,
+            #[case] title: Option<&str>,
+            #[case] device: Option<&str>,
+            #[case] filename: &str,
+            #[case] expected: &str,
+        ) {
+            assert_eq!(derive_identity(explicit, title, device, filename), expected);
         }
     }
 
-    #[test]
-    fn reencode_drops_only_the_given_ranges() {
-        let t0 = base();
-        // Five fixes one second apart, each at a distinct longitude so the
-        // assertions can identify which ones survived.
-        let mut recorder = NavFileBuilder::new().open();
-        for i in 0..5i64 {
+    mod conversion {
+        use super::*;
+
+        #[test]
+        fn a_loaded_fix_keeps_which_clock_stamped_it() {
+            let receiver_stamp = base() + Duration::seconds(2);
+            let host_stamp = base() + Duration::seconds(1);
+            let mut recorder = NavFileBuilder::new().open();
             recorder.add_nav_fix(
                 NavFix::builder()
-                    .time(NavFixTime::Receiver(t0 + Duration::seconds(i)))
+                    .time(NavFixTime::Receiver(receiver_stamp))
                     .lat(Angle::degrees(55.0))
-                    .lon(Angle::degrees(i as f64))
-                    .heading(Angle::degrees(0.0))
+                    .lon(Angle::degrees(12.0))
                     .build(),
             );
+            recorder.add_nav_fix(
+                NavFix::builder()
+                    .time(NavFixTime::Host(host_stamp))
+                    .lat(Angle::degrees(55.0))
+                    .lon(Angle::degrees(12.0))
+                    .build(),
+            );
+
+            let (points, _) = build(&recorder.finish().unwrap());
+
+            let stamped: Vec<(DateTime<Utc>, Option<DateTime<Utc>>)> = points
+                .iter()
+                .map(|p| (p.tpv.time().utc(), p.tpv.gps_time().map(GpsTime::utc)))
+                .collect();
+            assert_eq!(
+                stamped,
+                vec![(host_stamp, None), (receiver_stamp, Some(receiver_stamp))]
+            );
         }
-        let mut bytes = Vec::new();
-        recorder.finish().unwrap().write(&mut bytes).unwrap();
 
-        // Drop the middle two points (indices 1 and 2).
-        let reencoded =
-            reencode_dropping_ranges(&bytes, std::slice::from_ref(&(1usize..3))).unwrap();
-
-        let nav_file = NavFile::read(reencoded.as_slice()).unwrap();
-        let lons: Vec<f64> = nav_file
-            .nav_points()
-            .iter()
-            .map(|p| p.fix.lon.as_degrees().round())
-            .collect();
-        assert_eq!(lons, vec![0.0, 3.0, 4.0]);
-    }
-
-    #[test]
-    fn reencode_preserves_channels() {
-        let t0 = base();
-        let mut recorder = NavFileBuilder::new().open();
-        for i in 0..5i64 {
-            recorder.add_nav_fix(minimal_fix(t0 + Duration::seconds(i)));
-        }
-        recorder.add_channel(
-            geotrace_sdk::Channel::builder()
-                .name("accel")
-                .unit(Unit::G)
-                .components(["x", "y", "z"].map(String::from).to_vec())
-                .times(vec![t0, t0 + Duration::seconds(4)])
-                .values(vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02])
-                .build()
-                .expect("valid channel"),
-        );
-        let mut bytes = Vec::new();
-        recorder.finish().unwrap().write(&mut bytes).unwrap();
-
-        // Dropping a point range must not drop the channel.
-        let reencoded =
-            reencode_dropping_ranges(&bytes, std::slice::from_ref(&(1usize..3))).unwrap();
-        let nav_file = NavFile::read(reencoded.as_slice()).unwrap();
-        assert_eq!(nav_file.channels().len(), 1);
-        let accel = &nav_file.channels()[0];
-        assert_eq!(accel.name(), "accel");
-        assert_eq!(accel.components(), ["x", "y", "z"]);
-        assert_eq!(accel.times().len(), 2);
-    }
-
-    #[test]
-    fn reencode_clamps_ranges_past_the_end() {
-        let t0 = base();
-        let mut recorder = NavFileBuilder::new().open();
-        recorder.add_nav_fix(minimal_fix(t0));
-        recorder.add_nav_fix(minimal_fix(t0 + Duration::seconds(1)));
-        let mut bytes = Vec::new();
-        recorder.finish().unwrap().write(&mut bytes).unwrap();
-
-        // A range that runs past the end must not panic and must keep the rest.
-        let reencoded =
-            reencode_dropping_ranges(&bytes, std::slice::from_ref(&(1usize..99))).unwrap();
-        let nav_file = NavFile::read(reencoded.as_slice()).unwrap();
-        assert_eq!(nav_file.nav_points().len(), 1);
-    }
-
-    proptest! {
-        /// Permanent delete is irreversible, so pin down the drop-range handling
-        /// against arbitrary ranges - including reversed, overlapping, and
-        /// out-of-bounds ones. Survivors must be exactly the points no (clamped)
-        /// range covers. The all-dropped case is a don't-care (the worker deletes
-        /// the whole recording), so we only require it not to invent points.
         #[test]
-        fn reencode_keeps_exactly_the_undropped_points(
-            raw in proptest::collection::vec((0usize..14, 0usize..14), 0..6),
-        ) {
-            const N: usize = 10;
-            // N points with distinct longitudes 0..N, so survivors are identifiable.
+        fn loaded_file_carries_channels_on_its_track() {
+            let t0 = base();
             let mut recorder = NavFileBuilder::new().open();
-            for i in 0..N {
+            for i in 0..3i64 {
+                recorder.add_nav_fix(minimal_fix(t0 + Duration::seconds(i)));
+            }
+            recorder.add_channel(
+                geotrace_sdk::Channel::builder()
+                    .name("orientation")
+                    .unit(Unit::DEG)
+                    .period(Angle::degrees(360.0))
+                    .components(["x", "y", "z"].map(String::from).to_vec())
+                    .times(vec![t0, t0 + Duration::seconds(2)])
+                    .values(vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02])
+                    .build()
+                    .expect("valid channel"),
+            );
+            let mut bytes = Vec::new();
+            recorder.finish().unwrap().write(&mut bytes).unwrap();
+
+            let file = load_bytes(&bytes, "ride.gtd".to_owned()).unwrap();
+            // Three consecutive fixes form one track carrying the channel.
+            assert_eq!(file.tracks.len(), 1);
+            let channels = &file.tracks[0].channels;
+            assert_eq!(channels.len(), 1);
+            let orientation = &channels[0];
+            assert_eq!(orientation.name, "orientation");
+            assert!(orientation.is_vector());
+            assert_eq!(orientation.components, ["x", "y", "z"]);
+            assert_eq!(
+                orientation
+                    .unit
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .as_deref(),
+                Some("deg")
+            );
+            assert_eq!(
+                orientation
+                    .period
+                    .map(|a| a.get::<uom::si::angle::degree>()),
+                Some(360.0)
+            );
+            assert_eq!(orientation.times.len(), 2);
+            assert_eq!(orientation.values, vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02]);
+        }
+
+        #[rstest]
+        #[case(
+            Some("Morning ride"),
+            Some("uBlox F9P"),
+            Some("cross-town commute"),
+            Some(SdkTravelMode::Bicycle),
+            Some(TravelMode::Bicycle)
+        )]
+        #[case(
+            None,
+            None,
+            None,
+            Some(SdkTravelMode::Unknown("hovercraft".to_owned())),
+            Some(TravelMode::Unknown("hovercraft".to_owned()))
+        )]
+        #[case(None, None, None, None, None)]
+        fn loaded_file_carries_sdk_metadata(
+            #[case] title: Option<&str>,
+            #[case] device: Option<&str>,
+            #[case] notes: Option<&str>,
+            #[case] sdk_travel_mode: Option<SdkTravelMode>,
+            #[case] travel_mode: Option<TravelMode>,
+        ) {
+            let t0 = base();
+            let mut builder = NavFileBuilder::new();
+            if let Some(title) = title {
+                builder = builder.with_title(title);
+            }
+            if let Some(device) = device {
+                builder = builder.with_device(device);
+            }
+            if let Some(notes) = notes {
+                builder = builder.with_notes(notes);
+            }
+            if let Some(mode) = sdk_travel_mode {
+                builder = builder.with_travel_mode(mode);
+            }
+            let mut recorder = builder.open();
+            for i in 0..3i64 {
+                recorder.add_nav_fix(minimal_fix(t0 + Duration::seconds(i)));
+            }
+            let mut bytes = Vec::new();
+            recorder.finish().unwrap().write(&mut bytes).unwrap();
+
+            let file = load_bytes(&bytes, "ride.gtd".to_owned()).unwrap();
+            assert_eq!(file.metadata.title.as_deref(), title);
+            assert_eq!(file.metadata.device.as_deref(), device);
+            assert_eq!(file.metadata.notes.as_deref(), notes);
+            assert_eq!(file.metadata.travel_mode, travel_mode);
+        }
+
+        /// The SDK and app travel-mode `enum` types are structurally identical. Every
+        /// SDK variant must map onto the app variant of the same name. Iterating the
+        /// app `enum` and converting its wire form back through the SDK type pins
+        /// the two variant sets together, so adding a variant to one without the
+        /// other fails here.
+        #[test]
+        fn convert_travel_mode_covers_every_variant() {
+            for app_mode in TravelMode::iter() {
+                let sdk_mode = SdkTravelMode::from_lower_case(app_mode.to_string());
+                assert_eq!(convert_travel_mode(&sdk_mode), app_mode);
+            }
+        }
+
+        #[test]
+        #[expect(clippy::float_cmp, reason = "direct f64 round-trip comparisons")]
+        fn field_by_field_nav_fix() {
+            let t0 = base();
+            let mut recorder = NavFileBuilder::new().open();
+            recorder.add_nav_fix(
+                NavFix::builder()
+                    .time(NavFixTime::Receiver(t0))
+                    .lat(Angle::degrees(51.5))
+                    .lon(Angle::degrees(-0.1))
+                    .heading(Angle::degrees(270.0))
+                    .speed(Velocity::meter_per_second(12.5))
+                    .build(),
+            );
+            let (nav_points, _) = build(&recorder.finish().unwrap());
+            assert_eq!(nav_points.len(), 1);
+            let tpv = nav_points[0].tpv;
+            assert_eq!(tpv.time().utc(), t0);
+            assert_eq!(tpv.lat().as_written(), 51.5);
+            assert_eq!(tpv.lon().as_written(), -0.1);
+            assert_eq!(
+                tpv.heading().map(|h| h.get::<uom::si::angle::degree>()),
+                Some(270.0)
+            );
+            assert_eq!(tpv.velocity().map(|v| v.get::<uom_mps>()), Some(12.5));
+        }
+
+        #[test]
+        fn speed_none_propagation() {
+            let mut recorder = NavFileBuilder::new().open();
+            recorder.add_nav_fix(minimal_fix(base()));
+            let (nav_points, _) = build(&recorder.finish().unwrap());
+            assert_eq!(nav_points[0].tpv.velocity(), None);
+        }
+
+        #[test]
+        fn satellite_structure() {
+            let t0 = base();
+            let mut recorder = NavFileBuilder::new().open();
+            recorder.add_nav_fix(minimal_fix(t0));
+            recorder.add_satellite_report(
+                SatelliteReport::builder()
+                    .time(NavFixTime::Receiver(t0))
+                    .tracked(vec![
+                        SdkSat::builder()
+                            .constellation(SdkConst::Gps)
+                            .prn(3u32)
+                            .elevation(30.0f32)
+                            .azimuth(90.0f32)
+                            .snr(28.0f32)
+                            .in_fix(true)
+                            .build(),
+                        SdkSat::builder()
+                            .constellation(SdkConst::Galileo)
+                            .prn(7u32)
+                            .build(),
+                    ])
+                    .build(),
+            );
+            let (nav_points, _) = build(&recorder.finish().unwrap());
+            let sats = nav_points[0].satellites.as_ref().unwrap();
+            assert_eq!(sats.satellite_count(), 2);
+            assert_eq!(sats.fix_count(), 1);
+            let first = sats.satellites().next().unwrap();
+            assert_eq!(first.constellation(), Constellation::Gps);
+            assert_eq!(first.prn(), 3);
+            assert_eq!(first.elevation(), Some(30.0));
+            assert_eq!(first.azimuth(), Some(90.0));
+            assert_eq!(first.snr().map(|s| s.value()), Some(28.0));
+        }
+
+        #[test]
+        fn every_sdk_constellation_converts_to_the_app_constellation_of_the_same_name() {
+            // The full mapping table, checked against `SdkConst::COUNT`.
+            let pairs = [
+                (SdkConst::Gps, Constellation::Gps),
+                (SdkConst::Glonass, Constellation::Glonass),
+                (SdkConst::Galileo, Constellation::Galileo),
+                (SdkConst::Beidou, Constellation::Beidou),
+                (SdkConst::Navic, Constellation::Navic),
+                (SdkConst::Qzss, Constellation::Qzss),
+            ];
+            assert_eq!(pairs.len(), SdkConst::COUNT);
+            for (sdk, expected) in pairs {
+                assert_eq!(convert_constellation(sdk), expected);
+            }
+        }
+
+        #[rstest]
+        #[case::no_label(None)]
+        #[case::an_empty_label(Some(String::new()))]
+        fn a_marker_without_a_label_loads_with_an_empty_label(#[case] label: Option<String>) {
+            let t0 = base();
+            let mut recorder = NavFileBuilder::new().open();
+            recorder.add_nav_fix(minimal_fix(t0));
+            recorder.add_nav_fix(minimal_fix(t0 + Duration::seconds(1)));
+            recorder.add_annotation(
+                Annotation::builder()
+                    .time(t0 + Duration::milliseconds(500))
+                    .maybe_label(label)
+                    .build()
+                    .unwrap(),
+            );
+
+            let (_, markers) = build(&recorder.finish().unwrap());
+
+            assert_eq!(markers[0].label, "");
+        }
+
+        #[test]
+        fn every_sdk_marker_icon_converts_to_the_app_icon_of_the_same_name() {
+            // The full mapping table, checked against `SdkIcon::COUNT`.
+            let pairs = [
+                (SdkIcon::Pin, MarkerIcon::Pin),
+                (SdkIcon::Cross, MarkerIcon::Cross),
+                (SdkIcon::Circle, MarkerIcon::Circle),
+                (SdkIcon::Lightning, MarkerIcon::Lightning),
+                (SdkIcon::Warning, MarkerIcon::Warning),
+                (SdkIcon::Error, MarkerIcon::Error),
+                (SdkIcon::Check, MarkerIcon::Check),
+                (SdkIcon::Satellite, MarkerIcon::Satellite),
+                (SdkIcon::SatelliteLost, MarkerIcon::SatelliteLost),
+                (SdkIcon::Gear, MarkerIcon::Gear),
+                (SdkIcon::Refresh, MarkerIcon::Refresh),
+                (SdkIcon::Download, MarkerIcon::Download),
+                (SdkIcon::Upload, MarkerIcon::Upload),
+                (SdkIcon::Wrench, MarkerIcon::Wrench),
+            ];
+            assert_eq!(pairs.len(), SdkIcon::COUNT);
+            for (sdk, expected) in pairs {
+                assert_eq!(convert_icon(sdk), expected);
+            }
+        }
+    }
+
+    mod reencode {
+        use super::*;
+
+        #[test]
+        fn reencode_preserves_channels() {
+            let t0 = base();
+            let mut recorder = NavFileBuilder::new().open();
+            for i in 0..5i64 {
+                recorder.add_nav_fix(minimal_fix(t0 + Duration::seconds(i)));
+            }
+            recorder.add_channel(
+                geotrace_sdk::Channel::builder()
+                    .name("accel")
+                    .unit(Unit::G)
+                    .components(["x", "y", "z"].map(String::from).to_vec())
+                    .times(vec![t0, t0 + Duration::seconds(4)])
+                    .values(vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02])
+                    .build()
+                    .expect("valid channel"),
+            );
+            let mut bytes = Vec::new();
+            recorder.finish().unwrap().write(&mut bytes).unwrap();
+
+            // Dropping a point range must not drop the channel.
+            let reencoded =
+                reencode_dropping_ranges(&bytes, std::slice::from_ref(&(1usize..3))).unwrap();
+            let nav_file = NavFile::read(reencoded.as_slice()).unwrap();
+            assert_eq!(nav_file.channels().len(), 1);
+            let accel = &nav_file.channels()[0];
+            assert_eq!(accel.name(), "accel");
+            assert_eq!(accel.components(), ["x", "y", "z"]);
+            assert_eq!(accel.times().len(), 2);
+        }
+
+        #[test]
+        fn reencode_clamps_ranges_past_the_end() {
+            let t0 = base();
+            let mut recorder = NavFileBuilder::new().open();
+            recorder.add_nav_fix(minimal_fix(t0));
+            recorder.add_nav_fix(minimal_fix(t0 + Duration::seconds(1)));
+            let mut bytes = Vec::new();
+            recorder.finish().unwrap().write(&mut bytes).unwrap();
+
+            // A range that runs past the end must not panic and must keep the rest.
+            let reencoded =
+                reencode_dropping_ranges(&bytes, std::slice::from_ref(&(1usize..99))).unwrap();
+            let nav_file = NavFile::read(reencoded.as_slice()).unwrap();
+            assert_eq!(nav_file.nav_points().len(), 1);
+        }
+
+        proptest! {
+            /// Permanent delete is irreversible, so pin down the drop-range handling
+            /// against arbitrary ranges - including reversed, overlapping, and
+            /// out-of-bounds ones. Survivors must be exactly the points no (clamped)
+            /// range covers. The all-dropped case is a don't-care (the worker deletes
+            /// the whole recording), so we only require it not to invent points.
+            #[test]
+            fn reencode_keeps_exactly_the_undropped_points(
+                raw in proptest::collection::vec((0usize..14, 0usize..14), 0..6),
+            ) {
+                const N: usize = 10;
+                // N points with distinct longitudes 0..N, so survivors are identifiable.
+                let mut recorder = NavFileBuilder::new().open();
+                for i in 0..N {
+                    recorder.add_nav_fix(
+                        NavFix::builder()
+                            .time(NavFixTime::Receiver(base() + Duration::seconds(i as i64)))
+                            .lat(Angle::degrees(55.0))
+                            .lon(Angle::degrees(i as f64))
+                            .heading(Angle::degrees(0.0))
+                            .build(),
+                    );
+                }
+                let mut bytes = Vec::new();
+                recorder.finish().unwrap().write(&mut bytes).unwrap();
+
+                let ranges: Vec<std::ops::Range<usize>> = raw.iter().map(|&(a, b)| a..b).collect();
+
+                // Independently compute which indices a range covers (half-open, clamped
+                // to the point count. Reversed/out-of-bounds ranges cover nothing).
+                let mut dropped = [false; N];
+                for r in &ranges {
+                    let end = r.end.min(N);
+                    for slot in dropped.iter_mut().take(end).skip(r.start) {
+                        *slot = true;
+                    }
+                }
+                let expected: Vec<f64> = (0..N)
+                    .filter(|&i| !dropped[i])
+                    .map(|i| i as f64)
+                    .collect();
+
+                let result = reencode_dropping_ranges(&bytes, &ranges);
+                if expected.is_empty() {
+                    // Every point dropped: either re-encode errors, or it yields a file
+                    // with no nav points - never one that resurrects dropped points.
+                    if let Ok(reencoded) = result {
+                        let nav = NavFile::read(reencoded.as_slice()).expect("read back");
+                        prop_assert!(nav.nav_points().is_empty());
+                    }
+                } else {
+                    let reencoded = result.expect("re-encode");
+                    let nav = NavFile::read(reencoded.as_slice()).expect("read back");
+                    let lons: Vec<f64> = nav
+                        .nav_points()
+                        .iter()
+                        .map(|p| p.fix.lon.as_degrees().round())
+                        .collect();
+                    prop_assert_eq!(lons, expected);
+                }
+            }
+        }
+    }
+
+    mod warnings {
+        use super::*;
+
+        /// A file can hold a marker position no interpolation would produce: the
+        /// marker is left out and a load warning lists which one and why.
+        #[test]
+        fn a_marker_outside_the_coordinate_range_is_dropped_and_named() {
+            let marker = SdkMarker {
+                annotation: Annotation::builder()
+                    .time(base())
+                    .label("launch")
+                    .build()
+                    .unwrap(),
+                lat: Angle::degrees(91.0),
+                lon: Angle::degrees(12.0),
+            };
+            let event_marker = EventMarkerPoint {
+                variant_path: "power/boot".to_owned(),
+                sys_time: base(),
+                lat: Angle::degrees(55.0),
+                lon: Angle::degrees(-181.0),
+                annotation: None,
+            };
+
+            assert_eq!(
+                convert_marker(&marker, &mut Vec::new())
+                    .expect_err("latitude 91 is out of range")
+                    .to_string(),
+                "\"launch\": latitude 91 is outside -90..90"
+            );
+            assert_eq!(
+                convert_event_marker(&event_marker)
+                    .expect_err("longitude -181 is out of range")
+                    .to_string(),
+                "\"power/boot\": longitude -181 is outside -180..180"
+            );
+        }
+
+        /// 1e-9° is about 0.1 mm.
+        const DEGREE_TOLERANCE: f64 = 1e-9;
+
+        /// Ten fixes a second apart along the equator at longitudes 0 to 9, with
+        /// an unusable latitude at record 3 and an unusable longitude at record 5.
+        /// A position kept as recorded is distinguishable from one placed between
+        /// the neighbouring fixes: each of the two carries a plausible value on
+        /// its other axis, far from the fixes around it.
+        fn recording_with_two_coordinates_out_of_range() -> Vec<u8> {
+            let mut recorder = NavFileBuilder::new().open();
+            for record in 0..10i64 {
+                let (lat_degrees, lon_degrees) = match record {
+                    3 => (f64::NAN, 100.0),
+                    5 => (45.0, -181.0),
+                    _ => (0.0, record as f64),
+                };
                 recorder.add_nav_fix(
                     NavFix::builder()
-                        .time(NavFixTime::Receiver(base() + Duration::seconds(i as i64)))
-                        .lat(Angle::degrees(55.0))
-                        .lon(Angle::degrees(i as f64))
-                        .heading(Angle::degrees(0.0))
+                        .time(NavFixTime::Receiver(base() + Duration::seconds(record)))
+                        .lat(Angle::degrees(lat_degrees))
+                        .lon(Angle::degrees(lon_degrees))
+                        .heading(Angle::degrees(90.0))
+                        .build(),
+                );
+            }
+            let mut bytes = Vec::new();
+            recorder.finish().unwrap().write(&mut bytes).unwrap();
+            bytes
+        }
+
+        fn assert_drawn_at(drawn: (Latitude, Longitude), expected_degrees: (f64, f64)) {
+            let (latitude, longitude) = drawn;
+            let (expected_latitude, expected_longitude) = expected_degrees;
+            assert!(
+                (latitude.as_degrees() - expected_latitude).abs() < DEGREE_TOLERANCE
+                    && (longitude.as_degrees() - expected_longitude).abs() < DEGREE_TOLERANCE,
+                "drawn at {}, {}, expected {expected_latitude}, {expected_longitude}",
+                latitude.as_degrees(),
+                longitude.as_degrees()
+            );
+        }
+
+        fn listed_warnings(file: &LoadedFile) -> Vec<(u32, &str, &str)> {
+            file.load_warnings
+                .iter()
+                .map(|w| (w.count, w.issue.as_str(), w.description.as_str()))
+                .collect()
+        }
+
+        #[test]
+        fn fixes_with_a_coordinate_out_of_range_load_with_a_warning_naming_them() {
+            let file = load_bytes(
+                &recording_with_two_coordinates_out_of_range(),
+                "out_of_range.gtd".to_owned(),
+            )
+            .unwrap();
+
+            let track = file.tracks.first().expect("the ten fixes form one track");
+            assert_eq!(track.points.len(), 10);
+            assert_eq!(track.metadata.invalid_position_count, 2);
+            assert_eq!(
+                listed_warnings(&file),
+                vec![
+                    (
+                        1,
+                        "fix(es) with a latitude out of range",
+                        "record 3 wrote NaN°. Each is drawn between the fixes around it."
+                    ),
+                    (
+                        1,
+                        "fix(es) with a longitude out of range",
+                        "record 5 wrote -181°. Each is drawn between the fixes around it."
+                    ),
+                ]
+            );
+        }
+
+        /// Record 3 is drawn between records 2 and 4 (longitudes 2 and 4), record
+        /// 5 between records 4 and 6 (longitudes 4 and 6), both halfway in time.
+        #[test]
+        fn a_fix_with_a_coordinate_out_of_range_keeps_it_and_is_drawn_between_its_neighbours() {
+            let file = load_bytes(
+                &recording_with_two_coordinates_out_of_range(),
+                "out_of_range.gtd".to_owned(),
+            )
+            .unwrap();
+
+            let track = file.tracks.first().expect("the ten fixes form one track");
+            let placed = track.placed_points().expect("the track has a geometry");
+            let out_of_range_latitude = placed.get(3).expect("record 3");
+            let out_of_range_longitude = placed.get(5).expect("record 5");
+
+            assert!(out_of_range_latitude.fix.tpv.lat().as_written().is_nan());
+            assert_eq!(
+                out_of_range_latitude.fix.tpv.lon(),
+                RecordedLongitude::from_degrees(100.0)
+            );
+            assert_eq!(
+                out_of_range_longitude.fix.tpv.lat(),
+                RecordedLatitude::from_degrees(45.0)
+            );
+            assert_eq!(
+                out_of_range_longitude.fix.tpv.lon(),
+                RecordedLongitude::from_degrees(-181.0)
+            );
+            assert_drawn_at(out_of_range_latitude.resolved_position(), (0.0, 3.0));
+            assert_drawn_at(out_of_range_longitude.resolved_position(), (0.0, 5.0));
+        }
+
+        /// A recording no fix of which has a position has nowhere to draw its
+        /// track, and still loads: the fixes reach the plot and the history, and
+        /// the warning lists the records.
+        #[test]
+        fn a_recording_whose_every_latitude_is_nan_loads_with_tracks_that_have_no_geometry() {
+            let mut recorder = NavFileBuilder::new().open();
+            for record in 0..3i64 {
+                recorder.add_nav_fix(
+                    NavFix::builder()
+                        .time(NavFixTime::Receiver(base() + Duration::seconds(record)))
+                        .lat(Angle::degrees(f64::NAN))
+                        .lon(Angle::degrees(12.0))
+                        .heading(Angle::degrees(90.0))
                         .build(),
                 );
             }
             let mut bytes = Vec::new();
             recorder.finish().unwrap().write(&mut bytes).unwrap();
 
-            let ranges: Vec<std::ops::Range<usize>> = raw.iter().map(|&(a, b)| a..b).collect();
+            let file = load_bytes(&bytes, "no_position.gtd".to_owned()).unwrap();
 
-            // Independently compute which indices a range covers (half-open, clamped
-            // to the point count. Reversed/out-of-bounds ranges cover nothing).
-            let mut dropped = [false; N];
-            for r in &ranges {
-                let end = r.end.min(N);
-                for slot in dropped.iter_mut().take(end).skip(r.start) {
-                    *slot = true;
-                }
-            }
-            let expected: Vec<f64> = (0..N)
-                .filter(|&i| !dropped[i])
-                .map(|i| i as f64)
+            let track = file.tracks.first().expect("the three fixes form one track");
+            assert_eq!(track.points.len(), 3);
+            assert_eq!(track.geometry, TrackGeometry::NoValidPosition);
+            assert!(track.placed_points().is_none());
+            assert_eq!(track.metadata.invalid_position_count, 3);
+            let warnings: Vec<(u32, &str)> = file
+                .load_warnings
+                .iter()
+                .map(|w| (w.count, w.issue.as_str()))
                 .collect();
+            assert_eq!(warnings, vec![(3, "fix(es) with a latitude out of range")]);
+        }
 
-            let result = reencode_dropping_ranges(&bytes, &ranges);
-            if expected.is_empty() {
-                // Every point dropped: either re-encode errors, or it yields a file
-                // with no nav points - never one that resurrects dropped points.
-                if let Ok(reencoded) = result {
-                    let nav = NavFile::read(reencoded.as_slice()).expect("read back");
-                    prop_assert!(nav.nav_points().is_empty());
-                }
-            } else {
-                let reencoded = result.expect("re-encode");
-                let nav = NavFile::read(reencoded.as_slice()).expect("read back");
-                let lons: Vec<f64> = nav
-                    .nav_points()
-                    .iter()
-                    .map(|p| p.fix.lon.as_degrees().round())
-                    .collect();
-                prop_assert_eq!(lons, expected);
+        /// A color field a file can hold that is not a `#RRGGBB` hex value.
+        const COLOR_THAT_IS_NOT_HEX: &str = "#ZZZZZZ";
+
+        /// Three fixes a second apart, and the event marker styles in `styles`, in
+        /// the order they are written.
+        fn recording_with_event_marker_styles(styles: Vec<SdkEventMarkerStyle>) -> Vec<u8> {
+            let mut recorder = NavFileBuilder::new().open();
+            for second in 0..3i64 {
+                recorder.add_nav_fix(minimal_fix(base() + Duration::seconds(second)));
+            }
+            for style in styles {
+                recorder.add_event_marker_style(style);
+            }
+            let mut bytes = Vec::new();
+            recorder.finish().unwrap().write(&mut bytes).unwrap();
+            bytes
+        }
+
+        fn event_marker_style(variant_path: &str, color_hex: &str) -> SdkEventMarkerStyle {
+            SdkEventMarkerStyle {
+                variant_path: variant_path.to_owned(),
+                icon: SdkEventMarkerIconChoice::Auto,
+                color: SdkEventMarkerColor::hex(color_hex),
             }
         }
-    }
 
-    #[test]
-    #[expect(clippy::float_cmp, reason = "direct f64 round-trip comparisons")]
-    fn field_by_field_nav_fix() {
-        let t0 = base();
-        let mut recorder = NavFileBuilder::new().open();
-        recorder.add_nav_fix(
-            NavFix::builder()
-                .time(NavFixTime::Receiver(t0))
-                .lat(Angle::degrees(51.5))
-                .lon(Angle::degrees(-0.1))
-                .heading(Angle::degrees(270.0))
-                .speed(Velocity::meter_per_second(12.5))
-                .build(),
-        );
-        let (nav_points, _) = build(&recorder.finish().unwrap());
-        assert_eq!(nav_points.len(), 1);
-        let tpv = nav_points[0].tpv;
-        assert_eq!(tpv.time().utc(), t0);
-        assert_eq!(tpv.lat().as_written(), 51.5);
-        assert_eq!(tpv.lon().as_written(), -0.1);
-        assert_eq!(
-            tpv.heading().map(|h| h.get::<uom::si::angle::degree>()),
-            Some(270.0)
-        );
-        assert_eq!(tpv.velocity().map(|v| v.get::<uom_mps>()), Some(12.5));
-    }
+        #[test]
+        fn an_event_marker_color_that_is_not_hex_loads_as_gray_with_a_warning_naming_the_variant() {
+            let bytes = recording_with_event_marker_styles(vec![event_marker_style(
+                "power/boot",
+                COLOR_THAT_IS_NOT_HEX,
+            )]);
 
-    #[test]
-    fn speed_none_propagation() {
-        let mut recorder = NavFileBuilder::new().open();
-        recorder.add_nav_fix(minimal_fix(base()));
-        let (nav_points, _) = build(&recorder.finish().unwrap());
-        assert_eq!(nav_points[0].tpv.velocity(), None);
-    }
+            let file = load_bytes(&bytes, "marker_color.gtd".to_owned()).unwrap();
 
-    #[test]
-    fn velocity_unit_preservation() {
-        let mut recorder = NavFileBuilder::new().open();
-        recorder.add_nav_fix(
-            NavFix::builder()
-                .time(NavFixTime::Receiver(base()))
-                .lat(Angle::degrees(0.0))
-                .lon(Angle::degrees(0.0))
-                .heading(Angle::degrees(0.0))
-                .speed(Velocity::meter_per_second(15.0))
-                .build(),
-        );
-        let (nav_points, _) = build(&recorder.finish().unwrap());
-        assert_eq!(
-            nav_points[0].tpv.velocity().map(|v| v.get::<uom_mps>()),
-            Some(15.0)
-        );
-    }
-
-    #[test]
-    fn satellite_structure() {
-        let t0 = base();
-        let mut recorder = NavFileBuilder::new().open();
-        recorder.add_nav_fix(minimal_fix(t0));
-        recorder.add_satellite_report(
-            SatelliteReport::builder()
-                .time(NavFixTime::Receiver(t0))
-                .tracked(vec![
-                    SdkSat::builder()
-                        .constellation(SdkConst::Gps)
-                        .prn(3u32)
-                        .elevation(30.0f32)
-                        .azimuth(90.0f32)
-                        .snr(28.0f32)
-                        .in_fix(true)
-                        .build(),
-                    SdkSat::builder()
-                        .constellation(SdkConst::Galileo)
-                        .prn(7u32)
-                        .build(),
-                ])
-                .build(),
-        );
-        let (nav_points, _) = build(&recorder.finish().unwrap());
-        let sats = nav_points[0].satellites.as_ref().unwrap();
-        assert_eq!(sats.satellite_count(), 2);
-        assert_eq!(sats.fix_count(), 1);
-        let first = sats.satellites().next().unwrap();
-        assert_eq!(first.constellation(), Constellation::Gps);
-        assert_eq!(first.prn(), 3);
-        assert_eq!(first.elevation(), Some(30.0));
-        assert_eq!(first.azimuth(), Some(90.0));
-        assert_eq!(first.snr().map(|s| s.value()), Some(28.0));
-    }
-
-    const REPEATED_ELEVATION_DEG: f32 = 40.0;
-
-    const HIGHEST_ROW_SNR_DB: f32 = 45.0;
-
-    const AZIMUTH_JUST_WEST_OF_NORTH_DEG: f32 = 359.0;
-
-    const AZIMUTH_JUST_EAST_OF_NORTH_DEG: f32 = 2.0;
-
-    fn row_for_prn_7(elevation_deg: Option<f32>, snr_db: f32, in_fix: bool) -> SdkSat {
-        SdkSat::builder()
-            .constellation(SdkConst::Gps)
-            .prn(7u32)
-            .maybe_elevation(elevation_deg)
-            .azimuth(90.0f32)
-            .snr(snr_db)
-            .in_fix(in_fix)
-            .build()
-    }
-
-    #[rstest]
-    #[case::highest_snr_first(vec![
-        row_for_prn_7(Some(REPEATED_ELEVATION_DEG), HIGHEST_ROW_SNR_DB, true),
-        row_for_prn_7(Some(REPEATED_ELEVATION_DEG), 30.0, false),
-    ])]
-    #[case::highest_snr_last(vec![
-        row_for_prn_7(Some(REPEATED_ELEVATION_DEG), 30.0, false),
-        row_for_prn_7(Some(REPEATED_ELEVATION_DEG), HIGHEST_ROW_SNR_DB, true),
-    ])]
-    #[case::three_rows(vec![
-        row_for_prn_7(Some(REPEATED_ELEVATION_DEG), 30.0, false),
-        row_for_prn_7(Some(REPEATED_ELEVATION_DEG), HIGHEST_ROW_SNR_DB, true),
-        row_for_prn_7(Some(REPEATED_ELEVATION_DEG), 38.0, false),
-    ])]
-    #[case::elevation_on_one_row(vec![
-        row_for_prn_7(None, 30.0, false),
-        row_for_prn_7(Some(REPEATED_ELEVATION_DEG), HIGHEST_ROW_SNR_DB, true),
-    ])]
-    fn rows_repeating_a_satellite_merge_into_one(#[case] tracked: Vec<SdkSat>) {
-        let report = SatelliteReport::builder()
-            .time(NavFixTime::Receiver(base()))
-            .tracked(tracked)
-            .build();
-
-        let merged = convert_satellite_report(&report, 0, &mut SatelliteAlterations::default());
-
-        assert_eq!(merged.satellite_count(), 1);
-        assert_eq!(merged.fix_count(), 1);
-        let satellite = merged.satellites().next().unwrap();
-        assert!(satellite.in_fix());
-        assert_eq!(satellite.elevation(), Some(REPEATED_ELEVATION_DEG));
-        assert_eq!(satellite.snr().map(|s| s.value()), Some(HIGHEST_ROW_SNR_DB));
-    }
-
-    #[test]
-    fn a_repeated_satellite_keeps_the_first_azimuth_reported() {
-        let row_at = |azimuth_deg: f32| {
-            SdkSat::builder()
-                .constellation(SdkConst::Gps)
-                .prn(7u32)
-                .elevation(REPEATED_ELEVATION_DEG)
-                .azimuth(azimuth_deg)
-                .snr(HIGHEST_ROW_SNR_DB)
-                .in_fix(true)
-                .build()
-        };
-        let report = SatelliteReport::builder()
-            .time(NavFixTime::Receiver(base()))
-            .tracked(vec![
-                row_at(AZIMUTH_JUST_WEST_OF_NORTH_DEG),
-                row_at(AZIMUTH_JUST_EAST_OF_NORTH_DEG),
-            ])
-            .build();
-
-        let merged = convert_satellite_report(&report, 0, &mut SatelliteAlterations::default());
-
-        assert_eq!(merged.satellite_count(), 1);
-        assert_eq!(
-            merged.satellites().next().and_then(|s| s.azimuth()),
-            Some(AZIMUTH_JUST_WEST_OF_NORTH_DEG)
-        );
-    }
-
-    #[test]
-    fn one_prn_in_two_constellations_stays_two_satellites() {
-        let galileo_row = SdkSat::builder()
-            .constellation(SdkConst::Galileo)
-            .prn(7u32)
-            .elevation(REPEATED_ELEVATION_DEG)
-            .in_fix(true)
-            .build();
-        let report = SatelliteReport::builder()
-            .time(NavFixTime::Receiver(base()))
-            .tracked(vec![
-                row_for_prn_7(Some(REPEATED_ELEVATION_DEG), HIGHEST_ROW_SNR_DB, true),
-                galileo_row,
-            ])
-            .build();
-
-        let merged = convert_satellite_report(&report, 0, &mut SatelliteAlterations::default());
-
-        let constellations: Vec<Constellation> =
-            merged.satellites().map(|s| s.constellation()).collect();
-        assert_eq!(
-            constellations,
-            vec![Constellation::Gps, Constellation::Galileo]
-        );
-    }
-
-    #[test]
-    fn constellation_mapping() {
-        let consts = [
-            (SdkConst::Gps, Constellation::Gps),
-            (SdkConst::Glonass, Constellation::Glonass),
-            (SdkConst::Galileo, Constellation::Galileo),
-            (SdkConst::Beidou, Constellation::Beidou),
-        ];
-        for (sdk, expected) in consts {
-            assert_eq!(convert_constellation(sdk), expected);
-        }
-    }
-
-    #[test]
-    fn marker_label_none() {
-        let t0 = base();
-        let t1 = t0 + Duration::seconds(1);
-        let mut recorder = NavFileBuilder::new().open();
-        recorder.add_nav_fix(minimal_fix(t0));
-        recorder.add_nav_fix(minimal_fix(t1));
-        recorder.add_annotation(
-            Annotation::builder()
-                .time(t0 + Duration::milliseconds(500))
-                .build()
-                .unwrap(),
-        );
-        let (_, markers) = build(&recorder.finish().unwrap());
-        assert_eq!(markers[0].label, "");
-    }
-
-    #[test]
-    fn marker_label_empty_string() {
-        let t0 = base();
-        let t1 = t0 + Duration::seconds(1);
-        let mut recorder = NavFileBuilder::new().open();
-        recorder.add_nav_fix(minimal_fix(t0));
-        recorder.add_nav_fix(minimal_fix(t1));
-        recorder.add_annotation(
-            Annotation::builder()
-                .time(t0 + Duration::milliseconds(500))
-                .label(String::new())
-                .build()
-                .unwrap(),
-        );
-        let (_, markers) = build(&recorder.finish().unwrap());
-        assert_eq!(markers[0].label, "");
-    }
-
-    #[test]
-    fn every_sdk_marker_icon_converts_to_the_app_icon_of_the_same_name() {
-        // The full mapping table, checked against `SdkIcon::COUNT`.
-        let pairs = [
-            (SdkIcon::Pin, MarkerIcon::Pin),
-            (SdkIcon::Cross, MarkerIcon::Cross),
-            (SdkIcon::Circle, MarkerIcon::Circle),
-            (SdkIcon::Lightning, MarkerIcon::Lightning),
-            (SdkIcon::Warning, MarkerIcon::Warning),
-            (SdkIcon::Error, MarkerIcon::Error),
-            (SdkIcon::Check, MarkerIcon::Check),
-            (SdkIcon::Satellite, MarkerIcon::Satellite),
-            (SdkIcon::SatelliteLost, MarkerIcon::SatelliteLost),
-            (SdkIcon::Gear, MarkerIcon::Gear),
-            (SdkIcon::Refresh, MarkerIcon::Refresh),
-            (SdkIcon::Download, MarkerIcon::Download),
-            (SdkIcon::Upload, MarkerIcon::Upload),
-            (SdkIcon::Wrench, MarkerIcon::Wrench),
-        ];
-        assert_eq!(pairs.len(), SdkIcon::COUNT);
-        for (sdk, expected) in pairs {
-            assert_eq!(convert_icon(sdk), expected);
-        }
-    }
-
-    /// A file can hold a marker position no interpolation would produce: the
-    /// marker is left out and a load warning lists which one and why.
-    #[test]
-    fn a_marker_outside_the_coordinate_range_is_dropped_and_named() {
-        let marker = SdkMarker {
-            annotation: Annotation::builder()
-                .time(base())
-                .label("launch")
-                .build()
-                .unwrap(),
-            lat: Angle::degrees(91.0),
-            lon: Angle::degrees(12.0),
-        };
-        let event_marker = EventMarkerPoint {
-            variant_path: "power/boot".to_owned(),
-            sys_time: base(),
-            lat: Angle::degrees(55.0),
-            lon: Angle::degrees(-181.0),
-            annotation: None,
-        };
-
-        assert_eq!(
-            convert_marker(&marker, &mut Vec::new())
-                .expect_err("latitude 91 is out of range")
-                .to_string(),
-            "\"launch\": latitude 91 is outside -90..90"
-        );
-        assert_eq!(
-            convert_event_marker(&event_marker)
-                .expect_err("longitude -181 is out of range")
-                .to_string(),
-            "\"power/boot\": longitude -181 is outside -180..180"
-        );
-    }
-
-    /// 1e-9° is about 0.1 mm.
-    const DEGREE_TOLERANCE: f64 = 1e-9;
-
-    /// Ten fixes a second apart along the equator at longitudes 0 to 9, with
-    /// an unusable latitude at record 3 and an unusable longitude at record 5.
-    /// A position kept as recorded is distinguishable from one placed between
-    /// the neighbouring fixes: each of the two carries a plausible value on
-    /// its other axis, far from the fixes around it.
-    fn recording_with_two_coordinates_out_of_range() -> Vec<u8> {
-        let mut recorder = NavFileBuilder::new().open();
-        for record in 0..10i64 {
-            let (lat_degrees, lon_degrees) = match record {
-                3 => (f64::NAN, 100.0),
-                5 => (45.0, -181.0),
-                _ => (0.0, record as f64),
-            };
-            recorder.add_nav_fix(
-                NavFix::builder()
-                    .time(NavFixTime::Receiver(base() + Duration::seconds(record)))
-                    .lat(Angle::degrees(lat_degrees))
-                    .lon(Angle::degrees(lon_degrees))
-                    .heading(Angle::degrees(90.0))
-                    .build(),
+            assert_eq!(
+                file.event_marker_styles
+                    .get("power/boot")
+                    .map(|style| style.color),
+                Some(MarkerColor::new(128, 128, 128))
             );
-        }
-        let mut bytes = Vec::new();
-        recorder.finish().unwrap().write(&mut bytes).unwrap();
-        bytes
-    }
-
-    fn assert_drawn_at(drawn: (Latitude, Longitude), expected_degrees: (f64, f64)) {
-        let (latitude, longitude) = drawn;
-        let (expected_latitude, expected_longitude) = expected_degrees;
-        assert!(
-            (latitude.as_degrees() - expected_latitude).abs() < DEGREE_TOLERANCE
-                && (longitude.as_degrees() - expected_longitude).abs() < DEGREE_TOLERANCE,
-            "drawn at {}, {}, expected {expected_latitude}, {expected_longitude}",
-            latitude.as_degrees(),
-            longitude.as_degrees()
-        );
-    }
-
-    fn listed_warnings(file: &LoadedFile) -> Vec<(u32, &str, &str)> {
-        file.load_warnings
-            .iter()
-            .map(|w| (w.count, w.issue.as_str(), w.description.as_str()))
-            .collect()
-    }
-
-    #[test]
-    fn fixes_with_a_coordinate_out_of_range_load_with_a_warning_naming_them() {
-        let file = load_bytes(
-            &recording_with_two_coordinates_out_of_range(),
-            "out_of_range.gtd".to_owned(),
-        )
-        .unwrap();
-
-        let track = file.tracks.first().expect("the ten fixes form one track");
-        assert_eq!(track.points.len(), 10);
-        assert_eq!(track.metadata.invalid_position_count, 2);
-        assert_eq!(
-            listed_warnings(&file),
-            vec![
-                (
+            assert_eq!(
+                listed_warnings(&file),
+                vec![(
                     1,
-                    "fix(es) with a latitude out of range",
-                    "record 3 wrote NaN°. Each is drawn between the fixes around it."
-                ),
-                (
+                    "event marker color(s) replaced with gray",
+                    "\"power/boot\": \"#ZZZZZZ\". Those markers are drawn mid-gray: the style \
+                     holds a color that is not a #RRGGBB hex value."
+                )]
+            );
+        }
+
+        #[test]
+        fn an_event_marker_icon_outside_the_known_set_loads_as_a_pin_with_a_warning_naming_the_variant()
+         {
+            let bytes = recording_with_event_marker_styles(vec![SdkEventMarkerStyle {
+                variant_path: "power/boot".to_owned(),
+                icon: SdkEventMarkerIconChoice::Unrecognized("hovercraft".to_owned()),
+                color: SdkEventMarkerColor::Auto,
+            }]);
+
+            let file = load_bytes(&bytes, "marker_icon.gtd".to_owned()).unwrap();
+
+            assert_eq!(
+                file.event_marker_styles
+                    .get("power/boot")
+                    .map(|style| style.icon),
+                Some(MarkerIcon::Pin)
+            );
+            assert_eq!(
+                listed_warnings(&file),
+                vec![(
                     1,
-                    "fix(es) with a longitude out of range",
-                    "record 5 wrote -181°. Each is drawn between the fixes around it."
-                ),
-            ]
-        );
-    }
-
-    /// Record 3 is drawn between records 2 and 4 (longitudes 2 and 4), record
-    /// 5 between records 4 and 6 (longitudes 4 and 6), both halfway in time.
-    #[test]
-    fn a_fix_with_a_coordinate_out_of_range_keeps_it_and_is_drawn_between_its_neighbours() {
-        let file = load_bytes(
-            &recording_with_two_coordinates_out_of_range(),
-            "out_of_range.gtd".to_owned(),
-        )
-        .unwrap();
-
-        let track = file.tracks.first().expect("the ten fixes form one track");
-        let placed = track.placed_points().expect("the track has a geometry");
-        let out_of_range_latitude = placed.get(3).expect("record 3");
-        let out_of_range_longitude = placed.get(5).expect("record 5");
-
-        assert!(out_of_range_latitude.fix.tpv.lat().as_written().is_nan());
-        assert_eq!(
-            out_of_range_latitude.fix.tpv.lon(),
-            RecordedLongitude::from_degrees(100.0)
-        );
-        assert_eq!(
-            out_of_range_longitude.fix.tpv.lat(),
-            RecordedLatitude::from_degrees(45.0)
-        );
-        assert_eq!(
-            out_of_range_longitude.fix.tpv.lon(),
-            RecordedLongitude::from_degrees(-181.0)
-        );
-        assert_drawn_at(out_of_range_latitude.resolved_position(), (0.0, 3.0));
-        assert_drawn_at(out_of_range_longitude.resolved_position(), (0.0, 5.0));
-    }
-
-    /// A recording no fix of which has a position has nowhere to draw its
-    /// track, and still loads: the fixes reach the plot and the history, and
-    /// the warning lists the records.
-    #[test]
-    fn a_recording_whose_every_latitude_is_nan_loads_with_tracks_that_have_no_geometry() {
-        let mut recorder = NavFileBuilder::new().open();
-        for record in 0..3i64 {
-            recorder.add_nav_fix(
-                NavFix::builder()
-                    .time(NavFixTime::Receiver(base() + Duration::seconds(record)))
-                    .lat(Angle::degrees(f64::NAN))
-                    .lon(Angle::degrees(12.0))
-                    .heading(Angle::degrees(90.0))
-                    .build(),
+                    "event marker icon(s) replaced with the pin",
+                    "\"power/boot\": \"hovercraft\". Those markers are drawn as a pin: the style \
+                     names an icon this version of GeoTrace does not have."
+                )]
             );
         }
-        let mut bytes = Vec::new();
-        recorder.finish().unwrap().write(&mut bytes).unwrap();
 
-        let file = load_bytes(&bytes, "no_position.gtd".to_owned()).unwrap();
+        /// The last style written for a variant path is the one every marker on it
+        /// is drawn with: the styles reach the builder in the order the file holds
+        /// them.
+        #[test]
+        fn several_styles_for_one_variant_path_load_as_the_last_one_with_a_warning_listing_the_path()
+         {
+            let bytes = recording_with_event_marker_styles(vec![
+                event_marker_style("power/boot", "#112233"),
+                event_marker_style("power/boot", "#445566"),
+                event_marker_style("power/shutdown", "#778899"),
+            ]);
 
-        let track = file.tracks.first().expect("the three fixes form one track");
-        assert_eq!(track.points.len(), 3);
-        assert_eq!(track.geometry, TrackGeometry::NoValidPosition);
-        assert!(track.placed_points().is_none());
-        assert_eq!(track.metadata.invalid_position_count, 3);
-        let warnings: Vec<(u32, &str)> = file
-            .load_warnings
-            .iter()
-            .map(|w| (w.count, w.issue.as_str()))
-            .collect();
-        assert_eq!(warnings, vec![(3, "fix(es) with a latitude out of range")]);
-    }
+            let file = load_bytes(&bytes, "repeated_style.gtd".to_owned()).unwrap();
 
-    /// An SNR inside the ≈ 99 dB-Hz band the firmware writes for "no
-    /// measurement".
-    const NO_DATA_SNR_DB: f32 = gt_types::satellites::NO_DATA_SENTINEL_DB_HZ;
-
-    /// A color field a file can hold that is not a `#RRGGBB` hex value.
-    const COLOR_THAT_IS_NOT_HEX: &str = "#ZZZZZZ";
-
-    fn gps_row(prn: u32, snr_db: f32, in_fix: bool) -> SdkSat {
-        SdkSat::builder()
-            .constellation(SdkConst::Gps)
-            .prn(prn)
-            .elevation(REPEATED_ELEVATION_DEG)
-            .azimuth(90.0f32)
-            .snr(snr_db)
-            .in_fix(in_fix)
-            .build()
-    }
-
-    /// One fix per report, a second apart, each fix carrying the rows of its
-    /// report.
-    fn recording_with_satellite_reports(reports: Vec<Vec<SdkSat>>) -> Vec<u8> {
-        let mut recorder = NavFileBuilder::new().open();
-        for (second, tracked) in (0i64..).zip(reports) {
-            let time = base() + Duration::seconds(second);
-            recorder.add_nav_fix(minimal_fix(time));
-            recorder.add_satellite_report(
-                SatelliteReport::builder()
-                    .time(NavFixTime::Receiver(time))
-                    .tracked(tracked)
-                    .build(),
+            assert_eq!(
+                file.event_marker_styles
+                    .get("power/boot")
+                    .map(|style| style.color),
+                Some(MarkerColor::new(0x44, 0x55, 0x66))
+            );
+            assert_eq!(
+                file.event_marker_styles
+                    .get("power/shutdown")
+                    .map(|style| style.color),
+                Some(MarkerColor::new(0x77, 0x88, 0x99)),
+                "the style of the path written once is the one it was written with"
+            );
+            assert_eq!(
+                listed_warnings(&file),
+                vec![(
+                    1,
+                    "event marker variant path(s) with several styles",
+                    "\"power/boot\": 2 styles. Every marker on those paths is drawn with the \
+                     last style the recording holds for it: one style is kept per variant path."
+                )]
             );
         }
-        let mut bytes = Vec::new();
-        recorder.finish().unwrap().write(&mut bytes).unwrap();
-        bytes
-    }
-
-    /// Two warnings are raised for a file that repeats a satellite: the SDK's,
-    /// about the file being malformed, and the loader's, about what the app
-    /// made of the repeated rows.
-    #[test]
-    fn satellites_merged_from_several_rows_load_with_a_warning_naming_them() {
-        let bytes = recording_with_satellite_reports(vec![
-            vec![
-                gps_row(7, 45.0, true),
-                gps_row(7, 30.0, true),
-                gps_row(1, 40.0, true),
-            ],
-            vec![gps_row(1, 40.0, true)],
-            vec![
-                gps_row(7, 45.0, true),
-                gps_row(7, 30.0, true),
-                gps_row(7, 25.0, false),
-            ],
-        ]);
-
-        let file = load_bytes(&bytes, "repeated_rows.gtd".to_owned()).unwrap();
-
-        assert_eq!(
-            listed_warnings(&file),
-            vec![
-                (
-                    2,
-                    "satellite(s) merged from several rows of one report",
-                    "record 0: G07 on 2 rows, record 2: G07 on 3 rows. Every satellite \
-                     count shown is one per satellite, not one per row: the merged \
-                     satellite takes the highest SNR measured on its rows, the first \
-                     elevation and azimuth reported, and is in the fix when any row was."
-                ),
-                (
-                    2,
-                    "satellite report(s) with duplicate (constellation, PRN) pairs",
-                    "each satellite should appear at most once per report"
-                ),
-            ]
-        );
-    }
-
-    #[test]
-    fn two_merged_satellites_of_one_report_are_named_in_the_order_they_first_appear() {
-        let bytes = recording_with_satellite_reports(vec![
-            vec![
-                gps_row(7, 45.0, true),
-                gps_row(1, 40.0, true),
-                gps_row(1, 30.0, true),
-                gps_row(7, 30.0, true),
-            ],
-            vec![gps_row(1, 40.0, true)],
-        ]);
-
-        let file = load_bytes(&bytes, "repeated_rows.gtd".to_owned()).unwrap();
-
-        assert_eq!(
-            listed_warnings(&file)
-                .into_iter()
-                .find(|(_, issue, _)| *issue == MERGED_SATELLITE_ROWS.issue)
-                .map(|(count, _, description)| (
-                    count,
-                    description.split_once(". ").map(|(listed, _)| listed)
-                )),
-            Some((2, Some("record 0: G07 on 2 rows, record 0: G01 on 2 rows")))
-        );
-    }
-
-    #[test]
-    fn a_no_data_snr_loads_unchanged() {
-        let bytes = recording_with_satellite_reports(vec![
-            vec![gps_row(1, NO_DATA_SNR_DB, true), gps_row(7, 40.0, true)],
-            vec![gps_row(1, NO_DATA_SNR_DB, true)],
-            vec![gps_row(7, 40.0, true)],
-        ]);
-
-        let file = load_bytes(&bytes, "no_data_snr.gtd".to_owned()).unwrap();
-
-        assert_eq!(
-            listed_warnings(&file),
-            vec![(
-                2,
-                "satellite(s) with SNR ≈ 99 dB-Hz",
-                "common firmware sentinel for unavailable signal strength; omit \
-                    the SNR field when no measurement is available"
-            )]
-        );
-        let readings: Vec<f32> = file
-            .tracks
-            .iter()
-            .flat_map(|track| &track.points)
-            .filter_map(|point| point.satellites.as_ref())
-            .flat_map(Satellites::satellites)
-            .filter(|satellite| satellite.prn() == 1)
-            .filter_map(|satellite| satellite.snr().map(|snr| snr.value()))
-            .collect();
-        assert_eq!(readings, vec![NO_DATA_SNR_DB; 2]);
-    }
-
-    /// Three fixes a second apart, and the event marker styles in `styles`, in
-    /// the order they are written.
-    fn recording_with_event_marker_styles(styles: Vec<SdkEventMarkerStyle>) -> Vec<u8> {
-        let mut recorder = NavFileBuilder::new().open();
-        for second in 0..3i64 {
-            recorder.add_nav_fix(minimal_fix(base() + Duration::seconds(second)));
-        }
-        for style in styles {
-            recorder.add_event_marker_style(style);
-        }
-        let mut bytes = Vec::new();
-        recorder.finish().unwrap().write(&mut bytes).unwrap();
-        bytes
-    }
-
-    fn event_marker_style(variant_path: &str, color_hex: &str) -> SdkEventMarkerStyle {
-        SdkEventMarkerStyle {
-            variant_path: variant_path.to_owned(),
-            icon: SdkEventMarkerIconChoice::Auto,
-            color: SdkEventMarkerColor::hex(color_hex),
-        }
-    }
-
-    #[test]
-    fn an_event_marker_color_that_is_not_hex_loads_as_gray_with_a_warning_naming_the_variant() {
-        let bytes = recording_with_event_marker_styles(vec![event_marker_style(
-            "power/boot",
-            COLOR_THAT_IS_NOT_HEX,
-        )]);
-
-        let file = load_bytes(&bytes, "marker_color.gtd".to_owned()).unwrap();
-
-        assert_eq!(
-            file.event_marker_styles
-                .get("power/boot")
-                .map(|style| style.color),
-            Some(MarkerColor::new(128, 128, 128))
-        );
-        assert_eq!(
-            listed_warnings(&file),
-            vec![(
-                1,
-                "event marker color(s) replaced with gray",
-                "\"power/boot\": \"#ZZZZZZ\". Those markers are drawn mid-gray: the style \
-                 holds a color that is not a #RRGGBB hex value."
-            )]
-        );
-    }
-
-    #[test]
-    fn an_event_marker_icon_outside_the_known_set_loads_as_a_pin_with_a_warning_naming_the_variant()
-    {
-        let bytes = recording_with_event_marker_styles(vec![SdkEventMarkerStyle {
-            variant_path: "power/boot".to_owned(),
-            icon: SdkEventMarkerIconChoice::Unrecognized("hovercraft".to_owned()),
-            color: SdkEventMarkerColor::Auto,
-        }]);
-
-        let file = load_bytes(&bytes, "marker_icon.gtd".to_owned()).unwrap();
-
-        assert_eq!(
-            file.event_marker_styles
-                .get("power/boot")
-                .map(|style| style.icon),
-            Some(MarkerIcon::Pin)
-        );
-        assert_eq!(
-            listed_warnings(&file),
-            vec![(
-                1,
-                "event marker icon(s) replaced with the pin",
-                "\"power/boot\": \"hovercraft\". Those markers are drawn as a pin: the style \
-                 names an icon this version of GeoTrace does not have."
-            )]
-        );
-    }
-
-    /// The last style written for a variant path is the one every marker on it
-    /// is drawn with: the styles reach the builder in the order the file holds
-    /// them.
-    #[test]
-    fn several_styles_for_one_variant_path_load_as_the_last_one_with_a_warning_listing_the_path() {
-        let bytes = recording_with_event_marker_styles(vec![
-            event_marker_style("power/boot", "#112233"),
-            event_marker_style("power/boot", "#445566"),
-            event_marker_style("power/shutdown", "#778899"),
-        ]);
-
-        let file = load_bytes(&bytes, "repeated_style.gtd".to_owned()).unwrap();
-
-        assert_eq!(
-            file.event_marker_styles
-                .get("power/boot")
-                .map(|style| style.color),
-            Some(MarkerColor::new(0x44, 0x55, 0x66))
-        );
-        assert_eq!(
-            listed_warnings(&file),
-            vec![(
-                1,
-                "event marker variant path(s) with several styles",
-                "\"power/boot\": 2 styles. Every marker on those paths is drawn with the \
-                 last style the recording holds for it: one style is kept per variant path."
-            )]
-        );
     }
 }

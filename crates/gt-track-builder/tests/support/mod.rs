@@ -16,3 +16,13 @@ pub fn measured_geometry(points: &[NavPoint]) -> Option<MeasuredTrackGeometry> {
         .measured()
         .cloned()
 }
+
+/// 1e-9° is about 0.1 mm.
+pub const DEGREES_TOLERANCE: f64 = 1e-9;
+
+pub fn assert_degrees_close(actual: f64, expected: f64) {
+    assert!(
+        (actual - expected).abs() < DEGREES_TOLERANCE,
+        "expected {expected}°, got {actual}°"
+    );
+}

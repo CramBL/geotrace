@@ -104,3 +104,93 @@ macro_rules! enum_bitset {
         }
     };
 }
+
+#[cfg(test)]
+mod tests {
+    use strum::IntoEnumIterator as _;
+
+    use crate::satellites::{Constellation, ConstellationSet};
+
+    #[test]
+    fn empty_holds_no_variant_and_all_holds_every_variant() {
+        let empty = ConstellationSet::empty();
+        assert!(empty.is_empty());
+        assert!(Constellation::iter().all(|c| !empty.contains(c)));
+
+        let all = ConstellationSet::all();
+        assert!(!all.is_empty());
+        assert!(Constellation::iter().all(|c| all.contains(c)));
+    }
+
+    #[test]
+    fn single_holds_the_variant_it_names_and_no_other() {
+        for named in Constellation::iter() {
+            let set = ConstellationSet::single(named);
+            assert!(Constellation::iter().all(|c| set.contains(c) == (c == named)));
+        }
+    }
+
+    #[test]
+    fn with_and_insert_add_a_variant_and_leave_the_rest_as_they_were() {
+        let two = ConstellationSet::single(Constellation::Galileo).with(Constellation::Gps);
+        assert!(two.contains(Constellation::Gps));
+        assert!(two.contains(Constellation::Galileo));
+        assert!(!two.contains(Constellation::Beidou));
+
+        let mut built = ConstellationSet::empty();
+        built.insert(Constellation::Galileo);
+        built.insert(Constellation::Gps);
+        assert_eq!(built, two);
+    }
+
+    #[test]
+    fn a_repeated_insert_holds_the_variant_once() {
+        let mut built = ConstellationSet::empty();
+        built.insert(Constellation::Gps);
+        built.insert(Constellation::Gps);
+
+        assert_eq!(built, ConstellationSet::single(Constellation::Gps));
+    }
+
+    #[test]
+    fn set_and_remove_change_the_variant_they_name_and_leave_the_rest_as_they_were() {
+        let mut set = ConstellationSet::all();
+
+        set.set(Constellation::Gps, false);
+        assert!(!set.contains(Constellation::Gps));
+        assert!(
+            Constellation::iter()
+                .filter(|&c| c != Constellation::Gps)
+                .all(|c| set.contains(c))
+        );
+
+        set.set(Constellation::Gps, true);
+        assert_eq!(set, ConstellationSet::all());
+
+        set.remove(Constellation::Gps);
+        assert!(!set.contains(Constellation::Gps));
+        assert!(
+            Constellation::iter()
+                .filter(|&c| c != Constellation::Gps)
+                .all(|c| set.contains(c))
+        );
+    }
+
+    #[test]
+    fn a_union_holds_every_variant_of_both_sets() {
+        let union = ConstellationSet::single(Constellation::Gps)
+            .union(ConstellationSet::single(Constellation::Galileo));
+
+        assert_eq!(
+            union,
+            ConstellationSet::single(Constellation::Galileo).with(Constellation::Gps)
+        );
+    }
+
+    #[test]
+    fn a_set_collected_from_an_iterator_holds_every_variant_it_yielded() {
+        let all: ConstellationSet = Constellation::iter().collect();
+
+        assert_eq!(all, ConstellationSet::all());
+    }
+}

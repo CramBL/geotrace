@@ -7,13 +7,9 @@ use std::path::PathBuf;
 use chrono::{DateTime, Duration, Utc};
 use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::coordinates::{Latitude, Longitude};
+use gt_types::fixtures::{self, FixKind};
 use gt_types::nav_point::NavPoint;
-use gt_types::satellites::{Constellation, Satellite, Satellites};
-use gt_types::time_types::GpsTime;
-use gt_types::tpv::TimePositionVelocity;
 use gt_types::track::{FileSource, MeasuredTrackGeometry};
-use uom::si::angle::degree;
-use uom::si::f64::Angle;
 use uom::si::length::{kilometer, meter};
 
 /// Every fix of the track shares this latitude.
@@ -21,8 +17,6 @@ const LATITUDE_DEGREES: f64 = 55.0;
 
 const FIRST_LON_DEGREES: f64 = 12.0;
 const LAST_LON_DEGREES: f64 = 12.002;
-
-const SATELLITES_IN_FIX: u32 = 12;
 
 /// 1e-9° is about 0.1 mm.
 const DEGREES_TOLERANCE: f64 = 1e-9;
@@ -32,34 +26,29 @@ const DEGREES_TOLERANCE: f64 = 1e-9;
 /// haversine round trip cost anything.
 const METERS_TOLERANCE: f64 = 0.001;
 
-fn gps_time(secs: i64) -> GpsTime {
-    GpsTime::from_utc(DateTime::<Utc>::UNIX_EPOCH + Duration::seconds(secs))
+fn utc_time(secs: i64) -> DateTime<Utc> {
+    DateTime::<Utc>::UNIX_EPOCH + Duration::seconds(secs)
 }
 
 /// A measured fix: heading present and a full solution behind it.
 fn measured_fix(secs: i64, lon_degrees: f64) -> NavPoint {
-    let time = gps_time(secs);
-    let tpv = TimePositionVelocity::builder()
-        .time(time)
-        .lat(Latitude::new(LATITUDE_DEGREES))
-        .lon(Longitude::new(lon_degrees))
-        .heading(Angle::new::<degree>(90.0))
-        .build();
-    let satellites = (1..=SATELLITES_IN_FIX)
-        .map(|prn| Satellite::new(Constellation::Gps, prn, None, None, None, true))
-        .collect();
-    NavPoint::new(tpv, Some(Satellites::new(Some(time), None, satellites)))
+    fixtures::nav_point(
+        utc_time(secs),
+        Latitude::new(LATITUDE_DEGREES),
+        Longitude::new(lon_degrees),
+        FixKind::Measured,
+    )
 }
 
 /// An epoch the receiver dead-reckoned and wrote at the null island: no heading
 /// and no satellite report, so the builder redraws it between its neighbours.
 fn ghost_fix_at_the_null_island(secs: i64) -> NavPoint {
-    let tpv = TimePositionVelocity::builder()
-        .time(gps_time(secs))
-        .lat(Latitude::new(0.0))
-        .lon(Longitude::new(0.0))
-        .build();
-    NavPoint::new(tpv, None)
+    fixtures::nav_point(
+        utc_time(secs),
+        Latitude::new(0.0),
+        Longitude::new(0.0),
+        FixKind::GhostWithoutHeading,
+    )
 }
 
 /// Geometry of a track of two measured fixes 0.002° of longitude apart, with a

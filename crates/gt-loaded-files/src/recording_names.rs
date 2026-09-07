@@ -145,49 +145,11 @@ fn common_path_prefix_len(names: &[&str]) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use rustc_hash::FxHashMap;
-
-    use gt_types::{FileIdx, FileMetadata, LoadedFile, TrackIdx, TrackRef};
+    use gt_types::{FileIdx, TrackIdx, TrackRef};
 
     use super::{RecordingNames, common_path_prefix_len};
+    use crate::test_util;
     use crate::{FileHistory, LoadedFiles};
-
-    fn file(filename: &str, title: Option<&str>) -> LoadedFile {
-        LoadedFile {
-            metadata: FileMetadata {
-                filename: filename.to_owned(),
-                title: title.map(ToOwned::to_owned),
-                ..gt_test_utils::empty_file_metadata()
-            },
-            tracks: Vec::new(),
-            event_marker_styles: FxHashMap::default(),
-            orphaned_event_markers: Vec::new(),
-            source: gt_types::FileSource::GtdPath(std::path::PathBuf::new()),
-            load_warnings: Vec::new(),
-        }
-    }
-
-    /// The same file with `track_count` tracks, which is what decides whether
-    /// a track label carries a track number.
-    fn file_with_tracks(filename: &str, title: Option<&str>, track_count: usize) -> LoadedFile {
-        LoadedFile {
-            tracks: (0..track_count)
-                .map(|_| gt_test_utils::loaded_track_with_points(Vec::new()))
-                .collect(),
-            ..file(filename, title)
-        }
-    }
-
-    fn meta() -> gt_history_types::RecordingMeta {
-        gt_history_types::RecordingMeta {
-            time_range: None,
-            nav_point_count: 0,
-            sat_report_count: 0,
-            marker_count: 0,
-            event_marker_count: 0,
-            gtd_size_bytes: 0,
-        }
-    }
 
     fn names(template: &str, files: &LoadedFiles) -> Vec<String> {
         let resolved = RecordingNames::resolve(files.view(), template);
@@ -200,8 +162,12 @@ mod tests {
     fn identity_token_drops_the_auto_prefix() {
         let mut files = LoadedFiles::new();
         files.push(
-            file("ride.gtd", None),
-            FileHistory::recording("auto:Morning ride".to_owned(), meta(), None),
+            test_util::named_file("ride.gtd", None),
+            FileHistory::recording(
+                "auto:Morning ride".to_owned(),
+                test_util::empty_recording_meta(),
+                None,
+            ),
         );
         assert_eq!(names("{identity}", &files), ["Morning ride"]);
     }
@@ -209,19 +175,28 @@ mod tests {
     #[test]
     fn metadata_tokens_render_and_fall_back_to_the_filename() {
         let mut files = LoadedFiles::new();
-        files.push(file("ride.gtd", Some("Morning ride")), FileHistory::None);
+        files.push(
+            test_util::named_file("ride.gtd", Some("Morning ride")),
+            FileHistory::None,
+        );
         assert_eq!(names("{title}", &files), ["Morning ride"]);
 
         let mut untitled = LoadedFiles::new();
-        untitled.push(file("ride.gtd", None), FileHistory::None);
+        untitled.push(test_util::named_file("ride.gtd", None), FileHistory::None);
         assert_eq!(names("{title}", &untitled), ["ride.gtd"]);
     }
 
     #[test]
     fn filename_token_drops_the_shared_directory_prefix() {
         let mut files = LoadedFiles::new();
-        files.push(file("/home/user/rec/a.gtd", None), FileHistory::None);
-        files.push(file("/home/user/rec/b.gtd", None), FileHistory::None);
+        files.push(
+            test_util::named_file("/home/user/rec/a.gtd", None),
+            FileHistory::None,
+        );
+        files.push(
+            test_util::named_file("/home/user/rec/b.gtd", None),
+            FileHistory::None,
+        );
         assert_eq!(names("{filename}", &files), ["a.gtd", "b.gtd"]);
     }
 
@@ -231,8 +206,14 @@ mod tests {
     #[test]
     fn a_recording_is_named_by_its_session_identity_while_it_is_loaded() {
         let mut files = LoadedFiles::new();
-        files.push(file("a.gtd", Some("Morning ride")), FileHistory::None);
-        files.push(file("b.gtd", Some("Evening ride")), FileHistory::None);
+        files.push(
+            test_util::named_file("a.gtd", Some("Morning ride")),
+            FileHistory::None,
+        );
+        files.push(
+            test_util::named_file("b.gtd", Some("Evening ride")),
+            FileHistory::None,
+        );
         let evening = files
             .view()
             .get(1)
@@ -253,67 +234,31 @@ mod tests {
         );
     }
 
-    #[test]
-    fn empty_slice_returns_zero() {
-        assert_eq!(common_path_prefix_len(&[]), 0);
-    }
-
-    #[test]
-    fn single_name_returns_zero() {
-        assert_eq!(
-            common_path_prefix_len(&["/home/user/recordings/ride.gtd"]),
-            0
-        );
-    }
-
-    #[test]
-    fn no_path_separators_returns_zero() {
-        assert_eq!(common_path_prefix_len(&["ride_0.gtd", "ride_1.gtd"]), 0);
-    }
-
-    #[test]
-    fn shared_directory_prefix_is_stripped() {
-        let names = [
-            "/home/user/recordings/2024-01-15.gtd",
-            "/home/user/recordings/2024-01-16.gtd",
-        ];
-        assert_eq!(
-            common_path_prefix_len(&names),
-            "/home/user/recordings/".len()
-        );
-    }
-
-    #[test]
-    fn common_bytes_mid_component_trims_to_last_separator() {
-        // "/home/user/recordings/…" vs "/home/user/recent/…" share "/home/user/"
-        // even though more bytes match inside the next component.
-        let names = ["/home/user/recordings/a.gtd", "/home/user/recent/b.gtd"];
-        assert_eq!(common_path_prefix_len(&names), "/home/user/".len());
-    }
-
-    #[test]
-    fn no_common_directory_prefix_strips_only_root_slash() {
-        // The only shared byte is the leading '/', so we strip that.
-        let names = ["/alpha/a.gtd", "/beta/b.gtd"];
-        assert_eq!(common_path_prefix_len(&names), 1);
-    }
-
-    #[test]
-    fn truly_no_common_prefix_returns_zero() {
-        let names = ["alpha/a.gtd", "beta/b.gtd"];
-        assert_eq!(common_path_prefix_len(&names), 0);
-    }
-
-    #[test]
-    fn windows_backslash_separator() {
-        let names = [
-            r"C:\Users\alice\recordings\ride_a.gtd",
-            r"C:\Users\alice\recordings\ride_b.gtd",
-        ];
-        assert_eq!(
-            common_path_prefix_len(&names),
-            r"C:\Users\alice\recordings\".len()
-        );
+    /// Every displayed filename keeps a whole path component: a shared prefix
+    /// is stripped only up to the last separator inside it.
+    #[rstest::rstest]
+    #[case::no_names(&[], 0)]
+    #[case::one_name(&["/home/user/recordings/ride.gtd"], 0)]
+    #[case::names_without_a_separator(&["ride_0.gtd", "ride_1.gtd"], 0)]
+    #[case::a_shared_directory(
+        &["/home/user/recordings/2024-01-15.gtd", "/home/user/recordings/2024-01-16.gtd"],
+        "/home/user/recordings/".len()
+    )]
+    #[case::shared_bytes_inside_the_next_component(
+        &["/home/user/recordings/a.gtd", "/home/user/recent/b.gtd"],
+        "/home/user/".len()
+    )]
+    #[case::the_root_alone(&["/alpha/a.gtd", "/beta/b.gtd"], 1)]
+    #[case::nothing_shared(&["alpha/a.gtd", "beta/b.gtd"], 0)]
+    #[case::a_shared_directory_written_with_backslashes(
+        &[r"C:\Users\alice\recordings\ride_a.gtd", r"C:\Users\alice\recordings\ride_b.gtd"],
+        r"C:\Users\alice\recordings\".len()
+    )]
+    fn common_path_prefix_len_stops_at_the_last_shared_separator(
+        #[case] names: &[&str],
+        #[case] expected_len: usize,
+    ) {
+        assert_eq!(common_path_prefix_len(names), expected_len);
     }
 
     /// A track is named by its recording, and by its number within it once
@@ -331,7 +276,7 @@ mod tests {
     ) {
         let mut files = LoadedFiles::new();
         files.push(
-            file_with_tracks("ride.gtd", Some("Morning ride"), track_count),
+            test_util::named_file_with_tracks("ride.gtd", Some("Morning ride"), track_count),
             FileHistory::None,
         );
         let names = RecordingNames::resolve(files.view(), template);

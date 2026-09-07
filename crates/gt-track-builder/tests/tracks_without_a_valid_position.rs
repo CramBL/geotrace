@@ -6,26 +6,20 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, Utc};
 use gt_track_builder::{FileMeta, SegmentationConfig, segment};
-use gt_types::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
+use gt_types::coordinates::{Latitude, Longitude};
+use gt_types::fixtures::{self, FixKind};
 use gt_types::markers::EventMarker;
 use gt_types::nav_point::{NavPoint, ResolvedPosition};
-use gt_types::time_types::GpsTime;
-use gt_types::tpv::TimePositionVelocity;
 use gt_types::track::{FileSource, LoadedFile, TrackGeometry};
-use uom::si::angle::degree;
-use uom::si::f64::Angle;
 
 /// A fix the receiver stamped but wrote no usable latitude for.
 fn fix_without_a_valid_position(seconds: i64) -> NavPoint {
-    let tpv = TimePositionVelocity::builder()
-        .time(GpsTime::from_utc(
-            DateTime::<Utc>::UNIX_EPOCH + Duration::seconds(seconds),
-        ))
-        .lat(RecordedLatitude::from_degrees(91.0))
-        .lon(RecordedLongitude::from_degrees(12.0))
-        .heading(Angle::new::<degree>(90.0))
-        .build();
-    NavPoint::new(tpv, None)
+    fixtures::nav_point(
+        DateTime::<Utc>::UNIX_EPOCH + Duration::seconds(seconds),
+        Latitude::new(55.0),
+        Longitude::new(12.0),
+        FixKind::WithoutAPosition,
+    )
 }
 
 fn build(points: &[NavPoint], event_markers: Vec<EventMarker>) -> LoadedFile {

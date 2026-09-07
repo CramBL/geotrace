@@ -214,18 +214,20 @@ mod tests {
         assert_eq!((a - b).num_milliseconds(), 2000);
     }
 
-    #[test]
-    fn offset_from_sys_positive_means_gps_ahead() {
-        let g = gps(1000); // GPS at t=1s
-        let s = sys(400); // `sys` at t=0.4s → GPS 600 ms ahead
-        assert_eq!(g.offset_from_sys(s).num_milliseconds(), 600);
-    }
-
-    #[test]
-    fn offset_from_sys_negative_means_sys_ahead() {
-        let g = gps(400); // GPS at t=0.4s
-        let s = sys(1000); // `sys` at t=1s → the system clock is 600 ms ahead
-        assert_eq!(g.offset_from_sys(s).num_milliseconds(), -600);
+    #[rstest::rstest]
+    #[case::gps_ahead(1000, 400, 600)]
+    #[case::sys_ahead(400, 1000, -600)]
+    fn offset_from_sys_is_the_gps_time_less_the_system_time(
+        #[case] gps_millis: i64,
+        #[case] sys_millis: i64,
+        #[case] expected_offset_millis: i64,
+    ) {
+        assert_eq!(
+            gps(gps_millis)
+                .offset_from_sys(sys(sys_millis))
+                .num_milliseconds(),
+            expected_offset_millis
+        );
     }
 
     #[test]

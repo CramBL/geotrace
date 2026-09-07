@@ -1073,16 +1073,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_directory_without_a_status_file_reads_as_absent() {
-        let directory = tempfile::tempdir().expect("temp dir");
-
-        assert_eq!(
-            InstanceStatusRead::read_from(directory.path()),
-            InstanceStatusRead::Absent
-        );
-    }
-
     /// A directory in place of the status file fails `fs::read` with an error
     /// other than `NotFound`.
     #[test]

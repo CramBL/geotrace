@@ -1,58 +1,37 @@
-//! Generates `tests/fixtures/snapshot.gtd` at the workspace root and verifies
-//! the structure produced by `gt_loader::load_file`.
-//!
-//! The fixture is deterministic so it can be committed and referenced by GUI
-//! snapshot tests.
+//! What the loader makes of a recording holding a fix loss and a gap: the
+//! tracks it cuts the fixes into, the markers on each, and what each measures.
 //!
 //! ## Layout
 //!
-//! Track 0 - 12 points at 30 s intervals, all with satellite reports.
-//!   Points 0-4: GPS fix held (5 satellites in fix).
-//!   Point 5:    fix lost (0 in fix)   -> generates GnssFixLost marker.
-//!   Point 6:    still lost.
-//!   Point 7:    fix regained (4 in fix) -> generates GnssFixRegained marker.
-//!   Points 8-11: fix maintained.
+//! Track 0 - 12 fixes at 30 s intervals, all with satellite reports.
+//!   Fixes 0-4:  GPS fix held (5 satellites in fix).
+//!   Fix 5:      fix lost (0 in fix)     -> generates a GnssFixLost marker.
+//!   Fix 6:      still lost.
+//!   Fix 7:      fix regained (4 in fix) -> generates a GnssFixRegained marker.
+//!   Fixes 8-11: fix held.
 //!   Custom markers at t+75 ("Bike lock spot") and t+225 ("Coffee stop").
 //!
-//! 7-minute gap between tracks.
+//! 7-minute gap between the tracks.
 //!
-//! Track 1 - 8 points at 30 s intervals, no satellite reports.
+//! Track 1 - 8 fixes at 30 s intervals, no satellite reports.
 //!   Custom marker at t+780 ("Checkpoint").
 
 #![expect(
     clippy::expect_used,
-    reason = "test fixture helpers use expect() for setup invariants"
+    reason = "the fixture builder beside the test is not covered by clippy's in-test relaxations"
 )]
 #![expect(
     clippy::indexing_slicing,
-    reason = "test fixture uses known-length arrays indexed within bounds"
+    reason = "the fixture indexes its own arrays of a known length"
 )]
-#![expect(
-    clippy::cognitive_complexity,
-    reason = "test fixture setup is inherently complex"
-)]
-
-use std::{fs, path::PathBuf};
 
 use geotrace_sdk::{
     Angle, Annotation, Constellation as SdkConst, DateTime, Duration, MarkerIcon as SdkIcon,
     NavFileBuilder, NavFix, NavFixTime, Satellite as SdkSat, SatelliteReport, Utc, Velocity,
 };
-use gt_test_utils::assert_matches_sequence;
 use gt_types::GeneratedMarkerKind;
 use uom::si::f64::Length;
 use uom::si::length::kilometer;
-
-fn fixture_path() -> PathBuf {
-    // The workspace root is two levels up from crates/gt-loader.
-    let manifest = gt_test_utils::cargo_manifest_dir();
-    let workspace = manifest
-        .parent()
-        .expect("crates/ dir")
-        .parent()
-        .expect("workspace root");
-    workspace.join("tests/fixtures/snapshot.gtd")
-}
 
 /// 2024-06-15 08:00:00 UTC
 fn base() -> DateTime<Utc> {
@@ -95,12 +74,12 @@ fn satellite_report(
         .build()
 }
 
-fn build_snapshot_bytes() -> Vec<u8> {
+fn recording_bytes() -> Vec<u8> {
     let base = base();
     let mut recorder = NavFileBuilder::new().with_scrubbed_provenance().open();
 
     // Track 0: 12 points, Copenhagen area moving NE, all with satellite data
-    let trip0_lats = [
+    let first_track_lats = [
         55.6760_f64,
         55.6766,
         55.6772,
@@ -114,7 +93,7 @@ fn build_snapshot_bytes() -> Vec<u8> {
         55.6820,
         55.6826,
     ];
-    let trip0_lons = [
+    let first_track_lons = [
         12.5683_f64,
         12.5689,
         12.5695,
@@ -150,8 +129,8 @@ fn build_snapshot_bytes() -> Vec<u8> {
         recorder.add_nav_fix(
             NavFix::builder()
                 .time(NavFixTime::Receiver(pt_time))
-                .lat(a(trip0_lats[i]))
-                .lon(a(trip0_lons[i]))
+                .lat(a(first_track_lats[i]))
+                .lon(a(first_track_lons[i]))
                 .heading(a(45.0))
                 .speed(v(2.6))
                 .build(),
@@ -179,7 +158,7 @@ fn build_snapshot_bytes() -> Vec<u8> {
 
     // Track 1: 8 points, starts 7 min after Track 0 ends (t+330 → t+750)
     // No satellite data, slightly different area
-    let trip1_lats = [
+    let second_track_lats = [
         55.6750_f64,
         55.6757,
         55.6764,
@@ -189,7 +168,7 @@ fn build_snapshot_bytes() -> Vec<u8> {
         55.6792,
         55.6799,
     ];
-    let trip1_lons = [
+    let second_track_lons = [
         12.5600_f64,
         12.5607,
         12.5614,
@@ -205,8 +184,8 @@ fn build_snapshot_bytes() -> Vec<u8> {
         recorder.add_nav_fix(
             NavFix::builder()
                 .time(NavFixTime::Receiver(pt_time))
-                .lat(a(trip1_lats[i]))
-                .lon(a(trip1_lons[i]))
+                .lat(a(second_track_lats[i]))
+                .lon(a(second_track_lons[i]))
                 .heading(a(45.0))
                 .speed(v(3.0))
                 .build(),
@@ -235,15 +214,13 @@ fn build_snapshot_bytes() -> Vec<u8> {
 }
 
 #[test]
-fn generate_and_verify_snapshot_fixture() {
-    let path = fixture_path();
-    fs::create_dir_all(path.parent().expect("fixture path has parent"))
-        .expect("can create fixtures directory");
-
-    let bytes = build_snapshot_bytes();
-    fs::write(&path, &bytes).expect("can write fixture file");
-
-    let loaded = gt_loader::load_file(&path).expect("fixture loads without error");
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "one test reads the whole layout the recording loads as"
+)]
+fn a_recording_with_a_fix_loss_and_a_gap_loads_as_two_tracks_with_their_markers() {
+    let loaded = gt_loader::load_bytes(&recording_bytes(), "recording.gtd".to_owned())
+        .expect("the recording loads without error");
 
     // Two tracks separated by a >5-minute gap
     assert_eq!(loaded.tracks.len(), 2, "expected 2 tracks");
@@ -275,17 +252,17 @@ fn generate_and_verify_snapshot_fixture() {
     );
     assert!(t0.metadata.has_custom_markers, "track 0 has custom markers");
 
-    let gen_kinds: Vec<_> = t0
-        .generated_markers
-        .iter()
-        .map(|m| m.kind.clone())
-        .collect();
-    assert_matches_sequence!(
-        gen_kinds,
-        [
-            GeneratedMarkerKind::GnssFixLost,
-            GeneratedMarkerKind::GnssFixRegained { .. }
-        ]
+    let generated_kinds: Vec<&GeneratedMarkerKind> =
+        t0.generated_markers.iter().map(|m| &m.kind).collect();
+    assert!(
+        matches!(
+            generated_kinds.as_slice(),
+            [
+                GeneratedMarkerKind::GnssFixLost,
+                GeneratedMarkerKind::GnssFixRegained { .. }
+            ]
+        ),
+        "track 0's generated markers are {generated_kinds:?}"
     );
 
     let mut custom = t0.custom_markers.iter();
@@ -325,7 +302,7 @@ fn generate_and_verify_snapshot_fixture() {
     assert_eq!(checkpoint.label, "Checkpoint");
 
     // File-level metadata
-    assert_eq!(loaded.metadata.filename, "snapshot.gtd");
+    assert_eq!(loaded.metadata.filename, "recording.gtd");
     let total_distance = loaded
         .metadata
         .total_distance

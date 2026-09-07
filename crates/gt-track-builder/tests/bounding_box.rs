@@ -1,33 +1,29 @@
-//! A track's `bounding_box` and `merc_bounds` when it crosses the
-//! antimeridian, and for the ordinary tracks that must stay unaffected.
+//! A track's `bounding_box` and `merc_bounds`: over an ordinary track, over
+//! one crossing the antimeridian, and over one circling a pole.
+//!
+//! The box around a track that circles a pole is the polar cap holding it:
+//! every meridian, and latitudes from the southernmost fix to the pole. No
+//! longitude arc frames such a track, which reaches every meridian without
+//! crossing any of them twice.
 
 mod support;
 
 use chrono::{DateTime, Duration};
 use gt_types::coordinates::{Latitude, Longitude};
+use gt_types::fixtures::{self, FixKind};
+use gt_types::mercator;
 use gt_types::nav_point::NavPoint;
-use gt_types::time_types::GpsTime;
-use gt_types::tpv::TimePositionVelocity;
 use rstest::rstest;
-use uom::si::angle::degree;
-use uom::si::f64::Angle;
 use uom::si::length::meter;
-
-use support::measured_geometry;
-
-/// 1e-9° is about 0.1 mm.
-const DEGREES_TOLERANCE: f64 = 1e-9;
 
 /// One fix at second `t`.
 fn fix(t: i64, lat: Latitude, lon: Longitude) -> NavPoint {
-    let time = GpsTime::from_utc(DateTime::UNIX_EPOCH + Duration::seconds(t));
-    let tpv = TimePositionVelocity::builder()
-        .time(time)
-        .lat(lat)
-        .lon(lon)
-        .heading(Angle::new::<degree>(90.0))
-        .build();
-    NavPoint::new(tpv, None)
+    fixtures::nav_point(
+        DateTime::UNIX_EPOCH + Duration::seconds(t),
+        lat,
+        lon,
+        FixKind::Measured,
+    )
 }
 
 /// An eastbound equatorial track stepping over the antimeridian:
@@ -42,23 +38,16 @@ fn antimeridian_track() -> vec1::Vec1<NavPoint> {
     ]
 }
 
-fn assert_degrees_close(actual: f64, expected: f64) {
-    assert!(
-        (actual - expected).abs() < DEGREES_TOLERANCE,
-        "expected {expected}°, got {actual}°"
-    );
-}
-
 /// The box around a track crossing the antimeridian covers the 1.5° the track
 /// actually spans, not the 359.4° between its raw extremes.
 #[test]
 fn bounding_box_across_the_antimeridian_covers_the_span_the_track_flew() {
-    let bounds = measured_geometry(&antimeridian_track())
+    let bounds = support::measured_geometry(&antimeridian_track())
         .expect("every fix has a recorded position")
         .bounding_box;
 
-    assert_degrees_close(bounds.lon.start().as_degrees(), 179.0);
-    assert_degrees_close(bounds.lon.span_degrees(), 1.5);
+    support::assert_degrees_close(bounds.lon.start().as_degrees(), 179.0);
+    support::assert_degrees_close(bounds.lon.span_degrees(), 1.5);
 }
 
 /// The centre of the box must land on the track: the side panel centres the
@@ -69,7 +58,7 @@ fn bounding_box_across_the_antimeridian_covers_the_span_the_track_flew() {
 #[test]
 fn bounding_box_center_across_the_antimeridian_lands_on_the_track() {
     let points = antimeridian_track();
-    let geometry = measured_geometry(&points).expect("every fix has a recorded position");
+    let geometry = support::measured_geometry(&points).expect("every fix has a recorded position");
     let (center_lat, center_lon) = geometry.bounding_box.center();
     let nearest_m = geometry
         .resolved_positions
@@ -96,14 +85,14 @@ fn bounding_box_center_across_the_antimeridian_lands_on_the_track() {
 /// Oracle: normalized Mercator x is `(lon + 180) / 360`.
 #[test]
 fn merc_bounds_across_the_antimeridian_wrap_at_the_world_edge() {
-    let merc_bounds = measured_geometry(&antimeridian_track())
+    let merc_bounds = support::measured_geometry(&antimeridian_track())
         .expect("every fix has a recorded position")
         .merc_bounds;
 
     assert!(merc_bounds.crosses_the_antimeridian());
     let width = (1.0 - merc_bounds.x_min) + merc_bounds.x_max;
     assert!(
-        (width - 1.5 / 360.0).abs() < DEGREES_TOLERANCE,
+        (width - 1.5 / 360.0).abs() < support::DEGREES_TOLERANCE,
         "expected {} of the world's width, got {width} (merc x {} to {})",
         1.5 / 360.0,
         merc_bounds.x_min,
@@ -120,13 +109,13 @@ fn bounding_box_of_a_local_track_is_tight_and_holds_every_fix() {
         fix(60, Latitude::new(55.2), Longitude::new(12.5)),
         fix(120, Latitude::new(54.9), Longitude::new(12.1)),
     ];
-    let geometry = measured_geometry(&points).expect("every fix has a recorded position");
+    let geometry = support::measured_geometry(&points).expect("every fix has a recorded position");
     let bounds = geometry.bounding_box;
 
-    assert_degrees_close(bounds.lon.start().as_degrees(), 12.0);
-    assert_degrees_close(bounds.lon.end().as_degrees(), 12.5);
-    assert_degrees_close(bounds.lat.south().as_degrees(), 54.9);
-    assert_degrees_close(bounds.lat.north().as_degrees(), 55.2);
+    support::assert_degrees_close(bounds.lon.start().as_degrees(), 12.0);
+    support::assert_degrees_close(bounds.lon.end().as_degrees(), 12.5);
+    support::assert_degrees_close(bounds.lat.south().as_degrees(), 54.9);
+    support::assert_degrees_close(bounds.lat.north().as_degrees(), 55.2);
     for resolved in &geometry.resolved_positions {
         let (latitude, longitude) = resolved.coordinates();
         assert!(
@@ -146,14 +135,14 @@ fn bounding_box_of_fixes_at_one_position_is_degenerate(#[case] fix_count: i64) {
         .map(|t| fix(t, Latitude::new(-33.9), Longitude::new(151.2)))
         .collect();
     let points = vec1::Vec1::try_from_vec(points).expect("at least one fix");
-    let bounds = measured_geometry(&points)
+    let bounds = support::measured_geometry(&points)
         .expect("every fix has a recorded position")
         .bounding_box;
 
-    assert_degrees_close(bounds.lon.start().as_degrees(), 151.2);
-    assert_degrees_close(bounds.lon.span_degrees(), 0.0);
-    assert_degrees_close(bounds.lat.south().as_degrees(), -33.9);
-    assert_degrees_close(bounds.lat.north().as_degrees(), -33.9);
+    support::assert_degrees_close(bounds.lon.start().as_degrees(), 151.2);
+    support::assert_degrees_close(bounds.lon.span_degrees(), 0.0);
+    support::assert_degrees_close(bounds.lat.south().as_degrees(), -33.9);
+    support::assert_degrees_close(bounds.lat.north().as_degrees(), -33.9);
 }
 
 /// Mercator y grows southwards, so the northernmost latitude must become
@@ -164,16 +153,76 @@ fn merc_bounds_put_the_northern_edge_at_y_min() {
         fix(0, Latitude::new(55.0), Longitude::new(12.0)),
         fix(60, Latitude::new(56.0), Longitude::new(13.0)),
     ];
-    let merc_bounds = measured_geometry(&points)
+    let merc_bounds = support::measured_geometry(&points)
         .expect("every fix has a recorded position")
         .merc_bounds;
-    let north_west = gt_types::mercator::normalize(Latitude::new(56.0), Longitude::new(12.0));
-    let south_east = gt_types::mercator::normalize(Latitude::new(55.0), Longitude::new(13.0));
+    let north_west = mercator::normalize(Latitude::new(56.0), Longitude::new(12.0));
+    let south_east = mercator::normalize(Latitude::new(55.0), Longitude::new(13.0));
 
     assert!((merc_bounds.y_min - north_west.y).abs() < 1e-12, "y_min");
     assert!((merc_bounds.y_max - south_east.y).abs() < 1e-12, "y_max");
     assert!((merc_bounds.x_min - north_west.x).abs() < 1e-12, "x_min");
     assert!((merc_bounds.x_max - south_east.x).abs() < 1e-12, "x_max");
+}
+
+/// Four fixes at 89.9° N, a quarter turn apart: a receiver carried around the
+/// north pole. Its diameter is 22_239.02 m (0.2° over the pole).
+fn circumpolar_track() -> vec1::Vec1<NavPoint> {
+    vec1::vec1![
+        fix(0, Latitude::new(89.9), Longitude::new(0.0)),
+        fix(60, Latitude::new(89.9), Longitude::new(90.0)),
+        fix(120, Latitude::new(89.9), Longitude::new(180.0)),
+        fix(180, Latitude::new(89.9), Longitude::new(-90.0)),
+    ]
+}
+
+#[test]
+fn bounding_box_around_the_pole_holds_every_meridian_and_reaches_the_pole() {
+    let bounds = support::measured_geometry(&circumpolar_track())
+        .expect("every fix has a recorded position")
+        .bounding_box;
+
+    assert!(
+        bounds.lon.is_full_circle(),
+        "expected every meridian, got {}° from {}°",
+        bounds.lon.span_degrees(),
+        bounds.lon.start().as_degrees()
+    );
+    support::assert_degrees_close(bounds.lat.south().as_degrees(), 89.9);
+    support::assert_degrees_close(bounds.lat.north().as_degrees(), 90.0);
+}
+
+/// The cap projects to the world's whole width, which the map culls tracks
+/// against. Both of its Mercator edges are the northern edge of the world:
+/// the cap lies past `mercator::MAX_LATITUDE_DEGREES` from edge to edge.
+#[test]
+fn merc_bounds_around_the_pole_span_the_world_and_lie_on_its_northern_edge() {
+    let merc_bounds = support::measured_geometry(&circumpolar_track())
+        .expect("every fix has a recorded position")
+        .merc_bounds;
+    let northern_edge = mercator::normalize(
+        Latitude::new(mercator::MAX_LATITUDE_DEGREES),
+        Longitude::new(0.0),
+    );
+
+    assert!(
+        merc_bounds.x_min.abs() < support::DEGREES_TOLERANCE,
+        "x_min"
+    );
+    assert!(
+        (merc_bounds.x_max - 1.0).abs() < support::DEGREES_TOLERANCE,
+        "x_max"
+    );
+    assert!(
+        (merc_bounds.y_min - northern_edge.y).abs() < support::DEGREES_TOLERANCE,
+        "y_min {}",
+        merc_bounds.y_min
+    );
+    assert!(
+        (merc_bounds.y_max - northern_edge.y).abs() < support::DEGREES_TOLERANCE,
+        "y_max {}",
+        merc_bounds.y_max
+    );
 }
 
 proptest::proptest! {
@@ -195,7 +244,7 @@ proptest::proptest! {
             })
             .collect();
         let points = vec1::Vec1::try_from_vec(points).expect("at least one fix");
-        let geometry = measured_geometry(&points).expect("every fix has a recorded position");
+        let geometry = support::measured_geometry(&points).expect("every fix has a recorded position");
         for resolved in &geometry.resolved_positions {
             let (latitude, longitude) = resolved.coordinates();
             proptest::prop_assert!(geometry.bounding_box.contains(latitude, longitude));

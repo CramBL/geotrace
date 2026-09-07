@@ -6,59 +6,44 @@ use std::path::PathBuf;
 use chrono::{DateTime, Duration, Utc};
 use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::coordinates::{Latitude, Longitude};
+use gt_types::fixtures::{self, FixKind};
 use gt_types::markers::{GeneratedMarker, GeneratedMarkerKind};
 use gt_types::nav_point::NavPoint;
-use gt_types::satellites::{Constellation, Satellite, Satellites};
-use gt_types::time_types::{GpsTime, SysTime};
-use gt_types::tpv::TimePositionVelocity;
 use gt_types::track::FileSource;
-use uom::si::angle::degree;
-use uom::si::f64::Angle;
 
 /// Every fix of the track shares this latitude.
 const LATITUDE_DEGREES: f64 = 55.0;
-
-const SATELLITES_IN_FIX: u32 = 12;
 
 /// 1e-7° is about 1 cm. The great circle between two fixes at one latitude
 /// arcs a few 1e-9° poleward at its midpoint, so the drawn epoch does not sit
 /// at exactly 55°.
 const DEGREES_TOLERANCE: f64 = 1e-7;
 
-fn gps_time(secs: i64) -> GpsTime {
-    GpsTime::from_utc(DateTime::<Utc>::UNIX_EPOCH + Duration::seconds(secs))
-}
-
-fn system_time(secs: i64, ahead_of_gps: Duration) -> SysTime {
-    SysTime::from_utc(DateTime::<Utc>::UNIX_EPOCH + Duration::seconds(secs) + ahead_of_gps)
+fn utc_time(secs: i64) -> DateTime<Utc> {
+    DateTime::<Utc>::UNIX_EPOCH + Duration::seconds(secs)
 }
 
 /// A measured fix: heading present and a full solution behind it.
 fn measured_fix(secs: i64, lon_degrees: f64, system_clock_ahead: Duration) -> NavPoint {
-    let time = gps_time(secs);
-    let tpv = TimePositionVelocity::builder()
-        .time(time)
-        .lat(Latitude::new(LATITUDE_DEGREES))
-        .lon(Longitude::new(lon_degrees))
-        .heading(Angle::new::<degree>(90.0))
-        .sys_time(system_time(secs, system_clock_ahead))
-        .build();
-    let satellites = (1..=SATELLITES_IN_FIX)
-        .map(|prn| Satellite::new(Constellation::Gps, prn, None, None, None, true))
-        .collect();
-    NavPoint::new(tpv, Some(Satellites::new(Some(time), None, satellites)))
+    fixtures::nav_point_with_host_clock(
+        utc_time(secs),
+        system_clock_ahead,
+        Latitude::new(LATITUDE_DEGREES),
+        Longitude::new(lon_degrees),
+        FixKind::Measured,
+    )
 }
 
 /// An epoch the receiver dead-reckoned and wrote at the null island: no heading
 /// and no satellite report, so the builder redraws it between its neighbours.
 fn dead_reckoned_fix_at_the_null_island(secs: i64, system_clock_ahead: Duration) -> NavPoint {
-    let tpv = TimePositionVelocity::builder()
-        .time(gps_time(secs))
-        .lat(Latitude::new(0.0))
-        .lon(Longitude::new(0.0))
-        .sys_time(system_time(secs, system_clock_ahead))
-        .build();
-    NavPoint::new(tpv, None)
+    fixtures::nav_point_with_host_clock(
+        utc_time(secs),
+        system_clock_ahead,
+        Latitude::new(0.0),
+        Longitude::new(0.0),
+        FixKind::GhostWithoutHeading,
+    )
 }
 
 fn generated_markers(points: &[NavPoint]) -> Vec<GeneratedMarker> {
