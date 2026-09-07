@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
-# cargo-shear sees the trybuild fixture as unlinked: the test in
+# cargo-shear sees the `trybuild` fixture as unlinked: the test in
 # tests/compile_fail.rs compiles it, not cargo.
 [package.metadata.cargo-shear]
 ignored-paths = ["tests/compile_fail/*.rs"]

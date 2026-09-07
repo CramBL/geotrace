@@ -136,6 +136,12 @@ def c_family_files(root: Path) -> Iterator[Path]:
     yield from sorted(seen)
 
 
+def toml_files(root: Path) -> Iterator[Path]:
+    for path in sorted(root.rglob("*.toml")):
+        if not _is_excluded(root, path):
+            yield path
+
+
 def yaml_files(root: Path) -> Iterator[Path]:
     """Yield YAML files (workflow definitions, configuration)."""
     seen: set[Path] = set()

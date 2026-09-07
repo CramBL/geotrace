@@ -15,9 +15,9 @@ line_length = 100
 # Declarations follow the order the modules declare them.
 sort_by = "None"
 
-# The banner carries the generated-file line: cbindgen writes `autogen_warning`
-# as a standalone comment between blank lines, which `just qa::check-all` reads
-# as a floating comment.
+# The banner states the generated-file line: `cbindgen` writes
+# `autogen_warning` as a standalone comment between blank lines, and
+# `just qa::check-all` then reports a floating comment.
 header = """
 /**
  * @file geotrace.h

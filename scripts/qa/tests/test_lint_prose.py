@@ -191,6 +191,30 @@ def _repository_with_one_commit(root: Path) -> None:
     _commit_empty(root, "root")
 
 
+def test_script_files_reads_every_toml_file_and_only_the_workflow_yaml(tmp_path: Path) -> None:
+    for rel in (
+        "justfile",
+        "Cargo.toml",
+        "crates/gt-types/Cargo.toml",
+        "lychee.toml",
+        ".github/workflows/ci.yml",
+        ".config/settings.yml",
+        "README.md",
+    ):
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# A comment.\n")
+    _run_git(tmp_path, ["init", "--quiet"])
+
+    assert lint_prose.script_files(tmp_path) == [
+        ".github/workflows/ci.yml",
+        "Cargo.toml",
+        "crates/gt-types/Cargo.toml",
+        "justfile",
+        "lychee.toml",
+    ]
+
+
 def test_merge_base_exits_with_one_line_when_the_base_ref_does_not_resolve(tmp_path: Path) -> None:
     _repository_with_one_commit(tmp_path)
 

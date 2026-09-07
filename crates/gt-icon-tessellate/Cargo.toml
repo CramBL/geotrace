@@ -12,7 +12,7 @@ doctest = false
 [features]
 default = ["tessellate"]
 # SVG-to-mesh tessellation (usvg + lyon). On by default so tests and the
-# gt-map build script get it; the gt-map runtime depends on this crate with
+# gt-map build script get it. The gt-map runtime depends on this crate with
 # default-features = false to stay types-only.
 tessellate = ["dep:lyon_tessellation", "dep:thiserror", "dep:usvg"]
 

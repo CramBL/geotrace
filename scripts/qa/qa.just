@@ -61,7 +61,7 @@ vale-docs:
 vale-source:
     {{ _QA }} lint-prose source
 
-# Lint the comments of the justfiles, CMake files and workflow files.
+# Lint the comments of the justfiles, CMake files, TOML files and workflow files.
 [group("qa")]
 vale-scripts:
     {{ _QA }} lint-prose scripts

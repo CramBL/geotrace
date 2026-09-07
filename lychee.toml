@@ -29,7 +29,7 @@ exclude = [
     # workflows expand the shell variables in them at run time.
     '\$',
     # For the tap push URL, lychee requests `https://x-access-token/`: it
-    # reads the userinfo credential as the host.
+    # reads the credential before the `@` as the host.
     '^https://x-access-token',
     # The DONKI endpoint returns 403 without a real API key, and both the
     # module docs and the URL-builder tests spell the key as `KEY`.
@@ -43,15 +43,15 @@ exclude = [
     # The public Valhalla instance serves its API paths only: it returns 404
     # for the base URL GeoTrace defaults to.
     '^https://valhalla1\.openstreetmap\.de/?$',
-    # Wiley, which hosts the AGU journals these DOIs resolve to, returns 403
-    # for a scraper.
+    # Wiley hosts the AGU journals behind these links, and returns 403 for a
+    # scraper.
     '^https://doi\.org/10\.1029/',
     # EDP Sciences returns 403 for a scraper.
     '^https://www\.swsc-journal\.org/',
     # eCFR returns 200 for an interstitial page here, not for the cited
     # section: it redirects a scraper to unblock.federalregister.gov.
     '^https://www\.ecfr\.gov/',
-    # EUR-Lex tarpits non-browser clients: requests hang or come back 502.
+    # EUR-Lex stalls non-browser clients: requests hang or come back 502.
     '^https://eur-lex\.europa\.eu/',
     # The CDDIS archive sits behind Earthdata login: anonymous requests
     # redirect to the auth gate and frequently hang from CI addresses, and

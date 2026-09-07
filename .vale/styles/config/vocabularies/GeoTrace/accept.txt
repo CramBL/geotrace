@@ -9,6 +9,7 @@ Annales
 antialiased
 antialiases
 APIs
+Authenticode
 autocompletes
 axoupdater
 az

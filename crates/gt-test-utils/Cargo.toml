@@ -39,9 +39,9 @@ gt-track-builder = { path = "../gt-track-builder", optional = true }
 gt-types = { path = "../gt-types", features = ["fixtures"] }
 gt-ui-theme = { path = "../gt-ui-theme", optional = true }
 hdf5 = { workspace = true, optional = true }
-# Compares rendered frames in `snapshot_harness`. The same `image` version
-# `egui_kittest`'s `Harness::render` returns. No codec features: the frames
-# never leave memory.
+# Compares rendered frames in `snapshot_harness`. Matches the `image` version
+# returned by `egui_kittest`'s `Harness::render`. No image-format features: the
+# frames never leave memory.
 image = { version = "0.25", default-features = false, optional = true }
 tempfile = { workspace = true, optional = true }
 uom.workspace = true

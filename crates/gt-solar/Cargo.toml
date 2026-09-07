@@ -23,7 +23,7 @@ thiserror.workspace = true
 [dev-dependencies]
 insta.workspace = true
 proptest.workspace = true
-# The fixture-capture example talks to the service directly, not through
+# The fixture-capture example fetches from the service directly, not through
 # gt_fetch::Transport.
 reqwest.workspace = true
 rstest.workspace = true
