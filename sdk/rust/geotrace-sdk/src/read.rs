@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
@@ -6,20 +6,20 @@ use chrono::{DateTime, Utc};
 use crate::builder::ABSENT_TIMESTAMP_MICROS;
 use crate::error::{Error, FieldLocation};
 use crate::fixed_width_string::{
-    AnnotationField, ColorHexField, FixedWidthString, IconNameField, MarkerLabelField,
-    VariantPathField,
+    AnnotationField, ColorHexField, FixedWidthString, FixedWidthStringError, IconNameField,
+    MarkerLabelField, VariantPathField,
 };
 use crate::format_version::SUPPORTED_FORMAT_VERSIONS;
 use crate::provenance;
-use crate::size_checked_file::SizeCheckedFile;
+use crate::size_checked_file::{SizeCheckedFile, SizeCheckedGroup};
 use crate::types::{
     Annotation, AnnotationIcon, Channel, Constellation, EventMarkerColor, EventMarkerIconChoice,
-    EventMarkerPoint, EventMarkerStyle, Marker, MarkerIcon, Meta, NavFile, NavFix, NavFixTime,
-    NavPoint, RecordedFixTimestamps, Satellite, SatelliteReport, TravelMode,
+    EventMarkerPoint, EventMarkerStyle, Marker, Meta, NavFile, NavFix, NavFixTime, NavPoint,
+    RecordedFixTimestamps, Satellite, SatelliteReport, TravelMode,
 };
 use crate::write;
 use crate::{Angle, Velocity};
-use geotrace_sdk_units::ChannelUnit;
+use geotrace_sdk_units::{ChannelUnit, snr};
 use hdf5_pure::AttrValue;
 use strum::IntoEnumIterator;
 
@@ -715,6 +715,23 @@ fn opt_f32(v: f32) -> Option<f32> {
     if v.is_nan() { None } else { Some(v) }
 }
 
+/// The most rows of a fixed-width string field the summary previews on one
+/// line, and the most unreadable rows it lists.
+const PREVIEW_ROWS: usize = 3;
+
+/// The most entries a section lists one per line, with `…` where more follow.
+const MAX_LISTED_ENTRIES: usize = 20;
+
+const ABSENT_VALUE: &str = "—";
+
+const TIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%SZ";
+
+/// One row of a fixed-width string dataset: its value, or the error
+/// [`FixedWidthString::decode_row`] gives for it. [`NavFile::read`] reports
+/// that same error as [`Error::UnreadableField`]. `inspect` lists the row and
+/// prints the rest of the summary.
+type FieldRow<F> = Result<F, FixedWidthStringError>;
+
 pub(crate) fn inspect_path(path: &Path) -> Result<String, Error> {
     use std::fmt::Write as _;
 
@@ -732,39 +749,53 @@ pub(crate) fn inspect_path(path: &Path) -> Result<String, Error> {
     writeln!(out, "GeoTrace Data File - version {version}").ok();
     writeln!(out, "{sep}").ok();
 
-    // Metadata
-    writeln!(out, "Metadata").ok();
-    let fmt_meta = |v: Option<String>| v.map_or_else(|| "—".to_owned(), |s| format!("\"{s}\""));
-    writeln!(
-        out,
-        "  title  : {}",
-        fmt_meta(string_attr(&attrs, "meta_title"))
-    )
-    .ok();
-    writeln!(
-        out,
-        "  device : {}",
-        fmt_meta(string_attr(&attrs, "meta_device"))
-    )
-    .ok();
-    writeln!(
-        out,
-        "  notes  : {}",
-        fmt_meta(string_attr(&attrs, "meta_notes"))
-    )
-    .ok();
+    inspect_metadata(&attrs, &mut out);
     writeln!(out).ok();
-
-    let n = inspect_nav_points(&file, &mut out);
+    let nav_points = inspect_nav_points(&file, &mut out);
     writeln!(out).ok();
-    inspect_satellite_reports(&file, n, &mut out);
+    inspect_satellite_reports(&file, nav_points, &mut out);
     writeln!(out).ok();
     inspect_markers(&file, &mut out);
+    writeln!(out).ok();
+    inspect_event_markers(&file, &mut out);
+    writeln!(out).ok();
+    inspect_event_marker_styles(&file, &mut out);
     writeln!(out).ok();
     inspect_channels(&file, &mut out);
     writeln!(out, "{sep}").ok();
 
     Ok(out)
+}
+
+fn inspect_metadata(attrs: &HashMap<String, AttrValue>, out: &mut String) {
+    use std::fmt::Write as _;
+
+    writeln!(out, "Metadata").ok();
+
+    let quoted = |key| string_attr(attrs, key).map(|value| format!("{value:?}"));
+    let bare = |key| string_attr(attrs, key);
+    let fields = [
+        ("title", quoted("meta_title")),
+        ("device", quoted("meta_device")),
+        ("notes", quoted("meta_notes")),
+        ("identity", quoted("meta_identity")),
+        ("travel mode", bare("meta_travel_mode")),
+        ("sdk version", bare(provenance::SDK_VERSION_ATTR)),
+        ("sdk commit", bare(provenance::SDK_GIT_COMMIT_ATTR)),
+        ("sdk commit time", bare(provenance::SDK_COMMIT_TIME_ATTR)),
+    ];
+
+    let mut present = fields
+        .iter()
+        .filter_map(|(label, value)| value.as_deref().map(|value| (label, value)))
+        .peekable();
+    if present.peek().is_none() {
+        writeln!(out, "  {ABSENT_VALUE}").ok();
+        return;
+    }
+    for (label, value) in present {
+        writeln!(out, "  {label:<15}: {value}").ok();
+    }
 }
 
 fn inspect_nav_points(file: &SizeCheckedFile, out: &mut String) -> u64 {
@@ -775,12 +806,7 @@ fn inspect_nav_points(file: &SizeCheckedFile, out: &mut String) -> u64 {
         return 0;
     };
 
-    let n = grp
-        .dataset("time")
-        .ok()
-        .and_then(|ds| ds.shape().ok())
-        .and_then(|s| s.first().copied())
-        .unwrap_or(0);
+    let n = dataset_rows(&grp, "time");
 
     writeln!(out, "{:<24}{} records", "Nav Points", fmt_count(n)).ok();
 
@@ -789,18 +815,14 @@ fn inspect_nav_points(file: &SizeCheckedFile, out: &mut String) -> u64 {
     }
 
     if let Some(times) = grp.dataset("time").ok().and_then(|ds| ds.read_i64().ok())
-        && let (Some(&first), Some(&last)) = (times.first(), times.last())
-        && let (Some(t0), Some(t1)) = (
-            DateTime::from_timestamp_micros(first),
-            DateTime::from_timestamp_micros(last),
-        )
+        && let Some((first, last)) = first_and_last_time(&times)
     {
         writeln!(
             out,
             "  {:<22}{} → {}",
             "time",
-            t0.format("%Y-%m-%dT%H:%M:%SZ"),
-            t1.format("%Y-%m-%dT%H:%M:%SZ")
+            first.format(TIME_FORMAT),
+            last.format(TIME_FORMAT)
         )
         .ok();
     }
@@ -829,15 +851,11 @@ fn inspect_nav_points(file: &SizeCheckedFile, out: &mut String) -> u64 {
         .ok()
         .and_then(|ds| ds.read_f64().ok())
     {
-        let (mn, mx, present) = min_max_present_f64(&vals);
         writeln!(
             out,
-            "  {:<22}{:.1} – {:.1} m/s  ({} / {} present)",
+            "  {:<22}{}",
             "speed",
-            mn,
-            mx,
-            fmt_count(present as u64),
-            fmt_count(n)
+            MeasuredRange::of(vals.iter().copied()).line_value(" m/s")
         )
         .ok();
     }
@@ -855,12 +873,7 @@ fn inspect_satellite_reports(file: &SizeCheckedFile, n_nav_points: u64, out: &mu
 
     // Counts `nav_point_idx`, the one name every version writes it under. The
     // time field is named `time` in v1 and `gps_time_us` in v2.
-    let m = sat_grp
-        .dataset("nav_point_idx")
-        .ok()
-        .and_then(|ds| ds.shape().ok())
-        .and_then(|s| s.first().copied())
-        .unwrap_or(0);
+    let m = dataset_rows(&sat_grp, "nav_point_idx");
 
     if n_nav_points > 0 {
         writeln!(
@@ -880,64 +893,96 @@ fn inspect_satellite_reports(file: &SizeCheckedFile, n_nav_points: u64, out: &mu
         return;
     }
 
-    let t = file
-        .group("tracked_sats")
-        .and_then(|g| g.dataset("sat_report_idx"))
-        .ok()
-        .and_then(|ds| ds.shape().ok())
-        .and_then(|s| s.first().copied())
-        .unwrap_or(0);
-
-    let avg_t = t as f64 / m as f64;
+    let tracked = file.group("tracked_sats").ok();
+    let t = tracked
+        .as_ref()
+        .map_or(0, |grp| dataset_rows(grp, "sat_report_idx"));
     writeln!(
         out,
         "  {:<22}{} total  (avg {:.1} per report)",
         "Tracked satellites",
         fmt_count(t),
-        avg_t
+        t as f64 / m as f64
     )
     .ok();
 
-    if let Ok(ts_grp) = file.group("tracked_sats") {
-        if let Some(codes) = ts_grp
-            .dataset("constellation")
-            .ok()
-            .and_then(|ds| ds.read_u8().ok())
-        {
-            let list = constellation_names(&codes);
-            if !list.is_empty() {
-                writeln!(out, "    {:<20}{}", "constellations", list.join(", ")).ok();
-            }
+    let Some(ts_grp) = tracked else {
+        return;
+    };
+
+    let constellation_codes = ts_grp
+        .dataset("constellation")
+        .ok()
+        .and_then(|ds| ds.read_u8().ok());
+    if let Some(codes) = constellation_codes.as_deref() {
+        let list = constellation_names(codes);
+        if !list.is_empty() {
+            writeln!(out, "    {:<20}{}", "constellations", list.join(", ")).ok();
         }
-        if let Some(snr_vals) = ts_grp.dataset("snr").ok().and_then(|ds| ds.read_f32().ok()) {
-            let (mn, mx, present) = min_max_present_f32(&snr_vals);
+    }
+    if let Some(codes) = constellation_codes.as_deref()
+        && let Some(prns) = ts_grp.dataset("prn").ok().and_then(|ds| ds.read_u32().ok())
+    {
+        let distinct: HashSet<(u8, u32)> =
+            codes.iter().copied().zip(prns.iter().copied()).collect();
+        writeln!(
+            out,
+            "    {:<20}{}",
+            "distinct satellites",
+            fmt_count(distinct.len() as u64)
+        )
+        .ok();
+    }
+
+    for name in ["elevation", "azimuth"] {
+        if let Some(degrees) = ts_grp.dataset(name).ok().and_then(|ds| ds.read_f32().ok()) {
             writeln!(
                 out,
-                "    {:<20}{:.1} – {:.1} dB-Hz  ({} / {} present)",
-                "SNR",
-                mn,
-                mx,
-                fmt_count(present as u64),
-                fmt_count(t)
+                "    {:<20}{}",
+                name,
+                MeasuredRange::of(degrees.iter().copied().map(f64::from)).line_value("°")
             )
             .ok();
         }
     }
 
-    if let Ok(ts_grp) = file.group("tracked_sats")
-        && let Some(in_fix_vals) = ts_grp
-            .dataset("in_fix")
-            .ok()
-            .and_then(|ds| ds.read_u8().ok())
+    if let Some(snr_values) = ts_grp.dataset("snr").ok().and_then(|ds| ds.read_f32().ok()) {
+        writeln!(
+            out,
+            "    {:<20}{}",
+            "SNR",
+            MeasuredRange::of(snr_values.iter().copied().map(f64::from)).line_value(" dB-Hz")
+        )
+        .ok();
+        let no_data = snr_values
+            .iter()
+            .filter(|&&value| snr::is_no_data_sentinel(value))
+            .count();
+        if no_data > 0 {
+            writeln!(
+                out,
+                "    {:<20}{} / {} readings at {:.0} dB-Hz",
+                "no-data SNR",
+                fmt_count(no_data as u64),
+                fmt_count(snr_values.len() as u64),
+                snr::NO_DATA_SENTINEL_DB_HZ
+            )
+            .ok();
+        }
+    }
+
+    if let Some(in_fix_vals) = ts_grp
+        .dataset("in_fix")
+        .ok()
+        .and_then(|ds| ds.read_u8().ok())
     {
         let fix_count: u64 = in_fix_vals.iter().filter(|&&v| v != 0).count() as u64;
-        let avg_f = fix_count as f64 / m as f64;
         writeln!(
             out,
             "  {:<22}{} total  (avg {:.1} per report)",
             "Fix satellites",
             fmt_count(fix_count),
-            avg_f
+            fix_count as f64 / m as f64
         )
         .ok();
     }
@@ -951,12 +996,7 @@ fn inspect_markers(file: &SizeCheckedFile, out: &mut String) {
         return;
     };
 
-    let k = grp
-        .dataset("time")
-        .ok()
-        .and_then(|ds| ds.shape().ok())
-        .and_then(|s| s.first().copied())
-        .unwrap_or(0);
+    let k = dataset_rows(&grp, "time");
 
     writeln!(out, "{:<24}{} records", "Markers", fmt_count(k)).ok();
 
@@ -965,18 +1005,146 @@ fn inspect_markers(file: &SizeCheckedFile, out: &mut String) {
     }
 
     if let Some(icons) = grp.dataset("icon").ok().and_then(|ds| ds.read_u8().ok()) {
-        let hist = icon_histogram(&icons);
-        if !hist.is_empty() {
-            writeln!(out, "  {:<22}{hist}", "icons").ok();
+        let histogram = icon_histogram(&icons);
+        if !histogram.is_empty() {
+            writeln!(out, "  {:<22}{histogram}", "icons").ok();
         }
     }
 
-    if let Some(label_flat) = grp.dataset("label").ok().and_then(|ds| ds.read_u8().ok()) {
-        let preview = label_preview(&label_flat);
+    let labels: Option<Vec<FieldRow<MarkerLabelField>>> = read_field_rows(&grp, "label");
+    if let Some(labels) = labels {
+        let preview = quoted_values(&labels);
         if !preview.is_empty() {
-            writeln!(out, "  {:<22}{preview}", "labels").ok();
+            writeln!(out, "  {:<22}{}", "labels", preview_list(&preview)).ok();
+        }
+        write_unreadable_rows(&labels, "label", out);
+    }
+}
+
+fn inspect_event_markers(file: &SizeCheckedFile, out: &mut String) {
+    use std::fmt::Write as _;
+
+    let Ok(grp) = file.group("event_markers") else {
+        writeln!(out, "{:<24}0 records", "Event Markers").ok();
+        return;
+    };
+
+    let n = dataset_rows(&grp, "sys_time_us");
+
+    writeln!(out, "{:<24}{} records", "Event Markers", fmt_count(n)).ok();
+
+    if n == 0 {
+        return;
+    }
+
+    if let Some(times) = grp
+        .dataset("sys_time_us")
+        .ok()
+        .and_then(|ds| ds.read_u64().ok())
+        && let Some((earliest, latest)) = earliest_and_latest_time(&times)
+    {
+        writeln!(
+            out,
+            "  {:<22}{} → {}",
+            "time",
+            earliest.format(TIME_FORMAT),
+            latest.format(TIME_FORMAT)
+        )
+        .ok();
+    }
+
+    let paths: Option<Vec<FieldRow<VariantPathField>>> = read_field_rows(&grp, "variant_path");
+    if let Some(paths) = paths {
+        let mut markers_per_path: BTreeMap<&str, u64> = BTreeMap::new();
+        for path in paths.iter().filter_map(|row| row.as_ref().ok()) {
+            *markers_per_path.entry(path.as_str()).or_default() += 1;
+        }
+        writeln!(
+            out,
+            "  {:<22}{} distinct",
+            "variant paths",
+            fmt_count(markers_per_path.len() as u64)
+        )
+        .ok();
+        for (path, markers) in markers_per_path.iter().take(MAX_LISTED_ENTRIES) {
+            writeln!(out, "    {path:<19} ×{markers}").ok();
+        }
+        if markers_per_path.len() > MAX_LISTED_ENTRIES {
+            writeln!(out, "    …").ok();
+        }
+        write_unreadable_rows(&paths, "variant_path", out);
+    }
+
+    let annotations: Option<Vec<FieldRow<AnnotationField>>> = read_field_rows(&grp, "annotation");
+    if let Some(annotations) = annotations {
+        let preview = quoted_values(&annotations);
+        if !preview.is_empty() {
+            writeln!(out, "  {:<22}{}", "annotations", preview_list(&preview)).ok();
+        }
+        write_unreadable_rows(&annotations, "annotation", out);
+    }
+}
+
+fn inspect_event_marker_styles(file: &SizeCheckedFile, out: &mut String) {
+    use std::fmt::Write as _;
+
+    let Ok(grp) = file.group("event_marker_styles") else {
+        writeln!(out, "{:<24}0 records", "Event Marker Styles").ok();
+        return;
+    };
+
+    let paths: Option<Vec<FieldRow<VariantPathField>>> = read_field_rows(&grp, "variant_path");
+    let Some(paths) = paths else {
+        writeln!(out, "{:<24}unreadable variant_path", "Event Marker Styles").ok();
+        return;
+    };
+
+    writeln!(
+        out,
+        "{:<24}{} records",
+        "Event Marker Styles",
+        fmt_count(paths.len() as u64)
+    )
+    .ok();
+
+    let icons: Vec<FieldRow<IconNameField>> =
+        read_field_rows(&grp, "icon_name").unwrap_or_default();
+    let colors: Vec<FieldRow<ColorHexField>> =
+        read_field_rows(&grp, "color_hex").unwrap_or_default();
+
+    for (record, path) in paths.iter().enumerate().take(MAX_LISTED_ENTRIES) {
+        match path {
+            Ok(path) => {
+                let label = if path.is_empty() {
+                    ABSENT_VALUE
+                } else {
+                    path.as_str()
+                };
+                writeln!(
+                    out,
+                    "  {:<21} {}",
+                    label,
+                    icon_and_color(icons.get(record), colors.get(record))
+                )
+                .ok();
+            }
+            Err(_) => {
+                let label = format!("row {record}");
+                writeln!(
+                    out,
+                    "  {label:<21} {}",
+                    icon_and_color(icons.get(record), colors.get(record))
+                )
+                .ok();
+            }
         }
     }
+    if paths.len() > MAX_LISTED_ENTRIES {
+        writeln!(out, "  …").ok();
+    }
+    write_unreadable_rows(&paths, "variant_path", out);
+    write_unreadable_rows(&icons, "icon_name", out);
+    write_unreadable_rows(&colors, "color_hex", out);
 }
 
 fn inspect_channels(file: &SizeCheckedFile, out: &mut String) {
@@ -1000,12 +1168,7 @@ fn inspect_channels(file: &SizeCheckedFile, out: &mut String) {
         let Ok(grp) = root.group(name) else {
             continue;
         };
-        let samples = grp
-            .dataset("value")
-            .ok()
-            .and_then(|ds| ds.shape().ok())
-            .and_then(|s| s.first().copied())
-            .unwrap_or(0);
+        let samples = dataset_rows(&grp, "value");
         let attrs = grp.attrs().ok();
         let unit = attrs
             .as_ref()
@@ -1018,6 +1181,150 @@ fn inspect_channels(file: &SizeCheckedFile, out: &mut String) {
         {
             writeln!(out, "    {:<20}{}", "components", components.join(", ")).ok();
         }
+        if let Some(period_deg) = attrs.as_ref().and_then(|a| f64_attr(a, "period_deg")) {
+            writeln!(out, "    {:<20}{period_deg:.1}°", "period").ok();
+        }
+        if let Some(description) = attrs.as_ref().and_then(|a| string_attr(a, "description")) {
+            writeln!(out, "    {:<20}{description:?}", "description").ok();
+        }
+        if let Some(times) = grp.dataset("time").ok().and_then(|ds| ds.read_i64().ok())
+            && let Some((first, last)) = first_and_last_time(&times)
+        {
+            writeln!(
+                out,
+                "    {:<20}{} → {}",
+                "time",
+                first.format(TIME_FORMAT),
+                last.format(TIME_FORMAT)
+            )
+            .ok();
+        }
+    }
+}
+
+/// The rows the dataset declares, `0` where the group holds no such dataset or
+/// its shape cannot be read.
+fn dataset_rows(grp: &SizeCheckedGroup, name: &str) -> u64 {
+    grp.dataset(name)
+        .ok()
+        .and_then(|ds| ds.shape().ok())
+        .and_then(|shape| shape.first().copied())
+        .unwrap_or(0)
+}
+
+/// The rows of a fixed-width string dataset, each decoded or holding the error
+/// the reader returns for it. `None` where the group has no such dataset or it
+/// cannot be read.
+fn read_field_rows<const ROW_BYTES: usize>(
+    grp: &SizeCheckedGroup,
+    name: &str,
+) -> Option<Vec<FieldRow<FixedWidthString<ROW_BYTES>>>> {
+    let flat = grp.dataset(name).ok()?.read_u8().ok()?;
+    Some(
+        flat.chunks(ROW_BYTES)
+            .map(FixedWidthString::decode_row)
+            .collect(),
+    )
+}
+
+/// Every value the rows decode to, quoted, skipping the rows the reader rejects
+/// and those holding the empty value the format writes for an absent one.
+fn quoted_values<const ROW_BYTES: usize>(
+    rows: &[FieldRow<FixedWidthString<ROW_BYTES>>],
+) -> Vec<String> {
+    rows.iter()
+        .filter_map(|row| row.as_ref().ok())
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("{:?}", value.as_str()))
+        .collect()
+}
+
+/// Lists the rows of `field` the reader rejects, at most [`PREVIEW_ROWS`] of
+/// them.
+fn write_unreadable_rows<const ROW_BYTES: usize>(
+    rows: &[FieldRow<FixedWidthString<ROW_BYTES>>],
+    field: &str,
+    out: &mut String,
+) {
+    use std::fmt::Write as _;
+
+    let unreadable: Vec<(usize, &FixedWidthStringError)> = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(record, row)| row.as_ref().err().map(|error| (record, error)))
+        .collect();
+    if unreadable.is_empty() {
+        return;
+    }
+
+    let label = format!("unreadable {field}");
+    writeln!(
+        out,
+        "  {label:<21} {} / {} rows",
+        fmt_count(unreadable.len() as u64),
+        fmt_count(rows.len() as u64)
+    )
+    .ok();
+    for (record, error) in unreadable.iter().take(PREVIEW_ROWS) {
+        let label = format!("row {record}");
+        writeln!(out, "    {label:<19} {error}").ok();
+    }
+    if unreadable.len() > PREVIEW_ROWS {
+        writeln!(out, "    …").ok();
+    }
+}
+
+/// The icon and the color one event marker style sets, as one value. Absent
+/// where the style leaves both to the app. For a row the reader rejects, the
+/// value states its dataset. [`write_unreadable_rows`] lists that row's error.
+fn icon_and_color(
+    icon: Option<&FieldRow<IconNameField>>,
+    color: Option<&FieldRow<ColorHexField>>,
+) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    match icon {
+        Some(Ok(name)) => match EventMarkerIconChoice::from_wire_name(name.as_str()) {
+            EventMarkerIconChoice::Auto => {}
+            EventMarkerIconChoice::Icon(icon) => parts.push(icon.name().to_owned()),
+            EventMarkerIconChoice::Unrecognized(name) => {
+                parts.push(format!("unrecognized icon {name:?}"));
+            }
+        },
+        Some(Err(_)) => parts.push("unreadable icon_name".to_owned()),
+        None => {}
+    }
+    match color {
+        Some(Ok(value)) => match EventMarkerColor::from_wire_value(value.as_str()) {
+            EventMarkerColor::Auto => {}
+            EventMarkerColor::Hex(hex) => parts.push(hex),
+            EventMarkerColor::Unrecognized(value) => {
+                parts.push(format!("unrecognized color {value:?}"));
+            }
+        },
+        Some(Err(_)) => parts.push("unreadable color_hex".to_owned()),
+        None => {}
+    }
+
+    if parts.is_empty() {
+        ABSENT_VALUE.to_owned()
+    } else {
+        parts.join(", ")
+    }
+}
+
+/// `items` joined with `, `, at most [`PREVIEW_ROWS`] of them, with `…` where
+/// more follow.
+fn preview_list(items: &[String]) -> String {
+    let shown = items
+        .iter()
+        .take(PREVIEW_ROWS)
+        .map(String::as_str)
+        .collect::<Vec<&str>>()
+        .join(", ");
+    if items.len() > PREVIEW_ROWS {
+        format!("{shown}, …")
+    } else {
+        shown
     }
 }
 
@@ -1033,6 +1340,28 @@ fn fmt_count(n: u64) -> String {
     buf.chars().rev().collect()
 }
 
+/// The first and the last timestamp of a microsecond dataset, in the order the
+/// file holds them.
+fn first_and_last_time(micros: &[i64]) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    let first = DateTime::from_timestamp_micros(*micros.first()?)?;
+    let last = DateTime::from_timestamp_micros(*micros.last()?)?;
+    Some((first, last))
+}
+
+/// The earliest and the latest timestamp of a microsecond dataset, skipping the
+/// rows holding [`ABSENT_TIMESTAMP_MICROS`].
+fn earliest_and_latest_time(micros: &[u64]) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    let stamped = || {
+        micros
+            .iter()
+            .copied()
+            .filter(|&value| value != ABSENT_TIMESTAMP_MICROS)
+    };
+    let earliest = DateTime::from_timestamp_micros(stamped().min()?.cast_signed())?;
+    let latest = DateTime::from_timestamp_micros(stamped().max()?.cast_signed())?;
+    Some((earliest, latest))
+}
+
 fn min_max_f64(vals: &[f64]) -> (f64, f64) {
     vals.iter()
         .filter(|v| !v.is_nan())
@@ -1041,32 +1370,54 @@ fn min_max_f64(vals: &[f64]) -> (f64, f64) {
         })
 }
 
-fn min_max_present_f64(vals: &[f64]) -> (f64, f64, usize) {
-    let mut mn = f64::INFINITY;
-    let mut mx = f64::NEG_INFINITY;
-    let mut count = 0usize;
-    for &v in vals {
-        if !v.is_nan() {
-            mn = mn.min(v);
-            mx = mx.max(v);
-            count += 1;
-        }
-    }
-    (mn, mx, count)
+/// The lowest and the highest value a dataset holds, and how many of its rows
+/// hold one at all. A row holding NaN, the `.gtd` encoding of an absent value,
+/// is counted and enters neither bound.
+struct MeasuredRange {
+    min: f64,
+    max: f64,
+    present: usize,
+    rows: usize,
 }
 
-fn min_max_present_f32(vals: &[f32]) -> (f32, f32, usize) {
-    let mut mn = f32::INFINITY;
-    let mut mx = f32::NEG_INFINITY;
-    let mut count = 0usize;
-    for &v in vals {
-        if !v.is_nan() {
-            mn = mn.min(v);
-            mx = mx.max(v);
-            count += 1;
+impl MeasuredRange {
+    fn of(values: impl IntoIterator<Item = f64>) -> Self {
+        let mut range = Self {
+            min: f64::INFINITY,
+            max: f64::NEG_INFINITY,
+            present: 0,
+            rows: 0,
+        };
+        for value in values {
+            range.rows += 1;
+            if !value.is_nan() {
+                range.min = range.min.min(value);
+                range.max = range.max.max(value);
+                range.present += 1;
+            }
         }
+        range
     }
-    (mn, mx, count)
+
+    /// The range with `unit_suffix` after its high value, and how many rows
+    /// hold a value. The absent marker where none do. `unit_suffix` opens with
+    /// a space for a unit written with one (` dB-Hz`) and without for one
+    /// written without (`°`).
+    fn line_value(&self, unit_suffix: &str) -> String {
+        if self.present == 0 {
+            return format!(
+                "{ABSENT_VALUE}  (0 / {} present)",
+                fmt_count(self.rows as u64)
+            );
+        }
+        format!(
+            "{:.1} – {:.1}{unit_suffix}  ({} / {} present)",
+            self.min,
+            self.max,
+            fmt_count(self.present as u64),
+            fmt_count(self.rows as u64)
+        )
+    }
 }
 
 fn constellation_names(codes: &[u8]) -> Vec<&'static str> {
@@ -1083,40 +1434,24 @@ fn constellation_names(codes: &[u8]) -> Vec<&'static str> {
         .collect()
 }
 
+/// Every `markers/icon` code the dataset holds, with how many markers carry it,
+/// in code order. A code outside the [`MarkerIcon`](crate::MarkerIcon) set is
+/// listed as itself.
 fn icon_histogram(codes: &[u8]) -> String {
-    let mut counts = [0u64; 7];
-    for &c in codes {
-        if let Some(slot) = counts.get_mut(c as usize) {
-            *slot += 1;
-        }
+    let mut markers_per_code: BTreeMap<u8, u64> = BTreeMap::new();
+    for &code in codes {
+        *markers_per_code.entry(code).or_default() += 1;
     }
-    let parts: Vec<String> = counts
+    markers_per_code
         .iter()
-        .enumerate()
-        .filter(|&(_, &c)| c > 0)
-        .filter_map(|(i, &c)| {
-            let name = MarkerIcon::from_u8(i as u8)?.name();
-            Some(format!("{name} ×{c}"))
-        })
-        .collect();
-    parts.join(", ")
-}
-
-fn label_preview(flat: &[u8]) -> String {
-    let total = flat.len() / 256;
-    let shown = total.min(3);
-    let labels: Vec<String> = flat
-        .chunks(256)
-        .take(shown)
-        .map(|row| {
-            let end = row.iter().position(|&b| b == 0).unwrap_or(row.len());
-            let s = String::from_utf8_lossy(row.get(..end).unwrap_or(&[]));
-            format!("\"{s}\"")
-        })
-        .collect();
-    if total > 3 {
-        format!("{}, …", labels.join(", "))
-    } else {
-        labels.join(", ")
-    }
+        .map(
+            |(&code, markers)| match AnnotationIcon::from_wire_code(code) {
+                AnnotationIcon::Icon(icon) => format!("{} ×{markers}", icon.name()),
+                AnnotationIcon::Unrecognized(code) => {
+                    format!("unrecognized code {code} ×{markers}")
+                }
+            },
+        )
+        .collect::<Vec<String>>()
+        .join(", ")
 }

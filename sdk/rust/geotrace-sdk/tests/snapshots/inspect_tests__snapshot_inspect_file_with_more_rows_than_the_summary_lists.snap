@@ -1,0 +1,81 @@
+---
+source: sdk/rust/geotrace-sdk/tests/inspect_tests.rs
+expression: inspect_bytes(&bytes)?
+---
+GeoTrace Data File - version 2
+────────────────────────────────────────────────────────────
+Metadata
+  —
+
+Nav Points              1 records
+  time                  2025-05-23T11:33:20Z → 2025-05-23T11:33:20Z
+  lat                   55.000° – 55.000°
+  lon                   12.000° – 12.000°
+  heading               90.0° – 90.0°
+  speed                 3.0 – 3.0 m/s  (1 / 1 present)
+
+Satellite Reports       0 records
+
+Markers                 0 records
+
+Event Markers           26 records
+  time                  2025-05-23T11:33:20Z → 2025-05-23T11:33:20Z
+  variant paths         22 distinct
+    event/00            ×1
+    event/01            ×1
+    event/02            ×1
+    event/03            ×1
+    event/04            ×1
+    event/05            ×1
+    event/06            ×1
+    event/07            ×1
+    event/08            ×1
+    event/09            ×1
+    event/10            ×1
+    event/11            ×1
+    event/12            ×1
+    event/13            ×1
+    event/14            ×1
+    event/15            ×1
+    event/16            ×1
+    event/17            ×1
+    event/18            ×1
+    event/19            ×1
+    …
+  unreadable variant_path 4 / 26 rows
+    row 22              the field row is not UTF-8: invalid utf-8 sequence of 1 bytes from index 0
+    row 23              the field row is not UTF-8: invalid utf-8 sequence of 1 bytes from index 0
+    row 24              the field row is not UTF-8: invalid utf-8 sequence of 1 bytes from index 0
+    …
+  annotations           "note 00", "note 01", "note 02", …
+  unreadable annotation 4 / 26 rows
+    row 22              the field row is not UTF-8: invalid utf-8 sequence of 1 bytes from index 0
+    row 23              the field row is not UTF-8: invalid utf-8 sequence of 1 bytes from index 0
+    row 24              the field row is not UTF-8: invalid utf-8 sequence of 1 bytes from index 0
+    …
+
+Event Marker Styles     21 records
+  style/00              —
+  style/01              —
+  style/02              —
+  style/03              —
+  style/04              —
+  style/05              —
+  style/06              —
+  style/07              —
+  style/08              —
+  style/09              —
+  style/10              —
+  style/11              —
+  style/12              —
+  style/13              —
+  style/14              —
+  style/15              —
+  style/16              —
+  style/17              —
+  style/18              —
+  style/19              —
+  …
+
+Channels                0 channels
+────────────────────────────────────────────────────────────
