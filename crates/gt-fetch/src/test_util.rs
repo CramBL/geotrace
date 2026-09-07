@@ -2,12 +2,26 @@
 
 use std::collections::VecDeque;
 
-use gt_fetch::{HttpRequest, HttpResponse, Transport, TransportError};
 use parking_lot::Mutex;
+
+use crate::{HttpRequest, HttpResponse, Transport, TransportError};
 
 /// What a scripted transport returns for one request: a response, or a failure
 /// below the HTTP layer.
 pub type TransportResponse<B> = Result<HttpResponse<B>, TransportError>;
+
+pub fn response<B>(status: u16, body: impl Into<B>) -> TransportResponse<B> {
+    Ok(HttpResponse {
+        status,
+        body: body.into(),
+    })
+}
+
+pub fn transport_error<B>(detail: &str) -> TransportResponse<B> {
+    Err(TransportError {
+        detail: detail.to_owned(),
+    })
+}
 
 /// The two responses [`ScriptedTransport::by_url_prefix`] picks between, for a
 /// pipeline that tries several hosts.
@@ -39,7 +53,8 @@ impl<B> ScriptedTransport<B> {
     }
 
     /// Returns one script entry per request, in order. A request past the end
-    /// of the script fails, stating the test's under-declared script.
+    /// of the script fails, and the failure states the URL the script has no
+    /// entry for.
     pub fn in_order(script: Vec<TransportResponse<B>>) -> Self {
         Self::new(ScriptedResponses::InOrder(script.into()))
     }
@@ -75,9 +90,10 @@ impl<B: Clone> Transport<B> for ScriptedTransport<B> {
         match &mut *self.responses.lock() {
             ScriptedResponses::Always(response) => response.clone(),
             ScriptedResponses::InOrder(script) => script.pop_front().unwrap_or_else(|| {
-                Err(TransportError {
-                    detail: "the test under-declared its script".to_owned(),
-                })
+                transport_error(&format!(
+                    "the test under-declared its script: no response left for {}",
+                    request.url()
+                ))
             }),
             ScriptedResponses::ByUrlPrefix(responses) => {
                 if request.url().starts_with(&responses.prefix) {

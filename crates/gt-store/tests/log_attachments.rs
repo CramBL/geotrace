@@ -3,11 +3,11 @@
 
 use std::path::{Path, PathBuf};
 
+use gt_history_types::fixtures;
 use gt_store::{
     DatabaseRef, HistoryDatabase as _, LogAttachmentError, LogAttachmentId, LogAttachments as _,
     LogToAttach, ReadOnlyHistoryDatabase as _, ReadOnlyLogAttachments as _, RecordingMeta,
-    Recordings, Store, StoredFixPlacementRule, StoredLogFilter, StoredLogFilterMode,
-    StoredSegmentation, StoredTrackSplitRule, TrackRange, TrackState,
+    Recordings, Store, TrackRange, TrackState,
 };
 
 /// A journald-shaped log, long enough that its stored copy is visibly
@@ -20,24 +20,6 @@ const LOG_TEXT: &str = concat!(
 );
 
 const OTHER_LOG_TEXT: &str = "2026-01-01 14:03:01 nav-devkit-mk2: booted\n";
-
-/// A stack with one chip of each mode, with and without a palette slot.
-fn log_filters() -> Vec<StoredLogFilter> {
-    vec![
-        StoredLogFilter {
-            text: "gnss".to_owned(),
-            regex: false,
-            enabled: true,
-            mode: StoredLogFilterMode::Layer { color_slot: 3 },
-        },
-        StoredLogFilter {
-            text: "hal-powerd|navsyncd".to_owned(),
-            regex: true,
-            enabled: false,
-            mode: StoredLogFilterMode::Refine,
-        },
-    ]
-}
 
 /// A store with one recording in its history, ready to attach logs to.
 struct RecordedStore {
@@ -64,7 +46,13 @@ impl RecordedStore {
             state: TrackState::Live,
         }];
         let recording = recordings
-            .insert("nav-devkit-mk2", &meta, &tracks, segmentation(), &bytes)
+            .insert(
+                "nav-devkit-mk2",
+                &meta,
+                &tracks,
+                fixtures::default_segmentation(),
+                &bytes,
+            )
             .expect("insert");
         Self {
             _directory: directory,
@@ -81,7 +69,7 @@ impl RecordedStore {
                 &LogToAttach {
                     name,
                     text,
-                    filters: log_filters(),
+                    filters: fixtures::log_filters(),
                 },
             )
             .expect("attach")
@@ -98,16 +86,6 @@ impl RecordedStore {
             Ok(entries) => entries.count(),
             Err(_) => 0,
         }
-    }
-}
-
-fn segmentation() -> StoredSegmentation {
-    StoredSegmentation {
-        track_split_gap_us: 300_000_000,
-        track_split_rule: StoredTrackSplitRule::StepInEitherDirection,
-        fix_placement_rule: StoredFixPlacementRule::MissingHeadingAndNothingInFix,
-        detect_clock_discontinuities: true,
-        clock_discontinuity_sigmas: 5.0,
     }
 }
 
@@ -140,7 +118,7 @@ fn an_attached_log_comes_back_with_its_name_text_and_filters() {
         .expect("load");
     assert_eq!(attached.name, "navsyncd.log");
     assert_eq!(attached.text, LOG_TEXT);
-    assert_eq!(attached.filters, log_filters());
+    assert_eq!(attached.filters, fixtures::log_filters());
 }
 
 /// The attach returns the entry the recording now lists.
@@ -155,7 +133,7 @@ fn attaching_returns_the_attachment_the_recording_now_lists() {
             &LogToAttach {
                 name: "navsyncd.log",
                 text: LOG_TEXT,
-                filters: log_filters(),
+                filters: fixtures::log_filters(),
             },
         )
         .expect("attach");
@@ -308,7 +286,7 @@ fn changing_the_filters_of_an_attachment_a_recording_never_had_fails() {
         recorded.recordings.set_attached_log_filters(
             &recorded.recording,
             LogAttachmentId::new_random(),
-            log_filters(),
+            fixtures::log_filters(),
         ),
         Err(LogAttachmentError::UnknownAttachment { .. })
     ));
@@ -329,7 +307,7 @@ fn attaching_to_a_deleted_recording_fails_and_stores_no_log() {
         &LogToAttach {
             name: "navsyncd.log",
             text: LOG_TEXT,
-            filters: log_filters(),
+            filters: fixtures::log_filters(),
         },
     );
 

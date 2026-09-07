@@ -712,11 +712,12 @@ mod tests {
     use crate::app::day_fetch_status::{ArchivedDayCount, DayFetchStatus};
     use crate::app::fix_positions::FixPositions;
     use gt_fetch::BytesResponse;
+    use gt_fetch::test_util::{ScriptedTransport, UrlPrefixResponses};
     use gt_ionex::quiet_time::{IonosphericStormGrade, QuietTimeDeviation};
     use gt_ionex::{DEFAULT_BASE_URL, MirrorLayout};
     use gt_pending_writes::{WriteAccess, WriteRejection};
     use gt_store::Store;
-    use gt_test_utils::{ScriptedTransport, UrlPrefixResponses, ionex_fixtures, pending_writes};
+    use gt_test_utils::{ionex_fixtures, pending_writes};
 
     use super::*;
 

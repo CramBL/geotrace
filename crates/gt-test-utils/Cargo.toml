@@ -32,7 +32,6 @@ egui_kittest = { workspace = true, optional = true }
 geo.workspace = true
 geo-types.workspace = true
 geotrace-sdk = { path = "../../sdk/rust/geotrace-sdk" }
-gt-fetch = { path = "../gt-fetch" }
 gt-hdf5-archive = { path = "../gt-hdf5-archive", optional = true }
 gt-ionex = { path = "../gt-ionex", optional = true }
 gt-pending-writes = { path = "../gt-pending-writes" }
@@ -44,7 +43,6 @@ hdf5 = { workspace = true, optional = true }
 # `egui_kittest`'s `Harness::render` returns. No codec features: the frames
 # never leave memory.
 image = { version = "0.25", default-features = false, optional = true }
-parking_lot.workspace = true
 tempfile = { workspace = true, optional = true }
 uom.workspace = true
 vec1 = { workspace = true, optional = true }

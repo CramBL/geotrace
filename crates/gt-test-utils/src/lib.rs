@@ -14,7 +14,6 @@ pub mod recording_fixtures;
 pub mod snapshot_harness;
 #[cfg(feature = "tracks")]
 pub mod track_fixtures;
-pub mod transport;
 #[cfg(feature = "snapshot")]
 pub mod window_fit;
 
@@ -43,7 +42,6 @@ pub use track_fixtures::{
     FileParts, build_file, empty_file_metadata, empty_track_metadata, loaded_file_with_tracks,
     loaded_track_with_points, segmented_recording, track_geometry,
 };
-pub use transport::{ScriptedTransport, TransportResponse, UrlPrefixResponses};
 #[cfg(feature = "snapshot")]
 pub use window_fit::{AuditedWindow, ControlLabel, WindowFitAssertions, oversized_text};
 

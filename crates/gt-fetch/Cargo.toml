@@ -9,6 +9,11 @@ authors.workspace = true
 [lib]
 doctest = false
 
+[features]
+# Builds `gt_fetch::test_util`, whose scripted transport answers a fetch
+# pipeline's requests from a script. A normal build leaves it off.
+test-util = []
+
 [dependencies]
 parking_lot.workspace = true
 reqwest.workspace = true

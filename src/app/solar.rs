@@ -731,12 +731,13 @@ mod tests {
     use tempfile::TempDir;
 
     use gt_fetch::HttpResponse;
+    use gt_fetch::test_util::ScriptedTransport;
     use gt_pending_writes::{WriteAccess, WriteRejection};
     use gt_solar::DEFAULT_BASE_URL;
     use gt_solar::activity::GeomagneticStormClass;
     use gt_solar::series::{Hp30Sample, KpSample, KpStatus};
     use gt_store::Store;
-    use gt_test_utils::{ScriptedTransport, pending_writes};
+    use gt_test_utils::pending_writes;
 
     use crate::app::backfill::BackfillProgress;
     use crate::app::day_failures::DayFailure;
