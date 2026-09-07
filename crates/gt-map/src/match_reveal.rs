@@ -149,32 +149,15 @@ impl HaloStyle {
 
 #[cfg(test)]
 mod tests {
-    use gt_types::{FileIdx, TrackIdx, TrackRef};
-    use gt_ui_types::{DrawLayer, TrackRanges};
     use rstest::rstest;
 
     use super::*;
+    use crate::test_util;
 
     /// The zoom ends of [`tpv_renderer::glyph_size_scale`]: fully shrunk icons
     /// at zoom 12 and below, full size at zoom 18 and above.
     const ZOOMED_OUT: f64 = 12.0;
     const ZOOMED_IN: f64 = 18.0;
-
-    fn matches_with_halos(run: u64, stale: bool) -> QueryMatches {
-        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
-        // A range built from arguments, so the single-element `vec!` does not
-        // trip clippy's `single_range_in_vec_init`.
-        let rng = |start: usize, end: usize| start..end;
-        QueryMatches {
-            draws: vec![DrawLayer {
-                color: 0,
-                ranges: TrackRanges::from_iter([(track, vec![rng(0, 3)])]),
-            }],
-            stale,
-            run,
-            ..QueryMatches::default()
-        }
-    }
 
     #[test]
     #[expect(clippy::float_cmp, reason = "the easing endpoints are exact")]
@@ -277,21 +260,26 @@ mod tests {
     #[test]
     fn a_new_run_with_halos_reveals_once() {
         let mut state = MatchRevealState::default();
-        state.start_reveal_for_new_run(Some(&matches_with_halos(1, false)), 10.0);
+        let first_run = test_util::a_run_drawing(test_util::track0(), 0..3);
+        state.start_reveal_for_new_run(Some(&first_run), 10.0);
         assert!(state.is_active(), "a new run reveals");
 
         state.tick(11.0);
         assert!(!state.is_active());
-        state.start_reveal_for_new_run(Some(&matches_with_halos(1, false)), 12.0);
+        state.start_reveal_for_new_run(Some(&first_run), 12.0);
         assert!(!state.is_active(), "the same run does not reveal again");
 
-        state.start_reveal_for_new_run(Some(&matches_with_halos(2, false)), 13.0);
+        let next_run = QueryMatches {
+            run: first_run.run + 1,
+            ..first_run.clone()
+        };
+        state.start_reveal_for_new_run(Some(&next_run), 13.0);
         assert!(state.is_active(), "the next run reveals");
     }
 
     #[rstest]
-    #[case::no_run(matches_with_halos(0, false))]
-    #[case::stale(matches_with_halos(2, true))]
+    #[case::no_run(QueryMatches { run: 0, ..test_util::a_run_drawing(test_util::track0(), 0..3) })]
+    #[case::stale(QueryMatches { run: 2, stale: true, ..test_util::a_run_drawing(test_util::track0(), 0..3) })]
     #[case::without_halos(QueryMatches { run: 3, ..QueryMatches::default() })]
     fn matches_that_never_reveal_are_still_recorded(#[case] matches: QueryMatches) {
         let mut state = MatchRevealState::default();
@@ -307,7 +295,7 @@ mod tests {
     #[expect(clippy::float_cmp, reason = "a restarted reveal is exactly 1.0")]
     fn a_re_fire_reveals_the_run_that_already_revealed() {
         let mut state = MatchRevealState::default();
-        let matches = matches_with_halos(1, false);
+        let matches = test_util::a_run_drawing(test_util::track0(), 0..3);
         state.start_reveal_for_new_run(Some(&matches), 10.0);
         state.tick(11.0);
         assert!(!state.is_active());

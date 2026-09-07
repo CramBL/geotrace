@@ -188,6 +188,9 @@ mod tests {
         assert!((wrap_longitude_degrees(180.3) - -179.7).abs() < 1e-9);
         assert!((wrap_longitude_degrees(-180.3) - 179.7).abs() < 1e-9);
         assert!((wrap_longitude_degrees(12.5) - 12.5).abs() < 1e-9);
+        // A full extra revolution lands on the same meridian.
+        assert!((wrap_longitude_degrees(540.0) - wrap_longitude_degrees(180.0)).abs() < 1e-9);
+        assert!((wrap_longitude_degrees(-541.0) - wrap_longitude_degrees(-181.0)).abs() < 1e-9);
     }
 
     /// A viewport past the antimeridian denormalizes to a real longitude.

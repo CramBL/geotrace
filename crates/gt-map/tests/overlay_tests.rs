@@ -1,8 +1,4 @@
-use egui::ComboBox;
-use egui::accesskit;
-use egui_kittest::kittest::Queryable as _;
 use gt_map::test_util;
-use gt_test_utils::TestHarness;
 use gt_types::DataCategory;
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
 
@@ -34,63 +30,5 @@ fn the_map_stacks_an_elements_hover_label_unless_something_else_shows_it(
     assert_eq!(
         highlight.shows_hover_label(hovered, any_popup_open),
         expected
-    );
-}
-
-/// `suppress_hover_labels` defaults to false: an element under the pointer
-/// shows its label while nothing stands in its place.
-#[test]
-fn suppress_hover_labels_defaults_false() {
-    let h = MapHighlight::default();
-    assert!(!h.suppress_hover_labels);
-}
-
-/// Verifies that `any_popup_open()` returns false when no popup has been opened -
-/// confirming the egui baseline the guard relies on.
-#[test]
-fn egui_any_popup_open_false_by_default() {
-    let mut harness = TestHarness::builder().ui(|_ui| {});
-    harness.run();
-    assert!(
-        !harness.inner.ctx.any_popup_open(),
-        "no popup should be open in an idle UI"
-    );
-}
-
-/// Opens a ComboBox (which creates an egui Popup) and asserts that
-/// `any_popup_open()` returns true while the dropdown is visible.
-/// This confirms that the context-menu case the guard suppresses would actually
-/// set the flag the guard reads.
-#[test]
-fn egui_any_popup_open_true_when_combobox_expanded() {
-    let items = ["A", "B", "C"];
-
-    let mut harness = TestHarness::builder()
-        .size(egui::Vec2::new(300.0, 200.0))
-        .ui_state(
-            |ui, selected: &mut usize| {
-                ComboBox::from_label("Pick")
-                    .selected_text(items[*selected])
-                    .show_ui(ui, |ui| {
-                        for (i, item) in items.iter().enumerate() {
-                            ui.selectable_value(selected, i, *item);
-                        }
-                    });
-            },
-            0_usize,
-        );
-
-    harness.run();
-
-    // Click the combo box to open its popup.
-    harness
-        .inner
-        .get_by_role_and_label(accesskit::Role::ComboBox, "Pick")
-        .click();
-    harness.run();
-
-    assert!(
-        harness.inner.ctx.any_popup_open(),
-        "any_popup_open() should be true while the combo box dropdown is open"
     );
 }

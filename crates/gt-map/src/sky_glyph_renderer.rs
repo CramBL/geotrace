@@ -462,7 +462,6 @@ mod tests {
     use egui::{pos2, vec2};
     use gt_types::fixtures::MetricOffset;
     use gt_types::satellites::{Constellation, Satellite, Satellites};
-    use gt_types::{FileIdx, TrackIdx, TrackRef};
     use gt_ui_types::{SkyGlyphVariant, TrackMatchView};
 
     use super::{
@@ -511,13 +510,7 @@ mod tests {
         let mut scratch = GlyphSelection::default();
         select_glyphs(
             &mut scratch,
-            [(
-                0,
-                TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-                track,
-                TrackMatchView::default(),
-            )]
-            .into_iter(),
+            [(0, test_util::track0(), track, TrackMatchView::default())].into_iter(),
             1,
             WORLD,
             cell_merc,
@@ -623,13 +616,7 @@ mod tests {
         let mut scratch = GlyphSelection::default();
         let selected = select_glyphs(
             &mut scratch,
-            [(
-                0,
-                TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-                &track,
-                TrackMatchView::default(),
-            )]
-            .into_iter(),
+            [(0, test_util::track0(), &track, TrackMatchView::default())].into_iter(),
             1,
             nothing,
             1e-9,

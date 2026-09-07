@@ -380,6 +380,7 @@ mod tests {
     use strum::IntoEnumIterator;
 
     use super::*;
+    use crate::test_util;
 
     fn t(secs: i64) -> DateTime<Utc> {
         DateTime::<Utc>::UNIX_EPOCH + Duration::seconds(secs)
@@ -532,7 +533,7 @@ mod tests {
         let files = vec![fixture()];
         let mut snapped = SnappedTracks::default();
         snapped.insert(
-            TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+            test_util::track0(),
             Arc::new(gt_ui_types::SnappedTrackGeometry::default()),
         );
         let counts = DisplayCounts::compute(
@@ -594,7 +595,7 @@ mod tests {
     #[test]
     fn query_hide_and_draws_are_counted() {
         let files = vec![fixture()];
-        let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        let track_ref = test_util::track0();
         let matches = QueryMatches {
             // Points 0 and 1 removed by a `hide` query, which drops them from
             // the point count and drops the point-0 anchor.
@@ -616,7 +617,7 @@ mod tests {
         // A query ran before the filter was narrowed: its match on points
         // 0-1 is invisible now, so it must not be counted either.
         let files = vec![fixture()];
-        let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        let track_ref = test_util::track0();
         let matches = QueryMatches {
             draws: vec![DrawLayer {
                 color: 0,
@@ -638,7 +639,7 @@ mod tests {
     /// mismatch here. Steps repeat a state to exercise the (cheap) hit path.
     #[test]
     fn cache_agrees_with_compute_across_every_input_change() {
-        let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        let track_ref = test_util::track0();
         let files = vec![fixture()];
         // A second file state with an extra custom marker: same track shape
         // otherwise, so only the structural files signature distinguishes it.

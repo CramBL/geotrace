@@ -38,6 +38,8 @@ use gt_ui_types::{
     SnappedTrackGeometry, SnappedTracks, TrackDataVisibility, TrackRanges,
     TrackSpaceWeatherWarning, WarningLevelExplanation,
 };
+use uom::si::f64::Length;
+use uom::si::length::{kilometer, meter};
 
 use crate::{
     MapAction, MapDrawContext, NavMap, SpaceWeatherIndicator, TecHeatmapSnapshot, TecLayer,
@@ -149,6 +151,129 @@ pub fn a_recording_of(count: usize, step_degrees: f64) -> Vec<LoadedFile> {
         load_warnings: Vec::new(),
     }]
 }
+
+/// [`gt_test_utils::loaded_track_with_points`] with the LOD levels and the
+/// satellite label anchors the track builder computes for `points`.
+pub fn track_built_from(points: Vec<NavPoint>) -> LoadedTrack {
+    let mut track = gt_test_utils::loaded_track_with_points(points);
+    if let Some(placed) = track.placed_points() {
+        let lod = gt_track_builder::build_track_lod(placed);
+        let anchors = gt_track_builder::build_sat_label_anchors(placed);
+        track.lod = lod;
+        track.sat_label_anchors = anchors;
+    }
+    track
+}
+
+/// The recording most map baselines are framed on: one track of
+/// [`gt_test_utils::nav_test_data`] carrying one custom marker, one event
+/// marker and one `GnssFixRegained` generated marker, all at its first fix.
+///
+/// The geometry is written out here, not measured by the track builder. It
+/// sets the fit every baseline is framed at, so a change in what the builder
+/// measures must leave the baselines where they are.
+pub fn a_recording_with_every_marker_kind() -> LoadedFile {
+    let points = gt_test_utils::nav_test_data();
+    let first_fix = points
+        .first()
+        .map_or_else(epoch, |point| point.tpv.time().utc());
+    let (latitude_degrees, longitude_degrees) = MARKER_POSITION_DEGREES;
+    let latitude = Latitude::new(latitude_degrees);
+    let longitude = Longitude::new(longitude_degrees);
+    let span = Duration::seconds(points.len() as i64);
+
+    let bounding_box = gt_types::GeoBounds::from_positions([
+        (Latitude::new(55.67), Longitude::new(12.55)),
+        (Latitude::new(55.69), Longitude::new(12.59)),
+    ])
+    .expect("two positions");
+    let geometry = gt_types::TrackGeometry::Measured(gt_types::MeasuredTrackGeometry {
+        resolved_positions: points
+            .iter()
+            .filter_map(|point| point.tpv.position())
+            .map(|(lat, lon)| gt_types::ResolvedPosition::measured(lat, lon))
+            .collect(),
+        bounding_box,
+        merc_bounds: gt_types::MercBounds::from(bounding_box),
+        distance_km: Length::new::<kilometer>(RECORDING_DISTANCE_KM),
+        point_set_diameter_m: Length::new::<meter>(500.0),
+        segment_length_range: None,
+    });
+    let sat_label_anchors = geometry
+        .measured()
+        .and_then(|measured| gt_types::PlacedPoints::new(&points, &measured.resolved_positions))
+        .map_or_else(Vec::new, gt_track_builder::build_sat_label_anchors);
+
+    let track = LoadedTrack {
+        metadata: gt_types::TrackMetadata {
+            duration: span,
+            time_range: TimeRange::new(first_fix, first_fix + span),
+            has_custom_markers: true,
+            tpv_count: points.len(),
+            // Counted from the points: `SkySection::resolve` short-circuits on
+            // a zero count, so claiming zero here would hide the sky plot even
+            // though these points have satellite reports.
+            satellite_report_count: points
+                .iter()
+                .filter(|point| point.satellites.is_some())
+                .count(),
+            custom_marker_count: 1,
+            generated_marker_count: 1,
+            event_marker_count: 1,
+            ..gt_test_utils::empty_track_metadata()
+        },
+        geometry,
+        sat_label_anchors,
+        custom_markers: vec![gt_types::CustomMarker::new(
+            first_fix,
+            "Coffee stop".to_owned(),
+            gt_types::MarkerIcon::Pin,
+            latitude,
+            longitude,
+        )],
+        generated_markers: vec![gt_types::GeneratedMarker {
+            time: first_fix,
+            kind: gt_types::GeneratedMarkerKind::GnssFixRegained {
+                fix_lost_duration: Duration::milliseconds(12_300),
+            },
+            lat: latitude,
+            lon: longitude,
+            merc: gt_types::mercator::normalize(latitude, longitude),
+        }],
+        event_markers: vec![EventMarker::new(
+            first_fix,
+            "Lap/Start".to_owned(),
+            Some("Lap start point".to_owned()),
+            latitude,
+            longitude,
+        )],
+        ..gt_test_utils::loaded_track_with_points(points)
+    };
+    LoadedFile {
+        metadata: gt_types::FileMetadata {
+            filename: RECORDING_FILENAME.to_owned(),
+            total_distance: gt_types::TotalDistance::Measured(Length::new::<kilometer>(
+                RECORDING_DISTANCE_KM,
+            )),
+            total_duration: span,
+            time_range: Some(TimeRange::new(first_fix, first_fix + span)),
+            ..gt_test_utils::empty_file_metadata()
+        },
+        source: FileSource::GtdPath(std::path::PathBuf::from(RECORDING_FILENAME)),
+        ..gt_test_utils::loaded_file_with_tracks(vec![track])
+    }
+}
+
+/// Where every marker of [`a_recording_with_every_marker_kind`] sits, in
+/// degrees.
+pub const MARKER_POSITION_DEGREES: (f64, f64) = (55.686_7, 12.563_8);
+
+/// The path [`a_recording_with_every_marker_kind`] was loaded from.
+const RECORDING_FILENAME: &str = "snapshot_test.gtd";
+
+/// The distance [`a_recording_with_every_marker_kind`] states, which is what
+/// the map frames its baselines at.
+const RECORDING_DISTANCE_KM: f64 = 5.0;
 
 /// A window that keeps the fixes up to and including `index`.
 pub fn window_ending_at(index: usize) -> GlobalFilter {
@@ -766,47 +891,79 @@ pub fn an_interference_cell_around(position: (f64, f64)) -> JamDataset {
     )
 }
 
+/// The tallies of [`an_interference_ring_around`], from a cell no aircraft
+/// reported trouble in to two cells too thinly sampled to colour.
+const INTERFERENCE_RING_TALLIES: [(u32, u32); 7] = [
+    (400, 0),
+    (98, 2),
+    (94, 6),
+    (90, 10),
+    (60, 40),
+    (2, 2),
+    (1, 1),
+];
+
+/// The interference layer over a ring of seven cells around `position`, one
+/// per tally of [`INTERFERENCE_RING_TALLIES`], which covers the whole ramp
+/// from clear to heavy and both low-sample fills.
+pub fn an_interference_ring_around(position: (f64, f64)) -> JamDataset {
+    let (latitude, longitude) = position;
+    let center = h3o::LatLng::new(latitude, longitude)
+        .expect("a position on the globe")
+        .to_cell(gt_jam::H3_RESOLUTION);
+    let observations = center
+        .grid_disk::<Vec<_>>(1)
+        .into_iter()
+        .zip(INTERFERENCE_RING_TALLIES)
+        .map(|(cell, (good, bad))| HexObservation { cell, good, bad })
+        .collect();
+    JamDataset::new(epoch().date_naive(), observations)
+}
+
 /// Half the length of the snapped edge, in normalized Mercator: about 2 km
 /// each way, which crosses the whole viewport at the zoom that frames a
 /// walking track.
 const SNAPPED_EDGE_HALF_LENGTH_MERC: f64 = 1.0e-4;
 
-/// One straight snapped edge running west to east through `position`, in
-/// degrees, matched to a named road whose class, speed limit and surface the
-/// edge's hover label states.
+/// One straight snapped edge running west to east through `merc`, matched to a
+/// named road whose class, speed limit and surface the edge's hover label
+/// states.
+pub fn a_snapped_edge_at(merc: MercPoint) -> SnappedTrackGeometry {
+    SnappedTrackGeometry {
+        segments: vec![SnappedSegment {
+            points: vec![
+                MercPoint {
+                    x: merc.x - SNAPPED_EDGE_HALF_LENGTH_MERC,
+                    y: merc.y,
+                },
+                MercPoint {
+                    x: merc.x + SNAPPED_EDGE_HALF_LENGTH_MERC,
+                    y: merc.y,
+                },
+            ],
+            recorded_points: Vec::new(),
+            edge_spans: vec![SnappedEdgeSpan {
+                start: 0,
+                end: 2,
+                edge: 0,
+            }],
+        }],
+        edges: vec![SnappedEdgeInfo {
+            name: Some("H.C. Andersens Boulevard".to_owned()),
+            road_class: Some("Tertiary".to_owned()),
+            speed_limit: Some("50 km/h".to_owned()),
+            surface: Some("Paved smooth".to_owned()),
+        }],
+        whiskers: Vec::new(),
+    }
+}
+
+/// [`a_snapped_edge_at`] the position `position` states in degrees, as the
+/// only snapped track of the first recording.
 pub fn a_snapped_edge_through(position: (f64, f64)) -> SnappedTracks {
     let (latitude, longitude) = position;
     let merc = gt_types::mercator::normalize(Latitude::new(latitude), Longitude::new(longitude));
     let mut snapped = SnappedTracks::default();
-    snapped.insert(
-        track0(),
-        Arc::new(SnappedTrackGeometry {
-            segments: vec![SnappedSegment {
-                points: vec![
-                    MercPoint {
-                        x: merc.x - SNAPPED_EDGE_HALF_LENGTH_MERC,
-                        y: merc.y,
-                    },
-                    MercPoint {
-                        x: merc.x + SNAPPED_EDGE_HALF_LENGTH_MERC,
-                        y: merc.y,
-                    },
-                ],
-                recorded_points: Vec::new(),
-                edge_spans: vec![SnappedEdgeSpan {
-                    start: 0,
-                    end: 2,
-                    edge: 0,
-                }],
-            }],
-            edges: vec![SnappedEdgeInfo {
-                name: Some("H.C. Andersens Boulevard".to_owned()),
-                road_class: Some("Tertiary".to_owned()),
-                speed_limit: Some("50 km/h".to_owned()),
-                surface: Some("Paved smooth".to_owned()),
-            }],
-            whiskers: Vec::new(),
-        }),
-    );
+    snapped.insert(track0(), Arc::new(a_snapped_edge_at(merc)));
     snapped
 }

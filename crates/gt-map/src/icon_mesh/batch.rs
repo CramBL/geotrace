@@ -455,6 +455,8 @@ mod tests {
 
 #[cfg(test)]
 mod gpu_projection_tests {
+    use rstest::rstest;
+
     use super::*;
     use crate::icon_mesh::IconMeshLibrary;
     use crate::test_util;
@@ -531,55 +533,42 @@ mod gpu_projection_tests {
         f64::from(u32::try_from(differing).unwrap_or(u32::MAX)) / f64::from(w * h)
     }
 
-    /// Baseline: with the icon painter clipped to the whole frame, the paint
-    /// callback's viewport equals the framebuffer, so the GPU instanced path
-    /// and the CPU mesh path must produce the same image. This isolates the
-    /// next test's failure to the *viewport*, not to a pipeline-parity issue.
-    #[test]
-    fn gpu_and_cpu_match_when_clip_fills_the_frame() {
-        let size = egui::vec2(400.0, 320.0);
-        let full = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
-        let cpu = render_icon_grid(size, full, Backend::Cpu);
-        let gpu = render_icon_grid(size, full, Backend::Gpu);
+    /// The GPU instanced path rasterizes the shared template into the same
+    /// image as the CPU mesh path.
+    ///
+    /// The map widget is always inset by the side panels, so the icon
+    /// painter's clip rect is a sub-rect of the framebuffer, and egui-wgpu
+    /// sets a paint callback's render-pass viewport to that clip rect. The
+    /// inset case pins that the instanced shader maps screen points into NDC
+    /// relative to the clip rect: against the full framebuffer every icon
+    /// lands offset and scaled into a corner. Zooming out pushes the
+    /// visible-icon count past [`gpu::GPU_MIN_INSTANCES`], which is what
+    /// switches the map to the instanced draw. The CPU path is unaffected by
+    /// the viewport, since its vertices are absolute screen positions, so it
+    /// is the reference either way.
+    #[rstest]
+    #[case::the_clip_rect_fills_the_frame(egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        GPU_PARITY_CANVAS
+    ))]
+    #[case::an_inset_clip_rect(egui::Rect::from_min_size(
+        egui::pos2(150.0, 90.0),
+        egui::vec2(220.0, 200.0)
+    ))]
+    fn gpu_instanced_icons_match_cpu_placement(#[case] clip_rect: egui::Rect) {
+        let cpu = render_icon_grid(GPU_PARITY_CANVAS, clip_rect, Backend::Cpu);
+        let gpu = render_icon_grid(GPU_PARITY_CANVAS, clip_rect, Backend::Gpu);
         let frac = diff_fraction(&cpu, &gpu);
         assert!(
             frac < 0.01,
-            "full-frame GPU vs CPU icons differ by {:.2}% - the two pipelines \
-             should rasterize the shared template identically",
+            "GPU and CPU icons differ over {:.2}% of the pixels under clip \
+             rect {clip_rect:?}",
             frac * 100.0
         );
     }
 
-    /// Regression test for icons "placed incorrectly when zooming out".
-    ///
-    /// The map widget is always inset by the side panels, so the icon
-    /// painter's clip rect is a sub-rect of the framebuffer. egui-wgpu sets a
-    /// paint callback's render-pass viewport to that clip rect, so the
-    /// instanced shader must map screen points into NDC relative to the clip
-    /// rect - not the full framebuffer. Zooming out pushes the visible-icon
-    /// count past [gpu::GPU_MIN_INSTANCES], switching from the (correct) CPU
-    /// mesh path to the GPU instanced draw. If the shader assumes the whole
-    /// framebuffer, every icon is offset and scaled into a corner.
-    ///
-    /// The CPU path is unaffected by the viewport (its vertices are absolute
-    /// screen positions), so it is the correct reference. The two must match.
-    #[test]
-    fn gpu_instanced_icons_match_cpu_placement_in_inset_viewport() {
-        let size = egui::vec2(400.0, 320.0);
-        // A sub-rect standing in for the map widget inset by the side panels.
-        let inset = egui::Rect::from_min_size(egui::pos2(150.0, 90.0), egui::vec2(220.0, 200.0));
-        let cpu = render_icon_grid(size, inset, Backend::Cpu);
-        let gpu = render_icon_grid(size, inset, Backend::Gpu);
-        let frac = diff_fraction(&cpu, &gpu);
-        assert!(
-            frac < 0.01,
-            "GPU instanced icons are misplaced under an inset clip rect: \
-             {:.1}% of pixels differ from the CPU reference. The instanced \
-             shader maps NDC to the full framebuffer, but egui-wgpu set the \
-             render-pass viewport to the callback's clip rect.",
-            frac * 100.0
-        );
-    }
+    /// The canvas both icon pipelines draw the grid into.
+    const GPU_PARITY_CANVAS: egui::Vec2 = egui::vec2(400.0, 320.0);
 }
 
 #[cfg(test)]

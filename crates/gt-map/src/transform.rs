@@ -14,17 +14,6 @@ use walkers::MapMemory;
 
 use crate::polyline::MAX_LOD_ERROR_PX;
 
-/// Wrap a longitude in degrees into `Longitude`'s valid `[-180, 180]` range.
-///
-/// At low zoom the viewport can span more than 360° of longitude, so the
-/// pixel column at the viewport centre may sit past the antimeridian wrap and
-/// `Projector::unproject` returns e.g. 185°.
-/// Longitude is periodic with period 360°, so the wrapped value identifies the
-/// same meridian and is the correct input for [`Longitude::new`].
-fn wrap_longitude_degrees(deg: f64) -> f64 {
-    ((deg + 180.0).rem_euclid(360.0)) - 180.0
-}
-
 /// Per-frame transform context for projecting pre-computed normalised Mercator
 /// coordinates to screen pixel positions with full f64 precision.
 ///
@@ -140,7 +129,7 @@ impl MercTransform {
         // from.
         let merc_center = mercator::normalize_past_the_projection_limit(
             Latitude::new(center_ll.y()),
-            Longitude::new(wrap_longitude_degrees(center_ll.x())),
+            Longitude::new(mercator::wrap_longitude_degrees(center_ll.x())),
         );
         Self {
             clip_center_x: clip_center.x as f64,
@@ -542,45 +531,8 @@ mod tests {
     use gt_types::{LoadedTrack, PlacedPoint, PlacedPoints};
     use rstest::rstest;
 
-    use super::{GeometryCull, Latitude, MercTransform, lod_points, wrap_longitude_degrees};
+    use super::{GeometryCull, Latitude, MercTransform};
     use crate::polyline::{CULL_MARGIN_PX, MAX_LOD_ERROR_PX, VisiblePath, visible_path};
-
-    /// Asserts `a` and `b` are within `1e-9` of each other - tight enough to
-    /// catch a wrong wrap while tolerating ordinary `f64` rounding noise.
-    fn assert_deg_close(a: f64, b: f64) {
-        assert!((a - b).abs() < 1e-9, "expected {a} ≈ {b}");
-    }
-
-    /// Regression test: values already inside `Longitude`'s range must pass
-    /// through unchanged (the wrap must be a no-op for ordinary positions).
-    #[test]
-    fn wrap_longitude_degrees_is_identity_in_range() {
-        for deg in [-180.0, -179.999, -90.0, 0.0, 12.5638, 90.0, 179.999] {
-            assert_deg_close(wrap_longitude_degrees(deg), deg);
-        }
-    }
-
-    /// Regression test: longitudes past the antimeridian - as `unproject` can
-    /// return at low zoom - must wrap to the equivalent meridian inside
-    /// `Longitude`'s `[-180, 180]` range. An unwrapped value panics in
-    /// `Longitude::new`.
-    #[test]
-    fn wrap_longitude_degrees_wraps_past_antimeridian() {
-        assert_deg_close(
-            wrap_longitude_degrees(195.925_437_518_683_45),
-            -164.074_562_481_316_55,
-        );
-        assert_deg_close(
-            wrap_longitude_degrees(184.015_191_562_275_4),
-            -175.984_808_437_724_6,
-        );
-        // A full extra revolution must wrap back to the same meridian.
-        assert_deg_close(wrap_longitude_degrees(540.0), wrap_longitude_degrees(180.0));
-        assert_deg_close(
-            wrap_longitude_degrees(-541.0),
-            wrap_longitude_degrees(-181.0),
-        );
-    }
 
     /// The centre-latitude scale inverts `mercator::normalize`'s y exactly:
     /// for a viewport centred at a known latitude, the derived pixels per
@@ -643,7 +595,12 @@ mod tests {
 
     /// A track through `positions`, one fix per second.
     fn track_through(positions: &[(Latitude, Longitude)]) -> LoadedTrack {
-        track_stamped(positions, |i| i.try_into().unwrap_or(i64::MAX))
+        track_stamped(positions, one_fix_per_second)
+    }
+
+    /// The stamping of a track whose timestamps never step backwards.
+    fn one_fix_per_second(index: usize) -> i64 {
+        i64::try_from(index).unwrap_or(i64::MAX)
     }
 
     /// Neither end of a chunk is its earliest or its latest fix. The 30th fix
@@ -693,7 +650,7 @@ mod tests {
                 let degrees = 179.0 + f64::from(i) * 0.01;
                 (
                     Latitude::new(0.0),
-                    Longitude::new(wrap_longitude_degrees(degrees)),
+                    Longitude::new(gt_types::mercator::wrap_longitude_degrees(degrees)),
                 )
             })
             .collect()
@@ -785,7 +742,7 @@ mod tests {
         for transform in viewports(positions) {
             let cull = GeometryCull::new(&transform, cull_rect, filter);
             let bounded = path_of(
-                lod_points(track, placed, &transform, cull),
+                super::lod_points(track, placed, &transform, cull),
                 &transform,
                 cull_rect,
             );
@@ -803,45 +760,45 @@ mod tests {
         }
     }
 
+    /// The chunk-bounded walk draws what the unbounded walk draws, whatever
+    /// the track's shape and whatever the time window. A window ending at
+    /// 5 000 s cuts through the middle of a chunk, and one from 5 010 s to
+    /// 5 040 s opens and closes inside a single chunk. In the backward-step
+    /// row the fixes inside the window are no contiguous run of the chunk:
+    /// its first and its last fix are both outside the window.
     #[rstest]
-    #[case::straight_line(straight_line())]
-    #[case::rows_across_the_viewport(rows_across_the_viewport())]
-    #[case::across_the_antimeridian(across_the_antimeridian())]
-    #[case::shorter_than_one_chunk(first_fixes(40))]
-    #[case::two_fixes(first_fixes(2))]
-    #[case::one_fix(first_fixes(1))]
+    #[case::straight_line(straight_line(), one_fix_per_second, GlobalFilter::default())]
+    #[case::rows_across_the_viewport(
+        rows_across_the_viewport(),
+        one_fix_per_second,
+        GlobalFilter::default()
+    )]
+    #[case::across_the_antimeridian(
+        across_the_antimeridian(),
+        one_fix_per_second,
+        GlobalFilter::default()
+    )]
+    #[case::shorter_than_one_chunk(first_fixes(40), one_fix_per_second, GlobalFilter::default())]
+    #[case::two_fixes(first_fixes(2), one_fix_per_second, GlobalFilter::default())]
+    #[case::one_fix(first_fixes(1), one_fix_per_second, GlobalFilter::default())]
+    #[case::a_window_boundary_inside_a_chunk(
+        straight_line(),
+        one_fix_per_second,
+        window(3_000, 5_000)
+    )]
+    #[case::a_window_inside_one_chunk(straight_line(), one_fix_per_second, window(5_010, 5_040))]
+    #[case::a_backward_time_step_inside_every_chunk(
+        straight_line(),
+        offset_secs_stepping_backwards_inside_every_chunk,
+        window(3_000, 5_000)
+    )]
     fn the_bounded_walk_draws_the_path_the_unbounded_walk_draws(
         #[case] positions: Vec<(Latitude, Longitude)>,
-    ) {
-        let track = track_through(&positions);
-        assert_the_walks_draw_the_same_path(&track, &positions, &GlobalFilter::default());
-    }
-
-    /// A window ending at 5 000 s cuts through the middle of one chunk, and
-    /// one from 5 010 s to 5 040 s opens and closes inside a single chunk.
-    /// The straight line runs one fix per second over 10 000 seconds.
-    #[rstest]
-    #[case::boundary_inside_a_chunk(window(3_000, 5_000))]
-    #[case::inside_one_chunk(window(5_010, 5_040))]
-    fn the_bounded_walk_draws_the_windowed_path_the_unbounded_walk_draws(
+        #[case] offset_secs: fn(usize) -> i64,
         #[case] filter: GlobalFilter,
     ) {
-        let positions = straight_line();
-        let track = track_through(&positions);
+        let track = track_stamped(&positions, offset_secs);
         assert_the_walks_draw_the_same_path(&track, &positions, &filter);
-    }
-
-    /// The fixes with a timestamp inside the window are not one contiguous
-    /// run of the chunk. The first and the last fix of the chunk both have a
-    /// timestamp outside the window.
-    #[test]
-    fn the_bounded_walk_draws_the_windowed_path_across_a_backward_time_step() {
-        let positions = straight_line();
-        let track = track_stamped(
-            &positions,
-            offset_secs_stepping_backwards_inside_every_chunk,
-        );
-        assert_the_walks_draw_the_same_path(&track, &positions, &window(3_000, 5_000));
     }
 
     #[test]
@@ -857,7 +814,10 @@ mod tests {
         let filter = window(30_000, 40_000);
         let cull = GeometryCull::new(&transform, cull_rect, &filter);
 
-        assert_eq!(lod_points(&track, placed, &transform, cull).count(), 0);
+        assert_eq!(
+            super::lod_points(&track, placed, &transform, cull).count(),
+            0
+        );
     }
 
     /// The path is the unbounded walk's wherever a chunk boundary falls
@@ -881,7 +841,7 @@ mod tests {
             let transform = MercTransform::for_test_view(world_px, lat, lon, MAP_RECT.center());
             let cull = GeometryCull::new(&transform, cull_rect, &filter);
             let bounded = path_of(
-                lod_points(&track, placed, &transform, cull),
+                super::lod_points(&track, placed, &transform, cull),
                 &transform,
                 cull_rect,
             );
@@ -921,7 +881,7 @@ mod tests {
         let cull_rect = MAP_RECT.expand(CULL_MARGIN_PX);
         let filter = GlobalFilter::default();
         let cull = GeometryCull::new(&transform, cull_rect, &filter);
-        let walked = lod_points(&track, placed, &transform, cull).count();
+        let walked = super::lod_points(&track, placed, &transform, cull).count();
         let unbounded = unbounded_lod_points(&track, placed, &transform, &filter).len();
         assert!(
             walked < unbounded / 2,

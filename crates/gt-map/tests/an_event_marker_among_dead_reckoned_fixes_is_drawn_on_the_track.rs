@@ -12,13 +12,8 @@ use std::path::PathBuf;
 use chrono::{DateTime, Duration, Utc};
 use gt_map::test_util::{self, MapScene};
 use gt_track_builder::{FileMeta, SegmentationConfig};
-use gt_types::satellites::{Constellation, Satellite, Satellites};
-use gt_types::{
-    EventMarker, FileSource, GpsTime, Latitude, LoadedFile, Longitude, NavPoint,
-    TimePositionVelocity,
-};
-use uom::si::angle::degree;
-use uom::si::f64::Angle;
+use gt_types::fixtures::FixKind;
+use gt_types::{EventMarker, FileSource, Latitude, LoadedFile, Longitude, NavPoint, mercator};
 
 /// Fixes of the recording, one every [`SECONDS_BETWEEN_FIXES`].
 const FIX_COUNT: usize = 21;
@@ -47,12 +42,6 @@ const LONGITUDE_STEP_DEGREES: f64 = 0.000_5;
 /// coordinates, about 222 m.
 const DEAD_RECKONED_OFFSET_DEGREES: f64 = 0.002;
 
-/// The course the receiver reports along the measured stretches.
-const EAST_HEADING_DEGREES: f64 = 90.0;
-
-/// Satellites the receiver reports in fix under a full solution.
-const SATELLITES_IN_FIX: u32 = 12;
-
 fn time_of(index: usize) -> DateTime<Utc> {
     test_util::epoch() + Duration::seconds(index as i64 * SECONDS_BETWEEN_FIXES)
 }
@@ -65,34 +54,26 @@ fn dead_reckoned_latitude() -> Latitude {
     Latitude::new(MEASURED_LATITUDE_DEGREES + DEAD_RECKONED_OFFSET_DEGREES)
 }
 
-fn full_solution(index: usize) -> Satellites {
-    let satellites = (0..SATELLITES_IN_FIX)
-        .map(|index| Satellite::new(Constellation::Gps, index + 1, None, None, None, true))
-        .collect();
-    Satellites::new(Some(GpsTime::from_utc(time_of(index))), None, satellites)
-}
-
-/// A fix the receiver measured: a heading, and the satellites in fix that
-/// anchor the stretch it dead-reckoned.
+/// A fix the receiver measured: a course of 90°, and the twelve satellites in
+/// fix that anchor the stretch it dead-reckoned.
 fn measured_fix(index: usize) -> NavPoint {
-    let tpv = TimePositionVelocity::builder()
-        .time(GpsTime::from_utc(time_of(index)))
-        .lat(Latitude::new(MEASURED_LATITUDE_DEGREES))
-        .lon(longitude_of(index))
-        .heading(Angle::new::<degree>(EAST_HEADING_DEGREES))
-        .build();
-    NavPoint::new(tpv, Some(full_solution(index)))
+    gt_types::fixtures::nav_point(
+        time_of(index),
+        Latitude::new(MEASURED_LATITUDE_DEGREES),
+        longitude_of(index),
+        FixKind::Measured,
+    )
 }
 
-/// A fix the receiver dead-reckoned: no heading, and coordinates north of the
-/// line it measured.
+/// A fix the receiver dead-reckoned: no heading, no satellite report, and
+/// coordinates north of the line it measured.
 fn dead_reckoned_fix(index: usize) -> NavPoint {
-    let tpv = TimePositionVelocity::builder()
-        .time(GpsTime::from_utc(time_of(index)))
-        .lat(dead_reckoned_latitude())
-        .lon(longitude_of(index))
-        .build();
-    NavPoint::new(tpv, None)
+    gt_types::fixtures::nav_point(
+        time_of(index),
+        dead_reckoned_latitude(),
+        longitude_of(index),
+        FixKind::GhostWithoutHeading,
+    )
 }
 
 fn a_recording_with_an_event_marker_among_dead_reckoned_fixes() -> Vec<LoadedFile> {
@@ -126,6 +107,24 @@ fn a_recording_with_an_event_marker_among_dead_reckoned_fixes() -> Vec<LoadedFil
 #[test]
 fn snapshot_an_event_marker_among_dead_reckoned_fixes_is_drawn_on_the_dashed_track() {
     let files = a_recording_with_an_event_marker_among_dead_reckoned_fixes();
+    let marker = files
+        .first()
+        .and_then(|file| file.tracks.first())
+        .and_then(|track| track.event_markers.first())
+        .expect("the recording has the event marker");
+    assert_eq!(
+        Some(marker.resolved_position.merc()),
+        test_util::drawn_positions(&files)
+            .get(MARKER_FIX_INDEX)
+            .copied(),
+        "the marker is drawn where the map draws the fix it is stamped at"
+    );
+    assert_ne!(
+        marker.resolved_position.merc(),
+        mercator::normalize(marker.lat, marker.lon),
+        "the recorder wrote the marker off the line the receiver measured"
+    );
+
     let mut map = MapScene::of(files).render();
     map.snapshot("event_marker_among_dead_reckoned_fixes");
 }

@@ -368,6 +368,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    use crate::test_util;
 
     /// Pixels the whole world spans in the transforms below, which is the
     /// width a cell wrapped across the antimeridian would project to.
@@ -382,6 +383,22 @@ mod tests {
     /// World width in pixels for the test view: about 100 km across the
     /// canvas, so a ring of 22 km cells fits with room around it.
     const TEST_VIEW_TOTAL_PX: f64 = 160_000.0;
+
+    /// The Baltic cell, a 100 km view centred on it, and the canvas that view
+    /// is drawn on.
+    fn baltic_view() -> (CellIndex, MercTransform, egui::Rect) {
+        let cell = CellIndex::from_str(BALTIC).expect("cell index");
+        let center = LatLng::from(cell);
+        let rect =
+            egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(CANVAS_PX, CANVAS_PX));
+        let transform = MercTransform::for_test_view(
+            TEST_VIEW_TOTAL_PX,
+            Latitude::new(center.lat()),
+            Longitude::new(center.lng()),
+            rect.center(),
+        );
+        (cell, transform, rect)
+    }
 
     fn observation(hex: &str, good: u32, bad: u32) -> HexObservation {
         HexObservation {
@@ -460,16 +477,7 @@ mod tests {
     /// every count still looks right.
     #[test]
     fn a_centred_cell_covers_the_middle_of_the_viewport() {
-        let cell = CellIndex::from_str(BALTIC).expect("cell index");
-        let center = LatLng::from(cell);
-        let rect =
-            egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(CANVAS_PX, CANVAS_PX));
-        let transform = MercTransform::for_test_view(
-            TEST_VIEW_TOTAL_PX,
-            Latitude::new(center.lat()),
-            Longitude::new(center.lng()),
-            rect.center(),
-        );
+        let (cell, transform, rect) = baltic_view();
 
         let outline = cell_outline(cell, &transform).expect("outline");
         let bounds = bounding_rect(&outline).expect("bounds");
@@ -487,35 +495,10 @@ mod tests {
     /// ones marked for hatching.
     #[test]
     fn a_ring_of_cells_projects_with_its_low_sample_cells_marked() {
-        let day = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
-        let center_cell = CellIndex::from_str(BALTIC).expect("cell index");
-        let tallies = [
-            (400, 0),
-            (98, 2),
-            (94, 6),
-            (90, 10),
-            (60, 40),
-            (2, 2),
-            (1, 1),
-        ];
-        let observations: Vec<HexObservation> = center_cell
-            .grid_disk::<Vec<_>>(1)
-            .into_iter()
-            .zip(tallies)
-            .map(|(cell, (good, bad))| HexObservation { cell, good, bad })
-            .collect();
-        let expected_low_sample = observations.iter().filter(|o| is_low_sample(o)).count();
-        let dataset = JamDataset::new(day, observations);
-
-        let center = LatLng::from(center_cell);
-        let rect =
-            egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(CANVAS_PX, CANVAS_PX));
-        let transform = MercTransform::for_test_view(
-            TEST_VIEW_TOTAL_PX,
-            Latitude::new(center.lat()),
-            Longitude::new(center.lng()),
-            rect.center(),
-        );
+        let (cell, transform, rect) = baltic_view();
+        let center = LatLng::from(cell);
+        let dataset = test_util::an_interference_ring_around((center.lat(), center.lng()));
+        let expected_low_sample = dataset.observations().filter(|o| is_low_sample(o)).count();
 
         let cells = visible_cells(&dataset, &transform, rect, true);
         assert_eq!(
@@ -638,16 +621,7 @@ mod tests {
     /// box corners outside the hexagon.
     #[test]
     fn hatching_is_clipped_to_the_cell_outline() {
-        let cell = CellIndex::from_str(BALTIC).expect("cell index");
-        let center = LatLng::from(cell);
-        let rect =
-            egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(CANVAS_PX, CANVAS_PX));
-        let transform = MercTransform::for_test_view(
-            TEST_VIEW_TOTAL_PX,
-            Latitude::new(center.lat()),
-            Longitude::new(center.lng()),
-            rect.center(),
-        );
+        let (cell, transform, _) = baltic_view();
         let outline = cell_outline(cell, &transform).expect("outline");
         let bounds = bounding_rect(&outline).expect("bounds");
 
@@ -679,16 +653,7 @@ mod tests {
     /// box is not.
     #[test]
     fn a_cell_contains_its_own_centre() {
-        let cell = CellIndex::from_str(BALTIC).expect("cell index");
-        let center = LatLng::from(cell);
-        let rect =
-            egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(CANVAS_PX, CANVAS_PX));
-        let transform = MercTransform::for_test_view(
-            TEST_VIEW_TOTAL_PX,
-            Latitude::new(center.lat()),
-            Longitude::new(center.lng()),
-            rect.center(),
-        );
+        let (cell, transform, rect) = baltic_view();
         let outline = cell_outline(cell, &transform).expect("outline");
 
         assert!(contains_point(&outline, rect.center()));
@@ -699,16 +664,7 @@ mod tests {
     /// separates a polygon hit test from a rectangle one.
     #[test]
     fn a_cells_bounding_box_corners_are_outside_it() {
-        let cell = CellIndex::from_str(BALTIC).expect("cell index");
-        let center = LatLng::from(cell);
-        let rect =
-            egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(CANVAS_PX, CANVAS_PX));
-        let transform = MercTransform::for_test_view(
-            TEST_VIEW_TOTAL_PX,
-            Latitude::new(center.lat()),
-            Longitude::new(center.lng()),
-            rect.center(),
-        );
+        let (cell, transform, _) = baltic_view();
         let outline = cell_outline(cell, &transform).expect("outline");
         let bounds = bounding_rect(&outline).expect("bounds");
 
@@ -742,15 +698,7 @@ mod tests {
             .collect();
         let dataset = JamDataset::new(day, observations);
 
-        let center = LatLng::from(center_cell);
-        let rect =
-            egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(CANVAS_PX, CANVAS_PX));
-        let transform = MercTransform::for_test_view(
-            TEST_VIEW_TOTAL_PX,
-            Latitude::new(center.lat()),
-            Longitude::new(center.lng()),
-            rect.center(),
-        );
+        let (_, transform, rect) = baltic_view();
         let cells = visible_cells(&dataset, &transform, rect, true);
 
         let hit = cell_at_pointer(&cells, rect.center()).expect("a cell under the centre");

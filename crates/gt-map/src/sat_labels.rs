@@ -82,10 +82,12 @@ pub(crate) fn select_sat_labels<'s, 'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use gt_types::fixtures::MetricOffset;
     use gt_types::sat_label::SatLabelAnchor;
     use gt_types::{FileIdx, PointIdx, TrackIdx};
+
+    use super::*;
+    use crate::test_util;
 
     fn track_with_anchors(
         positions_m: &[(f64, f64)],
@@ -232,13 +234,7 @@ mod tests {
         let mut scratch = LabelSelection::default();
         let selected = select_sat_labels(
             &mut scratch,
-            [(
-                0,
-                TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-                &track,
-                TrackMatchView::default(),
-            )]
-            .into_iter(),
+            [(0, test_util::track0(), &track, TrackMatchView::default())].into_iter(),
             1,
             WORLD,
             1e-9,

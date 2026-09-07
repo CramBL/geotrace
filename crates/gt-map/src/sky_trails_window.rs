@@ -1024,10 +1024,9 @@ mod tests {
     use chrono::{DateTime, Duration, Utc};
     use gt_test_utils::{HarnessInteraction as _, TestHarness};
 
-    use gt_types::satellites::{Constellation, Satellite, Satellites};
-    use gt_types::{
-        FileIdx, GpsTime, Latitude, Longitude, NavPoint, TimePositionVelocity, TrackIdx,
-    };
+    use gt_types::fixtures::SatelliteDrift;
+    use gt_types::satellites::Constellation;
+    use gt_types::{FileIdx, TrackIdx};
 
     use super::{
         ConstellationSet, DEFAULT_WINDOW_SIZE, MAX_PLAYBACK_FRAME_SECS, MIN_PLOT_DIAMETER_PX,
@@ -1035,6 +1034,63 @@ mod tests {
         SkyTrails, SkyTrailsRequest, SkyTrailsWindow, TrackRef, Window, WindowBody, advanced_scrub,
         apply_scrub_highlight, floor_epoch, offset_time, scrub_offset_of, track_total_secs,
     };
+
+    /// What a case drives the window body with. Every field the body reads and
+    /// writes lives here, so a case states the ones it is about and takes the
+    /// rest as the window opens them.
+    struct BodyInputs {
+        scrub_secs: f64,
+        playing: bool,
+        speed: f32,
+        shown: ConstellationSet,
+        show_not_in_fix: bool,
+        show_trails: bool,
+        in_fix_now: bool,
+        show_heatmap: bool,
+        trail_opacity_percent: f32,
+        highlight: MapHighlight,
+    }
+
+    impl Default for BodyInputs {
+        fn default() -> Self {
+            Self {
+                scrub_secs: 4.0,
+                playing: false,
+                speed: 60.0,
+                shown: ConstellationSet::all(),
+                show_not_in_fix: true,
+                show_trails: true,
+                in_fix_now: false,
+                show_heatmap: false,
+                trail_opacity_percent: gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT,
+                highlight: MapHighlight::default(),
+            }
+        }
+    }
+
+    /// The elevation mask every case draws the body at. The application takes
+    /// its own from the settings, and no case here is about that value.
+    const TEST_ELEVATION_MASK_DEG: f32 = 10.0;
+
+    /// The window body over `trails`, reading and writing `inputs`, on the
+    /// first track of the first recording at [`TEST_ELEVATION_MASK_DEG`].
+    fn body<'a>(trails: &'a SkyTrails, inputs: &'a mut BodyInputs) -> WindowBody<'a> {
+        WindowBody {
+            trails,
+            scrub_secs: &mut inputs.scrub_secs,
+            playing: &mut inputs.playing,
+            speed: &mut inputs.speed,
+            shown: &mut inputs.shown,
+            show_not_in_fix: &mut inputs.show_not_in_fix,
+            show_trails: &mut inputs.show_trails,
+            in_fix_now: &mut inputs.in_fix_now,
+            show_heatmap: &mut inputs.show_heatmap,
+            trail_opacity_percent: &mut inputs.trail_opacity_percent,
+            track_ref: test_util::track0(),
+            elevation_mask_deg: TEST_ELEVATION_MASK_DEG,
+            highlight: &mut inputs.highlight,
+        }
+    }
 
     /// A synthetic track: a few satellites drifting across the sky over eight
     /// report epochs.
@@ -1045,27 +1101,17 @@ mod tests {
     /// A demo track spanning several minutes, so a held-key sweep has room to
     /// run without immediately hitting the end.
     fn long_demo_trails() -> SkyTrails {
-        let start = DateTime::<Utc>::from_timestamp(1_748_000_000, 0).expect("valid");
-        let points = (0..600)
-            .map(|i| {
-                let f = i as f32 / 599.0;
-                let sats = vec![Satellite::new(
-                    Constellation::Gps,
-                    5,
-                    Some(20.0 + 40.0 * f),
-                    Some(40.0 + 90.0 * f),
-                    Some(40.0),
-                    true,
-                )];
-                let tpv = TimePositionVelocity::builder()
-                    .time(GpsTime::from_utc(start + Duration::seconds(i)))
-                    .lat(Latitude::new(55.0))
-                    .lon(Longitude::new(12.0))
-                    .build();
-                NavPoint::new(tpv, Some(Satellites::new(None, None, sats)))
-            })
-            .collect();
-        gt_sky::extract_trails(&gt_test_utils::loaded_track_with_points(points))
+        trails_over(
+            600,
+            &[SatelliteDrift {
+                constellation: Constellation::Gps,
+                prn: 5,
+                azimuth_deg: (40.0, 130.0),
+                elevation_deg: (20.0, 60.0),
+                in_fix: true,
+                absent_at: &[],
+            }],
+        )
     }
 
     /// The demo track with GPS PRN 12 tracked but never in the fix, so the
@@ -1076,7 +1122,7 @@ mod tests {
 
     fn demo_trails_with(tracked_only: &[(Constellation, u32)]) -> SkyTrails {
         const EPOCHS: usize = 8;
-        let specs = [
+        let drifts: Vec<SatelliteDrift> = [
             (
                 Constellation::Gps,
                 5u32,
@@ -1086,35 +1132,36 @@ mod tests {
             (Constellation::Gps, 12, (85.0, 130.0), (20.0, 47.0)),
             (Constellation::Galileo, 3, (60.0, 30.0), (52.0, 40.0)),
             (Constellation::Glonass, 9, (170.0, 205.0), (48.0, 28.0)),
-        ];
-        let start = DateTime::<Utc>::from_timestamp(1_748_000_000, 0).expect("valid");
-        let lerp = |(a, b): (f32, f32), f: f32| a + (b - a) * f;
-        let points = (0..EPOCHS)
-            .map(|i| {
-                let f = i as f32 / (EPOCHS - 1) as f32;
-                let sats = specs
-                    .iter()
-                    .map(|&(c, prn, az, el)| {
-                        let in_fix = !tracked_only.contains(&(c, prn));
-                        Satellite::new(
-                            c,
-                            prn,
-                            Some(lerp(el, f)),
-                            Some(lerp(az, f)),
-                            Some(40.0),
-                            in_fix,
-                        )
-                    })
-                    .collect();
-                let tpv = TimePositionVelocity::builder()
-                    .time(GpsTime::from_utc(start + Duration::seconds(i as i64)))
-                    .lat(Latitude::new(55.0))
-                    .lon(Longitude::new(12.0))
-                    .build();
-                NavPoint::new(tpv, Some(Satellites::new(None, None, sats)))
-            })
-            .collect();
+        ]
+        .into_iter()
+        .map(
+            |(constellation, prn, azimuth_deg, elevation_deg)| SatelliteDrift {
+                constellation,
+                prn,
+                azimuth_deg,
+                elevation_deg,
+                in_fix: !tracked_only.contains(&(constellation, prn)),
+                absent_at: &[],
+            },
+        )
+        .collect();
+        trails_over(EPOCHS, &drifts)
+    }
+
+    /// The trails of a track of `epochs` reports, one second apart from
+    /// [`trails_start`], with `drifts` sweeping across its sky.
+    fn trails_over(epochs: usize, drifts: &[SatelliteDrift]) -> SkyTrails {
+        let points = gt_test_utils::fixtures::nav_points_with_drifting_satellites(
+            trails_start(),
+            epochs,
+            drifts,
+        );
         gt_sky::extract_trails(&gt_test_utils::loaded_track_with_points(points))
+    }
+
+    /// The instant the first report of every trails fixture is stamped at.
+    fn trails_start() -> DateTime<Utc> {
+        DateTime::<Utc>::from_timestamp(1_748_000_000, 0).unwrap_or_default()
     }
 
     /// The window must settle at a size and stay there. It used to grow by one
@@ -1137,22 +1184,7 @@ mod tests {
                     .min_width(MIN_WINDOW_WIDTH_PX)
                     .min_height(MIN_WINDOW_HEIGHT_PX)
                     .show(ui.ctx(), |ui| {
-                        WindowBody {
-                            trails: &trails,
-                            scrub_secs: &mut 4.0,
-                            playing: &mut false,
-                            speed: &mut 60.0,
-                            shown: &mut ConstellationSet::all(),
-                            show_not_in_fix: &mut true,
-                            show_trails: &mut true,
-                            in_fix_now: &mut false,
-                            show_heatmap: &mut false,
-                            trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
-                            track_ref: track_ref(),
-                            elevation_mask_deg: 10.0,
-                            highlight: &mut MapHighlight::default(),
-                        }
-                        .ui(ui);
+                        body(&trails, &mut BodyInputs::default()).ui(ui);
                     });
             });
 
@@ -1196,23 +1228,9 @@ mod tests {
         let mut harness = test_util::harness_builder()
             .size(egui::vec2(560.0, 440.0))
             .ui(move |ui| {
-                let mut h = sink.borrow_mut();
-                WindowBody {
-                    trails: &trails,
-                    scrub_secs: &mut 4.0,
-                    playing: &mut false,
-                    speed: &mut 60.0,
-                    shown: &mut ConstellationSet::all(),
-                    show_not_in_fix: &mut true,
-                    show_trails: &mut true,
-                    in_fix_now: &mut false,
-                    show_heatmap: &mut false,
-                    trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
-                    track_ref: track_ref(),
-                    elevation_mask_deg: 10.0,
-                    highlight: &mut h,
-                }
-                .ui(ui);
+                let mut inputs = BodyInputs::default();
+                body(&trails, &mut inputs).ui(ui);
+                *sink.borrow_mut() = inputs.highlight;
             });
         harness.run();
 
@@ -1223,35 +1241,20 @@ mod tests {
         );
     }
 
-    fn track_ref() -> TrackRef {
-        TrackRef::new(FileIdx::new(0), TrackIdx::new(0))
-    }
-
     fn body_snapshot(name: &str, trails: SkyTrails) {
         body_snapshot_with(name, trails, true);
     }
 
-    fn body_snapshot_with(name: &str, trails: SkyTrails, mut show_not_in_fix: bool) {
+    fn body_snapshot_with(name: &str, trails: SkyTrails, show_not_in_fix: bool) {
         let mut harness = test_util::harness_builder()
             .size(egui::vec2(560.0, 440.0))
             .theme(true)
             .ui(move |ui| {
-                WindowBody {
-                    trails: &trails,
-                    scrub_secs: &mut 4.0,
-                    playing: &mut false,
-                    speed: &mut 60.0,
-                    shown: &mut ConstellationSet::all(),
-                    show_not_in_fix: &mut show_not_in_fix,
-                    show_trails: &mut true,
-                    in_fix_now: &mut false,
-                    show_heatmap: &mut false,
-                    trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
-                    track_ref: track_ref(),
-                    elevation_mask_deg: 10.0,
-                    highlight: &mut MapHighlight::default(),
-                }
-                .ui(ui);
+                let mut inputs = BodyInputs {
+                    show_not_in_fix,
+                    ..BodyInputs::default()
+                };
+                body(&trails, &mut inputs).ui(ui);
             });
         harness.run();
         harness.snapshot_loose(name);
@@ -1265,22 +1268,12 @@ mod tests {
             .size(egui::vec2(560.0, 440.0))
             .ui_state(
                 move |ui, highlight: &mut MapHighlight| {
-                    WindowBody {
-                        trails: &trails,
-                        scrub_secs: &mut 4.0,
-                        playing: &mut false,
-                        speed: &mut 60.0,
-                        shown: &mut ConstellationSet::all(),
-                        show_not_in_fix: &mut true,
-                        show_trails: &mut true,
-                        in_fix_now: &mut false,
-                        show_heatmap: &mut false,
-                        trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
-                        track_ref: track_ref(),
-                        elevation_mask_deg: 10.0,
-                        highlight,
-                    }
-                    .ui(ui);
+                    let mut inputs = BodyInputs {
+                        highlight: *highlight,
+                        ..BodyInputs::default()
+                    };
+                    body(&trails, &mut inputs).ui(ui);
+                    *highlight = inputs.highlight;
                 },
                 *start,
             );
@@ -1370,29 +1363,23 @@ mod tests {
             (Constellation::Beidou, 11, 5),
             (Constellation::Galileo, 8, 8),
         ];
-        let start = DateTime::<Utc>::from_timestamp(1_748_000_000, 0).expect("valid");
-        let sats = specs
+        let drifts: Vec<SatelliteDrift> = specs
             .into_iter()
-            .flat_map(|(c, seen, fix)| {
-                (0..seen).map(move |i| {
-                    Satellite::new(
-                        c,
-                        i + 1,
-                        Some(20.0 + f32::from(i as u16) * 4.0),
-                        Some(f32::from(i as u16) * 30.0 % 360.0),
-                        Some(40.0),
-                        i < fix,
-                    )
+            .flat_map(|(constellation, seen, in_fix)| {
+                (0..seen).map(move |index| {
+                    let step = f32::from(u16::try_from(index).unwrap_or(u16::MAX));
+                    SatelliteDrift {
+                        constellation,
+                        prn: index + 1,
+                        azimuth_deg: (step * 30.0 % 360.0, step * 30.0 % 360.0),
+                        elevation_deg: (20.0 + step * 4.0, 20.0 + step * 4.0),
+                        in_fix: index < in_fix,
+                        absent_at: &[],
+                    }
                 })
             })
             .collect();
-        let tpv = TimePositionVelocity::builder()
-            .time(GpsTime::from_utc(start))
-            .lat(Latitude::new(55.0))
-            .lon(Longitude::new(12.0))
-            .build();
-        let point = NavPoint::new(tpv, Some(Satellites::new(None, None, sats)));
-        gt_sky::extract_trails(&gt_test_utils::loaded_track_with_points(vec![point]))
+        trails_over(1, &drifts)
     }
 
     /// Snapshot: a track with no satellite reports shows the fallback line.
@@ -1404,13 +1391,13 @@ mod tests {
     #[test]
     fn open_track_resets_only_when_the_track_changes() {
         let mut window = SkyTrailsWindow::default();
-        window.open_track(track_ref());
+        window.open_track(test_util::track0());
         window.scrub_secs = 5.0;
         window.playing = true;
         window.shown.remove(Constellation::Gps);
 
         // Re-opening the same track preserves the scrub position and filter.
-        window.open_track(track_ref());
+        window.open_track(test_util::track0());
         assert!(window.open);
         assert!((window.scrub_secs - 5.0).abs() < f64::EPSILON);
         assert!(window.playing);
@@ -1442,7 +1429,7 @@ mod tests {
             playing: true,
             ..SkyTrailsWindow::default()
         };
-        window.open(SkyTrailsRequest::at_instant(track_ref(), first));
+        window.open(SkyTrailsRequest::at_instant(test_util::track0(), first));
         assert_eq!(window.pending_scrub_to, Some(first));
         assert!(!window.playing, "a jump to a moment pauses playback");
     }
@@ -1451,7 +1438,7 @@ mod tests {
     #[test]
     fn opening_the_whole_track_requests_no_scrub() {
         let mut window = SkyTrailsWindow::default();
-        window.open(SkyTrailsRequest::whole_track(track_ref()));
+        window.open(SkyTrailsRequest::whole_track(test_util::track0()));
         assert!(window.open);
         assert_eq!(window.pending_scrub_to, None);
     }
@@ -1465,24 +1452,14 @@ mod tests {
         let mut harness = test_util::harness_builder()
             .size(egui::vec2(560.0, 440.0))
             .ui(move |ui| {
-                let (mut scrub, mut speed) = seen.get();
-                WindowBody {
-                    trails: &trails,
-                    scrub_secs: &mut scrub,
-                    playing: &mut false,
-                    speed: &mut speed,
-                    shown: &mut ConstellationSet::all(),
-                    show_not_in_fix: &mut true,
-                    show_trails: &mut true,
-                    in_fix_now: &mut false,
-                    show_heatmap: &mut false,
-                    trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
-                    track_ref: track_ref(),
-                    elevation_mask_deg: 10.0,
-                    highlight: &mut MapHighlight::default(),
-                }
-                .ui(ui);
-                seen.set((scrub, speed));
+                let (scrub_secs, speed) = seen.get();
+                let mut inputs = BodyInputs {
+                    scrub_secs,
+                    speed,
+                    ..BodyInputs::default()
+                };
+                body(&trails, &mut inputs).ui(ui);
+                seen.set((inputs.scrub_secs, inputs.speed));
             });
         // The keys only apply while the window is hovered, like the spacebar.
         harness.inner.hover_at(egui::pos2(280.0, 200.0));
@@ -1538,24 +1515,12 @@ mod tests {
         let mut harness = test_util::harness_builder()
             .size(egui::vec2(560.0, 440.0))
             .ui(move |ui| {
-                let mut scrub = seen.get();
-                WindowBody {
-                    trails: &trails,
-                    scrub_secs: &mut scrub,
-                    playing: &mut false,
-                    speed: &mut 60.0,
-                    shown: &mut ConstellationSet::all(),
-                    show_not_in_fix: &mut true,
-                    show_trails: &mut true,
-                    in_fix_now: &mut false,
-                    show_heatmap: &mut false,
-                    trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
-                    track_ref: track_ref(),
-                    elevation_mask_deg: 10.0,
-                    highlight: &mut MapHighlight::default(),
-                }
-                .ui(ui);
-                seen.set(scrub);
+                let mut inputs = BodyInputs {
+                    scrub_secs: seen.get(),
+                    ..BodyInputs::default()
+                };
+                body(&trails, &mut inputs).ui(ui);
+                seen.set(inputs.scrub_secs);
             });
         harness.inner.hover_at(egui::pos2(280.0, 200.0));
         harness.inner.step();
@@ -1670,24 +1635,16 @@ mod tests {
             .size(egui::vec2(560.0, 440.0))
             .ui_state(
                 move |ui, playing: &mut bool| {
-                    WindowBody {
-                        trails: &trails,
-                        scrub_secs: &mut 2.0,
-                        playing,
+                    let mut inputs = BodyInputs {
+                        scrub_secs: 2.0,
+                        playing: *playing,
                         // Slow, so playback cannot reach the end of the short
                         // demo track between presses and pause itself.
-                        speed: &mut 1.0,
-                        shown: &mut ConstellationSet::all(),
-                        show_not_in_fix: &mut true,
-                        show_trails: &mut true,
-                        in_fix_now: &mut false,
-                        show_heatmap: &mut false,
-                        trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
-                        track_ref: track_ref(),
-                        elevation_mask_deg: 10.0,
-                        highlight: &mut MapHighlight::default(),
-                    }
-                    .ui(ui);
+                        speed: 1.0,
+                        ..BodyInputs::default()
+                    };
+                    body(&trails, &mut inputs).ui(ui);
+                    *playing = inputs.playing;
                 },
                 false,
             );
@@ -1724,39 +1681,18 @@ mod tests {
     /// track.
     #[test]
     fn playback_runs_the_scrubber_to_the_end() {
-        struct State {
-            secs: f64,
-            playing: bool,
-            speed: f32,
-        }
         let trails = demo_trails();
         let mut harness = test_util::harness_builder()
             .size(egui::vec2(560.0, 440.0))
             .step_dt(0.1)
             .ui_state(
-                move |ui, state: &mut State| {
-                    WindowBody {
-                        trails: &trails,
-                        scrub_secs: &mut state.secs,
-                        playing: &mut state.playing,
-                        speed: &mut state.speed,
-                        shown: &mut ConstellationSet::all(),
-                        show_not_in_fix: &mut true,
-                        show_trails: &mut true,
-                        in_fix_now: &mut false,
-                        show_heatmap: &mut false,
-                        trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
-                        track_ref: track_ref(),
-                        elevation_mask_deg: 10.0,
-                        highlight: &mut MapHighlight::default(),
-                    }
-                    .ui(ui);
-                },
+                move |ui, inputs: &mut BodyInputs| body(&trails, inputs).ui(ui),
                 // 20x at 0.1s/frame is 2 track-seconds per frame over a 7s span.
-                State {
-                    secs: 0.0,
+                BodyInputs {
+                    scrub_secs: 0.0,
                     playing: true,
                     speed: 20.0,
+                    ..BodyInputs::default()
                 },
             );
 
@@ -1764,7 +1700,7 @@ mod tests {
         // until it stops - i.e. runs the whole playback. It should reach the
         // end of the 7s span and pause there.
         harness.run();
-        assert!((harness.state().secs - 7.0).abs() < 1e-6);
+        assert!((harness.state().scrub_secs - 7.0).abs() < 1e-6);
         assert!(!harness.state().playing);
     }
 
@@ -1794,24 +1730,13 @@ mod tests {
         let mut harness = test_util::harness_builder()
             .size(egui::vec2(560.0, 440.0))
             .ui(move |ui| {
-                let mut scrub = seen.get();
-                WindowBody {
-                    trails: &trails,
-                    scrub_secs: &mut scrub,
-                    playing: &mut true,
-                    speed: &mut 60.0,
-                    shown: &mut ConstellationSet::all(),
-                    show_not_in_fix: &mut true,
-                    show_trails: &mut true,
-                    in_fix_now: &mut false,
-                    show_heatmap: &mut false,
-                    trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
-                    track_ref: track_ref(),
-                    elevation_mask_deg: 10.0,
-                    highlight: &mut MapHighlight::default(),
-                }
-                .ui(ui);
-                seen.set(scrub);
+                let mut inputs = BodyInputs {
+                    scrub_secs: seen.get(),
+                    playing: true,
+                    ..BodyInputs::default()
+                };
+                body(&trails, &mut inputs).ui(ui);
+                seen.set(inputs.scrub_secs);
             });
         // Playback requests a repaint every frame, so `run` never settles:
         // step one frame at a time. One to seed the clock, then a ten-second
@@ -1850,7 +1775,7 @@ mod tests {
     #[test]
     fn invalidate_closes_and_drops_the_track() {
         let mut window = SkyTrailsWindow::default();
-        window.open_track(track_ref());
+        window.open_track(test_util::track0());
         window.invalidate();
         assert!(!window.open);
         assert_eq!(window.track, None);
@@ -1925,7 +1850,7 @@ mod tests {
         let trails = demo_trails();
         let epoch = trails.epochs[3];
         let mut highlight = MapHighlight::default();
-        apply_scrub_highlight(&mut highlight, track_ref(), &epoch);
+        apply_scrub_highlight(&mut highlight, test_util::track0(), &epoch);
         assert_eq!(
             highlight.plot_hover_point,
             Some((FileIdx::new(0), TrackIdx::new(0), epoch.point_index))
@@ -1954,22 +1879,7 @@ mod tests {
                 .min_width(MIN_WINDOW_WIDTH_PX)
                 .min_height(MIN_WINDOW_HEIGHT_PX)
                 .show(ui.ctx(), |ui| {
-                    WindowBody {
-                        trails: &trails,
-                        scrub_secs: &mut 4.0,
-                        playing: &mut false,
-                        speed: &mut 60.0,
-                        shown: &mut ConstellationSet::all(),
-                        show_not_in_fix: &mut true,
-                        show_trails: &mut true,
-                        in_fix_now: &mut false,
-                        show_heatmap: &mut false,
-                        trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
-                        track_ref: track_ref(),
-                        elevation_mask_deg: 10.0,
-                        highlight: &mut MapHighlight::default(),
-                    }
-                    .ui(ui);
+                    body(&trails, &mut BodyInputs::default()).ui(ui);
                 });
         });
         harness.inner.run_steps(8);

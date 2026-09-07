@@ -20,21 +20,43 @@ use uom::si::f64::{Angle, Length};
 /// part-drawn row that each GPU backend antialiases differently.
 const STICKY_CONTENT_CANVAS: egui::Vec2 = egui::vec2(600.0, 500.0);
 
-fn make_point(satellites: Option<Satellites>) -> NavPoint {
-    let tpv = TimePositionVelocity::builder()
-        .time(GpsTime::from_utc(chrono::Utc::now()))
-        .lat(Latitude::new(51.5))
-        .lon(Longitude::new(-0.1))
-        .heading(Angle::new::<degree>(90.0))
-        .build();
-    NavPoint::new(tpv, satellites)
+/// The position every fix built here sits at.
+const FIXTURE_LAT: f64 = 51.5;
+const FIXTURE_LON: f64 = -0.1;
+
+/// The instant fix 0 of every fixture track is stamped at. It is a constant,
+/// so the snapshots that draw the time row stay deterministic.
+fn fixture_epoch() -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::from_timestamp(1_748_000_000, 0).unwrap_or_default()
 }
 
-fn sats_with_fix(fix_count: u32) -> Satellites {
-    let satellites: Vec<_> = (1u32..=12)
-        .map(|prn| Satellite::new(Constellation::Gps, prn, None, None, None, prn <= fix_count))
-        .collect();
-    Satellites::new(None, None, satellites)
+/// A fix `secs` after [`fixture_epoch`] on a heading of 90°, with
+/// `satellites` as its report.
+fn point_at(secs: i64, satellites: Option<Satellites>) -> NavPoint {
+    let time = fixture_epoch() + chrono::Duration::seconds(secs);
+    let lat = Latitude::new(FIXTURE_LAT);
+    let lon = Longitude::new(FIXTURE_LON);
+    match satellites {
+        Some(report) => gt_test_utils::fixtures::nav_point_with_report(time, lat, lon, report),
+        None => gt_test_utils::fixtures::nav_point_heading(
+            time,
+            lat,
+            lon,
+            Some(Angle::new::<degree>(90.0)),
+            gt_types::fixtures::FixKind::GhostWithoutHeading,
+        ),
+    }
+}
+
+/// A report of twelve GPS satellites, `in_fix` of them used in the fix.
+fn twelve_satellites(in_fix: u32) -> Satellites {
+    gt_test_utils::fixtures::satellite_report(
+        None,
+        gt_types::fixtures::SatelliteCounts {
+            in_fix,
+            in_view_only: 12 - in_fix,
+        },
+    )
 }
 
 /// A dense, uneven multi-constellation fix - the case the point window was
@@ -143,7 +165,10 @@ fn sats_multi_constellation() -> Satellites {
 /// Where the map draws a fixture point, resolved over a one-fix track the way
 /// the point window reaches it.
 fn placement_of(point: &NavPoint) -> FixPlacement {
-    FixPlacement::resolve(&track_with_points(vec![point.clone()]), PointIdx::new(0))
+    FixPlacement::resolve(
+        &gt_test_utils::loaded_track_with_points(vec![point.clone()]),
+        PointIdx::new(0),
+    )
 }
 
 /// The sticky content's sky section for a fixture point: its own report
@@ -173,6 +198,10 @@ fn sky_for(point: &NavPoint) -> SkySection<'_> {
 #[case::lopsided(&[30, 3, 3], 1)]
 // Equal weights cut down the middle.
 #[case::even(&[10, 10, 10, 10], 2)]
+// Fewer than two panels cannot be split, so everything stays in the first
+// column.
+#[case::one_panel(&[7], 1)]
+#[case::no_panel(&[], 0)]
 fn balanced_split_cuts_where_the_columns_even_out(
     #[case] weights: &[usize],
     #[case] expected: usize,
@@ -180,20 +209,12 @@ fn balanced_split_cuts_where_the_columns_even_out(
     assert_eq!(super::balanced_split(weights), expected);
 }
 
-/// Fewer than two panels cannot be split, so everything stays in the
-/// first column.
-#[test]
-fn balanced_split_keeps_a_lone_panel_in_one_column() {
-    assert_eq!(super::balanced_split(&[7]), 1);
-    assert_eq!(super::balanced_split(&[]), 0);
-}
-
 /// Snapshot: a 40-satellite, 4-constellation fix. The two columns are cut
 /// where they even out, so the uneven constellations pack tight, and the plot
 /// stays beside them.
 #[test]
 fn dense_multi_constellation_packs_into_two_columns() {
-    let point = make_point(Some(sats_dense_multi_constellation()));
+    let point = point_at(0, Some(sats_dense_multi_constellation()));
     let mut folds = gt_ui_types::PointWindowFolds::default();
     let placement = placement_of(&point);
     let mut harness = test_util::harness_builder()
@@ -208,7 +229,7 @@ fn dense_multi_constellation_packs_into_two_columns() {
 
 #[test]
 fn dense_multi_constellation_reflows_to_one_column_when_narrow() {
-    let point = make_point(Some(sats_dense_multi_constellation()));
+    let point = point_at(0, Some(sats_dense_multi_constellation()));
     let mut folds = gt_ui_types::PointWindowFolds::default();
     let placement = placement_of(&point);
     let mut harness = test_util::harness_builder()
@@ -254,7 +275,7 @@ fn folded_panels_weigh_only_their_header() {
 /// survives folding - only the rows go away.
 #[test]
 fn folded_sections_keep_their_headers() {
-    let point = make_point(Some(sats_dense_multi_constellation()));
+    let point = point_at(0, Some(sats_dense_multi_constellation()));
     let mut folds = gt_ui_types::PointWindowFolds {
         plot_folded: true,
         ..Default::default()
@@ -278,7 +299,7 @@ fn folded_sections_keep_their_headers() {
 #[case::unfolded(false, true)]
 #[case::folded(true, false)]
 fn folding_a_constellation_hides_only_its_rows(#[case] fold_gps: bool, #[case] expect_rows: bool) {
-    let point = make_point(Some(sats_dense_multi_constellation()));
+    let point = point_at(0, Some(sats_dense_multi_constellation()));
     let mut folds = gt_ui_types::PointWindowFolds::default();
     let placement = placement_of(&point);
     if fold_gps {
@@ -303,7 +324,7 @@ fn folding_a_constellation_hides_only_its_rows(#[case] fold_gps: bool, #[case] e
 
 #[test]
 fn clicking_anywhere_on_the_header_folds() {
-    let point = make_point(Some(sats_multi_constellation()));
+    let point = point_at(0, Some(sats_multi_constellation()));
     let folded = std::rc::Rc::new(std::cell::Cell::new(false));
     let seen = folded.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
@@ -328,7 +349,7 @@ fn clicking_anywhere_on_the_header_folds() {
 /// from under the pointer.
 #[test]
 fn the_open_trails_button_does_not_fold_the_sky_plot() {
-    let point = make_point(Some(sats_multi_constellation()));
+    let point = point_at(0, Some(sats_multi_constellation()));
     let state = std::rc::Rc::new(std::cell::Cell::new((false, false)));
     let seen = state.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
@@ -363,7 +384,7 @@ fn the_open_trails_button_does_not_fold_the_sky_plot() {
 /// folding itself and leaving the first alone.
 #[test]
 fn each_header_folds_its_own_constellation() {
-    let point = make_point(Some(sats_multi_constellation()));
+    let point = point_at(0, Some(sats_multi_constellation()));
     let state = std::rc::Rc::new(std::cell::Cell::new((false, false)));
     let seen = state.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
@@ -394,7 +415,7 @@ fn each_header_folds_its_own_constellation() {
 /// flashed back to full strength between one satellite and the next.
 #[test]
 fn the_gap_between_satellite_rows_keeps_the_highlight() {
-    let point = make_point(Some(sats_multi_constellation()));
+    let point = point_at(0, Some(sats_multi_constellation()));
     let id_cell = std::rc::Rc::new(std::cell::Cell::new(None));
     let cell = id_cell.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
@@ -439,7 +460,7 @@ fn the_gap_between_satellite_rows_keeps_the_highlight() {
 #[case::dark("satellite_badge_dark", true)]
 #[case::light("satellite_badge_light", false)]
 fn satellite_badge(#[case] name: &str, #[case] dark_mode: bool) {
-    let point = make_point(Some(sats_multi_constellation()));
+    let point = point_at(0, Some(sats_multi_constellation()));
     let mut folds = gt_ui_types::PointWindowFolds::default();
     let placement = placement_of(&point);
     let mut harness = test_util::harness_builder()
@@ -463,7 +484,7 @@ fn satellite_badge(#[case] name: &str, #[case] dark_mode: bool) {
 )]
 #[case::constellation_header("GPS", SkyHighlight::constellation(Constellation::Gps))]
 fn hovering_a_table_sets_the_sky_highlight(#[case] label: &str, #[case] expected: SkyHighlight) {
-    let point = make_point(Some(sats_multi_constellation()));
+    let point = point_at(0, Some(sats_multi_constellation()));
     let id_cell = std::rc::Rc::new(std::cell::Cell::new(None));
     let cell = id_cell.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
@@ -488,7 +509,7 @@ fn hovering_a_table_sets_the_sky_highlight(#[case] label: &str, #[case] expected
 /// that it does something.
 #[test]
 fn hovering_a_prn_row_shows_the_affordance_band() {
-    let point = make_point(Some(sats_multi_constellation()));
+    let point = point_at(0, Some(sats_multi_constellation()));
     let mut folds = gt_ui_types::PointWindowFolds::default();
     let placement = placement_of(&point);
     let mut harness = test_util::harness_builder()
@@ -503,41 +524,10 @@ fn hovering_a_prn_row_shows_the_affordance_band() {
     harness.snapshot("sticky_prn_row_hovered");
 }
 
-fn track_with_points(points: Vec<NavPoint>) -> LoadedTrack {
-    let satellite_report_count = points.iter().filter(|p| p.satellites.is_some()).count();
-    LoadedTrack {
-        metadata: gt_types::TrackMetadata {
-            satellite_report_count,
-            ..gt_test_utils::empty_track_metadata()
-        },
-        geometry: gt_test_utils::track_geometry(&points),
-        points,
-        lod: gt_types::TrackLod::default(),
-        sat_label_anchors: Vec::new(),
-        custom_markers: Vec::new(),
-        generated_markers: Vec::new(),
-        event_markers: Vec::new(),
-        channels: Vec::new(),
-    }
-}
-
 /// The fix at `index` of `track` with the position the track builder placed
 /// it at, the way the map's hover reaches it.
 fn placed_point(track: &LoadedTrack, index: usize) -> Option<gt_types::PlacedPoint<'_>> {
     track.placed_points()?.get(index)
-}
-
-/// A nav point at a fixed time plus `secs`, so hover-badge snapshots
-/// (which render the time row) stay deterministic.
-fn point_at(secs: i64, satellites: Option<Satellites>) -> NavPoint {
-    let start = chrono::DateTime::from_timestamp(1_748_000_000, 0).expect("valid");
-    let tpv = TimePositionVelocity::builder()
-        .time(GpsTime::from_utc(start + chrono::Duration::seconds(secs)))
-        .lat(Latitude::new(51.5))
-        .lon(Longitude::new(-0.1))
-        .heading(Angle::new::<degree>(90.0))
-        .build();
-    NavPoint::new(tpv, satellites)
 }
 
 /// A report whose satellites carry sky positions, so the badge's compact
@@ -589,43 +579,60 @@ fn sats_with_sky() -> Satellites {
     Satellites::new(None, None, satellites)
 }
 
+/// The hover table over a fix: its own report in both themes, a report
+/// borrowed from a fix nearby, no report near enough to borrow, a track that
+/// records none at all, and a fix whose recorded latitude is out of range,
+/// which the table marks above the position the map draws it at.
 #[rstest]
-#[case::dark("hover_badge_own_report_dark", true)]
-#[case::light("hover_badge_own_report_light", false)]
-fn hover_badge_own_report(#[case] name: &str, #[case] dark_mode: bool) {
-    let track = track_with_points(vec![point_at(0, Some(sats_with_sky()))]);
+#[case::own_report_dark(
+    "hover_badge_own_report_dark",
+    true,
+    vec![point_at(0, Some(sats_with_sky()))],
+    0
+)]
+#[case::own_report_light(
+    "hover_badge_own_report_light",
+    false,
+    vec![point_at(0, Some(sats_with_sky()))],
+    0
+)]
+#[case::borrowed_report(
+    "hover_badge_borrowed_report",
+    true,
+    vec![point_at(0, Some(sats_with_sky())), point_at(3, None)],
+    1
+)]
+#[case::no_report_nearby(
+    "hover_badge_no_report_nearby",
+    true,
+    vec![point_at(0, Some(sats_with_sky())), point_at(60, None)],
+    1
+)]
+#[case::track_without_reports(
+    "hover_badge_track_without_reports",
+    true,
+    vec![point_at(0, None)],
+    0
+)]
+#[case::coordinate_out_of_range(
+    "hover_badge_coordinate_out_of_range",
+    true,
+    gt_test_utils::fixtures::nav_points_with_a_latitude_out_of_range(3, PointIdx::new(1)),
+    1
+)]
+fn snap_hover_badge(
+    #[case] name: &str,
+    #[case] dark_mode: bool,
+    #[case] points: Vec<NavPoint>,
+    #[case] hovered: usize,
+) {
+    let track = gt_test_utils::loaded_track_with_points(points);
     let mut harness = test_util::harness_builder()
         .size(egui::vec2(430.0, 260.0))
         .theme(dark_mode)
         .ui(move |ui| {
-            let sky = SkySection::resolve(&track, PointIdx::new(0));
-            if let Some(point) = placed_point(&track, 0) {
-                show_hover_table(ui, point, &sky, None);
-            }
-        });
-    harness.snapshot(name);
-}
-
-#[rstest]
-#[case::borrowed_report("hover_badge_borrowed_report", &[(0, true), (3, false)], 1)]
-#[case::no_report_nearby("hover_badge_no_report_nearby", &[(0, true), (60, false)], 1)]
-#[case::track_without_reports("hover_badge_track_without_reports", &[(0, false)], 0)]
-fn hover_badge_report_states(
-    #[case] name: &str,
-    #[case] spec: &[(i64, bool)],
-    #[case] query: usize,
-) {
-    let points = spec
-        .iter()
-        .map(|&(secs, has_report)| point_at(secs, has_report.then(sats_with_sky)))
-        .collect();
-    let track = track_with_points(points);
-    let mut harness = test_util::harness_builder()
-        .size(egui::vec2(430.0, 260.0))
-        .theme(true)
-        .ui(move |ui| {
-            let sky = SkySection::resolve(&track, PointIdx::new(query));
-            if let Some(point) = placed_point(&track, query) {
+            let sky = SkySection::resolve(&track, PointIdx::new(hovered));
+            if let Some(point) = placed_point(&track, hovered) {
                 show_hover_table(ui, point, &sky, None);
             }
         });
@@ -636,31 +643,12 @@ fn hover_badge_report_states(
 /// reported for it if any.
 fn fix_with_a_latitude_out_of_range(heading_degrees: Option<f64>) -> NavPoint {
     let tpv = TimePositionVelocity::builder()
-        .time(GpsTime::from_utc(chrono::Utc::now()))
+        .time(GpsTime::from_utc(fixture_epoch()))
         .lat(RecordedLatitude::from_degrees(91.0))
-        .lon(Longitude::new(-0.1))
+        .lon(Longitude::new(FIXTURE_LON))
         .maybe_heading(heading_degrees.map(Angle::new::<degree>))
         .build();
     NavPoint::new(tpv, None)
-}
-
-/// The hover of a fix the receiver wrote a latitude of 91° for: the recorded
-/// value stands as written and marked, above the position the map draws it at.
-#[test]
-fn hover_badge_coordinate_out_of_range() {
-    let track = track_with_points(
-        gt_test_utils::fixtures::nav_points_with_a_latitude_out_of_range(3, PointIdx::new(1)),
-    );
-    let mut harness = test_util::harness_builder()
-        .size(egui::vec2(430.0, 260.0))
-        .theme(true)
-        .ui(move |ui| {
-            let sky = SkySection::resolve(&track, PointIdx::new(1));
-            if let Some(point) = placed_point(&track, 1) {
-                show_hover_table(ui, point, &sky, None);
-            }
-        });
-    harness.snapshot("hover_badge_coordinate_out_of_range");
 }
 
 /// What the point window says under the two recorded coordinates.
@@ -699,7 +687,7 @@ fn the_point_window_names_the_recorded_coordinates(
     #[case] expected_latitude: &str,
     #[case] expected_placement: PlacementRow,
 ) {
-    let track = track_with_points(points);
+    let track = gt_test_utils::loaded_track_with_points(points);
     let mut folds = gt_ui_types::PointWindowFolds::default();
     let mut harness = test_util::harness_builder()
         .size(egui::vec2(430.0, 300.0))
@@ -740,7 +728,7 @@ fn hover_badge_recording_row(
     #[case] recording_name: Option<&'static str>,
     #[case] expect_row: bool,
 ) {
-    let track = track_with_points(vec![point_at(0, Some(sats_with_sky()))]);
+    let track = gt_test_utils::loaded_track_with_points(vec![point_at(0, Some(sats_with_sky()))]);
     let mut harness = test_util::harness_builder()
         .size(egui::vec2(430.0, 260.0))
         .theme(true)
@@ -772,104 +760,42 @@ fn report_age_label_names_the_side(#[case] ms: i64, #[case] expected: &str) {
     );
 }
 
-fn make_tpv(lat: f64, lon: f64, heading: Option<f64>) -> TimePositionVelocity {
-    if let Some(h) = heading {
-        TimePositionVelocity::builder()
-            .time(GpsTime::from_utc(chrono::Utc::now()))
-            .lat(Latitude::new(lat))
-            .lon(Longitude::new(lon))
-            .heading(Angle::new::<degree>(h))
-            .build()
-    } else {
-        TimePositionVelocity::builder()
-            .time(GpsTime::from_utc(chrono::Utc::now()))
-            .lat(Latitude::new(lat))
-            .lon(Longitude::new(lon))
-            .build()
-    }
+/// A fix at [`fixture_epoch`] with neither a heading nor a satellite report,
+/// which is what the map draws hollow.
+fn a_fix_without_a_heading() -> NavPoint {
+    gt_test_utils::fixtures::nav_point(
+        fixture_epoch(),
+        Latitude::new(FIXTURE_LAT),
+        Longitude::new(FIXTURE_LON),
+        gt_types::fixtures::FixKind::GhostWithoutHeading,
+    )
 }
 
-/// No satellite report → blue (unknown quality, assume fine).
-#[test]
-fn color_no_satellite_report_is_blue() {
-    let point = make_point(None);
-    assert_eq!(tpv_point_color(&point), Color32::from_rgb(66, 133, 244));
-}
-
-/// 10+ satellites in fix → blue (strong fix).
-#[test]
-fn color_strong_fix_is_blue() {
-    let point = make_point(Some(sats_with_fix(10)));
-    assert_eq!(tpv_point_color(&point), Color32::from_rgb(66, 133, 244));
-}
-
-/// 1–9 satellites in fix → yellow (marginal fix).
-#[test]
-fn color_marginal_fix_is_yellow() {
-    let point = make_point(Some(sats_with_fix(5)));
-    assert_eq!(tpv_point_color(&point), Color32::from_rgb(244, 180, 0));
-}
-
-/// 1 satellite in fix → yellow (lowest marginal threshold).
-#[test]
-fn color_single_sat_fix_is_yellow() {
-    let point = make_point(Some(sats_with_fix(1)));
-    assert_eq!(tpv_point_color(&point), Color32::from_rgb(244, 180, 0));
-}
-
-/// Satellite report present but 0 in fix → red (fix lost).
-#[test]
-fn color_fix_lost_is_red() {
-    let point = make_point(Some(sats_with_fix(0)));
-    assert_eq!(tpv_point_color(&point), Color32::from_rgb(219, 68, 55));
-}
-
-/// A point with no heading → classified as ghost (hollow chevron).
-#[test]
-fn no_heading_is_ghost() {
-    let tpv = make_tpv(51.5, -0.1, None);
-    let point = NavPoint::new(tpv, None);
-    assert!(point.is_ghost_fix());
-}
-
-/// A point with heading and no satellite report → classified as Real (blue arrow).
-#[test]
-fn heading_no_satellite_report_is_real() {
-    let tpv = make_tpv(51.5, -0.1, Some(90.0));
-    let point = NavPoint::new(tpv, None);
-    assert!(!point.is_ghost_fix());
-}
-
-/// Fix count > 0 with heading → classified as Real (filled arrow, good fix).
-///
-/// Dead reckoning or any device that supplies heading during a genuine fix
-/// is rendered as a filled arrow.
-#[test]
-fn heading_with_good_fix_is_real() {
-    let tpv = make_tpv(51.5, -0.1, Some(225.0));
-    let point = NavPoint::new(tpv, Some(sats_with_fix(5)));
-    assert!(!point.is_ghost_fix());
-}
-
-/// Fix count == 0 → ghost even when heading is present.
-///
-/// This is the common case for devices that continue outputting heading
-/// estimates after fix loss. Without any satellite in the fix, the heading
-/// is an internal guess and the icon should clearly signal uncertainty.
-#[test]
-fn heading_with_fix_lost_is_ghost() {
-    let tpv = make_tpv(51.5, -0.1, Some(180.0));
-    let point = NavPoint::new(tpv, Some(sats_with_fix(0)));
-    assert!(point.is_ghost_fix());
-}
-
+/// The icon colour states the fix quality: blue while the receiver held a
+/// strong solution or wrote no report at all, yellow while it had a report but
+/// too few satellites in the fix, red once it had none.
 #[rstest]
-#[case::measured(make_point(None), None)]
-#[case::without_a_heading(
-    NavPoint::new(make_tpv(51.5, -0.1, None), None),
+#[case::without_a_report(None, Color32::from_rgb(66, 133, 244))]
+#[case::ten_in_fix(Some(twelve_satellites(10)), Color32::from_rgb(66, 133, 244))]
+#[case::one_in_fix(Some(twelve_satellites(1)), Color32::from_rgb(244, 180, 0))]
+#[case::nothing_in_fix(Some(twelve_satellites(0)), Color32::from_rgb(219, 68, 55))]
+fn tpv_point_color_states_the_fix_quality(
+    #[case] satellites: Option<Satellites>,
+    #[case] expected: Color32,
+) {
+    assert_eq!(tpv_point_color(&point_at(0, satellites)), expected);
+}
+
+/// A fix the receiver did not measure is drawn as a chevron: one shape for a
+/// fix it dead reckoned, and one for a fix whose recorded coordinates lie
+/// outside their range. Every other fix is drawn as an arrow.
+#[rstest]
+#[case::measured(point_at(0, None), None)]
+#[case::without_a_heading(a_fix_without_a_heading(), Some(ChevronFix::DeadReckoned))]
+#[case::with_nothing_in_fix(
+    point_at(0, Some(twelve_satellites(0))),
     Some(ChevronFix::DeadReckoned)
 )]
-#[case::with_nothing_in_fix(make_point(Some(sats_with_fix(0))), Some(ChevronFix::DeadReckoned))]
 #[case::latitude_out_of_range(
     fix_with_a_latitude_out_of_range(Some(90.0)),
     Some(ChevronFix::CoordinateOutOfRange)
@@ -885,48 +811,34 @@ fn a_fix_the_receiver_did_not_measure_is_drawn_as_a_chevron(
     assert_eq!(ChevronFix::for_fix(&fix), expected);
 }
 
-/// The chevron points east when the surrounding fixes move eastward.
-#[test]
-fn chevron_direction_points_east_for_eastward_movement() {
-    let prev = MercPoint { x: 0.50, y: 0.50 };
-    let next = MercPoint { x: 0.60, y: 0.50 };
-    let dir = chevron_direction(prev, next);
+/// The chevron points along the line between the fixes either side of it.
+/// Mercator y grows southward, and the southward case pins that no y flip is
+/// applied. Two coincident neighbours give a fallback of down.
+#[rstest]
+#[case::eastward(
+    MercPoint { x: 0.50, y: 0.50 },
+    MercPoint { x: 0.60, y: 0.50 },
+    Vec2::new(1.0, 0.0)
+)]
+#[case::southward(
+    MercPoint { x: 0.50, y: 0.40 },
+    MercPoint { x: 0.50, y: 0.60 },
+    Vec2::new(0.0, 1.0)
+)]
+#[case::coincident_neighbours(
+    MercPoint { x: 0.5, y: 0.5 },
+    MercPoint { x: 0.5, y: 0.5 },
+    Vec2::DOWN
+)]
+fn chevron_direction_follows_the_neighbouring_fixes(
+    #[case] previous: MercPoint,
+    #[case] next: MercPoint,
+    #[case] expected: Vec2,
+) {
+    let direction = chevron_direction(previous, next);
     assert!(
-        dir.x > 0.99,
-        "eastward movement → large positive x; got {dir:?}"
-    );
-    assert!(
-        dir.y.abs() < 0.01,
-        "eastward movement → near-zero y; got {dir:?}"
-    );
-}
-
-/// The chevron points south when the surrounding fixes move southward.
-/// Mercator y increases southward, so this also tests that no Y-flip is applied.
-#[test]
-fn chevron_direction_points_south_for_southward_movement() {
-    let prev = MercPoint { x: 0.50, y: 0.40 };
-    let next = MercPoint { x: 0.50, y: 0.60 };
-    let dir = chevron_direction(prev, next);
-    assert!(
-        dir.y > 0.99,
-        "southward movement → large positive y; got {dir:?}"
-    );
-    assert!(
-        dir.x.abs() < 0.01,
-        "southward movement → near-zero x; got {dir:?}"
-    );
-}
-
-/// When prev and next coincide (isolated point) the direction falls back to DOWN.
-#[test]
-fn chevron_direction_falls_back_when_neighbours_coincide() {
-    let pt = MercPoint { x: 0.5, y: 0.5 };
-    let dir = chevron_direction(pt, pt);
-    assert_eq!(
-        dir,
-        Vec2::DOWN,
-        "coincident neighbours → fallback direction DOWN"
+        (direction - expected).length() < 0.01,
+        "got {direction:?}, expected {expected:?}"
     );
 }
 
@@ -935,72 +847,70 @@ fn chevron_direction_falls_back_when_neighbours_coincide() {
 // (HI, 0.5 icon sizes - arrows overlap but stay readable).
 const TEST_ICON_PX: f32 = 12.0;
 
-#[test]
-fn icon_fade_is_opaque_while_arrows_merely_overlap() {
-    assert!(icon_fade_alpha(100.0, TEST_ICON_PX) >= 1.0);
-    assert!(icon_fade_alpha(12.0, TEST_ICON_PX) >= 1.0); // fully side by side
-    assert!(icon_fade_alpha(8.0, TEST_ICON_PX) >= 1.0); // overlapping a bit
-    assert!(icon_fade_alpha(6.0, TEST_ICON_PX) >= 1.0); // exactly at the HI bound
-}
-
-#[test]
-fn icon_fade_is_transparent_when_arrows_blend_together() {
-    assert!(icon_fade_alpha(2.4, TEST_ICON_PX) <= 0.0); // exactly at the LO bound
-    assert!(icon_fade_alpha(0.0, TEST_ICON_PX) <= 0.0); // stacked on one point
-}
-
-#[test]
-fn icon_fade_is_linear_between_the_bounds() {
-    let alpha = icon_fade_alpha(4.2, TEST_ICON_PX); // midway between 2.4 and 6
-    assert!((alpha - 0.5).abs() < 1e-6);
-}
-
-#[test]
-fn icon_fade_stays_opaque_for_degenerate_icon_size() {
-    assert!(icon_fade_alpha(10.0, 0.0) >= 1.0);
-    assert!(icon_fade_alpha(10.0, -1.0) >= 1.0);
-}
-
 // At low zoom icons shrink to 3 px and the proportional band would be
 // 0.6-1.5 px. The absolute floors widen it to 2-5 px so dot-sized
 // arrows stacked a couple of pixels apart fade into the quality line.
 const SMALL_ICON_PX: f32 = 3.0;
 
-#[test]
-fn icon_fade_band_is_floored_for_small_icons() {
-    assert!(icon_fade_alpha(1.2, SMALL_ICON_PX) <= 0.0); // below the 2 px floor
-    assert!(icon_fade_alpha(2.0, SMALL_ICON_PX) <= 0.0); // exactly at the LO floor
-    assert!(icon_fade_alpha(5.0, SMALL_ICON_PX) >= 1.0); // exactly at the HI floor
-    let alpha = icon_fade_alpha(3.5, SMALL_ICON_PX); // midway between 2 and 5
-    assert!((alpha - 0.5).abs() < 1e-6);
+/// Arrows a spacing apart fade linearly from opaque at the top of the band to
+/// invisible at its foot. A degenerate icon size and a spacing that overflowed
+/// to infinity both clamp the alpha to opaque.
+#[rstest]
+#[case::far_apart(100.0, TEST_ICON_PX, 1.0)]
+#[case::side_by_side(12.0, TEST_ICON_PX, 1.0)]
+#[case::overlapping_a_little(8.0, TEST_ICON_PX, 1.0)]
+#[case::at_the_upper_bound(6.0, TEST_ICON_PX, 1.0)]
+#[case::midway_through_the_band(4.2, TEST_ICON_PX, 0.5)]
+#[case::at_the_lower_bound(2.4, TEST_ICON_PX, 0.0)]
+#[case::stacked_on_one_point(0.0, TEST_ICON_PX, 0.0)]
+#[case::spacing_overflowed_to_infinity(f32::INFINITY, TEST_ICON_PX, 1.0)]
+#[case::icon_of_no_size(10.0, 0.0, 1.0)]
+#[case::icon_of_negative_size(10.0, -1.0, 1.0)]
+#[case::below_the_small_icon_floor(1.2, SMALL_ICON_PX, 0.0)]
+#[case::at_the_small_icon_lower_floor(2.0, SMALL_ICON_PX, 0.0)]
+#[case::at_the_small_icon_upper_floor(5.0, SMALL_ICON_PX, 1.0)]
+#[case::midway_through_the_floored_band(3.5, SMALL_ICON_PX, 0.5)]
+fn icon_fade_alpha_ramps_across_the_fade_band(
+    #[case] spacing_px: f32,
+    #[case] icon_px: f32,
+    #[case] expected: f32,
+) {
+    let alpha = icon_fade_alpha(spacing_px, icon_px);
+    assert!((alpha - expected).abs() < 1e-6, "got {alpha}");
 }
 
-#[test]
-fn classify_uses_the_floored_band_for_small_icons() {
-    // 1.9 m segments at 1 px/m: below the 2 px floor, fully hidden even
-    // though 1.9 px is well above 0.2 x 3 px.
-    let track = track_with_segment_range(0.0, 1.9);
+/// Which fade pass a track takes is read off its segment length range against
+/// the fade band of the icon size the zoom draws at.
+#[rstest]
+// No segment at all means nothing can overlap: a spacing of zero would hide
+// a lone fix forever.
+#[case::a_lone_fix(None, TEST_ICON_PX, TrackIconFade::AllVisible)]
+// Longest segment 2 m = 2 px, below the 2.4 px fade-out bound.
+#[case::every_segment_blends(Some((0.0, 2.0)), TEST_ICON_PX, TrackIconFade::AllHidden)]
+// Shortest segment 6 m = 6 px, exactly the fade-in bound.
+#[case::every_segment_is_spaced(Some((6.0, 100.0)), TEST_ICON_PX, TrackIconFade::AllVisible)]
+// Parked then highway: zero-length segments next to 100 m hops.
+#[case::mixed_spacing(Some((0.0, 100.0)), TEST_ICON_PX, TrackIconFade::PerFix)]
+// A range entirely inside the fade band is per-fix as well.
+#[case::inside_the_band(Some((3.0, 5.0)), TEST_ICON_PX, TrackIconFade::PerFix)]
+// 1.9 m segments at 1 px/m: below the 2 px floor, fully hidden even though
+// 1.9 px is well above 0.2 x 3 px.
+#[case::below_the_small_icon_floor(Some((0.0, 1.9)), SMALL_ICON_PX, TrackIconFade::AllHidden)]
+#[case::above_the_small_icon_floor(Some((5.0, 50.0)), SMALL_ICON_PX, TrackIconFade::AllVisible)]
+#[case::inside_the_floored_band(Some((3.0, 4.0)), SMALL_ICON_PX, TrackIconFade::PerFix)]
+fn classify_icon_fade_reads_the_segment_length_range(
+    #[case] segment_range_m: Option<(f64, f64)>,
+    #[case] icon_px: f32,
+    #[case] expected: TrackIconFade,
+) {
+    let track = match segment_range_m {
+        Some((min_m, max_m)) => track_with_segment_range(min_m, max_m),
+        None => gt_test_utils::loaded_track_with_points(Vec::new()),
+    };
     assert_eq!(
-        classify_icon_fade(&track, unit_transform().scale(), SMALL_ICON_PX),
-        TrackIconFade::AllHidden
+        classify_icon_fade(&track, unit_transform().scale(), icon_px),
+        expected
     );
-    let track = track_with_segment_range(5.0, 50.0);
-    assert_eq!(
-        classify_icon_fade(&track, unit_transform().scale(), SMALL_ICON_PX),
-        TrackIconFade::AllVisible
-    );
-    let track = track_with_segment_range(3.0, 4.0);
-    assert_eq!(
-        classify_icon_fade(&track, unit_transform().scale(), SMALL_ICON_PX),
-        TrackIconFade::PerFix
-    );
-}
-
-#[test]
-fn icon_fade_stays_opaque_for_infinite_spacing() {
-    // Spacing can overflow to infinity when a long track meets an
-    // extreme zoom. The result must clamp to opaque, not turn NaN.
-    assert!(icon_fade_alpha(f32::INFINITY, TEST_ICON_PX) >= 1.0);
 }
 
 /// Same value as `MercTransform::pixels_per_meter`'s internal constant.
@@ -1051,53 +961,6 @@ fn track_with_segment_range(min_m: f64, max_m: f64) -> LoadedTrack {
     }
 }
 
-#[test]
-fn classify_keeps_lone_fix_visible_at_every_zoom() {
-    // No segments means nothing can overlap. A spacing of zero would
-    // hide the lone fix forever.
-    let track = track_with_points(Vec::new());
-    assert_eq!(
-        classify_icon_fade(&track, unit_transform().scale(), TEST_ICON_PX),
-        TrackIconFade::AllVisible
-    );
-}
-
-#[test]
-fn classify_hides_all_icons_when_even_the_longest_segment_blends() {
-    // Longest segment 2 m = 2 px, below the 2.4 px fade-out bound.
-    let track = track_with_segment_range(0.0, 2.0);
-    assert_eq!(
-        classify_icon_fade(&track, unit_transform().scale(), TEST_ICON_PX),
-        TrackIconFade::AllHidden
-    );
-}
-
-#[test]
-fn classify_shows_all_icons_when_even_the_shortest_segment_is_spaced() {
-    // Shortest segment 6 m = 6 px, exactly the fade-in bound.
-    let track = track_with_segment_range(6.0, 100.0);
-    assert_eq!(
-        classify_icon_fade(&track, unit_transform().scale(), TEST_ICON_PX),
-        TrackIconFade::AllVisible
-    );
-}
-
-#[test]
-fn classify_mixed_spacing_selects_per_fix() {
-    // Parked-then-highway: zero-length segments next to 100 m hops.
-    let track = track_with_segment_range(0.0, 100.0);
-    assert_eq!(
-        classify_icon_fade(&track, unit_transform().scale(), TEST_ICON_PX),
-        TrackIconFade::PerFix
-    );
-    // A range entirely inside the fade band is also per-fix.
-    let track = track_with_segment_range(3.0, 5.0);
-    assert_eq!(
-        classify_icon_fade(&track, unit_transform().scale(), TEST_ICON_PX),
-        TrackIconFade::PerFix
-    );
-}
-
 fn spacing_at(track: &LoadedTrack, pi: usize) -> Option<f32> {
     let transform = unit_transform();
     let placed = track.placed_points()?;
@@ -1105,44 +968,41 @@ fn spacing_at(track: &LoadedTrack, pi: usize) -> Option<f32> {
     local_fix_spacing_px(placed, pi, screen_pos, &transform)
 }
 
-#[test]
-fn local_spacing_is_none_for_a_lone_fix() {
-    let track = track_with_points(vec![nav_point_at_meters(0.0, None)]);
-    assert_eq!(spacing_at(&track, 0), None);
-}
-
-#[test]
-fn local_spacing_of_endpoints_uses_their_single_neighbour() {
-    let track = track_with_points(vec![
-        nav_point_at_meters(0.0, None),
-        nav_point_at_meters(100.0, None),
-    ]);
-    let first = spacing_at(&track, 0).expect("has a neighbour");
-    let last = spacing_at(&track, 1).expect("has a neighbour");
-    assert!((first - 100.0).abs() < 1.0, "got {first} px");
-    assert!((last - 100.0).abs() < 1.0, "got {last} px");
-}
-
-#[test]
-fn local_spacing_keeps_cluster_boundary_visible() {
-    // Three stacked fixes (parked), then a 100 m hop: the interior
-    // parked fixes have zero spacing, but the departure fix sees its
-    // far next-neighbour and must stay visible.
-    let track = track_with_points(vec![
-        nav_point_at_meters(0.0, None),
-        nav_point_at_meters(0.0, None),
-        nav_point_at_meters(0.0, None),
-        nav_point_at_meters(100.0, None),
-    ]);
-    let interior = spacing_at(&track, 1).expect("has neighbours");
-    let departure = spacing_at(&track, 2).expect("has neighbours");
-    assert!(interior < f32::EPSILON, "got {interior} px");
-    assert!((departure - 100.0).abs() < 1.0, "got {departure} px");
+/// A fix's local spacing is the shorter distance to a neighbour, and is
+/// absent for a fix with no neighbour at all. Three stacked fixes followed by
+/// a 100 m hop leave the interior of the cluster at zero, while the fix the
+/// hop departs from sees its far neighbour and stays visible.
+#[rstest]
+#[case::a_lone_fix(&[0.0], 0, None)]
+#[case::the_first_of_two(&[0.0, 100.0], 0, Some(100.0))]
+#[case::the_last_of_two(&[0.0, 100.0], 1, Some(100.0))]
+#[case::inside_a_cluster(&[0.0, 0.0, 0.0, 100.0], 1, Some(0.0))]
+#[case::the_fix_a_hop_departs_from(&[0.0, 0.0, 0.0, 100.0], 2, Some(100.0))]
+fn local_fix_spacing_px_reads_the_nearer_neighbour(
+    #[case] positions_m: &[f64],
+    #[case] fix_index: usize,
+    #[case] expected_px: Option<f32>,
+) {
+    let points = positions_m
+        .iter()
+        .map(|&x_m| nav_point_at_meters(x_m, None))
+        .collect();
+    let track = gt_test_utils::loaded_track_with_points(points);
+    let spacing = spacing_at(&track, fix_index);
+    let within_a_pixel = match (spacing, expected_px) {
+        (None, None) => true,
+        (Some(actual), Some(expected)) => (actual - expected).abs() < 1.0,
+        (None, Some(_)) | (Some(_), None) => false,
+    };
+    assert!(
+        within_a_pixel,
+        "got {spacing:?} px, expected {expected_px:?} px"
+    );
 }
 
 #[test]
 fn fix_icon_alpha_short_circuits_uniform_tracks() {
-    let track = track_with_points(vec![
+    let track = gt_test_utils::loaded_track_with_points(vec![
         nav_point_at_meters(0.0, None),
         nav_point_at_meters(0.0, None),
     ]);
@@ -1175,7 +1035,7 @@ fn per_fix_alpha_handles_parked_highway_parked() {
     // The shape from the bug report: parked (stacked fixes), then
     // highway (100 m hops), then parked again. Parked interiors fade,
     // every highway fix and both cluster boundary fixes stay opaque.
-    let track = track_with_points(vec![
+    let track = gt_test_utils::loaded_track_with_points(vec![
         nav_point_at_meters(0.0, None),
         nav_point_at_meters(0.0, None),
         nav_point_at_meters(0.0, None), // departure: next neighbour is far
@@ -1227,16 +1087,14 @@ fn line_alpha_buckets_quantize_the_crossfade() {
 fn quality_line_color_marks_ghost_fixes_red() {
     // No heading and no satellite report: `tpv_point_color` alone would say
     // blue, but the point is a ghost fix and must show as red.
-    let tpv = make_tpv(51.5, -0.1, None);
-    let point = NavPoint::new(tpv, None);
-    assert_eq!(quality_line_color(&point), FIX_LOST_RED);
+    assert_eq!(quality_line_color(&a_fix_without_a_heading()), FIX_LOST_RED);
 }
 
 #[test]
 fn quality_line_color_follows_fix_quality_for_real_fixes() {
-    let marginal = make_point(Some(sats_with_fix(4)));
+    let marginal = point_at(0, Some(twelve_satellites(4)));
     assert_eq!(quality_line_color(&marginal), FIX_MARGINAL_YELLOW);
-    let strong = make_point(Some(sats_with_fix(12)));
+    let strong = point_at(0, Some(twelve_satellites(12)));
     assert_eq!(quality_line_color(&strong), FIX_STRONG_BLUE);
 }
 
@@ -1317,7 +1175,7 @@ fn a_tracks_arrows_are_one_mesh_whatever_the_accuracy_circle_count() {
     let points = (0..FIX_COUNT)
         .map(|i| nav_point_at_meters(i as f64 * SPACING_M, Some(ACCURACY_M)))
         .collect();
-    let track = track_with_points(points);
+    let track = gt_test_utils::loaded_track_with_points(points);
     let indices: Vec<usize> = (0..FIX_COUNT).collect();
     let library = crate::icon_mesh::IconMeshLibrary::embedded().ok();
     let style = TpvDrawStyle {

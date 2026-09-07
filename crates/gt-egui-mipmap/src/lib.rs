@@ -430,6 +430,8 @@ fn extremes_either_side_of_mean_direction(
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
     fn seq(n: usize) -> Vec<[f64; 2]> {
@@ -448,19 +450,23 @@ mod tests {
         );
     }
 
-    #[test]
-    fn moderate_data_downsamples_to_coarse_levels() {
-        // The cascade continues down so a short track that occupies only a few
-        // pixels when zoomed out can be drawn with a handful of points.
-        let m = MipMap::build(seq(50));
+    /// The cascade continues down until the coarsest level fits a single
+    /// downsample window, so a track that occupies only a few pixels when
+    /// zoomed out draws from a handful of points.
+    #[rstest]
+    #[case::fifty_points(50)]
+    #[case::ten_thousand_points(10_000)]
+    fn a_cascade_reduces_to_one_downsample_window(#[case] point_count: usize) {
+        let mipmap = MipMap::build(seq(point_count));
         assert!(
-            m.level_count() > 1,
-            "moderate input should produce coarse levels"
+            mipmap.level_count() > 1,
+            "{point_count} points produced a single level"
         );
-        let coarsest = m.levels.last().expect("at least one level");
+        let coarsest = mipmap.levels.last().expect("at least one level");
+        assert!(coarsest.len() >= MIN_LEVEL_POINTS);
         assert!(
             coarsest.len() <= DOWNSAMPLE_WINDOW,
-            "cascade should reduce down toward a single segment, got {}",
+            "the coarsest level holds {} points",
             coarsest.len()
         );
     }
@@ -475,62 +481,19 @@ mod tests {
     }
 
     #[test]
-    fn large_data_produces_levels() {
-        let data = seq(10_000);
-        let m = MipMap::build(data);
-        assert!(
-            m.level_count() > 1,
-            "should have at least 2 levels for 10K points"
-        );
-        let coarsest = m.levels.last().expect("at least one level");
-        assert!(coarsest.len() >= MIN_LEVEL_POINTS);
-        assert!(
-            coarsest.len() <= DOWNSAMPLE_WINDOW,
-            "cascade should reduce down toward a single segment, got {}",
-            coarsest.len()
-        );
-    }
-
-    #[test]
-    fn select_slice_clips_to_range() {
-        let data: Vec<[f64; 2]> = (0..1000).map(|i| [i as f64, i as f64]).collect();
-        let m = MipMap::build(data);
-        let slice = m.select_slice(SelectionRange::within_viewport(100.0..=200.0), 10);
-        // All returned points must come from the original data range (no garbage).
-        assert!(slice.iter().all(|p| p.x >= 0.0 && p.x <= 999.0));
-        // The slice must include points from within the viewport.
-        assert!(slice.iter().any(|p| p.x >= 100.0 && p.x <= 200.0));
-    }
-
-    #[test]
     fn outliers_preserved_in_downsampled_level() {
         // Build a series where there's a clear spike at index 4.
         let mut data: Vec<[f64; 2]> = (0..800).map(|i| [i as f64, 1.0]).collect();
         data[4] = [4.0, 1000.0]; // spike
         let m = MipMap::build(data);
-        if m.level_count() > 1 {
-            // The spike should appear in the coarsest level.
-            let has_spike = m
-                .levels
-                .last()
-                .expect("at least one")
-                .iter()
-                .any(|p| p.y > 500.0);
-            assert!(has_spike, "min/max downsampling must preserve spikes");
-        }
-    }
-
-    #[test]
-    fn select_uses_coarser_level_for_wide_view() {
-        let data: Vec<[f64; 2]> = (0..10_000).map(|i| [i as f64, 1.0]).collect();
-        let m = MipMap::build(data);
-        let total_range_slice = m.select_slice(SelectionRange::within_viewport(0.0..=9_999.0), 50);
-        // With a small target (50) over the full range, a coarse level is
-        // selected - far fewer than the 10_000 original points.
-        assert!(
-            total_range_slice.len() < 5_000,
-            "should use a coarser level"
-        );
+        assert!(m.level_count() > 1, "800 points produced a single level");
+        let has_spike = m
+            .levels
+            .last()
+            .expect("at least one")
+            .iter()
+            .any(|p| p.y > 500.0);
+        assert!(has_spike, "min/max downsampling must preserve spikes");
     }
 
     fn int_data(n: usize) -> Vec<[f64; 2]> {

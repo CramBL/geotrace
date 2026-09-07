@@ -15,44 +15,6 @@ use rustc_hash::FxHashMap;
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
 
-fn make_file_from_points(points: Vec<gt_types::NavPoint>) -> LoadedFile {
-    let now = chrono::Utc::now();
-    let n = points.len();
-    let track = LoadedTrack {
-        metadata: TrackMetadata {
-            index: 0,
-            duration: chrono::Duration::seconds(n as i64),
-            time_range: TimeRange::new(now, now + chrono::Duration::seconds(n as i64)),
-            has_custom_markers: false,
-            tpv_count: n,
-            invalid_position_count: 0,
-            satellite_report_count: 0,
-            custom_marker_count: 0,
-            generated_marker_count: 0,
-            event_marker_count: 0,
-            ..gt_test_utils::empty_track_metadata()
-        },
-        ..gt_test_utils::loaded_track_with_points(points)
-    };
-    LoadedFile {
-        metadata: FileMetadata {
-            filename: format!("test_{n}.gtd"),
-            total_distance: TotalDistance::Measured(Length::new::<kilometer>(1.0)),
-            total_duration: chrono::Duration::seconds(n as i64),
-            time_range: Some(TimeRange::new(
-                now,
-                now + chrono::Duration::seconds(n as i64),
-            )),
-            ..gt_test_utils::empty_file_metadata()
-        },
-        tracks: vec![track],
-        event_marker_styles: FxHashMap::default(),
-        orphaned_event_markers: vec![],
-        source: gt_types::FileSource::GtdPath(PathBuf::from(format!("test_{n}.gtd"))),
-        load_warnings: vec![],
-    }
-}
-
 fn tpv_spatial_point(fi: usize, ti: usize, pi: usize) -> SpatialPoint {
     SpatialPoint {
         merc: MercPoint { x: 0.5, y: 0.5 },
@@ -93,7 +55,9 @@ fn scope<'a>(
 #[test]
 fn visible_tpv_point_is_hoverable() {
     let sp = tpv_spatial_point(0, 0, 0);
-    let files = vec![file_with_tracks(vec![track_at(55.0, 12.0)])];
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![track_at(
+        55.0, 12.0,
+    )])];
     let vis = vis_all_visible();
     assert!(is_spatial_point_visible(
         &sp,
@@ -105,7 +69,9 @@ fn visible_tpv_point_is_hoverable() {
 #[test]
 fn hidden_file_blocks_hover() {
     let sp = tpv_spatial_point(0, 0, 0);
-    let files = vec![file_with_tracks(vec![track_at(55.0, 12.0)])];
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![track_at(
+        55.0, 12.0,
+    )])];
     let mut vis = vis_all_visible();
     vis.files[0].enabled = false;
     assert!(!is_spatial_point_visible(
@@ -118,7 +84,9 @@ fn hidden_file_blocks_hover() {
 #[test]
 fn hidden_track_blocks_hover() {
     let sp = tpv_spatial_point(0, 0, 0);
-    let files = vec![file_with_tracks(vec![track_at(55.0, 12.0)])];
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![track_at(
+        55.0, 12.0,
+    )])];
     let mut vis = vis_all_visible();
     vis.files[0].tracks[0].enabled = false;
     assert!(!is_spatial_point_visible(
@@ -128,22 +96,7 @@ fn hidden_track_blocks_hover() {
 }
 
 fn track_at(lat: f64, lon: f64) -> LoadedTrack {
-    track_over(vec![nav_at(chrono::Utc::now(), lat, lon)])
-}
-
-pub(crate) fn track_over(points: Vec<gt_types::NavPoint>) -> LoadedTrack {
-    gt_test_utils::loaded_track_with_points(points)
-}
-
-pub(crate) fn file_with_tracks(tracks: Vec<LoadedTrack>) -> LoadedFile {
-    LoadedFile {
-        metadata: gt_test_utils::empty_file_metadata(),
-        tracks,
-        event_marker_styles: FxHashMap::default(),
-        orphaned_event_markers: vec![],
-        source: gt_types::FileSource::GtdPath(PathBuf::from("test.gtd")),
-        load_warnings: vec![],
-    }
+    gt_test_utils::loaded_track_with_points(vec![nav_at(chrono::Utc::now(), lat, lon)])
 }
 
 /// Regression test: "zoom to fit" frames only the visible tracks. Hiding a
@@ -151,7 +104,7 @@ pub(crate) fn file_with_tracks(tracks: Vec<LoadedTrack>) -> LoadedFile {
 #[test]
 fn visible_bounding_box_excludes_hidden_tracks() {
     // Track 0 sits south-west, track 1 sits far north-east.
-    let files = vec![file_with_tracks(vec![
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![
         track_at(55.0, 12.0),
         track_at(56.0, 13.0),
     ])];
@@ -192,7 +145,9 @@ fn visible_bounding_box_excludes_hidden_tracks() {
 #[test]
 fn hidden_tpv_layer_blocks_hover() {
     let sp = tpv_spatial_point(0, 0, 0);
-    let files = vec![file_with_tracks(vec![track_at(55.0, 12.0)])];
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![track_at(
+        55.0, 12.0,
+    )])];
     let mut vis = vis_all_visible();
     vis.files[0].tracks[0].set_category_visible(DataCategory::Tpv, false);
     assert!(!is_spatial_point_visible(
@@ -206,7 +161,9 @@ fn hidden_tpv_layer_blocks_hover() {
 #[test]
 fn masked_track_points_block_hover() {
     let sp = tpv_spatial_point(0, 0, 0);
-    let files = vec![file_with_tracks(vec![track_at(55.0, 12.0)])];
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![track_at(
+        55.0, 12.0,
+    )])];
     let vis = vis_all_visible();
     let mut mask = DisplayMask::default();
     mask.set_visible(DisplayCategory::TrackPoints, false);
@@ -224,10 +181,12 @@ fn masked_track_points_block_hover() {
 /// categories.
 #[test]
 fn track_plan_respects_the_display_mask() {
-    let files = vec![file_with_tracks(vec![track_at(55.0, 12.0)])];
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![track_at(
+        55.0, 12.0,
+    )])];
     let vis = vis_all_visible();
     let filter = GlobalFilter::default();
-    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    let track = test_util::track0();
 
     let all_on = viewport::TrackPlan::compute(&files, &vis, &filter, DisplayMask::default(), 15.0)
         .entry(track)
@@ -276,7 +235,9 @@ fn track_plan_respects_the_display_mask() {
 /// ink to frame, so zoom-to-fit must do nothing.
 #[test]
 fn fully_masked_map_has_no_bounding_box() {
-    let files = vec![file_with_tracks(vec![track_at(55.0, 12.0)])];
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![track_at(
+        55.0, 12.0,
+    )])];
     let vis = vis_all_visible();
     let filter = GlobalFilter::default();
     let mut mask = DisplayMask::default();
@@ -296,18 +257,18 @@ fn fully_masked_map_has_no_bounding_box() {
     assert!(compute_visible_bounding_box(&files, &vis, &filter, mask).is_some());
 }
 
-/// Builds a single-point [`NavPoint`] stamped at `time`.
+/// A fix at `time` with no heading and no satellite report.
 pub(crate) fn nav_at(
     time: chrono::DateTime<chrono::Utc>,
     lat: f64,
     lon: f64,
 ) -> gt_types::NavPoint {
-    let tpv = gt_types::TimePositionVelocity::builder()
-        .time(gt_types::GpsTime::from_utc(time))
-        .lat(gt_types::Latitude::new(lat))
-        .lon(gt_types::Longitude::new(lon))
-        .build();
-    gt_types::NavPoint::new(tpv, None)
+    gt_test_utils::fixtures::nav_point(
+        time,
+        Latitude::new(lat),
+        Longitude::new(lon),
+        gt_types::fixtures::FixKind::GhostWithoutHeading,
+    )
 }
 
 /// Regression test: with a partially-overlapping track, points outside the
@@ -322,9 +283,12 @@ fn time_filtered_point_is_not_hoverable() {
             time_range: TimeRange::new(early, late),
             ..gt_test_utils::empty_track_metadata()
         },
-        ..track_over(vec![nav_at(early, 55.0, 12.0), nav_at(late, 55.0, 12.0)])
+        ..gt_test_utils::loaded_track_with_points(vec![
+            nav_at(early, 55.0, 12.0),
+            nav_at(late, 55.0, 12.0),
+        ])
     };
-    let files = vec![file_with_tracks(vec![track])];
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![track])];
     let vis = vis_all_visible();
     // Start the window between the two points: the track still overlaps it,
     // but the early point falls outside.
@@ -347,18 +311,18 @@ fn time_filtered_point_is_not_hoverable() {
 #[test]
 fn query_hidden_point_is_not_hoverable() {
     let now = chrono::DateTime::from_timestamp(0, 0).expect("valid");
-    let track = track_over(vec![nav_at(now, 55.0, 12.0), nav_at(now, 55.0001, 12.0001)]);
-    let files = vec![file_with_tracks(vec![track])];
+    let track = gt_test_utils::loaded_track_with_points(vec![
+        nav_at(now, 55.0, 12.0),
+        nav_at(now, 55.0001, 12.0001),
+    ]);
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![track])];
     let vis = vis_all_visible();
     let filter = GlobalFilter::default();
     // A range built from arguments, so the single-element `vec!` does not trip
     // clippy's `single_range_in_vec_init`.
     let rng = |start: usize, end: usize| start..end;
     let matches = QueryMatches {
-        hidden: TrackRanges::from_iter([(
-            TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-            vec![rng(0, 1)],
-        )]),
+        hidden: TrackRanges::from_iter([(test_util::track0(), vec![rng(0, 1)])]),
         ..QueryMatches::default()
     };
     assert!(
@@ -407,7 +371,7 @@ fn hover_skips_hidden_nearest_and_finds_visible() {
         category: DataCategory::Tpv,
     };
     let tree = rstar::RTree::bulk_load(vec![hidden, visible]);
-    let files = vec![file_with_tracks(vec![
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![
         track_at(55.0, 12.0),
         track_at(56.0, 13.0),
     ])];
@@ -441,12 +405,17 @@ fn spatial_index_valid_after_file_deletion() {
     let points_a: Vec<_> = all_points.iter().take(700).cloned().collect();
     let points_b: Vec<_> = all_points.iter().take(340).cloned().collect();
 
-    let file_a = make_file_from_points(points_a);
-    let file_b = make_file_from_points(points_b.clone());
+    let file_a =
+        gt_test_utils::loaded_file_with_tracks(vec![test_util::track_built_from(points_a)]);
+    let file_b =
+        gt_test_utils::loaded_file_with_tracks(vec![test_util::track_built_from(points_b.clone())]);
 
     // Confirm the bug scenario: the stale tree (built before deletion) has
     // entries with `point_index` ≥ 340, which would be OOB for `file_b` alone.
-    let files_initial = vec![file_a, make_file_from_points(points_b)];
+    let files_initial = vec![
+        file_a,
+        gt_test_utils::loaded_file_with_tracks(vec![test_util::track_built_from(points_b)]),
+    ];
     let stale_index = gt_track_builder::SpatialIndex::build(&files_initial);
     let files_after = vec![file_b];
     let stale_has_oob = stale_index.points().any(|sp| {
@@ -496,12 +465,12 @@ fn hover_finds_the_nearest_fix_and_the_nearest_event_marker() {
             Longitude::new(lon),
         )
     };
-    let mut track = track_over(vec![
+    let mut track = gt_test_utils::loaded_track_with_points(vec![
         nav_at(start, 55.0, 12.0001),
         nav_at(start + chrono::Duration::seconds(1), 55.0, 12.001),
     ]);
     track.event_markers = vec![marker_at(0, 12.0), marker_at(1, 12.002)];
-    let files = vec![file_with_tracks(vec![track])];
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![track])];
     let mut map = NavMap::new(egui::Context::default(), TileAccess::Offline);
     map.rebuild_spatial_index(&files);
     let vis = vis_all_visible();
@@ -529,7 +498,7 @@ fn hover_finds_the_nearest_fix_and_the_nearest_event_marker() {
 
 fn hover_ref(category: DataCategory) -> DataPointRef {
     DataPointRef {
-        track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+        track: test_util::track0(),
         category,
         point_index: PointIdx::new(0),
     }
@@ -681,7 +650,7 @@ fn candidate_label_generated_marker_matches_header() {
     };
 
     let candidate = gt_ui_types::DataPointRef {
-        track: gt_types::TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+        track: test_util::track0(),
         category: DataCategory::GeneratedMarker,
         point_index: PointIdx::new(0),
     };
@@ -701,7 +670,7 @@ fn candidate_label_generated_marker_matches_header() {
 /// recording the query ran over.
 #[test]
 fn matched_bounding_box_covers_only_the_drawn_matches() {
-    let files = vec![file_with_tracks(vec![
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![
         track_at(55.0, 12.0),
         track_at(56.0, 13.0),
     ])];
@@ -724,7 +693,7 @@ fn matched_bounding_box_covers_only_the_drawn_matches() {
 /// first.
 #[test]
 fn matched_bounding_box_across_the_antimeridian_frames_the_arc_the_matches_cover() {
-    let files = vec![file_with_tracks(vec![
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![
         track_at(0.0, 175.0),
         track_at(0.0, 179.0),
         track_at(0.0, -179.5),
@@ -765,8 +734,10 @@ fn matched_bounding_box_across_the_antimeridian_frames_the_arc_the_matches_cover
 /// the run drew.
 #[test]
 fn match_bounding_box_covers_one_match() {
-    let files = vec![file_with_tracks(vec![track_at(55.0, 12.0)])];
-    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![track_at(
+        55.0, 12.0,
+    )])];
+    let track = test_util::track0();
     assert_eq!(
         match_bounding_box(&files, track, &(0..1), &GlobalFilter::default()),
         Some(GeoBounds::single_position(
@@ -808,8 +779,8 @@ fn map_framing_covers_where_the_points_are_drawn() {
         point_set_diameter_m: Length::new::<meter>(0.0),
         segment_length_range: None,
     });
-    let files = vec![file_with_tracks(vec![track])];
-    let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![track])];
+    let track_ref = test_util::track0();
     let expected = Some(GeoBounds::single_position(drawn.0, drawn.1));
 
     assert_eq!(
@@ -842,7 +813,7 @@ fn map_framing_covers_where_the_points_are_drawn() {
 /// fit has nothing to frame.
 #[test]
 fn a_file_whose_only_track_has_no_geometry_has_nothing_to_frame() {
-    let files = vec![file_with_tracks(vec![
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![
         gt_test_utils::loaded_track_with_points(
             gt_test_utils::fixtures::nav_points_without_a_valid_position(3),
         ),
@@ -864,7 +835,7 @@ fn a_file_whose_only_track_has_no_geometry_has_nothing_to_frame() {
 /// frames as usual.
 #[test]
 fn a_track_without_geometry_is_left_out_of_every_drawing_pass() {
-    let files = vec![file_with_tracks(vec![
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![
         track_at(55.0, 12.0),
         gt_test_utils::loaded_track_with_points(
             gt_test_utils::fixtures::nav_points_without_a_valid_position(3),
@@ -890,7 +861,7 @@ fn a_track_without_geometry_is_left_out_of_every_drawing_pass() {
 /// camera stood before.
 #[test]
 fn revealing_matches_frames_the_map_on_them() {
-    let files = vec![file_with_tracks(vec![
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![
         track_at(55.0, 12.0),
         track_at(56.0, 13.0),
     ])];

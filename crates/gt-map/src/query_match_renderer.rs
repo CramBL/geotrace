@@ -96,6 +96,7 @@ pub(crate) fn match_header_ui(
 #[cfg(test)]
 mod tests {
     use egui::pos2;
+    use rstest::rstest;
 
     use super::*;
 
@@ -111,24 +112,22 @@ mod tests {
         *key
     }
 
-    #[test]
-    fn matched_runs_split_on_unmatched_points() {
-        let s = span(&[false, true, true, false, true, false, true, true, true]);
-        let runs: Vec<usize> = matched_runs(&s, &is_matched).map(<[_]>::len).collect();
-        assert_eq!(runs, vec![2, 1, 3]);
-    }
-
-    #[test]
-    fn matched_runs_of_all_matched_is_one_run() {
-        let s = span(&[true, true, true]);
-        let runs: Vec<usize> = matched_runs(&s, &is_matched).map(<[_]>::len).collect();
-        assert_eq!(runs, vec![3]);
-    }
-
-    #[test]
-    fn matched_runs_of_none_matched_is_empty() {
-        let s = span(&[false, false]);
-        assert_eq!(matched_runs(&s, &is_matched).count(), 0);
+    /// A halo covers a maximal run of matched points, and breaks at every
+    /// point the run did not match.
+    #[rstest]
+    #[case::runs_split_at_the_unmatched_points(
+        &[false, true, true, false, true, false, true, true, true],
+        vec![2, 1, 3]
+    )]
+    #[case::everything_matched(&[true, true, true], vec![3])]
+    #[case::nothing_matched(&[false, false], vec![])]
+    fn matched_runs_break_at_the_unmatched_points(
+        #[case] matched: &[bool],
+        #[case] expected: Vec<usize>,
+    ) {
+        let span = span(matched);
+        let runs: Vec<usize> = matched_runs(&span, &is_matched).map(<[_]>::len).collect();
+        assert_eq!(runs, expected);
     }
 
     /// The header states how long the match ran, over the shared duration
