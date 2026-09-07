@@ -1,6 +1,7 @@
 use std::{fs::File, io, path::Path};
 
 use chrono::{DateTime, Utc};
+use geotrace_sdk_units::snr;
 use geotrace_sdk_units::{ChannelUnit, PhysicalQuantity};
 
 use crate::error::{ChannelError, Error, EventMarkerError, MARKER_LABEL_LOCATION};
@@ -157,23 +158,15 @@ pub struct Satellite {
     pub snr: Option<f32>,
 }
 
-/// The SNR some receiver firmware reports in place of a measurement, in dB-Hz.
-const SNR_NO_DATA_SENTINEL_DB_HZ: f32 = 99.0;
-
-/// How far from [`SNR_NO_DATA_SENTINEL_DB_HZ`] a reported SNR still counts as
-/// the sentinel value, in dB-Hz.
-const SNR_NO_DATA_SENTINEL_TOLERANCE_DB_HZ: f32 = 0.5;
-
 impl Satellite {
-    /// Whether `snr` holds ≈99 dB-Hz, the sentinel value firmware reports for "no data".
+    /// Whether `snr` holds ≈99 dB-Hz, the value firmware reports for "no data"
+    /// ([`snr::is_no_data_sentinel`]).
     ///
     /// The SDK reads and writes the value unchanged and only counts it among
     /// [`crate::NavFileBuilder`]'s satellite warnings: interpreting it is left
     /// to the caller.
     pub fn snr_is_no_data_sentinel(&self) -> bool {
-        self.snr.is_some_and(|snr| {
-            (snr - SNR_NO_DATA_SENTINEL_DB_HZ).abs() < SNR_NO_DATA_SENTINEL_TOLERANCE_DB_HZ
-        })
+        self.snr.is_some_and(snr::is_no_data_sentinel)
     }
 }
 

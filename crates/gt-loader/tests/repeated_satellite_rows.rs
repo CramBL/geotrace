@@ -1,7 +1,8 @@
 //! What the loader makes of a `.gtd` report's satellite rows, read back through
 //! the real file path: rows repeating a `(constellation, prn)` merge into the
 //! one satellite every count taken from a report measures, and an SNR of ≈99
-//! dB-Hz, the firmware's sentinel value for "no data", arrives as no SNR at all.
+//! dB-Hz, the value the firmware writes for "no data", arrives as the file
+//! holds it.
 
 #![expect(
     clippy::expect_used,
@@ -15,8 +16,7 @@ use geotrace_sdk::{
 use gt_analysis::{loss_of_lock, satellite_utilization};
 use gt_test_utils::GOLD_BYTES;
 use gt_types::LoadedTrack;
-use gt_types::satellites::{Constellation, SlipCause};
-use rstest::rstest;
+use gt_types::satellites::{Constellation, NO_DATA_SENTINEL_DB_HZ, SlipCause};
 
 /// Elevation mask, in degrees.
 const MASK_DEG: f32 = 15.0;
@@ -36,7 +36,8 @@ const REPEATED_PRN: u32 = 7;
 const REMAINING_PRN: u32 = 1;
 
 /// The GPS satellite the gold dataset's satellite-stress track reports on two
-/// rows: once with the ≈99 dB-Hz sentinel value, once with [`GOLD_MEASURED_SNR_DB`].
+/// rows: once with the ≈99 dB-Hz no-data value, once with
+/// [`GOLD_MEASURED_SNR_DB`].
 const GOLD_REPEATED_PRN: u32 = 1;
 
 /// The out-of-range PRN that identifies the gold dataset's satellite-stress track.
@@ -136,8 +137,10 @@ fn a_satellite_reported_on_two_rows_and_in_the_fix_on_one_is_fully_utilized() {
     assert_eq!(rates, vec![100.0; 3]);
 }
 
+/// A satellite reported on one row with the no-data value and on another with
+/// a measurement merges to the measurement, whichever row comes first.
 #[test]
-fn the_gold_dataset_keeps_the_measured_snr_of_the_satellite_it_also_reports_as_a_sentinel() {
+fn the_gold_dataset_keeps_the_measured_snr_of_the_satellite_it_also_reports_as_no_data() {
     let file =
         gt_loader::load_bytes(GOLD_BYTES, "gold.gtd".to_owned()).expect("the gold file loads");
 
@@ -170,17 +173,17 @@ fn the_gold_dataset_keeps_the_measured_snr_of_the_satellite_it_also_reports_as_a
     );
 }
 
-#[rstest]
-#[case::inside_the_sentinel_band(99.4, None)]
-#[case::just_outside_the_sentinel_band(98.5, Some(98.5))]
-#[case::high_but_measured(60.0, Some(60.0))]
-#[case::zero_is_a_measurement(0.0, Some(0.0))]
-fn an_snr_within_half_a_db_of_the_sentinel_arrives_as_no_snr(
-    #[case] reported_snr_db: f32,
-    #[case] expected_snr_db: Option<f32>,
-) {
-    let epoch = || vec![satellite_row(REMAINING_PRN, reported_snr_db, true)];
-    let track = load_track_reporting(vec![epoch(), epoch(), epoch()]);
+/// An SNR the receiver measured, for the epoch after the no-data value.
+const MEASURED_SNR_DB: f32 = 40.0;
+
+/// The no-data value reaches the app as the file holds it, and the fall from
+/// it to a measured reading at the next epoch is no signal loss.
+#[test]
+fn a_no_data_snr_arrives_unchanged_and_is_no_slip() {
+    let track = load_track_reporting(vec![
+        vec![satellite_row(REMAINING_PRN, NO_DATA_SENTINEL_DB_HZ, true)],
+        vec![satellite_row(REMAINING_PRN, MEASURED_SNR_DB, true)],
+    ]);
 
     let snrs: Vec<Option<f32>> = track
         .points
@@ -189,5 +192,9 @@ fn an_snr_within_half_a_db_of_the_sentinel_arrives_as_no_snr(
         .flat_map(|satellites| satellites.satellites())
         .map(|satellite| satellite.snr().map(|snr| snr.value()))
         .collect();
-    assert_eq!(snrs, vec![expected_snr_db; 3]);
+    assert_eq!(
+        snrs,
+        vec![Some(NO_DATA_SENTINEL_DB_HZ), Some(MEASURED_SNR_DB)]
+    );
+    assert!(loss_of_lock::detect_slip_events(&track.points, MASK_DEG, SNR_DROP_DB).is_empty());
 }

@@ -2266,6 +2266,7 @@ version = "0.6.0"
 dependencies = [
  "insta",
  "proptest",
+ "rstest",
  "strum",
  "thiserror 2.0.20",
  "uom",
@@ -2473,6 +2474,7 @@ dependencies = [
  "chrono",
  "gt-types",
  "proptest",
+ "rstest",
  "vec1",
 ]
 

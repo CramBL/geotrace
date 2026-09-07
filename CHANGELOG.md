@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **Map & Tracks:** The satellite tables and the sky plot now show a satellite's SNR of ≈99 dB-Hz, the value some receivers send when they have no measurement, in its own violet colour.
+
 ## 0.16.0 - 2026-09-07
 
 ### Added

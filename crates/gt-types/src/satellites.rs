@@ -1,5 +1,6 @@
 use crate::time_types::{GpsTime, SysTime};
 use chrono::{DateTime, Utc};
+use geotrace_sdk_units::snr;
 use std::cmp::Ordering;
 use std::fmt;
 
@@ -29,7 +30,9 @@ impl PartialEq<u32> for Prn {
     }
 }
 
-/// Signal quality tier derived from an [`Snr`] value.
+/// Signal quality tier derived from an [`Snr`] value. The measured tiers are
+/// declared strongest first, and [`SignalQuality::NoDataSentinel`] last: it
+/// classifies a reading the receiver made no measurement for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumIter)]
 pub enum SignalQuality {
     /// ≥ 40 dB-Hz - excellent lock.
@@ -42,7 +45,20 @@ pub enum SignalQuality {
     Weak,
     /// < 25 dB-Hz - very weak / marginal.
     VeryWeak,
+    /// [`NO_DATA_SENTINEL_DB_HZ`] - some receiver firmware sends this value
+    /// when it has no measurement.
+    NoDataSentinel,
 }
+
+/// The hover text beside a reading of [`SignalQuality::NoDataSentinel`], for
+/// every surface that shows one.
+pub const NO_DATA_SNR_EXPLANATION: &str =
+    "Some receivers send this value when they have no measurement";
+
+/// The SNR in dB-Hz some receiver firmware sends when it has no measurement. The
+/// `.gtd` format defines it, and the SDKs and the application classify a
+/// reading with the one definition.
+pub use geotrace_sdk_units::snr::NO_DATA_SENTINEL_DB_HZ;
 
 /// Signal-to-Noise Ratio for a satellite signal, in dB-Hz.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
@@ -57,8 +73,16 @@ impl Snr {
         self.0
     }
 
+    /// Whether the receiver sent [`NO_DATA_SENTINEL_DB_HZ`], which it sends
+    /// when it has no measurement.
+    pub fn is_no_data_sentinel(self) -> bool {
+        snr::is_no_data_sentinel(self.0)
+    }
+
     pub fn quality(self) -> SignalQuality {
-        if self.0 >= 40.0 {
+        if self.is_no_data_sentinel() {
+            SignalQuality::NoDataSentinel
+        } else if self.0 >= 40.0 {
             SignalQuality::Excellent
         } else if self.0 >= 35.0 {
             SignalQuality::Good
@@ -192,10 +216,17 @@ impl Satellite {
         self.snr
     }
 
+    /// The SNR the receiver measured for this satellite. `None` for a
+    /// satellite with a missing SNR, and for one with the no-data value.
+    pub fn measured_snr(&self) -> Option<Snr> {
+        self.snr.filter(|snr| !snr.is_no_data_sentinel())
+    }
+
     /// Merges another row of the same report for this satellite into this one.
     ///
     /// This satellite is in the fix when any of its rows was, and takes the
-    /// highest SNR reported: the strongest signal measured for the satellite.
+    /// highest SNR measured on its rows: the strongest signal measured for the
+    /// satellite. It takes the no-data value only where no row measured an SNR.
     /// Taking the highest keeps the result independent of row order, which
     /// `gt_analysis::loss_of_lock` reads when it compares a satellite's SNR
     /// between epochs. Elevation and azimuth are properties of the satellite's
@@ -205,11 +236,12 @@ impl Satellite {
         self.in_fix |= row.in_fix;
         self.elevation = self.elevation.or(row.elevation);
         self.azimuth = self.azimuth.or(row.azimuth);
-        self.snr = match (self.snr, row.snr) {
+        self.snr = match (self.measured_snr(), row.measured_snr()) {
             (Some(highest_so_far), Some(row_snr)) => {
                 Some(Snr::new(highest_so_far.value().max(row_snr.value())))
             }
-            (reported, None) | (None, reported) => reported,
+            (Some(measured), None) | (None, Some(measured)) => Some(measured),
+            (None, None) => self.snr.or(row.snr),
         };
     }
 }
@@ -527,10 +559,43 @@ mod constellation_tests {
 }
 
 #[cfg(test)]
+mod snr_tests {
+    use rstest::rstest;
+
+    use super::{Constellation, NO_DATA_SENTINEL_DB_HZ, Satellite, SignalQuality, Snr};
+
+    #[rstest]
+    #[case::excellent(44.0, SignalQuality::Excellent)]
+    #[case::at_the_excellent_threshold(40.0, SignalQuality::Excellent)]
+    #[case::good(37.0, SignalQuality::Good)]
+    #[case::moderate(32.0, SignalQuality::Moderate)]
+    #[case::weak(27.0, SignalQuality::Weak)]
+    #[case::very_weak(10.0, SignalQuality::VeryWeak)]
+    #[case::zero_is_a_measurement(0.0, SignalQuality::VeryWeak)]
+    #[case::the_no_data_value(99.0, SignalQuality::NoDataSentinel)]
+    #[case::inside_the_no_data_band(99.4, SignalQuality::NoDataSentinel)]
+    #[case::just_below_the_no_data_band(98.5, SignalQuality::Excellent)]
+    #[case::just_above_the_no_data_band(99.5, SignalQuality::Excellent)]
+    fn quality_classifies_a_reading(#[case] snr_db: f32, #[case] expected: SignalQuality) {
+        assert_eq!(Snr::new(snr_db).quality(), expected);
+    }
+
+    #[rstest]
+    #[case::the_no_data_value(NO_DATA_SENTINEL_DB_HZ, None)]
+    #[case::a_measurement(40.0, Some(40.0))]
+    fn measured_snr_drops_the_no_data_value(#[case] snr_db: f32, #[case] expected_db: Option<f32>) {
+        let satellite = Satellite::new(Constellation::Gps, 7, None, None, Some(snr_db), false);
+
+        assert_eq!(satellite.measured_snr().map(Snr::value), expected_db);
+        assert_eq!(satellite.snr().map(Snr::value), Some(snr_db));
+    }
+}
+
+#[cfg(test)]
 mod satellite_tests {
     use rstest::rstest;
 
-    use super::{Constellation, Satellite};
+    use super::{Constellation, NO_DATA_SENTINEL_DB_HZ, Satellite};
 
     const PRN: u32 = 7;
 
@@ -563,7 +628,32 @@ mod satellite_tests {
     #[case::only_the_first_row_reports_an_snr(Some(45.0), None, Some(45.0))]
     #[case::only_the_second_row_reports_an_snr(None, Some(45.0), Some(45.0))]
     #[case::neither_row_reports_an_snr(None, None, None)]
-    fn absorb_repeated_row_keeps_the_highest_snr_of_the_two_rows(
+    #[case::the_first_row_holds_the_no_data_value(
+        Some(NO_DATA_SENTINEL_DB_HZ),
+        Some(30.0),
+        Some(30.0)
+    )]
+    #[case::the_second_row_holds_the_no_data_value(
+        Some(30.0),
+        Some(NO_DATA_SENTINEL_DB_HZ),
+        Some(30.0)
+    )]
+    #[case::both_rows_hold_the_no_data_value(
+        Some(NO_DATA_SENTINEL_DB_HZ),
+        Some(NO_DATA_SENTINEL_DB_HZ),
+        Some(NO_DATA_SENTINEL_DB_HZ)
+    )]
+    #[case::the_no_data_value_and_no_snr(
+        Some(NO_DATA_SENTINEL_DB_HZ),
+        None,
+        Some(NO_DATA_SENTINEL_DB_HZ)
+    )]
+    #[case::no_snr_and_the_no_data_value(
+        None,
+        Some(NO_DATA_SENTINEL_DB_HZ),
+        Some(NO_DATA_SENTINEL_DB_HZ)
+    )]
+    fn absorb_repeated_row_keeps_the_highest_snr_measured_on_the_two_rows(
         #[case] snr_db: Option<f32>,
         #[case] absorbed_snr_db: Option<f32>,
         #[case] expected_snr_db: Option<f32>,

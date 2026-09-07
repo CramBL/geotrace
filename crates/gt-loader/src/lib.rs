@@ -439,7 +439,6 @@ struct EventMarkerStyleAlterations {
 #[derive(Default)]
 struct SatelliteAlterations {
     satellites_merged_from_several_rows: Vec<MergedSatelliteRows>,
-    discarded_snr_sentinels: Vec<SatelliteInRecord>,
 }
 
 fn coordinates_out_of_range_warning(
@@ -521,15 +520,8 @@ fn dropped_markers_warning(issue: &str, dropped: &[DroppedMarker]) -> Option<Loa
 const MERGED_SATELLITE_ROWS: AlterationWording = AlterationWording {
     issue: "satellite(s) merged from several rows of one report",
     consequence: "Every satellite count shown is one per satellite, not one per row: \
-        the merged satellite takes the highest SNR of its rows, the first elevation \
-        and azimuth reported, and is in the fix when any row was.",
-};
-
-const DISCARDED_SNR_SENTINELS: AlterationWording = AlterationWording {
-    issue: "satellite SNR reading(s) discarded as the no-data sentinel",
-    consequence: "Those satellites are drawn and listed with no signal strength: an SNR \
-        of ≈ 99 dB-Hz is the firmware sentinel for an unavailable measurement, not a \
-        reading.",
+        the merged satellite takes the highest SNR measured on its rows, the first \
+        elevation and azimuth reported, and is in the fix when any row was.",
 };
 
 const REPLACED_EVENT_MARKER_ICONS: AlterationWording = AlterationWording {
@@ -644,7 +636,6 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
         ),
         MERGED_SATELLITE_ROWS
             .load_warning(&satellite_alterations.satellites_merged_from_several_rows),
-        DISCARDED_SNR_SENTINELS.load_warning(&satellite_alterations.discarded_snr_sentinels),
         REPLACED_CUSTOM_MARKER_ICONS.load_warning(&unrecognized_marker_icons),
         REPLACED_EVENT_MARKER_ICONS.load_warning(&style_alterations.unrecognized_icons),
         REPLACED_EVENT_MARKER_COLORS.load_warning(&style_alterations.unrecognized_colors),
@@ -770,23 +761,13 @@ fn convert_satellite_report(
     let mut satellites: Vec<Satellite> = Vec::with_capacity(report.tracked.len());
     let mut repeated: Vec<IndexedMergedSatelliteRows> = Vec::new();
     for row in &report.tracked {
-        // The SNR sentinel value is cleared to `None` before the merge, which
-        // takes the highest SNR of the rows for one satellite.
-        let snr = if row.snr_is_no_data_sentinel() {
-            alterations
-                .discarded_snr_sentinels
-                .push(SatelliteInRecord::from_row(row, record));
-            None
-        } else {
-            row.snr
-        };
         let constellation = convert_constellation(row.constellation);
         let converted = Satellite::new(
             constellation,
             row.prn,
             row.elevation,
             row.azimuth,
-            snr,
+            row.snr,
             row.in_fix,
         );
 
@@ -1714,7 +1695,7 @@ mod tests {
 
     /// An SNR inside the ≈ 99 dB-Hz band the firmware writes for "no
     /// measurement".
-    const SENTINEL_SNR_DB: f32 = 99.0;
+    const NO_DATA_SNR_DB: f32 = gt_types::satellites::NO_DATA_SENTINEL_DB_HZ;
 
     /// A color field a file can hold that is not a `#RRGGBB` hex value.
     const COLOR_THAT_IS_NOT_HEX: &str = "#ZZZZZZ";
@@ -1778,8 +1759,8 @@ mod tests {
                     "satellite(s) merged from several rows of one report",
                     "record 0: G07 on 2 rows, record 2: G07 on 3 rows. Every satellite \
                      count shown is one per satellite, not one per row: the merged \
-                     satellite takes the highest SNR of its rows, the first elevation and \
-                     azimuth reported, and is in the fix when any row was."
+                     satellite takes the highest SNR measured on its rows, the first \
+                     elevation and azimuth reported, and is in the fix when any row was."
                 ),
                 (
                     2,
@@ -1817,33 +1798,34 @@ mod tests {
     }
 
     #[test]
-    fn sentinel_snrs_load_with_a_warning_naming_the_satellites_read_as_measureless() {
+    fn a_no_data_snr_loads_unchanged() {
         let bytes = recording_with_satellite_reports(vec![
-            vec![gps_row(1, SENTINEL_SNR_DB, true), gps_row(7, 40.0, true)],
-            vec![gps_row(1, SENTINEL_SNR_DB, true)],
+            vec![gps_row(1, NO_DATA_SNR_DB, true), gps_row(7, 40.0, true)],
+            vec![gps_row(1, NO_DATA_SNR_DB, true)],
             vec![gps_row(7, 40.0, true)],
         ]);
 
-        let file = load_bytes(&bytes, "sentinel_snr.gtd".to_owned()).unwrap();
+        let file = load_bytes(&bytes, "no_data_snr.gtd".to_owned()).unwrap();
 
         assert_eq!(
             listed_warnings(&file),
-            vec![
-                (
-                    2,
-                    "satellite SNR reading(s) discarded as the no-data sentinel",
-                    "record 0: G01, record 1: G01. Those satellites are drawn and listed \
-                     with no signal strength: an SNR of ≈ 99 dB-Hz is the firmware sentinel \
-                     for an unavailable measurement, not a reading."
-                ),
-                (
-                    2,
-                    "satellite(s) with SNR ≈ 99 dB-Hz",
-                    "common firmware sentinel for unavailable signal strength; omit \
+            vec![(
+                2,
+                "satellite(s) with SNR ≈ 99 dB-Hz",
+                "common firmware sentinel for unavailable signal strength; omit \
                     the SNR field when no measurement is available"
-                ),
-            ]
+            )]
         );
+        let readings: Vec<f32> = file
+            .tracks
+            .iter()
+            .flat_map(|track| &track.points)
+            .filter_map(|point| point.satellites.as_ref())
+            .flat_map(Satellites::satellites)
+            .filter(|satellite| satellite.prn() == 1)
+            .filter_map(|satellite| satellite.snr().map(|snr| snr.value()))
+            .collect();
+        assert_eq!(readings, vec![NO_DATA_SNR_DB; 2]);
     }
 
     /// Three fixes a second apart, and the event marker styles in `styles`, in

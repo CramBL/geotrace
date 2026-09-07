@@ -135,33 +135,38 @@ pub const COMPACT_CARDINAL_LABEL_OFFSET_PX: f32 = 6.0;
 pub const COMPACT_CARDINAL_TICK_PX: f32 = 3.5;
 
 /// Mark radius at full size for a satellite's signal quality, so weak
-/// satellites read as small at a glance. `None` (no reported SNR) gets the
-/// smallest radius.
+/// satellites read as small at a glance. `None` (no reported SNR) and
+/// [`SignalQuality::NoDataSentinel`] get the smallest radius: neither states a
+/// signal strength. The no-data mark is told apart by its colour.
 pub const fn mark_radius(quality: Option<SignalQuality>) -> f32 {
     match quality {
         Some(SignalQuality::Excellent) => 4.5,
         Some(SignalQuality::Good) => 4.0,
         Some(SignalQuality::Moderate) => 3.5,
         Some(SignalQuality::Weak) => 3.0,
-        Some(SignalQuality::VeryWeak) | None => 2.5,
+        Some(SignalQuality::VeryWeak | SignalQuality::NoDataSentinel) | None => 2.5,
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
     use strum::IntoEnumIterator as _;
 
     use gt_types::SignalQuality;
 
     use super::mark_radius;
 
+    /// The tiers measured from a reading, strongest first.
+    fn measured_tiers() -> impl Iterator<Item = SignalQuality> {
+        SignalQuality::iter().filter(|quality| *quality != SignalQuality::NoDataSentinel)
+    }
+
     /// Better quality never renders smaller - the size encoding stays
     /// monotonic even if the radii are retuned.
     #[test]
     fn mark_radius_is_monotonic_in_quality() {
-        let radii: Vec<f32> = SignalQuality::iter()
-            .map(|quality| mark_radius(Some(quality)))
-            .collect();
+        let radii: Vec<f32> = measured_tiers().map(|q| mark_radius(Some(q))).collect();
         for pair in radii.windows(2) {
             let [better, worse] = pair else {
                 continue;
@@ -170,12 +175,16 @@ mod tests {
         }
     }
 
-    #[test]
-    fn missing_snr_gets_the_smallest_radius() {
-        let smallest = SignalQuality::iter()
-            .map(|quality| mark_radius(Some(quality)))
+    #[rstest]
+    #[case::no_reported_snr(None)]
+    #[case::the_no_data_value(Some(SignalQuality::NoDataSentinel))]
+    fn a_satellite_without_a_measurement_gets_the_smallest_radius(
+        #[case] quality: Option<SignalQuality>,
+    ) {
+        let smallest = measured_tiers()
+            .map(|q| mark_radius(Some(q)))
             .fold(f32::INFINITY, f32::min);
-        assert!(mark_radius(None) <= smallest);
+        assert!(mark_radius(quality) <= smallest);
     }
 
     /// The opacity percentage maps to an alpha scale of `1.0` at the calibrated

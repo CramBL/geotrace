@@ -9,6 +9,7 @@ the app).
 
 ### Added
 
+- Rust `geotrace_sdk_units::snr`, holding `NO_DATA_SENTINEL_DB_HZ` (99 dB-Hz), `NO_DATA_SENTINEL_TOLERANCE_DB_HZ` (0.5 dB-Hz) and `is_no_data_sentinel`, the value some receiver firmware sends when it has no measurement, and the band around it. `geotrace_sdk::Satellite::snr_is_no_data_sentinel` reads that band.
 - Rust `NavFileBuilder::with_scrubbed_provenance()`. A file written through it holds the new `geotrace_sdk::SCRUBBED_SDK_VERSION` (`<scrubbed>`) as its `sdk_version`, no `sdk_git_commit` and no `sdk_commit_time`, whatever the build that wrote it.
 - Rust `NavFile::equals_ignoring_build_provenance()`, which compares two files over everything but their `sdk_version`, `sdk_git_commit` and `sdk_commit_time`.
 - C++ `FixTime::from_recorded()`, which takes a `RecordedFixTimestamps` and returns `std::nullopt` when the recorder holds neither timestamp.

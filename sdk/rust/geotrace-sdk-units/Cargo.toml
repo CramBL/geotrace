@@ -1,6 +1,6 @@
 [package]
 name = "geotrace-sdk-units"
-description = "Canonical channel units for the GeoTrace file format and SDKs"
+description = "Canonical channel units and SNR conventions for the GeoTrace file format and SDKs"
 # Kept in lockstep with the other SDK crates (see scripts/qa versions.py).
 version = "0.6.0"
 edition.workspace = true
@@ -22,6 +22,7 @@ uom.workspace = true
 [dev-dependencies]
 insta.workspace = true
 proptest.workspace = true
+rstest.workspace = true
 
 [lints]
 workspace = true

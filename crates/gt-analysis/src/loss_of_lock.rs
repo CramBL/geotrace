@@ -7,6 +7,9 @@
 //! - it stays in view above the mask but its SNR fell by more than the
 //!   configured threshold between the two ([`SlipCause::SnrDrop`]).
 //!
+//! An SNR drop is measured between two measured readings. A satellite whose
+//! receiver reported the no-data SNR value at either epoch has no SNR drop.
+//!
 //! Satellites below the mask, or with unknown elevation, are not considered:
 //! horizon satellites set and re-acquire routinely and would otherwise swamp
 //! the rate with false slips.  A satellite can yield at most one slip per
@@ -43,7 +46,7 @@ pub fn slips_between(
             Some(c) => {
                 let snr_dropped = c.elevation().is_some_and(|e| e >= mask_deg)
                     && matches!(
-                        (p.snr(), c.snr()),
+                        (p.measured_snr(), c.measured_snr()),
                         (Some(ps), Some(cs)) if ps.value() - cs.value() > snr_drop_db
                     );
                 (
@@ -295,8 +298,10 @@ pub fn slip_rate_per_point(
 
 #[cfg(test)]
 mod detection_tests {
+    use rstest::rstest;
+
     use super::*;
-    use gt_types::satellites::Satellite;
+    use gt_types::satellites::{NO_DATA_SENTINEL_DB_HZ, Satellite};
 
     /// `(constellation, prn, elevation, snr)` -> tracked `Satellite`.
     fn sat(c: Constellation, prn: u32, elevation: Option<f32>, snr: Option<f32>) -> Satellite {
@@ -357,6 +362,25 @@ mod detection_tests {
     fn snr_drop_ignored_when_satellite_falls_below_mask() {
         let prev = report(vec![sat(Constellation::Gps, 1, Some(20.0), Some(45.0))]);
         let curr = report(vec![sat(Constellation::Gps, 1, Some(5.0), Some(20.0))]);
+        assert!(slips_between(&prev, &curr, 15.0, 10.0).is_empty());
+    }
+
+    /// The fall from the no-data value to a measured reading is no signal
+    /// loss: firmware reports about 99 dB-Hz for "no measurement".
+    #[rstest]
+    #[case::the_previous_epoch_holds_the_no_data_value(Some(NO_DATA_SENTINEL_DB_HZ), Some(30.0))]
+    #[case::the_current_epoch_holds_the_no_data_value(Some(45.0), Some(NO_DATA_SENTINEL_DB_HZ))]
+    fn the_no_data_snr_value_is_no_snr_drop(
+        #[case] previous_snr_db: Option<f32>,
+        #[case] current_snr_db: Option<f32>,
+    ) {
+        let prev = report(vec![sat(
+            Constellation::Gps,
+            1,
+            Some(30.0),
+            previous_snr_db,
+        )]);
+        let curr = report(vec![sat(Constellation::Gps, 1, Some(30.0), current_snr_db)]);
         assert!(slips_between(&prev, &curr, 15.0, 10.0).is_empty());
     }
 

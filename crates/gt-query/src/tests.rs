@@ -205,7 +205,7 @@ fn summary_counts_tracks_without_a_referenced_metric() {
         BTreeMap::from([(QueryMetric::SnapError, 4)])
     );
 
-    // A run that produced values for no point (every point unsnapped)
+    // A run where no point produced a value (every point unsnapped)
     // counts too: the summary reports missing values, and its wording
     // deliberately does not claim the track was never snapped.
     let all_unsnapped = TestProvider::new(3).with(QueryMetric::SnapError, vec![None, None, None]);

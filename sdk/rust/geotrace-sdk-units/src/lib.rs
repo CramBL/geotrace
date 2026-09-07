@@ -1,4 +1,5 @@
-//! Canonical units used by GeoTrace channels and queries.
+//! Canonical units used by GeoTrace channels and queries, and the SNR
+//! conventions of the `.gtd` format in [`snr`].
 //!
 //! A channel declares an optional [`ChannelUnit`], which is one of three kinds
 //! ([`ChannelUnitKind`]):
@@ -60,6 +61,8 @@
 //! declared scale with [`Unit::from_base`]. Custom and legacy values are read
 //! as plain numbers, so a unit literal cannot be compared against them. Stored
 //! and plotted values always stay in the scale the recorder declared.
+
+pub mod snr;
 
 use std::{fmt, str::FromStr};
 

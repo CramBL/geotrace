@@ -10,11 +10,12 @@ use gt_filter::{self as filter, GlobalFilter};
 use gt_fmt::UTC_SECOND_FORMAT;
 use gt_sky::{SkyHighlight, SkyPlot, SkyPlotSize};
 use gt_types::coordinates::{Coordinate, RecordedCoordinate};
-use gt_types::satellites::{Constellation, Satellite};
+use gt_types::satellites::{Constellation, NO_DATA_SNR_EXPLANATION, Satellite};
 use gt_types::{
     DataCategory, FileIdx, LoadedFile, LoadedTrack, NavPoint, NearestSatelliteReport, PlacedPoint,
     PlacedPoints, PointIdx, ResolvedPosition, SKY_REPORT_MAX_AGE_SECS, TrackIdx, TrackRef,
 };
+use gt_ui_theme::labels::LabelWithHover;
 use gt_ui_theme::{DEGREE_SIGN, DELTA, EM_DASH};
 use gt_ui_types::{
     DRAWN_AT_CAPTION, DataPointRef, HighlightScope, INTERPOLATED_POSITION_NOTE, MapHighlight,
@@ -1114,10 +1115,16 @@ fn constellation_panel(
                         RichText::new(format!("{}{:02}", prn_prefix, sat.prn())).color(prn_color),
                     );
                     let snr_resp = match sat.snr() {
-                        Some(snr) => ui.label(
-                            RichText::new(format!("{:.1}", snr.value()))
-                                .color(gt_ui_theme::snr_color(snr.quality(), dark_mode)),
-                        ),
+                        Some(snr) => {
+                            let reading = RichText::new(format!("{:.1}", snr.value()))
+                                .color(gt_ui_theme::snr_color(snr.quality(), dark_mode));
+                            if snr.is_no_data_sentinel() {
+                                LabelWithHover::plain(reading)
+                                    .explanation_ui(ui, NO_DATA_SNR_EXPLANATION)
+                            } else {
+                                ui.label(reading)
+                            }
+                        }
                         None => ui.label(RichText::new(EM_DASH).color(muted_color)),
                     };
                     let fix_resp = if in_fix {
