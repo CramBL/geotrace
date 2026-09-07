@@ -515,27 +515,20 @@ pub(crate) fn candidate_label(candidate: DataPointRef, files: &[LoadedFile]) -> 
 
 #[cfg(test)]
 mod tests {
-    use gt_types::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
+    use gt_types::DataCategory;
     use gt_ui_types::{DataPointRef, HoverCandidates, MapHighlight};
     use rstest::rstest;
 
     use super::{OpenPopups, RecordedElementLabel, recorded_element_label};
+    use crate::test_util;
 
     const FIX: DataCategory = DataCategory::Tpv;
     const EVENT_MARKER: DataCategory = DataCategory::EventMarker;
 
-    fn candidate(category: DataCategory) -> DataPointRef {
-        DataPointRef {
-            track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-            category,
-            point_index: PointIdx::new(0),
-        }
-    }
-
     fn candidates(categories: &[DataCategory]) -> HoverCandidates {
         let mut candidates = HoverCandidates::default();
         for &category in categories {
-            candidates.keep_nearest(candidate(category));
+            candidates.keep_nearest(test_util::point_ref(category, 0));
         }
         candidates
     }
@@ -556,19 +549,19 @@ mod tests {
         &[FIX],
         &[FIX],
         FrameInputs::default(),
-        Some(RecordedElementLabel::One(candidate(FIX)))
+        Some(RecordedElementLabel::One(test_util::point_ref(FIX, 0)))
     )]
     #[case::the_element_under_the_pointer_is_pinned(
         &[FIX],
         &[FIX],
-        FrameInputs { pinned: Some(candidate(FIX)), ..FrameInputs::default() },
+        FrameInputs { pinned: Some(test_util::point_ref(FIX, 0)), ..FrameInputs::default() },
         None
     )]
     #[case::another_element_is_pinned(
         &[FIX],
         &[FIX],
-        FrameInputs { pinned: Some(candidate(EVENT_MARKER)), ..FrameInputs::default() },
-        Some(RecordedElementLabel::One(candidate(FIX)))
+        FrameInputs { pinned: Some(test_util::point_ref(EVENT_MARKER, 0)), ..FrameInputs::default() },
+        Some(RecordedElementLabel::One(test_util::point_ref(FIX, 0)))
     )]
     #[case::the_context_menu_is_open(
         &[FIX],

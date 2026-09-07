@@ -570,92 +570,85 @@ mod tests {
         stats
     }
 
-    #[rstest]
-    #[case::check("check")]
-    #[case::circle_marker("circle_marker")]
-    #[case::connection_lost("connection_lost")]
-    #[case::cross("cross")]
-    #[case::download("download")]
-    #[case::error("error")]
-    #[case::gear("gear")]
-    #[case::ghost_fix("ghost_fix")]
-    #[case::hexagon("hexagon")]
-    #[case::lightning("lightning")]
-    #[case::nav_arrow("nav_arrow")]
-    #[case::pin("pin")]
-    #[case::refresh("refresh")]
-    #[case::satellite("satellite")]
-    #[case::satellite_lost("satellite_lost")]
-    #[case::upload("upload")]
-    #[case::warning("warning")]
-    #[case::wrench("wrench")]
-    fn tessellation_stats_are_stable(#[case] name: &str) {
-        let tess = tessellate_icon(&icon_svg(name)).unwrap();
-        insta::assert_snapshot!(format!("stats_{name}"), mesh_stats(&tess));
+    /// One row per icon of [`ICON_NAMES`], so a failing case identifies the
+    /// icon it tessellated.
+    macro_rules! a_case_per_icon {
+        ($test:item) => {
+            #[rstest]
+            #[case::check("check")]
+            #[case::circle_marker("circle_marker")]
+            #[case::connection_lost("connection_lost")]
+            #[case::cross("cross")]
+            #[case::download("download")]
+            #[case::error("error")]
+            #[case::gear("gear")]
+            #[case::ghost_fix("ghost_fix")]
+            #[case::hexagon("hexagon")]
+            #[case::lightning("lightning")]
+            #[case::nav_arrow("nav_arrow")]
+            #[case::pin("pin")]
+            #[case::refresh("refresh")]
+            #[case::satellite("satellite")]
+            #[case::satellite_lost("satellite_lost")]
+            #[case::upload("upload")]
+            #[case::warning("warning")]
+            #[case::wrench("wrench")]
+            $test
+        };
     }
 
-    #[rstest]
-    #[case::check("check")]
-    #[case::circle_marker("circle_marker")]
-    #[case::connection_lost("connection_lost")]
-    #[case::cross("cross")]
-    #[case::download("download")]
-    #[case::error("error")]
-    #[case::gear("gear")]
-    #[case::ghost_fix("ghost_fix")]
-    #[case::hexagon("hexagon")]
-    #[case::lightning("lightning")]
-    #[case::nav_arrow("nav_arrow")]
-    #[case::pin("pin")]
-    #[case::refresh("refresh")]
-    #[case::satellite("satellite")]
-    #[case::satellite_lost("satellite_lost")]
-    #[case::upload("upload")]
-    #[case::warning("warning")]
-    #[case::wrench("wrench")]
-    fn mesh_invariants_hold(#[case] name: &str) {
-        let tess = tessellate_icon(&icon_svg(name)).unwrap();
-        for bucket in tess.buckets() {
-            let mesh = &bucket.mesh;
-            let label = format!("{name} at bucket {}", bucket.bucket_px);
+    a_case_per_icon! {
+        fn tessellation_stats_are_stable(#[case] name: &str) {
+            let tess = tessellate_icon(&icon_svg(name)).unwrap();
+            insta::assert_snapshot!(format!("stats_{name}"), mesh_stats(&tess));
+        }
+    }
 
-            assert!(!mesh.indices.is_empty(), "{label}: empty mesh");
-            assert_eq!(mesh.indices.len() % 3, 0, "{label}: dangling indices");
-            let vertex_count = mesh.vertices.len() as u32;
-            assert!(
-                mesh.indices.iter().all(|&index| index < vertex_count),
-                "{label}: index out of range"
-            );
-            assert!(
-                mesh.vertices
-                    .iter()
-                    .all(|vertex| vertex.pos.iter().all(|coord| coord.is_finite())),
-                "{label}: non-finite vertex position"
-            );
+    a_case_per_icon! {
+        fn mesh_invariants_hold(#[case] name: &str) {
+            let tess = tessellate_icon(&icon_svg(name)).unwrap();
+            for bucket in tess.buckets() {
+                let mesh = &bucket.mesh;
+                let label = format!("{name} at bucket {}", bucket.bucket_px);
 
-            // Both solid geometry and a fringe must be present. Solid alpha
-            // can sit below 255 at small buckets, where sub-feather strokes
-            // are dimmed.
-            assert!(
-                mesh.vertices.iter().any(|vertex| vertex.color[3] == 0),
-                "{label}: no fringe vertices"
-            );
-            assert!(
-                mesh.vertices.iter().any(|vertex| vertex.color[3] > 0),
-                "{label}: no solid vertices"
-            );
+                assert!(!mesh.indices.is_empty(), "{label}: empty mesh");
+                assert_eq!(mesh.indices.len() % 3, 0, "{label}: dangling indices");
+                let vertex_count = mesh.vertices.len() as u32;
+                assert!(
+                    mesh.indices.iter().all(|&index| index < vertex_count),
+                    "{label}: index out of range"
+                );
+                assert!(
+                    mesh.vertices
+                        .iter()
+                        .all(|vertex| vertex.pos.iter().all(|coord| coord.is_finite())),
+                    "{label}: non-finite vertex position"
+                );
 
-            // Loose sanity bound: the viewbox is [-1, 1], icons may overhang
-            // it by design (edge strokes, round caps: wrench reaches ~1.13),
-            // and the mitered fringe adds up to ~6 feather widths after the
-            // smaller-axis stretch. Catches runaway transforms, not pixels.
-            let allowance = 1.25 + 6.0 * FEATHER_PX / bucket.bucket_px;
-            assert!(
-                mesh.vertices
-                    .iter()
-                    .all(|vertex| vertex.pos.iter().all(|coord| coord.abs() <= allowance)),
-                "{label}: vertex outside the expected bounds"
-            );
+                // Both solid geometry and a fringe must be present. Solid alpha
+                // can sit below 255 at small buckets, where sub-feather strokes
+                // are dimmed.
+                assert!(
+                    mesh.vertices.iter().any(|vertex| vertex.color[3] == 0),
+                    "{label}: no fringe vertices"
+                );
+                assert!(
+                    mesh.vertices.iter().any(|vertex| vertex.color[3] > 0),
+                    "{label}: no solid vertices"
+                );
+
+                // Loose sanity bound: the viewbox is [-1, 1], icons may overhang
+                // it by design (edge strokes, round caps: wrench reaches ~1.13),
+                // and the mitered fringe adds up to ~6 feather widths after the
+                // smaller-axis stretch. Catches runaway transforms, not pixels.
+                let allowance = 1.25 + 6.0 * FEATHER_PX / bucket.bucket_px;
+                assert!(
+                    mesh.vertices
+                        .iter()
+                        .all(|vertex| vertex.pos.iter().all(|coord| coord.abs() <= allowance)),
+                    "{label}: vertex outside the expected bounds"
+                );
+            }
         }
     }
 

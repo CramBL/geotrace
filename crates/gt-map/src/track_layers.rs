@@ -821,10 +821,11 @@ fn paint_quality_path(ui: &Ui, path: &VisiblePath<LinePointKey>) {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_util;
     use egui::{Color32, Rect, pos2};
-
     use gt_ui_types::DrawLayerMask;
+    use rstest::rstest;
+
+    use crate::test_util;
 
     use super::{LinePointKey, focus_scrim_alpha, paint_fade_overlay, shown_runs};
     use crate::polyline::{VisiblePath, visible_path};
@@ -878,28 +879,20 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn shown_runs_of_all_visible_is_one_run() {
-        // Draw mode: nothing hidden, so the whole span is a single run.
-        let s = span(&[false, false, false]);
-        let runs: Vec<usize> = shown_runs(&s).map(<[_]>::len).collect();
-        assert_eq!(runs, vec![3]);
-    }
-
-    #[test]
-    fn shown_runs_break_at_hidden_points() {
-        // Hidden points split the line. Leading, trailing and adjacent
-        // hidden points are skipped, and an isolated shown point is a
-        // 1-element run (icon only, no edge).
-        let s = span(&[true, false, false, true, false, true]);
-        let runs: Vec<usize> = shown_runs(&s).map(<[_]>::len).collect();
-        assert_eq!(runs, vec![2, 1]);
-    }
-
-    #[test]
-    fn shown_runs_of_all_hidden_is_empty() {
-        let s = span(&[true, true]);
-        assert_eq!(shown_runs(&s).count(), 0);
+    /// The line breaks at the points a query hides. Leading, trailing and
+    /// adjacent hidden points are skipped, and a shown point between two
+    /// hidden ones is a run of its own, which draws an icon and no edge.
+    #[rstest]
+    #[case::nothing_hidden(&[false, false, false], vec![3])]
+    #[case::hidden_points_split_the_line(&[true, false, false, true, false, true], vec![2, 1])]
+    #[case::everything_hidden(&[true, true], vec![])]
+    fn shown_runs_break_at_the_points_a_query_hides(
+        #[case] hidden: &[bool],
+        #[case] expected: Vec<usize>,
+    ) {
+        let span = span(hidden);
+        let runs: Vec<usize> = shown_runs(&span).map(<[_]>::len).collect();
+        assert_eq!(runs, expected);
     }
 
     /// A parked cluster with mixed fix quality at sub-pixel distance: the
@@ -960,10 +953,7 @@ mod tests {
 
         use chrono::{DateTime, TimeDelta, Utc};
         use gt_filter::GlobalFilter;
-        use gt_types::{
-            FileIdx, GpsTime, Latitude, LoadedTrack, Longitude, NavPoint, TimePositionVelocity,
-            TrackIdx, TrackRef,
-        };
+        use gt_types::{GpsTime, Latitude, LoadedTrack, Longitude, NavPoint, TimePositionVelocity};
         use gt_ui_types::{QueryMatches, TrackMatchView};
         use rstest::rstest;
         use uom::si::angle::degree;
@@ -971,6 +961,7 @@ mod tests {
 
         use super::super::TrackGeometry;
         use crate::polyline::{CULL_MARGIN_PX, VisiblePath};
+        use crate::test_util;
         use crate::tpv_renderer::{self, ChevronFix, TrackIconFade};
         use crate::transform::{GeometryCull, MercTransform, lod_points};
         use crate::viewport::TrackEntry;
@@ -980,10 +971,6 @@ mod tests {
             min: egui::pos2(0.0, 0.0),
             max: egui::pos2(800.0, 600.0),
         };
-
-        fn the_track() -> TrackRef {
-            TrackRef::new(FileIdx::new(0), TrackIdx::new(0))
-        }
 
         const FIRST_FIX_TIME: DateTime<Utc> = DateTime::<Utc>::UNIX_EPOCH;
 
@@ -1091,8 +1078,8 @@ mod tests {
             let placed = track.placed_points().unwrap_or_default();
             let cull = GeometryCull::new(transform, MAP_RECT.expand(CULL_MARGIN_PX), filter);
             TrackGeometry {
-                fi: the_track().fi,
-                ti: the_track().index,
+                fi: test_util::track0().fi,
+                ti: test_util::track0().index,
                 track,
                 entry: TrackEntry {
                     trackline: true,
@@ -1181,7 +1168,7 @@ mod tests {
         fn a_query_hiding_half_the_dead_reckoned_stretch() -> QueryMatches {
             let first_half = DEAD_RECKONED.start..DEAD_RECKONED.start + DEAD_RECKONED.len() / 2;
             QueryMatches {
-                hidden: iter::once((the_track(), Vec::from([first_half]))).collect(),
+                hidden: iter::once((test_util::track0(), Vec::from([first_half]))).collect(),
                 ..QueryMatches::default()
             }
         }
@@ -1198,7 +1185,7 @@ mod tests {
             #[case] matches: QueryMatches,
         ) {
             let track = a_track_with_a_dead_reckoned_stretch();
-            let query_view = TrackMatchView::for_track(Some(&matches), the_track());
+            let query_view = TrackMatchView::for_track(Some(&matches), test_util::track0());
             let mut chevrons_drawn = 0_usize;
             let mut hits_the_level_drops = 0_usize;
 

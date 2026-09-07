@@ -59,10 +59,10 @@ pub fn track_geometry(points: &[NavPoint]) -> TrackGeometry {
 }
 
 /// A [`LoadedTrack`] over `points`, with the geometry that the track builder
-/// measures for them. Its metadata has the time range, TPV count and
-/// out-of-range fix count that the builder derives from `points`, and every
-/// other field of [`empty_track_metadata`]. A track of no points takes
-/// [`empty_track_metadata`] whole.
+/// measures for them. Its metadata has the time range, TPV count,
+/// out-of-range fix count and satellite report count that the builder derives
+/// from `points`, and every other field of [`empty_track_metadata`]. A track
+/// of no points takes [`empty_track_metadata`] whole.
 pub fn loaded_track_with_points(points: Vec<NavPoint>) -> LoadedTrack {
     let geometry = track_geometry(&points);
     let (metadata, points) = match vec1::Vec1::try_from_vec(points) {
@@ -72,6 +72,7 @@ pub fn loaded_track_with_points(points: Vec<NavPoint>) -> LoadedTrack {
                 time_range: measured.time_range,
                 tpv_count: measured.tpv_count,
                 invalid_position_count: measured.invalid_position_count,
+                satellite_report_count: measured.satellite_report_count,
                 ..empty_track_metadata()
             };
             (metadata, points.into_vec())

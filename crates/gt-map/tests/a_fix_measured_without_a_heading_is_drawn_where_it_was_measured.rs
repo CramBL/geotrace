@@ -11,10 +11,8 @@ use std::path::PathBuf;
 use chrono::{DateTime, Duration, Utc};
 use gt_map::test_util::{self, MapScene};
 use gt_track_builder::{FileMeta, SegmentationConfig};
-use gt_types::satellites::{Constellation, Satellite, Satellites};
-use gt_types::{
-    FileSource, GpsTime, Latitude, LoadedFile, Longitude, NavPoint, TimePositionVelocity,
-};
+use gt_types::fixtures::FixKind;
+use gt_types::{FileSource, Latitude, LoadedFile, Longitude, NavPoint, mercator};
 use uom::si::angle::degree;
 use uom::si::f64::Angle;
 
@@ -41,9 +39,6 @@ const WESTBOUND_LATITUDE_DEGREES: f64 = 55.676;
 const EAST_HEADING_DEGREES: f64 = 90.0;
 const WEST_HEADING_DEGREES: f64 = 270.0;
 
-/// Satellites the receiver reports in fix under a full solution.
-const SATELLITES_IN_FIX: u32 = 12;
-
 fn time_of(index: usize) -> DateTime<Utc> {
     test_util::epoch() + Duration::seconds(index as i64 * SECONDS_BETWEEN_FIXES)
 }
@@ -53,21 +48,19 @@ fn longitude_of(step: usize) -> Longitude {
     Longitude::new(FIRST_LONGITUDE_DEGREES + step as f64 * LONGITUDE_STEP_DEGREES)
 }
 
-fn full_solution(index: usize) -> Satellites {
-    let satellites = (0..SATELLITES_IN_FIX)
-        .map(|prn| Satellite::new(Constellation::Gps, prn + 1, None, None, None, true))
-        .collect();
-    Satellites::new(Some(GpsTime::from_utc(time_of(index))), None, satellites)
+/// A fix under a full solution, twelve satellites in fix, on the course the
+/// receiver reported for it.
+fn fix(index: usize, lat: Latitude, lon: Longitude, heading: Option<Angle>) -> NavPoint {
+    gt_types::fixtures::nav_point_heading(time_of(index), lat, lon, heading, FixKind::Measured)
 }
 
-fn fix(index: usize, lat: Latitude, lon: Longitude, heading: Option<Angle>) -> NavPoint {
-    let tpv = TimePositionVelocity::builder()
-        .time(GpsTime::from_utc(time_of(index)))
-        .lat(lat)
-        .lon(lon)
-        .maybe_heading(heading)
-        .build();
-    NavPoint::new(tpv, Some(full_solution(index)))
+/// The position of the fix at the turn, where the map draws the tip of the
+/// track.
+fn turn_position() -> (Latitude, Longitude) {
+    (
+        Latitude::new(EASTBOUND_LATITUDE_DEGREES.midpoint(WESTBOUND_LATITUDE_DEGREES)),
+        longitude_of(FIXES_PER_LEG),
+    )
 }
 
 /// The fixes of the leg running east, then the fix at the turn, then the fixes
@@ -81,12 +74,8 @@ fn a_recording_that_turns_at_the_end_of_a_cul_de_sac() -> Vec<LoadedFile> {
             Some(Angle::new::<degree>(EAST_HEADING_DEGREES)),
         )
     });
-    let turn = std::iter::once(fix(
-        TURN_FIX_INDEX,
-        Latitude::new(EASTBOUND_LATITUDE_DEGREES.midpoint(WESTBOUND_LATITUDE_DEGREES)),
-        longitude_of(FIXES_PER_LEG),
-        None,
-    ));
+    let (turn_lat, turn_lon) = turn_position();
+    let turn = std::iter::once(fix(TURN_FIX_INDEX, turn_lat, turn_lon, None));
     let westbound = (0..FIXES_PER_LEG).map(|step| {
         fix(
             TURN_FIX_INDEX + 1 + step,
@@ -114,6 +103,13 @@ fn a_recording_that_turns_at_the_end_of_a_cul_de_sac() -> Vec<LoadedFile> {
 #[test]
 fn snapshot_a_fix_measured_without_a_heading_is_drawn_at_the_tip_of_the_track() {
     let files = a_recording_that_turns_at_the_end_of_a_cul_de_sac();
+    let (turn_lat, turn_lon) = turn_position();
+    assert_eq!(
+        test_util::drawn_positions(&files).get(TURN_FIX_INDEX),
+        Some(&mercator::normalize(turn_lat, turn_lon)),
+        "the fix at the turn is drawn where the receiver measured it"
+    );
+
     let mut map = MapScene::of(files).render();
     map.snapshot("fix_measured_without_a_heading");
 }

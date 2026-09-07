@@ -24,173 +24,53 @@ fn recorded_positions(points: &[gt_types::NavPoint]) -> Vec<gt_types::ResolvedPo
         .collect()
 }
 
-/// Builds a single `LoadedFile` with one TPV point, one event marker, one custom
-/// marker, and one `GnssFixRegained` generated marker, all at index 0.  Used by
-/// snapshot tests so each candidate type produces real human-readable text.
-fn make_snapshot_file() -> gt_types::LoadedFile {
-    use gt_types::{
-        CustomMarker, EventMarker, FileMetadata, GeneratedMarker, GeneratedMarkerKind, GeoBounds,
-        Latitude, LoadedFile, LoadedTrack, Longitude, MarkerIcon, MercBounds, TimeRange,
-        TotalDistance, TrackMetadata, mercator,
-    };
-    use uom::si::f64::Length;
-    use uom::si::length::kilometer;
-
-    let points = gt_test_utils::nav_test_data();
-    let t0 = points[0].tpv.time().utc();
-    let lat = Latitude::new(55.686_7);
-    let lon = Longitude::new(12.563_8);
-
-    let event_marker = EventMarker::new(
-        t0,
-        "Lap/Start".to_string(),
-        Some("Lap start point".to_string()),
-        lat,
-        lon,
-    );
-    let custom_marker = CustomMarker::new(t0, "Coffee stop".to_string(), MarkerIcon::Pin, lat, lon);
-    let generated_marker = GeneratedMarker {
-        time: t0,
-        kind: GeneratedMarkerKind::GnssFixRegained {
-            fix_lost_duration: chrono::Duration::milliseconds(12_300),
-        },
-        lat,
-        lon,
-        merc: mercator::normalize(lat, lon),
-    };
-
-    let n = points.len();
-    // Counted from the points: `SkySection::resolve` short-circuits on a zero
-    // count, so claiming zero here would hide the sky plot even though these
-    // points carry satellite reports.
-    let satellite_report_count = points.iter().filter(|p| p.satellites.is_some()).count();
-    let bb = GeoBounds::from_positions([
-        (Latitude::new(55.67), Longitude::new(12.55)),
-        (Latitude::new(55.69), Longitude::new(12.59)),
-    ])
-    .expect("two positions");
-    // Every fix is drawn where it was recorded. The measures are the ones
-    // these snapshots are laid out for.
-    let geometry = gt_types::TrackGeometry::Measured(gt_types::MeasuredTrackGeometry {
-        resolved_positions: recorded_positions(&points),
-        bounding_box: bb,
-        merc_bounds: MercBounds::from(bb),
-        distance_km: Length::new::<kilometer>(5.0),
-        point_set_diameter_m: Length::new::<uom::si::length::meter>(500.0),
-        segment_length_range: None,
-    });
-    let sat_label_anchors = geometry
-        .measured()
-        .and_then(|measured| gt_types::PlacedPoints::new(&points, &measured.resolved_positions))
-        .map_or_else(Vec::new, gt_track_builder::build_sat_label_anchors);
-    let track = LoadedTrack {
-        metadata: TrackMetadata {
-            index: 0,
-            duration: chrono::Duration::seconds(n as i64),
-            time_range: TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64)),
-            has_custom_markers: true,
-            tpv_count: n,
-            invalid_position_count: 0,
-            satellite_report_count,
-            custom_marker_count: 1,
-            generated_marker_count: 1,
-            event_marker_count: 1,
-            ..gt_test_utils::empty_track_metadata()
-        },
-        geometry,
-        sat_label_anchors,
-        points,
-        lod: gt_types::TrackLod::default(),
-        custom_markers: vec![custom_marker],
-        generated_markers: vec![generated_marker],
-        event_markers: vec![event_marker],
-        channels: vec![],
-    };
-
-    LoadedFile {
-        metadata: FileMetadata {
-            filename: "snapshot_test.gtd".to_string(),
-            total_distance: TotalDistance::Measured(Length::new::<kilometer>(5.0)),
-            total_duration: chrono::Duration::seconds(n as i64),
-            time_range: Some(TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64))),
-            ..gt_test_utils::empty_file_metadata()
-        },
-        tracks: vec![track],
-        event_marker_styles: FxHashMap::default(),
-        orphaned_event_markers: vec![],
-        source: gt_types::FileSource::GtdPath(PathBuf::from("snapshot_test.gtd")),
-        load_warnings: vec![],
-    }
-}
-
-/// Snapshot: the stacked multi-hover label popup for TPV + event marker +
-/// custom marker simultaneously within cursor radius.  Calls the real
-/// production function so the test stays in sync with the code.
-#[test]
-fn snap_multi_hover_stacked_label() {
-    let files = vec![make_snapshot_file()];
-    let candidates = HoverCandidates {
-        tpv_or_satellite_report: Some(test_util::point_ref(DataCategory::Tpv, 0)),
-        event_marker: Some(test_util::point_ref(DataCategory::EventMarker, 0)),
-        custom_marker: Some(test_util::point_ref(DataCategory::CustomMarker, 0)),
-        generated_marker: None,
-    };
-
-    let mut harness = test_util::harness_builder()
-        .size(egui::vec2(400.0, 800.0))
-        .ui(move |ui| {
-            let names = RecordingNames::default();
-            let labels = RecordingLabels::new(&files, &names);
-            hover_labels::draw_multi_hover_label_contents(ui, candidates, &files, labels);
-        });
-
-    harness.fit_contents();
-    harness.snapshot("multi_hover_stacked_label");
-}
-
-/// Snapshot: the stacked multi-hover label for the common case where a TPV
-/// fix point and a GNSS-fix-regained generated marker share the same map
-/// position.  The TPV section shows the full hover table. The generated-marker
-/// section shows the kind and the fix-lost duration.
-#[test]
-fn snap_multi_hover_tpv_and_generated_marker() {
-    let files = vec![make_snapshot_file()];
-    let candidates = HoverCandidates {
-        tpv_or_satellite_report: Some(test_util::point_ref(DataCategory::Tpv, 0)),
-        generated_marker: Some(test_util::point_ref(DataCategory::GeneratedMarker, 0)),
-        ..HoverCandidates::default()
-    };
-
-    let mut harness = test_util::harness_builder()
-        .size(egui::vec2(400.0, 800.0))
-        .ui(move |ui| {
-            let names = RecordingNames::default();
-            let labels = RecordingLabels::new(&files, &names);
-            hover_labels::draw_multi_hover_label_contents(ui, candidates, &files, labels);
-        });
-
-    harness.fit_contents();
-    harness.snapshot("multi_hover_tpv_and_generated_marker");
-}
-
-/// Two loaded files with distinct filenames, so the labels stating a
-/// recording have something to distinguish.
-fn two_recordings_loaded() -> gt_loaded_files::LoadedFiles {
+/// The recordings the compound-label cases hover over, one per name, each a
+/// copy of the marker fixture.
+fn recordings_named(filenames: &[&str]) -> gt_loaded_files::LoadedFiles {
     let mut loaded = gt_loaded_files::LoadedFiles::new();
-    for filename in ["morning.gtd", "evening.gtd"] {
-        let mut file = make_snapshot_file();
-        file.metadata.filename = filename.to_owned();
+    for filename in filenames {
+        let mut file = test_util::a_recording_with_every_marker_kind();
+        file.metadata.filename = (*filename).to_owned();
         loaded.push(file, gt_loaded_files::FileHistory::None);
     }
     loaded
 }
 
-/// Snapshot: the same stacked label with two files loaded, where the fix
-/// section carries the recording row.
-#[test]
-fn snap_multi_hover_stacked_label_two_files() {
-    let loaded = two_recordings_loaded();
-    let candidates = HoverCandidates {
+/// Two loaded files with distinct filenames, so the labels stating a
+/// recording have something to distinguish.
+fn two_recordings_loaded() -> gt_loaded_files::LoadedFiles {
+    recordings_named(&["morning.gtd", "evening.gtd"])
+}
+
+/// Snapshot: the compound label of the elements one pointer reaches, a section
+/// per element. The fix section shows the whole hover table, a marker section
+/// its own kind and text, and the generated marker its fix-lost duration. With
+/// two recordings loaded the fix section also states the recording the fix
+/// came from.
+#[rstest::rstest]
+#[case::a_fix_and_two_markers(
+    "multi_hover_stacked_label",
+    &["walk.gtd"],
+    HoverCandidates {
+        tpv_or_satellite_report: Some(test_util::point_ref(DataCategory::Tpv, 0)),
+        event_marker: Some(test_util::point_ref(DataCategory::EventMarker, 0)),
+        custom_marker: Some(test_util::point_ref(DataCategory::CustomMarker, 0)),
+        generated_marker: None,
+    }
+)]
+#[case::a_fix_and_a_regained_fix_marker(
+    "multi_hover_tpv_and_generated_marker",
+    &["walk.gtd"],
+    HoverCandidates {
+        tpv_or_satellite_report: Some(test_util::point_ref(DataCategory::Tpv, 0)),
+        generated_marker: Some(test_util::point_ref(DataCategory::GeneratedMarker, 0)),
+        ..HoverCandidates::default()
+    }
+)]
+#[case::two_recordings_loaded(
+    "multi_hover_stacked_label_two_files",
+    &["morning.gtd", "evening.gtd"],
+    HoverCandidates {
         tpv_or_satellite_report: Some(test_util::point_ref_in(
             FileIdx::new(1),
             DataCategory::Tpv,
@@ -199,7 +79,14 @@ fn snap_multi_hover_stacked_label_two_files() {
         event_marker: Some(test_util::point_ref(DataCategory::EventMarker, 0)),
         custom_marker: Some(test_util::point_ref(DataCategory::CustomMarker, 0)),
         generated_marker: None,
-    };
+    }
+)]
+fn snap_multi_hover_stacked_label(
+    #[case] name: &str,
+    #[case] filenames: &[&str],
+    #[case] candidates: HoverCandidates,
+) {
+    let loaded = recordings_named(filenames);
 
     let mut harness = test_util::harness_builder()
         .size(egui::vec2(400.0, 800.0))
@@ -210,7 +97,7 @@ fn snap_multi_hover_stacked_label_two_files() {
         });
 
     harness.fit_contents();
-    harness.snapshot("multi_hover_stacked_label_two_files");
+    harness.snapshot(name);
 }
 
 /// The compound label states the recording of the fix it shows, which need
@@ -247,7 +134,7 @@ fn multi_hover_names_the_hovered_fixs_recording() {
 /// label text.
 #[test]
 fn snap_disambig_popup_big_icons() {
-    let files = vec![make_snapshot_file()];
+    let files = vec![test_util::a_recording_with_every_marker_kind()];
     let candidates = [
         Some(test_util::point_ref(DataCategory::Tpv, 0)),
         Some(test_util::point_ref(DataCategory::EventMarker, 0)),
@@ -299,18 +186,56 @@ enum MatchCapture {
     RevealStart,
 }
 
-/// Drive the full `NavMap::draw` path over the fixture track with a
-/// hardcoded set of query matches.
-fn snapshot_nav_map_with_matches(
-    name: &'static str,
-    mode: DisplayMode,
-    stale: bool,
-    capture: MatchCapture,
-    tile_access: TileAccess,
+/// The fixture track under a completed run, drawn through the whole
+/// `NavMap::draw` path. `draw` mode halos the matched stretches, `hide` drops
+/// them and `keep` drops everything else. The map dims a stale run and still
+/// draws it. The reveal row captures the frame the halos inflate on.
+#[rstest::rstest]
+#[case::halos(
+    "query_match_halos",
+    DisplayMode::Draw,
+    false,
+    MatchCapture::Settled,
+    TileAccess::Fixture(gt_test_utils::map_tile_fixture_dir())
+)]
+#[case::stale_halos(
+    "query_match_halos_stale",
+    DisplayMode::Draw,
+    true,
+    MatchCapture::Settled,
+    TileAccess::Synthetic
+)]
+#[case::keep_mode(
+    "query_keep_mode",
+    DisplayMode::Keep,
+    false,
+    MatchCapture::Settled,
+    TileAccess::Synthetic
+)]
+#[case::hide_mode(
+    "query_hide_mode",
+    DisplayMode::Hide,
+    false,
+    MatchCapture::Settled,
+    TileAccess::Synthetic
+)]
+#[case::reveal(
+    "query_match_reveal",
+    DisplayMode::Draw,
+    false,
+    MatchCapture::RevealStart,
+    TileAccess::Synthetic
+)]
+fn snap_query_matches(
+    #[case] name: &str,
+    #[case] mode: DisplayMode,
+    #[case] stale: bool,
+    #[case] capture: MatchCapture,
+    #[case] tile_access: TileAccess,
 ) {
     use gt_ui_types::{DrawLayer, QueryMatches, TrackRanges};
 
-    let files = vec![make_snapshot_file()];
+    let files = vec![test_util::a_recording_with_every_marker_kind()];
     let track = test_util::track0();
     let len = files
         .first()
@@ -375,36 +300,6 @@ fn snapshot_nav_map_with_matches(
     map.snapshot(name);
 }
 
-/// Interference cells around the snapshot fixture's track, tallied
-/// across the ramp so one snapshot shows clear, elevated, heavy, and
-/// low-sample fills together.
-fn snapshot_jamming_dataset() -> JamDataset {
-    use gt_jam::wire::HexObservation;
-
-    let center = h3o::LatLng::new(55.686_7, 12.563_8)
-        .expect("fixture position")
-        .to_cell(gt_jam::H3_RESOLUTION);
-    let tallies = [
-        (400, 0),
-        (98, 2),
-        (94, 6),
-        (90, 10),
-        (60, 40),
-        (2, 2),
-        (1, 1),
-    ];
-    let observations = center
-        .grid_disk::<Vec<_>>(1)
-        .into_iter()
-        .zip(tallies)
-        .map(|(cell, (good, bad))| HexObservation { cell, good, bad })
-        .collect();
-    JamDataset::new(
-        chrono::NaiveDate::from_ymd_opt(2026, 7, 20).expect("date"),
-        observations,
-    )
-}
-
 /// The interference overlay under the fixture track. At the zoom that
 /// frames a 1 km track a single 22 km cell covers the viewport, so this
 /// pins the fill and the draw order - track ink over cells.
@@ -417,13 +312,16 @@ fn snapshot_jamming_overlay(
     #[case] dark_mode: bool,
     #[case] hover: Option<egui::Pos2>,
 ) {
-    let files = vec![make_snapshot_file()];
-    let dataset = snapshot_jamming_dataset();
+    let files = vec![test_util::a_recording_with_every_marker_kind()];
 
     let mut map = MapScene::of(files)
         .tiles(TileAccess::Synthetic)
         .theme(dark_mode)
-        .overlays(|overlays| overlays.jamming_dataset = Some(dataset))
+        .overlays(|overlays| {
+            overlays.jamming_dataset = Some(test_util::an_interference_ring_around(
+                test_util::MARKER_POSITION_DEGREES,
+            ));
+        })
         .render();
     if let Some(pos) = hover {
         map.hover_at_and_settle(pos);
@@ -515,7 +413,7 @@ fn snapshot_space_weather_warning(
     #[case] warning: Vec<gt_ui_types::TrackSpaceWeatherWarning>,
     #[case] interaction: IndicatorInteraction,
 ) {
-    let files = vec![make_snapshot_file()];
+    let files = vec![test_util::a_recording_with_every_marker_kind()];
 
     let mut map = MapScene::of(files)
         .tiles(TileAccess::Synthetic)
@@ -553,7 +451,7 @@ fn snapshot_tec_heatmap(
     #[case] dark_mode: bool,
     #[case] hover: Option<egui::Pos2>,
 ) {
-    let files = vec![make_snapshot_file()];
+    let files = vec![test_util::a_recording_with_every_marker_kind()];
     let maps = gt_ionex::captured_maps(gt_ionex::STORM_CAPTURE).expect("the storm capture");
     let instant = chrono::NaiveDate::from_ymd_opt(2024, 5, 10)
         .and_then(|day| day.and_hms_opt(20, 0, 0))
@@ -585,61 +483,6 @@ fn snapshot_tec_heatmap(
 /// the recorded one.
 const SNAPPED_OFFSET_MERC_Y: f64 = -1.5e-6;
 
-/// Snapshot the map with `make_snapshot_file`'s track plus the snapped
-/// geometry `geometry_for` derives from where its fixes are drawn, under
-/// `mask`. With `hover`, the pointer is parked there before the snapshot
-/// (frames are stepped past egui's tooltip delay).
-fn snapshot_snapped_tracks_with(
-    name: &str,
-    mask: DisplayMask,
-    hover: Option<egui::Pos2>,
-    geometry_for: impl Fn(&[MercPoint]) -> gt_ui_types::SnappedTrackGeometry,
-) {
-    use std::sync::Arc;
-
-    use gt_ui_types::SnappedTracks;
-
-    let files = vec![make_snapshot_file()];
-    let mut snapped = SnappedTracks::default();
-    snapped.insert(
-        test_util::track0(),
-        Arc::new(geometry_for(&test_util::drawn_positions(&files))),
-    );
-
-    let mut map = MapScene::of(files)
-        .tiles(TileAccess::Synthetic)
-        .draw_state(|state| state.display_mask = mask)
-        .overlays(|overlays| overlays.snapped_tracks = Some(snapped))
-        .render();
-    if let Some(pos) = hover {
-        map.hover_at_and_settle(pos);
-    }
-    map.snapshot(name);
-}
-
-/// [`snapshot_snapped_tracks_with`] for bare polylines (no edge data,
-/// no hover).
-fn snapshot_snapped_tracks(
-    name: &str,
-    mask: DisplayMask,
-    segments_for: impl Fn(&[MercPoint]) -> Vec<Vec<MercPoint>>,
-) {
-    snapshot_snapped_tracks_with(name, mask, None, |points| {
-        gt_ui_types::SnappedTrackGeometry {
-            segments: segments_for(points)
-                .into_iter()
-                .map(|points| gt_ui_types::SnappedSegment {
-                    points,
-                    recorded_points: Vec::new(),
-                    edge_spans: Vec::new(),
-                })
-                .collect(),
-            edges: Vec::new(),
-            whiskers: Vec::new(),
-        }
-    });
-}
-
 /// A snapped segment following the recorded points in `range`, nudged
 /// north by [`SNAPPED_OFFSET_MERC_Y`].
 fn snapped_segment(drawn: &[MercPoint], range: std::ops::Range<usize>) -> Vec<MercPoint> {
@@ -654,159 +497,93 @@ fn snapped_segment(drawn: &[MercPoint], range: std::ops::Range<usize>) -> Vec<Me
         .collect()
 }
 
-/// Snapshot: dashed translucent snapped-track polylines beside the
-/// recorded track, with the empty stretch between the two segments
-/// rendering as a gap (a route discontinuity) - the recorded track
-/// beneath is never painted over or hidden.
-#[test]
-fn snap_snapped_track_polylines() {
-    snapshot_snapped_tracks(
-        "snapped_track_polylines",
-        DisplayMask::default(),
-        |points| {
-            vec![
-                snapped_segment(points, 100..400),
-                snapped_segment(points, 600..950),
-            ]
-        },
-    );
+/// `segments` as a geometry with no edge data, which is what the polyline
+/// cases draw.
+fn bare_polylines(segments: Vec<Vec<MercPoint>>) -> gt_ui_types::SnappedTrackGeometry {
+    gt_ui_types::SnappedTrackGeometry {
+        segments: segments
+            .into_iter()
+            .map(|points| gt_ui_types::SnappedSegment {
+                points,
+                recorded_points: Vec::new(),
+                edge_spans: Vec::new(),
+            })
+            .collect(),
+        edges: Vec::new(),
+        whiskers: Vec::new(),
+    }
 }
 
-/// Snapshot: a snapped segment whose tail runs far past the viewport.
-/// The culling in `SnappedTrackRenderer` must not clip visible geometry:
-/// the dashed line has to reach the viewport edge exactly, while the
-/// off-screen stretch generates no dashes at all (partially visible
-/// segments keep exact endpoints, and only provably invisible ones are
-/// dropped).
-#[test]
-fn snap_snapped_track_culled_tail() {
-    /// Mercator step between synthetic tail points, ≈ 5 viewport widths
-    /// beyond the fitted view over 60 points, so most of the tail is
-    /// provably off-screen.
+/// Two snapped stretches with an unsnapped gap between them, which the map
+/// draws as a route discontinuity.
+fn two_snapped_stretches(drawn: &[MercPoint]) -> gt_ui_types::SnappedTrackGeometry {
+    bare_polylines(vec![
+        snapped_segment(drawn, 100..400),
+        snapped_segment(drawn, 600..950),
+    ])
+}
+
+/// One snapped stretch whose tail runs about five viewport widths east, so
+/// most of it is provably off screen.
+fn a_snapped_stretch_with_a_tail_past_the_viewport(
+    drawn: &[MercPoint],
+) -> gt_ui_types::SnappedTrackGeometry {
+    /// Mercator step between the synthetic tail points.
     const TAIL_STEP_MERC_X: f64 = 2e-5;
 
-    snapshot_snapped_tracks(
-        "snapped_track_culled_tail",
-        DisplayMask::default(),
-        |points| {
-            let mut segment = snapped_segment(points, 100..400);
-            if let Some(&end) = segment.last() {
-                segment.extend((1..=60).map(|i| MercPoint {
-                    x: end.x + f64::from(i) * TAIL_STEP_MERC_X,
-                    y: end.y,
-                }));
-            }
-            vec![segment]
-        },
-    );
+    let mut segment = snapped_segment(drawn, 100..400);
+    if let Some(&end) = segment.last() {
+        segment.extend((1..=60).map(|i| MercPoint {
+            x: end.x + f64::from(i) * TAIL_STEP_MERC_X,
+            y: end.y,
+        }));
+    }
+    bare_polylines(vec![segment])
 }
 
-/// Snapshot: a snapped segment whose on-screen extent packs below one
-/// pixel draws as a dot - the `VisiblePath::Dot` case, reached when snapped
-/// geometry collapses at low zoom. The dot sits north of the recorded
-/// track's midpoint.
-#[test]
-fn snap_snapped_track_collapsed_dot() {
-    /// Mercator spacing of the collapsed cluster's points, ≈ 0.1 px at
-    /// the fitted zoom - far below the sub-pixel merge threshold.
+/// Four snapped points packed about a tenth of a pixel apart at the fitted
+/// zoom, north of the middle of the recorded track.
+fn a_snapped_cluster_below_one_pixel(drawn: &[MercPoint]) -> gt_ui_types::SnappedTrackGeometry {
+    /// Mercator spacing of the cluster's points, far below the sub-pixel
+    /// merge threshold.
     const CLUSTER_STEP_MERC_X: f64 = 2e-8;
 
-    /// Extra northward offset so the dot is clearly separate from the
+    /// Extra northward offset, so the dot is clearly separate from the
     /// recorded trackline.
     const CLUSTER_OFFSET_MERC_Y: f64 = -6e-6;
 
-    snapshot_snapped_tracks(
-        "snapped_track_collapsed_dot",
-        DisplayMask::default(),
-        |points| {
-            let mid = points.len() / 2;
-            let Some(base) = points.get(mid) else {
-                return vec![];
-            };
-            vec![
-                (0..4)
-                    .map(|i| MercPoint {
-                        x: base.x + f64::from(i) * CLUSTER_STEP_MERC_X,
-                        y: base.y + CLUSTER_OFFSET_MERC_Y,
-                    })
-                    .collect(),
-            ]
-        },
-    );
+    let Some(base) = drawn.get(drawn.len() / 2) else {
+        return bare_polylines(Vec::new());
+    };
+    bare_polylines(vec![
+        (0..4)
+            .map(|i| MercPoint {
+                x: base.x + f64::from(i) * CLUSTER_STEP_MERC_X,
+                y: base.y + CLUSTER_OFFSET_MERC_Y,
+            })
+            .collect(),
+    ])
 }
 
-/// Snapshot: hiding the snapped-tracks display category removes the
-/// dashed ink entirely - only the recorded track remains - without
-/// touching the `SnappedTracks` the renderer reads.
-#[test]
-fn snap_snapped_track_hidden_by_display_mask() {
-    let mut mask = DisplayMask::default();
-    mask.set_visible(DisplayCategory::SnappedTracks, false);
-    snapshot_snapped_tracks("snapped_track_hidden_by_display_mask", mask, |points| {
-        vec![
-            snapped_segment(points, 100..400),
-            snapped_segment(points, 600..950),
-        ]
-    });
-}
-
-/// Snapshot: hovering the snapped line shows the matched edge's
-/// attributes. The synthetic segment runs horizontally through the
-/// viewport center (zoom-to-fit centers the recorded track's bounds),
-/// so parking the pointer at the center hits it deterministically.
-#[test]
-fn snap_snapped_track_edge_hover() {
-    /// Half-width of the synthetic segment, Mercator units - wide
-    /// enough to cross the whole fitted viewport.
-    const SEGMENT_HALF_WIDTH_MERC: f64 = 1.0e-4;
-
-    snapshot_snapped_tracks_with(
-        "snapped_track_edge_hover",
-        DisplayMask::default(),
-        Some(egui::pos2(400.0, 300.0)),
-        |points| {
-            let (min, max) = points.iter().fold(
-                ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN)),
-                |(min, max), p| {
-                    (
-                        (min.0.min(p.x), min.1.min(p.y)),
-                        (max.0.max(p.x), max.1.max(p.y)),
-                    )
-                },
-            );
-            let center = MercPoint {
-                x: f64::midpoint(min.0, max.0),
-                y: f64::midpoint(min.1, max.1),
-            };
-            gt_ui_types::SnappedTrackGeometry {
-                segments: vec![gt_ui_types::SnappedSegment {
-                    points: vec![
-                        MercPoint {
-                            x: center.x - SEGMENT_HALF_WIDTH_MERC,
-                            y: center.y,
-                        },
-                        MercPoint {
-                            x: center.x + SEGMENT_HALF_WIDTH_MERC,
-                            y: center.y,
-                        },
-                    ],
-                    recorded_points: Vec::new(),
-                    edge_spans: vec![gt_ui_types::SnappedEdgeSpan {
-                        start: 0,
-                        end: 2,
-                        edge: 0,
-                    }],
-                }],
-                edges: vec![gt_ui_types::SnappedEdgeInfo {
-                    name: Some("H.C. Andersens Boulevard".to_owned()),
-                    road_class: Some("Tertiary".to_owned()),
-                    speed_limit: Some("50 km/h".to_owned()),
-                    surface: Some("Paved smooth".to_owned()),
-                }],
-                whiskers: Vec::new(),
-            }
+/// The named edge of [`test_util::a_snapped_edge_at`], running through the
+/// middle of the recorded track's bounds, which is where the fit centres the
+/// viewport.
+fn a_named_snapped_edge_across_the_viewport(
+    drawn: &[MercPoint],
+) -> gt_ui_types::SnappedTrackGeometry {
+    let (min, max) = drawn.iter().fold(
+        ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN)),
+        |(min, max), p| {
+            (
+                (min.0.min(p.x), min.1.min(p.y)),
+                (max.0.max(p.x), max.1.max(p.y)),
+            )
         },
     );
+    test_util::a_snapped_edge_at(MercPoint {
+        x: f64::midpoint(min.0, max.0),
+        y: f64::midpoint(min.1, max.1),
+    })
 }
 
 /// Eastward Mercator offset of the synthetic whisker tests' snapped
@@ -845,7 +622,7 @@ fn whisker_geometry(drawn: &[MercPoint]) -> gt_ui_types::SnappedTrackGeometry {
 
 /// A file whose single track spans only ~55 m, so zoom-to-fit lands
 /// far above the whisker scale gate.
-fn make_short_walk_file() -> gt_types::LoadedFile {
+fn a_recording_of_a_short_walk() -> gt_types::LoadedFile {
     use gt_types::time_types::GpsTime;
     use gt_types::{
         FileMetadata, GeoBounds, Latitude, LoadedFile, LoadedTrack, Longitude, MercBounds,
@@ -900,105 +677,90 @@ fn make_short_walk_file() -> gt_types::LoadedFile {
     }
 }
 
-/// Snapshot: above the scale gate (a ~55 m track fitted into the
-/// viewport) every snapped point gets its error whisker - a thin line
-/// from the recorded point to the snapped position.
-#[test]
-fn snap_snapped_track_whiskers_at_high_zoom() {
-    use std::sync::Arc;
-
-    use gt_ui_types::SnappedTracks;
-
-    let files = vec![make_short_walk_file()];
-    let mut snapped = SnappedTracks::default();
+/// The snapped track beside the recorded one: dashed translucent polylines
+/// that never paint over the recorded ink, a gap where the route breaks, the
+/// exact viewport edge where a stretch runs off screen, a dot where one packs
+/// below a pixel, the matched edge's attributes under the pointer, and no
+/// dashes at all while the category is hidden. The whisker rows sit either
+/// side of the scale gate: over a 55 m track every snapped point draws its
+/// error whisker, and over the kilometre-scale fixture none does.
+#[rstest::rstest]
+#[case::polylines(
+    "snapped_track_polylines",
+    test_util::a_recording_with_every_marker_kind(),
+    None,
+    None,
+    two_snapped_stretches
+)]
+#[case::culled_tail(
+    "snapped_track_culled_tail",
+    test_util::a_recording_with_every_marker_kind(),
+    None,
+    None,
+    a_snapped_stretch_with_a_tail_past_the_viewport
+)]
+#[case::collapsed_dot(
+    "snapped_track_collapsed_dot",
+    test_util::a_recording_with_every_marker_kind(),
+    None,
+    None,
+    a_snapped_cluster_below_one_pixel
+)]
+#[case::hidden_by_the_display_mask(
+    "snapped_track_hidden_by_display_mask",
+    test_util::a_recording_with_every_marker_kind(),
+    Some(DisplayCategory::SnappedTracks),
+    None,
+    two_snapped_stretches
+)]
+#[case::edge_hover(
+    "snapped_track_edge_hover",
+    test_util::a_recording_with_every_marker_kind(),
+    None,
+    Some(egui::pos2(400.0, 300.0)),
+    a_named_snapped_edge_across_the_viewport
+)]
+#[case::whiskers_above_the_scale_gate(
+    "snapped_track_whiskers",
+    a_recording_of_a_short_walk(),
+    None,
+    None,
+    whisker_geometry
+)]
+#[case::whiskers_below_the_scale_gate(
+    "snapped_track_whiskers_below_gate",
+    test_util::a_recording_with_every_marker_kind(),
+    None,
+    None,
+    whisker_geometry
+)]
+fn snap_snapped_tracks(
+    #[case] name: &str,
+    #[case] file: gt_types::LoadedFile,
+    #[case] hidden: Option<DisplayCategory>,
+    #[case] hover: Option<egui::Pos2>,
+    #[case] geometry_for: fn(&[MercPoint]) -> gt_ui_types::SnappedTrackGeometry,
+) {
+    let files = vec![file];
+    let mut snapped = gt_ui_types::SnappedTracks::default();
     snapped.insert(
         test_util::track0(),
-        Arc::new(whisker_geometry(&test_util::drawn_positions(&files))),
+        std::sync::Arc::new(geometry_for(&test_util::drawn_positions(&files))),
     );
+    let mut mask = DisplayMask::default();
+    if let Some(category) = hidden {
+        mask.set_visible(category, false);
+    }
 
     let mut map = MapScene::of(files)
         .tiles(TileAccess::Synthetic)
+        .draw_state(|state| state.display_mask = mask)
         .overlays(|overlays| overlays.snapped_tracks = Some(snapped))
         .render();
-    map.snapshot("snapped_track_whiskers");
-}
-
-/// Snapshot: below the scale gate (the standard km-scale fixture) the
-/// same whisker anchors draw nothing - only the dashed snapped line.
-#[test]
-fn snap_snapped_track_whiskers_hidden_below_gate() {
-    snapshot_snapped_tracks_with(
-        "snapped_track_whiskers_below_gate",
-        DisplayMask::default(),
-        None,
-        whisker_geometry,
-    );
-}
-
-/// Snapshot: match halos along the track, including the single-point
-/// ring, over the live map canvas.
-#[test]
-fn snap_query_match_halos() {
-    snapshot_nav_map_with_matches(
-        "query_match_halos",
-        DisplayMode::Draw,
-        false,
-        MatchCapture::Settled,
-        TileAccess::Fixture(gt_test_utils::map_tile_fixture_dir()),
-    );
-}
-
-/// Snapshot: the same matches grayed out after the visible data changed
-/// (stale results are dimmed, never hidden).
-#[test]
-fn snap_query_match_halos_stale() {
-    snapshot_nav_map_with_matches(
-        "query_match_halos_stale",
-        DisplayMode::Draw,
-        true,
-        MatchCapture::Settled,
-        TileAccess::Synthetic,
-    );
-}
-
-/// Snapshot: `keep` mode shows only the matching stretches. The rest of
-/// the track is hidden and the polyline breaks at the gaps.
-#[test]
-fn snap_query_keep_mode() {
-    snapshot_nav_map_with_matches(
-        "query_keep_mode",
-        DisplayMode::Keep,
-        false,
-        MatchCapture::Settled,
-        TileAccess::Synthetic,
-    );
-}
-
-/// Snapshot: `hide` mode drops the matching stretches, leaving the rest
-/// of the track with breaks where the matches were.
-#[test]
-fn snap_query_hide_mode() {
-    snapshot_nav_map_with_matches(
-        "query_hide_mode",
-        DisplayMode::Hide,
-        false,
-        MatchCapture::Settled,
-        TileAccess::Synthetic,
-    );
-}
-
-/// Snapshot: the halos of a run that just completed, caught on the frame its
-/// reveal fires - every band and ring inflated and brightened before it
-/// settles back to the state `snap_query_match_halos` shows.
-#[test]
-fn snap_query_match_reveal() {
-    snapshot_nav_map_with_matches(
-        "query_match_reveal",
-        DisplayMode::Draw,
-        false,
-        MatchCapture::RevealStart,
-        TileAccess::Synthetic,
-    );
+    if let Some(pos) = hover {
+        map.hover_at_and_settle(pos);
+    }
+    map.snapshot(name);
 }
 
 /// Snapshot: the halo band for the match hovered in the query results
@@ -1006,7 +768,7 @@ fn snap_query_match_reveal() {
 /// `draw` layers underneath.
 #[test]
 fn snap_query_match_hover_halo() {
-    let files = vec![make_snapshot_file()];
+    let files = vec![test_util::a_recording_with_every_marker_kind()];
 
     let mut map = MapScene::of(files)
         .tiles(TileAccess::Synthetic)
@@ -1070,17 +832,12 @@ fn log_layer(
     }
 }
 
-/// Every state a log hexagon draws in, over one track: a filter's plain
-/// glyphs, a cluster large enough to state its count, a second filter's
-/// colour beside the first, and the doubled outline of a shared colour.
-#[test]
-fn snap_log_match_hexagons() {
-    use gt_ui_types::{LogMatchColor, LogMatches};
-
-    let files = vec![make_snapshot_file()];
-    let positions = test_util::drawn_positions(&files);
+/// A filter's plain glyphs, a cluster large enough to state its count, a
+/// second filter's colour beside the first, and the doubled outline of a
+/// shared colour, all over one track.
+fn every_hexagon_state(drawn: &[MercPoint]) -> gt_ui_types::LogMatches {
     let merc_at = |index: usize| {
-        positions
+        drawn
             .get(index)
             .copied()
             .unwrap_or(MercPoint { x: 0.5, y: 0.5 })
@@ -1094,9 +851,9 @@ fn snap_log_match_hexagons() {
     // what it collapsed.
     let clustered = vec![merc_at(70); 8];
     let source = snapshot_log_source(20);
-    let log_matches = LogMatches::from_layers(vec![
+    gt_ui_types::LogMatches::from_layers(vec![
         log_layer(
-            LogMatchColor::LayerSlot {
+            gt_ui_types::LogMatchColor::LayerSlot {
                 index: 0,
                 shared: false,
             },
@@ -1104,89 +861,90 @@ fn snap_log_match_hexagons() {
             spread(40, 6),
         ),
         log_layer(
-            LogMatchColor::LayerSlot {
+            gt_ui_types::LogMatchColor::LayerSlot {
                 index: 1,
                 shared: true,
             },
             &source,
             spread(53, 4),
         ),
-        log_layer(LogMatchColor::LiveFilter, &source, clustered),
-    ]);
-
-    let mut map = MapScene::of(files)
-        .tiles(TileAccess::Synthetic)
-        .draw_state(|state| state.log_matches = log_matches)
-        .render();
-    map.snapshot("log_match_hexagons");
+        log_layer(gt_ui_types::LogMatchColor::LiveFilter, &source, clustered),
+    ])
 }
 
-/// A filter that matched every point of the track: its clusters draw evenly
-/// spaced along the line, each stating its own count.
-#[test]
-fn snap_log_matches_along_a_dense_track() {
-    use gt_ui_types::{LogMatchColor, LogMatches};
-
-    let files = vec![make_snapshot_file()];
-    let positions = test_util::drawn_positions(&files);
-    let source = snapshot_log_source(positions.len());
-    let log_matches = LogMatches::from_layers(vec![log_layer(
-        LogMatchColor::LayerSlot {
+/// One filter that matched every line of the log, one line per fix.
+fn one_layer_over_every_fix(drawn: &[MercPoint]) -> gt_ui_types::LogMatches {
+    let source = snapshot_log_source(drawn.len());
+    gt_ui_types::LogMatches::from_layers(vec![log_layer(
+        gt_ui_types::LogMatchColor::LayerSlot {
             index: 0,
             shared: false,
         },
         &source,
-        positions,
-    )]);
-
-    let mut map = MapScene::of(files)
-        .tiles(TileAccess::Synthetic)
-        .draw_state(|state| state.log_matches = log_matches)
-        .render();
-    map.snapshot("log_matches_along_a_dense_track");
+        drawn.to_vec(),
+    )])
 }
 
-/// Two filters that matched the same run of lines: the layer on top covers the
-/// one below glyph by glyph, count and all. The layer below counts three times
-/// as many lines, so a count escaping from under a covering hexagon would be
-/// wider than the one that belongs there.
-#[test]
-fn snap_log_matches_of_overlapping_layers() {
-    use gt_ui_types::{LogMatchColor, LogMatches};
-
-    let files = vec![make_snapshot_file()];
-    let track_positions = test_util::drawn_positions(&files);
-    let source = snapshot_log_source(track_positions.len() * 3);
+/// Two filters over the same run of lines. The layer below counts three times
+/// as many lines as the one on top, so a count escaping from under a covering
+/// hexagon would be wider than the one that belongs there. The covering layer
+/// matched only the first half, which leaves the layer below its own hexagons
+/// and counts along the rest of the track.
+fn two_overlapping_layers(drawn: &[MercPoint]) -> gt_ui_types::LogMatches {
+    let source = snapshot_log_source(drawn.len() * 3);
     let covered = log_layer(
-        LogMatchColor::LayerSlot {
+        gt_ui_types::LogMatchColor::LayerSlot {
             index: 0,
             shared: false,
         },
         &source,
-        track_positions.iter().flat_map(|&merc| [merc; 3]).collect(),
+        drawn.iter().flat_map(|&merc| [merc; 3]).collect(),
     );
-    // This layer matched only the first half of the run, so the layer below
-    // draws its own hexagons and counts along the rest of the track.
     let covering = log_layer(
-        LogMatchColor::LayerSlot {
+        gt_ui_types::LogMatchColor::LayerSlot {
             index: 1,
             shared: false,
         },
         &source,
-        track_positions
+        drawn
             .iter()
             .skip(2)
-            .take(track_positions.len() / 2)
+            .take(drawn.len() / 2)
             .copied()
             .collect(),
     );
-    let log_matches = LogMatches::from_layers(vec![covered, covering]);
+    gt_ui_types::LogMatches::from_layers(vec![covered, covering])
+}
+
+/// The hexagons a log filter puts on the map, and the layer switching off
+/// with its display category like every other kind of map ink.
+#[rstest::rstest]
+#[case::every_state("log_match_hexagons", every_hexagon_state, None)]
+#[case::a_dense_track("log_matches_along_a_dense_track", one_layer_over_every_fix, None)]
+#[case::overlapping_layers("log_matches_of_overlapping_layers", two_overlapping_layers, None)]
+#[case::hidden_by_the_display_mask(
+    "log_matches_hidden_by_display_mask",
+    one_layer_over_every_fix,
+    Some(DisplayCategory::LogMatches)
+)]
+fn snap_log_matches(
+    #[case] name: &str,
+    #[case] layers_for: fn(&[MercPoint]) -> gt_ui_types::LogMatches,
+    #[case] hidden: Option<DisplayCategory>,
+) {
+    let files = vec![test_util::a_recording_with_every_marker_kind()];
+    let log_matches = layers_for(&test_util::drawn_positions(&files));
 
     let mut map = MapScene::of(files)
         .tiles(TileAccess::Synthetic)
-        .draw_state(|state| state.log_matches = log_matches)
+        .draw_state(|state| {
+            state.log_matches = log_matches;
+            if let Some(category) = hidden {
+                state.display_mask.set_visible(category, false);
+            }
+        })
         .render();
-    map.snapshot("log_matches_of_overlapping_layers");
+    map.snapshot(name);
 }
 
 /// Entries the live-filter layer's cluster at the centre of the fixture stands
@@ -1202,7 +960,7 @@ fn log_map_harness(
     use gt_types::mercator;
     use gt_ui_types::TrackDataVisibility;
 
-    let files = vec![make_snapshot_file()];
+    let files = vec![test_util::a_recording_with_every_marker_kind()];
     let bounds = crate::viewport::compute_visible_bounding_box(
         &files,
         &TrackDataVisibility::from_loaded(&files),
@@ -1367,42 +1125,12 @@ fn snap_log_match_hover() {
     map.snapshot("log_match_hover");
 }
 
-/// The layer switches off with its display category, like every other kind of
-/// map ink.
-#[test]
-fn snap_log_matches_hidden_by_display_mask() {
-    use gt_ui_types::{LogMatchColor, LogMatches};
-
-    let files = vec![make_snapshot_file()];
-    let positions = test_util::drawn_positions(&files);
-    let source = snapshot_log_source(positions.len());
-    let log_matches = LogMatches::from_layers(vec![log_layer(
-        LogMatchColor::LayerSlot {
-            index: 0,
-            shared: false,
-        },
-        &source,
-        positions,
-    )]);
-
-    let mut map = MapScene::of(files)
-        .tiles(TileAccess::Synthetic)
-        .draw_state(|state| {
-            state.log_matches = log_matches;
-            state
-                .display_mask
-                .set_visible(DisplayCategory::LogMatches, false);
-        })
-        .render();
-    map.snapshot("log_matches_hidden_by_display_mask");
-}
-
 /// Snapshot: the display mask removes the marker ink (custom, generated,
 /// event) while the track, its icons, and the satellite labels stay.
 /// Compare against the marker-bearing fixture in the other snapshots.
 #[test]
 fn snap_display_mask_hides_markers() {
-    let files = vec![make_snapshot_file()];
+    let files = vec![test_util::a_recording_with_every_marker_kind()];
 
     let mut map = MapScene::of(files)
         .tiles(TileAccess::Synthetic)
@@ -1584,7 +1312,7 @@ fn snap_accuracy_circles_close_up() {
 #[case::ring("sky_glyphs_only_ring", gt_ui_types::SkyGlyphVariant::Ring)]
 #[case::disc("sky_glyphs_only_disc", gt_ui_types::SkyGlyphVariant::Disc)]
 fn snap_sky_glyphs_only(#[case] name: &str, #[case] variant: gt_ui_types::SkyGlyphVariant) {
-    let files = vec![make_snapshot_file()];
+    let files = vec![test_util::a_recording_with_every_marker_kind()];
 
     let mut map = MapScene::of(files)
         .tiles(TileAccess::Synthetic)
@@ -1611,7 +1339,7 @@ fn snap_sky_glyphs_only(#[case] name: &str, #[case] variant: gt_ui_types::SkyGly
 /// overlay. The ring around the point is the existing cross-highlight.
 #[test]
 fn snap_plot_hover_sky_disc() {
-    let files = vec![make_snapshot_file()];
+    let files = vec![test_util::a_recording_with_every_marker_kind()];
     // A mid-track point that carries a satellite report in the fixture.
     let hovered = (FileIdx::new(0), TrackIdx::new(0), PointIdx::new(50));
 
@@ -1633,7 +1361,7 @@ fn snap_plot_hover_sky_disc() {
 /// the window floor. Guards the whole composition, not just the body.
 #[test]
 fn snap_sticky_point_window() {
-    let files = vec![make_snapshot_file()];
+    let files = vec![test_util::a_recording_with_every_marker_kind()];
     // A mid-track point carrying a multi-constellation satellite report.
     let clicked = test_util::point_ref(DataCategory::Tpv, 50);
 
@@ -1659,7 +1387,7 @@ const POINT_WINDOW_WHEEL_POINTS: f32 = 200.0;
 fn scrolling_the_point_window_leaves_the_title_bar_untouched(#[case] viewport: egui::Vec2) {
     use gt_test_utils::HarnessInteraction as _;
 
-    let files = vec![make_snapshot_file()];
+    let files = vec![test_util::a_recording_with_every_marker_kind()];
     let clicked = test_util::point_ref(DataCategory::Tpv, 50);
 
     let mut map = MapScene::of(files)
@@ -1715,7 +1443,7 @@ fn scrolling_the_point_window_leaves_the_title_bar_untouched(#[case] viewport: e
 fn the_point_window_button_returns_a_timed_sky_trails_action() {
     use egui_kittest::kittest::Queryable as _;
 
-    let files = vec![make_snapshot_file()];
+    let files = vec![test_util::a_recording_with_every_marker_kind()];
     let clicked = test_util::point_ref(DataCategory::Tpv, 50);
     let point_time = files
         .first()
@@ -1769,7 +1497,7 @@ fn point_layout_covers_the_satellite_bearing_categories(
 /// A copy of the snapshot fixture whose custom marker carries a label far
 /// longer than any of the audit viewports fits.
 fn file_with_an_overlong_marker_label() -> gt_types::LoadedFile {
-    let mut file = make_snapshot_file();
+    let mut file = test_util::a_recording_with_every_marker_kind();
     for track in &mut file.tracks {
         for marker in &mut track.custom_markers {
             marker.label = gt_test_utils::oversized_text('m');

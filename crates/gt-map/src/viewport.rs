@@ -615,7 +615,8 @@ mod collection {
     use rstest::rstest;
 
     use super::*;
-    use crate::tests::{file_with_tracks, nav_at, track_over};
+    use crate::test_util;
+    use crate::tests;
 
     /// The viewport every case here collects from, in logical pixels.
     const VIEWPORT: egui::Rect =
@@ -632,10 +633,6 @@ mod collection {
     /// spans 512 px.
     const WHOLE_WORLD_ZOOM: f64 = 1.0;
 
-    fn the_only_track() -> TrackRef {
-        TrackRef::new(FileIdx::new(0), TrackIdx::new(0))
-    }
-
     /// Fixes at `positions`, one second apart.
     fn fixes_over(positions: &[(f64, f64)]) -> Vec<gt_types::NavPoint> {
         let start = chrono::DateTime::from_timestamp(0, 0).expect("valid timestamp");
@@ -643,7 +640,7 @@ mod collection {
             .iter()
             .zip(0_i64..)
             .map(|(&(lat, lon), second)| {
-                nav_at(start + chrono::Duration::seconds(second), lat, lon)
+                tests::nav_at(start + chrono::Duration::seconds(second), lat, lon)
             })
             .collect()
     }
@@ -652,7 +649,7 @@ mod collection {
     /// event marker at the first of them.
     fn one_file_over(positions: &[(f64, f64)]) -> Vec<LoadedFile> {
         let start = chrono::DateTime::from_timestamp(0, 0).expect("valid timestamp");
-        let mut track = track_over(fixes_over(positions));
+        let mut track = gt_test_utils::loaded_track_with_points(fixes_over(positions));
         if let Some(&(lat_degrees, lon_degrees)) = positions.first() {
             let lat = Latitude::new(lat_degrees);
             let lon = Longitude::new(lon_degrees);
@@ -678,7 +675,7 @@ mod collection {
                 lon,
             )];
         }
-        vec![file_with_tracks(vec![track])]
+        vec![gt_test_utils::loaded_file_with_tracks(vec![track])]
     }
 
     /// Two fixes 13 m apart, which [`ZOOM`] draws a fifth of a pixel apart:
@@ -695,9 +692,9 @@ mod collection {
     /// Two tracks whose icons draw at [`ZOOM`], the second one 1.3 km east of
     /// the first.
     fn two_tracks_whose_icons_draw() -> Vec<LoadedFile> {
-        vec![file_with_tracks(vec![
-            track_over(fixes_over(&[TRACK_START, (55.01, 12.0)])),
-            track_over(fixes_over(&[(55.0, 12.02), (55.01, 12.02)])),
+        vec![gt_test_utils::loaded_file_with_tracks(vec![
+            gt_test_utils::loaded_track_with_points(fixes_over(&[TRACK_START, (55.01, 12.0)])),
+            gt_test_utils::loaded_track_with_points(fixes_over(&[(55.0, 12.02), (55.01, 12.02)])),
         ])]
     }
 
@@ -819,7 +816,7 @@ mod collection {
             mask_showing(&[DisplayCategory::TrackPoints]),
         );
 
-        assert_eq!(collected_fixes(&visible, the_only_track()), vec![0, 1]);
+        assert_eq!(collected_fixes(&visible, test_util::track0()), vec![0, 1]);
         assert!(visible.custom().is_none());
     }
 
@@ -833,7 +830,7 @@ mod collection {
         );
 
         let second_track = TrackRef::new(FileIdx::new(0), TrackIdx::new(1));
-        assert_eq!(collected_fixes(&visible, the_only_track()), vec![0, 1]);
+        assert_eq!(collected_fixes(&visible, test_util::track0()), vec![0, 1]);
         assert_eq!(collected_fixes(&visible, second_track), vec![0, 1]);
     }
 
@@ -849,7 +846,7 @@ mod collection {
         );
 
         assert_eq!(
-            collected_fixes(&visible, the_only_track()),
+            collected_fixes(&visible, test_util::track0()),
             Vec::<usize>::new()
         );
     }
@@ -877,7 +874,7 @@ mod collection {
 
         let visible = collect(&files, mask_showing(&[DisplayCategory::TrackPoints]));
 
-        assert_eq!(collected_fixes(&visible, the_only_track()), expected);
+        assert_eq!(collected_fixes(&visible, test_util::track0()), expected);
     }
 
     /// A track across the antimeridian is bounded by a box whose two pieces
@@ -898,7 +895,7 @@ mod collection {
             WHOLE_WORLD_ZOOM,
         );
 
-        assert_eq!(collected_fixes(&visible, the_only_track()), vec![0, 1]);
+        assert_eq!(collected_fixes(&visible, test_util::track0()), vec![0, 1]);
     }
 }
 
@@ -909,7 +906,7 @@ mod zoom_to_fit {
     use rstest::rstest;
 
     use super::*;
-    use crate::tests::{file_with_tracks, nav_at, track_over, vis_all_visible};
+    use crate::tests;
 
     /// The viewport every case here frames into, in logical pixels.
     const VIEWPORT: egui::Rect =
@@ -931,12 +928,14 @@ mod zoom_to_fit {
         positions
             .iter()
             .zip(0_i64..)
-            .map(|(&(lat, lon), second)| nav_at(start + Duration::seconds(second), lat, lon))
+            .map(|(&(lat, lon), second)| tests::nav_at(start + Duration::seconds(second), lat, lon))
             .collect()
     }
 
     fn file_over(positions: &[(f64, f64)]) -> Vec<LoadedFile> {
-        vec![file_with_tracks(vec![track_over(fixes_at(positions))])]
+        vec![gt_test_utils::loaded_file_with_tracks(vec![
+            gt_test_utils::loaded_track_with_points(fixes_at(positions)),
+        ])]
     }
 
     /// An eastbound equatorial crossing running 179.0° E to 180.5° E:
@@ -948,7 +947,7 @@ mod zoom_to_fit {
     fn visible_bounds(files: &[LoadedFile]) -> GeoBounds {
         compute_visible_bounding_box(
             files,
-            &vis_all_visible(),
+            &tests::vis_all_visible(),
             &GlobalFilter::default(),
             DisplayMask::default(),
         )
@@ -956,10 +955,12 @@ mod zoom_to_fit {
     }
 
     /// Opening a Pacific recording frames the map through `adopt_new_files`
-    /// and [`zoom_to_fit`], which must center on the track's own center
-    /// meridian, 179.75° E.
+    /// and [`zoom_to_fit`], which centres on the track's own centre meridian,
+    /// 179.75° E, and zooms in on the 1.5° the track covers:
+    /// `log2(800 · 0.8 · 360 / (256 · 1.5))` is 9.23, while the long way
+    /// around the planet gives 1.32.
     #[test]
-    fn zoom_to_fit_across_the_antimeridian_centers_on_the_track() {
+    fn zoom_to_fit_across_the_antimeridian_centres_on_the_track_and_frames_its_arc() {
         let files = antimeridian_file();
         let mut map_memory = MapMemory::default();
         zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
@@ -969,16 +970,6 @@ mod zoom_to_fit {
             "expected the map centered near 179.75° E, got {}",
             center.x()
         );
-    }
-
-    /// The same framing must zoom in on the 1.5° the track covers:
-    /// `log2(800 · 0.8 · 360 / (256 · 1.5))` is 9.23, while the long way
-    /// around the planet gives 1.32.
-    #[test]
-    fn zoom_to_fit_across_the_antimeridian_frames_the_track_not_the_globe() {
-        let files = antimeridian_file();
-        let mut map_memory = MapMemory::default();
-        zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
         assert!(
             map_memory.zoom() > 8.0,
             "a 166.79 km track was framed at zoom {}",
@@ -1014,10 +1005,12 @@ mod zoom_to_fit {
     }
 
     /// A track that circles a pole is bounded by the cap over every meridian,
-    /// so the fit must size from the cap's 22.24 km diameter. Read as 360°
-    /// of longitude, the same box frames the whole globe at zoom 1.32.
+    /// so the fit sizes from the cap's 22.24 km diameter. Read as 360° of
+    /// longitude, the same box frames the whole globe at zoom 1.32. The cap
+    /// centres at 89.95°, which Web Mercator does not reach, so the map stops
+    /// at the parallel the projection ends on.
     #[test]
-    fn zoom_to_fit_around_the_pole_frames_the_track_not_the_globe() {
+    fn zoom_to_fit_around_the_pole_frames_the_cap_and_centres_at_the_projection_limit() {
         let files = file_over(AROUND_THE_NORTH_POLE);
         let mut map_memory = MapMemory::default();
         zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
@@ -1026,15 +1019,6 @@ mod zoom_to_fit {
             "a 22.24 km track around the pole was framed at zoom {}",
             map_memory.zoom()
         );
-    }
-
-    /// The cap around a pole centres at 89.95°, which Web Mercator does not
-    /// reach: the map has to stop at the parallel the projection ends on.
-    #[test]
-    fn zoom_to_fit_around_the_pole_centers_at_the_projection_limit() {
-        let files = file_over(AROUND_THE_NORTH_POLE);
-        let mut map_memory = MapMemory::default();
-        zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
         let center = map_memory.detached().expect("centered");
         assert!(
             (center.y() - mercator::MAX_LATITUDE_DEGREES).abs() < 1e-9,

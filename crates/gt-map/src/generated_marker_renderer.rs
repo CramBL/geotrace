@@ -388,9 +388,11 @@ fn draw_generated_marker(
 
 #[cfg(test)]
 mod snapshot_tests {
+    use gt_types::satellites::{Constellation, SatSample, Slip, SlipCause, SlipEvent, Snr};
+    use rstest::rstest;
+
     use super::show_slip_table;
     use crate::test_util;
-    use gt_types::satellites::{Constellation, SatSample, Slip, SlipCause, SlipEvent, Snr};
 
     fn sample(elevation: Option<f32>, azimuth: Option<f32>, snr: Option<f32>) -> SatSample {
         SatSample {
@@ -440,29 +442,19 @@ mod snapshot_tests {
         }
     }
 
-    #[test]
-    fn slip_table_dark() {
+    /// The slip detail table under both themes.
+    #[rstest]
+    #[case::dark("slip_detail_table_dark", true)]
+    #[case::light("slip_detail_table_light", false)]
+    fn snap_slip_table(#[case] name: &str, #[case] dark_mode: bool) {
         let event = mixed_slip_event();
         let mut harness = test_util::harness_builder()
             .size(egui::vec2(420.0, 200.0))
-            .theme(true)
+            .theme(dark_mode)
             .ui(move |ui| {
                 show_slip_table(ui, &event);
             });
         harness.run();
-        harness.snapshot("slip_detail_table_dark");
-    }
-
-    #[test]
-    fn slip_table_light() {
-        let event = mixed_slip_event();
-        let mut harness = test_util::harness_builder()
-            .size(egui::vec2(420.0, 200.0))
-            .theme(false)
-            .ui(move |ui| {
-                show_slip_table(ui, &event);
-            });
-        harness.run();
-        harness.snapshot("slip_detail_table_light");
+        harness.snapshot(name);
     }
 }
