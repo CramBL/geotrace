@@ -1,0 +1,42 @@
+---
+source: sdk/rust/geotrace-sdk/tests/inspect_tests.rs
+expression: inspect_bytes(&bytes)?
+---
+GeoTrace Data File - version 2
+────────────────────────────────────────────────────────────
+Metadata
+  —
+
+Nav Points              1 records
+  time                  2025-05-23T11:33:20Z → 2025-05-23T11:33:20Z
+  lat                   55.000° – 55.000°
+  lon                   12.000° – 12.000°
+  heading               90.0° – 90.0°
+  speed                 3.0 – 3.0 m/s  (1 / 1 present)
+
+Satellite Reports       0 records
+
+Markers                 0 records
+
+Event Markers           2 records
+  time                  2025-05-23T11:33:20Z → 2025-05-23T11:33:20Z
+  variant paths         1 distinct
+    power/boot          ×1
+  unreadable variant_path 1 / 2 rows
+    row 1               the field row is not UTF-8: invalid utf-8 sequence of 1 bytes from index 0
+  annotations           "battery replaced"
+  unreadable annotation 1 / 2 rows
+    row 1               the field row is not UTF-8: invalid utf-8 sequence of 1 bytes from index 0
+
+Event Marker Styles     2 records
+  power/boot            unreadable icon_name, unreadable color_hex
+  row 1                 wrench, #FF9900
+  unreadable variant_path 1 / 2 rows
+    row 1               the field row is not UTF-8: invalid utf-8 sequence of 1 bytes from index 0
+  unreadable icon_name  1 / 2 rows
+    row 0               the field row is not UTF-8: invalid utf-8 sequence of 1 bytes from index 0
+  unreadable color_hex  1 / 2 rows
+    row 0               the field row is not UTF-8: invalid utf-8 sequence of 1 bytes from index 0
+
+Channels                0 channels
+────────────────────────────────────────────────────────────

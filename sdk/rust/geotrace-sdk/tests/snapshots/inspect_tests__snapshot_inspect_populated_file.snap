@@ -5,29 +5,53 @@ expression: output
 GeoTrace Data File - version 2
 ────────────────────────────────────────────────────────────
 Metadata
-  title  : "Inspect test"
-  device : "test-device"
-  notes  : "a populated file"
+  title          : "Inspect test"
+  device         : "test-device"
+  notes          : "a populated file"
+  identity       : "test-fleet-7"
+  travel mode    : bicycle
+  sdk version    : <scrubbed>
 
 Nav Points              2 records
-  time                  2025-05-23T11:33:20Z → 2025-05-23T11:33:21Z
+  time                  2025-05-23T11:33:20Z → 2025-05-23T11:33:30Z
   lat                   51.500° – 51.600°
   lon                   -0.200° – -0.100°
   heading               180.0° – 270.0°
   speed                 10.0 – 12.5 m/s  (2 / 2 present)
 
 Satellite Reports       1 records  (1 / 2 nav points have data)
-  Tracked satellites    2 total  (avg 2.0 per report)
+  Tracked satellites    3 total  (avg 3.0 per report)
     constellations      GPS, Galileo
-    SNR                 30.0 – 35.0 dB-Hz  (2 / 2 present)
+    distinct satellites 3
+    elevation           5.0 – 72.0°  (3 / 3 present)
+    azimuth             45.0 – 310.0°  (3 / 3 present)
+    SNR                 30.0 – 99.0 dB-Hz  (3 / 3 present)
+    no-data SNR         1 / 3 readings at 99 dB-Hz
   Fix satellites        2 total  (avg 2.0 per report)
 
-Markers                 1 records
-  icons                 warning ×1
-  labels                "midpoint"
+Markers                 2 records
+  icons                 warning ×1, unrecognized code 200 ×1
+  labels                "midpoint", "icon from a newer writer"
+
+Event Markers           5 records
+  time                  2025-05-23T11:33:21Z → 2025-05-23T11:33:28Z
+  variant paths         3 distinct
+    app/start           ×1
+    gnss/fix_lost       ×2
+    power/boot          ×2
+  annotations           "antenna unplugged"
+
+Event Marker Styles     3 records
+  power/boot            wrench, #FF9900
+  gnss/fix_lost         —
+  sensor/fault          unrecognized icon "hovercraft", unrecognized color "FF9900"
 
 Channels                2 channels
   accel                 2 samples g
     components          x, y, z
+    description         "body frame acceleration"
+    time                2025-05-23T11:33:20Z → 2025-05-23T11:33:30Z
   incline               2 samples deg
+    period              360.0°
+    time                2025-05-23T11:33:20Z → 2025-05-23T11:33:30Z
 ────────────────────────────────────────────────────────────
