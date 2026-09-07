@@ -54,6 +54,10 @@ the app).
 - C `gtd_ts_from_seconds`, `gtd_ts_from_millis`, `gtd_ts_from_micros` and `gtd_ts_from_nanos` take an `int64_t` count and a `GtdTimestamp` out parameter and return a `GtdStatus`, with `GTD_ERR_OUT_OF_RANGE` for a count past the range a timestamp covers.
 - Rust `Timestamp::try_from_unix_seconds`, `try_from_unix_millis`, `try_from_unix_micros` and `try_from_unix_nanos` take an `i64` and return a `Result`, replacing `from_unix_seconds` and its three siblings.
 - C++ `Timestamp::try_from_seconds`, `try_from_millis`, `try_from_micros` and `try_from_nanos` return a `Result<Timestamp>`, and `Timestamp::from_seconds` and its siblings take a `std::int64_t` and throw `std::out_of_range` for a count past the range a timestamp covers.
+- An event marker outside the nav fix time range fails the build with Rust `BuildError::EventMarkersOutsideRange`, C `GTD_ERR_EVENT_MARKERS_OOB` (15), C++ `EventMarkersOutOfRangeError` or a Python `ValueError`, where it was placed on the nearest fix.
+- Lenient mode clamps an event marker outside the nav fix time range to the nearest fix and logs a warning.
+- An event marker on a builder with no nav fix fails the build with the no-nav-fixes error, where it was dropped.
+- Python `EventMarker` raises `TypeError` for a `variant_path` that is neither a `str`, `None` nor `event_kind.skip`, where it read any other value as `None`.
 
 ### Fixed
 
@@ -67,6 +71,7 @@ the app).
 - Fixed a timestamp of exactly 1969-12-31T23:59:59.999999Z being written as absent: writing it fails with an error stating the dataset and the record.
 - Fixed an annotation or event marker timestamped exactly at the last nav fix being placed outside the nav fix time range: it is placed on that fix.
 - Fixed a marker, event marker or ghost fix interpolated between two fixes on either side of the antimeridian being placed near longitude 0: it is placed on the short arc between the two fixes.
+- Fixed the reader accepting any `geotrace_version` beginning with a 1 or a 2, such as `10` or `1abc`: it reads the attribute as an integer and accepts 1 and 2 alone.
 
 ## [0.6.0] - 2026-09-03
 

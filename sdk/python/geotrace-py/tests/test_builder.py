@@ -10,6 +10,7 @@ import pytest
 from geotrace_sdk import (
     Annotation,
     Constellation,
+    EventMarker,
     MarkerIcon,
     Meta,
     NavFileBuilder,
@@ -389,6 +390,36 @@ def test_an_annotation_outside_the_nav_fix_time_range_fails_the_build() -> None:
     b.add(Annotation(T2, label="After the last fix"))
 
     with pytest.raises(ValueError, match="outside the nav fix time range"):
+        b.finish()
+
+
+def test_lenient_errors_clamps_an_event_marker_outside_the_nav_fix_time_range() -> None:
+    b = NavFileBuilder().with_lenient_errors()
+    b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
+    b.add(NavFix(lat=51.51, lon=-0.11, gps_time=T1))
+    b.add(EventMarker("power/boot", T2))
+
+    f = b.finish()
+
+    assert len(f.event_markers) == 1
+    assert f.event_markers[0].lat == pytest.approx(51.51)
+
+
+def test_an_event_marker_outside_the_nav_fix_time_range_fails_the_build() -> None:
+    b = NavFileBuilder()
+    b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
+    b.add(NavFix(lat=51.51, lon=-0.11, gps_time=T1))
+    b.add(EventMarker("power/boot", T2))
+
+    with pytest.raises(ValueError, match="outside the nav fix time range"):
+        b.finish()
+
+
+def test_an_event_marker_without_a_nav_fix_fails_the_build() -> None:
+    b = NavFileBuilder()
+    b.add(EventMarker("power/boot", T0))
+
+    with pytest.raises(ValueError, match="no nav fixes were added"):
         b.finish()
 
 

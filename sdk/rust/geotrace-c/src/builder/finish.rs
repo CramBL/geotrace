@@ -19,6 +19,7 @@ use crate::error::{self, GtdStatus};
 ///
 /// @return `GTD_ERR_NO_NAV_FIXES` if no nav fixes were added.
 /// @return `GTD_ERR_ANNOTATIONS_OOB` if annotations fall outside the time range (unless lenient).
+/// @return `GTD_ERR_EVENT_MARKERS_OOB` if event markers fall outside the time range (unless lenient).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_finish(
     builder: *mut GtdFileBuilder,
@@ -56,6 +57,12 @@ pub unsafe extern "C" fn gtd_builder_finish(
                     "{count} annotation(s) fall outside the nav fix time range"
                 ));
                 GtdStatus::GTD_ERR_ANNOTATIONS_OOB
+            }
+            Err(BuildError::EventMarkersOutsideRange { count }) => {
+                error::set_last_error(format!(
+                    "{count} event marker(s) fall outside the nav fix time range"
+                ));
+                GtdStatus::GTD_ERR_EVENT_MARKERS_OOB
             }
             Err(BuildError::DuplicateChannelName { name }) => {
                 error::set_last_error(format!("two channels share the name {name:?}"));

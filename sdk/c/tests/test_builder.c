@@ -183,8 +183,8 @@ Test(builder, no_fixes_error) {
     GtdTimestamp timestamp;
     cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
 
-    /* NoNavFixes is only returned when there are annotations but no fixes.
-       An empty builder (no fixes, no annotations) is valid and returns OK. */
+    /* NoNavFixes is returned when a marker requires interpolation and no fix
+       exists to interpolate from. An empty builder is valid and returns OK. */
     cr_assert_eq(gtd_builder_add_annotation(builder, timestamp, "note", GTD_ICON_PIN), GTD_OK);
 
     GtdNavFile *file = NULL;
@@ -192,6 +192,66 @@ Test(builder, no_fixes_error) {
     cr_assert_eq(status, GTD_ERR_NO_NAV_FIXES);
     cr_assert_null(file);
     cr_assert_not_null(gtd_last_error());
+}
+
+Test(builder, event_marker_without_a_nav_fix_error) {
+    GtdFileBuilder *builder = gtd_builder_create();
+    cr_assert_not_null(builder);
+
+    GtdTimestamp marker_time;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &marker_time), GTD_OK);
+    cr_assert_eq(gtd_builder_add_event_marker(builder, "power/boot", marker_time, NULL), GTD_OK);
+
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_ERR_NO_NAV_FIXES);
+    cr_assert_null(file);
+    cr_assert_not_null(gtd_last_error());
+}
+
+Test(builder, event_marker_after_the_last_fix_error) {
+    GtdFileBuilder *builder = gtd_builder_create();
+    cr_assert_not_null(builder);
+
+    GtdTimestamp fix_time;
+    GtdTimestamp marker_time;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &fix_time), GTD_OK);
+    cr_assert_eq(gtd_ts_from_seconds(1700000010, &marker_time), GTD_OK);
+
+    cr_assert_eq(gtd_builder_add_nav_fix(builder, fix_time, gtd_ts_none(), 51.5074, -0.1278,
+                                         GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
+                 GTD_OK);
+    cr_assert_eq(gtd_builder_add_event_marker(builder, "power/boot", marker_time, NULL), GTD_OK);
+
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_ERR_EVENT_MARKERS_OOB);
+    cr_assert_null(file);
+    cr_assert_not_null(gtd_last_error());
+}
+
+Test(builder, event_marker_after_the_last_fix_is_clamped_in_lenient_mode) {
+    GtdFileBuilder *builder = gtd_builder_create();
+    cr_assert_not_null(builder);
+    cr_assert_eq(gtd_builder_set_lenient(builder), GTD_OK);
+
+    GtdTimestamp fix_time;
+    GtdTimestamp marker_time;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &fix_time), GTD_OK);
+    cr_assert_eq(gtd_ts_from_seconds(1700000010, &marker_time), GTD_OK);
+
+    cr_assert_eq(gtd_builder_add_nav_fix(builder, fix_time, gtd_ts_none(), 51.5074, -0.1278,
+                                         GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
+                 GTD_OK);
+    cr_assert_eq(gtd_builder_add_event_marker(builder, "power/boot", marker_time, NULL), GTD_OK);
+
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_OK);
+
+    GtdEventMarkerInfo marker;
+    cr_assert_eq(gtd_nav_file_get_event_marker(file, 0, &marker), GTD_OK);
+    assert_near(marker.lat_deg, 51.5074, 1e-9);
+    assert_near(marker.lon_deg, -0.1278, 1e-9);
+
+    gtd_nav_file_destroy(file);
 }
 
 Test(builder, nav_fix_without_a_timestamp) {

@@ -107,6 +107,10 @@ typedef enum {
      */
     GTD_ERR_CALL_ORDER = 14,
     /**
+     * Event marker(s) outside the nav fix time range.
+     */
+    GTD_ERR_EVENT_MARKERS_OOB = 15,
+    /**
      * Internal error (bug in the SDK).
      */
     GTD_ERR_INTERNAL = 99,
@@ -701,8 +705,10 @@ extern "C" {
  *
  * @return `GTD_ERR_NO_NAV_FIXES` if no nav fixes were added.
  * @return `GTD_ERR_ANNOTATIONS_OOB` if annotations fall outside the time range (unless lenient).
+ * @return `GTD_ERR_EVENT_MARKERS_OOB` if event markers fall outside the time range (unless lenient).
  */
-GtdStatus gtd_builder_finish(GtdFileBuilder *builder, GtdNavFile **out);
+GtdStatus gtd_builder_finish(GtdFileBuilder *builder,
+                             GtdNavFile **out);
 
 /**
  * Add a GPS navigation fix.
@@ -925,8 +931,9 @@ GtdStatus gtd_builder_set_travel_mode(GtdFileBuilder *builder, GtdTravelMode mod
  * Enable lenient mode.
  *
  * By default `gtd_builder_finish()` returns `GTD_ERR_ANNOTATIONS_OOB` when any
- * annotation falls outside the nav fix time range. Calling this function
- * downgrades that error to a warning and lets the build succeed.
+ * annotation falls outside the nav fix time range, and
+ * `GTD_ERR_EVENT_MARKERS_OOB` when any event marker does. Calling this function
+ * clamps each to the nearest endpoint and downgrades the error to a warning.
  *
  * Must be called before the first `gtd_builder_add_*` call.
  *

@@ -325,12 +325,25 @@ fn timestamp_precision() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[test]
-fn version_rejection() -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = make_file_with_version("99");
+#[rstest]
+#[case::a_number_the_reader_does_not_support("10")]
+#[case::digits_followed_by_letters("1abc")]
+fn a_geotrace_version_outside_the_supported_set_fails_the_read(#[case] version: &str) {
+    let bytes = make_file_with_version(version);
     let err = NavFile::read(bytes.as_slice()).expect_err("should reject unknown version");
-    assert!(matches!(err, Error::UnsupportedVersion { version } if version == "99"));
-    Ok(())
+    assert!(
+        matches!(err, Error::UnsupportedVersion { version: ref read } if read == version),
+        "expected UnsupportedVersion({version:?}), got: {err:?}"
+    );
+}
+
+#[rstest]
+#[case::the_version_the_writer_stamps("1")]
+#[case::the_layout_with_the_microsecond_timestamps("2")]
+fn a_supported_geotrace_version_reads(#[case] version: &str) {
+    let bytes = make_file_with_version(version);
+    let nav_file = NavFile::read(bytes.as_slice()).expect("a supported version reads");
+    assert_eq!(nav_file.nav_points().len(), 0);
 }
 
 fn make_file_with_version(version: &str) -> Vec<u8> {
@@ -652,7 +665,8 @@ fn file_with_a_satellite_report_at(time: NavFixTime) -> NavFile {
 
 #[expect(clippy::expect_used, reason = "test setup must succeed")]
 fn file_with_an_event_marker_at(sys_time: DateTime<Utc>) -> NavFile {
-    let mut recorder = NavFileBuilder::new().open();
+    // The marker is before the single fix. Lenient mode clamps it to that fix.
+    let mut recorder = NavFileBuilder::new().with_lenient_errors().open();
     recorder.add_nav_fix(fix_at(NavFixTime::Receiver(instant(
         "1970-01-01T00:00:00Z",
     ))));

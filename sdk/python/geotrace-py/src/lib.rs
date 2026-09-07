@@ -18,7 +18,9 @@ use geotrace_sdk::{
     RecordedFixTimestamps, Satellite, SatelliteReport, TravelMode, Unit, Velocity,
 };
 use pyo3::IntoPyObjectExt as _;
-use pyo3::exceptions::{PyIOError, PyIndexError, PyRuntimeError, PyUserWarning, PyValueError};
+use pyo3::exceptions::{
+    PyIOError, PyIndexError, PyRuntimeError, PyTypeError, PyUserWarning, PyValueError,
+};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList, PySlice};
 use pyo3_log::{Caching, Logger};
@@ -1128,11 +1130,23 @@ impl PyMarker {
     }
 }
 
+/// The ``event_kind.skip`` sentinel value is the single instance of the private
+/// ``_Skip`` class of ``geotrace_sdk.event_kind``.
+fn is_skip_sentinel(value: &Bound<'_, PyAny>) -> PyResult<bool> {
+    let skip = value
+        .py()
+        .import("geotrace_sdk.event_kind")?
+        .getattr("event_kind")?
+        .getattr("skip")?;
+    let skip_type = skip.get_type();
+    value.is_instance(skip_type.as_any())
+}
+
 /// An event marker to add to the nav track.
 ///
 /// ``variant_path`` is a slash-separated hierarchy, e.g. ``"power/boot"`` or
 /// ``"connectivity/agps/request"``, or ``None`` (or the ``event_kind.skip``
-/// sentinel value) to silently skip this marker.
+/// sentinel value) to skip this marker. Anything else raises ``TypeError``.
 /// Allowed characters: ASCII alphanumeric, hyphen, underscore, and slash.
 /// No leading or trailing slash. No empty segments (``//``). Max 255 bytes.
 /// ``annotation`` holds at most 511 bytes, checked when ``NavFileBuilder.add()``
@@ -1152,8 +1166,9 @@ impl PyEventMarker {
     /// Create an ``EventMarker``.
     ///
     /// ``variant_path`` may be a path string, ``None``, or the
-    /// ``event_kind.skip`` sentinel value - the latter two are treated as a
-    /// silent no-op when passed to ``NavFileBuilder.add()``.
+    /// ``event_kind.skip`` sentinel value - the latter two are a no-op when the
+    /// marker is passed to ``NavFileBuilder.add()``. Any other type raises
+    /// ``TypeError``.
     #[new]
     #[pyo3(signature = (variant_path, sys_time, *, annotation=None))]
     fn new(
@@ -1161,8 +1176,21 @@ impl PyEventMarker {
         sys_time: DateTime<FixedOffset>,
         annotation: Option<String>,
     ) -> PyResult<Self> {
-        // Accept None or any non-string value (e.g. the skip sentinel value) as None.
-        let path = variant_path.and_then(|v| v.extract::<String>().ok());
+        let path = match variant_path {
+            None => None,
+            Some(value) => {
+                if let Ok(path) = value.extract::<String>() {
+                    Some(path)
+                } else if is_skip_sentinel(&value)? {
+                    None
+                } else {
+                    return Err(PyTypeError::new_err(format!(
+                        "variant_path must be a str, None, or event_kind.skip, not {}",
+                        value.get_type().name()?
+                    )));
+                }
+            }
+        };
         // Validate the path if one is supplied.
         if let Some(ref p) = path {
             geotrace_sdk::EventMarker::builder()

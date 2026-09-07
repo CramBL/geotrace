@@ -22,6 +22,10 @@ use geotrace_sdk_units::ChannelUnit;
 use hdf5_pure::AttrValue;
 use strum::IntoEnumIterator;
 
+/// The `geotrace_version` attribute values this reader accepts, each written as
+/// a bare integer. The writer stamps 1. Test fixtures in this repository stamp 2.
+const SUPPORTED_FORMAT_VERSIONS: [u32; 2] = [1, 2];
+
 pub(crate) fn parse_hdf5(bytes: Vec<u8>) -> Result<NavFile, Error> {
     let file = SizeCheckedFile::from_bytes(bytes)?;
     let root = file.root();
@@ -35,7 +39,10 @@ pub(crate) fn parse_hdf5(bytes: Vec<u8>) -> Result<NavFile, Error> {
             });
         }
     };
-    if !version.starts_with('1') && !version.starts_with('2') {
+    let supported = version
+        .parse::<u32>()
+        .is_ok_and(|number| SUPPORTED_FORMAT_VERSIONS.contains(&number));
+    if !supported {
         return Err(Error::UnsupportedVersion { version });
     }
 

@@ -14,6 +14,7 @@ using geotrace::CallOrderError;
 using geotrace::Channel;
 using geotrace::Error;
 using geotrace::EventMarker;
+using geotrace::EventMarkersOutOfRangeError;
 using geotrace::FieldTooLongError;
 using geotrace::FileBuilder;
 using geotrace::FixTime;
@@ -38,6 +39,7 @@ TEST_CASE("exception hierarchy: all types derive from geotrace::Error") {
     CHECK(std::is_base_of_v<Error, CallOrderError>);
     CHECK(std::is_base_of_v<BuildError, NoNavFixesError>);
     CHECK(std::is_base_of_v<BuildError, AnnotationsOutOfRangeError>);
+    CHECK(std::is_base_of_v<BuildError, EventMarkersOutOfRangeError>);
 }
 
 TEST_CASE("exception hierarchy: all types derive from std::exception") {
@@ -56,6 +58,19 @@ TEST_CASE("exception: NoNavFixesError is catchable as BuildError and Error") {
     CHECK_THROWS_AS(throw_it(), BuildError);
     CHECK_THROWS_AS(throw_it(), Error);
     CHECK_THROWS_AS(throw_it(), std::exception);
+}
+
+TEST_CASE("exception: EventMarkersOutOfRangeError is catchable as BuildError and Error") {
+    auto throw_it = [] {
+        FileBuilder builder;
+        builder.add_nav_fix(NavFix{FixTime::receiver(Timestamp::from_seconds(1700000000)),
+                                   Angle::degrees(0.0), Angle::degrees(0.0)});
+        builder.add_event_marker(EventMarker{"power/boot", Timestamp::from_seconds(1700000010)});
+        static_cast<void>(builder.finish());
+    };
+    CHECK_THROWS_AS(throw_it(), EventMarkersOutOfRangeError);
+    CHECK_THROWS_AS(throw_it(), BuildError);
+    CHECK_THROWS_AS(throw_it(), Error);
 }
 
 TEST_CASE("exception: InvalidPathError is catchable as Error") {

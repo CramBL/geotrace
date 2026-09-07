@@ -554,9 +554,12 @@ class EventMarker:
 
     Args:
         variant_path: Slash-separated path, e.g. ``"power/boot"``, or ``None`` /
-            ``event_kind.skip`` to silently skip this marker.
+            ``event_kind.skip`` to skip this marker.
         sys_time: Timezone-aware timestamp for this event.
         annotation: Optional free-text note shown on hover.
+
+    Raises:
+        TypeError: If ``variant_path`` is of any other type.
     """
 
     def __init__(

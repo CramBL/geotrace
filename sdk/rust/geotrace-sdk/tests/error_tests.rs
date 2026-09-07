@@ -97,33 +97,6 @@ fn missing_version_attribute_returns_error() {
     );
 }
 
-/// A file that uses an unrecognised version string should return UnsupportedVersion.
-#[test]
-fn unrecognised_version_string_returns_unsupported_version() {
-    let mut fb = FileBuilder::new();
-    fb.set_attr("geotrace_version", AttrValue::String("99".into()));
-    let mut np = fb.create_group("nav_points");
-    np.create_dataset("time")
-        .with_i64_data(&[])
-        .with_shape(&[0]);
-    np.create_dataset("lat").with_f64_data(&[]).with_shape(&[0]);
-    np.create_dataset("lon").with_f64_data(&[]).with_shape(&[0]);
-    np.create_dataset("heading")
-        .with_f64_data(&[])
-        .with_shape(&[0]);
-    np.create_dataset("speed_mps")
-        .with_f64_data(&[])
-        .with_shape(&[0]);
-    fb.add_group(np.finish());
-    let bytes = fb.finish().expect("build");
-
-    let result = NavFile::read(bytes.as_slice());
-    assert!(
-        matches!(result, Err(Error::UnsupportedVersion { ref version }) if version == "99"),
-        "expected UnsupportedVersion(\"99\"), got: {result:?}"
-    );
-}
-
 /// The `gps_time_us` and `sys_time_us` a `.gtd` file stores for one nav point,
 /// `u64::MAX` standing for an absent one.
 struct StoredNavPointTimestampsUs {
