@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import datetime, timedelta
 from enum import Enum
 from os import PathLike
-from typing import Any, final
+from typing import Any, final, overload
 
 from ._unit_catalog import UnitCatalog
 
@@ -644,6 +645,122 @@ class EventMarkerPoint:
     def annotation(self) -> str | None: ...
 
 @final
+class NavPointSequence:
+    """The nav points of a :class:`NavFile`, in chronological order.
+
+    Supports ``len()``, indexing, slicing and iteration, and builds one
+    :class:`NavPoint` per element read. The sequence keeps working after the
+    :class:`NavFile` object is gone.
+    """
+
+    def __len__(self) -> int: ...
+    @overload
+    def __getitem__(self, key: int) -> NavPoint: ...
+    @overload
+    def __getitem__(self, key: slice) -> list[NavPoint]: ...
+    def __iter__(self) -> Iterator[NavPoint]: ...
+    def latitudes(self) -> list[float]:
+        """Every point's latitude in degrees."""
+        ...
+
+    def longitudes(self) -> list[float]:
+        """Every point's longitude in degrees."""
+        ...
+
+    def gps_times(self) -> list[datetime | None]:
+        """Every point's GPS-receiver timestamp.
+
+        ``None`` where the receiver had no lock.
+        """
+        ...
+
+    def sys_times(self) -> list[datetime | None]:
+        """Every point's system-clock timestamp.
+
+        ``None`` where the recorder supplied none.
+        """
+        ...
+
+    def headings(self) -> list[float | None]:
+        """Every point's heading in degrees, or ``None`` for a fix without one."""
+        ...
+
+    def speeds_mps(self) -> list[float | None]:
+        """Every point's speed in m/s, or ``None`` for a fix without one."""
+        ...
+
+    def eph_m_values(self) -> list[float | None]:
+        """Every point's horizontal accuracy radius in metres.
+
+        ``None`` for a fix without one.
+        """
+        ...
+
+@final
+class MarkerSequence:
+    """The map markers of a :class:`NavFile` with their interpolated positions.
+
+    Supports ``len()``, indexing, slicing and iteration, and builds one
+    :class:`Marker` per element read. The sequence keeps working after the
+    :class:`NavFile` object is gone.
+    """
+
+    def __len__(self) -> int: ...
+    @overload
+    def __getitem__(self, key: int) -> Marker: ...
+    @overload
+    def __getitem__(self, key: slice) -> list[Marker]: ...
+    def __iter__(self) -> Iterator[Marker]: ...
+
+@final
+class EventMarkerPointSequence:
+    """The event markers of a :class:`NavFile` with their interpolated positions.
+
+    Supports ``len()``, indexing, slicing and iteration, and builds one
+    :class:`EventMarkerPoint` per element read. The sequence keeps working
+    after the :class:`NavFile` object is gone.
+    """
+
+    def __len__(self) -> int: ...
+    @overload
+    def __getitem__(self, key: int) -> EventMarkerPoint: ...
+    @overload
+    def __getitem__(self, key: slice) -> list[EventMarkerPoint]: ...
+    def __iter__(self) -> Iterator[EventMarkerPoint]: ...
+
+@final
+class ChannelSequence:
+    """The sensor channels of a :class:`NavFile`, sorted by name.
+
+    Supports ``len()``, indexing, slicing and iteration, and builds one
+    :class:`Channel` per element read. The sequence keeps working after the
+    :class:`NavFile` object is gone.
+    """
+
+    def __len__(self) -> int: ...
+    @overload
+    def __getitem__(self, key: int) -> Channel: ...
+    @overload
+    def __getitem__(self, key: slice) -> list[Channel]: ...
+    def __iter__(self) -> Iterator[Channel]: ...
+
+@final
+class EventMarkerStyleSequence:
+    """The per-variant event marker styles of a :class:`NavFile`.
+
+    Supports ``len()``, indexing, slicing and iteration, and builds one
+    :class:`EventMarkerStyle` per element read. The sequence keeps working
+    after the :class:`NavFile` object is gone.
+    """
+
+    def __len__(self) -> int: ...
+    @overload
+    def __getitem__(self, key: int) -> EventMarkerStyle: ...
+    @overload
+    def __getitem__(self, key: slice) -> list[EventMarkerStyle]: ...
+    def __iter__(self) -> Iterator[EventMarkerStyle]: ...
+
+@final
 class NavFile:
     """A parsed ``.gtd`` navigation data file.
 
@@ -675,36 +792,37 @@ class NavFile:
         ...
 
     @property
-    def points(self) -> list[NavPoint]:
+    def points(self) -> NavPointSequence:
         """All nav points in chronological order."""
         ...
 
     @property
-    def markers(self) -> list[Marker]:
+    def markers(self) -> MarkerSequence:
         """All map markers with their interpolated positions.
 
-        Raises a ``UserWarning`` for a marker holding an icon code this build
-        does not have. Its ``icon`` reads as ``None``. Its ``icon_code`` holds
-        the code.
+        Reading this attribute raises a ``UserWarning`` for a marker with an
+        icon code unknown to this build. Its ``icon`` reads as ``None``. Its
+        ``icon_code`` contains the code.
         """
         ...
 
     @property
-    def event_markers(self) -> list[EventMarkerPoint]:
+    def event_markers(self) -> EventMarkerPointSequence:
         """All event markers with their interpolated positions."""
         ...
 
     @property
-    def event_marker_styles(self) -> list[EventMarkerStyle]:
+    def event_marker_styles(self) -> EventMarkerStyleSequence:
         """Per-variant style overrides stored in the file.
 
-        Raises a ``UserWarning`` for a style naming an icon this build does not
-        have. Its ``icon`` reads as ``None``. Its ``icon_name`` holds the name.
+        Reading this attribute raises a ``UserWarning`` for a style with an icon
+        unknown to this build. Its ``icon`` reads as ``None``. Its ``icon_name``
+        contains the name.
         """
         ...
 
     @property
-    def channels(self) -> list[Channel]:
+    def channels(self) -> ChannelSequence:
         """All ad-hoc sensor channels, sorted by name."""
         ...
 

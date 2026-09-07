@@ -22,6 +22,11 @@ Quick start - reading a file::
     nav_file = NavFile.open("track.gtd")
     for point in nav_file.points:
         print(point.lat, point.lon, point.gps_time)
+
+Reading one field of every fix::
+
+    lons = nav_file.points.longitudes()
+    lats = nav_file.points.latitudes()
 """
 
 from importlib.metadata import PackageNotFoundError
@@ -30,18 +35,23 @@ from importlib.metadata import version as _dist_version
 from geotrace_sdk._geotrace_sdk import (
     Annotation,
     Channel,
+    ChannelSequence,
     ChannelUnit,
     Constellation,
     EventMarker,
     EventMarkerPoint,
+    EventMarkerPointSequence,
     EventMarkerStyle,
+    EventMarkerStyleSequence,
     Marker,
     MarkerIcon,
+    MarkerSequence,
     Meta,
     NavFile,
     NavFileBuilder,
     NavFix,
     NavPoint,
+    NavPointSequence,
     Satellite,
     SatelliteReport,
     TravelMode,
@@ -58,18 +68,23 @@ __all__ = [
     "__version__",
     "Annotation",
     "Channel",
+    "ChannelSequence",
     "ChannelUnit",
     "Constellation",
     "EventMarker",
     "EventMarkerPoint",
+    "EventMarkerPointSequence",
     "EventMarkerStyle",
+    "EventMarkerStyleSequence",
     "Marker",
     "MarkerIcon",
+    "MarkerSequence",
     "Meta",
     "NavFile",
     "NavFileBuilder",
     "NavFix",
     "NavPoint",
+    "NavPointSequence",
     "Satellite",
     "SatelliteReport",
     "TravelMode",

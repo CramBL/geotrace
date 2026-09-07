@@ -21,9 +21,11 @@ the app).
 - C++ `NavFile::satellite_warning_count`, `satellite_warning` and `try_satellite_warning` read them through `SatelliteWarningView`.
 - Python `NavFileBuilder.with_lenient_errors()` clamps an annotation outside the nav fix time range to the nearest fix, where the build otherwise fails.
 - Python `NavFileBuilder.with_satellite_window(timedelta)`, C `gtd_builder_set_satellite_window_us(uint64_t)` and C++ `FileBuilder::satellite_window(std::chrono::microseconds)` set how far a satellite report may be from a nav fix to be associated with it. Python raises `ValueError` and C++ throws `std::invalid_argument` for a negative window.
+- Python `NavFile.points` has `latitudes()`, `longitudes()`, `gps_times()`, `sys_times()`, `headings()`, `speeds_mps()` and `eph_m_values()`, each returning that field of every fix as a list.
 
 ### Changed
 
+- Python `NavFile.points`, `markers`, `event_markers`, `channels` and `event_marker_styles` return a sequence supporting `len()`, indexing, slicing and iteration, in place of a list rebuilt on every attribute access.
 - Rust `NavFileBuilder::with_satellite_window` takes a `std::time::Duration`, which cannot be negative. A window longer than `i64::MAX` microseconds associates every satellite report with its nearest nav fix.
 - C `GtdNavPointInfo` has two new `GtdTimestamp` fields, `sat_report_gps_time` and `sat_report_sys_time`, each `gtd_ts_none()` where the nav point has no satellite report and where the report has no such timestamp. C++ `NavPointView` has the two as `std::optional<Timestamp>`.
 - C `GtdSatellite` and `GtdSatInfo` take a satellite's elevation, azimuth and SNR as the new `GtdOptF32` (`GTD_SOME_F32`, `GTD_NONE_F32`), and C++ `Satellite` and `SatelliteView` as `std::optional<float>`, the 32-bit float the file stores.

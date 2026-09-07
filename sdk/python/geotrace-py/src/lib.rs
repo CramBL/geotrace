@@ -8,6 +8,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::ffi::CString;
 use std::hash::{Hash as _, Hasher as _};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use chrono::{DateTime, Duration, FixedOffset, Utc};
 use geotrace_sdk::{
@@ -16,9 +17,10 @@ use geotrace_sdk::{
     Marker, MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix, NavFixTime, NavPoint, NavRecorder,
     RecordedFixTimestamps, Satellite, SatelliteReport, TravelMode, Unit, Velocity,
 };
-use pyo3::exceptions::{PyIOError, PyRuntimeError, PyUserWarning, PyValueError};
+use pyo3::IntoPyObjectExt as _;
+use pyo3::exceptions::{PyIOError, PyIndexError, PyRuntimeError, PyUserWarning, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBytes, PyList, PySlice};
 use pyo3_log::{Caching, Logger};
 
 fn to_fixed(dt: DateTime<Utc>) -> DateTime<FixedOffset> {
@@ -575,6 +577,14 @@ pub struct PyChannel {
     inner: Channel,
 }
 
+impl From<&Channel> for PyChannel {
+    fn from(channel: &Channel) -> Self {
+        Self {
+            inner: channel.clone(),
+        }
+    }
+}
+
 #[pymethods]
 impl PyChannel {
     #[new]
@@ -968,6 +978,14 @@ pub struct PyNavPoint {
     inner: NavPoint,
 }
 
+impl From<&NavPoint> for PyNavPoint {
+    fn from(point: &NavPoint) -> Self {
+        Self {
+            inner: point.clone(),
+        }
+    }
+}
+
 #[pymethods]
 impl PyNavPoint {
     /// Latitude in degrees, expected in [-90, 90].
@@ -1038,6 +1056,14 @@ impl PyNavPoint {
 #[derive(Debug, Clone)]
 pub struct PyMarker {
     inner: Marker,
+}
+
+impl From<&Marker> for PyMarker {
+    fn from(marker: &Marker) -> Self {
+        Self {
+            inner: marker.clone(),
+        }
+    }
 }
 
 #[pymethods]
@@ -1185,6 +1211,21 @@ pub struct PyEventMarkerStyle {
     color: Option<String>,
 }
 
+impl From<&EventMarkerStyle> for PyEventMarkerStyle {
+    fn from(style: &EventMarkerStyle) -> Self {
+        Self {
+            variant_path: style.variant_path.clone(),
+            icon: style.icon.clone(),
+            color: match &style.color {
+                EventMarkerColor::Auto => None,
+                EventMarkerColor::Hex(hex) | EventMarkerColor::Unrecognized(hex) => {
+                    Some(hex.clone())
+                }
+            },
+        }
+    }
+}
+
 #[pymethods]
 impl PyEventMarkerStyle {
     #[new]
@@ -1246,6 +1287,14 @@ pub struct PyEventMarkerPoint {
     inner: EventMarkerPoint,
 }
 
+impl From<&EventMarkerPoint> for PyEventMarkerPoint {
+    fn from(point: &EventMarkerPoint) -> Self {
+        Self {
+            inner: point.clone(),
+        }
+    }
+}
+
 #[pymethods]
 impl PyEventMarkerPoint {
     #[getter]
@@ -1285,13 +1334,254 @@ impl PyEventMarkerPoint {
     }
 }
 
+const INDEX_OUT_OF_RANGE: &str = "index out of range";
+
+fn position_or_index_error(index: isize, len: usize) -> PyResult<usize> {
+    let length = isize::try_from(len).map_err(|_| PyIndexError::new_err(INDEX_OUT_OF_RANGE))?;
+    let position = if index < 0 {
+        index
+            .checked_add(length)
+            .ok_or_else(|| PyIndexError::new_err(INDEX_OUT_OF_RANGE))?
+    } else {
+        index
+    };
+    if position < 0 || position >= length {
+        return Err(PyIndexError::new_err(INDEX_OUT_OF_RANGE));
+    }
+    usize::try_from(position).map_err(|_| PyIndexError::new_err(INDEX_OUT_OF_RANGE))
+}
+
+fn slice_positions(slice: &Bound<'_, PySlice>, len: usize) -> PyResult<Vec<usize>> {
+    let length = isize::try_from(len).map_err(|_| PyIndexError::new_err(INDEX_OUT_OF_RANGE))?;
+    let indices = slice.indices(length)?;
+    let mut positions = Vec::with_capacity(indices.slicelength);
+    let mut at = indices.start;
+    for _ in 0..indices.slicelength {
+        positions.push(usize::try_from(at).map_err(|_| PyIndexError::new_err(INDEX_OUT_OF_RANGE))?);
+        at = at.saturating_add(indices.step);
+    }
+    Ok(positions)
+}
+
+/// One element for an integer `key`, a `list` of them for a slice.
+fn sequence_item_or_slice<'py, Exposed, Stored>(
+    py: Python<'py>,
+    key: &Bound<'py, PyAny>,
+    stored: &[Stored],
+) -> PyResult<Bound<'py, PyAny>>
+where
+    Exposed: IntoPyObject<'py> + for<'a> From<&'a Stored>,
+{
+    if let Ok(slice) = key.cast::<PySlice>() {
+        let selected: Vec<Exposed> = slice_positions(slice, stored.len())?
+            .into_iter()
+            .filter_map(|position| stored.get(position))
+            .map(Exposed::from)
+            .collect();
+        return Ok(PyList::new(py, selected)?.into_any());
+    }
+    let position = position_or_index_error(key.extract()?, stored.len())?;
+    let element = stored
+        .get(position)
+        .ok_or_else(|| PyIndexError::new_err(INDEX_OUT_OF_RANGE))?;
+    Exposed::from(element).into_bound_py_any(py)
+}
+
+/// Declares a sequence view over one of a [`NavFile`]'s collections together
+/// with its iterator, both holding the file through an [`Arc`], and the class
+/// documentation the Python side reads.
+///
+/// `methods` declares the columnar accessors of a collection that has them.
+/// This macro emits them inside the generated `#[pymethods]` block, since PyO3
+/// accepts one such block per class.
+macro_rules! nav_file_sequence {
+    (
+        summary: $summary:literal,
+        sequence: $sequence:ident as $sequence_name:literal,
+        iterator: $iterator:ident as $iterator_name:literal,
+        element: $element:ty as $element_name:literal,
+        collection: $collection:ident,
+        $(methods: { $($method:item)* },)?
+    ) => {
+        #[doc = $summary]
+        #[doc = ""]
+        #[doc = concat!(
+            "Supports ``len()``, indexing, slicing and iteration, and builds one :class:`",
+            $element_name,
+            "` per element read. The sequence keeps working after the :class:`NavFile` object ",
+            "is gone."
+        )]
+        #[pyclass(sequence, skip_from_py_object, name = $sequence_name)]
+        pub struct $sequence {
+            file: Arc<NavFile>,
+        }
+
+        #[pymethods]
+        impl $sequence {
+            fn __len__(&self) -> usize {
+                self.file.$collection().len()
+            }
+
+            fn __getitem__<'py>(
+                &self,
+                py: Python<'py>,
+                key: &Bound<'py, PyAny>,
+            ) -> PyResult<Bound<'py, PyAny>> {
+                sequence_item_or_slice::<$element, _>(py, key, self.file.$collection())
+            }
+
+            fn __iter__(&self) -> $iterator {
+                $iterator {
+                    file: Arc::clone(&self.file),
+                    position: 0,
+                }
+            }
+
+            fn __repr__(&self) -> String {
+                format!(
+                    concat!($sequence_name, "(len={})"),
+                    self.file.$collection().len()
+                )
+            }
+
+            $($($method)*)?
+        }
+
+        #[pyclass(skip_from_py_object, name = $iterator_name)]
+        pub struct $iterator {
+            file: Arc<NavFile>,
+            position: usize,
+        }
+
+        #[pymethods]
+        impl $iterator {
+            fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+                slf
+            }
+
+            fn __next__(&mut self) -> Option<$element> {
+                let element = self
+                    .file
+                    .$collection()
+                    .get(self.position)
+                    .map(<$element>::from)?;
+                self.position += 1;
+                Some(element)
+            }
+        }
+    };
+}
+
+nav_file_sequence! {
+    summary: "The nav points of a :class:`NavFile`, in chronological order.",
+    sequence: PyNavPointSequence as "NavPointSequence",
+    iterator: PyNavPointIterator as "NavPointIterator",
+    element: PyNavPoint as "NavPoint",
+    collection: nav_points,
+    methods: {
+        /// Every point's latitude in degrees.
+        fn latitudes(&self) -> Vec<f64> {
+            self.file
+                .nav_points()
+                .iter()
+                .map(|p| p.fix.lat.as_degrees())
+                .collect()
+        }
+
+        /// Every point's longitude in degrees.
+        fn longitudes(&self) -> Vec<f64> {
+            self.file
+                .nav_points()
+                .iter()
+                .map(|p| p.fix.lon.as_degrees())
+                .collect()
+        }
+
+        /// Every point's GPS-receiver timestamp, ``None`` where the receiver
+        /// had no lock.
+        fn gps_times(&self) -> Vec<Option<DateTime<FixedOffset>>> {
+            self.file
+                .nav_points()
+                .iter()
+                .map(|p| p.fix.gps_time().map(to_fixed))
+                .collect()
+        }
+
+        /// Every point's system-clock timestamp, ``None`` where the recorder
+        /// supplied none.
+        fn sys_times(&self) -> Vec<Option<DateTime<FixedOffset>>> {
+            self.file
+                .nav_points()
+                .iter()
+                .map(|p| p.fix.sys_time().map(to_fixed))
+                .collect()
+        }
+
+        /// Every point's heading in degrees, or ``None`` for a fix without one.
+        fn headings(&self) -> Vec<Option<f64>> {
+            self.file
+                .nav_points()
+                .iter()
+                .map(|p| p.fix.heading.map(|h| h.as_degrees()))
+                .collect()
+        }
+
+        /// Every point's speed in m/s, or ``None`` for a fix without one.
+        fn speeds_mps(&self) -> Vec<Option<f64>> {
+            self.file
+                .nav_points()
+                .iter()
+                .map(|p| p.fix.speed.map(|s| s.as_meters_per_second()))
+                .collect()
+        }
+
+        /// Every point's horizontal accuracy radius in metres, or ``None`` for a
+        /// fix without one.
+        fn eph_m_values(&self) -> Vec<Option<f64>> {
+            self.file.nav_points().iter().map(|p| p.fix.eph_m).collect()
+        }
+    },
+}
+
+nav_file_sequence! {
+    summary: "The map markers of a :class:`NavFile` with their interpolated positions.",
+    sequence: PyMarkerSequence as "MarkerSequence",
+    iterator: PyMarkerIterator as "MarkerIterator",
+    element: PyMarker as "Marker",
+    collection: markers,
+}
+
+nav_file_sequence! {
+    summary: "The event markers of a :class:`NavFile` with their interpolated positions.",
+    sequence: PyEventMarkerPointSequence as "EventMarkerPointSequence",
+    iterator: PyEventMarkerPointIterator as "EventMarkerPointIterator",
+    element: PyEventMarkerPoint as "EventMarkerPoint",
+    collection: event_markers,
+}
+
+nav_file_sequence! {
+    summary: "The sensor channels of a :class:`NavFile`, sorted by name.",
+    sequence: PyChannelSequence as "ChannelSequence",
+    iterator: PyChannelIterator as "ChannelIterator",
+    element: PyChannel as "Channel",
+    collection: channels,
+}
+
+nav_file_sequence! {
+    summary: "The per-variant event marker styles of a :class:`NavFile`.",
+    sequence: PyEventMarkerStyleSequence as "EventMarkerStyleSequence",
+    iterator: PyEventMarkerStyleIterator as "EventMarkerStyleIterator",
+    element: PyEventMarkerStyle as "EventMarkerStyle",
+    collection: event_marker_styles,
+}
+
 /// A parsed `.gtd` navigation data file.
 ///
 /// Construct via `NavFileBuilder.finish()` to write, or `NavFile.open(path)`
 /// to read.
 #[pyclass(skip_from_py_object, name = "NavFile")]
 pub struct PyNavFile {
-    inner: NavFile,
+    inner: Arc<NavFile>,
 }
 
 #[pymethods]
@@ -1306,7 +1596,7 @@ impl PyNavFile {
     )]
     fn open(path: PathBuf) -> PyResult<Self> {
         NavFile::open(&path)
-            .map(|f| Self { inner: f })
+            .map(|f| Self { inner: Arc::new(f) })
             .map_err(file_err)
     }
 
@@ -1314,7 +1604,7 @@ impl PyNavFile {
     #[staticmethod]
     fn from_bytes(data: &[u8]) -> PyResult<Self> {
         NavFile::read(std::io::Cursor::new(data))
-            .map(|f| Self { inner: f })
+            .map(|f| Self { inner: Arc::new(f) })
             .map_err(file_err)
     }
 
@@ -1347,86 +1637,72 @@ impl PyNavFile {
 
     /// All nav points in chronological order.
     #[getter]
-    fn points(&self) -> Vec<PyNavPoint> {
-        self.inner
-            .nav_points()
-            .iter()
-            .map(|p| PyNavPoint { inner: p.clone() })
-            .collect()
+    fn points(&self) -> PyNavPointSequence {
+        PyNavPointSequence {
+            file: Arc::clone(&self.inner),
+        }
     }
 
     /// All map markers with their interpolated positions.
     ///
-    /// A marker with an icon code this build does not have raises a
-    /// ``UserWarning``. Its ``icon`` reads as ``None``. Its ``icon_code``
-    /// holds the code.
+    /// Reading this attribute raises a ``UserWarning`` for a marker with an
+    /// icon code unknown to this build. Its ``icon`` reads as ``None``. Its
+    /// ``icon_code`` contains the code.
     #[getter]
-    fn markers(&self, py: Python<'_>) -> PyResult<Vec<PyMarker>> {
-        let markers = self.inner.markers();
-        let mut converted = Vec::with_capacity(markers.len());
-        for m in markers {
-            if let AnnotationIcon::Unrecognized(code) = m.annotation.icon() {
+    fn markers(&self, py: Python<'_>) -> PyResult<PyMarkerSequence> {
+        for marker in self.inner.markers() {
+            if let AnnotationIcon::Unrecognized(code) = marker.annotation.icon() {
                 let message = CString::new(format!(
                     "map marker {:?} holds the icon code {code}, which this build does not have: \
                      icon reads as None, icon_code holds the code",
-                    m.annotation.label().unwrap_or("")
+                    marker.annotation.label().unwrap_or("")
                 ))
                 .map_err(|err| PyValueError::new_err(err.to_string()))?;
                 PyErr::warn(py, &py.get_type::<PyUserWarning>(), &message, 1)?;
             }
-            converted.push(PyMarker { inner: m.clone() });
         }
-        Ok(converted)
+        Ok(PyMarkerSequence {
+            file: Arc::clone(&self.inner),
+        })
     }
 
     /// All event markers with their interpolated positions.
     #[getter]
-    fn event_markers(&self) -> Vec<PyEventMarkerPoint> {
-        self.inner
-            .event_markers()
-            .iter()
-            .map(|em| PyEventMarkerPoint { inner: em.clone() })
-            .collect()
+    fn event_markers(&self) -> PyEventMarkerPointSequence {
+        PyEventMarkerPointSequence {
+            file: Arc::clone(&self.inner),
+        }
     }
 
     /// All ad-hoc sensor channels, sorted by name.
     #[getter]
-    fn channels(&self) -> Vec<PyChannel> {
-        self.inner
-            .channels()
-            .iter()
-            .map(|c| PyChannel { inner: c.clone() })
-            .collect()
+    fn channels(&self) -> PyChannelSequence {
+        PyChannelSequence {
+            file: Arc::clone(&self.inner),
+        }
     }
 
     /// Per-variant style overrides stored in the file.
     ///
-    /// A style with an icon unknown to this build raises a ``UserWarning``.
-    /// Its ``icon`` reads as ``None``. Its ``icon_name`` holds the name.
+    /// Reading this attribute raises a ``UserWarning`` for a style with an icon
+    /// unknown to this build. Its ``icon`` reads as ``None``. Its
+    /// ``icon_name`` contains the name.
     #[getter]
-    fn event_marker_styles(&self, py: Python<'_>) -> PyResult<Vec<PyEventMarkerStyle>> {
-        let styles = self.inner.event_marker_styles();
-        let mut converted = Vec::with_capacity(styles.len());
-        for s in styles {
-            if let EventMarkerIconChoice::Unrecognized(name) = &s.icon {
+    fn event_marker_styles(&self, py: Python<'_>) -> PyResult<PyEventMarkerStyleSequence> {
+        for style in self.inner.event_marker_styles() {
+            if let EventMarkerIconChoice::Unrecognized(name) = &style.icon {
                 let message = CString::new(format!(
                     "event marker style {:?} names the icon {name:?}, which this build does not \
                      have: icon reads as None, icon_name holds the name",
-                    s.variant_path
+                    style.variant_path
                 ))
                 .map_err(|err| PyValueError::new_err(err.to_string()))?;
                 PyErr::warn(py, &py.get_type::<PyUserWarning>(), &message, 1)?;
             }
-            converted.push(PyEventMarkerStyle {
-                variant_path: s.variant_path.clone(),
-                icon: s.icon.clone(),
-                color: match &s.color {
-                    EventMarkerColor::Auto => None,
-                    EventMarkerColor::Hex(h) | EventMarkerColor::Unrecognized(h) => Some(h.clone()),
-                },
-            });
         }
-        Ok(converted)
+        Ok(PyEventMarkerStyleSequence {
+            file: Arc::clone(&self.inner),
+        })
     }
 
     fn __repr__(&self) -> String {
@@ -1642,7 +1918,7 @@ impl PyNavFileBuilder {
         };
         recorder
             .finish()
-            .map(|f| PyNavFile { inner: f })
+            .map(|f| PyNavFile { inner: Arc::new(f) })
             .map_err(build_err)
     }
 }
@@ -1683,6 +1959,16 @@ fn _geotrace_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyEventMarker>()?;
     m.add_class::<PyEventMarkerStyle>()?;
     m.add_class::<PyEventMarkerPoint>()?;
+    m.add_class::<PyNavPointSequence>()?;
+    m.add_class::<PyNavPointIterator>()?;
+    m.add_class::<PyMarkerSequence>()?;
+    m.add_class::<PyMarkerIterator>()?;
+    m.add_class::<PyEventMarkerPointSequence>()?;
+    m.add_class::<PyEventMarkerPointIterator>()?;
+    m.add_class::<PyChannelSequence>()?;
+    m.add_class::<PyChannelIterator>()?;
+    m.add_class::<PyEventMarkerStyleSequence>()?;
+    m.add_class::<PyEventMarkerStyleIterator>()?;
     m.add_class::<PyNavFile>()?;
     m.add_class::<PyNavFileBuilder>()?;
     Ok(())

@@ -21,7 +21,6 @@ from geotrace_sdk import (
     Constellation,
     EventMarker,
     EventMarkerStyle,
-    Marker,
     MarkerIcon,
     Meta,
     NavFileBuilder,
@@ -253,7 +252,7 @@ def _verify(path: Path) -> None:
     assert len(stationary) == 20, f"stationary points: {len(stationary)}"
     assert all(p.speed_mps == 0.0 for p in stationary)
 
-    markers: list[Marker] = file.markers
+    markers = file.markers
     assert len(markers) == 16, f"expected 16 markers, got {len(markers)}"
     assert markers[0].label == "File Boundary Start"
     assert markers[0].icon == MarkerIcon.CHECK
