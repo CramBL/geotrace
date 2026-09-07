@@ -53,6 +53,13 @@ def test_event_marker_skip_sentinel_converts_to_none() -> None:
     assert em.variant_path is None
 
 
+def test_event_marker_non_string_path_raises_a_type_error() -> None:
+    with pytest.raises(
+        TypeError, match="variant_path must be a str, None, or event_kind.skip"
+    ):
+        EventMarker(12345, T0)  # type: ignore[arg-type]
+
+
 def test_event_marker_invalid_path_raises_at_construction() -> None:
     with pytest.raises(ValueError):
         EventMarker("/bad/path", T1)

@@ -94,8 +94,9 @@ pub unsafe extern "C" fn gtd_builder_set_travel_mode(
 /// Enable lenient mode.
 ///
 /// By default `gtd_builder_finish()` returns `GTD_ERR_ANNOTATIONS_OOB` when any
-/// annotation falls outside the nav fix time range. Calling this function
-/// downgrades that error to a warning and lets the build succeed.
+/// annotation falls outside the nav fix time range, and
+/// `GTD_ERR_EVENT_MARKERS_OOB` when any event marker does. Calling this function
+/// clamps each to the nearest endpoint and downgrades the error to a warning.
 ///
 /// Must be called before the first `gtd_builder_add_*` call.
 ///

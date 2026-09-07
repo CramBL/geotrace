@@ -223,6 +223,12 @@ TEST_CASE("FileBuilder: NoNavFixesError thrown when annotations exist but no fix
     CHECK_THROWS_AS(static_cast<void>(builder.finish()), NoNavFixesError);
 }
 
+TEST_CASE("FileBuilder: NoNavFixesError thrown when an event marker exists but no fixes") {
+    FileBuilder builder;
+    builder.add_event_marker(EventMarker{"power/boot", FIRST_TIME});
+    CHECK_THROWS_AS(static_cast<void>(builder.finish()), NoNavFixesError);
+}
+
 TEST_CASE("FileBuilder: FieldTooLongError thrown for a label past the field capacity") {
     FileBuilder builder;
     Annotation ann{FIRST_TIME};

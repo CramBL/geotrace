@@ -241,10 +241,11 @@ impl NavFileBuilder {
         self
     }
 
-    /// Downgrade annotation-out-of-range errors to warnings and continue.
+    /// Downgrade out-of-range errors to warnings and continue.
     ///
-    /// The strict build fails with [`BuildError::AnnotationsOutsideRange`]. After
-    /// this call, an annotation outside the nav fix time range is clamped to the
+    /// The strict build fails with [`BuildError::AnnotationsOutsideRange`] or
+    /// [`BuildError::EventMarkersOutsideRange`]. After this call, an annotation
+    /// or an event marker outside the nav fix time range is clamped to the
     /// nearest endpoint and logged as a warning.
     pub fn with_lenient_errors(mut self) -> Self {
         self.continue_on_error = true;
@@ -492,10 +493,11 @@ impl NavRecorder {
     ///      subsequent ghost. Every ghost takes the last fix's position when it
     ///      has no heading. `heading = None` so the app renders circles.
     ///    - Before the first real fix: the first fix's position, `heading = None`.
-    /// 4. Interpolate each annotation's position from the surrounding fixes.
-    /// 5. In strict mode (default), return an error if any annotation falls
-    ///    outside the nav fix time range.  In lenient mode it is clamped with a
-    ///    warning.
+    /// 4. Interpolate each annotation's and event marker's position from the
+    ///    surrounding fixes.
+    /// 5. In strict mode (default), return an error if any annotation or event
+    ///    marker falls outside the nav fix time range.  In lenient mode each is
+    ///    clamped to the nearest endpoint with a warning.
     pub fn finish(mut self) -> Result<NavFile, BuildError> {
         validate_satellite_data(&self.satellite_reports);
 
@@ -503,7 +505,9 @@ impl NavRecorder {
         self.satellite_reports.sort_by_key(|r| r.time.effective());
         self.annotations.sort_by_key(|a| a.time);
 
-        if self.fixes.is_empty() && !self.annotations.is_empty() {
+        let markers_need_a_position =
+            !self.annotations.is_empty() || !self.pending_event_markers.is_empty();
+        if self.fixes.is_empty() && markers_need_a_position {
             return Err(BuildError::NoNavFixes);
         }
 
@@ -524,20 +528,10 @@ impl NavRecorder {
             interpolate_annotations(&self.fixes, self.annotations, self.continue_on_error);
         let out_of_range_count = out_of_range.len();
 
-        if !self.continue_on_error && out_of_range_count > 0 {
-            log::error!(
-                "{} annotation(s) fall outside the nav fix time range",
-                out_of_range_count
-            );
+        if out_of_range_count > 0 {
             return Err(BuildError::AnnotationsOutsideRange {
                 count: out_of_range_count,
             });
-        }
-        if out_of_range_count > 0 {
-            log::warn!(
-                "{} annotation(s) dropped: outside the nav fix time range",
-                out_of_range_count
-            );
         }
 
         // Merge real nav points and ghost nav points, sorted by time.
@@ -550,7 +544,16 @@ impl NavRecorder {
         internal_points.extend(ghost_points);
         internal_points.sort_by_key(|p| p.fix.effective_time());
 
-        let event_markers = interpolate_event_markers(&internal_points, self.pending_event_markers);
+        let placed_event_markers = interpolate_event_markers(
+            &internal_points,
+            self.pending_event_markers,
+            self.continue_on_error,
+        );
+        if placed_event_markers.outside_the_fix_time_range > 0 {
+            return Err(BuildError::EventMarkersOutsideRange {
+                count: placed_event_markers.outside_the_fix_time_range,
+            });
+        }
 
         // Convert to public output types at the output boundary.
         let nav_points: Vec<NavPoint> = internal_points
@@ -590,7 +593,7 @@ impl NavRecorder {
             meta,
             nav_points,
             markers,
-            event_markers,
+            event_markers: placed_event_markers.markers,
             event_marker_styles: self.event_marker_styles,
             channels,
         })
@@ -1075,6 +1078,30 @@ enum TimelinePlacement {
     NoFixes,
 }
 
+impl TimelinePlacement {
+    /// The position to give the event, `None` where it is outside the fix time
+    /// span and the build is strict. A lenient build takes the position of the
+    /// nearest endpoint and logs a warning naming `subject`.
+    fn resolved_position(
+        self,
+        lenient: bool,
+        subject: impl std::fmt::Display,
+    ) -> Option<TimelinePosition> {
+        match self {
+            Self::WithinFixTimeSpan(position) => Some(position),
+            Self::BeforeFirstFix(position) if lenient => {
+                log::warn!("{subject} is before the first nav fix: clamped to the first position");
+                Some(position)
+            }
+            Self::AfterLastFix(position) if lenient => {
+                log::warn!("{subject} is after the last nav fix: clamped to the last position");
+                Some(position)
+            }
+            Self::BeforeFirstFix(_) | Self::AfterLastFix(_) | Self::NoFixes => None,
+        }
+    }
+}
+
 /// Place an external event's time on the nav timeline.
 ///
 /// A time equal to a fix's time is placed at that fix. The timeline must be
@@ -1127,24 +1154,8 @@ fn interpolate_annotations(
     for annotation in annotations {
         let ann_time = annotation.time;
 
-        let position = match place_on_fix_timeline(&timeline, ann_time) {
-            TimelinePlacement::WithinFixTimeSpan(position) => Some(position),
-            TimelinePlacement::BeforeFirstFix(position) if lenient => {
-                log::warn!(
-                    "Annotation at {ann_time} is before the first nav fix; clamping to first position"
-                );
-                Some(position)
-            }
-            TimelinePlacement::AfterLastFix(position) if lenient => {
-                log::warn!(
-                    "Annotation at {ann_time} is after the last nav fix; clamping to last position"
-                );
-                Some(position)
-            }
-            TimelinePlacement::BeforeFirstFix(_)
-            | TimelinePlacement::AfterLastFix(_)
-            | TimelinePlacement::NoFixes => None,
-        };
+        let position = place_on_fix_timeline(&timeline, ann_time)
+            .resolved_position(lenient, format_args!("Annotation at {ann_time}"));
 
         match position {
             Some(position) => resolved.push((annotation, position)),
@@ -1155,39 +1166,54 @@ fn interpolate_annotations(
     (resolved, out_of_range)
 }
 
+/// The event markers [`interpolate_event_markers`] placed, and a count of the
+/// markers it left unplaced. `outside_the_fix_time_range` is 0 in lenient mode.
+struct PlacedEventMarkers {
+    markers: Vec<EventMarkerPoint>,
+    outside_the_fix_time_range: usize,
+}
+
 /// Interpolate geographic positions for event markers from the built nav track.
 ///
 /// The `sys_time` is placed on the nav timeline by [`place_on_fix_timeline`].
-/// Markers before the first fix or after the last fix are clamped to the
-/// endpoint. Markers with no fixes at all are silently dropped.
+/// In lenient mode a marker before the first fix or after the last fix is
+/// clamped to that endpoint and logged as a warning. In strict mode it is
+/// counted in `outside_the_fix_time_range` and left out of `markers`.
 fn interpolate_event_markers(
     points: &[InternalPoint],
     pending: Vec<(String, DateTime<Utc>, Option<String>)>,
-) -> Vec<EventMarkerPoint> {
+    lenient: bool,
+) -> PlacedEventMarkers {
     let timeline: Vec<TimelineFix> = points
         .iter()
         .map(|p| TimelineFix::from_internal_fix(&p.fix))
         .collect();
 
-    pending
-        .into_iter()
-        .filter_map(|(variant_path, sys_time, annotation)| {
-            let position = match place_on_fix_timeline(&timeline, sys_time) {
-                TimelinePlacement::WithinFixTimeSpan(position)
-                | TimelinePlacement::BeforeFirstFix(position)
-                | TimelinePlacement::AfterLastFix(position) => position,
-                TimelinePlacement::NoFixes => return None,
-            };
+    let mut markers = Vec::new();
+    let mut outside_the_fix_time_range = 0;
 
-            Some(EventMarkerPoint {
+    for (variant_path, sys_time, annotation) in pending {
+        let position = place_on_fix_timeline(&timeline, sys_time).resolved_position(
+            lenient,
+            format_args!("Event marker {variant_path:?} at {sys_time}"),
+        );
+
+        match position {
+            Some(position) => markers.push(EventMarkerPoint {
                 variant_path,
                 sys_time,
                 lat: position.lat,
                 lon: position.lon,
                 annotation,
-            })
-        })
-        .collect()
+            }),
+            None => outside_the_fix_time_range += 1,
+        }
+    }
+
+    PlacedEventMarkers {
+        markers,
+        outside_the_fix_time_range,
+    }
 }
 
 /// A structured data quality warning about satellite data in a recording.

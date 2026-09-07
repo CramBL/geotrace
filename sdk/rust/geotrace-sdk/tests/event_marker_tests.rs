@@ -1,7 +1,7 @@
 use geotrace_sdk::{
-    Angle, AnnotationField, DateTime, Duration, EventKind, EventMarker, EventMarkerColor,
-    EventMarkerError, EventMarkerIconChoice, EventMarkerStyle, MarkerIcon, NavFileBuilder, NavFix,
-    NavFixTime, Utc, VariantPathField,
+    Angle, AnnotationField, BuildError, DateTime, Duration, EventKind, EventMarker,
+    EventMarkerColor, EventMarkerError, EventMarkerIconChoice, EventMarkerStyle, MarkerIcon,
+    NavFileBuilder, NavFix, NavFixTime, Utc, VariantPathField,
 };
 use rstest::rstest;
 
@@ -287,18 +287,62 @@ fn an_event_marker_between_two_fixes_across_the_antimeridian_is_placed_on_the_sh
     );
 }
 
-#[test]
-fn position_clamped_to_first_fix_when_before_track() {
+#[rstest]
+#[case::before_the_first_fix(0, 55.0)]
+#[case::after_the_last_fix(30, 56.0)]
+fn an_event_marker_outside_the_fix_time_range_is_clamped_to_the_endpoint_in_lenient_mode(
+    #[case] marker_offset_secs: i64,
+    #[case] expected_lat_deg: f64,
+) {
     let mut recorder = NavFileBuilder::new().with_lenient_errors().open();
     recorder.add_nav_fix(fix(10, 55.0, 12.0));
-    recorder.add_event_marker(marker("boot", 0));
+    recorder.add_nav_fix(fix(20, 56.0, 13.0));
+    recorder.add_event_marker(marker("boot", marker_offset_secs));
 
     let nav_file = recorder.finish().unwrap();
     let em = &nav_file.event_markers()[0];
     assert!(
-        (em.lat.as_degrees() - 55.0).abs() < 1e-9,
-        "pre-track marker should be clamped to first fix"
+        (em.lat.as_degrees() - expected_lat_deg).abs() < 1e-9,
+        "lat is {}, expected {expected_lat_deg}",
+        em.lat.as_degrees()
     );
+}
+
+#[rstest]
+#[case::before_the_first_fix(0)]
+#[case::after_the_last_fix(30)]
+fn an_event_marker_outside_the_fix_time_range_fails_the_build_in_strict_mode(
+    #[case] marker_offset_secs: i64,
+) {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix(10, 55.0, 12.0));
+    recorder.add_nav_fix(fix(20, 56.0, 13.0));
+    recorder.add_event_marker(marker("boot", marker_offset_secs));
+
+    let error = recorder
+        .finish()
+        .expect_err("the marker is outside the range");
+    assert!(
+        matches!(error, BuildError::EventMarkersOutsideRange { count: 1 }),
+        "got {error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "1 event marker(s) fall outside the nav fix time range"
+    );
+}
+
+#[rstest]
+#[case::strict(NavFileBuilder::new())]
+#[case::lenient(NavFileBuilder::new().with_lenient_errors())]
+fn an_event_marker_without_any_nav_fix_fails_the_build(#[case] builder: NavFileBuilder) {
+    let mut recorder = builder.open();
+    recorder.add_event_marker(marker("boot", 0));
+
+    let error = recorder
+        .finish()
+        .expect_err("a marker needs a fix to place it");
+    assert!(matches!(error, BuildError::NoNavFixes), "got {error:?}");
 }
 
 // Styles
@@ -348,6 +392,7 @@ enum IconOuter {
 fn add_event_auto_registers_icon_for_derived_enum() {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(fix(0, 55.0, 12.0));
+    recorder.add_nav_fix(fix(1, 55.1, 12.1));
     recorder.add_event(&IconOuter::Power(IconLeaf::TurnOn), t(0));
     recorder.add_event(&IconOuter::Power(IconLeaf::Failed), t(1));
 

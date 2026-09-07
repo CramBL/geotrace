@@ -158,6 +158,11 @@ struct AnnotationsOutOfRangeError : BuildError {
         : BuildError(msg), count(annotation_count) {}
 };
 
+/** One or more event markers fall outside the nav fix time range. */
+struct EventMarkersOutOfRangeError : BuildError {
+    using BuildError::BuildError;
+};
+
 /** I/O error (file not found, permission denied, etc.). */
 struct IoError : Error {
     using Error::Error;
@@ -228,6 +233,8 @@ namespace detail {
         throw NoNavFixesError(msg);
     case GTD_ERR_ANNOTATIONS_OOB:
         throw AnnotationsOutOfRangeError(0, msg);
+    case GTD_ERR_EVENT_MARKERS_OOB:
+        throw EventMarkersOutOfRangeError(msg);
     case GTD_ERR_INVALID_PATH:
         throw InvalidPathError(msg);
     case GTD_ERR_FIELD_TOO_LONG:
@@ -1427,7 +1434,10 @@ class FileBuilder {
         return *this;
     }
 
-    /** Downgrade out-of-range annotation errors to warnings. */
+    /**
+     * Clamp an annotation or an event marker outside the nav fix time range to
+     * the nearest endpoint, and downgrade the error to a warning.
+     */
     FileBuilder &lenient() {
         record(::gtd_builder_set_lenient(impl_.get()));
         return *this;
@@ -1625,6 +1635,7 @@ class FileBuilder {
      *
      * @throws NoNavFixesError if no nav fixes were added.
      * @throws AnnotationsOutOfRangeError if annotations fall outside the time range.
+     * @throws EventMarkersOutOfRangeError if event markers fall outside the time range.
      */
     NavFile finish();
 

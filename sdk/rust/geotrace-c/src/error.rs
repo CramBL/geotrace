@@ -69,6 +69,8 @@ pub enum GtdStatus {
     GTD_ERR_OUT_OF_RANGE = 13,
     /// A call was made in an order the API does not allow.
     GTD_ERR_CALL_ORDER = 14,
+    /// Event marker(s) outside the nav fix time range.
+    GTD_ERR_EVENT_MARKERS_OOB = 15,
     /// Internal error (bug in the SDK).
     GTD_ERR_INTERNAL = 99,
 }
@@ -91,6 +93,7 @@ const _: () = {
     assert!(GtdStatus::GTD_ERR_INVALID_ARGUMENT as u32 == 12);
     assert!(GtdStatus::GTD_ERR_OUT_OF_RANGE as u32 == 13);
     assert!(GtdStatus::GTD_ERR_CALL_ORDER as u32 == 14);
+    assert!(GtdStatus::GTD_ERR_EVENT_MARKERS_OOB as u32 == 15);
     assert!(GtdStatus::GTD_ERR_INTERNAL as u32 == 99);
 };
 

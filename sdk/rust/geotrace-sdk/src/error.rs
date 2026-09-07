@@ -153,7 +153,8 @@ pub(crate) fn validate_components(name: &str, components: &[String]) -> Result<(
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum BuildError {
     /// The builder has no nav fixes. At least one is required to interpolate
-    /// annotation positions. This is returned even in lenient mode.
+    /// annotation and event marker positions. This is returned even in lenient
+    /// mode.
     #[error("no nav fixes were added; at least one NavFix is required")]
     NoNavFixes,
 
@@ -161,9 +162,17 @@ pub enum BuildError {
     ///
     /// Only emitted in strict mode (the default). Use
     /// [`NavFileBuilder::with_lenient_errors`](crate::NavFileBuilder::with_lenient_errors)
-    /// to downgrade to a warning and continue.
+    /// to clamp each to the nearest endpoint and continue.
     #[error("{count} annotation(s) fall outside the nav fix time range")]
     AnnotationsOutsideRange { count: usize },
+
+    /// One or more event markers fall outside the time range of the nav track.
+    ///
+    /// Only emitted in strict mode (the default). Use
+    /// [`NavFileBuilder::with_lenient_errors`](crate::NavFileBuilder::with_lenient_errors)
+    /// to clamp each to the nearest endpoint and continue.
+    #[error("{count} event marker(s) fall outside the nav fix time range")]
+    EventMarkersOutsideRange { count: usize },
 
     /// Two channels share a name. Names are the primary key (queries reference
     /// them as `@name`) and become HDF5 group names, so they must be unique.
