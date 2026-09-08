@@ -69,6 +69,58 @@ if(EXISTS "${GTD_OUT_OF_RANGE_FIXTURE}")
     )
 endif()
 
+# `test_invalid_enums` passes a value outside the `enum` to every entry point
+# that takes one. `WILL_FAIL` marks one case at a time: each case is registered
+# on its own. A case that faults is reported as a failure of that case:
+# criterion runs each case in a process of its own.
+add_executable(test_invalid_enums test_invalid_enums.c)
+target_link_libraries(test_invalid_enums PRIVATE GeoTrace::C PkgConfig::Criterion
+                      geotrace_sanitizers)
+geotrace_c_test_target(test_invalid_enums)
+
+# Each case below fails today: it asserts the status its entry point is to
+# return for a value outside an `enum`, and that entry point returns another one.
+# The library reads such a value as a variant the `enum` declares, which is
+# undefined behavior: the call returns `GTD_OK`, or the process faults. The unit
+# that fixes an entry point deletes its line from this list.
+set(GTD_INVALID_ENUM_CASES_AWAITING_A_FIX
+    # `gtd_builder_set_travel_mode`
+    a_travel_mode_outside_the_enum_is_rejected
+    # `gtd_travel_mode_name`
+    the_name_of_a_travel_mode_outside_the_enum_is_unknown
+    # `gtd_builder_add_annotation`
+    an_annotation_icon_outside_the_enum_is_rejected
+    # `gtd_builder_add_event_marker_style`
+    an_event_marker_style_icon_outside_the_enum_is_rejected
+    # `gtd_builder_add_satellite_report`
+    a_satellite_constellation_outside_the_enum_is_rejected
+    # `gtd_set_log_level`
+    a_log_level_outside_the_enum_leaves_the_forwarded_level_in_force
+)
+
+foreach(case
+        # This case passes today: `gtd_channel_unit_parse` and
+        # `gtd_builder_add_channel_with_unit_mode` take the mode as a `uint32_t`
+        # and check it.
+        a_channel_unit_mode_outside_the_enum_is_rejected
+        ${GTD_INVALID_ENUM_CASES_AWAITING_A_FIX})
+    add_test(NAME test_invalid_enums_${case}
+        COMMAND test_invalid_enums --filter "invalid_enums/${case}"
+    )
+    # A case that jumps into the library at an arbitrary address can run
+    # without returning. The timeout bounds how long `ctest` waits for it.
+    set_tests_properties(test_invalid_enums_${case} PROPERTIES
+        ENVIRONMENT "${GEOTRACE_SANITIZE_TEST_ENVIRONMENT}"
+        TIMEOUT 60
+    )
+endforeach()
+
+# A filter that matches no test exits 0, which `WILL_FAIL` reports as a failure.
+# A name above that no test declares fails from its first run.
+foreach(case IN LISTS GTD_INVALID_ENUM_CASES_AWAITING_A_FIX)
+    set_tests_properties(test_invalid_enums_${case} PROPERTIES WILL_FAIL TRUE)
+endforeach()
+
 # The canary checks that the address sanitizer resolves a fault inside the Rust
 # library to a .rs file and line. The link fails when `libgeotrace_c` lacks the
 # `sanitizer_canary` feature of geotrace-c: the canary calls an entry point only

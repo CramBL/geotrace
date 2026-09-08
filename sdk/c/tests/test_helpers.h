@@ -7,17 +7,21 @@
 
 #define assert_near(a, b, eps) cr_assert(fabs((a) - (b)) < (eps))
 
+static inline GtdFileBuilder *builder_with_a_nav_fix(GtdTimestamp *time) {
+    GtdFileBuilder *builder = gtd_builder_create();
+    cr_assert_not_null(builder);
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, time), GTD_OK);
+    cr_assert_eq(gtd_builder_add_nav_fix(builder, *time, gtd_ts_none(), 51.5, -0.1, GTD_NONE_F64,
+                                         GTD_NONE_F64, GTD_NONE_F64),
+                 GTD_OK);
+    return builder;
+}
+
 /* One fix and one satellite report whose satellites have a PRN of 0 and an SNR
    of 99 dB-Hz: the two data quality issues the builder reports at finish. */
 static inline GtdNavFile *build_file_with_satellite_issues(void) {
-    GtdFileBuilder *builder = gtd_builder_create();
-    cr_assert_not_null(builder);
-
     GtdTimestamp timestamp;
-    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
-    cr_assert_eq(gtd_builder_add_nav_fix(builder, timestamp, gtd_ts_none(), 51.5, -0.1,
-                                         GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
-                 GTD_OK);
+    GtdFileBuilder *builder = builder_with_a_nav_fix(&timestamp);
 
     GtdSatellite satellites[2] = {
         {GTD_CONSTELLATION_GPS, 0, 1, GTD_SOME_F32(45.0F), GTD_SOME_F32(90.0F),

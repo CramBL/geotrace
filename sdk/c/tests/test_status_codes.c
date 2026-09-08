@@ -1,18 +1,12 @@
 #include "../geotrace.h"
+#include "test_helpers.h"
 #include <criterion/criterion.h>
 #include <stdlib.h>
 
 /* One nav fix without a satellite report, and one two-component channel. */
 static GtdNavFile *build_file(void) {
-    GtdFileBuilder *builder = gtd_builder_create();
-    cr_assert_not_null(builder);
-
     GtdTimestamp timestamp;
-    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
-
-    cr_assert_eq(gtd_builder_add_nav_fix(builder, timestamp, gtd_ts_none(), 51.5, -0.1,
-                                         GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
-                 GTD_OK);
+    GtdFileBuilder *builder = builder_with_a_nav_fix(&timestamp);
 
     double values[2] = {1.0, 2.0};
     const char *components[2] = {"x", "y"};
@@ -32,17 +26,6 @@ static GtdNavFile *build_file(void) {
     cr_assert_eq(gtd_builder_finish(builder, &file), GTD_OK);
     cr_assert_not_null(file);
     return file;
-}
-
-static GtdFileBuilder *builder_with_a_nav_fix(void) {
-    GtdFileBuilder *builder = gtd_builder_create();
-    cr_assert_not_null(builder);
-    GtdTimestamp timestamp;
-    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
-    cr_assert_eq(gtd_builder_add_nav_fix(builder, timestamp, gtd_ts_none(), 51.5, -0.1,
-                                         GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
-                 GTD_OK);
-    return builder;
 }
 
 Test(status_codes, index_past_the_end_is_out_of_range) {
@@ -126,7 +109,8 @@ Test(status_codes, short_unit_parse_buffer_is_out_of_range) {
 }
 
 Test(status_codes, a_setter_after_a_nav_fix_is_a_call_order_error) {
-    GtdFileBuilder *builder = builder_with_a_nav_fix();
+    GtdTimestamp timestamp;
+    GtdFileBuilder *builder = builder_with_a_nav_fix(&timestamp);
 
     cr_assert_eq(gtd_builder_set_title(builder, "late"), GTD_ERR_CALL_ORDER);
     cr_assert_eq(gtd_builder_set_device(builder, "late"), GTD_ERR_CALL_ORDER);

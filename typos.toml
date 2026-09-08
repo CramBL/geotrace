@@ -23,3 +23,6 @@ PN = "PN"
 EXIS = "EXIS"
 # foF2, the F2 layer critical frequency, in the title of a cited paper
 fo = "fo"
+# clang-tidy spells its opt-in check group `optin`, as in the check
+# `clang-analyzer-optin.core.EnumCastOutOfRange`
+optin = "optin"
