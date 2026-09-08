@@ -30,9 +30,6 @@ Test(invalid_enums, the_name_of_a_travel_mode_outside_the_enum_is_unknown) {
     }
 }
 
-/* NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange): the cast below
-   produces a discriminant outside `GtdLogLevel`'s declared range. */
-
 /* NOLINTBEGIN(bugprone-easily-swappable-parameters): the C SDK fixes the order
    of a log callback's parameters. */
 static void count_records(GtdLogLevel level, const char *target, const char *message,
@@ -46,14 +43,17 @@ static void count_records(GtdLogLevel level, const char *target, const char *mes
 }
 
 Test(invalid_enums, a_log_level_outside_the_enum_leaves_the_forwarded_level_in_force) {
-    static const int32_t levels[] = {0, 6, 99};
+    /* 0 declares no variant either: the levels run from GTD_LOG_ERROR at 1 to
+       GTD_LOG_TRACE at 5. */
+    static const uint32_t levels[] = {0, 6, 99};
 
     size_t count = 0;
     cr_assert_eq(gtd_set_log_callback(count_records, &count), GTD_OK);
 
     for (size_t i = 0; i < sizeof(levels) / sizeof(levels[0]); i++) {
-        gtd_set_log_level(GTD_LOG_ERROR);
-        gtd_set_log_level((GtdLogLevel)levels[i]);
+        cr_assert_eq(gtd_set_log_level(GTD_LOG_ERROR), GTD_OK);
+        cr_assert_eq(gtd_set_log_level(levels[i]), GTD_ERR_INVALID_ARGUMENT);
+        cr_assert_not_null(strstr(gtd_last_error(), "not a valid GtdLogLevel"));
         /* The builder reports the PRN of 0 and the SNR of 99 dB-Hz at
            GTD_LOG_WARN, which GTD_LOG_ERROR holds back. */
         gtd_nav_file_destroy(build_file_with_satellite_issues());
@@ -62,7 +62,6 @@ Test(invalid_enums, a_log_level_outside_the_enum_leaves_the_forwarded_level_in_f
 
     gtd_clear_log_callback();
 }
-/* NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange) */
 
 Test(invalid_enums, an_annotation_icon_outside_the_enum_is_rejected) {
     /* The icons run 0 to 13 and GTD_ICON_AUTO is 255. These three values lie

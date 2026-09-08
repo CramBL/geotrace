@@ -1359,7 +1359,7 @@ inline void set_log_callback(LogCallback callback) {
  * `LogLevel::Warn` until this is called.
  */
 inline void set_log_level(LogLevel level) {
-    ::gtd_set_log_level(static_cast<GtdLogLevel>(level));
+    ::gtd_set_log_level(static_cast<std::uint32_t>(level));
 }
 
 /**

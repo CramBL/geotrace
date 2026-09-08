@@ -127,7 +127,7 @@ Test(log_callback, the_default_level_drops_a_debug_record) {
 Test(log_callback, the_debug_level_forwards_a_debug_record) {
     RecordedLog recorded = {0};
     cr_assert_eq(gtd_set_log_callback(record_into, &recorded), GTD_OK);
-    gtd_set_log_level(GTD_LOG_DEBUG);
+    cr_assert_eq(gtd_set_log_level(GTD_LOG_DEBUG), GTD_OK);
 
     build_a_file_with_a_ghost_fix();
     gtd_clear_log_callback();
@@ -140,7 +140,7 @@ Test(log_callback, the_debug_level_forwards_a_debug_record) {
 Test(log_callback, the_error_level_drops_a_warning) {
     RecordedLog recorded = {0};
     cr_assert_eq(gtd_set_log_callback(record_into, &recorded), GTD_OK);
-    gtd_set_log_level(GTD_LOG_ERROR);
+    cr_assert_eq(gtd_set_log_level(GTD_LOG_ERROR), GTD_OK);
 
     gtd_nav_file_destroy(build_file_with_satellite_issues());
     gtd_clear_log_callback();
