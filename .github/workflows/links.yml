@@ -1,0 +1,39 @@
+# Requests every URL the tracked files cite. The Links job of ci_extras.yml
+# checks the links a pull request or a push adds, and this sweep catches a link
+# that rots after the merge. The schedule is weekly: a link rots over weeks.
+# No branch protection requires this workflow, and an outage at a data provider
+# never blocks a merge.
+name: Links
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  lychee:
+    name: Links
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install tools
+        uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
+        with:
+          # lychee has no install-action manifest: the cargo-binstall
+          # fallback installs it from its own GitHub release.
+          tool: just,lychee
+
+      - name: Every link
+        run: just lychee
