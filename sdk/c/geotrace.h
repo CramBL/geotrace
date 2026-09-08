@@ -117,36 +117,6 @@ typedef enum {
 } GtdStatus;
 
 /**
- * GNSS constellation identifier.
- */
-typedef enum {
-    /**
-     * GPS (USA).
-     */
-    GTD_CONSTELLATION_GPS = 0,
-    /**
-     * GLONASS (Russia).
-     */
-    GTD_CONSTELLATION_GLONASS = 1,
-    /**
-     * Galileo (EU).
-     */
-    GTD_CONSTELLATION_GALILEO = 2,
-    /**
-     * BeiDou (China).
-     */
-    GTD_CONSTELLATION_BEIDOU = 3,
-    /**
-     * NavIC / IRNSS (India).
-     */
-    GTD_CONSTELLATION_NAVIC = 4,
-    /**
-     * QZSS (Japan).
-     */
-    GTD_CONSTELLATION_QZSS = 5,
-} GtdConstellation;
-
-/**
  * Icon for map markers. `GTD_ICON_AUTO` means the application picks the icon:
  * `gtd_builder_add_event_marker_style()` accepts it, and
  * `gtd_nav_file_get_event_marker_style()` returns it.
@@ -227,6 +197,36 @@ typedef enum {
     GTD_LOG_DEBUG = 4,
     GTD_LOG_TRACE = 5,
 } GtdLogLevel;
+
+/**
+ * GNSS constellation identifier.
+ */
+typedef enum {
+    /**
+     * GPS (USA).
+     */
+    GTD_CONSTELLATION_GPS = 0,
+    /**
+     * GLONASS (Russia).
+     */
+    GTD_CONSTELLATION_GLONASS = 1,
+    /**
+     * Galileo (EU).
+     */
+    GTD_CONSTELLATION_GALILEO = 2,
+    /**
+     * BeiDou (China).
+     */
+    GTD_CONSTELLATION_BEIDOU = 3,
+    /**
+     * NavIC / IRNSS (India).
+     */
+    GTD_CONSTELLATION_NAVIC = 4,
+    /**
+     * QZSS (Japan).
+     */
+    GTD_CONSTELLATION_QZSS = 5,
+} GtdConstellation;
 
 /**
  * Platform a recording was made on, declared by the recorder.
@@ -330,9 +330,9 @@ typedef struct {
  */
 typedef struct {
     /**
-     * GNSS constellation.
+     * GNSS constellation. A @ref GtdConstellation value.
      */
-    GtdConstellation constellation;
+    uint32_t constellation;
     /**
      * Pseudo-random noise number (satellite ID).
      */
@@ -759,6 +759,10 @@ GtdStatus gtd_builder_add_nav_fix(GtdFileBuilder *builder,
  *
  * @return `GTD_ERR_INVALID_ARGUMENT` if @p gps_time and @p sys_time are both
  *         `gtd_ts_none()`.
+ * @return `GTD_ERR_INVALID_ARGUMENT` if the constellation of an element of
+ *         @p sats is a value no @ref GtdConstellation variant declares. The
+ *         builder then keeps the reports it already has, and
+ *         `gtd_last_error()` states the index of that element.
  */
 GtdStatus gtd_builder_add_satellite_report(GtdFileBuilder *builder,
                                            GtdTimestamp gps_time,

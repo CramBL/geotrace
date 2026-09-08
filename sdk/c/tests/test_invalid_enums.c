@@ -57,26 +57,6 @@ Test(invalid_enums, an_event_marker_style_icon_outside_the_enum_is_rejected) {
     }
 }
 
-Test(invalid_enums, a_satellite_constellation_outside_the_enum_is_rejected) {
-    static const int32_t constellations[] = {6, 42, 255};
-
-    for (size_t i = 0; i < sizeof(constellations) / sizeof(constellations[0]); i++) {
-        GtdTimestamp time;
-        GtdFileBuilder *builder = builder_with_a_nav_fix(&time);
-        /* The second entry holds the value outside the `enum`: the builder
-           reads the constellation of every satellite of the report. */
-        GtdSatellite satellites[2] = {
-            {GTD_CONSTELLATION_GPS, 5, 1, GTD_SOME_F32(45.0F), GTD_SOME_F32(90.0F),
-             GTD_SOME_F32(40.0F)},
-            {(GtdConstellation)constellations[i], 7, 1, GTD_SOME_F32(30.0F), GTD_SOME_F32(120.0F),
-             GTD_SOME_F32(38.0F)},
-        };
-        cr_assert_eq(gtd_builder_add_satellite_report(builder, time, gtd_ts_none(), satellites, 2),
-                     GTD_ERR_INVALID_ARGUMENT);
-        gtd_builder_destroy(builder);
-    }
-}
-
 /* NOLINTBEGIN(bugprone-easily-swappable-parameters): the C SDK fixes the order
    of a log callback's parameters. */
 static void count_records(GtdLogLevel level, const char *target, const char *message,
@@ -107,6 +87,48 @@ Test(invalid_enums, a_log_level_outside_the_enum_leaves_the_forwarded_level_in_f
     gtd_clear_log_callback();
 }
 /* NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange) */
+
+Test(invalid_enums, a_satellite_constellation_outside_the_enum_is_rejected) {
+    static const uint32_t constellations[] = {6, 42, 255};
+
+    for (size_t i = 0; i < sizeof(constellations) / sizeof(constellations[0]); i++) {
+        GtdTimestamp time;
+        GtdFileBuilder *builder = builder_with_a_nav_fix(&time);
+        /* The second entry holds the value outside the `enum`: the builder
+           checks the constellation of every satellite of the report. */
+        GtdSatellite satellites[2] = {
+            {GTD_CONSTELLATION_GPS, 5, 1, GTD_SOME_F32(45.0F), GTD_SOME_F32(90.0F),
+             GTD_SOME_F32(40.0F)},
+            {constellations[i], 7, 1, GTD_SOME_F32(30.0F), GTD_SOME_F32(120.0F),
+             GTD_SOME_F32(38.0F)},
+        };
+        cr_assert_eq(gtd_builder_add_satellite_report(builder, time, gtd_ts_none(), satellites, 2),
+                     GTD_ERR_INVALID_ARGUMENT);
+        gtd_builder_destroy(builder);
+    }
+}
+
+Test(invalid_enums, the_builder_stays_unchanged_when_it_rejects_a_satellite_report) {
+    const uint32_t constellation_outside_the_enum = 42;
+
+    GtdTimestamp time;
+    GtdFileBuilder *builder = builder_with_a_nav_fix(&time);
+    GtdSatellite satellites[2] = {
+        {GTD_CONSTELLATION_GPS, 5, 1, GTD_SOME_F32(45.0F), GTD_SOME_F32(90.0F),
+         GTD_SOME_F32(40.0F)},
+        {constellation_outside_the_enum, 7, 1, GTD_SOME_F32(30.0F), GTD_SOME_F32(120.0F),
+         GTD_SOME_F32(38.0F)},
+    };
+    cr_assert_eq(gtd_builder_add_satellite_report(builder, time, gtd_ts_none(), satellites, 2),
+                 GTD_ERR_INVALID_ARGUMENT);
+
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_OK);
+    GtdNavPointInfo point;
+    cr_assert_eq(gtd_nav_file_get_nav_point(file, 0, &point), GTD_OK);
+    cr_assert_eq(point.sat_count, 0);
+    gtd_nav_file_destroy(file);
+}
 
 Test(invalid_enums, a_channel_unit_mode_outside_the_enum_is_rejected) {
     static const uint32_t unit_modes[] = {2, 7, UINT32_MAX};

@@ -19,6 +19,20 @@ pub enum GtdConstellation {
     Qzss = 5,
 }
 
+impl GtdConstellation {
+    pub(crate) fn from_abi_value(constellation: u32) -> Option<Self> {
+        match constellation {
+            0 => Some(Self::Gps),
+            1 => Some(Self::Glonass),
+            2 => Some(Self::Galileo),
+            3 => Some(Self::Beidou),
+            4 => Some(Self::Navic),
+            5 => Some(Self::Qzss),
+            _ => None,
+        }
+    }
+}
+
 impl From<GtdConstellation> for geotrace_sdk::Constellation {
     fn from(c: GtdConstellation) -> Self {
         match c {

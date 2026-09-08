@@ -107,7 +107,7 @@ static GtdOptF32 parse_opt_f32(const char *text) {
     return GTD_SOME_F32((float)value.value);
 }
 
-static GtdConstellation parse_constellation(const char *name) {
+static uint32_t parse_constellation(const char *name) {
     if (strcmp(name, "gps") == 0) {
         return GTD_CONSTELLATION_GPS;
     }
