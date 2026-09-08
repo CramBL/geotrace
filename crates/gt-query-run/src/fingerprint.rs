@@ -128,6 +128,7 @@ impl RunFingerprint {
 #[cfg(test)]
 mod tests {
     use gt_loaded_files::{FileHistory, LoadedFiles};
+    use rstest::rstest;
 
     use super::*;
     use crate::test_fixtures::{file_with_channels, loaded_file};
@@ -210,28 +211,19 @@ mod tests {
         );
     }
 
-    /// An archived geomagnetic day reaching an evaluated track changes the
-    /// input, so results referencing it gray out.
-    #[test]
-    fn fingerprint_tracks_geomagnetic_values() {
-        let mut loaded_files = LoadedFiles::new();
-        loaded_files.push(loaded_file(), FileHistory::None);
-        let visibility = TrackDataVisibility::from_loaded(loaded_files.files());
-        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
-        let fingerprint = |geomagnetic: &GeomagneticSeries| {
-            RunFingerprint::of(RunInputs {
-                loaded_files: loaded_files.view(),
-                visibility: &visibility,
-                filter: &GlobalFilter::default(),
-                snap_errors: &SnapErrorValues::default(),
-                jamming: &JammingValues::default(),
-                geomagnetic,
-                tec: &TecSeries::default(),
-            })
-        };
-        let series_of = |hp30: f64| {
-            let mut series = GeomagneticSeries::default();
-            series.points_by_track.insert(
+    /// The day archives a query reads per fix. This fixture fills one for one
+    /// track, from one archived day.
+    #[derive(Default)]
+    struct ArchivedSeries {
+        geomagnetic: GeomagneticSeries,
+        tec: TecSeries,
+    }
+
+    impl ArchivedSeries {
+        /// A geomagnetic index of `hp30` at the epoch, on `track` alone.
+        fn of_geomagnetic(track: TrackRef, hp30: f64) -> Self {
+            let mut series = Self::default();
+            series.geomagnetic.points_by_track.insert(
                 track,
                 Arc::new(vec![gt_ui_types::GeomagneticPoint {
                     x_secs: 0.0,
@@ -240,45 +232,12 @@ mod tests {
                 }]),
             );
             series
-        };
+        }
 
-        let unarchived = GeomagneticSeries::default();
-        let archived = series_of(5.0);
-        assert_ne!(
-            fingerprint(&unarchived),
-            fingerprint(&archived),
-            "an archived day changes the input"
-        );
-        assert_eq!(fingerprint(&archived), fingerprint(&archived), "stable");
-        assert_ne!(
-            fingerprint(&archived),
-            fingerprint(&series_of(6.0)),
-            "a revised day must gray results out"
-        );
-    }
-
-    /// An archived TEC day reaching an evaluated track changes the input the
-    /// same way an archived geomagnetic day does.
-    #[test]
-    fn fingerprint_tracks_tec_values() {
-        let mut loaded_files = LoadedFiles::new();
-        loaded_files.push(loaded_file(), FileHistory::None);
-        let visibility = TrackDataVisibility::from_loaded(loaded_files.files());
-        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
-        let fingerprint = |tec: &TecSeries| {
-            RunFingerprint::of(RunInputs {
-                loaded_files: loaded_files.view(),
-                visibility: &visibility,
-                filter: &GlobalFilter::default(),
-                snap_errors: &SnapErrorValues::default(),
-                jamming: &JammingValues::default(),
-                geomagnetic: &GeomagneticSeries::default(),
-                tec,
-            })
-        };
-        let series_of = |tecu: f64| {
-            let mut series = TecSeries::default();
-            series.points_by_track.insert(
+        /// A TEC reading of `tecu` at the epoch, on `track` alone.
+        fn of_tec(track: TrackRef, tecu: f64) -> Self {
+            let mut series = Self::default();
+            series.tec.points_by_track.insert(
                 track,
                 Arc::new(vec![gt_ui_types::TecPoint {
                     x_secs: 0.0,
@@ -286,18 +245,43 @@ mod tests {
                 }]),
             );
             series
+        }
+    }
+
+    /// An archived day reaching an evaluated track grays out the results
+    /// referencing it, and a revision of that day grays them out again.
+    #[rstest]
+    #[case::geomagnetic(ArchivedSeries::of_geomagnetic)]
+    #[case::tec(ArchivedSeries::of_tec)]
+    fn fingerprint_tracks_the_archived_values_of_an_evaluated_track(
+        #[case] series_of: fn(TrackRef, f64) -> ArchivedSeries,
+    ) {
+        let mut loaded_files = LoadedFiles::new();
+        loaded_files.push(loaded_file(), FileHistory::None);
+        let visibility = TrackDataVisibility::from_loaded(loaded_files.files());
+        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        let fingerprint = |series: &ArchivedSeries| {
+            RunFingerprint::of(RunInputs {
+                loaded_files: loaded_files.view(),
+                visibility: &visibility,
+                filter: &GlobalFilter::default(),
+                snap_errors: &SnapErrorValues::default(),
+                jamming: &JammingValues::default(),
+                geomagnetic: &series.geomagnetic,
+                tec: &series.tec,
+            })
         };
 
-        let archived = series_of(42.0);
+        let archived = series_of(track, 5.0);
         assert_ne!(
-            fingerprint(&TecSeries::default()),
+            fingerprint(&ArchivedSeries::default()),
             fingerprint(&archived),
             "an archived day changes the input"
         );
         assert_eq!(fingerprint(&archived), fingerprint(&archived), "stable");
         assert_ne!(
             fingerprint(&archived),
-            fingerprint(&series_of(43.0)),
+            fingerprint(&series_of(track, 6.0)),
             "a revised day must gray results out"
         );
     }

@@ -297,323 +297,427 @@ pub fn slip_rate_per_point(
 }
 
 #[cfg(test)]
-mod detection_tests {
-    use rstest::rstest;
+mod tests {
+    mod detection {
+        use rstest::rstest;
 
-    use super::*;
-    use gt_types::satellites::{NO_DATA_SENTINEL_DB_HZ, Satellite};
+        use gt_types::fixtures;
+        use gt_types::satellites::{NO_DATA_SENTINEL_DB_HZ, Satellite, Snr};
 
-    /// `(constellation, prn, elevation, snr)` -> tracked `Satellite`.
-    fn sat(c: Constellation, prn: u32, elevation: Option<f32>, snr: Option<f32>) -> Satellite {
-        Satellite::new(c, prn, elevation, None, snr, false)
-    }
+        use super::super::*;
+        use crate::test_util::report;
 
-    fn report(sats: Vec<Satellite>) -> Satellites {
-        Satellites::new(None, None, sats)
-    }
+        /// A satellite of `constellation` the receiver tracked at
+        /// `elevation_deg` with `snr`, without using it in the fix. Only
+        /// [`slips_between`]'s previous-report gate reads the fix flag, and it
+        /// reads the elevation instead.
+        fn tracked(
+            constellation: Constellation,
+            prn: u32,
+            elevation_deg: Option<f32>,
+            snr: Option<Snr>,
+        ) -> Satellite {
+            fixtures::satellite(constellation, prn, elevation_deg, snr, false)
+        }
 
-    #[test]
-    fn lost_lock_when_above_mask_satellite_disappears() {
-        let prev = report(vec![sat(Constellation::Gps, 7, Some(40.0), Some(45.0))]);
-        let curr = report(vec![]);
-        let slips = slips_between(&prev, &curr, 15.0, 10.0);
-        assert_eq!(slips.len(), 1);
-        let slip = slips.first().expect("one slip");
-        assert_eq!(slip.cause, SlipCause::LostLock);
-        assert_eq!(slip.constellation, Constellation::Gps);
-        assert_eq!(slip.prn, 7);
-        assert_eq!(slip.from.elevation, Some(40.0));
-        assert_eq!(slip.to, None);
-    }
-
-    #[test]
-    fn no_lost_lock_for_satellite_below_mask_or_unknown_elevation() {
-        // A satellite setting below the mask, then gone, is a natural set.
-        let prev = report(vec![
-            sat(Constellation::Gps, 7, Some(5.0), Some(45.0)),
-            sat(Constellation::Gps, 8, None, Some(45.0)),
-        ]);
-        let curr = report(vec![]);
-        assert!(slips_between(&prev, &curr, 15.0, 10.0).is_empty());
-    }
-
-    #[test]
-    fn snr_drop_above_threshold_is_a_slip_and_records_from_to() {
-        let prev = report(vec![sat(Constellation::Galileo, 3, Some(30.0), Some(45.0))]);
-        let curr = report(vec![sat(Constellation::Galileo, 3, Some(28.0), Some(30.0))]);
-        let slips = slips_between(&prev, &curr, 15.0, 10.0);
-        assert_eq!(slips.len(), 1);
-        let slip = slips.first().expect("one slip");
-        assert_eq!(slip.cause, SlipCause::SnrDrop);
-        assert_eq!(slip.from.snr.map(|s| s.value()), Some(45.0));
-        assert_eq!(slip.to.and_then(|t| t.snr).map(|s| s.value()), Some(30.0));
-        assert_eq!(slip.to.map(|t| t.elevation), Some(Some(28.0)));
-    }
-
-    #[test]
-    fn snr_drop_at_or_below_threshold_is_not_a_slip() {
-        // Exactly the threshold does not count (strictly greater required).
-        let prev = report(vec![sat(Constellation::Gps, 1, Some(30.0), Some(45.0))]);
-        let curr = report(vec![sat(Constellation::Gps, 1, Some(30.0), Some(35.0))]);
-        assert!(slips_between(&prev, &curr, 15.0, 10.0).is_empty());
-    }
-
-    #[test]
-    fn snr_drop_ignored_when_satellite_falls_below_mask() {
-        let prev = report(vec![sat(Constellation::Gps, 1, Some(20.0), Some(45.0))]);
-        let curr = report(vec![sat(Constellation::Gps, 1, Some(5.0), Some(20.0))]);
-        assert!(slips_between(&prev, &curr, 15.0, 10.0).is_empty());
-    }
-
-    /// The fall from the no-data value to a measured reading is no signal
-    /// loss: firmware reports about 99 dB-Hz for "no measurement".
-    #[rstest]
-    #[case::the_previous_epoch_holds_the_no_data_value(Some(NO_DATA_SENTINEL_DB_HZ), Some(30.0))]
-    #[case::the_current_epoch_holds_the_no_data_value(Some(45.0), Some(NO_DATA_SENTINEL_DB_HZ))]
-    fn the_no_data_snr_value_is_no_snr_drop(
-        #[case] previous_snr_db: Option<f32>,
-        #[case] current_snr_db: Option<f32>,
-    ) {
-        let prev = report(vec![sat(
-            Constellation::Gps,
-            1,
-            Some(30.0),
-            previous_snr_db,
-        )]);
-        let curr = report(vec![sat(Constellation::Gps, 1, Some(30.0), current_snr_db)]);
-        assert!(slips_between(&prev, &curr, 15.0, 10.0).is_empty());
-    }
-
-    #[test]
-    fn rising_snr_and_steady_lock_yield_no_slips() {
-        let prev = report(vec![sat(Constellation::Beidou, 5, Some(40.0), Some(30.0))]);
-        let curr = report(vec![sat(Constellation::Beidou, 5, Some(41.0), Some(48.0))]);
-        assert!(slips_between(&prev, &curr, 15.0, 10.0).is_empty());
-    }
-}
-
-#[cfg(test)]
-mod windowed_rate_tests {
-    use super::windowed_rate;
-
-    /// Just the y-values (rates), for terser assertions.
-    fn rates(pts: &[[f64; 2]]) -> Vec<f64> {
-        pts.iter().map(|p| p[1]).collect()
-    }
-
-    #[test]
-    fn empty_epochs_yield_no_points() {
-        assert!(windowed_rate(&[], &[1.0, 2.0], 60.0, 1.0).is_empty());
-    }
-
-    #[test]
-    fn no_events_give_a_zero_rate_at_every_epoch() {
-        let out = windowed_rate(&[0.0, 60.0, 120.0], &[], 60.0, 1.0);
-        assert_eq!(rates(&out), vec![0.0, 0.0, 0.0]);
-    }
-
-    #[test]
-    fn non_positive_window_minutes_yield_no_points() {
-        // The rate would divide by zero, so the series is empty by construction.
-        assert!(windowed_rate(&[0.0, 60.0], &[10.0], 60.0, 0.0).is_empty());
-    }
-
-    #[test]
-    fn event_at_the_epoch_is_counted_lower_edge_is_exclusive() {
-        // Window is half-open `(t - window_secs, t]`: an event exactly at `t`
-        // counts, one exactly at the lower edge does not.
-        let epochs = [100.0];
-        let window_secs = 60.0;
-        // Event at t=100 (counted), at the lower edge t=40 (excluded), and inside.
-        let events = [40.0, 70.0, 100.0];
-        let out = windowed_rate(&epochs, &events, window_secs, 1.0);
-        // Two events in (40, 100], over a 1-minute window -> 2 per minute.
-        assert_eq!(rates(&out), vec![2.0]);
-    }
-
-    #[test]
-    fn events_roll_off_as_the_trailing_window_advances() {
-        // One event at t=0. With a 60 s window it is in range at t=0 and t=59,
-        // but at t=60 it lands on the exclusive lower edge and drops out.
-        let events = [0.0];
-        let out = windowed_rate(&[0.0, 59.0, 60.0], &events, 60.0, 1.0);
-        assert_eq!(rates(&out), vec![1.0, 1.0, 0.0]);
-    }
-
-    #[test]
-    fn epochs_and_events_out_of_order_count_the_windows_they_would_when_sorted() {
-        // Epochs 0, 60 and 120 with events at 10 and 70, all given out of
-        // order: t=0 counts nothing, t=60 counts the event at 10, t=120 the one
-        // at 70. Each rate comes back at its epoch's own position.
-        let out = windowed_rate(&[120.0, 0.0, 60.0], &[70.0, 10.0], 60.0, 1.0);
-        assert_eq!(rates(&out), vec![1.0, 0.0, 1.0]);
-        assert_eq!(out.first().map(|p| p[0]), Some(120.0));
-    }
-
-    #[test]
-    fn rate_divides_the_window_count_by_the_window_length() {
-        // Three events all inside a 2-minute window -> 1.5 per minute.
-        let events = [10.0, 20.0, 30.0];
-        let out = windowed_rate(&[120.0], &events, 120.0, 2.0);
-        assert_eq!(rates(&out), vec![1.5]);
-    }
-
-    /// Window length of the generated cases, in seconds.
-    const PROPERTY_WINDOW_SECS: f64 = 60.0;
-
-    /// Window length of the generated cases, in minutes - the divisor that
-    /// turns a window count into a rate.
-    const PROPERTY_PER_MIN: f64 = 1.0;
-
-    proptest::proptest! {
-        /// Every epoch's rate counts exactly the events inside its own
-        /// `(t - window, t]` window, whatever order the epochs and the events
-        /// arrive in, and each rate comes back at its epoch's own position.
         #[test]
-        fn every_epoch_counts_the_events_in_its_own_window(
-            epochs in proptest::collection::vec(-1000.0f64..1000.0, 0..40),
-            events in proptest::collection::vec(-1000.0f64..1000.0, 0..40),
+        fn lost_lock_when_above_mask_satellite_disappears() {
+            let prev = report(vec![tracked(
+                Constellation::Gps,
+                7,
+                Some(40.0),
+                Some(Snr::new(45.0)),
+            )]);
+            let curr = report(vec![]);
+            let slips = slips_between(&prev, &curr, 15.0, 10.0);
+            assert_eq!(slips.len(), 1);
+            let slip = slips.first().expect("one slip");
+            assert_eq!(slip.cause, SlipCause::LostLock);
+            assert_eq!(slip.constellation, Constellation::Gps);
+            assert_eq!(slip.prn, 7);
+            assert_eq!(slip.from.elevation, Some(40.0));
+            assert_eq!(slip.to, None);
+        }
+
+        #[test]
+        fn no_lost_lock_for_satellite_below_mask_or_unknown_elevation() {
+            // A satellite setting below the mask, then gone, is a natural set.
+            let prev = report(vec![
+                tracked(Constellation::Gps, 7, Some(5.0), Some(Snr::new(45.0))),
+                tracked(Constellation::Gps, 8, None, Some(Snr::new(45.0))),
+            ]);
+            let curr = report(vec![]);
+            assert!(slips_between(&prev, &curr, 15.0, 10.0).is_empty());
+        }
+
+        #[test]
+        fn snr_drop_above_threshold_is_a_slip_and_records_from_to() {
+            let prev = report(vec![tracked(
+                Constellation::Galileo,
+                3,
+                Some(30.0),
+                Some(Snr::new(45.0)),
+            )]);
+            let curr = report(vec![tracked(
+                Constellation::Galileo,
+                3,
+                Some(28.0),
+                Some(Snr::new(30.0)),
+            )]);
+            let slips = slips_between(&prev, &curr, 15.0, 10.0);
+            assert_eq!(slips.len(), 1);
+            let slip = slips.first().expect("one slip");
+            assert_eq!(slip.cause, SlipCause::SnrDrop);
+            assert_eq!(slip.from.snr.map(|s| s.value()), Some(45.0));
+            assert_eq!(slip.to.and_then(|t| t.snr).map(|s| s.value()), Some(30.0));
+            assert_eq!(slip.to.map(|t| t.elevation), Some(Some(28.0)));
+        }
+
+        #[test]
+        fn snr_drop_at_or_below_threshold_is_not_a_slip() {
+            // Exactly the threshold does not count (strictly greater required).
+            let prev = report(vec![tracked(
+                Constellation::Gps,
+                1,
+                Some(30.0),
+                Some(Snr::new(45.0)),
+            )]);
+            let curr = report(vec![tracked(
+                Constellation::Gps,
+                1,
+                Some(30.0),
+                Some(Snr::new(35.0)),
+            )]);
+            assert!(slips_between(&prev, &curr, 15.0, 10.0).is_empty());
+        }
+
+        #[test]
+        fn snr_drop_ignored_when_satellite_falls_below_mask() {
+            let prev = report(vec![tracked(
+                Constellation::Gps,
+                1,
+                Some(20.0),
+                Some(Snr::new(45.0)),
+            )]);
+            let curr = report(vec![tracked(
+                Constellation::Gps,
+                1,
+                Some(5.0),
+                Some(Snr::new(20.0)),
+            )]);
+            assert!(slips_between(&prev, &curr, 15.0, 10.0).is_empty());
+        }
+
+        /// The fall from the no-data value to a measured reading is no signal
+        /// loss: firmware reports about 99 dB-Hz for "no measurement".
+        #[rstest]
+        #[case::the_previous_epoch_holds_the_no_data_value(
+            Some(Snr::new(NO_DATA_SENTINEL_DB_HZ)),
+            Some(Snr::new(30.0))
+        )]
+        #[case::the_current_epoch_holds_the_no_data_value(
+            Some(Snr::new(45.0)),
+            Some(Snr::new(NO_DATA_SENTINEL_DB_HZ))
+        )]
+        fn the_no_data_snr_value_is_no_snr_drop(
+            #[case] previous_snr: Option<Snr>,
+            #[case] current_snr: Option<Snr>,
         ) {
-            let expected: Vec<[f64; 2]> = epochs
-                .iter()
-                .map(|&t| {
-                    let counted = events
-                        .iter()
-                        .filter(|&&e| e > t - PROPERTY_WINDOW_SECS && e <= t)
-                        .count();
-                    [t, counted as f64 / PROPERTY_PER_MIN]
-                })
-                .collect();
+            let prev = report(vec![tracked(
+                Constellation::Gps,
+                1,
+                Some(30.0),
+                previous_snr,
+            )]);
+            let curr = report(vec![tracked(
+                Constellation::Gps,
+                1,
+                Some(30.0),
+                current_snr,
+            )]);
+            assert!(slips_between(&prev, &curr, 15.0, 10.0).is_empty());
+        }
 
-            let out = windowed_rate(&epochs, &events, PROPERTY_WINDOW_SECS, PROPERTY_PER_MIN);
-
-            proptest::prop_assert_eq!(out, expected);
+        #[test]
+        fn rising_snr_and_steady_lock_yield_no_slips() {
+            let prev = report(vec![tracked(
+                Constellation::Beidou,
+                5,
+                Some(40.0),
+                Some(Snr::new(30.0)),
+            )]);
+            let curr = report(vec![tracked(
+                Constellation::Beidou,
+                5,
+                Some(41.0),
+                Some(Snr::new(48.0)),
+            )]);
+            assert!(slips_between(&prev, &curr, 15.0, 10.0).is_empty());
         }
     }
-}
 
-#[cfg(test)]
-mod series_tests {
-    use super::*;
-    use chrono::{TimeZone, Utc};
-    use gt_types::coordinates::{Latitude, Longitude};
-    use gt_types::satellites::Satellite;
-    use gt_types::time_types::GpsTime;
-    use gt_types::tpv::TimePositionVelocity;
+    mod windowed_rate {
+        use super::super::windowed_rate;
 
-    fn point(secs: i64, sats: Vec<Satellite>) -> NavPoint {
-        let time = GpsTime::from_utc(Utc.timestamp_opt(secs, 0).single().expect("valid"));
-        let tpv = TimePositionVelocity::builder()
-            .time(time)
-            .lat(Latitude::new(55.0))
-            .lon(Longitude::new(12.0))
-            .build();
-        NavPoint::new(tpv, Some(Satellites::new(Some(time), None, sats)))
+        /// Just the y-values (rates), for terser assertions.
+        fn rates(pts: &[[f64; 2]]) -> Vec<f64> {
+            pts.iter().map(|p| p[1]).collect()
+        }
+
+        #[test]
+        fn empty_epochs_yield_no_points() {
+            assert!(windowed_rate(&[], &[1.0, 2.0], 60.0, 1.0).is_empty());
+        }
+
+        #[test]
+        fn no_events_give_a_zero_rate_at_every_epoch() {
+            let out = windowed_rate(&[0.0, 60.0, 120.0], &[], 60.0, 1.0);
+            assert_eq!(rates(&out), vec![0.0, 0.0, 0.0]);
+        }
+
+        #[test]
+        fn non_positive_window_minutes_yield_no_points() {
+            // The series is empty by construction: the rate would divide by zero.
+            assert!(windowed_rate(&[0.0, 60.0], &[10.0], 60.0, 0.0).is_empty());
+        }
+
+        #[test]
+        fn event_at_the_epoch_is_counted_lower_edge_is_exclusive() {
+            // Window is half-open `(t - window_secs, t]`: an event exactly at `t`
+            // counts, one exactly at the lower edge does not.
+            let epochs = [100.0];
+            let window_secs = 60.0;
+            // Event at t=100 (counted), at the lower edge t=40 (excluded), and inside.
+            let events = [40.0, 70.0, 100.0];
+            let out = windowed_rate(&epochs, &events, window_secs, 1.0);
+            // Two events in (40, 100], over a 1-minute window -> 2 per minute.
+            assert_eq!(rates(&out), vec![2.0]);
+        }
+
+        #[test]
+        fn events_roll_off_as_the_trailing_window_advances() {
+            // One event at t=0. With a 60 s window it is in range at t=0 and t=59,
+            // but at t=60 it lands on the exclusive lower edge and drops out.
+            let events = [0.0];
+            let out = windowed_rate(&[0.0, 59.0, 60.0], &events, 60.0, 1.0);
+            assert_eq!(rates(&out), vec![1.0, 1.0, 0.0]);
+        }
+
+        #[test]
+        fn epochs_and_events_out_of_order_count_the_windows_they_would_when_sorted() {
+            // Epochs 0, 60 and 120 with events at 10 and 70, all given out of
+            // order: t=0 counts nothing, t=60 counts the event at 10, t=120 the one
+            // at 70. Each rate comes back at its epoch's own position.
+            let out = windowed_rate(&[120.0, 0.0, 60.0], &[70.0, 10.0], 60.0, 1.0);
+            assert_eq!(rates(&out), vec![1.0, 0.0, 1.0]);
+            assert_eq!(out.first().map(|p| p[0]), Some(120.0));
+        }
+
+        #[test]
+        fn rate_divides_the_window_count_by_the_window_length() {
+            // Three events all inside a 2-minute window -> 1.5 per minute.
+            let events = [10.0, 20.0, 30.0];
+            let out = windowed_rate(&[120.0], &events, 120.0, 2.0);
+            assert_eq!(rates(&out), vec![1.5]);
+        }
+
+        /// Window length of the generated cases, in seconds.
+        const PROPERTY_WINDOW_SECS: f64 = 60.0;
+
+        /// Window length of the generated cases, in minutes - the divisor that
+        /// turns a window count into a rate.
+        const PROPERTY_PER_MIN: f64 = 1.0;
+
+        proptest::proptest! {
+            /// Every epoch's rate counts exactly the events inside its own
+            /// `(t - window, t]` window, whatever order the epochs and the events
+            /// arrive in, and each rate comes back at its epoch's own position.
+            #[test]
+            fn every_epoch_counts_the_events_in_its_own_window(
+                epochs in proptest::collection::vec(-1000.0f64..1000.0, 0..40),
+                events in proptest::collection::vec(-1000.0f64..1000.0, 0..40),
+            ) {
+                let expected: Vec<[f64; 2]> = epochs
+                    .iter()
+                    .map(|&t| {
+                        let counted = events
+                            .iter()
+                            .filter(|&&e| e > t - PROPERTY_WINDOW_SECS && e <= t)
+                            .count();
+                        [t, counted as f64 / PROPERTY_PER_MIN]
+                    })
+                    .collect();
+
+                let out = windowed_rate(&epochs, &events, PROPERTY_WINDOW_SECS, PROPERTY_PER_MIN);
+
+                proptest::prop_assert_eq!(out, expected);
+            }
+        }
     }
 
-    fn gps(prn: u32, elevation: f32, snr: f32) -> Satellite {
-        Satellite::new(
-            Constellation::Gps,
-            prn,
-            Some(elevation),
-            None,
-            Some(snr),
-            true,
-        )
-    }
+    mod series {
+        use chrono::{DateTime, Duration, Utc};
+        use gt_types::coordinates::{Latitude, Longitude};
+        use gt_types::fixtures::{self, FixKind};
+        use gt_types::satellites::{Satellite, Snr};
+        use rstest::rstest;
 
-    #[test]
-    fn detect_slip_events_groups_all_slips_at_one_epoch() {
-        // Sat 1 stays above the mask throughout. Sats 2 and 3 are both lost at
-        // index 1 and produce one grouped event at that epoch.
-        let points = vec![
-            point(
-                0,
-                vec![gps(1, 40.0, 45.0), gps(2, 30.0, 40.0), gps(3, 25.0, 38.0)],
-            ),
-            point(1, vec![gps(1, 40.0, 45.0)]),
-        ];
-        let events = detect_slip_events(&points, 15.0, 10.0);
-        assert_eq!(events.len(), 1, "one grouped event, not one per satellite");
-        let (index, slips) = events.first().expect("one event");
-        assert_eq!(*index, 1);
-        assert_eq!(slips.len(), 2);
-        let mut prns: Vec<u32> = slips.iter().map(|s| s.prn.value()).collect();
-        prns.sort_unstable();
-        assert_eq!(prns, vec![2, 3]);
-        assert!(slips.iter().all(|s| s.cause == SlipCause::LostLock));
-    }
+        use super::super::*;
+        use crate::test_util::point_at;
 
-    #[test]
-    fn slip_rate_series_counts_one_slip_per_minute_window() {
-        // One lost-lock slip at t=1 s. A 1-minute window gives a 1/min rate from
-        // that epoch onward, on the all and GPS series.
-        let points = vec![
-            point(0, vec![gps(1, 40.0, 45.0), gps(2, 30.0, 40.0)]),
-            point(1, vec![gps(1, 40.0, 45.0)]),
-        ];
-        let s = slip_rate_series(&points, 15.0, 10.0, 1.0);
-        assert_eq!(s.all, vec![[0.0, 0.0], [1.0, 1.0]]);
-        assert_eq!(s.gps, vec![[0.0, 0.0], [1.0, 1.0]]);
-        assert!(s.glonass.iter().all(|p| p[1] == 0.0));
-    }
+        /// Elevation mask, in degrees.
+        const MASK_DEG: f32 = 15.0;
 
-    /// The per-point form is index-aligned: reportless points hold `None`,
-    /// and every value matches the time-keyed series.
-    #[test]
-    fn slip_rate_per_point_aligns_with_series() {
-        let reportless = |secs: i64| {
-            let time = GpsTime::from_utc(Utc.timestamp_opt(secs, 0).single().expect("valid"));
-            let tpv = TimePositionVelocity::builder()
-                .time(time)
-                .lat(Latitude::new(55.0))
-                .lon(Longitude::new(12.0))
-                .build();
-            NavPoint::new(tpv, None)
-        };
-        let points = vec![
-            point(0, vec![gps(1, 40.0, 45.0), gps(2, 30.0, 40.0)]),
-            reportless(1),
-            point(2, vec![gps(1, 40.0, 45.0)]),
-        ];
+        /// SNR fall that counts as a slip, in dB-Hz.
+        const SNR_DROP_DB: f32 = 10.0;
 
-        let per_point = slip_rate_per_point(&points, 15.0, 10.0, 1.0);
-        assert_eq!(per_point.all, vec![Some(0.0), None, Some(1.0)]);
-        assert_eq!(per_point.gps, vec![Some(0.0), None, Some(1.0)]);
+        /// Trailing window of the rate, in minutes.
+        const WINDOW_MIN: f32 = 1.0;
 
-        let series = slip_rate_series(&points, 15.0, 10.0, 1.0);
-        let series_values: Vec<f64> = series.all.iter().map(|[_, v]| *v).collect();
-        let aligned_values: Vec<f64> = per_point.all.iter().copied().flatten().collect();
-        assert_eq!(series_values, aligned_values);
-    }
+        /// A GPS satellite in the fix at `elevation_deg` and `snr_db`.
+        fn gps(prn: u32, elevation_deg: f32, snr_db: f32) -> Satellite {
+            fixtures::satellite(
+                Constellation::Gps,
+                prn,
+                Some(elevation_deg),
+                Some(Snr::new(snr_db)),
+                true,
+            )
+        }
 
-    #[test]
-    fn slip_rate_per_point_with_zero_window_is_all_none() {
-        let points = vec![point(0, vec![gps(1, 40.0, 45.0)])];
-        let per_point = slip_rate_per_point(&points, 15.0, 10.0, 0.0);
-        assert_eq!(per_point.all, vec![None]);
-    }
+        #[test]
+        fn detect_slip_events_groups_all_slips_at_one_epoch() {
+            // Sat 1 stays above the mask throughout. Sats 2 and 3 are both lost at
+            // index 1 and produce one grouped event at that epoch.
+            let points = vec![
+                point_at(
+                    0,
+                    vec![gps(1, 40.0, 45.0), gps(2, 30.0, 40.0), gps(3, 25.0, 38.0)],
+                ),
+                point_at(1_000, vec![gps(1, 40.0, 45.0)]),
+            ];
+            let events = detect_slip_events(&points, MASK_DEG, SNR_DROP_DB);
+            assert_eq!(events.len(), 1, "one grouped event, not one per satellite");
+            let (index, slips) = events.first().expect("one event");
+            assert_eq!(*index, 1);
+            assert_eq!(slips.len(), 2);
+            let mut prns: Vec<u32> = slips.iter().map(|s| s.prn.value()).collect();
+            prns.sort_unstable();
+            assert_eq!(prns, vec![2, 3]);
+            assert!(slips.iter().all(|s| s.cause == SlipCause::LostLock));
+        }
 
-    /// A NavIC slip lands in `s.navic`, a QZSS slip in `s.qzss`, and neither
-    /// leaks into the GPS series - the new constellations get their own buckets.
-    #[test]
-    fn navic_and_qzss_slips_route_into_their_own_series() {
-        let nav = |prn, el, snr| {
-            Satellite::new(Constellation::Navic, prn, Some(el), None, Some(snr), true)
-        };
-        let qzs = |prn, el, snr| {
-            Satellite::new(Constellation::Qzss, prn, Some(el), None, Some(snr), true)
-        };
-        let points = vec![
-            point(0, vec![nav(3, 40.0, 45.0), qzs(5, 35.0, 44.0)]),
-            // Both lost at t=1 while above the mask -> one slip each.
-            point(1, vec![]),
-        ];
-        let s = slip_rate_series(&points, 15.0, 10.0, 1.0);
-        assert_eq!(s.navic, vec![[0.0, 0.0], [1.0, 1.0]]);
-        assert_eq!(s.qzss, vec![[0.0, 0.0], [1.0, 1.0]]);
-        assert!(s.gps.iter().all(|p| p[1] == 0.0));
-        // Two slips total at the same epoch.
-        assert_eq!(s.all, vec![[0.0, 0.0], [1.0, 2.0]]);
+        /// One lost-lock slip at the second fix. A 1-minute window gives a
+        /// 1/min rate from that epoch onward, on the all and GPS series, and
+        /// the first epoch counts nothing: no earlier report exists to have
+        /// slipped from. A fix half a second in reads at 0.5: the series is
+        /// keyed in seconds to the fraction.
+        #[rstest]
+        #[case::a_second_between_the_fixes(1_000, vec![[0.0, 0.0], [1.0, 1.0]])]
+        #[case::half_a_second_between_the_fixes(500, vec![[0.0, 0.0], [0.5, 1.0]])]
+        fn slip_rate_series_counts_one_slip_per_minute_window(
+            #[case] second_fix_millis: i64,
+            #[case] expected: Vec<[f64; 2]>,
+        ) {
+            let points = vec![
+                point_at(0, vec![gps(1, 40.0, 45.0), gps(2, 30.0, 40.0)]),
+                point_at(second_fix_millis, vec![gps(1, 40.0, 45.0)]),
+            ];
+            let s = slip_rate_series(&points, MASK_DEG, SNR_DROP_DB, WINDOW_MIN);
+            assert_eq!(s.all, expected);
+            assert_eq!(s.gps, expected);
+            assert!(s.glonass.iter().all(|p| p[1] == 0.0));
+        }
+
+        /// The rate series and the slip markers agree on the slip at a fix whose
+        /// GPS epoch steps backwards - the shape a receiver resuming after a gap
+        /// writes: the slip still falls inside that fix's own trailing window. The
+        /// series stays in point order, which the per-point form indexes into.
+        #[test]
+        fn slip_rate_counts_the_slip_at_a_fix_whose_epoch_steps_backwards() {
+            let points = vec![
+                point_at(120_000, vec![gps(1, 40.0, 45.0), gps(2, 30.0, 40.0)]),
+                point_at(60_000, vec![gps(1, 40.0, 45.0)]),
+            ];
+            assert_eq!(
+                detect_slip_events(&points, MASK_DEG, SNR_DROP_DB).len(),
+                1,
+                "the slip itself is detected"
+            );
+
+            let series = slip_rate_series(&points, MASK_DEG, SNR_DROP_DB, WINDOW_MIN);
+
+            let rates: Vec<f64> = series.all.iter().map(|point| point[1]).collect();
+            assert_eq!(rates, vec![0.0, 1.0]);
+            assert!(
+                series.all.first().map(|point| point[0]) > series.all.get(1).map(|point| point[0]),
+                "the later epoch stays first: the series keeps point order"
+            );
+        }
+
+        /// The per-point form is index-aligned: reportless points hold `None`,
+        /// and every value matches the time-keyed series.
+        #[test]
+        fn slip_rate_per_point_aligns_with_series() {
+            let reportless = fixtures::nav_point(
+                DateTime::<Utc>::UNIX_EPOCH + Duration::seconds(1),
+                Latitude::new(55.0),
+                Longitude::new(12.0),
+                FixKind::GhostWithoutHeading,
+            );
+            let points = vec![
+                point_at(0, vec![gps(1, 40.0, 45.0), gps(2, 30.0, 40.0)]),
+                reportless,
+                point_at(2_000, vec![gps(1, 40.0, 45.0)]),
+            ];
+
+            let per_point = slip_rate_per_point(&points, MASK_DEG, SNR_DROP_DB, WINDOW_MIN);
+            assert_eq!(per_point.all, vec![Some(0.0), None, Some(1.0)]);
+            assert_eq!(per_point.gps, vec![Some(0.0), None, Some(1.0)]);
+
+            let series = slip_rate_series(&points, MASK_DEG, SNR_DROP_DB, WINDOW_MIN);
+            let series_values: Vec<f64> = series.all.iter().map(|[_, v]| *v).collect();
+            let aligned_values: Vec<f64> = per_point.all.iter().copied().flatten().collect();
+            assert_eq!(series_values, aligned_values);
+        }
+
+        #[test]
+        fn slip_rate_per_point_with_zero_window_is_all_none() {
+            let points = vec![point_at(0, vec![gps(1, 40.0, 45.0)])];
+            let per_point = slip_rate_per_point(&points, MASK_DEG, SNR_DROP_DB, 0.0);
+            assert_eq!(per_point.all, vec![None]);
+        }
+
+        /// A NavIC slip lands in `s.navic`, a QZSS slip in `s.qzss`, and neither
+        /// leaks into the GPS series - the new constellations get their own buckets.
+        #[test]
+        fn navic_and_qzss_slips_route_into_their_own_series() {
+            let in_fix = |constellation, prn, elevation_deg, snr_db: f32| {
+                fixtures::satellite(
+                    constellation,
+                    prn,
+                    Some(elevation_deg),
+                    Some(Snr::new(snr_db)),
+                    true,
+                )
+            };
+            let points = vec![
+                point_at(
+                    0,
+                    vec![
+                        in_fix(Constellation::Navic, 3, 40.0, 45.0),
+                        in_fix(Constellation::Qzss, 5, 35.0, 44.0),
+                    ],
+                ),
+                // Both lost at t=1 while above the mask -> one slip each.
+                point_at(1_000, vec![]),
+            ];
+            let s = slip_rate_series(&points, MASK_DEG, SNR_DROP_DB, WINDOW_MIN);
+            assert_eq!(s.navic, vec![[0.0, 0.0], [1.0, 1.0]]);
+            assert_eq!(s.qzss, vec![[0.0, 0.0], [1.0, 1.0]]);
+            assert!(s.gps.iter().all(|p| p[1] == 0.0));
+            // Two slips total at the same epoch.
+            assert_eq!(s.all, vec![[0.0, 0.0], [1.0, 2.0]]);
+        }
     }
 }

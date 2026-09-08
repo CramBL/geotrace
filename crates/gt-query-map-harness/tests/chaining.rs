@@ -5,9 +5,7 @@ use gt_query_map_harness::{Dataset, MapScenario, PointSpec, TrackSpec};
 /// Slow at the ends, fast in the middle - the shape that makes composition
 /// visible.
 fn scenario() -> MapScenario {
-    MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(&[
-        5.0, 5.0, 40.0, 40.0, 40.0, 40.0, 5.0, 5.0,
-    ])))
+    MapScenario::of_speeds_kmh(&[5.0, 5.0, 40.0, 40.0, 40.0, 40.0, 5.0, 5.0])
 }
 
 /// Two queries, blank-line separated: the first hides, the second draws over
@@ -43,9 +41,7 @@ fn a_later_hide_removes_the_earlier_halo() {
 /// Two `keep` queries intersect: only points both keep survive.
 #[test]
 fn keep_then_keep_intersects() {
-    let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(&[
-        5.0, 20.0, 40.0, 60.0,
-    ])));
+    let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 20.0, 40.0, 60.0]);
     scenario.run(
         "points | where velocity > 10 km/h | keep\n\n\
          points | where velocity < 50 km/h | keep",
@@ -60,9 +56,7 @@ fn keep_then_keep_intersects() {
 /// band inside it - the second halo layer stacks on the first.
 #[test]
 fn three_stages_stack_two_halo_layers() {
-    let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(&[
-        5.0, 20.0, 40.0, 60.0, 40.0, 20.0, 5.0,
-    ])));
+    let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 20.0, 40.0, 60.0, 40.0, 20.0, 5.0]);
     scenario.run(
         "points | where velocity < 10 km/h | hide\n\n\
          points | where velocity > 15 km/h | draw\n\n\

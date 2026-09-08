@@ -664,3 +664,96 @@ pub fn gen_render_style() -> impl Strategy<Value = RenderStyle> {
             },
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use gt_query_map_harness::{Dataset, MapScenario, PointSpec, TrackSpec};
+
+    use super::*;
+
+    /// The renderer's messiness, spelled out: the same two-stage program written
+    /// plainly, wrapped at its pipes with CRLF endings, and with whitespace-only
+    /// separator lines. All three run to the same map, which
+    /// `the_writing_style_never_changes_the_map` asserts over generated programs.
+    #[test]
+    fn a_program_renders_with_the_messiness_it_is_given() {
+        let program = Program {
+            stages: vec![
+                Stage {
+                    mode: Mode::Hide,
+                    window: None,
+                    predicate: Predicate::Cmp {
+                        term: Term::Point(Metric::Velocity),
+                        op: CmpOp::Lt,
+                        threshold: 5.0,
+                    },
+                },
+                Stage {
+                    mode: Mode::Draw,
+                    window: Some(3),
+                    predicate: Predicate::And(
+                        Box::new(Predicate::Cmp {
+                            term: Term::Agg {
+                                func: Agg::Avg,
+                                metric: Metric::Velocity,
+                            },
+                            op: CmpOp::Ge,
+                            threshold: 30.0,
+                        }),
+                        Box::new(Predicate::Cmp {
+                            term: Term::Agg {
+                                func: Agg::Max,
+                                metric: Metric::Eph,
+                            },
+                            op: CmpOp::Lt,
+                            threshold: 20.0,
+                        }),
+                    ),
+                },
+            ],
+        };
+        insta::assert_snapshot!(program.render_plain(), @r"
+        points | where velocity < 5 km/h | hide
+
+        points | window 3 | where (avg(velocity) >= 30 km/h) and (max(eph) < 20 m) | draw
+        ");
+
+        let messy = RenderStyle {
+            newline: Newline::Crlf,
+            separators: vec![Separator::SpacesAndBlanks],
+            leading_blanks: 1,
+            trailing_blanks: 2,
+            wrap: Wrap::Wrapped { indent: 4 },
+        };
+        let text = program.render(&messy);
+        assert!(text.contains("\r\n"), "the messy style writes CRLF endings");
+        assert!(
+            text.contains("\r\n    | window 3"),
+            "and wraps at the pipes with an indent: {:?}",
+            text
+        );
+        assert!(
+            text.contains("\r\n \t\r\n"),
+            "and separates with a line holding only whitespace: {:?}",
+            text
+        );
+
+        // However it is written, the editor still sees exactly the two queries.
+        let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_points(
+            [1.0, 40.0, 40.0, 40.0]
+                .iter()
+                .enumerate()
+                .map(|(index, &speed)| PointSpec::at_secs(index as i64).speed_kmh(speed).eph_m(5.0))
+                .collect(),
+        )));
+        scenario.run(&text);
+        insta::assert_snapshot!(scenario.panel(), @"
+        chunks: 2
+          2..51 ok
+          61..157 ok
+        run: completed
+          1 match on 1 track — 1 of 4 points hidden
+          1 match on 1 track
+        ");
+    }
+}

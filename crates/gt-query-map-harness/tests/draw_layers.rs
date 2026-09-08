@@ -1,6 +1,6 @@
 //! More `draw` queries than the halo mask can hold.
 
-use gt_query_map_harness::{Dataset, MapScenario, TrackSpec, track};
+use gt_query_map_harness::{self, MapScenario};
 use gt_ui_types::DrawLayerMask;
 
 /// One draw query per layer index, each with a higher threshold than the last,
@@ -23,9 +23,7 @@ fn rising_speeds(count: usize) -> Vec<f64> {
 #[test]
 fn every_layer_up_to_the_cap_renders() {
     let count = DrawLayerMask::MAX_LAYERS;
-    let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(
-        &rising_speeds(count),
-    )));
+    let mut scenario = MapScenario::of_speeds_kmh(&rising_speeds(count));
     scenario.run(&stacked_draws(count));
 
     let matches = scenario.matches().expect("the run completed");
@@ -37,7 +35,10 @@ fn every_layer_up_to_the_cap_renders() {
     // The fastest point clears every threshold, so its mask is full.
     let last = count - 1;
     assert_eq!(
-        scenario.classify(track(0, 0), last).draw_layers.count() as usize,
+        scenario
+            .classify(gt_query_map_harness::track(0, 0), last)
+            .draw_layers
+            .count() as usize,
         count,
         "the fastest point carries every layer"
     );
@@ -52,9 +53,7 @@ fn every_layer_up_to_the_cap_renders() {
 #[test]
 fn a_draw_query_past_the_cap_is_dropped_from_the_map() {
     let count = DrawLayerMask::MAX_LAYERS + 1;
-    let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(
-        &rising_speeds(count),
-    )));
+    let mut scenario = MapScenario::of_speeds_kmh(&rising_speeds(count));
     scenario.run(&stacked_draws(count));
 
     let matches = scenario.matches().expect("the run completed");
@@ -65,7 +64,7 @@ fn a_draw_query_past_the_cap_is_dropped_from_the_map() {
     );
     assert_eq!(
         scenario
-            .classify(track(0, 0), count - 1)
+            .classify(gt_query_map_harness::track(0, 0), count - 1)
             .draw_layers
             .count() as usize,
         DrawLayerMask::MAX_LAYERS,
@@ -116,9 +115,7 @@ fn a_draw_query_past_the_cap_is_dropped_from_the_map() {
 /// not as either layer alone.
 #[test]
 fn overlapping_layers_read_as_a_multi_layer_stretch() {
-    let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(&[
-        5.0, 20.0, 40.0, 60.0,
-    ])));
+    let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 20.0, 40.0, 60.0]);
     scenario.run(&stacked_draws(2));
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  ****

@@ -64,6 +64,34 @@ fn fix_passes(fixes: &[NavPoint], index: usize, filter: &GlobalFilter) -> bool {
         .is_some_and(|fix| point_passes_time_filter(fix.tpv.time().utc(), filter))
 }
 
+/// On time-ordered fixes the range covers exactly the fixes the per-point
+/// predicate keeps: the query evaluator, which slices by the range, reads
+/// exactly the fixes the map draws.
+#[test]
+fn the_filtered_range_agrees_with_the_point_predicate_on_time_ordered_fixes() {
+    let fixes = fixes_at(&(0..8).map(at).collect::<Vec<_>>());
+    let filters = [
+        GlobalFilter::default(),
+        window(Some(at(2)), None),
+        window(None, Some(at(5))),
+        window(Some(at(2)), Some(at(5))),
+        window(None, Some(at(0) - Duration::hours(1))),
+        window(Some(at(7) + Duration::hours(1)), None),
+        window(Some(at(5)), Some(at(2))),
+    ];
+
+    for filter in filters {
+        let range = time_filtered_range(&fixes, &filter);
+        for index in 0..fixes.len() {
+            assert_eq!(
+                range.contains(&index),
+                fix_passes(&fixes, index, &filter),
+                "fix {index} under {filter:?}"
+            );
+        }
+    }
+}
+
 /// A fix stamped before its predecessor reaches the filter: nothing sorts the
 /// fixes a recording is read from, and a backward time step smaller than the
 /// track split gap keeps its fixes in one track. The query must still evaluate

@@ -16,10 +16,10 @@ use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime};
 use geotrace_sdk_units::ChannelUnit;
 use gt_filter::GlobalFilter;
 use gt_loaded_files::{FileHistory, LoadedFiles};
-use gt_query::{ChannelSchema, MetricProvider};
+use gt_query::ChannelSchema;
 use gt_query_run::{
     ChannelTrackResult, JammingValues, QuerySession, RunInputs, RunResults, SnapErrorValues,
-    TrackProvider, schema_from_files,
+    schema_from_files,
 };
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::time_types::GpsTime;
@@ -106,7 +106,7 @@ fn gtd_file_with_the_host_clock_ahead(micros_ahead: i64) -> LoadedFile {
 
 /// A scalar channel from `samples`, each a millisecond offset past [`EPOCH`]
 /// and a value.
-fn scalar_channel(name: &str, unit: Option<&str>, samples: &[(i64, f64)]) -> Channel {
+fn scalar_channel_at_millis(name: &str, unit: Option<&str>, samples: &[(i64, f64)]) -> Channel {
     Channel {
         name: name.to_owned(),
         unit: unit.map(ChannelUnit::from_file_label),
@@ -282,7 +282,7 @@ fn matched_sample_seconds(result: &ChannelTrackResult) -> Vec<f64> {
 
 #[test]
 fn a_channel_keep_query_hides_a_track_with_no_match() {
-    let channel = scalar_channel("accel", Some("g"), &[(0, 0.1), (500, 0.2)]);
+    let channel = scalar_channel_at_millis("accel", Some("g"), &[(0, 0.1), (500, 0.2)]);
     let state = LoadedState::of(file_named(
         "ride.gtd",
         fixes_at(&[0, 1_000, 2_000, 3_000]),
@@ -313,26 +313,14 @@ fn a_points_keep_query_hides_a_track_with_no_match() {
     assert_eq!(hidden_ranges(&session), vec![0..4]);
 }
 
-/// The samples of a closed span are the ones whose timestamp lands inside it,
-/// whatever order the file stored them in. Only the sample at 1 s does here.
-#[test]
-fn a_channel_span_holds_only_the_samples_inside_it_when_the_file_stored_them_out_of_order() {
-    let channel = scalar_channel("sensor", None, &[(0, 0.0), (2_000, 20.0), (1_000, 10.0)]);
-    let points = fixes_at(&[0, 1_000, 2_000, 3_000]);
-    let provider = TrackProvider::new(&points, std::slice::from_ref(&channel), None);
-
-    let span = provider.channel_span("sensor", EPOCH as f64 + 0.5, EPOCH as f64 + 1.5);
-
-    assert_eq!(span.values, vec![10.0]);
-}
-
 /// A window aggregate reads the samples of the window's time span, whatever
 /// order the file stored them in. The two windows holding the sample at 1 s
 /// match (points 0 and 1, and points 1 and 2): it is the only sample above the
 /// bar.
 #[test]
 fn a_window_aggregate_reads_a_channel_the_file_stored_out_of_order() {
-    let channel = scalar_channel("sensor", None, &[(0, 0.0), (2_000, 2.0), (1_000, 10.0)]);
+    let channel =
+        scalar_channel_at_millis("sensor", None, &[(0, 0.0), (2_000, 2.0), (1_000, 10.0)]);
     let state = LoadedState::of(file_named(
         "ride.gtd",
         fixes_at(&[0, 1_000, 2_000, 3_000]),
@@ -353,7 +341,7 @@ fn a_window_aggregate_reads_a_channel_the_file_stored_out_of_order() {
 /// matched sample at 250 ms between them.
 #[test]
 fn a_matched_sample_covers_the_two_fixes_around_it_at_two_hz() {
-    let channel = scalar_channel("accel", Some("g"), &[(250, 9.0)]);
+    let channel = scalar_channel_at_millis("accel", Some("g"), &[(250, 9.0)]);
     let state = LoadedState::of(file_named("ride.gtd", fixes_at(&[0, 500]), vec![channel]));
     let mut session = QuerySession::new();
 
@@ -392,7 +380,7 @@ fn a_time_window_keeps_the_fixes_on_both_sides_of_a_backward_time_step() {
 /// alone reads none of the fixes it covers.
 #[test]
 fn a_window_matching_on_a_channel_leaves_out_the_fix_the_time_window_rejects() {
-    let channel = scalar_channel("sensor", None, &[(500, 10.0)]);
+    let channel = scalar_channel_at_millis("sensor", None, &[(500, 10.0)]);
     let mut state = LoadedState::of(file_named(
         "ride.gtd",
         fixes_at(&[0, 10_000, 1_000]),
@@ -418,7 +406,7 @@ fn a_window_matching_on_a_channel_leaves_out_the_fix_the_time_window_rejects() {
 /// it matches nothing.
 #[test]
 fn a_channel_aggregate_leaves_out_a_sample_beside_a_fix_the_time_window_rejects() {
-    let channel = scalar_channel("sensor", None, &[(8_000, 10.0)]);
+    let channel = scalar_channel_at_millis("sensor", None, &[(8_000, 10.0)]);
     let mut state = LoadedState::of(file_named(
         "ride.gtd",
         fixes_at(&[0, 10_000, 1_000]),
@@ -444,7 +432,7 @@ fn a_channel_aggregate_leaves_out_a_sample_beside_a_fix_the_time_window_rejects(
 /// one at 0.5 s, which sits beside the fix the window rejects.
 #[test]
 fn a_window_over_a_sliced_track_reads_the_samples_of_its_own_fixes() {
-    let channel = scalar_channel("sensor", None, &[(500, 100.0), (1_500, 10.0)]);
+    let channel = scalar_channel_at_millis("sensor", None, &[(500, 100.0), (1_500, 10.0)]);
     let mut state = LoadedState::of(file_named(
         "ride.gtd",
         fixes_at(&[0, 1_000, 2_000, 3_000]),
@@ -492,7 +480,7 @@ fn accel_is_valued_between_two_fixes_in_the_same_second() {
 /// only the sample at 750 ms, which is under the bar.
 #[test]
 fn a_count_window_reads_the_channel_samples_between_its_own_fixes_at_two_hz() {
-    let channel = scalar_channel("sensor", None, &[(0, 100.0), (750, 1.0)]);
+    let channel = scalar_channel_at_millis("sensor", None, &[(0, 100.0), (750, 1.0)]);
     let state = LoadedState::of(file_named(
         "ride.gtd",
         fixes_at(&[0, 500, 1_000, 1_500]),
@@ -514,7 +502,7 @@ fn a_count_window_reads_the_channel_samples_between_its_own_fixes_at_two_hz() {
 /// fixes run from 0 s to 10 s.
 #[test]
 fn a_count_window_reads_a_sample_beside_the_fix_a_backward_time_step_follows() {
-    let channel = scalar_channel("sensor", None, &[(5_000, 10.0)]);
+    let channel = scalar_channel_at_millis("sensor", None, &[(5_000, 10.0)]);
     let state = LoadedState::of(file_named(
         "ride.gtd",
         fixes_at(&[0, 10_000, 1_000]),
@@ -536,7 +524,7 @@ fn a_count_window_reads_a_sample_beside_the_fix_a_backward_time_step_follows() {
 /// which run from 0 s to 10 s here.
 #[test]
 fn a_table_column_reads_a_sample_beside_the_fix_a_backward_time_step_follows() {
-    let channel = scalar_channel("sensor", None, &[(5_000, 10.0)]);
+    let channel = scalar_channel_at_millis("sensor", None, &[(5_000, 10.0)]);
     let state = LoadedState::of(file_named(
         "ride.gtd",
         fixes_at(&[0, 10_000, 1_000]),
@@ -605,7 +593,7 @@ fn a_duration_window_holds_the_fixes_of_one_chronological_run() {
 /// match.
 #[test]
 fn a_duration_window_reads_no_channel_sample_past_the_run_its_anchor_is_in() {
-    let channel = scalar_channel("sensor", None, &[(2_500, 10.0)]);
+    let channel = scalar_channel_at_millis("sensor", None, &[(2_500, 10.0)]);
     let state = LoadedState::of(file_named(
         "ride.gtd",
         fixes_at(&[0, 1_000, 2_000, 100, 1_100, 2_100, 3_100, 4_100]),
@@ -633,7 +621,7 @@ fn a_duration_window_reads_a_channel_only_where_its_full_span_fits_the_time_filt
     #[case] sample_millis: i64,
     #[case] expected: Vec<Range<usize>>,
 ) {
-    let channel = scalar_channel("sensor", None, &[(sample_millis, 100.0)]);
+    let channel = scalar_channel_at_millis("sensor", None, &[(sample_millis, 100.0)]);
     let mut state = LoadedState::of(file_named(
         "ride.gtd",
         fixes_at(&[0, 1_000, 2_000, 3_000, 4_000]),
@@ -659,7 +647,7 @@ fn a_duration_window_reads_a_channel_only_where_its_full_span_fits_the_time_filt
 /// that fits, and it holds the samples at 0 s and 1 s.
 #[test]
 fn a_channel_source_duration_window_matches_no_sample_past_the_filter_end() {
-    let channel = scalar_channel(
+    let channel = scalar_channel_at_millis(
         "sensor",
         None,
         &[(0, 100.0), (1_000, 100.0), (2_000, 100.0), (3_500, 100.0)],
@@ -691,7 +679,7 @@ fn a_channel_source_duration_window_matches_no_sample_past_the_filter_end() {
 /// before the step reaches a loud one after it.
 #[test]
 fn a_channel_source_duration_window_holds_the_samples_of_one_chronological_run() {
-    let channel = scalar_channel(
+    let channel = scalar_channel_at_millis(
         "sensor",
         None,
         &[
@@ -754,7 +742,7 @@ fn a_time_filter_leaving_no_room_for_a_window_is_reported_without_calling_the_tr
 /// it, and the map bands the fixes around them.
 #[test]
 fn a_channel_query_matches_only_the_samples_inside_the_time_window() {
-    let channel = scalar_channel(
+    let channel = scalar_channel_at_millis(
         "sensor",
         None,
         &[(0, 10.0), (1_000, 10.0), (6_000, 10.0), (7_000, 10.0)],
@@ -781,7 +769,7 @@ fn a_channel_query_matches_only_the_samples_inside_the_time_window() {
 /// start and one exactly at the end are both part of the run.
 #[test]
 fn a_channel_query_keeps_samples_at_each_bound_of_the_time_window() {
-    let channel = scalar_channel(
+    let channel = scalar_channel_at_millis(
         "sensor",
         None,
         &[
@@ -815,7 +803,7 @@ fn a_channel_query_keeps_samples_at_each_bound_of_the_time_window() {
 /// to draw.
 #[test]
 fn a_channel_query_matches_nothing_under_a_time_window_holding_no_sample() {
-    let channel = scalar_channel("sensor", None, &[(6_000, 10.0), (7_000, 10.0)]);
+    let channel = scalar_channel_at_millis("sensor", None, &[(6_000, 10.0), (7_000, 10.0)]);
     let mut state = LoadedState::of(file_named(
         "ride.gtd",
         fixes_at(&[0, 2_000, 4_000, 6_000, 8_000]),
@@ -838,7 +826,8 @@ fn a_channel_query_matches_nothing_under_a_time_window_holding_no_sample() {
 /// can leave a sample past the window between two samples inside it.
 #[test]
 fn a_channel_query_under_a_time_window_keeps_the_samples_around_a_backward_time_step() {
-    let channel = scalar_channel("sensor", None, &[(0, 10.0), (10_000, 10.0), (1_000, 10.0)]);
+    let channel =
+        scalar_channel_at_millis("sensor", None, &[(0, 10.0), (10_000, 10.0), (1_000, 10.0)]);
     let mut state = LoadedState::of(file_named(
         "ride.gtd",
         fixes_at(&[0, 1_000, 2_000, 10_000]),

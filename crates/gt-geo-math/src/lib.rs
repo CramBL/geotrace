@@ -203,7 +203,7 @@ mod tests {
         Longitude::new(v)
     }
 
-    fn make_position(lat_deg: f64, lon_deg: f64) -> (Latitude, Longitude) {
+    fn position(lat_deg: f64, lon_deg: f64) -> (Latitude, Longitude) {
         (lat(lat_deg), lon(lon_deg))
     }
 
@@ -230,12 +230,12 @@ mod tests {
     #[test]
     fn segment_length_range_none_without_segments() {
         assert_eq!(segment_length_range_m(&[]), None);
-        assert_eq!(segment_length_range_m(&[make_position(55.0, 12.0)]), None);
+        assert_eq!(segment_length_range_m(&[position(55.0, 12.0)]), None);
     }
 
     #[test]
     fn segment_length_range_single_segment_has_equal_min_and_max() {
-        let pts = [make_position(0.0, 0.0), make_position(0.0, 1.0)];
+        let pts = [position(0.0, 0.0), position(0.0, 1.0)];
         let Some((min, max)) = segment_length_range_m(&pts) else {
             panic!("expected a range for 2 points");
         };
@@ -248,11 +248,7 @@ mod tests {
     fn segment_length_range_spans_shortest_and_longest_segment() {
         // Stationary pair (zero-length segment), then a ~111 km hop:
         // exactly the parked-then-highway shape the range must capture.
-        let pts = [
-            make_position(0.0, 0.0),
-            make_position(0.0, 0.0),
-            make_position(0.0, 1.0),
-        ];
+        let pts = [position(0.0, 0.0), position(0.0, 0.0), position(0.0, 1.0)];
         let Some((min, max)) = segment_length_range_m(&pts) else {
             panic!("expected a range for 3 points");
         };
@@ -261,46 +257,30 @@ mod tests {
     }
 
     #[test]
-    fn path_distance_km_empty() {
-        let d = path_distance_km(&[]);
-        assert!(d < f64::EPSILON, "expected 0.0, got {d}");
-    }
-
-    #[test]
-    fn path_distance_km_single_point() {
-        let d = path_distance_km(&[make_position(55.0, 12.0)]);
-        assert!(d < f64::EPSILON, "expected 0.0, got {d}");
-    }
-
-    #[test]
-    fn path_distance_km_two_points() {
-        let d = path_distance_km(&[make_position(0.0, 0.0), make_position(1.0, 0.0)]);
-        assert!((d - 111.195).abs() < TOLERANCE_KM, "got {d} km");
+    fn path_distance_km_of_fewer_than_two_positions_is_zero() {
+        assert!(path_distance_km(&[]) < f64::EPSILON);
+        assert!(path_distance_km(&[position(55.0, 12.0)]) < f64::EPSILON);
     }
 
     #[test]
     fn path_distance_km_three_points_sums_segments() {
         let leg = haversine_km(lat(0.0), lon(0.0), lat(1.0), lon(0.0));
-        let total = path_distance_km(&[
-            make_position(0.0, 0.0),
-            make_position(1.0, 0.0),
-            make_position(2.0, 0.0),
-        ]);
+        let total = path_distance_km(&[position(0.0, 0.0), position(1.0, 0.0), position(2.0, 0.0)]);
         assert!((total - 2.0 * leg).abs() < TOLERANCE_KM, "got {total} km");
     }
 
     #[test]
     fn diameter_fewer_than_two_points() {
         assert!(point_set_diameter_m(&[]) < f64::EPSILON);
-        assert!(point_set_diameter_m(&[make_position(55.0, 12.0)]) < f64::EPSILON);
+        assert!(point_set_diameter_m(&[position(55.0, 12.0)]) < f64::EPSILON);
     }
 
     #[test]
     fn diameter_identical_points_is_zero() {
         let d = point_set_diameter_m(&[
-            make_position(55.0, 12.0),
-            make_position(55.0, 12.0),
-            make_position(55.0, 12.0),
+            position(55.0, 12.0),
+            position(55.0, 12.0),
+            position(55.0, 12.0),
         ]);
         assert!(d < 1.0, "expected ~0.0, got {d}");
     }
@@ -308,7 +288,7 @@ mod tests {
     #[test]
     fn diameter_two_points_matches_haversine() {
         let expected = haversine_m(lat(0.0), lon(0.0), lat(1.0), lon(0.0));
-        let d = point_set_diameter_m(&[make_position(0.0, 0.0), make_position(1.0, 0.0)]);
+        let d = point_set_diameter_m(&[position(0.0, 0.0), position(1.0, 0.0)]);
         assert!(
             (d - expected).abs() < TOLERANCE_M,
             "expected {expected}, got {d}"
@@ -318,11 +298,7 @@ mod tests {
     #[test]
     fn diameter_collinear_points_is_endpoint_distance() {
         let expected = haversine_m(lat(0.0), lon(0.0), lat(1.0), lon(0.0));
-        let d = point_set_diameter_m(&[
-            make_position(0.0, 0.0),
-            make_position(0.5, 0.0),
-            make_position(1.0, 0.0),
-        ]);
+        let d = point_set_diameter_m(&[position(0.0, 0.0), position(0.5, 0.0), position(1.0, 0.0)]);
         assert!(
             (d - expected).abs() < TOLERANCE_M,
             "expected {expected}, got {d}"

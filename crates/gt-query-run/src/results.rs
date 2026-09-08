@@ -668,11 +668,17 @@ mod tests {
         assert_eq!(complement_ranges(&[], 3), vec![rng(0, 3)]);
     }
 
+    /// `draw` halos the matched segments, `hide` breaks the polyline at them,
+    /// and `keep` breaks it everywhere else.
     #[rstest]
-    #[case(DisplayMode::Draw)]
-    #[case(DisplayMode::Hide)]
-    #[case(DisplayMode::Keep)]
-    fn channel_query_matches_honors_the_mode(#[case] mode: DisplayMode) {
+    #[case::draw(DisplayMode::Draw, &[rng(1, 3)], &[])]
+    #[case::hide(DisplayMode::Hide, &[], &[rng(1, 3)])]
+    #[case::keep(DisplayMode::Keep, &[], &[rng(0, 1), rng(3, 5)])]
+    fn channel_query_matches_halos_and_hides_by_mode(
+        #[case] mode: DisplayMode,
+        #[case] expected_halos: &[Range<usize>],
+        #[case] expected_hidden: &[Range<usize>],
+    ) {
         let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
         let per_track = FxHashMap::from_iter([(
             track,
@@ -681,24 +687,16 @@ mod tests {
                 point_count: 5,
             },
         )]);
+
         let matches = channel_query_matches(mode, &per_track);
-        match mode {
-            // Draw halos the matched segments.
-            DisplayMode::Draw => {
-                assert_eq!(matches.draws[0].ranges_for(track), [rng(1, 3)]);
-                assert!(matches.hidden.is_empty());
-            }
-            // Hide breaks the polyline at the matched segments.
-            DisplayMode::Hide => {
-                assert_eq!(matches.hidden_ranges(track), [rng(1, 3)]);
-                assert!(matches.draws.is_empty());
-            }
-            // Keep breaks the polyline everywhere else (the complement).
-            DisplayMode::Keep => {
-                assert_eq!(matches.hidden_ranges(track), &[0..1, 3..5]);
-                assert!(matches.draws.is_empty());
-            }
-        }
+
+        let halos: Vec<Range<usize>> = matches
+            .draws
+            .iter()
+            .flat_map(|layer| layer.ranges_for(track).to_vec())
+            .collect();
+        assert_eq!(halos, expected_halos);
+        assert_eq!(matches.hidden_ranges(track), expected_hidden);
     }
 
     /// `keep` hides a track that matched nothing over its whole length. `draw`

@@ -413,15 +413,6 @@ mod tests {
         assert_eq!(counts, [3, 2, 4], "each spec keeps its own points");
     }
 
-    /// A recording with no fixes loads as a file with no tracks: the builder
-    /// segments points into non-empty tracks, so a track without points cannot
-    /// exist.
-    #[test]
-    fn a_file_without_points_has_no_tracks() {
-        let dataset = Dataset::of_files(&[FileSpec::new("silent.gtd")]);
-        assert!(dataset.track_refs().is_empty());
-    }
-
     #[test]
     fn per_track_series_land_under_their_track() {
         let dataset = Dataset::one_file(vec![
