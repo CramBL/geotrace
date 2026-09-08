@@ -1,11 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 
-use geotrace_sdk_units::ChannelUnit;
 use gt_types::{DisplayMode, FileIdx, TrackIdx, TrackRef};
 use rstest::rstest;
 
 use super::*;
+use crate::test_util::{self, TestProvider};
 
 const UC1: &str = "points
 | window 10
@@ -15,159 +15,29 @@ const UC1: &str = "points
 | draw
 | table time, velocity, heading, accel";
 
-fn track_ref() -> TrackRef {
-    TrackRef::new(FileIdx::new(0), TrackIdx::new(0))
-}
-
-/// Per-metric series in base units. Anything absent is missing. Channels
-/// carry their own `(time, row)` samples, keyed by name, where each row
-/// holds one value per component (one for a scalar channel).
-#[derive(Default)]
-struct TestProvider {
-    len: usize,
-    series: BTreeMap<QueryMetric, Vec<Option<f64>>>,
-    channels: BTreeMap<String, Vec<(f64, Vec<f64>)>>,
-    filtered_out: BTreeSet<usize>,
-}
-
-impl TestProvider {
-    fn new(len: usize) -> Self {
-        Self {
-            len,
-            series: BTreeMap::new(),
-            channels: BTreeMap::new(),
-            filtered_out: BTreeSet::new(),
-        }
-    }
-
-    /// Filter `index` out of the run, as the global time window does in
-    /// `gt-query-run`: it has no value for any metric and falls in no match.
-    fn filtering_out(mut self, index: usize) -> Self {
-        self.filtered_out.insert(index);
-        self
-    }
-
-    fn with(mut self, metric: QueryMetric, values: Vec<Option<f64>>) -> Self {
-        assert_eq!(values.len(), self.len);
-        self.series.insert(metric, values);
-        self
-    }
-
-    fn indexed_time(self) -> Self {
-        let len = self.len;
-        self.with(
-            QueryMetric::Time,
-            (0..len).map(|i| Some(i as f64)).collect(),
-        )
-    }
-
-    /// Attach a scalar channel's native `(time_secs, value)` samples.
-    fn with_channel(mut self, name: &str, samples: Vec<(f64, f64)>) -> Self {
-        let rows = samples.into_iter().map(|(t, v)| (t, vec![v])).collect();
-        self.channels.insert(name.to_owned(), rows);
-        self
-    }
-
-    /// Attach a vector channel's native `(time_secs, row)` samples, each row
-    /// one value per component.
-    fn with_vector_channel(mut self, name: &str, samples: Vec<(f64, Vec<f64>)>) -> Self {
-        self.channels.insert(name.to_owned(), samples);
-        self
-    }
-}
-
-impl MetricProvider for TestProvider {
-    fn len(&self) -> usize {
-        self.len
-    }
-
-    fn value(&self, metric: QueryMetric, index: usize) -> Option<f64> {
-        if self.filtered_out.contains(&index) {
-            return None;
-        }
-        self.series
-            .get(&metric)
-            .and_then(|values| values.get(index).copied().flatten())
-    }
-
-    fn point_can_match(&self, index: usize) -> bool {
-        index < self.len && !self.filtered_out.contains(&index)
-    }
-
-    fn channel_span(&self, name: &str, t_lo: f64, t_hi: f64) -> ChannelSamples {
-        let Some(rows) = self.channels.get(name) else {
-            return ChannelSamples::default();
-        };
-        let columns = rows.first().map_or(1, |(_, row)| row.len());
-        let mut in_span: Vec<&(f64, Vec<f64>)> = rows
-            .iter()
-            .filter(|(t, _)| *t >= t_lo && *t <= t_hi)
-            .collect();
-        in_span.sort_by(|(a, _), (b, _)| a.total_cmp(b));
-        let values = in_span
-            .iter()
-            .flat_map(|(_, row)| row.iter().copied())
-            .collect();
-        ChannelSamples { values, columns }
-    }
-
-    fn channel_timeline(&self, name: &str) -> ChannelTimeline {
-        let Some(rows) = self.channels.get(name) else {
-            return ChannelTimeline::default();
-        };
-        let columns = rows.first().map_or(1, |(_, row)| row.len());
-        ChannelTimeline {
-            times: rows.iter().map(|(t, _)| *t).collect(),
-            values: rows
-                .iter()
-                .flat_map(|(_, row)| row.iter().copied())
-                .collect(),
-            columns,
-        }
-    }
-}
-
-fn checked(src: &str) -> CheckedQuery {
-    check(&parse(src).unwrap(), &ChannelSchema::new()).unwrap()
-}
-
-/// Check with an empty channel schema, for the many tests that reference no
-/// channels. Tests that need channels build their own schema.
-fn chk(query: &Query) -> Result<CheckedQuery, Diagnostic> {
-    check(query, &ChannelSchema::new())
-}
-
 #[test]
 fn a_count_window_checks_to_window_count() {
     assert_eq!(
-        checked("points | window 5 | where avg(velocity) > 30 km/h").window(),
+        test_util::checked("points | window 5 | where avg(velocity) > 30 km/h").window(),
         Some(Window::Count(NonZeroUsize::new(5).unwrap()))
     );
-    assert_eq!(checked("points | where velocity > 30 km/h").window(), None);
+    assert_eq!(
+        test_util::checked("points | where velocity > 30 km/h").window(),
+        None
+    );
 }
 
 #[test]
 fn a_duration_window_checks_to_seconds() {
     assert_eq!(
-        checked("points | window 15 s | where avg(velocity) > 30 km/h").window(),
+        test_util::checked("points | window 15 s | where avg(velocity) > 30 km/h").window(),
         Some(Window::Duration(15.0))
     );
     // Units convert to seconds: 2 min = 120 s.
     assert_eq!(
-        checked("points | window 2 min | where avg(velocity) > 30 km/h").window(),
+        test_util::checked("points | window 2 min | where avg(velocity) > 30 km/h").window(),
         Some(Window::Duration(120.0))
     );
-}
-
-fn run_one(src: &str, provider: &TestProvider) -> RunOutput {
-    let query = checked(src);
-    run(
-        &query,
-        &[TrackInput {
-            track: track_ref(),
-            provider,
-        }],
-    )
 }
 
 /// A track that carries no value at all for a referenced metric is
@@ -181,10 +51,10 @@ fn summary_counts_tracks_without_a_referenced_metric() {
         TestProvider::new(3).with(QueryMetric::SnapError, vec![Some(2.0), None, Some(4.0)]);
     let without = TestProvider::new(3);
     let output = run(
-        &checked("points | where snap_error > 1 m"),
+        &test_util::checked("points | where snap_error > 1 m"),
         &[
             TrackInput {
-                track: track_ref(),
+                track: test_util::track_ref(),
                 provider: &with_values,
             },
             TrackInput {
@@ -210,9 +80,9 @@ fn summary_counts_tracks_without_a_referenced_metric() {
     // deliberately does not claim the track was never snapped.
     let all_unsnapped = TestProvider::new(3).with(QueryMetric::SnapError, vec![None, None, None]);
     let output = run(
-        &checked("points | where snap_error > 1 m"),
+        &test_util::checked("points | where snap_error > 1 m"),
         &[TrackInput {
-            track: track_ref(),
+            track: test_util::track_ref(),
             provider: &all_unsnapped,
         }],
     );
@@ -224,9 +94,9 @@ fn summary_counts_tracks_without_a_referenced_metric() {
     let velocity_only =
         TestProvider::new(2).with(QueryMetric::Velocity, vec![Some(5.0), Some(6.0)]);
     let output = run(
-        &checked("points | where accel > 0 m/s2"),
+        &test_util::checked("points | where accel > 0 m/s2"),
         &[TrackInput {
-            track: track_ref(),
+            track: test_util::track_ref(),
             provider: &velocity_only,
         }],
     );
@@ -243,7 +113,7 @@ fn point_predicate_matches_consecutive_runs() {
         QueryMetric::Velocity,
         vec![Some(5.0), Some(10.0), Some(9.0), Some(3.0), Some(12.0)],
     );
-    let output = run_one("points | where velocity > 30 km/h", &provider);
+    let output = test_util::run_one("points | where velocity > 30 km/h", &provider);
     assert_eq!(output.matches.len(), 1);
     assert_eq!(output.matches[0].ranges, vec![1..3, 4..5]);
     assert_eq!(output.summary.match_count, 2);
@@ -269,7 +139,7 @@ fn matched_points_count_points_not_windows() {
             Some(0.0),
         ],
     );
-    let output = run_one(
+    let output = test_util::run_one(
         "points | window 3 | where avg(velocity) > 36 km/h",
         &provider,
     );
@@ -291,7 +161,7 @@ fn overlapping_windows_merge_into_one_match() {
             Some(0.0),
         ],
     );
-    let output = run_one(
+    let output = test_util::run_one(
         "points | window 3 | where avg(velocity) > 36 km/h",
         &provider,
     );
@@ -307,7 +177,7 @@ fn a_duration_window_reduces_the_points_in_its_time_span() {
         QueryMetric::Velocity,
         vec![Some(10.0), Some(10.0), Some(0.0), Some(0.0), Some(0.0)],
     );
-    let output = run_one(
+    let output = test_util::run_one(
         "points | window 2 s | where avg(velocity) > 5 km/h",
         &provider,
     );
@@ -323,7 +193,7 @@ fn a_duration_window_longer_than_the_track_matches_nothing() {
         QueryMetric::Velocity,
         vec![Some(10.0), Some(10.0), Some(10.0)],
     );
-    let output = run_one(
+    let output = test_util::run_one(
         "points | window 10 s | where avg(velocity) > 0 km/h",
         &provider,
     );
@@ -345,7 +215,7 @@ fn a_fractional_duration_window_spans_sub_second() {
             QueryMetric::Velocity,
             vec![Some(10.0), Some(10.0), Some(0.0), Some(0.0)],
         );
-    let output = run_one(
+    let output = test_util::run_one(
         "points | window 0.5 s | where avg(velocity) > 5 km/h",
         &provider,
     );
@@ -370,7 +240,7 @@ fn a_duration_window_survives_a_backward_time_step() {
     // window 2 s never fits (max time is 1 s), but the fast pair after the
     // jump proves the loop reaches them: with window 1 s, anchor 2 spans
     // [0,1) = point 2 (avg 10, match), which a `break` would have skipped.
-    let output = run_one(
+    let output = test_util::run_one(
         "points | window 1 s | where avg(velocity) > 5 km/h",
         &provider,
     );
@@ -408,7 +278,7 @@ fn a_duration_window_holds_the_points_of_one_chronological_run() {
                 Some(0.0),
             ],
         );
-    let output = run_one(
+    let output = test_util::run_one(
         "points | window 2 s | where avg(velocity) > 5 km/h",
         &provider,
     );
@@ -429,7 +299,7 @@ fn a_duration_window_has_no_room_in_a_run_shorter_than_itself() {
             QueryMetric::Velocity,
             vec![Some(10.0), Some(10.0), Some(10.0), Some(10.0)],
         );
-    let output = run_one(
+    let output = test_util::run_one(
         "points | window 2 s | where avg(velocity) > 5 km/h",
         &provider,
     );
@@ -456,14 +326,14 @@ fn a_channel_source_duration_window_holds_the_samples_of_one_chronological_run()
     );
     let query = check(
         &parse("@sensor | window 2 s | where max(@sensor) > 5").unwrap(),
-        &schema_with("sensor", None, None),
+        &test_util::schema_with("sensor", None, None),
     )
     .unwrap();
 
     let output = run(
         &query,
         &[TrackInput {
-            track: track_ref(),
+            track: test_util::track_ref(),
             provider: &provider,
         }],
     );
@@ -488,7 +358,7 @@ fn a_duration_window_spans_real_time_not_point_count() {
     // window 2 s: anchor 0 → pts 0,1 (avg 10, match). Anchor 1 → t=1, 1+2=3
     // <= 6, pts with time in [1,3) = just point 1 (avg 10, match). Anchor 2
     // → t=5, 5+2=7 > 6, doesn't fit → break.
-    let output = run_one(
+    let output = test_util::run_one(
         "points | window 2 s | where avg(velocity) > 5 km/h",
         &provider,
     );
@@ -501,7 +371,7 @@ fn missing_values_poison_and_are_counted() {
         QueryMetric::Heading,
         vec![Some(10.0), Some(12.0), None, Some(11.0), Some(13.0)],
     );
-    let output = run_one(
+    let output = test_util::run_one(
         "points | window 2 | where spread(heading) <= 10 deg",
         &provider,
     );
@@ -518,7 +388,7 @@ fn accel_derives_from_velocity_and_time() {
             vec![Some(0.0), Some(1.0), Some(2.0), Some(3.0)],
         )
         .indexed_time();
-    let output = run_one("points | where accel >= 0.5 m/s2", &provider);
+    let output = test_util::run_one("points | where accel >= 0.5 m/s2", &provider);
     // Point 0 has no accel (no predecessor) and counts as skipped.
     assert_eq!(output.matches[0].ranges, vec![1..4]);
     assert_eq!(output.summary.skipped.get(&QueryMetric::Accel), Some(&1));
@@ -530,7 +400,7 @@ fn circular_spread_matches_across_north() {
         QueryMetric::Heading,
         vec![Some(350.0), Some(0.0), Some(10.0)],
     );
-    let output = run_one(
+    let output = test_util::run_one(
         "points | window 3 | where spread(heading) <= 25 deg",
         &provider,
     );
@@ -545,7 +415,7 @@ fn std_over_a_window_uses_population_deviation() {
         QueryMetric::Velocity,
         vec![Some(10.0), Some(10.0), Some(10.0), Some(20.0)],
     );
-    let output = run_one(
+    let output = test_util::run_one(
         "points | window 2 | where std(velocity) < 2 km/h",
         &provider,
     );
@@ -568,7 +438,7 @@ fn circular_std_flags_a_steady_heading() {
             Some(300.0),
         ],
     );
-    let output = run_one("points | window 3 | where std(heading) <= 5 deg", &provider);
+    let output = test_util::run_one("points | window 3 | where std(heading) <= 5 deg", &provider);
     // Only the first window [0,3) around north is steady.
     assert_eq!(output.matches[0].ranges, vec![0..3]);
 }
@@ -577,7 +447,7 @@ fn circular_std_flags_a_steady_heading() {
 fn short_track_is_reported_not_dropped() {
     let provider =
         TestProvider::new(3).with(QueryMetric::Velocity, vec![Some(1.0), Some(2.0), Some(3.0)]);
-    let output = run_one(
+    let output = test_util::run_one(
         "points | window 10 | where avg(velocity) > 0 km/h",
         &provider,
     );
@@ -591,9 +461,9 @@ fn cancellation_stops_the_run_without_partial_results() {
         QueryMetric::Velocity,
         vec![Some(9.0), Some(9.0), Some(9.0), Some(9.0), Some(9.0)],
     );
-    let query = checked("points | where velocity > 0 km/h");
+    let query = test_util::checked("points | where velocity > 0 km/h");
     let inputs = [TrackInput {
-        track: track_ref(),
+        track: test_util::track_ref(),
         provider: &provider,
     }];
 
@@ -610,9 +480,9 @@ fn cancellation_stops_the_run_without_partial_results() {
 #[test]
 fn cancellation_fires_mid_scan() {
     let provider = TestProvider::new(6).with(QueryMetric::Velocity, vec![Some(9.0); 6]);
-    let query = checked("points | where velocity > 0 km/h");
+    let query = test_util::checked("points | where velocity > 0 km/h");
     let inputs = [TrackInput {
-        track: track_ref(),
+        track: test_util::track_ref(),
         provider: &provider,
     }];
 
@@ -634,7 +504,7 @@ fn cancellation_fires_mid_scan() {
 #[test]
 fn unused_params_flow_into_the_summary() {
     let provider = TestProvider::new(1).with(QueryMetric::Velocity, vec![Some(1.0)]);
-    let output = run_one(
+    let output = test_util::run_one(
         "points | with mask 15 deg | where velocity > 0 km/h",
         &provider,
     );
@@ -643,14 +513,15 @@ fn unused_params_flow_into_the_summary() {
 
 #[test]
 fn columns_default_to_time_plus_referenced_metrics() {
-    let query =
-        checked("points | window 5 | where spread(heading) <= 10 deg and avg(velocity) > 30 km/h");
+    let query = test_util::checked(
+        "points | window 5 | where spread(heading) <= 10 deg and avg(velocity) > 30 km/h",
+    );
     assert_eq!(column_labels(&query), ["time", "heading", "velocity"]);
 }
 
 #[test]
 fn explicit_table_controls_columns_time_stays_first() {
-    let query = checked(UC1);
+    let query = test_util::checked(UC1);
     assert_eq!(
         column_labels(&query),
         ["time", "velocity", "heading", "accel"]
@@ -677,7 +548,7 @@ fn aggregate_column<'a>(query: &'a CheckedQuery, label: &str) -> &'a AggregateCo
 
 #[test]
 fn a_table_column_takes_a_channel_aggregate() {
-    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     let src = "points | window 3 | where max(@accel.x) > 1 g | table time, max(@accel.x)";
     let query = check(&parse(src).unwrap(), &schema).expect(src);
     assert_eq!(column_labels(&query), ["time", "max(@accel.x)"]);
@@ -691,7 +562,7 @@ fn a_table_column_takes_a_channel_aggregate() {
 
 #[test]
 fn a_table_column_takes_a_metric_aggregate() {
-    let query = checked("points | window 3 | table avg(velocity)");
+    let query = test_util::checked("points | window 3 | table avg(velocity)");
     assert_eq!(column_labels(&query), ["time", "avg(velocity)"]);
     assert_eq!(
         aggregate_column(&query, "avg(velocity)").quantity(),
@@ -712,7 +583,7 @@ fn an_aggregate_column_names_the_channel_it_reduces(
     #[case] call: &str,
     #[case] channel: Option<&str>,
 ) {
-    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     let src = format!("points | window 3 | table {call}");
     let query = check(&parse(&src).unwrap(), &schema).expect(&src);
     assert_eq!(aggregate_column(&query, call).reduced_channel(), channel);
@@ -721,13 +592,13 @@ fn an_aggregate_column_names_the_channel_it_reduces(
 /// `var` squares its argument, and a squared speed has no quantity.
 #[test]
 fn an_aggregate_column_of_an_unnamed_dimension_has_no_quantity() {
-    let query = checked("points | window 3 | table var(velocity)");
+    let query = test_util::checked("points | window 3 | table var(velocity)");
     assert_eq!(aggregate_column(&query, "var(velocity)").quantity(), None);
 }
 
 #[test]
 fn a_repeated_table_column_is_listed_once() {
-    let query = checked("points | window 3 | table avg(velocity), avg(velocity), time");
+    let query = test_util::checked("points | window 3 | table avg(velocity), avg(velocity), time");
     assert_eq!(column_labels(&query), ["time", "avg(velocity)"]);
 }
 
@@ -744,7 +615,7 @@ fn a_repeated_table_column_is_listed_once() {
     "aggregate it over a window like max(@accel.x), or query @accel as the source"
 )]
 fn a_bare_channel_table_column_is_per_sample(#[case] src: &str, #[case] help: &str) {
-    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     let err = check(&parse(src).unwrap(), &schema).unwrap_err();
     assert_eq!(err.message, "@accel.x is per sample");
     assert_eq!(err.help.as_deref(), Some(help));
@@ -768,26 +639,26 @@ fn a_table_column_is_a_metric_or_an_aggregate() {
 fn display_mode_defaults_to_draw() {
     // No display stage, and a table without one, both mean draw.
     assert_eq!(
-        checked("points | where velocity > 0 km/h").mode(),
+        test_util::checked("points | where velocity > 0 km/h").mode(),
         DisplayMode::Draw
     );
     assert_eq!(
-        checked("points | where velocity > 0 km/h | table time").mode(),
+        test_util::checked("points | where velocity > 0 km/h | table time").mode(),
         DisplayMode::Draw
     );
     assert_eq!(
-        checked("points | where velocity > 0 km/h | keep").mode(),
+        test_util::checked("points | where velocity > 0 km/h | keep").mode(),
         DisplayMode::Keep
     );
     assert_eq!(
-        checked("points | where velocity > 0 km/h | hide | table time").mode(),
+        test_util::checked("points | where velocity > 0 km/h | hide | table time").mode(),
         DisplayMode::Hide
     );
 }
 
 #[test]
 fn with_params_resolve_to_base_units() {
-    let query = checked(
+    let query = test_util::checked(
         "points | with mask 15 deg, snr_drop 10, slip_window 5 min | where slip_all > 2 per min",
     );
     let params = query.params();
@@ -824,7 +695,7 @@ fn with_params_resolve_to_base_units() {
 fn pinned_error_messages(#[case] src: &str, #[case] expected: &str) {
     // The error may come from either the parse or the check stage.
     let message = parse(src)
-        .and_then(|q| chk(&q).map(|_| ()))
+        .and_then(|q| test_util::chk(&q).map(|_| ()))
         .expect_err(src)
         .message;
     assert_eq!(message, expected, "for {src}");
@@ -844,27 +715,28 @@ fn pinned_error_messages(#[case] src: &str, #[case] expected: &str) {
 #[case::compared_to_a_speed("points | where jamming > 10 km/h", false)]
 #[case::compared_to_a_duration("points | where jamming > 10 s", false)]
 fn jamming_accepts_ratios_and_rejects_other_dimensions(#[case] src: &str, #[case] accepted: bool) {
-    let checked = parse(src).and_then(|query| chk(&query).map(|_| ()));
+    let checked = parse(src).and_then(|query| test_util::chk(&query).map(|_| ()));
     assert_eq!(checked.is_ok(), accepted, "for {src}: {checked:?}");
 }
 
 /// The rejection states the metric and shows the form that works.
 #[test]
 fn a_jamming_comparison_without_a_unit_says_so() {
-    let err = chk(&parse("points | where jamming > 0.1").unwrap()).unwrap_err();
+    let err = test_util::chk(&parse("points | where jamming > 0.1").unwrap()).unwrap_err();
     assert_eq!(err.message, "jamming needs a unit, e.g. 50 %");
 }
 
 /// The metric's values come from the archive, not from a derivation.
 #[test]
 fn jamming_needs_no_parameters() {
-    let checked = parse("points | where jamming > 10 %").and_then(|query| chk(&query).map(|_| ()));
+    let checked =
+        parse("points | where jamming > 10 %").and_then(|query| test_util::chk(&query).map(|_| ()));
     assert_eq!(checked, Ok(()), "no `with` stage is required");
 }
 
 #[test]
 fn util_mask_error_has_the_add_help() {
-    let err = chk(&parse("points | where util_gps < 50 %").unwrap()).unwrap_err();
+    let err = test_util::chk(&parse("points | where util_gps < 50 %").unwrap()).unwrap_err();
     assert_eq!(err.help.as_deref(), Some("add: | with mask 15 deg"));
 }
 
@@ -873,7 +745,8 @@ fn suggestion_lives_in_help_not_the_message() {
     // A diagnostic's fix goes in the structured `help`, not appended to
     // `message`, so the editor shows it as a separate "Hint:" line without
     // parsing the message.
-    let err = chk(&parse("points | window 10 | where velocity > 30 km/h").unwrap()).unwrap_err();
+    let err = test_util::chk(&parse("points | window 10 | where velocity > 30 km/h").unwrap())
+        .unwrap_err();
     assert_eq!(err.message, "velocity is per point");
     assert_eq!(
         err.help.as_deref(),
@@ -895,10 +768,13 @@ fn suggestion_lives_in_help_not_the_message() {
 fn acceleration_units_and_kmh_alias(#[case] src: &str, #[case] error: Option<&str>) {
     match error {
         None => {
-            chk(&parse(src).expect(src)).expect(src);
+            test_util::chk(&parse(src).expect(src)).expect(src);
         }
         Some(message) => {
-            assert_eq!(chk(&parse(src).unwrap()).unwrap_err().message, message);
+            assert_eq!(
+                test_util::chk(&parse(src).unwrap()).unwrap_err().message,
+                message
+            );
         }
     }
 }
@@ -930,7 +806,7 @@ fn deep_nesting_errors_instead_of_overflowing() {
 #[case("points | where velocity * clock_delta > eph")]
 #[case("points | where velocity / eph > 2 per min")]
 fn arithmetic_accepts_well_formed_dimensions(#[case] src: &str) {
-    chk(&parse(src).expect(src)).expect(src);
+    test_util::chk(&parse(src).expect(src)).expect(src);
 }
 
 /// The rejected side of the algebra. A product or quotient with an exotic
@@ -963,7 +839,9 @@ fn arithmetic_accepts_well_formed_dimensions(#[case] src: &str) {
     "conditions do not support arithmetic"
 )]
 fn arithmetic_rejects_with_message(#[case] src: &str, #[case] expected: &str) {
-    let message = chk(&parse(src).expect(src)).expect_err(src).message;
+    let message = test_util::chk(&parse(src).expect(src))
+        .expect_err(src)
+        .message;
     assert_eq!(message, expected, "for {src}");
 }
 
@@ -971,7 +849,9 @@ fn arithmetic_rejects_with_message(#[case] src: &str, #[case] expected: &str) {
 fn min_unit_and_min_aggregate_coexist() {
     // Position disambiguates: after a number `min` is the minute unit,
     // before `(` it is the aggregate.
-    checked("points | window 3 | where delta(time) <= 15 min and min(velocity) > 5 km/h");
+    test_util::checked(
+        "points | window 3 | where delta(time) <= 15 min and min(velocity) > 5 km/h",
+    );
 }
 
 #[test]
@@ -998,7 +878,7 @@ fn negative_thresholds_parse_and_check() {
             vec![Some(10.0), Some(5.0), Some(1.0)],
         )
         .indexed_time();
-    let output = run_one("points | where accel < -2 m/s2", &provider);
+    let output = test_util::run_one("points | where accel < -2 m/s2", &provider);
     assert_eq!(output.matches[0].ranges, vec![1..3]);
 }
 
@@ -1008,7 +888,11 @@ fn negative_thresholds_parse_and_check() {
 #[case("points | where sats_fix == 6", true)]
 #[case("points | where velocity == 30 km/h", false)]
 fn equality_is_allowed_only_on_counts(#[case] src: &str, #[case] accepted: bool) {
-    assert_eq!(chk(&parse(src).unwrap()).is_ok(), accepted, "for {src}");
+    assert_eq!(
+        test_util::chk(&parse(src).unwrap()).is_ok(),
+        accepted,
+        "for {src}"
+    );
 }
 
 /// A ratio compares against `%`, never a bare number - a bare number is the
@@ -1017,7 +901,11 @@ fn equality_is_allowed_only_on_counts(#[case] src: &str, #[case] accepted: bool)
 #[case("points | with mask 15 deg | where util_all < 50 %", true)]
 #[case("points | with mask 15 deg | where util_all < 50", false)]
 fn a_ratio_metric_needs_a_percent_literal(#[case] src: &str, #[case] accepted: bool) {
-    assert_eq!(chk(&parse(src).unwrap()).is_ok(), accepted, "for {src}");
+    assert_eq!(
+        test_util::chk(&parse(src).unwrap()).is_ok(),
+        accepted,
+        "for {src}"
+    );
 }
 
 /// `var` squares the argument's dimension: `var(velocity)` is a squared
@@ -1051,11 +939,11 @@ fn a_ratio_metric_needs_a_percent_literal(#[case] src: &str, #[case] accepted: b
 fn var_squares_the_dimension(#[case] src: &str, #[case] error: Option<&str>) {
     match error {
         None => {
-            chk(&parse(src).expect(src)).expect(src);
+            test_util::chk(&parse(src).expect(src)).expect(src);
         }
         Some(message) => {
             assert_eq!(
-                chk(&parse(src).unwrap()).unwrap_err().message,
+                test_util::chk(&parse(src).unwrap()).unwrap_err().message,
                 message,
                 "for {src}"
             );
@@ -1065,7 +953,8 @@ fn var_squares_the_dimension(#[case] src: &str, #[case] error: Option<&str>) {
 
 #[test]
 fn var_on_a_wrapping_angle_suggests_std() {
-    let err = chk(&parse("points | window 3 | where var(heading) < 1 deg").unwrap()).unwrap_err();
+    let err = test_util::chk(&parse("points | window 3 | where var(heading) < 1 deg").unwrap())
+        .unwrap_err();
     assert_eq!(err.message, "var is not defined for a wrapping angle");
     assert_eq!(
         err.help.as_deref(),
@@ -1075,7 +964,8 @@ fn var_on_a_wrapping_angle_suggests_std() {
 
 #[test]
 fn min_of_longitude_is_rejected_as_ambiguous() {
-    let err = chk(&parse("points | window 3 | where min(lon) < 10 deg").unwrap()).unwrap_err();
+    let err =
+        test_util::chk(&parse("points | window 3 | where min(lon) < 10 deg").unwrap()).unwrap_err();
     assert_eq!(err.message, "min on a wrapping angle is ambiguous");
     assert_eq!(
         err.help.as_deref(),
@@ -1092,7 +982,7 @@ fn var_matches_low_variance_windows() {
         QueryMetric::SatsFix,
         vec![Some(6.0), Some(6.0), Some(6.0), Some(9.0)],
     );
-    let output = run_one("points | window 2 | where var(sats_fix) < 1", &provider);
+    let output = test_util::run_one("points | window 2 | where var(sats_fix) < 1", &provider);
     assert_eq!(output.matches[0].ranges, vec![0..3]);
 }
 
@@ -1161,11 +1051,11 @@ fn power_rejects_non_integer_and_out_of_range(#[case] src: &str, #[case] expecte
 fn power_scales_the_dimension(#[case] src: &str, #[case] error: Option<&str>) {
     match error {
         None => {
-            chk(&parse(src).expect(src)).expect(src);
+            test_util::chk(&parse(src).expect(src)).expect(src);
         }
         Some(message) => {
             assert_eq!(
-                chk(&parse(src).unwrap()).unwrap_err().message,
+                test_util::chk(&parse(src).unwrap()).unwrap_err().message,
                 message,
                 "for {src}"
             );
@@ -1177,7 +1067,7 @@ fn power_scales_the_dimension(#[case] src: &str, #[case] error: Option<&str>) {
 fn power_squares_a_point_value() {
     // `sats_fix` squared: 3² = 9 < 16 matches, 5² = 25 does not.
     let provider = TestProvider::new(2).with(QueryMetric::SatsFix, vec![Some(3.0), Some(5.0)]);
-    let output = run_one("points | where sats_fix² < 16", &provider);
+    let output = test_util::run_one("points | where sats_fix² < 16", &provider);
     assert_eq!(output.matches[0].ranges, vec![0..1]);
 }
 
@@ -1185,7 +1075,7 @@ fn power_squares_a_point_value() {
 fn power_with_a_negative_exponent_inverts() {
     // sats_fix⁻¹: 1/2 = 0.5 > 0.4 matches, 1/4 = 0.25 does not.
     let provider = TestProvider::new(2).with(QueryMetric::SatsFix, vec![Some(2.0), Some(4.0)]);
-    let output = run_one("points | where sats_fix⁻¹ > 0.4", &provider);
+    let output = test_util::run_one("points | where sats_fix⁻¹ > 0.4", &provider);
     assert_eq!(output.matches[0].ranges, vec![0..1]);
 }
 
@@ -1193,7 +1083,7 @@ fn power_with_a_negative_exponent_inverts() {
 fn power_with_a_zero_exponent_is_one() {
     // Every value to the zeroth power is 1, so all points clear the bar.
     let provider = TestProvider::new(2).with(QueryMetric::SatsFix, vec![Some(3.0), Some(7.0)]);
-    let output = run_one("points | where sats_fix⁰ > 0.5", &provider);
+    let output = test_util::run_one("points | where sats_fix⁰ > 0.5", &provider);
     assert_eq!(output.matches[0].ranges, vec![0..2]);
 }
 
@@ -1202,7 +1092,7 @@ fn a_negative_power_of_zero_poisons_the_point() {
     // 0⁻¹ is infinite, so that point is skipped like any undefined
     // arithmetic. The finite inverse still matches.
     let provider = TestProvider::new(2).with(QueryMetric::SatsFix, vec![Some(0.0), Some(2.0)]);
-    let output = run_one("points | where sats_fix⁻¹ < 1", &provider);
+    let output = test_util::run_one("points | where sats_fix⁻¹ < 1", &provider);
     assert_eq!(output.matches[0].ranges, vec![1..2]);
     assert_eq!(output.summary.skipped_non_finite, 1);
 }
@@ -1231,11 +1121,11 @@ fn a_negative_power_of_zero_poisons_the_point() {
 fn sqrt_needs_a_perfect_square(#[case] src: &str, #[case] error: Option<&str>) {
     match error {
         None => {
-            chk(&parse(src).expect(src)).expect(src);
+            test_util::chk(&parse(src).expect(src)).expect(src);
         }
         Some(message) => {
             assert_eq!(
-                chk(&parse(src).unwrap()).unwrap_err().message,
+                test_util::chk(&parse(src).unwrap()).unwrap_err().message,
                 message,
                 "for {src}"
             );
@@ -1245,7 +1135,7 @@ fn sqrt_needs_a_perfect_square(#[case] src: &str, #[case] error: Option<&str>) {
 
 #[test]
 fn sqrt_on_a_non_square_suggests_squaring_first() {
-    let err = chk(&parse("points | where sqrt(velocity) > 0").unwrap()).unwrap_err();
+    let err = test_util::chk(&parse("points | where sqrt(velocity) > 0").unwrap()).unwrap_err();
     assert_eq!(
         err.help.as_deref(),
         Some("square the values first, e.g. sqrt(x² + y²)")
@@ -1255,7 +1145,7 @@ fn sqrt_on_a_non_square_suggests_squaring_first() {
 #[test]
 fn a_squared_comparison_suggests_sqrt() {
     // The squared side has a matching root, so the fix is to take it.
-    let err = chk(&parse("points | where velocity² > 30 km/h").unwrap()).unwrap_err();
+    let err = test_util::chk(&parse("points | where velocity² > 30 km/h").unwrap()).unwrap_err();
     assert_eq!(err.message, "cannot compare speed² with speed");
     assert_eq!(err.help.as_deref(), Some("take its square root with sqrt"));
 }
@@ -1287,36 +1177,6 @@ fn a_channel_reference_parses_and_formats(
     assert!(query.to_string().contains(&expected));
 }
 
-/// A scalar channel schema entry for `@name` with `unit` and `period_deg`.
-fn schema_with(name: &str, unit: Option<&str>, period_deg: Option<f64>) -> ChannelSchema {
-    let mut schema = ChannelSchema::new();
-    schema.insert(
-        name,
-        ChannelInfo {
-            unit: unit.map(ChannelUnit::from_file_label),
-            period_deg,
-            components: vec![],
-            conflicts: Vec::new(),
-        },
-    );
-    schema
-}
-
-/// A single vector channel with `unit` and `components` as its labels.
-fn vector_schema(name: &str, unit: Option<&str>, components: &[&str]) -> ChannelSchema {
-    let mut schema = ChannelSchema::new();
-    schema.insert(
-        name,
-        ChannelInfo {
-            unit: unit.map(ChannelUnit::from_file_label),
-            period_deg: None,
-            components: components.iter().map(|c| (*c).to_owned()).collect(),
-            conflicts: Vec::new(),
-        },
-    );
-    schema
-}
-
 #[test]
 fn a_channel_absent_from_the_schema_is_no_such_channel() {
     // An empty schema has no channels.
@@ -1332,7 +1192,7 @@ fn a_channel_absent_from_the_schema_is_no_such_channel() {
 fn a_scalar_channel_resolves_to_its_unit_dimension() {
     // @accel (unit g) is an acceleration, so it compares to an acceleration
     // literal and rejects a speed.
-    let schema = schema_with("accel", Some("g"), None);
+    let schema = test_util::schema_with("accel", Some("g"), None);
     let ok = "points | window 10 | where max(@accel) > 0.1 g";
     check(&parse(ok).unwrap(), &schema).expect("checks with the schema");
 
@@ -1347,7 +1207,7 @@ fn a_scalar_channel_resolves_to_its_unit_dimension() {
 #[test]
 fn a_channel_with_a_period_is_circular_and_accepts_spread() {
     // @heading (deg, period 360) is a wrapping angle, so spread accepts it.
-    let schema = schema_with("heading", Some("deg"), Some(360.0));
+    let schema = test_util::schema_with("heading", Some("deg"), Some(360.0));
     let ok = "points | window 10 | where spread(@heading) < 10 deg";
     check(&parse(ok).unwrap(), &schema).expect("checks with the schema");
 }
@@ -1360,7 +1220,7 @@ fn a_channel_that_does_not_wrap_accepts_avg(
     #[case] period_deg: Option<f64>,
     #[case] src: &str,
 ) {
-    let schema = schema_with("sensor", Some(unit), period_deg);
+    let schema = test_util::schema_with("sensor", Some(unit), period_deg);
     check(&parse(src).unwrap(), &schema).expect(src);
 }
 
@@ -1371,7 +1231,7 @@ fn a_channel_that_does_not_wrap_accepts_avg(
 fn a_wrapping_channel_rejects_ambiguous_aggregates(#[case] func: &str) {
     // avg/min/max collapse a wrapping angle ambiguously, the same rule
     // `heading` and `lon` follow.
-    let schema = schema_with("heading", Some("deg"), Some(360.0));
+    let schema = test_util::schema_with("heading", Some("deg"), Some(360.0));
     let src = format!("points | window 10 | where {func}(@heading) < 10 deg");
     let err = check(&parse(&src).unwrap(), &schema).unwrap_err();
     assert_eq!(
@@ -1386,7 +1246,7 @@ fn a_wrapping_channel_rejects_ambiguous_aggregates(#[case] func: &str) {
 #[case(None)]
 #[case(Some("furlong"))]
 fn a_channel_without_a_known_unit_is_a_bare_number(#[case] unit: Option<&str>) {
-    let schema = schema_with("x", unit, None);
+    let schema = test_util::schema_with("x", unit, None);
     let ok = "points | window 10 | where max(@x) > 5";
     check(&parse(ok).unwrap(), &schema).expect("a bare number compares to a number");
 
@@ -1398,7 +1258,7 @@ fn a_channel_without_a_known_unit_is_a_bare_number(#[case] unit: Option<&str>) {
 fn a_bare_channel_must_be_aggregated() {
     // Like a nav-point metric, a channel has no per-point value. Used raw it
     // errors with a hint to wrap it in an aggregate.
-    let schema = schema_with("accel", Some("g"), None);
+    let schema = test_util::schema_with("accel", Some("g"), None);
     let err = check(
         &parse("points | window 10 | where @accel > 0.1 g").unwrap(),
         &schema,
@@ -1415,7 +1275,7 @@ fn a_bare_channel_must_be_aggregated() {
 fn an_aggregate_over_two_channels_is_rejected() {
     // An aggregate reduces one timeline. Two channels are on separate clocks
     // and cannot be combined per sample, so mixing them is a category error.
-    let mut schema = schema_with("ax", Some("g"), None);
+    let mut schema = test_util::schema_with("ax", Some("g"), None);
     schema.insert(
         "ay",
         ChannelInfo {
@@ -1437,7 +1297,7 @@ fn an_aggregate_over_two_channels_is_rejected() {
 fn an_aggregate_mixing_a_channel_and_a_metric_is_rejected() {
     // @accel (a channel) and accel (the derived nav metric) share a dimension
     // but not a clock, so an aggregate cannot combine them per element.
-    let schema = schema_with("accel", Some("g"), None);
+    let schema = test_util::schema_with("accel", Some("g"), None);
     let err = check(
         &parse("points | window 10 | where max(@accel + accel) > 1.0 g").unwrap(),
         &schema,
@@ -1450,7 +1310,7 @@ fn an_aggregate_mixing_a_channel_and_a_metric_is_rejected() {
 fn a_vector_component_resolves_to_the_channel_dimension() {
     // @accel.x is one column of the g-unit vector, so it is an acceleration:
     // it compares to an acceleration literal and rejects a speed.
-    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     let ok = "points | window 10 | where max(@accel.x) > 0.1 g";
     check(&parse(ok).unwrap(), &schema).expect("a component checks like a scalar");
 
@@ -1462,7 +1322,7 @@ fn a_vector_component_resolves_to_the_channel_dimension() {
 #[test]
 fn a_bare_vector_channel_needs_a_component() {
     // A whole vector has no scalar value. The error points at a component.
-    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     let err = check(
         &parse("points | window 10 | where max(@accel) > 0.1 g").unwrap(),
         &schema,
@@ -1477,7 +1337,7 @@ fn a_bare_vector_channel_needs_a_component() {
 
 #[test]
 fn an_unknown_component_is_rejected() {
-    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     let err = check(
         &parse("points | window 10 | where max(@accel.w) > 0.1 g").unwrap(),
         &schema,
@@ -1489,7 +1349,7 @@ fn an_unknown_component_is_rejected() {
 
 #[test]
 fn a_component_on_a_scalar_channel_is_rejected() {
-    let schema = schema_with("incline", Some("deg"), None);
+    let schema = test_util::schema_with("incline", Some("deg"), None);
     let err = check(
         &parse("points | window 10 | where max(@incline.x) > 1 deg").unwrap(),
         &schema,
@@ -1502,7 +1362,7 @@ fn a_component_on_a_scalar_channel_is_rejected() {
 fn a_bare_component_must_be_aggregated() {
     // Like a nav-point metric, a component has no per-point value. Used raw
     // it hints at wrapping it in an aggregate, keeping the `.x`.
-    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     let err = check(
         &parse("points | window 10 | where @accel.x > 0.1 g").unwrap(),
         &schema,
@@ -1522,7 +1382,7 @@ fn a_windowless_points_channel_points_at_the_working_forms() {
     // both forms that work: an aggregate over a window, or the channel as
     // its own source. (Regression: the old hint sent the user to
     // max(@accel.x), which then failed with "max needs a window".)
-    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     let err = check(&parse("points | where @accel.x > 0.2 mg").unwrap(), &schema).unwrap_err();
     assert_eq!(err.message, "@accel.x is per sample");
     assert_eq!(
@@ -1535,7 +1395,7 @@ fn a_windowless_points_channel_points_at_the_working_forms() {
 fn an_aggregate_without_a_window_hints_at_adding_one() {
     // Following the hint above to an aggregate still needs a window: the error
     // says how.
-    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     let err = check(
         &parse("points | where max(@accel.x) > 0.2 mg").unwrap(),
         &schema,
@@ -1551,7 +1411,7 @@ fn an_aggregate_without_a_window_hints_at_adding_one() {
 #[test]
 fn a_windowless_points_norm_points_at_the_working_forms() {
     // norm takes the same unwindowed-points branch, labelled as it reads.
-    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     let err = check(
         &parse("points | where norm(@accel) > 0.2 mg").unwrap(),
         &schema,
@@ -1568,7 +1428,7 @@ fn a_windowless_points_norm_points_at_the_working_forms() {
 fn components_of_one_channel_combine_per_sample() {
     // Components of one vector share a clock, so per-sample math across them
     // is a single timeline: sqrt(x² + y²) type-checks as an acceleration.
-    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     let src = "points | window 10 | where max(sqrt(@accel.x² + @accel.y²)) > 0.1 g";
     check(&parse(src).unwrap(), &schema).expect("shared-clock components combine");
 }
@@ -1578,7 +1438,7 @@ fn two_different_channels_cannot_combine() {
     // Distinct channels are on independent clocks, even at the same dimension
     // (both acceleration here, so the timeline rule is the one that rejects it,
     // not a unit mismatch).
-    let mut schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let mut schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     schema.insert(
         "accel2",
         ChannelInfo {
@@ -1599,7 +1459,7 @@ fn two_different_channels_cannot_combine() {
 #[test]
 fn norm_is_the_magnitude_of_a_vector_channel() {
     // norm(@accel) is an acceleration, so it compares to a g literal.
-    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     let ok = "points | window 10 | where max(norm(@accel)) > 1 g";
     check(&parse(ok).unwrap(), &schema).expect("norm of a vector is its dimension");
 }
@@ -1607,7 +1467,7 @@ fn norm_is_the_magnitude_of_a_vector_channel() {
 /// accel and accel2 (g-unit vectors) plus the scalar incline, for exercising
 /// norm's rejections and cross-timeline mixing.
 fn norm_schema() -> ChannelSchema {
-    let mut schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let mut schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     schema.insert(
         "accel2",
         ChannelInfo {
@@ -1676,7 +1536,7 @@ fn norm_and_channel_mixing_rejections(
 fn a_channel_can_be_the_source() {
     // `@accel | ...` iterates the channel's own samples. A bare per-sample
     // predicate is fine here: the sample is the match granularity.
-    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     check(
         &parse("@accel | where norm(@accel) > 1 g").unwrap(),
         &schema,
@@ -1727,7 +1587,7 @@ fn a_channel_source_round_trips_through_the_formatter() {
 // An unknown source channel.
 #[case("@nope | where @nope > 1", "no such channel @nope")]
 fn a_channel_source_rejects(#[case] src: &str, #[case] message: &str) {
-    let mut schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let mut schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     schema.insert(
         "gyro",
         ChannelInfo {
@@ -1741,17 +1601,6 @@ fn a_channel_source_rejects(#[case] src: &str, #[case] message: &str) {
     assert_eq!(err.message, message);
 }
 
-fn run_channel(src: &str, schema: &ChannelSchema, provider: &TestProvider) -> RunOutput {
-    let query = check(&parse(src).unwrap(), schema).expect(src);
-    run(
-        &query,
-        &[TrackInput {
-            track: track_ref(),
-            provider,
-        }],
-    )
-}
-
 #[test]
 fn a_channel_aggregate_reduces_native_samples_in_the_window_span() {
     // Points at 0,1,2 s, with `@accel` sampled finer than the points. A count
@@ -1759,7 +1608,7 @@ fn a_channel_aggregate_reduces_native_samples_in_the_window_span() {
     // all five accel samples. Sample values are base units (m/s2) per the
     // `channel_span` contract, near 1g here. The peak 10.8 clears 1.0 g
     // (9.81 m/s2), so the whole track matches.
-    let schema = schema_with("accel", Some("g"), None);
+    let schema = test_util::schema_with("accel", Some("g"), None);
     let provider = TestProvider::new(3).indexed_time().with_channel(
         "accel",
         vec![
@@ -1770,7 +1619,7 @@ fn a_channel_aggregate_reduces_native_samples_in_the_window_span() {
             (2.0, 9.7),
         ],
     );
-    let output = run_channel(
+    let output = test_util::run_channel(
         "points | window 3 | where max(@accel) > 1.0 g",
         &schema,
         &provider,
@@ -1783,12 +1632,12 @@ fn a_channel_reduces_more_samples_than_points() {
     // std over a `window 2` (span [0, 1]) reduces all five native accel
     // samples, not the 2 points. Values are base units (m/s2). A flat channel
     // has std 0 (< 0.02 g = 0.196 m/s2). A jumpy one does not.
-    let schema = schema_with("accel", Some("g"), None);
+    let schema = test_util::schema_with("accel", Some("g"), None);
     let flat = TestProvider::new(2).indexed_time().with_channel(
         "accel",
         vec![(0.0, 9.8), (0.25, 9.8), (0.5, 9.8), (0.75, 9.8), (1.0, 9.8)],
     );
-    let calm = run_channel(
+    let calm = test_util::run_channel(
         "points | window 2 | where std(@accel) < 0.02 g",
         &schema,
         &flat,
@@ -1805,7 +1654,7 @@ fn a_channel_reduces_more_samples_than_points() {
             (1.0, 9.0),
         ],
     );
-    let shaky = run_channel(
+    let shaky = test_util::run_channel(
         "points | window 2 | where std(@accel) < 0.02 g",
         &schema,
         &jumpy,
@@ -1817,11 +1666,11 @@ fn a_channel_reduces_more_samples_than_points() {
 fn a_window_with_no_channel_samples_is_reported_as_skipped() {
     // The channel has no samples in the window's span, so the aggregate is
     // missing: the window is skipped, attributed to the channel by name.
-    let schema = schema_with("accel", Some("g"), None);
+    let schema = test_util::schema_with("accel", Some("g"), None);
     let provider = TestProvider::new(2)
         .indexed_time()
         .with_channel("accel", vec![(100.0, 9.8)]); // far outside [0, 1]
-    let output = run_channel(
+    let output = test_util::run_channel(
         "points | window 2 | where max(@accel) > 0.5 g",
         &schema,
         &provider,
@@ -1835,11 +1684,11 @@ fn channel_per_sample_arithmetic_reduces_within_the_timeline() {
     // `@accel * 2` is per-sample math within the channel's own clock: each
     // base-unit sample doubled, then reduced. max(2*5.2) = 10.4 clears
     // 1.0 g (9.81 m/s2).
-    let schema = schema_with("accel", Some("g"), None);
+    let schema = test_util::schema_with("accel", Some("g"), None);
     let provider = TestProvider::new(2)
         .indexed_time()
         .with_channel("accel", vec![(0.0, 4.0), (0.5, 5.2), (1.0, 4.5)]);
-    let output = run_channel(
+    let output = test_util::run_channel(
         "points | window 2 | where max(@accel * 2) > 1.0 g",
         &schema,
         &provider,
@@ -1851,7 +1700,7 @@ fn channel_per_sample_arithmetic_reduces_within_the_timeline() {
 fn a_vector_component_reduces_its_own_column() {
     // @accel.y reduces the middle column, not x or z. A `window 3` spans the
     // three points' closed time extent [0, 2], holding all three samples.
-    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     let provider = TestProvider::new(3).indexed_time().with_vector_channel(
         "accel",
         vec![
@@ -1861,7 +1710,7 @@ fn a_vector_component_reduces_its_own_column() {
         ],
     );
     // The y column peaks at 11.0, clearing 1.0 g (9.81 m/s2), so all match.
-    let y = run_channel(
+    let y = test_util::run_channel(
         "points | window 3 | where max(@accel.y) > 1.0 g",
         &schema,
         &provider,
@@ -1869,7 +1718,7 @@ fn a_vector_component_reduces_its_own_column() {
     assert_eq!(y.matches[0].ranges, vec![0..3]);
     // The x column peaks at 9.2, below 1.0 g, so nothing matches - proving
     // the reduction reads x's column, not whichever column happens to clear.
-    let x = run_channel(
+    let x = test_util::run_channel(
         "points | window 3 | where max(@accel.x) > 1.0 g",
         &schema,
         &provider,
@@ -1883,18 +1732,18 @@ fn norm_reduces_the_per_sample_vector_magnitude() {
     // (3,4,0) -> 5 m/s2. The rest are near zero. 0.1 g is 0.981 m/s2, so
     // max(norm) = 5 clears it and min does not. Unit "g", which the schema
     // types as an acceleration.
-    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     let provider = TestProvider::new(2).indexed_time().with_vector_channel(
         "accel",
         vec![(0.0, vec![3.0, 4.0, 0.0]), (1.0, vec![0.1, 0.0, 0.0])],
     );
-    let hit = run_channel(
+    let hit = test_util::run_channel(
         "points | window 2 | where max(norm(@accel)) > 0.1 g",
         &schema,
         &provider,
     );
     assert_eq!(hit.matches[0].ranges, vec![0..2]);
-    let miss = run_channel(
+    let miss = test_util::run_channel(
         "points | window 2 | where min(norm(@accel)) > 0.1 g",
         &schema,
         &provider,
@@ -1906,11 +1755,11 @@ fn norm_reduces_the_per_sample_vector_magnitude() {
 fn norm_of_a_non_finite_sample_poisons_the_window() {
     // A component of f64::MAX squares to inf, so norm is non-finite: the
     // window poisons, matches nothing, and the skip is counted.
-    let schema = vector_schema("accel", Some("g"), &["x", "y"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y"]);
     let provider = TestProvider::new(1)
         .indexed_time()
         .with_vector_channel("accel", vec![(0.0, vec![f64::MAX, 0.0])]);
-    let output = run_channel(
+    let output = test_util::run_channel(
         "points | window 1 | where max(norm(@accel)) > 0.1 g",
         &schema,
         &provider,
@@ -1924,11 +1773,11 @@ fn components_combine_per_sample_within_the_row() {
     // sqrt(x² + y²) is per-sample math across two columns of the same row.
     // Row 0 is (3, 4) -> 5 m/s2, clearing 0.1 g (0.981 m/s2). The explicit
     // form matches what norm computes over those columns.
-    let schema = vector_schema("accel", Some("g"), &["x", "y"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y"]);
     let provider = TestProvider::new(2)
         .indexed_time()
         .with_vector_channel("accel", vec![(0.0, vec![3.0, 4.0]), (1.0, vec![0.1, 0.0])]);
-    let output = run_channel(
+    let output = test_util::run_channel(
         "points | window 2 | where max(sqrt(@accel.x² + @accel.y²)) > 0.1 g",
         &schema,
         &provider,
@@ -1940,7 +1789,7 @@ fn components_combine_per_sample_within_the_row() {
 fn a_channel_source_matches_per_sample() {
     // `@accel | where ...` judges each sample on its own. The match ranges
     // are sample indices, and the total is the sample count, not nav points.
-    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     let provider = TestProvider::new(2).indexed_time().with_vector_channel(
         "accel",
         vec![
@@ -1949,7 +1798,7 @@ fn a_channel_source_matches_per_sample() {
             (2.0, vec![10.0, 0.0, 0.0]), // over
         ],
     );
-    let output = run_channel("@accel | where norm(@accel) > 0.1 g", &schema, &provider);
+    let output = test_util::run_channel("@accel | where norm(@accel) > 0.1 g", &schema, &provider);
     assert_eq!(output.matches[0].ranges, vec![0..1, 2..3]);
     // Three channel samples, not the provider's two nav points.
     assert_eq!(output.summary.total_points, 3);
@@ -1959,7 +1808,7 @@ fn a_channel_source_matches_per_sample() {
 fn a_channel_source_window_reduces_its_samples() {
     // `@accel | window 3 | where max(norm(@accel)) > 0.1 g`: the window over
     // all three samples has peak norm 10, so every sample matches.
-    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y", "z"]);
     let provider = TestProvider::new(2).indexed_time().with_vector_channel(
         "accel",
         vec![
@@ -1968,7 +1817,7 @@ fn a_channel_source_window_reduces_its_samples() {
             (2.0, vec![10.0, 0.0, 0.0]),
         ],
     );
-    let output = run_channel(
+    let output = test_util::run_channel(
         "@accel | window 3 | where max(norm(@accel)) > 0.1 g",
         &schema,
         &provider,
@@ -1981,12 +1830,12 @@ fn a_channel_source_duration_window_groups_by_sample_time() {
     // `@accel | window 2 s`: at anchor 0 the samples in [0, 2) s are indices
     // 0 and 1 (the sample at 2.0 s starts a window that overruns the data).
     // Their std over the x column is 0, so a calm channel matches [0, 2).
-    let schema = vector_schema("accel", Some("g"), &["x"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x"]);
     let provider = TestProvider::new(2).indexed_time().with_vector_channel(
         "accel",
         vec![(0.0, vec![9.8]), (1.0, vec![9.8]), (2.0, vec![9.8])],
     );
-    let output = run_channel(
+    let output = test_util::run_channel(
         "@accel | window 2 s | where std(@accel.x) < 0.02 g",
         &schema,
         &provider,
@@ -2001,12 +1850,12 @@ fn a_duration_window_gathers_channel_samples_over_its_span() {
     // exactly 2.0 s is gathered though point 2 (at t=2) is not in the
     // half-open [0, 2) point window - the boundary difference the code flags.
     // The span's peak 10.8 clears 1.0 g, so the window's points 0 and 1 match.
-    let schema = schema_with("accel", Some("g"), None);
+    let schema = test_util::schema_with("accel", Some("g"), None);
     let provider = TestProvider::new(3).indexed_time().with_channel(
         "accel",
         vec![(0.0, 9.6), (0.7, 10.8), (1.4, 10.0), (2.0, 9.7)],
     );
-    let output = run_channel(
+    let output = test_util::run_channel(
         "points | window 2 s | where max(@accel) > 1.0 g",
         &schema,
         &provider,
@@ -2044,11 +1893,11 @@ fn a_channel_span_includes_samples_on_both_endpoints() {
     // the min and max, so spread = 2 clears the threshold. Dropping either
     // endpoint drops the spread to 1 and the window no longer matches, so the
     // assertion pins both bounds. A unitless channel keeps the math plain.
-    let schema = schema_with("sensor", None, None);
+    let schema = test_util::schema_with("sensor", None, None);
     let provider = TestProvider::new(3)
         .indexed_time()
         .with_channel("sensor", vec![(0.0, 9.0), (1.0, 10.0), (2.0, 11.0)]);
-    let output = run_channel(
+    let output = test_util::run_channel(
         "points | window 3 | where spread(@sensor) > 1.5",
         &schema,
         &provider,
@@ -2061,11 +1910,11 @@ fn a_channel_span_includes_samples_on_both_endpoints() {
 /// 10 s.
 #[test]
 fn a_count_window_spans_the_time_extent_of_its_points_across_a_backward_time_step() {
-    let schema = schema_with("sensor", None, None);
+    let schema = test_util::schema_with("sensor", None, None);
     let provider = TestProvider::new(3)
         .with(QueryMetric::Time, vec![Some(0.0), Some(10.0), Some(1.0)])
         .with_channel("sensor", vec![(5.0, 10.0)]);
-    let output = run_channel(
+    let output = test_util::run_channel(
         "points | window 3 | where max(@sensor) > 5",
         &schema,
         &provider,
@@ -2078,12 +1927,12 @@ fn a_count_window_spans_the_time_extent_of_its_points_across_a_backward_time_ste
 /// The window matches on the sample at 0.5 s and marks its other two points.
 #[test]
 fn a_window_marks_only_the_points_its_provider_offers() {
-    let schema = schema_with("sensor", None, None);
+    let schema = test_util::schema_with("sensor", None, None);
     let provider = TestProvider::new(3)
         .indexed_time()
         .with_channel("sensor", vec![(0.5, 10.0)])
         .filtering_out(1);
-    let output = run_channel(
+    let output = test_util::run_channel(
         "points | window 3 | where max(@sensor) > 5",
         &schema,
         &provider,
@@ -2095,9 +1944,9 @@ fn a_window_marks_only_the_points_its_provider_offers() {
 /// timestamp. Its channel aggregate reports a missing time.
 #[test]
 fn a_window_whose_points_have_no_time_skips_on_the_time_metric() {
-    let schema = schema_with("sensor", None, None);
+    let schema = test_util::schema_with("sensor", None, None);
     let provider = TestProvider::new(2).with_channel("sensor", vec![(0.5, 10.0)]);
-    let output = run_channel(
+    let output = test_util::run_channel(
         "points | window 2 | where max(@sensor) > 5",
         &schema,
         &provider,
@@ -2110,7 +1959,7 @@ fn a_window_whose_points_have_no_time_skips_on_the_time_metric() {
 fn a_channel_column_reduces_the_samples_of_its_match() {
     // The column reduces the accel samples in [0, 2], the closed time extent
     // of the match's points 0..3. Their peak is 10.8 m/s2.
-    let schema = schema_with("accel", Some("g"), None);
+    let schema = test_util::schema_with("accel", Some("g"), None);
     let provider = TestProvider::new(3).indexed_time().with_channel(
         "accel",
         vec![
@@ -2131,7 +1980,7 @@ fn a_channel_column_reduces_the_samples_of_its_match() {
 /// point steps the clock back to 1 s, and the points run from 0 s to 10 s.
 #[test]
 fn a_channel_column_spans_the_time_extent_of_a_match_across_a_backward_time_step() {
-    let schema = schema_with("sensor", None, None);
+    let schema = test_util::schema_with("sensor", None, None);
     let provider = TestProvider::new(3)
         .with(QueryMetric::Time, vec![Some(0.0), Some(10.0), Some(1.0)])
         .with_channel("sensor", vec![(5.0, 10.0)]);
@@ -2147,7 +1996,7 @@ fn a_metric_column_reduces_the_points_of_its_match() {
         QueryMetric::Velocity,
         vec![Some(10.0), Some(20.0), Some(30.0), Some(400.0)],
     );
-    let query = checked("points | window 2 | table avg(velocity)");
+    let query = test_util::checked("points | window 2 | table avg(velocity)");
     let column = aggregate_column(&query, "avg(velocity)");
     // The match's own three points average to 20 m/s: the fourth point is
     // outside it.
@@ -2158,7 +2007,7 @@ fn a_metric_column_reduces_the_points_of_its_match() {
 fn a_channel_source_column_reduces_the_samples_its_match_indexes() {
     // On a channel source a match is a range of samples. The column reduces
     // the rows of that range: x peaks at 3 over the first two samples.
-    let schema = vector_schema("accel", Some("g"), &["x", "y"]);
+    let schema = test_util::vector_schema("accel", Some("g"), &["x", "y"]);
     let provider = TestProvider::new(0).with_vector_channel(
         "accel",
         vec![
@@ -2178,7 +2027,7 @@ fn a_column_of_an_empty_match_has_no_value() {
     let provider = TestProvider::new(2)
         .indexed_time()
         .with(QueryMetric::Velocity, vec![Some(10.0), Some(20.0)]);
-    let query = checked("points | window 2 | table avg(velocity)");
+    let query = test_util::checked("points | window 2 | table avg(velocity)");
     let column = aggregate_column(&query, "avg(velocity)");
     assert_eq!(column.value_over_match(&provider, 1..1), None);
 }
@@ -2190,7 +2039,7 @@ fn a_missing_value_leaves_the_column_without_one() {
     let provider = TestProvider::new(3)
         .indexed_time()
         .with(QueryMetric::Velocity, vec![Some(10.0), None, Some(30.0)]);
-    let query = checked("points | window 2 | table avg(velocity)");
+    let query = test_util::checked("points | window 2 | table avg(velocity)");
     let column = aggregate_column(&query, "avg(velocity)");
     assert_eq!(column.value_over_match(&provider, 0..3), None);
     assert_eq!(column.value_over_match(&provider, 2..3), Some(30.0));
@@ -2202,7 +2051,7 @@ fn sqrt_computes_a_magnitude() {
     let provider = TestProvider::new(2)
         .with(QueryMetric::Lat, vec![Some(3.0), Some(0.0)])
         .with(QueryMetric::Lon, vec![Some(4.0), Some(0.0)]);
-    let output = run_one("points | where sqrt(lat² + lon²) > 4.5 deg", &provider);
+    let output = test_util::run_one("points | where sqrt(lat² + lon²) > 4.5 deg", &provider);
     assert_eq!(output.matches[0].ranges, vec![0..1]);
 }
 
@@ -2214,7 +2063,7 @@ fn sqrt_wraps_a_windowed_aggregate() {
         QueryMetric::Velocity,
         vec![Some(10.0), Some(20.0), Some(30.0)],
     );
-    let output = run_one(
+    let output = test_util::run_one(
         "points | window 2 | where sqrt(avg(velocity)²) > 70 km/h",
         &provider,
     );
@@ -2226,7 +2075,7 @@ fn sqrt_of_a_negative_poisons_the_point() {
     // sqrt(sats_fix - 10): 4 - 10 = -6 roots to NaN and is skipped. 20 - 10
     // roots to a finite value that matches.
     let provider = TestProvider::new(2).with(QueryMetric::SatsFix, vec![Some(4.0), Some(20.0)]);
-    let output = run_one("points | where sqrt(sats_fix - 10) < 5", &provider);
+    let output = test_util::run_one("points | where sqrt(sats_fix - 10) < 5", &provider);
     assert_eq!(output.matches[0].ranges, vec![1..2]);
     assert_eq!(output.summary.skipped_non_finite, 1);
 }
@@ -2241,7 +2090,7 @@ fn long_arithmetic_chain_checks_without_panicking() {
         .collect::<Vec<_>>()
         .join(" * ");
     let src = format!("points | where {chain} > 0");
-    let result = chk(&parse(&src).expect("a long product chain parses"));
+    let result = test_util::chk(&parse(&src).expect("a long product chain parses"));
     assert!(
         result.is_err(),
         "an exotic dimension cannot compare to a bare number"
@@ -2251,7 +2100,7 @@ fn long_arithmetic_chain_checks_without_panicking() {
 #[test]
 fn uc1_parses_checks_and_formats() {
     let query = parse(UC1).unwrap();
-    chk(&query).unwrap();
+    test_util::chk(&query).unwrap();
     insta::assert_debug_snapshot!("uc1_ast", query);
     insta::assert_snapshot!("uc1_canonical", query.to_string());
 }
@@ -2322,7 +2171,7 @@ fn error_catalog() {
         .map(|src| {
             let outcome = match parse(src) {
                 Err(e) => diag_line(&e),
-                Ok(q) => match chk(&q) {
+                Ok(q) => match test_util::chk(&q) {
                     Err(e) => diag_line(&e),
                     Ok(_) => "(no error)".to_owned(),
                 },

@@ -311,39 +311,15 @@ impl QueryAccum {
 
 #[cfg(test)]
 mod tests {
-    use gt_types::{FileIdx, TrackIdx};
-
     use super::*;
-    use crate::{ChannelSchema, check, parse};
-
-    fn track() -> TrackRef {
-        TrackRef::new(FileIdx::new(0), TrackIdx::new(0))
-    }
-
-    /// Velocity in m/s and a 1 s-per-point clock. Every other metric is
-    /// missing.
-    struct Speeds(Vec<f64>);
-
-    impl MetricProvider for Speeds {
-        fn len(&self) -> usize {
-            self.0.len()
-        }
-
-        fn value(&self, metric: QueryMetric, index: usize) -> Option<f64> {
-            match metric {
-                QueryMetric::Velocity => self.0.get(index).copied(),
-                QueryMetric::Time => (index < self.0.len()).then_some(index as f64),
-                _ => None,
-            }
-        }
-    }
+    use crate::test_util::{self, TestProvider};
 
     /// Each stage's summary counts the track once per metric it references
     /// and the track lacks - a `snap_error` stage lists the run-less track,
     /// the velocity stage next to it does not.
     #[test]
     fn stages_count_tracks_without_their_own_metrics() {
-        let provider = Speeds(vec![5.0, 10.0, 9.0]);
+        let provider = TestProvider::velocities_one_second_apart(vec![5.0, 10.0, 9.0]);
         let output = compose(
             &[
                 "points | where snap_error > 1 m",
@@ -365,13 +341,10 @@ mod tests {
         );
     }
 
-    fn compose(srcs: &[&str], provider: &impl MetricProvider) -> PipelineOutput {
-        let queries: Vec<CheckedQuery> = srcs
-            .iter()
-            .map(|s| check(&parse(s).expect(s), &ChannelSchema::new()).expect(s))
-            .collect();
+    fn compose(srcs: &[&str], provider: &TestProvider) -> PipelineOutput {
+        let queries: Vec<CheckedQuery> = srcs.iter().map(|s| test_util::checked(s)).collect();
         let inputs = [TrackInput {
-            track: track(),
+            track: test_util::track_ref(),
             provider,
         }];
         run_pipeline(&queries, &inputs, &|| false).expect("not cancelled")
@@ -395,7 +368,9 @@ mod tests {
     #[test]
     fn hide_then_draw_evaluates_over_survivors() {
         // Slow at the ends, fast in the middle.
-        let provider = Speeds(vec![5.0, 5.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 5.0, 5.0]);
+        let provider = TestProvider::velocities_one_second_apart(vec![
+            5.0, 5.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 5.0, 5.0,
+        ]);
         let out = compose(
             &[
                 "points | where velocity < 10 m/s | hide",
@@ -415,7 +390,7 @@ mod tests {
         let speeds: Vec<f64> = (0..20)
             .map(|i| if i % 5 == 4 { 0.0 } else { 20.0 })
             .collect();
-        let provider = Speeds(speeds);
+        let provider = TestProvider::velocities_one_second_apart(speeds);
         let out = compose(
             &[
                 "points | where velocity < 10 m/s | hide",
@@ -430,7 +405,7 @@ mod tests {
 
     #[test]
     fn a_later_hide_removes_an_earlier_halo() {
-        let provider = Speeds(vec![20.0, 40.0, 20.0, 40.0]);
+        let provider = TestProvider::velocities_one_second_apart(vec![20.0, 40.0, 20.0, 40.0]);
         let out = compose(
             &[
                 "points | where velocity > 10 m/s | draw",
@@ -446,7 +421,7 @@ mod tests {
     #[test]
     fn keep_hides_the_non_matching_points() {
         // 30 km/h is 8.33 m/s. Points 1 and 3 exceed it.
-        let provider = Speeds(vec![5.0, 20.0, 5.0, 20.0]);
+        let provider = TestProvider::velocities_one_second_apart(vec![5.0, 20.0, 5.0, 20.0]);
         let out = compose(&["points | where velocity > 30 km/h | keep"], &provider);
         assert_eq!(hidden_ranges(&out), vec![0..1, 2..3]);
         assert_eq!(out.queries.first().map(|q| q.mode), Some(DisplayMode::Keep));
@@ -456,7 +431,7 @@ mod tests {
     #[test]
     fn one_draw_query_matches_a_plain_run() {
         // A single draw query is drawn as a lone run: halos, nothing hidden.
-        let provider = Speeds(vec![5.0, 20.0, 20.0, 5.0]);
+        let provider = TestProvider::velocities_one_second_apart(vec![5.0, 20.0, 20.0, 5.0]);
         let out = compose(&["points | where velocity > 10 m/s | draw"], &provider);
         assert!(hidden_ranges(&out).is_empty());
         assert_eq!(draw_ranges(&out, 0), vec![1..3]);
@@ -466,7 +441,8 @@ mod tests {
     fn accel_resets_across_a_hidden_gap() {
         // A slow point in the middle is hidden, splitting the track into two
         // runs. `accel` differences velocity over time within a run only.
-        let provider = Speeds(vec![10.0, 20.0, 1.0, 100.0, 100.0, 100.0]);
+        let provider =
+            TestProvider::velocities_one_second_apart(vec![10.0, 20.0, 1.0, 100.0, 100.0, 100.0]);
         let out = compose(
             &[
                 "points | where velocity < 5 m/s | hide",
@@ -483,16 +459,16 @@ mod tests {
 
     #[test]
     fn cancellation_stops_the_pipeline_without_partial_results() {
-        let provider = Speeds(vec![20.0; 8]);
+        let provider = TestProvider::velocities_one_second_apart(vec![20.0; 8]);
         let queries: Vec<CheckedQuery> = [
             "points | where velocity > 0 m/s | hide",
             "points | where velocity > 0 m/s | draw",
         ]
         .iter()
-        .map(|s| check(&parse(s).expect(s), &ChannelSchema::new()).expect(s))
+        .map(|s| test_util::checked(s))
         .collect();
         let inputs = [TrackInput {
-            track: track(),
+            track: test_util::track_ref(),
             provider: &provider,
         }];
 
