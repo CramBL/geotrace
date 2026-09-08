@@ -32,6 +32,19 @@ const _: () = {
     assert!(GtdLogLevel::GTD_LOG_TRACE as u32 == 5);
 };
 
+impl GtdLogLevel {
+    pub(crate) fn from_abi_value(level: u32) -> Option<Self> {
+        match level {
+            1 => Some(Self::GTD_LOG_ERROR),
+            2 => Some(Self::GTD_LOG_WARN),
+            3 => Some(Self::GTD_LOG_INFO),
+            4 => Some(Self::GTD_LOG_DEBUG),
+            5 => Some(Self::GTD_LOG_TRACE),
+            _ => None,
+        }
+    }
+}
+
 impl From<Level> for GtdLogLevel {
     fn from(level: Level) -> Self {
         match level {
@@ -197,14 +210,25 @@ pub unsafe extern "C" fn gtd_set_log_callback(
 /// The level holds until the next call, a clear of the callback included, and
 /// is `GTD_LOG_WARN` until this is called.
 ///
-/// @param level Lowest severity to forward.
+/// @param level Lowest severity to forward. A @ref GtdLogLevel value.
+///
+/// @return `GTD_ERR_INVALID_ARGUMENT` if @p level is a value no
+///         @ref GtdLogLevel variant declares, and the level set before the call
+///         stays in force.
 #[unsafe(no_mangle)]
-pub extern "C" fn gtd_set_log_level(level: GtdLogLevel) {
-    let level = LevelFilter::from(level);
-    *FORWARDED_LEVEL.lock() = level;
-    if SINK.lock().is_some() {
-        apply_max_level(level);
-    }
+pub extern "C" fn gtd_set_log_level(level: u32) -> GtdStatus {
+    error::run_catching_panics(|| {
+        let Some(level) = GtdLogLevel::from_abi_value(level) else {
+            error::set_last_error("level is not a valid GtdLogLevel");
+            return GtdStatus::GTD_ERR_INVALID_ARGUMENT;
+        };
+        let filter = LevelFilter::from(level);
+        *FORWARDED_LEVEL.lock() = filter;
+        if SINK.lock().is_some() {
+            apply_max_level(filter);
+        }
+        GtdStatus::GTD_OK
+    })
 }
 
 /// Stop forwarding log records.

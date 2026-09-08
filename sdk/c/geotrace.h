@@ -1046,9 +1046,13 @@ GtdStatus gtd_set_log_callback(GtdLogCallback callback, void *user_data);
  * The level holds until the next call, a clear of the callback included, and
  * is `GTD_LOG_WARN` until this is called.
  *
- * @param level Lowest severity to forward.
+ * @param level Lowest severity to forward. A @ref GtdLogLevel value.
+ *
+ * @return `GTD_ERR_INVALID_ARGUMENT` if @p level is a value no
+ *         @ref GtdLogLevel variant declares, and the level set before the call
+ *         stays in force.
  */
-void gtd_set_log_level(GtdLogLevel level);
+GtdStatus gtd_set_log_level(uint32_t level);
 
 /**
  * Stop forwarding log records.

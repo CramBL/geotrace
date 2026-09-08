@@ -70,27 +70,16 @@ if(EXISTS "${GTD_OUT_OF_RANGE_FIXTURE}")
 endif()
 
 # `test_invalid_enums` passes a value outside the `enum` to every entry point
-# that takes one. `WILL_FAIL` marks one case at a time: each case is registered
-# on its own. A case that faults is reported as a failure of that case:
-# criterion runs each case in a process of its own.
+# that takes one. A case that faults is reported as a failure of that case: each
+# case is registered on its own, and criterion runs each in a process of its own.
 add_executable(test_invalid_enums test_invalid_enums.c)
 target_link_libraries(test_invalid_enums PRIVATE GeoTrace::C PkgConfig::Criterion
                       geotrace_sanitizers)
 geotrace_c_test_target(test_invalid_enums)
 
-# Each case below fails today: it asserts the status its entry point is to
-# return for a value outside an `enum`, and that entry point returns another one.
-# The library reads such a value as a variant the `enum` declares, which is
-# undefined behavior: the call returns `GTD_OK`, or the process faults. The unit
-# that fixes an entry point deletes its line from this list.
-set(GTD_INVALID_ENUM_CASES_AWAITING_A_FIX
-    # `gtd_set_log_level`
-    a_log_level_outside_the_enum_leaves_the_forwarded_level_in_force
-)
-
+# The C API takes each value below as a `uint32_t`, in a parameter or in a
+# struct field, and the library checks it.
 foreach(case
-        # These cases pass today: the C API takes the value as a `uint32_t`, in
-        # a parameter or in a struct field, and the library checks it.
         a_channel_unit_mode_outside_the_enum_is_rejected
         a_travel_mode_outside_the_enum_is_rejected
         the_name_of_a_travel_mode_outside_the_enum_is_unknown
@@ -98,7 +87,7 @@ foreach(case
         the_builder_stays_unchanged_when_it_rejects_a_satellite_report
         an_annotation_icon_outside_the_enum_is_rejected
         an_event_marker_style_icon_outside_the_enum_is_rejected
-        ${GTD_INVALID_ENUM_CASES_AWAITING_A_FIX})
+        a_log_level_outside_the_enum_leaves_the_forwarded_level_in_force)
     add_test(NAME test_invalid_enums_${case}
         COMMAND test_invalid_enums --filter "invalid_enums/${case}"
     )
@@ -108,12 +97,6 @@ foreach(case
         ENVIRONMENT "${GEOTRACE_SANITIZE_TEST_ENVIRONMENT}"
         TIMEOUT 60
     )
-endforeach()
-
-# A filter that matches no test exits 0, which `WILL_FAIL` reports as a failure.
-# A name above that no test declares fails from its first run.
-foreach(case IN LISTS GTD_INVALID_ENUM_CASES_AWAITING_A_FIX)
-    set_tests_properties(test_invalid_enums_${case} PROPERTIES WILL_FAIL TRUE)
 endforeach()
 
 # The canary checks that the address sanitizer resolves a fault inside the Rust
