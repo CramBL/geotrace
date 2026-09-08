@@ -1,6 +1,6 @@
 /* Each test here passes three values that the `enum` of a parameter or struct
-   field does not declare: the arm the library takes for such a value differs
-   between builds. */
+   field does not declare, and asserts what the entry point returns for such a
+   value. */
 
 #include "../geotrace.h"
 #include "test_helpers.h"
@@ -8,30 +8,29 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange): each cast below
-   produces a discriminant outside its `enum`'s declared range. */
-
 Test(invalid_enums, a_travel_mode_outside_the_enum_is_rejected) {
-    static const int32_t modes[] = {7, 99, 200};
+    static const uint32_t modes[] = {7, 99, 200};
 
     for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
         GtdFileBuilder *builder = gtd_builder_create();
         cr_assert_not_null(builder);
-        cr_assert_eq(gtd_builder_set_travel_mode(builder, (GtdTravelMode)modes[i]),
-                     GTD_ERR_INVALID_ARGUMENT);
+        cr_assert_eq(gtd_builder_set_travel_mode(builder, modes[i]), GTD_ERR_INVALID_ARGUMENT);
         gtd_builder_destroy(builder);
     }
 }
 
 Test(invalid_enums, the_name_of_a_travel_mode_outside_the_enum_is_unknown) {
-    static const int32_t modes[] = {7, 99, 200};
+    static const uint32_t modes[] = {7, 99, 200};
 
     for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
-        const char *name = gtd_travel_mode_name((GtdTravelMode)modes[i]);
+        const char *name = gtd_travel_mode_name(modes[i]);
         cr_assert_not_null(name);
         cr_assert_str_eq(name, "unknown");
     }
 }
+
+/* NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange): each cast below
+   produces a discriminant outside its `enum`'s declared range. */
 
 Test(invalid_enums, an_annotation_icon_outside_the_enum_is_rejected) {
     static const int32_t icons[] = {14, 200, 254};
@@ -107,6 +106,7 @@ Test(invalid_enums, a_log_level_outside_the_enum_leaves_the_forwarded_level_in_f
 
     gtd_clear_log_callback();
 }
+/* NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange) */
 
 Test(invalid_enums, a_channel_unit_mode_outside_the_enum_is_rejected) {
     static const uint32_t unit_modes[] = {2, 7, UINT32_MAX};
@@ -134,4 +134,3 @@ Test(invalid_enums, a_channel_unit_mode_outside_the_enum_is_rejected) {
         gtd_builder_destroy(builder);
     }
 }
-/* NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange) */

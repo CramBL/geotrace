@@ -781,7 +781,7 @@ marker_icon_from_code(std::uint8_t code) noexcept {
     return from_c(static_cast<GtdMarkerIcon>(code));
 }
 
-[[nodiscard]] constexpr GtdTravelMode to_c(TravelMode mode) noexcept {
+[[nodiscard]] constexpr std::uint32_t to_c(TravelMode mode) noexcept {
     switch (mode) {
     case TravelMode::Car:
         return GTD_TRAVEL_MODE_CAR;
