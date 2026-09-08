@@ -79,14 +79,23 @@ pub unsafe extern "C" fn gtd_builder_set_identity(
 ///
 /// Must be called before the first `gtd_builder_add_*` call.
 ///
+/// @param builder Builder handle.
+/// @param mode    A @ref GtdTravelMode value.
+///
+/// @return `GTD_ERR_INVALID_ARGUMENT` if @p mode is a value no
+///         @ref GtdTravelMode variant declares.
 /// @return `GTD_ERR_CALL_ORDER` if data has already been added.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_set_travel_mode(
     builder: *mut GtdFileBuilder,
-    mode: GtdTravelMode,
+    mode: u32,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
         let builder = nonnull_mut!(builder);
+        let Some(mode) = GtdTravelMode::from_abi_value(mode) else {
+            error::set_last_error("mode is not a valid GtdTravelMode");
+            return GtdStatus::GTD_ERR_INVALID_ARGUMENT;
+        };
         builder.set_travel_mode(mode.into())
     })
 }

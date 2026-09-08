@@ -26,6 +26,7 @@ the app).
 
 ### Changed
 
+- C `gtd_builder_set_travel_mode` and `gtd_travel_mode_name` take `uint32_t mode` in place of `GtdTravelMode`, a breaking change to the C API. `gtd_builder_set_travel_mode` returns `GTD_ERR_INVALID_ARGUMENT` and `gtd_travel_mode_name` returns `"unknown"` for a value no `GtdTravelMode` variant declares.
 - The writer stamps `geotrace_version` 2 for the layout it writes, and the reader accepts 1 and 2.
 - Rust `NavFile::inspect` reports a file's identity, travel mode and build stamp, its event markers and event marker styles, its satellites' elevation, azimuth and no-data SNR readings, each channel's period, description and time range, every marker icon code it holds, and each fixed-width field row that is not UTF-8.
 - Python `NavFile.points`, `markers`, `event_markers`, `channels` and `event_marker_styles` return a sequence supporting `len()`, indexing, slicing and iteration, in place of a list rebuilt on every attribute access.

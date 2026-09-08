@@ -215,6 +215,20 @@ typedef enum {
 } GtdMarkerIcon;
 
 /**
+ * Severity of a log record, with the values of the Rust `log` crate's levels.
+ *
+ * The SDK reports data it read or was given but could not use as written at
+ * `GTD_LOG_WARN`.
+ */
+typedef enum {
+    GTD_LOG_ERROR = 1,
+    GTD_LOG_WARN = 2,
+    GTD_LOG_INFO = 3,
+    GTD_LOG_DEBUG = 4,
+    GTD_LOG_TRACE = 5,
+} GtdLogLevel;
+
+/**
  * Platform a recording was made on, declared by the recorder.
  */
 typedef enum {
@@ -247,20 +261,6 @@ typedef enum {
      */
     GTD_TRAVEL_MODE_AIRCRAFT = 6,
 } GtdTravelMode;
-
-/**
- * Severity of a log record, with the values of the Rust `log` crate's levels.
- *
- * The SDK reports data it read or was given but could not use as written at
- * `GTD_LOG_WARN`.
- */
-typedef enum {
-    GTD_LOG_ERROR = 1,
-    GTD_LOG_WARN = 2,
-    GTD_LOG_INFO = 3,
-    GTD_LOG_DEBUG = 4,
-    GTD_LOG_TRACE = 5,
-} GtdLogLevel;
 
 /**
  * How a channel unit label should be interpreted on the write path.
@@ -925,9 +925,14 @@ GtdStatus gtd_builder_set_identity(GtdFileBuilder *builder, const char *identity
  *
  * Must be called before the first `gtd_builder_add_*` call.
  *
+ * @param builder Builder handle.
+ * @param mode    A @ref GtdTravelMode value.
+ *
+ * @return `GTD_ERR_INVALID_ARGUMENT` if @p mode is a value no
+ *         @ref GtdTravelMode variant declares.
  * @return `GTD_ERR_CALL_ORDER` if data has already been added.
  */
-GtdStatus gtd_builder_set_travel_mode(GtdFileBuilder *builder, GtdTravelMode mode);
+GtdStatus gtd_builder_set_travel_mode(GtdFileBuilder *builder, uint32_t mode);
 
 /**
  * Enable lenient mode.
@@ -1434,8 +1439,13 @@ uint8_t gtd_ts_is_none(GtdTimestamp timestamp);
  * Wire name of a travel mode, e.g. `GTD_TRAVEL_MODE_CAR` -> `"car"`.
  *
  * The returned pointer is a static string and always valid.
+ *
+ * @param mode A @ref GtdTravelMode value.
+ *
+ * @return `"unknown"` if @p mode is a value no @ref GtdTravelMode variant
+ *         declares.
  */
-const char *gtd_travel_mode_name(GtdTravelMode mode);
+const char *gtd_travel_mode_name(uint32_t mode);
 
 /**
  * Parse a wire name (as produced by `gtd_travel_mode_name()` or read from

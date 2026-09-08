@@ -40,6 +40,19 @@ impl From<GtdTravelMode> for geotrace_sdk::TravelMode {
 }
 
 impl GtdTravelMode {
+    pub(crate) fn from_abi_value(mode: u32) -> Option<Self> {
+        match mode {
+            0 => Some(Self::Car),
+            1 => Some(Self::Motorcycle),
+            2 => Some(Self::Bicycle),
+            3 => Some(Self::Pedestrian),
+            4 => Some(Self::Boat),
+            5 => Some(Self::Rail),
+            6 => Some(Self::Aircraft),
+            _ => None,
+        }
+    }
+
     /// The C `enum` cannot carry [`geotrace_sdk::TravelMode::Unknown`]'s
     /// preserved wire value, so unknown modes map to `None`. C callers read
     /// the raw value through `gtd_nav_file_travel_mode` instead.
@@ -60,16 +73,22 @@ impl GtdTravelMode {
 /// Wire name of a travel mode, e.g. `GTD_TRAVEL_MODE_CAR` -> `"car"`.
 ///
 /// The returned pointer is a static string and always valid.
+///
+/// @param mode A @ref GtdTravelMode value.
+///
+/// @return `"unknown"` if @p mode is a value no @ref GtdTravelMode variant
+///         declares.
 #[unsafe(no_mangle)]
-pub extern "C" fn gtd_travel_mode_name(mode: GtdTravelMode) -> *const c_char {
-    let name: &'static CStr = match mode {
-        GtdTravelMode::Car => c"car",
-        GtdTravelMode::Motorcycle => c"motorcycle",
-        GtdTravelMode::Bicycle => c"bicycle",
-        GtdTravelMode::Pedestrian => c"pedestrian",
-        GtdTravelMode::Boat => c"boat",
-        GtdTravelMode::Rail => c"rail",
-        GtdTravelMode::Aircraft => c"aircraft",
+pub extern "C" fn gtd_travel_mode_name(mode: u32) -> *const c_char {
+    let name: &'static CStr = match GtdTravelMode::from_abi_value(mode) {
+        Some(GtdTravelMode::Car) => c"car",
+        Some(GtdTravelMode::Motorcycle) => c"motorcycle",
+        Some(GtdTravelMode::Bicycle) => c"bicycle",
+        Some(GtdTravelMode::Pedestrian) => c"pedestrian",
+        Some(GtdTravelMode::Boat) => c"boat",
+        Some(GtdTravelMode::Rail) => c"rail",
+        Some(GtdTravelMode::Aircraft) => c"aircraft",
+        None => c"unknown",
     };
     name.as_ptr()
 }
