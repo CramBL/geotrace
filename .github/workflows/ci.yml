@@ -372,6 +372,11 @@ jobs:
           BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD~1' }}
         run: just qa::check-function-imports-added "$BASE"
 
+      - name: Inline modules on added lines
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD~1' }}
+        run: just qa::check-inline-modules-added "$BASE"
+
       - name: Commit message length
         env:
           BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD~1' }}

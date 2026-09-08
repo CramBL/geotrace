@@ -24,6 +24,17 @@ check-function-imports:
 check-function-imports-added BASE="origin/trunk":
     {{ _QA }} check-function-imports --added {{ BASE }}
 
+# Fail on a module written inline with a body anywhere in the tree. CODE_STYLE
+# states that a module is a file, with `mod tests` at file level as the exception.
+[group("qa")]
+check-inline-modules:
+    {{ _QA }} check-inline-modules
+
+# The gate: the same check over the lines added since BASE.
+[group("qa")]
+check-inline-modules-added BASE="origin/trunk":
+    {{ _QA }} check-inline-modules --added {{ BASE }}
+
 [group("qa")]
 check-narrative-comments:
     {{ _QA }} check-narrative-comments

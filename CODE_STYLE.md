@@ -197,6 +197,19 @@ We group our `use` statements by module, e.g. `crate_name::module::{a, b, c}`. T
 
 Use the destructor syntax (`let Self { a, b, c} = self;`) whenever you're accessing most of (or all) of the fields of a struct.
 
+### Modules
+
+A module is a file.
+Declare it as `mod name;` and write its body in `name.rs`, so that a reader finds any module by searching file names.
+
+The exception is a file's own unit tests, which go in `mod tests { … }` at the end of that file.
+A module nested inside that `mod tests` is no exception: give each test a name that says what it covers, and leave the tests in one list.
+
+`#[path = "…"]` is allowed, and is how several test files become one test binary.
+Any other inline module needs its reason stated in an escape comment: `// [qa-allow-check-inline-modules, reason = "seals the trait"]`.
+
+`just qa::check-inline-modules` reports every inline module in the tree, and CI runs the check over the lines a pull request adds.
+
 ### Test helpers
 A crate's shared test module is `src/test_util.rs`, or a directory `src/test_util/` of submodules once it grows past one file, and the file opens with `#![cfg(test)]`. A feature that exposes those helpers to another crate is named `test-util`.
 
