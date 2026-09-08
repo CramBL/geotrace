@@ -8,7 +8,6 @@ Read the one that covers what you are changing.
 - [`CODE_STYLE.md`](CODE_STYLE.md) - Rust style: error handling and log levels, imports, comments, item order, naming, and the project vocabulary table.
 - [`DESIGN.md`](DESIGN.md) - UI and text conventions: sentence casing, units, dates and times, dashes, button labels, disabled controls.
 - [`AI_POLICY.md`](AI_POLICY.md) - using an AI tool on a contribution.
-- [`AGENTS.md`](AGENTS.md) - how the agent workflow is set up, and the layout of the three cargo workspaces.
 - [`RELEASES.md`](RELEASES.md) - the two release tracks, and what a version bump touches.
 - [`CHANGELOG.md`](CHANGELOG.md) and [`CHANGELOG_SDK.md`](CHANGELOG_SDK.md) - a user-visible app change goes under `## Unreleased` in the first, an SDK change under `## [unreleased]` in the second.
 
