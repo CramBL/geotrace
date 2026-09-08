@@ -164,7 +164,14 @@ jobs:
         run: echo "RUSTFLAGS=$MATRIX_RUSTFLAGS" >> "$GITHUB_ENV"
 
       - name: Build geotrace-c
+        if: matrix.label != 'ubuntu-asan'
         run: cargo build -p geotrace-c --release
+
+      # Only the `ubuntu-asan` row needs the `sanitizer_canary` feature, which
+      # sdk/c/tests/CMakeLists.txt describes.
+      - name: Build geotrace-c with the sanitizer canary
+        if: matrix.label == 'ubuntu-asan'
+        run: cargo build -p geotrace-c --release --features sanitizer_canary
 
       - name: Generate fixture
         run: cargo run -p geotrace-c --bin gen_fixture --release
@@ -429,7 +436,9 @@ jobs:
           [ "$RUNNER_OS" = "macOS" ] && extra+=("-DCMAKE_PREFIX_PATH=$(brew --prefix)")
           # The static link puts the instrumented Rust code in the test binary
           # with its line tables, which cargo strips from the `cdylib`.
-          [ -n "$SANITIZE" ] && extra+=("-DGEOTRACE_SANITIZE=$SANITIZE" "-DGEOTRACE_C_STATIC=ON")
+          # GEOTRACE_C_SANITIZER_CANARY builds the canary, which
+          # sdk/c/tests/CMakeLists.txt describes.
+          [ -n "$SANITIZE" ] && extra+=("-DGEOTRACE_SANITIZE=$SANITIZE" "-DGEOTRACE_C_STATIC=ON" "-DGEOTRACE_C_SANITIZER_CANARY=ON")
           cmake -S sdk/c -B build/c \
             -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
             -DGEOTRACE_C_LIB_DIR="$LIB_DIR" \

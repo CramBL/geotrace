@@ -36,6 +36,8 @@ mod log_callback;
 mod nav_file;
 mod optf32;
 mod optf64;
+#[cfg(feature = "sanitizer_canary")]
+mod sanitizer_canary;
 mod satellite;
 mod satinfo;
 mod timestamp;
