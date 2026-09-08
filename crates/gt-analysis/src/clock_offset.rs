@@ -167,7 +167,7 @@ mod tests {
 
     /// A point at GPS second `gps_secs` whose system clock is `sys_ahead_ms`
     /// ahead of GPS (so the GPS−system offset is `-sys_ahead_ms`).
-    fn point(gps_secs: i64, sys_ahead_ms: i64) -> NavPoint {
+    fn point_with_clocks(gps_secs: i64, sys_ahead_ms: i64) -> NavPoint {
         let gps = GpsTime::from_utc(Utc.timestamp_opt(gps_secs, 0).single().expect("valid"));
         let sys = SysTime::from_utc(
             Utc.timestamp_millis_opt(gps_secs * 1000 + sys_ahead_ms)
@@ -212,14 +212,14 @@ mod tests {
     /// its first fix after resuming.
     fn resume_from_gap() -> Vec<NavPoint> {
         vec![
-            point(1000, 210),
-            point(1001, 227),
-            point(1002, 240),
-            point(1003, 234),
-            point(1004, 4_127_054),
-            point(1005, 240),
-            point(1006, 215),
-            point(1007, 235),
+            point_with_clocks(1000, 210),
+            point_with_clocks(1001, 227),
+            point_with_clocks(1002, 240),
+            point_with_clocks(1003, 234),
+            point_with_clocks(1004, 4_127_054),
+            point_with_clocks(1005, 240),
+            point_with_clocks(1006, 215),
+            point_with_clocks(1007, 235),
         ]
     }
 
@@ -240,14 +240,16 @@ mod tests {
     #[test]
     fn a_steady_large_offset_is_the_baseline_not_an_excursion() {
         // Host clock five minutes behind GPS for the whole track.
-        let points: Vec<NavPoint> = (0..8).map(|i| point(1000 + i, -300_000)).collect();
+        let points: Vec<NavPoint> = (0..8)
+            .map(|i| point_with_clocks(1000 + i, -300_000))
+            .collect();
         assert!(detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S).is_empty());
     }
 
     #[test]
     fn a_permanent_step_is_left_on_the_line() {
-        let mut points: Vec<NavPoint> = (0..6).map(|i| point(1000 + i, 200)).collect();
-        points.extend((6..12).map(|i| point(1000 + i, 3_600_000)));
+        let mut points: Vec<NavPoint> = (0..6).map(|i| point_with_clocks(1000 + i, 200)).collect();
+        points.extend((6..12).map(|i| point_with_clocks(1000 + i, 3_600_000)));
         assert!(detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S).is_empty());
     }
 
@@ -257,8 +259,10 @@ mod tests {
     #[test]
     fn a_long_run_that_returns_to_the_baseline_is_one_excursion() {
         const RUN_LEN: i64 = 40;
-        let mut points: Vec<NavPoint> = (0..RUN_LEN).map(|i| point(1000 + i, 3_600_000)).collect();
-        points.extend((0..160).map(|i| point(1000 + RUN_LEN + i, 200)));
+        let mut points: Vec<NavPoint> = (0..RUN_LEN)
+            .map(|i| point_with_clocks(1000 + i, 3_600_000))
+            .collect();
+        points.extend((0..160).map(|i| point_with_clocks(1000 + RUN_LEN + i, 200)));
         let excursions = detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S);
         let [excursion] = excursions.as_slice() else {
             panic!("expected one excursion, got {}", excursions.len());
@@ -268,11 +272,11 @@ mod tests {
 
     #[test]
     fn two_separate_excursions_stay_separate() {
-        let mut points: Vec<NavPoint> = (0..4).map(|i| point(1000 + i, 200)).collect();
-        points.push(point(1004, 3_600_000));
-        points.extend((0..4).map(|i| point(1005 + i, 200)));
-        points.push(point(1009, -3_600_000));
-        points.extend((0..4).map(|i| point(1010 + i, 200)));
+        let mut points: Vec<NavPoint> = (0..4).map(|i| point_with_clocks(1000 + i, 200)).collect();
+        points.push(point_with_clocks(1004, 3_600_000));
+        points.extend((0..4).map(|i| point_with_clocks(1005 + i, 200)));
+        points.push(point_with_clocks(1009, -3_600_000));
+        points.extend((0..4).map(|i| point_with_clocks(1010 + i, 200)));
         let excursions = detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S);
         assert_eq!(
             excursions
@@ -285,9 +289,9 @@ mod tests {
 
     #[test]
     fn the_threshold_determines_what_counts_as_a_departure() {
-        let mut points: Vec<NavPoint> = (0..8).map(|i| point(1000 + i, 200)).collect();
-        points.push(point(1008, 30_200));
-        points.extend((0..8).map(|i| point(1009 + i, 200)));
+        let mut points: Vec<NavPoint> = (0..8).map(|i| point_with_clocks(1000 + i, 200)).collect();
+        points.push(point_with_clocks(1008, 30_200));
+        points.extend((0..8).map(|i| point_with_clocks(1009 + i, 200)));
         assert_eq!(detect_excursions(&points, 10.0).len(), 1, "30 s > 10 s bar");
         assert!(
             detect_excursions(&points, 60.0).is_empty(),
@@ -303,11 +307,13 @@ mod tests {
     fn a_fix_without_a_gps_lock_is_not_an_excursion() {
         const HOST_BEHIND_S: i64 = 3600;
         let behind_ms = -HOST_BEHIND_S * 1000;
-        let mut points: Vec<NavPoint> = (0..4).map(|i| point(1000 + i, behind_ms)).collect();
+        let mut points: Vec<NavPoint> = (0..4)
+            .map(|i| point_with_clocks(1000 + i, behind_ms))
+            .collect();
         points.push(point_without_gps_lock(1004 - HOST_BEHIND_S));
-        points.extend((5..9).map(|i| point(1000 + i, behind_ms)));
-        points.push(point(1009, behind_ms + 60_000));
-        points.extend((10..14).map(|i| point(1000 + i, behind_ms)));
+        points.extend((5..9).map(|i| point_with_clocks(1000 + i, behind_ms)));
+        points.push(point_with_clocks(1009, behind_ms + 60_000));
+        points.extend((10..14).map(|i| point_with_clocks(1000 + i, behind_ms)));
 
         let excursions = detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S);
 
@@ -316,10 +322,10 @@ mod tests {
 
     #[test]
     fn samples_without_a_system_timestamp_are_skipped() {
-        let mut points: Vec<NavPoint> = (0..4).map(|i| point(1000 + i, 200)).collect();
+        let mut points: Vec<NavPoint> = (0..4).map(|i| point_with_clocks(1000 + i, 200)).collect();
         points.push(point_without_sys(1004));
-        points.push(point(1005, 3_600_000));
-        points.extend((0..4).map(|i| point(1006 + i, 200)));
+        points.push(point_with_clocks(1005, 3_600_000));
+        points.extend((0..4).map(|i| point_with_clocks(1006 + i, 200)));
         let excursions = detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S);
         let [excursion] = excursions.as_slice() else {
             panic!("expected exactly one excursion, got {}", excursions.len());
@@ -331,8 +337,10 @@ mod tests {
     /// run. The return after it is what makes that run an excursion.
     #[test]
     fn a_run_at_the_start_of_a_track_is_an_excursion() {
-        let mut points: Vec<NavPoint> = (0..2).map(|i| point(1000 + i, 3_600_000)).collect();
-        points.extend((0..3).map(|i| point(1002 + i, 200)));
+        let mut points: Vec<NavPoint> = (0..2)
+            .map(|i| point_with_clocks(1000 + i, 3_600_000))
+            .collect();
+        points.extend((0..3).map(|i| point_with_clocks(1002 + i, 200)));
         let excursions = detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S);
         let [excursion] = excursions.as_slice() else {
             panic!("expected one excursion, got {}", excursions.len());
@@ -352,9 +360,11 @@ mod tests {
     /// the excursion, however large the gap between them.
     #[test]
     fn the_majority_of_a_track_defines_its_baseline() {
-        let mut points: Vec<NavPoint> = (0..3).map(|i| point(1000 + i, 3_600_000)).collect();
-        points.extend((0..2).map(|i| point(1003 + i, 200)));
-        points.extend((0..3).map(|i| point(1005 + i, 3_600_000)));
+        let mut points: Vec<NavPoint> = (0..3)
+            .map(|i| point_with_clocks(1000 + i, 3_600_000))
+            .collect();
+        points.extend((0..2).map(|i| point_with_clocks(1003 + i, 200)));
+        points.extend((0..3).map(|i| point_with_clocks(1005 + i, 3_600_000)));
         let excursions = detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S);
         let [excursion] = excursions.as_slice() else {
             panic!("expected one excursion, got {}", excursions.len());
@@ -374,8 +384,8 @@ mod tests {
     fn an_evenly_split_track_has_no_baseline_to_depart_from() {
         // The median lands between the two levels, so every sample is out of
         // band. Neither half is the track's normal, so neither is an excursion.
-        let mut points: Vec<NavPoint> = (0..3).map(|i| point(1000 + i, 200)).collect();
-        points.extend((0..3).map(|i| point(1003 + i, 3_600_000)));
+        let mut points: Vec<NavPoint> = (0..3).map(|i| point_with_clocks(1000 + i, 200)).collect();
+        points.extend((0..3).map(|i| point_with_clocks(1003 + i, 3_600_000)));
         assert!(detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S).is_empty());
     }
 
@@ -383,7 +393,10 @@ mod tests {
     fn a_track_with_too_few_samples_yields_nothing() {
         // Two samples, one wild: there is no majority to form a baseline, so
         // neither is called an excursion.
-        let points = vec![point(1000, 200), point(1001, 3_600_000)];
+        let points = vec![
+            point_with_clocks(1000, 200),
+            point_with_clocks(1001, 3_600_000),
+        ];
         assert!(detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S).is_empty());
     }
 }

@@ -5,9 +5,7 @@ use gt_query_map_harness::{Dataset, FileSpec, MapScenario, TrackSpec, track};
 
 /// Six points: slow, fast, fast, slow, fast, fast.
 fn sliced_scenario() -> MapScenario {
-    let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(&[
-        5.0, 40.0, 40.0, 5.0, 40.0, 40.0,
-    ])));
+    let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 40.0, 40.0, 5.0, 40.0, 40.0]);
     // Only points 2..=5 are in the window, so a run over the slice must shift
     // its matches back by two to land on the map.
     scenario.set_time_filter_secs(Some(2), Some(5));
@@ -96,9 +94,7 @@ fn narrowing_the_window_can_change_a_windowed_match() {
 /// nothing - every point is already off the map by the filter alone.
 #[test]
 fn a_window_holding_no_points_leaves_keep_nothing_to_do() {
-    let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(&[
-        5.0, 40.0, 40.0,
-    ])));
+    let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 40.0, 40.0]);
     scenario.set_time_filter_secs(Some(50), Some(60));
     scenario.run("points | where velocity > 30 km/h | keep");
     insta::assert_snapshot!(scenario.picture(), @"

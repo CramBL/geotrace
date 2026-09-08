@@ -5,9 +5,7 @@ use gt_query_map_harness::{Dataset, FileSpec, MapScenario, TrackSpec, track};
 use gt_types::FileIdx;
 
 fn scenario() -> MapScenario {
-    MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(&[
-        5.0, 40.0, 40.0, 5.0, 40.0, 5.0,
-    ])))
+    MapScenario::of_speeds_kmh(&[5.0, 40.0, 40.0, 5.0, 40.0, 5.0])
 }
 
 /// Narrowing the time filter after a run marks the results stale, and the
@@ -74,9 +72,7 @@ fn disabling_an_evaluated_track_grays_the_results_out() {
 /// stay on points 1 and 2, where the replacement holds 5 km/h.
 #[test]
 fn replacing_the_loaded_file_with_another_of_the_same_name_grays_the_results_out() {
-    let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(&[
-        5.0, 40.0, 40.0, 5.0,
-    ])));
+    let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 40.0, 40.0, 5.0]);
     scenario.run("points | where velocity > 30 km/h | draw");
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  .00.

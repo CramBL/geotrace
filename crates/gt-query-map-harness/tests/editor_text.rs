@@ -2,14 +2,8 @@
 //! a query, since that is what `split_queries` returns and everything
 //! downstream relies on.
 
-use gt_query_map_harness::{Dataset, MapScenario, TrackSpec};
+use gt_query_map_harness::MapScenario;
 use rstest::rstest;
-
-fn scenario() -> MapScenario {
-    MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(&[
-        5.0, 40.0, 40.0, 5.0,
-    ])))
-}
 
 /// Every messy-but-legitimate way to write two queries lands the same two
 /// chunks and the same map.
@@ -39,7 +33,7 @@ fn scenario() -> MapScenario {
     "points | where velocity > 30 km/h | draw\n\n# the slow points are noise\n\npoints | where velocity < 10 km/h | hide"
 )]
 fn whitespace_between_queries_never_changes_the_result(#[case] text: &str) {
-    let mut scenario = scenario();
+    let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 40.0, 40.0, 5.0]);
     scenario.run(text);
     insta::allow_duplicates! {
         insta::assert_snapshot!(scenario.picture(), @"
@@ -54,7 +48,7 @@ fn whitespace_between_queries_never_changes_the_result(#[case] text: &str) {
 /// the run.
 #[test]
 fn a_blank_line_inside_a_query_splits_it_into_a_failing_chunk() {
-    let mut scenario = scenario();
+    let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 40.0, 40.0, 5.0]);
     scenario.run("points | where velocity > 30 km/h\n\n| draw");
     insta::assert_snapshot!(scenario.panel(), @"
     chunks: 2
@@ -71,7 +65,7 @@ fn a_blank_line_inside_a_query_splits_it_into_a_failing_chunk() {
 /// No trailing newline is the normal state of a buffer being typed in.
 #[test]
 fn a_buffer_without_a_trailing_newline_runs() {
-    let mut scenario = scenario();
+    let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 40.0, 40.0, 5.0]);
     scenario.run("points | where velocity > 30 km/h | draw");
     insta::assert_snapshot!(scenario.panel(), @"
     chunks: 1
@@ -89,7 +83,7 @@ fn a_buffer_without_a_trailing_newline_runs() {
 #[case::comment_only("# nothing to see here\n")]
 #[case::empty("")]
 fn a_buffer_with_no_query_is_rejected(#[case] text: &str) {
-    let mut scenario = scenario();
+    let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 40.0, 40.0, 5.0]);
     scenario.run(text);
     insta::allow_duplicates! {
         insta::assert_snapshot!(scenario.panel(), @"

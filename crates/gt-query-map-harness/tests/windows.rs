@@ -7,9 +7,7 @@ use gt_query_map_harness::{Dataset, MapScenario, PointSpec, TrackSpec, track};
 /// predicate happened to be evaluated at.
 #[test]
 fn a_window_match_bands_the_whole_window() {
-    let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(&[
-        5.0, 5.0, 40.0, 40.0, 40.0, 5.0,
-    ])));
+    let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 5.0, 40.0, 40.0, 40.0, 5.0]);
     scenario.run("points | window 3 | where min(velocity) > 30 km/h | draw");
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  ..000.
@@ -66,9 +64,7 @@ fn an_accuracy_filter_matches_single_points() {
 fn a_window_never_spans_a_hidden_point() {
     // Fast everywhere except point 3, which the first query hides, leaving runs
     // of three and two - only the first is long enough for a 3-point window.
-    let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(&[
-        40.0, 40.0, 40.0, 1.0, 40.0, 40.0,
-    ])));
+    let mut scenario = MapScenario::of_speeds_kmh(&[40.0, 40.0, 40.0, 1.0, 40.0, 40.0]);
     scenario.run(
         "points | where velocity < 10 km/h | hide\n\n\
          points | window 3 | where min(velocity) > 30 km/h | draw",

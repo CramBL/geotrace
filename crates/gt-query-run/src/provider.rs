@@ -1309,47 +1309,48 @@ mod tests {
         assert_eq!(slice.channel_timeline("sensor").values, vec![5.0]);
     }
 
-    #[test]
-    fn a_loaded_channel_checks_and_runs_end_to_end() {
-        // The whole app path: build the editor schema from the file, check a
-        // channel query against it, then run it over a provider carrying the
-        // same channel. The peak sample (1.5 g) clears the 1 g threshold.
-        let channel = scalar_channel("accel", Some("g"), &[(0, 0.9), (1, 1.5)]);
-        let files = [file_with_channels(vec![channel.clone()])];
-        let schema = schema_from_files(&files);
-        let query = check_text("points | window 2 | where max(@accel) > 1 g", &schema)
-            .expect("checks against the loaded schema");
-
-        let points = test_points();
-        let channels = [channel];
-        let provider = TrackProvider::new(&points, &channels, None);
-        let output = gt_query::run(
-            &query,
-            &[gt_query::TrackInput {
-                track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-                provider: &provider,
-            }],
-        );
-        assert_eq!(output.matches.len(), 1, "the window matches");
-        assert_eq!(output.summary.match_count, 1);
-    }
-
-    #[test]
-    fn a_vector_component_checks_and_runs_end_to_end() {
-        // The whole app path for a vector component: build the schema, check
-        // @accel.y, then run over a provider holding the vector. Only the y
-        // column (peak 1.5 g) clears the threshold. The x column peaks at
-        // 0.9 g.
-        let channel = vector_channel(
+    /// The whole app path: build the editor schema from the loaded file, check
+    /// a channel query against it, then run it over a provider built from the
+    /// same channel. Every case has exactly one sample above its threshold.
+    #[rstest]
+    #[case::a_scalar_channel(
+        scalar_channel("accel", Some("g"), &[(0, 0.9), (1, 1.5)]),
+        "points | window 2 | where max(@accel) > 1 g"
+    )]
+    #[case::a_vector_component(
+        vector_channel(
             "accel",
             Some("g"),
             &["x", "y", "z"],
             &[(0, [0.9, 0.9, 0.9]), (1, [0.9, 1.5, 0.9])],
-        );
+        ),
+        "points | window 2 | where max(@accel.y) > 1 g"
+    )]
+    #[case::an_si_prefix_on_both_sides(
+        vector_channel(
+            "accel",
+            Some("mg"),
+            &["x", "y", "z"],
+            &[(0, [20.0, 0.0, 0.0]), (1, [80.0, 0.0, 0.0])],
+        ),
+        "points | window 2 | where max(@accel.x) > 50 mg"
+    )]
+    #[case::the_norm_of_a_vector(
+        vector_channel(
+            "accel",
+            Some("g"),
+            &["x", "y", "z"],
+            &[(0, [3.0, 4.0, 0.0]), (1, [0.1, 0.0, 0.0])],
+        ),
+        "points | window 2 | where max(norm(@accel)) > 0.1 g"
+    )]
+    fn a_loaded_channel_checks_against_its_schema_and_runs(
+        #[case] channel: Channel,
+        #[case] text: &str,
+    ) {
         let files = [file_with_channels(vec![channel.clone()])];
         let schema = schema_from_files(&files);
-        let query = check_text("points | window 2 | where max(@accel.y) > 1 g", &schema)
-            .expect("a component checks against the loaded schema");
+        let query = check_text(text, &schema).expect("checks against the loaded schema");
 
         let points = test_points();
         let channels = [channel];
@@ -1361,74 +1362,43 @@ mod tests {
                 provider: &provider,
             }],
         );
-        assert_eq!(output.matches.len(), 1, "the y column clears the threshold");
+
+        assert_eq!(output.matches.len(), 1, "one window clears the threshold");
+        assert_eq!(output.summary.match_count, 1);
     }
 
+    /// The checker accepts a g threshold against a channel declared in mg.
+    /// Both labels measure the same quantity.
     #[test]
-    fn an_si_prefixed_channel_unit_checks_and_runs_end_to_end() {
-        // The whole app path for SI prefixes on both sides: a channel declared
-        // in mg (the usual IMU datasheet unit) against an mg literal. Sample
-        // 1 (80 mg) clears the 50 mg threshold. Sample 0 (20 mg) does not,
-        // pinning that the channel values scale by the prefixed label too.
+    fn a_channel_unit_checks_against_a_literal_of_another_si_prefix() {
         let channel = vector_channel(
             "accel",
             Some("mg"),
             &["x", "y", "z"],
             &[(0, [20.0, 0.0, 0.0]), (1, [80.0, 0.0, 0.0])],
         );
-        let files = [file_with_channels(vec![channel.clone()])];
-        let schema = schema_from_files(&files);
-        let query = check_text("points | window 2 | where max(@accel.x) > 50 mg", &schema)
-            .expect("an mg channel compares to an mg literal");
-        // The same channel against a g literal: the units share the quantity.
+        let schema = schema_from_files(&[file_with_channels(vec![channel])]);
+
         check_text("points | window 2 | where max(@accel.x) > 0.05 g", &schema)
             .expect("an mg channel compares to a g literal");
-
-        let points = test_points();
-        let channels = [channel];
-        let provider = TrackProvider::new(&points, &channels, None);
-        let output = gt_query::run(
-            &query,
-            &[gt_query::TrackInput {
-                track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-                provider: &provider,
-            }],
-        );
-        assert_eq!(output.summary.match_count, 1, "only the 80 mg sample");
     }
 
+    /// The samples of a closed span are the ones whose timestamp lands inside
+    /// it, whatever order the file stored them in. Only the sample at 1 s does
+    /// here.
     #[test]
-    fn norm_of_a_loaded_vector_checks_and_runs_end_to_end() {
-        // norm(@accel) over a loaded vector: row 0 is (3,4,0) -> 5 m/s2, well
-        // over 0.1 g (0.981 m/s2), so the window matches.
-        let channel = vector_channel(
-            "accel",
-            Some("g"),
-            &["x", "y", "z"],
-            &[(0, [3.0, 4.0, 0.0]), (1, [0.1, 0.0, 0.0])],
-        );
-        let files = [file_with_channels(vec![channel.clone()])];
-        let schema = schema_from_files(&files);
-        let query = check_text(
-            "points | window 2 | where max(norm(@accel)) > 0.1 g",
-            &schema,
-        )
-        .expect("norm checks against the loaded schema");
-
+    fn a_channel_span_holds_only_the_samples_inside_it_when_the_file_stored_them_out_of_order() {
+        let base = TEST_EPOCH as f64;
+        let channels = [scalar_channel(
+            "sensor",
+            None,
+            &[(0, 0.0), (2, 20.0), (1, 10.0)],
+        )];
         let points = test_points();
-        let channels = [channel];
         let provider = TrackProvider::new(&points, &channels, None);
-        let output = gt_query::run(
-            &query,
-            &[gt_query::TrackInput {
-                track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-                provider: &provider,
-            }],
-        );
-        assert_eq!(
-            output.matches.len(),
-            1,
-            "the magnitude clears the threshold"
-        );
+
+        let span = provider.channel_span("sensor", base + 0.5, base + 1.5);
+
+        assert_eq!(span.values, vec![10.0]);
     }
 }

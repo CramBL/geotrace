@@ -2504,6 +2504,7 @@ dependencies = [
  "chrono",
  "gt-test-utils",
  "gt-types",
+ "rstest",
  "uom",
 ]
 

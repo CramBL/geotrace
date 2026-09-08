@@ -218,17 +218,18 @@ pub fn compute_util(points: &[NavPoint], mask_deg: f32) -> UtilPoints {
 
 #[cfg(test)]
 mod tests {
+    use gt_types::coordinates::{Latitude, Longitude};
+    use gt_types::fixtures;
     use gt_types::satellites::Satellite;
 
     use super::*;
+    use crate::test_util::report;
 
-    /// `(constellation, elevation, in_fix)` -> `Satellite`, with a throwaway PRN.
-    fn sat(c: Constellation, elevation: Option<f32>, in_fix: bool) -> Satellite {
-        Satellite::new(c, 1, elevation, None, None, in_fix)
-    }
-
-    fn report(sats: Vec<Satellite>) -> Satellites {
-        Satellites::new(None, None, sats)
+    /// One satellite of `constellation` at `elevation_deg`, in the fix or only
+    /// in view, with a throwaway PRN and no signal quality: every rule below
+    /// reads the elevation and the fix flag alone.
+    fn sat(constellation: Constellation, elevation_deg: Option<f32>, in_fix: bool) -> Satellite {
+        fixtures::satellite(constellation, 1, elevation_deg, None, in_fix)
     }
 
     #[test]
@@ -263,6 +264,7 @@ mod tests {
         assert_eq!(in_fix_above_mask(&r, Some(Constellation::Glonass), 15.0), 1);
     }
 
+    /// [`compute_util`] reports every satellite this flags as an anomaly.
     #[test]
     fn masked_out_in_fix_flags_used_sub_mask_satellites_only() {
         let r = report(vec![
@@ -279,19 +281,16 @@ mod tests {
     /// and every value matches the time-keyed series.
     #[test]
     fn util_per_point_aligns_with_compute_util() {
-        use gt_types::TimePositionVelocity;
-        use gt_types::coordinates::{Latitude, Longitude};
-        use gt_types::time_types::GpsTime;
-
-        let point = |i: i64, sats: Option<Satellites>| {
+        let point = |secs: i64, sats: Option<Satellites>| {
             let time =
-                chrono::DateTime::from_timestamp(1_700_000_000 + i, 0).expect("valid timestamp");
-            let tpv = TimePositionVelocity::builder()
-                .time(GpsTime::from_utc(time))
-                .lat(Latitude::new(55.0))
-                .lon(Longitude::new(12.0))
-                .build();
-            NavPoint::new(tpv, sats)
+                chrono::DateTime::from_timestamp(1_700_000_000 + secs, 0).expect("valid timestamp");
+            let position = fixtures::nav_point(
+                time,
+                Latitude::new(55.0),
+                Longitude::new(12.0),
+                fixtures::FixKind::GhostWithoutHeading,
+            );
+            NavPoint::new(position.tpv, sats)
         };
         let with_sats = |used: bool| {
             report(vec![
@@ -314,22 +313,5 @@ mod tests {
         let series_values: Vec<f64> = series.all.iter().map(|[_, v]| *v).collect();
         let aligned_values: Vec<f64> = per_point.all.iter().copied().flatten().collect();
         assert_eq!(series_values, aligned_values);
-    }
-
-    /// A satellite used below the mask is excluded from both the numerator and
-    /// the denominator, so the rate stays within 100 % without clamping. The
-    /// excluded satellite is surfaced as an anomaly instead.
-    #[test]
-    fn utilization_stays_within_one_hundred_percent() {
-        let r = report(vec![
-            sat(Constellation::Gps, Some(20.0), true),
-            sat(Constellation::Gps, Some(5.0), true), // used but below mask
-        ]);
-        let num = in_fix_above_mask(&r, None, 15.0);
-        let den = in_view_above_mask(&r, None, 15.0);
-        assert_eq!(num, 1);
-        assert_eq!(den, 1);
-        assert!((num as f64) / (den as f64) <= 1.0);
-        assert_eq!(masked_out_in_fix(&r, 15.0).count(), 1);
     }
 }

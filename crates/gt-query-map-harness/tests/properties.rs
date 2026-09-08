@@ -10,16 +10,14 @@ mod support;
 use std::collections::HashMap;
 
 use chrono::Duration;
-use gt_query_map_harness::{
-    Dataset, FileSpec, MapScenario, PointClass, PointSpec, TrackSpec, epoch, track,
-};
+use gt_query_map_harness::{self, MapScenario, PointClass};
 use gt_types::TrackRef;
 use gt_ui_types::{PinnedPopup, PointVisibility};
 use proptest::prelude::*;
 use support::generate::{
-    Agg, CmpOp, GenDataset, Metric, Mode, Newline, Predicate, Program, RenderStyle, Separator,
-    Stage, Term, Wrap, gen_dataset, gen_dataset_and_program, gen_point_local_program,
-    gen_render_style, gen_windowed_dataset, gen_windowed_dataset_and_program,
+    GenDataset, Mode, Program, Stage, gen_dataset, gen_dataset_and_program,
+    gen_point_local_program, gen_render_style, gen_windowed_dataset,
+    gen_windowed_dataset_and_program,
 };
 use support::oracle;
 
@@ -77,8 +75,8 @@ fn window_of(
 ) -> Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> {
     dataset.window_secs.map(|(start, end)| {
         (
-            epoch() + Duration::seconds(start),
-            epoch() + Duration::seconds(end),
+            gt_query_map_harness::epoch() + Duration::seconds(start),
+            gt_query_map_harness::epoch() + Duration::seconds(end),
         )
     })
 }
@@ -497,8 +495,8 @@ proptest! {
 
         let files = after.dataset().files().files().to_vec();
         let wide_view = observed(&before);
-        let cut = epoch() + Duration::seconds(end - trim);
-        let from = epoch() + Duration::seconds(start);
+        let cut = gt_query_map_harness::epoch() + Duration::seconds(end - trim);
+        let from = gt_query_map_harness::epoch() + Duration::seconds(start);
         for (track_ref, points) in observed(&after) {
             let Some(track) = track_ref.resolve(&files) else {
                 continue;
@@ -614,117 +612,4 @@ proptest! {
             }
         }
     }
-}
-
-/// The renderer's messiness, spelled out: the same two-stage program written
-/// plainly, wrapped at its pipes with CRLF endings, and with whitespace-only
-/// separator lines. All three run to the same map, which
-/// `the_writing_style_never_changes_the_map` asserts over generated programs.
-#[test]
-fn a_program_renders_with_the_messiness_it_is_given() {
-    let program = Program {
-        stages: vec![
-            Stage {
-                mode: Mode::Hide,
-                window: None,
-                predicate: Predicate::Cmp {
-                    term: Term::Point(Metric::Velocity),
-                    op: CmpOp::Lt,
-                    threshold: 5.0,
-                },
-            },
-            Stage {
-                mode: Mode::Draw,
-                window: Some(3),
-                predicate: Predicate::And(
-                    Box::new(Predicate::Cmp {
-                        term: Term::Agg {
-                            func: Agg::Avg,
-                            metric: Metric::Velocity,
-                        },
-                        op: CmpOp::Ge,
-                        threshold: 30.0,
-                    }),
-                    Box::new(Predicate::Cmp {
-                        term: Term::Agg {
-                            func: Agg::Max,
-                            metric: Metric::Eph,
-                        },
-                        op: CmpOp::Lt,
-                        threshold: 20.0,
-                    }),
-                ),
-            },
-        ],
-    };
-    insta::assert_snapshot!(program.render_plain(), @r"
-    points | where velocity < 5 km/h | hide
-
-    points | window 3 | where (avg(velocity) >= 30 km/h) and (max(eph) < 20 m) | draw
-    ");
-
-    let messy = RenderStyle {
-        newline: Newline::Crlf,
-        separators: vec![Separator::SpacesAndBlanks],
-        leading_blanks: 1,
-        trailing_blanks: 2,
-        wrap: Wrap::Wrapped { indent: 4 },
-    };
-    let text = program.render(&messy);
-    assert!(text.contains("\r\n"), "the messy style writes CRLF endings");
-    assert!(
-        text.contains("\r\n    | window 3"),
-        "and wraps at the pipes with an indent: {:?}",
-        text
-    );
-    assert!(
-        text.contains("\r\n \t\r\n"),
-        "and separates with a line holding only whitespace: {:?}",
-        text
-    );
-
-    // However it is written, the editor still sees exactly the two queries.
-    let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_points(
-        [1.0, 40.0, 40.0, 40.0]
-            .iter()
-            .enumerate()
-            .map(|(index, &speed)| PointSpec::at_secs(index as i64).speed_kmh(speed).eph_m(5.0))
-            .collect(),
-    )));
-    scenario.run(&text);
-    insta::assert_snapshot!(scenario.panel(), @"
-    chunks: 2
-      2..51 ok
-      61..157 ok
-    run: completed
-      1 match on 1 track — 1 of 4 points hidden
-      1 match on 1 track
-    ");
-}
-
-/// A one-point track and a track shorter than any window it meets, which the
-/// generators reach only by chance, pinned as fixed cases.
-#[test]
-fn short_tracks_survive_a_windowed_program() {
-    let mut scenario = MapScenario::new(Dataset::of_files(&[
-        FileSpec::with_tracks("one.gtd", vec![TrackSpec::from_speeds_kmh(&[40.0])]),
-        FileSpec::with_tracks(
-            "two.gtd",
-            vec![TrackSpec::from_points(vec![
-                PointSpec::at_secs(0).speed_kmh(40.0),
-                PointSpec::at_secs(1),
-            ])],
-        ),
-    ]));
-    scenario.run("points | window 5 | where avg(velocity) > 1 km/h | keep");
-    insta::assert_snapshot!(scenario.picture(), @r"
-    one.gtd#0  x
-    two.gtd#0  xx
-    counts: shown 0, halos 0
-    ");
-    assert_eq!(
-        scenario.classify(track(0, 0), 0).visibility,
-        PointVisibility::HiddenByQuery,
-        "a keep whose window never fits keeps nothing"
-    );
 }

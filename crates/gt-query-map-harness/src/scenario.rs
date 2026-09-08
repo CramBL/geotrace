@@ -11,7 +11,7 @@ use gt_ui_types::{
 };
 
 use crate::classify::PointClass;
-use crate::dataset::{Dataset, FileSpec, epoch};
+use crate::dataset::{self, Dataset, FileSpec, TrackSpec};
 use crate::panel::{PanelView, RunAttempt};
 use crate::picture::{MapPicture, TrackPicture};
 
@@ -57,6 +57,13 @@ impl MapScenario {
             last_run: None,
             pin: None,
         }
+    }
+
+    /// A scenario over one file holding one track, one point per speed a
+    /// second apart - the shape most scenarios use, since `velocity` is the
+    /// metric they filter on.
+    pub fn of_speeds_kmh(speeds: &[f64]) -> Self {
+        Self::new(Dataset::single_track(TrackSpec::from_speeds_kmh(speeds)))
     }
 
     /// Put `text` in the editor without running it.
@@ -115,8 +122,8 @@ impl MapScenario {
     /// Narrow the global time filter to `start..=end`, in seconds from the
     /// dataset epoch. `None` leaves that end open.
     pub fn set_time_filter_secs(&mut self, start: Option<i64>, end: Option<i64>) -> &mut Self {
-        self.filter.time_start = start.map(|secs| epoch() + Duration::seconds(secs));
-        self.filter.time_end = end.map(|secs| epoch() + Duration::seconds(secs));
+        self.filter.time_start = start.map(|secs| dataset::epoch() + Duration::seconds(secs));
+        self.filter.time_end = end.map(|secs| dataset::epoch() + Duration::seconds(secs));
         self.sync()
     }
 

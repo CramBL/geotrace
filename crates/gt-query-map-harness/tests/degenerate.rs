@@ -1,7 +1,9 @@
 //! Data a query cannot say much about: no points, one point, fewer points than
 //! the window, and a metric the track never carried.
 
-use gt_query_map_harness::{Dataset, FileSpec, MapScenario, PointSpec, TrackSpec};
+use gt_query_map_harness::{
+    Dataset, FileSpec, MapScenario, PointSpec, PointVisibility, TrackSpec, track,
+};
 
 /// A recording with no fixes has no tracks, so a run over it evaluates
 /// nothing.
@@ -34,7 +36,7 @@ fn a_trackless_file_beside_a_real_one_is_harmless() {
 
 #[test]
 fn a_single_point_track_can_match() {
-    let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(&[40.0])));
+    let mut scenario = MapScenario::of_speeds_kmh(&[40.0]);
     scenario.run("points | where velocity > 30 km/h | draw");
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  0
@@ -46,7 +48,7 @@ fn a_single_point_track_can_match() {
 /// resolves no value and matches nothing.
 #[test]
 fn a_single_point_track_has_no_acceleration() {
-    let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(&[40.0])));
+    let mut scenario = MapScenario::of_speeds_kmh(&[40.0]);
     scenario.run("points | where accel > 0 m/s2 | draw");
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  .
@@ -64,9 +66,7 @@ fn a_single_point_track_has_no_acceleration() {
 /// track had no room for it.
 #[test]
 fn a_track_shorter_than_the_window_reports_it() {
-    let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(&[
-        40.0, 40.0, 40.0,
-    ])));
+    let mut scenario = MapScenario::of_speeds_kmh(&[40.0, 40.0, 40.0]);
     scenario.run("points | window 5 | where avg(velocity) > 1 km/h | draw");
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  ...
@@ -84,9 +84,7 @@ fn a_track_shorter_than_the_window_reports_it() {
 /// summary states the metric, and the map stays untouched.
 #[test]
 fn a_metric_the_track_never_carried_matches_nothing() {
-    let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(&[
-        5.0, 40.0, 40.0,
-    ])));
+    let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 40.0, 40.0]);
     scenario.run("points | where snap_error > 1 m | draw");
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  ...
@@ -104,9 +102,7 @@ fn a_metric_the_track_never_carried_matches_nothing() {
 /// kept, and the summary accounts for every hidden point.
 #[test]
 fn keep_on_an_absent_metric_hides_everything() {
-    let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(&[
-        5.0, 40.0, 40.0,
-    ])));
+    let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 40.0, 40.0]);
     scenario.run("points | where snap_error > 1 m | keep");
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  xxx
@@ -131,4 +127,31 @@ fn points_without_velocity_are_skipped_not_matched() {
     track.gtd#0  ...
     counts: shown 3, halos 0
     ");
+}
+
+/// A one-point track and a track shorter than any window it meets, which the
+/// generators reach only by chance, pinned as fixed cases.
+#[test]
+fn short_tracks_survive_a_windowed_program() {
+    let mut scenario = MapScenario::new(Dataset::of_files(&[
+        FileSpec::with_tracks("one.gtd", vec![TrackSpec::from_speeds_kmh(&[40.0])]),
+        FileSpec::with_tracks(
+            "two.gtd",
+            vec![TrackSpec::from_points(vec![
+                PointSpec::at_secs(0).speed_kmh(40.0),
+                PointSpec::at_secs(1),
+            ])],
+        ),
+    ]));
+    scenario.run("points | window 5 | where avg(velocity) > 1 km/h | keep");
+    insta::assert_snapshot!(scenario.picture(), @r"
+    one.gtd#0  x
+    two.gtd#0  xx
+    counts: shown 0, halos 0
+    ");
+    assert_eq!(
+        scenario.classify(track(0, 0), 0).visibility,
+        PointVisibility::HiddenByQuery,
+        "a keep whose window never fits keeps nothing"
+    );
 }
