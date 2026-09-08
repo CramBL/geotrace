@@ -7,15 +7,6 @@ retry_wait_time = 2
 timeout = 30
 accept = ["100..=103", "200..=299", "429"]
 
-exclude_path = [
-    # Captured service responses, frozen at the day they were recorded and
-    # never edited for link rot.
-    "(^|/)tests/fixtures/",
-    # lychee reads the regex patterns below as malformed links when it walks
-    # this file.
-    "^lychee\\.toml$",
-]
-
 exclude = [
     # Placeholder hosts in unit tests. `.example` and `.invalid` are reserved
     # for exactly this by RFC 6761, and nothing listens on localhost in CI.
@@ -37,9 +28,16 @@ exclude = [
     # The tile endpoint returns 401 without a real token, and the token-test
     # URL builder is asserted with the token `tok`.
     '^https://api\.mapbox\.com/',
-    # The rapid IONEX directory returns 404 for the fixed day the transport
-    # tests pin once that day ages out: it holds only the most recent days.
-    '^https://sideshow\.jpl\.nasa\.gov/pub/iono_daily/IONEX_rapid/',
+    # The IONEX archive URLs are URL-builder assertions and doc examples, and
+    # the transport tests pin their shape. lychee fetches a data file from
+    # this path, not a page, and the archive returns 404 for a pinned rapid
+    # day once that day ages out. The archive root stays checked.
+    '^https://sideshow\.jpl\.nasa\.gov/pub/iono_daily/',
+    # The Kp and Hp30 query URLs are URL-builder assertions and doc examples,
+    # and the transport tests pin their shape. lychee fetches query results
+    # from this path, not a page. The landing and reference pages stay
+    # checked.
+    '^https://kp\.gfz\.de/app/json/',
     # The public Valhalla instance serves its API paths only: it returns 404
     # for the base URL GeoTrace defaults to.
     '^https://valhalla1\.openstreetmap\.de/?$',

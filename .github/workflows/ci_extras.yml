@@ -65,6 +65,9 @@ jobs:
       - name: Lint workflows (zizmor)
         run: zizmor .
 
+  # This job checks the links a pull request or a push adds, and does nothing
+  # on a schedule or a dispatch. links.yml requests every URL the tracked files
+  # cite, weekly.
   lychee:
     name: Links
     runs-on: ubuntu-latest
@@ -74,6 +77,8 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          # The gate diffs against the base ref.
+          fetch-depth: 0
 
       - name: Install tools
         uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
@@ -82,8 +87,13 @@ jobs:
           # fallback installs it from its own GitHub release.
           tool: just,lychee
 
-      - name: Check links (lychee)
-        run: just lychee
+      # A pull request is gated against its base. A push to trunk is a merged
+      # pull request, gated against the commit before it.
+      - name: Links on added lines
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD~1' }}
+        run: just lychee-added "$BASE"
 
   ci-extras:
     runs-on: ubuntu-latest
