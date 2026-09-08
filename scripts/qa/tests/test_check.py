@@ -68,10 +68,21 @@ def test_commits_in_drops_a_fixup_subject_and_keeps_a_body_that_quotes_one(
         "amend! root",
         "squash! root",
         "quote a fixup subject",
-        "root",
     ]
     assert commits[0].message == f"amend! root\n\n{_REPLACEMENT_MESSAGE}"
-    assert commits[-1].message == "root\n"
+    assert commits[-1].message == "quote a fixup subject\n\nfixup! root is what this body says.\n"
+
+
+def test_commits_in_keeps_the_last_amend_of_a_subject_and_drops_what_it_replaces(
+    git_repository: GitRepository,
+) -> None:
+    git_repository.commit_empty("root")
+    git_repository.commit_empty("amend! root\n\nan earlier replacement\n")
+    git_repository.commit_empty("amend! root\n\nthe last replacement\n")
+
+    commits = _check.commits_in(git_repository.root, "HEAD")
+
+    assert [commit.message_to_land() for commit in commits] == ["the last replacement\n"]
 
 
 @pytest.mark.parametrize(

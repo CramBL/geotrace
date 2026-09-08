@@ -1,0 +1,9 @@
+# A blank line separates the subject from the body, which every tool that
+# reads a subject on its own depends on, `git log --oneline` included.
+extends: existence
+message: "Commit body without a blank line under the subject."
+level: error
+scope: raw
+nonword: true
+tokens:
+  - '\A[^\n]*\n(?!\n|\z)'

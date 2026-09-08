@@ -332,18 +332,34 @@ class Commit:
 
 
 def commits_in(root: Path, revision_range: str) -> list[Commit]:
-    """The commits of `revision_range`, without the merges and the `fixup!` commits:
-    `git rebase --autosquash` discards a `fixup!` message whole and no line of it
-    lands on the branch."""
+    """The commits of `revision_range` whose message lands on the branch, without
+    the merges.
+
+    A `fixup!` commit is dropped: `git rebase --autosquash` discards its message
+    whole. So is a commit whose subject an `amend!` later in the range names,
+    together with every `amend!` for that subject but the last: `git rebase
+    --autosquash` writes the last replacement over the target's message, and no
+    line of the messages under it lands on the branch.
+    """
     output = git_output(
         root,
         ["log", "--no-merges", f"--format={_COMMIT_RECORD_FORMAT}", revision_range],
     )
     found = []
+    replaced_subjects: set[str] = set()
     # The filter reads the subject here: `git log --grep` matches a body line too,
-    # and a body may quote a `fixup!` subject.
+    # and a body may quote a `fixup!` subject. `git log` lists the newest commit
+    # first, so a subject reaches `replaced_subjects` before the older commits it
+    # replaces.
     for record in output.split("\0"):
         short_hash, tab, message = record.lstrip("\n").partition("\t")
-        if tab and not message.startswith("fixup! "):
-            found.append(Commit(short_hash, message))
+        if not tab or message.startswith("fixup! "):
+            continue
+        commit = Commit(short_hash, message)
+        target = commit.subject.removeprefix("amend! ")
+        if target in replaced_subjects:
+            continue
+        if target != commit.subject:
+            replaced_subjects.add(target)
+        found.append(commit)
     return found

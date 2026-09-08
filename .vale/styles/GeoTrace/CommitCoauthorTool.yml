@@ -1,0 +1,10 @@
+# Co-authored-by credits a person who shares the authorship, and with it the
+# responsibility. A tool goes in Assisted-by, which AI_POLICY.md covers. The
+# list holds the assistant products and the model names they publish under.
+extends: existence
+message: "Co-authored-by credits a person. A tool goes in 'Assisted-by:': '%s'."
+level: error
+scope: raw
+nonword: true
+tokens:
+  - '(?mi)^Co-authored-by:[^\n]*\b(?:claude|sonnet|opus|haiku|anthropic|gpt|chatgpt|openai|codex|copilot|gemini|jules|deepseek|grok|qwen|kimi|mistral|llama|gemma|cursor|windsurf|devin|aider|cline|opencode|roo|amp|augment|codeium|tabnine|dependabot|renovate|bot|llm|ai\s+agent|assistant)\b'

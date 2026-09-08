@@ -1,12 +1,17 @@
-# A commit message ends without a trailer: no Co-Authored-By, Signed-off-by,
-# Claude-Session or session URL, and no other Key-Name: line. The session token
-# omits the scheme so that lychee does not read it as a link.
+# The trailers a commit message may end with, in this casing: attribution
+# between people (Signed-off-by, Co-authored-by, Reviewed-by, Tested-by,
+# Acked-by) and the tool that assisted (Assisted-by, which AI_POLICY.md
+# covers). Every other trailer key is rejected, the issue keys (Closes,
+# Fixes, Resolves, Refs, Bug, Issue, Link, Cc, Depends) among them, and so is
+# a link to an agent session. A line of prose that opens with a label, such
+# as "Current:", is no trailer and passes. The session token omits the scheme
+# so that lychee does not read it as a link.
 extends: existence
-message: "Commit trailer: '%s'. Commit messages have no trailers."
+message: "Commit trailer: '%s'. Accepted, in this casing: Signed-off-by, Co-authored-by, Reviewed-by, Tested-by, Acked-by, Assisted-by. Every other trailer key is rejected."
 level: error
 scope: raw
 nonword: true
 tokens:
-  - '(?m)^[A-Z][A-Za-z]*(?:-[A-Za-z]+)+:\s'
-  - '(?mi)^(?:Signed-off-by|Co-authored-by|Reviewed-by|Acked-by|Tested-by|Fixes|Closes|Resolves|Refs?|Link|Change-Id)\s*:'
+  - '(?m)^(?!(?:Signed-off-by|Co-authored-by|Reviewed-by|Tested-by|Acked-by|Assisted-by):\s)[A-Za-z][A-Za-z]*(?:-[A-Za-z]+)+:\s'
+  - '(?mi)^(?:closes|fixes|resolves|refs?|bug|issue|link|cc|depends)\s*:'
   - '\bclaude\.ai/code/session_\w+'

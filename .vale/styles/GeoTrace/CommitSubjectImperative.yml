@@ -1,0 +1,12 @@
+# The subject states the change in the imperative present tense, which
+# GNOME's handbook states: "Add the fuzz targets", and not "Added" or "Adds".
+# This check is a list of the past-tense, third-person and gerund openings
+# that appear in practice, and not an analysis of mood. A verb outside the
+# list passes.
+extends: existence
+message: "Commit subject '%s': write the verb in the imperative, such as 'Add' or 'Fix'."
+level: error
+scope: raw
+nonword: true
+tokens:
+  - '\A(?:[a-z][a-z0-9_./-]*: )?(?:Add(?:ed|ing|s)|Fix(?:ed|ing|es)|Updat(?:ed|ing|es)|Remov(?:ed|ing|es)|Chang(?:ed|ing|es)|Refactor(?:ed|ing|s)|Implement(?:ed|ing|s)|Delet(?:ed|ing|es)|Renam(?:ed|ing|es)|Mov(?:ed|ing|es)|Creat(?:ed|ing|es)|Introduc(?:ed|ing|es)|Improv(?:ed|ing|es)|Bump(?:ed|ing|s)|Port(?:ed|ing|s)|Switch(?:ed|ing|es)|Clean(?:ed|ing|s)|Enabl(?:ed|ing|es)|Disabl(?:ed|ing|es)|Replac(?:ed|ing|es)|Ma(?:de|king|kes)|Wr(?:ote|iting|ites))\b'
