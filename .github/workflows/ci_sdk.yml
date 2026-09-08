@@ -349,6 +349,12 @@ jobs:
     needs: [changes, build-c-lib]
     if: needs.changes.outputs.sdk == 'true'
 
+    # Every row of this job and of cpp-sdk builds with debug info, so the
+    # sanitizer and a debugger name the source file and line of a crash in the
+    # C and C++ sources.
+    env:
+      BUILD_TYPE: RelWithDebInfo
+
     strategy:
       fail-fast: false
       # macOS is built under both the system AppleClang and Homebrew LLVM.
@@ -359,7 +365,7 @@ jobs:
           # program does not have, because cargo builds the Rust library without
           # instrumentation and the sanitizer needs that library instrumented
           # too.
-          - { os: ubuntu-latest, cc: llvm-20, label: llvm-20-asan, lib: ubuntu, sanitize: asan, build_type: RelWithDebInfo }
+          - { os: ubuntu-latest, cc: llvm-20, label: llvm-20-asan, lib: ubuntu, sanitize: asan }
           - { os: macos-latest, cc: appleclang, label: appleclang, lib: macos }
           - { os: macos-latest, cc: llvm-20, label: llvm-20, lib: macos }
           - { os: windows-latest, cc: mingw, label: mingw, lib: windows-gnu }
@@ -386,7 +392,6 @@ jobs:
       - name: Configure C SDK tests (Linux, macOS)
         if: runner.os != 'Windows'
         env:
-          BUILD_TYPE: ${{ matrix.build_type || 'Release' }}
           SANITIZE: ${{ matrix.sanitize }}
         run: |
           extra=()
@@ -406,7 +411,7 @@ jobs:
         run: |
           cmake -S sdk/c -B build/c \
             -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
             -DGEOTRACE_C_LIB_DIR="${{ github.workspace }}/target/x86_64-pc-windows-gnu/release" \
             -DGEOTRACE_C_BUILD_TESTS=ON \
             -DGEOTRACE_C_BUILD_EXAMPLES=ON
@@ -432,6 +437,9 @@ jobs:
     needs: [changes, build-c-lib]
     if: needs.changes.outputs.sdk == 'true'
 
+    env:
+      BUILD_TYPE: RelWithDebInfo
+
     strategy:
       fail-fast: false
       # Fully enumerated so macOS can be tested under both the system AppleClang
@@ -439,16 +447,16 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, cxx_std: "17", cc: llvm-20, label: llvm-20, lib: ubuntu }
-          - { os: ubuntu-latest, cxx_std: "17", cc: llvm-20, label: llvm-20-asan, lib: ubuntu, sanitize: asan, build_type: RelWithDebInfo }
+          - { os: ubuntu-latest, cxx_std: "17", cc: llvm-20, label: llvm-20-asan, lib: ubuntu, sanitize: asan }
           - { os: ubuntu-latest, cxx_std: "20", cc: llvm-20, label: llvm-20, lib: ubuntu }
           - { os: macos-latest, cxx_std: "17", cc: appleclang, label: appleclang, lib: macos }
           - { os: macos-latest, cxx_std: "20", cc: appleclang, label: appleclang, lib: macos }
           - { os: macos-latest, cxx_std: "17", cc: llvm-20, label: llvm-20, lib: macos }
           - { os: macos-latest, cxx_std: "20", cc: llvm-20, label: llvm-20, lib: macos }
           - { os: windows-latest, cxx_std: "17", cc: msvc, label: MSBuild, lib: windows-msvc, generator: "", cmake_extra_args: "-A x64" }
-          - { os: windows-latest, cxx_std: "17", cc: msvc, label: Ninja, lib: windows-msvc, generator: Ninja, cmake_extra_args: "-DCMAKE_BUILD_TYPE=Release" }
+          - { os: windows-latest, cxx_std: "17", cc: msvc, label: Ninja, lib: windows-msvc, generator: Ninja }
           - { os: windows-latest, cxx_std: "20", cc: msvc, label: MSBuild, lib: windows-msvc, generator: "", cmake_extra_args: "-A x64" }
-          - { os: windows-latest, cxx_std: "20", cc: msvc, label: Ninja, lib: windows-msvc, generator: Ninja, cmake_extra_args: "-DCMAKE_BUILD_TYPE=Release" }
+          - { os: windows-latest, cxx_std: "20", cc: msvc, label: Ninja, lib: windows-msvc, generator: Ninja }
 
     steps:
       - name: Checkout
@@ -471,6 +479,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           cmake -S sdk/c -B build/c \
+            -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
             -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release \
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
           cmake --install build/c
@@ -480,7 +489,7 @@ jobs:
         run: |
           cmake -S sdk/c -B build/c \
             -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
             -DGEOTRACE_C_LIB_DIR="${{ github.workspace }}/target/release" \
             -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/install"
           cmake --install build/c
@@ -488,7 +497,6 @@ jobs:
       - name: Configure C++ SDK tests (Unix)
         if: runner.os != 'Windows'
         env:
-          BUILD_TYPE: ${{ matrix.build_type || 'Release' }}
           SANITIZE: ${{ matrix.sanitize }}
         run: |
           extra=()
@@ -501,6 +509,9 @@ jobs:
             -DCMAKE_CXX_STANDARD=${{ matrix.cxx_std }} \
             "${extra[@]}"
 
+      # Both generator kinds read the config from this job's BUILD_TYPE: the
+      # Ninja rows at configure time, the MSBuild rows from the `--config` and
+      # `ctest -C` arguments below.
       - name: Configure C++ SDK tests (Windows)
         if: runner.os == 'Windows'
         run: |
@@ -508,13 +519,14 @@ jobs:
           [ -n "${{ matrix.generator }}" ] && GEN="-G ${{ matrix.generator }}"
           cmake -S sdk/cpp -B build/cpp \
             $GEN ${{ matrix.cmake_extra_args }} \
+            -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
             -DCMAKE_PREFIX_PATH="${{ github.workspace }}/install" \
             -DBUILD_TESTING=ON \
             -DGEOTRACE_CPP_BUILD_EXAMPLES=ON \
             -DCMAKE_CXX_STANDARD=${{ matrix.cxx_std }}
 
       - name: Build C++ SDK tests
-        run: cmake --build build/cpp --config Release
+        run: cmake --build build/cpp --config "$BUILD_TYPE"
 
       - name: Run C++ SDK tests (Unix)
         if: runner.os != 'Windows'
@@ -523,7 +535,7 @@ jobs:
       - name: Run C++ SDK tests (Windows)
         if: runner.os == 'Windows'
         working-directory: build/cpp
-        run: ctest -C Release --output-on-failure
+        run: ctest -C "$BUILD_TYPE" --output-on-failure
 
   python-sdk:
     name: Python SDK / ${{ matrix.os }} / Python ${{ matrix.python-version }}
