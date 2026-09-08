@@ -3,16 +3,14 @@ cmake_minimum_required(VERSION 3.21)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(Criterion REQUIRED IMPORTED_TARGET criterion)
 
-foreach(test test_builder test_channels test_gold_timestamp test_log_callback test_markers
-             test_null_guards test_status_codes test_thread_local test_timestamp
-             test_value_ranges)
-    add_executable(${test} ${test}.c)
-    target_link_libraries(${test} PRIVATE GeoTrace::C PkgConfig::Criterion geotrace_sanitizers)
-
+# Gives a test binary its warning flags, and embeds the library directory in its
+# RPATH so `ctest` finds the shared library without needing LD_LIBRARY_PATH /
+# DYLD_LIBRARY_PATH.
+function(geotrace_c_test_target target)
     if(MSVC)
-        target_compile_options(${test} PRIVATE /W4 /WX)
+        target_compile_options(${target} PRIVATE /W4 /WX)
     else()
-        target_compile_options(${test} PRIVATE
+        target_compile_options(${target} PRIVATE
             -Wall -Wextra -Wpedantic
             -Wshadow -Wstrict-prototypes -Wmissing-prototypes
             -Wcast-qual -Wformat=2 -Wmissing-declarations -Wconversion
@@ -20,11 +18,17 @@ foreach(test test_builder test_channels test_gold_timestamp test_log_callback te
         )
     endif()
 
-    # Embed the library directory in the binary's RPATH so `ctest` finds the
-    # shared library without needing LD_LIBRARY_PATH / DYLD_LIBRARY_PATH.
-    set_target_properties(${test} PROPERTIES
+    set_target_properties(${target} PROPERTIES
         BUILD_RPATH "$<TARGET_FILE_DIR:GeoTrace::C>"
     )
+endfunction()
+
+foreach(test test_builder test_channels test_gold_timestamp test_log_callback test_markers
+             test_null_guards test_status_codes test_thread_local test_timestamp
+             test_value_ranges)
+    add_executable(${test} ${test}.c)
+    target_link_libraries(${test} PRIVATE GeoTrace::C PkgConfig::Criterion geotrace_sanitizers)
+    geotrace_c_test_target(${test})
 
     add_test(NAME ${test} COMMAND ${test})
     set_tests_properties(${test} PROPERTIES
@@ -62,5 +66,35 @@ set(GTD_OUT_OF_RANGE_FIXTURE "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/out_of_range_
 if(EXISTS "${GTD_OUT_OF_RANGE_FIXTURE}")
     target_compile_definitions(test_value_ranges PRIVATE
         GTD_OUT_OF_RANGE_FIXTURE_PATH="${GTD_OUT_OF_RANGE_FIXTURE}"
+    )
+endif()
+
+# The canary checks that the address sanitizer resolves a fault inside the Rust
+# library to a .rs file and line. The link fails when `libgeotrace_c` lacks the
+# `sanitizer_canary` feature of geotrace-c: the canary calls an entry point only
+# that feature exports.
+option(GEOTRACE_C_SANITIZER_CANARY
+    "Build the sanitizer canary (needs libgeotrace_c built with the sanitizer_canary feature)"
+    OFF)
+
+if(GEOTRACE_C_SANITIZER_CANARY AND GEOTRACE_SANITIZE STREQUAL "")
+    message(FATAL_ERROR
+        "GEOTRACE_C_SANITIZER_CANARY is ON and GEOTRACE_SANITIZE is empty. "
+        "The canary needs GEOTRACE_SANITIZE=asan: it reads a sanitizer report."
+    )
+endif()
+
+if(GEOTRACE_C_SANITIZER_CANARY)
+    add_executable(leak_canary leak_canary.c)
+    target_link_libraries(leak_canary PRIVATE GeoTrace::C geotrace_sanitizers)
+    geotrace_c_test_target(leak_canary)
+
+    add_test(NAME test_leak_report_contains_a_rust_source_file
+        COMMAND "${CMAKE_COMMAND}"
+            "-DCANARY_PROGRAM=$<TARGET_FILE:leak_canary>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/check_leak_report_symbolization.cmake"
+    )
+    set_tests_properties(test_leak_report_contains_a_rust_source_file PROPERTIES
+        ENVIRONMENT "${GEOTRACE_SANITIZE_TEST_ENVIRONMENT}"
     )
 endif()

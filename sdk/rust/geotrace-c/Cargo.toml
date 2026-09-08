@@ -24,6 +24,11 @@ test = false
 [[bin]]
 name = "gen_fixture"
 
+[features]
+# Exports the leaking entry point sdk/c/tests/leak_canary.c calls. Off in every
+# release build.
+sanitizer_canary = []
+
 [dependencies]
 chrono.workspace = true
 geotrace-sdk = { path = "../geotrace-sdk" }
