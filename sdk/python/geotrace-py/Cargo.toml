@@ -35,6 +35,7 @@ unsafe_code = "warn"
 unwrap_used = "warn"
 expect_used = "warn"
 needless_pass_by_value = "warn"
+ref_patterns = "warn"
 
 [profile.release]
 opt-level = 3

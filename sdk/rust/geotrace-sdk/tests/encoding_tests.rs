@@ -332,7 +332,7 @@ fn a_geotrace_version_outside_the_supported_set_fails_the_read(#[case] version: 
     let bytes = make_file_with_version(version);
     let err = NavFile::read(bytes.as_slice()).expect_err("should reject unknown version");
     assert!(
-        matches!(err, Error::UnsupportedVersion { version: ref read } if read == version),
+        matches!(&err, Error::UnsupportedVersion { version: read } if read == version),
         "expected UnsupportedVersion({version:?}), got: {err:?}"
     );
 }

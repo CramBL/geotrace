@@ -472,8 +472,8 @@ pub fn stored_track_table(
     let ends = read_column(TRACK_END_DATASET).unwrap_or_default();
     let state_column = read_column(TRACK_STATE_DATASET);
     let legacy_column = read_column(LEGACY_TRACK_HIDDEN_DATASET);
-    let states = match state_column {
-        Some(ref values) => TrackStateColumn::State(values),
+    let states = match &state_column {
+        Some(values) => TrackStateColumn::State(values),
         None => TrackStateColumn::LegacyHidden(legacy_column.as_deref().unwrap_or_default()),
     };
     let table = track_ranges_from_columns(&starts, &ends, states);

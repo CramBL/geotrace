@@ -1192,7 +1192,7 @@ impl PyEventMarker {
             }
         };
         // Validate the path if one is supplied.
-        if let Some(ref p) = path {
+        if let Some(p) = &path {
             geotrace_sdk::EventMarker::builder()
                 .variant_path(p.as_str())
                 .sys_time(sys_time.to_utc())

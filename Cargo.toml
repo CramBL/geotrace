@@ -171,6 +171,9 @@ unexpected_cfgs = "warn"
 unsafe_code = "warn"
 
 [workspace.lints.clippy]
+# Configured in clippy.toml. The level is allow while about 1200 items in the
+# tree are out of that order. It goes to warn once they are reordered.
+arbitrary_source_item_ordering = "allow"
 cognitive_complexity = { level = "warn", priority = -1 }
 disallowed_macros = "warn"                   # See clippy.toml
 disallowed_methods = "warn"                  # See clippy.toml
@@ -278,6 +281,7 @@ allow_attributes_without_reason = "warn"
 missing_fields_in_debug = "warn"
 format_push_string = "warn"
 ref_option = "warn"
+ref_patterns = "warn"
 needless_raw_string_hashes = "warn"
 ignored_unit_patterns = "warn"
 
