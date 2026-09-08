@@ -30,6 +30,7 @@ mod metric;
 mod parser;
 mod pipeline;
 mod position;
+mod test_util;
 mod unit;
 mod wrap;
 
