@@ -690,7 +690,7 @@ namespace detail {
     return Constellation::Gps;
 }
 
-[[nodiscard]] constexpr GtdMarkerIcon to_c(MarkerIcon icon) noexcept {
+[[nodiscard]] constexpr std::uint32_t to_c(MarkerIcon icon) noexcept {
     switch (icon) {
     case MarkerIcon::Pin:
         return GTD_ICON_PIN;
@@ -724,8 +724,8 @@ namespace detail {
     return GTD_ICON_PIN;
 }
 
-[[nodiscard]] constexpr GtdMarkerIcon to_c(std::optional<MarkerIcon> icon) noexcept {
-    return icon ? to_c(*icon) : GTD_ICON_AUTO;
+[[nodiscard]] constexpr std::uint32_t to_c(std::optional<MarkerIcon> icon) noexcept {
+    return icon ? to_c(*icon) : static_cast<std::uint32_t>(GTD_ICON_AUTO);
 }
 
 /**

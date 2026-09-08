@@ -26,6 +26,7 @@ the app).
 
 ### Changed
 
+- C `gtd_builder_add_annotation` and `gtd_builder_add_event_marker_style` take `uint32_t icon` in place of `GtdMarkerIcon`, a breaking change to the C API. Both return `GTD_ERR_INVALID_ARGUMENT` for a value no `GtdMarkerIcon` variant declares, and `gtd_builder_add_annotation` still returns it for `GTD_ICON_AUTO`.
 - C `GtdSatellite::constellation` is a `uint32_t` in place of a `GtdConstellation`, a breaking change to the C API. `gtd_builder_add_satellite_report` returns `GTD_ERR_INVALID_ARGUMENT`, and the builder keeps the reports it already has, for a satellite whose constellation is a value no `GtdConstellation` variant declares.
 - C `gtd_builder_set_travel_mode` and `gtd_travel_mode_name` take `uint32_t mode` in place of `GtdTravelMode`, a breaking change to the C API. `gtd_builder_set_travel_mode` returns `GTD_ERR_INVALID_ARGUMENT` and `gtd_travel_mode_name` returns `"unknown"` for a value no `GtdTravelMode` variant declares.
 - The writer stamps `geotrace_version` 2 for the layout it writes, and the reader accepts 1 and 2.
