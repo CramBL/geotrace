@@ -52,7 +52,7 @@ int main(void) {
     struct {
         uint32_t offset;
         const char *label;
-        GtdMarkerIcon icon;
+        uint32_t icon;
     } annotations[] = {
         {5, "Pothole", GTD_ICON_WARNING},
         {15, "Speed camera", GTD_ICON_CIRCLE},

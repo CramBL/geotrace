@@ -84,10 +84,6 @@ geotrace_c_test_target(test_invalid_enums)
 # undefined behavior: the call returns `GTD_OK`, or the process faults. The unit
 # that fixes an entry point deletes its line from this list.
 set(GTD_INVALID_ENUM_CASES_AWAITING_A_FIX
-    # `gtd_builder_add_annotation`
-    an_annotation_icon_outside_the_enum_is_rejected
-    # `gtd_builder_add_event_marker_style`
-    an_event_marker_style_icon_outside_the_enum_is_rejected
     # `gtd_set_log_level`
     a_log_level_outside_the_enum_leaves_the_forwarded_level_in_force
 )
@@ -100,6 +96,8 @@ foreach(case
         the_name_of_a_travel_mode_outside_the_enum_is_unknown
         a_satellite_constellation_outside_the_enum_is_rejected
         the_builder_stays_unchanged_when_it_rejects_a_satellite_report
+        an_annotation_icon_outside_the_enum_is_rejected
+        an_event_marker_style_icon_outside_the_enum_is_rejected
         ${GTD_INVALID_ENUM_CASES_AWAITING_A_FIX})
     add_test(NAME test_invalid_enums_${case}
         COMMAND test_invalid_enums --filter "invalid_enums/${case}"

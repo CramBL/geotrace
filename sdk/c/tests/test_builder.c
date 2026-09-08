@@ -580,7 +580,7 @@ Test(builder, annotation_rejects_the_auto_icon) {
 
     cr_assert_eq(gtd_builder_add_annotation(builder, timestamp, "note", GTD_ICON_AUTO),
                  GTD_ERR_INVALID_ARGUMENT);
-    cr_assert_not_null(gtd_last_error());
+    cr_assert_not_null(strstr(gtd_last_error(), "GTD_ICON_AUTO"));
 
     gtd_builder_destroy(builder);
 }

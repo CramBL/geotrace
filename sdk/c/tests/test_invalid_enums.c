@@ -7,6 +7,7 @@
 #include <criterion/criterion.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 Test(invalid_enums, a_travel_mode_outside_the_enum_is_rejected) {
     static const uint32_t modes[] = {7, 99, 200};
@@ -29,33 +30,8 @@ Test(invalid_enums, the_name_of_a_travel_mode_outside_the_enum_is_unknown) {
     }
 }
 
-/* NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange): each cast below
-   produces a discriminant outside its `enum`'s declared range. */
-
-Test(invalid_enums, an_annotation_icon_outside_the_enum_is_rejected) {
-    static const int32_t icons[] = {14, 200, 254};
-
-    for (size_t i = 0; i < sizeof(icons) / sizeof(icons[0]); i++) {
-        GtdTimestamp time;
-        GtdFileBuilder *builder = builder_with_a_nav_fix(&time);
-        cr_assert_eq(gtd_builder_add_annotation(builder, time, "waypoint", (GtdMarkerIcon)icons[i]),
-                     GTD_ERR_INVALID_ARGUMENT);
-        gtd_builder_destroy(builder);
-    }
-}
-
-Test(invalid_enums, an_event_marker_style_icon_outside_the_enum_is_rejected) {
-    static const int32_t icons[] = {14, 200, 254};
-
-    for (size_t i = 0; i < sizeof(icons) / sizeof(icons[0]); i++) {
-        GtdTimestamp time;
-        GtdFileBuilder *builder = builder_with_a_nav_fix(&time);
-        cr_assert_eq(gtd_builder_add_event_marker_style(builder, "power/boot",
-                                                        (GtdMarkerIcon)icons[i], "#FFAA00"),
-                     GTD_ERR_INVALID_ARGUMENT);
-        gtd_builder_destroy(builder);
-    }
-}
+/* NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange): the cast below
+   produces a discriminant outside `GtdLogLevel`'s declared range. */
 
 /* NOLINTBEGIN(bugprone-easily-swappable-parameters): the C SDK fixes the order
    of a log callback's parameters. */
@@ -87,6 +63,34 @@ Test(invalid_enums, a_log_level_outside_the_enum_leaves_the_forwarded_level_in_f
     gtd_clear_log_callback();
 }
 /* NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange) */
+
+Test(invalid_enums, an_annotation_icon_outside_the_enum_is_rejected) {
+    /* The icons run 0 to 13 and GTD_ICON_AUTO is 255. These three values lie
+       in the gap between them. */
+    static const uint32_t icons[] = {14, 200, 254};
+
+    for (size_t i = 0; i < sizeof(icons) / sizeof(icons[0]); i++) {
+        GtdTimestamp time;
+        GtdFileBuilder *builder = builder_with_a_nav_fix(&time);
+        cr_assert_eq(gtd_builder_add_annotation(builder, time, "waypoint", icons[i]),
+                     GTD_ERR_INVALID_ARGUMENT);
+        cr_assert_not_null(strstr(gtd_last_error(), "not a valid GtdMarkerIcon"));
+        gtd_builder_destroy(builder);
+    }
+}
+
+Test(invalid_enums, an_event_marker_style_icon_outside_the_enum_is_rejected) {
+    static const uint32_t icons[] = {14, 200, 254};
+
+    for (size_t i = 0; i < sizeof(icons) / sizeof(icons[0]); i++) {
+        GtdTimestamp time;
+        GtdFileBuilder *builder = builder_with_a_nav_fix(&time);
+        cr_assert_eq(gtd_builder_add_event_marker_style(builder, "power/boot", icons[i], "#FFAA00"),
+                     GTD_ERR_INVALID_ARGUMENT);
+        cr_assert_not_null(strstr(gtd_last_error(), "not a valid GtdMarkerIcon"));
+        gtd_builder_destroy(builder);
+    }
+}
 
 Test(invalid_enums, a_satellite_constellation_outside_the_enum_is_rejected) {
     static const uint32_t constellations[] = {6, 42, 255};

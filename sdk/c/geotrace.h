@@ -117,6 +117,20 @@ typedef enum {
 } GtdStatus;
 
 /**
+ * Severity of a log record, with the values of the Rust `log` crate's levels.
+ *
+ * The SDK reports data it read or was given but could not use as written at
+ * `GTD_LOG_WARN`.
+ */
+typedef enum {
+    GTD_LOG_ERROR = 1,
+    GTD_LOG_WARN = 2,
+    GTD_LOG_INFO = 3,
+    GTD_LOG_DEBUG = 4,
+    GTD_LOG_TRACE = 5,
+} GtdLogLevel;
+
+/**
  * Icon for map markers. `GTD_ICON_AUTO` means the application picks the icon:
  * `gtd_builder_add_event_marker_style()` accepts it, and
  * `gtd_nav_file_get_event_marker_style()` returns it.
@@ -183,20 +197,6 @@ typedef enum {
      */
     GTD_ICON_AUTO = 255,
 } GtdMarkerIcon;
-
-/**
- * Severity of a log record, with the values of the Rust `log` crate's levels.
- *
- * The SDK reports data it read or was given but could not use as written at
- * `GTD_LOG_WARN`.
- */
-typedef enum {
-    GTD_LOG_ERROR = 1,
-    GTD_LOG_WARN = 2,
-    GTD_LOG_INFO = 3,
-    GTD_LOG_DEBUG = 4,
-    GTD_LOG_TRACE = 5,
-} GtdLogLevel;
 
 /**
  * GNSS constellation identifier.
@@ -778,16 +778,19 @@ GtdStatus gtd_builder_add_satellite_report(GtdFileBuilder *builder,
  * @param builder Builder handle.
  * @param time    Timestamp of the annotation. Must not be `gtd_ts_none()`.
  * @param label   Human-readable label, or NULL to leave the marker unlabelled.
- * @param icon    Icon to display.
+ * @param icon    Icon to display. A @ref GtdMarkerIcon value other than
+ *                `GTD_ICON_AUTO`.
  *
  * @return `GTD_ERR_FIELD_TOO_LONG` if @p label is longer than 255 bytes.
+ * @return `GTD_ERR_INVALID_ARGUMENT` if @p icon is a value no
+ *         @ref GtdMarkerIcon variant declares.
  * @return `GTD_ERR_INVALID_ARGUMENT` if @p icon is `GTD_ICON_AUTO`, which only
  *         `gtd_builder_add_event_marker_style()` accepts.
  */
 GtdStatus gtd_builder_add_annotation(GtdFileBuilder *builder,
                                      GtdTimestamp time,
                                      const char *label,
-                                     GtdMarkerIcon icon);
+                                     uint32_t icon);
 
 /**
  * Add a structured event marker.
@@ -820,8 +823,12 @@ GtdStatus gtd_builder_add_event_marker(GtdFileBuilder *builder,
  * @param builder      Builder handle.
  * @param variant_path Hierarchical event type path (same format as in
  *                     `gtd_builder_add_event_marker()`).
- * @param icon         Icon to display. `GTD_ICON_AUTO` uses the application default.
+ * @param icon         Icon to display. A @ref GtdMarkerIcon value.
+ *                     `GTD_ICON_AUTO` uses the application default.
  * @param color_hex    Color as an `"#RRGGBB"` string, or NULL for automatic.
+ *
+ * @return `GTD_ERR_INVALID_ARGUMENT` if @p icon is a value no
+ *         @ref GtdMarkerIcon variant declares.
  *
  * @note The style is checked when the file is written: a @p variant_path past
  *       255 bytes or a @p color_hex past 7 bytes fails there with
@@ -829,7 +836,7 @@ GtdStatus gtd_builder_add_event_marker(GtdFileBuilder *builder,
  */
 GtdStatus gtd_builder_add_event_marker_style(GtdFileBuilder *builder,
                                              const char *variant_path,
-                                             GtdMarkerIcon icon,
+                                             uint32_t icon,
                                              const char *color_hex);
 
 /**

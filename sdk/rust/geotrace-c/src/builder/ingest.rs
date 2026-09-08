@@ -159,9 +159,12 @@ pub unsafe extern "C" fn gtd_builder_add_satellite_report(
 /// @param builder Builder handle.
 /// @param time    Timestamp of the annotation. Must not be `gtd_ts_none()`.
 /// @param label   Human-readable label, or NULL to leave the marker unlabelled.
-/// @param icon    Icon to display.
+/// @param icon    Icon to display. A @ref GtdMarkerIcon value other than
+///                `GTD_ICON_AUTO`.
 ///
 /// @return `GTD_ERR_FIELD_TOO_LONG` if @p label is longer than 255 bytes.
+/// @return `GTD_ERR_INVALID_ARGUMENT` if @p icon is a value no
+///         @ref GtdMarkerIcon variant declares.
 /// @return `GTD_ERR_INVALID_ARGUMENT` if @p icon is `GTD_ICON_AUTO`, which only
 ///         `gtd_builder_add_event_marker_style()` accepts.
 #[unsafe(no_mangle)]
@@ -169,7 +172,7 @@ pub unsafe extern "C" fn gtd_builder_add_annotation(
     builder: *mut GtdFileBuilder,
     time: GtdTimestamp,
     label: *const c_char,
-    icon: GtdMarkerIcon,
+    icon: u32,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
         let builder = nonnull_mut!(builder);
@@ -177,7 +180,11 @@ pub unsafe extern "C" fn gtd_builder_add_annotation(
             error::set_last_error("annotation time must not be gtd_ts_none()");
             return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         };
-        let Some(icon) = icon.to_marker_icon() else {
+        let Some(icon) = GtdMarkerIcon::from_abi_value(icon) else {
+            error::set_last_error("icon is not a valid GtdMarkerIcon");
+            return GtdStatus::GTD_ERR_INVALID_ARGUMENT;
+        };
+        let Some(marker_icon) = icon.to_marker_icon() else {
             error::set_last_error(
                 "an annotation's icon is a marker icon: GTD_ICON_AUTO is only accepted by \
                  gtd_builder_add_event_marker_style()",
@@ -187,7 +194,7 @@ pub unsafe extern "C" fn gtd_builder_add_annotation(
         let annotation = match Annotation::builder()
             .time(ann_time)
             .maybe_label(cstr_opt!(label).map(str::to_owned))
-            .icon(icon)
+            .icon(marker_icon)
             .build()
         {
             Ok(annotation) => annotation,
@@ -258,8 +265,12 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker(
 /// @param builder      Builder handle.
 /// @param variant_path Hierarchical event type path (same format as in
 ///                     `gtd_builder_add_event_marker()`).
-/// @param icon         Icon to display. `GTD_ICON_AUTO` uses the application default.
+/// @param icon         Icon to display. A @ref GtdMarkerIcon value.
+///                     `GTD_ICON_AUTO` uses the application default.
 /// @param color_hex    Color as an `"#RRGGBB"` string, or NULL for automatic.
+///
+/// @return `GTD_ERR_INVALID_ARGUMENT` if @p icon is a value no
+///         @ref GtdMarkerIcon variant declares.
 ///
 /// @note The style is checked when the file is written: a @p variant_path past
 ///       255 bytes or a @p color_hex past 7 bytes fails there with
@@ -268,12 +279,16 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker(
 pub unsafe extern "C" fn gtd_builder_add_event_marker_style(
     builder: *mut GtdFileBuilder,
     variant_path: *const c_char,
-    icon: GtdMarkerIcon,
+    icon: u32,
     color_hex: *const c_char,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
         let builder = nonnull_mut!(builder);
         let path = cstr!(variant_path);
+        let Some(icon) = GtdMarkerIcon::from_abi_value(icon) else {
+            error::set_last_error("icon is not a valid GtdMarkerIcon");
+            return GtdStatus::GTD_ERR_INVALID_ARGUMENT;
+        };
         let icon_choice = icon.to_icon_choice();
         let color = match cstr_opt!(color_hex) {
             Some(hex) => EventMarkerColor::Hex(hex.to_owned()),

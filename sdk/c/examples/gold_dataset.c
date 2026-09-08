@@ -124,7 +124,7 @@ static uint32_t parse_constellation(const char *name) {
     return GTD_CONSTELLATION_GPS; /* unreachable */
 }
 
-static GtdMarkerIcon parse_icon(const char *name) {
+static uint32_t parse_icon(const char *name) {
     if (!name || *name == '\0') {
         return GTD_ICON_AUTO;
     }
@@ -413,7 +413,7 @@ static void load_markers(GtdFileBuilder *builder, const char *base) {
             FAIL("markers.csv: missing timestamp");
         }
         const char *label = (*cols[1] != '\0') ? cols[1] : NULL;
-        GtdMarkerIcon icon = parse_icon(cols[2]);
+        uint32_t icon = parse_icon(cols[2]);
         if (icon == GTD_ICON_AUTO) {
             icon = GTD_ICON_PIN;
         }
