@@ -1,5 +1,5 @@
 ---
-source: crates/gt-query/src/lib.rs
+source: crates/gt-query/src/tests/parsing_and_formatting.rs
 expression: query.to_string()
 ---
 points

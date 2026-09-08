@@ -1,5 +1,5 @@
 ---
-source: crates/gt-query/src/tests.rs
+source: crates/gt-query/src/tests/error_messages.rs
 expression: catalog
 ---
 [
