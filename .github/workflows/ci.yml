@@ -26,41 +26,15 @@ env:
 # `shared-key` group. A cache written on a PR ref is readable only by that PR yet
 # still evicts trunk's from the repo-wide 10 GB budget, and one writer per group
 # means one cache per OS.
+#
+# Two jobs per platform, one that compiles the workspace and one that runs the
+# tests. The commands within a job share their dependency build, and a run of
+# this workflow takes one concurrency slot per job.
 jobs:
-  check:
-    name: check / ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
-        with:
-          toolchain: stable
-
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: app
-          save-if: false
-
-      - name: check
-        run: cargo check --workspace --features geotrace/self-update
-
-  clippy:
-    name: clippy / ${{ matrix.os }}
+  # `cargo check`, clippy and the examples run as three steps of one job: each
+  # needs the workspace built, and one job builds it once.
+  check-clippy-examples:
+    name: check-clippy-examples / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -89,13 +63,64 @@ jobs:
           shared-key: app
           save-if: false
 
+      - name: check
+        run: cargo check --workspace --features geotrace/self-update
+
+      # One run reports every command that failed. `!cancelled()` keeps the
+      # steps below a failed one running.
       - name: Clippy
+        if: ${{ !cancelled() }}
         run: |
           cargo clippy --workspace --no-deps -- -D warnings
           cargo clippy --workspace --no-deps --tests -- -D warnings
           cargo clippy --workspace --no-deps --examples -- -D warnings
           cargo clippy --workspace --no-deps --features geotrace/self-update --tests -- -D warnings
 
+      - name: Examples
+        if: ${{ !cancelled() }}
+        run: bash scripts/examples.sh
+
+      - name: Committed fixtures unchanged
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
+        run: |
+          git diff --exit-code --stat -- tests/fixtures/demo_trip/demo_trip.gtd tests/fixtures/gold_dataset/gold.gtd \
+              || { echo "error: an example rewrote a committed fixture, commit the new bytes" >&2; exit 1; }
+
+      # These two steps are diagnostic and neither fails the build. The collect
+      # step finds any difference that the gate above failed on, because it runs
+      # its own fixture diff.
+      - name: Collect the fixtures this platform regenerated
+        id: collect
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.os }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/regenerated-fixtures"
+          differed=false
+          for fixture in tests/fixtures/demo_trip/demo_trip.gtd tests/fixtures/gold_dataset/gold.gtd; do
+            name=$(basename "$fixture" .gtd)
+            if git diff --quiet -- "$fixture"; then
+              echo "$name: $PLATFORM wrote the committed bytes"
+              continue
+            fi
+            echo "$name: $PLATFORM wrote different bytes, uploading both files"
+            cp -- "$fixture" "$RUNNER_TEMP/regenerated-fixtures/$name.$PLATFORM.gtd"
+            git show "HEAD:$fixture" > "$RUNNER_TEMP/regenerated-fixtures/$name.committed.gtd"
+            differed=true
+          done
+          echo "differed=$differed" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the regenerated fixtures
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() && steps.collect.outputs.differed == 'true' }}
+        with:
+          name: regenerated-fixtures-${{ matrix.os }}
+          path: ${{ runner.temp }}/regenerated-fixtures
+          if-no-files-found: ignore
+
+  # The workspace suite and the two history backend suites run as three steps of
+  # one job: all three build the same workspace.
   test:
     name: test / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -145,50 +170,8 @@ jobs:
       - name: Tests
         run: cargo nextest run --workspace --features geotrace/self-update --profile ci
 
-      # Linux and macOS both compare snapshots (Windows CI skips comparison,
-      # see gt-test-utils::snapshot_harness), so upload diffs from both.
-      - name: Upload snapshots
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: matrix.os != 'windows-latest' && always()
-        with:
-          name: test-results-${{ matrix.os }}
-          path: "**/tests/snapshots"
-
-  test-backends:
-    name: test-backends / ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
-        with:
-          toolchain: stable
-
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: app
-          save-if: false
-
-      - name: Install tools
-        uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
-        with:
-          tool: nextest
-
       - name: Tests (pure backend)
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           cargo nextest run -p gt-history --test integration --no-default-features --features backend-pure --profile ci
@@ -201,76 +184,14 @@ jobs:
           cargo nextest run -p gt-history --test integration --no-default-features --features backend-sys --profile ci
           cargo nextest run -p gt-store --test log_attachments --no-default-features --features backend-sys --profile ci
 
-  examples:
-    name: examples / ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
-        with:
-          toolchain: stable
-
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: app
-          save-if: false
-
-      - name: Examples
-        run: bash scripts/examples.sh
-
-      - name: Committed fixtures unchanged
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          git diff --exit-code --stat -- tests/fixtures/demo_trip/demo_trip.gtd tests/fixtures/gold_dataset/gold.gtd \
-              || { echo "error: an example rewrote a committed fixture, commit the new bytes" >&2; exit 1; }
-
-      # These two steps are diagnostic and neither fails the build. The collect
-      # step finds any difference that the gate above failed on, because it runs
-      # its own fixture diff.
-      - name: Collect the fixtures this platform regenerated
-        id: collect
-        if: ${{ !cancelled() }}
-        shell: bash
-        env:
-          PLATFORM: ${{ matrix.os }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/regenerated-fixtures"
-          differed=false
-          for fixture in tests/fixtures/demo_trip/demo_trip.gtd tests/fixtures/gold_dataset/gold.gtd; do
-            name=$(basename "$fixture" .gtd)
-            if git diff --quiet -- "$fixture"; then
-              echo "$name: $PLATFORM wrote the committed bytes"
-              continue
-            fi
-            echo "$name: $PLATFORM wrote different bytes, uploading both files"
-            cp -- "$fixture" "$RUNNER_TEMP/regenerated-fixtures/$name.$PLATFORM.gtd"
-            git show "HEAD:$fixture" > "$RUNNER_TEMP/regenerated-fixtures/$name.committed.gtd"
-            differed=true
-          done
-          echo "differed=$differed" >> "$GITHUB_OUTPUT"
-
-      - name: Upload the regenerated fixtures
+      # Linux and macOS both compare snapshots (Windows CI skips comparison,
+      # see gt-test-utils::snapshot_harness), so upload diffs from both.
+      - name: Upload snapshots
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: ${{ !cancelled() && steps.collect.outputs.differed == 'true' }}
+        if: matrix.os != 'windows-latest' && always()
         with:
-          name: regenerated-fixtures-${{ matrix.os }}
-          path: ${{ runner.temp }}/regenerated-fixtures
-          if-no-files-found: ignore
+          name: test-results-${{ matrix.os }}
+          path: "**/tests/snapshots"
 
   quality:
     name: quality / ubuntu-latest
@@ -385,11 +306,8 @@ jobs:
   ci-essentials:
     runs-on: ubuntu-latest
     needs:
-      - check
-      - clippy
+      - check-clippy-examples
       - test
-      - test-backends
-      - examples
       - quality
       - vale
     permissions:

@@ -1,9 +1,12 @@
 name: CI / Container
 
+# `just ci` runs on a push to trunk and on demand, not on a pull request. Branch
+# protection requires the gates of the other CI workflows, not `ci-container`.
+# Inside the dev image `just ci` repeats what those workflows check, and its run
+# took 1607s, the longest job in CI.
 on:
   push:
     branches: [trunk]
-  pull_request:
   workflow_dispatch: {}
   schedule:
     - cron: "0 3 1 * *"
