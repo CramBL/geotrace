@@ -102,7 +102,7 @@ for secs, label, icon in ANNOTATIONS:
 
 nav_file = builder.finish()
 
-out = Path(tempfile.gettempdir()) / "with_satellites_and_markers.gtd"
+out = Path(tempfile.gettempdir()) / "geotrace_with_satellites_and_markers.gtd"
 nav_file.write_to_file(out)
 
 print(f"Written to {out}")
@@ -111,3 +111,5 @@ print()
 print("Markers:")
 for m in nav_file.markers:
     print(f"  {m.label!r:35s}  @ {m.lat:.5f}, {m.lon:.5f}  [{m.icon}]")
+
+out.unlink()

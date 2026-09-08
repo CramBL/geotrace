@@ -38,10 +38,9 @@ foreach(example ${GEOTRACE_CPP_EXAMPLES})
 endforeach()
 
 # Register self-contained examples as `ctest` smoke tests so CI runs them.
-# `read_file` needs an input path and `gold_dataset` needs the CSV fixtures and
-# writes into the source tree, so both are exercised separately (test-gold-cpp)
-# and excluded here.
-foreach(example write_basic with_satellites event_markers channels typed_events from_csv
+# `gold_dataset` needs the CSV fixtures and writes into the source tree, so it is
+# exercised separately by the `test-gold-cpp` recipe and excluded here.
+foreach(example write_basic read_file with_satellites event_markers channels typed_events from_csv
                 from_multiple_sources)
     add_test(NAME example_${example} COMMAND ${example})
     set_tests_properties(example_${example} PROPERTIES

@@ -19,41 +19,44 @@
     reason = "SDK example: demonstration code"
 )]
 
-use std::{error::Error, fs};
+use std::{env, error::Error, fs};
 
 use geotrace_sdk::{
-    Angle, Annotation, DateTime, MarkerIcon, NavFileBuilder, NavFix, NavFixTime, Utc,
+    Angle, Annotation, DateTime, Duration, MarkerIcon, NavFileBuilder, NavFix, NavFixTime, Utc,
 };
 
-// Source 1 - GPS track (lat/lon/heading in degrees, one fix per second).
-const GPS_FIXES: &[(&str, f64, f64, f64)] = &[
-    ("2024-01-15T09:00:00Z", 51.5074, -0.1278, 90.0),
-    ("2024-01-15T09:00:01Z", 51.5075, -0.1276, 91.0),
-    ("2024-01-15T09:00:02Z", 51.5076, -0.1274, 89.5),
-    ("2024-01-15T09:00:03Z", 51.5077, -0.1272, 88.0),
-    ("2024-01-15T09:00:04Z", 51.5078, -0.1270, 90.0),
-    ("2024-01-15T09:00:05Z", 51.5079, -0.1268, 90.5),
+/// Source 1, the GPS track, one fix every 10 s: second offset, latitude,
+/// longitude, heading.
+const GPS_FIXES: &[(i64, f64, f64, f64)] = &[
+    (0, 51.5074, -0.1278, 90.0),
+    (10, 51.5075, -0.1276, 91.0),
+    (20, 51.5076, -0.1274, 89.5),
+    (30, 51.5077, -0.1272, 88.0),
+    (40, 51.5078, -0.1270, 90.0),
+    (50, 51.5079, -0.1268, 90.5),
 ];
 
-// Source 2 - event annotations from a separate log / annotation system.
-const EVENTS: &[(&str, &str, MarkerIcon)] = &[
-    ("2024-01-15T09:00:01Z", "Checkpoint A", MarkerIcon::Pin),
-    (
-        "2024-01-15T09:00:03Z",
-        "Speed bump ahead",
-        MarkerIcon::Warning,
-    ),
-    ("2024-01-15T09:00:04Z", "Checkpoint B", MarkerIcon::Check),
+/// Source 2, annotations from a separate log: second offset, label, icon. Their
+/// map positions are not supplied - `finish()` interpolates them from the GPS
+/// fixes by timestamp.
+const ANNOTATIONS: &[(i64, &str, MarkerIcon)] = &[
+    (5, "Pothole", MarkerIcon::Warning),
+    (15, "Speed camera", MarkerIcon::Circle),
+    (25, "Junction", MarkerIcon::Pin),
 ];
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut recorder = NavFileBuilder::new().open();
+    let start = "2024-06-01T08:00:00Z".parse::<DateTime<Utc>>()?;
 
-    for &(timestamp, lat, lon, heading) in GPS_FIXES {
-        let time = timestamp.parse::<DateTime<Utc>>()?;
+    let mut recorder = NavFileBuilder::new()
+        .with_title("Merged GPS + annotations")
+        .with_device("Aggregator v1.0")
+        .open();
+
+    for &(offset_secs, lat, lon, heading) in GPS_FIXES {
         recorder.add(
             NavFix::builder()
-                .time(NavFixTime::Receiver(time))
+                .time(NavFixTime::Receiver(start + Duration::seconds(offset_secs)))
                 .lat(Angle::degrees(lat))
                 .lon(Angle::degrees(lon))
                 .heading(Angle::degrees(heading))
@@ -61,11 +64,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         );
     }
 
-    for &(timestamp, label, icon) in EVENTS {
-        let time = timestamp.parse::<DateTime<Utc>>()?;
+    for &(offset_secs, label, icon) in ANNOTATIONS {
         recorder.add(
             Annotation::builder()
-                .time(time)
+                .time(start + Duration::seconds(offset_secs))
                 .label(label)
                 .icon(icon)
                 .build()?,
@@ -74,11 +76,16 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let nav_file = recorder.finish()?;
 
-    let temp_dir = tempfile::tempdir()?;
-    let out = temp_dir.path().join("geotrace_from_multiple_sources.gtd");
-    nav_file.write_to_file(&out)?;
-    println!("Written {out:?}");
-    fs::remove_file(&out)?;
+    let path = env::temp_dir().join("geotrace_from_multiple_sources.gtd");
+    nav_file.write_to_file(&path)?;
+    println!(
+        "Merged {} GPS fixes + {} annotations -> {}",
+        nav_file.nav_points().len(),
+        nav_file.markers().len(),
+        path.display()
+    );
+    println!("Annotations were interpolated onto the track by timestamp.");
 
+    fs::remove_file(&path)?;
     Ok(())
 }

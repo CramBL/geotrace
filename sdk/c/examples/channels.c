@@ -4,16 +4,110 @@
  * A channel is a named time series sampled at its own rate, correlated with the
  * nav track by timestamp.  It can be scalar (an inclinometer angle) or a vector
  * whose components share one sample clock (an accelerometer's x/y/z axes).  This
- * example also shows recognized milli-g values and a custom display-only unit.
+ * example also shows recognized milli-g values and a custom display-only unit,
+ * then reads the file back and prints its channel metadata.
  */
 
 #include "../geotrace.h"
 
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 /* A fixed epoch keeps the output deterministic: 2024-06-01T08:00:00Z. */
 #define BASE_EPOCH 1717228800U
+
+static GtdStatus add_channels(GtdFileBuilder *builder) {
+    /* Three samples, one second apart. A real recorder would sample faster than
+       the fixes. The channel keeps its own clock either way. */
+    GtdTimestamp times[3];
+    double incline_vals[3];
+    double accel_vals[9]; /* 3 samples x 3 components, row-major */
+    double quality_vals[3];
+    for (size_t i = 0; i < 3; i++) {
+        GtdStatus status = gtd_ts_from_seconds(BASE_EPOCH + (int64_t)i, &times[i]);
+        if (status != GTD_OK) {
+            return status;
+        }
+        incline_vals[i] = 1.0 + ((double)i * 0.5);
+        accel_vals[(i * 3) + 0] = 100.0 * (double)i;
+        accel_vals[(i * 3) + 1] = 200.0;
+        accel_vals[(i * 3) + 2] = 980.0;
+        quality_vals[i] = 80.0 + (double)i;
+    }
+
+    /* A scalar channel: one value per timestamp. */
+    GtdChannel incline = {0};
+    incline.name = "incline";
+    incline.unit = "deg";
+    incline.period_deg = GTD_NONE_F64;
+    incline.description = "boom inclinometer";
+    incline.times = times;
+    incline.n_times = 3;
+    incline.values = incline_vals;
+    incline.n_values = 3;
+    GtdStatus status = gtd_builder_add_channel(builder, &incline);
+    if (status != GTD_OK) {
+        return status;
+    }
+
+    /* A vector channel: `values` is row-major, one row of x/y/z per timestamp.
+       Declaring the unit as `mg` lets GeoTrace's query language compare it
+       against acceleration literals. */
+    const char *comps[3] = {"x", "y", "z"};
+    GtdChannel accel = {0};
+    accel.name = "accel";
+    accel.unit = "mg";
+    accel.period_deg = GTD_NONE_F64;
+    accel.description = "IMU acceleration";
+    accel.components = comps;
+    accel.n_components = 3;
+    accel.times = times;
+    accel.n_times = 3;
+    accel.values = accel_vals;
+    accel.n_values = 9;
+    status = gtd_builder_add_channel(builder, &accel);
+    if (status != GTD_OK) {
+        return status;
+    }
+
+    /* A custom unit is displayed verbatim and stays dimensionless in queries. */
+    GtdChannel quality = {0};
+    quality.name = "quality";
+    quality.unit = "vendor score";
+    quality.period_deg = GTD_NONE_F64;
+    quality.times = times;
+    quality.n_times = 3;
+    quality.values = quality_vals;
+    quality.n_values = 3;
+    return gtd_builder_add_channel_with_unit_mode(builder, &quality, GTD_CHANNEL_UNIT_CUSTOM);
+}
+
+static void print_channels(const GtdNavFile *file) {
+    size_t channel_count = gtd_nav_file_channel_count(file);
+    printf("%zu channels:\n", channel_count);
+    for (size_t i = 0; i < channel_count; i++) {
+        GtdChannelInfo info;
+        if (gtd_nav_file_get_channel(file, i, &info) != GTD_OK) {
+            continue;
+        }
+        printf("  %-10s %zu samples", info.name, info.sample_count);
+        if (info.has_unit) {
+            printf(" [%s]", info.unit);
+        }
+        if (info.component_count > 0) {
+            printf(" components:");
+            for (size_t c = 0; c < info.component_count; c++) {
+                char label[32];
+                if (gtd_nav_file_get_channel_component(file, i, c, label, sizeof label) == GTD_OK) {
+                    printf(" %s", label);
+                }
+            }
+        }
+        printf("\n");
+    }
+}
 
 int main(void) {
     GtdFileBuilder *builder = gtd_builder_create();
@@ -33,66 +127,8 @@ int main(void) {
         return 1;
     }
 
-    GtdTimestamp times[3];
-    double incline_vals[3];
-    double accel_vals[9]; /* 3 samples x 3 components, row-major */
-    double quality_vals[3];
-    for (size_t i = 0; i < 3; i++) {
-        if (gtd_ts_from_seconds(BASE_EPOCH + (int64_t)i, &times[i]) != GTD_OK) {
-            fprintf(stderr, "ts_from_seconds: %s\n", gtd_last_error());
-            gtd_builder_destroy(builder);
-            return 1;
-        }
-        incline_vals[i] = 1.0 + ((double)i * 0.5);
-        accel_vals[(i * 3) + 0] = 100.0 * (double)i;
-        accel_vals[(i * 3) + 1] = 200.0;
-        accel_vals[(i * 3) + 2] = 980.0;
-        quality_vals[i] = 80.0 + (double)i;
-    }
-
-    GtdChannel incline = {0};
-    incline.name = "incline";
-    incline.unit = "deg";
-    incline.period_deg = GTD_NONE_F64;
-    incline.description = "boom inclinometer";
-    incline.times = times;
-    incline.n_times = 3;
-    incline.values = incline_vals;
-    incline.n_values = 3;
-    if (gtd_builder_add_channel(builder, &incline) != GTD_OK) {
-        fprintf(stderr, "add_channel(incline): %s\n", gtd_last_error());
-        gtd_builder_destroy(builder);
-        return 1;
-    }
-
-    const char *comps[3] = {"x", "y", "z"};
-    GtdChannel accel = {0};
-    accel.name = "accel";
-    accel.unit = "mg";
-    accel.period_deg = GTD_NONE_F64;
-    accel.components = comps;
-    accel.n_components = 3;
-    accel.times = times;
-    accel.n_times = 3;
-    accel.values = accel_vals;
-    accel.n_values = 9;
-    if (gtd_builder_add_channel(builder, &accel) != GTD_OK) {
-        fprintf(stderr, "add_channel(accel): %s\n", gtd_last_error());
-        gtd_builder_destroy(builder);
-        return 1;
-    }
-
-    GtdChannel quality = {0};
-    quality.name = "quality";
-    quality.unit = "vendor score";
-    quality.period_deg = GTD_NONE_F64;
-    quality.times = times;
-    quality.n_times = 3;
-    quality.values = quality_vals;
-    quality.n_values = 3;
-    if (gtd_builder_add_channel_with_unit_mode(builder, &quality, GTD_CHANNEL_UNIT_CUSTOM) !=
-        GTD_OK) {
-        fprintf(stderr, "add_channel(quality): %s\n", gtd_last_error());
+    if (add_channels(builder) != GTD_OK) {
+        fprintf(stderr, "add_channel: %s\n", gtd_last_error());
         gtd_builder_destroy(builder);
         return 1;
     }
@@ -103,30 +139,25 @@ int main(void) {
         return 1;
     }
 
-    size_t channel_count = gtd_nav_file_channel_count(file);
-    printf("%zu channels:\n", channel_count);
-    for (size_t i = 0; i < channel_count; i++) {
-        GtdChannelInfo info;
-        if (gtd_nav_file_get_channel(file, i, &info) != GTD_OK) {
-            continue;
-        }
-        printf("  %-10s %zu samples", info.name, info.sample_count);
-        if (info.has_unit) {
-            printf(" [%s]", info.unit);
-        }
-        if (info.component_count > 0) {
-            printf(" components:");
-            for (size_t c = 0; c < info.component_count; c++) {
-                char label[32];
-                if (gtd_nav_file_get_channel_component(file, i, c, label, sizeof(label)) ==
-                    GTD_OK) {
-                    printf(" %s", label);
-                }
-            }
-        }
-        printf("\n");
+    const char *path = "geotrace_channels.gtd";
+    GtdStatus status = gtd_nav_file_write_to_path(file, path);
+    gtd_nav_file_destroy(file);
+    if (status != GTD_OK) {
+        fprintf(stderr, "write: %s\n", gtd_last_error());
+        return 1;
     }
 
-    gtd_nav_file_destroy(file);
+    GtdNavFile *loaded = NULL;
+    if (gtd_nav_file_open(path, &loaded) != GTD_OK) {
+        fprintf(stderr, "open: %s\n", gtd_last_error());
+        return 1;
+    }
+
+    print_channels(loaded);
+
+    gtd_nav_file_destroy(loaded);
+    if (remove(path) != 0) {
+        fprintf(stderr, "remove %s: %s\n", path, strerror(errno));
+    }
     return 0;
 }

@@ -90,8 +90,8 @@ int main(void) {
         return 1;
     }
 
-    printf("Merged %zu GPS fixes + 3 annotations -> %s\n", gtd_nav_file_nav_point_count(file),
-           path);
+    printf("Merged %zu GPS fixes + %zu annotations -> %s\n", gtd_nav_file_nav_point_count(file),
+           gtd_nav_file_marker_count(file), path);
     printf("Annotations were interpolated onto the track by timestamp.\n");
 
     gtd_nav_file_destroy(file);
