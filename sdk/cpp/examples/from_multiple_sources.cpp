@@ -11,7 +11,6 @@
 #include <geotrace/geotrace.hpp>
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
@@ -70,11 +69,9 @@ int main() {
             {15, "Speed camera", geotrace::MarkerIcon::Circle},
             {25, "Junction", geotrace::MarkerIcon::Pin},
         }};
-        std::size_t marker_count = 0;
         for (const auto &marker : markers) {
             builder.add(geotrace::Annotation{timestamp_at(marker.offset), std::string(marker.label),
                                              marker.icon});
-            ++marker_count;
         }
 
         const geotrace::NavFile file = builder.finish();
@@ -83,7 +80,7 @@ int main() {
             std::filesystem::temp_directory_path() / "geotrace_from_multiple_sources.gtd";
         file.write_to_file(out);
 
-        std::cout << "Merged " << file.nav_point_count() << " GPS fixes + " << marker_count
+        std::cout << "Merged " << file.nav_point_count() << " GPS fixes + " << file.marker_count()
                   << " annotations -> " << out.string() << "\n";
         std::cout << "Annotations were interpolated onto the track by timestamp.\n";
 

@@ -33,18 +33,20 @@ endforeach()
 # Register self-contained examples as `ctest` smoke tests so CI runs them.
 # `gold_dataset` needs the CSV fixtures and writes into the source tree, so it is
 # exercised separately by the `test-gold-c` recipe and excluded here.
-foreach(example write_basic with_satellites event_markers channels from_csv from_multiple_sources)
+foreach(example write_basic read_file with_satellites event_markers channels from_csv
+                from_multiple_sources)
     add_test(NAME example_${example} COMMAND ${example})
     set_tests_properties(example_${example} PROPERTIES
         ENVIRONMENT "${GEOTRACE_SANITIZE_TEST_ENVIRONMENT}"
     )
 endforeach()
 
-# `read_file` takes a .gtd path. Feed it the minimal fixture the unit tests use.
+# `read_file` also takes a .gtd path. Run it a second time over the minimal
+# fixture the unit tests use, which covers the path a caller supplies.
 set(GTD_MINIMAL_FIXTURE "${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/minimal.gtd")
 if(EXISTS "${GTD_MINIMAL_FIXTURE}")
-    add_test(NAME example_read_file COMMAND read_file "${GTD_MINIMAL_FIXTURE}")
-    set_tests_properties(example_read_file PROPERTIES
+    add_test(NAME example_read_file_fixture COMMAND read_file "${GTD_MINIMAL_FIXTURE}")
+    set_tests_properties(example_read_file_fixture PROPERTIES
         ENVIRONMENT "${GEOTRACE_SANITIZE_TEST_ENVIRONMENT}"
     )
 endif()

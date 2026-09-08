@@ -24,6 +24,8 @@ use geotrace_sdk::{
 
 fn main() -> Result<(), Box<dyn Error>> {
     let t = |s: &str| s.parse::<DateTime<Utc>>().expect("valid timestamp");
+    let first_fix_time = t("2024-06-01T08:00:00Z");
+    let second_fix_time = t("2024-06-01T08:00:10Z");
 
     let meta = Meta::builder()
         .title("Quick tour")
@@ -33,7 +35,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     recorder.add(
         NavFix::builder()
-            .time(NavFixTime::Receiver(t("2024-06-01T08:00:00Z")))
+            .time(NavFixTime::Receiver(first_fix_time))
             .lat(Angle::degrees(51.5074))
             .lon(Angle::degrees(-0.1278))
             .heading(Angle::degrees(90.0))
@@ -44,7 +46,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     recorder.add(
         SatelliteReport::builder()
-            .time(NavFixTime::Receiver(t("2024-06-01T08:00:00Z")))
+            .time(NavFixTime::Receiver(first_fix_time))
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -54,6 +56,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .azimuth(90.0)
                     .snr(38.0)
                     .build(),
+                // Elevation and azimuth are optional. A receiver reports an
+                // SNR for a satellite whose position it has not computed.
                 Satellite::builder()
                     .constellation(Constellation::Galileo)
                     .prn(3)
@@ -65,7 +69,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     recorder.add(
         NavFix::builder()
-            .time(NavFixTime::Receiver(t("2024-06-01T08:00:10Z")))
+            .time(NavFixTime::Receiver(second_fix_time))
             .lat(Angle::degrees(51.5080))
             .lon(Angle::degrees(-0.1265))
             .heading(Angle::degrees(85.0))
@@ -75,7 +79,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     recorder.add(
         Annotation::builder()
-            .time(t("2024-06-01T08:00:00Z"))
+            .time(first_fix_time)
             .label("Start point")
             .icon(MarkerIcon::Pin)
             .build()?,

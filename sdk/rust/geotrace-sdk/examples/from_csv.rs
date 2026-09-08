@@ -6,6 +6,8 @@
 //!
 //! In a real workflow you would replace the inline `CSV_DATA` constant with a
 //! `std::fs::read_to_string("track.csv")?` call.
+//!
+//! Timestamps here are whole Unix epoch seconds to keep the parser tiny.
 
 // Examples favour brevity: the core's robustness restriction lints (no
 // unwrap/expect/panic/indexing, no std::env::temp_dir) are not enforced on
@@ -20,21 +22,25 @@
 
 use std::{env, error::Error, fs};
 
-use geotrace_sdk::{Angle, DateTime, NavFileBuilder, NavFix, NavFixTime, Utc, Velocity};
+use geotrace_sdk::{Angle, DateTime, NavFileBuilder, NavFix, NavFixTime, Velocity};
 
 const CSV_DATA: &str = "\
-timestamp,lat,lon,heading,speed_mps
-2024-01-15T09:00:00Z,51.5074,-0.1278,90.0,12.5
-2024-01-15T09:00:01Z,51.5075,-0.1276,91.0,12.6
-2024-01-15T09:00:02Z,51.5076,-0.1274,89.5,12.4
-2024-01-15T09:00:03Z,51.5077,-0.1272,88.0,12.3
-2024-01-15T09:00:04Z,51.5078,-0.1270,90.0,12.5
-2024-01-15T09:00:05Z,51.5079,-0.1268,90.5,12.6
+timestamp_s,lat,lon,heading_deg,speed_mps
+1705309200,51.5074,-0.1278,90.0,12.5
+1705309201,51.5075,-0.1276,91.0,12.6
+1705309202,51.5076,-0.1274,89.5,12.4
+1705309203,51.5077,-0.1272,88.0,12.3
+1705309204,51.5078,-0.1270,90.0,12.5
+1705309205,51.5079,-0.1268,90.5,12.6
 ";
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut recorder = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new()
+        .with_title("Imported from CSV")
+        .with_device("CSV importer v1.0")
+        .open();
 
+    let mut rows = 0;
     for line in CSV_DATA.lines().skip(1) {
         if line.trim().is_empty() {
             continue;
@@ -44,7 +50,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             eprintln!("Skipping malformed row: {line}");
             continue;
         };
-        let time = timestamp.parse::<DateTime<Utc>>()?;
+        let time = DateTime::from_timestamp(timestamp.parse::<i64>()?, 0)
+            .ok_or("timestamp outside the representable range")?;
         recorder.add(
             NavFix::builder()
                 .time(NavFixTime::Receiver(time))
@@ -54,14 +61,19 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .speed(Velocity::meter_per_second(speed.parse::<f64>()?))
                 .build(),
         );
+        rows += 1;
     }
 
     let nav_file = recorder.finish()?;
 
-    let out = env::temp_dir().join("geotrace_from_csv.gtd");
-    nav_file.write_to_file(&out)?;
-    println!("Written {out:?}");
-    fs::remove_file(&out)?;
+    let path = env::temp_dir().join("geotrace_from_csv.gtd");
+    nav_file.write_to_file(&path)?;
+    println!(
+        "Parsed {rows} CSV rows into {} nav points -> {}",
+        nav_file.nav_points().len(),
+        path.display()
+    );
 
+    fs::remove_file(&path)?;
     Ok(())
 }

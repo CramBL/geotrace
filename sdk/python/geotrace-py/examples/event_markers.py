@@ -21,14 +21,16 @@ from geotrace_sdk import (
     EventMarker,
     EventMarkerStyle,
     MarkerIcon,
+    NavFile,
     NavFileBuilder,
     NavFix,
 )
 
 START = datetime(2024, 6, 1, 8, 0, 0, tzinfo=UTC)
 
-FIXES = [
-    # (seconds, lat,     lon)
+# A short London track, one fix every 30 s.
+TRACK = [
+    # (`seconds`, `lat`, `lon`)
     (0, 51.5074, -0.1278),
     (30, 51.5080, -0.1265),
     (60, 51.5088, -0.1248),
@@ -37,8 +39,9 @@ FIXES = [
     (150, 51.5110, -0.1200),
 ]
 
+# Flat and nested variant paths.
 EVENTS = [
-    # (`variant_path`, seconds, annotation)
+    # (`variant_path`, `seconds`, `annotation`)
     ("power/boot", 2, "cold start"),
     ("connectivity/agps/request", 5, "EPO fetch started"),
     ("connectivity/agps/success", 18, "EPO applied, TTFF reduced"),
@@ -46,9 +49,11 @@ EVENTS = [
     ("power/sleep", 145, None),
 ]
 
-builder = NavFileBuilder()
+builder = (
+    NavFileBuilder().with_title("Event marker tour").with_device("Example GPS v1.0")
+)
 
-for secs, lat, lon in FIXES:
+for secs, lat, lon in TRACK:
     builder.add(
         NavFix(lat=lat, lon=lon, gps_time=START + timedelta(seconds=secs), heading=90.0)
     )
@@ -68,14 +73,18 @@ nav_file = builder.finish()
 out = Path(tempfile.gettempdir()) / "geotrace_event_markers.gtd"
 nav_file.write_to_file(out)
 
-loaded = nav_file.__class__.open(out)
-
-print(f"GPS fixes    : {len(loaded.points)}")
-print(f"Event markers: {len(loaded.event_markers)}")
-print(f"Styles       : {len(loaded.event_marker_styles)}")
-print()
-for em in loaded.event_markers:
-    note = em.annotation or "—"
-    print(f"  [{em.variant_path}]  {em.lat:.5f}, {em.lon:.5f}  - {note}")
-
-out.unlink()
+try:
+    loaded = NavFile.open(out)
+    print(f"Nav points: {len(loaded.points)}")
+    print(f"Event markers: {len(loaded.event_markers)}")
+    print(f"Event marker styles: {len(loaded.event_marker_styles)}")
+    for event_marker in loaded.event_markers:
+        line = (
+            f"  {event_marker.variant_path}  "
+            f"{event_marker.lat:.5f}, {event_marker.lon:.5f}"
+        )
+        if event_marker.annotation:
+            line += f" - {event_marker.annotation}"
+        print(line)
+finally:
+    out.unlink()

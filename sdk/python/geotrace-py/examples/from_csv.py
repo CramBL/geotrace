@@ -54,6 +54,8 @@ for row in reader:
 
 nav_file = builder.finish()
 
-out = Path(tempfile.gettempdir()) / "from_csv.gtd"
+out = Path(tempfile.gettempdir()) / "geotrace_from_csv.gtd"
 nav_file.write_to_file(out)
 print(f"Parsed {rows} CSV rows into {len(nav_file.points)} nav points -> {out}")
+
+out.unlink()

@@ -24,7 +24,7 @@ START = datetime(2024, 6, 1, 8, 0, 0, tzinfo=UTC)
 def main() -> None:
     times = [START + timedelta(seconds=i) for i in range(3)]
 
-    builder = NavFileBuilder()
+    builder = NavFileBuilder().with_title("Channel tour")
     builder.add(NavFix(lat=51.5074, lon=-0.1278, gps_time=START))
     builder.add(
         Channel(
@@ -46,10 +46,10 @@ def main() -> None:
                 980.0,
                 100.0,
                 200.0,
-                1000.0,
+                980.0,
                 200.0,
                 200.0,
-                1020.0,
+                980.0,
             ],
             unit=Unit.MG,
             components=["x", "y", "z"],
@@ -64,20 +64,20 @@ def main() -> None:
         )
     )
 
-    with tempfile.NamedTemporaryFile(suffix=".gtd", delete=False) as f:
-        path = f.name
+    out = Path(tempfile.gettempdir()) / "geotrace_channels.gtd"
+    builder.finish().write_to_file(out)
     try:
-        builder.finish().write_to_file(path)
-        nav_file = NavFile.open(path)
+        nav_file = NavFile.open(out)
         print(f"{len(nav_file.channels)} channels:")
         for channel in nav_file.channels:
-            unit = f" [{channel.unit}]" if channel.unit else ""
-            components = ""
+            line = f"  {channel.name:<10} {len(channel.times)} samples"
+            if channel.unit:
+                line += f" [{channel.unit}]"
             if channel.is_vector:
-                components = f" components: {', '.join(channel.components)}"
-            print(f"  {channel.name} {len(channel.times)} samples{unit}{components}")
+                line += f" components: {' '.join(channel.components)}"
+            print(line)
     finally:
-        Path(path).unlink()
+        out.unlink()
 
 
 if __name__ == "__main__":

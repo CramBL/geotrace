@@ -59,10 +59,12 @@ for offset, label, icon in ANNOTATIONS:
 
 nav_file = builder.finish()
 
-out = Path(tempfile.gettempdir()) / "from_multiple_sources.gtd"
+out = Path(tempfile.gettempdir()) / "geotrace_from_multiple_sources.gtd"
 nav_file.write_to_file(out)
 
 fix_count = len(nav_file.points)
 marker_count = len(nav_file.markers)
 print(f"Merged {fix_count} GPS fixes + {marker_count} annotations -> {out}")
 print("Annotations were interpolated onto the track by timestamp.")
+
+out.unlink()

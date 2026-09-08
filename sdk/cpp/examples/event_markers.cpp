@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -87,10 +88,13 @@ int main() {
         file.write_to_file(out);
 
         const geotrace::NavFile loaded = geotrace::NavFile::open(out);
-        std::cout << loaded.event_marker_count() << " event marker(s)\n";
+        std::cout << "Nav points: " << loaded.nav_point_count() << "\n";
+        std::cout << "Event markers: " << loaded.event_marker_count() << "\n";
+        std::cout << "Event marker styles: " << loaded.event_marker_style_count() << "\n";
         for (std::size_t i = 0; i < loaded.event_marker_count(); ++i) {
             const auto marker = loaded.event_marker(i);
-            std::cout << "  " << marker.variant_path;
+            std::cout << "  " << marker.variant_path << "  " << std::fixed << std::setprecision(5)
+                      << marker.lat.as_degrees() << ", " << marker.lon.as_degrees();
             if (!marker.annotation.empty()) {
                 std::cout << " - " << marker.annotation;
             }

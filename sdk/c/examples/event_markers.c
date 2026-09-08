@@ -117,7 +117,6 @@ int main(void) {
     }
     gtd_nav_file_destroy(file);
 
-    /* Read it back and print the markers, as GeoTrace would list them. */
     GtdNavFile *loaded = NULL;
     status = gtd_nav_file_open(path, &loaded);
     if (status != GTD_OK) {
@@ -126,15 +125,17 @@ int main(void) {
     }
 
     size_t marker_count = gtd_nav_file_event_marker_count(loaded);
+    printf("Nav points: %zu\n", gtd_nav_file_nav_point_count(loaded));
     printf("Event markers: %zu\n", marker_count);
+    printf("Event marker styles: %zu\n", gtd_nav_file_event_marker_style_count(loaded));
     for (size_t i = 0; i < marker_count; i++) {
         GtdEventMarkerInfo marker;
         if (gtd_nav_file_get_event_marker(loaded, i, &marker) != GTD_OK) {
             continue;
         }
-        printf("  %-28s %.5f, %.5f", marker.variant_path, marker.lat_deg, marker.lon_deg);
+        printf("  %s  %.5f, %.5f", marker.variant_path, marker.lat_deg, marker.lon_deg);
         if (marker.has_annotation) {
-            printf("  - %s", marker.annotation);
+            printf(" - %s", marker.annotation);
         }
         printf("\n");
     }
