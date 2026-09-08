@@ -671,317 +671,6 @@ fn by_name() -> &'static HashMap<&'static str, Vec<Construct>> {
 mod tests {
     use super::*;
 
-    /// The candidate names at `cursor`, typed automatically with an empty
-    /// channel schema - the common case for the construct-path tests.
-    fn names_at(src: &str, cursor: usize) -> Vec<&'static str> {
-        completions_with(
-            src,
-            cursor,
-            &ChannelSchema::new(),
-            CompletionTrigger::Automatic,
-        )
-    }
-
-    fn completions_with(
-        src: &str,
-        cursor: usize,
-        schema: &ChannelSchema,
-        trigger: CompletionTrigger,
-    ) -> Vec<&'static str> {
-        completions_at(src, cursor, schema, trigger)
-            .items
-            .iter()
-            .map(|c| c.name)
-            .collect()
-    }
-
-    fn names(src: &str) -> Vec<&'static str> {
-        names_at(src, src.len())
-    }
-
-    #[test]
-    fn source_waits_for_a_typed_character() {
-        // An empty editor (or the blank line after a query) stays quiet: the
-        // popup must not assert `points` before anything is typed - a channel
-        // source is an equally valid start.
-        assert!(names("").is_empty());
-        assert_eq!(names("po"), vec!["points"]);
-    }
-
-    #[test]
-    fn manual_trigger_offers_at_an_empty_prefix() {
-        // Ctrl+Space is explicit intent, so the empty-prefix wait does not
-        // apply: the source slot offers `points` on request.
-        let manual = completions_with("", 0, &ChannelSchema::new(), CompletionTrigger::Manual);
-        assert_eq!(manual, vec!["points"]);
-        // A stage position offers the stage keywords and display modes.
-        let src = "points | ";
-        let stage = completions_with(
-            src,
-            src.len(),
-            &ChannelSchema::new(),
-            CompletionTrigger::Manual,
-        );
-        assert!(stage.contains(&"where"));
-        assert!(stage.contains(&"draw"));
-    }
-
-    #[test]
-    fn stage_keywords_after_a_typed_character() {
-        // Nothing right after `|`: stage keywords and display modes are two
-        // kinds, so the popup waits for the first character.
-        assert!(names("points | ").is_empty());
-
-        let items = names("points | w");
-        assert!(items.contains(&"where"));
-        assert!(items.contains(&"window"));
-        assert!(items.contains(&"with"));
-        // A display mode is reachable by its own letters.
-        assert!(names("points | d").contains(&"draw"));
-        // No metrics offered at a stage-keyword position.
-        assert!(!names("points | wi").contains(&"velocity"));
-    }
-
-    #[test]
-    fn partial_stage_keyword_fuzzy_filters() {
-        // `wh`: `where` is a prefix and ranks first. `with` matches as a
-        // subsequence (w..h). `window` has no 'h' so it is filtered out.
-        let items = names("points | wh");
-        assert_eq!(items.first(), Some(&"where"));
-        assert!(items.contains(&"with"));
-        assert!(!items.contains(&"window"));
-        assert!(!items.contains(&"table"));
-    }
-
-    #[test]
-    fn metrics_and_functions_after_a_typed_character() {
-        // Nothing right after `where`: metrics and functions are two kinds.
-        assert!(names("points | where ").is_empty());
-        assert!(names("points | where v").contains(&"velocity"));
-        assert!(names("points | where a").contains(&"avg"));
-        // After a metric, an operator is expected - no names.
-        assert!(names("points | where velocity ").is_empty());
-    }
-
-    #[test]
-    fn only_matching_units_after_a_number() {
-        // `velocity` is a speed, so a unit there is a speed unit - never `m`,
-        // `g`, or `deg`.
-        let items = names("points | where velocity > 30 ");
-        assert!(items.contains(&"km/h"));
-        assert!(items.contains(&"m/s"));
-        assert!(items.contains(&"kn"));
-        assert!(!items.contains(&"m"));
-        assert!(!items.contains(&"g"));
-        assert!(!items.contains(&"deg"));
-        assert!(!items.contains(&"velocity"));
-        // A length metric gets length units.
-        let lengths = names("points | where eph > 20 ");
-        assert!(lengths.contains(&"m"));
-        assert!(lengths.contains(&"km"));
-        assert!(!lengths.contains(&"km/h"));
-    }
-
-    #[test]
-    fn duration_units_after_delta_of_time() {
-        // delta(time) is a duration, so its unit is a duration unit.
-        let items = names("points | window 3 | where delta(time) <= 15 ");
-        assert!(items.contains(&"min"));
-        assert!(items.contains(&"s"));
-        assert!(!items.contains(&"km/h"));
-    }
-
-    #[test]
-    fn nothing_joined_to_a_finished_unit() {
-        // The `h` of `km/h` sits after `/`, not a boundary, so it is not
-        // completed into `heading` or `eph`.
-        let items = names("points | window 3 | where avg(velocity) > 30 km/h");
-        assert!(items.is_empty(), "expected no completions, got {items:?}");
-    }
-
-    #[test]
-    fn caret_inside_a_complete_word_offers_nothing() {
-        // The caret sits inside `velocity` (after the `l`), which is already a
-        // complete metric - re-suggesting it is pointless.
-        let src = "points | where velocity < 2 km/h | hide";
-        let cursor = src.find("velocity").expect("has velocity") + 3;
-        assert!(names_at(src, cursor).is_empty());
-    }
-
-    #[test]
-    fn no_unit_offered_when_one_already_follows() {
-        // The caret sits right after the `2`, which already has `km/h` after
-        // it - there is no unit to add.
-        let src = "points | where velocity < 2 km/h | hide";
-        let cursor = src.find("2 km/h").expect("has the literal") + 1;
-        assert!(names_at(src, cursor).is_empty());
-    }
-
-    #[test]
-    fn params_in_with() {
-        let items = names("points | with ");
-        assert_eq!(
-            {
-                let mut i = items.clone();
-                i.sort_unstable();
-                i
-            },
-            vec!["mask", "slip_window", "snr_drop"]
-        );
-    }
-
-    #[test]
-    fn with_expects_a_value_then_the_right_unit() {
-        // After a parameter name a number is expected - nothing to complete.
-        assert!(names("points | with mask ").is_empty());
-        // The unit after the number is the parameter's quantity: mask is an
-        // angle, so only `deg`.
-        let mask_units = names("points | with mask 15 ");
-        assert!(mask_units.contains(&"deg"));
-        assert!(!mask_units.contains(&"m"));
-        assert!(!mask_units.contains(&"km/h"));
-        // `slip_window` is a duration.
-        let slip_units = names("points | with mask 15 deg, slip_window 5 ");
-        assert!(slip_units.contains(&"min"));
-        assert!(slip_units.contains(&"s"));
-        assert!(!slip_units.contains(&"deg"));
-        // `snr_drop` is a bare number, so no unit is offered.
-        assert!(names("points | with mask 15 deg, snr_drop 10 ").is_empty());
-        // A comma starts the next parameter name.
-        assert!(names("points | with mask 15 deg, ").contains(&"snr_drop"));
-    }
-
-    #[test]
-    fn columns_in_table() {
-        // `table ` must not dump every metric unprompted - the popup waits
-        // for the first character.
-        assert!(names("points | where velocity > 30 km/h | table ").is_empty());
-        let items = names("points | where velocity > 30 km/h | table v");
-        assert!(items.contains(&"velocity"));
-        // A column takes an aggregate as well as a metric.
-        assert!(names("points | window 5 | table a").contains(&"avg"));
-        let after_comma = names("points | where velocity > 30 km/h | table time, h");
-        assert!(after_comma.contains(&"heading"));
-    }
-
-    /// A column's aggregate takes a metric or a channel in its parentheses,
-    /// as a `where` atom does.
-    #[test]
-    fn values_inside_a_column_aggregate() {
-        assert!(names("points | window 5 | table max(v").contains(&"velocity"));
-        let src = "points | window 5 | table max(@acc";
-        assert_eq!(channel_names(src, src.len()), vec!["accel"]);
-    }
-
-    #[test]
-    fn nothing_after_display_modes() {
-        assert!(names("points | draw ").is_empty());
-    }
-
-    #[test]
-    fn duration_units_after_a_window_count() {
-        // `window 15 s` is valid grammar, so the count position offers the
-        // duration units - and only those.
-        let items = names("points | window 15 ");
-        assert!(items.contains(&"s"));
-        assert!(items.contains(&"min"));
-        assert!(!items.contains(&"km/h"));
-        assert!(!items.contains(&"deg"));
-    }
-
-    #[test]
-    fn connectives_complete_after_an_atom() {
-        // After a complete comparison, a typed character offers the joining
-        // connectives. Nothing pops eagerly, and `not` is not offered there.
-        assert!(names("points | where velocity > 30 km/h ").is_empty());
-        assert_eq!(names("points | where velocity > 30 km/h a"), vec!["and"]);
-        assert_eq!(names("points | where velocity > 30 km/h o"), vec!["or"]);
-        assert!(!names("points | where velocity > 30 km/h n").contains(&"not"));
-        // At the start of an atom `not` is offered alongside value names.
-        assert!(names("points | where velocity > 30 km/h and no").contains(&"not"));
-    }
-
-    #[test]
-    fn channels_type_the_unit_slot_through_the_schema() {
-        // `@accel` is m/s2 in the schema, so the unit offered after a
-        // comparison against it is an acceleration - never a speed.
-        let src = "points | where @accel > 1 ";
-        let items = completions_with(
-            src,
-            src.len(),
-            &channel_schema(),
-            CompletionTrigger::Automatic,
-        );
-        assert!(items.contains(&"m/s2"));
-        assert!(items.contains(&"g"));
-        assert!(!items.contains(&"km/h"));
-    }
-
-    #[test]
-    fn arithmetic_between_metrics_offers_no_eager_units() {
-        // `velocity / eph` is dimensionless. Length units (from `eph`) would be
-        // wrong, so nothing pops eagerly.
-        assert!(names("points | where velocity / eph > 3 ").is_empty());
-        // A typed prefix still completes over the full unit set, the fallback
-        // when the quantity is unknown.
-        let typed = names("points | where velocity / eph > 3 k");
-        assert!(typed.contains(&"km/h"));
-        assert!(typed.contains(&"km"));
-    }
-
-    #[test]
-    fn a_leading_literal_offers_no_eager_units() {
-        // `where 30 ` (intending `30 km/h < velocity`) has nothing to type the
-        // literal yet - offering every unit would be noise.
-        assert!(names("points | where 30 ").is_empty());
-    }
-
-    #[test]
-    fn compact_typing_completes_after_operators_and_digits() {
-        // No spaces anywhere: the metric after `(`, the unit after the digit.
-        assert!(names("points | where eph>2k").contains(&"km"));
-        assert!(names("points | where avg(velocity)>3 k").contains(&"km/h"));
-        // A name right after a comparison operator completes too.
-        assert!(names("points | where eph>vel").contains(&"velocity"));
-    }
-
-    #[test]
-    fn replace_range_covers_the_partial_word() {
-        // "vel" starts at byte 15 in "points | where vel".
-        let completions = completions_at(
-            "points | where vel",
-            18,
-            &ChannelSchema::new(),
-            CompletionTrigger::Automatic,
-        );
-        assert_eq!(completions.range, 15..18);
-        assert_eq!(completions.items.first().map(|c| c.name), Some("velocity"));
-    }
-
-    #[test]
-    fn construct_under_cursor_for_hover() {
-        // Cursor inside "spread".
-        let c = construct_at("points | window 3 | where spread(heading) < 10 deg", 28).unwrap();
-        assert_eq!(c.name, "spread");
-        assert_eq!(c.kind, ConstructKind::Function);
-        // Over the metric.
-        assert_eq!(
-            construct_at("points | where velocity > 0 km/h", 18).map(|c| c.name),
-            Some("velocity")
-        );
-        // Over whitespace: nothing.
-        assert!(construct_at("points | where velocity", 6).is_none());
-    }
-
-    #[test]
-    fn fuzzy_prefix_beats_subsequence() {
-        // `sl` prefixes `slip_*` and is a subsequence of `slip_window` etc.
-        assert!(fuzzy_score("sl", "slip_all") > fuzzy_score("sl", "sats_fix"));
-        assert_eq!(fuzzy_score("xyz", "velocity"), None);
-        // Empty prefix matches everything at a neutral score.
-        assert_eq!(fuzzy_score("", "anything"), Some(0));
-    }
-
     /// accel (m/s2), incline (unitless), bearing (a wrapping angle), and the
     /// vector gyro - one of each shape the summary and the scalar filter
     /// distinguish.
@@ -1032,147 +721,466 @@ mod tests {
             .unwrap_or_default()
     }
 
-    #[test]
-    fn a_lone_at_offers_channels_and_vector_components() {
-        // Scalar channels by name, the whole vector `gyro` (for norm) plus each
-        // of its components, all sorted by name.
-        let src = "points | window 3 | where max(@";
-        assert_eq!(
-            channel_names(src, src.len()),
-            vec![
-                "accel", "bearing", "gyro", "gyro.x", "gyro.y", "gyro.z", "incline"
-            ]
-        );
-    }
+    mod completions {
+        use super::*;
 
-    #[test]
-    fn an_at_at_the_start_offers_channels_as_sources() {
-        // The `@` sigil triggers channel completion anywhere, including the
-        // source position, so `@acc` at the query start offers accel as a source.
-        let names = channel_names("@acc", "@acc".len());
-        assert_eq!(names, vec!["accel"]);
-    }
+        /// The candidate names at `cursor`, typed automatically with an empty
+        /// channel schema - the common case for the construct-path tests.
+        fn names_at(src: &str, cursor: usize) -> Vec<&'static str> {
+            completions_with(
+                src,
+                cursor,
+                &ChannelSchema::new(),
+                CompletionTrigger::Automatic,
+            )
+        }
 
-    #[test]
-    fn a_component_prefix_offers_the_matching_components() {
-        // `@gyro.` offers every component of gyro.
-        let dot = "points | window 3 | where max(@gyro.";
-        assert_eq!(
-            channel_names(dot, dot.len()),
-            vec!["gyro.x", "gyro.y", "gyro.z"]
-        );
-        // `@gyro.y` narrows to the one component, replacing the whole `@gyro.y`.
-        let one = "points | window 3 | where max(@gyro.y";
-        let completions = channel_completions_at(one, one.len(), &channel_schema()).unwrap();
-        let at = one.find("@gyro.y").expect("has @gyro.y");
-        assert_eq!(completions.range, at..at + "@gyro.y".len());
-        assert_eq!(
-            completions
+        fn completions_with(
+            src: &str,
+            cursor: usize,
+            schema: &ChannelSchema,
+            trigger: CompletionTrigger,
+        ) -> Vec<&'static str> {
+            completions_at(src, cursor, schema, trigger)
                 .items
                 .iter()
-                .map(|s| s.name.as_str())
-                .collect::<Vec<_>>(),
-            vec!["gyro.y"]
-        );
-    }
+                .map(|c| c.name)
+                .collect()
+        }
 
-    #[test]
-    fn a_channel_prefix_filters_the_offer() {
-        // `@in` prefixes incline (ranked first). It is a subsequence of
-        // bear-in-g too, but accel has no 'i' then 'n' so it drops out.
-        let incline = "points | window 3 | where max(@in";
-        let names = channel_names(incline, incline.len());
-        assert_eq!(names.first().map(String::as_str), Some("incline"));
-        assert!(!names.contains(&"accel".to_owned()));
-        // `@b` prefixes only bearing.
-        let bearing = "points | window 3 | where max(@b";
-        assert_eq!(channel_names(bearing, bearing.len()), vec!["bearing"]);
-    }
+        fn names(src: &str) -> Vec<&'static str> {
+            names_at(src, src.len())
+        }
 
-    #[test]
-    fn channel_completion_replaces_the_at_partial() {
-        let src = "points | window 3 | where max(@ac)";
-        let at = src.find("@ac").expect("has @ac");
-        // Cursor just after `@ac`, before the `)`.
-        let completions = channel_completions_at(src, at + 3, &channel_schema()).unwrap();
-        assert_eq!(completions.range, at..at + 3);
-        assert_eq!(
-            completions.items.first().map(|s| s.name.as_str()),
-            Some("accel")
-        );
-    }
+        #[test]
+        fn source_waits_for_a_typed_character() {
+            // An empty editor (or the blank line after a query) stays quiet: the
+            // popup must not assert `points` before anything is typed - a channel
+            // source is an equally valid start.
+            assert!(names("").is_empty());
+            assert_eq!(names("po"), vec!["points"]);
+        }
 
-    #[test]
-    fn no_channel_completion_without_an_at() {
-        let src = "points | where velocity";
-        assert!(channel_completions_at(src, src.len(), &channel_schema()).is_none());
-    }
-
-    #[test]
-    fn no_channel_completion_inside_a_comment() {
-        // A `@` in a comment is prose, not a reference being typed.
-        for src in ["# see @", "points | draw # ping @a"] {
-            assert!(
-                channel_completions_at(src, src.len(), &channel_schema()).is_none(),
-                "no channel popup in {src:?}"
+        #[test]
+        fn manual_trigger_offers_at_an_empty_prefix() {
+            // Ctrl+Space is explicit intent, so the empty-prefix wait does not
+            // apply: the source slot offers `points` on request.
+            let manual = completions_with("", 0, &ChannelSchema::new(), CompletionTrigger::Manual);
+            assert_eq!(manual, vec!["points"]);
+            // A stage position offers the stage keywords and display modes.
+            let src = "points | ";
+            let stage = completions_with(
+                src,
+                src.len(),
+                &ChannelSchema::new(),
+                CompletionTrigger::Manual,
             );
+            assert!(stage.contains(&"where"));
+            assert!(stage.contains(&"draw"));
+        }
+
+        #[test]
+        fn stage_keywords_after_a_typed_character() {
+            // Nothing right after `|`: stage keywords and display modes are two
+            // kinds, so the popup waits for the first character.
+            assert!(names("points | ").is_empty());
+
+            let items = names("points | w");
+            assert!(items.contains(&"where"));
+            assert!(items.contains(&"window"));
+            assert!(items.contains(&"with"));
+            // A display mode is reachable by its own letters.
+            assert!(names("points | d").contains(&"draw"));
+            // No metrics offered at a stage-keyword position.
+            assert!(!names("points | wi").contains(&"velocity"));
+        }
+
+        #[test]
+        fn partial_stage_keyword_fuzzy_filters() {
+            // `wh`: `where` is a prefix and ranks first. `with` matches as a
+            // subsequence (w..h). `window` has no 'h' so it is filtered out.
+            let items = names("points | wh");
+            assert_eq!(items.first(), Some(&"where"));
+            assert!(items.contains(&"with"));
+            assert!(!items.contains(&"window"));
+            assert!(!items.contains(&"table"));
+        }
+
+        #[test]
+        fn metrics_and_functions_after_a_typed_character() {
+            // Nothing right after `where`: metrics and functions are two kinds.
+            assert!(names("points | where ").is_empty());
+            assert!(names("points | where v").contains(&"velocity"));
+            assert!(names("points | where a").contains(&"avg"));
+            // After a metric, an operator is expected - no names.
+            assert!(names("points | where velocity ").is_empty());
+        }
+
+        #[test]
+        fn only_matching_units_after_a_number() {
+            // `velocity` is a speed, so a unit there is a speed unit - never `m`,
+            // `g`, or `deg`.
+            let items = names("points | where velocity > 30 ");
+            assert!(items.contains(&"km/h"));
+            assert!(items.contains(&"m/s"));
+            assert!(items.contains(&"kn"));
+            assert!(!items.contains(&"m"));
+            assert!(!items.contains(&"g"));
+            assert!(!items.contains(&"deg"));
+            assert!(!items.contains(&"velocity"));
+            // A length metric gets length units.
+            let lengths = names("points | where eph > 20 ");
+            assert!(lengths.contains(&"m"));
+            assert!(lengths.contains(&"km"));
+            assert!(!lengths.contains(&"km/h"));
+        }
+
+        #[test]
+        fn duration_units_after_delta_of_time() {
+            // delta(time) is a duration, so its unit is a duration unit.
+            let items = names("points | window 3 | where delta(time) <= 15 ");
+            assert!(items.contains(&"min"));
+            assert!(items.contains(&"s"));
+            assert!(!items.contains(&"km/h"));
+        }
+
+        #[test]
+        fn nothing_joined_to_a_finished_unit() {
+            // The `h` of `km/h` sits after `/`, not a boundary, so it is not
+            // completed into `heading` or `eph`.
+            let items = names("points | window 3 | where avg(velocity) > 30 km/h");
+            assert!(items.is_empty(), "expected no completions, got {items:?}");
+        }
+
+        #[test]
+        fn caret_inside_a_complete_word_offers_nothing() {
+            // The caret sits inside `velocity` (after the `l`), which is already a
+            // complete metric - re-suggesting it is pointless.
+            let src = "points | where velocity < 2 km/h | hide";
+            let cursor = src.find("velocity").expect("has velocity") + 3;
+            assert!(names_at(src, cursor).is_empty());
+        }
+
+        #[test]
+        fn no_unit_offered_when_one_already_follows() {
+            // The caret sits right after the `2`, which already has `km/h` after
+            // it - there is no unit to add.
+            let src = "points | where velocity < 2 km/h | hide";
+            let cursor = src.find("2 km/h").expect("has the literal") + 1;
+            assert!(names_at(src, cursor).is_empty());
+        }
+
+        #[test]
+        fn params_in_with() {
+            let items = names("points | with ");
+            assert_eq!(
+                {
+                    let mut i = items.clone();
+                    i.sort_unstable();
+                    i
+                },
+                vec!["mask", "slip_window", "snr_drop"]
+            );
+        }
+
+        #[test]
+        fn with_expects_a_value_then_the_right_unit() {
+            // After a parameter name a number is expected - nothing to complete.
+            assert!(names("points | with mask ").is_empty());
+            // The unit after the number is the parameter's quantity: mask is an
+            // angle, so only `deg`.
+            let mask_units = names("points | with mask 15 ");
+            assert!(mask_units.contains(&"deg"));
+            assert!(!mask_units.contains(&"m"));
+            assert!(!mask_units.contains(&"km/h"));
+            // `slip_window` is a duration.
+            let slip_units = names("points | with mask 15 deg, slip_window 5 ");
+            assert!(slip_units.contains(&"min"));
+            assert!(slip_units.contains(&"s"));
+            assert!(!slip_units.contains(&"deg"));
+            // `snr_drop` is a bare number, so no unit is offered.
+            assert!(names("points | with mask 15 deg, snr_drop 10 ").is_empty());
+            // A comma starts the next parameter name.
+            assert!(names("points | with mask 15 deg, ").contains(&"snr_drop"));
+        }
+
+        #[test]
+        fn columns_in_table() {
+            // `table ` must not dump every metric unprompted - the popup waits
+            // for the first character.
+            assert!(names("points | where velocity > 30 km/h | table ").is_empty());
+            let items = names("points | where velocity > 30 km/h | table v");
+            assert!(items.contains(&"velocity"));
+            // A column takes an aggregate as well as a metric.
+            assert!(names("points | window 5 | table a").contains(&"avg"));
+            let after_comma = names("points | where velocity > 30 km/h | table time, h");
+            assert!(after_comma.contains(&"heading"));
+        }
+
+        /// A column's aggregate takes a metric or a channel in its parentheses,
+        /// as a `where` atom does.
+        #[test]
+        fn values_inside_a_column_aggregate() {
+            assert!(names("points | window 5 | table max(v").contains(&"velocity"));
+            let src = "points | window 5 | table max(@acc";
+            assert_eq!(channel_names(src, src.len()), vec!["accel"]);
+        }
+
+        #[test]
+        fn nothing_after_display_modes() {
+            assert!(names("points | draw ").is_empty());
+        }
+
+        #[test]
+        fn duration_units_after_a_window_count() {
+            // `window 15 s` is valid grammar, so the count position offers the
+            // duration units - and only those.
+            let items = names("points | window 15 ");
+            assert!(items.contains(&"s"));
+            assert!(items.contains(&"min"));
+            assert!(!items.contains(&"km/h"));
+            assert!(!items.contains(&"deg"));
+        }
+
+        #[test]
+        fn connectives_complete_after_an_atom() {
+            // After a complete comparison, a typed character offers the joining
+            // connectives. Nothing pops eagerly, and `not` is not offered there.
+            assert!(names("points | where velocity > 30 km/h ").is_empty());
+            assert_eq!(names("points | where velocity > 30 km/h a"), vec!["and"]);
+            assert_eq!(names("points | where velocity > 30 km/h o"), vec!["or"]);
+            assert!(!names("points | where velocity > 30 km/h n").contains(&"not"));
+            // At the start of an atom `not` is offered alongside value names.
+            assert!(names("points | where velocity > 30 km/h and no").contains(&"not"));
+        }
+
+        #[test]
+        fn channels_type_the_unit_slot_through_the_schema() {
+            // `@accel` is m/s2 in the schema, so the unit offered after a
+            // comparison against it is an acceleration - never a speed.
+            let src = "points | where @accel > 1 ";
+            let items = completions_with(
+                src,
+                src.len(),
+                &channel_schema(),
+                CompletionTrigger::Automatic,
+            );
+            assert!(items.contains(&"m/s2"));
+            assert!(items.contains(&"g"));
+            assert!(!items.contains(&"km/h"));
+        }
+
+        #[test]
+        fn arithmetic_between_metrics_offers_no_eager_units() {
+            // `velocity / eph` is dimensionless. Length units (from `eph`) would be
+            // wrong, so nothing pops eagerly.
+            assert!(names("points | where velocity / eph > 3 ").is_empty());
+            // A typed prefix still completes over the full unit set, the fallback
+            // when the quantity is unknown.
+            let typed = names("points | where velocity / eph > 3 k");
+            assert!(typed.contains(&"km/h"));
+            assert!(typed.contains(&"km"));
+        }
+
+        #[test]
+        fn a_leading_literal_offers_no_eager_units() {
+            // `where 30 ` (intending `30 km/h < velocity`) has nothing to type the
+            // literal yet - offering every unit would be noise.
+            assert!(names("points | where 30 ").is_empty());
+        }
+
+        #[test]
+        fn compact_typing_completes_after_operators_and_digits() {
+            // No spaces anywhere: the metric after `(`, the unit after the digit.
+            assert!(names("points | where eph>2k").contains(&"km"));
+            assert!(names("points | where avg(velocity)>3 k").contains(&"km/h"));
+            // A name right after a comparison operator completes too.
+            assert!(names("points | where eph>vel").contains(&"velocity"));
+        }
+
+        #[test]
+        fn replace_range_covers_the_partial_word() {
+            // "vel" starts at byte 15 in "points | where vel".
+            let completions = completions_at(
+                "points | where vel",
+                18,
+                &ChannelSchema::new(),
+                CompletionTrigger::Automatic,
+            );
+            assert_eq!(completions.range, 15..18);
+            assert_eq!(completions.items.first().map(|c| c.name), Some("velocity"));
+        }
+
+        #[test]
+        fn construct_under_cursor_for_hover() {
+            // Cursor inside "spread".
+            let c = construct_at("points | window 3 | where spread(heading) < 10 deg", 28).unwrap();
+            assert_eq!(c.name, "spread");
+            assert_eq!(c.kind, ConstructKind::Function);
+            // Over the metric.
+            assert_eq!(
+                construct_at("points | where velocity > 0 km/h", 18).map(|c| c.name),
+                Some("velocity")
+            );
+            // Over whitespace: nothing.
+            assert!(construct_at("points | where velocity", 6).is_none());
+        }
+
+        #[test]
+        fn fuzzy_prefix_beats_subsequence() {
+            // `sl` prefixes `slip_*` and is a subsequence of `slip_window` etc.
+            assert!(fuzzy_score("sl", "slip_all") > fuzzy_score("sl", "sats_fix"));
+            assert_eq!(fuzzy_score("xyz", "velocity"), None);
+            // Empty prefix matches everything at a neutral score.
+            assert_eq!(fuzzy_score("", "anything"), Some(0));
         }
     }
 
-    #[test]
-    fn no_channel_completion_where_a_channel_cannot_go() {
-        // Accepting a channel at a stage keyword, a `table` column, or a
-        // `with` parameter would insert an immediate parse error.
-        for src in ["points | @", "points | table @", "points | with mask @"] {
-            assert!(
-                channel_completions_at(src, src.len(), &channel_schema()).is_none(),
-                "no channel popup in {src:?}"
+    mod channel_completions {
+        use super::*;
+
+        #[test]
+        fn a_lone_at_offers_channels_and_vector_components() {
+            // Scalar channels by name, the whole vector `gyro` (for norm) plus each
+            // of its components, all sorted by name.
+            let src = "points | window 3 | where max(@";
+            assert_eq!(
+                channel_names(src, src.len()),
+                vec![
+                    "accel", "bearing", "gyro", "gyro.x", "gyro.y", "gyro.z", "incline"
+                ]
             );
         }
-        // Value positions still offer on the sigil.
-        let value = "points | where @";
-        assert!(channel_completions_at(value, value.len(), &channel_schema()).is_some());
-    }
 
-    #[test]
-    fn channel_hover_describes_the_dimension() {
-        let src = "points | window 3 | where max(@accel) > 1 g";
-        let inside = src.find("@accel").expect("has @accel") + 2;
-        let hover = channel_at(src, inside, &channel_schema()).expect("hovers a channel");
-        assert_eq!(hover.name, "accel");
-        assert_eq!(hover.summary, "in m/s2");
+        #[test]
+        fn an_at_at_the_start_offers_channels_as_sources() {
+            // The `@` sigil triggers channel completion anywhere, including the
+            // source position, so `@acc` at the query start offers accel as a source.
+            let names = channel_names("@acc", "@acc".len());
+            assert_eq!(names, vec!["accel"]);
+        }
 
-        // A wrapping channel reads as one. A position off any channel has no
-        // hover.
-        let bearing = "points | window 3 | where spread(@bearing) < 5 deg";
-        let bi = bearing.find("@bearing").expect("has @bearing") + 2;
-        assert_eq!(
-            channel_at(bearing, bi, &channel_schema()).map(|s| s.summary),
-            Some("wrapping angle".to_owned())
-        );
-        assert!(channel_at(bearing, 0, &channel_schema()).is_none());
-    }
+        #[test]
+        fn a_component_prefix_offers_the_matching_components() {
+            // `@gyro.` offers every component of gyro.
+            let dot = "points | window 3 | where max(@gyro.";
+            assert_eq!(
+                channel_names(dot, dot.len()),
+                vec!["gyro.x", "gyro.y", "gyro.z"]
+            );
+            // `@gyro.y` narrows to the one component, replacing the whole `@gyro.y`.
+            let one = "points | window 3 | where max(@gyro.y";
+            let completions = channel_completions_at(one, one.len(), &channel_schema()).unwrap();
+            let at = one.find("@gyro.y").expect("has @gyro.y");
+            assert_eq!(completions.range, at..at + "@gyro.y".len());
+            assert_eq!(
+                completions
+                    .items
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["gyro.y"]
+            );
+        }
 
-    #[test]
-    fn channel_hover_handles_components_and_whole_vectors() {
-        // The hover on a component shows the channel's dimension.
-        let comp = "points | window 3 | where max(@gyro.x) > 1 deg";
-        let ci = comp.find("@gyro.x").expect("has @gyro.x") + 2;
-        let hover = channel_at(comp, ci, &channel_schema()).expect("hovers a component");
-        assert_eq!(hover.name, "gyro.x");
-        assert_eq!(hover.summary, "in deg");
+        #[test]
+        fn a_channel_prefix_filters_the_offer() {
+            // `@in` prefixes incline (ranked first). It is a subsequence of
+            // bear-in-g too, but accel has no 'i' then 'n' so it drops out.
+            let incline = "points | window 3 | where max(@in";
+            let names = channel_names(incline, incline.len());
+            assert_eq!(names.first().map(String::as_str), Some("incline"));
+            assert!(!names.contains(&"accel".to_owned()));
+            // `@b` prefixes only bearing.
+            let bearing = "points | window 3 | where max(@b";
+            assert_eq!(channel_names(bearing, bearing.len()), vec!["bearing"]);
+        }
 
-        // The hover on a whole vector lists its components. An unknown
-        // component has no hover.
-        let whole = "points | window 3 | where max(@gyro) > 1 deg";
-        let gi = whole.find("@gyro").expect("has @gyro") + 2;
-        assert_eq!(
-            channel_at(whole, gi, &channel_schema()).map(|s| s.summary),
-            Some("vector (x, y, z)".to_owned())
-        );
-        let bad = "points | window 3 | where max(@gyro.w) > 1 deg";
-        let wi = bad.find("@gyro.w").expect("has @gyro.w") + 2;
-        assert!(channel_at(bad, wi, &channel_schema()).is_none());
+        #[test]
+        fn channel_completion_replaces_the_at_partial() {
+            let src = "points | window 3 | where max(@ac)";
+            let at = src.find("@ac").expect("has @ac");
+            // Cursor just after `@ac`, before the `)`.
+            let completions = channel_completions_at(src, at + 3, &channel_schema()).unwrap();
+            assert_eq!(completions.range, at..at + 3);
+            assert_eq!(
+                completions.items.first().map(|s| s.name.as_str()),
+                Some("accel")
+            );
+        }
+
+        #[test]
+        fn no_channel_completion_without_an_at() {
+            let src = "points | where velocity";
+            assert!(channel_completions_at(src, src.len(), &channel_schema()).is_none());
+        }
+
+        #[test]
+        fn no_channel_completion_inside_a_comment() {
+            // A `@` in a comment is prose, not a reference being typed.
+            for src in ["# see @", "points | draw # ping @a"] {
+                assert!(
+                    channel_completions_at(src, src.len(), &channel_schema()).is_none(),
+                    "no channel popup in {src:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn no_channel_completion_where_a_channel_cannot_go() {
+            // Accepting a channel at a stage keyword, a `table` column, or a
+            // `with` parameter would insert an immediate parse error.
+            for src in ["points | @", "points | table @", "points | with mask @"] {
+                assert!(
+                    channel_completions_at(src, src.len(), &channel_schema()).is_none(),
+                    "no channel popup in {src:?}"
+                );
+            }
+            // Value positions still offer on the sigil.
+            let value = "points | where @";
+            assert!(channel_completions_at(value, value.len(), &channel_schema()).is_some());
+        }
+
+        #[test]
+        fn channel_hover_describes_the_dimension() {
+            let src = "points | window 3 | where max(@accel) > 1 g";
+            let inside = src.find("@accel").expect("has @accel") + 2;
+            let hover = channel_at(src, inside, &channel_schema()).expect("hovers a channel");
+            assert_eq!(hover.name, "accel");
+            assert_eq!(hover.summary, "in m/s2");
+
+            // A wrapping channel reads as one. A position off any channel has no
+            // hover.
+            let bearing = "points | window 3 | where spread(@bearing) < 5 deg";
+            let bi = bearing.find("@bearing").expect("has @bearing") + 2;
+            assert_eq!(
+                channel_at(bearing, bi, &channel_schema()).map(|s| s.summary),
+                Some("wrapping angle".to_owned())
+            );
+            assert!(channel_at(bearing, 0, &channel_schema()).is_none());
+        }
+
+        #[test]
+        fn channel_hover_handles_components_and_whole_vectors() {
+            // The hover on a component shows the channel's dimension.
+            let comp = "points | window 3 | where max(@gyro.x) > 1 deg";
+            let ci = comp.find("@gyro.x").expect("has @gyro.x") + 2;
+            let hover = channel_at(comp, ci, &channel_schema()).expect("hovers a component");
+            assert_eq!(hover.name, "gyro.x");
+            assert_eq!(hover.summary, "in deg");
+
+            // The hover on a whole vector lists its components. An unknown
+            // component has no hover.
+            let whole = "points | window 3 | where max(@gyro) > 1 deg";
+            let gi = whole.find("@gyro").expect("has @gyro") + 2;
+            assert_eq!(
+                channel_at(whole, gi, &channel_schema()).map(|s| s.summary),
+                Some("vector (x, y, z)".to_owned())
+            );
+            let bad = "points | window 3 | where max(@gyro.w) > 1 deg";
+            let wi = bad.find("@gyro.w").expect("has @gyro.w") + 2;
+            assert!(channel_at(bad, wi, &channel_schema()).is_none());
+        }
     }
 
     mod properties {

@@ -556,12 +556,15 @@ mod tests {
     }
 
     #[test]
-    fn catalog_names_are_unique_per_kind_and_nonempty() {
+    fn every_catalog_entry_has_a_summary_and_a_name_unique_within_its_kind() {
         // Names are unique within a kind. Across kinds only `min` repeats -
         // the aggregate and the minute unit - which the parser and hover
         // disambiguate by position.
         let entries = catalog();
-        assert!(entries.iter().all(|c| !c.name.is_empty()));
+        for entry in entries {
+            assert!(!entry.name.is_empty(), "a {:?} needs a name", entry.kind);
+            assert!(!entry.summary.is_empty(), "{} needs a summary", entry.name);
+        }
         let mut per_kind: Vec<(ConstructKind, &str)> =
             entries.iter().map(|c| (c.kind, c.name)).collect();
         per_kind.sort_by_key(|(kind, name)| (format!("{kind:?}"), *name));
@@ -579,13 +582,6 @@ mod tests {
                 .collect()
         };
         assert_eq!(repeated, vec!["min"], "only `min` is shared across kinds");
-    }
-
-    #[test]
-    fn every_construct_has_a_summary() {
-        for c in catalog() {
-            assert!(!c.summary.is_empty(), "{} needs a summary", c.name);
-        }
     }
 
     #[test]

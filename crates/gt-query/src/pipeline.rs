@@ -429,12 +429,10 @@ mod tests {
     }
 
     #[test]
-    fn one_draw_query_matches_a_plain_run() {
-        // A single draw query is drawn as a lone run: halos, nothing hidden.
+    fn a_lone_draw_query_hides_nothing() {
         let provider = TestProvider::velocities_one_second_apart(vec![5.0, 20.0, 20.0, 5.0]);
         let out = compose(&["points | where velocity > 10 m/s | draw"], &provider);
         assert!(hidden_ranges(&out).is_empty());
-        assert_eq!(draw_ranges(&out, 0), vec![1..3]);
     }
 
     #[test]

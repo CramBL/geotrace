@@ -105,38 +105,33 @@ mod tests {
         assert_eq!(WrapPeriod::from_degrees(degrees), None, "{reason}");
     }
 
-    #[test]
-    fn delta_takes_the_short_way() {
-        let full_turn = WrapPeriod::FULL_TURN;
-        assert!((full_turn.delta(&[350.0, 0.0, 10.0]) - 20.0).abs() < 1e-12);
-        assert!((full_turn.delta(&[10.0, 0.0, 350.0]) + 20.0).abs() < 1e-12);
-        assert!((full_turn.delta(&[0.0, 180.0]) - 180.0).abs() < 1e-12);
+    #[rstest]
+    #[case::forwards_across_the_wrap(360.0, &[350.0, 0.0, 10.0], 20.0)]
+    #[case::backwards_across_the_wrap(360.0, &[10.0, 0.0, 350.0], -20.0)]
+    #[case::the_antipode(360.0, &[0.0, 180.0], 180.0)]
+    #[case::on_a_half_turn_period(180.0, &[170.0, 10.0], 20.0)]
+    fn delta_takes_the_short_way(
+        #[case] period_deg: f64,
+        #[case] values: &[f64],
+        #[case] expected: f64,
+    ) {
+        let period = WrapPeriod::from_degrees(period_deg).expect("a positive period");
+        assert!((period.delta(values) - expected).abs() < 1e-12);
     }
 
-    /// On a period of 180°, 170 and 10 are 20 apart the short way.
-    #[test]
-    fn delta_takes_the_short_way_on_a_half_turn() {
-        let half_turn = WrapPeriod::from_degrees(180.0).expect("a positive period");
-        assert!((half_turn.delta(&[170.0, 10.0]) - 20.0).abs() < 1e-12);
-    }
-
-    #[test]
-    fn spread_measures_across_the_wrap() {
-        let full_turn = WrapPeriod::FULL_TURN;
-        let mut wrapped = vec![350.0, 10.0, 0.0];
-        assert!((full_turn.spread(&mut wrapped) - 20.0).abs() < 1e-12);
-        let mut plain = vec![10.0, 40.0];
-        assert!((full_turn.spread(&mut plain) - 30.0).abs() < 1e-12);
-        let mut single = vec![123.0];
-        assert!((full_turn.spread(&mut single)).abs() < 1e-12);
-    }
-
-    /// On a period of 180°, 179 and 1 are two apart across the wrap.
-    #[test]
-    fn spread_measures_across_the_wrap_of_a_half_turn() {
-        let half_turn = WrapPeriod::from_degrees(180.0).expect("a positive period");
-        let mut values = vec![179.0, 1.0];
-        assert!((half_turn.spread(&mut values) - 2.0).abs() < 1e-12);
+    #[rstest]
+    #[case::across_the_wrap(360.0, &[350.0, 10.0, 0.0], 20.0)]
+    #[case::clear_of_the_wrap(360.0, &[10.0, 40.0], 30.0)]
+    #[case::a_single_value(360.0, &[123.0], 0.0)]
+    #[case::on_a_half_turn_period(180.0, &[179.0, 1.0], 2.0)]
+    fn spread_measures_the_smallest_arc_holding_every_value(
+        #[case] period_deg: f64,
+        #[case] values: &[f64],
+        #[case] expected: f64,
+    ) {
+        let period = WrapPeriod::from_degrees(period_deg).expect("a positive period");
+        let mut values = values.to_vec();
+        assert!((period.spread(&mut values) - expected).abs() < 1e-12);
     }
 
     #[test]
