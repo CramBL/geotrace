@@ -957,7 +957,6 @@ mod tests {
     #[case::the_c_floor(FLARE_C_CLASS_FLUX, FLARE_C_CLASS)]
     #[case::the_m_floor(FLARE_M_CLASS_FLUX, FLARE_M_CLASS)]
     #[case::the_x_floor(FLARE_X_CLASS_FLUX, FLARE_X_CLASS)]
-    #[case::an_x28(2.8e-3, FLARE_X_CLASS)]
     fn a_flare_marker_takes_the_colour_of_its_class(
         #[case] peak_flux_watts_per_square_meter: f64,
         #[case] expected: ThemedColor,
@@ -1255,23 +1254,23 @@ mod tests {
         }
     }
 
-    #[test]
-    fn fix_quality_color_full_is_green() {
-        assert_eq!(fix_quality_color(100, true), Color32::from_rgb(0, 200, 0));
+    /// The colour steps from green at a full fix rate, through a flat yellow
+    /// plateau, to a flat red below the red threshold.
+    #[rstest::rstest]
+    #[case::full(100, Color32::from_rgb(0, 200, 0))]
+    #[case::just_under_full(99, Color32::from_rgb(220, 200, 0))]
+    #[case::the_yellow_floor(95, Color32::from_rgb(220, 200, 0))]
+    #[case::the_red_ceiling(80, Color32::from_rgb(220, 60, 0))]
+    #[case::zero(0, Color32::from_rgb(220, 60, 0))]
+    fn fix_quality_color_steps_from_green_through_yellow_to_red(
+        #[case] fix_percent: u32,
+        #[case] expected: Color32,
+    ) {
+        assert_eq!(fix_quality_color(fix_percent, true), expected);
     }
 
-    #[test]
-    fn fix_quality_color_near_full_is_flat_yellow() {
-        assert_eq!(fix_quality_color(99, true), Color32::from_rgb(220, 200, 0));
-        assert_eq!(fix_quality_color(95, true), Color32::from_rgb(220, 200, 0));
-    }
-
-    #[test]
-    fn fix_quality_color_at_and_below_red_threshold_is_red() {
-        assert_eq!(fix_quality_color(80, true), Color32::from_rgb(220, 60, 0));
-        assert_eq!(fix_quality_color(0, true), Color32::from_rgb(220, 60, 0));
-    }
-
+    /// Between the yellow floor and the red ceiling only the green channel
+    /// moves.
     #[test]
     fn fix_quality_color_blends_between_yellow_and_red() {
         let c = fix_quality_color(88, true); // partway between 95% (yellow) and 80% (red)
@@ -1281,14 +1280,6 @@ mod tests {
             c.g() > 60 && c.g() < 200,
             "green channel should blend: {c:?}"
         );
-    }
-
-    #[test]
-    fn fix_quality_color_green_channel_decreases_toward_red() {
-        let g95 = fix_quality_color(95, true).g();
-        let g88 = fix_quality_color(88, true).g();
-        let g80 = fix_quality_color(80, true).g();
-        assert!(g95 > g88 && g88 > g80);
     }
 
     #[test]

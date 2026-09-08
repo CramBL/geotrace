@@ -217,9 +217,13 @@ pub fn legend_is_docked(offset: egui::Vec2) -> bool {
 mod tests {
     use super::*;
 
-    fn test_plot_rect() -> egui::Rect {
+    /// The plot rectangle the legend is laid out over, 400 by 300 points.
+    fn plot_rect_400_by_300() -> egui::Rect {
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))
     }
+
+    /// The size every offset case below gives the legend.
+    const LEGEND_SIZE: egui::Vec2 = egui::vec2(100.0, 50.0);
 
     #[test]
     fn file_legend_overlay_draws_below_floating_windows() {
@@ -230,7 +234,7 @@ mod tests {
         let window_id = egui::Id::new("test window");
 
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            show_file_legend_overlay(ui, &names, &[0, 1], test_plot_rect(), &mut state);
+            show_file_legend_overlay(ui, &names, &[0, 1], plot_rect_400_by_300(), &mut state);
             legend_id = Some(ui.id().with(LEGEND_AREA_ID_SALT));
             egui::Window::new("Settings")
                 .id(window_id)
@@ -262,53 +266,48 @@ mod tests {
         );
     }
 
-    #[test]
-    fn resolve_legend_offset_clamps_to_plot_edges() {
-        let legend_size = egui::vec2(100.0, 50.0);
+    /// The offset the legend settles at: clamped to the plot's edges, then
+    /// docked on an explicit request or on a drag released near the dock.
+    #[rstest::rstest]
+    #[case::clamps_to_the_plot_edges(
+        egui::vec2(-50.0, 1000.0),
+        false,
+        false,
+        egui::vec2(LEGEND_EDGE_MARGIN, 300.0 - 50.0 - LEGEND_EDGE_MARGIN)
+    )]
+    #[case::redocks_on_request(egui::vec2(200.0, 150.0), true, false, LEGEND_DOCK_OFFSET)]
+    #[case::stays_put_mid_drag_near_the_dock(
+        LEGEND_DOCK_OFFSET + egui::vec2(LEGEND_DOCK_SNAP_RADIUS - 1.0, 0.0),
+        false,
+        false,
+        LEGEND_DOCK_OFFSET + egui::vec2(LEGEND_DOCK_SNAP_RADIUS - 1.0, 0.0)
+    )]
+    #[case::snaps_on_release_near_the_dock(
+        LEGEND_DOCK_OFFSET + egui::vec2(LEGEND_DOCK_SNAP_RADIUS - 1.0, 0.0),
+        false,
+        true,
+        LEGEND_DOCK_OFFSET
+    )]
+    #[case::stays_put_far_from_the_dock(
+        egui::vec2(200.0, 150.0),
+        false,
+        true,
+        egui::vec2(200.0, 150.0)
+    )]
+    fn resolve_legend_offset_clamps_snaps_and_redocks(
+        #[case] requested: egui::Vec2,
+        #[case] redock_requested: bool,
+        #[case] drag_released: bool,
+        #[case] expected: egui::Vec2,
+    ) {
         let offset = resolve_legend_offset(
-            egui::vec2(-50.0, 1000.0),
-            legend_size,
-            test_plot_rect(),
-            false,
-            false,
+            requested,
+            LEGEND_SIZE,
+            plot_rect_400_by_300(),
+            redock_requested,
+            drag_released,
         );
-        assert!((offset.x - LEGEND_EDGE_MARGIN).abs() < f32::EPSILON);
-        assert!((offset.y - (300.0 - legend_size.y - LEGEND_EDGE_MARGIN)).abs() < f32::EPSILON);
-    }
 
-    #[test]
-    fn resolve_legend_offset_redocks_on_explicit_request() {
-        let offset = resolve_legend_offset(
-            egui::vec2(200.0, 150.0),
-            egui::vec2(100.0, 50.0),
-            test_plot_rect(),
-            true,
-            false,
-        );
-        assert_eq!(offset, LEGEND_DOCK_OFFSET);
-    }
-
-    #[test]
-    fn resolve_legend_offset_snaps_to_dock_on_release_near_corner_only() {
-        let legend_size = egui::vec2(100.0, 50.0);
-        let near_dock = LEGEND_DOCK_OFFSET + egui::vec2(LEGEND_DOCK_SNAP_RADIUS - 1.0, 0.0);
-
-        let mid_drag =
-            resolve_legend_offset(near_dock, legend_size, test_plot_rect(), false, false);
-        assert_eq!(mid_drag, near_dock, "must not snap before drag release");
-
-        let released = resolve_legend_offset(near_dock, legend_size, test_plot_rect(), false, true);
-        assert_eq!(
-            released, LEGEND_DOCK_OFFSET,
-            "must snap once released near the dock"
-        );
-    }
-
-    #[test]
-    fn resolve_legend_offset_does_not_snap_when_far_from_dock() {
-        let legend_size = egui::vec2(100.0, 50.0);
-        let far = egui::vec2(200.0, 150.0);
-        let offset = resolve_legend_offset(far, legend_size, test_plot_rect(), false, true);
-        assert_eq!(offset, far);
+        assert_eq!(offset, expected);
     }
 }

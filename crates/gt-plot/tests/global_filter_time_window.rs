@@ -2,20 +2,14 @@
 //! narrower than the loaded recordings: the view it fits, the chips it
 //! offers, and the fix the map highlight lands on.
 
-use std::ops::RangeInclusive;
-
 use chrono::{DateTime, TimeDelta, Utc};
 use gt_filter::GlobalFilter;
-use gt_loaded_files::RecordingNames;
-use gt_plot::{ArchiveOverlays, PlotState};
-use gt_test_utils::{Queryable as _, TestHarness};
+use gt_plot::PlotState;
+use gt_test_utils::Queryable as _;
 use gt_types::satellites::{Constellation, Satellite, Satellites};
-use gt_types::{Channel, FileIdx, FileSource, LoadedFile, NavPoint, PointIdx, TimeRange, TrackIdx};
-use gt_ui_types::{
-    ContextLines, GeomagneticSeries, JammingSeries, SnapErrorSeries, TecSeries, TrackDataVisibility,
-};
-use rustc_hash::FxHashMap;
-use support::{PLOT_SIZE, at_second, plot_area};
+use gt_types::{FileIdx, LoadedFile, NavPoint, PointIdx, TrackIdx};
+use gt_ui_types::TrackDataVisibility;
+use support::PlotSources;
 
 mod support;
 
@@ -23,7 +17,7 @@ mod support;
 /// seconds, each carrying a satellite report of `constellation`.
 fn recording(start_offset: i64, count: usize, constellation: Constellation) -> LoadedFile {
     let points: Vec<NavPoint> =
-        gt_test_utils::fixtures::nav_points_from(at_second(start_offset), count, 1)
+        gt_test_utils::fixtures::nav_points_from(support::at_second(start_offset), count, 1)
             .into_iter()
             .map(|point| {
                 let report = Satellites::new(
@@ -41,19 +35,7 @@ fn recording(start_offset: i64, count: usize, constellation: Constellation) -> L
                 NavPoint::new(point.tpv, Some(report))
             })
             .collect();
-    let mut track = gt_test_utils::loaded_track_with_points(points);
-    let first = at_second(start_offset);
-    let last = at_second(start_offset + count as i64 - 1);
-    track.metadata.time_range = TimeRange::new(first, last);
-    track.metadata.duration = last - first;
-    LoadedFile {
-        metadata: gt_test_utils::empty_file_metadata(),
-        tracks: vec![track],
-        event_marker_styles: FxHashMap::default(),
-        orphaned_event_markers: Vec::new(),
-        source: FileSource::GtdBytes([].into()),
-        load_warnings: Vec::new(),
-    }
+    support::recording(points, Vec::new())
 }
 
 /// The recording with one scalar channel named `channel_name` on each of its
@@ -66,15 +48,12 @@ fn with_channel(mut file: LoadedFile, channel_name: &str) -> LoadedFile {
             .map(|point| point.tpv.time().utc())
             .collect();
         let values = vec![1.0; times.len()];
-        track.channels = vec![Channel {
-            name: channel_name.to_owned(),
-            unit: None,
-            period: None,
-            description: None,
-            components: Vec::new(),
+        track.channels = vec![gt_test_utils::fixtures::scalar_channel(
+            channel_name,
+            None,
             times,
             values,
-        }];
+        )];
     }
     file
 }
@@ -82,88 +61,18 @@ fn with_channel(mut file: LoadedFile, channel_name: &str) -> LoadedFile {
 /// A window from `start` to `end`, both in seconds from the first fix.
 fn window(start: i64, end: i64) -> GlobalFilter {
     GlobalFilter {
-        time_start: Some(at_second(start)),
-        time_end: Some(at_second(end)),
+        time_start: Some(support::at_second(start)),
+        time_end: Some(support::at_second(end)),
         ..GlobalFilter::default()
     }
 }
 
-/// Everything the plot reads besides the recordings and the filter, all of it
-/// empty: no archive covers these recordings, and none of them was snapped.
-#[derive(Default)]
-struct EmptySources {
-    snap_error: SnapErrorSeries,
-    jamming: JammingSeries,
-    geomagnetic: GeomagneticSeries,
-    tec: TecSeries,
-    context_lines: ContextLines,
-}
-
-/// The plot's own state, the filter it draws under and the map viewport it
-/// syncs to, so a test can move any of them between two frames the way the
-/// app does.
-struct PlotUnderFilter {
-    plot: PlotState,
-    filter: GlobalFilter,
-    map_sync_x_range: Option<(f64, f64)>,
-}
-
-impl PlotUnderFilter {
-    /// A plot under `filter` whose view fits the data it draws.
-    fn new(filter: GlobalFilter) -> Self {
-        Self {
-            plot: PlotState::default(),
-            filter,
-            map_sync_x_range: None,
-        }
+/// The sources of a plot the window narrows, with every archive empty.
+fn under(filter: GlobalFilter) -> PlotSources {
+    PlotSources {
+        filter,
+        ..PlotSources::default()
     }
-
-    /// A plot under `filter` whose x bounds map-to-plot sync pinned to
-    /// `view`, in seconds from the first fix. A pinned view no longer re-fits
-    /// to the data.
-    fn pinned_to_map_view(filter: GlobalFilter, view: RangeInclusive<i64>) -> Self {
-        let seconds = |offset: i64| at_second(offset).timestamp() as f64;
-        Self {
-            map_sync_x_range: Some((seconds(*view.start()), seconds(*view.end()))),
-            ..Self::new(filter)
-        }
-    }
-}
-
-/// Draw the plot over `files` in `state` until the view settles.
-fn draw(files: &[LoadedFile], mut state: PlotUnderFilter) -> TestHarness<'_, PlotUnderFilter> {
-    let names = RecordingNames::default();
-    let visibility = TrackDataVisibility::from_loaded(files);
-    let sources = EmptySources::default();
-    state.plot.rebuild_all(files);
-
-    let mut harness = TestHarness::builder().size(PLOT_SIZE).ui_state(
-        move |ui, state: &mut PlotUnderFilter| {
-            gt_plot::show_track_plot(
-                ui,
-                files,
-                &names,
-                &visibility,
-                &state.filter,
-                None,
-                None,
-                None,
-                state.map_sync_x_range,
-                &sources.snap_error,
-                &sources.jamming,
-                &sources.geomagnetic,
-                &sources.tec,
-                ArchiveOverlays {
-                    context_lines: &sources.context_lines,
-                    solar_flares: &[],
-                },
-                &mut state.plot,
-            );
-        },
-        state,
-    );
-    harness.run();
-    harness
 }
 
 /// A window of one minute over an hour-long recording resets to the minute,
@@ -171,12 +80,11 @@ fn draw(files: &[LoadedFile], mut state: PlotUnderFilter) -> TestHarness<'_, Plo
 /// only the fixes inside the time window.
 #[test]
 fn the_view_fits_the_time_window_rather_than_the_whole_recording() {
-    let files = [recording(0, 3600, Constellation::Gps)];
-    let harness = draw(&files, PlotUnderFilter::new(window(1800, 1860)));
+    let files = vec![recording(0, 3600, Constellation::Gps)];
+    let plot = support::drawn_plot(files, under(window(1800, 1860)), PlotState::default());
 
-    let shown = harness
+    let shown = plot
         .state()
-        .plot
         .visible_x_range()
         .expect("the plot has drawn once");
     let span_secs = shown.end() - shown.start();
@@ -191,14 +99,14 @@ fn the_view_fits_the_time_window_rather_than_the_whole_recording() {
 /// that constellation.
 #[test]
 fn a_recording_outside_the_time_window_offers_no_constellation_chip() {
-    let files = [
+    let files = vec![
         recording(0, 60, Constellation::Gps),
         recording(7200, 60, Constellation::Qzss),
     ];
-    let harness = draw(&files, PlotUnderFilter::new(window(0, 60)));
+    let plot = support::drawn_plot(files, under(window(0, 60)), PlotState::default());
 
     assert!(
-        harness.inner.query_by_label("QZSS seen").is_none(),
+        plot.harness.inner.query_by_label("QZSS seen").is_none(),
         "the QZSS chip belongs to a recording the window leaves out"
     );
 }
@@ -208,14 +116,17 @@ fn a_recording_outside_the_time_window_offers_no_constellation_chip() {
 /// time window leaves out must reveal neither.
 #[test]
 fn a_recording_outside_the_time_window_reveals_no_channels_section() {
-    let files = [
+    let files = vec![
         recording(0, 60, Constellation::Gps),
         with_channel(recording(7200, 60, Constellation::Gps), "Brake pressure"),
     ];
-    let harness = draw(&files, PlotUnderFilter::new(window(0, 60)));
+    let plot = support::drawn_plot(files, under(window(0, 60)), PlotState::default());
 
     assert!(
-        harness.inner.query_by_label_contains("Channels").is_none(),
+        plot.harness
+            .inner
+            .query_by_label_contains("Channels")
+            .is_none(),
         "the channel belongs to a recording the window leaves out"
     );
 }
@@ -228,7 +139,8 @@ fn the_cross_highlight_lands_on_a_fix_inside_the_time_window() {
     let files = [recording(0, 60, Constellation::Gps)];
     let visibility = TrackDataVisibility::from_loaded(&files);
 
-    let closest = gt_plot::find_closest_tpv(&files, &visibility, &window(10, 20), at_second(50));
+    let closest =
+        gt_plot::find_closest_tpv(&files, &visibility, &window(10, 20), support::at_second(50));
 
     assert_eq!(
         closest,
@@ -249,7 +161,7 @@ fn a_track_below_the_minimum_duration_holds_no_cross_highlight() {
     };
 
     assert_eq!(
-        gt_plot::find_closest_tpv(&files, &visibility, &filter, at_second(30)),
+        gt_plot::find_closest_tpv(&files, &visibility, &filter, support::at_second(30)),
         None
     );
 }
@@ -260,21 +172,28 @@ fn a_track_below_the_minimum_duration_holds_no_cross_highlight() {
 /// the filter.
 #[test]
 fn a_small_move_of_the_window_end_redraws_the_lines() {
-    let files = [recording(0, 3600, Constellation::Gps)];
-    let mut harness = draw(&files, PlotUnderFilter::new(window(0, 3000)));
-    let pixels_per_point = harness.inner.ctx.pixels_per_point();
-    let plot_area = plot_area();
-    let before = harness.inner.render().expect("the harness renders a frame");
+    let files = vec![recording(0, 3600, Constellation::Gps)];
+    let mut plot = support::drawn_plot(files, under(window(0, 3000)), PlotState::default());
+    let pixels_per_point = plot.harness.inner.ctx.pixels_per_point();
+    let before = plot
+        .harness
+        .inner
+        .render()
+        .expect("the harness renders a frame");
 
-    harness.state_mut().filter.time_end = Some(at_second(2960));
-    harness.inner.run_steps(2);
-    let after = harness.inner.render().expect("the harness renders a frame");
+    plot.sources_mut().filter.time_end = Some(support::at_second(2960));
+    plot.harness.inner.run_steps(2);
+    let after = plot
+        .harness
+        .inner
+        .render()
+        .expect("the harness renders a frame");
 
     assert!(
         gt_test_utils::snapshot_harness::pixels_differ(
             &before,
             &after,
-            plot_area,
+            support::plot_area(),
             pixels_per_point
         ),
         "the last 40 s of every line left the window and must leave the plot"
@@ -286,22 +205,30 @@ fn a_small_move_of_the_window_end_redraws_the_lines() {
 /// help from the extent the plot would otherwise re-fit to.
 #[test]
 fn a_pinned_view_redraws_its_lines_when_the_window_end_moves() {
-    let files = [recording(0, 3600, Constellation::Gps)];
-    let mut harness = draw(
-        &files,
-        PlotUnderFilter::pinned_to_map_view(window(0, 3000), 0..=3600),
+    let files = vec![recording(0, 3600, Constellation::Gps)];
+    let mut plot = support::drawn_plot(
+        files,
+        under(window(0, 3000)).pinned_to_map_view(0..=3600),
+        PlotState::default(),
     );
-    let pixels_per_point = harness.inner.ctx.pixels_per_point();
-    let plot_area = plot_area();
-    let view = harness.state().plot.visible_x_range();
-    let before = harness.inner.render().expect("the harness renders a frame");
+    let pixels_per_point = plot.harness.inner.ctx.pixels_per_point();
+    let view = plot.state().visible_x_range();
+    let before = plot
+        .harness
+        .inner
+        .render()
+        .expect("the harness renders a frame");
 
-    harness.state_mut().filter.time_end = Some(at_second(2960));
-    harness.inner.run_steps(2);
-    let after = harness.inner.render().expect("the harness renders a frame");
+    plot.sources_mut().filter.time_end = Some(support::at_second(2960));
+    plot.harness.inner.run_steps(2);
+    let after = plot
+        .harness
+        .inner
+        .render()
+        .expect("the harness renders a frame");
 
     assert_eq!(
-        harness.state().plot.visible_x_range(),
+        plot.state().visible_x_range(),
         view,
         "the map sync pins the view across the window move"
     );
@@ -309,7 +236,7 @@ fn a_pinned_view_redraws_its_lines_when_the_window_end_moves() {
         gt_test_utils::snapshot_harness::pixels_differ(
             &before,
             &after,
-            plot_area,
+            support::plot_area(),
             pixels_per_point
         ),
         "the last 40 s of every line left the window and must leave the plot"

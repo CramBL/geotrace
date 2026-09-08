@@ -544,48 +544,35 @@ mod tests {
         DOCUMENT.prose_spans(prose).collect()
     }
 
-    #[test]
-    fn prose_without_a_marker_is_one_span() {
-        assert_eq!(spans("Plain prose"), vec![ProseSpan::Text("Plain prose")]);
-    }
-
-    #[test]
-    fn a_marker_splits_the_text_around_it() {
-        assert_eq!(
-            spans("errors in [GNSS] positions"),
-            vec![
-                ProseSpan::Text("errors in "),
-                ProseSpan::Abbreviation(GNSS),
-                ProseSpan::Text(" positions"),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_marker_at_the_start_yields_the_abbreviation_first() {
-        assert_eq!(
-            spans("[GNSS] positions"),
-            vec![ProseSpan::Abbreviation(GNSS), ProseSpan::Text(" positions")]
-        );
-    }
-
-    #[test]
-    fn a_marker_at_the_end_closes_the_prose() {
-        assert_eq!(
-            spans("positions from [GNSS]"),
-            vec![
-                ProseSpan::Text("positions from "),
-                ProseSpan::Abbreviation(GNSS)
-            ]
-        );
-    }
-
-    #[test]
-    fn adjacent_markers_stay_separate_spans() {
-        assert_eq!(
-            spans("[GNSS][GNSS]"),
-            vec![ProseSpan::Abbreviation(GNSS), ProseSpan::Abbreviation(GNSS),]
-        );
+    /// An abbreviation marker becomes a span of its own, and the prose either
+    /// side of it a text span.
+    #[rstest]
+    #[case::no_marker("Plain prose", vec![ProseSpan::Text("Plain prose")])]
+    #[case::mid_text(
+        "errors in [GNSS] positions",
+        vec![
+            ProseSpan::Text("errors in "),
+            ProseSpan::Abbreviation(GNSS),
+            ProseSpan::Text(" positions"),
+        ]
+    )]
+    #[case::at_the_start(
+        "[GNSS] positions",
+        vec![ProseSpan::Abbreviation(GNSS), ProseSpan::Text(" positions")]
+    )]
+    #[case::at_the_end(
+        "positions from [GNSS]",
+        vec![ProseSpan::Text("positions from "), ProseSpan::Abbreviation(GNSS)]
+    )]
+    #[case::adjacent(
+        "[GNSS][GNSS]",
+        vec![ProseSpan::Abbreviation(GNSS), ProseSpan::Abbreviation(GNSS)]
+    )]
+    fn prose_spans_split_around_an_abbreviation_marker(
+        #[case] prose: &'static str,
+        #[case] expected: Vec<ProseSpan>,
+    ) {
+        assert_eq!(spans(prose), expected);
     }
 
     /// A citation carries the position of its source in the document's

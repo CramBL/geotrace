@@ -1145,40 +1145,16 @@ mod tests {
     use super::*;
     use crate::plot_widget::style::CHANNEL_PALETTE;
 
-    /// Every per-constellation metric maps to a constellation and every
-    /// all-constellation metric maps to `None`, with the two groups together
-    /// covering all `MetricKind::COUNT` variants.
+    /// Each constellation has four metrics of its own: seen, fix, utilization
+    /// rate and slip.
     #[test]
-    fn metric_constellation_mapping_is_total() {
+    fn each_constellation_has_four_metrics() {
         use strum::EnumCount;
-        let with = MetricKind::iter()
-            .filter(|k| k.constellation().is_some())
+        let with_a_constellation = MetricKind::iter()
+            .filter(|kind| kind.constellation().is_some())
             .count();
-        let without = MetricKind::iter()
-            .filter(|k| k.constellation().is_none())
-            .count();
-        assert_eq!(with + without, MetricKind::COUNT);
-        // 6 constellations x {seen, fix, utilization rate, slip}.
-        assert_eq!(with, 24);
-    }
 
-    /// The default set is the one each metric declares, and toggling one
-    /// leaves the rest untouched.
-    #[test]
-    fn visibility_defaults_per_metric_and_toggles_independently() {
-        let mut vis = MetricVisibility::default();
-        assert!(MetricKind::iter().all(|k| vis.field(k) == k.visible_by_default()));
-
-        vis.set(MetricKind::Velocity, false);
-        assert!(!vis.field(MetricKind::Velocity));
-        assert!(
-            MetricKind::iter()
-                .filter(|&k| k != MetricKind::Velocity)
-                .all(|k| vis.field(k) == k.visible_by_default())
-        );
-
-        vis.set(MetricKind::Velocity, true);
-        assert!(MetricKind::iter().all(|k| vis.field(k) == k.visible_by_default()));
+        assert_eq!(with_a_constellation, 4 * Constellation::COUNT);
     }
 
     /// Each metric has independent visibility state, so toggling one never

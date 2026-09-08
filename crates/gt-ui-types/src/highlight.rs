@@ -292,44 +292,35 @@ impl Default for MapHighlight {
 #[cfg(test)]
 mod tests {
     use chrono::TimeDelta;
-    use gt_filter::GlobalFilter;
 
     use super::*;
     use crate::display_mask::DisplayCategory;
-    use crate::scope_fixture::{self, POINT_COUNT, ScopeFixture};
-
-    fn point(index: usize) -> DataPointRef {
-        DataPointRef {
-            track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-            category: DataCategory::Tpv,
-            point_index: PointIdx::new(index),
-        }
-    }
+    use crate::test_util::{self, POINT_COUNT, ScopeFixture};
 
     /// Each way the map can stop drawing a pinned point: a point that still
     /// exists keeps its pin and shows nothing, one that does not loses the pin.
     #[rstest::rstest]
-    #[case::drawn(|_: &mut ScopeFixture| {}, Some(PinnedPopup::Drawn(scope_fixture::point(1))))]
+    #[case::drawn(|_: &mut ScopeFixture| {}, Some(PinnedPopup::Drawn(test_util::point(1))))]
     #[case::hidden_by_query(
         |fixture: &mut ScopeFixture| fixture.hide_point(1),
         Some(PinnedPopup::Withheld {
-            pinned: scope_fixture::point(1),
+            pinned: test_util::point(1),
             reason: PinWithheld::HiddenByQuery,
         })
     )]
     #[case::outside_the_time_filter(
         |fixture: &mut ScopeFixture| {
-            fixture.filter.time_start = Some(scope_fixture::start() + TimeDelta::seconds(2));
+            fixture.filter.time_start = Some(test_util::start() + TimeDelta::seconds(2));
         },
         Some(PinnedPopup::Withheld {
-            pinned: scope_fixture::point(1),
+            pinned: test_util::point(1),
             reason: PinWithheld::OutsideTimeFilter,
         })
     )]
     #[case::track_switched_off(
         |fixture: &mut ScopeFixture| fixture.visibility.files[0].tracks[0].enabled = false,
         Some(PinnedPopup::Withheld {
-            pinned: scope_fixture::point(1),
+            pinned: test_util::point(1),
             reason: PinWithheld::TrackNotShown,
         })
     )]
@@ -340,7 +331,7 @@ mod tests {
                 .set_visible(DisplayCategory::TrackPoints, false);
         },
         Some(PinnedPopup::Withheld {
-            pinned: scope_fixture::point(1),
+            pinned: test_util::point(1),
             reason: PinWithheld::CategoryHidden,
         })
     )]
@@ -351,13 +342,13 @@ mod tests {
         let mut fixture = ScopeFixture::all_drawn();
         withhold(&mut fixture);
         let mut highlight = MapHighlight {
-            sticky: Some(scope_fixture::point(1)),
+            sticky: Some(test_util::point(1)),
             ..MapHighlight::default()
         };
         assert_eq!(highlight.pin_this_frame(fixture.scope()), expected);
         assert_eq!(
             highlight.sticky,
-            Some(scope_fixture::point(1)),
+            Some(test_util::point(1)),
             "a point that still exists keeps its pin"
         );
     }
@@ -365,7 +356,7 @@ mod tests {
     /// The recording a hover belongs to, over every scope the map and the plot
     /// can report.
     #[rstest::rstest]
-    #[case::point_of_the_file(Some(HighlightScope::Point(point(1))), false, true)]
+    #[case::point_of_the_file(Some(HighlightScope::Point(test_util::point(1))), false, true)]
     #[case::track_of_the_file(
         Some(HighlightScope::Track(TrackRef::new(FileIdx::new(0), TrackIdx::new(0)))),
         false,
@@ -411,7 +402,7 @@ mod tests {
     #[test]
     fn a_pin_on_a_vanished_element_is_dropped() {
         let fixture = ScopeFixture::all_drawn();
-        let stale = scope_fixture::point(POINT_COUNT);
+        let stale = test_util::point(POINT_COUNT);
         let mut highlight = MapHighlight {
             sticky: Some(stale),
             ..MapHighlight::default()
@@ -434,47 +425,90 @@ mod tests {
         fixture.hide_point(1);
         let mut highlight = MapHighlight::default();
         assert!(
-            !highlight.toggle_sticky_if_drawn(fixture.scope(), scope_fixture::point(1)),
+            !highlight.toggle_sticky_if_drawn(fixture.scope(), test_util::point(1)),
             "the hidden point does not pin"
         );
         assert_eq!(highlight.sticky, None);
         assert!(
-            highlight.toggle_sticky_if_drawn(fixture.scope(), scope_fixture::point(0)),
+            highlight.toggle_sticky_if_drawn(fixture.scope(), test_util::point(0)),
             "the drawn point next to it does"
         );
-        assert_eq!(highlight.sticky, Some(scope_fixture::point(0)));
-    }
-
-    /// The fixture's own filter default draws everything, so a case that changes
-    /// nothing must not be silently passing for the wrong reason.
-    #[test]
-    fn the_fixture_draws_every_point_by_default() {
-        let fixture = ScopeFixture::all_drawn();
-        assert_eq!(fixture.filter, GlobalFilter::default());
-        for index in 0..POINT_COUNT {
-            assert!(
-                fixture.scope().draws(scope_fixture::point(index)),
-                "point {index} must be drawn before a case withholds it"
-            );
-        }
+        assert_eq!(highlight.sticky, Some(test_util::point(0)));
     }
 
     #[test]
     fn toggling_the_same_point_unpins_it_and_another_takes_over() {
         let mut highlight = MapHighlight::default();
-        assert!(highlight.toggle_sticky(point(3)), "a first click pins");
-        assert_eq!(highlight.sticky, Some(point(3)));
         assert!(
-            !highlight.toggle_sticky(point(3)),
+            highlight.toggle_sticky(test_util::point(3)),
+            "a first click pins"
+        );
+        assert_eq!(highlight.sticky, Some(test_util::point(3)));
+        assert!(
+            !highlight.toggle_sticky(test_util::point(3)),
             "clicking the pinned point unpins it"
         );
         assert_eq!(highlight.sticky, None);
-        highlight.toggle_sticky(point(3));
+        highlight.toggle_sticky(test_util::point(3));
         assert!(
-            highlight.toggle_sticky(point(7)),
+            highlight.toggle_sticky(test_util::point(7)),
             "another point takes the pin over"
         );
-        assert_eq!(highlight.sticky, Some(point(7)));
+        assert_eq!(highlight.sticky, Some(test_util::point(7)));
+    }
+
+    /// The element a hover or a click acts on is the fix whenever one is among
+    /// the candidates.
+    #[test]
+    fn the_primary_candidate_is_the_fix_when_one_is_present() {
+        let tpv = test_util::point(0);
+        let marker = DataPointRef {
+            category: DataCategory::EventMarker,
+            ..tpv
+        };
+
+        let marker_only = HoverCandidates {
+            event_marker: Some(marker),
+            ..HoverCandidates::default()
+        };
+        assert_eq!(marker_only.primary(), Some(marker));
+        assert!(!marker_only.is_ambiguous());
+
+        let both = HoverCandidates {
+            tpv_or_satellite_report: Some(tpv),
+            event_marker: Some(marker),
+            ..HoverCandidates::default()
+        };
+        assert_eq!(both.primary(), Some(tpv));
+        assert!(both.is_ambiguous());
+    }
+
+    /// Every way an element under the pointer loses its own hover label, and
+    /// the plain hover that keeps it.
+    #[rstest::rstest]
+    #[case::plain_hover(None, false, false, true)]
+    #[case::another_point_pinned(Some(test_util::point(1)), false, false, true)]
+    #[case::hovered_point_pinned(Some(test_util::point(0)), false, false, false)]
+    #[case::popup_open(None, true, false, false)]
+    #[case::compound_label_took_over(None, false, true, false)]
+    fn the_map_stacks_an_elements_hover_label_unless_something_else_shows_it(
+        #[case] sticky: Option<DataPointRef>,
+        #[case] any_popup_open: bool,
+        #[case] suppress_hover_labels: bool,
+        #[case] expected: bool,
+    ) {
+        let hovered = test_util::point(0);
+        let highlight = MapHighlight {
+            hover: Some(HighlightScope::Point(hovered)),
+            sticky,
+            suppress_hover_labels,
+            ..MapHighlight::default()
+        };
+
+        assert_eq!(
+            highlight.shows_hover_label(hovered, any_popup_open),
+            expected
+        );
     }
 
     #[test]

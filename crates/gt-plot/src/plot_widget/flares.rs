@@ -243,13 +243,13 @@ mod tests {
 
     use super::*;
 
-    pub(super) fn parse_time(time: &str) -> DateTime<Utc> {
+    fn parse_time(time: &str) -> DateTime<Utc> {
         gt_flare::wire::parse_flare_time(time).expect("a catalog time")
     }
 
     /// One flare of the catalog, with the times the storm's X2.2 had, marked
     /// with no recording loaded to place the receiver.
-    pub(super) fn flare(peak: &str, class_type: &str) -> MarkedFlare {
+    fn flare(peak: &str, class_type: &str) -> MarkedFlare {
         let peak = parse_time(peak);
         MarkedFlare {
             flare: gt_flare::SolarFlare {
@@ -370,115 +370,111 @@ mod tests {
             ]
         );
     }
-}
 
-#[cfg(test)]
-mod snapshot_tests {
-    use chrono::NaiveDate;
-    use egui_plot::{Line, PlotBounds, PlotPoints};
-    use gt_test_utils::TestHarness;
-    use rstest::rstest;
+    mod snapshot_tests {
+        use egui_plot::{Line, PlotBounds, PlotPoints};
+        use gt_test_utils::TestHarness;
+        use rstest::rstest;
 
-    use super::tests::{flare, parse_time};
-    use super::*;
+        use super::*;
 
-    /// The May 2024 storm day, as the archive holds it: an X-class flare
-    /// among M-class ones, and a C-class flare below the blackout scale.
-    fn storm_day() -> Vec<MarkedFlare> {
-        [
-            ("2024-05-09T01:15Z", "M1.8"),
-            ("2024-05-09T03:32Z", "C4.5"),
-            ("2024-05-09T09:13Z", "X2.2"),
-            ("2024-05-09T17:44Z", "M9.0"),
-            ("2024-05-09T23:08Z", "M1.2"),
-        ]
-        .into_iter()
-        .map(|(peak, class_type)| flare(peak, class_type))
-        .collect()
-    }
+        /// The May 2024 storm day, as the archive holds it: an X-class flare
+        /// among M-class ones, and a C-class flare below the blackout scale.
+        fn storm_day() -> Vec<MarkedFlare> {
+            [
+                ("2024-05-09T01:15Z", "M1.8"),
+                ("2024-05-09T03:32Z", "C4.5"),
+                ("2024-05-09T09:13Z", "X2.2"),
+                ("2024-05-09T17:44Z", "M9.0"),
+                ("2024-05-09T23:08Z", "M1.2"),
+            ]
+            .into_iter()
+            .map(|(peak, class_type)| flare(peak, class_type))
+            .collect()
+        }
 
-    fn day_bounds() -> (f64, f64) {
-        let day = NaiveDate::from_ymd_opt(2024, 5, 9).unwrap_or_default();
-        let midnight = day
-            .and_hms_opt(0, 0, 0)
-            .map_or(0.0, |naive| naive.and_utc().timestamp() as f64);
-        (midnight, midnight + 24.0 * 60.0 * 60.0)
-    }
+        fn day_bounds() -> (f64, f64) {
+            let day = NaiveDate::from_ymd_opt(2024, 5, 9).unwrap_or_default();
+            (midnight(day), midnight(day) + 24.0 * 60.0 * 60.0)
+        }
 
-    /// The markers over a metric line, which is what the plot draws them
-    /// against, and the bands the two span markings shade.
-    #[rstest]
-    #[case::markers_dark(
-        "solar_flare_markers_dark",
-        true,
-        FlareSpanMarking::OnlyTheHoveredFlare,
-        None
-    )]
-    #[case::markers_light(
-        "solar_flare_markers_light",
-        false,
-        FlareSpanMarking::OnlyTheHoveredFlare,
-        None
-    )]
-    #[case::every_span_dark(
-        "solar_flare_spans_dark",
-        true,
-        FlareSpanMarking::EveryFlareInView,
-        None
-    )]
-    #[case::every_span_light(
-        "solar_flare_spans_light",
-        false,
-        FlareSpanMarking::EveryFlareInView,
-        None
-    )]
-    #[case::hovered_span(
-        "solar_flare_hovered_span",
-        true,
-        FlareSpanMarking::OnlyTheHoveredFlare,
-        Some("2024-05-09T09:13Z")
-    )]
-    fn solar_flare_markers(
-        #[case] name: &str,
-        #[case] dark_mode: bool,
-        #[case] span_marking: FlareSpanMarking,
-        #[case] hovered_peak: Option<&str>,
-    ) {
-        let flares = storm_day();
-        let (x_min, x_max) = day_bounds();
-        let hovered_peak_secs = hovered_peak.map(|peak| parse_time(peak).timestamp() as f64);
-        let mut harness = TestHarness::builder()
-            .size(egui::vec2(420.0, 220.0))
-            .theme(dark_mode)
-            .ui(|ui| {
-                egui_plot::Plot::new("flare_markers")
-                    .show_grid(false)
-                    .show(ui, |plot_ui| {
-                        plot_ui
-                            .set_plot_bounds(PlotBounds::from_min_max([x_min, 0.0], [x_max, 10.0]));
-                        plot_ui.line(Line::new(
-                            "Metric",
-                            PlotPoints::new(vec![[x_min, 2.0], [x_max, 6.0]]),
-                        ));
-                        // A pointer resting exactly on the peak marker, placed
-                        // by the plot's own transform.
-                        let pointer = hovered_peak_secs
-                            .map(|secs| plot_ui.screen_from_plot(PlotPoint::new(secs, 0.0)));
-                        add_flare_markers(
-                            plot_ui,
-                            &flares,
-                            FlareViewport {
-                                x_min,
-                                x_max,
-                                span_marking,
-                                dark_mode,
-                            },
-                            pointer,
-                            &mut NearestHoverLabel::default(),
-                        );
-                    });
-            });
-        harness.run();
-        harness.snapshot_loose(name);
+        /// The markers over a metric line, which is what the plot draws them
+        /// against, and the bands the two span markings shade.
+        #[rstest]
+        #[case::markers_dark(
+            "solar_flare_markers_dark",
+            true,
+            FlareSpanMarking::OnlyTheHoveredFlare,
+            None
+        )]
+        #[case::markers_light(
+            "solar_flare_markers_light",
+            false,
+            FlareSpanMarking::OnlyTheHoveredFlare,
+            None
+        )]
+        #[case::every_span_dark(
+            "solar_flare_spans_dark",
+            true,
+            FlareSpanMarking::EveryFlareInView,
+            None
+        )]
+        #[case::every_span_light(
+            "solar_flare_spans_light",
+            false,
+            FlareSpanMarking::EveryFlareInView,
+            None
+        )]
+        #[case::hovered_span(
+            "solar_flare_hovered_span",
+            true,
+            FlareSpanMarking::OnlyTheHoveredFlare,
+            Some("2024-05-09T09:13Z")
+        )]
+        fn solar_flare_markers(
+            #[case] name: &str,
+            #[case] dark_mode: bool,
+            #[case] span_marking: FlareSpanMarking,
+            #[case] hovered_peak: Option<&str>,
+        ) {
+            let flares = storm_day();
+            let (x_min, x_max) = day_bounds();
+            let hovered_peak_secs = hovered_peak.map(|peak| parse_time(peak).timestamp() as f64);
+            let mut harness = TestHarness::builder()
+                .size(egui::vec2(420.0, 220.0))
+                .theme(dark_mode)
+                .ui(|ui| {
+                    egui_plot::Plot::new("flare_markers")
+                        .show_grid(false)
+                        .show(ui, |plot_ui| {
+                            plot_ui.set_plot_bounds(PlotBounds::from_min_max(
+                                [x_min, 0.0],
+                                [x_max, 10.0],
+                            ));
+                            plot_ui.line(Line::new(
+                                "Metric",
+                                PlotPoints::new(vec![[x_min, 2.0], [x_max, 6.0]]),
+                            ));
+                            // A pointer resting exactly on the peak marker, placed
+                            // by the plot's own transform.
+                            let pointer = hovered_peak_secs
+                                .map(|secs| plot_ui.screen_from_plot(PlotPoint::new(secs, 0.0)));
+                            add_flare_markers(
+                                plot_ui,
+                                &flares,
+                                FlareViewport {
+                                    x_min,
+                                    x_max,
+                                    span_marking,
+                                    dark_mode,
+                                },
+                                pointer,
+                                &mut NearestHoverLabel::default(),
+                            );
+                        });
+                });
+            harness.run();
+            harness.snapshot_loose(name);
+        }
     }
 }

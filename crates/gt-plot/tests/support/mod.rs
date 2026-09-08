@@ -1,7 +1,7 @@
 //! Shared fixture construction for the gt-plot integration test binaries: the
-//! sources `show_track_plot` reads besides the recordings, the harness that
-//! draws it once, and the pointer and tooltip helpers a hover case drives it
-//! with.
+//! recordings they load, the sources `show_track_plot` reads besides them, the
+//! harness that draws it once, and the pointer and tooltip helpers a hover case
+//! drives it with.
 
 #![allow(dead_code, reason = "shared across binaries with different needs")]
 #![expect(
@@ -16,11 +16,11 @@ use chrono::{DateTime, TimeDelta, Utc};
 use egui::accesskit::Role;
 use egui_plot::{PlotPoint, PlotTransform};
 use gt_filter::GlobalFilter;
-use gt_flare::MarkedFlare;
+use gt_flare::{MarkedFlare, SolarFlare};
 use gt_loaded_files::RecordingNames;
 use gt_plot::{ArchiveOverlays, PlotState};
-use gt_test_utils::{By, HarnessInteraction as _, NodeT as _, Queryable as _, TestHarness};
-use gt_types::LoadedFile;
+use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
+use gt_types::{Channel, FileIdx, LoadedFile, NavPoint, TrackIdx, TrackRef};
 use gt_ui_types::{
     ContextLines, GeomagneticSeries, JammingSeries, SnapErrorSeries, TecSeries, TrackDataVisibility,
 };
@@ -46,9 +46,48 @@ pub fn plot_area() -> egui::Rect {
     egui::Rect::from_min_size(egui::Pos2::ZERO, PLOT_SIZE)
 }
 
+/// `count` fixes `step_secs` apart from the first fix.
+pub fn fixes(count: usize, step_secs: i64) -> Vec<NavPoint> {
+    gt_test_utils::fixtures::nav_points_from(at_second(0), count, step_secs)
+}
+
+/// A recording of one track over `points`, carrying `channels`. Its metadata
+/// has the duration of the span its fixes cover, which is what the plot's
+/// x-fit reads.
+pub fn recording(points: Vec<NavPoint>, channels: Vec<Channel>) -> LoadedFile {
+    let mut track = gt_test_utils::loaded_track_with_points(points);
+    track.metadata.duration = track.metadata.time_range.duration();
+    track.channels = channels;
+    gt_test_utils::loaded_file_with_tracks(vec![track])
+}
+
+/// The one track of the one recording most scenes load.
+pub fn track0() -> TrackRef {
+    TrackRef::new(FileIdx::new(0), TrackIdx::new(0))
+}
+
+/// One archived X2.2 flare peaking `offset_secs` after the first fix, its
+/// published begin 28 minutes before the peak and its end 23 minutes after.
+pub fn flare_peaking_at(offset_secs: i64) -> MarkedFlare {
+    let peak = at_second(offset_secs);
+    MarkedFlare {
+        flare: SolarFlare {
+            id: format!("{peak}-FLR-001"),
+            begin: peak - TimeDelta::minutes(28),
+            peak,
+            end: Some(peak + TimeDelta::minutes(23)),
+            classification: "X2.2".parse().expect("a published class"),
+            source_location: None,
+            active_region: None,
+        },
+        receiver_side: None,
+    }
+}
+
 /// Everything `show_track_plot` reads besides the recordings and the plot's
 /// own state. The default is a plot no filter narrows, over recordings no
-/// archive covers and none of which was snapped.
+/// archive covers and none of which was snapped, with its x bounds free to
+/// re-fit to the data.
 #[derive(Default)]
 pub struct PlotSources {
     pub filter: GlobalFilter,
@@ -58,6 +97,18 @@ pub struct PlotSources {
     pub tec: TecSeries,
     pub context_lines: ContextLines,
     pub solar_flares: Vec<MarkedFlare>,
+    /// The x bounds map-to-plot sync pins the view to, in seconds since the
+    /// Unix epoch. A pinned view no longer re-fits to the data.
+    pub map_sync_x_range: Option<(f64, f64)>,
+}
+
+impl PlotSources {
+    /// The x bounds of a view pinned to `view`, in seconds from the first fix.
+    pub fn pinned_to_map_view(mut self, view: std::ops::RangeInclusive<i64>) -> Self {
+        let seconds = |offset: i64| at_second(offset).timestamp() as f64;
+        self.map_sync_x_range = Some((seconds(*view.start()), seconds(*view.end())));
+        self
+    }
 }
 
 /// A point of the plot: `offset_secs` after the first fix, at `y` on the
@@ -68,10 +119,17 @@ pub struct PlotPosition {
     pub y: f64,
 }
 
+/// The plot's own state and the sources it draws under, so a test can move
+/// either between two frames the way the app does.
+pub struct DrawnPlotState {
+    pub plot: PlotState,
+    pub sources: PlotSources,
+}
+
 /// A harness that has drawn the plot, and the id the plot stored the frame's
 /// transform under.
 pub struct DrawnPlot {
-    pub harness: TestHarness<'static, PlotState>,
+    pub harness: TestHarness<'static, DrawnPlotState>,
     plot_id: Rc<Cell<Option<egui::Id>>>,
 }
 
@@ -85,7 +143,7 @@ pub fn drawn_plot(files: Vec<LoadedFile>, sources: PlotSources, mut plot: PlotSt
     let plot_id = Rc::new(Cell::new(None));
     let written_plot_id = Rc::clone(&plot_id);
     let mut harness = TestHarness::builder().size(PLOT_SIZE).ui_state(
-        move |ui, plot: &mut PlotState| {
+        move |ui, state: &mut DrawnPlotState| {
             written_plot_id.set(Some(
                 ui.make_persistent_id(egui::Id::new(gt_plot::TRACK_PLOT_ID_SALT)),
             ));
@@ -94,23 +152,23 @@ pub fn drawn_plot(files: Vec<LoadedFile>, sources: PlotSources, mut plot: PlotSt
                 &files,
                 &names,
                 &visibility,
-                &sources.filter,
+                &state.sources.filter,
                 None,
                 None,
                 None,
-                None,
-                &sources.snap_error,
-                &sources.jamming,
-                &sources.geomagnetic,
-                &sources.tec,
+                state.sources.map_sync_x_range,
+                &state.sources.snap_error,
+                &state.sources.jamming,
+                &state.sources.geomagnetic,
+                &state.sources.tec,
                 ArchiveOverlays {
-                    context_lines: &sources.context_lines,
-                    solar_flares: &sources.solar_flares,
+                    context_lines: &state.sources.context_lines,
+                    solar_flares: &state.sources.solar_flares,
                 },
-                plot,
+                &mut state.plot,
             );
         },
-        plot,
+        DrawnPlotState { plot, sources },
     );
     harness.run();
     DrawnPlot { harness, plot_id }
@@ -118,11 +176,15 @@ pub fn drawn_plot(files: Vec<LoadedFile>, sources: PlotSources, mut plot: PlotSt
 
 impl DrawnPlot {
     pub fn state(&self) -> &PlotState {
-        self.harness.state()
+        &self.harness.state().plot
     }
 
     pub fn state_mut(&mut self) -> &mut PlotState {
-        self.harness.state_mut()
+        &mut self.harness.state_mut().plot
+    }
+
+    pub fn sources_mut(&mut self) -> &mut PlotSources {
+        &mut self.harness.state_mut().sources
     }
 
     pub fn run(&mut self) {
@@ -154,22 +216,9 @@ impl DrawnPlot {
     /// The tooltip under the pointer, its lines joined top to bottom. Empty
     /// while no label is drawn.
     pub fn hover_label(&self) -> String {
-        let mut lines: Vec<(f32, String)> = self
-            .harness
+        self.harness
             .inner
-            .query_all(By::new().include_labels().role(Role::Label))
-            .map(|node| {
-                (
-                    node.rect().top(),
-                    node.accesskit_node().value().unwrap_or_default(),
-                )
-            })
-            .collect();
-        lines.sort_by(|left, right| left.0.total_cmp(&right.0));
-        lines
-            .into_iter()
-            .map(|(_, text)| text)
-            .collect::<Vec<_>>()
+            .label_texts_top_to_bottom(By::new().include_labels().role(Role::Label))
             .join("\n")
     }
 

@@ -1,25 +1,16 @@
 //! Which item the plot picks when several lie within reach of the pointer,
 //! and which sample the label it draws names.
 
-#![expect(
-    clippy::expect_used,
-    reason = "the fixture helpers beside the tests are not covered by clippy's in-test relaxations"
-)]
-
 use std::sync::Arc;
 
-use chrono::{DateTime, TimeDelta, Utc};
-use gt_flare::{MarkedFlare, SolarFlare};
+use chrono::{DateTime, Utc};
 use gt_plot::PlotState;
 use gt_solar::GeomagneticIndex;
-use gt_types::{
-    Channel, FileIdx, FileSource, LoadedFile, MetricKind, NavPoint, TimeRange, TrackIdx, TrackRef,
-};
+use gt_types::{Channel, LoadedFile, MetricKind};
 use gt_ui_types::{GeomagneticPoint, IndexContextSample, TecContextSample, TecPoint};
 use rstest::rstest;
-use rustc_hash::FxHashMap;
 use strum::IntoEnumIterator as _;
-use support::{DrawnPlot, PlotPosition, PlotSources, at_second};
+use support::{DrawnPlot, PlotPosition, PlotSources};
 
 mod support;
 
@@ -41,57 +32,13 @@ const FIXTURE_VELOCITY_KMH: f64 = 15.0;
 
 /// A scalar channel sampled at `times`, one value per sample.
 fn scalar_channel(name: &str, times: Vec<DateTime<Utc>>, values: Vec<f64>) -> Channel {
-    Channel {
-        name: name.to_owned(),
-        unit: None,
-        period: None,
-        description: None,
-        components: Vec::new(),
-        values,
-        times,
-    }
+    gt_test_utils::fixtures::scalar_channel(name, None, times, values)
 }
 
 /// A recording of one track of `fix_count` fixes `step_secs` apart from the
 /// first fix, carrying `channels`.
 fn recording(fix_count: usize, step_secs: i64, channels: Vec<Channel>) -> LoadedFile {
-    let points: Vec<NavPoint> =
-        gt_test_utils::fixtures::nav_points_from(at_second(0), fix_count, step_secs);
-    let last_offset = (fix_count as i64 - 1) * step_secs;
-    let mut track = gt_test_utils::loaded_track_with_points(points);
-    track.metadata.time_range = TimeRange::new(at_second(0), at_second(last_offset));
-    track.metadata.duration = TimeDelta::seconds(last_offset);
-    track.channels = channels;
-    LoadedFile {
-        metadata: gt_test_utils::empty_file_metadata(),
-        tracks: vec![track],
-        event_marker_styles: FxHashMap::default(),
-        orphaned_event_markers: Vec::new(),
-        source: FileSource::GtdBytes([].into()),
-        load_warnings: Vec::new(),
-    }
-}
-
-/// The one track of the one recording every scene loads.
-fn the_track() -> TrackRef {
-    TrackRef::new(FileIdx::new(0), TrackIdx::new(0))
-}
-
-/// One archived flare peaking `offset_secs` after the first fix.
-fn flare_peaking_at(offset_secs: i64) -> MarkedFlare {
-    let peak = at_second(offset_secs);
-    MarkedFlare {
-        flare: SolarFlare {
-            id: format!("{peak}-FLR-001"),
-            begin: peak - TimeDelta::minutes(28),
-            peak,
-            end: Some(peak + TimeDelta::minutes(23)),
-            classification: "X2.2".parse().expect("a published class"),
-            source_location: None,
-            active_region: None,
-        },
-        receiver_side: None,
-    }
+    support::recording(support::fixes(fix_count, step_secs), channels)
 }
 
 /// What one case draws: the recording, which metric lines are on, whether the
@@ -126,7 +73,7 @@ impl PlotScene {
     }
 
     fn with_a_flare_peaking_at(mut self, offset_secs: i64) -> Self {
-        self.sources.solar_flares = vec![flare_peaking_at(offset_secs)];
+        self.sources.solar_flares = vec![support::flare_peaking_at(offset_secs)];
         self
     }
 
@@ -143,14 +90,14 @@ impl PlotScene {
         };
         *line = Arc::new(samples);
         let point = GeomagneticPoint {
-            x_secs: at_second(0).timestamp() as f64,
+            x_secs: support::at_second(0).timestamp() as f64,
             hp30: (index == GeomagneticIndex::Hp30).then_some(1.0),
             kp: (index == GeomagneticIndex::Kp).then_some(1.0),
         };
         self.sources
             .geomagnetic
             .points_by_track
-            .insert(the_track(), Arc::new(vec![point]));
+            .insert(support::track0(), Arc::new(vec![point]));
         self
     }
 
@@ -159,9 +106,9 @@ impl PlotScene {
     fn with_archived_tec(mut self, samples: Vec<TecContextSample>) -> Self {
         self.sources.context_lines.tec = Arc::new(samples);
         self.sources.tec.points_by_track.insert(
-            the_track(),
+            support::track0(),
             Arc::new(vec![TecPoint {
-                x_secs: at_second(0).timestamp() as f64,
+                x_secs: support::at_second(0).timestamp() as f64,
                 tecu: Some(10.0),
             }]),
         );
@@ -201,7 +148,7 @@ const THE_FLARE_HOVER_LABEL: &str = "X2.2 solar flare\n\
 fn snapshot_the_plot_labels_the_segment_endpoint_nearest_the_pointer() {
     let channel = scalar_channel(
         CHANNEL_NAME,
-        vec![at_second(0), at_second(59)],
+        vec![support::at_second(0), support::at_second(59)],
         vec![0.0, 10.0],
     );
     let mut plot = PlotScene::of(recording(60, 1, vec![channel]))
@@ -236,7 +183,7 @@ fn snapshot_the_plot_labels_the_nearest_sample_of_the_level_it_drew() {
 
     assert_eq!(
         plot.state().hovered_time,
-        Some(at_second(40)),
+        Some(support::at_second(40)),
         "the pointer must rest on a second the recording has a fix at"
     );
     assert_eq!(plot.hover_label(), "Velocity (km/h)\n12:00:47\n15.00");
@@ -248,7 +195,7 @@ fn snapshot_the_plot_labels_the_nearest_sample_of_the_level_it_drew() {
 /// radius of a pointer 1 point below the lower one.
 #[test]
 fn snapshot_the_plot_labels_the_line_it_added_last() {
-    let sample_times = vec![at_second(0), at_second(59)];
+    let sample_times = vec![support::at_second(0), support::at_second(59)];
     let lower = scalar_channel(CHANNEL_NAME, sample_times.clone(), vec![1.0, 1.0]);
     let upper = scalar_channel(
         SECOND_CHANNEL_NAME,
@@ -345,7 +292,7 @@ fn snapshot_the_plot_labels_the_period_the_pointer_rests_in(
         .into_iter()
         .enumerate()
         .map(|(step, value)| IndexContextSample {
-            start_secs: at_second(step as i64 * period_secs).timestamp() as f64,
+            start_secs: support::at_second(step as i64 * period_secs).timestamp() as f64,
             value: Some(value),
         })
         .collect();
@@ -379,11 +326,11 @@ fn snapshot_the_plot_labels_the_period_the_pointer_rests_in(
 fn snapshot_the_plot_labels_the_tec_interpolated_at_the_pointer() {
     let samples = vec![
         TecContextSample {
-            x_secs: at_second(0).timestamp() as f64,
+            x_secs: support::at_second(0).timestamp() as f64,
             tecu: Some(10.0),
         },
         TecContextSample {
-            x_secs: at_second(7200).timestamp() as f64,
+            x_secs: support::at_second(7200).timestamp() as f64,
             tecu: Some(20.0),
         },
     ];
@@ -414,10 +361,10 @@ fn snapshot_the_plot_labels_the_tec_interpolated_at_the_pointer() {
 fn snapshot_the_plot_draws_no_line_and_no_channel_label_for_a_run_of_one_sample() {
     let drawn = scalar_channel(
         CHANNEL_NAME,
-        vec![at_second(0), at_second(59)],
+        vec![support::at_second(0), support::at_second(59)],
         vec![0.0, 10.0],
     );
-    let lone_sample = scalar_channel(SECOND_CHANNEL_NAME, vec![at_second(5)], vec![9.0]);
+    let lone_sample = scalar_channel(SECOND_CHANNEL_NAME, vec![support::at_second(5)], vec![9.0]);
     let mut plot = PlotScene::of(recording(60, 1, vec![drawn, lone_sample]))
         .with_the_channels_revealed()
         .draw();
@@ -440,9 +387,9 @@ fn snapshot_both_runs_of_one_channel_are_labelled_by_the_channel_name() {
     let times: Vec<DateTime<Utc>> = (0..60)
         .map(|sample| {
             if sample < 30 {
-                at_second(sample)
+                support::at_second(sample)
             } else {
-                at_second(sample - 10)
+                support::at_second(sample - 10)
             }
         })
         .collect();

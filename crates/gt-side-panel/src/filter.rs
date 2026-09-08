@@ -477,59 +477,30 @@ fn parse_duration_input(s: &str) -> Option<Duration> {
 
 #[cfg(test)]
 mod tests {
-    use std::fmt::Write as _;
+    use rstest::rstest;
 
     use super::*;
 
-    #[test]
-    fn parse_empty_is_none() {
-        assert_eq!(parse_duration_input(""), None);
-    }
-
-    #[test]
-    fn parse_hours_minutes_seconds() {
-        assert_eq!(parse_duration_input("1h30m"), Some(Duration::seconds(5400)));
-        assert_eq!(parse_duration_input("2h"), Some(Duration::seconds(7200)));
-        assert_eq!(parse_duration_input("45s"), Some(Duration::seconds(45)));
+    /// The duration field reads a run of value-and-unit pairs, and yields
+    /// nothing for a text it cannot read whole or one that adds up to zero.
+    #[rstest]
+    #[case::empty("", None)]
+    #[case::hours("2h", Some(7200))]
+    #[case::hours_and_minutes("1h30m", Some(5400))]
+    #[case::minutes_and_seconds("1m30s", Some(90))]
+    #[case::seconds("45s", Some(45))]
+    #[case::all_three("1h30m15s", Some(5415))]
+    #[case::zero_seconds("0s", None)]
+    #[case::letters("abc", None)]
+    #[case::unknown_unit("1x", None)]
+    fn parse_duration_input_reads_hours_minutes_and_seconds(
+        #[case] input: &str,
+        #[case] expected_secs: Option<i64>,
+    ) {
         assert_eq!(
-            parse_duration_input("1h30m15s"),
-            Some(Duration::seconds(5415))
+            parse_duration_input(input),
+            expected_secs.map(Duration::seconds)
         );
-    }
-
-    #[test]
-    fn parse_invalid_returns_none() {
-        assert_eq!(parse_duration_input("abc"), None);
-        assert_eq!(parse_duration_input("1x"), None);
-    }
-
-    #[test]
-    fn roundtrip_format_parse() {
-        let fmt = |secs: i64| -> String {
-            let h = secs / 3600;
-            let m = (secs % 3600) / 60;
-            let s = secs % 60;
-            let mut out = String::new();
-            if h > 0 {
-                write!(out, "{h}h").ok();
-            }
-            if m > 0 {
-                write!(out, "{m}m").ok();
-            }
-            if s > 0 || out.is_empty() {
-                write!(out, "{s}s").ok();
-            }
-            out
-        };
-        for secs in [0i64, 45, 90, 3600, 5415, 7265] {
-            let formatted = fmt(secs);
-            let parsed = parse_duration_input(&formatted);
-            if secs == 0 {
-                assert_eq!(parsed, None);
-            } else {
-                assert_eq!(parsed, Some(Duration::seconds(secs)));
-            }
-        }
     }
 
     #[test]
@@ -542,11 +513,6 @@ mod tests {
     fn sub_second_range() -> TimeRange {
         let start = DateTime::UNIX_EPOCH;
         TimeRange::new(start, start + Duration::milliseconds(900))
-    }
-
-    #[test]
-    fn a_range_under_a_second_has_a_scale() {
-        assert!(TimeRangeBarScale::new(sub_second_range()).is_some());
     }
 
     /// Ten fixes at 10 Hz still select a window, at a fifth of the 900 ms the

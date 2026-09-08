@@ -725,22 +725,196 @@ fn marker_at(trail: &SkyTrail, time: GpsTime) -> Option<(f32, f32, &TrailSample)
 
 #[cfg(test)]
 mod tests {
-    use chrono::{DateTime, Duration, Utc};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
     use rstest::rstest;
 
-    use gt_test_utils::{Queryable as _, TestHarness};
-    use gt_types::satellites::{Constellation, ConstellationSet, Satellite, Satellites};
-    use gt_types::{GpsTime, Latitude, Longitude, NavPoint, PointIdx, TimePositionVelocity};
+    use gt_test_utils::{HarnessInteraction as _, Queryable as _, TestHarness};
+    use gt_types::fixtures::SatelliteDrift;
+    use gt_types::satellites::{Constellation, ConstellationSet, Prn, SlipCause, Snr};
+    use gt_types::{GpsTime, GpsTimeRange, PointIdx};
 
     use super::{SkyTrail, SkyTrailsPlot, SlipMark, marker_at};
     use crate::extract_trails;
+    use crate::test_util::{self, Azimuth, Elevation};
     use crate::trails::{EpochIdx, SkyTrails, TrailEpoch, TrailSample};
 
+    /// The plot diameter the shape-count cases draw at.
+    const PLOT_DIAMETER_PX: f32 = 400.0;
+
+    /// The five satellites of [`demo_trails`], drifting across the sky over
+    /// its ten epochs. BeiDou 14 drops out at epochs 4 and 5, leaving a gap.
+    const DEMO_DRIFTS: &[SatelliteDrift] = &[
+        SatelliteDrift {
+            constellation: Constellation::Gps,
+            prn: 5,
+            azimuth_deg: (40.0, 95.0),
+            elevation_deg: (58.0, 71.0),
+            in_fix: true,
+            absent_at: &[],
+        },
+        SatelliteDrift {
+            constellation: Constellation::Gps,
+            prn: 12,
+            azimuth_deg: (85.0, 130.0),
+            elevation_deg: (20.0, 47.0),
+            in_fix: true,
+            absent_at: &[],
+        },
+        SatelliteDrift {
+            constellation: Constellation::Galileo,
+            prn: 3,
+            azimuth_deg: (60.0, 30.0),
+            elevation_deg: (52.0, 40.0),
+            in_fix: true,
+            absent_at: &[],
+        },
+        SatelliteDrift {
+            constellation: Constellation::Glonass,
+            prn: 9,
+            azimuth_deg: (170.0, 205.0),
+            elevation_deg: (48.0, 28.0),
+            in_fix: true,
+            absent_at: &[],
+        },
+        SatelliteDrift {
+            constellation: Constellation::Beidou,
+            prn: 14,
+            azimuth_deg: (250.0, 230.0),
+            elevation_deg: (66.0, 51.0),
+            in_fix: true,
+            absent_at: &[4, 5],
+        },
+    ];
+
     /// A frame big enough that the test's coordinates are unambiguous.
-    fn test_frame() -> super::Frame {
+    fn frame_of_180_px() -> super::Frame {
         super::Frame {
             center: egui::pos2(200.0, 200.0),
             radius: 180.0,
+        }
+    }
+
+    /// What one frame of the trails plot is drawn with. The defaults are the
+    /// ones [`SkyTrailsPlot::new`] declares, over [`demo_trails`] on a dark
+    /// theme, in a harness with 20 points of margin around the plot.
+    struct TrailsPlotScene {
+        trails: SkyTrails,
+        diameter_px: f32,
+        harness_size: egui::Vec2,
+        /// The theme the harness is built with, `None` for its own default.
+        dark_mode: Option<bool>,
+        shown: ConstellationSet,
+        focus: Option<Constellation>,
+        scrub: Option<GpsTime>,
+        show_not_in_fix: bool,
+        in_fix_now: bool,
+        show_trails: bool,
+        show_heatmap: bool,
+        elevation_mask_deg: Option<f32>,
+    }
+
+    impl Default for TrailsPlotScene {
+        fn default() -> Self {
+            Self {
+                trails: demo_trails(),
+                diameter_px: 300.0,
+                harness_size: egui::vec2(320.0, 320.0),
+                dark_mode: Some(true),
+                shown: ConstellationSet::all(),
+                focus: None,
+                scrub: None,
+                show_not_in_fix: true,
+                in_fix_now: false,
+                show_trails: true,
+                show_heatmap: false,
+                elevation_mask_deg: None,
+            }
+        }
+    }
+
+    impl TrailsPlotScene {
+        /// Draw one frame of the plot in this scene.
+        fn render(self) -> RenderedTrailsPlot {
+            let Self {
+                trails,
+                diameter_px,
+                harness_size,
+                dark_mode,
+                shown,
+                focus,
+                scrub,
+                show_not_in_fix,
+                in_fix_now,
+                show_trails,
+                show_heatmap,
+                elevation_mask_deg,
+            } = self;
+            let drawn_rect = Rc::new(Cell::new(egui::Rect::ZERO));
+            let written_rect = Rc::clone(&drawn_rect);
+            let mut builder = TestHarness::builder().size(harness_size);
+            if let Some(dark_mode) = dark_mode {
+                builder = builder.theme(dark_mode);
+            }
+            let mut harness = builder.ui(move |ui| {
+                let mut plot = SkyTrailsPlot::new(&trails, diameter_px)
+                    .shown(shown)
+                    .focus(focus)
+                    .scrub(scrub)
+                    .show_not_in_fix(show_not_in_fix)
+                    .in_fix_now(in_fix_now)
+                    .show_trails(show_trails)
+                    .show_heatmap(show_heatmap);
+                if let Some(mask_deg) = elevation_mask_deg {
+                    plot = plot.with_elevation_mask_deg(mask_deg);
+                }
+                written_rect.set(plot.ui(ui).rect);
+            });
+            harness.run();
+            RenderedTrailsPlot {
+                harness,
+                rect: drawn_rect.get(),
+            }
+        }
+    }
+
+    /// One drawn frame of the trails plot and the rectangle it took.
+    struct RenderedTrailsPlot {
+        harness: TestHarness<'static>,
+        rect: egui::Rect,
+    }
+
+    impl RenderedTrailsPlot {
+        fn center(&self) -> egui::Pos2 {
+            self.rect.center()
+        }
+
+        /// The radius the plot projects the rim to, which is the drawn width
+        /// less the margin the grid labels take.
+        fn radius(&self) -> f32 {
+            self.rect.width() / 2.0 - crate::style::FULL_RIM_MARGIN_PX
+        }
+
+        /// Where the plot draws a satellite at `azimuth` and `elevation`.
+        fn position_of(
+            &self,
+            Azimuth(azimuth): Azimuth,
+            Elevation(elevation): Elevation,
+        ) -> egui::Pos2 {
+            self.center() + crate::unit_disc_position(azimuth, elevation) * self.radius()
+        }
+
+        fn shapes(&self) -> Vec<egui::epaint::ClippedShape> {
+            self.harness.inner.output().shapes.clone()
+        }
+
+        fn snapshot(&mut self, name: &str) {
+            self.harness.snapshot(name);
+        }
+
+        fn snapshot_loose(&mut self, name: &str) {
+            self.harness.snapshot_loose(name);
         }
     }
 
@@ -748,13 +922,13 @@ mod tests {
     /// the run still reaches the last sample.
     #[test]
     fn collapsed_samples_still_reach_the_end_of_the_trail() {
-        let frame = test_frame();
+        let frame = frame_of_180_px();
         // Four samples a hair apart in elevation: sub-pixel on a 180px radius.
         let trail = trail_of(&[
-            trail_sample(0, 90.0, 45.0),
-            trail_sample(1, 90.0, 45.01),
-            trail_sample(2, 90.0, 45.02),
-            trail_sample(3, 90.0, 45.03),
+            trail_sample(0, Azimuth(90.0), Elevation(45.0)),
+            trail_sample(1, Azimuth(90.0), Elevation(45.01)),
+            trail_sample(2, Azimuth(90.0), Elevation(45.02)),
+            trail_sample(3, Azimuth(90.0), Elevation(45.03)),
         ]);
 
         let runs = super::trail_runs(&trail, frame, false);
@@ -771,13 +945,13 @@ mod tests {
     /// still shows a break.
     #[test]
     fn a_gap_ends_the_run_even_when_the_samples_are_sub_pixel_apart() {
-        let frame = test_frame();
+        let frame = frame_of_180_px();
         let trail = trail_of(&[
-            trail_sample(0, 90.0, 45.0),
-            trail_sample(1, 90.0, 45.01),
+            trail_sample(0, Azimuth(90.0), Elevation(45.0)),
+            trail_sample(1, Azimuth(90.0), Elevation(45.01)),
             // Epoch 2 has no sample for this satellite: it was absent.
-            trail_sample(3, 90.0, 45.02),
-            trail_sample(4, 90.0, 45.03),
+            trail_sample(3, Azimuth(90.0), Elevation(45.02)),
+            trail_sample(4, Azimuth(90.0), Elevation(45.03)),
         ]);
 
         let runs = super::trail_runs(&trail, frame, false);
@@ -796,46 +970,38 @@ mod tests {
         // One satellite parked at a fixed sky position, so its marker sits in
         // the same place whether or not the instant is interpolated.
         let trail = trail_of(&[
-            trail_sample_from_epoch(0, 0, 90.0, 45.0),
-            trail_sample_from_epoch(2, 1, 90.0, 45.0),
+            trail_sample_at(0, EpochIdx::new(0), Azimuth(90.0), Elevation(45.0), true),
+            trail_sample_at(2, EpochIdx::new(1), Azimuth(90.0), Elevation(45.0), true),
         ]);
         let trails = SkyTrails {
             trails: vec![trail],
             epochs: vec![epoch(0), epoch(2)],
             slips: Vec::new(),
-            time_range: Some(gt_types::GpsTimeRange::new(at(0), at(2))),
+            time_range: Some(GpsTimeRange::new(test_util::at(0), test_util::at(2))),
         };
 
         // Half a second past the first report: mid-interpolation, exactly
         // where playback leaves the scrubber.
-        let between = GpsTime::from_utc(start() + Duration::milliseconds(500));
-        let rect = std::rc::Rc::new(std::cell::Cell::new(egui::Rect::ZERO));
-        let seen = rect.clone();
-        let mut harness = TestHarness::builder()
-            .size(egui::vec2(PLOT_DIAMETER_PX + 40.0, PLOT_DIAMETER_PX + 40.0))
-            .ui(move |ui| {
-                let response = SkyTrailsPlot::new(&trails, PLOT_DIAMETER_PX)
-                    .shown(ConstellationSet::all())
-                    .show_not_in_fix(true)
-                    .scrub(Some(between))
-                    .ui(ui);
-                seen.set(response.rect);
-            });
-        harness.run();
-
-        // Where the plot puts a satellite at 90 deg azimuth, 45 deg elevation.
-        let plot = rect.get();
-        let radius = plot.width() / 2.0 - crate::style::FULL_RIM_MARGIN_PX;
-        let marker = plot.center() + crate::unit_disc_position(90.0, 45.0) * radius;
+        let between = GpsTime::from_utc(test_util::start() + chrono::Duration::milliseconds(500));
+        let mut plot = TrailsPlotScene {
+            trails,
+            diameter_px: PLOT_DIAMETER_PX,
+            harness_size: egui::Vec2::splat(PLOT_DIAMETER_PX + 40.0),
+            dark_mode: None,
+            scrub: Some(between),
+            ..TrailsPlotScene::default()
+        }
+        .render();
+        let marker = plot.position_of(Azimuth(90.0), Elevation(45.0));
 
         assert!(
-            harness.inner.query_by_label("In fix").is_none(),
+            plot.harness.inner.query_by_label("In fix").is_none(),
             "the tooltip must not be showing before the marker is hovered"
         );
-        harness.inner.hover_at(marker);
-        harness.inner.run_steps(2);
+        plot.harness.inner.hover_at(marker);
+        plot.harness.inner.run_steps(2);
         assert!(
-            harness.inner.query_by_label("In fix").is_some(),
+            plot.harness.inner.query_by_label("In fix").is_some(),
             "hovering the marker between reports must still show its tooltip"
         );
     }
@@ -845,46 +1011,40 @@ mod tests {
     fn long_trails(epochs: usize, sats: usize) -> SkyTrails {
         let points = (0..epochs)
             .map(|i| {
-                let f = i as f32 / (epochs - 1) as f32;
+                let elapsed = i as f32 / (epochs - 1) as f32;
                 let list = (0..sats)
                     .map(|s| {
                         let base = s as f32 * 11.0;
-                        Satellite::new(
+                        test_util::sat(
                             Constellation::Gps,
                             (s as u32 % 32) + 1,
-                            Some(15.0 + 60.0 * (base + f * 180.0).to_radians().sin().abs()),
-                            Some((base + f * 90.0) % 360.0),
-                            Some(40.0),
+                            Some(Azimuth((base + elapsed * 90.0) % 360.0)),
+                            Some(Elevation(
+                                15.0 + 60.0 * (base + elapsed * 180.0).to_radians().sin().abs(),
+                            )),
                             true,
                         )
                     })
                     .collect();
-                let tpv = TimePositionVelocity::builder()
-                    .time(GpsTime::from_utc(start() + Duration::seconds(i as i64)))
-                    .lat(Latitude::new(55.0))
-                    .lon(Longitude::new(12.0))
-                    .build();
-                NavPoint::new(tpv, Some(Satellites::new(None, None, list)))
+                test_util::nav_point_reporting(i as i64, Some(list))
             })
             .collect();
         extract_trails(&gt_test_utils::loaded_track_with_points(points))
     }
 
-    /// Shapes emitted for one frame of the plot at `PLOT_DIAMETER_PX`.
+    /// Shapes emitted for one frame of the plot at [`PLOT_DIAMETER_PX`].
     fn painted_shapes(trails: SkyTrails) -> usize {
-        let mut harness = TestHarness::builder()
-            .size(egui::vec2(PLOT_DIAMETER_PX + 40.0, PLOT_DIAMETER_PX + 40.0))
-            .ui(move |ui| {
-                SkyTrailsPlot::new(&trails, PLOT_DIAMETER_PX)
-                    .shown(ConstellationSet::all())
-                    .show_not_in_fix(true)
-                    .ui(ui);
-            });
-        harness.run();
-        harness.inner.output().shapes.len()
+        TrailsPlotScene {
+            trails,
+            diameter_px: PLOT_DIAMETER_PX,
+            harness_size: egui::Vec2::splat(PLOT_DIAMETER_PX + 40.0),
+            dark_mode: None,
+            ..TrailsPlotScene::default()
+        }
+        .render()
+        .shapes()
+        .len()
     }
-
-    const PLOT_DIAMETER_PX: f32 = 400.0;
 
     /// The drawn shape count must be bounded by what the plot can resolve, not
     /// by how long the recording ran. Adjacent samples on a long track project
@@ -904,46 +1064,44 @@ mod tests {
         );
     }
 
-    fn start() -> DateTime<Utc> {
-        DateTime::<Utc>::from_timestamp(1_748_000_000, 0).expect("valid")
-    }
-
-    fn at(secs: i64) -> GpsTime {
-        GpsTime::from_utc(start() + Duration::seconds(secs))
-    }
-
     // The point index is irrelevant to the time-only helpers under test.
     fn epoch(secs: i64) -> TrailEpoch {
         TrailEpoch {
-            time: at(secs),
+            time: test_util::at(secs),
             point_index: PointIdx::new(0),
         }
     }
 
-    /// A sample at second `secs`, taken from the epoch of the same number.
-    /// These fixtures report at 1 Hz, so a skipped second is a skipped epoch
-    /// and produces a gap. Use [`trail_sample_from_epoch`] where the two must
-    /// come apart.
-    fn trail_sample(secs: i64, azimuth: f32, elevation: f32) -> TrailSample {
-        trail_sample_from_epoch(secs, secs.unsigned_abs() as usize, azimuth, elevation)
+    /// A sample at second `secs`, taken from the epoch of the same number and
+    /// in the fix. These fixtures report at 1 Hz, so a skipped second is a
+    /// skipped epoch and produces a gap. Use [`trail_sample_at`] where the two
+    /// must come apart.
+    fn trail_sample(secs: i64, azimuth: Azimuth, elevation: Elevation) -> TrailSample {
+        trail_sample_at(
+            secs,
+            EpochIdx::new(secs.unsigned_abs() as usize),
+            azimuth,
+            elevation,
+            true,
+        )
     }
 
-    /// A sample at second `secs` taken from epoch `epoch`, for fixtures whose
-    /// reports are not one second apart.
-    fn trail_sample_from_epoch(
+    /// A sample at second `secs` taken from `epoch`, without an SNR.
+    fn trail_sample_at(
         secs: i64,
-        epoch: usize,
-        azimuth: f32,
-        elevation: f32,
+        epoch: EpochIdx,
+        Azimuth(azimuth): Azimuth,
+        Elevation(elevation): Elevation,
+        in_fix: bool,
     ) -> TrailSample {
         TrailSample {
-            time: at(secs),
-            epoch: EpochIdx::new(epoch),
+            time: test_util::at(secs),
+            epoch,
             point_index: PointIdx::new(0),
             azimuth,
             elevation,
             snr: None,
-            in_fix: true,
+            in_fix,
         }
     }
 
@@ -951,8 +1109,26 @@ mod tests {
     fn trail_of(samples: &[TrailSample]) -> SkyTrail {
         SkyTrail {
             constellation: Constellation::Gps,
-            prn: gt_types::satellites::Prn::new(5),
+            prn: Prn::new(5),
             samples: samples.to_vec(),
+        }
+    }
+
+    /// A slip of `cause` on `constellation` `prn`, at the sky position the
+    /// mark is drawn at.
+    fn slip_mark(
+        constellation: Constellation,
+        prn: u32,
+        Azimuth(azimuth): Azimuth,
+        Elevation(elevation): Elevation,
+        cause: SlipCause,
+    ) -> SlipMark {
+        SlipMark {
+            constellation,
+            prn: Prn::new(prn),
+            azimuth,
+            elevation,
+            cause,
         }
     }
 
@@ -960,18 +1136,17 @@ mod tests {
     /// epoch, so its two samples come from epochs 0 and 2, not back-to-back
     /// reports, and the trail breaks between them.
     fn gapped_trail() -> SkyTrail {
-        SkyTrail {
-            constellation: Constellation::Gps,
-            prn: gt_types::satellites::Prn::new(5),
-            samples: vec![trail_sample(0, 40.0, 60.0), trail_sample(2, 60.0, 40.0)],
-        }
+        trail_of(&[
+            trail_sample(0, Azimuth(40.0), Elevation(60.0)),
+            trail_sample(2, Azimuth(60.0), Elevation(40.0)),
+        ])
     }
 
     #[rstest]
-    #[case::exact_hit(at(0), Some((40.0, 60.0)))]
-    #[case::in_gap(at(1), None)]
-    #[case::before_first_sample(at(-1), None)]
-    #[case::after_last_sample(at(5), None)]
+    #[case::exact_hit(test_util::at(0), Some((40.0, 60.0)))]
+    #[case::in_gap(test_util::at(1), None)]
+    #[case::before_first_sample(test_util::at(-1), None)]
+    #[case::after_last_sample(test_util::at(5), None)]
     fn marker_at_respects_trail_bounds_and_gaps(
         #[case] time: GpsTime,
         #[case] expected: Option<(f32, f32)>,
@@ -984,8 +1159,8 @@ mod tests {
     /// them, so the trail runs straight through and interpolates.
     fn unbroken_trail() -> SkyTrail {
         trail_of(&[
-            trail_sample_from_epoch(0, 0, 40.0, 60.0),
-            trail_sample_from_epoch(2, 1, 60.0, 40.0),
+            trail_sample_at(0, EpochIdx::new(0), Azimuth(40.0), Elevation(60.0), true),
+            trail_sample_at(2, EpochIdx::new(1), Azimuth(60.0), Elevation(40.0), true),
         ])
     }
 
@@ -995,148 +1170,68 @@ mod tests {
     fn marker_at_carries_the_report_in_effect_between_reports() {
         let trail = unbroken_trail();
         // Exactly on a report: that report.
-        let (_, _, report) = marker_at(&trail, at(0)).expect("hit");
-        assert_eq!(report.time, at(0));
+        let (_, _, report) = marker_at(&trail, test_util::at(0)).expect("hit");
+        assert_eq!(report.time, test_util::at(0));
         // Between reports: interpolated position, earlier report still in
         // effect.
-        let (az, el, report) = marker_at(&trail, at(1)).expect("interpolated");
+        let (az, el, report) = marker_at(&trail, test_util::at(1)).expect("interpolated");
         assert_eq!((az, el), (50.0, 50.0));
-        assert_eq!(report.time, at(0), "the last report received still stands");
-    }
-
-    struct Spec {
-        c: Constellation,
-        prn: u32,
-        az: (f32, f32),
-        el: (f32, f32),
-        absent: &'static [usize],
+        assert_eq!(
+            report.time,
+            test_util::at(0),
+            "the last report received still stands"
+        );
     }
 
     /// A synthetic track: several satellites drifting across the sky over ten
     /// report epochs, one dropping out mid-track to leave a gap.
     fn demo_trails() -> SkyTrails {
-        const EPOCHS: usize = 10;
-        let specs = [
-            Spec {
-                c: Constellation::Gps,
-                prn: 5,
-                az: (40.0, 95.0),
-                el: (58.0, 71.0),
-                absent: &[],
-            },
-            Spec {
-                c: Constellation::Gps,
-                prn: 12,
-                az: (85.0, 130.0),
-                el: (20.0, 47.0),
-                absent: &[],
-            },
-            Spec {
-                c: Constellation::Galileo,
-                prn: 3,
-                az: (60.0, 30.0),
-                el: (52.0, 40.0),
-                absent: &[],
-            },
-            Spec {
-                c: Constellation::Glonass,
-                prn: 9,
-                az: (170.0, 205.0),
-                el: (48.0, 28.0),
-                absent: &[],
-            },
-            Spec {
-                c: Constellation::Beidou,
-                prn: 14,
-                az: (250.0, 230.0),
-                el: (66.0, 51.0),
-                absent: &[4, 5],
-            },
-        ];
-        let lerp = |(a, b): (f32, f32), f: f32| a + (b - a) * f;
-        let points = (0..EPOCHS)
-            .map(|i| {
-                let f = i as f32 / (EPOCHS - 1) as f32;
-                let sats: Vec<Satellite> = specs
-                    .iter()
-                    .filter(|s| !s.absent.contains(&i))
-                    .map(|s| {
-                        Satellite::new(
-                            s.c,
-                            s.prn,
-                            Some(lerp(s.el, f)),
-                            Some(lerp(s.az, f)),
-                            Some(40.0),
-                            true,
-                        )
-                    })
-                    .collect();
-                let tpv = TimePositionVelocity::builder()
-                    .time(at(i as i64))
-                    .lat(Latitude::new(55.0))
-                    .lon(Longitude::new(12.0))
-                    .build();
-                NavPoint::new(tpv, Some(Satellites::new(None, None, sats)))
-            })
-            .collect();
+        let points = gt_types::fixtures::nav_points_with_drifting_satellites(
+            test_util::start(),
+            10,
+            DEMO_DRIFTS,
+        );
         extract_trails(&gt_test_utils::loaded_track_with_points(points))
     }
 
-    fn snapshot(
-        name: &str,
-        shown: ConstellationSet,
-        focus: Option<Constellation>,
-        scrub: Option<GpsTime>,
+    /// Every trail time-ramped with the BeiDou gap, GPS focused so the rest
+    /// dim, only two constellations shown, and a marker per trail at a
+    /// mid-track instant.
+    #[rstest]
+    #[case::every_trail("sky_trails_full", ConstellationSet::all(), None, None)]
+    #[case::focused(
+        "sky_trails_focused",
+        ConstellationSet::all(),
+        Some(Constellation::Gps),
+        None
+    )]
+    #[case::filtered(
+        "sky_trails_filtered",
+        ConstellationSet::single(Constellation::Gps).with(Constellation::Galileo),
+        None,
+        None
+    )]
+    #[case::scrubbed(
+        "sky_trails_scrubbed",
+        ConstellationSet::all(),
+        None,
+        Some(test_util::at(4))
+    )]
+    fn snapshot_sky_trails_under_each_view(
+        #[case] name: &str,
+        #[case] shown: ConstellationSet,
+        #[case] focus: Option<Constellation>,
+        #[case] scrub: Option<GpsTime>,
     ) {
-        let trails = demo_trails();
-        let mut harness = TestHarness::builder()
-            .size(egui::vec2(320.0, 320.0))
-            .theme(true)
-            .ui(move |ui| {
-                SkyTrailsPlot::new(&trails, 300.0)
-                    .shown(shown)
-                    .focus(focus)
-                    .scrub(scrub)
-                    .with_elevation_mask_deg(10.0)
-                    .ui(ui);
-            });
-        harness.run();
-        harness.snapshot(name);
-    }
-
-    #[test]
-    fn sky_trails_full() {
-        // Every trail, time-ramped, with the BeiDou gap.
-        snapshot("sky_trails_full", ConstellationSet::all(), None, None);
-    }
-
-    #[test]
-    fn sky_trails_focused() {
-        // GPS focused: its trails stay bright, the rest dim.
-        snapshot(
-            "sky_trails_focused",
-            ConstellationSet::all(),
-            Some(Constellation::Gps),
-            None,
-        );
-    }
-
-    #[test]
-    fn sky_trails_filtered() {
-        // Only GPS and Galileo shown.
-        let shown = ConstellationSet::single(Constellation::Gps).with(Constellation::Galileo);
-        snapshot("sky_trails_filtered", shown, None, None);
-    }
-
-    #[test]
-    fn sky_trails_scrubbed() {
-        // A marker on each trail at a mid-track instant.
-        snapshot(
-            "sky_trails_scrubbed",
-            ConstellationSet::all(),
-            None,
-            Some(at(4)),
-        );
+        TrailsPlotScene {
+            shown,
+            focus,
+            scrub,
+            elevation_mask_deg: Some(10.0),
+            ..TrailsPlotScene::default()
+        }
+        .render()
+        .snapshot(name);
     }
 
     /// Snapshot: on a long track each trail draws as a comet's tail - brightest
@@ -1147,208 +1242,165 @@ mod tests {
     /// the path still ahead - the direction of travel reads without any arrow.
     #[test]
     fn sky_trails_tail_points_the_way_the_satellite_is_moving() {
-        let trails = long_trails(1200, 3);
-        let mut harness = TestHarness::builder()
-            .size(egui::vec2(320.0, 320.0))
-            .theme(true)
-            .ui(move |ui| {
-                SkyTrailsPlot::new(&trails, 300.0)
-                    .scrub(Some(at(900)))
-                    .ui(ui);
-            });
-        harness.run();
-        harness.snapshot_loose("sky_trails_tail");
+        TrailsPlotScene {
+            trails: long_trails(1200, 3),
+            scrub: Some(test_util::at(900)),
+            ..TrailsPlotScene::default()
+        }
+        .render()
+        .snapshot_loose("sky_trails_tail");
     }
 
     #[test]
     fn sky_trails_with_slips() {
-        use gt_types::satellites::{Prn, SlipCause};
-
         let mut trails = demo_trails();
         // Two slip marks (an "×" each), on distinct constellations.
         trails.slips = vec![
-            SlipMark {
-                constellation: Constellation::Gps,
-                prn: Prn::new(5),
-                azimuth: 70.0,
-                elevation: 64.0,
-                cause: SlipCause::LostLock,
-            },
-            SlipMark {
-                constellation: Constellation::Galileo,
-                prn: Prn::new(3),
-                azimuth: 45.0,
-                elevation: 46.0,
-                cause: SlipCause::SnrDrop,
-            },
+            slip_mark(
+                Constellation::Gps,
+                5,
+                Azimuth(70.0),
+                Elevation(64.0),
+                SlipCause::LostLock,
+            ),
+            slip_mark(
+                Constellation::Galileo,
+                3,
+                Azimuth(45.0),
+                Elevation(46.0),
+                SlipCause::SnrDrop,
+            ),
         ];
-        let mut harness = TestHarness::builder()
-            .size(egui::vec2(320.0, 320.0))
-            .theme(true)
-            .ui(move |ui| {
-                SkyTrailsPlot::new(&trails, 300.0)
-                    .with_elevation_mask_deg(10.0)
-                    .ui(ui);
-            });
-        harness.run();
-        harness.snapshot("sky_trails_with_slips");
+
+        TrailsPlotScene {
+            trails,
+            elevation_mask_deg: Some(10.0),
+            ..TrailsPlotScene::default()
+        }
+        .render()
+        .snapshot("sky_trails_with_slips");
     }
 
     #[test]
     fn sky_trails_mask_ring_hover_lights_up_and_labels() {
-        use std::cell::Cell;
-        use std::rc::Rc;
-
-        let trails = demo_trails();
-        // The plot's rendered centre, captured so the hover point can be placed
-        // on the ring regardless of the harness's layout margins.
-        let center = Rc::new(Cell::new(egui::Pos2::ZERO));
-        let sink = Rc::clone(&center);
-        let mut harness = TestHarness::builder()
-            .size(egui::vec2(320.0, 360.0))
-            .theme(true)
-            .ui(move |ui| {
-                let response = SkyTrailsPlot::new(&trails, 300.0)
-                    .with_elevation_mask_deg(10.0)
-                    .ui(ui);
-                sink.set(response.rect.center());
-            });
-        harness.run();
+        let mut plot = TrailsPlotScene {
+            harness_size: egui::vec2(320.0, 360.0),
+            elevation_mask_deg: Some(10.0),
+            ..TrailsPlotScene::default()
+        }
+        .render();
 
         // Hover a point on the mask ring (its east side).
-        let radius = 300.0 / 2.0 - super::style::FULL_RIM_MARGIN_PX;
-        let ring_radius = radius * super::projection::unit_disc_radius(10.0);
-        let on_ring = center.get() + egui::vec2(ring_radius, 0.0);
-        harness.inner.hover_at(on_ring);
-        // Tooltips appear after egui's hover delay. Step until it elapses.
-        for _ in 0..60 {
-            harness.run();
-        }
-        harness.snapshot_loose("sky_trails_mask_ring_hover");
+        let ring_radius = plot.radius() * crate::unit_disc_radius(10.0);
+        let on_ring = plot.center() + egui::vec2(ring_radius, 0.0);
+        plot.harness
+            .inner
+            .hover_at_and_settle(on_ring, TOOLTIP_SETTLE_FRAMES);
+
+        plot.snapshot_loose("sky_trails_mask_ring_hover");
     }
+
+    /// Frames the pointer rests still for before a tooltip is read: egui opens
+    /// one once the pointer has stopped moving.
+    const TOOLTIP_SETTLE_FRAMES: usize = 60;
 
     #[test]
     fn sky_trails_marker_hover_shows_the_satellite() {
-        use std::cell::Cell;
-        use std::rc::Rc;
-
-        let trails = demo_trails();
         // The GPS-5 satellite's position at the scrubbed epoch, so the hover
         // point can land on its marker.
-        let scrub = at(4);
+        let scrub = test_util::at(4);
+        let trails = demo_trails();
         let gps5 = trails
             .trails
             .iter()
             .find(|t| t.constellation == Constellation::Gps && t.prn.value() == 5)
             .expect("gps-5 trail");
         let sample = gps5.sample_exactly_at(scrub).expect("sample at the epoch");
-        let offset = super::projection::unit_disc_position(sample.azimuth, sample.elevation);
+        let (azimuth, elevation) = (Azimuth(sample.azimuth), Elevation(sample.elevation));
 
-        let center = Rc::new(Cell::new(egui::Pos2::ZERO));
-        let sink = Rc::clone(&center);
-        let trails_for_ui = trails.clone();
-        let mut harness = TestHarness::builder()
-            .size(egui::vec2(320.0, 360.0))
-            .theme(true)
-            .ui(move |ui| {
-                let response = SkyTrailsPlot::new(&trails_for_ui, 300.0)
-                    .scrub(Some(scrub))
-                    .ui(ui);
-                sink.set(response.rect.center());
-            });
-        harness.run();
-
-        let radius = 300.0 / 2.0 - super::style::FULL_RIM_MARGIN_PX;
-        harness.inner.hover_at(center.get() + offset * radius);
-        for _ in 0..60 {
-            harness.run();
+        let mut plot = TrailsPlotScene {
+            trails: trails.clone(),
+            harness_size: egui::vec2(320.0, 360.0),
+            scrub: Some(scrub),
+            ..TrailsPlotScene::default()
         }
-        harness.snapshot_loose("sky_trails_marker_hover");
-    }
+        .render();
+        let marker = plot.position_of(azimuth, elevation);
+        plot.harness
+            .inner
+            .hover_at_and_settle(marker, TOOLTIP_SETTLE_FRAMES);
 
-    #[test]
-    fn satellite_from_sample_carries_the_reports_facts() {
-        let trail = SkyTrail {
-            constellation: Constellation::Gps,
-            prn: gt_types::satellites::Prn::new(5),
-            samples: vec![],
-        };
-        let sample = TrailSample {
-            time: at(0),
-            epoch: EpochIdx::new(0),
-            point_index: PointIdx::new(0),
-            azimuth: 40.0,
-            elevation: 60.0,
-            snr: Some(gt_types::satellites::Snr::new(42.0)),
-            in_fix: true,
-        };
-
-        let satellite = super::satellite_from_sample(&trail, &sample);
-        assert_eq!(satellite.constellation(), Constellation::Gps);
-        assert_eq!(satellite.prn().value(), 5);
-        assert_eq!(satellite.azimuth(), Some(40.0));
-        assert_eq!(satellite.elevation(), Some(60.0));
-        assert_eq!(satellite.snr().map(|s| s.value()), Some(42.0));
-        assert!(satellite.in_fix());
+        plot.snapshot_loose("sky_trails_marker_hover");
     }
 
     /// Trails exercising fix state: one always in fix, one tracked-but-not-in-
     /// fix at the scrubbed epoch (still shown, hollow marker), one never in fix
     /// over the track (hidden when not-in-fix is off).
     fn fix_state_trails() -> SkyTrails {
-        let times = [at(0), at(1), at(2)];
-        let mk = |c: Constellation, prn: u32, fixes: [bool; 3], az0: f32, az1: f32, el: f32| {
-            let samples = fixes
-                .into_iter()
-                .zip(times)
-                .enumerate()
-                .map(|(i, (in_fix, time))| TrailSample {
-                    time,
-                    epoch: EpochIdx::new(i),
-                    point_index: PointIdx::new(i),
-                    azimuth: az0 + (az1 - az0) * i as f32 / 2.0,
-                    elevation: el,
-                    snr: Some(gt_types::satellites::Snr::new(40.0)),
-                    in_fix,
-                })
-                .collect();
-            SkyTrail {
-                constellation: c,
-                prn: gt_types::satellites::Prn::new(prn),
-                samples,
-            }
-        };
+        let trail =
+            |constellation, prn, fixes: [bool; 3], from: Azimuth, to: Azimuth, elevation| {
+                let samples = fixes
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, in_fix)| {
+                        let Azimuth(from) = from;
+                        let Azimuth(to) = to;
+                        let mut sample = trail_sample_at(
+                            i as i64,
+                            EpochIdx::new(i),
+                            Azimuth(from + (to - from) * i as f32 / 2.0),
+                            elevation,
+                            in_fix,
+                        );
+                        sample.point_index = PointIdx::new(i);
+                        sample.snr = Some(Snr::new(40.0));
+                        sample
+                    })
+                    .collect();
+                SkyTrail {
+                    constellation,
+                    prn: Prn::new(prn),
+                    samples,
+                }
+            };
         SkyTrails {
             trails: vec![
-                mk(Constellation::Gps, 5, [true, true, true], 40.0, 70.0, 62.0),
-                mk(
+                trail(
+                    Constellation::Gps,
+                    5,
+                    [true, true, true],
+                    Azimuth(40.0),
+                    Azimuth(70.0),
+                    Elevation(62.0),
+                ),
+                trail(
                     Constellation::Gps,
                     12,
                     [true, false, true],
-                    120.0,
-                    150.0,
-                    40.0,
+                    Azimuth(120.0),
+                    Azimuth(150.0),
+                    Elevation(40.0),
                 ),
-                mk(
+                trail(
                     Constellation::Galileo,
                     3,
                     [false, false, false],
-                    200.0,
-                    230.0,
-                    30.0,
+                    Azimuth(200.0),
+                    Azimuth(230.0),
+                    Elevation(30.0),
                 ),
             ],
             epochs: vec![epoch(0), epoch(1), epoch(2)],
-            time_range: Some(gt_types::GpsTimeRange::new(at(0), at(2))),
+            time_range: Some(GpsTimeRange::new(test_util::at(0), test_util::at(2))),
             // A slip on the never-in-fix Galileo-3: hidden along with its trail
             // when not-in-fix is off, so no orphan mark is left behind.
-            slips: vec![SlipMark {
-                constellation: Constellation::Galileo,
-                prn: gt_types::satellites::Prn::new(3),
-                azimuth: 215.0,
-                elevation: 30.0,
-                cause: gt_types::satellites::SlipCause::LostLock,
-            }],
+            slips: vec![slip_mark(
+                Constellation::Galileo,
+                3,
+                Azimuth(215.0),
+                Elevation(30.0),
+                SlipCause::LostLock,
+            )],
         }
     }
 
@@ -1362,18 +1414,14 @@ mod tests {
         #[case] name: &str,
         #[case] show_not_in_fix: bool,
     ) {
-        let trails = fix_state_trails();
-        let mut harness = TestHarness::builder()
-            .size(egui::vec2(320.0, 320.0))
-            .theme(true)
-            .ui(move |ui| {
-                SkyTrailsPlot::new(&trails, 300.0)
-                    .scrub(Some(at(1)))
-                    .show_not_in_fix(show_not_in_fix)
-                    .ui(ui);
-            });
-        harness.run();
-        harness.snapshot_loose(name);
+        TrailsPlotScene {
+            trails: fix_state_trails(),
+            scrub: Some(test_util::at(1)),
+            show_not_in_fix,
+            ..TrailsPlotScene::default()
+        }
+        .render()
+        .snapshot_loose(name);
     }
 
     /// Snapshot: with the trails hidden, only the current-instant markers
@@ -1381,19 +1429,14 @@ mod tests {
     /// whole-track polylines behind them.
     #[test]
     fn sky_trails_trails_hidden_leaves_only_markers() {
-        let trails = demo_trails();
-        let mut harness = TestHarness::builder()
-            .size(egui::vec2(320.0, 320.0))
-            .theme(true)
-            .ui(move |ui| {
-                SkyTrailsPlot::new(&trails, 300.0)
-                    .scrub(Some(at(4)))
-                    .show_trails(false)
-                    .with_elevation_mask_deg(10.0)
-                    .ui(ui);
-            });
-        harness.run();
-        harness.snapshot("sky_trails_trails_hidden");
+        TrailsPlotScene {
+            scrub: Some(test_util::at(4)),
+            show_trails: false,
+            elevation_mask_deg: Some(10.0),
+            ..TrailsPlotScene::default()
+        }
+        .render()
+        .snapshot("sky_trails_trails_hidden");
     }
 
     /// Snapshot: "in fix only" trims each trail to its in-fix stretches and
@@ -1406,18 +1449,14 @@ mod tests {
     /// instant.
     #[test]
     fn sky_trails_in_fix_now_keeps_only_the_current_fix() {
-        let trails = fix_state_trails();
-        let mut harness = TestHarness::builder()
-            .size(egui::vec2(320.0, 320.0))
-            .theme(true)
-            .ui(move |ui| {
-                SkyTrailsPlot::new(&trails, 300.0)
-                    .scrub(Some(at(1)))
-                    .in_fix_now(true)
-                    .ui(ui);
-            });
-        harness.run();
-        harness.snapshot("sky_trails_in_fix_now");
+        TrailsPlotScene {
+            trails: fix_state_trails(),
+            scrub: Some(test_util::at(1)),
+            in_fix_now: true,
+            ..TrailsPlotScene::default()
+        }
+        .render()
+        .snapshot("sky_trails_in_fix_now");
     }
 
     /// The trail polylines and the round markers, counted for a single frame at
@@ -1425,17 +1464,15 @@ mod tests {
     /// Trails draw as connected polylines (`egui::Shape::Path`), markers as
     /// circles.
     fn trail_path_and_marker_shapes(in_fix_now: bool) -> (usize, usize) {
-        let trails = fix_state_trails();
-        let mut harness = TestHarness::builder()
-            .size(egui::vec2(320.0, 320.0))
-            .ui(move |ui| {
-                SkyTrailsPlot::new(&trails, 300.0)
-                    .scrub(Some(at(1)))
-                    .in_fix_now(in_fix_now)
-                    .ui(ui);
-            });
-        harness.run();
-        let shapes = &harness.inner.output().shapes;
+        let shapes = TrailsPlotScene {
+            trails: fix_state_trails(),
+            dark_mode: None,
+            scrub: Some(test_util::at(1)),
+            in_fix_now,
+            ..TrailsPlotScene::default()
+        }
+        .render()
+        .shapes();
         let paths = shapes
             .iter()
             .filter(|s| matches!(s.shape, egui::Shape::Path(_)))
@@ -1475,26 +1512,22 @@ mod tests {
     /// a satellite never in the fix draws nothing at all.
     #[test]
     fn in_fix_only_trims_the_trail_to_its_in_fix_stretches() {
-        let frame = test_frame();
-        let sample = |secs: i64, elevation: f32, in_fix: bool| TrailSample {
-            time: at(secs),
-            epoch: EpochIdx::new(secs.unsigned_abs() as usize),
-            point_index: PointIdx::new(0),
-            azimuth: 90.0,
-            elevation,
-            snr: None,
-            in_fix,
+        let frame = frame_of_180_px();
+        let sample = |secs: i64, elevation: Elevation, in_fix: bool| {
+            trail_sample_at(
+                secs,
+                EpochIdx::new(secs.unsigned_abs() as usize),
+                Azimuth(90.0),
+                elevation,
+                in_fix,
+            )
         };
-        let trail = SkyTrail {
-            constellation: Constellation::Gps,
-            prn: gt_types::satellites::Prn::new(5),
-            samples: vec![
-                sample(0, 20.0, true),
-                sample(1, 40.0, true),
-                sample(2, 60.0, false),
-                sample(3, 30.0, true),
-            ],
-        };
+        let trail = trail_of(&[
+            sample(0, Elevation(20.0), true),
+            sample(1, Elevation(40.0), true),
+            sample(2, Elevation(60.0), false),
+            sample(3, Elevation(30.0), true),
+        ]);
 
         // Untrimmed: one run through all four samples.
         let full = super::trail_runs(&trail, frame, false);
@@ -1512,10 +1545,10 @@ mod tests {
         assert_eq!(trimmed[0].len(), 2);
 
         // Never in the fix: nothing to draw once trimmed.
-        let never = SkyTrail {
-            samples: vec![sample(0, 20.0, false), sample(1, 40.0, false)],
-            ..trail
-        };
+        let never = trail_of(&[
+            sample(0, Elevation(20.0), false),
+            sample(1, Elevation(40.0), false),
+        ]);
         assert!(super::trail_runs(&never, frame, true).is_empty());
     }
 
@@ -1533,10 +1566,10 @@ mod tests {
         let run: Vec<super::TrailVertex> = (0..=10)
             .map(|i| super::TrailVertex {
                 pos: egui::pos2(i as f32 * 10.0, 0.0),
-                time: at(i * 30),
+                time: test_util::at(i * 30),
             })
             .collect();
-        let stretches = super::fade_stretches(&run, Some(at(300)));
+        let stretches = super::fade_stretches(&run, Some(test_util::at(300)));
 
         assert!(stretches.len() > 1, "the fade must change along the run");
         for (points, _) in &stretches {
@@ -1575,52 +1608,43 @@ mod tests {
     /// direction of travel.
     #[test]
     fn trail_fade_makes_a_tail_behind_the_satellite() {
-        use crate::style::{TRAIL_FADE_STEPS, TRAIL_MAX_ALPHA, TRAIL_MIN_ALPHA};
-
         let approx = |a: f32, b: f32| (a - b).abs() < 1e-6;
-        let scrub = Some(at(600));
+        let scrub = Some(test_util::at(600));
         // At the satellite: full strength - the head of the tail.
-        assert!(approx(super::trail_fade(at(600), scrub), 1.0));
+        assert!(approx(super::trail_fade(test_util::at(600), scrub), 1.0));
         // Behind it, the tail fades with distance travelled but stays lit.
-        let just_behind = super::trail_fade(at(540), scrub);
-        let further_behind = super::trail_fade(at(420), scrub);
+        let just_behind = super::trail_fade(test_util::at(540), scrub);
+        let further_behind = super::trail_fade(test_util::at(420), scrub);
         assert!(just_behind < 1.0 && just_behind > 0.0);
         assert!(
             further_behind < just_behind,
             "the tail must keep fading the further back it goes"
         );
         // Ahead of it - not travelled yet - is flat floor, however near.
-        assert!(approx(super::trail_fade(at(660), scrub), 0.0));
-        assert!(approx(super::trail_fade(at(601), scrub), 0.0));
+        assert!(approx(super::trail_fade(test_util::at(660), scrub), 0.0));
+        assert!(approx(super::trail_fade(test_util::at(601), scrub), 0.0));
         assert!(
-            super::trail_fade(at(599), scrub) > super::trail_fade(at(601), scrub),
+            super::trail_fade(test_util::at(599), scrub)
+                > super::trail_fade(test_util::at(601), scrub),
             "the emphasis must sit behind the satellite, not ahead of it"
         );
         // A full tail behind (ten minutes), and beyond: the floor.
-        assert!(approx(super::trail_fade(at(0), scrub), 0.0));
-        assert!(approx(super::trail_fade(at(-120), scrub), 0.0));
+        assert!(approx(super::trail_fade(test_util::at(0), scrub), 0.0));
+        assert!(approx(super::trail_fade(test_util::at(-120), scrub), 0.0));
         // No scrub: full strength everywhere.
-        assert!(approx(super::trail_fade(at(0), None), 1.0));
-
-        // Quantized: the head sits at the top step, a full tail back at the
-        // floor step, and the step alphas span the range.
-        assert_eq!(super::fade_step(at(600), scrub), TRAIL_FADE_STEPS as i32);
-        assert_eq!(super::fade_step(at(0), scrub), 0);
-        assert!(approx(super::fade_step_alpha(0), TRAIL_MIN_ALPHA));
-        assert!(approx(
-            super::fade_step_alpha(TRAIL_FADE_STEPS as i32),
-            TRAIL_MAX_ALPHA
-        ));
+        assert!(approx(super::trail_fade(test_util::at(0), None), 1.0));
     }
 
     #[test]
     fn fade_step_over_the_whole_tail_stays_in_range_and_within_one_level_of_the_exact_formula() {
         use crate::style::{TRAIL_FADE_STEPS, TRAIL_TAIL_SECS};
 
-        let scrub = Some(at(0));
+        let scrub = Some(test_util::at(0));
         let steps = 0..=TRAIL_FADE_STEPS as i32;
         for millis_behind in 0..=(TRAIL_TAIL_SECS as i64) * 1000 {
-            let time = GpsTime::from_utc(start() - Duration::milliseconds(millis_behind));
+            let time = GpsTime::from_utc(
+                test_util::start() - chrono::Duration::milliseconds(millis_behind),
+            );
             let step = super::fade_step(time, scrub);
 
             let secs_behind = millis_behind as f32 / 1000.0;
@@ -1636,6 +1660,16 @@ mod tests {
                 "{millis_behind}ms behind: step {step} outside {steps:?}"
             );
         }
+        // The quantized ends: the head sits at the top step and a full tail
+        // back at the floor step.
+        assert_eq!(
+            super::fade_step(test_util::at(0), scrub),
+            TRAIL_FADE_STEPS as i32
+        );
+        assert_eq!(
+            super::fade_step(test_util::at(-(TRAIL_TAIL_SECS as i64)), scrub),
+            0
+        );
     }
 
     /// The opacity multiplier scales the whole trail, but the stroke alpha
@@ -1689,10 +1723,10 @@ mod tests {
         let run: Vec<super::TrailVertex> = (0..5)
             .map(|i| super::TrailVertex {
                 pos: egui::pos2(i as f32 * 10.0, 0.0),
-                time: at(i * 60),
+                time: test_util::at(i * 60),
             })
             .collect();
-        let head = at(120);
+        let head = test_util::at(120);
         let stretches = super::fade_stretches(&run, Some(head));
 
         // The brightest stretch must end at the head, not start from it.
@@ -1719,31 +1753,25 @@ mod tests {
     /// and where satellites cluster.
     #[test]
     fn sky_trails_heatmap_glows_under_the_fix_satellites() {
-        let trails = demo_trails();
-        let mut harness = TestHarness::builder()
-            .size(egui::vec2(320.0, 320.0))
-            .theme(true)
-            .ui(move |ui| {
-                SkyTrailsPlot::new(&trails, 300.0)
-                    .scrub(Some(at(4)))
-                    .show_heatmap(true)
-                    .with_elevation_mask_deg(10.0)
-                    .ui(ui);
-            });
-        harness.run();
-        harness.snapshot_loose("sky_trails_heatmap");
+        TrailsPlotScene {
+            scrub: Some(test_util::at(4)),
+            show_heatmap: true,
+            elevation_mask_deg: Some(10.0),
+            ..TrailsPlotScene::default()
+        }
+        .render()
+        .snapshot_loose("sky_trails_heatmap");
     }
 
     #[test]
     fn slip_label_names_the_satellite_and_cause() {
-        use gt_types::satellites::{Prn, SlipCause};
-        let slip = SlipMark {
-            constellation: Constellation::Gps,
-            prn: Prn::new(5),
-            azimuth: 70.0,
-            elevation: 64.0,
-            cause: SlipCause::LostLock,
-        };
+        let slip = slip_mark(
+            Constellation::Gps,
+            5,
+            Azimuth(70.0),
+            Elevation(64.0),
+            SlipCause::LostLock,
+        );
         assert_eq!(super::slip_label(&slip), "G05 GPS - lost lock");
     }
 
@@ -1759,19 +1787,18 @@ mod tests {
         #[case] shown: ConstellationSet,
         #[case] expected: bool,
     ) {
-        use gt_types::satellites::{Prn, SlipCause};
         let frame = super::Frame {
             center: egui::pos2(100.0, 100.0),
             radius: 1.0,
         };
         // Placed on the east rim: unit-disc (1, 0) -> center + (1, 0).
-        let slips = [SlipMark {
-            constellation: Constellation::Gps,
-            prn: Prn::new(5),
-            azimuth: 90.0,
-            elevation: 0.0,
-            cause: SlipCause::LostLock,
-        }];
+        let slips = [slip_mark(
+            Constellation::Gps,
+            5,
+            Azimuth(90.0),
+            Elevation(0.0),
+            SlipCause::LostLock,
+        )];
         let hit = super::nearest_slip(&slips, frame, pointer, |slip| {
             shown.contains(slip.constellation)
         })

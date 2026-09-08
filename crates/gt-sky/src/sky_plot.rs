@@ -333,55 +333,73 @@ fn paint_marks(
 }
 
 #[cfg(test)]
-mod snapshot_tests {
+mod tests {
     use rstest::rstest;
 
     use gt_test_utils::TestHarness;
     use gt_types::satellites::{Constellation, NO_DATA_SENTINEL_DB_HZ, Satellite, Satellites};
 
     use super::{SkyHighlight, SkyPlot, SkyPlotSize};
+    use crate::test_util::{self, Azimuth, Elevation};
+
+    /// One satellite of the report below, at a sky position both angles of
+    /// which the receiver reported.
+    fn sat(
+        constellation: Constellation,
+        prn: u32,
+        azimuth_deg: f32,
+        elevation_deg: f32,
+        snr_db: Option<f32>,
+        in_fix: bool,
+    ) -> Satellite {
+        test_util::satellite(
+            constellation,
+            prn,
+            Some(Azimuth(azimuth_deg)),
+            Some(Elevation(elevation_deg)),
+            snr_db,
+            in_fix,
+        )
+    }
 
     /// Several constellations, tracked-only satellites, the full
     /// signal-quality spread, a satellite whose receiver reported the no-data
     /// SNR value, and two unplaceable satellites.
     fn mixed_report() -> Satellites {
-        let sat = |constellation, prn, elevation: f32, azimuth: f32, snr, in_fix| {
-            Satellite::new(
-                constellation,
-                prn,
-                Some(elevation),
-                Some(azimuth),
-                snr,
-                in_fix,
-            )
-        };
         Satellites::new(
             None,
             None,
             vec![
-                sat(Constellation::Gps, 5, 62.0, 45.0, Some(44.0), true),
-                sat(Constellation::Gps, 12, 35.0, 110.0, Some(38.0), true),
-                sat(Constellation::Gps, 18, 71.0, 200.0, Some(47.0), true),
-                sat(Constellation::Gps, 23, 18.0, 305.0, Some(31.0), true),
-                sat(Constellation::Gps, 29, 12.0, 155.0, Some(24.0), false),
-                sat(Constellation::Gps, 2, 8.0, 250.0, None, false),
-                sat(Constellation::Galileo, 3, 55.0, 80.0, Some(42.0), true),
-                sat(Constellation::Galileo, 15, 40.0, 340.0, Some(39.0), true),
-                sat(Constellation::Galileo, 27, 25.0, 220.0, Some(33.0), true),
-                sat(Constellation::Glonass, 9, 48.0, 130.0, Some(40.0), true),
-                sat(Constellation::Glonass, 22, 30.0, 20.0, Some(35.0), false),
+                sat(Constellation::Gps, 5, 45.0, 62.0, Some(44.0), true),
+                sat(Constellation::Gps, 12, 110.0, 35.0, Some(38.0), true),
+                sat(Constellation::Gps, 18, 200.0, 71.0, Some(47.0), true),
+                sat(Constellation::Gps, 23, 305.0, 18.0, Some(31.0), true),
+                sat(Constellation::Gps, 29, 155.0, 12.0, Some(24.0), false),
+                sat(Constellation::Gps, 2, 250.0, 8.0, None, false),
+                sat(Constellation::Galileo, 3, 80.0, 55.0, Some(42.0), true),
+                sat(Constellation::Galileo, 15, 340.0, 40.0, Some(39.0), true),
+                sat(Constellation::Galileo, 27, 220.0, 25.0, Some(33.0), true),
+                sat(Constellation::Glonass, 9, 130.0, 48.0, Some(40.0), true),
+                sat(Constellation::Glonass, 22, 20.0, 30.0, Some(35.0), false),
                 sat(
                     Constellation::Glonass,
                     14,
-                    45.0,
                     240.0,
+                    45.0,
                     Some(NO_DATA_SENTINEL_DB_HZ),
                     true,
                 ),
-                sat(Constellation::Beidou, 14, 65.0, 275.0, Some(41.0), true),
-                sat(Constellation::Beidou, 31, 20.0, 185.0, Some(28.0), false),
-                Satellite::new(Constellation::Qzss, 1, Some(50.0), None, Some(36.0), false),
-                Satellite::new(Constellation::Navic, 4, None, None, None, false),
+                sat(Constellation::Beidou, 14, 275.0, 65.0, Some(41.0), true),
+                sat(Constellation::Beidou, 31, 185.0, 20.0, Some(28.0), false),
+                test_util::satellite(
+                    Constellation::Qzss,
+                    1,
+                    None,
+                    Some(Elevation(50.0)),
+                    Some(36.0),
+                    false,
+                ),
+                test_util::satellite(Constellation::Navic, 4, None, None, None, false),
             ],
         )
     }
@@ -467,16 +485,9 @@ mod snapshot_tests {
 
     #[test]
     fn highlight_matches_the_right_satellites() {
-        let gps_fix = Satellite::new(Constellation::Gps, 5, Some(45.0), Some(90.0), None, true);
-        let gps_idle = Satellite::new(Constellation::Gps, 9, Some(45.0), Some(90.0), None, false);
-        let gal_fix = Satellite::new(
-            Constellation::Galileo,
-            3,
-            Some(45.0),
-            Some(90.0),
-            None,
-            true,
-        );
+        let gps_fix = sat(Constellation::Gps, 5, 90.0, 45.0, None, true);
+        let gps_idle = sat(Constellation::Gps, 9, 90.0, 45.0, None, false);
+        let gal_fix = sat(Constellation::Galileo, 3, 90.0, 45.0, None, true);
 
         let one = SkyHighlight::satellite(Constellation::Gps, gps_fix.prn());
         assert!(one.matches(&gps_fix));
@@ -555,10 +566,15 @@ mod snapshot_tests {
         #[case] pointer: egui::Pos2,
         #[case] expected_prn: Option<u32>,
     ) {
-        let sat = |prn| Satellite::new(Constellation::Gps, prn, Some(45.0), Some(90.0), None, true);
         let marks = vec![
-            (sat(5), egui::pos2(100.0, 100.0)),
-            (sat(12), egui::pos2(112.0, 100.0)),
+            (
+                sat(Constellation::Gps, 5, 90.0, 45.0, None, true),
+                egui::pos2(100.0, 100.0),
+            ),
+            (
+                sat(Constellation::Gps, 12, 90.0, 45.0, None, true),
+                egui::pos2(112.0, 100.0),
+            ),
         ];
         let nearest = super::nearest_mark(&marks, pointer).map(|s| s.prn().value());
         assert_eq!(nearest, expected_prn);

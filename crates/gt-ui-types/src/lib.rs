@@ -13,14 +13,14 @@ pub mod metric_chip_hover;
 pub mod point_window;
 pub mod query_matches;
 pub mod reference;
-#[cfg(test)]
-mod scope_fixture;
 pub mod sky_glyphs;
 pub mod sky_trails_request;
 pub mod snap_error_series;
 pub mod snapped_tracks;
 pub mod space_weather_warning;
 pub mod tec_series;
+#[cfg(test)]
+mod test_util;
 pub mod visibility;
 
 pub use arc_identity::ArcIdentity;

@@ -2,16 +2,15 @@
 //! channels while the Channels section is open, and the solar flare markers
 //! while a flare is archived over the span the plot shows.
 
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, Utc};
 use egui_phosphor::regular::EYE as ICON_EYE;
 use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
-use gt_flare::{MarkedFlare, SolarFlare};
+use gt_flare::MarkedFlare;
 use gt_plot::PlotState;
 use gt_test_utils::Queryable as _;
-use gt_types::{Channel, FileSource, LoadedFile, MetricKind, NavPoint, TimeRange};
+use gt_types::{LoadedFile, MetricKind};
 use rstest::rstest;
-use rustc_hash::FxHashMap;
-use support::{DrawnPlot, PlotSources, at_second};
+use support::{DrawnPlot, PlotSources};
 
 mod support;
 
@@ -24,53 +23,21 @@ const CHANNEL_NAME: &str = "Incline";
 /// A channel of a recording this test never loads.
 const UNLOADED_CHANNEL_NAME: &str = "Brake pressure";
 
+/// Where the archived flare peaks, in seconds from the first fix: inside the
+/// recording, so the flare chip enables.
+const FLARE_PEAK_SECS: i64 = 30;
+
 /// A recording of one track at 1 Hz carrying a scalar channel sampled at the
 /// same rate.
 fn recording_with_a_channel() -> LoadedFile {
-    let points: Vec<NavPoint> =
-        gt_test_utils::fixtures::nav_points_from(at_second(0), FIX_COUNT, 1);
-    let times: Vec<DateTime<Utc>> = (0..FIX_COUNT as i64).map(at_second).collect();
-    let mut track = gt_test_utils::loaded_track_with_points(points);
-    track.metadata.time_range = TimeRange::new(at_second(0), at_second(FIX_COUNT as i64 - 1));
-    track.metadata.duration = TimeDelta::seconds(FIX_COUNT as i64 - 1);
-    track.channels = vec![Channel {
-        name: CHANNEL_NAME.to_owned(),
-        unit: None,
-        period: None,
-        description: None,
-        components: Vec::new(),
-        values: vec![1.0; times.len()],
-        times,
-    }];
-    LoadedFile {
-        metadata: gt_test_utils::empty_file_metadata(),
-        tracks: vec![track],
-        event_marker_styles: FxHashMap::default(),
-        orphaned_event_markers: Vec::new(),
-        source: FileSource::GtdBytes([].into()),
-        load_warnings: Vec::new(),
-    }
-}
-
-/// One flare peaking during the recording, which enables the flare chip.
-#[expect(
-    clippy::expect_used,
-    reason = "the fixture helpers beside the tests are not covered by clippy's in-test relaxations"
-)]
-fn archived_flare() -> MarkedFlare {
-    let peak = at_second(30);
-    MarkedFlare {
-        flare: SolarFlare {
-            id: format!("{peak}-FLR-001"),
-            begin: peak - TimeDelta::minutes(28),
-            peak,
-            end: Some(peak + TimeDelta::minutes(23)),
-            classification: "X2.2".parse().expect("a published class"),
-            source_location: None,
-            active_region: None,
-        },
-        receiver_side: None,
-    }
+    let times: Vec<DateTime<Utc>> = (0..FIX_COUNT as i64).map(support::at_second).collect();
+    let channel = gt_test_utils::fixtures::scalar_channel(
+        CHANNEL_NAME,
+        None,
+        times.clone(),
+        vec![1.0; times.len()],
+    );
+    support::recording(support::fixes(FIX_COUNT, 1), vec![channel])
 }
 
 /// What the plot draws the recording under: whether the Channels section is
@@ -86,7 +53,7 @@ impl PlotScene {
     fn with_channels_and_a_flare() -> Self {
         Self {
             show_channels: true,
-            solar_flares: vec![archived_flare()],
+            solar_flares: vec![support::flare_peaking_at(FLARE_PEAK_SECS)],
         }
     }
 
@@ -194,7 +161,7 @@ enum HiddenSeries {
 fn hiding_all_leaves_the_channels_of_a_collapsed_section_visible() {
     let mut plot = PlotScene {
         show_channels: false,
-        solar_flares: vec![archived_flare()],
+        solar_flares: vec![support::flare_peaking_at(FLARE_PEAK_SECS)],
     }
     .draw();
 
