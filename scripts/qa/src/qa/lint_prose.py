@@ -22,9 +22,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from qa._check import (
+    Commit,
+    added_lines_since,
     c_family_files,
+    commits_in,
+    git_output,
     just_and_cmake_files,
     markdown_files,
+    merge_base_with_head,
     python_files,
     repo_root,
     rs_files,
@@ -104,12 +109,6 @@ def _run_vale(engine: Engine, root: Path, args: Sequence[str], stdin: str | None
         sys.stderr.write(result.stderr)
         raise SystemExit(f"error: vale exited {result.returncode}")
     return result.stdout
-
-
-def _git(root: Path, args: Sequence[str]) -> str:
-    return subprocess.run(
-        ["git", *args], cwd=root, capture_output=True, text=True, check=True
-    ).stdout
 
 
 @dataclass(frozen=True)
@@ -231,88 +230,14 @@ def _lint_comments(engine: Engine, root: Path, path: str) -> list[Alert]:
     return parse_alerts(output, where=path)
 
 
-# Per commit: short hash, tab, the whole message, NUL.
-_COMMIT_RECORD_FORMAT = "%h%x09%B%x00"
-
-
-@dataclass(frozen=True)
-class Commit:
-    """One commit of the range, by its short hash and its whole message."""
-
-    hash: str
-    message: str
-
-    @property
-    def subject(self) -> str:
-        return self.message.partition("\n")[0]
-
-    def message_to_lint(self) -> str:
-        """The part of this commit's message that lands on the branch.
-
-        Under an `amend!` subject, linting starts at the replacement subject line:
-        `git rebase --autosquash` writes that message over the target's, and
-        `GeoTrace.CommitSubject` matches only at the start of the text vale reads.
-        Under a `squash!` subject, the generated line goes blank and the appended
-        body keeps the line numbers it has in this commit.
-        """
-        if self.subject.startswith("amend! "):
-            return self.message.partition("\n\n")[2]
-        if self.subject.startswith("squash! "):
-            _, newline, body = self.message.partition("\n")
-            return newline + body
-        return self.message
-
-
-def commits_in(root: Path, revision_range: str) -> list[Commit]:
-    """The commits of `revision_range`, without the merges and the `fixup!` commits:
-    `git rebase --autosquash` discards a `fixup!` message whole and no line of it
-    lands on the branch."""
-    output = _git(
-        root,
-        ["log", "--no-merges", f"--format={_COMMIT_RECORD_FORMAT}", revision_range],
-    )
-    found = []
-    # The filter reads the subject here: `git log --grep` matches a body line too,
-    # and a body may quote a `fixup!` subject.
-    for record in output.split("\0"):
-        short_hash, tab, message = record.lstrip("\n").partition("\t")
-        if tab and not message.startswith("fixup! "):
-            found.append(Commit(short_hash, message))
-    return found
-
-
 def _lint_commit(engine: Engine, root: Path, commit: Commit) -> list[Alert]:
-    message = commit.message_to_lint()
+    message = commit.message_to_land()
     if not message.strip():
         return []
     output = _run_vale(
         engine, root, ["--no-exit", "--output=JSON", "--ext=.commit"], stdin=message
     )
     return parse_alerts(output, where=commit.hash, commit=True)
-
-
-_DIFF_FILE = re.compile(r"^\+\+\+ b/(.*)$")
-_DIFF_HUNK = re.compile(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@")
-
-
-def added_lines(diff: str) -> dict[str, set[int]]:
-    """The line numbers each file gains, read from a `git diff -U0` text. A hunk
-    without a count adds one line, and a hunk of count zero adds none."""
-    added: dict[str, set[int]] = {}
-    current = None
-    for line in diff.splitlines():
-        header = _DIFF_FILE.match(line)
-        if header is not None:
-            current = header.group(1)
-            continue
-        hunk = _DIFF_HUNK.match(line)
-        if hunk is None or current is None:
-            continue
-        start = int(hunk.group(1))
-        count = 1 if hunk.group(2) is None else int(hunk.group(2))
-        if count:
-            added.setdefault(current, set()).update(range(start, start + count))
-    return added
 
 
 def _plural(count: int, noun: str) -> str:
@@ -370,33 +295,9 @@ class Run:
         )
 
 
-def _untracked_added(root: Path) -> dict[str, set[int]]:
-    """Every line of every untracked file: a change adds an untracked file in full."""
-    listed = _git(root, ["ls-files", "--others", "--exclude-standard", "-z"])
-    added = {}
-    for path in listed.split("\0"):
-        if not path:
-            continue
-        count = len((root / path).read_bytes().splitlines())
-        if count:
-            added[path] = set(range(1, count + 1))
-    return added
-
-
-def _merge_base_with_head(root: Path, base: str) -> str:
-    resolved = subprocess.run(
-        ["git", "rev-parse", "--verify", "--quiet", base], cwd=root, capture_output=True
-    )
-    if resolved.returncode != 0:
-        raise SystemExit(f"error: base ref {base} does not resolve: fetch it, or pass another base")
-    return _git(root, ["merge-base", base, "HEAD"]).strip()
-
-
 def _collect_run(engine: Engine, root: Path, base: str) -> Run:
-    merge_base = _merge_base_with_head(root, base)
-    diff = _git(root, ["diff", "-U0", "--no-color", "--diff-filter=AM", merge_base])
-    added = added_lines(diff)
-    added.update(_untracked_added(root))
+    merge_base = merge_base_with_head(root, base)
+    added = added_lines_since(root, merge_base)
 
     linted = docs_files(root) + source_files(root)
     prose = [path for path in linted if path in added]
@@ -445,7 +346,8 @@ def _print_detail(engine: Engine, root: Path, run: Run) -> None:
         "vale: range",
         [
             f"base ref: {run.base}",
-            "merge base: " + _git(root, ["log", "-1", "--format=%h %s", run.merge_base]).strip(),
+            "merge base: "
+            + git_output(root, ["log", "-1", "--format=%h %s", run.merge_base]).strip(),
         ],
     )
     _print_group(
