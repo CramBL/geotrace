@@ -496,9 +496,12 @@ mod tests {
     fn track(points: &[(f64, f64, Option<Satellites>)]) -> gt_types::LoadedTrack {
         let points = points
             .iter()
-            .map(|&(east_m, north_m, ref report)| {
+            .map(|(east_m, north_m, report)| {
                 gt_test_utils::fixtures::nav_point_at_meters(
-                    MetricOffset { east_m, north_m },
+                    MetricOffset {
+                        east_m: *east_m,
+                        north_m: *north_m,
+                    },
                     report.clone(),
                 )
             })

@@ -25,3 +25,27 @@ disallowed-types = [
     { path = "std::sync::Mutex", reason = "Use parking_lot instead" },
     { path = "std::sync::RwLock", reason = "Use parking_lot instead" },
 ]
+
+# https://rust-lang.github.io/rust-clippy/master/index.html#/arbitrary_source_item_ordering
+# This checks module items and enum variants. The `impl` and `trait` settings
+# report every item whose name is out of alphabetical order. That contradicts
+# the inherent `impl` order in CODE_STYLE.md, and CODE_STYLE.md fixes no order
+# for the fields of a struct.
+source-item-ordering = ["enum", "module"]
+# The groups CODE_STYLE.md orders: imports, then module declarations, then
+# everything a module defines, with `const` and `static` last. A type, an
+# `impl` and a function share one group: CODE_STYLE.md states no order between
+# them. A `macro_rules!` is in scope from its definition down, which fixes the
+# place of the macro group. The `mod tests` of a file stays last, where
+# CODE_STYLE.md puts it: clippy skips an item under `#[cfg(test)]` and does not
+# check its position.
+module-item-order-groupings = [
+    ["use", ["use"]],
+    ["modules", ["extern_crate", "mod", "foreign_mod"]],
+    ["macros", ["macro", "global_asm"]],
+    ["definitions", ["ty_alias", "enum", "struct", "union", "trait", "trait_alias", "impl", "fn"]],
+    ["constants", ["static", "const"]],
+]
+# Alphabetical order within a group contradicts the rule that an item depends
+# on the items below it, which puts the public API at the top of the file.
+module-items-ordered-within-groupings = "none"
