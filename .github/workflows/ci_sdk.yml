@@ -89,6 +89,7 @@ jobs:
   # Builds the C ABI library and the round-trip fixture once per platform. The C
   # and C++ jobs download that artifact.
   # Windows appears twice: the C SDK links under mingw, the C++ SDK under MSVC.
+  # Ubuntu appears twice: the sanitizer rows link an instrumented library.
   build-c-lib:
     name: Build geotrace-c / ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
@@ -103,6 +104,13 @@ jobs:
           - { os: macos-latest, label: macos, lib_dir: target/release, cache_key: sdk-c }
           - { os: windows-latest, label: windows-msvc, lib_dir: target/release, cache_key: sdk-c }
           - { os: windows-latest, label: windows-gnu, rust_target: x86_64-pc-windows-gnu, lib_dir: target/x86_64-pc-windows-gnu/release, cache_key: sdk-c-gnu }
+          # The address sanitizer resolves a fault inside the Rust library to a
+          # .rs file and line only when that library is instrumented too, which
+          # `-Zsanitizer=address` does. This row pins a nightly by date and
+          # states the host target explicitly. That flag is nightly-only and
+          # rejects an implied target, and the explicit target moves cargo's
+          # output under target/<triple>/release.
+          - { os: ubuntu-latest, label: ubuntu-asan, toolchain: nightly-2026-07-20, rustflags: "-Zsanitizer=address -Cdebuginfo=line-tables-only", rust_target: x86_64-unknown-linux-gnu, lib_dir: target/x86_64-unknown-linux-gnu/release, cache_key: sdk-c-asan }
 
     steps:
       - name: Checkout
@@ -110,10 +118,20 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust stable
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
         with:
-          toolchain: stable
+          toolchain: ${{ matrix.toolchain || 'stable' }}
+
+      # rust-toolchain.toml pins 1.98.1 and takes precedence over the toolchain
+      # the action installs. RUSTUP_TOOLCHAIN takes precedence over the file.
+      # This step comes first: the cache step keys on the selected compiler, and
+      # `rustup target add` adds the target to the selected toolchain.
+      - name: Select the row's toolchain
+        if: matrix.toolchain != ''
+        env:
+          MATRIX_TOOLCHAIN: ${{ matrix.toolchain }}
+        run: echo "RUSTUP_TOOLCHAIN=$MATRIX_TOOLCHAIN" >> "$GITHUB_ENV"
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -122,7 +140,6 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/trunk' }}
           cache-on-failure: true
 
-      # MinGW's gcc links the gnu target and is not on PATH by default.
       - name: Set Cargo build target
         if: matrix.rust_target != ''
         env:
@@ -130,7 +147,21 @@ jobs:
         run: |
           rustup target add "$RUST_TARGET"
           echo "CARGO_BUILD_TARGET=$RUST_TARGET" >> "$GITHUB_ENV"
-          echo 'C:\msys64\mingw64\bin' >> "$GITHUB_PATH"
+
+      # MinGW's gcc links the gnu target and is not on PATH by default.
+      - name: Put MinGW on PATH
+        if: matrix.rust_target == 'x86_64-pc-windows-gnu'
+        run: echo 'C:\msys64\mingw64\bin' >> "$GITHUB_PATH"
+
+      # Only a row with flags of its own sets RUSTFLAGS. Setting it everywhere
+      # would discard the per-target `rustflags` of .cargo/config.toml that the
+      # Windows rows link with. CARGO_BUILD_TARGET then keeps the flags off the
+      # build scripts and proc macros, which run on the host.
+      - name: Set RUSTFLAGS
+        if: matrix.rustflags != ''
+        env:
+          MATRIX_RUSTFLAGS: ${{ matrix.rustflags }}
+        run: echo "RUSTFLAGS=$MATRIX_RUSTFLAGS" >> "$GITHUB_ENV"
 
       - name: Build geotrace-c
         run: cargo build -p geotrace-c --release
@@ -361,11 +392,10 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, cc: llvm-20, label: llvm-20, lib: ubuntu }
-          # No thread-sanitizer row: the thread sanitizer reports races the
-          # program does not have, because cargo builds the Rust library without
-          # instrumentation and the sanitizer needs that library instrumented
-          # too.
-          - { os: ubuntu-latest, cc: llvm-20, label: llvm-20-asan, lib: ubuntu, sanitize: asan }
+          # This row links the library build-c-lib instruments for the address
+          # sanitizer. A thread-sanitizer row would need an instrumented library
+          # of its own, built with `-Zsanitizer=thread`.
+          - { os: ubuntu-latest, cc: llvm-20, label: llvm-20-asan, lib: ubuntu-asan, lib_dir: target/x86_64-unknown-linux-gnu/release, sanitize: asan }
           - { os: macos-latest, cc: appleclang, label: appleclang, lib: macos }
           - { os: macos-latest, cc: llvm-20, label: llvm-20, lib: macos }
           - { os: windows-latest, cc: mingw, label: mingw, lib: windows-gnu }
@@ -393,13 +423,16 @@ jobs:
         if: runner.os != 'Windows'
         env:
           SANITIZE: ${{ matrix.sanitize }}
+          LIB_DIR: ${{ github.workspace }}/${{ matrix.lib_dir || 'target/release' }}
         run: |
           extra=()
           [ "$RUNNER_OS" = "macOS" ] && extra+=("-DCMAKE_PREFIX_PATH=$(brew --prefix)")
-          [ -n "$SANITIZE" ] && extra+=("-DGEOTRACE_SANITIZE=$SANITIZE")
+          # The static link puts the instrumented Rust code in the test binary
+          # with its line tables, which cargo strips from the `cdylib`.
+          [ -n "$SANITIZE" ] && extra+=("-DGEOTRACE_SANITIZE=$SANITIZE" "-DGEOTRACE_C_STATIC=ON")
           cmake -S sdk/c -B build/c \
             -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-            -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release \
+            -DGEOTRACE_C_LIB_DIR="$LIB_DIR" \
             -DGEOTRACE_C_BUILD_TESTS=ON \
             -DGEOTRACE_C_BUILD_EXAMPLES=ON \
             "${extra[@]}"
@@ -447,7 +480,7 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, cxx_std: "17", cc: llvm-20, label: llvm-20, lib: ubuntu }
-          - { os: ubuntu-latest, cxx_std: "17", cc: llvm-20, label: llvm-20-asan, lib: ubuntu, sanitize: asan }
+          - { os: ubuntu-latest, cxx_std: "17", cc: llvm-20, label: llvm-20-asan, lib: ubuntu-asan, lib_dir: target/x86_64-unknown-linux-gnu/release, sanitize: asan }
           - { os: ubuntu-latest, cxx_std: "20", cc: llvm-20, label: llvm-20, lib: ubuntu }
           - { os: macos-latest, cxx_std: "17", cc: appleclang, label: appleclang, lib: macos }
           - { os: macos-latest, cxx_std: "20", cc: appleclang, label: appleclang, lib: macos }
@@ -477,11 +510,20 @@ jobs:
 
       - name: Install C SDK to local prefix (Unix)
         if: runner.os != 'Windows'
+        env:
+          SANITIZE: ${{ matrix.sanitize }}
+          LIB_DIR: ${{ github.workspace }}/${{ matrix.lib_dir || 'target/release' }}
         run: |
+          extra=()
+          # The C++ tests link the static library for the same reason as the
+          # c-sdk sanitizer row. The installed GeoTraceCConfig.cmake
+          # reconstructs the imported target from GEOTRACE_C_STATIC.
+          [ -n "$SANITIZE" ] && extra+=("-DGEOTRACE_C_STATIC=ON")
           cmake -S sdk/c -B build/c \
             -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-            -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release \
-            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
+            -DGEOTRACE_C_LIB_DIR="$LIB_DIR" \
+            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install \
+            "${extra[@]}"
           cmake --install build/c
 
       - name: Install C SDK to local prefix (Windows)

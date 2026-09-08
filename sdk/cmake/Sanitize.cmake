@@ -1,5 +1,7 @@
-# cargo builds `GeoTrace::C` outside these projects, so these options never
-# reach it.
+# These options reach the C and C++ sources alone. cargo builds `GeoTrace::C`
+# outside these projects: the ubuntu-asan row of `.github/workflows/ci_sdk.yml`
+# builds it with `-Zsanitizer=address` and links it statically, which is what
+# lets the address sanitizer name the Rust frames of a fault inside it.
 
 set(GEOTRACE_SANITIZE "" CACHE STRING
     "Sanitizer for the tests and examples: asan (address + undefined), or empty")
