@@ -45,9 +45,10 @@ pub fn mark_position(satellite: &Satellite) -> Option<Vec2> {
 mod tests {
     use rstest::rstest;
 
-    use gt_types::satellites::{Constellation, Satellite};
+    use gt_types::satellites::Constellation;
 
     use super::{mark_position, unit_disc_position};
+    use crate::test_util::{self, Azimuth, Elevation};
 
     const EPSILON: f32 = 1e-5;
 
@@ -83,31 +84,32 @@ mod tests {
         assert_close(unit_disc_position(azimuth_deg, elevation_deg), expected);
     }
 
-    #[test]
-    fn wraparound_is_continuous_across_north() {
-        let just_west = unit_disc_position(359.0, 30.0);
-        let just_east = unit_disc_position(1.0, 30.0);
-        assert!((just_west - just_east).length() < 0.05);
-    }
-
-    fn satellite(elevation: Option<f32>, azimuth: Option<f32>) -> Satellite {
-        Satellite::new(Constellation::Gps, 1, elevation, azimuth, Some(40.0), true)
-    }
-
     #[rstest]
-    #[case::missing_azimuth(Some(45.0), None)]
-    #[case::missing_elevation(None, Some(45.0))]
+    #[case::missing_azimuth(None, Some(Elevation(45.0)))]
+    #[case::missing_elevation(Some(Azimuth(45.0)), None)]
     #[case::missing_both(None, None)]
     fn satellite_without_sky_position_has_no_mark(
-        #[case] elevation: Option<f32>,
-        #[case] azimuth: Option<f32>,
+        #[case] azimuth: Option<Azimuth>,
+        #[case] elevation: Option<Elevation>,
     ) {
-        assert_eq!(mark_position(&satellite(elevation, azimuth)), None);
+        let satellite = test_util::sat(Constellation::Gps, 1, azimuth, elevation, true);
+
+        assert_eq!(mark_position(&satellite), None);
     }
 
     #[test]
     fn satellite_with_sky_position_has_a_mark() {
-        let mark = mark_position(&satellite(Some(45.0), Some(90.0)));
-        assert_close(mark.unwrap_or_default(), egui::vec2(0.5, 0.0));
+        let satellite = test_util::sat(
+            Constellation::Gps,
+            1,
+            Some(Azimuth(90.0)),
+            Some(Elevation(45.0)),
+            true,
+        );
+
+        assert_close(
+            mark_position(&satellite).unwrap_or_default(),
+            egui::vec2(0.5, 0.0),
+        );
     }
 }

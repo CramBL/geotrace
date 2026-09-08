@@ -486,26 +486,6 @@ mod tests {
         assert!(group_into_marks(&[], one_pixel_per_second).is_empty());
     }
 
-    #[test]
-    fn the_hover_reports_one_step_as_both_its_timestamps() {
-        let steps = [channel_step(
-            "accel",
-            step(StepSpec {
-                offset: TimeDelta::zero(),
-                back: TimeDelta::seconds(4),
-            }),
-        )];
-
-        let hover = BackwardTimeStepHover::new(Some("ride.gtd"), &steps);
-
-        assert_eq!(hover.track.as_deref(), Some("ride.gtd"));
-        assert_eq!(hover.step_count, 1);
-        assert_eq!(
-            hover.channels,
-            ["accel - 12:00:04.000 → 12:00:00.000, 4s back"]
-        );
-    }
-
     /// A mark covering several channels reports each of them, with the count
     /// and the largest step of the channels that stepped back more than once.
     #[test]
@@ -534,8 +514,9 @@ mod tests {
             ),
         ];
 
-        let hover = BackwardTimeStepHover::new(None, &steps);
+        let hover = BackwardTimeStepHover::new(Some("ride.gtd"), &steps);
 
+        assert_eq!(hover.track.as_deref(), Some("ride.gtd"));
         assert_eq!(hover.step_count, 3);
         assert_eq!(
             hover.channels,
@@ -546,10 +527,11 @@ mod tests {
         );
     }
 
-    /// A step under a second reads at its own scale, and one under a
-    /// millisecond widens both timestamps to microseconds, which
-    /// [`STEP_TIME_FORMAT`] would print as one and the same time.
+    /// A step reads at its own scale: one under a second in milliseconds, and
+    /// one under a millisecond with both timestamps widened to microseconds,
+    /// which [`STEP_TIME_FORMAT`] would print as one and the same time.
     #[rstest::rstest]
+    #[case::seconds(TimeDelta::seconds(4), "accel - 12:00:08.000 → 12:00:04.000, 4s back")]
     #[case::milliseconds(
         TimeDelta::milliseconds(4),
         "accel - 12:00:04.004 → 12:00:04.000, 4ms back"
@@ -558,7 +540,7 @@ mod tests {
         TimeDelta::microseconds(900),
         "accel - 12:00:04.000900 → 12:00:04.000000, 900µs back"
     )]
-    fn the_hover_reports_a_sub_second_step_at_its_own_scale(
+    fn the_hover_reports_one_step_at_its_own_scale(
         #[case] back: TimeDelta,
         #[case] expected: &str,
     ) {
@@ -572,6 +554,7 @@ mod tests {
 
         let hover = BackwardTimeStepHover::new(None, &steps);
 
+        assert_eq!(hover.step_count, 1);
         assert_eq!(hover.channels, [expected]);
     }
 
@@ -598,88 +581,81 @@ mod tests {
             "distance is {distance}, expected {expected}"
         );
     }
-}
 
-#[cfg(test)]
-mod snapshot_tests {
-    use chrono::DateTime;
-    use egui_plot::{Line, PlotBounds, PlotPoints};
-    use gt_test_utils::TestHarness;
-    use rstest::rstest;
+    mod snapshot_tests {
+        use egui_plot::{Line, PlotBounds, PlotPoints};
+        use gt_test_utils::TestHarness;
+        use rstest::rstest;
 
-    use super::*;
+        use super::*;
 
-    /// 2024-01-15 12:00:00 UTC, the plot's left edge.
-    const T: f64 = 1_705_320_000.0;
+        /// The plot's right edge, a minute past [`T`].
+        const T_END: f64 = T + 60.0;
 
-    /// The plot's right edge, a minute later.
-    const T_END: f64 = T + 60.0;
-
-    /// A step at `offset_secs` seconds from the left edge. Its sample clock
-    /// stepped one second back.
-    fn step(offset_secs: f64) -> PlacedBackwardTimeStep {
-        let time = DateTime::from_timestamp(T as i64 + offset_secs as i64, 0).unwrap_or_default();
-        PlacedBackwardTimeStep {
-            previous_time: time + chrono::TimeDelta::seconds(1),
-            time,
-            x_secs: T + offset_secs,
+        fn channel(name: &str, offsets_secs: &[f64]) -> ChannelSeries {
+            ChannelSeries {
+                name: name.to_owned(),
+                unit: None,
+                components: Vec::new(),
+                backward_time_steps: offsets_secs
+                    .iter()
+                    .map(|&offset| {
+                        step(StepSpec {
+                            offset: TimeDelta::milliseconds((offset * 1000.0) as i64),
+                            back: TimeDelta::seconds(1),
+                        })
+                    })
+                    .collect(),
+            }
         }
-    }
 
-    fn channel(name: &str, offsets_secs: &[f64]) -> ChannelSeries {
-        ChannelSeries {
-            name: name.to_owned(),
-            unit: None,
-            components: Vec::new(),
-            backward_time_steps: offsets_secs.iter().map(|&offset| step(offset)).collect(),
+        /// One isolated step, a second one a channel away, and a jittering stretch
+        /// whose steps land inside a pitch of each other.
+        fn channels() -> Vec<ChannelSeries> {
+            let jitter: Vec<f64> = (0..40).map(|i| 40.0 + f64::from(i) * 0.2).collect();
+            vec![
+                channel("accel", &[10.0]),
+                channel("gyro", &[[25.0].as_slice(), &jitter].concat()),
+            ]
         }
-    }
 
-    /// One isolated step, a second one a channel away, and a jittering stretch
-    /// whose steps land inside a pitch of each other.
-    fn channels() -> Vec<ChannelSeries> {
-        let jitter: Vec<f64> = (0..40).map(|i| 40.0 + f64::from(i) * 0.2).collect();
-        vec![
-            channel("accel", &[10.0]),
-            channel("gyro", &[[25.0].as_slice(), &jitter].concat()),
-        ]
-    }
-
-    #[rstest]
-    #[case::dark("backward_time_step_marks_dark", true)]
-    #[case::light("backward_time_step_marks_light", false)]
-    fn backward_time_step_marks(#[case] name: &str, #[case] dark_mode: bool) {
-        let channels = channels();
-        let channel_vis = ChannelVisibility::default();
-        let mut harness = TestHarness::builder()
-            .size(egui::vec2(420.0, 220.0))
-            .theme(dark_mode)
-            .ui(|ui| {
-                egui_plot::Plot::new("backward_time_step_marks")
-                    .show_grid(false)
-                    .show(ui, |plot_ui| {
-                        plot_ui.set_plot_bounds(PlotBounds::from_min_max([T, 0.0], [T_END, 10.0]));
-                        plot_ui.line(Line::new(
-                            "Channel",
-                            PlotPoints::new(vec![[T, 2.0], [T_END, 6.0]]),
-                        ));
-                        add_backward_time_steps(
-                            plot_ui,
-                            &channels,
-                            None,
-                            BackwardTimeStepViewport {
-                                x_min: T,
-                                x_max: T_END,
-                                marks_shown: true,
-                                channel_vis: &channel_vis,
-                                dark_mode,
-                            },
-                            None,
-                            &mut NearestHoverLabel::default(),
-                        );
-                    });
-            });
-        harness.run();
-        harness.snapshot_loose(name);
+        #[rstest]
+        #[case::dark("backward_time_step_marks_dark", true)]
+        #[case::light("backward_time_step_marks_light", false)]
+        fn backward_time_step_marks(#[case] name: &str, #[case] dark_mode: bool) {
+            let channels = channels();
+            let channel_vis = ChannelVisibility::default();
+            let mut harness = TestHarness::builder()
+                .size(egui::vec2(420.0, 220.0))
+                .theme(dark_mode)
+                .ui(|ui| {
+                    egui_plot::Plot::new("backward_time_step_marks")
+                        .show_grid(false)
+                        .show(ui, |plot_ui| {
+                            plot_ui
+                                .set_plot_bounds(PlotBounds::from_min_max([T, 0.0], [T_END, 10.0]));
+                            plot_ui.line(Line::new(
+                                "Channel",
+                                PlotPoints::new(vec![[T, 2.0], [T_END, 6.0]]),
+                            ));
+                            add_backward_time_steps(
+                                plot_ui,
+                                &channels,
+                                None,
+                                BackwardTimeStepViewport {
+                                    x_min: T,
+                                    x_max: T_END,
+                                    marks_shown: true,
+                                    channel_vis: &channel_vis,
+                                    dark_mode,
+                                },
+                                None,
+                                &mut NearestHoverLabel::default(),
+                            );
+                        });
+                });
+            harness.run();
+            harness.snapshot_loose(name);
+        }
     }
 }

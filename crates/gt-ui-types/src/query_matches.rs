@@ -249,10 +249,7 @@ mod tests {
     use gt_types::{FileIdx, TrackIdx};
 
     use super::*;
-
-    fn track() -> TrackRef {
-        TrackRef::new(FileIdx::new(0), TrackIdx::new(0))
-    }
+    use crate::test_util;
 
     /// A range built from arguments, so single-element `vec![rng(0, 1)]` does
     /// not trip clippy's `single_range_in_vec_init`.
@@ -263,7 +260,7 @@ mod tests {
     fn layer(color: usize, ranges: Vec<Range<usize>>) -> DrawLayer {
         DrawLayer {
             color,
-            ranges: TrackRanges::from_iter([(track(), ranges)]),
+            ranges: TrackRanges::from_iter([(test_util::track0(), ranges)]),
         }
     }
 
@@ -274,40 +271,43 @@ mod tests {
             ..QueryMatches::default()
         };
         // Point 1: only layer 0.
-        let at_1 = matches.draw_mask(track(), 1);
+        let at_1 = matches.draw_mask(test_util::track0(), 1);
         assert!(at_1.contains(0) && !at_1.contains(1));
         // Point 2: both layers.
-        let at_2 = matches.draw_mask(track(), 2);
+        let at_2 = matches.draw_mask(test_util::track0(), 2);
         assert!(at_2.contains(0) && at_2.contains(1));
         // Point 5: only layer 1.
-        let at_5 = matches.draw_mask(track(), 5);
+        let at_5 = matches.draw_mask(test_util::track0(), 5);
         assert!(!at_5.contains(0) && at_5.contains(1));
         // Point 9: no layer.
-        assert!(matches.draw_mask(track(), 9).is_empty());
+        assert!(matches.draw_mask(test_util::track0(), 9).is_empty());
     }
 
     #[test]
     fn hidden_and_header_lookups() {
         let matches = QueryMatches {
-            hidden: TrackRanges::from_iter([(track(), vec![rng(2, 5), rng(9, 10)])]),
+            hidden: TrackRanges::from_iter([(test_util::track0(), vec![rng(2, 5), rng(9, 10)])]),
             draws: vec![layer(0, vec![rng(0, 3), rng(14, 20)])],
             ..QueryMatches::default()
         };
-        assert!(matches.is_hidden(track(), 3));
-        assert!(!matches.is_hidden(track(), 5));
-        assert_eq!(matches.header_range(track(), 1), Some(&(0..3)));
-        assert_eq!(matches.header_range(track(), 15), Some(&(14..20)));
-        assert_eq!(matches.header_range(track(), 8), None);
+        assert!(matches.is_hidden(test_util::track0(), 3));
+        assert!(!matches.is_hidden(test_util::track0(), 5));
+        assert_eq!(matches.header_range(test_util::track0(), 1), Some(&(0..3)));
+        assert_eq!(
+            matches.header_range(test_util::track0(), 15),
+            Some(&(14..20))
+        );
+        assert_eq!(matches.header_range(test_util::track0(), 8), None);
     }
 
     #[test]
     fn a_track_view_reports_the_hidden_and_covering_ranges_of_its_own_track() {
         let matches = QueryMatches {
-            hidden: TrackRanges::from_iter([(track(), vec![rng(2, 5)])]),
+            hidden: TrackRanges::from_iter([(test_util::track0(), vec![rng(2, 5)])]),
             draws: vec![layer(0, vec![rng(0, 3)]), layer(1, vec![rng(2, 6)])],
             ..QueryMatches::default()
         };
-        let view = matches.track_view(track());
+        let view = matches.track_view(test_util::track0());
         assert!(view.hides_any_point());
         assert!(!view.is_hidden(1));
         assert!(view.is_hidden(4));
@@ -321,7 +321,7 @@ mod tests {
     #[test]
     fn a_track_with_no_matches_has_no_hidden_point_and_no_covering_layer() {
         let matches = QueryMatches {
-            hidden: TrackRanges::from_iter([(track(), vec![rng(2, 5)])]),
+            hidden: TrackRanges::from_iter([(test_util::track0(), vec![rng(2, 5)])]),
             draws: vec![layer(0, vec![rng(0, 3)])],
             ..QueryMatches::default()
         };
@@ -346,10 +346,10 @@ mod tests {
     #[should_panic(expected = "sorted and disjoint")]
     fn unsorted_ranges_fail_loudly_in_debug() {
         let matches = QueryMatches {
-            hidden: TrackRanges::from_iter([(track(), vec![rng(9, 10), rng(2, 5)])]),
+            hidden: TrackRanges::from_iter([(test_util::track0(), vec![rng(9, 10), rng(2, 5)])]),
             ..QueryMatches::default()
         };
-        let _ = matches.hidden_ranges(track());
+        let _ = matches.hidden_ranges(test_util::track0());
     }
 
     #[test]
@@ -366,7 +366,7 @@ mod tests {
         // alias back onto bit 0.
         assert_eq!(matches.draws.len(), DrawLayerMask::MAX_LAYERS + 1);
         assert_eq!(
-            matches.draw_mask(track(), 0).count() as usize,
+            matches.draw_mask(test_util::track0(), 0).count() as usize,
             DrawLayerMask::MAX_LAYERS
         );
     }

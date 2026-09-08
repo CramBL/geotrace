@@ -2,11 +2,10 @@
 //! backwards, and the two gates the marks follow: the Channels section and the
 //! setting behind them.
 
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, Utc};
 use gt_plot::PlotState;
-use gt_types::{Channel, FileSource, LoadedFile, NavPoint, TimeRange};
-use rustc_hash::FxHashMap;
-use support::{DrawnPlot, PlotSources, at_second, plot_area};
+use gt_types::LoadedFile;
+use support::{DrawnPlot, PlotSources};
 
 mod support;
 
@@ -16,37 +15,22 @@ const FIX_COUNT: usize = 60;
 /// A recording of one track at 1 Hz carrying a scalar channel sampled at the
 /// same rate, whose timestamps step back by ten seconds halfway through.
 fn recording_with_a_backward_time_step() -> LoadedFile {
-    let points: Vec<NavPoint> =
-        gt_test_utils::fixtures::nav_points_from(at_second(0), FIX_COUNT, 1);
     let times: Vec<DateTime<Utc>> = (0..FIX_COUNT as i64)
         .map(|i| {
             if i < 30 {
-                at_second(i)
+                support::at_second(i)
             } else {
-                at_second(i - 10)
+                support::at_second(i - 10)
             }
         })
         .collect();
-    let mut track = gt_test_utils::loaded_track_with_points(points);
-    track.metadata.time_range = TimeRange::new(at_second(0), at_second(FIX_COUNT as i64 - 1));
-    track.metadata.duration = TimeDelta::seconds(FIX_COUNT as i64 - 1);
-    track.channels = vec![Channel {
-        name: "Incline".to_owned(),
-        unit: None,
-        period: None,
-        description: None,
-        components: Vec::new(),
-        values: times.iter().map(|_| 1.0).collect(),
-        times,
-    }];
-    LoadedFile {
-        metadata: gt_test_utils::empty_file_metadata(),
-        tracks: vec![track],
-        event_marker_styles: FxHashMap::default(),
-        orphaned_event_markers: Vec::new(),
-        source: FileSource::GtdBytes([].into()),
-        load_warnings: Vec::new(),
-    }
+    let channel = gt_test_utils::fixtures::scalar_channel(
+        "Incline",
+        None,
+        times.clone(),
+        vec![1.0; times.len()],
+    );
+    support::recording(support::fixes(FIX_COUNT, 1), vec![channel])
 }
 
 /// The two gates the marks follow.
@@ -103,7 +87,7 @@ fn the_marks_draw_with_the_channels_revealed() {
         gt_test_utils::snapshot_harness::pixels_differ(
             &with_marks,
             &without_marks,
-            plot_area(),
+            support::plot_area(),
             pixels_per_point
         ),
         "the channel's backward time step must reach the plot"
@@ -141,7 +125,7 @@ fn a_collapsed_channels_section_draws_no_mark() {
         !gt_test_utils::snapshot_harness::pixels_differ(
             &with_setting,
             &without_setting,
-            plot_area(),
+            support::plot_area(),
             pixels_per_point
         ),
         "the setting must draw nothing while the Channels section is collapsed"

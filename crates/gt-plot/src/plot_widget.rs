@@ -1026,7 +1026,7 @@ pub fn find_closest_tpv(
 }
 
 #[cfg(test)]
-mod label_tests {
+mod tests {
     use std::cell::Cell;
 
     use super::{cursor_label, track_label};

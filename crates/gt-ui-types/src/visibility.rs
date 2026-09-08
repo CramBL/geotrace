@@ -279,21 +279,27 @@ mod tests {
     use chrono::TimeDelta;
 
     use super::*;
-    use crate::scope_fixture::{one_track_file, track0};
+    use crate::test_util;
 
     fn vis_all() -> TrackDataVisibility {
-        TrackDataVisibility::from_loaded(&one_track_file())
+        TrackDataVisibility::from_loaded(&test_util::one_track_file())
     }
 
     #[test]
     fn everything_enabled_is_in_scope() {
-        let files = one_track_file();
+        let files = test_util::one_track_file();
         let vis = vis_all();
         let filter = GlobalFilter::default();
-        assert!(track_in_scope(&files, &vis, &filter, track0()).is_some());
+        assert!(track_in_scope(&files, &vis, &filter, test_util::track0()).is_some());
         assert!(
-            category_in_scope(&files, &vis, &filter, track0(), DataCategory::CustomMarker)
-                .is_some()
+            category_in_scope(
+                &files,
+                &vis,
+                &filter,
+                test_util::track0(),
+                DataCategory::CustomMarker
+            )
+            .is_some()
         );
     }
 
@@ -301,34 +307,49 @@ mod tests {
     #[case::file_disabled(|vis: &mut TrackDataVisibility| vis.files[0].enabled = false)]
     #[case::track_disabled(|vis: &mut TrackDataVisibility| vis.files[0].tracks[0].enabled = false)]
     fn disabled_nodes_are_out_of_scope(#[case] disable: fn(&mut TrackDataVisibility)) {
-        let files = one_track_file();
+        let files = test_util::one_track_file();
         let mut vis = vis_all();
         disable(&mut vis);
-        assert!(track_in_scope(&files, &vis, &GlobalFilter::default(), track0()).is_none());
+        assert!(
+            track_in_scope(&files, &vis, &GlobalFilter::default(), test_util::track0()).is_none()
+        );
     }
 
     #[test]
     fn failing_the_track_filter_is_out_of_scope() {
-        let files = one_track_file();
+        let files = test_util::one_track_file();
         let filter = GlobalFilter {
             min_duration: Some(TimeDelta::hours(1)),
             ..GlobalFilter::default()
         };
-        assert!(track_in_scope(&files, &vis_all(), &filter, track0()).is_none());
+        assert!(track_in_scope(&files, &vis_all(), &filter, test_util::track0()).is_none());
     }
 
     #[test]
     fn category_toggle_gates_only_its_category() {
-        let files = one_track_file();
+        let files = test_util::one_track_file();
         let mut vis = vis_all();
         vis.files[0].tracks[0].set_category_visible(DataCategory::CustomMarker, false);
         let filter = GlobalFilter::default();
         assert!(
-            category_in_scope(&files, &vis, &filter, track0(), DataCategory::CustomMarker)
-                .is_none()
+            category_in_scope(
+                &files,
+                &vis,
+                &filter,
+                test_util::track0(),
+                DataCategory::CustomMarker
+            )
+            .is_none()
         );
         assert!(
-            category_in_scope(&files, &vis, &filter, track0(), DataCategory::EventMarker).is_some()
+            category_in_scope(
+                &files,
+                &vis,
+                &filter,
+                test_util::track0(),
+                DataCategory::EventMarker
+            )
+            .is_some()
         );
     }
 
@@ -336,7 +357,7 @@ mod tests {
     /// is out of scope.
     #[test]
     fn stale_indices_are_out_of_scope() {
-        let files = one_track_file();
+        let files = test_util::one_track_file();
         let vis = vis_all();
         let filter = GlobalFilter::default();
         let stale = TrackRef::new(FileIdx::new(0), TrackIdx::new(7));

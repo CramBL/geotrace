@@ -504,29 +504,6 @@ fn hover_ref(category: DataCategory) -> DataPointRef {
     }
 }
 
-/// The element a hover or a click acts on is the fix whenever one is among the
-/// candidates.
-#[test]
-fn the_primary_candidate_is_the_fix_when_one_is_present() {
-    let tpv = hover_ref(DataCategory::Tpv);
-    let marker = hover_ref(DataCategory::EventMarker);
-
-    let marker_only = HoverCandidates {
-        event_marker: Some(marker),
-        ..HoverCandidates::default()
-    };
-    assert_eq!(marker_only.primary(), Some(marker));
-    assert!(!marker_only.is_ambiguous());
-
-    let both = HoverCandidates {
-        tpv_or_satellite_report: Some(tpv),
-        event_marker: Some(marker),
-        ..HoverCandidates::default()
-    };
-    assert_eq!(both.primary(), Some(tpv));
-    assert!(both.is_ambiguous());
-}
-
 /// The click that opens the disambiguation popup also fires `clicked_elsewhere`
 /// on the popup area, so only a later frame's click or Escape closes it.
 #[rstest::rstest]

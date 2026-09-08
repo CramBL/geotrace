@@ -272,51 +272,43 @@ fn extract_slips(track: &LoadedTrack) -> Vec<SlipMark> {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{DateTime, Duration, Utc};
-
-    use gt_types::satellites::{Constellation, Satellite, Satellites};
-    use gt_types::{GpsTime, Latitude, Longitude, NavPoint, TimePositionVelocity};
+    use gt_types::satellites::Constellation;
 
     use super::{PointIdx, extract_trails};
-
-    fn sat(
-        constellation: Constellation,
-        prn: u32,
-        azimuth: Option<f32>,
-        elevation: Option<f32>,
-        in_fix: bool,
-    ) -> Satellite {
-        Satellite::new(constellation, prn, elevation, azimuth, Some(40.0), in_fix)
-    }
-
-    /// A point `secs` after a fixed epoch, reporting `satellites` (or no
-    /// report when `None`).
-    fn point_at(secs: i64, satellites: Option<Vec<Satellite>>) -> NavPoint {
-        let start = DateTime::<Utc>::from_timestamp(1_748_000_000, 0).expect("valid");
-        let tpv = TimePositionVelocity::builder()
-            .time(GpsTime::from_utc(start + Duration::seconds(secs)))
-            .lat(Latitude::new(55.0))
-            .lon(Longitude::new(12.0))
-            .build();
-        NavPoint::new(tpv, satellites.map(|s| Satellites::new(None, None, s)))
-    }
-
-    fn track(points: Vec<NavPoint>) -> gt_types::LoadedTrack {
-        gt_test_utils::loaded_track_with_points(points)
-    }
+    use crate::test_util::{self, Azimuth, Elevation};
 
     #[test]
     fn counts_at_splits_seen_and_fix_per_constellation() {
         // One epoch: two GPS satellites up but only one in the fix, one Galileo
         // in the fix.
-        let trails = extract_trails(&track(vec![point_at(
-            0,
-            Some(vec![
-                sat(Constellation::Gps, 5, Some(40.0), Some(45.0), true),
-                sat(Constellation::Gps, 12, Some(120.0), Some(30.0), false),
-                sat(Constellation::Galileo, 3, Some(60.0), Some(50.0), true),
-            ]),
-        )]));
+        let trails = extract_trails(&gt_test_utils::loaded_track_with_points(vec![
+            test_util::nav_point_reporting(
+                0,
+                Some(vec![
+                    test_util::sat(
+                        Constellation::Gps,
+                        5,
+                        Some(Azimuth(40.0)),
+                        Some(Elevation(45.0)),
+                        true,
+                    ),
+                    test_util::sat(
+                        Constellation::Gps,
+                        12,
+                        Some(Azimuth(120.0)),
+                        Some(Elevation(30.0)),
+                        false,
+                    ),
+                    test_util::sat(
+                        Constellation::Galileo,
+                        3,
+                        Some(Azimuth(60.0)),
+                        Some(Elevation(50.0)),
+                        true,
+                    ),
+                ]),
+            ),
+        ]));
 
         let counts = trails.counts_at(trails.epochs[0].time, true);
         let gps = counts
@@ -347,40 +339,42 @@ mod tests {
 
     #[test]
     fn ever_in_fix_reflects_any_fix_over_the_track() {
-        let trails = extract_trails(&track(vec![
-            point_at(
+        let trails = extract_trails(&gt_test_utils::loaded_track_with_points(vec![
+            test_util::nav_point_reporting(
                 0,
-                Some(vec![sat(
+                Some(vec![test_util::sat(
                     Constellation::Gps,
                     5,
-                    Some(40.0),
-                    Some(45.0),
+                    Some(Azimuth(40.0)),
+                    Some(Elevation(45.0)),
                     false,
                 )]),
             ),
-            point_at(
+            test_util::nav_point_reporting(
                 1,
-                Some(vec![sat(
+                Some(vec![test_util::sat(
                     Constellation::Gps,
                     5,
-                    Some(50.0),
-                    Some(40.0),
+                    Some(Azimuth(50.0)),
+                    Some(Elevation(40.0)),
                     true,
                 )]),
             ),
         ]));
         assert!(trails.trails[0].ever_in_fix());
 
-        let never = extract_trails(&track(vec![point_at(
-            0,
-            Some(vec![sat(
-                Constellation::Gps,
-                5,
-                Some(40.0),
-                Some(45.0),
-                false,
-            )]),
-        )]));
+        let never = extract_trails(&gt_test_utils::loaded_track_with_points(vec![
+            test_util::nav_point_reporting(
+                0,
+                Some(vec![test_util::sat(
+                    Constellation::Gps,
+                    5,
+                    Some(Azimuth(40.0)),
+                    Some(Elevation(45.0)),
+                    false,
+                )]),
+            ),
+        ]));
         assert!(!never.trails[0].ever_in_fix());
     }
 
@@ -388,29 +382,29 @@ mod tests {
     fn counts_at_between_epochs_finds_nobody() {
         // `counts_at` matches an epoch exactly (no interpolation), so a time
         // between reports yields zero everywhere.
-        let trails = extract_trails(&track(vec![
-            point_at(
+        let trails = extract_trails(&gt_test_utils::loaded_track_with_points(vec![
+            test_util::nav_point_reporting(
                 0,
-                Some(vec![sat(
+                Some(vec![test_util::sat(
                     Constellation::Gps,
                     5,
-                    Some(40.0),
-                    Some(45.0),
+                    Some(Azimuth(40.0)),
+                    Some(Elevation(45.0)),
                     true,
                 )]),
             ),
-            point_at(
+            test_util::nav_point_reporting(
                 2,
-                Some(vec![sat(
+                Some(vec![test_util::sat(
                     Constellation::Gps,
                     5,
-                    Some(50.0),
-                    Some(40.0),
+                    Some(Azimuth(50.0)),
+                    Some(Elevation(40.0)),
                     true,
                 )]),
             ),
         ]));
-        let between = GpsTime::from_utc(trails.epochs[0].time.utc() + Duration::seconds(1));
+        let between = test_util::at(1);
         let counts = trails.counts_at(between, true);
         assert!(counts.iter().all(|c| c.seen == 0 && c.fix == 0));
     }
@@ -448,9 +442,10 @@ mod tests {
         };
         let lat = Latitude::new(55.0);
         let lon = Longitude::new(12.0);
-        let mut track = track(vec![point_at(0, None)]);
+        let mut track =
+            gt_test_utils::loaded_track_with_points(vec![test_util::nav_point_reporting(0, None)]);
         track.generated_markers = vec![GeneratedMarker {
-            time: DateTime::<Utc>::from_timestamp(1_748_000_000, 0).expect("valid"),
+            time: test_util::start(),
             kind: GeneratedMarkerKind::Slip(SlipEvent {
                 slips: vec![placeable, unplaceable],
             }),
@@ -471,22 +466,34 @@ mod tests {
     fn groups_by_satellite_sorted_with_gaps() {
         // Reports at t0 and t2 (t1 has none). GPS G05 has a sky position at
         // both. Galileo E03 has one only at t0, so its trail has one sample.
-        let track = track(vec![
-            point_at(
+        let track = gt_test_utils::loaded_track_with_points(vec![
+            test_util::nav_point_reporting(
                 0,
                 Some(vec![
-                    sat(Constellation::Gps, 5, Some(45.0), Some(60.0), true),
-                    sat(Constellation::Galileo, 3, Some(80.0), Some(40.0), true),
+                    test_util::sat(
+                        Constellation::Gps,
+                        5,
+                        Some(Azimuth(45.0)),
+                        Some(Elevation(60.0)),
+                        true,
+                    ),
+                    test_util::sat(
+                        Constellation::Galileo,
+                        3,
+                        Some(Azimuth(80.0)),
+                        Some(Elevation(40.0)),
+                        true,
+                    ),
                 ]),
             ),
-            point_at(1, None),
-            point_at(
+            test_util::nav_point_reporting(1, None),
+            test_util::nav_point_reporting(
                 2,
-                Some(vec![sat(
+                Some(vec![test_util::sat(
                     Constellation::Gps,
                     5,
-                    Some(50.0),
-                    Some(58.0),
+                    Some(Azimuth(50.0)),
+                    Some(Elevation(58.0)),
                     true,
                 )]),
             ),
@@ -526,13 +533,13 @@ mod tests {
         reason = "az/el/snr pass through unchanged, so the values are bit-exact"
     )]
     fn a_sample_carries_the_satellites_values() {
-        let track = track(vec![point_at(
+        let track = gt_test_utils::loaded_track_with_points(vec![test_util::nav_point_reporting(
             0,
-            Some(vec![sat(
+            Some(vec![test_util::sat(
                 Constellation::Gps,
                 5,
-                Some(45.0),
-                Some(60.0),
+                Some(Azimuth(45.0)),
+                Some(Elevation(60.0)),
                 true,
             )]),
         )]);
@@ -548,21 +555,33 @@ mod tests {
     fn constellations_lists_each_present_one_once_in_order() {
         // Two GPS satellites and one Galileo, interleaved across epochs.
         // `constellations()` collapses to one entry each, GPS before Galileo.
-        let track = track(vec![
-            point_at(
+        let track = gt_test_utils::loaded_track_with_points(vec![
+            test_util::nav_point_reporting(
                 0,
                 Some(vec![
-                    sat(Constellation::Gps, 5, Some(45.0), Some(60.0), true),
-                    sat(Constellation::Galileo, 3, Some(80.0), Some(40.0), true),
+                    test_util::sat(
+                        Constellation::Gps,
+                        5,
+                        Some(Azimuth(45.0)),
+                        Some(Elevation(60.0)),
+                        true,
+                    ),
+                    test_util::sat(
+                        Constellation::Galileo,
+                        3,
+                        Some(Azimuth(80.0)),
+                        Some(Elevation(40.0)),
+                        true,
+                    ),
                 ]),
             ),
-            point_at(
+            test_util::nav_point_reporting(
                 1,
-                Some(vec![sat(
+                Some(vec![test_util::sat(
                     Constellation::Gps,
                     12,
-                    Some(30.0),
-                    Some(50.0),
+                    Some(Azimuth(30.0)),
+                    Some(Elevation(50.0)),
                     true,
                 )]),
             ),
@@ -575,11 +594,23 @@ mod tests {
     fn same_prn_in_two_constellations_stays_separate() {
         // GPS and Galileo both have a PRN 5: the compound `(constellation, prn)`
         // key must keep them in distinct trails.
-        let track = track(vec![point_at(
+        let track = gt_test_utils::loaded_track_with_points(vec![test_util::nav_point_reporting(
             0,
             Some(vec![
-                sat(Constellation::Gps, 5, Some(45.0), Some(60.0), true),
-                sat(Constellation::Galileo, 5, Some(80.0), Some(40.0), true),
+                test_util::sat(
+                    Constellation::Gps,
+                    5,
+                    Some(Azimuth(45.0)),
+                    Some(Elevation(60.0)),
+                    true,
+                ),
+                test_util::sat(
+                    Constellation::Galileo,
+                    5,
+                    Some(Azimuth(80.0)),
+                    Some(Elevation(40.0)),
+                    true,
+                ),
             ]),
         )]);
         let trails = extract_trails(&track);
@@ -592,9 +623,15 @@ mod tests {
     #[test]
     fn unplaceable_samples_are_skipped() {
         // Azimuth but no elevation -> not placeable -> no sample, no trail.
-        let track = track(vec![point_at(
+        let track = gt_test_utils::loaded_track_with_points(vec![test_util::nav_point_reporting(
             0,
-            Some(vec![sat(Constellation::Gps, 5, Some(45.0), None, true)]),
+            Some(vec![test_util::sat(
+                Constellation::Gps,
+                5,
+                Some(Azimuth(45.0)),
+                None,
+                true,
+            )]),
         )]);
         let trails = extract_trails(&track);
         assert!(trails.trails.is_empty());
@@ -604,7 +641,10 @@ mod tests {
 
     #[test]
     fn a_track_without_reports_has_no_trails() {
-        let trails = extract_trails(&track(vec![point_at(0, None), point_at(1, None)]));
+        let trails = extract_trails(&gt_test_utils::loaded_track_with_points(vec![
+            test_util::nav_point_reporting(0, None),
+            test_util::nav_point_reporting(1, None),
+        ]));
         assert!(trails.trails.is_empty());
         assert!(trails.epochs.is_empty());
         assert_eq!(trails.time_range, None);

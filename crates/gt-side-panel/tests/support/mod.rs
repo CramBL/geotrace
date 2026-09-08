@@ -12,14 +12,14 @@
     reason = "the helpers beside the tests are not covered by clippy's in-test relaxations"
 )]
 
-use std::path::PathBuf;
-
 use chrono::{DateTime, TimeZone as _, Utc};
 use egui::accesskit::Role;
 use gt_filter::GlobalFilter;
 use gt_side_panel::filter::TRACK_INSET_PX;
 use gt_side_panel::{FilterPanelState, render_filter_panel};
-use gt_test_utils::{By, HarnessInteraction as _, NodeT as _, Queryable as _, TestHarness};
+use gt_test_utils::{
+    By, FileParts, HarnessInteraction as _, NodeT as _, Queryable as _, TestHarness,
+};
 use gt_types::{LoadedFile, NavPoint};
 
 /// The state the filter panel reads and writes.
@@ -49,18 +49,7 @@ pub fn recording(name: &str, tracks: &[(DateTime<Utc>, usize)]) -> LoadedFile {
         .iter()
         .flat_map(|(start, count)| gt_test_utils::fixtures::nav_points_from(*start, *count, 1))
         .collect();
-    gt_track_builder::build_loaded_file(
-        name.to_owned(),
-        &points,
-        &[],
-        vec![],
-        vec![],
-        &[],
-        &gt_track_builder::SegmentationConfig::default(),
-        gt_types::FileSource::GtdPath(PathBuf::from(name)),
-        gt_track_builder::FileMeta::default(),
-        vec![],
-    )
+    gt_test_utils::build_file(name, &points, FileParts::default())
 }
 
 pub fn harness(files: Vec<LoadedFile>) -> TestHarness<'static, PanelState> {

@@ -2164,189 +2164,206 @@ fn file_bounding_center(file: Option<&LoadedFile>) -> Option<(f64, f64)> {
 }
 
 #[cfg(test)]
-mod snap_action_tests {
-    use rstest::rstest;
+mod tests {
+    mod snap_action {
+        use rstest::rstest;
 
-    use super::*;
+        use super::super::*;
 
-    fn view(offline: bool, consent_pending: bool) -> SnapPanelView<'static> {
-        // The rows map is irrelevant to `snap_action`. A `static` empty map keeps
-        // the borrow 'static for the test helper.
-        static EMPTY: std::sync::OnceLock<FxHashMap<TrackRef, SnapRowView>> =
-            std::sync::OnceLock::new();
-        static IDLE: std::sync::OnceLock<SnapProgressView> = std::sync::OnceLock::new();
-        SnapPanelView {
-            offline,
-            consent_pending,
-            rows: EMPTY.get_or_init(FxHashMap::default),
-            costing_choices: &[],
-            progress: IDLE.get_or_init(SnapProgressView::default),
+        /// Whether the app is in offline mode, which grays the trigger.
+        #[derive(Clone, Copy)]
+        struct Offline(bool);
+
+        /// Whether the click still has to pass the upload consent dialog, which
+        /// suffixes the label.
+        #[derive(Clone, Copy)]
+        struct ConsentPending(bool);
+
+        fn view(
+            Offline(offline): Offline,
+            ConsentPending(consent_pending): ConsentPending,
+        ) -> SnapPanelView<'static> {
+            // The rows map is irrelevant to `snap_action`. A `static` empty map keeps
+            // the borrow 'static for the test helper.
+            static EMPTY: std::sync::OnceLock<FxHashMap<TrackRef, SnapRowView>> =
+                std::sync::OnceLock::new();
+            static IDLE: std::sync::OnceLock<SnapProgressView> = std::sync::OnceLock::new();
+            SnapPanelView {
+                offline,
+                consent_pending,
+                rows: EMPTY.get_or_init(FxHashMap::default),
+                costing_choices: &[],
+                progress: IDLE.get_or_init(SnapProgressView::default),
+            }
+        }
+
+        fn unsnappable() -> SnapRowView {
+            SnapRowView::Unsnappable {
+                travel_mode: "Boat".to_owned(),
+            }
+        }
+
+        fn failed() -> SnapRowView {
+            SnapRowView::Failed {
+                error: "server unreachable".to_owned(),
+            }
+        }
+
+        fn done() -> SnapRowView {
+            SnapRowView::Done {
+                snapped: 1,
+                interpolated: 2,
+                unsnapped: 3,
+                confidence_score: None,
+                shown: true,
+                stale: None,
+                partial: false,
+                warnings: Vec::new(),
+            }
+        }
+
+        fn stale_done() -> SnapRowView {
+            SnapRowView::Done {
+                snapped: 1,
+                interpolated: 2,
+                unsnapped: 3,
+                confidence_score: None,
+                shown: true,
+                stale: Some(vec![
+                    "Snapped as Bicycle - would now snap as Auto".to_owned(),
+                ]),
+                partial: false,
+                warnings: Vec::new(),
+            }
+        }
+
+        /// Pins the trigger's priority order: a current Done never has an action
+        /// (its status glyph stays usable offline), a stale Done offers the
+        /// re-run (grayed offline - it needs the network), Unsnappable and
+        /// NothingToSend beat offline (the permanent conditions), offline grays
+        /// everything else, only Idle, Failed, and stale Done are clickable, and
+        /// only clickable states carry the consent-pending `…` suffix.
+        #[rstest]
+        #[case(SnapRowView::Idle, Offline(false), Some(true))]
+        #[case(SnapRowView::Idle, Offline(true), Some(false))]
+        #[case(failed(), Offline(false), Some(true))]
+        #[case(failed(), Offline(true), Some(false))]
+        #[case(unsnappable(), Offline(false), Some(false))]
+        #[case(unsnappable(), Offline(true), Some(false))]
+        #[case(SnapRowView::Queued, Offline(false), Some(false))]
+        #[case(SnapRowView::Queued, Offline(true), Some(false))]
+        #[case(SnapRowView::InFlight { completed_chunks: 1, total_chunks: 2 }, Offline(false), Some(false))]
+        #[case(SnapRowView::InFlight { completed_chunks: 1, total_chunks: 2 }, Offline(true), Some(false))]
+        #[case(done(), Offline(false), None)]
+        #[case(done(), Offline(true), None)]
+        #[case(stale_done(), Offline(false), Some(true))]
+        #[case(stale_done(), Offline(true), Some(false))]
+        #[case(SnapRowView::NothingToSend, Offline(false), Some(false))]
+        #[case(SnapRowView::NothingToSend, Offline(true), Some(false))]
+        fn action_enablement_per_state_and_offline(
+            #[case] row: SnapRowView,
+            #[case] offline: Offline,
+            #[case] expected_enabled: Option<bool>,
+        ) {
+            let action = snap_action(&row, view(offline, ConsentPending(false)));
+            assert_eq!(action.map(|a| a.enabled), expected_enabled);
+        }
+
+        /// The disabled hover must name the reason: the declared travel mode for
+        /// unsnappable tracks and the missing fixes for a track with nothing to
+        /// send (both even offline - the permanent condition wins), and the
+        /// offline switch for everything else.
+        #[rstest]
+        #[case(unsnappable(), "Boat")]
+        #[case(SnapRowView::NothingToSend, "no measured fixes")]
+        #[case(SnapRowView::Idle, "offline mode")]
+        #[case(failed(), "offline mode")]
+        fn offline_hover_names_the_blocking_condition(
+            #[case] row: SnapRowView,
+            #[case] expected_substring: &str,
+        ) {
+            let action =
+                snap_action(&row, view(Offline(true), ConsentPending(false))).map(|a| a.hover);
+            let hover = action.unwrap_or_default();
+            assert!(
+                hover.contains(expected_substring),
+                "hover {hover:?} should mention {expected_substring:?}"
+            );
+        }
+
+        /// The `…` suffix marks a click that still needs the consent dialog - so
+        /// it only ever appears on clickable states, never on grayed ones.
+        #[rstest]
+        #[case(SnapRowView::Idle, true)]
+        #[case(failed(), true)]
+        #[case(stale_done(), true)]
+        #[case(unsnappable(), false)]
+        #[case(SnapRowView::Queued, false)]
+        fn consent_suffix_only_on_clickable_states(
+            #[case] row: SnapRowView,
+            #[case] expected: bool,
+        ) {
+            let action = snap_action(&row, view(Offline(false), ConsentPending(true)));
+            assert_eq!(action.map(|a| a.consent_pending), Some(expected));
         }
     }
 
-    fn unsnappable() -> SnapRowView {
-        SnapRowView::Unsnappable {
-            travel_mode: "Boat".to_owned(),
+    mod coordinate_warning {
+        use gt_types::TrackGeometry;
+        use rstest::rstest;
+
+        use super::super::CoordinateWarning;
+
+        #[rstest]
+        #[case::one_fix(
+            CoordinateWarning::FixesOutOfRange(1),
+            "1 fix with a coordinate out of range: drawn between the fixes around it"
+        )]
+        #[case::several_fixes(
+            CoordinateWarning::FixesOutOfRange(2),
+            "2 fixes with a coordinate out of range: drawn between the fixes around them"
+        )]
+        #[case::no_valid_position(
+            CoordinateWarning::NoValidPosition,
+            "Not drawn: no fix has a valid coordinate"
+        )]
+        fn a_coordinate_warning_states_what_is_wrong_with_the_track(
+            #[case] warning: CoordinateWarning,
+            #[case] expected: &str,
+        ) {
+            assert_eq!(warning.hover_text(), expected);
         }
-    }
 
-    fn failed() -> SnapRowView {
-        SnapRowView::Failed {
-            error: "server unreachable".to_owned(),
+        #[test]
+        fn a_track_whose_fixes_all_hold_a_coordinate_in_range_raises_no_warning() {
+            let track = gt_test_utils::loaded_track_with_points(gt_test_utils::nav_test_data());
+
+            assert_eq!(CoordinateWarning::for_track(&track), None);
         }
-    }
 
-    fn done() -> SnapRowView {
-        SnapRowView::Done {
-            snapped: 1,
-            interpolated: 2,
-            unsnapped: 3,
-            confidence_score: None,
-            shown: true,
-            stale: None,
-            partial: false,
-            warnings: Vec::new(),
+        #[test]
+        fn a_track_with_fixes_out_of_range_counts_them() {
+            let mut track = gt_test_utils::loaded_track_with_points(gt_test_utils::nav_test_data());
+            track.metadata.invalid_position_count = 2;
+
+            assert_eq!(
+                CoordinateWarning::for_track(&track),
+                Some(CoordinateWarning::FixesOutOfRange(2))
+            );
         }
-    }
 
-    fn stale_done() -> SnapRowView {
-        SnapRowView::Done {
-            snapped: 1,
-            interpolated: 2,
-            unsnapped: 3,
-            confidence_score: None,
-            shown: true,
-            stale: Some(vec![
-                "Snapped as Bicycle - would now snap as Auto".to_owned(),
-            ]),
-            partial: false,
-            warnings: Vec::new(),
+        #[test]
+        fn a_track_without_a_geometry_reports_no_valid_position() {
+            let mut track = gt_test_utils::loaded_track_with_points(
+                gt_test_utils::fixtures::nav_points_without_a_valid_position(3),
+            );
+            track.metadata.invalid_position_count = 3;
+
+            assert_eq!(track.geometry, TrackGeometry::NoValidPosition);
+            assert_eq!(
+                CoordinateWarning::for_track(&track),
+                Some(CoordinateWarning::NoValidPosition)
+            );
         }
-    }
-
-    /// Pins the trigger's priority order: a current Done never has an action
-    /// (its status glyph stays usable offline), a stale Done offers the
-    /// re-run (grayed offline - it needs the network), Unsnappable and
-    /// NothingToSend beat offline (the permanent conditions), offline grays
-    /// everything else, only Idle, Failed, and stale Done are clickable, and
-    /// only clickable states carry the consent-pending `…` suffix.
-    #[rstest]
-    #[case(SnapRowView::Idle, false, Some(true))]
-    #[case(SnapRowView::Idle, true, Some(false))]
-    #[case(failed(), false, Some(true))]
-    #[case(failed(), true, Some(false))]
-    #[case(unsnappable(), false, Some(false))]
-    #[case(unsnappable(), true, Some(false))]
-    #[case(SnapRowView::Queued, false, Some(false))]
-    #[case(SnapRowView::Queued, true, Some(false))]
-    #[case(SnapRowView::InFlight { completed_chunks: 1, total_chunks: 2 }, false, Some(false))]
-    #[case(SnapRowView::InFlight { completed_chunks: 1, total_chunks: 2 }, true, Some(false))]
-    #[case(done(), false, None)]
-    #[case(done(), true, None)]
-    #[case(stale_done(), false, Some(true))]
-    #[case(stale_done(), true, Some(false))]
-    #[case(SnapRowView::NothingToSend, false, Some(false))]
-    #[case(SnapRowView::NothingToSend, true, Some(false))]
-    fn action_enablement_per_state_and_offline(
-        #[case] row: SnapRowView,
-        #[case] offline: bool,
-        #[case] expected_enabled: Option<bool>,
-    ) {
-        let action = snap_action(&row, view(offline, false));
-        assert_eq!(action.map(|a| a.enabled), expected_enabled);
-    }
-
-    /// The disabled hover must name the reason: the declared travel mode for
-    /// unsnappable tracks and the missing fixes for a track with nothing to
-    /// send (both even offline - the permanent condition wins), and the
-    /// offline switch for everything else.
-    #[rstest]
-    #[case(unsnappable(), "Boat")]
-    #[case(SnapRowView::NothingToSend, "no measured fixes")]
-    #[case(SnapRowView::Idle, "offline mode")]
-    #[case(failed(), "offline mode")]
-    fn offline_hover_names_the_blocking_condition(
-        #[case] row: SnapRowView,
-        #[case] expected_substring: &str,
-    ) {
-        let action = snap_action(&row, view(true, false)).map(|a| a.hover);
-        let hover = action.unwrap_or_default();
-        assert!(
-            hover.contains(expected_substring),
-            "hover {hover:?} should mention {expected_substring:?}"
-        );
-    }
-
-    /// The `…` suffix marks a click that still needs the consent dialog - so
-    /// it only ever appears on clickable states, never on grayed ones.
-    #[rstest]
-    #[case(SnapRowView::Idle, true)]
-    #[case(failed(), true)]
-    #[case(stale_done(), true)]
-    #[case(unsnappable(), false)]
-    #[case(SnapRowView::Queued, false)]
-    fn consent_suffix_only_on_clickable_states(#[case] row: SnapRowView, #[case] expected: bool) {
-        let action = snap_action(&row, view(false, true));
-        assert_eq!(action.map(|a| a.consent_pending), Some(expected));
-    }
-}
-
-#[cfg(test)]
-mod coordinate_warning_tests {
-    use gt_types::TrackGeometry;
-    use rstest::rstest;
-
-    use super::CoordinateWarning;
-
-    #[rstest]
-    #[case::one_fix(
-        CoordinateWarning::FixesOutOfRange(1),
-        "1 fix with a coordinate out of range: drawn between the fixes around it"
-    )]
-    #[case::several_fixes(
-        CoordinateWarning::FixesOutOfRange(2),
-        "2 fixes with a coordinate out of range: drawn between the fixes around them"
-    )]
-    #[case::no_valid_position(
-        CoordinateWarning::NoValidPosition,
-        "Not drawn: no fix has a valid coordinate"
-    )]
-    fn a_coordinate_warning_states_what_is_wrong_with_the_track(
-        #[case] warning: CoordinateWarning,
-        #[case] expected: &str,
-    ) {
-        assert_eq!(warning.hover_text(), expected);
-    }
-
-    #[test]
-    fn a_track_whose_fixes_all_hold_a_coordinate_in_range_raises_no_warning() {
-        let track = gt_test_utils::loaded_track_with_points(gt_test_utils::nav_test_data());
-
-        assert_eq!(CoordinateWarning::for_track(&track), None);
-    }
-
-    #[test]
-    fn a_track_with_fixes_out_of_range_counts_them() {
-        let mut track = gt_test_utils::loaded_track_with_points(gt_test_utils::nav_test_data());
-        track.metadata.invalid_position_count = 2;
-
-        assert_eq!(
-            CoordinateWarning::for_track(&track),
-            Some(CoordinateWarning::FixesOutOfRange(2))
-        );
-    }
-
-    #[test]
-    fn a_track_without_a_geometry_reports_no_valid_position() {
-        let mut track = gt_test_utils::loaded_track_with_points(
-            gt_test_utils::fixtures::nav_points_without_a_valid_position(3),
-        );
-        track.metadata.invalid_position_count = 3;
-
-        assert_eq!(track.geometry, TrackGeometry::NoValidPosition);
-        assert_eq!(
-            CoordinateWarning::for_track(&track),
-            Some(CoordinateWarning::NoValidPosition)
-        );
     }
 }

@@ -10,6 +10,8 @@ mod plot_common;
 mod projection;
 mod sky_plot;
 pub mod style;
+#[cfg(test)]
+mod test_util;
 mod trails;
 mod trails_plot;
 

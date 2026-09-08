@@ -4,6 +4,8 @@
 //! hand-writes a [`LoadedFile`] and a field added to a loaded recording never
 //! reaches here.
 
+#![cfg(test)]
+
 use std::path::PathBuf;
 
 use chrono::{DateTime, TimeDelta, Utc};
