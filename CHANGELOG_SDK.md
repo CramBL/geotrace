@@ -12,13 +12,13 @@ the app).
 - Rust `geotrace_sdk_units::snr`, holding `NO_DATA_SENTINEL_DB_HZ` (99 dB-Hz), `NO_DATA_SENTINEL_TOLERANCE_DB_HZ` (0.5 dB-Hz) and `is_no_data_sentinel`, the value some receiver firmware sends when it has no measurement, and the band around it. `geotrace_sdk::Satellite::snr_is_no_data_sentinel` reads that band.
 - Rust `NavFileBuilder::with_scrubbed_provenance()`. A file written through it holds the new `geotrace_sdk::SCRUBBED_SDK_VERSION` (`<scrubbed>`) as its `sdk_version`, no `sdk_git_commit` and no `sdk_commit_time`, whatever the build that wrote it.
 - Rust `NavFile::equals_ignoring_build_provenance()`, which compares two files over everything but their `sdk_version`, `sdk_git_commit` and `sdk_commit_time`.
-- C++ `FixTime::from_recorded()`, which takes a `RecordedFixTimestamps` and returns `std::nullopt` when the recorder holds neither timestamp.
 - C `gtd_nav_file_marker_count`, `gtd_nav_file_get_marker`, `gtd_nav_file_event_marker_style_count` and `gtd_nav_file_get_event_marker_style` read the map markers and the event marker styles a file contains.
-- C++ `NavFile::marker_count`, `marker`, `try_marker`, `event_marker_style_count`, `event_marker_style` and `try_event_marker_style` read them through `MarkerView` and `EventMarkerStyleView`.
 - C `gtd_set_log_callback` and `gtd_clear_log_callback` send the SDK's log records to a callback, which receives each record's `GtdLogLevel`, target and message.
 - C `gtd_set_log_level` sets the lowest severity the SDK forwards, `GTD_LOG_WARN` until it is called.
-- C++ `geotrace::set_log_callback`, `try_set_log_callback` and `clear_log_callback` take a `std::function` over the same records, with the level as the new `LogLevel`. `geotrace::set_log_level` sets the lowest severity forwarded.
 - C `gtd_nav_file_satellite_warning_count` and `gtd_nav_file_get_satellite_warning` read the satellite data warnings the builder's checks raise for a file, through the new `GtdSatelliteWarningInfo`.
+- C++ `FixTime::from_recorded()`, which takes a `RecordedFixTimestamps` and returns `std::nullopt` when the recorder holds neither timestamp.
+- C++ `NavFile::marker_count`, `marker`, `try_marker`, `event_marker_style_count`, `event_marker_style` and `try_event_marker_style` read them through `MarkerView` and `EventMarkerStyleView`.
+- C++ `geotrace::set_log_callback`, `try_set_log_callback` and `clear_log_callback` take a `std::function` over the same records, with the level as the new `LogLevel`. `geotrace::set_log_level` sets the lowest severity forwarded.
 - C++ `NavFile::satellite_warning_count`, `satellite_warning` and `try_satellite_warning` read them through `SatelliteWarningView`.
 - Python `NavFileBuilder.with_lenient_errors()` clamps an annotation outside the nav fix time range to the nearest fix, where the build otherwise fails.
 - Python `NavFileBuilder.with_satellite_window(timedelta)`, C `gtd_builder_set_satellite_window_us(uint64_t)` and C++ `FileBuilder::satellite_window(std::chrono::microseconds)` set how far a satellite report may be from a nav fix to be associated with it. Python raises `ValueError` and C++ throws `std::invalid_argument` for a negative window.
@@ -26,58 +26,50 @@ the app).
 
 ### Changed
 
-- C `gtd_builder_add_annotation` and `gtd_builder_add_event_marker_style` take `uint32_t icon` in place of `GtdMarkerIcon`, a breaking change to the C API. Both return `GTD_ERR_INVALID_ARGUMENT` for a value no `GtdMarkerIcon` variant declares, and `gtd_builder_add_annotation` still returns it for `GTD_ICON_AUTO`.
-- C `GtdSatellite::constellation` is a `uint32_t` in place of a `GtdConstellation`, a breaking change to the C API. `gtd_builder_add_satellite_report` returns `GTD_ERR_INVALID_ARGUMENT`, and the builder keeps the reports it already has, for a satellite whose constellation is a value no `GtdConstellation` variant declares.
-- C `gtd_builder_set_travel_mode` and `gtd_travel_mode_name` take `uint32_t mode` in place of `GtdTravelMode`, a breaking change to the C API. `gtd_builder_set_travel_mode` returns `GTD_ERR_INVALID_ARGUMENT` and `gtd_travel_mode_name` returns `"unknown"` for a value no `GtdTravelMode` variant declares.
 - The writer stamps `geotrace_version` 2 for the layout it writes, and the reader accepts 1 and 2.
-- Rust `NavFile::inspect` reports a file's identity, travel mode and build stamp, its event markers and event marker styles, its satellites' elevation, azimuth and no-data SNR readings, each channel's period, description and time range, every marker icon code it holds, and each fixed-width field row that is not UTF-8.
-- Python `NavFile.points`, `markers`, `event_markers`, `channels` and `event_marker_styles` return a sequence supporting `len()`, indexing, slicing and iteration, in place of a list rebuilt on every attribute access.
-- Rust `NavFileBuilder::with_satellite_window` takes a `std::time::Duration`, which cannot be negative. A window longer than `i64::MAX` microseconds associates every satellite report with its nearest nav fix.
-- C `GtdNavPointInfo` has two new `GtdTimestamp` fields, `sat_report_gps_time` and `sat_report_sys_time`, each `gtd_ts_none()` where the nav point has no satellite report and where the report has no such timestamp. C++ `NavPointView` has the two as `std::optional<Timestamp>`.
-- C `GtdSatellite` and `GtdSatInfo` take a satellite's elevation, azimuth and SNR as the new `GtdOptF32` (`GTD_SOME_F32`, `GTD_NONE_F32`), and C++ `Satellite` and `SatelliteView` as `std::optional<float>`, the 32-bit float the file stores.
 - The writer takes `sdk_version`, `sdk_git_commit` and `sdk_commit_time` from the `NavFile` it writes: a file read from disk and written back keeps the stamp it was read with, and one read without a stamp is written without one. `NavRecorder::finish` stamps the build it runs in.
-- C `gtd_builder_add_channel_with_unit_mode` takes `uint32_t unit_mode`, the parameter type `gtd_channel_unit_parse` already uses. A `GtdChannelUnitMode` value passes unchanged.
-- Rust `NavFix` cannot be built without a timestamp: its new required `time` field takes a `NavFixTime` (`Receiver`, `Host`, or `Both`). `gps_time()` and `sys_time()` read that field.
-- C `gtd_builder_add_nav_fix` returns the new `GTD_ERR_INVALID_ARGUMENT` (12) when `gps_time` and `sys_time` are both `gtd_ts_none()`.
-- Python `NavFix` raises `ValueError` when `gps_time` and `sys_time` are both `None`.
-- Reading a file whose nav point has neither a receiver nor a host timestamp fails with an error stating the record.
-- Rust `SatelliteReport` cannot be built without a timestamp: its new required `time` field takes a `NavFixTime`. `gps_time()` and `sys_time()` read that field. The builder no longer drops a report without a timestamp.
-- C `gtd_builder_add_satellite_report` returns `GTD_ERR_INVALID_ARGUMENT` when `gps_time` and `sys_time` are both `gtd_ts_none()`.
-- Python `SatelliteReport` raises `ValueError` when `gps_time` and `sys_time` are both `None`.
-- Reading a file whose satellite report has neither a receiver nor a host timestamp fails with an error stating the report.
-- C++ `NavFix` and `SatelliteReport` have a required `FixTime` member, built with `FixTime::receiver`, `FixTime::host` or `FixTime::both`, in place of their two timestamps.
-- C++ `Timestamp` is always an instant: it has no default constructor, `Timestamp::none()` and `Timestamp::is_none()` are gone, and `NavPointView::gps_time`, `NavPointView::sys_time` and `NavFile::sdk_commit_time()` are `std::optional<Timestamp>`.
-- C++ header values are `[[nodiscard]]`, the value types are `constexpr` apart from the `Timestamp` factories, and `NavFile` has no default constructor.
-- A map marker whose `markers/icon` code is outside the `MarkerIcon` set is preserved and written back unchanged: Rust `Annotation::icon()` returns the new `AnnotationIcon` (`Icon(MarkerIcon)` or `Unrecognized(u8)`), and Python `Marker.icon` and `Annotation.icon` read `None` for it with the new `icon_code` holding the code and a `UserWarning` raised by `NavFile.markers`.
-- An annotation's icon is Pin unless set: Rust `Annotation::icon()` returns a `MarkerIcon`, C `gtd_builder_add_annotation` returns `GTD_ERR_INVALID_ARGUMENT` for `GTD_ICON_AUTO`, C++ `Annotation::icon` defaults to `MarkerIcon::Pin` and `MarkerIcon::Auto` is gone (`EventMarkerStyle::icon` is a `std::optional<MarkerIcon>`), and Python `Annotation.icon` and `Marker.icon` are a `MarkerIcon`.
-- Rust `NavRecorder::finish` fails with the new `BuildError::GhostFixTimeOutOfRange` where the ghost nav fix for an unassociated satellite report is past the range a UTC timestamp covers.
-- C `gtd_builder_finish` returns `GTD_ERR_INVALID_ARGUMENT` where a ghost nav fix is past the range a UTC timestamp covers.
-- A satellite report before the first nav fix produces a ghost fix on the first fix.
-- A ghost fix after the last nav fix takes that fix's position when the fix has no heading.
-- C `gtd_nav_file_get_nav_point`, `gtd_nav_file_get_satellite`, `gtd_nav_file_get_event_marker`, `gtd_nav_file_get_channel`, `gtd_nav_file_get_channel_component`, `gtd_nav_file_get_channel_unit` and `gtd_channel_unit_parse` return the new `GTD_ERR_OUT_OF_RANGE` (13) for an index past the end or a short output buffer, where they returned `GTD_ERR_NULL_ARGUMENT`.
-- C `gtd_builder_set_title`, `gtd_builder_set_device`, `gtd_builder_set_notes`, `gtd_builder_set_identity`, `gtd_builder_set_travel_mode` and `gtd_builder_set_lenient` return the new `GTD_ERR_CALL_ORDER` (14) when data has already been added, where the first five returned `GTD_ERR_INTERNAL`. `gtd_builder_set_lenient` returns a `GtdStatus` in place of `void`.
-- C++ `FileBuilder::lenient()` records its status, an out-of-range accessor throws `std::out_of_range` through the new status, and `GTD_ERR_CALL_ORDER` throws the new `geotrace::CallOrderError`.
-- C `gtd_ts_from_seconds`, `gtd_ts_from_millis`, `gtd_ts_from_micros` and `gtd_ts_from_nanos` take an `int64_t` count and a `GtdTimestamp` out parameter and return a `GtdStatus`, with `GTD_ERR_OUT_OF_RANGE` for a count past the range a timestamp covers.
-- Rust `Timestamp::try_from_unix_seconds`, `try_from_unix_millis`, `try_from_unix_micros` and `try_from_unix_nanos` take an `i64` and return a `Result`, replacing `from_unix_seconds` and its three siblings.
-- C++ `Timestamp::try_from_seconds`, `try_from_millis`, `try_from_micros` and `try_from_nanos` return a `Result<Timestamp>`, and `Timestamp::from_seconds` and its siblings take a `std::int64_t` and throw `std::out_of_range` for a count past the range a timestamp covers.
-- An event marker outside the nav fix time range fails the build with Rust `BuildError::EventMarkersOutsideRange`, C `GTD_ERR_EVENT_MARKERS_OOB` (15), C++ `EventMarkersOutOfRangeError` or a Python `ValueError`, where it was placed on the nearest fix.
-- Lenient mode clamps an event marker outside the nav fix time range to the nearest fix and logs a warning.
-- An event marker on a builder with no nav fix fails the build with the no-nav-fixes error, where it was dropped.
-- Python `EventMarker` raises `TypeError` for a `variant_path` that is neither a `str`, `None` nor `event_kind.skip`, where it read any other value as `None`.
+- **Breaking:** Reading a file whose nav point, satellite report or event marker has no timestamp fails with an error stating the record. A nav point and a satellite report each have a receiver timestamp and a host timestamp, and the reader accepts a record with either one.
+- **Breaking:** A map marker whose `markers/icon` code is outside the `MarkerIcon` set is preserved and written back unchanged: Rust `Annotation::icon()` returns the new `AnnotationIcon` (`Icon(MarkerIcon)` or `Unrecognized(u8)`), and Python `Marker.icon` and `Annotation.icon` read `None` for it with the new `icon_code` holding the code and a `UserWarning` raised by `NavFile.markers`.
+- **Breaking:** An annotation's icon is Pin unless set: Rust `Annotation::icon()` returns a `MarkerIcon`, C `gtd_builder_add_annotation` returns `GTD_ERR_INVALID_ARGUMENT` for `GTD_ICON_AUTO`, C++ `Annotation::icon` defaults to `MarkerIcon::Pin` and `MarkerIcon::Auto` is gone (`EventMarkerStyle::icon` is a `std::optional<MarkerIcon>`), and Python `Annotation.icon` and `Marker.icon` are a `MarkerIcon`.
+- A satellite report before the first nav fix produces a ghost fix on the first fix. A ghost fix after the last nav fix takes that fix's position when the fix has no heading.
+- **Breaking:** An event marker outside the nav fix time range fails the build with Rust `BuildError::EventMarkersOutsideRange`, C `GTD_ERR_EVENT_MARKERS_OOB` (15), C++ `EventMarkersOutOfRangeError` or a Python `ValueError`, where it was placed on the nearest fix. Lenient mode clamps it to the nearest fix and logs a warning.
+- **Breaking:** An event marker on a builder with no nav fix fails the build with the no-nav-fixes error, where it was dropped.
+- Rust `NavFile::inspect` reports a file's identity, travel mode and build stamp, its event markers and event marker styles, its satellites' elevation, azimuth and no-data SNR readings, each channel's period, description and time range, every marker icon code it holds, and each fixed-width field row that is not UTF-8.
+- **Breaking:** Rust `NavFileBuilder::with_satellite_window` takes a `std::time::Duration`, which cannot be negative. A window longer than `i64::MAX` microseconds associates every satellite report with its nearest nav fix.
+- **Breaking:** Rust `NavFix` and `SatelliteReport` cannot be built without a timestamp: each has a new required `time` field, a `NavFixTime` (`Receiver`, `Host`, or `Both`). `gps_time()` and `sys_time()` read that field. The builder no longer drops a satellite report without a timestamp.
+- **Breaking:** Rust `NavRecorder::finish` fails with the new `BuildError::GhostFixTimeOutOfRange` where the ghost nav fix for an unassociated satellite report is past the range a UTC timestamp covers.
+- **Breaking:** Rust `Timestamp::try_from_unix_seconds`, `try_from_unix_millis`, `try_from_unix_micros` and `try_from_unix_nanos` take an `i64` and return a `Result`, replacing `from_unix_seconds` and its three siblings.
+- **Breaking:** C `gtd_builder_add_annotation` and `gtd_builder_add_event_marker_style` take `uint32_t icon` in place of `GtdMarkerIcon`. Both return `GTD_ERR_INVALID_ARGUMENT` for a value no `GtdMarkerIcon` variant declares, and `gtd_builder_add_annotation` still returns it for `GTD_ICON_AUTO`.
+- **Breaking:** C `GtdSatellite::constellation` is a `uint32_t` in place of a `GtdConstellation`. `gtd_builder_add_satellite_report` returns `GTD_ERR_INVALID_ARGUMENT`, and the builder keeps the reports it already has, for a satellite whose constellation is a value no `GtdConstellation` variant declares.
+- **Breaking:** C `gtd_builder_set_travel_mode` and `gtd_travel_mode_name` take `uint32_t mode` in place of `GtdTravelMode`. `gtd_builder_set_travel_mode` returns `GTD_ERR_INVALID_ARGUMENT` and `gtd_travel_mode_name` returns `"unknown"` for a value no `GtdTravelMode` variant declares.
+- **Breaking:** C `GtdNavPointInfo` has two new `GtdTimestamp` fields, `sat_report_gps_time` and `sat_report_sys_time`, each `gtd_ts_none()` where the nav point has no satellite report and where the report has no such timestamp. C++ `NavPointView` has the two as `std::optional<Timestamp>`.
+- **Breaking:** C `GtdSatellite` and `GtdSatInfo` take a satellite's elevation, azimuth and SNR as the new `GtdOptF32` (`GTD_SOME_F32`, `GTD_NONE_F32`), and C++ `Satellite` and `SatelliteView` as `std::optional<float>`, the 32-bit float the file stores.
+- **Breaking:** C `gtd_builder_add_channel_with_unit_mode` takes `uint32_t unit_mode`, the parameter type `gtd_channel_unit_parse` already uses. A `GtdChannelUnitMode` value passes unchanged.
+- **Breaking:** C `gtd_builder_add_nav_fix` and `gtd_builder_add_satellite_report` return the new `GTD_ERR_INVALID_ARGUMENT` (12) when `gps_time` and `sys_time` are both `gtd_ts_none()`.
+- **Breaking:** C `gtd_builder_finish` returns `GTD_ERR_INVALID_ARGUMENT` where a ghost nav fix is past the range a UTC timestamp covers.
+- **Breaking:** C `gtd_nav_file_get_nav_point`, `gtd_nav_file_get_satellite`, `gtd_nav_file_get_event_marker`, `gtd_nav_file_get_channel`, `gtd_nav_file_get_channel_component`, `gtd_nav_file_get_channel_unit` and `gtd_channel_unit_parse` return the new `GTD_ERR_OUT_OF_RANGE` (13) for an index past the end or a short output buffer, where they returned `GTD_ERR_NULL_ARGUMENT`.
+- **Breaking:** C `gtd_builder_set_title`, `gtd_builder_set_device`, `gtd_builder_set_notes`, `gtd_builder_set_identity`, `gtd_builder_set_travel_mode` and `gtd_builder_set_lenient` return the new `GTD_ERR_CALL_ORDER` (14) when data has already been added, where the first five returned `GTD_ERR_INTERNAL`. `gtd_builder_set_lenient` returns a `GtdStatus` in place of `void`.
+- **Breaking:** C `gtd_ts_from_seconds`, `gtd_ts_from_millis`, `gtd_ts_from_micros` and `gtd_ts_from_nanos` take an `int64_t` count and a `GtdTimestamp` out parameter and return a `GtdStatus`, with `GTD_ERR_OUT_OF_RANGE` for a count past the range a timestamp covers.
+- **Breaking:** C++ `NavFix` and `SatelliteReport` have a required `FixTime` member, built with `FixTime::receiver`, `FixTime::host` or `FixTime::both`, in place of their two timestamps.
+- **Breaking:** C++ `Timestamp` is always an instant: it has no default constructor, `Timestamp::none()` and `Timestamp::is_none()` are gone, and `NavPointView::gps_time`, `NavPointView::sys_time` and `NavFile::sdk_commit_time()` are `std::optional<Timestamp>`.
+- **Breaking:** C++ header values are `[[nodiscard]]`, the value types are `constexpr` apart from the `Timestamp` factories, and `NavFile` has no default constructor.
+- **Breaking:** C++ `FileBuilder::lenient()` records its status, an out-of-range accessor throws `std::out_of_range` through the new status, and `GTD_ERR_CALL_ORDER` throws the new `geotrace::CallOrderError`.
+- **Breaking:** C++ `Timestamp::try_from_seconds`, `try_from_millis`, `try_from_micros` and `try_from_nanos` return a `Result<Timestamp>`, and `Timestamp::from_seconds` and its siblings take a `std::int64_t` and throw `std::out_of_range` for a count past the range a timestamp covers.
+- **Breaking:** Python `NavFile.points`, `markers`, `event_markers`, `channels` and `event_marker_styles` return a sequence supporting `len()`, indexing, slicing and iteration, in place of a list rebuilt on every attribute access.
+- **Breaking:** Python `NavFix` and `SatelliteReport` raise `ValueError` when `gps_time` and `sys_time` are both `None`.
+- **Breaking:** Python `EventMarker` raises `TypeError` for a `variant_path` that is neither a `str`, `None` nor `event_kind.skip`, where it read any other value as `None`.
 
 ### Fixed
 
-- Fixed the reader dropping an event marker without a timestamp: it now fails with an error stating the record.
-- Fixed the reader dropping an event marker or event marker style with an empty variant path: it now fails with an error stating the dataset and the record.
-- Fixed the reader dropping a tracked satellite or a satellite report whose index points past the table it addresses: it now fails with an error stating the dataset and the record.
-- Fixed the reader reading a timestamp outside the range a UTC timestamp covers as 1970-01-01: it now fails with an error stating the dataset and the record.
-- Fixed the reader treating a timestamp dataset it cannot read as one the file does not hold: it now fails with an error stating the dataset and the record.
-- Fixed the reader dropping the rows past the end of a dataset shorter than its table: it now fails with an error stating the dataset and the row counts.
-- Fixed the reader treating a group it cannot open as one the file does not hold: it now fails with an error stating the group.
-- Fixed a timestamp of exactly 1969-12-31T23:59:59.999999Z being written as absent: writing it fails with an error stating the dataset and the record.
-- Fixed an annotation or event marker timestamped exactly at the last nav fix being placed outside the nav fix time range: it is placed on that fix.
+- **Breaking:** Fixed the reader dropping an event marker or event marker style with an empty variant path: it now fails with an error stating the dataset and the record.
+- **Breaking:** Fixed the reader dropping a tracked satellite or a satellite report whose index points past the table it addresses: it now fails with an error stating the dataset and the record.
+- **Breaking:** Fixed the reader reading a timestamp outside the range a UTC timestamp covers as 1970-01-01: it now fails with an error stating the dataset and the record.
+- **Breaking:** Fixed the reader treating a dataset it cannot read or a group it cannot open as one the file does not hold: it now fails with an error stating the dataset and the record, or stating the group.
+- **Breaking:** Fixed the reader dropping the rows past the end of a dataset shorter than its table: it now fails with an error stating the dataset and the row counts.
+- **Breaking:** Fixed a timestamp of exactly 1969-12-31T23:59:59.999999Z being written as absent: writing it fails with an error stating the dataset and the record.
+- Fixed an annotation timestamped exactly at the last nav fix being placed outside the nav fix time range: it is placed on that fix.
 - Fixed a marker, event marker or ghost fix interpolated between two fixes on either side of the antimeridian being placed near longitude 0: it is placed on the short arc between the two fixes.
-- Fixed the reader accepting any `geotrace_version` beginning with a 1 or a 2, such as `10` or `1abc`: it reads the attribute as an integer and accepts 1 and 2 alone.
+- **Breaking:** Fixed the reader accepting any `geotrace_version` beginning with a 1 or a 2, such as `10` or `1abc`: it reads the attribute as an integer and accepts 1 and 2 alone.
 - Fixed the `encoding` attribute of the `markers/icon` and `tracked_sats/constellation` datasets listing 7 of the 14 marker icons and 4 of the 6 constellations: the writer builds each attribute from the full set of codes.
 
 ## [0.6.0] - 2026-09-03
