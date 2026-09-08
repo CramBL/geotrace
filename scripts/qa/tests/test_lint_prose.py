@@ -4,13 +4,14 @@ No test runs Vale or reaches the network: `_VALE_JSON` and `_CONTRASTIVE_JSON`
 are captured replies.
 """
 
-import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+from conftest import GitRepository
 
 from qa import lint_prose
+from qa._check import Commit
 
 _VALE_JSON = """\
 {
@@ -51,8 +52,6 @@ _STUB_ENGINE = lint_prose.Engine(argv=["vale"], description="vale")
 
 _REPLACEMENT_MESSAGE = "a replacement subject\n\nA replacement body.\n"
 
-_BODY = "An appended note.\n"
-
 _JUST_SOURCE = """\
 # Lint the tracked Markdown files.
 [doc("Every surface, the whole backlog.")]
@@ -88,34 +87,6 @@ def test_annotation_anchors_a_commit_alert_on_its_hash() -> None:
         "::error title=commit 8250d2ea::GeoTrace.Overused: "
         "Overused in generated prose: 'seamless'."
     )
-
-
-@pytest.mark.parametrize(
-    ("hunk", "expected"),
-    [
-        ("@@ -1,0 +5,3 @@", {5, 6, 7}),
-        ("@@ -1 +5 @@", {5}),
-        ("@@ -4,2 +3,0 @@", set()),
-    ],
-)
-def test_added_lines_reads_a_hunk_header(hunk: str, expected: set[int]) -> None:
-    diff = f"--- a/README.md\n+++ b/README.md\n{hunk}\n+added\n"
-    assert lint_prose.added_lines(diff).get("README.md", set()) == expected
-
-
-def test_added_lines_keys_each_hunk_on_the_file_above_it() -> None:
-    diff = """\
---- a/README.md
-+++ b/README.md
-@@ -1,0 +2,1 @@
-+one
---- a/justfile
-+++ b/justfile
-@@ -8,0 +9,2 @@
-+two
-+three
-"""
-    assert lint_prose.added_lines(diff) == {"README.md": {2}, "justfile": {9, 10}}
 
 
 def test_keep_added_drops_an_alert_off_an_added_line() -> None:
@@ -173,25 +144,9 @@ def test_summary_says_nothing_to_check_when_the_range_is_empty() -> None:
     )
 
 
-def _run_git(root: Path, args: Sequence[str]) -> None:
-    subprocess.run(
-        ["git", "-c", "user.email=qa@example.com", "-c", "user.name=QA", *args],
-        cwd=root,
-        check=True,
-        capture_output=True,
-    )
-
-
-def _commit_empty(root: Path, message: str) -> None:
-    _run_git(root, ["commit", "--quiet", "--allow-empty", "-m", message])
-
-
-def _repository_with_one_commit(root: Path) -> None:
-    _run_git(root, ["init", "--quiet"])
-    _commit_empty(root, "root")
-
-
-def test_script_files_reads_every_toml_file_and_only_the_workflow_yaml(tmp_path: Path) -> None:
+def test_script_files_reads_every_toml_file_and_only_the_workflow_yaml(
+    git_repository: GitRepository,
+) -> None:
     for rel in (
         "justfile",
         "Cargo.toml",
@@ -201,12 +156,11 @@ def test_script_files_reads_every_toml_file_and_only_the_workflow_yaml(tmp_path:
         ".config/settings.yml",
         "README.md",
     ):
-        path = tmp_path / rel
+        path = git_repository.root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("# A comment.\n")
-    _run_git(tmp_path, ["init", "--quiet"])
 
-    assert lint_prose.script_files(tmp_path) == [
+    assert lint_prose.script_files(git_repository.root) == [
         ".github/workflows/ci.yml",
         "Cargo.toml",
         "crates/gt-types/Cargo.toml",
@@ -215,57 +169,10 @@ def test_script_files_reads_every_toml_file_and_only_the_workflow_yaml(tmp_path:
     ]
 
 
-def test_merge_base_exits_with_one_line_when_the_base_ref_does_not_resolve(tmp_path: Path) -> None:
-    _repository_with_one_commit(tmp_path)
-
-    with pytest.raises(SystemExit) as raised:
-        lint_prose._merge_base_with_head(tmp_path, "origin/trunk")
-
-    assert str(raised.value) == (
-        "error: base ref origin/trunk does not resolve: fetch it, or pass another base"
-    )
-
-
-def test_commits_in_drops_a_fixup_subject_and_keeps_a_body_that_quotes_one(
-    tmp_path: Path,
-) -> None:
-    _repository_with_one_commit(tmp_path)
-    _commit_empty(tmp_path, "fixup! root")
-    _commit_empty(tmp_path, "quote a fixup subject\n\nfixup! root is what this body says.")
-    _commit_empty(tmp_path, f"squash! root\n\n{_BODY}")
-    _commit_empty(tmp_path, f"amend! root\n\n{_REPLACEMENT_MESSAGE}")
-
-    commits = lint_prose.commits_in(tmp_path, "HEAD")
-
-    assert [commit.subject for commit in commits] == [
-        "amend! root",
-        "squash! root",
-        "quote a fixup subject",
-        "root",
-    ]
-    assert commits[0].message == f"amend! root\n\n{_REPLACEMENT_MESSAGE}"
-    assert commits[-1].message == "root\n"
-
-
-@pytest.mark.parametrize(
-    ("message", "expected"),
-    [
-        (f"amend! root\n\n{_REPLACEMENT_MESSAGE}", _REPLACEMENT_MESSAGE),
-        ("amend! root\n", ""),
-        (f"squash! root\n\n{_BODY}", f"\n\n{_BODY}"),
-        (f"a plain subject\n\n{_BODY}", f"a plain subject\n\n{_BODY}"),
-    ],
-)
-def test_message_to_lint_returns_the_text_that_lands_on_the_branch(
-    message: str, expected: str
-) -> None:
-    assert lint_prose.Commit(hash="8250d2ea", message=message).message_to_lint() == expected
-
-
 def test_lint_commit_reads_an_amend_replacement_and_names_the_commit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    commit = lint_prose.Commit(hash="8250d2ea", message=f"amend! root\n\n{_REPLACEMENT_MESSAGE}")
+    commit = Commit(hash="8250d2ea", message=f"amend! root\n\n{_REPLACEMENT_MESSAGE}")
     read_by_vale: list[str | None] = []
 
     def stub_vale(
@@ -293,6 +200,6 @@ def test_lint_commit_runs_no_vale_on_an_amend_without_a_body(
 
     monkeypatch.setattr(lint_prose, "_run_vale", fail_on_call)
 
-    commit = lint_prose.Commit(hash="ad2e0f4", message="amend! root\n")
+    commit = Commit(hash="ad2e0f4", message="amend! root\n")
 
     assert lint_prose._lint_commit(_STUB_ENGINE, Path("."), commit) == []

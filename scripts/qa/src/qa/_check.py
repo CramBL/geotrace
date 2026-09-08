@@ -1,9 +1,11 @@
-"""Shared infrastructure for QA checks: file iteration, reporting, and exit logic."""
+"""Shared infrastructure for QA checks: git queries, file iteration, reporting,
+and exit logic."""
 
 import itertools
 import re
 import subprocess
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from typing import NamedTuple
@@ -158,6 +160,28 @@ def _labelled_lines(tag: str, lines: list[str]) -> None:
         print(f"{prefix}{text}")
 
 
+def report_locations(
+    check: str,
+    title: str,
+    entries: list[tuple[str, str]],
+    note: list[str],
+    help: list[str],
+) -> None:
+    """Print one report, each entry as a location line and the text found there.
+
+    `help` is printed as it stands: a check over something other than a file has
+    no line to hold an allow comment.
+    """
+    print(f"error[{check}]: {title}\n")
+    for where, text in entries:
+        print(f"  --> {where}")
+        print("   |")
+        print(f"   |  {text}")
+        print("   |")
+    _labelled_lines("note", note)
+    _labelled_lines("help", help)
+
+
 def report(
     check: str,
     title: str,
@@ -165,14 +189,13 @@ def report(
     note: list[str],
     help: list[str],
 ) -> None:
-    print(f"error[{check}]: {title}\n")
-    for path, lineno, line in violations:
-        print(f"  --> {path}:{lineno}")
-        print("   |")
-        print(f"   |  {line}")
-        print("   |")
-    _labelled_lines("note", note)
-    _labelled_lines("help", help + [f'// [qa-allow-{check}, reason = "why this is acceptable"]'])
+    report_locations(
+        check,
+        title,
+        [(f"{path}:{lineno}", line) for path, lineno, line in violations],
+        note,
+        help + [f'// [qa-allow-{check}, reason = "why this is acceptable"]'],
+    )
 
 
 class Check(NamedTuple):
@@ -185,13 +208,142 @@ class Check(NamedTuple):
     help: list[str]
 
 
+def _report_any(check: Check, violations: list[Violation]) -> bool:
+    if not violations:
+        return False
+    report(check.name, check.title, violations, check.note, check.help)
+    return True
+
+
 def run_check(check: Check, root: Path) -> bool:
     """Run `check` against `root`, printing a report if it finds violations.
 
     Returns `True` if any violations were found.
     """
-    violations = check.collect(root)
-    if violations:
-        report(check.name, check.title, violations, check.note, check.help)
-        return True
-    return False
+    return _report_any(check, check.collect(root))
+
+
+def run_check_on_added(check: Check, root: Path, added: dict[str, set[int]]) -> bool:
+    """Run `check` against `root` and report the violations on a line in `added`.
+
+    This is the gate a pull request runs: a violation on a line the change did
+    not add leaves an unrelated change green.
+    """
+    return _report_any(
+        check,
+        [
+            violation
+            for violation in check.collect(root)
+            if violation[1] in added.get(violation[0].relative_to(root).as_posix(), set())
+        ],
+    )
+
+
+def git_output(root: Path, args: Sequence[str]) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=root, capture_output=True, text=True, check=True
+    ).stdout
+
+
+def merge_base_with_head(root: Path, base: str) -> str:
+    resolved = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", base], cwd=root, capture_output=True
+    )
+    if resolved.returncode != 0:
+        raise SystemExit(f"error: base ref {base} does not resolve: fetch it, or pass another base")
+    return git_output(root, ["merge-base", base, "HEAD"]).strip()
+
+
+_DIFF_FILE = re.compile(r"^\+\+\+ b/(.*)$")
+_DIFF_HUNK = re.compile(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@")
+
+
+def added_lines(diff: str) -> dict[str, set[int]]:
+    """The line numbers each file gains, read from a `git diff -U0` text. A hunk
+    without a count adds one line, and a hunk of count zero adds none."""
+    added: dict[str, set[int]] = {}
+    current = None
+    for line in diff.splitlines():
+        header = _DIFF_FILE.match(line)
+        if header is not None:
+            current = header.group(1)
+            continue
+        hunk = _DIFF_HUNK.match(line)
+        if hunk is None or current is None:
+            continue
+        start = int(hunk.group(1))
+        count = 1 if hunk.group(2) is None else int(hunk.group(2))
+        if count:
+            added.setdefault(current, set()).update(range(start, start + count))
+    return added
+
+
+def untracked_added(root: Path) -> dict[str, set[int]]:
+    """Every line of every untracked file: a change adds an untracked file in full."""
+    listed = git_output(root, ["ls-files", "--others", "--exclude-standard", "-z"])
+    added = {}
+    for path in listed.split("\0"):
+        if not path:
+            continue
+        count = len((root / path).read_bytes().splitlines())
+        if count:
+            added[path] = set(range(1, count + 1))
+    return added
+
+
+def added_lines_since(root: Path, revision: str) -> dict[str, set[int]]:
+    """The line numbers each file gains against `revision`, and the untracked files."""
+    diff = git_output(root, ["diff", "-U0", "--no-color", "--diff-filter=AM", revision])
+    added = added_lines(diff)
+    added.update(untracked_added(root))
+    return added
+
+
+# Per commit: short hash, tab, the whole message, NUL.
+_COMMIT_RECORD_FORMAT = "%h%x09%B%x00"
+
+
+@dataclass(frozen=True)
+class Commit:
+    """One commit of a range, by its short hash and its whole message."""
+
+    hash: str
+    message: str
+
+    @property
+    def subject(self) -> str:
+        return self.message.partition("\n")[0]
+
+    def message_to_land(self) -> str:
+        """The part of this commit's message that lands on the branch.
+
+        Under an `amend!` subject, the text starts at the replacement subject
+        line, which `git rebase --autosquash` writes over the target's message.
+        Under a `squash!` subject, the generated subject line goes blank. The
+        appended body then keeps the line numbers it has in this commit, and a
+        report against the text points at the line the reader sees.
+        """
+        if self.subject.startswith("amend! "):
+            return self.message.partition("\n\n")[2]
+        if self.subject.startswith("squash! "):
+            _, newline, body = self.message.partition("\n")
+            return newline + body
+        return self.message
+
+
+def commits_in(root: Path, revision_range: str) -> list[Commit]:
+    """The commits of `revision_range`, without the merges and the `fixup!` commits:
+    `git rebase --autosquash` discards a `fixup!` message whole and no line of it
+    lands on the branch."""
+    output = git_output(
+        root,
+        ["log", "--no-merges", f"--format={_COMMIT_RECORD_FORMAT}", revision_range],
+    )
+    found = []
+    # The filter reads the subject here: `git log --grep` matches a body line too,
+    # and a body may quote a `fixup!` subject.
+    for record in output.split("\0"):
+        short_hash, tab, message = record.lstrip("\n").partition("\t")
+        if tab and not message.startswith("fixup! "):
+            found.append(Commit(short_hash, message))
+    return found

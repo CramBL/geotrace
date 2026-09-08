@@ -13,6 +13,17 @@ check-fixed-width-integers:
 check-floating-comments:
     {{ _QA }} check-floating-comments
 
+# Fail on a `use` that fully imports a function anywhere in the tree. A call site
+# states the module its function comes from, which CODE_STYLE requires.
+[group("qa")]
+check-function-imports:
+    {{ _QA }} check-function-imports
+
+# The gate: the same check over the lines added since BASE.
+[group("qa")]
+check-function-imports-added BASE="origin/trunk":
+    {{ _QA }} check-function-imports --added {{ BASE }}
+
 [group("qa")]
 check-narrative-comments:
     {{ _QA }} check-narrative-comments
@@ -65,6 +76,11 @@ vale-source:
 [group("qa")]
 vale-scripts:
     {{ _QA }} lint-prose scripts
+
+# Fail on a commit message whose body runs past the ceiling, over RANGE.
+[group("qa")]
+check-commit-length RANGE="origin/trunk..HEAD":
+    {{ _QA }} check-commit-length {{ RANGE }}
 
 # Lint every commit message in RANGE.
 [group("qa")]
