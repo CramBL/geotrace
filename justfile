@@ -46,7 +46,7 @@ fmt-check-all: fmt-check fmt-check-sdk
 
 [group("native")]
 check *ARGS:
-    cargo check {{ ARGS }}
+    cargo check --workspace {{ ARGS }}
 
 [group("native")]
 check-sdk:
