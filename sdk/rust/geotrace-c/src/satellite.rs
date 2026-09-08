@@ -8,8 +8,8 @@ use crate::{GtdConstellation, GtdOptF32};
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct GtdSatellite {
-    /// GNSS constellation.
-    pub constellation: GtdConstellation,
+    /// GNSS constellation. A @ref GtdConstellation value.
+    pub constellation: u32,
     /// Pseudo-random noise number (satellite ID).
     pub prn: u32,
     /// Non-zero if this satellite contributed to the position fix.
@@ -23,14 +23,19 @@ pub struct GtdSatellite {
 }
 
 impl GtdSatellite {
-    pub(crate) fn to_sdk_satellite(self) -> geotrace_sdk::Satellite {
-        geotrace_sdk::Satellite::builder()
-            .constellation(geotrace_sdk::Constellation::from(self.constellation))
-            .prn(self.prn)
-            .in_fix(self.in_fix != 0)
-            .maybe_elevation(self.elevation_deg.to_opt())
-            .maybe_azimuth(self.azimuth_deg.to_opt())
-            .maybe_snr(self.snr_dbhz.to_opt())
-            .build()
+    /// `None` when `constellation` is a value no [`GtdConstellation`] variant
+    /// declares.
+    pub(crate) fn to_sdk_satellite(self) -> Option<geotrace_sdk::Satellite> {
+        let constellation = GtdConstellation::from_abi_value(self.constellation)?;
+        Some(
+            geotrace_sdk::Satellite::builder()
+                .constellation(geotrace_sdk::Constellation::from(constellation))
+                .prn(self.prn)
+                .in_fix(self.in_fix != 0)
+                .maybe_elevation(self.elevation_deg.to_opt())
+                .maybe_azimuth(self.azimuth_deg.to_opt())
+                .maybe_snr(self.snr_dbhz.to_opt())
+                .build(),
+        )
     }
 }

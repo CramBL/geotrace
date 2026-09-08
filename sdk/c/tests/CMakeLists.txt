@@ -88,18 +88,18 @@ set(GTD_INVALID_ENUM_CASES_AWAITING_A_FIX
     an_annotation_icon_outside_the_enum_is_rejected
     # `gtd_builder_add_event_marker_style`
     an_event_marker_style_icon_outside_the_enum_is_rejected
-    # `gtd_builder_add_satellite_report`
-    a_satellite_constellation_outside_the_enum_is_rejected
     # `gtd_set_log_level`
     a_log_level_outside_the_enum_leaves_the_forwarded_level_in_force
 )
 
 foreach(case
-        # These cases pass today: the entry points behind them take the value as
-        # a `uint32_t` and check it.
+        # These cases pass today: the C API takes the value as a `uint32_t`, in
+        # a parameter or in a struct field, and the library checks it.
         a_channel_unit_mode_outside_the_enum_is_rejected
         a_travel_mode_outside_the_enum_is_rejected
         the_name_of_a_travel_mode_outside_the_enum_is_unknown
+        a_satellite_constellation_outside_the_enum_is_rejected
+        the_builder_stays_unchanged_when_it_rejects_a_satellite_report
         ${GTD_INVALID_ENUM_CASES_AWAITING_A_FIX})
     add_test(NAME test_invalid_enums_${case}
         COMMAND test_invalid_enums --filter "invalid_enums/${case}"

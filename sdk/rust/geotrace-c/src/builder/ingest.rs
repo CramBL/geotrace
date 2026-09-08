@@ -104,6 +104,10 @@ pub unsafe extern "C" fn gtd_builder_add_nav_fix(
 ///
 /// @return `GTD_ERR_INVALID_ARGUMENT` if @p gps_time and @p sys_time are both
 ///         `gtd_ts_none()`.
+/// @return `GTD_ERR_INVALID_ARGUMENT` if the constellation of an element of
+///         @p sats is a value no @ref GtdConstellation variant declares. The
+///         builder then keeps the reports it already has, and
+///         `gtd_last_error()` states the index of that element.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_satellite_report(
     builder: *mut GtdFileBuilder,
@@ -125,13 +129,22 @@ pub unsafe extern "C" fn gtd_builder_add_satellite_report(
             Ok(time) => time,
             Err(status) => return status,
         };
-        let tracked: Vec<geotrace_sdk::Satellite> = if n_sats == 0 {
-            Vec::new()
+        let slice = if n_sats == 0 {
+            &[][..]
         } else {
             // SAFETY: sats is non-null (checked above), `n_sats` is the element count
-            let slice = unsafe { std::slice::from_raw_parts(sats, n_sats) };
-            slice.iter().map(|s| s.to_sdk_satellite()).collect()
+            unsafe { std::slice::from_raw_parts(sats, n_sats) }
         };
+        let mut tracked = Vec::with_capacity(n_sats);
+        for (index, sat) in slice.iter().enumerate() {
+            let Some(sat) = sat.to_sdk_satellite() else {
+                error::set_last_error(format!(
+                    "sats[{index}].constellation is not a valid GtdConstellation"
+                ));
+                return GtdStatus::GTD_ERR_INVALID_ARGUMENT;
+            };
+            tracked.push(sat);
+        }
         builder
             .recorder_mut()
             .add_satellite_report(SatelliteReport { time, tracked });

@@ -654,7 +654,7 @@ enum class TravelMode : std::uint8_t {
 
 namespace detail {
 
-[[nodiscard]] constexpr GtdConstellation to_c(Constellation constellation) noexcept {
+[[nodiscard]] constexpr std::uint32_t to_c(Constellation constellation) noexcept {
     switch (constellation) {
     case Constellation::Gps:
         return GTD_CONSTELLATION_GPS;
