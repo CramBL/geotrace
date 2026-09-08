@@ -5,6 +5,7 @@
 ### Avoid `unsafe`
 
 `unsafe` code should be only used when necessary, and should be carefully scrutinized during PR reviews.
+An `unsafe` block comes with a `// SAFETY:` comment stating the invariant and what upholds it.
 
 ### Avoid `unwrap`, `expect` etc.
 The code should never panic or crash, which means that any instance of `unwrap` or `expect` is a potential time-bomb. Even if you structured your code to make them impossible, any reader will have to read the code very carefully to prove to themselves that an `unwrap` won't panic. Often you can instead rewrite your code so as to avoid it. The same goes for indexing into a slice (which will panic on out-of-bounds) - it is often preferable to use `.get()`.
@@ -44,6 +45,8 @@ If sorting is too slow, you MUST put `unsorted` in the  name as a warning.
 * Handle each error exactly once. If you log it, don't pass it on. If you pass it on, don't log it.
 
 Strive to encode code invariants and contracts in the type system as much as possible. So if a vector cannot be empty, consider using [`vec1`](https://crates.io/crates/vec1). [Parse, don’t validate](https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/).
+Avoid a `validate` or a `check` function that reads a populated object for error conditions.
+Make an invalid state impossible to represent.
 
 Some contracts cannot be enforced using the type system. In those cases you should explicitly enforce them using `assert` (self-documenting code) and in documentation (if it is part of a public API).
 
@@ -193,9 +196,133 @@ Never use `foo().unwrap_or(())` to discard a `Result` - it is more verbose than 
 
 We group and order imports (`use` statements) by `std`, other crates, and lastly own `crate` and `super`. This corresponds to [`StdExternalCrate`](https://rust-lang.github.io/rustfmt/?version=v1.8.0&search=group#StdExternalCrate%5C%3A).
 
-We group our `use` statements by module, e.g. `crate_name::module::{a, b, c}`. This is a compromise, being rather terse while still avoiding excessive merge conflicts. See [the `rustfmt` docs](https://rust-lang.github.io/rustfmt/?version=v1.8.0&search=group#Module%5C%3A) for details.
+An import that shares a parent module with another joins it in one brace group, and an import whose parent module is its own goes on a line of its own:
+
+``` rust
+// Good
+use alloc::format;
+use alloc::vec::Vec;
+use egui::{Button, RichText};
+
+// Bad - one brace group over two parent modules
+use alloc::{format, vec::Vec};
+```
+
+This is rustfmt's [`imports_granularity = "Module"`](https://rust-lang.github.io/rustfmt/?version=v1.8.0&search=group#Module%5C%3A), under the `group_imports = "StdExternalCrate"` grouping above.
+A reviewer checks both rules by reading: both options are nightly-only, and this repository pins a stable toolchain in `rust-toolchain.toml`.
 
 Use the destructor syntax (`let Self { a, b, c} = self;`) whenever you're accessing most of (or all) of the fields of a struct.
+
+### Comments
+
+An item gets a comment for a subtlety or for an invariant the type system cannot express, and none otherwise: a comment is a maintenance cost.
+The SDK crates under `sdk/` are the exception: every item they expose publicly has a descriptive doc comment.
+Their API is published and has users outside this repository.
+The compiler lint `missing_docs` (allow by default) reports an undocumented public item.
+
+Every comment wraps at 100 columns, doc comment or not.
+A reviewer checks the width by reading, because rustfmt's `comment_width` and `wrap_comments` are nightly-only options.
+
+### Item order within a file
+
+The public API sits near the top of a file and its helpers under it: an item depends on the items defined below it.
+Module declarations come after the imports and above every other item.
+`const` values sit low, and `mod tests` is last (see Modules).
+`clippy::arbitrary_source_item_ordering` (restriction, allow by default) checks the order of items in a module and takes the grouping as configuration.
+
+### Type and `impl` order
+
+A type definition comes first, its inherent `impl` after it, and its trait `impl` blocks last, ordered from the most specific trait to the least specific: a trait of this project's own above a `std` trait such as `Display`.
+
+An inherent `impl` orders its items:
+
+1. associated functions without a `self` parameter, apart from the constructors
+2. constructors, the one with the fewest arguments first
+3. public `&mut self` methods
+4. public `&self` methods
+5. private `&mut self` methods
+6. private `&self` methods
+7. `const` values
+
+A getter and a setter follow the order of the fields in the type definition.
+
+### Attributes
+
+A doc comment comes above the attributes, and the attribute that changes the item's meaning most sits last, closest to the item.
+A `derive` lists its traits alphabetically.
+
+### `enum` definitions
+
+Variants are in alphabetical order.
+An external source that fixes an order overrides this, and the definition then states that source.
+A variant name is an active verb (`Allow`, and not `Allowed`), and an `enum` of `Yes` and `No` is a `bool`.
+
+A public `enum` is marked `#[non_exhaustive]`, or `#[allow(clippy::exhaustive_enums, reason = "the set is complete")]` where the set of variants is complete by definition, as `enum ByteOrder { LittleEndian, BigEndian }` is.
+Err on the side of `#[non_exhaustive]`.
+The same holds for a public struct, and a struct with at least one private field is already non-exhaustive.
+This weighs most on the SDK crates, which are published: adding a variant to an exhaustive public `enum` breaks a downstream `match`.
+
+### Functions
+
+Before making a function longer, split the part out into a function whose name says what that part does.
+A reader follows a sequence of named steps more easily than one long body.
+
+Where the semantics of a function depend on the type of one of its arguments, and this crate defines that type, write it as a method on the type.
+The same holds where several arguments share one type at every call site.
+
+`impl Trait` is the form for an argument or a return type used once, because a named type parameter adds a level of indirection to read past.
+
+A fully qualified call writes the type out: `GlobalFilter::default()`, and never `<_>::default()`.
+
+### Argument order
+
+The most generic argument comes first, which is egui's convention: `fn detail_row(ui: &mut egui::Ui, caption: &str, value: &str)`.
+
+### Patterns and lifetimes
+
+A pattern avoids `ref`: take the reference on the value being matched, as in `match &value { … }`.
+`clippy::ref_patterns` (restriction, allow by default) reports a `ref` pattern.
+
+A type generic over a lifetime is written with the placeholder wherever it is named: `Formatter<'_>`, and never a bare `Formatter`.
+The compiler lint `elided_lifetimes_in_paths` (allow by default, part of `rust_2018_idioms`) reports an elided lifetime.
+
+### Type aliases
+
+Write the type out: a type alias hides the type it abbreviates.
+Where an abstraction boundary justifies the complexity, a newtype encodes the same boundary in a type of its own.
+The one exception is the deprecated alias that keeps an old name across a rename in the SDK crates (see Exports).
+
+### Expressions
+
+A binding used once reads well written into the expression that uses it, and an iterator adapter reads well where a `for` loop does the same work.
+The limit is the chain that hides the work.
+`.map().map_err()` reads worse than a `match` when both arms transform the value.
+
+A `match` or an `if` whose arms share a wrapper hoists it out:
+
+``` rust
+// Bad
+match foo {
+    1..10 => Ok(do_one_thing()),
+    _ => Ok(do_another()),
+}
+
+// Good
+Ok(match foo {
+    1..10 => do_one_thing(),
+    _ => do_another(),
+})
+```
+
+### Nesting
+
+Write the case that ends the work as an early `return` or `continue`, and the rest of the body stays at one indentation level.
+
+### Cargo features
+
+Enabling a cargo feature keeps the default behaviour of the crate.
+A feature may expose more API, and the behaviour reached through that API is opt-in at the call site.
+`test-util` and `fixtures` are the shape of it: they add test helpers and fixture builders to a crate's surface.
 
 ### Modules
 
@@ -209,6 +336,16 @@ A module nested inside that `mod tests` is no exception: give each test a name t
 Any other inline module needs its reason stated in an escape comment: `// [qa-allow-check-inline-modules, reason = "seals the trait"]`.
 
 `just qa::check-inline-modules` reports every inline module in the tree, and CI runs the check over the lines a pull request adds.
+
+### Exports
+
+The crate root is the public API.
+The modules are private, and `lib.rs` re-exports every public item, grouped by the part of the API it belongs to.
+A public item then has exactly one path, and moving an item between modules is not an API change.
+A module that is public and re-exported as well gives its item two paths, which is the shape to avoid.
+
+A rename in the SDK crates keeps the old name for one minor release as a deprecated alias (`#[deprecated] pub type OldName = NewName;`), which warns at the use site.
+A rename in the internal crates under `crates/` is a plain rename: they are published nowhere outside this repository.
 
 ### Test helpers
 A crate's shared test module is `src/test_util.rs`, or a directory `src/test_util/` of submodules once it grows past one file, and the file opens with `#![cfg(test)]`. A feature that exposes those helpers to another crate is named `test-util`.
@@ -346,3 +483,8 @@ Instead, use:
 - A named `const &str` when the character is a typographic symbol that appears inline with text - for example `const EM_DASH: &str = "—";` or `const ELLIPSIS: &str = "…";`.
   Define the constant in the narrowest scope that covers all callers (file-level `const` in the module that owns the UI, crate-level if shared across files in a crate).
   The constant body may contain the literal Unicode character directly (the restriction is on escape sequences, not on non-ASCII characters in source).
+
+### Numeric literals
+
+A numeric base fits the domain of the value: hexadecimal for a `.gtd` signature, a record type or a flag bit, decimal for a size or a count.
+Group the digits of a large constant: `100_000_000`, and never `100000000`.

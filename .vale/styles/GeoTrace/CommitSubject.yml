@@ -1,10 +1,12 @@
-# The subject line is plain lowercase prose: no capital first letter and no
-# trailing period. A lowercase namespace prefix ("ci: ...", "sdk: ...") is fine.
+# The subject line is a sentence: a capital first letter and no trailing
+# period, after an optional lowercase tag ("ci: Run the fuzz targets"). This
+# is the convention GNOME's handbook states.
 extends: existence
-message: "Commit subject: '%s'. Plain lowercase, no trailing period."
+message: "Commit subject: '%s'. A capital first letter after an optional lowercase 'tag: ', no trailing period."
 level: error
 scope: raw
 nonword: true
 tokens:
-  - '\A[A-Z]'
+  - '\A(?![a-z][a-z0-9_./-]*: )[a-z]'
+  - '\A[a-z][a-z0-9_./-]*: [a-z]'
   - '\A[^\n]*\.(?:\n|\z)'
