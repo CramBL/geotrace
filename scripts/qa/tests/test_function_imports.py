@@ -5,7 +5,7 @@ import random
 import pytest
 from conftest import GitRepository
 
-from qa import check_function_imports
+from qa import _rust, check_function_imports
 
 
 def _violations(repository: GitRepository, source: str) -> list[tuple[int, str]]:
@@ -293,7 +293,7 @@ def test_random_source_keeps_the_offsets_and_raises_nothing() -> None:
     rng = random.Random(_SEED)
     for _ in range(_RANDOM_SOURCES):
         source = "".join(rng.choice(_FRAGMENTS) for _ in range(rng.randrange(1, 40)))
-        code = check_function_imports.mask_comments_and_strings(source)
+        code = _rust.mask_comments_and_strings(source)
 
         assert len(code) == len(source)
         assert code.count("\n") == source.count("\n")
