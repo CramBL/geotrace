@@ -62,6 +62,7 @@ the app).
 - **Breaking:** Python `NavFile.points`, `markers`, `event_markers`, `channels` and `event_marker_styles` return a sequence supporting `len()`, indexing, slicing and iteration, in place of a list rebuilt on every attribute access.
 - **Breaking:** Python `NavFix` and `SatelliteReport` raise `ValueError` when `gps_time` and `sys_time` are both `None`.
 - **Breaking:** Python `EventMarker` raises `TypeError` for a `variant_path` that is neither a `str`, `None` nor `event_kind.skip`, where it read any other value as `None`.
+- **Breaking:** Python `Constellation`, `MarkerIcon` and `TravelMode` are `enum.Enum` classes: each member has `.name` and `.value` and works as a `set` element and a `dict` key, and `list()` and `len()` over the class give the members and their count.
 
 ### Fixed
 

@@ -37,14 +37,12 @@ from geotrace_sdk._geotrace_sdk import (
     Channel,
     ChannelSequence,
     ChannelUnit,
-    Constellation,
     EventMarker,
     EventMarkerPoint,
     EventMarkerPointSequence,
     EventMarkerStyle,
     EventMarkerStyleSequence,
     Marker,
-    MarkerIcon,
     MarkerSequence,
     Meta,
     NavFile,
@@ -54,9 +52,9 @@ from geotrace_sdk._geotrace_sdk import (
     NavPointSequence,
     Satellite,
     SatelliteReport,
-    TravelMode,
     Unit,
 )
+from geotrace_sdk.enums import Constellation, MarkerIcon, TravelMode
 from geotrace_sdk.event_kind import event_kind
 
 try:

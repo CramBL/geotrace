@@ -631,28 +631,29 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
 
+      # `--no-install-project` leaves the extension to `maturin develop`, and
+      # `--no-sync` on every later step keeps uv from replacing that build.
       - name: Build Python extension
         working-directory: sdk/python/geotrace-py
         run: |
-          uv venv --python ${{ matrix.python-version }}
-          uv pip install maturin pytest ruff mypy
-          uv run maturin develop
+          uv sync --python ${{ matrix.python-version }} --no-install-project
+          uv run --no-sync maturin develop
 
       - name: Check formatting
         working-directory: sdk/python/geotrace-py
-        run: uv run ruff format --check .
+        run: uv run --no-sync ruff format --check .
 
       - name: Lint
         working-directory: sdk/python/geotrace-py
-        run: uv run ruff check .
+        run: uv run --no-sync ruff check .
 
       - name: Type-check
         working-directory: sdk/python/geotrace-py
-        run: uv run mypy . --strict
+        run: uv run --no-sync mypy . --strict
 
       - name: Test
         working-directory: sdk/python/geotrace-py
-        run: uv run pytest tests/ -v
+        run: uv run --no-sync pytest tests/ -v
 
       # geotrace-py is an isolated workspace, so ci.yml's root `cargo nextest
       # run` never reaches these tests. The test binary links libpython: pyo3
@@ -676,7 +677,7 @@ jobs:
           for file in examples/*.py; do
             filename=$(basename "$file")
             echo "running example: ${filename}"
-            uv run python "${file}"
+            uv run --no-sync python "${file}"
           done
 
   # Installs the C and C++ SDKs into one prefix and builds the two smoke programs

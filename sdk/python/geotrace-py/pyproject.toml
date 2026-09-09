@@ -31,7 +31,7 @@ Changelog = "https://github.com/CramBL/geotrace/blob/trunk/CHANGELOG_SDK.md"
 Issues = "https://github.com/CramBL/geotrace/issues"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["maturin>=1,<2", "mypy>=1.11", "pytest>=8", "ruff>=0.6"]
 
 [tool.maturin]
 module-name = "geotrace_sdk._geotrace_sdk"
