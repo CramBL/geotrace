@@ -3,6 +3,11 @@
 
 @PACKAGE_INIT@
 
+if(TARGET GeoTrace::Cpp)
+    set(GeoTraceCpp_FOUND TRUE)
+    return()
+endif()
+
 include(CMakeFindDependencyMacro)
 
 # The C++ SDK depends on the C SDK.

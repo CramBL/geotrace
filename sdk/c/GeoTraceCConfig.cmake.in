@@ -3,6 +3,14 @@
 
 @PACKAGE_INIT@
 
+# A consumer that calls find_package(GeoTraceC) and then find_package(GeoTraceCpp)
+# runs this file twice: the find_dependency(GeoTraceC) inside GeoTraceCppConfig.cmake
+# passes HINTS, and CMake's already-found shortcut keys on the argument list.
+if(TARGET GeoTrace::C)
+    set(GeoTraceC_FOUND TRUE)
+    return()
+endif()
+
 # Whether the installed library is static (.a / .lib); baked in at install time.
 set(_geotrace_c_static @_gtc_config_static@)
 

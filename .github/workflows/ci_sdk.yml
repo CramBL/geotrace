@@ -679,6 +679,68 @@ jobs:
             uv run python "${file}"
           done
 
+  # Installs the C and C++ SDKs into one prefix and builds the two smoke programs
+  # of sdk/integration-tests/cmake-find-package against it, each through
+  # `find_package`. This is the path a downstream project takes after
+  # `cmake --install`. scripts/test-install.sh runs the same steps locally.
+  find-package-consumer:
+    name: find_package consumer
+    runs-on: ubuntu-latest
+    needs: [changes, build-c-lib]
+    if: needs.changes.outputs.sdk == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up SDK toolchain
+        uses: ./.github/actions/setup-sdk-toolchain
+        with:
+          compiler: llvm-20
+          cmake: true
+          ninja: true
+
+      - name: Download geotrace-c
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: geotrace-c-lib-ubuntu
+
+      - name: Install the C SDK to a local prefix
+        run: |
+          cmake -S sdk/c -B build/c \
+            -GNinja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release \
+            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
+          cmake --install build/c
+
+      - name: Install the C++ SDK to the same prefix
+        run: |
+          cmake -S sdk/cpp -B build/cpp \
+            -GNinja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH=${{ github.workspace }}/install \
+            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
+          cmake --install build/cpp
+
+      - name: Configure the find_package consumer
+        run: |
+          cmake -S sdk/integration-tests/cmake-find-package -B build/find-package \
+            -GNinja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH=${{ github.workspace }}/install
+
+      - name: Build the find_package consumer
+        run: cmake --build build/find-package
+
+      - name: Run the C smoke program
+        run: build/find-package/smoke_c
+
+      - name: Run the C++ smoke program
+        run: build/find-package/smoke_cpp
+
   # Install the C SDK via a local vcpkg overlay port and verify a downstream
   # consumer project builds and runs correctly.  This validates the `portfile`
   # and the integration-test consumer in sdk/integration-tests/vcpkg/.
@@ -753,6 +815,7 @@ jobs:
       - c-sdk
       - cpp-sdk
       - python-sdk
+      - find-package-consumer
       - vcpkg-sdk
     permissions:
       contents: none
