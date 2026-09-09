@@ -19,7 +19,7 @@ use super::chips::MetricVisibility;
 use super::lines::{
     ANOMALY_HOVER_RADIUS_PX, ANOMALY_MARKER_RADIUS, NearestHoverLabel, PlotHoverLabel, visible_by_x,
 };
-use super::overlay::{EDGE_INSET, OverlayItem, OverlayPainter, TAIL_LENGTH};
+use super::overlay::{EDGE_MARKER_INSET, OverlayItem, OverlayPainter, TAIL_LENGTH};
 use crate::series::TrackSeries;
 
 /// Half-width of a marker glyph, in points.
@@ -54,7 +54,7 @@ impl Placement {
     /// Y in plot coordinates for a sample worth `value`, given the visible
     /// range: the near edge when it runs off, the value itself when it fits.
     fn place(self, value: f64, y_min: f64, y_max: f64) -> f64 {
-        let inset = (y_max - y_min) * EDGE_INSET;
+        let inset = (y_max - y_min) * EDGE_MARKER_INSET;
         match self {
             Self::OffScaleBelow => y_min + inset,
             Self::OffScaleAbove => y_max - inset,

@@ -19,6 +19,7 @@ mod style;
 mod tec;
 
 pub use chips::{ChannelVisibility, MetricVisibility};
+pub use overlay::EDGE_MARKER_INSET;
 pub use legend::{LEGEND_DOCK_OFFSET, legend_is_docked};
 
 use backward_time_step::{BackwardTimeStepViewport, add_backward_time_steps};

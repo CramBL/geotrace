@@ -270,6 +270,10 @@ struct Walk {
     stride_degrees: f64,
     heading: Option<Angle>,
     velocity: Option<Velocity>,
+    /// How far the host clock runs past the receiver's own on every fix.
+    /// [`None`] leaves the fixes without a system timestamp, so they have no
+    /// clock offset.
+    host_ahead: Option<Duration>,
 }
 
 impl Walk {
@@ -289,6 +293,7 @@ impl Walk {
             stride_degrees,
             heading: Some(Angle::new::<degree>(45.0)),
             velocity: Some(Velocity::new::<kilometer_per_hour>(15.0)),
+            host_ahead: None,
         }
     }
 
@@ -301,6 +306,7 @@ impl Walk {
             .lon(Longitude::new(self.first_lon.as_degrees() + walked))
             .maybe_heading(self.heading)
             .maybe_velocity(self.velocity)
+            .maybe_sys_time(self.host_ahead.map(|ahead| SysTime::from_utc(time + ahead)))
             .build();
         NavPoint::new(tpv, None)
     }
@@ -326,6 +332,27 @@ pub fn nav_points_from(start: DateTime<Utc>, count: usize, step_secs: i64) -> Ve
     )
 }
 
+/// [`nav_points_from`] with a host timestamp on every fix, `host_ahead` past
+/// the receiver's own, for tests that read the GPS−system clock offset.
+pub fn nav_points_with_a_host_clock_from(
+    start: DateTime<Utc>,
+    count: usize,
+    step_secs: i64,
+    host_ahead: Duration,
+) -> Vec<NavPoint> {
+    Walk {
+        host_ahead: Some(host_ahead),
+        ..Walk::north_east(
+            start,
+            Latitude::new(55.0),
+            Longitude::new(12.0),
+            step_secs,
+            0.001,
+        )
+    }
+    .points(count)
+}
+
 /// [`nav_points_from`] starting at a position of the caller's choosing, for
 /// tests that tell two recordings apart by where their fixes are.
 pub fn nav_points_walking_from(
@@ -349,6 +376,7 @@ pub fn stationary_nav_data(count: usize) -> Vec<NavPoint> {
         stride_degrees: 0.0,
         heading: Some(Angle::new::<degree>(0.0)),
         velocity: Some(Velocity::new::<kilometer_per_hour>(0.0)),
+        host_ahead: None,
     }
     .points(count)
 }

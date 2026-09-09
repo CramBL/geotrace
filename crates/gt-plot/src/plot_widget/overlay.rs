@@ -7,7 +7,7 @@ use egui_plot::{PlotBounds, PlotGeometry, PlotItem, PlotItemBase, PlotTransform}
 
 /// How far inside the plot's edge a marker drawn at that edge sits, as a
 /// fraction of the visible y range.  Keeps the whole glyph on screen.
-pub(super) const EDGE_INSET: f64 = 0.03;
+pub const EDGE_MARKER_INSET: f64 = 0.03;
 
 /// Length of the line running from a marker at the edge back into the plot, in
 /// points: the clock excursion marker's tail, and the backward time step
