@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 BASE_TIME = datetime(2026, 2, 1, 15, 0, 0, tzinfo=UTC)
+UNIX_EPOCH = datetime(1970, 1, 1, 0, 0, 0, tzinfo=UTC)
 SAHARA_LAT = 23.0
 SAHARA_LON = 13.0
 
@@ -441,6 +442,28 @@ def main() -> None:
                 "elevation": 50,
                 "azimuth": 270,
                 "snr": 38,
+            }
+        )
+
+    # Track 13: Receiver lock with the host clock unset
+    # The receiver stamps `gps_time` from its own lock while the device's
+    # real-time clock still reads 1969. The writer stores negative, zero and
+    # positive microsecond counts for the five `sys_time` values, which run from
+    # two seconds before the Unix epoch to two seconds after it.
+    for i in range(5):
+        gps_time = get_time(12, float(i))
+        sys_time = (UNIX_EPOCH + timedelta(seconds=i - 2)).isoformat()
+        lat, lon = add_meters(SAHARA_LAT + 0.4, SAHARA_LON, i * 5, 0)
+        fixes.append(
+            {
+                "track_id": 13,
+                "gps_time": gps_time,
+                "sys_time": sys_time,
+                "lat": lat,
+                "lon": lon,
+                "heading_deg": 0.0,
+                "speed_kmh": 18.0,
+                "eph_m": 2.0,
             }
         )
 

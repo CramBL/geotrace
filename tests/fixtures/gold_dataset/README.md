@@ -9,7 +9,7 @@ The `gold_conformance` test (`sdk/rust/geotrace-sdk/tests/gold_conformance.rs`) 
 ## Dataset Structure
 
 - `meta.csv`: The recording's title, device, notes, identity and travel mode.
-- `fixes.csv`: Primary navigation data (TPV). 199 fixes over 12 tracks.
+- `fixes.csv`: Primary navigation data (TPV). 204 fixes over 13 tracks.
 - `satellites.csv`: Satellite visibility reports associated with the fixes.
 - `markers.csv`: User-defined map annotations (Markers). 16 markers covering peaks, starts, sub-second interpolation and the antimeridian crossing.
 - `events.csv`: System event markers. 7 events for status changes, turns, signal loss and the antimeridian crossing.
@@ -19,8 +19,10 @@ The `gold_conformance` test (`sdk/rust/geotrace-sdk/tests/gold_conformance.rs`) 
 ## Track Definitions
 
 Each track starts one day after the one before it, the first on **1 February 2026 at 15:00:00 UTC**.
-Tracks 1 to 7 and track 12 start in the Sahara desert around 23.0°N, 13.0°E.
-Tracks 1 to 5 are each offset by up to 0.05° to sit apart on the map.
+Tracks 1 to 7, track 12 and track 13 start in the Sahara desert, offset from 23.0°N, 13.0°E to sit apart on the map.
+Tracks 1 to 5 are offset by up to 0.05° on each axis.
+Track 6 is offset by 0.1° and track 7 by 0.2°, both on latitude and longitude.
+Track 12 is offset by 0.3° of latitude and track 13 by 0.4° of latitude.
 Tracks 8 to 11 start at the coordinates named in their own sections.
 
 ### Track 1: Straight Line (North)
@@ -58,7 +60,7 @@ Tracks 8 to 11 start at the coordinates named in their own sections.
 
 ### Track 8: Antimeridian Crossing
 - **Purpose**: Verify coordinate wrapping and interpolation.
-- **Description**: Moves from Longitude 179.95° to -179.95° across the 180° meridian.
+- **Description**: Moves from Longitude 179.95° to -179.96° across the 180° meridian.
 - **Verification**: A marker, an event marker and an orphan satellite report share the time 15:00:05.5, half way between the fixes at 180.0° and -179.99°.
   The SDK places all three at -179.995°, on the short arc between those two fixes.
 
@@ -77,6 +79,14 @@ Tracks 8 to 11 start at the coordinates named in their own sections.
 ### Track 12: Fix Acquired Mid-Track
 - **Purpose**: Rendering a track that starts without a receiver fix and gains one part-way through.
 - **Description**: 10 points moving North. The first 3 have a `sys_time` only, the remaining 7 have a `gps_time`, a `sys_time` and an `eph_m`.
+
+### Track 13: Host Clock Before the Unix Epoch
+- **Purpose**: Verify that every SDK writes and reads a timestamp before 1970.
+- **Description**: 5 points moving North.
+  Each fix has a `gps_time` of 13 February 2026 from the receiver's lock and a `sys_time` from an unset real-time clock.
+  Two of the five `sys_time` values fall in 1969, before the Unix epoch, and three fall in 1970.
+- **Verification**: The five `sys_time` values run from `1969-12-31T23:59:58+00:00` to `1970-01-01T00:00:02+00:00`.
+  The microsecond counts the writer stores for them are negative, zero and positive.
 
 ## Event Styling
 
