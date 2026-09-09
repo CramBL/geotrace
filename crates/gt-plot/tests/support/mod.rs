@@ -134,42 +134,56 @@ pub struct DrawnPlot {
 }
 
 /// Draw one frame of the plot over `files`, reading `sources`, with `plot` as
-/// the plot's own state.
-pub fn drawn_plot(files: Vec<LoadedFile>, sources: PlotSources, mut plot: PlotState) -> DrawnPlot {
+/// the plot's own state, in the dark theme.
+pub fn drawn_plot(files: Vec<LoadedFile>, sources: PlotSources, plot: PlotState) -> DrawnPlot {
+    drawn_plot_in_theme(files, sources, plot, egui::Theme::Dark)
+}
+
+/// [`drawn_plot`] under `theme`, for a case with a different colour in each
+/// theme.
+pub fn drawn_plot_in_theme(
+    files: Vec<LoadedFile>,
+    sources: PlotSources,
+    mut plot: PlotState,
+    theme: egui::Theme,
+) -> DrawnPlot {
     let names = RecordingNames::default();
     let visibility = TrackDataVisibility::from_loaded(&files);
     plot.rebuild_all(&files);
 
     let plot_id = Rc::new(Cell::new(None));
     let written_plot_id = Rc::clone(&plot_id);
-    let mut harness = TestHarness::builder().size(PLOT_SIZE).ui_state(
-        move |ui, state: &mut DrawnPlotState| {
-            written_plot_id.set(Some(
-                ui.make_persistent_id(egui::Id::new(gt_plot::TRACK_PLOT_ID_SALT)),
-            ));
-            gt_plot::show_track_plot(
-                ui,
-                &files,
-                &names,
-                &visibility,
-                &state.sources.filter,
-                None,
-                None,
-                None,
-                state.sources.map_sync_x_range,
-                &state.sources.snap_error,
-                &state.sources.jamming,
-                &state.sources.geomagnetic,
-                &state.sources.tec,
-                ArchiveOverlays {
-                    context_lines: &state.sources.context_lines,
-                    solar_flares: &state.sources.solar_flares,
-                },
-                &mut state.plot,
-            );
-        },
-        DrawnPlotState { plot, sources },
-    );
+    let mut harness = TestHarness::builder()
+        .size(PLOT_SIZE)
+        .theme(theme == egui::Theme::Dark)
+        .ui_state(
+            move |ui, state: &mut DrawnPlotState| {
+                written_plot_id.set(Some(
+                    ui.make_persistent_id(egui::Id::new(gt_plot::TRACK_PLOT_ID_SALT)),
+                ));
+                gt_plot::show_track_plot(
+                    ui,
+                    &files,
+                    &names,
+                    &visibility,
+                    &state.sources.filter,
+                    None,
+                    None,
+                    None,
+                    state.sources.map_sync_x_range,
+                    &state.sources.snap_error,
+                    &state.sources.jamming,
+                    &state.sources.geomagnetic,
+                    &state.sources.tec,
+                    ArchiveOverlays {
+                        context_lines: &state.sources.context_lines,
+                        solar_flares: &state.sources.solar_flares,
+                    },
+                    &mut state.plot,
+                );
+            },
+            DrawnPlotState { plot, sources },
+        );
     harness.run();
     DrawnPlot { harness, plot_id }
 }

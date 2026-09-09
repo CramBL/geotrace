@@ -345,6 +345,27 @@ pub fn nav_points_with_a_host_clock_from(
     .points(count)
 }
 
+/// [`nav_points_with_a_host_clock_from`] with a host clock offset per fix. One
+/// fix per entry of `host_ahead`. The fix at index `i` has a host timestamp
+/// `host_ahead[i]` past the receiver's own time.
+pub fn nav_points_with_host_clock_offsets_from(
+    start: DateTime<Utc>,
+    step_secs: i64,
+    host_ahead: &[Duration],
+) -> Vec<NavPoint> {
+    host_ahead
+        .iter()
+        .enumerate()
+        .map(|(index, &ahead)| {
+            Walk {
+                host_ahead: Some(ahead),
+                ..default_walk(start, step_secs)
+            }
+            .point(index)
+        })
+        .collect()
+}
+
 /// The walk of [`nav_points_from`]: north-east from 55°N 12°E in 0.001° steps.
 fn default_walk(start: DateTime<Utc>, step_secs: i64) -> Walk {
     Walk::north_east(
