@@ -6,6 +6,10 @@
 
 - **Map & Tracks:** The satellite tables and the sky plot now show a satellite's SNR of ≈99 dB-Hz, the value some receivers send when they have no measurement, in its own violet colour.
 
+### Fixed
+
+- **Map & Tracks:** Fixed the plot's shared y-axis fitting the clock offset of a recording whose baseline offset is more than a day: it now marks the offset at the axis edge, with the value on hover.
+
 ## 0.16.0 - 2026-09-07
 
 ### Added

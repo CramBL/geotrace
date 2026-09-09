@@ -1,6 +1,6 @@
 use crate::AnalysisConfig;
 use chrono::{DateTime, TimeDelta, Utc};
-use gt_analysis::clock_offset::ClockOffsetExcursion;
+use gt_analysis::clock_offset::ClockOffsetPlacement;
 use gt_analysis::satellite_utilization::UtilAnomaly;
 use gt_egui_mipmap::{MipMap, WrapPeriod};
 use gt_types::LoadedFile;
@@ -64,17 +64,16 @@ pub(crate) struct TrackSeries {
     /// Positive = GPS clock ahead, negative = system clock ahead.
     /// Only present when the TPV record carries a system timestamp.
     ///
-    /// Excludes the samples in [`Self::clock_excursions`]: an offset that
-    /// leaves the track's baseline and returns would otherwise set the
-    /// auto-bounds of the y-axis every other metric shares, flattening the
-    /// plot.  Those samples are drawn by the off-scale indicator instead, never
-    /// dropped.
+    /// Excludes the samples [`Self::clock_offset_placement`] holds back: an
+    /// offset the shared y-axis cannot show would otherwise set its
+    /// auto-bounds, flattening every other metric.  Those samples are drawn by
+    /// the off-scale indicator instead, never dropped.
     pub clock_delta_ms: MipMap,
-    /// The departures of the clock offset from this track's baseline that
-    /// returned to it, kept off [`Self::clock_delta_ms`] and marked on their
-    /// own.  Threshold-dependent: recomputed by
-    /// [`TrackSeries::apply_analysis`].
-    pub clock_excursions: Vec<ClockOffsetExcursion>,
+    /// What is kept off [`Self::clock_delta_ms`] and marked on its own: the
+    /// departures from this track's baseline that returned to it, or every
+    /// sample of a track whose baseline the shared y-axis cannot show.
+    /// Threshold-dependent: recomputed by [`TrackSeries::apply_analysis`].
+    pub clock_offset_placement: ClockOffsetPlacement,
     /// Satellite utilization rate (percent), all constellations combined, and
     /// broken down per constellation.  Mask-dependent: recomputed by
     /// [`TrackSeries::apply_analysis`] when the elevation mask changes.
@@ -248,23 +247,27 @@ impl TrackSeries {
         self.slip_navic = MipMap::build(s.navic);
         self.slip_qzss = MipMap::build(s.qzss);
 
-        let (clock_delta_pts, excursions) =
+        let (clock_delta_pts, placement) =
             clock_delta_series(track, analysis.clock_excursion_threshold_s);
         self.clock_delta_ms = MipMap::build(clock_delta_pts);
-        self.clock_excursions = excursions;
+        self.clock_offset_placement = placement;
     }
 }
 
-/// The clock-offset line points and the excursions held back from it.
+/// The clock offset line points and what is held back from them.
 ///
 /// The plot marks each held-back sample at the edge of the view, with its true
-/// offset on hover.
+/// offset on hover.  A track whose baseline the shared y-axis cannot show has
+/// no line at all: every one of its samples is held back.
 fn clock_delta_series(
     track: &gt_types::LoadedTrack,
     threshold_s: f32,
-) -> (Vec<[f64; 2]>, Vec<ClockOffsetExcursion>) {
-    let excursions = gt_analysis::clock_offset::detect_excursions(&track.points, threshold_s);
-    let excluded = gt_analysis::clock_offset::excursion_indices(&excursions);
+) -> (Vec<[f64; 2]>, ClockOffsetPlacement) {
+    let placement = gt_analysis::clock_offset::detect_placement(&track.points, threshold_s);
+    let ClockOffsetPlacement::BaselineOnScale(excursions) = &placement else {
+        return (Vec::new(), placement);
+    };
+    let excluded = gt_analysis::clock_offset::excursion_indices(excursions);
     let points = track
         .points
         .iter()
@@ -275,7 +278,7 @@ fn clock_delta_series(
             Some([point.tpv.time().as_secs_f64(), delta_ms as f64])
         })
         .collect();
-    (points, excursions)
+    (points, placement)
 }
 
 /// Build mipmap series for every track in a single file, using `fi` as the file
@@ -391,7 +394,7 @@ fn build_track_series(
         }
     }
 
-    let (clock_delta_ms_pts, clock_excursions) =
+    let (clock_delta_ms_pts, clock_offset_placement) =
         clock_delta_series(track, analysis.clock_excursion_threshold_s);
 
     let x_range = track
@@ -438,7 +441,7 @@ fn build_track_series(
         eph_m: MipMap::build(eph_m_pts),
         heading_deg: MipMap::build_wrapping(heading_deg_pts, WrapPeriod::full_turn_degrees()),
         clock_delta_ms: MipMap::build(clock_delta_ms_pts),
-        clock_excursions,
+        clock_offset_placement,
         util_all: MipMap::build(util.all),
         util_gps: MipMap::build(util.gps),
         util_glonass: MipMap::build(util.glonass),
@@ -588,6 +591,16 @@ mod tests {
             })
     }
 
+    /// The excursions of a series whose baseline the shared y-axis can show.
+    fn excursions(series: &TrackSeries) -> &[gt_analysis::clock_offset::ClockOffsetExcursion] {
+        match &series.clock_offset_placement {
+            ClockOffsetPlacement::BaselineOnScale(excursions) => excursions,
+            ClockOffsetPlacement::BaselineOffScale(off_scale) => {
+                panic!("expected a baseline on the axis, got {off_scale:?}")
+            }
+        }
+    }
+
     /// The whole point of the excursion split: one sample carrying a recording
     /// gap must not set the auto-bounds of the y-axis every metric shares.
     #[test]
@@ -600,8 +613,8 @@ mod tests {
             lo >= -1000.0 && hi <= 0.0,
             "the line keeps the track's own scale, got {lo}..{hi}"
         );
-        let [excursion] = series.clock_excursions.as_slice() else {
-            panic!("expected one excursion, got {:?}", series.clock_excursions);
+        let [excursion] = excursions(&series) else {
+            panic!("expected one excursion, got {:?}", excursions(&series));
         };
         assert_eq!(excursion.peak().offset_ms, -4_127_054, "value is not lost");
     }
@@ -621,7 +634,7 @@ mod tests {
         };
         let series = build_track_series(0, &track, analysis);
 
-        assert!(series.clock_excursions.is_empty());
+        assert!(excursions(&series).is_empty());
         let (lo, _) = clock_delta_extent(&series);
         assert_eq!(lo, -4_127_054.0, "the sample is back on the line");
     }
@@ -636,7 +649,7 @@ mod tests {
     fn apply_analysis_re_derives_the_excursion_split() {
         let track = track_with_a_clock_spike(8, 4);
         let mut series = build_track_series(0, &track, AnalysisConfig::default());
-        assert_eq!(series.clock_excursions.len(), 1);
+        assert_eq!(excursions(&series).len(), 1);
 
         series.apply_analysis(
             &track,
@@ -645,7 +658,7 @@ mod tests {
                 ..AnalysisConfig::default()
             },
         );
-        assert!(series.clock_excursions.is_empty());
+        assert!(excursions(&series).is_empty());
         assert_eq!(clock_delta_extent(&series).0, -4_127_054.0);
     }
 
@@ -774,7 +787,7 @@ mod tests {
         }
         let peaks: Vec<i64> = series
             .iter()
-            .flat_map(|track| track.clock_excursions.iter())
+            .flat_map(excursions)
             .map(|excursion| excursion.peak().offset_ms)
             .collect();
         assert_eq!(peaks.len(), 4, "one excursion per boot");

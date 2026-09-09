@@ -1,6 +1,7 @@
 //! The filter row above the plot: metric and channel chips, their
 //! visibility state, hover metadata, and the channel color pickers.
 
+use std::borrow::Cow;
 use std::num::NonZeroUsize;
 
 use egui::{Button, Color32, RichText, Slider};
@@ -10,6 +11,7 @@ use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
 use egui_phosphor::regular::GAUGE as ICON_GAUGE;
 use egui_phosphor::regular::GEAR as ICON_GEAR;
 use egui_phosphor::regular::LINK as ICON_LINK;
+use egui_phosphor::regular::WARNING as ICON_WARNING;
 use egui_phosphor::regular::WAVE_SINE as ICON_WAVE_SINE;
 use gt_solar::GeomagneticIndex;
 use gt_types::MetricKind;
@@ -24,6 +26,12 @@ use super::{DEFAULT_PLOT_LINE_WIDTH, PLOT_LINE_WIDTH_RANGE};
 /// What a chip shows on hover: a paragraph of prose, or the three scannable
 /// lines of an environment metric.
 pub(super) enum ChipHover {
+    /// A metric's own paragraph, under a note about the state of its data on
+    /// the visible tracks.
+    Annotated {
+        note: String,
+        paragraph: &'static str,
+    },
     Paragraph(&'static str),
     Structured(&'static MetricChipHover),
 }
@@ -31,6 +39,10 @@ pub(super) enum ChipHover {
 impl ChipHover {
     fn attach(self, response: egui::Response) -> egui::Response {
         match self {
+            Self::Annotated { note, paragraph } => response.on_hover_ui(|ui| {
+                ui.strong(&note);
+                ui.label(paragraph);
+            }),
             Self::Paragraph(text) => response.on_hover_text(text),
             Self::Structured(hover) => response.on_hover_ui(|ui| {
                 ui.strong(&hover.definition);
@@ -505,6 +517,43 @@ impl MetricAvailability {
     }
 }
 
+/// What the chip row shows about the visible tracks: which data-backed metrics
+/// have values, and the clock offset baseline that lies off the shared y-axis.
+#[derive(Clone, Copy)]
+pub(super) struct MetricChipState<'a> {
+    pub(super) available: MetricAvailability,
+    /// The baseline of a visible recording whose clock offset lies outside what
+    /// the shared y-axis shows, formatted. [`None`] while every visible
+    /// recording's baseline fits on the axis.
+    pub(super) off_scale_clock_baseline: Option<&'a str>,
+}
+
+impl MetricChipState<'_> {
+    /// The chip label and hover for `kind`. The clock offset chip takes a
+    /// warning icon and a note above its paragraph while a visible recording's
+    /// baseline lies off the shared y-axis.
+    fn chip_label_and_hover(self, kind: MetricKind) -> (Cow<'static, str>, Option<ChipHover>) {
+        let off_scale_baseline = match kind {
+            MetricKind::ClockDeltaMs => self.off_scale_clock_baseline,
+            _ => None,
+        };
+        match (off_scale_baseline, kind.hover()) {
+            (Some(baseline), Some(ChipHover::Paragraph(paragraph))) => (
+                Cow::Owned(format!("{ICON_WARNING} {}", kind.label())),
+                Some(ChipHover::Annotated {
+                    note: format!(
+                        "A visible recording's clock offset is {baseline}, past what the \
+                         shared y-axis shows. Each of its fixes is marked at the edge of the \
+                         plot, with its own offset on hover."
+                    ),
+                    paragraph,
+                }),
+            ),
+            (_, hover) => (Cow::Borrowed(kind.label()), hover),
+        }
+    }
+}
+
 /// The solar flare markers' chip: whether they draw, whether every flare's
 /// span is shaded without hovering it, and whether the archive holds a flare
 /// over the span the plot shows.
@@ -595,7 +644,7 @@ fn chip_group(
     present: ConstellationSet,
     kinds: &[MetricKind],
     show_advanced: bool,
-    available: MetricAvailability,
+    state: MetricChipState<'_>,
     show_only: &mut Option<MetricKind>,
     hovered: &mut Option<HoveredChip>,
 ) {
@@ -615,7 +664,7 @@ fn chip_group(
     for kind in shown {
         // A data-backed chip stays visible but disabled until its data
         // exists - never hidden, per DESIGN.md.
-        if let Some(hover) = available.unavailable_hover(kind) {
+        if let Some(hover) = state.available.unavailable_hover(kind) {
             disabled_chip(
                 ui,
                 kind.label(),
@@ -624,13 +673,14 @@ fn chip_group(
             );
             continue;
         }
+        let (label, hover) = state.chip_label_and_hover(kind);
         let mut enabled = vis.field(kind);
         let (s, h) = metric_chip(
             ui,
             &mut enabled,
-            kind.label(),
+            &label,
             gt_ui_theme::metric_color(kind, dark_mode),
-            kind.hover(),
+            hover,
         );
         vis.set(kind, enabled);
         if s {
@@ -774,7 +824,7 @@ pub(super) fn metric_filter_row(
     sync_to_map: &mut bool,
     show_advanced: &mut bool,
     show_channels: &mut bool,
-    available: MetricAvailability,
+    state: MetricChipState<'_>,
     flares: FlareChipState<'_>,
 ) -> Option<HoveredChip> {
     let mut show_only = None;
@@ -846,7 +896,7 @@ pub(super) fn metric_filter_row(
                 present,
                 group,
                 *show_advanced,
-                available,
+                state,
                 &mut show_only,
                 &mut hovered_chip,
             );
@@ -858,7 +908,7 @@ pub(super) fn metric_filter_row(
             present,
             ENVIRONMENT_GROUP,
             *show_advanced,
-            available,
+            state,
             &mut show_only,
             &mut hovered_chip,
         );
@@ -878,7 +928,7 @@ pub(super) fn metric_filter_row(
                     present,
                     group,
                     *show_advanced,
-                    available,
+                    state,
                     &mut show_only,
                     &mut hovered_chip,
                 );
@@ -1144,6 +1194,57 @@ mod tests {
 
     use super::*;
     use crate::plot_widget::style::CHANNEL_PALETTE;
+
+    /// The formatted baseline of the visible recording whose clock offset the
+    /// shared y-axis cannot show.
+    const OFF_SCALE_BASELINE: &str = "+491h5m";
+
+    /// The chip row over one off-scale recording, for the label and hover
+    /// cases below.
+    fn chip_state_with_an_off_scale_baseline() -> MetricChipState<'static> {
+        MetricChipState {
+            available: MetricAvailability {
+                snap_error: true,
+                jamming: true,
+                hp30: true,
+                kp: true,
+                tec: true,
+            },
+            off_scale_clock_baseline: Some(OFF_SCALE_BASELINE),
+        }
+    }
+
+    #[test]
+    fn the_clock_chip_names_a_baseline_the_shared_y_axis_cannot_show() {
+        let (label, hover) =
+            chip_state_with_an_off_scale_baseline().chip_label_and_hover(MetricKind::ClockDeltaMs);
+
+        assert_eq!(label, format!("{ICON_WARNING} Clock Δt (ms)"));
+        let Some(ChipHover::Annotated { note, .. }) = hover else {
+            panic!("expected an annotated hover");
+        };
+        assert!(note.contains(OFF_SCALE_BASELINE), "the note reads {note:?}");
+    }
+
+    /// The note is the clock chip's alone, and it draws only while a visible
+    /// recording's baseline lies off the axis.
+    #[rstest]
+    #[case::the_clock_chip_without_an_off_scale_baseline(MetricKind::ClockDeltaMs, None)]
+    #[case::another_metric_with_one(MetricKind::Eph, Some(OFF_SCALE_BASELINE))]
+    fn a_chip_keeps_its_plain_label_and_paragraph(
+        #[case] kind: MetricKind,
+        #[case] off_scale_clock_baseline: Option<&str>,
+    ) {
+        let state = MetricChipState {
+            off_scale_clock_baseline,
+            ..chip_state_with_an_off_scale_baseline()
+        };
+
+        let (label, hover) = state.chip_label_and_hover(kind);
+
+        assert_eq!(label, kind.label());
+        assert!(matches!(hover, Some(ChipHover::Paragraph(_))));
+    }
 
     /// Each constellation has four metrics of its own: seen, fix, utilization
     /// rate and slip.

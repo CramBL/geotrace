@@ -11,7 +11,7 @@ use egui_plot::{PlotPoint, PlotTransform};
 
 use super::chips::ChannelVisibility;
 use super::lines::{ANOMALY_HOVER_RADIUS_PX, NearestHoverLabel, PlotHoverLabel, visible_by_x};
-use super::overlay::{EDGE_INSET, OverlayItem, OverlayPainter, TAIL_LENGTH};
+use super::overlay::{EDGE_MARKER_INSET, OverlayItem, OverlayPainter, TAIL_LENGTH};
 use crate::series::{ChannelSeries, PlacedBackwardTimeStep};
 
 /// Screen distance between two marks, in points, below which the steps share
@@ -62,7 +62,7 @@ const MARK_STROKE_WIDTH: f32 = 1.0;
 const MARK_WIDTH: f32 = 2.0 * STEP_HALF_WIDTH + MARK_STROKE_WIDTH;
 
 /// How far above the bottom of the view a mark's anchor sits at the least, in
-/// points. [`EDGE_INSET`] is a fraction of the visible y range: that fraction
+/// points. [`EDGE_MARKER_INSET`] is a fraction of the visible y range: that fraction
 /// of a short view is less than the drop below the anchor.
 const MIN_MARK_HEIGHT_ABOVE_EDGE: f32 = DROP_BELOW_ANCHOR + MARK_STROKE_WIDTH;
 
@@ -203,10 +203,10 @@ struct VerticalView {
 
 impl VerticalView {
     /// How far above the bottom of the view a mark's anchor sits, in plot
-    /// units: [`EDGE_INSET`] of the view's height, and never less than
+    /// units: [`EDGE_MARKER_INSET`] of the view's height, and never less than
     /// [`MIN_MARK_HEIGHT_ABOVE_EDGE`] points.
     fn mark_height_above_edge(self) -> f64 {
-        (self.height * EDGE_INSET)
+        (self.height * EDGE_MARKER_INSET)
             .max(self.plot_units_per_point * f64::from(MIN_MARK_HEIGHT_ABOVE_EDGE))
     }
 }
@@ -391,7 +391,7 @@ mod tests {
         (x_secs - T) as f32
     }
 
-    /// A tall view holds the whole mark at [`EDGE_INSET`] of its height, and a
+    /// A tall view holds the whole mark at [`EDGE_MARKER_INSET`] of its height, and a
     /// short one raises the anchor to [`MIN_MARK_HEIGHT_ABOVE_EDGE`] points.
     #[rstest::rstest]
     #[case::tall_view(400.0, 12.0)]

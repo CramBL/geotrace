@@ -1,5 +1,6 @@
-//! Clock offset excursions: the samples whose GPS−system clock offset leaves
-//! the track's baseline and returns to it.
+//! What a plot holds off its GPS−system clock offset line: the samples whose
+//! offset leaves the track's baseline and returns to it, and every sample of a
+//! track whose baseline itself lies outside [`MAX_PLOTTED_OFFSET_S`].
 //!
 //! A receiver resuming from a recording gap can report a pre-gap GPS epoch for
 //! its first fix while the host stamps that fix on resume, which puts the whole
@@ -25,10 +26,13 @@ use vec1::Vec1;
 /// excursions a resume-from-gap sample produces.
 pub const DEFAULT_EXCURSION_THRESHOLD_S: f32 = 10.0;
 
-/// Ceiling on the configured threshold, in seconds.  The clamp is what keeps
-/// the conversion to milliseconds in range.  Any deviation this large is beyond
-/// what a plot axis can meaningfully show anyway.
-const MAX_THRESHOLD_S: f32 = 86_400.0;
+/// Widest GPS−system clock offset a plot's shared y-axis shows, in seconds.
+///
+/// A day.  Past it the clock offset line alone sets the auto-bounds.  Every
+/// other metric on the axis becomes a flat line.  The configured excursion
+/// threshold is clamped to the same limit.  That also keeps its conversion to
+/// milliseconds inside `i64`.
+pub const MAX_PLOTTED_OFFSET_S: f32 = 86_400.0;
 
 /// One sample whose offset sits outside the baseline band.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -68,6 +72,27 @@ impl ClockOffsetExcursion {
     }
 }
 
+/// Every offset sample of a track whose baseline lies outside
+/// [`MAX_PLOTTED_OFFSET_S`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct OffScaleClockBaseline {
+    /// The track's samples that have an offset, in ascending index order.
+    pub samples: Vec1<ExcursionSample>,
+    /// Median offset over those samples, in milliseconds.
+    pub baseline_ms: i64,
+}
+
+/// Where a track's clock offset sits against the shared y-axis of a plot.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClockOffsetPlacement {
+    /// The plot draws none of this track's samples on the line: its baseline
+    /// lies outside [`MAX_PLOTTED_OFFSET_S`].
+    BaselineOffScale(OffScaleClockBaseline),
+    /// The baseline lies inside [`MAX_PLOTTED_OFFSET_S`], and these are the
+    /// departures from it that returned.
+    BaselineOnScale(Vec<ClockOffsetExcursion>),
+}
+
 /// Nav-point indices covered by `excursions`, ascending - the samples a plot
 /// keeps off its line and marks on its own.
 pub fn excursion_indices(excursions: &[ClockOffsetExcursion]) -> Vec<usize> {
@@ -91,28 +116,68 @@ pub fn excursion_indices(excursions: &[ClockOffsetExcursion]) -> Vec<usize> {
 /// half out-of-band yields nothing: with that little agreement there is no
 /// baseline to depart from.
 pub fn detect_excursions(points: &[NavPoint], threshold_s: f32) -> Vec<ClockOffsetExcursion> {
-    let samples: Vec<ExcursionSample> = points
-        .iter()
-        .enumerate()
-        .filter_map(|(index, p)| {
-            Some(ExcursionSample {
-                index,
-                t: p.tpv.time().as_secs_f64_with_subseconds(),
-                offset_ms: p.tpv.gps_system_clock_offset()?.num_milliseconds(),
-            })
-        })
-        .collect();
-
-    let sample_count = samples.len();
-    let offsets: Vec<i64> = samples.iter().map(|s| s.offset_ms).collect();
-    let Some(baseline_ms) = crate::robust::median_i64(&offsets) else {
+    let Some((samples, baseline_ms)) = offset_samples_and_baseline(points) else {
         return Vec::new();
     };
-    let threshold_ms = threshold_ms(threshold_s);
+    excursions_from_baseline(&samples, baseline_ms, threshold_s)
+}
+
+/// Where the clock offset of `points` sits against the shared y-axis, with
+/// `threshold_s` as the excursion bar for a baseline inside the band.
+///
+/// The excursion scan runs only inside the band: a baseline outside
+/// [`MAX_PLOTTED_OFFSET_S`] already puts every one of the track's samples
+/// off-scale.
+pub fn detect_placement(points: &[NavPoint], threshold_s: f32) -> ClockOffsetPlacement {
+    let Some((samples, baseline_ms)) = offset_samples_and_baseline(points) else {
+        return ClockOffsetPlacement::BaselineOnScale(Vec::new());
+    };
+    let max_plotted_offset_ms = offset_ms(MAX_PLOTTED_OFFSET_S);
+    if baseline_ms.saturating_abs() > max_plotted_offset_ms {
+        return ClockOffsetPlacement::BaselineOffScale(OffScaleClockBaseline {
+            samples,
+            baseline_ms,
+        });
+    }
+    ClockOffsetPlacement::BaselineOnScale(excursions_from_baseline(
+        &samples,
+        baseline_ms,
+        threshold_s,
+    ))
+}
+
+/// The track's samples that have a clock offset, with the median over them, or
+/// [`None`] for a track with no such sample.
+fn offset_samples_and_baseline(points: &[NavPoint]) -> Option<(Vec1<ExcursionSample>, i64)> {
+    let samples = Vec1::try_from_vec(
+        points
+            .iter()
+            .enumerate()
+            .filter_map(|(index, p)| {
+                Some(ExcursionSample {
+                    index,
+                    t: p.tpv.time().as_secs_f64_with_subseconds(),
+                    offset_ms: p.tpv.gps_system_clock_offset()?.num_milliseconds(),
+                })
+            })
+            .collect(),
+    )
+    .ok()?;
+    let offsets: Vec<i64> = samples.iter().map(|s| s.offset_ms).collect();
+    Some((samples, crate::robust::median_i64(&offsets)?))
+}
+
+fn excursions_from_baseline(
+    samples: &[ExcursionSample],
+    baseline_ms: i64,
+    threshold_s: f32,
+) -> Vec<ClockOffsetExcursion> {
+    let sample_count = samples.len();
+    let threshold_ms = offset_ms(threshold_s);
 
     let mut excursions = Vec::new();
     let mut run: Vec<ExcursionSample> = Vec::new();
-    for sample in samples {
+    for &sample in samples {
         if deviation(sample.offset_ms, baseline_ms).saturating_abs() > threshold_ms {
             run.push(sample);
             continue;
@@ -145,12 +210,13 @@ fn deviation(offset_ms: i64, baseline_ms: i64) -> i64 {
     offset_ms.saturating_sub(baseline_ms)
 }
 
-/// The configured threshold in milliseconds, clamped to [`MAX_THRESHOLD_S`].
-fn threshold_ms(threshold_s: f32) -> i64 {
-    let ms = f64::from(threshold_s.clamp(0.0, MAX_THRESHOLD_S)) * 1000.0;
+/// `offset_s` in milliseconds, capped at [`MAX_PLOTTED_OFFSET_S`], which keeps
+/// the product inside `i64`.
+fn offset_ms(offset_s: f32) -> i64 {
+    let ms = f64::from(offset_s.clamp(0.0, MAX_PLOTTED_OFFSET_S)) * 1000.0;
     #[expect(
         clippy::cast_possible_truncation,
-        reason = "clamped to MAX_THRESHOLD_S above, so the product is far inside i64"
+        reason = "clamped to MAX_PLOTTED_OFFSET_S above, so the product is far inside i64"
     )]
     let ms = ms as i64;
     ms
@@ -387,6 +453,51 @@ mod tests {
         let mut points: Vec<NavPoint> = (0..3).map(|i| point_with_clocks(1000 + i, 200)).collect();
         points.extend((0..3).map(|i| point_with_clocks(1003 + i, 3_600_000)));
         assert!(detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S).is_empty());
+    }
+
+    /// A tracker that comes up with its real-time clock unset stamps every fix
+    /// decades from the receiver's epoch, 56 years here.
+    #[test]
+    fn every_sample_of_a_track_with_an_unset_host_clock_is_off_scale() {
+        const OFFSET_MS: i64 = 1_767_225_600_000;
+        let points: Vec<NavPoint> = (0..8)
+            .map(|i| point_with_clocks(1000 + i, -OFFSET_MS))
+            .collect();
+
+        let placement = detect_placement(&points, DEFAULT_EXCURSION_THRESHOLD_S);
+
+        let ClockOffsetPlacement::BaselineOffScale(off_scale) = placement else {
+            panic!("expected an off-scale baseline, got {placement:?}");
+        };
+        assert_eq!(off_scale.baseline_ms, OFFSET_MS);
+        assert_eq!(
+            off_scale
+                .samples
+                .iter()
+                .map(|s| s.index)
+                .collect::<Vec<_>>(),
+            (0..8).collect::<Vec<_>>()
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::at_the_edge_of_the_band(86_400_000, None)]
+    #[case::past_the_edge_of_the_band(86_400_001, Some(8))]
+    fn only_a_baseline_past_the_edge_of_the_band_is_off_scale(
+        #[case] host_ahead_ms: i64,
+        #[case] expected_off_scale_samples: Option<usize>,
+    ) {
+        let points: Vec<NavPoint> = (0..8)
+            .map(|i| point_with_clocks(1000 + i, host_ahead_ms))
+            .collect();
+
+        let placement = detect_placement(&points, DEFAULT_EXCURSION_THRESHOLD_S);
+
+        let off_scale_samples = match &placement {
+            ClockOffsetPlacement::BaselineOffScale(off_scale) => Some(off_scale.samples.len()),
+            ClockOffsetPlacement::BaselineOnScale(_) => None,
+        };
+        assert_eq!(off_scale_samples, expected_off_scale_samples);
     }
 
     #[test]
