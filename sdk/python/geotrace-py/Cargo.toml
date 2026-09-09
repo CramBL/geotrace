@@ -27,6 +27,7 @@ log = "0.4"
 # which keeps plain `cargo` builds (e.g. tests) able to link libpython.
 pyo3 = { version = "0.29", features = ["abi3-py312", "chrono"] }
 pyo3-log = "0.13"
+strum = { version = "0.28", features = ["derive"] }
 
 [lints.rust]
 unsafe_code = "warn"

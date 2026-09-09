@@ -194,6 +194,7 @@ dependencies = [
  "log",
  "pyo3",
  "pyo3-log",
+ "strum",
 ]
 
 [[package]]

@@ -22,8 +22,13 @@ use pyo3::exceptions::{
     PyIOError, PyIndexError, PyRuntimeError, PyTypeError, PyUserWarning, PyValueError,
 };
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyList, PySlice};
+use pyo3::sync::PyOnceLock;
+use pyo3::types::{PyBytes, PyList, PySlice, PyType};
 use pyo3_log::{Caching, Logger};
+
+use crate::python_enum::PythonEnumMirror;
+
+mod python_enum;
 
 fn to_fixed(dt: DateTime<Utc>) -> DateTime<FixedOffset> {
     dt.fixed_offset()
@@ -93,22 +98,43 @@ fn nav_fix_time_or_value_error(
         .ok_or_else(|| PyValueError::new_err("provide gps_time or sys_time"))
 }
 
-/// GNSS constellation identifier.
-#[pyclass(eq, from_py_object, name = "Constellation")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// GNSS constellation identifier, mirroring `geotrace_sdk.enums.Constellation`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, strum::EnumString, strum::IntoStaticStr)]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum PyConstellation {
-    #[pyo3(name = "GPS")]
     Gps,
-    #[pyo3(name = "GLONASS")]
     Glonass,
-    #[pyo3(name = "GALILEO")]
     Galileo,
-    #[pyo3(name = "BEIDOU")]
     Beidou,
-    #[pyo3(name = "NAVIC")]
     Navic,
-    #[pyo3(name = "QZSS")]
     Qzss,
+}
+
+impl PythonEnumMirror for PyConstellation {
+    const CLASS_NAME: &'static str = "Constellation";
+
+    fn class_lock() -> &'static PyOnceLock<Py<PyType>> {
+        static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+        &CLASS
+    }
+}
+
+impl<'py> FromPyObject<'_, 'py> for PyConstellation {
+    type Error = PyErr;
+
+    fn extract(object: Borrowed<'_, 'py, PyAny>) -> PyResult<Self> {
+        Self::from_python_member(&object)
+    }
+}
+
+impl<'py> IntoPyObject<'py> for PyConstellation {
+    type Target = PyAny;
+    type Output = Bound<'py, PyAny>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.to_python_member(py)
+    }
 }
 
 impl From<Constellation> for PyConstellation {
@@ -137,63 +163,52 @@ impl From<PyConstellation> for Constellation {
     }
 }
 
-#[cfg(test)]
-mod py_constellation_tests {
-    use super::*;
+/// Visual icon for a map annotation marker, mirroring
+/// `geotrace_sdk.enums.MarkerIcon`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, strum::EnumString, strum::IntoStaticStr)]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
+pub enum PyMarkerIcon {
+    Pin,
+    Cross,
+    Circle,
+    Lightning,
+    Warning,
+    Error,
+    Check,
+    Satellite,
+    SatelliteLost,
+    Gear,
+    Refresh,
+    Download,
+    Upload,
+    Wrench,
+}
 
-    /// `Satellite::__repr__` derives the Python member name from
-    /// `PyConstellation`'s `Debug` output (upper-cased).
-    /// This pins down that the result still matches the literal
-    /// `#[pyo3(name = "...")]` strings declared on `PyConstellation` above. A
-    /// rename of one without the other - the exact desync this issue is
-    /// about - fails here.
-    #[test]
-    fn repr_name_matches_pyo3_name() {
-        for (variant, pyo3_name) in [
-            (PyConstellation::Gps, "GPS"),
-            (PyConstellation::Glonass, "GLONASS"),
-            (PyConstellation::Galileo, "GALILEO"),
-            (PyConstellation::Beidou, "BEIDOU"),
-            (PyConstellation::Navic, "NAVIC"),
-            (PyConstellation::Qzss, "QZSS"),
-        ] {
-            assert_eq!(format!("{variant:?}").to_uppercase(), pyo3_name);
-        }
+impl PythonEnumMirror for PyMarkerIcon {
+    const CLASS_NAME: &'static str = "MarkerIcon";
+
+    fn class_lock() -> &'static PyOnceLock<Py<PyType>> {
+        static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+        &CLASS
     }
 }
 
-/// Visual icon for a map annotation marker.
-#[pyclass(eq, from_py_object, name = "MarkerIcon")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PyMarkerIcon {
-    #[pyo3(name = "PIN")]
-    Pin,
-    #[pyo3(name = "CROSS")]
-    Cross,
-    #[pyo3(name = "CIRCLE")]
-    Circle,
-    #[pyo3(name = "LIGHTNING")]
-    Lightning,
-    #[pyo3(name = "WARNING")]
-    Warning,
-    #[pyo3(name = "ERROR")]
-    Error,
-    #[pyo3(name = "CHECK")]
-    Check,
-    #[pyo3(name = "SATELLITE")]
-    Satellite,
-    #[pyo3(name = "SATELLITE_LOST")]
-    SatelliteLost,
-    #[pyo3(name = "GEAR")]
-    Gear,
-    #[pyo3(name = "REFRESH")]
-    Refresh,
-    #[pyo3(name = "DOWNLOAD")]
-    Download,
-    #[pyo3(name = "UPLOAD")]
-    Upload,
-    #[pyo3(name = "WRENCH")]
-    Wrench,
+impl<'py> FromPyObject<'_, 'py> for PyMarkerIcon {
+    type Error = PyErr;
+
+    fn extract(object: Borrowed<'_, 'py, PyAny>) -> PyResult<Self> {
+        Self::from_python_member(&object)
+    }
+}
+
+impl<'py> IntoPyObject<'py> for PyMarkerIcon {
+    type Target = PyAny;
+    type Output = Bound<'py, PyAny>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.to_python_member(py)
+    }
 }
 
 impl From<MarkerIcon> for PyMarkerIcon {
@@ -238,24 +253,45 @@ impl From<PyMarkerIcon> for MarkerIcon {
     }
 }
 
-/// Platform a recording was made on, declared by the recorder.
-#[pyclass(eq, from_py_object, name = "TravelMode")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Platform a recording was made on, declared by the recorder, mirroring
+/// `geotrace_sdk.enums.TravelMode`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, strum::EnumString, strum::IntoStaticStr)]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum PyTravelMode {
-    #[pyo3(name = "CAR")]
     Car,
-    #[pyo3(name = "MOTORCYCLE")]
     Motorcycle,
-    #[pyo3(name = "BICYCLE")]
     Bicycle,
-    #[pyo3(name = "PEDESTRIAN")]
     Pedestrian,
-    #[pyo3(name = "BOAT")]
     Boat,
-    #[pyo3(name = "RAIL")]
     Rail,
-    #[pyo3(name = "AIRCRAFT")]
     Aircraft,
+}
+
+impl PythonEnumMirror for PyTravelMode {
+    const CLASS_NAME: &'static str = "TravelMode";
+
+    fn class_lock() -> &'static PyOnceLock<Py<PyType>> {
+        static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+        &CLASS
+    }
+}
+
+impl<'py> FromPyObject<'_, 'py> for PyTravelMode {
+    type Error = PyErr;
+
+    fn extract(object: Borrowed<'_, 'py, PyAny>) -> PyResult<Self> {
+        Self::from_python_member(&object)
+    }
+}
+
+impl<'py> IntoPyObject<'py> for PyTravelMode {
+    type Target = PyAny;
+    type Output = Bound<'py, PyAny>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.to_python_member(py)
+    }
 }
 
 impl From<PyTravelMode> for TravelMode {
@@ -386,13 +422,9 @@ impl PySatellite {
     }
 
     fn __repr__(&self) -> String {
-        // Upper-cased `Debug` of the *Python-facing* enum's variant identifier -
-        // derived from the same identifiers `#[pyo3(name = "...")]` spells out
-        // below, so a rename can't desync `__repr__` from the actual Python
-        // member name (see `py_constellation_repr_name_matches_pyo3_name`).
-        let name = format!("{:?}", PyConstellation::from(self.inner.constellation)).to_uppercase();
+        let member_name: &str = PyConstellation::from(self.inner.constellation).into();
         format!(
-            "Satellite(constellation=Constellation.{name}, prn={})",
+            "Satellite(constellation=Constellation.{member_name}, prn={})",
             self.inner.prn
         )
     }
@@ -1971,9 +2003,6 @@ fn install_python_logging_bridge(py: Python<'_>) {
 fn _geotrace_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     install_python_logging_bridge(m.py());
 
-    m.add_class::<PyConstellation>()?;
-    m.add_class::<PyMarkerIcon>()?;
-    m.add_class::<PyTravelMode>()?;
     m.add_class::<PySatellite>()?;
     m.add_class::<PySatelliteReport>()?;
     m.add_class::<PyUnit>()?;
