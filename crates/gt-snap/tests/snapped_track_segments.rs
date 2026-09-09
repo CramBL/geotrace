@@ -120,18 +120,6 @@ fn teleport_gap_splits_into_two_segments() {
     );
 }
 
-/// The unfiltered fixture has every edge attribute. Segment assembly must
-/// work there too (it is the same clean drive).
-#[test]
-fn unfiltered_fixture_assembles_like_filtered() {
-    let filtered = parse_response("clean_drive").expect("fixture");
-    let unfiltered = parse_response("clean_drive_unfiltered").expect("fixture");
-    assert_eq!(
-        snapped_track::snapped_track_segments(&filtered).expect("filtered assembles"),
-        snapped_track::snapped_track_segments(&unfiltered).expect("unfiltered assembles"),
-    );
-}
-
 /// A response with a valid 4-position synthetic shape, holding `points` and
 /// `edges`. The shape is encoded with the wire's precision constant, so
 /// encode and decode cannot drift apart.

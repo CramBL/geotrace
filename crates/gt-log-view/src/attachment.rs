@@ -109,7 +109,7 @@ impl SessionLogAttachments {
 mod tests {
     use gt_history_types::{LogAttachment, LogContentHash};
 
-    use crate::test_fixtures::{recording_ref_of_group, stored_recording_ref};
+    use crate::test_util;
 
     use super::*;
 
@@ -136,7 +136,7 @@ mod tests {
     /// it.
     #[test]
     fn a_recordings_attachments_are_listed_by_name() {
-        let recording = stored_recording_ref();
+        let recording = test_util::stored_recording_ref();
         let mut attachments = SessionLogAttachments::default();
 
         attachments.set_attachments_of(
@@ -155,8 +155,8 @@ mod tests {
     /// takes every attachment of that recording with it.
     #[test]
     fn a_removed_attachment_and_a_forgotten_recording_leave_the_other_recording_listed() {
-        let removed_from = stored_recording_ref();
-        let forgotten = recording_ref_of_group("2026-01-02T09-15-00");
+        let removed_from = test_util::stored_recording_ref();
+        let forgotten = test_util::recording_ref_of_group("2026-01-02T09-15-00");
         let mut attachments = SessionLogAttachments::default();
         let detached = entry("hal-powerd.log");
         attachments.set_attachments_of(

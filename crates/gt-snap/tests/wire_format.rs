@@ -5,30 +5,36 @@
 //! [`TraceAttributesRequest`] byte-for-byte (as JSON values) - proving the
 //! types model exactly what the capture harness sent and the server returned.
 
+#[path = "wire_format/open_world_values.rs"]
+mod open_world_values;
+#[path = "wire_format/wire_names.rs"]
+mod wire_names;
+
 use std::collections::BTreeSet;
 use std::fs;
 
-use serde::Deserialize;
-use serde::de::IntoDeserializer;
-use serde::de::value::{Error as DeError, StrDeserializer};
 use serde_json::{Value, json};
-use strum::EnumCount;
 
 use gt_snap::wire::{
-    Costing, ErrorCode, ErrorResponse, FilterAction, RoadClass, SnapPointKind, SpeedLimit, Surface,
-    TraceAttributesRequest, TraceAttributesResponse, TraceOptions,
+    ErrorResponse, SnapPointKind, SpeedLimit, TraceAttributesRequest, TraceAttributesResponse,
+    TraceOptions,
 };
 use gt_snap::{DEFAULT_SERVER_URL, FIXTURE_SCENARIOS, fixtures_dir, server_host};
 
-/// The fixture scenarios whose response is a successful match.
+/// The fixture scenarios whose response is a successful match, each with a
+/// digest baseline of its own.
 const SUCCESS_SCENARIOS: &[&str] = &[
     "clean_drive",
     "clean_drive_tuned",
-    "clean_drive_unfiltered",
     "dense_10hz",
     "partially_snappable",
     "teleport_gap",
 ];
+
+/// The same drive as `clean_drive`, captured without the edge-attribute
+/// filter the app sends. Its response holds every edge attribute Valhalla
+/// knows. The test below asserts it against `clean_drive`.
+const UNFILTERED_SCENARIO: &str = "clean_drive_unfiltered";
 
 /// The fixture scenarios whose response is a Valhalla JSON error.
 const ERROR_SCENARIOS: &[&str] = &[
@@ -53,6 +59,7 @@ fn every_scenario_is_classified_exactly_once() {
         .chain(ERROR_SCENARIOS)
         .chain(HTML_ERROR_SCENARIOS)
         .copied()
+        .chain([UNFILTERED_SCENARIO])
         .collect();
     classified.sort_unstable();
     let mut expected: Vec<&str> = FIXTURE_SCENARIOS.to_vec();
@@ -140,6 +147,21 @@ fn success_fixtures_parse() {
             serde_json::from_str(&body).expect("success fixture must parse");
         insta::assert_debug_snapshot!(scenario, ResponseDigest::of(&response));
     }
+}
+
+/// The filtered and unfiltered captures of one drive parse to the same value:
+/// the typed response reads only the fields the app requests, whatever else
+/// the server wrote into each.
+#[test]
+fn the_filtered_and_unfiltered_captures_of_one_drive_parse_to_the_same_response() {
+    let filtered = read_fixture("clean_drive.response.json").expect("fixture");
+    let unfiltered =
+        read_fixture(&format!("{UNFILTERED_SCENARIO}.response.json")).expect("fixture");
+
+    assert_eq!(
+        serde_json::from_str::<TraceAttributesResponse>(&filtered).expect("the fixture parses"),
+        serde_json::from_str::<TraceAttributesResponse>(&unfiltered).expect("the fixture parses"),
+    );
 }
 
 #[test]
@@ -231,103 +253,6 @@ fn warnings_array_is_preserved_raw() {
     assert_eq!(response.warnings[0]["message"], "synthetic");
 }
 
-/// Locks the wire spelling of every closed `enum`, exhaustively via
-/// `EnumCount` (see `gt_types::metrics::tests::wire_names_are_stable`).
-#[test]
-fn wire_names_are_stable() {
-    let kinds = [
-        (SnapPointKind::Snapped, "matched"),
-        (SnapPointKind::Interpolated, "interpolated"),
-        (SnapPointKind::Unsnapped, "unmatched"),
-    ];
-    assert_eq!(kinds.len(), SnapPointKind::COUNT);
-    for (kind, wire) in kinds {
-        let de: StrDeserializer<'_, DeError> = wire.into_deserializer();
-        assert_eq!(SnapPointKind::deserialize(de), Ok(kind), "{wire:?}");
-        assert_eq!(kind.to_string(), wire);
-    }
-
-    let costings = [
-        (Costing::Auto, "auto"),
-        (Costing::Bicycle, "bicycle"),
-        (Costing::Pedestrian, "pedestrian"),
-    ];
-    assert_eq!(costings.len(), Costing::COUNT);
-    for (costing, wire) in costings {
-        let de: StrDeserializer<'_, DeError> = wire.into_deserializer();
-        assert_eq!(Costing::deserialize(de), Ok(costing), "{wire:?}");
-        assert_eq!(costing.to_string(), wire);
-    }
-
-    let actions = [
-        (FilterAction::Include, "include"),
-        (FilterAction::Exclude, "exclude"),
-    ];
-    assert_eq!(actions.len(), FilterAction::COUNT);
-    for (action, wire) in actions {
-        let de: StrDeserializer<'_, DeError> = wire.into_deserializer();
-        assert_eq!(FilterAction::deserialize(de), Ok(action), "{wire:?}");
-        assert_eq!(action.to_string(), wire);
-    }
-}
-
-/// Pin the costing display spellings so a variant rename cannot silently
-/// change the settings combo. The table length is asserted against
-/// `EnumCount` so a new variant cannot be forgotten here.
-#[test]
-fn costing_display_name_is_canonical_spelling() {
-    let expected = [
-        (Costing::Auto, "Auto"),
-        (Costing::Bicycle, "Bicycle"),
-        (Costing::Pedestrian, "Pedestrian"),
-    ];
-    assert_eq!(expected.len(), Costing::COUNT);
-    for (costing, name) in expected {
-        assert_eq!(costing.display_name(), name);
-    }
-}
-
-/// Pins the UI spelling of every road class shown on snapped-track hover,
-/// exhaustively like [`costing_display_name_is_canonical_spelling`].
-#[test]
-fn road_class_display_name_is_canonical_spelling() {
-    let expected = [
-        (RoadClass::Motorway, "Motorway"),
-        (RoadClass::Trunk, "Trunk"),
-        (RoadClass::Primary, "Primary"),
-        (RoadClass::Secondary, "Secondary"),
-        (RoadClass::Tertiary, "Tertiary"),
-        (RoadClass::Unclassified, "Unclassified"),
-        (RoadClass::Residential, "Residential"),
-        (RoadClass::ServiceOther, "Service or other"),
-        (RoadClass::Unknown, "Unknown"),
-    ];
-    assert_eq!(expected.len(), RoadClass::COUNT);
-    for (road_class, name) in expected {
-        assert_eq!(road_class.display_name(), name);
-    }
-}
-
-/// Pins the UI spelling of every surface shown on snapped-track hover.
-#[test]
-fn surface_display_name_is_canonical_spelling() {
-    let expected = [
-        (Surface::PavedSmooth, "Paved smooth"),
-        (Surface::Paved, "Paved"),
-        (Surface::PavedRough, "Paved rough"),
-        (Surface::Compacted, "Compacted"),
-        (Surface::Dirt, "Dirt"),
-        (Surface::Gravel, "Gravel"),
-        (Surface::Path, "Path"),
-        (Surface::Impassable, "Impassable"),
-        (Surface::Unknown, "Unknown"),
-    ];
-    assert_eq!(expected.len(), Surface::COUNT);
-    for (surface, name) in expected {
-        assert_eq!(surface.display_name(), name);
-    }
-}
-
 /// `server_host` is the granularity of the app's upload-consent bookkeeping:
 /// scheme, port, and path changes keep consent, a host change re-prompts, and
 /// URLs without a parsable host never count as consented.
@@ -345,115 +270,4 @@ fn server_host_extracts_the_host_and_only_the_host() {
     assert_eq!(server_host(""), None);
     // A host-less URL must not count as a host either.
     assert_eq!(server_host("file:///tmp/x"), None);
-}
-
-/// Open-world `enum` types: known wire names parse to their variant, anything
-/// else lands on `Unknown` and the response still parses.
-#[test]
-fn open_enums_absorb_unknown_wire_values() {
-    let road_classes = [
-        (RoadClass::Motorway, "motorway"),
-        (RoadClass::Trunk, "trunk"),
-        (RoadClass::Primary, "primary"),
-        (RoadClass::Secondary, "secondary"),
-        (RoadClass::Tertiary, "tertiary"),
-        (RoadClass::Unclassified, "unclassified"),
-        (RoadClass::Residential, "residential"),
-        (RoadClass::ServiceOther, "service_other"),
-        (RoadClass::Unknown, "some_future_class"),
-    ];
-    assert_eq!(road_classes.len(), RoadClass::COUNT);
-    for (class, wire) in road_classes {
-        let de: StrDeserializer<'_, DeError> = wire.into_deserializer();
-        assert_eq!(RoadClass::deserialize(de), Ok(class), "{wire:?}");
-    }
-
-    let surfaces = [
-        (Surface::PavedSmooth, "paved_smooth"),
-        (Surface::Paved, "paved"),
-        (Surface::PavedRough, "paved_rough"),
-        (Surface::Compacted, "compacted"),
-        (Surface::Dirt, "dirt"),
-        (Surface::Gravel, "gravel"),
-        (Surface::Path, "path"),
-        (Surface::Impassable, "impassable"),
-        (Surface::Unknown, "some_future_surface"),
-    ];
-    assert_eq!(surfaces.len(), Surface::COUNT);
-    for (surface, wire) in surfaces {
-        let de: StrDeserializer<'_, DeError> = wire.into_deserializer();
-        assert_eq!(Surface::deserialize(de), Ok(surface), "{wire:?}");
-    }
-}
-
-/// The wire's "no edge association" sentinel value (`u64::MAX`, captured on
-/// interpolated points in `dense_10hz`) folds into `None` and never escapes
-/// the wire layer.
-#[test]
-fn edge_index_sentinel_folds_into_none() {
-    let response: TraceAttributesResponse = serde_json::from_str(
-        r#"{"matched_points": [
-            {"lat": 55.0, "lon": 12.0, "type": "interpolated", "edge_index": 18446744073709551615},
-            {"lat": 55.0, "lon": 12.0, "type": "matched", "edge_index": 3}
-        ]}"#,
-    )
-    .expect("synthetic body");
-    assert_eq!(response.snapped_points[0].edge_index, None);
-    assert_eq!(response.snapped_points[1].edge_index, Some(3));
-}
-
-/// Valhalla reports derestricted roads (autobahn stretches) as the string
-/// `"unlimited"` where a km/h number normally sits. Both wire shapes parse
-/// and serialize back unchanged so cached results round-trip. Any other
-/// string is an error.
-#[rstest::rstest]
-#[case::kmh("50", SpeedLimit::Kmh(50), "50 km/h")]
-#[case::unlimited(r#""unlimited""#, SpeedLimit::Unlimited, "Unlimited")]
-fn speed_limit_parses_both_wire_shapes(
-    #[case] json: &str,
-    #[case] expected: SpeedLimit,
-    #[case] display: &str,
-) {
-    let parsed: SpeedLimit = serde_json::from_str(json).expect("parses");
-    assert_eq!(parsed, expected);
-    assert_eq!(parsed.display(), display);
-    assert_eq!(
-        serde_json::to_string(&parsed).expect("serializes"),
-        json,
-        "cached results must round-trip the wire shape"
-    );
-}
-
-#[test]
-fn speed_limit_rejects_unknown_strings() {
-    serde_json::from_str::<SpeedLimit>(r#""none""#)
-        .expect_err("an undocumented string must fail loudly, not guess");
-}
-
-/// The failing body shape from the field: a success response whose edge
-/// has `"speed_limit": "unlimited"` parses.
-#[test]
-fn response_with_unlimited_speed_limit_parses() {
-    let response: TraceAttributesResponse = serde_json::from_str(
-        r#"{"matched_points": [{"lat": 55.0, "lon": 12.0, "type": "matched", "edge_index": 0}],
-            "edges": [{"names": ["A 7"], "speed_limit": "unlimited"}]}"#,
-    )
-    .expect("a derestricted edge must not fail the chunk");
-    assert_eq!(response.edges[0].speed_limit, Some(SpeedLimit::Unlimited));
-}
-
-/// Error codes roundtrip through their raw u32, including unknown ones.
-#[test]
-fn error_codes_roundtrip() {
-    let known = [
-        (ErrorCode::MissingShape, 114),
-        (ErrorCode::TooManyShapePoints, 153),
-        (ErrorCode::TraceOptionOutOfBounds, 158),
-        (ErrorCode::OffNetwork, 444),
-        (ErrorCode::Other(999), 999),
-    ];
-    for (code, raw) in known {
-        assert_eq!(ErrorCode::from(raw), code);
-        assert_eq!(u32::from(code), raw);
-    }
 }

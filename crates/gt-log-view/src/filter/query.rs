@@ -213,10 +213,7 @@ mod tests {
     use proptest::{prelude::*, proptest};
 
     use super::*;
-    use crate::{
-        filter::pattern::FilterPattern,
-        test_fixtures::{self, parsed_log},
-    };
+    use crate::{filter::pattern::FilterPattern, test_util};
 
     fn compiled(text: &str) -> CompiledFilter {
         FilterPattern::plain(text)
@@ -235,7 +232,7 @@ mod tests {
 
     #[test]
     fn a_scan_marks_the_entries_whose_message_matches() {
-        let log = parsed_log(10);
+        let log = test_util::parsed_log(10);
         let matches = scanned(&log, "entry 7", WORDS_PER_CHUNK);
 
         assert_eq!(matches.match_count(), 1);
@@ -247,7 +244,7 @@ mod tests {
     /// timestamp is not part of the message.
     #[test]
     fn a_scan_never_matches_a_timestamp() {
-        let log = parsed_log(3);
+        let log = test_util::parsed_log(3);
         assert_eq!(scanned(&log, "14:02", WORDS_PER_CHUNK).match_count(), 0);
         assert_eq!(scanned(&log, "2026", WORDS_PER_CHUNK).match_count(), 0);
     }
@@ -256,7 +253,7 @@ mod tests {
     /// map: a structural line is not an entry.
     #[test]
     fn a_scan_never_matches_a_structural_line() {
-        let log = test_fixtures::parsed_log_of_text(
+        let log = test_util::parsed_log_of_text(
             "2026-01-01 14:02:11 navsyncd: starting\n\
              --- Device reboot ---\n\
              2026-01-01 14:02:20 navsyncd: reboot done\n",
@@ -273,7 +270,7 @@ mod tests {
     /// other entry.
     #[test]
     fn a_scan_matches_an_interpolated_entry() {
-        let log = test_fixtures::parsed_log_of_text(
+        let log = test_util::parsed_log_of_text(
             "2026-01-01 14:02:11 navsyncd: starting\n  at 0x0000c3f4 in gnss_task+0x54\n",
         );
         assert_eq!(log.interpolated_entry_count(), 1);
@@ -287,7 +284,7 @@ mod tests {
 
     #[test]
     fn a_superseded_scan_leaves_its_remaining_chunks_unread() {
-        let log = parsed_log(20_000);
+        let log = test_util::parsed_log(20_000);
         let words_per_chunk = words(1);
         let chunks_started = AtomicUsize::new(0);
 
@@ -334,7 +331,7 @@ mod tests {
 
     #[test]
     fn an_edited_filter_lands_its_matches_and_stops_pending() {
-        let log = Arc::new(parsed_log(1_000));
+        let log = Arc::new(test_util::parsed_log(1_000));
         let mut query = FilterQuery::matching_nothing(log.entries().len());
 
         query.restart(&log, Arc::new(compiled("entry 512")));
@@ -348,7 +345,7 @@ mod tests {
     /// The last edit decides, whichever order the generations finish in.
     #[test]
     fn the_newest_generation_is_the_one_that_lands() {
-        let log = Arc::new(parsed_log(5_000));
+        let log = Arc::new(test_util::parsed_log(5_000));
         let mut query = FilterQuery::matching_nothing(log.entries().len());
 
         query.restart(&log, Arc::new(compiled("entry")));
@@ -371,7 +368,7 @@ mod tests {
             entry_count in 1usize..500,
             words_per_chunk in 1usize..8,
         ) {
-            let log = parsed_log(entry_count);
+            let log = test_util::parsed_log(entry_count);
             let filter = compiled("entry 1");
             let matches = scanned(&log, "entry 1", words(words_per_chunk));
 

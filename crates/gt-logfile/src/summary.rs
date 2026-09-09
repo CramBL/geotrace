@@ -165,7 +165,7 @@ mod tests {
     use proptest::{prelude::*, proptest};
 
     use super::*;
-    use crate::log_strategies::{self, GeneratedSummaryBlock};
+    use crate::test_util::strategies::{self, GeneratedSummaryBlock};
 
     /// The block a real journald export ends with, shortened to two rows per table.
     const EXPORTED_BLOCK: &str = "\
@@ -289,7 +289,7 @@ kernel               -> 315 Warnings";
         /// figure it wrote.
         #[test]
         fn a_written_block_is_read_back_as_the_figures_it_states(
-            block in log_strategies::any_summary_block(),
+            block in strategies::any_summary_block(),
         ) {
             let GeneratedSummaryBlock { stated, text } = block;
             prop_assert_eq!(parse_summary_block(text.lines().map(str::trim)), stated);
