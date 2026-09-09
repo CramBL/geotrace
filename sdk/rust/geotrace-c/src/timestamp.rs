@@ -1,5 +1,7 @@
 //! The timestamp type and its constructors.
 
+use std::ffi::c_char;
+
 use crate::error::{self, GtdStatus};
 
 /// UTC Unix epoch timestamp in microseconds.
@@ -103,6 +105,30 @@ pub unsafe extern "C" fn gtd_ts_from_nanos(nanos: i64, out: *mut GtdTimestamp) -
     error::run_catching_panics(|| {
         let out = nonnull_mut!(out);
         write_converted_timestamp(geotrace_sdk::Timestamp::try_from_unix_nanos(nanos), out)
+    })
+}
+
+/// Parse an ISO 8601 / RFC 3339 timestamp, such as `"2026-02-01T15:00:00+00:00"`.
+///
+/// A leap second (`:60`) converts to the microsecond count of the second
+/// after it.
+///
+/// @param text An ISO 8601 timestamp with a timezone designator,
+///             NUL-terminated.
+/// @param out  Caller-allocated result, written on success.
+///
+/// @return `GTD_ERR_PARSE` if @p text is not an ISO 8601 timestamp, which
+///         includes one with no timezone designator and one whose year is past
+///         the range a timestamp covers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_ts_from_iso8601(
+    text: *const c_char,
+    out: *mut GtdTimestamp,
+) -> GtdStatus {
+    error::run_catching_panics(|| {
+        let text = cstr!(text);
+        let out = nonnull_mut!(out);
+        write_converted_timestamp(geotrace_sdk::Timestamp::try_from_iso8601(text), out)
     })
 }
 

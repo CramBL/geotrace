@@ -7,8 +7,6 @@
  *   ./sdk/cpp/build/gold/examples/gold_dataset
  */
 
-#include "gold_timestamp.hpp"
-
 #include <geotrace/geotrace.hpp>
 
 #include <algorithm>
@@ -70,6 +68,16 @@ std::optional<std::array<std::string, N>> split_csv_fields(const std::string &li
     std::array<std::string, N> fields;
     std::move(cols.begin(), cols.begin() + static_cast<std::ptrdiff_t>(N), fields.begin());
     return fields;
+}
+
+// Every timestamp cell of the gold CSV fixtures is an ISO 8601 timestamp or empty.
+std::optional<geotrace::Timestamp> parse_timestamp_or_absent(const std::string &text) {
+    const geotrace::Result<geotrace::Timestamp> parsed =
+        geotrace::Timestamp::try_from_iso8601(text);
+    if (const geotrace::Timestamp *timestamp = parsed.get_if()) {
+        return *timestamp;
+    }
+    return std::nullopt;
 }
 
 geotrace::Constellation parse_constellation(const std::string &name) {
@@ -268,8 +276,8 @@ void load_fixes(geotrace::FileBuilder &builder, const fs::path &base,
                                       speed_kmh, eph_m] = *fields;
 
         geotrace::RecordedFixTimestamps recorded{};
-        recorded.gps_time = gold::parse_timestamp(gps_time);
-        recorded.sys_time = gold::parse_timestamp(sys_time);
+        recorded.gps_time = parse_timestamp_or_absent(gps_time);
+        recorded.sys_time = parse_timestamp_or_absent(sys_time);
         const auto time = required_fix_time(recorded, "fixes.csv row " + line);
 
         auto hdg = parse_opt_double(heading_deg);
@@ -306,8 +314,8 @@ void load_fixes(geotrace::FileBuilder &builder, const fs::path &base,
     }
     for (const auto &[times, tracked] : orphans) {
         geotrace::RecordedFixTimestamps recorded{};
-        recorded.gps_time = gold::parse_timestamp(times.first);
-        recorded.sys_time = gold::parse_timestamp(times.second);
+        recorded.gps_time = parse_timestamp_or_absent(times.first);
+        recorded.sys_time = parse_timestamp_or_absent(times.second);
 
         const auto time = required_fix_time(recorded, "satellites.csv row (" + times.first + ", " +
                                                           times.second + ")");
@@ -329,7 +337,7 @@ void load_markers(geotrace::FileBuilder &builder, const fs::path &base) {
             continue;
         }
         const auto &[time, label, icon] = *fields;
-        auto timestamp = gold::parse_timestamp(time);
+        auto timestamp = parse_timestamp_or_absent(time);
         if (!timestamp) {
             throw geotrace::IoError("markers.csv: missing timestamp");
         }
@@ -352,7 +360,7 @@ void load_events(geotrace::FileBuilder &builder, const fs::path &base) {
             continue;
         }
         const auto &[sys_time, variant_path, annotation] = *fields;
-        auto timestamp = gold::parse_timestamp(sys_time);
+        auto timestamp = parse_timestamp_or_absent(sys_time);
         if (!timestamp) {
             throw geotrace::IoError("events.csv: missing sys_time");
         }
@@ -406,7 +414,7 @@ void load_channels(geotrace::FileBuilder &builder, const fs::path &base) {
                                       values] = *fields;
 
         geotrace::Channel &channel = channel_for_row(channels, *fields);
-        auto timestamp = gold::parse_timestamp(time);
+        auto timestamp = parse_timestamp_or_absent(time);
         if (!timestamp) {
             throw geotrace::IoError("channels.csv: invalid timestamp");
         }

@@ -1441,6 +1441,22 @@ GtdStatus gtd_ts_from_micros(int64_t micros, GtdTimestamp *out);
 GtdStatus gtd_ts_from_nanos(int64_t nanos, GtdTimestamp *out);
 
 /**
+ * Parse an ISO 8601 / RFC 3339 timestamp, such as `"2026-02-01T15:00:00+00:00"`.
+ *
+ * A leap second (`:60`) converts to the microsecond count of the second
+ * after it.
+ *
+ * @param text An ISO 8601 timestamp with a timezone designator,
+ *             NUL-terminated.
+ * @param out  Caller-allocated result, written on success.
+ *
+ * @return `GTD_ERR_PARSE` if @p text is not an ISO 8601 timestamp, which
+ *         includes one with no timezone designator and one whose year is past
+ *         the range a timestamp covers.
+ */
+GtdStatus gtd_ts_from_iso8601(const char *text, GtdTimestamp *out);
+
+/**
  * The timestamp value that represents an absent timestamp.
  */
 GtdTimestamp gtd_ts_none(void);

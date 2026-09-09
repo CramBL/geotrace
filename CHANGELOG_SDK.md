@@ -24,6 +24,7 @@ the app).
 - Python `NavFileBuilder.with_lenient_errors()` clamps an annotation outside the nav fix time range to the nearest fix, where the build otherwise fails.
 - Python `NavFileBuilder.with_satellite_window(timedelta)`, C `gtd_builder_set_satellite_window_us(uint64_t)` and C++ `FileBuilder::satellite_window(std::chrono::microseconds)` set how far a satellite report may be from a nav fix to be associated with it. Python raises `ValueError` and C++ throws `std::invalid_argument` for a negative window.
 - Python `NavFile.points` has `latitudes()`, `longitudes()`, `gps_times()`, `sys_times()`, `headings()`, `speeds_mps()` and `eph_m_values()`, each returning that field of every fix as a list.
+- C `gtd_ts_from_iso8601` and C++ `Timestamp::from_iso8601` and `try_from_iso8601` parse an ISO 8601 timestamp, such as `2026-02-01T15:00:00+00:00`, on either side of the Unix epoch. C returns `GTD_ERR_PARSE` and C++ throws `geotrace::ParseError` for a string that is not one, which includes one with no timezone designator and one whose year is past the range a timestamp covers.
 
 ### Changed
 
