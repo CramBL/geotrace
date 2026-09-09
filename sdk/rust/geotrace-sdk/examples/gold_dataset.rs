@@ -9,6 +9,7 @@
     reason = "SDK example: demonstration code"
 )]
 
+use chrono::Datelike as _;
 use geotrace_sdk::{
     Angle, Annotation, AnnotationIcon, Channel, ChannelUnit, Constellation, EventMarker,
     EventMarkerStyle, MarkerIcon, Meta, NavFileBuilder, NavFix, NavFixTime, NavRecorder,
@@ -261,7 +262,7 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     assert_eq!(meta.travel_mode, Some(TravelMode::Bicycle));
 
     let points = file.nav_points();
-    assert_eq!(points.len(), 200);
+    assert_eq!(points.len(), 205);
 
     // Track 8 Antimeridian: 10 fixes plus the ghost fix of the orphan satellite
     // report at 15:00:05.5. Check the first and the last point.
@@ -272,6 +273,11 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     assert_eq!(track_8_points.len(), 11);
     assert!((track_8_points[0].fix.lon.as_degrees() - 179.95).abs() < 1e-6);
     assert!((track_8_points[10].fix.lon.as_degrees() - (-179.96)).abs() < 1e-6);
+    // The SDK places the orphan satellite report's ghost fix on the short arc
+    // between the two fixes around it: the report at 15:00:05.5 has no fix of
+    // its own.
+    assert!((track_8_points[6].fix.lon.as_degrees() - (-179.995)).abs() < 1e-6);
+    assert_eq!(track_8_points[6].fix.time.sys_time(), None);
 
     // Track 9 Stationary
     let track_9_points: Vec<_> = points
@@ -282,6 +288,19 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     for p in track_9_points {
         assert_eq!(p.fix.speed.map(|s| s.as_meters_per_second()), Some(0.0));
     }
+
+    // The two clocks of a track 13 fix read different years: the receiver has a
+    // lock while the host clock is unset.
+    let unset_host_clock: Vec<i64> = points
+        .iter()
+        .filter_map(|p| Some((p.fix.time.gps_time()?, p.fix.time.sys_time()?)))
+        .filter(|(gps, sys)| gps.year() != sys.year())
+        .map(|(_, sys)| sys.timestamp_micros())
+        .collect();
+    assert_eq!(
+        unset_host_clock,
+        [-2_000_000, -1_000_000, 0, 1_000_000, 2_000_000]
+    );
 
     let markers = file.markers();
     assert_eq!(markers.len(), 16);
@@ -305,6 +324,11 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
 
     let events = file.event_markers();
     assert_eq!(events.len(), 7);
+    let antimeridian_event = events
+        .iter()
+        .find(|e| e.variant_path == "navigation/antimeridian")
+        .unwrap();
+    assert!((antimeridian_event.lon.as_degrees() - (-179.995)).abs() < 1e-6);
 
     let styles = file.event_marker_styles();
     let icon_style = styles
