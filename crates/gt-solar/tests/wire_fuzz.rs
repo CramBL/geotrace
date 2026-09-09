@@ -7,14 +7,13 @@
 //! survives holds only values inside the index's published range. Mirrors how
 //! `gt-jam` fuzzes its dataset parser.
 
-mod support;
-
 use std::sync::OnceLock;
 
 use proptest::test_runner::TestCaseError;
 
 use gt_solar::activity::{GeomagneticActivity, KP_MAX_VALUE, MIN_VALUE};
 use gt_solar::series::{Hp30Series, KpSeries};
+use gt_solar::test_util;
 use gt_solar::wire;
 
 /// How far into the captured storm the truncation property cuts: past the end
@@ -24,7 +23,7 @@ const MAX_TRUNCATION_BYTES: usize = 4096;
 /// The capture the truncation property cuts, read once for the whole run.
 fn captured_storm() -> Result<&'static str, String> {
     static JSON: OnceLock<Result<String, String>> = OnceLock::new();
-    JSON.get_or_init(|| support::captured_response(support::declared_window("hp30-storm")?))
+    JSON.get_or_init(|| test_util::captured_response(test_util::declared_window("hp30-storm")?))
         .as_deref()
         .map_err(Clone::clone)
 }

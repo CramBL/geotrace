@@ -29,6 +29,8 @@ pub mod activity;
 pub mod calendar;
 pub mod reference;
 pub mod series;
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
 pub mod text;
 pub mod transport;
 pub mod wire;

@@ -1,13 +1,11 @@
 //! The archive against the captured GFZ responses.
 
-use std::fs;
-
 use chrono::{DateTime, NaiveDate, Utc};
 use tempfile::TempDir;
 
 use gt_hdf5_archive::WritableDayArchive as _;
 use gt_solar::series::{Hp30Series, IndexSample as _, KpSeries};
-use gt_solar::{FIXTURE_WINDOWS, FixtureWindow, wire};
+use gt_solar::{test_util, wire};
 use gt_solar_store::{FILE_NAME, SolarStore};
 
 /// The May 2024 storm, at both cadences.
@@ -17,18 +15,13 @@ const HP30_STORM_CAPTURE: &str = "hp30-storm";
 /// The captured response for `name`, and the first UTC day of the window it
 /// was requested over, which is the day the samples are archived under.
 fn captured_response(name: &str) -> Result<(NaiveDate, String), String> {
-    let fixture: &FixtureWindow = FIXTURE_WINDOWS
-        .iter()
-        .find(|fixture| fixture.name == name)
-        .ok_or_else(|| format!("{name} is not a declared window"))?;
+    let fixture = test_util::declared_window(name)?;
     let day = fixture
         .window()
         .map_err(|err| format!("{name} window: {err}"))?
         .start
         .date_naive();
-    let json = fs::read_to_string(gt_solar::fixtures_dir().join(fixture.file_name()))
-        .map_err(|err| format!("{name} capture: {err}"))?;
-    Ok((day, json))
+    Ok((day, test_util::captured_response(fixture)?))
 }
 
 fn store() -> Result<(TempDir, SolarStore), String> {

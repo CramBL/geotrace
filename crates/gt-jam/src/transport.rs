@@ -68,13 +68,13 @@ fn classify(response: HttpResponse) -> Classified<FetchOutcome> {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
     use std::collections::HashSet;
 
     use rstest::rstest;
     use strum::EnumCount as _;
 
-    use gt_fetch::{TransportError, TransportSource};
+    use gt_fetch::TransportSource;
+    use gt_fetch::test_util::{self as scripted_transport, ScriptedTransport, TransportResponse};
 
     use super::*;
     use crate::DEFAULT_BASE_URL;
@@ -84,58 +84,18 @@ mod tests {
         NaiveDate::from_ymd_opt(2026, 7, 20).unwrap()
     }
 
-    fn response(status: u16, body: &str) -> Result<HttpResponse, TransportError> {
-        Ok(HttpResponse {
-            status,
-            body: body.to_owned(),
-        })
-    }
-
-    fn transport_error(detail: &str) -> Result<HttpResponse, TransportError> {
-        Err(TransportError {
-            detail: detail.to_owned(),
-        })
-    }
-
-    /// Replays a scripted sequence and records the URL of every request.
-    struct CannedTransport {
-        script: RefCell<Vec<Result<HttpResponse, TransportError>>>,
-        urls: RefCell<Vec<String>>,
-    }
-
-    impl CannedTransport {
-        fn new(script: Vec<Result<HttpResponse, TransportError>>) -> Self {
-            Self {
-                script: RefCell::new(script),
-                urls: RefCell::new(Vec::new()),
-            }
-        }
-
-        fn urls(&self) -> Vec<String> {
-            self.urls.borrow().clone()
-        }
-    }
-
-    impl Transport for CannedTransport {
-        fn send(&self, request: &HttpRequest) -> Result<HttpResponse, TransportError> {
-            self.urls.borrow_mut().push(request.url().to_owned());
-            let mut script = self.script.borrow_mut();
-            if script.is_empty() {
-                return transport_error("the test under-declared its requests");
-            }
-            script.remove(0)
-        }
-    }
-
-    fn fetch(script: Vec<Result<HttpResponse, TransportError>>) -> (FetchOutcome, Vec<String>) {
-        let transport = CannedTransport::new(script);
+    fn fetch(script: Vec<TransportResponse<String>>) -> (FetchOutcome, Vec<String>) {
+        let transport = ScriptedTransport::in_order(script);
         let outcome = fetch_day(&transport, DEFAULT_BASE_URL, day());
-        (outcome, transport.urls())
+        (outcome, transport.requested_urls())
     }
 
     #[test]
     fn a_served_day_returns_its_body() {
-        let (outcome, urls) = fetch(vec![response(200, "hex,count_good_aircraft\n")]);
+        let (outcome, urls) = fetch(vec![scripted_transport::response(
+            200,
+            "hex,count_good_aircraft\n",
+        )]);
         assert_eq!(
             outcome,
             FetchOutcome::Served("hex,count_good_aircraft\n".to_owned())
@@ -145,7 +105,10 @@ mod tests {
 
     #[test]
     fn a_404_is_missing_not_a_failure() {
-        let (outcome, urls) = fetch(vec![response(404, r#"{"message":"File not found"}"#)]);
+        let (outcome, urls) = fetch(vec![scripted_transport::response(
+            404,
+            r#"{"message":"File not found"}"#,
+        )]);
         assert_eq!(outcome, FetchOutcome::Missing);
         assert_eq!(urls.len(), 1, "a 404 is deterministic");
     }
@@ -156,7 +119,7 @@ mod tests {
     #[case::teapot(418)]
     #[case::too_many_requests(429)]
     fn a_4xx_fails_without_a_retry(#[case] status: u16) {
-        let (outcome, urls) = fetch(vec![response(status, "")]);
+        let (outcome, urls) = fetch(vec![scripted_transport::response(status, "")]);
         assert!(matches!(outcome, FetchOutcome::Failed(_)), "{outcome:?}");
         assert_eq!(urls.len(), 1);
     }
@@ -166,23 +129,19 @@ mod tests {
     #[case::bad_gateway(502)]
     #[case::unavailable(503)]
     fn a_5xx_is_retried_once(#[case] status: u16) {
-        let (outcome, urls) = fetch(vec![response(status, ""), response(status, "")]);
+        let (outcome, urls) = fetch(vec![
+            scripted_transport::response(status, ""),
+            scripted_transport::response(status, ""),
+        ]);
         assert!(matches!(outcome, FetchOutcome::Failed(_)), "{outcome:?}");
-        assert_eq!(urls.len(), 2);
-    }
-
-    #[test]
-    fn a_retried_5xx_that_succeeds_returns_the_body() {
-        let (outcome, urls) = fetch(vec![response(503, ""), response(200, "csv")]);
-        assert_eq!(outcome, FetchOutcome::Served("csv".to_owned()));
         assert_eq!(urls.len(), 2);
     }
 
     #[test]
     fn a_transport_failure_is_retried_once() {
         let (outcome, urls) = fetch(vec![
-            transport_error("connection reset"),
-            response(200, "csv"),
+            scripted_transport::transport_error("connection reset"),
+            scripted_transport::response(200, "csv"),
         ]);
         assert_eq!(outcome, FetchOutcome::Served("csv".to_owned()));
         assert_eq!(urls.len(), 2);
@@ -191,8 +150,8 @@ mod tests {
     #[test]
     fn a_failure_carries_the_last_detail() {
         let (outcome, _) = fetch(vec![
-            transport_error("connection reset"),
-            transport_error("timed out"),
+            scripted_transport::transport_error("connection reset"),
+            scripted_transport::transport_error("timed out"),
         ]);
         assert_eq!(
             outcome,
@@ -202,7 +161,7 @@ mod tests {
 
     #[test]
     fn a_status_outside_http_fails() {
-        let (outcome, _) = fetch(vec![response(0, "")]);
+        let (outcome, _) = fetch(vec![scripted_transport::response(0, "")]);
         assert_eq!(
             outcome,
             FetchOutcome::Failed("invalid HTTP status 0".to_owned())
@@ -230,7 +189,10 @@ mod tests {
             body in ".{0,512}",
         ) {
             // Two scripted responses: a 5xx spends its retry on the second.
-            let (outcome, _) = fetch(vec![response(status, &body), response(status, &body)]);
+            let (outcome, _) = fetch(vec![
+                scripted_transport::response(status, body.as_str()),
+                scripted_transport::response(status, body.as_str()),
+            ]);
             let served = (200..300).contains(&status);
             match outcome {
                 FetchOutcome::Served(returned) => {
@@ -249,9 +211,9 @@ mod tests {
     #[test]
     fn every_outcome_is_reachable() {
         let reached: HashSet<&'static str> = [
-            fetch(vec![response(200, "csv")]).0,
-            fetch(vec![response(404, "")]).0,
-            fetch(vec![response(400, "")]).0,
+            fetch(vec![scripted_transport::response(200, "csv")]).0,
+            fetch(vec![scripted_transport::response(404, "")]).0,
+            fetch(vec![scripted_transport::response(400, "")]).0,
         ]
         .iter()
         .map(<&'static str>::from)

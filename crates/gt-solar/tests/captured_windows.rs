@@ -5,8 +5,6 @@
 //! against each other, and checks the captures are still the shape the parser
 //! is written for.
 
-mod support;
-
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, Utc};
@@ -14,6 +12,7 @@ use serde_json::Value;
 
 use gt_solar::activity::{GeomagneticActivity, GeomagneticActivityClass, GeomagneticStormClass};
 use gt_solar::series::KpStatus;
+use gt_solar::test_util;
 use gt_solar::text;
 use gt_solar::wire;
 use gt_solar::{FIXTURE_WINDOWS, FixtureWindow, GeomagneticIndex};
@@ -38,7 +37,7 @@ struct CapturedSeries {
 }
 
 fn parse_capture(fixture: &FixtureWindow) -> Result<CapturedSeries, String> {
-    let json = support::captured_response(fixture)?;
+    let json = test_util::captured_response(fixture)?;
     let capture = match fixture.index {
         GeomagneticIndex::Kp => {
             let series =
@@ -63,14 +62,14 @@ fn parse_capture(fixture: &FixtureWindow) -> Result<CapturedSeries, String> {
 }
 
 fn peak_activity(name: &str) -> Result<Option<GeomagneticActivity>, String> {
-    Ok(parse_capture(support::declared_window(name)?)?.peak)
+    Ok(parse_capture(test_util::declared_window(name)?)?.peak)
 }
 
 /// The manifest agrees with what each window declares.
 #[test]
 fn every_declared_window_has_a_matching_manifest_entry() {
     for fixture in FIXTURE_WINDOWS {
-        let entry = support::manifest_entry(fixture.name).unwrap();
+        let entry = test_util::manifest_entry(fixture.name).unwrap();
         assert_eq!(
             entry.get("index").and_then(Value::as_str),
             Some(fixture.index.wire_name()),
@@ -104,7 +103,7 @@ fn every_declared_window_has_a_matching_manifest_entry() {
 #[test]
 fn the_manifest_lists_exactly_the_declared_windows() {
     let declared: BTreeSet<&str> = FIXTURE_WINDOWS.iter().map(|fixture| fixture.name).collect();
-    let recorded: Vec<String> = support::manifest_entries()
+    let recorded: Vec<String> = test_util::manifest_entries()
         .unwrap()
         .iter()
         .filter_map(|entry| Some(entry.get("name")?.as_str()?.to_owned()))
@@ -116,7 +115,7 @@ fn the_manifest_lists_exactly_the_declared_windows() {
 #[test]
 fn every_capture_parses_into_the_recorded_number_of_samples() {
     for fixture in FIXTURE_WINDOWS {
-        let recorded = support::manifest_entry(fixture.name)
+        let recorded = test_util::manifest_entry(fixture.name)
             .unwrap()
             .get("samples")
             .and_then(Value::as_u64)
@@ -161,7 +160,7 @@ fn every_capture_runs_at_its_index_cadence_inside_the_requested_window() {
 #[test]
 fn only_kp_captures_carry_a_status_array() {
     for fixture in FIXTURE_WINDOWS {
-        let json = support::captured_response(&fixture).unwrap();
+        let json = test_util::captured_response(&fixture).unwrap();
         let body: Value = serde_json::from_str(&json).unwrap();
         assert_eq!(
             body.get("status").is_some(),
@@ -221,10 +220,10 @@ fn the_captured_quiet_day_reaches_no_storm_class() {
 
 #[test]
 fn a_window_before_the_index_begins_is_captured_as_an_empty_series() {
-    let fixture = support::declared_window(BEFORE_COVERAGE_CAPTURE).unwrap();
+    let fixture = test_util::declared_window(BEFORE_COVERAGE_CAPTURE).unwrap();
     assert!(parse_capture(fixture).unwrap().period_starts.is_empty());
     assert_eq!(
-        support::manifest_entry(fixture.name)
+        test_util::manifest_entry(fixture.name)
             .unwrap()
             .get("http_status")
             .and_then(Value::as_u64),
@@ -238,7 +237,7 @@ fn a_window_before_the_index_begins_is_captured_as_an_empty_series() {
 #[test]
 fn every_capture_records_the_services_license_and_source() {
     for fixture in FIXTURE_WINDOWS {
-        let entry = support::manifest_entry(fixture.name).unwrap();
+        let entry = test_util::manifest_entry(fixture.name).unwrap();
         assert_eq!(
             entry.get("license").and_then(Value::as_str),
             Some(text::LICENSE_NAME),

@@ -5,12 +5,11 @@
 //! against each other, and checks the captured day is still the shape the
 //! parser is written for.
 
-mod support;
-
 use std::collections::BTreeSet;
 
 use serde_json::Value;
 
+use gt_jam::test_util;
 use gt_jam::wire::{self, HexObservation, ParseWarningReporter};
 use gt_jam::{FIXTURE_DAYS, FixtureDay, dataset_file_name, fixtures_dir, parse_day};
 
@@ -29,7 +28,7 @@ fn refused_days() -> impl Iterator<Item = &'static FixtureDay> {
 
 /// Parse a captured day from disk.
 fn parse_captured(day: &str) -> Result<(Vec<HexObservation>, ParseWarningReporter), String> {
-    let csv = support::captured_csv(day)?;
+    let csv = test_util::captured_csv(day)?;
     let reporter = ParseWarningReporter::default();
     let observations =
         wire::parse_dataset(&csv, &reporter).map_err(|err| format!("{day}: {err}"))?;
@@ -40,7 +39,7 @@ fn parse_captured(day: &str) -> Result<(Vec<HexObservation>, ParseWarningReporte
 #[test]
 fn every_declared_day_has_a_matching_manifest_entry() {
     for fixture in FIXTURE_DAYS {
-        let entry = support::manifest_entry(fixture.day).unwrap();
+        let entry = test_util::manifest_entry(fixture.day).unwrap();
         assert_eq!(
             entry.get("http_status").and_then(Value::as_u64),
             Some(u64::from(fixture.http_status)),
@@ -62,7 +61,7 @@ fn every_declared_day_has_a_matching_manifest_entry() {
 #[test]
 fn the_manifest_lists_exactly_the_declared_days() {
     let declared: BTreeSet<&str> = FIXTURE_DAYS.iter().map(|fixture| fixture.day).collect();
-    let recorded: Vec<String> = support::manifest_entries()
+    let recorded: Vec<String> = test_util::manifest_entries()
         .unwrap()
         .iter()
         .filter_map(|entry| Some(entry.get("day")?.as_str()?.to_owned()))
@@ -92,7 +91,7 @@ fn only_served_days_have_a_dataset_on_disk() {
 #[test]
 fn a_refused_day_records_the_hosts_response() {
     for fixture in refused_days() {
-        let entry = support::manifest_entry(fixture.day).unwrap();
+        let entry = test_util::manifest_entry(fixture.day).unwrap();
         assert!(
             entry
                 .get("body")
@@ -130,7 +129,7 @@ fn the_captured_world_day_parses_cleanly() {
         );
         assert_eq!(
             observations.len(),
-            support::manifest_entry(fixture.day)
+            test_util::manifest_entry(fixture.day)
                 .unwrap()
                 .get("rows")
                 .and_then(Value::as_u64)

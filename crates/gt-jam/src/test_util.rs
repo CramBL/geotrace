@@ -1,16 +1,14 @@
-//! Shared access to the captured fixtures and their manifest.
-
-// Each test binary compiles this module independently and uses a different
-// subset, so "unused" here only means "unused by this binary".
-#![allow(dead_code, reason = "shared across binaries with different needs")]
+//! Readers for the captured datasets under `tests/fixtures/` and their
+//! manifest.
+//!
+//! The integration test binaries reach these as `gt_jam::test_util`, through
+//! the `test-util` feature gt-jam's dev-dependency on itself enables.
 
 use std::fs;
 
 use serde_json::Value;
 
-use gt_jam::{
-    CAPTURE_MANIFEST, FIXTURE_DAYS, FixtureDay, dataset_file_name, fixtures_dir, parse_day,
-};
+use crate::{CAPTURE_MANIFEST, FIXTURE_DAYS, FixtureDay};
 
 /// The declared day the host served.
 pub fn served_day() -> Result<&'static FixtureDay, String> {
@@ -29,7 +27,7 @@ pub fn refused_day() -> Result<&'static FixtureDay, String> {
 }
 
 pub fn manifest() -> Result<Value, String> {
-    let path = fixtures_dir().join(CAPTURE_MANIFEST);
+    let path = crate::fixtures_dir().join(CAPTURE_MANIFEST);
     let contents =
         fs::read_to_string(&path).map_err(|err| format!("reading {}: {err}", path.display()))?;
     serde_json::from_str(&contents).map_err(|err| format!("{CAPTURE_MANIFEST}: {err}"))
@@ -52,7 +50,8 @@ pub fn manifest_entry(day: &str) -> Result<Value, String> {
 
 /// The dataset captured for `day`.
 pub fn captured_csv(day: &str) -> Result<String, String> {
-    let date = parse_day(day).map_err(|err| format!("{day} is not a calendar date: {err}"))?;
-    let path = fixtures_dir().join(dataset_file_name(date));
+    let date =
+        crate::parse_day(day).map_err(|err| format!("{day} is not a calendar date: {err}"))?;
+    let path = crate::fixtures_dir().join(crate::dataset_file_name(date));
     fs::read_to_string(&path).map_err(|err| format!("reading {}: {err}", path.display()))
 }

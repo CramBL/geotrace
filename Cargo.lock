@@ -2515,6 +2515,7 @@ version = "0.16.0"
 dependencies = [
  "chrono",
  "gt-fetch",
+ "gt-flare",
  "gt-fmt",
  "gt-types",
  "gt-ui-types",
@@ -2707,6 +2708,7 @@ version = "0.16.0"
 dependencies = [
  "chrono",
  "gt-fetch",
+ "gt-jam",
  "gt-types",
  "gt-ui-types",
  "h3o",
@@ -3023,6 +3025,7 @@ dependencies = [
  "chrono",
  "gt-fetch",
  "gt-fmt",
+ "gt-solar",
  "gt-types",
  "gt-ui-types",
  "insta",

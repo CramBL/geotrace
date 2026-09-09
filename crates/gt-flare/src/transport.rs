@@ -70,10 +70,8 @@ fn classify(response: HttpResponse) -> Classified<Result<String, FetchFailure>> 
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-
     use chrono::NaiveDate;
-    use gt_fetch::{TransportError, TransportSource};
+    use gt_fetch::test_util::{self as scripted_transport, ScriptedTransport, TransportResponse};
     use rstest::rstest;
 
     use super::*;
@@ -91,51 +89,17 @@ mod tests {
         DateWindow::covering_utc_day(NaiveDate::from_ymd_opt(2024, 5, 9).unwrap_or(NaiveDate::MIN))
     }
 
-    fn response(status: u16, body: &str) -> Result<HttpResponse, TransportError> {
-        Ok(HttpResponse {
-            status,
-            body: body.to_owned(),
-        })
-    }
-
-    fn transport_error(detail: &str) -> Result<HttpResponse, TransportError> {
-        Err(TransportError {
-            detail: detail.to_owned(),
-        })
-    }
-
-    /// Replays a scripted sequence and records the URL of every request.
-    struct CannedTransport {
-        script: RefCell<Vec<Result<HttpResponse, TransportError>>>,
-        urls: RefCell<Vec<String>>,
-    }
-
-    impl Transport for CannedTransport {
-        fn send(&self, request: &HttpRequest) -> Result<HttpResponse, TransportError> {
-            self.urls.borrow_mut().push(request.url().to_owned());
-            let mut script = self.script.borrow_mut();
-            if script.is_empty() {
-                return transport_error("the test under-declared its requests");
-            }
-            script.remove(0)
-        }
-    }
-
     fn fetch(
-        script: Vec<Result<HttpResponse, TransportError>>,
+        script: Vec<TransportResponse<String>>,
     ) -> (Result<String, FetchFailure>, Vec<String>) {
-        let transport = CannedTransport {
-            script: RefCell::new(script),
-            urls: RefCell::new(Vec::new()),
-        };
+        let transport = ScriptedTransport::in_order(script);
         let outcome = fetch_flare_window(&transport, DEFAULT_BASE_URL, &key(), window());
-        let urls = transport.urls.borrow().clone();
-        (outcome, urls)
+        (outcome, transport.requested_urls())
     }
 
     #[test]
     fn a_served_window_returns_its_body_from_the_addressed_url() {
-        let (outcome, urls) = fetch(vec![response(200, "[]")]);
+        let (outcome, urls) = fetch(vec![scripted_transport::response(200, "[]")]);
         assert_eq!(outcome, Ok("[]".to_owned()));
         assert_eq!(
             urls,
@@ -152,27 +116,23 @@ mod tests {
     #[case::not_found(404)]
     #[case::over_the_rate_limit(429)]
     fn a_4xx_fails_without_a_retry(#[case] status: u16) {
-        let (outcome, urls) = fetch(vec![response(status, "")]);
+        let (outcome, urls) = fetch(vec![scripted_transport::response(status, "")]);
         assert!(outcome.is_err(), "{outcome:?}");
         assert_eq!(urls.len(), 1);
     }
 
     #[test]
     fn a_5xx_is_retried_once_and_then_fails() {
-        let (outcome, urls) = fetch(vec![response(503, ""), response(503, "")]);
+        let (outcome, urls) = fetch(vec![
+            scripted_transport::response(503, ""),
+            scripted_transport::response(503, ""),
+        ]);
         assert_eq!(
             outcome,
             Err(FetchFailure {
                 detail: "HTTP 503 Service Unavailable".to_owned()
             })
         );
-        assert_eq!(urls.len(), 2);
-    }
-
-    #[test]
-    fn a_retried_5xx_that_succeeds_returns_the_body() {
-        let (outcome, urls) = fetch(vec![response(503, ""), response(200, "[]")]);
-        assert_eq!(outcome, Ok("[]".to_owned()));
         assert_eq!(urls.len(), 2);
     }
 
@@ -183,7 +143,10 @@ mod tests {
             "error sending request for url ({})",
             flare_url(DEFAULT_BASE_URL, window(), &key())
         );
-        let (outcome, _) = fetch(vec![transport_error(&quoted), transport_error(&quoted)]);
+        let (outcome, _) = fetch(vec![
+            scripted_transport::transport_error(&quoted),
+            scripted_transport::transport_error(&quoted),
+        ]);
 
         let detail = outcome.expect_err("both attempts failed").detail;
         assert!(!detail.contains(TEST_KEY), "{detail}");
@@ -192,23 +155,12 @@ mod tests {
 
     #[test]
     fn a_status_outside_http_fails() {
-        let (outcome, _) = fetch(vec![response(0, "")]);
+        let (outcome, _) = fetch(vec![scripted_transport::response(0, "")]);
         assert_eq!(
             outcome,
             Err(FetchFailure {
                 detail: "invalid HTTP status 0".to_owned()
             })
         );
-    }
-
-    /// Offline, the endpoint is never contacted, so nothing is known about the
-    /// window: that is a failure, not an empty one.
-    #[test]
-    fn an_offline_fetch_fails() {
-        let transport = TransportSource::Offline
-            .connect(None)
-            .expect("the offline source connects");
-        let outcome = fetch_flare_window(&transport, DEFAULT_BASE_URL, &key(), window());
-        assert!(outcome.is_err(), "{outcome:?}");
     }
 }

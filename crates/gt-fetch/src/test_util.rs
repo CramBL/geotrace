@@ -70,6 +70,11 @@ impl<B> ScriptedTransport<B> {
         }
     }
 
+    /// The requests it was sent, in order, headers included.
+    pub fn requests(&self) -> Vec<HttpRequest> {
+        self.requests.lock().clone()
+    }
+
     /// The URLs requested of it, in order.
     pub fn requested_urls(&self) -> Vec<String> {
         self.requests

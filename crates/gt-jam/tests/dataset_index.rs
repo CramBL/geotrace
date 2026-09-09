@@ -4,8 +4,6 @@
 //! over all 44 546 cells the host actually published, where H3's distortion
 //! near pentagons and the poles is present.
 
-mod support;
-
 use std::sync::OnceLock;
 
 use gt_types::coordinates::{Latitude, Longitude};
@@ -13,6 +11,7 @@ use h3o::LatLng;
 use proptest::test_runner::TestCaseError;
 
 use gt_jam::dataset::{self, JamDataset};
+use gt_jam::test_util;
 use gt_jam::wire::{self, ParseWarningReporter};
 use gt_jam::{H3_RESOLUTION, parse_day};
 
@@ -25,10 +24,10 @@ fn captured_day() -> Result<&'static JamDataset, String> {
     static DATASET: OnceLock<Result<JamDataset, String>> = OnceLock::new();
     DATASET
         .get_or_init(|| {
-            let fixture = support::served_day()?;
+            let fixture = test_util::served_day()?;
             let day = parse_day(fixture.day)
                 .map_err(|err| format!("{} is not a calendar date: {err}", fixture.day))?;
-            let csv = support::captured_csv(fixture.day)?;
+            let csv = test_util::captured_csv(fixture.day)?;
             let observations = wire::parse_dataset(&csv, &ParseWarningReporter::default())
                 .map_err(|err| format!("{}: {err}", fixture.day))?;
             Ok(JamDataset::new(day, observations))
