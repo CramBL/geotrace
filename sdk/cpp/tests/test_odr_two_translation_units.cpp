@@ -15,8 +15,9 @@ std::string header_values_from_first_translation_unit() {
     const geotrace::Result<geotrace::NavFile> missing =
         geotrace::NavFile::try_open(kOdrMissingFilePath);
     return std::to_string(file.nav_point_count()) + " " + std::to_string(gps_time.unix_micros) +
-           " " + std::string{geotrace::travel_mode_name(geotrace::TravelMode::Bicycle)} + " " +
-           std::to_string(static_cast<int>(missing.error().code));
+           " " +
+           std::string{geotrace::travel_mode_name(geotrace::TravelMode::Bicycle).value_or("")} +
+           " " + std::to_string(static_cast<int>(missing.error().code));
 }
 
 // This executable links two translation units that both include the header.

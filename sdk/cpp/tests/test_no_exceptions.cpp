@@ -6,18 +6,27 @@
 #include <geotrace/geotrace.hpp>
 
 #include <cstddef>
+#include <optional>
+
+#include "test_undeclared_enums.hpp"
 
 #if GEOTRACE_CPP_EXCEPTIONS
 #error "this translation unit must be built with GEOTRACE_CPP_NO_EXCEPTIONS"
 #endif
 
 using geotrace::Angle;
+using geotrace::Annotation;
+using geotrace::Constellation;
 using geotrace::EventMarker;
 using geotrace::FileBuilder;
 using geotrace::FixTime;
+using geotrace::MarkerIcon;
 using geotrace::NavFile;
 using geotrace::NavFix;
+using geotrace::Satellite;
+using geotrace::SatelliteReport;
 using geotrace::Timestamp;
+using geotrace::TravelMode;
 
 namespace {
 NavFix one_fix() {
@@ -60,6 +69,34 @@ TEST_CASE("a valid build succeeds without exceptions") {
     const auto result = FileBuilder{}.add(one_fix()).try_finish();
     CHECK(result.is_ok());
     CHECK(result.value().nav_point_count() == std::size_t{1});
+}
+
+TEST_CASE("an undeclared travel mode records GTD_ERR_INVALID_ARGUMENT") {
+    FileBuilder builder;
+    builder.travel_mode(undeclared_enum_value<TravelMode>());
+    CHECK(builder.status().code == GTD_ERR_INVALID_ARGUMENT);
+    CHECK(builder.status().description == "TravelMode has no enumerator with the value 200");
+}
+
+TEST_CASE("an undeclared constellation records GTD_ERR_INVALID_ARGUMENT") {
+    SatelliteReport report{FixTime::receiver(Timestamp::from_seconds(1700000000)), {}};
+    report.tracked.push_back(Satellite{undeclared_enum_value<Constellation>(), 1, true,
+                                       std::nullopt, std::nullopt, std::nullopt});
+
+    FileBuilder builder;
+    builder.add(one_fix());
+    builder.add_satellite_report(report);
+    CHECK(builder.status().code == GTD_ERR_INVALID_ARGUMENT);
+    CHECK(builder.try_finish().error().code == GTD_ERR_INVALID_ARGUMENT);
+}
+
+TEST_CASE("an undeclared marker icon records GTD_ERR_INVALID_ARGUMENT") {
+    FileBuilder builder;
+    builder.add(one_fix());
+    builder.add_annotation(Annotation{Timestamp::from_seconds(1700000000), "waypoint",
+                                      undeclared_enum_value<MarkerIcon>()});
+    CHECK(builder.status().code == GTD_ERR_INVALID_ARGUMENT);
+    CHECK(builder.status().description == "MarkerIcon has no enumerator with the value 200");
 }
 
 TEST_CASE("try_open reports an error by value, never aborting") {
