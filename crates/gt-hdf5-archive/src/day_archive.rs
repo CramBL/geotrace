@@ -152,3 +152,68 @@ pub trait WritableDayArchive: Sized {
         Ok(Self::from_archive_file(archive))
     }
 }
+
+/// The failures a caller opening every day archive acts on, whichever archive
+/// reported one.
+///
+/// Each archive crate implements this for its own error type, through
+/// [`impl_day_archive_error!`](crate::impl_day_archive_error).
+pub trait DayArchiveError: std::error::Error {
+    /// Another process has the file open. libhdf5 takes an OS lock for the
+    /// duration of an open, readers included, so nothing here can read it
+    /// until that process lets go.
+    fn is_held_by_another_process(&self) -> bool;
+
+    /// The interrupted delete an open declined to recover, which left the
+    /// file untouched, or [`None`] for any other failure.
+    fn interrupted_delete_left_unrecovered(&self) -> Option<InterruptedDelete>;
+
+    /// The schema versions an open read out of a file that a newer build
+    /// wrote, or [`None`] for any other failure.
+    fn schema_too_new(&self) -> Option<SchemaVersions>;
+}
+
+/// The schema version an archive file states, beside the newest that this
+/// build reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SchemaVersions {
+    pub found: i64,
+    pub supported: i64,
+}
+
+/// Implements [`DayArchiveError`] for an archive error with a
+/// `HeldByAnotherProcess`, a `SchemaTooNew { found, supported }` and a
+/// `DeclinedRecovery` variant.
+///
+/// The macro expands in the crate that owns the error type, which the orphan
+/// rule requires.
+#[macro_export]
+macro_rules! impl_day_archive_error {
+    ($error:ty) => {
+        impl $crate::DayArchiveError for $error {
+            fn is_held_by_another_process(&self) -> bool {
+                matches!(self, Self::HeldByAnotherProcess)
+            }
+
+            fn interrupted_delete_left_unrecovered(
+                &self,
+            ) -> Option<$crate::prune::InterruptedDelete> {
+                match self {
+                    Self::DeclinedRecovery($crate::prune::DeclinedRecovery(interrupted)) => {
+                        Some(*interrupted)
+                    }
+                    _ => None,
+                }
+            }
+
+            fn schema_too_new(&self) -> Option<$crate::SchemaVersions> {
+                match *self {
+                    Self::SchemaTooNew { found, supported } => {
+                        Some($crate::SchemaVersions { found, supported })
+                    }
+                    _ => None,
+                }
+            }
+        }
+    };
+}

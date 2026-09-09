@@ -22,6 +22,8 @@ strum.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+# Builds `test_util`, which the delete test reads the progress assertion from.
+gt-hdf5-archive = { path = "../../gt-hdf5-archive", features = ["test-util"] }
 # Builds `test_util`, which the archive tests read the captures through.
 gt-solar = { path = "../gt-solar", features = ["test-util"] }
 gt-test-utils = { path = "../../gt-test-utils", features = ["archive"] }

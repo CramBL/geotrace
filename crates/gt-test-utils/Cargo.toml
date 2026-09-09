@@ -11,7 +11,7 @@ doctest = false
 
 [features]
 default = ["tracks"]
-archive = ["dep:gt-hdf5-archive", "dep:hdf5"]
+archive = ["dep:gt-hdf5-archive", "dep:hdf5", "dep:tempfile"]
 ionex = ["dep:gt-ionex"]
 snapshot = [
     "dep:egui",

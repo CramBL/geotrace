@@ -1,21 +1,21 @@
-//! The four day archives a [`Store`] holds: which they are, where each one is
-//! stored, and what its error reports.
+//! The four day archives a [`Store`] holds: which they are, and where each
+//! one is stored.
 //!
-//! Each archive has its own error type, and a caller opening all four reads
-//! the same two facts from every one of them: whether another process has the
-//! file, and whether an open declined to recover an interrupted delete.
+//! A caller opening all four reads the same failures from each. Every archive
+//! has an error type of its own, and each of those implements
+//! [`DayArchiveError`].
 
 use std::path::PathBuf;
 
 use chrono::NaiveDate;
-use gt_flare_store::{FlareStore, FlareStoreError};
-use gt_ionex_store::{IonexStore, IonexStoreError};
-use gt_jam_store::{JamStore, JamStoreError};
+use gt_flare_store::FlareStore;
+use gt_ionex_store::IonexStore;
+use gt_jam_store::JamStore;
 use gt_pending_writes::{WriteKind, WriteRegistration};
-use gt_solar_store::{SolarStore, SolarStoreError};
+use gt_solar_store::SolarStore;
 use strum::{EnumCount, EnumIter};
 
-use crate::{DeclinedRecovery, InterruptedDelete, SharedArchive, Store, WritableDayArchive};
+use crate::{DayArchiveError, SharedArchive, Store, WritableDayArchive};
 
 /// One of the archives, as the settings rows and the delete controls name it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumCount, EnumIter)]
@@ -84,39 +84,11 @@ pub trait StoredDayArchive: WritableDayArchive<Error: DayArchiveError> {
     fn shared_in(store: &Store) -> &SharedArchive<Self, Self::ReadOnly>;
 }
 
-/// The failures a caller opening every day archive acts on, whichever archive
-/// reported one.
-pub trait DayArchiveError: std::error::Error {
-    /// Another process has the file open. libhdf5 takes an OS lock for the
-    /// duration of an open, readers included, so nothing here can read it
-    /// until that process lets go.
-    fn is_held_by_another_process(&self) -> bool;
-
-    /// The interrupted delete an open declined to recover, which left the
-    /// file untouched, or [`None`] for any other failure.
-    fn interrupted_delete_left_unrecovered(&self) -> Option<InterruptedDelete>;
-
-    /// The schema versions an open read out of a file that a newer build
-    /// wrote, or [`None`] for any other failure.
-    fn schema_too_new(&self) -> Option<SchemaVersions>;
-}
-
-/// The schema version an archive file states, beside the newest that this
-/// build reads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SchemaVersions {
-    pub found: i64,
-    pub supported: i64,
-}
-
-/// Implements [`StoredDayArchive`] for each archive listed, [`DayArchiveError`]
-/// for its error type, which has a `HeldByAnotherProcess`, a `SchemaTooNew` and
-/// a `DeclinedRecovery` variant, and `EnvironmentArchive::file_name` over the
-/// four variants.
+/// Implements [`StoredDayArchive`] for each archive listed, and
+/// `EnvironmentArchive::file_name` over the four variants.
 macro_rules! stored_day_archives {
     ($($writable:ty {
         archive: $variant:ident,
-        error: $error:ty,
         shared_from: $slot:ident,
     })+) => {
         impl EnvironmentArchive {
@@ -136,28 +108,6 @@ macro_rules! stored_day_archives {
                     &store.$slot
                 }
             }
-
-            impl DayArchiveError for $error {
-                fn is_held_by_another_process(&self) -> bool {
-                    matches!(self, Self::HeldByAnotherProcess)
-                }
-
-                fn schema_too_new(&self) -> Option<SchemaVersions> {
-                    match *self {
-                        Self::SchemaTooNew { found, supported } => {
-                            Some(SchemaVersions { found, supported })
-                        }
-                        _ => None,
-                    }
-                }
-
-                fn interrupted_delete_left_unrecovered(&self) -> Option<InterruptedDelete> {
-                    match self {
-                        Self::DeclinedRecovery(DeclinedRecovery(interrupted)) => Some(*interrupted),
-                        _ => None,
-                    }
-                }
-            }
         )+
     };
 }
@@ -165,29 +115,31 @@ macro_rules! stored_day_archives {
 stored_day_archives! {
     JamStore {
         archive: AircraftInterference,
-        error: JamStoreError,
         shared_from: interference,
     }
     SolarStore {
         archive: GeomagneticIndices,
-        error: SolarStoreError,
         shared_from: geomagnetic_indices,
     }
     IonexStore {
         archive: IonosphericTec,
-        error: IonexStoreError,
         shared_from: tec_maps,
     }
     FlareStore {
         archive: SolarFlares,
-        error: FlareStoreError,
         shared_from: solar_flares,
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use gt_flare_store::FlareStoreError;
+    use gt_ionex_store::IonexStoreError;
+    use gt_jam_store::JamStoreError;
+    use gt_solar_store::SolarStoreError;
+
     use super::*;
+    use crate::{DeclinedRecovery, InterruptedDelete, SchemaVersions};
 
     const INTERRUPTED: InterruptedDelete = InterruptedDelete { archived_days: 3 };
 

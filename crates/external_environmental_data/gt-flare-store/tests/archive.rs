@@ -2,7 +2,6 @@
 
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use rstest::rstest;
-use tempfile::TempDir;
 
 use gt_flare::SolarFlare;
 use gt_flare::class::FlareClassification;
@@ -12,24 +11,18 @@ use gt_hdf5_archive::prune::{
     DeclinedRecovery, DeleteState, InterruptedDelete, InterruptedDeleteRecovery,
 };
 use gt_hdf5_archive::{ReadOnlyDayArchive as _, WritableDayArchive as _};
+use gt_test_utils::day_archive::conformance::{self, StoredDayOperations};
 use gt_test_utils::day_archive::{self, ColumnName, GroupPath};
 
 /// The base URL the archive records. The API key is never part of it.
 const HOST: &str = "https://api.nasa.gov";
-
-fn store() -> Result<(TempDir, FlareStore), String> {
-    let dir = tempfile::tempdir().map_err(|err| format!("temp dir: {err}"))?;
-    let store = FlareStore::open_or_create(&dir.path().join(FILE_NAME))
-        .map_err(|err| format!("open archive: {err}"))?;
-    Ok((dir, store))
-}
 
 fn day(offset: i64) -> NaiveDate {
     NaiveDate::from_ymd_opt(2024, 5, 9).unwrap_or_default() + TimeDelta::days(offset)
 }
 
 fn fetched_at() -> DateTime<Utc> {
-    DateTime::from_timestamp(1_784_505_600, 0).unwrap_or_default()
+    day_archive::fetched_at()
 }
 
 fn at(day: NaiveDate, hour: u32, minute: u32) -> DateTime<Utc> {
@@ -67,9 +60,38 @@ fn flare_day(day: NaiveDate) -> Option<Vec<SolarFlare>> {
     ])
 }
 
+const DAY_OPERATIONS: StoredDayOperations<FlareStore, Vec<SolarFlare>> = StoredDayOperations {
+    insert_a_day,
+    read_a_day,
+    indexed_days,
+};
+
+fn insert_a_day(store: &FlareStore, day: NaiveDate) -> Result<Vec<SolarFlare>, String> {
+    let flares = flare_day(day).ok_or_else(|| format!("a day of flares for {day}"))?;
+    store
+        .insert_or_replace_day(day, HOST, fetched_at(), &flares)
+        .map_err(|err| format!("store {day}: {err}"))?;
+    Ok(flares)
+}
+
+fn read_a_day(store: &FlareStore, day: NaiveDate) -> Result<Option<Vec<SolarFlare>>, String> {
+    store
+        .flares(day)
+        .map_err(|err| format!("read {day}: {err}"))
+}
+
+fn indexed_days(store: &FlareStore) -> Result<Vec<NaiveDate>, String> {
+    Ok(store
+        .archived_days()
+        .map_err(|err| format!("archived days: {err}"))?
+        .into_iter()
+        .map(|entry| entry.day)
+        .collect())
+}
+
 #[test]
 fn a_new_archive_holds_no_day() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<FlareStore>().unwrap();
     assert!(store.archived_days().expect("days").is_empty());
     assert!(!store.contains(day(0)).expect("contains"));
     assert_eq!(store.flares(day(0)).expect("flares"), None);
@@ -79,7 +101,7 @@ fn a_new_archive_holds_no_day() {
 /// included.
 #[test]
 fn a_day_round_trips_with_the_fields_the_catalog_left_off() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<FlareStore>().unwrap();
     let written = flare_day(day(0)).expect("a day of flares");
     store
         .insert_or_replace_day(day(0), HOST, fetched_at(), &written)
@@ -94,7 +116,7 @@ fn a_day_round_trips_with_the_fields_the_catalog_left_off() {
 /// from one never fetched.
 #[test]
 fn a_day_without_flares_is_still_archived() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<FlareStore>().unwrap();
     store
         .insert_or_replace_day(day(0), HOST, fetched_at(), &[])
         .expect("store");
@@ -114,7 +136,7 @@ fn a_day_without_flares_is_still_archived() {
 /// A day already archived is stored again when the catalog revises it.
 #[test]
 fn storing_a_day_again_replaces_what_was_archived() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<FlareStore>().unwrap();
     store
         .insert_or_replace_day(
             day(0),
@@ -148,7 +170,7 @@ fn storing_a_day_again_replaces_what_was_archived() {
 /// it.
 #[test]
 fn replacing_a_day_leaves_the_days_around_it_alone() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<FlareStore>().unwrap();
     for offset in [0, 1, 2] {
         store
             .insert_or_replace_day(
@@ -183,7 +205,7 @@ fn replacing_a_day_leaves_the_days_around_it_alone() {
 /// Store order does not determine read order.
 #[test]
 fn archived_days_come_back_oldest_first_with_their_provenance() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<FlareStore>().unwrap();
     for offset in [2, 0, 1] {
         store
             .insert_or_replace_day(
@@ -213,7 +235,7 @@ fn archived_days_come_back_oldest_first_with_their_provenance() {
 /// store's read-append-index sequence.
 #[test]
 fn days_stored_from_two_threads_both_reach_the_archive() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<FlareStore>().unwrap();
     let store = &store;
     std::thread::scope(|scope| {
         for offset in [0, 1] {
@@ -245,24 +267,7 @@ fn days_stored_from_two_threads_both_reach_the_archive() {
 
 #[test]
 fn an_archive_reopens_with_its_days() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let path = dir.path().join(FILE_NAME);
-    {
-        let store = FlareStore::open_or_create(&path).expect("create");
-        store
-            .insert_or_replace_day(
-                day(0),
-                HOST,
-                fetched_at(),
-                &flare_day(day(0)).expect("a day of flares"),
-            )
-            .expect("store");
-    }
-    let reopened = FlareStore::open_or_create(&path).expect("reopen");
-    assert_eq!(
-        reopened.flares(day(0)).expect("flares"),
-        Some(flare_day(day(0)).expect("a day of flares"))
-    );
+    conformance::an_archive_reopens_with_its_days(&DAY_OPERATIONS, day(0));
 }
 
 #[rstest]
@@ -270,45 +275,12 @@ fn an_archive_reopens_with_its_days() {
 #[case::before_epoch(NaiveDate::from_ymd_opt(1969, 12, 31))]
 #[case::far_future(NaiveDate::from_ymd_opt(2999, 1, 1))]
 fn any_date_round_trips_through_the_day_index(#[case] date: Option<NaiveDate>) {
-    let date = date.expect("date");
-    let (_dir, store) = store().unwrap();
-    store
-        .insert_or_replace_day(
-            date,
-            HOST,
-            fetched_at(),
-            &flare_day(date).expect("a day of flares"),
-        )
-        .expect("store");
-    assert_eq!(
-        store
-            .archived_days()
-            .expect("days")
-            .first()
-            .map(|entry| entry.day),
-        Some(date)
-    );
+    conformance::any_date_round_trips_through_the_day_index(&DAY_OPERATIONS, date.expect("date"));
 }
 
-/// An archive written by a newer build is rejected.
 #[test]
 fn a_newer_schema_is_rejected() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let path = dir.path().join(FILE_NAME);
-    FlareStore::open_or_create(&path).expect("create");
-    {
-        let file = hdf5::File::open_rw(&path).expect("reopen");
-        let attr = file.attr(schema::SCHEMA_VERSION_ATTR).expect("attr");
-        attr.write_scalar(&(schema::CURRENT_SCHEMA_VERSION + 1))
-            .expect("bump");
-    }
-    let err = FlareStore::open_or_create(&path).expect_err("reject");
-    assert!(
-        matches!(err, FlareStoreError::SchemaTooNew { found, supported }
-            if found == schema::CURRENT_SCHEMA_VERSION + 1
-                && supported == schema::CURRENT_SCHEMA_VERSION),
-        "{err}"
-    );
+    conformance::a_newer_schema_is_rejected::<FlareStore>();
 }
 
 /// Events appended without an index entry, which is what an interrupted store
@@ -408,7 +380,7 @@ fn an_undecodable_event_is_reported(
     #[case] code: u8,
     #[case] expected: &str,
 ) {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<FlareStore>().unwrap();
     store
         .insert_or_replace_day(
             day(0),
@@ -438,7 +410,7 @@ fn an_undecodable_event_is_reported(
 /// offsets the delete rebased, text columns included.
 #[test]
 fn deleting_days_before_a_cutoff_keeps_the_flares_of_the_rest() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<FlareStore>().unwrap();
     let kept = flare_day(day(1)).expect("a day of flares");
     for (day, flares) in [
         (day(0), flare_day(day(0)).expect("a day of flares")),
@@ -458,21 +430,7 @@ fn deleting_days_before_a_cutoff_keeps_the_flares_of_the_rest() {
 
 #[test]
 fn deleting_every_day_empties_the_archive() {
-    let (_dir, store) = store().unwrap();
-    store
-        .insert_or_replace_day(
-            day(0),
-            HOST,
-            fetched_at(),
-            &flare_day(day(0)).expect("a day of flares"),
-        )
-        .expect("store");
-
-    let removed = store.delete_all_days(None).expect("delete all");
-
-    assert_eq!(removed, 1);
-    assert!(store.archived_days().expect("days").is_empty());
-    assert_eq!(store.flares(day(0)).expect("flares"), None);
+    conformance::deleting_every_day_empties_the_archive(&DAY_OPERATIONS, &[day(0)]);
 }
 
 /// The archive's day index, which is where a delete records that it is
@@ -481,10 +439,9 @@ const DAYS: GroupPath<'static> = GroupPath(schema::DAYS_GROUP);
 
 /// Write access taken from an instance part-way through a delete must not
 /// discard its days behind the user's back. The archive reports what
-/// recovering costs, a declined recovery leaves every day where it is, and an
-/// open that accepts the recovery still discards them.
+/// recovering costs before either choice is made.
 #[test]
-fn declining_recovery_leaves_the_interrupted_archive_as_it_was() {
+fn a_declined_recovery_keeps_the_interrupted_days_and_an_accepted_one_discards_them() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join(FILE_NAME);
     let store = FlareStore::open_or_create(&path).expect("open");
@@ -538,23 +495,7 @@ fn declining_recovery_leaves_the_interrupted_archive_as_it_was() {
     assert!(store.archived_days().expect("days").is_empty());
 }
 
-/// Nothing to recover, so the choice does not matter and inspection reports
-/// none.
 #[test]
 fn a_settled_archive_reports_no_interrupted_delete() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let path = dir.path().join(FILE_NAME);
-
-    assert_eq!(
-        ReadOnlyFlareStore::interrupted_delete_at(&path).expect("before the archive exists"),
-        None
-    );
-    FlareStore::open_or_create(&path).expect("create");
-
-    assert_eq!(
-        ReadOnlyFlareStore::interrupted_delete_at(&path).expect("a settled archive"),
-        None
-    );
-    FlareStore::open_or_create_with_recovery_choice(&path, InterruptedDeleteRecovery::Decline)
-        .expect("a settled archive opens whatever the choice");
+    conformance::a_settled_archive_reports_no_interrupted_delete(&DAY_OPERATIONS, day(0));
 }

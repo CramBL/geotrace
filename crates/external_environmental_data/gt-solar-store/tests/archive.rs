@@ -4,35 +4,29 @@ use std::path::Path;
 
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use rstest::rstest;
-use tempfile::TempDir;
 
 use gt_hdf5_archive::day_index;
 use gt_hdf5_archive::prune::{
     DeclinedRecovery, DeleteState, InterruptedDelete, InterruptedDeleteRecovery, PruneProgress,
 };
+use gt_hdf5_archive::test_util;
 use gt_hdf5_archive::{ReadOnlyDayArchive as _, WritableDayArchive as _};
 use gt_solar::GeomagneticIndex;
 use gt_solar::activity::GeomagneticActivity;
 use gt_solar::series::{Hp30Sample, Hp30Series, KpSample, KpSeries, KpStatus};
 use gt_solar_store::schema::IndexArchiveLayout as _;
 use gt_solar_store::{FILE_NAME, ReadOnlySolarStore, SolarStore, SolarStoreError, schema};
+use gt_test_utils::day_archive::conformance::{self, StoredDayOperations};
 use gt_test_utils::day_archive::{self, ColumnName, GroupPath};
 
 const HOST: &str = "https://kp.gfz.de";
-
-fn store() -> Result<(TempDir, SolarStore), String> {
-    let dir = tempfile::tempdir().map_err(|err| format!("temp dir: {err}"))?;
-    let store = SolarStore::open_or_create(&dir.path().join(FILE_NAME))
-        .map_err(|err| format!("open archive: {err}"))?;
-    Ok((dir, store))
-}
 
 fn day(offset: i64) -> NaiveDate {
     NaiveDate::from_ymd_opt(2024, 5, 10).unwrap_or_default() + TimeDelta::days(offset)
 }
 
 fn fetched_at() -> DateTime<Utc> {
-    DateTime::from_timestamp(1_784_505_600, 0).unwrap_or_default()
+    day_archive::fetched_at()
 }
 
 fn period_start(day: NaiveDate, period: i32, index: GeomagneticIndex) -> DateTime<Utc> {
@@ -80,9 +74,68 @@ fn hp30_day(day: NaiveDate) -> Hp30Series {
     Hp30Series { samples }
 }
 
+/// A conformance case runs over the operations of the index it pins. The
+/// archive keeps a day index per geomagnetic index.
+const KP_DAY_OPERATIONS: StoredDayOperations<SolarStore, KpSeries> = StoredDayOperations {
+    insert_a_day: insert_a_kp_day,
+    read_a_day: read_a_kp_day,
+    indexed_days: indexed_kp_days,
+};
+
+const HP30_DAY_OPERATIONS: StoredDayOperations<SolarStore, Hp30Series> = StoredDayOperations {
+    insert_a_day: insert_an_hp30_day,
+    read_a_day: read_an_hp30_day,
+    indexed_days: indexed_hp30_days,
+};
+
+fn insert_a_kp_day(store: &SolarStore, day: NaiveDate) -> Result<KpSeries, String> {
+    let series = kp_day(day);
+    store
+        .insert_or_replace_kp_day(day, HOST, fetched_at(), &series)
+        .map_err(|err| format!("store Kp {day}: {err}"))?;
+    Ok(series)
+}
+
+fn read_a_kp_day(store: &SolarStore, day: NaiveDate) -> Result<Option<KpSeries>, String> {
+    store
+        .kp_series(day)
+        .map_err(|err| format!("read Kp {day}: {err}"))
+}
+
+fn indexed_kp_days(store: &SolarStore) -> Result<Vec<NaiveDate>, String> {
+    indexed_days(store, GeomagneticIndex::Kp)
+}
+
+fn insert_an_hp30_day(store: &SolarStore, day: NaiveDate) -> Result<Hp30Series, String> {
+    let series = hp30_day(day);
+    store
+        .insert_or_replace_hp30_day(day, HOST, fetched_at(), &series)
+        .map_err(|err| format!("store Hp30 {day}: {err}"))?;
+    Ok(series)
+}
+
+fn read_an_hp30_day(store: &SolarStore, day: NaiveDate) -> Result<Option<Hp30Series>, String> {
+    store
+        .hp30_series(day)
+        .map_err(|err| format!("read Hp30 {day}: {err}"))
+}
+
+fn indexed_hp30_days(store: &SolarStore) -> Result<Vec<NaiveDate>, String> {
+    indexed_days(store, GeomagneticIndex::Hp30)
+}
+
+fn indexed_days(store: &SolarStore, index: GeomagneticIndex) -> Result<Vec<NaiveDate>, String> {
+    Ok(store
+        .archived_days(index)
+        .map_err(|err| format!("{index} days: {err}"))?
+        .into_iter()
+        .map(|entry| entry.day)
+        .collect())
+}
+
 #[test]
 fn a_new_archive_holds_neither_index() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<SolarStore>().unwrap();
     for index in [GeomagneticIndex::Kp, GeomagneticIndex::Hp30] {
         assert!(store.archived_days(index).expect("days").is_empty());
         assert!(!store.contains(index, day(0)).expect("contains"));
@@ -94,7 +147,7 @@ fn a_new_archive_holds_neither_index() {
 /// Values, gaps and per-value statuses all survive the round trip.
 #[test]
 fn a_kp_day_round_trips_with_its_statuses_and_gaps() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<SolarStore>().unwrap();
     let written = kp_day(day(0));
     store
         .insert_or_replace_kp_day(day(0), HOST, fetched_at(), &written)
@@ -117,7 +170,7 @@ fn a_kp_day_round_trips_with_its_statuses_and_gaps() {
 
 #[test]
 fn an_hp30_day_round_trips_with_its_gaps() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<SolarStore>().unwrap();
     let written = hp30_day(day(0));
     store
         .insert_or_replace_hp30_day(day(0), HOST, fetched_at(), &written)
@@ -135,7 +188,7 @@ fn an_hp30_day_round_trips_with_its_gaps() {
 /// One day can hold both indices, which are archived apart.
 #[test]
 fn one_day_holds_both_indices_independently() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<SolarStore>().unwrap();
     store
         .insert_or_replace_kp_day(day(0), HOST, fetched_at(), &kp_day(day(0)))
         .expect("store kp");
@@ -162,7 +215,7 @@ fn one_day_holds_both_indices_independently() {
 /// values.
 #[test]
 fn storing_a_day_again_replaces_what_was_archived() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<SolarStore>().unwrap();
     store
         .insert_or_replace_kp_day(day(0), HOST, fetched_at(), &kp_day(day(0)))
         .expect("store nowcast");
@@ -193,7 +246,7 @@ fn storing_a_day_again_replaces_what_was_archived() {
 /// A replacement of a different length must not spill into the days around it.
 #[test]
 fn replacing_a_day_leaves_the_days_around_it_alone() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<SolarStore>().unwrap();
     for offset in [0, 1, 2] {
         store
             .insert_or_replace_kp_day(day(offset), HOST, fetched_at(), &kp_day(day(offset)))
@@ -215,7 +268,7 @@ fn replacing_a_day_leaves_the_days_around_it_alone() {
 /// Store order does not determine read order.
 #[test]
 fn archived_days_come_back_oldest_first_with_their_provenance() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<SolarStore>().unwrap();
     for offset in [2, 0, 1] {
         store
             .insert_or_replace_hp30_day(day(offset), HOST, fetched_at(), &hp30_day(day(offset)))
@@ -242,7 +295,7 @@ fn archived_days_come_back_oldest_first_with_their_provenance() {
 /// distinct from one never fetched.
 #[test]
 fn a_day_with_no_samples_is_still_archived() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<SolarStore>().unwrap();
     let empty = Hp30Series { samples: vec![] };
     store
         .insert_or_replace_hp30_day(day(0), HOST, fetched_at(), &empty)
@@ -260,7 +313,7 @@ fn a_day_with_no_samples_is_still_archived() {
 /// store's read-append-index sequence.
 #[test]
 fn days_stored_from_two_threads_both_reach_the_archive() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<SolarStore>().unwrap();
     let store = &store;
     std::thread::scope(|scope| {
         for offset in [0, 1] {
@@ -287,19 +340,7 @@ fn days_stored_from_two_threads_both_reach_the_archive() {
 
 #[test]
 fn an_archive_reopens_with_its_days() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let path = dir.path().join(FILE_NAME);
-    {
-        let store = SolarStore::open_or_create(&path).expect("create");
-        store
-            .insert_or_replace_kp_day(day(0), HOST, fetched_at(), &kp_day(day(0)))
-            .expect("store");
-    }
-    let reopened = SolarStore::open_or_create(&path).expect("reopen");
-    assert_eq!(
-        reopened.kp_series(day(0)).expect("kp"),
-        Some(kp_day(day(0)))
-    );
+    conformance::an_archive_reopens_with_its_days(&KP_DAY_OPERATIONS, day(0));
 }
 
 #[rstest]
@@ -307,40 +348,15 @@ fn an_archive_reopens_with_its_days() {
 #[case::hp30_coverage_start(NaiveDate::from_ymd_opt(1985, 1, 1))]
 #[case::far_future(NaiveDate::from_ymd_opt(2999, 1, 1))]
 fn any_date_round_trips_through_the_day_index(#[case] date: Option<NaiveDate>) {
-    let date = date.expect("date");
-    let (_dir, store) = store().unwrap();
-    store
-        .insert_or_replace_hp30_day(date, HOST, fetched_at(), &hp30_day(date))
-        .expect("store");
-    assert_eq!(
-        store
-            .archived_days(GeomagneticIndex::Hp30)
-            .expect("archived days")
-            .first()
-            .map(|entry| entry.day),
-        Some(date)
+    conformance::any_date_round_trips_through_the_day_index(
+        &HP30_DAY_OPERATIONS,
+        date.expect("date"),
     );
 }
 
-/// An archive written by a newer build is rejected.
 #[test]
 fn a_newer_schema_is_rejected() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let path = dir.path().join(FILE_NAME);
-    SolarStore::open_or_create(&path).expect("create");
-    {
-        let file = hdf5::File::open_rw(&path).expect("reopen");
-        let attr = file.attr(schema::SCHEMA_VERSION_ATTR).expect("attr");
-        attr.write_scalar(&(schema::CURRENT_SCHEMA_VERSION + 1))
-            .expect("bump");
-    }
-    let err = SolarStore::open_or_create(&path).expect_err("reject");
-    assert!(
-        matches!(err, SolarStoreError::SchemaTooNew { found, supported }
-            if found == schema::CURRENT_SCHEMA_VERSION + 1
-                && supported == schema::CURRENT_SCHEMA_VERSION),
-        "{err}"
-    );
+    conformance::a_newer_schema_is_rejected::<SolarStore>();
 }
 
 /// Samples appended without an index entry, which is what an interrupted
@@ -425,7 +441,7 @@ fn an_undecodable_sample_is_reported(
     #[case] code: u8,
     #[case] expected: &str,
 ) {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<SolarStore>().unwrap();
     store
         .insert_or_replace_kp_day(day(0), HOST, fetched_at(), &kp_day(day(0)))
         .unwrap();
@@ -450,7 +466,7 @@ fn an_undecodable_sample_is_reported(
 /// inconsistent archive.
 #[test]
 fn an_activity_outside_the_published_range_is_reported() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<SolarStore>().unwrap();
     store
         .insert_or_replace_kp_day(day(0), HOST, fetched_at(), &kp_day(day(0)))
         .unwrap();
@@ -475,7 +491,7 @@ fn an_activity_outside_the_published_range_is_reported() {
 /// counts once.
 #[test]
 fn deleting_days_before_a_cutoff_covers_both_series() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<SolarStore>().unwrap();
     for offset in 0..3 {
         store
             .insert_or_replace_kp_day(day(offset), HOST, fetched_at(), &kp_day(day(offset)))
@@ -509,7 +525,7 @@ fn deleting_days_before_a_cutoff_covers_both_series() {
 /// the Kp half stopped, and the total covers the columns of both.
 #[test]
 fn a_delete_counts_the_columns_of_both_indices_as_one_run() {
-    let (_dir, store) = store().expect("store");
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<SolarStore>().expect("store");
     for offset in 0..3 {
         store
             .insert_or_replace_kp_day(day(offset), HOST, fetched_at(), &kp_day(day(offset)))
@@ -526,14 +542,8 @@ fn a_delete_counts_the_columns_of_both_indices_as_one_run() {
         .expect("delete days");
 
     let reported = reported.into_inner();
+    test_util::assert_progress_ran_to_completion(&reported);
     let first = reported.first().expect("a delete reports before it starts");
-    assert_eq!(first.columns_rewritten, 0);
-    assert!(
-        reported
-            .windows(2)
-            .all(|pair| pair[1].columns_rewritten >= pair[0].columns_rewritten),
-        "progress went backwards across the two indices: {reported:?}"
-    );
     assert!(
         reported
             .iter()
@@ -541,10 +551,6 @@ fn a_delete_counts_the_columns_of_both_indices_as_one_run() {
         "the total changed part way through: {reported:?}"
     );
     let last = reported.last().expect("a delete reports as it finishes");
-    assert_eq!(
-        last.columns_rewritten, last.columns_total,
-        "the delete ended short of the columns of both indices"
-    );
     assert!(
         last.columns_total > reported.len() / 2,
         "the total looks like one index rather than both: {reported:?}"
@@ -552,8 +558,16 @@ fn a_delete_counts_the_columns_of_both_indices_as_one_run() {
 }
 
 #[test]
+fn deleting_every_day_empties_the_archive() {
+    conformance::deleting_every_day_empties_the_archive(
+        &KP_DAY_OPERATIONS,
+        &[day(0), day(1), day(2)],
+    );
+}
+
+#[test]
 fn deleting_every_day_empties_both_series() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<SolarStore>().unwrap();
     store
         .insert_or_replace_kp_day(day(0), HOST, fetched_at(), &kp_day(day(0)))
         .expect("store kp");
@@ -686,23 +700,7 @@ fn declining_recovery_leaves_the_interrupted_archive_as_it_was() {
     }
 }
 
-/// Nothing to recover, so the choice does not matter and inspection reports
-/// none.
 #[test]
 fn a_settled_archive_reports_no_interrupted_delete() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let path = dir.path().join(FILE_NAME);
-
-    assert_eq!(
-        ReadOnlySolarStore::interrupted_delete_at(&path).expect("before the archive exists"),
-        None
-    );
-    SolarStore::open_or_create(&path).expect("create");
-
-    assert_eq!(
-        ReadOnlySolarStore::interrupted_delete_at(&path).expect("a settled archive"),
-        None
-    );
-    SolarStore::open_or_create_with_recovery_choice(&path, InterruptedDeleteRecovery::Decline)
-        .expect("a settled archive opens whatever the choice");
+    conformance::a_settled_archive_reports_no_interrupted_delete(&KP_DAY_OPERATIONS, day(0));
 }

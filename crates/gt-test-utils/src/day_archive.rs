@@ -1,9 +1,15 @@
 //! Reading and marking a day archive file directly, beside the store that
-//! owns it.
+//! owns it, and the rules every day archive follows.
 
+use std::fmt::Display;
 use std::path::Path;
 
+use chrono::{DateTime, Utc};
 use gt_hdf5_archive::prune::DeleteState;
+use gt_hdf5_archive::{ReadOnlyDayArchive as _, WritableDayArchive};
+use tempfile::TempDir;
+
+pub mod conformance;
 
 /// Path of a group in an archive file, from its root: `"days"`, or `"kp/days"`
 /// where the archive holds one index per group.
@@ -40,3 +46,25 @@ pub fn column_rows(
         .rows()
         .map_err(|err| format!("{group}/{column}: {err}"))
 }
+
+/// The instant every day a store fixture archives was fetched at.
+pub fn fetched_at() -> DateTime<Utc> {
+    DateTime::from_timestamp(FETCH_INSTANT_UNIX_SECS, 0).unwrap_or(DateTime::UNIX_EPOCH)
+}
+
+/// A day archive of `A` in a temp directory of its own, under the file name
+/// the archive declares. The file lives for as long as the caller holds the
+/// [`TempDir`].
+pub fn store_in_a_temp_dir<A>() -> Result<(TempDir, A), String>
+where
+    A: WritableDayArchive,
+    A::Error: Display,
+{
+    let dir = tempfile::tempdir().map_err(|err| format!("temp dir: {err}"))?;
+    let store = A::open_or_create(&dir.path().join(A::ReadOnly::FILE_NAME))
+        .map_err(|err| format!("open archive: {err}"))?;
+    Ok((dir, store))
+}
+
+/// 2026-07-20 00:00:00 UTC.
+const FETCH_INSTANT_UNIX_SECS: i64 = 1_784_505_600;

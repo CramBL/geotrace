@@ -55,6 +55,8 @@ pub enum FlareStoreError {
     DeclinedRecovery(#[from] DeclinedRecovery),
 }
 
+gt_hdf5_archive::impl_day_archive_error!(FlareStoreError);
+
 impl From<ArchiveError> for FlareStoreError {
     fn from(err: ArchiveError) -> Self {
         match err {

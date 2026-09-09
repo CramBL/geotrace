@@ -2572,6 +2572,7 @@ name = "gt-hdf5-archive"
 version = "0.16.0"
 dependencies = [
  "chrono",
+ "gt-hdf5-archive",
  "hdf5-metno",
  "log",
  "rstest",

@@ -12,6 +12,7 @@ use gt_hdf5_archive::day_index::{self, DayIndex, RowPlacement};
 use gt_hdf5_archive::prune::{
     ArchiveLayout, DeleteState, ExtentColumns, InterruptedDelete, PruneProgress, RowLevel,
 };
+use gt_hdf5_archive::test_util;
 use gt_hdf5_archive::{ArchiveError, Column, ColumnFormat};
 
 const FORMAT: ColumnFormat = ColumnFormat {
@@ -351,38 +352,7 @@ fn a_delete_reports_progress_up_to_every_column_it_rewrites() {
         })
         .expect("delete");
 
-    assert_progress_ran_to_completion(&reported.into_inner());
-}
-
-/// A delete reports before it rewrites anything, never goes backwards or past
-/// what it counted, and ends on the last column.
-#[track_caller]
-fn assert_progress_ran_to_completion(reported: &[PruneProgress]) {
-    assert!(
-        matches!(reported, [first, ..] if first.columns_rewritten == 0),
-        "a delete reports before it rewrites a column: {reported:?}"
-    );
-    assert!(
-        reported.windows(2).all(|pair| matches!(
-            pair,
-            [before, after] if after.columns_rewritten >= before.columns_rewritten
-        )),
-        "progress went backwards: {reported:?}"
-    );
-    assert!(
-        reported
-            .iter()
-            .all(|progress| progress.columns_rewritten <= progress.columns_total),
-        "progress passed the columns it counts: {reported:?}"
-    );
-    assert!(
-        matches!(reported, [.., last] if last.columns_rewritten == last.columns_total),
-        "the delete ended short of the columns it counted: {reported:?}"
-    );
-    assert!(
-        matches!(reported, [.., last] if (last.fraction() - 1.0).abs() < f32::EPSILON),
-        "the delete ended on a bar short of full: {reported:?}"
-    );
+    test_util::assert_progress_ran_to_completion(&reported.into_inner());
 }
 
 #[test]
@@ -797,7 +767,7 @@ mod three_levels {
             .expect("delete");
 
         assert_eq!(removed, 1);
-        assert_progress_ran_to_completion(&reported.into_inner());
+        test_util::assert_progress_ran_to_completion(&reported.into_inner());
         assert_eq!(
             archive.day_nodes(day(1)).expect("nodes"),
             Some((0..3).map(|map| nodes_of(day(1), map)).collect::<Vec<_>>())

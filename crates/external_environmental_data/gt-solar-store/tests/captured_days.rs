@@ -1,12 +1,11 @@
 //! The archive against the captured GFZ responses.
 
 use chrono::{DateTime, NaiveDate, Utc};
-use tempfile::TempDir;
 
-use gt_hdf5_archive::WritableDayArchive as _;
 use gt_solar::series::{Hp30Series, IndexSample as _, KpSeries};
 use gt_solar::{test_util, wire};
-use gt_solar_store::{FILE_NAME, SolarStore};
+use gt_solar_store::SolarStore;
+use gt_test_utils::day_archive;
 
 /// The May 2024 storm, at both cadences.
 const KP_STORM_CAPTURE: &str = "kp-storm";
@@ -24,13 +23,6 @@ fn captured_response(name: &str) -> Result<(NaiveDate, String), String> {
     Ok((day, test_util::captured_response(capture)?))
 }
 
-fn store() -> Result<(TempDir, SolarStore), String> {
-    let dir = tempfile::tempdir().map_err(|err| format!("temp dir: {err}"))?;
-    let store = SolarStore::open_or_create(&dir.path().join(FILE_NAME))
-        .map_err(|err| format!("open archive: {err}"))?;
-    Ok((dir, store))
-}
-
 #[test]
 fn a_captured_kp_day_round_trips() {
     let (day, json) = captured_response(KP_STORM_CAPTURE).unwrap();
@@ -44,7 +36,7 @@ fn a_captured_kp_day_round_trips() {
     };
     assert_eq!(published.samples.len(), 8, "a full day of Kp");
 
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<SolarStore>().unwrap();
     store
         .insert_or_replace_kp_day(
             day,
@@ -69,7 +61,7 @@ fn a_captured_hp30_day_round_trips() {
     };
     assert_eq!(published.samples.len(), 48, "a full day of Hp30");
 
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<SolarStore>().unwrap();
     store
         .insert_or_replace_hp30_day(
             day,
