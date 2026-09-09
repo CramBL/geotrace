@@ -1,6 +1,10 @@
 //! The icon a map marker is drawn with.
 
+use std::ffi::c_char;
+
 use strum::FromRepr;
+
+use crate::error::{self, GtdStatus};
 
 /// Icon for map markers. `GTD_ICON_AUTO` means the application picks the icon:
 /// `gtd_builder_add_event_marker_style()` accepts it, and
@@ -92,4 +96,33 @@ impl From<geotrace_sdk::MarkerIcon> for GtdMarkerIcon {
             geotrace_sdk::MarkerIcon::Wrench => Self::GTD_ICON_WRENCH,
         }
     }
+}
+
+/// Parse the wire name of a marker icon, e.g. `"satellite_lost"`.
+///
+/// @param name Wire name, NUL-terminated, lower `snake_case`.
+/// @param out  Caller-allocated result, written on success.
+///
+/// @return `GTD_ERR_PARSE` if @p name is not a known marker icon,
+///         `GTD_ICON_AUTO` included: it has no wire name.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_marker_icon_from_name(
+    name: *const c_char,
+    out: *mut GtdMarkerIcon,
+) -> GtdStatus {
+    error::run_catching_panics(|| {
+        let name = cstr!(name);
+        let out = nonnull_mut!(out);
+        match geotrace_sdk::MarkerIcon::try_from_lower_case(name) {
+            Ok(icon) => {
+                *out = icon.into();
+                GtdStatus::GTD_OK
+            }
+            Err(e) => {
+                let status = error::status_for_error(&e);
+                error::set_last_error(e);
+                status
+            }
+        }
+    })
 }

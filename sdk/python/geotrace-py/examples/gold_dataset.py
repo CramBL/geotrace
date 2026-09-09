@@ -18,7 +18,6 @@ from pathlib import Path
 from geotrace_sdk import (
     Annotation,
     Channel,
-    Constellation,
     EventMarker,
     EventMarkerStyle,
     MarkerIcon,
@@ -28,31 +27,9 @@ from geotrace_sdk import (
     Satellite,
     SatelliteReport,
     TravelMode,
+    constellation_from_name,
+    marker_icon_from_name,
 )
-
-_ICONS = {
-    "pin": MarkerIcon.PIN,
-    "cross": MarkerIcon.CROSS,
-    "circle": MarkerIcon.CIRCLE,
-    "lightning": MarkerIcon.LIGHTNING,
-    "warning": MarkerIcon.WARNING,
-    "error": MarkerIcon.ERROR,
-    "check": MarkerIcon.CHECK,
-    "satellite": MarkerIcon.SATELLITE,
-    "satellite_lost": MarkerIcon.SATELLITE_LOST,
-    "gear": MarkerIcon.GEAR,
-    "refresh": MarkerIcon.REFRESH,
-    "download": MarkerIcon.DOWNLOAD,
-    "upload": MarkerIcon.UPLOAD,
-    "wrench": MarkerIcon.WRENCH,
-}
-
-_CONSTELLATIONS = {
-    "gps": Constellation.GPS,
-    "glonass": Constellation.GLONASS,
-    "galileo": Constellation.GALILEO,
-    "beidou": Constellation.BEIDOU,
-}
 
 # (`gps_time`, `sys_time`) raw CSV strings -> satellites captured at that instant.
 SatKey = tuple[str, str]
@@ -73,10 +50,6 @@ def _parse_ts(value: str) -> datetime | None:
 
 def _opt_float(value: str) -> float | None:
     return float(value) if value else None
-
-
-def _icon(name: str) -> MarkerIcon | None:
-    return _ICONS.get(name)
 
 
 def _rows(path: Path) -> list[list[str]]:
@@ -104,7 +77,8 @@ def _load_event_styles(builder: NavFileBuilder, base: Path) -> None:
         builder.add_event_marker_style(
             EventMarkerStyle(
                 cols[0],
-                icon=_icon(cols[1]),
+                # An empty icon cell leaves the icon to the application.
+                icon=marker_icon_from_name(cols[1]) if cols[1] else None,
                 color=cols[2] or None,
             )
         )
@@ -114,7 +88,7 @@ def _load_satellites(base: Path) -> dict[SatKey, list[Satellite]]:
     reports: dict[SatKey, list[Satellite]] = {}
     for cols in _rows(base / "satellites.csv"):
         sat = Satellite(
-            _CONSTELLATIONS[cols[2]],
+            constellation_from_name(cols[2]),
             int(cols[3]),
             in_fix=cols[4] == "true",
             elevation=_opt_float(cols[5]),
@@ -167,8 +141,11 @@ def _load_markers(builder: NavFileBuilder, base: Path) -> None:
         time = _parse_ts(cols[0])
         if time is None:
             continue
-        icon = _icon(cols[2]) or MarkerIcon.PIN
-        builder.add(Annotation(time=time, label=cols[1] or None, icon=icon))
+        builder.add(
+            Annotation(
+                time=time, label=cols[1] or None, icon=marker_icon_from_name(cols[2])
+            )
+        )
 
 
 def _load_events(builder: NavFileBuilder, base: Path) -> None:

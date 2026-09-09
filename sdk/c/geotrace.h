@@ -117,18 +117,34 @@ typedef enum {
 } GtdStatus;
 
 /**
- * Severity of a log record, with the values of the Rust `log` crate's levels.
- *
- * The SDK reports data it read or was given but could not use as written at
- * `GTD_LOG_WARN`.
+ * GNSS constellation identifier.
  */
 typedef enum {
-    GTD_LOG_ERROR = 1,
-    GTD_LOG_WARN = 2,
-    GTD_LOG_INFO = 3,
-    GTD_LOG_DEBUG = 4,
-    GTD_LOG_TRACE = 5,
-} GtdLogLevel;
+    /**
+     * GPS (USA).
+     */
+    GTD_CONSTELLATION_GPS = 0,
+    /**
+     * GLONASS (Russia).
+     */
+    GTD_CONSTELLATION_GLONASS = 1,
+    /**
+     * Galileo (EU).
+     */
+    GTD_CONSTELLATION_GALILEO = 2,
+    /**
+     * BeiDou (China).
+     */
+    GTD_CONSTELLATION_BEIDOU = 3,
+    /**
+     * NavIC / IRNSS (India).
+     */
+    GTD_CONSTELLATION_NAVIC = 4,
+    /**
+     * QZSS (Japan).
+     */
+    GTD_CONSTELLATION_QZSS = 5,
+} GtdConstellation;
 
 /**
  * Icon for map markers. `GTD_ICON_AUTO` means the application picks the icon:
@@ -199,34 +215,18 @@ typedef enum {
 } GtdMarkerIcon;
 
 /**
- * GNSS constellation identifier.
+ * Severity of a log record, with the values of the Rust `log` crate's levels.
+ *
+ * The SDK reports data it read or was given but could not use as written at
+ * `GTD_LOG_WARN`.
  */
 typedef enum {
-    /**
-     * GPS (USA).
-     */
-    GTD_CONSTELLATION_GPS = 0,
-    /**
-     * GLONASS (Russia).
-     */
-    GTD_CONSTELLATION_GLONASS = 1,
-    /**
-     * Galileo (EU).
-     */
-    GTD_CONSTELLATION_GALILEO = 2,
-    /**
-     * BeiDou (China).
-     */
-    GTD_CONSTELLATION_BEIDOU = 3,
-    /**
-     * NavIC / IRNSS (India).
-     */
-    GTD_CONSTELLATION_NAVIC = 4,
-    /**
-     * QZSS (Japan).
-     */
-    GTD_CONSTELLATION_QZSS = 5,
-} GtdConstellation;
+    GTD_LOG_ERROR = 1,
+    GTD_LOG_WARN = 2,
+    GTD_LOG_INFO = 3,
+    GTD_LOG_DEBUG = 4,
+    GTD_LOG_TRACE = 5,
+} GtdLogLevel;
 
 /**
  * Platform a recording was made on, declared by the recorder.
@@ -1008,11 +1008,32 @@ GtdStatus gtd_channel_unit_parse(const char *label,
                                  size_t *required_length);
 
 /**
+ * Parse the wire name of a constellation, e.g. `"beidou"`.
+ *
+ * @param name Wire name, NUL-terminated, lower case.
+ * @param out  Caller-allocated result, written on success.
+ *
+ * @return `GTD_ERR_PARSE` if @p name is not a known constellation.
+ */
+GtdStatus gtd_constellation_from_name(const char *name, GtdConstellation *out);
+
+/**
  * Returns the last error message for the current thread, or NULL if none.
  *
  * The pointer is valid until the next SDK call on this thread.
  */
 const char *gtd_last_error(void);
+
+/**
+ * Parse the wire name of a marker icon, e.g. `"satellite_lost"`.
+ *
+ * @param name Wire name, NUL-terminated, lower `snake_case`.
+ * @param out  Caller-allocated result, written on success.
+ *
+ * @return `GTD_ERR_PARSE` if @p name is not a known marker icon,
+ *         `GTD_ICON_AUTO` included: it has no wire name.
+ */
+GtdStatus gtd_marker_icon_from_name(const char *name, GtdMarkerIcon *out);
 
 /**
  * Register @p callback as the destination for the SDK's log records.

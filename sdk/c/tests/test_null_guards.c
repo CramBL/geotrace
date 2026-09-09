@@ -73,6 +73,18 @@ Test(null_guards, travel_mode_from_name_null) {
     cr_assert_eq(gtd_travel_mode_from_name("car", NULL), GTD_ERR_NULL_ARGUMENT);
 }
 
+Test(null_guards, constellation_from_name_null) {
+    GtdConstellation constellation;
+    cr_assert_eq(gtd_constellation_from_name(NULL, &constellation), GTD_ERR_NULL_ARGUMENT);
+    cr_assert_eq(gtd_constellation_from_name("gps", NULL), GTD_ERR_NULL_ARGUMENT);
+}
+
+Test(null_guards, marker_icon_from_name_null) {
+    GtdMarkerIcon icon;
+    cr_assert_eq(gtd_marker_icon_from_name(NULL, &icon), GTD_ERR_NULL_ARGUMENT);
+    cr_assert_eq(gtd_marker_icon_from_name("pin", NULL), GTD_ERR_NULL_ARGUMENT);
+}
+
 Test(null_guards, open_null_path) {
     GtdNavFile *file = NULL;
     cr_assert_eq(gtd_nav_file_open(NULL, &file), GTD_ERR_NULL_ARGUMENT);

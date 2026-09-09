@@ -80,71 +80,6 @@ std::optional<geotrace::Timestamp> parse_timestamp_or_absent(const std::string &
     return std::nullopt;
 }
 
-geotrace::Constellation parse_constellation(const std::string &name) {
-    if (name == "gps") {
-        return geotrace::Constellation::Gps;
-    }
-    if (name == "glonass") {
-        return geotrace::Constellation::Glonass;
-    }
-    if (name == "galileo") {
-        return geotrace::Constellation::Galileo;
-    }
-    if (name == "beidou") {
-        return geotrace::Constellation::Beidou;
-    }
-    throw std::invalid_argument("unknown constellation: " + name);
-}
-
-std::optional<geotrace::MarkerIcon> parse_icon(const std::string &name) {
-    if (name.empty() || name == "auto") {
-        return std::nullopt;
-    }
-    if (name == "pin") {
-        return geotrace::MarkerIcon::Pin;
-    }
-    if (name == "cross") {
-        return geotrace::MarkerIcon::Cross;
-    }
-    if (name == "circle") {
-        return geotrace::MarkerIcon::Circle;
-    }
-    if (name == "lightning") {
-        return geotrace::MarkerIcon::Lightning;
-    }
-    if (name == "warning") {
-        return geotrace::MarkerIcon::Warning;
-    }
-    if (name == "error") {
-        return geotrace::MarkerIcon::Error;
-    }
-    if (name == "check") {
-        return geotrace::MarkerIcon::Check;
-    }
-    if (name == "satellite") {
-        return geotrace::MarkerIcon::Satellite;
-    }
-    if (name == "satellite_lost") {
-        return geotrace::MarkerIcon::SatelliteLost;
-    }
-    if (name == "gear") {
-        return geotrace::MarkerIcon::Gear;
-    }
-    if (name == "refresh") {
-        return geotrace::MarkerIcon::Refresh;
-    }
-    if (name == "download") {
-        return geotrace::MarkerIcon::Download;
-    }
-    if (name == "upload") {
-        return geotrace::MarkerIcon::Upload;
-    }
-    if (name == "wrench") {
-        return geotrace::MarkerIcon::Wrench;
-    }
-    return std::nullopt;
-}
-
 std::optional<double> parse_opt_double(const std::string &text) {
     if (text.empty()) {
         return std::nullopt;
@@ -220,8 +155,10 @@ void load_event_styles(geotrace::FileBuilder &builder, const fs::path &base) {
             continue;
         }
         const auto &[variant_path, icon, color] = *fields;
-        builder.add_event_marker_style(
-            geotrace::EventMarkerStyle{variant_path, parse_icon(icon), color});
+        // An empty icon cell leaves the icon to the application.
+        const std::optional<geotrace::MarkerIcon> parsed =
+            icon.empty() ? std::nullopt : std::optional{geotrace::marker_icon_from_name(icon)};
+        builder.add_event_marker_style(geotrace::EventMarkerStyle{variant_path, parsed, color});
     }
 }
 
@@ -245,7 +182,7 @@ std::vector<SatRow> load_satellites(const fs::path &base) {
             gps_time,
             sys_time,
             geotrace::Satellite{
-                parse_constellation(constellation),
+                geotrace::constellation_from_name(constellation),
                 static_cast<std::uint32_t>(std::stoul(prn)),
                 in_fix == "true",
                 parse_opt_float(elevation),
@@ -341,8 +278,7 @@ void load_markers(geotrace::FileBuilder &builder, const fs::path &base) {
         if (!timestamp) {
             throw geotrace::IoError("markers.csv: missing timestamp");
         }
-        builder.add(geotrace::Annotation{*timestamp, label,
-                                         parse_icon(icon).value_or(geotrace::MarkerIcon::Pin)});
+        builder.add(geotrace::Annotation{*timestamp, label, geotrace::marker_icon_from_name(icon)});
     }
 }
 

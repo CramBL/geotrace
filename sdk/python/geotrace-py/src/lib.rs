@@ -163,6 +163,16 @@ impl From<PyConstellation> for Constellation {
     }
 }
 
+/// The `Constellation` member named by ``name``, e.g. ``"beidou"``.
+///
+/// Raises ``ValueError`` for a name outside the set.
+#[pyfunction]
+fn constellation_from_name(name: &str) -> PyResult<PyConstellation> {
+    Constellation::try_from_lower_case(name)
+        .map(PyConstellation::from)
+        .map_err(file_err)
+}
+
 /// Visual icon for a map annotation marker, mirroring
 /// `geotrace_sdk.enums.MarkerIcon`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, strum::EnumString, strum::IntoStaticStr)]
@@ -251,6 +261,16 @@ impl From<PyMarkerIcon> for MarkerIcon {
             PyMarkerIcon::Wrench => Self::Wrench,
         }
     }
+}
+
+/// The `MarkerIcon` member named by ``name``, e.g. ``"satellite_lost"``.
+///
+/// Raises ``ValueError`` for a name outside the set.
+#[pyfunction]
+fn marker_icon_from_name(name: &str) -> PyResult<PyMarkerIcon> {
+    MarkerIcon::try_from_lower_case(name)
+        .map(PyMarkerIcon::from)
+        .map_err(file_err)
 }
 
 /// Platform a recording was made on, declared by the recorder, mirroring
@@ -2028,5 +2048,7 @@ fn _geotrace_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyEventMarkerStyleIterator>()?;
     m.add_class::<PyNavFile>()?;
     m.add_class::<PyNavFileBuilder>()?;
+    m.add_function(wrap_pyfunction!(constellation_from_name, m)?)?;
+    m.add_function(wrap_pyfunction!(marker_icon_from_name, m)?)?;
     Ok(())
 }

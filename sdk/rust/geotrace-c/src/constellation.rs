@@ -1,6 +1,10 @@
 //! The GNSS constellation identifier.
 
+use std::ffi::c_char;
+
 use strum::FromRepr;
+
+use crate::error::{self, GtdStatus};
 
 /// GNSS constellation identifier.
 /// cbindgen:rename-all=QualifiedScreamingSnakeCase
@@ -51,4 +55,32 @@ impl From<geotrace_sdk::Constellation> for GtdConstellation {
             geotrace_sdk::Constellation::Qzss => GtdConstellation::Qzss,
         }
     }
+}
+
+/// Parse the wire name of a constellation, e.g. `"beidou"`.
+///
+/// @param name Wire name, NUL-terminated, lower case.
+/// @param out  Caller-allocated result, written on success.
+///
+/// @return `GTD_ERR_PARSE` if @p name is not a known constellation.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_constellation_from_name(
+    name: *const c_char,
+    out: *mut GtdConstellation,
+) -> GtdStatus {
+    error::run_catching_panics(|| {
+        let name = cstr!(name);
+        let out = nonnull_mut!(out);
+        match geotrace_sdk::Constellation::try_from_lower_case(name) {
+            Ok(constellation) => {
+                *out = constellation.into();
+                GtdStatus::GTD_OK
+            }
+            Err(e) => {
+                let status = error::status_for_error(&e);
+                error::set_last_error(e);
+                status
+            }
+        }
+    })
 }
