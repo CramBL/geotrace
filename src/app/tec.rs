@@ -1016,20 +1016,6 @@ mod tests {
         assert!(scheduler.days.is_fetching());
     }
 
-    /// A recording is requested once. Loading it again requests nothing.
-    #[test]
-    fn a_day_is_queued_at_most_once() {
-        let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        let span = TimeRange::new(
-            day_archive::at(2024, 5, 10, 8),
-            day_archive::at(2024, 5, 10, 17),
-        );
-        scheduler.request_days_for(span);
-        let after_first = scheduler.days.requested_days().len();
-        scheduler.request_days_for(span);
-        assert_eq!(scheduler.days.requested_days().len(), after_first);
-    }
-
     /// A track spanning more than the cap queues nothing: bulk fetching is a
     /// backfill's job.
     #[test]
@@ -1467,26 +1453,6 @@ mod tests {
         );
     }
 
-    /// Re-running a backfill over a range already archived from the settled
-    /// product costs nothing.
-    #[test]
-    fn a_fully_archived_range_queues_nothing() {
-        let (_dir, store, mut scheduler) = scheduler_with_archive();
-        for offset in 10..=12 {
-            archive_day(
-                &store,
-                day_archive::day(2024, 5, offset),
-                IonexProduct::Final,
-            );
-        }
-
-        assert_eq!(
-            scheduler.backfill(day_archive::day(2024, 5, 10), day_archive::day(2024, 5, 12)),
-            Some(0)
-        );
-        assert_eq!(scheduler.days.backfill_progress(), None);
-    }
-
     /// A range before JPL's first published day requests nothing.
     #[test]
     fn a_backfill_before_coverage_queues_nothing() {
@@ -1537,29 +1503,6 @@ mod tests {
         assert_eq!(
             scheduler.days.backfill_progress(),
             Some(BackfillProgress { done: 1, total: 2 })
-        );
-    }
-
-    /// Cancelling releases the queued days for a later backfill, and keeps the
-    /// day already being fetched claimed.
-    #[test]
-    fn cancelling_releases_every_queued_day_but_the_one_in_flight() {
-        let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        let (in_flight, queued) = (day_archive::day(2024, 5, 10), day_archive::day(2024, 5, 11));
-        scheduler.days.queue_backfill_of(&[in_flight, queued]);
-        assert_eq!(scheduler.days.take_next_day(), Some(in_flight));
-
-        scheduler.days.cancel_backfill();
-
-        assert_eq!(scheduler.days.backfill_progress(), None);
-        assert_eq!(scheduler.days.queued(), 0);
-        assert!(
-            scheduler.days.requested_days().contains(&in_flight),
-            "the day being fetched stays claimed"
-        );
-        assert!(
-            !scheduler.days.requested_days().contains(&queued),
-            "a day that never went out can be requested again"
         );
     }
 

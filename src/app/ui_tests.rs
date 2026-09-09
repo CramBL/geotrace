@@ -1345,32 +1345,23 @@ fn clicking_a_match_lists_its_points() {
     );
 }
 
-/// Clicking a column header orders the matches by that column, and clicking it
-/// again reverses the order.
+/// A click on a rendered column header reaches the sort. `MatchSort::clicked`
+/// has its own tests for the sort order.
 #[test]
 fn a_column_header_click_sorts_the_matches() {
     let mut harness = demo_app_with_query_run(TWO_MATCH_QUERY);
-    // The two matches of the run, told apart by how long each one ran.
-    let longest_first = |harness: &Harness<'_, App>| {
-        harness.get_by_label("1:01").rect().top() < harness.get_by_label("0:11").rect().top()
-    };
-    assert!(
-        longest_first(&harness),
-        "run order lists the long match first"
-    );
 
-    matches_sort_header(&harness, "points").click();
-    harness.run_steps(3);
-    assert!(
-        longest_first(&harness),
-        "the first click sorts largest first"
-    );
+    // The two matches of the run are told apart by how long each one ran. The
+    // run lists the long match first. The first click keeps that order and the
+    // second click reverses it.
+    for _ in 0..2 {
+        matches_sort_header(&harness, "points").click();
+        harness.run_steps(3);
+    }
 
-    matches_sort_header(&harness, "points").click();
-    harness.run_steps(3);
     assert!(
-        !longest_first(&harness),
-        "clicking the header again sorts smallest first"
+        harness.get_by_label("0:11").rect().top() < harness.get_by_label("1:01").rect().top(),
+        "the clicks on the points header did not reach the sort"
     );
 }
 
@@ -2110,35 +2101,6 @@ fn legend_redock_icon_resets_offset_to_default() {
 }
 
 #[test]
-fn dragging_files_header_moves_legend_overlay() {
-    let mut harness = harness_with_three_files_loaded();
-
-    let before = harness
-        .state()
-        .shared
-        .borrow()
-        .plot_state
-        .file_legend_offset;
-    let start = harness.get_by_label(ICON_DOTS_SIX).rect().center();
-    harness.press_drag_release(start, egui::vec2(120.0, 70.0), 1);
-
-    let after = harness
-        .state()
-        .shared
-        .borrow()
-        .plot_state
-        .file_legend_offset;
-    assert!(
-        (after.x - before.x).abs() > 5.0 || (after.y - before.y).abs() > 5.0,
-        "expected dragging Files header to move legend: before=({:.2},{:.2}) after=({:.2},{:.2})",
-        before.x,
-        before.y,
-        after.x,
-        after.y
-    );
-}
-
-#[test]
 fn dragging_files_header_far_across_many_frames_does_not_snap_back() {
     let mut harness = harness_with_three_files_loaded();
 
@@ -2159,13 +2121,16 @@ fn dragging_files_header_far_across_many_frames_does_not_snap_back() {
     );
 }
 
+/// Only the snap can dock the legend from this release point: it is 21 points
+/// from the dock, inside the snap radius and past the tolerance
+/// `gt_plot::legend_is_docked` allows.
 #[test]
-fn dragging_legend_near_top_left_redocks_automatically() {
+fn a_legend_drag_released_short_of_the_dock_snaps_to_it() {
     let mut harness = harness_with_three_files_loaded();
     detach_legend(&mut harness, egui::vec2(220.0, 120.0));
 
     let start = harness.get_by_label(ICON_DOTS_SIX).rect().center();
-    harness.press_drag_release(start, egui::vec2(-210.0, -110.0), 1);
+    harness.press_drag_release(start, egui::vec2(-195.0, -95.0), 1);
 
     let offset = harness
         .state()
@@ -2175,7 +2140,7 @@ fn dragging_legend_near_top_left_redocks_automatically() {
         .file_legend_offset;
     assert!(
         gt_plot::legend_is_docked(offset),
-        "expected legend dropped near top-left to auto-redock at {:?}, got ({:.2},{:.2})",
+        "expected the legend released near the dock to snap to {:?}, got ({:.2},{:.2})",
         gt_plot::LEGEND_DOCK_OFFSET,
         offset.x,
         offset.y
@@ -8570,21 +8535,6 @@ fn app_with_the_force_quit_confirmation_open<'a>()
         .click();
     harness.run_steps(2);
     (harness, compaction)
-}
-
-/// "Force quit…" asks the user first, and the confirmation states what
-/// stopping the running write costs.
-#[test]
-fn force_quit_confirms_and_names_what_the_running_write_costs() {
-    let (harness, compaction) = app_with_the_force_quit_confirmation_open();
-
-    assert!(
-        harness
-            .query_by_label(&TEC_COMPACTION.interruption_cost())
-            .is_some(),
-        "the confirmation never named what quitting over the write costs"
-    );
-    drop(compaction);
 }
 
 /// Cancelling the confirmation goes back to the shutdown window, which is

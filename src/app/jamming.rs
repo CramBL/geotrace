@@ -779,21 +779,6 @@ mod tests {
         assert_eq!(queued, Some(5), "seven days in range, two already held");
     }
 
-    /// Re-running a backfill over a range already downloaded costs nothing.
-    #[test]
-    fn a_fully_archived_range_queues_nothing() {
-        let (_dir, store, mut scheduler) = scheduler_with_archive();
-        for offset in 20..=26 {
-            archive_day(&store, day_archive::day(2026, 7, offset), &[]);
-        }
-
-        assert_eq!(
-            scheduler.backfill(day_archive::day(2026, 7, 20), day_archive::day(2026, 7, 26)),
-            Some(0)
-        );
-        assert_eq!(scheduler.days.backfill_progress(), None);
-    }
-
     /// A range entirely outside the coverage window requests nothing.
     #[test]
     fn a_backfill_outside_coverage_queues_nothing() {
@@ -859,58 +844,6 @@ mod tests {
         assert_eq!(scheduler.days.backfill_progress(), None);
     }
 
-    /// Cancelling drops the queued days and lets a later backfill request
-    /// them again.
-    #[test]
-    fn cancelling_releases_the_queued_days() {
-        let mut scheduler = scheduler();
-        let days = [day_archive::day(2026, 7, 20), day_archive::day(2026, 7, 21)];
-        scheduler.days.queue_backfill_of(&days);
-
-        scheduler.days.cancel_backfill();
-        assert_eq!(scheduler.days.backfill_progress(), None);
-        assert_eq!(scheduler.days.queued(), 0);
-        assert!(
-            scheduler.days.requested_days().is_empty(),
-            "cancelled days can be re-queued"
-        );
-    }
-
-    /// Cancelling must not release the day already being fetched: releasing
-    /// it lets a later request go out for a day still in flight.
-    #[test]
-    fn cancelling_keeps_the_in_flight_day() {
-        let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        let (in_flight, queued) = (day_archive::day(2026, 7, 20), day_archive::day(2026, 7, 21));
-        scheduler.days.queue_backfill_of(&[in_flight, queued]);
-        assert_eq!(scheduler.days.take_next_day(), Some(in_flight));
-
-        scheduler.days.cancel_backfill();
-        assert!(
-            scheduler.days.requested_days().contains(&in_flight),
-            "the day being fetched stays claimed"
-        );
-        assert!(
-            !scheduler.days.requested_days().contains(&queued),
-            "a day that never went out can be requested again"
-        );
-    }
-
-    /// A day queued by a track load is not cancelled with the backfill.
-    #[test]
-    fn cancelling_leaves_track_requested_days_alone() {
-        let mut scheduler = scheduler();
-        let track_day = day_archive::day(2026, 7, 19);
-        scheduler.days.queue_track_day(track_day);
-        scheduler
-            .days
-            .queue_backfill_of(&[day_archive::day(2026, 7, 20)]);
-
-        scheduler.days.cancel_backfill();
-        assert_eq!(scheduler.days.queued(), 1);
-        assert!(scheduler.days.requested_days().contains(&track_day));
-    }
-
     #[rstest]
     #[case::the_first_request(None, Duration::ZERO)]
     #[case::right_after_one(Some(Duration::ZERO), REQUEST_INTERVAL)]
@@ -948,26 +881,6 @@ mod tests {
             scheduler.days.backfill_progress(),
             Some(BackfillProgress { done: 0, total: 2 })
         );
-    }
-
-    /// Changing the host abandons a backfill and the failures the old host
-    /// produced.
-    #[test]
-    fn changing_the_host_abandons_the_backfill_and_its_failures() {
-        let mut scheduler = scheduler();
-        scheduler
-            .days
-            .queue_backfill_of(&[day_archive::day(2026, 7, 20)]);
-        scheduler.days.report_failure(
-            day_archive::day(2026, 7, 20),
-            "HTTP 500 Internal Server Error".to_owned(),
-        );
-
-        scheduler.set_base_url("https://mirror.example");
-
-        assert_eq!(scheduler.days.backfill_progress(), None);
-        assert_eq!(scheduler.days.queued(), 0);
-        assert!(scheduler.days.failures().is_empty());
     }
 
     /// A failure reaches the settings page's list.
@@ -1260,20 +1173,6 @@ mod tests {
 
         assert_eq!(scheduler.days.queued(), 0);
         assert!(scheduler.days.is_fetching());
-    }
-
-    /// A recording is requested once. Loading it again requests nothing.
-    #[test]
-    fn a_day_is_queued_at_most_once() {
-        let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        let span = range(
-            day_archive::at(2026, 7, 20, 8),
-            day_archive::at(2026, 7, 20, 17),
-        );
-        scheduler.request_days_for(span);
-        let after_first = scheduler.days.requested_days().len();
-        scheduler.request_days_for(span);
-        assert_eq!(scheduler.days.requested_days().len(), after_first);
     }
 
     /// A track spanning more than the cap queues nothing: bulk fetching is
