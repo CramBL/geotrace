@@ -85,9 +85,14 @@ pub trait StoredDayArchive: WritableDayArchive<Error: DayArchiveError> {
 }
 
 /// Implements [`StoredDayArchive`] for each archive listed, and
-/// `EnvironmentArchive::file_name` over the four variants.
+/// `EnvironmentArchive::file_name` over the four variants. Defines
+/// `for_each_stored_archive!` over the same list, which a test covering every
+/// archive expands.
+///
+/// The first argument is a literal `$`: a nested `macro_rules!` has no other
+/// way to write its own `$archive` and `$body`.
 macro_rules! stored_day_archives {
-    ($($writable:ty {
+    ($dollar:tt $($writable:ty {
         archive: $variant:ident,
         shared_from: $slot:ident,
     })+) => {
@@ -109,10 +114,28 @@ macro_rules! stored_day_archives {
                 }
             }
         )+
+
+        /// Expands the body once per stored archive, with `$archive` declared
+        /// inside the body as a type alias for that archive's writable type.
+        #[cfg(test)]
+        macro_rules! for_each_stored_archive {
+            ($dollar archive:ident => $dollar body:block) => {
+                $(
+                    {
+                        type $dollar archive = $writable;
+                        $dollar body
+                    }
+                )+
+            };
+        }
+
+        #[cfg(test)]
+        pub(crate) use for_each_stored_archive;
     };
 }
 
 stored_day_archives! {
+    $
     JamStore {
         archive: AircraftInterference,
         shared_from: interference,

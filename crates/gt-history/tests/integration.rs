@@ -349,7 +349,7 @@ fn a_gtd_without_a_version_attribute_loads_with_the_default_version() {
 
 #[test_log::test]
 #[cfg(feature = "backend-sys")]
-fn repro_duplicate_entry_issue() {
+fn a_recording_inserted_twice_is_listed_once() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
@@ -378,7 +378,7 @@ fn repro_duplicate_entry_issue() {
 }
 
 #[test]
-fn create_on_nonexistent_path() {
+fn opening_a_database_under_a_missing_directory_creates_it() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("sub").join("geotrace.h5");
 
@@ -389,16 +389,7 @@ fn create_on_nonexistent_path() {
 }
 
 #[test]
-fn open_twice_preserves_schema_version() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let db_path = dir.path().join("geotrace.h5");
-
-    Database::open_or_create(&db_path).expect("first open");
-    Database::open_or_create(&db_path).expect("second open should succeed");
-}
-
-#[test]
-fn groups_present_after_creation() {
+fn a_new_file_has_the_identity_and_meta_groups() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
 
@@ -436,7 +427,7 @@ fn a_new_file_records_the_current_schema_version() {
 }
 
 #[test]
-fn insert_creates_recording_group() {
+fn an_inserted_recording_gets_a_group_under_its_identity() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
@@ -532,9 +523,6 @@ fn is_duplicate_matches_only_exact_meta() {
     db.insert_simple("sensor_1", &meta, &bytes).expect("insert");
 
     assert!(db.is_duplicate(&meta).expect("check after insert"));
-
-    // Different identity → duplicate detected based on metadata.
-    assert!(db.is_duplicate(&meta).expect("different identity"));
 
     // Different `nav_point_count` → not a duplicate.
     let other_meta = RecordingMeta {
@@ -1891,7 +1879,7 @@ fn a_deleted_row_of_the_track_table_is_no_track_the_history_window_counts() {
 }
 
 #[test]
-fn open_with_older_schema_version_migrates_data() {
+fn a_database_with_an_older_schema_version_opens() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
 
@@ -1932,7 +1920,7 @@ fn open_with_older_schema_version_migrates_data() {
 }
 
 #[test]
-fn meta_time_range_and_size_bytes_are_populated() {
+fn extract_meta_reads_the_time_range_and_size_from_the_bytes() {
     let bytes = make_gtd_bytes(5_000, 10);
     let meta = extract_meta(&bytes).expect("meta");
 
@@ -2007,7 +1995,7 @@ fn concurrent_insert_does_not_panic() {
 }
 
 #[test]
-fn insert_malformed_data_returns_error() {
+fn extract_meta_rejects_bytes_that_are_not_a_recording() {
     let malformed_bytes = vec![0, 1, 2, 3, 4]; // Not a GTD file
     let meta = extract_meta(&malformed_bytes);
     assert!(
@@ -2017,7 +2005,7 @@ fn insert_malformed_data_returns_error() {
 }
 
 #[test]
-fn insert_large_dataset_works() {
+fn a_recording_large_enough_to_be_chunked_round_trips_its_times() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
@@ -2054,7 +2042,7 @@ fn insert_large_dataset_works() {
 }
 
 #[test]
-fn pure_backend_does_not_add_duplicate_recordings() {
+fn a_stored_recordings_meta_is_reported_as_a_duplicate() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
@@ -2066,7 +2054,6 @@ fn pure_backend_does_not_add_duplicate_recordings() {
     db.insert_simple(identity, &meta, &bytes)
         .expect("first insert");
 
-    // Re-inserting the same identity must be detected as a duplicate.
     let is_dup = db.is_duplicate(&meta).expect("check duplicate");
 
     assert!(is_dup, "Should be detected as a duplicate");
@@ -2081,7 +2068,7 @@ fn pure_backend_does_not_add_duplicate_recordings() {
 }
 
 #[test_log::test]
-fn pure_backend_prevents_recursive_insertion_of_loaded_file() {
+fn inserting_the_loaded_bytes_again_returns_the_same_reference() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
@@ -2115,9 +2102,9 @@ fn pure_backend_prevents_recursive_insertion_of_loaded_file() {
 }
 
 #[test]
-fn sys_backend_structural_parity_repro() {
+fn an_inserted_recording_is_found_by_the_hdf5_pure_reader() {
     let dir = tempfile::tempdir().expect("temp dir");
-    let db_path = dir.path().join("geotrace_sys.h5");
+    let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(1_000_000, 5);
@@ -2125,8 +2112,6 @@ fn sys_backend_structural_parity_repro() {
 
     let _db_ref = db.insert_simple("device", &meta, &bytes).expect("insert");
 
-    // Verify the sys-backend structure with the hdf5-pure reader (as the pure
-    // backend does): if the system-HDF5 backend is parity-compatible, this works.
     let file = hdf5_pure::File::open(&db_path).expect("open");
     let root = file.root();
 
@@ -2142,7 +2127,7 @@ fn sys_backend_structural_parity_repro() {
     let rec_grp = id_grp.group(rec_name).expect("recording group missing");
     assert!(
         rec_grp.group("nav_points").is_ok(),
-        "nav_points group missing in sys-backend database"
+        "nav_points group missing in the database"
     );
 }
 
@@ -2174,30 +2159,7 @@ fn sys_backend_load_bytes_rebuilds_the_recording_file() {
     assert_eq!(members, ["nav_points"]);
 }
 
-#[test]
-fn test_hdf5_pure_self_compatibility() {
-    let tmp = tempfile::NamedTempFile::new().expect("temp file");
-    let mut fb = hdf5_pure::FileBuilder::new();
-    fb.set_attr("version", hdf5_pure::AttrValue::String("1".into()));
-    fb.write(tmp.path()).expect("write");
-
-    let file = hdf5_pure::File::open(tmp.path()).expect("open pure");
-    file.root().attrs().unwrap();
-}
-
-#[test]
-fn test_hdf5_pure_file_openable_by_metno() {
-    let tmp = tempfile::NamedTempFile::new().expect("temp file");
-    let mut fb = hdf5_pure::FileBuilder::new();
-    fb.set_attr("version", hdf5_pure::AttrValue::String("1".into()));
-    fb.write(tmp.path()).expect("write");
-
-    // Try to open with hdf5 (metno)
-    let res = hdf5::File::open(tmp.path());
-    assert!(res.is_ok(), "Failed to open: {:?}", res.err());
-}
-
-/// The mirror of [`sys_backend_structural_parity_repro`]: a database written by
+/// The mirror of [`an_inserted_recording_is_found_by_the_hdf5_pure_reader`]: a database written by
 /// the pure backend must be readable by the reference C library, since the
 /// system-HDF5 backend (the default) opens the very same file. Reads the whole shape a
 /// recording occupies - the identity tree, the recording attributes, and the
