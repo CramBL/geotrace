@@ -654,7 +654,12 @@ enum class TravelMode : std::uint8_t {
 
 namespace detail {
 
-[[nodiscard]] constexpr std::uint32_t to_c(Constellation constellation) noexcept {
+[[nodiscard]] inline std::string undeclared_enum_message(const char *type_name,
+                                                         std::uint32_t value) {
+    return std::string{type_name} + " has no enumerator with the value " + std::to_string(value);
+}
+
+[[nodiscard]] constexpr std::optional<std::uint32_t> to_c(Constellation constellation) noexcept {
     switch (constellation) {
     case Constellation::Gps:
         return GTD_CONSTELLATION_GPS;
@@ -669,7 +674,7 @@ namespace detail {
     case Constellation::Qzss:
         return GTD_CONSTELLATION_QZSS;
     }
-    return GTD_CONSTELLATION_GPS;
+    return std::nullopt;
 }
 
 [[nodiscard]] constexpr Constellation from_c(GtdConstellation constellation) noexcept {
@@ -690,7 +695,7 @@ namespace detail {
     return Constellation::Gps;
 }
 
-[[nodiscard]] constexpr std::uint32_t to_c(MarkerIcon icon) noexcept {
+[[nodiscard]] constexpr std::optional<std::uint32_t> to_c(MarkerIcon icon) noexcept {
     switch (icon) {
     case MarkerIcon::Pin:
         return GTD_ICON_PIN;
@@ -721,11 +726,7 @@ namespace detail {
     case MarkerIcon::Wrench:
         return GTD_ICON_WRENCH;
     }
-    return GTD_ICON_PIN;
-}
-
-[[nodiscard]] constexpr std::uint32_t to_c(std::optional<MarkerIcon> icon) noexcept {
-    return icon ? to_c(*icon) : static_cast<std::uint32_t>(GTD_ICON_AUTO);
+    return std::nullopt;
 }
 
 /**
@@ -768,20 +769,7 @@ namespace detail {
     return std::nullopt;
 }
 
-/**
- * The @ref MarkerIcon value for a `markers/icon` @p code, or `std::nullopt`
- * for a code outside the set, which a newer writer can store.
- *
- * A code outside the set converts to `GtdMarkerIcon` and falls past the
- * switch: every `GtdMarkerIcon` value fits a `std::uint8_t`, and the
- * enumeration covers 0 to 255.
- */
-[[nodiscard]] constexpr std::optional<MarkerIcon>
-marker_icon_from_code(std::uint8_t code) noexcept {
-    return from_c(static_cast<GtdMarkerIcon>(code));
-}
-
-[[nodiscard]] constexpr std::uint32_t to_c(TravelMode mode) noexcept {
+[[nodiscard]] constexpr std::optional<std::uint32_t> to_c(TravelMode mode) noexcept {
     switch (mode) {
     case TravelMode::Car:
         return GTD_TRAVEL_MODE_CAR;
@@ -798,7 +786,7 @@ marker_icon_from_code(std::uint8_t code) noexcept {
     case TravelMode::Aircraft:
         return GTD_TRAVEL_MODE_AIRCRAFT;
     }
-    return GTD_TRAVEL_MODE_CAR;
+    return std::nullopt;
 }
 
 [[nodiscard]] constexpr TravelMode from_c(GtdTravelMode mode) noexcept {
@@ -819,6 +807,14 @@ marker_icon_from_code(std::uint8_t code) noexcept {
         return TravelMode::Aircraft;
     }
     return TravelMode::Car;
+}
+
+// A `std::uint8_t` cast to `Enumeration` is defined for every value, and
+// `to_c` returns a code only for a value an enumerator declares.
+template <typename Enumeration>
+[[nodiscard]] constexpr std::optional<Enumeration> enum_from_code(std::uint8_t code) noexcept {
+    const auto value = static_cast<Enumeration>(code);
+    return to_c(value) ? std::optional<Enumeration>{value} : std::nullopt;
 }
 
 [[nodiscard]] constexpr GtdTimestamp to_c(Timestamp timestamp) noexcept {
@@ -844,9 +840,16 @@ marker_icon_from_code(std::uint8_t code) noexcept {
 
 } // namespace detail
 
-/** Wire name of @p mode, e.g. `"car"` for `TravelMode::Car`. */
-[[nodiscard]] inline std::string_view travel_mode_name(TravelMode mode) noexcept {
-    return std::string_view{::gtd_travel_mode_name(detail::to_c(mode))};
+/**
+ * Wire name of @p mode, e.g. `"car"` for `TravelMode::Car`, or `std::nullopt`
+ * for a value no `TravelMode` enumerator declares.
+ */
+[[nodiscard]] inline std::optional<std::string_view> travel_mode_name(TravelMode mode) noexcept {
+    const std::optional<std::uint32_t> code = detail::to_c(mode);
+    if (!code) {
+        return std::nullopt;
+    }
+    return std::string_view{::gtd_travel_mode_name(*code)};
 }
 
 /**
@@ -863,6 +866,39 @@ travel_mode_from_name(const std::string &name) noexcept {
     }
     return detail::from_c(mode);
 }
+
+/**
+ * @name Checked conversions from an integer code
+ *
+ * Each returns `std::nullopt` for a code no enumerator of that type declares,
+ * so a caller holding a code from configuration or a wire format needs no
+ * `static_cast`.
+ * @{
+ */
+
+/** The @ref Constellation @p code identifies. */
+[[nodiscard]] constexpr std::optional<Constellation>
+constellation_from_code(std::uint8_t code) noexcept {
+    return detail::enum_from_code<Constellation>(code);
+}
+
+/**
+ * The @ref MarkerIcon a `markers/icon` @p code identifies. `GTD_ICON_AUTO`
+ * (255) identifies none: an absent icon is an empty `std::optional<MarkerIcon>`
+ * at the call site.
+ */
+[[nodiscard]] constexpr std::optional<MarkerIcon>
+marker_icon_from_code(std::uint8_t code) noexcept {
+    return detail::enum_from_code<MarkerIcon>(code);
+}
+
+/** The @ref TravelMode @p code identifies. */
+[[nodiscard]] constexpr std::optional<TravelMode>
+travel_mode_from_code(std::uint8_t code) noexcept {
+    return detail::enum_from_code<TravelMode>(code);
+}
+
+/** @} */
 
 /**
  * A single GPS navigation fix.
@@ -1428,9 +1464,18 @@ class FileBuilder {
         return *this;
     }
 
-    /** Declare the platform the recording was made on. */
+    /**
+     * Declare the platform the recording was made on.
+     *
+     * @throws std::invalid_argument for a @p mode no `TravelMode` enumerator
+     *         declares.
+     */
     FileBuilder &travel_mode(TravelMode mode) {
-        record(::gtd_builder_set_travel_mode(impl_.get(), detail::to_c(mode)));
+        const std::optional<std::uint32_t> code = checked_code("TravelMode", mode);
+        if (!code) {
+            return *this;
+        }
+        record(::gtd_builder_set_travel_mode(impl_.get(), *code));
         return *this;
     }
 
@@ -1479,18 +1524,31 @@ class FileBuilder {
         return *this;
     }
 
+    /**
+     * @throws std::invalid_argument for a satellite whose constellation is a
+     *         value no `Constellation` enumerator declares. The report is not
+     *         added, and the message states the satellite's index.
+     */
     FileBuilder &add_satellite_report(const SatelliteReport &report) {
         std::vector<GtdSatellite> sats;
         sats.reserve(report.tracked.size());
-        for (const auto &satellite : report.tracked) {
+        std::size_t index = 0;
+        for (const Satellite &satellite : report.tracked) {
+            const std::optional<std::uint32_t> constellation =
+                checked_code("Constellation", satellite.constellation,
+                             "tracked[" + std::to_string(index) + "].constellation: ");
+            if (!constellation) {
+                return *this;
+            }
             sats.push_back(GtdSatellite{
-                detail::to_c(satellite.constellation),
+                *constellation,
                 satellite.prn,
                 static_cast<std::uint8_t>(satellite.in_fix ? 1 : 0),
                 detail::to_c(satellite.elevation_deg),
                 detail::to_c(satellite.azimuth_deg),
                 detail::to_c(satellite.snr_dbhz),
             });
+            ++index;
         }
         record(::gtd_builder_add_satellite_report(impl_.get(), detail::to_c(report.time.gps_time()),
                                                   detail::to_c(report.time.sys_time()), sats.data(),
@@ -1501,11 +1559,16 @@ class FileBuilder {
     /**
      * Add a legacy map-pin annotation.
      * @throws FieldTooLongError if `label` is longer than 255 bytes.
+     * @throws std::invalid_argument for an `icon` no `MarkerIcon` enumerator
+     *         declares.
      */
     FileBuilder &add_annotation(const Annotation &ann) {
+        const std::optional<std::uint32_t> icon = checked_code("MarkerIcon", ann.icon);
+        if (!icon) {
+            return *this;
+        }
         const char *label = ann.label.empty() ? nullptr : ann.label.c_str();
-        record(::gtd_builder_add_annotation(impl_.get(), detail::to_c(ann.time), label,
-                                            detail::to_c(ann.icon)));
+        record(::gtd_builder_add_annotation(impl_.get(), detail::to_c(ann.time), label, *icon));
         return *this;
     }
 
@@ -1532,11 +1595,25 @@ class FileBuilder {
      * The style is checked when the file is written: a `variant_path` past 255
      * bytes or a `color_hex` past 7 bytes fails there with a
      * `FieldTooLongError`.
+     *
+     * An absent `icon` reaches the file as `GTD_ICON_AUTO`, where the
+     * application picks it.
+     *
+     * @throws std::invalid_argument for an `icon` no `MarkerIcon` enumerator
+     *         declares.
      */
     FileBuilder &add_event_marker_style(const EventMarkerStyle &style) {
+        auto icon = static_cast<std::uint32_t>(GTD_ICON_AUTO);
+        if (style.icon) {
+            const std::optional<std::uint32_t> code = checked_code("MarkerIcon", *style.icon);
+            if (!code) {
+                return *this;
+            }
+            icon = *code;
+        }
         const char *color = style.color_hex.empty() ? nullptr : style.color_hex.c_str();
-        record(::gtd_builder_add_event_marker_style(impl_.get(), style.variant_path.c_str(),
-                                                    detail::to_c(style.icon), color));
+        record(::gtd_builder_add_event_marker_style(impl_.get(), style.variant_path.c_str(), icon,
+                                                    color));
         return *this;
     }
 
@@ -1653,6 +1730,21 @@ class FileBuilder {
     [[nodiscard]] constexpr const Status &status() const noexcept { return status_; }
 
   private:
+    // Records `GTD_ERR_INVALID_ARGUMENT` and returns `std::nullopt` for a
+    // @p value no enumerator declares, with @p context prefixed to the message.
+    // `add_satellite_report` passes the field path of the failing satellite.
+    template <typename Enumeration>
+    [[nodiscard]] std::optional<std::uint32_t>
+    checked_code(const char *type_name, Enumeration value, const std::string &context = {}) {
+        const std::optional<std::uint32_t> code = detail::to_c(value);
+        if (!code) {
+            record(Status{GTD_ERR_INVALID_ARGUMENT,
+                          context + detail::undeclared_enum_message(
+                                        type_name, static_cast<std::uint32_t>(value))});
+        }
+        return code;
+    }
+
     // Record the first error. With exceptions enabled, throw it immediately so
     // the throwing API still reports at the call site. Without exceptions it
     // stays sticky and is surfaced by status() / try_finish().
@@ -1958,7 +2050,7 @@ class [[nodiscard]] NavFile {
         // NOLINTBEGIN(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
         return MarkerView{
             info.has_label != 0 ? std::string{info.label} : std::string{},
-            detail::marker_icon_from_code(info.icon_code),
+            marker_icon_from_code(info.icon_code),
             info.icon_code,
             detail::instant_from_c(info.time),
             Angle::degrees(info.lat_deg),

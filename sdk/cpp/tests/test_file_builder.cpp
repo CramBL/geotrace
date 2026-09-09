@@ -199,9 +199,6 @@ TEST_CASE("FileBuilder: fluent chain works end-to-end") {
 // which `gtd_builder_add_annotation` accepts.
 static_assert(geotrace::detail::to_c(MarkerIcon::Pin) == GTD_ICON_PIN);
 
-static_assert(geotrace::detail::to_c(std::optional<MarkerIcon>{}) == GTD_ICON_AUTO);
-static_assert(geotrace::detail::to_c(std::optional<MarkerIcon>{MarkerIcon::Gear}) == GTD_ICON_GEAR);
-
 TEST_CASE("FileBuilder: an annotation with no icon set is written as Pin") {
     const NavFix first_fix{FixTime::receiver(FIRST_TIME), Angle::degrees(51.5074),
                            Angle::degrees(-0.1278)};

@@ -264,9 +264,10 @@ TEST_CASE("travel mode names round-trip through travel_mode_from_name") {
     for (auto mode :
          {TravelMode::Car, TravelMode::Motorcycle, TravelMode::Bicycle, TravelMode::Pedestrian,
           TravelMode::Boat, TravelMode::Rail, TravelMode::Aircraft}) {
-        auto name = travel_mode_name(mode);
-        CHECK_FALSE(name.empty());
-        CHECK(travel_mode_from_name(std::string{name}) == mode);
+        const auto name = travel_mode_name(mode);
+        REQUIRE(name.has_value());
+        CHECK_FALSE(name->empty());
+        CHECK(travel_mode_from_name(std::string{*name}) == mode);
     }
     CHECK(travel_mode_from_name("hovercraft") == std::nullopt);
 }
