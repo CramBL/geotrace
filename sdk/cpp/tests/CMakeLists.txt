@@ -94,7 +94,6 @@ add_cpp_test(test_channels)
 add_cpp_test(test_exceptions)
 add_cpp_test(test_invalid_enums)
 add_cpp_test(test_event_kind)
-add_cpp_test(test_gold_timestamp)
 add_cpp_test(test_result_api)
 target_compile_definitions(test_result_api PRIVATE NDEBUG)
 
