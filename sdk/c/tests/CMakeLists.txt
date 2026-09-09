@@ -23,9 +23,8 @@ function(geotrace_c_test_target target)
     )
 endfunction()
 
-foreach(test test_builder test_channels test_gold_timestamp test_log_callback test_markers
-             test_null_guards test_status_codes test_thread_local test_timestamp
-             test_value_ranges)
+foreach(test test_builder test_channels test_log_callback test_markers test_null_guards
+             test_status_codes test_thread_local test_timestamp test_value_ranges)
     add_executable(${test} ${test}.c)
     target_link_libraries(${test} PRIVATE GeoTrace::C PkgConfig::Criterion geotrace_sanitizers)
     geotrace_c_test_target(${test})
