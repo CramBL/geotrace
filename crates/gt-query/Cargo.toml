@@ -11,9 +11,9 @@ doctest = false
 
 [dependencies]
 geotrace-sdk-units = { path = "../../sdk/rust/geotrace-sdk-units" }
-gt-ionex = { path = "../gt-ionex" }
-gt-jam = { path = "../gt-jam" }
-gt-solar = { path = "../gt-solar" }
+gt-ionex = { path = "../external_environmental_data/gt-ionex" }
+gt-jam = { path = "../external_environmental_data/gt-jam" }
+gt-solar = { path = "../external_environmental_data/gt-solar" }
 gt-types = { path = "../gt-types" }
 logos.workspace = true
 nalgebra.workspace = true

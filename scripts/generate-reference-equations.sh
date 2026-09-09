@@ -13,8 +13,8 @@ PPI=192
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-shopt -s nullglob
-for source in "$repo_root"/crates/*/assets/equations/*.typ; do
+shopt -s nullglob globstar
+for source in "$repo_root"/crates/**/assets/equations/*.typ; do
     name="$(basename "$source" .typ)"
     if [ "$name" = "preamble" ]; then
         continue

@@ -18,12 +18,12 @@ geotrace-sdk-units = { path = "../../sdk/rust/geotrace-sdk-units" }
 gt-analysis = { path = "../gt-analysis" }
 gt-egui-mipmap = { path = "../gt-egui-mipmap" }
 gt-filter = { path = "../gt-filter" }
-gt-flare = { path = "../gt-flare" }
+gt-flare = { path = "../external_environmental_data/gt-flare" }
 gt-fmt = { path = "../gt-fmt" }
-gt-ionex = { path = "../gt-ionex" }
-gt-jam = { path = "../gt-jam" }
+gt-ionex = { path = "../external_environmental_data/gt-ionex" }
+gt-jam = { path = "../external_environmental_data/gt-jam" }
 gt-loaded-files = { path = "../gt-loaded-files" }
-gt-solar = { path = "../gt-solar" }
+gt-solar = { path = "../external_environmental_data/gt-solar" }
 gt-types = { path = "../gt-types" }
 gt-ui-theme = { path = "../gt-ui-theme" }
 gt-ui-types = { path = "../gt-ui-types" }

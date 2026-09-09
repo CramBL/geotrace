@@ -22,7 +22,8 @@ use super::lines::{LineStroke, NearestHoverLabel, add_line};
 use super::style::metric_line_color;
 
 /// Where the rendered plot lands, resolved from this crate's manifest dir.
-const ASSET_PATH: &str = "../gt-ionex/assets/tec_plot_2024_05_gannon_storm.png";
+const ASSET_PATH: &str =
+    "../external_environmental_data/gt-ionex/assets/tec_plot_2024_05_gannon_storm.png";
 
 /// The same width as the map illustration beside it in the document, at the
 /// height the plot pane opens with.

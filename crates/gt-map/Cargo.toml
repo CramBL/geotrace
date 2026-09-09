@@ -24,8 +24,8 @@ egui-wgpu.workspace = true
 gt-filter = { path = "../gt-filter" }
 gt-fmt = { path = "../gt-fmt" }
 gt-icon-tessellate = { path = "../gt-icon-tessellate", default-features = false }
-gt-ionex = { path = "../gt-ionex" }
-gt-jam = { path = "../gt-jam" }
+gt-ionex = { path = "../external_environmental_data/gt-ionex" }
+gt-jam = { path = "../external_environmental_data/gt-jam" }
 gt-loaded-files = { path = "../gt-loaded-files" }
 gt-logfile = { path = "../gt-logfile" }
 gt-sky = { path = "../gt-sky" }

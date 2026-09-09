@@ -38,7 +38,7 @@ env:
   # `just map-tile-fixtures` is run by hand as well. The TEC feature's CDDIS
   # mirror is checked the same way, by hand through `just cddis-verify`: it
   # serves files to callers holding a per-user NASA Earthdata token.
-  FIXTURE_DIRS: crates/gt-ionex/tests/fixtures crates/gt-jam/tests/fixtures crates/gt-solar/tests/fixtures
+  FIXTURE_DIRS: crates/external_environmental_data/gt-ionex/tests/fixtures crates/external_environmental_data/gt-jam/tests/fixtures crates/external_environmental_data/gt-solar/tests/fixtures
 
 jobs:
   freshness:

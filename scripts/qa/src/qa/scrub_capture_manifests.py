@@ -33,9 +33,9 @@ _NONDETERMINISTIC_FIELDS = frozenset({"captured_at"})
 # token, so `just cddis-verify --capture` writes it by hand. Passing one of
 # those on the command line scrubs it all the same.
 _MANIFESTS = (
-    "crates/gt-ionex/tests/fixtures/capture.json",
-    "crates/gt-jam/tests/fixtures/capture.json",
-    "crates/gt-solar/tests/fixtures/capture.json",
+    "crates/external_environmental_data/gt-ionex/tests/fixtures/capture.json",
+    "crates/external_environmental_data/gt-jam/tests/fixtures/capture.json",
+    "crates/external_environmental_data/gt-solar/tests/fixtures/capture.json",
 )
 
 
