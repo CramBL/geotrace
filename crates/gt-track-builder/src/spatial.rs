@@ -63,42 +63,27 @@ impl SpatialIndex {
 mod tests {
     use std::path::PathBuf;
 
-    use chrono::{DateTime, Duration, Utc};
     use gt_types::coordinates::{Latitude, Longitude};
+    use gt_types::fixtures::{self, FixKind};
     use gt_types::markers::{CustomMarker, EventMarker, MarkerIcon};
     use gt_types::nav_point::NavPoint;
-    use gt_types::satellites::{Constellation, Satellite, Satellites};
-    use gt_types::time_types::GpsTime;
-    use gt_types::tpv::TimePositionVelocity;
     use gt_types::track::FileSource;
-    use uom::si::angle::degree;
-    use uom::si::f64::Angle;
 
     use super::*;
-    use crate::segment::{FileMeta, SegmentationConfig};
+    use crate::segment::{self, FileMeta, SegmentationConfig};
+    use crate::test_util;
 
     const LATITUDE_DEGREES: f64 = 55.0;
-
-    fn at(second: i64) -> DateTime<Utc> {
-        DateTime::<Utc>::UNIX_EPOCH + Duration::seconds(second)
-    }
 
     /// The builder places this fix where the receiver wrote it and generates
     /// no marker for it: it has a heading and a full solution behind it, as a
     /// receiver-measured fix would.
     fn measured_fix(second: i64, lon_degrees: f64) -> NavPoint {
-        let time = GpsTime::from_utc(at(second));
-        let satellites = (1..=12)
-            .map(|prn| Satellite::new(Constellation::Gps, prn, None, None, None, true))
-            .collect();
-        NavPoint::new(
-            TimePositionVelocity::builder()
-                .time(time)
-                .lat(Latitude::new(LATITUDE_DEGREES))
-                .lon(Longitude::new(lon_degrees))
-                .heading(Angle::new::<degree>(90.0))
-                .build(),
-            Some(Satellites::new(Some(time), None, satellites)),
+        fixtures::nav_point(
+            test_util::time_at_second(second),
+            Latitude::new(LATITUDE_DEGREES),
+            Longitude::new(lon_degrees),
+            FixKind::Measured,
         )
     }
 
@@ -107,7 +92,7 @@ mod tests {
     fn a_file_with_fixes_and_two_markers() -> Vec<LoadedFile> {
         let lat = Latitude::new(LATITUDE_DEGREES);
         let lon = Longitude::new(12.0);
-        vec![crate::segment::build_loaded_file(
+        vec![segment::build_loaded_file(
             "index.gtd".to_owned(),
             &[
                 measured_fix(0, 12.0),
@@ -115,14 +100,14 @@ mod tests {
                 measured_fix(2, 12.002),
             ],
             &[CustomMarker::new(
-                at(0),
+                test_util::time_at_second(0),
                 "note".to_owned(),
                 MarkerIcon::Pin,
                 lat,
                 lon,
             )],
             vec![EventMarker::new(
-                at(0),
+                test_util::time_at_second(0),
                 "power/boot".to_owned(),
                 None,
                 lat,

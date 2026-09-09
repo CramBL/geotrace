@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use gt_geo_math::segment_distances_m;
 use gt_types::sat_label::{SatLabelAnchor, SatLabelTier};
 use gt_types::{FixQuality, PlacedPoints, PointIdx};
 
@@ -123,7 +122,7 @@ fn add_ghost_recoveries(anchors: &mut BTreeMap<usize, SatLabelTier>, points: Pla
 fn add_fill(anchors: &mut BTreeMap<usize, SatLabelTier>, points: PlacedPoints<'_>) {
     let positions: Vec<(gt_types::Latitude, gt_types::Longitude)> = points.positions().collect();
     let mut since_anchor_m = 0.0;
-    for (i, segment_m) in segment_distances_m(&positions).enumerate() {
+    for (i, segment_m) in gt_geo_math::segment_distances_m(&positions).enumerate() {
         since_anchor_m += segment_m;
         let cur_index = i + 1;
         if anchors.contains_key(&cur_index) {
@@ -144,17 +143,11 @@ mod tests {
     use super::*;
     use crate::test_util;
     use chrono::Utc;
-    use gt_types::coordinates::{Latitude, Longitude};
+    use gt_types::fixtures::{self, FixKind, MetricOffset};
     use gt_types::nav_point::NavPoint;
-    use gt_types::satellites::{Constellation, Satellite, Satellites};
-    use gt_types::time_types::GpsTime;
-    use gt_types::tpv::TimePositionVelocity;
     use rstest::rstest;
     use uom::si::angle::degree;
     use uom::si::f64::Angle;
-
-    /// ~1 m of longitude at the equator, in degrees.
-    const DEG_PER_METER: f64 = 360.0 / 40_030_173.0;
 
     /// The anchors of `points` taken as a track of their own, none for a track
     /// of no fixes.
@@ -167,19 +160,22 @@ mod tests {
     /// A point `x_m` meters east of the origin. `fix_count: None` means no
     /// satellite report attached. `heading: false` makes a ghost fix.
     fn point(x_m: f64, fix_count: Option<u32>, heading: bool) -> NavPoint {
-        let sats = fix_count.map(|n| {
-            let list: Vec<_> = (1..=n.max(1))
-                .map(|prn| Satellite::new(Constellation::Gps, prn, None, None, None, prn <= n))
-                .collect();
-            Satellites::new(None, None, list)
-        });
-        let tpv = TimePositionVelocity::builder()
-            .time(GpsTime::from_utc(Utc::now()))
-            .lat(Latitude::new(0.0))
-            .lon(Longitude::new(x_m * DEG_PER_METER))
-            .maybe_heading(heading.then(|| Angle::new::<degree>(90.0)))
-            .build();
-        NavPoint::new(tpv, sats)
+        let (latitude, longitude) = MetricOffset {
+            east_m: x_m,
+            north_m: 0.0,
+        }
+        .to_latlon();
+        let without_a_report = fixtures::nav_point_heading(
+            Utc::now(),
+            latitude,
+            longitude,
+            heading.then(|| Angle::new::<degree>(90.0)),
+            FixKind::GhostWithoutHeading,
+        );
+        NavPoint::new(
+            without_a_report.tpv,
+            fix_count.map(test_util::satellite_report_of),
+        )
     }
 
     /// Points spaced 10 m apart with the fix counts in `fix_counts`, heading
