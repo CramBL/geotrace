@@ -20,17 +20,17 @@ use walkers::{Style, Tile, TileId, TilePiece, Tiles};
 use crate::mapbox_tiles;
 use crate::test_tiles::FULL_TILE_UV;
 
-/// A tile of the fixture directory. Ordered by zoom, then x, then y, so a set
+/// A tile of the capture directory. Ordered by zoom, then x, then y, so a set
 /// of them reads in a stable order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct FixtureTileId {
+pub struct CapturedTileId {
     pub zoom: u8,
     pub x: u32,
     pub y: u32,
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum FixtureTileIdParseError {
+pub enum CapturedTileIdParseError {
     #[error("{0:?} is not three /-separated fields")]
     FieldCount(String),
 
@@ -42,7 +42,7 @@ pub enum FixtureTileIdParseError {
     },
 }
 
-impl FixtureTileId {
+impl CapturedTileId {
     pub fn path_within(self, directory: &Path, format: CapturedTileFormat) -> PathBuf {
         directory
             .join(self.zoom.to_string())
@@ -85,7 +85,7 @@ impl CapturedTileFormat {
     }
 }
 
-impl From<TileId> for FixtureTileId {
+impl From<TileId> for CapturedTileId {
     fn from(tile_id: TileId) -> Self {
         Self {
             zoom: tile_id.zoom,
@@ -95,8 +95,8 @@ impl From<TileId> for FixtureTileId {
     }
 }
 
-impl From<FixtureTileId> for TileId {
-    fn from(tile_id: FixtureTileId) -> Self {
+impl From<CapturedTileId> for TileId {
+    fn from(tile_id: CapturedTileId) -> Self {
         Self {
             zoom: tile_id.zoom,
             x: tile_id.x,
@@ -105,18 +105,18 @@ impl From<FixtureTileId> for TileId {
     }
 }
 
-impl fmt::Display for FixtureTileId {
+impl fmt::Display for CapturedTileId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self { zoom, x, y } = self;
         write!(f, "{zoom}/{x}/{y}")
     }
 }
 
-impl FromStr for FixtureTileId {
-    type Err = FixtureTileIdParseError;
+impl FromStr for CapturedTileId {
+    type Err = CapturedTileIdParseError;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let field_count = || FixtureTileIdParseError::FieldCount(text.to_owned());
+        let field_count = || CapturedTileIdParseError::FieldCount(text.to_owned());
         let mut fields = text.split('/');
         let zoom = fields.next().ok_or_else(field_count)?;
         let x = fields.next().ok_or_else(field_count)?;
@@ -124,7 +124,7 @@ impl FromStr for FixtureTileId {
         if fields.next().is_some() {
             return Err(field_count());
         }
-        let field = |field: &str, source: ParseIntError| FixtureTileIdParseError::Field {
+        let field = |field: &str, source: ParseIntError| CapturedTileIdParseError::Field {
             text: text.to_owned(),
             field: field.to_owned(),
             source,
@@ -137,13 +137,13 @@ impl FromStr for FixtureTileId {
     }
 }
 
-impl Serialize for FixtureTileId {
+impl Serialize for CapturedTileId {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.collect_str(self)
     }
 }
 
-impl<'de> Deserialize<'de> for FixtureTileId {
+impl<'de> Deserialize<'de> for CapturedTileId {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         String::deserialize(deserializer)?
             .parse()
@@ -151,10 +151,10 @@ impl<'de> Deserialize<'de> for FixtureTileId {
     }
 }
 
-/// What a fixture directory records about its own capture. The access token
+/// What a capture directory records about itself. The access token
 /// is never part of it: the host is written down, the URL is not.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TileFixtureManifest {
+pub struct CapturedTileManifest {
     /// The edge of every captured tile, which the map scales its base layer
     /// by. Mapbox serves 512, the slippy default is 256.
     pub tile_size_px: u32,
@@ -163,62 +163,62 @@ pub struct TileFixtureManifest {
     pub style: String,
     pub host: String,
     pub captured_at: String,
-    pub tiles: BTreeSet<FixtureTileId>,
+    pub tiles: BTreeSet<CapturedTileId>,
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum TileFixtureManifestError {
+pub enum CapturedTileManifestError {
     #[error("{path:?}: {source}")]
     File { path: PathBuf, source: io::Error },
 
-    #[error("{path:?} is not a tile fixture manifest: {source}")]
+    #[error("{path:?} is not a captured tile manifest: {source}")]
     Json {
         path: PathBuf,
         source: serde_json::Error,
     },
 }
 
-impl TileFixtureManifest {
+impl CapturedTileManifest {
     pub const FILE_NAME: &'static str = "manifest.json";
 
-    pub fn read(directory: &Path) -> Result<Self, TileFixtureManifestError> {
+    pub fn read(directory: &Path) -> Result<Self, CapturedTileManifestError> {
         let path = directory.join(Self::FILE_NAME);
-        let text = fs::read_to_string(&path).map_err(|source| TileFixtureManifestError::File {
+        let text = fs::read_to_string(&path).map_err(|source| CapturedTileManifestError::File {
             path: path.clone(),
             source,
         })?;
         serde_json::from_str(&text)
-            .map_err(|source| TileFixtureManifestError::Json { path, source })
+            .map_err(|source| CapturedTileManifestError::Json { path, source })
     }
 
-    pub fn write(&self, directory: &Path) -> Result<(), TileFixtureManifestError> {
+    pub fn write(&self, directory: &Path) -> Result<(), CapturedTileManifestError> {
         let path = directory.join(Self::FILE_NAME);
         let text = serde_json::to_string_pretty(self).map_err(|source| {
-            TileFixtureManifestError::Json {
+            CapturedTileManifestError::Json {
                 path: path.clone(),
                 source,
             }
         })?;
         fs::write(&path, format!("{text}\n"))
-            .map_err(|source| TileFixtureManifestError::File { path, source })
+            .map_err(|source| CapturedTileManifestError::File { path, source })
     }
 }
 
-pub struct FixtureTiles {
+pub struct CapturedTiles {
     directory: PathBuf,
     tile_size_px: u32,
     tile_format: CapturedTileFormat,
     egui_ctx: Context,
     decoded_tiles: FxHashMap<TileId, Option<Tile>>,
-    missing_tiles: BTreeSet<FixtureTileId>,
+    missing_tiles: BTreeSet<CapturedTileId>,
 }
 
-impl FixtureTiles {
+impl CapturedTiles {
     /// Reads the manifest the capture wrote, which states the size and the
     /// format the tiles were served in. A directory without one has no
     /// usable capture.
-    pub fn new(directory: PathBuf, egui_ctx: Context) -> Result<Self, TileFixtureManifestError> {
-        let manifest = TileFixtureManifest::read(&directory)?;
+    pub fn new(directory: PathBuf, egui_ctx: Context) -> Result<Self, CapturedTileManifestError> {
+        let manifest = CapturedTileManifest::read(&directory)?;
         Ok(Self {
             directory,
             tile_size_px: manifest.tile_size_px,
@@ -229,10 +229,10 @@ impl FixtureTiles {
         })
     }
 
-    /// Every tile requested since the last [`FixtureTiles::forget_missing_tiles`]
+    /// Every tile requested since the last [`CapturedTiles::forget_missing_tiles`]
     /// that the directory could not serve, which is every tile the base layer
     /// left blank.
-    pub fn missing_tiles(&self) -> &BTreeSet<FixtureTileId> {
+    pub fn missing_tiles(&self) -> &BTreeSet<CapturedTileId> {
         &self.missing_tiles
     }
 
@@ -241,25 +241,25 @@ impl FixtureTiles {
     }
 
     fn read_and_decode_tile(&self, tile_id: TileId) -> Option<Tile> {
-        let path = FixtureTileId::from(tile_id).path_within(&self.directory, self.tile_format);
+        let path = CapturedTileId::from(tile_id).path_within(&self.directory, self.tile_format);
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
             Err(err) => {
-                log::debug!("no fixture tile at {path:?}: {err}");
+                log::debug!("no captured tile at {path:?}: {err}");
                 return None;
             }
         };
         match Tile::new(&bytes, &Style, tile_id.zoom, &self.egui_ctx) {
             Ok(tile) => Some(tile),
             Err(err) => {
-                log::debug!("the fixture tile at {path:?} did not decode: {err}");
+                log::debug!("the captured tile at {path:?} did not decode: {err}");
                 None
             }
         }
     }
 }
 
-impl Tiles for FixtureTiles {
+impl Tiles for CapturedTiles {
     fn at(&mut self, tile_id: TileId) -> Option<TilePiece> {
         let tile = match self.decoded_tiles.get(&tile_id) {
             Some(cached) => cached.clone(),
@@ -270,7 +270,7 @@ impl Tiles for FixtureTiles {
             }
         };
         if tile.is_none() {
-            self.missing_tiles.insert(FixtureTileId::from(tile_id));
+            self.missing_tiles.insert(CapturedTileId::from(tile_id));
         }
         tile.map(|tile| TilePiece::new(tile, FULL_TILE_UV))
     }
@@ -298,14 +298,14 @@ mod tests {
         zoom: 3,
     };
 
-    fn manifest(tile_size_px: u32, tile_format: CapturedTileFormat) -> TileFixtureManifest {
-        TileFixtureManifest {
+    fn manifest(tile_size_px: u32, tile_format: CapturedTileFormat) -> CapturedTileManifest {
+        CapturedTileManifest {
             tile_size_px,
             tile_format,
             style: "satellite-v9".to_owned(),
             host: "api.mapbox.com".to_owned(),
             captured_at: "2026-08-26T10:00:00+00:00".to_owned(),
-            tiles: BTreeSet::from([FixtureTileId::from(TILE_ID)]),
+            tiles: BTreeSet::from([CapturedTileId::from(TILE_ID)]),
         }
     }
 
@@ -315,11 +315,11 @@ mod tests {
         format: CapturedTileFormat,
         bytes: &[u8],
     ) {
-        let path = FixtureTileId::from(tile_id).path_within(directory, format);
+        let path = CapturedTileId::from(tile_id).path_within(directory, format);
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).expect("create the fixture directory");
+            fs::create_dir_all(parent).expect("create the capture directory");
         }
-        fs::write(path, bytes).expect("write the fixture tile");
+        fs::write(path, bytes).expect("write the captured tile");
     }
 
     /// A tile the way a host serves one, encoded in the format the capture
@@ -353,13 +353,13 @@ mod tests {
         if let Some(bytes) = written {
             write_tile_file(directory.path(), TILE_ID, CapturedTileFormat::Jpeg, bytes);
         }
-        let mut tiles = FixtureTiles::new(directory.path().to_owned(), Context::default())
+        let mut tiles = CapturedTiles::new(directory.path().to_owned(), Context::default())
             .expect("read the manifest");
 
         assert!(tiles.at(TILE_ID).is_none());
         assert_eq!(
             tiles.missing_tiles(),
-            &BTreeSet::from([FixtureTileId::from(TILE_ID)])
+            &BTreeSet::from([CapturedTileId::from(TILE_ID)])
         );
     }
 
@@ -382,7 +382,7 @@ mod tests {
             tile_format,
             &captured_tile_bytes(tile_size_px, tile_format),
         );
-        let mut tiles = FixtureTiles::new(directory.path().to_owned(), Context::default())
+        let mut tiles = CapturedTiles::new(directory.path().to_owned(), Context::default())
             .expect("read the manifest");
 
         let piece = tiles.at(TILE_ID).expect("the captured tile is served");
@@ -408,13 +408,13 @@ mod tests {
             CapturedTileFormat::Png,
             &captured_tile_bytes(512, CapturedTileFormat::Png),
         );
-        let mut tiles = FixtureTiles::new(directory.path().to_owned(), Context::default())
+        let mut tiles = CapturedTiles::new(directory.path().to_owned(), Context::default())
             .expect("read the manifest");
 
         assert!(tiles.at(TILE_ID).is_none());
         assert_eq!(
             tiles.missing_tiles(),
-            &BTreeSet::from([FixtureTileId::from(TILE_ID)])
+            &BTreeSet::from([CapturedTileId::from(TILE_ID)])
         );
     }
 
@@ -436,11 +436,11 @@ mod tests {
     fn a_directory_without_a_manifest_holds_no_capture() {
         let directory = tempfile::tempdir().expect("temp dir");
 
-        let error = FixtureTiles::new(directory.path().to_owned(), Context::default())
+        let error = CapturedTiles::new(directory.path().to_owned(), Context::default())
             .err()
             .expect("a directory without a manifest is rejected");
 
-        assert!(matches!(error, TileFixtureManifestError::File { .. }));
+        assert!(matches!(error, CapturedTileManifestError::File { .. }));
     }
 
     #[test]
@@ -451,7 +451,7 @@ mod tests {
         written.write(directory.path()).expect("write");
 
         assert_eq!(
-            TileFixtureManifest::read(directory.path()).expect("read"),
+            CapturedTileManifest::read(directory.path()).expect("read"),
             written
         );
     }
@@ -462,7 +462,7 @@ mod tests {
     #[case::not_a_number("3/x/5")]
     #[case::zoom_past_a_byte("300/4/5")]
     fn a_malformed_tile_id_is_rejected(#[case] text: &str) {
-        text.parse::<FixtureTileId>()
+        text.parse::<CapturedTileId>()
             .expect_err("a malformed tile id is rejected");
     }
 
@@ -475,9 +475,9 @@ mod tests {
             x in 0u32..1 << 22,
             y in 0u32..1 << 22,
         ) {
-            let tile_id = FixtureTileId { zoom, x, y };
+            let tile_id = CapturedTileId { zoom, x, y };
             proptest::prop_assert_eq!(
-                tile_id.to_string().parse::<FixtureTileId>().ok(),
+                tile_id.to_string().parse::<CapturedTileId>().ok(),
                 Some(tile_id)
             );
         }

@@ -53,9 +53,9 @@ _ALLOWED: dict[str, frozenset[str]] = {
     f"{_ENVIRONMENTAL_DATA_DIR}/gt-ionex/examples/fetch_ionex_captures.rs": _EVERY_CONSTRUCT,
     f"{_ENVIRONMENTAL_DATA_DIR}/gt-ionex/examples/fetch_node_series_capture.rs": _EVERY_CONSTRUCT,
     f"{_ENVIRONMENTAL_DATA_DIR}/gt-jam/examples/fetch_jam_captures.rs": _EVERY_CONSTRUCT,
-    "crates/gt-map/examples/fetch_map_tile_fixtures.rs": _EVERY_CONSTRUCT,
+    "crates/gt-map/examples/fetch_map_tile_captures.rs": _EVERY_CONSTRUCT,
     f"{_ENVIRONMENTAL_DATA_DIR}/gt-solar/examples/fetch_solar_captures.rs": _EVERY_CONSTRUCT,
-    "crates/gt-snap/examples/fetch_snap_fixtures.rs": _EVERY_CONSTRUCT,
+    "crates/gt-snap/examples/fetch_snap_captures.rs": _EVERY_CONSTRUCT,
     # The CDDIS verification tool, run by hand through `just cddis-verify`:
     # the archive it addresses serves files to callers holding a per-user
     # Earthdata token, which CI has none of.

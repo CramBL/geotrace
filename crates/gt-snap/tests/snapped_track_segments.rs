@@ -1,5 +1,5 @@
-//! Validate snapped-track segment assembly against the captured fixtures and
-//! synthetic break scenarios.
+//! Validate snapped-track segment assembly against the captured responses
+//! and synthetic break scenarios.
 
 use std::fs;
 
@@ -7,7 +7,6 @@ use proptest::prelude::*;
 use rstest::rstest;
 use serde_json::{Value, json};
 
-use gt_snap::fixtures_dir;
 use gt_snap::snapped_track::{
     self, SHAPE_POLYLINE_PRECISION, SnappedTrackError, SnappedTrackSegment,
 };
@@ -15,7 +14,7 @@ use gt_snap::wire::{SnapPointKind, TraceAttributesResponse};
 use gt_types::PointIdx;
 
 fn parse_response(scenario: &str) -> Result<TraceAttributesResponse, String> {
-    let path = fixtures_dir().join(format!("{scenario}.response.json"));
+    let path = gt_snap::captures_dir().join(format!("{scenario}.response.json"));
     let body =
         fs::read_to_string(&path).map_err(|err| format!("reading {}: {err}", path.display()))?;
     serde_json::from_str(&body).map_err(|err| format!("{scenario}: {err}"))
@@ -51,12 +50,12 @@ fn digest(segments: &[SnappedTrackSegment]) -> Vec<String> {
         .collect()
 }
 
-/// Edge spans are internally coherent on every fixture: sorted, within the
+/// Edge spans are internally coherent on every capture: sorted, within the
 /// segment's vertices, gapless between consecutive spans (adjacent edges
 /// share their boundary vertex), and referencing existing edges.
 ///
 /// Full coverage is a captured-reality pin, not a general guarantee: all
-/// four fixtures happen to have contiguous edge shape ranges. The contract
+/// four captures happen to have contiguous edge shape ranges. The contract
 /// explicitly permits uncovered vertices (see
 /// [`SnappedTrackSegment::edge_spans`] and
 /// `shape_index_gaps_leave_vertices_uncovered`).
@@ -66,7 +65,7 @@ fn digest(segments: &[SnappedTrackSegment]) -> Vec<String> {
 #[case::partially_snappable("partially_snappable")]
 #[case::teleport_gap("teleport_gap")]
 fn edge_spans_cover_segments_coherently(#[case] scenario: &str) {
-    let response = parse_response(scenario).expect("fixture parses");
+    let response = parse_response(scenario).expect("the capture parses");
     let segments = snapped_track::snapped_track_segments(&response).expect("segments assemble");
     assert!(!segments.is_empty());
     for segment in &segments {
@@ -88,13 +87,13 @@ fn edge_spans_cover_segments_coherently(#[case] scenario: &str) {
         assert_eq!(
             previous_end,
             segment.positions.len(),
-            "captured reality: these fixtures' edge ranges are contiguous, \
+            "captured reality: these captures' edge ranges are contiguous, \
              so coverage is total here (not a general guarantee)"
         );
     }
 }
 
-/// Every success fixture assembles without error. The digests pin segment
+/// Every success capture assembles without error. The digests pin segment
 /// counts and endpoints. `teleport_gap` must split into two segments (the
 /// break shows only as an unmatched run - no discontinuity flags), and
 /// `partially_snappable` splits on its flagged discontinuity.
@@ -103,15 +102,15 @@ fn edge_spans_cover_segments_coherently(#[case] scenario: &str) {
 #[case::dense_10hz("dense_10hz")]
 #[case::partially_snappable("partially_snappable")]
 #[case::teleport_gap("teleport_gap")]
-fn fixture_segments_assemble(#[case] scenario: &str) {
-    let response = parse_response(scenario).expect("fixture");
+fn captured_segments_assemble(#[case] scenario: &str) {
+    let response = parse_response(scenario).expect("capture");
     let segments = snapped_track::snapped_track_segments(&response).expect("assembles");
     insta::assert_debug_snapshot!(format!("{scenario}_segments"), digest(&segments));
 }
 
 #[test]
 fn teleport_gap_splits_into_two_segments() {
-    let response = parse_response("teleport_gap").expect("fixture");
+    let response = parse_response("teleport_gap").expect("capture");
     let segments = snapped_track::snapped_track_segments(&response).expect("assembles");
     assert_eq!(
         segments.len(),
@@ -227,7 +226,7 @@ fn synthetic_split_behavior(
 /// A shape-index gap between two edges (legal per the wire format - see
 /// the module doc on non-contiguous edge ranges) leaves the gapped
 /// vertices uncovered by every span: the documented "uncovered" branch of
-/// the span contract, exercised positively since no fixture captures it.
+/// the span contract, exercised positively since no capture shows it.
 #[test]
 fn shape_index_gaps_leave_vertices_uncovered() {
     let points = json!([
@@ -323,15 +322,15 @@ fn vertices_name_the_earliest_of_the_points_placed_at_one_spot() {
     assert_eq!(segment.recorded_points, vec![PointIdx::new(0); 4]);
 }
 
-/// Every fixture's segments name one recorded point per vertex, in track
+/// Every capture's segments name one recorded point per vertex, in track
 /// order.
 #[rstest]
 #[case::clean_drive("clean_drive")]
 #[case::dense_10hz("dense_10hz")]
 #[case::partially_snappable("partially_snappable")]
 #[case::teleport_gap("teleport_gap")]
-fn fixture_segments_name_a_recorded_point_at_every_vertex(#[case] scenario: &str) {
-    let response = parse_response(scenario).expect("fixture parses");
+fn captured_segments_name_a_recorded_point_at_every_vertex(#[case] scenario: &str) {
+    let response = parse_response(scenario).expect("the capture parses");
     let segments = snapped_track::snapped_track_segments(&response).expect("segments assemble");
     assert!(!segments.is_empty());
     for segment in &segments {
@@ -406,7 +405,7 @@ fn garbage_shape_is_an_error() {
 proptest! {
     /// The decoder consumes untrusted network bytes: any string - random
     /// garbage or a mutilated real polyline - must produce `Ok` or `Err`,
-    /// never a panic. The real captured shapes are exercised by the fixture
+    /// never a panic. The real captured shapes are exercised by the capture
     /// tests above, this covers everything else.
     #[test]
     fn arbitrary_shape_strings_never_panic(shape in ".{0,256}") {
@@ -423,7 +422,7 @@ proptest! {
     /// panic either.
     #[test]
     fn truncated_real_shape_never_panics(cut in 0usize..200) {
-        let response = parse_response("clean_drive").expect("fixture");
+        let response = parse_response("clean_drive").expect("capture");
         let Some(shape) = response.shape.as_deref() else {
             return Ok(());
         };

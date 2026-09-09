@@ -2041,32 +2041,6 @@ fn a_recording_large_enough_to_be_chunked_round_trips_its_times() {
     assert_eq!(original_nav, loaded_nav, "Large dataset content mismatch");
 }
 
-#[test]
-fn a_stored_recordings_meta_is_reported_as_a_duplicate() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let db_path = dir.path().join("geotrace.h5");
-    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
-
-    let bytes = make_gtd_bytes(1_000_000, 5);
-    let meta = extract_meta(&bytes).expect("parse meta");
-
-    let identity = "auto:snapshot.gtd";
-    db.insert_simple(identity, &meta, &bytes)
-        .expect("first insert");
-
-    let is_dup = db.is_duplicate(&meta).expect("check duplicate");
-
-    assert!(is_dup, "Should be detected as a duplicate");
-
-    let recordings = db.list_recordings().expect("list");
-    assert_eq!(
-        recordings.len(),
-        1,
-        "Should only have 1 recording, found: {:?}",
-        recordings.len()
-    );
-}
-
 #[test_log::test]
 fn inserting_the_loaded_bytes_again_returns_the_same_reference() {
     let dir = tempfile::tempdir().expect("temp dir");

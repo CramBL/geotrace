@@ -2,7 +2,7 @@
 //! and a directory of captured tiles. A snapshot taken over either one
 //! shows where the map was framed. A blank base layer shows nothing of it.
 
-pub mod fixture;
+pub mod captured;
 pub mod glyph;
 pub mod synthetic;
 
@@ -13,8 +13,9 @@ use walkers::sources::Attribution;
 use walkers::{TileId, TilePiece, Tiles};
 
 use crate::TileAccess;
-pub use crate::test_tiles::fixture::{
-    CapturedTileFormat, FixtureTileId, FixtureTiles, TileFixtureManifest, TileFixtureManifestError,
+pub use crate::test_tiles::captured::{
+    CapturedTileFormat, CapturedTileId, CapturedTileManifest, CapturedTileManifestError,
+    CapturedTiles,
 };
 pub use crate::test_tiles::synthetic::SyntheticTiles;
 
@@ -23,7 +24,7 @@ const FULL_TILE_UV: Rect = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
 
 pub(crate) enum TestTileSource {
     Synthetic(SyntheticTiles),
-    Fixture(FixtureTiles),
+    Captured(CapturedTiles),
 }
 
 impl TestTileSource {
@@ -31,9 +32,9 @@ impl TestTileSource {
         match tile_access {
             TileAccess::Network | TileAccess::Offline => None,
             TileAccess::Synthetic => Some(Self::Synthetic(SyntheticTiles::new(egui_ctx.clone()))),
-            TileAccess::Fixture(directory) => {
-                match FixtureTiles::new(directory.clone(), egui_ctx.clone()) {
-                    Ok(tiles) => Some(Self::Fixture(tiles)),
+            TileAccess::Captured(directory) => {
+                match CapturedTiles::new(directory.clone(), egui_ctx.clone()) {
+                    Ok(tiles) => Some(Self::Captured(tiles)),
                     Err(err) => {
                         log::error!("the map draws no base layer: {err}");
                         None
@@ -43,17 +44,17 @@ impl TestTileSource {
         }
     }
 
-    pub(crate) fn missing_tiles(&self) -> Option<&BTreeSet<FixtureTileId>> {
+    pub(crate) fn missing_tiles(&self) -> Option<&BTreeSet<CapturedTileId>> {
         match self {
             Self::Synthetic(_) => None,
-            Self::Fixture(tiles) => Some(tiles.missing_tiles()),
+            Self::Captured(tiles) => Some(tiles.missing_tiles()),
         }
     }
 
     pub(crate) fn forget_missing_tiles(&mut self) {
         match self {
             Self::Synthetic(_) => {}
-            Self::Fixture(tiles) => tiles.forget_missing_tiles(),
+            Self::Captured(tiles) => tiles.forget_missing_tiles(),
         }
     }
 }
@@ -62,21 +63,21 @@ impl Tiles for TestTileSource {
     fn at(&mut self, tile_id: TileId) -> Option<TilePiece> {
         match self {
             Self::Synthetic(tiles) => tiles.at(tile_id),
-            Self::Fixture(tiles) => tiles.at(tile_id),
+            Self::Captured(tiles) => tiles.at(tile_id),
         }
     }
 
     fn attribution(&self) -> Attribution {
         match self {
             Self::Synthetic(tiles) => tiles.attribution(),
-            Self::Fixture(tiles) => tiles.attribution(),
+            Self::Captured(tiles) => tiles.attribution(),
         }
     }
 
     fn tile_size(&self) -> u32 {
         match self {
             Self::Synthetic(tiles) => tiles.tile_size(),
-            Self::Fixture(tiles) => tiles.tile_size(),
+            Self::Captured(tiles) => tiles.tile_size(),
         }
     }
 }

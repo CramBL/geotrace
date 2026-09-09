@@ -35,7 +35,7 @@ env:
   # gt-flare's endpoint needs a per-user api.nasa.gov key that this workflow
   # has none of, so `just flare-captures` is run by hand, and gt-map's tiles
   # need a per-user Mapbox token and are frozen once captured, so
-  # `just map-tile-fixtures` is run by hand as well. The TEC feature's CDDIS
+  # `just map-tile-captures` is run by hand as well. The TEC feature's CDDIS
   # mirror is checked the same way, by hand through `just cddis-verify`: it
   # serves files to callers holding a per-user NASA Earthdata token.
   CAPTURE_DIRS: crates/external_environmental_data/gt-ionex/tests/captures crates/external_environmental_data/gt-jam/tests/captures crates/external_environmental_data/gt-solar/tests/captures

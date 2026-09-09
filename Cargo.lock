@@ -2617,6 +2617,7 @@ dependencies = [
  "hdf5-metno",
  "log",
  "parking_lot",
+ "rstest",
  "tempfile",
  "thiserror 2.0.20",
  "uuid",

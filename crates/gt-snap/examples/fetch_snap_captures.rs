@@ -1,17 +1,17 @@
-//! Capture live map-matching fixtures from a Valhalla server.
+//! Capture live map-matching responses from a Valhalla server.
 //!
-//! Sends one request per fixture scenario ([`gt_snap::FIXTURE_SCENARIOS`]) to
+//! Sends one request per capture scenario ([`gt_snap::CAPTURE_SCENARIOS`]) to
 //! the live server and writes each exchange as a `NAME.request.json` /
-//! `NAME.response.json` pair under `tests/fixtures/`, plus a `capture.json`
+//! `NAME.response.json` pair under `tests/captures/`, plus a `capture.json`
 //! with capture metadata (date, server, per-scenario HTTP status).
 //!
-//! Fixtures are frozen once committed - matching output drifts as the
+//! Captures are frozen once committed - matching output drifts as the
 //! OpenStreetMap data updates - so re-running this tool is an
 //! explicit act and the resulting diff is reviewed like code.
 //! See `docs/snap/design.md` ("Testing") and `docs/snap/implementation-plan.md`.
 //!
-//! Usage: `just snap-fixtures [SCENARIO...]`, or
-//! `cargo run -p gt-snap --example fetch_snap_fixtures -- [SCENARIO...]`.
+//! Usage: `just snap-captures [SCENARIO...]`, or
+//! `cargo run -p gt-snap --example fetch_snap_captures -- [SCENARIO...]`.
 //! Naming scenarios captures only those (an additive capture: entries for
 //! untouched scenarios are kept in `capture.json`). No arguments re-captures
 //! everything.
@@ -38,8 +38,8 @@ use serde_json::{Value, json};
 use gt_snap::request_plan::{SEARCH_RADIUS_RANGE_M, SnapParams};
 use gt_snap::wire::{Costing, ShapePoint, TraceAttributesRequest, TraceOptions};
 use gt_snap::{
-    CLIENT_ID_HEADER, DEFAULT_SERVER_URL, FIXTURE_SCENARIOS, REQUEST_INTERVAL,
-    TRACE_ATTRIBUTES_PATH, fixtures_dir,
+    CAPTURE_SCENARIOS, CLIENT_ID_HEADER, DEFAULT_SERVER_URL, REQUEST_INTERVAL,
+    TRACE_ATTRIBUTES_PATH,
 };
 
 /// Fixed base timestamp for synthetic traces: 2026-01-01T12:00:00Z.
@@ -99,7 +99,7 @@ const ROSKILDE: Coord = (55.642, 12.081);
 const JITTER_DEG: f64 = 3.0e-5;
 
 /// The tuned scenario's non-default trace options: values inside the
-/// server-accepted ranges but distinct from any default, so the fixture pins
+/// server-accepted ranges but distinct from any default, so the capture pins
 /// both the tuned-request serialization and the server accepting it.
 const TUNED_PARAMS: SnapParams = SnapParams {
     costing: Costing::Auto,
@@ -111,22 +111,22 @@ const TUNED_PARAMS: SnapParams = SnapParams {
 fn main() -> Result<(), Box<dyn Error>> {
     let server = env::var("GEOTRACE_SNAP_SERVER").unwrap_or_else(|_| DEFAULT_SERVER_URL.to_owned());
     let url = format!("{server}{TRACE_ATTRIBUTES_PATH}");
-    let dir = fixtures_dir();
+    let dir = gt_snap::captures_dir();
     fs::create_dir_all(&dir)?;
 
     // Positional arguments select a scenario subset for an additive capture.
     // Without them the capture covers every scenario.
     let args: Vec<String> = env::args().skip(1).collect();
     let selected: Vec<&str> = if args.is_empty() {
-        FIXTURE_SCENARIOS.to_vec()
+        CAPTURE_SCENARIOS.to_vec()
     } else {
         args.iter()
             .map(|name| {
-                FIXTURE_SCENARIOS
+                CAPTURE_SCENARIOS
                     .iter()
                     .copied()
                     .find(|&s| s == name)
-                    .unwrap_or_else(|| panic!("unknown fixture scenario {name:?}"))
+                    .unwrap_or_else(|| panic!("unknown capture scenario {name:?}"))
             })
             .collect()
     };
@@ -169,7 +169,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let status = response.status().as_u16();
         let body = response.text()?;
 
-        // Pretty-print JSON bodies so fixture diffs are reviewable. Keep
+        // Pretty-print JSON bodies so capture diffs are reviewable. Keep
         // anything unparsable (e.g. the reverse proxy's HTML 413) verbatim.
         let (body_pretty, osm_changeset) = match serde_json::from_str::<Value>(&body) {
             Ok(value) => {
@@ -195,7 +195,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // Emit in canonical scenario order regardless of capture order.
-    let summaries: Vec<Value> = FIXTURE_SCENARIOS
+    let summaries: Vec<Value> = CAPTURE_SCENARIOS
         .iter()
         .filter_map(|&name| summaries_by_name.get(name).cloned())
         .collect();
@@ -208,19 +208,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         dir.join("capture.json"),
         format!("{}\n", serde_json::to_string_pretty(&capture)?),
     )?;
-    println!("Fixtures written to {}", dir.display());
+    println!("Captures written to {}", dir.display());
     Ok(())
 }
 
 /// The request body for one named scenario.
 ///
 /// Well-formed scenarios are built through the production wire types
-/// ([`TraceAttributesRequest`]), so the fixtures exercise exactly the
+/// ([`TraceAttributesRequest`]), so the captures exercise exactly the
 /// serialization the client will send. Only the deliberately malformed
 /// `bad_request` stays a raw JSON literal.
 ///
 /// Panics on an unknown name: the scenario list and this table must stay in
-/// sync, and the fixture validation test pins both to [`FIXTURE_SCENARIOS`].
+/// sync, and the capture validation test pins both to [`CAPTURE_SCENARIOS`].
 fn scenario_request(name: &str) -> Value {
     let typed = |request: TraceAttributesRequest| {
         serde_json::to_value(request).expect("serializing a request never fails")
@@ -318,7 +318,7 @@ fn scenario_request(name: &str) -> Value {
             Costing::Auto,
             trace(30_000, &[BOULEVARD_ROUTE[0], ROSKILDE], Some(1.0)),
         )),
-        other => panic!("unknown fixture scenario {other:?}"),
+        other => panic!("unknown capture scenario {other:?}"),
     }
 }
 
@@ -353,7 +353,7 @@ fn trace_from(
 }
 
 /// The point a fraction `t` (0..=1) along the anchor chain, measured by
-/// cumulative flat-earth segment length - accurate enough for fixture
+/// cumulative flat-earth segment length - accurate enough for capture
 /// geometry at city scale.
 fn point_along(route: &[Coord], t: f64) -> Coord {
     assert!(route.len() >= 2, "route needs at least two anchors");

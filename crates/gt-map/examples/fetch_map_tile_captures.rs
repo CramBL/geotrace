@@ -1,14 +1,14 @@
-//! Capture the Mapbox satellite tiles the fixture-backed map snapshots draw.
+//! Capture the Mapbox satellite tiles the map snapshots draw.
 //!
-//! Writes `tests/fixtures/map_tiles/{zoom}/{x}/{y}.{extension}` and the
+//! Writes `tests/captures/map_tiles/{zoom}/{x}/{y}.{extension}` and the
 //! `manifest.json` beside them, which records the tile size, image format,
 //! style, host and capture date. The token is never written down.
 //!
-//! Fixtures are frozen once committed: a tile already on disk is kept and a
+//! Captures are frozen once committed: a tile already on disk is kept and a
 //! re-run only fills the gaps. A re-capture's diff is reviewed like code.
 //!
-//! Usage: `MAPBOX_TOKEN=... just map-tile-fixtures [WANTED...]`, or
-//! `cargo run -p gt-map --example fetch_map_tile_fixtures -- [WANTED...]`.
+//! Usage: `MAPBOX_TOKEN=... just map-tile-captures [WANTED...]`, or
+//! `cargo run -p gt-map --example fetch_map_tile_captures -- [WANTED...]`.
 //! Each `WANTED` is a file a snapshot run recorded under
 //! `GEOTRACE_RECORD_TILE_MISSES`, one `zoom/x/y` tile id per line. Its tiles
 //! are added to the ones the manifest already lists.
@@ -38,8 +38,7 @@ use reqwest::header::CONTENT_TYPE;
 use walkers::TileId;
 
 use gt_map::mapbox_tiles;
-use gt_map::test_tiles::{CapturedTileFormat, FixtureTileId, TileFixtureManifest};
-use gt_test_utils::map_tile_fixture_dir;
+use gt_map::test_tiles::{CapturedTileFormat, CapturedTileId, CapturedTileManifest};
 
 /// Recorded in the manifest in place of the URL, which holds the token.
 const HOST: &str = "api.mapbox.com";
@@ -60,12 +59,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 mapbox_tiles::TOKEN_ENVS[0]
             )
         })?;
-    let dir = map_tile_fixture_dir();
+    let dir = gt_test_utils::map_tile_capture_dir();
     fs::create_dir_all(&dir)?;
 
-    let existing = TileFixtureManifest::read(&dir).ok();
+    let existing = CapturedTileManifest::read(&dir).ok();
     let existing_format = existing.as_ref().map(|manifest| manifest.tile_format);
-    let mut wanted: BTreeSet<FixtureTileId> =
+    let mut wanted: BTreeSet<CapturedTileId> =
         existing.map(|manifest| manifest.tiles).unwrap_or_default();
     for path in env::args().skip(1) {
         let recorded = fs::read_to_string(&path)?;
@@ -146,7 +145,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let Some(tile_format) = tile_format else {
         return Err("no tile wanted: name a file a snapshot run recorded".into());
     };
-    let manifest = TileFixtureManifest {
+    let manifest = CapturedTileManifest {
         tile_size_px: mapbox_tiles::satellite_tile_size_px(),
         tile_format,
         style: mapbox_tiles::SATELLITE_STYLE.to_owned(),

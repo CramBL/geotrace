@@ -43,14 +43,14 @@ ionex-node-series:
 jam-captures *DAYS:
     cargo run -p gt-jam --example fetch_jam_captures -- {{ DAYS }}
 
-# Capture the Mapbox satellite tiles the fixture-backed map snapshots draw
-# (network!). Needs MAPBOX_TOKEN.
+# Capture the Mapbox satellite tiles the map snapshots draw (network!).
+# Needs MAPBOX_TOKEN.
 # Name files a snapshot run recorded under GEOTRACE_RECORD_TILE_MISSES to add
 # their tiles (additive). No `WANTED` re-captures what the manifest already
 # lists.
 [group("fixtures")]
-map-tile-fixtures *WANTED:
-    cargo run -p gt-map --example fetch_map_tile_fixtures -- {{ WANTED }}
+map-tile-captures *WANTED:
+    cargo run -p gt-map --example fetch_map_tile_captures -- {{ WANTED }}
 
 # Refresh the gt-solar index captures from the GFZ Potsdam service (network!).
 # Name windows to capture only those (additive). No `WINDOWS` captures all.
@@ -58,8 +58,8 @@ map-tile-fixtures *WANTED:
 solar-captures *WINDOWS:
     cargo run -p gt-solar --example fetch_solar_captures -- {{ WINDOWS }}
 
-# Refresh the gt-snap live-API fixtures from the Valhalla server (network!).
+# Refresh the gt-snap live-API captures from the Valhalla server (network!).
 # Name scenarios to capture only those (additive). No `SCENARIOS` captures all.
 [group("fixtures")]
-snap-fixtures *SCENARIOS:
-    cargo run -p gt-snap --example fetch_snap_fixtures -- {{ SCENARIOS }}
+snap-captures *SCENARIOS:
+    cargo run -p gt-snap --example fetch_snap_captures -- {{ SCENARIOS }}

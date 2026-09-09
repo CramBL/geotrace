@@ -74,7 +74,7 @@ pub fn build_app_on_captured_tiles(
         fading,
         PendingWrites::new(WriteAccess::Owner),
         DataDirectoryLock::marking_nothing(),
-        gt_map::TileAccess::Fixture(gt_test_utils::map_tile_fixture_dir()),
+        gt_map::TileAccess::Captured(gt_test_utils::map_tile_capture_dir()),
     )
 }
 

@@ -48,12 +48,12 @@ pub fn server_host(url: &str) -> Option<String> {
     parsed.host_str().map(str::to_owned)
 }
 
-/// The canonical fixture scenarios captured from the live server.
+/// The canonical scenarios captured from the live server.
 ///
 /// Each entry identifies a `NAME.request.json` / `NAME.response.json` pair
-/// under [`fixtures_dir`]. The set is deliberately one scenario per server behavior
+/// under [`captures_dir`]. The set is deliberately one scenario per server behavior
 /// the client must handle. The capture harness builds the matching requests.
-pub const FIXTURE_SCENARIOS: &[&str] = &[
+pub const CAPTURE_SCENARIOS: &[&str] = &[
     "clean_drive",
     "clean_drive_tuned",
     "clean_drive_unfiltered",
@@ -67,13 +67,13 @@ pub const FIXTURE_SCENARIOS: &[&str] = &[
     "too_large_body",
 ];
 
-/// Directory holding the captured request/response fixture pairs.
+/// Directory holding the captured request/response pairs.
 ///
 /// Resolved from the crate manifest dir, so it is only meaningful for
 /// development tooling (the capture harness and tests) running inside the
 /// workspace - never in the shipped application.
-pub fn fixtures_dir() -> PathBuf {
+pub fn captures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
+        .join("captures")
 }

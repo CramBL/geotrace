@@ -99,15 +99,19 @@ use crate::termination_signal::TERMINATION_SIGNAL_FLAG;
 /// recorded over blank ground. The record starts fresh and one more frame is
 /// drawn, so the check covers only that frame.
 fn assert_the_capture_covers_the_map(harness: &mut TestHarness<'_, App>, snapshot_name: &str) {
-    harness.inner.state_mut().map.forget_missing_fixture_tiles();
+    harness
+        .inner
+        .state_mut()
+        .map
+        .forget_missing_captured_tiles();
     harness.inner.step();
     let missing = harness
         .inner
         .state()
         .map
-        .missing_fixture_tiles()
+        .missing_captured_tiles()
         .expect("the map draws the captured tiles");
-    gt_test_utils::assert_map_tile_fixture_is_complete(snapshot_name, missing);
+    gt_test_utils::assert_map_tile_capture_is_complete(snapshot_name, missing);
 }
 
 /// Fixes every date the settings window seeds from today, or its snapshots
