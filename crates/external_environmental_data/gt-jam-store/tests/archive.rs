@@ -6,7 +6,6 @@ use std::str::FromStr as _;
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use h3o::CellIndex;
 use rstest::rstest;
-use tempfile::TempDir;
 
 use gt_hdf5_archive::day_index;
 use gt_hdf5_archive::prune::{
@@ -15,6 +14,7 @@ use gt_hdf5_archive::prune::{
 use gt_hdf5_archive::{ReadOnlyDayArchive as _, WritableDayArchive as _};
 use gt_jam::wire::HexObservation;
 use gt_jam_store::{FILE_NAME, JamStore, JamStoreError, ReadOnlyJamStore, schema};
+use gt_test_utils::day_archive::conformance::{self, StoredDayOperations};
 use gt_test_utils::day_archive::{self, ColumnName, GroupPath};
 
 /// Cells copied from the captured day.
@@ -27,19 +27,12 @@ const CELLS: [&str; 4] = [
 
 const HOST: &str = "https://gpsjam.org";
 
-fn store() -> Result<(TempDir, JamStore), String> {
-    let dir = tempfile::tempdir().map_err(|err| format!("temp dir: {err}"))?;
-    let store = JamStore::open_or_create(&dir.path().join(FILE_NAME))
-        .map_err(|err| format!("open archive: {err}"))?;
-    Ok((dir, store))
-}
-
 fn day(offset: i64) -> NaiveDate {
     NaiveDate::from_ymd_opt(2026, 7, 20).unwrap_or_default() + TimeDelta::days(offset)
 }
 
 fn fetched_at() -> DateTime<Utc> {
-    DateTime::from_timestamp(1_784_505_600, 0).unwrap_or_default()
+    day_archive::fetched_at()
 }
 
 /// `count` observations with distinct cells and recognisable counts. A cell
@@ -64,9 +57,38 @@ fn observations(count: usize) -> Vec<HexObservation> {
 /// part-way through.
 const DAYS: GroupPath<'static> = GroupPath(schema::DAYS_GROUP);
 
+const DAY_OPERATIONS: StoredDayOperations<JamStore, Vec<HexObservation>> = StoredDayOperations {
+    insert_a_day,
+    read_a_day,
+    indexed_days,
+};
+
+fn insert_a_day(store: &JamStore, day: NaiveDate) -> Result<Vec<HexObservation>, String> {
+    let observations = observations(4);
+    store
+        .insert_day(day, HOST, fetched_at(), &observations)
+        .map_err(|err| format!("insert {day}: {err}"))?;
+    Ok(observations)
+}
+
+fn read_a_day(store: &JamStore, day: NaiveDate) -> Result<Option<Vec<HexObservation>>, String> {
+    store
+        .observations(day)
+        .map_err(|err| format!("read {day}: {err}"))
+}
+
+fn indexed_days(store: &JamStore) -> Result<Vec<NaiveDate>, String> {
+    Ok(store
+        .days()
+        .map_err(|err| format!("days: {err}"))?
+        .into_iter()
+        .map(|stored| stored.day)
+        .collect())
+}
+
 #[test]
 fn a_new_archive_is_empty() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<JamStore>().unwrap();
     assert!(store.days().expect("days").is_empty());
     assert!(!store.contains(day(0)).expect("contains"));
     assert_eq!(store.observations(day(0)).expect("observations"), None);
@@ -74,7 +96,7 @@ fn a_new_archive_is_empty() {
 
 #[test]
 fn a_stored_day_round_trips() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<JamStore>().unwrap();
     let written = observations(4);
     store
         .insert_day(day(0), HOST, fetched_at(), &written)
@@ -89,7 +111,7 @@ fn a_stored_day_round_trips() {
 
 #[test]
 fn days_are_indexed_with_their_provenance() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<JamStore>().unwrap();
     store
         .insert_day(day(0), HOST, fetched_at(), &observations(3))
         .expect("insert");
@@ -106,7 +128,7 @@ fn days_are_indexed_with_their_provenance() {
 /// Rows of one day must not leak into another's slice.
 #[test]
 fn days_stored_together_stay_separate() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<JamStore>().unwrap();
     store
         .insert_day(day(0), HOST, fetched_at(), &observations(4))
         .expect("insert first");
@@ -127,7 +149,7 @@ fn days_stored_together_stay_separate() {
 /// Ingest order does not determine read order.
 #[test]
 fn days_come_back_oldest_first() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<JamStore>().unwrap();
     for offset in [2, 0, 1] {
         store
             .insert_day(day(offset), HOST, fetched_at(), &observations(1))
@@ -144,7 +166,7 @@ fn days_come_back_oldest_first() {
 
 #[test]
 fn a_day_cannot_be_stored_twice() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<JamStore>().unwrap();
     store
         .insert_day(day(0), HOST, fetched_at(), &observations(2))
         .expect("insert");
@@ -160,7 +182,7 @@ fn a_day_cannot_be_stored_twice() {
 /// A rejected insert must not leave rows behind.
 #[test]
 fn a_rejected_insert_leaves_the_archive_unchanged() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<JamStore>().unwrap();
     store
         .insert_day(day(0), HOST, fetched_at(), &observations(3))
         .expect("insert");
@@ -179,7 +201,7 @@ fn a_rejected_insert_leaves_the_archive_unchanged() {
 /// one never fetched.
 #[test]
 fn a_day_with_no_cells_is_still_stored() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<JamStore>().unwrap();
     store
         .insert_day(day(0), HOST, fetched_at(), &[])
         .expect("insert");
@@ -194,7 +216,7 @@ fn a_day_with_no_cells_is_still_stored() {
 /// insert's read-append-index sequence.
 #[test]
 fn days_inserted_from_two_threads_both_reach_the_archive() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<JamStore>().unwrap();
     let store = &store;
     std::thread::scope(|scope| {
         for offset in [0, 1] {
@@ -221,24 +243,12 @@ fn days_inserted_from_two_threads_both_reach_the_archive() {
 
 #[test]
 fn an_archive_reopens_with_its_days() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let path = dir.path().join(FILE_NAME);
-    {
-        let store = JamStore::open_or_create(&path).expect("create");
-        store
-            .insert_day(day(0), HOST, fetched_at(), &observations(4))
-            .expect("insert");
-    }
-    let reopened = JamStore::open_or_create(&path).expect("reopen");
-    assert_eq!(
-        reopened.observations(day(0)).expect("observations"),
-        Some(observations(4))
-    );
+    conformance::an_archive_reopens_with_its_days(&DAY_OPERATIONS, day(0));
 }
 
 #[test]
 fn a_stored_day_indexes_for_lookup() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<JamStore>().unwrap();
     store
         .insert_day(day(0), HOST, fetched_at(), &observations(4))
         .expect("insert");
@@ -255,36 +265,12 @@ fn a_stored_day_indexes_for_lookup() {
 #[case::coverage_start(NaiveDate::from_ymd_opt(2022, 2, 14))]
 #[case::far_future(NaiveDate::from_ymd_opt(2999, 1, 1))]
 fn any_date_round_trips_through_the_day_index(#[case] date: Option<NaiveDate>) {
-    let date = date.expect("date");
-    let (_dir, store) = store().unwrap();
-    store
-        .insert_day(date, HOST, fetched_at(), &observations(1))
-        .expect("insert");
-    assert_eq!(
-        store.days().expect("days").first().map(|stored| stored.day),
-        Some(date)
-    );
+    conformance::any_date_round_trips_through_the_day_index(&DAY_OPERATIONS, date.expect("date"));
 }
 
-/// An archive written by a newer build is rejected.
 #[test]
 fn a_newer_schema_is_rejected() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let path = dir.path().join(FILE_NAME);
-    JamStore::open_or_create(&path).expect("create");
-    {
-        let file = hdf5::File::open_rw(&path).expect("reopen");
-        let attr = file.attr(schema::SCHEMA_VERSION_ATTR).expect("attr");
-        attr.write_scalar(&(schema::CURRENT_SCHEMA_VERSION + 1))
-            .expect("bump");
-    }
-    let err = JamStore::open_or_create(&path).expect_err("reject");
-    assert!(
-        matches!(err, JamStoreError::SchemaTooNew { found, supported }
-            if found == schema::CURRENT_SCHEMA_VERSION + 1
-                && supported == schema::CURRENT_SCHEMA_VERSION),
-        "{err}"
-    );
+    conformance::a_newer_schema_is_rejected::<JamStore>();
 }
 
 /// Rows appended without an index entry, which is what an interrupted
@@ -387,7 +373,7 @@ fn deleting_days_before_a_cutoff_keeps_the_rest(
     #[case] cutoff_offset: i64,
     #[case] expected: Vec<NaiveDate>,
 ) {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<JamStore>().unwrap();
     for offset in 0..3 {
         let count = usize::try_from(offset).unwrap_or_default() + 1;
         store
@@ -421,25 +407,14 @@ fn deleting_days_before_a_cutoff_keeps_the_rest(
 
 #[test]
 fn deleting_every_day_empties_the_archive() {
-    let (_dir, store) = store().unwrap();
-    for offset in 0..3 {
-        store
-            .insert_day(day(offset), HOST, fetched_at(), &observations(2))
-            .expect("insert");
-    }
-
-    let removed = store.delete_all_days(None).expect("delete all");
-
-    assert_eq!(removed, 3);
-    assert!(store.days().expect("days").is_empty());
-    assert!(!store.contains(day(0)).expect("contains"));
+    conformance::deleting_every_day_empties_the_archive(&DAY_OPERATIONS, &[day(0), day(1), day(2)]);
 }
 
 /// A day deleted and fetched again is stored where the delete freed room for
 /// it, and reads back on its own.
 #[test]
 fn a_day_can_be_stored_again_after_it_was_deleted() {
-    let (_dir, store) = store().unwrap();
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<JamStore>().unwrap();
     store
         .insert_day(day(0), HOST, fetched_at(), &observations(4))
         .expect("insert");
@@ -462,32 +437,11 @@ fn a_day_can_be_stored_again_after_it_was_deleted() {
     );
 }
 
-/// A delete interrupted while the rows were moving leaves observations of two
-/// layouts mixed. The next open drops every day the archive holds.
-#[test]
-fn an_interrupted_delete_is_dropped_when_the_archive_is_opened_again() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join(FILE_NAME);
-    let store = JamStore::open_or_create(&path).unwrap();
-    for offset in 0..2 {
-        store
-            .insert_day(day(offset), HOST, fetched_at(), &observations(2))
-            .expect("insert");
-    }
-    drop(store);
-    day_archive::mark_delete_in_flight(&path, DAYS).expect("mark the delete");
-
-    let store = JamStore::open_or_create(&path).expect("open after the interruption");
-
-    assert!(store.days().expect("days").is_empty());
-    assert_eq!(store.observations(day(0)).expect("observations"), None);
-}
-
 /// Write access taken from an instance part-way through a delete must not
 /// discard its days behind the user's back. The archive reports what
-/// recovering costs, and a declined recovery leaves every day where it is.
+/// recovering costs before either choice is made.
 #[test]
-fn declining_recovery_leaves_the_interrupted_archive_as_it_was() {
+fn a_declined_recovery_keeps_the_interrupted_days_and_an_accepted_one_discards_them() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join(FILE_NAME);
     let store = JamStore::open_or_create(&path).expect("open");
@@ -536,32 +490,13 @@ fn declining_recovery_leaves_the_interrupted_archive_as_it_was() {
         .expect("observations"),
         4
     );
+
+    let store = JamStore::open_or_create(&path).expect("open accepting the recovery");
+    assert!(store.days().expect("days").is_empty());
+    assert_eq!(store.observations(day(0)).expect("observations"), None);
 }
 
-/// An archive without an interrupted delete has nothing to offer a choice
-/// about, and opens whichever choice it is given. Nor does one that has yet to
-/// be created.
 #[test]
 fn a_settled_archive_reports_no_interrupted_delete() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let path = dir.path().join(FILE_NAME);
-
-    assert_eq!(
-        ReadOnlyJamStore::interrupted_delete_at(&path).expect("before the archive exists"),
-        None
-    );
-    let store = JamStore::open_or_create(&path).expect("open");
-    store
-        .insert_day(day(0), HOST, fetched_at(), &observations(2))
-        .expect("insert");
-    drop(store);
-
-    assert_eq!(
-        ReadOnlyJamStore::interrupted_delete_at(&path).expect("a settled archive"),
-        None
-    );
-    let store =
-        JamStore::open_or_create_with_recovery_choice(&path, InterruptedDeleteRecovery::Decline)
-            .expect("a settled archive opens whatever the choice");
-    assert_eq!(store.days().expect("days").len(), 1);
+    conformance::a_settled_archive_reports_no_interrupted_delete(&DAY_OPERATIONS, day(0));
 }

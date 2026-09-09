@@ -4,7 +4,6 @@ use std::path::Path;
 
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use rstest::rstest;
-use tempfile::TempDir;
 
 use gt_hdf5_archive::day_index;
 use gt_hdf5_archive::prune::{
@@ -12,28 +11,23 @@ use gt_hdf5_archive::prune::{
 };
 use gt_hdf5_archive::{ReadOnlyDayArchive as _, WritableDayArchive as _};
 use gt_ionex::IonexProduct;
+use gt_ionex::calendar::COVERAGE_START;
 use gt_ionex::grid::{AxisDeclaration, GridAxis, GridPoint, LatitudeAxis, LongitudeAxis, MapGrid};
 use gt_ionex::maps::{GlobalIonosphereMaps, TecMap};
 use gt_ionex::tec::TotalElectronContent;
 use gt_ionex_store::{FILE_NAME, IonexStore, IonexStoreError, ReadOnlyIonexStore, schema};
+use gt_test_utils::day_archive::conformance::{self, StoredDayOperations};
 use gt_test_utils::day_archive::{self, ColumnName, GroupPath};
 use gt_types::{Latitude, Longitude};
 
 const HOST: &str = "https://sideshow.jpl.nasa.gov/pub/iono_daily";
-
-fn store() -> Result<(TempDir, IonexStore), String> {
-    let dir = tempfile::tempdir().map_err(|err| format!("temp dir: {err}"))?;
-    let store = IonexStore::open_or_create(&dir.path().join(FILE_NAME))
-        .map_err(|err| format!("open archive: {err}"))?;
-    Ok((dir, store))
-}
 
 fn day(offset: i64) -> NaiveDate {
     NaiveDate::from_ymd_opt(2024, 5, 10).unwrap_or_default() + TimeDelta::days(offset)
 }
 
 fn fetched_at() -> DateTime<Utc> {
-    DateTime::from_timestamp(1_784_505_600, 0).unwrap_or_default()
+    day_archive::fetched_at()
 }
 
 fn epoch(day: NaiveDate, hour: i64) -> DateTime<Utc> {
@@ -115,9 +109,38 @@ fn day_with_a_gap(day: NaiveDate) -> Result<GlobalIonosphereMaps, String> {
     ))
 }
 
+const DAY_OPERATIONS: StoredDayOperations<IonexStore, GlobalIonosphereMaps> = StoredDayOperations {
+    insert_a_day,
+    read_a_day,
+    indexed_days,
+};
+
+fn insert_a_day(store: &IonexStore, day: NaiveDate) -> Result<GlobalIonosphereMaps, String> {
+    let maps = published_day(day)?;
+    store
+        .insert_or_replace_day(day, HOST, fetched_at(), IonexProduct::Final, &maps)
+        .map_err(|err| format!("insert {day}: {err}"))?;
+    Ok(maps)
+}
+
+fn read_a_day(store: &IonexStore, day: NaiveDate) -> Result<Option<GlobalIonosphereMaps>, String> {
+    store
+        .day_maps(day)
+        .map_err(|err| format!("read {day}: {err}"))
+}
+
+fn indexed_days(store: &IonexStore) -> Result<Vec<NaiveDate>, String> {
+    Ok(store
+        .archived_days()
+        .map_err(|err| format!("archived days: {err}"))?
+        .into_iter()
+        .map(|archived| archived.day)
+        .collect())
+}
+
 #[test]
 fn a_day_of_published_maps_reads_back_exactly_as_it_was_stored() {
-    let (_dir, store) = store().expect("archive");
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<IonexStore>().expect("archive");
     let stored = published_day(day(0)).expect("a day of maps");
 
     store
@@ -131,7 +154,7 @@ fn a_day_of_published_maps_reads_back_exactly_as_it_was_stored() {
 /// A gap must come back a gap, never the fill the column holds in its place.
 #[test]
 fn a_gap_reads_back_as_a_gap_and_not_as_a_value() {
-    let (_dir, store) = store().expect("archive");
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<IonexStore>().expect("archive");
     let stored = day_with_a_gap(day(0)).expect("a day with a gap");
 
     store
@@ -165,7 +188,7 @@ fn a_gap_reads_back_as_a_gap_and_not_as_a_value() {
 /// interpolated value from the archive matches one from the file.
 #[test]
 fn the_grid_and_interval_survive_the_round_trip() {
-    let (_dir, store) = store().expect("archive");
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<IonexStore>().expect("archive");
     let stored = published_day(day(0)).expect("a day of maps");
 
     store
@@ -192,7 +215,7 @@ fn the_grid_and_interval_survive_the_round_trip() {
 /// fetch queue.
 #[test]
 fn an_unarchived_day_reads_back_as_nothing() {
-    let (_dir, store) = store().expect("archive");
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<IonexStore>().expect("archive");
     assert_eq!(store.day_maps(day(0)).expect("archive read"), None);
     assert!(!store.contains(day(0)).expect("archive read"));
     assert_eq!(store.archived_product(day(0)).expect("archive read"), None);
@@ -204,7 +227,7 @@ fn an_unarchived_day_reads_back_as_nothing() {
 #[case::a_settled_day(IonexProduct::Final)]
 #[case::an_earlier_estimate(IonexProduct::Rapid)]
 fn the_product_a_day_came_from_is_recorded(#[case] product: IonexProduct) {
-    let (_dir, store) = store().expect("archive");
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<IonexStore>().expect("archive");
     store
         .insert_or_replace_day(
             day(0),
@@ -225,7 +248,7 @@ fn the_product_a_day_came_from_is_recorded(#[case] product: IonexProduct) {
 /// The rapid maps of a day are replaced by the final ones, not appended to.
 #[test]
 fn storing_a_day_again_replaces_what_was_archived() {
-    let (_dir, store) = store().expect("archive");
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<IonexStore>().expect("archive");
     store
         .insert_or_replace_day(
             day(0),
@@ -257,7 +280,7 @@ fn storing_a_day_again_replaces_what_was_archived() {
 /// Days are listed oldest first with what each was fetched from and by whom.
 #[test]
 fn every_archived_day_is_listed_oldest_first() {
-    let (_dir, store) = store().expect("archive");
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<IonexStore>().expect("archive");
     for offset in [2, 0, 1] {
         let product = if offset == 1 {
             IonexProduct::Rapid
@@ -298,7 +321,7 @@ fn every_archived_day_is_listed_oldest_first() {
 /// Two days share the value columns, so each must read only its own rows.
 #[test]
 fn two_days_in_one_archive_keep_their_own_maps() {
-    let (_dir, store) = store().expect("archive");
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<IonexStore>().expect("archive");
     let first = published_day(day(0)).expect("a day of maps");
     let second = day_with_a_gap(day(1)).expect("a day with a gap");
     store
@@ -312,52 +335,29 @@ fn two_days_in_one_archive_keep_their_own_maps() {
     assert_eq!(store.day_maps(day(1)).expect("archive read"), Some(second));
 }
 
-/// The archive survives being closed and opened again, which is the whole
-/// point of keeping it.
 #[test]
-fn a_reopened_archive_still_holds_its_days() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let path = dir.path().join(FILE_NAME);
-    let stored = published_day(day(0)).expect("a day of maps");
-    {
-        let store = IonexStore::open_or_create(&path).expect("open");
-        store
-            .insert_or_replace_day(day(0), HOST, fetched_at(), IonexProduct::Final, &stored)
-            .expect("insert");
-    }
+fn an_archive_reopens_with_its_days() {
+    conformance::an_archive_reopens_with_its_days(&DAY_OPERATIONS, day(0));
+}
 
-    let store = IonexStore::open_or_create(&path).expect("reopen");
-    assert_eq!(store.day_maps(day(0)).expect("archive read"), Some(stored));
+#[rstest]
+#[case::before_epoch(NaiveDate::from_ymd_opt(1969, 12, 31))]
+#[case::the_map_coverage_start(Some(COVERAGE_START))]
+#[case::far_future(NaiveDate::from_ymd_opt(2999, 1, 1))]
+fn any_date_round_trips_through_the_day_index(#[case] date: Option<NaiveDate>) {
+    conformance::any_date_round_trips_through_the_day_index(&DAY_OPERATIONS, date.expect("date"));
 }
 
 #[test]
-fn an_archive_from_a_newer_schema_is_rejected() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let path = dir.path().join(FILE_NAME);
-    {
-        IonexStore::open_or_create(&path).expect("open");
-    }
-    {
-        let file = hdf5::File::open_rw(&path).expect("raw open");
-        file.attr(schema::SCHEMA_VERSION_ATTR)
-            .and_then(|attr| attr.write_scalar(&(schema::CURRENT_SCHEMA_VERSION + 1)))
-            .expect("bump the schema version");
-    }
-
-    match IonexStore::open_or_create(&path) {
-        Err(IonexStoreError::SchemaTooNew { found, supported }) => {
-            assert_eq!(found, schema::CURRENT_SCHEMA_VERSION + 1);
-            assert_eq!(supported, schema::CURRENT_SCHEMA_VERSION);
-        }
-        other => panic!("the newer archive opened: {other:?}"),
-    }
+fn a_newer_schema_is_rejected() {
+    conformance::a_newer_schema_is_rejected::<IonexStore>();
 }
 
 /// A file with no maps at all still records its grid, so reading it back does
 /// not fail on a day the producer published an empty file for.
 #[test]
 fn a_day_without_maps_still_records_its_grid() {
-    let (_dir, store) = store().expect("archive");
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<IonexStore>().expect("archive");
     let stored = GlobalIonosphereMaps::new(
         published_grid().expect("the grid"),
         TimeDelta::hours(2),
@@ -490,7 +490,7 @@ fn a_column_shorter_than_what_refers_to_it_is_reported(
 /// each map indexes its values.
 #[test]
 fn deleting_days_before_a_cutoff_keeps_the_maps_of_the_rest() {
-    let (_dir, store) = store().expect("archive");
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<IonexStore>().expect("archive");
     let deleted = published_day(day(0)).expect("a day of maps");
     let kept = day_with_a_gap(day(1)).expect("a day with a gap");
     let newest = published_day(day(2)).expect("a day of maps");
@@ -519,31 +519,14 @@ fn deleting_days_before_a_cutoff_keeps_the_maps_of_the_rest() {
 
 #[test]
 fn deleting_every_day_empties_the_archive() {
-    let (_dir, store) = store().expect("archive");
-    for offset in 0..2 {
-        store
-            .insert_or_replace_day(
-                day(offset),
-                HOST,
-                fetched_at(),
-                IonexProduct::Final,
-                &published_day(day(offset)).expect("a day of maps"),
-            )
-            .expect("insert");
-    }
-
-    let removed = store.delete_all_days(None).expect("delete all");
-
-    assert_eq!(removed, 2);
-    assert!(store.archived_days().expect("days").is_empty());
-    assert_eq!(store.day_maps(day(0)).expect("archive read"), None);
+    conformance::deleting_every_day_empties_the_archive(&DAY_OPERATIONS, &[day(0), day(1)]);
 }
 
 /// The product and grid a day was archived from sit in columns beside the day
 /// index, and move with it.
 #[test]
 fn the_columns_beside_the_day_index_move_with_the_days_that_stay() {
-    let (_dir, store) = store().expect("archive");
+    let (_dir, store) = day_archive::store_in_a_temp_dir::<IonexStore>().expect("archive");
     store
         .insert_or_replace_day(
             day(0),
@@ -573,10 +556,9 @@ const DAYS: GroupPath<'static> = GroupPath(schema::DAYS_GROUP);
 
 /// Write access taken from an instance part-way through a delete must not
 /// discard its days behind the user's back. The archive reports what
-/// recovering costs, a declined recovery leaves every day where it is, and an
-/// open that accepts the recovery still discards them.
+/// recovering costs before either choice is made.
 #[test]
-fn declining_recovery_leaves_the_interrupted_archive_as_it_was() {
+fn a_declined_recovery_keeps_the_interrupted_days_and_an_accepted_one_discards_them() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join(FILE_NAME);
     let store = IonexStore::open_or_create(&path).expect("open");
@@ -631,23 +613,7 @@ fn declining_recovery_leaves_the_interrupted_archive_as_it_was() {
     assert!(store.archived_days().expect("days").is_empty());
 }
 
-/// Nothing to recover, so the choice does not matter and inspection reports
-/// none.
 #[test]
 fn a_settled_archive_reports_no_interrupted_delete() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let path = dir.path().join(FILE_NAME);
-
-    assert_eq!(
-        ReadOnlyIonexStore::interrupted_delete_at(&path).expect("before the archive exists"),
-        None
-    );
-    IonexStore::open_or_create(&path).expect("create");
-
-    assert_eq!(
-        ReadOnlyIonexStore::interrupted_delete_at(&path).expect("a settled archive"),
-        None
-    );
-    IonexStore::open_or_create_with_recovery_choice(&path, InterruptedDeleteRecovery::Decline)
-        .expect("a settled archive opens whatever the choice");
+    conformance::a_settled_archive_reports_no_interrupted_delete(&DAY_OPERATIONS, day(0));
 }

@@ -54,6 +54,8 @@ pub enum JamStoreError {
     DeclinedRecovery(#[from] DeclinedRecovery),
 }
 
+gt_hdf5_archive::impl_day_archive_error!(JamStoreError);
+
 impl From<ArchiveError> for JamStoreError {
     fn from(err: ArchiveError) -> Self {
         match err {

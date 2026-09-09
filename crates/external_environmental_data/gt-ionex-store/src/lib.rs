@@ -61,6 +61,8 @@ pub enum IonexStoreError {
     DeclinedRecovery(#[from] DeclinedRecovery),
 }
 
+gt_hdf5_archive::impl_day_archive_error!(IonexStoreError);
+
 impl From<ArchiveError> for IonexStoreError {
     fn from(err: ArchiveError) -> Self {
         match err {

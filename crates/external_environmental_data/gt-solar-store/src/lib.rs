@@ -54,6 +54,8 @@ pub enum SolarStoreError {
     DeclinedRecovery(#[from] DeclinedRecovery),
 }
 
+gt_hdf5_archive::impl_day_archive_error!(SolarStoreError);
+
 impl From<ArchiveError> for SolarStoreError {
     fn from(err: ArchiveError) -> Self {
         match err {

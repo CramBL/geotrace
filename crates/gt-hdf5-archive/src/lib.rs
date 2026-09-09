@@ -19,10 +19,14 @@ pub mod day_archive;
 pub mod day_index;
 mod open_retry;
 pub mod prune;
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
 mod usage;
 
 pub use archive_file::{ArchiveFile, FileSpaceMigration, OpenArchive};
-pub use day_archive::{ArchiveFileBeingOpened, ReadOnlyDayArchive, WritableDayArchive};
+pub use day_archive::{
+    ArchiveFileBeingOpened, DayArchiveError, ReadOnlyDayArchive, SchemaVersions, WritableDayArchive,
+};
 pub use usage::{ArchiveUsage, ArchivedDaySpan};
 
 /// Why an archive access failed. Each archive converts this into its own
