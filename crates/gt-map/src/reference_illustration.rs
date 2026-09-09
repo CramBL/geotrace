@@ -22,11 +22,13 @@ use crate::test_util;
 use crate::transform::MercTransform;
 
 /// Where the rendered TEC map lands, resolved from this crate's manifest dir.
-const TEC_ASSET_PATH: &str = "../gt-ionex/assets/tec_map_2024_05_10_gannon_storm.png";
+const TEC_ASSET_PATH: &str =
+    "../external_environmental_data/gt-ionex/assets/tec_map_2024_05_10_gannon_storm.png";
 
 /// Where the rendered interference map lands, resolved from this crate's
 /// manifest dir.
-const INTERFERENCE_ASSET_PATH: &str = "../gt-jam/assets/interference_map_2026_07_20.png";
+const INTERFERENCE_ASSET_PATH: &str =
+    "../external_environmental_data/gt-jam/assets/interference_map_2026_07_20.png";
 
 /// Zoom at which the world spans `256 * 2^2 = 1024` pixels, which is the
 /// canvas width below. The canvas height then covers 66 degrees of latitude

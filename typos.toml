@@ -3,9 +3,9 @@ extend-exclude = [
     "sdk/python/geotrace-py/target",
     "tests/fixtures/demo_trip/markers.csv",
     # Captured interference datasets: H3 cell indices are hex strings, not words
-    "crates/gt-jam/tests/fixtures/*.csv",
+    "crates/external_environmental_data/gt-jam/tests/fixtures/*.csv",
     # Captured IONEX maps: four-letter IGS station codes are not words
-    "crates/gt-ionex/tests/fixtures/*",
+    "crates/external_environmental_data/gt-ionex/tests/fixtures/*",
 ]
 
 [default.extend-words]

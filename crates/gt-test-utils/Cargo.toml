@@ -36,7 +36,7 @@ geo.workspace = true
 geo-types.workspace = true
 geotrace-sdk = { path = "../../sdk/rust/geotrace-sdk" }
 gt-hdf5-archive = { path = "../gt-hdf5-archive", optional = true }
-gt-ionex = { path = "../gt-ionex", optional = true }
+gt-ionex = { path = "../external_environmental_data/gt-ionex", optional = true }
 gt-pending-writes = { path = "../gt-pending-writes" }
 gt-track-builder = { path = "../gt-track-builder", optional = true }
 gt-types = { path = "../gt-types", features = ["fixtures"] }

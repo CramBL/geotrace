@@ -1,0 +1,44 @@
+[package]
+name = "gt-jam"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+doctest = false
+
+[features]
+# Builds `gt_jam::test_util`, which reads the captured datasets under
+# `tests/fixtures/`. A normal build leaves it off.
+test-util = ["dep:serde_json"]
+
+[dependencies]
+chrono.workspace = true
+gt-fetch = { path = "../../gt-fetch" }
+gt-types = { path = "../../gt-types" }
+gt-ui-types = { path = "../../gt-ui-types" }
+h3o.workspace = true
+parking_lot.workspace = true
+# Reads the capture manifest, for `test_util` alone.
+serde_json = { workspace = true, optional = true }
+strum.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# Responds to a fetch pipeline's requests from a script.
+gt-fetch = { path = "../../gt-fetch", features = ["test-util"] }
+# Builds `test_util`, which the integration test binaries read the
+# captures through.
+gt-jam = { path = ".", features = ["test-util"] }
+insta.workspace = true
+proptest.workspace = true
+# The fixture-capture example fetches from the host directly, not through
+# gt_fetch::Transport.
+reqwest.workspace = true
+rstest.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

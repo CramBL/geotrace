@@ -43,35 +43,37 @@ _CONSTRUCTS = (
 _EVERY_CONSTRUCT = frozenset(construct.name for construct in _CONSTRUCTS)
 _URL_LITERAL_ONLY = frozenset({"url-literal"})
 
+_ENVIRONMENTAL_DATA_DIR = "crates/external_environmental_data"
+
 _ALLOWED: dict[str, frozenset[str]] = {
     # The seven capture tools. Requesting the live service is their whole job:
     # `just ionex-fixtures` and its siblings run them by hand, and the
     # fixture-freshness workflow runs them on trunk.
-    "crates/gt-flare/examples/fetch_flare_fixtures.rs": _EVERY_CONSTRUCT,
-    "crates/gt-ionex/examples/fetch_ionex_fixtures.rs": _EVERY_CONSTRUCT,
-    "crates/gt-ionex/examples/fetch_node_series_fixture.rs": _EVERY_CONSTRUCT,
-    "crates/gt-jam/examples/fetch_jam_fixtures.rs": _EVERY_CONSTRUCT,
+    f"{_ENVIRONMENTAL_DATA_DIR}/gt-flare/examples/fetch_flare_fixtures.rs": _EVERY_CONSTRUCT,
+    f"{_ENVIRONMENTAL_DATA_DIR}/gt-ionex/examples/fetch_ionex_fixtures.rs": _EVERY_CONSTRUCT,
+    f"{_ENVIRONMENTAL_DATA_DIR}/gt-ionex/examples/fetch_node_series_fixture.rs": _EVERY_CONSTRUCT,
+    f"{_ENVIRONMENTAL_DATA_DIR}/gt-jam/examples/fetch_jam_fixtures.rs": _EVERY_CONSTRUCT,
     "crates/gt-map/examples/fetch_map_tile_fixtures.rs": _EVERY_CONSTRUCT,
-    "crates/gt-solar/examples/fetch_solar_fixtures.rs": _EVERY_CONSTRUCT,
+    f"{_ENVIRONMENTAL_DATA_DIR}/gt-solar/examples/fetch_solar_fixtures.rs": _EVERY_CONSTRUCT,
     "crates/gt-snap/examples/fetch_snap_fixtures.rs": _EVERY_CONSTRUCT,
     # The CDDIS verification tool, run by hand through `just cddis-verify`:
     # the archive it addresses serves files to callers holding a per-user
     # Earthdata token, which CI has none of.
-    "crates/gt-ionex/examples/verify_cddis_mirror.rs": _EVERY_CONSTRUCT,
+    f"{_ENVIRONMENTAL_DATA_DIR}/gt-ionex/examples/verify_cddis_mirror.rs": _EVERY_CONSTRUCT,
     # The live map-matching API smoke test. Every test in it is `#[ignore]`d
     # and runs only under `just snap-live-test`.
     "crates/gt-snap/tests/live_api.rs": _EVERY_CONSTRUCT,
     # Host constants the archive tests build expected URLs from. The requests
     # go to a canned transport that responds from a committed fixture.
-    "crates/gt-flare-store/tests/archive.rs": _URL_LITERAL_ONLY,
+    f"{_ENVIRONMENTAL_DATA_DIR}/gt-flare-store/tests/archive.rs": _URL_LITERAL_ONLY,
     "crates/gt-hdf5-archive/tests/columns.rs": _URL_LITERAL_ONLY,
     "crates/gt-hdf5-archive/tests/file_space_migration.rs": _URL_LITERAL_ONLY,
     "crates/gt-hdf5-archive/tests/prune.rs": _URL_LITERAL_ONLY,
-    "crates/gt-ionex-store/tests/archive.rs": _URL_LITERAL_ONLY,
-    "crates/gt-jam-store/tests/archive.rs": _URL_LITERAL_ONLY,
-    "crates/gt-jam-store/tests/captured_day.rs": _URL_LITERAL_ONLY,
-    "crates/gt-jam-store/tests/file_space_migration.rs": _URL_LITERAL_ONLY,
-    "crates/gt-solar-store/tests/archive.rs": _URL_LITERAL_ONLY,
+    f"{_ENVIRONMENTAL_DATA_DIR}/gt-ionex-store/tests/archive.rs": _URL_LITERAL_ONLY,
+    f"{_ENVIRONMENTAL_DATA_DIR}/gt-jam-store/tests/archive.rs": _URL_LITERAL_ONLY,
+    f"{_ENVIRONMENTAL_DATA_DIR}/gt-jam-store/tests/captured_day.rs": _URL_LITERAL_ONLY,
+    f"{_ENVIRONMENTAL_DATA_DIR}/gt-jam-store/tests/file_space_migration.rs": _URL_LITERAL_ONLY,
+    f"{_ENVIRONMENTAL_DATA_DIR}/gt-solar-store/tests/archive.rs": _URL_LITERAL_ONLY,
     # A URL parsed into its host part, asserted against the expected result.
     "crates/gt-snap/tests/wire_format.rs": _URL_LITERAL_ONLY,
 }

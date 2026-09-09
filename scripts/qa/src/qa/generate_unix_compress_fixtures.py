@@ -19,7 +19,7 @@ from pathlib import Path
 from qa._check import repo_root
 from qa.unix_compress import compress, decompressed_by_gzip
 
-FIXTURE_DIR = Path("crates/gt-ionex/tests/fixtures")
+FIXTURE_DIR = Path("crates/external_environmental_data/gt-ionex/tests/fixtures")
 
 OUTPUT_DIR = FIXTURE_DIR / "unix_compress"
 

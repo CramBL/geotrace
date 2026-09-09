@@ -32,12 +32,18 @@ eula = false
 
 [workspace]
 members = [
+    "crates/external_environmental_data/gt-flare",
+    "crates/external_environmental_data/gt-flare-store",
+    "crates/external_environmental_data/gt-ionex",
+    "crates/external_environmental_data/gt-ionex-store",
+    "crates/external_environmental_data/gt-jam",
+    "crates/external_environmental_data/gt-jam-store",
+    "crates/external_environmental_data/gt-solar",
+    "crates/external_environmental_data/gt-solar-store",
     "crates/gt-analysis",
     "crates/gt-egui-mipmap",
     "crates/gt-fetch",
     "crates/gt-filter",
-    "crates/gt-flare",
-    "crates/gt-flare-store",
     "crates/gt-fmt",
     "crates/gt-geo-math",
     "crates/gt-hdf5-archive",
@@ -47,10 +53,6 @@ members = [
     "crates/gt-history-types",
     "crates/gt-icon-tessellate",
     "crates/gt-instance-lock",
-    "crates/gt-ionex",
-    "crates/gt-ionex-store",
-    "crates/gt-jam",
-    "crates/gt-jam-store",
     "crates/gt-loaded-files",
     "crates/gt-loader",
     "crates/gt-log-view",
@@ -64,8 +66,6 @@ members = [
     "crates/gt-side-panel",
     "crates/gt-sky",
     "crates/gt-snap",
-    "crates/gt-solar",
-    "crates/gt-solar-store",
     "crates/gt-store",
     "crates/gt-test-utils",
     "crates/gt-track-builder",
@@ -312,11 +312,11 @@ env_logger.workspace = true
 geotrace-sdk-units = { path = "sdk/rust/geotrace-sdk-units" }
 gt-fetch = { path = "crates/gt-fetch" }
 gt-filter = { path = "crates/gt-filter" }
-gt-flare = { path = "crates/gt-flare" }
+gt-flare = { path = "crates/external_environmental_data/gt-flare" }
 gt-fmt = { path = "crates/gt-fmt" }
 gt-instance-lock = { path = "crates/gt-instance-lock" }
-gt-ionex = { path = "crates/gt-ionex" }
-gt-jam = { path = "crates/gt-jam" }
+gt-ionex = { path = "crates/external_environmental_data/gt-ionex" }
+gt-jam = { path = "crates/external_environmental_data/gt-jam" }
 gt-loaded-files = { path = "crates/gt-loaded-files" }
 gt-loader = { path = "crates/gt-loader" }
 gt-log-view = { path = "crates/gt-log-view" }
@@ -329,7 +329,7 @@ gt-query-run = { path = "crates/gt-query-run" }
 gt-side-panel = { path = "crates/gt-side-panel" }
 gt-sky = { path = "crates/gt-sky" }
 gt-snap = { path = "crates/gt-snap" }
-gt-solar = { path = "crates/gt-solar" }
+gt-solar = { path = "crates/external_environmental_data/gt-solar" }
 gt-store = { path = "crates/gt-store" }
 gt-track-builder = { path = "crates/gt-track-builder" }
 gt-types = { path = "crates/gt-types" }
@@ -366,7 +366,7 @@ geotrace-sdk = { path = "sdk/rust/geotrace-sdk" }
 # Responds to a fetch pipeline's requests from a script.
 gt-fetch = { path = "crates/gt-fetch", features = ["test-util"] }
 # Defines `schema::DAYS_GROUP`. A test marks an interrupted delete in that group.
-gt-jam-store = { path = "crates/gt-jam-store" }
+gt-jam-store = { path = "crates/external_environmental_data/gt-jam-store" }
 gt-test-utils = { path = "crates/gt-test-utils", features = [
     "archive",
     "ionex",

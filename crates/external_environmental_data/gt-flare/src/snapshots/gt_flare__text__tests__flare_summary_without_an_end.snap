@@ -1,0 +1,10 @@
+---
+source: crates/external_environmental_data/gt-flare/src/text.rs
+expression: lines
+---
+[
+    "C5.0 solar flare",
+    "Below R1",
+    "Peak: 2024-05-09 09:13 UTC",
+    "08:45 – end not published",
+]
