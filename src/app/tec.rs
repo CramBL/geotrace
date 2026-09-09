@@ -719,18 +719,9 @@ mod tests {
     use gt_store::Store;
     use gt_test_utils::{ionex_fixtures, pending_writes};
 
+    use crate::app::test_util::day_archive;
+
     use super::*;
-
-    fn at(year: i32, month: u32, day: u32, hour: u32) -> DateTime<Utc> {
-        NaiveDate::from_ymd_opt(year, month, day)
-            .and_then(|date| date.and_hms_opt(hour, 0, 0))
-            .map(|naive| naive.and_utc())
-            .unwrap_or_default()
-    }
-
-    fn day(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
-    }
 
     /// Column the record label starts at.
     const LABEL_COLUMN: usize = 60;
@@ -864,7 +855,7 @@ mod tests {
     #[test]
     fn a_day_index_read_that_failed_on_another_process_is_run_again_and_finds_the_days() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        archive_day(&store, day(2024, 5, 10), IonexProduct::Final);
+        archive_day(&store, day_archive::day(2024, 5, 10), IonexProduct::Final);
         let failed = scheduler.day_index_read.record_read(
             &scheduler.ctx,
             Err::<BTreeSet<NaiveDate>, _>(IonexStoreError::HeldByAnotherProcess),
@@ -880,7 +871,10 @@ mod tests {
     #[test]
     fn a_scheduler_without_an_archive_queues_nothing() {
         let mut scheduler = scheduler_without_archive();
-        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17)));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(2024, 5, 10, 8),
+            day_archive::at(2024, 5, 10, 17),
+        ));
         assert_eq!(scheduler.days.queued(), 0);
         assert!(!scheduler.days.is_fetching());
         assert!(scheduler.days.failures().is_empty());
@@ -891,7 +885,10 @@ mod tests {
     #[test]
     fn a_day_before_coverage_is_never_queued() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        scheduler.request_days_for(TimeRange::new(at(1970, 1, 1, 0), at(1970, 1, 1, 1)));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(1970, 1, 1, 0),
+            day_archive::at(1970, 1, 1, 1),
+        ));
         assert_eq!(scheduler.days.queued(), 0);
         assert!(!scheduler.days.is_fetching());
     }
@@ -910,12 +907,18 @@ mod tests {
     #[test]
     fn a_day_archived_from_the_final_product_is_not_requested_again() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        archive_day(&store, day(2024, 5, 10), IonexProduct::Final);
+        archive_day(&store, day_archive::day(2024, 5, 10), IonexProduct::Final);
 
-        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17)));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(2024, 5, 10, 8),
+            day_archive::at(2024, 5, 10, 17),
+        ));
 
         assert!(
-            !scheduler.days.requested_days().contains(&day(2024, 5, 10)),
+            !scheduler
+                .days
+                .requested_days()
+                .contains(&day_archive::day(2024, 5, 10)),
             "the archived recording day stayed off the queue"
         );
     }
@@ -926,29 +929,32 @@ mod tests {
     #[test]
     fn a_recording_day_queues_the_quiet_time_window_before_it() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        archive_day(&store, day(2024, 5, 3), IonexProduct::Final);
+        archive_day(&store, day_archive::day(2024, 5, 3), IonexProduct::Final);
 
-        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17)));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(2024, 5, 10, 8),
+            day_archive::at(2024, 5, 10, 17),
+        ));
 
         let requested = scheduler.days.requested_days();
         assert!(
-            requested.contains(&day(2024, 4, 13)),
+            requested.contains(&day_archive::day(2024, 4, 13)),
             "the first day of the window"
         );
         assert!(
-            requested.contains(&day(2024, 5, 9)),
+            requested.contains(&day_archive::day(2024, 5, 9)),
             "the last day of the window"
         );
         assert!(
-            !requested.contains(&day(2024, 4, 12)),
+            !requested.contains(&day_archive::day(2024, 4, 12)),
             "a day before the window"
         );
         assert!(
-            !requested.contains(&day(2024, 5, 11)),
+            !requested.contains(&day_archive::day(2024, 5, 11)),
             "a day after the recording"
         );
         assert!(
-            !requested.contains(&day(2024, 5, 3)),
+            !requested.contains(&day_archive::day(2024, 5, 3)),
             "a day the archive already holds"
         );
         assert_eq!(
@@ -968,8 +974,8 @@ mod tests {
         let recorded = calendar::COVERAGE_START + TimeDelta::days(5);
 
         scheduler.request_days_for(TimeRange::new(
-            at(recorded.year(), recorded.month(), recorded.day(), 8),
-            at(recorded.year(), recorded.month(), recorded.day(), 17),
+            day_archive::at(recorded.year(), recorded.month(), recorded.day(), 8),
+            day_archive::at(recorded.year(), recorded.month(), recorded.day(), 17),
         ));
 
         assert_eq!(
@@ -986,9 +992,12 @@ mod tests {
     #[test]
     fn a_day_archived_from_the_rapid_product_is_requested_again() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        archive_day(&store, day(2024, 5, 10), IonexProduct::Rapid);
+        archive_day(&store, day_archive::day(2024, 5, 10), IonexProduct::Rapid);
 
-        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17)));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(2024, 5, 10, 8),
+            day_archive::at(2024, 5, 10, 17),
+        ));
         assert!(
             scheduler.days.is_fetching(),
             "the archived day is dispatched"
@@ -1011,7 +1020,10 @@ mod tests {
     #[test]
     fn a_day_is_queued_at_most_once() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        let span = TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17));
+        let span = TimeRange::new(
+            day_archive::at(2024, 5, 10, 8),
+            day_archive::at(2024, 5, 10, 17),
+        );
         scheduler.request_days_for(span);
         let after_first = scheduler.days.requested_days().len();
         scheduler.request_days_for(span);
@@ -1023,7 +1035,10 @@ mod tests {
     #[test]
     fn an_overlong_recording_queues_nothing() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        scheduler.request_days_for(TimeRange::new(at(2024, 4, 1, 0), at(2024, 5, 10, 0)));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(2024, 4, 1, 0),
+            day_archive::at(2024, 5, 10, 0),
+        ));
         assert_eq!(scheduler.days.queued(), 0);
         assert!(scheduler.days.requested_days().is_empty());
     }
@@ -1036,9 +1051,12 @@ mod tests {
     fn changing_the_mirror_list_drops_the_queue_and_its_failures(#[case] changed: &[&str]) {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.set_mirrors(&mirrors(&[DEFAULT_BASE_URL, "https://mirror.example"]));
-        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 11, 17)));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(2024, 5, 10, 8),
+            day_archive::at(2024, 5, 11, 17),
+        ));
         scheduler.days.report_failure(
-            day(2024, 5, 10),
+            day_archive::day(2024, 5, 10),
             "HTTP 500 Internal Server Error".to_owned(),
         );
 
@@ -1058,9 +1076,12 @@ mod tests {
     #[test]
     fn changing_the_earthdata_token_drops_the_queue_and_its_failures() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 11, 17)));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(2024, 5, 10, 8),
+            day_archive::at(2024, 5, 11, 17),
+        ));
         scheduler.days.report_failure(
-            day(2024, 5, 10),
+            day_archive::day(2024, 5, 10),
             format!("final: {}", gt_ionex::text::MIRROR_SKIPPED_WITHOUT_TOKEN),
         );
 
@@ -1077,7 +1098,10 @@ mod tests {
     #[test]
     fn setting_the_same_earthdata_token_changes_nothing() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17)));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(2024, 5, 10, 8),
+            day_archive::at(2024, 5, 10, 17),
+        ));
         let seen = scheduler.days.requested_days().len();
 
         scheduler.set_earthdata_token(None);
@@ -1100,7 +1124,7 @@ mod tests {
             &writable(&store),
             &MirrorList::single(gt_ionex::Mirror::publishing(MirrorLayout::Cddis)),
             None,
-            day(2024, 5, 10),
+            day_archive::day(2024, 5, 10),
         );
 
         match message {
@@ -1120,7 +1144,10 @@ mod tests {
     #[test]
     fn setting_the_same_mirror_list_changes_nothing() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17)));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(2024, 5, 10, 8),
+            day_archive::at(2024, 5, 10, 17),
+        ));
         let seen = scheduler.days.requested_days().len();
 
         scheduler.set_mirrors(&MirrorList::default());
@@ -1136,7 +1163,7 @@ mod tests {
             .tx
             .send(
                 UnarchivedDay::failed(
-                    day(2024, 5, 10),
+                    day_archive::day(2024, 5, 10),
                     "final: HTTP 500 Internal Server Error".to_owned(),
                 )
                 .into(),
@@ -1147,7 +1174,7 @@ mod tests {
         assert_eq!(
             scheduler.days.failures(),
             [DayFailure {
-                day: day(2024, 5, 10),
+                day: day_archive::day(2024, 5, 10),
                 detail: "final: HTTP 500 Internal Server Error".to_owned(),
             }]
         );
@@ -1158,7 +1185,7 @@ mod tests {
     #[test]
     fn an_ingested_day_archives_its_maps_the_product_and_the_mirror() {
         let (_dir, store) = archive();
-        let ingested = day(2024, 5, 10);
+        let ingested = day_archive::day(2024, 5, 10);
         let transport = ScriptedTransport::always(Ok(BytesResponse {
             status: 200,
             body: gzipped(&published_file()),
@@ -1200,7 +1227,7 @@ mod tests {
     #[test]
     fn an_ingested_day_reads_back_as_the_file_it_came_from() {
         let (_dir, store) = archive();
-        let ingested = day(2024, 5, 10);
+        let ingested = day_archive::day(2024, 5, 10);
         let transport = ScriptedTransport::always(Ok(BytesResponse {
             status: 200,
             body: gzipped(&published_file()),
@@ -1223,7 +1250,7 @@ mod tests {
             maps.total_electron_content_at(
                 gt_types::Latitude::new(87.5),
                 gt_types::Longitude::new(-180.0),
-                at(2024, 5, 10, 0),
+                day_archive::at(2024, 5, 10, 0),
             )
             .map(gt_ionex::tec::TotalElectronContent::tecu),
             Some(10.0),
@@ -1235,7 +1262,7 @@ mod tests {
     #[test]
     fn ingesting_a_day_twice_replaces_what_was_archived() {
         let (_dir, store) = archive();
-        let ingested = day(2024, 5, 10);
+        let ingested = day_archive::day(2024, 5, 10);
         let transport = ScriptedTransport::always(Ok(BytesResponse {
             status: 200,
             body: gzipped(&published_file()),
@@ -1268,10 +1295,16 @@ mod tests {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.pending_writes = pending_writes;
 
-        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17)));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(2024, 5, 10, 8),
+            day_archive::at(2024, 5, 10, 17),
+        ));
 
         assert!(
-            scheduler.days.requested_days().contains(&day(2024, 5, 10)),
+            scheduler
+                .days
+                .requested_days()
+                .contains(&day_archive::day(2024, 5, 10)),
             "the day left the queue"
         );
         assert!(!scheduler.days.is_fetching());
@@ -1302,7 +1335,7 @@ mod tests {
                 .expect("an owner session opens the archive writable"),
             &publishing_host(),
             None,
-            day(2024, 5, 10),
+            day_archive::day(2024, 5, 10),
         );
 
         let MapDayMessage::Unarchived(UnarchivedDay::Rejected { rejection, .. }) = message else {
@@ -1326,7 +1359,7 @@ mod tests {
             &writable(&store),
             &publishing_host(),
             None,
-            day(2024, 5, 10),
+            day_archive::day(2024, 5, 10),
         );
 
         assert!(matches!(
@@ -1339,7 +1372,7 @@ mod tests {
     #[test]
     fn a_day_the_second_mirror_served_is_archived_under_that_mirror() {
         let (_dir, store) = archive();
-        let ingested = day(2024, 5, 10);
+        let ingested = day_archive::day(2024, 5, 10);
         let transport = ScriptedTransport::by_url_prefix(UrlPrefixResponses {
             prefix: "https://second.example".to_owned(),
             matching: Ok(BytesResponse {
@@ -1397,7 +1430,7 @@ mod tests {
             &writable(&store),
             &mirrors(&["https://first.example", "https://second.example"]),
             None,
-            day(2024, 5, 10),
+            day_archive::day(2024, 5, 10),
         );
 
         match message {
@@ -1420,15 +1453,16 @@ mod tests {
     #[test]
     fn a_backfill_queues_the_days_the_refresh_rule_wants() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        archive_day(&store, day(2024, 5, 10), IonexProduct::Final);
-        archive_day(&store, day(2024, 5, 11), IonexProduct::Rapid);
+        archive_day(&store, day_archive::day(2024, 5, 10), IonexProduct::Final);
+        archive_day(&store, day_archive::day(2024, 5, 11), IonexProduct::Rapid);
 
-        let queued = scheduler.backfill(day(2024, 5, 10), day(2024, 5, 12));
+        let queued =
+            scheduler.backfill(day_archive::day(2024, 5, 10), day_archive::day(2024, 5, 12));
 
         assert_eq!(queued, Some(2), "the rapid day and the unarchived one");
         assert_eq!(
             scheduler.days.fetch_status().fetching,
-            Some(day(2024, 5, 11)),
+            Some(day_archive::day(2024, 5, 11)),
             "the day archived from the settled product is never requested"
         );
     }
@@ -1439,11 +1473,15 @@ mod tests {
     fn a_fully_archived_range_queues_nothing() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         for offset in 10..=12 {
-            archive_day(&store, day(2024, 5, offset), IonexProduct::Final);
+            archive_day(
+                &store,
+                day_archive::day(2024, 5, offset),
+                IonexProduct::Final,
+            );
         }
 
         assert_eq!(
-            scheduler.backfill(day(2024, 5, 10), day(2024, 5, 12)),
+            scheduler.backfill(day_archive::day(2024, 5, 10), day_archive::day(2024, 5, 12)),
             Some(0)
         );
         assert_eq!(scheduler.days.backfill_progress(), None);
@@ -1454,7 +1492,7 @@ mod tests {
     fn a_backfill_before_coverage_queues_nothing() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         assert_eq!(
-            scheduler.backfill(day(1970, 1, 1), day(2008, 11, 18)),
+            scheduler.backfill(day_archive::day(1970, 1, 1), day_archive::day(2008, 11, 18)),
             Some(0)
         );
         assert_eq!(scheduler.days.backfill_progress(), None);
@@ -1465,26 +1503,29 @@ mod tests {
     fn a_backfill_without_an_archive_reports_no_archive() {
         let mut scheduler = scheduler_without_archive();
         assert!(!scheduler.archive_available());
-        assert_eq!(scheduler.backfill(day(2024, 5, 10), day(2024, 5, 12)), None);
+        assert_eq!(
+            scheduler.backfill(day_archive::day(2024, 5, 10), day_archive::day(2024, 5, 12)),
+            None
+        );
         assert_eq!(scheduler.days.backfill_progress(), None);
     }
 
     /// Every outcome retires its day, and the last one ends the backfill.
     #[rstest]
     #[case::stored(MapDayMessage::Stored {
-        day: day(2024, 5, 10),
+        day: day_archive::day(2024, 5, 10),
         mirror: MirrorBaseUrl::new(DEFAULT_BASE_URL),
         product: IonexProduct::Final,
         map_count: 13,
         skipped: Vec::new(),
     })]
-    #[case::failed(UnarchivedDay::failed(day(2024, 5, 10), "final: HTTP 500 Internal Server Error".to_owned()).into())]
-    #[case::rejected(UnarchivedDay::rejected(day(2024, 5, 10), WriteRejection::ShuttingDown).into())]
+    #[case::failed(UnarchivedDay::failed(day_archive::day(2024, 5, 10), "final: HTTP 500 Internal Server Error".to_owned()).into())]
+    #[case::rejected(UnarchivedDay::rejected(day_archive::day(2024, 5, 10), WriteRejection::ShuttingDown).into())]
     fn progress_advances_on_every_outcome(#[case] message: MapDayMessage) {
         let mut scheduler = scheduler_without_archive();
         scheduler
             .days
-            .queue_backfill_of(&[day(2024, 5, 10), day(2024, 5, 11)]);
+            .queue_backfill_of(&[day_archive::day(2024, 5, 10), day_archive::day(2024, 5, 11)]);
         assert_eq!(
             scheduler.days.backfill_progress(),
             Some(BackfillProgress { done: 0, total: 2 })
@@ -1504,7 +1545,7 @@ mod tests {
     #[test]
     fn cancelling_releases_every_queued_day_but_the_one_in_flight() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        let (in_flight, queued) = (day(2024, 5, 10), day(2024, 5, 11));
+        let (in_flight, queued) = (day_archive::day(2024, 5, 10), day_archive::day(2024, 5, 11));
         scheduler.days.queue_backfill_of(&[in_flight, queued]);
         assert_eq!(scheduler.days.take_next_day(), Some(in_flight));
 
@@ -1527,16 +1568,19 @@ mod tests {
     #[test]
     fn the_status_reports_the_queue_and_the_archived_recording_days() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        archive_day(&store, day(2024, 5, 10), IonexProduct::Final);
+        archive_day(&store, day_archive::day(2024, 5, 10), IonexProduct::Final);
 
-        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 11, 17)));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(2024, 5, 10, 8),
+            day_archive::at(2024, 5, 11, 17),
+        ));
 
         // The two recording days' windows run from 13 April to 9 May, 27 days
         // behind the recording day in flight.
         assert_eq!(
             scheduler.days.fetch_status(),
             DayFetchStatus {
-                fetching: Some(day(2024, 5, 11)),
+                fetching: Some(day_archive::day(2024, 5, 11)),
                 queued: 27,
                 recording_days: ArchivedDayCount {
                     days: 2,
@@ -1558,7 +1602,10 @@ mod tests {
     #[test]
     fn a_day_outside_coverage_is_no_recording_day() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        scheduler.request_days_for(TimeRange::new(at(1970, 1, 1, 0), at(1970, 1, 1, 1)));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(1970, 1, 1, 0),
+            day_archive::at(1970, 1, 1, 1),
+        ));
 
         assert_eq!(scheduler.days.fetch_status().recording_days.days, 0);
     }
@@ -1567,12 +1614,14 @@ mod tests {
     #[test]
     fn archiving_a_day_covers_the_recording_day_it_belongs_to() {
         let mut scheduler = scheduler_without_archive();
-        scheduler.days.await_recording_day(day(2024, 5, 10));
+        scheduler
+            .days
+            .await_recording_day(day_archive::day(2024, 5, 10));
 
         scheduler
             .tx
             .send(MapDayMessage::Stored {
-                day: day(2024, 5, 10),
+                day: day_archive::day(2024, 5, 10),
                 mirror: MirrorBaseUrl::new(DEFAULT_BASE_URL),
                 product: IonexProduct::Final,
                 map_count: 13,
@@ -1589,7 +1638,10 @@ mod tests {
     #[test]
     fn a_queued_day_is_dispatched() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17)));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(2024, 5, 10, 8),
+            day_archive::at(2024, 5, 10, 17),
+        ));
 
         assert!(scheduler.days.is_fetching());
     }
@@ -1640,10 +1692,10 @@ mod tests {
     #[test]
     fn a_fix_is_valued_between_the_maps_bracketing_its_own_time() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        let archived = day(2024, 5, 10);
+        let archived = day_archive::day(2024, 5, 10);
         archive_last_maps_of(&store, archived);
         scheduler.archived_days.insert(archived);
-        let files = loaded_files_of(track_over(at(2024, 5, 10, 22), 4, 1800));
+        let files = loaded_files_of(track_over(day_archive::at(2024, 5, 10, 22), 4, 1800));
 
         let series = scheduler.plot_series(&files);
         let points = series
@@ -1687,7 +1739,7 @@ mod tests {
     /// The day the deviation tests record on, far enough from the calendar's
     /// ends for a whole window to exist.
     fn recorded_day() -> NaiveDate {
-        day(2024, 5, 20)
+        day_archive::day(2024, 5, 20)
     }
 
     /// The peak of the one loaded track, or [`None`] where its window has
@@ -1757,7 +1809,7 @@ mod tests {
                 &rising_maps(background, 2, 1.0),
             );
         }
-        let files = loaded_files_of(track_over(at(2024, 5, 20, 12), 4, 600));
+        let files = loaded_files_of(track_over(day_archive::at(2024, 5, 20, 12), 4, 600));
 
         let deviation = peak_deviation(&mut scheduler, &files);
 
@@ -1778,7 +1830,7 @@ mod tests {
     fn a_diurnal_rise_every_day_repeats_is_no_deviation() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         archive_whole_window(&mut scheduler, &store, 1.0);
-        let files = loaded_files_of(track_over(at(2024, 5, 20, 12), 4, 600));
+        let files = loaded_files_of(track_over(day_archive::at(2024, 5, 20, 12), 4, 600));
 
         let deviation = peak_deviation(&mut scheduler, &files).expect("a fully archived window");
 
@@ -1815,7 +1867,7 @@ mod tests {
         // 13:07 sits nearest the recording day's own 13:00 epoch, which the
         // two-hourly days reach only between their 12:00 and 14:00 maps.
         let files = loaded_files_of(track_over(
-            at(2024, 5, 20, 13) + TimeDelta::minutes(7),
+            day_archive::at(2024, 5, 20, 13) + TimeDelta::minutes(7),
             4,
             60,
         ));
@@ -1837,7 +1889,7 @@ mod tests {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         archive_whole_window(&mut scheduler, &store, 1.75);
         let files = loaded_files_of(track_over(
-            at(2024, 5, 20, 23) + TimeDelta::minutes(30),
+            day_archive::at(2024, 5, 20, 23) + TimeDelta::minutes(30),
             2,
             600,
         ));
@@ -1856,7 +1908,7 @@ mod tests {
     fn a_day_archived_again_is_read_into_the_deviation_again() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         archive_whole_window(&mut scheduler, &store, 1.75);
-        let files = loaded_files_of(track_over(at(2024, 5, 20, 12), 4, 600));
+        let files = loaded_files_of(track_over(day_archive::at(2024, 5, 20, 12), 4, 600));
 
         let first = peak_deviation(&mut scheduler, &files).expect("a fully archived window");
         assert!(
@@ -1964,7 +2016,7 @@ mod tests {
         #[case] expected_run: &str,
     ) {
         let capture = gt_ionex::captured_node_series().expect("the node-series capture");
-        let recorded = day(2024, 5, day_of_may);
+        let recorded = day_archive::day(2024, 5, day_of_may);
         let offset = TimeDelta::hours(20);
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         for archived in quiet_time::background_days(recorded)
@@ -1981,7 +2033,7 @@ mod tests {
         // Ten minutes either side of the epoch, so every fix of the track
         // falls on the 20:00 map the storm's depletion is published in.
         let files = loaded_files_of(track_over(
-            at(2024, 5, day_of_may, 19) + TimeDelta::minutes(50),
+            day_archive::at(2024, 5, day_of_may, 19) + TimeDelta::minutes(50),
             3,
             600,
         ));
@@ -2015,7 +2067,7 @@ mod tests {
     fn unloading_a_recording_drops_its_deviation() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         archive_whole_window(&mut scheduler, &store, 1.75);
-        let files = loaded_files_of(track_over(at(2024, 5, 20, 12), 4, 600));
+        let files = loaded_files_of(track_over(day_archive::at(2024, 5, 20, 12), 4, 600));
 
         assert_eq!(scheduler.quiet_time_deviations(&files).len(), 1);
         assert!(scheduler.quiet_time_deviations(&[]).is_empty());
@@ -2025,12 +2077,18 @@ mod tests {
     #[test]
     fn the_earliest_loaded_recording_picks_the_instant() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        scheduler.request_days_for(TimeRange::new(at(2024, 5, 12, 8), at(2024, 5, 12, 9)));
-        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 9)));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(2024, 5, 12, 8),
+            day_archive::at(2024, 5, 12, 9),
+        ));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(2024, 5, 10, 8),
+            day_archive::at(2024, 5, 10, 9),
+        ));
 
         assert_eq!(
             scheduler.overlay_layer().instant.instant(),
-            Some(at(2024, 5, 10, 8))
+            Some(day_archive::at(2024, 5, 10, 8))
         );
     }
 
@@ -2039,14 +2097,17 @@ mod tests {
     #[test]
     fn the_heatmap_draws_the_archived_day_of_the_shown_instant() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        let archived = day(2024, 5, 10);
+        let archived = day_archive::day(2024, 5, 10);
         archive_last_maps_of(&store, archived);
         scheduler.archived_days.insert(archived);
-        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 22), at(2024, 5, 10, 23)));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(2024, 5, 10, 22),
+            day_archive::at(2024, 5, 10, 23),
+        ));
 
         let layer = scheduler.overlay_layer();
         let snapshot = layer.snapshot.expect("the archived day draws");
-        assert_eq!(snapshot.instant, at(2024, 5, 10, 22));
+        assert_eq!(snapshot.instant, day_archive::at(2024, 5, 10, 22));
         assert_eq!(snapshot.node_count(), 3 * 2);
         assert_eq!(layer.empty_reason, None);
     }
@@ -2056,18 +2117,21 @@ mod tests {
     #[test]
     fn the_heatmap_follows_the_hovered_fix() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        let archived = day(2024, 5, 10);
+        let archived = day_archive::day(2024, 5, 10);
         archive_last_maps_of(&store, archived);
         scheduler.archived_days.insert(archived);
-        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 22), at(2024, 5, 10, 23)));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(2024, 5, 10, 22),
+            day_archive::at(2024, 5, 10, 23),
+        ));
 
-        scheduler.follow_instant(Some(at(2024, 5, 10, 23)));
+        scheduler.follow_instant(Some(day_archive::at(2024, 5, 10, 23)));
         assert_eq!(
             scheduler
                 .overlay_layer()
                 .snapshot
                 .map(|snapshot| snapshot.instant),
-            Some(at(2024, 5, 10, 23))
+            Some(day_archive::at(2024, 5, 10, 23))
         );
 
         scheduler.follow_instant(None);
@@ -2076,7 +2140,7 @@ mod tests {
                 .overlay_layer()
                 .snapshot
                 .map(|snapshot| snapshot.instant),
-            Some(at(2024, 5, 10, 22))
+            Some(day_archive::at(2024, 5, 10, 22))
         );
     }
 
@@ -2084,7 +2148,10 @@ mod tests {
     #[test]
     fn following_a_fix_on_another_day_reads_that_days_maps() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        for (archived, tecu) in [(day(2024, 5, 10), 10.0), (day(2024, 5, 11), 40.0)] {
+        for (archived, tecu) in [
+            (day_archive::day(2024, 5, 10), 10.0),
+            (day_archive::day(2024, 5, 11), 40.0),
+        ] {
             write_to_archive(&store, archived, |archive| {
                 archive.insert_or_replace_day(
                     archived,
@@ -2096,9 +2163,12 @@ mod tests {
             });
             scheduler.archived_days.insert(archived);
         }
-        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 12), at(2024, 5, 10, 13)));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(2024, 5, 10, 12),
+            day_archive::at(2024, 5, 10, 13),
+        ));
 
-        scheduler.follow_instant(Some(at(2024, 5, 11, 12)));
+        scheduler.follow_instant(Some(day_archive::at(2024, 5, 11, 12)));
         let layer = scheduler.overlay_layer();
         let snapshot = layer.snapshot.expect("the second day draws");
         let value = snapshot
@@ -2106,7 +2176,7 @@ mod tests {
             .total_electron_content_at(
                 gt_types::Latitude::new(55.0),
                 gt_types::Longitude::new(12.5),
-                at(2024, 5, 11, 12),
+                day_archive::at(2024, 5, 11, 12),
             )
             .map(TotalElectronContent::tecu);
         assert_eq!(value, Some(40.0));
@@ -2115,8 +2185,14 @@ mod tests {
     /// An instant whose day the archive does not hold draws nothing, and the
     /// display toggle says why.
     #[rstest]
-    #[case::not_archived(at(2024, 5, 10, 12), Some(gt_ionex::TecEmptyReason::NotArchived))]
-    #[case::before_coverage(at(2005, 1, 1, 12), Some(gt_ionex::TecEmptyReason::BeforeCoverage))]
+    #[case::not_archived(
+        day_archive::at(2024, 5, 10, 12),
+        Some(gt_ionex::TecEmptyReason::NotArchived)
+    )]
+    #[case::before_coverage(
+        day_archive::at(2005, 1, 1, 12),
+        Some(gt_ionex::TecEmptyReason::BeforeCoverage)
+    )]
     fn an_instant_without_archived_maps_draws_nothing(
         #[case] instant: DateTime<Utc>,
         #[case] expected: Option<gt_ionex::TecEmptyReason>,
@@ -2145,7 +2221,7 @@ mod tests {
     #[test]
     fn archiving_a_day_again_redraws_it() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        let archived = day(2024, 5, 10);
+        let archived = day_archive::day(2024, 5, 10);
         write_to_archive(&store, archived, |archive| {
             archive.insert_or_replace_day(
                 archived,
@@ -2156,7 +2232,7 @@ mod tests {
             )
         });
         scheduler.archived_days.insert(archived);
-        scheduler.follow_instant(Some(at(2024, 5, 10, 12)));
+        scheduler.follow_instant(Some(day_archive::at(2024, 5, 10, 12)));
         assert!(scheduler.overlay_layer().snapshot.is_some());
 
         write_to_archive(&store, archived, |archive| {
@@ -2188,7 +2264,7 @@ mod tests {
             .total_electron_content_at(
                 gt_types::Latitude::new(55.0),
                 gt_types::Longitude::new(12.5),
-                at(2024, 5, 10, 12),
+                day_archive::at(2024, 5, 10, 12),
             )
             .map(TotalElectronContent::tecu);
         assert_eq!(value, Some(55.0));
@@ -2198,15 +2274,18 @@ mod tests {
     #[test]
     fn the_stepper_moves_by_the_archived_days_map_interval() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        let archived = day(2024, 5, 10);
+        let archived = day_archive::day(2024, 5, 10);
         archive_last_maps_of(&store, archived);
         scheduler.archived_days.insert(archived);
-        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 22), at(2024, 5, 10, 23)));
+        scheduler.request_days_for(TimeRange::new(
+            day_archive::at(2024, 5, 10, 22),
+            day_archive::at(2024, 5, 10, 23),
+        ));
 
         scheduler.overlay_layer().instant.step_back();
         assert_eq!(
             scheduler.overlay_layer().instant.instant(),
-            Some(at(2024, 5, 10, 20)),
+            Some(day_archive::at(2024, 5, 10, 20)),
             "the archived day publishes a map every two hours"
         );
     }
@@ -2216,10 +2295,10 @@ mod tests {
     #[test]
     fn a_track_outside_every_archived_epoch_has_no_plot_series() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        let archived = day(2024, 5, 10);
+        let archived = day_archive::day(2024, 5, 10);
         archive_last_maps_of(&store, archived);
         scheduler.archived_days.insert(archived);
-        let files = loaded_files_of(track_over(at(2024, 5, 10, 12), 4, 1800));
+        let files = loaded_files_of(track_over(day_archive::at(2024, 5, 10, 12), 4, 1800));
 
         assert!(scheduler.plot_series(&files).is_empty());
     }
@@ -2228,7 +2307,7 @@ mod tests {
     #[test]
     fn a_track_with_no_archived_day_has_no_plot_series() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        let files = loaded_files_of(track_over(at(2024, 5, 10, 22), 4, 1800));
+        let files = loaded_files_of(track_over(day_archive::at(2024, 5, 10, 22), 4, 1800));
 
         assert!(scheduler.plot_series(&files).is_empty());
     }
@@ -2258,7 +2337,7 @@ mod tests {
     #[test]
     fn the_context_line_samples_every_archived_epoch() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        let archived = day(2024, 5, 10);
+        let archived = day_archive::day(2024, 5, 10);
         write_to_archive(&store, archived, |archive| {
             archive.insert_or_replace_day(
                 archived,
@@ -2269,11 +2348,11 @@ mod tests {
             )
         });
         scheduler.archived_days.insert(archived);
-        let timeline = timeline_of(track_over(at(2024, 5, 10, 22), 4, 1800));
+        let timeline = timeline_of(track_over(day_archive::at(2024, 5, 10, 22), 4, 1800));
 
         let line = context_line_over(&mut scheduler, &timeline, archived..=archived);
 
-        let midnight = at(2024, 5, 10, 0).timestamp() as f64;
+        let midnight = day_archive::at(2024, 5, 10, 0).timestamp() as f64;
         assert_eq!(
             line.iter()
                 .map(|sample| (sample.x_secs - midnight, sample.tecu))
@@ -2291,7 +2370,7 @@ mod tests {
     #[test]
     fn an_unarchived_day_breaks_the_context_line() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        for archived in [day(2024, 5, 10), day(2024, 5, 12)] {
+        for archived in [day_archive::day(2024, 5, 10), day_archive::day(2024, 5, 12)] {
             write_to_archive(&store, archived, |archive| {
                 archive.insert_or_replace_day(
                     archived,
@@ -2303,12 +2382,12 @@ mod tests {
             });
             scheduler.archived_days.insert(archived);
         }
-        let timeline = timeline_of(track_over(at(2024, 5, 10, 22), 4, 1800));
+        let timeline = timeline_of(track_over(day_archive::at(2024, 5, 10, 22), 4, 1800));
 
         let line = context_line_over(
             &mut scheduler,
             &timeline,
-            day(2024, 5, 10)..=day(2024, 5, 12),
+            day_archive::day(2024, 5, 10)..=day_archive::day(2024, 5, 12),
         );
 
         assert_eq!(
@@ -2322,8 +2401,8 @@ mod tests {
     #[test]
     fn archiving_a_day_gives_the_loaded_track_its_values() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        let archived = day(2024, 5, 10);
-        let files = loaded_files_of(track_over(at(2024, 5, 10, 22), 4, 1800));
+        let archived = day_archive::day(2024, 5, 10);
+        let files = loaded_files_of(track_over(day_archive::at(2024, 5, 10, 22), 4, 1800));
         assert!(scheduler.plot_series(&files).is_empty());
 
         archive_last_maps_of(&store, archived);

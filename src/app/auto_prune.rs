@@ -35,6 +35,8 @@ pub fn run(
 
 #[cfg(test)]
 mod tests {
+    use crate::app::test_util::recordings;
+
     use super::*;
     use geotrace_sdk::{
         Angle, DateTime, Duration as SdkDuration, NavFileBuilder, NavFix, NavFixTime,
@@ -59,32 +61,12 @@ mod tests {
         bytes
     }
 
-    fn insert(db: &mut Recordings, identity: &str, bytes: &[u8]) {
-        use gt_store::{StoredSegmentation, TrackRange, TrackState};
-        let meta = gt_store::extract_meta(bytes).expect("parse meta");
-        // One track spanning the whole recording is enough for prune tests.
-        let tracks = [TrackRange {
-            start: 0,
-            end: meta.nav_point_count,
-            state: TrackState::Live,
-        }];
-        let settings = StoredSegmentation {
-            track_split_gap_us: 300_000_000,
-            track_split_rule: gt_store::StoredTrackSplitRule::StepInEitherDirection,
-            fix_placement_rule: gt_store::StoredFixPlacementRule::MissingHeadingAndNothingInFix,
-            detect_clock_discontinuities: false,
-            clock_discontinuity_sigmas: 5.0,
-        };
-        db.insert(identity, &meta, &tracks, settings, bytes)
-            .expect("insert");
-    }
-
     #[test]
     fn not_needed_when_under_limit() {
         let dir = tempfile::tempdir().expect("temp dir");
         let mut db = Recordings::open_or_create(&dir.path().join("h.h5")).expect("db");
         let bytes = make_gtd(1_000_000, 2);
-        insert(&mut db, "dev", &bytes);
+        recordings::insert_recording_as_one_whole_file_track(&mut db, "dev", &bytes);
 
         let outcome = run(&mut db, bytes.len() as u64 * 10, false).expect("run");
         assert!(matches!(outcome, AutoPruneOutcome::NotNeeded));
@@ -106,8 +88,8 @@ mod tests {
         let mut db = Recordings::open_or_create(&dir.path().join("h.h5")).expect("db");
         let bytes_a = make_gtd(1_000_000, 2);
         let bytes_b = make_gtd(2_000_000, 2);
-        insert(&mut db, "dev", &bytes_a);
-        insert(&mut db, "dev", &bytes_b);
+        recordings::insert_recording_as_one_whole_file_track(&mut db, "dev", &bytes_a);
+        recordings::insert_recording_as_one_whole_file_track(&mut db, "dev", &bytes_b);
         let total = bytes_a.len() as u64 + bytes_b.len() as u64;
 
         // Limit just under total - should remove the oldest recording.
@@ -129,8 +111,8 @@ mod tests {
         let mut db = Recordings::open_or_create(&dir.path().join("h.h5")).expect("db");
         let bytes_a = make_gtd(1_000_000, 2);
         let bytes_b = make_gtd(2_000_000, 2);
-        insert(&mut db, "dev", &bytes_a);
-        insert(&mut db, "dev", &bytes_b);
+        recordings::insert_recording_as_one_whole_file_track(&mut db, "dev", &bytes_a);
+        recordings::insert_recording_as_one_whole_file_track(&mut db, "dev", &bytes_b);
         let total = bytes_a.len() as u64 + bytes_b.len() as u64;
 
         let outcome = run(&mut db, total - 1, true).expect("run");
@@ -152,8 +134,8 @@ mod tests {
         let mut db = Recordings::open_or_create(&dir.path().join("h.h5")).expect("db");
         let bytes_a = make_gtd(1_000_000, 2);
         let bytes_b = make_gtd(2_000_000, 2);
-        insert(&mut db, "dev", &bytes_a);
-        insert(&mut db, "dev", &bytes_b);
+        recordings::insert_recording_as_one_whole_file_track(&mut db, "dev", &bytes_a);
+        recordings::insert_recording_as_one_whole_file_track(&mut db, "dev", &bytes_b);
 
         let outcome = run(&mut db, 0, false).expect("run");
         assert!(

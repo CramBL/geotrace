@@ -185,10 +185,9 @@ mod tests {
         use geotrace_sdk::{
             Angle, DateTime, Duration as SdkDuration, NavFileBuilder, NavFix, NavFixTime,
         };
-        use gt_store::{
-            HistoryDatabase, ReadOnlyHistoryDatabase, Recordings, StoredSegmentation, TrackRange,
-            TrackState,
-        };
+        use gt_store::{HistoryDatabase, ReadOnlyHistoryDatabase, Recordings};
+
+        use crate::app::test_util::recordings;
 
         let t0 = DateTime::from_timestamp(1_000, 0).expect("valid timestamp");
         let mut recorder = NavFileBuilder::new().open();
@@ -208,22 +207,7 @@ mod tests {
 
         let dir = tempfile::tempdir().expect("temp dir");
         let mut db = Recordings::open_or_create(&dir.path().join("geotrace.h5")).expect("open");
-        let meta = gt_store::extract_meta(&bytes).expect("meta");
-        let tracks = [TrackRange {
-            start: 0,
-            end: meta.nav_point_count,
-            state: TrackState::Live,
-        }];
-        let settings = StoredSegmentation {
-            track_split_gap_us: 300_000_000,
-            track_split_rule: gt_store::StoredTrackSplitRule::StepInEitherDirection,
-            fix_placement_rule: gt_store::StoredFixPlacementRule::MissingHeadingAndNothingInFix,
-            detect_clock_discontinuities: false,
-            clock_discontinuity_sigmas: 5.0,
-        };
-        let db_ref = db
-            .insert("dev", &meta, &tracks, settings, &bytes)
-            .expect("insert");
+        let db_ref = recordings::insert_recording_as_one_whole_file_track(&mut db, "dev", &bytes);
 
         let loaded = track(10, 1_000);
         db.set_snap_blob(&db_ref, &encode([(&loaded, &run(Costing::Auto))]))

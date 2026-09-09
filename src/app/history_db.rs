@@ -321,19 +321,6 @@ pub enum Response {
     },
 }
 
-/// A second sender on a worker's request channel: while it lives the worker's
-/// `recv` cannot fail, so its thread stays on its loop.
-#[cfg(test)]
-pub struct HeldOpenWorkerThread(Sender<Request>);
-
-#[cfg(test)]
-impl HeldOpenWorkerThread {
-    /// Lets the worker's thread reach the end of its loop.
-    pub fn release(self) {
-        drop(self.0);
-    }
-}
-
 /// Owns the history-database worker thread and the request and response
 /// channels to it.
 pub struct HistoryWorker {
@@ -378,21 +365,13 @@ impl HistoryWorker {
         }
     }
 
-    /// A worker whose thread stays on its request loop until the returned
-    /// [`HeldOpenWorkerThread`] drops, so a test controls when the shutdown
-    /// join returns.
+    /// A second sender on this worker's request channel, wrapped by
+    /// `HeldOpenWorkerThread`.
     #[cfg(test)]
-    pub fn spawn_held_open(
-        db: RecordingsHandle,
-        ctx: Context,
-        pending_writes: PendingWrites,
-    ) -> (Self, HeldOpenWorkerThread) {
-        let worker = Self::spawn(db, ctx, pending_writes);
-        let held_open = worker
-            .req_tx
+    pub(super) fn second_request_sender(&self) -> impl Send + 'static {
+        self.req_tx
             .clone()
-            .expect("a spawned worker holds a request sender");
-        (worker, HeldOpenWorkerThread(held_open))
+            .expect("a spawned worker holds a request sender")
     }
 
     /// Whether a backing database is available (the worker is running).
@@ -1009,10 +988,7 @@ mod tests {
     use gt_test_utils::pending_writes;
     use rstest::rstest;
 
-    use crate::app::history_test_support::{
-        SAMPLE_POINT_COUNT, bytes_starting_at, listed_recordings, next_response, only_recording,
-        sample_bytes, seed_two_track_recording, store_recording, worker_on,
-    };
+    use crate::app::test_util::recordings;
 
     use super::*;
 
@@ -1021,15 +997,15 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
 
-        seed_two_track_recording(&path);
+        recordings::seed_two_track_recording(&path);
 
-        let worker = worker_on(&path);
+        let worker = recordings::worker_on(&path);
         assert!(worker.available());
         assert_eq!(worker.path(), Some(path.as_path()));
 
         // List
         worker.list();
-        let Response::Listed(Ok(entries)) = next_response(&worker) else {
+        let Response::Listed(Ok(entries)) = recordings::next_response(&worker) else {
             panic!("expected a Listed response");
         };
         assert_eq!(entries.len(), 1);
@@ -1038,7 +1014,7 @@ mod tests {
 
         // Open returns the stored recording (bytes + tracks).
         worker.open(db_ref.clone());
-        let Response::Opened { result, .. } = next_response(&worker) else {
+        let Response::Opened { result, .. } = recordings::next_response(&worker) else {
             panic!("expected an Opened response");
         };
         let stored = result.expect("open ok").stored;
@@ -1050,7 +1026,7 @@ mod tests {
         let Response::Mutated {
             op: DbOp::TracksShelved { count },
             result,
-        } = next_response(&worker)
+        } = recordings::next_response(&worker)
         else {
             panic!("expected a TracksShelved mutation");
         };
@@ -1059,14 +1035,16 @@ mod tests {
 
         // Prune preview reports candidates without deleting.
         worker.prune_preview(PruneMode::ByCount { keep: 0 });
-        let Response::PrunePreview(Ok(candidates)) = next_response(&worker) else {
+        let Response::PrunePreview(Ok(candidates)) = recordings::next_response(&worker) else {
             panic!("expected a PrunePreview response");
         };
         assert_eq!(candidates.len(), 1);
 
         // Auto-prune with an enormous budget leaves everything in place.
         worker.auto_prune(u64::MAX, false);
-        let Response::AutoPruned(Ok(AutoPruneOutcome::NotNeeded)) = next_response(&worker) else {
+        let Response::AutoPruned(Ok(AutoPruneOutcome::NotNeeded)) =
+            recordings::next_response(&worker)
+        else {
             panic!("expected AutoPruned(NotNeeded)");
         };
 
@@ -1075,7 +1053,7 @@ mod tests {
         let Response::Mutated {
             op: DbOp::RecordingsDeleted { count, .. },
             result,
-        } = next_response(&worker)
+        } = recordings::next_response(&worker)
         else {
             panic!("expected a RecordingsDeleted mutation");
         };
@@ -1083,7 +1061,7 @@ mod tests {
         result.expect("delete ok");
 
         worker.list();
-        let Response::Listed(Ok(entries)) = next_response(&worker) else {
+        let Response::Listed(Ok(entries)) = recordings::next_response(&worker) else {
             panic!("expected a Listed response");
         };
         assert!(entries.is_empty(), "recording should be gone after delete");
@@ -1094,20 +1072,20 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
 
-        seed_two_track_recording(&path);
+        recordings::seed_two_track_recording(&path);
 
-        let worker = worker_on(&path);
+        let worker = recordings::worker_on(&path);
 
         // Shelve the first track, then permanently delete every shelved track.
-        let db_ref = only_recording(&worker).db_ref;
+        let db_ref = recordings::only_recording(&worker).db_ref;
         worker.set_tracks_shelved(db_ref, vec![0], true);
-        next_response(&worker);
+        recordings::next_response(&worker);
 
         worker.delete_shelved_tracks(DeleteShelvedTracksScope::EveryRecording);
         let Response::Mutated {
             op: DbOp::TracksDeleted { count },
             result,
-        } = next_response(&worker)
+        } = recordings::next_response(&worker)
         else {
             panic!("expected TracksDeleted");
         };
@@ -1116,7 +1094,7 @@ mod tests {
 
         // The recording now has a single ten-point track, every one of them live.
         worker.list();
-        let Response::Listed(Ok(entries)) = next_response(&worker) else {
+        let Response::Listed(Ok(entries)) = recordings::next_response(&worker) else {
             panic!("expected Listed");
         };
         assert_eq!(entries.len(), 1);
@@ -1126,7 +1104,7 @@ mod tests {
 
         let new_ref = entries[0].db_ref.clone();
         worker.open(new_ref);
-        let Response::Opened { result, .. } = next_response(&worker) else {
+        let Response::Opened { result, .. } = recordings::next_response(&worker) else {
             panic!("expected Opened");
         };
         let stored = result.expect("open ok").stored;
@@ -1155,9 +1133,9 @@ mod tests {
         path: &Path,
     ) -> (DatabaseRef, DatabaseRef) {
         for start_secs in [1_748_000_000, 1_749_000_000] {
-            store_recording(
+            recordings::store_recording(
                 path,
-                &bytes_starting_at(start_secs, SAMPLE_POINT_COUNT as usize),
+                &recordings::bytes_starting_at(start_secs, recordings::SAMPLE_POINT_COUNT as usize),
                 &[
                     TrackRange {
                         start: 0,
@@ -1172,9 +1150,9 @@ mod tests {
                 ],
             );
         }
-        for entry in listed_recordings(worker) {
+        for entry in recordings::listed_recordings(worker) {
             worker.set_tracks_shelved(entry.db_ref, vec![0], true);
-            let Response::Mutated { result, .. } = next_response(worker) else {
+            let Response::Mutated { result, .. } = recordings::next_response(worker) else {
                 panic!("expected a mutation response");
             };
             result.expect("the shelve runs");
@@ -1189,7 +1167,7 @@ mod tests {
     /// The recordings the worker's database holds, keyed by reference, with
     /// how many of each one's tracks are shelved.
     fn shelved_tracks_per_recording(worker: &HistoryWorker) -> Vec<(DatabaseRef, usize)> {
-        listed_recordings(worker)
+        recordings::listed_recordings(worker)
             .into_iter()
             .map(|entry| (entry.db_ref, entry.shelved_tracks))
             .collect()
@@ -1199,14 +1177,14 @@ mod tests {
     fn deleting_one_recordings_shelved_tracks_leaves_the_other_recordings_alone() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
-        let worker = worker_on(&path);
+        let worker = recordings::worker_on(&path);
         let (first, second) = seed_two_recordings_with_a_shelved_track(&worker, &path);
 
         worker.delete_shelved_tracks(DeleteShelvedTracksScope::OneRecording(first.clone()));
         let Response::Mutated {
             op: DbOp::TracksDeleted { count },
             result,
-        } = next_response(&worker)
+        } = recordings::next_response(&worker)
         else {
             panic!("expected a TracksDeleted mutation");
         };
@@ -1226,10 +1204,10 @@ mod tests {
     fn deleting_the_shelved_tracks_of_a_recording_with_no_live_track_deletes_the_recording() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
-        let worker = worker_on(&path);
+        let worker = recordings::worker_on(&path);
         let (first, second) = seed_two_recordings_with_a_shelved_track(&worker, &path);
         worker.set_tracks_shelved(first.clone(), vec![1], true);
-        let Response::Mutated { result, .. } = next_response(&worker) else {
+        let Response::Mutated { result, .. } = recordings::next_response(&worker) else {
             panic!("expected a mutation response");
         };
         result.expect("the second shelve runs");
@@ -1238,7 +1216,7 @@ mod tests {
         let Response::Mutated {
             op: DbOp::TracksDeleted { count },
             result,
-        } = next_response(&worker)
+        } = recordings::next_response(&worker)
         else {
             panic!("expected a TracksDeleted mutation");
         };
@@ -1253,13 +1231,13 @@ mod tests {
     fn deleting_a_track_index_the_stored_table_does_not_have_reports_the_tracks_it_removed() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
-        seed_two_track_recording(&path);
-        let worker = worker_on(&path);
+        recordings::seed_two_track_recording(&path);
+        let worker = recordings::worker_on(&path);
 
-        let recording = only_recording(&worker);
+        let recording = recordings::only_recording(&worker);
         let tracks_before = recording.total_tracks;
         worker.delete_tracks(recording.db_ref, vec![2]);
-        let Response::Mutated { op, result } = next_response(&worker) else {
+        let Response::Mutated { op, result } = recordings::next_response(&worker) else {
             panic!("expected a mutation response");
         };
         // A failed mutation counts as zero here: only a successful one raises
@@ -1269,7 +1247,7 @@ mod tests {
             _ => 0,
         };
 
-        let tracks_lost = tracks_before - only_recording(&worker).total_tracks;
+        let tracks_lost = tracks_before - recordings::only_recording(&worker).total_tracks;
         assert_eq!(
             reported, tracks_lost,
             "the delete reports the number of tracks it removed"
@@ -1284,11 +1262,11 @@ mod tests {
     fn deleting_a_track_index_the_stored_table_does_not_have_removes_no_track_at_all() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
-        seed_two_track_recording(&path);
-        let worker = worker_on(&path);
+        recordings::seed_two_track_recording(&path);
+        let worker = recordings::worker_on(&path);
 
-        worker.delete_tracks(only_recording(&worker).db_ref, vec![0, 2]);
-        let Response::Mutated { result, .. } = next_response(&worker) else {
+        worker.delete_tracks(recordings::only_recording(&worker).db_ref, vec![0, 2]);
+        let Response::Mutated { result, .. } = recordings::next_response(&worker) else {
             panic!("expected a mutation response");
         };
         let Err(DbError::TrackIndexOutOfRange {
@@ -1300,7 +1278,7 @@ mod tests {
         };
         assert_eq!((index, stored_track_count), (2, 2));
 
-        let recording = only_recording(&worker);
+        let recording = recordings::only_recording(&worker);
         assert_eq!(recording.total_tracks, 2);
         assert_eq!(recording.meta.nav_point_count, 20);
         worker.shutdown();
@@ -1310,12 +1288,12 @@ mod tests {
     fn shelving_a_track_after_a_delete_re_encoded_the_recording_stores_the_shelve() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
-        seed_two_track_recording(&path);
-        let worker = worker_on(&path);
+        recordings::seed_two_track_recording(&path);
+        let worker = recordings::worker_on(&path);
 
-        let session_ref = only_recording(&worker).db_ref;
+        let session_ref = recordings::only_recording(&worker).db_ref;
         worker.delete_tracks(session_ref.clone(), vec![0]);
-        let Response::Mutated { result, .. } = next_response(&worker) else {
+        let Response::Mutated { result, .. } = recordings::next_response(&worker) else {
             panic!("expected a mutation response");
         };
         result.expect("the delete runs");
@@ -1323,13 +1301,13 @@ mod tests {
         // The track that the session still holds sits in stored row 1, where
         // the delete left it.
         worker.set_tracks_shelved(session_ref, vec![1], true);
-        let Response::Mutated { result, .. } = next_response(&worker) else {
+        let Response::Mutated { result, .. } = recordings::next_response(&worker) else {
             panic!("expected a mutation response");
         };
         result.expect("the shelve runs");
 
         assert_eq!(
-            only_recording(&worker).shelved_tracks,
+            recordings::only_recording(&worker).shelved_tracks,
             1,
             "the track the session shelved is shelved in history"
         );
@@ -1342,18 +1320,18 @@ mod tests {
     fn shelving_a_track_after_the_shelved_data_sweep_re_encoded_the_recording_stores_the_shelve() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
-        seed_two_track_recording(&path);
-        let worker = worker_on(&path);
+        recordings::seed_two_track_recording(&path);
+        let worker = recordings::worker_on(&path);
 
-        let session_ref = only_recording(&worker).db_ref;
+        let session_ref = recordings::only_recording(&worker).db_ref;
         worker.set_tracks_shelved(session_ref.clone(), vec![0], true);
-        let Response::Mutated { result, .. } = next_response(&worker) else {
+        let Response::Mutated { result, .. } = recordings::next_response(&worker) else {
             panic!("expected a mutation response");
         };
         result.expect("the first shelve runs");
 
         worker.delete_shelved_tracks(DeleteShelvedTracksScope::EveryRecording);
-        let Response::Mutated { result, .. } = next_response(&worker) else {
+        let Response::Mutated { result, .. } = recordings::next_response(&worker) else {
             panic!("expected a mutation response");
         };
         result.expect("the sweep runs");
@@ -1361,13 +1339,13 @@ mod tests {
         // The track that the session still holds sits in stored row 1, where
         // the sweep left it.
         worker.set_tracks_shelved(session_ref, vec![1], true);
-        let Response::Mutated { result, .. } = next_response(&worker) else {
+        let Response::Mutated { result, .. } = recordings::next_response(&worker) else {
             panic!("expected a mutation response");
         };
         result.expect("the second shelve runs");
 
         assert_eq!(
-            only_recording(&worker).shelved_tracks,
+            recordings::only_recording(&worker).shelved_tracks,
             1,
             "the track the session shelved is shelved in history"
         );
@@ -1378,18 +1356,18 @@ mod tests {
     fn deleting_a_stored_row_that_holds_a_tombstone_removes_no_track_at_all() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
-        seed_two_track_recording(&path);
-        let worker = worker_on(&path);
+        recordings::seed_two_track_recording(&path);
+        let worker = recordings::worker_on(&path);
 
-        let db_ref = only_recording(&worker).db_ref;
+        let db_ref = recordings::only_recording(&worker).db_ref;
         worker.delete_tracks(db_ref.clone(), vec![0]);
-        let Response::Mutated { result, .. } = next_response(&worker) else {
+        let Response::Mutated { result, .. } = recordings::next_response(&worker) else {
             panic!("expected a mutation response");
         };
         result.expect("the first delete runs");
 
         worker.delete_tracks(db_ref, vec![0]);
-        let Response::Mutated { result, .. } = next_response(&worker) else {
+        let Response::Mutated { result, .. } = recordings::next_response(&worker) else {
             panic!("expected a mutation response");
         };
         let Err(DbError::TrackAlreadyDeleted { index }) = result else {
@@ -1397,7 +1375,7 @@ mod tests {
         };
         assert_eq!(index, 0);
 
-        let recording = only_recording(&worker);
+        let recording = recordings::only_recording(&worker);
         assert_eq!(recording.total_tracks, 1);
         assert_eq!(recording.meta.nav_point_count, 10);
         worker.shutdown();
@@ -1409,9 +1387,9 @@ mod tests {
     fn the_shelved_data_sweep_of_a_recording_with_a_tombstone_deletes_the_shelved_track() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
-        store_recording(
+        recordings::store_recording(
             &path,
-            &sample_bytes(),
+            &recordings::sample_bytes(),
             &[
                 TrackRange {
                     start: 0,
@@ -1430,17 +1408,17 @@ mod tests {
                 },
             ],
         );
-        let worker = worker_on(&path);
+        let worker = recordings::worker_on(&path);
 
-        let db_ref = only_recording(&worker).db_ref;
+        let db_ref = recordings::only_recording(&worker).db_ref;
         worker.delete_tracks(db_ref.clone(), vec![0]);
-        let Response::Mutated { result, .. } = next_response(&worker) else {
+        let Response::Mutated { result, .. } = recordings::next_response(&worker) else {
             panic!("expected a mutation response");
         };
         result.expect("the delete runs");
 
         worker.set_tracks_shelved(db_ref.clone(), vec![1], true);
-        let Response::Mutated { result, .. } = next_response(&worker) else {
+        let Response::Mutated { result, .. } = recordings::next_response(&worker) else {
             panic!("expected a mutation response");
         };
         result.expect("the shelve runs");
@@ -1449,7 +1427,7 @@ mod tests {
         let Response::Mutated {
             op: DbOp::TracksDeleted { count },
             result,
-        } = next_response(&worker)
+        } = recordings::next_response(&worker)
         else {
             panic!("expected a TracksDeleted mutation");
         };
@@ -1457,12 +1435,12 @@ mod tests {
         assert_eq!(count, 1);
 
         assert_eq!(
-            only_recording(&worker).meta.nav_point_count,
+            recordings::only_recording(&worker).meta.nav_point_count,
             6,
             "the recording keeps the six points of its last track"
         );
         worker.open(db_ref);
-        let Response::Opened { result, .. } = next_response(&worker) else {
+        let Response::Opened { result, .. } = recordings::next_response(&worker) else {
             panic!("expected an Opened response");
         };
         assert_eq!(
@@ -1494,10 +1472,10 @@ mod tests {
     fn deleting_one_track_of_a_recording_keeps_the_logs_attached_to_it() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
-        seed_two_track_recording(&path);
-        let worker = worker_on(&path);
+        recordings::seed_two_track_recording(&path);
+        let worker = recordings::worker_on(&path);
 
-        let db_ref = only_recording(&worker).db_ref;
+        let db_ref = recordings::only_recording(&worker).db_ref;
         worker.attach_log(
             db_ref.clone(),
             LoadedLogId::new(1),
@@ -1505,19 +1483,20 @@ mod tests {
             "one line".into(),
             Vec::new(),
         );
-        let Response::LogAttached { result, .. } = next_response(&worker) else {
+        let Response::LogAttached { result, .. } = recordings::next_response(&worker) else {
             panic!("expected a LogAttached response");
         };
         result.expect("the log is attached");
 
         worker.delete_tracks(db_ref, vec![0]);
-        let Response::Mutated { result, .. } = next_response(&worker) else {
+        let Response::Mutated { result, .. } = recordings::next_response(&worker) else {
             panic!("expected a mutation response");
         };
         result.expect("the delete runs");
 
-        worker.load_attached_logs(only_recording(&worker).db_ref);
-        let Response::AttachedLogsLoaded { attachments, .. } = next_response(&worker) else {
+        worker.load_attached_logs(recordings::only_recording(&worker).db_ref);
+        let Response::AttachedLogsLoaded { attachments, .. } = recordings::next_response(&worker)
+        else {
             panic!("expected an AttachedLogsLoaded response");
         };
         assert_eq!(
@@ -1534,10 +1513,10 @@ mod tests {
     fn deleting_a_track_keeps_the_recording_when_a_stored_one_matches_what_is_left() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
-        seed_two_track_recording(&path);
-        store_recording(
+        recordings::seed_two_track_recording(&path);
+        recordings::store_recording(
             &path,
-            &bytes_starting_at(1_748_000_010, 10),
+            &recordings::bytes_starting_at(1_748_000_010, 10),
             &[TrackRange {
                 start: 0,
                 end: 10,
@@ -1545,21 +1524,21 @@ mod tests {
             }],
         );
 
-        let worker = worker_on(&path);
-        let db_ref = listed_recordings(&worker)
+        let worker = recordings::worker_on(&path);
+        let db_ref = recordings::listed_recordings(&worker)
             .iter()
             .find(|entry| entry.total_tracks == 2)
             .map(|entry| entry.db_ref.clone())
             .expect("the two-track recording is listed");
 
         worker.delete_tracks(db_ref, vec![0]);
-        let Response::Mutated { result, .. } = next_response(&worker) else {
+        let Response::Mutated { result, .. } = recordings::next_response(&worker) else {
             panic!("expected a mutation response");
         };
         result.expect("the delete runs");
 
         assert_eq!(
-            listed_recordings(&worker).len(),
+            recordings::listed_recordings(&worker).len(),
             2,
             "the recording the delete re-encoded is still stored"
         );
@@ -1580,7 +1559,7 @@ mod tests {
     fn a_mutation_registers_and_releases_its_write_guard() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
-        seed_two_track_recording(&path);
+        recordings::seed_two_track_recording(&path);
         let pending_writes = PendingWrites::default();
         let db = Recordings::open_or_create(&path).expect("reopen");
         let worker = HistoryWorker::spawn(
@@ -1588,10 +1567,10 @@ mod tests {
             Context::default(),
             pending_writes.clone(),
         );
-        let db_ref = only_recording(&worker).db_ref;
+        let db_ref = recordings::only_recording(&worker).db_ref;
 
         worker.set_tracks_shelved(db_ref, vec![0], true);
-        let Response::Mutated { result, .. } = next_response(&worker) else {
+        let Response::Mutated { result, .. } = recordings::next_response(&worker) else {
             panic!("expected a mutation response");
         };
 
@@ -1617,18 +1596,19 @@ mod tests {
     ) {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
-        seed_two_track_recording(&path);
+        recordings::seed_two_track_recording(&path);
         let db = Recordings::open_or_create(&path).expect("reopen");
         let worker = HistoryWorker::spawn(
             RecordingsHandle::Owner(db),
             Context::default(),
             pending_writes.clone(),
         );
-        let db_ref = only_recording(&worker).db_ref;
+        let db_ref = recordings::only_recording(&worker).db_ref;
 
         worker.set_tracks_shelved(db_ref, vec![0], true);
 
-        let Response::WriteRejected { label, rejection } = next_response(&worker) else {
+        let Response::WriteRejected { label, rejection } = recordings::next_response(&worker)
+        else {
             panic!("expected the write to be rejected");
         };
         assert_eq!(rejection, expected);
@@ -1637,7 +1617,7 @@ mod tests {
 
         // Reads still return, and report a database the rejected write left alone.
         worker.list();
-        let Response::Listed(Ok(entries)) = next_response(&worker) else {
+        let Response::Listed(Ok(entries)) = recordings::next_response(&worker) else {
             panic!("expected a Listed response");
         };
         assert_eq!(entries.first().map(|entry| entry.shelved_tracks), Some(0));
@@ -1650,7 +1630,7 @@ mod tests {
     fn a_write_on_a_read_only_handle_is_rejected_where_the_registry_allows_it() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
-        seed_two_track_recording(&path);
+        recordings::seed_two_track_recording(&path);
         let pending_writes = PendingWrites::default();
         let db = ReadOnlyRecordings::open_existing_read_only(&path).expect("open read-only");
         let worker = HistoryWorker::spawn(
@@ -1658,11 +1638,12 @@ mod tests {
             Context::default(),
             pending_writes.clone(),
         );
-        let db_ref = only_recording(&worker).db_ref;
+        let db_ref = recordings::only_recording(&worker).db_ref;
 
         worker.set_tracks_shelved(db_ref, vec![0], true);
 
-        let Response::WriteRejected { label, rejection } = next_response(&worker) else {
+        let Response::WriteRejected { label, rejection } = recordings::next_response(&worker)
+        else {
             panic!("expected the write to be rejected");
         };
         assert_eq!(rejection, WriteRejection::ReadOnlySession);
@@ -1675,7 +1656,7 @@ mod tests {
 
         // Reads still return, and report a database the rejected write left alone.
         worker.list();
-        let Response::Listed(Ok(entries)) = next_response(&worker) else {
+        let Response::Listed(Ok(entries)) = recordings::next_response(&worker) else {
             panic!("expected a Listed response");
         };
         assert_eq!(entries.first().map(|entry| entry.shelved_tracks), Some(0));

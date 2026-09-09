@@ -205,14 +205,12 @@ impl<S: Clone> ContextSampleCache<S> {
 mod tests {
     use rstest::rstest;
 
+    use crate::app::test_util::day_archive;
+
     use super::*;
 
-    fn day(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
-    }
-
     fn at(year: i32, month: u32, day_of_month: u32, hour: u32) -> f64 {
-        day(year, month, day_of_month)
+        day_archive::day(year, month, day_of_month)
             .and_hms_opt(hour, 0, 0)
             .map_or(0.0, |naive| naive.and_utc().timestamp() as f64)
     }
@@ -222,7 +220,10 @@ mod tests {
     #[test]
     fn a_span_inside_one_day_covers_that_day() {
         let span = ContextSpan::covering(at(2026, 7, 20, 8)..=at(2026, 7, 20, 17));
-        assert_eq!(span.days(), day(2026, 7, 20)..=day(2026, 7, 20));
+        assert_eq!(
+            span.days(),
+            day_archive::day(2026, 7, 20)..=day_archive::day(2026, 7, 20)
+        );
     }
 
     /// A span of weeks snaps out to a bucket an eighth of its length, so a
@@ -232,8 +233,8 @@ mod tests {
         let span = ContextSpan::covering(at(2026, 1, 1, 0)..=at(2026, 3, 1, 0));
         let moved = ContextSpan::covering(at(2026, 1, 2, 0)..=at(2026, 3, 2, 0));
         assert_eq!(span, moved);
-        assert!(span.days().contains(&day(2026, 1, 1)));
-        assert!(span.days().contains(&day(2026, 3, 1)));
+        assert!(span.days().contains(&day_archive::day(2026, 1, 1)));
+        assert!(span.days().contains(&day_archive::day(2026, 3, 1)));
     }
 
     /// The snapped span never loses a day of the view.
@@ -252,7 +253,7 @@ mod tests {
     #[test]
     fn a_view_beyond_the_calendar_still_produces_a_span() {
         let span = ContextSpan::covering(f64::MIN..=f64::MAX);
-        assert!(span.days().contains(&day(2026, 7, 20)));
+        assert!(span.days().contains(&day_archive::day(2026, 7, 20)));
     }
 
     #[derive(Debug, Clone, Copy, PartialEq)]
@@ -285,7 +286,11 @@ mod tests {
     #[test]
     fn a_missing_day_breaks_the_line() {
         let mut cache = ContextSampleCache::default();
-        let archived = [day(2026, 7, 20), day(2026, 7, 21), day(2026, 7, 24)];
+        let archived = [
+            day_archive::day(2026, 7, 20),
+            day_archive::day(2026, 7, 21),
+            day_archive::day(2026, 7, 24),
+        ];
 
         let line = cache.resolve(source(&archived), valued, gap);
 
@@ -293,19 +298,19 @@ mod tests {
             line.as_slice(),
             [
                 Sample {
-                    day: day(2026, 7, 20),
+                    day: day_archive::day(2026, 7, 20),
                     value: Some(1)
                 },
                 Sample {
-                    day: day(2026, 7, 21),
+                    day: day_archive::day(2026, 7, 21),
                     value: Some(1)
                 },
                 Sample {
-                    day: day(2026, 7, 22),
+                    day: day_archive::day(2026, 7, 22),
                     value: None
                 },
                 Sample {
-                    day: day(2026, 7, 24),
+                    day: day_archive::day(2026, 7, 24),
                     value: Some(1)
                 },
             ]
@@ -317,12 +322,16 @@ mod tests {
     #[test]
     fn an_archived_day_without_samples_breaks_the_line() {
         let mut cache = ContextSampleCache::default();
-        let archived = [day(2026, 7, 20), day(2026, 7, 21), day(2026, 7, 22)];
+        let archived = [
+            day_archive::day(2026, 7, 20),
+            day_archive::day(2026, 7, 21),
+            day_archive::day(2026, 7, 22),
+        ];
 
         let line = cache.resolve(
             source(&archived),
             |read| {
-                if read == day(2026, 7, 21) {
+                if read == day_archive::day(2026, 7, 21) {
                     Vec::new()
                 } else {
                     valued(read)
@@ -343,13 +352,17 @@ mod tests {
     #[test]
     fn an_unchanged_source_hands_back_the_same_line() {
         let mut cache = ContextSampleCache::default();
-        let archived = [day(2026, 7, 20)];
+        let archived = [day_archive::day(2026, 7, 20)];
 
         let first = cache.resolve(source(&archived), valued, gap);
         let again = cache.resolve(source(&archived), valued, gap);
         assert_eq!(ArcIdentity::of(&first), ArcIdentity::of(&again));
 
-        let extended = cache.resolve(source(&[day(2026, 7, 20), day(2026, 7, 21)]), valued, gap);
+        let extended = cache.resolve(
+            source(&[day_archive::day(2026, 7, 20), day_archive::day(2026, 7, 21)]),
+            valued,
+            gap,
+        );
         assert_ne!(ArcIdentity::of(&first), ArcIdentity::of(&extended));
     }
 
@@ -364,14 +377,17 @@ mod tests {
             valued(read)
         };
 
-        cache.resolve(source(&[day(2026, 7, 20)]), &mut read_day, gap);
+        cache.resolve(source(&[day_archive::day(2026, 7, 20)]), &mut read_day, gap);
         cache.resolve(
-            source(&[day(2026, 7, 20), day(2026, 7, 21)]),
+            source(&[day_archive::day(2026, 7, 20), day_archive::day(2026, 7, 21)]),
             &mut read_day,
             gap,
         );
 
-        assert_eq!(reads, [day(2026, 7, 20), day(2026, 7, 21)]);
+        assert_eq!(
+            reads,
+            [day_archive::day(2026, 7, 20), day_archive::day(2026, 7, 21)]
+        );
     }
 
     /// The values of the position-dependent lines are read where the
@@ -386,13 +402,16 @@ mod tests {
         };
         let positioned = |positions| ContextSource {
             positions: Some(positions),
-            ..source(&[day(2026, 7, 20)])
+            ..source(&[day_archive::day(2026, 7, 20)])
         };
         let (first, second) = (Arc::new(0_u8), Arc::new(0_u8));
 
         cache.resolve(positioned(ArcIdentity::of(&first)), &mut read_day, gap);
         cache.resolve(positioned(ArcIdentity::of(&second)), &mut read_day, gap);
 
-        assert_eq!(reads, [day(2026, 7, 20), day(2026, 7, 20)]);
+        assert_eq!(
+            reads,
+            [day_archive::day(2026, 7, 20), day_archive::day(2026, 7, 20)]
+        );
     }
 }

@@ -1,4 +1,5 @@
-//! Fixtures for the tests that drive a [`HistoryWorker`] over a real database.
+//! Recordings written into a real history database, and a `HistoryWorker`
+//! spawned on that database.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -6,8 +7,8 @@ use std::time::{Duration, Instant};
 use chrono::DateTime;
 use gt_pending_writes::PendingWrites;
 use gt_store::{
-    HistoryDatabase as _, RecordingEntry, Recordings, RecordingsHandle, StoredFixPlacementRule,
-    StoredSegmentation, StoredTrackSplitRule, TrackRange, TrackState,
+    DatabaseRef, HistoryDatabase as _, RecordingEntry, Recordings, RecordingsHandle,
+    StoredFixPlacementRule, StoredSegmentation, StoredTrackSplitRule, TrackRange, TrackState,
 };
 use gt_test_utils::SyntheticGtdSpec;
 
@@ -39,6 +40,8 @@ pub fn sample_bytes() -> Vec<u8> {
     bytes_starting_at(1_748_000_000, SAMPLE_POINT_COUNT as usize)
 }
 
+/// The settings a recording is stored under, matching
+/// `SegmentationConfig::default`.
 pub fn segmentation() -> StoredSegmentation {
     StoredSegmentation {
         track_split_gap_us: 300_000_000,
@@ -49,11 +52,28 @@ pub fn segmentation() -> StoredSegmentation {
     }
 }
 
-pub fn store_recording(path: &Path, bytes: &[u8], tracks: &[TrackRange]) {
+pub fn store_recording(path: &Path, bytes: &[u8], tracks: &[TrackRange]) -> DatabaseRef {
     let mut db = Recordings::open_or_create(path).expect("open");
     let meta = gt_store::extract_meta(bytes).expect("meta");
     db.insert("dev", &meta, tracks, segmentation(), bytes)
-        .expect("insert");
+        .expect("insert")
+}
+
+/// Store `bytes` under `identity` with a track table of one live track
+/// spanning every nav point of the recording.
+pub fn insert_recording_as_one_whole_file_track(
+    db: &mut Recordings,
+    identity: &str,
+    bytes: &[u8],
+) -> DatabaseRef {
+    let meta = gt_store::extract_meta(bytes).expect("parse meta");
+    let tracks = [TrackRange {
+        start: 0,
+        end: meta.nav_point_count,
+        state: TrackState::Live,
+    }];
+    db.insert(identity, &meta, &tracks, segmentation(), bytes)
+        .expect("insert")
 }
 
 /// Store one recording whose twenty nav points are cut at `bounds` into live
@@ -88,6 +108,30 @@ pub fn worker_on(path: &Path) -> HistoryWorker {
         egui::Context::default(),
         PendingWrites::default(),
     )
+}
+
+/// A second sender on a worker's request channel: while it lives the worker's
+/// `recv` cannot fail, so its thread stays on its loop.
+pub struct HeldOpenWorkerThread(Box<dyn Send>);
+
+impl HeldOpenWorkerThread {
+    /// Lets the worker's thread reach the end of its loop.
+    pub fn release(self) {
+        drop(self.0);
+    }
+}
+
+/// A worker whose thread stays on its request loop until the returned
+/// [`HeldOpenWorkerThread`] drops, so a test controls when the shutdown join
+/// returns.
+pub fn spawn_worker_held_open(
+    db: RecordingsHandle,
+    ctx: egui::Context,
+    pending_writes: PendingWrites,
+) -> (HistoryWorker, HeldOpenWorkerThread) {
+    let worker = HistoryWorker::spawn(db, ctx, pending_writes);
+    let held_open = HeldOpenWorkerThread(Box::new(worker.second_request_sender()));
+    (worker, held_open)
 }
 
 /// Block until the worker delivers exactly one response, or time out.

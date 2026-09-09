@@ -631,7 +631,7 @@ pub fn load_settings() -> Settings {
 }
 
 #[cfg(test)]
-mod snap_settings_tests {
+mod tests {
     use rstest::rstest;
 
     use super::*;
@@ -802,34 +802,83 @@ mod snap_settings_tests {
         assert!(!snap.consent_granted());
     }
 
-    /// The section is new. Older config files without it must load with the
-    /// FOSSGIS default server and no consent.
-    #[test]
-    fn snap_settings_default_from_absent_toml_section() {
-        let settings: Settings = toml::from_str("").unwrap_or_default();
-        assert_eq!(settings.snap.server_url, gt_snap::DEFAULT_SERVER_URL);
-        assert_eq!(settings.snap.costing, gt_snap::wire::Costing::Auto);
-        assert_eq!(settings.snap.consent_host, None);
+    /// The six sections share one rule: serde's `default` on [`Settings`]
+    /// fills an absent section.
+    #[rstest]
+    #[case::snap(&|settings: &Settings| format!("{:?}", settings.snap))]
+    #[case::interference(&|settings: &Settings| format!("{:?}", settings.interference))]
+    #[case::tec(&|settings: &Settings| format!("{:?}", settings.tec))]
+    #[case::environment_storage(
+        &|settings: &Settings| format!("{:?}", settings.environment_storage)
+    )]
+    #[case::solar_flares(&|settings: &Settings| format!("{:?}", settings.solar_flares))]
+    #[case::geomagnetic_indices(
+        &|settings: &Settings| format!("{:?}", settings.geomagnetic_indices)
+    )]
+    fn a_section_absent_from_the_settings_file_loads_at_its_default(
+        #[case] read_section: &dyn Fn(&Settings) -> String,
+    ) {
+        let stored: Settings = toml::from_str("version = 1\n").expect("parse");
+
+        assert_eq!(read_section(&stored), read_section(&Settings::default()));
     }
 
-    /// A settings file written before the interference section existed loads
-    /// with the default host.
-    #[test]
-    fn a_settings_file_without_the_interference_section_loads() {
-        let stored = "version = 1\n";
-        let settings: Settings = toml::from_str(stored).expect("parse");
-        assert_eq!(settings.interference.base_url, gt_jam::DEFAULT_BASE_URL);
-    }
-
-    /// A configured mirror round-trips.
-    #[test]
-    fn a_configured_interference_host_round_trips() {
+    /// A configured value reaches the settings file and comes back out of it
+    /// unchanged.
+    #[rstest]
+    #[case::an_interference_host(
+        &|settings: &mut Settings| {
+            settings.interference.base_url = "https://mirror.example".to_owned();
+        },
+        &["https://mirror.example"]
+    )]
+    #[case::a_tec_mirror_list(
+        &|settings: &mut Settings| {
+            settings.tec.mirrors = gt_ionex::MirrorList::new(vec![
+                gt_ionex::Mirror::new(
+                    gt_ionex::MirrorBaseUrl::new("https://first.example"),
+                    gt_ionex::MirrorLayout::Jpl,
+                ),
+                gt_ionex::Mirror::new(
+                    gt_ionex::MirrorBaseUrl::new("https://second.example"),
+                    gt_ionex::MirrorLayout::Cddis,
+                ),
+            ])
+            .expect("two named hosts");
+        },
+        &["https://first.example", "https://second.example"]
+    )]
+    #[case::an_earthdata_token(
+        &|settings: &mut Settings| settings.tec.earthdata_token = "entered-token".to_owned(),
+        &["entered-token"]
+    )]
+    #[case::a_solar_flare_host_and_key(
+        &|settings: &mut Settings| {
+            settings.solar_flares.base_url = "https://proxy.example".to_owned();
+            settings.solar_flares.api_key = "entered-key".to_owned();
+        },
+        &["https://proxy.example", "entered-key"]
+    )]
+    #[case::a_geomagnetic_index_host(
+        &|settings: &mut Settings| {
+            settings.geomagnetic_indices.base_url = "https://mirror.example".to_owned();
+        },
+        &["https://mirror.example"]
+    )]
+    fn a_configured_value_round_trips_through_the_settings_file(
+        #[case] configure: &dyn Fn(&mut Settings),
+        #[case] written: &[&str],
+    ) {
         let mut settings = Settings::default();
-        settings.interference.base_url = "https://mirror.example".to_owned();
+        configure(&mut settings);
 
         let text = toml::to_string_pretty(&settings).expect("serialize");
+        for value in written {
+            assert!(text.contains(value), "the file states {value}:\n{text}");
+        }
+
         let parsed: Settings = toml::from_str(&text).expect("parse");
-        assert_eq!(parsed.interference.base_url, "https://mirror.example");
+        assert_eq!(toml::to_string_pretty(&parsed).expect("re-serialize"), text);
     }
 
     fn tec_mirrors(stored: &str) -> Vec<String> {
@@ -928,55 +977,6 @@ mod snap_settings_tests {
         );
     }
 
-    #[test]
-    fn a_configured_tec_mirror_list_round_trips() {
-        let mut settings = Settings::default();
-        settings.tec.mirrors = gt_ionex::MirrorList::new(vec![
-            gt_ionex::Mirror::new(
-                gt_ionex::MirrorBaseUrl::new("https://first.example"),
-                gt_ionex::MirrorLayout::Jpl,
-            ),
-            gt_ionex::Mirror::new(
-                gt_ionex::MirrorBaseUrl::new("https://second.example"),
-                gt_ionex::MirrorLayout::Cddis,
-            ),
-        ])
-        .expect("two named hosts");
-
-        let text = toml::to_string(&settings).expect("serialize");
-        let parsed: Settings = toml::from_str(&text).expect("parse");
-
-        assert_eq!(parsed.tec.mirrors, settings.tec.mirrors);
-    }
-
-    /// A file written before the token setting existed loads without one,
-    /// which leaves the mirrors needing one unrequested.
-    #[test]
-    fn a_settings_file_without_the_earthdata_token_loads() {
-        let settings: Settings = toml::from_str("version = 1\n").expect("parse");
-        assert!(settings.tec.earthdata_token().is_none());
-    }
-
-    #[test]
-    fn a_configured_earthdata_token_round_trips() {
-        let mut settings = Settings::default();
-        settings.tec.earthdata_token = "entered-token".to_owned();
-
-        let text = toml::to_string(&settings).expect("serialize");
-        let parsed: Settings = toml::from_str(&text).expect("parse");
-
-        assert_eq!(parsed.tec.earthdata_token, "entered-token");
-    }
-
-    /// An upgrade keeps every archived day: a settings file written before the
-    /// environment storage section existed loads with auto-pruning off.
-    #[test]
-    fn a_settings_file_without_the_environment_storage_section_loads() {
-        let settings: Settings = toml::from_str("version = 1\n").expect("parse");
-        assert!(!settings.environment_storage.auto_prune_enabled);
-        assert_eq!(settings.environment_storage.auto_prune_max_age_months, 12);
-    }
-
     /// A hand-edited age loads clamped to what the control offers.
     #[rstest]
     #[case::under_the_range(0, 1)]
@@ -995,54 +995,6 @@ mod snap_settings_tests {
                 .clamped_to_offered_range()
                 .auto_prune_max_age_months,
             expected
-        );
-    }
-
-    /// A settings file written before the solar flare section existed loads
-    /// with the publishing host and no key, which fetches nothing.
-    #[test]
-    fn a_settings_file_without_the_solar_flare_section_loads() {
-        let settings: Settings = toml::from_str("version = 1\n").expect("parse");
-        assert_eq!(settings.solar_flares.base_url, gt_flare::DEFAULT_BASE_URL);
-        assert!(settings.solar_flares.api_key().is_none());
-    }
-
-    /// A configured host and key round-trip.
-    #[test]
-    fn a_configured_solar_flare_host_and_key_round_trip() {
-        let mut settings = Settings::default();
-        settings.solar_flares.base_url = "https://proxy.example".to_owned();
-        settings.solar_flares.api_key = "entered-key".to_owned();
-
-        let text = toml::to_string_pretty(&settings).expect("serialize");
-        let parsed: Settings = toml::from_str(&text).expect("parse");
-        assert_eq!(parsed.solar_flares.base_url, "https://proxy.example");
-        assert_eq!(parsed.solar_flares.api_key, "entered-key");
-    }
-
-    /// A settings file written before the geomagnetic index section existed
-    /// loads with the GFZ default host.
-    #[test]
-    fn a_settings_file_without_the_geomagnetic_index_section_loads() {
-        let stored = "version = 1\n";
-        let settings: Settings = toml::from_str(stored).expect("parse");
-        assert_eq!(
-            settings.geomagnetic_indices.base_url,
-            gt_solar::DEFAULT_BASE_URL
-        );
-    }
-
-    /// A configured index mirror round-trips.
-    #[test]
-    fn a_configured_geomagnetic_index_host_round_trips() {
-        let mut settings = Settings::default();
-        settings.geomagnetic_indices.base_url = "https://mirror.example".to_owned();
-
-        let text = toml::to_string_pretty(&settings).expect("serialize");
-        let parsed: Settings = toml::from_str(&text).expect("parse");
-        assert_eq!(
-            parsed.geomagnetic_indices.base_url,
-            "https://mirror.example"
         );
     }
 

@@ -1623,9 +1623,7 @@ mod tests {
     use gt_side_panel::{ShelveConfirmState, TreeState};
 
     use crate::app::history_db::{DbOp, HistoryWorker, Response};
-    use crate::app::history_test_support::{
-        next_response, only_recording, seed_recording_cut_at, worker_on,
-    };
+    use crate::app::test_util::recordings;
 
     fn day(offset: i64) -> chrono::NaiveDate {
         chrono::NaiveDate::from_ymd_opt(2026, 7, 5).unwrap_or_default()
@@ -1993,7 +1991,7 @@ mod tests {
             show_snap_replace_dialog(ui, SNAP_COSTING);
         });
         harness.inner.run_steps(4);
-        harness.snapshot("snap_replace_confirmation");
+        harness.snapshot("snap_to_road_replace_confirmation");
     }
 
     struct TokenDialogState {
@@ -2449,7 +2447,7 @@ mod tests {
         let Response::Mutated {
             op: DbOp::TracksDeleted { .. },
             result,
-        } = next_response(worker)
+        } = recordings::next_response(worker)
         else {
             panic!("expected a TracksDeleted mutation");
         };
@@ -2467,15 +2465,15 @@ mod tests {
     fn removing_a_track_after_a_permanent_delete_deletes_the_track_the_user_chose() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
-        seed_recording_cut_at(&path, &[7, 14]);
-        let worker = worker_on(&path);
+        recordings::seed_recording_cut_at(&path, &[7, 14]);
+        let worker = recordings::worker_on(&path);
 
-        let db_ref = only_recording(&worker).db_ref;
+        let db_ref = recordings::only_recording(&worker).db_ref;
         let mut loaded = loaded_recording_in_stored_rows(&[0, 1, 2], &db_ref);
         let mut tree = TreeState::default();
         remove_the_track_permanently(&worker, &mut loaded, &mut tree, &db_ref, 0);
 
-        let after_the_first_delete = only_recording(&worker);
+        let after_the_first_delete = recordings::only_recording(&worker);
         assert_eq!(
             after_the_first_delete.meta.nav_point_count, 13,
             "the first delete removed seven points"
@@ -2484,7 +2482,7 @@ mod tests {
         remove_the_track_permanently(&worker, &mut loaded, &mut tree, &db_ref, 0);
 
         assert_eq!(
-            only_recording(&worker).meta.nav_point_count,
+            recordings::only_recording(&worker).meta.nav_point_count,
             6,
             "the recording keeps the six points of its last track"
         );
@@ -2499,12 +2497,12 @@ mod tests {
      {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
-        seed_recording_cut_at(&path, &[7, 14]);
-        let worker = worker_on(&path);
+        recordings::seed_recording_cut_at(&path, &[7, 14]);
+        let worker = recordings::worker_on(&path);
 
-        let db_ref = only_recording(&worker).db_ref;
+        let db_ref = recordings::only_recording(&worker).db_ref;
         worker.set_tracks_shelved(db_ref.clone(), vec![1], true);
-        let Response::Mutated { result, .. } = next_response(&worker) else {
+        let Response::Mutated { result, .. } = recordings::next_response(&worker) else {
             panic!("expected a mutation response");
         };
         result.expect("the first shelve runs");
@@ -2518,13 +2516,13 @@ mod tests {
             panic!("expected one affected recording, got {}", removals.len());
         };
         worker.set_tracks_shelved(db_ref.clone(), removal.track_rows.clone(), true);
-        let Response::Mutated { result, .. } = next_response(&worker) else {
+        let Response::Mutated { result, .. } = recordings::next_response(&worker) else {
             panic!("expected a mutation response");
         };
         result.expect("the second shelve runs");
 
         worker.open(db_ref);
-        let Response::Opened { result, .. } = next_response(&worker) else {
+        let Response::Opened { result, .. } = recordings::next_response(&worker) else {
             panic!("expected an Opened response");
         };
         let states: Vec<TrackState> = result

@@ -319,3 +319,246 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use egui_kittest::Harness;
+    use gt_ui_types::{DisplayCategory, DisplayMask};
+
+    use crate::app::test_util::harness;
+    use crate::settings::Settings;
+
+    /// An added TEC mirror reaches the settings file and points the scheduler at
+    /// the whole list on the way back in.
+    #[test]
+    fn tec_mirrors_persist_across_settings_roundtrip() {
+        let mut harness = Harness::builder()
+            .with_wait_for_pending_images(false)
+            .build_eframe(harness::transient_app);
+        harness.step();
+        let before = harness.state().collect_snapshot();
+
+        harness
+            .state_mut()
+            .tec_settings
+            .mirrors
+            .add(gt_ionex::Mirror::new(
+                gt_ionex::MirrorBaseUrl::new("https://mirror.example"),
+                gt_ionex::MirrorLayout::Jpl,
+            ));
+
+        assert!(
+            harness.state().collect_snapshot() != before,
+            "the autosaver sees the edited list"
+        );
+        let flushed = harness.state().collect_settings_for_flush();
+        let toml = toml::to_string(&flushed).expect("settings serialize");
+        let reloaded: Settings = toml::from_str(&toml).expect("settings parse");
+        assert_eq!(reloaded.tec.mirrors, flushed.tec.mirrors);
+
+        harness.state_mut().apply_startup_settings(&reloaded);
+        assert_eq!(
+            harness
+                .state()
+                .tec_settings
+                .mirrors
+                .as_slice()
+                .iter()
+                .map(|mirror| mirror.base_url.to_string())
+                .collect::<Vec<_>>(),
+            [
+                gt_ionex::DEFAULT_BASE_URL,
+                gt_ionex::cddis::DEFAULT_BASE_URL,
+                "https://mirror.example",
+            ]
+        );
+    }
+
+    /// Channel plot toggles survive the settings flush/load roundtrip: the
+    /// revealed section and a hidden channel come back, and the TOML encoding
+    /// itself round-trips the dynamic name map.
+    #[test]
+    fn plot_channel_toggles_persist_across_settings_roundtrip() {
+        let mut harness = Harness::builder()
+            .with_wait_for_pending_images(false)
+            .build_eframe(harness::transient_app);
+        harness.step();
+
+        {
+            let shared = harness.state_mut().shared.clone();
+            let mut shared = shared.borrow_mut();
+            shared.plot_state.show_channels = true;
+            shared.plot_state.channel_vis.set("accel", false);
+        }
+
+        let flushed = harness.state().collect_settings_for_flush();
+        assert!(flushed.plot.show_channels);
+        assert_eq!(flushed.plot.channel.get("accel"), Some(&false));
+
+        // Through the actual wire format, not just the struct.
+        let toml = toml::to_string(&flushed).expect("settings serialize");
+        let reloaded: Settings = toml::from_str(&toml).expect("settings parse");
+        assert!(reloaded.plot.show_channels);
+        assert_eq!(reloaded.plot.channel.get("accel"), Some(&false));
+
+        harness.state_mut().apply_startup_settings(&reloaded);
+        let shared = harness.state().shared.borrow();
+        assert!(shared.plot_state.show_channels);
+        assert!(!shared.plot_state.channel_vis.is_visible("accel"));
+        assert!(shared.plot_state.channel_vis.is_visible("incline"));
+    }
+
+    /// A picked component color persists through the actual settings wire
+    /// format, non-overridden slots included: the dense plot slots convert to
+    /// sparse stored entries and back without drift.
+    #[test]
+    fn channel_component_colors_persist_across_settings_roundtrip() {
+        let mut harness = Harness::builder()
+            .with_wait_for_pending_images(false)
+            .build_eframe(harness::transient_app);
+        harness.step();
+
+        let magenta = egui::Color32::from_rgb(255, 0, 200);
+        {
+            let shared = harness.state_mut().shared.clone();
+            let mut shared = shared.borrow_mut();
+            shared
+                .plot_state
+                .channel_component_colors
+                .insert("accel".to_owned(), vec![None, Some(magenta), None]);
+        }
+
+        let flushed = harness.state().collect_settings_for_flush();
+        let toml = toml::to_string(&flushed).expect("settings serialize");
+        let reloaded: Settings = toml::from_str(&toml).expect("settings parse");
+        harness.state_mut().apply_startup_settings(&reloaded);
+
+        let shared = harness.state().shared.borrow();
+        let colors = shared
+            .plot_state
+            .channel_component_colors
+            .get("accel")
+            .expect("override survives the roundtrip");
+        assert_eq!(colors.first(), Some(&None), "unset slots stay unset");
+        assert_eq!(colors.get(1), Some(&Some(magenta)));
+    }
+
+    /// The side panel's Visible section opens at the share the settings file
+    /// holds, and the app writes the rendered share back out.
+    #[test]
+    fn the_visible_section_opens_at_the_share_the_settings_file_holds() {
+        let config_dir = tempfile::tempdir().expect("temp config dir");
+        let config_path = config_dir.path().join("config.toml");
+        std::fs::write(&config_path, "[ui]\nvisible_section_fraction = 0.5\n")
+            .expect("write the settings file");
+
+        let built_from = config_path.clone();
+        let mut harness = Harness::builder()
+            .with_wait_for_pending_images(false)
+            .build_eframe(move |cc| harness::build_app(cc, &built_from, false));
+        harness.step();
+
+        let share = harness
+            .state()
+            .collect_settings_for_flush()
+            .ui
+            .visible_section_fraction;
+        assert!(
+            (share - 0.5).abs() < 0.02,
+            "the section opened at {share} of the region"
+        );
+    }
+
+    /// The display mask persists through the actual settings wire format:
+    /// hidden categories survive the round trip, missing keys mean visible.
+    #[test]
+    fn display_mask_persists_across_settings_roundtrip() {
+        let mut harness = Harness::builder()
+            .with_wait_for_pending_images(false)
+            .build_eframe(harness::transient_app);
+        harness.step();
+
+        {
+            let shared = harness.state_mut().shared.clone();
+            let mut shared = shared.borrow_mut();
+            shared
+                .display_mask
+                .set_visible(DisplayCategory::GeneratedMarkers, false);
+            shared
+                .display_mask
+                .set_visible(DisplayCategory::SatelliteLabels, false);
+        }
+
+        let flushed = harness.state().collect_settings_for_flush();
+        let toml = toml::to_string(&flushed).expect("settings serialize");
+        let reloaded: Settings = toml::from_str(&toml).expect("settings parse");
+
+        harness.state_mut().apply_startup_settings(&reloaded);
+        let shared = harness.state().shared.borrow();
+        assert!(
+            !shared
+                .display_mask
+                .is_visible(DisplayCategory::GeneratedMarkers)
+        );
+        assert!(
+            !shared
+                .display_mask
+                .is_visible(DisplayCategory::SatelliteLabels)
+        );
+        assert!(shared.display_mask.is_visible(DisplayCategory::Tracks));
+
+        // A config from before the display mask existed loads with every
+        // category at its default: everything visible but the opt-in layer.
+        let old_config: Settings =
+            toml::from_str("[map]\nsync_to_map = false\n").expect("old config parses");
+        assert_eq!(old_config.map.display_mask, DisplayMask::default());
+        assert!(
+            !old_config
+                .map
+                .display_mask
+                .is_visible(DisplayCategory::JammingHexes)
+        );
+    }
+
+    /// The interference layer is off until enabled, and stays on once it is.
+    #[test]
+    fn showing_the_interference_layer_persists_across_settings_roundtrip() {
+        let mut harness = Harness::builder()
+            .with_wait_for_pending_images(false)
+            .build_eframe(harness::transient_app);
+        harness.step();
+
+        assert!(
+            !harness
+                .state()
+                .shared
+                .borrow()
+                .display_mask
+                .is_visible(DisplayCategory::JammingHexes),
+            "off on a fresh install"
+        );
+
+        {
+            let shared = harness.state_mut().shared.clone();
+            let mut shared = shared.borrow_mut();
+            shared
+                .display_mask
+                .set_visible(DisplayCategory::JammingHexes, true);
+        }
+
+        let flushed = harness.state().collect_settings_for_flush();
+        let toml = toml::to_string(&flushed).expect("settings serialize");
+        let reloaded: Settings = toml::from_str(&toml).expect("settings parse");
+        harness.state_mut().apply_startup_settings(&reloaded);
+
+        assert!(
+            harness
+                .state()
+                .shared
+                .borrow()
+                .display_mask
+                .is_visible(DisplayCategory::JammingHexes),
+            "the choice survives a restart"
+        );
+    }
+}

@@ -122,42 +122,106 @@ enum DocumentPosition {
     End,
 }
 
-/// Both themes at both ends of the document. The end holds the illustration
-/// pair, the query example in the editor's syntax colors, and the sources
-/// footer.
+/// Each document in both themes at both of its ends. A top holds the
+/// document's illustrations and its display equations, tinted to the theme's
+/// text colour. An end holds the tables, the query examples in the editor's
+/// syntax colors, and the sources footer.
 #[rstest]
-#[case(true, DocumentPosition::Top, "reference_window_geomagnetic")]
-#[case(false, DocumentPosition::Top, "reference_window_geomagnetic_light")]
-#[case(true, DocumentPosition::End, "reference_window_geomagnetic_end")]
-#[case(false, DocumentPosition::End, "reference_window_geomagnetic_end_light")]
-fn snapshot_reference_window_geomagnetic(
+#[case(
+    GEOMAGNETIC_ACTIVITY,
+    true,
+    DocumentPosition::Top,
+    "reference_window_geomagnetic"
+)]
+#[case(
+    GEOMAGNETIC_ACTIVITY,
+    false,
+    DocumentPosition::Top,
+    "reference_window_geomagnetic_light"
+)]
+#[case(
+    GEOMAGNETIC_ACTIVITY,
+    true,
+    DocumentPosition::End,
+    "reference_window_geomagnetic_end"
+)]
+#[case(
+    GEOMAGNETIC_ACTIVITY,
+    false,
+    DocumentPosition::End,
+    "reference_window_geomagnetic_end_light"
+)]
+#[case(IONOSPHERIC_TEC, true, DocumentPosition::Top, "reference_window_tec")]
+#[case(
+    IONOSPHERIC_TEC,
+    false,
+    DocumentPosition::Top,
+    "reference_window_tec_light"
+)]
+#[case(
+    IONOSPHERIC_TEC,
+    true,
+    DocumentPosition::End,
+    "reference_window_tec_end"
+)]
+#[case(
+    IONOSPHERIC_TEC,
+    false,
+    DocumentPosition::End,
+    "reference_window_tec_end_light"
+)]
+#[case(SOLAR_FLARES, true, DocumentPosition::Top, "reference_window_flares")]
+#[case(
+    SOLAR_FLARES,
+    false,
+    DocumentPosition::Top,
+    "reference_window_flares_light"
+)]
+#[case(
+    SOLAR_FLARES,
+    true,
+    DocumentPosition::End,
+    "reference_window_flares_end"
+)]
+#[case(
+    SOLAR_FLARES,
+    false,
+    DocumentPosition::End,
+    "reference_window_flares_end_light"
+)]
+#[case(
+    AIRCRAFT_INTERFERENCE,
+    true,
+    DocumentPosition::Top,
+    "reference_window_interference"
+)]
+#[case(
+    AIRCRAFT_INTERFERENCE,
+    false,
+    DocumentPosition::Top,
+    "reference_window_interference_light"
+)]
+#[case(
+    AIRCRAFT_INTERFERENCE,
+    true,
+    DocumentPosition::End,
+    "reference_window_interference_end"
+)]
+#[case(
+    AIRCRAFT_INTERFERENCE,
+    false,
+    DocumentPosition::End,
+    "reference_window_interference_end_light"
+)]
+fn snapshot_the_reference_window(
+    #[case] document: ReferenceDocument,
     #[case] dark_mode: bool,
     #[case] position: DocumentPosition,
     #[case] snapshot_name: &str,
 ) {
-    let mut harness = harness_showing(GEOMAGNETIC_ACTIVITY, dark_mode);
+    let mut harness = harness_showing(document, dark_mode);
     if matches!(position, DocumentPosition::End) {
-        scroll_to_end(&mut harness, GEOMAGNETIC_ACTIVITY);
-    }
-    harness.snapshot_loose(snapshot_name);
-}
-
-/// Both themes at both ends of the TEC document. The top holds the display
-/// equations, tinted to the theme's text colour, the end the storm index table
-/// and the query examples.
-#[rstest]
-#[case(true, DocumentPosition::Top, "reference_window_tec")]
-#[case(false, DocumentPosition::Top, "reference_window_tec_light")]
-#[case(true, DocumentPosition::End, "reference_window_tec_end")]
-#[case(false, DocumentPosition::End, "reference_window_tec_end_light")]
-fn snapshot_reference_window_tec(
-    #[case] dark_mode: bool,
-    #[case] position: DocumentPosition,
-    #[case] snapshot_name: &str,
-) {
-    let mut harness = harness_showing(IONOSPHERIC_TEC, dark_mode);
-    if matches!(position, DocumentPosition::End) {
-        scroll_to_end(&mut harness, IONOSPHERIC_TEC);
+        scroll_to_end(&mut harness, document);
     }
     harness.snapshot_loose(snapshot_name);
 }
@@ -176,49 +240,6 @@ fn snapshot_reference_window_tec_storm_plot() {
 /// The frame label of the TEC document's plot illustration, which the scroll
 /// searches for.
 const STORM_PLOT_FRAME_LABEL: &str = "grid node 40 N";
-
-/// Both themes at both ends of the flare document. The top holds the flare
-/// image and the quotation of the class ladder, the end the R-scale table.
-#[rstest]
-#[case(true, DocumentPosition::Top, "reference_window_flares")]
-#[case(false, DocumentPosition::Top, "reference_window_flares_light")]
-#[case(true, DocumentPosition::End, "reference_window_flares_end")]
-#[case(false, DocumentPosition::End, "reference_window_flares_end_light")]
-fn snapshot_reference_window_flares(
-    #[case] dark_mode: bool,
-    #[case] position: DocumentPosition,
-    #[case] snapshot_name: &str,
-) {
-    let mut harness = harness_showing(SOLAR_FLARES, dark_mode);
-    if matches!(position, DocumentPosition::End) {
-        scroll_to_end(&mut harness, SOLAR_FLARES);
-    }
-    harness.snapshot_loose(snapshot_name);
-}
-
-/// Both themes at both ends of the interference document. The top holds the
-/// world day GeoTrace rendered, the end the quoted formula and the query
-/// example.
-#[rstest]
-#[case(true, DocumentPosition::Top, "reference_window_interference")]
-#[case(false, DocumentPosition::Top, "reference_window_interference_light")]
-#[case(true, DocumentPosition::End, "reference_window_interference_end")]
-#[case(
-    false,
-    DocumentPosition::End,
-    "reference_window_interference_end_light"
-)]
-fn snapshot_reference_window_interference(
-    #[case] dark_mode: bool,
-    #[case] position: DocumentPosition,
-    #[case] snapshot_name: &str,
-) {
-    let mut harness = harness_showing(AIRCRAFT_INTERFERENCE, dark_mode);
-    if matches!(position, DocumentPosition::End) {
-        scroll_to_end(&mut harness, AIRCRAFT_INTERFERENCE);
-    }
-    harness.snapshot_loose(snapshot_name);
-}
 
 /// A reader who cannot see the equation image is offered the equation as one
 /// line of text.

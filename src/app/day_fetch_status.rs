@@ -158,17 +158,23 @@ pub fn show_background_day_row(ui: &mut Ui, coverage: ArchivedDayCount, hover: &
 mod tests {
     use rstest::rstest;
 
-    use super::*;
+    use crate::app::test_util::day_archive;
 
-    fn day(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
-    }
+    use super::*;
 
     #[rstest]
     #[case::idle(None, 0, "Idle")]
-    #[case::fetching_the_last_day(Some(day(2026, 7, 20)), 0, "Fetching 2026-07-20")]
-    #[case::fetching_with_a_queue(Some(day(2026, 7, 20)), 3, "Fetching 2026-07-20, 3 days queued")]
-    #[case::one_day_behind(Some(day(2026, 7, 20)), 1, "Fetching 2026-07-20, 1 day queued")]
+    #[case::fetching_the_last_day(Some(day_archive::day(2026, 7, 20)), 0, "Fetching 2026-07-20")]
+    #[case::fetching_with_a_queue(
+        Some(day_archive::day(2026, 7, 20)),
+        3,
+        "Fetching 2026-07-20, 3 days queued"
+    )]
+    #[case::one_day_behind(
+        Some(day_archive::day(2026, 7, 20)),
+        1,
+        "Fetching 2026-07-20, 1 day queued"
+    )]
     #[case::queued_without_a_request_in_flight(None, 2, "2 days queued")]
     fn the_queue_line_states_what_is_in_flight_and_what_waits(
         #[case] fetching: Option<NaiveDate>,
@@ -202,9 +208,9 @@ mod tests {
     #[test]
     fn archiving_a_day_outside_the_loaded_recordings_changes_no_count() {
         let mut coverage = DayArchiveCoverage::default();
-        coverage.record(day(2026, 7, 20), DayArchiveState::Awaited);
+        coverage.record(day_archive::day(2026, 7, 20), DayArchiveState::Awaited);
 
-        coverage.mark_archived(day(2026, 7, 25));
+        coverage.mark_archived(day_archive::day(2026, 7, 25));
 
         assert_eq!(
             coverage.counts(),

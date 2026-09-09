@@ -21,8 +21,6 @@ mod frame;
 mod history;
 mod history_db;
 mod history_open;
-#[cfg(test)]
-mod history_test_support;
 mod instance_wait;
 mod jamming;
 mod loader;
@@ -53,6 +51,7 @@ mod storage_controls;
 mod tec;
 mod tec_mirrors_ui;
 mod tec_quiet_time;
+mod test_util;
 mod track_day_values;
 mod unarchived_day;
 pub use storage::Storage;
@@ -242,13 +241,6 @@ fn sparse_component_colors(
         })
         .collect()
 }
-
-/// The fixed version string injected in place of the real crate version in
-/// tests, so every version-bearing UI snapshot stays stable across release
-/// bumps. The one placeholder for the whole app (the About dialog and the
-/// update prompt both flow through it).
-#[cfg(test)]
-pub(crate) const TEST_APP_VERSION: &str = "0.0.0-test";
 
 pub struct App {
     map: NavMap,
@@ -1153,4 +1145,33 @@ impl App {
 
 #[cfg(test)]
 #[path = "app/ui_tests.rs"]
-mod tests;
+mod ui_tests;
+
+#[cfg(test)]
+mod tests {
+    use egui::Color32;
+
+    use crate::settings::ComponentColor;
+
+    /// The sparse<->dense component color conversions: empty stays empty, an
+    /// index gap widens with unset slots, and only overridden slots are stored.
+    #[test]
+    fn component_color_conversions_handle_gaps_and_empty_input() {
+        assert!(super::dense_component_colors(&[]).is_empty());
+        assert!(super::sparse_component_colors(&[None, None]).is_empty());
+
+        let red = Color32::from_rgb(255, 0, 0);
+        let dense = super::dense_component_colors(&[ComponentColor {
+            component: 2,
+            rgba: red.to_array(),
+        }]);
+        assert_eq!(dense, vec![None, None, Some(red)], "gaps widen with unset");
+        assert_eq!(
+            super::sparse_component_colors(&dense),
+            vec![ComponentColor {
+                component: 2,
+                rgba: red.to_array(),
+            }]
+        );
+    }
+}
