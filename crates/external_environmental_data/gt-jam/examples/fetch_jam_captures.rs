@@ -1,15 +1,15 @@
 //! Capture live interference datasets from the publisher.
 //!
-//! Requests each day of [`gt_jam::FIXTURE_DAYS`] into `tests/fixtures/`.
+//! Requests each day of [`gt_jam::CAPTURED_DAYS`] into `tests/captures/`.
 //! A served day is written as its own file. A day the host refused has no
 //! dataset, so only its `capture.json` entry records the status, alongside the
 //! capture date and host.
 //!
-//! Fixtures are frozen once committed. A re-capture's diff is reviewed like
+//! Captures are frozen once committed. A re-capture's diff is reviewed like
 //! code.
 //!
-//! Usage: `just jam-fixtures [DAY...]`, or
-//! `cargo run -p gt-jam --example fetch_jam_fixtures -- [DAY...]`.
+//! Usage: `just jam-captures [DAY...]`, or
+//! `cargo run -p gt-jam --example fetch_jam_captures -- [DAY...]`.
 //! Naming days captures only those, keeping the manifest entries of the
 //! rest. No arguments re-captures everything.
 //! Point it at a mirror with `GEOTRACE_JAM_HOST=https://mirror.example`.
@@ -36,8 +36,8 @@ use serde_json::{Value, json};
 
 use gt_jam::wire::{self, ParseWarningReporter};
 use gt_jam::{
-    CAPTURE_MANIFEST, DEFAULT_BASE_URL, FIXTURE_DAYS, FixtureDay, dataset_file_name, dataset_url,
-    fixtures_dir, parse_day,
+    CAPTURE_MANIFEST, CAPTURED_DAYS, CapturedDay, DEFAULT_BASE_URL, captures_dir,
+    dataset_file_name, dataset_url, parse_day,
 };
 
 /// Points the capture at a mirror. The capture requests from `DEFAULT_BASE_URL`
@@ -52,23 +52,23 @@ const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
 
 fn main() -> Result<(), Box<dyn Error>> {
     let host = env::var(HOST_ENV).unwrap_or_else(|_| DEFAULT_BASE_URL.to_owned());
-    let dir = fixtures_dir();
+    let dir = captures_dir();
     fs::create_dir_all(&dir)?;
 
     // Positional arguments select a subset. Without them the capture covers
     // every day.
     let args: Vec<String> = env::args().skip(1).collect();
-    let selected: Vec<FixtureDay> = if args.is_empty() {
-        FIXTURE_DAYS.to_vec()
+    let selected: Vec<CapturedDay> = if args.is_empty() {
+        CAPTURED_DAYS.to_vec()
     } else {
         args.iter()
             .map(|day| {
-                FIXTURE_DAYS
+                CAPTURED_DAYS
                     .iter()
                     .copied()
-                    .find(|fixture| fixture.day == day)
+                    .find(|capture| capture.day == day)
                     .unwrap_or_else(|| {
-                        panic!("{day:?} is not a declared fixture day - add it to FIXTURE_DAYS")
+                        panic!("{day:?} is not a declared capture day - add it to CAPTURED_DAYS")
                     })
             })
             .collect()
@@ -91,11 +91,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             Err(_) => BTreeMap::new(),
         };
 
-    for (index, fixture) in selected.iter().enumerate() {
+    for (index, capture) in selected.iter().enumerate() {
         if index > 0 {
             thread::sleep(REQUEST_INTERVAL);
         }
-        let day = parse_day(fixture.day)?;
+        let day = parse_day(capture.day)?;
         let response = client.get(dataset_url(&host, day)).send()?;
         let served = response.status().is_success();
         let status = response.status().as_u16();
@@ -106,27 +106,27 @@ fn main() -> Result<(), Box<dyn Error>> {
             .unwrap_or_default()
             .to_owned();
         let body = response.text()?;
-        println!("{}: HTTP {status} ({} bytes)", fixture.day, body.len());
-        if status != fixture.http_status {
+        println!("{}: HTTP {status} ({} bytes)", capture.day, body.len());
+        if status != capture.http_status {
             println!(
-                "  note: FIXTURE_DAYS pins HTTP {} for this day - update it or drop the day",
-                fixture.http_status
+                "  note: CAPTURED_DAYS pins HTTP {} for this day - update it or drop the day",
+                capture.http_status
             );
         }
 
         // Written verbatim, but only once it parses: the host gzip-encodes
         // regardless of Accept-Encoding, so a client that does not decode
         // gets compressed bytes that still look like a body and would
-        // overwrite the fixture with them.
+        // overwrite the capture with them.
         //
-        // Keyed on what the host returned now, not on what FIXTURE_DAYS
+        // Keyed on what the host returned now, not on what CAPTURED_DAYS
         // declares. tests/captured_days.rs catches the disagreement.
         let (rows, recorded_body) = if served {
             let reporter = ParseWarningReporter::default();
             let observations = wire::parse_dataset(&body, &reporter).map_err(|err| {
                 format!(
                     "{}: not written, the response did not parse: {err}",
-                    fixture.day
+                    capture.day
                 )
             })?;
             let warnings = reporter.warnings().len() + reporter.suppressed();
@@ -140,9 +140,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
 
         entries_by_day.insert(
-            fixture.day.to_owned(),
+            capture.day.to_owned(),
             json!({
-                "day": fixture.day,
+                "day": capture.day,
                 "captured_at": Utc::now().to_rfc3339(),
                 "host": host,
                 "http_status": status,
@@ -155,9 +155,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Declared order, not capture order, so a partial re-capture diffs
     // cleanly.
-    let days: Vec<Value> = FIXTURE_DAYS
+    let days: Vec<Value> = CAPTURED_DAYS
         .iter()
-        .filter_map(|fixture| entries_by_day.get(fixture.day).cloned())
+        .filter_map(|capture| entries_by_day.get(capture.day).cloned())
         .collect();
     fs::write(
         dir.join(CAPTURE_MANIFEST),

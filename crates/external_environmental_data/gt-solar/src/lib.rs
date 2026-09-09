@@ -196,12 +196,12 @@ pub fn parse_timestamp(timestamp: &str) -> Result<DateTime<Utc>, chrono::ParseEr
     Ok(DateTime::parse_from_rfc3339(timestamp)?.with_timezone(&Utc))
 }
 
-/// One response captured under [`fixtures_dir`] by `just solar-fixtures`.
+/// One response captured under [`captures_dir`] by `just solar-captures`.
 ///
 /// Captures are frozen once committed. A re-capture's diff is reviewed like
 /// code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FixtureWindow {
+pub struct CapturedWindow {
     /// Identifies the capture on disk and on the capture command line.
     pub name: &'static str,
     pub index: GeomagneticIndex,
@@ -213,7 +213,7 @@ pub struct FixtureWindow {
     pub purpose: &'static str,
 }
 
-impl FixtureWindow {
+impl CapturedWindow {
     /// The window that was requested, or the error in one of its declared
     /// timestamps.
     pub fn window(&self) -> Result<TimeWindow, chrono::ParseError> {
@@ -223,36 +223,36 @@ impl FixtureWindow {
         })
     }
 
-    /// The file the response is captured to, under [`fixtures_dir`].
+    /// The file the response is captured to, under [`captures_dir`].
     pub fn file_name(&self) -> String {
         format!("{}.json", self.name)
     }
 }
 
 /// The captured windows, in the order the manifest lists them.
-pub const FIXTURE_WINDOWS: [FixtureWindow; 4] = [
-    FixtureWindow {
+pub const CAPTURED_WINDOWS: [CapturedWindow; 4] = [
+    CapturedWindow {
         name: "kp-quiet",
         index: GeomagneticIndex::Kp,
         start: "2024-04-01T00:00:00Z",
         end: "2024-04-02T00:00:00Z",
         purpose: "a day no storm reached, the shape most responses have",
     },
-    FixtureWindow {
+    CapturedWindow {
         name: "kp-storm",
         index: GeomagneticIndex::Kp,
         start: "2024-05-10T00:00:00Z",
         end: "2024-05-12T00:00:00Z",
         purpose: "the May 2024 storm, where Kp reaches its ceiling of 9 and the G5 class",
     },
-    FixtureWindow {
+    CapturedWindow {
         name: "hp30-storm",
         index: GeomagneticIndex::Hp30,
         start: "2024-05-10T00:00:00Z",
         end: "2024-05-12T00:00:00Z",
         purpose: "the same storm at 30-minute cadence, with values above 9 and no status array",
     },
-    FixtureWindow {
+    CapturedWindow {
         name: "hp30-before-coverage",
         index: GeomagneticIndex::Hp30,
         start: "1980-01-01T00:00:00Z",
@@ -261,19 +261,19 @@ pub const FIXTURE_WINDOWS: [FixtureWindow; 4] = [
     },
 ];
 
-/// File name of the capture manifest written beside the fixtures, recording
+/// File name of the capture manifest written beside the captures, recording
 /// when each window was captured and what the service returned.
 pub const CAPTURE_MANIFEST: &str = "capture.json";
 
-/// Directory holding the captured response fixtures.
+/// Directory holding the captured responses.
 ///
 /// Resolved from the crate manifest dir, so it is only meaningful to
 /// development tooling running inside the workspace, never to the shipped
 /// application.
-pub fn fixtures_dir() -> PathBuf {
+pub fn captures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
+        .join("captures")
 }
 
 #[cfg(test)]
@@ -385,7 +385,9 @@ mod tests {
     fn every_index_has_a_capture() {
         for index in GeomagneticIndex::iter() {
             assert!(
-                FIXTURE_WINDOWS.iter().any(|fixture| fixture.index == index),
+                CAPTURED_WINDOWS
+                    .iter()
+                    .any(|capture| capture.index == index),
                 "{index} has no captured window"
             );
         }
@@ -393,16 +395,16 @@ mod tests {
     }
 
     #[test]
-    fn a_fixture_window_names_its_capture_and_parses_its_timestamps() {
-        for fixture in FIXTURE_WINDOWS {
-            let window = fixture.window().unwrap();
+    fn a_captured_window_names_its_file_and_parses_its_timestamps() {
+        for capture in CAPTURED_WINDOWS {
+            let window = capture.window().unwrap();
             assert!(
                 window.start <= window.end,
                 "{}: {}",
-                fixture.name,
-                fixture.purpose
+                capture.name,
+                capture.purpose
             );
-            assert_eq!(fixture.file_name(), format!("{}.json", fixture.name));
+            assert_eq!(capture.file_name(), format!("{}.json", capture.name));
         }
     }
 
@@ -410,12 +412,12 @@ mod tests {
     /// its capture cannot change meaning as time passes.
     #[test]
     fn no_captured_window_reaches_into_the_future() {
-        for fixture in FIXTURE_WINDOWS {
+        for capture in CAPTURED_WINDOWS {
             assert!(
-                fixture.window().unwrap().end < Utc::now(),
+                capture.window().unwrap().end < Utc::now(),
                 "{}: {}",
-                fixture.name,
-                fixture.purpose
+                capture.name,
+                capture.purpose
             );
         }
     }

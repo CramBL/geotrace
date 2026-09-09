@@ -145,12 +145,12 @@ pub(crate) const FILE_SEQUENCE_DIGIT: char = '0';
 /// header's type record declares.
 pub(crate) const IONOSPHERE_MAPS_TYPE: char = 'I';
 
-/// One file captured under [`fixtures_dir`] by `just ionex-fixtures`.
+/// One file captured under [`captures_dir`] by `just ionex-captures`.
 ///
 /// Captures are frozen once committed. A re-capture's diff is reviewed like
 /// code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FixtureFile {
+pub struct CapturedFile {
     /// Identifies the capture on the capture command line.
     pub name: &'static str,
     /// Where the file was captured from, compressed as the archive serves it.
@@ -170,14 +170,14 @@ pub const STORM_CAPTURE: &str = "jpl-final-storm";
 pub const QUIET_CAPTURE: &str = "jpl-final-quiet";
 
 /// The captured files, in the order the manifest lists them.
-pub const FIXTURE_FILES: [FixtureFile; 2] = [
-    FixtureFile {
+pub const CAPTURED_FILES: [CapturedFile; 2] = [
+    CapturedFile {
         name: STORM_CAPTURE,
         url: "https://sideshow.jpl.nasa.gov/pub/iono_daily/IONEX_final/y2024/JPLG1310.24I.gz",
         file_name: "JPLG1310.24I",
         purpose: "10 May 2024, the day of the G5 storm, where TEC peaks far above a normal day",
     },
-    FixtureFile {
+    CapturedFile {
         name: QUIET_CAPTURE,
         url: "https://sideshow.jpl.nasa.gov/pub/iono_daily/IONEX_final/y2024/JPLG0920.24I.gz",
         file_name: "JPLG0920.24I",
@@ -191,7 +191,7 @@ pub const FIXTURE_FILES: [FixtureFile; 2] = [
 /// Every node sits on the grid JPL publishes its global maps on: 2.5 degrees
 /// in latitude, 5 in longitude.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct FixtureNode {
+pub struct NodeSeriesNode {
     /// Keys the node in the capture and names it on the capture command line.
     pub name: &'static str,
     pub latitude_degrees: f64,
@@ -210,22 +210,22 @@ pub const NORTH_AMERICA_NODE: &str = "north-america-mid-latitude";
 pub const EQUATORIAL_CREST_NODE: &str = "south-america-equatorial-crest";
 
 /// The nodes the capture follows, in the order it writes them.
-pub const FIXTURE_NODES: [FixtureNode; 3] = [
-    FixtureNode {
+pub const NODE_SERIES_NODES: [NodeSeriesNode; 3] = [
+    NodeSeriesNode {
         name: EUROPE_NODE,
         latitude_degrees: 50.0,
         longitude_degrees: 10.0,
         purpose: "mid-latitude Europe, in daylight through 11 May, where the storm's positive \
                   phase is documented",
     },
-    FixtureNode {
+    NodeSeriesNode {
         name: NORTH_AMERICA_NODE,
         latitude_degrees: 40.0,
         longitude_degrees: -100.0,
         purpose: "mid-latitude North America, in afternoon daylight as the storm's main phase \
                   began late on 10 May",
     },
-    FixtureNode {
+    NodeSeriesNode {
         name: EQUATORIAL_CREST_NODE,
         latitude_degrees: -10.0,
         longitude_degrees: -60.0,
@@ -254,7 +254,7 @@ pub const NODE_SERIES_DAYS: (NaiveDate, NaiveDate) = (
 /// captures.
 pub const NODE_SERIES_CAPTURE: &str = "node_series.json";
 
-/// File name of the capture manifest written beside the fixtures, recording
+/// File name of the capture manifest written beside the captures, recording
 /// when each file was captured and what the archive served.
 pub const CAPTURE_MANIFEST: &str = "capture.json";
 
@@ -263,17 +263,17 @@ pub const CAPTURE_MANIFEST: &str = "capture.json";
 /// Resolved from the crate manifest dir, so it is only meaningful to
 /// development tooling running inside the workspace, never to the shipped
 /// application.
-pub fn fixtures_dir() -> PathBuf {
+pub fn captures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
+        .join("captures")
 }
 
 /// Directory holding the files CDDIS served, captured by
 /// `just cddis-verify --capture` with a manifest of the same shape beside
 /// them.
-pub fn cddis_fixtures_dir() -> PathBuf {
-    fixtures_dir().join(CDDIS_CAPTURE_DIR)
+pub fn cddis_captures_dir() -> PathBuf {
+    captures_dir().join(CDDIS_CAPTURE_DIR)
 }
 
 const CDDIS_CAPTURE_DIR: &str = "cddis";
@@ -281,7 +281,7 @@ const CDDIS_CAPTURE_DIR: &str = "cddis";
 /// Why a captured file did not reach the caller as maps.
 #[derive(Debug, thiserror::Error)]
 pub enum CaptureError {
-    #[error("{name} is not declared in FIXTURE_FILES")]
+    #[error("{name} is not declared in CAPTURED_FILES")]
     Undeclared { name: String },
     #[error("reading {}: {source}", path.display())]
     Read {
@@ -297,38 +297,38 @@ pub enum CaptureError {
     ReadNodeSeries { source: serde_json::Error },
 }
 
-/// The capture [`FIXTURE_FILES`] declares under `name`.
-pub fn declared_fixture(name: &str) -> Option<&'static FixtureFile> {
-    FIXTURE_FILES.iter().find(|fixture| fixture.name == name)
+/// The capture [`CAPTURED_FILES`] declares under `name`.
+pub fn declared_capture(name: &str) -> Option<&'static CapturedFile> {
+    CAPTURED_FILES.iter().find(|capture| capture.name == name)
 }
 
-/// The capture [`FIXTURE_FILES`] holds of `product` on `day`, [`None`] for a
+/// The capture [`CAPTURED_FILES`] holds of `product` on `day`, [`None`] for a
 /// day no capture was taken on.
-pub fn declared_fixture_for_day(
+pub fn declared_capture_for_day(
     product: IonexProduct,
     day: NaiveDate,
-) -> Option<&'static FixtureFile> {
+) -> Option<&'static CapturedFile> {
     let published = product.file_name(day);
     let stored = published.strip_suffix(COMPRESSED_SUFFIX)?;
-    FIXTURE_FILES
+    CAPTURED_FILES
         .iter()
-        .find(|fixture| fixture.file_name == stored)
+        .find(|capture| capture.file_name == stored)
 }
 
 /// The decompressed text of one capture, as the archive published it.
-pub fn captured_text(fixture: &FixtureFile) -> Result<String, CaptureError> {
-    let path = fixtures_dir().join(fixture.file_name);
+pub fn captured_text(capture: &CapturedFile) -> Result<String, CaptureError> {
+    let path = captures_dir().join(capture.file_name);
     std::fs::read_to_string(&path).map_err(|source| CaptureError::Read { path, source })
 }
 
 /// The maps of the capture declared under `name`, which the tests and the
 /// asset generators of the workspace read their archived day from.
 pub fn captured_maps(name: &str) -> Result<GlobalIonosphereMaps, CaptureError> {
-    let fixture = declared_fixture(name).ok_or_else(|| CaptureError::Undeclared {
+    let capture = declared_capture(name).ok_or_else(|| CaptureError::Undeclared {
         name: name.to_owned(),
     })?;
-    parse::global_ionosphere_maps(&captured_text(fixture)?).map_err(|source| CaptureError::Parse {
-        file_name: fixture.file_name,
+    parse::global_ionosphere_maps(&captured_text(capture)?).map_err(|source| CaptureError::Parse {
+        file_name: capture.file_name,
         source,
     })
 }
@@ -336,7 +336,7 @@ pub fn captured_maps(name: &str) -> Result<GlobalIonosphereMaps, CaptureError> {
 /// The node-series capture, which the grading tests and the reference
 /// illustration read the storm days from.
 pub fn captured_node_series() -> Result<NodeSeriesCapture, CaptureError> {
-    let path = fixtures_dir().join(NODE_SERIES_CAPTURE);
+    let path = captures_dir().join(NODE_SERIES_CAPTURE);
     let text =
         std::fs::read_to_string(&path).map_err(|source| CaptureError::Read { path, source })?;
     serde_json::from_str(&text).map_err(|source| CaptureError::ReadNodeSeries { source })
@@ -416,8 +416,8 @@ mod tests {
         }
     }
 
-    /// The captured fixtures were downloaded from URLs verified against the
-    /// live archive, so addressing their days must reproduce them exactly.
+    /// The captures were downloaded from URLs verified against the live
+    /// archive, so addressing their days must reproduce them exactly.
     #[rstest]
     #[case::the_storm_day("jpl-final-storm", date(2024, 5, 10))]
     #[case::the_quiet_day("jpl-final-quiet", date(2024, 4, 1))]
@@ -425,25 +425,25 @@ mod tests {
         #[case] name: &str,
         #[case] day: NaiveDate,
     ) {
-        let fixture = FIXTURE_FILES
+        let capture = CAPTURED_FILES
             .iter()
-            .find(|fixture| fixture.name == name)
+            .find(|capture| capture.name == name)
             .expect("the capture is declared");
         assert_eq!(
             IonexProduct::Final.file_url(DEFAULT_BASE_URL, day),
-            fixture.url
+            capture.url
         );
     }
 
     #[test]
     fn every_capture_is_named_after_the_file_its_url_serves() {
-        for fixture in FIXTURE_FILES {
+        for capture in CAPTURED_FILES {
             assert_eq!(
-                fixture.url.rsplit('/').next(),
-                Some(format!("{}{COMPRESSED_SUFFIX}", fixture.file_name).as_str()),
+                capture.url.rsplit('/').next(),
+                Some(format!("{}{COMPRESSED_SUFFIX}", capture.file_name).as_str()),
                 "{}: {}",
-                fixture.name,
-                fixture.purpose
+                capture.name,
+                capture.purpose
             );
         }
     }
@@ -461,19 +461,19 @@ mod tests {
         #[case] expected: Option<&str>,
     ) {
         assert_eq!(
-            declared_fixture_for_day(product, day).map(|fixture| fixture.name),
+            declared_capture_for_day(product, day).map(|capture| capture.name),
             expected
         );
     }
 
     #[test]
     fn every_capture_has_its_own_name_and_file_name() {
-        let names: BTreeSet<&str> = FIXTURE_FILES.iter().map(|fixture| fixture.name).collect();
-        let file_names: BTreeSet<&str> = FIXTURE_FILES
+        let names: BTreeSet<&str> = CAPTURED_FILES.iter().map(|capture| capture.name).collect();
+        let file_names: BTreeSet<&str> = CAPTURED_FILES
             .iter()
-            .map(|fixture| fixture.file_name)
+            .map(|capture| capture.file_name)
             .collect();
-        assert_eq!(names.len(), FIXTURE_FILES.len());
-        assert_eq!(file_names.len(), FIXTURE_FILES.len());
+        assert_eq!(names.len(), CAPTURED_FILES.len());
+        assert_eq!(file_names.len(), CAPTURED_FILES.len());
     }
 }

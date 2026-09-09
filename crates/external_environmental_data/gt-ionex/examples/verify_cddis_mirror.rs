@@ -11,7 +11,7 @@
 //! [--capture]`, or `cargo run -p gt-ionex --example verify_cddis_mirror --
 //! [ARGS]`. `--day` reaches the legacy era as well as the current one: it
 //! states the day to request, [`DEFAULT_DAY`] by default. `--capture` writes
-//! each served file under `tests/fixtures/cddis/` and records it in the
+//! each served file under `tests/captures/cddis/` and records it in the
 //! manifest beside them. The token authenticates a request header. It is never
 //! written to a manifest field.
 
@@ -35,10 +35,7 @@ use serde_json::{Value, json};
 
 use gt_ionex::mirrors::FileCandidate;
 use gt_ionex::tec::TotalElectronContent;
-use gt_ionex::{
-    CAPTURE_MANIFEST, IonexProduct, Mirror, MirrorLayout, captured_text, cddis_fixtures_dir,
-    declared_fixture_for_day, parse, transport,
-};
+use gt_ionex::{CAPTURE_MANIFEST, IonexProduct, Mirror, MirrorLayout, parse, transport};
 
 #[path = "shared/capture_manifest.rs"]
 mod capture_manifest;
@@ -90,9 +87,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .ok_or_else(|| format!("set {TOKEN_ENV} to a NASA Earthdata token"))?;
     let Arguments { day, capture } = Arguments::parse(env::args().skip(1))?;
 
-    let expected = match declared_fixture_for_day(REQUESTED_PRODUCT, day) {
-        Some(fixture) => {
-            let maps = parse::global_ionosphere_maps(&captured_text(fixture)?)?;
+    let expected = match gt_ionex::declared_capture_for_day(REQUESTED_PRODUCT, day) {
+        Some(capture) => {
+            let maps = parse::global_ionosphere_maps(&gt_ionex::captured_text(capture)?)?;
             println!(
                 "The committed JPL capture of {day} holds {} maps on a {} by {} grid",
                 maps.maps().len(),
@@ -109,7 +106,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     };
 
-    let directory = cddis_fixtures_dir();
+    let directory = gt_ionex::cddis_captures_dir();
     let mut entries_by_file_name = capture_manifest::recorded_entries(&directory, "file_name");
     let transport = HttpTransport::new(Some(transport::REQUEST_INTERVAL))?;
     let mirror = Mirror::publishing(MirrorLayout::Cddis);

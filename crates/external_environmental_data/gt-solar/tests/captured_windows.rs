@@ -1,7 +1,7 @@
 //! Validate the committed response captures.
 //!
-//! Guards [`gt_solar::FIXTURE_WINDOWS`], the capture harness
-//! (`examples/fetch_solar_fixtures.rs`), and the files under `tests/fixtures/`
+//! Guards [`gt_solar::CAPTURED_WINDOWS`], the capture harness
+//! (`examples/fetch_solar_captures.rs`), and the files under `tests/captures/`
 //! against each other, and checks the captures are still the shape the parser
 //! is written for.
 
@@ -15,7 +15,7 @@ use gt_solar::series::KpStatus;
 use gt_solar::test_util;
 use gt_solar::text;
 use gt_solar::wire;
-use gt_solar::{FIXTURE_WINDOWS, FixtureWindow, GeomagneticIndex};
+use gt_solar::{CAPTURED_WINDOWS, CapturedWindow, GeomagneticIndex};
 
 /// The day no storm reached.
 const QUIET_CAPTURE: &str = "kp-quiet";
@@ -36,12 +36,12 @@ struct CapturedSeries {
     kp_statuses: Vec<KpStatus>,
 }
 
-fn parse_capture(fixture: &FixtureWindow) -> Result<CapturedSeries, String> {
-    let json = test_util::captured_response(fixture)?;
-    let capture = match fixture.index {
+fn parse_capture(capture: &CapturedWindow) -> Result<CapturedSeries, String> {
+    let json = test_util::captured_response(capture)?;
+    Ok(match capture.index {
         GeomagneticIndex::Kp => {
             let series =
-                wire::parse_kp_series(&json).map_err(|err| format!("{}: {err}", fixture.name))?;
+                wire::parse_kp_series(&json).map_err(|err| format!("{}: {err}", capture.name))?;
             CapturedSeries {
                 period_starts: series.period_starts().collect(),
                 peak: series.peak_activity(),
@@ -50,15 +50,14 @@ fn parse_capture(fixture: &FixtureWindow) -> Result<CapturedSeries, String> {
         }
         GeomagneticIndex::Hp30 => {
             let series =
-                wire::parse_hp30_series(&json).map_err(|err| format!("{}: {err}", fixture.name))?;
+                wire::parse_hp30_series(&json).map_err(|err| format!("{}: {err}", capture.name))?;
             CapturedSeries {
                 period_starts: series.period_starts().collect(),
                 peak: series.peak_activity(),
                 kp_statuses: Vec::new(),
             }
         }
-    };
-    Ok(capture)
+    })
 }
 
 fn peak_activity(name: &str) -> Result<Option<GeomagneticActivity>, String> {
@@ -68,25 +67,25 @@ fn peak_activity(name: &str) -> Result<Option<GeomagneticActivity>, String> {
 /// The manifest agrees with what each window declares.
 #[test]
 fn every_declared_window_has_a_matching_manifest_entry() {
-    for fixture in FIXTURE_WINDOWS {
-        let entry = test_util::manifest_entry(fixture.name).unwrap();
+    for capture in CAPTURED_WINDOWS {
+        let entry = test_util::manifest_entry(capture.name).unwrap();
         assert_eq!(
             entry.get("index").and_then(Value::as_str),
-            Some(fixture.index.wire_name()),
-            "{}: the capture requested another index than FIXTURE_WINDOWS declares",
-            fixture.name
+            Some(capture.index.wire_name()),
+            "{}: the capture requested another index than CAPTURED_WINDOWS declares",
+            capture.name
         );
         assert_eq!(
             entry.get("start").and_then(Value::as_str),
-            Some(fixture.start),
+            Some(capture.start),
             "{}: the capture requested another window",
-            fixture.name
+            capture.name
         );
         assert_eq!(
             entry.get("end").and_then(Value::as_str),
-            Some(fixture.end),
+            Some(capture.end),
             "{}: the capture requested another window",
-            fixture.name
+            capture.name
         );
         assert!(
             entry
@@ -94,7 +93,7 @@ fn every_declared_window_has_a_matching_manifest_entry() {
                 .and_then(Value::as_str)
                 .is_some_and(|captured_at| !captured_at.is_empty()),
             "{} has no capture date",
-            fixture.name
+            capture.name
         );
     }
 }
@@ -102,7 +101,10 @@ fn every_declared_window_has_a_matching_manifest_entry() {
 /// No entry survives a dropped window, and no window is captured undeclared.
 #[test]
 fn the_manifest_lists_exactly_the_declared_windows() {
-    let declared: BTreeSet<&str> = FIXTURE_WINDOWS.iter().map(|fixture| fixture.name).collect();
+    let declared: BTreeSet<&str> = CAPTURED_WINDOWS
+        .iter()
+        .map(|capture| capture.name)
+        .collect();
     let recorded: Vec<String> = test_util::manifest_entries()
         .unwrap()
         .iter()
@@ -114,18 +116,18 @@ fn the_manifest_lists_exactly_the_declared_windows() {
 
 #[test]
 fn every_capture_parses_into_the_recorded_number_of_samples() {
-    for fixture in FIXTURE_WINDOWS {
-        let recorded = test_util::manifest_entry(fixture.name)
+    for capture in CAPTURED_WINDOWS {
+        let recorded = test_util::manifest_entry(capture.name)
             .unwrap()
             .get("samples")
             .and_then(Value::as_u64)
             .and_then(|samples| usize::try_from(samples).ok())
             .expect("a capture records its sample count");
         assert_eq!(
-            parse_capture(&fixture).unwrap().period_starts.len(),
+            parse_capture(&capture).unwrap().period_starts.len(),
             recorded,
             "{}: the file on disk is not the one the manifest describes",
-            fixture.name
+            capture.name
         );
     }
 }
@@ -134,21 +136,21 @@ fn every_capture_parses_into_the_recorded_number_of_samples() {
 /// the one before it.
 #[test]
 fn every_capture_runs_at_its_index_cadence_inside_the_requested_window() {
-    for fixture in FIXTURE_WINDOWS {
-        let window = fixture.window().unwrap();
+    for capture in CAPTURED_WINDOWS {
+        let window = capture.window().unwrap();
         let mut previous: Option<DateTime<Utc>> = None;
-        for period_start in parse_capture(&fixture).unwrap().period_starts {
+        for period_start in parse_capture(&capture).unwrap().period_starts {
             assert!(
                 (window.start..=window.end).contains(&period_start),
                 "{}: {period_start} is outside the requested window",
-                fixture.name
+                capture.name
             );
             if let Some(previous) = previous {
                 assert_eq!(
                     period_start - previous,
-                    fixture.index.period_length(),
+                    capture.index.period_length(),
                     "{}: {previous} and {period_start} are not one period apart",
-                    fixture.name
+                    capture.name
                 );
             }
             previous = Some(period_start);
@@ -159,15 +161,15 @@ fn every_capture_runs_at_its_index_cadence_inside_the_requested_window() {
 /// The service publishes a status per Kp value and none for Hp30.
 #[test]
 fn only_kp_captures_carry_a_status_array() {
-    for fixture in FIXTURE_WINDOWS {
-        let json = test_util::captured_response(&fixture).unwrap();
+    for capture in CAPTURED_WINDOWS {
+        let json = test_util::captured_response(&capture).unwrap();
         let body: Value = serde_json::from_str(&json).unwrap();
         assert_eq!(
             body.get("status").is_some(),
-            fixture.index.publishes_status(),
+            capture.index.publishes_status(),
             "{}: {}",
-            fixture.name,
-            fixture.purpose
+            capture.name,
+            capture.purpose
         );
     }
 }
@@ -175,16 +177,16 @@ fn only_kp_captures_carry_a_status_array() {
 /// Published years ago, so every value in these captures is final.
 #[test]
 fn every_captured_kp_value_is_definitive() {
-    for fixture in FIXTURE_WINDOWS {
-        let capture = parse_capture(&fixture).unwrap();
+    for capture in CAPTURED_WINDOWS {
+        let series = parse_capture(&capture).unwrap();
         assert!(
-            capture
+            series
                 .kp_statuses
                 .iter()
                 .all(|status| *status == KpStatus::Definitive),
             "{}: {:?}",
-            fixture.name,
-            capture.kp_statuses
+            capture.name,
+            series.kp_statuses
         );
     }
 }
@@ -220,10 +222,10 @@ fn the_captured_quiet_day_reaches_no_storm_class() {
 
 #[test]
 fn a_window_before_the_index_begins_is_captured_as_an_empty_series() {
-    let fixture = test_util::declared_window(BEFORE_COVERAGE_CAPTURE).unwrap();
-    assert!(parse_capture(fixture).unwrap().period_starts.is_empty());
+    let capture = test_util::declared_window(BEFORE_COVERAGE_CAPTURE).unwrap();
+    assert!(parse_capture(capture).unwrap().period_starts.is_empty());
     assert_eq!(
-        test_util::manifest_entry(fixture.name)
+        test_util::manifest_entry(capture.name)
             .unwrap()
             .get("http_status")
             .and_then(Value::as_u64),
@@ -236,19 +238,19 @@ fn a_window_before_the_index_begins_is_captured_as_an_empty_series() {
 /// response.
 #[test]
 fn every_capture_records_the_services_license_and_source() {
-    for fixture in FIXTURE_WINDOWS {
-        let entry = test_util::manifest_entry(fixture.name).unwrap();
+    for capture in CAPTURED_WINDOWS {
+        let entry = test_util::manifest_entry(capture.name).unwrap();
         assert_eq!(
             entry.get("license").and_then(Value::as_str),
             Some(text::LICENSE_NAME),
             "{}: the service published another license than the attribution names",
-            fixture.name
+            capture.name
         );
         assert_eq!(
             entry.get("source").and_then(Value::as_str),
             Some(text::SOURCE_NAME),
             "{}: the service published another source than the attribution names",
-            fixture.name
+            capture.name
         );
     }
 }

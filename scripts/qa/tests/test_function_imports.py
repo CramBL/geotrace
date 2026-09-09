@@ -67,7 +67,7 @@ def test_reports_the_line_a_leaf_sits_on_in_a_statement_over_several_lines(
 ) -> None:
     source = (
         "use gt_jam::{\n"
-        "    FixtureDay,\n"
+        "    CapturedDay,\n"
         "    parse_day,\n"
         "};\n"
         "\n"

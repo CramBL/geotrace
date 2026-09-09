@@ -11,7 +11,7 @@ doctest = false
 
 [features]
 # Builds `gt_flare::test_util`, which reads the captured responses under
-# `tests/fixtures/`. A normal build leaves it off.
+# `tests/captures/`. A normal build leaves it off.
 test-util = []
 
 [dependencies]
@@ -33,7 +33,7 @@ gt-fetch = { path = "../../gt-fetch", features = ["test-util"] }
 gt-flare = { path = ".", features = ["test-util"] }
 insta.workspace = true
 proptest.workspace = true
-# The fixture-capture example sends its requests to the endpoint directly,
+# The capture example sends its requests to the endpoint directly,
 # not through gt_fetch::Transport.
 reqwest.workspace = true
 rstest.workspace = true

@@ -1,4 +1,6 @@
-# Captured fixtures are byte-exact copies of what a service served, and tests
-# compare them byte for byte. Checkout must never rewrite their line endings
-# (git's text heuristic would CRLF-convert the NUL-free ones on Windows).
+# These directories contain byte-exact test data, the captures and fixtures
+# defined in CODE_STYLE.md's vocabulary table. Checkout must never rewrite
+# their line endings: the tests read them byte for byte, and git's text
+# heuristic CRLF-converts the NUL-free ones on Windows.
+**/tests/captures/** -text
 **/tests/fixtures/** -text

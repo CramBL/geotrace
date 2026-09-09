@@ -118,14 +118,14 @@ fn draw_world_interference(ui: &egui::Ui, dataset: &JamDataset) {
     }
 }
 
-/// The captured world day, read from the fixture `gt-jam` commits.
+/// The captured world day, read from the capture that `gt-jam` commits.
 fn captured_interference_day() -> JamDataset {
-    let fixture = gt_jam::FIXTURE_DAYS
+    let capture = gt_jam::CAPTURED_DAYS
         .into_iter()
-        .find(gt_jam::FixtureDay::is_served)
-        .expect("a served fixture day");
-    let day = gt_jam::parse_day(fixture.day).expect("a calendar date");
-    let csv = fs::read_to_string(gt_jam::fixtures_dir().join(gt_jam::dataset_file_name(day)))
+        .find(gt_jam::CapturedDay::is_served)
+        .expect("a served captured day");
+    let day = gt_jam::parse_day(capture.day).expect("a calendar date");
+    let csv = fs::read_to_string(gt_jam::captures_dir().join(gt_jam::dataset_file_name(day)))
         .expect("the captured day");
     let observations =
         wire::parse_dataset(&csv, &ParseWarningReporter::default()).expect("the day parses");

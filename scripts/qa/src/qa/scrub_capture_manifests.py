@@ -1,4 +1,4 @@
-"""Normalize the nondeterministic fields of the fixture capture manifests.
+"""Normalize the nondeterministic fields of the capture manifests.
 
 Two correct captures of the same data differ in `captured_at` and nowhere
 else: it holds the wall clock at capture time. A change in any other field is
@@ -28,14 +28,14 @@ _NONDETERMINISTIC_FIELDS = frozenset({"captured_at"})
 # Three manifests are absent: gt-snap's map-matching responses change with every
 # OpenStreetMap edit, so it is checked on demand through `just snap-live-test`,
 # gt-flare's endpoint needs a per-user api.nasa.gov key that CI has none of, so
-# it is re-captured by hand through `just flare-fixtures`, and the CDDIS
-# manifest under gt-ionex/tests/fixtures/cddis/ needs a per-user Earthdata
+# it is re-captured by hand through `just flare-captures`, and the CDDIS
+# manifest under gt-ionex/tests/captures/cddis/ needs a per-user Earthdata
 # token, so `just cddis-verify --capture` writes it by hand. Passing one of
 # those on the command line scrubs it all the same.
 _MANIFESTS = (
-    "crates/external_environmental_data/gt-ionex/tests/fixtures/capture.json",
-    "crates/external_environmental_data/gt-jam/tests/fixtures/capture.json",
-    "crates/external_environmental_data/gt-solar/tests/fixtures/capture.json",
+    "crates/external_environmental_data/gt-ionex/tests/captures/capture.json",
+    "crates/external_environmental_data/gt-jam/tests/captures/capture.json",
+    "crates/external_environmental_data/gt-solar/tests/captures/capture.json",
 )
 
 
@@ -60,7 +60,7 @@ def scrub_manifest(path: Path) -> int:
 
     Raises if the manifest holds none: the capture tool's schema changed, and
     a scrub that silently does nothing would report a fresh capture's
-    timestamps as fixture drift.
+    timestamps as capture drift.
     """
     manifest = json.loads(path.read_text(encoding="utf-8"))
     scrubbed = _scrub(manifest)

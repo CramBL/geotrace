@@ -1,6 +1,6 @@
 //! Read the committed CDDIS captures the way the fetch reads a served file.
 //!
-//! Every file under `tests/fixtures/cddis/` is what the archive served for the
+//! Every file under `tests/captures/cddis/` is what the archive served for the
 //! day and product its manifest entry records, written by
 //! `just cddis-verify --capture`. Addressing that day again identifies the
 //! file, the decompression depends on the name it was requested under, and
@@ -167,14 +167,15 @@ fn every_capture_holds_the_day_and_maps_its_manifest_entry_records() {
 fn a_capture_of_a_day_with_a_jpl_file_reads_as_that_file() {
     let mut compared = 0_usize;
     for capture in captured_files().unwrap() {
-        let Some(fixture) = gt_ionex::declared_fixture_for_day(capture.product, capture.day) else {
+        let Some(jpl_capture) = gt_ionex::declared_capture_for_day(capture.product, capture.day)
+        else {
             continue;
         };
         assert!(
-            capture.maps == gt_ionex::captured_maps(fixture.name).unwrap(),
+            capture.maps == gt_ionex::captured_maps(jpl_capture.name).unwrap(),
             "{}: the archive served other maps than JPL published in {}",
             capture.file_name,
-            fixture.file_name
+            jpl_capture.file_name
         );
         compared = compared.saturating_add(1);
     }

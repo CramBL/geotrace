@@ -1,15 +1,15 @@
 //! Capture live flare responses from the NASA DONKI catalog.
 //!
-//! Requests each window of [`gt_flare::FIXTURE_WINDOWS`] into
-//! `tests/fixtures/`, one file per window, and records what the endpoint
+//! Requests each window of [`gt_flare::CAPTURED_WINDOWS`] into
+//! `tests/captures/`, one file per window, and records what the endpoint
 //! returned in `capture.json` alongside the capture date and host. The key is
 //! never written down: the manifest records the host, not the URL.
 //!
-//! Fixtures are frozen once committed. A re-capture's diff is reviewed like
+//! Captures are frozen once committed. A re-capture's diff is reviewed like
 //! code.
 //!
-//! Usage: `GEOTRACE_FLARE_API_KEY=... just flare-fixtures [NAME...]`, or
-//! `cargo run -p gt-flare --example fetch_flare_fixtures -- [NAME...]`.
+//! Usage: `GEOTRACE_FLARE_API_KEY=... just flare-captures [NAME...]`, or
+//! `cargo run -p gt-flare --example fetch_flare_captures -- [NAME...]`.
 //! Naming windows captures only those, keeping the manifest entries of the
 //! rest. No arguments re-captures everything.
 //! Point it at a proxy with `GEOTRACE_FLARE_HOST=https://proxy.example`.
@@ -36,7 +36,7 @@ use serde_json::{Value, json};
 
 use gt_flare::wire;
 use gt_flare::{
-    ApiKey, CAPTURE_MANIFEST, DEFAULT_BASE_URL, FIXTURE_WINDOWS, FixtureWindow, fixtures_dir,
+    ApiKey, CAPTURE_MANIFEST, CAPTURED_WINDOWS, CapturedWindow, DEFAULT_BASE_URL, captures_dir,
     flare_url,
 };
 
@@ -59,24 +59,24 @@ fn main() -> Result<(), Box<dyn Error>> {
         .and_then(|entered| ApiKey::new(&entered))
         .ok_or_else(|| format!("set {API_KEY_ENV} to an api.nasa.gov key"))?;
     let host = env::var(HOST_ENV).unwrap_or_else(|_| DEFAULT_BASE_URL.to_owned());
-    let dir = fixtures_dir();
+    let dir = captures_dir();
     fs::create_dir_all(&dir)?;
 
     // Positional arguments select a subset. Without them the capture covers
     // every window.
     let args: Vec<String> = env::args().skip(1).collect();
-    let selected: Vec<FixtureWindow> = if args.is_empty() {
-        FIXTURE_WINDOWS.to_vec()
+    let selected: Vec<CapturedWindow> = if args.is_empty() {
+        CAPTURED_WINDOWS.to_vec()
     } else {
         args.iter()
             .map(|name| {
-                FIXTURE_WINDOWS
+                CAPTURED_WINDOWS
                     .iter()
                     .copied()
-                    .find(|fixture| fixture.name == name)
+                    .find(|capture| capture.name == name)
                     .unwrap_or_else(|| {
                         panic!(
-                            "{name:?} is not a declared fixture window - add it to FIXTURE_WINDOWS"
+                            "{name:?} is not a declared capture window - add it to CAPTURED_WINDOWS"
                         )
                     })
             })
@@ -100,14 +100,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             Err(_) => BTreeMap::new(),
         };
 
-    for (position, fixture) in selected.iter().enumerate() {
+    for (position, capture) in selected.iter().enumerate() {
         if position > 0 {
             thread::sleep(REQUEST_INTERVAL);
         }
         // Failures are reported through the key's own redaction: the client
         // quotes the URL it tried, and the URL holds the key.
         let response = client
-            .get(flare_url(&host, fixture.window()?, &key))
+            .get(flare_url(&host, capture.window()?, &key))
             .send()
             .map_err(|err| key.redact(&format!("{err:#}")))?;
         let status = response.status().as_u16();
@@ -120,12 +120,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         let body = response
             .text()
             .map_err(|err| key.redact(&format!("{err:#}")))?;
-        println!("{}: HTTP {status} ({} bytes)", fixture.name, body.len());
+        println!("{}: HTTP {status} ({} bytes)", capture.name, body.len());
 
-        // Written only once it parses, so a fixture on disk is always one the
+        // Written only once it parses, so a capture on disk is always one the
         // parser accepts.
         let flares = wire::parse_flares(&body)
-            .map_err(|err| format!("{}: not written, {err}", fixture.name))?;
+            .map_err(|err| format!("{}: not written, {err}", capture.name))?;
         let strongest = flares
             .iter()
             .map(|flare| flare.classification)
@@ -136,14 +136,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             flares.len(),
             strongest.as_deref().unwrap_or("none")
         );
-        fs::write(dir.join(fixture.file_name()), &body)?;
+        fs::write(dir.join(capture.file_name()), &body)?;
 
         entries_by_name.insert(
-            fixture.name.to_owned(),
+            capture.name.to_owned(),
             json!({
-                "name": fixture.name,
-                "start": fixture.start,
-                "end": fixture.end,
+                "name": capture.name,
+                "start": capture.start,
+                "end": capture.end,
                 "captured_at": Utc::now().to_rfc3339(),
                 "host": host,
                 "http_status": status,
@@ -156,9 +156,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Declared order, not capture order, so a partial re-capture diffs
     // cleanly.
-    let windows: Vec<Value> = FIXTURE_WINDOWS
+    let windows: Vec<Value> = CAPTURED_WINDOWS
         .iter()
-        .filter_map(|fixture| entries_by_name.get(fixture.name).cloned())
+        .filter_map(|capture| entries_by_name.get(capture.name).cloned())
         .collect();
     fs::write(
         dir.join(CAPTURE_MANIFEST),

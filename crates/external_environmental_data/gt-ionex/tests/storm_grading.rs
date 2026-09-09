@@ -19,7 +19,7 @@ use chrono::{NaiveDate, TimeDelta};
 
 use gt_ionex::node_series::{CapturedNodeDay, NodeSeriesCapture};
 use gt_ionex::quiet_time::{self, IonosphericStormGrade, QuietTimeDeviation, StormGradeRun};
-use gt_ionex::{EQUATORIAL_CREST_NODE, EUROPE_NODE, FIXTURE_NODES, NORTH_AMERICA_NODE};
+use gt_ionex::{EQUATORIAL_CREST_NODE, EUROPE_NODE, NODE_SERIES_NODES, NORTH_AMERICA_NODE};
 
 fn day(month: u32, day_of_month: u32) -> NaiveDate {
     NaiveDate::from_ymd_opt(2024, month, day_of_month).expect("a calendar date")
@@ -109,7 +109,7 @@ fn describe(offset: TimeDelta, deviation: QuietTimeDeviation) -> String {
 fn the_captured_storm_grades_as_published() {
     let capture = capture();
     let mut report = String::new();
-    for node in FIXTURE_NODES {
+    for node in NODE_SERIES_NODES {
         report.push_str(node.name);
         report.push('\n');
         for day_of_may in 6..=12 {
@@ -136,7 +136,7 @@ fn the_captured_storm_grades_as_published() {
 fn the_quiet_day_before_the_storm_never_reaches_the_storm_grade() {
     let capture = capture();
 
-    for node in FIXTURE_NODES {
+    for node in NODE_SERIES_NODES {
         for (offset, deviation) in graded_day(&capture, node.name, day(5, 8)) {
             assert!(
                 !deviation.grade().is_a_storm(),
@@ -179,7 +179,7 @@ fn the_positive_phase_over_north_america_grades_a_storm() {
 fn the_negative_phase_of_11_may_grades_an_intense_storm_everywhere() {
     let capture = capture();
 
-    for node in FIXTURE_NODES {
+    for node in NODE_SERIES_NODES {
         let (offset, deviation) = peak_of_day(&capture, node.name, day(5, 11));
 
         assert_eq!(
@@ -205,7 +205,7 @@ fn the_negative_phase_of_11_may_grades_an_intense_storm_everywhere() {
 fn every_node_reaches_the_storm_grade_once_the_main_phase_began() {
     let capture = capture();
 
-    for node in FIXTURE_NODES {
+    for node in NODE_SERIES_NODES {
         let reached: Vec<String> = graded_day(&capture, node.name, day(5, 10))
             .into_iter()
             .filter(|(offset, deviation)| {
@@ -268,7 +268,7 @@ fn the_capture_covers_every_declared_node_over_the_whole_window() {
     for captured in &capture.days {
         assert_eq!(captured.http_status, 200, "{}", captured.day);
         assert_eq!(captured.interval_seconds, 7200, "{}", captured.day);
-        for node in FIXTURE_NODES {
+        for node in NODE_SERIES_NODES {
             let values = captured.values_tecu.get(node.name);
             assert_eq!(
                 values.map(Vec::len),
@@ -290,7 +290,7 @@ fn the_capture_covers_every_declared_node_over_the_whole_window() {
 /// The nodes sit where the capture says they do, on the grid JPL publishes.
 #[test]
 fn the_declared_nodes_sit_on_the_published_grid() {
-    for node in FIXTURE_NODES {
+    for node in NODE_SERIES_NODES {
         assert!(
             (node.latitude_degrees / 2.5).fract() == 0.0,
             "{} is off the latitude grid",
@@ -303,7 +303,7 @@ fn the_declared_nodes_sit_on_the_published_grid() {
         );
     }
     assert_eq!(
-        FIXTURE_NODES.map(|node| node.name),
+        NODE_SERIES_NODES.map(|node| node.name),
         [EUROPE_NODE, NORTH_AMERICA_NODE, EQUATORIAL_CREST_NODE]
     );
 }

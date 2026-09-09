@@ -1,5 +1,5 @@
-# Re-captures the committed fixtures from the live services and fails when what
-# a service serves today no longer matches what is committed.
+# Records the committed captures from the live services again and fails when
+# what a service serves today no longer matches what is committed.
 #
 # No `pull_request` or `pull_request_target` trigger of any kind, because this
 # workflow reaches the network: `push` events on the base repository only fire
@@ -30,15 +30,15 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   # The directories the capture recipes write into. Three are absent: gt-snap's
-  # map-matching responses change with every OpenStreetMap edit, so its fixtures
+  # map-matching responses change with every OpenStreetMap edit, so its captures
   # are frozen by design and checked on demand through `just snap-live-test`,
   # gt-flare's endpoint needs a per-user api.nasa.gov key that this workflow
-  # has none of, so `just flare-fixtures` is run by hand, and gt-map's tiles
+  # has none of, so `just flare-captures` is run by hand, and gt-map's tiles
   # need a per-user Mapbox token and are frozen once captured, so
   # `just map-tile-fixtures` is run by hand as well. The TEC feature's CDDIS
   # mirror is checked the same way, by hand through `just cddis-verify`: it
   # serves files to callers holding a per-user NASA Earthdata token.
-  FIXTURE_DIRS: crates/external_environmental_data/gt-ionex/tests/fixtures crates/external_environmental_data/gt-jam/tests/fixtures crates/external_environmental_data/gt-solar/tests/fixtures
+  CAPTURE_DIRS: crates/external_environmental_data/gt-ionex/tests/captures crates/external_environmental_data/gt-jam/tests/captures crates/external_environmental_data/gt-solar/tests/captures
 
 jobs:
   freshness:
@@ -80,28 +80,28 @@ jobs:
       - name: Scrub the committed manifests into the baseline
         run: |
           just qa::scrub-capture-manifests
-          git add -- $FIXTURE_DIRS
+          git add -- $CAPTURE_DIRS
 
       - name: Capture the ionosphere maps (JPL archive)
         run: |
-          just ionex-fixtures || {
-            echo "::error::gt-ionex capture failed: the JPL archive refused the request or was unreachable. This is a capture failure, not fixture drift."
+          just ionex-captures || {
+            echo "::error::gt-ionex capture failed: the JPL archive refused the request or was unreachable. This is a capture failure, not capture drift."
             exit 1
           }
 
       - name: Capture the interference datasets (gpsjam.org)
         if: ${{ !cancelled() }}
         run: |
-          just jam-fixtures || {
-            echo "::error::gt-jam capture failed: gpsjam.org refused the request or was unreachable. This is a capture failure, not fixture drift."
+          just jam-captures || {
+            echo "::error::gt-jam capture failed: gpsjam.org refused the request or was unreachable. This is a capture failure, not capture drift."
             exit 1
           }
 
       - name: Capture the geomagnetic indices (GFZ Potsdam)
         if: ${{ !cancelled() }}
         run: |
-          just solar-fixtures || {
-            echo "::error::gt-solar capture failed: the GFZ Potsdam service refused the request or was unreachable. This is a capture failure, not fixture drift."
+          just solar-captures || {
+            echo "::error::gt-solar capture failed: the GFZ Potsdam service refused the request or was unreachable. This is a capture failure, not capture drift."
             exit 1
           }
 
@@ -109,13 +109,13 @@ jobs:
         if: ${{ !cancelled() }}
         run: just qa::scrub-capture-manifests
 
-      - name: Detect fixture drift
+      - name: Detect capture drift
         if: ${{ !cancelled() }}
         run: |
-          if git diff --exit-code -- $FIXTURE_DIRS; then
-            echo "Every fixture captured by this run matches what is committed."
+          if git diff --exit-code -- $CAPTURE_DIRS; then
+            echo "Every capture this run took matches what is committed."
           else
-            echo "::error::Fixtures drifted: a service no longer serves what is committed. Review the diff above, then re-capture with just ionex-fixtures, just jam-fixtures, just solar-fixtures and commit the result."
+            echo "::error::The captures drifted: a service no longer serves what is committed. Review the diff above, then re-capture with just ionex-captures, just jam-captures, just solar-captures and commit the result."
             exit 1
           fi
 

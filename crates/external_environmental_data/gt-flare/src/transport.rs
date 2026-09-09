@@ -77,7 +77,7 @@ mod tests {
     use super::*;
     use crate::{DEFAULT_BASE_URL, REDACTED_KEY};
 
-    /// The key the tests fetch with. Never a real one: a fixture holding a
+    /// The key the tests fetch with. Never a real one: a capture holding a
     /// working key would publish it.
     const TEST_KEY: &str = "test-key";
 

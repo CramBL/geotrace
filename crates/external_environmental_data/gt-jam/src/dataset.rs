@@ -167,7 +167,7 @@ mod tests {
 
     use super::*;
 
-    // Cells from the captured fixture day, far enough apart to sit in
+    // Cells from the captured day, far enough apart to sit in
     // different windows. The comment is where each one's centre is.
     const BALTIC: &str = "841f0c9ffffffff"; // 55.016 N, 15.413 E
     const WYOMING: &str = "8426b45ffffffff"; // 43.818 N, 109.957 W

@@ -318,8 +318,8 @@ mod tests {
 
     use super::*;
 
-    // Cells at the published resolution, copied from the captured fixture
-    // day. Each is named for the row it carries in the malformed dataset.
+    // Cells at the published resolution, copied from the captured day.
+    // Each is named for its row in the malformed dataset.
     const GOOD_CELL: &str = "84005c7ffffffff";
     const SECOND_GOOD_CELL: &str = "8401255ffffffff";
     const SHORT_ROW_CELL: &str = "840104bffffffff";
