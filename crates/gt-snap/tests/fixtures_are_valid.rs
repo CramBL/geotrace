@@ -1,8 +1,8 @@
-//! Validate the committed live-API fixtures.
+//! Validate the committed live-API captures.
 //!
-//! Guards the contract between [`gt_snap::FIXTURE_SCENARIOS`], the capture
-//! harness (`examples/fetch_snap_fixtures.rs`), and the files under
-//! `tests/fixtures/`: every scenario has its request/response pair, nothing
+//! Guards the contract between [`gt_snap::CAPTURE_SCENARIOS`], the capture
+//! harness (`examples/fetch_snap_captures.rs`), and the files under
+//! `tests/captures/`: every scenario has its request/response pair, nothing
 //! stray lingers after a scenario rename, and the captured statuses stay
 //! pinned so a re-capture that changes server behavior fails.
 
@@ -11,32 +11,32 @@ use std::fs;
 
 use serde_json::Value;
 
-use gt_snap::{DEFAULT_SERVER_URL, FIXTURE_SCENARIOS, fixtures_dir};
+use gt_snap::{CAPTURE_SCENARIOS, DEFAULT_SERVER_URL};
 
 /// The one scenario whose response is deliberately not JSON: the reverse
 /// proxy's HTML 413 page.
 const HTML_RESPONSE_SCENARIO: &str = "too_large_body";
 
-fn read_fixture(name: &str) -> Result<String, String> {
-    let path = fixtures_dir().join(name);
+fn read_capture(name: &str) -> Result<String, String> {
+    let path = gt_snap::captures_dir().join(name);
     fs::read_to_string(&path).map_err(|err| format!("reading {}: {err}", path.display()))
 }
 
 fn parse_json(name: &str) -> Result<Value, String> {
-    serde_json::from_str(&read_fixture(name)?).map_err(|err| format!("{name}: {err}"))
+    serde_json::from_str(&read_capture(name)?).map_err(|err| format!("{name}: {err}"))
 }
 
 #[test]
 fn every_scenario_has_a_valid_pair() {
-    for &scenario in FIXTURE_SCENARIOS {
-        let request = parse_json(&format!("{scenario}.request.json")).expect("request fixture");
+    for &scenario in CAPTURE_SCENARIOS {
+        let request = parse_json(&format!("{scenario}.request.json")).expect("request capture");
         assert!(
             request.is_object(),
             "{scenario} request must be a JSON object"
         );
 
         let response =
-            read_fixture(&format!("{scenario}.response.json")).expect("response fixture");
+            read_capture(&format!("{scenario}.response.json")).expect("response capture");
         if scenario == HTML_RESPONSE_SCENARIO {
             assert!(
                 serde_json::from_str::<Value>(&response).is_err(),
@@ -48,28 +48,28 @@ fn every_scenario_has_a_valid_pair() {
                 "{scenario} response no longer looks like the proxy's 413 page"
             );
         } else {
-            parse_json(&format!("{scenario}.response.json")).expect("response fixture JSON");
+            parse_json(&format!("{scenario}.response.json")).expect("response capture JSON");
         }
     }
 }
 
 #[test]
-fn fixture_dir_matches_scenario_list_exactly() {
-    let mut expected: BTreeSet<String> = FIXTURE_SCENARIOS
+fn capture_dir_matches_scenario_list_exactly() {
+    let mut expected: BTreeSet<String> = CAPTURE_SCENARIOS
         .iter()
         .flat_map(|s| [format!("{s}.request.json"), format!("{s}.response.json")])
         .collect();
     expected.insert("capture.json".to_owned());
 
-    let actual: BTreeSet<String> = fs::read_dir(fixtures_dir())
-        .expect("fixtures dir must exist - run `just snap-fixtures` once")
+    let actual: BTreeSet<String> = fs::read_dir(gt_snap::captures_dir())
+        .expect("captures dir must exist - run `just snap-captures` once")
         .map(|entry| entry.expect("readable dir entry").file_name())
         .map(|name| name.to_string_lossy().into_owned())
         .collect();
 
     assert_eq!(
         expected, actual,
-        "fixture files and FIXTURE_SCENARIOS drifted apart - \
+        "capture files and CAPTURE_SCENARIOS drifted apart - \
          after renaming or removing a scenario, delete its stale pair"
     );
 }
@@ -79,7 +79,7 @@ fn capture_metadata_pins_server_and_statuses() {
     let capture = parse_json("capture.json").expect("capture metadata");
     assert_eq!(
         capture["server"], DEFAULT_SERVER_URL,
-        "fixtures must be captured from the default server, not a local override"
+        "captures must be taken from the default server, not a local override"
     );
 
     let scenarios = capture["scenarios"]

@@ -7,7 +7,7 @@ pub mod interaction;
 #[cfg(feature = "ionex")]
 pub mod ionex_fixtures;
 pub mod log_fixtures;
-pub mod map_tile_fixtures;
+pub mod map_tile_captures;
 pub mod pending_writes;
 pub mod recording_fixtures;
 #[cfg(feature = "snapshot")]
@@ -30,7 +30,7 @@ pub use log_fixtures::{
     SyntheticLogSpec, SyntheticLogTimestamps, after_the_synthetic_log, synthetic_journald_log,
     synthetic_log_start, syslog_journald_log,
 };
-pub use map_tile_fixtures::{assert_map_tile_fixture_is_complete, map_tile_fixture_dir};
+pub use map_tile_captures::{assert_map_tile_capture_is_complete, map_tile_capture_dir};
 pub use recording_fixtures::{
     SyntheticGtdSpec, marker_test_data, nav_test_data, synthetic_gtd_bytes,
     synthetic_gtd_bytes_with_channels,

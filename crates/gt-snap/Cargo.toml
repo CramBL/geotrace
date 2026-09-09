@@ -8,7 +8,7 @@ authors.workspace = true
 
 [lib]
 doctest = false
-# The wire and fixture checks are integration tests, and `test = false` drops
+# The wire and capture checks are integration tests, and `test = false` drops
 # the lib's own test harness from the build.
 test = false
 

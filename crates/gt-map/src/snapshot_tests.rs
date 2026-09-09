@@ -1,4 +1,4 @@
-//! Every map here draws a base layer from local fixtures: the labelled
+//! Every map here draws a base layer from local files: the labelled
 //! synthetic tiles, or the captured Mapbox tiles where the imagery under the
 //! track is part of what the baseline shows.
 
@@ -196,7 +196,7 @@ enum MatchCapture {
     DisplayMode::Draw,
     false,
     MatchCapture::Settled,
-    TileAccess::Fixture(gt_test_utils::map_tile_fixture_dir())
+    TileAccess::Captured(gt_test_utils::map_tile_capture_dir())
 )]
 #[case::stale_halos(
     "query_match_halos_stale",
@@ -273,7 +273,7 @@ fn snap_query_matches(
         },
     };
 
-    let on_captured_tiles = matches!(tile_access, TileAccess::Fixture(_));
+    let on_captured_tiles = matches!(tile_access, TileAccess::Captured(_));
     let scene = MapScene::of(files)
         .tiles(tile_access)
         .overlays(|overlays| overlays.query_matches = Some(matches));
@@ -288,14 +288,14 @@ fn snap_query_matches(
         // One more frame off a fresh record, so the check covers only the
         // frame the snapshot captures.
         if let Some(map) = map.map_mut() {
-            map.forget_missing_fixture_tiles();
+            map.forget_missing_captured_tiles();
         }
         map.render_one_more_frame();
         let missing = map
             .map()
-            .and_then(NavMap::missing_fixture_tiles)
+            .and_then(NavMap::missing_captured_tiles)
             .expect("the map draws the captured tiles");
-        gt_test_utils::assert_map_tile_fixture_is_complete(name, missing);
+        gt_test_utils::assert_map_tile_capture_is_complete(name, missing);
     }
     map.snapshot(name);
 }

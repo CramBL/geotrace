@@ -1694,6 +1694,8 @@ pub(crate) fn mark_write_locked(db_path: &Path) -> Result<(), InternalError> {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::{
         SUPERBLOCK_V2_LEN, WRITER_FLAGS, clear_write_lock, create_native_file, jenkins_lookup3,
         mark_write_locked, read_string_attr, write_string_attr,
@@ -1783,4 +1785,34 @@ mod tests {
             0x1777_0551
         );
     }
+
+    /// The expected digests come from libhdf5's `H5_checksum_lookup3` over the
+    /// first `length` bytes of [`CHECKSUM_INPUT`] with an `initval` of 0.
+    /// A length of 13 to 24 runs one mixing block and leaves a tail of 1 to 12
+    /// bytes, which is every case of the trailing byte block.
+    #[rstest]
+    #[case(13, 0xd261_82d5)]
+    #[case(14, 0xf740_1155)]
+    #[case(15, 0xc4d0_d1c1)]
+    #[case(16, 0x99e4_30b5)]
+    #[case(17, 0x7000_3614)]
+    #[case(18, 0x17d6_cd17)]
+    #[case(19, 0xe4bf_5e2b)]
+    #[case(20, 0x3207_64dc)]
+    #[case(21, 0xfb67_bae1)]
+    #[case(22, 0x7a88_f494)]
+    #[case(23, 0x87bb_79a0)]
+    #[case(24, 0xa2f3_46b5)]
+    fn jenkins_lookup3_matches_libhdf5_at_every_tail_length(
+        #[case] length: usize,
+        #[case] expected: u32,
+    ) {
+        let data = CHECKSUM_INPUT.get(..length).expect("a prefix of the input");
+        assert_eq!(jenkins_lookup3(data), expected);
+    }
+
+    const CHECKSUM_INPUT: [u8; 24] = [
+        0x89, 0x48, 0x44, 0x46, 0x0d, 0x0a, 0x1a, 0x0a, 0x03, 0x08, 0x08, 0x00, 0x01, 0xff, 0x80,
+        0x7f, 0xfe, 0x10, 0x20, 0x40, 0xc3, 0xa5, 0x5a, 0x96,
+    ];
 }

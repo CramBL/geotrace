@@ -7,7 +7,6 @@ use std::fs;
 use serde_json::{Value, json};
 use support::points;
 
-use gt_snap::fixtures_dir;
 use gt_snap::merge::{self, ChunkOutcome, SnapWarning, SnapWarningReporter};
 use gt_snap::request_plan::{CHUNK_POINTS, RequestPlan, SnapParams};
 use gt_snap::snapped_track::SHAPE_POLYLINE_PRECISION;
@@ -22,7 +21,7 @@ fn auto_params() -> SnapParams {
 
 /// A synthetic success response with `count` matched points, every one
 /// `kind`, all errors `error_m`, no shape (geometry is exercised separately
-/// by the fixture test), one shared edge when kind is not unsnapped.
+/// by the capture test), one shared edge when kind is not unsnapped.
 fn uniform_response(
     count: usize,
     kind: SnapPointKind,
@@ -72,8 +71,9 @@ fn chunk_sizes(plan: &RequestPlan) -> Vec<usize> {
 
 #[test]
 fn single_fixture_chunk_merges_into_result() {
-    let body = fs::read_to_string(fixtures_dir().join("partially_snappable.response.json"))
-        .expect("fixture");
+    let body =
+        fs::read_to_string(gt_snap::captures_dir().join("partially_snappable.response.json"))
+            .expect("capture");
     let response: TraceAttributesResponse = serde_json::from_str(&body).expect("parse");
     let sent_count = response.snapped_points.len();
 

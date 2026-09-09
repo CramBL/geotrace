@@ -7,10 +7,10 @@
 //! Only fields with a consumer are modeled. Serde skips everything else in
 //! the responses (`alternate_paths`, `raw_score`, `units`, ...).
 //!
-//! Every type is validated against the live-captured fixtures under
-//! `tests/fixtures/` - captured by `examples/fetch_snap_fixtures.rs`, which builds
-//! its requests from these same types so the fixtures always exercise the
-//! production serialization.
+//! Every type is validated against the captures under `tests/captures/` -
+//! recorded by `examples/fetch_snap_captures.rs`, which builds its requests
+//! from these same types so the captures always exercise the production
+//! serialization.
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -136,7 +136,7 @@ impl AttributeFilter {
 /// Captured reality: out-of-range values are rejected (400, code 158), not
 /// clamped, so senders must bound values client-side - production requests
 /// are built through `request_plan::SnapParams`, which clamps to the
-/// empirically pinned ranges (the `option_out_of_bounds` fixture is the
+/// empirically pinned ranges (the `option_out_of_bounds` capture is the
 /// rejection exemplar).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct TraceOptions {

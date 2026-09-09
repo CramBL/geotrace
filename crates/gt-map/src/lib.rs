@@ -70,7 +70,7 @@ use crate::marker_renderer::MarkerRenderer;
 use crate::match_reveal::MatchRevealState;
 use crate::recording_labels::RecordingLabels;
 use crate::snapped_track_renderer::SnappedTrackRenderer;
-use crate::test_tiles::{FixtureTileId, TestTileSource};
+use crate::test_tiles::{CapturedTileId, TestTileSource};
 use crate::tpv_renderer::FixPlacement;
 use crate::track_layers::TrackLayers;
 use crate::transform::{MapScale, MercTransform};
@@ -271,7 +271,7 @@ pub enum TileAccess {
     /// its north-west corner.
     Synthetic,
     /// Captured tiles read from `{directory}/{zoom}/{x}/{y}.png`.
-    Fixture(PathBuf),
+    Captured(PathBuf),
 }
 
 impl TileAccess {
@@ -412,7 +412,7 @@ pub struct NavMap {
     osm_tiles: Option<HttpTiles>,
     mapbox_tiles: Option<HttpTiles>,
     /// The base layer under [`TileAccess::Synthetic`] and
-    /// [`TileAccess::Fixture`], drawn in place of both fetchers.
+    /// [`TileAccess::Captured`], drawn in place of both fetchers.
     test_tiles: Option<TestTileSource>,
     tile_access: TileAccess,
     mapbox_token: String,
@@ -547,11 +547,11 @@ impl NavMap {
         );
     }
 
-    /// Every base tile the fixture directory could not serve since the last
-    /// [`NavMap::forget_missing_fixture_tiles`], which is every tile the map
+    /// Every base tile the capture directory could not serve since the last
+    /// [`NavMap::forget_missing_captured_tiles`], which is every tile the map
     /// drew blank. `None` unless the map was built on a
-    /// [`TileAccess::Fixture`] directory holding a readable manifest.
-    pub fn missing_fixture_tiles(&self) -> Option<&BTreeSet<FixtureTileId>> {
+    /// [`TileAccess::Captured`] directory holding a readable manifest.
+    pub fn missing_captured_tiles(&self) -> Option<&BTreeSet<CapturedTileId>> {
         self.test_tiles
             .as_ref()
             .and_then(TestTileSource::missing_tiles)
@@ -559,7 +559,7 @@ impl NavMap {
 
     /// Starts a fresh record, so a check after the last frame covers that
     /// frame alone.
-    pub fn forget_missing_fixture_tiles(&mut self) {
+    pub fn forget_missing_captured_tiles(&mut self) {
         if let Some(tiles) = self.test_tiles.as_mut() {
             tiles.forget_missing_tiles();
         }

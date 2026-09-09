@@ -1,6 +1,6 @@
-//! Validate the typed wire format against the live-captured fixtures.
+//! Validate the typed wire format against the live-captured responses.
 //!
-//! Every success and error fixture must parse into the typed structs, and
+//! Every success and error capture must parse into the typed structs, and
 //! every well-formed captured request must roundtrip through
 //! [`TraceAttributesRequest`] byte-for-byte (as JSON values) - proving the
 //! types model exactly what the capture harness sent and the server returned.
@@ -19,9 +19,9 @@ use gt_snap::wire::{
     ErrorResponse, SnapPointKind, SpeedLimit, TraceAttributesRequest, TraceAttributesResponse,
     TraceOptions,
 };
-use gt_snap::{DEFAULT_SERVER_URL, FIXTURE_SCENARIOS, fixtures_dir, server_host};
+use gt_snap::{CAPTURE_SCENARIOS, DEFAULT_SERVER_URL};
 
-/// The fixture scenarios whose response is a successful match, each with a
+/// The capture scenarios whose response is a successful match, each with a
 /// digest baseline of its own.
 const SUCCESS_SCENARIOS: &[&str] = &[
     "clean_drive",
@@ -36,7 +36,7 @@ const SUCCESS_SCENARIOS: &[&str] = &[
 /// knows. The test below asserts it against `clean_drive`.
 const UNFILTERED_SCENARIO: &str = "clean_drive_unfiltered";
 
-/// The fixture scenarios whose response is a Valhalla JSON error.
+/// The capture scenarios whose response is a Valhalla JSON error.
 const ERROR_SCENARIOS: &[&str] = &[
     "bad_request",
     "option_out_of_bounds",
@@ -44,12 +44,12 @@ const ERROR_SCENARIOS: &[&str] = &[
     "unsnappable",
 ];
 
-/// The fixture scenarios whose response is not JSON at all (rejected by the
+/// The capture scenarios whose response is not JSON at all (rejected by the
 /// reverse proxy before Valhalla sees them).
 const HTML_ERROR_SCENARIOS: &[&str] = &["too_large_body"];
 
-/// Every fixture scenario must be classified into exactly one of the three
-/// lists above, so adding a scenario to [`FIXTURE_SCENARIOS`] without
+/// Every capture scenario must be classified into exactly one of the three
+/// lists above, so adding a scenario to [`CAPTURE_SCENARIOS`] without
 /// classifying (and thereby parsing) it here fails loudly - the same
 /// discipline `EnumCount` applies to the wire-name tables.
 #[test]
@@ -62,13 +62,13 @@ fn every_scenario_is_classified_exactly_once() {
         .chain([UNFILTERED_SCENARIO])
         .collect();
     classified.sort_unstable();
-    let mut expected: Vec<&str> = FIXTURE_SCENARIOS.to_vec();
+    let mut expected: Vec<&str> = CAPTURE_SCENARIOS.to_vec();
     expected.sort_unstable();
     assert_eq!(classified, expected);
 }
 
-fn read_fixture(name: &str) -> Result<String, String> {
-    let path = fixtures_dir().join(name);
+fn read_capture(name: &str) -> Result<String, String> {
+    let path = gt_snap::captures_dir().join(name);
     fs::read_to_string(&path).map_err(|err| format!("reading {}: {err}", path.display()))
 }
 
@@ -140,11 +140,11 @@ impl ResponseDigest {
 }
 
 #[test]
-fn success_fixtures_parse() {
+fn success_captures_parse() {
     for &scenario in SUCCESS_SCENARIOS {
-        let body = read_fixture(&format!("{scenario}.response.json")).expect("fixture");
+        let body = read_capture(&format!("{scenario}.response.json")).expect("capture");
         let response: TraceAttributesResponse =
-            serde_json::from_str(&body).expect("success fixture must parse");
+            serde_json::from_str(&body).expect("success capture must parse");
         insta::assert_debug_snapshot!(scenario, ResponseDigest::of(&response));
     }
 }
@@ -154,13 +154,13 @@ fn success_fixtures_parse() {
 /// the server wrote into each.
 #[test]
 fn the_filtered_and_unfiltered_captures_of_one_drive_parse_to_the_same_response() {
-    let filtered = read_fixture("clean_drive.response.json").expect("fixture");
+    let filtered = read_capture("clean_drive.response.json").expect("capture");
     let unfiltered =
-        read_fixture(&format!("{UNFILTERED_SCENARIO}.response.json")).expect("fixture");
+        read_capture(&format!("{UNFILTERED_SCENARIO}.response.json")).expect("capture");
 
     assert_eq!(
-        serde_json::from_str::<TraceAttributesResponse>(&filtered).expect("the fixture parses"),
-        serde_json::from_str::<TraceAttributesResponse>(&unfiltered).expect("the fixture parses"),
+        serde_json::from_str::<TraceAttributesResponse>(&filtered).expect("the capture parses"),
+        serde_json::from_str::<TraceAttributesResponse>(&unfiltered).expect("the capture parses"),
     );
 }
 
@@ -169,9 +169,9 @@ fn error_fixtures_parse() {
     let digests: Vec<(String, ErrorResponse)> = ERROR_SCENARIOS
         .iter()
         .map(|&scenario| {
-            let body = read_fixture(&format!("{scenario}.response.json")).expect("fixture");
+            let body = read_capture(&format!("{scenario}.response.json")).expect("capture");
             let error: ErrorResponse =
-                serde_json::from_str(&body).expect("error fixture must parse");
+                serde_json::from_str(&body).expect("error capture must parse");
             (scenario.to_owned(), error)
         })
         .collect();
@@ -181,7 +181,7 @@ fn error_fixtures_parse() {
 #[test]
 fn proxy_html_error_parses_as_neither_type() {
     for &scenario in HTML_ERROR_SCENARIOS {
-        let body = read_fixture(&format!("{scenario}.response.json")).expect("fixture");
+        let body = read_capture(&format!("{scenario}.response.json")).expect("capture");
         serde_json::from_str::<TraceAttributesResponse>(&body)
             .expect_err("the proxy's HTML error page must not parse as a success response");
         serde_json::from_str::<ErrorResponse>(&body)
@@ -195,9 +195,9 @@ fn proxy_html_error_parses_as_neither_type() {
 /// drift in either direction fails here).
 #[test]
 fn captured_requests_roundtrip_through_typed_request() {
-    for &scenario in FIXTURE_SCENARIOS.iter().filter(|&&s| s != "bad_request") {
-        let body = read_fixture(&format!("{scenario}.request.json")).expect("fixture");
-        let original: Value = serde_json::from_str(&body).expect("fixture JSON");
+    for &scenario in CAPTURE_SCENARIOS.iter().filter(|&&s| s != "bad_request") {
+        let body = read_capture(&format!("{scenario}.request.json")).expect("capture");
+        let original: Value = serde_json::from_str(&body).expect("capture JSON");
         let typed: TraceAttributesRequest =
             serde_json::from_value(original.clone()).expect("typed parse");
         let reserialized = serde_json::to_value(&typed).expect("re-serialize");
@@ -208,15 +208,15 @@ fn captured_requests_roundtrip_through_typed_request() {
 /// The deliberately malformed request (no shape) must NOT parse: `shape` is
 /// mandatory on the typed request.
 #[test]
-fn bad_request_fixture_is_not_a_valid_typed_request() {
-    let body = read_fixture("bad_request.request.json").expect("fixture");
+fn bad_request_capture_is_not_a_valid_typed_request() {
+    let body = read_capture("bad_request.request.json").expect("capture");
     serde_json::from_str::<TraceAttributesRequest>(&body)
         .expect_err("a request without a shape must not be expressible");
 }
 
 /// The `trace_options` payload shape: each present option serializes under
 /// Valhalla's field name, absent options serialize to nothing (which is why
-/// captured fixture requests without `trace_options` still roundtrip
+/// captured requests without `trace_options` still roundtrip
 /// unchanged).
 #[test]
 fn trace_options_serialize_only_present_options() {
@@ -259,15 +259,15 @@ fn warnings_array_is_preserved_raw() {
 #[test]
 fn server_host_extracts_the_host_and_only_the_host() {
     assert_eq!(
-        server_host(DEFAULT_SERVER_URL).as_deref(),
+        gt_snap::server_host(DEFAULT_SERVER_URL).as_deref(),
         Some("valhalla1.openstreetmap.de")
     );
     assert_eq!(
-        server_host("http://localhost:8002/some/path").as_deref(),
+        gt_snap::server_host("http://localhost:8002/some/path").as_deref(),
         Some("localhost")
     );
-    assert_eq!(server_host("not a url"), None);
-    assert_eq!(server_host(""), None);
+    assert_eq!(gt_snap::server_host("not a url"), None);
+    assert_eq!(gt_snap::server_host(""), None);
     // A host-less URL must not count as a host either.
-    assert_eq!(server_host("file:///tmp/x"), None);
+    assert_eq!(gt_snap::server_host("file:///tmp/x"), None);
 }

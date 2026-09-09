@@ -1,6 +1,6 @@
 //! Validate plan sending and outcome classification with a scripted transport.
 //!
-//! No network: the scripted transport replays captured fixture bodies and
+//! No network: the scripted transport replays captured response bodies and
 //! synthetic statuses, exercising the same classification path production
 //! uses (static dispatch through the `Transport` trait).
 
@@ -15,7 +15,7 @@ use gt_fetch::test_util::{self, ScriptedTransport, TransportResponse};
 use gt_snap::merge::{ChunkOutcome, SnapWarningReporter};
 use gt_snap::request_plan::{CHUNK_POINTS, SnapParams};
 use gt_snap::wire::Costing;
-use gt_snap::{DEFAULT_SERVER_URL, fixtures_dir, transport};
+use gt_snap::{DEFAULT_SERVER_URL, transport};
 
 /// The [`SnapParams`] every scenario in this file runs with: default advanced
 /// options, auto costing.
@@ -23,8 +23,8 @@ fn auto_params() -> SnapParams {
     SnapParams::new(Costing::Auto)
 }
 
-fn fixture_body(name: &str) -> Result<String, String> {
-    let path = fixtures_dir().join(name);
+fn capture_body(name: &str) -> Result<String, String> {
+    let path = gt_snap::captures_dir().join(name);
     fs::read_to_string(&path).map_err(|err| format!("reading {}: {err}", path.display()))
 }
 
@@ -41,14 +41,14 @@ fn connection_reset() -> TransportResponse<String> {
 }
 
 #[test]
-fn fixture_success_body_classifies_and_merges_end_to_end() {
+fn captured_success_body_classifies_and_merges_end_to_end() {
     // The captured `partially_snappable` response has 20 matched points, so a
     // 20-point plan is one chunk.
     let plan = support::plan_of(&points(20));
-    let transport = ScriptedTransport::in_order(vec![ok(fixture_body(
+    let transport = ScriptedTransport::in_order(vec![ok(capture_body(
         "partially_snappable.response.json",
     )
-    .expect("fixture"))]);
+    .expect("capture"))]);
 
     let mut progress = Vec::new();
     let outcomes = transport::send_plan(
@@ -84,7 +84,7 @@ fn off_network_error_becomes_off_network_outcome_without_retry() {
     let plan = support::plan_of(&points(10));
     let transport = ScriptedTransport::in_order(vec![status(
         400,
-        &fixture_body("unsnappable.response.json").expect("fixture"),
+        &capture_body("unsnappable.response.json").expect("capture"),
     )]);
 
     let outcomes = transport::send_plan(
@@ -104,7 +104,7 @@ fn deterministic_client_error_fails_without_retry() {
     let plan = support::plan_of(&points(10));
     let transport = ScriptedTransport::in_order(vec![status(
         400,
-        &fixture_body("bad_request.response.json").expect("fixture"),
+        &capture_body("bad_request.response.json").expect("capture"),
     )]);
 
     let outcomes = transport::send_plan(
@@ -126,7 +126,7 @@ fn html_error_body_fails_without_retry() {
     let plan = support::plan_of(&points(10));
     let transport = ScriptedTransport::in_order(vec![status(
         413,
-        &fixture_body("too_large_body.response.json").expect("fixture"),
+        &capture_body("too_large_body.response.json").expect("capture"),
     )]);
 
     let outcomes = transport::send_plan(
@@ -148,7 +148,7 @@ fn transient_transport_failure_gets_one_retry_then_succeeds() {
     let plan = support::plan_of(&points(10));
     let transport = ScriptedTransport::in_order(vec![
         connection_reset(),
-        ok(fixture_body("clean_drive.response.json").expect("fixture")),
+        ok(capture_body("clean_drive.response.json").expect("capture")),
     ]);
 
     let outcomes = transport::send_plan(
@@ -192,7 +192,7 @@ fn failed_chunk_does_not_stop_later_chunks() {
     let transport = ScriptedTransport::in_order(vec![
         connection_reset(),
         connection_reset(),
-        ok(fixture_body("clean_drive.response.json").expect("fixture")),
+        ok(capture_body("clean_drive.response.json").expect("capture")),
     ]);
 
     let mut progress = Vec::new();
@@ -233,7 +233,7 @@ fn unparsable_success_body_is_a_failure() {
 proptest::proptest! {
     /// The classifier consumes untrusted network responses: any status code
     /// crossed with any body must produce outcomes, never a panic. Curated
-    /// fixture bodies are exercised by the tests above, this covers everything
+    /// capture bodies are exercised by the tests above, this covers everything
     /// else, mirroring the shape-decoder fuzz tests.
     #[test]
     fn arbitrary_responses_never_panic(code in proptest::prelude::any::<u16>(), body in ".{0,512}") {
