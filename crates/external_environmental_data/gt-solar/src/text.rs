@@ -151,6 +151,8 @@ pub const LICENSE_URL: &str = "https://creativecommons.org/licenses/by/4.0/";
 
 #[cfg(test)]
 mod tests {
+    use gt_types::fixtures;
+
     use crate::activity::GeomagneticStormClass;
 
     use super::*;
@@ -159,41 +161,45 @@ mod tests {
         GeomagneticActivity::from_published_value(GeomagneticIndex::Kp, value)
     }
 
-    /// A period start, as the service publishes them.
-    fn period_start(year: i32, month: u32, day: u32, hour: u32) -> DateTime<Utc> {
-        chrono::NaiveDate::from_ymd_opt(year, month, day)
-            .and_then(|day| day.and_hms_opt(hour, 0, 0))
-            .map(|naive| naive.and_utc())
-            .unwrap_or_default()
-    }
-
     /// One period's hover lines: the value, its class, then what it covers.
     #[test]
     fn period_summary_leads_with_the_value() {
         let lines = period_summary(
             GeomagneticIndex::Kp,
             kp(8.667),
-            period_start(2024, 5, 10, 18),
+            fixtures::utc_instant(2024, 5, 10, 18, 0),
         );
         insta::assert_debug_snapshot!("period_summary", lines);
     }
 
     #[test]
     fn period_summary_states_a_missing_value_as_such() {
-        let lines = period_summary(GeomagneticIndex::Hp30, None, period_start(1980, 1, 1, 0));
+        let lines = period_summary(
+            GeomagneticIndex::Hp30,
+            None,
+            fixtures::utc_instant(1980, 1, 1, 0, 0),
+        );
         insta::assert_debug_snapshot!("period_summary_without_a_value", lines);
     }
 
     #[test]
     fn period_summary_names_the_class_of_a_quiet_period() {
-        let lines = period_summary(GeomagneticIndex::Kp, kp(1.667), period_start(2024, 4, 1, 0));
+        let lines = period_summary(
+            GeomagneticIndex::Kp,
+            kp(1.667),
+            fixtures::utc_instant(2024, 4, 1, 0, 0),
+        );
         assert_eq!(lines.get(1).map(String::as_str), Some("Quiet"));
     }
 
     /// The class line is the one the storm class supplies.
     #[test]
     fn period_summary_names_the_storm_class() {
-        let lines = period_summary(GeomagneticIndex::Kp, kp(9.0), period_start(2024, 5, 11, 0));
+        let lines = period_summary(
+            GeomagneticIndex::Kp,
+            kp(9.0),
+            fixtures::utc_instant(2024, 5, 11, 0, 0),
+        );
         assert_eq!(
             lines.get(1).map(String::as_str),
             Some(GeomagneticStormClass::Extreme.display_name())

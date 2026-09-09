@@ -301,13 +301,10 @@ fn median_tecu(values: &[TotalElectronContent]) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
+    use gt_types::fixtures;
     use rstest::rstest;
 
     use super::*;
-
-    fn day(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
-    }
 
     fn tecu(value: f64) -> TotalElectronContent {
         TotalElectronContent::from_tecu(value)
@@ -322,13 +319,13 @@ mod tests {
     /// made yesterday has a whole quiet reference behind it.
     #[test]
     fn the_window_is_the_twenty_seven_days_before_the_day_assessed() {
-        let assessed = day(2024, 5, 20);
+        let assessed = fixtures::date(2024, 5, 20);
 
         let window = background_days(assessed);
 
         assert_eq!(window.len(), BACKGROUND_WINDOW_DAYS);
-        assert_eq!(window.first().copied(), Some(day(2024, 4, 23)));
-        assert_eq!(window.last().copied(), Some(day(2024, 5, 19)));
+        assert_eq!(window.first().copied(), Some(fixtures::date(2024, 4, 23)));
+        assert_eq!(window.last().copied(), Some(fixtures::date(2024, 5, 19)));
         assert!(!window.contains(&assessed));
     }
 

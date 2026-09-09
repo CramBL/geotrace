@@ -111,45 +111,42 @@ pub fn today_utc() -> NaiveDate {
 mod tests {
     use std::collections::HashSet;
 
+    use gt_types::fixtures;
     use rstest::rstest;
     use strum::IntoEnumIterator;
 
     use super::*;
 
-    fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap()
-    }
-
     #[test]
     fn coverage_start_is_the_first_published_day() {
-        assert_eq!(COVERAGE_START, date(2022, 2, 14));
+        assert_eq!(COVERAGE_START, fixtures::date(2022, 2, 14));
     }
 
     #[rstest]
-    #[case::the_day_before_coverage(date(2022, 2, 13), DayOutlook::BeforeCoverage)]
-    #[case::long_before_coverage(date(2019, 6, 4), DayOutlook::BeforeCoverage)]
-    #[case::the_first_covered_day(date(2022, 2, 14), DayOutlook::Fetchable)]
-    #[case::a_settled_past_day(date(2026, 7, 20), DayOutlook::Fetchable)]
+    #[case::the_day_before_coverage(fixtures::date(2022, 2, 13), DayOutlook::BeforeCoverage)]
+    #[case::long_before_coverage(fixtures::date(2019, 6, 4), DayOutlook::BeforeCoverage)]
+    #[case::the_first_covered_day(fixtures::date(2022, 2, 14), DayOutlook::Fetchable)]
+    #[case::a_settled_past_day(fixtures::date(2026, 7, 20), DayOutlook::Fetchable)]
     // Inside the publication lag: still requested, the host determines the
     // outcome.
-    #[case::yesterday(date(2026, 7, 28), DayOutlook::Fetchable)]
-    #[case::today(date(2026, 7, 29), DayOutlook::Fetchable)]
-    #[case::tomorrow(date(2026, 7, 30), DayOutlook::InFuture)]
+    #[case::yesterday(fixtures::date(2026, 7, 28), DayOutlook::Fetchable)]
+    #[case::today(fixtures::date(2026, 7, 29), DayOutlook::Fetchable)]
+    #[case::tomorrow(fixtures::date(2026, 7, 30), DayOutlook::InFuture)]
     fn day_outlook_covers_every_calendar_boundary(
         #[case] day: NaiveDate,
         #[case] expected: DayOutlook,
     ) {
-        assert_eq!(day_outlook(day, date(2026, 7, 29)), expected);
+        assert_eq!(day_outlook(day, fixtures::date(2026, 7, 29)), expected);
     }
 
     /// A variant cannot be added without a day that reaches it.
     #[test]
     fn every_outlook_is_reachable() {
-        let today = date(2026, 7, 29);
+        let today = fixtures::date(2026, 7, 29);
         let reached: HashSet<DayOutlook> = [
-            day_outlook(date(2021, 1, 1), today),
+            day_outlook(fixtures::date(2021, 1, 1), today),
             day_outlook(today, today),
-            day_outlook(date(2030, 1, 1), today),
+            day_outlook(fixtures::date(2030, 1, 1), today),
         ]
         .into_iter()
         .collect();
@@ -157,35 +154,40 @@ mod tests {
         assert_eq!(reached, declared);
     }
 
-    fn at(year: i32, month: u32, day: u32, hour: u32) -> DateTime<Utc> {
-        date(year, month, day)
-            .and_hms_opt(hour, 0, 0)
-            .unwrap()
-            .and_utc()
-    }
-
     #[rstest]
-    #[case::within_one_day(at(2026, 7, 20, 8), at(2026, 7, 20, 17), Some(vec![date(2026, 7, 20)]))]
+    #[case::within_one_day(
+        fixtures::utc_instant(2026, 7, 20, 8, 0),
+        fixtures::utc_instant(2026, 7, 20, 17, 0),
+        Some(vec![fixtures::date(2026, 7, 20)])
+    )]
     #[case::across_midnight(
-        at(2026, 7, 20, 23),
-        at(2026, 7, 21, 1),
-        Some(vec![date(2026, 7, 20), date(2026, 7, 21)])
+        fixtures::utc_instant(2026, 7, 20, 23, 0),
+        fixtures::utc_instant(2026, 7, 21, 1, 0),
+        Some(vec![fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 21)])
     )]
     #[case::exactly_the_limit(
-        at(2026, 7, 20, 0),
-        at(2026, 7, 26, 23),
+        fixtures::utc_instant(2026, 7, 20, 0, 0),
+        fixtures::utc_instant(2026, 7, 26, 23, 0),
         Some(vec![
-            date(2026, 7, 20),
-            date(2026, 7, 21),
-            date(2026, 7, 22),
-            date(2026, 7, 23),
-            date(2026, 7, 24),
-            date(2026, 7, 25),
-            date(2026, 7, 26),
+            fixtures::date(2026, 7, 20),
+            fixtures::date(2026, 7, 21),
+            fixtures::date(2026, 7, 22),
+            fixtures::date(2026, 7, 23),
+            fixtures::date(2026, 7, 24),
+            fixtures::date(2026, 7, 25),
+            fixtures::date(2026, 7, 26),
         ])
     )]
-    #[case::one_past_the_limit(at(2026, 7, 20, 0), at(2026, 7, 27, 0), None)]
-    #[case::end_before_start(at(2026, 7, 21, 0), at(2026, 7, 20, 0), None)]
+    #[case::one_past_the_limit(
+        fixtures::utc_instant(2026, 7, 20, 0, 0),
+        fixtures::utc_instant(2026, 7, 27, 0, 0),
+        None
+    )]
+    #[case::end_before_start(
+        fixtures::utc_instant(2026, 7, 21, 0, 0),
+        fixtures::utc_instant(2026, 7, 20, 0, 0),
+        None
+    )]
     fn days_spanned_covers_the_recording(
         #[case] start: DateTime<Utc>,
         #[case] end: DateTime<Utc>,
@@ -195,19 +197,19 @@ mod tests {
     }
 
     #[rstest]
-    #[case::a_week(date(2026, 7, 20), date(2026, 7, 26), 7)]
-    #[case::one_day(date(2026, 7, 20), date(2026, 7, 20), 1)]
-    #[case::reversed(date(2026, 7, 26), date(2026, 7, 20), 0)]
-    #[case::clamped_to_coverage(date(2020, 1, 1), COVERAGE_START, 1)]
-    #[case::clamped_to_today(date(2026, 7, 29), date(2027, 1, 1), 3)]
-    #[case::entirely_before_coverage(date(2019, 1, 1), date(2020, 1, 1), 0)]
-    #[case::entirely_in_the_future(date(2027, 1, 1), date(2027, 2, 1), 0)]
+    #[case::a_week(fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 26), 7)]
+    #[case::one_day(fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 20), 1)]
+    #[case::reversed(fixtures::date(2026, 7, 26), fixtures::date(2026, 7, 20), 0)]
+    #[case::clamped_to_coverage(fixtures::date(2020, 1, 1), COVERAGE_START, 1)]
+    #[case::clamped_to_today(fixtures::date(2026, 7, 29), fixtures::date(2027, 1, 1), 3)]
+    #[case::entirely_before_coverage(fixtures::date(2019, 1, 1), fixtures::date(2020, 1, 1), 0)]
+    #[case::entirely_in_the_future(fixtures::date(2027, 1, 1), fixtures::date(2027, 2, 1), 0)]
     fn fetchable_days_covers_the_range_inside_coverage(
         #[case] from: NaiveDate,
         #[case] to: NaiveDate,
         #[case] expected: usize,
     ) {
-        let days = fetchable_days(from, to, date(2026, 7, 31));
+        let days = fetchable_days(from, to, fixtures::date(2026, 7, 31));
         assert_eq!(days.len(), expected);
         assert!(days.iter().all(|day| *day >= COVERAGE_START));
         assert!(days.windows(2).all(|pair| pair[0] < pair[1]), "ascending");
@@ -215,15 +217,18 @@ mod tests {
 
     #[rstest]
     // The lag is three days, so the three most recent days are pending.
-    #[case::today(date(2026, 7, 29), true)]
-    #[case::yesterday(date(2026, 7, 28), true)]
-    #[case::two_days_back(date(2026, 7, 27), true)]
-    #[case::the_newest_expected_day(date(2026, 7, 26), false)]
-    #[case::a_settled_day(date(2026, 7, 20), false)]
+    #[case::today(fixtures::date(2026, 7, 29), true)]
+    #[case::yesterday(fixtures::date(2026, 7, 28), true)]
+    #[case::two_days_back(fixtures::date(2026, 7, 27), true)]
+    #[case::the_newest_expected_day(fixtures::date(2026, 7, 26), false)]
+    #[case::a_settled_day(fixtures::date(2026, 7, 20), false)]
     fn awaiting_publication_marks_only_the_lag_window(
         #[case] day: NaiveDate,
         #[case] expected: bool,
     ) {
-        assert_eq!(awaiting_publication(day, date(2026, 7, 29)), expected);
+        assert_eq!(
+            awaiting_publication(day, fixtures::date(2026, 7, 29)),
+            expected
+        );
     }
 }

@@ -230,20 +230,14 @@ impl TecInstantSelection {
 mod tests {
     use std::collections::HashSet;
 
+    use gt_types::fixtures;
     use rstest::rstest;
     use strum::{EnumCount as _, IntoEnumIterator as _};
 
     use super::*;
 
     fn today() -> NaiveDate {
-        NaiveDate::from_ymd_opt(2026, 8, 17).unwrap()
-    }
-
-    fn at(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
-        NaiveDate::from_ymd_opt(year, month, day)
-            .and_then(|date| date.and_hms_opt(hour, minute, 0))
-            .unwrap()
-            .and_utc()
+        fixtures::date(2026, 8, 17)
     }
 
     fn selection(instant: DateTime<Utc>) -> TecInstantSelection {
@@ -254,41 +248,83 @@ mod tests {
     fn the_first_loaded_track_picks_the_instant() {
         let mut selection = TecInstantSelection::new(None, today());
         assert_eq!(selection.instant(), None);
-        selection.adopt_default(at(2024, 5, 10, 18, 37));
-        assert_eq!(selection.instant(), Some(at(2024, 5, 10, 18, 37)));
+        selection.adopt_default(fixtures::utc_instant(2024, 5, 10, 18, 37));
+        assert_eq!(
+            selection.instant(),
+            Some(fixtures::utc_instant(2024, 5, 10, 18, 37))
+        );
     }
 
     /// Files load on their own threads and finish in any order, so the instant
     /// must not depend on which arrived first.
     #[rstest]
-    #[case::ascending([at(2024, 5, 10, 8, 0), at(2024, 5, 12, 9, 0)])]
-    #[case::descending([at(2024, 5, 12, 9, 0), at(2024, 5, 10, 8, 0)])]
+    #[case::ascending([
+        fixtures::utc_instant(2024, 5, 10, 8, 0),
+        fixtures::utc_instant(2024, 5, 12, 9, 0)
+    ])]
+    #[case::descending([
+        fixtures::utc_instant(2024, 5, 12, 9, 0),
+        fixtures::utc_instant(2024, 5, 10, 8, 0)
+    ])]
     fn concurrent_loads_settle_on_the_earliest_instant(#[case] order: [DateTime<Utc>; 2]) {
         let mut selection = TecInstantSelection::new(None, today());
         for instant in order {
             selection.adopt_default(instant);
         }
-        assert_eq!(selection.instant(), Some(at(2024, 5, 10, 8, 0)));
+        assert_eq!(
+            selection.instant(),
+            Some(fixtures::utc_instant(2024, 5, 10, 8, 0))
+        );
     }
 
     #[test]
     fn a_later_load_does_not_move_a_stepped_instant() {
-        let mut selection = selection(at(2024, 5, 10, 18, 0));
+        let mut selection = selection(fixtures::utc_instant(2024, 5, 10, 18, 0));
         selection.step_back();
-        assert_eq!(selection.instant(), Some(at(2024, 5, 10, 16, 0)));
+        assert_eq!(
+            selection.instant(),
+            Some(fixtures::utc_instant(2024, 5, 10, 16, 0))
+        );
 
-        selection.adopt_default(at(2024, 5, 9, 8, 0));
-        assert_eq!(selection.instant(), Some(at(2024, 5, 10, 16, 0)));
+        selection.adopt_default(fixtures::utc_instant(2024, 5, 9, 8, 0));
+        assert_eq!(
+            selection.instant(),
+            Some(fixtures::utc_instant(2024, 5, 10, 16, 0))
+        );
     }
 
     /// An instant between two epochs steps onto the epoch grid.
     #[rstest]
-    #[case::back_from_between_epochs(at(2024, 5, 10, 18, 37), true, at(2024, 5, 10, 18, 0))]
-    #[case::back_from_an_epoch(at(2024, 5, 10, 18, 0), true, at(2024, 5, 10, 16, 0))]
-    #[case::forward_from_between_epochs(at(2024, 5, 10, 18, 37), false, at(2024, 5, 10, 20, 0))]
-    #[case::forward_from_an_epoch(at(2024, 5, 10, 18, 0), false, at(2024, 5, 10, 20, 0))]
-    #[case::back_across_midnight(at(2024, 5, 10, 0, 0), true, at(2024, 5, 9, 22, 0))]
-    #[case::forward_across_midnight(at(2024, 5, 10, 23, 0), false, at(2024, 5, 11, 0, 0))]
+    #[case::back_from_between_epochs(
+        fixtures::utc_instant(2024, 5, 10, 18, 37),
+        true,
+        fixtures::utc_instant(2024, 5, 10, 18, 0)
+    )]
+    #[case::back_from_an_epoch(
+        fixtures::utc_instant(2024, 5, 10, 18, 0),
+        true,
+        fixtures::utc_instant(2024, 5, 10, 16, 0)
+    )]
+    #[case::forward_from_between_epochs(
+        fixtures::utc_instant(2024, 5, 10, 18, 37),
+        false,
+        fixtures::utc_instant(2024, 5, 10, 20, 0)
+    )]
+    #[case::forward_from_an_epoch(
+        fixtures::utc_instant(2024, 5, 10, 18, 0),
+        false,
+        fixtures::utc_instant(2024, 5, 10, 20, 0)
+    )]
+    #[case::back_across_midnight(
+        fixtures::utc_instant(2024, 5, 10, 0, 0),
+        true,
+        fixtures::utc_instant(2024, 5, 9, 22, 0)
+    )]
+    #[case::forward_across_midnight(
+        fixtures::utc_instant(2024, 5, 10, 23, 0),
+        false,
+        fixtures::utc_instant(2024, 5, 11, 0, 0)
+    )]
     fn stepping_lands_on_the_published_epochs(
         #[case] from: DateTime<Utc>,
         #[case] back: bool,
@@ -306,20 +342,26 @@ mod tests {
     /// A rapid day publishes hourly, so one step covers one hour.
     #[test]
     fn the_step_follows_the_archived_days_interval() {
-        let mut selection = selection(at(2024, 5, 10, 18, 0));
+        let mut selection = selection(fixtures::utc_instant(2024, 5, 10, 18, 0));
         selection.set_map_interval(TimeDelta::hours(1));
         selection.step_back();
-        assert_eq!(selection.instant(), Some(at(2024, 5, 10, 17, 0)));
+        assert_eq!(
+            selection.instant(),
+            Some(fixtures::utc_instant(2024, 5, 10, 17, 0))
+        );
     }
 
     #[rstest]
     #[case::zero(TimeDelta::zero())]
     #[case::negative(TimeDelta::hours(-2))]
     fn an_interval_that_is_not_a_step_is_rejected(#[case] interval: TimeDelta) {
-        let mut selection = selection(at(2024, 5, 10, 18, 0));
+        let mut selection = selection(fixtures::utc_instant(2024, 5, 10, 18, 0));
         selection.set_map_interval(interval);
         selection.step_back();
-        assert_eq!(selection.instant(), Some(at(2024, 5, 10, 16, 0)));
+        assert_eq!(
+            selection.instant(),
+            Some(fixtures::utc_instant(2024, 5, 10, 16, 0))
+        );
     }
 
     #[test]
@@ -333,27 +375,34 @@ mod tests {
 
     #[test]
     fn stepping_stops_at_the_end_of_today() {
-        let mut selection = selection(at(2026, 8, 17, 23, 0));
+        let mut selection = selection(fixtures::utc_instant(2026, 8, 17, 23, 0));
         assert_eq!(selection.next(), None);
         selection.step_forward();
-        assert_eq!(selection.instant(), Some(at(2026, 8, 17, 23, 0)));
+        assert_eq!(
+            selection.instant(),
+            Some(fixtures::utc_instant(2026, 8, 17, 23, 0))
+        );
     }
 
     /// A hovered fix wins over the stepper, and letting go hands the heatmap
     /// back to where the stepper stood.
     #[test]
     fn a_followed_fix_wins_over_the_stepper() {
-        let mut selection = selection(at(2024, 5, 10, 18, 0));
-        selection.follow(Some(at(2024, 5, 10, 6, 30)));
+        let mut selection = selection(fixtures::utc_instant(2024, 5, 10, 18, 0));
+        selection.follow(Some(fixtures::utc_instant(2024, 5, 10, 6, 30)));
         assert_eq!(
             selection.shown(),
-            Some(ShownInstant::Followed(at(2024, 5, 10, 6, 30)))
+            Some(ShownInstant::Followed(fixtures::utc_instant(
+                2024, 5, 10, 6, 30
+            )))
         );
 
         selection.follow(None);
         assert_eq!(
             selection.shown(),
-            Some(ShownInstant::Stepped(at(2024, 5, 10, 18, 0)))
+            Some(ShownInstant::Stepped(fixtures::utc_instant(
+                2024, 5, 10, 18, 0
+            )))
         );
         assert!(!selection.shown().unwrap().is_followed());
     }
@@ -362,16 +411,31 @@ mod tests {
     #[test]
     fn a_followed_fix_alone_is_enough_to_draw() {
         let mut selection = TecInstantSelection::new(None, today());
-        selection.follow(Some(at(2024, 5, 10, 6, 30)));
-        assert_eq!(selection.instant(), Some(at(2024, 5, 10, 6, 30)));
+        selection.follow(Some(fixtures::utc_instant(2024, 5, 10, 6, 30)));
+        assert_eq!(
+            selection.instant(),
+            Some(fixtures::utc_instant(2024, 5, 10, 6, 30))
+        );
     }
 
     #[rstest]
     #[case::no_instant(None, 0, Some(TecEmptyReason::NoTrack))]
-    #[case::archived(Some(at(2024, 5, 10, 18, 0)), 5183, None)]
-    #[case::before_coverage(Some(at(2005, 1, 1, 0, 0)), 0, Some(TecEmptyReason::BeforeCoverage))]
-    #[case::in_future(Some(at(2027, 1, 1, 0, 0)), 0, Some(TecEmptyReason::InFuture))]
-    #[case::not_archived(Some(at(2024, 5, 10, 18, 0)), 0, Some(TecEmptyReason::NotArchived))]
+    #[case::archived(Some(fixtures::utc_instant(2024, 5, 10, 18, 0)), 5183, None)]
+    #[case::before_coverage(
+        Some(fixtures::utc_instant(2005, 1, 1, 0, 0)),
+        0,
+        Some(TecEmptyReason::BeforeCoverage)
+    )]
+    #[case::in_future(
+        Some(fixtures::utc_instant(2027, 1, 1, 0, 0)),
+        0,
+        Some(TecEmptyReason::InFuture)
+    )]
+    #[case::not_archived(
+        Some(fixtures::utc_instant(2024, 5, 10, 18, 0)),
+        0,
+        Some(TecEmptyReason::NotArchived)
+    )]
     fn every_empty_state_has_its_own_reason(
         #[case] instant: Option<DateTime<Utc>>,
         #[case] archived_nodes: usize,
@@ -386,9 +450,9 @@ mod tests {
     fn every_reason_is_reachable() {
         let reached: HashSet<&'static str> = [
             TecInstantSelection::new(None, today()).empty_reason(0),
-            selection(at(2005, 1, 1, 0, 0)).empty_reason(0),
-            selection(at(2027, 1, 1, 0, 0)).empty_reason(0),
-            selection(at(2024, 5, 10, 18, 0)).empty_reason(0),
+            selection(fixtures::utc_instant(2005, 1, 1, 0, 0)).empty_reason(0),
+            selection(fixtures::utc_instant(2027, 1, 1, 0, 0)).empty_reason(0),
+            selection(fixtures::utc_instant(2024, 5, 10, 18, 0)).empty_reason(0),
         ]
         .into_iter()
         .flatten()

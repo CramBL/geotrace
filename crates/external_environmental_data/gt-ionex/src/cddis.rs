@@ -115,20 +115,17 @@ fn legacy_name(product: IonexProduct, day: NaiveDate) -> String {
 
 #[cfg(test)]
 mod tests {
+    use gt_types::fixtures;
     use rstest::rstest;
 
     use super::*;
     use crate::mirrors::FileCompression;
 
-    fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
-    }
-
     /// The long names come first, and the legacy name closes the list.
     #[rstest]
     #[case::the_final_solution(
         IonexProduct::Final,
-        date(2024, 5, 10),
+        fixtures::date(2024, 5, 10),
         &[
             "https://cddis.nasa.gov/archive/gnss/products/ionex/2024/131/JPL0OPSFIN_20241310000_01D_02H_GIM.INX.gz",
             "https://cddis.nasa.gov/archive/gnss/products/ionex/2024/131/jplg1310.24i.Z",
@@ -136,7 +133,7 @@ mod tests {
     )]
     #[case::the_rapid_solution(
         IonexProduct::Rapid,
-        date(2026, 8, 15),
+        fixtures::date(2026, 8, 15),
         &[
             "https://cddis.nasa.gov/archive/gnss/products/ionex/2026/227/JPL0OPSRAP_20262270000_01D_01H_GIM.INX.gz",
             "https://cddis.nasa.gov/archive/gnss/products/ionex/2026/227/JPL0OPSRAP_20262270000_01D_02H_GIM.INX.gz",
@@ -145,7 +142,7 @@ mod tests {
     )]
     #[case::the_first_day_of_a_year(
         IonexProduct::Final,
-        date(2026, 1, 1),
+        fixtures::date(2026, 1, 1),
         &[
             "https://cddis.nasa.gov/archive/gnss/products/ionex/2026/001/JPL0OPSFIN_20260010000_01D_02H_GIM.INX.gz",
             "https://cddis.nasa.gov/archive/gnss/products/ionex/2026/001/jplg0010.26i.Z",
@@ -153,7 +150,7 @@ mod tests {
     )]
     #[case::a_year_whose_last_two_digits_lead_with_a_zero(
         IonexProduct::Final,
-        date(2008, 11, 19),
+        fixtures::date(2008, 11, 19),
         &[
             "https://cddis.nasa.gov/archive/gnss/products/ionex/2008/324/JPL0OPSFIN_20083240000_01D_02H_GIM.INX.gz",
             "https://cddis.nasa.gov/archive/gnss/products/ionex/2008/324/jplg3240.08i.Z",
@@ -178,10 +175,14 @@ mod tests {
     #[test]
     fn each_candidate_declares_how_its_file_is_compressed() {
         assert_eq!(
-            file_candidates(DEFAULT_BASE_URL, IonexProduct::Final, date(2024, 5, 10))
-                .iter()
-                .map(|candidate| candidate.compression)
-                .collect::<Vec<_>>(),
+            file_candidates(
+                DEFAULT_BASE_URL,
+                IonexProduct::Final,
+                fixtures::date(2024, 5, 10)
+            )
+            .iter()
+            .map(|candidate| candidate.compression)
+            .collect::<Vec<_>>(),
             [FileCompression::Gzip, FileCompression::UnixCompress]
         );
     }
@@ -192,7 +193,7 @@ mod tests {
             file_candidates(
                 "https://mirror.example/ionex",
                 IonexProduct::Final,
-                date(2024, 5, 10)
+                fixtures::date(2024, 5, 10)
             )
             .first()
             .map(|candidate| candidate.url.clone()),

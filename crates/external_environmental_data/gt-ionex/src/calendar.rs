@@ -85,25 +85,22 @@ pub fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> V
 mod tests {
     use std::collections::HashSet;
 
+    use gt_types::fixtures;
     use rstest::rstest;
     use strum::IntoEnumIterator as _;
 
     use super::*;
 
-    fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
-    }
-
     fn today() -> NaiveDate {
-        date(2026, 8, 17)
+        fixtures::date(2026, 8, 17)
     }
 
     #[rstest]
-    #[case::before_coverage(date(2008, 11, 18), DayOutlook::BeforeCoverage)]
-    #[case::the_first_published_day(date(2008, 11, 19), DayOutlook::Fetchable)]
-    #[case::a_settled_day(date(2024, 5, 10), DayOutlook::Fetchable)]
-    #[case::today(date(2026, 8, 17), DayOutlook::Fetchable)]
-    #[case::tomorrow(date(2026, 8, 18), DayOutlook::InFuture)]
+    #[case::before_coverage(fixtures::date(2008, 11, 18), DayOutlook::BeforeCoverage)]
+    #[case::the_first_published_day(fixtures::date(2008, 11, 19), DayOutlook::Fetchable)]
+    #[case::a_settled_day(fixtures::date(2024, 5, 10), DayOutlook::Fetchable)]
+    #[case::today(fixtures::date(2026, 8, 17), DayOutlook::Fetchable)]
+    #[case::tomorrow(fixtures::date(2026, 8, 18), DayOutlook::InFuture)]
     fn day_outlook_covers_every_calendar_boundary(
         #[case] day: NaiveDate,
         #[case] expected: DayOutlook,
@@ -115,9 +112,9 @@ mod tests {
     #[test]
     fn every_outlook_is_reachable() {
         let reached: HashSet<DayOutlook> = [
-            day_outlook(date(1900, 1, 1), today()),
+            day_outlook(fixtures::date(1900, 1, 1), today()),
             day_outlook(today(), today()),
-            day_outlook(date(2030, 1, 1), today()),
+            day_outlook(fixtures::date(2030, 1, 1), today()),
         ]
         .into_iter()
         .collect();
@@ -127,9 +124,9 @@ mod tests {
     /// A fetchable day requests the settled product first, and a day outside
     /// coverage is never requested at all.
     #[rstest]
-    #[case::a_settled_day(date(2024, 5, 10), &[IonexProduct::Final, IonexProduct::Rapid])]
-    #[case::before_coverage(date(1970, 1, 1), &[])]
-    #[case::in_the_future(date(2026, 8, 18), &[])]
+    #[case::a_settled_day(fixtures::date(2024, 5, 10), &[IonexProduct::Final, IonexProduct::Rapid])]
+    #[case::before_coverage(fixtures::date(1970, 1, 1), &[])]
+    #[case::in_the_future(fixtures::date(2026, 8, 18), &[])]
     fn fetchable_products_orders_the_settled_product_first(
         #[case] day: NaiveDate,
         #[case] expected: &[IonexProduct],
@@ -138,12 +135,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case::a_week(date(2024, 5, 10), date(2024, 5, 16), 7)]
-    #[case::one_day(date(2024, 5, 10), date(2024, 5, 10), 1)]
-    #[case::reversed(date(2024, 5, 16), date(2024, 5, 10), 0)]
-    #[case::clamped_to_coverage(date(1900, 1, 1), COVERAGE_START, 1)]
-    #[case::stops_at_today(date(2026, 8, 15), date(2026, 8, 30), 3)]
-    #[case::entirely_in_the_future(date(2026, 9, 1), date(2026, 9, 10), 0)]
+    #[case::a_week(fixtures::date(2024, 5, 10), fixtures::date(2024, 5, 16), 7)]
+    #[case::one_day(fixtures::date(2024, 5, 10), fixtures::date(2024, 5, 10), 1)]
+    #[case::reversed(fixtures::date(2024, 5, 16), fixtures::date(2024, 5, 10), 0)]
+    #[case::clamped_to_coverage(fixtures::date(1900, 1, 1), COVERAGE_START, 1)]
+    #[case::stops_at_today(fixtures::date(2026, 8, 15), fixtures::date(2026, 8, 30), 3)]
+    #[case::entirely_in_the_future(fixtures::date(2026, 9, 1), fixtures::date(2026, 9, 10), 0)]
     fn fetchable_days_covers_the_range_the_archive_can_serve(
         #[case] from: NaiveDate,
         #[case] to: NaiveDate,

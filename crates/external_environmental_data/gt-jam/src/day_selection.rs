@@ -159,6 +159,7 @@ impl DaySelection {
 mod tests {
     use std::collections::HashSet;
 
+    use gt_types::fixtures;
     use rstest::rstest;
     use strum::{EnumCount as _, IntoEnumIterator as _};
 
@@ -167,12 +168,8 @@ mod tests {
     /// Longest badge the display-toggle row has space for.
     const MAX_BADGE_CHARS: usize = 18;
 
-    fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap()
-    }
-
     fn today() -> NaiveDate {
-        date(2026, 7, 31)
+        fixtures::date(2026, 7, 31)
     }
 
     fn selection(day: NaiveDate) -> DaySelection {
@@ -183,33 +180,33 @@ mod tests {
     fn the_first_loaded_track_picks_the_day() {
         let mut selection = DaySelection::new(None, today());
         assert_eq!(selection.day(), None);
-        selection.adopt_default(date(2026, 7, 20));
-        assert_eq!(selection.day(), Some(date(2026, 7, 20)));
+        selection.adopt_default(fixtures::date(2026, 7, 20));
+        assert_eq!(selection.day(), Some(fixtures::date(2026, 7, 20)));
     }
 
     /// A second track must not move the overlay off the day the user chose.
     #[test]
     fn a_later_track_does_not_move_a_chosen_day() {
         let mut selection = DaySelection::new(None, today());
-        selection.adopt_default(date(2026, 7, 20));
+        selection.adopt_default(fixtures::date(2026, 7, 20));
         selection.step_back();
-        assert_eq!(selection.day(), Some(date(2026, 7, 19)));
+        assert_eq!(selection.day(), Some(fixtures::date(2026, 7, 19)));
 
-        selection.adopt_default(date(2026, 7, 25));
-        assert_eq!(selection.day(), Some(date(2026, 7, 19)));
+        selection.adopt_default(fixtures::date(2026, 7, 25));
+        assert_eq!(selection.day(), Some(fixtures::date(2026, 7, 19)));
     }
 
     /// Files load on their own threads and finish in any order, so the day
     /// must not depend on which arrived first.
     #[rstest]
-    #[case::ascending([date(2026, 7, 20), date(2026, 7, 25)])]
-    #[case::descending([date(2026, 7, 25), date(2026, 7, 20)])]
+    #[case::ascending([fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 25)])]
+    #[case::descending([fixtures::date(2026, 7, 25), fixtures::date(2026, 7, 20)])]
     fn concurrent_loads_settle_on_the_earliest_day(#[case] order: [NaiveDate; 2]) {
         let mut selection = DaySelection::new(None, today());
         for day in order {
             selection.adopt_default(day);
         }
-        assert_eq!(selection.day(), Some(date(2026, 7, 20)));
+        assert_eq!(selection.day(), Some(fixtures::date(2026, 7, 20)));
     }
 
     /// Stepping to the coverage edge still counts as stepping.
@@ -217,7 +214,7 @@ mod tests {
     fn a_step_that_cannot_move_does_not_lock_the_default() {
         let mut selection = DaySelection::new(Some(COVERAGE_START), today());
         selection.step_back();
-        selection.adopt_default(date(2026, 7, 20));
+        selection.adopt_default(fixtures::date(2026, 7, 20));
         assert_eq!(
             selection.day(),
             Some(COVERAGE_START),
@@ -227,12 +224,12 @@ mod tests {
 
     #[test]
     fn stepping_moves_one_day_at_a_time() {
-        let mut selection = selection(date(2026, 7, 20));
+        let mut selection = selection(fixtures::date(2026, 7, 20));
         selection.step_forward();
-        assert_eq!(selection.day(), Some(date(2026, 7, 21)));
+        assert_eq!(selection.day(), Some(fixtures::date(2026, 7, 21)));
         selection.step_back();
         selection.step_back();
-        assert_eq!(selection.day(), Some(date(2026, 7, 19)));
+        assert_eq!(selection.day(), Some(fixtures::date(2026, 7, 19)));
     }
 
     #[test]
@@ -253,17 +250,37 @@ mod tests {
 
     #[rstest]
     #[case::no_track(None, 0, false, Some(EmptyReason::NoTrack))]
-    #[case::archived(Some(date(2026, 7, 20)), 44_546, false, None)]
-    #[case::before_coverage(Some(date(2020, 1, 1)), 0, false, Some(EmptyReason::BeforeCoverage))]
-    #[case::in_future(Some(date(2027, 1, 1)), 0, false, Some(EmptyReason::InFuture))]
-    #[case::not_fetched(Some(date(2026, 7, 20)), 0, false, Some(EmptyReason::NotFetched))]
+    #[case::archived(Some(fixtures::date(2026, 7, 20)), 44_546, false, None)]
+    #[case::before_coverage(
+        Some(fixtures::date(2020, 1, 1)),
+        0,
+        false,
+        Some(EmptyReason::BeforeCoverage)
+    )]
+    #[case::in_future(
+        Some(fixtures::date(2027, 1, 1)),
+        0,
+        false,
+        Some(EmptyReason::InFuture)
+    )]
+    #[case::not_fetched(
+        Some(fixtures::date(2026, 7, 20)),
+        0,
+        false,
+        Some(EmptyReason::NotFetched)
+    )]
     #[case::awaiting(
-        Some(date(2026, 7, 30)),
+        Some(fixtures::date(2026, 7, 30)),
         0,
         true,
         Some(EmptyReason::AwaitingPublication)
     )]
-    #[case::not_published(Some(date(2026, 7, 20)), 0, true, Some(EmptyReason::NotPublished))]
+    #[case::not_published(
+        Some(fixtures::date(2026, 7, 20)),
+        0,
+        true,
+        Some(EmptyReason::NotPublished)
+    )]
     fn every_empty_state_has_its_own_reason(
         #[case] day: Option<NaiveDate>,
         #[case] archived_cells: usize,
@@ -282,11 +299,11 @@ mod tests {
     fn every_reason_is_reachable() {
         let reached: HashSet<&'static str> = [
             DaySelection::new(None, today()).empty_reason(0, false),
-            DaySelection::new(Some(date(2020, 1, 1)), today()).empty_reason(0, false),
-            DaySelection::new(Some(date(2027, 1, 1)), today()).empty_reason(0, false),
-            DaySelection::new(Some(date(2026, 7, 30)), today()).empty_reason(0, true),
-            DaySelection::new(Some(date(2026, 7, 20)), today()).empty_reason(0, false),
-            DaySelection::new(Some(date(2026, 7, 20)), today()).empty_reason(0, true),
+            DaySelection::new(Some(fixtures::date(2020, 1, 1)), today()).empty_reason(0, false),
+            DaySelection::new(Some(fixtures::date(2027, 1, 1)), today()).empty_reason(0, false),
+            DaySelection::new(Some(fixtures::date(2026, 7, 30)), today()).empty_reason(0, true),
+            DaySelection::new(Some(fixtures::date(2026, 7, 20)), today()).empty_reason(0, false),
+            DaySelection::new(Some(fixtures::date(2026, 7, 20)), today()).empty_reason(0, true),
         ]
         .into_iter()
         .flatten()

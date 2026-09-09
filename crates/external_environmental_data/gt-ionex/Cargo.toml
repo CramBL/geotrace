@@ -28,6 +28,9 @@ thiserror.workspace = true
 [dev-dependencies]
 # Responds to a fetch pipeline's requests from a script.
 gt-fetch = { path = "../../gt-fetch", features = ["test-util"] }
+# Adds the date builders of `gt_types::fixtures`, which the tests use for their
+# dates and instants. The feature is off in a normal build of gt-types.
+gt-types = { path = "../../gt-types", features = ["fixtures"] }
 insta.workspace = true
 proptest.workspace = true
 # The capture example fetches from the archive directly, not through

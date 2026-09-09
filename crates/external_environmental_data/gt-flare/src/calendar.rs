@@ -72,25 +72,22 @@ pub fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> V
 mod tests {
     use std::collections::HashSet;
 
+    use gt_types::fixtures;
     use rstest::rstest;
     use strum::IntoEnumIterator as _;
 
     use super::*;
 
-    fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
-    }
-
     fn today() -> NaiveDate {
-        date(2026, 7, 29)
+        fixtures::date(2026, 7, 29)
     }
 
     #[rstest]
-    #[case::before_the_catalog(date(2010, 4, 2), DayOutlook::BeforeCoverage)]
-    #[case::the_first_listed_day(date(2010, 4, 3), DayOutlook::Fetchable)]
-    #[case::a_settled_day(date(2024, 5, 9), DayOutlook::Fetchable)]
-    #[case::today(date(2026, 7, 29), DayOutlook::Fetchable)]
-    #[case::tomorrow(date(2026, 7, 30), DayOutlook::InFuture)]
+    #[case::before_the_catalog(fixtures::date(2010, 4, 2), DayOutlook::BeforeCoverage)]
+    #[case::the_first_listed_day(fixtures::date(2010, 4, 3), DayOutlook::Fetchable)]
+    #[case::a_settled_day(fixtures::date(2024, 5, 9), DayOutlook::Fetchable)]
+    #[case::today(fixtures::date(2026, 7, 29), DayOutlook::Fetchable)]
+    #[case::tomorrow(fixtures::date(2026, 7, 30), DayOutlook::InFuture)]
     fn day_outlook_covers_every_calendar_boundary(
         #[case] day: NaiveDate,
         #[case] expected: DayOutlook,
@@ -102,9 +99,9 @@ mod tests {
     #[test]
     fn every_outlook_is_reachable() {
         let reached: HashSet<DayOutlook> = [
-            day_outlook(date(1970, 1, 1), today()),
+            day_outlook(fixtures::date(1970, 1, 1), today()),
             day_outlook(today(), today()),
-            day_outlook(date(2030, 1, 1), today()),
+            day_outlook(fixtures::date(2030, 1, 1), today()),
         ]
         .into_iter()
         .collect();
@@ -112,12 +109,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case::a_week(date(2026, 7, 20), date(2026, 7, 26), 7)]
-    #[case::one_day(date(2026, 7, 20), date(2026, 7, 20), 1)]
-    #[case::reversed(date(2026, 7, 26), date(2026, 7, 20), 0)]
-    #[case::clamped_to_coverage(date(1900, 1, 1), COVERAGE_START, 1)]
-    #[case::stops_at_today(date(2026, 7, 27), date(2026, 8, 10), 3)]
-    #[case::entirely_in_the_future(date(2026, 8, 1), date(2026, 8, 10), 0)]
+    #[case::a_week(fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 26), 7)]
+    #[case::one_day(fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 20), 1)]
+    #[case::reversed(fixtures::date(2026, 7, 26), fixtures::date(2026, 7, 20), 0)]
+    #[case::clamped_to_coverage(fixtures::date(1900, 1, 1), COVERAGE_START, 1)]
+    #[case::stops_at_today(fixtures::date(2026, 7, 27), fixtures::date(2026, 8, 10), 3)]
+    #[case::entirely_in_the_future(fixtures::date(2026, 8, 1), fixtures::date(2026, 8, 10), 0)]
     fn fetchable_days_covers_the_range_the_catalog_can_serve(
         #[case] from: NaiveDate,
         #[case] to: NaiveDate,
