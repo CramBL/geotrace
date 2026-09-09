@@ -273,6 +273,37 @@ fn an_event_marker_within_the_fix_time_span_takes_the_position_at_its_time(
 }
 
 #[test]
+fn an_event_marker_between_two_fixes_in_host_clock_order_is_placed_between_them() {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix(10, 12.0, 24.0));
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .time(NavFixTime::Both {
+                gps: t(12),
+                sys: t(8),
+            })
+            .lat(Angle::degrees(10.0))
+            .lon(Angle::degrees(20.0))
+            .heading(Angle::degrees(0.0))
+            .build(),
+    );
+    recorder.add_event_marker(marker("sensor/sample", 9));
+
+    let nav_file = recorder.finish().unwrap();
+    let event_marker = &nav_file.event_markers()[0];
+    assert!(
+        (event_marker.lat.as_degrees() - 11.0).abs() < 1e-9,
+        "lat is {}, expected 11",
+        event_marker.lat.as_degrees()
+    );
+    assert!(
+        (event_marker.lon.as_degrees() - 22.0).abs() < 1e-9,
+        "lon is {}, expected 22",
+        event_marker.lon.as_degrees()
+    );
+}
+
+#[test]
 fn an_event_marker_between_two_fixes_across_the_antimeridian_is_placed_on_the_short_arc() {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(fix(0, 0.0, 179.95));
