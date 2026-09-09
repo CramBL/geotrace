@@ -282,3 +282,359 @@ impl DayFetchQueue {
         self.recording_days.record(day, DayArchiveState::Awaited);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::app::test_util::day_archive;
+
+    use super::*;
+
+    const NEEDS_FETCH: Result<bool, &str> = Ok(true);
+    const ARCHIVED: Result<bool, &str> = Ok(false);
+    const UNREADABLE_ARCHIVE: Result<bool, &str> = Err("the archive is locked");
+
+    #[test]
+    fn a_recording_day_the_archive_lacks_is_queued_once() {
+        let mut queue = DayFetchQueue::default();
+        let day = day_archive::day(2026, 7, 20);
+
+        queue.request_recording_day(day, NEEDS_FETCH);
+        queue.request_recording_day(day, NEEDS_FETCH);
+
+        assert_eq!(queue.queued(), 1);
+        assert_eq!(queue.requested_days().len(), 1);
+        assert_eq!(
+            queue.fetch_status().recording_days,
+            ArchivedDayCount {
+                days: 1,
+                archived: 0
+            }
+        );
+    }
+
+    /// A delete that removes an archived day lets the next load request it
+    /// again: archived days stay out of `requested`.
+    #[test]
+    fn an_archived_recording_day_is_not_queued_and_counts_as_archived() {
+        let mut queue = DayFetchQueue::default();
+
+        queue.request_recording_day(day_archive::day(2026, 7, 20), ARCHIVED);
+
+        assert_eq!(queue.queued(), 0);
+        assert!(queue.requested_days().is_empty());
+        assert_eq!(
+            queue.fetch_status().recording_days,
+            ArchivedDayCount {
+                days: 1,
+                archived: 1
+            }
+        );
+    }
+
+    #[test]
+    fn an_unreadable_archive_awaits_the_recording_day_and_reports_one_failure() {
+        let mut queue = DayFetchQueue::default();
+        let day = day_archive::day(2026, 7, 20);
+
+        queue.request_recording_day(day, UNREADABLE_ARCHIVE);
+        queue.request_recording_day(day, UNREADABLE_ARCHIVE);
+
+        assert_eq!(queue.queued(), 0);
+        assert_eq!(
+            queue.fetch_status().recording_days,
+            ArchivedDayCount {
+                days: 1,
+                archived: 0
+            }
+        );
+        assert_eq!(
+            queue.failures(),
+            [DayFailure {
+                day,
+                detail: "reading the archive: the archive is locked".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_background_day_a_recording_spans_stays_in_the_recording_count() {
+        let mut queue = DayFetchQueue::default();
+        let day = day_archive::day(2026, 7, 20);
+        queue.request_recording_day(day, NEEDS_FETCH);
+
+        queue.request_background_day(day, NEEDS_FETCH);
+
+        assert_eq!(
+            queue.fetch_status().recording_days,
+            ArchivedDayCount {
+                days: 1,
+                archived: 0
+            }
+        );
+        assert_eq!(queue.background_day_coverage(), ArchivedDayCount::default());
+    }
+
+    #[test]
+    fn a_background_day_a_recording_later_spans_moves_to_the_recording_count() {
+        let mut queue = DayFetchQueue::default();
+        let day = day_archive::day(2026, 7, 20);
+        queue.request_background_day(day, NEEDS_FETCH);
+
+        queue.request_recording_day(day, NEEDS_FETCH);
+
+        assert_eq!(
+            queue.fetch_status().recording_days,
+            ArchivedDayCount {
+                days: 1,
+                archived: 0
+            }
+        );
+        assert_eq!(queue.background_day_coverage(), ArchivedDayCount::default());
+        assert_eq!(queue.queued(), 1);
+    }
+
+    #[test]
+    fn a_backfill_queues_the_days_the_archive_lacks_and_reports_their_total() {
+        let mut queue = DayFetchQueue::default();
+        let archived = day_archive::day(2026, 7, 21);
+
+        let total = queue.start_backfill(
+            (20..=22).map(|number| day_archive::day(2026, 7, number)),
+            |day| {
+                if day == archived {
+                    ARCHIVED
+                } else {
+                    NEEDS_FETCH
+                }
+            },
+        );
+
+        assert_eq!(total, 2);
+        assert_eq!(queue.queued(), 2);
+        assert_eq!(
+            queue.backfill_progress(),
+            Some(BackfillProgress { done: 0, total: 2 })
+        );
+    }
+
+    #[test]
+    fn a_backfill_over_a_fully_archived_range_queues_nothing() {
+        let mut queue = DayFetchQueue::default();
+
+        let total = queue.start_backfill(
+            (20..=22).map(|number| day_archive::day(2026, 7, number)),
+            |_| ARCHIVED,
+        );
+
+        assert_eq!(total, 0);
+        assert_eq!(queue.queued(), 0);
+        assert_eq!(queue.backfill_progress(), None);
+    }
+
+    #[test]
+    fn a_backfill_skips_a_day_a_recording_already_requested() {
+        let mut queue = DayFetchQueue::default();
+        let recording_day = day_archive::day(2026, 7, 20);
+        queue.request_recording_day(recording_day, NEEDS_FETCH);
+
+        let total = queue.start_backfill([recording_day, day_archive::day(2026, 7, 21)], |_| {
+            NEEDS_FETCH
+        });
+
+        assert_eq!(total, 1);
+        assert_eq!(queue.queued(), 2);
+        assert_eq!(queue.take_next_day(), Some(recording_day));
+    }
+
+    #[test]
+    fn an_unreadable_archive_in_a_backfill_queues_nothing_and_reports_a_failure() {
+        let mut queue = DayFetchQueue::default();
+        let day = day_archive::day(2026, 7, 20);
+
+        let total = queue.start_backfill([day], |_| UNREADABLE_ARCHIVE);
+
+        assert_eq!(total, 0);
+        assert_eq!(queue.queued(), 0);
+        assert_eq!(queue.backfill_progress(), None);
+        assert_eq!(
+            queue.failures(),
+            [DayFailure {
+                day,
+                detail: "reading the archive: the archive is locked".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn starting_a_backfill_drops_the_days_the_running_one_queued() {
+        let mut queue = DayFetchQueue::default();
+        let replaced = day_archive::day(2026, 7, 20);
+        let started = day_archive::day(2026, 7, 25);
+        queue.start_backfill([replaced], |_| NEEDS_FETCH);
+
+        let total = queue.start_backfill([started], |_| NEEDS_FETCH);
+
+        assert_eq!(total, 1);
+        assert_eq!(queue.queued(), 1);
+        assert_eq!(queue.take_next_day(), Some(started));
+    }
+
+    #[test]
+    fn cancelling_a_backfill_releases_the_days_it_queued() {
+        let mut queue = DayFetchQueue::default();
+        queue.start_backfill(
+            [day_archive::day(2026, 7, 20), day_archive::day(2026, 7, 21)],
+            |_| NEEDS_FETCH,
+        );
+
+        queue.cancel_backfill();
+
+        assert_eq!(queue.queued(), 0);
+        assert!(queue.requested_days().is_empty());
+        assert_eq!(queue.backfill_progress(), None);
+    }
+
+    /// Releasing the day in flight would let a second request go out for a day
+    /// already being fetched.
+    #[test]
+    fn cancelling_a_backfill_keeps_the_day_in_flight_requested() {
+        let mut queue = DayFetchQueue::default();
+        let in_flight = day_archive::day(2026, 7, 20);
+        let queued = day_archive::day(2026, 7, 21);
+        queue.start_backfill([in_flight, queued], |_| NEEDS_FETCH);
+        assert_eq!(queue.take_next_day(), Some(in_flight));
+
+        queue.cancel_backfill();
+
+        assert!(queue.requested_days().contains(&in_flight));
+        assert!(!queue.requested_days().contains(&queued));
+    }
+
+    #[test]
+    fn cancelling_a_backfill_leaves_a_recording_day_queued() {
+        let mut queue = DayFetchQueue::default();
+        let recording_day = day_archive::day(2026, 7, 19);
+        queue.request_recording_day(recording_day, NEEDS_FETCH);
+        queue.start_backfill([day_archive::day(2026, 7, 20)], |_| NEEDS_FETCH);
+
+        queue.cancel_backfill();
+
+        assert_eq!(queue.queued(), 1);
+        assert!(queue.requested_days().contains(&recording_day));
+        assert_eq!(queue.take_next_day(), Some(recording_day));
+    }
+
+    #[test]
+    fn take_next_day_dispatches_one_day_at_a_time_in_queue_order() {
+        let mut queue = DayFetchQueue::default();
+        let first = day_archive::day(2026, 7, 20);
+        let second = day_archive::day(2026, 7, 21);
+        queue.request_recording_day(first, NEEDS_FETCH);
+        queue.request_recording_day(second, NEEDS_FETCH);
+
+        assert_eq!(queue.take_next_day(), Some(first));
+        assert_eq!(queue.take_next_day(), None);
+        queue.finish_day(first);
+        assert_eq!(queue.take_next_day(), Some(second));
+        queue.finish_day(second);
+        assert_eq!(queue.take_next_day(), None);
+    }
+
+    #[test]
+    fn the_last_day_of_a_backfill_ends_it() {
+        let mut queue = DayFetchQueue::default();
+        let first = day_archive::day(2026, 7, 20);
+        let last = day_archive::day(2026, 7, 21);
+        queue.start_backfill([first, last], |_| NEEDS_FETCH);
+
+        queue.finish_day(first);
+        assert_eq!(
+            queue.backfill_progress(),
+            Some(BackfillProgress { done: 1, total: 2 })
+        );
+
+        queue.finish_day(last);
+        assert_eq!(queue.backfill_progress(), None);
+    }
+
+    #[test]
+    fn a_changed_host_drops_the_queue_its_failures_and_the_backfill() {
+        let mut queue = DayFetchQueue::default();
+        let day = day_archive::day(2026, 7, 20);
+        queue.start_backfill([day], |_| NEEDS_FETCH);
+        queue.report_failure(day, "HTTP 500 Internal Server Error".to_owned());
+
+        queue.forget_host();
+
+        assert_eq!(queue.queued(), 0);
+        assert!(queue.requested_days().is_empty());
+        assert!(queue.failures().is_empty());
+        assert_eq!(queue.backfill_progress(), None);
+    }
+
+    #[test]
+    fn a_changed_host_keeps_what_the_archive_holds_for_the_recording_days() {
+        let mut queue = DayFetchQueue::default();
+        queue.request_recording_day(day_archive::day(2026, 7, 20), ARCHIVED);
+        queue.request_recording_day(day_archive::day(2026, 7, 21), NEEDS_FETCH);
+
+        queue.forget_host();
+
+        assert_eq!(
+            queue.fetch_status().recording_days,
+            ArchivedDayCount {
+                days: 2,
+                archived: 1
+            }
+        );
+    }
+
+    #[test]
+    fn pruned_days_are_requestable_again_and_lose_their_failures() {
+        let mut queue = DayFetchQueue::default();
+        let pruned = day_archive::day(2026, 7, 20);
+        let kept = day_archive::day(2026, 7, 25);
+        queue.request_recording_day(pruned, NEEDS_FETCH);
+        queue.request_recording_day(kept, NEEDS_FETCH);
+        queue.mark_archived(pruned);
+        queue.mark_archived(kept);
+        queue.report_failure(pruned, "HTTP 500 Internal Server Error".to_owned());
+
+        queue.forget_pruned_days(PrunedDays::Before(day_archive::day(2026, 7, 21)));
+
+        assert!(!queue.requested_days().contains(&pruned));
+        assert!(queue.requested_days().contains(&kept));
+        assert!(queue.failures().is_empty());
+        assert_eq!(
+            queue.fetch_status().recording_days,
+            ArchivedDayCount {
+                days: 2,
+                archived: 1
+            }
+        );
+    }
+
+    #[test]
+    fn a_prune_keeps_the_day_in_flight_requested() {
+        let mut queue = DayFetchQueue::default();
+        let day = day_archive::day(2026, 7, 20);
+        queue.request_recording_day(day, NEEDS_FETCH);
+        assert_eq!(queue.take_next_day(), Some(day));
+
+        queue.forget_pruned_days(PrunedDays::All);
+
+        assert!(queue.requested_days().contains(&day));
+    }
+
+    #[test]
+    fn the_oldest_needed_day_is_the_earliest_recording_or_background_day() {
+        let mut queue = DayFetchQueue::default();
+        queue.request_recording_day(day_archive::day(2026, 7, 20), NEEDS_FETCH);
+        queue.request_background_day(day_archive::day(2026, 6, 23), NEEDS_FETCH);
+
+        assert_eq!(
+            queue.oldest_needed_day(),
+            Some(day_archive::day(2026, 6, 23))
+        );
+    }
+}
