@@ -372,6 +372,9 @@ gt-test-utils = { path = "crates/gt-test-utils", features = [
     "ionex",
     "snapshot",
 ] }
+# Adds the date builders of `gt_types::fixtures`, which the tests use for their
+# dates and instants. The feature is off in a normal build of gt-types.
+gt-types = { path = "crates/gt-types", features = ["fixtures"] }
 insta.workspace = true
 rstest.workspace = true
 tempfile.workspace = true

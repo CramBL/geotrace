@@ -346,41 +346,38 @@ pub fn captured_node_series() -> Result<NodeSeriesCapture, CaptureError> {
 mod tests {
     use std::collections::BTreeSet;
 
+    use gt_types::fixtures;
     use rstest::rstest;
     use strum::{EnumCount as _, IntoEnumIterator as _};
 
     use super::*;
-
-    fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
-    }
 
     /// Final maps are filed by year, rapid ones sit in one directory, and both
     /// name the day by its ordinal in the year.
     #[rstest]
     #[case::a_final_file(
         IonexProduct::Final,
-        date(2024, 5, 10),
+        fixtures::date(2024, 5, 10),
         "https://sideshow.jpl.nasa.gov/pub/iono_daily/IONEX_final/y2024/JPLG1310.24I.gz"
     )]
     #[case::a_rapid_file(
         IonexProduct::Rapid,
-        date(2026, 8, 15),
+        fixtures::date(2026, 8, 15),
         "https://sideshow.jpl.nasa.gov/pub/iono_daily/IONEX_rapid/JPLR2270.26I.gz"
     )]
     #[case::the_first_day_of_a_year(
         IonexProduct::Final,
-        date(2026, 1, 1),
+        fixtures::date(2026, 1, 1),
         "https://sideshow.jpl.nasa.gov/pub/iono_daily/IONEX_final/y2026/JPLG0010.26I.gz"
     )]
     #[case::the_last_day_of_a_leap_year(
         IonexProduct::Final,
-        date(2024, 12, 31),
+        fixtures::date(2024, 12, 31),
         "https://sideshow.jpl.nasa.gov/pub/iono_daily/IONEX_final/y2024/JPLG3660.24I.gz"
     )]
     #[case::a_year_whose_last_two_digits_lead_with_a_zero(
         IonexProduct::Final,
-        date(2008, 11, 19),
+        fixtures::date(2008, 11, 19),
         "https://sideshow.jpl.nasa.gov/pub/iono_daily/IONEX_final/y2008/JPLG3240.08I.gz"
     )]
     fn a_file_url_names_the_day_by_its_ordinal_in_the_year(
@@ -394,7 +391,7 @@ mod tests {
     #[test]
     fn a_file_url_honors_the_configured_host() {
         assert_eq!(
-            IonexProduct::Rapid.file_url("https://mirror.example", date(2024, 5, 10)),
+            IonexProduct::Rapid.file_url("https://mirror.example", fixtures::date(2024, 5, 10)),
             "https://mirror.example/IONEX_rapid/JPLR1310.24I.gz"
         );
     }
@@ -419,8 +416,8 @@ mod tests {
     /// The captures were downloaded from URLs verified against the live
     /// archive, so addressing their days must reproduce them exactly.
     #[rstest]
-    #[case::the_storm_day("jpl-final-storm", date(2024, 5, 10))]
-    #[case::the_quiet_day("jpl-final-quiet", date(2024, 4, 1))]
+    #[case::the_storm_day("jpl-final-storm", fixtures::date(2024, 5, 10))]
+    #[case::the_quiet_day("jpl-final-quiet", fixtures::date(2024, 4, 1))]
     fn addressing_a_captured_day_reproduces_the_url_it_was_captured_from(
         #[case] name: &str,
         #[case] day: NaiveDate,
@@ -451,10 +448,22 @@ mod tests {
     /// A day is matched by the file the product publishes it as, so only a
     /// day and product a capture was taken of resolves.
     #[rstest]
-    #[case::the_captured_storm_day(IonexProduct::Final, date(2024, 5, 10), Some(STORM_CAPTURE))]
-    #[case::the_captured_quiet_day(IonexProduct::Final, date(2024, 4, 1), Some(QUIET_CAPTURE))]
-    #[case::an_uncaptured_day(IonexProduct::Final, date(2020, 5, 10), None)]
-    #[case::the_uncaptured_product_of_a_captured_day(IonexProduct::Rapid, date(2024, 5, 10), None)]
+    #[case::the_captured_storm_day(
+        IonexProduct::Final,
+        fixtures::date(2024, 5, 10),
+        Some(STORM_CAPTURE)
+    )]
+    #[case::the_captured_quiet_day(
+        IonexProduct::Final,
+        fixtures::date(2024, 4, 1),
+        Some(QUIET_CAPTURE)
+    )]
+    #[case::an_uncaptured_day(IonexProduct::Final, fixtures::date(2020, 5, 10), None)]
+    #[case::the_uncaptured_product_of_a_captured_day(
+        IonexProduct::Rapid,
+        fixtures::date(2024, 5, 10),
+        None
+    )]
     fn a_day_resolves_to_the_capture_taken_of_it(
         #[case] product: IonexProduct,
         #[case] day: NaiveDate,

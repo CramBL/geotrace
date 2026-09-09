@@ -72,26 +72,51 @@ pub fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> V
 mod tests {
     use std::collections::HashSet;
 
+    use gt_types::fixtures;
     use rstest::rstest;
 
     use super::*;
 
-    fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
-    }
-
     fn today() -> NaiveDate {
-        date(2026, 7, 29)
+        fixtures::date(2026, 7, 29)
     }
 
     #[rstest]
-    #[case::before_kp(GeomagneticIndex::Kp, date(1931, 12, 31), DayOutlook::BeforeCoverage)]
-    #[case::the_first_kp_day(GeomagneticIndex::Kp, date(1932, 1, 1), DayOutlook::Fetchable)]
-    #[case::before_hp30(GeomagneticIndex::Hp30, date(1984, 12, 31), DayOutlook::BeforeCoverage)]
-    #[case::the_first_hp30_day(GeomagneticIndex::Hp30, date(1985, 1, 1), DayOutlook::Fetchable)]
-    #[case::a_settled_day(GeomagneticIndex::Hp30, date(2026, 7, 20), DayOutlook::Fetchable)]
-    #[case::today(GeomagneticIndex::Kp, date(2026, 7, 29), DayOutlook::Fetchable)]
-    #[case::tomorrow(GeomagneticIndex::Kp, date(2026, 7, 30), DayOutlook::InFuture)]
+    #[case::before_kp(
+        GeomagneticIndex::Kp,
+        fixtures::date(1931, 12, 31),
+        DayOutlook::BeforeCoverage
+    )]
+    #[case::the_first_kp_day(
+        GeomagneticIndex::Kp,
+        fixtures::date(1932, 1, 1),
+        DayOutlook::Fetchable
+    )]
+    #[case::before_hp30(
+        GeomagneticIndex::Hp30,
+        fixtures::date(1984, 12, 31),
+        DayOutlook::BeforeCoverage
+    )]
+    #[case::the_first_hp30_day(
+        GeomagneticIndex::Hp30,
+        fixtures::date(1985, 1, 1),
+        DayOutlook::Fetchable
+    )]
+    #[case::a_settled_day(
+        GeomagneticIndex::Hp30,
+        fixtures::date(2026, 7, 20),
+        DayOutlook::Fetchable
+    )]
+    #[case::today(
+        GeomagneticIndex::Kp,
+        fixtures::date(2026, 7, 29),
+        DayOutlook::Fetchable
+    )]
+    #[case::tomorrow(
+        GeomagneticIndex::Kp,
+        fixtures::date(2026, 7, 30),
+        DayOutlook::InFuture
+    )]
     fn day_outlook_covers_every_calendar_boundary(
         #[case] index: GeomagneticIndex,
         #[case] day: NaiveDate,
@@ -104,9 +129,9 @@ mod tests {
     #[test]
     fn every_outlook_is_reachable() {
         let reached: HashSet<DayOutlook> = [
-            day_outlook(GeomagneticIndex::Kp, date(1900, 1, 1), today()),
+            day_outlook(GeomagneticIndex::Kp, fixtures::date(1900, 1, 1), today()),
             day_outlook(GeomagneticIndex::Kp, today(), today()),
-            day_outlook(GeomagneticIndex::Kp, date(2030, 1, 1), today()),
+            day_outlook(GeomagneticIndex::Kp, fixtures::date(2030, 1, 1), today()),
         ]
         .into_iter()
         .collect();
@@ -116,10 +141,13 @@ mod tests {
     /// A 1970 day, as a receiver without time lock reports, has Kp and no
     /// Hp30.
     #[rstest]
-    #[case::both_indices(date(2026, 7, 20), vec![GeomagneticIndex::Kp, GeomagneticIndex::Hp30])]
-    #[case::kp_only(date(1970, 1, 1), vec![GeomagneticIndex::Kp])]
-    #[case::in_the_future(date(2026, 7, 30), vec![])]
-    #[case::before_every_index(date(1900, 1, 1), vec![])]
+    #[case::both_indices(
+        fixtures::date(2026, 7, 20),
+        vec![GeomagneticIndex::Kp, GeomagneticIndex::Hp30]
+    )]
+    #[case::kp_only(fixtures::date(1970, 1, 1), vec![GeomagneticIndex::Kp])]
+    #[case::in_the_future(fixtures::date(2026, 7, 30), vec![])]
+    #[case::before_every_index(fixtures::date(1900, 1, 1), vec![])]
     fn fetchable_indices_drops_what_the_service_cannot_have(
         #[case] day: NaiveDate,
         #[case] expected: Vec<GeomagneticIndex>,
@@ -139,16 +167,16 @@ mod tests {
                 .map(GeomagneticIndex::coverage_start)
                 .min()
         );
-        assert_eq!(COVERAGE_START, date(1932, 1, 1));
+        assert_eq!(COVERAGE_START, fixtures::date(1932, 1, 1));
     }
 
     #[rstest]
-    #[case::a_week(date(2026, 7, 20), date(2026, 7, 26), 7)]
-    #[case::one_day(date(2026, 7, 20), date(2026, 7, 20), 1)]
-    #[case::reversed(date(2026, 7, 26), date(2026, 7, 20), 0)]
-    #[case::clamped_to_coverage(date(1900, 1, 1), COVERAGE_START, 1)]
-    #[case::stops_at_today(date(2026, 7, 27), date(2026, 8, 10), 3)]
-    #[case::entirely_in_the_future(date(2026, 8, 1), date(2026, 8, 10), 0)]
+    #[case::a_week(fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 26), 7)]
+    #[case::one_day(fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 20), 1)]
+    #[case::reversed(fixtures::date(2026, 7, 26), fixtures::date(2026, 7, 20), 0)]
+    #[case::clamped_to_coverage(fixtures::date(1900, 1, 1), COVERAGE_START, 1)]
+    #[case::stops_at_today(fixtures::date(2026, 7, 27), fixtures::date(2026, 8, 10), 3)]
+    #[case::entirely_in_the_future(fixtures::date(2026, 8, 1), fixtures::date(2026, 8, 10), 0)]
     fn fetchable_days_covers_the_range_the_service_can_serve(
         #[case] from: NaiveDate,
         #[case] to: NaiveDate,

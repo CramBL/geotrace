@@ -158,6 +158,7 @@ pub fn captures_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
+    use gt_types::fixtures;
     use rstest::rstest;
 
     use super::*;
@@ -166,15 +167,11 @@ mod tests {
         ApiKey::new(entered).expect("a key")
     }
 
-    fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
-    }
-
     #[test]
     fn flare_url_addresses_the_window_on_the_default_host() {
         let window = DateWindow {
-            start: date(2024, 5, 9),
-            end: date(2024, 5, 11),
+            start: fixtures::date(2024, 5, 9),
+            end: fixtures::date(2024, 5, 11),
         };
         assert_eq!(
             flare_url(DEFAULT_BASE_URL, window, &key("KEY")),
@@ -184,7 +181,7 @@ mod tests {
 
     #[test]
     fn flare_url_honors_the_configured_host_and_covers_one_day() {
-        let window = DateWindow::covering_utc_day(date(2024, 5, 9));
+        let window = DateWindow::covering_utc_day(fixtures::date(2024, 5, 9));
         assert_eq!(
             flare_url("https://proxy.example", window, &key("KEY")),
             "https://proxy.example/DONKI/FLR?startDate=2024-05-09&endDate=2024-05-09&api_key=KEY"
@@ -215,7 +212,7 @@ mod tests {
             "error sending request for url ({})",
             flare_url(
                 DEFAULT_BASE_URL,
-                DateWindow::covering_utc_day(date(2024, 5, 9)),
+                DateWindow::covering_utc_day(fixtures::date(2024, 5, 9)),
                 &key
             )
         );

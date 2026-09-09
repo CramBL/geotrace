@@ -99,16 +99,9 @@ mod tests {
     use chrono::TimeDelta;
     use rstest::rstest;
 
-    use crate::solar_position;
+    use crate::{fixtures, solar_position};
 
     use super::*;
-
-    fn utc(year: i32, month: u32, day: u32, hour: u32) -> DateTime<Utc> {
-        chrono::NaiveDate::from_ymd_opt(year, month, day)
-            .and_then(|date| date.and_hms_opt(hour, 0, 0))
-            .map(|naive| naive.and_utc())
-            .expect("a calendar instant")
-    }
 
     fn instant(rfc3339: &str) -> DateTime<Utc> {
         rfc3339.parse().expect("an RFC 3339 instant")
@@ -147,13 +140,48 @@ mod tests {
     /// polar day at midnight, polar night at midday, and the far side of
     /// Earth at midday.
     #[rstest]
-    #[case::midday(51.4778, 0.0, utc(2024, 6, 21, 12), SunlitSide::Sunlit)]
-    #[case::midnight(51.4778, 0.0, utc(2024, 6, 21, 0), SunlitSide::Night)]
-    #[case::the_far_side_at_midday(0.0, 180.0, utc(2024, 6, 21, 12), SunlitSide::Night)]
-    #[case::svalbard_polar_day(78.22, 15.65, utc(2024, 6, 21, 0), SunlitSide::Sunlit)]
-    #[case::svalbard_polar_night(78.22, 15.65, utc(2024, 12, 21, 12), SunlitSide::Night)]
-    #[case::antarctic_polar_day(-77.85, 166.67, utc(2024, 12, 21, 12), SunlitSide::Sunlit)]
-    #[case::antarctic_polar_night(-77.85, 166.67, utc(2024, 6, 21, 12), SunlitSide::Night)]
+    #[case::midday(
+        51.4778,
+        0.0,
+        fixtures::utc_instant(2024, 6, 21, 12, 0),
+        SunlitSide::Sunlit
+    )]
+    #[case::midnight(
+        51.4778,
+        0.0,
+        fixtures::utc_instant(2024, 6, 21, 0, 0),
+        SunlitSide::Night
+    )]
+    #[case::the_far_side_at_midday(
+        0.0,
+        180.0,
+        fixtures::utc_instant(2024, 6, 21, 12, 0),
+        SunlitSide::Night
+    )]
+    #[case::svalbard_polar_day(
+        78.22,
+        15.65,
+        fixtures::utc_instant(2024, 6, 21, 0, 0),
+        SunlitSide::Sunlit
+    )]
+    #[case::svalbard_polar_night(
+        78.22,
+        15.65,
+        fixtures::utc_instant(2024, 12, 21, 12, 0),
+        SunlitSide::Night
+    )]
+    #[case::antarctic_polar_day(
+        -77.85,
+        166.67,
+        fixtures::utc_instant(2024, 12, 21, 12, 0),
+        SunlitSide::Sunlit
+    )]
+    #[case::antarctic_polar_night(
+        -77.85,
+        166.67,
+        fixtures::utc_instant(2024, 6, 21, 12, 0),
+        SunlitSide::Night
+    )]
     fn a_position_is_read_on_the_side_the_sun_stands_over(
         #[case] latitude: f64,
         #[case] longitude: f64,
@@ -178,7 +206,7 @@ mod tests {
             longitude in -180.0_f64..=0.0,
             seconds in SECONDS_OF_TWO_DECADES,
         )| {
-            let time = utc(2010, 1, 1, 0) + TimeDelta::seconds(seconds);
+            let time = fixtures::utc_instant(2010, 1, 1, 0, 0) + TimeDelta::seconds(seconds);
             let here = solar_position::elevation_degrees(
                 Latitude::new(latitude),
                 Longitude::new(longitude),

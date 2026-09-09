@@ -1,5 +1,5 @@
-//! Builders for the nav points, satellite reports and channels that tests
-//! across the workspace assemble by hand.
+//! Builders for the dates, nav points, satellite reports and channels that
+//! tests across the workspace assemble by hand.
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use geotrace_sdk_units::ChannelUnit;
@@ -599,15 +599,23 @@ pub fn nav_points_with_drifting_satellites(
 }
 
 /// The start of [`stationary_nav_data`] and [`nav_data_with_gap`].
-#[expect(
-    clippy::expect_used,
-    reason = "a hardcoded date the fixture builders depend on"
-)]
 fn fixture_start() -> DateTime<Utc> {
-    NaiveDate::from_ymd_opt(2026, 1, 1)
-        .and_then(|date| date.and_hms_opt(12, 0, 0))
-        .map(|naive| naive.and_utc())
-        .expect("2026-01-01 12:00:00 is a date and a time")
+    utc_instant(2026, 1, 1, 12, 0)
+}
+
+/// Panics on a month, a day, an hour or a minute out of range.
+#[expect(clippy::expect_used, reason = "an instant written out in a test")]
+pub fn utc_instant(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
+    date(year, month, day)
+        .and_hms_opt(hour, minute, 0)
+        .expect("a time of day")
+        .and_utc()
+}
+
+/// Panics on a month or a day out of range.
+#[expect(clippy::expect_used, reason = "a date written out in a test")]
+pub fn date(year: i32, month: u32, day: u32) -> NaiveDate {
+    NaiveDate::from_ymd_opt(year, month, day).expect("a calendar date")
 }
 
 #[cfg(test)]

@@ -923,20 +923,12 @@ mod tests {
     }
 
     mod time_range {
-        use chrono::{NaiveDate, TimeZone as _, Utc};
+        use chrono::{NaiveDate, Utc};
         use rstest::rstest;
 
+        use crate::fixtures;
+
         use super::TimeRange;
-
-        fn at(year: i32, month: u32, day: u32, hour: u32) -> chrono::DateTime<Utc> {
-            Utc.with_ymd_and_hms(year, month, day, hour, 0, 0)
-                .single()
-                .unwrap_or_default()
-        }
-
-        fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-            NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
-        }
 
         #[rstest]
         #[case::in_order(8, &[12, 17], 8, 17)]
@@ -951,15 +943,17 @@ mod tests {
             #[case] expected_end_hour: u32,
         ) {
             let span = TimeRange::spanning(
-                at(2026, 7, 20, first_hour),
-                rest_hours.iter().map(|&hour| at(2026, 7, 20, hour)),
+                fixtures::utc_instant(2026, 7, 20, first_hour, 0),
+                rest_hours
+                    .iter()
+                    .map(|&hour| fixtures::utc_instant(2026, 7, 20, hour, 0)),
             );
 
             assert_eq!(
                 span,
                 TimeRange::new(
-                    at(2026, 7, 20, expected_start_hour),
-                    at(2026, 7, 20, expected_end_hour)
+                    fixtures::utc_instant(2026, 7, 20, expected_start_hour, 0),
+                    fixtures::utc_instant(2026, 7, 20, expected_end_hour, 0)
                 )
             );
         }
@@ -974,43 +968,62 @@ mod tests {
             #[case] second_end_hour: u32,
         ) {
             let first = TimeRange::new(
-                at(2026, 7, 20, first_start_hour),
-                at(2026, 7, 20, first_end_hour),
+                fixtures::utc_instant(2026, 7, 20, first_start_hour, 0),
+                fixtures::utc_instant(2026, 7, 20, first_end_hour, 0),
             );
             let second = TimeRange::new(
-                at(2026, 7, 20, second_start_hour),
-                at(2026, 7, 20, second_end_hour),
+                fixtures::utc_instant(2026, 7, 20, second_start_hour, 0),
+                fixtures::utc_instant(2026, 7, 20, second_end_hour, 0),
             );
 
             assert_eq!(
                 first.union(second),
-                TimeRange::new(at(2026, 7, 20, 8), at(2026, 7, 20, 19))
+                TimeRange::new(
+                    fixtures::utc_instant(2026, 7, 20, 8, 0),
+                    fixtures::utc_instant(2026, 7, 20, 19, 0)
+                )
             );
         }
 
         #[rstest]
-        #[case::disjoint(at(2026, 7, 20, 0), at(2026, 7, 20, 6), None)]
+        #[case::disjoint(
+            fixtures::utc_instant(2026, 7, 20, 0, 0),
+            fixtures::utc_instant(2026, 7, 20, 6, 0),
+            None
+        )]
         #[case::meeting_at_one_instant(
-            at(2026, 7, 20, 0),
-            at(2026, 7, 20, 8),
-            Some((at(2026, 7, 20, 8), at(2026, 7, 20, 8)))
+            fixtures::utc_instant(2026, 7, 20, 0, 0),
+            fixtures::utc_instant(2026, 7, 20, 8, 0),
+            Some((
+                fixtures::utc_instant(2026, 7, 20, 8, 0),
+                fixtures::utc_instant(2026, 7, 20, 8, 0)
+            ))
         )]
         #[case::partly_covered(
-            at(2026, 7, 20, 6),
-            at(2026, 7, 20, 12),
-            Some((at(2026, 7, 20, 8), at(2026, 7, 20, 12)))
+            fixtures::utc_instant(2026, 7, 20, 6, 0),
+            fixtures::utc_instant(2026, 7, 20, 12, 0),
+            Some((
+                fixtures::utc_instant(2026, 7, 20, 8, 0),
+                fixtures::utc_instant(2026, 7, 20, 12, 0)
+            ))
         )]
         #[case::covering_the_other_whole(
-            at(2026, 7, 20, 0),
-            at(2026, 7, 21, 0),
-            Some((at(2026, 7, 20, 8), at(2026, 7, 20, 17)))
+            fixtures::utc_instant(2026, 7, 20, 0, 0),
+            fixtures::utc_instant(2026, 7, 21, 0, 0),
+            Some((
+                fixtures::utc_instant(2026, 7, 20, 8, 0),
+                fixtures::utc_instant(2026, 7, 20, 17, 0)
+            ))
         )]
         fn intersection_is_the_shared_span(
             #[case] start: chrono::DateTime<Utc>,
             #[case] end: chrono::DateTime<Utc>,
             #[case] expected: Option<(chrono::DateTime<Utc>, chrono::DateTime<Utc>)>,
         ) {
-            let day = TimeRange::new(at(2026, 7, 20, 8), at(2026, 7, 20, 17));
+            let day = TimeRange::new(
+                fixtures::utc_instant(2026, 7, 20, 8, 0),
+                fixtures::utc_instant(2026, 7, 20, 17, 0),
+            );
             let other = TimeRange::new(start, end);
             let expected = expected.map(|(start, end)| TimeRange::new(start, end));
 
@@ -1035,7 +1048,7 @@ mod tests {
             #[case] window_end: Option<u32>,
             #[case] expected: bool,
         ) {
-            let hour_of_day = |hour: u32| at(2026, 7, 20, hour);
+            let hour_of_day = |hour: u32| fixtures::utc_instant(2026, 7, 20, hour, 0);
             let range = TimeRange::new(hour_of_day(8), hour_of_day(17));
 
             assert_eq!(
@@ -1045,19 +1058,35 @@ mod tests {
         }
 
         #[rstest]
-        #[case::within_one_day(at(2026, 7, 20, 8), at(2026, 7, 20, 17), Some(vec![date(2026, 7, 20)]))]
+        #[case::within_one_day(
+            fixtures::utc_instant(2026, 7, 20, 8, 0),
+            fixtures::utc_instant(2026, 7, 20, 17, 0),
+            Some(vec![fixtures::date(2026, 7, 20)])
+        )]
         #[case::across_midnight(
-            at(2026, 7, 20, 23),
-            at(2026, 7, 21, 1),
-            Some(vec![date(2026, 7, 20), date(2026, 7, 21)])
+            fixtures::utc_instant(2026, 7, 20, 23, 0),
+            fixtures::utc_instant(2026, 7, 21, 1, 0),
+            Some(vec![fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 21)])
         )]
         #[case::exactly_the_limit(
-            at(2026, 7, 20, 0),
-            at(2026, 7, 22, 23),
-            Some(vec![date(2026, 7, 20), date(2026, 7, 21), date(2026, 7, 22)])
+            fixtures::utc_instant(2026, 7, 20, 0, 0),
+            fixtures::utc_instant(2026, 7, 22, 23, 0),
+            Some(vec![
+                fixtures::date(2026, 7, 20),
+                fixtures::date(2026, 7, 21),
+                fixtures::date(2026, 7, 22)
+            ])
         )]
-        #[case::one_past_the_limit(at(2026, 7, 20, 0), at(2026, 7, 23, 0), None)]
-        #[case::end_before_start(at(2026, 7, 21, 0), at(2026, 7, 20, 0), None)]
+        #[case::one_past_the_limit(
+            fixtures::utc_instant(2026, 7, 20, 0, 0),
+            fixtures::utc_instant(2026, 7, 23, 0, 0),
+            None
+        )]
+        #[case::end_before_start(
+            fixtures::utc_instant(2026, 7, 21, 0, 0),
+            fixtures::utc_instant(2026, 7, 20, 0, 0),
+            None
+        )]
         fn utc_days_walks_the_range_up_to_the_cap(
             #[case] start: chrono::DateTime<Utc>,
             #[case] end: chrono::DateTime<Utc>,

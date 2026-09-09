@@ -462,6 +462,7 @@ mod tests {
 
     use egui_kittest::kittest::{NodeT as _, Queryable as _};
     use gt_test_utils::TestHarness;
+    use gt_types::fixtures;
     use rstest::rstest;
 
     use super::*;
@@ -469,10 +470,6 @@ mod tests {
     /// The interference control covers both datasets: the dataset only supplies
     /// constants, and the geomagnetic ones are covered where they differ.
     type TestBackfillUi = BackfillUi<InterferenceBackfill>;
-
-    fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap()
-    }
 
     fn state(from: NaiveDate, to: NaiveDate) -> TestBackfillUi {
         TestBackfillUi {
@@ -486,9 +483,9 @@ mod tests {
     /// Pinned at both ends of the coverage window and across a leap day.
     #[rstest]
     #[case::coverage_start(gt_jam::calendar::COVERAGE_START)]
-    #[case::a_leap_day(date(2024, 2, 29))]
-    #[case::new_years_eve(date(2026, 12, 31))]
-    #[case::the_first_of_a_month(date(2026, 8, 1))]
+    #[case::a_leap_day(fixtures::date(2024, 2, 29))]
+    #[case::new_years_eve(fixtures::date(2026, 12, 31))]
+    #[case::the_first_of_a_month(fixtures::date(2026, 8, 1))]
     fn dates_survive_the_round_trip_through_jiff(#[case] original: NaiveDate) {
         assert_eq!(
             civil_date::to_chrono(civil_date::to_jiff(original)),
@@ -497,9 +494,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case::ascending(date(2026, 7, 20), date(2026, 7, 26), true)]
-    #[case::one_day(date(2026, 7, 20), date(2026, 7, 20), true)]
-    #[case::reversed(date(2026, 7, 26), date(2026, 7, 20), false)]
+    #[case::ascending(fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 26), true)]
+    #[case::one_day(fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 20), true)]
+    #[case::reversed(fixtures::date(2026, 7, 26), fixtures::date(2026, 7, 20), false)]
     fn range_accepts_only_an_ascending_range(
         #[case] from: NaiveDate,
         #[case] to: NaiveDate,
@@ -634,7 +631,7 @@ mod tests {
 
     #[test]
     fn a_backwards_range_disables_the_button() {
-        let mut state = state(date(2026, 7, 26), date(2026, 7, 20));
+        let mut state = state(fixtures::date(2026, 7, 26), fixtures::date(2026, 7, 20));
         let mut harness = TestHarness::builder().ui(|ui| {
             state.ui(ui, None, BackfillReadiness::Ready);
         });

@@ -31,6 +31,9 @@ gt-fetch = { path = "../../gt-fetch", features = ["test-util"] }
 # Builds `test_util`, which the integration test binaries read the
 # captures through.
 gt-solar = { path = ".", features = ["test-util"] }
+# Adds the date builders of `gt_types::fixtures`, which the tests use for their
+# dates and instants. The feature is off in a normal build of gt-types.
+gt-types = { path = "../../gt-types", features = ["fixtures"] }
 insta.workspace = true
 proptest.workspace = true
 # The capture example fetches from the service directly, not through
