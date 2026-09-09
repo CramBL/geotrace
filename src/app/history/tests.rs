@@ -18,10 +18,7 @@ use egui_phosphor::regular::CARET_RIGHT as ICON_CARET_RIGHT;
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
 use egui_phosphor::regular::TRASH as ICON_TRASH;
-use gt_store::{
-    ChannelSummary, StoredFixPlacementRule, StoredSegmentation, StoredTrackSplitRule, TrackRange,
-    TrackState,
-};
+use gt_store::{ChannelSummary, TrackRange, TrackState};
 use gt_ui_theme::EM_DASH;
 
 use super::delete_shelved_prompt::{DELETE_SHELVED_TRACKS_LABEL, DELETE_SHELVED_WINDOW_TITLE};
@@ -30,14 +27,14 @@ use super::table::{
     channel_title, data_breakdown_ui, duration_text, started_at_text, time_range_text,
     track_count_text,
 };
-use super::test_support::{
-    ShelvedTracks, TotalTracks, entry_with_identity, entry_with_shelved_tracks,
-};
 use super::{
     DEFAULT_WINDOW_HEIGHT_PX, DEFAULT_WINDOW_WIDTH_PX, DatabaseRef, HistorySort, HistoryWindow,
     HistoryWorker, ICON_CARET_DOWN, ICON_CARET_UP, NavPointTimeRange, PRUNE_WINDOW_TITLE,
     RecordingEntry, SortColumn, SortDirection, identity_display_parts, travel_mode_display,
 };
+use crate::app::test_util::listing;
+use crate::app::test_util::listing::{ShelvedTracks, TotalTracks};
+use crate::app::test_util::recordings;
 use strum::{EnumCount as _, IntoEnumIterator as _};
 
 /// Harness state for driving the History window: the window, a live (empty)
@@ -109,15 +106,7 @@ fn history_harness_with_recording(identity: &str, stored_logs: &[&str]) -> Histo
     let mut db =
         gt_store::Recordings::open_or_create(&dir.path().join("history.h5")).expect("open db");
     let bytes = gt_test_utils::GOLD_BYTES;
-    let meta = gt_store::extract_meta(bytes).expect("meta");
-    let tracks = [TrackRange {
-        start: 0,
-        end: meta.nav_point_count,
-        state: TrackState::Live,
-    }];
-    let db_ref = db
-        .insert(identity, &meta, &tracks, stored_segmentation(), bytes)
-        .expect("insert recording");
+    let db_ref = recordings::insert_recording_as_one_whole_file_track(&mut db, identity, bytes);
     for name in stored_logs {
         db.attach_log(
             &db_ref,
@@ -269,7 +258,7 @@ fn the_logs_column_counts_the_stored_logs_and_opens_the_one_that_was_chosen() {
 /// noise on every row of a database nobody attached a log in.
 #[test]
 fn a_recording_storing_no_log_shows_no_count() {
-    let harness = history_harness(vec![entry_with_identity("auto:ride.gtd")]);
+    let harness = history_harness(vec![listing::entry_with_identity("auto:ride.gtd")]);
     let mut h = TestHarness::builder()
         .size(egui::vec2(900.0, 500.0))
         .ui_state(show_history, harness);
@@ -283,7 +272,7 @@ fn a_recording_storing_no_log_shows_no_count() {
 /// opening a recording - which writes nothing - stays live.
 #[test]
 fn the_row_actions_that_write_are_grayed_in_a_read_only_session() {
-    let mut harness = history_harness(vec![entry_with_identity("auto:ride.gtd")]);
+    let mut harness = history_harness(vec![listing::entry_with_identity("auto:ride.gtd")]);
     harness.write_access = WriteAccess::ReadOnly;
     let mut h = TestHarness::builder()
         .size(egui::vec2(900.0, 500.0))
@@ -314,7 +303,7 @@ fn the_row_actions_that_write_are_grayed_in_a_read_only_session() {
 /// the double click, and the context menu's Rename is grayed.
 #[test]
 fn no_rename_editor_opens_in_a_read_only_session() {
-    let mut harness = history_harness(vec![entry_with_identity("auto:ride.gtd")]);
+    let mut harness = history_harness(vec![listing::entry_with_identity("auto:ride.gtd")]);
     harness.write_access = WriteAccess::ReadOnly;
     let mut h = TestHarness::builder()
         .size(egui::vec2(900.0, 500.0))
@@ -348,7 +337,7 @@ fn no_rename_editor_opens_in_a_read_only_session() {
 /// unavailable, it is not open yet.
 #[test]
 fn the_window_reports_the_databases_still_opening() {
-    let mut harness = history_harness(vec![entry_with_identity("auto:ride.gtd")]);
+    let mut harness = history_harness(vec![listing::entry_with_identity("auto:ride.gtd")]);
     harness.databases_opening = true;
     let mut h = TestHarness::builder()
         .size(egui::vec2(900.0, 500.0))
@@ -370,9 +359,9 @@ fn the_window_reports_the_databases_still_opening() {
 #[test]
 fn snapshot_history_window_table() {
     let mut harness = history_harness(vec![
-        with_stored_logs(entry_with_identity("auto:ride.gtd"), 2),
-        entry_with_identity("a much longer recording identity that needs the room"),
-        entry_with_identity("survey_flight_2026_07_15.gtd"),
+        with_stored_logs(listing::entry_with_identity("auto:ride.gtd"), 2),
+        listing::entry_with_identity("a much longer recording identity that needs the room"),
+        listing::entry_with_identity("survey_flight_2026_07_15.gtd"),
     ]);
     // The temporary database path differs every run, so keep it out of the
     // image.
@@ -390,7 +379,7 @@ fn snapshot_history_window_table() {
 
 #[test]
 fn double_clicking_identity_opens_inline_editor() {
-    let harness = history_harness(vec![entry_with_identity("auto:ride.gtd")]);
+    let harness = history_harness(vec![listing::entry_with_identity("auto:ride.gtd")]);
     // Frames at 60 fps: kittest's default 0.25 s/frame clock (one frame
     // per queued event) spaces the two clicks beyond egui's 0.3 s
     // double-click window.
@@ -420,18 +409,6 @@ fn double_clicking_identity_opens_inline_editor() {
     );
 }
 
-/// Segmentation settings for a recording a test stores, matching
-/// `SegmentationConfig::default`.
-fn stored_segmentation() -> StoredSegmentation {
-    StoredSegmentation {
-        track_split_gap_us: 300_000_000,
-        track_split_rule: StoredTrackSplitRule::StepInEitherDirection,
-        fix_placement_rule: StoredFixPlacementRule::MissingHeadingAndNothingInFix,
-        detect_clock_discontinuities: true,
-        clock_discontinuity_sigmas: 5.0,
-    }
-}
-
 /// A harness backed by a real database holding one recording whose stored track
 /// table is `tracks`, which is what the shelf reads back through the worker.
 ///
@@ -451,9 +428,15 @@ fn history_harness_with_stored_tracks(tracks: &[TrackRange]) -> HistoryHarness {
         })
         .collect();
     let db_ref = db
-        .insert("auto:ride.gtd", &meta, &live, stored_segmentation(), bytes)
+        .insert(
+            "auto:ride.gtd",
+            &meta,
+            &live,
+            recordings::segmentation(),
+            bytes,
+        )
         .expect("insert recording");
-    db.set_tracks(&db_ref, tracks, stored_segmentation())
+    db.set_tracks(&db_ref, tracks, recordings::segmentation())
         .expect("write the stored track states");
 
     let worker = HistoryWorker::spawn(
@@ -760,7 +743,7 @@ fn sortable_entry(
     nav_point_count: u64,
     gtd_size_bytes: u64,
 ) -> RecordingEntry {
-    let mut entry = entry_with_identity(identity);
+    let mut entry = listing::entry_with_identity(identity);
     entry.meta.time_range = NavPointTimeRange::covering(&[start_us, start_us + duration_us]);
     entry.meta.nav_point_count = nav_point_count;
     entry.meta.gtd_size_bytes = gtd_size_bytes;
@@ -932,7 +915,7 @@ fn travel_mode_display_humanizes_the_wire_value(#[case] wire: &str, #[case] expe
 /// `identity_cell` feeds the field into the shared metadata presence check.
 #[test]
 fn travel_mode_alone_shows_the_metadata_note_icon() {
-    let mut entry = entry_with_identity("auto:ride.gtd");
+    let mut entry = listing::entry_with_identity("auto:ride.gtd");
     entry.travel_mode = Some("bicycle".to_owned());
     let harness = history_harness(vec![entry]);
     let mut h = TestHarness::builder()
@@ -950,7 +933,7 @@ fn travel_mode_alone_shows_the_metadata_note_icon() {
 /// its content, the path where an un-clipped column would report its
 /// full text width and stretch the window.
 fn history_window_width(identity: &str) -> f32 {
-    let harness = history_harness(vec![entry_with_identity(identity)]);
+    let harness = history_harness(vec![listing::entry_with_identity(identity)]);
     let mut h = TestHarness::builder()
         .size(egui::vec2(1600.0, 500.0))
         .ui_state(show_history, harness);
@@ -999,7 +982,7 @@ fn fresh_window_settles_to_content_width_not_a_bloated_one() {
 /// recordings" checkbox slid left underneath it, overlapping.
 #[test]
 fn filter_field_does_not_overlap_the_toolbar_controls() {
-    let harness = history_harness(vec![entry_with_identity("auto:ride.gtd")]);
+    let harness = history_harness(vec![listing::entry_with_identity("auto:ride.gtd")]);
     let mut h = TestHarness::builder()
         .size(egui::vec2(1200.0, 500.0))
         .ui_state(show_history, harness);
@@ -1039,9 +1022,9 @@ fn filter_field_does_not_overlap_the_toolbar_controls() {
 fn resize_harness() -> TestHarness<'static, HistoryHarness> {
     let long = "a/very/long/recording/identity/that/needs/lots/of/room/".repeat(2);
     let harness = history_harness(vec![
-        entry_with_identity(&long),
-        entry_with_identity(&format!("{long}/2")),
-        entry_with_identity(&format!("{long}/3")),
+        listing::entry_with_identity(&long),
+        listing::entry_with_identity(&format!("{long}/2")),
+        listing::entry_with_identity(&format!("{long}/3")),
     ]);
     let mut h = TestHarness::builder()
         .size(egui::vec2(1400.0, 600.0))
@@ -1141,7 +1124,7 @@ fn row_filling_every_metadata_column(
         gtd_size_bytes,
     }: RowFigures,
 ) -> RecordingEntry {
-    let mut entry = entry_with_shelved_tracks(
+    let mut entry = listing::entry_with_shelved_tracks(
         "auto:ride.gtd",
         TotalTracks(total_tracks),
         ShelvedTracks(shelved_tracks),
@@ -1376,7 +1359,7 @@ fn a_row_of_a_recording_with_no_time_range_reads_em_dashes() {
 #[case(SortColumn::Duration)]
 fn a_recording_with_no_time_range_sorts_first_ascending(#[case] column: SortColumn) {
     let mut entries = sortable_entries();
-    entries.push(entry_with_identity("no_time_range"));
+    entries.push(listing::entry_with_identity("no_time_range"));
     let sort = HistorySort {
         column,
         direction: SortDirection::Ascending,
@@ -1402,7 +1385,7 @@ fn a_date_filter_leaves_out_a_recording_with_no_time_range(
         10,
         1_024,
     );
-    let mut harness = history_harness(vec![dated, entry_with_identity("auto:blank.gtd")]);
+    let mut harness = history_harness(vec![dated, listing::entry_with_identity("auto:blank.gtd")]);
     harness.window.filter_date_from = filter_date_from.to_owned();
     harness.window.filter_date_to = filter_date_to.to_owned();
     let mut h = TestHarness::builder()
@@ -1717,7 +1700,7 @@ fn hovering_the_identity_cell_shows_metadata_and_the_breakdown() {
 #[test]
 fn hovering_a_truncated_identity_opens_a_single_tooltip() {
     let long = "auto:a-recording-identity-far-too-long-for-the-identity-column.gtd";
-    let harness = history_harness(vec![entry_with_identity(long)]);
+    let harness = history_harness(vec![listing::entry_with_identity(long)]);
     let mut h = TestHarness::builder()
         .size(egui::vec2(520.0, 300.0))
         .ui_state(show_history, harness);
@@ -1818,7 +1801,7 @@ fn track_count_text_states_the_shelved_tracks(
     #[case] shelved_tracks: usize,
     #[case] expected: &str,
 ) {
-    let mut entry = entry_with_identity("auto:ride.gtd");
+    let mut entry = listing::entry_with_identity("auto:ride.gtd");
     entry.total_tracks = total_tracks;
     entry.shelved_tracks = shelved_tracks;
 
@@ -1848,7 +1831,7 @@ fn crowded_history_harness() -> HistoryHarness {
     let identity = gt_test_utils::oversized_text('r');
     let entries = (0..OVERSIZED_ROW_COUNT)
         .map(|index| {
-            let mut entry = entry_with_identity(&format!("{identity}/{index}"));
+            let mut entry = listing::entry_with_identity(&format!("{identity}/{index}"));
             entry.meta.gtd_size_bytes = CROWDED_RECORDING_BYTES;
             entry
         })
@@ -1933,7 +1916,7 @@ fn open_the_delete_shelved_confirmation(
 
 #[test]
 fn snapshot_delete_shelved_confirmation() {
-    let mut harness = history_harness(vec![entry_with_shelved_tracks(
+    let mut harness = history_harness(vec![listing::entry_with_shelved_tracks(
         "auto:ride.gtd",
         TotalTracks(12),
         ShelvedTracks(3),
@@ -1956,9 +1939,9 @@ fn snapshot_delete_shelved_confirmation() {
 #[test]
 fn snapshot_delete_shelved_confirmation_deleting_recordings_whole() {
     let entries = vec![
-        entry_with_shelved_tracks("auto:ride.gtd", TotalTracks(4), ShelvedTracks(1)),
-        entry_with_shelved_tracks("auto:walk.gtd", TotalTracks(2), ShelvedTracks(2)),
-        entry_with_shelved_tracks("auto:sail.gtd", TotalTracks(3), ShelvedTracks(3)),
+        listing::entry_with_shelved_tracks("auto:ride.gtd", TotalTracks(4), ShelvedTracks(1)),
+        listing::entry_with_shelved_tracks("auto:walk.gtd", TotalTracks(2), ShelvedTracks(2)),
+        listing::entry_with_shelved_tracks("auto:sail.gtd", TotalTracks(3), ShelvedTracks(3)),
     ];
     let mut harness = history_harness(entries);
     harness.worker.hide_path();
@@ -1977,8 +1960,8 @@ fn snapshot_delete_shelved_confirmation_deleting_recordings_whole() {
 #[test]
 fn snapshot_delete_shelved_confirmation_for_one_recording() {
     let entries = vec![
-        entry_with_shelved_tracks("auto:ride.gtd", TotalTracks(4), ShelvedTracks(1)),
-        entry_with_shelved_tracks("auto:walk.gtd", TotalTracks(2), ShelvedTracks(2)),
+        listing::entry_with_shelved_tracks("auto:ride.gtd", TotalTracks(4), ShelvedTracks(1)),
+        listing::entry_with_shelved_tracks("auto:walk.gtd", TotalTracks(2), ShelvedTracks(2)),
     ];
     let walk = DatabaseRef {
         identity: "auto:walk.gtd".to_owned(),
@@ -2004,7 +1987,7 @@ fn snapshot_delete_shelved_confirmation_for_one_recording() {
 /// delete out, and counts down on its Close button.
 #[test]
 fn snapshot_delete_shelved_confirmation_with_every_track_live() {
-    let mut harness = history_harness(vec![entry_with_shelved_tracks(
+    let mut harness = history_harness(vec![listing::entry_with_shelved_tracks(
         "auto:ride.gtd",
         TotalTracks(12),
         ShelvedTracks(3),
@@ -2013,11 +1996,13 @@ fn snapshot_delete_shelved_confirmation_with_every_track_live() {
     harness.worker.hide_path();
     open_the_delete_shelved_confirmation(&mut harness, DeleteShelvedTracksScope::EveryRecording);
     // The last shelved track goes while the confirmation is up.
-    harness.window.set_entries(vec![entry_with_shelved_tracks(
-        "auto:ride.gtd",
-        TotalTracks(12),
-        ShelvedTracks(0),
-    )]);
+    harness
+        .window
+        .set_entries(vec![listing::entry_with_shelved_tracks(
+            "auto:ride.gtd",
+            TotalTracks(12),
+            ShelvedTracks(0),
+        )]);
     let mut h = TestHarness::builder()
         .size(egui::vec2(900.0, 500.0))
         .ui_state(show_history, harness);
@@ -2039,7 +2024,7 @@ fn delete_shelved_confirmation_fits_every_viewport(
     let identity = gt_test_utils::oversized_text('r');
     let entries: Vec<RecordingEntry> = (0..OVERSIZED_ROW_COUNT)
         .map(|index| {
-            entry_with_shelved_tracks(
+            listing::entry_with_shelved_tracks(
                 &format!("{identity}/{index}"),
                 TotalTracks(OVERSIZED_ROW_COUNT),
                 ShelvedTracks(OVERSIZED_ROW_COUNT),
@@ -2117,7 +2102,7 @@ fn a_window_that_listed_more_rows_than_it_shows_fits_a_short_list_again() {
 
     h.inner.state_mut().window.set_entries(
         (0..SHORT_LIST_ROWS)
-            .map(|index| entry_with_identity(&format!("auto:ride{index}.gtd")))
+            .map(|index| listing::entry_with_identity(&format!("auto:ride{index}.gtd")))
             .collect(),
     );
     h.inner.run_steps(8);
@@ -2174,7 +2159,7 @@ const SHORT_LIST_ROWS: usize = 3;
 fn history_harness_for_the_height_audit(rows: usize) -> HistoryHarness {
     let entries = (0..rows)
         .map(|index| {
-            let mut entry = entry_with_identity(&format!("auto:ride{index:03}.gtd"));
+            let mut entry = listing::entry_with_identity(&format!("auto:ride{index:03}.gtd"));
             entry.meta.gtd_size_bytes = CROWDED_RECORDING_BYTES;
             entry
         })

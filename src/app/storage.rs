@@ -650,6 +650,8 @@ mod tests {
     use crate::app::environment_storage::PrunedDays;
     use crate::app::{flares, jamming, solar, tec};
 
+    use crate::app::test_util;
+
     use super::*;
 
     fn db_path() -> PathBuf {
@@ -904,10 +906,9 @@ mod tests {
     /// the handles it already has open.
     fn archive_one_day_in_each(opened: &OpenStorage, day: NaiveDate) {
         let fetched_at = Utc::now();
-        environment_storage::archive_one_day(
+        test_util::day_archive::archive_an_empty_interference_day(
             opened.archive.as_ref().expect("interference archive"),
-            EnvironmentArchive::AircraftInterference.day_insert_registration(day),
-            |interference| interference.insert_day(day, "host", fetched_at, &[]),
+            day,
         );
         environment_storage::archive_one_day(
             opened

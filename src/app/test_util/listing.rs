@@ -4,13 +4,13 @@
 use gt_store::{DatabaseRef, RecordingEntry, RecordingMeta};
 
 /// How many tracks a listing entry states in all.
-pub(super) struct TotalTracks(pub usize);
+pub struct TotalTracks(pub usize);
 
 /// How many of a listing entry's tracks are shelved.
-pub(super) struct ShelvedTracks(pub usize);
+pub struct ShelvedTracks(pub usize);
 
 /// A listing entry for `identity` with no tracks and no SDK metadata.
-pub(super) fn entry_with_identity(identity: &str) -> RecordingEntry {
+pub fn entry_with_identity(identity: &str) -> RecordingEntry {
     RecordingEntry {
         db_ref: DatabaseRef {
             identity: identity.to_owned(),
@@ -37,7 +37,7 @@ pub(super) fn entry_with_identity(identity: &str) -> RecordingEntry {
 
 /// A listing entry for `identity` with the track counts the delete of shelved
 /// data reads.
-pub(super) fn entry_with_shelved_tracks(
+pub fn entry_with_shelved_tracks(
     identity: &str,
     TotalTracks(total_tracks): TotalTracks,
     ShelvedTracks(shelved_tracks): ShelvedTracks,

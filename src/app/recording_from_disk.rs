@@ -441,7 +441,7 @@ impl App {
 mod tests {
     use gt_store::{HistoryDatabase as _, Recordings};
 
-    use crate::app::history_test_support::{SAMPLE_POINT_COUNT, sample_bytes, store_recording};
+    use crate::app::test_util::recordings;
 
     use super::*;
 
@@ -451,13 +451,13 @@ mod tests {
     fn a_database_that_cannot_be_listed_leaves_every_recording_new_to_history() {
         let dir = tempfile::tempdir().expect("temp dir");
         let db_path = dir.path().join("history.h5");
-        let bytes = sample_bytes();
-        store_recording(
+        let bytes = recordings::sample_bytes();
+        recordings::store_recording(
             &db_path,
             &bytes,
             &[TrackRange {
                 start: 0,
-                end: SAMPLE_POINT_COUNT,
+                end: recordings::SAMPLE_POINT_COUNT,
                 state: TrackState::Live,
             }],
         );

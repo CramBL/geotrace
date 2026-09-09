@@ -629,6 +629,8 @@ mod tests {
 
     use gt_pending_writes::{PendingWrites, WriteAccess};
 
+    use crate::app::test_util::day_archive;
+
     use super::*;
 
     fn day(offset: i64) -> NaiveDate {
@@ -660,11 +662,7 @@ mod tests {
             .open_or_create_archive::<JamStore>()
             .expect("open the archive");
         for offset in 0..3 {
-            archive_one_day(
-                &interference,
-                EnvironmentArchive::AircraftInterference.day_insert_registration(day(offset)),
-                |store| store.insert_day(day(offset), "host", Utc::now(), &[]),
-            );
+            day_archive::archive_an_empty_interference_day(&interference, day(offset));
         }
         TestArchives {
             open: OpenEnvironmentArchives {
@@ -694,23 +692,28 @@ mod tests {
         archives
     }
 
-    fn ymd(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
-    }
-
     /// The configured age decides the cutoff, except where the schedulers
     /// still need older days.
     #[rstest]
-    #[case::nothing_loaded(None, ymd(2025, 8, 21))]
-    #[case::a_recording_older_than_the_age(Some(ymd(2024, 3, 2)), ymd(2024, 3, 2))]
-    #[case::a_recording_newer_than_the_age(Some(ymd(2026, 6, 4)), ymd(2025, 8, 21))]
-    #[case::a_quiet_time_window_reaching_past_the_age(Some(ymd(2025, 7, 26)), ymd(2025, 7, 26))]
+    #[case::nothing_loaded(None, day_archive::day(2025, 8, 21))]
+    #[case::a_recording_older_than_the_age(
+        Some(day_archive::day(2024, 3, 2)),
+        day_archive::day(2024, 3, 2)
+    )]
+    #[case::a_recording_newer_than_the_age(
+        Some(day_archive::day(2026, 6, 4)),
+        day_archive::day(2025, 8, 21)
+    )]
+    #[case::a_quiet_time_window_reaching_past_the_age(
+        Some(day_archive::day(2025, 7, 26)),
+        day_archive::day(2025, 7, 26)
+    )]
     fn the_auto_prune_cutoff_keeps_the_days_the_schedulers_need(
         #[case] oldest_needed_day: Option<NaiveDate>,
         #[case] expected: NaiveDate,
     ) {
         assert_eq!(
-            auto_prune_cutoff(ymd(2026, 8, 21), 12, oldest_needed_day),
+            auto_prune_cutoff(day_archive::day(2026, 8, 21), 12, oldest_needed_day),
             Some(expected)
         );
     }

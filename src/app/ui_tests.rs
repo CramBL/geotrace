@@ -53,6 +53,7 @@ use rstest::rstest;
 use rustc_hash::FxHashMap;
 use strum::IntoEnumIterator as _;
 
+use super::App;
 use super::archive_recovery::{
     self, ARCHIVE_IN_USE_BUTTON_LABEL, ArchiveUnavailable, InspectedArchives,
     InterruptedDeleteFinding, LEAVE_UNRECOVERED_BUTTON_LABEL, RECOVER_BUTTON_LABEL,
@@ -89,67 +90,9 @@ use super::recording_from_disk::{
 use super::settings_ui::{self, SettingsPage};
 use super::storage::{DatabasesPending, OPENING_DATABASES, OpenStorage, StorageOpen};
 use super::storage_controls::AUTO_STORE_LABEL;
-use super::{App, TEST_APP_VERSION};
+use crate::app::test_util;
+use crate::app::test_util::harness::{TEST_APP_VERSION, TestDroppedFile};
 use crate::termination_signal::TERMINATION_SIGNAL_FLAG;
-
-/// In-memory [`egui::DroppedFile`] for drag-drop tests. `bytes` drops carry a
-/// relative path holding the display name, matching how web drops expose only
-/// the file name, `path` drops behave like native drops from disk.
-#[derive(Debug)]
-struct TestDroppedFile {
-    path: PathBuf,
-    bytes: Option<Vec<u8>>,
-}
-
-impl TestDroppedFile {
-    fn bytes(bytes: impl Into<Vec<u8>>, name: &str) -> Self {
-        Self {
-            path: PathBuf::from(name),
-            bytes: Some(bytes.into()),
-        }
-    }
-
-    fn path(path: PathBuf) -> Self {
-        Self { path, bytes: None }
-    }
-}
-
-impl egui::DroppedFile for TestDroppedFile {
-    fn path(&self) -> &std::path::Path {
-        &self.path
-    }
-
-    fn bytes(&self) -> Result<Vec<u8>, String> {
-        match &self.bytes {
-            Some(bytes) => Ok(bytes.clone()),
-            None => std::fs::read(&self.path).map_err(|e| e.to_string()),
-        }
-    }
-}
-
-/// App constructor for snapshot harnesses, persisting settings at the harness's
-/// temp config path. `fading` is supplied by the harness (off by default) so
-/// snapshots don't capture mid-animation hover fades.
-fn build_app(cc: &eframe::CreationContext<'_>, config_path: &std::path::Path, fading: bool) -> App {
-    build_app_with_write_access(cc, config_path, fading, WriteAccess::Owner)
-}
-
-/// [`build_app`] with the map drawing the captured Mapbox satellite tiles, so
-/// its snapshot shows the ground the recording was made on.
-fn build_app_on_captured_tiles(
-    cc: &eframe::CreationContext<'_>,
-    config_path: &std::path::Path,
-    fading: bool,
-) -> App {
-    build_app_with_the_instance_lock(
-        cc,
-        config_path,
-        fading,
-        PendingWrites::new(WriteAccess::Owner),
-        DataDirectoryLock::marking_nothing(),
-        gt_map::TileAccess::Fixture(gt_test_utils::map_tile_fixture_dir()),
-    )
-}
 
 /// Fails listing every captured tile the map requested while drawing the frame
 /// about to be snapshotted and did not get, so no fixture-backed snapshot is
@@ -165,51 +108,6 @@ fn assert_the_capture_covers_the_map(harness: &mut TestHarness<'_, App>, snapsho
         .missing_fixture_tiles()
         .expect("the map draws the captured tiles");
     gt_test_utils::assert_map_tile_fixture_is_complete(snapshot_name, missing);
-}
-
-/// [`build_app`] for a session with `write_access`, which controls whether the
-/// settings are persisted at all.
-fn build_app_with_write_access(
-    cc: &eframe::CreationContext<'_>,
-    config_path: &std::path::Path,
-    fading: bool,
-    write_access: WriteAccess,
-) -> App {
-    build_app_with_the_instance_lock(
-        cc,
-        config_path,
-        fading,
-        PendingWrites::new(write_access),
-        DataDirectoryLock::marking_nothing(),
-        gt_map::TileAccess::Synthetic,
-    )
-}
-
-/// [`build_app`] on the data directory `instance_lock` was taken on, which is
-/// what decides whether the run opens anything, with `pending_writes`
-/// deciding whether it writes to it at all.
-fn build_app_with_the_instance_lock(
-    cc: &eframe::CreationContext<'_>,
-    config_path: &std::path::Path,
-    fading: bool,
-    pending_writes: PendingWrites,
-    instance_lock: DataDirectoryLock,
-    tile_access: gt_map::TileAccess,
-) -> App {
-    App::new_with_config(
-        cc,
-        &[],
-        Some(config_path.to_path_buf()),
-        super::StartupOptions {
-            fading_enabled: fading,
-            offline: true,
-            tile_access,
-            storage: crate::app::Storage::Disabled,
-            app_version: TEST_APP_VERSION,
-            pending_writes,
-            instance_lock,
-        },
-    )
 }
 
 /// Fixes every date the settings window seeds from today, or its snapshots
@@ -231,59 +129,6 @@ fn node_outside_the_side_panel<'h>(harness: &'h Harness<'_, App>, label: &'h str
     harness.nth_matching(By::new().label(label), 1)
 }
 
-/// App constructor for the functional (non-snapshot) tests that don't touch a
-/// config file. Fading stays off so frame counts are deterministic.
-fn transient_app(cc: &mut eframe::CreationContext<'_>) -> App {
-    transient_app_with_paths(cc, &[])
-}
-
-/// [`transient_app`] started with the files a command line named.
-fn transient_app_with_paths(cc: &eframe::CreationContext<'_>, paths: &[PathBuf]) -> App {
-    transient_app_with_the_instance_lock(
-        cc,
-        paths,
-        DataDirectoryLock::marking_nothing(),
-        PendingWrites::default(),
-    )
-}
-
-/// [`transient_app_with_paths`] on the data directory `instance_lock` was
-/// taken on, which is what decides whether the run opens anything, with
-/// `pending_writes` deciding whether it writes to it at all.
-fn transient_app_with_the_instance_lock(
-    cc: &eframe::CreationContext<'_>,
-    paths: &[PathBuf],
-    instance_lock: DataDirectoryLock,
-    pending_writes: PendingWrites,
-) -> App {
-    transient_app_with_the_settings_file(cc, paths, None, instance_lock, pending_writes)
-}
-
-/// [`transient_app_with_the_instance_lock`] reading and writing the settings
-/// file at `config_path`, and none where that is [`None`].
-fn transient_app_with_the_settings_file(
-    cc: &eframe::CreationContext<'_>,
-    paths: &[PathBuf],
-    config_path: Option<PathBuf>,
-    instance_lock: DataDirectoryLock,
-    pending_writes: PendingWrites,
-) -> App {
-    App::new_with_config(
-        cc,
-        paths,
-        config_path,
-        super::StartupOptions {
-            fading_enabled: false,
-            offline: true,
-            tile_access: gt_map::TileAccess::Synthetic,
-            storage: crate::app::Storage::Disabled,
-            app_version: TEST_APP_VERSION,
-            pending_writes,
-            instance_lock,
-        },
-    )
-}
-
 fn base_time() -> DateTime<Utc> {
     DateTime::from_timestamp(1_748_000_000, 0).expect("fixed timestamp is valid")
 }
@@ -303,50 +148,6 @@ fn minimal_gtd_bytes() -> Vec<u8> {
         sats_seen: 10,
         sats_in_fix: 7,
     })
-}
-
-/// Drop `file` into the app and step until the background load thread has
-/// finished with it.
-///
-/// The thread sends a `Completed` message when done and `drain_load_channel`
-/// (called at the start of every `ui()` frame) removes the job. A dropped
-/// recording is looked up in the recording history before its job starts, so
-/// the wait covers that lookup too.
-fn drop_file_and_wait_for_load(harness: &mut Harness<App>, file: TestDroppedFile) {
-    harness.input_mut().dropped_files.push(Arc::new(file));
-    harness.step();
-    assert!(
-        harness.step_until(|harness| harness.state().loader.loading_jobs.is_empty()
-            && harness.state().recordings_awaiting_a_history_lookup == 0),
-        "the background load did not finish"
-    );
-}
-
-/// Drop a recording history already holds, answer the prompt it raises with
-/// "Load from disk", and step until the recording is in the view.
-fn drop_a_stored_recording_and_load_it_from_disk(
-    harness: &mut Harness<App>,
-    file: TestDroppedFile,
-) {
-    let loaded_before = harness.state().shared.borrow().loaded_files.len();
-    harness.input_mut().dropped_files.push(Arc::new(file));
-    harness.step();
-    step_until_the_prompt_over_stored_recordings_is_drawn(harness);
-    harness.get_by_label(LOAD_FROM_DISK_LABEL).click();
-    assert!(
-        harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len()
-            > loaded_before
-            && harness.state().loader.loading_jobs.is_empty()),
-        "the recording did not load from disk"
-    );
-}
-
-/// Step the harness repeatedly until the query worker's result has landed.
-fn step_until_query_result(harness: &mut Harness<App>) {
-    assert!(
-        harness.step_until(|harness| harness.state().query_window.matches().is_some()),
-        "the query worker produced no result"
-    );
 }
 
 fn load_three_overlapping_files(harness: &mut Harness<App>) {
@@ -406,7 +207,10 @@ fn load_three_overlapping_files(harness: &mut Harness<App>) {
     ];
 
     for (name, bytes) in overlapping_files {
-        drop_file_and_wait_for_load(harness, TestDroppedFile::bytes(bytes, name));
+        test_util::harness::drop_file_and_wait_for_load(
+            harness,
+            TestDroppedFile::bytes(bytes, name),
+        );
     }
 }
 
@@ -419,8 +223,8 @@ fn drag_drop_gtd_path_loads_file() {
 
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(&mut harness, TestDroppedFile::path(tmp_path));
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(&mut harness, TestDroppedFile::path(tmp_path));
 
     assert_eq!(harness.state().shared.borrow().loaded_files.len(), 1);
 }
@@ -431,8 +235,8 @@ fn drag_drop_gtd_bytes_loads_file() {
 
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(gtd_bytes.as_slice(), "test.gtd"),
     );
@@ -582,8 +386,8 @@ fn query_results_over_archived_interference_stay_fresh() {
     let gtd_bytes = minimal_gtd_bytes();
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(gtd_bytes.as_slice(), "test.gtd"),
     );
@@ -603,7 +407,7 @@ fn query_results_over_archived_interference_stay_fresh() {
     harness
         .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
         .click();
-    step_until_query_result(&mut harness);
+    test_util::harness::step_until_query_result(&mut harness);
     harness.run_steps(5);
 
     assert!(
@@ -625,13 +429,13 @@ fn query_matches_on_snap_error_after_a_run() {
     let gtd_bytes = minimal_gtd_bytes();
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(gtd_bytes.as_slice(), "test.gtd"),
     );
     let track = gt_types::TrackRef::new(gt_types::FileIdx::new(0), gt_types::TrackIdx::new(0));
-    inject_completed_run(&mut harness, track);
+    test_util::snap::inject_completed_run(&mut harness, track);
 
     {
         let app = harness.state_mut();
@@ -643,7 +447,7 @@ fn query_matches_on_snap_error_after_a_run() {
     harness
         .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
         .click();
-    step_until_query_result(&mut harness);
+    test_util::harness::step_until_query_result(&mut harness);
     harness.run_steps(3);
     let matches = harness
         .state()
@@ -660,7 +464,7 @@ fn query_matches_on_snap_error_after_a_run() {
     );
 
     // A re-snap produces new values: the results gray out.
-    inject_completed_run(&mut harness, track);
+    test_util::snap::inject_completed_run(&mut harness, track);
     harness.run_steps(3);
     assert!(
         harness
@@ -865,9 +669,9 @@ fn the_plot_cursor_over_a_hidden_stretch_reaches_for_no_drawn_fix() {
 fn the_plot_takes_a_range_from_the_map_only_while_sync_to_map_is_on(#[case] sync_to_map: bool) {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.state().shared.borrow_mut().plot_state.sync_to_map = sync_to_map;
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(minimal_gtd_bytes(), "test.gtd"),
     );
@@ -944,8 +748,8 @@ fn the_results_leave_the_query_window_at_its_default_height() {
 fn demo_app_with_query_run(query: &str) -> Harness<'static, App> {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
     );
@@ -1784,8 +1588,8 @@ fn copied_text(harness: &Harness<'_, App>) -> String {
 fn accel_app_with_query_window() -> Harness<'static, App> {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(accel_channel_gtd_bytes(28.0), "accel_demo.gtd"),
     );
@@ -2027,8 +1831,8 @@ fn query_match_row_hover_highlights_the_match() {
     let gtd_bytes = minimal_gtd_bytes();
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(gtd_bytes.as_slice(), "test.gtd"),
     );
@@ -2043,7 +1847,7 @@ fn query_match_row_hover_highlights_the_match() {
     harness
         .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
         .click();
-    step_until_query_result(&mut harness);
+    test_util::harness::step_until_query_result(&mut harness);
     harness.run_steps(3);
 
     let match_row = topmost_match_row(&harness).0.center();
@@ -2085,8 +1889,8 @@ fn query_match_row_hover_highlights_the_match() {
 fn drag_drop_binary_junk_reports_it_is_not_a_recognised_log() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(b"\xff\xfe\x00binary_junk".as_slice(), "mystery.bin"),
     );
@@ -2104,7 +1908,7 @@ fn drag_drop_binary_junk_reports_it_is_not_a_recognised_log() {
 fn panel_detached_renders_without_panic() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     assert!(!harness.state().shared.borrow().tree.detached);
 
@@ -2141,7 +1945,7 @@ fn panel_detached_renders_without_panic() {
 fn detached_panel_steps_complete_within_time_budget() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
 
     harness.state_mut().shared.borrow_mut().tree.detached = true;
@@ -2170,7 +1974,7 @@ fn detached_panel_steps_complete_within_time_budget() {
 fn settings_window_stays_open_after_step() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step(); // initial render
     harness.state_mut().settings_open = true;
     harness.step(); // frame where window is first shown
@@ -2199,7 +2003,7 @@ fn press_escape<State>(harness: &mut Harness<'_, State>) {
 fn settings_window_closes_on_esc() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     harness.state_mut().settings_open = true;
     harness.step(); // window open
@@ -2217,7 +2021,7 @@ fn harness_with_three_files_loaded() -> Harness<'static, App> {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .with_size(egui::vec2(1280.0, 800.0))
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     load_three_overlapping_files(&mut harness);
     harness.run_steps(20);
@@ -2385,10 +2189,10 @@ fn dragging_legend_near_top_left_redocks_automatically() {
 fn snapshot_app_with_file_loaded() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
 
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         TestDroppedFile::bytes(GOLD_BYTES, "gold.gtd"),
     );
@@ -2408,10 +2212,10 @@ fn snapshot_app_with_file_loaded() {
 fn snapshot_space_weather_warning_toast() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
 
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         TestDroppedFile::bytes(GOLD_BYTES, "gold.gtd"),
     );
@@ -2433,7 +2237,7 @@ fn snapshot_space_weather_warning_toast() {
         .expect("archive");
     // Every period of the archived day is at storm level, so the recording is
     // disturbed wherever in the day its first track falls.
-    archive_kp_day(&store, recorded, 5.0);
+    test_util::day_archive::archive_kp_day(&store, recorded, 5.0);
     let ctx = harness.inner.ctx.clone();
     harness.state_mut().geomagnetic_indices = crate::app::solar::GeomagneticIndexScheduler::new(
         ctx,
@@ -2456,7 +2260,7 @@ fn snapshot_space_weather_warning_toast() {
 fn the_map_warning_levels_open_their_reference_windows() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.run_steps(2);
 
     harness
@@ -2501,10 +2305,10 @@ fn the_map_warning_levels_open_their_reference_windows() {
 fn snapshot_app_with_file_loaded_light() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
 
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         TestDroppedFile::bytes(GOLD_BYTES, "gold.gtd"),
     );
@@ -2521,7 +2325,7 @@ fn snapshot_app_with_file_loaded_light() {
 fn snapshot_app_point_window_coordinate_out_of_range() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
 
     let out_of_range = gt_types::PointIdx::new(2);
@@ -2555,10 +2359,10 @@ fn snapshot_app_point_window_coordinate_out_of_range() {
 fn snapshot_app_sahara_tracks() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app_on_captured_tiles);
+        .eframe(test_util::harness::build_app_on_captured_tiles);
     harness.inner.step();
 
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         TestDroppedFile::bytes(GOLD_BYTES, "gold.gtd"),
     );
@@ -2603,10 +2407,10 @@ fn snapshot_app_sahara_tracks() {
 fn snapshot_app_demo_trip() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app_on_captured_tiles);
+        .eframe(test_util::harness::build_app_on_captured_tiles);
     harness.inner.step();
 
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
     );
@@ -2633,10 +2437,10 @@ fn snapshot_app_demo_trip() {
 fn snapshot_app_query_window() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app_on_captured_tiles);
+        .eframe(test_util::harness::build_app_on_captured_tiles);
     harness.inner.step();
 
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
     );
@@ -2658,7 +2462,7 @@ fn snapshot_app_query_window() {
         .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
         .click();
     // The run executes on a worker thread, so step until its results land.
-    step_until_query_result(&mut harness.inner);
+    test_util::harness::step_until_query_result(&mut harness.inner);
     harness.inner.run_steps(60);
 
     let match_count: usize = {
@@ -2686,10 +2490,10 @@ fn snapshot_app_query_window() {
 fn snapshot_app_query_matches_window() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
 
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
     );
@@ -2702,7 +2506,7 @@ fn snapshot_app_query_matches_window() {
         .inner
         .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
         .click();
-    step_until_query_result(&mut harness.inner);
+    test_util::harness::step_until_query_result(&mut harness.inner);
     harness.inner.run_steps(60);
 
     pop_out_button(&harness.inner).click();
@@ -2719,10 +2523,10 @@ fn snapshot_app_query_matches_window() {
 fn snapshot_app_query_editor_light() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
 
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
     );
@@ -2748,10 +2552,10 @@ fn snapshot_app_query_editor_light() {
 fn snapshot_app_query_match_hover() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
 
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
     );
@@ -2770,7 +2574,7 @@ fn snapshot_app_query_match_hover() {
         .inner
         .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
         .click();
-    step_until_query_result(&mut harness.inner);
+    test_util::harness::step_until_query_result(&mut harness.inner);
     harness.inner.run_steps(60);
 
     // Hover the larger match's row. The cross-highlight lands on the map and
@@ -2796,10 +2600,10 @@ fn snapshot_app_query_match_hover() {
 fn snapshot_app_plot_channels() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
 
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
     );
@@ -2861,10 +2665,10 @@ fn snapshot_app_plot_channels() {
 fn snapshot_app_plot_light() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
 
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
     );
@@ -2909,10 +2713,10 @@ fn snapshot_app_plot_light() {
 fn snapshot_app_query_channel_source() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
 
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         TestDroppedFile::bytes(accel_channel_gtd_bytes(28.0), "accel_demo.gtd"),
     );
@@ -2931,7 +2735,7 @@ fn snapshot_app_query_channel_source() {
         .inner
         .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
         .click();
-    step_until_query_result(&mut harness.inner);
+    test_util::harness::step_until_query_result(&mut harness.inner);
     harness.inner.run_steps(60);
 
     // The matches table lists a row per crafted stretch, the samples of the
@@ -2955,10 +2759,10 @@ fn snapshot_app_query_channel_source() {
 fn snapshot_app_query_points_with_channel() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
 
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         TestDroppedFile::bytes(accel_channel_gtd_bytes(28.0), "accel_demo.gtd"),
     );
@@ -2980,7 +2784,7 @@ fn snapshot_app_query_points_with_channel() {
         .inner
         .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
         .click();
-    step_until_query_result(&mut harness.inner);
+    test_util::harness::step_until_query_result(&mut harness.inner);
     harness.inner.run_steps(60);
 
     // The high-accel stretches match as point ranges on the track.
@@ -3012,10 +2816,10 @@ fn snapshot_app_query_points_with_channel() {
 fn snapshot_app_query_match_samples() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
 
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         TestDroppedFile::bytes(accel_channel_gtd_bytes(28.0), "accel_demo.gtd"),
     );
@@ -3035,7 +2839,7 @@ fn snapshot_app_query_match_samples() {
         .inner
         .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
         .click();
-    step_until_query_result(&mut harness.inner);
+    test_util::harness::step_until_query_result(&mut harness.inner);
     harness.inner.run_steps(60);
 
     harness
@@ -3057,9 +2861,9 @@ fn snapshot_app_query_match_samples() {
 fn snapshot_query_pipeline() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
     );
@@ -3084,7 +2888,7 @@ fn snapshot_query_pipeline() {
         .inner
         .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
         .click();
-    step_until_query_result(&mut harness.inner);
+    test_util::harness::step_until_query_result(&mut harness.inner);
     harness.inner.run_steps(60);
 
     {
@@ -3112,8 +2916,8 @@ fn query_history_persists_across_settings_roundtrip() {
     let gtd_bytes = minimal_gtd_bytes();
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(gtd_bytes.as_slice(), "test.gtd"),
     );
@@ -3128,7 +2932,7 @@ fn query_history_persists_across_settings_roundtrip() {
     harness
         .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
         .click();
-    step_until_query_result(&mut harness);
+    test_util::harness::step_until_query_result(&mut harness);
     harness.run_steps(3);
 
     // The flushed settings carry the run, and re-applying them restores it.
@@ -3143,275 +2947,13 @@ fn query_history_persists_across_settings_roundtrip() {
     assert_eq!(harness.state().query_window.history().len(), 1);
 }
 
-/// An added TEC mirror reaches the settings file and points the scheduler at
-/// the whole list on the way back in.
-#[test]
-fn tec_mirrors_persist_across_settings_roundtrip() {
-    let mut harness = Harness::builder()
-        .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    harness.step();
-    let before = harness.state().collect_snapshot();
-
-    harness
-        .state_mut()
-        .tec_settings
-        .mirrors
-        .add(gt_ionex::Mirror::new(
-            gt_ionex::MirrorBaseUrl::new("https://mirror.example"),
-            gt_ionex::MirrorLayout::Jpl,
-        ));
-
-    assert!(
-        harness.state().collect_snapshot() != before,
-        "the autosaver sees the edited list"
-    );
-    let flushed = harness.state().collect_settings_for_flush();
-    let toml = toml::to_string(&flushed).expect("settings serialize");
-    let reloaded: crate::settings::Settings = toml::from_str(&toml).expect("settings parse");
-    assert_eq!(reloaded.tec.mirrors, flushed.tec.mirrors);
-
-    harness.state_mut().apply_startup_settings(&reloaded);
-    assert_eq!(
-        harness
-            .state()
-            .tec_settings
-            .mirrors
-            .as_slice()
-            .iter()
-            .map(|mirror| mirror.base_url.to_string())
-            .collect::<Vec<_>>(),
-        [
-            gt_ionex::DEFAULT_BASE_URL,
-            gt_ionex::cddis::DEFAULT_BASE_URL,
-            "https://mirror.example",
-        ]
-    );
-}
-
-/// Channel plot toggles survive the settings flush/load roundtrip: the
-/// revealed section and a hidden channel come back, and the TOML encoding
-/// itself round-trips the dynamic name map.
-#[test]
-fn plot_channel_toggles_persist_across_settings_roundtrip() {
-    let mut harness = Harness::builder()
-        .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    harness.step();
-
-    {
-        let shared = harness.state_mut().shared.clone();
-        let mut shared = shared.borrow_mut();
-        shared.plot_state.show_channels = true;
-        shared.plot_state.channel_vis.set("accel", false);
-    }
-
-    let flushed = harness.state().collect_settings_for_flush();
-    assert!(flushed.plot.show_channels);
-    assert_eq!(flushed.plot.channel.get("accel"), Some(&false));
-
-    // Through the actual wire format, not just the struct.
-    let toml = toml::to_string(&flushed).expect("settings serialize");
-    let reloaded: crate::settings::Settings = toml::from_str(&toml).expect("settings parse");
-    assert!(reloaded.plot.show_channels);
-    assert_eq!(reloaded.plot.channel.get("accel"), Some(&false));
-
-    harness.state_mut().apply_startup_settings(&reloaded);
-    let shared = harness.state().shared.borrow();
-    assert!(shared.plot_state.show_channels);
-    assert!(!shared.plot_state.channel_vis.is_visible("accel"));
-    assert!(shared.plot_state.channel_vis.is_visible("incline"));
-}
-
-/// The sparse<->dense component color conversions: empty stays empty, an
-/// index gap widens with unset slots, and only overridden slots are stored.
-#[test]
-fn component_color_conversions_handle_gaps_and_empty_input() {
-    use crate::app::{dense_component_colors, sparse_component_colors};
-    use crate::settings::ComponentColor;
-
-    assert!(dense_component_colors(&[]).is_empty());
-    assert!(sparse_component_colors(&[None, None]).is_empty());
-
-    let red = egui::Color32::from_rgb(255, 0, 0);
-    let dense = dense_component_colors(&[ComponentColor {
-        component: 2,
-        rgba: red.to_array(),
-    }]);
-    assert_eq!(dense, vec![None, None, Some(red)], "gaps widen with unset");
-    assert_eq!(
-        sparse_component_colors(&dense),
-        vec![ComponentColor {
-            component: 2,
-            rgba: red.to_array(),
-        }]
-    );
-}
-
-/// A picked component color persists through the actual settings wire
-/// format, non-overridden slots included: the dense plot slots convert to
-/// sparse stored entries and back without drift.
-#[test]
-fn channel_component_colors_persist_across_settings_roundtrip() {
-    let mut harness = Harness::builder()
-        .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    harness.step();
-
-    let magenta = egui::Color32::from_rgb(255, 0, 200);
-    {
-        let shared = harness.state_mut().shared.clone();
-        let mut shared = shared.borrow_mut();
-        shared
-            .plot_state
-            .channel_component_colors
-            .insert("accel".to_owned(), vec![None, Some(magenta), None]);
-    }
-
-    let flushed = harness.state().collect_settings_for_flush();
-    let toml = toml::to_string(&flushed).expect("settings serialize");
-    let reloaded: crate::settings::Settings = toml::from_str(&toml).expect("settings parse");
-    harness.state_mut().apply_startup_settings(&reloaded);
-
-    let shared = harness.state().shared.borrow();
-    let colors = shared
-        .plot_state
-        .channel_component_colors
-        .get("accel")
-        .expect("override survives the roundtrip");
-    assert_eq!(colors.first(), Some(&None), "unset slots stay unset");
-    assert_eq!(colors.get(1), Some(&Some(magenta)));
-}
-
-/// The side panel's Visible section opens at the share the settings file
-/// holds, and the app writes the rendered share back out.
-#[test]
-fn the_visible_section_opens_at_the_share_the_settings_file_holds() {
-    let config_dir = tempfile::tempdir().expect("temp config dir");
-    let config_path = config_dir.path().join("config.toml");
-    std::fs::write(&config_path, "[ui]\nvisible_section_fraction = 0.5\n")
-        .expect("write the settings file");
-
-    let built_from = config_path.clone();
-    let mut harness = Harness::builder()
-        .with_wait_for_pending_images(false)
-        .build_eframe(move |cc| build_app(cc, &built_from, false));
-    harness.step();
-
-    let share = harness
-        .state()
-        .collect_settings_for_flush()
-        .ui
-        .visible_section_fraction;
-    assert!(
-        (share - 0.5).abs() < 0.02,
-        "the section opened at {share} of the region"
-    );
-}
-
-/// The display mask persists through the actual settings wire format:
-/// hidden categories survive the round trip, missing keys mean visible.
-#[test]
-fn display_mask_persists_across_settings_roundtrip() {
-    let mut harness = Harness::builder()
-        .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    harness.step();
-
-    {
-        let shared = harness.state_mut().shared.clone();
-        let mut shared = shared.borrow_mut();
-        shared
-            .display_mask
-            .set_visible(DisplayCategory::GeneratedMarkers, false);
-        shared
-            .display_mask
-            .set_visible(DisplayCategory::SatelliteLabels, false);
-    }
-
-    let flushed = harness.state().collect_settings_for_flush();
-    let toml = toml::to_string(&flushed).expect("settings serialize");
-    let reloaded: crate::settings::Settings = toml::from_str(&toml).expect("settings parse");
-
-    harness.state_mut().apply_startup_settings(&reloaded);
-    let shared = harness.state().shared.borrow();
-    assert!(
-        !shared
-            .display_mask
-            .is_visible(DisplayCategory::GeneratedMarkers)
-    );
-    assert!(
-        !shared
-            .display_mask
-            .is_visible(DisplayCategory::SatelliteLabels)
-    );
-    assert!(shared.display_mask.is_visible(DisplayCategory::Tracks));
-
-    // A config from before the display mask existed loads with every
-    // category at its default: everything visible but the opt-in layer.
-    let old_config: crate::settings::Settings =
-        toml::from_str("[map]\nsync_to_map = false\n").expect("old config parses");
-    assert_eq!(
-        old_config.map.display_mask,
-        gt_ui_types::DisplayMask::default()
-    );
-    assert!(
-        !old_config
-            .map
-            .display_mask
-            .is_visible(DisplayCategory::JammingHexes)
-    );
-}
-
-/// The interference layer is off until enabled, and stays on once it is.
-#[test]
-fn showing_the_interference_layer_persists_across_settings_roundtrip() {
-    let mut harness = Harness::builder()
-        .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    harness.step();
-
-    assert!(
-        !harness
-            .state()
-            .shared
-            .borrow()
-            .display_mask
-            .is_visible(DisplayCategory::JammingHexes),
-        "off on a fresh install"
-    );
-
-    {
-        let shared = harness.state_mut().shared.clone();
-        let mut shared = shared.borrow_mut();
-        shared
-            .display_mask
-            .set_visible(DisplayCategory::JammingHexes, true);
-    }
-
-    let flushed = harness.state().collect_settings_for_flush();
-    let toml = toml::to_string(&flushed).expect("settings serialize");
-    let reloaded: crate::settings::Settings = toml::from_str(&toml).expect("settings parse");
-    harness.state_mut().apply_startup_settings(&reloaded);
-
-    assert!(
-        harness
-            .state()
-            .shared
-            .borrow()
-            .display_mask
-            .is_visible(DisplayCategory::JammingHexes),
-        "the choice survives a restart"
-    );
-}
-
 /// Build an app with one loaded file and the query window open. Shared setup
 /// for the interactive query-history tests.
 fn app_with_a_recording() -> Harness<'static, App> {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(minimal_gtd_bytes(), "test.gtd"),
     );
@@ -3433,7 +2975,7 @@ fn run_query(harness: &mut Harness<App>, text: &str) {
     harness
         .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
         .click();
-    step_until_query_result(harness);
+    test_util::harness::step_until_query_result(harness);
     harness.run_steps(3);
 }
 
@@ -3527,7 +3069,7 @@ fn query_ctrl_enter_runs() {
         modifiers: egui::Modifiers::COMMAND,
     });
     harness.step();
-    step_until_query_result(&mut harness);
+    test_util::harness::step_until_query_result(&mut harness);
     harness.run_steps(3);
 
     assert!(
@@ -3557,7 +3099,7 @@ fn key_press(key: egui::Key) -> egui::Event {
 fn editor_with_popup(text: &str) -> Harness<'static, App> {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     {
         let app = harness.state_mut();
@@ -3786,9 +3328,9 @@ fn comment_only_chunk_does_not_block_run() {
 fn snapshot_app_plot_channel_components() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         TestDroppedFile::bytes(accel_channel_gtd_bytes(0.9), "accel.gtd"),
     );
@@ -3822,9 +3364,9 @@ fn snapshot_app_plot_channel_components() {
 fn channel_chip_menu_offers_component_colors() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         TestDroppedFile::bytes(accel_channel_gtd_bytes(0.9), "accel.gtd"),
     );
@@ -3889,9 +3431,9 @@ fn channel_chip_menu_offers_component_colors() {
 fn snapshot_app_plot_channel_color_override() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         TestDroppedFile::bytes(accel_channel_gtd_bytes(0.9), "accel.gtd"),
     );
@@ -4005,7 +3547,7 @@ fn push_file_with_channel(harness: &mut Harness<App>, name: &str, unit: &str) {
 fn channel_popup_offers_and_inserts_a_loaded_channel() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     push_file_with_channel(&mut harness, "accel", "g");
     {
@@ -4033,7 +3575,7 @@ fn channel_popup_offers_and_inserts_a_loaded_channel() {
 fn mixed_channel_queries_explain_why_run_is_disabled() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     push_file_with_channel(&mut harness, "accel", "g");
     {
@@ -4104,7 +3646,7 @@ fn focus_query_editor_at_end(harness: &Harness<App>, text: &str) {
 fn snapshot_query_autocomplete_popup() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(560.0, 460.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
 
     // A prefix that matches many metrics, so the popup overflows five rows.
@@ -4137,7 +3679,7 @@ fn snapshot_query_autocomplete_popup() {
 fn snapshot_query_error() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(560.0, 260.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     {
         let app = harness.inner.state_mut();
@@ -4159,7 +3701,7 @@ fn snapshot_query_error() {
 fn snapshot_query_hover_docs() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(560.0, 460.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
 
     {
@@ -4192,7 +3734,7 @@ fn snapshot_query_hover_docs() {
 fn query_hover_doc_sticks_within_its_token() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(560.0, 460.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     {
         let app = harness.inner.state_mut();
@@ -4253,7 +3795,7 @@ fn query_hover_doc_sticks_within_its_token() {
 fn snapshot_app_three_overlapping_files() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app_on_captured_tiles);
+        .eframe(test_util::harness::build_app_on_captured_tiles);
     harness.inner.step();
     load_three_overlapping_files(&mut harness.inner);
     assert_eq!(harness.inner.state().shared.borrow().loaded_files.len(), 3);
@@ -4310,7 +3852,7 @@ impl SettingsPage {
 fn harness_with_settings_window_open<'a>() -> (TestHarness<'a, App>, PathBuf) {
     let (mut harness, config_path) = TestHarness::builder()
         .size(egui::vec2(940.0, 720.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     // Search radius set (its drag value active), the other two unset (grayed,
     // never hidden): the snap page shows both states of its optional rows.
@@ -4557,7 +4099,7 @@ fn click_settings_row_tickbox(harness: &mut Harness<App>, label: &str) {
 
 /// Load one recording and give it the metadata the name template draws on.
 fn load_recording_with_metadata(harness: &mut Harness<App>) {
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         harness,
         TestDroppedFile::bytes(minimal_gtd_bytes(), "ride.gtd"),
     );
@@ -4571,28 +4113,11 @@ fn load_recording_with_metadata(harness: &mut Harness<App>) {
 
 /// A stored recording for the guide's preview line to fall back on.
 fn stored_recording_entry(identity: &str, title: &str) -> gt_store::RecordingEntry {
-    gt_store::RecordingEntry {
-        db_ref: gt_store::DatabaseRef {
-            identity: identity.to_owned(),
-            group_name: "2026-01-01T00:00:00Z_0".to_owned(),
-        },
-        meta: gt_store::RecordingMeta {
-            time_range: None,
-            nav_point_count: 0,
-            sat_report_count: 0,
-            marker_count: 0,
-            event_marker_count: 0,
-            gtd_size_bytes: 0,
-        },
-        total_tracks: 1,
-        shelved_tracks: 0,
-        title: Some(title.to_owned()),
-        device: Some("u-blox F9P".to_owned()),
-        notes: None,
-        travel_mode: None,
-        channels: Vec::new(),
-        log_attachments: Vec::new(),
-    }
+    let mut entry = test_util::listing::entry_with_identity(identity);
+    entry.total_tracks = 1;
+    entry.title = Some(title.to_owned());
+    entry.device = Some("u-blox F9P".to_owned());
+    entry
 }
 
 /// The template guide opens while the field has focus and previews the template
@@ -4603,7 +4128,7 @@ fn name_template_guide_previews_the_loaded_recording() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .with_size(egui::vec2(820.0, 620.0))
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     load_recording_with_metadata(&mut harness);
     harness
@@ -4635,7 +4160,7 @@ fn name_template_guide_previews_a_history_recording() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .with_size(egui::vec2(820.0, 620.0))
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     {
         let mut older = stored_recording_entry("auto:older.gtd", "Older ride");
@@ -4665,7 +4190,7 @@ fn name_template_guide_previews_follow_the_typed_template() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .with_size(egui::vec2(820.0, 620.0))
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     load_recording_with_metadata(&mut harness);
     harness.state_mut().settings_open = true;
@@ -4692,7 +4217,7 @@ fn name_template_guide_explains_a_missing_recording() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .with_size(egui::vec2(820.0, 620.0))
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     harness.state_mut().settings_open = true;
     harness.state_mut().settings_page = SettingsPage::Interface;
@@ -4711,7 +4236,7 @@ fn the_interface_page_edits_the_token_the_map_reads() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .with_size(egui::vec2(820.0, 620.0))
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     harness.state_mut().settings_open = true;
     harness.state_mut().settings_page = SettingsPage::Interface;
@@ -4735,7 +4260,7 @@ fn the_interface_page_gates_the_satellite_layer_on_a_token() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .with_size(egui::vec2(820.0, 620.0))
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     harness.state_mut().settings_open = true;
     harness.state_mut().settings_page = SettingsPage::Interface;
@@ -4765,7 +4290,7 @@ fn the_interface_page_gates_the_satellite_layer_on_a_token() {
 fn snapshot_recording_name_template_guide() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(820.0, 620.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     harness
         .inner
@@ -4802,7 +4327,7 @@ fn snapshot_recording_name_template_guide() {
 fn snapshot_update_prompt_self_update() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(640.0, 400.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     harness.inner.state_mut().update_checker =
         super::update::UpdateChecker::available_for_test("0.2.0", true);
@@ -4819,7 +4344,7 @@ const UPDATE_INSTALL_FAILURE: &str = "the release asset could not be downloaded"
 fn app_showing_the_update_prompt() -> TestHarness<'static, App> {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(640.0, 400.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     harness.inner.state_mut().update_checker =
         super::update::UpdateChecker::available_for_test("0.2.0", true);
@@ -4931,7 +4456,7 @@ fn storage_controls_drive_one_setting_from_both_windows() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .with_size(egui::vec2(1000.0, 700.0))
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     let ctx = harness.ctx.clone();
     harness
@@ -4999,7 +4524,7 @@ fn storage_controls_drive_one_setting_from_both_windows() {
 fn snapshot_history_locked_dialog() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(640.0, 420.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     harness.inner.state_mut().history_failure = Some(crate::app::storage::HistoryFailure::Locked(
         PathBuf::from("geotrace.h5"),
@@ -5012,7 +4537,7 @@ fn snapshot_history_locked_dialog() {
 fn snapshot_history_corrupt_dialog() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(640.0, 420.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     harness.inner.state_mut().history_failure = Some(
         crate::app::storage::HistoryFailure::Unreadable(PathBuf::from("geotrace.h5")),
@@ -5032,7 +4557,7 @@ fn adopting_an_open_storage_installs_its_history_worker() {
 
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     assert!(
         harness.state().history.path().is_none(),
@@ -5072,7 +4597,7 @@ fn adopting_an_open_storage_installs_its_history_worker() {
 fn a_history_failure_in_the_adopted_storage_raises_its_prompt() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
 
     harness
@@ -5117,7 +4642,7 @@ fn app_with_the_databases_still_opening_for<'a>(
 ) -> (Harness<'a, App>, mpsc::Sender<OpenStorage>) {
     let paths = paths.to_vec();
     app_with_the_databases_still_opening_built_by(move |cc| {
-        transient_app_with_the_instance_lock(
+        test_util::harness::transient_app_with_the_instance_lock(
             cc,
             &paths,
             DataDirectoryLock::marking_nothing(),
@@ -5133,7 +4658,7 @@ fn app_with_the_databases_still_opening_reading<'a>(
     write_access: WriteAccess,
 ) -> (Harness<'a, App>, mpsc::Sender<OpenStorage>) {
     app_with_the_databases_still_opening_built_by(move |cc| {
-        transient_app_with_the_settings_file(
+        test_util::harness::transient_app_with_the_settings_file(
             cc,
             &[],
             Some(config_path.clone()),
@@ -5275,10 +4800,7 @@ fn a_file_named_before_the_databases_land_is_loaded_and_stored_once_they_do() {
 
     land_the_databases(&mut harness, &databases, &store);
 
-    assert!(
-        harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1),
-        "the file that waited for the databases did not load"
-    );
+    test_util::harness::step_until_a_recording_is_loaded(&mut harness);
     let stored = harness
         .step_until_some(|_| {
             let recordings = Recordings::open_or_create(&store.recordings_path()).ok()?;
@@ -5303,10 +4825,7 @@ fn a_recording_loaded_in_a_read_only_session_is_not_stored() {
 
     land_the_databases(&mut harness, &databases, &store);
 
-    assert!(
-        harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1),
-        "the recording did not load"
-    );
+    test_util::harness::step_until_a_recording_is_loaded(&mut harness);
     let recordings =
         Recordings::open_or_create(&store.recordings_path()).expect("open the recording history");
     assert_eq!(
@@ -5345,10 +4864,7 @@ fn a_file_dropped_before_the_databases_land_loads_once_they_do() {
 
     land_the_databases(&mut harness, &databases, &store);
 
-    assert!(
-        harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1),
-        "the drop that waited for the databases did not load"
-    );
+    test_util::harness::step_until_a_recording_is_loaded(&mut harness);
 }
 
 /// Pasted log text waits for the databases like any other load: a load that
@@ -5370,10 +4886,7 @@ fn log_text_pasted_before_the_databases_land_loads_once_they_do() {
 
     land_the_databases(&mut harness, &databases, &store);
 
-    assert!(
-        harness.step_until(|harness| harness.state().logs.len() == 1),
-        "the paste that waited for the databases did not load"
-    );
+    test_util::harness::step_until_a_log_is_loaded(&mut harness);
 }
 
 /// A storage open that ends without reporting leaves the run storing nothing,
@@ -5392,10 +4905,7 @@ fn a_storage_open_that_never_reports_still_runs_the_loads_that_waited() {
     harness.run_steps(3);
     drop(databases);
 
-    assert!(
-        harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1),
-        "the drop never loaded once the open gave up"
-    );
+    test_util::harness::step_until_a_recording_is_loaded(&mut harness);
     assert_eq!(harness.state().storage_open.databases_pending(), None);
 }
 
@@ -5425,7 +4935,7 @@ fn app_waiting_for_the_data_directory<'a>(
         .with_size(egui::vec2(1280.0, 800.0))
         .with_wait_for_pending_images(false)
         .build_eframe(move |cc| {
-            transient_app_with_the_instance_lock(
+            test_util::harness::transient_app_with_the_instance_lock(
                 cc,
                 &paths,
                 instance_lock,
@@ -5445,7 +4955,12 @@ fn app_waiting_for_the_data_directory_registering_writes_in<'a>(
         .with_size(egui::vec2(1280.0, 800.0))
         .with_wait_for_pending_images(false)
         .build_eframe(move |cc| {
-            transient_app_with_the_instance_lock(cc, &[], instance_lock, pending_writes)
+            test_util::harness::transient_app_with_the_instance_lock(
+                cc,
+                &[],
+                instance_lock,
+                pending_writes,
+            )
         })
 }
 
@@ -5730,10 +5245,7 @@ fn a_file_named_while_the_data_directory_is_held_loads_once_it_frees() {
 
     drop(holder);
 
-    assert!(
-        harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1),
-        "the file that waited for the data directory did not load"
-    );
+    test_util::harness::step_until_a_recording_is_loaded(&mut harness);
 }
 
 /// A drop lands in the same queue, which the dialog being up does not stop.
@@ -5759,10 +5271,7 @@ fn a_file_dropped_while_the_data_directory_is_held_loads_once_it_frees() {
 
     drop(holder);
 
-    assert!(
-        harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1),
-        "the drop that waited for the data directory did not load"
-    );
+    test_util::harness::step_until_a_recording_is_loaded(&mut harness);
 }
 
 /// Pasted log text waits for the data directory like any other load: paste is
@@ -5784,10 +5293,7 @@ fn log_text_pasted_while_the_data_directory_is_held_loads_once_it_frees() {
 
     drop(holder);
 
-    assert!(
-        harness.step_until(|harness| harness.state().logs.len() == 1),
-        "the paste that waited for the data directory did not load"
-    );
+    test_util::harness::step_until_a_log_is_loaded(&mut harness);
 }
 
 /// Reports `holder` as shutting down with one archive compaction left, which
@@ -5879,7 +5385,12 @@ fn app_waiting_on_a_stale_shutdown_report(directory: &Path) -> TestHarness<'stat
         .with_size(egui::vec2(640.0, 420.0))
         .with_wait_for_pending_images(false)
         .build_eframe(move |cc| {
-            transient_app_with_the_instance_lock(cc, &[], instance_lock, PendingWrites::default())
+            test_util::harness::transient_app_with_the_instance_lock(
+                cc,
+                &[],
+                instance_lock,
+                PendingWrites::default(),
+            )
         });
     let mut harness = TestHarness::from_harness(harness);
     harness.inner.input_mut().time = Some(PINNED_FRAME_TIME);
@@ -6065,10 +5576,7 @@ fn taking_over_opens_the_databases_and_runs_the_loads_that_waited() {
 
     take_over_write_access(&mut harness);
 
-    assert!(
-        harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1),
-        "the file that waited for the data directory never loaded"
-    );
+    test_util::harness::step_until_a_recording_is_loaded(&mut harness);
     assert_eq!(
         harness.state().storage_open.databases_pending(),
         None,
@@ -6217,7 +5725,7 @@ fn app_waiting_for_the_data_directory_that_saves_settings<'a>(
     TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
         .eframe(move |cc, config_path, fading| {
-            build_app_with_the_instance_lock(
+            test_util::harness::build_app_with_the_instance_lock(
                 cc,
                 config_path,
                 fading,
@@ -6408,10 +5916,7 @@ fn a_file_queued_while_waiting_loads_read_only_and_is_not_stored() {
     let databases = harness.state_mut().storage_open.take_over_for_test();
     land_the_databases(&mut harness, &databases, &store);
 
-    assert!(
-        harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1),
-        "the file that waited for the data directory never loaded"
-    );
+    test_util::harness::step_until_a_recording_is_loaded(&mut harness);
     let recordings =
         Recordings::open_or_create(&store.recordings_path()).expect("open the recording history");
     assert_eq!(
@@ -6446,10 +5951,7 @@ fn log_text_pasted_while_waiting_loads_in_the_read_only_session_it_starts() {
     let databases = harness.state_mut().storage_open.take_over_for_test();
     land_the_databases(&mut harness, &databases, &store);
 
-    assert!(
-        harness.step_until(|harness| harness.state().logs.len() == 1),
-        "the paste that waited for the data directory never loaded"
-    );
+    test_util::harness::step_until_a_log_is_loaded(&mut harness);
 }
 
 /// The interference archive's day index, which is where a delete records
@@ -6477,11 +5979,7 @@ fn data_directory_with_an_interrupted_interference_delete() -> tempfile::TempDir
         for offset in 0..2 {
             let day = chrono::NaiveDate::from_ymd_opt(2026, 7, 20).unwrap_or_default()
                 + chrono::TimeDelta::days(offset);
-            environment_storage::archive_one_day(
-                &archive,
-                EnvironmentArchive::AircraftInterference.day_insert_registration(day),
-                |interference| interference.insert_day(day, "host", chrono::Utc::now(), &[]),
-            );
+            test_util::day_archive::archive_an_empty_interference_day(&archive, day);
         }
     }
     drop(store);
@@ -6862,12 +6360,11 @@ fn the_environment_controls_are_grayed_while_the_archives_open() {
     let store = gt_store::Store::open_in(dir.path());
     // A day to delete, or the control stays grayed for having nothing to act on.
     let day = chrono::NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
-    environment_storage::archive_one_day(
+    test_util::day_archive::archive_an_empty_interference_day(
         &store
             .open_or_create_archive::<JamStore>()
             .expect("open the archive"),
-        EnvironmentArchive::AircraftInterference.day_insert_registration(day),
-        |archive| archive.insert_day(day, "host", chrono::Utc::now(), &[]),
+        day,
     );
     land_the_databases(&mut harness, &databases, &store);
     harness.run_steps(3);
@@ -6899,12 +6396,11 @@ fn the_environment_controls_are_grayed_in_a_read_only_session() {
     // A day to delete, or the controls stay grayed for having nothing to act
     // on, whatever the session may write.
     let day = chrono::NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
-    environment_storage::archive_one_day(
+    test_util::day_archive::archive_an_empty_interference_day(
         &store
             .open_or_create_archive::<JamStore>()
             .expect("open the archive"),
-        EnvironmentArchive::AircraftInterference.day_insert_registration(day),
-        |archive| archive.insert_day(day, "host", chrono::Utc::now(), &[]),
+        day,
     );
     let (mut harness, databases) =
         app_with_the_databases_still_opening_for(&[], WriteAccess::ReadOnly);
@@ -7012,11 +6508,7 @@ fn the_environment_auto_prune_runs_when_the_archives_land() {
     let archive = store
         .open_or_create_archive::<JamStore>()
         .expect("the interference archive");
-    environment_storage::archive_one_day(
-        &archive,
-        EnvironmentArchive::AircraftInterference.day_insert_registration(old),
-        |interference| interference.insert_day(old, "host", chrono::Utc::now(), &[]),
-    );
+    test_util::day_archive::archive_an_empty_interference_day(&archive, old);
 
     let (mut harness, databases) = app_with_the_databases_still_opening(&[]);
     enable_environment_auto_prune(&mut harness, 12);
@@ -7067,7 +6559,7 @@ fn a_failed_retry_restores_the_prompt() {
 
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     harness.state_mut().history_failure =
         Some(crate::app::storage::HistoryFailure::Busy(path.clone()));
@@ -7119,7 +6611,7 @@ fn a_history_database_recovery_is_rejected_once_shutdown_has_begun(
 
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     harness.state().pending_writes.begin_shutdown();
     let ctx = harness.ctx.clone();
@@ -7144,7 +6636,7 @@ fn app_after_a_take_over_with<'a>(
 ) -> Harness<'a, App> {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     harness.state_mut().instance_taken_over_from = Some(TakenOverInstance {
         process_id: Some(4210),
@@ -7201,7 +6693,7 @@ fn the_locked_prompt_after_a_take_over_grays_the_lock_clear() {
 fn snapshot_history_busy_dialog() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(640.0, 420.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     harness.inner.state_mut().history_failure = Some(crate::app::storage::HistoryFailure::Busy(
         PathBuf::from("geotrace.h5"),
@@ -7238,7 +6730,7 @@ fn resegment_prompt_named(filename: &str) -> super::ResegmentPrompt {
 fn app_showing_the_resegment_prompt(filename: &str) -> TestHarness<'static, App> {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(640.0, 420.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     harness.inner.state_mut().pending_resegment = Some(resegment_prompt_named(filename));
     harness.run();
@@ -7277,7 +6769,7 @@ fn app_showing_the_resegment_prompt_with(
 ) -> TestHarness<'static, App> {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(640.0, 420.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     let mut prompt = resegment_prompt_named("ride.gtd");
     prompt.stored_tracks = stored_track_table_with_shelved_tracks(marks.shelved_tracks);
@@ -7407,7 +6899,7 @@ fn auto_prune_candidates(count: usize) -> Vec<gt_store::DatabaseRef> {
 fn app_showing_the_auto_prune_confirmation(count: usize) -> TestHarness<'static, App> {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(640.0, 420.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     harness.inner.state_mut().pending_auto_prune = Some(auto_prune_candidates(count));
     harness.run();
@@ -7599,20 +7091,6 @@ fn drop_paths(harness: &mut Harness<'_, App>, paths: &[PathBuf]) {
     harness.step();
 }
 
-/// Step until the prompt over the recordings history holds is drawn where the
-/// user sees it: an anchored dialog takes its position on the pass after it
-/// opens, and a click aimed at the pass before that misses its buttons.
-fn step_until_the_prompt_over_stored_recordings_is_drawn(harness: &mut Harness<'_, App>) {
-    assert!(
-        harness.step_until(|harness| harness
-            .state()
-            .pending_recordings_already_in_history
-            .is_some()),
-        "the drop of a recording history holds raised no prompt"
-    );
-    harness.run_steps(3);
-}
-
 /// How many tracks the one loaded recording has, once its load lands.
 fn step_until_one_recording_is_loaded(harness: &mut Harness<'_, App>) -> usize {
     assert!(
@@ -7639,7 +7117,7 @@ fn dropping_a_recording_history_holds_raises_a_prompt_before_it_loads() {
     let (mut harness, _dir, gtd_path) = app_with_a_stored_recording_on_disk();
 
     drop_paths(&mut harness, &[gtd_path]);
-    step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
+    test_util::harness::step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
 
     let state = harness.state();
     let prompt = state
@@ -7674,7 +7152,7 @@ fn one_drop_of_several_stored_recordings_raises_one_prompt() {
         .collect();
 
     drop_paths(&mut harness, &[vec![gtd_path], copies].concat());
-    step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
+    test_util::harness::step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
 
     let state = harness.state();
     let prompt = state
@@ -7733,7 +7211,7 @@ fn opening_the_stored_version_reproduces_the_stored_tracks_from_the_database() {
     let (mut harness, _dir, gtd_path) = app_with_a_stored_recording_on_disk();
 
     drop_paths(&mut harness, &[gtd_path]);
-    step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
+    test_util::harness::step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
     harness.get_by_label(OPEN_THE_STORED_VERSION_LABEL).click();
 
     assert_eq!(
@@ -7760,7 +7238,7 @@ fn loading_from_disk_leaves_the_shelved_track_out_while_the_tickbox_is_ticked() 
     let (mut harness, _dir, gtd_path) = app_with_a_stored_recording_on_disk();
 
     drop_paths(&mut harness, &[gtd_path]);
-    step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
+    test_util::harness::step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
     harness.get_by_label(LOAD_FROM_DISK_LABEL).click();
 
     assert_eq!(
@@ -7787,7 +7265,7 @@ fn loading_from_disk_shows_every_track_once_the_tickbox_is_cleared() {
     let (mut harness, _dir, gtd_path) = app_with_a_stored_recording_on_disk();
 
     drop_paths(&mut harness, &[gtd_path]);
-    step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
+    test_util::harness::step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
     harness.get_by_label(LEAVE_SHELVED_TRACKS_OUT_LABEL).click();
     harness.step();
     harness.get_by_label(LOAD_FROM_DISK_LABEL).click();
@@ -7804,7 +7282,7 @@ fn the_tickbox_is_grayed_out_where_no_stored_recording_has_a_shelved_track() {
     let (mut harness, _dir, gtd_path) = app_with_a_stored_recording_of_live_tracks();
 
     drop_paths(&mut harness, &[gtd_path]);
-    step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
+    test_util::harness::step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
 
     assert!(
         harness
@@ -7827,7 +7305,7 @@ fn the_tickbox_is_grayed_out_where_no_stored_recording_has_a_shelved_track() {
 /// it. The prompt over a stored recording offers that as one of its choices.
 fn open_the_stored_version_of(harness: &mut Harness<'_, App>, gtd_path: &Path) {
     drop_paths(harness, std::slice::from_ref(&gtd_path.to_path_buf()));
-    step_until_the_prompt_over_stored_recordings_is_drawn(harness);
+    test_util::harness::step_until_the_prompt_over_stored_recordings_is_drawn(harness);
     harness.get_by_label(OPEN_THE_STORED_VERSION_LABEL).click();
 }
 
@@ -7892,7 +7370,7 @@ fn a_recording_loaded_from_disk_hides_the_tracks_stored_with_it_as_hidden() {
     let (mut harness, _dir, gtd_path) = app_that_stored_the_second_track_of_a_recording_as_hidden();
 
     drop_paths(&mut harness, std::slice::from_ref(&gtd_path));
-    step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
+    test_util::harness::step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
     harness.get_by_label(LOAD_FROM_DISK_LABEL).click();
 
     assert_eq!(step_until_one_recording_is_loaded(&mut harness), 2);
@@ -8014,9 +7492,7 @@ fn the_hidden_tracks_the_settings_file_lists_wait_for_a_recording_history() {
 
     harness
         .state_mut()
-        .install_history_worker(crate::app::history_test_support::worker_on(
-            &store.recordings_path(),
-        ));
+        .install_history_worker(test_util::recordings::worker_on(&store.recordings_path()));
     harness.state().history.open(db_ref.clone());
 
     assert!(
@@ -8138,7 +7614,7 @@ fn recordings_already_in_history(count: usize) -> RecordingsAlreadyInHistory {
 fn app_showing_the_prompt_over_stored_recordings(count: usize) -> TestHarness<'static, App> {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(640.0, 420.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     harness
         .inner
@@ -8235,7 +7711,7 @@ fn opening_a_recording_stored_by_another_rule_raises_the_resegment_prompt(
 ) {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     let stored = gt_store::StoredRecording {
         bytes: minimal_gtd_bytes(),
@@ -8302,7 +7778,7 @@ fn the_resegment_prompt_offers_the_stored_tracks_only_for_rules_it_implements(
 ) {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     let prompt = resegment_prompt_for(harness.state(), stored_split_rule, stored_placement_rule);
     harness.state_mut().pending_resegment = Some(prompt);
@@ -8317,7 +7793,7 @@ fn the_resegment_prompt_offers_the_stored_tracks_only_for_rules_it_implements(
 fn snapshot_load_warnings_dialog() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1024.0, 768.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     harness.inner.state().shared.borrow_mut().warnings_popup = Some((
         "ride_2025-05-23.gtd".to_owned(),
@@ -8348,11 +7824,11 @@ fn snapshot_load_warnings_dialog() {
 fn snapshot_snap_consent_dialog() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1024.0, 768.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     harness.inner.state_mut().snap_consent_prompt = true;
     harness.run();
-    harness.snapshot_loose("snap_consent_dialog");
+    harness.snapshot_loose("snap_to_road_consent_dialog");
 }
 
 /// The service link only shows for the default FOSSGIS host - its terms do
@@ -8361,7 +7837,7 @@ fn snapshot_snap_consent_dialog() {
 fn consent_service_link_gates_on_the_default_host() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1024.0, 768.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     harness.inner.state_mut().snap_consent_prompt = true;
     harness.run();
@@ -8390,12 +7866,12 @@ fn consent_service_link_gates_on_the_default_host() {
 fn snapshot_snap_consent_dialog_mode_chosen() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1024.0, 768.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     harness.inner.state_mut().snap_settings.auto_snap = Some(false);
     harness.inner.state_mut().snap_consent_prompt = true;
     harness.run();
-    harness.snapshot_loose("snap_consent_dialog_mode_chosen");
+    harness.snapshot_loose("snap_to_road_consent_dialog_mode_chosen");
 }
 
 /// The one-time auto prompt for uploads acknowledged before auto mode
@@ -8404,7 +7880,7 @@ fn snapshot_snap_consent_dialog_mode_chosen() {
 fn snapshot_snap_auto_prompt() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1024.0, 768.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     harness
         .inner
@@ -8432,14 +7908,14 @@ fn snapshot_snap_auto_prompt() {
     shared.sync_tree_from_loaded_files();
     drop(shared);
     harness.run();
-    harness.snapshot_loose("snap_auto_prompt");
+    harness.snapshot_loose("snap_to_road_auto_prompt");
 }
 
 #[test]
 fn snap_consent_agree_persists_the_server_host() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     assert!(!harness.state().snap_settings.consent_granted());
     harness.state_mut().snap_consent_prompt = true;
@@ -8473,7 +7949,7 @@ fn snap_consent_agree_persists_the_server_host() {
 fn snap_consent_escape_declines_without_persisting() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     harness.state_mut().snap_consent_prompt = true;
     harness.step();
@@ -8508,7 +7984,7 @@ fn snap_consent_escape_declines_without_persisting() {
 fn auto_prompt_appears_once_after_earlier_consent() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     harness.state_mut().snap_settings.acknowledge_consent();
     harness.step();
@@ -8548,7 +8024,7 @@ fn auto_prompt_appears_once_after_earlier_consent() {
 fn auto_without_consent_prompts_before_anything_is_sent() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     harness.state_mut().snap_settings.auto_snap = Some(true);
     harness.step();
@@ -8573,7 +8049,7 @@ fn auto_without_consent_prompts_before_anything_is_sent() {
 fn auto_sweep_is_paused_offline() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     harness.state_mut().snap_settings.acknowledge_consent();
     harness.state_mut().snap_settings.auto_snap = Some(true);
@@ -8594,7 +8070,7 @@ fn auto_sweep_is_paused_offline() {
 fn the_test_harness_opens_no_user_databases() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
 
     assert!(
@@ -8622,11 +8098,7 @@ fn install_interference_archive(
         .open_or_create_archive::<JamStore>()
         .expect("archive");
     for day in days {
-        environment_storage::archive_one_day(
-            &store,
-            EnvironmentArchive::AircraftInterference.day_insert_registration(*day),
-            |archive| archive.insert_day(*day, "host", chrono::Utc::now(), &[]),
-        );
+        test_util::day_archive::archive_an_empty_interference_day(&store, *day);
     }
     install_interference_scheduler(harness, &store);
     (dir, store)
@@ -8665,7 +8137,7 @@ fn app_with_interference_days<'a>(
 ) {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     let (dir, store) = install_interference_archive(&mut harness, days);
     (harness, dir, store)
@@ -8719,7 +8191,7 @@ fn environment_auto_pruning_keeps_the_days_the_loaded_recording_needs() {
     let (mut harness, _dir, store) = app_with_interference_days(&[before_the_recording, recorded]);
     enable_environment_auto_prune(&mut harness, 1);
 
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(minimal_gtd_bytes().as_slice(), "ride.gtd"),
     );
@@ -8779,7 +8251,7 @@ fn closed_the_window(harness: &Harness<'_, App>) -> bool {
 /// over, writes the settings, and closes the window itself.
 #[test]
 fn closing_the_window_takes_the_close_over_and_writes_the_settings() {
-    let (mut harness, config_path) = TestHarness::builder().eframe(build_app);
+    let (mut harness, config_path) = TestHarness::builder().eframe(test_util::harness::build_app);
     harness.inner.step();
     assert!(
         !config_path.exists(),
@@ -8805,7 +8277,7 @@ fn closing_the_window_takes_the_close_over_and_writes_the_settings() {
 #[test]
 fn closing_a_read_only_session_writes_no_settings() {
     let (mut harness, config_path) = TestHarness::builder().eframe(|cc, path, fading| {
-        build_app_with_write_access(cc, path, fading, WriteAccess::ReadOnly)
+        test_util::harness::build_app_with_write_access(cc, path, fading, WriteAccess::ReadOnly)
     });
     harness.inner.step();
 
@@ -8830,7 +8302,7 @@ fn closing_a_read_only_session_writes_no_settings() {
 
 #[test]
 fn a_settings_flush_during_the_run_registers_a_pending_write() {
-    let (mut harness, config_path) = TestHarness::builder().eframe(build_app);
+    let (mut harness, config_path) = TestHarness::builder().eframe(test_util::harness::build_app);
     harness.inner.step();
 
     harness.inner.state_mut().flush_settings();
@@ -8852,7 +8324,7 @@ fn a_settings_flush_during_the_run_registers_a_pending_write() {
 /// `PendingWrites::try_begin_shutdown_write`.
 #[test]
 fn a_settings_flush_after_the_shutdown_flush_writes_nothing() {
-    let (mut harness, config_path) = TestHarness::builder().eframe(build_app);
+    let (mut harness, config_path) = TestHarness::builder().eframe(test_util::harness::build_app);
     harness.inner.step();
     harness.inner.state().pending_writes.begin_shutdown();
 
@@ -8868,7 +8340,7 @@ fn a_settings_flush_after_the_shutdown_flush_writes_nothing() {
 /// the next run to find.
 #[test]
 fn a_settings_flush_that_cannot_replace_the_settings_file_removes_its_temporary() {
-    let (mut harness, config_path) = TestHarness::builder().eframe(build_app);
+    let (mut harness, config_path) = TestHarness::builder().eframe(test_util::harness::build_app);
     harness.inner.step();
     std::fs::create_dir(&config_path).expect("occupy the settings path with a directory");
 
@@ -8890,7 +8362,7 @@ const TEC_COMPACTION: gt_pending_writes::WriteKind =
 fn app_with_a_running_write<'a>() -> (Harness<'a, App>, gt_pending_writes::PendingWriteGuard) {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     let compaction = harness
         .state()
@@ -9225,7 +8697,12 @@ fn app_holding_the_data_directory_over_a_running_write<'a>(
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(move |cc| {
-            transient_app_with_the_instance_lock(cc, &[], instance_lock, pending_writes)
+            test_util::harness::transient_app_with_the_instance_lock(
+                cc,
+                &[],
+                instance_lock,
+                pending_writes,
+            )
         });
     harness.step();
     (harness, compaction)
@@ -9315,9 +8792,9 @@ fn closing_the_window_hands_the_history_worker_to_its_own_thread() {
             let dir = tempfile::tempdir().expect("temp dir");
             let mut harness = Harness::builder()
                 .with_wait_for_pending_images(false)
-                .build_eframe(transient_app);
+                .build_eframe(test_util::harness::transient_app);
             harness.step();
-            let (worker, held_open) = crate::app::history_db::HistoryWorker::spawn_held_open(
+            let (worker, held_open) = test_util::recordings::spawn_worker_held_open(
                 RecordingsHandle::Owner(open_temporary_history_database(
                     &dir.path().join("geotrace.h5"),
                 )),
@@ -9364,7 +8841,7 @@ fn closing_the_window_hands_the_history_worker_to_its_own_thread() {
 fn the_auto_snap_sweep_is_paused_once_the_close_began() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     // A scheduler that queues the way an online run does, over a transport
     // that reaches nothing.
@@ -9503,7 +8980,7 @@ fn push_points_as(
 fn snap_row_views_marks_declared_roadless_modes_unsnappable() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     let boat =
         push_file_with_travel_mode(&mut harness, "boat.gtd", Some(gt_types::TravelMode::Boat));
@@ -9528,7 +9005,7 @@ fn snap_row_views_marks_declared_roadless_modes_unsnappable() {
 fn snap_request_parks_on_consent_and_agree_takes_it() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
 
@@ -9561,7 +9038,7 @@ fn snap_request_parks_on_consent_and_agree_takes_it() {
 fn snap_request_parked_on_consent_is_dropped_on_decline() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
 
@@ -9597,10 +9074,10 @@ fn snap_request_parked_on_consent_is_dropped_on_decline() {
 fn snap_error_series_is_stable_across_frames() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
-    inject_completed_run(&mut harness, track);
+    test_util::snap::inject_completed_run(&mut harness, track);
 
     let first = harness.state_mut().snap_error_view();
     let second = harness.state_mut().snap_error_view();
@@ -9614,7 +9091,7 @@ fn snap_error_series_is_stable_across_frames() {
     );
 
     // A new run for the same track invalidates: fresh points, fresh Arc.
-    inject_completed_run(&mut harness, track);
+    test_util::snap::inject_completed_run(&mut harness, track);
     let third = harness.state_mut().snap_error_view();
     let c = third.points_by_track.get(&track).expect("series present");
     assert!(
@@ -9631,7 +9108,7 @@ fn snap_error_series_is_stable_across_frames() {
 fn costing_override_beats_the_declared_mode() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     let track =
         push_file_with_travel_mode(&mut harness, "boat.gtd", Some(gt_types::TravelMode::Boat));
@@ -9700,7 +9177,7 @@ fn costing_override_reaches_the_dispatched_run() {
 
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     harness.state_mut().snap_settings.acknowledge_consent();
     let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
@@ -9764,28 +9241,17 @@ fn costing_override_reaches_the_dispatched_run() {
     assert!(cached(Costing::Auto), "the other costing's run is kept");
 }
 
-/// Whether the scheduler still holds a cached auto-costing run for `track`.
-fn has_cached_auto_run(harness: &Harness<'_, App>, track: gt_types::TrackRef) -> bool {
-    let state = harness.state();
-    let shared = state.shared.borrow();
-    let loaded = track.resolve(shared.loaded_files.files()).expect("track");
-    state.snap.has_cached_run(
-        loaded,
-        state.snap_settings.params(gt_snap::wire::Costing::Auto),
-    )
-}
-
 /// A harness whose single track already has a cached auto-costing run,
 /// with the auto choice requested and its dialog on screen.
 fn harness_prompting_to_replace_the_auto_run<'a>() -> (Harness<'a, App>, gt_types::TrackRef) {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     harness.state_mut().snap_settings.acknowledge_consent();
     let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
     harness.step();
-    inject_completed_run(&mut harness, track);
+    test_util::snap::inject_completed_run(&mut harness, track);
     harness.state_mut().handle_snap_costing_request(
         gt_side_panel::SnapCostingTarget::Track(track),
         gt_ui_types::SnapCosting::Auto,
@@ -9821,7 +9287,7 @@ fn costing_choice_with_a_cached_run_prompts_before_replacing_it() {
 
     assert!(harness.state().snap_replace_prompt.is_none());
     assert!(
-        has_cached_auto_run(&harness, track),
+        test_util::snap::has_cached_auto_run(&harness, track),
         "cancelling keeps the stored run"
     );
 }
@@ -9838,33 +9304,9 @@ fn confirming_the_replace_prompt_discards_the_cached_run() {
 
     assert!(harness.state().snap_replace_prompt.is_none());
     assert!(
-        !has_cached_auto_run(&harness, track),
+        !test_util::snap::has_cached_auto_run(&harness, track),
         "the confirmed choice must reach the server, not the cache"
     );
-}
-
-/// Add `track` to the panel's selection, as clicking its row would.
-fn select_track(harness: &mut Harness<'_, App>, track: gt_types::TrackRef) {
-    let state = harness.state_mut();
-    let mut shared = state.shared.borrow_mut();
-    shared
-        .tree
-        .selection
-        .insert(gt_side_panel::NodeKey::Track(track));
-}
-
-/// The session costing override stored for `track`, if any.
-fn costing_override(
-    harness: &Harness<'_, App>,
-    track: gt_types::TrackRef,
-) -> Option<gt_snap::wire::Costing> {
-    let state = harness.state();
-    let shared = state.shared.borrow();
-    let loaded = track.resolve(shared.loaded_files.files())?;
-    state
-        .snap_costing_overrides
-        .get(&crate::app::snap::TrackContentKey::new(loaded))
-        .copied()
 }
 
 /// The scope dialog's counts separate the recording's selected tracks from
@@ -9873,12 +9315,12 @@ fn costing_override(
 fn recording_scope_counts_separate_selected_from_all() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     let fi = push_two_track_file(&mut harness, "tour.gtd");
     harness.step();
     let second = gt_types::TrackRef::new(fi, gt_types::TrackIdx::new(1));
-    inject_completed_run(
+    test_util::snap::inject_completed_run(
         &mut harness,
         gt_types::TrackRef::new(fi, gt_types::TrackIdx::new(0)),
     );
@@ -9893,7 +9335,7 @@ fn recording_scope_counts_separate_selected_from_all() {
         crate::app::modals::SnapScopeCount::default()
     );
 
-    select_track(&mut harness, second);
+    test_util::snap::select_track(&mut harness, second);
     let counts = harness.state().snap_scope_counts(prompt);
     assert_eq!(
         counts.selected,
@@ -9921,15 +9363,15 @@ fn recording_scope_counts_separate_selected_from_all() {
 fn recording_scope_dialog_snaps_the_chosen_scope(#[case] button: &str, #[case] expected: &[usize]) {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     harness.state_mut().snap_settings.acknowledge_consent();
     let fi = push_two_track_file(&mut harness, "tour.gtd");
     harness.step();
     let track = |ti| gt_types::TrackRef::new(fi, gt_types::TrackIdx::new(ti));
-    inject_completed_run(&mut harness, track(0));
-    inject_completed_run(&mut harness, track(1));
-    select_track(&mut harness, track(1));
+    test_util::snap::inject_completed_run(&mut harness, track(0));
+    test_util::snap::inject_completed_run(&mut harness, track(1));
+    test_util::snap::select_track(&mut harness, track(1));
 
     harness.state_mut().handle_snap_costing_request(
         gt_side_panel::SnapCostingTarget::Recording(fi),
@@ -9945,12 +9387,12 @@ fn recording_scope_dialog_snaps_the_chosen_scope(#[case] button: &str, #[case] e
     for ti in 0..2 {
         let in_scope = expected.contains(&ti);
         assert_eq!(
-            costing_override(&harness, track(ti)),
+            test_util::snap::costing_override(&harness, track(ti)),
             in_scope.then_some(gt_snap::wire::Costing::Auto),
             "track {ti} override"
         );
         assert_eq!(
-            has_cached_auto_run(&harness, track(ti)),
+            test_util::snap::has_cached_auto_run(&harness, track(ti)),
             !in_scope,
             "track {ti} cached run"
         );
@@ -9964,13 +9406,13 @@ fn recording_scope_dialog_snaps_the_chosen_scope(#[case] button: &str, #[case] e
 fn recording_scope_parks_the_whole_batch_on_one_consent_dialog() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     let fi = push_two_track_file(&mut harness, "tour.gtd");
     harness.step();
     let track = |ti| gt_types::TrackRef::new(fi, gt_types::TrackIdx::new(ti));
-    inject_completed_run(&mut harness, track(0));
-    inject_completed_run(&mut harness, track(1));
+    test_util::snap::inject_completed_run(&mut harness, track(0));
+    test_util::snap::inject_completed_run(&mut harness, track(1));
 
     harness.state_mut().handle_snap_costing_request(
         gt_side_panel::SnapCostingTarget::Recording(fi),
@@ -9986,7 +9428,7 @@ fn recording_scope_parks_the_whole_batch_on_one_consent_dialog() {
     assert_eq!(harness.state().pending_snap.track_refs.len(), 2);
     for ti in 0..2 {
         assert!(
-            has_cached_auto_run(&harness, track(ti)),
+            test_util::snap::has_cached_auto_run(&harness, track(ti)),
             "track {ti} keeps its run until consent"
         );
     }
@@ -9999,7 +9441,7 @@ fn recording_scope_parks_the_whole_batch_on_one_consent_dialog() {
     assert!(harness.state().pending_snap.track_refs.is_empty());
     for ti in 0..2 {
         assert!(
-            !has_cached_auto_run(&harness, track(ti)),
+            !test_util::snap::has_cached_auto_run(&harness, track(ti)),
             "track {ti} runs once the batch is released"
         );
     }
@@ -10014,7 +9456,7 @@ fn snap_runs_persist_and_restore_through_the_app() {
     use geotrace_sdk::{
         Angle, DateTime, Duration as SdkDuration, NavFileBuilder, NavFix, NavFixTime,
     };
-    use gt_store::{HistoryDatabase, Recordings, StoredSegmentation, TrackRange, TrackState};
+    use gt_store::{HistoryDatabase, Recordings};
 
     // One real recording so the blob has a valid group to live in.
     let t0 = DateTime::from_timestamp(1_000, 0).expect("valid timestamp");
@@ -10037,25 +9479,12 @@ fn snap_runs_persist_and_restore_through_the_app() {
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Recordings::open_or_create(&db_path).expect("open");
     let meta = gt_store::extract_meta(&bytes).expect("meta");
-    let tracks = [TrackRange {
-        start: 0,
-        end: meta.nav_point_count,
-        state: TrackState::Live,
-    }];
-    let settings = StoredSegmentation {
-        track_split_gap_us: 300_000_000,
-        track_split_rule: gt_store::StoredTrackSplitRule::StepInEitherDirection,
-        fix_placement_rule: gt_store::StoredFixPlacementRule::MissingHeadingAndNothingInFix,
-        detect_clock_discontinuities: false,
-        clock_discontinuity_sigmas: 5.0,
-    };
-    let db_ref = db
-        .insert("dev", &meta, &tracks, settings, &bytes)
-        .expect("insert");
+    let db_ref =
+        test_util::recordings::insert_recording_as_one_whole_file_track(&mut db, "dev", &bytes);
 
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     harness.state_mut().history = crate::app::history_db::HistoryWorker::spawn(
         RecordingsHandle::Owner(Recordings::open_or_create(&db_path).expect("reopen")),
@@ -10071,7 +9500,7 @@ fn snap_runs_persist_and_restore_through_the_app() {
         None,
         gt_loaded_files::FileHistory::recording("dev".to_owned(), meta, Some(db_ref.clone())),
     );
-    inject_completed_run(&mut harness, track);
+    test_util::snap::inject_completed_run(&mut harness, track);
 
     // Persist leg: the worker writes the recording's blob.
     let content = {
@@ -10116,93 +9545,16 @@ fn snap_runs_persist_and_restore_through_the_app() {
     assert_eq!(restored.result.points.len(), 60);
 }
 
-/// Inject a completed run for `track` straight into the scheduler cache,
-/// keyed the way the app's view builders look it up: one snapped segment for
-/// the map, and per-point results for the plot - errors for the first sixty
-/// points with an unsnapped stretch at indices 20..25, so the snap error
-/// series has a line break and markers to show.
-fn inject_completed_run(harness: &mut Harness<'_, App>, track: gt_types::TrackRef) {
-    use crate::app::snap::{SnapCacheKey, SnapRun};
-    use gt_snap::merge::{SnapPoint, SnapResult};
-    use gt_snap::snapped_track::{Position, SnappedTrackSegment};
-    use gt_snap::wire::{Costing, SnapPointKind};
-
-    let points: Vec<SnapPoint> = (0..60)
-        .map(|i| {
-            let kind = if (20..25).contains(&i) {
-                SnapPointKind::Unsnapped
-            } else if i % 2 == 0 {
-                SnapPointKind::Snapped
-            } else {
-                SnapPointKind::Interpolated
-            };
-            SnapPoint {
-                point: gt_types::PointIdx::new(i),
-                kind,
-                error_m: (kind != SnapPointKind::Unsnapped)
-                    .then(|| 2.0 + f64::from(u8::try_from(i % 7).unwrap_or(0))),
-                snapped: None,
-                edge: None,
-                follows_gap: i == 0,
-            }
-        })
-        .collect();
-    let result = SnapResult {
-        points,
-        segments: vec![SnappedTrackSegment {
-            positions: vec![
-                Position {
-                    lat: 55.68,
-                    lon: 12.56,
-                },
-                Position {
-                    lat: 55.69,
-                    lon: 12.57,
-                },
-            ],
-            edge_spans: Vec::new(),
-            recorded_points: Vec::new(),
-        }],
-        edges: Vec::new(),
-        kind_counts: gt_snap::merge::SnapKindCounts::default(),
-        confidence_score: None,
-        osm_changeset: None,
-        params: gt_snap::request_plan::SnapParams::new(Costing::Auto),
-        gps_accuracy_sent_m: None,
-        partial: false,
-    };
-    let key = {
-        let state = harness.state();
-        let shared = state.shared.borrow();
-        let loaded_track = track
-            .resolve(shared.loaded_files.files())
-            .expect("track just pushed");
-        SnapCacheKey::new(
-            loaded_track,
-            gt_snap::request_plan::SnapParams::new(Costing::Auto),
-            gt_snap::server_host(gt_snap::DEFAULT_SERVER_URL),
-        )
-    };
-    harness.state_mut().snap.insert_run(
-        key,
-        SnapRun::new(
-            result,
-            Vec::new(),
-            gt_snap::server_host(gt_snap::DEFAULT_SERVER_URL),
-        ),
-    );
-}
-
 /// The map's snapped-track geometry follows the completed run's toggle and
 /// the track's tree visibility - hidden either way means no entry.
 #[test]
 fn snapped_tracks_view_respects_toggle_and_tree_visibility() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
-    inject_completed_run(&mut harness, track);
+    test_util::snap::inject_completed_run(&mut harness, track);
 
     let view = harness.state().snapped_tracks_view();
     let geometry = view
@@ -10272,8 +9624,8 @@ fn snapshot_app_plot_clock_excursion() {
     let gtd_bytes = clock_excursion_gtd_bytes();
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(gtd_bytes.as_slice(), "ride.gtd"),
     );
@@ -10302,13 +9654,13 @@ fn snapshot_app_plot_snap_error() {
     let gtd_bytes = minimal_gtd_bytes();
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(gtd_bytes.as_slice(), "ride.gtd"),
     );
     let track = gt_types::TrackRef::new(gt_types::FileIdx::new(0), gt_types::TrackIdx::new(0));
-    inject_completed_run(&mut harness, track);
+    test_util::snap::inject_completed_run(&mut harness, track);
     harness.run_steps(5);
 
     {
@@ -10343,44 +9695,6 @@ fn listed_track_warnings(harness: &Harness<'_, App>) -> Vec<(String, Vec<String>
         .collect()
 }
 
-/// A Kp day archived as the fetch worker leaves one: eight three-hour periods
-/// climbing from `first_period_index` through the storm levels.
-fn archive_kp_day(
-    store: &gt_store::GeomagneticIndexArchive,
-    day: chrono::NaiveDate,
-    first_period_index: f64,
-) {
-    let midnight = day.and_time(chrono::NaiveTime::MIN).and_utc();
-    let samples = (0..8_u32)
-        .map(|period| gt_solar::series::KpSample {
-            period_start: midnight + chrono::TimeDelta::hours(i64::from(period) * 3),
-            activity: gt_solar::activity::GeomagneticActivity::from_published_value(
-                gt_solar::GeomagneticIndex::Kp,
-                first_period_index + f64::from(period % 5),
-            ),
-            status: gt_solar::series::KpStatus::Definitive,
-        })
-        .collect();
-    environment_storage::archive_one_day(
-        store,
-        EnvironmentArchive::GeomagneticIndices.day_insert_registration(day),
-        |archive| {
-            archive.insert_or_replace_kp_day(
-                day,
-                "host",
-                Utc::now(),
-                &gt_solar::series::KpSeries { samples },
-            )?;
-            archive.insert_or_replace_hp30_day(
-                day,
-                "host",
-                Utc::now(),
-                &gt_solar::series::Hp30Series { samples: vec![] },
-            )
-        },
-    );
-}
-
 /// The Kp line is drawn from the archive across the whole span the plot
 /// shows: it runs past both ends of the recording into the margins, and
 /// breaks over the day nothing is archived for while the recording runs
@@ -10403,8 +9717,8 @@ fn snapshot_app_plot_context_line_spans_the_archived_days() {
     });
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(gtd_bytes.as_slice(), "ride.gtd"),
     );
@@ -10418,7 +9732,7 @@ fn snapshot_app_plot_context_line_spans_the_archived_days() {
     let recorded = base_time().date_naive();
     for offset in [-1_i64, 0, 2, 3, 4] {
         let day = recorded + chrono::TimeDelta::days(offset);
-        archive_kp_day(&store, day, 2.0);
+        test_util::day_archive::archive_kp_day(&store, day, 2.0);
     }
     let ctx = harness.ctx.clone();
     harness.state_mut().geomagnetic_indices = crate::app::solar::GeomagneticIndexScheduler::new(
@@ -10455,8 +9769,8 @@ fn a_storm_day_archived_after_the_load_warns_on_the_map() {
     let gtd_bytes = minimal_gtd_bytes();
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(gtd_bytes.as_slice(), "ride.gtd"),
     );
@@ -10474,7 +9788,7 @@ fn a_storm_day_archived_after_the_load_warns_on_the_map() {
     let store = gt_store::Store::open_in(dir.path())
         .open_or_create_archive::<SolarStore>()
         .expect("archive");
-    archive_kp_day(&store, base_time().date_naive(), 2.0);
+    test_util::day_archive::archive_kp_day(&store, base_time().date_naive(), 2.0);
     let ctx = harness.ctx.clone();
     harness.state_mut().geomagnetic_indices = crate::app::solar::GeomagneticIndexScheduler::new(
         ctx,
@@ -10503,46 +9817,6 @@ fn a_storm_day_archived_after_the_load_warns_on_the_map() {
     );
 }
 
-/// Archive one UTC day of TEC maps over the recording's own position, every
-/// node standing at `tecu`, two hours apart.
-fn archive_tec_day(store: &gt_store::TecMapArchive, day: chrono::NaiveDate, tecu: f64) {
-    let axis = |first_degrees: f64, last_degrees: f64, step_degrees: f64| {
-        gt_ionex::grid::GridAxis::new(gt_ionex::grid::AxisDeclaration {
-            first_degrees,
-            last_degrees,
-            step_degrees,
-        })
-        .expect("axis")
-    };
-    let grid = gt_ionex::grid::MapGrid {
-        latitudes: gt_ionex::grid::LatitudeAxis::new(axis(55.0, 50.0, -2.5)),
-        longitudes: gt_ionex::grid::LongitudeAxis::new(axis(-5.0, 5.0, 5.0)),
-        shell_height_km: 450.0,
-    };
-    let midnight = day.and_time(chrono::NaiveTime::MIN).and_utc();
-    let maps = (0..=12)
-        .map(|step| {
-            gt_ionex::maps::TecMap::new(
-                midnight + chrono::TimeDelta::hours(step * 2),
-                vec![vec![Some(gt_ionex::tec::TotalElectronContent::from_tecu(tecu)); 3]; 3],
-            )
-        })
-        .collect();
-    environment_storage::archive_one_day(
-        store,
-        EnvironmentArchive::IonosphericTec.day_insert_registration(day),
-        |archive| {
-            archive.insert_or_replace_day(
-                day,
-                "host",
-                Utc::now(),
-                gt_ionex::IonexProduct::Final,
-                &gt_ionex::maps::GlobalIonosphereMaps::new(grid, chrono::TimeDelta::hours(2), maps),
-            )
-        },
-    );
-}
-
 /// The quiet-time window before a loaded recording arrives after it: the map
 /// indicator states the deviation and the load toast is raised once, however
 /// many frames follow.
@@ -10551,8 +9825,8 @@ fn a_tec_window_archived_after_the_load_warns_on_the_map() {
     let gtd_bytes = minimal_gtd_bytes();
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(gtd_bytes.as_slice(), "ride.gtd"),
     );
@@ -10571,9 +9845,9 @@ fn a_tec_window_archived_after_the_load_warns_on_the_map() {
         .open_or_create_archive::<IonexStore>()
         .expect("archive");
     let recorded = base_time().date_naive();
-    archive_tec_day(&store, recorded, 35.0);
+    test_util::day_archive::archive_tec_day(&store, recorded, 35.0);
     for days_before in 1..=gt_ionex::quiet_time::BACKGROUND_WINDOW_DAYS as i64 {
-        archive_tec_day(
+        test_util::day_archive::archive_tec_day(
             &store,
             recorded - chrono::TimeDelta::days(days_before),
             20.0,
@@ -10616,7 +9890,7 @@ fn a_tec_window_archived_after_the_load_warns_on_the_map() {
     let indices = gt_store::Store::open_in(indices_dir.path())
         .open_or_create_archive::<SolarStore>()
         .expect("archive");
-    archive_kp_day(&indices, recorded - chrono::TimeDelta::days(1), 5.0);
+    test_util::day_archive::archive_kp_day(&indices, recorded - chrono::TimeDelta::days(1), 5.0);
     let ctx = harness.ctx.clone();
     harness.state_mut().geomagnetic_indices = crate::app::solar::GeomagneticIndexScheduler::new(
         ctx,
@@ -10642,35 +9916,6 @@ fn a_tec_window_archived_after_the_load_warns_on_the_map() {
     );
 }
 
-/// The flares of the May 2024 storm, as the fetch worker archives a day:
-/// classes spread across the scale so each marker colour is drawn.
-fn archive_flare_day(
-    store: &gt_store::SolarFlareArchive,
-    day: chrono::NaiveDate,
-    peaks: &[(u32, &str)],
-) {
-    let flares: Vec<gt_flare::SolarFlare> = peaks
-        .iter()
-        .map(|&(hour, class_type)| {
-            let peak = day.and_hms_opt(hour, 13, 0).unwrap_or_default().and_utc();
-            gt_flare::SolarFlare {
-                id: format!("{peak}-FLR-001"),
-                begin: peak - chrono::TimeDelta::minutes(28),
-                peak,
-                end: Some(peak + chrono::TimeDelta::minutes(23)),
-                classification: class_type.parse().expect("a published class"),
-                source_location: Some("S20W25".to_owned()),
-                active_region: Some(13664),
-            }
-        })
-        .collect();
-    environment_storage::archive_one_day(
-        store,
-        EnvironmentArchive::SolarFlares.day_insert_registration(day),
-        |archive| archive.insert_or_replace_day(day, "host", Utc::now(), &flares),
-    );
-}
-
 /// A harness with a recording loaded and an archive of flares behind it,
 /// returning the temp directory the archive lives in.
 fn harness_with_archived_flares<'a>(
@@ -10692,8 +9937,8 @@ fn harness_with_archived_flares<'a>(
     });
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(gtd_bytes.as_slice(), "ride.gtd"),
     );
@@ -10704,7 +9949,11 @@ fn harness_with_archived_flares<'a>(
         .expect("archive");
     let recorded = base_time().date_naive();
     for &(offset, peaks) in archived {
-        archive_flare_day(&store, recorded + chrono::TimeDelta::days(offset), peaks);
+        test_util::day_archive::archive_flare_day(
+            &store,
+            recorded + chrono::TimeDelta::days(offset),
+            peaks,
+        );
     }
     let ctx = harness.ctx.clone();
     harness.state_mut().solar_flares = crate::app::flares::SolarFlareScheduler::new(
@@ -10791,8 +10040,8 @@ fn snap_error_chip_is_disabled_until_a_run_completes() {
     let gtd_bytes = minimal_gtd_bytes();
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(gtd_bytes.as_slice(), "ride.gtd"),
     );
@@ -10805,7 +10054,7 @@ fn snap_error_chip_is_disabled_until_a_run_completes() {
         "the chip must render disabled while no run has completed"
     );
 
-    inject_completed_run(&mut harness, track);
+    test_util::snap::inject_completed_run(&mut harness, track);
     harness.run_steps(3);
     let chip = harness.get_by_label("Snap error (m)");
     assert!(
@@ -10820,10 +10069,10 @@ fn snap_error_chip_is_disabled_until_a_run_completes() {
 fn snap_error_view_resolves_point_times_and_kinds() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
-    inject_completed_run(&mut harness, track);
+    test_util::snap::inject_completed_run(&mut harness, track);
 
     let view = harness.state_mut().snap_error_view();
     let points = view
@@ -10853,7 +10102,7 @@ fn snap_error_view_resolves_point_times_and_kinds() {
 fn snapshot_about_dialog() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1024.0, 768.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     harness.inner.state_mut().about_open = true;
     harness.run();
@@ -10881,7 +10130,7 @@ fn snapshot_about_dialog() {
 fn snapshot_file_menu_open() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(400.0, 300.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     harness.inner.get_by_label("File").click();
     harness.run();
@@ -10894,7 +10143,7 @@ fn snapshot_file_menu_open() {
 fn file_menu_opens_about_dialog() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
 
     harness.get_by_label("File").click();
@@ -10917,7 +10166,7 @@ fn the_about_dialog_shows_the_text_cursor_only_over_the_version(
 ) {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     harness.state_mut().about_open = true;
     harness.run_steps(2);
@@ -10936,7 +10185,7 @@ fn the_about_dialog_shows_the_text_cursor_only_over_the_version(
 fn about_dialog_closes_on_escape() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     harness.state_mut().about_open = true;
     harness.step();
@@ -10957,7 +10206,7 @@ fn about_dialog_closes_on_escape() {
 fn snapshot_recording_details_dialog() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1024.0, 768.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     // The recorded time reads well short of the range it covers: this
     // recording idled between its tracks.
@@ -11020,7 +10269,10 @@ fn recording_bytes_alongside_the_log(start_lat_deg: f64) -> Vec<u8> {
 }
 
 fn drop_log_and_wait_for_load(harness: &mut Harness<App>, text: &str, name: &str) {
-    drop_file_and_wait_for_load(harness, TestDroppedFile::bytes(text.as_bytes(), name));
+    test_util::harness::drop_file_and_wait_for_load(
+        harness,
+        TestDroppedFile::bytes(text.as_bytes(), name),
+    );
 }
 
 /// Drops a log and confirms the association dialog it raises: the log is left
@@ -11037,7 +10289,7 @@ fn drop_log_and_associate_it(harness: &mut Harness<App>, text: &str, name: &str)
 fn app_with_a_log_loaded() -> Harness<'static, App> {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     drop_log_and_wait_for_load(&mut harness, &synthetic_log(64 * 1024), "navsyncd.log");
     harness.run_steps(3);
     harness
@@ -11142,7 +10394,7 @@ fn dropping_a_log_the_session_already_holds_shows_the_loaded_one() {
 fn a_drag_over_the_app_shows_the_hint_naming_every_way_a_log_gets_in() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     assert!(
         harness.query_by_label(log_viewer::LOG_LOAD_HINT).is_none(),
@@ -11181,7 +10433,7 @@ fn paste_and_wait_for_load(harness: &mut Harness<App>, text: &str) {
 fn pasting_log_text_loads_it_named_after_its_first_entry() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
 
     paste_and_wait_for_load(&mut harness, PASTED_LOG);
@@ -11204,7 +10456,7 @@ fn pasting_log_text_loads_it_named_after_its_first_entry() {
 fn pasting_into_a_focused_field_reaches_the_field_and_loads_no_log() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
     harness.state_mut().query_window.open = true;
     harness.run_steps(2);
@@ -11230,7 +10482,7 @@ fn pasting_into_a_focused_field_reaches_the_field_and_loads_no_log() {
 fn pasting_empty_text_loads_no_log() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
+        .build_eframe(test_util::harness::transient_app);
     harness.step();
 
     harness
@@ -11249,8 +10501,8 @@ fn pasting_empty_text_loads_no_log() {
 fn dropping_a_log_that_is_not_utf8_states_the_replacement_in_its_summary() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(
             b"2026-01-01 14:02:11 navsyncd: caf\xe9 open\n".as_slice(),
@@ -11326,10 +10578,10 @@ fn clicking_the_parse_summary_unfolds_the_boots_and_the_service_table() {
 fn snapshot_app_log_viewer() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
 
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         recording_alongside_the_log("walk.gtd", 55.0),
     );
@@ -11493,10 +10745,10 @@ fn the_log_filter_wait_runs_until_the_scan_the_keystroke_started_lands() {
 fn snapshot_app_log_viewer_filters() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
 
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         recording_alongside_the_log("walk.gtd", 55.0),
     );
@@ -11530,7 +10782,7 @@ fn snapshot_log_association_dialog() {
     let dir = tempfile::tempdir().expect("temp dir");
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     harness.inner.state_mut().history = crate::app::history_db::HistoryWorker::spawn(
         RecordingsHandle::Owner(open_temporary_history_database(
@@ -11542,11 +10794,11 @@ fn snapshot_log_association_dialog() {
     harness.inner.state_mut().sync_db_path();
     harness.inner.state_mut().history.hide_path();
 
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         recording_alongside_the_log("walk.gtd", 55.0),
     );
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         recording_a_day_after_the_log("drive.gtd"),
     );
@@ -11601,9 +10853,9 @@ fn recording_a_day_after_the_log(name: &str) -> TestDroppedFile {
 fn a_layer_chip_puts_the_lines_it_matched_on_the_map() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         recording_alongside_the_log("walk.gtd", 55.0),
     );
@@ -11639,10 +10891,10 @@ fn a_layer_chip_puts_the_lines_it_matched_on_the_map() {
 fn snapshot_app_log_map_hexagons() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app_on_captured_tiles);
+        .eframe(test_util::harness::build_app_on_captured_tiles);
     harness.inner.step();
 
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness.inner,
         recording_alongside_the_log("walk.gtd", 55.0),
     );
@@ -11671,8 +10923,11 @@ fn snapshot_app_log_map_hexagons() {
 fn unloading_a_recording_outside_history_unloads_the_logs_anchored_to_it() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
+        &mut harness,
+        recording_alongside_the_log("walk.gtd", 55.0),
+    );
     drop_log_and_associate_it(&mut harness, &synthetic_log(8 * 1024), "navsyncd.log");
     harness.run_steps(3);
     assert!(
@@ -11695,12 +10950,12 @@ fn unloading_a_recording_outside_history_unloads_the_logs_anchored_to_it() {
 fn choosing_a_target_in_the_footer_associates_the_log_against_it() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         recording_alongside_the_log("walk_a.gtd", 55.0),
     );
-    drop_file_and_wait_for_load(
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         recording_alongside_the_log("walk_b.gtd", 60.0),
     );
@@ -11756,7 +11011,7 @@ mod log_association {
     fn app_over_a_history_database(db_path: &std::path::Path) -> Harness<'static, App> {
         let mut harness = Harness::builder()
             .with_wait_for_pending_images(false)
-            .build_eframe(transient_app);
+            .build_eframe(test_util::harness::transient_app);
         harness.step();
         harness.state_mut().history = HistoryWorker::spawn(
             RecordingsHandle::Owner(open_temporary_history_database(db_path)),
@@ -11835,7 +11090,10 @@ mod log_association {
         db_path: &std::path::Path,
     ) -> (Harness<'static, App>, gt_store::DatabaseRef) {
         let mut harness = app_over_a_history_database(db_path);
-        drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+        test_util::harness::drop_file_and_wait_for_load(
+            &mut harness,
+            recording_alongside_the_log("walk.gtd", 55.0),
+        );
         let db_ref = stored_recording(&harness);
         drop_the_log(&mut harness);
         (harness, db_ref)
@@ -11888,8 +11146,11 @@ mod log_association {
     fn confirming_the_dialog_associates_the_log_with_the_preselected_recording() {
         let mut harness = Harness::builder()
             .with_wait_for_pending_images(false)
-            .build_eframe(transient_app);
-        drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+            .build_eframe(test_util::harness::transient_app);
+        test_util::harness::drop_file_and_wait_for_load(
+            &mut harness,
+            recording_alongside_the_log("walk.gtd", 55.0),
+        );
         drop_the_log(&mut harness);
 
         assert!(dialog_is_open(&harness), "a loaded log raises the dialog");
@@ -11918,12 +11179,12 @@ mod log_association {
     fn several_overlapping_recordings_leave_the_dialog_without_a_preselection() {
         let mut harness = Harness::builder()
             .with_wait_for_pending_images(false)
-            .build_eframe(transient_app);
-        drop_file_and_wait_for_load(
+            .build_eframe(test_util::harness::transient_app);
+        test_util::harness::drop_file_and_wait_for_load(
             &mut harness,
             recording_alongside_the_log("walk_a.gtd", 55.0),
         );
-        drop_file_and_wait_for_load(
+        test_util::harness::drop_file_and_wait_for_load(
             &mut harness,
             recording_alongside_the_log("walk_b.gtd", 60.0),
         );
@@ -11948,8 +11209,11 @@ mod log_association {
     fn cancelling_the_dialog_loads_the_log_untargeted() {
         let mut harness = Harness::builder()
             .with_wait_for_pending_images(false)
-            .build_eframe(transient_app);
-        drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+            .build_eframe(test_util::harness::transient_app);
+        test_util::harness::drop_file_and_wait_for_load(
+            &mut harness,
+            recording_alongside_the_log("walk.gtd", 55.0),
+        );
         drop_the_log(&mut harness);
 
         cancel(&mut harness);
@@ -11970,8 +11234,11 @@ mod log_association {
     fn escape_cancels_the_dialog_and_leaves_the_viewer_open() {
         let mut harness = Harness::builder()
             .with_wait_for_pending_images(false)
-            .build_eframe(transient_app);
-        drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+            .build_eframe(test_util::harness::transient_app);
+        test_util::harness::drop_file_and_wait_for_load(
+            &mut harness,
+            recording_alongside_the_log("walk.gtd", 55.0),
+        );
         drop_the_log(&mut harness);
         assert!(dialog_is_open(&harness));
 
@@ -12016,7 +11283,7 @@ mod log_association {
         .expect("the attribute is writable");
         drop(db);
 
-        drop_a_stored_recording_and_load_it_from_disk(
+        test_util::harness::drop_a_stored_recording_and_load_it_from_disk(
             &mut harness,
             recording_alongside_the_log("walk.gtd", 55.0),
         );
@@ -12040,8 +11307,11 @@ mod log_association {
     fn dont_show_this_again_leaves_the_unambiguous_case_to_associate_by_itself() {
         let mut harness = Harness::builder()
             .with_wait_for_pending_images(false)
-            .build_eframe(transient_app);
-        drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+            .build_eframe(test_util::harness::transient_app);
+        test_util::harness::drop_file_and_wait_for_load(
+            &mut harness,
+            recording_alongside_the_log("walk.gtd", 55.0),
+        );
         drop_the_log(&mut harness);
 
         harness
@@ -12119,14 +11389,11 @@ mod log_association {
         assert_eq!(harness.state().logs.len(), 0);
 
         // Opening the recording again restores the log it carries.
-        drop_a_stored_recording_and_load_it_from_disk(
+        test_util::harness::drop_a_stored_recording_and_load_it_from_disk(
             &mut harness,
             recording_alongside_the_log("walk.gtd", 55.0),
         );
-        assert!(
-            harness.step_until(|harness| harness.state().logs.len() == 1),
-            "the attached log came back with the recording"
-        );
+        test_util::harness::step_until_a_log_is_loaded(&mut harness);
         let restored = harness
             .state()
             .first_log()
@@ -12185,10 +11452,7 @@ mod log_association {
         harness
             .get_by_label(log_viewer::log_list::LOAD_ATTACHMENT_LABEL)
             .click();
-        assert!(
-            harness.step_until(|harness| harness.state().logs.len() == 1),
-            "the attachment came back as a loaded log"
-        );
+        test_util::harness::step_until_a_log_is_loaded(&mut harness);
 
         assert_eq!(
             harness
@@ -12577,10 +11841,7 @@ mod log_association {
 
         open_the_stored_log(&harness, &db_ref, stored);
 
-        assert!(
-            harness.step_until(|harness| harness.state().logs.len() == 1),
-            "the log the history window opened is loaded"
-        );
+        test_util::harness::step_until_a_log_is_loaded(&mut harness);
         assert_eq!(
             harness
                 .state()
@@ -12620,7 +11881,7 @@ mod log_association {
         let (db_ref, stored) = seed_a_recording_and_the_log_stored_with_it(&db_path);
         let mut harness = app_over_a_history_database(&db_path);
         open_the_stored_log(&harness, &db_ref, stored);
-        assert!(harness.step_until(|harness| harness.state().logs.len() == 1));
+        test_util::harness::step_until_a_log_is_loaded(&mut harness);
         let loaded = harness.state().logs.first_id();
         harness.state_mut().toasts.dismiss_all_toasts();
 
@@ -12644,7 +11905,7 @@ mod log_association {
         let (db_ref, stored) = seed_a_recording_and_the_log_stored_with_it(&db_path);
         let mut harness = app_over_a_history_database(&db_path);
         open_the_stored_log(&harness, &db_ref, stored);
-        assert!(harness.step_until(|harness| harness.state().logs.len() == 1));
+        test_util::harness::step_until_a_log_is_loaded(&mut harness);
         harness.run_steps(3);
         harness.get_by_label("Anchored to walk.gtd (not loaded)");
 
@@ -12652,10 +11913,7 @@ mod log_association {
             .get_by_label(log_viewer::LOAD_RECORDING_LABEL)
             .click();
 
-        assert!(
-            harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1),
-            "the recording the log is anchored to opened from history"
-        );
+        test_util::harness::step_until_a_recording_is_loaded(&mut harness);
         assert!(
             harness.step_until(|harness| harness
                 .state()
@@ -12728,7 +11986,7 @@ mod log_association {
         {
             std::fs::remove_file(entry.path()).expect("the stored log is removable");
         }
-        drop_a_stored_recording_and_load_it_from_disk(
+        test_util::harness::drop_a_stored_recording_and_load_it_from_disk(
             &mut harness,
             recording_alongside_the_log("walk.gtd", 55.0),
         );
@@ -12779,7 +12037,10 @@ mod log_association {
         let dir = tempfile::tempdir().expect("temp dir");
         let db_path = dir.path().join("geotrace.h5");
         let mut harness = app_over_a_history_database(&db_path);
-        drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+        test_util::harness::drop_file_and_wait_for_load(
+            &mut harness,
+            recording_alongside_the_log("walk.gtd", 55.0),
+        );
         let db_ref = stored_recording(&harness);
         drop_the_log(&mut harness);
 
@@ -12997,7 +12258,9 @@ fn every_app_window_fits_the_audit_viewports(
     )]
     viewport: egui::Vec2,
 ) {
-    let (mut harness, _config_path) = TestHarness::builder().size(viewport).eframe(build_app);
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(viewport)
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     window.open_on(harness.inner.state_mut());
     harness.inner.run_steps(8);
@@ -13025,7 +12288,9 @@ fn the_update_prompt_fits_the_audit_viewports(
     viewport: egui::Vec2,
 ) {
     let window = gt_test_utils::AuditedWindow::titled(super::update::UPDATE_DIALOG_TITLE);
-    let (mut harness, _config_path) = TestHarness::builder().size(viewport).eframe(build_app);
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(viewport)
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     harness.inner.state_mut().update_checker =
         super::update::UpdateChecker::available_for_test(&gt_test_utils::oversized_text('a'), true);
@@ -13051,8 +12316,8 @@ fn the_match_list_window_fits_the_audit_viewports(
     let mut harness = Harness::builder()
         .with_size(viewport)
         .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
     );
@@ -13093,7 +12358,9 @@ fn app_with_a_batch_of_load_jobs(
     running: RunningJobCount,
     finished: FinishedJobCount,
 ) -> TestHarness<'static, App> {
-    let (mut harness, _config_path) = TestHarness::builder().size(viewport).eframe(build_app);
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(viewport)
+        .eframe(test_util::harness::build_app);
     harness.inner.step();
     let now = harness.inner.ctx.input(|input| input.time);
     let app = harness.state_mut();

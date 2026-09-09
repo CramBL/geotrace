@@ -121,7 +121,7 @@ impl UpdateChecker {
     pub fn available_for_test(version: &str, self_update: bool) -> Self {
         // The same fixed placeholder the app injects in tests, so the prompt
         // snapshot stays stable across releases.
-        let mut checker = Self::new(crate::app::TEST_APP_VERSION);
+        let mut checker = Self::new(crate::app::test_util::harness::TEST_APP_VERSION);
         checker.started = true;
         *checker.outcome.lock() = Some(CheckOutcome::Available {
             version: version.to_owned(),

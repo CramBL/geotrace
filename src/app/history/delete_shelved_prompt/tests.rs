@@ -5,11 +5,12 @@ use gt_store::{DatabaseRef, RecordingEntry};
 use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
 use rstest::rstest;
 
-use crate::app::history::test_support::{ShelvedTracks, TotalTracks, entry_with_shelved_tracks};
 use crate::app::history_db::DeleteShelvedTracksScope;
 use crate::app::modals::{
     COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES, PointerOverTheDialog, TimeUntilTheClose,
 };
+use crate::app::test_util;
+use crate::app::test_util::listing::{ShelvedTracks, TotalTracks};
 
 use super::{
     DELETE_SHELVED_TRACKS_LABEL, DeleteShelvedTracksChoice, DeleteShelvedTracksPrompt,
@@ -26,8 +27,8 @@ const VIEWPORT: egui::Vec2 = egui::vec2(640.0, 480.0);
 /// all, and one recording that a sweep would delete whole.
 fn listing() -> Vec<RecordingEntry> {
     vec![
-        entry_with_shelved_tracks("ride.gtd", TotalTracks(4), ShelvedTracks(1)),
-        entry_with_shelved_tracks("walk.gtd", TotalTracks(2), ShelvedTracks(2)),
+        test_util::listing::entry_with_shelved_tracks("ride.gtd", TotalTracks(4), ShelvedTracks(1)),
+        test_util::listing::entry_with_shelved_tracks("walk.gtd", TotalTracks(2), ShelvedTracks(2)),
     ]
 }
 
@@ -125,7 +126,7 @@ fn the_confirmation_lists_the_recordings_the_delete_removes_entirely(
     #[case] ShelvedTracks(shelved_tracks): ShelvedTracks,
     #[case] expected: &[&str],
 ) {
-    let listing = [entry_with_shelved_tracks(
+    let listing = [test_util::listing::entry_with_shelved_tracks(
         "ride.gtd",
         total_tracks,
         ShelvedTracks(shelved_tracks),

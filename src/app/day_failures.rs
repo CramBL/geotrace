@@ -56,15 +56,13 @@ mod tests {
     use egui_kittest::kittest::Queryable as _;
     use gt_test_utils::{HarnessInteraction as _, TestHarness};
 
-    use super::*;
+    use crate::app::test_util::day_archive;
 
-    fn day(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
-    }
+    use super::*;
 
     fn failure(day_of_july: u32) -> DayFailure {
         DayFailure {
-            day: day(2026, 7, day_of_july),
+            day: day_archive::day(2026, 7, day_of_july),
             detail: "Kp: HTTP 500 Internal Server Error".to_owned(),
         }
     }

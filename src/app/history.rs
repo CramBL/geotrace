@@ -28,8 +28,6 @@ pub(in crate::app) const OPENING_RECORDINGS_DATABASE: &str = "Opening the record
 
 mod delete_shelved_prompt;
 mod table;
-#[cfg(test)]
-mod test_support;
 
 /// Which pruning mode is selected in the Prune dialog.
 #[derive(Clone, Copy, PartialEq, Eq)]
