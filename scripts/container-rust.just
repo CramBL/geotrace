@@ -40,10 +40,11 @@ sdk-msrv:
 
 LYCHEE_CHECKED_FILE_GLOBS := "'*.rs' '*.md' '*.toml' '*.yml' '*.yaml'"
 
-# The paths both lychee recipes drop from the file list: the fixture responses,
-# frozen at the day they were recorded and never edited for link rot, and
-# lychee.toml, whose regex patterns lychee reads as malformed links.
-LYCHEE_SKIPPED_PATHS := '(^|/)tests/fixtures/|^lychee\.toml$'
+# The paths both lychee recipes drop from the file list: the captured responses,
+# frozen at the day they were recorded and never edited for link rot, the
+# committed fixtures beside them, and lychee.toml, whose regex patterns lychee
+# reads as malformed links.
+LYCHEE_SKIPPED_PATHS := '(^|/)tests/(captures|fixtures)/|^lychee\.toml$'
 
 # Requests every URL the tracked files cite (network!), under the settings and
 # exclusions of lychee.toml. Kept out of the dev image like msrv: install it

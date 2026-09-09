@@ -11,7 +11,7 @@ doctest = false
 
 [features]
 # Builds `gt_jam::test_util`, which reads the captured datasets under
-# `tests/fixtures/`. A normal build leaves it off.
+# `tests/captures/`. A normal build leaves it off.
 test-util = ["dep:serde_json"]
 
 [dependencies]
@@ -34,7 +34,7 @@ gt-fetch = { path = "../../gt-fetch", features = ["test-util"] }
 gt-jam = { path = ".", features = ["test-util"] }
 insta.workspace = true
 proptest.workspace = true
-# The fixture-capture example fetches from the host directly, not through
+# The capture example fetches from the host directly, not through
 # gt_fetch::Transport.
 reqwest.workspace = true
 rstest.workspace = true

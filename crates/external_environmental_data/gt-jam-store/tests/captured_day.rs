@@ -5,8 +5,8 @@ use std::fs;
 use chrono::{DateTime, Utc};
 
 use gt_hdf5_archive::WritableDayArchive as _;
+use gt_jam::CAPTURED_DAYS;
 use gt_jam::wire::{self, ParseWarningReporter};
-use gt_jam::{FIXTURE_DAYS, dataset_file_name, fixtures_dir, parse_day};
 use gt_jam_store::{FILE_NAME, JamStore};
 
 const HOST: &str = "https://gpsjam.org";
@@ -22,12 +22,13 @@ const STORED_DAYS: i64 = 10;
 
 /// The day every measurement here is made against, and its observations.
 fn captured_day() -> Result<(chrono::NaiveDate, Vec<gt_jam::wire::HexObservation>), String> {
-    let fixture = FIXTURE_DAYS
+    let capture = CAPTURED_DAYS
         .iter()
-        .find(|fixture| fixture.is_served())
-        .ok_or("no served fixture day")?;
-    let day = parse_day(fixture.day).map_err(|err| format!("fixture day: {err}"))?;
-    let csv = fs::read_to_string(fixtures_dir().join(dataset_file_name(day)))
+        .find(|capture| capture.is_served())
+        .ok_or("no served captured day")?;
+    let day = gt_jam::parse_day(capture.day)
+        .map_err(|err| format!("{} is not a calendar date: {err}", capture.day))?;
+    let csv = fs::read_to_string(gt_jam::captures_dir().join(gt_jam::dataset_file_name(day)))
         .map_err(|err| format!("captured day: {err}"))?;
     let parsed = wire::parse_dataset(&csv, &ParseWarningReporter::default())
         .map_err(|err| format!("parse: {err}"))?;

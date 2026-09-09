@@ -1,7 +1,7 @@
 //! Validate the committed IONEX captures.
 //!
-//! Guards [`gt_ionex::FIXTURE_FILES`], the capture harness
-//! (`examples/fetch_ionex_fixtures.rs`), and the files under `tests/fixtures/`
+//! Guards [`gt_ionex::CAPTURED_FILES`], the capture harness
+//! (`examples/fetch_ionex_captures.rs`), and the files under `tests/captures/`
 //! against each other, and checks the captures are still the shape the parser
 //! is written for.
 
@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 use chrono::TimeDelta;
 use serde_json::Value;
 
-use gt_ionex::FIXTURE_FILES;
+use gt_ionex::CAPTURED_FILES;
 use gt_ionex::grid::GridPoint;
 use gt_ionex::maps::{GlobalIonosphereMaps, TecMap};
 use gt_ionex::tec::TotalElectronContent;
@@ -52,28 +52,28 @@ fn assert_tecu_near(value: Option<TotalElectronContent>, expected_tecu: f64) {
     );
 }
 
-/// The manifest agrees with what each fixture declares.
+/// The manifest agrees with what each capture declares.
 #[test]
-fn every_declared_fixture_has_a_matching_manifest_entry() {
-    for fixture in FIXTURE_FILES {
-        let entry = support::manifest_entry(fixture.name).unwrap();
+fn every_declared_capture_has_a_matching_manifest_entry() {
+    for capture in CAPTURED_FILES {
+        let entry = support::manifest_entry(capture.name).unwrap();
         assert_eq!(
             entry.get("url").and_then(Value::as_str),
-            Some(fixture.url),
-            "{}: the capture was taken from another URL than FIXTURE_FILES declares",
-            fixture.name
+            Some(capture.url),
+            "{}: the capture was taken from another URL than CAPTURED_FILES declares",
+            capture.name
         );
         assert_eq!(
             entry.get("file_name").and_then(Value::as_str),
-            Some(fixture.file_name),
+            Some(capture.file_name),
             "{}: the capture was stored under another name",
-            fixture.name
+            capture.name
         );
         assert_eq!(
             entry.get("http_status").and_then(Value::as_u64),
             Some(HTTP_OK),
             "{}: the archive did not serve the file",
-            fixture.name
+            capture.name
         );
         assert!(
             entry
@@ -81,15 +81,15 @@ fn every_declared_fixture_has_a_matching_manifest_entry() {
                 .and_then(Value::as_str)
                 .is_some_and(|captured_at| !captured_at.is_empty()),
             "{} has no capture date",
-            fixture.name
+            capture.name
         );
     }
 }
 
-/// No entry survives a dropped fixture, and no file is captured undeclared.
+/// No entry survives a dropped capture, and no file is captured undeclared.
 #[test]
-fn the_manifest_lists_exactly_the_declared_fixtures() {
-    let declared: BTreeSet<&str> = FIXTURE_FILES.iter().map(|fixture| fixture.name).collect();
+fn the_manifest_lists_exactly_the_declared_captures() {
+    let declared: BTreeSet<&str> = CAPTURED_FILES.iter().map(|capture| capture.name).collect();
     let recorded: Vec<String> = support::manifest_entries()
         .unwrap()
         .iter()
@@ -101,27 +101,27 @@ fn the_manifest_lists_exactly_the_declared_fixtures() {
 
 #[test]
 fn every_capture_parses_into_what_the_manifest_records() {
-    for fixture in FIXTURE_FILES {
-        let maps = support::captured_maps(fixture.name).unwrap();
-        let entry = support::manifest_entry(fixture.name).unwrap();
+    for capture in CAPTURED_FILES {
+        let maps = support::captured_maps(capture.name).unwrap();
+        let entry = support::manifest_entry(capture.name).unwrap();
         let recorded = |field: &str| entry.get(field).and_then(Value::as_u64);
         assert_eq!(
             recorded("maps"),
             u64::try_from(maps.maps().len()).ok(),
             "{}: the file on disk is not the one the manifest describes",
-            fixture.name
+            capture.name
         );
         assert_eq!(
             recorded("latitude_nodes"),
             u64::try_from(maps.grid().latitudes.node_count()).ok(),
             "{}: the grid on disk is not the one the manifest describes",
-            fixture.name
+            capture.name
         );
         assert_eq!(
             recorded("longitude_nodes"),
             u64::try_from(maps.grid().longitudes.node_count()).ok(),
             "{}: the grid on disk is not the one the manifest describes",
-            fixture.name
+            capture.name
         );
     }
 }
@@ -131,52 +131,52 @@ fn every_capture_parses_into_what_the_manifest_records() {
 /// midnight to midnight.
 #[test]
 fn every_capture_holds_a_day_of_maps_on_the_published_grid() {
-    for fixture in FIXTURE_FILES {
-        let maps = support::captured_maps(fixture.name).unwrap();
+    for capture in CAPTURED_FILES {
+        let maps = support::captured_maps(capture.name).unwrap();
         let grid = maps.grid();
         assert_eq!(
             grid.latitudes.node_count(),
             LATITUDE_NODES,
             "{}",
-            fixture.name
+            capture.name
         );
         assert_eq!(
             grid.longitudes.node_count(),
             LONGITUDE_NODES,
             "{}",
-            fixture.name
+            capture.name
         );
-        assert_eq!(grid.latitudes.degrees_at(0), Some(87.5), "{}", fixture.name);
+        assert_eq!(grid.latitudes.degrees_at(0), Some(87.5), "{}", capture.name);
         assert_eq!(
             grid.latitudes.degrees_at(LATITUDE_NODES - 1),
             Some(-87.5),
             "{}",
-            fixture.name
+            capture.name
         );
         assert_eq!(
             grid.longitudes.degrees_at(0),
             Some(-180.0),
             "{}",
-            fixture.name
+            capture.name
         );
         assert_eq!(
             grid.longitudes.degrees_at(LONGITUDE_NODES - 1),
             Some(180.0),
             "{}",
-            fixture.name
+            capture.name
         );
         assert!(
             (grid.shell_height_km - SHELL_HEIGHT_KM).abs() < HEIGHT_TOLERANCE_KM,
             "{}: a shell at {} km",
-            fixture.name,
+            capture.name,
             grid.shell_height_km
         );
-        assert_eq!(maps.interval(), TimeDelta::hours(2), "{}", fixture.name);
-        assert_eq!(maps.maps().len(), 13, "{}", fixture.name);
+        assert_eq!(maps.interval(), TimeDelta::hours(2), "{}", capture.name);
+        assert_eq!(maps.maps().len(), 13, "{}", capture.name);
 
         let first = maps.epoch_of_first_map().unwrap();
         let last = maps.epoch_of_last_map().unwrap();
-        assert_eq!(last - first, TimeDelta::days(1), "{}", fixture.name);
+        assert_eq!(last - first, TimeDelta::days(1), "{}", capture.name);
     }
 }
 
@@ -184,29 +184,29 @@ fn every_capture_holds_a_day_of_maps_on_the_published_grid() {
 /// full grid and none of its gap handling.
 #[test]
 fn every_captured_node_holds_a_published_value() {
-    for fixture in FIXTURE_FILES {
-        let maps = support::captured_maps(fixture.name).unwrap();
+    for capture in CAPTURED_FILES {
+        let maps = support::captured_maps(capture.name).unwrap();
         let gaps = maps
             .maps()
             .iter()
             .flat_map(TecMap::values)
             .filter(Option::is_none)
             .count();
-        assert_eq!(gaps, 0, "{}", fixture.name);
+        assert_eq!(gaps, 0, "{}", capture.name);
         assert_eq!(
-            support::manifest_entry(fixture.name)
+            support::manifest_entry(capture.name)
                 .unwrap()
                 .get("gaps")
                 .and_then(Value::as_u64),
             Some(0),
             "{}",
-            fixture.name
+            capture.name
         );
         assert_eq!(
             maps.maps().iter().flat_map(TecMap::values).count(),
             13 * LATITUDE_NODES * LONGITUDE_NODES,
             "{}",
-            fixture.name
+            capture.name
         );
     }
 }

@@ -85,12 +85,12 @@ pub fn parse_date(date: &str) -> Result<NaiveDate, chrono::ParseError> {
     NaiveDate::parse_from_str(date, DATE_FORMAT)
 }
 
-/// One response captured under [`fixtures_dir`] by `just flare-fixtures`.
+/// One response captured under [`captures_dir`] by `just flare-captures`.
 ///
 /// Captures are frozen once committed. A re-capture's diff is reviewed like
 /// code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FixtureWindow {
+pub struct CapturedWindow {
     /// Identifies the capture on disk and on the capture command line.
     pub name: &'static str,
     /// First day of the capture window, as [`parse_date`] reads it.
@@ -101,7 +101,7 @@ pub struct FixtureWindow {
     pub purpose: &'static str,
 }
 
-impl FixtureWindow {
+impl CapturedWindow {
     /// The window that was requested, or the error in one of its declared
     /// dates.
     pub fn window(&self) -> Result<DateWindow, chrono::ParseError> {
@@ -111,28 +111,28 @@ impl FixtureWindow {
         })
     }
 
-    /// The file the response is captured to, under [`fixtures_dir`].
+    /// The file the response is captured to, under [`captures_dir`].
     pub fn file_name(&self) -> String {
         format!("{}.json", self.name)
     }
 }
 
 /// The captured windows, in the order the manifest lists them.
-pub const FIXTURE_WINDOWS: [FixtureWindow; 3] = [
-    FixtureWindow {
+pub const CAPTURED_WINDOWS: [CapturedWindow; 3] = [
+    CapturedWindow {
         name: "storm-may-2024",
         start: "2024-05-09",
         end: "2024-05-11",
         purpose: "the May 2024 storm, with X-class flares and an event whose active region is null",
     },
-    FixtureWindow {
+    CapturedWindow {
         name: "quiet-january-2019",
         start: "2019-01-01",
         end: "2019-01-31",
         purpose: "solar minimum, where the catalog lists two C-class flares and neither has an \
                   end time",
     },
-    FixtureWindow {
+    CapturedWindow {
         name: "before-coverage",
         start: "2009-01-01",
         end: "2009-12-31",
@@ -140,19 +140,19 @@ pub const FIXTURE_WINDOWS: [FixtureWindow; 3] = [
     },
 ];
 
-/// File name of the capture manifest written beside the fixtures, recording
+/// File name of the capture manifest written beside the captures, recording
 /// when each window was captured and what the endpoint returned.
 pub const CAPTURE_MANIFEST: &str = "capture.json";
 
-/// Directory holding the captured response fixtures.
+/// Directory holding the captured responses.
 ///
 /// Resolved from the crate manifest dir, so it is only meaningful to
 /// development tooling running inside the workspace, never to the shipped
 /// application.
-pub fn fixtures_dir() -> PathBuf {
+pub fn captures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
+        .join("captures")
 }
 
 #[cfg(test)]
@@ -236,16 +236,16 @@ mod tests {
     }
 
     #[test]
-    fn a_fixture_window_names_its_capture_and_parses_its_dates() {
-        for fixture in FIXTURE_WINDOWS {
-            let window = fixture.window().expect("declared dates");
+    fn a_captured_window_names_its_file_and_parses_its_dates() {
+        for capture in CAPTURED_WINDOWS {
+            let window = capture.window().expect("declared dates");
             assert!(
                 window.start <= window.end,
                 "{}: {}",
-                fixture.name,
-                fixture.purpose
+                capture.name,
+                capture.purpose
             );
-            assert_eq!(fixture.file_name(), format!("{}.json", fixture.name));
+            assert_eq!(capture.file_name(), format!("{}.json", capture.name));
         }
     }
 
@@ -253,12 +253,12 @@ mod tests {
     /// capture cannot change meaning as time passes.
     #[test]
     fn no_captured_window_reaches_into_the_future() {
-        for fixture in FIXTURE_WINDOWS {
+        for capture in CAPTURED_WINDOWS {
             assert!(
-                fixture.window().expect("declared dates").end < Utc::now().date_naive(),
+                capture.window().expect("declared dates").end < Utc::now().date_naive(),
                 "{}: {}",
-                fixture.name,
-                fixture.purpose
+                capture.name,
+                capture.purpose
             );
         }
     }

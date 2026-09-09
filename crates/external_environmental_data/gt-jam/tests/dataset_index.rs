@@ -24,12 +24,12 @@ fn captured_day() -> Result<&'static JamDataset, String> {
     static DATASET: OnceLock<Result<JamDataset, String>> = OnceLock::new();
     DATASET
         .get_or_init(|| {
-            let fixture = test_util::served_day()?;
-            let day = parse_day(fixture.day)
-                .map_err(|err| format!("{} is not a calendar date: {err}", fixture.day))?;
-            let csv = test_util::captured_csv(fixture.day)?;
+            let capture = test_util::served_day()?;
+            let day = parse_day(capture.day)
+                .map_err(|err| format!("{} is not a calendar date: {err}", capture.day))?;
+            let csv = test_util::captured_csv(capture.day)?;
             let observations = wire::parse_dataset(&csv, &ParseWarningReporter::default())
-                .map_err(|err| format!("{}: {err}", fixture.day))?;
+                .map_err(|err| format!("{}: {err}", capture.day))?;
             Ok(JamDataset::new(day, observations))
         })
         .as_ref()

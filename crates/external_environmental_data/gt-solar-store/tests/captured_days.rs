@@ -15,13 +15,13 @@ const HP30_STORM_CAPTURE: &str = "hp30-storm";
 /// The captured response for `name`, and the first UTC day of the window it
 /// was requested over, which is the day the samples are archived under.
 fn captured_response(name: &str) -> Result<(NaiveDate, String), String> {
-    let fixture = test_util::declared_window(name)?;
-    let day = fixture
+    let capture = test_util::declared_window(name)?;
+    let day = capture
         .window()
         .map_err(|err| format!("{name} window: {err}"))?
         .start
         .date_naive();
-    Ok((day, test_util::captured_response(fixture)?))
+    Ok((day, test_util::captured_response(capture)?))
 }
 
 fn store() -> Result<(TempDir, SolarStore), String> {

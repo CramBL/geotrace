@@ -8,40 +8,40 @@ gen-fixture:
     git diff --exit-code --stat -- sdk/c/tests/fixtures \
         || { echo "error: the generator rewrote a committed fixture, commit the new bytes" >&2; exit 1; }
 
-# Refresh the gt-flare event fixtures from the NASA DONKI catalog (network!).
+# Refresh the gt-flare event captures from the NASA DONKI catalog (network!).
 # Needs GEOTRACE_FLARE_API_KEY, an api.nasa.gov key.
 # Name windows to capture only those (additive). No `WINDOWS` captures all.
 [group("fixtures")]
-flare-fixtures *WINDOWS:
-    cargo run -p gt-flare --example fetch_flare_fixtures -- {{ WINDOWS }}
+flare-captures *WINDOWS:
+    cargo run -p gt-flare --example fetch_flare_captures -- {{ WINDOWS }}
 
-# Refresh the gt-ionex map fixtures from the JPL archive (network!).
+# Refresh the gt-ionex map captures from the JPL archive (network!).
 # Name files to capture only those (additive). No `FILES` captures all.
 [group("fixtures")]
-ionex-fixtures *FILES:
-    cargo run -p gt-ionex --example fetch_ionex_fixtures -- {{ FILES }}
+ionex-captures *FILES:
+    cargo run -p gt-ionex --example fetch_ionex_captures -- {{ FILES }}
 
 # Check the CDDIS mirror addressing against the live archive (network!).
 # Needs EARTHDATA_TOKEN, a NASA Earthdata token.
 # Pass --day YYYY-MM-DD to address another day than 2024-05-10, such as one
 # from the years the archive files under the legacy short names.
 # Pass --capture to write the served files and their manifest entries under
-# gt-ionex/tests/fixtures/cddis/.
+# gt-ionex/tests/captures/cddis/.
 [group("fixtures")]
 cddis-verify *ARGS:
     cargo run -p gt-ionex --example verify_cddis_mirror -- {{ ARGS }}
 
-# Refresh the gt-ionex node-series fixture from the JPL archive (network!).
+# Refresh the gt-ionex node-series capture from the JPL archive (network!).
 # Captures the storm days' per-node values the quiet-time grading reads.
 [group("fixtures")]
 ionex-node-series:
-    cargo run -p gt-ionex --example fetch_node_series_fixture
+    cargo run -p gt-ionex --example fetch_node_series_capture
 
-# Refresh the gt-jam interference dataset fixtures from gpsjam.org (network!).
+# Refresh the gt-jam interference dataset captures from gpsjam.org (network!).
 # Name days to capture only those (additive). No `DAYS` captures all.
 [group("fixtures")]
-jam-fixtures *DAYS:
-    cargo run -p gt-jam --example fetch_jam_fixtures -- {{ DAYS }}
+jam-captures *DAYS:
+    cargo run -p gt-jam --example fetch_jam_captures -- {{ DAYS }}
 
 # Capture the Mapbox satellite tiles the fixture-backed map snapshots draw
 # (network!). Needs MAPBOX_TOKEN.
@@ -52,11 +52,11 @@ jam-fixtures *DAYS:
 map-tile-fixtures *WANTED:
     cargo run -p gt-map --example fetch_map_tile_fixtures -- {{ WANTED }}
 
-# Refresh the gt-solar index fixtures from the GFZ Potsdam service (network!).
+# Refresh the gt-solar index captures from the GFZ Potsdam service (network!).
 # Name windows to capture only those (additive). No `WINDOWS` captures all.
 [group("fixtures")]
-solar-fixtures *WINDOWS:
-    cargo run -p gt-solar --example fetch_solar_fixtures -- {{ WINDOWS }}
+solar-captures *WINDOWS:
+    cargo run -p gt-solar --example fetch_solar_captures -- {{ WINDOWS }}
 
 # Refresh the gt-snap live-API fixtures from the Valhalla server (network!).
 # Name scenarios to capture only those (additive). No `SCENARIOS` captures all.

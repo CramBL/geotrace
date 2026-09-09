@@ -17,7 +17,7 @@ use gt_jam::wire::HexObservation;
 use gt_jam_store::{FILE_NAME, JamStore, JamStoreError, ReadOnlyJamStore, schema};
 use gt_test_utils::day_archive::{self, ColumnName, GroupPath};
 
-/// Cells copied from the captured fixture day.
+/// Cells copied from the captured day.
 const CELLS: [&str; 4] = [
     "84005c7ffffffff",
     "840104bffffffff",

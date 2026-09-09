@@ -81,12 +81,12 @@ pub fn parse_day(day: &str) -> Result<NaiveDate, chrono::ParseError> {
     NaiveDate::parse_from_str(day, DATE_FORMAT)
 }
 
-/// One day captured under [`fixtures_dir`] by `just jam-fixtures`.
+/// One day captured under [`captures_dir`] by `just jam-captures`.
 ///
 /// Captures are frozen once committed. A re-capture's diff is reviewed like
 /// code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FixtureDay {
+pub struct CapturedDay {
     /// The UTC day, as it appears in the dataset's file name.
     pub day: &'static str,
     /// The status the host returned when this day was captured. Pinned here
@@ -98,7 +98,7 @@ pub struct FixtureDay {
 
 const HTTP_OK: u16 = 200;
 
-impl FixtureDay {
+impl CapturedDay {
     /// Whether the host served this day, and so whether it has a dataset
     /// file. A refused day exists only in the capture manifest.
     pub const fn is_served(&self) -> bool {
@@ -107,14 +107,14 @@ impl FixtureDay {
 }
 
 /// The captured days, in the order the manifest lists them.
-pub const FIXTURE_DAYS: [FixtureDay; 2] = [
-    FixtureDay {
+pub const CAPTURED_DAYS: [CapturedDay; 2] = [
+    CapturedDay {
         day: "2026-07-20",
         http_status: 200,
         purpose: "a full world day, downloaded unchanged, for the parser, the index, and \
                   the renderers to run against",
     },
-    FixtureDay {
+    CapturedDay {
         day: "2022-02-13",
         http_status: 404,
         purpose: "the day before coverage begins, so its 404 is permanent: a valid response \
@@ -122,19 +122,19 @@ pub const FIXTURE_DAYS: [FixtureDay; 2] = [
     },
 ];
 
-/// File name of the capture manifest written beside the fixtures, recording
+/// File name of the capture manifest written beside the captures, recording
 /// when each day was captured and what status the host returned.
 pub const CAPTURE_MANIFEST: &str = "capture.json";
 
-/// Directory holding the captured dataset fixtures.
+/// Directory holding the captured datasets.
 ///
 /// Resolved from the crate manifest dir, so it is only meaningful to
 /// development tooling running inside the workspace, never to the shipped
 /// application.
-pub fn fixtures_dir() -> PathBuf {
+pub fn captures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
+        .join("captures")
 }
 
 #[cfg(test)]
@@ -181,18 +181,18 @@ mod tests {
     }
 
     /// A captured day must never be one the host has not reached yet: such a
-    /// day returns 404 now and 200 later, which would rot the fixture into
+    /// day returns 404 now and 200 later, which would rot the capture into
     /// meaning the opposite of what it was captured for.
     #[test]
     fn no_captured_day_is_still_ahead_of_the_host() {
-        for fixture in FIXTURE_DAYS {
-            let day = parse_day(fixture.day).unwrap();
+        for capture in CAPTURED_DAYS {
+            let day = parse_day(capture.day).unwrap();
             assert_ne!(
                 calendar::day_outlook(day, calendar::today_utc()),
                 calendar::DayOutlook::InFuture,
                 "{}: {}",
-                fixture.day,
-                fixture.purpose
+                capture.day,
+                capture.purpose
             );
         }
     }

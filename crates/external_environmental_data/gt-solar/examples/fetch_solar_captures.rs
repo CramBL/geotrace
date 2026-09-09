@@ -1,14 +1,14 @@
 //! Capture live index responses from the GFZ Potsdam service.
 //!
-//! Requests each window of [`gt_solar::FIXTURE_WINDOWS`] into
-//! `tests/fixtures/`, one file per window, and records what the service
+//! Requests each window of [`gt_solar::CAPTURED_WINDOWS`] into
+//! `tests/captures/`, one file per window, and records what the service
 //! returned in `capture.json` alongside the capture date and host.
 //!
-//! Fixtures are frozen once committed. A re-capture's diff is reviewed like
+//! Captures are frozen once committed. A re-capture's diff is reviewed like
 //! code.
 //!
-//! Usage: `just solar-fixtures [NAME...]`, or
-//! `cargo run -p gt-solar --example fetch_solar_fixtures -- [NAME...]`.
+//! Usage: `just solar-captures [NAME...]`, or
+//! `cargo run -p gt-solar --example fetch_solar_captures -- [NAME...]`.
 //! Naming windows captures only those, keeping the manifest entries of the
 //! rest. No arguments re-captures everything.
 //! Point it at a mirror with `GEOTRACE_SOLAR_HOST=https://mirror.example`.
@@ -35,8 +35,8 @@ use serde_json::{Value, json};
 
 use gt_solar::wire;
 use gt_solar::{
-    CAPTURE_MANIFEST, DEFAULT_BASE_URL, FIXTURE_WINDOWS, FixtureWindow, GeomagneticIndex,
-    fixtures_dir, index_url,
+    CAPTURE_MANIFEST, CAPTURED_WINDOWS, CapturedWindow, DEFAULT_BASE_URL, GeomagneticIndex,
+    captures_dir, index_url,
 };
 
 /// Points the capture at a mirror. The capture requests from `DEFAULT_BASE_URL`
@@ -50,24 +50,24 @@ const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
 
 fn main() -> Result<(), Box<dyn Error>> {
     let host = env::var(HOST_ENV).unwrap_or_else(|_| DEFAULT_BASE_URL.to_owned());
-    let dir = fixtures_dir();
+    let dir = captures_dir();
     fs::create_dir_all(&dir)?;
 
     // Positional arguments select a subset. Without them the capture covers
     // every window.
     let args: Vec<String> = env::args().skip(1).collect();
-    let selected: Vec<FixtureWindow> = if args.is_empty() {
-        FIXTURE_WINDOWS.to_vec()
+    let selected: Vec<CapturedWindow> = if args.is_empty() {
+        CAPTURED_WINDOWS.to_vec()
     } else {
         args.iter()
             .map(|name| {
-                FIXTURE_WINDOWS
+                CAPTURED_WINDOWS
                     .iter()
                     .copied()
-                    .find(|fixture| fixture.name == name)
+                    .find(|capture| capture.name == name)
                     .unwrap_or_else(|| {
                         panic!(
-                            "{name:?} is not a declared fixture window - add it to FIXTURE_WINDOWS"
+                            "{name:?} is not a declared capture window - add it to CAPTURED_WINDOWS"
                         )
                     })
             })
@@ -91,12 +91,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             Err(_) => BTreeMap::new(),
         };
 
-    for (position, fixture) in selected.iter().enumerate() {
+    for (position, capture) in selected.iter().enumerate() {
         if position > 0 {
             thread::sleep(REQUEST_INTERVAL);
         }
         let response = client
-            .get(index_url(&host, fixture.index, fixture.window()?))
+            .get(index_url(&host, capture.index, capture.window()?))
             .send()?;
         let status = response.status().as_u16();
         let content_type = response
@@ -106,19 +106,19 @@ fn main() -> Result<(), Box<dyn Error>> {
             .unwrap_or_default()
             .to_owned();
         let body = response.text()?;
-        println!("{}: HTTP {status} ({} bytes)", fixture.name, body.len());
+        println!("{}: HTTP {status} ({} bytes)", capture.name, body.len());
 
-        // Written only once it parses, so a fixture on disk is always one the
+        // Written only once it parses, so a capture on disk is always one the
         // parser accepts.
-        let samples = match fixture.index {
+        let samples = match capture.index {
             GeomagneticIndex::Kp => wire::parse_kp_series(&body).map(|series| series.samples.len()),
             GeomagneticIndex::Hp30 => {
                 wire::parse_hp30_series(&body).map(|series| series.samples.len())
             }
         }
-        .map_err(|err| format!("{}: not written, {err}", fixture.name))?;
+        .map_err(|err| format!("{}: not written, {err}", capture.name))?;
         println!("  {samples} samples");
-        fs::write(dir.join(fixture.file_name()), &body)?;
+        fs::write(dir.join(capture.file_name()), &body)?;
 
         let meta = serde_json::from_str::<Value>(&body)?;
         let meta_field = |field: &str| {
@@ -128,12 +128,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .unwrap_or(Value::Null)
         };
         entries_by_name.insert(
-            fixture.name.to_owned(),
+            capture.name.to_owned(),
             json!({
-                "name": fixture.name,
-                "index": fixture.index.wire_name(),
-                "start": fixture.start,
-                "end": fixture.end,
+                "name": capture.name,
+                "index": capture.index.wire_name(),
+                "start": capture.start,
+                "end": capture.end,
                 "captured_at": Utc::now().to_rfc3339(),
                 "host": host,
                 "http_status": status,
@@ -147,9 +147,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Declared order, not capture order, so a partial re-capture diffs
     // cleanly.
-    let windows: Vec<Value> = FIXTURE_WINDOWS
+    let windows: Vec<Value> = CAPTURED_WINDOWS
         .iter()
-        .filter_map(|fixture| entries_by_name.get(fixture.name).cloned())
+        .filter_map(|capture| entries_by_name.get(capture.name).cloned())
         .collect();
     fs::write(
         dir.join(CAPTURE_MANIFEST),

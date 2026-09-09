@@ -1,7 +1,7 @@
 //! Validate the committed response captures.
 //!
-//! Guards [`gt_flare::FIXTURE_WINDOWS`], the capture harness
-//! (`examples/fetch_flare_fixtures.rs`), and the files under `tests/fixtures/`
+//! Guards [`gt_flare::CAPTURED_WINDOWS`], the capture harness
+//! (`examples/fetch_flare_captures.rs`), and the files under `tests/captures/`
 //! against each other, and checks the captures are still the shape the parser
 //! is written for.
 
@@ -12,7 +12,7 @@ use serde_json::Value;
 use gt_flare::class::{FlareClass, RadioBlackoutClass};
 use gt_flare::test_util;
 use gt_flare::wire;
-use gt_flare::{FIXTURE_WINDOWS, FixtureWindow, SolarFlare};
+use gt_flare::{CAPTURED_WINDOWS, CapturedWindow, SolarFlare};
 
 /// The May 2024 storm.
 const STORM_CAPTURE: &str = "storm-may-2024";
@@ -25,9 +25,9 @@ const BEFORE_COVERAGE_CAPTURE: &str = "before-coverage";
 
 const HTTP_OK: u64 = 200;
 
-fn parse_capture(fixture: &FixtureWindow) -> Result<Vec<SolarFlare>, String> {
-    let json = test_util::captured_response(fixture)?;
-    wire::parse_flares(&json).map_err(|err| format!("{}: {err}", fixture.name))
+fn parse_capture(capture: &CapturedWindow) -> Result<Vec<SolarFlare>, String> {
+    let json = test_util::captured_response(capture)?;
+    wire::parse_flares(&json).map_err(|err| format!("{}: {err}", capture.name))
 }
 
 fn captured_flares(name: &str) -> Result<Vec<SolarFlare>, String> {
@@ -37,19 +37,19 @@ fn captured_flares(name: &str) -> Result<Vec<SolarFlare>, String> {
 /// The manifest agrees with what each window declares.
 #[test]
 fn every_declared_window_has_a_matching_manifest_entry() {
-    for fixture in FIXTURE_WINDOWS {
-        let entry = test_util::manifest_entry(fixture.name).unwrap();
+    for capture in CAPTURED_WINDOWS {
+        let entry = test_util::manifest_entry(capture.name).unwrap();
         assert_eq!(
             entry.get("start").and_then(Value::as_str),
-            Some(fixture.start),
+            Some(capture.start),
             "{}: the capture requested another window",
-            fixture.name
+            capture.name
         );
         assert_eq!(
             entry.get("end").and_then(Value::as_str),
-            Some(fixture.end),
+            Some(capture.end),
             "{}: the capture requested another window",
-            fixture.name
+            capture.name
         );
         assert!(
             entry
@@ -57,7 +57,7 @@ fn every_declared_window_has_a_matching_manifest_entry() {
                 .and_then(Value::as_str)
                 .is_some_and(|captured_at| !captured_at.is_empty()),
             "{} has no capture date",
-            fixture.name
+            capture.name
         );
     }
 }
@@ -65,7 +65,10 @@ fn every_declared_window_has_a_matching_manifest_entry() {
 /// No entry survives a dropped window, and no window is captured undeclared.
 #[test]
 fn the_manifest_lists_exactly_the_declared_windows() {
-    let declared: BTreeSet<&str> = FIXTURE_WINDOWS.iter().map(|fixture| fixture.name).collect();
+    let declared: BTreeSet<&str> = CAPTURED_WINDOWS
+        .iter()
+        .map(|capture| capture.name)
+        .collect();
     let recorded: Vec<String> = test_util::manifest_entries()
         .unwrap()
         .iter()
@@ -82,26 +85,26 @@ fn no_capture_records_a_url() {
     let manifest = test_util::manifest().unwrap().to_string();
     assert!(!manifest.contains("api_key"), "{manifest}");
     assert!(!manifest.contains("DONKI/FLR"), "{manifest}");
-    for fixture in FIXTURE_WINDOWS {
-        let json = test_util::captured_response(&fixture).unwrap();
-        assert!(!json.contains("api_key"), "{}", fixture.name);
+    for capture in CAPTURED_WINDOWS {
+        let json = test_util::captured_response(&capture).unwrap();
+        assert!(!json.contains("api_key"), "{}", capture.name);
     }
 }
 
 #[test]
 fn every_capture_parses_into_the_recorded_number_of_flares() {
-    for fixture in FIXTURE_WINDOWS {
-        let recorded = test_util::manifest_entry(fixture.name)
+    for capture in CAPTURED_WINDOWS {
+        let recorded = test_util::manifest_entry(capture.name)
             .unwrap()
             .get("flares")
             .and_then(Value::as_u64)
             .and_then(|flares| usize::try_from(flares).ok())
             .expect("a capture records its flare count");
         assert_eq!(
-            parse_capture(&fixture).unwrap().len(),
+            parse_capture(&capture).unwrap().len(),
             recorded,
             "{}: the file on disk is not the one the manifest describes",
-            fixture.name
+            capture.name
         );
     }
 }
@@ -110,26 +113,26 @@ fn every_capture_parses_into_the_recorded_number_of_flares() {
 /// and the events come back in peak order.
 #[test]
 fn every_capture_falls_inside_the_requested_window_in_peak_order() {
-    for fixture in FIXTURE_WINDOWS {
-        let window = fixture.window().unwrap();
+    for capture in CAPTURED_WINDOWS {
+        let window = capture.window().unwrap();
         let mut previous_peak = None;
-        for flare in parse_capture(&fixture).unwrap() {
+        for flare in parse_capture(&capture).unwrap() {
             assert!(
                 (window.start..=window.end).contains(&flare.begin_day()),
                 "{}: {} begins outside the requested window",
-                fixture.name,
+                capture.name,
                 flare.id
             );
             assert!(
                 flare.peak >= flare.begin,
                 "{}: {} peaks before it begins",
-                fixture.name,
+                capture.name,
                 flare.id
             );
             assert!(
                 previous_peak.is_none_or(|previous| previous <= flare.peak),
                 "{}: {} is out of peak order",
-                fixture.name,
+                capture.name,
                 flare.id
             );
             previous_peak = Some(flare.peak);
@@ -190,10 +193,10 @@ fn the_captured_quiet_month_holds_c_class_flares_without_end_times() {
 
 #[test]
 fn a_window_before_the_catalog_begins_is_captured_as_an_empty_array() {
-    let fixture = test_util::declared_window(BEFORE_COVERAGE_CAPTURE).unwrap();
-    assert!(parse_capture(fixture).unwrap().is_empty());
+    let capture = test_util::declared_window(BEFORE_COVERAGE_CAPTURE).unwrap();
+    assert!(parse_capture(capture).unwrap().is_empty());
     assert_eq!(
-        test_util::manifest_entry(fixture.name)
+        test_util::manifest_entry(capture.name)
             .unwrap()
             .get("http_status")
             .and_then(Value::as_u64),

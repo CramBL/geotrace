@@ -2,16 +2,16 @@
 //! archive.
 //!
 //! Requests every day of [`gt_ionex::NODE_SERIES_DAYS`], parses each published
-//! file with the crate's own parser, and keeps only what
-//! [`gt_ionex::FIXTURE_NODES`] carries at each of that day's epochs, written
-//! to `tests/fixtures/node_series.json`. A month of whole files is 30 MB: this
-//! is the part the storm index reads.
+//! file with the crate's own parser, and writes the value of every node of
+//! [`gt_ionex::NODE_SERIES_NODES`] at each of that day's epochs to
+//! `tests/captures/node_series.json`. A month of whole files is 30 MB: this is
+//! the part the storm index reads.
 //!
-//! Fixtures are frozen once committed. A re-capture's diff is reviewed like
+//! Captures are frozen once committed. A re-capture's diff is reviewed like
 //! code.
 //!
 //! Usage: `just ionex-node-series`, or
-//! `cargo run -p gt-ionex --example fetch_node_series_fixture`.
+//! `cargo run -p gt-ionex --example fetch_node_series_capture`.
 
 // Examples favour brevity: the core's robustness restriction lints (no
 // unwrap/expect/panic/indexing, no std::env::temp_dir) are not enforced on
@@ -38,8 +38,8 @@ use gt_ionex::maps::GlobalIonosphereMaps;
 use gt_ionex::node_series::{CapturedNodeDay, NodeSeriesCapture};
 use gt_ionex::tec::TotalElectronContent;
 use gt_ionex::{
-    DEFAULT_BASE_URL, FIXTURE_NODES, FixtureNode, IonexProduct, NODE_SERIES_CAPTURE,
-    NODE_SERIES_DAYS, fixtures_dir, parse,
+    DEFAULT_BASE_URL, IonexProduct, NODE_SERIES_CAPTURE, NODE_SERIES_DAYS, NODE_SERIES_NODES,
+    NodeSeriesNode, captures_dir, parse,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -48,14 +48,14 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let dir = fixtures_dir();
+    let dir = captures_dir();
     fs::create_dir_all(&dir)?;
 
     let client = reqwest::blocking::Client::builder()
         .timeout(REQUEST_TIMEOUT)
         .build()?;
 
-    for node in FIXTURE_NODES {
+    for node in NODE_SERIES_NODES {
         println!(
             "{}: {:.1} N, {:.1} E - {}",
             node.name, node.latitude_degrees, node.longitude_degrees, node.purpose
@@ -103,7 +103,7 @@ fn capture_day(
     GzDecoder::new(compressed.as_ref()).read_to_string(&mut text)?;
     let maps = parse::global_ionosphere_maps(&text).map_err(|err| format!("{day}: {err}"))?;
 
-    let values_tecu: BTreeMap<String, Vec<Option<f64>>> = FIXTURE_NODES
+    let values_tecu: BTreeMap<String, Vec<Option<f64>>> = NODE_SERIES_NODES
         .iter()
         .map(|node| (node.name.to_owned(), node_values(&maps, node)))
         .collect();
@@ -131,7 +131,7 @@ fn capture_day(
 
 /// The node's value in every map of the day, in epoch order. A value the
 /// producer left unpublished is kept as a gap.
-fn node_values(maps: &GlobalIonosphereMaps, node: &FixtureNode) -> Vec<Option<f64>> {
+fn node_values(maps: &GlobalIonosphereMaps, node: &NodeSeriesNode) -> Vec<Option<f64>> {
     let point = maps.grid().nearest_node(
         Latitude::new(node.latitude_degrees),
         Longitude::new(node.longitude_degrees),

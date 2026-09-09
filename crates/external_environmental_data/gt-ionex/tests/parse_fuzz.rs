@@ -37,7 +37,7 @@ struct ValueRange {
 /// run.
 fn captured_storm() -> Result<&'static str, String> {
     static TEXT: OnceLock<Result<String, String>> = OnceLock::new();
-    TEXT.get_or_init(|| support::captured_text(support::declared_fixture(gt_ionex::STORM_CAPTURE)?))
+    TEXT.get_or_init(|| support::captured_text(support::declared_capture(gt_ionex::STORM_CAPTURE)?))
         .as_deref()
         .map_err(Clone::clone)
 }

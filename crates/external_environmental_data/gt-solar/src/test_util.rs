@@ -1,4 +1,4 @@
-//! Readers for the captured responses under `tests/fixtures/` and their
+//! Readers for the captured responses under `tests/captures/` and their
 //! manifest.
 //!
 //! The integration test binaries and gt-solar-store's archive tests reach
@@ -9,18 +9,18 @@ use std::fs;
 
 use serde_json::Value;
 
-use crate::{CAPTURE_MANIFEST, FIXTURE_WINDOWS, FixtureWindow};
+use crate::{CAPTURE_MANIFEST, CAPTURED_WINDOWS, CapturedWindow};
 
 /// The declared window named `name`.
-pub fn declared_window(name: &str) -> Result<&'static FixtureWindow, String> {
-    FIXTURE_WINDOWS
+pub fn declared_window(name: &str) -> Result<&'static CapturedWindow, String> {
+    CAPTURED_WINDOWS
         .iter()
-        .find(|fixture| fixture.name == name)
-        .ok_or_else(|| format!("{name} is not declared in FIXTURE_WINDOWS"))
+        .find(|capture| capture.name == name)
+        .ok_or_else(|| format!("{name} is not declared in CAPTURED_WINDOWS"))
 }
 
 pub fn manifest() -> Result<Value, String> {
-    let path = crate::fixtures_dir().join(CAPTURE_MANIFEST);
+    let path = crate::captures_dir().join(CAPTURE_MANIFEST);
     let contents =
         fs::read_to_string(&path).map_err(|err| format!("reading {}: {err}", path.display()))?;
     serde_json::from_str(&contents).map_err(|err| format!("{CAPTURE_MANIFEST}: {err}"))
@@ -38,11 +38,11 @@ pub fn manifest_entry(name: &str) -> Result<Value, String> {
     manifest_entries()?
         .into_iter()
         .find(|entry| entry.get("name").and_then(Value::as_str) == Some(name))
-        .ok_or_else(|| format!("{name} has no manifest entry - run `just solar-fixtures {name}`"))
+        .ok_or_else(|| format!("{name} has no manifest entry - run `just solar-captures {name}`"))
 }
 
-/// The response captured for `fixture`.
-pub fn captured_response(fixture: &FixtureWindow) -> Result<String, String> {
-    let path = crate::fixtures_dir().join(fixture.file_name());
+/// The response the service returned when `capture` was recorded.
+pub fn captured_response(capture: &CapturedWindow) -> Result<String, String> {
+    let path = crate::captures_dir().join(capture.file_name());
     fs::read_to_string(&path).map_err(|err| format!("reading {}: {err}", path.display()))
 }

@@ -4,16 +4,16 @@
 // subset, so "unused" here only means "unused by this binary".
 #![allow(dead_code, reason = "shared across binaries with different needs")]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{fs, io};
 
 use serde_json::Value;
 
 use gt_ionex::maps::GlobalIonosphereMaps;
-use gt_ionex::{CAPTURE_MANIFEST, CaptureError, FixtureFile, cddis_fixtures_dir, fixtures_dir};
+use gt_ionex::{CAPTURE_MANIFEST, CaptureError, CapturedFile};
 
-pub fn declared_fixture(name: &str) -> Result<&'static FixtureFile, String> {
-    gt_ionex::declared_fixture(name).ok_or_else(|| {
+pub fn declared_capture(name: &str) -> Result<&'static CapturedFile, String> {
+    gt_ionex::declared_capture(name).ok_or_else(|| {
         CaptureError::Undeclared {
             name: name.to_owned(),
         }
@@ -21,30 +21,33 @@ pub fn declared_fixture(name: &str) -> Result<&'static FixtureFile, String> {
     })
 }
 
-pub fn captured_text(fixture: &FixtureFile) -> Result<String, String> {
-    gt_ionex::captured_text(fixture).map_err(|error| error.to_string())
+pub fn captured_text(capture: &CapturedFile) -> Result<String, String> {
+    gt_ionex::captured_text(capture).map_err(|error| error.to_string())
 }
 
 pub fn captured_maps(name: &str) -> Result<GlobalIonosphereMaps, String> {
     gt_ionex::captured_maps(name).map_err(|error| error.to_string())
 }
 
-/// Directory of the streams `just qa::generate-unix-compress-fixtures` writes.
-const COMPRESSED_DIR: &str = "unix_compress";
-
-/// The capture those streams hold, and how much of it the partial ones do,
-/// declared the same way on the generator's side.
+/// The capture the generated streams hold, and how much of it the partial
+/// ones do, declared the same way on the generator's side.
 pub const COMPRESSED_CAPTURE: &str = "JPLG0920.24I";
 pub const COMPRESSED_HEAD_BYTES: usize = 65_536;
 
+/// One of the `.Z` streams `just qa::generate-unix-compress-fixtures`
+/// constructs under `tests/fixtures/unix_compress/`.
 pub fn compressed_fixture(name: &str) -> Result<Vec<u8>, String> {
-    let path = fixtures_dir().join(COMPRESSED_DIR).join(name);
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("unix_compress")
+        .join(name);
     fs::read(&path).map_err(|err| format!("reading {}: {err}", path.display()))
 }
 
 /// The bytes [`COMPRESSED_CAPTURE`] holds, which the streams decode to.
 pub fn compressed_capture_bytes() -> Result<Vec<u8>, String> {
-    let path = fixtures_dir().join(COMPRESSED_CAPTURE);
+    let path = gt_ionex::captures_dir().join(COMPRESSED_CAPTURE);
     fs::read(&path).map_err(|err| format!("reading {}: {err}", path.display()))
 }
 
@@ -64,26 +67,26 @@ fn manifest_entries_in(directory: &Path) -> Result<Vec<Value>, String> {
 }
 
 pub fn manifest_entries() -> Result<Vec<Value>, String> {
-    manifest_entries_in(&fixtures_dir())
+    manifest_entries_in(&gt_ionex::captures_dir())
 }
 
 pub fn manifest_entry(name: &str) -> Result<Value, String> {
     manifest_entries()?
         .into_iter()
         .find(|entry| entry.get("name").and_then(Value::as_str) == Some(name))
-        .ok_or_else(|| format!("{name} has no manifest entry - run `just ionex-fixtures {name}`"))
+        .ok_or_else(|| format!("{name} has no manifest entry - run `just ionex-captures {name}`"))
 }
 
 /// What `just cddis-verify --capture` recorded about the files the archive
 /// served.
 pub fn cddis_manifest_entries() -> Result<Vec<Value>, String> {
-    manifest_entries_in(&cddis_fixtures_dir())
+    manifest_entries_in(&gt_ionex::cddis_captures_dir())
 }
 
 /// The files the archive served, as they arrived: still compressed, under the
 /// name they were requested under.
 pub fn cddis_capture_file_names() -> Result<Vec<String>, String> {
-    let directory = cddis_fixtures_dir();
+    let directory = gt_ionex::cddis_captures_dir();
     let mut names: Vec<String> = fs::read_dir(&directory)
         .and_then(|entries| entries.collect::<Result<Vec<_>, io::Error>>())
         .map_err(|err| format!("reading {}: {err}", directory.display()))?
@@ -96,6 +99,6 @@ pub fn cddis_capture_file_names() -> Result<Vec<String>, String> {
 }
 
 pub fn cddis_capture_bytes(file_name: &str) -> Result<Vec<u8>, String> {
-    let path = cddis_fixtures_dir().join(file_name);
+    let path = gt_ionex::cddis_captures_dir().join(file_name);
     fs::read(&path).map_err(|err| format!("reading {}: {err}", path.display()))
 }

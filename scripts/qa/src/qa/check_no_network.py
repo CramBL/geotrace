@@ -47,14 +47,14 @@ _ENVIRONMENTAL_DATA_DIR = "crates/external_environmental_data"
 
 _ALLOWED: dict[str, frozenset[str]] = {
     # The seven capture tools. Requesting the live service is their whole job:
-    # `just ionex-fixtures` and its siblings run them by hand, and the
+    # `just ionex-captures` and its siblings run them by hand, and the
     # fixture-freshness workflow runs them on trunk.
-    f"{_ENVIRONMENTAL_DATA_DIR}/gt-flare/examples/fetch_flare_fixtures.rs": _EVERY_CONSTRUCT,
-    f"{_ENVIRONMENTAL_DATA_DIR}/gt-ionex/examples/fetch_ionex_fixtures.rs": _EVERY_CONSTRUCT,
-    f"{_ENVIRONMENTAL_DATA_DIR}/gt-ionex/examples/fetch_node_series_fixture.rs": _EVERY_CONSTRUCT,
-    f"{_ENVIRONMENTAL_DATA_DIR}/gt-jam/examples/fetch_jam_fixtures.rs": _EVERY_CONSTRUCT,
+    f"{_ENVIRONMENTAL_DATA_DIR}/gt-flare/examples/fetch_flare_captures.rs": _EVERY_CONSTRUCT,
+    f"{_ENVIRONMENTAL_DATA_DIR}/gt-ionex/examples/fetch_ionex_captures.rs": _EVERY_CONSTRUCT,
+    f"{_ENVIRONMENTAL_DATA_DIR}/gt-ionex/examples/fetch_node_series_capture.rs": _EVERY_CONSTRUCT,
+    f"{_ENVIRONMENTAL_DATA_DIR}/gt-jam/examples/fetch_jam_captures.rs": _EVERY_CONSTRUCT,
     "crates/gt-map/examples/fetch_map_tile_fixtures.rs": _EVERY_CONSTRUCT,
-    f"{_ENVIRONMENTAL_DATA_DIR}/gt-solar/examples/fetch_solar_fixtures.rs": _EVERY_CONSTRUCT,
+    f"{_ENVIRONMENTAL_DATA_DIR}/gt-solar/examples/fetch_solar_captures.rs": _EVERY_CONSTRUCT,
     "crates/gt-snap/examples/fetch_snap_fixtures.rs": _EVERY_CONSTRUCT,
     # The CDDIS verification tool, run by hand through `just cddis-verify`:
     # the archive it addresses serves files to callers holding a per-user

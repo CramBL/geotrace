@@ -5,7 +5,7 @@
 generate-reference-equations:
     bash scripts/generate-reference-equations.sh
 
-# Render the TEC reference material's illustration from the committed storm fixture.
+# Render the TEC reference material's illustration from the committed storm capture.
 [group("reference-assets")]
 generate-reference-tec-map:
     cargo nextest run -p gt-map --run-ignored all -E 'test(generate_tec_reference_illustration)'

@@ -1,4 +1,4 @@
-//! Readers for the captured datasets under `tests/fixtures/` and their
+//! Readers for the captured datasets under `tests/captures/` and their
 //! manifest.
 //!
 //! The integration test binaries reach these as `gt_jam::test_util`, through
@@ -8,26 +8,26 @@ use std::fs;
 
 use serde_json::Value;
 
-use crate::{CAPTURE_MANIFEST, FIXTURE_DAYS, FixtureDay};
+use crate::{CAPTURE_MANIFEST, CAPTURED_DAYS, CapturedDay};
 
 /// The declared day the host served.
-pub fn served_day() -> Result<&'static FixtureDay, String> {
-    FIXTURE_DAYS
+pub fn served_day() -> Result<&'static CapturedDay, String> {
+    CAPTURED_DAYS
         .iter()
-        .find(|fixture| fixture.is_served())
-        .ok_or_else(|| "no served day is declared in FIXTURE_DAYS".to_owned())
+        .find(|capture| capture.is_served())
+        .ok_or_else(|| "no served day is declared in CAPTURED_DAYS".to_owned())
 }
 
 /// The declared day the host refused.
-pub fn refused_day() -> Result<&'static FixtureDay, String> {
-    FIXTURE_DAYS
+pub fn refused_day() -> Result<&'static CapturedDay, String> {
+    CAPTURED_DAYS
         .iter()
-        .find(|fixture| !fixture.is_served())
-        .ok_or_else(|| "no refused day is declared in FIXTURE_DAYS".to_owned())
+        .find(|capture| !capture.is_served())
+        .ok_or_else(|| "no refused day is declared in CAPTURED_DAYS".to_owned())
 }
 
 pub fn manifest() -> Result<Value, String> {
-    let path = crate::fixtures_dir().join(CAPTURE_MANIFEST);
+    let path = crate::captures_dir().join(CAPTURE_MANIFEST);
     let contents =
         fs::read_to_string(&path).map_err(|err| format!("reading {}: {err}", path.display()))?;
     serde_json::from_str(&contents).map_err(|err| format!("{CAPTURE_MANIFEST}: {err}"))
@@ -45,13 +45,13 @@ pub fn manifest_entry(day: &str) -> Result<Value, String> {
     manifest_entries()?
         .into_iter()
         .find(|entry| entry.get("day").and_then(Value::as_str) == Some(day))
-        .ok_or_else(|| format!("{day} has no manifest entry - run `just jam-fixtures {day}`"))
+        .ok_or_else(|| format!("{day} has no manifest entry - run `just jam-captures {day}`"))
 }
 
 /// The dataset captured for `day`.
 pub fn captured_csv(day: &str) -> Result<String, String> {
     let date =
         crate::parse_day(day).map_err(|err| format!("{day} is not a calendar date: {err}"))?;
-    let path = crate::fixtures_dir().join(crate::dataset_file_name(date));
+    let path = crate::captures_dir().join(crate::dataset_file_name(date));
     fs::read_to_string(&path).map_err(|err| format!("reading {}: {err}", path.display()))
 }

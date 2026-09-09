@@ -1,11 +1,12 @@
-//! The per-node TEC series captured across the May 2024 storm, as a fixture
-//! small enough to commit.
+//! The per-node TEC series captured across the May 2024 storm, small enough
+//! to commit.
 //!
 //! A quiet-time median needs the 27 days before the day assessed, and a whole
 //! month of published files is 30 MB. This capture keeps, for the few grid
-//! nodes [`FIXTURE_NODES`](crate::FIXTURE_NODES) declares, every published
-//! epoch's value over [`NODE_SERIES_DAYS`](crate::NODE_SERIES_DAYS), which is
-//! what the storm index reads and what the reference illustration draws.
+//! nodes [`NODE_SERIES_NODES`](crate::NODE_SERIES_NODES) declares, every
+//! published epoch's value over [`NODE_SERIES_DAYS`](crate::NODE_SERIES_DAYS),
+//! which is what the storm index reads and what the reference illustration
+//! draws.
 //!
 //! Written by `just ionex-node-series` and frozen once committed, like the
 //! whole-file captures beside it.
@@ -31,9 +32,9 @@ pub struct CapturedNodeDay {
     /// The highest value anywhere in the day's maps, which places the node
     /// values against the whole grid.
     pub peak_tecu: Option<f64>,
-    /// One entry per node of [`FIXTURE_NODES`](crate::FIXTURE_NODES), keyed by
-    /// its name, holding that node's value at each epoch of the day's file in
-    /// epoch order. A published file's last epoch is the next day's midnight,
+    /// One entry per node of [`NODE_SERIES_NODES`](crate::NODE_SERIES_NODES),
+    /// keyed by its name, holding that node's value at each epoch of the day's
+    /// file in epoch order. A published file's last epoch is the next day's midnight,
     /// so the last entry of a day repeats the first entry of the day after it.
     pub values_tecu: BTreeMap<String, Vec<Option<f64>>>,
 }

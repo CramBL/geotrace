@@ -19,9 +19,9 @@ from pathlib import Path
 from qa._check import repo_root
 from qa.unix_compress import compress, decompressed_by_gzip
 
-FIXTURE_DIR = Path("crates/external_environmental_data/gt-ionex/tests/fixtures")
+CAPTURE_DIR = Path("crates/external_environmental_data/gt-ionex/tests/captures")
 
-OUTPUT_DIR = FIXTURE_DIR / "unix_compress"
+OUTPUT_DIR = Path("crates/external_environmental_data/gt-ionex/tests/fixtures/unix_compress")
 
 # The capture the file-derived fixtures hold, and how much of it the partial
 # ones do. The Rust tests slice the same capture to this.
@@ -42,7 +42,7 @@ class _Fixture:
 
 
 def _capture(root: Path) -> bytes:
-    return (root / FIXTURE_DIR / CAPTURE).read_bytes()
+    return (root / CAPTURE_DIR / CAPTURE).read_bytes()
 
 
 def _capture_head(root: Path) -> bytes:
