@@ -3,7 +3,7 @@
 
 mod backward_time_step;
 mod chips;
-mod clock_excursion;
+mod clock_offset;
 mod context;
 mod flares;
 mod geomagnetic;
@@ -19,15 +19,12 @@ mod style;
 mod tec;
 
 pub use chips::{ChannelVisibility, MetricVisibility};
-pub use overlay::EDGE_MARKER_INSET;
 pub use legend::{LEGEND_DOCK_OFFSET, legend_is_docked};
+pub use overlay::EDGE_MARKER_INSET;
 
 use backward_time_step::{BackwardTimeStepViewport, add_backward_time_steps};
-use chips::{
-    FlareChipState, HoveredChip, MetricAvailability, SectionGates, loaded_channels,
-    metric_filter_row,
-};
-use clock_excursion::{ExcursionViewport, add_clock_excursions};
+use chips::{FlareChipState, HoveredChip, MetricAvailability, MetricChipState, SectionGates};
+use clock_offset::ClockOffsetViewport;
 use context::{ContextLineGates, ContextPlotCaches, add_context_lines};
 use flares::{FlareSpanMarking, FlareViewport, add_flare_markers};
 use geomagnetic::geomagnetic_availability;
@@ -47,6 +44,7 @@ use chrono::{DateTime, Utc};
 use egui::Color32;
 use egui::RichText;
 use egui_plot::{LineStyle, Span, VLine};
+use gt_analysis::clock_offset::ClockOffsetPlacement;
 use gt_filter::GlobalFilter;
 use gt_flare::MarkedFlare;
 use gt_loaded_files::RecordingNames;
@@ -157,6 +155,22 @@ fn visible_series<'a>(
         .iter()
         .zip(visible)
         .filter_map(|(series, &is_vis)| is_vis.then_some(series))
+}
+
+/// The clock offset baseline furthest from zero among the visible tracks whose
+/// baseline lies off the shared y-axis, formatted. [`None`] while every visible
+/// track's baseline fits on the axis.
+fn off_scale_clock_baseline(
+    series_cache: &[PlacedTrackSeries],
+    visible: &[bool],
+) -> Option<String> {
+    visible_series(series_cache, visible)
+        .filter_map(|series| match &series.series.clock_offset_placement {
+            ClockOffsetPlacement::BaselineOffScale(off_scale) => Some(off_scale.baseline_ms),
+            ClockOffsetPlacement::BaselineOnScale(_) => None,
+        })
+        .max_by_key(|baseline_ms| baseline_ms.saturating_abs())
+        .map(gt_fmt::format_signed_delta)
 }
 
 /// The x range in Unix seconds a double-click resets the view to: the fixes
@@ -518,7 +532,7 @@ pub fn show_track_plot(
     // Channels present anywhere on the plot, unioned like the constellations:
     // the Channels toggle and chips render only when a track the plot draws
     // carries channels.
-    let channels = loaded_channels(
+    let channels = chips::loaded_channels(
         visible_series(&state.series_cache, &visible)
             .flat_map(|series| series.series.channels.iter()),
     );
@@ -537,17 +551,21 @@ pub fn show_track_plot(
         tec,
     );
 
-    let available = MetricAvailability {
-        snap_error: snap_error_available,
-        jamming: jamming_available,
-        hp30: geomagnetic_available.hp30,
-        kp: geomagnetic_available.kp,
-        tec: tec_available,
+    let off_scale_clock_baseline = off_scale_clock_baseline(&state.series_cache, &visible);
+    let chip_state = MetricChipState {
+        available: MetricAvailability {
+            snap_error: snap_error_available,
+            jamming: jamming_available,
+            hp30: geomagnetic_available.hp30,
+            kp: geomagnetic_available.kp,
+            tec: tec_available,
+        },
+        off_scale_clock_baseline: off_scale_clock_baseline.as_deref(),
     };
 
     // Draw the per-metric filter row before the plot so it consumes vertical
     // space first.  `ui.available_height()` below then gives the remainder.
-    let hovered_chip = metric_filter_row(
+    let hovered_chip = chips::metric_filter_row(
         ui,
         &mut state.metric_vis,
         present,
@@ -559,7 +577,7 @@ pub fn show_track_plot(
         &mut state.sync_to_map,
         &mut state.show_advanced_metrics,
         &mut state.show_channels,
-        available,
+        chip_state,
         FlareChipState {
             visible: &mut state.show_solar_flares,
             always_show_spans: &mut state.always_show_solar_flare_spans,
@@ -787,7 +805,7 @@ pub fn show_track_plot(
             context_caches,
             ContextLineGates {
                 metric_vis,
-                available,
+                available: chip_state.available,
             },
             context_stroke,
             line_viewport,
@@ -845,11 +863,11 @@ pub fn show_track_plot(
                 line_viewport,
                 &mut hovered_label,
             );
-            add_clock_excursions(
+            clock_offset::add_off_scale_clock_offsets(
                 plot_ui,
                 &series.series,
                 track_label,
-                ExcursionViewport {
+                ClockOffsetViewport {
                     x_min: eff_x_min,
                     x_max: eff_x_max,
                     metric_vis,
@@ -1030,23 +1048,24 @@ pub fn find_closest_tpv(
 mod tests {
     use std::cell::Cell;
 
-    use super::{cursor_label, track_label};
+    use super::{AnalysisConfig, LoadedFile};
+    use chrono::Duration;
     use egui_plot::PlotPoint;
 
     /// For the tests that are not about suppression, so they need no `Cell`
     /// of their own.
     fn cursor_label_alone(pos: &egui_plot::HoverPosition<'_>) -> Option<String> {
-        cursor_label(&Cell::new(false), pos)
+        super::cursor_label(&Cell::new(false), pos)
     }
 
     #[test]
     fn a_single_track_recording_is_labelled_by_name_alone() {
-        assert_eq!(track_label("Morning ride", 0, 1), "Morning ride");
+        assert_eq!(super::track_label("Morning ride", 0, 1), "Morning ride");
     }
 
     #[test]
     fn a_split_recording_numbers_its_tracks() {
-        assert_eq!(track_label("Morning ride", 1, 3), "Morning ride T2");
+        assert_eq!(super::track_label("Morning ride", 1, 3), "Morning ride T2");
     }
 
     /// 2024-01-15 12:00:00 UTC.
@@ -1084,6 +1103,50 @@ mod tests {
         let pos = egui_plot::HoverPosition::Elsewhere {
             position: PlotPoint::new(T, 12.0),
         };
-        assert_eq!(cursor_label(&Cell::new(true), &pos), None);
+        assert_eq!(super::cursor_label(&Cell::new(true), &pos), None);
+    }
+
+    /// One recording per entry, its host clock that far past its receiver's
+    /// own on every fix.
+    fn series_of_recordings_with_host_clocks(
+        host_ahead: &[Duration],
+    ) -> Vec<crate::series::PlacedTrackSeries> {
+        let start = chrono::DateTime::from_timestamp(T as i64, 0).unwrap_or_default();
+        let files: Vec<LoadedFile> = host_ahead
+            .iter()
+            .map(|&ahead| {
+                let points =
+                    gt_test_utils::fixtures::nav_points_with_a_host_clock_from(start, 8, 1, ahead);
+                gt_test_utils::loaded_file_with_tracks(vec![
+                    gt_test_utils::loaded_track_with_points(points),
+                ])
+            })
+            .collect();
+        crate::series::build_all_series(&files, AnalysisConfig::default())
+    }
+
+    /// A day is the widest offset the shared y-axis shows. This baseline still
+    /// draws on the line.
+    const ON_SCALE_HOURS: i64 = 20;
+
+    #[rstest::rstest]
+    #[case::every_baseline_on_the_axis(&[ON_SCALE_HOURS], &[true], None)]
+    #[case::one_baseline_off_it(&[-48], &[true], Some("+48h"))]
+    #[case::the_baseline_furthest_from_zero(&[-48, 72], &[true, true], Some("\u{2212}72h"))]
+    #[case::a_hidden_track_is_left_out(&[ON_SCALE_HOURS, -48], &[true, false], None)]
+    fn the_chip_row_reads_the_off_scale_baseline_of_the_visible_tracks(
+        #[case] host_ahead_hours: &[i64],
+        #[case] visible: &[bool],
+        #[case] expected: Option<&str>,
+    ) {
+        let host_ahead: Vec<Duration> = host_ahead_hours
+            .iter()
+            .map(|&hours| Duration::hours(hours))
+            .collect();
+        let series = series_of_recordings_with_host_clocks(&host_ahead);
+
+        let baseline = super::off_scale_clock_baseline(&series, visible);
+
+        assert_eq!(baseline.as_deref(), expected);
     }
 }

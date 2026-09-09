@@ -16,7 +16,7 @@ use super::chips::{
     ChannelVisibility, HoveredChip, LoadedChannel, MetricKindUi, MetricVisibility, SectionGates,
     metric_is_shown,
 };
-use super::clock_excursion::ClockExcursionHover;
+use super::clock_offset::ClockOffsetHover;
 use super::flares::SolarFlareHover;
 use super::geomagnetic::GeomagneticHover;
 use super::jamming::JammingHover;
@@ -249,7 +249,7 @@ pub(super) enum PlotHoverLabel {
     Jamming(JammingHover),
     Geomagnetic(GeomagneticHover),
     Tec(TecHover),
-    ClockExcursion(ClockExcursionHover),
+    ClockOffset(ClockOffsetHover),
     BackwardTimeStep(BackwardTimeStepHover),
     SolarFlare(SolarFlareHover),
 }
@@ -262,7 +262,7 @@ impl PlotHoverLabel {
             Self::Jamming(hover) => hover.show(ui),
             Self::Geomagnetic(hover) => hover.show(ui),
             Self::Tec(hover) => hover.show(ui),
-            Self::ClockExcursion(hover) => hover.show(ui),
+            Self::ClockOffset(hover) => hover.show(ui),
             Self::BackwardTimeStep(hover) => hover.show(ui),
             Self::SolarFlare(hover) => hover.show(ui),
         }

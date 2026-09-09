@@ -18,6 +18,10 @@ use crate::tpv::TimePositionVelocity;
 /// The heading of every fixture fix that has one.
 const EASTWARD_HEADING_DEGREES: f64 = 90.0;
 
+/// How far the walking fixtures step per fix, in degrees of latitude and of
+/// longitude alike.
+const WALK_STRIDE_DEGREES: f64 = 0.001;
+
 /// The satellites in the fix of a [`FixKind`] the receiver measured.
 const SATELLITES_IN_FIX: u32 = 12;
 
@@ -271,8 +275,8 @@ struct Walk {
     heading: Option<Angle>,
     velocity: Option<Velocity>,
     /// How far the host clock runs past the receiver's own on every fix.
-    /// [`None`] leaves the fixes without a system timestamp, so they have no
-    /// clock offset.
+    /// [`None`] leaves the fixes with no clock offset: without a host
+    /// timestamp, there is no second clock to measure against.
     host_ahead: Option<Duration>,
 }
 
@@ -323,13 +327,7 @@ impl Walk {
 /// `count` fixes `step_secs` apart from `start`, walking north-east from
 /// 55°N 12°E in 0.001° steps at 15 km/h, without a satellite report.
 pub fn nav_points_from(start: DateTime<Utc>, count: usize, step_secs: i64) -> Vec<NavPoint> {
-    nav_points_walking_from(
-        start,
-        count,
-        step_secs,
-        Latitude::new(55.0),
-        Longitude::new(12.0),
-    )
+    default_walk(start, step_secs).points(count)
 }
 
 /// [`nav_points_from`] with a host timestamp on every fix, `host_ahead` past
@@ -342,15 +340,20 @@ pub fn nav_points_with_a_host_clock_from(
 ) -> Vec<NavPoint> {
     Walk {
         host_ahead: Some(host_ahead),
-        ..Walk::north_east(
-            start,
-            Latitude::new(55.0),
-            Longitude::new(12.0),
-            step_secs,
-            0.001,
-        )
+        ..default_walk(start, step_secs)
     }
     .points(count)
+}
+
+/// The walk of [`nav_points_from`]: north-east from 55°N 12°E in 0.001° steps.
+fn default_walk(start: DateTime<Utc>, step_secs: i64) -> Walk {
+    Walk::north_east(
+        start,
+        Latitude::new(55.0),
+        Longitude::new(12.0),
+        step_secs,
+        WALK_STRIDE_DEGREES,
+    )
 }
 
 /// [`nav_points_from`] starting at a position of the caller's choosing, for
@@ -362,7 +365,7 @@ pub fn nav_points_walking_from(
     first_lat: Latitude,
     first_lon: Longitude,
 ) -> Vec<NavPoint> {
-    Walk::north_east(start, first_lat, first_lon, step_secs, 0.001).points(count)
+    Walk::north_east(start, first_lat, first_lon, step_secs, WALK_STRIDE_DEGREES).points(count)
 }
 
 /// `count` fixes one second apart from 2026-01-01 12:00:00 UTC, all at 55.6867°N
