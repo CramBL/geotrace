@@ -9,13 +9,13 @@
 //! decoder and response classifier.
 
 use std::collections::HashSet;
-use std::fs;
 use std::sync::OnceLock;
 
 use proptest::test_runner::TestCaseError;
 
+use gt_jam::H3_RESOLUTION;
+use gt_jam::test_util;
 use gt_jam::wire::{self, HexObservation, ParseWarningReporter};
-use gt_jam::{FIXTURE_DAYS, H3_RESOLUTION, dataset_file_name, fixtures_dir, parse_day};
 
 /// How far into the captured day the truncation property cuts: enough for
 /// the header and the first rows, without re-parsing 900 KiB per case.
@@ -24,18 +24,9 @@ const MAX_TRUNCATION_BYTES: usize = 4096;
 /// The captured world day, read once for the whole run.
 fn captured_world_day() -> Result<&'static str, String> {
     static CSV: OnceLock<Result<String, String>> = OnceLock::new();
-    CSV.get_or_init(|| {
-        let fixture = FIXTURE_DAYS
-            .iter()
-            .find(|fixture| fixture.is_served())
-            .ok_or_else(|| "no served day is declared in FIXTURE_DAYS".to_owned())?;
-        let day = parse_day(fixture.day)
-            .map_err(|err| format!("{} is not a calendar date: {err}", fixture.day))?;
-        let path = fixtures_dir().join(dataset_file_name(day));
-        fs::read_to_string(&path).map_err(|err| format!("reading {}: {err}", path.display()))
-    })
-    .as_deref()
-    .map_err(Clone::clone)
+    CSV.get_or_init(|| test_util::captured_csv(test_util::served_day()?.day))
+        .as_deref()
+        .map_err(Clone::clone)
 }
 
 /// What [`wire::parse_dataset`] promises about its output.

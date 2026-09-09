@@ -9,6 +9,11 @@ authors.workspace = true
 [lib]
 doctest = false
 
+[features]
+# Builds `gt_solar::test_util`, which reads the captured responses under
+# `tests/fixtures/`. A normal build leaves it off.
+test-util = []
+
 [dependencies]
 chrono.workspace = true
 gt-fetch = { path = "../gt-fetch" }
@@ -21,6 +26,11 @@ strum.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+# Responds to a fetch pipeline's requests from a script.
+gt-fetch = { path = "../gt-fetch", features = ["test-util"] }
+# Builds `test_util`, which the integration test binaries read the
+# captures through.
+gt-solar = { path = ".", features = ["test-util"] }
 insta.workspace = true
 proptest.workspace = true
 # The fixture-capture example fetches from the service directly, not through

@@ -7,13 +7,12 @@
 //! what survives holds only events the catalog could publish. Mirrors how
 //! `gt-solar` fuzzes its series parser.
 
-mod support;
-
 use std::sync::OnceLock;
 
 use proptest::test_runner::TestCaseError;
 
 use gt_flare::SolarFlare;
+use gt_flare::test_util;
 use gt_flare::wire;
 
 /// How far into the captured storm the truncation property cuts: past the end
@@ -23,7 +22,7 @@ const MAX_TRUNCATION_BYTES: usize = 32_768;
 /// The capture the truncation property cuts, read once for the whole run.
 fn captured_storm() -> Result<&'static str, String> {
     static JSON: OnceLock<Result<String, String>> = OnceLock::new();
-    JSON.get_or_init(|| support::captured_response(support::declared_window("storm-may-2024")?))
+    JSON.get_or_init(|| test_util::captured_response(test_util::declared_window("storm-may-2024")?))
         .as_deref()
         .map_err(Clone::clone)
 }

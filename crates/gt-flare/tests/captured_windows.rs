@@ -5,13 +5,12 @@
 //! against each other, and checks the captures are still the shape the parser
 //! is written for.
 
-mod support;
-
 use std::collections::BTreeSet;
 
 use serde_json::Value;
 
 use gt_flare::class::{FlareClass, RadioBlackoutClass};
+use gt_flare::test_util;
 use gt_flare::wire;
 use gt_flare::{FIXTURE_WINDOWS, FixtureWindow, SolarFlare};
 
@@ -27,19 +26,19 @@ const BEFORE_COVERAGE_CAPTURE: &str = "before-coverage";
 const HTTP_OK: u64 = 200;
 
 fn parse_capture(fixture: &FixtureWindow) -> Result<Vec<SolarFlare>, String> {
-    let json = support::captured_response(fixture)?;
+    let json = test_util::captured_response(fixture)?;
     wire::parse_flares(&json).map_err(|err| format!("{}: {err}", fixture.name))
 }
 
 fn captured_flares(name: &str) -> Result<Vec<SolarFlare>, String> {
-    parse_capture(support::declared_window(name)?)
+    parse_capture(test_util::declared_window(name)?)
 }
 
 /// The manifest agrees with what each window declares.
 #[test]
 fn every_declared_window_has_a_matching_manifest_entry() {
     for fixture in FIXTURE_WINDOWS {
-        let entry = support::manifest_entry(fixture.name).unwrap();
+        let entry = test_util::manifest_entry(fixture.name).unwrap();
         assert_eq!(
             entry.get("start").and_then(Value::as_str),
             Some(fixture.start),
@@ -67,7 +66,7 @@ fn every_declared_window_has_a_matching_manifest_entry() {
 #[test]
 fn the_manifest_lists_exactly_the_declared_windows() {
     let declared: BTreeSet<&str> = FIXTURE_WINDOWS.iter().map(|fixture| fixture.name).collect();
-    let recorded: Vec<String> = support::manifest_entries()
+    let recorded: Vec<String> = test_util::manifest_entries()
         .unwrap()
         .iter()
         .filter_map(|entry| Some(entry.get("name")?.as_str()?.to_owned()))
@@ -80,11 +79,11 @@ fn the_manifest_lists_exactly_the_declared_windows() {
 /// it was sent in.
 #[test]
 fn no_capture_records_a_url() {
-    let manifest = support::manifest().unwrap().to_string();
+    let manifest = test_util::manifest().unwrap().to_string();
     assert!(!manifest.contains("api_key"), "{manifest}");
     assert!(!manifest.contains("DONKI/FLR"), "{manifest}");
     for fixture in FIXTURE_WINDOWS {
-        let json = support::captured_response(&fixture).unwrap();
+        let json = test_util::captured_response(&fixture).unwrap();
         assert!(!json.contains("api_key"), "{}", fixture.name);
     }
 }
@@ -92,7 +91,7 @@ fn no_capture_records_a_url() {
 #[test]
 fn every_capture_parses_into_the_recorded_number_of_flares() {
     for fixture in FIXTURE_WINDOWS {
-        let recorded = support::manifest_entry(fixture.name)
+        let recorded = test_util::manifest_entry(fixture.name)
             .unwrap()
             .get("flares")
             .and_then(Value::as_u64)
@@ -191,10 +190,10 @@ fn the_captured_quiet_month_holds_c_class_flares_without_end_times() {
 
 #[test]
 fn a_window_before_the_catalog_begins_is_captured_as_an_empty_array() {
-    let fixture = support::declared_window(BEFORE_COVERAGE_CAPTURE).unwrap();
+    let fixture = test_util::declared_window(BEFORE_COVERAGE_CAPTURE).unwrap();
     assert!(parse_capture(fixture).unwrap().is_empty());
     assert_eq!(
-        support::manifest_entry(fixture.name)
+        test_util::manifest_entry(fixture.name)
             .unwrap()
             .get("http_status")
             .and_then(Value::as_u64),

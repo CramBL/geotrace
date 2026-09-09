@@ -227,10 +227,10 @@ pub fn read_served_file(
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
     use std::io::Write as _;
 
-    use gt_fetch::{TransportError, TransportSource};
+    use gt_fetch::TransportSource;
+    use gt_fetch::test_util::{self as scripted_transport, ScriptedTransport, TransportResponse};
     use rstest::rstest;
 
     use crate::mirrors::MirrorLayout;
@@ -289,50 +289,6 @@ mod tests {
         encoder.finish().expect("finish")
     }
 
-    fn response(status: u16, body: Vec<u8>) -> Result<BytesResponse, TransportError> {
-        Ok(BytesResponse { status, body })
-    }
-
-    /// Replays a scripted sequence and records the requests it was sent.
-    struct CannedTransport {
-        script: RefCell<Vec<Result<BytesResponse, TransportError>>>,
-        requests: RefCell<Vec<HttpRequest>>,
-    }
-
-    impl CannedTransport {
-        fn new(script: Vec<Result<BytesResponse, TransportError>>) -> Self {
-            Self {
-                script: RefCell::new(script),
-                requests: RefCell::new(Vec::new()),
-            }
-        }
-
-        fn urls(&self) -> Vec<String> {
-            self.requests
-                .borrow()
-                .iter()
-                .map(|request| request.url().to_owned())
-                .collect()
-        }
-
-        fn requests(&self) -> Vec<HttpRequest> {
-            self.requests.borrow().clone()
-        }
-    }
-
-    impl Transport<Vec<u8>> for CannedTransport {
-        fn send(&self, request: &HttpRequest) -> Result<BytesResponse, TransportError> {
-            self.requests.borrow_mut().push(request.clone());
-            let mut script = self.script.borrow_mut();
-            if script.is_empty() {
-                return Err(TransportError {
-                    detail: "the test under-declared its requests".to_owned(),
-                });
-            }
-            script.remove(0)
-        }
-    }
-
     const FIRST_MIRROR: &str = "https://first.example";
     const SECOND_MIRROR: &str = "https://second.example";
 
@@ -363,22 +319,22 @@ mod tests {
     fn fetch_with_token(
         mirrors: &MirrorList,
         earthdata_token: Option<&SecretToken>,
-        script: Vec<Result<BytesResponse, TransportError>>,
-    ) -> (DayFetch, CannedTransport) {
-        let transport = CannedTransport::new(script);
+        script: Vec<TransportResponse<Vec<u8>>>,
+    ) -> (DayFetch, ScriptedTransport<Vec<u8>>) {
+        let transport = ScriptedTransport::in_order(script);
         let outcome = fetch_day_maps(&transport, mirrors, earthdata_token, day(), today());
         (outcome, transport)
     }
 
     fn fetch_from(
         mirrors: &MirrorList,
-        script: Vec<Result<BytesResponse, TransportError>>,
+        script: Vec<TransportResponse<Vec<u8>>>,
     ) -> (DayFetch, Vec<String>) {
         let (outcome, transport) = fetch_with_token(mirrors, None, script);
-        (outcome, transport.urls())
+        (outcome, transport.requested_urls())
     }
 
-    fn fetch(script: Vec<Result<BytesResponse, TransportError>>) -> (DayFetch, Vec<String>) {
+    fn fetch(script: Vec<TransportResponse<Vec<u8>>>) -> (DayFetch, Vec<String>) {
         fetch_from(&publishing_host(), script)
     }
 
@@ -386,7 +342,10 @@ mod tests {
     /// requested.
     #[test]
     fn a_served_final_file_is_parsed_without_requesting_the_rapid_one() {
-        let (outcome, urls) = fetch(vec![response(200, gzipped(&published_file()))]);
+        let (outcome, urls) = fetch(vec![scripted_transport::response(
+            200,
+            gzipped(&published_file()),
+        )]);
 
         match outcome {
             DayFetch::Fetched {
@@ -413,8 +372,8 @@ mod tests {
     #[test]
     fn a_missing_final_file_falls_back_to_the_rapid_one() {
         let (outcome, urls) = fetch(vec![
-            response(404, Vec::new()),
-            response(200, gzipped(&published_file())),
+            scripted_transport::response(404, Vec::new()),
+            scripted_transport::response(200, gzipped(&published_file())),
         ]);
 
         assert!(
@@ -442,14 +401,17 @@ mod tests {
     #[case::a_body_that_is_not_gzip(b"<html>captive portal</html>".to_vec())]
     #[case::gzip_holding_something_else(gzipped("not an ionex file"))]
     fn a_file_that_cannot_be_read_fails_the_day(#[case] body: Vec<u8>) {
-        let (outcome, urls) = fetch(vec![response(200, body)]);
+        let (outcome, urls) = fetch(vec![scripted_transport::response(200, body)]);
         assert!(matches!(outcome, DayFetch::Failed(_)), "{outcome:?}");
         assert_eq!(urls.len(), 1, "the broken file is not retried");
     }
 
     #[test]
     fn a_5xx_is_retried_once_and_then_fails_the_day() {
-        let (outcome, urls) = fetch(vec![response(503, Vec::new()), response(503, Vec::new())]);
+        let (outcome, urls) = fetch(vec![
+            scripted_transport::response(503, Vec::new()),
+            scripted_transport::response(503, Vec::new()),
+        ]);
         match outcome {
             DayFetch::Failed(failure) => {
                 assert_eq!(
@@ -469,7 +431,7 @@ mod tests {
     #[case::forbidden(403)]
     #[case::too_many_requests(429)]
     fn a_4xx_that_is_not_a_missing_file_fails_the_day(#[case] status: u16) {
-        let (outcome, urls) = fetch(vec![response(status, Vec::new())]);
+        let (outcome, urls) = fetch(vec![scripted_transport::response(status, Vec::new())]);
         assert!(matches!(outcome, DayFetch::Failed(_)), "{outcome:?}");
         assert_eq!(urls.len(), 1);
     }
@@ -479,7 +441,7 @@ mod tests {
     #[case::before_coverage(NaiveDate::from_ymd_opt(2000, 1, 1))]
     #[case::in_the_future(NaiveDate::from_ymd_opt(2030, 1, 1))]
     fn a_day_outside_coverage_is_never_requested(#[case] day: Option<NaiveDate>) {
-        let transport = CannedTransport::new(Vec::new());
+        let transport = ScriptedTransport::<Vec<u8>>::in_order(Vec::new());
         let outcome = fetch_day_maps(
             &transport,
             &publishing_host(),
@@ -488,7 +450,7 @@ mod tests {
             today(),
         );
         assert!(matches!(outcome, DayFetch::Missing), "{outcome:?}");
-        assert!(transport.urls().is_empty());
+        assert!(transport.requested_urls().is_empty());
     }
 
     /// Offline, the host is never reached, so nothing is known about the day:
@@ -505,17 +467,26 @@ mod tests {
     /// The mirror that did not serve the file is passed over, and what it
     /// returned is kept with the day the next mirror served.
     #[rstest]
-    #[case::a_mirror_without_the_file(vec![response(404, Vec::new())], MirrorOutcome::NoFile)]
+    #[case::a_mirror_without_the_file(
+        vec![scripted_transport::response(404, Vec::new())],
+        MirrorOutcome::NoFile
+    )]
     #[case::a_mirror_that_fails(
-        vec![response(503, Vec::new()), response(503, Vec::new())],
+        vec![
+            scripted_transport::response(503, Vec::new()),
+            scripted_transport::response(503, Vec::new()),
+        ],
         MirrorOutcome::Failed("HTTP 503 Service Unavailable".to_owned())
     )]
     fn the_next_mirror_serves_a_day_the_one_before_it_did_not(
-        #[case] first_mirror: Vec<Result<BytesResponse, TransportError>>,
+        #[case] first_mirror: Vec<TransportResponse<Vec<u8>>>,
         #[case] expected: MirrorOutcome,
     ) {
         let mut script = first_mirror;
-        script.push(response(200, gzipped(&published_file())));
+        script.push(scripted_transport::response(
+            200,
+            gzipped(&published_file()),
+        ));
 
         let (outcome, urls) = fetch_from(&two_mirrors(), script);
 
@@ -553,9 +524,9 @@ mod tests {
         let (outcome, urls) = fetch_from(
             &two_mirrors(),
             vec![
-                response(404, Vec::new()),
-                response(404, Vec::new()),
-                response(200, gzipped(&published_file())),
+                scripted_transport::response(404, Vec::new()),
+                scripted_transport::response(404, Vec::new()),
+                scripted_transport::response(200, gzipped(&published_file())),
             ],
         );
 
@@ -590,10 +561,10 @@ mod tests {
         let (outcome, urls) = fetch_from(
             &two_mirrors(),
             vec![
-                response(503, Vec::new()),
-                response(503, Vec::new()),
-                response(500, Vec::new()),
-                response(500, Vec::new()),
+                scripted_transport::response(503, Vec::new()),
+                scripted_transport::response(503, Vec::new()),
+                scripted_transport::response(500, Vec::new()),
+                scripted_transport::response(500, Vec::new()),
             ],
         );
 
@@ -619,7 +590,10 @@ mod tests {
     fn a_day_one_mirror_lacks_and_another_fails_on_is_a_failure() {
         let (outcome, _urls) = fetch_from(
             &two_mirrors(),
-            vec![response(404, Vec::new()), response(403, Vec::new())],
+            vec![
+                scripted_transport::response(404, Vec::new()),
+                scripted_transport::response(403, Vec::new()),
+            ],
         );
 
         match outcome {
@@ -655,7 +629,10 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        assert!(transport.urls().is_empty(), "nothing was requested");
+        assert!(
+            transport.requested_urls().is_empty(),
+            "nothing was requested"
+        );
     }
 
     /// The token authenticates the archive that needs one, and the mirrors
@@ -672,8 +649,8 @@ mod tests {
             &mirrors,
             Some(&token()),
             vec![
-                response(404, Vec::new()),
-                response(200, gzipped(&published_file())),
+                scripted_transport::response(404, Vec::new()),
+                scripted_transport::response(200, gzipped(&published_file())),
             ],
         );
 
@@ -699,8 +676,8 @@ mod tests {
             &one_mirror(Mirror::publishing(MirrorLayout::Cddis)),
             Some(&token()),
             vec![
-                response(404, Vec::new()),
-                response(200, LEGACY_FILE.to_vec()),
+                scripted_transport::response(404, Vec::new()),
+                scripted_transport::response(200, LEGACY_FILE.to_vec()),
             ],
         );
 
@@ -712,7 +689,7 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(
-            transport.urls().last().map(String::as_str),
+            transport.requested_urls().last().map(String::as_str),
             Some("https://cddis.nasa.gov/archive/gnss/products/ionex/2024/131/jplg1310.24i.Z")
         );
     }
@@ -726,12 +703,12 @@ mod tests {
             Some(&token()),
             // Twice: a transport failure is retried once.
             vec![
-                Err(TransportError {
-                    detail: "error sending request with header Bearer earthdata-token".to_owned(),
-                }),
-                Err(TransportError {
-                    detail: "error sending request with header Bearer earthdata-token".to_owned(),
-                }),
+                scripted_transport::transport_error(
+                    "error sending request with header Bearer earthdata-token",
+                ),
+                scripted_transport::transport_error(
+                    "error sending request with header Bearer earthdata-token",
+                ),
             ],
         );
 
@@ -752,10 +729,10 @@ mod tests {
         let (outcome, urls) = fetch_from(
             &two_mirrors(),
             vec![
-                response(404, Vec::new()),
-                response(404, Vec::new()),
-                response(404, Vec::new()),
-                response(404, Vec::new()),
+                scripted_transport::response(404, Vec::new()),
+                scripted_transport::response(404, Vec::new()),
+                scripted_transport::response(404, Vec::new()),
+                scripted_transport::response(404, Vec::new()),
             ],
         );
 

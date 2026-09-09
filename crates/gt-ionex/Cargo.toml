@@ -26,6 +26,8 @@ strum.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+# Responds to a fetch pipeline's requests from a script.
+gt-fetch = { path = "../gt-fetch", features = ["test-util"] }
 insta.workspace = true
 proptest.workspace = true
 # The fixture-capture example fetches from the archive directly, not through
