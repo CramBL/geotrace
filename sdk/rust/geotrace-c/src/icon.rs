@@ -1,10 +1,12 @@
 //! The icon a map marker is drawn with.
 
+use strum::FromRepr;
+
 /// Icon for map markers. `GTD_ICON_AUTO` means the application picks the icon:
 /// `gtd_builder_add_event_marker_style()` accepts it, and
 /// `gtd_nav_file_get_event_marker_style()` returns it.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, FromRepr)]
 pub enum GtdMarkerIcon {
     /// Map pin.
     GTD_ICON_PIN = 0,
@@ -39,27 +41,8 @@ pub enum GtdMarkerIcon {
 }
 
 impl GtdMarkerIcon {
-    /// The declared discriminants are 0 to 13 and 255, so a value between 14
-    /// and 254 declares no variant.
-    pub(crate) fn from_abi_value(icon: u32) -> Option<Self> {
-        match icon {
-            0 => Some(Self::GTD_ICON_PIN),
-            1 => Some(Self::GTD_ICON_CROSS),
-            2 => Some(Self::GTD_ICON_CIRCLE),
-            3 => Some(Self::GTD_ICON_LIGHTNING),
-            4 => Some(Self::GTD_ICON_WARNING),
-            5 => Some(Self::GTD_ICON_ERROR),
-            6 => Some(Self::GTD_ICON_CHECK),
-            7 => Some(Self::GTD_ICON_SATELLITE),
-            8 => Some(Self::GTD_ICON_SATELLITE_LOST),
-            9 => Some(Self::GTD_ICON_GEAR),
-            10 => Some(Self::GTD_ICON_REFRESH),
-            11 => Some(Self::GTD_ICON_DOWNLOAD),
-            12 => Some(Self::GTD_ICON_UPLOAD),
-            13 => Some(Self::GTD_ICON_WRENCH),
-            255 => Some(Self::GTD_ICON_AUTO),
-            _ => None,
-        }
+    pub(crate) fn from_abi_value(value: u32) -> Option<Self> {
+        Self::from_repr(usize::try_from(value).ok()?)
     }
 
     pub(crate) fn to_marker_icon(self) -> Option<geotrace_sdk::MarkerIcon> {
