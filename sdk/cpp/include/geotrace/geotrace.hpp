@@ -445,6 +445,24 @@ struct [[nodiscard]] Timestamp {
         return try_from_nanos(nanos).value_or_throw();
     }
 
+    /**
+     * An ISO 8601 / RFC 3339 timestamp with a timezone designator, such as
+     * `"2026-02-01T15:00:00+00:00"`. A leap second (`:60`) converts to the
+     * microsecond count of the second after it.
+     */
+    static Result<Timestamp> try_from_iso8601(const std::string &text) {
+        return try_convert(text.c_str(), ::gtd_ts_from_iso8601);
+    }
+
+    /**
+     * @throws geotrace::ParseError for a string that is not an ISO 8601
+     *         timestamp, which includes one with no timezone designator and one
+     *         whose year is past the range a timestamp covers.
+     */
+    static Timestamp from_iso8601(const std::string &text) {
+        return try_from_iso8601(text).value_or_throw();
+    }
+
 #if defined(__cpp_impl_three_way_comparison) && __cpp_impl_three_way_comparison >= 201907L
     auto operator<=>(const Timestamp &) const = default;
 #else
@@ -467,10 +485,10 @@ struct [[nodiscard]] Timestamp {
 #endif
 
   private:
-    template <typename Convert>
-    static Result<Timestamp> try_convert(std::int64_t count, Convert convert) {
+    template <typename Input, typename Convert>
+    static Result<Timestamp> try_convert(Input input, Convert convert) {
         GtdTimestamp out{0};
-        const GtdStatus status = convert(count, &out);
+        const GtdStatus status = convert(input, &out);
         if (status != GTD_OK) {
             return Status::from(status);
         }

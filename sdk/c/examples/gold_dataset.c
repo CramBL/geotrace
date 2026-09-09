@@ -8,7 +8,6 @@
  */
 
 #include "../geotrace.h"
-#include "gold_timestamp.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -51,6 +50,15 @@ static void check_sdk_status(GtdStatus status, const char *label) {
     if (status != GTD_OK) {
         FAILF("%s: %s", label, gtd_last_error());
     }
+}
+
+/* Every timestamp cell of the gold CSV fixtures is an ISO 8601 timestamp or empty. */
+static GtdTimestamp parse_timestamp_or_absent(const char *text) {
+    GtdTimestamp timestamp;
+    if (gtd_ts_from_iso8601(text, &timestamp) != GTD_OK) {
+        return gtd_ts_none();
+    }
+    return timestamp;
 }
 
 /* Copies `value` into `dest`, which holds `size` bytes. Exits with an error
@@ -313,8 +321,8 @@ static size_t take_satellites_at(SatelliteTimeKey key, GtdSatellite *out, size_t
 /* cols: `track_id`, `gps_time`, `sys_time`, `lat`, `lon`, `heading_deg`,
    `speed_kmh`, `eph_m` */
 static void add_fix_row(GtdFileBuilder *builder, char *cols[]) {
-    GtdTimestamp gps_ts = gold_parse_timestamp(cols[1]);
-    GtdTimestamp sys_ts = gold_parse_timestamp(cols[2]);
+    GtdTimestamp gps_ts = parse_timestamp_or_absent(cols[1]);
+    GtdTimestamp sys_ts = parse_timestamp_or_absent(cols[2]);
 
     char *end;
     double lat = strtod(cols[3], &end);
@@ -361,8 +369,8 @@ static void add_ghost_fix_reports(GtdFileBuilder *builder) {
         GtdSatellite sat_buf[SAT_PER_FIX];
         size_t sat_count = take_satellites_at(key, sat_buf, SAT_PER_FIX);
         check_sdk_status(gtd_builder_add_satellite_report(
-                             builder, gold_parse_timestamp(key.gps_time),
-                             gold_parse_timestamp(key.sys_time), sat_buf, sat_count),
+                             builder, parse_timestamp_or_absent(key.gps_time),
+                             parse_timestamp_or_absent(key.sys_time), sat_buf, sat_count),
                          "add_satellite_report");
     }
 }
@@ -408,7 +416,7 @@ static void load_markers(GtdFileBuilder *builder, const char *base) {
         if (split_csv(line, cols, CSV_MAX_COLS) < 3) {
             continue;
         }
-        GtdTimestamp timestamp = gold_parse_timestamp(cols[0]);
+        GtdTimestamp timestamp = parse_timestamp_or_absent(cols[0]);
         if (gtd_ts_is_none(timestamp)) {
             FAIL("markers.csv: missing timestamp");
         }
@@ -440,7 +448,7 @@ static void load_events(GtdFileBuilder *builder, const char *base) {
         if (split_csv(line, cols, CSV_MAX_COLS) < 3) {
             continue;
         }
-        GtdTimestamp timestamp = gold_parse_timestamp(cols[0]);
+        GtdTimestamp timestamp = parse_timestamp_or_absent(cols[0]);
         if (gtd_ts_is_none(timestamp)) {
             FAIL("events.csv: missing sys_time");
         }
@@ -552,7 +560,7 @@ static void load_channels(GtdFileBuilder *builder, const char *base) {
         if (accumulator->n_times >= MAX_CH_SAMPLES) {
             FAIL("too many channel samples");
         }
-        GtdTimestamp timestamp = gold_parse_timestamp(cols[5]);
+        GtdTimestamp timestamp = parse_timestamp_or_absent(cols[5]);
         if (gtd_ts_is_none(timestamp)) {
             FAIL("invalid channel timestamp");
         }
