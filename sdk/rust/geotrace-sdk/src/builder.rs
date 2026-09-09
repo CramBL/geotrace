@@ -1102,31 +1102,46 @@ impl TimelinePlacement {
     }
 }
 
-/// Place an external event's time on the nav timeline.
-///
-/// A time equal to a fix's time is placed at that fix. The timeline must be
-/// sorted by time.
-fn place_on_fix_timeline(timeline: &[TimelineFix], time: DateTime<Utc>) -> TimelinePlacement {
-    let pos = timeline.partition_point(|fix| fix.time < time);
-    let before = pos.checked_sub(1).and_then(|index| timeline.get(index));
+/// The fixes an external event is placed against, sorted by
+/// [`InternalFix::timeline_time`], the key [`FixTimeline::place`] searches.
+/// The nav points stay in [`InternalFix::effective_time`] order, and the two
+/// orders differ where a fix has both a receiver and a host timestamp.
+struct FixTimeline(Vec<TimelineFix>);
 
-    match (before, timeline.get(pos)) {
-        (_, Some(at)) if at.time == time => TimelinePlacement::WithinFixTimeSpan(at.position),
-        (Some(before), Some(after)) => {
-            let before_us = before.time.timestamp_micros();
-            let span_us = after.time.timestamp_micros() - before_us;
-            let fraction = if span_us == 0 {
-                0.0_f64
-            } else {
-                (time.timestamp_micros() - before_us) as f64 / span_us as f64
-            };
-            TimelinePlacement::WithinFixTimeSpan(
-                before.position.interpolated_to(after.position, fraction),
-            )
+impl FixTimeline {
+    fn from_fixes<'a>(fixes: impl Iterator<Item = &'a InternalFix>) -> Self {
+        let mut timeline: Vec<TimelineFix> = fixes.map(TimelineFix::from_internal_fix).collect();
+        timeline.sort_by_key(|fix| fix.time);
+        Self(timeline)
+    }
+
+    /// Place an external event's time on the nav timeline.
+    ///
+    /// A time equal to a fix's time is placed at that fix, and at the first of
+    /// them in [`InternalFix::effective_time`] order where several fixes share
+    /// that time.
+    fn place(&self, time: DateTime<Utc>) -> TimelinePlacement {
+        let pos = self.0.partition_point(|fix| fix.time < time);
+        let before = pos.checked_sub(1).and_then(|index| self.0.get(index));
+
+        match (before, self.0.get(pos)) {
+            (_, Some(at)) if at.time == time => TimelinePlacement::WithinFixTimeSpan(at.position),
+            (Some(before), Some(after)) => {
+                let before_us = before.time.timestamp_micros();
+                let span_us = after.time.timestamp_micros() - before_us;
+                let fraction = if span_us == 0 {
+                    0.0_f64
+                } else {
+                    (time.timestamp_micros() - before_us) as f64 / span_us as f64
+                };
+                TimelinePlacement::WithinFixTimeSpan(
+                    before.position.interpolated_to(after.position, fraction),
+                )
+            }
+            (Some(last), None) => TimelinePlacement::AfterLastFix(last.position),
+            (None, Some(first)) => TimelinePlacement::BeforeFirstFix(first.position),
+            (None, None) => TimelinePlacement::NoFixes,
         }
-        (Some(last), None) => TimelinePlacement::AfterLastFix(last.position),
-        (None, Some(first)) => TimelinePlacement::BeforeFirstFix(first.position),
-        (None, None) => TimelinePlacement::NoFixes,
     }
 }
 
@@ -1136,25 +1151,24 @@ fn place_on_fix_timeline(timeline: &[TimelineFix], time: DateTime<Utc>) -> Timel
 /// is always empty (positions are clamped and a warning is logged). In strict
 /// mode, out-of-range annotations go into `out_of_range`.
 ///
-/// Annotation timestamps are treated as host system-clock times and compared
-/// against each fix's `sys_time` (falling back to `gps_time` via
-/// [`timeline_time`]). This matches the clock domain of all external event
-/// sources (log files, user annotations). The fix slice must be sorted by a
-/// time consistent with `timeline_time` - in practice the GPS and system clocks
-/// are monotonically consistent for well-formed data.
+/// An annotation's timestamp is a host system-clock time, as are the timestamps
+/// of every external event source (log files, user annotations).
+/// [`FixTimeline`] places it against each fix's `sys_time`, or against the
+/// `gps_time` of a fix that has no `sys_time`.
 fn interpolate_annotations(
     fixes: &[InternalFix],
     annotations: Vec<Annotation>,
     lenient: bool,
 ) -> (Vec<(Annotation, TimelinePosition)>, Vec<Annotation>) {
-    let timeline: Vec<TimelineFix> = fixes.iter().map(TimelineFix::from_internal_fix).collect();
+    let timeline = FixTimeline::from_fixes(fixes.iter());
     let mut resolved = Vec::new();
     let mut out_of_range = Vec::new();
 
     for annotation in annotations {
         let ann_time = annotation.time;
 
-        let position = place_on_fix_timeline(&timeline, ann_time)
+        let position = timeline
+            .place(ann_time)
             .resolved_position(lenient, format_args!("Annotation at {ann_time}"));
 
         match position {
@@ -1175,7 +1189,7 @@ struct PlacedEventMarkers {
 
 /// Interpolate geographic positions for event markers from the built nav track.
 ///
-/// The `sys_time` is placed on the nav timeline by [`place_on_fix_timeline`].
+/// [`FixTimeline::place`] places the `sys_time` on the nav timeline.
 /// In lenient mode a marker before the first fix or after the last fix is
 /// clamped to that endpoint and logged as a warning. In strict mode it is
 /// counted in `outside_the_fix_time_range` and left out of `markers`.
@@ -1184,16 +1198,13 @@ fn interpolate_event_markers(
     pending: Vec<(String, DateTime<Utc>, Option<String>)>,
     lenient: bool,
 ) -> PlacedEventMarkers {
-    let timeline: Vec<TimelineFix> = points
-        .iter()
-        .map(|p| TimelineFix::from_internal_fix(&p.fix))
-        .collect();
+    let timeline = FixTimeline::from_fixes(points.iter().map(|p| &p.fix));
 
     let mut markers = Vec::new();
     let mut outside_the_fix_time_range = 0;
 
     for (variant_path, sys_time, annotation) in pending {
-        let position = place_on_fix_timeline(&timeline, sys_time).resolved_position(
+        let position = timeline.place(sys_time).resolved_position(
             lenient,
             format_args!("Event marker {variant_path:?} at {sys_time}"),
         );
