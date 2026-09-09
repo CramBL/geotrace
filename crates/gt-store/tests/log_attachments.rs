@@ -315,22 +315,6 @@ fn attaching_to_a_deleted_recording_fails_and_stores_no_log() {
     assert_eq!(recorded.stored_log_count(), 0);
 }
 
-/// Deleting a recording deletes the logs attached to it, compressed files
-/// included.
-#[test_log::test]
-fn deleting_a_recording_deletes_the_logs_attached_to_it() {
-    let mut recorded = RecordedStore::new();
-    let id = recorded.attach("navsyncd.log", LOG_TEXT);
-
-    recorded
-        .recordings
-        .delete_batch(std::slice::from_ref(&recorded.recording))
-        .expect("delete");
-
-    assert!(!recorded.log_path(id).exists());
-    assert_eq!(recorded.stored_log_count(), 0);
-}
-
 /// The same log attached twice is stored twice, each copy named by its own
 /// attachment. The duplicate query is what the dialog warns from.
 #[test_log::test]

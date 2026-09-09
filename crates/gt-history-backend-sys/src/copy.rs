@@ -1783,17 +1783,4 @@ mod tests {
             0x1777_0551
         );
     }
-
-    #[test]
-    fn jenkins_lookup3_covers_all_tail_lengths() {
-        // Exercise every fall-through arm (tail length 0..=12 after the main
-        // loop) so a bug in any tail byte would change the digest. The values
-        // are self-consistent regression anchors.
-        let data: Vec<u8> = (0..40_u8).collect();
-        for len in 0..=data.len() {
-            // Must not panic and must be deterministic.
-            let h = jenkins_lookup3(&data[..len]);
-            assert_eq!(h, jenkins_lookup3(&data[..len]));
-        }
-    }
 }

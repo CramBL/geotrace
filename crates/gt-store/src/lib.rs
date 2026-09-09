@@ -229,8 +229,10 @@ mod tests {
     use std::ptr;
 
     use gt_pending_writes::PendingWrites;
+    use strum::IntoEnumIterator as _;
 
     use super::*;
+    use crate::day_archive::for_each_stored_archive;
 
     fn store() -> (tempfile::TempDir, Store) {
         let dir = tempfile::tempdir().unwrap_or_else(|err| panic!("temp dir: {err}"));
@@ -315,24 +317,16 @@ mod tests {
     #[test]
     fn opening_creates_each_database_under_the_root() {
         let (_dir, store) = store();
+
         store.open_recordings().expect("recordings");
-        store
-            .open_or_create_archive::<JamStore>()
-            .expect("interference");
-        store
-            .open_or_create_archive::<SolarStore>()
-            .expect("geomagnetic indices");
-        store
-            .open_or_create_archive::<IonexStore>()
-            .expect("tec maps");
-        store
-            .open_or_create_archive::<FlareStore>()
-            .expect("solar flares");
         assert!(store.recordings_path().exists());
-        assert!(store.archive_path::<JamStore>().exists());
-        assert!(store.archive_path::<SolarStore>().exists());
-        assert!(store.archive_path::<IonexStore>().exists());
-        assert!(store.archive_path::<FlareStore>().exists());
+
+        for_each_stored_archive!(Archive => {
+            store
+                .open_or_create_archive::<Archive>()
+                .expect("open the archive");
+            assert!(store.archive_path::<Archive>().exists());
+        });
     }
 
     /// One instance per store: two callers share the archive, and so share
@@ -341,49 +335,19 @@ mod tests {
     fn each_archive_is_opened_once_and_shared() {
         let (_dir, store) = store();
 
-        let interference = store
-            .open_or_create_archive::<JamStore>()
-            .expect("interference");
-        let indices = store
-            .open_or_create_archive::<SolarStore>()
-            .expect("geomagnetic indices");
+        for_each_stored_archive!(Archive => {
+            let opened = store
+                .open_or_create_archive::<Archive>()
+                .expect("open the archive");
 
-        assert!(ptr::eq(
-            interference.read(),
-            store
-                .open_or_create_archive::<JamStore>()
-                .expect("interference again")
-                .read()
-        ));
-        assert!(ptr::eq(
-            indices.read(),
-            store
-                .open_or_create_archive::<SolarStore>()
-                .expect("geomagnetic indices again")
-                .read()
-        ));
-
-        let maps = store
-            .open_or_create_archive::<IonexStore>()
-            .expect("tec maps");
-        assert!(ptr::eq(
-            maps.read(),
-            store
-                .open_or_create_archive::<IonexStore>()
-                .expect("tec maps again")
-                .read()
-        ));
-
-        let flares = store
-            .open_or_create_archive::<FlareStore>()
-            .expect("solar flares");
-        assert!(ptr::eq(
-            flares.read(),
-            store
-                .open_or_create_archive::<FlareStore>()
-                .expect("solar flares again")
-                .read()
-        ));
+            assert!(ptr::eq(
+                opened.read(),
+                store
+                    .open_or_create_archive::<Archive>()
+                    .expect("open the archive again")
+                    .read()
+            ));
+        });
     }
 
     /// [`ArchiveHandle::writer`] is [`None`] for every archive a read-only
@@ -391,55 +355,19 @@ mod tests {
     #[test]
     fn a_read_only_open_hands_out_no_writer() {
         let (_dir, store) = store();
-        store
-            .open_or_create_archive::<JamStore>()
-            .expect("interference");
-        store
-            .open_or_create_archive::<SolarStore>()
-            .expect("geomagnetic indices");
-        store
-            .open_or_create_archive::<IonexStore>()
-            .expect("tec maps");
-        store
-            .open_or_create_archive::<FlareStore>()
-            .expect("solar flares");
         let read_only = Store::open_in(store.root());
 
-        assert!(
-            read_only
-                .open_existing_archive_read_only::<JamStore>()
-                .expect("interference")
-                .writer(&PendingWrites::default())
-                .is_none()
-        );
-        assert!(
-            read_only
-                .open_existing_archive_read_only::<SolarStore>()
-                .expect("geomagnetic indices")
-                .writer(&PendingWrites::default())
-                .is_none()
-        );
-        assert!(
-            read_only
-                .open_existing_archive_read_only::<IonexStore>()
-                .expect("tec maps")
-                .writer(&PendingWrites::default())
-                .is_none()
-        );
-        assert!(
-            read_only
-                .open_existing_archive_read_only::<FlareStore>()
-                .expect("solar flares")
-                .writer(&PendingWrites::default())
-                .is_none()
-        );
-        assert!(
-            store
-                .open_or_create_archive::<JamStore>()
-                .expect("interference")
-                .writer(&PendingWrites::default())
-                .is_some()
-        );
+        for_each_stored_archive!(Archive => {
+            let owner = store
+                .open_or_create_archive::<Archive>()
+                .expect("open the archive");
+            let session = read_only
+                .open_existing_archive_read_only::<Archive>()
+                .expect("open the archive read-only");
+
+            assert!(session.writer(&PendingWrites::default()).is_none());
+            assert!(owner.writer(&PendingWrites::default()).is_some());
+        });
     }
 
     /// A failure that has since been repaired must not keep the archive shut
@@ -461,42 +389,22 @@ mod tests {
     }
 
     #[test]
-    fn the_interference_archive_opens_without_the_recording_history() {
-        let (_dir, store) = store();
-        store
-            .open_or_create_archive::<JamStore>()
-            .expect("interference");
-        assert!(store.archive_path::<JamStore>().exists());
-        assert!(!store.recordings_path().exists());
-        assert!(!store.archive_path::<SolarStore>().exists());
-        assert!(!store.archive_path::<IonexStore>().exists());
-        assert!(!store.archive_path::<FlareStore>().exists());
-    }
+    fn each_archive_opens_without_the_recording_history_or_the_others() {
+        for_each_stored_archive!(Archive => {
+            let (_dir, store) = store();
 
-    #[test]
-    fn the_geomagnetic_index_archive_opens_without_the_recording_history() {
-        let (_dir, store) = store();
-        store
-            .open_or_create_archive::<SolarStore>()
-            .expect("geomagnetic indices");
-        assert!(store.archive_path::<SolarStore>().exists());
-        assert!(!store.recordings_path().exists());
-        assert!(!store.archive_path::<JamStore>().exists());
-        assert!(!store.archive_path::<IonexStore>().exists());
-        assert!(!store.archive_path::<FlareStore>().exists());
-    }
+            store
+                .open_or_create_archive::<Archive>()
+                .expect("open the archive");
 
-    #[test]
-    fn the_tec_map_archive_opens_without_the_recording_history() {
-        let (_dir, store) = store();
-        store
-            .open_or_create_archive::<IonexStore>()
-            .expect("tec maps");
-        assert!(store.archive_path::<IonexStore>().exists());
-        assert!(!store.recordings_path().exists());
-        assert!(!store.archive_path::<JamStore>().exists());
-        assert!(!store.archive_path::<SolarStore>().exists());
-        assert!(!store.archive_path::<FlareStore>().exists());
+            assert!(!store.recordings_path().exists());
+            assert_eq!(
+                EnvironmentArchive::iter()
+                    .filter(|archive| archive.path_in(&store).exists())
+                    .collect::<Vec<_>>(),
+                [Archive::ARCHIVE]
+            );
+        });
     }
 
     #[test]
@@ -554,66 +462,33 @@ mod tests {
     #[test]
     fn a_read_only_open_writes_to_no_archive() {
         let (_dir, store) = store();
-        store
-            .open_or_create_archive::<JamStore>()
-            .expect("interference");
-        store
-            .open_or_create_archive::<SolarStore>()
-            .expect("geomagnetic indices");
-        store
-            .open_or_create_archive::<IonexStore>()
-            .expect("tec maps");
-        store
-            .open_or_create_archive::<FlareStore>()
-            .expect("solar flares");
-        let archives = [
-            store.archive_path::<JamStore>(),
-            store.archive_path::<SolarStore>(),
-            store.archive_path::<IonexStore>(),
-            store.archive_path::<FlareStore>(),
-        ];
-        let rebuilding: Vec<PathBuf> = archives
-            .iter()
-            .map(|path| {
-                let rebuilding = gt_hdf5_archive::ArchiveFile::new(path).rebuilding_path();
-                std::fs::write(&rebuilding, b"an interrupted rebuild").expect("write");
-                rebuilding
-            })
-            .collect();
-        let before: Vec<Vec<u8>> = archives
-            .iter()
-            .map(|path| std::fs::read(path).expect("read the archive"))
-            .collect();
         let read_only = Store::open_in(store.root());
 
-        read_only
-            .open_existing_archive_read_only::<JamStore>()
-            .expect("interference");
-        read_only
-            .open_existing_archive_read_only::<SolarStore>()
-            .expect("geomagnetic indices");
-        read_only
-            .open_existing_archive_read_only::<IonexStore>()
-            .expect("tec maps");
-        read_only
-            .open_existing_archive_read_only::<FlareStore>()
-            .expect("solar flares");
+        for_each_stored_archive!(Archive => {
+            store
+                .open_or_create_archive::<Archive>()
+                .expect("open the archive");
+            let path = store.archive_path::<Archive>();
+            let rebuilding = gt_hdf5_archive::ArchiveFile::new(&path).rebuilding_path();
+            std::fs::write(&rebuilding, b"an interrupted rebuild").expect("write");
+            let before = std::fs::read(&path).expect("read the archive");
 
-        for (path, before) in archives.iter().zip(before) {
+            read_only
+                .open_existing_archive_read_only::<Archive>()
+                .expect("open the archive read-only");
+
             assert_eq!(
-                std::fs::read(path).expect("read the archive"),
+                std::fs::read(&path).expect("read the archive"),
                 before,
                 "the read-only open changed {}",
                 path.display()
             );
-        }
-        for path in rebuilding {
             assert!(
-                path.exists(),
+                rebuilding.exists(),
                 "the read-only open removed {}",
-                path.display()
+                rebuilding.display()
             );
-        }
+        });
     }
 
     /// The database's own error reaches the caller undisguised, which is what
