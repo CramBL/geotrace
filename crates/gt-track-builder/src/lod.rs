@@ -196,17 +196,10 @@ mod tests {
     use crate::test_util;
     use chrono::{DateTime, TimeDelta, Utc};
     use gt_types::coordinates::{Latitude, Longitude};
+    use gt_types::fixtures::{self, MetricOffset};
     use gt_types::nav_point::NavPoint;
-    use gt_types::satellites::{Constellation, Satellite, Satellites};
-    use gt_types::time_types::GpsTime;
-    use gt_types::tpv::TimePositionVelocity;
     use gt_types::{FixQuality, MercBounds, TrackLod};
-    use uom::si::angle::degree;
-    use uom::si::f64::Angle;
     use vec1::Vec1;
-
-    /// ~1 m of longitude at the equator, in degrees.
-    const DEG_PER_METER: f64 = 360.0 / 40_030_173.0;
 
     /// The instant the first fix of every fixture track is stamped at.
     const FIRST_FIX_TIME: DateTime<Utc> = DateTime::<Utc>::UNIX_EPOCH;
@@ -226,20 +219,21 @@ mod tests {
     }
 
     fn point_at_meters(x_m: f64, fix_count: u32, time: DateTime<Utc>) -> NavPoint {
-        point_at_longitude(Longitude::new(x_m * DEG_PER_METER), fix_count, time)
+        let (_, longitude) = MetricOffset {
+            east_m: x_m,
+            north_m: 0.0,
+        }
+        .to_latlon();
+        point_at_longitude(longitude, fix_count, time)
     }
 
     fn point_at_longitude(longitude: Longitude, fix_count: u32, time: DateTime<Utc>) -> NavPoint {
-        let sats: Vec<_> = (1..=fix_count.max(1))
-            .map(|prn| Satellite::new(Constellation::Gps, prn, None, None, None, prn <= fix_count))
-            .collect();
-        let tpv = TimePositionVelocity::builder()
-            .time(GpsTime::from_utc(time))
-            .lat(Latitude::new(0.0))
-            .lon(longitude)
-            .heading(Angle::new::<degree>(90.0))
-            .build();
-        NavPoint::new(tpv, Some(Satellites::new(None, None, sats)))
+        fixtures::nav_point_with_report(
+            time,
+            Latitude::new(0.0),
+            longitude,
+            test_util::satellite_report_of(fix_count),
+        )
     }
 
     /// One second per fix from [`FIRST_FIX_TIME`].
