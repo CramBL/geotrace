@@ -1,9 +1,11 @@
 //! The GNSS constellation identifier.
 
+use strum::FromRepr;
+
 /// GNSS constellation identifier.
 /// cbindgen:rename-all=QualifiedScreamingSnakeCase
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, FromRepr)]
 pub enum GtdConstellation {
     /// GPS (USA).
     Gps = 0,
@@ -20,16 +22,8 @@ pub enum GtdConstellation {
 }
 
 impl GtdConstellation {
-    pub(crate) fn from_abi_value(constellation: u32) -> Option<Self> {
-        match constellation {
-            0 => Some(Self::Gps),
-            1 => Some(Self::Glonass),
-            2 => Some(Self::Galileo),
-            3 => Some(Self::Beidou),
-            4 => Some(Self::Navic),
-            5 => Some(Self::Qzss),
-            _ => None,
-        }
+    pub(crate) fn from_abi_value(value: u32) -> Option<Self> {
+        Self::from_repr(usize::try_from(value).ok()?)
     }
 }
 

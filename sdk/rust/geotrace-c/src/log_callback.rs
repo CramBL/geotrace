@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use parking_lot::Mutex;
+use strum::FromRepr;
 
 use crate::error::{self, GtdStatus};
 
@@ -13,7 +14,7 @@ use crate::error::{self, GtdStatus};
 /// The SDK reports data it read or was given but could not use as written at
 /// `GTD_LOG_WARN`.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, FromRepr)]
 pub enum GtdLogLevel {
     GTD_LOG_ERROR = 1,
     GTD_LOG_WARN = 2,
@@ -33,15 +34,8 @@ const _: () = {
 };
 
 impl GtdLogLevel {
-    pub(crate) fn from_abi_value(level: u32) -> Option<Self> {
-        match level {
-            1 => Some(Self::GTD_LOG_ERROR),
-            2 => Some(Self::GTD_LOG_WARN),
-            3 => Some(Self::GTD_LOG_INFO),
-            4 => Some(Self::GTD_LOG_DEBUG),
-            5 => Some(Self::GTD_LOG_TRACE),
-            _ => None,
-        }
+    pub(crate) fn from_abi_value(value: u32) -> Option<Self> {
+        Self::from_repr(usize::try_from(value).ok()?)
     }
 }
 

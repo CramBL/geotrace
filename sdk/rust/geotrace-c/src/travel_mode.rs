@@ -2,12 +2,14 @@
 
 use std::ffi::{CStr, c_char};
 
+use strum::FromRepr;
+
 use crate::error::{self, GtdStatus};
 
 /// Platform a recording was made on, declared by the recorder.
 /// cbindgen:rename-all=QualifiedScreamingSnakeCase
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, FromRepr)]
 pub enum GtdTravelMode {
     /// Passenger car.
     Car = 0,
@@ -40,17 +42,8 @@ impl From<GtdTravelMode> for geotrace_sdk::TravelMode {
 }
 
 impl GtdTravelMode {
-    pub(crate) fn from_abi_value(mode: u32) -> Option<Self> {
-        match mode {
-            0 => Some(Self::Car),
-            1 => Some(Self::Motorcycle),
-            2 => Some(Self::Bicycle),
-            3 => Some(Self::Pedestrian),
-            4 => Some(Self::Boat),
-            5 => Some(Self::Rail),
-            6 => Some(Self::Aircraft),
-            _ => None,
-        }
+    pub(crate) fn from_abi_value(value: u32) -> Option<Self> {
+        Self::from_repr(usize::try_from(value).ok()?)
     }
 
     /// The C `enum` cannot carry [`geotrace_sdk::TravelMode::Unknown`]'s

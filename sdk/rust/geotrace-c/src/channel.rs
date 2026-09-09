@@ -3,6 +3,7 @@
 use std::ffi::{CStr, c_char};
 
 use geotrace_sdk::{ChannelUnit, UnitParseError};
+use strum::FromRepr;
 
 use crate::error::{self, GtdStatus};
 use crate::{GtdOptF64, GtdTimestamp};
@@ -16,7 +17,7 @@ use crate::{GtdOptF64, GtdTimestamp};
 /// hold a legacy label that is neither (see @ref gtd_nav_file_get_channel_unit):
 /// it is readable but not writable, so neither mode accepts it.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, FromRepr)]
 pub enum GtdChannelUnitMode {
     /// Validate as a recognized, convertible unit.
     GTD_CHANNEL_UNIT_RECOGNIZED = 0,
@@ -25,12 +26,8 @@ pub enum GtdChannelUnitMode {
 }
 
 impl GtdChannelUnitMode {
-    pub(crate) fn from_abi_value(unit_mode: u32) -> Option<Self> {
-        match unit_mode {
-            0 => Some(Self::GTD_CHANNEL_UNIT_RECOGNIZED),
-            1 => Some(Self::GTD_CHANNEL_UNIT_CUSTOM),
-            _ => None,
-        }
+    pub(crate) fn from_abi_value(value: u32) -> Option<Self> {
+        Self::from_repr(usize::try_from(value).ok()?)
     }
 
     pub(crate) fn parse_label(self, label: &str) -> Result<ChannelUnit, UnitParseError> {
