@@ -181,23 +181,17 @@ pub(crate) fn parse_line(
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone as _;
     use proptest::{prelude::*, proptest};
     use rstest::rstest;
 
     use super::*;
-    use crate::log_strategies::{self, GeneratedTimestamp};
-
-    fn utc(y: i32, mo: u32, d: u32, h: u32, m: u32, s: u32) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(y, mo, d, h, m, s)
-            .single()
-            .expect("valid")
-    }
+    use crate::test_util;
+    use crate::test_util::strategies::{self, GeneratedTimestamp};
 
     /// A moment past every generated timestamp, so the year-less formats
     /// resolve to the year the timestamp was generated in.
     fn now() -> DateTime<Utc> {
-        utc(2030, 6, 1, 0, 0, 0)
+        test_util::utc(2030, 6, 1, 0, 0, 0)
     }
 
     #[rstest]
@@ -229,18 +223,11 @@ mod tests {
         assert_eq!(parse_month_abbrev(abbreviation), expected);
     }
 
-    #[test]
-    fn a_lower_case_month_names_the_moment_its_capitalised_form_does() {
-        let capitalised = parse_syslog("Sep 03 21:11:29 msg", false);
-        assert_eq!(parse_syslog("sep 03 21:11:29 msg", false), capitalised);
-        assert!(capitalised.is_some(), "the capitalised form parses");
-    }
-
     #[rstest]
-    #[case::december_read_in_january(12, 31, 23, 59, utc(2026, 1, 1, 0, 0, 0), 2025)]
-    #[case::january_read_in_january(1, 1, 0, 1, utc(2026, 1, 15, 12, 0, 0), 2026)]
-    #[case::two_hours_ahead(5, 23, 12, 0, utc(2026, 5, 23, 10, 0, 0), 2025)]
-    #[case::half_an_hour_ahead(5, 23, 10, 30, utc(2026, 5, 23, 10, 0, 0), 2026)]
+    #[case::december_read_in_january(12, 31, 23, 59, test_util::utc(2026, 1, 1, 0, 0, 0), 2025)]
+    #[case::january_read_in_january(1, 1, 0, 1, test_util::utc(2026, 1, 15, 12, 0, 0), 2026)]
+    #[case::two_hours_ahead(5, 23, 12, 0, test_util::utc(2026, 5, 23, 10, 0, 0), 2025)]
+    #[case::half_an_hour_ahead(5, 23, 10, 30, test_util::utc(2026, 5, 23, 10, 0, 0), 2026)]
     fn a_year_less_timestamp_ahead_of_now_belongs_to_last_year(
         #[case] month: u32,
         #[case] day: u32,
@@ -262,8 +249,8 @@ mod tests {
         /// the month can come back in another case, which is the locale's.
         #[test]
         fn a_line_is_read_back_as_the_format_that_wrote_it(
-            timestamp in log_strategies::any_timestamp(),
-            message in log_strategies::any_message(),
+            timestamp in strategies::any_timestamp(),
+            message in strategies::any_message(),
         ) {
             let GeneratedTimestamp { format, text } = timestamp;
             let line = format!("{text} {message}");

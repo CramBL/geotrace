@@ -390,7 +390,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::log_strategies;
+    use crate::test_util::strategies;
 
     /// What the recogniser found in a message, as the cases below write it:
     /// the hostname, the service and the level, each as the text it covers.
@@ -634,7 +634,7 @@ mod tests {
         /// host before the service, the level at or after the end of it.
         #[test]
         fn every_span_of_any_message_slices_it_in_layout_order(
-            message in log_strategies::any_message(),
+            message in strategies::any_message(),
             hostname_column in prop_oneof![
                 Just(HostnameColumn::Present),
                 Just(HostnameColumn::Absent)

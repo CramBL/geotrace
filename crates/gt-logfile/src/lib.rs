@@ -14,10 +14,8 @@ mod recognise;
 mod session;
 mod structure;
 mod summary;
+mod test_util;
 mod text;
-
-#[cfg(test)]
-mod log_strategies;
 
 pub use associate::{EntryPlacement, associate_entries, associate_position};
 pub use format::{LogFormat, detect_format, infer_year};

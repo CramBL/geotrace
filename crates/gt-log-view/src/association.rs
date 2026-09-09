@@ -109,7 +109,7 @@ impl AssociationCandidate {
 mod tests {
     use rstest::rstest;
 
-    use crate::test_fixtures::{id_of, loaded, log_of, recording_from, recording_with_no_track};
+    use crate::test_util;
 
     use super::*;
 
@@ -118,12 +118,12 @@ mod tests {
 
     #[test]
     fn recordings_rank_by_overlap_and_the_ones_missing_the_log_stay_listed() {
-        let files = loaded(vec![
-            recording_from(Duration::seconds(5), 10),
-            recording_from(Duration::zero(), 10),
-            recording_from(Duration::seconds(100), 5),
+        let files = test_util::loaded(vec![
+            test_util::recording_from(Duration::seconds(5), 10),
+            test_util::recording_from(Duration::zero(), 10),
+            test_util::recording_from(Duration::seconds(100), 5),
         ]);
-        let log = log_of(10);
+        let log = test_util::log_of(10);
 
         let candidates = log.rank_association_candidates(&files.view());
         let ranked = candidates.ranked();
@@ -133,7 +133,11 @@ mod tests {
                 .iter()
                 .map(|candidate| candidate.recording)
                 .collect::<Vec<_>>(),
-            vec![id_of(&files, 1), id_of(&files, 0), id_of(&files, 2)]
+            vec![
+                test_util::id_of(&files, 1),
+                test_util::id_of(&files, 0),
+                test_util::id_of(&files, 2)
+            ]
         );
         assert_eq!(
             ranked
@@ -164,11 +168,11 @@ mod tests {
 
     #[test]
     fn a_recording_with_no_track_is_listed_but_is_no_candidate() {
-        let files = loaded(vec![
-            recording_with_no_track(),
-            recording_from(Duration::zero(), 10),
+        let files = test_util::loaded(vec![
+            test_util::recording_with_no_track(),
+            test_util::recording_from(Duration::zero(), 10),
         ]);
-        let log = log_of(10);
+        let log = test_util::log_of(10);
 
         let candidates = log.rank_association_candidates(&files.view());
 
@@ -176,11 +180,14 @@ mod tests {
             candidates
                 .ranked()
                 .iter()
-                .find(|candidate| candidate.recording == id_of(&files, 0))
+                .find(|candidate| candidate.recording == test_util::id_of(&files, 0))
                 .map(|candidate| candidate.overlaps_the_log()),
             Some(false)
         );
-        assert_eq!(candidates.unambiguous_target(), Some(id_of(&files, 1)));
+        assert_eq!(
+            candidates.unambiguous_target(),
+            Some(test_util::id_of(&files, 1))
+        );
     }
 
     #[rstest]
@@ -191,18 +198,18 @@ mod tests {
         #[case] recording_offsets_secs: &[i64],
         #[case] expected: Option<usize>,
     ) {
-        let files = loaded(
+        let files = test_util::loaded(
             recording_offsets_secs
                 .iter()
-                .map(|offset| recording_from(Duration::seconds(*offset), 10))
+                .map(|offset| test_util::recording_from(Duration::seconds(*offset), 10))
                 .collect(),
         );
-        let log = log_of(10);
+        let log = test_util::log_of(10);
 
         assert_eq!(
             log.rank_association_candidates(&files.view())
                 .unambiguous_target(),
-            expected.map(|index| id_of(&files, index))
+            expected.map(|index| test_util::id_of(&files, index))
         );
     }
 }

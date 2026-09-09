@@ -1,3 +1,4 @@
+#![cfg(test)]
 //! Logs and recordings the crate's tests associate against each other.
 
 use chrono::{DateTime, Duration, TimeZone as _, Utc};
@@ -5,10 +6,8 @@ use gt_history_types::{DatabaseRef, RecordingMeta};
 use gt_loaded_files::{FileHistory, LoadedFileId, LoadedFiles, RecordingNames};
 use gt_logfile::ParsedLog;
 use gt_test_utils::fixtures;
-use gt_test_utils::{empty_file_metadata, loaded_track_with_points};
-use gt_types::{FileMetadata, FileSource, Latitude, LoadedFile, Longitude, NavPoint, TimeRange};
+use gt_types::{Latitude, LoadedFile, Longitude, NavPoint};
 use gt_ui_types::LogMatches;
-use rustc_hash::FxHashMap;
 
 use crate::{LoadedLog, LoadedLogs, RecordingKey};
 
@@ -130,26 +129,12 @@ pub(crate) fn recording_with_no_track() -> LoadedFile {
 }
 
 fn recording_of_tracks(tracks: Vec<Vec<NavPoint>>) -> LoadedFile {
-    let time_range = tracks
-        .iter()
-        .filter_map(|points| {
-            Some(TimeRange::new(
-                points.first()?.tpv.time().utc(),
-                points.last()?.tpv.time().utc(),
-            ))
-        })
-        .reduce(TimeRange::union);
-    LoadedFile {
-        metadata: FileMetadata {
-            time_range,
-            ..empty_file_metadata()
-        },
-        tracks: tracks.into_iter().map(loaded_track_with_points).collect(),
-        event_marker_styles: FxHashMap::default(),
-        orphaned_event_markers: Vec::new(),
-        source: FileSource::GtdPath(std::path::PathBuf::new()),
-        load_warnings: Vec::new(),
-    }
+    gt_test_utils::loaded_file_with_tracks(
+        tracks
+            .into_iter()
+            .map(gt_test_utils::loaded_track_with_points)
+            .collect(),
+    )
 }
 
 pub(crate) fn loaded(files: Vec<LoadedFile>) -> LoadedFiles {
@@ -202,14 +187,7 @@ pub(crate) fn recording_ref_of_group(group_name: &str) -> DatabaseRef {
 pub(crate) fn stored_in_history(db_ref: &DatabaseRef) -> FileHistory {
     FileHistory::recording(
         db_ref.identity.clone(),
-        RecordingMeta {
-            time_range: None,
-            nav_point_count: 0,
-            sat_report_count: 0,
-            marker_count: 0,
-            event_marker_count: 0,
-            gtd_size_bytes: 0,
-        },
+        RecordingMeta::default(),
         Some(db_ref.clone()),
     )
 }

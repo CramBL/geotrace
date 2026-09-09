@@ -148,7 +148,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::{FilterStack, test_fixtures};
+    use crate::{FilterStack, test_util};
 
     /// A minute boundary, an hour boundary and a day boundary, each reached
     /// from the second before it.
@@ -180,7 +180,7 @@ mod tests {
     }
 
     fn ticks_of(text: &str) -> ClockTicks {
-        let log = Arc::new(test_fixtures::parsed_log_of_text(text));
+        let log = Arc::new(test_util::parsed_log_of_text(text));
         let mut stack = FilterStack::new(log);
         stack.wait_for_queries();
         stack.clock_ticks().clone()
@@ -241,7 +241,7 @@ mod tests {
             ]
         );
 
-        let mut stack = FilterStack::new(Arc::new(test_fixtures::parsed_log_of_text(text)));
+        let mut stack = FilterStack::new(Arc::new(test_util::parsed_log_of_text(text)));
         stack.set_live_filter_text("gnss");
         stack.wait_for_queries();
 
@@ -298,7 +298,7 @@ mod tests {
 ";
         assert_eq!(day_divider_rows(&ticks_of(text)), [1]);
 
-        let log = Arc::new(test_fixtures::parsed_log_of_text(text));
+        let log = Arc::new(test_util::parsed_log_of_text(text));
         let mut stack = FilterStack::new(Arc::clone(&log));
         stack.set_live_filter_text("navsyncd");
         stack.wait_for_queries();
@@ -389,16 +389,8 @@ mod tests {
     }
 
     #[test]
-    fn a_log_of_one_line_draws_it_strong_and_opens_no_day() {
-        let ticks = ticks_of("2026-01-01 14:02:11 navsyncd: gnss fix acquired\n");
-
-        assert_eq!(ticks_by_row(&ticks), [TimestampTick::Strong]);
-        assert_eq!(day_divider_rows(&ticks), Vec::<usize>::new());
-    }
-
-    #[test]
     fn a_table_the_filters_emptied_has_no_row_to_tick() {
-        let log = Arc::new(test_fixtures::parsed_log_of_text(
+        let log = Arc::new(test_util::parsed_log_of_text(
             "2026-01-01 14:02:11 navsyncd: gnss fix acquired\n",
         ));
         let mut stack = FilterStack::new(log);
@@ -413,19 +405,23 @@ mod tests {
         assert_eq!(day_divider_rows(stack.clock_ticks()), Vec::<usize>::new());
     }
 
-    /// The tick of a row the table does not draw: the lookup stays inside the
-    /// visible set.
     #[test]
-    fn a_row_past_the_visible_set_is_weak() {
+    fn a_log_of_one_line_opens_no_day_and_ticks_only_its_own_row_strong() {
         let ticks = ticks_of("2026-01-01 14:02:11 navsyncd: gnss fix acquired\n");
 
-        assert_eq!(ticks.tick(9), TimestampTick::Weak);
+        assert_eq!(ticks_by_row(&ticks), [TimestampTick::Strong]);
+        assert_eq!(day_divider_rows(&ticks), Vec::<usize>::new());
+        assert_eq!(
+            ticks.tick(9),
+            TimestampTick::Weak,
+            "a row past the visible set still ticks weak"
+        );
     }
 
     /// The unfiltered stack ticks its rows the moment the log is loaded.
     #[test]
     fn a_freshly_loaded_log_has_a_tick_for_every_line() {
-        let log = Arc::new(test_fixtures::parsed_log(3));
+        let log = Arc::new(test_util::parsed_log(3));
 
         let stack = FilterStack::new(log);
 

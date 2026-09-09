@@ -229,32 +229,28 @@ mod tests {
     }
 
     #[rstest]
-    // Both fields present: separator kept.
-    #[case("{title} — {device}", Some("Alpha"), Some("Bravo"), "Alpha — Bravo")]
-    // Trailing token absent: its leading separator collapses.
-    #[case("{title} — {device}", Some("Alpha"), None, "Alpha")]
-    // Leading token absent: its trailing separator collapses.
-    #[case("{title} — {device}", None, Some("Bravo"), "Bravo")]
-    // Both absent: whole template collapses, falls back to filename.
-    #[case("{title} — {device}", None, None, "ride.gtd")]
-    // Default template is just the filename.
-    #[case("{filename}", Some("Alpha"), Some("Bravo"), "ride.gtd")]
-    // Literal-only template renders verbatim.
-    #[case("just text", None, None, "just text")]
-    // Unknown token kept as literal text.
-    #[case("{foo}", Some("Alpha"), None, "{foo}")]
-    // Empty template falls back to filename.
-    #[case("", Some("Alpha"), Some("Bravo"), "ride.gtd")]
-    // Leading affix text kept next to a present token.
-    #[case("Track: {title}", Some("Alpha"), None, "Track: Alpha")]
-    // Leading affix orphaned by an absent token collapses to the filename.
-    #[case("Track: {title}", None, None, "ride.gtd")]
-    // Trailing affix text kept next to a present token.
-    #[case("{title} ready", Some("Alpha"), None, "Alpha ready")]
-    // Substantive trailing prose is kept when earlier content exists, even
-    // though an intervening token was absent (consistent with the case above,
-    // regardless of whether a later token happens to resolve).
-    #[case("{title} — {device} (raw)", Some("Alpha"), None, "Alpha (raw)")]
+    #[case::both_fields_present(
+        "{title} — {device}",
+        Some("Alpha"),
+        Some("Bravo"),
+        "Alpha — Bravo"
+    )]
+    #[case::trailing_token_absent("{title} — {device}", Some("Alpha"), None, "Alpha")]
+    #[case::leading_token_absent("{title} — {device}", None, Some("Bravo"), "Bravo")]
+    #[case::both_tokens_absent("{title} — {device}", None, None, "ride.gtd")]
+    #[case::the_filename_token("{filename}", Some("Alpha"), Some("Bravo"), "ride.gtd")]
+    #[case::literal_text_alone("just text", None, None, "just text")]
+    #[case::an_unknown_token("{foo}", Some("Alpha"), None, "{foo}")]
+    #[case::an_empty_template("", Some("Alpha"), Some("Bravo"), "ride.gtd")]
+    #[case::a_leading_affix("Track: {title}", Some("Alpha"), None, "Track: Alpha")]
+    #[case::a_leading_affix_of_an_absent_token("Track: {title}", None, None, "ride.gtd")]
+    #[case::a_trailing_affix("{title} ready", Some("Alpha"), None, "Alpha ready")]
+    #[case::a_trailing_affix_past_an_absent_token(
+        "{title} — {device} (raw)",
+        Some("Alpha"),
+        None,
+        "Alpha (raw)"
+    )]
     fn renders_expected(
         #[case] template: &str,
         #[case] title: Option<&str>,
@@ -268,14 +264,10 @@ mod tests {
     }
 
     #[rstest]
-    // A value over the limit is cut to that many characters plus an ellipsis.
-    #[case("{title:3}", Some("Alphabet"), "Alp…")]
-    // A value within the limit renders unchanged.
-    #[case("{title:9}", Some("Alpha"), "Alpha")]
-    // An absent token with a limit collapses with its separator as usual.
-    #[case("{title:4} — {device}", None, "Bravo")]
-    // Each token of a limited pair is cut on its own limit.
-    #[case("{title:2} — {device:2}", Some("Alpha"), "Al… — Br…")]
+    #[case::over_the_limit("{title:3}", Some("Alphabet"), "Alp…")]
+    #[case::within_the_limit("{title:9}", Some("Alpha"), "Alpha")]
+    #[case::an_absent_token_with_a_limit("{title:4} — {device}", None, "Bravo")]
+    #[case::each_token_on_its_own_limit("{title:2} — {device:2}", Some("Alpha"), "Al… — Br…")]
     fn limits_token_length(
         #[case] template: &str,
         #[case] title: Option<&str>,
@@ -288,16 +280,11 @@ mod tests {
     }
 
     #[rstest]
-    // No limit given.
-    #[case("{title:}")]
-    // Zero cannot cut anything.
-    #[case("{title:0}")]
-    // Non-numeric limit.
-    #[case("{title:abc}")]
-    // A signed number: integer parsing would accept a leading sign, the syntax
-    // does not.
-    #[case("{title:-3}")]
-    #[case("{title:+3}")]
+    #[case::no_limit_given("{title:}")]
+    #[case::a_limit_of_zero("{title:0}")]
+    #[case::a_non_numeric_limit("{title:abc}")]
+    #[case::a_negative_limit("{title:-3}")]
+    #[case::an_explicitly_positive_limit("{title:+3}")]
     fn malformed_limit_renders_as_literal(#[case] template: &str) {
         assert_eq!(
             render_name_template(template, &fields(Some("Alpha"), None, None)),
@@ -307,7 +294,6 @@ mod tests {
 
     #[test]
     fn middle_token_absent_keeps_one_separator() {
-        // A collapsing middle token should not eat both surrounding separators.
         let f = fields(Some("Alpha"), None, Some("Charlie"));
         assert_eq!(
             render_name_template("{title}/{device}/{identity}", &f),

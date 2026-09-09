@@ -15,8 +15,7 @@ mod association;
 mod attachment;
 mod filter;
 mod loaded_log;
-#[cfg(test)]
-mod test_fixtures;
+mod test_util;
 
 pub use anchor::RecordingKey;
 pub use association::{AssociationCandidate, AssociationCandidates};

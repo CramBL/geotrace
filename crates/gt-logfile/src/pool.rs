@@ -47,10 +47,12 @@ mod tests {
     fn the_pool_leaves_at_least_half_the_cores_to_the_rest_of_the_machine() {
         let cores = thread::available_parallelism().map_or(1, NonZeroUsize::get);
         let pool = log_worker_pool().expect("the pool builds");
+
         assert_eq!(
             pool.current_num_threads(),
-            (cores / CORES_PER_WORKER).max(1),
-            "on {cores} cores"
+            (cores / 2).max(1),
+            "one worker per two cores, and one on a single-core machine, \
+             on {cores} cores"
         );
     }
 }

@@ -522,7 +522,7 @@ mod tests {
     use proptest::{prelude::*, proptest};
 
     use super::*;
-    use crate::{filter::slots::LAYER_COLOR_SLOT_COUNT, test_fixtures};
+    use crate::{filter::slots::LAYER_COLOR_SLOT_COUNT, test_util};
 
     /// A filter can select a service, a phenomenon, or one line: two services
     /// write two lines each.
@@ -534,7 +534,7 @@ mod tests {
 ";
 
     fn unfiltered_stack() -> (FilterStack, LayerColorSlots) {
-        let log = Arc::new(test_fixtures::parsed_log_of_text(LOG));
+        let log = Arc::new(test_util::parsed_log_of_text(LOG));
         (FilterStack::new(log), LayerColorSlots::default())
     }
 
@@ -870,7 +870,7 @@ mod tests {
             ]
         );
 
-        let log = Arc::new(test_fixtures::parsed_log_of_text(LOG));
+        let log = Arc::new(test_util::parsed_log_of_text(LOG));
         let mut restored = FilterStack::from_stored_filters(log, &stored);
         restored.wait_for_queries();
 
@@ -904,7 +904,7 @@ mod tests {
             },
         }];
 
-        let log = Arc::new(test_fixtures::parsed_log_of_text(LOG));
+        let log = Arc::new(test_util::parsed_log_of_text(LOG));
         let mut restored = FilterStack::from_stored_filters(log, &stored);
         restored.wait_for_queries();
 
@@ -937,7 +937,7 @@ mod tests {
             let live_filter = FilterPattern::plain(&live).compile().expect("plain compiles");
             let refine_filter = FilterPattern::plain(&refine).compile().expect("plain compiles");
             let refine_narrows = chip.is_some() && chip_enabled;
-            let log = test_fixtures::parsed_log_of_text(LOG);
+            let log = test_util::parsed_log_of_text(LOG);
             let expected: Vec<usize> = log
                 .entries()
                 .iter()

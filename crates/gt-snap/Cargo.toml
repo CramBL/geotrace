@@ -26,6 +26,8 @@ thiserror.workspace = true
 [dev-dependencies]
 chrono.workspace = true
 geo-types.workspace = true
+# Responds to a fetch pipeline's requests from a script.
+gt-fetch = { path = "../gt-fetch", features = ["test-util"] }
 gt-test-utils = { path = "../gt-test-utils" }
 insta.workspace = true
 proptest.workspace = true
