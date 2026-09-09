@@ -73,6 +73,7 @@ the app).
 - **Breaking:** Fixed the reader dropping the rows past the end of a dataset shorter than its table: it now fails with an error stating the dataset and the row counts.
 - **Breaking:** Fixed a timestamp of exactly 1969-12-31T23:59:59.999999Z being written as absent: writing it fails with an error stating the dataset and the record.
 - Fixed an annotation timestamped exactly at the last nav fix being placed outside the nav fix time range: it is placed on that fix.
+- Fixed an annotation or event marker inside the nav fix time range being reported as outside it, where a recording's receiver and host timestamps put its fixes in different orders: it is placed between the two fixes whose host timestamps surround its time.
 - Fixed a marker, event marker or ghost fix interpolated between two fixes on either side of the antimeridian being placed near longitude 0: it is placed on the short arc between the two fixes.
 - **Breaking:** Fixed the reader accepting any `geotrace_version` beginning with a 1 or a 2, such as `10` or `1abc`: it reads the attribute as an integer and accepts 1 and 2 alone.
 - Fixed the `encoding` attribute of the `markers/icon` and `tracked_sats/constellation` datasets listing 7 of the 14 marker icons and 4 of the 6 constellations: the writer builds each attribute from the full set of codes.

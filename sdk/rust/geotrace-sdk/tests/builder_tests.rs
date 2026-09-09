@@ -640,6 +640,89 @@ fn an_annotation_at_the_time_of_the_only_fix_resolves_to_that_fix_in_strict_mode
 }
 
 #[test]
+fn an_annotation_between_two_fixes_in_host_clock_order_is_placed_between_them()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .time(NavFixTime::Receiver(t(10_000)))
+            .lat(Angle::degrees(56.0))
+            .lon(Angle::degrees(16.0))
+            .heading(Angle::degrees(0.0))
+            .build(),
+    );
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .time(NavFixTime::Both {
+                gps: t(12_000),
+                sys: t(8_000),
+            })
+            .lat(Angle::degrees(54.0))
+            .lon(Angle::degrees(12.0))
+            .heading(Angle::degrees(0.0))
+            .build(),
+    );
+    recorder.add_annotation(Annotation::builder().time(t(9_000)).label("note").build()?);
+
+    let nav_file = recorder.finish()?;
+    let marker = &nav_file.markers()[0];
+    assert!(
+        (marker.lat.as_degrees() - 55.0).abs() < 1e-10,
+        "lat is {}, expected 55",
+        marker.lat.as_degrees()
+    );
+    assert!(
+        (marker.lon.as_degrees() - 14.0).abs() < 1e-10,
+        "lon is {}, expected 14",
+        marker.lon.as_degrees()
+    );
+    Ok(())
+}
+
+#[test]
+fn an_annotation_at_a_host_time_two_fixes_share_is_placed_on_the_earlier_by_receiver_time()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .time(NavFixTime::Both {
+                gps: t(13_000),
+                sys: t(9_000),
+            })
+            .lat(Angle::degrees(56.0))
+            .lon(Angle::degrees(16.0))
+            .heading(Angle::degrees(0.0))
+            .build(),
+    );
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .time(NavFixTime::Both {
+                gps: t(12_000),
+                sys: t(9_000),
+            })
+            .lat(Angle::degrees(54.0))
+            .lon(Angle::degrees(12.0))
+            .heading(Angle::degrees(0.0))
+            .build(),
+    );
+    recorder.add_annotation(Annotation::builder().time(t(9_000)).label("note").build()?);
+
+    let nav_file = recorder.finish()?;
+    let marker = &nav_file.markers()[0];
+    assert!(
+        (marker.lat.as_degrees() - 54.0).abs() < 1e-10,
+        "lat is {}, expected 54",
+        marker.lat.as_degrees()
+    );
+    assert!(
+        (marker.lon.as_degrees() - 12.0).abs() < 1e-10,
+        "lon is {}, expected 12",
+        marker.lon.as_degrees()
+    );
+    Ok(())
+}
+
+#[test]
 fn an_annotation_one_microsecond_after_the_last_fix_is_outside_the_range_in_strict_mode() {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(simple_fix(0));
