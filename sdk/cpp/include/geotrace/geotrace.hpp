@@ -886,6 +886,55 @@ travel_mode_from_name(const std::string &name) noexcept {
 }
 
 /**
+ * @name Parsers of a wire name
+ *
+ * Each parses a lower-case wire name of the `.gtd` format, through the Rust SDK
+ * that defines the set. The `try_` form reports `GTD_ERR_PARSE` in its `Status`
+ * for a name outside the set, the other form throws `geotrace::ParseError`.
+ * @{
+ */
+
+/** The @ref Constellation with the wire name @p name, e.g. `"beidou"`. */
+[[nodiscard]] inline Result<Constellation> try_constellation_from_name(const std::string &name) {
+    GtdConstellation constellation{};
+    const GtdStatus status = ::gtd_constellation_from_name(name.c_str(), &constellation);
+    if (status != GTD_OK) {
+        return Status::from(status);
+    }
+    return detail::from_c(constellation);
+}
+
+/** The throwing form of try_constellation_from_name(). */
+[[nodiscard]] inline Constellation constellation_from_name(const std::string &name) {
+    return try_constellation_from_name(name).value_or_throw();
+}
+
+/**
+ * The @ref MarkerIcon with the wire name @p name, e.g. `"satellite_lost"`.
+ * `GTD_ICON_AUTO` has no wire name: a style leaves its icon to the application
+ * with an empty `std::optional<MarkerIcon>` instead.
+ */
+[[nodiscard]] inline Result<MarkerIcon> try_marker_icon_from_name(const std::string &name) {
+    GtdMarkerIcon icon{};
+    const GtdStatus status = ::gtd_marker_icon_from_name(name.c_str(), &icon);
+    if (status != GTD_OK) {
+        return Status::from(status);
+    }
+    if (const std::optional<MarkerIcon> parsed = detail::from_c(icon)) {
+        return *parsed;
+    }
+    return Status{GTD_ERR_PARSE,
+                  detail::undeclared_enum_message("MarkerIcon", static_cast<std::uint32_t>(icon))};
+}
+
+/** The throwing form of try_marker_icon_from_name(). */
+[[nodiscard]] inline MarkerIcon marker_icon_from_name(const std::string &name) {
+    return try_marker_icon_from_name(name).value_or_throw();
+}
+
+/** @} */
+
+/**
  * @name Checked conversions from an integer code
  *
  * Each returns `std::nullopt` for a code no enumerator of that type declares,

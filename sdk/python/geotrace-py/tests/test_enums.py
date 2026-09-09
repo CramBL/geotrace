@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import pytest
@@ -12,6 +13,8 @@ from geotrace_sdk import (
     Meta,
     Satellite,
     TravelMode,
+    constellation_from_name,
+    marker_icon_from_name,
 )
 
 T0 = datetime(2024, 6, 1, 9, 0, 0, tzinfo=UTC)
@@ -25,6 +28,27 @@ def test_every_constellation_crosses_the_boundary(member: Constellation) -> None
 @pytest.mark.parametrize("member", list(MarkerIcon))
 def test_every_marker_icon_crosses_the_boundary(member: MarkerIcon) -> None:
     assert Annotation(T0, icon=member).icon is member
+
+
+@pytest.mark.parametrize("member", list(Constellation))
+def test_every_constellation_parses_from_its_wire_name(member: Constellation) -> None:
+    assert constellation_from_name(member.name.lower()) is member
+
+
+@pytest.mark.parametrize("member", list(MarkerIcon))
+def test_every_marker_icon_parses_from_its_wire_name(member: MarkerIcon) -> None:
+    assert marker_icon_from_name(member.name.lower()) is member
+
+
+@pytest.mark.parametrize(
+    ("parse", "name"),
+    [(constellation_from_name, "pulsar"), (marker_icon_from_name, "compass")],
+)
+def test_a_wire_name_outside_the_set_raises(
+    parse: Callable[[str], object], name: str
+) -> None:
+    with pytest.raises(ValueError, match=name):
+        parse(name)
 
 
 @pytest.mark.parametrize("member", list(TravelMode))

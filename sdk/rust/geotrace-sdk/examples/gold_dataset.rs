@@ -92,14 +92,16 @@ fn load_event_styles(
         if cols.len() < 3 {
             continue;
         }
+        // An empty icon cell leaves the icon to the application.
+        let icon = if cols[1].is_empty() {
+            None
+        } else {
+            Some(MarkerIcon::try_from_lower_case(cols[1])?)
+        };
         recorder.add_event_marker_style(
             EventMarkerStyle::builder()
                 .variant_path(cols[0])
-                .maybe_icon(
-                    MarkerIcon::try_from_lower_case(cols[1])
-                        .ok()
-                        .map(Into::into),
-                )
+                .maybe_icon(icon.map(Into::into))
                 .maybe_color(Some(cols[2]))
                 .build()?,
         );
@@ -212,7 +214,7 @@ fn load_markers(
             Annotation::builder()
                 .time(parse_time(cols[0]).expect("Marker time required"))
                 .maybe_label(Some(cols[1]))
-                .maybe_icon(MarkerIcon::try_from_lower_case(cols[2]).ok())
+                .icon(MarkerIcon::try_from_lower_case(cols[2])?)
                 .build()?,
         );
     }

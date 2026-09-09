@@ -46,11 +46,12 @@ def write_csv(dest_path: Path, data: list[dict[str, Any]], fieldnames: list[str]
 
 
 def multi_constellation_sats(t: str, gps_time: str | None = None) -> list[dict[str, Any]]:
-    """Generate a realistic modern-GNSS satellite set: 25 in-fix, 24 visible only = 49 total.
+    """Generate a realistic modern-GNSS satellite set: 28 in-fix, 26 visible only = 54 total.
 
-    All four major constellations are represented (GPS, GLONASS, Galileo, BeiDou).
-    Matches what a high-quality dual-frequency receiver reports.
-    PRNs are within validated ranges (GPS 1-32, GLONASS 1-24, Galileo 1-36, BeiDou 1-63).
+    Every constellation the `.gtd` format encodes is represented (GPS, GLONASS,
+    Galileo, BeiDou, NavIC, QZSS).
+    PRNs are within validated ranges (GPS 1-32, GLONASS 1-24, Galileo 1-36,
+    BeiDou 1-63, NavIC 1-14, QZSS 1-10).
     """
     gt = gps_time if gps_time is not None else t
     sats: list[dict[str, Any]] = []
@@ -61,6 +62,8 @@ def multi_constellation_sats(t: str, gps_time: str | None = None) -> list[dict[s
         ("glonass", 1, 6, 3, 35, 90, 38),
         ("galileo", 1, 7, 4, 45, 180, 40),
         ("beidou", 1, 4, 13, 25, 270, 35),
+        ("navic", 1, 2, 1, 55, 45, 39),
+        ("qzss", 1, 1, 1, 70, 135, 41),
     ]
 
     for constellation, prn_start, n_in, n_out, base_elev, base_az, base_snr in config:

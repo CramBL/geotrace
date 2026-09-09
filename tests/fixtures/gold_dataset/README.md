@@ -29,7 +29,7 @@ Tracks 8 to 11 start at the coordinates named in their own sections.
 - **Purpose**: Baseline linear movement and speed acceleration.
 - **Description**: 10 points spaced 2 meters apart, moving North.
 - **Speed**: Starts at 0 km/h and increases by 10 km/h at each point (up to 90 km/h).
-- **Satellites**: 49 per fix across GPS, GLONASS, Galileo and BeiDou, 25 of them in the fix.
+- **Satellites**: 54 per fix across every constellation the format encodes (GPS, GLONASS, Galileo, BeiDou, NavIC and QZSS), 28 of them in the fix.
 
 ### Track 2: Sine Curve
 - **Purpose**: Periodic lateral movement.

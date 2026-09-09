@@ -115,72 +115,6 @@ static GtdOptF32 parse_opt_f32(const char *text) {
     return GTD_SOME_F32((float)value.value);
 }
 
-static uint32_t parse_constellation(const char *name) {
-    if (strcmp(name, "gps") == 0) {
-        return GTD_CONSTELLATION_GPS;
-    }
-    if (strcmp(name, "glonass") == 0) {
-        return GTD_CONSTELLATION_GLONASS;
-    }
-    if (strcmp(name, "galileo") == 0) {
-        return GTD_CONSTELLATION_GALILEO;
-    }
-    if (strcmp(name, "beidou") == 0) {
-        return GTD_CONSTELLATION_BEIDOU;
-    }
-    FAILF("unknown constellation: %s", name);
-    return GTD_CONSTELLATION_GPS; /* unreachable */
-}
-
-static uint32_t parse_icon(const char *name) {
-    if (!name || *name == '\0') {
-        return GTD_ICON_AUTO;
-    }
-    if (strcmp(name, "pin") == 0) {
-        return GTD_ICON_PIN;
-    }
-    if (strcmp(name, "cross") == 0) {
-        return GTD_ICON_CROSS;
-    }
-    if (strcmp(name, "circle") == 0) {
-        return GTD_ICON_CIRCLE;
-    }
-    if (strcmp(name, "lightning") == 0) {
-        return GTD_ICON_LIGHTNING;
-    }
-    if (strcmp(name, "warning") == 0) {
-        return GTD_ICON_WARNING;
-    }
-    if (strcmp(name, "error") == 0) {
-        return GTD_ICON_ERROR;
-    }
-    if (strcmp(name, "check") == 0) {
-        return GTD_ICON_CHECK;
-    }
-    if (strcmp(name, "satellite") == 0) {
-        return GTD_ICON_SATELLITE;
-    }
-    if (strcmp(name, "satellite_lost") == 0) {
-        return GTD_ICON_SATELLITE_LOST;
-    }
-    if (strcmp(name, "gear") == 0) {
-        return GTD_ICON_GEAR;
-    }
-    if (strcmp(name, "refresh") == 0) {
-        return GTD_ICON_REFRESH;
-    }
-    if (strcmp(name, "download") == 0) {
-        return GTD_ICON_DOWNLOAD;
-    }
-    if (strcmp(name, "upload") == 0) {
-        return GTD_ICON_UPLOAD;
-    }
-    if (strcmp(name, "wrench") == 0) {
-        return GTD_ICON_WRENCH;
-    }
-    return GTD_ICON_AUTO;
-}
-
 typedef struct {
     char gps_time[TS_BUFSIZE];
     char sys_time[TS_BUFSIZE];
@@ -251,9 +185,15 @@ static void load_event_styles(GtdFileBuilder *builder, const char *base) {
             continue;
         }
         const char *color = (*cols[2] != '\0') ? cols[2] : NULL;
-        check_sdk_status(
-            gtd_builder_add_event_marker_style(builder, cols[0], parse_icon(cols[1]), color),
-            "add_event_marker_style");
+        /* An empty icon cell leaves the icon to the application. */
+        uint32_t icon = GTD_ICON_AUTO;
+        if (*cols[1] != '\0') {
+            GtdMarkerIcon named;
+            check_sdk_status(gtd_marker_icon_from_name(cols[1], &named), "marker_icon_from_name");
+            icon = (uint32_t)named;
+        }
+        check_sdk_status(gtd_builder_add_event_marker_style(builder, cols[0], icon, color),
+                         "add_event_marker_style");
     }
     (void)fclose(file);
 }
@@ -290,7 +230,10 @@ static void load_satellites(const char *base) {
             FAIL("invalid PRN");
         }
 
-        row->sat.constellation = parse_constellation(cols[2]);
+        GtdConstellation constellation;
+        check_sdk_status(gtd_constellation_from_name(cols[2], &constellation),
+                         "constellation_from_name");
+        row->sat.constellation = (uint32_t)constellation;
         row->sat.prn = (uint32_t)prn;
         row->sat.in_fix = (uint8_t)(strcmp(cols[4], "true") == 0);
         row->sat.elevation_deg = parse_opt_f32(cols[5]);
@@ -421,11 +364,9 @@ static void load_markers(GtdFileBuilder *builder, const char *base) {
             FAIL("markers.csv: missing timestamp");
         }
         const char *label = (*cols[1] != '\0') ? cols[1] : NULL;
-        uint32_t icon = parse_icon(cols[2]);
-        if (icon == GTD_ICON_AUTO) {
-            icon = GTD_ICON_PIN;
-        }
-        check_sdk_status(gtd_builder_add_annotation(builder, timestamp, label, icon),
+        GtdMarkerIcon icon;
+        check_sdk_status(gtd_marker_icon_from_name(cols[2], &icon), "marker_icon_from_name");
+        check_sdk_status(gtd_builder_add_annotation(builder, timestamp, label, (uint32_t)icon),
                          "add_annotation");
     }
     (void)fclose(file);

@@ -16,6 +16,22 @@ StrPath = str | bytes | PathLike[str]
 
 __version__: str
 
+def constellation_from_name(name: str) -> Constellation:
+    """The :class:`Constellation` member named by ``name``, e.g. ``"beidou"``.
+
+    Raises:
+        ValueError: for a name outside the set.
+    """
+    ...
+
+def marker_icon_from_name(name: str) -> MarkerIcon:
+    """The :class:`MarkerIcon` member named by ``name``, e.g. ``"satellite_lost"``.
+
+    Raises:
+        ValueError: for a name outside the set.
+    """
+    ...
+
 @final
 class Satellite:
     """One tracked satellite with optional signal metrics.
