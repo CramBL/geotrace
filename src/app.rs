@@ -1144,7 +1144,6 @@ impl App {
 }
 
 #[cfg(test)]
-#[path = "app/ui_tests.rs"]
 mod ui_tests;
 
 #[cfg(test)]
