@@ -7,6 +7,8 @@
  *   ./sdk/cpp/build/gold/examples/gold_dataset
  */
 
+#include "parse_number.hpp"
+
 #include <geotrace/geotrace.hpp>
 
 #include <algorithm>
@@ -80,17 +82,27 @@ std::optional<geotrace::Timestamp> parse_timestamp_or_absent(const std::string &
     return std::nullopt;
 }
 
+double required_double(const std::string &text) {
+    const auto value = examples::parse_decimal<double>(text);
+    if (!value) {
+        throw geotrace::IoError("not a number: " + text);
+    }
+    return *value;
+}
+
 std::optional<double> parse_opt_double(const std::string &text) {
     if (text.empty()) {
         return std::nullopt;
     }
-    try {
-        std::size_t pos = 0;
-        double value = std::stod(text, &pos);
-        return (pos > 0) ? std::optional<double>{value} : std::nullopt;
-    } catch (const std::exception &) {
-        return std::nullopt;
+    return required_double(text);
+}
+
+std::uint32_t required_prn(const std::string &text) {
+    const auto prn = examples::parse_decimal<std::uint32_t>(text);
+    if (!prn) {
+        throw geotrace::IoError("satellites.csv: invalid PRN: " + text);
     }
+    return *prn;
 }
 
 std::optional<float> parse_opt_float(const std::string &text) {
@@ -183,7 +195,7 @@ std::vector<SatRow> load_satellites(const fs::path &base) {
             sys_time,
             geotrace::Satellite{
                 geotrace::constellation_from_name(constellation),
-                static_cast<std::uint32_t>(std::stoul(prn)),
+                required_prn(prn),
                 in_fix == "true",
                 parse_opt_float(elevation),
                 parse_opt_float(azimuth),
@@ -222,8 +234,8 @@ void load_fixes(geotrace::FileBuilder &builder, const fs::path &base,
 
         builder.add(geotrace::NavFix{
             time,
-            geotrace::Angle::degrees(std::stod(lat)),
-            geotrace::Angle::degrees(std::stod(lon)),
+            geotrace::Angle::degrees(required_double(lat)),
+            geotrace::Angle::degrees(required_double(lon)),
             hdg ? std::optional{geotrace::Angle::degrees(*hdg)} : std::nullopt,
             kmh ? std::optional{geotrace::Velocity::kmh(*kmh)} : std::nullopt,
             parse_opt_double(eph_m),
@@ -320,7 +332,7 @@ geotrace::Channel &channel_for_row(std::vector<geotrace::Channel> &channels,
         channel.unit = geotrace::ChannelUnit::parse_recognized(unit);
     }
     if (!period_deg.empty()) {
-        channel.period = geotrace::Angle::degrees(std::stod(period_deg));
+        channel.period = geotrace::Angle::degrees(required_double(period_deg));
     }
     channel.description = description;
     if (!components.empty()) {
@@ -356,7 +368,7 @@ void load_channels(geotrace::FileBuilder &builder, const fs::path &base) {
         }
         channel.times.push_back(*timestamp);
         for (const auto &value : split(values, ';')) {
-            channel.values.push_back(std::stod(value));
+            channel.values.push_back(required_double(value));
         }
     }
 
