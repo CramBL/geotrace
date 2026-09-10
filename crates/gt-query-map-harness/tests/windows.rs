@@ -2,6 +2,7 @@
 //! per-point metrics a recording carries.
 
 use gt_query_map_harness::{Dataset, MapScenario, PointSpec, TrackSpec, track};
+use gt_ui_types::{GeomagneticPoint, TecPoint};
 
 /// A window match bands every point of the window, not just the one the
 /// predicate happened to be evaluated at.
@@ -86,5 +87,45 @@ fn an_interference_filter_reads_the_supplied_series() {
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  .00.
     counts: shown 4, halos 1
+    ");
+}
+
+/// Geomagnetic indices and TEC are supplied per track like the interference
+/// series, each on its own published scale. Point 2 matches both queries and
+/// takes the several-halos glyph.
+#[test]
+fn a_geomagnetic_and_a_tec_filter_read_the_supplied_series() {
+    let fix_secs = |index: usize| gt_query_map_harness::EPOCH_SECS as f64 + index as f64;
+    let mut scenario = MapScenario::new(Dataset::single_track(
+        TrackSpec::steady(4, 40.0)
+            .geomagnetic(
+                [3.0, 5.0, 5.0, 3.0]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, kp)| GeomagneticPoint {
+                        x_secs: fix_secs(index),
+                        hp30: None,
+                        kp: Some(kp),
+                    })
+                    .collect(),
+            )
+            .tec(
+                [50.0, 50.0, 120.0, 120.0]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, tecu)| TecPoint {
+                        x_secs: fix_secs(index),
+                        tecu: Some(tecu),
+                    })
+                    .collect(),
+            ),
+    ));
+    scenario.run(
+        "points | where kp >= 5 | draw\n\n\
+         points | where tec > 100 | draw",
+    );
+    insta::assert_snapshot!(scenario.picture(), @"
+    track.gtd#0  .0*1
+    counts: shown 4, halos 2
     ");
 }

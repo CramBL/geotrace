@@ -220,10 +220,10 @@ pub fn compute_util(points: &[NavPoint], mask_deg: f32) -> UtilPoints {
 mod tests {
     use gt_types::coordinates::{Latitude, Longitude};
     use gt_types::fixtures;
-    use gt_types::satellites::Satellite;
+    use gt_types::satellites::{Prn, Satellite};
 
     use super::*;
-    use crate::test_util::report;
+    use crate::test_util;
 
     /// One satellite of `constellation` at `elevation_deg`, in the fix or only
     /// in view, with a throwaway PRN and no signal quality: every rule below
@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn in_view_above_mask_excludes_sub_mask_and_unknown_elevation() {
-        let r = report(vec![
+        let r = test_util::report(vec![
             sat(Constellation::Gps, Some(20.0), false),
             sat(Constellation::Gps, Some(15.0), false), // exactly at the mask counts
             sat(Constellation::Gps, Some(5.0), false),  // below mask
@@ -252,7 +252,7 @@ mod tests {
 
     #[test]
     fn in_fix_above_mask_excludes_used_sub_mask_and_unknown_elevation() {
-        let r = report(vec![
+        let r = test_util::report(vec![
             sat(Constellation::Gps, Some(20.0), true), // used, above mask
             sat(Constellation::Gps, Some(5.0), true),  // used but below mask -> excluded
             sat(Constellation::Glonass, Some(40.0), true),
@@ -267,7 +267,7 @@ mod tests {
     /// [`compute_util`] reports every satellite this flags as an anomaly.
     #[test]
     fn masked_out_in_fix_flags_used_sub_mask_satellites_only() {
-        let r = report(vec![
+        let r = test_util::report(vec![
             sat(Constellation::Gps, Some(5.0), true), // used and below mask -> flagged
             sat(Constellation::Gps, Some(20.0), true), // used, above mask
             sat(Constellation::Gps, Some(3.0), false), // below mask but not used
@@ -293,7 +293,7 @@ mod tests {
             NavPoint::new(position.tpv, sats)
         };
         let with_sats = |used: bool| {
-            report(vec![
+            test_util::report(vec![
                 sat(Constellation::Gps, Some(40.0), used),
                 sat(Constellation::Gps, Some(30.0), true),
             ])
@@ -313,5 +313,32 @@ mod tests {
         let series_values: Vec<f64> = series.all.iter().map(|[_, v]| *v).collect();
         let aligned_values: Vec<f64> = per_point.all.iter().copied().flatten().collect();
         assert_eq!(series_values, aligned_values);
+    }
+
+    #[test]
+    fn an_anomaly_without_an_above_mask_satellite_sits_at_zero_percent() {
+        let points = [test_util::point_at(
+            0,
+            vec![sat(Constellation::Gps, Some(5.0), true)],
+        )];
+
+        let util = compute_util(&points, 15.0);
+
+        assert_eq!(
+            util.anomalies,
+            [UtilAnomaly {
+                t: 0.0,
+                value: 0.0,
+                masked: vec![MaskedSat {
+                    constellation: Constellation::Gps,
+                    prn: Prn::new(1),
+                    elevation: 5.0,
+                }],
+            }]
+        );
+        assert!(
+            util.all.is_empty(),
+            "an empty masked baseline contributes no rate point"
+        );
     }
 }
