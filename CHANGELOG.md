@@ -5,10 +5,13 @@
 ### Changed
 
 - **Map & Tracks:** The satellite tables and the sky plot now show a satellite's SNR of ≈99 dB-Hz, the value some receivers send when they have no measurement, in its own violet colour.
+- **Map & Tracks:** The plot joins each clock offset marker at the axis edge to the clock offset line on either side of it, and consecutive markers to each other.
 
 ### Fixed
 
 - **Map & Tracks:** Fixed the plot's shared y-axis fitting the clock offset of a recording whose baseline offset is more than a day: it now marks the offset at the axis edge, with the value on hover.
+- **Map & Tracks:** Fixed the plot cutting a clock offset marker in half at the left or the right edge of the view.
+- **Map & Tracks:** Fixed the plot's shared y-axis fitting a clock offset departure on a recording's last fixes: a departure over less than a tenth of a track is now marked at the axis edge.
 
 ## 0.16.0 - 2026-09-07
 

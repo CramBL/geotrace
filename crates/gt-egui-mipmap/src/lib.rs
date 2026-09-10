@@ -265,9 +265,14 @@ impl MipMap {
         Some((level.first()?.x, level.last()?.x))
     }
 
+    /// The finest (original) level: every data point, ascending by x.
+    pub fn finest_level(&self) -> &[PlotPoint] {
+        self.levels.first().map_or(&[][..], Vec::as_slice)
+    }
+
     /// Total number of points in the finest (original) level.
     pub fn original_len(&self) -> usize {
-        self.levels.first().map_or(0, Vec::len)
+        self.finest_level().len()
     }
 
     /// Number of mipmap levels, including the finest.

@@ -1,6 +1,6 @@
 //! What a plot holds off its GPS−system clock offset line: the samples whose
-//! offset leaves the track's baseline and returns to it, and every sample of a
-//! track whose baseline itself lies outside [`MAX_PLOTTED_OFFSET_S`].
+//! offset departs from the track's baseline, and every sample of a track whose
+//! baseline itself lies outside [`MAX_PLOTTED_OFFSET_S`].
 //!
 //! A receiver resuming from a recording gap can report a pre-gap GPS epoch for
 //! its first fix while the host stamps that fix on resume, which puts the whole
@@ -9,11 +9,11 @@
 //! it.  Those offsets are real and stay in the data.  Separating them here lets
 //! a plot keep them off the shared y-axis and mark them explicitly.
 //!
-//! An offset that steps and stays to the end of the track is a clock
-//! discontinuity, not an excursion, and is deliberately not matched here: a run
-//! of out-of-band samples is an excursion only when the offset returns to the
-//! baseline after it.  That leaves the level shifts on the line where they
-//! belong.
+//! An offset that steps and stays over a substantial part of the track is a
+//! clock discontinuity, not an excursion, and is deliberately not matched
+//! here.  A run of out-of-band samples that the track ends inside is a level
+//! shift once it holds a tenth of the track's samples, and an excursion below
+//! that.
 
 use gt_types::nav_point::NavPoint;
 use vec1::Vec1;
@@ -34,6 +34,19 @@ pub const DEFAULT_EXCURSION_THRESHOLD_S: f32 = 10.0;
 /// milliseconds inside `i64`.
 pub const MAX_PLOTTED_OFFSET_S: f32 = 86_400.0;
 
+/// Smallest share of a track's samples a run reaching its last sample must
+/// hold to count as a level shift, written as the divisor of that share: a
+/// tenth.
+///
+/// A level shift holds a substantial part of the track: a clock that steps and
+/// stays keeps logging at its new level whatever the fix rate.  A device that
+/// suspends before it stamps its last fixes leaves a handful of samples there
+/// instead, and holding those on the line costs every other metric the shared
+/// y-axis.  On a track of ten samples or fewer a single trailing sample already
+/// holds a tenth, and the line keeps it: too little of the track follows the
+/// departure to tell the two apart.
+const TRAILING_LEVEL_SHIFT_MIN_SHARE_DIVISOR: usize = 10;
+
 /// One sample whose offset sits outside the baseline band.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ExcursionSample {
@@ -45,15 +58,18 @@ pub struct ExcursionSample {
     pub offset_ms: i64,
 }
 
-/// A run of consecutive samples that departed from the track's baseline offset
-/// and returned to it.
+/// A run of consecutive samples that departed from the track's baseline
+/// offset.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClockOffsetExcursion {
     /// The out-of-band samples, in ascending index order.
     pub samples: Vec1<ExcursionSample>,
     /// The track's baseline offset (median over all its samples), in
-    /// milliseconds - what the offset departed from and returns to.
+    /// milliseconds - what the offset departed from.
     pub baseline_ms: i64,
+    /// `true` where a later sample came back to the baseline, `false` where
+    /// the track's last sample is the run's own.
+    pub returned_to_baseline: bool,
 }
 
 impl ClockOffsetExcursion {
@@ -89,7 +105,7 @@ pub enum ClockOffsetPlacement {
     /// lies outside [`MAX_PLOTTED_OFFSET_S`].
     BaselineOffScale(OffScaleClockBaseline),
     /// The baseline lies inside [`MAX_PLOTTED_OFFSET_S`], and these are the
-    /// departures from it that returned.
+    /// departures from it.
     BaselineOnScale(Vec<ClockOffsetExcursion>),
 }
 
@@ -108,9 +124,9 @@ pub fn excursion_indices(excursions: &[ClockOffsetExcursion]) -> Vec<usize> {
 /// The baseline is the median offset over the whole track, so a large but
 /// *steady* offset (a host clock hours off all recording) sits at the baseline
 /// and is never flagged - only departures from a track's own normal are.  A run
-/// of out-of-band samples counts as a departure only once an in-band sample
-/// follows it: a run that reaches the last sample is a level shift the line
-/// keeps.
+/// that the track ends inside counts as a departure while it holds less than a
+/// tenth of the track's samples.  From there on it is a level shift, and the
+/// line keeps it.
 ///
 /// Returned in ascending sample order.  A track whose samples are more than
 /// half out-of-band yields nothing: with that little agreement there is no
@@ -174,6 +190,7 @@ fn excursions_from_baseline(
 ) -> Vec<ClockOffsetExcursion> {
     let sample_count = samples.len();
     let threshold_ms = offset_ms(threshold_s);
+    let level_shift_min_samples = sample_count.div_ceil(TRAILING_LEVEL_SHIFT_MIN_SHARE_DIVISOR);
 
     let mut excursions = Vec::new();
     let mut run: Vec<ExcursionSample> = Vec::new();
@@ -183,14 +200,26 @@ fn excursions_from_baseline(
             continue;
         }
         // The run before this sample departed and returned, now that this
-        // sample is back at the baseline.  A run still open when the loop ends
-        // never returned: that is a level shift, and the line keeps it.
+        // sample is back at the baseline.
         if let Ok(samples) = Vec1::try_from_vec(std::mem::take(&mut run)) {
             excursions.push(ClockOffsetExcursion {
                 samples,
                 baseline_ms,
+                returned_to_baseline: true,
             });
         }
+    }
+    // No sample returned to the baseline after this run: the track ends inside
+    // it.  A run this long is the offset stepping to a new level, which the
+    // line keeps.
+    if let Ok(samples) = Vec1::try_from_vec(run)
+        && samples.len() < level_shift_min_samples
+    {
+        excursions.push(ClockOffsetExcursion {
+            samples,
+            baseline_ms,
+            returned_to_baseline: false,
+        });
     }
 
     // The total is checked too: a median only stands for a baseline while most
@@ -300,6 +329,7 @@ mod tests {
         assert_eq!(excursion.peak().offset_ms, -4_127_054);
         assert_eq!(excursion.baseline_ms, -234);
         assert_eq!(excursion.deviation_ms(), -4_126_820);
+        assert!(excursion.returned_to_baseline);
         assert_eq!(excursion_indices(&excursions), vec![4]);
     }
 
@@ -317,6 +347,49 @@ mod tests {
         let mut points: Vec<NavPoint> = (0..6).map(|i| point_with_clocks(1000 + i, 200)).collect();
         points.extend((6..12).map(|i| point_with_clocks(1000 + i, 3_600_000)));
         assert!(detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S).is_empty());
+    }
+
+    /// A device that reads a position from the receiver, suspends, and stamps
+    /// that fix on resume puts the whole suspend on the track's last sample,
+    /// with no sample after it to come back to the baseline.
+    #[test]
+    fn a_departure_on_the_last_sample_of_a_track_is_an_excursion() {
+        const SUSPEND_MS: i64 = 2 * 60 * 60 * 1000;
+        let mut points: Vec<NavPoint> = (0..59).map(|i| point_with_clocks(1000 + i, 200)).collect();
+        points.push(point_with_clocks(1059, SUSPEND_MS));
+
+        let excursions = detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S);
+
+        let [excursion] = excursions.as_slice() else {
+            panic!("expected one excursion, got {}", excursions.len());
+        };
+        assert_eq!(excursion.peak().index, 59);
+        assert_eq!(excursion.peak().offset_ms, -SUSPEND_MS);
+        assert!(!excursion.returned_to_baseline);
+    }
+
+    #[rstest::rstest]
+    #[case::below_a_tenth_of_the_track(9, Some(9))]
+    #[case::a_tenth_of_the_track(10, None)]
+    fn a_trailing_run_is_a_level_shift_from_a_tenth_of_a_track(
+        #[case] trailing_samples: i64,
+        #[case] expected_excursion_samples: Option<usize>,
+    ) {
+        const TRACK_SAMPLES: i64 = 100;
+        let baseline_samples = TRACK_SAMPLES - trailing_samples;
+        let mut points: Vec<NavPoint> = (0..baseline_samples)
+            .map(|i| point_with_clocks(1000 + i, 200))
+            .collect();
+        points.extend(
+            (baseline_samples..TRACK_SAMPLES).map(|i| point_with_clocks(1000 + i, 3_600_000)),
+        );
+
+        let excursions = detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S);
+
+        assert_eq!(
+            excursions.first().map(|e| e.samples.len()),
+            expected_excursion_samples
+        );
     }
 
     /// A tracker holds its RTC default for tens of fixes after each boot,
