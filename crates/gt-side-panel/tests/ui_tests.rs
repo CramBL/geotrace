@@ -29,9 +29,14 @@ use gt_test_utils::fixtures::FixCountsAroundAGap;
 use gt_test_utils::{
     By, FileParts, HarnessInteraction as _, Node, NodeT as _, Queryable as _, TestHarness,
 };
-use gt_types::{FileIdx, FixStats, LoadWarning, NavPoint, PointIdx, TrackIdx, TrackRef};
+use gt_types::{
+    CustomMarker, FileIdx, FixStats, LoadWarning, MarkerIcon, MarkerRequirement, NavPoint,
+    PointIdx, TrackIdx, TrackRef,
+};
 use gt_ui_types::{DisplayCategory, DisplayMask, HighlightScope, MapHighlight, SnapCosting};
 use rustc_hash::FxHashMap;
+use uom::si::f64::Length;
+use uom::si::length::{kilometer, meter};
 
 mod support;
 
@@ -2216,6 +2221,24 @@ fn stored_recording_ref() -> gt_history_types::DatabaseRef {
 ///
 /// The recording history holds the recording when `db_ref` is `Some`.
 fn state_with_two_tracks(db_ref: Option<gt_history_types::DatabaseRef>) -> State {
+    let file = gt_test_utils::build_file(
+        "ride_0.gtd",
+        &points_of_two_tracks_a_day_apart(),
+        FileParts::default(),
+    );
+    let mut files = LoadedFiles::new();
+    files.push(
+        file,
+        FileHistory::recording("auto:ride".to_owned(), RecordingMeta::default(), db_ref),
+    );
+    make_state_from_files(files)
+}
+
+/// 60 fixes from the Unix epoch and five more a day later, one second apart,
+/// walking north-east. The track builder splits them at the day-long gap: the
+/// first track measures 7.6km of distance and 7.6km of spread, the second
+/// 0.5km of each.
+fn points_of_two_tracks_a_day_apart() -> Vec<NavPoint> {
     let start = DateTime::<Utc>::UNIX_EPOCH;
     let mut points = gt_test_utils::fixtures::nav_points_from(start, 60, 1);
     points.extend(gt_test_utils::fixtures::nav_points_from(
@@ -2223,13 +2246,7 @@ fn state_with_two_tracks(db_ref: Option<gt_history_types::DatabaseRef>) -> State
         5,
         1,
     ));
-    let file = gt_test_utils::build_file("ride_0.gtd", &points, FileParts::default());
-    let mut files = LoadedFiles::new();
-    files.push(
-        file,
-        FileHistory::recording("auto:ride".to_owned(), RecordingMeta::default(), db_ref),
-    );
-    make_state_from_files(files)
+    points
 }
 
 /// The panel over a stored recording of two tracks, with no filter set.
@@ -2291,6 +2308,80 @@ fn the_shelve_button_confirms_over_the_track_that_the_filter_excludes() {
             .shelve_confirm
             .as_ref()
             .map(|confirm| confirm.items.clone()),
+        Some(vec![NodeKey::Track(TrackRef::new(
+            FileIdx::new(0),
+            TrackIdx::new(1)
+        ))])
+    );
+}
+
+/// [`points_of_two_tracks_a_day_apart`] as a stored recording, with a custom
+/// marker on its first fix. The marker falls in the first track's time range,
+/// and the second track has none.
+fn state_with_a_short_unmarked_second_track() -> State {
+    let points = points_of_two_tracks_a_day_apart();
+    let marker = points.first().and_then(|point| {
+        let (lat, lon) = point.tpv.position()?;
+        Some(CustomMarker::new(
+            point.tpv.time().utc(),
+            "start".to_owned(),
+            MarkerIcon::Pin,
+            lat,
+            lon,
+        ))
+    });
+    let file = gt_test_utils::build_file(
+        "ride_0.gtd",
+        &points,
+        FileParts {
+            custom_markers: marker.into_iter().collect(),
+            ..FileParts::default()
+        },
+    );
+    let mut files = LoadedFiles::new();
+    files.push(
+        file,
+        FileHistory::recording(
+            "auto:ride".to_owned(),
+            RecordingMeta::default(),
+            Some(stored_recording_ref()),
+        ),
+    );
+    make_state_from_files(files)
+}
+
+/// Each of these rules excludes the second track of the recording and keeps
+/// the first.
+#[rstest::rstest]
+#[case::a_minimum_distance(GlobalFilter {
+    min_distance_km: Some(Length::new::<kilometer>(5.0)),
+    ..GlobalFilter::default()
+})]
+#[case::a_minimum_spread(GlobalFilter {
+    min_spread_m: Some(Length::new::<meter>(1000.0)),
+    ..GlobalFilter::default()
+})]
+#[case::a_marker_requirement(GlobalFilter {
+    marker_requirement: MarkerRequirement::AnyMarker,
+    ..GlobalFilter::default()
+})]
+fn the_shelve_button_confirms_over_the_track_that_the_filter_rule_excludes(
+    #[case] filter: GlobalFilter,
+) {
+    let mut state = state_with_a_short_unmarked_second_track();
+    state.filter = filter;
+    let mut harness = make_harness(state);
+    harness.run();
+
+    assert!(!shelve_button_is_disabled(&harness));
+    harness
+        .inner
+        .get_by_label_contains(SHELVE_FILTERED_DATA_LABEL)
+        .click();
+    harness.run();
+
+    assert_eq!(
+        shelve_confirmation_items(&harness),
         Some(vec![NodeKey::Track(TrackRef::new(
             FileIdx::new(0),
             TrackIdx::new(1)
