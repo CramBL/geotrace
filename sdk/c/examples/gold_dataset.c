@@ -8,6 +8,8 @@
  */
 
 #include "../geotrace.h"
+#include "csv_fields.h"
+#include "parse_number.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -77,31 +79,12 @@ static void rtrim(char *text) {
     }
 }
 
-static int split_delim(char *line, char delim, char *cols[], int max) {
-    int count = 0;
-    char *cursor = line;
-    while (count < max) {
-        cols[count++] = cursor;
-        cursor = strchr(cursor, delim);
-        if (!cursor) {
-            break;
-        }
-        *cursor++ = '\0';
-    }
-    return count;
-}
-
-static int split_csv(char *line, char *cols[], int max) {
-    return split_delim(line, ',', cols, max);
-}
-
 static GtdOptF64 parse_opt_f64(const char *text) {
     if (!text || *text == '\0') {
         return GTD_NONE_F64;
     }
-    char *end;
-    double value = strtod(text, &end);
-    if (end == text) {
+    double value;
+    if (!parse_decimal_double(text, &value)) {
         return GTD_NONE_F64;
     }
     return GTD_SOME_F64(value);
@@ -267,23 +250,22 @@ static void add_fix_row(GtdFileBuilder *builder, char *cols[]) {
     GtdTimestamp gps_ts = parse_timestamp_or_absent(cols[1]);
     GtdTimestamp sys_ts = parse_timestamp_or_absent(cols[2]);
 
-    char *end;
-    double lat = strtod(cols[3], &end);
-    if (end == cols[3]) {
+    double lat;
+    if (!parse_decimal_double(cols[3], &lat)) {
         FAIL("invalid latitude");
     }
-    double lon = strtod(cols[4], &end);
-    if (end == cols[4]) {
+    double lon;
+    if (!parse_decimal_double(cols[4], &lon)) {
         FAIL("invalid longitude");
     }
 
     GtdOptF64 hdg = parse_opt_f64(cols[5]);
     GtdOptF64 spd = GTD_NONE_F64;
     if (*cols[6] != '\0') {
-        double kmh = strtod(cols[6], &end);
+        double kmh;
         /* Use the same constant-multiply as Rust's MPS_PER_KMH = 1.0/3.6.
            Direct kmh/3.6 differs by 1 ULP for some values (e.g. 23.2). */
-        if (end != cols[6]) {
+        if (parse_decimal_double(cols[6], &kmh)) {
             spd = GTD_SOME_F64(kmh * (1.0 / 3.6));
         }
     }
@@ -460,9 +442,8 @@ static void append_sample_values(ChannelAcc *accumulator, char *values_col) {
     char *value_cols[MAX_CH_COMPONENTS];
     int value_count = split_delim(values_col, ';', value_cols, MAX_CH_COMPONENTS);
     for (size_t i = 0; i < (size_t)value_count; i++) {
-        char *end;
-        double value = strtod(value_cols[i], &end);
-        if (end == value_cols[i]) {
+        double value;
+        if (!parse_decimal_double(value_cols[i], &value)) {
             FAIL("invalid channel value");
         }
         if (accumulator->n_values >= (size_t)MAX_CH_SAMPLES * MAX_CH_COMPONENTS) {

@@ -104,5 +104,6 @@ add_cpp_test(test_no_exceptions)
 target_compile_definitions(test_no_exceptions PRIVATE GEOTRACE_CPP_NO_EXCEPTIONS)
 
 add_cpp_test(test_unit_catalog_header)
+add_cpp_test(test_parse_number)
 
 add_cpp_test(test_odr_two_translation_units test_odr_second_translation_unit.cpp)

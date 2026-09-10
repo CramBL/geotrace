@@ -10,6 +10,8 @@
  */
 
 #include "../geotrace.h"
+#include "csv_fields.h"
+#include "parse_number.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -29,29 +31,24 @@ static const char *const CSV_DATA = "timestamp_s,lat,lon,heading_deg,speed_mps\n
 #define LINE_BUFSIZE 128
 #define CSV_COLS     5
 
-/* Parse "ts,lat,lon,heading,speed" into out[CSV_COLS]. The first column is an
-   integer (seconds), the rest are doubles. Returns 1 on success, 0 on a
-   malformed row. A row is malformed when `strtod` or `strtoimax` leaves the
-   end pointer at the start of a field. */
-static int parse_row(const char *line, int64_t *unix_seconds, double out[CSV_COLS - 1]) {
-    char *end;
-    *unix_seconds = (int64_t)strtoimax(line, &end, 10);
-    if (end == line || *end != ',') {
+/* Parse "ts,lat,lon,heading,speed" into out[CSV_COLS - 1]. The first column is
+   an integer (seconds), the rest are doubles. Returns 1 on success, 0 on a
+   malformed row. */
+static int parse_row(char *line, int64_t *unix_seconds, double out[CSV_COLS - 1]) {
+    char *fields[CSV_COLS];
+    if (split_csv(line, fields, CSV_COLS) != CSV_COLS) {
         return 0;
     }
 
-    const char *cur = end + 1;
+    char *end;
+    *unix_seconds = (int64_t)strtoimax(fields[0], &end, 10);
+    if (end == fields[0] || *end != '\0') {
+        return 0;
+    }
+
     for (int i = 0; i < CSV_COLS - 1; i++) {
-        out[i] = strtod(cur, &end);
-        if (end == cur) {
+        if (!parse_decimal_double(fields[i + 1], &out[i])) {
             return 0;
-        }
-        /* Every field but the last must be followed by a comma. */
-        if (i < CSV_COLS - 2) {
-            if (*end != ',') {
-                return 0;
-            }
-            cur = end + 1;
         }
     }
     return 1;
