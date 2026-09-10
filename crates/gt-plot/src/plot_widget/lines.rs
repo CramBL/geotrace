@@ -1,6 +1,8 @@
 //! The metric and channel line pass: one line per enabled metric and
 //! channel component, plus the anomaly markers and the custom hover labels.
 
+use std::ops::Range;
+
 use chrono::DateTime;
 use egui::{Color32, Tooltip};
 use egui_plot::{Line, LineStyle, MarkerShape, PlotPoint, PlotPoints, Points};
@@ -40,9 +42,22 @@ pub(super) fn visible_by_x<T>(
     x_min: f64,
     x_max: f64,
 ) -> &[T] {
+    items
+        .get(visible_x_range(items, key, x_min, x_max))
+        .unwrap_or_default()
+}
+
+/// [`visible_by_x`] as the index range it takes, for a caller that also reads
+/// the items on either side of it.
+pub(super) fn visible_x_range<T>(
+    items: &[T],
+    key: impl Fn(&T) -> f64,
+    x_min: f64,
+    x_max: f64,
+) -> Range<usize> {
     let start = items.partition_point(|it| key(it) < x_min);
     let end = items.partition_point(|it| key(it) <= x_max);
-    items.get(start..end).unwrap_or_default()
+    start..end
 }
 
 /// Pixel radius within which the pointer is considered to be hovering a

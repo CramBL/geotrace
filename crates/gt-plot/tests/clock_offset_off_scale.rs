@@ -306,12 +306,11 @@ fn snapshot_the_track_on_the_line_sets_the_axis_the_off_scale_track_is_marked_ag
     drawn.snapshot("clock_offset_off_scale_track_beside_an_on_scale_track");
 }
 
-/// A marker is inset from the top and the bottom edge by [`EDGE_MARKER_INSET`],
-/// and its horizontal placement puts the glyph's centre on the sample's own x.
-/// The glyph of the sample at the view's right boundary is drawn half outside
-/// the plot area, and the plot clips that half away.
+/// The sample at the view's right boundary is drawn whole: a marker is inset
+/// from the top and the bottom edge by [`EDGE_MARKER_INSET`], and from the left
+/// and the right boundary by half a glyph.
 #[test]
-fn snapshot_a_marker_at_the_right_boundary_is_clipped_by_the_plot_edge() {
+fn snapshot_a_marker_at_the_right_boundary_is_drawn_whole() {
     // The marker at the view's left boundary is drawn whole: the view opens
     // this far before the first fix.
     const LEAD_IN_SECS: i64 = 10;
@@ -329,10 +328,11 @@ fn snapshot_a_marker_at_the_right_boundary_is_clipped_by_the_plot_edge() {
 }
 
 /// The plot draws the clock offset line across the x span of the excursion, and
-/// the markers at the top edge above it. The tail below each glyph stops a
-/// fixed distance down, and the space from the tail to the line stays empty.
+/// the markers at the top edge above it. A connector runs from the line point
+/// before the excursion up to the first marker, from marker to marker along
+/// the edge, and back down to the line point after it.
 #[test]
-fn snapshot_no_line_joins_an_off_scale_marker_to_the_clock_offset_line() {
+fn snapshot_connectors_join_the_markers_to_the_line_they_left() {
     const FIXES_EITHER_SIDE: i64 = 5;
     let around_the_excursion = (EXCURSION_FIXES.start as i64 - FIXES_EITHER_SIDE)
         ..=(EXCURSION_FIXES.end as i64 + FIXES_EITHER_SIDE);
@@ -348,14 +348,59 @@ fn snapshot_no_line_joins_an_off_scale_marker_to_the_clock_offset_line() {
     drawn.snapshot("clock_offset_markers_over_the_line_they_left");
 }
 
-/// The last fix's offset stays on the clock offset line: a departure counts as
-/// an excursion once a later sample returns to the baseline, and this track has
-/// no sample after its last fix. That one sample sets the shared auto-bounds
-/// down to two hours below zero. Velocity, heading and the clock offset
-/// baseline all draw on one flat line at the top of the plot area.
+/// The departure on the last fix is one sample of a track of [`FIX_COUNT`], far
+/// below the tenth of a track's samples that a level shift needs. The plot
+/// holds it off the line and marks it at the bottom edge, with a connector up
+/// to the line point before it.
 #[test]
-fn snapshot_a_departure_on_the_last_fix_sets_the_axis_and_flattens_the_other_series() {
+fn snapshot_a_departure_on_the_last_fix_is_marked_at_the_bottom_edge() {
     let mut drawn = drawn_over(recording_with_a_departure_on_the_last_fix());
 
     drawn.snapshot("clock_offset_departure_on_the_last_fix");
+}
+
+#[test]
+fn a_departure_on_the_last_fix_leaves_the_shared_y_axis_to_the_clock_offset_baseline() {
+    let drawn = drawn_over(recording_with_a_departure_on_the_last_fix());
+
+    let (y_min, y_max) = visible_y_range(&drawn);
+
+    let baseline_offset_ms = -BASELINE_HOST_AHEAD_MS as f64;
+    assert!(
+        y_min > 2.0 * baseline_offset_ms && y_max < VELOCITY_AND_HEADING_LIMIT,
+        "the baseline of {baseline_offset_ms} ms and the other metrics set the axis, \
+         not the departure of {} h, got {y_min}..{y_max}",
+        -SUSPEND_HOURS
+    );
+}
+
+#[test]
+fn the_hover_of_a_departure_on_the_last_fix_says_the_recording_ends_there() {
+    // The pointer reaches the marker inside the plot area: the view runs past
+    // the last fix.
+    const LEAD_OUT_SECS: i64 = 10;
+    let last_fix = FIX_COUNT as i64 - 1;
+
+    let mut drawn = support::drawn_plot(
+        vec![recording_with_a_departure_on_the_last_fix()],
+        PlotSources::default().pinned_to_map_view(0..=(last_fix + LEAD_OUT_SECS)),
+        PlotState::default(),
+    );
+    let (y_min, y_max) = visible_y_range(&drawn);
+    let marker = drawn.screen_position(PlotPosition {
+        offset_secs: last_fix as f64,
+        y: y_min + (y_max - y_min) * EDGE_MARKER_INSET,
+    });
+
+    drawn.hover(marker);
+
+    let label = drawn.hover_label();
+    assert!(
+        label.contains("Clock offset excursion"),
+        "the marker's tooltip reads {label:?}"
+    );
+    assert!(
+        label.contains("The offset left the track's baseline for 1 sample, and the recording ends"),
+        "the marker's tooltip reads {label:?}"
+    );
 }

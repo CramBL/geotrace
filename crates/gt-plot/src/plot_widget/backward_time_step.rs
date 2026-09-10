@@ -11,7 +11,7 @@ use egui_plot::{PlotPoint, PlotTransform};
 
 use super::chips::ChannelVisibility;
 use super::lines::{ANOMALY_HOVER_RADIUS_PX, NearestHoverLabel, PlotHoverLabel, visible_by_x};
-use super::overlay::{EDGE_MARKER_INSET, OverlayItem, OverlayPainter, TAIL_LENGTH};
+use super::overlay::{EDGE_MARKER_INSET, OverlayItem, OverlayPainter};
 use crate::series::{ChannelSeries, PlacedBackwardTimeStep};
 
 /// Screen distance between two marks, in points, below which the steps share
@@ -40,10 +40,10 @@ struct ChannelBackwardTimeStep<'a> {
     placed: PlacedBackwardTimeStep,
 }
 
-/// Length of the leader descending to the step, in points. The same as the
-/// clock excursion marker's tail, so the two overlays' marks reach equally far
-/// into the plot.
-const LEADER_LENGTH: f32 = TAIL_LENGTH;
+/// Length of the leader descending to the step, in points. Short on purpose: a
+/// full-height line would look like a cursor, and the plot already has two of
+/// those.
+const LEADER_LENGTH: f32 = 22.0;
 
 /// Half the width of the step's horizontal run, in points. The leader descends
 /// this far right of the anchor, and the drop falls this far left of it.
