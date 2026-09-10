@@ -25,11 +25,11 @@ Exemption syntax (same line):
 
 import re
 import sys
-from collections.abc import Iterator
 from pathlib import Path
 
 from qa._allow import is_exempt
 from qa._check import Check, Violation, is_test_only_module, repo_root, rs_files, run_check
+from qa._rust import cfg_test_line_numbers
 
 CHECK = "check-raw-colors"
 
@@ -65,44 +65,20 @@ _RAW_COLOR = re.compile(rf"Color32::(?:{'|'.join(_CHROMATIC)})\b")
 # boundary keeps `WARNING_AMBER` from also matching `WARNING_AMBER_LIGHT`.
 _UNTHEMED_CONST = re.compile(r"\b(?:WARNING_AMBER|ERROR_INDICATOR)\b")
 
-_CFG_TEST = re.compile(r"#\[cfg\(test\)\]")
-
-
-def _non_test_lines(lines: list[str]) -> Iterator[tuple[int, str]]:
-    """Yield `(index, line)` for lines outside any `#[cfg(test)]` block.
-
-    Tracks brace depth so a `#[cfg(test)]`-attributed module or function is
-    skipped in full, wherever it sits in the file, and normal code after it is
-    still scanned.
-    """
-    depth = 0
-    pending_test = False
-    test_depth: int | None = None
-    for i, line in enumerate(lines):
-        if test_depth is None and not pending_test and _CFG_TEST.search(line):
-            pending_test = True
-        opens = line.count("{")
-        closes = line.count("}")
-        if test_depth is None:
-            yield i, line
-        if pending_test and opens > 0:
-            test_depth = depth
-            pending_test = False
-        depth += opens - closes
-        if test_depth is not None and depth <= test_depth:
-            test_depth = None
-
 
 def _collect(root: Path) -> list[Violation]:
     violations: list[Violation] = []
     for path in rs_files(root):
         if _PALETTE_CRATE in path.as_posix() or is_test_only_module(path):
             continue
-        lines = path.read_text(errors="replace").splitlines()
-        for i, raw in _non_test_lines(lines):
+        source = path.read_text(errors="replace")
+        test_lines = cfg_test_line_numbers(source)
+        for lineno, raw in enumerate(source.splitlines(), 1):
+            if lineno in test_lines:
+                continue
             hit = _RAW_COLOR.search(raw) or _UNTHEMED_CONST.search(raw)
             if hit and not is_exempt(raw, CHECK):
-                violations.append((path, i + 1, raw.strip()))
+                violations.append((path, lineno, raw.strip()))
     return violations
 
 

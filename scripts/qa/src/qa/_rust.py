@@ -1,5 +1,6 @@
 """Reading Rust source as code alone, with its comments and strings blanked out."""
 
+import bisect
 import re
 
 # Where a comment or a string literal opens. A raw string keeps the hashes of
@@ -78,3 +79,64 @@ def mask_comments_and_strings(source: str) -> str:
         _blank(masked, start, end)
         index = end
     return "".join(masked)
+
+
+# `#[cfg(test)]` on an item, and `#![cfg(test)]` on the file that opens with it.
+_CFG_TEST_ATTRIBUTE = re.compile(r"#\[cfg\(test\)\]")
+_INNER_CFG_TEST_ATTRIBUTE = re.compile(r"#!\[cfg\(test\)\]")
+
+
+def cfg_test_line_numbers(source: str) -> frozenset[int]:
+    """The 1-based line numbers of the `#[cfg(test)]` regions of `source`.
+
+    `#![cfg(test)]` gates the file it opens, so every line of it counts. An
+    outer `#[cfg(test)]` gates the one item under it, which ends at the closing
+    brace of its block or at the semicolon of a declaration. Production code
+    below a `mod tests`, and production code between two gated items, sits
+    outside every region.
+    """
+    masked = mask_comments_and_strings(source)
+    if _INNER_CFG_TEST_ATTRIBUTE.search(masked) is not None:
+        return frozenset(range(1, len(source.splitlines()) + 1))
+    line_starts = [0, *(index + 1 for index, char in enumerate(masked) if char == "\n")]
+    numbers: set[int] = set()
+    for attribute in _CFG_TEST_ATTRIBUTE.finditer(masked):
+        end = _end_of_gated_item(masked, attribute.end())
+        first = bisect.bisect_right(line_starts, attribute.start())
+        last = bisect.bisect_right(line_starts, end - 1)
+        numbers.update(range(first, last + 1))
+    return frozenset(numbers)
+
+
+def _end_of_gated_item(masked: str, start: int) -> int:
+    """The offset just past the item an attribute ending at `start` gates.
+
+    Bracket depth skips a further attribute and a type between the two, so the
+    first `;` or `{` found outside every bracket belongs to the item itself.
+    """
+    depth = 0
+    index = start
+    while index < len(masked):
+        char = masked[index]
+        if char in "([":
+            depth += 1
+        elif char in ")]":
+            depth -= 1
+        elif depth == 0 and char == ";":
+            return index + 1
+        elif depth == 0 and char == "{":
+            return _end_of_block(masked, index)
+        index += 1
+    return len(masked)
+
+
+def _end_of_block(masked: str, start: int) -> int:
+    depth = 0
+    for index in range(start, len(masked)):
+        if masked[index] == "{":
+            depth += 1
+        elif masked[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return len(masked)

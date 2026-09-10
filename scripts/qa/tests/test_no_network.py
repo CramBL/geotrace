@@ -73,3 +73,58 @@ def test_an_allowlisted_file_is_exempt_for_its_constructs_alone(
 def test_every_allowlisted_file_exists() -> None:
     root = repo_root()
     assert [rel for rel in sorted(check_no_network._ALLOWED) if not (root / rel).is_file()] == []
+
+
+def test_flags_a_construct_in_a_test_module_under_src(tmp_path: Path) -> None:
+    body = (
+        "fn production() {}\n"
+        "\n"
+        "#[cfg(test)]\n"
+        "mod tests {\n"
+        "    fn t() {\n"
+        "        let transport = HttpTransport::new(None);\n"
+        "    }\n"
+        "}\n"
+    )
+    _write(tmp_path, "crates/gt-x/src/lib.rs", body)
+    _init_repo(tmp_path)
+
+    assert [v[1] for v in check_no_network._collect(tmp_path)] == [6]
+
+
+def test_skips_production_code_below_a_test_module(tmp_path: Path) -> None:
+    body = (
+        "#[cfg(test)]\n"
+        "mod tests {\n"
+        "    fn t() {}\n"
+        "}\n"
+        "\n"
+        "fn fetch() {\n"
+        '    HttpTransport::new(None).send(&get("https://a.b"));\n'
+        "}\n"
+    )
+    _write(tmp_path, "crates/gt-x/src/lib.rs", body)
+    _init_repo(tmp_path)
+
+    assert check_no_network._collect(tmp_path) == []
+
+
+def test_honors_an_exemption_in_a_test_module(tmp_path: Path) -> None:
+    body = (
+        "#[cfg(test)]\n"
+        "mod tests {\n"
+        '    const HOST: &str = "https://a.b"; // [qa-allow-check-no-network, reason = "ok"]\n'
+        "}\n"
+    )
+    _write(tmp_path, "crates/gt-x/src/lib.rs", body)
+    _init_repo(tmp_path)
+
+    assert check_no_network._collect(tmp_path) == []
+
+
+def test_reads_a_test_only_module_file_whole(tmp_path: Path) -> None:
+    _write(tmp_path, "crates/gt-x/src/lib.rs", "#[cfg(test)]\nmod support;\n")
+    _write(tmp_path, "crates/gt-x/src/support.rs", 'fn t() { get("https://a.b"); }\n')
+    _init_repo(tmp_path)
+
+    assert [v[1] for v in check_no_network._collect(tmp_path)] == [1]
