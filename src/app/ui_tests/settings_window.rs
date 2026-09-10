@@ -74,7 +74,7 @@ fn snapshot_settings_pages() {
     for page in SettingsPage::iter() {
         harness.inner.state_mut().settings_page = page;
         harness.run();
-        harness.snapshot_loose(page.snapshot_file_stem());
+        harness.snapshot_with_color_tolerance(page.snapshot_file_stem());
     }
 }
 
@@ -276,7 +276,7 @@ fn snapshot_settings_window_search_matches() {
     harness.run();
     type_into_settings_search(&mut harness, "clock");
     harness.run();
-    harness.snapshot_loose("settings_window_search_matches");
+    harness.snapshot_with_color_tolerance("settings_window_search_matches");
 }
 
 /// Load one recording and give it the metadata the name template draws on.
@@ -496,8 +496,5 @@ fn snapshot_recording_name_template_guide() {
         .get_by_label_contains("Recording name")
         .focus();
     harness.inner.run_steps(3);
-    // The GL and software renderers disagree by one antialiased pixel at the
-    // guide window's edge, in opposite directions, so no baseline passes both
-    // at the default threshold.
-    harness.snapshot_with_threshold("recording_name_template_guide", 1.5);
+    harness.snapshot_with_color_tolerance("recording_name_template_guide");
 }

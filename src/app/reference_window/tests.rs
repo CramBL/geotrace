@@ -223,7 +223,7 @@ fn snapshot_the_reference_window(
     if matches!(position, DocumentPosition::End) {
         scroll_to_end(&mut harness, document);
     }
-    harness.snapshot_loose(snapshot_name);
+    harness.snapshot_with_color_tolerance(snapshot_name);
 }
 
 /// The plot illustration of the TEC document, at the width the window gives
@@ -234,7 +234,7 @@ fn snapshot_reference_window_tec_storm_plot() {
 
     scroll_to_block(&mut harness, IONOSPHERIC_TEC, STORM_PLOT_FRAME_LABEL);
 
-    harness.snapshot_loose("reference_window_tec_storm_plot");
+    harness.snapshot_with_color_tolerance("reference_window_tec_storm_plot");
 }
 
 /// The frame label of the TEC document's plot illustration, which the scroll

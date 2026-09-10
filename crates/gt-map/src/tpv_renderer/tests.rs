@@ -239,7 +239,7 @@ fn dense_multi_constellation_reflows_to_one_column_when_narrow() {
             let _opened =
                 show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
-    harness.snapshot_loose("sticky_dense_one_column");
+    harness.snapshot_with_color_tolerance("sticky_dense_one_column");
 }
 
 /// A folded panel costs only its header when the columns are balanced, so

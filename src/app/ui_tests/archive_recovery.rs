@@ -167,7 +167,7 @@ fn snapshot_recover_archive_prompt() {
     );
 
     let mut harness = TestHarness::from_harness(harness);
-    harness.snapshot_loose("recover_archive_prompt");
+    harness.snapshot_with_color_tolerance("recover_archive_prompt");
 }
 
 #[test]
@@ -182,7 +182,7 @@ fn snapshot_archive_in_use_prompt() {
     ));
 
     let mut harness = TestHarness::from_harness(harness);
-    harness.snapshot_loose("archive_in_use_prompt");
+    harness.snapshot_with_color_tolerance("archive_in_use_prompt");
 }
 
 /// A take-over the archive was written after says nothing about the state

@@ -27,9 +27,7 @@ fn snapshot_app_with_file_loaded() {
     // so the map zoom and plot layout converge before we snapshot.
     harness.inner.run_steps(60);
 
-    // Use per-test tolerance: this snapshot includes live map/plot rendering,
-    // so allow tiny pixel-level variance across runs and platforms.
-    harness.snapshot_with_tolerance("app_with_file_loaded", 2.5, 4);
+    harness.snapshot_with_color_tolerance("app_with_file_loaded");
 }
 
 /// The load warning as the user meets it: the toast the application raises
@@ -78,7 +76,7 @@ fn snapshot_space_weather_warning_toast() {
     harness.inner.step();
     harness.inner.step();
 
-    harness.snapshot_loose("space_weather_warning_toast");
+    harness.snapshot_with_color_tolerance("space_weather_warning_toast");
 }
 
 /// Every level the map's environment indicator lists, and the reference
@@ -142,7 +140,7 @@ fn snapshot_app_with_file_loaded_light() {
     harness.inner.ctx.set_theme(egui::ThemePreference::Light);
     harness.inner.run_steps(60);
 
-    harness.snapshot_with_tolerance("app_with_file_loaded_light", 2.5, 4);
+    harness.snapshot_with_color_tolerance("app_with_file_loaded_light");
 }
 
 /// Snapshot of the point window pinned on a fix the receiver wrote a latitude
@@ -176,7 +174,7 @@ fn snapshot_app_point_window_coordinate_out_of_range() {
     }
     harness.inner.run_steps(30);
 
-    harness.snapshot_loose("app_point_window_coordinate_out_of_range");
+    harness.snapshot_with_color_tolerance("app_point_window_coordinate_out_of_range");
 }
 
 /// Snapshot of the app zoomed into the cluster of Sahara desert tracks from
@@ -223,7 +221,7 @@ fn snapshot_app_sahara_tracks() {
     harness.inner.run_steps(60);
 
     ui_tests::assert_the_capture_covers_the_map(&mut harness, "app_sahara_tracks");
-    harness.snapshot_loose("app_sahara_tracks");
+    harness.snapshot_with_color_tolerance("app_sahara_tracks");
 }
 
 /// Snapshot of the demo trip along the Paris quays: a single track with a
@@ -254,7 +252,7 @@ fn snapshot_app_demo_trip() {
     harness.inner.run_steps(60);
 
     ui_tests::assert_the_capture_covers_the_map(&mut harness, "app_demo_trip");
-    harness.snapshot_loose("app_demo_trip");
+    harness.snapshot_with_color_tolerance("app_demo_trip");
 }
 
 /// Channels plot as their own toggleable category: the Channels toggle
@@ -306,7 +304,7 @@ fn snapshot_app_plot_channels() {
         }
     }
     harness.inner.run_steps(5);
-    harness.snapshot_loose("app_plot_channels");
+    harness.snapshot_with_color_tolerance("app_plot_channels");
 
     // The chip toggles the channel's lines off without collapsing the section.
     harness.inner.get_by_label_contains("accel (g)").click();
@@ -367,7 +365,7 @@ fn snapshot_app_plot_light() {
     }
     harness.inner.run_steps(8);
 
-    harness.snapshot_loose("app_plot_light");
+    harness.snapshot_with_color_tolerance("app_plot_light");
 }
 
 /// The vector channel's per-component hues and the chip's hover legend, on
@@ -404,7 +402,7 @@ fn snapshot_app_plot_channel_components() {
     for _ in 0..60 {
         harness.inner.run();
     }
-    harness.snapshot_loose("app_plot_channel_components");
+    harness.snapshot_with_color_tolerance("app_plot_channel_components");
 }
 
 /// The channel chip's right-click menu carries one color entry per
@@ -507,7 +505,7 @@ fn snapshot_app_plot_channel_color_override() {
     for _ in 0..60 {
         harness.inner.run();
     }
-    harness.snapshot_loose("app_plot_channel_color_override");
+    harness.snapshot_with_color_tolerance("app_plot_channel_color_override");
 }
 
 #[test]
@@ -525,10 +523,14 @@ fn snapshot_app_three_overlapping_files() {
     }
     harness.inner.run_steps(70);
     ui_tests::assert_the_capture_covers_the_map(&mut harness, "app_three_overlapping_files");
-    // Full-app map+plot render, so it carries the same GPU/anti-aliasing
-    // nondeterminism as the other map snapshots and uses the shared loose
-    // tolerance: a tighter hand-picked count drifts on the macOS runner.
-    harness.snapshot_loose("app_three_overlapping_files");
+    // The side panel's italic recording name has one anti-aliased pixel at
+    // (55, 357) that egui draws 91 or 84 gray, the second value in two of
+    // seven runs of the whole test suite.
+    harness.snapshot_with_tolerance(
+        "app_three_overlapping_files",
+        gt_test_utils::CROSS_BACKEND_COLOR_TOLERANCE,
+        1,
+    );
 }
 
 /// A recording whose clock offset holds near −234 ms, with one sample carrying
@@ -588,7 +590,7 @@ fn snapshot_app_plot_clock_excursion() {
     harness.run_steps(5);
 
     let mut harness = gt_test_utils::TestHarness::from_harness(harness);
-    harness.snapshot_loose("app_plot_clock_excursion");
+    harness.snapshot_with_color_tolerance("app_plot_clock_excursion");
 }
 
 /// The plot's snap error series from an injected completed run: the mint
@@ -627,7 +629,7 @@ fn snapshot_app_plot_snap_error() {
     harness.run_steps(5);
 
     let mut harness = gt_test_utils::TestHarness::from_harness(harness);
-    harness.snapshot_loose("app_plot_snap_error");
+    harness.snapshot_with_color_tolerance("app_plot_snap_error");
 }
 
 /// Every affected track the map indicator lists, as its label and its lines.
@@ -704,7 +706,7 @@ fn snapshot_app_plot_context_line_spans_the_archived_days() {
     harness.run_steps(2);
 
     let mut harness = gt_test_utils::TestHarness::from_harness(harness);
-    harness.snapshot_loose("app_plot_context_line");
+    harness.snapshot_with_color_tolerance("app_plot_context_line");
 }
 
 /// A geomagnetic day archived after the recording was loaded reaches it: the
@@ -943,7 +945,7 @@ fn snapshot_app_plot_solar_flare_markers() {
     harness.run_steps(5);
 
     let mut harness = gt_test_utils::TestHarness::from_harness(harness);
-    harness.snapshot_loose("app_plot_solar_flare_markers");
+    harness.snapshot_with_color_tolerance("app_plot_solar_flare_markers");
 }
 
 #[test]
@@ -957,7 +959,7 @@ fn snapshot_app_environment_chip_hover() {
     harness.run_steps(60);
 
     let mut harness = gt_test_utils::TestHarness::from_harness(harness);
-    harness.snapshot_loose("app_environment_chip_hover");
+    harness.snapshot_with_color_tolerance("app_environment_chip_hover");
 }
 
 /// With nothing archived the flare chip renders disabled - visible, not

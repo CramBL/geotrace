@@ -318,7 +318,7 @@ fn snapshot_app_log_viewer() {
     harness.inner.get_by_label(summary.as_str()).click();
     harness.inner.run_steps(8);
 
-    harness.snapshot_loose("app_log_viewer");
+    harness.snapshot_with_color_tolerance("app_log_viewer");
 }
 
 /// Types `text` into the log viewer's live filter and runs until the scan it
@@ -451,7 +451,7 @@ fn snapshot_app_log_viewer_filters() {
     ui_tests::run_until_the_log_filter_scans_land(&mut harness.inner);
     type_into_log_filter(&mut harness, "retries");
 
-    harness.snapshot_loose("app_log_viewer_filters");
+    harness.snapshot_with_color_tolerance("app_log_viewer_filters");
 }
 
 /// The association dialog over a freshly loaded log: the loaded recordings
@@ -496,7 +496,7 @@ fn snapshot_log_association_dialog() {
         .click();
     harness.inner.run_steps(5);
 
-    harness.snapshot_loose("log_association_dialog");
+    harness.snapshot_with_color_tolerance("log_association_dialog");
 }
 
 /// A recording from a day the log does not cover, which the dialog lists as a
@@ -587,7 +587,7 @@ fn snapshot_app_log_map_hexagons() {
     harness.inner.run_steps(5);
 
     ui_tests::assert_the_capture_covers_the_map(&mut harness, "app_log_map_hexagons");
-    harness.snapshot_loose("app_log_map_hexagons");
+    harness.snapshot_with_color_tolerance("app_log_map_hexagons");
 }
 
 /// A recording the history database does not hold is identified by the session

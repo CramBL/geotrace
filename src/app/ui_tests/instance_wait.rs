@@ -486,7 +486,7 @@ fn snapshot_data_directory_wait_dialog() {
     let _holder = DataDirectoryLock::acquire(Some(directory.path()));
     let mut harness = app_waiting_on_a_stale_shutdown_report(directory.path());
 
-    harness.snapshot_loose("data_directory_wait_dialog");
+    harness.snapshot_with_color_tolerance("data_directory_wait_dialog");
 }
 
 /// The pinned frame clock is what makes the baseline above a fixed image: the
@@ -587,7 +587,7 @@ fn snapshot_take_over_confirmation() {
     harness.inner.remove_cursor();
     harness.inner.run_steps(4);
 
-    harness.snapshot_loose("take_over_confirmation");
+    harness.snapshot_with_color_tolerance("take_over_confirmation");
 }
 
 /// Cancelling leaves everything as it was: the wait dialog is back and

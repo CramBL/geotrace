@@ -474,7 +474,7 @@ mod tests {
                         });
                 });
             harness.run();
-            harness.snapshot_loose(name);
+            harness.snapshot_with_color_tolerance(name);
         }
     }
 }

@@ -510,7 +510,7 @@ fn snapshot_query_autocomplete_popup() {
         "s-metrics are offered: {names:?}"
     );
 
-    harness.snapshot_loose("query_autocomplete_popup");
+    harness.snapshot_with_color_tolerance("query_autocomplete_popup");
 }
 
 /// A checker error: an error icon and the red problem, then the suggestion as
@@ -530,9 +530,7 @@ fn snapshot_query_error() {
     }
     // Editor left unfocused so no completion popup covers the error.
     harness.inner.run_steps(3);
-    // Loose: the error text rasterizes a pixel or two differently between the
-    // local baseline and CI's software renderer.
-    harness.snapshot_loose("query_error");
+    harness.snapshot_with_color_tolerance("query_error");
 }
 
 /// Hovering a construct in the editor shows a Rust-doc-style tooltip: name and
@@ -565,7 +563,7 @@ fn snapshot_query_hover_docs() {
     // the delay (steps advance the mock clock a frame at a time).
     harness.inner.run_steps(40);
 
-    harness.snapshot_loose("query_hover_docs");
+    harness.snapshot_with_color_tolerance("query_hover_docs");
 }
 
 /// The hover doc stays up while the pointer moves within its token, hides off
