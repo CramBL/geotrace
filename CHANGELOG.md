@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- **Map & Tracks:** Fixed the plot's clock offset line drawing a segment over the samples it holds off the axis: the line now ends at the fix before them and starts again at the fix after, and a fix between two excursions draws as a point.
 - **Map & Tracks:** Fixed the plot's shared y-axis fitting the clock offset of a recording whose baseline offset is more than a day: it now marks the offset at the axis edge, with the value on hover.
 - **Map & Tracks:** Fixed the plot cutting a clock offset marker in half at the left or the right edge of the view.
 - **Map & Tracks:** Fixed the plot's shared y-axis fitting a clock offset departure on a recording's last fixes: a departure over less than a tenth of a track is now marked at the axis edge.

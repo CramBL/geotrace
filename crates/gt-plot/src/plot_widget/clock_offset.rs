@@ -16,19 +16,25 @@
 //! line point after the run.  At the end of a recording, and for a track whose
 //! baseline is off-scale over its whole length, the markers join to each other
 //! alone.  The plot draws a connector only between two points the view holds.
+//!
+//! The line itself stops at a held-back run and opens again after it: this
+//! module submits one line per stretch of the emitted points with no held-back
+//! sample between two consecutive ones, and a point for a stretch of one
+//! sample.
 
-use std::ops::Range;
+use std::ops::{Range, RangeInclusive};
 
 use chrono::DateTime;
 use egui::epaint::{Shape, Stroke};
 use egui::{Color32, Pos2, Vec2};
-use egui_plot::{PlotPoint, PlotTransform};
+use egui_plot::{PlotPoint, PlotPoints, PlotTransform, Points};
 use gt_analysis::clock_offset::{ClockOffsetExcursion, ClockOffsetPlacement, ExcursionSample};
 use gt_types::MetricKind;
 
 use super::chips::MetricVisibility;
 use super::lines::{
-    self, ANOMALY_HOVER_RADIUS_PX, ANOMALY_MARKER_RADIUS, NearestHoverLabel, PlotHoverLabel,
+    self, ANOMALY_HOVER_RADIUS_PX, ANOMALY_MARKER_RADIUS, LineStroke, NearestHoverLabel,
+    PlotHoverLabel,
 };
 use super::overlay::{EDGE_MARKER_INSET, OverlayItem, OverlayPainter};
 use crate::series::TrackSeries;
@@ -38,6 +44,11 @@ const MARKER_HALF_WIDTH: f32 = ANOMALY_MARKER_RADIUS;
 
 /// Width of a connector between a marker and what it joins.
 const CONNECTOR_WIDTH: f32 = 1.0;
+
+/// Radius of the dot drawn for a stretch of one sample, as a multiple of the
+/// line width.  egui_plot draws a one-point line as a dot of half the line
+/// width, which is under a pixel across at the widths this plot offers.
+const LONE_SAMPLE_RADIUS_MULTIPLE: f32 = 1.5;
 
 /// Screen distance below which two markers overlap into one glyph, in points.
 /// The drawn markers are spaced by this much: a whole track goes off-scale at
@@ -275,6 +286,36 @@ impl OverlayPainter for OffScaleMarkers {
     }
 }
 
+/// Submit the clock offset line of one track, cut where the plot holds samples
+/// off it: one line per stretch of `points` with no held-back sample between
+/// two consecutive ones, and a point where a stretch holds a single sample.
+///
+/// Every stretch draws under `name`, which is what the metric's chip gates and
+/// what egui_plot's hover label states.
+pub(super) fn add_clock_offset_line<'a>(
+    plot_ui: &mut egui_plot::PlotUi<'a>,
+    points: &'a [PlotPoint],
+    placement: &ClockOffsetPlacement,
+    name: &str,
+    stroke: LineStroke,
+) {
+    let (Some(first), Some(last)) = (points.first(), points.last()) else {
+        return;
+    };
+    let held_back = held_back_times_within(placement, first.x..=last.x);
+    for stretch in stretches_between_held_back_samples(points, held_back) {
+        match stretch {
+            [_] => plot_ui.points(
+                Points::new(name, PlotPoints::Borrowed(stretch))
+                    .color(stroke.color)
+                    .radius(stroke.width * LONE_SAMPLE_RADIUS_MULTIPLE)
+                    .highlight(stroke.highlighted),
+            ),
+            _ => lines::add_line(plot_ui, stretch, name.to_owned(), stroke),
+        }
+    }
+}
+
 /// The frame-level inputs the off-scale overlay needs beyond the track itself:
 /// the visible x range it clips to, the metric visibility it gates on, and the
 /// theme.
@@ -486,6 +527,64 @@ impl ClockOffsetHover {
     }
 }
 
+/// The maximal stretches of `points` with no held-back sample between two
+/// consecutive ones.  `held_back` holds the times of the held-back samples in
+/// ascending order, which this walks alongside `points` in one pass.
+fn stretches_between_held_back_samples(
+    points: &[PlotPoint],
+    held_back: impl Iterator<Item = f64>,
+) -> impl Iterator<Item = &[PlotPoint]> {
+    let mut held_back = held_back.peekable();
+    let mut pairs = points.iter().zip(points.iter().skip(1)).enumerate();
+    let mut start = 0;
+    std::iter::from_fn(move || {
+        if start >= points.len() {
+            return None;
+        }
+        for (index, (before, after)) in pairs.by_ref() {
+            while held_back.peek().is_some_and(|&t| t <= before.x) {
+                held_back.next();
+            }
+            if held_back.peek().is_some_and(|&t| t < after.x) {
+                let stretch = points.get(start..=index);
+                start = index + 1;
+                return stretch;
+            }
+        }
+        let stretch = points.get(start..);
+        start = points.len();
+        stretch
+    })
+}
+
+/// The times of the samples the plot holds off the clock offset line over
+/// `x_range`, ascending, from the first run reaching into it to the last run
+/// starting inside it.
+///
+/// A run outside `x_range` cuts no line drawn over it, and the binary search
+/// keeps the runs before the view out of the frame's work.
+///
+/// A track whose baseline is off-scale has no line to cut: every one of its
+/// samples is held back, and [`TrackSeries::clock_delta_ms`] has no points at
+/// all.
+fn held_back_times_within(
+    placement: &ClockOffsetPlacement,
+    x_range: RangeInclusive<f64>,
+) -> impl Iterator<Item = f64> + '_ {
+    let excursions = match placement {
+        ClockOffsetPlacement::BaselineOnScale(excursions) => excursions.as_slice(),
+        ClockOffsetPlacement::BaselineOffScale(_) => &[],
+    };
+    let (x_min, x_max) = (*x_range.start(), *x_range.end());
+    let reaching_in = excursions.partition_point(|excursion| excursion.samples.last().t < x_min);
+    excursions
+        .get(reaching_in..)
+        .unwrap_or_default()
+        .iter()
+        .take_while(move |excursion| excursion.samples.first().t <= x_max)
+        .flat_map(|excursion| excursion.samples.iter().map(|sample| sample.t))
+}
+
 /// Where the plot draws `sample`: at its own offset while the visible range
 /// holds it, at the near edge while it does not.
 fn placed_point(sample: &ExcursionSample, y: VisibleYRange) -> (Placement, PlotPoint) {
@@ -553,7 +652,7 @@ const OFF_SCALE_BASELINE_TITLE: &str = "Clock offset off the plot's scale";
 mod tests {
     use egui::{Rect, Vec2};
     use egui_plot::PlotBounds;
-    use vec1::vec1;
+    use vec1::{Vec1, vec1};
 
     use super::*;
 
@@ -874,5 +973,97 @@ mod tests {
         assert_eq!(hover.gps_time, "2024-01-15 12:00:00 UTC");
         assert_eq!(hover.sys_time, "1968-01-15 12:00:00.000 UTC");
         assert_eq!(hover.cause, FormattedCause::Baseline);
+    }
+
+    /// The line runs from [`T`] over this many seconds, one sample a second.
+    const LINE_SECONDS: usize = 6;
+
+    /// The clock offset line of a track whose samples at `held_back` seconds
+    /// the plot holds off it, and the times of those samples.
+    fn line_holding_back(held_back: &[usize]) -> (Vec<PlotPoint>, Vec<f64>) {
+        let points = (0..LINE_SECONDS)
+            .filter(|second| !held_back.contains(second))
+            .map(line_point)
+            .collect();
+        let times = held_back.iter().map(|&second| T + second as f64).collect();
+        (points, times)
+    }
+
+    /// The line point of the sample `second` seconds after [`T`].
+    fn line_point(second: usize) -> PlotPoint {
+        PlotPoint::new(T + second as f64, 0.0)
+    }
+
+    /// The drawn range of the line the cases below walk against, in seconds
+    /// from [`T`].
+    const DRAWN_RANGE_SECONDS: Range<usize> = 7..13;
+
+    /// A run reaching into the drawn range of the line is walked whole, the
+    /// samples it holds outside that range included. A run outside the range
+    /// cuts nothing there and is skipped.
+    #[rstest::rstest]
+    #[case::a_run_before_the_range(&[&[1, 2][..]], vec![])]
+    #[case::a_run_reaching_in_over_the_start(&[&[5, 6, 7, 8][..]], vec![5, 6, 7, 8])]
+    #[case::a_run_inside_the_range(&[&[8, 9][..]], vec![8, 9])]
+    #[case::a_run_reaching_out_over_the_end(&[&[11, 12, 13, 14][..]], vec![11, 12, 13, 14])]
+    #[case::a_run_after_the_range(&[&[20, 21][..]], vec![])]
+    #[case::a_range_between_two_runs(&[&[1, 2][..], &[8, 9], &[20, 21]], vec![8, 9])]
+    fn every_run_reaching_into_the_drawn_range_is_walked(
+        #[case] runs: &[&[usize]],
+        #[case] expected_seconds: Vec<usize>,
+    ) {
+        let placement = ClockOffsetPlacement::BaselineOnScale(
+            runs.iter()
+                .map(|&seconds| excursion_over(seconds))
+                .collect(),
+        );
+        let x_range = (T + DRAWN_RANGE_SECONDS.start as f64)..=(T + DRAWN_RANGE_SECONDS.end as f64);
+
+        let times: Vec<f64> = held_back_times_within(&placement, x_range).collect();
+
+        let expected: Vec<f64> = expected_seconds
+            .iter()
+            .map(|&second| T + second as f64)
+            .collect();
+        assert_eq!(times, expected);
+    }
+
+    /// A run over the samples at `seconds`, each an hour off a baseline of
+    /// nothing.
+    fn excursion_over(seconds: &[usize]) -> ClockOffsetExcursion {
+        const AN_HOUR_MS: i64 = 3_600_000;
+        let samples: Vec<ExcursionSample> = seconds
+            .iter()
+            .map(|&second| sample(second, AN_HOUR_MS))
+            .collect();
+        ClockOffsetExcursion {
+            samples: Vec1::try_from_vec(samples).expect("a run holds a sample"),
+            baseline_ms: 0,
+            returned_to_baseline: true,
+        }
+    }
+
+    #[rstest::rstest]
+    #[case::nothing_held_back(&[], vec![vec![0, 1, 2, 3, 4, 5]])]
+    #[case::a_run_between_two_samples(&[2, 3], vec![vec![0, 1], vec![4, 5]])]
+    #[case::one_sample_between_two_runs(&[1, 2, 4, 5], vec![vec![0], vec![3]])]
+    #[case::a_run_the_track_opens_with(&[0, 1], vec![vec![2, 3, 4, 5]])]
+    #[case::a_run_the_track_ends_with(&[4, 5], vec![vec![0, 1, 2, 3]])]
+    fn the_line_is_cut_at_every_held_back_run(
+        #[case] held_back: &[usize],
+        #[case] expected_seconds: Vec<Vec<usize>>,
+    ) {
+        let (points, times) = line_holding_back(held_back);
+
+        let stretches: Vec<Vec<PlotPoint>> =
+            stretches_between_held_back_samples(&points, times.iter().copied())
+                .map(<[PlotPoint]>::to_vec)
+                .collect();
+
+        let expected: Vec<Vec<PlotPoint>> = expected_seconds
+            .iter()
+            .map(|seconds| seconds.iter().map(|&second| line_point(second)).collect())
+            .collect();
+        assert_eq!(stretches, expected);
     }
 }

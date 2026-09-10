@@ -11,7 +11,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime};
 use geotrace_sdk_units::ChannelUnit;
 use gt_filter::GlobalFilter;
@@ -37,6 +37,21 @@ use uom::si::velocity::kilometer_per_hour;
 
 /// The Unix second the fixtures start at.
 const EPOCH: i64 = 1_700_000_000;
+
+/// Fixes of the recording whose host clock departs from its baseline.
+const EXCURSION_FIX_COUNT: usize = 60;
+
+/// The fixes of that recording whose host clock stands [`EXCURSION_HOURS`] off
+/// the receiver's own.
+const EXCURSION_FIXES: Range<usize> = 20..30;
+
+/// How far the host clock runs past the receiver's own over
+/// [`EXCURSION_FIXES`].
+const EXCURSION_HOURS: i64 = 1;
+
+/// How far the host clock runs past the receiver's own outside
+/// [`EXCURSION_FIXES`], in milliseconds.
+const BASELINE_HOST_AHEAD_MS: i64 = 200;
 
 /// The one track every fixture builds.
 fn track_zero() -> TrackRef {
@@ -71,6 +86,22 @@ fn fixes_at_speeds(fixes: &[(i64, f64)]) -> Vec<NavPoint> {
             NavPoint::new(tpv, None)
         })
         .collect()
+}
+
+/// The fixes of the excursion recording, one per second past [`EPOCH`]. The
+/// host clock of every fix runs [`BASELINE_HOST_AHEAD_MS`] past the receiver's
+/// own, and [`EXCURSION_HOURS`] past it over `excursion`.
+fn fixes_whose_host_clock_departs_over(excursion: Range<usize>) -> Vec<NavPoint> {
+    let host_ahead: Vec<Duration> = (0..EXCURSION_FIX_COUNT)
+        .map(|index| {
+            if excursion.contains(&index) {
+                Duration::hours(EXCURSION_HOURS)
+            } else {
+                Duration::milliseconds(BASELINE_HOST_AHEAD_MS)
+            }
+        })
+        .collect();
+    gt_test_utils::fixtures::nav_points_with_host_clock_offsets_from(utc(0), 1, &host_ahead)
 }
 
 fn utc_micros(micros: i64) -> DateTime<Utc> {
@@ -877,6 +908,27 @@ fn sys_time_reads_past_time_for_a_fix_whose_host_clock_is_500_microseconds_ahead
     );
 
     assert_eq!(drawn_ranges(&session), vec![0..3]);
+}
+
+/// A query over `clock_delta` returns every fix of a clock offset excursion
+/// with its own offset. The query engine reads the track's points, not the
+/// samples the plot holds off its clock offset line.
+#[test]
+fn clock_delta_reads_the_offset_of_every_fix_of_a_clock_offset_excursion() {
+    let state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_whose_host_clock_departs_over(EXCURSION_FIXES),
+        vec![],
+    ));
+    let mut session = QuerySession::new();
+
+    run_text(
+        &mut session,
+        &state,
+        "points | where clock_delta < -30 min | draw",
+    );
+
+    assert_eq!(drawn_ranges(&session), vec![EXCURSION_FIXES]);
 }
 
 #[test]

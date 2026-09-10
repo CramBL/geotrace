@@ -5,8 +5,10 @@
 use std::ops::Range;
 
 use chrono::Duration;
+use egui_plot::PlotPoint;
 use gt_plot::{EDGE_MARKER_INSET, PlotState};
-use gt_types::LoadedFile;
+use gt_types::{LoadedFile, MetricKind};
+use strum::IntoEnumIterator as _;
 use support::{DrawnPlot, PlotPosition, PlotSources};
 
 mod support;
@@ -34,6 +36,11 @@ const BASELINE_HOST_AHEAD_MS: i64 = 200;
 /// The fixes of the excursion recordings whose host clock departs from the
 /// baseline, halfway along the track.
 const EXCURSION_FIXES: Range<usize> = 20..30;
+
+/// The fixes of the second excursion of
+/// [`recording_with_an_excursion_on_either_side_of_one_fix`]. One fix at the
+/// baseline stands between the two excursions.
+const SECOND_EXCURSION_FIXES: Range<usize> = 31..41;
 
 /// How far the host clock departs from the baseline over [`EXCURSION_FIXES`],
 /// in either direction.
@@ -89,6 +96,22 @@ fn recording_with_an_excursion(host_ahead_in_the_excursion: Duration) -> LoadedF
         .map(|index| {
             if EXCURSION_FIXES.contains(&index) {
                 host_ahead_in_the_excursion
+            } else {
+                Duration::milliseconds(BASELINE_HOST_AHEAD_MS)
+            }
+        })
+        .collect();
+    recording_with_host_clock_offsets(1, &host_ahead)
+}
+
+/// A recording of one track at 1 Hz whose host clock departs from
+/// [`BASELINE_HOST_AHEAD_MS`] over [`EXCURSION_FIXES`] and again over
+/// [`SECOND_EXCURSION_FIXES`], with one fix at the baseline between them.
+fn recording_with_an_excursion_on_either_side_of_one_fix() -> LoadedFile {
+    let host_ahead: Vec<Duration> = (0..FIX_COUNT)
+        .map(|index| {
+            if EXCURSION_FIXES.contains(&index) || SECOND_EXCURSION_FIXES.contains(&index) {
+                Duration::hours(-EXCURSION_HOURS)
             } else {
                 Duration::milliseconds(BASELINE_HOST_AHEAD_MS)
             }
@@ -162,6 +185,46 @@ fn drawn_over(recording: LoadedFile) -> DrawnPlot {
         PlotSources::default(),
         PlotState::default(),
     )
+}
+
+/// Every polyline the frame paints belongs to the clock offset line:
+/// [`drawn_over`] under `sources`, with the clock offset as the only metric
+/// drawn.
+fn drawn_with_the_clock_offset_line_alone(
+    recording: LoadedFile,
+    sources: PlotSources,
+) -> DrawnPlot {
+    let mut plot = PlotState::default();
+    for kind in MetricKind::iter() {
+        plot.metric_vis.set(kind, kind == MetricKind::ClockDeltaMs);
+    }
+    support::drawn_plot(vec![recording], sources, plot)
+}
+
+/// The first and the last fix of every stretch the clock offset line draws, in
+/// seconds from the first fix of the recording.
+fn drawn_stretches(drawn: &DrawnPlot) -> Vec<(f64, f64)> {
+    drawn
+        .painted_polylines()
+        .iter()
+        .filter_map(|stretch| Some((offset_secs(stretch.first()?), offset_secs(stretch.last()?))))
+        .collect()
+}
+
+/// The fixes the clock offset line draws as a point, in seconds from the first
+/// fix of the recording.
+fn drawn_lone_fixes(drawn: &DrawnPlot) -> Vec<f64> {
+    drawn
+        .painted_circle_centers()
+        .iter()
+        .map(offset_secs)
+        .collect()
+}
+
+/// `at` in seconds from the first fix, to the nearest second: a position read
+/// back off the screen carries the rounding of the pixel it was drawn at.
+fn offset_secs(at: &PlotPoint) -> f64 {
+    (at.x - support::at_second(0).timestamp() as f64).round()
 }
 
 fn visible_y_range(drawn: &DrawnPlot) -> (f64, f64) {
@@ -266,6 +329,67 @@ fn snapshot_a_baseline_before_the_unix_epoch_marks_every_fix_at_the_top_edge(
     );
 
     drawn.snapshot(snapshot_name);
+}
+
+/// The plot holds the samples of an excursion off the line and marks them at
+/// the edge of the view. The line stops at the fix before the excursion and
+/// opens again at the fix after it: a segment across the excursion would draw
+/// offsets no fix of the recording holds.
+#[test]
+fn the_clock_offset_line_stops_at_the_samples_held_off_it() {
+    let drawn = drawn_with_the_clock_offset_line_alone(
+        recording_with_an_excursion(Duration::hours(-EXCURSION_HOURS)),
+        PlotSources::default(),
+    );
+
+    let stretches = drawn_stretches(&drawn);
+
+    let before_the_excursion = (0.0, EXCURSION_FIXES.start as f64 - 1.0);
+    let after_the_excursion = (EXCURSION_FIXES.end as f64, FIX_COUNT as f64 - 1.0);
+    assert_eq!(stretches, [before_the_excursion, after_the_excursion]);
+}
+
+/// The fix between two excursions has no neighbour on the line to draw a
+/// segment to. The plot draws it as a point instead, which keeps every
+/// recorded offset on the line.
+#[test]
+fn a_fix_between_two_excursions_is_drawn_as_a_point() {
+    let drawn = drawn_with_the_clock_offset_line_alone(
+        recording_with_an_excursion_on_either_side_of_one_fix(),
+        PlotSources::default(),
+    );
+
+    let lone_fixes = drawn_lone_fixes(&drawn);
+
+    assert_eq!(lone_fixes, [EXCURSION_FIXES.end as f64]);
+}
+
+/// The view opens inside the first excursion, which leaves the rest of that
+/// run before the first fix the line draws. The line still stops at the second
+/// excursion. Two fixes have no neighbour to draw a segment to and become
+/// points: the one the mipmap hands over from before the view, and the one
+/// between the two excursions.
+#[test]
+fn a_view_opening_inside_an_excursion_cuts_the_line_at_the_next_one() {
+    const FIXES_INTO_THE_EXCURSION: i64 = 5;
+    let opening_inside_the_first_excursion =
+        (EXCURSION_FIXES.start as i64 + FIXES_INTO_THE_EXCURSION)..=(FIX_COUNT as i64 - 1);
+
+    let drawn = drawn_with_the_clock_offset_line_alone(
+        recording_with_an_excursion_on_either_side_of_one_fix(),
+        PlotSources::default().pinned_to_map_view(opening_inside_the_first_excursion),
+    );
+
+    let before_the_view = EXCURSION_FIXES.start as f64 - 1.0;
+    let between_the_excursions = EXCURSION_FIXES.end as f64;
+    assert_eq!(
+        drawn_lone_fixes(&drawn),
+        [before_the_view, between_the_excursions]
+    );
+    assert_eq!(
+        drawn_stretches(&drawn),
+        [(SECOND_EXCURSION_FIXES.end as f64, FIX_COUNT as f64 - 1.0)]
+    );
 }
 
 #[test]

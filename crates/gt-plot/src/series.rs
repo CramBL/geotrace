@@ -619,6 +619,22 @@ mod tests {
         assert_eq!(excursion.peak().offset_ms, -4_127_054, "value is not lost");
     }
 
+    /// The series leaves out the excursion's samples and keeps every other
+    /// one. The plot cuts the line into stretches at draw time, which takes
+    /// nothing further out of the mipmap.
+    #[test]
+    fn the_clock_offset_series_keeps_every_sample_outside_the_excursion() {
+        let track = track_with_a_clock_spike(8, 4);
+        let series = build_track_series(0, &track, AnalysisConfig::default());
+
+        let seconds: Vec<i64> = drawn_points(&series.clock_delta_ms, usize::MAX)
+            .into_iter()
+            .map(|(x, _)| x as i64 - at_second(0).timestamp())
+            .collect();
+
+        assert_eq!(seconds, [0, 1, 2, 3, 5, 6, 7]);
+    }
+
     /// Raising the threshold past the departure puts the sample back on the
     /// line: the split is the user's call, not a fixed rule.
     #[test]
