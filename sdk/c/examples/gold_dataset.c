@@ -85,7 +85,7 @@ static GtdOptF64 parse_opt_f64(const char *text) {
     }
     double value;
     if (!parse_decimal_double(text, &value)) {
-        return GTD_NONE_F64;
+        FAILF("not a number: %s", text);
     }
     return GTD_SOME_F64(value);
 }
@@ -263,11 +263,12 @@ static void add_fix_row(GtdFileBuilder *builder, char *cols[]) {
     GtdOptF64 spd = GTD_NONE_F64;
     if (*cols[6] != '\0') {
         double kmh;
+        if (!parse_decimal_double(cols[6], &kmh)) {
+            FAIL("invalid speed");
+        }
         /* Use the same constant-multiply as Rust's MPS_PER_KMH = 1.0/3.6.
            Direct kmh/3.6 differs by 1 ULP for some values (e.g. 23.2). */
-        if (parse_decimal_double(cols[6], &kmh)) {
-            spd = GTD_SOME_F64(kmh * (1.0 / 3.6));
-        }
+        spd = GTD_SOME_F64(kmh * (1.0 / 3.6));
     }
     GtdOptF64 eph = parse_opt_f64(cols[7]);
 

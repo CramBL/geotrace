@@ -82,23 +82,23 @@ std::optional<geotrace::Timestamp> parse_timestamp_or_absent(const std::string &
     return std::nullopt;
 }
 
-std::optional<double> parse_opt_double(const std::string &text) {
-    if (text.empty()) {
-        return std::nullopt;
-    }
-    return examples::parse_decimal_double(text);
-}
-
 double required_double(const std::string &text) {
-    const auto value = examples::parse_decimal_double(text);
+    const auto value = examples::parse_decimal<double>(text);
     if (!value) {
         throw geotrace::IoError("not a number: " + text);
     }
     return *value;
 }
 
+std::optional<double> parse_opt_double(const std::string &text) {
+    if (text.empty()) {
+        return std::nullopt;
+    }
+    return required_double(text);
+}
+
 std::uint32_t required_prn(const std::string &text) {
-    const auto prn = examples::parse_decimal_uint32(text);
+    const auto prn = examples::parse_decimal<std::uint32_t>(text);
     if (!prn) {
         throw geotrace::IoError("satellites.csv: invalid PRN: " + text);
     }

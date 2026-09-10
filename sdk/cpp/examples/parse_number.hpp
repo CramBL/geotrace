@@ -1,42 +1,34 @@
 /**
  * Number parsing shared by the C++ examples that read numbers out of CSV text.
+ *
+ * `std::from_chars` reads '.' as the decimal separator under every locale.
+ * `std::stod` reads the separator from `LC_NUMERIC`. The parse below calls
+ * `std::from_chars` and requires its stop position to be the end of the field.
  */
 
 #ifndef GEOTRACE_EXAMPLES_PARSE_NUMBER_HPP
 #define GEOTRACE_EXAMPLES_PARSE_NUMBER_HPP
 
+#include <charconv>
 #include <cstddef>
-#include <cstdint>
-#include <exception>
+#include <iterator>
 #include <optional>
 #include <string>
-#include <string_view>
+#include <system_error>
 
 namespace examples {
 
-/// The value of `text`, or `std::nullopt` when `text` is not a decimal number.
-[[nodiscard]] inline std::optional<double> parse_decimal_double(std::string_view text) {
-    try {
-        std::size_t pos = 0;
-        const double value = std::stod(std::string(text), &pos);
-        return (pos > 0) ? std::optional<double>{value} : std::nullopt;
-    } catch (const std::exception &) {
+/// The value of `text`, or `std::nullopt` when `text` holds anything but one
+/// decimal number in the range of `Number`.
+template <typename Number>
+[[nodiscard]] inline std::optional<Number> parse_decimal(const std::string &text) {
+    Number value{};
+    const char *const end = std::next(text.data(), static_cast<std::ptrdiff_t>(text.size()));
+    const std::from_chars_result parsed = std::from_chars(text.data(), end, value);
+    if (parsed.ec != std::errc{} || parsed.ptr != end) {
         return std::nullopt;
     }
-}
-
-/// The value of `text`, or `std::nullopt` when `text` is not a decimal number
-/// that a `std::uint32_t` holds.
-[[nodiscard]] inline std::optional<std::uint32_t> parse_decimal_uint32(std::string_view text) {
-    try {
-        const std::uint64_t value = std::stoul(std::string(text));
-        if (value > UINT32_MAX) {
-            return std::nullopt;
-        }
-        return static_cast<std::uint32_t>(value);
-    } catch (const std::exception &) {
-        return std::nullopt;
-    }
+    return value;
 }
 
 } // namespace examples

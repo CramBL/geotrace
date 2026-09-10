@@ -79,6 +79,7 @@ the app).
 - Fixed a marker, event marker or ghost fix interpolated between two fixes on either side of the antimeridian being placed near longitude 0: it is placed on the short arc between the two fixes.
 - **Breaking:** Fixed the reader accepting any `geotrace_version` beginning with a 1 or a 2, such as `10` or `1abc`: it reads the attribute as an integer and accepts 1 and 2 alone.
 - Fixed the `encoding` attribute of the `markers/icon` and `tracked_sats/constellation` datasets listing 7 of the 14 marker icons and 4 of the 6 constellations: the writer builds each attribute from the full set of codes.
+- C, C++: Fixed the examples taking a CSV number's decimal separator from `LC_NUMERIC`: they read '.' as the separator under every locale and reject a field with trailing characters.
 
 ## [0.6.0] - 2026-09-03
 

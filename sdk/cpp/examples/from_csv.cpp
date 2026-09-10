@@ -15,6 +15,7 @@
 #include <exception>
 #include <filesystem>
 #include <iostream>
+#include <locale>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -33,6 +34,10 @@ constexpr std::string_view kCsvData = "timestamp_s,lat,lon,heading_deg,speed_mps
 // Parse one "ts,lat,lon,heading,speed" row. Returns std::nullopt for a malformed line.
 std::optional<geotrace::NavFix> parse_row(const std::string &line) {
     std::istringstream fields(line);
+    // `operator>>` reads a number under the locale the stream holds, which is
+    // the global locale until it is imbued. The classic locale's decimal
+    // separator is the '.' the data uses.
+    fields.imbue(std::locale::classic());
     std::int64_t unix_seconds = 0;
     double lat = 0.0;
     double lon = 0.0;
