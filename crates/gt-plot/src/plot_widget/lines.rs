@@ -18,7 +18,7 @@ use super::chips::{
     ChannelVisibility, HoveredChip, LoadedChannel, MetricKindUi, MetricVisibility, SectionGates,
     metric_is_shown,
 };
-use super::clock_offset::ClockOffsetHover;
+use super::clock_offset::{self, ClockOffsetHover};
 use super::flares::SolarFlareHover;
 use super::geomagnetic::GeomagneticHover;
 use super::jamming::JammingHover;
@@ -183,12 +183,21 @@ pub(super) fn add_series_lines<'a>(
         else {
             continue;
         };
-        add_line(
-            plot_ui,
-            mipmap.slice_at(level),
-            format!("{prefix}{}", kind.label()),
-            stroke,
-        );
+        let name = format!("{prefix}{}", kind.label());
+        let points = mipmap.slice_at(level);
+        // The plot holds samples off the clock offset line alone, and cuts
+        // that line where they were.
+        if kind == MetricKind::ClockDeltaMs {
+            clock_offset::add_clock_offset_line(
+                plot_ui,
+                points,
+                &placed.series.clock_offset_placement,
+                &name,
+                stroke,
+            );
+        } else {
+            add_line(plot_ui, points, name, stroke);
+        }
     }
 
     if metric_vis.field(MetricKind::SnapError)

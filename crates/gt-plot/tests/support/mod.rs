@@ -14,6 +14,7 @@ use std::rc::Rc;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use egui::accesskit::Role;
+use egui::epaint::Shape;
 use egui_plot::{PlotPoint, PlotTransform};
 use gt_filter::GlobalFilter;
 use gt_flare::{MarkedFlare, SolarFlare};
@@ -236,7 +237,60 @@ impl DrawnPlot {
             .join("\n")
     }
 
+    /// The open polylines the last frame painted, their vertices in plot
+    /// coordinates. A line the plot cuts paints one polyline per stretch. The
+    /// marker glyphs are closed polygons and are left out.
+    pub fn painted_polylines(&self) -> Vec<Vec<PlotPoint>> {
+        let transform = self.transform();
+        self.painted_shapes()
+            .iter()
+            .filter_map(|shape| match shape {
+                Shape::Path(path) if !path.closed => Some(
+                    path.points
+                        .iter()
+                        .map(|&at| transform.value_from_position(at))
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The centres of the filled circles the last frame painted, in plot
+    /// coordinates.
+    pub fn painted_circle_centers(&self) -> Vec<PlotPoint> {
+        let transform = self.transform();
+        self.painted_shapes()
+            .iter()
+            .filter_map(|shape| match shape {
+                Shape::Circle(circle) => Some(transform.value_from_position(circle.center)),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn snapshot(&mut self, name: &str) {
         self.harness.snapshot_loose(name);
+    }
+
+    /// Every shape the last frame painted, in paint order, with the nested
+    /// shape lists flattened out.
+    fn painted_shapes(&self) -> Vec<Shape> {
+        let mut flat = Vec::new();
+        for clipped in &self.harness.inner.output().shapes {
+            flatten_shape(&clipped.shape, &mut flat);
+        }
+        flat
+    }
+}
+
+fn flatten_shape(shape: &Shape, flat: &mut Vec<Shape>) {
+    match shape {
+        Shape::Vec(shapes) => {
+            for nested in shapes {
+                flatten_shape(nested, flat);
+            }
+        }
+        other => flat.push(other.clone()),
     }
 }

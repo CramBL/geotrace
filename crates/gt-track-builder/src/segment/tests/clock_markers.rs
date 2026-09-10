@@ -101,6 +101,48 @@ fn an_excursion_is_one_marker_not_a_pair_of_discontinuities() {
     );
 }
 
+/// A departure the host clock holds for several fixes is one marker too. It
+/// counts every sample of the run and sits at the sample that departed
+/// furthest, which here is the middle one.
+#[test]
+fn an_excursion_over_several_samples_is_one_marker_counting_them_all() {
+    let baseline = Duration::milliseconds(234);
+    let mut points: Vec<NavPoint> = (0..5)
+        .map(|i| test_util::fix_with_host_clock_ahead(1000 + i, baseline))
+        .collect();
+    points.extend([3_600_000, 5_400_000, 3_600_000].iter().enumerate().map(
+        |(index, &ahead_ms)| {
+            test_util::fix_with_host_clock_ahead(
+                1005 + index as i64,
+                Duration::milliseconds(ahead_ms),
+            )
+        },
+    ));
+    points.extend((8..12).map(|i| test_util::fix_with_host_clock_ahead(1000 + i, baseline)));
+
+    let markers = generated_markers_of(&points, &GeneratedMarkerConfig::default());
+
+    let [marker] = markers.as_slice() else {
+        panic!("expected exactly one marker, got {}", markers.len());
+    };
+    let GeneratedMarkerKind::ClockOffsetExcursion {
+        deviation,
+        offset,
+        samples,
+    } = marker.kind
+    else {
+        panic!("expected a clock offset excursion, got {:?}", marker.kind);
+    };
+    assert_eq!(samples, 3);
+    assert_eq!(offset.num_milliseconds(), -5_400_000);
+    assert_eq!(deviation.num_milliseconds(), -5_399_766);
+    assert_eq!(
+        marker.time,
+        Utc.timestamp_opt(1006, 0).single().expect("valid"),
+        "placed at the sample that departed furthest"
+    );
+}
+
 #[test]
 fn excursion_detection_off_leaves_the_discontinuity_markers() {
     let config = GeneratedMarkerConfig {

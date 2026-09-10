@@ -562,8 +562,9 @@ fn clock_excursion_gtd_bytes() -> Vec<u8> {
 }
 
 /// The clock offset excursion overlay: the offset line keeps the track's own
-/// sub-second scale, and the sample carrying the recording gap is marked with a
-/// down-pointing indicator at the bottom edge, on a stub from the baseline.
+/// sub-second scale and stops on either side of the sample carrying the
+/// recording gap. That sample is marked with a down-pointing indicator at the
+/// bottom edge, on a stub from the baseline.
 #[test]
 fn snapshot_app_plot_clock_excursion() {
     let gtd_bytes = clock_excursion_gtd_bytes();
