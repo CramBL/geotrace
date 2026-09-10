@@ -480,7 +480,7 @@ mod tests {
                     .ui(ui);
             });
         harness.run();
-        harness.snapshot_loose(name);
+        harness.snapshot_with_color_tolerance(name);
     }
 
     #[test]

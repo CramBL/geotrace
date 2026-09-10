@@ -1662,7 +1662,7 @@ fn snapshot_app_query_window() {
     assert_eq!(history_len, 1, "the run above is recorded in history");
 
     ui_tests::assert_the_capture_covers_the_map(&mut harness, "app_query_window");
-    harness.snapshot_loose("app_query_window");
+    harness.snapshot_with_color_tolerance("app_query_window");
 }
 
 /// The same run with its matches popped out: the list fills a window of its
@@ -1693,7 +1693,7 @@ fn snapshot_app_query_matches_window() {
     ui_tests::pop_out_button(&harness.inner).click();
     harness.inner.run_steps(10);
 
-    harness.snapshot_loose("app_query_matches_window");
+    harness.snapshot_with_color_tolerance("app_query_matches_window");
 }
 
 /// The query editor under the light theme, so the syntax-highlight colours
@@ -1723,7 +1723,7 @@ fn snapshot_app_query_editor_light() {
     );
     harness.inner.run_steps(8);
 
-    harness.snapshot_loose("app_query_editor_light");
+    harness.snapshot_with_color_tolerance("app_query_editor_light");
 }
 
 /// Hovering a match header in the results table: the map draws the highlight
@@ -1770,7 +1770,7 @@ fn snapshot_app_query_match_hover() {
         "hovering the header cross-highlights the match"
     );
 
-    harness.snapshot_loose("app_query_match_hover");
+    harness.snapshot_with_color_tolerance("app_query_match_hover");
 }
 
 /// A channel-source query end to end: filtering on a vector channel's
@@ -1815,7 +1815,7 @@ fn snapshot_app_query_channel_source() {
         first_stretch.len()
     ));
 
-    harness.snapshot_loose("app_query_channel_source");
+    harness.snapshot_with_color_tolerance("app_query_channel_source");
 }
 
 /// A points-source query that references a channel: the window's time span
@@ -1874,7 +1874,7 @@ fn snapshot_app_query_points_with_channel() {
     harness.inner.hover_at(egui::pos2(1.0, 1.0));
     harness.inner.run_steps(5);
 
-    harness.snapshot_loose("app_query_points_with_channel");
+    harness.snapshot_with_color_tolerance("app_query_points_with_channel");
 }
 
 /// A match expanded to the samples behind its aggregate column: the results tab
@@ -1920,7 +1920,7 @@ fn snapshot_app_query_match_samples() {
     harness.inner.hover_at(egui::pos2(1.0, 1.0));
     harness.inner.run_steps(5);
 
-    harness.snapshot_loose("app_query_match_samples");
+    harness.snapshot_with_color_tolerance("app_query_match_samples");
 }
 
 /// Several queries compose in one editor: a `hide` filter plus two colored
@@ -1973,5 +1973,5 @@ fn snapshot_query_pipeline() {
         assert_eq!(matches.draws.len(), 2, "two draw queries, two halo layers");
     }
 
-    harness.snapshot_loose("query_pipeline");
+    harness.snapshot_with_color_tolerance("query_pipeline");
 }

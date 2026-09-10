@@ -36,7 +36,9 @@ pub use recording_fixtures::{
     synthetic_gtd_bytes_with_channels,
 };
 #[cfg(feature = "snapshot")]
-pub use snapshot_harness::{By, Node, NodeT, Queryable, TestHarness, TestHarnessBuilder};
+pub use snapshot_harness::{
+    By, CROSS_BACKEND_COLOR_TOLERANCE, Node, NodeT, Queryable, TestHarness, TestHarnessBuilder,
+};
 #[cfg(feature = "tracks")]
 pub use track_fixtures::{
     FileParts, build_file, empty_file_metadata, empty_track_metadata, loaded_file_with_tracks,

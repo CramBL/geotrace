@@ -72,7 +72,5 @@ fn nav_arrow_grid_renders_correctly() {
         });
 
     harness.run();
-    // Loose: mesh edges rasterize a few pixels differently between the
-    // Linux baseline and the macOS CI runner's Metal backend.
-    harness.snapshot_loose("nav_arrow_grid");
+    harness.snapshot_with_mesh_edge_tolerance("nav_arrow_grid");
 }

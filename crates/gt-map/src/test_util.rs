@@ -718,7 +718,7 @@ impl RenderedMap {
     }
 
     pub fn snapshot(&mut self, name: &str) {
-        self.harness.snapshot_loose(name);
+        self.harness.snapshot_with_mesh_edge_tolerance(name);
     }
 
     /// The id and rect of every layer the last frame left open at

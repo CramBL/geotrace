@@ -270,7 +270,7 @@ impl DrawnPlot {
     }
 
     pub fn snapshot(&mut self, name: &str) {
-        self.harness.snapshot_loose(name);
+        self.harness.snapshot_with_color_tolerance(name);
     }
 
     /// Every shape the last frame painted, in paint order, with the nested

@@ -424,14 +424,16 @@ fn app_showing_the_prompt_over_stored_recordings(count: usize) -> TestHarness<'s
 #[test]
 fn snapshot_recordings_already_in_history_dialog() {
     let mut harness = app_showing_the_prompt_over_stored_recordings(1);
-    harness.snapshot_loose("recordings_already_in_history_dialog");
+    harness.snapshot_with_color_tolerance("recordings_already_in_history_dialog");
 }
 
 /// More recordings than the prompt lists one by one: the rest are counted.
 #[test]
 fn snapshot_recordings_already_in_history_dialog_past_the_listed_recordings() {
     let mut harness = app_showing_the_prompt_over_stored_recordings(14);
-    harness.snapshot_loose("recordings_already_in_history_dialog_past_the_listed_recordings");
+    harness.snapshot_with_color_tolerance(
+        "recordings_already_in_history_dialog_past_the_listed_recordings",
+    );
 }
 
 fn stored_segmentation_from_app_with_rules(

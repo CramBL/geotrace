@@ -20,18 +20,35 @@ fn snapshot_options() -> SnapshotOptions {
         .max_failed_pixels(STRICT_PIXEL_COUNT_TOLERANCE)
 }
 
-/// Per-pixel color tolerance for [`TestHarness::snapshot_loose`], as a squared
-/// YIQ distance. 4.0 admits a difference of two gray levels per channel, which
-/// is how far apart the macOS and the Linux rasterizer place an anti-aliased
-/// edge. A one-pixel error in the History window's height put 10596 pixels
-/// past it.
-const LOOSE_PIXEL_COLOR_TOLERANCE: f32 = 4.0;
+/// Per-pixel color tolerance shared by
+/// [`TestHarness::snapshot_with_color_tolerance`] and
+/// [`TestHarness::snapshot_with_mesh_edge_tolerance`], as a squared YIQ
+/// distance. 5.0 admits a difference of three gray levels per channel, whose
+/// distance is 4.55, and stops at four, whose distance is 8.08. Three levels
+/// is the whole spread that two rasterizers put on an anti-aliased edge. The
+/// macOS runner left 5 pixels of a 1000x800 History window past 0.6 and none
+/// past 3.0. A hardware Vulkan adapter left one pixel of the flare reference
+/// window past 4.0 and none past 5.0, against baselines that Mesa's llvmpipe
+/// recorded.
+pub const CROSS_BACKEND_COLOR_TOLERANCE: f32 = 5.0;
 
-/// Pixel-count tolerance for [`TestHarness::snapshot_loose`]. Live map/plot
-/// snapshots differ by a handful of pixels between GPU backends (the baselines
-/// are committed from Linux but CI compares them on the macOS runner), so a
-/// small allowance keeps those tests stable without masking real regressions.
-const LOOSE_PIXEL_COUNT_TOLERANCE: usize = 32;
+/// Differing-pixel budget for [`TestHarness::snapshot_with_color_tolerance`].
+/// Zero, because [`CROSS_BACKEND_COLOR_TOLERANCE`] absorbs the whole spread
+/// that two backends put between them. The suite passes at this budget under
+/// Mesa's llvmpipe (`LIBGL_ALWAYS_SOFTWARE=1 WGPU_BACKEND=gl`, the Linux CI
+/// configuration) and on a hardware Vulkan adapter alike. The budget of 32
+/// that this comparison ran at before held 34 baselines stale, twenty of which
+/// drew a button icon that a merged commit had already replaced.
+const COLOR_TOLERANCE_PIXEL_COUNT_BUDGET: usize = 0;
+
+/// Differing-pixel budget for
+/// [`TestHarness::snapshot_with_mesh_edge_tolerance`]. The edges of a rotated,
+/// textured icon mesh landed on different pixels between the Linux baseline
+/// and the macOS runner's Metal backend. That finding is the budget's whole
+/// record, and no count came with it. Mesa's llvmpipe and a hardware Vulkan
+/// adapter put no pixel of a map surface or an icon grid past
+/// [`CROSS_BACKEND_COLOR_TOLERANCE`].
+const MESH_EDGE_PIXEL_COUNT_BUDGET: usize = 32;
 
 /// Snapshot comparison runs locally, on macOS CI (Metal), and on Linux CI
 /// (Mesa's software rasterizer via `WGPU_BACKEND=gl`, deterministic across
@@ -106,24 +123,34 @@ impl<'a, State> TestHarness<'a, State> {
             .snapshot_options(snap_name(name), &snapshot_options());
     }
 
-    /// Like [`TestHarness::snapshot`] but at [`LOOSE_PIXEL_COLOR_TOLERANCE`],
-    /// with a budget of [`LOOSE_PIXEL_COUNT_TOLERANCE`] pixels.
+    /// Compare at [`CROSS_BACKEND_COLOR_TOLERANCE`], with no pixel admitted
+    /// past it.
     ///
-    /// Use it for live-rendered content (plots, maps), whose floating-point
-    /// layout differs by a few pixels between GPU backends. Use it also for an
-    /// image far larger than the 280x600 side-panel baselines
-    /// [`STRICT_PIXEL_COUNT_TOLERANCE`] was measured on: a larger image has
-    /// more anti-aliased edges.
-    pub fn snapshot_loose(&mut self, name: &str) {
+    /// This is the comparison for an image that egui draws: a window, a
+    /// panel, a table, a plot, and the application shell around them. It is
+    /// also the comparison for an image far larger than the 280x600 side-panel
+    /// baselines that [`STRICT_PIXEL_COUNT_TOLERANCE`] was measured on, whose
+    /// many anti-aliased edges each need the wider per-pixel tolerance.
+    pub fn snapshot_with_color_tolerance(&mut self, name: &str) {
         self.snapshot_with_tolerance(
             name,
-            LOOSE_PIXEL_COLOR_TOLERANCE,
-            LOOSE_PIXEL_COUNT_TOLERANCE,
+            CROSS_BACKEND_COLOR_TOLERANCE,
+            COLOR_TOLERANCE_PIXEL_COUNT_BUDGET,
         );
     }
 
-    pub fn snapshot_with_threshold(&mut self, name: &str, threshold: f32) {
-        self.snapshot_with_tolerance(name, threshold, 0);
+    /// Compare at [`CROSS_BACKEND_COLOR_TOLERANCE`], admitting
+    /// [`MESH_EDGE_PIXEL_COUNT_BUDGET`] pixels past it.
+    ///
+    /// This is the comparison for an image that gt-map fills with its
+    /// GPU-instanced icon meshes: the map surface and the icon grids that
+    /// render one mesh per cell.
+    pub fn snapshot_with_mesh_edge_tolerance(&mut self, name: &str) {
+        self.snapshot_with_tolerance(
+            name,
+            CROSS_BACKEND_COLOR_TOLERANCE,
+            MESH_EDGE_PIXEL_COUNT_BUDGET,
+        );
     }
 
     pub fn snapshot_with_tolerance(

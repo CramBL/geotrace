@@ -19,6 +19,12 @@ use crate::app::{App, StartupOptions, Storage};
 /// update prompt both flow through it).
 pub const TEST_APP_VERSION: &str = "0.0.0-test";
 
+/// The load time that every finished job reports in a test, replacing the
+/// value that the app measures. The load overlay prints it as `0.4s`. The
+/// measured value counts the frames that the background thread ran for, and
+/// the machine's load changes that count from run to run.
+pub const TEST_LOAD_ELAPSED_SECS: f32 = 0.4;
+
 /// In-memory [`egui::DroppedFile`] for drag-drop tests. `bytes` drops carry a
 /// relative path holding the display name, matching how web drops expose only
 /// the file name, `path` drops behave like native drops from disk.
@@ -187,6 +193,14 @@ pub fn drop_file_and_wait_for_load(harness: &mut Harness<App>, file: TestDropped
             && harness.state().recordings_awaiting_a_history_lookup == 0),
         "the background load did not finish"
     );
+    pin_the_load_time_the_overlay_shows(harness);
+}
+
+/// Give every job the load overlay still lists [`TEST_LOAD_ELAPSED_SECS`].
+fn pin_the_load_time_the_overlay_shows(harness: &mut Harness<'_, App>) {
+    for job in &mut harness.state_mut().loader.finishing_jobs {
+        job.elapsed_secs = TEST_LOAD_ELAPSED_SECS;
+    }
 }
 
 /// Drop a recording history already holds, answer the prompt it raises with
@@ -206,6 +220,7 @@ pub fn drop_a_stored_recording_and_load_it_from_disk(
             && harness.state().loader.loading_jobs.is_empty()),
         "the recording did not load from disk"
     );
+    pin_the_load_time_the_overlay_shows(harness);
 }
 
 /// Step until the prompt over the recordings history holds is drawn where the

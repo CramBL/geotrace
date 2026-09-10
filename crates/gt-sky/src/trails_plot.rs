@@ -913,8 +913,8 @@ mod tests {
             self.harness.snapshot(name);
         }
 
-        fn snapshot_loose(&mut self, name: &str) {
-            self.harness.snapshot_loose(name);
+        fn snapshot_with_color_tolerance(&mut self, name: &str) {
+            self.harness.snapshot_with_color_tolerance(name);
         }
     }
 
@@ -1248,7 +1248,7 @@ mod tests {
             ..TrailsPlotScene::default()
         }
         .render()
-        .snapshot_loose("sky_trails_tail");
+        .snapshot_with_color_tolerance("sky_trails_tail");
     }
 
     #[test]
@@ -1297,7 +1297,7 @@ mod tests {
             .inner
             .hover_at_and_settle(on_ring, TOOLTIP_SETTLE_FRAMES);
 
-        plot.snapshot_loose("sky_trails_mask_ring_hover");
+        plot.snapshot_with_color_tolerance("sky_trails_mask_ring_hover");
     }
 
     /// Frames the pointer rests still for before a tooltip is read: egui opens
@@ -1330,7 +1330,7 @@ mod tests {
             .inner
             .hover_at_and_settle(marker, TOOLTIP_SETTLE_FRAMES);
 
-        plot.snapshot_loose("sky_trails_marker_hover");
+        plot.snapshot_with_color_tolerance("sky_trails_marker_hover");
     }
 
     /// Trails exercising fix state: one always in fix, one tracked-but-not-in-
@@ -1421,7 +1421,7 @@ mod tests {
             ..TrailsPlotScene::default()
         }
         .render()
-        .snapshot_loose(name);
+        .snapshot_with_color_tolerance(name);
     }
 
     /// Snapshot: with the trails hidden, only the current-instant markers
@@ -1760,7 +1760,7 @@ mod tests {
             ..TrailsPlotScene::default()
         }
         .render()
-        .snapshot_loose("sky_trails_heatmap");
+        .snapshot_with_color_tolerance("sky_trails_heatmap");
     }
 
     #[test]

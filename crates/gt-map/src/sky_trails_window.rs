@@ -1257,7 +1257,7 @@ mod tests {
                 body(&trails, &mut inputs).ui(ui);
             });
         harness.run();
-        harness.snapshot_loose(name);
+        harness.snapshot_with_color_tolerance(name);
     }
 
     /// Run the body once at a mid-track scrub with `start` as the highlight,

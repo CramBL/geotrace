@@ -675,7 +675,7 @@ fn snapshot_update_prompt_self_update() {
     harness.inner.state_mut().update_checker =
         super::update::UpdateChecker::available_for_test("0.2.0", true);
     harness.run();
-    harness.snapshot_loose("update_prompt_self_update");
+    harness.snapshot_with_color_tolerance("update_prompt_self_update");
 }
 
 /// What a failed install reports in the cases below.
@@ -708,7 +708,7 @@ fn snapshot_update_prompt_install_failed() {
         .report_a_failed_install_for_test(UPDATE_INSTALL_FAILURE);
     harness.inner.run_steps(4);
 
-    harness.snapshot_loose("update_prompt_install_failed");
+    harness.snapshot_with_color_tolerance("update_prompt_install_failed");
 }
 
 /// The install reports its outcome after the prompt has already opened.
@@ -873,7 +873,7 @@ fn snapshot_history_locked_dialog() {
         PathBuf::from("geotrace.h5"),
     ));
     harness.run();
-    harness.snapshot_loose("history_locked_dialog");
+    harness.snapshot_with_color_tolerance("history_locked_dialog");
 }
 
 #[test]
@@ -886,7 +886,7 @@ fn snapshot_history_corrupt_dialog() {
         crate::app::storage::HistoryFailure::Unreadable(PathBuf::from("geotrace.h5")),
     );
     harness.run();
-    harness.snapshot_loose("history_corrupt_dialog");
+    harness.snapshot_with_color_tolerance("history_corrupt_dialog");
 }
 
 /// Startup hands the app the databases a completed open produced. The worker
@@ -1273,7 +1273,7 @@ fn snapshot_history_busy_dialog() {
         PathBuf::from("geotrace.h5"),
     ));
     harness.run();
-    harness.snapshot_loose("history_busy_dialog");
+    harness.snapshot_with_color_tolerance("history_busy_dialog");
 }
 
 /// The button that dismisses a history database prompt.
@@ -1419,7 +1419,8 @@ fn snapshot_history_resegment_dialog_with_shelved_and_hidden_tracks() {
         shelved_tracks: 1,
         hidden_tracks: 3,
     });
-    harness.snapshot_loose("history_resegment_dialog_with_shelved_and_hidden_tracks");
+    harness
+        .snapshot_with_color_tolerance("history_resegment_dialog_with_shelved_and_hidden_tracks");
 }
 
 /// A recording name of words, long enough for the prompt's intro to run past
@@ -1431,13 +1432,13 @@ fn recording_name_past_the_capped_room() -> String {
 #[test]
 fn snapshot_history_resegment_dialog() {
     let mut harness = app_showing_the_resegment_prompt("ride.gtd");
-    harness.snapshot_loose("history_resegment_dialog");
+    harness.snapshot_with_color_tolerance("history_resegment_dialog");
 }
 
 #[test]
 fn snapshot_history_resegment_dialog_past_the_capped_room() {
     let mut harness = app_showing_the_resegment_prompt(&recording_name_past_the_capped_room());
-    harness.snapshot_loose("history_resegment_dialog_past_the_capped_room");
+    harness.snapshot_with_color_tolerance("history_resegment_dialog_past_the_capped_room");
 }
 
 /// Opening a second recording from history replaces the prompt with one
@@ -1489,14 +1490,14 @@ const AUTO_PRUNE_CANDIDATES_FAR_PAST_THE_CAPPED_ROOM: usize = 40;
 #[test]
 fn snapshot_auto_prune_dialog() {
     let mut harness = app_showing_the_auto_prune_confirmation(3);
-    harness.snapshot_loose("auto_prune_dialog");
+    harness.snapshot_with_color_tolerance("auto_prune_dialog");
 }
 
 #[test]
 fn snapshot_auto_prune_dialog_past_the_capped_room() {
     let mut harness =
         app_showing_the_auto_prune_confirmation(AUTO_PRUNE_CANDIDATES_FAR_PAST_THE_CAPPED_ROOM);
-    harness.snapshot_loose("auto_prune_dialog_past_the_capped_room");
+    harness.snapshot_with_color_tolerance("auto_prune_dialog_past_the_capped_room");
 }
 
 #[test]
@@ -1821,7 +1822,7 @@ fn snapshot_load_warnings_dialog() {
         ],
     ));
     harness.run();
-    harness.snapshot_loose("load_warnings_dialog");
+    harness.snapshot_with_color_tolerance("load_warnings_dialog");
 }
 
 #[test]
@@ -1832,7 +1833,7 @@ fn snapshot_snap_consent_dialog() {
     harness.inner.step();
     harness.inner.state_mut().snap_consent_prompt = true;
     harness.run();
-    harness.snapshot_loose("snap_to_road_consent_dialog");
+    harness.snapshot_with_color_tolerance("snap_to_road_consent_dialog");
 }
 
 /// The service link only shows for the default FOSSGIS host - its terms do
@@ -1875,7 +1876,7 @@ fn snapshot_snap_consent_dialog_mode_chosen() {
     harness.inner.state_mut().snap_settings.auto_snap = Some(false);
     harness.inner.state_mut().snap_consent_prompt = true;
     harness.run();
-    harness.snapshot_loose("snap_to_road_consent_dialog_mode_chosen");
+    harness.snapshot_with_color_tolerance("snap_to_road_consent_dialog_mode_chosen");
 }
 
 /// The one-time auto prompt for uploads acknowledged before auto mode
@@ -1912,7 +1913,7 @@ fn snapshot_snap_auto_prompt() {
     shared.sync_tree_from_loaded_files();
     drop(shared);
     harness.run();
-    harness.snapshot_loose("snap_to_road_auto_prompt");
+    harness.snapshot_with_color_tolerance("snap_to_road_auto_prompt");
 }
 
 #[test]
@@ -2251,7 +2252,7 @@ fn snapshot_about_dialog() {
             .is_none(),
         "the live crate version must never reach the rendered dialog"
     );
-    harness.snapshot_loose("about_dialog");
+    harness.snapshot_with_color_tolerance("about_dialog");
 }
 
 #[test]
@@ -2262,7 +2263,7 @@ fn snapshot_file_menu_open() {
     harness.inner.step();
     harness.inner.get_by_label("File").click();
     harness.run();
-    harness.snapshot_loose("file_menu_open");
+    harness.snapshot_with_color_tolerance("file_menu_open");
 }
 
 /// The File menu is the sole route to the About dialog: opening the menu and
@@ -2358,7 +2359,7 @@ fn snapshot_recording_details_dialog() {
             identity: Some("auto:/home/user/recordings/2025/05/ride_2025-05-23.gtd".to_owned()),
         });
     harness.run();
-    harness.snapshot_loose("recording_details_dialog");
+    harness.snapshot_with_color_tolerance("recording_details_dialog");
 }
 
 /// A recording running from the moment the generated log starts, so the log
@@ -2752,7 +2753,7 @@ fn snapshot_loading_overlay_past_the_listed_jobs() {
         RunningJobCount(BATCH_FAR_PAST_THE_LISTED_JOBS),
         FinishedJobCount(0),
     );
-    harness.snapshot_loose("loading_overlay_past_the_listed_jobs");
+    harness.snapshot_with_color_tolerance("loading_overlay_past_the_listed_jobs");
 }
 
 /// The overlay lists [`LOADING_OVERLAY_MOST_LISTED_JOBS`] jobs whatever the
