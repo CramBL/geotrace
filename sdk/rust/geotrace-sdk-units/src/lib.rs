@@ -1,5 +1,6 @@
-//! Canonical units used by GeoTrace channels and queries, and the SNR
-//! conventions of the `.gtd` format in [`snr`].
+//! Canonical units used by GeoTrace channels and queries, the SNR conventions
+//! of the `.gtd` format in [`snr`], and the factors the SDKs convert speeds with,
+//! [`MPS_PER_KMH`] and [`MPS_PER_KNOT`].
 //!
 //! A channel declares an optional [`ChannelUnit`], which is one of three kinds
 //! ([`ChannelUnitKind`]):
@@ -64,11 +65,14 @@
 
 pub mod snr;
 
+mod conversion_factor;
+
 use std::{fmt, str::FromStr};
 
 use uom::si::acceleration::{meter_per_second_squared, standard_gravity};
-use uom::si::f64::{Acceleration, Velocity};
-use uom::si::velocity::{kilometer_per_hour, knot, meter_per_second};
+use uom::si::f64::Acceleration;
+
+pub use conversion_factor::{MPS_PER_KMH, MPS_PER_KNOT};
 
 const S_PER_MIN: f64 = 60.0;
 const MIN_PER_H: f64 = 60.0;
@@ -193,10 +197,8 @@ impl BaseUnit {
     pub fn to_base(self) -> f64 {
         match self {
             Self::Deg | Self::M | Self::MPerS | Self::MPerS2 | Self::S | Self::PerS => 1.0,
-            Self::KmPerH | Self::KmPerHPerS => {
-                Velocity::new::<kilometer_per_hour>(1.0).get::<meter_per_second>()
-            }
-            Self::Kn => Velocity::new::<knot>(1.0).get::<meter_per_second>(),
+            Self::KmPerH | Self::KmPerHPerS => MPS_PER_KMH,
+            Self::Kn => MPS_PER_KNOT,
             Self::G => Acceleration::new::<standard_gravity>(1.0).get::<meter_per_second_squared>(),
             Self::Min => S_PER_MIN,
             Self::H => S_PER_MIN * MIN_PER_H,

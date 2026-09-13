@@ -49,6 +49,7 @@
 #include <vector>
 
 #include <geotrace.h> // C SDK (already has extern "C" guards)
+#include <geotrace/conversion_factors.hpp>
 #include <geotrace/unit_catalog.hpp>
 
 // A user tests the version with `#if`, where an `enum` is not visible.
@@ -587,10 +588,10 @@ class [[nodiscard]] FixTime {
 class [[nodiscard]] Angle {
   public:
     static constexpr Angle degrees(double deg) noexcept { return Angle{deg}; }
-    static constexpr Angle radians(double rad) noexcept { return Angle{rad * kDegreesPerRadian}; }
+    static Angle radians(double rad) noexcept { return Angle{gtd_degrees_from_radians(rad)}; }
 
     [[nodiscard]] constexpr double as_degrees() const noexcept { return deg_; }
-    [[nodiscard]] constexpr double as_radians() const noexcept { return deg_ * kRadiansPerDegree; }
+    [[nodiscard]] double as_radians() const noexcept { return gtd_radians_from_degrees(deg_); }
 
 #if defined(__cpp_impl_three_way_comparison) && __cpp_impl_three_way_comparison >= 201907L
     auto operator<=>(const Angle &) const = default;
@@ -604,13 +605,6 @@ class [[nodiscard]] Angle {
 #endif
 
   private:
-    // M_PI is a POSIX extension not guaranteed by the C++ standard (absent on MSVC
-    // without _USE_MATH_DEFINES), so we use our own constant instead.
-    static constexpr double kPi = 3.141592653589793238462643383279502884;
-    // Each conversion multiplies by its own factor. Dividing by the other one
-    // differs by 1 ULP for some values.
-    static constexpr double kDegreesPerRadian = 180.0 / kPi;
-    static constexpr double kRadiansPerDegree = kPi / 180.0;
     explicit constexpr Angle(double deg) noexcept : deg_(deg) {}
     double deg_ = 0.0;
 };
@@ -618,20 +612,18 @@ class [[nodiscard]] Angle {
 /** Velocity stored in metres per second. */
 class [[nodiscard]] Velocity {
   public:
-    // Conversion factors kept bit-identical to the Rust SDK (units.rs
-    // MPS_PER_KMH / MPS_PER_KNOT) so the same input yields the same stored m/s
-    // across SDKs. Use the constant-multiply form (`v * (1.0/3.6)`), not
-    // `v / 3.6`, which differs by 1 ULP for some values.
-    static constexpr double kMpsPerKmh = 1.0 / 3.6;
-    static constexpr double kMpsPerKnot = 1852.0 / 3600.0;
+    /** Meters per second in one km/h, the factor `kmh` and `as_kmh` convert with. */
+    static constexpr double kMpsPerKmh = detail::kMpsPerKmh;
+    /** Meters per second in one knot, the factor `knots` and `as_knots` convert with. */
+    static constexpr double kMpsPerKnot = detail::kMpsPerKnot;
 
     static constexpr Velocity mps(double value) noexcept { return Velocity{value}; }
-    static constexpr Velocity kmh(double value) noexcept { return Velocity{value * kMpsPerKmh}; }
-    static constexpr Velocity knots(double value) noexcept { return Velocity{value * kMpsPerKnot}; }
+    static Velocity kmh(double value) noexcept { return Velocity{gtd_mps_from_kmh(value)}; }
+    static Velocity knots(double value) noexcept { return Velocity{gtd_mps_from_knots(value)}; }
 
     [[nodiscard]] constexpr double as_mps() const noexcept { return mps_; }
-    [[nodiscard]] constexpr double as_kmh() const noexcept { return mps_ / kMpsPerKmh; }
-    [[nodiscard]] constexpr double as_knots() const noexcept { return mps_ / kMpsPerKnot; }
+    [[nodiscard]] double as_kmh() const noexcept { return gtd_kmh_from_mps(mps_); }
+    [[nodiscard]] double as_knots() const noexcept { return gtd_knots_from_mps(mps_); }
 
 #if defined(__cpp_impl_three_way_comparison) && __cpp_impl_three_way_comparison >= 201907L
     auto operator<=>(const Velocity &) const = default;

@@ -26,6 +26,10 @@ the app).
 - Python `NavFile.points` has `latitudes()`, `longitudes()`, `gps_times()`, `sys_times()`, `headings()`, `speeds_mps()` and `eph_m_values()`, each returning that field of every fix as a list.
 - C `gtd_ts_from_iso8601` and C++ `Timestamp::from_iso8601` and `try_from_iso8601` parse an ISO 8601 timestamp, such as `2026-02-01T15:00:00+00:00`, on either side of the Unix epoch. C returns `GTD_ERR_PARSE` and C++ throws `geotrace::ParseError` for a string that is not one, which includes one with no timezone designator and one whose year is past the range a timestamp covers.
 - C `gtd_constellation_from_name` and `gtd_marker_icon_from_name`, C++ `constellation_from_name`, `try_constellation_from_name`, `marker_icon_from_name` and `try_marker_icon_from_name`, and Python `constellation_from_name` and `marker_icon_from_name` parse the lower-case wire name of a constellation, such as `navic`, and of a marker icon, such as `satellite_lost`. C returns `GTD_ERR_PARSE`, C++ throws `geotrace::ParseError` and its `try_` form returns that status, and Python raises `ValueError`, for a name outside the set.
+- C `gtd_mps_from_kmh`, `gtd_mps_from_knots`, `gtd_kmh_from_mps` and `gtd_knots_from_mps`, and Python `mps_from_kmh`, `mps_from_knots`, `kmh_from_mps` and `knots_from_mps` convert a speed between m/s and km/h or knots, to the same double as the Rust `Velocity`.
+- C `gtd_degrees_from_radians` and `gtd_radians_from_degrees` convert an angle between radians and degrees, to the same double as the Rust `Angle`.
+- Rust `geotrace_sdk_units::MPS_PER_KMH` and `MPS_PER_KNOT` are the factors `Velocity` converts with.
+- Rust `Velocity::try_from_knots_str` parses a speed in knots from a string, as `try_from_kmh_str` parses one in km/h.
 
 ### Changed
 
@@ -57,7 +61,7 @@ the app).
 - **Breaking:** C `gtd_builder_add_nav_fix`, `gtd_builder_add_satellite_report`, `gtd_builder_add_annotation`, `gtd_builder_add_event_marker`, `gtd_builder_add_channel` and `gtd_builder_add_channel_with_unit_mode` return `GTD_ERR_OUT_OF_RANGE` for a `GtdTimestamp` past the range a timestamp covers.
 - **Breaking:** C++ `NavFix` and `SatelliteReport` have a required `FixTime` member, built with `FixTime::receiver`, `FixTime::host` or `FixTime::both`, in place of their two timestamps.
 - **Breaking:** C++ `Timestamp` is always an instant: it has no default constructor, `Timestamp::none()` and `Timestamp::is_none()` are gone, and `NavPointView::gps_time`, `NavPointView::sys_time` and `NavFile::sdk_commit_time()` are `std::optional<Timestamp>`.
-- **Breaking:** C++ header values are `[[nodiscard]]`, the value types are `constexpr` apart from the `Timestamp` factories, and `NavFile` has no default constructor.
+- **Breaking:** C++ header values are `[[nodiscard]]`, the value types are `constexpr` apart from the `Timestamp` factories and the `Velocity` and `Angle` unit conversions, and `NavFile` has no default constructor.
 - **Breaking:** C++ `FileBuilder::lenient()` records its status, an out-of-range accessor throws `std::out_of_range` through the new status, and `GTD_ERR_CALL_ORDER` throws the new `geotrace::CallOrderError`.
 - **Breaking:** C++ `Timestamp::try_from_seconds`, `try_from_millis`, `try_from_micros` and `try_from_nanos` return a `Result<Timestamp>`, and `Timestamp::from_seconds` and its siblings take a `std::int64_t` and throw `std::out_of_range` for a count past the range a timestamp covers.
 - **Breaking:** C++ `FileBuilder::travel_mode`, `add_satellite_report`, `add_annotation` and `add_event_marker_style` throw `std::invalid_argument` for a `TravelMode`, `Constellation` or `MarkerIcon` value no enumerator declares, where the SDK wrote the platform as `car`, the satellite as GPS and the marker as a pin. Built without exceptions, the builder records `GTD_ERR_INVALID_ARGUMENT` with a message stating the rejected value.
@@ -67,6 +71,7 @@ the app).
 - **Breaking:** Python `NavFix` and `SatelliteReport` raise `ValueError` when `gps_time` and `sys_time` are both `None`.
 - **Breaking:** Python `EventMarker` raises `TypeError` for a `variant_path` that is neither a `str`, `None` nor `event_kind.skip`, where it read any other value as `None`.
 - **Breaking:** Python `Constellation`, `MarkerIcon` and `TravelMode` are `enum.Enum` classes: each member has `.name` and `.value` and works as a `set` element and a `dict` key, and `list()` and `len()` over the class give the members and their count.
+- **Breaking:** C++ `Velocity::kmh`, `Velocity::knots`, `Velocity::as_kmh`, `Velocity::as_knots`, `Angle::radians` and `Angle::as_radians` are no longer `constexpr`: they call the C SDK's conversion functions.
 
 ### Fixed
 

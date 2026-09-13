@@ -1,4 +1,4 @@
-use geotrace_sdk::{Angle, DateTime, Error, Timestamp, Utc};
+use geotrace_sdk::{Angle, DateTime, Error, Timestamp, Utc, Velocity};
 use proptest::prelude::*;
 use rstest::rstest;
 
@@ -98,5 +98,22 @@ fn try_from_unix_nanos_converts_the_largest_i64_count() {
     assert_eq!(
         DateTime::<Utc>::from(timestamp).timestamp_micros(),
         9_223_372_036_854_775
+    );
+}
+
+#[test]
+fn try_from_knots_str_parses_a_speed_in_knots() {
+    assert_eq!(
+        Velocity::try_from_knots_str("13").ok(),
+        Some(Velocity::knot(13.0))
+    );
+}
+
+#[test]
+fn try_from_knots_str_reports_a_string_that_is_no_number_with_the_knots_unit() {
+    let error = Velocity::try_from_knots_str("fast").expect_err("\"fast\" is no number");
+    assert_eq!(
+        error.to_string(),
+        "failed to parse Velocity (knots) from \"fast\": invalid float literal"
     );
 }

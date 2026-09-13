@@ -54,7 +54,11 @@ from geotrace_sdk._geotrace_sdk import (
     SatelliteReport,
     Unit,
     constellation_from_name,
+    kmh_from_mps,
+    knots_from_mps,
     marker_icon_from_name,
+    mps_from_kmh,
+    mps_from_knots,
 )
 from geotrace_sdk.enums import Constellation, MarkerIcon, TravelMode
 from geotrace_sdk.event_kind import event_kind
@@ -91,5 +95,9 @@ __all__ = [
     "Unit",
     "constellation_from_name",
     "event_kind",
+    "kmh_from_mps",
+    "knots_from_mps",
     "marker_icon_from_name",
+    "mps_from_kmh",
+    "mps_from_knots",
 ]

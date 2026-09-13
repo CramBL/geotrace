@@ -27,6 +27,7 @@
 #[macro_use]
 mod macros;
 
+mod angle;
 mod builder;
 mod channel;
 mod constellation;
@@ -42,6 +43,7 @@ mod satellite;
 mod satinfo;
 mod timestamp;
 mod travel_mode;
+mod velocity;
 
 pub use builder::GtdFileBuilder;
 pub use channel::{GtdChannel, GtdChannelUnitMode};

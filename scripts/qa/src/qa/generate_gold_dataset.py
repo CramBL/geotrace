@@ -470,6 +470,27 @@ def main() -> None:
             }
         )
 
+    # Track 14: Speed in knots
+    # The SDKs convert with `speed * (1852 / 3600)`, which gives 6.687777777777779 m/s for 13 kn.
+    # `speed * 1852 / 3600`, `speed / (3600 / 1852)` and `speed * 1.852 / 3.6` give one ULP less
+    # for each of these speeds, 6.687777777777778 m/s for 13 kn.
+    for i, speed_knots in enumerate([4.5, 9.0, 13.0, 18.0, 22.6]):
+        t = get_time(13, float(i))
+        lat, lon = add_meters(SAHARA_LAT + 0.5, SAHARA_LON, i * 5, 0)
+        fixes.append(
+            {
+                "track_id": 14,
+                "gps_time": t,
+                "sys_time": t,
+                "lat": lat,
+                "lon": lon,
+                "heading_deg": 0.0,
+                "speed_kmh": "",
+                "eph_m": 2.0,
+                "speed_knots": speed_knots,
+            }
+        )
+
     # Add some markers and events
     # Boundary markers (Exactly at start/end of Track 1)
     markers.append({"time": get_time(0, 0), "label": "File Boundary Start", "icon": "check"})
@@ -579,7 +600,17 @@ def main() -> None:
     write_csv(
         dest_dir / "fixes.csv",
         fixes,
-        ["track_id", "gps_time", "sys_time", "lat", "lon", "heading_deg", "speed_kmh", "eph_m"],
+        [
+            "track_id",
+            "gps_time",
+            "sys_time",
+            "lat",
+            "lon",
+            "heading_deg",
+            "speed_kmh",
+            "eph_m",
+            "speed_knots",
+        ],
     )
     write_csv(
         dest_dir / "satellites.csv",

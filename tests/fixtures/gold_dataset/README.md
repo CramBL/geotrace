@@ -9,7 +9,7 @@ The `gold_conformance` test (`sdk/rust/geotrace-sdk/tests/gold_conformance.rs`) 
 ## Dataset Structure
 
 - `meta.csv`: The recording's title, device, notes, identity and travel mode.
-- `fixes.csv`: Primary navigation data (TPV). 204 fixes over 13 tracks.
+- `fixes.csv`: Primary navigation data (TPV). 209 fixes over 14 tracks. Each row has its speed in the `speed_kmh` column or in the `speed_knots` column, never in both.
 - `satellites.csv`: Satellite visibility reports associated with the fixes.
 - `markers.csv`: User-defined map annotations (Markers). 16 markers covering peaks, starts, sub-second interpolation and the antimeridian crossing.
 - `events.csv`: System event markers. 7 events for status changes, turns, signal loss and the antimeridian crossing.
@@ -19,10 +19,10 @@ The `gold_conformance` test (`sdk/rust/geotrace-sdk/tests/gold_conformance.rs`) 
 ## Track Definitions
 
 Each track starts one day after the one before it, the first on **1 February 2026 at 15:00:00 UTC**.
-Tracks 1 to 7, track 12 and track 13 start in the Sahara desert, offset from 23.0°N, 13.0°E to sit apart on the map.
+Tracks 1 to 7 and tracks 12 to 14 start in the Sahara desert, offset from 23.0°N, 13.0°E to sit apart on the map.
 Tracks 1 to 5 are offset by up to 0.05° on each axis.
 Track 6 is offset by 0.1° and track 7 by 0.2°, both on latitude and longitude.
-Track 12 is offset by 0.3° of latitude and track 13 by 0.4° of latitude.
+Track 12 is offset by 0.3° of latitude, track 13 by 0.4° and track 14 by 0.5°.
 Tracks 8 to 11 start at the coordinates named in their own sections.
 
 ### Track 1: Straight Line (North)
@@ -87,6 +87,13 @@ Tracks 8 to 11 start at the coordinates named in their own sections.
   Two of the five `sys_time` values fall in 1969, before the Unix epoch, and three fall in 1970.
 - **Verification**: The five `sys_time` values run from `1969-12-31T23:59:58+00:00` to `1970-01-01T00:00:02+00:00`.
   The microsecond counts the writer stores for them are negative, zero and positive.
+
+### Track 14: Speed in Knots
+- **Purpose**: Verify that every SDK converts a speed in knots to the same m/s.
+- **Description**: 5 points moving North.
+  The five rows have their speeds of 4.5, 9, 13, 18 and 22.6 kn in `speed_knots` and an empty `speed_kmh`.
+- **Verification**: The SDKs convert with `speed * (1852 / 3600)`, which gives 6.687777777777779 m/s for 13 kn.
+  `speed * 1852 / 3600`, `speed / (3600 / 1852)` and `speed * 1.852 / 3.6` give one ULP less for each of the five speeds, 6.687777777777778 m/s for 13 kn.
 
 ## Event Styling
 

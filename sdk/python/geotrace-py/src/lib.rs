@@ -173,6 +173,35 @@ fn constellation_from_name(name: &str) -> PyResult<PyConstellation> {
         .map_err(file_err)
 }
 
+/// Convert a speed in km/h to m/s, the unit ``NavFix.speed_mps`` takes.
+///
+/// Every SDK converts ``kmh`` to the same float. ``kmh / 3.6`` differs from it
+/// in the last place for some values, 23.2 among them.
+#[pyfunction]
+fn mps_from_kmh(kmh: f64) -> f64 {
+    Velocity::kilometer_per_hour(kmh).as_meters_per_second()
+}
+
+/// Convert a speed in knots to m/s, the unit ``NavFix.speed_mps`` takes.
+///
+/// Every SDK converts ``knots`` to the same float.
+#[pyfunction]
+fn mps_from_knots(knots: f64) -> f64 {
+    Velocity::knot(knots).as_meters_per_second()
+}
+
+/// Convert a speed in m/s to km/h.
+#[pyfunction]
+fn kmh_from_mps(mps: f64) -> f64 {
+    Velocity::meter_per_second(mps).as_kilometers_per_hour()
+}
+
+/// Convert a speed in m/s to knots.
+#[pyfunction]
+fn knots_from_mps(mps: f64) -> f64 {
+    Velocity::meter_per_second(mps).as_knots()
+}
+
 /// Visual icon for a map annotation marker, mirroring
 /// `geotrace_sdk.enums.MarkerIcon`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, strum::EnumString, strum::IntoStaticStr)]
@@ -2050,5 +2079,9 @@ fn _geotrace_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyNavFileBuilder>()?;
     m.add_function(wrap_pyfunction!(constellation_from_name, m)?)?;
     m.add_function(wrap_pyfunction!(marker_icon_from_name, m)?)?;
+    m.add_function(wrap_pyfunction!(mps_from_kmh, m)?)?;
+    m.add_function(wrap_pyfunction!(mps_from_knots, m)?)?;
+    m.add_function(wrap_pyfunction!(kmh_from_mps, m)?)?;
+    m.add_function(wrap_pyfunction!(knots_from_mps, m)?)?;
     Ok(())
 }

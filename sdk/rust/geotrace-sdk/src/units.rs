@@ -1,3 +1,5 @@
+use geotrace_sdk_units::{MPS_PER_KMH, MPS_PER_KNOT};
+
 use crate::error::Error;
 
 /// A point in time, wrapping [`chrono::DateTime<chrono::Utc>`].
@@ -134,9 +136,6 @@ impl From<uom::si::f64::Angle> for Angle {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Velocity(f64);
 
-const MPS_PER_KMH: f64 = 1.0 / 3.6;
-const MPS_PER_KNOT: f64 = 1852.0 / 3600.0;
-
 impl Velocity {
     pub fn meter_per_second(v: f64) -> Self {
         Self(v)
@@ -169,6 +168,18 @@ impl Velocity {
             .map(Self::kilometer_per_hour)
             .map_err(|e| Error::ParseError {
                 unit: "Velocity (km/h)",
+                input: s.to_owned(),
+                reason: e.to_string(),
+            })
+    }
+
+    /// Parse a knots value from a string.
+    pub fn try_from_knots_str(s: impl AsRef<str>) -> Result<Self, Error> {
+        let s = s.as_ref();
+        s.parse::<f64>()
+            .map(Self::knot)
+            .map_err(|e| Error::ParseError {
+                unit: "Velocity (knots)",
                 input: s.to_owned(),
                 reason: e.to_string(),
             })

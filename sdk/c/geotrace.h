@@ -692,6 +692,28 @@ extern "C" {
 #endif // __cplusplus
 
 /**
+ * Convert an angle in radians to degrees.
+ *
+ * The Rust SDK's `Angle::radians` computes the same double.
+ *
+ * @param radians Angle in radians.
+ *
+ * @return The angle in degrees.
+ */
+double gtd_degrees_from_radians(double radians);
+
+/**
+ * Convert an angle in degrees to radians.
+ *
+ * The Rust SDK's `Angle::as_radians` computes the same double.
+ *
+ * @param degrees Angle in degrees.
+ *
+ * @return The angle in radians.
+ */
+double gtd_radians_from_degrees(double degrees);
+
+/**
  * Finalise the builder and produce a `GtdNavFile` handle.
  *
  * The builder is **consumed** by this call regardless of success or failure.
@@ -1523,6 +1545,47 @@ const char *gtd_travel_mode_name(uint32_t mode);
  * @return `GTD_ERR_PARSE` if @p name is not a known travel mode.
  */
 GtdStatus gtd_travel_mode_from_name(const char *name, GtdTravelMode *out);
+
+/**
+ * Convert a speed in km/h to m/s.
+ *
+ * Every SDK converts @p kmh to the same double. `kmh / 3.6` differs from it
+ * in the last place for some values, 23.2 among them.
+ *
+ * @param kmh Speed in km/h.
+ *
+ * @return The speed in m/s.
+ */
+double gtd_mps_from_kmh(double kmh);
+
+/**
+ * Convert a speed in knots to m/s.
+ *
+ * Every SDK converts @p knots to the same double.
+ *
+ * @param knots Speed in knots, nautical miles of 1852 m per hour.
+ *
+ * @return The speed in m/s.
+ */
+double gtd_mps_from_knots(double knots);
+
+/**
+ * Convert a speed in m/s to km/h.
+ *
+ * @param mps Speed in m/s.
+ *
+ * @return The speed in km/h.
+ */
+double gtd_kmh_from_mps(double mps);
+
+/**
+ * Convert a speed in m/s to knots.
+ *
+ * @param mps Speed in m/s.
+ *
+ * @return The speed in knots.
+ */
+double gtd_knots_from_mps(double mps);
 
 #ifdef __cplusplus
 }  // extern "C"
