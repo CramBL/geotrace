@@ -35,91 +35,64 @@ fn marker(variant_path: &str, offset_secs: i64) -> EventMarker {
         .expect("test marker path should be valid")
 }
 
-// Validation - accepted paths
-#[test]
-fn valid_simple() {
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(fix(0, 55.0, 12.0));
-    recorder.add_event_marker(marker("power/turn_on", 0));
-}
-
-#[test]
-fn valid_kebab() {
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(fix(0, 55.0, 12.0));
-    recorder.add_event_marker(marker("agps/request-epo/gps", 0));
-}
-
-#[test]
-fn valid_single_segment() {
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(fix(0, 55.0, 12.0));
-    recorder.add_event_marker(marker("boot", 0));
-}
-
-#[test]
-fn valid_mixed_case_and_digits() {
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(fix(0, 55.0, 12.0));
-    recorder.add_event_marker(marker("sensor/GPS3/lock", 0));
-}
-
-#[test]
-fn valid_at_the_variant_path_capacity() {
-    let path = "a".repeat(VariantPathField::CONTENT_CAPACITY);
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(fix(0, 55.0, 12.0));
-    recorder.add_event_marker(marker(&path, 0));
-}
-
-// Validation - rejected paths (validation now happens in EventMarker::builder().build())
-#[test]
-fn empty_path_is_rejected() {
-    let err = EventMarker::builder()
-        .variant_path("")
+#[rstest]
+#[case::two_segments("power/turn_on")]
+#[case::kebab_case_segments("agps/request-epo/gps")]
+#[case::a_single_segment("boot")]
+#[case::mixed_case_and_digits("sensor/GPS3/lock")]
+#[case::at_the_field_capacity(&"a".repeat(VariantPathField::CONTENT_CAPACITY))]
+fn a_well_formed_variant_path_is_accepted(#[case] path: &str) {
+    let event_marker = EventMarker::builder()
+        .variant_path(path)
         .sys_time(t(0))
         .build()
-        .expect_err("should fail");
-    assert!(matches!(err, EventMarkerError::Empty { .. }), "got {err}");
+        .expect("the variant path is well formed");
+    assert_eq!(event_marker.variant_path(), path);
 }
 
-#[test]
-fn leading_slash_is_rejected() {
-    let err = EventMarker::builder()
-        .variant_path("/power/on")
+#[rstest]
+#[case::empty(
+    "",
+    |error: &EventMarkerError| matches!(error, EventMarkerError::Empty { .. }),
+    r#"invalid event marker variant path "": path is empty"#
+)]
+#[case::a_leading_slash(
+    "/power/on",
+    |error: &EventMarkerError| matches!(error, EventMarkerError::LeadingSlash { .. }),
+    r#"invalid event marker variant path "/power/on": starts with '/'"#
+)]
+#[case::a_trailing_slash(
+    "power/on/",
+    |error: &EventMarkerError| matches!(error, EventMarkerError::TrailingSlash { .. }),
+    r#"invalid event marker variant path "power/on/": ends with '/'"#
+)]
+#[case::a_double_slash(
+    "power//on",
+    |error: &EventMarkerError| matches!(error, EventMarkerError::EmptySegment { .. }),
+    r#"invalid event marker variant path "power//on": contains '//'"#
+)]
+#[case::a_space(
+    "power/turn on",
+    |error: &EventMarkerError| matches!(error, EventMarkerError::InvalidChars { .. }),
+    r#"invalid event marker variant path "power/turn on": contains characters outside ASCII alphanumeric, hyphen, underscore, and slash"#
+)]
+#[case::a_dot(
+    "power/v1.2",
+    |error: &EventMarkerError| matches!(error, EventMarkerError::InvalidChars { .. }),
+    r#"invalid event marker variant path "power/v1.2": contains characters outside ASCII alphanumeric, hyphen, underscore, and slash"#
+)]
+fn a_malformed_variant_path_is_rejected(
+    #[case] path: &str,
+    #[case] is_expected_error: fn(&EventMarkerError) -> bool,
+    #[case] expected_message: &str,
+) {
+    let error = EventMarker::builder()
+        .variant_path(path)
         .sys_time(t(0))
         .build()
-        .expect_err("should fail");
-    assert!(
-        matches!(err, EventMarkerError::LeadingSlash { .. }),
-        "got {err}"
-    );
-}
-
-#[test]
-fn trailing_slash_is_rejected() {
-    let err = EventMarker::builder()
-        .variant_path("power/on/")
-        .sys_time(t(0))
-        .build()
-        .expect_err("should fail");
-    assert!(
-        matches!(err, EventMarkerError::TrailingSlash { .. }),
-        "got {err}"
-    );
-}
-
-#[test]
-fn double_slash_is_rejected() {
-    let err = EventMarker::builder()
-        .variant_path("power//on")
-        .sys_time(t(0))
-        .build()
-        .expect_err("should fail");
-    assert!(
-        matches!(err, EventMarkerError::EmptySegment { .. }),
-        "got {err}"
-    );
+        .expect_err("the variant path is malformed");
+    assert!(is_expected_error(&error), "got {error:?}");
+    assert_eq!(error.to_string(), expected_message);
 }
 
 #[test]
@@ -158,56 +131,6 @@ fn an_annotation_the_field_cannot_hold_is_rejected(#[case] annotation: String) {
     );
 }
 
-#[test]
-fn space_in_path_is_rejected() {
-    let err = EventMarker::builder()
-        .variant_path("power/turn on")
-        .sys_time(t(0))
-        .build()
-        .expect_err("should fail");
-    assert!(
-        matches!(err, EventMarkerError::InvalidChars { .. }),
-        "got {err}"
-    );
-}
-
-#[test]
-fn dot_in_path_is_rejected() {
-    let err = EventMarker::builder()
-        .variant_path("power/v1.2")
-        .sys_time(t(0))
-        .build()
-        .expect_err("should fail");
-    assert!(
-        matches!(err, EventMarkerError::InvalidChars { .. }),
-        "got {err}"
-    );
-}
-
-// Error messages include the offending path
-#[test]
-fn error_messages_include_path() {
-    let cases: &[(&str, &str)] = &[
-        ("", "\"\""),
-        ("/leading", "\"/leading\""),
-        ("trailing/", "\"trailing/\""),
-        ("dbl//slash", "\"dbl//slash\""),
-        ("a b", "\"a b\""),
-    ];
-    for (path, expected_fragment) in cases {
-        let err = EventMarker::builder()
-            .variant_path(*path)
-            .sys_time(t(0))
-            .build()
-            .expect_err("should fail");
-        let msg = err.to_string();
-        assert!(
-            msg.contains(expected_fragment),
-            "error for {path:?} should contain {expected_fragment}, got: {msg}"
-        );
-    }
-}
-
 // Builder - counts and round-trip
 #[test]
 fn markers_are_stored_in_nav_file() {
@@ -221,26 +144,6 @@ fn markers_are_stored_in_nav_file() {
     assert_eq!(nav_file.event_markers().len(), 2);
     assert_eq!(nav_file.event_markers()[0].variant_path, "power/on");
     assert_eq!(nav_file.event_markers()[1].variant_path, "power/off");
-}
-
-#[test]
-fn annotation_is_preserved() {
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(fix(0, 55.0, 12.0));
-    recorder.add_event_marker(
-        EventMarker::builder()
-            .variant_path("status/alert")
-            .sys_time(t(0))
-            .annotation("motor overtemp")
-            .build()
-            .unwrap(),
-    );
-
-    let nav_file = recorder.finish().unwrap();
-    assert_eq!(
-        nav_file.event_markers()[0].annotation.as_deref(),
-        Some("motor overtemp")
-    );
 }
 
 // Position interpolation

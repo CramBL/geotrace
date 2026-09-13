@@ -146,6 +146,7 @@ fn minimal() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(rt.nav_points()[0].fix.speed, None);
     assert!(rt.nav_points()[0].satellites.is_none());
     assert!(rt.markers().is_empty());
+    assert!(rt.channels().is_empty());
     Ok(())
 }
 
@@ -277,55 +278,56 @@ fn empty_builder() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn large_file() -> Result<(), Box<dyn std::error::Error>> {
+#[expect(clippy::float_cmp, reason = "round-trip exact bit preservation")]
+fn a_large_recording_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+    const FIX_COUNT: u32 = 50_000;
     let t0 = base();
-    let mut recorder = NavFileBuilder::new().open();
-
-    let tracked: Vec<_> = (0u32..12u32)
-        .map(|i| {
+    let lat_deg = |i: u32| -89.0 + f64::from(i % 178);
+    let lon_deg = |i: u32| -179.0 + f64::from(i % 358);
+    let tracked: Vec<_> = (1u32..=12)
+        .map(|prn| {
             Satellite::builder()
                 .constellation(Constellation::Gps)
-                .prn(i + 1)
+                .prn(prn)
                 .snr(30.0f32)
                 .in_fix(true)
                 .build()
         })
         .collect();
 
-    for i in 0u32..50_000 {
-        let t = t0 + Duration::seconds(i64::from(i));
+    let mut recorder = NavFileBuilder::new().open();
+    for i in 0..FIX_COUNT {
+        let time = NavFixTime::Receiver(t0 + Duration::seconds(i64::from(i)));
         recorder.add_nav_fix(
             NavFix::builder()
-                .time(NavFixTime::Receiver(t))
-                .lat(Angle::degrees(55.0))
-                .lon(Angle::degrees(12.0))
-                .heading(Angle::degrees(0.0))
+                .time(time)
+                .lat(Angle::degrees(lat_deg(i)))
+                .lon(Angle::degrees(lon_deg(i)))
                 .build(),
         );
         recorder.add_satellite_report(
             SatelliteReport::builder()
-                .time(NavFixTime::Receiver(t))
+                .time(time)
                 .tracked(tracked.clone())
                 .build(),
         );
     }
+    let rt = round_trip(&recorder.finish()?)?;
 
-    let nav_file = recorder.finish()?;
-    assert_eq!(nav_file.nav_points().len(), 50_000);
-
-    let rt = round_trip(&nav_file)?;
-    assert_eq!(rt.nav_points().len(), 50_000);
-    assert_eq!(rt.markers().len(), 0);
-
-    assert_eq!(rt.nav_points()[0].fix.gps_time(), Some(t0));
-    assert_eq!(
-        rt.nav_points()[49_999].fix.gps_time(),
-        Some(t0 + Duration::seconds(49_999))
-    );
-    let sat_rep = rt.nav_points()[0].satellites.as_ref().ok_or("missing")?;
-    assert_eq!(sat_rep.tracked.len(), 12);
-    assert_eq!(sat_rep.tracked.iter().filter(|s| s.in_fix).count(), 12);
-
+    assert_eq!(rt.nav_points().len(), usize::try_from(FIX_COUNT)?);
+    for i in [0, FIX_COUNT - 1] {
+        let point = &rt.nav_points()[usize::try_from(i)?];
+        assert_eq!(
+            point.fix.time,
+            NavFixTime::Receiver(t0 + Duration::seconds(i64::from(i)))
+        );
+        assert_eq!(point.fix.lat.as_degrees(), lat_deg(i));
+        assert_eq!(point.fix.lon.as_degrees(), lon_deg(i));
+        assert_eq!(
+            point.satellites.as_ref().map(|report| &report.tracked),
+            Some(&tracked)
+        );
+    }
     Ok(())
 }
 
@@ -461,46 +463,6 @@ fn no_travel_mode_deserialises_as_none() -> Result<(), Box<dyn std::error::Error
 }
 
 #[test]
-fn large_file_round_trip() -> Result<(), Box<dyn std::error::Error>> {
-    const N: u32 = 100_000;
-    let t0 = base();
-
-    let mut recorder = NavFileBuilder::new().with_title("large file test").open();
-    for i in 0..N {
-        let t = t0 + Duration::seconds(i as i64);
-        let lat = -89.0 + (i as f64 % 178.0);
-        let lon = -179.0 + (i as f64 % 358.0);
-        recorder.add_nav_fix(
-            NavFix::builder()
-                .time(NavFixTime::Receiver(t))
-                .lat(Angle::degrees(lat))
-                .lon(Angle::degrees(lon))
-                .build(),
-        );
-    }
-    let nav_file = recorder.finish()?;
-
-    assert_eq!(nav_file.nav_points().len(), N as usize);
-
-    let rt = round_trip(&nav_file)?;
-
-    assert_eq!(rt.nav_points().len(), N as usize);
-
-    let first = &rt.nav_points()[0];
-    let last = &rt.nav_points()[(N - 1) as usize];
-
-    assert!((first.fix.lat.as_degrees() - (-89.0)).abs() < 1e-9);
-    assert!((first.fix.lon.as_degrees() - (-179.0)).abs() < 1e-9);
-
-    let last_lat = -89.0 + ((N - 1) as f64 % 178.0);
-    let last_lon = -179.0 + ((N - 1) as f64 % 358.0);
-    assert!((last.fix.lat.as_degrees() - last_lat).abs() < 1e-9);
-    assert!((last.fix.lon.as_degrees() - last_lon).abs() < 1e-9);
-
-    Ok(())
-}
-
-#[test]
 fn channels_round_trip() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = base();
     let t1 = t0 + Duration::milliseconds(100);
@@ -566,47 +528,6 @@ fn channels_round_trip() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn a_file_without_channels_still_reads() -> Result<(), Box<dyn std::error::Error>> {
-    // The channels group is absent, so there are simply none.
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(
-        NavFix::builder()
-            .time(NavFixTime::Receiver(base()))
-            .lat(Angle::degrees(0.0))
-            .lon(Angle::degrees(0.0))
-            .build(),
-    );
-    let rt = round_trip(&recorder.finish()?)?;
-    assert!(rt.channels().is_empty());
-    Ok(())
-}
-
-#[test]
-fn a_channel_name_must_be_a_lowercase_identifier() {
-    // Uppercase, a space, an empty name, and a leading digit are all rejected.
-    // A plain lowercase identifier is accepted.
-    for bad in ["Accel Fwd", "accel-fwd", "", "1accel", "Accel"] {
-        assert!(
-            matches!(
-                Channel::builder()
-                    .name(bad)
-                    .times(vec![base()])
-                    .values(vec![1.0])
-                    .build(),
-                Err(geotrace_sdk::ChannelError::InvalidName { .. })
-            ),
-            "expected {bad:?} to be rejected"
-        );
-    }
-    Channel::builder()
-        .name("accel_fwd2")
-        .times(vec![base()])
-        .values(vec![1.0])
-        .build()
-        .expect("a lowercase identifier with digits and underscores is valid");
-}
-
-#[test]
 fn a_bare_channel_round_trips_with_no_optional_fields() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = base();
     let mut recorder = NavFileBuilder::new().open();
@@ -646,53 +567,6 @@ fn an_empty_channel_round_trips() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn an_invalid_custom_unit_is_rejected() {
-    assert!(matches!(
-        ChannelUnit::custom("   "),
-        Err(geotrace_sdk::UnitParseError::EmptyCustom)
-    ));
-}
-
-#[test]
-fn legacy_invalid_unit_metadata_cannot_be_new_writer_input() {
-    let result = Channel::builder()
-        .name("legacy")
-        .unit(ChannelUnit::from_file_label("bad\nunit"))
-        .times(vec![base()])
-        .values(vec![1.0])
-        .build();
-
-    assert!(matches!(
-        result,
-        Err(geotrace_sdk::ChannelError::UnwritableUnit { .. })
-    ));
-}
-
-#[test]
-fn channel_period_requires_a_positive_angular_unit() {
-    let build = |unit: Option<ChannelUnit>, period: Option<Angle>| {
-        Channel::builder()
-            .name("bearing")
-            .maybe_unit(unit)
-            .maybe_period(period)
-            .times(vec![base()])
-            .values(vec![10.0])
-            .build()
-    };
-
-    assert!(matches!(
-        build(Some(Unit::G.into()), Some(Angle::degrees(360.0))),
-        Err(geotrace_sdk::ChannelError::PeriodNeedsAngularUnit { .. })
-    ));
-    assert!(matches!(
-        build(Some(Unit::DEG.into()), Some(Angle::degrees(0.0))),
-        Err(geotrace_sdk::ChannelError::InvalidPeriod { .. })
-    ));
-    build(Some(Unit::DEG.into()), Some(Angle::degrees(360.0)))
-        .expect("positive angular period is valid");
-}
-
-#[test]
 fn a_custom_unit_round_trips_without_scaling_metadata() -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_channel(
@@ -712,43 +586,6 @@ fn a_custom_unit_round_trips_without_scaling_metadata() -> Result<(), Box<dyn st
     assert_eq!(unit.map(ToString::to_string).as_deref(), Some("rpm"));
     assert_eq!(round_tripped.channels()[0].values(), [1200.0]);
     Ok(())
-}
-
-#[test]
-fn duplicate_channel_names_are_rejected() {
-    let mut recorder = NavFileBuilder::new().open();
-    for value in [1.0, 2.0] {
-        recorder.add_channel(
-            Channel::builder()
-                .name("accel")
-                .times(vec![base()])
-                .values(vec![value])
-                .build()
-                .expect("valid channel"),
-        );
-    }
-    assert!(matches!(
-        recorder.finish(),
-        Err(geotrace_sdk::BuildError::DuplicateChannelName { name }) if name == "accel"
-    ));
-}
-
-#[test]
-fn a_channel_rejects_mismatched_lengths() {
-    let err = Channel::builder()
-        .name("accel")
-        .times(vec![base()])
-        .values(vec![1.0, 2.0])
-        .build()
-        .expect_err("two values but one timestamp");
-    assert!(matches!(
-        err,
-        geotrace_sdk::ChannelError::LengthMismatch {
-            expected: 1,
-            actual: 2,
-            ..
-        }
-    ));
 }
 
 #[test]
@@ -784,55 +621,6 @@ fn a_vector_channel_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     // The whole file round-trips by value, components and all.
     assert_eq!(rt, nav_file);
     Ok(())
-}
-
-#[test]
-fn vector_channel_validation() {
-    let t = vec![base()];
-    // Empty component list.
-    assert!(matches!(
-        Channel::builder()
-            .name("v")
-            .components(Vec::<String>::new())
-            .times(t.clone())
-            .values(vec![1.0])
-            .build(),
-        Err(geotrace_sdk::ChannelError::EmptyComponents { .. })
-    ));
-    // A component label that is not an identifier.
-    assert!(matches!(
-        Channel::builder()
-            .name("v")
-            .components(["x", "Y"])
-            .times(t.clone())
-            .values(vec![1.0, 2.0])
-            .build(),
-        Err(geotrace_sdk::ChannelError::InvalidComponent { .. })
-    ));
-    // A repeated component label.
-    assert!(matches!(
-        Channel::builder()
-            .name("v")
-            .components(["x", "x"])
-            .times(t.clone())
-            .values(vec![1.0, 2.0])
-            .build(),
-        Err(geotrace_sdk::ChannelError::DuplicateComponent { .. })
-    ));
-    // Values are not times × components long (1 sample × 3 components = 3).
-    assert!(matches!(
-        Channel::builder()
-            .name("v")
-            .components(["x", "y", "z"])
-            .times(t)
-            .values(vec![1.0, 2.0])
-            .build(),
-        Err(geotrace_sdk::ChannelError::LengthMismatch {
-            expected: 3,
-            actual: 2,
-            ..
-        })
-    ));
 }
 
 #[test]

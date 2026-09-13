@@ -1561,10 +1561,10 @@ pub(crate) fn opt_datetime_to_u64(
 }
 
 #[cfg(test)]
-mod validation_tests {
+mod tests {
+    use rstest::rstest;
+
     use super::*;
-    use crate::types::{Constellation, Satellite};
-    use chrono::DateTime;
 
     /// `to_records` drives off a table with one row per `SatelliteIssues` field.
     /// Setting every field non-zero must surface exactly one record per field:
@@ -1596,14 +1596,10 @@ mod validation_tests {
         assert!(records.iter().all(|r| r.count == 1));
     }
 
-    fn gps_time() -> DateTime<Utc> {
-        DateTime::from_timestamp(1_748_000_000, 0).expect("valid")
-    }
-
-    fn report(sats: Vec<Satellite>) -> InternalSatReport {
+    fn report(tracked: Vec<Satellite>) -> InternalSatReport {
         InternalSatReport {
-            time: NavFixTime::Receiver(gps_time()),
-            tracked: sats,
+            time: NavFixTime::Receiver(DateTime::from_timestamp(1_748_000_000, 0).expect("valid")),
+            tracked,
         }
     }
 
@@ -1611,30 +1607,6 @@ mod validation_tests {
         Satellite::builder()
             .constellation(constellation)
             .prn(prn)
-            .build()
-    }
-
-    fn sat_el(constellation: Constellation, prn: u32, elevation: f32) -> Satellite {
-        Satellite::builder()
-            .constellation(constellation)
-            .prn(prn)
-            .elevation(elevation)
-            .build()
-    }
-
-    fn sat_az(constellation: Constellation, prn: u32, azimuth: f32) -> Satellite {
-        Satellite::builder()
-            .constellation(constellation)
-            .prn(prn)
-            .azimuth(azimuth)
-            .build()
-    }
-
-    fn sat_snr(constellation: Constellation, prn: u32, snr: f32) -> Satellite {
-        Satellite::builder()
-            .constellation(constellation)
-            .prn(prn)
-            .snr(snr)
             .build()
     }
 
@@ -1649,6 +1621,10 @@ mod validation_tests {
             sat(Constellation::Galileo, 36),
             sat(Constellation::Beidou, 1),
             sat(Constellation::Beidou, 63),
+            sat(Constellation::Navic, 1),
+            sat(Constellation::Navic, 14),
+            sat(Constellation::Qzss, 1),
+            sat(Constellation::Qzss, 10),
         ])];
         assert_eq!(
             collect_satellite_issues(&reports),
@@ -1656,143 +1632,104 @@ mod validation_tests {
         );
     }
 
-    #[test]
-    fn prn_zero_detected() {
-        let reports = vec![report(vec![sat(Constellation::Gps, 0)])];
-        let issues = collect_satellite_issues(&reports);
-        assert_eq!(issues.prn_zero, 1);
-    }
-
-    #[test]
-    fn gps_sbas_range_prn_33_to_64() {
-        let reports = vec![report(vec![
-            sat(Constellation::Gps, 33),
-            sat(Constellation::Gps, 64),
-        ])];
-        let issues = collect_satellite_issues(&reports);
-        assert_eq!(issues.gps_sbas_range, 2);
-        assert_eq!(issues.gps_out_of_range, 0);
-    }
-
-    #[test]
-    fn gps_prn_above_64_is_out_of_range() {
-        let reports = vec![report(vec![sat(Constellation::Gps, 65)])];
-        let issues = collect_satellite_issues(&reports);
-        assert_eq!(issues.gps_out_of_range, 1);
-        assert_eq!(issues.gps_sbas_range, 0);
-    }
-
-    #[test]
-    fn glonass_offset_range_65_to_96() {
-        let reports = vec![report(vec![
-            sat(Constellation::Glonass, 65),
-            sat(Constellation::Glonass, 96),
-        ])];
-        let issues = collect_satellite_issues(&reports);
-        assert_eq!(issues.glo_offset_range, 2);
-        assert_eq!(issues.glo_out_of_range, 0);
-    }
-
-    #[test]
-    fn glonass_prn_33_to_64_is_out_of_range() {
-        let reports = vec![report(vec![sat(Constellation::Glonass, 33)])];
-        let issues = collect_satellite_issues(&reports);
-        assert_eq!(issues.glo_out_of_range, 1);
-        assert_eq!(issues.glo_offset_range, 0);
-    }
-
-    #[test]
-    fn galileo_prn_above_36_is_out_of_range() {
-        let reports = vec![report(vec![sat(Constellation::Galileo, 37)])];
-        let issues = collect_satellite_issues(&reports);
-        assert_eq!(issues.gal_out_of_range, 1);
-    }
-
-    #[test]
-    fn beidou_prn_above_63_is_out_of_range() {
-        let reports = vec![report(vec![sat(Constellation::Beidou, 64)])];
-        let issues = collect_satellite_issues(&reports);
-        assert_eq!(issues.bds_out_of_range, 1);
-    }
-
-    #[test]
-    fn negative_elevation_detected() {
-        let reports = vec![report(vec![sat_el(Constellation::Gps, 1, -1.0)])];
-        let issues = collect_satellite_issues(&reports);
-        assert_eq!(issues.elevation_negative, 1);
-    }
-
-    #[test]
-    fn elevation_above_90_detected() {
-        let reports = vec![report(vec![sat_el(Constellation::Gps, 1, 91.0)])];
-        let issues = collect_satellite_issues(&reports);
-        assert_eq!(issues.elevation_above_90, 1);
-    }
-
-    #[test]
-    fn azimuth_out_of_range_detected() {
-        let reports = vec![report(vec![
-            sat_az(Constellation::Gps, 1, -1.0),
-            sat_az(Constellation::Gps, 2, 360.0),
-        ])];
-        let issues = collect_satellite_issues(&reports);
-        assert_eq!(issues.azimuth_out_of_range, 2);
+    #[rstest]
+    #[case::prn_0_skips_the_constellation_range_check(
+        vec![sat(Constellation::Glonass, 0)],
+        SatelliteIssues { prn_zero: 1, ..SatelliteIssues::default() },
+    )]
+    #[case::gps_prn_33_to_64_is_the_sbas_range(
+        vec![sat(Constellation::Gps, 33), sat(Constellation::Gps, 64)],
+        SatelliteIssues { gps_sbas_range: 2, ..SatelliteIssues::default() },
+    )]
+    #[case::gps_prn_above_64_is_out_of_range(
+        vec![sat(Constellation::Gps, 65)],
+        SatelliteIssues { gps_out_of_range: 1, ..SatelliteIssues::default() },
+    )]
+    #[case::glonass_prn_65_to_96_is_the_gngsv_offset_range(
+        vec![sat(Constellation::Glonass, 65), sat(Constellation::Glonass, 96)],
+        SatelliteIssues { glo_offset_range: 2, ..SatelliteIssues::default() },
+    )]
+    #[case::glonass_prn_33_to_64_is_out_of_range(
+        vec![sat(Constellation::Glonass, 33)],
+        SatelliteIssues { glo_out_of_range: 1, ..SatelliteIssues::default() },
+    )]
+    #[case::galileo_prn_above_36_is_out_of_range(
+        vec![sat(Constellation::Galileo, 37)],
+        SatelliteIssues { gal_out_of_range: 1, ..SatelliteIssues::default() },
+    )]
+    #[case::beidou_prn_above_63_is_out_of_range(
+        vec![sat(Constellation::Beidou, 64)],
+        SatelliteIssues { bds_out_of_range: 1, ..SatelliteIssues::default() },
+    )]
+    #[case::navic_prn_above_14_is_out_of_range(
+        vec![sat(Constellation::Navic, 15)],
+        SatelliteIssues { navic_out_of_range: 1, ..SatelliteIssues::default() },
+    )]
+    #[case::qzss_prn_above_10_is_out_of_range(
+        vec![sat(Constellation::Qzss, 11)],
+        SatelliteIssues { qzss_out_of_range: 1, ..SatelliteIssues::default() },
+    )]
+    #[case::elevation_below_the_horizon(
+        vec![Satellite { elevation: Some(-1.0), ..sat(Constellation::Gps, 1) }],
+        SatelliteIssues { elevation_negative: 1, ..SatelliteIssues::default() },
+    )]
+    #[case::elevation_above_the_zenith(
+        vec![Satellite { elevation: Some(91.0), ..sat(Constellation::Gps, 1) }],
+        SatelliteIssues { elevation_above_90: 1, ..SatelliteIssues::default() },
+    )]
+    #[case::azimuth_below_0_and_at_360(
+        vec![
+            Satellite { azimuth: Some(-1.0), ..sat(Constellation::Gps, 1) },
+            Satellite { azimuth: Some(360.0), ..sat(Constellation::Gps, 2) },
+        ],
+        SatelliteIssues { azimuth_out_of_range: 2, ..SatelliteIssues::default() },
+    )]
+    #[case::snr_at_the_99_no_data_value(
+        vec![Satellite { snr: Some(99.0), ..sat(Constellation::Gps, 1) }],
+        SatelliteIssues { snr_sentinel_99: 1, ..SatelliteIssues::default() },
+    )]
+    #[case::snr_above_60(
+        vec![Satellite { snr: Some(70.0), ..sat(Constellation::Gps, 1) }],
+        SatelliteIssues { snr_above_60: 1, ..SatelliteIssues::default() },
+    )]
+    #[case::snr_below_0(
+        vec![Satellite { snr: Some(-1.0), ..sat(Constellation::Gps, 1) }],
+        SatelliteIssues { snr_negative: 1, ..SatelliteIssues::default() },
+    )]
+    #[case::a_prn_twice_two_rows_apart(
+        vec![sat(Constellation::Gps, 5), sat(Constellation::Gps, 12), sat(Constellation::Gps, 5)],
+        SatelliteIssues { reports_with_duplicate_prn: 1, ..SatelliteIssues::default() },
+    )]
+    #[case::a_prn_three_times_counts_the_report_once(
+        vec![sat(Constellation::Gps, 1), sat(Constellation::Gps, 1), sat(Constellation::Gps, 1)],
+        SatelliteIssues { reports_with_duplicate_prn: 1, ..SatelliteIssues::default() },
+    )]
+    fn each_issue_is_counted_in_its_own_field(
+        #[case] tracked: Vec<Satellite>,
+        #[case] expected_issues: SatelliteIssues,
+    ) {
+        assert_eq!(
+            collect_satellite_issues(&[report(tracked)]),
+            expected_issues
+        );
     }
 
     #[test]
     fn azimuth_boundary_values_are_valid() {
         let reports = vec![report(vec![
-            sat_az(Constellation::Gps, 1, 0.0),
-            sat_az(Constellation::Gps, 2, 359.9),
+            Satellite {
+                azimuth: Some(0.0),
+                ..sat(Constellation::Gps, 1)
+            },
+            Satellite {
+                azimuth: Some(359.9),
+                ..sat(Constellation::Gps, 2)
+            },
         ])];
         assert_eq!(
             collect_satellite_issues(&reports),
             SatelliteIssues::default()
         );
-    }
-
-    #[test]
-    fn snr_sentinel_99_detected() {
-        let reports = vec![report(vec![sat_snr(Constellation::Gps, 1, 99.0)])];
-        let issues = collect_satellite_issues(&reports);
-        assert_eq!(issues.snr_sentinel_99, 1);
-        assert_eq!(issues.snr_above_60, 0);
-    }
-
-    #[test]
-    fn snr_above_60_but_not_sentinel_detected() {
-        let reports = vec![report(vec![sat_snr(Constellation::Gps, 1, 70.0)])];
-        let issues = collect_satellite_issues(&reports);
-        assert_eq!(issues.snr_above_60, 1);
-        assert_eq!(issues.snr_sentinel_99, 0);
-    }
-
-    #[test]
-    fn snr_negative_detected() {
-        let reports = vec![report(vec![sat_snr(Constellation::Gps, 1, -1.0)])];
-        let issues = collect_satellite_issues(&reports);
-        assert_eq!(issues.snr_negative, 1);
-    }
-
-    #[test]
-    fn duplicate_prn_in_same_report_detected() {
-        let reports = vec![report(vec![
-            sat(Constellation::Gps, 5),
-            sat(Constellation::Gps, 5),
-        ])];
-        let issues = collect_satellite_issues(&reports);
-        assert_eq!(issues.reports_with_duplicate_prn, 1);
-    }
-
-    #[test]
-    fn duplicate_prn_detected_when_the_two_rows_are_not_adjacent() {
-        let reports = vec![report(vec![
-            sat(Constellation::Gps, 5),
-            sat(Constellation::Gps, 12),
-            sat(Constellation::Gps, 5),
-        ])];
-        let issues = collect_satellite_issues(&reports);
-        assert_eq!(issues.reports_with_duplicate_prn, 1);
     }
 
     #[test]
@@ -1808,17 +1745,6 @@ mod validation_tests {
     }
 
     #[test]
-    fn duplicate_counted_once_per_report_not_per_satellite() {
-        let reports = vec![report(vec![
-            sat(Constellation::Gps, 1),
-            sat(Constellation::Gps, 1),
-            sat(Constellation::Gps, 1),
-        ])];
-        let issues = collect_satellite_issues(&reports);
-        assert_eq!(issues.reports_with_duplicate_prn, 1);
-    }
-
-    #[test]
     fn issues_aggregated_across_multiple_reports() {
         let reports = vec![
             report(vec![sat(Constellation::Gps, 0)]),
@@ -1827,13 +1753,5 @@ mod validation_tests {
         ];
         let issues = collect_satellite_issues(&reports);
         assert_eq!(issues.prn_zero, 3);
-    }
-
-    #[test]
-    fn prn_zero_skips_range_check() {
-        let reports = vec![report(vec![sat(Constellation::Glonass, 0)])];
-        let issues = collect_satellite_issues(&reports);
-        assert_eq!(issues.prn_zero, 1);
-        assert_eq!(issues.glo_out_of_range, 0);
     }
 }
