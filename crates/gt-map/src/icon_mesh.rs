@@ -27,6 +27,17 @@ pub(crate) const ICON_HALF_EXTENT_LARGE_PT: f32 = 12.0;
 /// 18x24 pt rect whose tip sits one y-half-extent below the instance center.
 pub(crate) const PIN_HALF_EXTENTS_PT: Vec2 = Vec2::new(9.0, 12.0);
 
+/// Half extents in points of [IconId::StartFlag] and [IconId::FinishFlag] at
+/// their normal size: an aspect-true 18x24 pt rect.
+pub(crate) const FLAG_HALF_EXTENTS_PT: Vec2 = Vec2::new(9.0, 12.0);
+
+/// Offset from a fix to the center of a flag instance of
+/// [FLAG_HALF_EXTENTS_PT], which puts the pole's foot on the fix and the
+/// cloth above the track line. Both flag assets stand the pole at x=2 of
+/// their 18x24 viewbox, its foot on the bottom edge. An instance drawn larger
+/// scales this offset by the same factor, which keeps the foot on the fix.
+pub(crate) const FLAG_ANCHOR_OFFSET_PT: Vec2 = Vec2::new(7.0, -FLAG_HALF_EXTENTS_PT.y);
+
 /// The half extent a [MarkerIcon] is drawn with when rendered as a square
 /// icon: satellites and the warning triangle get the larger size.
 pub(crate) fn marker_icon_half_extent(icon: MarkerIcon) -> f32 {
@@ -74,6 +85,7 @@ pub enum IconId {
     Cross,
     Download,
     Error,
+    FinishFlag,
     Gear,
     GhostFix,
     Hexagon,
@@ -83,6 +95,7 @@ pub enum IconId {
     Refresh,
     Satellite,
     SatelliteLost,
+    StartFlag,
     Upload,
     Warning,
     Wrench,
@@ -138,6 +151,7 @@ pub struct IconMeshLibrary {
     cross: IconTessellation,
     download: IconTessellation,
     error: IconTessellation,
+    finish_flag: IconTessellation,
     gear: IconTessellation,
     ghost_fix: IconTessellation,
     hexagon: IconTessellation,
@@ -147,6 +161,7 @@ pub struct IconMeshLibrary {
     refresh: IconTessellation,
     satellite: IconTessellation,
     satellite_lost: IconTessellation,
+    start_flag: IconTessellation,
     upload: IconTessellation,
     warning: IconTessellation,
     wrench: IconTessellation,
@@ -185,6 +200,7 @@ impl IconMeshLibrary {
             cross: take(IconId::Cross)?,
             download: take(IconId::Download)?,
             error: take(IconId::Error)?,
+            finish_flag: take(IconId::FinishFlag)?,
             gear: take(IconId::Gear)?,
             ghost_fix: take(IconId::GhostFix)?,
             hexagon: take(IconId::Hexagon)?,
@@ -194,6 +210,7 @@ impl IconMeshLibrary {
             refresh: take(IconId::Refresh)?,
             satellite: take(IconId::Satellite)?,
             satellite_lost: take(IconId::SatelliteLost)?,
+            start_flag: take(IconId::StartFlag)?,
             upload: take(IconId::Upload)?,
             warning: take(IconId::Warning)?,
             wrench: take(IconId::Wrench)?,
@@ -208,6 +225,7 @@ impl IconMeshLibrary {
             IconId::Cross => &self.cross,
             IconId::Download => &self.download,
             IconId::Error => &self.error,
+            IconId::FinishFlag => &self.finish_flag,
             IconId::Gear => &self.gear,
             IconId::GhostFix => &self.ghost_fix,
             IconId::Hexagon => &self.hexagon,
@@ -217,6 +235,7 @@ impl IconMeshLibrary {
             IconId::Refresh => &self.refresh,
             IconId::Satellite => &self.satellite,
             IconId::SatelliteLost => &self.satellite_lost,
+            IconId::StartFlag => &self.start_flag,
             IconId::Upload => &self.upload,
             IconId::Warning => &self.warning,
             IconId::Wrench => &self.wrench,
@@ -263,6 +282,7 @@ mod tests {
             (IconId::Cross, "cross"),
             (IconId::Download, "download"),
             (IconId::Error, "error"),
+            (IconId::FinishFlag, "finish_flag"),
             (IconId::Gear, "gear"),
             (IconId::GhostFix, "ghost_fix"),
             (IconId::Hexagon, "hexagon"),
@@ -272,6 +292,7 @@ mod tests {
             (IconId::Refresh, "refresh"),
             (IconId::Satellite, "satellite"),
             (IconId::SatelliteLost, "satellite_lost"),
+            (IconId::StartFlag, "start_flag"),
             (IconId::Upload, "upload"),
             (IconId::Warning, "warning"),
             (IconId::Wrench, "wrench"),

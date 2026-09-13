@@ -120,6 +120,13 @@ pub const ERROR: ThemedColor = ThemedColor::new(ERROR_INDICATOR, Color32::from_r
 /// button in the update prompt.
 pub const SUCCESS_GREEN: Color32 = Color32::from_rgb(46, 160, 67);
 
+/// The cloth of the flag the map draws at the first fix of a track, whether
+/// or not that track is highlighted. The light variant is a deeper green than
+/// [`SUCCESS_GREEN`]: this flag draws over the map's tiles, not the app's
+/// panels.
+pub const TRACK_START_FLAG: ThemedColor =
+    ThemedColor::new(SUCCESS_GREEN, Color32::from_rgb(20, 105, 42));
+
 /// Background colour for a hovered map element.
 ///
 /// Pass `ui.visuals().dark_mode`.

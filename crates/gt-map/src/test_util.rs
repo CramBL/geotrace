@@ -32,10 +32,10 @@ use gt_types::{
 };
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, DrawLayer, EventMarkerVisibility,
-    GeneratedMarkerVisibility, LoadedLogId, LogMatch, LogMatchColor, LogMatchGlyph, LogMatchHover,
-    LogMatchLayer, LogMatchSource, LogMatches, MapHighlight, MatchRevealTarget, PointWindowFolds,
-    QueryMatches, SkyGlyphVariant, SnappedEdgeInfo, SnappedEdgeSpan, SnappedSegment,
-    SnappedTrackGeometry, SnappedTracks, TrackDataVisibility, TrackRanges,
+    GeneratedMarkerVisibility, HighlightScope, LoadedLogId, LogMatch, LogMatchColor, LogMatchGlyph,
+    LogMatchHover, LogMatchLayer, LogMatchSource, LogMatches, MapHighlight, MatchRevealTarget,
+    PointWindowFolds, QueryMatches, SkyGlyphVariant, SnappedEdgeInfo, SnappedEdgeSpan,
+    SnappedSegment, SnappedTrackGeometry, SnappedTracks, TrackDataVisibility, TrackRanges,
     TrackSpaceWeatherWarning, WarningLevelExplanation,
 };
 use uom::si::f64::Length;
@@ -582,6 +582,16 @@ pub struct RenderedMap {
 impl RenderedMap {
     /// Renders one more frame, with the pointer where the last one left it.
     pub fn render_one_more_frame(&mut self) {
+        self.harness.step();
+    }
+
+    /// Publishes `scope` as the hover, the way the side panel publishes the
+    /// row the pointer is on, and renders one more frame.
+    ///
+    /// The scope lasts that frame: the map writes its own pointer hover back
+    /// at the end of every draw.
+    pub fn render_one_more_frame_hovering(&mut self, scope: HighlightScope) {
+        self.draw_state().highlight.hover = Some(scope);
         self.harness.step();
     }
 

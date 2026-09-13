@@ -5,6 +5,7 @@
 ### Added
 
 - **Interface:** The file dialog offers an "All files" filter, which shows every file, including a log with no file extension.
+- **Map & Tracks:** The map draws a green flag at the start of every track and a chequered flag at its end, larger and outlined when the track is highlighted.
 
 ### Changed
 

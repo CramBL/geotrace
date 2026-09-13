@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 24">
+  <!-- Finish flag: the same pole and cloth as start_flag.svg, with a 4 by 3
+       chequerboard of 3.5-unit cells baked into the cloth. The dark cells are
+       near-black rather than black, to match the app's dark surfaces.
+       Pale cells that meet at a corner go in separate paths: two cells of one
+       path meeting at a corner would leave the tessellated mesh non-manifold,
+       and the mesh bake cannot build an anti-alias fringe there. The top and
+       the bottom row share a path, since they stand one row apart.
+       The cloth keeps the colours baked here: the renderer sets the primary
+       tint to white. The pole and the cloth's outline take the secondary tint
+       under id="tint2" (see gt-icon-tessellate). -->
+  <path d="M 2 2 H 16 V 12.5 H 2 Z" fill="#0F1114"/>
+  <path d="M 5.5 2 H 9 V 5.5 H 5.5 Z M 12.5 2 H 16 V 5.5 H 12.5 Z
+           M 5.5 9 H 9 V 12.5 H 5.5 Z M 12.5 9 H 16 V 12.5 H 12.5 Z" fill="white"/>
+  <path d="M 2 5.5 H 5.5 V 9 H 2 Z M 9 5.5 H 12.5 V 9 H 9 Z" fill="white"/>
+  <path id="tint2" d="M 2 2 V 24" fill="none" stroke="white" stroke-width="2"/>
+  <path id="tint2" d="M 2 2 H 16 V 12.5 H 2 Z" fill="none" stroke="white"
+        stroke-width="1" stroke-linejoin="miter"/>
+</svg>

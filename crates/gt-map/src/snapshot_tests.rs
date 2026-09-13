@@ -1540,3 +1540,80 @@ fn the_sticky_popup_fits_every_viewport(
             egui::Id::new(("sticky_popup", clicked)),
         ));
 }
+
+/// Snapshot: the flags at a track's ends. Every drawn track shows a green flag
+/// at its first fix and a chequered flag at its last. The highlighted track
+/// draws them at twice the size with a highlight-blue pole and cloth outline,
+/// which is why both themes are covered for that case.
+#[rstest::rstest]
+#[case::unhighlighted("track_endpoint_flags", true, false)]
+#[case::highlighted_dark("track_endpoint_flags_highlighted_dark", true, true)]
+#[case::highlighted_light("track_endpoint_flags_highlighted_light", false, true)]
+fn snap_track_endpoint_flags(
+    #[case] name: &str,
+    #[case] dark_mode: bool,
+    #[case] highlighted: bool,
+) {
+    let files = test_util::a_recording_of(30, test_util::WALKING_STEP_DEGREES);
+
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .theme(dark_mode)
+        .render();
+    if highlighted {
+        map.render_one_more_frame_hovering(gt_ui_types::HighlightScope::Track(test_util::track0()));
+    }
+    map.snapshot(name);
+}
+
+/// Snapshot: a highlighted track zoomed out until every fix icon has given
+/// way to the quality line. Both flags stand at its ends, which is the zoom a
+/// recording opened from history is framed at.
+#[test]
+fn snap_track_endpoint_flags_with_the_fix_icons_faded_out() {
+    let files = test_util::a_recording_of(30, test_util::WALKING_STEP_DEGREES);
+
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .zoomed_to(ZOOM_BELOW_THE_ICON_FADE_BAND)
+        .render();
+    map.render_one_more_frame_hovering(gt_ui_types::HighlightScope::Track(test_util::track0()));
+    map.snapshot("track_endpoint_flags_icons_faded_out");
+}
+
+/// The map scale at which the walking track's fixes sit closer together than
+/// the fade band's floor, so every fix icon is fully transparent.
+const ZOOM_BELOW_THE_ICON_FADE_BAND: f64 = 10.0;
+
+/// Snapshot: a track zoomed out until its whole line packs below one pixel,
+/// which the map draws as a dot. One start flag stands there, where two flags
+/// would cover each other.
+#[test]
+fn snap_track_endpoint_flags_on_a_track_drawn_as_one_dot() {
+    let files = test_util::a_recording_of(30, test_util::WALKING_STEP_DEGREES);
+
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .zoomed_to(ZOOM_THAT_COLLAPSES_THE_TRACK)
+        .render();
+    map.render_one_more_frame_hovering(gt_ui_types::HighlightScope::Track(test_util::track0()));
+    map.snapshot("track_endpoint_flags_on_a_dot");
+}
+
+/// The map scale at which the walking track's whole 1.9 km span is under one
+/// pixel wide.
+const ZOOM_THAT_COLLAPSES_THE_TRACK: f64 = 5.0;
+
+/// Snapshot: a highlighted track whose time window keeps one fix shows the
+/// start flag at that fix, and no finish flag.
+#[test]
+fn snap_track_endpoint_flags_with_one_fix_in_the_window() {
+    let files = test_util::a_recording_of(30, test_util::WALKING_STEP_DEGREES);
+
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .draw_state(|state| state.filter = test_util::window_ending_at(0))
+        .render();
+    map.render_one_more_frame_hovering(gt_ui_types::HighlightScope::Track(test_util::track0()));
+    map.snapshot("track_endpoint_flags_one_fix_window");
+}
