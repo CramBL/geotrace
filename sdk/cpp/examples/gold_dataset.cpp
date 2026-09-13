@@ -217,12 +217,12 @@ void load_fixes(geotrace::FileBuilder &builder, const fs::path &base,
         if (line.empty()) {
             continue;
         }
-        auto fields = split_csv_fields<8>(line);
+        auto fields = split_csv_fields<9>(line);
         if (!fields) {
             continue;
         }
         [[maybe_unused]] const auto &[track_id, gps_time, sys_time, lat, lon, heading_deg,
-                                      speed_kmh, eph_m] = *fields;
+                                      speed_kmh, eph_m, speed_knots] = *fields;
 
         geotrace::RecordedFixTimestamps recorded{};
         recorded.gps_time = parse_timestamp_or_absent(gps_time);
@@ -231,13 +231,24 @@ void load_fixes(geotrace::FileBuilder &builder, const fs::path &base,
 
         auto hdg = parse_opt_double(heading_deg);
         auto kmh = parse_opt_double(speed_kmh);
+        auto knots = parse_opt_double(speed_knots);
+        if (kmh && knots) {
+            throw geotrace::IoError("fixes.csv row " + line +
+                                    " has a speed in both speed_kmh and speed_knots");
+        }
+        std::optional<geotrace::Velocity> speed;
+        if (kmh) {
+            speed = geotrace::Velocity::kmh(*kmh);
+        } else if (knots) {
+            speed = geotrace::Velocity::knots(*knots);
+        }
 
         builder.add(geotrace::NavFix{
             time,
             geotrace::Angle::degrees(required_double(lat)),
             geotrace::Angle::degrees(required_double(lon)),
             hdg ? std::optional{geotrace::Angle::degrees(*hdg)} : std::nullopt,
-            kmh ? std::optional{geotrace::Velocity::kmh(*kmh)} : std::nullopt,
+            speed,
             parse_opt_double(eph_m),
         });
 
@@ -391,8 +402,8 @@ void verify_counts(const geotrace::NavFile &file) {
     check(file.travel_mode() == "bicycle", "travel mode wrong");
 
     auto nav_points = file.nav_point_count();
-    if (nav_points != 205) {
-        throw std::runtime_error("expected 205 nav points, got " + std::to_string(nav_points));
+    if (nav_points != 210) {
+        throw std::runtime_error("expected 210 nav points, got " + std::to_string(nav_points));
     }
 
     std::size_t anti = 0;
@@ -453,7 +464,7 @@ int main(int argc, char **argv) {
         verify_counts(nav);
 
         std::cout << "Written: " << out << "\n";
-        std::cout << "Gold dataset verified. Nav points: 205, Event markers: 7, Channels: 2\n";
+        std::cout << "Gold dataset verified. Nav points: 210, Event markers: 7, Channels: 2\n";
     } catch (const std::exception &e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;

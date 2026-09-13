@@ -32,6 +32,29 @@ def marker_icon_from_name(name: str) -> MarkerIcon:
     """
     ...
 
+def mps_from_kmh(kmh: float) -> float:
+    """Convert a speed in km/h to m/s, the unit :attr:`NavFix.speed_mps` takes.
+
+    Every SDK converts ``kmh`` to the same float. ``kmh / 3.6`` differs from it
+    in the last place for some values, 23.2 among them.
+    """
+    ...
+
+def mps_from_knots(knots: float) -> float:
+    """Convert a speed in knots to m/s, the unit :attr:`NavFix.speed_mps` takes.
+
+    Every SDK converts ``knots`` to the same float.
+    """
+    ...
+
+def kmh_from_mps(mps: float) -> float:
+    """Convert a speed in m/s to km/h."""
+    ...
+
+def knots_from_mps(mps: float) -> float:
+    """Convert a speed in m/s to knots."""
+    ...
+
 @final
 class Satellite:
     """One tracked satellite with optional signal metrics.

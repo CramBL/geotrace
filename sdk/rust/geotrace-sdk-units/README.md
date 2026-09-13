@@ -1,6 +1,7 @@
 # geotrace-sdk-units
 
 Canonical channel units shared by the GeoTrace file SDK and query engine, with the SNR conventions of the `.gtd` format in the `snr` module.
+`MPS_PER_KMH` and `MPS_PER_KNOT` are the factors the SDKs convert speeds with.
 
 A channel declares an optional `ChannelUnit`, which is one of three kinds:
 

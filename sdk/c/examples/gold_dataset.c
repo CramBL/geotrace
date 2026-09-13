@@ -244,8 +244,32 @@ static size_t take_satellites_at(SatelliteTimeKey key, GtdSatellite *out, size_t
     return count;
 }
 
+/* A fix row has its speed in `speed_kmh` (column 6), in `speed_knots`
+   (column 8), or in neither. */
+static GtdOptF64 parse_fix_speed(char *cols[]) {
+    const char *speed_kmh = cols[6];
+    const char *speed_knots = cols[8];
+    if (*speed_kmh != '\0' && *speed_knots != '\0') {
+        FAIL("fixes.csv: a row has a speed in both speed_kmh and speed_knots");
+    }
+    double speed;
+    if (*speed_kmh != '\0') {
+        if (!parse_decimal_double(speed_kmh, &speed)) {
+            FAIL("invalid speed_kmh");
+        }
+        return GTD_SOME_F64(gtd_mps_from_kmh(speed));
+    }
+    if (*speed_knots != '\0') {
+        if (!parse_decimal_double(speed_knots, &speed)) {
+            FAIL("invalid speed_knots");
+        }
+        return GTD_SOME_F64(gtd_mps_from_knots(speed));
+    }
+    return GTD_NONE_F64;
+}
+
 /* cols: `track_id`, `gps_time`, `sys_time`, `lat`, `lon`, `heading_deg`,
-   `speed_kmh`, `eph_m` */
+   `speed_kmh`, `eph_m`, `speed_knots` */
 static void add_fix_row(GtdFileBuilder *builder, char *cols[]) {
     GtdTimestamp gps_ts = parse_timestamp_or_absent(cols[1]);
     GtdTimestamp sys_ts = parse_timestamp_or_absent(cols[2]);
@@ -260,16 +284,7 @@ static void add_fix_row(GtdFileBuilder *builder, char *cols[]) {
     }
 
     GtdOptF64 hdg = parse_opt_f64(cols[5]);
-    GtdOptF64 spd = GTD_NONE_F64;
-    if (*cols[6] != '\0') {
-        double kmh;
-        if (!parse_decimal_double(cols[6], &kmh)) {
-            FAIL("invalid speed");
-        }
-        /* Use the same constant-multiply as Rust's MPS_PER_KMH = 1.0/3.6.
-           Direct kmh/3.6 differs by 1 ULP for some values (e.g. 23.2). */
-        spd = GTD_SOME_F64(kmh * (1.0 / 3.6));
-    }
+    GtdOptF64 spd = parse_fix_speed(cols);
     GtdOptF64 eph = parse_opt_f64(cols[7]);
 
     check_sdk_status(gtd_builder_add_nav_fix(builder, gps_ts, sys_ts, lat, lon, hdg, spd, eph),
@@ -315,7 +330,7 @@ static void load_fixes(GtdFileBuilder *builder, const char *base) {
             continue;
         }
         char *cols[CSV_MAX_COLS];
-        if (split_csv(line, cols, CSV_MAX_COLS) < 8) {
+        if (split_csv(line, cols, CSV_MAX_COLS) < 9) {
             continue;
         }
         add_fix_row(builder, cols);
@@ -526,8 +541,8 @@ static void verify_metadata(const GtdNavFile *file) {
 
 static void verify_nav_points(const GtdNavFile *file) {
     size_t nav_points = gtd_nav_file_nav_point_count(file);
-    if (nav_points != 205) {
-        FAILF("expected 205 nav points, got %zu", nav_points);
+    if (nav_points != 210) {
+        FAILF("expected 210 nav points, got %zu", nav_points);
     }
 
     size_t antimeridian = 0;
@@ -606,6 +621,6 @@ int main(int argc, char **argv) {
     gtd_nav_file_destroy(nav);
 
     printf("Written: %s\n", out_path);
-    printf("Gold dataset verified. Nav points: 205, Event markers: 7, Channels: 2\n");
+    printf("Gold dataset verified. Nav points: 210, Event markers: 7, Channels: 2\n");
     return 0;
 }

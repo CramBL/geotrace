@@ -142,11 +142,22 @@ fn load_satellites_and_fixes(
     for line in reader.lines().skip(1) {
         let line = line?;
         let cols: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
-        if cols.len() < 8 {
+        if cols.len() < 9 {
             continue;
         }
         let gps_time = parse_time(cols[1]);
         let sys_time = parse_time(cols[2]);
+        let speed = match (cols[6], cols[8]) {
+            ("", "") => None,
+            (kmh, "") => Some(Velocity::try_from_kmh_str(kmh)?),
+            ("", knots) => Some(Velocity::try_from_knots_str(knots)?),
+            _ => {
+                return Err(format!(
+                    "fixes.csv row {line:?} has a speed in both speed_kmh and speed_knots"
+                )
+                .into());
+            }
+        };
 
         let time = required_nav_fix_time(
             RecordedFixTimestamps {
@@ -162,7 +173,7 @@ fn load_satellites_and_fixes(
                 .lat(Angle::try_from_degrees_str(cols[3])?)
                 .lon(Angle::try_from_degrees_str(cols[4])?)
                 .maybe_heading(Angle::try_from_degrees_str(cols[5]).ok())
-                .maybe_speed(Velocity::try_from_kmh_str(cols[6]).ok())
+                .maybe_speed(speed)
                 .maybe_eph_m(cols[7].parse().ok())
                 .build(),
         );
@@ -264,7 +275,7 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     assert_eq!(meta.travel_mode, Some(TravelMode::Bicycle));
 
     let points = file.nav_points();
-    assert_eq!(points.len(), 205);
+    assert_eq!(points.len(), 210);
 
     // Track 8 Antimeridian: 10 fixes plus the ghost fix of the orphan satellite
     // report at 15:00:05.5. Check the first and the last point.
@@ -302,6 +313,17 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     assert_eq!(
         unset_host_clock,
         [-2_000_000, -1_000_000, 0, 1_000_000, 2_000_000]
+    );
+
+    // Track 14, the track of 14 February: speeds in knots.
+    let track_14_speeds: Vec<Option<Velocity>> = points
+        .iter()
+        .filter(|p| p.fix.time.gps_time().is_some_and(|gps| gps.day() == 14))
+        .map(|p| p.fix.speed)
+        .collect();
+    assert_eq!(
+        track_14_speeds,
+        [4.5, 9.0, 13.0, 18.0, 22.6].map(|knots| Some(Velocity::knot(knots)))
     );
 
     let markers = file.markers();

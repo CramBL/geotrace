@@ -29,6 +29,8 @@ from geotrace_sdk import (
     TravelMode,
     constellation_from_name,
     marker_icon_from_name,
+    mps_from_kmh,
+    mps_from_knots,
 )
 
 # (`gps_time`, `sys_time`) raw CSV strings -> satellites captured at that instant.
@@ -99,6 +101,20 @@ def _load_satellites(base: Path) -> dict[SatKey, list[Satellite]]:
     return reports
 
 
+def _speed_mps(cols: list[str]) -> float | None:
+    """Return the m/s of a fix row's ``speed_kmh`` or ``speed_knots`` column."""
+    speed_kmh = _opt_float(cols[6])
+    speed_knots = _opt_float(cols[8])
+    if speed_kmh is not None and speed_knots is not None:
+        msg = f"fixes.csv row {cols} has a speed in both speed_kmh and speed_knots"
+        raise ValueError(msg)
+    if speed_kmh is not None:
+        return mps_from_kmh(speed_kmh)
+    if speed_knots is not None:
+        return mps_from_knots(speed_knots)
+    return None
+
+
 def _load_fixes(
     builder: NavFileBuilder,
     base: Path,
@@ -107,7 +123,6 @@ def _load_fixes(
     for cols in _rows(base / "fixes.csv"):
         gps_time = _parse_ts(cols[1])
         sys_time = _parse_ts(cols[2])
-        speed_kmh = _opt_float(cols[6])
         builder.add(
             NavFix(
                 lat=float(cols[3]),
@@ -115,10 +130,7 @@ def _load_fixes(
                 gps_time=gps_time,
                 sys_time=sys_time,
                 heading=_opt_float(cols[5]),
-                # Match the SDK's MPS_PER_KMH = 1.0 / 3.6 constant-multiply so
-                # the m/s value is bit-identical across SDKs (`kmh / 3.6` differs
-                # by 1 ULP for some values).
-                speed_mps=None if speed_kmh is None else speed_kmh * (1.0 / 3.6),
+                speed_mps=_speed_mps(cols),
                 eph_m=_opt_float(cols[7]),
             )
         )
@@ -220,7 +232,7 @@ def _verify(path: Path) -> None:
     assert meta.travel_mode == TravelMode.BICYCLE
 
     points = file.points
-    assert len(points) == 205, f"expected 205 nav points, got {len(points)}"
+    assert len(points) == 210, f"expected 210 nav points, got {len(points)}"
 
     antimeridian = [p for p in points if p.lon > 179.9 or p.lon < -179.9]
     assert len(antimeridian) == 11, f"antimeridian points: {len(antimeridian)}"
