@@ -98,8 +98,8 @@ typedef enum {
      */
     GTD_ERR_INVALID_ARGUMENT = 12,
     /**
-     * An index is past the end of what it addresses, or an output buffer is
-     * too small.
+     * An index is past the end of what it addresses, an output buffer is too
+     * small, or a microsecond count is past the range a UTC timestamp covers.
      */
     GTD_ERR_OUT_OF_RANGE = 13,
     /**
@@ -734,6 +734,9 @@ GtdStatus gtd_builder_finish(GtdFileBuilder *builder,
  *
  * @return `GTD_ERR_INVALID_ARGUMENT` if @p gps_time and @p sys_time are both
  *         `gtd_ts_none()`.
+ * @return `GTD_ERR_OUT_OF_RANGE` if @p gps_time or @p sys_time is past the
+ *         range a timestamp covers, and `gtd_last_error()` states which one
+ *         and its count.
  */
 GtdStatus gtd_builder_add_nav_fix(GtdFileBuilder *builder,
                                   GtdTimestamp gps_time,
@@ -759,6 +762,9 @@ GtdStatus gtd_builder_add_nav_fix(GtdFileBuilder *builder,
  *
  * @return `GTD_ERR_INVALID_ARGUMENT` if @p gps_time and @p sys_time are both
  *         `gtd_ts_none()`.
+ * @return `GTD_ERR_OUT_OF_RANGE` if @p gps_time or @p sys_time is past the
+ *         range a timestamp covers, and `gtd_last_error()` states which one
+ *         and its count.
  * @return `GTD_ERR_INVALID_ARGUMENT` if the constellation of an element of
  *         @p sats is a value no @ref GtdConstellation variant declares. The
  *         builder then keeps the reports it already has, and
@@ -786,6 +792,8 @@ GtdStatus gtd_builder_add_satellite_report(GtdFileBuilder *builder,
  *         @ref GtdMarkerIcon variant declares.
  * @return `GTD_ERR_INVALID_ARGUMENT` if @p icon is `GTD_ICON_AUTO`, which only
  *         `gtd_builder_add_event_marker_style()` accepts.
+ * @return `GTD_ERR_OUT_OF_RANGE` if @p time is past the range a timestamp
+ *         covers.
  */
 GtdStatus gtd_builder_add_annotation(GtdFileBuilder *builder,
                                      GtdTimestamp time,
@@ -807,6 +815,8 @@ GtdStatus gtd_builder_add_annotation(GtdFileBuilder *builder,
  * @return `GTD_ERR_INVALID_PATH` if @p variant_path is malformed.
  * @return `GTD_ERR_FIELD_TOO_LONG` if @p variant_path is longer than 255 bytes,
  *         or @p annotation longer than 511 bytes.
+ * @return `GTD_ERR_OUT_OF_RANGE` if @p sys_time is past the range a timestamp
+ *         covers.
  */
 GtdStatus gtd_builder_add_event_marker(GtdFileBuilder *builder,
                                        const char *variant_path,
@@ -852,6 +862,8 @@ GtdStatus gtd_builder_add_event_marker_style(GtdFileBuilder *builder,
  * @return `GTD_ERR_INVALID_CHANNEL` if the unit is unrecognized, the name or a
  *         component label is malformed, or `values` is not
  *         `n_times * max(n_components, 1)` long.
+ * @return `GTD_ERR_OUT_OF_RANGE` if an element of `times` is past the range a
+ *         timestamp covers, and `gtd_last_error()` states its index.
  */
 GtdStatus gtd_builder_add_channel(GtdFileBuilder *builder, const GtdChannel *channel);
 
@@ -872,6 +884,8 @@ GtdStatus gtd_builder_add_channel(GtdFileBuilder *builder, const GtdChannel *cha
  *
  * @return `GTD_ERR_INVALID_CHANNEL` for an invalid unit/mode combination or
  *         malformed channel metadata.
+ * @return `GTD_ERR_OUT_OF_RANGE` if an element of `times` is past the range a
+ *         timestamp covers, and `gtd_last_error()` states its index.
  */
 GtdStatus gtd_builder_add_channel_with_unit_mode(GtdFileBuilder *builder,
                                                  const GtdChannel *channel,

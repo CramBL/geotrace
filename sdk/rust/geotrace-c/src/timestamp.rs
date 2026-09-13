@@ -1,6 +1,9 @@
 //! The timestamp type and its constructors.
 
 use std::ffi::c_char;
+use std::fmt::Display;
+
+use chrono::{DateTime, Utc};
 
 use crate::error::{self, GtdStatus};
 
@@ -13,20 +16,45 @@ pub struct GtdTimestamp {
     pub unix_micros: i64,
 }
 
-/// The `unix_micros` value that marks an absent timestamp.
-const TS_NONE_SENTINEL: i64 = i64::MIN;
+impl GtdTimestamp {
+    /// `Ok(None)` for `gtd_ts_none()`. Sets the last error, prefixed with `argument_name`,
+    /// before it returns an `Err`.
+    pub(crate) fn to_optional_datetime(
+        self,
+        argument_name: impl Display,
+    ) -> Result<Option<DateTime<Utc>>, GtdStatus> {
+        if self.unix_micros == TS_NONE_SENTINEL {
+            return Ok(None);
+        }
+        match geotrace_sdk::Timestamp::try_from_unix_micros(self.unix_micros) {
+            Ok(timestamp) => Ok(Some(timestamp.into())),
+            Err(e) => {
+                let status = error::status_for_error(&e);
+                error::set_last_error(format!("{argument_name}: {e}"));
+                Err(status)
+            }
+        }
+    }
 
-pub(crate) fn ts_from_datetime(dt: chrono::DateTime<chrono::Utc>) -> GtdTimestamp {
-    GtdTimestamp {
-        unix_micros: dt.timestamp_micros(),
+    /// `Err(GTD_ERR_NULL_ARGUMENT)` for `gtd_ts_none()`. Sets the last error, prefixed with
+    /// `argument_name`, before it returns an `Err`.
+    pub(crate) fn to_required_datetime(
+        self,
+        argument_name: impl Display,
+    ) -> Result<DateTime<Utc>, GtdStatus> {
+        self.to_optional_datetime(&argument_name)?.ok_or_else(|| {
+            error::set_last_error(format!("{argument_name} must not be gtd_ts_none()"));
+            GtdStatus::GTD_ERR_NULL_ARGUMENT
+        })
     }
 }
 
-pub(crate) fn ts_to_datetime(ts: GtdTimestamp) -> Option<chrono::DateTime<chrono::Utc>> {
-    if ts.unix_micros == TS_NONE_SENTINEL {
-        None
-    } else {
-        chrono::DateTime::from_timestamp_micros(ts.unix_micros)
+/// The `unix_micros` value that marks an absent timestamp.
+const TS_NONE_SENTINEL: i64 = i64::MIN;
+
+pub(crate) fn ts_from_datetime(dt: DateTime<Utc>) -> GtdTimestamp {
+    GtdTimestamp {
+        unix_micros: dt.timestamp_micros(),
     }
 }
 

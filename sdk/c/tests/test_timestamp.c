@@ -1,4 +1,5 @@
 #include "../geotrace.h"
+#include "test_helpers.h"
 #include <criterion/criterion.h>
 #include <inttypes.h>
 #include <stddef.h>
@@ -62,7 +63,7 @@ Test(timestamp, a_count_past_the_range_is_out_of_range) {
     cr_assert_eq(gtd_ts_from_seconds(INT64_MAX, &timestamp), GTD_ERR_OUT_OF_RANGE);
     cr_assert_eq(gtd_ts_from_millis(INT64_MAX, &timestamp), GTD_ERR_OUT_OF_RANGE);
     cr_assert_eq(gtd_ts_from_micros(INT64_MAX, &timestamp), GTD_ERR_OUT_OF_RANGE);
-    cr_assert_not_null(gtd_last_error());
+    cr_assert_str_eq(gtd_last_error(), INT64_MAX_MICROS_PAST_THE_RANGE_MESSAGE);
 
     /* A rejected count leaves the caller's timestamp as it was. */
     cr_assert(gtd_ts_is_none(timestamp));

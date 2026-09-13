@@ -7,6 +7,12 @@
 
 #define assert_near(a, b, eps) cr_assert(fabs((a) - (b)) < (eps))
 
+/* The message `gtd_ts_from_micros()` reports for `INT64_MAX`. A builder entry point reports it
+   after the name of the timestamp argument. */
+#define INT64_MAX_MICROS_PAST_THE_RANGE_MESSAGE                                                    \
+    "9223372036854775807 microseconds since the Unix epoch is past the range a UTC timestamp "     \
+    "covers"
+
 static inline GtdFileBuilder *builder_with_a_nav_fix(GtdTimestamp *time) {
     GtdFileBuilder *builder = gtd_builder_create();
     cr_assert_not_null(builder);

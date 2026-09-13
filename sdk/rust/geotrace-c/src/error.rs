@@ -64,8 +64,8 @@ pub enum GtdStatus {
     GTD_ERR_FIELD_TOO_LONG = 11,
     /// An argument's value is not allowed.
     GTD_ERR_INVALID_ARGUMENT = 12,
-    /// An index is past the end of what it addresses, or an output buffer is
-    /// too small.
+    /// An index is past the end of what it addresses, an output buffer is too
+    /// small, or a microsecond count is past the range a UTC timestamp covers.
     GTD_ERR_OUT_OF_RANGE = 13,
     /// A call was made in an order the API does not allow.
     GTD_ERR_CALL_ORDER = 14,

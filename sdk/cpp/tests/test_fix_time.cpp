@@ -1,6 +1,9 @@
 #include <doctest/doctest.h>
 #include <geotrace/geotrace.hpp>
 
+#include <cstdint>
+#include <limits>
+#include <stdexcept>
 #include <type_traits>
 
 using geotrace::Angle;
@@ -98,4 +101,12 @@ TEST_CASE("a nav point keeps its two clocks apart through a write and a read") {
         CHECK(point.gps_time->unix_micros == GPS.unix_micros);
         CHECK(point.sys_time->unix_micros == SYS.unix_micros);
     }
+}
+
+TEST_CASE("add_nav_fix throws for a host time past the range beside a valid receiver time") {
+    const Timestamp past_the_range{std::numeric_limits<std::int64_t>::max()};
+    const NavFix fix{FixTime::both(GPS, past_the_range), Angle::degrees(51.5),
+                     Angle::degrees(-0.1)};
+    FileBuilder builder;
+    CHECK_THROWS_AS(builder.add_nav_fix(fix), std::out_of_range);
 }

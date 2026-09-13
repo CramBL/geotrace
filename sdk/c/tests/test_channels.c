@@ -225,6 +225,24 @@ Test(channels, long_custom_unit_uses_lossless_accessor) {
     gtd_nav_file_destroy(file);
 }
 
+Test(channels, a_sample_time_past_the_range_is_out_of_range) {
+    GtdFileBuilder *builder = gtd_builder_create();
+    GtdTimestamp times[2];
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &times[0]), GTD_OK);
+    times[1].unix_micros = INT64_MAX;
+    double values[2] = {1.0, 2.0};
+    GtdChannel channel = {0};
+    channel.name = "accel";
+    channel.period_deg = GTD_NONE_F64;
+    channel.times = times;
+    channel.n_times = 2;
+    channel.values = values;
+    channel.n_values = 2;
+    cr_assert_eq(gtd_builder_add_channel(builder, &channel), GTD_ERR_OUT_OF_RANGE);
+    cr_assert_str_eq(gtd_last_error(), "times[1]: " INT64_MAX_MICROS_PAST_THE_RANGE_MESSAGE);
+    gtd_builder_destroy(builder);
+}
+
 Test(channels, length_mismatch_is_rejected) {
     GtdFileBuilder *builder = gtd_builder_create();
     GtdTimestamp timestamp;
