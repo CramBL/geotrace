@@ -1,74 +1,17 @@
-use geotrace_sdk::{
-    Angle, DateTime, Duration, Error, NavFile, NavFileBuilder, NavFix, NavFixTime, Utc,
-    VariantPathField,
-};
+use geotrace_sdk::{DateTime, Error, NavFile, NavFixTime, VariantPathField};
 use hdf5_pure::{AttrValue, FileBuilder, GroupBuilder};
 use rstest::rstest;
 
-fn base() -> DateTime<Utc> {
-    #[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
-    DateTime::from_timestamp(1_748_000_000, 0).expect("valid")
-}
-
-fn minimal_gtd_bytes() -> Vec<u8> {
-    let t = base();
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(
-        NavFix::builder()
-            .time(NavFixTime::Receiver(t))
-            .lat(Angle::degrees(51.5))
-            .lon(Angle::degrees(-0.1))
-            .heading(Angle::degrees(90.0))
-            .build(),
-    );
-    recorder.add_nav_fix(
-        NavFix::builder()
-            .time(NavFixTime::Receiver(t + Duration::seconds(60)))
-            .lat(Angle::degrees(51.6))
-            .lon(Angle::degrees(-0.2))
-            .heading(Angle::degrees(270.0))
-            .build(),
-    );
-    #[expect(clippy::expect_used, reason = "test setup must succeed")]
-    let nav_file = recorder.finish().expect("valid nav file");
-    let mut bytes = Vec::new();
-    #[expect(clippy::expect_used, reason = "test setup must succeed")]
-    nav_file.write(&mut bytes).expect("write");
-    bytes
-}
-
-#[test]
-fn read_non_hdf5_bytes_returns_error() {
-    let garbage = b"this is not an HDF5 file at all";
-    let result = NavFile::read(garbage.as_slice());
+#[rstest]
+#[case::plain_text(b"this is not an HDF5 file at all")]
+#[case::no_bytes(b"")]
+#[case::a_truncated_hdf5_signature(b"\x89HDF")]
+fn bytes_that_are_not_an_hdf5_file_fail_the_read(#[case] bytes: &[u8]) {
+    let result = NavFile::read(bytes);
     assert!(
-        result.is_err(),
-        "expected an error reading non-HDF5 bytes, got Ok"
+        matches!(result, Err(Error::Hdf5(_))),
+        "expected an HDF5 error, got: {result:?}"
     );
-}
-
-#[test]
-fn read_empty_bytes_returns_error() {
-    let result = NavFile::read([].as_slice());
-    assert!(result.is_err(), "expected an error reading empty bytes");
-}
-
-#[test]
-fn read_truncated_hdf5_magic_returns_error() {
-    // HDF5 magic is "\x89HDF\r\n\x1a\n" - truncate after 4 bytes.
-    let truncated = b"\x89HDF";
-    let result = NavFile::read(truncated.as_slice());
-    assert!(
-        result.is_err(),
-        "expected an error reading truncated HDF5 header"
-    );
-}
-
-#[test]
-fn valid_gtd_round_trips_without_error() {
-    let bytes = minimal_gtd_bytes();
-    let nav_file = NavFile::read(bytes.as_slice()).expect("valid .gtd bytes must parse");
-    assert_eq!(nav_file.nav_points().len(), 2);
 }
 
 /// A file that is valid HDF5 but has no `geotrace_version` attribute should fail.

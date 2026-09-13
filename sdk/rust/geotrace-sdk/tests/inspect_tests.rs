@@ -11,10 +11,11 @@ use geotrace_sdk::{Angle, DateTime, Duration, Unit, Utc, Velocity};
 use geotrace_sdk::{
     Annotation, AnnotationField, AnnotationIcon, Channel, ColorHexField, Constellation,
     EventMarker, EventMarkerColor, EventMarkerIconChoice, EventMarkerStyle, IconNameField,
-    MarkerIcon, MarkerLabelField, NavFile, NavFileBuilder, NavFix, NavFixTime, Satellite,
-    SatelliteReport, TravelMode, VariantPathField,
+    MarkerIcon, MarkerLabelField, NavFile, NavFileBuilder, NavFix, NavFixTime, NavRecorder,
+    Satellite, SatelliteReport, TravelMode, VariantPathField,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
+use rstest::rstest;
 
 #[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
 fn base() -> DateTime<Utc> {
@@ -506,89 +507,38 @@ fn inspect_states_an_event_marker_styles_group_without_a_variant_path_dataset()
     Ok(())
 }
 
-#[test]
-fn empty_file() -> Result<(), Box<dyn std::error::Error>> {
-    let nav_file = NavFileBuilder::new().open().finish()?;
-    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
-    nav_file.write(tmp.as_file())?;
-
-    let output = NavFile::inspect(tmp.path())?;
-    assert!(output.contains("version 2"), "missing version: {output}");
-
-    Ok(())
-}
-
-#[test]
-fn file_with_no_satellite_data() -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = base();
-    let mut recorder = NavFileBuilder::new().open();
-    for i in 0..3i64 {
-        recorder.add_nav_fix(
-            NavFix::builder()
-                .time(NavFixTime::Receiver(t0 + Duration::seconds(i)))
-                .lat(Angle::degrees(55.0))
-                .lon(Angle::degrees(12.0))
-                .heading(Angle::degrees(0.0))
-                .build(),
-        );
-    }
-
-    let nav_file = recorder.finish()?;
-    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
-    nav_file.write(tmp.as_file())?;
-
-    let output = NavFile::inspect(tmp.path())?;
-    assert!(
-        output.contains("Satellite Reports") && output.contains("0 records"),
-        "expected satellite section with '0 records': {output}"
-    );
-
-    Ok(())
-}
-
-#[test]
-fn file_with_no_markers() -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = base();
+fn recorder_with_one_fix() -> NavRecorder {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .time(NavFixTime::Receiver(t0))
+            .time(NavFixTime::Receiver(base()))
             .lat(Angle::degrees(55.0))
             .lon(Angle::degrees(12.0))
             .heading(Angle::degrees(0.0))
             .build(),
     );
-
-    let nav_file = recorder.finish()?;
-    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
-    nav_file.write(tmp.as_file())?;
-
-    let output = NavFile::inspect(tmp.path())?;
-    assert!(
-        output.contains("Markers") && output.contains("0 records"),
-        "expected markers section with '0 records': {output}"
-    );
-
-    Ok(())
+    recorder
 }
 
-#[test]
-fn inspect_reports_no_channels_when_absent() -> Result<(), Box<dyn std::error::Error>> {
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(
-        NavFix::builder()
-            .time(NavFixTime::Receiver(base()))
-            .lat(Angle::degrees(0.0))
-            .lon(Angle::degrees(0.0))
-            .build(),
-    );
-    let nav_file = recorder.finish()?;
-    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
-    nav_file.write(tmp.as_file())?;
-    let output = NavFile::inspect(tmp.path())?;
+#[rstest]
+#[case::nav_points_of_a_file_without_fixes(
+    NavFileBuilder::new().open(),
+    "Nav Points              0 records"
+)]
+#[case::satellite_reports(recorder_with_one_fix(), "Satellite Reports       0 records")]
+#[case::markers(recorder_with_one_fix(), "Markers                 0 records")]
+#[case::channels(recorder_with_one_fix(), "Channels                0 channels")]
+fn inspect_states_a_count_of_zero_for_an_empty_section(
+    #[case] recorder: NavRecorder,
+    #[case] expected_line: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut bytes = Vec::new();
+    recorder.finish()?.write(&mut bytes)?;
+
+    let output = inspect_bytes(&bytes)?;
     assert!(
-        output.contains("0 channels"),
-        "missing zero-channel line: {output}"
+        output.lines().any(|line| line == expected_line),
+        "no line {expected_line:?} in:\n{output}"
     );
     Ok(())
 }

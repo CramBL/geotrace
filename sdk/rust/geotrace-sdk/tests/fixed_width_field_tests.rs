@@ -83,27 +83,29 @@ fn an_event_marker_at_the_field_capacities_round_trips() {
     assert_eq!(marker.annotation.as_deref(), Some(annotation.as_str()));
 }
 
-#[test]
-fn a_marker_at_the_label_capacity_round_trips() {
-    let label = "l".repeat(MarkerLabelField::CONTENT_CAPACITY);
+#[rstest]
+#[case::at_the_field_capacity(Some("l".repeat(MarkerLabelField::CONTENT_CAPACITY)))]
+#[case::multibyte_utf8(Some("日本語テスト 🌍".to_owned()))]
+#[case::no_label(None)]
+fn a_marker_label_round_trips(#[case] label: Option<String>) {
     let mut recorder = recorder_with_fixes_bracketing_an_annotation();
     recorder.add_annotation(
         Annotation::builder()
             .time(t(5))
-            .label(label.clone())
+            .maybe_label(label.clone())
             .build()
-            .expect("a label at the field capacity is accepted"),
+            .expect("a label within the field capacity is accepted"),
     );
     let mut bytes = Vec::new();
     recorder
         .finish()
         .expect("the recording builds")
         .write(&mut bytes)
-        .expect("a label at the field capacity is written");
+        .expect("a label within the field capacity is written");
 
     let loaded = NavFile::read(bytes.as_slice()).expect("the written file reads back");
     let marker = loaded.markers().first().expect("the file holds the marker");
-    assert_eq!(marker.annotation.label(), Some(label.as_str()));
+    assert_eq!(marker.annotation.label(), label.as_deref());
 }
 
 #[rstest]
