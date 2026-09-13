@@ -6,16 +6,14 @@
 //! only finite values within the ones the file writes. Mirrors how `gt-solar`
 //! fuzzes its wire parser.
 
-mod support;
-
 use std::sync::OnceLock;
 
 use chrono::TimeDelta;
 use proptest::test_runner::TestCaseError;
 
 use gt_ionex::maps::{GlobalIonosphereMaps, TecMap};
-use gt_ionex::parse;
 use gt_ionex::tec::TotalElectronContent;
+use gt_ionex::{parse, test_util};
 use gt_types::{Latitude, Longitude};
 
 /// How far into a capture the truncation property cuts: past the header and
@@ -37,14 +35,16 @@ struct ValueRange {
 /// run.
 fn captured_storm() -> Result<&'static str, String> {
     static TEXT: OnceLock<Result<String, String>> = OnceLock::new();
-    TEXT.get_or_init(|| support::captured_text(support::declared_capture(gt_ionex::STORM_CAPTURE)?))
-        .as_deref()
-        .map_err(Clone::clone)
+    TEXT.get_or_init(|| {
+        test_util::captured_text(test_util::declared_capture(gt_ionex::STORM_CAPTURE)?)
+    })
+    .as_deref()
+    .map_err(Clone::clone)
 }
 
 fn parsed_storm() -> Result<&'static GlobalIonosphereMaps, String> {
     static MAPS: OnceLock<Result<GlobalIonosphereMaps, String>> = OnceLock::new();
-    MAPS.get_or_init(|| support::captured_maps(gt_ionex::STORM_CAPTURE))
+    MAPS.get_or_init(|| test_util::captured_maps(gt_ionex::STORM_CAPTURE))
         .as_ref()
         .map_err(Clone::clone)
 }

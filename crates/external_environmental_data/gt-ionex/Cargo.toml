@@ -9,6 +9,11 @@ authors.workspace = true
 [lib]
 doctest = false
 
+[features]
+# Builds `gt_ionex::test_util`, the capture and fixture readers the integration
+# test binaries read their files through. A normal build leaves it off.
+test-util = []
+
 [dependencies]
 # The `serde` feature dates the node-series capture's days.
 chrono = { workspace = true, features = ["serde"] }
@@ -28,6 +33,9 @@ thiserror.workspace = true
 [dev-dependencies]
 # Responds to a fetch pipeline's requests from a script.
 gt-fetch = { path = "../../gt-fetch", features = ["test-util"] }
+# The crate's own capture and fixture readers, which the integration test
+# binaries read their files through.
+gt-ionex = { path = ".", features = ["test-util"] }
 # Adds the date builders of `gt_types::fixtures`, which the tests use for their
 # dates and instants. The feature is off in a normal build of gt-types.
 gt-types = { path = "../../gt-types", features = ["fixtures"] }

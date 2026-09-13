@@ -5,21 +5,15 @@
 //! [`gt_map::display_counts::DisplayCounts`]. The panel/map agreement is
 //! exercised wherever a property calls `picture()` or `classify()`.
 
-mod support;
-
 use std::collections::HashMap;
 
 use chrono::Duration;
+use gt_query_map_harness::test_util::generate::{self, GenDataset, Mode, Program, Stage};
+use gt_query_map_harness::test_util::oracle;
 use gt_query_map_harness::{self, MapScenario, PointClass};
 use gt_types::TrackRef;
 use gt_ui_types::{PinnedPopup, PointVisibility};
 use proptest::prelude::*;
-use support::generate::{
-    GenDataset, Mode, Program, Stage, gen_dataset, gen_dataset_and_program,
-    gen_point_local_program, gen_render_style, gen_windowed_dataset,
-    gen_windowed_dataset_and_program,
-};
-use support::oracle;
 
 /// The per-point verdicts a scenario reports, per track.
 fn observed(scenario: &MapScenario) -> HashMap<TrackRef, Vec<PointVisibility>> {
@@ -117,7 +111,7 @@ proptest! {
     /// the states only a category toggle or a bad index can produce.
     #[test]
     fn every_point_lands_in_one_reachable_state(
-        (dataset, program) in gen_dataset_and_program(),
+        (dataset, program) in generate::gen_dataset_and_program(),
     ) {
         let mut scenario = dataset.scenario();
         scenario.run(&program.render_plain());
@@ -141,7 +135,7 @@ proptest! {
     /// `draw` stages hides nothing at all.
     #[test]
     fn halos_stay_on_shown_points(
-        (dataset, program) in gen_dataset_and_program(),
+        (dataset, program) in generate::gen_dataset_and_program(),
     ) {
         let mut scenario = dataset.scenario();
         scenario.run(&program.render_plain());
@@ -169,7 +163,7 @@ proptest! {
     /// Appending a stage never brings a hidden point back.
     #[test]
     fn appending_a_stage_never_unhides(
-        (dataset, program) in gen_dataset_and_program(),
+        (dataset, program) in generate::gen_dataset_and_program(),
     ) {
         prop_assume!(program.stages.len() >= 2);
         let mut shorter = dataset.scenario();
@@ -203,8 +197,8 @@ proptest! {
     /// `chaining::swapping_two_hides_can_change_the_map`.
     #[test]
     fn repeating_and_swapping_point_local_stages_are_no_ops(
-        dataset in gen_dataset(),
-        program in gen_point_local_program(),
+        dataset in generate::gen_dataset(),
+        program in generate::gen_point_local_program(),
         index in 0usize..4,
     ) {
         prop_assert!(program.stages.iter().all(Stage::is_point_local));
@@ -249,7 +243,7 @@ proptest! {
     /// the run never saw it, so nothing it did can explain its absence.
     #[test]
     fn a_filtered_out_point_is_never_hidden_by_the_query(
-        (dataset, program) in gen_windowed_dataset_and_program(),
+        (dataset, program) in generate::gen_windowed_dataset_and_program(),
     ) {
         let mut scenario = dataset.scenario();
         scenario.run(&program.render_plain());
@@ -284,8 +278,8 @@ proptest! {
     /// that never ran.
     #[test]
     fn clearing_returns_to_the_never_run_baseline(
-        (dataset, first) in gen_dataset_and_program(),
-        (_, second) in gen_dataset_and_program(),
+        (dataset, first) in generate::gen_dataset_and_program(),
+        (_, second) in generate::gen_dataset_and_program(),
     ) {
         let baseline = dataset.scenario();
         let untouched = baseline.picture().to_string();
@@ -312,7 +306,7 @@ proptest! {
     /// Another file's tracks never change a track's own classification.
     #[test]
     fn a_track_is_classified_independently_of_the_others(
-        (dataset, program) in gen_dataset_and_program(),
+        (dataset, program) in generate::gen_dataset_and_program(),
     ) {
         let alone = GenDataset {
             files: dataset.files.iter().take(1).cloned().collect(),
@@ -340,7 +334,7 @@ proptest! {
     /// The same dataset and text run twice give the same picture.
     #[test]
     fn a_run_is_deterministic(
-        (dataset, program) in gen_dataset_and_program(),
+        (dataset, program) in generate::gen_dataset_and_program(),
     ) {
         let text = program.render_plain();
         let mut once = dataset.scenario();
@@ -359,7 +353,7 @@ proptest! {
     /// the invariant behind the popup that outlived its own point.
     #[test]
     fn a_pinned_popup_never_outlives_its_point(
-        (dataset, program) in gen_dataset_and_program(),
+        (dataset, program) in generate::gen_dataset_and_program(),
     ) {
         let text = program.render_plain();
         let baseline = dataset.scenario().picture();
@@ -396,7 +390,7 @@ proptest! {
     /// semantics, point by point and halo by halo.
     #[test]
     fn the_map_agrees_with_the_reference_fold(
-        (dataset, program) in gen_dataset_and_program(),
+        (dataset, program) in generate::gen_dataset_and_program(),
     ) {
         let mut scenario = dataset.scenario();
         scenario.run(&program.render_plain());
@@ -428,7 +422,7 @@ proptest! {
     /// stage by stage, with no stage reaching backwards.
     #[test]
     fn every_prefix_agrees_with_the_reference_fold(
-        (dataset, program) in gen_dataset_and_program(),
+        (dataset, program) in generate::gen_dataset_and_program(),
     ) {
         let files = dataset.dataset().files().files().to_vec();
         let window = window_of(&dataset);
@@ -476,8 +470,8 @@ proptest! {
     /// `index_mapping::narrowing_the_window_can_change_a_windowed_match`.
     #[test]
     fn narrowing_the_window_leaves_the_survivors_alone(
-        dataset in gen_windowed_dataset(),
-        program in gen_point_local_program(),
+        dataset in generate::gen_windowed_dataset(),
+        program in generate::gen_point_local_program(),
         trim in 1i64..=8,
     ) {
         let (start, end) = dataset.window_secs.unwrap_or((0, 45));
@@ -530,8 +524,8 @@ proptest! {
     /// same map. This is what `split_queries` promises.
     #[test]
     fn the_writing_style_never_changes_the_map(
-        (dataset, program) in gen_dataset_and_program(),
-        style in gen_render_style(),
+        (dataset, program) in generate::gen_dataset_and_program(),
+        style in generate::gen_render_style(),
     ) {
         let mut plain = dataset.scenario();
         plain.run(&program.render_plain());
@@ -554,7 +548,7 @@ proptest! {
     /// on any other, a point missing it would be skipped and so hidden, which
     /// the property below covers.
     #[test]
-    fn keep_hides_by_its_predicate_alone(dataset in gen_dataset()) {
+    fn keep_hides_by_its_predicate_alone(dataset in generate::gen_dataset()) {
         let mut everything = dataset.scenario();
         everything.run("points | where lat <= 90 deg | keep");
         for (track_ref, points) in observed(&everything) {
@@ -587,7 +581,7 @@ proptest! {
     /// A `keep` on a metric hides every point without that metric: a missing
     /// value makes the predicate skip, and a skipped point was never matched.
     #[test]
-    fn a_keep_on_a_missing_metric_hides_that_point(dataset in gen_dataset()) {
+    fn a_keep_on_a_missing_metric_hides_that_point(dataset in generate::gen_dataset()) {
         let mut scenario = dataset.scenario();
         scenario.run("points | where velocity >= 0 km/h | keep");
         let files = scenario.dataset().files().files().to_vec();

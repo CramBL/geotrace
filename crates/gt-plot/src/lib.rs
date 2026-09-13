@@ -1,5 +1,7 @@
 mod plot_widget;
 mod series;
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
 
 pub use plot_widget::{
     ArchiveOverlays, DEFAULT_PLOT_LINE_WIDTH, EDGE_MARKER_INSET, LEGEND_DOCK_OFFSET,

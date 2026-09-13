@@ -1,26 +1,29 @@
-//! Shared fixture construction for the filter panel's time range bar test
-//! binaries: the recordings they load, the harness that draws the panel over
-//! them, and the readouts they assert on.
+//! Fixtures for the filter panel's time range bar tests: the recordings they
+//! load, the harness that draws the panel over them, and the readouts they
+//! assert on.
 //!
 //! The panel lays out a heading, the bar under it, and a label of the window's
 //! two ends, twice: once over the whole loaded time range, and once over the
 //! active range when that range is far narrower than the whole.
+//!
+//! The integration test binaries reach it as `gt_side_panel::test_util`,
+//! through the `test-util` feature gt-side-panel's dev-dependency on itself
+//! enables.
 
-#![allow(dead_code, reason = "shared across binaries with different needs")]
 #![expect(
     clippy::expect_used,
-    reason = "the helpers beside the tests are not covered by clippy's in-test relaxations"
+    reason = "the fixtures are not covered by clippy's in-test relaxations"
 )]
 
 use chrono::{DateTime, TimeZone as _, Utc};
 use egui::accesskit::Role;
 use gt_filter::GlobalFilter;
-use gt_side_panel::filter::TRACK_INSET_PX;
-use gt_side_panel::{FilterPanelState, render_filter_panel};
 use gt_test_utils::{
     By, FileParts, HarnessInteraction as _, NodeT as _, Queryable as _, TestHarness,
 };
 use gt_types::{LoadedFile, NavPoint};
+
+use crate::filter::{self, FilterPanelState, TRACK_INSET_PX};
 
 /// The state the filter panel reads and writes.
 pub struct PanelState {
@@ -63,7 +66,7 @@ pub fn harness(files: Vec<LoadedFile>) -> TestHarness<'static, PanelState> {
         .ui_state(
             |ui, s: &mut PanelState| {
                 let reset_requested =
-                    render_filter_panel(ui, &s.files, &mut s.filter, &mut s.panel);
+                    filter::render_filter_panel(ui, &s.files, &mut s.filter, &mut s.panel);
                 assert!(!reset_requested, "no test here clicks Reset filters");
             },
             state,

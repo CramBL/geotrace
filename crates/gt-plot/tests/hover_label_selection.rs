@@ -5,14 +5,12 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use gt_plot::PlotState;
+use gt_plot::test_util::{self, DrawnPlot, PlotPosition, PlotSources};
 use gt_solar::GeomagneticIndex;
 use gt_types::{Channel, LoadedFile, MetricKind};
 use gt_ui_types::{GeomagneticPoint, IndexContextSample, TecContextSample, TecPoint};
 use rstest::rstest;
 use strum::IntoEnumIterator as _;
-use support::{DrawnPlot, PlotPosition, PlotSources};
-
-mod support;
 
 const CHANNEL_NAME: &str = "Incline";
 const SECOND_CHANNEL_NAME: &str = "Brake pressure";
@@ -38,7 +36,7 @@ fn scalar_channel(name: &str, times: Vec<DateTime<Utc>>, values: Vec<f64>) -> Ch
 /// A recording of one track of `fix_count` fixes `step_secs` apart from the
 /// first fix, carrying `channels`.
 fn recording(fix_count: usize, step_secs: i64, channels: Vec<Channel>) -> LoadedFile {
-    support::recording(support::fixes(fix_count, step_secs), channels)
+    test_util::recording(test_util::fixes(fix_count, step_secs), channels)
 }
 
 /// What one case draws: the recording, which metric lines are on, whether the
@@ -73,7 +71,7 @@ impl PlotScene {
     }
 
     fn with_a_flare_peaking_at(mut self, offset_secs: i64) -> Self {
-        self.sources.solar_flares = vec![support::flare_peaking_at(offset_secs)];
+        self.sources.solar_flares = vec![test_util::flare_peaking_at(offset_secs)];
         self
     }
 
@@ -90,14 +88,14 @@ impl PlotScene {
         };
         *line = Arc::new(samples);
         let point = GeomagneticPoint {
-            x_secs: support::at_second(0).timestamp() as f64,
+            x_secs: test_util::at_second(0).timestamp() as f64,
             hp30: (index == GeomagneticIndex::Hp30).then_some(1.0),
             kp: (index == GeomagneticIndex::Kp).then_some(1.0),
         };
         self.sources
             .geomagnetic
             .points_by_track
-            .insert(support::track0(), Arc::new(vec![point]));
+            .insert(test_util::track0(), Arc::new(vec![point]));
         self
     }
 
@@ -106,9 +104,9 @@ impl PlotScene {
     fn with_archived_tec(mut self, samples: Vec<TecContextSample>) -> Self {
         self.sources.context_lines.tec = Arc::new(samples);
         self.sources.tec.points_by_track.insert(
-            support::track0(),
+            test_util::track0(),
             Arc::new(vec![TecPoint {
-                x_secs: support::at_second(0).timestamp() as f64,
+                x_secs: test_util::at_second(0).timestamp() as f64,
                 tecu: Some(10.0),
             }]),
         );
@@ -127,7 +125,7 @@ impl PlotScene {
         for kind in MetricKind::iter() {
             plot.metric_vis.set(kind, shown_metrics.contains(&kind));
         }
-        support::drawn_plot(vec![file], sources, plot)
+        test_util::drawn_plot(vec![file], sources, plot)
     }
 }
 
@@ -148,7 +146,7 @@ const THE_FLARE_HOVER_LABEL: &str = "X2.2 solar flare\n\
 fn snapshot_the_plot_labels_the_segment_endpoint_nearest_the_pointer() {
     let channel = scalar_channel(
         CHANNEL_NAME,
-        vec![support::at_second(0), support::at_second(59)],
+        vec![test_util::at_second(0), test_util::at_second(59)],
         vec![0.0, 10.0],
     );
     let mut plot = PlotScene::of(recording(60, 1, vec![channel]))
@@ -183,7 +181,7 @@ fn snapshot_the_plot_labels_the_nearest_sample_of_the_level_it_drew() {
 
     assert_eq!(
         plot.state().hovered_time,
-        Some(support::at_second(40)),
+        Some(test_util::at_second(40)),
         "the pointer must rest on a second the recording has a fix at"
     );
     assert_eq!(plot.hover_label(), "Velocity (km/h)\n12:00:47\n15.00");
@@ -195,7 +193,7 @@ fn snapshot_the_plot_labels_the_nearest_sample_of_the_level_it_drew() {
 /// radius of a pointer 1 point below the lower one.
 #[test]
 fn snapshot_the_plot_labels_the_line_it_added_last() {
-    let sample_times = vec![support::at_second(0), support::at_second(59)];
+    let sample_times = vec![test_util::at_second(0), test_util::at_second(59)];
     let lower = scalar_channel(CHANNEL_NAME, sample_times.clone(), vec![1.0, 1.0]);
     let upper = scalar_channel(
         SECOND_CHANNEL_NAME,
@@ -292,7 +290,7 @@ fn snapshot_the_plot_labels_the_period_the_pointer_rests_in(
         .into_iter()
         .enumerate()
         .map(|(step, value)| IndexContextSample {
-            start_secs: support::at_second(step as i64 * period_secs).timestamp() as f64,
+            start_secs: test_util::at_second(step as i64 * period_secs).timestamp() as f64,
             value: Some(value),
         })
         .collect();
@@ -326,11 +324,11 @@ fn snapshot_the_plot_labels_the_period_the_pointer_rests_in(
 fn snapshot_the_plot_labels_the_tec_interpolated_at_the_pointer() {
     let samples = vec![
         TecContextSample {
-            x_secs: support::at_second(0).timestamp() as f64,
+            x_secs: test_util::at_second(0).timestamp() as f64,
             tecu: Some(10.0),
         },
         TecContextSample {
-            x_secs: support::at_second(7200).timestamp() as f64,
+            x_secs: test_util::at_second(7200).timestamp() as f64,
             tecu: Some(20.0),
         },
     ];
@@ -361,10 +359,14 @@ fn snapshot_the_plot_labels_the_tec_interpolated_at_the_pointer() {
 fn snapshot_the_plot_draws_no_line_and_no_channel_label_for_a_run_of_one_sample() {
     let drawn = scalar_channel(
         CHANNEL_NAME,
-        vec![support::at_second(0), support::at_second(59)],
+        vec![test_util::at_second(0), test_util::at_second(59)],
         vec![0.0, 10.0],
     );
-    let lone_sample = scalar_channel(SECOND_CHANNEL_NAME, vec![support::at_second(5)], vec![9.0]);
+    let lone_sample = scalar_channel(
+        SECOND_CHANNEL_NAME,
+        vec![test_util::at_second(5)],
+        vec![9.0],
+    );
     let mut plot = PlotScene::of(recording(60, 1, vec![drawn, lone_sample]))
         .with_the_channels_revealed()
         .draw();
@@ -387,9 +389,9 @@ fn snapshot_both_runs_of_one_channel_are_labelled_by_the_channel_name() {
     let times: Vec<DateTime<Utc>> = (0..60)
         .map(|sample| {
             if sample < 30 {
-                support::at_second(sample)
+                test_util::at_second(sample)
             } else {
-                support::at_second(sample - 10)
+                test_util::at_second(sample - 10)
             }
         })
         .collect();

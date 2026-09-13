@@ -5,19 +5,17 @@
 use chrono::{DateTime, TimeDelta, Utc};
 use gt_filter::GlobalFilter;
 use gt_plot::PlotState;
+use gt_plot::test_util::{self, PlotSources};
 use gt_test_utils::Queryable as _;
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::{FileIdx, LoadedFile, NavPoint, PointIdx, TrackIdx};
 use gt_ui_types::TrackDataVisibility;
-use support::PlotSources;
-
-mod support;
 
 /// A recording of one track, `count` fixes at 1 Hz from `start_offset`
 /// seconds, each carrying a satellite report of `constellation`.
 fn recording(start_offset: i64, count: usize, constellation: Constellation) -> LoadedFile {
     let points: Vec<NavPoint> =
-        gt_test_utils::fixtures::nav_points_from(support::at_second(start_offset), count, 1)
+        gt_test_utils::fixtures::nav_points_from(test_util::at_second(start_offset), count, 1)
             .into_iter()
             .map(|point| {
                 let report = Satellites::new(
@@ -35,7 +33,7 @@ fn recording(start_offset: i64, count: usize, constellation: Constellation) -> L
                 NavPoint::new(point.tpv, Some(report))
             })
             .collect();
-    support::recording(points, Vec::new())
+    test_util::recording(points, Vec::new())
 }
 
 /// The recording with one scalar channel named `channel_name` on each of its
@@ -61,8 +59,8 @@ fn with_channel(mut file: LoadedFile, channel_name: &str) -> LoadedFile {
 /// A window from `start` to `end`, both in seconds from the first fix.
 fn window(start: i64, end: i64) -> GlobalFilter {
     GlobalFilter {
-        time_start: Some(support::at_second(start)),
-        time_end: Some(support::at_second(end)),
+        time_start: Some(test_util::at_second(start)),
+        time_end: Some(test_util::at_second(end)),
         ..GlobalFilter::default()
     }
 }
@@ -81,7 +79,7 @@ fn under(filter: GlobalFilter) -> PlotSources {
 #[test]
 fn the_view_fits_the_time_window_rather_than_the_whole_recording() {
     let files = vec![recording(0, 3600, Constellation::Gps)];
-    let plot = support::drawn_plot(files, under(window(1800, 1860)), PlotState::default());
+    let plot = test_util::drawn_plot(files, under(window(1800, 1860)), PlotState::default());
 
     let shown = plot
         .state()
@@ -103,7 +101,7 @@ fn a_recording_outside_the_time_window_offers_no_constellation_chip() {
         recording(0, 60, Constellation::Gps),
         recording(7200, 60, Constellation::Qzss),
     ];
-    let plot = support::drawn_plot(files, under(window(0, 60)), PlotState::default());
+    let plot = test_util::drawn_plot(files, under(window(0, 60)), PlotState::default());
 
     assert!(
         plot.harness.inner.query_by_label("QZSS seen").is_none(),
@@ -120,7 +118,7 @@ fn a_recording_outside_the_time_window_reveals_no_channels_section() {
         recording(0, 60, Constellation::Gps),
         with_channel(recording(7200, 60, Constellation::Gps), "Brake pressure"),
     ];
-    let plot = support::drawn_plot(files, under(window(0, 60)), PlotState::default());
+    let plot = test_util::drawn_plot(files, under(window(0, 60)), PlotState::default());
 
     assert!(
         plot.harness
@@ -139,8 +137,12 @@ fn the_cross_highlight_lands_on_a_fix_inside_the_time_window() {
     let files = [recording(0, 60, Constellation::Gps)];
     let visibility = TrackDataVisibility::from_loaded(&files);
 
-    let closest =
-        gt_plot::find_closest_tpv(&files, &visibility, &window(10, 20), support::at_second(50));
+    let closest = gt_plot::find_closest_tpv(
+        &files,
+        &visibility,
+        &window(10, 20),
+        test_util::at_second(50),
+    );
 
     assert_eq!(
         closest,
@@ -161,7 +163,7 @@ fn a_track_below_the_minimum_duration_holds_no_cross_highlight() {
     };
 
     assert_eq!(
-        gt_plot::find_closest_tpv(&files, &visibility, &filter, support::at_second(30)),
+        gt_plot::find_closest_tpv(&files, &visibility, &filter, test_util::at_second(30)),
         None
     );
 }
@@ -173,7 +175,7 @@ fn a_track_below_the_minimum_duration_holds_no_cross_highlight() {
 #[test]
 fn a_small_move_of_the_window_end_redraws_the_lines() {
     let files = vec![recording(0, 3600, Constellation::Gps)];
-    let mut plot = support::drawn_plot(files, under(window(0, 3000)), PlotState::default());
+    let mut plot = test_util::drawn_plot(files, under(window(0, 3000)), PlotState::default());
     let pixels_per_point = plot.harness.inner.ctx.pixels_per_point();
     let before = plot
         .harness
@@ -181,7 +183,7 @@ fn a_small_move_of_the_window_end_redraws_the_lines() {
         .render()
         .expect("the harness renders a frame");
 
-    plot.sources_mut().filter.time_end = Some(support::at_second(2960));
+    plot.sources_mut().filter.time_end = Some(test_util::at_second(2960));
     plot.harness.inner.run_steps(2);
     let after = plot
         .harness
@@ -193,7 +195,7 @@ fn a_small_move_of_the_window_end_redraws_the_lines() {
         gt_test_utils::snapshot_harness::pixels_differ(
             &before,
             &after,
-            support::plot_area(),
+            test_util::plot_area(),
             pixels_per_point
         ),
         "the last 40 s of every line left the window and must leave the plot"
@@ -206,7 +208,7 @@ fn a_small_move_of_the_window_end_redraws_the_lines() {
 #[test]
 fn a_pinned_view_redraws_its_lines_when_the_window_end_moves() {
     let files = vec![recording(0, 3600, Constellation::Gps)];
-    let mut plot = support::drawn_plot(
+    let mut plot = test_util::drawn_plot(
         files,
         under(window(0, 3000)).pinned_to_map_view(0..=3600),
         PlotState::default(),
@@ -219,7 +221,7 @@ fn a_pinned_view_redraws_its_lines_when_the_window_end_moves() {
         .render()
         .expect("the harness renders a frame");
 
-    plot.sources_mut().filter.time_end = Some(support::at_second(2960));
+    plot.sources_mut().filter.time_end = Some(test_util::at_second(2960));
     plot.harness.inner.run_steps(2);
     let after = plot
         .harness
@@ -236,7 +238,7 @@ fn a_pinned_view_redraws_its_lines_when_the_window_end_moves() {
         gt_test_utils::snapshot_harness::pixels_differ(
             &before,
             &after,
-            support::plot_area(),
+            test_util::plot_area(),
             pixels_per_point
         ),
         "the last 40 s of every line left the window and must leave the plot"

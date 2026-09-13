@@ -23,7 +23,7 @@ use gt_side_panel::{
     EVERY_TRACK_PASSES_THE_FILTER_HOVER, FilterPanelState, NodeKey,
     ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER, PanelContext, SHELVE_FILTERED_DATA_LABEL,
     SHELVE_SELECTED_TRACKS_LABEL, SHELVE_TRACK_LABEL, SnapCostingTarget, SnapPanelView,
-    SnapRowView, TreeState, show_side_panel,
+    SnapRowView, TreeState, test_util,
 };
 use gt_test_utils::fixtures::FixCountsAroundAGap;
 use gt_test_utils::{
@@ -37,8 +37,6 @@ use gt_ui_types::{DisplayCategory, DisplayMask, HighlightScope, MapHighlight, Sn
 use rustc_hash::FxHashMap;
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
-
-mod support;
 
 struct State {
     files: LoadedFiles,
@@ -181,7 +179,7 @@ fn make_harness_sized(state: State, size: egui::Vec2) -> TestHarness<'static, St
         |ui, s: &mut State| {
             let names = RecordingNames::resolve(s.files.view(), &s.recording_name_template);
             let mut ctx = panel_context(s, &names);
-            show_side_panel(ui, &mut ctx);
+            gt_side_panel::show_side_panel(ui, &mut ctx);
         },
         state,
     )
@@ -865,7 +863,7 @@ fn snapshot_visible_section_groups_the_tracks_under_their_recording() {
 /// of kilometres above two tracks of under a minute and under a kilometre.
 #[test]
 fn snapshot_visible_section_columns_across_magnitudes() {
-    let start = support::utc(12, 0, 0);
+    let start = test_util::utc(12, 0, 0);
     let mut files = LoadedFiles::new();
     files.push(
         gt_test_utils::build_file(
@@ -1336,7 +1334,7 @@ fn snapshot_tracks_with_coordinates_out_of_range() {
 fn snapshot_track_channels() {
     // A stationary track (starts 2026-01-01T12:00:00Z, 1 pt/s) plus two channels
     // whose samples fall in its range: a vector accel and a scalar incline.
-    let start = support::utc(12, 0, 0);
+    let start = test_util::utc(12, 0, 0);
     let points = gt_test_utils::fixtures::stationary_nav_data(10);
     let accel = gt_types::Channel {
         name: "accel".to_owned(),
@@ -1669,7 +1667,7 @@ fn settled_docked_panel_width(state: State) -> f32 {
                                     &s.recording_name_template,
                                 );
                                 let mut ctx = panel_context(s, &names);
-                                show_side_panel(ui, &mut ctx);
+                                gt_side_panel::show_side_panel(ui, &mut ctx);
                             });
                     width_probe.set(resp.response.rect.width());
                 });
@@ -1772,7 +1770,7 @@ fn a_plot_hover_that_has_not_snapped_marks_no_row() {
 /// of ten fixes at 10 Hz spanning 900 ms.
 #[test]
 fn the_time_range_filter_covers_a_recording_shorter_than_a_second() {
-    let start = support::utc(12, 0, 0);
+    let start = test_util::utc(12, 0, 0);
     let points = gt_test_utils::fixtures::nav_points_from_specs(start, 10, 100, |_| {
         gt_test_utils::fixtures::NavPointSpec::default()
     });

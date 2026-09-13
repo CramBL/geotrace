@@ -7,12 +7,9 @@ use egui_phosphor::regular::EYE as ICON_EYE;
 use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
 use gt_flare::MarkedFlare;
 use gt_plot::PlotState;
-use gt_test_utils::Queryable as _;
+use gt_plot::test_util::{self, DrawnPlot, PlotSources};
 use gt_types::{LoadedFile, MetricKind};
 use rstest::rstest;
-use support::{DrawnPlot, PlotSources};
-
-mod support;
 
 /// Fixes in the recording, one per second.
 const FIX_COUNT: usize = 60;
@@ -30,14 +27,14 @@ const FLARE_PEAK_SECS: i64 = 30;
 /// A recording of one track at 1 Hz carrying a scalar channel sampled at the
 /// same rate.
 fn recording_with_a_channel() -> LoadedFile {
-    let times: Vec<DateTime<Utc>> = (0..FIX_COUNT as i64).map(support::at_second).collect();
+    let times: Vec<DateTime<Utc>> = (0..FIX_COUNT as i64).map(test_util::at_second).collect();
     let channel = gt_test_utils::fixtures::scalar_channel(
         CHANNEL_NAME,
         None,
         times.clone(),
         vec![1.0; times.len()],
     );
-    support::recording(support::fixes(FIX_COUNT, 1), vec![channel])
+    test_util::recording(test_util::fixes(FIX_COUNT, 1), vec![channel])
 }
 
 /// What the plot draws the recording under: whether the Channels section is
@@ -53,7 +50,7 @@ impl PlotScene {
     fn with_channels_and_a_flare() -> Self {
         Self {
             show_channels: true,
-            solar_flares: vec![support::flare_peaking_at(FLARE_PEAK_SECS)],
+            solar_flares: vec![test_util::flare_peaking_at(FLARE_PEAK_SECS)],
         }
     }
 
@@ -65,7 +62,7 @@ impl PlotScene {
         } = self;
         let mut plot = PlotState::default();
         plot.show_channels = show_channels;
-        support::drawn_plot(
+        test_util::drawn_plot(
             vec![recording_with_a_channel()],
             PlotSources {
                 solar_flares,
@@ -73,31 +70,6 @@ impl PlotScene {
             },
             plot,
         )
-    }
-}
-
-impl DrawnPlot {
-    /// The icon on the show/hide-all button: the crossed-out eye while every
-    /// series in scope is visible, the plain eye otherwise.
-    fn show_hide_all_icon(&self) -> &'static str {
-        if self.harness.inner.query_by_label(ICON_EYE_SLASH).is_some() {
-            ICON_EYE_SLASH
-        } else {
-            ICON_EYE
-        }
-    }
-
-    fn click_show_hide_all(&mut self) {
-        let icon = self.show_hide_all_icon();
-        self.harness.inner.get_by_label(icon).click();
-        self.run();
-    }
-
-    /// The state a click reaches from the default: every series in scope
-    /// visible, then every one of them hidden.
-    fn show_all_then_hide_all(&mut self) {
-        self.click_show_hide_all();
-        self.click_show_hide_all();
     }
 }
 
@@ -161,7 +133,7 @@ enum HiddenSeries {
 fn hiding_all_leaves_the_channels_of_a_collapsed_section_visible() {
     let mut plot = PlotScene {
         show_channels: false,
-        solar_flares: vec![support::flare_peaking_at(FLARE_PEAK_SECS)],
+        solar_flares: vec![test_util::flare_peaking_at(FLARE_PEAK_SECS)],
     }
     .draw();
 

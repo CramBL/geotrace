@@ -9,6 +9,7 @@ from qa import (
     check_floating_comments,
     check_narrative_comments,
     check_no_network,
+    check_no_tests_support,
     check_raw_colors,
 )
 from qa._check import repo_root, run_check
@@ -18,6 +19,7 @@ _CHECKS = [
     check_floating_comments.DEFINITION,
     check_narrative_comments.DEFINITION,
     check_no_network.DEFINITION,
+    check_no_tests_support.DEFINITION,
     check_raw_colors.DEFINITION,
 ]
 

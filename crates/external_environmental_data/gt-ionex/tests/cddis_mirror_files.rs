@@ -11,8 +11,6 @@
 //! that capture. Capturing another day extends this without a change here:
 //! every entry of the manifest is read.
 
-mod support;
-
 use std::collections::BTreeSet;
 
 use chrono::NaiveDate;
@@ -20,7 +18,7 @@ use serde_json::Value;
 
 use gt_ionex::maps::GlobalIonosphereMaps;
 use gt_ionex::tec::TotalElectronContent;
-use gt_ionex::{IonexProduct, Mirror, MirrorLayout, transport};
+use gt_ionex::{IonexProduct, Mirror, MirrorLayout, test_util, transport};
 
 /// How far a recorded peak may stand from the one the file parses to.
 const TECU_TOLERANCE: f64 = 1e-9;
@@ -41,7 +39,7 @@ struct CapturedFile {
 /// the recorded day, found by the URL the file was served from.
 fn captured_files() -> Result<Vec<CapturedFile>, String> {
     let mut captures = Vec::new();
-    for entry in support::cddis_manifest_entries()? {
+    for entry in test_util::cddis_manifest_entries()? {
         let file_name = recorded_str(&entry, "file_name")?.to_owned();
         let url = recorded_str(&entry, "url")?.to_owned();
         let day: NaiveDate = recorded_str(&entry, "day")?
@@ -67,7 +65,7 @@ fn captured_files() -> Result<Vec<CapturedFile>, String> {
             ));
         }
 
-        let served = support::cddis_capture_bytes(&file_name)?;
+        let served = test_util::cddis_capture_bytes(&file_name)?;
         let maps = transport::read_served_file(&served, candidate.compression)
             .map_err(|err| format!("{file_name}: {err}"))?;
         captures.push(CapturedFile {
@@ -91,7 +89,7 @@ fn recorded_str<'entry>(entry: &'entry Value, field: &str) -> Result<&'entry str
 /// No entry survives a dropped capture, and no file is captured unrecorded.
 #[test]
 fn the_manifest_lists_exactly_the_captured_files() {
-    let captured: BTreeSet<String> = support::cddis_capture_file_names()
+    let captured: BTreeSet<String> = test_util::cddis_capture_file_names()
         .unwrap()
         .into_iter()
         .collect();

@@ -6,12 +6,10 @@ use std::ops::Range;
 
 use chrono::Duration;
 use egui_plot::PlotPoint;
+use gt_plot::test_util::{self, DrawnPlot, PlotPosition, PlotSources};
 use gt_plot::{EDGE_MARKER_INSET, PlotState};
 use gt_types::{LoadedFile, MetricKind};
 use strum::IntoEnumIterator as _;
-use support::{DrawnPlot, PlotPosition, PlotSources};
-
-mod support;
 
 /// Fixes in the recording, one per second.
 const FIX_COUNT: usize = 60;
@@ -76,9 +74,9 @@ fn recording_with_a_host_clock(host_ahead: Duration) -> LoadedFile {
 
 /// [`recording_with_a_host_clock`] over `fix_count` fixes.
 fn recording_of_fixes_with_a_host_clock(fix_count: usize, host_ahead: Duration) -> LoadedFile {
-    support::recording(
+    test_util::recording(
         gt_test_utils::fixtures::nav_points_with_a_host_clock_from(
-            support::at_second(0),
+            test_util::at_second(0),
             fix_count,
             1,
             host_ahead,
@@ -141,9 +139,9 @@ fn recording_with_a_departure_on_the_last_fix() -> LoadedFile {
 /// index `i` has a host timestamp `host_ahead[i]` past the receiver's own
 /// time.
 fn recording_with_host_clock_offsets(step_secs: i64, host_ahead: &[Duration]) -> LoadedFile {
-    support::recording(
+    test_util::recording(
         gt_test_utils::fixtures::nav_points_with_host_clock_offsets_from(
-            support::at_second(0),
+            test_util::at_second(0),
             step_secs,
             host_ahead,
         ),
@@ -160,7 +158,7 @@ fn recording_of_a_track_per_host_clock(host_ahead: &[Duration]) -> LoadedFile {
         .enumerate()
         .map(|(index, &ahead)| {
             let points = gt_test_utils::fixtures::nav_points_with_a_host_clock_from(
-                support::at_second((index * 2 * FIX_COUNT) as i64),
+                test_util::at_second((index * 2 * FIX_COUNT) as i64),
                 FIX_COUNT,
                 1,
                 ahead,
@@ -180,7 +178,7 @@ fn drawn_with_a_host_clock(host_ahead: Duration) -> DrawnPlot {
 /// A harness that has drawn the plot over `recording`, under the default
 /// sources and the default plot state.
 fn drawn_over(recording: LoadedFile) -> DrawnPlot {
-    support::drawn_plot(
+    test_util::drawn_plot(
         vec![recording],
         PlotSources::default(),
         PlotState::default(),
@@ -198,7 +196,7 @@ fn drawn_with_the_clock_offset_line_alone(
     for kind in MetricKind::iter() {
         plot.metric_vis.set(kind, kind == MetricKind::ClockDeltaMs);
     }
-    support::drawn_plot(vec![recording], sources, plot)
+    test_util::drawn_plot(vec![recording], sources, plot)
 }
 
 /// The first and the last fix of every stretch the clock offset line draws, in
@@ -224,7 +222,7 @@ fn drawn_lone_fixes(drawn: &DrawnPlot) -> Vec<f64> {
 /// `at` in seconds from the first fix, to the nearest second: a position read
 /// back off the screen carries the rounding of the pixel it was drawn at.
 fn offset_secs(at: &PlotPoint) -> f64 {
-    (at.x - support::at_second(0).timestamp() as f64).round()
+    (at.x - test_util::at_second(0).timestamp() as f64).round()
 }
 
 fn visible_y_range(drawn: &DrawnPlot) -> (f64, f64) {
@@ -319,7 +317,7 @@ fn snapshot_a_baseline_before_the_unix_epoch_marks_every_fix_at_the_top_edge(
     #[case] snapshot_name: &str,
     #[case] theme: egui::Theme,
 ) {
-    let mut drawn = support::drawn_plot_in_theme(
+    let mut drawn = test_util::drawn_plot_in_theme(
         vec![recording_with_a_host_clock(
             host_clock_before_the_unix_epoch(),
         )],
@@ -440,7 +438,7 @@ fn snapshot_a_marker_at_the_right_boundary_is_drawn_whole() {
     const LEAD_IN_SECS: i64 = 10;
     let up_to_the_last_fix = -LEAD_IN_SECS..=(FIX_COUNT as i64 - 1);
 
-    let mut drawn = support::drawn_plot(
+    let mut drawn = test_util::drawn_plot(
         vec![recording_with_a_host_clock(
             host_clock_before_the_unix_epoch(),
         )],
@@ -461,7 +459,7 @@ fn snapshot_connectors_join_the_markers_to_the_line_they_left() {
     let around_the_excursion = (EXCURSION_FIXES.start as i64 - FIXES_EITHER_SIDE)
         ..=(EXCURSION_FIXES.end as i64 + FIXES_EITHER_SIDE);
 
-    let mut drawn = support::drawn_plot(
+    let mut drawn = test_util::drawn_plot(
         vec![recording_with_an_excursion(Duration::hours(
             -EXCURSION_HOURS,
         ))],
@@ -505,7 +503,7 @@ fn the_hover_of_a_departure_on_the_last_fix_says_the_recording_ends_there() {
     const LEAD_OUT_SECS: i64 = 10;
     let last_fix = FIX_COUNT as i64 - 1;
 
-    let mut drawn = support::drawn_plot(
+    let mut drawn = test_util::drawn_plot(
         vec![recording_with_a_departure_on_the_last_fix()],
         PlotSources::default().pinned_to_map_view(0..=(last_fix + LEAD_OUT_SECS)),
         PlotState::default(),

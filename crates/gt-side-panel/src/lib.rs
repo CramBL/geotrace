@@ -1,5 +1,7 @@
 pub mod filter;
 mod render;
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
 mod track_columns;
 pub mod tree;
 pub mod widgets;

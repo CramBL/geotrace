@@ -9,6 +9,12 @@ authors.workspace = true
 [lib]
 doctest = false
 
+[features]
+# Builds `gt_side_panel::test_util`, the recordings and the harness the
+# integration test binaries draw the filter panel with. A normal build leaves
+# it off.
+test-util = ["dep:gt-test-utils"]
+
 [dependencies]
 chrono.workspace = true
 egui.workspace = true
@@ -17,6 +23,11 @@ gt-filter = { path = "../gt-filter" }
 gt-fmt = { path = "../gt-fmt" }
 gt-history-types = { path = "../gt-history-types" }
 gt-loaded-files = { path = "../gt-loaded-files" }
+# Builds the recordings and drives the harness of `test_util`, which the
+# `test-util` feature exposes to the integration test binaries.
+gt-test-utils = { path = "../gt-test-utils", features = [
+    "snapshot",
+], optional = true }
 gt-types = { path = "../gt-types" }
 gt-ui-theme = { path = "../gt-ui-theme" }
 gt-ui-types = { path = "../gt-ui-types" }
@@ -26,6 +37,9 @@ uom.workspace = true
 [dev-dependencies]
 geotrace-sdk-units = { path = "../../sdk/rust/geotrace-sdk-units" }
 gt-filter = { path = "../gt-filter" }
+# The crate's own recordings and harness, which the integration test binaries
+# draw the filter panel with.
+gt-side-panel = { path = ".", features = ["test-util"] }
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
 gt-track-builder = { path = "../gt-track-builder" }
 gt-ui-types = { path = "../gt-ui-types" }

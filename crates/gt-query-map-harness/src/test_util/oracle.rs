@@ -77,7 +77,7 @@ pub fn expect(
     let mut expected = HashMap::new();
     for (fi, file) in files.iter().enumerate() {
         for (ti, track) in file.tracks.iter().enumerate() {
-            let track_ref = gt_query_map_harness::track(fi, ti);
+            let track_ref = crate::track(fi, ti);
             expected.insert(track_ref, expect_track(&track.points, window, program));
         }
     }
