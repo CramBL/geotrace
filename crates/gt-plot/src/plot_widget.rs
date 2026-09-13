@@ -17,6 +17,7 @@ mod reference_illustration;
 mod snap_error;
 mod style;
 mod tec;
+mod time_axis;
 
 pub use chips::{ChannelVisibility, MetricVisibility};
 pub use legend::{LEGEND_DOCK_OFFSET, legend_is_docked};
@@ -37,13 +38,14 @@ use lines::{
 use snap_error::{SnapErrorPlotCache, snap_error_available, sync_snap_error_cache};
 use style::metric_line_color;
 use tec::tec_available;
+use time_axis::{TimeAxisFrame, TimeAxisLabeling};
 
 use crate::AnalysisConfig;
 use crate::series::{PlacedTrackSeries, build_all_series};
 use chrono::{DateTime, Utc};
 use egui::Color32;
 use egui::RichText;
-use egui_plot::{LineStyle, Span, VLine};
+use egui_plot::{AxisHints, LineStyle, Span, VLine};
 use gt_analysis::clock_offset::ClockOffsetPlacement;
 use gt_filter::GlobalFilter;
 use gt_flare::MarkedFlare;
@@ -590,13 +592,8 @@ pub fn show_track_plot(
 
     let time_window = FilterTimeWindow::from(filter);
 
-    // Format an x-axis tick label from a Unix timestamp.
-    let x_fmt = |mark: egui_plot::GridMark, _range: &RangeInclusive<f64>| {
-        let ts = mark.value as i64;
-        DateTime::from_timestamp(ts, 0)
-            .map(|dt| dt.format("%H:%M:%S").to_string())
-            .unwrap_or_default()
-    };
+    // Read by the tick formatter after the x-axis spacer runs. See [`TimeAxisFrame`].
+    let time_axis_labeling = Cell::new(TimeAxisLabeling::default());
 
     let reset_extent = reset_extent(&state.series_cache, &visible, time_window);
 
@@ -665,7 +662,19 @@ pub fn show_track_plot(
                 .text_color()
                 .gamma_multiply(GRID_COLOR_STRENGTH),
         )
-        .x_axis_formatter(x_fmt)
+        .x_grid_spacer(|input| {
+            let frame = TimeAxisFrame::new(&input, available_width);
+            time_axis_labeling.set(frame.labeling);
+            frame.marks
+        })
+        .custom_x_axes(vec![
+            AxisHints::new_x()
+                .formatter(|mark, _range| time_axis_labeling.get().tick_label(mark))
+                // The axis draws every label at full strength. The formatter leaves a mark
+                // finer than the label step unlabelled, and a labelled mark spans at least
+                // `MIN_LABEL_SPACING_POINTS`, the top of this range.
+                .label_spacing(0.0..=time_axis::MIN_LABEL_SPACING_POINTS),
+        ])
         .label_formatter(|pos| cursor_label(&custom_hover_label_shown, pos));
 
     // Set as the plot's fixed x bounds so the context lines, which span
