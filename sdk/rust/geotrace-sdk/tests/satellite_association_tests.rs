@@ -76,13 +76,19 @@ fn first_constellation(p: &geotrace_sdk::NavPoint) -> Constellation {
 
 /// The association window comparison is `<=`, not `<`.
 /// A report at exactly `window` distance from a fix must be assigned to it.
-#[test]
-fn window_boundary_inclusive() -> Result<(), BuildError> {
-    let mut recorder = NavFileBuilder::new()
-        .with_satellite_window(std::time::Duration::from_millis(100))
-        .open();
+#[rstest]
+#[case::the_default_window(NavFileBuilder::new(), 500)]
+#[case::a_custom_window(
+    NavFileBuilder::new().with_satellite_window(std::time::Duration::from_millis(100)),
+    100
+)]
+fn window_boundary_inclusive(
+    #[case] builder: NavFileBuilder,
+    #[case] window_ms: i64,
+) -> Result<(), BuildError> {
+    let mut recorder = builder.open();
     recorder.add_nav_fix(fix_at(0, 55.0, 12.0));
-    recorder.add_satellite_report(report_gps(100)); // exactly 100 ms away
+    recorder.add_satellite_report(report_gps(window_ms));
     let nav_file = recorder.finish()?;
 
     assert_eq!(nav_file.nav_points().len(), 1, "no ghost fix expected");
@@ -114,16 +120,21 @@ fn a_window_past_the_microsecond_count_associates_every_report() -> Result<(), B
 
 /// One microsecond past the window boundary falls outside (`dist > window`).
 /// The report must become a ghost fix, not be silently dropped.
-#[test]
-fn window_boundary_one_microsecond_past_is_excluded() -> Result<(), BuildError> {
-    let mut recorder = NavFileBuilder::new()
-        .with_satellite_window(std::time::Duration::from_millis(100))
-        .open();
+#[rstest]
+#[case::the_default_window(NavFileBuilder::new(), 500)]
+#[case::a_custom_window(
+    NavFileBuilder::new().with_satellite_window(std::time::Duration::from_millis(100)),
+    100
+)]
+fn window_boundary_one_microsecond_past_is_excluded(
+    #[case] builder: NavFileBuilder,
+    #[case] window_ms: i64,
+) -> Result<(), BuildError> {
+    let mut recorder = builder.open();
     recorder.add_nav_fix(fix_at(0, 0.0, 0.0));
-    // 100 ms + 1 μs → just outside the window.
     recorder.add_satellite_report(
         SatelliteReport::builder()
-            .time(NavFixTime::Receiver(t_us(100_001)))
+            .time(NavFixTime::Receiver(t_us(window_ms * 1000 + 1)))
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -589,8 +600,6 @@ fn between_fix_ghost_interpolated_at_correct_fraction() -> Result<(), BuildError
 
 /// When no clock delta can be computed (fixes have no `sys_time`, and reports
 /// have no `gps_time`), ghost fixes are evenly distributed along the segment.
-/// This complements `ghost_points_between_fixes_are_evenly_distributed` by
-/// explicitly verifying the "no information" fallback.
 #[test]
 fn between_fix_ghosts_evenly_distributed_when_no_delta_available() -> Result<(), BuildError> {
     let mut recorder = NavFileBuilder::new().open();
@@ -678,6 +687,33 @@ fn a_report_before_the_first_fix_and_one_after_the_last_both_become_ghosts()
     Ok(())
 }
 
+#[test]
+fn reports_before_the_first_fix_become_ghosts_on_the_first_fix_in_time_order()
+-> Result<(), BuildError> {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix_at(10_000, 55.0, 12.0));
+    recorder.add_satellite_report(report_gps(2000));
+    recorder.add_satellite_report(report_gps(0));
+
+    let nav_file = recorder.finish()?;
+    let points = nav_file.nav_points();
+    assert_eq!(points.len(), 3, "expected 2 ghost fixes and 1 real fix");
+
+    for (i, expected_time) in [t(0), t(2000)].into_iter().enumerate() {
+        let ghost = &points[i];
+        assert_eq!(ghost.fix.gps_time(), Some(expected_time));
+        assert_eq!(ghost.fix.lat, Angle::degrees(55.0));
+        assert_eq!(ghost.fix.lon, Angle::degrees(12.0));
+        assert_eq!(ghost.fix.heading, None);
+        assert!(
+            ghost.satellites.is_some(),
+            "ghost {i} is missing its satellite report"
+        );
+    }
+    assert_eq!(points[2].fix.gps_time(), Some(t(10_000)), "the real fix");
+    Ok(())
+}
+
 /// `SatelliteReport` with only a host timestamp, at `t(offset_ms)`.
 fn report_with_sys_time_only(offset_ms: i64) -> SatelliteReport {
     SatelliteReport::builder()
@@ -727,6 +763,49 @@ fn a_ghost_from_a_sys_time_only_report_takes_the_anchor_fixs_clock_delta(
     Ok(())
 }
 
+/// The one fix has a receiver time of `DateTime::<Utc>::MAX_UTC` and a host
+/// time three hours earlier, a clock offset of three hours. The orphan report
+/// has a host time one hour before `MAX_UTC`, which that offset places two
+/// hours past it.
+#[test]
+fn a_ghost_fix_past_the_utc_range_fails_the_build() {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .time(NavFixTime::Both {
+                gps: DateTime::<Utc>::MAX_UTC,
+                sys: DateTime::<Utc>::MAX_UTC - Duration::hours(3),
+            })
+            .lat(Angle::degrees(55.0))
+            .lon(Angle::degrees(12.0))
+            .heading(Angle::degrees(0.0))
+            .build(),
+    );
+    recorder.add_satellite_report(
+        SatelliteReport::builder()
+            .time(NavFixTime::Host(
+                DateTime::<Utc>::MAX_UTC - Duration::hours(1),
+            ))
+            .tracked(vec![
+                Satellite::builder()
+                    .constellation(Constellation::Gps)
+                    .prn(1u32)
+                    .in_fix(true)
+                    .build(),
+            ])
+            .build(),
+    );
+
+    let result = recorder.finish();
+    let Err(error @ BuildError::GhostFixTimeOutOfRange { .. }) = result else {
+        panic!("expected GhostFixTimeOutOfRange, got: {result:?}");
+    };
+    assert_eq!(
+        error.to_string(),
+        "a ghost nav fix at 8210266883999999999 microseconds is past the range a UTC timestamp covers"
+    );
+}
+
 #[test]
 fn ghosts_after_a_last_fix_without_a_heading_take_that_fixs_position() -> Result<(), BuildError> {
     let mut recorder = NavFileBuilder::new().open();
@@ -750,6 +829,61 @@ fn ghosts_after_a_last_fix_without_a_heading_take_that_fixs_position() -> Result
         assert_eq!(ghost.fix.lon, Angle::degrees(12.0));
         assert_eq!(ghost.fix.heading, None);
     }
+    Ok(())
+}
+
+fn fix_on_the_equator_heading_east(offset_ms: i64, lon: f64) -> NavFix {
+    NavFix::builder()
+        .time(NavFixTime::Receiver(t(offset_ms)))
+        .lat(Angle::degrees(0.0))
+        .lon(Angle::degrees(lon))
+        .heading(Angle::degrees(90.0))
+        .build()
+}
+
+#[test]
+fn a_ghost_fix_between_two_fixes_across_the_antimeridian_is_placed_on_the_short_arc_heading_east()
+-> Result<(), BuildError> {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix_on_the_equator_heading_east(0, 179.95));
+    recorder.add_nav_fix(fix_on_the_equator_heading_east(10_000, -179.95));
+    recorder.add_satellite_report(report_gps(5000));
+
+    let nav_file = recorder.finish()?;
+    let points = nav_file.nav_points();
+    assert_eq!(points.len(), 3, "expected 2 real fixes and 1 ghost fix");
+
+    let ghost = &points[1];
+    assert!(ghost.satellites.is_some());
+    assert!(
+        (ghost.fix.lon.as_degrees() - (-180.0)).abs() < 1e-9,
+        "lon is {}, expected -180",
+        ghost.fix.lon.as_degrees()
+    );
+    let heading_deg = ghost.fix.heading.map_or(f64::NAN, Angle::as_degrees);
+    assert!(
+        (heading_deg - 90.0).abs() < 1e-9,
+        "heading is {heading_deg}, expected 90"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_dead_reckoned_ghost_stepping_east_over_the_antimeridian_wraps_its_longitude()
+-> Result<(), BuildError> {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix_on_the_equator_heading_east(0, 179.999999));
+    recorder.add_satellite_report(report_gps(10_000));
+
+    let nav_file = recorder.finish()?;
+    let points = nav_file.nav_points();
+    assert_eq!(points.len(), 2, "expected 1 real fix and 1 ghost fix");
+
+    let lon_deg = points[1].fix.lon.as_degrees();
+    assert!(
+        (-180.0..0.0).contains(&lon_deg),
+        "lon is {lon_deg}, expected a wrapped value west of the antimeridian"
+    );
     Ok(())
 }
 

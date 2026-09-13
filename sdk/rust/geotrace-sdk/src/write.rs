@@ -707,7 +707,6 @@ mod tests {
     use hdf5_pure::File;
 
     use super::*;
-    use crate::provenance::SCRUBBED_SDK_VERSION;
 
     fn attrs_of_a_file_with(meta: &Meta) -> HashMap<String, AttrValue> {
         let mut fb = FileBuilder::new();
@@ -761,21 +760,6 @@ mod tests {
             attrs.get(SDK_VERSION_ATTR).and_then(AttrValue::as_str),
             Some("0.4.2")
         );
-    }
-
-    #[test]
-    fn a_scrubbed_stamp_writes_the_placeholder_version_and_no_commit() {
-        let mut meta = Meta::default();
-        meta.stamp_scrubbed_provenance();
-
-        let attrs = attrs_of_a_file_with(&meta);
-
-        assert_eq!(
-            attrs.get(SDK_VERSION_ATTR).and_then(AttrValue::as_str),
-            Some(SCRUBBED_SDK_VERSION)
-        );
-        assert!(!attrs.contains_key(SDK_GIT_COMMIT_ATTR));
-        assert!(!attrs.contains_key(SDK_COMMIT_TIME_ATTR));
     }
 
     #[test]

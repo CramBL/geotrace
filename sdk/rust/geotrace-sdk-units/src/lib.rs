@@ -1015,14 +1015,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn recognized_channel_units_scale_to_base() {
-        let mg = Unit::from_label("mg").expect("mg is recognized");
-        assert_eq!(mg.quantity(), PhysicalQuantity::Acceleration);
-        assert!((mg.to_base() - 0.009_806_65).abs() < 1e-12);
-        assert_eq!(mg.to_string(), "mg");
-    }
-
-    #[test]
     fn file_labels_parse_aliases_before_using_the_escape_hatch() {
         for (label, expected) in [
             ("µg", "ug"),

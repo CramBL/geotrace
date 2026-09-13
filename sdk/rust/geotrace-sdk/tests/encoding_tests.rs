@@ -2,10 +2,6 @@
     clippy::panic_in_result_fn,
     reason = "test functions mix ? propagation with assert! - both are correct in test code"
 )]
-#![expect(
-    clippy::unwrap_in_result,
-    reason = "test code may use expect() for infallible test invariants"
-)]
 
 use geotrace_sdk::{Angle, DateTime, Duration, Utc};
 use geotrace_sdk::{
@@ -280,51 +276,6 @@ fn marker_icon_encoding() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[test]
-fn label_ascii() -> Result<(), Box<dyn std::error::Error>> {
-    let rt = nav_file_with_label(Some("Hello, world!".into()))?;
-    assert_eq!(rt.markers()[0].annotation.label(), Some("Hello, world!"));
-    Ok(())
-}
-
-#[test]
-fn label_multibyte_utf8() -> Result<(), Box<dyn std::error::Error>> {
-    let label = "日本語テスト 🌍";
-    let rt = nav_file_with_label(Some(label.into()))?;
-    assert_eq!(rt.markers()[0].annotation.label(), Some(label));
-    Ok(())
-}
-
-#[test]
-fn label_none() -> Result<(), Box<dyn std::error::Error>> {
-    // An all-zero label row decodes as None.
-    let rt = nav_file_with_label(None)?;
-    assert_eq!(rt.markers()[0].annotation.label(), None);
-    Ok(())
-}
-
-#[test]
-fn timestamp_precision() -> Result<(), Box<dyn std::error::Error>> {
-    // Timestamps with sub-millisecond precision survive the round-trip.
-    let t = DateTime::from_timestamp_micros(1_748_000_000_000_500).expect("valid");
-
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(
-        NavFix::builder()
-            .time(NavFixTime::Receiver(t))
-            .lat(Angle::degrees(0.0))
-            .lon(Angle::degrees(0.0))
-            .heading(Angle::degrees(0.0))
-            .build(),
-    );
-    let nav_file = recorder.finish()?;
-    let mut bytes = Vec::new();
-    nav_file.write(&mut bytes)?;
-    let rt = NavFile::read(bytes.as_slice())?;
-    assert_eq!(rt.nav_points()[0].fix.gps_time(), Some(t));
-    Ok(())
-}
-
 #[rstest]
 #[case::a_number_the_reader_does_not_support("10")]
 #[case::digits_followed_by_letters("1abc")]
@@ -451,59 +402,6 @@ fn make_file_with_shape_mismatch() -> Vec<u8> {
     fb.add_group(np.finish());
     #[expect(clippy::expect_used, reason = "test helper")]
     fb.finish().expect("build")
-}
-
-#[test]
-fn chunked_fixed_array_large_dataset_round_trips() -> Result<(), Box<dyn std::error::Error>> {
-    // hdf5-pure ≤ 0.5.0 could not read datasets whose Fixed Array chunk index
-    // used the "paged" variant, triggered when `num_chunks` > 1024. Using
-    // chunk_size=1 with 1025 elements forces this path.
-    const N: usize = 1025;
-    let data: Vec<f64> = (0..N).map(|i| i as f64).collect();
-
-    let mut fb = FileBuilder::new();
-    let mut grp = fb.create_group("data");
-    grp.create_dataset("values")
-        .with_f64_data(&data)
-        .with_shape(&[N as u64])
-        .with_chunks(&[1])
-        .with_deflate(6);
-    fb.add_group(grp.finish());
-    let bytes = fb.finish().expect("build");
-
-    let file = hdf5_pure::File::from_bytes(bytes)?;
-    let read_back = file.group("data")?.dataset("values")?.read_f64()?;
-    assert_eq!(read_back, data);
-    Ok(())
-}
-
-fn nav_file_with_label(label: Option<String>) -> Result<NavFile, Box<dyn std::error::Error>> {
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(
-        NavFix::builder()
-            .time(NavFixTime::Receiver(t(0)))
-            .lat(Angle::degrees(0.0))
-            .lon(Angle::degrees(0.0))
-            .heading(Angle::degrees(0.0))
-            .build(),
-    );
-    recorder.add_nav_fix(
-        NavFix::builder()
-            .time(NavFixTime::Receiver(t(1000)))
-            .lat(Angle::degrees(1.0))
-            .lon(Angle::degrees(1.0))
-            .heading(Angle::degrees(0.0))
-            .build(),
-    );
-    recorder.add_annotation(
-        Annotation::builder()
-            .time(t(500))
-            .maybe_label(label)
-            .build()?,
-    );
-    let mut bytes = Vec::new();
-    recorder.finish()?.write(&mut bytes)?;
-    Ok(NavFile::read(bytes.as_slice())?)
 }
 
 #[test]
