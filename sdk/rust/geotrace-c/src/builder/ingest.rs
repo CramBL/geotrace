@@ -9,7 +9,6 @@ use geotrace_sdk::{
 
 use super::GtdFileBuilder;
 use crate::error::{self, GtdStatus};
-use crate::timestamp;
 use crate::{GtdChannel, GtdChannelUnitMode, GtdMarkerIcon, GtdOptF64, GtdSatellite, GtdTimestamp};
 
 /// The two timestamp arguments of one `gtd_builder_add_*` call. Each clock has
@@ -19,20 +18,19 @@ struct TimestampArguments {
     sys_time: GtdTimestamp,
 }
 
-fn nav_fix_time_or_invalid_argument(
-    TimestampArguments { gps_time, sys_time }: TimestampArguments,
-    what_needs_a_timestamp: &str,
-) -> Result<NavFixTime, GtdStatus> {
-    let recorded = RecordedFixTimestamps {
-        gps: timestamp::ts_to_datetime(gps_time),
-        sys: timestamp::ts_to_datetime(sys_time),
-    };
-    NavFixTime::from_recorded(recorded).ok_or_else(|| {
-        error::set_last_error(format!(
-            "gps_time and sys_time are both gtd_ts_none(): {what_needs_a_timestamp} needs one"
-        ));
-        GtdStatus::GTD_ERR_INVALID_ARGUMENT
-    })
+impl TimestampArguments {
+    fn into_nav_fix_time(self, what_needs_a_timestamp: &str) -> Result<NavFixTime, GtdStatus> {
+        let recorded = RecordedFixTimestamps {
+            gps: self.gps_time.to_optional_datetime("gps_time")?,
+            sys: self.sys_time.to_optional_datetime("sys_time")?,
+        };
+        NavFixTime::from_recorded(recorded).ok_or_else(|| {
+            error::set_last_error(format!(
+                "gps_time and sys_time are both gtd_ts_none(): {what_needs_a_timestamp} needs one"
+            ));
+            GtdStatus::GTD_ERR_INVALID_ARGUMENT
+        })
+    }
 }
 
 /// Add a GPS navigation fix.
@@ -58,6 +56,9 @@ fn nav_fix_time_or_invalid_argument(
 ///
 /// @return `GTD_ERR_INVALID_ARGUMENT` if @p gps_time and @p sys_time are both
 ///         `gtd_ts_none()`.
+/// @return `GTD_ERR_OUT_OF_RANGE` if @p gps_time or @p sys_time is past the
+///         range a timestamp covers, and `gtd_last_error()` states which one
+///         and its count.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_nav_fix(
     builder: *mut GtdFileBuilder,
@@ -71,10 +72,8 @@ pub unsafe extern "C" fn gtd_builder_add_nav_fix(
 ) -> GtdStatus {
     error::run_catching_panics(|| {
         let builder = nonnull_mut!(builder);
-        let time = match nav_fix_time_or_invalid_argument(
-            TimestampArguments { gps_time, sys_time },
-            "a fix",
-        ) {
+        let timestamps = TimestampArguments { gps_time, sys_time };
+        let time = match timestamps.into_nav_fix_time("a fix") {
             Ok(time) => time,
             Err(status) => return status,
         };
@@ -104,6 +103,9 @@ pub unsafe extern "C" fn gtd_builder_add_nav_fix(
 ///
 /// @return `GTD_ERR_INVALID_ARGUMENT` if @p gps_time and @p sys_time are both
 ///         `gtd_ts_none()`.
+/// @return `GTD_ERR_OUT_OF_RANGE` if @p gps_time or @p sys_time is past the
+///         range a timestamp covers, and `gtd_last_error()` states which one
+///         and its count.
 /// @return `GTD_ERR_INVALID_ARGUMENT` if the constellation of an element of
 ///         @p sats is a value no @ref GtdConstellation variant declares. The
 ///         builder then keeps the reports it already has, and
@@ -122,10 +124,8 @@ pub unsafe extern "C" fn gtd_builder_add_satellite_report(
             error::set_last_error("sats is null but n_sats > 0");
             return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         }
-        let time = match nav_fix_time_or_invalid_argument(
-            TimestampArguments { gps_time, sys_time },
-            "a satellite report",
-        ) {
+        let timestamps = TimestampArguments { gps_time, sys_time };
+        let time = match timestamps.into_nav_fix_time("a satellite report") {
             Ok(time) => time,
             Err(status) => return status,
         };
@@ -167,6 +167,8 @@ pub unsafe extern "C" fn gtd_builder_add_satellite_report(
 ///         @ref GtdMarkerIcon variant declares.
 /// @return `GTD_ERR_INVALID_ARGUMENT` if @p icon is `GTD_ICON_AUTO`, which only
 ///         `gtd_builder_add_event_marker_style()` accepts.
+/// @return `GTD_ERR_OUT_OF_RANGE` if @p time is past the range a timestamp
+///         covers.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_annotation(
     builder: *mut GtdFileBuilder,
@@ -176,9 +178,9 @@ pub unsafe extern "C" fn gtd_builder_add_annotation(
 ) -> GtdStatus {
     error::run_catching_panics(|| {
         let builder = nonnull_mut!(builder);
-        let Some(ann_time) = timestamp::ts_to_datetime(time) else {
-            error::set_last_error("annotation time must not be gtd_ts_none()");
-            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
+        let ann_time = match time.to_required_datetime("time") {
+            Ok(ann_time) => ann_time,
+            Err(status) => return status,
         };
         let Some(icon) = GtdMarkerIcon::from_abi_value(icon) else {
             error::set_last_error("icon is not a valid GtdMarkerIcon");
@@ -223,6 +225,8 @@ pub unsafe extern "C" fn gtd_builder_add_annotation(
 /// @return `GTD_ERR_INVALID_PATH` if @p variant_path is malformed.
 /// @return `GTD_ERR_FIELD_TOO_LONG` if @p variant_path is longer than 255 bytes,
 ///         or @p annotation longer than 511 bytes.
+/// @return `GTD_ERR_OUT_OF_RANGE` if @p sys_time is past the range a timestamp
+///         covers.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_event_marker(
     builder: *mut GtdFileBuilder,
@@ -234,9 +238,9 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker(
         let builder = nonnull_mut!(builder);
         let path = cstr!(variant_path);
         let ann = cstr_opt!(annotation).map(str::to_owned);
-        let Some(dt) = timestamp::ts_to_datetime(sys_time) else {
-            error::set_last_error("event marker sys_time must not be gtd_ts_none()");
-            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
+        let dt = match sys_time.to_required_datetime("sys_time") {
+            Ok(dt) => dt,
+            Err(status) => return status,
         };
         let marker = match EventMarker::builder()
             .variant_path(path)
@@ -317,6 +321,8 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker_style(
 /// @return `GTD_ERR_INVALID_CHANNEL` if the unit is unrecognized, the name or a
 ///         component label is malformed, or `values` is not
 ///         `n_times * max(n_components, 1)` long.
+/// @return `GTD_ERR_OUT_OF_RANGE` if an element of `times` is past the range a
+///         timestamp covers, and `gtd_last_error()` states its index.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_channel(
     builder: *mut GtdFileBuilder,
@@ -342,6 +348,8 @@ pub unsafe extern "C" fn gtd_builder_add_channel(
 ///
 /// @return `GTD_ERR_INVALID_CHANNEL` for an invalid unit/mode combination or
 ///         malformed channel metadata.
+/// @return `GTD_ERR_OUT_OF_RANGE` if an element of `times` is past the range a
+///         timestamp covers, and `gtd_last_error()` states its index.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_channel_with_unit_mode(
     builder: *mut GtdFileBuilder,
@@ -397,14 +405,15 @@ pub unsafe extern "C" fn gtd_builder_add_channel_with_unit_mode(
             // SAFETY: times is non-null with `n_times` elements (checked above).
             unsafe { std::slice::from_raw_parts(ch.times, ch.n_times) }
         };
-        let mut times = Vec::with_capacity(ch.n_times);
-        for ts in time_slice {
-            let Some(dt) = timestamp::ts_to_datetime(*ts) else {
-                error::set_last_error("channel timestamps must not be gtd_ts_none()");
-                return GtdStatus::GTD_ERR_NULL_ARGUMENT;
-            };
-            times.push(dt);
-        }
+        let times = match time_slice
+            .iter()
+            .enumerate()
+            .map(|(index, time)| time.to_required_datetime(format_args!("times[{index}]")))
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(times) => times,
+            Err(status) => return status,
+        };
 
         if ch.n_values > 0 && ch.values.is_null() {
             error::set_last_error("values is null but n_values > 0");
