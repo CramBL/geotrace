@@ -506,8 +506,9 @@ impl LoadJobs {
         let ctx = self.ctx.clone();
         background_thread::spawn_or_panic("file-dialog", move || {
             let path = rfd::FileDialog::new()
-                .add_filter("GeoTrace Data", &["gtd"])
-                .add_filter("Log Files", &["log", "txt"])
+                .add_filter("GeoTrace data", &["gtd"])
+                .add_filter("Log files", &["log", "txt"])
+                .add_filter("All files", &["*"])
                 .pick_file();
             tx.send(path).ok();
             ctx.request_repaint();
