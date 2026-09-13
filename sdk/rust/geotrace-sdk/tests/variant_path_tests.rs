@@ -1,22 +1,5 @@
-use geotrace_sdk::{Angle, DateTime, Duration, EventKind, NavFileBuilder, NavFix, NavFixTime, Utc};
-
-fn base() -> DateTime<Utc> {
-    #[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
-    DateTime::from_timestamp(1_748_000_000, 0).expect("valid")
-}
-
-fn t(offset_secs: i64) -> DateTime<Utc> {
-    base() + Duration::seconds(offset_secs)
-}
-
-fn fix() -> NavFix {
-    NavFix::builder()
-        .time(NavFixTime::Receiver(t(0)))
-        .lat(Angle::degrees(55.0))
-        .lon(Angle::degrees(12.0))
-        .heading(Angle::degrees(0.0))
-        .build()
-}
+use geotrace_sdk::EventKind;
+use geotrace_sdk_test_util as test_util;
 
 // Unit variants produce the `snake_case` segment.
 #[derive(EventKind)]
@@ -152,18 +135,16 @@ fn skip_variant_returns_none() {
 // `add_event` silently no-ops when the variant returns `None`.
 #[test]
 fn add_event_noop_on_skip_variant() {
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(fix());
-    recorder.add_event(&SkipEvent::Internal, t(0));
+    let mut recorder = test_util::recorder_with_one_fix();
+    recorder.add_event(&SkipEvent::Internal, test_util::base());
     let nav_file = recorder.finish().unwrap();
     assert_eq!(nav_file.event_markers().len(), 0);
 }
 
 #[test]
 fn add_event_adds_marker_on_non_skip_variant() {
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(fix());
-    recorder.add_event(&SkipEvent::Active, t(0));
+    let mut recorder = test_util::recorder_with_one_fix();
+    recorder.add_event(&SkipEvent::Active, test_util::base());
     let nav_file = recorder.finish().unwrap();
     assert_eq!(nav_file.event_markers().len(), 1);
     assert_eq!(nav_file.event_markers()[0].variant_path, "active");

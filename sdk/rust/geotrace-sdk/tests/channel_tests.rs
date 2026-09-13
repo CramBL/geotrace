@@ -4,14 +4,9 @@
 )]
 
 use geotrace_sdk::{
-    Angle, BuildError, Channel, ChannelError, ChannelUnit, DateTime, NavFileBuilder, Unit,
-    UnitParseError, Utc,
+    Angle, BuildError, Channel, ChannelError, ChannelUnit, NavFileBuilder, Unit, UnitParseError,
 };
-
-#[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
-fn base() -> DateTime<Utc> {
-    DateTime::from_timestamp(1_748_000_000, 0).expect("valid timestamp")
-}
+use geotrace_sdk_test_util as test_util;
 
 #[test]
 fn a_channel_name_must_be_a_lowercase_identifier() {
@@ -20,7 +15,7 @@ fn a_channel_name_must_be_a_lowercase_identifier() {
             matches!(
                 Channel::builder()
                     .name(bad)
-                    .times(vec![base()])
+                    .times(vec![test_util::base()])
                     .values(vec![1.0])
                     .build(),
                 Err(ChannelError::InvalidName { .. })
@@ -30,7 +25,7 @@ fn a_channel_name_must_be_a_lowercase_identifier() {
     }
     Channel::builder()
         .name("accel_fwd2")
-        .times(vec![base()])
+        .times(vec![test_util::base()])
         .values(vec![1.0])
         .build()
         .expect("a lowercase identifier with digits and underscores is valid");
@@ -49,7 +44,7 @@ fn legacy_invalid_unit_metadata_cannot_be_new_writer_input() {
     let result = Channel::builder()
         .name("legacy")
         .unit(ChannelUnit::from_file_label("bad\nunit"))
-        .times(vec![base()])
+        .times(vec![test_util::base()])
         .values(vec![1.0])
         .build();
 
@@ -63,7 +58,7 @@ fn channel_period_requires_a_positive_angular_unit() {
             .name("bearing")
             .maybe_unit(unit)
             .maybe_period(period)
-            .times(vec![base()])
+            .times(vec![test_util::base()])
             .values(vec![10.0])
             .build()
     };
@@ -87,7 +82,7 @@ fn duplicate_channel_names_are_rejected() {
         recorder.add_channel(
             Channel::builder()
                 .name("accel")
-                .times(vec![base()])
+                .times(vec![test_util::base()])
                 .values(vec![value])
                 .build()
                 .expect("valid channel"),
@@ -103,7 +98,7 @@ fn duplicate_channel_names_are_rejected() {
 fn a_channel_rejects_mismatched_lengths() {
     let err = Channel::builder()
         .name("accel")
-        .times(vec![base()])
+        .times(vec![test_util::base()])
         .values(vec![1.0, 2.0])
         .build()
         .expect_err("two values but one timestamp");
@@ -119,7 +114,7 @@ fn a_channel_rejects_mismatched_lengths() {
 
 #[test]
 fn a_malformed_vector_channel_is_rejected() {
-    let times = vec![base()];
+    let times = vec![test_util::base()];
     assert!(matches!(
         Channel::builder()
             .name("v")
@@ -164,7 +159,7 @@ fn a_malformed_vector_channel_is_rejected() {
 
 #[test]
 fn channel_components_accept_any_stringlike_iterable() -> Result<(), Box<dyn std::error::Error>> {
-    let times = vec![base()];
+    let times = vec![test_util::base()];
     let values = vec![1.0, 2.0, 3.0];
 
     let from_array = Channel::builder()

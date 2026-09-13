@@ -5,46 +5,17 @@
 //! in `EventMarker::builder().build()`.
 
 use geotrace_sdk::{
-    Angle, Annotation, AnnotationField, ColorHexField, DateTime, Duration, EventKind, EventMarker,
-    EventMarkerColor, EventMarkerIconChoice, EventMarkerStyle, IconNameField, MarkerIcon,
-    MarkerLabelField, NavFile, NavFileBuilder, NavFix, NavFixTime, NavRecorder, Utc,
-    VariantPathField,
+    Annotation, AnnotationField, ColorHexField, EventKind, EventMarker, EventMarkerColor,
+    EventMarkerIconChoice, EventMarkerStyle, IconNameField, MarkerIcon, MarkerLabelField, NavFile,
+    NavRecorder, VariantPathField,
 };
+use geotrace_sdk_test_util as test_util;
 use hdf5_pure::{AttrValue, FileBuilder};
 use rstest::rstest;
 
-fn base() -> DateTime<Utc> {
-    #[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
-    DateTime::from_timestamp(1_748_000_000, 0).expect("valid")
-}
-
-fn t(offset_secs: i64) -> DateTime<Utc> {
-    base() + Duration::seconds(offset_secs)
-}
-
-fn recorder_with_one_fix() -> NavRecorder {
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(
-        NavFix::builder()
-            .time(NavFixTime::Receiver(t(0)))
-            .lat(Angle::degrees(55.0))
-            .lon(Angle::degrees(12.0))
-            .heading(Angle::degrees(0.0))
-            .build(),
-    );
-    recorder
-}
-
 fn recorder_with_fixes_bracketing_an_annotation() -> NavRecorder {
-    let mut recorder = recorder_with_one_fix();
-    recorder.add_nav_fix(
-        NavFix::builder()
-            .time(NavFixTime::Receiver(t(10)))
-            .lat(Angle::degrees(55.1))
-            .lon(Angle::degrees(12.1))
-            .heading(Angle::degrees(0.0))
-            .build(),
-    );
+    let mut recorder = test_util::recorder_with_one_fix();
+    recorder.add_nav_fix(test_util::fix_at(10_000, 55.1, 12.1));
     recorder
 }
 
@@ -58,23 +29,17 @@ enum PowerEvent {
 fn an_event_marker_at_the_field_capacities_round_trips() {
     let variant_path = "a".repeat(VariantPathField::CONTENT_CAPACITY);
     let annotation = "n".repeat(AnnotationField::CONTENT_CAPACITY);
-    let mut recorder = recorder_with_one_fix();
+    let mut recorder = test_util::recorder_with_one_fix();
     recorder.add_event_marker(
         EventMarker::builder()
             .variant_path(variant_path.clone())
-            .sys_time(t(0))
+            .sys_time(test_util::t_s(0))
             .annotation(annotation.clone())
             .build()
             .expect("a value at the field capacity is accepted"),
     );
-    let mut bytes = Vec::new();
-    recorder
-        .finish()
-        .expect("the recording builds")
-        .write(&mut bytes)
-        .expect("a value at the field capacity is written");
-
-    let loaded = NavFile::read(bytes.as_slice()).expect("the written file reads back");
+    let loaded = test_util::round_trip(&recorder.finish().expect("the recording builds"))
+        .expect("a value at the field capacity is written and read back");
     let marker = loaded
         .event_markers()
         .first()
@@ -91,19 +56,13 @@ fn a_marker_label_round_trips(#[case] label: Option<String>) {
     let mut recorder = recorder_with_fixes_bracketing_an_annotation();
     recorder.add_annotation(
         Annotation::builder()
-            .time(t(5))
+            .time(test_util::t_s(5))
             .maybe_label(label.clone())
             .build()
             .expect("a label within the field capacity is accepted"),
     );
-    let mut bytes = Vec::new();
-    recorder
-        .finish()
-        .expect("the recording builds")
-        .write(&mut bytes)
-        .expect("a label within the field capacity is written");
-
-    let loaded = NavFile::read(bytes.as_slice()).expect("the written file reads back");
+    let loaded = test_util::round_trip(&recorder.finish().expect("the recording builds"))
+        .expect("a label within the field capacity is written and read back");
     let marker = loaded.markers().first().expect("the file holds the marker");
     assert_eq!(marker.annotation.label(), label.as_deref());
 }
@@ -115,7 +74,7 @@ fn a_marker_label_round_trips(#[case] label: Option<String>) {
 )]
 fn a_label_past_the_field_capacity_is_rejected(#[case] label: String) {
     let error_message = Annotation::builder()
-        .time(t(0))
+        .time(test_util::t_s(0))
         .label(label.clone())
         .build()
         .expect_err("a label past the field capacity is rejected")
@@ -129,8 +88,8 @@ fn a_label_past_the_field_capacity_is_rejected(#[case] label: String) {
 #[test]
 fn a_note_one_byte_past_the_annotation_capacity_stops_the_write() {
     let note = "n".repeat(AnnotationField::CONTENT_CAPACITY + 1);
-    let mut recorder = recorder_with_one_fix();
-    recorder.add_event_with_note(&PowerEvent::Boot, t(0), note.clone());
+    let mut recorder = test_util::recorder_with_one_fix();
+    recorder.add_event_with_note(&PowerEvent::Boot, test_util::t_s(0), note.clone());
 
     let error_message = recorder
         .finish()
@@ -149,7 +108,7 @@ fn a_note_one_byte_past_the_annotation_capacity_stops_the_write() {
 #[test]
 fn a_style_variant_path_one_byte_past_the_capacity_stops_the_write() {
     let variant_path = "a".repeat(VariantPathField::CONTENT_CAPACITY + 1);
-    let mut recorder = recorder_with_one_fix();
+    let mut recorder = test_util::recorder_with_one_fix();
     recorder.add_event_marker_style(EventMarkerStyle {
         variant_path: variant_path.clone(),
         icon: EventMarkerIconChoice::Auto,
@@ -172,7 +131,7 @@ fn a_style_variant_path_one_byte_past_the_capacity_stops_the_write() {
 
 #[test]
 fn a_style_color_one_byte_past_the_capacity_stops_the_write() {
-    let mut recorder = recorder_with_one_fix();
+    let mut recorder = test_util::recorder_with_one_fix();
     recorder.add_event_marker_style(EventMarkerStyle {
         variant_path: "power/boot".to_owned(),
         icon: EventMarkerIconChoice::Auto,

@@ -3,23 +3,11 @@
 //! the always-on, stable-toolchain counterpart to the cargo-fuzz `decode`
 //! target under `fuzz/` (same entry point, `NavFile::read`).
 
+use std::fs;
 use std::io::Cursor;
-use std::path::Path;
 
 use geotrace_sdk::{Angle, DateTime, Error, NavFile, NavFileBuilder, NavFix, NavFixTime, Utc};
-
-fn fixture_bytes(relative_path: &str) -> std::io::Result<Vec<u8>> {
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").map_err(std::io::Error::other)?;
-    let path = Path::new(&manifest_dir)
-        .join("../../../tests/fixtures")
-        .join(relative_path);
-    std::fs::read(path)
-}
-
-/// The committed gold fixture, the same seed the cargo-fuzz workflow uses.
-fn gold_bytes() -> std::io::Result<Vec<u8>> {
-    fixture_bytes("gold_dataset/gold.gtd")
-}
+use geotrace_sdk_test_util as test_util;
 
 fn valid_gtd_bytes() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let t = "2024-06-01T08:00:00Z".parse::<DateTime<Utc>>()?;
@@ -31,10 +19,7 @@ fn valid_gtd_bytes() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
             .lon(Angle::degrees(-0.1278))
             .build(),
     );
-    let nav_file = recorder.finish()?;
-    let mut buf = Vec::new();
-    nav_file.write(&mut buf)?;
-    Ok(buf)
+    Ok(test_util::to_bytes(&recorder.finish()?)?)
 }
 
 fn read(bytes: Vec<u8>) {
@@ -73,7 +58,7 @@ fn single_byte_mutations_never_panic() {
 /// test covers the same corpus the fuzz workflow seeds from.
 #[test]
 fn gold_corpus_truncations_and_mutations_never_panic() {
-    let gold = gold_bytes().unwrap();
+    let gold = fs::read(test_util::fixture_path("gold_dataset/gold.gtd")).unwrap();
     for len in (0..gold.len()).step_by(101) {
         read(gold[..len].to_vec());
     }
@@ -90,7 +75,10 @@ fn gold_corpus_truncations_and_mutations_never_panic() {
 /// that dataset has its own test in `size_checked_file`.
 #[test]
 fn the_2026_09_02_fuzz_crash_input_is_rejected() {
-    let bytes = fixture_bytes("fuzz_regressions/dataset_size_past_file_length.gtd").unwrap();
+    let bytes = fs::read(test_util::fixture_path(
+        "fuzz_regressions/dataset_size_past_file_length.gtd",
+    ))
+    .unwrap();
 
     let error = NavFile::read(Cursor::new(bytes)).unwrap_err();
 

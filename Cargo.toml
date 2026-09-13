@@ -75,6 +75,7 @@ members = [
     "sdk/rust/geotrace-c",
     "sdk/rust/geotrace-sdk",
     "sdk/rust/geotrace-sdk-macros",
+    "sdk/rust/geotrace-sdk-test-util",
     "sdk/rust/geotrace-sdk-units",
 ]
 

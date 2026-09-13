@@ -2240,6 +2240,7 @@ dependencies = [
  "bon",
  "chrono",
  "geotrace-sdk-macros",
+ "geotrace-sdk-test-util",
  "geotrace-sdk-units",
  "hdf5-pure",
  "insta",
@@ -2259,6 +2260,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "geotrace-sdk-test-util"
+version = "0.0.0"
+dependencies = [
+ "geotrace-sdk",
 ]
 
 [[package]]

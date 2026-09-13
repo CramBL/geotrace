@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from qa import versions
 
 _APP_CRATES = versions._APP_LOCK_CRATES
@@ -134,6 +136,28 @@ def test_publish_closure_rejects_a_dependency_published_too_late(tmp_path: Path)
     )
     errors = versions.publish_closure_errors(tmp_path)
     assert any("published after" in e for e in errors), errors
+
+
+@pytest.mark.parametrize(
+    ("dev_dependency", "reported"),
+    [
+        ('{ path = "../geotrace-sdk-test-util" }', False),
+        ('{ path = "../geotrace-sdk-test-util", version = "0.5.0" }', True),
+    ],
+    ids=["path_only", "with_a_version"],
+)
+def test_publish_closure_reads_a_dev_dependency_only_when_it_has_a_version(
+    tmp_path: Path, dev_dependency: str, reported: bool
+) -> None:
+    _write_publish_fixture(tmp_path, publish=["geotrace-sdk"], deps={"geotrace-sdk": []})
+    manifest = tmp_path / "sdk/rust/geotrace-sdk/Cargo.toml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8")
+        + f"\n[dev-dependencies]\ngeotrace-sdk-test-util = {dev_dependency}\n",
+        encoding="utf-8",
+    )
+    errors = versions.publish_closure_errors(tmp_path)
+    assert any("geotrace-sdk-test-util is not published" in e for e in errors) == reported, errors
 
 
 def _write_workspace(tmp_path: Path, members: dict[str, bool]) -> None:

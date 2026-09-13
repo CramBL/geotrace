@@ -41,6 +41,8 @@ jobs:
             sdk:
               - 'sdk/rust/geotrace-sdk/**'
               - 'sdk/rust/geotrace-sdk-macros/**'
+              - 'sdk/rust/geotrace-sdk-test-util/**'
+              - 'sdk/rust/geotrace-sdk-units/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'

@@ -4,12 +4,8 @@
 )]
 
 use geotrace_sdk::{Angle, DateTime, NavFile, NavFileBuilder, NavFix, NavFixTime, Utc};
+use geotrace_sdk_test_util as test_util;
 use hdf5_pure::{AttrValue, FileBuilder};
-
-#[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
-fn base() -> DateTime<Utc> {
-    DateTime::from_timestamp(1_748_000_000, 0).expect("valid timestamp")
-}
 
 fn read_file_with_attrs(
     set_attrs: impl FnOnce(&mut FileBuilder),
@@ -39,16 +35,13 @@ fn a_written_file_carries_the_sdk_version() -> Result<(), Box<dyn std::error::Er
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .time(NavFixTime::Receiver(base()))
+            .time(NavFixTime::Receiver(test_util::base()))
             .lat(Angle::degrees(51.5))
             .lon(Angle::degrees(-0.1))
             .build(),
     );
 
-    let mut bytes = Vec::new();
-    recorder.finish()?.write(&mut bytes)?;
-
-    let nav_file = NavFile::read(bytes.as_slice())?;
+    let nav_file = test_util::round_trip(&recorder.finish()?)?;
     assert_eq!(nav_file.meta().sdk_version(), Some(geotrace_sdk::VERSION));
     Ok(())
 }
@@ -59,15 +52,13 @@ fn a_scrubbed_file_has_the_placeholder_version_and_no_commit()
     let mut recorder = NavFileBuilder::new().with_scrubbed_provenance().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .time(NavFixTime::Receiver(base()))
+            .time(NavFixTime::Receiver(test_util::base()))
             .lat(Angle::degrees(51.5))
             .lon(Angle::degrees(-0.1))
             .build(),
     );
 
     let nav_file = recorder.finish()?;
-    let mut bytes = Vec::new();
-    nav_file.write(&mut bytes)?;
 
     assert_eq!(
         nav_file.meta().sdk_version(),
@@ -75,7 +66,7 @@ fn a_scrubbed_file_has_the_placeholder_version_and_no_commit()
     );
     assert_eq!(nav_file.meta().sdk_git_commit(), None);
     assert_eq!(nav_file.meta().sdk_commit_time(), None);
-    assert_eq!(NavFile::read(bytes.as_slice())?, nav_file);
+    assert_eq!(test_util::round_trip(&nav_file)?, nav_file);
     Ok(())
 }
 

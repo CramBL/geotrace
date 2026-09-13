@@ -1,0 +1,18 @@
+[package]
+name = "geotrace-sdk-test-util"
+description = "Test helpers shared by the integration test binaries of geotrace-sdk"
+edition.workspace = true
+rust-version = "1.89"
+license = "MIT"
+authors.workspace = true
+publish = false
+
+[lib]
+doctest = false
+test = false
+
+[dependencies]
+geotrace-sdk = { path = "../geotrace-sdk" }
+
+[lints]
+workspace = true

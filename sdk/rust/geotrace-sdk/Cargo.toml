@@ -13,6 +13,9 @@ rust-version = "1.89"
 authors.workspace = true
 license = "MIT"
 readme = "README.md"
+# The integration tests build on geotrace-sdk-test-util, a path-only
+# dev-dependency that `cargo publish` removes from the published manifest.
+exclude = ["tests/"]
 
 [package.metadata.dist]
 # Excluded from dist: SDKs release on their own track (geotrace-sdk-v* tags).
@@ -35,6 +38,7 @@ uom.workspace = true
 chrono.workspace = true
 
 [dev-dependencies]
+geotrace-sdk-test-util = { path = "../geotrace-sdk-test-util" }
 hdf5-pure.workspace = true
 insta.workspace = true
 proptest.workspace = true

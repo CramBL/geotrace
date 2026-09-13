@@ -7,31 +7,26 @@
     reason = "test code may use expect() for infallible test invariants"
 )]
 
-use geotrace_sdk::{Angle, DateTime, Duration, Unit, Utc, Velocity};
+use geotrace_sdk::{Angle, Unit, Velocity};
 use geotrace_sdk::{
     Annotation, AnnotationField, AnnotationIcon, Channel, ColorHexField, Constellation,
     EventMarker, EventMarkerColor, EventMarkerIconChoice, EventMarkerStyle, IconNameField,
     MarkerIcon, MarkerLabelField, NavFile, NavFileBuilder, NavFix, NavFixTime, NavRecorder,
     Satellite, SatelliteReport, TravelMode, VariantPathField,
 };
+use geotrace_sdk_test_util as test_util;
 use hdf5_pure::{AttrValue, FileBuilder};
 use rstest::rstest;
-
-#[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
-fn base() -> DateTime<Utc> {
-    DateTime::from_timestamp(1_748_000_000, 0).expect("valid")
-}
 
 /// A full inspect render of a file exercising every section: the metadata a
 /// recording declares, nav points, satellites, markers, event markers over
 /// three variant paths, two styles, and both a scalar and a vector channel.
 /// The output is the same in every build: timestamps derive from the fixed
-/// [`base`] and the build stamp is scrubbed.
+/// `test_util::base` and the build stamp is scrubbed.
 #[test]
 fn snapshot_inspect_populated_file() -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = base();
-    let t1 = t0 + Duration::seconds(10);
-    let at = |offset_secs: i64| t0 + Duration::seconds(offset_secs);
+    let t0 = test_util::base();
+    let t1 = test_util::t_s(10);
 
     let mut recorder = NavFileBuilder::new()
         .with_title("Inspect test")
@@ -94,14 +89,14 @@ fn snapshot_inspect_populated_file() -> Result<(), Box<dyn std::error::Error>> {
 
     recorder.add_annotation(
         Annotation::builder()
-            .time(at(5))
+            .time(test_util::t_s(5))
             .label("midpoint")
             .icon(MarkerIcon::Warning)
             .build()?,
     );
     recorder.add_annotation(
         Annotation::builder()
-            .time(at(6))
+            .time(test_util::t_s(6))
             .label("icon from a newer writer")
             .icon(AnnotationIcon::Unrecognized(200))
             .build()?,
@@ -116,14 +111,14 @@ fn snapshot_inspect_populated_file() -> Result<(), Box<dyn std::error::Error>> {
         recorder.add_event_marker(
             EventMarker::builder()
                 .variant_path(variant_path)
-                .sys_time(at(offset_secs))
+                .sys_time(test_util::t_s(offset_secs))
                 .build()?,
         );
     }
     recorder.add_event_marker(
         EventMarker::builder()
             .variant_path("gnss/fix_lost")
-            .sys_time(at(8))
+            .sys_time(test_util::t_s(8))
             .annotation("antenna unplugged")
             .build()?,
     );
@@ -188,7 +183,7 @@ const MARKER_ICON_WARNING_CODE: u8 = 4;
 const NOT_UTF8: &[u8] = &[0xff];
 
 fn fix_time_us() -> i64 {
-    base().timestamp_micros()
+    test_util::base().timestamp_micros()
 }
 
 fn nul_padded_row(content: &[u8], row_bytes: usize) -> Vec<u8> {
@@ -507,33 +502,28 @@ fn inspect_states_an_event_marker_styles_group_without_a_variant_path_dataset()
     Ok(())
 }
 
-fn recorder_with_one_fix() -> NavRecorder {
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(
-        NavFix::builder()
-            .time(NavFixTime::Receiver(base()))
-            .lat(Angle::degrees(55.0))
-            .lon(Angle::degrees(12.0))
-            .heading(Angle::degrees(0.0))
-            .build(),
-    );
-    recorder
-}
-
 #[rstest]
 #[case::nav_points_of_a_file_without_fixes(
     NavFileBuilder::new().open(),
     "Nav Points              0 records"
 )]
-#[case::satellite_reports(recorder_with_one_fix(), "Satellite Reports       0 records")]
-#[case::markers(recorder_with_one_fix(), "Markers                 0 records")]
-#[case::channels(recorder_with_one_fix(), "Channels                0 channels")]
+#[case::satellite_reports(
+    test_util::recorder_with_one_fix(),
+    "Satellite Reports       0 records"
+)]
+#[case::markers(
+    test_util::recorder_with_one_fix(),
+    "Markers                 0 records"
+)]
+#[case::channels(
+    test_util::recorder_with_one_fix(),
+    "Channels                0 channels"
+)]
 fn inspect_states_a_count_of_zero_for_an_empty_section(
     #[case] recorder: NavRecorder,
     #[case] expected_line: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut bytes = Vec::new();
-    recorder.finish()?.write(&mut bytes)?;
+    let bytes = test_util::to_bytes(&recorder.finish()?)?;
 
     let output = inspect_bytes(&bytes)?;
     assert!(
