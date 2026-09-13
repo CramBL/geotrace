@@ -9,6 +9,12 @@ authors.workspace = true
 [lib]
 doctest = false
 
+[features]
+# Builds `gt_track_builder::test_util`, the fixtures and assertions the tests
+# build their nav points and check their positions with. A normal build leaves
+# it off.
+test-util = ["gt-types/fixtures"]
+
 [dependencies]
 chrono.workspace = true
 geotrace-sdk-units = { path = "../../sdk/rust/geotrace-sdk-units" }
@@ -24,6 +30,9 @@ vec1.workspace = true
 # The fixture builders of `gt_types::fixtures`, which the tests build their nav
 # points with. The feature is off in a normal build of gt-types.
 gt-types = { path = "../gt-types", features = ["fixtures"] }
+# The crate's own fixtures and assertions, which the integration test binaries
+# check their positions with.
+gt-track-builder = { path = ".", features = ["test-util"] }
 proptest.workspace = true
 rstest.workspace = true
 

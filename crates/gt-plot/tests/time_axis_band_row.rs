@@ -2,9 +2,7 @@
 //! for, and where the row sits under the plot frame.
 
 use gt_plot::PlotState;
-use support::{DrawnPlot, PlotSources};
-
-mod support;
+use gt_plot::test_util::{self, DrawnPlot, PlotSources};
 
 /// Fixes ten minutes apart over a day and a half from the first fix.
 const FIX_COUNT: usize = 217;
@@ -16,11 +14,11 @@ const FIX_STEP_SECS: i64 = 600;
 const VIEW_END_SECS: i64 = 24 * 60 * 60;
 
 fn drawn_across_a_midnight() -> DrawnPlot {
-    let files = vec![support::recording(
-        support::fixes(FIX_COUNT, FIX_STEP_SECS),
+    let files = vec![test_util::recording(
+        test_util::fixes(FIX_COUNT, FIX_STEP_SECS),
         Vec::new(),
     )];
-    support::drawn_plot(
+    test_util::drawn_plot(
         files,
         PlotSources::default().pinned_to_map_view(0..=VIEW_END_SECS),
         PlotState::default(),

@@ -4,10 +4,8 @@
 
 use chrono::{DateTime, Utc};
 use gt_plot::PlotState;
+use gt_plot::test_util::{self, DrawnPlot, PlotSources};
 use gt_types::LoadedFile;
-use support::{DrawnPlot, PlotSources};
-
-mod support;
 
 /// Fixes in the recording, one per second.
 const FIX_COUNT: usize = 60;
@@ -18,9 +16,9 @@ fn recording_with_a_backward_time_step() -> LoadedFile {
     let times: Vec<DateTime<Utc>> = (0..FIX_COUNT as i64)
         .map(|i| {
             if i < 30 {
-                support::at_second(i)
+                test_util::at_second(i)
             } else {
-                support::at_second(i - 10)
+                test_util::at_second(i - 10)
             }
         })
         .collect();
@@ -30,7 +28,7 @@ fn recording_with_a_backward_time_step() -> LoadedFile {
         times.clone(),
         vec![1.0; times.len()],
     );
-    support::recording(support::fixes(FIX_COUNT, 1), vec![channel])
+    test_util::recording(test_util::fixes(FIX_COUNT, 1), vec![channel])
 }
 
 /// The two gates the marks follow.
@@ -50,7 +48,7 @@ impl MarkGates {
         let mut plot = PlotState::default();
         plot.show_channels = show_channels;
         plot.mark_backward_time_steps = mark_backward_time_steps;
-        support::drawn_plot(
+        test_util::drawn_plot(
             vec![recording_with_a_backward_time_step()],
             PlotSources::default(),
             plot,
@@ -87,7 +85,7 @@ fn the_marks_draw_with_the_channels_revealed() {
         gt_test_utils::snapshot_harness::pixels_differ(
             &with_marks,
             &without_marks,
-            support::plot_area(),
+            test_util::plot_area(),
             pixels_per_point
         ),
         "the channel's backward time step must reach the plot"
@@ -125,7 +123,7 @@ fn a_collapsed_channels_section_draws_no_mark() {
         !gt_test_utils::snapshot_harness::pixels_differ(
             &with_setting,
             &without_setting,
-            support::plot_area(),
+            test_util::plot_area(),
             pixels_per_point
         ),
         "the setting must draw nothing while the Channels section is collapsed"

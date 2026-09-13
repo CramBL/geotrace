@@ -12,21 +12,33 @@ publish = false
 [lib]
 doctest = false
 
+[features]
+# Builds `gt_query_map_harness::test_util`, the generators and the oracle the
+# property tests compare the harness against. A normal build leaves it off.
+test-util = ["dep:gt-query", "dep:proptest"]
+
 [dependencies]
 chrono.workspace = true
 gt-filter = { path = "../gt-filter" }
 gt-loaded-files = { path = "../gt-loaded-files" }
 gt-map = { path = "../gt-map" }
+# The generators and the oracle of `test_util`, which the `test-util` feature
+# exposes to the integration test binaries.
+gt-query = { path = "../gt-query", optional = true }
 gt-query-run = { path = "../gt-query-run" }
 gt-track-builder = { path = "../gt-track-builder" }
 gt-types = { path = "../gt-types" }
 gt-ui-types = { path = "../gt-ui-types" }
+proptest = { workspace = true, optional = true }
 rustc-hash.workspace = true
 strum.workspace = true
 uom.workspace = true
 
 [dev-dependencies]
 gt-query = { path = "../gt-query" }
+# The crate's own generators and oracle, which the property tests compare the
+# harness against.
+gt-query-map-harness = { path = ".", features = ["test-util"] }
 insta.workspace = true
 proptest.workspace = true
 rstest.workspace = true

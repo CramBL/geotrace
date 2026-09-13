@@ -352,6 +352,7 @@ A crate's shared test helpers go in its `test_util` module: `src/test_util.rs`, 
 A `test_util` module that only the crate's unit tests call opens with `#![cfg(test)]`.
 A `test_util` module that the crate's integration test binaries or another crate call is declared `#[cfg(any(test, feature = "test-util"))] pub mod test_util;`, and the crate's `test-util` feature exposes it.
 The crate's integration test binaries enable that feature through a dev-dependency of the crate on itself.
+`just qa::check-no-tests-support` reports every Rust file under a `tests/support/` directory.
 
 A test-only crate is the shape for a harness that spans two crates without a dependency between them, as `gt-query-map-harness` drives a query run over gt-query-run and reads the result out of gt-map.
 

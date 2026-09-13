@@ -5,11 +5,10 @@
 //! input panics, what comes back stays inside the declared output limit, and
 //! a stream cut short decodes to what it did hold.
 
-mod support;
-
 use proptest::prelude::any;
 use proptest::test_runner::TestCaseError;
 
+use gt_ionex::test_util;
 use gt_ionex::unix_compress::{self, MAX_DECOMPRESSED_BYTES};
 
 /// Magic plus the flags byte. A cut inside the header leaves bytes that are no
@@ -20,7 +19,7 @@ const HEADER_LEN: usize = 3;
 /// The stream the truncation property cuts, small enough to decode a few
 /// hundred times.
 fn head_stream() -> Result<Vec<u8>, String> {
-    support::compressed_fixture("JPLG0920.24I.head.12bit.Z")
+    test_util::compressed_fixture("JPLG0920.24I.head.12bit.Z")
 }
 
 fn check_within_the_limit(decompressed: &[u8]) -> Result<(), TestCaseError> {

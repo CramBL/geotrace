@@ -1,30 +1,35 @@
-//! Shared fixture construction for the gt-plot integration test binaries: the
-//! recordings they load, the sources `show_track_plot` reads besides them, the
-//! harness that draws it once, and the pointer and tooltip helpers a hover case
-//! drives it with.
+//! Fixtures for the gt-plot tests: the recordings they load, the sources
+//! `show_track_plot` reads besides them, the harness that draws it once, and
+//! the pointer and tooltip helpers a hover case drives it with.
+//!
+//! The integration test binaries reach it as `gt_plot::test_util`, through the
+//! `test-util` feature gt-plot's dev-dependency on itself enables.
 
-#![allow(dead_code, reason = "shared across binaries with different needs")]
 #![expect(
     clippy::expect_used,
-    reason = "the helpers beside the tests are not covered by clippy's in-test relaxations"
+    reason = "the fixtures are not covered by clippy's in-test relaxations"
 )]
 
 use std::cell::Cell;
+use std::ops::RangeInclusive;
 use std::rc::Rc;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use egui::accesskit::Role;
 use egui::epaint::Shape;
+use egui_phosphor::regular::EYE as ICON_EYE;
+use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
 use egui_plot::{PlotPoint, PlotTransform};
 use gt_filter::GlobalFilter;
 use gt_flare::{MarkedFlare, SolarFlare};
 use gt_loaded_files::RecordingNames;
-use gt_plot::{ArchiveOverlays, PlotState};
-use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
+use gt_test_utils::{By, HarnessInteraction as _, Queryable as _, TestHarness};
 use gt_types::{Channel, FileIdx, LoadedFile, NavPoint, TrackIdx, TrackRef};
 use gt_ui_types::{
     ContextLines, GeomagneticSeries, JammingSeries, SnapErrorSeries, TecSeries, TrackDataVisibility,
 };
+
+use crate::plot_widget::{self, ArchiveOverlays, PlotState, TRACK_PLOT_ID_SALT};
 
 /// 2024-01-15 12:00:00 UTC, the first fix of every recording the binaries
 /// build.
@@ -105,7 +110,7 @@ pub struct PlotSources {
 
 impl PlotSources {
     /// The x bounds of a view pinned to `view`, in seconds from the first fix.
-    pub fn pinned_to_map_view(mut self, view: std::ops::RangeInclusive<i64>) -> Self {
+    pub fn pinned_to_map_view(mut self, view: RangeInclusive<i64>) -> Self {
         let seconds = |offset: i64| at_second(offset).timestamp() as f64;
         self.map_sync_x_range = Some((seconds(*view.start()), seconds(*view.end())));
         self
@@ -160,9 +165,9 @@ pub fn drawn_plot_in_theme(
         .ui_state(
             move |ui, state: &mut DrawnPlotState| {
                 written_plot_id.set(Some(
-                    ui.make_persistent_id(egui::Id::new(gt_plot::TRACK_PLOT_ID_SALT)),
+                    ui.make_persistent_id(egui::Id::new(TRACK_PLOT_ID_SALT)),
                 ));
-                gt_plot::show_track_plot(
+                plot_widget::show_track_plot(
                     ui,
                     &files,
                     &names,
@@ -228,6 +233,19 @@ impl DrawnPlot {
             .hover_at_and_settle(target, SETTLE_FRAMES);
     }
 
+    pub fn click_show_hide_all(&mut self) {
+        let icon = self.show_hide_all_icon();
+        self.harness.inner.get_by_label(icon).click();
+        self.run();
+    }
+
+    /// The state a click reaches from the default: every series in scope
+    /// visible, then every one of them hidden.
+    pub fn show_all_then_hide_all(&mut self) {
+        self.click_show_hide_all();
+        self.click_show_hide_all();
+    }
+
     /// The tooltip under the pointer, its lines joined top to bottom. Empty
     /// while no label is drawn.
     pub fn hover_label(&self) -> String {
@@ -235,6 +253,16 @@ impl DrawnPlot {
             .inner
             .label_texts_top_to_bottom(By::new().include_labels().role(Role::Label))
             .join("\n")
+    }
+
+    /// The icon on the show/hide-all button: the crossed-out eye while every
+    /// series in scope is visible, the plain eye otherwise.
+    pub fn show_hide_all_icon(&self) -> &'static str {
+        if self.harness.inner.query_by_label(ICON_EYE_SLASH).is_some() {
+            ICON_EYE_SLASH
+        } else {
+            ICON_EYE
+        }
     }
 
     /// The open polylines the last frame painted, their vertices in plot

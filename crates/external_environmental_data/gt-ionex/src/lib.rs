@@ -44,6 +44,8 @@ pub mod parse;
 pub mod quiet_time;
 pub mod reference;
 pub mod tec;
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
 pub mod text;
 pub mod transport;
 pub mod unix_compress;

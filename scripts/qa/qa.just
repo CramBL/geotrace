@@ -43,6 +43,12 @@ check-narrative-comments:
 check-no-network:
     {{ _QA }} check-no-network
 
+# Fail on a Rust file under a `tests/support/` directory. CODE_STYLE puts the
+# helpers a crate's tests share in its `test_util` module.
+[group("qa")]
+check-no-tests-support:
+    {{ _QA }} check-no-tests-support
+
 [group("qa")]
 check-raw-colors:
     {{ _QA }} check-raw-colors

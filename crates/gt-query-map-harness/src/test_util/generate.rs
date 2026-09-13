@@ -4,8 +4,9 @@
 //! A program is generated as data and rendered afterwards, so the same program
 //! can be written several ways and the pictures compared.
 
-use gt_query_map_harness::{Dataset, FileSpec, MapScenario, PointSpec, TrackSpec};
 use proptest::prelude::*;
+
+use crate::{Dataset, FileSpec, MapScenario, PointSpec, TrackSpec};
 
 /// Metrics the synthetic points carry, and a query may therefore read.
 ///
@@ -667,8 +668,6 @@ pub fn gen_render_style() -> impl Strategy<Value = RenderStyle> {
 
 #[cfg(test)]
 mod tests {
-    use gt_query_map_harness::{Dataset, MapScenario, PointSpec, TrackSpec};
-
     use super::*;
 
     /// The renderer's messiness, spelled out: the same two-stage program written

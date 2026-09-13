@@ -5,17 +5,15 @@
 //! against each other, and checks the captures are still the shape the parser
 //! is written for.
 
-mod support;
-
 use std::collections::BTreeSet;
 
 use chrono::TimeDelta;
 use serde_json::Value;
 
-use gt_ionex::CAPTURED_FILES;
 use gt_ionex::grid::GridPoint;
 use gt_ionex::maps::{GlobalIonosphereMaps, TecMap};
 use gt_ionex::tec::TotalElectronContent;
+use gt_ionex::{CAPTURED_FILES, test_util};
 use gt_types::{Latitude, Longitude};
 
 /// How far an interpolated value may stand from the mean of the nodes it
@@ -56,7 +54,7 @@ fn assert_tecu_near(value: Option<TotalElectronContent>, expected_tecu: f64) {
 #[test]
 fn every_declared_capture_has_a_matching_manifest_entry() {
     for capture in CAPTURED_FILES {
-        let entry = support::manifest_entry(capture.name).unwrap();
+        let entry = test_util::manifest_entry(capture.name).unwrap();
         assert_eq!(
             entry.get("url").and_then(Value::as_str),
             Some(capture.url),
@@ -90,7 +88,7 @@ fn every_declared_capture_has_a_matching_manifest_entry() {
 #[test]
 fn the_manifest_lists_exactly_the_declared_captures() {
     let declared: BTreeSet<&str> = CAPTURED_FILES.iter().map(|capture| capture.name).collect();
-    let recorded: Vec<String> = support::manifest_entries()
+    let recorded: Vec<String> = test_util::manifest_entries()
         .unwrap()
         .iter()
         .filter_map(|entry| Some(entry.get("name")?.as_str()?.to_owned()))
@@ -102,8 +100,8 @@ fn the_manifest_lists_exactly_the_declared_captures() {
 #[test]
 fn every_capture_parses_into_what_the_manifest_records() {
     for capture in CAPTURED_FILES {
-        let maps = support::captured_maps(capture.name).unwrap();
-        let entry = support::manifest_entry(capture.name).unwrap();
+        let maps = test_util::captured_maps(capture.name).unwrap();
+        let entry = test_util::manifest_entry(capture.name).unwrap();
         let recorded = |field: &str| entry.get(field).and_then(Value::as_u64);
         assert_eq!(
             recorded("maps"),
@@ -132,7 +130,7 @@ fn every_capture_parses_into_what_the_manifest_records() {
 #[test]
 fn every_capture_holds_a_day_of_maps_on_the_published_grid() {
     for capture in CAPTURED_FILES {
-        let maps = support::captured_maps(capture.name).unwrap();
+        let maps = test_util::captured_maps(capture.name).unwrap();
         let grid = maps.grid();
         assert_eq!(
             grid.latitudes.node_count(),
@@ -185,7 +183,7 @@ fn every_capture_holds_a_day_of_maps_on_the_published_grid() {
 #[test]
 fn every_captured_node_holds_a_published_value() {
     for capture in CAPTURED_FILES {
-        let maps = support::captured_maps(capture.name).unwrap();
+        let maps = test_util::captured_maps(capture.name).unwrap();
         let gaps = maps
             .maps()
             .iter()
@@ -194,7 +192,7 @@ fn every_captured_node_holds_a_published_value() {
             .count();
         assert_eq!(gaps, 0, "{}", capture.name);
         assert_eq!(
-            support::manifest_entry(capture.name)
+            test_util::manifest_entry(capture.name)
                 .unwrap()
                 .get("gaps")
                 .and_then(Value::as_u64),
@@ -215,7 +213,7 @@ fn every_captured_node_holds_a_published_value() {
 /// exponent of -1 its header declares.
 #[test]
 fn the_stored_integers_read_back_as_the_tec_units_they_stand_for() {
-    let maps = support::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
+    let maps = test_util::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
     let map = maps.maps().first().unwrap();
     assert_eq!(
         map.value_at(GridPoint {
@@ -237,8 +235,8 @@ fn the_stored_integers_read_back_as_the_tec_units_they_stand_for() {
 
 #[test]
 fn the_storm_day_reaches_far_higher_than_the_quiet_day() {
-    let storm = support::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
-    let quiet = support::captured_maps(gt_ionex::QUIET_CAPTURE).unwrap();
+    let storm = test_util::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
+    let quiet = test_util::captured_maps(gt_ionex::QUIET_CAPTURE).unwrap();
     assert_eq!(
         storm.peak_total_electron_content(),
         Some(TotalElectronContent::from_tecu(175.2))
@@ -253,7 +251,7 @@ fn the_storm_day_reaches_far_higher_than_the_quiet_day() {
 /// on a node and an epoch reads that node back.
 #[test]
 fn a_query_on_a_node_and_an_epoch_reads_the_stored_value() {
-    let maps = support::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
+    let maps = test_util::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
     assert_eq!(
         value_at(&maps, 15.0, -105.0, TimeDelta::hours(22)),
         Some(TotalElectronContent::from_tecu(175.2))
@@ -272,7 +270,7 @@ fn a_query_on_a_node_and_an_epoch_reads_the_stored_value() {
 /// value at each.
 #[test]
 fn the_repeated_meridian_returns_the_same_from_both_ends() {
-    let maps = support::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
+    let maps = test_util::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
     assert_eq!(
         value_at(&maps, 87.5, 180.0, TimeDelta::zero()),
         value_at(&maps, 87.5, -180.0, TimeDelta::zero())
@@ -286,7 +284,7 @@ fn the_repeated_meridian_returns_the_same_from_both_ends() {
 /// Halfway between two nodes, or two epochs, is the mean of them.
 #[test]
 fn a_query_between_nodes_and_epochs_interpolates_between_them() {
-    let maps = support::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
+    let maps = test_util::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
     assert_tecu_near(
         value_at(&maps, 0.0, 2.5, TimeDelta::zero()),
         (39.5 + 41.5) / 2.0,
@@ -303,7 +301,7 @@ fn a_query_between_nodes_and_epochs_interpolates_between_them() {
 
 #[test]
 fn a_query_outside_the_captured_day_or_grid_has_no_value() {
-    let maps = support::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
+    let maps = test_util::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
     assert_eq!(value_at(&maps, 0.0, 0.0, TimeDelta::seconds(-1)), None);
     assert_eq!(
         value_at(&maps, 0.0, 0.0, TimeDelta::days(1) + TimeDelta::seconds(1)),
@@ -324,7 +322,7 @@ fn a_query_outside_the_captured_day_or_grid_has_no_value() {
 /// One TEC unit is the delay every hover shows beside the value.
 #[test]
 fn the_storm_peak_delays_l1_by_the_published_relation() {
-    let maps = support::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
+    let maps = test_util::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
     let peak = maps.peak_total_electron_content().unwrap();
     let delay = peak.l1_delay_meters();
     assert!(

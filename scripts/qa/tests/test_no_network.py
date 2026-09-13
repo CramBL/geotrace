@@ -123,8 +123,8 @@ def test_honors_an_exemption_in_a_test_module(tmp_path: Path) -> None:
 
 
 def test_reads_a_test_only_module_file_whole(tmp_path: Path) -> None:
-    _write(tmp_path, "crates/gt-x/src/lib.rs", "#[cfg(test)]\nmod support;\n")
-    _write(tmp_path, "crates/gt-x/src/support.rs", 'fn t() { get("https://a.b"); }\n')
+    _write(tmp_path, "crates/gt-x/src/lib.rs", "#[cfg(test)]\nmod test_util;\n")
+    _write(tmp_path, "crates/gt-x/src/test_util.rs", 'fn t() { get("https://a.b"); }\n')
     _init_repo(tmp_path)
 
     assert [v[1] for v in check_no_network._collect(tmp_path)] == [1]
