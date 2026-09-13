@@ -355,6 +355,9 @@ The crate's integration test binaries enable that feature through a dev-dependen
 
 A test-only crate is the shape for a harness that spans two crates without a dependency between them, as `gt-query-map-harness` drives a query run over gt-query-run and reads the result out of gt-map.
 
+The helpers shared between the integration test binaries of a published crate go in an unpublished test-only crate, as those of geotrace-sdk go in `geotrace-sdk-test-util`, and never behind a `test-util` feature, which adds them to the published API.
+The published crate takes the test-only crate as a path-only dev-dependency, which `cargo publish` removes from the published manifest, and excludes `tests/` from its package.
+
 Fixture builders for nav points, satellite reports and channels that need gt-types alone live in `gt_types::fixtures`, behind gt-types' `fixtures` feature, and every crate in the workspace builds its fixtures on them.
 
 ### Misc

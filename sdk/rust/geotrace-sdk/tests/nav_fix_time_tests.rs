@@ -1,28 +1,25 @@
-use geotrace_sdk::{DateTime, Duration, NavFixTime, RecordedFixTimestamps, Utc};
+use geotrace_sdk::{DateTime, NavFixTime, RecordedFixTimestamps, Utc};
+use geotrace_sdk_test_util as test_util;
 use rstest::rstest;
-
-#[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
-fn receiver_stamp() -> DateTime<Utc> {
-    DateTime::from_timestamp(1_748_000_000, 0).expect("valid")
-}
-
-fn host_stamp() -> DateTime<Utc> {
-    receiver_stamp() + Duration::milliseconds(250)
-}
 
 #[rstest]
 #[case::receiver(
-    NavFixTime::Receiver(receiver_stamp()),
-    Some(receiver_stamp()),
+    NavFixTime::Receiver(test_util::base()),
+    Some(test_util::base()),
     None,
-    receiver_stamp()
+    test_util::base()
 )]
-#[case::host(NavFixTime::Host(host_stamp()), None, Some(host_stamp()), host_stamp())]
+#[case::host(
+    NavFixTime::Host(test_util::t_ms(250)),
+    None,
+    Some(test_util::t_ms(250)),
+    test_util::t_ms(250)
+)]
 #[case::both(
-    NavFixTime::Both { gps: receiver_stamp(), sys: host_stamp() },
-    Some(receiver_stamp()),
-    Some(host_stamp()),
-    receiver_stamp()
+    NavFixTime::Both { gps: test_util::base(), sys: test_util::t_ms(250) },
+    Some(test_util::base()),
+    Some(test_util::t_ms(250)),
+    test_util::base()
 )]
 fn a_fix_time_reads_back_the_clocks_that_stamped_it(
     #[case] time: NavFixTime,
@@ -37,16 +34,16 @@ fn a_fix_time_reads_back_the_clocks_that_stamped_it(
 
 #[rstest]
 #[case::receiver(
-    RecordedFixTimestamps { gps: Some(receiver_stamp()), sys: None },
-    Some(NavFixTime::Receiver(receiver_stamp()))
+    RecordedFixTimestamps { gps: Some(test_util::base()), sys: None },
+    Some(NavFixTime::Receiver(test_util::base()))
 )]
 #[case::host(
-    RecordedFixTimestamps { gps: None, sys: Some(host_stamp()) },
-    Some(NavFixTime::Host(host_stamp()))
+    RecordedFixTimestamps { gps: None, sys: Some(test_util::t_ms(250)) },
+    Some(NavFixTime::Host(test_util::t_ms(250)))
 )]
 #[case::both(
-    RecordedFixTimestamps { gps: Some(receiver_stamp()), sys: Some(host_stamp()) },
-    Some(NavFixTime::Both { gps: receiver_stamp(), sys: host_stamp() })
+    RecordedFixTimestamps { gps: Some(test_util::base()), sys: Some(test_util::t_ms(250)) },
+    Some(NavFixTime::Both { gps: test_util::base(), sys: test_util::t_ms(250) })
 )]
 #[case::neither(RecordedFixTimestamps { gps: None, sys: None }, None)]
 fn a_recorded_pair_resolves_to_the_clocks_it_holds(

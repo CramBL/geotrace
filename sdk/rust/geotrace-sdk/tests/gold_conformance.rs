@@ -15,23 +15,12 @@
 //! the Rust example writes it with a scrubbed one, while each generated file
 //! holds the stamp of the build that wrote it.
 
-use std::env;
-use std::path::{Path, PathBuf};
-
 use geotrace_sdk::NavFile;
-
-#[expect(
-    clippy::expect_used,
-    reason = "cargo sets CARGO_MANIFEST_DIR for the test it runs"
-)]
-fn gold_dir() -> PathBuf {
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR");
-    Path::new(&manifest_dir).join("../../../tests/fixtures/gold_dataset")
-}
+use geotrace_sdk_test_util as test_util;
 
 #[test]
 fn all_sdks_decode_to_the_same_nav_file() {
-    let dir = gold_dir();
+    let dir = test_util::fixture_path("gold_dataset");
     let canonical = NavFile::open(dir.join("gold.gtd")).unwrap();
     for name in ["gold_c.gtd", "gold_cpp.gtd", "gold_py.gtd"] {
         let path = dir.join(name);

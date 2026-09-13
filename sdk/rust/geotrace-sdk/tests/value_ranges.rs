@@ -11,6 +11,7 @@
 use std::path::Path;
 
 use geotrace_sdk::{Angle, DateTime, NavFile, NavFileBuilder, NavFix, NavFixTime, Utc};
+use geotrace_sdk_test_util as test_util;
 
 #[test]
 #[expect(
@@ -45,9 +46,7 @@ fn out_of_range_latitude_writes_and_reads_back() -> Result<(), Box<dyn std::erro
             .build(),
     );
 
-    let mut bytes = Vec::new();
-    recorder.finish()?.write(&mut bytes)?;
-    let read_back = NavFile::read(bytes.as_slice())?;
+    let read_back = test_util::round_trip(&recorder.finish()?)?;
 
     assert_eq!(read_back.nav_points()[0].fix.lat.as_degrees(), 91.0);
     Ok(())

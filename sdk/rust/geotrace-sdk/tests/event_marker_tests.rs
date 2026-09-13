@@ -1,22 +1,14 @@
 use geotrace_sdk::{
-    Angle, AnnotationField, BuildError, DateTime, Duration, EventKind, EventMarker,
-    EventMarkerColor, EventMarkerError, EventMarkerIconChoice, EventMarkerStyle, MarkerIcon,
-    NavFileBuilder, NavFix, NavFixTime, Utc, VariantPathField,
+    Angle, AnnotationField, BuildError, EventKind, EventMarker, EventMarkerColor, EventMarkerError,
+    EventMarkerIconChoice, EventMarkerStyle, MarkerIcon, NavFileBuilder, NavFix, NavFixTime,
+    VariantPathField,
 };
+use geotrace_sdk_test_util as test_util;
 use rstest::rstest;
-
-fn base() -> DateTime<Utc> {
-    #[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
-    DateTime::from_timestamp(1_748_000_000, 0).expect("valid")
-}
-
-fn t(offset_secs: i64) -> DateTime<Utc> {
-    base() + Duration::seconds(offset_secs)
-}
 
 fn fix(offset_secs: i64, lat: f64, lon: f64) -> NavFix {
     NavFix::builder()
-        .time(NavFixTime::Receiver(t(offset_secs)))
+        .time(NavFixTime::Receiver(test_util::t_s(offset_secs)))
         .lat(Angle::degrees(lat))
         .lon(Angle::degrees(lon))
         .heading(Angle::degrees(0.0))
@@ -30,7 +22,7 @@ fn marker(variant_path: &str, offset_secs: i64) -> EventMarker {
     )]
     EventMarker::builder()
         .variant_path(variant_path)
-        .sys_time(t(offset_secs))
+        .sys_time(test_util::t_s(offset_secs))
         .build()
         .expect("test marker path should be valid")
 }
@@ -44,7 +36,7 @@ fn marker(variant_path: &str, offset_secs: i64) -> EventMarker {
 fn a_well_formed_variant_path_is_accepted(#[case] path: &str) {
     let event_marker = EventMarker::builder()
         .variant_path(path)
-        .sys_time(t(0))
+        .sys_time(test_util::t_s(0))
         .build()
         .expect("the variant path is well formed");
     assert_eq!(event_marker.variant_path(), path);
@@ -88,7 +80,7 @@ fn a_malformed_variant_path_is_rejected(
 ) {
     let error = EventMarker::builder()
         .variant_path(path)
-        .sys_time(t(0))
+        .sys_time(test_util::t_s(0))
         .build()
         .expect_err("the variant path is malformed");
     assert!(is_expected_error(&error), "got {error:?}");
@@ -100,7 +92,7 @@ fn a_variant_path_one_byte_past_the_capacity_is_rejected() {
     let path = "a".repeat(VariantPathField::CONTENT_CAPACITY + 1);
     let err = EventMarker::builder()
         .variant_path(path.clone())
-        .sys_time(t(0))
+        .sys_time(test_util::t_s(0))
         .build()
         .expect_err("should fail");
     assert_eq!(
@@ -119,7 +111,7 @@ fn a_variant_path_one_byte_past_the_capacity_is_rejected() {
 fn an_annotation_the_field_cannot_hold_is_rejected(#[case] annotation: String) {
     let err = EventMarker::builder()
         .variant_path("power/boot")
-        .sys_time(t(0))
+        .sys_time(test_util::t_s(0))
         .annotation(annotation.clone())
         .build()
         .expect_err("should fail");
@@ -182,8 +174,8 @@ fn an_event_marker_between_two_fixes_in_host_clock_order_is_placed_between_them(
     recorder.add_nav_fix(
         NavFix::builder()
             .time(NavFixTime::Both {
-                gps: t(12),
-                sys: t(8),
+                gps: test_util::t_s(12),
+                sys: test_util::t_s(8),
             })
             .lat(Angle::degrees(10.0))
             .lon(Angle::degrees(20.0))
@@ -327,8 +319,8 @@ fn add_event_auto_registers_icon_for_derived_enum() {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(fix(0, 55.0, 12.0));
     recorder.add_nav_fix(fix(1, 55.1, 12.1));
-    recorder.add_event(&IconOuter::Power(IconLeaf::TurnOn), t(0));
-    recorder.add_event(&IconOuter::Power(IconLeaf::Failed), t(1));
+    recorder.add_event(&IconOuter::Power(IconLeaf::TurnOn), test_util::t_s(0));
+    recorder.add_event(&IconOuter::Power(IconLeaf::Failed), test_util::t_s(1));
 
     let nav_file = recorder.finish().unwrap();
     let styles = nav_file.event_marker_styles();
@@ -356,15 +348,9 @@ fn add_event_auto_registers_icon_for_derived_enum() {
 fn add_event_icon_survives_round_trip() {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(fix(0, 55.0, 12.0));
-    recorder.add_event(&IconOuter::Power(IconLeaf::TurnOn), t(0));
+    recorder.add_event(&IconOuter::Power(IconLeaf::TurnOn), test_util::t_s(0));
 
-    let nav_file = recorder.finish().unwrap();
-    let bytes = {
-        let mut v = Vec::new();
-        nav_file.write(&mut v).unwrap();
-        v
-    };
-    let loaded = geotrace_sdk::NavFile::read(bytes.as_slice()).unwrap();
+    let loaded = test_util::round_trip(&recorder.finish().unwrap()).unwrap();
 
     let styles = loaded.event_marker_styles();
     assert_eq!(styles.len(), 1);
@@ -385,9 +371,7 @@ fn an_icon_name_and_color_outside_the_known_sets_are_written_back_verbatim() {
         color: EventMarkerColor::Unrecognized("FFAA00".to_owned()),
     });
 
-    let mut bytes = Vec::new();
-    recorder.finish().unwrap().write(&mut bytes).unwrap();
-    let loaded = geotrace_sdk::NavFile::read(bytes.as_slice()).unwrap();
+    let loaded = test_util::round_trip(&recorder.finish().unwrap()).unwrap();
 
     let styles = loaded.event_marker_styles();
     assert_eq!(

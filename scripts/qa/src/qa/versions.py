@@ -31,6 +31,7 @@ import tomllib
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 from qa import changelog
 from qa._check import repo_root
@@ -270,7 +271,25 @@ def _read_int_triple(root: Path, path: str, macro: str) -> Fact:
 
 _RELEASE_WORKFLOW = ".github/workflows/release-sdk.yml"
 _PUBLISH_LINE = re.compile(r"^\s*publish (geotrace-[a-z-]+)\s*$", re.MULTILINE)
-_PATH_DEP = re.compile(r'^(geotrace-[a-z-]+) = \{[^}]*\bpath = "', re.MULTILINE)
+_DEPENDENCY_TABLES = ("dependencies", "build-dependencies", "dev-dependencies")
+
+
+def _path_dependencies_kept_by_publish(manifest: dict[str, Any]) -> list[str]:
+    """The path dependencies of a manifest that `cargo publish` keeps.
+
+    A dev-dependency with a path and no version is not one: `cargo publish`
+    removes it from the published manifest.
+    """
+    tables = [manifest, *manifest.get("target", {}).values()]
+    return [
+        name
+        for table in tables
+        for section in _DEPENDENCY_TABLES
+        for name, spec in table.get(section, {}).items()
+        if isinstance(spec, dict)
+        and "path" in spec
+        and (section != "dev-dependencies" or "version" in spec)
+    ]
 
 
 def publish_closure_errors(root: Path) -> list[str]:
@@ -293,7 +312,7 @@ def publish_closure_errors(root: Path) -> list[str]:
     for index, crate in enumerate(published):
         manifest = f"sdk/rust/{crate}/Cargo.toml"
         text = (root / manifest).read_text(encoding="utf-8")
-        for dep in _PATH_DEP.findall(text):
+        for dep in _path_dependencies_kept_by_publish(tomllib.loads(text)):
             if dep not in published:
                 errors.append(
                     f"{manifest}: path dependency {dep} is not published by "

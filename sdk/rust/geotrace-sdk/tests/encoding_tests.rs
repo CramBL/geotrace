@@ -3,52 +3,34 @@
     reason = "test functions mix ? propagation with assert! - both are correct in test code"
 )]
 
-use geotrace_sdk::{Angle, DateTime, Duration, Utc};
+use geotrace_sdk::{Angle, DateTime, Utc};
 use geotrace_sdk::{
     Annotation, AnnotationIcon, ChannelUnit, Constellation, Error, EventMarker, MarkerIcon,
     NavFile, NavFileBuilder, NavFix, NavFixTime, Satellite, SatelliteReport,
 };
+use geotrace_sdk_test_util as test_util;
 use hdf5_pure::{AttrValue, FileBuilder};
 use rstest::rstest;
-
-fn base() -> DateTime<Utc> {
-    #[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
-    let dt = DateTime::from_timestamp(1_748_000_000, 0).expect("valid");
-    dt
-}
-
-fn t(offset_ms: i64) -> DateTime<Utc> {
-    base() + Duration::milliseconds(offset_ms)
-}
-
-fn to_bytes(nav_file: &NavFile) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    #[expect(clippy::expect_used, reason = "test setup must succeed")]
-    nav_file.write(&mut bytes).expect("write");
-    bytes
-}
 
 #[test]
 fn nan_for_absent_speed() -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .time(NavFixTime::Receiver(base()))
+            .time(NavFixTime::Receiver(test_util::base()))
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .heading(Angle::degrees(0.0))
             .build(),
     );
     let nav_file = recorder.finish()?;
-    let bytes = to_bytes(&nav_file);
+    let bytes = test_util::to_bytes(&nav_file)?;
 
     let file = hdf5_pure::File::from_bytes(bytes)?;
     let speeds = file.group("nav_points")?.dataset("speed_mps")?.read_f64()?;
     assert!(speeds[0].is_nan());
 
-    let mut bytes2 = Vec::new();
-    nav_file.write(&mut bytes2)?;
-    let rt = NavFile::read(bytes2.as_slice())?;
+    let rt = test_util::round_trip(&nav_file)?;
     assert_eq!(rt.nav_points()[0].fix.speed, None);
     Ok(())
 }
@@ -59,7 +41,7 @@ fn nan_for_absent_satellite_fields() -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .time(NavFixTime::Receiver(base()))
+            .time(NavFixTime::Receiver(test_util::base()))
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .heading(Angle::degrees(0.0))
@@ -67,7 +49,7 @@ fn nan_for_absent_satellite_fields() -> Result<(), Box<dyn std::error::Error>> {
     );
     recorder.add_satellite_report(
         SatelliteReport::builder()
-            .time(NavFixTime::Receiver(base()))
+            .time(NavFixTime::Receiver(test_util::base()))
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -77,7 +59,7 @@ fn nan_for_absent_satellite_fields() -> Result<(), Box<dyn std::error::Error>> {
             .build(),
     );
     let nav_file = recorder.finish()?;
-    let bytes = to_bytes(&nav_file);
+    let bytes = test_util::to_bytes(&nav_file)?;
 
     let file = hdf5_pure::File::from_bytes(bytes)?;
     let ts = file.group("tracked_sats")?;
@@ -85,9 +67,7 @@ fn nan_for_absent_satellite_fields() -> Result<(), Box<dyn std::error::Error>> {
     assert!(ts.dataset("azimuth")?.read_f32()?[0].is_nan());
     assert!(ts.dataset("snr")?.read_f32()?[0].is_nan());
 
-    let mut bytes2 = Vec::new();
-    nav_file.write(&mut bytes2)?;
-    let rt = NavFile::read(bytes2.as_slice())?;
+    let rt = test_util::round_trip(&nav_file)?;
     let sat = rt.nav_points()[0]
         .satellites
         .as_ref()
@@ -112,7 +92,7 @@ fn constellation_encoding() -> Result<(), Box<dyn std::error::Error>> {
         let mut recorder = NavFileBuilder::new().open();
         recorder.add_nav_fix(
             NavFix::builder()
-                .time(NavFixTime::Receiver(base()))
+                .time(NavFixTime::Receiver(test_util::base()))
                 .lat(Angle::degrees(0.0))
                 .lon(Angle::degrees(0.0))
                 .heading(Angle::degrees(0.0))
@@ -120,7 +100,7 @@ fn constellation_encoding() -> Result<(), Box<dyn std::error::Error>> {
         );
         recorder.add_satellite_report(
             SatelliteReport::builder()
-                .time(NavFixTime::Receiver(base()))
+                .time(NavFixTime::Receiver(test_util::base()))
                 .tracked(vec![
                     Satellite::builder()
                         .constellation(constellation)
@@ -131,7 +111,7 @@ fn constellation_encoding() -> Result<(), Box<dyn std::error::Error>> {
                 .build(),
         );
         let nav_file = recorder.finish()?;
-        let bytes = to_bytes(&nav_file);
+        let bytes = test_util::to_bytes(&nav_file)?;
 
         let file = hdf5_pure::File::from_bytes(bytes)?;
         let codes = file
@@ -140,9 +120,7 @@ fn constellation_encoding() -> Result<(), Box<dyn std::error::Error>> {
             .read_u8()?;
         assert_eq!(codes[0], expected_code);
 
-        let mut bytes2 = Vec::new();
-        nav_file.write(&mut bytes2)?;
-        let rt = NavFile::read(bytes2.as_slice())?;
+        let rt = test_util::round_trip(&nav_file)?;
         assert_eq!(
             rt.nav_points()[0]
                 .satellites
@@ -240,7 +218,7 @@ fn marker_icon_encoding() -> Result<(), Box<dyn std::error::Error>> {
         let mut recorder = NavFileBuilder::new().open();
         recorder.add_nav_fix(
             NavFix::builder()
-                .time(NavFixTime::Receiver(t(0)))
+                .time(NavFixTime::Receiver(test_util::t_ms(0)))
                 .lat(Angle::degrees(0.0))
                 .lon(Angle::degrees(0.0))
                 .heading(Angle::degrees(0.0))
@@ -248,15 +226,20 @@ fn marker_icon_encoding() -> Result<(), Box<dyn std::error::Error>> {
         );
         recorder.add_nav_fix(
             NavFix::builder()
-                .time(NavFixTime::Receiver(t(1000)))
+                .time(NavFixTime::Receiver(test_util::t_ms(1000)))
                 .lat(Angle::degrees(0.0))
                 .lon(Angle::degrees(0.0))
                 .heading(Angle::degrees(0.0))
                 .build(),
         );
-        recorder.add_annotation(Annotation::builder().time(t(500)).icon(icon).build()?);
+        recorder.add_annotation(
+            Annotation::builder()
+                .time(test_util::t_ms(500))
+                .icon(icon)
+                .build()?,
+        );
         let nav_file = recorder.finish()?;
-        let bytes = to_bytes(&nav_file);
+        let bytes = test_util::to_bytes(&nav_file)?;
 
         let file = hdf5_pure::File::from_bytes(bytes)?;
         let codes = file.group("markers")?.dataset("icon")?.read_u8()?;
@@ -265,9 +248,7 @@ fn marker_icon_encoding() -> Result<(), Box<dyn std::error::Error>> {
             "icon {icon:?} should be code {expected_code}"
         );
 
-        let mut bytes2 = Vec::new();
-        nav_file.write(&mut bytes2)?;
-        let rt = NavFile::read(bytes2.as_slice())?;
+        let rt = test_util::round_trip(&nav_file)?;
         assert_eq!(
             rt.markers()[0].annotation.icon(),
             AnnotationIcon::Icon(icon)
@@ -407,8 +388,8 @@ fn make_file_with_shape_mismatch() -> Vec<u8> {
 #[test]
 fn a_fix_without_a_lock_writes_the_gps_time_sentinel_and_a_host_clock_time_axis()
 -> Result<(), Box<dyn std::error::Error>> {
-    let locked = t(0);
-    let host_only = t(1000);
+    let locked = test_util::t_ms(0);
+    let host_only = test_util::t_ms(1000);
 
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
@@ -428,7 +409,7 @@ fn a_fix_without_a_lock_writes_the_gps_time_sentinel_and_a_host_clock_time_axis(
             .lon(Angle::degrees(0.0))
             .build(),
     );
-    let bytes = to_bytes(&recorder.finish()?);
+    let bytes = test_util::to_bytes(&recorder.finish()?)?;
 
     let grp = hdf5_pure::File::from_bytes(bytes)?.group("nav_points")?;
     assert_eq!(
@@ -445,8 +426,8 @@ fn a_fix_without_a_lock_writes_the_gps_time_sentinel_and_a_host_clock_time_axis(
 #[test]
 fn a_file_without_gps_time_us_reads_its_time_axis_as_the_receiver_timestamp()
 -> Result<(), Box<dyn std::error::Error>> {
-    let fix_time = t(0);
-    let host_time = t(500);
+    let fix_time = test_util::t_ms(0);
+    let host_time = test_util::t_ms(500);
     let bytes = make_nav_points_file(
         fix_time.timestamp_micros(),
         host_time.timestamp_micros().cast_unsigned(),
@@ -464,7 +445,7 @@ fn a_file_without_gps_time_us_reads_its_time_axis_as_the_receiver_timestamp()
 #[test]
 fn a_gps_time_us_shorter_than_the_time_axis_is_rejected() -> Result<(), Box<dyn std::error::Error>>
 {
-    let bytes = make_nav_points_file(t(0).timestamp_micros(), u64::MAX, Some(&[]));
+    let bytes = make_nav_points_file(test_util::t_ms(0).timestamp_micros(), u64::MAX, Some(&[]));
 
     let err = NavFile::read(bytes.as_slice()).expect_err("should detect shape mismatch");
 
@@ -526,7 +507,7 @@ fn absent_count_instant() -> DateTime<Utc> {
     instant("1969-12-31T23:59:59.999999Z")
 }
 
-fn fix_at(time: NavFixTime) -> NavFix {
+fn fix_stamped(time: NavFixTime) -> NavFix {
     NavFix::builder()
         .time(time)
         .lat(Angle::degrees(0.0))
@@ -537,14 +518,14 @@ fn fix_at(time: NavFixTime) -> NavFix {
 #[expect(clippy::expect_used, reason = "test setup must succeed")]
 fn file_with_a_fix_at(time: NavFixTime) -> NavFile {
     let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(fix_at(time));
+    recorder.add_nav_fix(fix_stamped(time));
     recorder.finish().expect("build")
 }
 
 #[expect(clippy::expect_used, reason = "test setup must succeed")]
 fn file_with_a_satellite_report_at(time: NavFixTime) -> NavFile {
     let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(fix_at(NavFixTime::Receiver(instant(
+    recorder.add_nav_fix(fix_stamped(NavFixTime::Receiver(instant(
         "1970-01-01T00:00:00Z",
     ))));
     recorder.add_satellite_report(
@@ -565,7 +546,7 @@ fn file_with_a_satellite_report_at(time: NavFixTime) -> NavFile {
 fn file_with_an_event_marker_at(sys_time: DateTime<Utc>) -> NavFile {
     // The marker is before the single fix. Lenient mode clamps it to that fix.
     let mut recorder = NavFileBuilder::new().with_lenient_errors().open();
-    recorder.add_nav_fix(fix_at(NavFixTime::Receiver(instant(
+    recorder.add_nav_fix(fix_stamped(NavFixTime::Receiver(instant(
         "1970-01-01T00:00:00Z",
     ))));
     recorder.add_event_marker(
@@ -638,7 +619,7 @@ fn a_fix_reads_back_the_time_it_was_written_with(
         gps: time,
         sys: time,
     });
-    let read_back = NavFile::read(to_bytes(&nav_file).as_slice())?;
+    let read_back = test_util::round_trip(&nav_file)?;
 
     let fix = &read_back.nav_points()[0].fix;
     assert_eq!(fix.gps_time(), Some(time));
