@@ -38,14 +38,13 @@ use lines::{
 use snap_error::{SnapErrorPlotCache, snap_error_available, sync_snap_error_cache};
 use style::metric_line_color;
 use tec::tec_available;
-use time_axis::{TimeAxisFrame, TimeAxisLabeling};
+use time_axis::{BandUnit, TimeAxisBandRow, TimeAxisFrame, TimeAxisLabeling};
 
 use crate::AnalysisConfig;
 use crate::series::{PlacedTrackSeries, build_all_series};
 use chrono::{DateTime, Utc};
-use egui::Color32;
-use egui::RichText;
-use egui_plot::{AxisHints, LineStyle, Span, VLine};
+use egui::{Align2, Color32, RichText, Stroke, TextStyle};
+use egui_plot::{AxisHints, LineStyle, PlotTransform, Span, VLine};
 use gt_analysis::clock_offset::ClockOffsetPlacement;
 use gt_filter::GlobalFilter;
 use gt_flare::MarkedFlare;
@@ -76,6 +75,9 @@ pub const PLOT_LINE_WIDTH_RANGE: RangeInclusive<f32> = 0.5..=5.0;
 /// Stroke width of the vertical seek lines (hovered match, map position). Above
 /// the data lines so the marker stays findable across a crowded plot.
 const SEEK_LINE_WIDTH: f32 = 1.5;
+/// Stroke width of a band-row divider. egui_plot fixes its grid stroke at 1.0,
+/// and a divider continues the grid line above it.
+const BAND_DIVIDER_WIDTH: f32 = 1.0;
 
 /// The salt [`show_track_plot`] passes to its plot. `egui_plot` derives the
 /// plot's memory id from it, which is how a test reads the transform of the
@@ -592,8 +594,10 @@ pub fn show_track_plot(
 
     let time_window = FilterTimeWindow::from(filter);
 
-    // Read by the tick formatter after the x-axis spacer runs. See [`TimeAxisFrame`].
+    // Read by the tick formatter, and by the band row after `Plot::show` returns, both of
+    // which run after the x-axis spacer. See [`TimeAxisFrame`].
     let time_axis_labeling = Cell::new(TimeAxisLabeling::default());
+    let axis_row_height = ui.text_style_height(&TextStyle::Body);
 
     let reset_extent = reset_extent(&state.series_cache, &visible, time_window);
 
@@ -673,7 +677,10 @@ pub fn show_track_plot(
                 // The axis draws every label at full strength. The formatter leaves a mark
                 // finer than the label step unlabelled, and a labelled mark spans at least
                 // `MIN_LABEL_SPACING_POINTS`, the top of this range.
-                .label_spacing(0.0..=time_axis::MIN_LABEL_SPACING_POINTS),
+                .label_spacing(0.0..=time_axis::MIN_LABEL_SPACING_POINTS)
+                // `min_thickness` reserves the tick row and the band row under it before
+                // either draws. The plot area then keeps its height across a pan.
+                .min_thickness(2.0 * axis_row_height),
         ])
         .label_formatter(|pos| cursor_label(&custom_hover_label_shown, pos));
 
@@ -933,6 +940,9 @@ pub fn show_track_plot(
     if !dark_mode {
         ui.visuals_mut().extreme_bg_color = saved_extreme_bg;
     }
+    if let Some(unit) = time_axis_labeling.get().band_unit() {
+        paint_time_axis_band_row(ui, &plot_response.transform, axis_row_height, unit);
+    }
 
     // Persist the newly computed level cache (only when a recompute happened).
     if let Some(inputs) = new_level_cache_inputs {
@@ -969,6 +979,57 @@ pub fn show_track_plot(
         None
     };
 }
+
+/// Draws the band row under the plot's tick labels: a divider at each band edge in view, and
+/// each band's label centred in the band's visible part.
+///
+/// The band row starts one row below the plot frame's bottom edge: egui_plot draws a
+/// bottom-placed tick label from the top of the axis rect, which is that edge.
+fn paint_time_axis_band_row(
+    ui: &egui::Ui,
+    transform: &PlotTransform,
+    row_height: f32,
+    unit: BandUnit,
+) {
+    let frame = *transform.frame();
+    let row_top = frame.bottom() + row_height;
+    let font_id = TextStyle::Body.resolve(ui.style());
+    let text_color = ui.visuals().text_color();
+    let painter = ui.painter();
+    let band_row = TimeAxisBandRow::new(
+        (transform.bounds().min()[0], transform.bounds().max()[0]),
+        frame.width(),
+        unit,
+        |text| {
+            painter
+                .layout_no_wrap(text.to_owned(), font_id.clone(), text_color)
+                .size()
+                .x
+        },
+    );
+
+    let divider_stroke = Stroke::new(
+        BAND_DIVIDER_WIDTH,
+        text_color.gamma_multiply(GRID_COLOR_STRENGTH),
+    );
+    for divider_secs in band_row.divider_positions_secs {
+        painter.vline(
+            transform.position_from_point_x(divider_secs),
+            row_top..=(row_top + row_height),
+            divider_stroke,
+        );
+    }
+    for label in band_row.labels {
+        painter.text(
+            egui::pos2(transform.position_from_point_x(label.center_secs), row_top),
+            Align2::CENTER_TOP,
+            label.text,
+            font_id.clone(),
+            text_color,
+        );
+    }
+}
+
 /// Returns `true` when the track at `(fi, ti)` passes visibility and filter checks.
 fn track_is_visible(
     visibility: &TrackDataVisibility,

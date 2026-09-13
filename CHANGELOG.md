@@ -6,7 +6,7 @@
 
 - **Map & Tracks:** The satellite tables and the sky plot now show a satellite's SNR of ≈99 dB-Hz, the value some receivers send when they have no measurement, in its own violet colour.
 - **Map & Tracks:** The plot joins each clock offset marker at the axis edge to the clock offset line on either side of it, and consecutive markers to each other.
-- **Map & Tracks:** The plot's time axis puts its ticks on clock boundaries (a quarter hour, an hour, a day), and writes the date under every midnight and under the first tick of the view.
+- **Map & Tracks:** The plot's time axis puts its ticks on clock boundaries (a quarter hour, an hour, a day, a month), and a row under the ticks labels each day, month or year in view.
 
 ### Fixed
 

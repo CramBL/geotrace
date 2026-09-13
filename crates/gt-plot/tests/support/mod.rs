@@ -256,6 +256,18 @@ impl DrawnPlot {
             .collect()
     }
 
+    /// The texts the last frame painted, in paint order. A label query covers the widgets of
+    /// a frame, and the plot paints its tick labels and its band row itself.
+    pub fn painted_texts(&self) -> Vec<String> {
+        self.painted_shapes()
+            .iter()
+            .filter_map(|shape| match shape {
+                Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The centres of the filled circles the last frame painted, in plot
     /// coordinates.
     pub fn painted_circle_centers(&self) -> Vec<PlotPoint> {
