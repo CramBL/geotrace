@@ -10,22 +10,9 @@ use hdf5_pure::{AttrValue, FileBuilder};
 fn read_file_with_attrs(
     set_attrs: impl FnOnce(&mut FileBuilder),
 ) -> Result<NavFile, Box<dyn std::error::Error>> {
-    let mut fb = FileBuilder::new();
+    let mut fb = test_util::file_with_an_empty_nav_points_group();
     fb.set_attr("geotrace_version", AttrValue::String("1".into()));
     set_attrs(&mut fb);
-
-    let mut nav_points = fb.create_group("nav_points");
-    nav_points
-        .create_dataset("time")
-        .with_i64_data(&[])
-        .with_shape(&[0]);
-    for name in ["lat", "lon", "heading", "speed_mps"] {
-        nav_points
-            .create_dataset(name)
-            .with_f64_data(&[])
-            .with_shape(&[0]);
-    }
-    fb.add_group(nav_points.finish());
 
     Ok(NavFile::read(fb.finish()?.as_slice())?)
 }

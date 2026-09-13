@@ -5,57 +5,21 @@
 
 use geotrace_sdk::{Angle, DateTime, Duration, Unit, Utc};
 use geotrace_sdk::{
-    Annotation, BuildError, Channel, Constellation, EventMarker, NavFileBuilder, NavFix,
-    NavFixTime, Satellite, SatelliteReport,
+    Annotation, BuildError, Channel, Constellation, EventMarker, NavFileBuilder, NavFix, NavFixTime,
 };
+use geotrace_sdk_test_util as test_util;
+use geotrace_sdk_test_util::{Lat, Lon};
 use proptest::prelude::*;
 use rstest::rstest;
 
-fn t(offset_ms: i64) -> DateTime<Utc> {
-    #[expect(clippy::expect_used, reason = "fixed base timestamp is always valid")]
-    let base = DateTime::from_timestamp(1_748_000_000, 0).expect("valid");
-    base + Duration::milliseconds(offset_ms)
-}
-
-fn simple_fix(offset_ms: i64) -> NavFix {
-    NavFix::builder()
-        .time(NavFixTime::Receiver(t(offset_ms)))
-        .lat(Angle::degrees(55.0))
-        .lon(Angle::degrees(12.0))
-        .heading(Angle::degrees(0.0))
-        .build()
-}
-
-fn simple_report(offset_ms: i64) -> SatelliteReport {
-    SatelliteReport::builder()
-        .time(NavFixTime::Receiver(t(offset_ms)))
-        .tracked(vec![
-            Satellite::builder()
-                .constellation(Constellation::Gps)
-                .prn(1u32)
-                .in_fix(true)
-                .build(),
-        ])
-        .build()
-}
-
-fn fix_at_lon(offset_ms: i64, lon_deg: f64) -> NavFix {
-    NavFix::builder()
-        .time(NavFixTime::Receiver(t(offset_ms)))
-        .lat(Angle::degrees(0.0))
-        .lon(Angle::degrees(lon_deg))
-        .heading(Angle::degrees(90.0))
-        .build()
-}
-
 #[rstest]
-#[case::eastward_a_quarter_of_the_way(179.95, -179.95, t(2500), 179.975)]
-#[case::eastward_halfway(179.95, -179.95, t(5000), -180.0)]
-#[case::eastward_three_quarters_of_the_way(179.95, -179.95, t(7500), -179.975)]
-#[case::westward_a_quarter_of_the_way(-179.95, 179.95, t(2500), -179.975)]
-#[case::westward_halfway(-179.95, 179.95, t(5000), -180.0)]
-#[case::westward_three_quarters_of_the_way(-179.95, 179.95, t(7500), 179.975)]
-#[case::exactly_180_apart_halfway(0.0, 180.0, t(5000), -90.0)]
+#[case::eastward_a_quarter_of_the_way(179.95, -179.95, test_util::t_ms(2500), 179.975)]
+#[case::eastward_halfway(179.95, -179.95, test_util::t_ms(5000), -180.0)]
+#[case::eastward_three_quarters_of_the_way(179.95, -179.95, test_util::t_ms(7500), -179.975)]
+#[case::westward_a_quarter_of_the_way(-179.95, 179.95, test_util::t_ms(2500), -179.975)]
+#[case::westward_halfway(-179.95, 179.95, test_util::t_ms(5000), -180.0)]
+#[case::westward_three_quarters_of_the_way(-179.95, 179.95, test_util::t_ms(7500), 179.975)]
+#[case::exactly_180_apart_halfway(0.0, 180.0, test_util::t_ms(5000), -90.0)]
 fn an_annotation_between_two_fixes_takes_the_shortest_arc_in_longitude(
     #[case] first_fix_lon_deg: f64,
     #[case] second_fix_lon_deg: f64,
@@ -63,8 +27,14 @@ fn an_annotation_between_two_fixes_takes_the_shortest_arc_in_longitude(
     #[case] expected_lon_deg: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(fix_at_lon(0, first_fix_lon_deg));
-    recorder.add_nav_fix(fix_at_lon(10_000, second_fix_lon_deg));
+    recorder.add_nav_fix(test_util::fix_on_the_equator_heading_east(
+        0,
+        first_fix_lon_deg,
+    ));
+    recorder.add_nav_fix(test_util::fix_on_the_equator_heading_east(
+        10_000,
+        second_fix_lon_deg,
+    ));
     recorder.add_annotation(Annotation::builder().time(time).label("note").build()?);
 
     let nav_file = recorder.finish()?;
@@ -78,9 +48,9 @@ fn an_annotation_between_two_fixes_takes_the_shortest_arc_in_longitude(
 }
 
 #[rstest]
-#[case::at_the_first_fix_time(t(0), 10.0, 20.0)]
-#[case::halfway_between_two_fixes(t(500), 11.0, 22.0)]
-#[case::at_the_last_fix_time(t(1000), 12.0, 24.0)]
+#[case::at_the_first_fix_time(test_util::t_ms(0), 10.0, 20.0)]
+#[case::halfway_between_two_fixes(test_util::t_ms(500), 11.0, 22.0)]
+#[case::at_the_last_fix_time(test_util::t_ms(1000), 12.0, 24.0)]
 fn an_annotation_within_the_fix_time_span_resolves_to_a_position_in_strict_mode(
     #[case] time: DateTime<Utc>,
     #[case] expected_lat_deg: f64,
@@ -89,7 +59,7 @@ fn an_annotation_within_the_fix_time_span_resolves_to_a_position_in_strict_mode(
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .time(NavFixTime::Receiver(t(0)))
+            .time(NavFixTime::Receiver(test_util::t_ms(0)))
             .lat(Angle::degrees(10.0))
             .lon(Angle::degrees(20.0))
             .heading(Angle::degrees(0.0))
@@ -97,7 +67,7 @@ fn an_annotation_within_the_fix_time_span_resolves_to_a_position_in_strict_mode(
     );
     recorder.add_nav_fix(
         NavFix::builder()
-            .time(NavFixTime::Receiver(t(1000)))
+            .time(NavFixTime::Receiver(test_util::t_ms(1000)))
             .lat(Angle::degrees(12.0))
             .lon(Angle::degrees(24.0))
             .heading(Angle::degrees(0.0))
@@ -124,8 +94,8 @@ fn an_annotation_within_the_fix_time_span_resolves_to_a_position_in_strict_mode(
 fn an_annotation_at_the_time_of_the_only_fix_resolves_to_that_fix_in_strict_mode()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(simple_fix(0));
-    recorder.add_annotation(Annotation::builder().time(t(0)).build()?);
+    recorder.add_nav_fix(test_util::fix_at(0, Lat(55.0), Lon(12.0)));
+    recorder.add_annotation(Annotation::builder().time(test_util::t_ms(0)).build()?);
 
     let nav_file = recorder.finish()?;
     let marker = &nav_file.markers()[0];
@@ -140,7 +110,7 @@ fn an_annotation_between_two_fixes_in_host_clock_order_is_placed_between_them()
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .time(NavFixTime::Receiver(t(10_000)))
+            .time(NavFixTime::Receiver(test_util::t_ms(10_000)))
             .lat(Angle::degrees(56.0))
             .lon(Angle::degrees(16.0))
             .heading(Angle::degrees(0.0))
@@ -149,15 +119,20 @@ fn an_annotation_between_two_fixes_in_host_clock_order_is_placed_between_them()
     recorder.add_nav_fix(
         NavFix::builder()
             .time(NavFixTime::Both {
-                gps: t(12_000),
-                sys: t(8_000),
+                gps: test_util::t_ms(12_000),
+                sys: test_util::t_ms(8_000),
             })
             .lat(Angle::degrees(54.0))
             .lon(Angle::degrees(12.0))
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    recorder.add_annotation(Annotation::builder().time(t(9_000)).label("note").build()?);
+    recorder.add_annotation(
+        Annotation::builder()
+            .time(test_util::t_ms(9_000))
+            .label("note")
+            .build()?,
+    );
 
     let nav_file = recorder.finish()?;
     let marker = &nav_file.markers()[0];
@@ -181,8 +156,8 @@ fn an_annotation_at_a_host_time_two_fixes_share_is_placed_on_the_earlier_by_rece
     recorder.add_nav_fix(
         NavFix::builder()
             .time(NavFixTime::Both {
-                gps: t(13_000),
-                sys: t(9_000),
+                gps: test_util::t_ms(13_000),
+                sys: test_util::t_ms(9_000),
             })
             .lat(Angle::degrees(56.0))
             .lon(Angle::degrees(16.0))
@@ -192,15 +167,20 @@ fn an_annotation_at_a_host_time_two_fixes_share_is_placed_on_the_earlier_by_rece
     recorder.add_nav_fix(
         NavFix::builder()
             .time(NavFixTime::Both {
-                gps: t(12_000),
-                sys: t(9_000),
+                gps: test_util::t_ms(12_000),
+                sys: test_util::t_ms(9_000),
             })
             .lat(Angle::degrees(54.0))
             .lon(Angle::degrees(12.0))
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    recorder.add_annotation(Annotation::builder().time(t(9_000)).label("note").build()?);
+    recorder.add_annotation(
+        Annotation::builder()
+            .time(test_util::t_ms(9_000))
+            .label("note")
+            .build()?,
+    );
 
     let nav_file = recorder.finish()?;
     let marker = &nav_file.markers()[0];
@@ -220,11 +200,11 @@ fn an_annotation_at_a_host_time_two_fixes_share_is_placed_on_the_earlier_by_rece
 #[test]
 fn an_annotation_one_microsecond_after_the_last_fix_is_outside_the_range_in_strict_mode() {
     let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(simple_fix(0));
-    recorder.add_nav_fix(simple_fix(1000));
+    recorder.add_nav_fix(test_util::fix_at(0, Lat(55.0), Lon(12.0)));
+    recorder.add_nav_fix(test_util::fix_at(1000, Lat(55.0), Lon(12.0)));
     recorder.add_annotation(
         Annotation::builder()
-            .time(t(1000) + Duration::microseconds(1))
+            .time(test_util::t_ms(1000) + Duration::microseconds(1))
             .build()
             .expect("an annotation without a label is accepted"),
     );
@@ -241,13 +221,13 @@ fn annotation_before_first_fix_lenient() -> Result<(), Box<dyn std::error::Error
     let mut recorder = NavFileBuilder::new().with_lenient_errors().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .time(NavFixTime::Receiver(t(1000)))
+            .time(NavFixTime::Receiver(test_util::t_ms(1000)))
             .lat(Angle::degrees(55.0))
             .lon(Angle::degrees(12.0))
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    recorder.add_annotation(Annotation::builder().time(t(0)).build()?);
+    recorder.add_annotation(Annotation::builder().time(test_util::t_ms(0)).build()?);
     let nav_file = recorder.finish()?;
     let m = &nav_file.markers()[0];
     assert!((m.lat.as_degrees() - 55.0).abs() < 1e-10);
@@ -261,13 +241,13 @@ fn annotation_after_last_fix_lenient() -> Result<(), Box<dyn std::error::Error>>
     let mut recorder = NavFileBuilder::new().with_lenient_errors().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .time(NavFixTime::Receiver(t(0)))
+            .time(NavFixTime::Receiver(test_util::t_ms(0)))
             .lat(Angle::degrees(55.0))
             .lon(Angle::degrees(12.0))
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    recorder.add_annotation(Annotation::builder().time(t(5000)).build()?);
+    recorder.add_annotation(Annotation::builder().time(test_util::t_ms(5000)).build()?);
     let nav_file = recorder.finish()?;
     let m = &nav_file.markers()[0];
     assert!((m.lat.as_degrees() - 55.0).abs() < 1e-10);
@@ -278,12 +258,12 @@ fn annotation_after_last_fix_lenient() -> Result<(), Box<dyn std::error::Error>>
 #[test]
 fn strict_mode_fails_on_an_annotation_before_the_first_fix_and_not_on_orphan_reports() {
     let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(simple_fix(0));
-    recorder.add_satellite_report(simple_report(2000));
-    recorder.add_satellite_report(simple_report(3000));
+    recorder.add_nav_fix(test_util::fix_at(0, Lat(55.0), Lon(12.0)));
+    recorder.add_satellite_report(test_util::report_with(2000, Constellation::Gps, 1));
+    recorder.add_satellite_report(test_util::report_with(3000, Constellation::Gps, 1));
     recorder.add_annotation(
         Annotation::builder()
-            .time(t(-1000))
+            .time(test_util::t_ms(-1000))
             .build()
             .expect("an annotation without a label is accepted"),
     );
@@ -300,7 +280,7 @@ fn no_nav_fixes_with_annotations_lenient() {
     let mut recorder = NavFileBuilder::new().with_lenient_errors().open();
     recorder.add_annotation(
         Annotation::builder()
-            .time(t(0))
+            .time(test_util::t_ms(0))
             .build()
             .expect("an annotation without a label is accepted"),
     );
@@ -312,8 +292,12 @@ fn unsorted_insertion() -> Result<(), BuildError> {
     let mut recorder = NavFileBuilder::new().open();
     // Insert in reverse chronological order. finish() must sort correctly.
     for i in (0..5).rev() {
-        recorder.add_nav_fix(simple_fix(i * 1000));
-        recorder.add_satellite_report(simple_report(i * 1000 + 100));
+        recorder.add_nav_fix(test_util::fix_at(i * 1000, Lat(55.0), Lon(12.0)));
+        recorder.add_satellite_report(test_util::report_with(
+            i * 1000 + 100,
+            Constellation::Gps,
+            1,
+        ));
     }
     let nav_file = recorder.finish()?;
     let times: Vec<_> = nav_file
@@ -354,10 +338,10 @@ proptest! {
 
         let mut recorder = NavFileBuilder::new().open();
         for &ms in &gps_ms {
-            recorder.add_nav_fix(simple_fix(ms));
+            recorder.add_nav_fix(test_util::fix_at(ms, Lat(55.0), Lon(12.0)));
         }
         for &ms in &sat_ms {
-            recorder.add_satellite_report(simple_report(ms));
+            recorder.add_satellite_report(test_util::report_with(ms, Constellation::Gps, 1));
         }
 
         if let Ok(nav_file) = recorder.finish() {
@@ -383,7 +367,7 @@ fn add_dispatches_to_the_matching_typed_method() -> Result<(), BuildError> {
     // Same data, two fixes bracketing the annotation/event so both land in range.
     let annotation = || {
         Annotation::builder()
-            .time(t(500))
+            .time(test_util::t_ms(500))
             .label("mid")
             .build()
             .expect("the marker label fits its field")
@@ -391,7 +375,7 @@ fn add_dispatches_to_the_matching_typed_method() -> Result<(), BuildError> {
     let marker = || {
         EventMarker::builder()
             .variant_path("power/boot")
-            .sys_time(t(500))
+            .sys_time(test_util::t_ms(500))
             .annotation("cold start")
             .build()
             .expect("valid event marker")
@@ -400,7 +384,7 @@ fn add_dispatches_to_the_matching_typed_method() -> Result<(), BuildError> {
         Channel::builder()
             .name("incline")
             .unit(Unit::DEG)
-            .times(vec![t(0)])
+            .times(vec![test_util::t_ms(0)])
             .values(vec![1.5])
             .build()
             .expect("valid channel")
@@ -409,9 +393,9 @@ fn add_dispatches_to_the_matching_typed_method() -> Result<(), BuildError> {
     // Built the explicit way.
     let mut typed = NavFileBuilder::new().open();
     typed
-        .add_nav_fix(simple_fix(0))
-        .add_nav_fix(simple_fix(1000))
-        .add_satellite_report(simple_report(100))
+        .add_nav_fix(test_util::fix_at(0, Lat(55.0), Lon(12.0)))
+        .add_nav_fix(test_util::fix_at(1000, Lat(55.0), Lon(12.0)))
+        .add_satellite_report(test_util::report_with(100, Constellation::Gps, 1))
         .add_annotation(annotation())
         .add_event_marker(marker())
         .add_channel(channel());
@@ -420,9 +404,9 @@ fn add_dispatches_to_the_matching_typed_method() -> Result<(), BuildError> {
     // Built via the type-dispatched add().
     let mut via_add = NavFileBuilder::new().open();
     via_add
-        .add(simple_fix(0))
-        .add(simple_fix(1000))
-        .add(simple_report(100))
+        .add(test_util::fix_at(0, Lat(55.0), Lon(12.0)))
+        .add(test_util::fix_at(1000, Lat(55.0), Lon(12.0)))
+        .add(test_util::report_with(100, Constellation::Gps, 1))
         .add(annotation())
         .add(marker())
         .add(channel());

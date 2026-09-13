@@ -9,12 +9,15 @@
 
 use geotrace_sdk::{Angle, Unit, Velocity};
 use geotrace_sdk::{
-    Annotation, AnnotationField, AnnotationIcon, Channel, ColorHexField, Constellation,
-    EventMarker, EventMarkerColor, EventMarkerIconChoice, EventMarkerStyle, IconNameField,
-    MarkerIcon, MarkerLabelField, NavFile, NavFileBuilder, NavFix, NavFixTime, NavRecorder,
-    Satellite, SatelliteReport, TravelMode, VariantPathField,
+    Annotation, AnnotationIcon, Channel, Constellation, EventMarker, EventMarkerColor,
+    EventMarkerIconChoice, EventMarkerStyle, MarkerIcon, NavFile, NavFileBuilder, NavFix,
+    NavFixTime, NavRecorder, Satellite, SatelliteReport, TravelMode,
 };
 use geotrace_sdk_test_util as test_util;
+use geotrace_sdk_test_util::{
+    ANNOTATION_ROW_BYTES, COLOR_HEX_ROW_BYTES, EventMarkerFieldRows, GtdFileContents,
+    ICON_NAME_ROW_BYTES, MARKER_LABEL_ROW_BYTES, StyleFieldRows, VARIANT_PATH_ROW_BYTES,
+};
 use hdf5_pure::{AttrValue, FileBuilder};
 use rstest::rstest;
 
@@ -172,178 +175,8 @@ fn snapshot_inspect_populated_file() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-const MARKER_LABEL_ROW_BYTES: usize = MarkerLabelField::CONTENT_CAPACITY + 1;
-const VARIANT_PATH_ROW_BYTES: usize = VariantPathField::CONTENT_CAPACITY + 1;
-const ANNOTATION_ROW_BYTES: usize = AnnotationField::CONTENT_CAPACITY + 1;
-const ICON_NAME_ROW_BYTES: usize = IconNameField::CONTENT_CAPACITY + 1;
-const COLOR_HEX_ROW_BYTES: usize = ColorHexField::CONTENT_CAPACITY + 1;
-const MARKER_ICON_WARNING_CODE: u8 = 4;
-
 /// Field content no reader decodes as UTF-8.
 const NOT_UTF8: &[u8] = &[0xff];
-
-fn fix_time_us() -> i64 {
-    test_util::base().timestamp_micros()
-}
-
-fn nul_padded_row(content: &[u8], row_bytes: usize) -> Vec<u8> {
-    let mut row = content.to_vec();
-    row.resize(row_bytes, 0);
-    row
-}
-
-struct EventMarkerRow {
-    variant_path: Vec<u8>,
-    annotation: Vec<u8>,
-}
-
-struct StyleRow {
-    variant_path: Vec<u8>,
-    icon_name: Vec<u8>,
-    color_hex: Vec<u8>,
-}
-
-/// What the file [`gtd_bytes`] builds holds beyond its one nav fix: root
-/// attributes, one marker per label row, one event marker per row, one style
-/// per row. A list left empty leaves its group out of the file.
-#[derive(Default)]
-struct GtdFileContents {
-    attrs: Vec<(&'static str, &'static str)>,
-    marker_labels: Vec<Vec<u8>>,
-    event_markers: Vec<EventMarkerRow>,
-    styles: Vec<StyleRow>,
-}
-
-fn nav_points_group_of_one_fix(fb: &mut FileBuilder) {
-    let mut nav_points = fb.create_group("nav_points");
-    nav_points
-        .create_dataset("time")
-        .with_i64_data(&[fix_time_us()])
-        .with_shape(&[1]);
-    for (name, value) in [
-        ("lat", 55.0),
-        ("lon", 12.0),
-        ("heading", 90.0),
-        ("speed_mps", 3.0),
-    ] {
-        nav_points
-            .create_dataset(name)
-            .with_f64_data(&[value])
-            .with_shape(&[1]);
-    }
-    fb.add_group(nav_points.finish());
-}
-
-/// A `.gtd` file of one nav fix, with the attributes, markers, event markers
-/// and styles of [`GtdFileContents`]. A row that is not UTF-8 has to be
-/// assembled here, since the writer takes a `String` for every field that holds
-/// one.
-#[expect(clippy::expect_used, reason = "test setup must succeed")]
-fn gtd_bytes(
-    GtdFileContents {
-        attrs,
-        marker_labels,
-        event_markers,
-        styles,
-    }: GtdFileContents,
-) -> Vec<u8> {
-    let mut fb = FileBuilder::new();
-    fb.set_attr("geotrace_version", AttrValue::String("2".into()));
-    for (name, value) in attrs {
-        fb.set_attr(name, AttrValue::String(value.to_owned()));
-    }
-
-    nav_points_group_of_one_fix(&mut fb);
-
-    if !marker_labels.is_empty() {
-        let count = marker_labels.len();
-        let mut markers = fb.create_group("markers");
-        markers
-            .create_dataset("time")
-            .with_i64_data(&vec![fix_time_us(); count])
-            .with_shape(&[count as u64]);
-        markers
-            .create_dataset("lat")
-            .with_f64_data(&vec![55.0; count])
-            .with_shape(&[count as u64]);
-        markers
-            .create_dataset("lon")
-            .with_f64_data(&vec![12.0; count])
-            .with_shape(&[count as u64]);
-        markers
-            .create_dataset("icon")
-            .with_u8_data(&vec![MARKER_ICON_WARNING_CODE; count])
-            .with_shape(&[count as u64]);
-        markers
-            .create_dataset("label")
-            .with_u8_data(&marker_labels.concat())
-            .with_shape(&[count as u64, MARKER_LABEL_ROW_BYTES as u64]);
-        fb.add_group(markers.finish());
-    }
-
-    if !event_markers.is_empty() {
-        let count = event_markers.len();
-        let mut grp = fb.create_group("event_markers");
-        grp.create_dataset("sys_time_us")
-            .with_u64_data(&vec![fix_time_us().cast_unsigned(); count])
-            .with_shape(&[count as u64]);
-        grp.create_dataset("lat")
-            .with_f64_data(&vec![55.0; count])
-            .with_shape(&[count as u64]);
-        grp.create_dataset("lon")
-            .with_f64_data(&vec![12.0; count])
-            .with_shape(&[count as u64]);
-        grp.create_dataset("variant_path")
-            .with_u8_data(
-                &event_markers
-                    .iter()
-                    .flat_map(|row| row.variant_path.clone())
-                    .collect::<Vec<u8>>(),
-            )
-            .with_shape(&[count as u64, VARIANT_PATH_ROW_BYTES as u64]);
-        grp.create_dataset("annotation")
-            .with_u8_data(
-                &event_markers
-                    .iter()
-                    .flat_map(|row| row.annotation.clone())
-                    .collect::<Vec<u8>>(),
-            )
-            .with_shape(&[count as u64, ANNOTATION_ROW_BYTES as u64]);
-        fb.add_group(grp.finish());
-    }
-
-    if !styles.is_empty() {
-        let count = styles.len();
-        let mut grp = fb.create_group("event_marker_styles");
-        grp.create_dataset("variant_path")
-            .with_u8_data(
-                &styles
-                    .iter()
-                    .flat_map(|row| row.variant_path.clone())
-                    .collect::<Vec<u8>>(),
-            )
-            .with_shape(&[count as u64, VARIANT_PATH_ROW_BYTES as u64]);
-        grp.create_dataset("icon_name")
-            .with_u8_data(
-                &styles
-                    .iter()
-                    .flat_map(|row| row.icon_name.clone())
-                    .collect::<Vec<u8>>(),
-            )
-            .with_shape(&[count as u64, ICON_NAME_ROW_BYTES as u64]);
-        grp.create_dataset("color_hex")
-            .with_u8_data(
-                &styles
-                    .iter()
-                    .flat_map(|row| row.color_hex.clone())
-                    .collect::<Vec<u8>>(),
-            )
-            .with_shape(&[count as u64, COLOR_HEX_ROW_BYTES as u64]);
-        fb.add_group(grp.finish());
-    }
-
-    fb.finish().expect("the assembled file builds")
-}
 
 fn inspect_bytes(bytes: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
     let tmp = tempfile::NamedTempFile::new()?;
@@ -356,14 +189,15 @@ fn inspect_bytes(bytes: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
 #[test]
 fn snapshot_inspect_file_with_a_label_row_that_is_not_utf8()
 -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = gtd_bytes(GtdFileContents {
+    let bytes = GtdFileContents {
         marker_labels: vec![
-            nul_padded_row(b"start", MARKER_LABEL_ROW_BYTES),
-            nul_padded_row(NOT_UTF8, MARKER_LABEL_ROW_BYTES),
-            nul_padded_row(b"end", MARKER_LABEL_ROW_BYTES),
+            test_util::nul_padded_row(b"start", MARKER_LABEL_ROW_BYTES),
+            test_util::nul_padded_row(NOT_UTF8, MARKER_LABEL_ROW_BYTES),
+            test_util::nul_padded_row(b"end", MARKER_LABEL_ROW_BYTES),
         ],
         ..GtdFileContents::default()
-    });
+    }
+    .into_gtd_bytes();
 
     insta::assert_snapshot!(inspect_bytes(&bytes)?);
     Ok(())
@@ -375,31 +209,32 @@ fn snapshot_inspect_file_with_a_label_row_that_is_not_utf8()
 #[test]
 fn snapshot_inspect_file_with_event_marker_rows_that_are_not_utf8()
 -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = gtd_bytes(GtdFileContents {
+    let bytes = GtdFileContents {
         event_markers: vec![
-            EventMarkerRow {
-                variant_path: nul_padded_row(b"power/boot", VARIANT_PATH_ROW_BYTES),
-                annotation: nul_padded_row(b"battery replaced", ANNOTATION_ROW_BYTES),
+            EventMarkerFieldRows {
+                variant_path: test_util::nul_padded_row(b"power/boot", VARIANT_PATH_ROW_BYTES),
+                annotation: test_util::nul_padded_row(b"battery replaced", ANNOTATION_ROW_BYTES),
             },
-            EventMarkerRow {
-                variant_path: nul_padded_row(NOT_UTF8, VARIANT_PATH_ROW_BYTES),
-                annotation: nul_padded_row(NOT_UTF8, ANNOTATION_ROW_BYTES),
+            EventMarkerFieldRows {
+                variant_path: test_util::nul_padded_row(NOT_UTF8, VARIANT_PATH_ROW_BYTES),
+                annotation: test_util::nul_padded_row(NOT_UTF8, ANNOTATION_ROW_BYTES),
             },
         ],
         styles: vec![
-            StyleRow {
-                variant_path: nul_padded_row(b"power/boot", VARIANT_PATH_ROW_BYTES),
-                icon_name: nul_padded_row(NOT_UTF8, ICON_NAME_ROW_BYTES),
-                color_hex: nul_padded_row(NOT_UTF8, COLOR_HEX_ROW_BYTES),
+            StyleFieldRows {
+                variant_path: test_util::nul_padded_row(b"power/boot", VARIANT_PATH_ROW_BYTES),
+                icon_name: test_util::nul_padded_row(NOT_UTF8, ICON_NAME_ROW_BYTES),
+                color_hex: test_util::nul_padded_row(NOT_UTF8, COLOR_HEX_ROW_BYTES),
             },
-            StyleRow {
-                variant_path: nul_padded_row(NOT_UTF8, VARIANT_PATH_ROW_BYTES),
-                icon_name: nul_padded_row(b"wrench", ICON_NAME_ROW_BYTES),
-                color_hex: nul_padded_row(b"#FF9900", COLOR_HEX_ROW_BYTES),
+            StyleFieldRows {
+                variant_path: test_util::nul_padded_row(NOT_UTF8, VARIANT_PATH_ROW_BYTES),
+                icon_name: test_util::nul_padded_row(b"wrench", ICON_NAME_ROW_BYTES),
+                color_hex: test_util::nul_padded_row(b"#FF9900", COLOR_HEX_ROW_BYTES),
             },
         ],
         ..GtdFileContents::default()
-    });
+    }
+    .into_gtd_bytes();
 
     insta::assert_snapshot!(inspect_bytes(&bytes)?);
     Ok(())
@@ -409,36 +244,40 @@ fn snapshot_inspect_file_with_event_marker_rows_that_are_not_utf8()
 #[test]
 fn snapshot_inspect_file_with_more_rows_than_the_summary_lists()
 -> Result<(), Box<dyn std::error::Error>> {
-    let mut event_markers: Vec<EventMarkerRow> = (0..22)
-        .map(|row| EventMarkerRow {
-            variant_path: nul_padded_row(
+    let mut event_markers: Vec<EventMarkerFieldRows> = (0..22)
+        .map(|row| EventMarkerFieldRows {
+            variant_path: test_util::nul_padded_row(
                 format!("event/{row:02}").as_bytes(),
                 VARIANT_PATH_ROW_BYTES,
             ),
-            annotation: nul_padded_row(format!("note {row:02}").as_bytes(), ANNOTATION_ROW_BYTES),
+            annotation: test_util::nul_padded_row(
+                format!("note {row:02}").as_bytes(),
+                ANNOTATION_ROW_BYTES,
+            ),
         })
         .collect();
-    event_markers.extend((0..4).map(|_| EventMarkerRow {
-        variant_path: nul_padded_row(NOT_UTF8, VARIANT_PATH_ROW_BYTES),
-        annotation: nul_padded_row(NOT_UTF8, ANNOTATION_ROW_BYTES),
+    event_markers.extend((0..4).map(|_| EventMarkerFieldRows {
+        variant_path: test_util::nul_padded_row(NOT_UTF8, VARIANT_PATH_ROW_BYTES),
+        annotation: test_util::nul_padded_row(NOT_UTF8, ANNOTATION_ROW_BYTES),
     }));
 
-    let styles: Vec<StyleRow> = (0..21)
-        .map(|row| StyleRow {
-            variant_path: nul_padded_row(
+    let styles: Vec<StyleFieldRows> = (0..21)
+        .map(|row| StyleFieldRows {
+            variant_path: test_util::nul_padded_row(
                 format!("style/{row:02}").as_bytes(),
                 VARIANT_PATH_ROW_BYTES,
             ),
-            icon_name: nul_padded_row(b"", ICON_NAME_ROW_BYTES),
-            color_hex: nul_padded_row(b"", COLOR_HEX_ROW_BYTES),
+            icon_name: test_util::nul_padded_row(b"", ICON_NAME_ROW_BYTES),
+            color_hex: test_util::nul_padded_row(b"", COLOR_HEX_ROW_BYTES),
         })
         .collect();
 
-    let bytes = gtd_bytes(GtdFileContents {
+    let bytes = GtdFileContents {
         event_markers,
         styles,
         ..GtdFileContents::default()
-    });
+    }
+    .into_gtd_bytes();
 
     insta::assert_snapshot!(inspect_bytes(&bytes)?);
     Ok(())
@@ -448,14 +287,15 @@ fn snapshot_inspect_file_with_more_rows_than_the_summary_lists()
 /// build that wrote the file.
 #[test]
 fn inspect_states_the_build_stamp_a_file_holds() -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = gtd_bytes(GtdFileContents {
+    let bytes = GtdFileContents {
         attrs: vec![
             ("sdk_version", "0.4.2"),
             ("sdk_git_commit", "0123456789abcdef0123456789abcdef01234567"),
             ("sdk_commit_time", "2026-02-01T15:00:00Z"),
         ],
         ..GtdFileContents::default()
-    });
+    }
+    .into_gtd_bytes();
     let output = inspect_bytes(&bytes)?;
 
     let metadata: Vec<&str> = output
@@ -482,11 +322,11 @@ fn inspect_states_an_event_marker_styles_group_without_a_variant_path_dataset()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut fb = FileBuilder::new();
     fb.set_attr("geotrace_version", AttrValue::String("2".into()));
-    nav_points_group_of_one_fix(&mut fb);
+    test_util::add_nav_points_group_of_one_fix(&mut fb);
     let mut styles = fb.create_group("event_marker_styles");
     styles
         .create_dataset("icon_name")
-        .with_u8_data(&nul_padded_row(b"wrench", ICON_NAME_ROW_BYTES))
+        .with_u8_data(&test_util::nul_padded_row(b"wrench", ICON_NAME_ROW_BYTES))
         .with_shape(&[1, ICON_NAME_ROW_BYTES as u64]);
     fb.add_group(styles.finish());
 

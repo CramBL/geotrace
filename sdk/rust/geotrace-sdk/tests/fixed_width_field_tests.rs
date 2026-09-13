@@ -5,17 +5,19 @@
 //! in `EventMarker::builder().build()`.
 
 use geotrace_sdk::{
-    Annotation, AnnotationField, ColorHexField, EventKind, EventMarker, EventMarkerColor,
-    EventMarkerIconChoice, EventMarkerStyle, IconNameField, MarkerIcon, MarkerLabelField, NavFile,
-    NavRecorder, VariantPathField,
+    Annotation, AnnotationField, EventKind, EventMarker, EventMarkerColor, EventMarkerIconChoice,
+    EventMarkerStyle, MarkerIcon, MarkerLabelField, NavFile, NavRecorder, VariantPathField,
 };
 use geotrace_sdk_test_util as test_util;
-use hdf5_pure::{AttrValue, FileBuilder};
+use geotrace_sdk_test_util::{
+    ANNOTATION_ROW_BYTES, COLOR_HEX_ROW_BYTES, EventMarkerFieldRows, GtdFileContents,
+    ICON_NAME_ROW_BYTES, Lat, Lon, MARKER_LABEL_ROW_BYTES, StyleFieldRows, VARIANT_PATH_ROW_BYTES,
+};
 use rstest::rstest;
 
 fn recorder_with_fixes_bracketing_an_annotation() -> NavRecorder {
     let mut recorder = test_util::recorder_with_one_fix();
-    recorder.add_nav_fix(test_util::fix_at(10_000, 55.1, 12.1));
+    recorder.add_nav_fix(test_util::fix_at(10_000, Lat(55.1), Lon(12.1)));
     recorder
 }
 
@@ -150,23 +152,8 @@ fn a_style_color_one_byte_past_the_capacity_stops_the_write() {
     );
 }
 
-const MARKER_LABEL_ROW_BYTES: usize = MarkerLabelField::CONTENT_CAPACITY + 1;
-const VARIANT_PATH_ROW_BYTES: usize = VariantPathField::CONTENT_CAPACITY + 1;
-const ANNOTATION_ROW_BYTES: usize = AnnotationField::CONTENT_CAPACITY + 1;
-const ICON_NAME_ROW_BYTES: usize = IconNameField::CONTENT_CAPACITY + 1;
-const COLOR_HEX_ROW_BYTES: usize = ColorHexField::CONTENT_CAPACITY + 1;
-
-const FIX_TIME_US: i64 = 1_748_000_000_000_000;
-const MARKER_ICON_WARNING_CODE: u8 = 4;
-
-fn nul_padded_row(content: &[u8], row_bytes: usize) -> Vec<u8> {
-    let mut row = content.to_vec();
-    row.resize(row_bytes, 0);
-    row
-}
-
 fn row_that_is_not_utf8(row_bytes: usize) -> Vec<u8> {
-    nul_padded_row(&[0xff], row_bytes)
+    test_util::nul_padded_row(&[0xff], row_bytes)
 }
 
 /// The six fixed-width field rows of the file [`gtd_bytes_with_field_rows`]
@@ -183,118 +170,48 @@ struct FixedWidthFieldRows {
 impl Default for FixedWidthFieldRows {
     fn default() -> Self {
         Self {
-            marker_label: nul_padded_row(b"start", MARKER_LABEL_ROW_BYTES),
-            event_marker_variant_path: nul_padded_row(b"power/boot", VARIANT_PATH_ROW_BYTES),
-            event_marker_annotation: nul_padded_row(b"battery replaced", ANNOTATION_ROW_BYTES),
-            style_variant_path: nul_padded_row(b"power/boot", VARIANT_PATH_ROW_BYTES),
-            style_icon_name: nul_padded_row(b"wrench", ICON_NAME_ROW_BYTES),
-            style_color_hex: nul_padded_row(b"#FFAA00", COLOR_HEX_ROW_BYTES),
+            marker_label: test_util::nul_padded_row(b"start", MARKER_LABEL_ROW_BYTES),
+            event_marker_variant_path: test_util::nul_padded_row(
+                b"power/boot",
+                VARIANT_PATH_ROW_BYTES,
+            ),
+            event_marker_annotation: test_util::nul_padded_row(
+                b"battery replaced",
+                ANNOTATION_ROW_BYTES,
+            ),
+            style_variant_path: test_util::nul_padded_row(b"power/boot", VARIANT_PATH_ROW_BYTES),
+            style_icon_name: test_util::nul_padded_row(b"wrench", ICON_NAME_ROW_BYTES),
+            style_color_hex: test_util::nul_padded_row(b"#FFAA00", COLOR_HEX_ROW_BYTES),
         }
     }
 }
 
 /// A `.gtd` file with one nav fix, one marker, one event marker and one event
-/// marker style, whose fixed-width field rows are written as given. These tests
-/// assemble the file themselves, since the writer cannot produce a malformed row.
-#[expect(clippy::expect_used, reason = "test setup must succeed")]
-fn gtd_bytes_with_field_rows(rows: FixedWidthFieldRows) -> Vec<u8> {
-    let FixedWidthFieldRows {
+/// marker style, whose fixed-width field rows are written as given.
+fn gtd_bytes_with_field_rows(
+    FixedWidthFieldRows {
         marker_label,
         event_marker_variant_path,
         event_marker_annotation,
         style_variant_path,
         style_icon_name,
         style_color_hex,
-    } = rows;
-
-    let mut fb = FileBuilder::new();
-    fb.set_attr("geotrace_version", AttrValue::String("2".into()));
-
-    let mut nav_points = fb.create_group("nav_points");
-    nav_points
-        .create_dataset("time")
-        .with_i64_data(&[FIX_TIME_US])
-        .with_shape(&[1]);
-    nav_points
-        .create_dataset("lat")
-        .with_f64_data(&[55.0])
-        .with_shape(&[1]);
-    nav_points
-        .create_dataset("lon")
-        .with_f64_data(&[12.0])
-        .with_shape(&[1]);
-    nav_points
-        .create_dataset("heading")
-        .with_f64_data(&[90.0])
-        .with_shape(&[1]);
-    nav_points
-        .create_dataset("speed_mps")
-        .with_f64_data(&[3.0])
-        .with_shape(&[1]);
-    fb.add_group(nav_points.finish());
-
-    let mut markers = fb.create_group("markers");
-    markers
-        .create_dataset("time")
-        .with_i64_data(&[FIX_TIME_US])
-        .with_shape(&[1]);
-    markers
-        .create_dataset("lat")
-        .with_f64_data(&[55.0])
-        .with_shape(&[1]);
-    markers
-        .create_dataset("lon")
-        .with_f64_data(&[12.0])
-        .with_shape(&[1]);
-    markers
-        .create_dataset("icon")
-        .with_u8_data(&[MARKER_ICON_WARNING_CODE])
-        .with_shape(&[1]);
-    markers
-        .create_dataset("label")
-        .with_u8_data(&marker_label)
-        .with_shape(&[1, marker_label.len() as u64]);
-    fb.add_group(markers.finish());
-
-    let mut event_markers = fb.create_group("event_markers");
-    event_markers
-        .create_dataset("sys_time_us")
-        .with_u64_data(&[FIX_TIME_US.cast_unsigned()])
-        .with_shape(&[1]);
-    event_markers
-        .create_dataset("lat")
-        .with_f64_data(&[55.0])
-        .with_shape(&[1]);
-    event_markers
-        .create_dataset("lon")
-        .with_f64_data(&[12.0])
-        .with_shape(&[1]);
-    event_markers
-        .create_dataset("variant_path")
-        .with_u8_data(&event_marker_variant_path)
-        .with_shape(&[1, event_marker_variant_path.len() as u64]);
-    event_markers
-        .create_dataset("annotation")
-        .with_u8_data(&event_marker_annotation)
-        .with_shape(&[1, event_marker_annotation.len() as u64]);
-    fb.add_group(event_markers.finish());
-
-    let mut styles = fb.create_group("event_marker_styles");
-    styles
-        .create_dataset("variant_path")
-        .with_u8_data(&style_variant_path)
-        .with_shape(&[1, style_variant_path.len() as u64]);
-    styles
-        .create_dataset("icon_name")
-        .with_u8_data(&style_icon_name)
-        .with_shape(&[1, style_icon_name.len() as u64]);
-    styles
-        .create_dataset("color_hex")
-        .with_u8_data(&style_color_hex)
-        .with_shape(&[1, style_color_hex.len() as u64]);
-    fb.add_group(styles.finish());
-
-    fb.finish().expect("the assembled file builds")
+    }: FixedWidthFieldRows,
+) -> Vec<u8> {
+    GtdFileContents {
+        attrs: Vec::new(),
+        marker_labels: vec![marker_label],
+        event_markers: vec![EventMarkerFieldRows {
+            variant_path: event_marker_variant_path,
+            annotation: event_marker_annotation,
+        }],
+        styles: vec![StyleFieldRows {
+            variant_path: style_variant_path,
+            icon_name: style_icon_name,
+            color_hex: style_color_hex,
+        }],
+    }
+    .into_gtd_bytes()
 }
 
 #[test]
@@ -324,7 +241,7 @@ fn well_formed_fixed_width_field_rows_read_back() {
 #[test]
 fn an_icon_name_outside_the_known_set_survives_the_read() {
     let bytes = gtd_bytes_with_field_rows(FixedWidthFieldRows {
-        style_icon_name: nul_padded_row(b"hovercraft", ICON_NAME_ROW_BYTES),
+        style_icon_name: test_util::nul_padded_row(b"hovercraft", ICON_NAME_ROW_BYTES),
         ..FixedWidthFieldRows::default()
     });
 
@@ -343,7 +260,7 @@ fn an_icon_name_outside_the_known_set_survives_the_read() {
 #[test]
 fn a_color_that_is_not_rrggbb_survives_the_read() {
     let bytes = gtd_bytes_with_field_rows(FixedWidthFieldRows {
-        style_color_hex: nul_padded_row(b"FFAA00", COLOR_HEX_ROW_BYTES),
+        style_color_hex: test_util::nul_padded_row(b"FFAA00", COLOR_HEX_ROW_BYTES),
         ..FixedWidthFieldRows::default()
     });
 

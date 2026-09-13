@@ -13,6 +13,7 @@ test = false
 
 [dependencies]
 geotrace-sdk = { path = "../geotrace-sdk" }
+hdf5-pure.workspace = true
 
 [lints]
 workspace = true

@@ -1,4 +1,5 @@
 use geotrace_sdk::{DateTime, Error, NavFile, NavFixTime, VariantPathField};
+use geotrace_sdk_test_util as test_util;
 use hdf5_pure::{AttrValue, FileBuilder, GroupBuilder};
 use rstest::rstest;
 
@@ -17,21 +18,9 @@ fn bytes_that_are_not_an_hdf5_file_fail_the_read(#[case] bytes: &[u8]) {
 /// A file that is valid HDF5 but has no `geotrace_version` attribute should fail.
 #[test]
 fn missing_version_attribute_returns_error() {
-    let mut fb = FileBuilder::new();
-    let mut np = fb.create_group("nav_points");
-    np.create_dataset("time")
-        .with_i64_data(&[])
-        .with_shape(&[0]);
-    np.create_dataset("lat").with_f64_data(&[]).with_shape(&[0]);
-    np.create_dataset("lon").with_f64_data(&[]).with_shape(&[0]);
-    np.create_dataset("heading")
-        .with_f64_data(&[])
-        .with_shape(&[0]);
-    np.create_dataset("speed_mps")
-        .with_f64_data(&[])
-        .with_shape(&[0]);
-    fb.add_group(np.finish());
-    let bytes = fb.finish().expect("build");
+    let bytes = test_util::file_with_an_empty_nav_points_group()
+        .finish()
+        .expect("build");
 
     let result = NavFile::read(bytes.as_slice());
     assert!(

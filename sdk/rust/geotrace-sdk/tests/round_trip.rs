@@ -4,28 +4,18 @@
 )]
 #![expect(clippy::cognitive_complexity, reason = "comprehensive round-trip test")]
 
-use geotrace_sdk::{Angle, ChannelUnit, DateTime, Duration, Unit, Utc, Velocity};
+use geotrace_sdk::{Angle, ChannelUnit, Duration, Unit, Velocity};
 use geotrace_sdk::{
-    Annotation, AnnotationIcon, Channel, Constellation, MarkerIcon, Meta, NavFile, NavFileBuilder,
-    NavFix, NavFixTime, Satellite, SatelliteReport, TravelMode,
+    Annotation, AnnotationIcon, Channel, Constellation, MarkerIcon, Meta, NavFileBuilder, NavFix,
+    NavFixTime, Satellite, SatelliteReport, TravelMode,
 };
+use geotrace_sdk_test_util as test_util;
 use rstest::rstest;
-
-#[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
-fn base() -> DateTime<Utc> {
-    DateTime::from_timestamp(1_748_000_000, 0).expect("valid timestamp")
-}
-
-fn round_trip(nav_file: &NavFile) -> Result<NavFile, geotrace_sdk::Error> {
-    let mut bytes = Vec::new();
-    nav_file.write(&mut bytes)?;
-    NavFile::read(bytes.as_slice())
-}
 
 #[test]
 #[expect(clippy::float_cmp, reason = "round-trip exact bit preservation")]
 fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = base();
+    let t0 = test_util::base();
     let t1 = t0 + Duration::seconds(1);
     let tmid = t0 + Duration::milliseconds(500);
 
@@ -83,7 +73,7 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let nav_file = recorder.finish()?;
-    let rt = round_trip(&nav_file)?;
+    let rt = test_util::round_trip(&nav_file)?;
 
     assert_eq!(rt.meta().title.as_deref(), Some("Test trace"));
     assert_eq!(rt.meta().device.as_deref(), Some("u-blox NEO-M9N"));
@@ -135,13 +125,13 @@ fn minimal() -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .time(NavFixTime::Receiver(base()))
+            .time(NavFixTime::Receiver(test_util::base()))
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    let rt = round_trip(&recorder.finish()?)?;
+    let rt = test_util::round_trip(&recorder.finish()?)?;
     assert_eq!(rt.nav_points().len(), 1);
     assert_eq!(rt.nav_points()[0].fix.speed, None);
     assert!(rt.nav_points()[0].satellites.is_none());
@@ -156,21 +146,21 @@ fn an_annotation_built_without_an_icon_reads_back_as_pin() -> Result<(), Box<dyn
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .time(NavFixTime::Receiver(base()))
+            .time(NavFixTime::Receiver(test_util::base()))
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .heading(Angle::degrees(0.0))
             .build(),
     );
     let annotation = Annotation::builder()
-        .time(base())
+        .time(test_util::base())
         .label("no icon")
         .build()?;
     assert_eq!(annotation.icon(), AnnotationIcon::Icon(MarkerIcon::Pin));
     recorder.add_annotation(annotation);
 
     let nav_file = recorder.finish()?;
-    let rt = round_trip(&nav_file)?;
+    let rt = test_util::round_trip(&nav_file)?;
 
     assert_eq!(
         rt.markers()[0].annotation.icon(),
@@ -190,7 +180,7 @@ fn an_icon_code_outside_the_marker_icon_set_reads_back_and_writes_back_unchanged
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .time(NavFixTime::Receiver(base()))
+            .time(NavFixTime::Receiver(test_util::base()))
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .heading(Angle::degrees(0.0))
@@ -198,21 +188,19 @@ fn an_icon_code_outside_the_marker_icon_set_reads_back_and_writes_back_unchanged
     );
     recorder.add_annotation(
         Annotation::builder()
-            .time(base())
+            .time(test_util::base())
             .label("from a newer build")
             .icon(AnnotationIcon::Unrecognized(UNRECOGNIZED_ICON_CODE))
             .build()?,
     );
 
-    let rt = round_trip(&recorder.finish()?)?;
+    let rt = test_util::round_trip(&recorder.finish()?)?;
 
     assert_eq!(
         rt.markers()[0].annotation.icon(),
         AnnotationIcon::Unrecognized(UNRECOGNIZED_ICON_CODE)
     );
-    let mut bytes = Vec::new();
-    rt.write(&mut bytes)?;
-    let file = hdf5_pure::File::from_bytes(bytes)?;
+    let file = hdf5_pure::File::from_bytes(test_util::to_bytes(&rt)?)?;
     assert_eq!(
         file.group("markers")?.dataset("icon")?.read_u8()?,
         vec![UNRECOGNIZED_ICON_CODE]
@@ -222,7 +210,7 @@ fn an_icon_code_outside_the_marker_icon_set_reads_back_and_writes_back_unchanged
 
 #[test]
 fn no_satellite_data() -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = base();
+    let t0 = test_util::base();
     let mut recorder = NavFileBuilder::new().open();
     for i in 0..3 {
         recorder.add_nav_fix(
@@ -234,19 +222,18 @@ fn no_satellite_data() -> Result<(), Box<dyn std::error::Error>> {
                 .build(),
         );
     }
-    let rt = round_trip(&recorder.finish()?)?;
+    let rt = test_util::round_trip(&recorder.finish()?)?;
     assert_eq!(rt.nav_points().len(), 3);
     assert!(rt.nav_points().iter().all(|p| p.satellites.is_none()));
 
     // Re-round-trip to confirm the absent groups survive another write/read cycle.
-    let mut bytes = Vec::new();
-    round_trip(&rt)?.write(&mut bytes)?;
+    test_util::to_bytes(&test_util::round_trip(&rt)?)?;
     Ok(())
 }
 
 #[test]
 fn no_markers() -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = base();
+    let t0 = test_util::base();
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
@@ -262,7 +249,7 @@ fn no_markers() -> Result<(), Box<dyn std::error::Error>> {
             .tracked(vec![])
             .build(),
     );
-    let rt = round_trip(&recorder.finish()?)?;
+    let rt = test_util::round_trip(&recorder.finish()?)?;
     assert!(rt.markers().is_empty());
     assert!(rt.nav_points()[0].satellites.is_some());
     Ok(())
@@ -271,7 +258,7 @@ fn no_markers() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn empty_builder() -> Result<(), Box<dyn std::error::Error>> {
     let nav_file = NavFileBuilder::new().open().finish()?;
-    let rt = round_trip(&nav_file)?;
+    let rt = test_util::round_trip(&nav_file)?;
     assert!(rt.nav_points().is_empty());
     assert!(rt.markers().is_empty());
     Ok(())
@@ -281,7 +268,7 @@ fn empty_builder() -> Result<(), Box<dyn std::error::Error>> {
 #[expect(clippy::float_cmp, reason = "round-trip exact bit preservation")]
 fn a_large_recording_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     const FIX_COUNT: u32 = 50_000;
-    let t0 = base();
+    let t0 = test_util::base();
     let lat_deg = |i: u32| -89.0 + f64::from(i % 178);
     let lon_deg = |i: u32| -179.0 + f64::from(i % 358);
     let tracked: Vec<_> = (1u32..=12)
@@ -312,7 +299,7 @@ fn a_large_recording_round_trips() -> Result<(), Box<dyn std::error::Error>> {
                 .build(),
         );
     }
-    let rt = round_trip(&recorder.finish()?)?;
+    let rt = test_util::round_trip(&recorder.finish()?)?;
 
     assert_eq!(rt.nav_points().len(), usize::try_from(FIX_COUNT)?);
     for i in [0, FIX_COUNT - 1] {
@@ -333,7 +320,7 @@ fn a_large_recording_round_trips() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn identity_round_trips() -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = base();
+    let t0 = test_util::base();
     let mut recorder = NavFileBuilder::new()
         .with_identity("device-serial-001")
         .open();
@@ -350,14 +337,14 @@ fn identity_round_trips() -> Result<(), Box<dyn std::error::Error>> {
         Some("device-serial-001")
     );
 
-    let rt = round_trip(&nav_file)?;
+    let rt = test_util::round_trip(&nav_file)?;
     assert_eq!(rt.meta().identity.as_deref(), Some("device-serial-001"));
     Ok(())
 }
 
 #[test]
 fn no_identity_deserialises_as_none() -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = base();
+    let t0 = test_util::base();
     let mut recorder = NavFileBuilder::new().with_title("No identity").open();
     recorder.add_nav_fix(
         NavFix::builder()
@@ -368,14 +355,14 @@ fn no_identity_deserialises_as_none() -> Result<(), Box<dyn std::error::Error>> 
     );
     let nav_file = recorder.finish()?;
 
-    let rt = round_trip(&nav_file)?;
+    let rt = test_util::round_trip(&nav_file)?;
     assert_eq!(rt.meta().identity, None);
     Ok(())
 }
 
 #[test]
 fn identity_via_meta_builder() -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = base();
+    let t0 = test_util::base();
     let meta = Meta::builder().identity("route-a").build();
     let mut recorder = NavFileBuilder::new().with_meta(meta).open();
     recorder.add_nav_fix(
@@ -386,14 +373,14 @@ fn identity_via_meta_builder() -> Result<(), Box<dyn std::error::Error>> {
             .build(),
     );
     let nav_file = recorder.finish()?;
-    let rt = round_trip(&nav_file)?;
+    let rt = test_util::round_trip(&nav_file)?;
     assert_eq!(rt.meta().identity.as_deref(), Some("route-a"));
     Ok(())
 }
 
 #[test]
 fn travel_mode_round_trips() -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = base();
+    let t0 = test_util::base();
     let mut recorder = NavFileBuilder::new()
         .with_travel_mode(TravelMode::Bicycle)
         .open();
@@ -407,7 +394,7 @@ fn travel_mode_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     let nav_file = recorder.finish()?;
     assert_eq!(nav_file.meta().travel_mode, Some(TravelMode::Bicycle));
 
-    let rt = round_trip(&nav_file)?;
+    let rt = test_util::round_trip(&nav_file)?;
     assert_eq!(rt.meta().travel_mode, Some(TravelMode::Bicycle));
     Ok(())
 }
@@ -416,7 +403,7 @@ fn travel_mode_round_trips() -> Result<(), Box<dyn std::error::Error>> {
 /// verbatim - readers warn about it but never drop it.
 #[test]
 fn unknown_travel_mode_round_trips() -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = base();
+    let t0 = test_util::base();
     let meta = Meta::builder()
         .travel_mode(TravelMode::Unknown("hovercraft".into()))
         .build();
@@ -430,13 +417,13 @@ fn unknown_travel_mode_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     );
     let nav_file = recorder.finish()?;
 
-    let rt = round_trip(&nav_file)?;
+    let rt = test_util::round_trip(&nav_file)?;
     assert_eq!(
         rt.meta().travel_mode,
         Some(TravelMode::Unknown("hovercraft".into()))
     );
 
-    let rt2 = round_trip(&rt)?;
+    let rt2 = test_util::round_trip(&rt)?;
     assert_eq!(
         rt2.meta().travel_mode,
         Some(TravelMode::Unknown("hovercraft".into()))
@@ -446,7 +433,7 @@ fn unknown_travel_mode_round_trips() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn no_travel_mode_deserialises_as_none() -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = base();
+    let t0 = test_util::base();
     let mut recorder = NavFileBuilder::new().with_title("No travel mode").open();
     recorder.add_nav_fix(
         NavFix::builder()
@@ -457,14 +444,14 @@ fn no_travel_mode_deserialises_as_none() -> Result<(), Box<dyn std::error::Error
     );
     let nav_file = recorder.finish()?;
 
-    let rt = round_trip(&nav_file)?;
+    let rt = test_util::round_trip(&nav_file)?;
     assert_eq!(rt.meta().travel_mode, None);
     Ok(())
 }
 
 #[test]
 fn channels_round_trip() -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = base();
+    let t0 = test_util::base();
     let t1 = t0 + Duration::milliseconds(100);
     let t2 = t0 + Duration::milliseconds(200);
 
@@ -500,7 +487,7 @@ fn channels_round_trip() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let nav_file = recorder.finish()?;
-    let rt = round_trip(&nav_file)?;
+    let rt = test_util::round_trip(&nav_file)?;
 
     // Restored channels are name-sorted, so `accel_mag` precedes `tilt`.
     assert_eq!(rt.channels().len(), 2);
@@ -529,7 +516,7 @@ fn channels_round_trip() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn a_bare_channel_round_trips_with_no_optional_fields() -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = base();
+    let t0 = test_util::base();
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_channel(
         Channel::builder()
@@ -538,7 +525,7 @@ fn a_bare_channel_round_trips_with_no_optional_fields() -> Result<(), Box<dyn st
             .values(vec![1.0, 2.0])
             .build()?,
     );
-    let rt = round_trip(&recorder.finish()?)?;
+    let rt = test_util::round_trip(&recorder.finish()?)?;
     let channel = &rt.channels()[0];
     assert_eq!(channel.name(), "raw");
     assert_eq!(channel.unit(), None);
@@ -558,7 +545,7 @@ fn an_empty_channel_round_trips() -> Result<(), Box<dyn std::error::Error>> {
             .values(vec![])
             .build()?,
     );
-    let rt = round_trip(&recorder.finish()?)?;
+    let rt = test_util::round_trip(&recorder.finish()?)?;
     let channel = &rt.channels()[0];
     assert_eq!(channel.name(), "empty");
     assert!(channel.times().is_empty());
@@ -573,11 +560,11 @@ fn a_custom_unit_round_trips_without_scaling_metadata() -> Result<(), Box<dyn st
         Channel::builder()
             .name("shaft_speed")
             .unit(ChannelUnit::custom("rpm")?)
-            .times(vec![base()])
+            .times(vec![test_util::base()])
             .values(vec![1200.0])
             .build()?,
     );
-    let round_tripped = round_trip(&recorder.finish()?)?;
+    let round_tripped = test_util::round_trip(&recorder.finish()?)?;
     let unit = round_tripped.channels()[0].unit();
     assert_eq!(
         unit.map(ChannelUnit::kind),
@@ -590,7 +577,7 @@ fn a_custom_unit_round_trips_without_scaling_metadata() -> Result<(), Box<dyn st
 
 #[test]
 fn a_vector_channel_round_trips() -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = base();
+    let t0 = test_util::base();
     let t1 = t0 + Duration::milliseconds(80);
 
     let mut recorder = NavFileBuilder::new().open();
@@ -607,7 +594,7 @@ fn a_vector_channel_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let nav_file = recorder.finish()?;
-    let rt = round_trip(&nav_file)?;
+    let rt = test_util::round_trip(&nav_file)?;
     let accel = &rt.channels()[0];
 
     assert!(accel.is_vector());
@@ -627,7 +614,7 @@ fn a_vector_channel_round_trips() -> Result<(), Box<dyn std::error::Error>> {
 fn a_single_component_vector_channel_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     // A 1-component vector's `components` attribute stores as a single string.
     // It must still read back as a vector, not collapse to a scalar.
-    let t0 = base();
+    let t0 = test_util::base();
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_channel(
         Channel::builder()
@@ -639,7 +626,7 @@ fn a_single_component_vector_channel_round_trips() -> Result<(), Box<dyn std::er
             .build()?,
     );
     let nav_file = recorder.finish()?;
-    let rt = round_trip(&nav_file)?;
+    let rt = test_util::round_trip(&nav_file)?;
 
     let tilt = &rt.channels()[0];
     assert!(tilt.is_vector());
@@ -651,7 +638,7 @@ fn a_single_component_vector_channel_round_trips() -> Result<(), Box<dyn std::er
 
 #[test]
 fn scalar_and_vector_channels_coexist() -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = base();
+    let t0 = test_util::base();
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_channel(
         Channel::builder()
@@ -670,7 +657,7 @@ fn scalar_and_vector_channels_coexist() -> Result<(), Box<dyn std::error::Error>
             .build()?,
     );
     let nav_file = recorder.finish()?;
-    let rt = round_trip(&nav_file)?;
+    let rt = test_util::round_trip(&nav_file)?;
 
     // Sorted by name: accel (vector) then temp (scalar).
     assert!(rt.channels()[0].is_vector());
@@ -683,7 +670,7 @@ fn scalar_and_vector_channels_coexist() -> Result<(), Box<dyn std::error::Error>
 
 #[test]
 fn a_vector_channel_preserves_its_period() -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = base();
+    let t0 = test_util::base();
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_channel(
         Channel::builder()
@@ -696,7 +683,7 @@ fn a_vector_channel_preserves_its_period() -> Result<(), Box<dyn std::error::Err
             .build()?,
     );
     let nav_file = recorder.finish()?;
-    let rt = round_trip(&nav_file)?;
+    let rt = test_util::round_trip(&nav_file)?;
     let bearing = &rt.channels()[0];
     assert_eq!(bearing.period(), Some(Angle::degrees(360.0)));
     assert_eq!(bearing.components(), &["fwd", "aft"]);
@@ -708,7 +695,7 @@ fn a_vector_channel_preserves_its_period() -> Result<(), Box<dyn std::error::Err
 #[expect(clippy::float_cmp, reason = "round-trip exact bit preservation")]
 fn a_vector_channel_preserves_nan_holes() -> Result<(), Box<dyn std::error::Error>> {
     // NaN marks an absent sample per column, and must survive the round-trip.
-    let t0 = base();
+    let t0 = test_util::base();
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_channel(
         Channel::builder()
@@ -718,7 +705,7 @@ fn a_vector_channel_preserves_nan_holes() -> Result<(), Box<dyn std::error::Erro
             .values(vec![1.0, f64::NAN, f64::NAN, 4.0])
             .build()?,
     );
-    let rt = round_trip(&recorder.finish()?)?;
+    let rt = test_util::round_trip(&recorder.finish()?)?;
     let values = rt.channels()[0].values();
     // NaN != NaN, so compare finiteness and the finite values explicitly.
     assert!(values[0] == 1.0 && values[3] == 4.0);
@@ -728,11 +715,11 @@ fn a_vector_channel_preserves_nan_holes() -> Result<(), Box<dyn std::error::Erro
 
 #[rstest]
 #[case::receiver_and_host_clock(NavFixTime::Both {
-    gps: base(),
-    sys: base() + Duration::milliseconds(250),
+    gps: test_util::base(),
+    sys: test_util::base() + Duration::milliseconds(250),
 })]
-#[case::host_clock_only(NavFixTime::Host(base()))]
-#[case::receiver_only(NavFixTime::Receiver(base()))]
+#[case::host_clock_only(NavFixTime::Host(test_util::base()))]
+#[case::receiver_only(NavFixTime::Receiver(test_util::base()))]
 fn a_fix_keeps_the_clock_that_stamped_it(
     #[case] time: NavFixTime,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -745,7 +732,7 @@ fn a_fix_keeps_the_clock_that_stamped_it(
             .build(),
     );
 
-    let rt = round_trip(&recorder.finish()?)?;
+    let rt = test_util::round_trip(&recorder.finish()?)?;
     let fix = &rt.nav_points().first().ok_or("no nav point")?.fix;
 
     assert_eq!(fix.time, time);

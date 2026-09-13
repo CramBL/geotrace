@@ -2267,6 +2267,7 @@ name = "geotrace-sdk-test-util"
 version = "0.0.0"
 dependencies = [
  "geotrace-sdk",
+ "hdf5-pure",
 ]
 
 [[package]]
