@@ -278,80 +278,13 @@ impl QuerySession {
 
 #[cfg(test)]
 mod tests {
-    use gt_filter::GlobalFilter;
-    use gt_loaded_files::{FileHistory, LoadedFiles};
     use gt_query::{AggregateColumn, TableColumn};
     use gt_types::{FileIdx, TrackIdx, TrackRef};
-    use gt_ui_types::{GeomagneticSeries, TecSeries, TrackDataVisibility};
     use rstest::rstest;
 
     use super::*;
-    use crate::fingerprint::{JammingValues, SnapErrorValues};
     use crate::results::MatchValues;
-    use crate::schema::schema_from_files;
-    use crate::test_fixtures::{
-        file_with_channels, matched_rows, rng, scalar_channel, vector_channel,
-    };
-
-    /// The loaded state a session runs against, owned so the borrowed
-    /// [`RunInputs`] can be rebuilt per call.
-    struct LoadedState {
-        files: LoadedFiles,
-        visibility: TrackDataVisibility,
-        filter: GlobalFilter,
-        snap_errors: SnapErrorValues,
-        jamming: JammingValues,
-        geomagnetic: GeomagneticSeries,
-        tec: TecSeries,
-    }
-
-    impl LoadedState {
-        fn with_channels(channels: Vec<gt_types::Channel>) -> Self {
-            let mut files = LoadedFiles::new();
-            files.push(file_with_channels(channels), FileHistory::None);
-            let visibility = TrackDataVisibility::from_loaded(files.files());
-            Self {
-                files,
-                visibility,
-                filter: GlobalFilter::default(),
-                snap_errors: SnapErrorValues::default(),
-                jamming: JammingValues::default(),
-                geomagnetic: GeomagneticSeries::default(),
-                tec: TecSeries::default(),
-            }
-        }
-
-        fn inputs(&self) -> RunInputs<'_> {
-            RunInputs {
-                loaded_files: self.files.view(),
-                visibility: &self.visibility,
-                filter: &self.filter,
-                snap_errors: &self.snap_errors,
-                jamming: &self.jamming,
-                geomagnetic: &self.geomagnetic,
-                tec: &self.tec,
-            }
-        }
-
-        fn schema(&self) -> ChannelSchema {
-            schema_from_files(self.files.files())
-        }
-    }
-
-    /// Drive one run of `text` to completion, the way a headless caller does.
-    fn run_text(session: &mut QuerySession, state: &LoadedState, text: &str) {
-        session.set_text(text.to_owned());
-        session.sync_checks(&state.schema());
-        let prepared = session
-            .start_run(state.inputs())
-            .expect("the query checks and nothing is in flight");
-        assert!(
-            session.run_in_flight(),
-            "the run is in flight until it completes"
-        );
-        session.finish_run(prepared.execute());
-        assert!(!session.run_in_flight(), "the run completed");
-    }
+    use crate::test_util::{self, LoadedState};
 
     #[test]
     fn a_session_runs_holds_clears_and_runs_again() {
@@ -361,14 +294,14 @@ mod tests {
         assert!(session.matches().is_none(), "no run, no matches");
 
         // The first point moves at 36 km/h, the second carries no velocity.
-        run_text(
+        test_util::run_text(
             &mut session,
             &state,
             "points | where velocity > 30 km/h | draw",
         );
         let matches = session.matches().expect("a completed run has matches");
         assert_eq!(matches.draws.len(), 1);
-        assert_eq!(matches.draws[0].ranges_for(track), [rng(0, 1)]);
+        assert_eq!(matches.draws[0].ranges_for(track), [test_util::rng(0, 1)]);
         assert!(!matches.stale, "a fresh run is not stale");
 
         session.clear_results();
@@ -376,14 +309,14 @@ mod tests {
 
         // A second run over the same session: the hide mode takes the map
         // effect the other way round.
-        run_text(
+        test_util::run_text(
             &mut session,
             &state,
             "points | where velocity > 30 km/h | hide",
         );
         let matches = session.matches().expect("the second run has matches");
         assert!(matches.draws.is_empty(), "hide draws nothing");
-        assert_eq!(matches.hidden_ranges(track), [rng(0, 1)]);
+        assert_eq!(matches.hidden_ranges(track), [test_util::rng(0, 1)]);
     }
 
     #[test]
@@ -391,9 +324,9 @@ mod tests {
         let state = LoadedState::with_channels(vec![]);
         let mut session = QuerySession::new();
         let text = "points | where velocity > 30 km/h | draw";
-        run_text(&mut session, &state, text);
+        test_util::run_text(&mut session, &state, text);
         assert_eq!(session.matches().expect("first run").run, 1);
-        run_text(&mut session, &state, text);
+        test_util::run_text(&mut session, &state, text);
         assert_eq!(session.matches().expect("second run").run, 2);
 
         // A cancelled run keeps the previous results, numbers and all.
@@ -408,7 +341,7 @@ mod tests {
     fn results_go_stale_when_the_inputs_change() {
         let mut state = LoadedState::with_channels(vec![]);
         let mut session = QuerySession::new();
-        run_text(
+        test_util::run_text(
             &mut session,
             &state,
             "points | where velocity > 30 km/h | draw",
@@ -435,7 +368,7 @@ mod tests {
     fn a_cancelled_run_keeps_the_previous_results() {
         let state = LoadedState::with_channels(vec![]);
         let mut session = QuerySession::new();
-        run_text(
+        test_util::run_text(
             &mut session,
             &state,
             "points | where velocity > 30 km/h | draw",
@@ -487,8 +420,11 @@ mod tests {
 
     #[test]
     fn checks_refresh_on_text_and_on_schema_changes() {
-        let state =
-            LoadedState::with_channels(vec![scalar_channel("accel", Some("g"), &[(0, 1.0)])]);
+        let state = LoadedState::with_channels(vec![test_util::scalar_channel(
+            "accel",
+            Some("g"),
+            &[(0, 1.0)],
+        )]);
         let mut session = QuerySession::new();
         session.set_text("points | window 2 | where max(@accel) > 1 g".to_owned());
         // Without the channel in the schema, the query cannot check.
@@ -521,7 +457,7 @@ mod tests {
         RunKind::MixedChannel
     )]
     fn run_kind_classifies_the_editor_queries(#[case] text: &str, #[case] expected: RunKind) {
-        let state = LoadedState::with_channels(vec![vector_channel(
+        let state = LoadedState::with_channels(vec![test_util::vector_channel(
             "accel",
             Some("g"),
             &["x", "y", "z"],
@@ -536,7 +472,7 @@ mod tests {
 
     #[test]
     fn a_mixed_channel_editor_never_starts_a_run() {
-        let state = LoadedState::with_channels(vec![vector_channel(
+        let state = LoadedState::with_channels(vec![test_util::vector_channel(
             "accel",
             Some("g"),
             &["x", "y", "z"],
@@ -559,7 +495,7 @@ mod tests {
         // Sample 0 (1.5 g -> 14.7 m/s2) clears 1 g. Sample 1 (0.2 g -> 1.96)
         // does not. The matched sample (at t=0 s) bands the track: a draw halo
         // over the enclosing nav-point range.
-        let state = LoadedState::with_channels(vec![vector_channel(
+        let state = LoadedState::with_channels(vec![test_util::vector_channel(
             "accel",
             Some("g"),
             &["x", "y", "z"],
@@ -567,7 +503,7 @@ mod tests {
         )]);
         let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
         let mut session = QuerySession::new();
-        run_text(&mut session, &state, "@accel | where norm(@accel) > 1 g");
+        test_util::run_text(&mut session, &state, "@accel | where norm(@accel) > 1 g");
 
         let Some(RunResults::Channel(results)) = session.results() else {
             panic!("a channel source produces channel results");
@@ -575,10 +511,16 @@ mod tests {
         assert_eq!(results.channel, "accel");
         assert_eq!(results.components, ["x", "y", "z"]);
         assert_eq!(results.tracks.len(), 1);
-        assert_eq!(results.tracks[0].matches, [matched_rows(rng(0, 1))]);
+        assert_eq!(
+            results.tracks[0].matches,
+            [test_util::matched_rows(test_util::rng(0, 1))]
+        );
         assert_eq!(results.tracks[0].timeline.times.len(), 2);
         assert_eq!(results.matches.draws.len(), 1);
-        assert_eq!(results.matches.draws[0].ranges_for(track), [rng(0, 1)]);
+        assert_eq!(
+            results.matches.draws[0].ranges_for(track),
+            [test_util::rng(0, 1)]
+        );
     }
 
     /// `g` in the evaluator's base unit, which channel samples are valued in.
@@ -607,14 +549,14 @@ mod tests {
     /// The aggregate reduces the one accel sample recorded in that second.
     #[test]
     fn a_points_table_values_an_aggregate_column_over_each_match() {
-        let state = LoadedState::with_channels(vec![vector_channel(
+        let state = LoadedState::with_channels(vec![test_util::vector_channel(
             "accel",
             Some("g"),
             &["x", "y", "z"],
             &[(0, [1.5, 0.0, 0.0]), (1, [0.2, 0.0, 0.0])],
         )]);
         let mut session = QuerySession::new();
-        run_text(
+        test_util::run_text(
             &mut session,
             &state,
             "points | window 1 | where avg(velocity) > 30 km/h | table time, max(@accel.x)",
@@ -641,14 +583,14 @@ mod tests {
     /// The accel samples start a second after the match.
     #[test]
     fn an_aggregate_over_a_match_without_channel_samples_has_no_value() {
-        let state = LoadedState::with_channels(vec![vector_channel(
+        let state = LoadedState::with_channels(vec![test_util::vector_channel(
             "accel",
             Some("g"),
             &["x", "y", "z"],
             &[(1, [1.5, 0.0, 0.0])],
         )]);
         let mut session = QuerySession::new();
-        run_text(
+        test_util::run_text(
             &mut session,
             &state,
             "points | window 1 | where avg(velocity) > 30 km/h | table time, max(@accel.x)",
@@ -659,14 +601,14 @@ mod tests {
     /// The match covers sample 0 alone: it clears 1 g, sample 1 does not.
     #[test]
     fn a_channel_table_values_an_aggregate_column_over_each_match() {
-        let state = LoadedState::with_channels(vec![vector_channel(
+        let state = LoadedState::with_channels(vec![test_util::vector_channel(
             "accel",
             Some("g"),
             &["x", "y", "z"],
             &[(0, [1.5, 0.0, 0.0]), (1, [0.2, 0.0, 0.0])],
         )]);
         let mut session = QuerySession::new();
-        run_text(
+        test_util::run_text(
             &mut session,
             &state,
             "@accel | window 1 | where max(norm(@accel)) > 1 g | table max(@accel.x)",
@@ -686,7 +628,7 @@ mod tests {
         assert_eq!(
             results.tracks[0].matches,
             [MatchValues {
-                rows: rng(0, 1),
+                rows: test_util::rng(0, 1),
                 aggregates: vec![Some(1.5 * gravity_in_base_units())],
             }]
         );
@@ -694,7 +636,7 @@ mod tests {
 
     #[test]
     fn channel_source_spans_point_at_the_source_token() {
-        let state = LoadedState::with_channels(vec![vector_channel(
+        let state = LoadedState::with_channels(vec![test_util::vector_channel(
             "accel",
             Some("g"),
             &["x", "y", "z"],

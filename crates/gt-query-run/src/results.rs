@@ -502,7 +502,7 @@ mod tests {
 
     use super::*;
     use crate::check::check_text;
-    use crate::test_fixtures::{TEST_EPOCH, matched_rows, points_at_millis, rng};
+    use crate::test_util::{self, TEST_EPOCH};
 
     #[test]
     fn summary_notes_every_skip_and_unused_param() {
@@ -623,13 +623,13 @@ mod tests {
     /// A sample between two fixes bands both of them. A sample on a fix's own
     /// timestamp bands that fix alone.
     #[rstest]
-    #[case(250, rng(0, 2))]
-    #[case(500, rng(1, 2))]
+    #[case(250, test_util::rng(0, 2))]
+    #[case(500, test_util::rng(1, 2))]
     fn matched_point_ranges_band_the_fixes_around_a_matched_sample(
         #[case] sample_millis: i64,
         #[case] expected: Range<usize>,
     ) {
-        let points = points_at_millis(&[0, 500]);
+        let points = test_util::points_at_millis(&[0, 500]);
         let timeline = ChannelTimeline {
             times: vec![TEST_EPOCH as f64 + sample_millis as f64 / 1_000.0],
             values: vec![9.8],
@@ -637,14 +637,18 @@ mod tests {
         };
 
         assert_eq!(
-            matched_point_ranges(&points, &timeline, &[matched_rows(rng(0, 1))]),
+            matched_point_ranges(
+                &points,
+                &timeline,
+                &[test_util::matched_rows(test_util::rng(0, 1))]
+            ),
             vec![expected]
         );
     }
 
     #[test]
     fn matched_point_ranges_are_empty_without_a_matched_sample() {
-        let points = points_at_millis(&[0, 500]);
+        let points = test_util::points_at_millis(&[0, 500]);
         let timeline = ChannelTimeline {
             times: vec![TEST_EPOCH as f64 + 0.25],
             values: vec![9.8],
@@ -657,23 +661,23 @@ mod tests {
     #[test]
     fn merge_ranges_merges_touching_and_overlapping() {
         assert_eq!(merge_ranges(vec![0..2, 2..4, 5..6]), vec![0..4, 5..6]);
-        assert_eq!(merge_ranges(vec![0..3, 1..2]), vec![rng(0, 3)]);
+        assert_eq!(merge_ranges(vec![0..3, 1..2]), vec![test_util::rng(0, 3)]);
         assert!(merge_ranges(vec![]).is_empty());
     }
 
     #[test]
     fn complement_ranges_returns_the_gaps() {
         assert_eq!(complement_ranges(&[1..3, 5..6], 8), vec![0..1, 3..5, 6..8]);
-        assert!(complement_ranges(&[rng(0, 4)], 4).is_empty());
-        assert_eq!(complement_ranges(&[], 3), vec![rng(0, 3)]);
+        assert!(complement_ranges(&[test_util::rng(0, 4)], 4).is_empty());
+        assert_eq!(complement_ranges(&[], 3), vec![test_util::rng(0, 3)]);
     }
 
     /// `draw` halos the matched segments, `hide` breaks the polyline at them,
     /// and `keep` breaks it everywhere else.
     #[rstest]
-    #[case::draw(DisplayMode::Draw, &[rng(1, 3)], &[])]
-    #[case::hide(DisplayMode::Hide, &[], &[rng(1, 3)])]
-    #[case::keep(DisplayMode::Keep, &[], &[rng(0, 1), rng(3, 5)])]
+    #[case::draw(DisplayMode::Draw, &[test_util::rng(1, 3)], &[])]
+    #[case::hide(DisplayMode::Hide, &[], &[test_util::rng(1, 3)])]
+    #[case::keep(DisplayMode::Keep, &[], &[test_util::rng(0, 1), test_util::rng(3, 5)])]
     fn channel_query_matches_halos_and_hides_by_mode(
         #[case] mode: DisplayMode,
         #[case] expected_halos: &[Range<usize>],
@@ -683,7 +687,7 @@ mod tests {
         let per_track = FxHashMap::from_iter([(
             track,
             MatchedTrackPoints {
-                matched: vec![rng(1, 3)],
+                matched: vec![test_util::rng(1, 3)],
                 point_count: 5,
             },
         )]);
@@ -704,7 +708,7 @@ mod tests {
     #[rstest]
     #[case(DisplayMode::Draw, &[])]
     #[case(DisplayMode::Hide, &[])]
-    #[case(DisplayMode::Keep, &[rng(0, 5)])]
+    #[case(DisplayMode::Keep, &[test_util::rng(0, 5)])]
     fn channel_query_matches_of_a_track_with_no_match(
         #[case] mode: DisplayMode,
         #[case] expected_hidden: &[Range<usize>],

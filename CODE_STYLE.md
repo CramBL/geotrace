@@ -348,11 +348,12 @@ A rename in the SDK crates keeps the old name for one minor release as a depreca
 A rename in the internal crates under `crates/` is a plain rename: they are published nowhere outside this repository.
 
 ### Test helpers
-A crate's shared test module is `src/test_util.rs`, or a directory `src/test_util/` of submodules once it grows past one file, and the file opens with `#![cfg(test)]`. A feature that exposes those helpers to another crate is named `test-util`.
+A crate's shared test helpers go in its `test_util` module: `src/test_util.rs`, or a directory `src/test_util/` of submodules once it grows past one file.
+A `test_util` module that only the crate's unit tests call opens with `#![cfg(test)]`.
+A `test_util` module that the crate's integration test binaries or another crate call is declared `#[cfg(any(test, feature = "test-util"))] pub mod test_util;`, and the crate's `test-util` feature exposes it.
+The crate's integration test binaries enable that feature through a dev-dependency of the crate on itself.
 
 A test-only crate is the shape for a harness that spans two crates without a dependency between them, as `gt-query-map-harness` drives a query run over gt-query-run and reads the result out of gt-map.
-
-`tests/support/mod.rs` is the shape for a module shared between one crate's test binaries.
 
 Fixture builders for nav points, satellite reports and channels that need gt-types alone live in `gt_types::fixtures`, behind gt-types' `fixtures` feature, and every crate in the workspace builds its fixtures on them.
 

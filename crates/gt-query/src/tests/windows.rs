@@ -277,3 +277,16 @@ fn short_track_is_reported_not_dropped() {
     assert!(output.matches.is_empty());
     assert_eq!(output.summary.tracks_with_no_room_for_the_window, 1);
 }
+
+/// A window count is a [`std::num::NonZeroU64`], so one point is the smallest
+/// window a query can express.
+#[test]
+fn the_smallest_window_over_an_empty_track_matches_nothing() {
+    let provider = TestProvider::new(0);
+    let output = test_util::run_one(
+        "points | window 1 | where avg(velocity) > 0 km/h",
+        &provider,
+    );
+    assert!(output.matches.is_empty());
+    assert_eq!(output.summary.tracks_with_no_room_for_the_window, 1);
+}

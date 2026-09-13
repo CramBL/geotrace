@@ -11,7 +11,6 @@ mod open_world_values;
 mod wire_names;
 
 use std::collections::BTreeSet;
-use std::fs;
 
 use serde_json::{Value, json};
 
@@ -19,7 +18,7 @@ use gt_snap::wire::{
     ErrorResponse, SnapPointKind, SpeedLimit, TraceAttributesRequest, TraceAttributesResponse,
     TraceOptions,
 };
-use gt_snap::{CAPTURE_SCENARIOS, DEFAULT_SERVER_URL};
+use gt_snap::{CAPTURE_SCENARIOS, DEFAULT_SERVER_URL, test_util};
 
 /// The capture scenarios whose response is a successful match, each with a
 /// digest baseline of its own.
@@ -65,11 +64,6 @@ fn every_scenario_is_classified_exactly_once() {
     let mut expected: Vec<&str> = CAPTURE_SCENARIOS.to_vec();
     expected.sort_unstable();
     assert_eq!(classified, expected);
-}
-
-fn read_capture(name: &str) -> Result<String, String> {
-    let path = gt_snap::captures_dir().join(name);
-    fs::read_to_string(&path).map_err(|err| format!("reading {}: {err}", path.display()))
 }
 
 /// A compact, order-stable digest of a parsed response, sized for snapshot
@@ -142,9 +136,7 @@ impl ResponseDigest {
 #[test]
 fn success_captures_parse() {
     for &scenario in SUCCESS_SCENARIOS {
-        let body = read_capture(&format!("{scenario}.response.json")).expect("capture");
-        let response: TraceAttributesResponse =
-            serde_json::from_str(&body).expect("success capture must parse");
+        let response = test_util::captured_response(scenario).expect("success capture must parse");
         insta::assert_debug_snapshot!(scenario, ResponseDigest::of(&response));
     }
 }
@@ -154,13 +146,9 @@ fn success_captures_parse() {
 /// the server wrote into each.
 #[test]
 fn the_filtered_and_unfiltered_captures_of_one_drive_parse_to_the_same_response() {
-    let filtered = read_capture("clean_drive.response.json").expect("capture");
-    let unfiltered =
-        read_capture(&format!("{UNFILTERED_SCENARIO}.response.json")).expect("capture");
-
     assert_eq!(
-        serde_json::from_str::<TraceAttributesResponse>(&filtered).expect("the capture parses"),
-        serde_json::from_str::<TraceAttributesResponse>(&unfiltered).expect("the capture parses"),
+        test_util::captured_response("clean_drive").expect("the capture parses"),
+        test_util::captured_response(UNFILTERED_SCENARIO).expect("the capture parses"),
     );
 }
 
@@ -169,7 +157,8 @@ fn error_fixtures_parse() {
     let digests: Vec<(String, ErrorResponse)> = ERROR_SCENARIOS
         .iter()
         .map(|&scenario| {
-            let body = read_capture(&format!("{scenario}.response.json")).expect("capture");
+            let body =
+                test_util::read_capture(&format!("{scenario}.response.json")).expect("capture");
             let error: ErrorResponse =
                 serde_json::from_str(&body).expect("error capture must parse");
             (scenario.to_owned(), error)
@@ -181,7 +170,7 @@ fn error_fixtures_parse() {
 #[test]
 fn proxy_html_error_parses_as_neither_type() {
     for &scenario in HTML_ERROR_SCENARIOS {
-        let body = read_capture(&format!("{scenario}.response.json")).expect("capture");
+        let body = test_util::read_capture(&format!("{scenario}.response.json")).expect("capture");
         serde_json::from_str::<TraceAttributesResponse>(&body)
             .expect_err("the proxy's HTML error page must not parse as a success response");
         serde_json::from_str::<ErrorResponse>(&body)
@@ -196,7 +185,7 @@ fn proxy_html_error_parses_as_neither_type() {
 #[test]
 fn captured_requests_roundtrip_through_typed_request() {
     for &scenario in CAPTURE_SCENARIOS.iter().filter(|&&s| s != "bad_request") {
-        let body = read_capture(&format!("{scenario}.request.json")).expect("capture");
+        let body = test_util::read_capture(&format!("{scenario}.request.json")).expect("capture");
         let original: Value = serde_json::from_str(&body).expect("capture JSON");
         let typed: TraceAttributesRequest =
             serde_json::from_value(original.clone()).expect("typed parse");
@@ -209,7 +198,7 @@ fn captured_requests_roundtrip_through_typed_request() {
 /// mandatory on the typed request.
 #[test]
 fn bad_request_capture_is_not_a_valid_typed_request() {
-    let body = read_capture("bad_request.request.json").expect("capture");
+    let body = test_util::read_capture("bad_request.request.json").expect("capture");
     serde_json::from_str::<TraceAttributesRequest>(&body)
         .expect_err("a request without a shape must not be expressible");
 }

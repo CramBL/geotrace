@@ -15,12 +15,8 @@ use chrono::{DateTime, Duration, Utc};
 use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime};
 use geotrace_sdk_units::ChannelUnit;
 use gt_filter::GlobalFilter;
-use gt_loaded_files::{FileHistory, LoadedFiles};
-use gt_query::ChannelSchema;
-use gt_query_run::{
-    ChannelTrackResult, JammingValues, QuerySession, RunInputs, RunResults, SnapErrorValues,
-    schema_from_files,
-};
+use gt_query_run::test_util::{self, LoadedState};
+use gt_query_run::{ChannelTrackResult, QuerySession, RunResults};
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::time_types::GpsTime;
 use gt_types::tpv::TimePositionVelocity;
@@ -29,7 +25,6 @@ use gt_types::{
     Channel, FileIdx, FileMetadata, FileSource, LoadedFile, LoadedTrack, NavPoint, TrackIdx,
     TrackRef,
 };
-use gt_ui_types::{GeomagneticSeries, TecSeries, TrackDataVisibility};
 use rstest::rstest;
 use rustc_hash::FxHashMap;
 use uom::si::f64::Velocity;
@@ -177,68 +172,6 @@ fn file_named(filename: &str, points: Vec<NavPoint>, channels: Vec<Channel>) -> 
     }
 }
 
-/// The loaded state a session runs against, owned so the borrowed [`RunInputs`]
-/// can be rebuilt per call.
-struct LoadedState {
-    files: LoadedFiles,
-    visibility: TrackDataVisibility,
-    filter: GlobalFilter,
-    snap_errors: SnapErrorValues,
-    jamming: JammingValues,
-    geomagnetic: GeomagneticSeries,
-    tec: TecSeries,
-}
-
-impl LoadedState {
-    fn of(file: LoadedFile) -> Self {
-        let mut files = LoadedFiles::new();
-        files.push(file, FileHistory::None);
-        let visibility = TrackDataVisibility::from_loaded(files.files());
-        Self {
-            files,
-            visibility,
-            filter: GlobalFilter::default(),
-            snap_errors: SnapErrorValues::default(),
-            jamming: JammingValues::default(),
-            geomagnetic: GeomagneticSeries::default(),
-            tec: TecSeries::default(),
-        }
-    }
-
-    /// Unload the loaded file, then load `file` in its place.
-    fn replace_with(&mut self, file: LoadedFile) {
-        self.files.remove_file(0);
-        self.files.push(file, FileHistory::None);
-        self.visibility = TrackDataVisibility::from_loaded(self.files.files());
-    }
-
-    fn inputs(&self) -> RunInputs<'_> {
-        RunInputs {
-            loaded_files: self.files.view(),
-            visibility: &self.visibility,
-            filter: &self.filter,
-            snap_errors: &self.snap_errors,
-            jamming: &self.jamming,
-            geomagnetic: &self.geomagnetic,
-            tec: &self.tec,
-        }
-    }
-
-    fn schema(&self) -> ChannelSchema {
-        schema_from_files(self.files.files())
-    }
-}
-
-/// Drive one run of `text` to completion, the way a headless caller does.
-fn run_text(session: &mut QuerySession, state: &LoadedState, text: &str) {
-    session.set_text(text.to_owned());
-    session.sync_checks(&state.schema());
-    let prepared = session
-        .start_run(state.inputs())
-        .expect("the query checks and nothing is in flight");
-    session.finish_run(prepared.execute());
-}
-
 /// The hidden point ranges of the last run, for the one loaded track.
 fn hidden_ranges(session: &QuerySession) -> Vec<Range<usize>> {
     session
@@ -321,7 +254,7 @@ fn a_channel_keep_query_hides_a_track_with_no_match() {
     ));
     let mut session = QuerySession::new();
 
-    run_text(&mut session, &state, "@accel | where @accel > 5 g | keep");
+    test_util::run_text(&mut session, &state, "@accel | where @accel > 5 g | keep");
 
     assert_eq!(hidden_ranges(&session), vec![0..4]);
 }
@@ -335,7 +268,7 @@ fn a_points_keep_query_hides_a_track_with_no_match() {
     ));
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "points | where velocity > 500 km/h | keep",
@@ -359,7 +292,7 @@ fn a_window_aggregate_reads_a_channel_the_file_stored_out_of_order() {
     ));
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "points | window 2 | where max(@sensor) > 5 | draw",
@@ -376,7 +309,7 @@ fn a_matched_sample_covers_the_two_fixes_around_it_at_two_hz() {
     let state = LoadedState::of(file_named("ride.gtd", fixes_at(&[0, 500]), vec![channel]));
     let mut session = QuerySession::new();
 
-    run_text(&mut session, &state, "@accel | where @accel > 1 g | draw");
+    test_util::run_text(&mut session, &state, "@accel | where @accel > 1 g | draw");
 
     assert_eq!(drawn_ranges(&session), vec![0..2]);
 }
@@ -397,7 +330,7 @@ fn a_time_window_keeps_the_fixes_on_both_sides_of_a_backward_time_step() {
     };
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "points | where velocity > 1 km/h | draw",
@@ -423,7 +356,7 @@ fn a_window_matching_on_a_channel_leaves_out_the_fix_the_time_window_rejects() {
     };
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "points | window 3 | where max(@sensor) > 5 | draw",
@@ -449,7 +382,7 @@ fn a_channel_aggregate_leaves_out_a_sample_beside_a_fix_the_time_window_rejects(
     };
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "points | window 3 | where max(@sensor) > 5 | draw",
@@ -475,7 +408,7 @@ fn a_window_over_a_sliced_track_reads_the_samples_of_its_own_fixes() {
     };
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "points | window 3 | where max(@sensor) > 5 | draw",
@@ -496,7 +429,7 @@ fn accel_is_valued_between_two_fixes_in_the_same_second() {
     ));
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "points | where accel > 15 m/s2 | draw",
@@ -519,7 +452,7 @@ fn a_count_window_reads_the_channel_samples_between_its_own_fixes_at_two_hz() {
     ));
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "points | window 2 | where max(@sensor) > 50 | draw",
@@ -541,7 +474,7 @@ fn a_count_window_reads_a_sample_beside_the_fix_a_backward_time_step_follows() {
     ));
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "points | window 3 | where max(@sensor) > 5 | draw",
@@ -563,7 +496,7 @@ fn a_table_column_reads_a_sample_beside_the_fix_a_backward_time_step_follows() {
     ));
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "points | window 3 | where avg(velocity) > 1 km/h | table max(@sensor) | draw",
@@ -585,7 +518,7 @@ fn a_duration_window_groups_the_fixes_of_its_own_span_at_two_hz() {
     ));
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "points | window 1 s | where avg(velocity) > 30 km/h | draw",
@@ -608,7 +541,7 @@ fn a_duration_window_holds_the_fixes_of_one_chronological_run() {
     ));
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "points | window 2 s | where avg(velocity) > 1 km/h | draw",
@@ -632,7 +565,7 @@ fn a_duration_window_reads_no_channel_sample_past_the_run_its_anchor_is_in() {
     ));
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "points | window 2 s | where max(@sensor) > 5 | draw",
@@ -664,7 +597,7 @@ fn a_duration_window_reads_a_channel_only_where_its_full_span_fits_the_time_filt
     };
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "points | window 2 s | where max(@sensor) > 5 | draw",
@@ -694,7 +627,7 @@ fn a_channel_source_duration_window_matches_no_sample_past_the_filter_end() {
     };
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "@sensor | window 2 s | where max(@sensor) > 5 | draw",
@@ -730,7 +663,7 @@ fn a_channel_source_duration_window_holds_the_samples_of_one_chronological_run()
     ));
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "@sensor | window 2 s | where max(@sensor) > 5 | draw",
@@ -757,7 +690,7 @@ fn a_time_filter_leaving_no_room_for_a_window_is_reported_without_calling_the_tr
     };
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "points | window 5 s | where avg(velocity) > 1 km/h | draw",
@@ -789,7 +722,7 @@ fn a_channel_query_matches_only_the_samples_inside_the_time_window() {
     };
     let mut session = QuerySession::new();
 
-    run_text(&mut session, &state, "@sensor | where @sensor > 5 | draw");
+    test_util::run_text(&mut session, &state, "@sensor | where @sensor > 5 | draw");
 
     let result = channel_track_result(&session).expect("a track with a match");
     assert_eq!(matched_sample_seconds(result), vec![0.0, 1.0]);
@@ -823,7 +756,7 @@ fn a_channel_query_keeps_samples_at_each_bound_of_the_time_window() {
     };
     let mut session = QuerySession::new();
 
-    run_text(&mut session, &state, "@sensor | where @sensor > 5 | draw");
+    test_util::run_text(&mut session, &state, "@sensor | where @sensor > 5 | draw");
 
     let result = channel_track_result(&session).expect("a track with a match");
     assert_eq!(matched_sample_seconds(result), vec![1.0, 2.0, 3.0]);
@@ -846,7 +779,7 @@ fn a_channel_query_matches_nothing_under_a_time_window_holding_no_sample() {
     };
     let mut session = QuerySession::new();
 
-    run_text(&mut session, &state, "@sensor | where @sensor > 5 | draw");
+    test_util::run_text(&mut session, &state, "@sensor | where @sensor > 5 | draw");
 
     assert_eq!(drawn_ranges(&session), Vec::<Range<usize>>::new());
     assert!(channel_track_result(&session).is_none());
@@ -870,7 +803,7 @@ fn a_channel_query_under_a_time_window_keeps_the_samples_around_a_backward_time_
     };
     let mut session = QuerySession::new();
 
-    run_text(&mut session, &state, "@sensor | where @sensor > 5 | draw");
+    test_util::run_text(&mut session, &state, "@sensor | where @sensor > 5 | draw");
 
     let result = channel_track_result(&session).expect("a track with a match");
     assert_eq!(matched_sample_seconds(result), vec![0.0, 1.0]);
@@ -880,7 +813,7 @@ fn a_channel_query_under_a_time_window_keeps_the_samples_around_a_backward_time_
 fn results_go_stale_when_another_file_of_the_same_name_replaces_the_loaded_one() {
     let mut state = LoadedState::of(file_named("ride.gtd", fixes_at(&[0, 1_000]), vec![]));
     let mut session = QuerySession::new();
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "points | where velocity > 1 km/h | draw",
@@ -901,7 +834,7 @@ fn sys_time_reads_past_time_for_a_fix_whose_host_clock_is_500_microseconds_ahead
     let state = LoadedState::of(gtd_file_with_the_host_clock_ahead(500));
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "points | where time < sys_time | draw",
@@ -922,7 +855,7 @@ fn clock_delta_reads_the_offset_of_every_fix_of_a_clock_offset_excursion() {
     ));
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "points | where clock_delta < -30 min | draw",
@@ -936,7 +869,7 @@ fn clock_delta_reads_below_zero_for_a_fix_whose_host_clock_is_500_microseconds_a
     let state = LoadedState::of(gtd_file_with_the_host_clock_ahead(500));
     let mut session = QuerySession::new();
 
-    run_text(
+    test_util::run_text(
         &mut session,
         &state,
         "points | where clock_delta < 0 s | draw",

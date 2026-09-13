@@ -1,23 +1,12 @@
 //! Validate merging of chunk outcomes into a `SnapResult`.
 
-mod support;
-
-use std::fs;
-
 use serde_json::{Value, json};
-use support::points;
 
 use gt_snap::merge::{self, ChunkOutcome, SnapWarning, SnapWarningReporter};
 use gt_snap::request_plan::{CHUNK_POINTS, RequestPlan, SnapParams};
-use gt_snap::snapped_track::SHAPE_POLYLINE_PRECISION;
+use gt_snap::test_util;
 use gt_snap::wire::{Costing, SnapPointKind, TraceAttributesResponse};
 use gt_types::PointIdx;
-
-/// The [`SnapParams`] every scenario in this file merges with: default advanced
-/// options, auto costing.
-fn auto_params() -> SnapParams {
-    SnapParams::new(Costing::Auto)
-}
 
 /// A synthetic success response with `count` matched points, every one
 /// `kind`, all errors `error_m`, no shape (geometry is exercised separately
@@ -60,7 +49,7 @@ fn uniform_response(
 
 /// A two-chunk plan (CHUNK_POINTS + 1 sent points at 1 Hz).
 fn two_chunk_plan() -> RequestPlan {
-    let plan = support::plan_of(&points(CHUNK_POINTS + 1));
+    let plan = test_util::plan_of(&test_util::points(CHUNK_POINTS + 1));
     assert_eq!(plan.chunks.len(), 2, "precondition");
     plan
 }
@@ -71,19 +60,16 @@ fn chunk_sizes(plan: &RequestPlan) -> Vec<usize> {
 
 #[test]
 fn single_fixture_chunk_merges_into_result() {
-    let body =
-        fs::read_to_string(gt_snap::captures_dir().join("partially_snappable.response.json"))
-            .expect("capture");
-    let response: TraceAttributesResponse = serde_json::from_str(&body).expect("parse");
+    let response = test_util::captured_response("partially_snappable").expect("capture");
     let sent_count = response.snapped_points.len();
 
-    let plan = support::plan_of(&points(sent_count));
+    let plan = test_util::plan_of(&test_util::points(sent_count));
     assert_eq!(plan.chunks.len(), 1);
 
     let reporter = SnapWarningReporter::default();
     let result = merge::merge(
         &plan,
-        auto_params(),
+        SnapParams::new(Costing::Auto),
         &[ChunkOutcome::Success(response)],
         &reporter,
     );
@@ -110,7 +96,7 @@ fn owned_ranges_select_results_across_chunks() {
         uniform_response(sizes[1], SnapPointKind::Interpolated, 2.0).expect("outcome"),
     ];
     let reporter = SnapWarningReporter::default();
-    let result = merge::merge(&plan, auto_params(), &outcomes, &reporter);
+    let result = merge::merge(&plan, SnapParams::new(Costing::Auto), &outcomes, &reporter);
 
     assert_eq!(result.points.len(), plan.sent_point_count());
     assert_eq!(
@@ -148,7 +134,7 @@ fn off_network_chunk_becomes_unsnapped_points() {
         ChunkOutcome::OffNetwork,
     ];
     let reporter = SnapWarningReporter::default();
-    let result = merge::merge(&plan, auto_params(), &outcomes, &reporter);
+    let result = merge::merge(&plan, SnapParams::new(Costing::Auto), &outcomes, &reporter);
 
     assert!(reporter.is_empty(), "off-network is not a failure");
     assert!(!result.partial);
@@ -178,7 +164,7 @@ fn failed_chunk_leaves_gap_and_marks_partial() {
         uniform_response(sizes[1], SnapPointKind::Snapped, 1.0).expect("outcome"),
     ];
     let reporter = SnapWarningReporter::default();
-    let result = merge::merge(&plan, auto_params(), &outcomes, &reporter);
+    let result = merge::merge(&plan, SnapParams::new(Costing::Auto), &outcomes, &reporter);
 
     assert!(result.partial);
     assert_eq!(result.points.len(), plan.chunks[1].owned.len());
@@ -215,7 +201,7 @@ fn point_count_mismatch_fails_the_chunk() {
         uniform_response(sizes[1], SnapPointKind::Snapped, 1.0).expect("outcome"),
     ];
     let reporter = SnapWarningReporter::default();
-    let result = merge::merge(&plan, auto_params(), &outcomes, &reporter);
+    let result = merge::merge(&plan, SnapParams::new(Costing::Auto), &outcomes, &reporter);
 
     assert!(result.partial);
     assert_eq!(
@@ -247,7 +233,7 @@ fn confidence_takes_the_minimum_and_changeset_mismatch_warns() {
     let reporter = SnapWarningReporter::default();
     let result = merge::merge(
         &plan,
-        auto_params(),
+        SnapParams::new(Costing::Auto),
         &[make(sizes[0], 0.9, 100), make(sizes[1], 0.4, 200)],
         &reporter,
     );
@@ -265,7 +251,7 @@ fn confidence_takes_the_minimum_and_changeset_mismatch_warns() {
 
 #[test]
 fn server_warnings_are_passed_through() {
-    let plan = support::plan_of(&points(10));
+    let plan = test_util::plan_of(&test_util::points(10));
     let response: TraceAttributesResponse = serde_json::from_value(json!({
         "matched_points": (0..10).map(|_| json!({ "lat": 55.0, "lon": 12.0, "type": "matched" })).collect::<Vec<_>>(),
         "warnings": [{ "message": "synthetic deprecation" }],
@@ -274,7 +260,7 @@ fn server_warnings_are_passed_through() {
     let reporter = SnapWarningReporter::default();
     merge::merge(
         &plan,
-        auto_params(),
+        SnapParams::new(Costing::Auto),
         &[ChunkOutcome::Success(response)],
         &reporter,
     );
@@ -296,7 +282,7 @@ fn edge_references_survive_cross_chunk_concatenation() {
         uniform_response(sizes[1], SnapPointKind::Snapped, 1.0).expect("outcome"),
     ];
     let reporter = SnapWarningReporter::default();
-    let result = merge::merge(&plan, auto_params(), &outcomes, &reporter);
+    let result = merge::merge(&plan, SnapParams::new(Costing::Auto), &outcomes, &reporter);
 
     // Each chunk contributed one edge. Points of the second chunk must
     // reference the second edge, not the first.
@@ -312,16 +298,12 @@ fn edge_references_survive_cross_chunk_concatenation() {
 fn outcome_count_mismatch_is_a_bug() {
     let plan = two_chunk_plan();
     let reporter = SnapWarningReporter::default();
-    merge::merge(&plan, auto_params(), &[], &reporter);
+    merge::merge(&plan, SnapParams::new(Costing::Auto), &[], &reporter);
 }
 
 /// A success response with real geometry: `count` matched points spread
 /// evenly along one edge whose shape is a 4-position encoded polyline.
 fn shaped_response(count: usize) -> Result<ChunkOutcome, String> {
-    let line: geo_types::LineString<f64> =
-        vec![(12.0, 55.0), (12.0, 55.001), (12.0, 55.002), (12.0, 55.003)].into();
-    let shape = polyline::encode_coordinates(line, SHAPE_POLYLINE_PRECISION)
-        .map_err(|err| err.to_string())?;
     let last = count.saturating_sub(1).max(1) as f64;
     let matched_points: Vec<Value> = (0..count)
         .map(|i| {
@@ -334,7 +316,7 @@ fn shaped_response(count: usize) -> Result<ChunkOutcome, String> {
         })
         .collect();
     let response: TraceAttributesResponse = serde_json::from_value(json!({
-        "shape": shape,
+        "shape": test_util::four_position_shape()?,
         "matched_points": matched_points,
         "edges": [{ "begin_shape_index": 0, "end_shape_index": 3 }],
     }))
@@ -366,7 +348,7 @@ fn continuous_chunks_join_into_one_segment() {
         shaped_response(sizes[1]).expect("outcome"),
     ];
     let reporter = SnapWarningReporter::default();
-    let result = merge::merge(&plan, auto_params(), &outcomes, &reporter);
+    let result = merge::merge(&plan, SnapParams::new(Costing::Auto), &outcomes, &reporter);
 
     assert!(reporter.is_empty());
     // Both boundary points are snappable, so the cut mid-road is bridged:
@@ -412,7 +394,7 @@ fn off_network_boundary_keeps_segments_split() {
         ChunkOutcome::OffNetwork,
     ];
     let reporter = SnapWarningReporter::default();
-    let result = merge::merge(&plan, auto_params(), &outcomes, &reporter);
+    let result = merge::merge(&plan, SnapParams::new(Costing::Auto), &outcomes, &reporter);
 
     // Chunk 0 contributes its segment, chunk 1 contributes none.
     assert_eq!(result.segments.len(), 1);
@@ -421,7 +403,7 @@ fn off_network_boundary_keeps_segments_split() {
 
 #[test]
 fn geometry_error_reports_warning_and_never_welds_across() {
-    let plan = support::plan_of(&points(2 * CHUNK_POINTS));
+    let plan = test_util::plan_of(&test_util::points(2 * CHUNK_POINTS));
     assert_eq!(plan.chunks.len(), 3, "precondition");
     let sizes = chunk_sizes(&plan);
     let outcomes = [
@@ -430,7 +412,7 @@ fn geometry_error_reports_warning_and_never_welds_across() {
         shaped_response(sizes[2]).expect("outcome"),
     ];
     let reporter = SnapWarningReporter::default();
-    let result = merge::merge(&plan, auto_params(), &outcomes, &reporter);
+    let result = merge::merge(&plan, SnapParams::new(Costing::Auto), &outcomes, &reporter);
 
     // The middle chunk's geometry failed: one Geometry warning, its points
     // still present and kinded, and the third chunk must NOT weld onto the
@@ -451,7 +433,7 @@ fn geometry_error_reports_warning_and_never_welds_across() {
 /// snappable - the snapped track shows the break.
 #[test]
 fn chunks_across_a_ghost_gap_keep_their_geometry_split() {
-    let plan = support::plan_of(&support::points_with_ghosts_at(20, &[10, 11, 12]));
+    let plan = test_util::plan_of(&test_util::points_with_ghosts_at(20, &[10, 11, 12]));
     assert_eq!(plan.chunks.len(), 2, "precondition");
     let sizes = chunk_sizes(&plan);
     let outcomes = [
@@ -459,7 +441,7 @@ fn chunks_across_a_ghost_gap_keep_their_geometry_split() {
         shaped_response(sizes[1]).expect("outcome"),
     ];
     let reporter = SnapWarningReporter::default();
-    let result = merge::merge(&plan, auto_params(), &outcomes, &reporter);
+    let result = merge::merge(&plan, SnapParams::new(Costing::Auto), &outcomes, &reporter);
 
     assert!(reporter.is_empty());
     assert_eq!(result.segments.len(), 2);
@@ -482,14 +464,14 @@ fn chunks_across_a_ghost_gap_keep_their_geometry_split() {
 /// the server returned.
 #[test]
 fn an_off_network_chunk_after_a_ghost_gap_follows_the_gap() {
-    let plan = support::plan_of(&support::points_with_ghosts_at(20, &[10, 11, 12]));
+    let plan = test_util::plan_of(&test_util::points_with_ghosts_at(20, &[10, 11, 12]));
     let sizes = chunk_sizes(&plan);
     let outcomes = [
         uniform_response(sizes[0], SnapPointKind::Snapped, 1.0).expect("outcome"),
         ChunkOutcome::OffNetwork,
     ];
     let reporter = SnapWarningReporter::default();
-    let result = merge::merge(&plan, auto_params(), &outcomes, &reporter);
+    let result = merge::merge(&plan, SnapParams::new(Costing::Auto), &outcomes, &reporter);
 
     let gap_starts: Vec<usize> = result
         .points
@@ -511,7 +493,7 @@ fn shapeless_previous_chunk_loses_no_geometry() {
         shaped_response(sizes[1]).expect("outcome"),
     ];
     let reporter = SnapWarningReporter::default();
-    let result = merge::merge(&plan, auto_params(), &outcomes, &reporter);
+    let result = merge::merge(&plan, SnapParams::new(Costing::Auto), &outcomes, &reporter);
 
     // The second chunk's leading segment survives intact: nothing to join
     // onto must never consume (and drop) it.

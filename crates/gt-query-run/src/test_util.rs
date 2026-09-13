@@ -1,5 +1,15 @@
 //! Shared fixtures for this crate's tests: two nav points, channels over their
-//! time span, and the loaded files carrying them.
+//! time span, the loaded files carrying them, and the loaded state a session
+//! runs against.
+//!
+//! The crate's own tests reach it as `crate::test_util`. The integration test
+//! binary reaches it as `gt_query_run::test_util`, through the `test-util`
+//! feature gt-query-run's dev-dependency on itself enables.
+
+#![expect(
+    clippy::expect_used,
+    reason = "the fixtures are not covered by clippy's in-test relaxations"
+)]
 
 use std::ops::Range;
 use std::path::PathBuf;
@@ -7,30 +17,108 @@ use std::sync::Arc;
 
 use chrono::DateTime;
 use geotrace_sdk_units::ChannelUnit;
+use gt_filter::GlobalFilter;
+use gt_loaded_files::{FileHistory, LoadedFiles};
+use gt_query::ChannelSchema;
 use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::{GpsTime, SysTime};
 use gt_types::tpv::TimePositionVelocity;
 use gt_types::{Channel, FileSource, LoadedFile, LoadedTrack, NavPoint};
+use gt_ui_types::{GeomagneticSeries, TecSeries, TrackDataVisibility};
 use rustc_hash::FxHashMap;
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Velocity};
 use uom::si::velocity::kilometer_per_hour;
 
+use crate::fingerprint::{JammingValues, RunInputs, SnapErrorValues};
 use crate::results::MatchValues;
+use crate::schema;
+use crate::session::QuerySession;
 
 /// The Unix epoch the fixtures place their first point and sample at.
-pub(crate) const TEST_EPOCH: i64 = 1_700_000_000;
+pub const TEST_EPOCH: i64 = 1_700_000_000;
+
+/// The loaded state a session runs against, owned so the borrowed [`RunInputs`]
+/// can be rebuilt per call.
+pub struct LoadedState {
+    files: LoadedFiles,
+    visibility: TrackDataVisibility,
+    pub filter: GlobalFilter,
+    pub snap_errors: SnapErrorValues,
+    jamming: JammingValues,
+    geomagnetic: GeomagneticSeries,
+    tec: TecSeries,
+}
+
+impl LoadedState {
+    pub fn of(file: LoadedFile) -> Self {
+        let mut files = LoadedFiles::new();
+        files.push(file, FileHistory::None);
+        let visibility = TrackDataVisibility::from_loaded(files.files());
+        Self {
+            files,
+            visibility,
+            filter: GlobalFilter::default(),
+            snap_errors: SnapErrorValues::default(),
+            jamming: JammingValues::default(),
+            geomagnetic: GeomagneticSeries::default(),
+            tec: TecSeries::default(),
+        }
+    }
+
+    pub fn with_channels(channels: Vec<Channel>) -> Self {
+        Self::of(file_with_channels(channels))
+    }
+
+    /// Unload the loaded file, then load `file` in its place.
+    pub fn replace_with(&mut self, file: LoadedFile) {
+        self.files.remove_file(0);
+        self.files.push(file, FileHistory::None);
+        self.visibility = TrackDataVisibility::from_loaded(self.files.files());
+    }
+
+    pub fn inputs(&self) -> RunInputs<'_> {
+        RunInputs {
+            loaded_files: self.files.view(),
+            visibility: &self.visibility,
+            filter: &self.filter,
+            snap_errors: &self.snap_errors,
+            jamming: &self.jamming,
+            geomagnetic: &self.geomagnetic,
+            tec: &self.tec,
+        }
+    }
+
+    pub fn schema(&self) -> ChannelSchema {
+        schema::schema_from_files(self.files.files())
+    }
+}
+
+/// Drive one run of `text` to completion, the way a headless caller does.
+pub fn run_text(session: &mut QuerySession, state: &LoadedState, text: &str) {
+    session.set_text(text.to_owned());
+    session.sync_checks(&state.schema());
+    let prepared = session
+        .start_run(state.inputs())
+        .expect("the query checks and nothing is in flight");
+    assert!(
+        session.run_in_flight(),
+        "the run is in flight until it completes"
+    );
+    session.finish_run(prepared.execute());
+    assert!(!session.run_in_flight(), "the run completed");
+}
 
 /// A range built from arguments, so a single-element `vec![rng(0, 1)]` does not
 /// trip clippy's `single_range_in_vec_init`.
-pub(crate) fn rng(start: usize, end: usize) -> Range<usize> {
+pub fn rng(start: usize, end: usize) -> Range<usize> {
     start..end
 }
 
 /// A match over `rows` with no aggregate column valued.
-pub(crate) fn matched_rows(rows: Range<usize>) -> MatchValues {
+pub fn matched_rows(rows: Range<usize>) -> MatchValues {
     MatchValues {
         rows,
         aggregates: Vec::new(),
@@ -39,7 +127,7 @@ pub(crate) fn matched_rows(rows: Range<usize>) -> MatchValues {
 
 /// One point with a satellite report at 36 km/h, one without any of it,
 /// exercising the provider's unit conversions and count folds.
-pub(crate) fn test_points() -> Vec<NavPoint> {
+pub fn test_points() -> Vec<NavPoint> {
     let time = |secs: i64| {
         GpsTime::from_utc(DateTime::from_timestamp(TEST_EPOCH + secs, 0).expect("valid timestamp"))
     };
@@ -78,7 +166,7 @@ pub(crate) fn test_points() -> Vec<NavPoint> {
 
 /// One point per millisecond offset past [`TEST_EPOCH`], with no velocity,
 /// heading or satellite report.
-pub(crate) fn points_at_millis(offsets_millis: &[i64]) -> Vec<NavPoint> {
+pub fn points_at_millis(offsets_millis: &[i64]) -> Vec<NavPoint> {
     offsets_millis
         .iter()
         .map(|&millis| {
@@ -95,14 +183,15 @@ pub(crate) fn points_at_millis(offsets_millis: &[i64]) -> Vec<NavPoint> {
 }
 
 /// One fix's two clock readings, in microseconds past [`TEST_EPOCH`].
-pub(crate) struct FixClocksMicros {
-    pub(crate) receiver: i64,
-    pub(crate) host: i64,
+#[derive(Clone, Copy)]
+pub struct FixClocksMicros {
+    pub receiver: i64,
+    pub host: i64,
 }
 
 /// One point per fix, stamped by the receiver clock and the host clock, with no
 /// velocity, heading or satellite report.
-pub(crate) fn points_stamped_by_both_clocks(fixes: &[FixClocksMicros]) -> Vec<NavPoint> {
+pub fn points_stamped_by_both_clocks(fixes: &[FixClocksMicros]) -> Vec<NavPoint> {
     let at = |micros: i64| {
         DateTime::from_timestamp_micros(TEST_EPOCH * 1_000_000 + micros).expect("valid timestamp")
     };
@@ -122,7 +211,7 @@ pub(crate) fn points_stamped_by_both_clocks(fixes: &[FixClocksMicros]) -> Vec<Na
 
 /// One point per coordinate pair, a second apart from [`TEST_EPOCH`], with no
 /// velocity, heading or satellite report.
-pub(crate) fn points_at_recorded_coordinates(
+pub fn points_at_recorded_coordinates(
     coordinates: &[(RecordedLatitude, RecordedLongitude)],
 ) -> Vec<NavPoint> {
     coordinates
@@ -143,7 +232,7 @@ pub(crate) fn points_at_recorded_coordinates(
 
 /// A scalar channel named `name` with `unit`, sampled at `TEST_EPOCH + secs`
 /// for each `(secs, value)` pair.
-pub(crate) fn scalar_channel(name: &str, unit: Option<&str>, samples: &[(i64, f64)]) -> Channel {
+pub fn scalar_channel(name: &str, unit: Option<&str>, samples: &[(i64, f64)]) -> Channel {
     Channel {
         name: name.to_owned(),
         unit: unit.map(ChannelUnit::from_file_label),
@@ -156,7 +245,7 @@ pub(crate) fn scalar_channel(name: &str, unit: Option<&str>, samples: &[(i64, f6
 }
 
 /// A 3-component vector channel, each row `[x, y, z]` at `TEST_EPOCH + secs`.
-pub(crate) fn vector_channel(
+pub fn vector_channel(
     name: &str,
     unit: Option<&str>,
     components: &[&str],
@@ -180,7 +269,7 @@ fn sample_times(offsets: impl Iterator<Item = i64>) -> Vec<DateTime<chrono::Utc>
 }
 
 /// A single-track file carrying `channels` over [`test_points`].
-pub(crate) fn file_with_channels(channels: Vec<Channel>) -> LoadedFile {
+pub fn file_with_channels(channels: Vec<Channel>) -> LoadedFile {
     LoadedFile {
         metadata: gt_test_utils::empty_file_metadata(),
         tracks: vec![LoadedTrack {
@@ -195,7 +284,7 @@ pub(crate) fn file_with_channels(channels: Vec<Channel>) -> LoadedFile {
 }
 
 /// A file built the way the loader builds one, over the shared nav fixture.
-pub(crate) fn loaded_file() -> LoadedFile {
+pub fn loaded_file() -> LoadedFile {
     let points = gt_test_utils::nav_test_data();
     gt_track_builder::build_loaded_file(
         "ride.gtd".to_owned(),

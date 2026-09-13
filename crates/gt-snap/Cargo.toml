@@ -8,12 +8,19 @@ authors.workspace = true
 
 [lib]
 doctest = false
-# The wire and capture checks are integration tests, and `test = false` drops
-# the lib's own test harness from the build.
-test = false
+
+[features]
+# Builds `gt_snap::test_util`, the fixtures and capture readers the integration
+# test binaries build their cases from. A normal build leaves it off.
+test-util = ["dep:chrono", "dep:geo-types", "dep:gt-test-utils"]
 
 [dependencies]
+# The fixtures of `test_util`, which the `test-util` feature exposes to the
+# integration test binaries.
+chrono = { workspace = true, optional = true }
+geo-types = { workspace = true, optional = true }
 gt-fetch = { path = "../gt-fetch" }
+gt-test-utils = { path = "../gt-test-utils", optional = true }
 gt-types = { path = "../gt-types" }
 parking_lot.workspace = true
 polyline.workspace = true
@@ -25,9 +32,11 @@ thiserror.workspace = true
 
 [dev-dependencies]
 chrono.workspace = true
-geo-types.workspace = true
 # Responds to a fetch pipeline's requests from a script.
 gt-fetch = { path = "../gt-fetch", features = ["test-util"] }
+# The crate's own fixtures, which the integration test binaries build their
+# cases from.
+gt-snap = { path = ".", features = ["test-util"] }
 gt-test-utils = { path = "../gt-test-utils" }
 insta.workspace = true
 proptest.workspace = true

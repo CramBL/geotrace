@@ -30,18 +30,6 @@ const HOST: &str = "https://example.invalid";
 const DAY_COLUMNS: [&str; 1] = [NOTE];
 const ROW_COLUMNS: [&str; 2] = [VALUE, LABEL];
 
-fn day(offset: i64) -> NaiveDate {
-    NaiveDate::from_ymd_opt(2026, 8, 10).unwrap_or_default() + chrono::TimeDelta::days(offset)
-}
-
-/// Values whose file size follows the rows they fill: they do not compress.
-fn values_of(day: NaiveDate, rows: usize) -> Vec<u64> {
-    let seed = u64::try_from(day.to_epoch_days()).unwrap_or_default();
-    (0..rows)
-        .map(|row| (seed * 1_000 + row as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15))
-        .collect()
-}
-
 fn labels_of(day: NaiveDate, rows: usize) -> Vec<String> {
     (0..rows).map(|row| format!("{day}-{row}")).collect()
 }
@@ -68,7 +56,7 @@ impl StoredRows {
     /// What [`TestArchive::insert_day`] stored for `day`.
     fn of(day: NaiveDate, rows: usize) -> Self {
         Self {
-            values: values_of(day, rows),
+            values: test_util::values_of(day, rows),
             labels: labels_of(day, rows),
         }
     }
@@ -156,7 +144,7 @@ impl TestArchive {
         let value = Column::new(&group, VALUE);
         let offset = value.rows().map_err(|err| format!("row count: {err}"))?;
         value
-            .append(&values_of(day, rows))
+            .append(&test_util::values_of(day, rows))
             .map_err(|err| format!("append values: {err}"))?;
         if self.row_columns.contains(&LABEL) {
             Column::new(&group, LABEL)
@@ -278,18 +266,11 @@ impl TestArchive {
 /// Days stored out of the order they fall in, which is what a backfill does:
 /// the index rows are not in day order.
 const STORED_DAYS: [(NaiveDate, usize); 4] = [
-    (day_at(2), 5),
-    (day_at(0), 3),
-    (day_at(3), 6),
-    (day_at(1), 4),
+    (test_util::day_at(2), 5),
+    (test_util::day_at(0), 3),
+    (test_util::day_at(3), 6),
+    (test_util::day_at(1), 4),
 ];
-
-const fn day_at(offset: u32) -> NaiveDate {
-    match NaiveDate::from_ymd_opt(2026, 8, 10 + offset) {
-        Some(day) => day,
-        None => NaiveDate::MIN,
-    }
-}
 
 fn rows_of(day: NaiveDate) -> usize {
     STORED_DAYS
@@ -301,10 +282,16 @@ fn rows_of(day: NaiveDate) -> usize {
 /// The days an archive holds are exactly the ones at or after the cutoff, and
 /// each of them still reads back what it was stored with.
 #[rstest]
-#[case::before_every_day(day(0), vec![day(0), day(1), day(2), day(3)])]
-#[case::past_the_oldest(day(1), vec![day(1), day(2), day(3)])]
-#[case::past_all_but_the_newest(day(3), vec![day(3)])]
-#[case::past_every_day(day(4), vec![])]
+#[case::before_every_day(
+    test_util::day(0),
+    vec![test_util::day(0), test_util::day(1), test_util::day(2), test_util::day(3)]
+)]
+#[case::past_the_oldest(
+    test_util::day(1),
+    vec![test_util::day(1), test_util::day(2), test_util::day(3)]
+)]
+#[case::past_all_but_the_newest(test_util::day(3), vec![test_util::day(3)])]
+#[case::past_every_day(test_util::day(4), vec![])]
 fn deleting_days_before_a_cutoff_keeps_the_rest_whole(
     #[case] cutoff: NaiveDate,
     #[case] expected: Vec<NaiveDate>,
@@ -348,7 +335,7 @@ fn a_delete_reports_progress_up_to_every_column_it_rewrites() {
     archive
         .with_layout(|layout| {
             let report = |progress: PruneProgress| reported.borrow_mut().push(progress);
-            layout.delete_days_before(day(2), Some(&report))
+            layout.delete_days_before(test_util::day(2), Some(&report))
         })
         .expect("delete");
 
@@ -374,20 +361,20 @@ fn deleting_every_day_empties_the_archive() {
 #[test]
 fn rows_no_day_names_go_with_the_delete() {
     let archive = TestArchive::create().expect("archive");
-    archive.insert_day(day(0), 5).expect("insert");
-    archive.insert_day(day(1), 5).expect("insert");
+    archive.insert_day(test_util::day(0), 5).expect("insert");
+    archive.insert_day(test_util::day(1), 5).expect("insert");
     // Stored again: the five rows of the first copy are left unnamed.
-    archive.insert_day(day(1), 7).expect("insert");
+    archive.insert_day(test_util::day(1), 7).expect("insert");
 
     archive
-        .with_layout(|layout| layout.delete_days_before(day(1), None))
+        .with_layout(|layout| layout.delete_days_before(test_util::day(1), None))
         .expect("delete");
 
-    assert_eq!(archive.archived_days().expect("days"), [day(1)]);
+    assert_eq!(archive.archived_days().expect("days"), [test_util::day(1)]);
     assert_eq!(archive.stored_rows().expect("row count"), 7);
     assert_eq!(
-        archive.day_rows(day(1)).expect("rows"),
-        Some(StoredRows::of(day(1), 7))
+        archive.day_rows(test_util::day(1)).expect("rows"),
+        Some(StoredRows::of(test_util::day(1), 7))
     );
 }
 
@@ -397,16 +384,20 @@ fn rows_no_day_names_go_with_the_delete() {
 fn rows_stored_after_a_delete_reuse_the_space_it_freed() {
     let mut archive = TestArchive::create_without_text().expect("archive");
     for offset in 0..12 {
-        archive.insert_day(day(offset), 8_192).expect("insert");
+        archive
+            .insert_day(test_util::day(offset), 8_192)
+            .expect("insert");
     }
     let filled = archive.size_on_disk().expect("size");
 
     archive
-        .with_layout(|layout| layout.delete_days_before(day(6), None))
+        .with_layout(|layout| layout.delete_days_before(test_util::day(6), None))
         .expect("delete");
     let pruned = archive.size_on_disk().expect("size");
     for offset in 12..18 {
-        archive.insert_day(day(offset), 8_192).expect("insert");
+        archive
+            .insert_day(test_util::day(offset), 8_192)
+            .expect("insert");
     }
     let refilled = archive.size_on_disk().expect("size");
 
@@ -428,17 +419,23 @@ fn a_delete_that_finished_leaves_the_index_settled() {
     archive.insert_days(&STORED_DAYS).expect("insert");
 
     archive
-        .with_layout(|layout| layout.delete_days_before(day(2), None))
+        .with_layout(|layout| layout.delete_days_before(test_util::day(2), None))
         .expect("delete");
     assert_eq!(archive.delete_state().expect("state"), DeleteState::Settled);
     archive
         .with_layout(|layout| layout.recover_interrupted_delete("test archive"))
         .expect("recover");
 
-    assert_eq!(archive.archived_days().expect("days"), [day(2), day(3)]);
     assert_eq!(
-        archive.day_rows(day(2)).expect("rows"),
-        Some(StoredRows::of(day(2), rows_of(day(2))))
+        archive.archived_days().expect("days"),
+        [test_util::day(2), test_util::day(3)]
+    );
+    assert_eq!(
+        archive.day_rows(test_util::day(2)).expect("rows"),
+        Some(StoredRows::of(
+            test_util::day(2),
+            rows_of(test_util::day(2))
+        ))
     );
 }
 
@@ -462,7 +459,7 @@ fn a_delete_that_fails_leaves_the_index_marked() {
     };
 
     layout
-        .delete_days_before(day(2), None)
+        .delete_days_before(test_util::day(2), None)
         .expect_err("a column that is not there");
 
     assert_eq!(
@@ -496,11 +493,19 @@ fn an_interrupted_delete_is_reported_without_touching_the_archive() {
     );
     assert_eq!(
         archive.archived_days().expect("days"),
-        [day(0), day(1), day(2), day(3)]
+        [
+            test_util::day(0),
+            test_util::day(1),
+            test_util::day(2),
+            test_util::day(3)
+        ]
     );
     assert_eq!(
-        archive.day_rows(day(2)).expect("rows"),
-        Some(StoredRows::of(day(2), rows_of(day(2))))
+        archive.day_rows(test_util::day(2)).expect("rows"),
+        Some(StoredRows::of(
+            test_util::day(2),
+            rows_of(test_util::day(2))
+        ))
     );
     assert_eq!(
         archive.delete_state().expect("state"),
@@ -545,7 +550,9 @@ fn an_interrupted_delete_drops_every_day() {
 fn overlapping_days_are_rejected() {
     let archive = TestArchive::create().expect("archive");
     for offset in 0..3 {
-        archive.insert_day(day(offset), 5).expect("insert");
+        archive
+            .insert_day(test_util::day(offset), 5)
+            .expect("insert");
     }
     let days = archive.group(DAYS).expect("days group");
     Column::new(&days, day_index::OFFSET)
@@ -554,7 +561,7 @@ fn overlapping_days_are_rejected() {
     drop(days);
 
     let err = archive
-        .with_layout(|layout| layout.delete_days_before(day(1), None))
+        .with_layout(|layout| layout.delete_days_before(test_util::day(1), None))
         .expect_err("overlapping days");
 
     assert!(err.contains("overlap the rows before them"), "{err}");
@@ -572,7 +579,7 @@ fn an_index_column_that_lost_rows_is_rejected() {
     drop(days);
 
     let err = archive
-        .with_layout(|layout| layout.delete_days_before(day(1), None))
+        .with_layout(|layout| layout.delete_days_before(test_util::day(1), None))
         .expect_err("an index that disagrees with itself");
 
     assert!(err.contains("count holds 2 rows, requested"), "{err}");
@@ -754,30 +761,34 @@ mod three_levels {
     #[test]
     fn deleting_days_rebases_the_maps_and_the_values_they_name() {
         let archive = NestedArchive::create().expect("archive");
-        archive.insert_day(day(0), 2).expect("insert");
-        archive.insert_day(day(1), 3).expect("insert");
-        archive.insert_day(day(2), 1).expect("insert");
+        archive.insert_day(test_util::day(0), 2).expect("insert");
+        archive.insert_day(test_util::day(1), 3).expect("insert");
+        archive.insert_day(test_util::day(2), 1).expect("insert");
         let reported = std::cell::RefCell::new(Vec::new());
 
         let removed = archive
             .with_layout(|layout| {
                 let report = |progress: PruneProgress| reported.borrow_mut().push(progress);
-                layout.delete_days_before(day(1), Some(&report))
+                layout.delete_days_before(test_util::day(1), Some(&report))
             })
             .expect("delete");
 
         assert_eq!(removed, 1);
         test_util::assert_progress_ran_to_completion(&reported.into_inner());
         assert_eq!(
-            archive.day_nodes(day(1)).expect("nodes"),
-            Some((0..3).map(|map| nodes_of(day(1), map)).collect::<Vec<_>>())
+            archive.day_nodes(test_util::day(1)).expect("nodes"),
+            Some(
+                (0..3)
+                    .map(|map| nodes_of(test_util::day(1), map))
+                    .collect::<Vec<_>>()
+            )
         );
         assert_eq!(
-            archive.day_nodes(day(2)).expect("nodes"),
-            Some(vec![nodes_of(day(2), 0)]),
+            archive.day_nodes(test_util::day(2)).expect("nodes"),
+            Some(vec![nodes_of(test_util::day(2), 0)]),
             "the newest day reads through its rebased offsets"
         );
-        assert_eq!(archive.day_nodes(day(0)).expect("nodes"), None);
+        assert_eq!(archive.day_nodes(test_util::day(0)).expect("nodes"), None);
         assert_eq!(
             archive.stored_values().expect("value count"),
             4 * NODES,

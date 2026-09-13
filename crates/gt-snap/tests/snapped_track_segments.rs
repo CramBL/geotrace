@@ -1,24 +1,14 @@
 //! Validate snapped-track segment assembly against the captured responses
 //! and synthetic break scenarios.
 
-use std::fs;
-
 use proptest::prelude::*;
 use rstest::rstest;
 use serde_json::{Value, json};
 
-use gt_snap::snapped_track::{
-    self, SHAPE_POLYLINE_PRECISION, SnappedTrackError, SnappedTrackSegment,
-};
+use gt_snap::snapped_track::{self, SnappedTrackError, SnappedTrackSegment};
+use gt_snap::test_util;
 use gt_snap::wire::{SnapPointKind, TraceAttributesResponse};
 use gt_types::PointIdx;
-
-fn parse_response(scenario: &str) -> Result<TraceAttributesResponse, String> {
-    let path = gt_snap::captures_dir().join(format!("{scenario}.response.json"));
-    let body =
-        fs::read_to_string(&path).map_err(|err| format!("reading {}: {err}", path.display()))?;
-    serde_json::from_str(&body).map_err(|err| format!("{scenario}: {err}"))
-}
 
 /// A digest of assembled segments, sized for snapshot review: per segment
 /// the vertex count, first and last position, and the edge-span coverage
@@ -65,7 +55,7 @@ fn digest(segments: &[SnappedTrackSegment]) -> Vec<String> {
 #[case::partially_snappable("partially_snappable")]
 #[case::teleport_gap("teleport_gap")]
 fn edge_spans_cover_segments_coherently(#[case] scenario: &str) {
-    let response = parse_response(scenario).expect("the capture parses");
+    let response = test_util::captured_response(scenario).expect("the capture parses");
     let segments = snapped_track::snapped_track_segments(&response).expect("segments assemble");
     assert!(!segments.is_empty());
     for segment in &segments {
@@ -103,14 +93,14 @@ fn edge_spans_cover_segments_coherently(#[case] scenario: &str) {
 #[case::partially_snappable("partially_snappable")]
 #[case::teleport_gap("teleport_gap")]
 fn captured_segments_assemble(#[case] scenario: &str) {
-    let response = parse_response(scenario).expect("capture");
+    let response = test_util::captured_response(scenario).expect("capture");
     let segments = snapped_track::snapped_track_segments(&response).expect("assembles");
     insta::assert_debug_snapshot!(format!("{scenario}_segments"), digest(&segments));
 }
 
 #[test]
 fn teleport_gap_splits_into_two_segments() {
-    let response = parse_response("teleport_gap").expect("capture");
+    let response = test_util::captured_response("teleport_gap").expect("capture");
     let segments = snapped_track::snapped_track_segments(&response).expect("assembles");
     assert_eq!(
         segments.len(),
@@ -119,17 +109,11 @@ fn teleport_gap_splits_into_two_segments() {
     );
 }
 
-/// A response with a valid 4-position synthetic shape, holding `points` and
-/// `edges`. The shape is encoded with the wire's precision constant, so
-/// encode and decode cannot drift apart.
+/// A response over [`test_util::four_position_shape`], holding `points` and
+/// `edges`.
 fn synthetic_response(points: &Value, edges: &Value) -> Result<TraceAttributesResponse, String> {
-    // Four positions spaced ~110 m apart along a meridian.
-    let line: geo_types::LineString<f64> =
-        vec![(12.0, 55.0), (12.0, 55.001), (12.0, 55.002), (12.0, 55.003)].into();
-    let shape = polyline::encode_coordinates(line, SHAPE_POLYLINE_PRECISION)
-        .map_err(|err| err.to_string())?;
     serde_json::from_value(json!({
-        "shape": shape,
+        "shape": test_util::four_position_shape()?,
         "matched_points": points,
         "edges": edges,
     }))
@@ -330,7 +314,7 @@ fn vertices_name_the_earliest_of_the_points_placed_at_one_spot() {
 #[case::partially_snappable("partially_snappable")]
 #[case::teleport_gap("teleport_gap")]
 fn captured_segments_name_a_recorded_point_at_every_vertex(#[case] scenario: &str) {
-    let response = parse_response(scenario).expect("the capture parses");
+    let response = test_util::captured_response(scenario).expect("the capture parses");
     let segments = snapped_track::snapped_track_segments(&response).expect("segments assemble");
     assert!(!segments.is_empty());
     for segment in &segments {
@@ -422,7 +406,7 @@ proptest! {
     /// panic either.
     #[test]
     fn truncated_real_shape_never_panics(cut in 0usize..200) {
-        let response = parse_response("clean_drive").expect("capture");
+        let response = test_util::captured_response("clean_drive").expect("capture");
         let Some(shape) = response.shape.as_deref() else {
             return Ok(());
         };
