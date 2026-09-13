@@ -6,6 +6,8 @@
 #include <geotrace/geotrace.hpp>
 
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <optional>
 
 #include "test_undeclared_enums.hpp"
@@ -97,6 +99,20 @@ TEST_CASE("an undeclared marker icon records GTD_ERR_INVALID_ARGUMENT") {
                                       undeclared_enum_value<MarkerIcon>()});
     CHECK(builder.status().code == GTD_ERR_INVALID_ARGUMENT);
     CHECK(builder.status().description == "MarkerIcon has no enumerator with the value 200");
+}
+
+TEST_CASE("a host time of INT64_MIN microseconds records GTD_ERR_OUT_OF_RANGE") {
+    const Timestamp int64_min_micros{std::numeric_limits<std::int64_t>::min()};
+    const NavFix fix{FixTime::both(Timestamp::from_seconds(1700000000), int64_min_micros),
+                     Angle::degrees(51.5), Angle::degrees(-0.1)};
+
+    FileBuilder builder;
+    builder.add_nav_fix(fix);
+    CHECK(builder.status().code == GTD_ERR_OUT_OF_RANGE);
+    CHECK(builder.status().description ==
+          "sys_time: -9223372036854775808 microseconds since the Unix epoch is past the range a "
+          "UTC timestamp covers");
+    CHECK(builder.try_finish().error().code == GTD_ERR_OUT_OF_RANGE);
 }
 
 TEST_CASE("try_open reports an error by value, never aborting") {
