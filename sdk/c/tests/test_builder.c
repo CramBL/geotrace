@@ -281,6 +281,54 @@ Test(builder, satellite_report_without_a_timestamp) {
     gtd_builder_destroy(builder);
 }
 
+Test(builder, nav_fix_with_a_gps_time_past_the_range_is_out_of_range) {
+    GtdFileBuilder *builder = gtd_builder_create();
+    cr_assert_not_null(builder);
+
+    const GtdTimestamp past_the_range = {INT64_MAX};
+    cr_assert_eq(gtd_builder_add_nav_fix(builder, past_the_range, gtd_ts_none(), 51.5074, -0.1278,
+                                         GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
+                 GTD_ERR_OUT_OF_RANGE);
+    cr_assert_str_eq(gtd_last_error(), "gps_time: " INT64_MAX_MICROS_PAST_THE_RANGE_MESSAGE);
+
+    gtd_builder_destroy(builder);
+}
+
+Test(builder, nav_fix_with_a_sys_time_past_the_range_is_out_of_range_beside_a_valid_gps_time) {
+    GtdFileBuilder *builder = gtd_builder_create();
+    cr_assert_not_null(builder);
+
+    GtdTimestamp gps_time;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &gps_time), GTD_OK);
+    const GtdTimestamp past_the_range = {INT64_MAX};
+    cr_assert_eq(gtd_builder_add_nav_fix(builder, gps_time, past_the_range, 51.5074, -0.1278,
+                                         GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
+                 GTD_ERR_OUT_OF_RANGE);
+    cr_assert_str_eq(gtd_last_error(), "sys_time: " INT64_MAX_MICROS_PAST_THE_RANGE_MESSAGE);
+
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_OK);
+    cr_assert_eq(gtd_nav_file_nav_point_count(file), 0);
+
+    gtd_nav_file_destroy(file);
+}
+
+Test(builder,
+     satellite_report_with_a_sys_time_past_the_range_is_out_of_range_beside_a_valid_gps_time) {
+    GtdTimestamp gps_time;
+    GtdFileBuilder *builder = builder_with_a_nav_fix(&gps_time);
+
+    GtdSatellite sats[] = {
+        {GTD_CONSTELLATION_GPS, 7, 1, GTD_NONE_F32, GTD_NONE_F32, GTD_NONE_F32},
+    };
+    const GtdTimestamp past_the_range = {INT64_MAX};
+    cr_assert_eq(gtd_builder_add_satellite_report(builder, gps_time, past_the_range, sats, 1),
+                 GTD_ERR_OUT_OF_RANGE);
+    cr_assert_str_eq(gtd_last_error(), "sys_time: " INT64_MAX_MICROS_PAST_THE_RANGE_MESSAGE);
+
+    gtd_builder_destroy(builder);
+}
+
 Test(builder, satellite_report) {
     GtdFileBuilder *builder = gtd_builder_create();
     cr_assert_not_null(builder);
@@ -581,6 +629,30 @@ Test(builder, annotation_rejects_the_auto_icon) {
     cr_assert_eq(gtd_builder_add_annotation(builder, timestamp, "note", GTD_ICON_AUTO),
                  GTD_ERR_INVALID_ARGUMENT);
     cr_assert_not_null(strstr(gtd_last_error(), "GTD_ICON_AUTO"));
+
+    gtd_builder_destroy(builder);
+}
+
+Test(builder, annotation_with_a_time_past_the_range_is_out_of_range) {
+    GtdFileBuilder *builder = gtd_builder_create();
+    cr_assert_not_null(builder);
+
+    const GtdTimestamp past_the_range = {INT64_MAX};
+    cr_assert_eq(gtd_builder_add_annotation(builder, past_the_range, "note", GTD_ICON_PIN),
+                 GTD_ERR_OUT_OF_RANGE);
+    cr_assert_str_eq(gtd_last_error(), "time: " INT64_MAX_MICROS_PAST_THE_RANGE_MESSAGE);
+
+    gtd_builder_destroy(builder);
+}
+
+Test(builder, event_marker_with_a_sys_time_past_the_range_is_out_of_range) {
+    GtdFileBuilder *builder = gtd_builder_create();
+    cr_assert_not_null(builder);
+
+    const GtdTimestamp past_the_range = {INT64_MAX};
+    cr_assert_eq(gtd_builder_add_event_marker(builder, "system/startup", past_the_range, NULL),
+                 GTD_ERR_OUT_OF_RANGE);
+    cr_assert_str_eq(gtd_last_error(), "sys_time: " INT64_MAX_MICROS_PAST_THE_RANGE_MESSAGE);
 
     gtd_builder_destroy(builder);
 }
