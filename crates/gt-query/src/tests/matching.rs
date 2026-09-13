@@ -84,6 +84,21 @@ fn point_predicate_matches_consecutive_runs() {
     assert!(output.summary.skipped.is_empty());
 }
 
+/// A threshold of 10 kn is 5.14444 m/s.
+#[test]
+fn a_threshold_in_knots_converts_to_metres_per_second() {
+    let provider = TestProvider::new(2).with(QueryMetric::Velocity, vec![Some(5.0), Some(5.2)]);
+    let output = test_util::run_one("points | where velocity > 10 kn", &provider);
+    assert_eq!(output.matches[0].ranges, vec![1..2]);
+}
+
+#[test]
+fn a_velocity_of_negative_zero_is_not_below_zero() {
+    let provider = TestProvider::new(1).with(QueryMetric::Velocity, vec![Some(-0.0)]);
+    let output = test_util::run_one("points | where velocity < 0 m/s", &provider);
+    assert!(output.matches.is_empty());
+}
+
 #[test]
 fn missing_values_poison_and_are_counted() {
     let provider = TestProvider::new(5).with(

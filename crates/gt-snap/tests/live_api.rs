@@ -10,15 +10,11 @@
 //! can never exceed the server's 1 request/s fair-use budget (the transport
 //! also paces itself).
 
-mod support;
-
-use support::base_time;
-
 use gt_fetch::HttpTransport;
 use gt_snap::merge::{self, ChunkOutcome, SnapWarningReporter};
 use gt_snap::request_plan::SnapParams;
 use gt_snap::wire::Costing;
-use gt_snap::{DEFAULT_SERVER_URL, REQUEST_INTERVAL, transport};
+use gt_snap::{DEFAULT_SERVER_URL, REQUEST_INTERVAL, test_util, transport};
 use gt_types::nav_point::NavPoint;
 use gt_types::time_types::GpsTime;
 use gt_types::tpv::TimePositionVelocity;
@@ -33,7 +29,7 @@ fn boulevard_points() -> Vec<NavPoint> {
     (0..count)
         .map(|i| {
             let t = i as f64 / (count - 1) as f64;
-            let time = base_time() + chrono::Duration::seconds(i as i64);
+            let time = test_util::base_time() + chrono::Duration::seconds(i as i64);
             let tpv = TimePositionVelocity::builder()
                 .time(GpsTime::from_utc(time))
                 .lat(Latitude::new(from.0 + (to.0 - from.0) * t))
@@ -54,7 +50,7 @@ fn boulevard_points() -> Vec<NavPoint> {
 #[test]
 fn full_pipeline_against_live_server() {
     let points = boulevard_points();
-    let plan = support::plan_of(&points);
+    let plan = test_util::plan_of(&points);
     assert_eq!(plan.chunks.len(), 1);
 
     let transport = HttpTransport::new(Some(REQUEST_INTERVAL)).expect("transport builds");

@@ -167,6 +167,23 @@ fn norm_of_a_non_finite_sample_poisons_the_window() {
     assert_eq!(output.summary.skipped_non_finite, 1);
 }
 
+/// `max` skips the window that `avg` skips. Every aggregate reads the same
+/// samples.
+#[test]
+fn a_channel_sample_that_is_not_a_number_skips_the_window() {
+    let schema = test_util::schema_with("sensor", None, None);
+    let provider = TestProvider::new(2)
+        .indexed_time()
+        .with_channel("sensor", vec![(0.0, 5.0), (1.0, f64::NAN)]);
+    let output = test_util::run_channel(
+        "points | window 2 | where max(@sensor) < 10",
+        &schema,
+        &provider,
+    );
+    assert!(output.matches.is_empty());
+    assert_eq!(output.summary.skipped_non_finite, 1);
+}
+
 #[test]
 fn components_combine_per_sample_within_the_row() {
     // sqrt(x² + y²) is per-sample math across two columns of the same row.
@@ -244,6 +261,21 @@ fn a_channel_span_includes_samples_on_both_endpoints() {
         &provider,
     );
     assert_eq!(output.matches[0].ranges, vec![0..3]);
+}
+
+/// 179 and 1 are two degrees apart on a channel with a wrap period of 180°.
+#[test]
+fn the_spread_of_a_channel_uses_its_declared_period() {
+    let schema = test_util::schema_with("compass", Some("deg"), Some(180.0));
+    let provider = TestProvider::new(2)
+        .indexed_time()
+        .with_channel("compass", vec![(0.0, 179.0), (1.0, 1.0)]);
+    let output = test_util::run_channel(
+        "points | window 2 | where spread(@compass) <= 5 deg",
+        &schema,
+        &provider,
+    );
+    assert_eq!(output.matches[0].ranges, vec![0..2]);
 }
 
 /// The window's aggregate reads the sample at 5 s, between its points. The

@@ -95,6 +95,16 @@ fn negative_thresholds_parse_and_check() {
     assert_eq!(output.matches[0].ranges, vec![1..3]);
 }
 
+/// 10 m/s over 10 m is one length per second, which is 60 per minute.
+#[test]
+fn a_rate_from_a_speed_and_a_length_compares_in_per_minute() {
+    let provider = TestProvider::new(1)
+        .with(QueryMetric::Velocity, vec![Some(10.0)])
+        .with(QueryMetric::Eph, vec![Some(10.0)]);
+    let output = test_util::run_one("points | where velocity / eph > 2 per min", &provider);
+    assert_eq!(output.matches[0].ranges, vec![0..1]);
+}
+
 /// `==`/`!=` accept a discrete count (`sats_fix == 6`) but not a continuous
 /// quantity (`velocity == 30 km/h`), which would be a float-equality trap.
 #[rstest]

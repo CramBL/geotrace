@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use hdf5::filters::Filter;
 use hdf5::plist::file_create::FileSpaceStrategy;
 use hdf5::{Dataset, File, Group};
@@ -13,6 +13,7 @@ use tempfile::TempDir;
 
 use gt_hdf5_archive::day_index::{DayIndex, RowPlacement};
 use gt_hdf5_archive::prune::{ArchiveLayout, RowLevel};
+use gt_hdf5_archive::test_util;
 use gt_hdf5_archive::{ArchiveFile, Column, ColumnFormat, FileSpaceMigration, attributes};
 
 const FORMAT: ColumnFormat = ColumnFormat {
@@ -29,26 +30,11 @@ const SCHEMA_VERSION: i64 = 3;
 
 /// The days the tests that read an archive back store, out of the order they
 /// fall in.
-const STORED_DAYS: [(NaiveDate, usize); 3] = [(day_at(2), 5), (day_at(0), 3), (day_at(1), 4)];
-
-const fn day_at(offset: u32) -> NaiveDate {
-    match NaiveDate::from_ymd_opt(2026, 8, 10 + offset) {
-        Some(day) => day,
-        None => NaiveDate::MIN,
-    }
-}
-
-fn day(offset: i64) -> NaiveDate {
-    day_at(0) + TimeDelta::days(offset)
-}
-
-/// Values whose file size follows the rows they fill: they do not compress.
-fn values_of(day: NaiveDate, rows: usize) -> Vec<u64> {
-    let seed = u64::try_from(day.to_epoch_days()).unwrap_or_default();
-    (0..rows)
-        .map(|row| (seed * 1_000 + row as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15))
-        .collect()
-}
+const STORED_DAYS: [(NaiveDate, usize); 3] = [
+    (test_util::day_at(2), 5),
+    (test_util::day_at(0), 3),
+    (test_util::day_at(1), 4),
+];
 
 /// A day-keyed archive of one row column, left closed between operations the
 /// way a store leaves it.
@@ -104,7 +90,7 @@ impl TestArchive {
             let value = Column::new(&group, VALUE);
             let offset = value.rows().map_err(|err| format!("row count: {err}"))?;
             value
-                .append(&values_of(day, rows))
+                .append(&test_util::values_of(day, rows))
                 .map_err(|err| format!("append values: {err}"))?;
 
             let days = group_of(&file, DAYS)?;
@@ -223,12 +209,12 @@ fn an_unpaged_archive_is_rebuilt_and_keeps_what_it_held() {
     );
     assert_eq!(
         archive.archived_days().expect("days"),
-        [day(0), day(1), day(2)]
+        [test_util::day(0), test_util::day(1), test_util::day(2)]
     );
     for (stored, rows) in STORED_DAYS {
         assert_eq!(
             archive.day_rows(stored).expect("rows"),
-            Some(values_of(stored, rows)),
+            Some(test_util::values_of(stored, rows)),
             "{stored} lost its rows"
         );
     }
@@ -301,7 +287,7 @@ fn a_file_an_interrupted_rebuild_left_is_removed(
     );
     assert_eq!(
         archive.archived_days().expect("days"),
-        [day(0), day(1), day(2)]
+        [test_util::day(0), test_util::day(1), test_util::day(2)]
     );
 }
 
@@ -326,11 +312,11 @@ fn days_stored_after_a_delete_reuse_the_space_a_migrated_archive_freed() {
 fn fill_delete_and_refill(archive: &TestArchive) -> Result<u64, String> {
     const ROWS_PER_DAY: usize = 8_192;
     for offset in 0..12 {
-        archive.insert_days(&[(day(offset), ROWS_PER_DAY)])?;
+        archive.insert_days(&[(test_util::day(offset), ROWS_PER_DAY)])?;
     }
-    archive.delete_days_before(day(6))?;
+    archive.delete_days_before(test_util::day(6))?;
     for offset in 12..18 {
-        archive.insert_days(&[(day(offset), ROWS_PER_DAY)])?;
+        archive.insert_days(&[(test_util::day(offset), ROWS_PER_DAY)])?;
     }
     archive.size_on_disk()
 }

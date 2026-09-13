@@ -13,6 +13,25 @@ fn circular_spread_matches_across_north() {
     assert_eq!(output.matches[0].ranges, vec![0..3]);
 }
 
+/// 179.95° and -179.95° are a tenth of a degree apart across the antimeridian.
+#[test]
+fn the_spread_of_longitude_wraps_at_the_antimeridian() {
+    let provider = TestProvider::new(2).with(QueryMetric::Lon, vec![Some(179.95), Some(-179.95)]);
+    let output = test_util::run_one("points | window 2 | where spread(lon) <= 1 deg", &provider);
+    assert_eq!(output.matches[0].ranges, vec![0..2]);
+}
+
+/// A bearing of 360° is the same direction as 0°.
+#[test]
+fn a_heading_of_a_full_turn_has_no_spread_against_north() {
+    let provider = TestProvider::new(2).with(QueryMetric::Heading, vec![Some(360.0), Some(0.0)]);
+    let output = test_util::run_one(
+        "points | window 2 | where spread(heading) < 0.5 deg",
+        &provider,
+    );
+    assert_eq!(output.matches[0].ranges, vec![0..2]);
+}
+
 #[test]
 fn std_over_a_window_uses_population_deviation() {
     // Steady speed has zero std. The last window jumps, so only the steady

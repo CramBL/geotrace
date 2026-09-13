@@ -11,6 +11,8 @@ use std::time::Duration;
 pub mod merge;
 pub mod request_plan;
 pub mod snapped_track;
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
 pub mod transport;
 pub mod wire;
 

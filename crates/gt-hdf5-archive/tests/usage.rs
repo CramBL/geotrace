@@ -1,16 +1,12 @@
 //! What an archive reports about its size and the days it holds.
 
-use chrono::NaiveDate;
+use gt_hdf5_archive::test_util;
 use gt_hdf5_archive::{ArchiveUsage, ArchivedDaySpan};
-
-fn day(offset: i64) -> NaiveDate {
-    NaiveDate::from_ymd_opt(2026, 8, 10).unwrap_or_default() + chrono::TimeDelta::days(offset)
-}
 
 fn span(oldest: i64, newest: i64) -> Option<ArchivedDaySpan> {
     Some(ArchivedDaySpan {
-        oldest: day(oldest),
-        newest: day(newest),
+        oldest: test_util::day(oldest),
+        newest: test_util::day(newest),
     })
 }
 
@@ -20,7 +16,10 @@ fn an_archive_reports_its_size_and_the_days_it_spans() {
     let path = dir.path().join("archive.h5");
     std::fs::write(&path, [0_u8; 128]).expect("write");
 
-    let usage = ArchiveUsage::measure(&path, [day(3), day(0), day(1)]);
+    let usage = ArchiveUsage::measure(
+        &path,
+        [test_util::day(3), test_util::day(0), test_util::day(1)],
+    );
 
     assert_eq!(usage.bytes, Some(128));
     assert_eq!(usage.days, 3);

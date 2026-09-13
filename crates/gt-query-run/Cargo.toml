@@ -10,6 +10,11 @@ authors.workspace = true
 [lib]
 doctest = false
 
+[features]
+# Builds `gt_query_run::test_util`, the loaded state and the run driver the
+# integration test binary runs a session with. A normal build leaves it off.
+test-util = ["dep:gt-test-utils", "dep:gt-track-builder"]
+
 [dependencies]
 chrono.workspace = true
 geotrace-sdk-units = { path = "../../sdk/rust/geotrace-sdk-units" }
@@ -18,6 +23,10 @@ gt-filter = { path = "../gt-filter" }
 gt-fmt = { path = "../gt-fmt" }
 gt-loaded-files = { path = "../gt-loaded-files" }
 gt-query = { path = "../gt-query" }
+# The fixtures of `test_util`, which the `test-util` feature exposes to the
+# integration test binary.
+gt-test-utils = { path = "../gt-test-utils", optional = true }
+gt-track-builder = { path = "../gt-track-builder", optional = true }
 gt-types = { path = "../gt-types" }
 gt-ui-types = { path = "../gt-ui-types" }
 log.workspace = true
@@ -27,6 +36,9 @@ uom.workspace = true
 [dev-dependencies]
 geotrace-sdk = { path = "../../sdk/rust/geotrace-sdk" }
 gt-loader = { path = "../gt-loader" }
+# The crate's own fixtures, which the integration test binary runs a session
+# through.
+gt-query-run = { path = ".", features = ["test-util"] }
 gt-test-utils = { path = "../gt-test-utils" }
 gt-track-builder = { path = "../gt-track-builder" }
 rstest.workspace = true

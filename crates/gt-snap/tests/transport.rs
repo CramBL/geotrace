@@ -4,48 +4,31 @@
 //! synthetic statuses, exercising the same classification path production
 //! uses (static dispatch through the `Transport` trait).
 
-mod support;
-
-use std::fs;
-
-use support::points;
-
 use gt_fetch::TransportSource;
-use gt_fetch::test_util::{self, ScriptedTransport, TransportResponse};
+use gt_fetch::test_util::{self as fetch_test_util, ScriptedTransport, TransportResponse};
 use gt_snap::merge::{ChunkOutcome, SnapWarningReporter};
 use gt_snap::request_plan::{CHUNK_POINTS, SnapParams};
 use gt_snap::wire::Costing;
-use gt_snap::{DEFAULT_SERVER_URL, transport};
-
-/// The [`SnapParams`] every scenario in this file runs with: default advanced
-/// options, auto costing.
-fn auto_params() -> SnapParams {
-    SnapParams::new(Costing::Auto)
-}
-
-fn capture_body(name: &str) -> Result<String, String> {
-    let path = gt_snap::captures_dir().join(name);
-    fs::read_to_string(&path).map_err(|err| format!("reading {}: {err}", path.display()))
-}
+use gt_snap::{DEFAULT_SERVER_URL, test_util, transport};
 
 fn ok(body: String) -> TransportResponse<String> {
-    test_util::response(200, body)
+    fetch_test_util::response(200, body)
 }
 
 fn status(code: u16, body: &str) -> TransportResponse<String> {
-    test_util::response(code, body)
+    fetch_test_util::response(code, body)
 }
 
 fn connection_reset() -> TransportResponse<String> {
-    test_util::transport_error("connection reset")
+    fetch_test_util::transport_error("connection reset")
 }
 
 #[test]
 fn captured_success_body_classifies_and_merges_end_to_end() {
     // The captured `partially_snappable` response has 20 matched points, so a
     // 20-point plan is one chunk.
-    let plan = support::plan_of(&points(20));
-    let transport = ScriptedTransport::in_order(vec![ok(capture_body(
+    let plan = test_util::plan_of(&test_util::points(20));
+    let transport = ScriptedTransport::in_order(vec![ok(test_util::read_capture(
         "partially_snappable.response.json",
     )
     .expect("capture"))]);
@@ -55,7 +38,7 @@ fn captured_success_body_classifies_and_merges_end_to_end() {
         &transport,
         DEFAULT_SERVER_URL,
         &plan,
-        &auto_params(),
+        &SnapParams::new(Costing::Auto),
         |done, total| {
             progress.push((done, total));
         },
@@ -76,22 +59,22 @@ fn merge_all(
     outcomes: &[ChunkOutcome],
     reporter: &SnapWarningReporter,
 ) -> gt_snap::merge::SnapResult {
-    gt_snap::merge::merge(plan, auto_params(), outcomes, reporter)
+    gt_snap::merge::merge(plan, SnapParams::new(Costing::Auto), outcomes, reporter)
 }
 
 #[test]
 fn off_network_error_becomes_off_network_outcome_without_retry() {
-    let plan = support::plan_of(&points(10));
+    let plan = test_util::plan_of(&test_util::points(10));
     let transport = ScriptedTransport::in_order(vec![status(
         400,
-        &capture_body("unsnappable.response.json").expect("capture"),
+        &test_util::read_capture("unsnappable.response.json").expect("capture"),
     )]);
 
     let outcomes = transport::send_plan(
         &transport,
         DEFAULT_SERVER_URL,
         &plan,
-        &auto_params(),
+        &SnapParams::new(Costing::Auto),
         |_, _| {},
     );
 
@@ -101,17 +84,17 @@ fn off_network_error_becomes_off_network_outcome_without_retry() {
 
 #[test]
 fn deterministic_client_error_fails_without_retry() {
-    let plan = support::plan_of(&points(10));
+    let plan = test_util::plan_of(&test_util::points(10));
     let transport = ScriptedTransport::in_order(vec![status(
         400,
-        &capture_body("bad_request.response.json").expect("capture"),
+        &test_util::read_capture("bad_request.response.json").expect("capture"),
     )]);
 
     let outcomes = transport::send_plan(
         &transport,
         DEFAULT_SERVER_URL,
         &plan,
-        &auto_params(),
+        &SnapParams::new(Costing::Auto),
         |_, _| {},
     );
 
@@ -123,17 +106,17 @@ fn deterministic_client_error_fails_without_retry() {
 
 #[test]
 fn html_error_body_fails_without_retry() {
-    let plan = support::plan_of(&points(10));
+    let plan = test_util::plan_of(&test_util::points(10));
     let transport = ScriptedTransport::in_order(vec![status(
         413,
-        &capture_body("too_large_body.response.json").expect("capture"),
+        &test_util::read_capture("too_large_body.response.json").expect("capture"),
     )]);
 
     let outcomes = transport::send_plan(
         &transport,
         DEFAULT_SERVER_URL,
         &plan,
-        &auto_params(),
+        &SnapParams::new(Costing::Auto),
         |_, _| {},
     );
 
@@ -145,17 +128,17 @@ fn html_error_body_fails_without_retry() {
 
 #[test]
 fn transient_transport_failure_gets_one_retry_then_succeeds() {
-    let plan = support::plan_of(&points(10));
+    let plan = test_util::plan_of(&test_util::points(10));
     let transport = ScriptedTransport::in_order(vec![
         connection_reset(),
-        ok(capture_body("clean_drive.response.json").expect("capture")),
+        ok(test_util::read_capture("clean_drive.response.json").expect("capture")),
     ]);
 
     let outcomes = transport::send_plan(
         &transport,
         DEFAULT_SERVER_URL,
         &plan,
-        &auto_params(),
+        &SnapParams::new(Costing::Auto),
         |_, _| {},
     );
 
@@ -165,7 +148,7 @@ fn transient_transport_failure_gets_one_retry_then_succeeds() {
 
 #[test]
 fn server_error_gets_one_retry_then_fails() {
-    let plan = support::plan_of(&points(10));
+    let plan = test_util::plan_of(&test_util::points(10));
     let transport = ScriptedTransport::in_order(vec![
         status(503, "upstream overloaded"),
         status(503, "upstream overloaded"),
@@ -175,7 +158,7 @@ fn server_error_gets_one_retry_then_fails() {
         &transport,
         DEFAULT_SERVER_URL,
         &plan,
-        &auto_params(),
+        &SnapParams::new(Costing::Auto),
         |_, _| {},
     );
 
@@ -187,12 +170,12 @@ fn server_error_gets_one_retry_then_fails() {
 
 #[test]
 fn failed_chunk_does_not_stop_later_chunks() {
-    let plan = support::plan_of(&points(CHUNK_POINTS + 1));
+    let plan = test_util::plan_of(&test_util::points(CHUNK_POINTS + 1));
     assert_eq!(plan.chunks.len(), 2, "precondition");
     let transport = ScriptedTransport::in_order(vec![
         connection_reset(),
         connection_reset(),
-        ok(capture_body("clean_drive.response.json").expect("capture")),
+        ok(test_util::read_capture("clean_drive.response.json").expect("capture")),
     ]);
 
     let mut progress = Vec::new();
@@ -200,7 +183,7 @@ fn failed_chunk_does_not_stop_later_chunks() {
         &transport,
         DEFAULT_SERVER_URL,
         &plan,
-        &auto_params(),
+        &SnapParams::new(Costing::Auto),
         |done, total| {
             progress.push((done, total));
         },
@@ -214,14 +197,14 @@ fn failed_chunk_does_not_stop_later_chunks() {
 
 #[test]
 fn unparsable_success_body_is_a_failure() {
-    let plan = support::plan_of(&points(10));
+    let plan = test_util::plan_of(&test_util::points(10));
     let transport = ScriptedTransport::in_order(vec![status(200, "not json")]);
 
     let outcomes = transport::send_plan(
         &transport,
         DEFAULT_SERVER_URL,
         &plan,
-        &auto_params(),
+        &SnapParams::new(Costing::Auto),
         |_, _| {},
     );
 
@@ -237,12 +220,18 @@ proptest::proptest! {
     /// else, mirroring the shape-decoder fuzz tests.
     #[test]
     fn arbitrary_responses_never_panic(code in proptest::prelude::any::<u16>(), body in ".{0,512}") {
-        let plan = support::plan_of(&points(5));
+        let plan = test_util::plan_of(&test_util::points(5));
         let transport = ScriptedTransport::in_order(vec![
             status(code, &body),
             status(code, &body), // a transient classification retries once
         ]);
-        let outcomes = transport::send_plan(&transport, DEFAULT_SERVER_URL, &plan, &auto_params(), |_, _| {});
+        let outcomes = transport::send_plan(
+            &transport,
+            DEFAULT_SERVER_URL,
+            &plan,
+            &SnapParams::new(Costing::Auto),
+            |_, _| {},
+        );
         proptest::prop_assert_eq!(outcomes.len(), plan.chunks.len());
     }
 }
@@ -254,13 +243,13 @@ fn an_offline_plan_fails_every_chunk() {
     let transport = TransportSource::Offline
         .connect(None)
         .expect("the offline source connects");
-    let plan = support::plan_of(&points(10));
+    let plan = test_util::plan_of(&test_util::points(10));
 
     let outcomes = transport::send_plan(
         &transport,
         DEFAULT_SERVER_URL,
         &plan,
-        &auto_params(),
+        &SnapParams::new(Costing::Auto),
         |_, _| {},
     );
     assert_eq!(outcomes.len(), plan.chunks.len());

@@ -86,6 +86,17 @@ fn acceleration_units_and_kmh_alias(#[case] src: &str, #[case] error: Option<&st
     }
 }
 
+/// A diagnostic's span is a byte range. The two-byte superscripts earlier in
+/// the query do not shift it.
+#[test]
+fn a_diagnostic_span_covers_the_offending_bytes() {
+    let src = "points | where velocity² > velocity² and eph > 3 s";
+    let error = parse(src)
+        .and_then(|query| test_util::chk(&query).map(|_checked| ()))
+        .expect_err(src);
+    assert_eq!(src.get(error.span.start..error.span.end), Some("3 s"));
+}
+
 #[test]
 fn error_catalog() {
     // One snapshot over every distinct diagnostic, so any wording or span

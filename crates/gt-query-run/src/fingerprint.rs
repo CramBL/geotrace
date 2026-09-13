@@ -131,7 +131,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::test_fixtures::{file_with_channels, loaded_file};
+    use crate::test_util;
 
     #[test]
     fn fingerprint_changes_with_files_visibility_and_filter() {
@@ -163,7 +163,7 @@ mod tests {
     #[test]
     fn fingerprint_tracks_snap_run_identity() {
         let mut loaded_files = LoadedFiles::new();
-        loaded_files.push(loaded_file(), FileHistory::None);
+        loaded_files.push(test_util::loaded_file(), FileHistory::None);
         let visibility = TrackDataVisibility::from_loaded(loaded_files.files());
         let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
         let fingerprint = |snap_errors: &SnapErrorValues| {
@@ -194,7 +194,7 @@ mod tests {
     #[test]
     fn fingerprint_lists_the_evaluated_tracks() {
         let mut loaded_files = LoadedFiles::new();
-        loaded_files.push(file_with_channels(vec![]), FileHistory::None);
+        loaded_files.push(test_util::file_with_channels(vec![]), FileHistory::None);
         let visibility = TrackDataVisibility::from_loaded(loaded_files.files());
         let fingerprint = RunFingerprint::of(RunInputs {
             loaded_files: loaded_files.view(),
@@ -257,7 +257,7 @@ mod tests {
         #[case] series_of: fn(TrackRef, f64) -> ArchivedSeries,
     ) {
         let mut loaded_files = LoadedFiles::new();
-        loaded_files.push(loaded_file(), FileHistory::None);
+        loaded_files.push(test_util::loaded_file(), FileHistory::None);
         let visibility = TrackDataVisibility::from_loaded(loaded_files.files());
         let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
         let fingerprint = |series: &ArchivedSeries| {

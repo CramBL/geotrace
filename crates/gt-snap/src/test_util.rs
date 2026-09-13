@@ -1,14 +1,20 @@
-//! Shared fixture construction for the gt-snap integration test binaries.
+//! Fixtures for the gt-snap tests: nav points from the capture harness's base
+//! time, their request plan, and readers for the captured responses under
+//! `tests/captures/`.
+//!
+//! The integration test binaries reach it as `gt_snap::test_util`, through the
+//! `test-util` feature gt-snap's dev-dependency on itself enables.
 
-// Each test binary compiles this module independently and uses a different
-// subset, so "unused" here only means "unused by this binary".
-#![allow(dead_code, reason = "shared across binaries with different needs")]
+use std::fs;
 
 use chrono::{DateTime, Utc};
-
-use gt_snap::request_plan::{self, RequestPlan};
+use geo_types::LineString;
 use gt_test_utils::fixtures::{self, FixKind, NavPointSpec};
 use gt_types::nav_point::NavPoint;
+
+use crate::request_plan::{self, RequestPlan};
+use crate::snapped_track::SHAPE_POLYLINE_PRECISION;
+use crate::wire::TraceAttributesResponse;
 
 /// 2026-01-01T12:00:00Z, matching the capture harness's fixed base time.
 /// (The epoch fallback is unreachable for this valid constant and would
@@ -64,4 +70,22 @@ pub fn points_with_ghosts_at(count: usize, ghosts: &[usize]) -> Vec<NavPoint> {
 pub fn plan_of(points: &[NavPoint]) -> RequestPlan {
     let track = gt_test_utils::loaded_track_with_points(points.to_vec());
     request_plan::plan(track.placed_points().unwrap_or_default())
+}
+
+pub fn read_capture(name: &str) -> Result<String, String> {
+    let path = crate::captures_dir().join(name);
+    fs::read_to_string(&path).map_err(|err| format!("reading {}: {err}", path.display()))
+}
+
+pub fn captured_response(scenario: &str) -> Result<TraceAttributesResponse, String> {
+    let body = read_capture(&format!("{scenario}.response.json"))?;
+    serde_json::from_str(&body).map_err(|err| format!("{scenario}: {err}"))
+}
+
+/// Four positions about 110 m apart along the 12°E meridian, encoded at
+/// [`SHAPE_POLYLINE_PRECISION`].
+pub fn four_position_shape() -> Result<String, String> {
+    let line: LineString<f64> =
+        vec![(12.0, 55.0), (12.0, 55.001), (12.0, 55.002), (12.0, 55.003)].into();
+    polyline::encode_coordinates(line, SHAPE_POLYLINE_PRECISION).map_err(|err| err.to_string())
 }

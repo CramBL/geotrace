@@ -37,8 +37,8 @@ mod results;
 mod run;
 mod schema;
 mod session;
-#[cfg(test)]
-mod test_fixtures;
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
 
 pub use check::{QueryChunk, analysis_context, check_all, check_text, split_queries};
 pub use fingerprint::{JammingValues, RunFingerprint, RunInputs, SnapErrorValues};

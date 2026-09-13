@@ -11,19 +11,14 @@ use std::fs;
 
 use serde_json::Value;
 
-use gt_snap::{CAPTURE_SCENARIOS, DEFAULT_SERVER_URL};
+use gt_snap::{CAPTURE_SCENARIOS, DEFAULT_SERVER_URL, test_util};
 
 /// The one scenario whose response is deliberately not JSON: the reverse
 /// proxy's HTML 413 page.
 const HTML_RESPONSE_SCENARIO: &str = "too_large_body";
 
-fn read_capture(name: &str) -> Result<String, String> {
-    let path = gt_snap::captures_dir().join(name);
-    fs::read_to_string(&path).map_err(|err| format!("reading {}: {err}", path.display()))
-}
-
 fn parse_json(name: &str) -> Result<Value, String> {
-    serde_json::from_str(&read_capture(name)?).map_err(|err| format!("{name}: {err}"))
+    serde_json::from_str(&test_util::read_capture(name)?).map_err(|err| format!("{name}: {err}"))
 }
 
 #[test]
@@ -35,8 +30,8 @@ fn every_scenario_has_a_valid_pair() {
             "{scenario} request must be a JSON object"
         );
 
-        let response =
-            read_capture(&format!("{scenario}.response.json")).expect("response capture");
+        let response = test_util::read_capture(&format!("{scenario}.response.json"))
+            .expect("response capture");
         if scenario == HTML_RESPONSE_SCENARIO {
             assert!(
                 serde_json::from_str::<Value>(&response).is_err(),

@@ -655,11 +655,7 @@ mod tests {
     use super::*;
     use crate::check::check_text;
     use crate::schema::schema_from_files;
-    use crate::test_fixtures::{
-        FixClocksMicros, TEST_EPOCH, file_with_channels, points_at_millis,
-        points_at_recorded_coordinates, points_stamped_by_both_clocks, rng, scalar_channel,
-        test_points, vector_channel,
-    };
+    use crate::test_util::{self, FixClocksMicros, TEST_EPOCH};
 
     /// The points of a track from the second one on, as a window starting at
     /// the second point's timestamp selects them.
@@ -681,7 +677,7 @@ mod tests {
 
     #[test]
     fn provider_maps_metrics_to_base_units() {
-        let points = test_points();
+        let points = test_util::test_points();
         let util = UtilPerPoint {
             gps: vec![Some(50.0), None],
             ..UtilPerPoint::default()
@@ -787,7 +783,7 @@ mod tests {
         #[case] lon_degrees: f64,
         #[case] expected: f64,
     ) {
-        let points = points_at_recorded_coordinates(&[(
+        let points = test_util::points_at_recorded_coordinates(&[(
             RecordedLatitude::from_degrees(lat_degrees),
             RecordedLongitude::from_degrees(lon_degrees),
         )]);
@@ -803,7 +799,7 @@ mod tests {
     /// coordinate match. The fixes between them do not.
     #[test]
     fn invalid_coordinates_matches_the_out_of_range_fixes_end_to_end() {
-        let points = points_at_recorded_coordinates(&[
+        let points = test_util::points_at_recorded_coordinates(&[
             in_range(),
             (
                 RecordedLatitude::from_degrees(f64::NAN),
@@ -830,7 +826,10 @@ mod tests {
             }],
         );
 
-        assert_eq!(output.matches[0].ranges, vec![rng(1, 2), rng(3, 4)]);
+        assert_eq!(
+            output.matches[0].ranges,
+            vec![test_util::rng(1, 2), test_util::rng(3, 4)]
+        );
     }
 
     /// The metric's documented windowed example: the union of the matching
@@ -843,7 +842,7 @@ mod tests {
             RecordedLatitude::from_degrees(91.0),
             RecordedLongitude::from_degrees(12.25),
         );
-        let points = points_at_recorded_coordinates(&coordinates);
+        let points = test_util::points_at_recorded_coordinates(&coordinates);
         let query = check_text(
             "points | window 10 | where max(invalid_coordinates) > 0",
             &schema_from_files(&[]),
@@ -859,12 +858,15 @@ mod tests {
             }],
         );
 
-        assert_eq!(output.matches[0].ranges, vec![rng(2, POINT_COUNT)]);
+        assert_eq!(
+            output.matches[0].ranges,
+            vec![test_util::rng(2, POINT_COUNT)]
+        );
     }
 
     #[test]
     fn the_time_metric_keeps_the_sub_second_fraction_of_a_fix() {
-        let points = points_at_millis(&[0, 500]);
+        let points = test_util::points_at_millis(&[0, 500]);
         let provider = TrackProvider::new(&points, &[], None);
 
         assert_eq!(
@@ -879,7 +881,7 @@ mod tests {
 
     #[test]
     fn the_sys_time_metric_keeps_the_microseconds_of_a_host_timestamp() {
-        let points = points_stamped_by_both_clocks(&[FixClocksMicros {
+        let points = test_util::points_stamped_by_both_clocks(&[FixClocksMicros {
             receiver: 0,
             host: 1_500,
         }]);
@@ -893,7 +895,7 @@ mod tests {
 
     #[test]
     fn the_clock_delta_metric_keeps_the_microseconds_of_the_offset() {
-        let points = points_stamped_by_both_clocks(&[FixClocksMicros {
+        let points = test_util::points_stamped_by_both_clocks(&[FixClocksMicros {
             receiver: 1_500,
             host: 0,
         }]);
@@ -907,7 +909,7 @@ mod tests {
     /// and never triggers an upload.
     #[test]
     fn snap_error_is_absent_without_a_run() {
-        let points = test_points();
+        let points = test_util::test_points();
         let provider = TrackProvider::new(&points, &[], None);
         assert_eq!(provider.value(QueryMetric::SnapError, 0), None);
         assert_eq!(provider.value(QueryMetric::SnapError, 1), None);
@@ -918,7 +920,7 @@ mod tests {
     /// period matches, so the index is what narrows the result.
     #[test]
     fn a_storm_and_slip_correlation_checks_and_runs_end_to_end() {
-        let points = test_points();
+        let points = test_util::test_points();
         let data = TrackQueryData {
             geomagnetic: Some(Arc::new(vec![
                 GeomagneticPoint {
@@ -965,7 +967,7 @@ mod tests {
     /// matches, so the metric is what narrows the result.
     #[test]
     fn a_tec_and_slip_correlation_checks_and_runs_end_to_end() {
-        let points = test_points();
+        let points = test_util::test_points();
         let data = TrackQueryData {
             tec: Some(Arc::new(vec![
                 TecPoint {
@@ -1007,7 +1009,7 @@ mod tests {
 
     #[test]
     fn slice_provider_offsets_and_bounds() {
-        let points = test_points();
+        let points = test_util::test_points();
         let slice = SliceProvider::new(
             TrackProvider::new(&points, &[], None),
             from_the_second_point(&points),
@@ -1061,13 +1063,13 @@ mod tests {
         // to base m/s2 and keeps only those whose absolute time lands in the
         // span.
         let base = TEST_EPOCH as f64;
-        let accel = scalar_channel(
+        let accel = test_util::scalar_channel(
             "accel",
             Some("g"),
             &[(0, 1.0), (1, 1.5), (2, 2.0), (3, 0.5)],
         );
         let channels = [accel];
-        let points = test_points();
+        let points = test_util::test_points();
         let provider = TrackProvider::new(&points, &channels, None);
 
         let got = provider.channel_span("accel", base, base + 2.0);
@@ -1087,14 +1089,14 @@ mod tests {
         // A vector channel returns row-major values, all columns per row, each
         // converted to base. An unknown channel returns a span with no values.
         let base = TEST_EPOCH as f64;
-        let accel = vector_channel(
+        let accel = test_util::vector_channel(
             "accel",
             Some("g"),
             &["x", "y", "z"],
             &[(0, [1.0, 2.0, 3.0]), (1, [1.1, 2.2, 3.3])],
         );
         let channels = [accel];
-        let points = test_points();
+        let points = test_util::test_points();
         let provider = TrackProvider::new(&points, &channels, None);
 
         let g = Unit::G.to_base();
@@ -1122,7 +1124,7 @@ mod tests {
         #[case] stored_order_is_chronological: bool,
     ) {
         let samples: Vec<(i64, f64)> = offsets_secs.iter().map(|&secs| (secs, 1.0)).collect();
-        let channel = scalar_channel("sensor", None, &samples);
+        let channel = test_util::scalar_channel("sensor", None, &samples);
 
         let order = ChannelSampleOrder::of(&channel);
 
@@ -1135,7 +1137,7 @@ mod tests {
     #[test]
     fn a_span_of_an_out_of_order_channel_yields_whole_rows_in_timestamp_order() {
         let base = TEST_EPOCH as f64;
-        let accel = vector_channel(
+        let accel = test_util::vector_channel(
             "accel",
             None,
             &["x", "y", "z"],
@@ -1146,7 +1148,7 @@ mod tests {
             ],
         );
         let channels = [accel];
-        let points = test_points();
+        let points = test_util::test_points();
         let provider = TrackProvider::new(&points, &channels, None);
 
         let got = provider.channel_span("accel", base, base + 1.0);
@@ -1162,8 +1164,8 @@ mod tests {
     #[case::stored_out_of_time_order(&[(2, 2.0), (0, 0.0), (1, 1.0)])]
     fn a_timed_span_has_the_timestamp_of_every_sample_of_the_span(#[case] samples: &[(i64, f64)]) {
         let base = TEST_EPOCH as f64;
-        let channels = [scalar_channel("accel", Some("g"), samples)];
-        let points = test_points();
+        let channels = [test_util::scalar_channel("accel", Some("g"), samples)];
+        let points = test_util::test_points();
         let provider = TrackProvider::new(&points, &channels, None);
 
         let timeline = provider.channel_span_timeline("accel", base, base + 1.0);
@@ -1180,8 +1182,8 @@ mod tests {
 
     #[test]
     fn a_timed_span_of_an_unknown_channel_is_empty() {
-        let channels = [scalar_channel("accel", Some("g"), &[(0, 1.0)])];
-        let points = test_points();
+        let channels = [test_util::scalar_channel("accel", Some("g"), &[(0, 1.0)])];
+        let points = test_util::test_points();
         let provider = TrackProvider::new(&points, &channels, None);
 
         let timeline = provider.channel_span_timeline("missing", 0.0, f64::MAX);
@@ -1195,8 +1197,8 @@ mod tests {
     #[test]
     fn a_provider_given_channels_reads_them() {
         let base = TEST_EPOCH as f64;
-        let channels = [scalar_channel("accel", Some("g"), &[(0, 1.0)])];
-        let points = test_points();
+        let channels = [test_util::scalar_channel("accel", Some("g"), &[(0, 1.0)])];
+        let points = test_util::test_points();
         let without = TrackProvider::new(&points, &[], None);
 
         assert!(without.channel_timeline("accel").times.is_empty());
@@ -1215,9 +1217,9 @@ mod tests {
         // Channels are absolute-time-keyed, so a SliceProvider selects the same
         // samples as its inner provider regardless of the point-index start.
         let base = TEST_EPOCH as f64;
-        let accel = scalar_channel("accel", Some("g"), &[(0, 1.0), (1, 1.5), (2, 2.0)]);
+        let accel = test_util::scalar_channel("accel", Some("g"), &[(0, 1.0), (1, 1.5), (2, 2.0)]);
         let channels = [accel];
-        let points = test_points();
+        let points = test_util::test_points();
         let inner = TrackProvider::new(&points, &channels, None);
         let slice = SliceProvider::new(inner.clone(), from_the_second_point(&points));
 
@@ -1241,9 +1243,9 @@ mod tests {
         // The channel-source timeline carries every sample's time and value,
         // converted to base units (g -> m/s2), independent of the point slice.
         let base = TEST_EPOCH as f64;
-        let accel = scalar_channel("accel", Some("g"), &[(0, 1.0), (1, 2.0)]);
+        let accel = test_util::scalar_channel("accel", Some("g"), &[(0, 1.0), (1, 2.0)]);
         let channels = [accel];
-        let points = test_points();
+        let points = test_util::test_points();
         let provider = TrackProvider::new(&points, &channels, None);
 
         let timeline = provider.channel_timeline("accel");
@@ -1260,7 +1262,7 @@ mod tests {
     #[test]
     fn a_slice_provider_drops_a_vector_sample_outside_the_time_window_row_by_row() {
         let base = TEST_EPOCH as f64;
-        let channels = [vector_channel(
+        let channels = [test_util::vector_channel(
             "accel",
             None,
             &["x", "y", "z"],
@@ -1270,7 +1272,7 @@ mod tests {
                 (2, [2.0, 2.1, 2.2]),
             ],
         )];
-        let points = points_at_millis(&[0, 1_000, 2_000]);
+        let points = test_util::points_at_millis(&[0, 1_000, 2_000]);
         let filter = GlobalFilter {
             time_start: DateTime::from_timestamp(TEST_EPOCH + 2, 0),
             ..GlobalFilter::default()
@@ -1293,8 +1295,12 @@ mod tests {
     #[test]
     fn a_slice_provider_keeps_a_channel_sample_the_window_covers_without_a_point() {
         let base = TEST_EPOCH as f64;
-        let channels = [scalar_channel("sensor", None, &[(0, 0.0), (5, 5.0)])];
-        let points = points_at_millis(&[0, 1_000]);
+        let channels = [test_util::scalar_channel(
+            "sensor",
+            None,
+            &[(0, 0.0), (5, 5.0)],
+        )];
+        let points = test_util::points_at_millis(&[0, 1_000]);
         let filter = GlobalFilter {
             time_start: DateTime::from_timestamp(TEST_EPOCH + 4, 0),
             ..GlobalFilter::default()
@@ -1314,11 +1320,11 @@ mod tests {
     /// same channel. Every case has exactly one sample above its threshold.
     #[rstest]
     #[case::a_scalar_channel(
-        scalar_channel("accel", Some("g"), &[(0, 0.9), (1, 1.5)]),
+        test_util::scalar_channel("accel", Some("g"), &[(0, 0.9), (1, 1.5)]),
         "points | window 2 | where max(@accel) > 1 g"
     )]
     #[case::a_vector_component(
-        vector_channel(
+        test_util::vector_channel(
             "accel",
             Some("g"),
             &["x", "y", "z"],
@@ -1327,7 +1333,7 @@ mod tests {
         "points | window 2 | where max(@accel.y) > 1 g"
     )]
     #[case::an_si_prefix_on_both_sides(
-        vector_channel(
+        test_util::vector_channel(
             "accel",
             Some("mg"),
             &["x", "y", "z"],
@@ -1336,7 +1342,7 @@ mod tests {
         "points | window 2 | where max(@accel.x) > 50 mg"
     )]
     #[case::the_norm_of_a_vector(
-        vector_channel(
+        test_util::vector_channel(
             "accel",
             Some("g"),
             &["x", "y", "z"],
@@ -1348,11 +1354,11 @@ mod tests {
         #[case] channel: Channel,
         #[case] text: &str,
     ) {
-        let files = [file_with_channels(vec![channel.clone()])];
+        let files = [test_util::file_with_channels(vec![channel.clone()])];
         let schema = schema_from_files(&files);
         let query = check_text(text, &schema).expect("checks against the loaded schema");
 
-        let points = test_points();
+        let points = test_util::test_points();
         let channels = [channel];
         let provider = TrackProvider::new(&points, &channels, None);
         let output = gt_query::run(
@@ -1371,13 +1377,13 @@ mod tests {
     /// Both labels measure the same quantity.
     #[test]
     fn a_channel_unit_checks_against_a_literal_of_another_si_prefix() {
-        let channel = vector_channel(
+        let channel = test_util::vector_channel(
             "accel",
             Some("mg"),
             &["x", "y", "z"],
             &[(0, [20.0, 0.0, 0.0]), (1, [80.0, 0.0, 0.0])],
         );
-        let schema = schema_from_files(&[file_with_channels(vec![channel])]);
+        let schema = schema_from_files(&[test_util::file_with_channels(vec![channel])]);
 
         check_text("points | window 2 | where max(@accel.x) > 0.05 g", &schema)
             .expect("an mg channel compares to a g literal");
@@ -1389,12 +1395,12 @@ mod tests {
     #[test]
     fn a_channel_span_holds_only_the_samples_inside_it_when_the_file_stored_them_out_of_order() {
         let base = TEST_EPOCH as f64;
-        let channels = [scalar_channel(
+        let channels = [test_util::scalar_channel(
             "sensor",
             None,
             &[(0, 0.0), (2, 20.0), (1, 10.0)],
         )];
-        let points = test_points();
+        let points = test_util::test_points();
         let provider = TrackProvider::new(&points, &channels, None);
 
         let span = provider.channel_span("sensor", base + 0.5, base + 1.5);
