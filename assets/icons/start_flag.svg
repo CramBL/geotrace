@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 24">
+  <!-- Start flag: a bottom-anchored instance puts the pole's foot on the fix
+       and the cloth above the track line. The pole stands at x=2 with its
+       foot on the bottom edge of the viewbox (see gt_map's
+       FLAG_HALF_EXTENTS_PT and FLAG_ANCHOR_OFFSET_PT). The cloth matches
+       finish_flag.svg's, which reads the two as a pair.
+       The cloth is white and takes the primary tint, which the renderer sets
+       to the theme's start green. The pole and the cloth's outline take the
+       secondary tint under id="tint2", which the renderer sets to white, or
+       to the highlight blue on a highlighted track (see
+       gt-icon-tessellate). -->
+  <path d="M 2 2 H 16 V 12.5 H 2 Z" fill="white"/>
+  <path id="tint2" d="M 2 2 V 24" fill="none" stroke="white" stroke-width="2"/>
+  <path id="tint2" d="M 2 2 H 16 V 12.5 H 2 Z" fill="none" stroke="white"
+        stroke-width="1" stroke-linejoin="miter"/>
+</svg>

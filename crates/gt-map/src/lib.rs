@@ -26,6 +26,7 @@ pub mod test_tiles;
 #[cfg(any(test, feature = "test-util"))]
 pub mod test_util;
 pub mod tpv_renderer;
+mod track_endpoint_renderer;
 mod track_layers;
 pub mod track_renderer;
 mod transform;

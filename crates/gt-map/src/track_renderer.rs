@@ -42,14 +42,16 @@ pub(crate) const FOCUS_SCRIM_MAX_ALPHA_DARK: f32 = 0.3;
 /// Dimming of non-focused tracks is handled by the fade overlay in
 /// [`crate::track_layers`], not by modifying the stroke color here.
 pub(crate) fn track_stroke(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) -> Stroke {
-    if is_trip_highlighted(highlight, fi, ti) {
+    if is_track_highlighted(highlight, fi, ti) {
         Stroke::new(4.0_f32, HIGHLIGHT_BLUE)
     } else {
         Stroke::new(3.0_f32, track_color(fi.as_usize(), ti.as_usize()))
     }
 }
 
-fn is_trip_highlighted(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) -> bool {
+/// Whether the map draws `ti` as the highlighted track: the pointer is on it
+/// or on its recording, or it is the sticky selection's track.
+pub(crate) fn is_track_highlighted(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) -> bool {
     let track = TrackRef::new(fi, ti);
     if highlight.sticky.is_some_and(|r| r.track == track) {
         return true;

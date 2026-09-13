@@ -14,7 +14,7 @@ use rustc_hash::FxHashMap;
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::collision_grid;
-use crate::icon_mesh::IconMeshLibrary;
+use crate::icon_mesh::{IconMeshBatch, IconMeshLibrary};
 use crate::match_reveal::HaloStyle;
 use crate::polyline::{CULL_MARGIN_PX, VisiblePath, visible_path};
 use crate::query_match_renderer;
@@ -24,6 +24,7 @@ use crate::tpv_renderer::{
     self, ChevronFix, QUALITY_LINE_WIDTH, TpvDrawStyle, TrackIconFade, bucket_alpha,
     fix_icon_alpha, line_alpha_bucket, quality_line_color,
 };
+use crate::track_endpoint_renderer::{DrawnTrackEnds, FlagStyle};
 use crate::track_renderer::{
     self, blink_stroke, draw_track_with_ghost, skip_trackline, track_stroke,
 };
@@ -688,7 +689,47 @@ impl<'a> TrackLayers<'a> {
             if let Some(label_indices) = sat_labels.get(i) {
                 tpv_renderer::draw_sat_labels(ui, geo.track, label_indices, style, transform);
             }
+            self.paint_endpoint_flags(ui, geo, icon_view_rect, transform);
         }
+    }
+
+    /// Paint the flags at the ends of a track, above its arrows, chevrons and
+    /// labels.
+    ///
+    /// Every drawn track shows them, at every zoom: a track whose fix icons
+    /// have all given way to the quality line still says where it starts and
+    /// where it ends. The highlighted track's flags draw larger and outlined
+    /// in the highlight blue, which picks them out among the rest.
+    ///
+    /// The fade is this pass's own: a non-focused track's flags go under the
+    /// fade overlay with its arrows and labels, painted in the same phase.
+    ///
+    /// A track whose whole line draws as one dot shows the start flag alone.
+    fn paint_endpoint_flags(
+        &self,
+        ui: &Ui,
+        geo: &TrackGeometry<'_>,
+        view_rect: egui::Rect,
+        transform: &MercTransform,
+    ) {
+        let Some(placed) = geo.track.placed_points() else {
+            return;
+        };
+        let Some(ends) = DrawnTrackEnds::of(placed, self.filter) else {
+            return;
+        };
+        let ends = match geo.path {
+            VisiblePath::Dot(_, _) => ends.collapsed_to_the_start(),
+            VisiblePath::OffScreen | VisiblePath::Spans(_) => ends,
+        };
+        let style = FlagStyle {
+            view_rect,
+            dark_mode: ui.visuals().dark_mode,
+            highlighted: track_renderer::is_track_highlighted(self.highlight, geo.fi, geo.ti),
+        };
+        let mut batch = IconMeshBatch::gpu_when_available(ui, self.icon_meshes);
+        ends.push_flags(&mut batch, style, transform);
+        batch.paint(ui.painter());
     }
 }
 

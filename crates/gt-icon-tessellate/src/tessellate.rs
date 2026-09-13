@@ -488,13 +488,14 @@ mod tests {
 
     /// Every icon asset, sorted. Kept in sync with `assets/icons/` by
     /// [`icon_names_match_assets_dir`]. The rstest cases below must mirror it.
-    const ICON_NAMES: [&str; 18] = [
+    const ICON_NAMES: [&str; 20] = [
         "check",
         "circle_marker",
         "connection_lost",
         "cross",
         "download",
         "error",
+        "finish_flag",
         "gear",
         "ghost_fix",
         "hexagon",
@@ -504,6 +505,7 @@ mod tests {
         "refresh",
         "satellite",
         "satellite_lost",
+        "start_flag",
         "upload",
         "warning",
         "wrench",
@@ -581,6 +583,7 @@ mod tests {
             #[case::cross("cross")]
             #[case::download("download")]
             #[case::error("error")]
+            #[case::finish_flag("finish_flag")]
             #[case::gear("gear")]
             #[case::ghost_fix("ghost_fix")]
             #[case::hexagon("hexagon")]
@@ -590,6 +593,7 @@ mod tests {
             #[case::refresh("refresh")]
             #[case::satellite("satellite")]
             #[case::satellite_lost("satellite_lost")]
+            #[case::start_flag("start_flag")]
             #[case::upload("upload")]
             #[case::warning("warning")]
             #[case::wrench("wrench")]

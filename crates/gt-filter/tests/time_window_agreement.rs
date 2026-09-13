@@ -1,9 +1,10 @@
 //! The global filter's time window, as the three readers of it must agree on
-//! it: the per-point predicate, the range form the query evaluates over, and
-//! the track-level clause the side panel and the map gate a whole track with.
+//! it: the per-point predicate, the range form the query and the map evaluate
+//! over, and the track-level clause the side panel and the map gate a whole
+//! track with.
 
 use chrono::{DateTime, Duration, Utc};
-use gt_filter::{GlobalFilter, point_passes_time_filter, time_filtered_range, track_passes_filter};
+use gt_filter::GlobalFilter;
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::time_types::GpsTime;
 use gt_types::tpv::TimePositionVelocity;
@@ -61,12 +62,12 @@ fn track_over(fixes: Vec<NavPoint>) -> LoadedTrack {
 fn fix_passes(fixes: &[NavPoint], index: usize, filter: &GlobalFilter) -> bool {
     fixes
         .get(index)
-        .is_some_and(|fix| point_passes_time_filter(fix.tpv.time().utc(), filter))
+        .is_some_and(|fix| gt_filter::point_passes_time_filter(fix.tpv.time().utc(), filter))
 }
 
 /// On time-ordered fixes the range covers exactly the fixes the per-point
-/// predicate keeps: the query evaluator, which slices by the range, reads
-/// exactly the fixes the map draws.
+/// predicate keeps: the query evaluator, which slices by the range, and the
+/// map, which reads the range's ends, take the fixes the map draws.
 #[test]
 fn the_filtered_range_agrees_with_the_point_predicate_on_time_ordered_fixes() {
     let fixes = fixes_at(&(0..8).map(at).collect::<Vec<_>>());
@@ -78,10 +79,14 @@ fn the_filtered_range_agrees_with_the_point_predicate_on_time_ordered_fixes() {
         window(None, Some(at(0) - Duration::hours(1))),
         window(Some(at(7) + Duration::hours(1)), None),
         window(Some(at(5)), Some(at(2))),
+        window(
+            Some(at(2) + Duration::milliseconds(200)),
+            Some(at(2) + Duration::milliseconds(800)),
+        ),
     ];
 
     for filter in filters {
-        let range = time_filtered_range(&fixes, &filter);
+        let range = gt_filter::time_filtered_range(&fixes, &filter);
         for index in 0..fixes.len() {
             assert_eq!(
                 range.contains(&index),
@@ -101,7 +106,7 @@ fn a_fix_after_a_backward_time_step_stays_inside_the_filtered_range() {
     let fixes = fixes_at(&[at(0), at(10), at(1)]);
     let filter = window(None, Some(at(5)));
 
-    let range = time_filtered_range(&fixes, &filter);
+    let range = gt_filter::time_filtered_range(&fixes, &filter);
 
     assert!(
         range.contains(&2),
@@ -116,7 +121,7 @@ fn a_fix_before_a_backward_time_step_stays_outside_the_filtered_range() {
     let fixes = fixes_at(&[at(10), at(1)]);
     let filter = window(None, Some(at(5)));
 
-    let range = time_filtered_range(&fixes, &filter);
+    let range = gt_filter::time_filtered_range(&fixes, &filter);
 
     assert!(
         !range.contains(&0),
@@ -143,7 +148,7 @@ fn both_ends_of_the_window_include_a_fix_stamped_exactly_on_them() {
         vec![false, true, true, false],
         "the window's ends are inclusive, and one nanosecond outside is not"
     );
-    assert_eq!(time_filtered_range(&fixes, &filter), 1..3);
+    assert_eq!(gt_filter::time_filtered_range(&fixes, &filter), 1..3);
 }
 
 /// A window of one instant keeps every fix stamped at that instant, however
@@ -159,7 +164,7 @@ fn a_window_of_one_instant_keeps_every_fix_stamped_at_it() {
         .collect();
 
     assert_eq!(kept, vec![false, true, true, true, false]);
-    assert_eq!(time_filtered_range(&fixes, &filter), 1..4);
+    assert_eq!(gt_filter::time_filtered_range(&fixes, &filter), 1..4);
 }
 
 /// An empty slice of fixes has no fix to select, whatever the window is.
@@ -167,7 +172,7 @@ fn a_window_of_one_instant_keeps_every_fix_stamped_at_it() {
 fn an_empty_track_yields_an_empty_filtered_range() {
     let filter = window(Some(at(10)), Some(at(20)));
 
-    assert_eq!(time_filtered_range(&[], &filter), 0..0);
+    assert_eq!(gt_filter::time_filtered_range(&[], &filter), 0..0);
 }
 
 /// The track-level clause reads the metadata's time range alone, so a track
@@ -183,7 +188,7 @@ fn a_track_passes_a_window_that_its_recording_gap_covers_entirely() {
         "the window is inside the gap, so it keeps no fix"
     );
 
-    assert!(track_passes_filter(&track, &filter));
+    assert!(gt_filter::track_passes_filter(&track, &filter));
 }
 
 /// A window whose start is after its end excludes every instant: the
@@ -200,7 +205,7 @@ fn an_inverted_window_rejects_a_track_no_fix_of_which_it_keeps() {
     );
 
     assert!(
-        !track_passes_filter(&track, &filter),
+        !gt_filter::track_passes_filter(&track, &filter),
         "the track passes a window that keeps none of its fixes"
     );
 }
