@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **Interface:** The file dialog offers an "All files" filter, which shows every file, including a log with no file extension.
+
 ### Changed
 
 - **Map & Tracks:** The satellite tables and the sky plot now show a satellite's SNR of ≈99 dB-Hz, the value some receivers send when they have no measurement, in its own violet colour.
