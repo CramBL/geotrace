@@ -13,6 +13,7 @@ using geotrace::Channel;
 using geotrace::EventMarker;
 using geotrace::FileBuilder;
 using geotrace::FixTime;
+using geotrace::NavFile;
 using geotrace::NavFix;
 using geotrace::Result;
 using geotrace::SatelliteReport;
@@ -126,4 +127,18 @@ TEST_CASE("FileBuilder throws std::out_of_range for a Timestamp of INT64_MIN mic
     CHECK(builder.status().code == GTD_ERR_OUT_OF_RANGE);
     CHECK(builder.status().description ==
           argument_name + ": " + INT64_MIN_MICROS_PAST_THE_RANGE_MESSAGE);
+}
+
+TEST_CASE("a nav fix before the epoch keeps both its timestamps through a write and a read") {
+    const Timestamp gps_time = Timestamp::from_seconds(-1'700'000'000);
+    const Timestamp sys_time = Timestamp::from_micros(-1'700'000'000'123'456);
+    const NavFix fix{FixTime::both(gps_time, sys_time), Angle::degrees(51.5), Angle::degrees(-0.1)};
+
+    const NavFile file = NavFile::from_bytes(FileBuilder{}.add_nav_fix(fix).finish().to_bytes());
+
+    const auto point = file.nav_point(0);
+    REQUIRE(point.gps_time.has_value());
+    REQUIRE(point.sys_time.has_value());
+    CHECK(point.gps_time->unix_micros == gps_time.unix_micros);
+    CHECK(point.sys_time->unix_micros == sys_time.unix_micros);
 }

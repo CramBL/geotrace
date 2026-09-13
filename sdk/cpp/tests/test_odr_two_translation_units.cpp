@@ -11,7 +11,8 @@ std::string header_values_from_first_translation_unit() {
     builder.add_nav_fix(
         geotrace::NavFix{geotrace::FixTime::receiver(geotrace::Timestamp{kOdrFixTimeMicros})});
     const geotrace::NavFile file = builder.finish();
-    const GtdTimestamp gps_time = geotrace::detail::to_c(file.nav_point(0).gps_time);
+    const GtdTimestamp gps_time =
+        geotrace::detail::to_c(file.nav_point(0).gps_time).value_or_throw();
     const geotrace::Result<geotrace::NavFile> missing =
         geotrace::NavFile::try_open(kOdrMissingFilePath);
     return std::to_string(file.nav_point_count()) + " " + std::to_string(gps_time.unix_micros) +
