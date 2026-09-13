@@ -279,21 +279,8 @@ fn a_supported_geotrace_version_reads(#[case] version: &str) {
 }
 
 fn make_file_with_version(version: &str) -> Vec<u8> {
-    let mut fb = FileBuilder::new();
+    let mut fb = test_util::file_with_an_empty_nav_points_group();
     fb.set_attr("geotrace_version", AttrValue::String(version.into()));
-    let mut np = fb.create_group("nav_points");
-    np.create_dataset("time")
-        .with_i64_data(&[])
-        .with_shape(&[0]);
-    np.create_dataset("lat").with_f64_data(&[]).with_shape(&[0]);
-    np.create_dataset("lon").with_f64_data(&[]).with_shape(&[0]);
-    np.create_dataset("heading")
-        .with_f64_data(&[])
-        .with_shape(&[0]);
-    np.create_dataset("speed_mps")
-        .with_f64_data(&[])
-        .with_shape(&[0]);
-    fb.add_group(np.finish());
     #[expect(clippy::expect_used, reason = "test helper")]
     fb.finish().expect("build")
 }
@@ -302,23 +289,9 @@ fn make_file_with_version(version: &str) -> Vec<u8> {
 /// with `STRSIZE = H5T_VARIABLE`.
 #[test]
 fn variable_length_string_attributes_are_read() -> Result<(), Box<dyn std::error::Error>> {
-    let mut fb = FileBuilder::new();
+    let mut fb = test_util::file_with_an_empty_nav_points_group();
     fb.set_attr("geotrace_version", AttrValue::VarLenString("1".into()));
     fb.set_attr("meta_title", AttrValue::VarLenString("Ride home".into()));
-
-    let mut np = fb.create_group("nav_points");
-    np.create_dataset("time")
-        .with_i64_data(&[])
-        .with_shape(&[0]);
-    np.create_dataset("lat").with_f64_data(&[]).with_shape(&[0]);
-    np.create_dataset("lon").with_f64_data(&[]).with_shape(&[0]);
-    np.create_dataset("heading")
-        .with_f64_data(&[])
-        .with_shape(&[0]);
-    np.create_dataset("speed_mps")
-        .with_f64_data(&[])
-        .with_shape(&[0]);
-    fb.add_group(np.finish());
 
     let mut channels = fb.create_group("channels");
     let mut accel = channels.create_group("accel");
