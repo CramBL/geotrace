@@ -88,6 +88,46 @@ def test_flags_an_aliased_function_under_its_alias(git_repository: GitRepository
 
 
 @pytest.mark.parametrize(
+    ("what", "source", "violation"),
+    [
+        (
+            "an argument",
+            "use crate::tpv_renderer::fix_count_color;\n"
+            "\n"
+            "fn cells(counts: &[u32]) {\n"
+            "    counts.iter().map(fix_count_color);\n"
+            "}\n",
+            "fix_count_color - use crate::tpv_renderer::fix_count_color;",
+        ),
+        (
+            "the left operand of a comparison",
+            "use crate::hooks::default_handler;\n"
+            "\n"
+            "fn is_default(handler: fn()) -> bool {\n"
+            "    default_handler != handler\n"
+            "}\n",
+            "default_handler - use crate::hooks::default_handler;",
+        ),
+        (
+            "an argument beside a struct literal field, a borrow and an array element",
+            "use crate::tpv_renderer::fix_count_color;\n"
+            "\n"
+            "fn cells(counts: &[u32]) -> Cell {\n"
+            "    counts.iter().map(fix_count_color);\n"
+            "    let colors = [fix_count_color];\n"
+            "    Cell { color: fix_count_color, first: &fix_count_color, colors }\n"
+            "}\n",
+            "fix_count_color - use crate::tpv_renderer::fix_count_color;",
+        ),
+    ],
+)
+def test_flags_a_function_passed_as_a_value(
+    git_repository: GitRepository, what: str, source: str, violation: str
+) -> None:
+    assert _violations(git_repository, source) == [(1, violation)]
+
+
+@pytest.mark.parametrize(
     ("what", "source"),
     [
         (
@@ -95,15 +135,76 @@ def test_flags_an_aliased_function_under_its_alias(git_repository: GitRepository
             "use gt_types::mercator;\n\nfn draw() {\n    mercator::to_pixel(1.0);\n}\n",
         ),
         (
+            "a module beside a parameter of the same name",
+            "use crate::transform;\n"
+            "\n"
+            "fn draw(transform: Transform) {\n"
+            "    transform::lod_points(transform);\n"
+            "}\n",
+        ),
+        (
             "a macro",
             "use gt_types::assert_close;\n\nfn check() {\n    assert_close!(1.0, 1.0);\n}\n",
+        ),
+        (
+            "a macro beside a local binding of the same name",
+            "use serde_json::json;\n"
+            "\n"
+            "fn encode() -> String {\n"
+            "    let json = json!(1);\n"
+            "    json.to_string()\n"
+            "}\n",
+        ),
+        (
+            "a field access and a method call",
+            "use gt_types::heading;\n"
+            "\n"
+            "fn f(p: Point) -> f64 {\n"
+            "    p.heading.max(p.heading())\n"
+            "}\n",
         ),
         (
             "a lowercase type in a generic argument",
             "use uom::si::length::meter;\n\nfn far() {\n    Length::new::<meter>(3.0);\n}\n",
         ),
         (
-            "a re-export the file never calls",
+            "a lowercase type behind a raw pointer",
+            "use std::ffi::c_char;\n\nfn title() -> *const c_char {\n    TITLE.as_ptr()\n}\n",
+        ),
+        (
+            "a lowercase type in a cast",
+            "use std::ffi::c_char;\n\nfn write(byte: u8) {\n    push(byte as c_char);\n}\n",
+        ),
+        (
+            "a lowercase type as a return type",
+            "use std::ffi::c_char;\n\nfn first() -> c_char {\n    0\n}\n",
+        ),
+        (
+            "a lowercase type in an array type",
+            "use std::ffi::c_char;\n\npub struct Label {\n    pub text: [c_char; 256],\n}\n",
+        ),
+        (
+            "a lowercase type as a parameter type",
+            "use std::ffi::c_char;\n\nfn write(byte: c_char) {\n    push(byte);\n}\n",
+        ),
+        (
+            "a lowercase type in a slice type",
+            "use std::ffi::c_char;\n\nfn fill(field: &mut [c_char]) {\n    clear(field);\n}\n",
+        ),
+        (
+            "a lowercase type behind a mutable reference",
+            "use std::ffi::c_char;\n\nfn write(byte: &mut c_char) {\n    clear(byte);\n}\n",
+        ),
+        (
+            "a lowercase type behind a reference with a lifetime",
+            "use std::ffi::c_char;\n"
+            "\n"
+            "fn first<'a>(text: &'a Text) -> &'a c_char {\n"
+            "    text.first()\n"
+            "}\n",
+        ),
+        (
+            "a re-export the file never uses",
             "pub use gt_fmt::render_name_template;\n",
         ),
         (
@@ -112,9 +213,31 @@ def test_flags_an_aliased_function_under_its_alias(git_repository: GitRepository
         ),
     ],
 )
-def test_leaves_a_name_the_file_never_calls_on_its_own(
+def test_leaves_a_name_the_file_never_uses_as_a_function(
     git_repository: GitRepository, what: str, source: str
 ) -> None:
+    assert _violations(git_repository, source) == []
+
+
+@pytest.mark.parametrize(
+    ("what", "use_of_the_function"),
+    [
+        ("a struct literal field", "Cell { color: fix_count_color }"),
+        ("a borrow", "&fix_count_color"),
+        ("an array element", "[fix_count_color]"),
+    ],
+)
+def test_leaves_a_function_set_only_as_a_field_a_borrow_or_an_array_element(
+    git_repository: GitRepository, what: str, use_of_the_function: str
+) -> None:
+    source = (
+        "use crate::tpv_renderer::fix_count_color;\n"
+        "\n"
+        "fn cell() {\n"
+        f"    keep({use_of_the_function});\n"
+        "}\n"
+    )
+
     assert _violations(git_repository, source) == []
 
 
@@ -178,12 +301,24 @@ def test_honors_the_exemption_comment(git_repository: GitRepository) -> None:
             "}\n",
         ),
         (
+            "a module declaration of the same name",
+            "mod check;\n\npub use check::{CheckedQuery, check};\n",
+        ),
+        (
+            "a macro_rules definition of the same name",
+            "macro_rules! for_each_archive {\n"
+            "    () => {};\n"
+            "}\n"
+            "\n"
+            "pub(crate) use for_each_archive;\n",
+        ),
+        (
             "an attribute macro taking arguments",
             "use serial_test::serial;\n\n#[serial(archive)]\nfn t() {}\n",
         ),
     ],
 )
-def test_reads_neither_a_definition_nor_an_attribute_as_a_call(
+def test_reads_neither_a_definition_nor_an_attribute_as_a_use(
     git_repository: GitRepository, what: str, source: str
 ) -> None:
     assert _violations(git_repository, source) == []
@@ -262,8 +397,11 @@ _FRAGMENTS = (
     "Track",
     "self",
     "as",
+    "mod",
+    "macro_rules",
     "_",
     "::",
+    ":",
     "{",
     "}",
     ",",
@@ -272,6 +410,12 @@ _FRAGMENTS = (
     ")",
     "<",
     ">",
+    "->",
+    "&",
+    "!",
+    "*",
+    "[",
+    "]",
     "//",
     "/*",
     "*/",
@@ -298,6 +442,13 @@ def test_random_source_keeps_the_offsets_and_raises_nothing() -> None:
         assert len(code) == len(source)
         assert code.count("\n") == source.count("\n")
 
-        for _, statement in check_function_imports.use_statements(code.splitlines()):
-            for _, offset in check_function_imports.imported_names(statement):
+        statements = list(check_function_imports.use_statements(code.splitlines()))
+        code_outside_use_statements = check_function_imports._blank_use_statements(code, statements)
+
+        assert len(code_outside_use_statements) == len(code)
+
+        check_function_imports._is_used_as_a_function(code_outside_use_statements, "read_to_string")
+        for _, statement in statements:
+            for name, offset in check_function_imports.imported_names(statement):
                 assert 0 <= offset <= len(statement)
+                check_function_imports._is_used_as_a_function(code_outside_use_statements, name)
