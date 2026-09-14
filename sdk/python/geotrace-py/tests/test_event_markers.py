@@ -64,9 +64,32 @@ def test_event_marker_non_string_path_raises_a_type_error() -> None:
         EventMarker(12345, T0)  # type: ignore[arg-type]
 
 
-def test_event_marker_invalid_path_raises_at_construction() -> None:
-    with pytest.raises(ValueError):
-        EventMarker("/bad/path", T1)
+@pytest.mark.parametrize(
+    ("variant_path", "annotation", "message"),
+    [
+        pytest.param("", None, "path is empty", id="empty path"),
+        pytest.param(
+            "über_lang", None, "outside ASCII alphanumeric", id="non-ASCII path"
+        ),
+        pytest.param(
+            "a" * 256,
+            None,
+            "256 bytes, past the 255 bytes the field holds",
+            id="path past the capacity",
+        ),
+        pytest.param(
+            "power/boot",
+            "a" * 512,
+            "512 bytes, past the 511 bytes the field holds",
+            id="annotation past the capacity",
+        ),
+    ],
+)
+def test_event_marker_raises_at_construction_for_a_value_the_rust_builder_rejects(
+    variant_path: str, annotation: str | None, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        EventMarker(variant_path, T1, annotation=annotation)
 
 
 def test_event_marker_is_true_class() -> None:
@@ -242,17 +265,32 @@ def test_an_empty_style_color_is_the_hash_color() -> None:
     assert b.finish().event_marker_styles[0].color is None
 
 
-def test_a_whitespace_only_style_color_is_rejected_when_added() -> None:
-    b = _builder_with_fixes()
-    with pytest.raises(ValueError, match="#RRGGBB"):
-        b.add_event_marker_style(EventMarkerStyle("power/boot", color="   "))
+@pytest.mark.parametrize("color", ["red", "FF9900", "   "])
+def test_event_marker_style_raises_at_construction_for_a_color_outside_the_rrggbb_form(
+    color: str,
+) -> None:
+    with pytest.raises(ValueError, match="expected the #RRGGBB form"):
+        EventMarkerStyle("power/boot", color=color)
 
 
-def test_style_variant_path_past_the_field_capacity_raises_on_write() -> None:
-    b = _builder_with_fixes()
-    b.add_event_marker_style(EventMarkerStyle("a" * 256))
-    with pytest.raises(ValueError, match="event_marker_styles/variant_path"):
-        b.finish().to_bytes()
+@pytest.mark.parametrize(
+    ("variant_path", "message"),
+    [
+        pytest.param("", "path is empty", id="empty"),
+        pytest.param("über_lang", "outside ASCII alphanumeric", id="non-ASCII"),
+        pytest.param("power/\0boot", "outside ASCII alphanumeric", id="nul byte"),
+        pytest.param(
+            "a" * 256,
+            "256 bytes, past the 255 bytes the field holds",
+            id="past the capacity",
+        ),
+    ],
+)
+def test_event_marker_style_raises_at_construction_for_a_malformed_variant_path(
+    variant_path: str, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        EventMarkerStyle(variant_path)
 
 
 # @event_kind decorator

@@ -18,6 +18,7 @@ using geotrace::Angle;
 using geotrace::Annotation;
 using geotrace::Constellation;
 using geotrace::EventMarker;
+using geotrace::EventMarkerStyle;
 using geotrace::FileBuilder;
 using geotrace::FixTime;
 using geotrace::MarkerIcon;
@@ -97,6 +98,16 @@ TEST_CASE("an undeclared marker icon records GTD_ERR_INVALID_ARGUMENT") {
                                       undeclared_enum_value<MarkerIcon>()});
     CHECK(builder.status().code == GTD_ERR_INVALID_ARGUMENT);
     CHECK(builder.status().description == "MarkerIcon has no enumerator with the value 200");
+}
+
+TEST_CASE("a style color outside the #RRGGBB form records GTD_ERR_INVALID_ARGUMENT") {
+    FileBuilder builder;
+    builder.add(one_fix());
+    builder.add_event_marker_style(EventMarkerStyle{"power/boot", std::nullopt, "red"});
+    CHECK(builder.status().code == GTD_ERR_INVALID_ARGUMENT);
+    CHECK(builder.status().description ==
+          "invalid event marker color \"red\": expected the #RRGGBB form");
+    CHECK(builder.try_finish().error().code == GTD_ERR_INVALID_ARGUMENT);
 }
 
 TEST_CASE("try_open reports an error by value, never aborting") {

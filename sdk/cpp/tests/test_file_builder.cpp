@@ -279,6 +279,30 @@ TEST_CASE("FileBuilder: InvalidPathError thrown for malformed variant path") {
     CHECK_THROWS_AS(builder.add_event_marker(marker), InvalidPathError);
 }
 
+TEST_CASE("FileBuilder: a style color outside the #RRGGBB form throws std::invalid_argument") {
+    for (const std::string color : {"red", "FF9900", "   "}) {
+        CAPTURE(color);
+        const std::string message =
+            "invalid event marker color \"" + color + "\": expected the #RRGGBB form";
+        FileBuilder builder;
+        CHECK_THROWS_WITH_AS(
+            builder.add_event_marker_style(EventMarkerStyle{"power/boot", std::nullopt, color}),
+            message.c_str(), std::invalid_argument);
+    }
+}
+
+TEST_CASE("FileBuilder: a style variant path the event marker rules reject throws") {
+    FileBuilder builder;
+    CHECK_THROWS_WITH_AS(builder.add_event_marker_style(EventMarkerStyle{""}),
+                         "invalid event marker variant path \"\": path is empty", InvalidPathError);
+    CHECK_THROWS_WITH_AS(builder.add_event_marker_style(EventMarkerStyle{"über_lang"}),
+                         "invalid event marker variant path \"über_lang\": contains characters "
+                         "outside ASCII alphanumeric, hyphen, underscore, and slash",
+                         InvalidPathError);
+    CHECK_THROWS_AS(builder.add_event_marker_style(EventMarkerStyle{std::string(256, 'p')}),
+                    FieldTooLongError);
+}
+
 TEST_CASE("FileBuilder: a string argument with a nul byte throws and states the string") {
     const std::string with_a_nul_byte = std::string{"before"} + '\0' + "after";
 
