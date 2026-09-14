@@ -2269,8 +2269,10 @@ dependencies = [
 name = "geotrace-sdk-macros"
 version = "0.6.0"
 dependencies = [
+ "geotrace-sdk",
  "proc-macro2",
  "quote",
+ "rstest",
  "syn 2.0.119",
 ]
 

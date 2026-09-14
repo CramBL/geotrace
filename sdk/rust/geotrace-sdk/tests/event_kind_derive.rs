@@ -41,6 +41,25 @@ fn a_variant_name_derives_its_snake_case_segment(
 
 #[derive(EventKind)]
 #[event_kind(note = none)]
+enum RenamedEvent {
+    #[event_kind(rename = "groesse")]
+    Größe,
+    #[event_kind(rename = "radio-scan")]
+    Scan(WordBoundaryEvent),
+}
+
+#[rstest]
+#[case::a_leaf(RenamedEvent::Größe, "groesse")]
+#[case::a_delegating_variant(RenamedEvent::Scan(WordBoundaryEvent::GPSLock), "radio-scan/gps_lock")]
+fn a_rename_replaces_the_segment_of_its_variant(
+    #[case] event: RenamedEvent,
+    #[case] expected_path: &str,
+) {
+    assert_eq!(event.variant_path().as_deref(), Some(expected_path));
+}
+
+#[derive(EventKind)]
+#[event_kind(note = none)]
 enum LongOuterEvent {
     Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(
         LongInnerEvent,

@@ -1,0 +1,5 @@
+error: variant path segment "power/boot" contains '/', outside ASCII letters, digits, '-' and '_'
+ --> tests/compile_fail/rename_with_an_invalid_segment.rs:5:27
+  |
+5 |     #[event_kind(rename = "power/boot")]
+  |                           ^^^^^^^^^^^^
