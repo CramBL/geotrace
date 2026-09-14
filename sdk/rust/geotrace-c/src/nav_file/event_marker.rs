@@ -2,7 +2,9 @@
 
 use std::ffi::c_char;
 
-use super::GtdNavFile;
+use geotrace_sdk::EventMarkerPoint;
+
+use super::{GtdNavFile, StructFieldName};
 use crate::GtdTimestamp;
 use crate::error::{self, GtdStatus};
 use crate::timestamp;
@@ -60,19 +62,36 @@ pub unsafe extern "C" fn gtd_nav_file_get_event_marker(
             return GtdStatus::GTD_ERR_OUT_OF_RANGE;
         };
 
-        // SAFETY: GtdEventMarkerInfo is repr(C). Zeroing it is valid initial state
-        *out = unsafe { std::mem::zeroed() };
-
-        super::fill_c_str(&mut out.variant_path, &marker.variant_path);
-        out.sys_time = timestamp::ts_from_datetime(marker.sys_time);
-        out.lat_deg = marker.lat.as_degrees();
-        out.lon_deg = marker.lon.as_degrees();
-
-        if let Some(ann) = &marker.annotation {
-            out.has_annotation = 1;
-            super::fill_c_str(&mut out.annotation, ann);
+        match GtdEventMarkerInfo::new(marker) {
+            Ok(info) => {
+                *out = info;
+                GtdStatus::GTD_OK
+            }
+            Err(status) => status,
         }
-
-        GtdStatus::GTD_OK
     })
+}
+
+impl GtdEventMarkerInfo {
+    fn new(marker: &EventMarkerPoint) -> Result<Self, GtdStatus> {
+        let mut info = Self {
+            variant_path: [0; 257],
+            sys_time: timestamp::ts_from_datetime(marker.sys_time),
+            lat_deg: marker.lat.as_degrees(),
+            lon_deg: marker.lon.as_degrees(),
+            has_annotation: u8::from(marker.annotation.is_some()),
+            annotation: [0; 1024],
+        };
+        super::fill_struct_field(
+            &mut info.variant_path,
+            &marker.variant_path,
+            StructFieldName("GtdEventMarkerInfo::variant_path"),
+        )?;
+        super::fill_struct_field(
+            &mut info.annotation,
+            marker.annotation.as_deref().unwrap_or(""),
+            StructFieldName("GtdEventMarkerInfo::annotation"),
+        )?;
+        Ok(info)
+    }
 }

@@ -95,9 +95,6 @@ Test(null_guards, nav_file_null) {
     cr_assert_eq(gtd_nav_file_get_channel(NULL, 0, &channel), GTD_ERR_NULL_ARGUMENT);
 
     char label[16];
-    cr_assert_eq(gtd_nav_file_get_channel_component(NULL, 0, 0, label, sizeof label),
-                 GTD_ERR_NULL_ARGUMENT);
-
     size_t required = 0;
     cr_assert_eq(gtd_nav_file_get_channel_unit(NULL, 0, label, sizeof label, &required, NULL),
                  GTD_ERR_NULL_ARGUMENT);

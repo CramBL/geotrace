@@ -11,10 +11,12 @@ mod style;
 mod write;
 
 use std::ffi::{CString, c_char};
+use std::fmt;
 
 use geotrace_sdk::{NavFile, SatelliteWarning};
 
 use crate::GtdTimestamp;
+use crate::error::{self, GtdStatus};
 use crate::timestamp;
 
 pub use channel::GtdChannelInfo;
@@ -36,6 +38,7 @@ pub struct GtdNavFile {
     sdk_git_commit: Option<CString>,
     sdk_commit_time: GtdTimestamp,
     satellite_warnings: Vec<SatelliteWarning>,
+    channel_c_strings: Vec<Result<channel::ChannelCStrings, channel::ChannelStringWithNul>>,
 }
 
 impl GtdNavFile {
@@ -63,17 +66,62 @@ impl GtdNavFile {
                     .iter()
                     .filter_map(|point| point.satellites.as_ref()),
             ),
+            channel_c_strings: file
+                .channels()
+                .iter()
+                .map(channel::ChannelCStrings::new)
+                .collect(),
             file,
         }
     }
 }
 
-/// Copy `s` into a fixed C-string buffer, zero-filling and always leaving a
-/// trailing NUL (truncating an over-long string).
-fn fill_c_str(dst: &mut [c_char], s: &str) {
+/// Copy `s` and a nul terminator into `dst` and zero-fill the rest of `dst`, or
+/// leave `dst` unwritten when the two do not fit.
+fn fill_c_str(dst: &mut [c_char], s: &str) -> Result<(), CStringPastBuffer> {
+    let length_with_terminator = s.len().saturating_add(1);
+    if length_with_terminator > dst.len() {
+        return Err(CStringPastBuffer {
+            length_with_terminator,
+            capacity: dst.len(),
+        });
+    }
     dst.fill(0);
-    let cap = dst.len().saturating_sub(1);
-    for (slot, byte) in dst.iter_mut().zip(s.bytes().take(cap)) {
+    for (slot, byte) in dst.iter_mut().zip(s.bytes()) {
         *slot = byte as c_char;
+    }
+    Ok(())
+}
+
+/// [`fill_c_str`] into the struct field `field_name`, returning
+/// `GTD_ERR_FIELD_TOO_LONG` when `s` does not fit.
+fn fill_struct_field(
+    field: &mut [c_char],
+    s: &str,
+    StructFieldName(field_name): StructFieldName,
+) -> Result<(), GtdStatus> {
+    fill_c_str(field, s).map_err(|error| {
+        error::set_last_error(format!("{field_name}: {error}"));
+        GtdStatus::GTD_ERR_FIELD_TOO_LONG
+    })
+}
+
+struct StructFieldName(&'static str);
+
+struct CStringPastBuffer {
+    length_with_terminator: usize,
+    capacity: usize,
+}
+
+impl fmt::Display for CStringPastBuffer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            length_with_terminator,
+            capacity,
+        } = self;
+        write!(
+            f,
+            "{length_with_terminator} bytes with the nul terminator, past a buffer of {capacity} bytes"
+        )
     }
 }

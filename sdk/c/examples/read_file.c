@@ -111,19 +111,17 @@ static void print_channels(const GtdNavFile *file) {
     for (size_t i = 0; i < count; i++) {
         GtdChannelInfo info;
         if (gtd_nav_file_get_channel(file, i, &info) != GTD_OK) {
+            fprintf(stderr, "get_channel %zu: %s\n", i, gtd_last_error());
             continue;
         }
         printf("  [%zu] %s %zu samples", i, info.name, info.sample_count);
-        if (info.has_unit) {
+        if (info.unit != NULL) {
             printf(" [%s]", info.unit);
         }
         if (info.component_count > 0) {
             printf(" components:");
             for (size_t c = 0; c < info.component_count; c++) {
-                char label[32];
-                if (gtd_nav_file_get_channel_component(file, i, c, label, sizeof label) == GTD_OK) {
-                    printf(" %s", label);
-                }
+                printf(" %s", info.components[c]);
             }
         }
         printf("\n");

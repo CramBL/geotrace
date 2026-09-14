@@ -1,6 +1,9 @@
 //! The channel read path: channel metadata, samples and component labels.
 
-use std::ffi::c_char;
+use std::ffi::{CStr, CString, c_char};
+use std::fmt;
+
+use geotrace_sdk::Channel;
 
 use super::GtdNavFile;
 use crate::error::{self, GtdStatus};
@@ -10,12 +13,9 @@ use crate::{GtdOptF64, GtdTimestamp};
 
 /// Channel metadata returned by `gtd_nav_file_get_channel()`.
 ///
-/// Sample timestamps, values, and component labels are fetched separately with
-/// `gtd_nav_file_channel_times()`, `gtd_nav_file_channel_values()`, and
-/// `gtd_nav_file_get_channel_component()`. A @ref component_count of zero marks
-/// a scalar channel. All string fields are null-terminated and truncated to
-/// their buffer size if longer. `gtd_nav_file_get_channel_unit()` reads the unit
-/// without that limit and reports whether it is a recognized unit.
+/// Every string pointer points into the file handle and is valid until
+/// `gtd_nav_file_destroy()`. Sample timestamps and values are fetched separately
+/// with `gtd_nav_file_channel_times()` and `gtd_nav_file_channel_values()`.
 ///
 /// Only a channel with @ref period_deg set wraps: a `deg` channel without it
 /// holds an unbounded angle.
@@ -23,17 +23,17 @@ use crate::{GtdOptF64, GtdTimestamp};
 #[derive(Clone, Copy)]
 pub struct GtdChannelInfo {
     /// Channel name.
-    pub name: [c_char; 256],
-    /// Non-zero if @ref unit is set.
-    pub has_unit: u8,
-    /// Unit of the values, when @ref has_unit.
-    pub unit: [c_char; 64],
+    pub name: *const c_char,
+    /// Unit of the values, or NULL for a channel without a unit.
+    /// `gtd_nav_file_get_channel_unit()` reports whether it is a recognized unit.
+    pub unit: *const c_char,
     /// Wrap period in degrees, or absent for a linear channel.
     pub period_deg: GtdOptF64,
-    /// Non-zero if @ref description is set.
-    pub has_description: u8,
-    /// Description, when @ref has_description.
-    pub description: [c_char; 1024],
+    /// Description, or NULL for a channel without one.
+    pub description: *const c_char,
+    /// The @ref component_count component labels of a vector channel, or NULL
+    /// for a scalar channel.
+    pub components: *const *const c_char,
     /// Number of vector components (0 = scalar channel).
     pub component_count: usize,
     /// Number of sample timestamps (value rows).
@@ -59,6 +59,8 @@ pub unsafe extern "C" fn gtd_nav_file_channel_count(file: *const GtdNavFile) -> 
 /// @param out   Caller-allocated struct to fill.
 ///
 /// @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last channel.
+/// @return `GTD_ERR_INVALID_CHANNEL` if a string of the channel has a nul byte.
+///         `gtd_last_error()` states the string and the byte offset.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_get_channel(
     file: *const GtdNavFile,
@@ -69,38 +71,33 @@ pub unsafe extern "C" fn gtd_nav_file_get_channel(
         let handle = nonnull_ref!(file);
         let out = nonnull_mut!(out);
 
-        let Some(ch) = handle.file.channels().get(index) else {
+        let (Some(channel), Some(c_strings)) = (
+            handle.file.channels().get(index),
+            handle.channel_c_strings.get(index),
+        ) else {
             error::set_last_error(format!("channel index {index} is out of range"));
             return GtdStatus::GTD_ERR_OUT_OF_RANGE;
         };
-
-        // SAFETY: GtdChannelInfo is repr(C). Zeroing it is a valid initial state.
-        *out = unsafe { std::mem::zeroed() };
-        super::fill_c_str(&mut out.name, ch.name());
-        if let Some(unit) = ch.unit() {
-            out.has_unit = 1;
-            super::fill_c_str(&mut out.unit, &unit.to_string());
+        match c_strings {
+            Ok(c_strings) => {
+                *out = c_strings.info(channel);
+                GtdStatus::GTD_OK
+            }
+            Err(string_with_nul) => {
+                error::set_last_error(format!("channel {index}: {string_with_nul}"));
+                GtdStatus::GTD_ERR_INVALID_CHANNEL
+            }
         }
-        out.period_deg = ch.period().map_or(optf64::opt_f64_none(), |a| {
-            optf64::opt_f64_some(a.as_degrees())
-        });
-        if let Some(description) = ch.description() {
-            out.has_description = 1;
-            super::fill_c_str(&mut out.description, description);
-        }
-        out.component_count = ch.components().len();
-        out.sample_count = ch.times().len();
-        GtdStatus::GTD_OK
     })
 }
 
-/// Read a channel unit without the fixed-size @ref GtdChannelInfo buffer limit.
+/// Copy the unit label of the channel at @p index into @p out, and report whether
+/// it is a recognized unit.
 ///
 /// Pass NULL @p out and zero @p out_capacity to query the required byte length,
 /// including the trailing null byte. A channel without a unit reports zero.
-/// With a non-zero @p out_capacity below the required length, the SDK writes the
-/// first `out_capacity - 1` bytes of the label and a null byte, and returns
-/// `GTD_OK`.
+/// With a non-zero @p out_capacity below the required length, the SDK leaves
+/// @p out unwritten and returns `GTD_ERR_OUT_OF_RANGE`.
 ///
 /// @p is_custom is non-zero for any label that is not a recognized unit. That
 /// covers both a custom label and a legacy label an older writer stored, which
@@ -115,7 +112,8 @@ pub unsafe extern "C" fn gtd_nav_file_get_channel(
 /// @param required_length Receives the label's byte length including the null byte.
 /// @param is_custom       Receives the recognized/custom distinction. May be NULL.
 ///
-/// @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last channel.
+/// @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last channel or
+///         @p out_capacity is below the required length.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_get_channel_unit(
     file: *const GtdNavFile,
@@ -141,7 +139,7 @@ pub unsafe extern "C" fn gtd_nav_file_get_channel_unit(
             return GtdStatus::GTD_OK;
         };
 
-        let label = unit.to_string();
+        let label = unit.label();
         *required_length = label.len().saturating_add(1);
         if !is_custom.is_null() {
             // SAFETY: non-null output pointer is caller-owned.
@@ -156,52 +154,13 @@ pub unsafe extern "C" fn gtd_nav_file_get_channel_unit(
         }
         // SAFETY: out points to `out_capacity` writable bytes by the C API contract.
         let buffer = unsafe { std::slice::from_raw_parts_mut(out, out_capacity) };
-        super::fill_c_str(buffer, &label);
-        GtdStatus::GTD_OK
-    })
-}
-
-/// Copy the label of a vector channel's component into @p out (null-terminated,
-/// truncated to @p out_capacity bytes).
-///
-/// @param file            File handle.
-/// @param channel_index   Channel index.
-/// @param component_index Component index. Must be less than `GtdChannelInfo::component_count`.
-/// @param out             Caller-allocated buffer of @p out_capacity bytes.
-/// @param out_capacity    Capacity of @p out in bytes.
-///
-/// @return `GTD_ERR_OUT_OF_RANGE` if an index is past the end or @p out_capacity
-///         is zero, `GTD_ERR_NULL_ARGUMENT` if @p out is NULL.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gtd_nav_file_get_channel_component(
-    file: *const GtdNavFile,
-    channel_index: usize,
-    component_index: usize,
-    out: *mut c_char,
-    out_capacity: usize,
-) -> GtdStatus {
-    error::run_catching_panics(|| {
-        let handle = nonnull_ref!(file);
-        if out.is_null() {
-            error::set_last_error("out buffer is null");
-            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
+        match super::fill_c_str(buffer, label) {
+            Ok(()) => GtdStatus::GTD_OK,
+            Err(error) => {
+                error::set_last_error(format!("channel unit: {error}"));
+                GtdStatus::GTD_ERR_OUT_OF_RANGE
+            }
         }
-        if out_capacity == 0 {
-            error::set_last_error("out buffer capacity is zero");
-            return GtdStatus::GTD_ERR_OUT_OF_RANGE;
-        }
-        let Some(ch) = handle.file.channels().get(channel_index) else {
-            error::set_last_error(format!("channel index {channel_index} is out of range"));
-            return GtdStatus::GTD_ERR_OUT_OF_RANGE;
-        };
-        let Some(label) = ch.components().get(component_index) else {
-            error::set_last_error(format!("component index {component_index} is out of range"));
-            return GtdStatus::GTD_ERR_OUT_OF_RANGE;
-        };
-        // SAFETY: out points to `out_capacity` writable bytes (caller contract).
-        let buffer = unsafe { std::slice::from_raw_parts_mut(out, out_capacity) };
-        super::fill_c_str(buffer, label);
-        GtdStatus::GTD_OK
     })
 }
 
@@ -272,4 +231,103 @@ pub unsafe extern "C" fn gtd_nav_file_channel_values(
         }
     }
     values.len()
+}
+
+/// The C strings of one channel, which [`GtdChannelInfo`] points into.
+pub(super) struct ChannelCStrings {
+    name: CString,
+    unit: Option<CString>,
+    description: Option<CString>,
+    components: Vec<CString>,
+    component_pointers: Vec<*const c_char>,
+}
+
+impl ChannelCStrings {
+    pub(super) fn new(channel: &Channel) -> Result<Self, ChannelStringWithNul> {
+        let name = ChannelString::Name.to_c_string(channel.name())?;
+        let unit = channel
+            .unit()
+            .map(|unit| ChannelString::Unit.to_c_string(unit.label()))
+            .transpose()?;
+        let description = channel
+            .description()
+            .map(|description| ChannelString::Description.to_c_string(description))
+            .transpose()?;
+        let components = channel
+            .components()
+            .iter()
+            .enumerate()
+            .map(|(index, label)| ChannelString::Component(index).to_c_string(label))
+            .collect::<Result<Vec<CString>, ChannelStringWithNul>>()?;
+        let component_pointers = components.iter().map(|label| label.as_ptr()).collect();
+        Ok(Self {
+            name,
+            unit,
+            description,
+            components,
+            component_pointers,
+        })
+    }
+
+    fn info(&self, channel: &Channel) -> GtdChannelInfo {
+        GtdChannelInfo {
+            name: self.name.as_ptr(),
+            unit: self.unit.as_deref().map_or(std::ptr::null(), CStr::as_ptr),
+            period_deg: channel.period().map_or(optf64::opt_f64_none(), |period| {
+                optf64::opt_f64_some(period.as_degrees())
+            }),
+            description: self
+                .description
+                .as_deref()
+                .map_or(std::ptr::null(), CStr::as_ptr),
+            // `Vec::as_ptr` returns a dangling pointer for an empty vector.
+            components: if self.components.is_empty() {
+                std::ptr::null()
+            } else {
+                self.component_pointers.as_ptr()
+            },
+            component_count: self.components.len(),
+            sample_count: channel.times().len(),
+        }
+    }
+}
+
+pub(super) struct ChannelStringWithNul {
+    string: ChannelString,
+    offset: usize,
+}
+
+impl fmt::Display for ChannelStringWithNul {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { string, offset } = self;
+        write!(f, "the {string} has a nul byte at offset {offset}")
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ChannelString {
+    Component(usize),
+    Description,
+    Name,
+    Unit,
+}
+
+impl ChannelString {
+    fn to_c_string(self, value: &str) -> Result<CString, ChannelStringWithNul> {
+        CString::new(value).map_err(|error| ChannelStringWithNul {
+            string: self,
+            offset: error.nul_position(),
+        })
+    }
+}
+
+impl fmt::Display for ChannelString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Component(index) => write!(f, "label of component {index}"),
+            Self::Description => f.write_str("description"),
+            Self::Name => f.write_str("name"),
+            Self::Unit => f.write_str("unit"),
+        }
+    }
 }

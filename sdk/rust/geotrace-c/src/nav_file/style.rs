@@ -2,9 +2,9 @@
 
 use std::ffi::c_char;
 
-use geotrace_sdk::{EventMarkerColor, EventMarkerIconChoice};
+use geotrace_sdk::{EventMarkerColor, EventMarkerIconChoice, EventMarkerStyle};
 
-use super::GtdNavFile;
+use super::{GtdNavFile, StructFieldName};
 use crate::error::{self, GtdStatus};
 use crate::icon::GtdMarkerIcon;
 
@@ -51,6 +51,8 @@ pub unsafe extern "C" fn gtd_nav_file_event_marker_style_count(file: *const GtdN
 /// @param out   Caller-allocated struct to fill.
 ///
 /// @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last event marker style.
+/// @return `GTD_ERR_FIELD_TOO_LONG` if a string of the style is longer than its
+///         field of @ref GtdEventMarkerStyleInfo. `gtd_last_error()` states the field.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_get_event_marker_style(
     file: *const GtdNavFile,
@@ -66,23 +68,49 @@ pub unsafe extern "C" fn gtd_nav_file_get_event_marker_style(
             return GtdStatus::GTD_ERR_OUT_OF_RANGE;
         };
 
-        super::fill_c_str(&mut out.variant_path, &style.variant_path);
-
-        out.icon = match style.icon {
-            EventMarkerIconChoice::Icon(icon) => GtdMarkerIcon::from(icon),
-            EventMarkerIconChoice::Auto | EventMarkerIconChoice::Unrecognized(_) => {
-                GtdMarkerIcon::GTD_ICON_AUTO
+        match GtdEventMarkerStyleInfo::new(style) {
+            Ok(info) => {
+                *out = info;
+                GtdStatus::GTD_OK
             }
-        };
-        super::fill_c_str(&mut out.icon_name, style.icon.wire_name());
+            Err(status) => status,
+        }
+    })
+}
 
+impl GtdEventMarkerStyleInfo {
+    fn new(style: &EventMarkerStyle) -> Result<Self, GtdStatus> {
         let color_hex = match &style.color {
             EventMarkerColor::Auto => None,
             EventMarkerColor::Hex(hex) | EventMarkerColor::Unrecognized(hex) => Some(hex.as_str()),
         };
-        super::fill_c_str(&mut out.color_hex, color_hex.unwrap_or(""));
-        out.has_color = u8::from(color_hex.is_some());
-
-        GtdStatus::GTD_OK
-    })
+        let mut info = Self {
+            variant_path: [0; 257],
+            icon: match style.icon {
+                EventMarkerIconChoice::Icon(icon) => GtdMarkerIcon::from(icon),
+                EventMarkerIconChoice::Auto | EventMarkerIconChoice::Unrecognized(_) => {
+                    GtdMarkerIcon::GTD_ICON_AUTO
+                }
+            },
+            icon_name: [0; 32],
+            has_color: u8::from(color_hex.is_some()),
+            color_hex: [0; 8],
+        };
+        super::fill_struct_field(
+            &mut info.variant_path,
+            &style.variant_path,
+            StructFieldName("GtdEventMarkerStyleInfo::variant_path"),
+        )?;
+        super::fill_struct_field(
+            &mut info.icon_name,
+            style.icon.wire_name(),
+            StructFieldName("GtdEventMarkerStyleInfo::icon_name"),
+        )?;
+        super::fill_struct_field(
+            &mut info.color_hex,
+            color_hex.unwrap_or(""),
+            StructFieldName("GtdEventMarkerStyleInfo::color_hex"),
+        )?;
+        Ok(info)
+    }
 }

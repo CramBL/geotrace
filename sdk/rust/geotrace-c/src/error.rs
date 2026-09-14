@@ -59,9 +59,11 @@ pub enum GtdStatus {
     GTD_ERR_UTF8 = 8,
     /// Malformed or corrupt .gtd file (decode failed).
     GTD_ERR_PARSE = 9,
-    /// Malformed channel (bad name/component or length mismatch).
+    /// Malformed channel: a bad name or component label, a length mismatch, or a
+    /// string with a nul byte.
     GTD_ERR_INVALID_CHANNEL = 10,
-    /// A string is longer than the `.gtd` field that holds it.
+    /// A string is longer than the `.gtd` field that stores it, or than the struct
+    /// field that a read copies it into.
     GTD_ERR_FIELD_TOO_LONG = 11,
     /// An argument's value is not allowed.
     GTD_ERR_INVALID_ARGUMENT = 12,

@@ -18,23 +18,9 @@ typedef struct {
     size_t n_values;
 } FrozenGtdChannelV040;
 
-typedef struct {
-    char name[256];
-    uint8_t has_unit;
-    char unit[64];
-    GtdOptF64 period_deg;
-    uint8_t has_description;
-    char description[1024];
-    size_t component_count;
-    size_t sample_count;
-} FrozenGtdChannelInfoV040;
-
-Test(channels, published_v040_layout_is_preserved) {
+Test(channels, published_v040_input_layout_is_preserved) {
     cr_assert_eq(sizeof(GtdChannel), sizeof(FrozenGtdChannelV040));
-    cr_assert_eq(sizeof(GtdChannelInfo), sizeof(FrozenGtdChannelInfoV040));
     cr_assert_eq(offsetof(GtdChannel, period_deg), offsetof(FrozenGtdChannelV040, period_deg));
-    cr_assert_eq(offsetof(GtdChannelInfo, period_deg),
-                 offsetof(FrozenGtdChannelInfoV040, period_deg));
 }
 
 Test(channels, frozen_v040_input_layout_calls_current_library) {
@@ -112,15 +98,11 @@ Test(channels, round_trip) {
     GtdChannelInfo info;
     cr_assert_eq(gtd_nav_file_get_channel(reloaded, 0, &info), GTD_OK);
     cr_assert_str_eq(info.name, "accel");
-    cr_assert_eq(info.has_unit, 1);
     cr_assert_str_eq(info.unit, "g");
     cr_assert_eq(info.component_count, 3);
+    cr_assert_str_eq(info.components[2], "z");
     cr_assert_eq(info.sample_count, 2);
     cr_assert_eq(info.period_deg.present, 0);
-
-    char label[16];
-    cr_assert_eq(gtd_nav_file_get_channel_component(reloaded, 0, 2, label, sizeof(label)), GTD_OK);
-    cr_assert_str_eq(label, "z");
 
     GtdTimestamp got_times[2];
     cr_assert_eq(gtd_nav_file_channel_times(reloaded, 0, got_times, 2), 2);
@@ -144,7 +126,9 @@ Test(channels, round_trip) {
 
     cr_assert_eq(gtd_nav_file_get_channel(reloaded, 1, &info), GTD_OK);
     cr_assert_str_eq(info.name, "incline");
+    cr_assert_null(info.description);
     cr_assert_eq(info.component_count, 0);
+    cr_assert_null(info.components);
     cr_assert_eq(info.period_deg.present, 1);
     assert_near(info.period_deg.value, 360.0, 1e-9);
 
@@ -152,10 +136,70 @@ Test(channels, round_trip) {
     gtd_free_bytes(buf, len);
 }
 
+Test(channels, get_channel_strings_stay_valid_until_the_file_is_destroyed) {
+    GtdTimestamp timestamp;
+    GtdFileBuilder *builder = builder_with_a_nav_fix(&timestamp);
+    const char *components[3] = {"x", "y", "z"};
+    double accel_values[3] = {0.1, 0.2, 0.98};
+    GtdChannel accel = {0};
+    accel.name = "accel";
+    accel.unit = "g";
+    accel.period_deg = GTD_NONE_F64;
+    accel.components = components;
+    accel.n_components = 3;
+    accel.times = &timestamp;
+    accel.n_times = 1;
+    accel.values = accel_values;
+    accel.n_values = 3;
+    cr_assert_eq(gtd_builder_add_channel(builder, &accel), GTD_OK);
+    double temp_value = 20.0;
+    GtdChannel temp = {0};
+    temp.name = "temp";
+    temp.period_deg = GTD_NONE_F64;
+    temp.times = &timestamp;
+    temp.n_times = 1;
+    temp.values = &temp_value;
+    temp.n_values = 1;
+    cr_assert_eq(gtd_builder_add_channel(builder, &temp), GTD_OK);
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_OK);
+
+    GtdChannelInfo accel_info;
+    cr_assert_eq(gtd_nav_file_get_channel(file, 0, &accel_info), GTD_OK);
+    GtdChannelInfo temp_info;
+    cr_assert_eq(gtd_nav_file_get_channel(file, 1, &temp_info), GTD_OK);
+    GtdChannelInfo accel_info_again;
+    cr_assert_eq(gtd_nav_file_get_channel(file, 0, &accel_info_again), GTD_OK);
+
+    cr_assert_eq(accel_info.name, accel_info_again.name);
+    cr_assert_eq(accel_info.components, accel_info_again.components);
+    cr_assert_str_eq(accel_info.name, "accel");
+    cr_assert_str_eq(accel_info.unit, "g");
+    cr_assert_str_eq(accel_info.components[0], "x");
+    cr_assert_str_eq(temp_info.name, "temp");
+    cr_assert_null(temp_info.unit);
+    cr_assert_null(temp_info.description);
+    cr_assert_null(temp_info.components);
+    gtd_nav_file_destroy(file);
+}
+
+#ifdef GTD_CHANNEL_DESCRIPTION_WITH_A_NUL_BYTE_FIXTURE_PATH
+Test(channels, get_channel_returns_invalid_channel_for_a_description_with_a_nul_byte) {
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_nav_file_open(GTD_CHANNEL_DESCRIPTION_WITH_A_NUL_BYTE_FIXTURE_PATH, &file),
+                 GTD_OK);
+    GtdChannelInfo info;
+    cr_assert_eq(gtd_nav_file_get_channel(file, 0, &info), GTD_ERR_INVALID_CHANNEL);
+    cr_assert_str_eq(gtd_last_error(), "channel 0: the description has a nul byte at offset 6");
+    cr_assert_eq(gtd_nav_file_channel_times(file, 0, NULL, 0), 1);
+    gtd_nav_file_destroy(file);
+}
+#endif
+
 static void repeat_into(char *out, const char *piece, size_t count) {
     size_t piece_length = strlen(piece);
     for (size_t i = 0; i < count; i++) {
-        memcpy(out + i * piece_length, piece, piece_length);
+        memcpy(out + (i * piece_length), piece, piece_length);
     }
     out[count * piece_length] = '\0';
 }
