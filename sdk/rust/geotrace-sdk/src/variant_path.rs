@@ -1,9 +1,11 @@
+use crate::__private::Sealed;
+
 /// Implemented by `enum` types to produce a slash-separated variant path string.
 ///
-/// Use `#[derive(EventKind)]` - the trait is sealed so manual implementations
-/// are not possible.  Each variant's name is converted to `snake_case` and
-/// becomes one segment of the path.  Nested `enum` types produce paths like
-/// `"power/boot"` or `"connectivity/agps/request"` by chaining segments.
+/// Use `#[derive(EventKind)]` to implement it.  Each variant's name is
+/// converted to `snake_case` and becomes one segment of the path.  Nested
+/// `enum` types produce paths like `"power/boot"` or
+/// `"connectivity/agps/request"` by chaining segments.
 ///
 /// [`variant_path`](EventKind::variant_path) returns `None` for variants
 /// marked `#[event_kind(skip)]`. Callers such as
@@ -79,7 +81,7 @@
 /// );
 /// assert_eq!(SafeEvent::Internal("x".into()).variant_path(), None);
 /// ```
-pub trait EventKind: __private::Sealed {
+pub trait EventKind: Sealed {
     fn variant_path(&self) -> Option<String>;
 
     /// The icon declared on this variant via `#[event_kind(icon = <Name>)]`, if any.
@@ -107,14 +109,4 @@ pub trait EventKind: __private::Sealed {
     fn event_note(&self) -> Option<String> {
         None
     }
-}
-
-/// Internal support code for the `#[derive(EventKind)]` macro.
-///
-/// Not part of the public API. Subject to change without notice.
-#[doc(hidden)]
-pub mod __private {
-    /// Sealing trait - implemented only by the `#[derive(EventKind)]` macro.
-    /// Prevents external code from implementing `EventKind` by hand.
-    pub trait Sealed {}
 }
