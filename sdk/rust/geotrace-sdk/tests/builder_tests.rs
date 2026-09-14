@@ -274,17 +274,55 @@ fn strict_mode_fails_on_an_annotation_before_the_first_fix_and_not_on_orphan_rep
     ));
 }
 
-#[test]
-fn no_nav_fixes_with_annotations_lenient() {
-    // NoNavFixes is returned even in lenient mode - positions cannot be interpolated at all.
-    let mut recorder = NavFileBuilder::new().with_lenient_errors().open();
-    recorder.add_annotation(
-        Annotation::builder()
-            .time(test_util::t_ms(0))
+#[rstest]
+#[case::satellite_reports(
+    vec![],
+    vec![],
+    "2 satellite report(s) have no nav fix to take a position from: at least one nav fix is required",
+)]
+#[case::satellite_reports_and_an_annotation(
+    vec![Annotation::builder().time(test_util::t_ms(0)).build().expect("no label is valid")],
+    vec![],
+    "2 satellite report(s) and 1 annotation(s) have no nav fix to take a position from: \
+     at least one nav fix is required",
+)]
+#[case::satellite_reports_an_annotation_and_an_event_marker(
+    vec![Annotation::builder().time(test_util::t_ms(0)).build().expect("no label is valid")],
+    vec![
+        EventMarker::builder()
+            .variant_path("power/boot")
+            .sys_time(test_util::t_ms(0))
             .build()
-            .expect("an annotation without a label is accepted"),
+            .expect("power/boot is a valid variant path"),
+    ],
+    "2 satellite report(s), 1 annotation(s) and 1 event marker(s) have no nav fix to take a \
+     position from: at least one nav fix is required",
+)]
+fn satellite_reports_without_any_nav_fix_fail_the_build(
+    #[values(NavFileBuilder::new(), NavFileBuilder::new().with_lenient_errors())]
+    builder: NavFileBuilder,
+    #[case] annotations: Vec<Annotation>,
+    #[case] event_markers: Vec<EventMarker>,
+    #[case] expected_message: &str,
+) {
+    let mut recorder = builder.open();
+    recorder.add_satellite_report(test_util::report_with(0, Constellation::Gps, 1));
+    recorder.add_satellite_report(test_util::report_with(1000, Constellation::Gps, 2));
+    for annotation in annotations {
+        recorder.add_annotation(annotation);
+    }
+    for event_marker in event_markers {
+        recorder.add_event_marker(event_marker);
+    }
+
+    let error = recorder
+        .finish()
+        .expect_err("a satellite report fails the build without a nav fix");
+    assert!(
+        matches!(error, BuildError::NoNavFixes { .. }),
+        "got {error:?}"
     );
-    assert!(matches!(recorder.finish(), Err(BuildError::NoNavFixes)));
+    assert_eq!(error.to_string(), expected_message);
 }
 
 #[test]

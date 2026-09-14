@@ -1428,21 +1428,25 @@ fn sys_time_direct_comparison_drifting_offset_with_sat_delay() -> Result<(), Bui
     Ok(())
 }
 
-/// With no nav fixes at all, `finish()` succeeds (no annotations to fail on)
-/// and returns an empty nav-point list.
-/// Satellite reports are silently dropped since there is nothing to ghost from.
 #[test]
-fn no_nav_fixes_no_annotations_returns_empty() -> Result<(), BuildError> {
+fn a_build_with_nav_fixes_keeps_every_satellite_report() -> Result<(), BuildError> {
     let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(test_util::fix_at(5000, Lat(55.0), Lon(12.0)));
+    recorder.add_nav_fix(test_util::fix_at(10_000, Lat(55.1), Lon(12.1)));
     recorder.add_satellite_report(test_util::report_with(0, Constellation::Gps, 1));
-    recorder.add_satellite_report(test_util::report_with(1000, Constellation::Gps, 1));
+    recorder.add_satellite_report(test_util::report_with(5000, Constellation::Gps, 2));
+    recorder.add_satellite_report(test_util::report_with(7500, Constellation::Gps, 3));
+    recorder.add_satellite_report(test_util::report_with(15_000, Constellation::Gps, 4));
 
     let nav_file = recorder.finish()?;
 
-    assert_eq!(
-        nav_file.nav_points().len(),
-        0,
-        "no fixes → no nav points; reports cannot be ghosted"
-    );
+    let prns_in_nav_point_order: Vec<u32> = nav_file
+        .nav_points()
+        .iter()
+        .filter_map(|point| point.satellites.as_ref())
+        .flat_map(|report| report.tracked.iter().map(|satellite| satellite.prn))
+        .collect();
+    assert_eq!(prns_in_nav_point_order, [1, 2, 3, 4]);
+    assert_eq!(nav_file.nav_points().len(), 5);
     Ok(())
 }

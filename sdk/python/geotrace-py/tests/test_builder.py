@@ -423,6 +423,19 @@ def test_an_event_marker_without_a_nav_fix_fails_the_build() -> None:
         b.finish()
 
 
+def test_satellite_reports_without_a_nav_fix_fail_the_build() -> None:
+    b = NavFileBuilder()
+    b.add(SatelliteReport([Satellite(Constellation.GPS, 7, in_fix=False)], gps_time=T0))
+    b.add(SatelliteReport([Satellite(Constellation.GPS, 7, in_fix=False)], gps_time=T1))
+
+    with pytest.raises(
+        ValueError,
+        match=r"^2 satellite report\(s\) have no nav fix to take a position from: "
+        r"at least one nav fix is required$",
+    ):
+        b.finish()
+
+
 def test_a_satellite_window_wider_than_the_default_associates_a_late_report() -> None:
     report_time = T0 + timedelta(milliseconds=1500)
 
