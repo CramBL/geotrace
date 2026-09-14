@@ -6,6 +6,10 @@
 
 - **Log Viewer:** The line table scrolls with the arrow keys (one line) and Page Up / Page Down (one page) while the pointer rests on the window.
 
+### Changed
+
+- **Log Viewer:** The line table shows its "Centre the map on this line" hover text only once the pointer has rested on one line for a few seconds.
+
 ### Fixed
 
 - **Log Viewer:** Fixed the line table scrolling further than the distance the mouse wheel sends.

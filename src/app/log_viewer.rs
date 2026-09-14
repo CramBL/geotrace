@@ -14,7 +14,7 @@ use rustc_hash::FxHashMap;
 use strum::IntoEnumIterator as _;
 
 use association_window::AssociationWindowUnit;
-use line_table::LineTableRequests;
+use line_table::{LineTableRequests, RowHoverDwell};
 use restored_logs_badge::RestoredLogsBadge;
 
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
@@ -60,6 +60,9 @@ pub(super) struct LogViewerWindow {
     /// The hexagon the map was last clicked on. The table marks the rows of
     /// its lines while it shows that hexagon's log.
     clicked_glyph: Option<LogMatchGlyph>,
+
+    /// The table line the pointer rests on, and since when.
+    row_hover_dwell: RowHoverDwell,
 
     /// What went wrong with this session's attachments, shown until dismissed.
     notices: Vec<String>,
@@ -143,6 +146,7 @@ impl LogViewerWindow {
             query_pending_since: None,
             scroll_to_row: None,
             clicked_glyph: None,
+            row_hover_dwell: RowHoverDwell::default(),
             notices: Vec::new(),
             restored_logs: RestoredLogsBadge::default(),
         }

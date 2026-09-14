@@ -230,6 +230,51 @@ pub(super) struct LineTableRequests<'a> {
     pub(super) hover: &'a mut LogMatchHover,
 }
 
+/// The line the pointer rests on and the moment it arrived there.
+///
+/// egui's `tooltip_delay` runs from the last pointer movement anywhere on
+/// screen, and its grace time opens the next tooltip at once after another one
+/// closed. The table times the pointer's stay on one line itself.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct RowHoverDwell {
+    entry_index: Option<usize>,
+    arrived_at_secs: f64,
+}
+
+impl RowHoverDwell {
+    /// Records the line the pointer is on this frame. Any change of line -
+    /// including the pointer leaving the table - restarts the dwell.
+    fn moved_to(&mut self, entry_index: Option<usize>, now_secs: f64) {
+        if self.entry_index != entry_index {
+            *self = Self {
+                entry_index,
+                arrived_at_secs: now_secs,
+            };
+        }
+    }
+
+    /// [`ASSOCIATED_ROW_HOVER`] once the pointer has rested on `entry_index`
+    /// for [`ASSOCIATED_ROW_HOVER_DWELL_SECS`], and `None` until then. It
+    /// requests a repaint for the time still to run, which opens the text
+    /// under a pointer that stays where it is.
+    fn associated_row_hover(
+        &self,
+        ctx: &egui::Context,
+        entry_index: usize,
+    ) -> Option<&'static str> {
+        let rested_secs = match self.entry_index == Some(entry_index) {
+            true => ctx.input(|input| input.time) - self.arrived_at_secs,
+            false => 0.0,
+        };
+        let remaining_secs = f64::from(ASSOCIATED_ROW_HOVER_DWELL_SECS) - rested_secs;
+        if remaining_secs > 0.0 {
+            ctx.request_repaint_after_secs(remaining_secs as f32);
+            return None;
+        }
+        Some(ASSOCIATED_ROW_HOVER)
+    }
+}
+
 /// The rows a hexagon on the map marks in the table: the one under the cursor,
 /// or the one last clicked while the cursor is on none.
 ///
@@ -307,7 +352,9 @@ impl LogViewerWindow {
             .as_ref()
             .or(self.clicked_glyph.as_ref());
         let cross_highlighted = CrossHighlightedRows::of(marking_hexagon, log_id, dark_mode);
+        let hover_dwell = self.row_hover_dwell;
         let mut hovered_row_placement = None;
+        let mut hovered_entry_index = None;
 
         ui.scope(|ui| {
             // Rows sit directly on top of each other, so the table reads as one
@@ -373,23 +420,24 @@ impl LogViewerWindow {
                                 entry_index,
                                 tick: ticks.tick(visible_row),
                                 cross_highlight_fill: cross_highlighted.fill_of(entry_index),
+                                hover_dwell,
                             }
                             .ui(ui, unit);
-                            if let Some(RowInteraction {
-                                latitude,
-                                longitude,
-                                clicked,
-                            }) = interaction
-                            {
-                                hovered_row_placement =
-                                    placement.map(|placement| LogRowPlacement {
-                                        merc: mercator::normalize(latitude, longitude),
-                                        track: placement.fix.track,
-                                    });
-                                if clicked {
-                                    *requests.map_center =
-                                        Some((latitude.as_degrees(), longitude.as_degrees()));
-                                }
+                            let Some(RowInteraction { clicked }) = interaction else {
+                                continue;
+                            };
+                            hovered_entry_index = Some(entry_index);
+                            let Some(placement) = placement else {
+                                continue;
+                            };
+                            let (latitude, longitude) = placement.position;
+                            hovered_row_placement = Some(LogRowPlacement {
+                                merc: mercator::normalize(latitude, longitude),
+                                track: placement.fix.track,
+                            });
+                            if clicked {
+                                *requests.map_center =
+                                    Some((latitude.as_degrees(), longitude.as_degrees()));
                             }
                         }
                         None => {}
@@ -397,6 +445,8 @@ impl LogViewerWindow {
                 }
             });
         });
+        self.row_hover_dwell
+            .moved_to(hovered_entry_index, ui.input(|input| input.time));
         requests.hover.row_placement = hovered_row_placement;
     }
 }
@@ -494,13 +544,13 @@ struct EntryRow<'a> {
 
     /// The background of a row the map's hovered hexagon stands for.
     cross_highlight_fill: Option<Color32>,
+
+    hover_dwell: RowHoverDwell,
 }
 
-/// What the cursor did to a row carrying a position: hovering it rings that
-/// position on the map, clicking centres the map there.
+/// What the cursor did to the row under it, built only for the row the pointer
+/// is on.
 struct RowInteraction {
-    latitude: Latitude,
-    longitude: Longitude,
     clicked: bool,
 }
 
@@ -624,38 +674,46 @@ impl EntryRow<'_> {
                 .set(background, Shape::rect_filled(row.rect, 0, fill));
         }
 
-        let hover = match (self.order_anomaly_step, self.position) {
-            (Some(step), _) => format!(
-                "Timestamp steps back {} here with no recorded clock change {EM_DASH} the log \
-                 may have been edited or spliced",
-                gt_fmt::format_human_terse_duration(step.abs())
-            ),
-            (None, Some(_)) => ASSOCIATED_ROW_HOVER.to_owned(),
-            (None, None) => format!(
-                "No GPS fix within {} of this line",
-                unit.describe(self.association_window)
-            ),
-        };
         // Registered above the labels the row just drew: a selectable label
         // senses the pointer, and the topmost sensing widget under the cursor
         // takes the hover and the click.
-        let row = ui
-            .interact_opt(
-                row.rect,
-                row.id,
-                match associated {
-                    true => egui::Sense::click(),
-                    false => egui::Sense::hover(),
-                },
-                InteractOptions { move_to_top: true },
-            )
-            .on_hover_text(hover);
-        let (latitude, longitude) = self.position?;
-        row.hovered().then_some(RowInteraction {
-            latitude,
-            longitude,
+        let row = ui.interact_opt(
+            row.rect,
+            row.id,
+            match associated {
+                true => egui::Sense::click(),
+                false => egui::Sense::hover(),
+            },
+            InteractOptions { move_to_top: true },
+        );
+        if !row.hovered() {
+            return None;
+        }
+        let row = match self.hover_text(ui.ctx(), unit) {
+            Some(hover) => row.on_hover_text(hover),
+            None => row,
+        };
+        Some(RowInteraction {
             clicked: row.clicked(),
         })
+    }
+
+    fn hover_text(&self, ctx: &egui::Context, unit: AssociationWindowUnit) -> Option<String> {
+        match (self.order_anomaly_step, self.position) {
+            (Some(step), _) => Some(format!(
+                "Timestamp steps back {} here with no recorded clock change {EM_DASH} the log \
+                 may have been edited or spliced",
+                gt_fmt::format_human_terse_duration(step.abs())
+            )),
+            (None, Some(_)) => self
+                .hover_dwell
+                .associated_row_hover(ctx, self.entry_index)
+                .map(str::to_owned),
+            (None, None) => Some(format!(
+                "No GPS fix within {} of this line",
+                unit.describe(self.association_window)
+            )),
+        }
     }
 
     /// The timestamp column in three runs: the date, the hour and minute, and
@@ -848,6 +906,8 @@ pub(super) const INTERPOLATED_TIMESTAMP_HOVER: &str =
     "Timestamp interpolated between neighbouring entries";
 
 pub(super) const ASSOCIATED_ROW_HOVER: &str = "Centre the map on this line";
+
+pub(super) const ASSOCIATED_ROW_HOVER_DWELL_SECS: u32 = 4;
 
 /// Width of the gutter column holding the order-anomaly marker, keeping the
 /// timestamp column aligned on the rows without one.

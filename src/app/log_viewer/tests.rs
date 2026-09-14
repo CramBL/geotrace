@@ -254,7 +254,7 @@ fn click_line(harness: &mut Harness<ViewerState>, timestamp: &str) {
 }
 
 /// Parks the cursor on the table row whose timestamp column reads `timestamp`,
-/// long enough for the hover texts of that row to open.
+/// and holds it there past egui's tooltip delay.
 fn hover_line(harness: &mut Harness<ViewerState>, timestamp: &str) {
     let row = harness.get_by_label(timestamp).rect().center();
     harness.hover_at_and_settle(row, TOOLTIP_DELAY_FRAMES);
@@ -562,24 +562,82 @@ fn hovering_a_line_with_a_position_rings_it_on_the_map() {
     assert_eq!(ringed_position(&harness), position);
 }
 
-/// A selectable label senses the pointer, and both hover texts of a line still
-/// reach the reader over its text: the row's own, and the one an interpolated
-/// timestamp carries.
-#[rstest]
-#[case::row(FIRST_ENTRY_TIMESTAMP, line_table::ASSOCIATED_ROW_HOVER)]
-#[case::interpolated_timestamp(
-    INTERPOLATED_ENTRY_TIMESTAMP,
-    line_table::INTERPOLATED_TIMESTAMP_HOVER
-)]
-fn hovering_the_text_of_a_line_shows_its_hover_text(
-    #[case] timestamp: &str,
-    #[case] expected: &str,
-) {
+/// A selectable label senses the pointer, and the hover text of an
+/// interpolated timestamp still reaches the reader over that label.
+#[test]
+fn hovering_an_interpolated_timestamp_shows_its_hover_text() {
     let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
+
+    hover_line(&mut harness, INTERPOLATED_ENTRY_TIMESTAMP);
+
+    harness.get_by_label(line_table::INTERPOLATED_TIMESTAMP_HOVER);
+}
+
+/// The hover texts the table opens as soon as egui's tooltip delay passes.
+/// Only [`line_table::ASSOCIATED_ROW_HOVER`] waits out a dwell of its own.
+#[rstest]
+#[case::no_fix(
+    FIRST_ENTRY_TIMESTAMP,
+    format!("No GPS fix within {ASSOCIATION_WINDOW_SECS}s of this line")
+)]
+#[case::order_anomaly(
+    ORDER_ANOMALY_ENTRY_TIMESTAMP,
+    format!(
+        "Timestamp steps back 4m here with no recorded clock change {} the log may have been \
+         edited or spliced",
+        gt_ui_theme::EM_DASH
+    )
+)]
+fn hovering_a_line_shows_its_hover_text_at_the_tooltip_delay(
+    #[case] timestamp: &str,
+    #[case] expected: String,
+) {
+    let mut harness = harness_with(Vec::new());
 
     hover_line(&mut harness, timestamp);
 
-    harness.get_by_label(expected);
+    harness.get_by_label(&expected);
+}
+
+#[test]
+fn the_hover_text_of_an_associated_line_opens_once_the_pointer_has_rested_on_it() {
+    let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
+    let row = harness.get_by_label(FIRST_ENTRY_TIMESTAMP).rect().center();
+
+    harness.hover_at_and_settle(row, TOOLTIP_DELAY_FRAMES);
+    assert!(
+        harness
+            .query_by_label(line_table::ASSOCIATED_ROW_HOVER)
+            .is_none(),
+        "the table keeps the row's hover text closed past egui's tooltip delay"
+    );
+
+    harness.run_steps(ASSOCIATED_ROW_DWELL_FRAMES - TOOLTIP_DELAY_FRAMES);
+
+    harness.get_by_label(line_table::ASSOCIATED_ROW_HOVER);
+}
+
+#[test]
+fn moving_to_another_line_restarts_the_dwell() {
+    let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
+    let dwelt_on = harness
+        .get_by_label(SAME_MINUTE_ENTRY_TIMESTAMP)
+        .rect()
+        .center();
+    let moved_to = harness.get_by_label(FIRST_ENTRY_TIMESTAMP).rect().center();
+
+    harness.hover_at_and_settle(dwelt_on, ASSOCIATED_ROW_DWELL_FRAMES);
+    harness.hover_at_and_settle(moved_to, TOOLTIP_DELAY_FRAMES);
+    assert!(
+        harness
+            .query_by_label(line_table::ASSOCIATED_ROW_HOVER)
+            .is_none(),
+        "the table keeps the second line's hover text closed until its own dwell passes"
+    );
+
+    harness.run_steps(ASSOCIATED_ROW_DWELL_FRAMES - TOOLTIP_DELAY_FRAMES);
+
+    harness.get_by_label(line_table::ASSOCIATED_ROW_HOVER);
 }
 
 #[test]
@@ -1842,6 +1900,10 @@ const SERVICE_AND_LEVEL_MESSAGE: &str = "navsyncd: [WARN gnss::fix] signal lost"
 /// it inside the same minute.
 const SAME_MINUTE_ENTRY_TIMESTAMP: &str = " 2026-05-29 18:48:27";
 
+/// The timestamp column of the log's one order anomaly, whose line steps the
+/// clock back with no adjustment to explain it.
+const ORDER_ANOMALY_ENTRY_TIMESTAMP: &str = " 2026-05-29 18:44:00";
+
 /// The format the parse read the fixture log in, as the summary panel names
 /// it.
 const FIXTURE_LOG_FORMAT: &str = "ISO 8601";
@@ -1861,6 +1923,16 @@ const ASSOCIATION_WINDOW_SECS: i64 = 60;
 /// Frames the cursor rests on a row before egui opens its hover text: the
 /// harness clock ticks a quarter second per frame, past the tooltip delay.
 const TOOLTIP_DELAY_FRAMES: usize = 3;
+
+/// Frames the harness clock takes to advance one second, at its quarter
+/// second per frame.
+const FRAMES_PER_SECOND: u32 = 4;
+
+/// Frames the cursor rests on a line before the table opens
+/// [`line_table::ASSOCIATED_ROW_HOVER`]: the table's own dwell in frames, and
+/// the frame the pointer arrives on.
+const ASSOCIATED_ROW_DWELL_FRAMES: usize =
+    (line_table::ASSOCIATED_ROW_HOVER_DWELL_SECS * FRAMES_PER_SECOND) as usize + 1;
 
 /// The window the viewer is driven in, wide enough for the footer's controls
 /// to sit on one row.
