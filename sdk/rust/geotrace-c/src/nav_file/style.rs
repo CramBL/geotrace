@@ -80,14 +80,14 @@ pub unsafe extern "C" fn gtd_nav_file_get_event_marker_style(
 
 impl GtdEventMarkerStyleInfo {
     fn new(style: &EventMarkerStyle) -> Result<Self, GtdStatus> {
-        let color_hex = match &style.color {
+        let color_hex = match style.color() {
             EventMarkerColor::Auto => None,
             EventMarkerColor::Hex(hex) | EventMarkerColor::Unrecognized(hex) => Some(hex.as_str()),
         };
         let mut info = Self {
             variant_path: [0; 257],
-            icon: match style.icon {
-                EventMarkerIconChoice::Icon(icon) => GtdMarkerIcon::from(icon),
+            icon: match style.icon() {
+                EventMarkerIconChoice::Icon(icon) => GtdMarkerIcon::from(*icon),
                 EventMarkerIconChoice::Auto | EventMarkerIconChoice::Unrecognized(_) => {
                     GtdMarkerIcon::GTD_ICON_AUTO
                 }
@@ -98,12 +98,12 @@ impl GtdEventMarkerStyleInfo {
         };
         super::fill_struct_field(
             &mut info.variant_path,
-            &style.variant_path,
+            style.variant_path(),
             StructFieldName("GtdEventMarkerStyleInfo::variant_path"),
         )?;
         super::fill_struct_field(
             &mut info.icon_name,
-            style.icon.wire_name(),
+            style.icon().wire_name(),
             StructFieldName("GtdEventMarkerStyleInfo::icon_name"),
         )?;
         super::fill_struct_field(

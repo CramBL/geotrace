@@ -3,8 +3,8 @@
 use std::ffi::c_char;
 
 use geotrace_sdk::{
-    Angle, Annotation, Channel, ChannelUnit, EventMarker, EventMarkerColor, EventMarkerStyle,
-    NavFixTime, RecordedFixTimestamps, SatelliteReport, Velocity,
+    Angle, Annotation, Channel, ChannelUnit, EventMarker, EventMarkerStyle, NavFixTime,
+    RecordedFixTimestamps, SatelliteReport, Velocity,
 };
 
 use super::GtdFileBuilder;
@@ -274,14 +274,13 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker(
 ///                     `gtd_builder_add_event_marker()`).
 /// @param icon         Icon to display. A @ref GtdMarkerIcon value.
 ///                     `GTD_ICON_AUTO` uses the application default.
-/// @param color_hex    Color as an `"#RRGGBB"` string, or NULL for automatic.
+/// @param color_hex    Color as an `"#RRGGBB"` string, or NULL or an empty string for automatic.
 ///
+/// @return `GTD_ERR_INVALID_PATH` if @p variant_path is malformed.
+/// @return `GTD_ERR_FIELD_TOO_LONG` if @p variant_path is longer than 255 bytes.
 /// @return `GTD_ERR_INVALID_ARGUMENT` if @p icon is a value no
-///         @ref GtdMarkerIcon variant declares.
-///
-/// @note The style is checked when the file is written: a @p variant_path past
-///       255 bytes or a @p color_hex past 7 bytes fails there with
-///       `GTD_ERR_FIELD_TOO_LONG`.
+///         @ref GtdMarkerIcon variant declares, or @p color_hex is neither empty
+///         nor of the `#RRGGBB` form.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_event_marker_style(
     builder: *mut GtdFileBuilder,
@@ -296,18 +295,20 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker_style(
             error::set_last_error("icon is not a valid GtdMarkerIcon");
             return GtdStatus::GTD_ERR_INVALID_ARGUMENT;
         };
-        let icon_choice = icon.to_icon_choice();
-        let color = match cstr_opt!(color_hex) {
-            Some(hex) => EventMarkerColor::Hex(hex.to_owned()),
-            None => EventMarkerColor::Auto,
+        let style = match EventMarkerStyle::builder()
+            .variant_path(path)
+            .icon(icon.to_icon_choice())
+            .maybe_color(cstr_opt!(color_hex))
+            .build()
+        {
+            Ok(style) => style,
+            Err(e) => {
+                let status = error::status_for_event_marker_style_error(&e);
+                error::set_last_error(e);
+                return status;
+            }
         };
-        builder
-            .recorder_mut()
-            .add_event_marker_style(EventMarkerStyle {
-                variant_path: path.to_owned(),
-                icon: icon_choice,
-                color,
-            });
+        builder.recorder_mut().add_event_marker_style(style);
         GtdStatus::GTD_OK
     })
 }

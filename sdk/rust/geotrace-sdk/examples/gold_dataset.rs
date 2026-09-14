@@ -352,22 +352,22 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     let styles = file.event_marker_styles();
     let icon_style = styles
         .iter()
-        .find(|s| s.variant_path == "style/custom-icon")
+        .find(|s| s.variant_path() == "style/custom-icon")
         .unwrap();
     assert_eq!(
-        icon_style.icon,
-        geotrace_sdk::EventMarkerIconChoice::Icon(MarkerIcon::Lightning)
+        icon_style.icon(),
+        &geotrace_sdk::EventMarkerIconChoice::Icon(MarkerIcon::Lightning)
     );
 
     let color_style = styles
         .iter()
-        .find(|s| s.variant_path == "style/custom-color")
+        .find(|s| s.variant_path() == "style/custom-color")
         .unwrap();
     assert!(matches!(
-        color_style.color,
+        color_style.color(),
         geotrace_sdk::EventMarkerColor::Hex(_)
     ));
-    if let geotrace_sdk::EventMarkerColor::Hex(hex) = &color_style.color {
+    if let geotrace_sdk::EventMarkerColor::Hex(hex) = color_style.color() {
         assert_eq!(hex, "#FF00FF");
     }
 

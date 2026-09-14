@@ -293,14 +293,21 @@ TEST_CASE("FileBuilder: a style color outside the #RRGGBB form throws std::inval
 
 TEST_CASE("FileBuilder: a style variant path the event marker rules reject throws") {
     FileBuilder builder;
-    CHECK_THROWS_WITH_AS(builder.add_event_marker_style(EventMarkerStyle{""}),
-                         "invalid event marker variant path \"\": path is empty", InvalidPathError);
-    CHECK_THROWS_WITH_AS(builder.add_event_marker_style(EventMarkerStyle{"über_lang"}),
-                         "invalid event marker variant path \"über_lang\": contains characters "
-                         "outside ASCII alphanumeric, hyphen, underscore, and slash",
-                         InvalidPathError);
-    CHECK_THROWS_AS(builder.add_event_marker_style(EventMarkerStyle{std::string(256, 'p')}),
-                    FieldTooLongError);
+    SUBCASE("an empty path") {
+        CHECK_THROWS_WITH_AS(builder.add_event_marker_style(EventMarkerStyle{""}),
+                             "invalid event marker variant path \"\": path is empty",
+                             InvalidPathError);
+    }
+    SUBCASE("a non-ASCII path") {
+        CHECK_THROWS_WITH_AS(builder.add_event_marker_style(EventMarkerStyle{"über_lang"}),
+                             "invalid event marker variant path \"über_lang\": contains "
+                             "characters outside ASCII alphanumeric, hyphen, underscore, and slash",
+                             InvalidPathError);
+    }
+    SUBCASE("a path past 255 bytes") {
+        CHECK_THROWS_AS(builder.add_event_marker_style(EventMarkerStyle{std::string(256, 'p')}),
+                        FieldTooLongError);
+    }
 }
 
 TEST_CASE("FileBuilder: a string argument with a nul byte throws and states the string") {

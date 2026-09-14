@@ -2,7 +2,7 @@ use geotrace_sdk::__private::Sealed;
 use geotrace_sdk::{
     Angle, AnnotationField, BuildError, EventKind, EventMarker, EventMarkerColor, EventMarkerError,
     EventMarkerIconChoice, EventMarkerStyle, MarkerIcon, NavFileBuilder, NavFix, NavFixTime,
-    NavRecorder, UnplacedRecordCounts, VariantPathField,
+    NavRecorder, UnplacedRecordCounts, VariantPathError, VariantPathField,
 };
 use geotrace_sdk_test_util as test_util;
 use rstest::rstest;
@@ -46,37 +46,37 @@ fn a_well_formed_variant_path_is_accepted(#[case] path: &str) {
 #[rstest]
 #[case::empty(
     "",
-    |error: &EventMarkerError| matches!(error, EventMarkerError::Empty { .. }),
+    |error: &VariantPathError| matches!(error, VariantPathError::Empty { .. }),
     r#"invalid event marker variant path "": path is empty"#
 )]
 #[case::a_leading_slash(
     "/power/on",
-    |error: &EventMarkerError| matches!(error, EventMarkerError::LeadingSlash { .. }),
+    |error: &VariantPathError| matches!(error, VariantPathError::LeadingSlash { .. }),
     r#"invalid event marker variant path "/power/on": starts with '/'"#
 )]
 #[case::a_trailing_slash(
     "power/on/",
-    |error: &EventMarkerError| matches!(error, EventMarkerError::TrailingSlash { .. }),
+    |error: &VariantPathError| matches!(error, VariantPathError::TrailingSlash { .. }),
     r#"invalid event marker variant path "power/on/": ends with '/'"#
 )]
 #[case::a_double_slash(
     "power//on",
-    |error: &EventMarkerError| matches!(error, EventMarkerError::EmptySegment { .. }),
+    |error: &VariantPathError| matches!(error, VariantPathError::EmptySegment { .. }),
     r#"invalid event marker variant path "power//on": contains '//'"#
 )]
 #[case::a_space(
     "power/turn on",
-    |error: &EventMarkerError| matches!(error, EventMarkerError::InvalidChars { .. }),
+    |error: &VariantPathError| matches!(error, VariantPathError::InvalidChars { .. }),
     r#"invalid event marker variant path "power/turn on": contains characters outside ASCII alphanumeric, hyphen, underscore, and slash"#
 )]
 #[case::a_dot(
     "power/v1.2",
-    |error: &EventMarkerError| matches!(error, EventMarkerError::InvalidChars { .. }),
+    |error: &VariantPathError| matches!(error, VariantPathError::InvalidChars { .. }),
     r#"invalid event marker variant path "power/v1.2": contains characters outside ASCII alphanumeric, hyphen, underscore, and slash"#
 )]
 fn a_malformed_variant_path_is_rejected(
     #[case] path: &str,
-    #[case] is_expected_error: fn(&EventMarkerError) -> bool,
+    #[case] is_expected_error: fn(&VariantPathError) -> bool,
     #[case] expected_message: &str,
 ) {
     let error = EventMarker::builder()
@@ -84,7 +84,10 @@ fn a_malformed_variant_path_is_rejected(
         .sys_time(test_util::t_s(0))
         .build()
         .expect_err("the variant path is malformed");
-    assert!(is_expected_error(&error), "got {error:?}");
+    assert!(
+        matches!(&error, EventMarkerError::InvalidVariantPath { source } if is_expected_error(source)),
+        "got {error:?}"
+    );
     assert_eq!(error.to_string(), expected_message);
 }
 
@@ -307,7 +310,7 @@ fn an_empty_style_color_is_auto() {
         .color("")
         .build()
         .expect("an empty color is accepted");
-    assert_eq!(style.color, EventMarkerColor::Auto);
+    assert_eq!(style.color(), &EventMarkerColor::Auto);
 }
 
 #[rstest]
@@ -373,19 +376,19 @@ fn add_event_auto_registers_icon_for_derived_enum() {
 
     assert_eq!(styles.len(), 2, "expected one style per unique path");
 
-    let turn_on = styles.iter().find(|s| s.variant_path == "power/turn_on");
+    let turn_on = styles.iter().find(|s| s.variant_path() == "power/turn_on");
     assert!(turn_on.is_some(), "no style registered for power/turn_on");
     assert_eq!(
-        turn_on.unwrap().icon,
-        EventMarkerIconChoice::Icon(MarkerIcon::Lightning),
+        turn_on.unwrap().icon(),
+        &EventMarkerIconChoice::Icon(MarkerIcon::Lightning),
         "power/turn_on should have Lightning icon"
     );
 
-    let failed = styles.iter().find(|s| s.variant_path == "power/failed");
+    let failed = styles.iter().find(|s| s.variant_path() == "power/failed");
     assert!(failed.is_some(), "no style registered for power/failed");
     assert_eq!(
-        failed.unwrap().icon,
-        EventMarkerIconChoice::Icon(MarkerIcon::Error),
+        failed.unwrap().icon(),
+        &EventMarkerIconChoice::Icon(MarkerIcon::Error),
         "power/failed should have Error icon"
     );
 }
@@ -401,8 +404,8 @@ fn add_event_icon_survives_round_trip() {
     let styles = loaded.event_marker_styles();
     assert_eq!(styles.len(), 1);
     assert_eq!(
-        styles[0].icon,
-        EventMarkerIconChoice::Icon(MarkerIcon::Lightning),
+        styles[0].icon(),
+        &EventMarkerIconChoice::Icon(MarkerIcon::Lightning),
         "Lightning icon must survive write/read round-trip"
     );
 }
@@ -426,19 +429,19 @@ impl EventKind for HandWrittenEvent {
 #[rstest]
 #[case::a_leading_slash(
     "/power/boot",
-    |error: &EventMarkerError| matches!(error, EventMarkerError::LeadingSlash { .. })
+    |error: &VariantPathError| matches!(error, VariantPathError::LeadingSlash { .. })
 )]
 #[case::an_empty_segment(
     "power//boot",
-    |error: &EventMarkerError| matches!(error, EventMarkerError::EmptySegment { .. })
+    |error: &VariantPathError| matches!(error, VariantPathError::EmptySegment { .. })
 )]
 #[case::a_non_ascii_character(
     "power/größe",
-    |error: &EventMarkerError| matches!(error, EventMarkerError::InvalidChars { .. })
+    |error: &VariantPathError| matches!(error, VariantPathError::InvalidChars { .. })
 )]
 fn an_event_with_a_malformed_variant_path_fails_the_build_in_strict_mode(
     #[case] variant_path: &'static str,
-    #[case] is_expected_rejection: fn(&EventMarkerError) -> bool,
+    #[case] is_expected_rejection: fn(&VariantPathError) -> bool,
     #[values(record_through_add_event, record_through_add_event_with_note)] record_event: fn(
         &mut NavRecorder,
         &HandWrittenEvent,
@@ -488,7 +491,7 @@ fn an_event_with_a_malformed_variant_path_is_dropped_in_lenient_mode(
     let registered_icons: Vec<(&str, &EventMarkerIconChoice)> = nav_file
         .event_marker_styles()
         .iter()
-        .map(|style| (style.variant_path.as_str(), &style.icon))
+        .map(|style| (style.variant_path(), style.icon()))
         .collect();
     assert_eq!(
         registered_icons,
@@ -511,27 +514,4 @@ fn record_through_add_event(recorder: &mut NavRecorder, event: &HandWrittenEvent
 
 fn record_through_add_event_with_note(recorder: &mut NavRecorder, event: &HandWrittenEvent) {
     recorder.add_event_with_note(event, test_util::t_s(0), "note");
-}
-
-#[test]
-fn an_icon_name_and_color_outside_the_known_sets_are_written_back_verbatim() {
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(fix(0, 55.0, 12.0));
-    recorder.add_event_marker_style(EventMarkerStyle {
-        variant_path: "power/on".to_owned(),
-        icon: EventMarkerIconChoice::Unrecognized("hovercraft".to_owned()),
-        color: EventMarkerColor::Unrecognized("FFAA00".to_owned()),
-    });
-
-    let loaded = test_util::round_trip(&recorder.finish().unwrap()).unwrap();
-
-    let styles = loaded.event_marker_styles();
-    assert_eq!(
-        styles[0].icon,
-        EventMarkerIconChoice::Unrecognized("hovercraft".to_owned())
-    );
-    assert_eq!(
-        styles[0].color,
-        EventMarkerColor::Unrecognized("FFAA00".to_owned())
-    );
 }

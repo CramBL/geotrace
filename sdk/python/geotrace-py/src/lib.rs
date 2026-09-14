@@ -1391,16 +1391,24 @@ fn is_skip_sentinel(value: &Bound<'_, PyAny>) -> PyResult<bool> {
 /// sentinel value) to skip this marker. Anything else raises ``TypeError``.
 /// Allowed characters: ASCII alphanumeric, hyphen, underscore, and slash.
 /// No leading or trailing slash. No empty segments (``//``). Max 255 bytes.
-/// ``annotation`` holds at most 511 bytes, checked when ``NavFileBuilder.add()``
-/// takes the marker. ``NavFileBuilder.add()`` stores an empty ``annotation`` as none.
+/// ``annotation`` holds at most 511 bytes. An empty ``annotation`` reads back as none.
+/// The constructor raises ``ValueError`` if ``variant_path`` is a malformed string, or if
+/// ``annotation`` is past 511 bytes for a marker that is not skipped.
 ///
 /// ``sys_time`` must be a timezone-aware ``datetime.datetime``.
 #[pyclass(skip_from_py_object, name = "EventMarker")]
 #[derive(Debug, Clone)]
 pub struct PyEventMarker {
-    variant_path: Option<String>,
-    sys_time: DateTime<Utc>,
-    annotation: Option<String>,
+    marker: SkippableEventMarker,
+}
+
+#[derive(Debug, Clone)]
+enum SkippableEventMarker {
+    Record(EventMarker),
+    Skip {
+        sys_time: DateTime<Utc>,
+        annotation: Option<String>,
+    },
 }
 
 #[pymethods]
@@ -1433,67 +1441,71 @@ impl PyEventMarker {
                 }
             }
         };
-        // Validate the path if one is supplied.
-        if let Some(p) = &path {
-            geotrace_sdk::EventMarker::builder()
-                .variant_path(p.as_str())
-                .sys_time(sys_time.to_utc())
-                .build()
-                .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        }
-        Ok(Self {
-            variant_path: path,
-            sys_time: sys_time.to_utc(),
-            annotation,
-        })
+        let sys_time = sys_time.to_utc();
+        let marker = match path {
+            Some(path) => SkippableEventMarker::Record(
+                EventMarker::builder()
+                    .variant_path(path)
+                    .sys_time(sys_time)
+                    .maybe_annotation(annotation)
+                    .build()
+                    .map_err(|e| PyValueError::new_err(e.to_string()))?,
+            ),
+            None => SkippableEventMarker::Skip {
+                sys_time,
+                annotation,
+            },
+        };
+        Ok(Self { marker })
     }
 
     #[getter]
     fn variant_path(&self) -> Option<&str> {
-        self.variant_path.as_deref()
+        match &self.marker {
+            SkippableEventMarker::Record(marker) => Some(marker.variant_path()),
+            SkippableEventMarker::Skip { .. } => None,
+        }
     }
 
     #[getter]
     fn sys_time(&self) -> DateTime<FixedOffset> {
-        to_fixed(self.sys_time)
+        to_fixed(match &self.marker {
+            SkippableEventMarker::Record(marker) => marker.sys_time(),
+            SkippableEventMarker::Skip { sys_time, .. } => *sys_time,
+        })
     }
 
     #[getter]
     fn annotation(&self) -> Option<&str> {
-        self.annotation.as_deref()
+        match &self.marker {
+            SkippableEventMarker::Record(marker) => marker.annotation(),
+            SkippableEventMarker::Skip { annotation, .. } => annotation.as_deref(),
+        }
     }
 
     fn __repr__(&self) -> String {
-        format!("EventMarker(variant_path={:?})", self.variant_path)
+        format!("EventMarker(variant_path={:?})", self.variant_path())
     }
 }
 
 /// Per-variant icon and color style stored in the file.
 ///
-/// ``variant_path`` must exactly match a path used in an event marker.
+/// ``variant_path`` must exactly match a path used in an event marker, and follows the rules of
+/// :class:`EventMarker`.
 /// ``icon`` is a :class:`MarkerIcon` value, or ``None`` for the application default (Pin).
 /// ``color`` is ``#RRGGBB``, e.g. ``"#FF9900"``, or ``None`` or an empty string for the
-/// deterministic hash color. ``NavFileBuilder.add_event_marker_style`` raises ``ValueError`` for
-/// any other color.
+/// deterministic hash color. The constructor raises ``ValueError`` for a malformed variant path
+/// and for any other color.
 #[pyclass(skip_from_py_object, name = "EventMarkerStyle")]
 #[derive(Debug, Clone)]
 pub struct PyEventMarkerStyle {
-    variant_path: String,
-    icon: EventMarkerIconChoice,
-    color: Option<String>,
+    inner: EventMarkerStyle,
 }
 
 impl From<&EventMarkerStyle> for PyEventMarkerStyle {
     fn from(style: &EventMarkerStyle) -> Self {
         Self {
-            variant_path: style.variant_path.clone(),
-            icon: style.icon.clone(),
-            color: match &style.color {
-                EventMarkerColor::Auto => None,
-                EventMarkerColor::Hex(hex) | EventMarkerColor::Unrecognized(hex) => {
-                    Some(hex.clone())
-                }
-            },
+            inner: style.clone(),
         }
     }
 }
@@ -1502,24 +1514,30 @@ impl From<&EventMarkerStyle> for PyEventMarkerStyle {
 impl PyEventMarkerStyle {
     #[new]
     #[pyo3(signature = (variant_path, *, icon=None, color=None))]
-    fn new(variant_path: String, icon: Option<PyMarkerIcon>, color: Option<String>) -> Self {
-        Self {
-            variant_path,
-            icon: EventMarkerIconChoice::from(icon.map(MarkerIcon::from)),
-            color,
-        }
+    fn new(
+        variant_path: String,
+        icon: Option<PyMarkerIcon>,
+        color: Option<String>,
+    ) -> PyResult<Self> {
+        let inner = EventMarkerStyle::builder()
+            .variant_path(variant_path)
+            .icon(EventMarkerIconChoice::from(icon.map(MarkerIcon::from)))
+            .maybe_color(color)
+            .build()
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        Ok(Self { inner })
     }
 
     #[getter]
     fn variant_path(&self) -> &str {
-        &self.variant_path
+        self.inner.variant_path()
     }
 
     /// Icon shape, or ``None`` for the application default and for an icon name
     /// this build does not have. :attr:`icon_name` holds such a name.
     #[getter]
     fn icon(&self) -> Option<PyMarkerIcon> {
-        match &self.icon {
+        match self.inner.icon() {
             EventMarkerIconChoice::Icon(icon) => Some(PyMarkerIcon::from(*icon)),
             EventMarkerIconChoice::Auto | EventMarkerIconChoice::Unrecognized(_) => None,
         }
@@ -1532,7 +1550,7 @@ impl PyEventMarkerStyle {
     /// :attr:`icon` is ``None`` for it.
     #[getter]
     fn icon_name(&self) -> Option<&str> {
-        Some(self.icon.wire_name()).filter(|name| !name.is_empty())
+        Some(self.inner.icon().wire_name()).filter(|name| !name.is_empty())
     }
 
     /// Fill color as ``#RRGGBB``, or ``None`` for the deterministic hash color.
@@ -1541,11 +1559,14 @@ impl PyEventMarkerStyle {
     /// Such a color reads back verbatim.
     #[getter]
     fn color(&self) -> Option<&str> {
-        self.color.as_deref()
+        match self.inner.color() {
+            EventMarkerColor::Auto => None,
+            EventMarkerColor::Hex(hex) | EventMarkerColor::Unrecognized(hex) => Some(hex),
+        }
     }
 
     fn __repr__(&self) -> String {
-        format!("EventMarkerStyle(variant_path={:?})", self.variant_path)
+        format!("EventMarkerStyle(variant_path={:?})", self.variant_path())
     }
 }
 
@@ -1875,11 +1896,11 @@ impl PyNavFile {
     #[getter]
     fn event_marker_styles(&self, py: Python<'_>) -> PyResult<PyEventMarkerStyleSequence> {
         for style in self.inner.event_marker_styles() {
-            if let EventMarkerIconChoice::Unrecognized(name) = &style.icon {
+            if let EventMarkerIconChoice::Unrecognized(name) = style.icon() {
                 let message = CString::new(format!(
                     "event marker style {:?} names the icon {name:?}, which this build does not \
                      have: icon reads as None, icon_name holds the name",
-                    style.variant_path
+                    style.variant_path()
                 ))
                 .map_err(|err| PyValueError::new_err(err.to_string()))?;
                 PyErr::warn(py, &py.get_type::<PyUserWarning>(), &message, 1)?;
@@ -2064,17 +2085,9 @@ impl PyNavFileBuilder {
                     recorder.add_annotation(a.borrow().inner.clone());
                 }
                 AddItem::EventMarker(em) => {
-                    let m = em.borrow();
-                    let Some(path) = m.variant_path.clone() else {
-                        return Ok(slf.unbind());
-                    };
-                    let marker = EventMarker::builder()
-                        .variant_path(path)
-                        .sys_time(m.sys_time)
-                        .maybe_annotation(m.annotation.clone())
-                        .build()
-                        .map_err(|e| PyValueError::new_err(e.to_string()))?;
-                    recorder.add_event_marker(marker);
+                    if let SkippableEventMarker::Record(marker) = &em.borrow().marker {
+                        recorder.add_event_marker(marker.clone());
+                    }
                 }
                 AddItem::Channel(c) => {
                     recorder.add_channel(c.borrow().inner.clone());
@@ -2086,7 +2099,8 @@ impl PyNavFileBuilder {
 
     /// Add a per-variant style override to the file.
     ///
-    /// Returns ``self`` to allow chaining.
+    /// Returns ``self`` to allow chaining. A style from ``NavFile.event_marker_styles`` is written
+    /// back verbatim, a color outside the ``#RRGGBB`` form included.
     fn add_event_marker_style(
         slf: Bound<'_, Self>,
         style: &PyEventMarkerStyle,
@@ -2094,14 +2108,7 @@ impl PyNavFileBuilder {
         {
             let mut b = slf.borrow_mut();
             let recorder = b.ensure_recorder()?;
-            recorder.add_event_marker_style(
-                EventMarkerStyle::builder()
-                    .variant_path(style.variant_path.clone())
-                    .icon(style.icon.clone())
-                    .maybe_color(style.color.clone())
-                    .build()
-                    .map_err(file_err)?,
-            );
+            recorder.add_event_marker_style(style.inner.clone());
         }
         Ok(slf.unbind())
     }

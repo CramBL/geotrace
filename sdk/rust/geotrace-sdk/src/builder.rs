@@ -3,8 +3,8 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 
 use crate::error::{
-    self, BuildError, Error, EventMarkerError, FieldLocation, MetaField, MetaStringWithNul,
-    UnplacedRecordCounts,
+    self, BuildError, Error, FieldLocation, MetaField, MetaStringWithNul, UnplacedRecordCounts,
+    VariantPathError,
 };
 use crate::time_types::{GpsTime, SysTime};
 use crate::types::{
@@ -321,7 +321,7 @@ pub struct NavRecorder {
     event_marker_styles: Vec<EventMarkerStyle>,
     channels: Vec<Channel>,
     styled_paths: std::collections::HashSet<String>,
-    first_event_variant_path_rejection: Option<EventMarkerError>,
+    first_event_variant_path_rejection: Option<VariantPathError>,
     meta: Option<Meta>,
     satellite_window: Duration,
     continue_on_error: bool,

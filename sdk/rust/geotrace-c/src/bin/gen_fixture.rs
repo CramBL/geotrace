@@ -15,10 +15,9 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use geotrace_sdk::{
-    Angle, Annotation, AnnotationIcon, Constellation, DateTime, Duration, EventMarkerColor,
-    EventMarkerIconChoice, EventMarkerStyle, NavFile, NavFileBuilder, NavFix, NavFixTime,
-    NavRecorder, SCRUBBED_SDK_VERSION, SDK_VERSION_ATTR, Satellite, SatelliteReport, TravelMode,
-    Velocity,
+    Angle, Annotation, AnnotationIcon, ColorHexField, Constellation, DateTime, Duration,
+    IconNameField, NavFile, NavFileBuilder, NavFix, NavFixTime, NavRecorder, SCRUBBED_SDK_VERSION,
+    SDK_VERSION_ATTR, Satellite, SatelliteReport, TravelMode, VariantPathField, Velocity,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 
@@ -172,28 +171,42 @@ fn out_of_range_values() -> NavFile {
 
 /// A file as a newer build would write it: an event marker style with an icon
 /// outside the [`MarkerIcon`](geotrace_sdk::MarkerIcon) set, and a color that is
-/// not `#RRGGBB`.
+/// not `#RRGGBB`. The style builder rejects that color: `hdf5_pure` writes the file, and the SDK
+/// reads it back. [`write_fixture`] writes the result in the layout of the SDK writer.
 fn unrecognized_style_values() -> NavFile {
-    let t0 = DateTime::from_timestamp_micros(1_700_000_000_000_000).expect("valid timestamp");
+    let mut fb = file_builder_with_one_nav_point(1_700_000_000_000_000);
+    fb.set_attr(
+        "meta_title",
+        AttrValue::String("unrecognized style values fixture".into()),
+    );
+    fb.set_attr("meta_device", AttrValue::String("gen_fixture".into()));
 
-    let mut recorder = fixture_recorder("unrecognized style values fixture");
+    let mut styles = fb.create_group("event_marker_styles");
+    let variant_path = VariantPathField::new("power/boot")
+        .expect("gen_fixture: the variant path fits its field")
+        .encode_row();
+    styles
+        .create_dataset("variant_path")
+        .with_u8_data(&variant_path)
+        .with_shape(&[1, variant_path.len() as u64]);
+    let icon_name = IconNameField::new("hovercraft")
+        .expect("gen_fixture: the icon name fits its field")
+        .encode_row();
+    styles
+        .create_dataset("icon_name")
+        .with_u8_data(&icon_name)
+        .with_shape(&[1, icon_name.len() as u64]);
+    let color_hex = ColorHexField::new("FFAA00")
+        .expect("gen_fixture: the color fits its field")
+        .encode_row();
+    styles
+        .create_dataset("color_hex")
+        .with_u8_data(&color_hex)
+        .with_shape(&[1, color_hex.len() as u64]);
+    fb.add_group(styles.finish());
 
-    recorder.add_nav_fix(NavFix {
-        time: NavFixTime::Receiver(t0),
-        lat: Angle::degrees(51.5074),
-        lon: Angle::degrees(-0.1278),
-        heading: Some(Angle::degrees(90.0)),
-        speed: Some(Velocity::meter_per_second(5.0)),
-        eph_m: None,
-    });
-
-    recorder.add_event_marker_style(EventMarkerStyle {
-        variant_path: "power/boot".to_owned(),
-        icon: EventMarkerIconChoice::Unrecognized("hovercraft".to_owned()),
-        color: EventMarkerColor::Unrecognized("FFAA00".to_owned()),
-    });
-
-    recorder.finish().expect("gen_fixture: build failed")
+    let bytes = fb.finish().expect("gen_fixture: build failed");
+    NavFile::read(bytes.as_slice()).expect("gen_fixture: the SDK reads the file")
 }
 
 /// A file as a newer build would write it: a map marker with a `markers/icon`

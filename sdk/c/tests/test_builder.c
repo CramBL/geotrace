@@ -683,30 +683,6 @@ Test(builder, event_marker_with_a_sys_time_past_the_range_is_out_of_range) {
     gtd_builder_destroy(builder);
 }
 
-Test(builder, event_marker_style_color_past_its_field_is_too_long_when_written) {
-    GtdFileBuilder *builder = gtd_builder_create();
-    cr_assert_not_null(builder);
-
-    GtdTimestamp timestamp;
-    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
-
-    cr_assert_eq(gtd_builder_add_nav_fix(builder, timestamp, gtd_ts_none(), 35.6762, 139.6503,
-                                         GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
-                 GTD_OK);
-    cr_assert_eq(
-        gtd_builder_add_event_marker_style(builder, "system/startup", GTD_ICON_AUTO, "#00FF00FF"),
-        GTD_OK);
-
-    GtdNavFile *file = NULL;
-    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_OK);
-
-    uint8_t *buf = NULL;
-    size_t len = 0;
-    cr_assert_eq(gtd_nav_file_to_bytes(file, &buf, &len), GTD_ERR_FIELD_TOO_LONG);
-
-    gtd_nav_file_destroy(file);
-}
-
 #ifdef GTD_FIXTURE_PATH
 Test(builder, open_fixture) {
     GtdNavFile *file = NULL;

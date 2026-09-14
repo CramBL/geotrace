@@ -589,10 +589,12 @@ class EventMarker:
             ``event_kind.skip`` to skip this marker.
         sys_time: Timezone-aware timestamp for this event.
         annotation: Optional free-text note shown on hover, or ``None`` or an
-            empty string for none.
+            empty string for none. At most 511 bytes.
 
     Raises:
         TypeError: If ``variant_path`` is of any other type.
+        ValueError: If ``variant_path`` is a malformed string, or if
+            ``annotation`` is past 511 bytes for a marker that is not skipped.
     """
 
     def __init__(
@@ -618,6 +620,10 @@ class EventMarkerStyle:
         icon: Icon shape, or ``None`` for the application default (Pin).
         color: Fill color as ``#RRGGBB``, or ``None`` or an empty string for the
             deterministic hash color.
+
+    Raises:
+        ValueError: If ``variant_path`` is malformed, or ``color`` is neither
+            empty nor of the ``#RRGGBB`` form.
     """
 
     def __init__(
@@ -950,9 +956,8 @@ class NavFileBuilder:
     def add_event_marker_style(self, style: EventMarkerStyle) -> NavFileBuilder:
         """Add a per-variant style override. Returns ``self``.
 
-        Raises:
-            ValueError: If the style's color is neither empty nor of the
-                ``#RRGGBB`` form.
+        A style from :attr:`NavFile.event_marker_styles` is written back
+        verbatim, a color outside the ``#RRGGBB`` form included.
         """
         ...
 

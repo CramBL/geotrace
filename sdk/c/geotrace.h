@@ -884,14 +884,13 @@ GtdStatus gtd_builder_add_event_marker(GtdFileBuilder *builder,
  *                     `gtd_builder_add_event_marker()`).
  * @param icon         Icon to display. A @ref GtdMarkerIcon value.
  *                     `GTD_ICON_AUTO` uses the application default.
- * @param color_hex    Color as an `"#RRGGBB"` string, or NULL for automatic.
+ * @param color_hex    Color as an `"#RRGGBB"` string, or NULL or an empty string for automatic.
  *
+ * @return `GTD_ERR_INVALID_PATH` if @p variant_path is malformed.
+ * @return `GTD_ERR_FIELD_TOO_LONG` if @p variant_path is longer than 255 bytes.
  * @return `GTD_ERR_INVALID_ARGUMENT` if @p icon is a value no
- *         @ref GtdMarkerIcon variant declares.
- *
- * @note The style is checked when the file is written: a @p variant_path past
- *       255 bytes or a @p color_hex past 7 bytes fails there with
- *       `GTD_ERR_FIELD_TOO_LONG`.
+ *         @ref GtdMarkerIcon variant declares, or @p color_hex is neither empty
+ *         nor of the `#RRGGBB` form.
  */
 GtdStatus gtd_builder_add_event_marker_style(GtdFileBuilder *builder,
                                              const char *variant_path,

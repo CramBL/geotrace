@@ -102,20 +102,39 @@ pub(crate) fn status_for_error(e: &geotrace_sdk::Error) -> GtdStatus {
     }
 }
 
-/// Map an event marker build error to its C status code: a value past the
-/// capacity of the field that holds it gets `ErrFieldTooLong`, a malformed
-/// variant path `ErrInvalidPath`.
+/// Map an event marker build error to its C status code: a malformed variant path gets the status
+/// of [`status_for_variant_path_error`], an annotation past the capacity of its field
+/// `ErrFieldTooLong`, any other error `ErrInvalidArgument`.
 pub(crate) fn status_for_event_marker_error(e: &geotrace_sdk::EventMarkerError) -> GtdStatus {
     use geotrace_sdk::EventMarkerError;
     match e {
-        EventMarkerError::TooLong { .. } | EventMarkerError::UnwritableAnnotation { .. } => {
-            GtdStatus::GTD_ERR_FIELD_TOO_LONG
+        EventMarkerError::InvalidVariantPath { source } => status_for_variant_path_error(source),
+        EventMarkerError::UnwritableAnnotation { .. } => GtdStatus::GTD_ERR_FIELD_TOO_LONG,
+        _ => GtdStatus::GTD_ERR_INVALID_ARGUMENT,
+    }
+}
+
+/// Map an event marker style build error to its C status code: a malformed variant path gets the
+/// status of [`status_for_variant_path_error`], any other error `ErrInvalidArgument`.
+pub(crate) fn status_for_event_marker_style_error(
+    e: &geotrace_sdk::EventMarkerStyleError,
+) -> GtdStatus {
+    use geotrace_sdk::EventMarkerStyleError;
+    match e {
+        EventMarkerStyleError::InvalidVariantPath { source } => {
+            status_for_variant_path_error(source)
         }
-        EventMarkerError::Empty { .. }
-        | EventMarkerError::LeadingSlash { .. }
-        | EventMarkerError::TrailingSlash { .. }
-        | EventMarkerError::EmptySegment { .. }
-        | EventMarkerError::InvalidChars { .. } => GtdStatus::GTD_ERR_INVALID_PATH,
+        _ => GtdStatus::GTD_ERR_INVALID_ARGUMENT,
+    }
+}
+
+/// Map a malformed variant path to its C status code: a path past the capacity of its field gets
+/// `ErrFieldTooLong`, any other `ErrInvalidPath`.
+pub(crate) fn status_for_variant_path_error(e: &geotrace_sdk::VariantPathError) -> GtdStatus {
+    use geotrace_sdk::VariantPathError;
+    match e {
+        VariantPathError::TooLong { .. } => GtdStatus::GTD_ERR_FIELD_TOO_LONG,
+        _ => GtdStatus::GTD_ERR_INVALID_PATH,
     }
 }
 

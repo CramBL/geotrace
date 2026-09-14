@@ -1,12 +1,12 @@
 //! The fixed-width string fields of the `.gtd` format: the builder and the
 //! writer rejecting a value past a field's capacity, the reader rejecting a field
-//! row that is not UTF-8, and the reader preserving a well-formed value it does
-//! not recognize. The write tests reach a field by a path that skips the checks
-//! in `EventMarker::builder().build()`.
+//! row that is not UTF-8, and the reader and the writer preserving a well-formed
+//! value outside the known sets. The write test reaches a field by a path that
+//! skips the checks in `EventMarker::builder().build()`.
 
 use geotrace_sdk::{
     Annotation, AnnotationField, EventKind, EventMarker, EventMarkerColor, EventMarkerIconChoice,
-    EventMarkerStyle, MarkerIcon, MarkerLabelField, NavFile, NavRecorder, VariantPathField,
+    MarkerIcon, MarkerLabelField, NavFile, NavRecorder, VariantPathField,
 };
 use geotrace_sdk_test_util as test_util;
 use geotrace_sdk_test_util::{
@@ -142,51 +142,6 @@ fn a_note_one_byte_past_the_annotation_capacity_stops_the_write() {
     );
 }
 
-#[test]
-fn a_style_variant_path_one_byte_past_the_capacity_stops_the_write() {
-    let variant_path = "a".repeat(VariantPathField::CONTENT_CAPACITY + 1);
-    let mut recorder = test_util::recorder_with_one_fix();
-    recorder.add_event_marker_style(EventMarkerStyle {
-        variant_path: variant_path.clone(),
-        icon: EventMarkerIconChoice::Auto,
-        color: EventMarkerColor::Auto,
-    });
-
-    let error_message = recorder
-        .finish()
-        .expect("the recording builds")
-        .write(Vec::new())
-        .expect_err("a variant path past the field capacity stops the write")
-        .to_string();
-    assert_eq!(
-        error_message,
-        format!(
-            "event_marker_styles/variant_path: {variant_path:?} is 256 bytes, past the 255 bytes the field holds"
-        )
-    );
-}
-
-#[test]
-fn a_style_color_one_byte_past_the_capacity_stops_the_write() {
-    let mut recorder = test_util::recorder_with_one_fix();
-    recorder.add_event_marker_style(EventMarkerStyle {
-        variant_path: "power/boot".to_owned(),
-        icon: EventMarkerIconChoice::Auto,
-        color: EventMarkerColor::hex("#FFAA001"),
-    });
-
-    let error_message = recorder
-        .finish()
-        .expect("the recording builds")
-        .write(Vec::new())
-        .expect_err("a color past the field capacity stops the write")
-        .to_string();
-    assert_eq!(
-        error_message,
-        "event_marker_styles/color_hex: \"#FFAA001\" is 8 bytes, past the 7 bytes the field holds"
-    );
-}
-
 fn row_that_is_not_utf8(row_bytes: usize) -> Vec<u8> {
     test_util::nul_padded_row(&[0xff], row_bytes)
 }
@@ -268,46 +223,59 @@ fn well_formed_fixed_width_field_rows_read_back() {
         .event_marker_styles()
         .first()
         .expect("the file holds the event marker style");
-    assert_eq!(style.variant_path, "power/boot");
-    assert_eq!(style.icon, EventMarkerIconChoice::Icon(MarkerIcon::Wrench));
-    assert_eq!(style.color, EventMarkerColor::hex("#FFAA00"));
+    assert_eq!(style.variant_path(), "power/boot");
+    assert_eq!(
+        style.icon(),
+        &EventMarkerIconChoice::Icon(MarkerIcon::Wrench)
+    );
+    assert_eq!(style.color(), &EventMarkerColor::hex("#FFAA00"));
 }
 
 #[test]
-fn an_icon_name_outside_the_known_set_survives_the_read() {
+fn an_icon_name_outside_the_known_set_survives_the_read_and_the_write() {
     let bytes = gtd_bytes_with_field_rows(FixedWidthFieldRows {
         style_icon_name: test_util::nul_padded_row(b"hovercraft", ICON_NAME_ROW_BYTES),
         ..FixedWidthFieldRows::default()
     });
 
     let file = NavFile::read(bytes.as_slice()).expect("a well-formed icon name reads");
+    let written_back = test_util::round_trip(&file).expect("the file writes and reads back");
 
     let style = file
         .event_marker_styles()
         .first()
         .expect("the file holds the event marker style");
     assert_eq!(
-        style.icon,
-        EventMarkerIconChoice::Unrecognized("hovercraft".to_owned())
+        style.icon(),
+        &EventMarkerIconChoice::Unrecognized("hovercraft".to_owned())
+    );
+    assert_eq!(
+        written_back.event_marker_styles(),
+        file.event_marker_styles()
     );
 }
 
 #[test]
-fn a_color_that_is_not_rrggbb_survives_the_read() {
+fn a_color_that_is_not_rrggbb_survives_the_read_and_the_write() {
     let bytes = gtd_bytes_with_field_rows(FixedWidthFieldRows {
         style_color_hex: test_util::nul_padded_row(b"FFAA00", COLOR_HEX_ROW_BYTES),
         ..FixedWidthFieldRows::default()
     });
 
     let file = NavFile::read(bytes.as_slice()).expect("a well-formed color reads");
+    let written_back = test_util::round_trip(&file).expect("the file writes and reads back");
 
     let style = file
         .event_marker_styles()
         .first()
         .expect("the file holds the event marker style");
     assert_eq!(
-        style.color,
-        EventMarkerColor::Unrecognized("FFAA00".to_owned())
+        style.color(),
+        &EventMarkerColor::Unrecognized("FFAA00".to_owned())
+    );
+    assert_eq!(
+        written_back.event_marker_styles(),
+        file.event_marker_styles()
     );
 }
 

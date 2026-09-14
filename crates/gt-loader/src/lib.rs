@@ -662,29 +662,29 @@ fn convert_event_marker_style(
     s: &SdkEventMarkerStyle,
     alterations: &mut EventMarkerStyleAlterations,
 ) -> EventMarkerStyle {
-    let icon = match &s.icon {
+    let icon = match s.icon() {
         SdkEventMarkerIconChoice::Auto => MarkerIcon::Pin,
         SdkEventMarkerIconChoice::Icon(icon) => convert_icon(*icon),
         SdkEventMarkerIconChoice::Unrecognized(name) => {
             alterations
                 .unrecognized_icons
                 .push(UnrecognizedEventMarkerIcon {
-                    variant_path: s.variant_path.clone(),
+                    variant_path: s.variant_path().to_owned(),
                     written_icon_name: name.clone(),
                 });
             MarkerIcon::Pin
         }
     };
-    let color = match &s.color {
+    let color = match s.color() {
         SdkEventMarkerColor::Auto => {
-            gt_types::markers::event_marker_fallback_color(&s.variant_path)
+            gt_types::markers::event_marker_fallback_color(s.variant_path())
         }
         SdkEventMarkerColor::Hex(hex) | SdkEventMarkerColor::Unrecognized(hex) => {
             parse_hex_color(hex).unwrap_or_else(|| {
                 alterations
                     .unrecognized_colors
                     .push(UnrecognizedEventMarkerColor {
-                        variant_path: s.variant_path.clone(),
+                        variant_path: s.variant_path().to_owned(),
                         written_color: hex.clone(),
                     });
                 UNRECOGNIZED_COLOR_REPLACEMENT
@@ -692,7 +692,7 @@ fn convert_event_marker_style(
         }
     };
     EventMarkerStyle {
-        variant_path: s.variant_path.clone(),
+        variant_path: s.variant_path().to_owned(),
         icon,
         color,
     }
@@ -881,6 +881,11 @@ mod tests {
         Angle, Annotation, Constellation as SdkConst, DateTime, Duration, MarkerIcon as SdkIcon,
         NavFile, NavFileBuilder, NavFix, NavFixTime, Satellite as SdkSat, SatelliteReport, Unit,
         Utc, Velocity,
+    };
+    use geotrace_sdk_test_util as test_util;
+    use geotrace_sdk_test_util::{
+        COLOR_HEX_ROW_BYTES, GtdFileContents, ICON_NAME_ROW_BYTES, StyleFieldRows,
+        VARIANT_PATH_ROW_BYTES,
     };
     use gt_types::TrackGeometry;
     use proptest::prelude::*;
@@ -1520,16 +1525,40 @@ mod tests {
     }
 
     fn event_marker_style(variant_path: &str, color_hex: &str) -> SdkEventMarkerStyle {
-        SdkEventMarkerStyle {
-            variant_path: variant_path.to_owned(),
-            icon: SdkEventMarkerIconChoice::Auto,
-            color: SdkEventMarkerColor::hex(color_hex),
+        SdkEventMarkerStyle::builder()
+            .variant_path(variant_path)
+            .color(color_hex)
+            .build()
+            .unwrap()
+    }
+
+    /// `GtdFileContents` writes a file with one style of `color_hex`, and the SDK reads the style
+    /// back: the style builder rejects a color that is not `#RRGGBB`.
+    fn event_marker_style_read_from_a_file(
+        variant_path: &str,
+        color_hex: &str,
+    ) -> SdkEventMarkerStyle {
+        let bytes = GtdFileContents {
+            styles: vec![StyleFieldRows {
+                variant_path: test_util::nul_padded_row(
+                    variant_path.as_bytes(),
+                    VARIANT_PATH_ROW_BYTES,
+                ),
+                icon_name: test_util::nul_padded_row(b"", ICON_NAME_ROW_BYTES),
+                color_hex: test_util::nul_padded_row(color_hex.as_bytes(), COLOR_HEX_ROW_BYTES),
+            }],
+            ..GtdFileContents::default()
         }
+        .into_gtd_bytes();
+        NavFile::read(bytes.as_slice())
+            .unwrap()
+            .event_marker_styles()[0]
+            .clone()
     }
 
     #[test]
     fn an_event_marker_color_that_is_not_hex_loads_as_gray_with_a_warning_naming_the_variant() {
-        let bytes = recording_with_event_marker_styles(vec![event_marker_style(
+        let bytes = recording_with_event_marker_styles(vec![event_marker_style_read_from_a_file(
             "power/boot",
             COLOR_THAT_IS_NOT_HEX,
         )]);
@@ -1556,11 +1585,15 @@ mod tests {
     #[test]
     fn an_event_marker_icon_outside_the_known_set_loads_as_a_pin_with_a_warning_naming_the_variant()
     {
-        let bytes = recording_with_event_marker_styles(vec![SdkEventMarkerStyle {
-            variant_path: "power/boot".to_owned(),
-            icon: SdkEventMarkerIconChoice::Unrecognized("hovercraft".to_owned()),
-            color: SdkEventMarkerColor::Auto,
-        }]);
+        let bytes = recording_with_event_marker_styles(vec![
+            SdkEventMarkerStyle::builder()
+                .variant_path("power/boot")
+                .icon(SdkEventMarkerIconChoice::Unrecognized(
+                    "hovercraft".to_owned(),
+                ))
+                .build()
+                .unwrap(),
+        ]);
 
         let file = load_bytes(&bytes, "marker_icon.gtd".to_owned()).unwrap();
 

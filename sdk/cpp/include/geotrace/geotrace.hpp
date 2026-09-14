@@ -1706,16 +1706,14 @@ class FileBuilder {
      * for that path. Each call writes its own row, so two calls for one path
      * write two.
      *
-     * The style is checked when the file is written: a `variant_path` past 255
-     * bytes or a `color_hex` past 7 bytes fails there with a
-     * `FieldTooLongError`.
-     *
      * An absent `icon` reaches the file as `GTD_ICON_AUTO`, where the
      * application picks it.
      *
-     * @throws InvalidPathError if `variant_path` has a nul byte.
+     * @throws InvalidPathError if `variant_path` is malformed or has a nul byte.
+     * @throws FieldTooLongError if `variant_path` is longer than 255 bytes.
      * @throws std::invalid_argument for an `icon` no `MarkerIcon` enumerator
-     *         declares, and for a `color_hex` with a nul byte.
+     *         declares, and for a `color_hex` with a nul byte or neither empty
+     *         nor of the `#RRGGBB` form.
      */
     FileBuilder &add_event_marker_style(const EventMarkerStyle &style) {
         if (recorded_nul_byte(GTD_ERR_INVALID_PATH, "the event marker style variant path",
