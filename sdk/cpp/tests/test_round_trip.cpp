@@ -252,8 +252,8 @@ TEST_CASE("round-trip: travel mode survives write → to_bytes → from_bytes") 
     auto bytes = file.to_bytes();
     auto file2 = NavFile::from_bytes(bytes);
 
-    CHECK(file2.travel_mode() == "rail");
-    CHECK(travel_mode_from_name(std::string{file2.travel_mode()}) == TravelMode::Rail);
+    REQUIRE(file2.travel_mode() == "rail");
+    CHECK(travel_mode_from_name(std::string{*file2.travel_mode()}) == TravelMode::Rail);
 }
 
 TEST_CASE("a build without provenance writes only the sdk version") {
