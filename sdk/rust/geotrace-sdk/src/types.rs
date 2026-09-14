@@ -194,8 +194,8 @@ pub enum Constellation {
 }
 
 impl Constellation {
-    /// Stable u8 encoding written to the `tracked_sats/constellation` dataset.
-    pub(crate) fn to_u8(self) -> u8 {
+    /// The code the `tracked_sats/constellation` dataset stores for this constellation.
+    pub fn wire_code(self) -> u8 {
         match self {
             Constellation::Gps => 0,
             Constellation::Glonass => 1,
@@ -206,7 +206,7 @@ impl Constellation {
         }
     }
 
-    pub(crate) fn from_u8(code: u8, dataset: &'static str) -> Result<Self, Error> {
+    pub(crate) fn from_wire_code(code: u8, dataset: &'static str) -> Result<Self, Error> {
         match code {
             0 => Ok(Constellation::Gps),
             1 => Ok(Constellation::Glonass),
@@ -254,7 +254,11 @@ impl Constellation {
     pub(crate) fn encoding_attribute() -> String {
         Constellation::iter()
             .map(|constellation| {
-                format!("{}={}", constellation.to_u8(), constellation.display_name())
+                format!(
+                    "{}={}",
+                    constellation.wire_code(),
+                    constellation.display_name()
+                )
             })
             .collect::<Vec<_>>()
             .join(",")
@@ -322,7 +326,7 @@ impl AnnotationIcon {
     /// [`AnnotationIcon::from_wire_code`].
     pub fn wire_code(self) -> u8 {
         match self {
-            Self::Icon(icon) => icon.to_u8(),
+            Self::Icon(icon) => icon.wire_code(),
             Self::Unrecognized(code) => code,
         }
     }
@@ -331,7 +335,7 @@ impl AnnotationIcon {
     /// [`AnnotationIcon::Icon`], any other code
     /// [`AnnotationIcon::Unrecognized`].
     pub fn from_wire_code(code: u8) -> Self {
-        MarkerIcon::from_u8(code).map_or(Self::Unrecognized(code), Self::Icon)
+        MarkerIcon::from_wire_code(code).map_or(Self::Unrecognized(code), Self::Icon)
     }
 }
 
@@ -378,8 +382,8 @@ pub enum MarkerIcon {
 }
 
 impl MarkerIcon {
-    /// Stable u8 encoding written to the `markers/icon` dataset.
-    pub(crate) fn to_u8(self) -> u8 {
+    /// The code the `markers/icon` dataset stores for this icon.
+    pub fn wire_code(self) -> u8 {
         match self {
             MarkerIcon::Pin => 0,
             MarkerIcon::Cross => 1,
@@ -400,7 +404,7 @@ impl MarkerIcon {
 
     /// `None` for a code outside the set, which
     /// [`AnnotationIcon::from_wire_code`] preserves.
-    pub(crate) fn from_u8(code: u8) -> Option<Self> {
+    pub(crate) fn from_wire_code(code: u8) -> Option<Self> {
         match code {
             0 => Some(MarkerIcon::Pin),
             1 => Some(MarkerIcon::Cross),
@@ -442,7 +446,7 @@ impl MarkerIcon {
     /// added to this string with no separate list to update.
     pub(crate) fn encoding_attribute() -> String {
         MarkerIcon::iter()
-            .map(|icon| format!("{}={}", icon.to_u8(), icon.name()))
+            .map(|icon| format!("{}={}", icon.wire_code(), icon.name()))
             .collect::<Vec<_>>()
             .join(",")
     }
@@ -503,7 +507,7 @@ mod annotation_icon_tests {
     #[test]
     fn a_code_in_the_marker_icon_set_reads_as_that_icon_and_writes_back_unchanged() {
         for icon in MarkerIcon::iter() {
-            let code = icon.to_u8();
+            let code = icon.wire_code();
             assert_eq!(
                 AnnotationIcon::from_wire_code(code),
                 AnnotationIcon::Icon(icon)
@@ -637,11 +641,11 @@ mod constellation_tests {
         );
     }
 
-    /// `to_u8`/`from_u8` are the on-disk binary codes in the `.gtd`
+    /// `wire_code`/`from_wire_code` are the on-disk binary codes in the `.gtd`
     /// `tracked_sats/constellation` dataset - the highest-consequence mapping
     /// for this type. Pin the exact codes (a wrong number silently corrupts
     /// files) and assert the table is exhaustive against `COUNT`, then check
-    /// every variant roundtrips so no new variant can lack a `from_u8` arm.
+    /// every variant roundtrips so no new variant can lack a `from_wire_code` arm.
     #[test]
     fn u8_wire_codes_are_stable_and_round_trip() {
         use strum::{EnumCount, IntoEnumIterator};
@@ -655,11 +659,14 @@ mod constellation_tests {
         ];
         assert_eq!(expected.len(), Constellation::COUNT);
         for (c, code) in expected {
-            assert_eq!(c.to_u8(), code, "{c:?} wire code");
-            assert_eq!(Constellation::from_u8(code, "test").unwrap(), c);
+            assert_eq!(c.wire_code(), code, "{c:?} wire code");
+            assert_eq!(Constellation::from_wire_code(code, "test").unwrap(), c);
         }
         for c in Constellation::iter() {
-            assert_eq!(Constellation::from_u8(c.to_u8(), "test").unwrap(), c);
+            assert_eq!(
+                Constellation::from_wire_code(c.wire_code(), "test").unwrap(),
+                c
+            );
         }
     }
 }

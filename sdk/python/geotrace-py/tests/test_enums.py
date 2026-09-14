@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
+from enum import Enum
 
 import pytest
 from geotrace_sdk import (
@@ -13,6 +14,7 @@ from geotrace_sdk import (
     Meta,
     Satellite,
     TravelMode,
+    _rust_sdk_enum_members,
     constellation_from_name,
     marker_icon_from_name,
 )
@@ -56,18 +58,13 @@ def test_every_travel_mode_crosses_the_boundary(member: TravelMode) -> None:
     assert Meta(travel_mode=member).travel_mode is member
 
 
-def test_a_member_has_its_name_and_value() -> None:
-    assert Constellation.GALILEO.name == "GALILEO"
-    assert Constellation.GALILEO.value == 2
-    assert MarkerIcon.SATELLITE_LOST.name == "SATELLITE_LOST"
-    assert MarkerIcon.SATELLITE_LOST.value == 8
-
-
-def test_a_class_iterates_and_counts_its_members() -> None:
-    assert len(Constellation) == 6
-    assert len(MarkerIcon) == 14
-    assert len(TravelMode) == 7
-    assert list(Constellation)[0] is Constellation.GPS
+@pytest.mark.parametrize("enum_class", [Constellation, MarkerIcon, TravelMode])
+def test_a_class_lists_the_rust_sdk_variants_by_name_and_value(
+    enum_class: type[Enum],
+) -> None:
+    assert [(member.name, member.value) for member in enum_class] == (
+        _rust_sdk_enum_members()[enum_class.__name__]
+    )
 
 
 def test_a_member_is_a_set_element_and_a_dict_key() -> None:

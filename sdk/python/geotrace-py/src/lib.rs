@@ -4,6 +4,7 @@
 //! `geotrace_sdk._geotrace_sdk`.  The public `geotrace_sdk` package re-exports
 //! everything from this module via `python/geotrace_sdk/__init__.py`.
 
+use std::collections::BTreeMap;
 use std::collections::hash_map::DefaultHasher;
 use std::ffi::CString;
 use std::hash::{Hash as _, Hasher as _};
@@ -26,6 +27,7 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBytes, PyList, PySlice, PyType};
 use pyo3_log::{Caching, Logger};
+use strum::IntoEnumIterator as _;
 
 use crate::python_enum::PythonEnumMirror;
 
@@ -400,6 +402,55 @@ impl From<TravelModeArg> for TravelMode {
             TravelModeArg::Name(name) => TravelMode::from_lower_case(name),
         }
     }
+}
+
+/// The name and the ``.value`` of every ``geotrace_sdk.enums`` member the Rust SDK
+/// defines, keyed by class name, in the Rust SDK's variant order.
+#[pyfunction(name = "_rust_sdk_enum_members")]
+fn rust_sdk_enum_members() -> BTreeMap<&'static str, Vec<(&'static str, PythonEnumValue)>> {
+    BTreeMap::from([
+        (
+            PyConstellation::CLASS_NAME,
+            Constellation::iter()
+                .map(|constellation| {
+                    (
+                        PyConstellation::from(constellation).into(),
+                        PythonEnumValue::WireCode(constellation.wire_code()),
+                    )
+                })
+                .collect(),
+        ),
+        (
+            PyMarkerIcon::CLASS_NAME,
+            MarkerIcon::iter()
+                .map(|icon| {
+                    (
+                        PyMarkerIcon::from(icon).into(),
+                        PythonEnumValue::WireCode(icon.wire_code()),
+                    )
+                })
+                .collect(),
+        ),
+        (
+            PyTravelMode::CLASS_NAME,
+            TravelMode::iter()
+                .filter_map(|mode| {
+                    PyTravelMode::from_travel_mode(&mode).map(|python_mode| {
+                        (
+                            python_mode.into(),
+                            PythonEnumValue::WireName(mode.name().to_owned()),
+                        )
+                    })
+                })
+                .collect(),
+        ),
+    ])
+}
+
+#[derive(IntoPyObject)]
+enum PythonEnumValue {
+    WireCode(u8),
+    WireName(String),
 }
 
 /// One tracked satellite with optional signal metrics.
@@ -2104,5 +2155,6 @@ fn _geotrace_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(kmh_from_mps, m)?)?;
     m.add_function(wrap_pyfunction!(knots_from_mps, m)?)?;
     m.add_function(wrap_pyfunction!(snr_is_no_data_sentinel, m)?)?;
+    m.add_function(wrap_pyfunction!(rust_sdk_enum_members, m)?)?;
     Ok(())
 }

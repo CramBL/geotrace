@@ -31,15 +31,15 @@ _cbindgen *ARGS:
     fi
     just _native_or_dev cbindgen "cbindgen --config sdk/rust/geotrace-c/cbindgen.toml --crate geotrace-c {{ ARGS }}"
 
-# Regenerate C++ and Python recognized-unit catalogs from the Rust catalog.
+# Rewrite the C++ and Python SDK files generated from the Rust SDK.
 [group("utils")]
-generate-unit-bindings:
-    cargo run -p geotrace-sdk-units --example generate_bindings
+generate-bindings:
+    cargo run -p geotrace-sdk-binding-generator
 
-# Verify committed recognized-unit bindings match the Rust catalog.
+# Fail when a C++ or Python SDK file differs from what the Rust SDK generates.
 [group("ci")]
-check-unit-bindings:
-    cargo run -p geotrace-sdk-units --example generate_bindings -- --check
+check-bindings:
+    cargo run -p geotrace-sdk-binding-generator -- --check
 
 # Build and run the C SDK unit/integration tests.
 [group("container-sdk")]

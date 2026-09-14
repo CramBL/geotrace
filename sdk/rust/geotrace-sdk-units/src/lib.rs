@@ -332,7 +332,7 @@ impl fmt::Debug for Unit {
 
 /// Stable language-binding names for a recognized [Unit].
 ///
-/// `examples/generate_bindings.rs` renders the C++ `RecognizedUnit` enumerators
+/// `geotrace-sdk-binding-generator` renders the C++ `RecognizedUnit` enumerators
 /// and the Python `Unit` class attributes from [`Unit::BINDINGS`], so a unit
 /// added to the catalog needs a binding here and a regenerated catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

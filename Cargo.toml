@@ -74,6 +74,7 @@ members = [
     "crates/gt-ui-types",
     "sdk/rust/geotrace-c",
     "sdk/rust/geotrace-sdk",
+    "sdk/rust/geotrace-sdk-binding-generator",
     "sdk/rust/geotrace-sdk-macros",
     "sdk/rust/geotrace-sdk-test-util",
     "sdk/rust/geotrace-sdk-units",
@@ -123,6 +124,7 @@ h3o = "0.10"
 # to pkg-config and fails wherever no system libhdf5 is installed.
 hdf5 = { package = "hdf5-metno", version = "0.14", features = ["static", "zlib"] }
 hdf5-pure = "0.44.0"
+heck = "0.5"
 insta = "1.48.0"
 jiff = "0.2.23"
 log = "0.4"

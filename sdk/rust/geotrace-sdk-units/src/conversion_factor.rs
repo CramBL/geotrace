@@ -1,6 +1,6 @@
 //! The factors the SDKs convert speeds with.
 //!
-//! `examples/generate_bindings.rs` writes each factor into the C++ SDK as
+//! `geotrace-sdk-binding-generator` writes each factor into the C++ SDK as
 //! `Velocity::kMpsPerKmh` and `Velocity::kMpsPerKnot`. `kmh * MPS_PER_KMH` and
 //! `kmh / 3.6` differ in the last place for some values, 23.2 among them.
 

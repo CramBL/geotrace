@@ -64,6 +64,12 @@ def snr_is_no_data_sentinel(snr: float) -> bool:
     """
     ...
 
+def _rust_sdk_enum_members() -> dict[str, list[tuple[str, int | str]]]:
+    """The name and the ``.value`` of every ``geotrace_sdk.enums`` member the Rust SDK
+    defines, keyed by class name, in the Rust SDK's variant order.
+    """
+    ...
+
 @final
 class Satellite:
     """One tracked satellite with optional signal metrics.
