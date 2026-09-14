@@ -1,7 +1,7 @@
 //! The log match under the cursor, on either side of the cross-highlight
 //! between the map and the log viewer.
 
-use gt_types::MercPoint;
+use gt_types::{MercPoint, TrackRef};
 
 use crate::log_matches::LogMatchGlyph;
 
@@ -16,6 +16,14 @@ pub struct LogMatchHover {
 
     /// Where the viewer row under the cursor was recorded. The viewer writes
     /// it while it draws, and the map reads it one frame later, ringing that
-    /// position.
-    pub row_position: Option<MercPoint>,
+    /// position while the track is in scope.
+    pub row_placement: Option<LogRowPlacement>,
+}
+
+/// Where one log viewer row sits on the map: the position its entry was
+/// recorded at, and the track of the fix it is attributed to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LogRowPlacement {
+    pub merc: MercPoint,
+    pub track: TrackRef,
 }

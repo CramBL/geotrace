@@ -762,6 +762,12 @@ impl RenderedMap {
         &mut self.harness.state_mut().draw
     }
 
+    /// The side panel tree the next frame draws under, every file and track
+    /// checked until a case leaves one unchecked.
+    pub fn tree(&mut self) -> &mut TrackDataVisibility {
+        &mut self.harness.state_mut().visibility
+    }
+
     /// The overlays the next frame draws.
     pub fn overlays(&mut self) -> &mut Overlays {
         &mut self.harness.state_mut().overlays

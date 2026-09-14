@@ -34,8 +34,9 @@ pub struct SuppliedCounts<'a> {
     /// Grid nodes archived for the day the heatmap shows.
     pub tec_nodes: usize,
     /// Hexagons the loaded logs' filters put on the map, already scoped by the
-    /// app to the shown logs and enabled filters. The global filter is applied
-    /// by [`DisplayCounts::compute`], not before this field is filled.
+    /// app to the shown logs and enabled filters. The tree and the global
+    /// filter are applied by [`DisplayCounts::compute`], not before this field
+    /// is filled.
     pub log_matches: Option<&'a LogMatches>,
 }
 
@@ -59,8 +60,8 @@ pub struct DisplayCounts {
     jamming_hexes: usize,
     /// TEC grid nodes available for the shown instant, from the archive.
     tec_heatmap: usize,
-    /// Hexagons the loaded logs' filters selected, those the global filter
-    /// keeps.
+    /// Hexagons the loaded logs' filters selected, those on a track the tree
+    /// and the global filter keep.
     log_matches: usize,
 }
 
@@ -114,9 +115,9 @@ impl DisplayCounts {
         let mut counts = Self {
             jamming_hexes: supplied.jamming_cells,
             tec_heatmap: supplied.tec_nodes,
-            log_matches: supplied
-                .log_matches
-                .map_or(0, |matches| matches.count_passing_filter(files, filter)),
+            log_matches: supplied.log_matches.map_or(0, |matches| {
+                matches.count_in_scope(files, visibility, filter)
+            }),
             // The count is per track, like "Tracks": how many snapped tracks
             // are eligible to draw.
             snapped_tracks: supplied.snapped_tracks.map_or(0, |snapped| {

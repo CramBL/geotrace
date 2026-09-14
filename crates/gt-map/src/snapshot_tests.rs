@@ -1008,17 +1008,26 @@ fn log_hover_harness() -> crate::test_util::RenderedMap {
 }
 
 /// The map rings the viewer's hovered row even where the filters selected
-/// nothing: the row has a position wherever its line was recorded.
-#[test]
-fn a_hovered_viewer_row_is_ringed_on_the_map() {
+/// nothing: the row has a position wherever its line was recorded. The ring
+/// follows that row's track: with the track unchecked in the side panel, the
+/// ring stays off the map.
+#[rstest::rstest]
+#[case::track_checked(true)]
+#[case::track_unchecked(false)]
+fn a_hovered_viewer_row_is_ringed_while_its_track_is_checked(#[case] checked: bool) {
     let (mut map, center) = log_map_harness(|_| gt_ui_types::LogMatches::default());
+    map.tree().files[0].tracks[0].enabled = checked;
+    map.harness.run();
     let before = map
         .harness
         .inner
         .render()
         .expect("the harness renders a frame");
 
-    map.draw_state().log_hover.row_position = Some(center);
+    map.draw_state().log_hover.row_placement = Some(gt_ui_types::LogRowPlacement {
+        merc: center,
+        track: test_util::track0(),
+    });
     map.harness.run();
 
     let after = map
@@ -1028,14 +1037,15 @@ fn a_hovered_viewer_row_is_ringed_on_the_map() {
         .expect("the harness renders a frame");
     let around_the_centre =
         egui::Rect::from_center_size(test_util::viewport_center(), egui::Vec2::splat(40.0));
-    assert!(
+    assert_eq!(
         gt_test_utils::snapshot_harness::pixels_differ(
             &before,
             &after,
             around_the_centre,
             map.harness.inner.ctx.pixels_per_point()
         ),
-        "the ring draws where the hovered row's line was recorded"
+        checked,
+        "the ring draws at the hovered row while that row's track is checked"
     );
 }
 

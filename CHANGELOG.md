@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Log Viewer:** Fixed the map drawing a log's hexagons, and the ring at the viewer's hovered line, on a track unchecked in the side panel.
+
 ## 0.17.0 - 2026-09-14
 
 ### Added

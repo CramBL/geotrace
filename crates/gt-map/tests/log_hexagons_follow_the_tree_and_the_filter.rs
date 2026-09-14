@@ -1,10 +1,11 @@
-//! What the global filter keeps off the map's log-match layer: the hexagons of
-//! a recording the filter rejects, the entries its time window hides, and the
-//! count the display toggle states beside "Log matches".
+//! What the side panel tree and the global filter keep off the map's log-match
+//! layer: the hexagons of a recording the filter rejects, those of a track the
+//! user unchecked, the entries the time window hides, and the count the display
+//! toggle states beside "Log matches".
 //!
-//! A log takes its positions from one recording: the global filter keeps or
-//! hides that recording's hexagons the way it keeps or hides its fixes. The
-//! log's own filter chips still select which lines match.
+//! A log takes its positions from one recording: the tree and the global filter
+//! keep or hide that recording's hexagons the way they keep or hide its fixes.
+//! The log's own filter chips still select which lines match.
 
 use chrono::Duration;
 use gt_filter::GlobalFilter;
@@ -51,6 +52,32 @@ fn shapes_with(files: &[LoadedFile], filter: GlobalFilter, matches: LogMatches) 
     let mut map = map_framed_on(files, matches, filter);
     map.render_one_more_frame();
     map.shapes_painted()
+}
+
+/// Shapes one frame paints over `files` with its only track unchecked in the
+/// tree, `matches` handed to the map, after the frames that framed the
+/// recording with the track checked.
+///
+/// The app leaves a track unchecked the same way, while the user is looking
+/// at the track: the camera stays where the earlier frames put it.
+fn shapes_with_the_track_unchecked(files: &[LoadedFile], matches: LogMatches) -> usize {
+    let mut map = map_framed_on(files, matches, GlobalFilter::default());
+    *map.tree() = with_the_track_unchecked(files);
+    map.render_one_more_frame();
+    map.shapes_painted()
+}
+
+/// The tree of `files` with every track unchecked and every file left
+/// checked, the state the side panel reaches with the one track of the
+/// fixture recording unchecked.
+fn with_the_track_unchecked(files: &[LoadedFile]) -> TrackDataVisibility {
+    let mut visibility = TrackDataVisibility::from_loaded(files);
+    for file in &mut visibility.files {
+        for track in &mut file.tracks {
+            track.enabled = false;
+        }
+    }
+    visibility
 }
 
 /// Points at the hexagon sitting on the fix at `fix_index`, which the camera
@@ -100,6 +127,23 @@ fn no_log_hexagon_is_drawn_for_a_recording_the_filter_rejects(#[case] filter: Gl
         ),
         shapes_with(&files, filter, LogMatches::default()),
         "the hexagons of a filtered-out recording put ink on the map"
+    );
+}
+
+/// A track unchecked in the side panel tree takes its line off the map, and
+/// the hexagons of the log anchored to it go with the line.
+#[test]
+fn no_log_hexagon_is_drawn_for_a_track_unchecked_in_the_tree() {
+    let files = test_util::a_recording_of(FIX_COUNT, STANDING_STEP_DEGREES);
+    let log = test_util::a_log_over(&files);
+
+    assert_eq!(
+        shapes_with_the_track_unchecked(
+            &files,
+            test_util::matches_over(&files, &log, 0..FIX_COUNT)
+        ),
+        shapes_with_the_track_unchecked(&files, LogMatches::default()),
+        "the hexagons of an unchecked track put ink on the map"
     );
 }
 
@@ -215,6 +259,30 @@ fn the_log_match_count_states_the_hexagons_the_filter_keeps(
     );
 
     assert_eq!(counts.get(DisplayCategory::LogMatches), expected);
+}
+
+/// The count follows the tree as well: the display toggle states how many
+/// hexagons the map would draw, and an unchecked track draws none.
+#[test]
+fn the_log_match_count_leaves_out_a_track_unchecked_in_the_tree() {
+    let files = test_util::a_recording_of(FIX_COUNT, STANDING_STEP_DEGREES);
+    let log = test_util::a_log_over(&files);
+    let matches = test_util::matches_over(&files, &log, 0..FIX_COUNT);
+
+    let counts = DisplayCounts::compute(
+        &files,
+        &with_the_track_unchecked(&files),
+        &GlobalFilter::default(),
+        &EventMarkerVisibility::default(),
+        &GeneratedMarkerVisibility::default(),
+        None,
+        SuppliedCounts {
+            log_matches: Some(&matches),
+            ..SuppliedCounts::default()
+        },
+    );
+
+    assert_eq!(counts.get(DisplayCategory::LogMatches), 0);
 }
 
 /// This guards the oracle the cases above rely on: a recording the filter

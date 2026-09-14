@@ -12,6 +12,8 @@ use gt_filter::GlobalFilter;
 use gt_logfile::ParsedLog;
 use gt_types::{FixRef, LoadedFile, MercPoint};
 
+use crate::visibility::{self, TrackDataVisibility};
+
 /// Session-unique identity of a loaded log, handed out by `LoadedLogs`.
 ///
 /// Stable while the log stays loaded, and never handed out again once it is
@@ -49,8 +51,8 @@ pub struct LogMatch {
     /// Index into [`ParsedLog::entries`] of the layer's log.
     pub entry_index: usize,
 
-    /// The fix the entry took its position from. The global filter keeps this
-    /// match according to that fix's track.
+    /// The fix the entry took its position from. The tree and the global
+    /// filter keep this match according to that fix's track.
     pub fix: FixRef,
 }
 
@@ -96,16 +98,21 @@ pub struct LogMatchLayer {
 }
 
 impl LogMatchLayer {
-    /// The matches of this layer the global filter keeps, in file order: a
-    /// match draws where its entry's timestamp is inside the filter's time
-    /// window and its fix's track passes the filter.
+    /// The matches of this layer the map draws, in file order: a match draws
+    /// where its entry's timestamp is inside the filter's time window and its
+    /// fix's track is in scope - its file and the track itself enabled in the
+    /// side panel tree, and the track passing the filter.
+    ///
+    /// The track's own "Track" toggle is no gate here: a hexagon is a log
+    /// event, and stays on the map where the user hid the line under it.
     ///
     /// A match whose entry index or fix reference resolves to nothing is kept:
     /// an entry the log no longer holds, or a fix on a track that is no longer
     /// loaded, still draws.
-    pub fn matches_passing_filter<'a>(
+    pub fn matches_in_scope<'a>(
         &'a self,
         files: &'a [LoadedFile],
+        visibility: &'a TrackDataVisibility,
         filter: &'a GlobalFilter,
     ) -> impl Iterator<Item = &'a LogMatch> {
         self.matches.iter().filter(move |log_match| {
@@ -114,11 +121,10 @@ impl LogMatchLayer {
                 .entries()
                 .get(log_match.entry_index)
                 .is_none_or(|entry| gt_filter::point_passes_time_filter(entry.timestamp, filter))
-                && log_match
-                    .fix
-                    .track
-                    .resolve(files)
-                    .is_none_or(|track| gt_filter::track_passes_filter(track, filter))
+                && log_match.fix.track.resolve(files).is_none_or(|_| {
+                    visibility::track_in_scope(files, visibility, filter, log_match.fix.track)
+                        .is_some()
+                })
         })
     }
 }
@@ -149,12 +155,142 @@ impl LogMatches {
         self.layers.iter().map(|layer| layer.matches.len()).sum()
     }
 
-    /// [`LogMatches::match_count`] over the matches the global filter keeps,
-    /// which the display toggle states beside "Log matches".
-    pub fn count_passing_filter(&self, files: &[LoadedFile], filter: &GlobalFilter) -> usize {
+    /// [`LogMatches::match_count`] over the matches of every layer that
+    /// [`LogMatchLayer::matches_in_scope`] keeps, which the display toggle
+    /// states beside "Log matches".
+    pub fn count_in_scope(
+        &self,
+        files: &[LoadedFile],
+        visibility: &TrackDataVisibility,
+        filter: &GlobalFilter,
+    ) -> usize {
         self.layers
             .iter()
-            .map(|layer| layer.matches_passing_filter(files, filter).count())
+            .map(|layer| layer.matches_in_scope(files, visibility, filter).count())
             .sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::TimeDelta;
+    use gt_types::{FileIdx, PointIdx, TrackIdx, TrackRef};
+
+    use super::*;
+    use crate::test_util;
+
+    /// One line per fixture point, timestamped at that point.
+    fn a_log_over_the_fixture_track() -> LogMatchSource {
+        let text: String = (0..test_util::POINT_COUNT)
+            .map(|index| {
+                let time = test_util::start() + TimeDelta::seconds(index as i64);
+                format!(
+                    "{} navsyncd[770]: gnss fix acquired\n",
+                    time.format("%Y-%m-%d %H:%M:%S")
+                )
+            })
+            .collect();
+        LogMatchSource {
+            id: LoadedLogId::new(0),
+            parsed: Arc::new(
+                gt_logfile::parse_log(text.into(), test_util::start())
+                    .expect("the fixture log parses"),
+            ),
+            display_name: None,
+        }
+    }
+
+    /// A layer of one match per line of that log, each on the fixture track's
+    /// fix of the same index.
+    fn a_layer_over_every_line() -> LogMatchLayer {
+        LogMatchLayer {
+            color: LogMatchColor::LiveFilter,
+            log: a_log_over_the_fixture_track(),
+            matches: (0..test_util::POINT_COUNT)
+                .map(|index| LogMatch {
+                    merc: MercPoint { x: 0.5, y: 0.5 },
+                    entry_index: index,
+                    fix: FixRef::new(test_util::track0(), PointIdx::new(index)),
+                })
+                .collect(),
+        }
+    }
+
+    /// What one case withholds a match with.
+    struct Gates {
+        visibility: TrackDataVisibility,
+        filter: GlobalFilter,
+    }
+
+    /// The time window opens on the fixture's third line, which leaves the
+    /// two lines before it out and keeps the track itself.
+    fn window_from_the_third_line(gates: &mut Gates) {
+        gates.filter.time_start = Some(test_util::start() + TimeDelta::seconds(2));
+    }
+
+    #[rstest::rstest]
+    #[case::everything_in_scope(|_: &mut Gates| {}, test_util::POINT_COUNT)]
+    #[case::file_unchecked(|gates: &mut Gates| gates.visibility.files[0].enabled = false, 0)]
+    #[case::track_unchecked(|gates: &mut Gates| gates.visibility.files[0].tracks[0].enabled = false, 0)]
+    #[case::filter_rejects_the_track(
+        |gates: &mut Gates| gates.filter.min_duration = Some(TimeDelta::hours(1)),
+        0
+    )]
+    #[case::line_outside_the_time_window(window_from_the_third_line, 2)]
+    fn matches_in_scope_applies_the_tree_and_the_filter(
+        #[case] withhold: fn(&mut Gates),
+        #[case] expected: usize,
+    ) {
+        let files = test_util::one_track_file();
+        let mut gates = Gates {
+            visibility: TrackDataVisibility::from_loaded(&files),
+            filter: GlobalFilter::default(),
+        };
+        withhold(&mut gates);
+
+        assert_eq!(
+            a_layer_over_every_line()
+                .matches_in_scope(&files, &gates.visibility, &gates.filter)
+                .count(),
+            expected
+        );
+    }
+
+    #[test]
+    fn a_match_on_a_track_that_is_no_longer_loaded_stays_in_scope() {
+        let files = test_util::one_track_file();
+        let mut layer = a_layer_over_every_line();
+        let unloaded = TrackRef::new(FileIdx::new(0), TrackIdx::new(7));
+        for log_match in &mut layer.matches {
+            log_match.fix = FixRef::new(unloaded, PointIdx::new(0));
+        }
+
+        assert_eq!(
+            layer
+                .matches_in_scope(
+                    &files,
+                    &TrackDataVisibility::from_loaded(&files),
+                    &GlobalFilter::default()
+                )
+                .count(),
+            test_util::POINT_COUNT
+        );
+    }
+
+    #[test]
+    fn count_in_scope_counts_the_matches_of_every_layer_on_a_checked_track() {
+        let files = test_util::one_track_file();
+        let mut visibility = TrackDataVisibility::from_loaded(&files);
+        let filter = GlobalFilter::default();
+        let matches =
+            LogMatches::from_layers(vec![a_layer_over_every_line(), a_layer_over_every_line()]);
+
+        assert_eq!(
+            matches.count_in_scope(&files, &visibility, &filter),
+            2 * test_util::POINT_COUNT
+        );
+
+        visibility.files[0].tracks[0].enabled = false;
+        assert_eq!(matches.count_in_scope(&files, &visibility, &filter), 0);
     }
 }

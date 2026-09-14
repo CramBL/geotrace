@@ -17,7 +17,7 @@ use gt_logfile::{BootSession, LogEntry, LogLevelKind, RecognisedMessage, Timesta
 use gt_types::{Latitude, Longitude, mercator};
 use gt_ui_theme::ALMOST_EQUAL_TO;
 use gt_ui_theme::EM_DASH;
-use gt_ui_types::{LoadedLogId, LogMatchGlyph, LogMatchHover};
+use gt_ui_types::{LoadedLogId, LogMatchGlyph, LogMatchHover, LogRowPlacement};
 use rustc_hash::FxHashMap;
 
 use super::{AssociationWindowUnit, DATE_FORMAT, LogViewerWindow};
@@ -345,7 +345,7 @@ impl LogViewerWindow {
             .as_ref()
             .or(self.clicked_glyph.as_ref());
         let cross_highlighted = CrossHighlightedRows::of(marking_hexagon, log_id, dark_mode);
-        let mut hovered_row_position = None;
+        let mut hovered_row_placement = None;
 
         ui.scope(|ui| {
             // Rows sit directly on top of each other, so the table reads as one
@@ -384,6 +384,7 @@ impl LogViewerWindow {
                                 continue;
                             };
                             let message = parsed.message(entry);
+                            let placement = log.entry_placement(entry_index);
                             let interaction = EntryRow {
                                 entry,
                                 message,
@@ -391,9 +392,7 @@ impl LogViewerWindow {
                                     spans: filters.live_filter_match_spans(message),
                                     color: highlight,
                                 },
-                                position: log
-                                    .entry_placement(entry_index)
-                                    .map(|placement| placement.position),
+                                position: placement.map(|placement| placement.position),
                                 order_anomaly_step: anomaly_steps.get(&entry_index).copied(),
                                 recognised: recognised_messages.get(entry_index).copied(),
                                 color_switches,
@@ -410,8 +409,11 @@ impl LogViewerWindow {
                                 clicked,
                             }) = interaction
                             {
-                                hovered_row_position =
-                                    Some(mercator::normalize(latitude, longitude));
+                                hovered_row_placement =
+                                    placement.map(|placement| LogRowPlacement {
+                                        merc: mercator::normalize(latitude, longitude),
+                                        track: placement.fix.track,
+                                    });
                                 if clicked {
                                     *requests.map_center =
                                         Some((latitude.as_degrees(), longitude.as_degrees()));
@@ -423,7 +425,7 @@ impl LogViewerWindow {
                 }
             });
         });
-        requests.hover.row_position = hovered_row_position;
+        requests.hover.row_placement = hovered_row_placement;
     }
 }
 
@@ -1105,7 +1107,7 @@ mod tests {
                 },
                 entry_indices: entry_indices.to_vec(),
             }),
-            row_position: None,
+            row_placement: None,
         }
     }
 
