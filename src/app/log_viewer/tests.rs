@@ -1666,6 +1666,214 @@ fn the_live_filter_belongs_to_the_log_it_was_written_for() {
     assert_eq!(live_filter_text(&harness), "battery low");
 }
 
+/// Tolerance for a scroll read off the screen, in points: the table's rows are
+/// laid out at whole points, and a step is compared against a height measured
+/// the same way.
+const SCROLL_READING_TOLERANCE_PX: f32 = 0.5;
+
+/// Points one wheel scroll sends, which falls between two rows: the lines
+/// cannot land on that distance by rounding to a row.
+const WHEEL_SCROLL_PX: f32 = 30.0;
+
+/// Frames a wheel scroll takes to come to rest, which egui smooths over
+/// several.
+const WHEEL_SETTLE_FRAMES: usize = 4;
+
+/// A pointer position off the viewer, which is where the pointer sits while
+/// the user works on the map or on another window.
+const POINTER_OFF_EVERY_WINDOW: egui::Pos2 = egui::Pos2::new(-10.0, -10.0);
+
+/// Page steps [`scroll_to_the_end`] takes before it gives up, which covers
+/// [`LONG_LOG_ENTRIES`] rows at any table height.
+const PAGE_STEPS_TO_THE_END: usize = 60;
+
+/// The viewer over a log longer than the table shows at once, with the pointer
+/// resting on the window: the scrolling keys fire nowhere else.
+fn keyboard_scroll_harness() -> Harness<'static, ViewerState> {
+    let log = long_log(LONG_LOG_ENTRIES);
+    let mut harness = harness_of(Vec::new(), &[("navsyncd.log", log.as_str())]);
+    let window = harness
+        .window_rect(LOG_VIEWER_TITLE)
+        .expect("the viewer window is shown");
+    harness.hover_at(window.center());
+    harness.run_steps(2);
+    harness
+}
+
+/// Presses `key` and runs the frames the step takes to show. The rows move on
+/// the frame after the press: egui applies a scroll once the table has drawn.
+fn press_scroll_key(harness: &mut Harness<ViewerState>, key: egui::Key) {
+    harness.input_mut().events.push(egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run_steps(2);
+}
+
+/// How far the table has scrolled, read off the lines it draws. The index of a
+/// drawn entry and the position of its timestamp give the offset: every entry
+/// row's timestamp sits the same distance below the top of its row.
+struct TableScroll {
+    /// The step between two rows the table draws.
+    row_height_px: f32,
+
+    /// Where the first entry's timestamp sits while the table is at the top.
+    first_entry_y: f32,
+}
+
+impl TableScroll {
+    /// Measures `harness`, whose table is scrolled to the top.
+    fn of(harness: &Harness<ViewerState>) -> Self {
+        let first_entry_y = entry_timestamp_y(harness, 0);
+        Self {
+            row_height_px: entry_timestamp_y(harness, 1) - first_entry_y,
+            first_entry_y,
+        }
+    }
+
+    /// How far down the log the table is scrolled, in points.
+    fn offset_px(&self, harness: &Harness<ViewerState>) -> f32 {
+        let drawn = (0..LONG_LOG_ENTRIES)
+            .find(|&index| {
+                harness
+                    .query_by_label(long_log_entry_timestamp(index).as_str())
+                    .is_some()
+            })
+            .expect("the table draws an entry of the log");
+        self.first_entry_y + drawn as f32 * self.row_height_px - entry_timestamp_y(harness, drawn)
+    }
+}
+
+/// Where the timestamp of [`long_log`]'s entry `index` is drawn.
+fn entry_timestamp_y(harness: &Harness<ViewerState>, index: usize) -> f32 {
+    harness
+        .get_by_label(long_log_entry_timestamp(index).as_str())
+        .rect()
+        .top()
+}
+
+/// The rows the table contains: one per visible entry, plus the divider the
+/// boot session opens with.
+fn table_row_count(harness: &Harness<ViewerState>) -> usize {
+    harness
+        .state()
+        .shown_log()
+        .map(|log| line_table::LineTableRows::of(log).len())
+        .expect("a log is shown")
+}
+
+/// Pages to the end of the log and reads the furthest the table scrolled.
+fn scroll_to_the_end(harness: &mut Harness<ViewerState>, scroll: &TableScroll) -> f32 {
+    let mut furthest = scroll.offset_px(harness);
+    for _ in 0..PAGE_STEPS_TO_THE_END {
+        press_scroll_key(harness, egui::Key::PageDown);
+        let reached = scroll.offset_px(harness);
+        if reached <= furthest {
+            return furthest;
+        }
+        furthest = reached;
+    }
+    panic!("the table reaches the end of the log within {PAGE_STEPS_TO_THE_END} page steps");
+}
+
+#[test]
+fn arrow_down_scrolls_the_table_one_row_and_arrow_up_scrolls_it_back() {
+    let mut harness = keyboard_scroll_harness();
+    let scroll = TableScroll::of(&harness);
+
+    press_scroll_key(&mut harness, egui::Key::ArrowDown);
+
+    assert!(
+        (scroll.offset_px(&harness) - scroll.row_height_px).abs() < SCROLL_READING_TOLERANCE_PX,
+        "one press of Arrow Down scrolls the table by one row of {} points, and it scrolled {} \
+         points",
+        scroll.row_height_px,
+        scroll.offset_px(&harness)
+    );
+
+    press_scroll_key(&mut harness, egui::Key::ArrowUp);
+
+    assert!(
+        scroll.offset_px(&harness).abs() < SCROLL_READING_TOLERANCE_PX,
+        "Arrow Up scrolls the table back to the head of the log"
+    );
+}
+
+#[test]
+fn page_down_scrolls_the_table_by_the_height_it_shows() {
+    let mut harness = keyboard_scroll_harness();
+    let scroll = TableScroll::of(&harness);
+
+    press_scroll_key(&mut harness, egui::Key::PageDown);
+    let one_page_px = scroll.offset_px(&harness);
+
+    // Where egui stops the scroll shows how much of the log the table draws at
+    // once: at the end, the bottom of the last row meets the bottom of the
+    // table.
+    let furthest_px = scroll_to_the_end(&mut harness, &scroll);
+    let shown_px = table_row_count(&harness) as f32 * scroll.row_height_px - furthest_px;
+    assert!(
+        (one_page_px - shown_px).abs() < SCROLL_READING_TOLERANCE_PX,
+        "one press of Page Down scrolls the table by the {shown_px} points it shows, and it \
+         scrolled {one_page_px} points"
+    );
+}
+
+/// The virtualized rows step by the height a row draws at, which keeps a
+/// scroll of any size on the distance it was sent.
+#[test]
+fn a_wheel_scroll_over_the_table_moves_its_lines_by_the_points_it_sends() {
+    let mut harness = keyboard_scroll_harness();
+    let scroll = TableScroll::of(&harness);
+    let table = harness
+        .window_rect(LOG_VIEWER_TITLE)
+        .expect("the viewer window is shown")
+        .center();
+
+    harness.scroll_wheel_at(table, -WHEEL_SCROLL_PX, WHEEL_SETTLE_FRAMES);
+
+    let scrolled_px = scroll.offset_px(&harness);
+    assert!(
+        (scrolled_px - WHEEL_SCROLL_PX).abs() < SCROLL_READING_TOLERANCE_PX,
+        "a wheel scroll of {WHEEL_SCROLL_PX} points moved the lines {scrolled_px} points"
+    );
+}
+
+#[test]
+fn a_scrolling_key_leaves_the_table_where_it_is_while_the_live_filter_has_focus() {
+    let mut harness = keyboard_scroll_harness();
+    let scroll = TableScroll::of(&harness);
+    harness.ctx.memory_mut(|memory| {
+        memory.request_focus(egui::Id::new(filters::LIVE_FILTER_FIELD_ID));
+    });
+    harness.run_steps(2);
+
+    press_scroll_key(&mut harness, egui::Key::ArrowDown);
+
+    assert!(
+        scroll.offset_px(&harness).abs() < SCROLL_READING_TOLERANCE_PX,
+        "the arrow keys belong to the field being typed in"
+    );
+}
+
+#[test]
+fn a_scrolling_key_leaves_the_table_where_it_is_while_the_pointer_rests_outside_the_window() {
+    let mut harness = keyboard_scroll_harness();
+    let scroll = TableScroll::of(&harness);
+    harness.hover_at(POINTER_OFF_EVERY_WINDOW);
+    harness.run_steps(2);
+
+    press_scroll_key(&mut harness, egui::Key::ArrowDown);
+
+    assert!(
+        scroll.offset_px(&harness).abs() < SCROLL_READING_TOLERANCE_PX,
+        "the table scrolls only under the pointer"
+    );
+}
+
 /// A log whose lines are longer and more numerous than any audit viewport
 /// shows: an unbroken message stresses the width, the row count the height.
 fn oversized_log_text() -> String {

@@ -2,8 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- **Log Viewer:** The line table scrolls with the arrow keys (one line) and Page Up / Page Down (one page) while the pointer rests on the window.
+
 ### Fixed
 
+- **Log Viewer:** Fixed the line table scrolling further than the distance the mouse wheel sends.
 - **Log Viewer:** Fixed the map drawing a log's hexagons, and the ring at the viewer's hovered line, on a track unchecked in the side panel.
 - **Interface:** Fixed the History window's columns changing width as the listing scrolls, as a recording's shelved tracks open under its row, as a filter narrows the list, and as a click on a header reorders it.
 - **Interface:** Fixed unshelving a track of a loaded recording leaving it without that track.
