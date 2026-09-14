@@ -191,6 +191,7 @@ version = "0.6.0"
 dependencies = [
  "chrono",
  "geotrace-sdk",
+ "geotrace-sdk-units",
  "log",
  "pyo3",
  "pyo3-log",

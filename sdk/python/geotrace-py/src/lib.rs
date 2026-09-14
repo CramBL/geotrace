@@ -17,6 +17,7 @@ use geotrace_sdk::{
     Marker, MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix, NavFixTime, NavPoint, NavRecorder,
     RecordedFixTimestamps, Satellite, SatelliteReport, TravelMode, Unit, Velocity,
 };
+use geotrace_sdk_units::snr;
 use pyo3::IntoPyObjectExt as _;
 use pyo3::exceptions::{
     PyIOError, PyIndexError, PyRuntimeError, PyTypeError, PyUserWarning, PyValueError,
@@ -200,6 +201,15 @@ fn kmh_from_mps(mps: f64) -> f64 {
 #[pyfunction]
 fn knots_from_mps(mps: f64) -> f64 {
     Velocity::meter_per_second(mps).as_knots()
+}
+
+/// Whether ``snr`` is the SNR some receiver firmware sends when it has no
+/// measurement: 99 dB-Hz, within the tolerance the Rust SDK sets.
+///
+/// The function rounds ``snr`` to a 32-bit float first, as ``Satellite`` stores it.
+#[pyfunction]
+fn snr_is_no_data_sentinel(snr: f32) -> bool {
+    snr::is_no_data_sentinel(snr)
 }
 
 /// Visual icon for a map annotation marker, mirroring
@@ -456,9 +466,19 @@ impl PySatellite {
     }
 
     /// Signal-to-noise ratio in dB-Hz, or `None`.
+    ///
+    /// The reader returns a stored value unchanged, which includes a reading
+    /// for which `snr_is_no_data_sentinel()` returns `True`.
     #[getter]
     fn snr(&self) -> Option<f32> {
         self.inner.snr
+    }
+
+    /// Whether `snr` holds a reading for which `snr_is_no_data_sentinel()`
+    /// returns `True`.
+    #[getter]
+    fn snr_is_no_data_sentinel(&self) -> bool {
+        self.inner.snr_is_no_data_sentinel()
     }
 
     fn __eq__(&self, other: &Self) -> bool {
@@ -2083,5 +2103,6 @@ fn _geotrace_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(mps_from_knots, m)?)?;
     m.add_function(wrap_pyfunction!(kmh_from_mps, m)?)?;
     m.add_function(wrap_pyfunction!(knots_from_mps, m)?)?;
+    m.add_function(wrap_pyfunction!(snr_is_no_data_sentinel, m)?)?;
     Ok(())
 }

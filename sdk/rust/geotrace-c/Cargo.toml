@@ -32,6 +32,7 @@ sanitizer_canary = []
 [dependencies]
 chrono.workspace = true
 geotrace-sdk = { path = "../geotrace-sdk" }
+geotrace-sdk-units = { path = "../geotrace-sdk-units" }
 log.workspace = true
 parking_lot.workspace = true
 strum.workspace = true

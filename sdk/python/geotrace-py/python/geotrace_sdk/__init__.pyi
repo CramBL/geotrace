@@ -55,6 +55,15 @@ def knots_from_mps(mps: float) -> float:
     """Convert a speed in m/s to knots."""
     ...
 
+def snr_is_no_data_sentinel(snr: float) -> bool:
+    """Whether ``snr`` is the SNR some receiver firmware sends when it has no
+    measurement: 99 dB-Hz, within the tolerance the Rust SDK sets.
+
+    The function rounds ``snr`` to a 32-bit float first, as :class:`Satellite`
+    stores it.
+    """
+    ...
+
 @final
 class Satellite:
     """One tracked satellite with optional signal metrics.
@@ -68,7 +77,9 @@ class Satellite:
         in_fix: Whether this satellite is contributing to the current fix.
         elevation: Elevation above horizon in degrees, or ``None``.
         azimuth: Azimuth from true north in degrees, or ``None``.
-        snr: Signal-to-noise ratio in dB-Hz, or ``None``.
+        snr: Signal-to-noise ratio in dB-Hz, or ``None`` without a measurement.
+            The builder writes a present value unchanged: pass ``None`` for a
+            reading for which :func:`snr_is_no_data_sentinel` returns ``True``.
     """
 
     def __init__(
@@ -99,7 +110,18 @@ class Satellite:
 
     @property
     def snr(self) -> float | None:
-        """Signal-to-noise ratio in dB-Hz."""
+        """Signal-to-noise ratio in dB-Hz.
+
+        The reader returns a stored value unchanged, which includes a reading for
+        which :func:`snr_is_no_data_sentinel` returns ``True``.
+        """
+        ...
+
+    @property
+    def snr_is_no_data_sentinel(self) -> bool:
+        """Whether :attr:`snr` holds a reading for which :func:`snr_is_no_data_sentinel`
+        returns ``True``.
+        """
         ...
 
     def __eq__(self, other: object) -> bool: ...

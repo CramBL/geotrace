@@ -18,7 +18,9 @@ pub struct GtdSatellite {
     pub elevation_deg: GtdOptF32,
     /// Azimuth from true north in degrees [0, 360).
     pub azimuth_deg: GtdOptF32,
-    /// Signal-to-noise ratio in dB·Hz.
+    /// Signal-to-noise ratio in dB·Hz, `GTD_NONE_F32` without a measurement. The builder writes a
+    /// present value unchanged: pass `GTD_NONE_F32` for a reading for which
+    /// `gtd_snr_is_no_data_sentinel()` returns 1.
     pub snr_dbhz: GtdOptF32,
 }
 

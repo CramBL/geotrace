@@ -41,6 +41,7 @@ mod optf64;
 mod sanitizer_canary;
 mod satellite;
 mod satinfo;
+mod snr;
 mod timestamp;
 mod travel_mode;
 mod velocity;
