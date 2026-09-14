@@ -18,10 +18,26 @@ Test(null_guards, builder_null) {
 
     cr_assert_eq(gtd_builder_add_satellite_report(NULL, timestamp, timestamp, NULL, 0),
                  GTD_ERR_NULL_ARGUMENT);
+}
 
-    GtdNavFile *out = NULL;
-    cr_assert_eq(gtd_builder_finish(NULL, &out), GTD_ERR_NULL_ARGUMENT);
+Test(null_guards, finish_sets_out_to_null_when_the_builder_is_null) {
+    static char stale_handle_target;
+    GtdNavFile *out = (GtdNavFile *)&stale_handle_target;
+
+    GtdStatus status = gtd_builder_finish(NULL, &out);
+    cr_assert_eq(status, GTD_ERR_NULL_ARGUMENT);
     cr_assert_null(out);
+    cr_assert_str_eq(gtd_last_error(), "null pointer argument (builder)");
+}
+
+/* `ctest` fails this test on the LeakSanitizer report when the call does not free the builder. */
+Test(null_guards, finish_consumes_the_builder_when_out_is_null) {
+    GtdFileBuilder *builder = gtd_builder_create();
+    cr_assert_not_null(builder);
+
+    GtdStatus status = gtd_builder_finish(builder, NULL);
+    cr_assert_eq(status, GTD_ERR_NULL_ARGUMENT);
+    cr_assert_str_eq(gtd_last_error(), "null pointer argument (out)");
 }
 
 Test(null_guards, nav_file_null) {

@@ -23,6 +23,11 @@ function(geotrace_c_test_target target)
     )
 endfunction()
 
+# `ctest` fails a criterion test whose output contains a LeakSanitizer report.
+# criterion counts a test as passed once its body returns, whatever status its
+# process exits with after that, and LeakSanitizer reports a leak at that exit.
+set(LEAK_REPORT_REGULAR_EXPRESSION "ERROR: LeakSanitizer")
+
 foreach(test test_builder test_channels test_log_callback test_markers test_null_guards
              test_parse_number test_status_codes test_thread_local test_timestamp
              test_snr test_unit_conversions test_value_ranges test_wire_names)
@@ -33,6 +38,7 @@ foreach(test test_builder test_channels test_log_callback test_markers test_null
     add_test(NAME ${test} COMMAND ${test})
     set_tests_properties(${test} PROPERTIES
         ENVIRONMENT "${GEOTRACE_SANITIZE_TEST_ENVIRONMENT}"
+        FAIL_REGULAR_EXPRESSION "${LEAK_REPORT_REGULAR_EXPRESSION}"
     )
 endforeach()
 
@@ -95,6 +101,7 @@ foreach(case
     # without returning. The timeout bounds how long `ctest` waits for it.
     set_tests_properties(test_invalid_enums_${case} PROPERTIES
         ENVIRONMENT "${GEOTRACE_SANITIZE_TEST_ENVIRONMENT}"
+        FAIL_REGULAR_EXPRESSION "${LEAK_REPORT_REGULAR_EXPRESSION}"
         TIMEOUT 60
     )
 endforeach()
