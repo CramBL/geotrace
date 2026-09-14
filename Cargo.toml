@@ -123,7 +123,7 @@ h3o = "0.10"
 # gt-history-backend-sys is compiled out. A build without `static` falls back
 # to pkg-config and fails wherever no system libhdf5 is installed.
 hdf5 = { package = "hdf5-metno", version = "0.14", features = ["static", "zlib"] }
-hdf5-pure = "0.44.0"
+hdf5-pure = "0.46.0"
 heck = "0.5"
 insta = "1.48.0"
 jiff = "0.2.23"

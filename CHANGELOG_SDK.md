@@ -76,6 +76,7 @@ the app).
 - **Breaking:** Python `EventMarker` raises `TypeError` for a `variant_path` that is neither a `str`, `None` nor `event_kind.skip`, where it read any other value as `None`.
 - **Breaking:** Python `Constellation`, `MarkerIcon` and `TravelMode` are `enum.Enum` classes: each member has `.name` and `.value` and works as a `set` element and a `dict` key, and `list()` and `len()` over the class give the members and their count. A `Constellation` or `MarkerIcon` member's `.value` is the code the file stores, and a `TravelMode` member's `.value` is the name the file stores, such as `"car"`.
 - **Breaking:** C++ `Velocity::kmh`, `Velocity::knots`, `Velocity::as_kmh`, `Velocity::as_knots`, `Angle::radians` and `Angle::as_radians` are no longer `constexpr`: they call the C SDK's conversion functions.
+- Updated `hdf5-pure` to 0.46.0.
 
 ### Fixed
 
