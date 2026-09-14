@@ -317,6 +317,12 @@ impl LogViewerWindow {
             .default_height(520.0)
             .resizable(true)
             .show(ctx, |ui| {
+                // An arrow key press over the map or another window leaves
+                // the table where it is: the scrolling keys fire only while
+                // the pointer is over the window. Measured against the whole
+                // content rect, since `ui.min_rect()` is still empty this
+                // early in the layout.
+                let pointer_over_the_window = ui.rect_contains_pointer(ui.max_rect());
                 // The footer claims its height first: the sections above it
                 // divide what is left.
                 egui::Panel::bottom("log_viewer_footer")
@@ -338,8 +344,8 @@ impl LogViewerWindow {
                 // scroll among themselves once they need more room than the
                 // window can spare, leaving the table
                 // `TABLE_ROWS_THE_HEADER_LEAVES` rows to draw in.
-                let reserved_for_the_table = ui.text_style_height(&egui::TextStyle::Monospace)
-                    * TABLE_ROWS_THE_HEADER_LEAVES as f32;
+                let reserved_for_the_table =
+                    line_table::row_height(ui) * TABLE_ROWS_THE_HEADER_LEAVES as f32;
                 egui::ScrollArea::both()
                     .id_salt("log_viewer_header")
                     .max_height((ui.available_height() - reserved_for_the_table).max(0.0))
@@ -376,6 +382,7 @@ impl LogViewerWindow {
                         ui,
                         log,
                         shown,
+                        pointer_over_the_window,
                         &mut LineTableRequests {
                             map_center: map_center_request,
                             hover: log_hover,

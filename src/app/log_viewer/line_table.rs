@@ -311,6 +311,7 @@ impl LogViewerWindow {
         ui: &mut egui::Ui,
         log: &LoadedLog,
         log_id: LoadedLogId,
+        pointer_over_the_window: bool,
         requests: &mut LineTableRequests<'_>,
     ) {
         let parsed = log.parsed();
@@ -351,10 +352,13 @@ impl LogViewerWindow {
             // Rows sit directly on top of each other, so the table reads as one
             // block of text and a row's index times its height is its offset.
             ui.spacing_mut().item_spacing.y = 0.0;
-            let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
+            let row_height = row_height(ui);
             let mut scroll_area = ScrollArea::vertical()
                 .id_salt("log_viewer_line_table")
                 .auto_shrink([false, false])
+                // A keyboard step lands on a row boundary and a held key counts
+                // every repeat, which an animation in flight would round off.
+                .animated(false)
                 // egui keeps a 64px floor by default, which on a short window
                 // pushes the footer off the bottom. The table takes exactly the
                 // room the window has left.
@@ -363,6 +367,13 @@ impl LogViewerWindow {
                 scroll_area = scroll_area.vertical_scroll_offset(row as f32 * row_height);
             }
             scroll_area.show_rows(ui, row_height, rows.len(), |ui, shown| {
+                if pointer_over_the_window && ui.memory(|memory| memory.focused()).is_none() {
+                    KeyboardScrollSteps {
+                        row_height_px: row_height,
+                        page_height_px: ui.clip_rect().height(),
+                    }
+                    .scroll_the_table(ui);
+                }
                 for row in shown {
                     match rows.at(row) {
                         Some(LineTableRow::BootDivider { session_index }) => {
@@ -426,6 +437,46 @@ impl LogViewerWindow {
             });
         });
         requests.hover.row_placement = hovered_row_placement;
+    }
+}
+
+/// The height one row of the table draws at. A row is a `ui.horizontal`, which
+/// claims the interactive height whenever the text is shorter than it. The
+/// virtualized rows keep step with the drawn ones only at this height.
+pub(super) fn row_height(ui: &egui::Ui) -> f32 {
+    ui.text_style_height(&egui::TextStyle::Monospace)
+        .max(ui.spacing().interact_size.y)
+}
+
+struct KeyboardScrollSteps {
+    row_height_px: f32,
+    page_height_px: f32,
+}
+
+impl KeyboardScrollSteps {
+    /// Scrolls the table by the arrow and page keys pressed this frame. Each
+    /// press is consumed, which leaves nothing for another widget to act on.
+    /// An auto-repeat counts as a press of its own: holding a key keeps
+    /// scrolling.
+    fn scroll_the_table(&self, ui: &egui::Ui) {
+        let distance_px: f32 = [
+            (egui::Key::ArrowDown, self.row_height_px),
+            (egui::Key::ArrowUp, -self.row_height_px),
+            (egui::Key::PageDown, self.page_height_px),
+            (egui::Key::PageUp, -self.page_height_px),
+        ]
+        .into_iter()
+        .map(|(key, step_px)| {
+            let presses = ui
+                .ctx()
+                .input_mut(|input| input.count_and_consume_key(egui::Modifiers::NONE, key));
+            presses as f32 * step_px
+        })
+        .sum();
+        // egui reads the delta as a movement of the content, which runs
+        // against the scroll offset: a step towards the end of the log is
+        // negative.
+        ui.scroll_with_delta(egui::vec2(0.0, -distance_px));
     }
 }
 
