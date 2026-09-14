@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.17.0 - 2026-09-14
+
 ### Added
 
 - **Interface:** The file dialog offers an "All files" filter, which shows every file, including a log with no file extension.
