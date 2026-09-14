@@ -36,6 +36,7 @@ mod recording_from_disk;
 mod recording_names;
 mod recording_ui_state;
 mod settings_window;
+mod shelved_tracks;
 mod shutdown;
 mod snap;
 mod storage;

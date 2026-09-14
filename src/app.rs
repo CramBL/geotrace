@@ -166,6 +166,8 @@ struct ResegmentPrompt {
     /// Whether marker-generation settings differ from the stored/default marker
     /// settings and will be rebuilt from the current app settings when opened.
     marker_settings_changed: bool,
+    /// Where the app puts the recording once the user's choice has loaded it.
+    placement: loader::LoadedRecordingPlacement,
 }
 
 fn transport_source(offline: bool) -> TransportSource {
@@ -924,6 +926,7 @@ impl App {
                 series,
                 history,
                 applied_current_marker_settings,
+                placement,
             }) => {
                 let was_stored = history.is_stored();
                 log::info!(
@@ -953,16 +956,39 @@ impl App {
                     .map(|m| (m.time, m.variant_path.clone()))
                     .collect();
                 let mut s = self.shared.borrow_mut();
-                let fi = s.loaded_files.len();
-                s.loaded_files.push(file, history);
+                let replaced = match placement {
+                    loader::LoadedRecordingPlacement::AddAnEntry => None,
+                    loader::LoadedRecordingPlacement::ReplaceTheLoadedEntry => history
+                        .db_ref()
+                        .and_then(|db_ref| s.loaded_files.view().stored_recording_index(db_ref)),
+                };
+                let fi = match replaced {
+                    Some(replaced) => {
+                        s.loaded_files
+                            .replace_file(replaced.as_usize(), file, history);
+                        replaced.as_usize()
+                    }
+                    None => {
+                        let fi = s.loaded_files.len();
+                        s.loaded_files.push(file, history);
+                        fi
+                    }
+                };
                 s.sync_tree_from_loaded_files();
                 s.plot_state.integrate_file(fi, series);
                 drop(s);
-                // Associates every loaded log again now that this recording is
-                // loaded, which gives a log anchored to it its positions.
-                let s = self.shared.borrow();
-                self.logs.reassociate_all(&s.loaded_files.view());
-                drop(s);
+                if replaced.is_some() {
+                    // The replaced entry holds other tracks than the one it
+                    // took the place of, so every TrackRef-keyed state and the
+                    // spatial index are rebuilt.
+                    self.on_track_indices_changed();
+                } else {
+                    // Associates every loaded log again now that this recording
+                    // is loaded, which gives a log anchored to it its positions.
+                    let s = self.shared.borrow();
+                    self.logs.reassociate_all(&s.loaded_files.view());
+                    drop(s);
+                }
                 if !orphans.is_empty() {
                     self.orphaned_event_markers = Some(orphans);
                 }

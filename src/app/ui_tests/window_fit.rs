@@ -111,6 +111,7 @@ impl OversizedAppWindow {
                     },
                     stored_tracks: Vec::new(),
                     marker_settings_changed: false,
+                    placement: crate::app::loader::LoadedRecordingPlacement::AddAnEntry,
                 });
             }
             Self::AutoPrune => {

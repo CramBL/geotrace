@@ -290,6 +290,7 @@ impl App {
     fn begin_history_open(
         &mut self,
         db_ref: gt_store::DatabaseRef,
+        placement: loader::LoadedRecordingPlacement,
         stored: gt_store::StoredRecording,
     ) {
         // Reuse the original filename: the identity is the filename (with an
@@ -335,6 +336,7 @@ impl App {
                     stored: stored_settings,
                     stored_tracks,
                     marker_settings_changed,
+                    placement,
                 });
             }
             // Every stored track setting matches: reproduce the stored tracks,
@@ -357,6 +359,7 @@ impl App {
                         db_ref,
                         stored_tracks,
                         applied_current_marker_settings: marker_settings_changed,
+                        placement,
                     }),
                 );
             }
@@ -370,6 +373,7 @@ impl App {
                         db_ref,
                         stored_tracks,
                         applied_current_marker_settings: false,
+                        placement,
                     }),
                 );
             }
@@ -381,22 +385,54 @@ impl App {
     fn apply_mutation_outcome(&mut self, op: &history_db::DbOp, result: &Result<(), DbError>) {
         match result {
             Ok(()) => {
-                // Keep loaded recordings pointing at the renamed identity so
-                // later history operations on them still resolve.
-                if let history_db::DbOp::IdentityRenamed { old, new } = op {
-                    self.shared
-                        .borrow_mut()
-                        .loaded_files
-                        .rename_identity(old, new);
+                let mut loading_the_recording_again = false;
+                match op {
+                    // Keep loaded recordings pointing at the renamed identity
+                    // so later history operations on them still resolve.
+                    history_db::DbOp::IdentityRenamed { old, new } => {
+                        self.shared
+                            .borrow_mut()
+                            .loaded_files
+                            .rename_identity(old, new);
+                    }
+                    history_db::DbOp::TracksUnshelved { db_ref, .. } => {
+                        loading_the_recording_again =
+                            self.reload_the_recording_if_it_is_loaded(db_ref);
+                    }
+                    history_db::DbOp::TracksShelved { .. }
+                    | history_db::DbOp::TracksDeleted { .. }
+                    | history_db::DbOp::RecordingsDeleted { .. } => {}
                 }
                 self.history_window.invalidate();
-                self.toasts.info(mutation_toast(op));
+                self.toasts
+                    .info(mutation_toast(op, loading_the_recording_again));
             }
             Err(e) => {
                 log::error!("History update failed: {e}");
                 self.toasts.error(format!("History update failed: {e}"));
             }
         }
+    }
+
+    /// Request the recording `db_ref` from the history worker again, where the
+    /// view already holds that recording. The app then puts the loaded
+    /// recording over that recording's entry in the view, with the unshelved
+    /// tracks in it.
+    ///
+    /// Returns whether the request went out.
+    fn reload_the_recording_if_it_is_loaded(&self, db_ref: &gt_store::DatabaseRef) -> bool {
+        let shared = self.shared.borrow();
+        let loaded = shared
+            .loaded_files
+            .view()
+            .stored_recording_index(db_ref)
+            .is_some();
+        drop(shared);
+        if !loaded {
+            return false;
+        }
+        self.history.open_over_the_loaded_entry(db_ref.clone());
+        true
     }
 
     /// Apply a result delivered by the history worker thread.
@@ -408,10 +444,14 @@ impl App {
                 self.history_window
                     .set_error(format!("Failed to load history: {e}"));
             }
-            Response::Opened { db_ref, result } => match result {
+            Response::Opened {
+                db_ref,
+                placement,
+                result,
+            } => match result {
                 Ok(opened) => {
                     self.apply_the_ui_state_stored_with_a_recording(&db_ref, opened.ui_state);
-                    self.begin_history_open(db_ref, opened.stored);
+                    self.begin_history_open(db_ref, placement, opened.stored);
                 }
                 Err(e) => {
                     log::error!("Failed to load recording from history: {e}");
@@ -782,6 +822,7 @@ impl App {
                     Some(loader::HistoryOpen::Recalculate {
                         db_ref: prompt.db_ref,
                         applied_current_marker_settings: prompt.marker_settings_changed,
+                        placement: prompt.placement,
                     }),
                 );
                 self.history_window.invalidate();
@@ -797,6 +838,7 @@ impl App {
                         db_ref: prompt.db_ref,
                         stored_tracks: prompt.stored_tracks,
                         applied_current_marker_settings: prompt.marker_settings_changed,
+                        placement: prompt.placement,
                     }),
                 );
             }
@@ -882,19 +924,24 @@ fn corrupt_backup_path(path: &std::path::Path) -> PathBuf {
 }
 
 /// Build the completion toast for a finished history mutation.
-fn mutation_toast(op: &history_db::DbOp) -> String {
+///
+/// `loading_the_recording_again` is true only where an unshelve requested a
+/// loaded recording from the history worker again. Only the unshelve toast
+/// reads it.
+fn mutation_toast(op: &history_db::DbOp, loading_the_recording_again: bool) -> String {
     use history_db::{DbOp, DeleteReason};
     match op {
         DbOp::TracksShelved { count } => {
             let tracks = gt_fmt::pluralize(*count, "track", "tracks");
             format!("Shelved {count} {tracks} in history")
         }
-        DbOp::TracksUnshelved { count } => {
+        DbOp::TracksUnshelved { count, .. } => {
             let tracks = gt_fmt::pluralize(*count, "track", "tracks");
-            let pronoun = gt_fmt::pluralize(*count, "it", "them");
-            format!(
-                "Unshelved {count} {tracks} in history. Open the recording again to see {pronoun}."
-            )
+            if loading_the_recording_again {
+                format!("Unshelved {count} {tracks}, loading the recording again")
+            } else {
+                format!("Unshelved {count} {tracks} in history")
+            }
         }
         DbOp::TracksDeleted { count } => {
             let tracks = gt_fmt::pluralize(*count, "track", "tracks");

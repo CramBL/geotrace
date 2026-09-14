@@ -474,6 +474,7 @@ fn resegment_prompt_for(
             },
         ],
         marker_settings_changed: false,
+        placement: crate::app::loader::LoadedRecordingPlacement::AddAnEntry,
     }
 }
 
@@ -540,6 +541,7 @@ fn opening_a_recording_stored_by_another_rule_raises_the_resegment_prompt(
                 identity: "auto:ride.gtd".to_owned(),
                 group_name: "2025-05-23T10:00:00Z_a1b2".to_owned(),
             },
+            placement: crate::app::loader::LoadedRecordingPlacement::AddAnEntry,
             result: Ok(crate::app::history_db::OpenedRecording {
                 stored,
                 ui_state: Ok(gt_store::RecordingUiState::default()),

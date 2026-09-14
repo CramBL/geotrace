@@ -575,11 +575,9 @@ pub(super) const UNSHELVE_LABEL: &str = "Unshelve";
 
 pub(super) const UNSHELVE_ALL_LABEL: &str = "Unshelve all";
 
-const UNSHELVE_HOVER: &str =
-    "Put this track back in the recording. Open the recording again to see it.";
+const UNSHELVE_HOVER: &str = "Put this track back in the recording";
 
-const UNSHELVE_ALL_HOVER: &str =
-    "Put every shelved track back in the recording. Open the recording again to see them.";
+const UNSHELVE_ALL_HOVER: &str = "Put every shelved track back in the recording";
 
 const DELETE_SHELVED_HOVER: &str = "Permanently delete every shelved track of this recording";
 
