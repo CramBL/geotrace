@@ -2,7 +2,9 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 
-use crate::error::{BuildError, Error, FieldLocation, UnplacedRecordCounts};
+use crate::error::{
+    self, BuildError, Error, EventMarkerError, FieldLocation, UnplacedRecordCounts,
+};
 use crate::time_types::{GpsTime, SysTime};
 use crate::types::{
     Annotation, Channel, Constellation, EventMarker, EventMarkerColor, EventMarkerIconChoice,
@@ -272,6 +274,7 @@ impl NavFileBuilder {
             event_marker_styles: Vec::new(),
             channels: Vec::new(),
             styled_paths: std::collections::HashSet::new(),
+            first_event_variant_path_rejection: None,
             meta: self.meta,
             satellite_window: self.satellite_window,
             continue_on_error: self.continue_on_error,
@@ -298,6 +301,7 @@ pub struct NavRecorder {
     event_marker_styles: Vec<EventMarkerStyle>,
     channels: Vec<Channel>,
     styled_paths: std::collections::HashSet<String>,
+    first_event_variant_path_rejection: Option<EventMarkerError>,
     meta: Option<Meta>,
     satellite_window: Duration,
     continue_on_error: bool,
@@ -410,7 +414,9 @@ impl NavRecorder {
     /// Add a typed event marker derived from an [`EventKind`] implementation.
     ///
     /// If `event.variant_path()` returns `None` (e.g. a `#[event_kind(skip)]`
-    /// variant), the call is a silent no-op.
+    /// variant), the call is a silent no-op. A variant path that
+    /// [`EventMarker::builder`] rejects makes [`finish`](Self::finish) fail with
+    /// [`BuildError::InvalidEventMarkerVariantPath`], in lenient mode too.
     pub fn add_event(
         &mut self,
         event: &impl EventKind,
@@ -419,9 +425,7 @@ impl NavRecorder {
         let Some(path) = event.variant_path() else {
             return self;
         };
-        self.register_icon_for_path(&path, event);
-        self.pending_event_markers
-            .push((path, sys_time.into(), event.event_note()));
+        self.add_typed_event_marker(path, event, sys_time.into(), event.event_note());
         self
     }
 
@@ -438,10 +442,25 @@ impl NavRecorder {
         let Some(path) = event.variant_path() else {
             return self;
         };
+        self.add_typed_event_marker(path, event, sys_time.into(), Some(note.into()));
+        self
+    }
+
+    fn add_typed_event_marker(
+        &mut self,
+        path: String,
+        event: &impl EventKind,
+        sys_time: DateTime<Utc>,
+        annotation: Option<String>,
+    ) {
+        if let Err(rejection) = error::validate_variant_path(&path) {
+            self.first_event_variant_path_rejection
+                .get_or_insert(rejection);
+            return;
+        }
         self.register_icon_for_path(&path, event);
         self.pending_event_markers
-            .push((path, sys_time.into(), Some(note.into())));
-        self
+            .push((path, sys_time, annotation));
     }
 
     fn register_icon_for_path(&mut self, path: &str, event: &impl EventKind) {
@@ -471,6 +490,9 @@ impl NavRecorder {
     ///
     /// Returns [`BuildError::NoNavFixes`] for a recorder with a satellite report, an annotation
     /// or an event marker and no nav fix, in lenient mode too.
+    /// Returns [`BuildError::InvalidEventMarkerVariantPath`] for a recorder with an event from
+    /// [`add_event`](Self::add_event) or [`add_event_with_note`](Self::add_event_with_note)
+    /// whose variant path [`EventMarker::builder`] rejects, in lenient mode too.
     ///
     /// Steps performed in order:
     /// 1. Sort fixes, satellite reports, and annotations by time.
@@ -502,6 +524,9 @@ impl NavRecorder {
     ///    marker falls outside the nav fix time range.  In lenient mode each is
     ///    clamped to the nearest endpoint with a warning.
     pub fn finish(mut self) -> Result<NavFile, BuildError> {
+        if let Some(source) = self.first_event_variant_path_rejection {
+            return Err(BuildError::InvalidEventMarkerVariantPath { source });
+        }
         validate_satellite_data(&self.satellite_reports);
 
         self.fixes.sort_by_key(InternalFix::effective_time);

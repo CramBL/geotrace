@@ -185,6 +185,13 @@ pub enum BuildError {
     /// report's own timestamp and the clock offset of the nav fixes around it.
     #[error("a ghost nav fix at {micros} microseconds is past the range a UTC timestamp covers")]
     GhostFixTimeOutOfRange { micros: i64 },
+
+    /// An event from [`NavRecorder::add_event`](crate::NavRecorder::add_event) or
+    /// [`NavRecorder::add_event_with_note`](crate::NavRecorder::add_event_with_note) has a
+    /// variant path that [`EventMarker::builder`](crate::EventMarker::builder) rejects. `source`
+    /// states the first such path and the rule it breaks. This is returned even in lenient mode.
+    #[error(transparent)]
+    InvalidEventMarkerVariantPath { source: EventMarkerError },
 }
 
 /// The satellite reports, annotations and event markers of a build without a nav fix, counted by

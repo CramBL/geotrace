@@ -1,7 +1,8 @@
+use geotrace_sdk::__private::Sealed;
 use geotrace_sdk::{
     Angle, AnnotationField, BuildError, EventKind, EventMarker, EventMarkerColor, EventMarkerError,
     EventMarkerIconChoice, EventMarkerStyle, MarkerIcon, NavFileBuilder, NavFix, NavFixTime,
-    UnplacedRecordCounts, VariantPathField,
+    NavRecorder, UnplacedRecordCounts, VariantPathField,
 };
 use geotrace_sdk_test_util as test_util;
 use rstest::rstest;
@@ -368,6 +369,69 @@ fn add_event_icon_survives_round_trip() {
         EventMarkerIconChoice::Icon(MarkerIcon::Lightning),
         "Lightning icon must survive write/read round-trip"
     );
+}
+
+struct HandWrittenEvent {
+    variant_path: &'static str,
+}
+
+impl Sealed for HandWrittenEvent {}
+
+impl EventKind for HandWrittenEvent {
+    fn variant_path(&self) -> Option<String> {
+        Some(self.variant_path.to_owned())
+    }
+
+    fn marker_icon(&self) -> Option<MarkerIcon> {
+        Some(MarkerIcon::Warning)
+    }
+}
+
+#[rstest]
+#[case::a_leading_slash(
+    "/power/boot",
+    |error: &EventMarkerError| matches!(error, EventMarkerError::LeadingSlash { .. })
+)]
+#[case::an_empty_segment(
+    "power//boot",
+    |error: &EventMarkerError| matches!(error, EventMarkerError::EmptySegment { .. })
+)]
+#[case::a_non_ascii_character(
+    "power/größe",
+    |error: &EventMarkerError| matches!(error, EventMarkerError::InvalidChars { .. })
+)]
+fn an_event_with_a_malformed_variant_path_fails_the_build(
+    #[case] variant_path: &'static str,
+    #[case] is_expected_rejection: fn(&EventMarkerError) -> bool,
+    #[values(NavFileBuilder::new(), NavFileBuilder::new().with_lenient_errors())]
+    builder: NavFileBuilder,
+    #[values(record_through_add_event, record_through_add_event_with_note)] record_event: fn(
+        &mut NavRecorder,
+        &HandWrittenEvent,
+    ),
+) {
+    let mut recorder = builder.open();
+    recorder.add_nav_fix(fix(0, 55.0, 12.0));
+    record_event(&mut recorder, &HandWrittenEvent { variant_path });
+
+    let error = recorder
+        .finish()
+        .expect_err("the variant path is malformed");
+    assert!(
+        matches!(
+            &error,
+            BuildError::InvalidEventMarkerVariantPath { source } if is_expected_rejection(source)
+        ),
+        "got {error:?}"
+    );
+}
+
+fn record_through_add_event(recorder: &mut NavRecorder, event: &HandWrittenEvent) {
+    recorder.add_event(event, test_util::t_s(0));
+}
+
+fn record_through_add_event_with_note(recorder: &mut NavRecorder, event: &HandWrittenEvent) {
+    recorder.add_event_with_note(event, test_util::t_s(0), "note");
 }
 
 #[test]
