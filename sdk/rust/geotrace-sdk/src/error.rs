@@ -189,7 +189,11 @@ pub enum BuildError {
     /// An event from [`NavRecorder::add_event`](crate::NavRecorder::add_event) or
     /// [`NavRecorder::add_event_with_note`](crate::NavRecorder::add_event_with_note) has a
     /// variant path that [`EventMarker::builder`](crate::EventMarker::builder) rejects. `source`
-    /// states the first such path and the rule it breaks. This is returned even in lenient mode.
+    /// states the first such path and the rule it breaks.
+    ///
+    /// Only emitted in strict mode (the default). Use
+    /// [`NavFileBuilder::with_lenient_errors`](crate::NavFileBuilder::with_lenient_errors)
+    /// to drop each such event, log an error and continue.
     #[error(transparent)]
     InvalidEventMarkerVariantPath { source: EventMarkerError },
 }

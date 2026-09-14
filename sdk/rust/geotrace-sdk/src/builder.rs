@@ -243,12 +243,16 @@ impl NavFileBuilder {
         self
     }
 
-    /// Downgrade out-of-range errors to warnings and continue.
+    /// Clamp an out-of-range time and log a warning. Drop an event with an invalid variant path
+    /// and log an error.
     ///
-    /// The strict build fails with [`BuildError::AnnotationsOutsideRange`] or
-    /// [`BuildError::EventMarkersOutsideRange`]. After this call, an annotation
+    /// The strict build fails with [`BuildError::AnnotationsOutsideRange`],
+    /// [`BuildError::EventMarkersOutsideRange`] or
+    /// [`BuildError::InvalidEventMarkerVariantPath`]. After this call, an annotation
     /// or an event marker outside the nav fix time range is clamped to the
-    /// nearest endpoint and logged as a warning.
+    /// nearest endpoint. An event from [`NavRecorder::add_event`] or
+    /// [`NavRecorder::add_event_with_note`] whose variant path
+    /// [`EventMarker::builder`] rejects is dropped.
     pub fn with_lenient_errors(mut self) -> Self {
         self.continue_on_error = true;
         self
@@ -414,9 +418,10 @@ impl NavRecorder {
     /// Add a typed event marker derived from an [`EventKind`] implementation.
     ///
     /// If `event.variant_path()` returns `None` (e.g. a `#[event_kind(skip)]`
-    /// variant), the call is a silent no-op. A variant path that
-    /// [`EventMarker::builder`] rejects makes [`finish`](Self::finish) fail with
-    /// [`BuildError::InvalidEventMarkerVariantPath`], in lenient mode too.
+    /// variant), the call is a silent no-op. The recorder drops an event whose variant path
+    /// [`EventMarker::builder`] rejects. In strict mode [`finish`](Self::finish) then fails with
+    /// [`BuildError::InvalidEventMarkerVariantPath`]. In lenient mode this call logs an error
+    /// with the path and the rule it breaks.
     pub fn add_event(
         &mut self,
         event: &impl EventKind,
@@ -454,8 +459,12 @@ impl NavRecorder {
         annotation: Option<String>,
     ) {
         if let Err(rejection) = error::validate_variant_path(&path) {
-            self.first_event_variant_path_rejection
-                .get_or_insert(rejection);
+            if self.continue_on_error {
+                log::error!("Event marker at {sys_time} dropped: {rejection:#}");
+            } else {
+                self.first_event_variant_path_rejection
+                    .get_or_insert(rejection);
+            }
             return;
         }
         self.register_icon_for_path(&path, event);
@@ -490,9 +499,10 @@ impl NavRecorder {
     ///
     /// Returns [`BuildError::NoNavFixes`] for a recorder with a satellite report, an annotation
     /// or an event marker and no nav fix, in lenient mode too.
-    /// Returns [`BuildError::InvalidEventMarkerVariantPath`] for a recorder with an event from
-    /// [`add_event`](Self::add_event) or [`add_event_with_note`](Self::add_event_with_note)
-    /// whose variant path [`EventMarker::builder`] rejects, in lenient mode too.
+    /// Returns [`BuildError::InvalidEventMarkerVariantPath`] in strict mode for a recorder with an
+    /// event from [`add_event`](Self::add_event) or
+    /// [`add_event_with_note`](Self::add_event_with_note) whose variant path
+    /// [`EventMarker::builder`] rejects. A lenient recorder drops such an event and logs an error.
     ///
     /// Steps performed in order:
     /// 1. Sort fixes, satellite reports, and annotations by time.
