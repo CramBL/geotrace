@@ -64,14 +64,41 @@ links the system libraries it needs (`ntdll`, `userenv`, `ws2_32`, `advapi32`,
 
 ## Build from source
 
-Requires a Rust toolchain. `-DGEOTRACE_C_STATIC=ON` builds the static library
-(the default on Windows). Omit it for a shared library on Linux and macOS.
+Requires a Rust toolchain.
+`cargo build` writes both the static and the shared library.
+`-DGEOTRACE_C_STATIC=ON` selects the static one for the `GeoTrace::C` target and for `cmake --install`.
+Without it, Linux and macOS use the shared library.
+Windows always uses the static library.
 
 ```sh
 cargo build -p geotrace-c --release
 cmake -S sdk/c -B build -DGEOTRACE_C_STATIC=ON -DCMAKE_INSTALL_PREFIX=prefix
 cmake --install build
 ```
+
+## Logging
+
+The SDK logs a record for input data that it cannot use as written, such as a satellite SNR of 99 dB-Hz, an unknown travel mode in a file, or an annotation that lenient mode clamps.
+The function that logs the record returns `GTD_OK`.
+`gtd_set_log_callback()` registers one callback for the whole process, and the SDK passes it every record at `GTD_LOG_WARN` and above.
+`gtd_set_log_level()` sets that level, and `gtd_clear_log_callback()` removes the callback.
+
+```c
+static void print_log_record(GtdLogLevel level, const char *target, const char *message,
+                             void *user_data) {
+    (void)level;
+    (void)user_data;
+    fprintf(stderr, "%s: %s\n", target, message);
+}
+
+GtdStatus status = gtd_set_log_callback(print_log_record, NULL);
+if (status != GTD_OK) {
+    fprintf(stderr, "set_log_callback: %s\n", gtd_last_error());
+}
+```
+
+The callback runs on the thread that wrote the record.
+The `target` and `message` pointers are valid only for the duration of the call.
 
 ## Examples
 
@@ -85,4 +112,4 @@ In [`sdk/c/examples/`](../../sdk/c/examples/). Configure the C SDK with
 - [`channels`](../../sdk/c/examples/channels.c): attach scalar and vector sensor channels and read them back.
 - [`from_csv`](../../sdk/c/examples/from_csv.c): convert CSV rows into a `.gtd` file.
 - [`from_multiple_sources`](../../sdk/c/examples/from_multiple_sources.c): merge fixes and events from separate sources, interpolating event positions.
-- [`gold_dataset`](../../sdk/c/examples/gold_dataset.c): build the cross-SDK reference file from shared fixtures and verify the round-trip.
+- [`gold_dataset`](../../sdk/c/examples/gold_dataset.c): build the cross-SDK reference file from shared fixtures, write it, and check the metadata and the counts of the built file handle.

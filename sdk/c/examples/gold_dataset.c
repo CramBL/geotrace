@@ -2,7 +2,8 @@
  * Gold dataset reference test for the GeoTrace C SDK.
  *
  * Reads the CSV fixtures in tests/fixtures/gold_dataset/, builds a .gtd file,
- * then verifies the round-trip.  Run from the repository root:
+ * writes it, then checks the metadata and the counts of the file handle it built.
+ * Run from the repository root:
  *
  *   ./sdk/c/build/gold/examples/gold_dataset
  */

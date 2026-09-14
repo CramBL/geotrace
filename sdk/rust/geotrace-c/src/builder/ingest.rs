@@ -35,8 +35,8 @@ impl TimestampArguments {
 
 /// Add a GPS navigation fix.
 ///
-/// At least one nav fix is required before `gtd_builder_finish()`, which sorts
-/// the fixes by time: a caller may add them in any order.
+/// `gtd_builder_finish()` sorts the fixes by time: a caller may add them in any
+/// order.
 ///
 /// The ranges named below are data quality expectations, not parse rules.
 /// The SDK records a value outside its range, NaN included, as given: a recorder
@@ -169,6 +169,7 @@ pub unsafe extern "C" fn gtd_builder_add_satellite_report(
 ///         `gtd_builder_add_event_marker_style()` accepts.
 /// @return `GTD_ERR_OUT_OF_RANGE` if @p time is past the range a timestamp
 ///         covers.
+/// @return `GTD_ERR_NULL_ARGUMENT` if @p time is `gtd_ts_none()`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_annotation(
     builder: *mut GtdFileBuilder,
@@ -227,6 +228,7 @@ pub unsafe extern "C" fn gtd_builder_add_annotation(
 ///         or @p annotation longer than 511 bytes.
 /// @return `GTD_ERR_OUT_OF_RANGE` if @p sys_time is past the range a timestamp
 ///         covers.
+/// @return `GTD_ERR_NULL_ARGUMENT` if @p sys_time is `gtd_ts_none()`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_event_marker(
     builder: *mut GtdFileBuilder,
@@ -323,6 +325,8 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker_style(
 ///         `n_times * max(n_components, 1)` long.
 /// @return `GTD_ERR_OUT_OF_RANGE` if an element of `times` is past the range a
 ///         timestamp covers, and `gtd_last_error()` states its index.
+/// @return `GTD_ERR_NULL_ARGUMENT` if an element of `times` is `gtd_ts_none()`, and
+///         `gtd_last_error()` states its index.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_channel(
     builder: *mut GtdFileBuilder,
@@ -350,6 +354,8 @@ pub unsafe extern "C" fn gtd_builder_add_channel(
 ///         malformed channel metadata.
 /// @return `GTD_ERR_OUT_OF_RANGE` if an element of `times` is past the range a
 ///         timestamp covers, and `gtd_last_error()` states its index.
+/// @return `GTD_ERR_NULL_ARGUMENT` if an element of `times` is `gtd_ts_none()`, and
+///         `gtd_last_error()` states its index.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_channel_with_unit_mode(
     builder: *mut GtdFileBuilder,

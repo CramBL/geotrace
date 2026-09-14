@@ -13,6 +13,8 @@
  * **Ownership:** Every function that returns a handle allocates heap memory.
  * Destroy handles exactly once with the matching `gtd_*_destroy()` function.
  * Passing a destroyed handle is undefined behaviour (same contract as `FILE*`).
+ * A caller may free or reuse a string, array or struct argument once the call returns, except
+ * the `user_data` of `gtd_set_log_callback()`: the SDK copies all other argument data.
  */
 
 #ifndef GEOTRACE_H
@@ -58,7 +60,8 @@ typedef enum {
      */
     GTD_ERR_INVALID_PATH = 2,
     /**
-     * Builder finished with no nav fixes.
+     * The builder has an annotation or an event marker and no nav fix to interpolate its
+     * position from.
      */
     GTD_ERR_NO_NAV_FIXES = 3,
     /**
@@ -327,6 +330,12 @@ typedef struct {
  * A satellite entry within a report (write path, input from C).
  *
  * Pass an array of these to `gtd_builder_add_satellite_report()`.
+ *
+ * The ranges on @ref elevation_deg and @ref azimuth_deg are data quality
+ * expectations. The SDK writes a value outside its range unchanged and counts it
+ * in a satellite warning (see `gtd_nav_file_get_satellite_warning()`).
+ * A NaN @ref elevation_deg, @ref azimuth_deg or @ref snr_dbhz reads back as
+ * absent: the SDK stores `GTD_NONE_F32` as NaN.
  */
 typedef struct {
     /**
@@ -342,15 +351,15 @@ typedef struct {
      */
     uint8_t in_fix;
     /**
-     * Elevation above the horizon in degrees [0, 90].
+     * Elevation above the horizon in degrees, expected in [0, 90].
      */
     GtdOptF32 elevation_deg;
     /**
-     * Azimuth from true north in degrees [0, 360).
+     * Azimuth from true north in degrees, expected in [0, 360).
      */
     GtdOptF32 azimuth_deg;
     /**
-     * Signal-to-noise ratio in dB·Hz, `GTD_NONE_F32` without a measurement. The builder writes a
+     * Signal-to-noise ratio in dB-Hz, `GTD_NONE_F32` without a measurement. The builder writes a
      * present value unchanged: pass `GTD_NONE_F32` for a reading for which
      * `gtd_snr_is_no_data_sentinel()` returns 1.
      */
@@ -606,6 +615,11 @@ typedef struct {
 
 /**
  * Satellite data returned by `gtd_nav_file_get_satellite()`.
+ *
+ * The ranges on @ref elevation_deg and @ref azimuth_deg are data quality
+ * expectations. The SDK returns a value outside its range unchanged and counts it
+ * in a satellite warning (see `gtd_nav_file_get_satellite_warning()`).
+ * Checking a value against its range is the caller's job.
  */
 typedef struct {
     /**
@@ -621,15 +635,15 @@ typedef struct {
      */
     uint8_t in_fix;
     /**
-     * Elevation in degrees, if available.
+     * Elevation above the horizon in degrees, expected in [0, 90], if available.
      */
     GtdOptF32 elevation_deg;
     /**
-     * Azimuth in degrees, if available.
+     * Azimuth from true north in degrees, expected in [0, 360), if available.
      */
     GtdOptF32 azimuth_deg;
     /**
-     * SNR in dB·Hz, if available. The reader returns a stored value unchanged, which includes a
+     * SNR in dB-Hz, if available. The reader returns a stored value unchanged, which includes a
      * reading for which `gtd_snr_is_no_data_sentinel()` returns 1.
      */
     GtdOptF32 snr_dbhz;
@@ -728,9 +742,16 @@ double gtd_radians_from_degrees(double degrees);
  * @param builder Builder to finalise.
  * @param out     Output parameter for the resulting file handle.
  *
- * @return `GTD_ERR_NO_NAV_FIXES` if no nav fixes were added.
+ * On a builder without nav fixes, the call returns `GTD_OK` and a file with zero nav points,
+ * unless the builder has an annotation or an event marker.
+ *
+ * @return `GTD_ERR_NO_NAV_FIXES` if the builder has an annotation or an event marker and no
+ *         nav fix, in lenient mode too.
  * @return `GTD_ERR_ANNOTATIONS_OOB` if annotations fall outside the time range (unless lenient).
  * @return `GTD_ERR_EVENT_MARKERS_OOB` if event markers fall outside the time range (unless lenient).
+ * @return `GTD_ERR_INVALID_CHANNEL` if two channels share a name.
+ * @return `GTD_ERR_INVALID_ARGUMENT` if the timestamp the builder computes for a ghost nav fix
+ *         is past the range a timestamp covers.
  */
 GtdStatus gtd_builder_finish(GtdFileBuilder *builder,
                              GtdNavFile **out);
@@ -738,8 +759,8 @@ GtdStatus gtd_builder_finish(GtdFileBuilder *builder,
 /**
  * Add a GPS navigation fix.
  *
- * At least one nav fix is required before `gtd_builder_finish()`, which sorts
- * the fixes by time: a caller may add them in any order.
+ * `gtd_builder_finish()` sorts the fixes by time: a caller may add them in any
+ * order.
  *
  * The ranges named below are data quality expectations, not parse rules.
  * The SDK records a value outside its range, NaN included, as given: a recorder
@@ -819,6 +840,7 @@ GtdStatus gtd_builder_add_satellite_report(GtdFileBuilder *builder,
  *         `gtd_builder_add_event_marker_style()` accepts.
  * @return `GTD_ERR_OUT_OF_RANGE` if @p time is past the range a timestamp
  *         covers.
+ * @return `GTD_ERR_NULL_ARGUMENT` if @p time is `gtd_ts_none()`.
  */
 GtdStatus gtd_builder_add_annotation(GtdFileBuilder *builder,
                                      GtdTimestamp time,
@@ -842,6 +864,7 @@ GtdStatus gtd_builder_add_annotation(GtdFileBuilder *builder,
  *         or @p annotation longer than 511 bytes.
  * @return `GTD_ERR_OUT_OF_RANGE` if @p sys_time is past the range a timestamp
  *         covers.
+ * @return `GTD_ERR_NULL_ARGUMENT` if @p sys_time is `gtd_ts_none()`.
  */
 GtdStatus gtd_builder_add_event_marker(GtdFileBuilder *builder,
                                        const char *variant_path,
@@ -889,6 +912,8 @@ GtdStatus gtd_builder_add_event_marker_style(GtdFileBuilder *builder,
  *         `n_times * max(n_components, 1)` long.
  * @return `GTD_ERR_OUT_OF_RANGE` if an element of `times` is past the range a
  *         timestamp covers, and `gtd_last_error()` states its index.
+ * @return `GTD_ERR_NULL_ARGUMENT` if an element of `times` is `gtd_ts_none()`, and
+ *         `gtd_last_error()` states its index.
  */
 GtdStatus gtd_builder_add_channel(GtdFileBuilder *builder, const GtdChannel *channel);
 
@@ -911,6 +936,8 @@ GtdStatus gtd_builder_add_channel(GtdFileBuilder *builder, const GtdChannel *cha
  *         malformed channel metadata.
  * @return `GTD_ERR_OUT_OF_RANGE` if an element of `times` is past the range a
  *         timestamp covers, and `gtd_last_error()` states its index.
+ * @return `GTD_ERR_NULL_ARGUMENT` if an element of `times` is `gtd_ts_none()`, and
+ *         `gtd_last_error()` states its index.
  */
 GtdStatus gtd_builder_add_channel_with_unit_mode(GtdFileBuilder *builder,
                                                  const GtdChannel *channel,
@@ -939,6 +966,9 @@ void gtd_builder_destroy(GtdFileBuilder *builder);
  *
  * Must be called before the first `gtd_builder_add_*` call.
  *
+ * @param builder Builder handle.
+ * @param title   Title, NUL-terminated UTF-8.
+ *
  * @return `GTD_ERR_CALL_ORDER` if data has already been added.
  */
 GtdStatus gtd_builder_set_title(GtdFileBuilder *builder, const char *title);
@@ -947,6 +977,9 @@ GtdStatus gtd_builder_set_title(GtdFileBuilder *builder, const char *title);
  * Set the recording device name (optional).
  *
  * Must be called before the first `gtd_builder_add_*` call.
+ *
+ * @param builder Builder handle.
+ * @param device  Recording device name, NUL-terminated UTF-8.
  *
  * @return `GTD_ERR_CALL_ORDER` if data has already been added.
  */
@@ -957,6 +990,9 @@ GtdStatus gtd_builder_set_device(GtdFileBuilder *builder, const char *device);
  *
  * Must be called before the first `gtd_builder_add_*` call.
  *
+ * @param builder Builder handle.
+ * @param notes   Notes, NUL-terminated UTF-8.
+ *
  * @return `GTD_ERR_CALL_ORDER` if data has already been added.
  */
 GtdStatus gtd_builder_set_notes(GtdFileBuilder *builder, const char *notes);
@@ -965,6 +1001,9 @@ GtdStatus gtd_builder_set_notes(GtdFileBuilder *builder, const char *notes);
  * Set a device/session identity string (optional).
  *
  * Must be called before the first `gtd_builder_add_*` call.
+ *
+ * @param builder  Builder handle.
+ * @param identity Device or session identity, NUL-terminated UTF-8.
  *
  * @return `GTD_ERR_CALL_ORDER` if data has already been added.
  */
@@ -993,6 +1032,8 @@ GtdStatus gtd_builder_set_travel_mode(GtdFileBuilder *builder, uint32_t mode);
  * clamps each to the nearest endpoint and downgrades the error to a warning.
  *
  * Must be called before the first `gtd_builder_add_*` call.
+ *
+ * @param builder Builder handle.
  *
  * @return `GTD_ERR_CALL_ORDER` if data has already been added.
  */
@@ -1093,7 +1134,10 @@ GtdStatus gtd_marker_icon_from_name(const char *name, GtdMarkerIcon *out);
  * clears it, as `gtd_clear_log_callback()` does.
  *
  * @param callback  Function to call per record, or NULL to stop forwarding.
- * @param user_data Passed to every call. The SDK stores it and never reads it.
+ * @param user_data Passed to every call. The SDK stores the pointer and never dereferences it.
+ *                  The data at @p user_data must stay valid until a later
+ *                  `gtd_set_log_callback()` call or `gtd_clear_log_callback()` removes the
+ *                  pointer.
  *
  * @return `GTD_ERR_INTERNAL` if the SDK could not install its log sink, in
  *         which case the callback receives no records.
@@ -1145,13 +1189,22 @@ GtdStatus gtd_nav_file_get_channel(const GtdNavFile *file, size_t index, GtdChan
  *
  * Pass NULL @p out and zero @p out_capacity to query the required byte length,
  * including the trailing null byte. A channel without a unit reports zero.
- * @p is_custom may be NULL when the recognized/custom distinction is not needed.
+ * With a non-zero @p out_capacity below the required length, the SDK writes the
+ * first `out_capacity - 1` bytes of the label and a null byte, and returns
+ * `GTD_OK`.
  *
  * @p is_custom is non-zero for any label that is not a recognized unit. That
  * covers both a custom label and a legacy label an older writer stored, which
  * this SDK reports verbatim and rejects on the write path: passing such a label
  * to @ref gtd_builder_add_channel_with_unit_mode returns
  * `GTD_ERR_INVALID_CHANNEL`.
+ *
+ * @param file            File handle.
+ * @param index           Zero-based channel index.
+ * @param out             Buffer for the unit label, or NULL to size it.
+ * @param out_capacity    Bytes writable at @p out.
+ * @param required_length Receives the label's byte length including the null byte.
+ * @param is_custom       Receives the recognized/custom distinction. May be NULL.
  *
  * @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last channel.
  */
@@ -1184,6 +1237,11 @@ GtdStatus gtd_nav_file_get_channel_component(const GtdNavFile *file,
 /**
  * Copy up to @p out_capacity sample timestamps of the channel at @p channel_index into @p out.
  *
+ * @param file          File handle. Returns 0 if NULL.
+ * @param channel_index Zero-based channel index. Returns 0 if past the last channel.
+ * @param out           Caller-allocated array of @p out_capacity timestamps, or NULL.
+ * @param out_capacity  Capacity of @p out in elements.
+ *
  * @return The channel's total sample count (independent of @p out_capacity). Pass a NULL
  *         @p out or zero @p out_capacity to query the count without copying.
  */
@@ -1194,6 +1252,11 @@ size_t gtd_nav_file_channel_times(const GtdNavFile *file,
 
 /**
  * Copy up to @p out_capacity values of the channel at @p channel_index into @p out (row-major).
+ *
+ * @param file          File handle. Returns 0 if NULL.
+ * @param channel_index Zero-based channel index. Returns 0 if past the last channel.
+ * @param out           Caller-allocated array of @p out_capacity values, or NULL.
+ * @param out_capacity  Capacity of @p out in elements.
  *
  * @return The channel's total value count, `sample_count * max(component_count, 1)`
  *         (independent of @p out_capacity). Pass a NULL @p out or zero
@@ -1301,6 +1364,8 @@ const char *gtd_nav_file_sdk_git_commit(const GtdNavFile *file);
  * Return the committer timestamp of `gtd_nav_file_sdk_git_commit()`.
  *
  * `gtd_ts_none()` if not set. Use `gtd_ts_is_none()` to check.
+ *
+ * @param file File handle. Returns `gtd_ts_none()` if NULL.
  */
 GtdTimestamp gtd_nav_file_sdk_commit_time(const GtdNavFile *file);
 
@@ -1457,9 +1522,9 @@ void gtd_nav_file_destroy(GtdNavFile *file);
 
 /**
  * Whether @p snr_dbhz is the SNR some receiver firmware sends when it has no measurement:
- * 99 dB·Hz, within the tolerance of the Rust SDK's `snr::is_no_data_sentinel`.
+ * 99 dB-Hz, within the tolerance of the Rust SDK's `snr::is_no_data_sentinel`.
  *
- * @param snr_dbhz SNR in dB·Hz.
+ * @param snr_dbhz SNR in dB-Hz.
  *
  * @return 1 for such a reading, 0 for any other.
  */
@@ -1533,6 +1598,8 @@ GtdTimestamp gtd_ts_none(void);
 
 /**
  * Returns non-zero if @p timestamp is the absent timestamp.
+ *
+ * @param timestamp Timestamp to test.
  */
 uint8_t gtd_ts_is_none(GtdTimestamp timestamp);
 

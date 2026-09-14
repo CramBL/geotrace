@@ -98,13 +98,22 @@ pub unsafe extern "C" fn gtd_nav_file_get_channel(
 ///
 /// Pass NULL @p out and zero @p out_capacity to query the required byte length,
 /// including the trailing null byte. A channel without a unit reports zero.
-/// @p is_custom may be NULL when the recognized/custom distinction is not needed.
+/// With a non-zero @p out_capacity below the required length, the SDK writes the
+/// first `out_capacity - 1` bytes of the label and a null byte, and returns
+/// `GTD_OK`.
 ///
 /// @p is_custom is non-zero for any label that is not a recognized unit. That
 /// covers both a custom label and a legacy label an older writer stored, which
 /// this SDK reports verbatim and rejects on the write path: passing such a label
 /// to @ref gtd_builder_add_channel_with_unit_mode returns
 /// `GTD_ERR_INVALID_CHANNEL`.
+///
+/// @param file            File handle.
+/// @param index           Zero-based channel index.
+/// @param out             Buffer for the unit label, or NULL to size it.
+/// @param out_capacity    Bytes writable at @p out.
+/// @param required_length Receives the label's byte length including the null byte.
+/// @param is_custom       Receives the recognized/custom distinction. May be NULL.
 ///
 /// @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last channel.
 #[unsafe(no_mangle)]
@@ -198,6 +207,11 @@ pub unsafe extern "C" fn gtd_nav_file_get_channel_component(
 
 /// Copy up to @p out_capacity sample timestamps of the channel at @p channel_index into @p out.
 ///
+/// @param file          File handle. Returns 0 if NULL.
+/// @param channel_index Zero-based channel index. Returns 0 if past the last channel.
+/// @param out           Caller-allocated array of @p out_capacity timestamps, or NULL.
+/// @param out_capacity  Capacity of @p out in elements.
+///
 /// @return The channel's total sample count (independent of @p out_capacity). Pass a NULL
 ///         @p out or zero @p out_capacity to query the count without copying.
 #[unsafe(no_mangle)]
@@ -226,6 +240,11 @@ pub unsafe extern "C" fn gtd_nav_file_channel_times(
 }
 
 /// Copy up to @p out_capacity values of the channel at @p channel_index into @p out (row-major).
+///
+/// @param file          File handle. Returns 0 if NULL.
+/// @param channel_index Zero-based channel index. Returns 0 if past the last channel.
+/// @param out           Caller-allocated array of @p out_capacity values, or NULL.
+/// @param out_capacity  Capacity of @p out in elements.
 ///
 /// @return The channel's total value count, `sample_count * max(component_count, 1)`
 ///         (independent of @p out_capacity). Pass a NULL @p out or zero

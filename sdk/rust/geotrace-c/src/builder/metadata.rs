@@ -11,6 +11,9 @@ use crate::error::{self, GtdStatus};
 ///
 /// Must be called before the first `gtd_builder_add_*` call.
 ///
+/// @param builder Builder handle.
+/// @param title   Title, NUL-terminated UTF-8.
+///
 /// @return `GTD_ERR_CALL_ORDER` if data has already been added.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_set_title(
@@ -27,6 +30,9 @@ pub unsafe extern "C" fn gtd_builder_set_title(
 /// Set the recording device name (optional).
 ///
 /// Must be called before the first `gtd_builder_add_*` call.
+///
+/// @param builder Builder handle.
+/// @param device  Recording device name, NUL-terminated UTF-8.
 ///
 /// @return `GTD_ERR_CALL_ORDER` if data has already been added.
 #[unsafe(no_mangle)]
@@ -45,6 +51,9 @@ pub unsafe extern "C" fn gtd_builder_set_device(
 ///
 /// Must be called before the first `gtd_builder_add_*` call.
 ///
+/// @param builder Builder handle.
+/// @param notes   Notes, NUL-terminated UTF-8.
+///
 /// @return `GTD_ERR_CALL_ORDER` if data has already been added.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_set_notes(
@@ -61,6 +70,9 @@ pub unsafe extern "C" fn gtd_builder_set_notes(
 /// Set a device/session identity string (optional).
 ///
 /// Must be called before the first `gtd_builder_add_*` call.
+///
+/// @param builder  Builder handle.
+/// @param identity Device or session identity, NUL-terminated UTF-8.
 ///
 /// @return `GTD_ERR_CALL_ORDER` if data has already been added.
 #[unsafe(no_mangle)]
@@ -108,6 +120,8 @@ pub unsafe extern "C" fn gtd_builder_set_travel_mode(
 /// clamps each to the nearest endpoint and downgrades the error to a warning.
 ///
 /// Must be called before the first `gtd_builder_add_*` call.
+///
+/// @param builder Builder handle.
 ///
 /// @return `GTD_ERR_CALL_ORDER` if data has already been added.
 #[unsafe(no_mangle)]
