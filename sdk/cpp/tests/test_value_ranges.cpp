@@ -4,6 +4,8 @@
 
 #include <cmath>
 
+#include "test_timestamps.hpp"
+
 using geotrace::Angle;
 using geotrace::Constellation;
 using geotrace::FileBuilder;
@@ -12,7 +14,6 @@ using geotrace::NavFile;
 using geotrace::NavFix;
 using geotrace::Satellite;
 using geotrace::SatelliteReport;
-using geotrace::Timestamp;
 
 #ifdef GTD_OUT_OF_RANGE_FIXTURE_PATH
 TEST_CASE("NavFile: out-of-range coordinates read verbatim") {
@@ -30,10 +31,10 @@ TEST_CASE("NavFile: out-of-range coordinates read verbatim") {
 #endif
 
 TEST_CASE("NavFile: satellite warnings report the PRN and the SNR sentinel") {
-    constexpr Timestamp FIX_TIME{1'700'000'000'000'000};
-    const NavFix fix{FixTime::receiver(FIX_TIME), Angle::degrees(51.5), Angle::degrees(-0.1)};
+    const NavFix fix{FixTime::receiver(fix_timestamp()), Angle::degrees(51.5),
+                     Angle::degrees(-0.1)};
     const SatelliteReport report{
-        FixTime::receiver(FIX_TIME),
+        FixTime::receiver(fix_timestamp()),
         {
             Satellite{Constellation::Gps, 0, true, 45.0F, 90.0F, 40.0F},
             Satellite{Constellation::Gps, 5, true, 30.0F, 120.0F, 99.0F},

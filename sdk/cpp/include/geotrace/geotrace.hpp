@@ -396,39 +396,16 @@ template <typename T> struct [[nodiscard]] Result {
     Status status_;
 };
 
-namespace detail {
-
-// `Output` is `Timestamp` or `GtdTimestamp`, built from the count @p convert
-// writes.
-template <typename Output, typename Input, typename Convert>
-[[nodiscard]] Result<Output> try_convert_timestamp(Input input, Convert convert) {
-    GtdTimestamp converted{0};
-    const GtdStatus status = convert(input, &converted);
-    if (status != GTD_OK) {
-        return Status::from(status);
-    }
-    return Output{converted.unix_micros};
-}
-
-} // namespace detail
-
 /**
  * UTC Unix epoch timestamp in microseconds.
  *
  * Always an instant. An absent timestamp is `std::optional<Timestamp>`.
  */
-struct [[nodiscard]] Timestamp {
-    std::int64_t unix_micros;
-
-    /**
-     * Unchecked. `try_from_micros` checks the count, and `FileBuilder` rejects a
-     * count past the range a UTC timestamp covers.
-     */
-    explicit constexpr Timestamp(std::int64_t micros) noexcept : unix_micros(micros) {}
-
+class [[nodiscard]] Timestamp {
+  public:
     /** Whole seconds since the Unix epoch, negative before it. */
     static Result<Timestamp> try_from_seconds(std::int64_t seconds) {
-        return detail::try_convert_timestamp<Timestamp>(seconds, ::gtd_ts_from_seconds);
+        return try_convert(seconds, ::gtd_ts_from_seconds);
     }
 
     /** @throws std::out_of_range for a count past the range a timestamp covers. */
@@ -438,7 +415,7 @@ struct [[nodiscard]] Timestamp {
 
     /** Milliseconds since the Unix epoch, negative before it. */
     static Result<Timestamp> try_from_millis(std::int64_t millis) {
-        return detail::try_convert_timestamp<Timestamp>(millis, ::gtd_ts_from_millis);
+        return try_convert(millis, ::gtd_ts_from_millis);
     }
 
     /** @throws std::out_of_range for a count past the range a timestamp covers. */
@@ -448,7 +425,7 @@ struct [[nodiscard]] Timestamp {
 
     /** Microseconds since the Unix epoch, negative before it. */
     static Result<Timestamp> try_from_micros(std::int64_t micros) {
-        return detail::try_convert_timestamp<Timestamp>(micros, ::gtd_ts_from_micros);
+        return try_convert(micros, ::gtd_ts_from_micros);
     }
 
     /** @throws std::out_of_range for a count past the range a timestamp covers. */
@@ -461,7 +438,7 @@ struct [[nodiscard]] Timestamp {
      * zero to whole microseconds.
      */
     static Result<Timestamp> try_from_nanos(std::int64_t nanos) {
-        return detail::try_convert_timestamp<Timestamp>(nanos, ::gtd_ts_from_nanos);
+        return try_convert(nanos, ::gtd_ts_from_nanos);
     }
 
     /** @throws std::out_of_range for a count past the range a timestamp covers. */
@@ -475,7 +452,7 @@ struct [[nodiscard]] Timestamp {
      * microsecond count of the second after it.
      */
     static Result<Timestamp> try_from_iso8601(const std::string &text) {
-        return detail::try_convert_timestamp<Timestamp>(text.c_str(), ::gtd_ts_from_iso8601);
+        return try_convert(text.c_str(), ::gtd_ts_from_iso8601);
     }
 
     /**
@@ -487,26 +464,45 @@ struct [[nodiscard]] Timestamp {
         return try_from_iso8601(text).value_or_throw();
     }
 
+    [[nodiscard]] constexpr std::int64_t as_unix_micros() const noexcept { return unix_micros_; }
+
 #if defined(__cpp_impl_three_way_comparison) && __cpp_impl_three_way_comparison >= 201907L
     auto operator<=>(const Timestamp &) const = default;
 #else
     constexpr bool operator==(Timestamp other) const noexcept {
-        return unix_micros == other.unix_micros;
+        return unix_micros_ == other.unix_micros_;
     }
     constexpr bool operator!=(Timestamp other) const noexcept { return !(*this == other); }
     constexpr bool operator<(Timestamp other) const noexcept {
-        return unix_micros < other.unix_micros;
+        return unix_micros_ < other.unix_micros_;
     }
     constexpr bool operator<=(Timestamp other) const noexcept {
-        return unix_micros <= other.unix_micros;
+        return unix_micros_ <= other.unix_micros_;
     }
     constexpr bool operator>(Timestamp other) const noexcept {
-        return unix_micros > other.unix_micros;
+        return unix_micros_ > other.unix_micros_;
     }
     constexpr bool operator>=(Timestamp other) const noexcept {
-        return unix_micros >= other.unix_micros;
+        return unix_micros_ >= other.unix_micros_;
     }
 #endif
+
+  private:
+    friend class NavFile;
+
+    explicit constexpr Timestamp(std::int64_t micros) noexcept : unix_micros_(micros) {}
+
+    template <typename Input, typename Convert>
+    static Result<Timestamp> try_convert(Input input, Convert convert) {
+        GtdTimestamp converted{0};
+        const GtdStatus status = convert(input, &converted);
+        if (status != GTD_OK) {
+            return Status::from(status);
+        }
+        return Timestamp{converted.unix_micros};
+    }
+
+    std::int64_t unix_micros_;
 };
 
 /**
@@ -839,31 +835,12 @@ template <typename Enumeration>
     return to_c(value) ? std::optional<Enumeration>{value} : std::nullopt;
 }
 
-// `gtd_ts_from_micros` returns `GTD_ERR_OUT_OF_RANGE` for a count past the
-// range a UTC timestamp covers, which includes `INT64_MIN`, the count of
-// `gtd_ts_none()`.
-[[nodiscard]] inline Result<GtdTimestamp> to_c(Timestamp timestamp) {
-    return try_convert_timestamp<GtdTimestamp>(timestamp.unix_micros, ::gtd_ts_from_micros);
+[[nodiscard]] constexpr GtdTimestamp to_c(Timestamp timestamp) noexcept {
+    return GtdTimestamp{timestamp.as_unix_micros()};
 }
 
-[[nodiscard]] inline Result<GtdTimestamp> to_c(std::optional<Timestamp> timestamp) {
-    if (!timestamp) {
-        return ::gtd_ts_none();
-    }
-    return to_c(*timestamp);
-}
-
-[[nodiscard]] inline std::optional<Timestamp> from_c(GtdTimestamp timestamp) noexcept {
-    if (::gtd_ts_is_none(timestamp) != 0) {
-        return std::nullopt;
-    }
-    return Timestamp{timestamp.unix_micros};
-}
-
-// `gtd_ts_none()` never appears in an event marker or channel sample timestamp:
-// the `.gtd` format stores an instant for both.
-[[nodiscard]] constexpr Timestamp instant_from_c(GtdTimestamp timestamp) noexcept {
-    return Timestamp{timestamp.unix_micros};
+[[nodiscard]] inline GtdTimestamp to_c(std::optional<Timestamp> timestamp) noexcept {
+    return timestamp ? to_c(*timestamp) : ::gtd_ts_none();
 }
 
 } // namespace detail
@@ -1611,26 +1588,13 @@ class FileBuilder {
     /** @name Data ingestion */
     ///@{
 
-    /**
-     * @throws std::out_of_range for a `Timestamp` whose count is past the range
-     *         a UTC timestamp covers.
-     */
     FileBuilder &add_nav_fix(const NavFix &fix) {
-        const std::optional<GtdTimestamp> gps_time =
-            checked_timestamp(fix.time.gps_time(), "gps_time: ");
-        if (!gps_time) {
-            return *this;
-        }
-        const std::optional<GtdTimestamp> sys_time =
-            checked_timestamp(fix.time.sys_time(), "sys_time: ");
-        if (!sys_time) {
-            return *this;
-        }
         const std::optional<double> heading_deg =
             fix.heading ? std::optional<double>{fix.heading->as_degrees()} : std::nullopt;
         const std::optional<double> speed_mps =
             fix.speed ? std::optional<double>{fix.speed->as_mps()} : std::nullopt;
-        record(::gtd_builder_add_nav_fix(impl_.get(), *gps_time, *sys_time, fix.lat.as_degrees(),
+        record(::gtd_builder_add_nav_fix(impl_.get(), detail::to_c(fix.time.gps_time()),
+                                         detail::to_c(fix.time.sys_time()), fix.lat.as_degrees(),
                                          fix.lon.as_degrees(), detail::to_c(heading_deg),
                                          detail::to_c(speed_mps), detail::to_c(fix.eph_m)));
         return *this;
@@ -1640,20 +1604,8 @@ class FileBuilder {
      * @throws std::invalid_argument for a satellite whose constellation is a
      *         value no `Constellation` enumerator declares. The report is not
      *         added, and the message states the satellite's index.
-     * @throws std::out_of_range for a `Timestamp` whose count is past the range
-     *         a UTC timestamp covers.
      */
     FileBuilder &add_satellite_report(const SatelliteReport &report) {
-        const std::optional<GtdTimestamp> gps_time =
-            checked_timestamp(report.time.gps_time(), "gps_time: ");
-        if (!gps_time) {
-            return *this;
-        }
-        const std::optional<GtdTimestamp> sys_time =
-            checked_timestamp(report.time.sys_time(), "sys_time: ");
-        if (!sys_time) {
-            return *this;
-        }
         std::vector<GtdSatellite> sats;
         sats.reserve(report.tracked.size());
         std::size_t index = 0;
@@ -1674,7 +1626,8 @@ class FileBuilder {
             });
             ++index;
         }
-        record(::gtd_builder_add_satellite_report(impl_.get(), *gps_time, *sys_time, sats.data(),
+        record(::gtd_builder_add_satellite_report(impl_.get(), detail::to_c(report.time.gps_time()),
+                                                  detail::to_c(report.time.sys_time()), sats.data(),
                                                   sats.size()));
         return *this;
     }
@@ -1684,20 +1637,14 @@ class FileBuilder {
      * @throws FieldTooLongError if `label` is longer than 255 bytes.
      * @throws std::invalid_argument for an `icon` no `MarkerIcon` enumerator
      *         declares.
-     * @throws std::out_of_range for a `Timestamp` whose count is past the range
-     *         a UTC timestamp covers.
      */
     FileBuilder &add_annotation(const Annotation &ann) {
-        const std::optional<GtdTimestamp> time = checked_timestamp(ann.time, "time: ");
-        if (!time) {
-            return *this;
-        }
         const std::optional<std::uint32_t> icon = checked_code("MarkerIcon", ann.icon);
         if (!icon) {
             return *this;
         }
         const char *label = ann.label.empty() ? nullptr : ann.label.c_str();
-        record(::gtd_builder_add_annotation(impl_.get(), *time, label, *icon));
+        record(::gtd_builder_add_annotation(impl_.get(), detail::to_c(ann.time), label, *icon));
         return *this;
     }
 
@@ -1706,18 +1653,11 @@ class FileBuilder {
      * @throws InvalidPathError if `variant_path` is malformed.
      * @throws FieldTooLongError if `variant_path` is longer than 255 bytes, or
      *         `annotation` longer than 511 bytes.
-     * @throws std::out_of_range for a `Timestamp` whose count is past the range
-     *         a UTC timestamp covers.
      */
     FileBuilder &add_event_marker(const EventMarker &marker) {
-        const std::optional<GtdTimestamp> sys_time =
-            checked_timestamp(marker.sys_time, "sys_time: ");
-        if (!sys_time) {
-            return *this;
-        }
         const char *ann = marker.annotation.empty() ? nullptr : marker.annotation.c_str();
-        record(::gtd_builder_add_event_marker(impl_.get(), marker.variant_path.c_str(), *sys_time,
-                                              ann));
+        record(::gtd_builder_add_event_marker(impl_.get(), marker.variant_path.c_str(),
+                                              detail::to_c(marker.sys_time), ann));
         return *this;
     }
 
@@ -1761,8 +1701,6 @@ class FileBuilder {
      * @throws InvalidChannelError if the name/a component is malformed, the
      *         unit is not valid writer input, or `values` is not
      *         `times.size() * max(components.size(), 1)` long.
-     * @throws std::out_of_range for a `Timestamp` whose count is past the range
-     *         a UTC timestamp covers.
      */
     FileBuilder &add_channel(const Channel &channel) {
         std::vector<const char *> components;
@@ -1773,15 +1711,8 @@ class FileBuilder {
 
         std::vector<GtdTimestamp> times;
         times.reserve(channel.times.size());
-        std::size_t index = 0;
         for (const auto &time : channel.times) {
-            const std::optional<GtdTimestamp> c_api_time =
-                checked_timestamp(time, "times[" + std::to_string(index) + "]: ");
-            if (!c_api_time) {
-                return *this;
-            }
-            times.push_back(*c_api_time);
-            ++index;
+            times.push_back(detail::to_c(time));
         }
 
         const std::optional<double> period_deg =
@@ -1811,8 +1742,6 @@ class FileBuilder {
      * Accepts any `enum class` with an `EventEnum<>` specialisation. The path is
      * `base + "/" + seg(v)`.  Use `event_path()` for nested taxonomies.
      * @throws InvalidPathError if the composed path is malformed.
-     * @throws std::out_of_range for a `Timestamp` whose count is past the range
-     *         a UTC timestamp covers.
      */
 #if defined(__cpp_concepts) && __cpp_concepts >= 201907L
     template <EventEnumValue E>
@@ -1827,8 +1756,6 @@ class FileBuilder {
     /**
      * Add a type-safe event marker from a composed `EventPath`.
      * @throws InvalidPathError if the path is malformed.
-     * @throws std::out_of_range for a `Timestamp` whose count is past the range
-     *         a UTC timestamp covers.
      */
     FileBuilder &add_event(const EventPath &path, Timestamp sys_time, std::string note = {}) {
         return add_event_marker(EventMarker{path.str(), sys_time, std::move(note)});
@@ -1893,21 +1820,6 @@ class FileBuilder {
                                         type_name, static_cast<std::uint32_t>(value))});
         }
         return code;
-    }
-
-    // Records the status of `detail::to_c` and returns `std::nullopt` for a
-    // @p timestamp past the range a UTC timestamp covers, with @p context
-    // prefixed to the message. Each caller passes the argument name and ": ",
-    // the prefix the C SDK writes.
-    template <typename TimestampOrOptional>
-    [[nodiscard]] std::optional<GtdTimestamp> checked_timestamp(TimestampOrOptional timestamp,
-                                                                const std::string &context) {
-        const Result<GtdTimestamp> converted = detail::to_c(timestamp);
-        if (const GtdTimestamp *c_api_timestamp = converted.get_if()) {
-            return *c_api_timestamp;
-        }
-        record(Status{converted.error().code, context + converted.error().description});
-        return std::nullopt;
     }
 
     // Record the first error. With exceptions enabled, throw it immediately so
@@ -2092,7 +2004,7 @@ class [[nodiscard]] NavFile {
 
     /** Committer timestamp of sdk_git_commit(). */
     [[nodiscard]] std::optional<Timestamp> sdk_commit_time() const noexcept {
-        return detail::from_c(::gtd_nav_file_sdk_commit_time(impl_.get()));
+        return timestamp_from_c(::gtd_nav_file_sdk_commit_time(impl_.get()));
     }
 
     ///@}
@@ -2111,8 +2023,8 @@ class [[nodiscard]] NavFile {
         }
 
         NavPointView point{};
-        point.gps_time = detail::from_c(info.gps_time);
-        point.sys_time = detail::from_c(info.sys_time);
+        point.gps_time = timestamp_from_c(info.gps_time);
+        point.sys_time = timestamp_from_c(info.sys_time);
         point.lat = Angle::degrees(info.lat_deg);
         point.lon = Angle::degrees(info.lon_deg);
         point.heading = info.heading_deg.present != 0
@@ -2124,8 +2036,8 @@ class [[nodiscard]] NavFile {
         point.eph_m =
             info.eph_m.present != 0 ? std::optional<double>{info.eph_m.value} : std::nullopt;
         point.satellite_count = info.sat_count;
-        point.satellite_report_gps_time = detail::from_c(info.sat_report_gps_time);
-        point.satellite_report_sys_time = detail::from_c(info.sat_report_sys_time);
+        point.satellite_report_gps_time = timestamp_from_c(info.sat_report_gps_time);
+        point.satellite_report_sys_time = timestamp_from_c(info.sat_report_sys_time);
         return point;
     }
 
@@ -2181,7 +2093,7 @@ class [[nodiscard]] NavFile {
         // NOLINTBEGIN(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
         return EventMarkerView{
             info.variant_path,
-            detail::instant_from_c(info.sys_time),
+            instant_from_c(info.sys_time),
             Angle::degrees(info.lat_deg),
             Angle::degrees(info.lon_deg),
             info.has_annotation != 0 ? std::string{info.annotation} : std::string{},
@@ -2217,7 +2129,7 @@ class [[nodiscard]] NavFile {
             info.has_label != 0 ? std::string{info.label} : std::string{},
             marker_icon_from_code(info.icon_code),
             info.icon_code,
-            detail::instant_from_c(info.time),
+            instant_from_c(info.time),
             Angle::degrees(info.lat_deg),
             Angle::degrees(info.lon_deg),
         };
@@ -2356,7 +2268,7 @@ class [[nodiscard]] NavFile {
         }
         view.times.reserve(info.sample_count);
         for (const auto &time : raw_times) {
-            view.times.push_back(detail::instant_from_c(time));
+            view.times.push_back(instant_from_c(time));
         }
 
         view.values.resize(info.sample_count * columns);
@@ -2379,6 +2291,21 @@ class [[nodiscard]] NavFile {
   private:
     friend class FileBuilder;
     explicit NavFile(GtdNavFile *impl) noexcept : impl_(impl) {}
+
+    [[nodiscard]] static std::optional<Timestamp>
+    timestamp_from_c(GtdTimestamp timestamp) noexcept {
+        if (::gtd_ts_is_none(timestamp) != 0) {
+            return std::nullopt;
+        }
+        return instant_from_c(timestamp);
+    }
+
+    // `gtd_ts_none()` never appears in an event marker or channel sample
+    // timestamp: the `.gtd` format stores an instant for both.
+    [[nodiscard]] static constexpr Timestamp instant_from_c(GtdTimestamp timestamp) noexcept {
+        return Timestamp{timestamp.unix_micros};
+    }
+
     std::unique_ptr<GtdNavFile, detail::NavFileDeleter> impl_;
 };
 

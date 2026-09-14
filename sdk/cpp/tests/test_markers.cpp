@@ -2,9 +2,12 @@
 #include <geotrace.h>
 #include <geotrace/geotrace.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
+
+#include "test_timestamps.hpp"
 
 using geotrace::Angle;
 using geotrace::Annotation;
@@ -14,24 +17,23 @@ using geotrace::FixTime;
 using geotrace::MarkerIcon;
 using geotrace::NavFile;
 using geotrace::NavFix;
-using geotrace::Timestamp;
 
-constexpr Timestamp FIRST_FIX_TIME{1'700'000'000'000'000};
-constexpr Timestamp MARKER_TIME{1'700'000'005'000'000};
-constexpr Timestamp LAST_FIX_TIME{1'700'000'010'000'000};
 constexpr std::uint8_t UNRECOGNIZED_ICON_CODE = 200;
 
 namespace {
 NavFile make_markers_and_styles() {
-    const NavFix first{FixTime::receiver(FIRST_FIX_TIME), Angle::degrees(51.0),
+    const NavFix first{FixTime::receiver(fix_timestamp()), Angle::degrees(51.0),
                        Angle::degrees(-1.0)};
-    const NavFix last{FixTime::receiver(LAST_FIX_TIME), Angle::degrees(52.0), Angle::degrees(-2.0)};
+    const NavFix last{FixTime::receiver(after_fix_timestamp(std::chrono::seconds{10})),
+                      Angle::degrees(52.0), Angle::degrees(-2.0)};
 
     return FileBuilder{}
         .add_nav_fix(first)
         .add_nav_fix(last)
-        .add_annotation(Annotation{MARKER_TIME, "waypoint", MarkerIcon::Lightning})
-        .add_annotation(Annotation{MARKER_TIME, "", MarkerIcon::Pin})
+        .add_annotation(Annotation{after_fix_timestamp(std::chrono::seconds{5}), "waypoint",
+                                   MarkerIcon::Lightning})
+        .add_annotation(
+            Annotation{after_fix_timestamp(std::chrono::seconds{5}), "", MarkerIcon::Pin})
         .add_event_marker_style(EventMarkerStyle{"power/boot", MarkerIcon::Warning, "#FF9900"})
         .add_event_marker_style(EventMarkerStyle{"power/sleep", std::nullopt, ""})
         .finish();
@@ -47,7 +49,8 @@ TEST_CASE("NavFile: a labelled marker reads back with its icon, time and positio
     REQUIRE(marker.icon.has_value());
     CHECK(marker.icon.value() == MarkerIcon::Lightning);
     CHECK(marker.icon_code == GTD_ICON_LIGHTNING);
-    CHECK(marker.time.unix_micros == MARKER_TIME.unix_micros);
+    CHECK(marker.time.as_unix_micros() ==
+          after_fix_timestamp(std::chrono::seconds{5}).as_unix_micros());
     CHECK(marker.lat.as_degrees() == doctest::Approx(51.5).epsilon(1e-9));
     CHECK(marker.lon.as_degrees() == doctest::Approx(-1.5).epsilon(1e-9));
 }

@@ -2,9 +2,12 @@
 #include <geotrace/geotrace.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "test_timestamps.hpp"
 
 using geotrace::Angle;
 using geotrace::Constellation;
@@ -14,11 +17,8 @@ using geotrace::LogLevel;
 using geotrace::NavFix;
 using geotrace::Satellite;
 using geotrace::SatelliteReport;
-using geotrace::Timestamp;
 
 namespace {
-
-constexpr Timestamp FIX_TIME{1'700'000'000'000'000};
 
 struct Record {
     LogLevel level = LogLevel::Error;
@@ -29,9 +29,10 @@ struct Record {
 // One fix and one report whose satellites have a PRN of 0 and an SNR of 99
 // dB-Hz: the two data quality issues the builder reports at finish.
 void build_a_file_the_builder_warns_about() {
-    const NavFix fix{FixTime::receiver(FIX_TIME), Angle::degrees(51.5), Angle::degrees(-0.1)};
+    const NavFix fix{FixTime::receiver(fix_timestamp()), Angle::degrees(51.5),
+                     Angle::degrees(-0.1)};
     const SatelliteReport report{
-        FixTime::receiver(FIX_TIME),
+        FixTime::receiver(fix_timestamp()),
         {
             Satellite{Constellation::Gps, 0, true, 45.0F, 90.0F, 40.0F},
             Satellite{Constellation::Gps, 5, true, 30.0F, 120.0F, 99.0F},
@@ -44,9 +45,10 @@ void build_a_file_the_builder_warns_about() {
 // the builder reports the ghost nav fix it creates for the report, at
 // LogLevel::Debug.
 void build_a_file_with_a_ghost_fix() {
-    const NavFix fix{FixTime::receiver(FIX_TIME), Angle::degrees(51.5), Angle::degrees(-0.1)};
+    const NavFix fix{FixTime::receiver(fix_timestamp()), Angle::degrees(51.5),
+                     Angle::degrees(-0.1)};
     const SatelliteReport report{
-        FixTime::receiver(Timestamp{FIX_TIME.unix_micros + 1'500'000}),
+        FixTime::receiver(after_fix_timestamp(std::chrono::milliseconds{1500})),
         {Satellite{Constellation::Gps, 5, true, 30.0F, 120.0F, 40.0F}},
     };
     static_cast<void>(FileBuilder{}.add_nav_fix(fix).add_satellite_report(report).finish());
