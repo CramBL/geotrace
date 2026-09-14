@@ -10,6 +10,8 @@ from functools import cache
 from pathlib import Path
 from typing import NamedTuple
 
+from qa._rust import line_numbers_gated_for_tests, mask_comments_and_strings
+
 Violation = tuple[Path, int, str]
 
 # Files that declare themselves machine-generated (e.g. dist's release
@@ -66,19 +68,22 @@ def rs_files(root: Path) -> Iterator[Path]:
             yield path
 
 
-# A `#[cfg(test)] mod …;` declaration, allowing attributes (such as `#[path]`)
-# between the gate and the `mod` line.
-_TEST_MOD_DECL = re.compile(
-    r"#\[cfg\(test\)\]\s*\n(?:\s*#\[[^\n]*\]\s*\n)*\s*mod\s+(\w+)\s*;"
+# A `mod …;` declaration in masked source, with the attributes above it. The
+# masking blanks the string of a `#[path]` attribute, so no `]` sits inside one.
+_MOD_DECL = re.compile(
+    r"(?P<attributes>(?:#\[[^\]]*\]\s*)*)(?:pub(?:\([^)]*\))?\s+)?\bmod\s+(?P<name>\w+)\s*;"
 )
 _MOD_PATH_ATTR = re.compile(r'#\[path\s*=\s*"([^"]+)"\]')
 
 
 def is_test_only_module(path: Path) -> bool:
-    """Whether `path` holds a module its parent declares `#[cfg(test)] mod …;`.
+    """Whether `path` holds a module compiled for tests alone.
 
-    Such a file is compiled only for tests, so checks that exempt inline
-    `#[cfg(test)]` blocks must exempt it too.
+    The parent of such a module declares it inside a region of
+    `line_numbers_gated_for_tests`, as
+    `#[cfg(any(test, feature = "test-util"))] pub mod test_util;` does, or is a
+    test-only module itself. A check that exempts the test-only regions of a
+    file exempts such a file too.
     """
     parents = (
         path.parent.with_suffix(".rs"),
@@ -89,16 +94,44 @@ def is_test_only_module(path: Path) -> bool:
     for parent in parents:
         if parent == path or not parent.is_file():
             continue
-        text = parent.read_text(errors="replace")
-        for decl in _TEST_MOD_DECL.finditer(text):
-            declared = decl.group(1)
-            attr = _MOD_PATH_ATTR.search(decl.group(0))
-            if attr is not None:
-                if (parent.parent / attr.group(1)).resolve() == path.resolve():
-                    return True
-            elif declared == path.stem:
+        for declaration in _module_declarations(parent):
+            if declaration.loads(path) and (
+                declaration.gated_for_tests or is_test_only_module(parent)
+            ):
                 return True
     return False
+
+
+class _ModuleDeclaration(NamedTuple):
+    name: str
+    path_attribute_target: Path | None
+    gated_for_tests: bool
+
+    def loads(self, path: Path) -> bool:
+        if self.path_attribute_target is not None:
+            return self.path_attribute_target == path.resolve()
+        return self.name == path.stem
+
+
+@cache
+def _module_declarations(parent: Path) -> tuple[_ModuleDeclaration, ...]:
+    """The `mod …;` declarations of `parent`, read once per process for all its modules."""
+    source = parent.read_text(errors="replace")
+    gated_lines = line_numbers_gated_for_tests(source)
+    masked = mask_comments_and_strings(source)
+    declarations = []
+    for decl in _MOD_DECL.finditer(masked):
+        attr = _MOD_PATH_ATTR.search(source, decl.start(), decl.end("attributes"))
+        declarations.append(
+            _ModuleDeclaration(
+                name=decl.group("name"),
+                path_attribute_target=(
+                    None if attr is None else (parent.parent / attr.group(1)).resolve()
+                ),
+                gated_for_tests=masked.count("\n", 0, decl.start("name")) + 1 in gated_lines,
+            )
+        )
+    return tuple(declarations)
 
 
 def markdown_files(root: Path) -> Iterator[Path]:

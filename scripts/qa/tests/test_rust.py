@@ -1,4 +1,4 @@
-"""Tests for `qa._rust`: the `#[cfg(test)]` regions of a Rust file."""
+"""Tests for `qa._rust`: the regions of a Rust file gated for tests alone."""
 
 import pytest
 
@@ -76,7 +76,14 @@ fn helper() {}
         (_A_BRACE_IN_A_STRING, {1, 2, 3, 4}),
         (_AN_INNER_ATTRIBUTE, {1, 2, 3}),
         ("fn production() {}\n", set()),
+        ('#[cfg(any(test, feature = "test-util"))]\npub mod test_util;\n', {1, 2}),
+        ('#[cfg(any(test, feature = "fixtures"))]\npub mod fixtures;\n', {1, 2}),
+        ("#[cfg(all(unix, test))]\nfn helper() {}\n", {1, 2}),
+        ("#[cfg(any(unix, test))]\nfn production() {}\n", set()),
+        ("#[cfg(not(test))]\nfn production() {}\n", set()),
     ],
 )
-def test_cfg_test_line_numbers_covers_the_gated_item(source: str, expected: set[int]) -> None:
-    assert _rust.cfg_test_line_numbers(source) == expected
+def test_line_numbers_gated_for_tests_covers_the_gated_item(
+    source: str, expected: set[int]
+) -> None:
+    assert _rust.line_numbers_gated_for_tests(source) == expected

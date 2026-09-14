@@ -2,6 +2,7 @@
 
 import bisect
 import re
+from typing import NamedTuple
 
 # Where a comment or a string literal opens. A raw string keeps the hashes of
 # its opening in group 1, which its closing repeats.
@@ -81,31 +82,90 @@ def mask_comments_and_strings(source: str) -> str:
     return "".join(masked)
 
 
-# `#[cfg(test)]` on an item, and `#![cfg(test)]` on the file that opens with it.
-_CFG_TEST_ATTRIBUTE = re.compile(r"#\[cfg\(test\)\]")
-_INNER_CFG_TEST_ATTRIBUTE = re.compile(r"#!\[cfg\(test\)\]")
+# `#[cfg(` on an item, and `#![cfg(` on the file that opens with it, up to the
+# opening parenthesis of the predicate.
+_CFG_ATTRIBUTE = re.compile(r"#(?P<inner>!?)(?P<bracket>\[)cfg\(")
+
+# The features `CODE_STYLE.md` defines as adding test helpers to a crate.
+_TEST_ONLY_FEATURES = frozenset({"fixtures", "test-util"})
+
+_CFG_PREDICATE_TOKEN = re.compile(r'"[^"]*"|[\w-]+|[(),=]')
 
 
-def cfg_test_line_numbers(source: str) -> frozenset[int]:
-    """The 1-based line numbers of the `#[cfg(test)]` regions of `source`.
+def line_numbers_gated_for_tests(source: str) -> frozenset[int]:
+    """The 1-based line numbers of the regions of `source` gated for tests alone.
 
-    `#![cfg(test)]` gates the file it opens, so every line of it counts. An
-    outer `#[cfg(test)]` gates the one item under it, which ends at the closing
-    brace of its block or at the semicolon of a declaration. Production code
-    below a `mod tests`, and production code between two gated items, sits
-    outside every region.
+    A `cfg` attribute gates a region for tests alone when its predicate is
+    `test`, a feature in `_TEST_ONLY_FEATURES`, an `all(…)` with such a
+    predicate among its operands, or an `any(…)` whose every operand is such a
+    predicate. `not(…)` never is: `not(test)` gates production code.
+
+    An inner attribute gates the file it opens, so every line of it counts. An
+    outer attribute gates the one item under it, which ends at the closing brace
+    of its block or at the semicolon of a declaration. Production code below a
+    `mod tests`, and production code between two gated items, sits outside every
+    region.
     """
     masked = mask_comments_and_strings(source)
-    if _INNER_CFG_TEST_ATTRIBUTE.search(masked) is not None:
-        return frozenset(range(1, len(source.splitlines()) + 1))
     line_starts = [0, *(index + 1 for index, char in enumerate(masked) if char == "\n")]
     numbers: set[int] = set()
-    for attribute in _CFG_TEST_ATTRIBUTE.finditer(masked):
-        end = _end_of_gated_item(masked, attribute.end())
+    for attribute in _CFG_ATTRIBUTE.finditer(masked):
+        predicate_end = _end_of_brackets(masked, attribute.end() - 1)
+        tokens = _CFG_PREDICATE_TOKEN.findall(source, attribute.end(), predicate_end - 1)
+        if not _read_cfg_predicate(tokens, 0).test_only:
+            continue
+        if attribute.group("inner"):
+            return frozenset(range(1, len(source.splitlines()) + 1))
+        end = _end_of_gated_item(masked, _end_of_brackets(masked, attribute.start("bracket")))
         first = bisect.bisect_right(line_starts, attribute.start())
         last = bisect.bisect_right(line_starts, end - 1)
         numbers.update(range(first, last + 1))
     return frozenset(numbers)
+
+
+class _CfgPredicate(NamedTuple):
+    test_only: bool
+    next_token: int
+
+
+def _read_cfg_predicate(tokens: list[str], start: int) -> _CfgPredicate:
+    """Whether the `cfg` predicate opening at `tokens[start]` gates for tests alone,
+    and the index of the token after it."""
+    name = tokens[start] if start < len(tokens) else ""
+    index = start + 1
+    if tokens[index : index + 1] == ["="]:
+        value = tokens[index + 1].strip('"') if index + 1 < len(tokens) else ""
+        return _CfgPredicate(name == "feature" and value in _TEST_ONLY_FEATURES, index + 2)
+    if tokens[index : index + 1] != ["("]:
+        return _CfgPredicate(name == "test", index)
+    index += 1
+    operands: list[bool] = []
+    while index < len(tokens) and tokens[index] != ")":
+        if tokens[index] == ",":
+            index += 1
+            continue
+        operand = _read_cfg_predicate(tokens, index)
+        operands.append(operand.test_only)
+        index = operand.next_token
+    index += 1
+    if name == "all":
+        return _CfgPredicate(any(operands), index)
+    if name == "any":
+        return _CfgPredicate(bool(operands) and all(operands), index)
+    return _CfgPredicate(False, index)
+
+
+def _end_of_brackets(masked: str, start: int) -> int:
+    """The offset just past the bracket that closes the one at `start`."""
+    depth = 0
+    for index in range(start, len(masked)):
+        if masked[index] in "([":
+            depth += 1
+        elif masked[index] in ")]":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return len(masked)
 
 
 def _end_of_gated_item(masked: str, start: int) -> int:

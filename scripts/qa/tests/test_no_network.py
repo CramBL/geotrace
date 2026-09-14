@@ -122,9 +122,35 @@ def test_honors_an_exemption_in_a_test_module(tmp_path: Path) -> None:
     assert check_no_network._collect(tmp_path) == []
 
 
-def test_reads_a_test_only_module_file_whole(tmp_path: Path) -> None:
-    _write(tmp_path, "crates/gt-x/src/lib.rs", "#[cfg(test)]\nmod test_util;\n")
+@pytest.mark.parametrize(
+    ("declaration", "expected"),
+    [
+        ("#[cfg(test)]\nmod test_util;\n", [1]),
+        ('#[cfg(test)]\n#[path = "test_util.rs"]\nmod helpers;\n', [1]),
+        ("#[cfg(test)]\npub(in crate::app) mod test_util;\n", [1]),
+        ('#[cfg(any(test, feature = "test-util"))]\npub mod test_util;\n', [1]),
+        ('#[cfg(any(test, feature = "fixtures"))]\npub mod test_util;\n', [1]),
+        ("#[cfg(any(unix, test))]\nmod test_util;\n", []),
+    ],
+)
+def test_reads_a_module_file_whole_behind_a_test_only_gate(
+    tmp_path: Path, declaration: str, expected: list[int]
+) -> None:
+    _write(tmp_path, "crates/gt-x/src/lib.rs", declaration)
     _write(tmp_path, "crates/gt-x/src/test_util.rs", 'fn t() { get("https://a.b"); }\n')
     _init_repo(tmp_path)
 
-    assert [v[1] for v in check_no_network._collect(tmp_path)] == [1]
+    assert [v[1] for v in check_no_network._collect(tmp_path)] == expected
+
+
+def test_reads_a_submodule_of_a_test_only_module_whole(tmp_path: Path) -> None:
+    lib = '#[cfg(any(test, feature = "test-util"))]\npub mod test_util;\n'
+    _write(tmp_path, "crates/gt-x/src/lib.rs", lib)
+    _write(tmp_path, "crates/gt-x/src/test_util.rs", "pub mod transport;\n")
+    transport = "fn t() {\n    let transport = HttpTransport::new(None);\n}\n"
+    _write(tmp_path, "crates/gt-x/src/test_util/transport.rs", transport)
+    _init_repo(tmp_path)
+
+    assert [(v[0].name, v[1]) for v in check_no_network._collect(tmp_path)] == [
+        ("transport.rs", 2)
+    ]

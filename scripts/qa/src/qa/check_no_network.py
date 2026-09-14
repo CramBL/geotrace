@@ -5,10 +5,12 @@ never depends on a live service being reachable or on what it returns today.
 The services themselves are pinned by the capture tools listed below and by
 the fixture-freshness workflow that re-runs them on trunk.
 
-A file under `tests/` or `examples/`, and a file a parent module declares
-`#[cfg(test)] mod …;`, is test code throughout and is read whole. Any other
-file is read inside its `#[cfg(test)]` items alone, which is where the unit
-tests of `src/` sit. The production code around them opens transports and
+A file under `tests/` or `examples/` is test code throughout and is read whole.
+So is a module file its parent declares under a test-only `cfg` gate, such as
+`#[cfg(test)] mod tests;` or a `test_util` module behind
+`#[cfg(any(test, feature = "test-util"))]`, and every module file below it.
+Any other file is read inside its test-only items alone, which is where the
+unit tests of `src/` sit. The production code around them opens transports and
 states the hosts it requests, and the check leaves it alone.
 
 The allowlist is keyed by file and by construct: a file that legitimately
@@ -29,7 +31,7 @@ from typing import NamedTuple
 
 from qa._allow import is_exempt
 from qa._check import Check, Violation, is_test_only_module, repo_root, rs_files, run_check
-from qa._rust import cfg_test_line_numbers
+from qa._rust import line_numbers_gated_for_tests
 
 CHECK = "check-no-network"
 
@@ -131,7 +133,7 @@ def _lines_compiled_for_tests(root: Path, path: Path, source: str) -> Iterator[t
     """Each line of `source` compiled for a test run, with its 1-based number."""
     parts = path.relative_to(root).parts
     whole_file = "tests" in parts or "examples" in parts or is_test_only_module(path)
-    numbers = None if whole_file else cfg_test_line_numbers(source)
+    numbers = None if whole_file else line_numbers_gated_for_tests(source)
     for lineno, raw in enumerate(source.splitlines(), 1):
         if numbers is None or lineno in numbers:
             yield lineno, raw
