@@ -13,8 +13,8 @@ pub extern "C" fn gtd_builder_create() -> *mut GtdFileBuilder {
 
 /// Free a builder without writing a file.
 ///
-/// Do **not** call this after a successful `gtd_builder_finish()`: that call
-/// already consumes the builder.
+/// Do **not** call this after `gtd_builder_finish()`: that call consumes the builder, whatever
+/// status it returns.
 ///
 /// @param builder Builder to destroy. No-op if NULL.
 #[unsafe(no_mangle)]

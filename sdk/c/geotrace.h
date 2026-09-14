@@ -289,8 +289,8 @@ typedef enum {
 /**
  * Opaque handle for a file-under-construction.
  *
- * Created by `gtd_builder_create()`. Freed either by `gtd_builder_destroy()`
- * (on error paths) or consumed by `gtd_builder_finish()` (on success).
+ * Created by `gtd_builder_create()`. Freed by `gtd_builder_finish()`, whatever status it
+ * returns, or by `gtd_builder_destroy()` for a builder the caller does not finish.
  */
 typedef struct GtdFileBuilder GtdFileBuilder;
 
@@ -733,11 +733,12 @@ double gtd_radians_from_degrees(double degrees);
 /**
  * Finalise the builder and produce a `GtdNavFile` handle.
  *
- * The builder is **consumed** by this call regardless of success or failure.
- * Do not call `gtd_builder_destroy()` afterwards.
+ * The call **consumes** a non-null `builder` whatever status it returns, including when `out`
+ * is NULL. Do not call `gtd_builder_destroy()` afterwards.
  *
  * On success, `*out` is set to the new handle.
- * On failure, `*out` is set to NULL and `gtd_last_error()` describes the error.
+ * On failure, `*out` is set to NULL for a non-null `out`, including when `builder` is NULL, and
+ * `gtd_last_error()` describes the error.
  *
  * @param builder Builder to finalise.
  * @param out     Output parameter for the resulting file handle.
@@ -745,6 +746,7 @@ double gtd_radians_from_degrees(double degrees);
  * On a builder without nav fixes, the call returns `GTD_OK` and a file with zero nav points,
  * unless the builder has a satellite report, an annotation or an event marker.
  *
+ * @return `GTD_ERR_NULL_ARGUMENT` if `builder` or `out` is NULL. `gtd_last_error()` states which.
  * @return `GTD_ERR_NO_NAV_FIXES` if the builder has a satellite report, an annotation or an
  *         event marker and no nav fix, in lenient mode too. `gtd_last_error()` states the
  *         number of each.
@@ -955,8 +957,8 @@ GtdFileBuilder *gtd_builder_create(void);
 /**
  * Free a builder without writing a file.
  *
- * Do **not** call this after a successful `gtd_builder_finish()`: that call
- * already consumes the builder.
+ * Do **not** call this after `gtd_builder_finish()`: that call consumes the builder, whatever
+ * status it returns.
  *
  * @param builder Builder to destroy. No-op if NULL.
  */

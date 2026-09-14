@@ -1,5 +1,7 @@
 //! Consuming a builder into a `GtdNavFile`.
 
+use std::ptr;
+
 use geotrace_sdk::BuildError;
 
 use super::GtdFileBuilder;
@@ -8,11 +10,12 @@ use crate::error::{self, GtdStatus};
 
 /// Finalise the builder and produce a `GtdNavFile` handle.
 ///
-/// The builder is **consumed** by this call regardless of success or failure.
-/// Do not call `gtd_builder_destroy()` afterwards.
+/// The call **consumes** a non-null `builder` whatever status it returns, including when `out`
+/// is NULL. Do not call `gtd_builder_destroy()` afterwards.
 ///
 /// On success, `*out` is set to the new handle.
-/// On failure, `*out` is set to NULL and `gtd_last_error()` describes the error.
+/// On failure, `*out` is set to NULL for a non-null `out`, including when `builder` is NULL, and
+/// `gtd_last_error()` describes the error.
 ///
 /// @param builder Builder to finalise.
 /// @param out     Output parameter for the resulting file handle.
@@ -20,6 +23,7 @@ use crate::error::{self, GtdStatus};
 /// On a builder without nav fixes, the call returns `GTD_OK` and a file with zero nav points,
 /// unless the builder has a satellite report, an annotation or an event marker.
 ///
+/// @return `GTD_ERR_NULL_ARGUMENT` if `builder` or `out` is NULL. `gtd_last_error()` states which.
 /// @return `GTD_ERR_NO_NAV_FIXES` if the builder has a satellite report, an annotation or an
 ///         event marker and no nav fix, in lenient mode too. `gtd_last_error()` states the
 ///         number of each.
@@ -34,26 +38,26 @@ pub unsafe extern "C" fn gtd_builder_finish(
     out: *mut *mut GtdNavFile,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
-        if builder.is_null() {
+        // SAFETY: a non-null `out` points to a writable `GtdNavFile *` (caller contract).
+        if let Some(out) = unsafe { out.as_mut() } {
+            *out = ptr::null_mut();
+        }
+        // SAFETY: a non-null `builder` comes from `gtd_builder_create` through `Box::into_raw`,
+        // and no earlier `gtd_builder_finish` or `gtd_builder_destroy` call has freed it (caller
+        // contract).
+        let Some(builder) = (!builder.is_null()).then(|| unsafe { Box::from_raw(builder) }) else {
             error::set_last_error("null pointer argument (builder)");
             return GtdStatus::GTD_ERR_NULL_ARGUMENT;
-        }
-        if out.is_null() {
+        };
+        // SAFETY: a non-null `out` points to a writable `GtdNavFile *` (caller contract).
+        let Some(out) = (unsafe { out.as_mut() }) else {
             error::set_last_error("null pointer argument (out)");
             return GtdStatus::GTD_ERR_NULL_ARGUMENT;
-        }
-        // SAFETY: builder is non-null, was created by `gtd_builder_create` via Box::into_raw
-        let builder_box = unsafe { Box::from_raw(builder) };
-        // SAFETY: out is non-null (checked above)
-        let out_ref = unsafe { &mut *out };
-        *out_ref = std::ptr::null_mut();
+        };
 
-        let recorder = builder_box.into_recorder();
-
-        match recorder.finish() {
+        match builder.into_recorder().finish() {
             Ok(nav_file) => {
-                let handle = Box::new(GtdNavFile::from_nav_file(nav_file));
-                *out_ref = Box::into_raw(handle);
+                *out = Box::into_raw(Box::new(GtdNavFile::from_nav_file(nav_file)));
                 GtdStatus::GTD_OK
             }
             Err(error @ BuildError::NoNavFixes(_)) => {
