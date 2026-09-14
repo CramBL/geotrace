@@ -123,9 +123,9 @@ pub fn load_gtd_file_with_progress(
     progress(0.90, STAGE_SEGMENTING);
     let source = FileSource::GtdPath(path.to_path_buf());
     let identity = derive_identity(
-        nav_file.meta().identity.as_deref(),
-        nav_file.meta().title.as_deref(),
-        nav_file.meta().device.as_deref(),
+        nav_file.meta().identity(),
+        nav_file.meta().title(),
+        nav_file.meta().device(),
         &filename,
     );
     let file = gt_track_builder::build_loaded_file(
@@ -149,10 +149,10 @@ pub fn load_gtd_file_with_progress(
 fn file_meta_from_nav(nav_file: &NavFile) -> gt_track_builder::FileMeta {
     let meta = nav_file.meta();
     gt_track_builder::FileMeta {
-        title: meta.title.clone(),
-        device: meta.device.clone(),
-        notes: meta.notes.clone(),
-        travel_mode: meta.travel_mode.as_ref().map(convert_travel_mode),
+        title: meta.title().map(str::to_owned),
+        device: meta.device().map(str::to_owned),
+        notes: meta.notes().map(str::to_owned),
+        travel_mode: meta.travel_mode().map(convert_travel_mode),
     }
 }
 
@@ -194,9 +194,9 @@ pub fn load_gtd_bytes_with_progress(
     progress(0.90, STAGE_SEGMENTING);
     let source = FileSource::GtdBytes(Arc::from(bytes));
     let identity = derive_identity(
-        nav_file.meta().identity.as_deref(),
-        nav_file.meta().title.as_deref(),
-        nav_file.meta().device.as_deref(),
+        nav_file.meta().identity(),
+        nav_file.meta().title(),
+        nav_file.meta().device(),
         &filename,
     );
     let file = gt_track_builder::build_loaded_file(
@@ -1046,16 +1046,16 @@ mod tests {
         let t0 = base();
         let mut builder = NavFileBuilder::new();
         if let Some(title) = title {
-            builder = builder.with_title(title);
+            builder = builder.with_title(title).unwrap();
         }
         if let Some(device) = device {
-            builder = builder.with_device(device);
+            builder = builder.with_device(device).unwrap();
         }
         if let Some(notes) = notes {
-            builder = builder.with_notes(notes);
+            builder = builder.with_notes(notes).unwrap();
         }
         if let Some(mode) = sdk_travel_mode {
-            builder = builder.with_travel_mode(mode);
+            builder = builder.with_travel_mode(mode).unwrap();
         }
         let mut recorder = builder.open();
         for i in 0..3i64 {

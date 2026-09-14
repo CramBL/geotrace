@@ -49,6 +49,7 @@ the app).
 - **Breaking:** Rust `BuildError::NoNavFixes` has a new `UnplacedRecordCounts` field with the number of satellite reports, annotations and event markers on the builder.
 - Rust `NavFile::inspect` reports a file's identity, travel mode and build stamp, its event markers and event marker styles, its satellites' elevation, azimuth and no-data SNR readings, each channel's period, description and time range, every marker icon code it holds, and each fixed-width field row that is not UTF-8.
 - **Breaking:** Rust `NavFileBuilder::with_satellite_window` takes a `std::time::Duration`, which cannot be negative. A window longer than `i64::MAX` microseconds associates every satellite report with its nearest nav fix.
+- **Breaking:** Rust `Meta` has private fields, read through the new `title()`, `device()`, `notes()`, `identity()` and `travel_mode()`. `Meta::builder().build()` returns a `Result`, and `NavFileBuilder::with_title`, `with_device`, `with_notes`, `with_identity` and `with_travel_mode` return a `Result<NavFileBuilder, MetaStringWithNul>`.
 - **Breaking:** Rust `NavFix` and `SatelliteReport` cannot be built without a timestamp: each has a new required `time` field, a `NavFixTime` (`Receiver`, `Host`, or `Both`). `gps_time()` and `sys_time()` read that field. The builder no longer drops a satellite report without a timestamp.
 - **Breaking:** Rust `NavRecorder::finish` fails with the new `BuildError::GhostFixTimeOutOfRange` where the ghost nav fix for an unassociated satellite report is past the range a UTC timestamp covers.
 - **Breaking:** Rust `Timestamp::try_from_unix_seconds`, `try_from_unix_millis`, `try_from_unix_micros` and `try_from_unix_nanos` take an `i64` and return a `Result`, replacing `from_unix_seconds` and its three siblings.
@@ -100,6 +101,7 @@ the app).
 - Fixed an annotation or event marker inside the nav fix time range being reported as outside it, where a recording's receiver and host timestamps put its fixes in different orders: it is placed between the two fixes whose host timestamps surround its time.
 - Fixed a marker, event marker or ghost fix interpolated between two fixes on either side of the antimeridian being placed near longitude 0: it is placed on the short arc between the two fixes.
 - **Breaking:** Fixed the reader accepting any `geotrace_version` beginning with a 1 or a 2, such as `10` or `1abc`: it reads the attribute as an integer and accepts 1 and 2 alone.
+- **Breaking:** Fixed the SDK writing a title, device, notes, identity, travel mode or channel description with a nul byte: Rust `Meta::builder().build()`, `Channel::builder().build()` and the `NavFileBuilder` metadata setters return an error stating the string and the byte offset, and Python `Meta`, `Channel`, `NavFileBuilder.with_title`, `with_device` and `with_notes` raise `ValueError`.
 - **Breaking:** Fixed Rust `NavRecorder::add_event` and `add_event_with_note` writing a variant path that `EventMarker::builder()` rejects, such as a path of nested `#[derive(EventKind)]` variants past 255 bytes: in strict mode `NavRecorder::finish` fails with the new `BuildError::InvalidEventMarkerVariantPath`, and in lenient mode the recorder drops the event and logs an error.
 - Fixed the `encoding` attribute of the `markers/icon` and `tracked_sats/constellation` datasets listing 7 of the 14 marker icons and 4 of the 6 constellations: the writer builds each attribute from the full set of codes.
 - C, C++: Fixed the examples taking a CSV number's decimal separator from `LC_NUMERIC`: they read '.' as the separator under every locale and reject a field with trailing characters.
@@ -107,6 +109,7 @@ the app).
 - C: Fixed `gtd_nav_file_open` leaving `*out` unchanged when `path` is NULL or not valid UTF-8: it now sets `*out` to NULL on every failure with a non-null `out`.
 - C: Fixed `gtd_nav_file_get_event_marker_style` shortening a variant path or a color longer than its `GtdEventMarkerStyleInfo` field, for a file handle from `gtd_builder_finish`: it returns `GTD_ERR_FIELD_TOO_LONG`.
 - C++: Fixed `NavFile::channel` and `try_channel` shortening a channel name past 255 bytes, a description past 1023 bytes and a component label past 255 bytes: they return each string whole.
+- **Breaking:** C++: Fixed `FileBuilder` writing a string argument with a nul byte up to that byte, and `ChannelUnit::custom` and `parse_recognized` reading a label with one up to that byte: they throw `InvalidChannelError` for a channel string, `InvalidPathError` for a variant path and `std::invalid_argument` for the other strings, with a message stating the string and the byte offset.
 
 ## [0.6.0] - 2026-09-03
 

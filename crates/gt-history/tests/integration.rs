@@ -344,7 +344,7 @@ fn a_gtd_without_a_version_attribute_loads_with_the_default_version() {
         result
     );
     let nav_file = result.unwrap();
-    assert_eq!(nav_file.meta().title.as_deref(), None); // Basic check
+    assert_eq!(nav_file.meta().title(), None);
 }
 
 #[test_log::test]

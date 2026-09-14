@@ -36,8 +36,8 @@ timestamp_s,lat,lon,heading_deg,speed_mps
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut recorder = NavFileBuilder::new()
-        .with_title("Imported from CSV")
-        .with_device("CSV importer v1.0")
+        .with_title("Imported from CSV")?
+        .with_device("CSV importer v1.0")?
         .open();
 
     let mut rows = 0;

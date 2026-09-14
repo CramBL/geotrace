@@ -7,7 +7,7 @@ mod metadata;
 
 use std::time::Duration;
 
-use geotrace_sdk::{NavFileBuilder, NavRecorder, TravelMode};
+use geotrace_sdk::{MetaStringWithNul, NavFileBuilder, NavRecorder, TravelMode};
 
 use crate::error::{self, GtdStatus};
 
@@ -55,19 +55,25 @@ impl GtdFileBuilder {
         }
     }
 
+    /// When `configure` returns an error, the builder stays unchanged: `configure` receives a
+    /// clone.
     fn configure_before_data(
         &mut self,
         call_order_message: &str,
-        configure: impl FnOnce(NavFileBuilder) -> NavFileBuilder,
+        configure: impl FnOnce(NavFileBuilder) -> Result<NavFileBuilder, MetaStringWithNul>,
     ) -> GtdStatus {
-        match self.builder.take() {
-            Some(builder) => {
-                self.builder = Some(configure(builder));
+        let Some(builder) = &self.builder else {
+            error::set_last_error(call_order_message);
+            return GtdStatus::GTD_ERR_CALL_ORDER;
+        };
+        match configure(builder.clone()) {
+            Ok(configured) => {
+                self.builder = Some(configured);
                 GtdStatus::GTD_OK
             }
-            None => {
-                error::set_last_error(call_order_message);
-                GtdStatus::GTD_ERR_CALL_ORDER
+            Err(string_with_nul) => {
+                error::set_last_error(string_with_nul);
+                GtdStatus::GTD_ERR_INVALID_ARGUMENT
             }
         }
     }
@@ -94,13 +100,13 @@ impl GtdFileBuilder {
 
     fn set_lenient(&mut self) -> GtdStatus {
         self.configure_before_data("lenient mode must be set before adding data", |b| {
-            b.with_lenient_errors()
+            Ok(b.with_lenient_errors())
         })
     }
 
     fn set_satellite_window(&mut self, window: Duration) -> GtdStatus {
         self.configure_before_data("the satellite window must be set before adding data", |b| {
-            b.with_satellite_window(window)
+            Ok(b.with_satellite_window(window))
         })
     }
 }

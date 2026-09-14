@@ -312,10 +312,26 @@ fn variable_length_string_attributes_are_read() -> Result<(), Box<dyn std::error
     fb.add_group(channels.finish());
 
     let nav_file = NavFile::read(fb.finish()?.as_slice())?;
-    assert_eq!(nav_file.meta().title.as_deref(), Some("Ride home"));
+    assert_eq!(nav_file.meta().title(), Some("Ride home"));
     let channel = nav_file.channels().first().ok_or("no channel")?;
     assert_eq!(channel.components(), ["x", "y"]);
     assert_eq!(channel.unit().map(ChannelUnit::label), Some("g"));
+    Ok(())
+}
+
+#[test]
+fn a_title_with_a_nul_byte_from_a_file_reads_and_writes_back_unchanged()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut fb = test_util::file_with_an_empty_nav_points_group();
+    fb.set_attr("geotrace_version", AttrValue::String("2".into()));
+    fb.set_attr("meta_title", AttrValue::String("before\0after".into()));
+
+    let nav_file = NavFile::read(fb.finish()?.as_slice())?;
+    assert_eq!(nav_file.meta().title(), Some("before\0after"));
+    assert_eq!(
+        test_util::round_trip(&nav_file)?.meta().title(),
+        Some("before\0after")
+    );
     Ok(())
 }
 

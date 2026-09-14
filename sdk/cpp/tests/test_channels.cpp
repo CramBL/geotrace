@@ -130,6 +130,12 @@ TEST_CASE("channels: a malformed channel throws InvalidChannelError") {
     }
 }
 
+TEST_CASE("channels: a custom unit with a nul byte throws InvalidChannelError") {
+    CHECK_THROWS_WITH_AS(
+        static_cast<void>(ChannelUnit::custom(std::string{"before"} + '\0' + "after")),
+        "the channel unit has a nul byte at offset 6", InvalidChannelError);
+}
+
 TEST_CASE("channels: a custom unit is an explicit display-only escape hatch") {
     Channel channel{};
     channel.name = "shaft_speed";

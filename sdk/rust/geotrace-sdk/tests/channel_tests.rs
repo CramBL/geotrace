@@ -10,7 +10,14 @@ use geotrace_sdk_test_util as test_util;
 
 #[test]
 fn a_channel_name_must_be_a_lowercase_identifier() {
-    for bad in ["Accel Fwd", "accel-fwd", "", "1accel", "Accel"] {
+    for bad in [
+        "Accel Fwd",
+        "accel-fwd",
+        "",
+        "1accel",
+        "Accel",
+        "accel\0fwd",
+    ] {
         assert!(
             matches!(
                 Channel::builder()
@@ -49,6 +56,22 @@ fn legacy_invalid_unit_metadata_cannot_be_new_writer_input() {
         .build();
 
     assert!(matches!(result, Err(ChannelError::UnwritableUnit { .. })));
+}
+
+#[test]
+fn a_channel_description_with_a_nul_byte_is_rejected() {
+    let error = Channel::builder()
+        .name("speed")
+        .description("before\0after")
+        .times(vec![test_util::base()])
+        .values(vec![1.0])
+        .build()
+        .expect_err("the description has a nul byte");
+
+    assert_eq!(
+        error.to_string(),
+        "channel \"speed\": the description has a nul byte at offset 6"
+    );
 }
 
 #[test]

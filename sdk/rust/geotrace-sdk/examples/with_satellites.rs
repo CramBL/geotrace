@@ -170,8 +170,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let start = "2024-06-01T08:00:00Z".parse::<DateTime<Utc>>()?;
 
     let mut recorder = NavFileBuilder::new()
-        .with_title("Satellite quality tour")
-        .with_device("Example GNSS v1.0")
+        .with_title("Satellite quality tour")?
+        .with_device("Example GNSS v1.0")?
         .open();
 
     for (i, point) in TRACK.iter().enumerate() {

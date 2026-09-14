@@ -49,8 +49,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let start = "2024-06-01T08:00:00Z".parse::<DateTime<Utc>>()?;
 
     let mut recorder = NavFileBuilder::new()
-        .with_title("Merged GPS + annotations")
-        .with_device("Aggregator v1.0")
+        .with_title("Merged GPS + annotations")?
+        .with_device("Aggregator v1.0")?
         .open();
 
     for &(offset_secs, lat, lon, heading) in GPS_FIXES {

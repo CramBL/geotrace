@@ -677,6 +677,16 @@ namespace detail {
     return std::string{type_name} + " has no enumerator with the value " + std::to_string(value);
 }
 
+// The C SDK reads a string argument up to its first nul byte.
+[[nodiscard]] inline std::optional<Status>
+nul_byte_status(GtdStatus status, const std::string &string_name, std::string_view value) {
+    const std::size_t offset = value.find('\0');
+    if (offset == std::string_view::npos) {
+        return std::nullopt;
+    }
+    return Status{status, string_name + " has a nul byte at offset " + std::to_string(offset)};
+}
+
 [[nodiscard]] constexpr std::optional<std::uint32_t> to_c(Constellation constellation) noexcept {
     switch (constellation) {
     case Constellation::Gps:
@@ -1058,8 +1068,8 @@ class [[nodiscard]] ChannelUnit {
      * A display-only label for a unit the catalog does not cover.
      *
      * Throws `InvalidChannelError` for an empty label, a label with a control
-     * character, or a label that spells a recognized unit: declare that one
-     * with `recognized()` or `parse_recognized()`.
+     * character or a nul byte, or a label that spells a recognized unit:
+     * declare that one with `recognized()` or `parse_recognized()`.
      */
     static ChannelUnit custom(const std::string &label) {
         return try_custom(label).value_or_throw();
@@ -1074,8 +1084,8 @@ class [[nodiscard]] ChannelUnit {
      * A catalog unit named by its label, resolving aliases: `"kph"` is
      * `"km/h"`, `"degrees"` is `"deg"`, `"m/s²"` is `"m/s2"`.
      *
-     * Throws `InvalidChannelError` for a label outside the catalog: store that
-     * one with `custom()`.
+     * Throws `InvalidChannelError` for a label with a nul byte and a label
+     * outside the catalog: store that one with `custom()`.
      */
     static ChannelUnit parse_recognized(std::string_view label) {
         return try_parse_recognized(label).value_or_throw();
@@ -1107,6 +1117,11 @@ class [[nodiscard]] ChannelUnit {
 
     static Result<ChannelUnit> try_parse(const std::string &label, GtdChannelUnitMode mode,
                                          bool custom) {
+        std::optional<Status> nul_byte =
+            detail::nul_byte_status(GTD_ERR_INVALID_CHANNEL, "the channel unit", label);
+        if (nul_byte) {
+            return std::move(*nul_byte);
+        }
         std::size_t required = 0;
         GtdStatus status = ::gtd_channel_unit_parse(label.c_str(), static_cast<std::uint32_t>(mode),
                                                     nullptr, 0, &required);
@@ -1517,26 +1532,39 @@ class FileBuilder {
 
     ~FileBuilder() = default;
 
-    /** @name Metadata setters (must be called before the first `add_*` call). */
+    /**
+     * @name Metadata setters
+     *
+     * Each must be called before the first `add_*` call. The four string setters throw
+     * `std::invalid_argument` for a value with a nul byte.
+     */
     ///@{
 
     FileBuilder &title(const std::string &title) {
-        record(::gtd_builder_set_title(impl_.get(), title.c_str()));
+        if (!recorded_nul_byte(GTD_ERR_INVALID_ARGUMENT, "the title value", title)) {
+            record(::gtd_builder_set_title(impl_.get(), title.c_str()));
+        }
         return *this;
     }
 
     FileBuilder &device(const std::string &device) {
-        record(::gtd_builder_set_device(impl_.get(), device.c_str()));
+        if (!recorded_nul_byte(GTD_ERR_INVALID_ARGUMENT, "the device value", device)) {
+            record(::gtd_builder_set_device(impl_.get(), device.c_str()));
+        }
         return *this;
     }
 
     FileBuilder &notes(const std::string &notes) {
-        record(::gtd_builder_set_notes(impl_.get(), notes.c_str()));
+        if (!recorded_nul_byte(GTD_ERR_INVALID_ARGUMENT, "the notes value", notes)) {
+            record(::gtd_builder_set_notes(impl_.get(), notes.c_str()));
+        }
         return *this;
     }
 
     FileBuilder &identity(const std::string &identity) {
-        record(::gtd_builder_set_identity(impl_.get(), identity.c_str()));
+        if (!recorded_nul_byte(GTD_ERR_INVALID_ARGUMENT, "the identity value", identity)) {
+            record(::gtd_builder_set_identity(impl_.get(), identity.c_str()));
+        }
         return *this;
     }
 
@@ -1636,9 +1664,12 @@ class FileBuilder {
      * Add a legacy map-pin annotation.
      * @throws FieldTooLongError if `label` is longer than 255 bytes.
      * @throws std::invalid_argument for an `icon` no `MarkerIcon` enumerator
-     *         declares.
+     *         declares, and for a `label` with a nul byte.
      */
     FileBuilder &add_annotation(const Annotation &ann) {
+        if (recorded_nul_byte(GTD_ERR_INVALID_ARGUMENT, "the annotation label", ann.label)) {
+            return *this;
+        }
         const std::optional<std::uint32_t> icon = checked_code("MarkerIcon", ann.icon);
         if (!icon) {
             return *this;
@@ -1650,11 +1681,18 @@ class FileBuilder {
 
     /**
      * Add a structured event marker.
-     * @throws InvalidPathError if `variant_path` is malformed.
+     * @throws InvalidPathError if `variant_path` is malformed or has a nul byte.
      * @throws FieldTooLongError if `variant_path` is longer than 255 bytes, or
      *         `annotation` longer than 511 bytes.
+     * @throws std::invalid_argument if `annotation` has a nul byte.
      */
     FileBuilder &add_event_marker(const EventMarker &marker) {
+        if (recorded_nul_byte(GTD_ERR_INVALID_PATH, "the event marker variant path",
+                              marker.variant_path) ||
+            recorded_nul_byte(GTD_ERR_INVALID_ARGUMENT, "the event marker annotation",
+                              marker.annotation)) {
+            return *this;
+        }
         const char *ann = marker.annotation.empty() ? nullptr : marker.annotation.c_str();
         record(::gtd_builder_add_event_marker(impl_.get(), marker.variant_path.c_str(),
                                               detail::to_c(marker.sys_time), ann));
@@ -1675,10 +1713,17 @@ class FileBuilder {
      * An absent `icon` reaches the file as `GTD_ICON_AUTO`, where the
      * application picks it.
      *
+     * @throws InvalidPathError if `variant_path` has a nul byte.
      * @throws std::invalid_argument for an `icon` no `MarkerIcon` enumerator
-     *         declares.
+     *         declares, and for a `color_hex` with a nul byte.
      */
     FileBuilder &add_event_marker_style(const EventMarkerStyle &style) {
+        if (recorded_nul_byte(GTD_ERR_INVALID_PATH, "the event marker style variant path",
+                              style.variant_path) ||
+            recorded_nul_byte(GTD_ERR_INVALID_ARGUMENT, "the event marker style color",
+                              style.color_hex)) {
+            return *this;
+        }
         auto icon = static_cast<std::uint32_t>(GTD_ICON_AUTO);
         if (style.icon) {
             const std::optional<std::uint32_t> code = checked_code("MarkerIcon", *style.icon);
@@ -1699,10 +1744,14 @@ class FileBuilder {
      * The unit keeps its recognized/custom interpretation, so a
      * `ChannelUnit::custom` label is stored as a display-only unit.
      * @throws InvalidChannelError if the name/a component is malformed, the
-     *         unit is not valid writer input, or `values` is not
-     *         `times.size() * max(components.size(), 1)` long.
+     *         unit is not valid writer input, `values` is not
+     *         `times.size() * max(components.size(), 1)` long, or the name, the
+     *         description or a component label has a nul byte.
      */
     FileBuilder &add_channel(const Channel &channel) {
+        if (recorded_nul_byte(channel)) {
+            return *this;
+        }
         std::vector<const char *> components;
         components.reserve(channel.components.size());
         for (const auto &label : channel.components) {
@@ -1820,6 +1869,38 @@ class FileBuilder {
                                         type_name, static_cast<std::uint32_t>(value))});
         }
         return code;
+    }
+
+    // Records @p status for a @p value with a nul byte and returns true.
+    [[nodiscard]] bool recorded_nul_byte(GtdStatus status, const std::string &string_name,
+                                         std::string_view value) {
+        std::optional<Status> nul_byte = detail::nul_byte_status(status, string_name, value);
+        if (!nul_byte) {
+            return false;
+        }
+        record(std::move(*nul_byte));
+        return true;
+    }
+
+    [[nodiscard]] bool recorded_nul_byte(const Channel &channel) {
+        if (recorded_nul_byte(GTD_ERR_INVALID_CHANNEL, "the channel name", channel.name)) {
+            return true;
+        }
+        const std::string channel_prefix = "channel \"" + channel.name + "\": the ";
+        if (recorded_nul_byte(GTD_ERR_INVALID_CHANNEL, channel_prefix + "description",
+                              channel.description)) {
+            return true;
+        }
+        std::size_t index = 0;
+        for (const std::string &label : channel.components) {
+            if (recorded_nul_byte(GTD_ERR_INVALID_CHANNEL,
+                                  channel_prefix + "label of component " + std::to_string(index),
+                                  label)) {
+                return true;
+            }
+            ++index;
+        }
+        return false;
     }
 
     // Record the first error. With exceptions enabled, throw it immediately so

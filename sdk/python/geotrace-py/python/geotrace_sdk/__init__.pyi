@@ -263,8 +263,9 @@ class Channel:
 
     Raises:
         ValueError: If the name or a component label is malformed, the unit is
-            neither a catalog unit nor a ``ChannelUnit``, or ``values`` is not
-            ``len(times) * max(len(components), 1)`` long.
+            neither a catalog unit nor a ``ChannelUnit``, ``values`` is not
+            ``len(times) * max(len(components), 1)`` long, or the description
+            has a nul byte.
     """
 
     def __init__(
@@ -434,6 +435,9 @@ class Meta:
         identity: Opaque producer identity string, or ``None``.
         travel_mode: Platform the recording was made on: a ``TravelMode``
             or its wire-name string (e.g. ``"car"``), or ``None``.
+
+    Raises:
+        ValueError: If a value has a nul byte.
     """
 
     def __init__(
@@ -883,18 +887,29 @@ class NavFileBuilder:
         ...
 
     def with_title(self, title: str) -> NavFileBuilder:
-        """Set the file title. Must be called before ``add()``. Returns ``self``."""
+        """Set the file title. Must be called before ``add()``. Returns ``self``.
+
+        Raises:
+            ValueError: If the title has a nul byte.
+        """
         ...
 
     def with_device(self, device: str) -> NavFileBuilder:
         """Set the device or sensor name.
 
         Must be called before ``add()``. Returns ``self``.
+
+        Raises:
+            ValueError: If the device name has a nul byte.
         """
         ...
 
     def with_notes(self, notes: str) -> NavFileBuilder:
-        """Set free-text notes. Must be called before ``add()``. Returns ``self``."""
+        """Set free-text notes. Must be called before ``add()``. Returns ``self``.
+
+        Raises:
+            ValueError: If the notes have a nul byte.
+        """
         ...
 
     def with_lenient_errors(self) -> NavFileBuilder:

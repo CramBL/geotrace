@@ -5,8 +5,8 @@
 
 use geotrace_sdk::{Angle, DateTime, Duration, Unit, Utc};
 use geotrace_sdk::{
-    Annotation, BuildError, Channel, Constellation, EventMarker, NavFileBuilder, NavFix,
-    NavFixTime, UnplacedRecordCounts,
+    Annotation, BuildError, Channel, Constellation, EventMarker, Meta, MetaStringWithNul,
+    NavFileBuilder, NavFix, NavFixTime, TravelMode, UnplacedRecordCounts,
 };
 use geotrace_sdk_test_util as test_util;
 use geotrace_sdk_test_util::{Lat, Lon};
@@ -330,6 +330,64 @@ fn satellite_reports_without_any_nav_fix_fail_the_build(
         "got {error:?}"
     );
     assert_eq!(error.to_string(), expected_message);
+}
+
+#[rstest]
+#[case::meta_title(
+    |value: &str| Meta::builder().title(value).build().map(drop),
+    "the title value has a nul byte at offset 6"
+)]
+#[case::meta_device(
+    |value: &str| Meta::builder().device(value).build().map(drop),
+    "the device value has a nul byte at offset 6"
+)]
+#[case::meta_notes(
+    |value: &str| Meta::builder().notes(value).build().map(drop),
+    "the notes value has a nul byte at offset 6"
+)]
+#[case::meta_identity(
+    |value: &str| Meta::builder().identity(value).build().map(drop),
+    "the identity value has a nul byte at offset 6"
+)]
+#[case::meta_travel_mode(
+    |value: &str| {
+        Meta::builder()
+            .travel_mode(TravelMode::from_lower_case(value))
+            .build()
+            .map(drop)
+    },
+    "the travel mode value has a nul byte at offset 6"
+)]
+#[case::with_title(
+    |value: &str| NavFileBuilder::new().with_title(value).map(drop),
+    "the title value has a nul byte at offset 6"
+)]
+#[case::with_device(
+    |value: &str| NavFileBuilder::new().with_device(value).map(drop),
+    "the device value has a nul byte at offset 6"
+)]
+#[case::with_notes(
+    |value: &str| NavFileBuilder::new().with_notes(value).map(drop),
+    "the notes value has a nul byte at offset 6"
+)]
+#[case::with_identity(
+    |value: &str| NavFileBuilder::new().with_identity(value).map(drop),
+    "the identity value has a nul byte at offset 6"
+)]
+#[case::with_travel_mode(
+    |value: &str| {
+        NavFileBuilder::new()
+            .with_travel_mode(TravelMode::Unknown(value.to_owned()))
+            .map(drop)
+    },
+    "the travel mode value has a nul byte at offset 6"
+)]
+fn a_metadata_value_with_a_nul_byte_is_rejected(
+    #[case] set_value: impl FnOnce(&str) -> Result<(), MetaStringWithNul>,
+    #[case] message: &str,
+) {
+    let error = set_value("before\0after").expect_err("the value has a nul byte");
+    assert_eq!(error.to_string(), message);
 }
 
 #[test]

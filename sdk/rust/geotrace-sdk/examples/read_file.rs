@@ -39,10 +39,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let file = NavFile::open(&path)?;
 
     let meta = file.meta();
-    if let Some(title) = &meta.title {
+    if let Some(title) = meta.title() {
         println!("Title:  {title}");
     }
-    if let Some(device) = &meta.device {
+    if let Some(device) = meta.device() {
         println!("Device: {device}");
     }
 
@@ -164,8 +164,8 @@ fn write_sample_file() -> Result<PathBuf, Box<dyn Error>> {
     let start = t("2024-06-01T08:00:00Z");
 
     let mut recorder = NavFileBuilder::new()
-        .with_title("Sample track")
-        .with_device("Example GPS v1.0")
+        .with_title("Sample track")?
+        .with_device("Example GPS v1.0")?
         .open();
 
     for (offset_secs, lat, lon) in [

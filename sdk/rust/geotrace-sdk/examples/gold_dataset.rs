@@ -74,10 +74,10 @@ fn load_meta(base_dir: &Path) -> Result<Meta, Box<dyn std::error::Error>> {
                 .maybe_notes(Some(cols[2]))
                 .maybe_identity(Some(cols[3]))
                 .travel_mode(TravelMode::from_lower_case(cols[4]))
-                .build());
+                .build()?);
         }
     }
-    Ok(Meta::builder().build())
+    Ok(Meta::builder().build()?)
 }
 
 fn load_event_styles(
@@ -263,16 +263,11 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     let file = geotrace_sdk::NavFile::open(path)?;
 
     let meta = file.meta();
-    assert!(meta.title.as_ref().unwrap().contains("Gold Dataset 🏆"));
-    assert!(
-        meta.device
-            .as_ref()
-            .unwrap()
-            .contains("Synthetic Generator 🧬")
-    );
-    assert!(meta.notes.as_ref().unwrap().contains("🛰️"));
-    assert_eq!(meta.identity.as_ref().unwrap(), "gold-standard-v2");
-    assert_eq!(meta.travel_mode, Some(TravelMode::Bicycle));
+    assert!(meta.title().unwrap().contains("Gold Dataset 🏆"));
+    assert!(meta.device().unwrap().contains("Synthetic Generator 🧬"));
+    assert!(meta.notes().unwrap().contains("🛰️"));
+    assert_eq!(meta.identity(), Some("gold-standard-v2"));
+    assert_eq!(meta.travel_mode(), Some(&TravelMode::Bicycle));
 
     let points = file.nav_points();
     assert_eq!(points.len(), 210);
