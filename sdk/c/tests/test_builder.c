@@ -183,8 +183,8 @@ Test(builder, no_fixes_error) {
     GtdTimestamp timestamp;
     cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
 
-    /* NoNavFixes is returned when a marker requires interpolation and no fix
-       exists to interpolate from. An empty builder is valid and returns OK. */
+    /* NoNavFixes is returned when a record needs a position and no fix exists
+       to take it from. An empty builder is valid and returns OK. */
     cr_assert_eq(gtd_builder_add_annotation(builder, timestamp, "note", GTD_ICON_PIN), GTD_OK);
 
     GtdNavFile *file = NULL;

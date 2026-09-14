@@ -147,7 +147,10 @@ struct BuildError : Error {
     using Error::Error;
 };
 
-/** `finish()` was called without adding any nav fixes. */
+/**
+ * The builder has a satellite report, an annotation or an event marker and no nav fix to take
+ * its position from.
+ */
 struct NoNavFixesError : BuildError {
     using BuildError::BuildError;
 };
@@ -1860,7 +1863,8 @@ class FileBuilder {
      * The builder is **consumed** by this call regardless of success or failure.
      * Do not use the builder after calling `finish()`.
      *
-     * @throws NoNavFixesError if no nav fixes were added.
+     * @throws NoNavFixesError if the builder has a satellite report, an annotation or an event
+     *         marker and no nav fix, in lenient mode too.
      * @throws AnnotationsOutOfRangeError if annotations fall outside the time range.
      * @throws EventMarkersOutOfRangeError if event markers fall outside the time range.
      */

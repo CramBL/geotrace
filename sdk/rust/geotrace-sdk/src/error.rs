@@ -1,3 +1,6 @@
+use std::fmt;
+use std::fmt::{Display, Formatter};
+
 use crate::fixed_width_string::{FixedWidthStringError, VariantPathField};
 
 /// Validate that `path` is a well-formed event marker variant path.
@@ -152,11 +155,10 @@ pub(crate) fn validate_components(name: &str, components: &[String]) -> Result<(
 /// Errors that can occur when building a [`NavFile`](crate::NavFile).
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum BuildError {
-    /// The builder has no nav fixes. At least one is required to interpolate
-    /// annotation and event marker positions. This is returned even in lenient
-    /// mode.
-    #[error("no nav fixes were added; at least one NavFix is required")]
-    NoNavFixes,
+    /// The builder has a satellite report, an annotation or an event marker and no nav fix
+    /// to take its position from. This is returned even in lenient mode.
+    #[error("{0} have no nav fix to take a position from: at least one nav fix is required")]
+    NoNavFixes(UnplacedRecordCounts),
 
     /// One or more annotations fall outside the time range of the nav track.
     ///
@@ -183,6 +185,44 @@ pub enum BuildError {
     /// report's own timestamp and the clock offset of the nav fixes around it.
     #[error("a ghost nav fix at {micros} microseconds is past the range a UTC timestamp covers")]
     GhostFixTimeOutOfRange { micros: i64 },
+}
+
+/// The satellite reports, annotations and event markers of a build without a nav fix, counted by
+/// kind.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct UnplacedRecordCounts {
+    /// The number of satellite reports.
+    pub satellite_reports: usize,
+    /// The number of annotations.
+    pub annotations: usize,
+    /// The number of event markers.
+    pub event_markers: usize,
+}
+
+/// Lists each kind with a non-zero count, as in `2 satellite report(s) and 1 annotation(s)`.
+impl Display for UnplacedRecordCounts {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let Self {
+            satellite_reports,
+            annotations,
+            event_markers,
+        } = *self;
+        let counted_kinds: Vec<String> = [
+            (satellite_reports, "satellite report(s)"),
+            (annotations, "annotation(s)"),
+            (event_markers, "event marker(s)"),
+        ]
+        .into_iter()
+        .filter(|&(count, _)| count > 0)
+        .map(|(count, kind)| format!("{count} {kind}"))
+        .collect();
+        match counted_kinds.split_last() {
+            Some((last, [])) => f.write_str(last),
+            Some((last, leading)) => write!(f, "{} and {last}", leading.join(", ")),
+            None => Ok(()),
+        }
+    }
 }
 
 /// Errors that can occur when reading or writing a `.gtd` file.

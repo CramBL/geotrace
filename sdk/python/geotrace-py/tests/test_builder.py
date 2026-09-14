@@ -419,7 +419,7 @@ def test_an_event_marker_without_a_nav_fix_fails_the_build() -> None:
     b = NavFileBuilder()
     b.add(EventMarker("power/boot", T0))
 
-    with pytest.raises(ValueError, match="no nav fixes were added"):
+    with pytest.raises(ValueError, match=r"^1 event marker\(s\) have no nav fix"):
         b.finish()
 
 

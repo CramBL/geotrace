@@ -44,8 +44,8 @@ pub enum GtdStatus {
     GTD_ERR_NULL_ARGUMENT = 1,
     /// Malformed event-marker variant path.
     GTD_ERR_INVALID_PATH = 2,
-    /// The builder has an annotation or an event marker and no nav fix to interpolate its
-    /// position from.
+    /// The builder has a satellite report, an annotation or an event marker and no nav fix to
+    /// take its position from.
     GTD_ERR_NO_NAV_FIXES = 3,
     /// Annotation(s) outside the nav fix time range.
     GTD_ERR_ANNOTATIONS_OOB = 4,

@@ -938,7 +938,8 @@ class NavFileBuilder:
 
         Raises:
             RuntimeError: If called more than once.
-            ValueError: If the data is invalid (e.g., no nav fixes provided).
+            ValueError: If the data is invalid, such as a satellite report, an
+                annotation or an event marker without a nav fix.
         """
         ...
 

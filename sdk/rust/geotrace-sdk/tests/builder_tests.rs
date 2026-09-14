@@ -5,7 +5,8 @@
 
 use geotrace_sdk::{Angle, DateTime, Duration, Unit, Utc};
 use geotrace_sdk::{
-    Annotation, BuildError, Channel, Constellation, EventMarker, NavFileBuilder, NavFix, NavFixTime,
+    Annotation, BuildError, Channel, Constellation, EventMarker, NavFileBuilder, NavFix,
+    NavFixTime, UnplacedRecordCounts,
 };
 use geotrace_sdk_test_util as test_util;
 use geotrace_sdk_test_util::{Lat, Lon};
@@ -319,7 +320,13 @@ fn satellite_reports_without_any_nav_fix_fail_the_build(
         .finish()
         .expect_err("a satellite report fails the build without a nav fix");
     assert!(
-        matches!(error, BuildError::NoNavFixes { .. }),
+        matches!(
+            error,
+            BuildError::NoNavFixes(UnplacedRecordCounts {
+                satellite_reports: 2,
+                ..
+            })
+        ),
         "got {error:?}"
     );
     assert_eq!(error.to_string(), expected_message);

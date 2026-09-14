@@ -1,7 +1,7 @@
 use geotrace_sdk::{
     Angle, AnnotationField, BuildError, EventKind, EventMarker, EventMarkerColor, EventMarkerError,
     EventMarkerIconChoice, EventMarkerStyle, MarkerIcon, NavFileBuilder, NavFix, NavFixTime,
-    VariantPathField,
+    UnplacedRecordCounts, VariantPathField,
 };
 use geotrace_sdk_test_util as test_util;
 use rstest::rstest;
@@ -268,7 +268,16 @@ fn an_event_marker_without_any_nav_fix_fails_the_build(#[case] builder: NavFileB
     let error = recorder
         .finish()
         .expect_err("a marker needs a fix to place it");
-    assert!(matches!(error, BuildError::NoNavFixes), "got {error:?}");
+    assert!(
+        matches!(
+            error,
+            BuildError::NoNavFixes(UnplacedRecordCounts {
+                event_markers: 1,
+                ..
+            })
+        ),
+        "got {error:?}"
+    );
 }
 
 // Styles
