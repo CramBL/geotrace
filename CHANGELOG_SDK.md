@@ -9,117 +9,78 @@ the app).
 
 ### Added
 
-- Rust `geotrace_sdk_units::snr`, holding `NO_DATA_SENTINEL_DB_HZ` (99 dB-Hz), `NO_DATA_SENTINEL_TOLERANCE_DB_HZ` (0.5 dB-Hz) and `is_no_data_sentinel`, the value some receiver firmware sends when it has no measurement, and the band around it. `geotrace_sdk::Satellite::snr_is_no_data_sentinel` reads that band.
-- Rust `NavFileBuilder::with_scrubbed_provenance()`. A file written through it holds the new `geotrace_sdk::SCRUBBED_SDK_VERSION` (`<scrubbed>`) as its `sdk_version`, no `sdk_git_commit` and no `sdk_commit_time`, whatever the build that wrote it.
-- Rust `NavFile::equals_ignoring_build_provenance()`, which compares two files over everything but their `sdk_version`, `sdk_git_commit` and `sdk_commit_time`.
-- C `gtd_nav_file_marker_count`, `gtd_nav_file_get_marker`, `gtd_nav_file_event_marker_style_count` and `gtd_nav_file_get_event_marker_style` read the map markers and the event marker styles a file contains.
-- C `gtd_set_log_callback` and `gtd_clear_log_callback` send the SDK's log records to a callback, which receives each record's `GtdLogLevel`, target and message.
-- C `gtd_set_log_level` sets the lowest severity the SDK forwards, `GTD_LOG_WARN` until it is called.
-- C `gtd_nav_file_satellite_warning_count` and `gtd_nav_file_get_satellite_warning` read the satellite data warnings the builder's checks raise for a file, through the new `GtdSatelliteWarningInfo`.
-- C `gtd_nav_file_title_with_length`, `gtd_nav_file_device_with_length`, `gtd_nav_file_notes_with_length`, `gtd_nav_file_identity_with_length` and `gtd_nav_file_travel_mode_with_length` return a metadata value with its byte length, nul bytes included.
-- C++ `FixTime::from_recorded()`, which takes a `RecordedFixTimestamps` and returns `std::nullopt` when the recorder holds neither timestamp.
-- C++ `NavFile::marker_count`, `marker`, `try_marker`, `event_marker_style_count`, `event_marker_style` and `try_event_marker_style` read them through `MarkerView` and `EventMarkerStyleView`.
-- C++ `geotrace::set_log_callback`, `try_set_log_callback` and `clear_log_callback` take a `std::function` over the same records, with the level as the new `LogLevel`. `geotrace::set_log_level` sets the lowest severity forwarded.
-- C++ `NavFile::satellite_warning_count`, `satellite_warning` and `try_satellite_warning` read them through `SatelliteWarningView`.
-- C++ `geotrace::constellation_from_code`, `marker_icon_from_code` and `travel_mode_from_code` convert an integer code to the scoped `enum`, and return `std::nullopt` for a code no enumerator declares.
-- Python `NavFileBuilder.with_lenient_errors()` clamps an annotation outside the nav fix time range to the nearest fix, where the build otherwise fails.
-- Python `NavFileBuilder.with_satellite_window(timedelta)`, C `gtd_builder_set_satellite_window_us(uint64_t)` and C++ `FileBuilder::satellite_window(std::chrono::microseconds)` set how far a satellite report may be from a nav fix to be associated with it. Python raises `ValueError` and C++ throws `std::invalid_argument` for a negative window.
-- Python `NavFile.points` has `latitudes()`, `longitudes()`, `gps_times()`, `sys_times()`, `headings()`, `speeds_mps()` and `eph_m_values()`, each returning that field of every fix as a list.
-- C `gtd_ts_from_iso8601` and C++ `Timestamp::from_iso8601` and `try_from_iso8601` parse an ISO 8601 timestamp, such as `2026-02-01T15:00:00+00:00`, on either side of the Unix epoch. C returns `GTD_ERR_PARSE` and C++ throws `geotrace::ParseError` for a string that is not one, which includes one with no timezone designator and one whose year is past the range a timestamp covers.
-- C `gtd_constellation_from_name` and `gtd_marker_icon_from_name`, C++ `constellation_from_name`, `try_constellation_from_name`, `marker_icon_from_name` and `try_marker_icon_from_name`, and Python `constellation_from_name` and `marker_icon_from_name` parse the lower-case wire name of a constellation, such as `navic`, and of a marker icon, such as `satellite_lost`. C returns `GTD_ERR_PARSE`, C++ throws `geotrace::ParseError` and its `try_` form returns that status, and Python raises `ValueError`, for a name outside the set.
-- C `gtd_mps_from_kmh`, `gtd_mps_from_knots`, `gtd_kmh_from_mps` and `gtd_knots_from_mps`, and Python `mps_from_kmh`, `mps_from_knots`, `kmh_from_mps` and `knots_from_mps` convert a speed between m/s and km/h or knots, to the same double as the Rust `Velocity`.
-- C `gtd_degrees_from_radians` and `gtd_radians_from_degrees` convert an angle between radians and degrees, to the same double as the Rust `Angle`.
-- C `gtd_snr_is_no_data_sentinel`, C++ `geotrace::snr_is_no_data_sentinel`, `Satellite::snr_is_no_data_sentinel` and `SatelliteView::snr_is_no_data_sentinel`, and Python `snr_is_no_data_sentinel` and `Satellite.snr_is_no_data_sentinel` return whether an SNR reading is the 99 dB-Hz some receiver firmware sends when it has no measurement, with the same result as the Rust `geotrace_sdk_units::snr::is_no_data_sentinel`.
-- Rust `geotrace_sdk_units::MPS_PER_KMH` and `MPS_PER_KNOT` are the factors `Velocity` converts with.
-- Rust `Velocity::try_from_knots_str` parses a speed in knots from a string, as `try_from_kmh_str` parses one in km/h.
-- Rust `Constellation::wire_code` and `MarkerIcon::wire_code` return the code the file stores for a constellation or a marker icon.
-- Rust `#[event_kind(rename = "<segment>")]` sets the variant path segment of a variant in place of the one `#[derive(EventKind)]` derives from its name.
-- Python `event_kind.rename("<segment>")` sets the variant path segment of an attribute, or of the inner class it decorates, in place of the one `@event_kind` derives from its name.
+- Every SDK reports whether an SNR reading is the 99 dB-Hz some receiver firmware sends when it has no measurement (`snr_is_no_data_sentinel`).
+- Rust `NavFileBuilder::with_scrubbed_provenance()` writes a file without the build stamp of the SDK that wrote it, and `NavFile::equals_ignoring_build_provenance()` compares two files apart from that stamp.
+- Rust `Velocity::try_from_knots_str` parses a speed in knots, and `geotrace_sdk_units::MPS_PER_KMH` and `MPS_PER_KNOT` are the factors `Velocity` converts with.
+- Rust `Constellation::wire_code` and `MarkerIcon::wire_code` return the code the file stores.
+- Rust, Python: `#[event_kind(rename = "<segment>")]` and `event_kind.rename("<segment>")` set a variant path segment other than the derived one.
+- C `gtd_nav_file_title_with_length` and its siblings return a metadata value with its byte length, nul bytes included.
+- C: Angle conversions between degrees and radians, to the same double as the Rust `Angle`.
+- C, C++: Readers for a file's map markers and event marker styles.
+- C, C++: A callback that receives the SDK's log records, and a setting for the lowest level forwarded.
+- C, C++: Readers for the satellite data warnings the builder raises for a file.
+- C, C++: A parser for an ISO 8601 timestamp, such as `2026-02-01T15:00:00+00:00`.
+- C, C++, Python: A parser for the lower-case wire name of a constellation or a marker icon, such as `navic` or `satellite_lost`.
+- C, C++, Python: A setting for how far a satellite report may be from a nav fix to be associated with it.
+- C, Python: Speed conversions between m/s and km/h or knots, to the same double as the Rust `Velocity`.
+- C++ `FixTime::from_recorded()` returns `std::nullopt` for a recorder with neither timestamp.
+- C++ `constellation_from_code`, `marker_icon_from_code` and `travel_mode_from_code` convert an integer code to the scoped `enum`.
+- Python `NavFileBuilder.with_lenient_errors()` clamps an annotation outside the nav fix time range to the nearest fix.
+- Python `NavFile.points` returns each field of every fix as a list, such as `latitudes()`.
 
 ### Changed
 
-- The writer stamps `geotrace_version` 2 for the layout it writes, and the reader accepts 1 and 2.
-- The writer takes `sdk_version`, `sdk_git_commit` and `sdk_commit_time` from the `NavFile` it writes: a file read from disk and written back keeps the stamp it was read with, and one read without a stamp is written without one. `NavRecorder::finish` stamps the build it runs in.
-- **Breaking:** Reading a file whose nav point, satellite report or event marker has no timestamp fails with an error stating the record. A nav point and a satellite report each have a receiver timestamp and a host timestamp, and the reader accepts a record with either one.
-- **Breaking:** A map marker whose `markers/icon` code is outside the `MarkerIcon` set is preserved and written back unchanged: Rust `Annotation::icon()` returns the new `AnnotationIcon` (`Icon(MarkerIcon)` or `Unrecognized(u8)`), and Python `Marker.icon` and `Annotation.icon` read `None` for it with the new `icon_code` holding the code and a `UserWarning` raised by `NavFile.markers`.
-- **Breaking:** An annotation's icon is Pin unless set: Rust `Annotation::icon()` returns a `MarkerIcon`, C `gtd_builder_add_annotation` returns `GTD_ERR_INVALID_ARGUMENT` for `GTD_ICON_AUTO`, C++ `Annotation::icon` defaults to `MarkerIcon::Pin` and `MarkerIcon::Auto` is gone (`EventMarkerStyle::icon` is a `std::optional<MarkerIcon>`), and Python `Annotation.icon` and `Marker.icon` are a `MarkerIcon`.
+- The writer stamps `geotrace_version` 2, and the reader accepts 1 and 2.
+- The writer writes the build stamp the `NavFile` has: a file read and written back keeps its stamp, and `NavRecorder::finish` stamps the build it runs in.
+- **Breaking:** Reading a nav point, satellite report or event marker without a timestamp fails with an error stating the record. A nav point or satellite report with either a receiver or a host timestamp reads.
+- **Breaking:** A nav fix and a satellite report need a receiver or a host timestamp: Rust and C++ take a required `NavFixTime` and `FixTime`, C returns `GTD_ERR_INVALID_ARGUMENT` and Python raises `ValueError` without either. The builder no longer drops a satellite report without a timestamp.
+- **Breaking:** A map marker icon code outside the `MarkerIcon` set is preserved and written back unchanged. Rust reads it as `AnnotationIcon::Unrecognized`, and Python as `Marker.icon_code` with a `UserWarning`.
+- **Breaking:** An annotation's icon is Pin unless set, and no SDK takes the automatic icon for an annotation. C++ `MarkerIcon` has no `Auto`, and C++ `EventMarkerStyle::icon` is a `std::optional<MarkerIcon>`.
 - A satellite report before the first nav fix produces a ghost fix on the first fix. A ghost fix after the last nav fix takes that fix's position when the fix has no heading.
-- **Breaking:** An event marker outside the nav fix time range fails the build with Rust `BuildError::EventMarkersOutsideRange`, C `GTD_ERR_EVENT_MARKERS_OOB` (15), C++ `EventMarkersOutOfRangeError` or a Python `ValueError`, where it was placed on the nearest fix. Lenient mode clamps it to the nearest fix and logs a warning.
-- **Breaking:** An event marker on a builder with no nav fix fails the build with the no-nav-fixes error, where it was dropped.
-- **Breaking:** A satellite report on a builder with no nav fix fails the build with the no-nav-fixes error, where it was dropped. The error message states the number of satellite reports, annotations and event markers on the builder.
-- **Breaking:** Rust `BuildError::NoNavFixes` has a new `UnplacedRecordCounts` field with the number of satellite reports, annotations and event markers on the builder.
+- **Breaking:** An event marker outside the nav fix time range fails the build. Lenient mode clamps it to the nearest fix and logs a warning.
+- **Breaking:** A satellite report or an event marker on a builder with no nav fix fails the build, with an error stating the number of records of each kind.
+- **Breaking:** The build fails where a ghost nav fix is past the range a UTC timestamp covers.
 - **Breaking:** The builder stores an empty event marker annotation as none.
-- Rust `NavFile::inspect` reports a file's identity, travel mode and build stamp, its event markers and event marker styles, its satellites' elevation, azimuth and no-data SNR readings, each channel's period, description and time range, every marker icon code it holds, and each fixed-width field row that is not UTF-8.
-- **Breaking:** Rust `NavFileBuilder::with_satellite_window` takes a `std::time::Duration`, which cannot be negative. A window longer than `i64::MAX` microseconds associates every satellite report with its nearest nav fix.
-- **Breaking:** Rust `Meta` has private fields, read through the new `title()`, `device()`, `notes()`, `identity()` and `travel_mode()`. `Meta::builder().build()` returns a `Result`, and `NavFileBuilder::with_title`, `with_device`, `with_notes`, `with_identity` and `with_travel_mode` return a `Result<NavFileBuilder, MetaStringWithNul>`.
-- **Breaking:** Rust: `EventMarkerStyle` has private fields, and its builder returns the new `EventMarkerStyleError`.
-- **Breaking:** Rust: `EventMarkerError` reports a malformed variant path through the new `VariantPathError`.
-- **Breaking:** Rust: `EventMarkerColor` no longer implements `TryFrom<String>`.
-- **Breaking:** Rust `NavFix` and `SatelliteReport` cannot be built without a timestamp: each has a new required `time` field, a `NavFixTime` (`Receiver`, `Host`, or `Both`). `gps_time()` and `sys_time()` read that field. The builder no longer drops a satellite report without a timestamp.
-- **Breaking:** Rust `NavRecorder::finish` fails with the new `BuildError::GhostFixTimeOutOfRange` where the ghost nav fix for an unassociated satellite report is past the range a UTC timestamp covers.
-- **Breaking:** Rust `Timestamp::try_from_unix_seconds`, `try_from_unix_millis`, `try_from_unix_micros` and `try_from_unix_nanos` take an `i64` and return a `Result`, replacing `from_unix_seconds` and its three siblings.
-- **Breaking:** C `gtd_set_log_level` takes `uint32_t level` in place of `GtdLogLevel` and returns a `GtdStatus` in place of `void`. It returns `GTD_ERR_INVALID_ARGUMENT` for a value no `GtdLogLevel` variant declares, and the level set before the call stays in force.
-- **Breaking:** C `gtd_builder_add_annotation` and `gtd_builder_add_event_marker_style` take `uint32_t icon` in place of `GtdMarkerIcon`. Both return `GTD_ERR_INVALID_ARGUMENT` for a value no `GtdMarkerIcon` variant declares, and `gtd_builder_add_annotation` still returns it for `GTD_ICON_AUTO`.
-- **Breaking:** C `GtdSatellite::constellation` is a `uint32_t` in place of a `GtdConstellation`. `gtd_builder_add_satellite_report` returns `GTD_ERR_INVALID_ARGUMENT`, and the builder keeps the reports it already has, for a satellite whose constellation is a value no `GtdConstellation` variant declares.
-- **Breaking:** C `gtd_builder_set_travel_mode` and `gtd_travel_mode_name` take `uint32_t mode` in place of `GtdTravelMode`. `gtd_builder_set_travel_mode` returns `GTD_ERR_INVALID_ARGUMENT` and `gtd_travel_mode_name` returns `"unknown"` for a value no `GtdTravelMode` variant declares.
-- **Breaking:** C `GtdNavPointInfo` has two new `GtdTimestamp` fields, `sat_report_gps_time` and `sat_report_sys_time`, each `gtd_ts_none()` where the nav point has no satellite report and where the report has no such timestamp. C++ `NavPointView` has the two as `std::optional<Timestamp>`.
-- **Breaking:** C `GtdSatellite` and `GtdSatInfo` take a satellite's elevation, azimuth and SNR as the new `GtdOptF32` (`GTD_SOME_F32`, `GTD_NONE_F32`), and C++ `Satellite` and `SatelliteView` as `std::optional<float>`, the 32-bit float the file stores.
-- **Breaking:** C `gtd_builder_add_channel_with_unit_mode` takes `uint32_t unit_mode`, the parameter type `gtd_channel_unit_parse` already uses. A `GtdChannelUnitMode` value passes unchanged.
-- **Breaking:** C `gtd_builder_add_nav_fix` and `gtd_builder_add_satellite_report` return the new `GTD_ERR_INVALID_ARGUMENT` (12) when `gps_time` and `sys_time` are both `gtd_ts_none()`.
-- **Breaking:** C `gtd_builder_finish` returns `GTD_ERR_INVALID_ARGUMENT` where a ghost nav fix is past the range a UTC timestamp covers.
-- **Breaking:** C `gtd_nav_file_get_nav_point`, `gtd_nav_file_get_satellite`, `gtd_nav_file_get_event_marker`, `gtd_nav_file_get_channel`, `gtd_nav_file_get_channel_unit` and `gtd_channel_unit_parse` return the new `GTD_ERR_OUT_OF_RANGE` (13) for an index past the end or a short output buffer, where they returned `GTD_ERR_NULL_ARGUMENT`.
-- **Breaking:** C `gtd_builder_set_title`, `gtd_builder_set_device`, `gtd_builder_set_notes`, `gtd_builder_set_identity`, `gtd_builder_set_travel_mode` and `gtd_builder_set_lenient` return the new `GTD_ERR_CALL_ORDER` (14) when data has already been added, where the first five returned `GTD_ERR_INTERNAL`. `gtd_builder_set_lenient` returns a `GtdStatus` in place of `void`.
-- **Breaking:** C `gtd_ts_from_seconds`, `gtd_ts_from_millis`, `gtd_ts_from_micros` and `gtd_ts_from_nanos` take an `int64_t` count and a `GtdTimestamp` out parameter and return a `GtdStatus`, with `GTD_ERR_OUT_OF_RANGE` for a count past the range a timestamp covers.
-- **Breaking:** C `gtd_builder_add_nav_fix`, `gtd_builder_add_satellite_report`, `gtd_builder_add_annotation`, `gtd_builder_add_event_marker`, `gtd_builder_add_channel` and `gtd_builder_add_channel_with_unit_mode` return `GTD_ERR_OUT_OF_RANGE` for a `GtdTimestamp` past the range a timestamp covers.
-- **Breaking:** C++ `NavFix` and `SatelliteReport` have a required `FixTime` member, built with `FixTime::receiver`, `FixTime::host` or `FixTime::both`, in place of their two timestamps.
-- **Breaking:** C++ `Timestamp` is always an instant: it has no default constructor, `Timestamp::none()` and `Timestamp::is_none()` are gone, and `NavPointView::gps_time`, `NavPointView::sys_time` and `NavFile::sdk_commit_time()` are `std::optional<Timestamp>`.
-- **Breaking:** C++ header values are `[[nodiscard]]`, the value types are `constexpr` apart from the `Timestamp` factories and the `Velocity` and `Angle` unit conversions, and `NavFile` has no default constructor.
-- **Breaking:** C++ `FileBuilder::lenient()` records its status, an out-of-range accessor throws `std::out_of_range` through the new status, and `GTD_ERR_CALL_ORDER` throws the new `geotrace::CallOrderError`.
-- **Breaking:** C `GtdChannelInfo` has the `const char *` fields `name`, `unit` and `description` and the `const char *const *` field `components`, each valid until `gtd_nav_file_destroy`, in place of three fixed-size `char` arrays and `has_unit` and `has_description`. `unit`, `description` and `components` are NULL for a channel without one, and `gtd_nav_file_get_channel` returns every string whole.
-- **Breaking:** C `gtd_nav_file_get_channel` returns `GTD_ERR_INVALID_CHANNEL` for a channel with a nul byte in its name, unit, description or a component label.
-- **Breaking:** C `gtd_nav_file_get_channel_component` is removed: `GtdChannelInfo::components` has the component labels.
-- **Breaking:** C `gtd_nav_file_get_channel_unit` returns `GTD_ERR_OUT_OF_RANGE` and leaves `out` unwritten when `out_capacity` is below the label's length, where it wrote a shortened label and returned `GTD_OK`.
-- **Breaking:** C++ `Timestamp::try_from_seconds`, `try_from_millis`, `try_from_micros` and `try_from_nanos` return a `Result<Timestamp>`, and `Timestamp::from_seconds` and its siblings take a `std::int64_t` and throw `std::out_of_range` for a count past the range a timestamp covers.
-- **Breaking:** C++ `Timestamp` has no public constructor from a `std::int64_t` and no public `unix_micros` field: `Timestamp::from_micros(micros)` replaces `Timestamp{micros}`, and `timestamp.as_unix_micros()` replaces `timestamp.unix_micros`.
-- **Breaking:** C++ `FileBuilder::travel_mode`, `add_satellite_report`, `add_annotation` and `add_event_marker_style` throw `std::invalid_argument` for a `TravelMode`, `Constellation` or `MarkerIcon` value no enumerator declares, where the SDK wrote the platform as `car`, the satellite as GPS and the marker as a pin. Built without exceptions, the builder records `GTD_ERR_INVALID_ARGUMENT` with a message stating the rejected value.
-- **Breaking:** C++ `travel_mode_name` returns a `std::optional<std::string_view>`, `std::nullopt` for a value no `TravelMode` enumerator declares.
-- **Breaking:** C++ `NavFile::title`, `device`, `notes`, `identity` and `travel_mode` return a `std::optional<std::string_view>`: `std::nullopt` for an absent field and an empty view for an empty value.
-- **Breaking:** Python `NavFile.points`, `markers`, `event_markers`, `channels` and `event_marker_styles` return a sequence supporting `len()`, indexing, slicing and iteration, in place of a list rebuilt on every attribute access.
-- **Breaking:** Python `NavFix` and `SatelliteReport` raise `ValueError` when `gps_time` and `sys_time` are both `None`.
-- **Breaking:** Python `EventMarker` raises `TypeError` for a `variant_path` that is neither a `str`, `None` nor `event_kind.skip`, where it read any other value as `None`.
-- **Breaking:** Python `Constellation`, `MarkerIcon` and `TravelMode` are `enum.Enum` classes: each member has `.name` and `.value` and works as a `set` element and a `dict` key, and `list()` and `len()` over the class give the members and their count. A `Constellation` or `MarkerIcon` member's `.value` is the code the file stores, and a `TravelMode` member's `.value` is the name the file stores, such as `"car"`.
-- **Breaking:** C++ `Velocity::kmh`, `Velocity::knots`, `Velocity::as_kmh`, `Velocity::as_knots`, `Angle::radians` and `Angle::as_radians` are no longer `constexpr`: they call the C SDK's conversion functions.
-- **Breaking:** Rust `#[derive(EventKind)]` fails to compile for a variant name with a non-ASCII character, a variant path segment past 255 bytes, two variants of one `enum` with the same segment, and an `event_kind` attribute without effect or in conflict with another.
-- **Breaking:** Rust `#[derive(EventKind)]` derives `gps3_lock` for a variant `GPS3Lock` and `type` for `r#type`, where files written by an earlier SDK contain `gp_s3_lock` and `r#type`.
-- **Breaking:** Python `@event_kind` raises `ValueError` when it runs on a class with an attribute name with a non-ASCII character, a variant path segment past 255 bytes, or two attributes with the same segment.
-- **Breaking:** Python `@event_kind` derives `gps3_lock` for an attribute `GPS3Lock`, where files written by an earlier SDK contain `gp_s3_lock`.
+- Rust `NavFile::inspect` reports a file's metadata and build stamp, event markers and styles, satellite readings, channel details, marker icon codes and fixed-width field rows that are not UTF-8.
+- **Breaking:** Rust `NavFileBuilder::with_satellite_window` takes a `std::time::Duration`. A window past `i64::MAX` microseconds associates every satellite report with its nearest nav fix.
+- **Breaking:** Rust `Meta` and `EventMarkerStyle` have private fields. `Meta::builder()` and the `NavFileBuilder` metadata setters return a `Result`, and `EventMarkerStyle::builder()` returns the new `EventMarkerStyleError`.
+- **Breaking:** Rust `EventMarkerError` reports a malformed variant path through the new `VariantPathError`.
+- **Breaking:** Rust `EventMarkerColor` no longer implements `TryFrom<String>`.
+- **Breaking:** Rust, C, C++: A timestamp built from a count of seconds, milliseconds, microseconds or nanoseconds takes a signed 64-bit count and reports an error for a count past the range a timestamp covers.
+- **Breaking:** Rust, Python: `#[derive(EventKind)]` and `@event_kind` reject a variant name with a non-ASCII character, a segment past 255 bytes and two variants with the same segment, and the derive rejects an attribute without effect. Both derive `gps3_lock` for `GPS3Lock`, and the derive `type` for `r#type`, where files written by an earlier SDK contain `gp_s3_lock` and `r#type`.
+- **Breaking:** C takes an enumeration value as a `uint32_t`, the unit mode of `gtd_builder_add_channel_with_unit_mode` included, and returns `GTD_ERR_INVALID_ARGUMENT`, or `"unknown"` from `gtd_travel_mode_name`, for a value no variant declares. The builder keeps the records it already has, and `gtd_set_log_level` returns a `GtdStatus`.
+- **Breaking:** C returns the new `GTD_ERR_OUT_OF_RANGE` for an index past the end, a short output buffer and a timestamp past the range a timestamp covers, and the new `GTD_ERR_CALL_ORDER` for a builder setting made after data. `gtd_builder_set_lenient` returns a `GtdStatus`.
+- **Breaking:** C `GtdChannelInfo` points to the channel's strings, and `gtd_nav_file_get_channel` returns each whole, or `GTD_ERR_INVALID_CHANNEL` for one with a nul byte. `gtd_nav_file_get_channel_component` is removed.
+- **Breaking:** C, C++: A nav point read from a file states the timestamps of its satellite report.
+- **Breaking:** C, C++: A satellite's elevation, azimuth and SNR are optional 32-bit floats, as the file stores them.
+- **Breaking:** C++ `Timestamp` is always an instant, with no default constructor, no public constructor from a count and no public field. An absent timestamp is a `std::optional<Timestamp>`.
+- **Breaking:** C++ header values are `[[nodiscard]]`, and the value types are `constexpr` apart from the `Timestamp` factories and the unit conversions. `NavFile` has no default constructor.
+- **Breaking:** C++ `FileBuilder::lenient()` records its status, an out-of-range accessor throws `std::out_of_range`, and `GTD_ERR_CALL_ORDER` throws the new `CallOrderError`.
+- **Breaking:** C++ `FileBuilder` throws `std::invalid_argument` for an enumeration value no enumerator declares, or records `GTD_ERR_INVALID_ARGUMENT` when built without exceptions, and `travel_mode_name` returns `std::nullopt` for one.
+- **Breaking:** C++ `NavFile::title` and the other metadata getters return a `std::optional<std::string_view>`: `std::nullopt` for an absent field and an empty view for an empty value.
+- **Breaking:** Python `NavFile.points`, `markers`, `event_markers`, `channels` and `event_marker_styles` return a sequence.
+- **Breaking:** Python `EventMarker` raises `TypeError` for a `variant_path` that is neither a `str`, `None` nor `event_kind.skip`.
+- **Breaking:** Python `Constellation`, `MarkerIcon` and `TravelMode` are `enum.Enum` classes, and a member's `.value` is the code or the name the file stores.
 - Updated `hdf5-pure` to 0.46.0.
 
 ### Fixed
 
-- **Breaking:** Fixed the reader dropping an event marker or event marker style with an empty variant path: it now fails with an error stating the dataset and the record.
-- **Breaking:** Fixed the reader dropping a tracked satellite or a satellite report whose index points past the table it addresses: it now fails with an error stating the dataset and the record.
-- **Breaking:** Fixed the reader reading a timestamp outside the range a UTC timestamp covers as 1970-01-01: it now fails with an error stating the dataset and the record.
-- **Breaking:** Fixed the reader treating a dataset it cannot read or a group it cannot open as one the file does not hold: it now fails with an error stating the dataset and the record, or stating the group.
-- **Breaking:** Fixed the reader dropping the rows past the end of a dataset shorter than its table: it now fails with an error stating the dataset and the row counts.
-- **Breaking:** Fixed a timestamp of exactly 1969-12-31T23:59:59.999999Z being written as absent: writing it fails with an error stating the dataset and the record.
-- Fixed an annotation timestamped exactly at the last nav fix being placed outside the nav fix time range: it is placed on that fix.
-- Fixed an annotation or event marker inside the nav fix time range being reported as outside it, where a recording's receiver and host timestamps put its fixes in different orders: it is placed between the two fixes whose host timestamps surround its time.
-- Fixed a marker, event marker or ghost fix interpolated between two fixes on either side of the antimeridian being placed near longitude 0: it is placed on the short arc between the two fixes.
-- **Breaking:** Fixed the reader accepting any `geotrace_version` beginning with a 1 or a 2, such as `10` or `1abc`: it reads the attribute as an integer and accepts 1 and 2 alone.
-- **Breaking:** Fixed the SDK writing a title, device, notes, identity, travel mode or channel description with a nul byte: Rust `Meta::builder().build()`, `Channel::builder().build()` and the `NavFileBuilder` metadata setters return an error stating the string and the byte offset, and Python `Meta`, `Channel`, `NavFileBuilder.with_title`, `with_device` and `with_notes` raise `ValueError`.
-- **Breaking:** Fixed the SDK storing an empty or whitespace-only title, device, notes, identity or channel description, and a whitespace-only map marker label, as absent: it stores each as given.
-- **Breaking:** Fixed Rust `EventMarkerStyle::builder().build()` and the Python `EventMarkerStyle` using the hash color for a whitespace-only color: Rust returns an error and Python raises `ValueError`. Both use the hash color for an empty color.
-- **Breaking:** Fixed the SDK accepting an event marker style with a malformed variant path, or in C and C++ with a color outside the `#RRGGBB` form: it rejects the style where it is built.
-- **Breaking:** Fixed Rust `NavRecorder::add_event` and `add_event_with_note` writing a variant path that `EventMarker::builder()` rejects, such as a path of nested `#[derive(EventKind)]` variants past 255 bytes: in strict mode `NavRecorder::finish` fails with the new `BuildError::InvalidEventMarkerVariantPath`, and in lenient mode the recorder drops the event and logs an error.
-- Fixed the `encoding` attribute of the `markers/icon` and `tracked_sats/constellation` datasets listing 7 of the 14 marker icons and 4 of the 6 constellations: the writer builds each attribute from the full set of codes.
-- C, C++: Fixed the examples taking a CSV number's decimal separator from `LC_NUMERIC`: they read '.' as the separator under every locale and reject a field with trailing characters.
-- **Breaking:** C: Fixed `gtd_builder_finish` leaving the builder allocated when `out` is NULL, and leaving `*out` unchanged when `builder` is NULL: it now frees a non-null builder whatever status it returns, and sets `*out` to NULL on every failure with a non-null `out`.
-- C: Fixed `gtd_nav_file_open` leaving `*out` unchanged when `path` is NULL or not valid UTF-8: it now sets `*out` to NULL on every failure with a non-null `out`.
-- C: Fixed `gtd_nav_file_get_event_marker_style` shortening a variant path or a color longer than its `GtdEventMarkerStyleInfo` field, for a file handle from `gtd_builder_finish`: it returns `GTD_ERR_FIELD_TOO_LONG`.
-- C++: Fixed `NavFile::channel` and `try_channel` shortening a channel name past 255 bytes, a description past 1023 bytes and a component label past 255 bytes: they return each string whole.
-- C++: Fixed `NavFile::title`, `device`, `notes`, `identity` and `travel_mode` returning an empty view for a value with a nul byte: they return the whole value.
-- **Breaking:** C++: Fixed `FileBuilder` writing a string argument with a nul byte up to that byte, and `ChannelUnit::custom` and `parse_recognized` reading a label with one up to that byte: they throw `InvalidChannelError` for a channel string, `InvalidPathError` for a variant path and `std::invalid_argument` for the other strings, with a message stating the string and the byte offset.
+- **Breaking:** Fixed the reader dropping or misreading a record with an empty variant path, an index past its table or a timestamp out of range, a dataset shorter than its table or unreadable, and a group it cannot open: it fails with an error stating the dataset and the record, or the group.
+- **Breaking:** Fixed the reader accepting any `geotrace_version` beginning with a 1 or a 2, such as `10`: it accepts 1 and 2 alone.
+- **Breaking:** Fixed a timestamp of exactly 1969-12-31T23:59:59.999999Z being written as absent: writing it fails.
+- Fixed an annotation at the last nav fix, and an annotation or event marker between fixes whose receiver and host timestamps disagree on their order, being reported as outside the nav fix time range: the first is placed on that fix, the second between the two fixes whose host timestamps surround its time.
+- Fixed a marker, event marker or ghost fix between two fixes on either side of the antimeridian being placed near longitude 0: it is placed on the short arc between them.
+- **Breaking:** Fixed the SDK writing a metadata or channel string with a nul byte: it rejects the string with an error stating the byte offset.
+- **Breaking:** Fixed the SDK storing an empty or whitespace-only title, device, notes, identity, channel description or marker label as absent: it stores each as given.
+- **Breaking:** Fixed the SDK accepting an event marker style with a malformed variant path or a color outside the `#RRGGBB` form, a whitespace-only color included: it rejects the style where it is built. An empty color still gets the hash color.
+- Fixed the `encoding` attribute of the `markers/icon` and `tracked_sats/constellation` datasets listing part of the codes: it lists every code.
+- **Breaking:** Fixed Rust `NavRecorder::add_event` writing a variant path that `EventMarker::builder()` rejects: the build fails in strict mode, and lenient mode drops the event and logs an error.
+- **Breaking:** C: Fixed `gtd_builder_finish` leaving `*out` unchanged or the builder allocated on a failure: it sets `*out` to NULL and frees the builder.
+- C: Fixed `gtd_nav_file_open` leaving `*out` unchanged on a failure: it sets `*out` to NULL.
+- C, C++: Fixed the examples taking a CSV number's decimal separator from `LC_NUMERIC`: they read '.' under every locale and reject a field with trailing characters.
+- C++: Fixed a channel string read shortening a value longer than its buffer: it returns the whole value.
+- C++: Fixed the metadata getters returning an empty view for a value with a nul byte: they return the whole value.
+- **Breaking:** C++: Fixed `FileBuilder` and `ChannelUnit::custom` cutting a string with a nul byte at that byte: they throw an error stating the byte offset.
 - **Breaking:** Python: Fixed `EventMarkerStyle` and `EventMarker` raising `ValueError` only when added to the builder: the constructor raises it.
 - **Breaking:** Python: Fixed `NavFileBuilder.add_event_marker_style` rejecting a style read from a file with a color outside the `#RRGGBB` form: it writes the style back unchanged.
 
