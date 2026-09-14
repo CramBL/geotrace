@@ -5,6 +5,7 @@
 ### Fixed
 
 - **Log Viewer:** Fixed the map drawing a log's hexagons, and the ring at the viewer's hovered line, on a track unchecked in the side panel.
+- **Interface:** Fixed the History window's columns changing width as the listing scrolls, as a recording's shelved tracks open under its row, as a filter narrows the list, and as a click on a header reorders it.
 
 ## 0.17.0 - 2026-09-14
 

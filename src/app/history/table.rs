@@ -1,5 +1,3 @@
-use std::cell::Cell;
-
 use chrono::{DateTime, Utc};
 use egui::{Button, Grid, Label, RichText, TextEdit};
 use egui_extras::{Column, TableBuilder, TableRow};
@@ -12,7 +10,8 @@ use gt_pending_writes::WriteAccess;
 use gt_side_panel::widgets::{self, MetadataView};
 use gt_store::{ChannelSummary, DatabaseRef, NavPointTimeRange, RecordingEntry, TrackState};
 use gt_ui_theme::EM_DASH;
-use gt_ui_theme::buttons::{FramelessIconButton, SortHeaderButton};
+use gt_ui_theme::buttons::{self, FramelessIconButton, SortHeaderButton};
+use gt_ui_theme::labels;
 use strum::{EnumCount as _, IntoEnumIterator as _};
 
 use super::{HistorySort, OpenShelf, RenameEdit, ShelfTracks, SortColumn};
@@ -20,21 +19,24 @@ use crate::app::history_db::{DeleteReason, HistoryWorker};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 
 /// The scrolling recordings table, laid out like a file manager's list: the
-/// metadata columns (date, duration, points, size, actions) size to their
-/// fixed-format content, and the identity column fills whatever width is left,
-/// clipping long names. Its width is a function of the window's width, so the
-/// table is always exactly as wide as the window.
+/// metadata columns (date, duration, points, size, logs, actions) take the
+/// width of their own header or of the widest cell they draw for the stored
+/// recordings (see [`MetadataColumnFloors`]), and the identity column fills
+/// whatever width is left, clipping long names. Its width is a function of the window's width, so
+/// the table is always exactly as wide as the window.
 ///
-/// Identity is sized as a [`Column::exact`] recomputed each frame. A
-/// [`Column::remainder`] that is not the *last* column ratchets in `egui_extras`:
-/// it feeds its clipped width back into its own minimum every frame, so it can
-/// never shrink again, which stops the window from being made narrower and lets
-/// it creep wider.
+/// Identity is sized as a [`Column::exact`] computed from the floors the other
+/// columns take (see [`identity_column_width`]). A [`Column::remainder`] that is
+/// not the *last* column ratchets in `egui_extras`: it feeds its clipped width
+/// back into its own minimum every frame, so it can never shrink again, which
+/// stops the window from being made narrower and lets it creep wider.
 pub(super) fn history_table(
     ui: &mut egui::Ui,
     HistoryTable {
         max_listing_height,
         visible,
+        entries,
+        entries_revision,
         loaded_metas,
         worker,
         rename,
@@ -52,26 +54,10 @@ pub(super) fn history_table(
     let max_scroll_height =
         (max_listing_height - row_height - ui.spacing().item_spacing.y).max(0.0);
 
-    // Identity is window width minus last frame's metadata width, see this
-    // function's doc comment.
-    let available_width = ui.available_width();
-    let metadata_width_id = ui.id().with("history_metadata_width");
-    let identity_width = ui
-        .data(|d| d.get_temp::<f32>(metadata_width_id))
-        .map_or(IDENTITY_DEFAULT_WIDTH, |metadata| {
-            (available_width - metadata).max(IDENTITY_MIN_WIDTH)
-        });
+    let floors = metadata_column_floors(ui, entries, entries_revision);
+    let identity_width = identity_column_width(ui, floors);
 
-    // Right edges of the identity and last (action) columns, captured from the
-    // header this frame to measure the metadata width for the next one. The
-    // measurement is only valid outside the table's sizing pass: during it the
-    // auto columns have not yet grown to their content, so the reserve reads too
-    // small and identity briefly blows up (window sticks wide).
-    let identity_right = Cell::new(0.0_f32);
-    let last_column_right = Cell::new(0.0_f32);
-    let measured_while_sizing = Cell::new(false);
-
-    TableBuilder::new(ui)
+    let mut table = TableBuilder::new(ui)
         .id_salt("history_list")
         .striped(true)
         // Cells lay out in a row (no vertical wrapping): dates stay on one
@@ -86,31 +72,33 @@ pub(super) fn history_table(
         // it is given.
         .min_scrolled_height(0.0)
         // Identity fills the leftover width (see above) and clips long names.
-        .column(Column::exact(identity_width).clip(true))
-        // Metadata columns size to their fixed-format content - every sortable
-        // column except identity, which was added above. They are not
-        // resizable: there is nothing to gain from resizing a date or a byte
-        // count, and it keeps the table's width fully determined by the window.
-        .columns(Column::auto().resizable(false), SortColumn::COUNT - 1)
-        .column(Column::auto().resizable(false))
+        .column(Column::exact(identity_width).clip(true));
+
+    // The metadata columns, every sortable column except identity, which was
+    // added above, and the action column after them. They are not resizable:
+    // there is nothing to gain from resizing a date or a byte count, and it
+    // keeps the table's width fully determined by the window. Each takes the
+    // floor of the widest cell it can draw (see [`MetadataColumnFloors`]).
+    for floor in SortColumn::iter()
+        .filter_map(|column| floors.of_sortable_column(column))
+        .chain(std::iter::once(floors.action))
+    {
+        table = table.column(Column::auto().resizable(false).at_least(floor));
+    }
+
+    table
         .header(row_height, |mut header| {
             // Driven off `SortColumn`, so a new sortable column cannot be added
             // without a header appearing.
             for column in SortColumn::iter() {
                 header.col(|ui| {
-                    // Identity is the measured, term-explained column. Every
-                    // other one is a plain sortable header.
-                    let term = (column == SortColumn::Identity).then(|| {
-                        identity_right.set(ui.max_rect().right());
-                        measured_while_sizing.set(ui.is_sizing_pass());
-                        crate::terms::IDENTITY
-                    });
+                    // Identity is the term-explained column. Every other one is
+                    // a plain sortable header.
+                    let term = (column == SortColumn::Identity).then_some(crate::terms::IDENTITY);
                     sort_header(ui, column, sort, term);
                 });
             }
-            header.col(|ui| {
-                last_column_right.set(ui.max_rect().right());
-            });
+            header.col(|_| {});
         })
         .body(|body| {
             body.rows(row_height, listing.len(), |mut row| {
@@ -148,14 +136,232 @@ pub(super) fn history_table(
                 }
             });
         });
+}
 
-    // Record the metadata columns' total width (everything right of identity)
-    // for next frame's fill calculation. The header always renders - unlike the
-    // virtualized body rows - so these edges are always fresh.
-    let metadata_width = last_column_right.get() - identity_right.get();
-    if metadata_width > 0.0 && !measured_while_sizing.get() {
-        ui.data_mut(|d| d.insert_temp(metadata_width_id, metadata_width));
+/// The width left for the identity column: what the table has, less the gap
+/// between each pair of columns and the floor every other column takes.
+///
+/// It lands on the pixel grid, always down, never up: half a pixel over sets the
+/// listing scrolling sideways, and the scroll area's drag then takes the hover
+/// off the rows.
+fn identity_column_width(ui: &egui::Ui, floors: MetadataColumnFloors) -> f32 {
+    // What `egui_extras` lays the table's columns out in.
+    let table_width = ui.available_width() - ui.spacing().scroll.allocated_width();
+    let gaps = ui.spacing().item_spacing.x * COLUMN_GAP_COUNT;
+    let left_over = (table_width - gaps - floors.total()).max(IDENTITY_MIN_WIDTH);
+    let pixels_per_point = ui.pixels_per_point();
+    (left_over * pixels_per_point).floor() / pixels_per_point
+}
+
+/// Gaps `egui_extras` leaves between the table's columns, one fewer than the
+/// columns themselves: one per sortable column, and the actions after them.
+const COLUMN_GAP_COUNT: f32 = SortColumn::COUNT as f32;
+
+/// The width each metadata column keeps, whatever the listing has scrolled into
+/// view: the widest cell that column draws for the recordings the database
+/// holds, filtered out of the listing or not.
+///
+/// An `egui_extras` auto column takes the width of the cells laid out this
+/// frame, and the body draws the rows in view alone. Without these floors the
+/// columns, and the identity column that fills what they leave, change width as
+/// the user scrolls.
+///
+/// A line of an open shelf draws a subset of the same cells: its track's
+/// nav-point count under Points, its two controls under the actions, and
+/// nothing under Date, Duration, Size and Logs.
+#[derive(Clone, Copy)]
+struct MetadataColumnFloors {
+    date: f32,
+    duration: f32,
+    points: f32,
+    size: f32,
+    logs: f32,
+    action: f32,
+}
+
+impl MetadataColumnFloors {
+    /// A floor covers the column's header as well as its cells, and lands on a
+    /// whole pixel: the identity column takes the width these leave, and a
+    /// fraction of a pixel over sends the table past the window's edge.
+    fn measure(ui: &egui::Ui, entries: &[RecordingEntry]) -> Self {
+        let widest = |column: SortColumn, cell_width: fn(&egui::Ui, &RecordingEntry) -> f32| {
+            let widest = entries
+                .iter()
+                .map(|entry| cell_width(ui, entry))
+                .fold(buttons::sort_header_width(ui, column.title()), f32::max);
+            whole_pixels(ui, widest)
+        };
+        Self {
+            date: widest(SortColumn::Date, |ui, entry| {
+                label_width(ui, &started_at_text(entry.meta.time_range))
+            }),
+            duration: widest(SortColumn::Duration, |ui, entry| {
+                label_width(ui, &duration_text(entry.meta.time_range))
+            }),
+            points: widest(SortColumn::Points, points_cell_width),
+            size: widest(SortColumn::Size, |ui, entry| {
+                label_width(ui, &gt_fmt::format_bytes(entry.meta.gtd_size_bytes))
+            }),
+            logs: widest(SortColumn::Logs, |ui, entry| {
+                attached_logs_label(entry).map_or(0.0, |label| buttons::button_width(ui, &label))
+            }),
+            action: whole_pixels(ui, action_column_width(ui)),
+        }
     }
+
+    /// What every column but identity takes.
+    fn total(self) -> f32 {
+        self.date + self.duration + self.points + self.size + self.logs + self.action
+    }
+
+    /// The floor of a sortable column, and [`None`] for identity, which takes
+    /// the width the other columns leave.
+    fn of_sortable_column(self, column: SortColumn) -> Option<f32> {
+        match column {
+            SortColumn::Identity => None,
+            SortColumn::Date => Some(self.date),
+            SortColumn::Duration => Some(self.duration),
+            SortColumn::Points => Some(self.points),
+            SortColumn::Size => Some(self.size),
+            SortColumn::Logs => Some(self.logs),
+        }
+    }
+}
+
+/// The floors are kept until the listing they were measured from, or the scale
+/// they were measured at, changes. [`MetadataColumnFloors::measure`] lays out a
+/// galley per cell of every stored recording.
+fn metadata_column_floors(
+    ui: &egui::Ui,
+    entries: &[RecordingEntry],
+    entries_revision: u64,
+) -> MetadataColumnFloors {
+    let measured_for = FloorsMeasuredFor {
+        entries_revision,
+        pixels_per_point_bits: ui.pixels_per_point().to_bits(),
+    };
+    let pass = ui.ctx().cumulative_pass_nr();
+    let id = ui.id().with("history_column_floors");
+    let cached = ui
+        .data(|d| d.get_temp::<MeasuredColumnFloors>(id))
+        .filter(|cached| cached.measured_for == measured_for);
+    if let Some(cached) = cached
+        && (cached.measured_again || cached.first_measured_on_pass == pass)
+    {
+        return cached.floors;
+    }
+    let floors = MetadataColumnFloors::measure(ui, entries);
+    let measured = MeasuredColumnFloors {
+        measured_for,
+        floors,
+        first_measured_on_pass: cached.map_or(pass, |cached| cached.first_measured_on_pass),
+        measured_again: cached.is_some(),
+    };
+    ui.data_mut(|d| d.insert_temp(id, measured));
+    floors
+}
+
+/// The floors the cache holds, what they were measured from, and the pass the
+/// first measurement of them ran in.
+///
+/// The floors are measured a second time, in the pass after the first
+/// measurement. epaint reports a glyph it lays out for the first time from the
+/// font's own advance, and the pixel-snapped width the cell draws with from the
+/// next pass on, which are 0.375px apart on the delete icon at the default
+/// scale.
+#[derive(Clone, Copy)]
+struct MeasuredColumnFloors {
+    measured_for: FloorsMeasuredFor,
+    floors: MetadataColumnFloors,
+    first_measured_on_pass: u64,
+    measured_again: bool,
+}
+
+/// What [`MetadataColumnFloors`] were measured from. A change to either leaves
+/// the measured widths stale.
+#[derive(Clone, Copy, PartialEq)]
+struct FloorsMeasuredFor {
+    entries_revision: u64,
+    pixels_per_point_bits: u32,
+}
+
+/// The width the action column reserves: the widest cell it can hold, which is
+/// the shelf's closing line with "Unshelve all" beside the delete icon.
+fn action_column_width(ui: &egui::Ui) -> f32 {
+    let between_the_two_controls = ui.spacing().item_spacing.x;
+    let recording_row = buttons::button_width(ui, OPEN_RECORDING_LABEL)
+        + between_the_two_controls
+        + buttons::button_width(ui, DELETE_RECORDING_LABEL);
+    let shelf_closing_line = buttons::button_width(ui, UNSHELVE_ALL_LABEL)
+        + between_the_two_controls
+        + FramelessIconButton::new(ICON_TRASH).width(ui);
+    recording_row.max(shelf_closing_line)
+}
+
+/// The width the Points column needs for `entry`: its own nav-point count with
+/// the shelved-track note beside it, or the widest count a shelf line under it
+/// states, whichever is wider.
+pub(super) fn points_cell_width(ui: &egui::Ui, entry: &RecordingEntry) -> f32 {
+    let (count, shelved_note) = points_cell_texts(entry);
+    let recording_row = label_width(ui, &count)
+        + shelved_note.map_or(0.0, |note| {
+            ui.spacing().item_spacing.x + label_width(ui, &note)
+        });
+    widest_counts_a_shelf_line_states(entry.meta.nav_point_count)
+        .map(|count| label_width(ui, &gt_store::format_count_suffix(count)))
+        .fold(recording_row, f32::max)
+}
+
+/// The counts whose formatted form can be the widest a shelf line under a
+/// recording of `nav_points` states.
+///
+/// A shelved track spans at most its recording's own points, and
+/// [`gt_store::format_count_suffix`] does not widen with the count: 999_900
+/// gives "999.9k", where the 1_000_000 above it gives "1m". Each band the
+/// counts reach contributes the highest count in it and the count a tenth of a
+/// step below, which is the one written with a decimal.
+fn widest_counts_a_shelf_line_states(nav_points: u64) -> impl Iterator<Item = u64> {
+    COUNT_FORM_BANDS
+        .into_iter()
+        .filter(move |band| nav_points >= band.first)
+        .flat_map(move |CountFormBand { first, past_last }| {
+            let highest = nav_points.min(past_last.saturating_sub(1));
+            [highest, highest.saturating_sub(first / 10)]
+        })
+}
+
+/// A run of counts [`gt_store::format_count_suffix`] writes in one form.
+#[derive(Clone, Copy)]
+struct CountFormBand {
+    first: u64,
+    past_last: u64,
+}
+
+/// The three forms [`gt_store::format_count_suffix`] writes: plain digits under
+/// a thousand, thousands under a million, millions above it.
+const COUNT_FORM_BANDS: [CountFormBand; 3] = [
+    CountFormBand {
+        first: 0,
+        past_last: 1_000,
+    },
+    CountFormBand {
+        first: 1_000,
+        past_last: 1_000_000,
+    },
+    CountFormBand {
+        first: 1_000_000,
+        past_last: u64::MAX,
+    },
+];
+
+fn label_width(ui: &egui::Ui, text: &str) -> f32 {
+    labels::text_width(ui, text, egui::TextStyle::Body)
+}
+
+/// `width` rounded up to a whole pixel.
+fn whole_pixels(ui: &egui::Ui, width: f32) -> f32 {
+    let pixels_per_point = ui.pixels_per_point();
+    (width * pixels_per_point).ceil() / pixels_per_point
 }
 
 /// One line of the History listing: a stored recording, or a line of the shelf
@@ -341,9 +547,6 @@ fn render_shelf_row(
         let ShelfRow::EveryShelvedTrack { .. } = shelf_row else {
             return;
         };
-        // This button has no frame: the closing line's two controls have to
-        // fit inside the width the recording row's own Open and Delete already
-        // claim.
         let delete = FramelessIconButton::new(
             RichText::new(ICON_TRASH).color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
         )
@@ -363,6 +566,10 @@ fn render_shelf_row(
         }
     });
 }
+
+pub(super) const OPEN_RECORDING_LABEL: &str = "Open";
+
+const DELETE_RECORDING_LABEL: &str = "Delete";
 
 pub(super) const UNSHELVE_LABEL: &str = "Unshelve";
 
@@ -424,6 +631,12 @@ pub(super) struct HistoryTable<'a> {
     pub max_listing_height: f32,
     /// The rows the filters left, in the order the sort put them.
     pub visible: &'a [&'a RecordingEntry],
+    /// Every stored recording, whether the filters left it in `visible` or not.
+    /// Filtering moves no column: the floors are measured from all of them.
+    pub entries: &'a [RecordingEntry],
+    /// Bumped by [`super::HistoryWindow::set_entries`], which is what makes the
+    /// measured column widths stale.
+    pub entries_revision: u64,
     /// The recordings already in the window, whose rows cannot be opened
     /// again.
     pub loaded_metas: &'a [gt_store::RecordingMeta],
@@ -445,12 +658,6 @@ pub(super) struct HistoryTable<'a> {
 /// content width first. Identity reaches this floor in a window too narrow for
 /// them, and the listing then scrolls sideways.
 const IDENTITY_MIN_WIDTH: f32 = 64.0;
-
-/// Identity's width on the very first frame, before the metadata columns have
-/// been measured (see [`history_table`]). From then on it fills the leftover
-/// width. Kept above [`IDENTITY_MIN_WIDTH`] so this bootstrap value is already
-/// a readable width.
-const IDENTITY_DEFAULT_WIDTH: f32 = 280.0;
 
 fn render_row(
     row: &mut TableRow<'_, '_>,
@@ -484,12 +691,10 @@ fn render_row(
     });
 
     breakdown_cell(row, entry, SortColumn::Points, |ui| {
-        ui.label(gt_store::format_count_suffix(entry.meta.nav_point_count));
-        if entry.shelved_tracks > 0 {
-            ui.weak(format!(
-                "({}/{} shelved)",
-                entry.shelved_tracks, entry.total_tracks
-            ));
+        let (count, shelved_note) = points_cell_texts(entry);
+        ui.label(count);
+        if let Some(note) = shelved_note {
+            ui.weak(note);
         }
     });
 
@@ -502,14 +707,17 @@ fn render_row(
     });
 
     row.col(|ui| {
-        let open = ui.add_enabled(!already_loaded, Button::new("Open").small());
+        let open = ui.add_enabled(!already_loaded, Button::new(OPEN_RECORDING_LABEL).small());
         if already_loaded {
             open.on_hover_text("Already loaded");
         } else if open.clicked() {
             worker.open(entry.db_ref.clone());
         }
         if ui
-            .add_enabled(write_access.allows_writing(), Button::new("Delete").small())
+            .add_enabled(
+                write_access.allows_writing(),
+                Button::new(DELETE_RECORDING_LABEL).small(),
+            )
             .on_hover_text("Permanently delete this recording from history")
             .on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER)
             .clicked()
@@ -523,11 +731,10 @@ fn render_row(
 /// the menu listing them by name with an action that loads one. A recording
 /// storing no log shows an empty cell.
 fn attached_logs_cell(ui: &mut egui::Ui, entry: &RecordingEntry, worker: &HistoryWorker) {
-    let count = entry.log_attachments.len();
-    if count == 0 {
+    let Some(label) = attached_logs_label(entry) else {
         return;
-    }
-    ui.menu_button(format!("{ICON_PAPERCLIP} {count}"), |ui| {
+    };
+    ui.menu_button(label, |ui| {
         for listed in &entry.log_attachments {
             ui.horizontal(|ui| {
                 let name = listed.attachment.name.as_str();
@@ -551,6 +758,22 @@ fn attached_logs_cell(ui: &mut egui::Ui, entry: &RecordingEntry, worker: &Histor
     })
     .response
     .on_hover_text(ATTACHED_LOGS_HOVER);
+}
+
+/// What the Points cell of a recording row states: the recording's nav-point
+/// count, and the note of how many of its tracks are shelved for a recording
+/// that has one.
+fn points_cell_texts(entry: &RecordingEntry) -> (String, Option<String>) {
+    let count = gt_store::format_count_suffix(entry.meta.nav_point_count);
+    let shelved_note = (entry.shelved_tracks > 0)
+        .then(|| format!("({}/{} shelved)", entry.shelved_tracks, entry.total_tracks));
+    (count, shelved_note)
+}
+
+/// The Logs cell's label, and [`None`] for a recording storing no log.
+fn attached_logs_label(entry: &RecordingEntry) -> Option<String> {
+    let count = entry.log_attachments.len();
+    (count > 0).then(|| format!("{ICON_PAPERCLIP} {count}"))
 }
 
 pub(in crate::app) const OPEN_LOG_LABEL: &str = "Open log";

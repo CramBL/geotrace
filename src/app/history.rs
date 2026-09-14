@@ -3,14 +3,13 @@ use std::time::Instant;
 
 use chrono::NaiveDate;
 use egui::{Button, DragValue, Label, RichText, ScrollArea, TextEdit, Window};
-use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
-use egui_phosphor::regular::CARET_UP as ICON_CARET_UP;
 use egui_phosphor::regular::X as ICON_X;
 use gt_pending_writes::WriteAccess;
 use gt_store::{
     DatabaseRef, DbError, NavPointTimeRange, PruneMode, RecordingEntry, RecordingMeta, TrackRange,
 };
 use gt_types::TravelMode;
+use gt_ui_theme::buttons::SortCaret;
 use gt_ui_theme::labels::LabelWithHover;
 use strum::{EnumCount, EnumIter};
 
@@ -370,10 +369,10 @@ impl SortDirection {
 
     /// The caret drawn beside the active column's header, pointing the way the
     /// values grow down the list.
-    fn caret(self) -> &'static str {
+    fn caret(self) -> SortCaret {
         match self {
-            Self::Ascending => ICON_CARET_UP,
-            Self::Descending => ICON_CARET_DOWN,
+            Self::Ascending => SortCaret::Ascending,
+            Self::Descending => SortCaret::Descending,
         }
     }
 }
@@ -474,6 +473,9 @@ pub struct HistoryWindow {
     /// known only once they are drawn. `None` before the first of those
     /// frames.
     footer_height_last_frame: Option<f32>,
+    /// Counts the recording lists that have arrived. The listing's measured
+    /// column widths hold until it changes.
+    entries_revision: u64,
 }
 
 /// What the app hands the History window on the frame it draws.
@@ -541,6 +543,7 @@ impl HistoryWindow {
             shelf: None,
             sort: HistorySort::default(),
             footer_height_last_frame: None,
+            entries_revision: 0,
         }
     }
 
@@ -623,6 +626,7 @@ impl HistoryWindow {
             self.shelf = None;
         }
         self.entries = Some(entries);
+        self.entries_revision = self.entries_revision.wrapping_add(1);
         self.list_pending = false;
         self.error = None;
     }
@@ -844,6 +848,8 @@ impl HistoryWindow {
                             table::HistoryTable {
                                 max_listing_height,
                                 visible: &visible,
+                                entries,
+                                entries_revision: self.entries_revision,
                                 loaded_metas,
                                 worker,
                                 rename: &mut rename,

@@ -132,3 +132,12 @@ impl CountLine {
         self.job
     }
 }
+
+/// The width `text` lays out to on one line in `style`, for a caller reserving
+/// room for text it is not drawing here.
+pub fn text_width(ui: &egui::Ui, text: impl Into<WidgetText>, style: TextStyle) -> f32 {
+    text.into()
+        .into_galley(ui, Some(TextWrapMode::Extend), f32::INFINITY, style)
+        .size()
+        .x
+}

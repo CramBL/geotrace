@@ -20,13 +20,15 @@ use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
 use egui_phosphor::regular::TRASH as ICON_TRASH;
 use gt_store::{ChannelSummary, TrackRange, TrackState};
 use gt_ui_theme::EM_DASH;
+use gt_ui_theme::buttons::SortCaret;
+use gt_ui_theme::labels;
 
 use super::delete_shelved_prompt::{DELETE_SHELVED_TRACKS_LABEL, DELETE_SHELVED_WINDOW_TITLE};
 use super::table::{self, MAX_HOVER_CHANNELS, OPEN_LOG_LABEL, UNSHELVE_ALL_LABEL, UNSHELVE_LABEL};
 use super::{
     DEFAULT_WINDOW_HEIGHT_PX, DEFAULT_WINDOW_WIDTH_PX, DatabaseRef, HistorySort, HistoryWindow,
-    HistoryWorker, ICON_CARET_DOWN, ICON_CARET_UP, NavPointTimeRange, PRUNE_WINDOW_TITLE,
-    RecordingEntry, SortColumn, SortDirection,
+    HistoryWorker, NavPointTimeRange, PRUNE_WINDOW_TITLE, RecordingEntry, SortColumn,
+    SortDirection,
 };
 use crate::app::test_util::listing;
 use crate::app::test_util::listing::{ShelvedTracks, TotalTracks};
@@ -489,8 +491,8 @@ fn one_live_a_tombstone_and_two_shelved_tracks() -> Vec<TrackRange> {
 /// footer.
 const SHELF_WINDOW_GROWN_BY: egui::Vec2 = egui::vec2(0.0, 140.0);
 
-/// Open the shelf of the only listed recording and wait for its stored track
-/// table to arrive.
+/// Drag the window tall enough for the shelf's lines and the footer, then open
+/// the shelf of the only listed recording.
 fn open_the_shelf(h: &mut TestHarness<HistoryHarness>) {
     assert!(
         h.inner
@@ -500,6 +502,17 @@ fn open_the_shelf(h: &mut TestHarness<HistoryHarness>) {
     let window = h.inner.window_rect("History").expect("the window is shown");
     h.inner
         .press_drag_release(window.max, SHELF_WINDOW_GROWN_BY, 8);
+    open_the_shelf_at_the_window_size_it_is_shown_at(h);
+}
+
+/// Open the shelf of the only listed recording and wait for its stored track
+/// table to arrive.
+fn open_the_shelf_at_the_window_size_it_is_shown_at(h: &mut TestHarness<HistoryHarness>) {
+    assert!(
+        h.inner
+            .step_until(|h| h.query_by_label_contains("ride.gtd").is_some()),
+        "the recording should appear in the History list"
+    );
     // The caret's column position moves for a few frames after the list
     // arrives, until the table settles.
     for _ in 0..4 {
@@ -692,6 +705,509 @@ fn deleting_the_shelved_tracks_from_the_shelf_leaves_the_recording_its_live_trac
         "the shelf should close once the recording has no shelved track to list"
     );
 }
+
+/// A stored track table of one live track followed by `shelved` shelved
+/// tracks.
+fn one_live_track_and_shelved_tracks(shelved: usize) -> Vec<TrackRange> {
+    let mut tracks = vec![TrackRange {
+        start: 0,
+        end: NAV_POINTS_PER_TRACK,
+        state: TrackState::Live,
+    }];
+    for _ in 0..shelved {
+        let start = tracks.last().map_or(0, |track| track.end);
+        tracks.push(TrackRange {
+            start,
+            end: start.saturating_add(NAV_POINTS_PER_TRACK),
+            state: TrackState::Shelved,
+        });
+    }
+    tracks
+}
+
+/// Nav points a track of [`one_live_track_and_shelved_tracks`] spans, few
+/// enough that the whole table fits the gold recording's fixes.
+const NAV_POINTS_PER_TRACK: u64 = 5;
+
+/// Shelved tracks of a recording whose shelf is longer than the window it
+/// opens in: the closing line starts below the fold.
+const SHELVED_TRACKS_PAST_THE_FOLD: usize = 40;
+
+const LISTING_SCROLL_STEP_PX: f32 = 200.0;
+
+/// Wheel steps the scroll to the shelf's closing line takes before it gives
+/// up.
+const LISTING_SCROLL_STEPS: usize = 30;
+
+/// Frames each wheel step runs for: the smooth scroll comes to rest, and the
+/// column widths settle on the rows it left in view.
+const LISTING_SETTLE_FRAMES: usize = 8;
+
+/// The action column reserves the width of the shelf's closing line, which
+/// holds its widest controls. Every column keeps its width as the user scrolls
+/// down to that line, and the window keeps the size it had.
+#[test]
+fn scrolling_to_the_closing_line_of_the_shelf_keeps_every_column_width() {
+    let harness = history_harness_with_stored_tracks(&one_live_track_and_shelved_tracks(
+        SHELVED_TRACKS_PAST_THE_FOLD,
+    ));
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(pump_history, harness);
+    open_the_shelf_at_the_window_size_it_is_shown_at(&mut h);
+    for _ in 0..6 {
+        h.run();
+    }
+    let over_the_listing = h
+        .inner
+        .nth_matching(By::new().label(UNSHELVE_LABEL), 0)
+        .rect()
+        .center();
+
+    // Scroll into the shelf, where the rows in view are shelved tracks alone.
+    h.inner.scroll_wheel_at(
+        over_the_listing,
+        -LISTING_SCROLL_STEP_PX,
+        LISTING_SETTLE_FRAMES,
+    );
+    assert!(
+        h.inner.query_by_label_contains("ride.gtd").is_none(),
+        "the recording's own row should have scrolled out of view"
+    );
+    assert!(
+        h.inner.query_by_label(UNSHELVE_ALL_LABEL).is_none(),
+        "the shelf's closing line should still be below the fold"
+    );
+    let window = window_rect(&h);
+    let action_column = action_column_left(&h);
+
+    for _ in 0..LISTING_SCROLL_STEPS {
+        if h.inner.query_by_label(UNSHELVE_ALL_LABEL).is_some() {
+            break;
+        }
+        h.inner.scroll_wheel_at(
+            over_the_listing,
+            -LISTING_SCROLL_STEP_PX,
+            LISTING_SETTLE_FRAMES,
+        );
+    }
+    h.inner.get_by_label(UNSHELVE_ALL_LABEL);
+
+    let action_column_with_the_closing_line = action_column_left(&h);
+    assert!(
+        (action_column_with_the_closing_line - action_column).abs() < 1.0,
+        "the action column starts at {action_column_with_the_closing_line:.1}px with the \
+         shelf's closing line in view, where it started at {action_column:.1}px with the \
+         line below the fold",
+    );
+    let window_with_the_closing_line = window_rect(&h);
+    assert!(
+        (window_with_the_closing_line.width() - window.width()).abs() < 1.0
+            && (window_with_the_closing_line.height() - window.height()).abs() < 1.0,
+        "the History window is {:.1}x{:.1}px with the shelf's closing line in view, where it \
+         was {:.1}x{:.1}px with the line below the fold",
+        window_with_the_closing_line.width(),
+        window_with_the_closing_line.height(),
+        window.width(),
+        window.height(),
+    );
+}
+
+/// The figures the listing's recordings take, laid down again and again until
+/// the listing is longer than the window shows: a long recording, a two-fix
+/// one, and a middling one with logs stored beside it. A column sized on the
+/// rows in view alone changes width as the listing scrolls, because every
+/// column draws a different width for each of the three.
+const LISTED_FIGURES: [ListedFigures; 3] = [
+    ListedFigures {
+        nav_points: 200,
+        stored_logs: 0,
+    },
+    ListedFigures {
+        nav_points: 2,
+        stored_logs: 0,
+    },
+    ListedFigures {
+        nav_points: 60,
+        stored_logs: 2,
+    },
+];
+
+/// What one recording of [`LISTED_FIGURES`] holds.
+struct ListedFigures {
+    nav_points: usize,
+    stored_logs: usize,
+}
+
+/// Recordings [`history_harness_with_a_shelf_over_more_recordings`] stores. The
+/// window settles at the height it opens at and scrolls its rows: the listing is
+/// longer than that.
+const LISTED_RECORDING_COUNT: usize = 12;
+
+/// Shelved tracks the first listed recording holds. The listing scrolls through
+/// lines of the shelf alone before the next recording's row comes back into
+/// view: the shelf is longer than the window shows at once.
+const SHELVED_TRACKS_OVER_A_WINDOW: usize = 25;
+
+/// The identity of the recording listed at `index`, counting from the top of
+/// the listing.
+fn listed_identity(index: usize) -> String {
+    format!("ride{index:02}.gtd")
+}
+
+/// Where the recording listed at `index` starts, a day earlier for each row
+/// down the listing, which the newest-first sort puts them in.
+fn listed_start_secs(index: usize) -> i64 {
+    const SECONDS_PER_DAY: i64 = 86_400;
+    1_700_000_000 - i64::try_from(index).unwrap_or(0) * SECONDS_PER_DAY
+}
+
+/// A harness backed by a real database holding [`LISTED_RECORDING_COUNT`]
+/// recordings, the first of them with [`SHELVED_TRACKS_OVER_A_WINDOW`] shelved
+/// tracks.
+fn history_harness_with_a_shelf_over_more_recordings() -> HistoryHarness {
+    use gt_store::{LogAttachments as _, LogToAttach};
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut db =
+        gt_store::Recordings::open_or_create(&dir.path().join("history.h5")).expect("open db");
+    let mut stored = Vec::new();
+    for (index, figures) in LISTED_FIGURES
+        .iter()
+        .cycle()
+        .take(LISTED_RECORDING_COUNT)
+        .enumerate()
+    {
+        let identity = listed_identity(index);
+        let bytes = recordings::bytes_starting_at(listed_start_secs(index), figures.nav_points);
+        let meta = gt_store::extract_meta(&bytes).expect("meta");
+        let whole_file = [TrackRange {
+            start: 0,
+            end: meta.nav_point_count,
+            state: TrackState::Live,
+        }];
+        let db_ref = db
+            .insert(
+                &identity,
+                &meta,
+                &whole_file,
+                recordings::segmentation(),
+                &bytes,
+            )
+            .expect("insert recording");
+        for log in 0..figures.stored_logs {
+            let name = format!("{identity}-log{log}");
+            db.attach_log(
+                &db_ref,
+                &LogToAttach {
+                    name: &name,
+                    text: &stored_log_text(&name),
+                    filters: Vec::new(),
+                },
+            )
+            .expect("attach a log to the recording");
+        }
+        stored.push(db_ref);
+    }
+    let shelf_recording = stored.first().expect("the first recording is stored");
+    db.set_tracks(
+        shelf_recording,
+        &one_live_track_and_shelved_tracks(SHELVED_TRACKS_OVER_A_WINDOW),
+        recordings::segmentation(),
+    )
+    .expect("write the stored track states");
+
+    let worker = HistoryWorker::spawn(
+        RecordingsHandle::Owner(db),
+        egui::Context::default(),
+        PendingWrites::default(),
+    );
+    let mut window = HistoryWindow::new();
+    window.open = true;
+    HistoryHarness {
+        window,
+        now: Instant::now(),
+        worker,
+        storage: crate::settings::StorageSettings {
+            auto_prune_max_bytes: 0,
+            ..crate::settings::StorageSettings::default()
+        },
+        databases_opening: false,
+        write_access: WriteAccess::Owner,
+        opened_log: None,
+        _dir: dir,
+    }
+}
+
+/// Where the listing's columns and the History window itself stood once the
+/// listing settled.
+struct SettledListing {
+    /// Each column's title and the left edge it starts at, the action column
+    /// last under the title the failure message names it by.
+    column_lefts: Vec<(&'static str, f32)>,
+    window: egui::Rect,
+}
+
+impl SettledListing {
+    fn read(h: &TestHarness<HistoryHarness>) -> Self {
+        Self {
+            column_lefts: column_lefts(h),
+            window: window_rect(h),
+        }
+    }
+
+    /// Assert the listing stands where it settled, naming `moment` in what a
+    /// failure reports.
+    fn assert_the_listing_stands_where_it_settled(
+        &self,
+        h: &TestHarness<HistoryHarness>,
+        moment: &str,
+    ) {
+        self.assert_the_columns_stand_where_they_settled(h, moment);
+        let window = window_rect(h);
+        assert!(
+            (window.width() - self.window.width()).abs() < 1.0
+                && (window.height() - self.window.height()).abs() < 1.0,
+            "the History window is {:.1}x{:.1}px {moment}, where it settled at {:.1}x{:.1}px",
+            window.width(),
+            window.height(),
+            self.window.width(),
+            self.window.height(),
+        );
+    }
+
+    /// Assert every column starts where it settled, naming `moment` in what a
+    /// failure reports.
+    fn assert_the_columns_stand_where_they_settled(
+        &self,
+        h: &TestHarness<HistoryHarness>,
+        moment: &str,
+    ) {
+        for ((column, settled), (_, now)) in self.column_lefts.iter().zip(column_lefts(h)) {
+            assert!(
+                (now - settled).abs() < 1.0,
+                "the {column} column starts at {now:.1}px {moment}, where it settled at \
+                 {settled:.1}px",
+            );
+        }
+    }
+}
+
+/// Where every column of the listing starts: the sortable columns from their
+/// header cells, and the action column from a row's own controls.
+fn column_lefts(h: &TestHarness<HistoryHarness>) -> Vec<(&'static str, f32)> {
+    SortColumn::iter()
+        .map(|column| (column.title(), header_node(h, column.title()).rect().left()))
+        .chain(std::iter::once((ACTION_COLUMN, action_column_left(h))))
+        .collect()
+}
+
+/// What a failure calls the column of a row's actions, which has no header of
+/// its own.
+const ACTION_COLUMN: &str = "action";
+
+/// Where the action column starts. A cell lays its controls out from its left
+/// edge. The first Open or Unshelve button on screen starts the column.
+fn action_column_left(h: &TestHarness<HistoryHarness>) -> f32 {
+    [table::OPEN_RECORDING_LABEL, UNSHELVE_LABEL]
+        .into_iter()
+        .filter_map(|label| h.inner.query_all_by_label(label).next())
+        .map(|button| button.rect().left())
+        .next()
+        .expect("a row of the listing draws its actions")
+}
+
+/// Scroll the listing one wheel step at a time until `reached` holds, and
+/// report whether it did within [`LISTING_SCROLL_STEPS`].
+#[must_use]
+fn scroll_the_listing_until(
+    h: &mut TestHarness<HistoryHarness>,
+    reached: impl Fn(&TestHarness<HistoryHarness>) -> bool,
+) -> bool {
+    let over_the_listing = h
+        .inner
+        .nth_matching(By::new().label(UNSHELVE_LABEL), 0)
+        .rect()
+        .center();
+    for _ in 0..LISTING_SCROLL_STEPS {
+        if reached(h) {
+            return true;
+        }
+        h.inner.scroll_wheel_at(
+            over_the_listing,
+            -LISTING_SCROLL_STEP_PX,
+            LISTING_SETTLE_FRAMES,
+        );
+    }
+    reached(h)
+}
+
+/// Every column of the listing keeps the width the stored recordings need,
+/// whichever rows the user has scrolled into view and whichever column the list
+/// is ordered by: opening a shelf, scrolling through lines of that shelf alone,
+/// scrolling on to the next recording, and ordering the list by another column
+/// all leave every column edge and the window where they settled.
+#[test]
+fn every_column_keeps_its_width_through_the_shelf_the_scroll_and_the_sort() {
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(
+            pump_history,
+            history_harness_with_a_shelf_over_more_recordings(),
+        );
+    let first_listed = listed_identity(0);
+    assert!(
+        h.inner
+            .step_until(|h| h.query_by_label_contains(&first_listed).is_some()),
+        "the recordings should appear in the History list"
+    );
+    for _ in 0..6 {
+        h.run();
+    }
+    let settled = SettledListing::read(&h);
+
+    // The listing's first row is the recording with the shelved tracks.
+    h.inner
+        .topmost_matching(By::new().label(ICON_CARET_RIGHT))
+        .click();
+    assert!(
+        h.inner
+            .step_until(|h| h.query_all_by_label(UNSHELVE_LABEL).next().is_some()),
+        "the shelf should list the recording's shelved tracks"
+    );
+    for _ in 0..4 {
+        h.run();
+    }
+    settled.assert_the_listing_stands_where_it_settled(&h, "with the shelf open");
+
+    assert!(
+        scroll_the_listing_until(&mut h, |h| {
+            h.inner.query_by_label_contains(".gtd").is_none()
+        }),
+        "the listing should scroll to lines of the shelf alone"
+    );
+    settled.assert_the_listing_stands_where_it_settled(&h, "with the shelf's lines alone in view");
+
+    let listed_under_the_shelf = listed_identity(1);
+    assert!(
+        scroll_the_listing_until(&mut h, |h| {
+            h.inner
+                .query_by_label_contains(&listed_under_the_shelf)
+                .is_some()
+        }),
+        "the listing should scroll past the shelf to the recordings under it"
+    );
+    settled.assert_the_listing_stands_where_it_settled(
+        &h,
+        "with the next recording rows back in view",
+    );
+
+    // The sort moves from Date, which the list opens ordered by, to Duration,
+    // and the second click reverses it. Duration's caret is what a column sized
+    // on its header alone would grow by: its header is wider than the durations
+    // under it.
+    click_header(&h, SortColumn::Duration.title());
+    for _ in 0..4 {
+        h.run();
+    }
+    settled.assert_the_listing_stands_where_it_settled(&h, "with the list ordered by Duration");
+
+    click_header(&h, SortColumn::Duration.title());
+    for _ in 0..4 {
+        h.run();
+    }
+    settled
+        .assert_the_listing_stands_where_it_settled(&h, "with the order of Duration turned around");
+}
+
+/// The columns hold what the database holds, not what the filters left: typing
+/// an identity filter that leaves one recording moves no column.
+///
+/// The window is not part of this: it follows the height of what it lists, and
+/// the filtered listing is shorter.
+#[test]
+fn every_column_keeps_its_width_while_a_filter_narrows_the_listing() {
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(
+            pump_history,
+            history_harness_with_a_shelf_over_more_recordings(),
+        );
+    let narrowest_listed = listed_identity(1);
+    assert!(
+        h.inner
+            .step_until(|h| h.query_by_label_contains(&narrowest_listed).is_some()),
+        "the recordings should appear in the History list"
+    );
+    for _ in 0..6 {
+        h.run();
+    }
+    let settled = SettledListing::read(&h);
+
+    // The identity filter is the listing's first text field. The recording it
+    // leaves is the one with the narrowest cells: two nav points, no log.
+    let filter_field = h
+        .inner
+        .get_all_by_role(egui::accesskit::Role::TextInput)
+        .next()
+        .expect("the identity filter field");
+    filter_field.focus();
+    filter_field.type_text(&narrowest_listed);
+    for _ in 0..6 {
+        h.run();
+    }
+
+    assert!(
+        h.inner
+            .query_by_label_contains(&listed_identity(0))
+            .is_none(),
+        "the filter should leave the listing one recording"
+    );
+    settled.assert_the_columns_stand_where_they_settled(&h, "with a filter on the listing");
+}
+
+/// The Points column holds every count a shelf line under a recording states.
+///
+/// The column cannot be measured from a recording's own count alone, because
+/// [`gt_store::format_count_suffix`] does not widen with the count: a track of
+/// 999_900 points states "999.9k" under a recording of a million, which states
+/// "1m".
+#[rstest::rstest]
+#[case(999)]
+#[case(1_000)]
+#[case(999_999)]
+#[case(1_000_000)]
+#[case(12_345_678)]
+fn the_points_column_holds_every_count_a_shelf_line_states(#[case] nav_points: u64) {
+    let mut entry = listing::entry_with_identity("auto:ride.gtd");
+    entry.meta.nav_point_count = nav_points;
+    let mut h = TestHarness::builder().ui(move |ui| {
+        let floor = table::points_cell_width(ui, &entry);
+        for count in scanned_counts_up_to(nav_points) {
+            let text = gt_store::format_count_suffix(count);
+            let width = labels::text_width(ui, text.as_str(), egui::TextStyle::Body);
+            assert!(
+                width <= floor,
+                "a shelf line stating {text:?} is {width:.1}px wide, past the {floor:.1}px the \
+                 Points column of a recording of {nav_points} points holds",
+            );
+        }
+    });
+    // The harness installs the app's fonts after the frame it builds on: this
+    // one measures in them.
+    h.run();
+}
+
+/// Counts spread from zero to `n`, close enough together to land in every form
+/// [`gt_store::format_count_suffix`] writes on the way.
+fn scanned_counts_up_to(n: u64) -> impl Iterator<Item = u64> {
+    let step = (n / SCANNED_COUNTS_PER_RECORDING).max(1);
+    (0..=n).step_by(usize::try_from(step).unwrap_or(usize::MAX))
+}
+
+/// Counts [`scanned_counts_up_to`] takes from a recording's range. The forms
+/// the formatter writes hold over runs far longer than the step this leaves.
+const SCANNED_COUNTS_PER_RECORDING: u64 = 2_000;
 
 /// The shelf open on a recording: one line per shelved track with its number
 /// and nav-point count, and the closing line that unshelves all of them.
@@ -1309,14 +1825,17 @@ fn only_the_active_column_shows_a_direction_caret() {
     }
 
     // Default sort is Date descending: exactly one caret, pointing down.
-    assert_eq!(h.inner.query_all_by_label(ICON_CARET_DOWN).count(), 1);
-    assert_eq!(h.inner.query_all_by_label(ICON_CARET_UP).count(), 0);
+    let carets = |h: &TestHarness<HistoryHarness>, caret: SortCaret| {
+        h.inner.query_all_by_label(caret.glyph()).count()
+    };
+    assert_eq!(carets(&h, SortCaret::Descending), 1);
+    assert_eq!(carets(&h, SortCaret::Ascending), 0);
 
     // Reversing it flips the caret without adding a second one.
     click_header(&h, "Date");
     h.run();
-    assert_eq!(h.inner.query_all_by_label(ICON_CARET_DOWN).count(), 0);
-    assert_eq!(h.inner.query_all_by_label(ICON_CARET_UP).count(), 1);
+    assert_eq!(carets(&h, SortCaret::Descending), 0);
+    assert_eq!(carets(&h, SortCaret::Ascending), 1);
 }
 
 /// The recording ran, rebooted to a clock an hour behind and ran on: its
