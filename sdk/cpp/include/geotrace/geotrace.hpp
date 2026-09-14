@@ -996,6 +996,14 @@ struct NavFix {
     std::optional<double> eph_m = std::nullopt;
 };
 
+/**
+ * Whether @p snr_dbhz is the SNR some receiver firmware sends when it has no measurement:
+ * 99 dB-Hz, within the tolerance of `gtd_snr_is_no_data_sentinel()`.
+ */
+[[nodiscard]] inline bool snr_is_no_data_sentinel(float snr_dbhz) noexcept {
+    return gtd_snr_is_no_data_sentinel(snr_dbhz) != 0;
+}
+
 /** One satellite in a visibility report. */
 struct Satellite {
     Constellation constellation = Constellation::Gps;
@@ -1003,7 +1011,14 @@ struct Satellite {
     bool in_fix = false;
     std::optional<float> elevation_deg;
     std::optional<float> azimuth_deg;
+    // `std::nullopt` without a measurement. The builder writes a present value unchanged: pass
+    // `std::nullopt` for a reading for which `snr_is_no_data_sentinel()` returns true.
     std::optional<float> snr_dbhz;
+
+    /** Whether `snr_dbhz` holds a reading for which `snr_is_no_data_sentinel()` returns true. */
+    [[nodiscard]] bool snr_is_no_data_sentinel() const noexcept {
+        return snr_dbhz.has_value() && geotrace::snr_is_no_data_sentinel(*snr_dbhz);
+    }
 };
 
 /** A snapshot of satellite visibility at a point in time. */
@@ -1197,7 +1212,14 @@ struct SatelliteView {
     bool in_fix = false;
     std::optional<float> elevation_deg;
     std::optional<float> azimuth_deg;
+    // The reader returns a stored value unchanged, which includes a reading for which
+    // `snr_is_no_data_sentinel()` returns true.
     std::optional<float> snr_dbhz;
+
+    /** Whether `snr_dbhz` holds a reading for which `snr_is_no_data_sentinel()` returns true. */
+    [[nodiscard]] bool snr_is_no_data_sentinel() const noexcept {
+        return snr_dbhz.has_value() && geotrace::snr_is_no_data_sentinel(*snr_dbhz);
+    }
 };
 
 /**

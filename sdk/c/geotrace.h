@@ -350,7 +350,9 @@ typedef struct {
      */
     GtdOptF32 azimuth_deg;
     /**
-     * Signal-to-noise ratio in dB·Hz.
+     * Signal-to-noise ratio in dB·Hz, `GTD_NONE_F32` without a measurement. The builder writes a
+     * present value unchanged: pass `GTD_NONE_F32` for a reading for which
+     * `gtd_snr_is_no_data_sentinel()` returns 1.
      */
     GtdOptF32 snr_dbhz;
 } GtdSatellite;
@@ -627,7 +629,8 @@ typedef struct {
      */
     GtdOptF32 azimuth_deg;
     /**
-     * SNR in dB·Hz, if available.
+     * SNR in dB·Hz, if available. The reader returns a stored value unchanged, which includes a
+     * reading for which `gtd_snr_is_no_data_sentinel()` returns 1.
      */
     GtdOptF32 snr_dbhz;
 } GtdSatInfo;
@@ -1451,6 +1454,16 @@ void gtd_free_bytes(uint8_t *buffer, size_t length);
  * @param file Handle to destroy. No-op if NULL.
  */
 void gtd_nav_file_destroy(GtdNavFile *file);
+
+/**
+ * Whether @p snr_dbhz is the SNR some receiver firmware sends when it has no measurement:
+ * 99 dB·Hz, within the tolerance of the Rust SDK's `snr::is_no_data_sentinel`.
+ *
+ * @param snr_dbhz SNR in dB·Hz.
+ *
+ * @return 1 for such a reading, 0 for any other.
+ */
+uint8_t gtd_snr_is_no_data_sentinel(float snr_dbhz);
 
 /**
  * Construct a timestamp from whole seconds since the Unix epoch.

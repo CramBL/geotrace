@@ -59,6 +59,7 @@ from geotrace_sdk._geotrace_sdk import (
     marker_icon_from_name,
     mps_from_kmh,
     mps_from_knots,
+    snr_is_no_data_sentinel,
 )
 from geotrace_sdk.enums import Constellation, MarkerIcon, TravelMode
 from geotrace_sdk.event_kind import event_kind
@@ -100,4 +101,5 @@ __all__ = [
     "marker_icon_from_name",
     "mps_from_kmh",
     "mps_from_knots",
+    "snr_is_no_data_sentinel",
 ]

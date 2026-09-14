@@ -20,6 +20,7 @@ crate-type = ["cdylib"]
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 geotrace-sdk = { path = "../../rust/geotrace-sdk" }
+geotrace-sdk-units = { path = "../../rust/geotrace-sdk-units" }
 log = "0.4"
 # abi3-py312: one stable-ABI wheel (cp312-abi3) covers 3.12 and every later
 # CPython. `extension-module` is intentionally NOT enabled here. maturin turns

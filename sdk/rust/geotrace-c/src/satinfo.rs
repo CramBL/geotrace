@@ -16,6 +16,7 @@ pub struct GtdSatInfo {
     pub elevation_deg: GtdOptF32,
     /// Azimuth in degrees, if available.
     pub azimuth_deg: GtdOptF32,
-    /// SNR in dB·Hz, if available.
+    /// SNR in dB·Hz, if available. The reader returns a stored value unchanged, which includes a
+    /// reading for which `gtd_snr_is_no_data_sentinel()` returns 1.
     pub snr_dbhz: GtdOptF32,
 }
