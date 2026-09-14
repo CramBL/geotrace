@@ -84,10 +84,10 @@ fn load_meta(base_dir: &Path) -> Result<Meta, Box<dyn std::error::Error>> {
                 .maybe_device(Some(cols[1]))
                 .maybe_notes(Some(cols[2]))
                 .maybe_identity(Some(cols[3]))
-                .build());
+                .build()?);
         }
     }
-    Ok(Meta::builder().build())
+    Ok(Meta::builder().build()?)
 }
 
 fn load_event_styles(
@@ -424,7 +424,7 @@ fn load_events(
 fn verify_demo_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
     let file = geotrace_sdk::NavFile::open(path)?;
 
-    assert_eq!(file.meta().identity.as_deref(), Some("demo-trip-v1"));
+    assert_eq!(file.meta().identity(), Some("demo-trip-v1"));
     assert_eq!(file.markers().len(), 3);
     assert_eq!(file.event_markers().len(), 4);
     assert_eq!(file.event_marker_styles().len(), 4);

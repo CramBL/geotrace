@@ -38,7 +38,7 @@ impl<const ROW_BYTES: usize> FixedWidthString<ROW_BYTES> {
     /// is longer than [`Self::CONTENT_CAPACITY`].
     pub fn new(value: impl Into<String>) -> Result<Self, FixedWidthStringError> {
         let value = value.into();
-        if let Some(offset) = value.bytes().position(|byte| byte == 0) {
+        if let Some(offset) = first_nul_byte_offset(&value) {
             return Err(FixedWidthStringError::InteriorNul { value, offset });
         }
         if value.len() > Self::CONTENT_CAPACITY {
@@ -118,6 +118,11 @@ impl<const ROW_BYTES: usize> From<FixedWidthString<ROW_BYTES>> for String {
     fn from(value: FixedWidthString<ROW_BYTES>) -> Self {
         value.0
     }
+}
+
+/// The byte offset of the first nul byte in `value`, where a C reader ends the string.
+pub(crate) fn first_nul_byte_offset(value: &str) -> Option<usize> {
+    value.bytes().position(|byte| byte == 0)
 }
 
 /// Why a value cannot be held in a [`FixedWidthString`], or why a row does not

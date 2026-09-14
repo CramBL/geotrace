@@ -5,8 +5,10 @@ use geotrace_sdk_units::snr;
 use geotrace_sdk_units::{ChannelUnit, PhysicalQuantity};
 use strum::IntoEnumIterator as _;
 
-use crate::error::{ChannelError, Error, EventMarkerError, MARKER_LABEL_LOCATION};
-use crate::fixed_width_string::{AnnotationField, MarkerLabelField};
+use crate::error::{
+    ChannelError, Error, EventMarkerError, MARKER_LABEL_LOCATION, MetaField, MetaStringWithNul,
+};
+use crate::fixed_width_string::{self, AnnotationField, MarkerLabelField};
 use crate::provenance;
 use crate::{Angle, Velocity};
 
@@ -520,26 +522,50 @@ impl TravelMode {
 }
 
 /// Optional file-level metadata.
+///
+/// [`Meta::builder`] and the metadata setters of [`NavFileBuilder`](crate::NavFileBuilder) reject
+/// a value with a nul byte. [`NavFile::read`] keeps one from a file.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Meta {
-    pub title: Option<String>,
-    /// Sensor or device that produced the data.
-    pub device: Option<String>,
-    /// Free-text notes.
-    pub notes: Option<String>,
-    /// Stable grouping key used by the app's history database.
-    ///
-    /// When set, all recordings with the same identity string are stored under
-    /// the same group in the database and appear together in the History window.
-    pub identity: Option<String>,
-    /// Platform the recording was made on.
-    pub travel_mode: Option<TravelMode>,
+    pub(crate) title: Option<String>,
+    pub(crate) device: Option<String>,
+    pub(crate) notes: Option<String>,
+    pub(crate) identity: Option<String>,
+    pub(crate) travel_mode: Option<TravelMode>,
     pub(crate) sdk_version: Option<String>,
     pub(crate) sdk_git_commit: Option<String>,
     pub(crate) sdk_commit_time: Option<DateTime<Utc>>,
 }
 
 impl Meta {
+    /// The file title.
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
+
+    /// Sensor or device that produced the data.
+    pub fn device(&self) -> Option<&str> {
+        self.device.as_deref()
+    }
+
+    /// Free-text notes.
+    pub fn notes(&self) -> Option<&str> {
+        self.notes.as_deref()
+    }
+
+    /// Stable grouping key used by the app's history database.
+    ///
+    /// When set, all recordings with the same identity string are stored under
+    /// the same group in the database and appear together in the History window.
+    pub fn identity(&self) -> Option<&str> {
+        self.identity.as_deref()
+    }
+
+    /// Platform the recording was made on.
+    pub fn travel_mode(&self) -> Option<&TravelMode> {
+        self.travel_mode.as_ref()
+    }
+
     /// Version of the SDK build that produced the file.
     pub fn sdk_version(&self) -> Option<&str> {
         self.sdk_version.as_deref()
@@ -590,7 +616,8 @@ impl Meta {
 impl Meta {
     /// Build a new [`Meta`] object.
     ///
-    /// Empty or whitespace-only strings are automatically converted to `None`.
+    /// Empty or whitespace-only strings are automatically converted to `None`. Returns `Err` for
+    /// a value with a nul byte.
     #[builder(finish_fn = build)]
     pub fn new(
         #[builder(into)] title: Option<String>,
@@ -598,8 +625,23 @@ impl Meta {
         #[builder(into)] notes: Option<String>,
         #[builder(into)] identity: Option<String>,
         travel_mode: Option<TravelMode>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, MetaStringWithNul> {
+        let values = [
+            (MetaField::Title, title.as_deref()),
+            (MetaField::Device, device.as_deref()),
+            (MetaField::Notes, notes.as_deref()),
+            (MetaField::Identity, identity.as_deref()),
+            (
+                MetaField::TravelMode,
+                travel_mode.as_ref().map(TravelMode::name),
+            ),
+        ];
+        for (field, value) in values {
+            if let Some(value) = value {
+                field.reject_nul_byte(value)?;
+            }
+        }
+        Ok(Self {
             title: title.filter(|s| !s.trim().is_empty()),
             device: device.filter(|s| !s.trim().is_empty()),
             notes: notes.filter(|s| !s.trim().is_empty()),
@@ -608,7 +650,7 @@ impl Meta {
             sdk_version: None,
             sdk_git_commit: None,
             sdk_commit_time: None,
-        }
+        })
     }
 }
 
@@ -904,7 +946,8 @@ impl Channel {
     /// `values` is row-major: `times.len()` rows of one column (scalar) or
     /// `components.len()` columns (vector). Returns `Err` if the name or a
     /// component label is malformed, `values` is not `times.len() × columns`
-    /// long, or a wrap period is invalid or paired with a non-angular unit.
+    /// long, a wrap period is invalid or paired with a non-angular unit, or the description has a
+    /// nul byte.
     #[builder(finish_fn = build)]
     pub fn new(
         #[builder(into)] name: String,
@@ -921,6 +964,12 @@ impl Channel {
         values: Vec<f64>,
     ) -> Result<Self, ChannelError> {
         crate::error::validate_channel_name(&name)?;
+        if let Some(offset) = description
+            .as_deref()
+            .and_then(fixed_width_string::first_nul_byte_offset)
+        {
+            return Err(ChannelError::DescriptionWithNul { name, offset });
+        }
         if let Some(unit) = unit.as_ref().filter(|unit| !unit.is_writable()) {
             return Err(ChannelError::UnwritableUnit {
                 name,
@@ -1381,7 +1430,10 @@ mod tests {
         let lat = Angle::degrees(51.5);
         let lon = Angle::degrees(-0.1);
         NavFile {
-            meta: Meta::builder().title("A recording").build(),
+            meta: Meta::builder()
+                .title("A recording")
+                .build()
+                .expect("a title without a nul byte"),
             nav_points: vec![NavPoint {
                 fix: NavFix::builder()
                     .time(NavFixTime::Receiver(time))

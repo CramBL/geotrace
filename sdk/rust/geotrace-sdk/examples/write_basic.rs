@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let meta = Meta::builder()
         .title("Quick tour")
         .device("Example GPS v1.0")
-        .build();
+        .build()?;
     let mut recorder = NavFileBuilder::new().with_meta(meta).open();
 
     recorder.add(

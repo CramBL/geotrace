@@ -3,7 +3,8 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 
 use crate::error::{
-    self, BuildError, Error, EventMarkerError, FieldLocation, UnplacedRecordCounts,
+    self, BuildError, Error, EventMarkerError, FieldLocation, MetaField, MetaStringWithNul,
+    UnplacedRecordCounts,
 };
 use crate::time_types::{GpsTime, SysTime};
 use crate::types::{
@@ -162,13 +163,14 @@ impl InternalPoint {
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut recorder = NavFileBuilder::new()
-///     .with_meta(Meta::builder().title("My Track").build())
+///     .with_meta(Meta::builder().title("My Track").build()?)
 ///     .open();
 ///
 /// // Add data to `recorder`, then call `recorder.finish()`.
 /// # Ok(())
 /// # }
 /// ```
+#[derive(Clone)]
 pub struct NavFileBuilder {
     meta: Option<Meta>,
     satellite_window: Duration,
@@ -196,24 +198,33 @@ impl NavFileBuilder {
     }
 
     /// Set the file title.
-    pub fn with_title(mut self, title: impl Into<String>) -> Self {
-        let m = self.meta.get_or_insert_with(Meta::default);
-        m.title = Some(title.into());
-        self
+    ///
+    /// Returns `Err` for a title with a nul byte.
+    pub fn with_title(mut self, title: impl Into<String>) -> Result<Self, MetaStringWithNul> {
+        let title = title.into();
+        MetaField::Title.reject_nul_byte(&title)?;
+        self.meta.get_or_insert_with(Meta::default).title = Some(title);
+        Ok(self)
     }
 
     /// Set the device or sensor name.
-    pub fn with_device(mut self, device: impl Into<String>) -> Self {
-        let m = self.meta.get_or_insert_with(Meta::default);
-        m.device = Some(device.into());
-        self
+    ///
+    /// Returns `Err` for a device name with a nul byte.
+    pub fn with_device(mut self, device: impl Into<String>) -> Result<Self, MetaStringWithNul> {
+        let device = device.into();
+        MetaField::Device.reject_nul_byte(&device)?;
+        self.meta.get_or_insert_with(Meta::default).device = Some(device);
+        Ok(self)
     }
 
     /// Set free-text notes for the file.
-    pub fn with_notes(mut self, notes: impl Into<String>) -> Self {
-        let m = self.meta.get_or_insert_with(Meta::default);
-        m.notes = Some(notes.into());
-        self
+    ///
+    /// Returns `Err` for notes with a nul byte.
+    pub fn with_notes(mut self, notes: impl Into<String>) -> Result<Self, MetaStringWithNul> {
+        let notes = notes.into();
+        MetaField::Notes.reject_nul_byte(&notes)?;
+        self.meta.get_or_insert_with(Meta::default).notes = Some(notes);
+        Ok(self)
     }
 
     /// Set the stable identity key used by the app's history database.
@@ -221,17 +232,22 @@ impl NavFileBuilder {
     /// All recordings with the same identity are stored under the same group
     /// and appear together in the History window. The string should be stable
     /// across re-recordings - for example a device serial number or route name.
-    pub fn with_identity(mut self, id: impl Into<String>) -> Self {
-        let m = self.meta.get_or_insert_with(Meta::default);
-        m.identity = Some(id.into());
-        self
+    ///
+    /// Returns `Err` for an identity with a nul byte.
+    pub fn with_identity(mut self, id: impl Into<String>) -> Result<Self, MetaStringWithNul> {
+        let id = id.into();
+        MetaField::Identity.reject_nul_byte(&id)?;
+        self.meta.get_or_insert_with(Meta::default).identity = Some(id);
+        Ok(self)
     }
 
     /// Declare the platform the recording was made on.
-    pub fn with_travel_mode(mut self, mode: TravelMode) -> Self {
-        let m = self.meta.get_or_insert_with(Meta::default);
-        m.travel_mode = Some(mode);
-        self
+    ///
+    /// Returns `Err` for a [`TravelMode::Unknown`] wire value with a nul byte.
+    pub fn with_travel_mode(mut self, mode: TravelMode) -> Result<Self, MetaStringWithNul> {
+        MetaField::TravelMode.reject_nul_byte(mode.name())?;
+        self.meta.get_or_insert_with(Meta::default).travel_mode = Some(mode);
+        Ok(self)
     }
 
     /// Override the maximum time gap for associating a satellite report to a nav fix.

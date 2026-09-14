@@ -32,11 +32,11 @@ fn snapshot_inspect_populated_file() -> Result<(), Box<dyn std::error::Error>> {
     let t1 = test_util::t_s(10);
 
     let mut recorder = NavFileBuilder::new()
-        .with_title("Inspect test")
-        .with_device("test-device")
-        .with_notes("a populated file")
-        .with_identity("test-fleet-7")
-        .with_travel_mode(TravelMode::Bicycle)
+        .with_title("Inspect test")?
+        .with_device("test-device")?
+        .with_notes("a populated file")?
+        .with_identity("test-fleet-7")?
+        .with_travel_mode(TravelMode::Bicycle)?
         .with_scrubbed_provenance()
         .open();
 

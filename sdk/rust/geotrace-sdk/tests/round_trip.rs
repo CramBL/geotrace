@@ -20,9 +20,9 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
     let tmid = t0 + Duration::milliseconds(500);
 
     let mut recorder = NavFileBuilder::new()
-        .with_title("Test trace")
-        .with_device("u-blox NEO-M9N")
-        .with_notes("round-trip test")
+        .with_title("Test trace")?
+        .with_device("u-blox NEO-M9N")?
+        .with_notes("round-trip test")?
         .open();
 
     recorder.add_nav_fix(
@@ -75,9 +75,9 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
     let nav_file = recorder.finish()?;
     let rt = test_util::round_trip(&nav_file)?;
 
-    assert_eq!(rt.meta().title.as_deref(), Some("Test trace"));
-    assert_eq!(rt.meta().device.as_deref(), Some("u-blox NEO-M9N"));
-    assert_eq!(rt.meta().notes.as_deref(), Some("round-trip test"));
+    assert_eq!(rt.meta().title(), Some("Test trace"));
+    assert_eq!(rt.meta().device(), Some("u-blox NEO-M9N"));
+    assert_eq!(rt.meta().notes(), Some("round-trip test"));
 
     assert_eq!(rt.nav_points().len(), 2);
     let p0 = &rt.nav_points()[0];
@@ -322,7 +322,7 @@ fn a_large_recording_round_trips() -> Result<(), Box<dyn std::error::Error>> {
 fn identity_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = test_util::base();
     let mut recorder = NavFileBuilder::new()
-        .with_identity("device-serial-001")
+        .with_identity("device-serial-001")?
         .open();
     recorder.add_nav_fix(
         NavFix::builder()
@@ -332,20 +332,17 @@ fn identity_round_trips() -> Result<(), Box<dyn std::error::Error>> {
             .build(),
     );
     let nav_file = recorder.finish()?;
-    assert_eq!(
-        nav_file.meta().identity.as_deref(),
-        Some("device-serial-001")
-    );
+    assert_eq!(nav_file.meta().identity(), Some("device-serial-001"));
 
     let rt = test_util::round_trip(&nav_file)?;
-    assert_eq!(rt.meta().identity.as_deref(), Some("device-serial-001"));
+    assert_eq!(rt.meta().identity(), Some("device-serial-001"));
     Ok(())
 }
 
 #[test]
 fn no_identity_deserialises_as_none() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = test_util::base();
-    let mut recorder = NavFileBuilder::new().with_title("No identity").open();
+    let mut recorder = NavFileBuilder::new().with_title("No identity")?.open();
     recorder.add_nav_fix(
         NavFix::builder()
             .time(NavFixTime::Receiver(t0))
@@ -356,14 +353,14 @@ fn no_identity_deserialises_as_none() -> Result<(), Box<dyn std::error::Error>> 
     let nav_file = recorder.finish()?;
 
     let rt = test_util::round_trip(&nav_file)?;
-    assert_eq!(rt.meta().identity, None);
+    assert_eq!(rt.meta().identity(), None);
     Ok(())
 }
 
 #[test]
 fn identity_via_meta_builder() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = test_util::base();
-    let meta = Meta::builder().identity("route-a").build();
+    let meta = Meta::builder().identity("route-a").build()?;
     let mut recorder = NavFileBuilder::new().with_meta(meta).open();
     recorder.add_nav_fix(
         NavFix::builder()
@@ -374,7 +371,7 @@ fn identity_via_meta_builder() -> Result<(), Box<dyn std::error::Error>> {
     );
     let nav_file = recorder.finish()?;
     let rt = test_util::round_trip(&nav_file)?;
-    assert_eq!(rt.meta().identity.as_deref(), Some("route-a"));
+    assert_eq!(rt.meta().identity(), Some("route-a"));
     Ok(())
 }
 
@@ -382,7 +379,7 @@ fn identity_via_meta_builder() -> Result<(), Box<dyn std::error::Error>> {
 fn travel_mode_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = test_util::base();
     let mut recorder = NavFileBuilder::new()
-        .with_travel_mode(TravelMode::Bicycle)
+        .with_travel_mode(TravelMode::Bicycle)?
         .open();
     recorder.add_nav_fix(
         NavFix::builder()
@@ -392,10 +389,10 @@ fn travel_mode_round_trips() -> Result<(), Box<dyn std::error::Error>> {
             .build(),
     );
     let nav_file = recorder.finish()?;
-    assert_eq!(nav_file.meta().travel_mode, Some(TravelMode::Bicycle));
+    assert_eq!(nav_file.meta().travel_mode(), Some(&TravelMode::Bicycle));
 
     let rt = test_util::round_trip(&nav_file)?;
-    assert_eq!(rt.meta().travel_mode, Some(TravelMode::Bicycle));
+    assert_eq!(rt.meta().travel_mode(), Some(&TravelMode::Bicycle));
     Ok(())
 }
 
@@ -406,7 +403,7 @@ fn unknown_travel_mode_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = test_util::base();
     let meta = Meta::builder()
         .travel_mode(TravelMode::Unknown("hovercraft".into()))
-        .build();
+        .build()?;
     let mut recorder = NavFileBuilder::new().with_meta(meta).open();
     recorder.add_nav_fix(
         NavFix::builder()
@@ -419,14 +416,14 @@ fn unknown_travel_mode_round_trips() -> Result<(), Box<dyn std::error::Error>> {
 
     let rt = test_util::round_trip(&nav_file)?;
     assert_eq!(
-        rt.meta().travel_mode,
-        Some(TravelMode::Unknown("hovercraft".into()))
+        rt.meta().travel_mode(),
+        Some(&TravelMode::Unknown("hovercraft".into()))
     );
 
     let rt2 = test_util::round_trip(&rt)?;
     assert_eq!(
-        rt2.meta().travel_mode,
-        Some(TravelMode::Unknown("hovercraft".into()))
+        rt2.meta().travel_mode(),
+        Some(&TravelMode::Unknown("hovercraft".into()))
     );
     Ok(())
 }
@@ -434,7 +431,7 @@ fn unknown_travel_mode_round_trips() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn no_travel_mode_deserialises_as_none() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = test_util::base();
-    let mut recorder = NavFileBuilder::new().with_title("No travel mode").open();
+    let mut recorder = NavFileBuilder::new().with_title("No travel mode")?.open();
     recorder.add_nav_fix(
         NavFix::builder()
             .time(NavFixTime::Receiver(t0))
@@ -445,7 +442,7 @@ fn no_travel_mode_deserialises_as_none() -> Result<(), Box<dyn std::error::Error
     let nav_file = recorder.finish()?;
 
     let rt = test_util::round_trip(&nav_file)?;
-    assert_eq!(rt.meta().travel_mode, None);
+    assert_eq!(rt.meta().travel_mode(), None);
     Ok(())
 }
 

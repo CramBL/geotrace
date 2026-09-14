@@ -28,7 +28,7 @@ use geotrace_sdk::{
 fn main() -> Result<(), Box<dyn Error>> {
     let t0 = "2024-06-01T08:00:00Z".parse::<DateTime<Utc>>()?;
 
-    let mut recorder = NavFileBuilder::new().with_title("Channel tour").open();
+    let mut recorder = NavFileBuilder::new().with_title("Channel tour")?.open();
     recorder.add(
         NavFix::builder()
             .time(NavFixTime::Receiver(t0))

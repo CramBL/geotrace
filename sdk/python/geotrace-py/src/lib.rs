@@ -15,8 +15,9 @@ use chrono::{DateTime, Duration, FixedOffset, Utc};
 use geotrace_sdk::{
     Angle, Annotation, AnnotationIcon, BuildError, Channel, ChannelUnit, Constellation,
     EventMarker, EventMarkerColor, EventMarkerIconChoice, EventMarkerPoint, EventMarkerStyle,
-    Marker, MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix, NavFixTime, NavPoint, NavRecorder,
-    RecordedFixTimestamps, Satellite, SatelliteReport, TravelMode, Unit, Velocity,
+    Marker, MarkerIcon, Meta, MetaStringWithNul, NavFile, NavFileBuilder, NavFix, NavFixTime,
+    NavPoint, NavRecorder, RecordedFixTimestamps, Satellite, SatelliteReport, TravelMode, Unit,
+    Velocity,
 };
 use geotrace_sdk_units::snr;
 use pyo3::IntoPyObjectExt as _;
@@ -1026,6 +1027,8 @@ impl PyAnnotation {
 }
 
 /// Optional file-level metadata for a `.gtd` file.
+///
+/// Raises `ValueError` for a value with a nul byte.
 #[pyclass(skip_from_py_object, name = "Meta")]
 #[derive(Debug, Clone)]
 pub struct PyMeta {
@@ -1042,39 +1045,40 @@ impl PyMeta {
         notes: Option<String>,
         identity: Option<String>,
         travel_mode: Option<TravelModeArg>,
-    ) -> Self {
+    ) -> PyResult<Self> {
         let inner = Meta::builder()
             .maybe_title(title)
             .maybe_device(device)
             .maybe_notes(notes)
             .maybe_identity(identity)
             .maybe_travel_mode(travel_mode.map(TravelMode::from))
-            .build();
-        Self { inner }
+            .build()
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        Ok(Self { inner })
     }
 
     /// File title, or `None`.
     #[getter]
     fn title(&self) -> Option<&str> {
-        self.inner.title.as_deref()
+        self.inner.title()
     }
 
     /// Sensor or device that produced the data, or `None`.
     #[getter]
     fn device(&self) -> Option<&str> {
-        self.inner.device.as_deref()
+        self.inner.device()
     }
 
     /// Free-text notes, or `None`.
     #[getter]
     fn notes(&self) -> Option<&str> {
-        self.inner.notes.as_deref()
+        self.inner.notes()
     }
 
     /// Opaque producer identity string, or `None`.
     #[getter]
     fn identity(&self) -> Option<&str> {
-        self.inner.identity.as_deref()
+        self.inner.identity()
     }
 
     /// Platform the recording was made on: a `TravelMode`, or the raw wire
@@ -1082,7 +1086,7 @@ impl PyMeta {
     /// dropped), or `None` when absent.
     #[getter]
     fn travel_mode<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
-        match &self.inner.travel_mode {
+        match self.inner.travel_mode() {
             None => Ok(None),
             Some(mode) => match PyTravelMode::from_travel_mode(mode) {
                 Some(known) => Ok(Some(known.into_pyobject(py)?.into_any())),
@@ -1115,7 +1119,7 @@ impl PyMeta {
     }
 
     fn __repr__(&self) -> String {
-        format!("Meta(title={:?})", self.inner.title)
+        format!("Meta(title={:?})", self.inner.title())
     }
 }
 
@@ -1928,19 +1932,23 @@ pub struct PyNavFileBuilder {
 
 impl PyNavFileBuilder {
     /// Apply `configure` to the pre-open config, raising `RuntimeError` under
-    /// the name of the method that called it once data has been added.
+    /// the name of the method that called it once data has been added. When `configure` returns
+    /// an error, this raises `ValueError` and the config stays unchanged: `configure` receives a
+    /// clone.
     fn configure_before_data(
         &mut self,
         method_name: &str,
-        configure: impl FnOnce(NavFileBuilder) -> NavFileBuilder,
+        configure: impl FnOnce(NavFileBuilder) -> Result<NavFileBuilder, MetaStringWithNul>,
     ) -> PyResult<()> {
         if self.recorder.is_some() {
             return Err(PyRuntimeError::new_err(format!(
                 "{method_name}() must be called before adding data"
             )));
         }
-        let config = self.config.take().ok_or_else(consumed_err)?;
-        self.config = Some(configure(config));
+        let config = self.config.as_ref().ok_or_else(consumed_err)?;
+        let configured =
+            configure(config.clone()).map_err(|error| PyValueError::new_err(error.to_string()))?;
+        self.config = Some(configured);
         Ok(())
     }
 
@@ -1969,11 +1977,15 @@ impl PyNavFileBuilder {
     /// Must be called before any `add()` call. Returns `self` for chaining.
     fn with_meta(slf: Bound<'_, Self>, meta: &PyMeta) -> PyResult<Py<Self>> {
         slf.borrow_mut()
-            .configure_before_data("with_meta", |config| config.with_meta(meta.inner.clone()))?;
+            .configure_before_data("with_meta", |config| {
+                Ok(config.with_meta(meta.inner.clone()))
+            })?;
         Ok(slf.unbind())
     }
 
     /// Set the file title. Must be called before any `add()` call.
+    ///
+    /// Raises `ValueError` for a title with a nul byte.
     fn with_title(slf: Bound<'_, Self>, title: String) -> PyResult<Py<Self>> {
         slf.borrow_mut()
             .configure_before_data("with_title", |config| config.with_title(title))?;
@@ -1981,6 +1993,8 @@ impl PyNavFileBuilder {
     }
 
     /// Set the device or sensor name. Must be called before any `add()` call.
+    ///
+    /// Raises `ValueError` for a device name with a nul byte.
     fn with_device(slf: Bound<'_, Self>, device: String) -> PyResult<Py<Self>> {
         slf.borrow_mut()
             .configure_before_data("with_device", |config| config.with_device(device))?;
@@ -1988,6 +2002,8 @@ impl PyNavFileBuilder {
     }
 
     /// Set free-text notes. Must be called before any `add()` call.
+    ///
+    /// Raises `ValueError` for notes with a nul byte.
     fn with_notes(slf: Bound<'_, Self>, notes: String) -> PyResult<Py<Self>> {
         slf.borrow_mut()
             .configure_before_data("with_notes", |config| config.with_notes(notes))?;
@@ -2001,7 +2017,9 @@ impl PyNavFileBuilder {
     /// Must be called before any `add()` call. Returns `self` for chaining.
     fn with_lenient_errors(slf: Bound<'_, Self>) -> PyResult<Py<Self>> {
         slf.borrow_mut()
-            .configure_before_data("with_lenient_errors", NavFileBuilder::with_lenient_errors)?;
+            .configure_before_data("with_lenient_errors", |config| {
+                Ok(config.with_lenient_errors())
+            })?;
         Ok(slf.unbind())
     }
 
@@ -2017,7 +2035,7 @@ impl PyNavFileBuilder {
             .map_err(|_| PyValueError::new_err("the satellite window must be zero or longer"))?;
         slf.borrow_mut()
             .configure_before_data("with_satellite_window", |config| {
-                config.with_satellite_window(window)
+                Ok(config.with_satellite_window(window))
             })?;
         Ok(slf.unbind())
     }

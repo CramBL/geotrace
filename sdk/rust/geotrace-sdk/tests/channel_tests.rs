@@ -10,7 +10,14 @@ use geotrace_sdk_test_util as test_util;
 
 #[test]
 fn a_channel_name_must_be_a_lowercase_identifier() {
-    for bad in ["Accel Fwd", "accel-fwd", "", "1accel", "Accel"] {
+    for bad in [
+        "Accel Fwd",
+        "accel-fwd",
+        "",
+        "1accel",
+        "Accel",
+        "accel\0fwd",
+    ] {
         assert!(
             matches!(
                 Channel::builder()

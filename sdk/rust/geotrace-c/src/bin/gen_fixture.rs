@@ -15,9 +15,9 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use geotrace_sdk::{
-    Angle, Annotation, AnnotationIcon, Channel, Constellation, DateTime, Duration,
-    EventMarkerColor, EventMarkerIconChoice, EventMarkerStyle, NavFile, NavFileBuilder, NavFix,
-    NavFixTime, Satellite, SatelliteReport, Velocity,
+    Angle, Annotation, AnnotationIcon, Constellation, DateTime, Duration, EventMarkerColor,
+    EventMarkerIconChoice, EventMarkerStyle, NavFile, NavFileBuilder, NavFix, NavFixTime,
+    NavRecorder, SCRUBBED_SDK_VERSION, SDK_VERSION_ATTR, Satellite, SatelliteReport, Velocity,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 
@@ -67,15 +67,20 @@ fn write_bytes(bytes: &[u8], path: &Path) {
     println!("wrote {}", path.display());
 }
 
+fn fixture_recorder(title: &str) -> NavRecorder {
+    NavFileBuilder::new()
+        .with_scrubbed_provenance()
+        .with_title(title)
+        .and_then(|builder| builder.with_device("gen_fixture"))
+        .expect("gen_fixture: the title and the device have no nul byte")
+        .open()
+}
+
 fn minimal() -> NavFile {
     let t0 = DateTime::from_timestamp_micros(1_700_000_000_000_000).expect("valid timestamp");
     let t1 = t0 + Duration::seconds(10);
 
-    let mut recorder = NavFileBuilder::new()
-        .with_scrubbed_provenance()
-        .with_title("minimal fixture")
-        .with_device("gen_fixture")
-        .open();
+    let mut recorder = fixture_recorder("minimal fixture");
 
     recorder.add_nav_fix(NavFix {
         time: NavFixTime::Receiver(t0),
@@ -123,11 +128,7 @@ fn minimal() -> NavFile {
 fn out_of_range_values() -> NavFile {
     let t0 = DateTime::from_timestamp_micros(1_700_000_000_000_000).expect("valid timestamp");
 
-    let mut recorder = NavFileBuilder::new()
-        .with_scrubbed_provenance()
-        .with_title("out of range values fixture")
-        .with_device("gen_fixture")
-        .open();
+    let mut recorder = fixture_recorder("out of range values fixture");
 
     recorder.add_nav_fix(NavFix {
         time: NavFixTime::Receiver(t0),
@@ -174,11 +175,7 @@ fn out_of_range_values() -> NavFile {
 fn unrecognized_style_values() -> NavFile {
     let t0 = DateTime::from_timestamp_micros(1_700_000_000_000_000).expect("valid timestamp");
 
-    let mut recorder = NavFileBuilder::new()
-        .with_scrubbed_provenance()
-        .with_title("unrecognized style values fixture")
-        .with_device("gen_fixture")
-        .open();
+    let mut recorder = fixture_recorder("unrecognized style values fixture");
 
     recorder.add_nav_fix(NavFix {
         time: NavFixTime::Receiver(t0),
@@ -203,11 +200,7 @@ fn unrecognized_style_values() -> NavFile {
 fn unrecognized_marker_icon() -> NavFile {
     let t0 = DateTime::from_timestamp_micros(1_700_000_000_000_000).expect("valid timestamp");
 
-    let mut recorder = NavFileBuilder::new()
-        .with_scrubbed_provenance()
-        .with_title("unrecognized marker icon fixture")
-        .with_device("gen_fixture")
-        .open();
+    let mut recorder = fixture_recorder("unrecognized marker icon fixture");
 
     recorder.add_nav_fix(NavFix {
         time: NavFixTime::Receiver(t0),
@@ -239,36 +232,61 @@ fn unrecognized_marker_icon() -> NavFile {
     recorder.finish().expect("gen_fixture: build failed")
 }
 
-/// A channel whose description has a nul byte at offset 6.
+/// A channel whose description has a nul byte at offset 6. The channel builder rejects that
+/// description: `hdf5_pure` writes the file, and the SDK reads it back. [`write_fixture`] writes
+/// the result in the layout of the SDK writer.
 fn channel_description_with_a_nul_byte() -> NavFile {
-    let t0 = DateTime::from_timestamp_micros(1_700_000_000_000_000).expect("valid timestamp");
+    let t0_micros: i64 = 1_700_000_000_000_000;
 
-    let mut recorder = NavFileBuilder::new()
-        .with_scrubbed_provenance()
-        .with_title("channel description with a nul byte fixture")
-        .with_device("gen_fixture")
-        .open();
-
-    recorder.add_nav_fix(NavFix {
-        time: NavFixTime::Receiver(t0),
-        lat: Angle::degrees(51.5074),
-        lon: Angle::degrees(-0.1278),
-        heading: None,
-        speed: None,
-        eph_m: None,
-    });
-
-    recorder.add_channel(
-        Channel::builder()
-            .name("speed")
-            .description("before\0after")
-            .times(vec![t0])
-            .values(vec![1.0])
-            .build()
-            .expect("gen_fixture: channel is valid"),
+    let mut fb = FileBuilder::new();
+    fb.set_attr("geotrace_version", AttrValue::String("2".into()));
+    fb.set_attr(
+        SDK_VERSION_ATTR,
+        AttrValue::String(SCRUBBED_SDK_VERSION.into()),
     );
+    fb.set_attr(
+        "meta_title",
+        AttrValue::String("channel description with a nul byte fixture".into()),
+    );
+    fb.set_attr("meta_device", AttrValue::String("gen_fixture".into()));
 
-    recorder.finish().expect("gen_fixture: build failed")
+    let mut np = fb.create_group("nav_points");
+    np.create_dataset("time")
+        .with_i64_data(&[t0_micros])
+        .with_shape(&[1]);
+    np.create_dataset("gps_time_us")
+        .with_u64_data(&[t0_micros.unsigned_abs()])
+        .with_shape(&[1]);
+    np.create_dataset("lat")
+        .with_f64_data(&[51.5074])
+        .with_shape(&[1]);
+    np.create_dataset("lon")
+        .with_f64_data(&[-0.1278])
+        .with_shape(&[1]);
+    np.create_dataset("heading")
+        .with_f64_data(&[f64::NAN])
+        .with_shape(&[1]);
+    np.create_dataset("speed_mps")
+        .with_f64_data(&[f64::NAN])
+        .with_shape(&[1]);
+    fb.add_group(np.finish());
+
+    let mut channels = fb.create_group("channels");
+    let mut speed = channels.create_group("speed");
+    speed.set_attr("description", AttrValue::String("before\0after".into()));
+    speed
+        .create_dataset("time")
+        .with_i64_data(&[t0_micros])
+        .with_shape(&[1]);
+    speed
+        .create_dataset("value")
+        .with_f64_data(&[1.0])
+        .with_shape(&[1]);
+    channels.add_group(speed.finish());
+    fb.add_group(channels.finish());
+
+    let bytes = fb.finish().expect("gen_fixture: build failed");
+    NavFile::read(bytes.as_slice()).expect("gen_fixture: the SDK reads the file")
 }
 
 /// One nav point and one satellite report whose `nav_point_idx` is 5, written

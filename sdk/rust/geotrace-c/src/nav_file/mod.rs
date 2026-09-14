@@ -45,14 +45,13 @@ impl GtdNavFile {
     pub(crate) fn from_nav_file(file: NavFile) -> Self {
         let to_cstring = |s: &str| CString::new(s).ok();
         Self {
-            title: file.meta().title.as_deref().and_then(to_cstring),
-            device: file.meta().device.as_deref().and_then(to_cstring),
-            notes: file.meta().notes.as_deref().and_then(to_cstring),
-            identity: file.meta().identity.as_deref().and_then(to_cstring),
+            title: file.meta().title().and_then(to_cstring),
+            device: file.meta().device().and_then(to_cstring),
+            notes: file.meta().notes().and_then(to_cstring),
+            identity: file.meta().identity().and_then(to_cstring),
             travel_mode: file
                 .meta()
-                .travel_mode
-                .as_ref()
+                .travel_mode()
                 .map(geotrace_sdk::TravelMode::name)
                 .and_then(to_cstring),
             sdk_version: file.meta().sdk_version().and_then(to_cstring),

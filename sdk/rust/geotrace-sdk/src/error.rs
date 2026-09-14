@@ -1,7 +1,7 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
-use crate::fixed_width_string::{FixedWidthStringError, VariantPathField};
+use crate::fixed_width_string::{self, FixedWidthStringError, VariantPathField};
 
 /// Validate that `path` is a well-formed event marker variant path.
 ///
@@ -100,6 +100,9 @@ pub enum ChannelError {
 
     #[error("channel {name:?}: legacy unit metadata {unit:?} is not valid writer input")]
     UnwritableUnit { name: String, unit: String },
+
+    #[error("channel {name:?}: the description has a nul byte at offset {offset}")]
+    DescriptionWithNul { name: String, offset: usize },
 }
 
 /// A lowercase identifier: a lowercase letter or underscore, then lowercase
@@ -150,6 +153,44 @@ pub(crate) fn validate_components(name: &str, components: &[String]) -> Result<(
         }
     }
     Ok(())
+}
+
+/// A string field of [`Meta`](crate::Meta).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, strum::Display)]
+#[strum(serialize_all = "lowercase")]
+#[non_exhaustive]
+pub enum MetaField {
+    Device,
+    Identity,
+    Notes,
+    Title,
+    #[strum(to_string = "travel mode")]
+    TravelMode,
+}
+
+impl MetaField {
+    pub(crate) fn reject_nul_byte(self, value: &str) -> Result<(), MetaStringWithNul> {
+        match fixed_width_string::first_nul_byte_offset(value) {
+            Some(offset) => Err(MetaStringWithNul {
+                field: self,
+                offset,
+            }),
+            None => Ok(()),
+        }
+    }
+}
+
+/// Error returned by [`Meta::builder`](crate::Meta::builder) and the metadata setters of
+/// [`NavFileBuilder`](crate::NavFileBuilder) for a value with a nul byte. A C reader ends the
+/// value at its first nul byte.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("the {field} value has a nul byte at offset {offset}")]
+#[non_exhaustive]
+pub struct MetaStringWithNul {
+    /// The field of the rejected value.
+    pub field: MetaField,
+    /// The byte offset of the first nul byte in the value.
+    pub offset: usize,
 }
 
 /// Errors that can occur when building a [`NavFile`](crate::NavFile).

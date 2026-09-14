@@ -92,7 +92,8 @@ pub fn recording_whose_clock_restarts_at_every_boot() -> Vec<u8> {
                 .device("Fieldlogger")
                 .notes("Tracker whose clock restarts at every boot")
                 .identity("clock-reset-v1")
-                .build(),
+                .build()
+                .expect("the metadata has no nul byte"),
         )
         .open();
 
