@@ -89,6 +89,7 @@ the app).
 - Fixed an annotation or event marker inside the nav fix time range being reported as outside it, where a recording's receiver and host timestamps put its fixes in different orders: it is placed between the two fixes whose host timestamps surround its time.
 - Fixed a marker, event marker or ghost fix interpolated between two fixes on either side of the antimeridian being placed near longitude 0: it is placed on the short arc between the two fixes.
 - **Breaking:** Fixed the reader accepting any `geotrace_version` beginning with a 1 or a 2, such as `10` or `1abc`: it reads the attribute as an integer and accepts 1 and 2 alone.
+- **Breaking:** Fixed Rust `NavRecorder::add_event` and `add_event_with_note` writing a variant path that `EventMarker::builder()` rejects, such as a path derived from a variant name with a non-ASCII character or from a raw identifier: `NavRecorder::finish` now fails with the new `BuildError::InvalidEventMarkerVariantPath`, in lenient mode too.
 - Fixed the `encoding` attribute of the `markers/icon` and `tracked_sats/constellation` datasets listing 7 of the 14 marker icons and 4 of the 6 constellations: the writer builds each attribute from the full set of codes.
 - C, C++: Fixed the examples taking a CSV number's decimal separator from `LC_NUMERIC`: they read '.' as the separator under every locale and reject a field with trailing characters.
 
