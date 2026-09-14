@@ -12,7 +12,6 @@ use egui::{
 use egui_extras::{Column, TableBuilder, TableRow};
 use egui_phosphor::regular::ARROW_SQUARE_IN as ICON_ARROW_SQUARE_IN;
 use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
-use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_phosphor::regular::COPY as ICON_COPY;
 use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
 use egui_phosphor::regular::INFO as ICON_INFO;
@@ -27,7 +26,7 @@ use gt_side_panel::widgets::{self, PointClickRequests};
 use gt_types::{
     Channel, DataCategory, LoadedFile, PlacedPoints, PointIdx, ResolvedPosition, TrackRef,
 };
-use gt_ui_theme::buttons::SortHeaderButton;
+use gt_ui_theme::buttons::{self, SortHeaderButton};
 use gt_ui_theme::labels::{CountLine, LabelWithHover};
 use gt_ui_types::{
     DRAWN_AT_CAPTION, DataPointRef, HighlightScope, INTERPOLATED_POSITION_NOTE, MapHighlight,
@@ -1059,12 +1058,8 @@ impl<'a> ResultsTables<'a> {
     /// column takes what the others leave, so the table is exactly as wide as
     /// the window.
     fn match_column_widths(&self, ui: &egui::Ui) -> Vec<f32> {
-        let caret = column_format::text_width(ui, ICON_CARET_DOWN, &TextStyle::Small)
-            + ui.spacing().item_spacing.x;
         let natural = |column: MatchColumn| {
-            let header =
-                column_format::text_width(ui, column.title(self.row_noun), &TextStyle::Body)
-                    + caret;
+            let header = buttons::sort_header_width(ui, column.title(self.row_noun));
             let cells = column_format::text_width(
                 ui,
                 self.matches.widest_cell_text(column),

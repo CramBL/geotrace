@@ -6,13 +6,12 @@ use std::ops::Range;
 
 use chrono::{DateTime, Utc};
 use egui::{Align, Layout};
-use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
-use egui_phosphor::regular::CARET_UP as ICON_CARET_UP;
 use gt_fmt::DurationClockFormat;
 use gt_query_run::{ChannelResults, PointsResults};
 #[cfg(test)]
 use gt_types::{FileIdx, TrackIdx};
 use gt_types::{LoadedFile, TrackRef};
+use gt_ui_theme::buttons::SortCaret;
 use strum::EnumIter;
 
 use super::column_format;
@@ -362,10 +361,10 @@ impl SortDirection {
 
     /// The caret drawn beside the active column's header, pointing the way the
     /// values grow down the list.
-    pub(super) fn caret(self) -> &'static str {
+    pub(super) fn caret(self) -> SortCaret {
         match self {
-            Self::Ascending => ICON_CARET_UP,
-            Self::Descending => ICON_CARET_DOWN,
+            Self::Ascending => SortCaret::Ascending,
+            Self::Descending => SortCaret::Descending,
         }
     }
 }
