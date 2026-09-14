@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -53,6 +54,18 @@ TEST_CASE("NavFile: absent metadata returns empty string_view") {
     CHECK(file.travel_mode() == "");
     CHECK(file.title().empty());
 }
+
+#ifdef GTD_METADATA_WITH_A_NUL_BYTE_FIXTURE_PATH
+TEST_CASE("NavFile: metadata getters return a value with a nul byte whole") {
+    using namespace std::string_view_literals;
+    const auto file = NavFile::open(GTD_METADATA_WITH_A_NUL_BYTE_FIXTURE_PATH);
+    CHECK(file.title() == "title\0after"sv);
+    CHECK(file.device() == "device\0after"sv);
+    CHECK(file.notes() == "notes\0after"sv);
+    CHECK(file.identity() == "identity\0after"sv);
+    CHECK(file.travel_mode() == "car\0after"sv);
+}
+#endif
 
 TEST_CASE("NavFile: nav_point_count returns correct value") {
     const NavFix first_fix{FixTime::receiver(Timestamp::from_seconds(1700000000)),

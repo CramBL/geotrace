@@ -17,13 +17,23 @@ use std::path::{Path, PathBuf};
 use geotrace_sdk::{
     Angle, Annotation, AnnotationIcon, Constellation, DateTime, Duration, EventMarkerColor,
     EventMarkerIconChoice, EventMarkerStyle, NavFile, NavFileBuilder, NavFix, NavFixTime,
-    NavRecorder, SCRUBBED_SDK_VERSION, SDK_VERSION_ATTR, Satellite, SatelliteReport, Velocity,
+    NavRecorder, SCRUBBED_SDK_VERSION, SDK_VERSION_ATTR, Satellite, SatelliteReport, TravelMode,
+    Velocity,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 
 /// The `markers/icon` code of the unrecognized marker icon fixture, outside
 /// the 0 to 13 the `MarkerIcon` set covers.
 const UNRECOGNIZED_MARKER_ICON_CODE: u8 = 200;
+
+/// The root attribute and the value of each metadata string in `metadata_with_a_nul_byte.gtd`.
+const METADATA_WITH_A_NUL_BYTE: [(&str, &str); 5] = [
+    ("meta_title", "title\0after"),
+    ("meta_device", "device\0after"),
+    ("meta_notes", "notes\0after"),
+    ("meta_identity", "identity\0after"),
+    ("meta_travel_mode", "car\0after"),
+];
 
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR");
@@ -44,6 +54,10 @@ fn main() {
     write_fixture(
         &channel_description_with_a_nul_byte(),
         &fixtures.join("channel_description_with_a_nul_byte.gtd"),
+    );
+    write_fixture(
+        &metadata_with_a_nul_byte(),
+        &fixtures.join("metadata_with_a_nul_byte.gtd"),
     );
     write_bytes(
         &nav_point_idx_past_the_nav_points(),
@@ -238,38 +252,12 @@ fn unrecognized_marker_icon() -> NavFile {
 fn channel_description_with_a_nul_byte() -> NavFile {
     let t0_micros: i64 = 1_700_000_000_000_000;
 
-    let mut fb = FileBuilder::new();
-    fb.set_attr("geotrace_version", AttrValue::String("2".into()));
-    fb.set_attr(
-        SDK_VERSION_ATTR,
-        AttrValue::String(SCRUBBED_SDK_VERSION.into()),
-    );
+    let mut fb = file_builder_with_one_nav_point(t0_micros);
     fb.set_attr(
         "meta_title",
         AttrValue::String("channel description with a nul byte fixture".into()),
     );
     fb.set_attr("meta_device", AttrValue::String("gen_fixture".into()));
-
-    let mut np = fb.create_group("nav_points");
-    np.create_dataset("time")
-        .with_i64_data(&[t0_micros])
-        .with_shape(&[1]);
-    np.create_dataset("gps_time_us")
-        .with_u64_data(&[t0_micros.unsigned_abs()])
-        .with_shape(&[1]);
-    np.create_dataset("lat")
-        .with_f64_data(&[51.5074])
-        .with_shape(&[1]);
-    np.create_dataset("lon")
-        .with_f64_data(&[-0.1278])
-        .with_shape(&[1]);
-    np.create_dataset("heading")
-        .with_f64_data(&[f64::NAN])
-        .with_shape(&[1]);
-    np.create_dataset("speed_mps")
-        .with_f64_data(&[f64::NAN])
-        .with_shape(&[1]);
-    fb.add_group(np.finish());
 
     let mut channels = fb.create_group("channels");
     let mut speed = channels.create_group("speed");
@@ -287,6 +275,67 @@ fn channel_description_with_a_nul_byte() -> NavFile {
 
     let bytes = fb.finish().expect("gen_fixture: build failed");
     NavFile::read(bytes.as_slice()).expect("gen_fixture: the SDK reads the file")
+}
+
+/// A file with the [`METADATA_WITH_A_NUL_BYTE`] strings. The metadata setters reject each of them:
+/// `hdf5_pure` writes the file, and the SDK reads it back. [`write_fixture`] writes the result in
+/// the layout of the SDK writer.
+fn metadata_with_a_nul_byte() -> NavFile {
+    let mut fb = file_builder_with_one_nav_point(1_700_000_000_000_000);
+    for (attribute, value) in METADATA_WITH_A_NUL_BYTE {
+        fb.set_attr(attribute, AttrValue::String(value.into()));
+    }
+
+    let bytes = fb.finish().expect("gen_fixture: build failed");
+    let nav_file = NavFile::read(bytes.as_slice()).expect("gen_fixture: the SDK reads the file");
+    let meta = nav_file.meta();
+    let read_back = [
+        meta.title(),
+        meta.device(),
+        meta.notes(),
+        meta.identity(),
+        meta.travel_mode().map(TravelMode::name),
+    ];
+    for ((attribute, written), read) in METADATA_WITH_A_NUL_BYTE.into_iter().zip(read_back) {
+        assert_eq!(
+            read,
+            Some(written),
+            "gen_fixture: the SDK reads {attribute} back whole"
+        );
+    }
+    nav_file
+}
+
+/// A file with one nav point at `time_micros`, stamped with the scrubbed SDK version.
+fn file_builder_with_one_nav_point(time_micros: i64) -> FileBuilder {
+    let mut fb = FileBuilder::new();
+    fb.set_attr("geotrace_version", AttrValue::String("2".into()));
+    fb.set_attr(
+        SDK_VERSION_ATTR,
+        AttrValue::String(SCRUBBED_SDK_VERSION.into()),
+    );
+
+    let mut np = fb.create_group("nav_points");
+    np.create_dataset("time")
+        .with_i64_data(&[time_micros])
+        .with_shape(&[1]);
+    np.create_dataset("gps_time_us")
+        .with_u64_data(&[time_micros.unsigned_abs()])
+        .with_shape(&[1]);
+    np.create_dataset("lat")
+        .with_f64_data(&[51.5074])
+        .with_shape(&[1]);
+    np.create_dataset("lon")
+        .with_f64_data(&[-0.1278])
+        .with_shape(&[1]);
+    np.create_dataset("heading")
+        .with_f64_data(&[f64::NAN])
+        .with_shape(&[1]);
+    np.create_dataset("speed_mps")
+        .with_f64_data(&[f64::NAN])
+        .with_shape(&[1]);
+    fb.add_group(np.finish());
+    fb
 }
 
 /// One nav point and one satellite report whose `nav_point_idx` is 5, written
