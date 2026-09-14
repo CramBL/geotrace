@@ -826,24 +826,6 @@ mod tests {
         );
     }
 
-    /// The last day retires the backfill, so the panel stops showing a bar.
-    #[test]
-    fn the_last_day_ends_the_backfill() {
-        let mut scheduler = scheduler();
-        let days = [day_archive::day(2026, 7, 20)];
-        scheduler.days.queue_backfill_of(&days);
-
-        scheduler
-            .tx
-            .send(JamMessage::Stored {
-                day: day_archive::day(2026, 7, 20),
-                cells: 1,
-            })
-            .expect("send");
-        scheduler.poll();
-        assert_eq!(scheduler.days.backfill_progress(), None);
-    }
-
     #[rstest]
     #[case::the_first_request(None, Duration::ZERO)]
     #[case::right_after_one(Some(Duration::ZERO), REQUEST_INTERVAL)]

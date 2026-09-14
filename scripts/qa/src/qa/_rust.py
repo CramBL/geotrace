@@ -100,11 +100,10 @@ def line_numbers_gated_for_tests(source: str) -> frozenset[int]:
     predicate among its operands, or an `any(…)` whose every operand is such a
     predicate. `not(…)` never is: `not(test)` gates production code.
 
-    An inner attribute gates the file it opens, so every line of it counts. An
-    outer attribute gates the one item under it, which ends at the closing brace
-    of its block or at the semicolon of a declaration. Production code below a
-    `mod tests`, and production code between two gated items, sits outside every
-    region.
+    An inner attribute gates every line of the file it opens. An outer attribute
+    gates the one item under it, which ends at the closing brace of its block or
+    at the semicolon of a declaration. Production code below a `mod tests`, and
+    production code between two gated items, sits outside every region.
     """
     masked = mask_comments_and_strings(source)
     line_starts = [0, *(index + 1 for index, char in enumerate(masked) if char == "\n")]

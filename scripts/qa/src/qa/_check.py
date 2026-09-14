@@ -68,8 +68,8 @@ def rs_files(root: Path) -> Iterator[Path]:
             yield path
 
 
-# A `mod …;` declaration in masked source, with the attributes above it. The
-# masking blanks the string of a `#[path]` attribute, so no `]` sits inside one.
+# A `mod …;` declaration in masked source, with the attributes above it. A `#[path]`
+# attribute has no `]` inside it here, because the masking blanks its string.
 _MOD_DECL = re.compile(
     r"(?P<attributes>(?:#\[[^\]]*\]\s*)*)(?:pub(?:\([^)]*\))?\s+)?\bmod\s+(?P<name>\w+)\s*;"
 )

@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, Utc};
-use gt_track_builder::{FileMeta, SegmentationConfig};
+use gt_track_builder::{FileMeta, SegmentationConfig, test_util};
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::fixtures::{self, FixKind};
 use gt_types::nav_point::NavPoint;
@@ -17,9 +17,6 @@ const LATITUDE_DEGREES: f64 = 55.0;
 
 const FIRST_LON_DEGREES: f64 = 12.0;
 const LAST_LON_DEGREES: f64 = 12.002;
-
-/// 1e-9° is about 0.1 mm.
-const DEGREES_TOLERANCE: f64 = 1e-9;
 
 /// A millimetre over a track 128 m long: the interpolated ghost fix lands on
 /// the great circle between the measured fixes, so only the projection and the
@@ -127,16 +124,9 @@ fn bounding_box_covers_where_the_track_is_drawn() {
         .expect("the fixes form one track")
         .bounding_box;
 
-    assert!(
-        (bounds.lat.south().as_degrees() - LATITUDE_DEGREES).abs() < DEGREES_TOLERANCE,
-        "the box reaches south to {}°, the drawn track stays at {LATITUDE_DEGREES}°",
-        bounds.lat.south().as_degrees()
-    );
-    assert!(
-        (bounds.lon.span_degrees() - (LAST_LON_DEGREES - FIRST_LON_DEGREES)).abs()
-            < DEGREES_TOLERANCE,
-        "the box spans {}° of longitude, the drawn track spans {}°",
+    test_util::assert_degrees_close(bounds.lat.south().as_degrees(), LATITUDE_DEGREES);
+    test_util::assert_degrees_close(
         bounds.lon.span_degrees(),
-        LAST_LON_DEGREES - FIRST_LON_DEGREES
+        LAST_LON_DEGREES - FIRST_LON_DEGREES,
     );
 }
