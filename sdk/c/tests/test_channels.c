@@ -152,6 +152,94 @@ Test(channels, round_trip) {
     gtd_free_bytes(buf, len);
 }
 
+static void repeat_into(char *out, const char *piece, size_t count) {
+    size_t piece_length = strlen(piece);
+    for (size_t i = 0; i < count; i++) {
+        memcpy(out + i * piece_length, piece, piece_length);
+    }
+    out[count * piece_length] = '\0';
+}
+
+static GtdNavFile *reload_through_bytes(GtdNavFile *file) {
+    uint8_t *bytes = NULL;
+    size_t length = 0;
+    cr_assert_eq(gtd_nav_file_to_bytes(file, &bytes, &length), GTD_OK);
+    gtd_nav_file_destroy(file);
+    GtdNavFile *reloaded = NULL;
+    cr_assert_eq(gtd_nav_file_from_bytes(bytes, length, &reloaded), GTD_OK);
+    gtd_free_bytes(bytes, length);
+    return reloaded;
+}
+
+Test(channels, get_channel_returns_long_multibyte_strings_whole) {
+    char name[301];
+    name[0] = 'n';
+    repeat_into(name + 1, "a", 299);
+    char unit[81];
+    repeat_into(unit, "µ", 40);
+    char description[1201];
+    repeat_into(description, "µ", 600);
+    char first_component[301];
+    first_component[0] = 'c';
+    repeat_into(first_component + 1, "b", 299);
+    const char *components[2] = {first_component, "y"};
+
+    GtdTimestamp timestamp;
+    GtdFileBuilder *builder = builder_with_a_nav_fix(&timestamp);
+    double values[2] = {1.0, 2.0};
+    GtdChannel channel = {0};
+    channel.name = name;
+    channel.unit = unit;
+    channel.period_deg = GTD_NONE_F64;
+    channel.description = description;
+    channel.components = components;
+    channel.n_components = 2;
+    channel.times = &timestamp;
+    channel.n_times = 1;
+    channel.values = values;
+    channel.n_values = 2;
+    cr_assert_eq(gtd_builder_add_channel_with_unit_mode(builder, &channel, GTD_CHANNEL_UNIT_CUSTOM),
+                 GTD_OK);
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_OK);
+    GtdNavFile *reloaded = reload_through_bytes(file);
+
+    GtdChannelInfo info;
+    cr_assert_eq(gtd_nav_file_get_channel(reloaded, 0, &info), GTD_OK);
+    cr_assert_str_eq(info.name, name);
+    cr_assert_str_eq(info.unit, unit);
+    cr_assert_str_eq(info.description, description);
+    cr_assert_eq(info.component_count, 2);
+    cr_assert_str_eq(info.components[0], first_component);
+    cr_assert_str_eq(info.components[1], "y");
+    gtd_nav_file_destroy(reloaded);
+}
+
+Test(channels, get_channel_unit_returns_out_of_range_and_leaves_a_short_buffer_unwritten) {
+    GtdTimestamp timestamp;
+    GtdFileBuilder *builder = builder_with_a_nav_fix(&timestamp);
+    double value = 1.0;
+    GtdChannel channel = {0};
+    channel.name = "speed";
+    channel.unit = "km/h";
+    channel.period_deg = GTD_NONE_F64;
+    channel.times = &timestamp;
+    channel.n_times = 1;
+    channel.values = &value;
+    channel.n_values = 1;
+    cr_assert_eq(gtd_builder_add_channel(builder, &channel), GTD_OK);
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_OK);
+
+    char unit[3] = {'z', 'z', 'z'};
+    size_t required_length = 0;
+    cr_assert_eq(gtd_nav_file_get_channel_unit(file, 0, unit, sizeof unit, &required_length, NULL),
+                 GTD_ERR_OUT_OF_RANGE);
+    cr_assert_eq(required_length, sizeof "km/h");
+    cr_assert_arr_eq(unit, "zzz", sizeof unit);
+    gtd_nav_file_destroy(file);
+}
+
 Test(channels, invalid_name_is_rejected) {
     GtdFileBuilder *builder = gtd_builder_create();
     GtdTimestamp timestamp;

@@ -3,9 +3,11 @@
 #include <geotrace/geotrace.hpp>
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
+#include <string>
 
 #include "test_timestamps.hpp"
 
@@ -91,6 +93,24 @@ TEST_CASE("NavFile: a style that leaves the icon and color to the application re
     CHECK_FALSE(style.icon.has_value());
     CHECK(style.icon_name.empty());
     CHECK(style.color_hex.empty());
+}
+
+TEST_CASE("NavFile: a style path or color past its C struct field is GTD_ERR_FIELD_TOO_LONG") {
+    const NavFix fix{FixTime::receiver(fix_timestamp()), Angle::degrees(51.0),
+                     Angle::degrees(-1.0)};
+    auto file =
+        FileBuilder{}
+            .add_nav_fix(fix)
+            .add_event_marker_style(EventMarkerStyle{std::string(300, 'p'), std::nullopt, ""})
+            .add_event_marker_style(
+                EventMarkerStyle{"power/boot", std::nullopt, "#12AB9F-and-more"})
+            .finish();
+
+    for (std::size_t index = 0; index < 2; ++index) {
+        const auto style = file.try_event_marker_style(index);
+        REQUIRE(style.is_err());
+        CHECK(style.error().code == GTD_ERR_FIELD_TOO_LONG);
+    }
 }
 
 TEST_CASE("NavFile: event_marker_style out-of-range throws std::out_of_range") {
