@@ -169,20 +169,116 @@ pub fn a_recording_looping_back_to_its_start(
     a_recording_over(points)
 }
 
+/// One file over `count` tracks recorded from one door, each walking out in
+/// its own direction for `reach_degrees` and back to the fix it started at,
+/// one track per hour from [`epoch`].
+///
+/// Each track's first fix sits [`DOOR_SCATTER_DEGREES`] from the door, the way
+/// a receiver's first fixes scatter, and close enough that the flags of all
+/// [`count`] of them fold into one cluster.
+pub fn a_recording_of_round_trips_from_one_door(
+    count: usize,
+    reach_degrees: f64,
+) -> Vec<LoadedFile> {
+    let tracks = (0..count)
+        .map(|index| {
+            let bearing = index as f64 / count.max(1) as f64 * std::f64::consts::TAU;
+            let out: Vec<(f64, f64)> = (0..=ROUND_TRIP_STEPS_PER_LEG)
+                .map(|step| {
+                    let along = DOOR_SCATTER_DEGREES
+                        + step as f64 / ROUND_TRIP_STEPS_PER_LEG as f64 * reach_degrees;
+                    (bearing.cos() * along, bearing.sin() * along)
+                })
+                .collect();
+            let start = epoch() + Duration::hours(index as i64);
+            a_track_over(
+                out.iter()
+                    .copied()
+                    .chain(out.iter().rev().skip(1).copied())
+                    .enumerate()
+                    .map(|(minute, (north, east))| {
+                        fix_at_time(start + Duration::minutes(minute as i64), north, east)
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+    vec![gt_test_utils::loaded_file_with_tracks(tracks)]
+}
+
+/// One file over two tracks that meet mid-route: the first walks east up to
+/// [`MID_ROUTE_MEETING_DEGREES`], and the second starts `metres_apart` east of
+/// that fix and walks on north east, an hour later.
+pub fn a_recording_of_two_tracks_meeting_mid_route(metres_apart: f64) -> Vec<LoadedFile> {
+    let apart = degrees_of_longitude(metres_apart);
+    let step = degrees_of_longitude(MID_ROUTE_STEP_METRES);
+    let arriving = (0..MID_ROUTE_FIXES).map(|index| {
+        let short_of_the_meeting_place = (MID_ROUTE_FIXES - 1 - index) as f64 * step;
+        fix_at_time(
+            epoch() + Duration::minutes(index as i64),
+            0.0,
+            -short_of_the_meeting_place,
+        )
+    });
+    let leaving = (0..MID_ROUTE_FIXES).map(|index| {
+        let along = index as f64 * step;
+        fix_at_time(
+            epoch() + Duration::hours(1) + Duration::minutes(index as i64),
+            along,
+            apart + along,
+        )
+    });
+    vec![gt_test_utils::loaded_file_with_tracks(vec![
+        a_track_over(arriving.collect()),
+        a_track_over(leaving.collect()),
+    ])]
+}
+
+/// Where the two tracks of [`a_recording_of_two_tracks_meeting_mid_route`]
+/// meet, in degrees.
+pub const MID_ROUTE_MEETING_DEGREES: (f64, f64) = (CENTER_LAT, CENTER_LON);
+
+/// Fixes per leg of a track of [`a_recording_of_round_trips_from_one_door`],
+/// which walks each leg out and back.
+const ROUND_TRIP_STEPS_PER_LEG: usize = 10;
+
+/// How far the first fix of each track of
+/// [`a_recording_of_round_trips_from_one_door`] sits from the door: about 11 m
+/// north, 6 m east.
+const DOOR_SCATTER_DEGREES: f64 = 0.000_1;
+
+/// Fixes per track of [`a_recording_of_two_tracks_meeting_mid_route`].
+const MID_ROUTE_FIXES: usize = 12;
+
+/// Ground distance between consecutive fixes of a track of
+/// [`a_recording_of_two_tracks_meeting_mid_route`].
+const MID_ROUTE_STEP_METRES: f64 = 20.0;
+
+/// One fix `north` and `east` of the map's default centre, in degrees.
+fn fix_at_time(time: DateTime<Utc>, north: f64, east: f64) -> NavPoint {
+    let tpv = gt_types::TimePositionVelocity::builder()
+        .time(gt_types::GpsTime::from_utc(time))
+        .lat(Latitude::new(CENTER_LAT + north))
+        .lon(Longitude::new(CENTER_LON + east))
+        .build();
+    NavPoint::new(tpv, None)
+}
+
+/// How many degrees of longitude `metres` span at the map's default centre.
+fn degrees_of_longitude(metres: f64) -> f64 {
+    metres
+        / gt_geo_math::haversine_m(
+            Latitude::new(CENTER_LAT),
+            Longitude::new(CENTER_LON),
+            Latitude::new(CENTER_LAT),
+            Longitude::new(CENTER_LON + 1.0),
+        )
+}
+
 /// One file over one track of `points`. The metadata has the time range and
 /// the duration the track filter reads.
 fn a_recording_over(points: Vec<NavPoint>) -> Vec<LoadedFile> {
-    let first = points.first().map_or_else(epoch, |p| p.tpv.time().utc());
-    let last = points.last().map_or_else(epoch, |p| p.tpv.time().utc());
-    let track = LoadedTrack {
-        metadata: gt_types::TrackMetadata {
-            duration: last - first,
-            time_range: TimeRange::new(first, last),
-            tpv_count: points.len(),
-            ..gt_test_utils::empty_track_metadata()
-        },
-        ..gt_test_utils::loaded_track_with_points(points)
-    };
+    let track = a_track_over(points);
     vec![LoadedFile {
         metadata: gt_test_utils::empty_file_metadata(),
         tracks: vec![track],
@@ -191,6 +287,22 @@ fn a_recording_over(points: Vec<NavPoint>) -> Vec<LoadedFile> {
         source: FileSource::GtdPath(std::path::PathBuf::from("recording.gtd")),
         load_warnings: Vec::new(),
     }]
+}
+
+/// One track over `points`, with the time range and the duration the track
+/// filter reads.
+fn a_track_over(points: Vec<NavPoint>) -> LoadedTrack {
+    let first = points.first().map_or_else(epoch, |p| p.tpv.time().utc());
+    let last = points.last().map_or_else(epoch, |p| p.tpv.time().utc());
+    LoadedTrack {
+        metadata: gt_types::TrackMetadata {
+            duration: last - first,
+            time_range: TimeRange::new(first, last),
+            tpv_count: points.len(),
+            ..gt_test_utils::empty_track_metadata()
+        },
+        ..gt_test_utils::loaded_track_with_points(points)
+    }
 }
 
 /// [`gt_test_utils::loaded_track_with_points`] with the LOD levels and the

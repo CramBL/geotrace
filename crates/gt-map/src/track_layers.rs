@@ -11,10 +11,11 @@ use gt_filter::GlobalFilter;
 use gt_types::{FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef};
 use gt_ui_types::{DrawLayerMask, MapHighlight, QueryMatches, SkyGlyphVariant, TrackMatchView};
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::collision_grid;
-use crate::icon_mesh::{IconMeshBatch, IconMeshLibrary};
+use crate::icon_mesh::IconMeshLibrary;
 use crate::match_reveal::HaloStyle;
 use crate::polyline::{CULL_MARGIN_PX, VisiblePath, visible_path};
 use crate::query_match_renderer;
@@ -24,7 +25,9 @@ use crate::tpv_renderer::{
     self, ChevronFix, QUALITY_LINE_WIDTH, TpvDrawStyle, TrackIconFade, bucket_alpha,
     fix_icon_alpha, line_alpha_bucket, quality_line_color,
 };
-use crate::track_endpoint_renderer::{DrawnTrackEnds, FlagStyle};
+use crate::track_endpoint_renderer::{
+    self, DrawnTrackEnds, FlagStyle, PendingEndpointFlags, StandingFlag,
+};
 use crate::track_renderer::{
     self, blink_stroke, draw_track_with_ghost, skip_trackline, track_stroke,
 };
@@ -177,6 +180,10 @@ pub struct TrackLayers<'a> {
     sat_label_scratch: &'a mut LabelSelection,
     /// Reused decimation scratch for the sky-glyph selection.
     sky_glyph_scratch: &'a mut GlyphSelection,
+    /// Reused buffer for the flags at the ends of the tracks drawn without a
+    /// highlight, filled per track and painted as one clustered batch at the
+    /// end of the phase.
+    endpoint_flags: &'a mut PendingEndpointFlags,
 }
 
 impl Plugin for TrackLayers<'_> {
@@ -195,13 +202,8 @@ impl Plugin for TrackLayers<'_> {
         let max_rect = ui.max_rect();
 
         let geometries = self.prepare_track_geometries(max_rect, &style, &transform);
-        // The `select_*` calls fill the scratches through `&mut self`. The
-        // `.selected()` reads then borrow them immutably for the paint passes.
-        // Split so the mutable fill fully ends before the shared reads begin.
         self.select_sat_labels(&geometries, max_rect, &transform, map_memory.zoom());
         self.select_sky_glyphs(&geometries, max_rect, &transform, map_memory.zoom());
-        let sat_labels = self.sat_label_scratch.selected();
-        let sky_glyphs = self.sky_glyph_scratch.selected();
 
         let hover_active =
             self.highlight.fading_enabled && track_renderer::hover_is_active(self.highlight);
@@ -226,16 +228,9 @@ impl Plugin for TrackLayers<'_> {
                 self.paint_tracklines(ui, &geometries, |i| {
                     !focused.get(i).copied().unwrap_or(false)
                 });
-                self.paint_tpv_layers(
-                    ui,
-                    &geometries,
-                    sat_labels,
-                    sky_glyphs,
-                    &style,
-                    &transform,
-                    max_rect,
-                    |i| !focused.get(i).copied().unwrap_or(false),
-                );
+                self.paint_tpv_layers(ui, &geometries, &style, &transform, max_rect, |i| {
+                    !focused.get(i).copied().unwrap_or(false)
+                });
                 paint_fade_overlay(ui, max_rect, fade);
                 self.paint_match_halos(ui, &geometries, &style, |i| {
                     focused.get(i).copied().unwrap_or(false)
@@ -243,46 +238,21 @@ impl Plugin for TrackLayers<'_> {
                 self.paint_tracklines(ui, &geometries, |i| {
                     focused.get(i).copied().unwrap_or(false)
                 });
-                self.paint_tpv_layers(
-                    ui,
-                    &geometries,
-                    sat_labels,
-                    sky_glyphs,
-                    &style,
-                    &transform,
-                    max_rect,
-                    |i| focused.get(i).copied().unwrap_or(false),
-                );
+                self.paint_tpv_layers(ui, &geometries, &style, &transform, max_rect, |i| {
+                    focused.get(i).copied().unwrap_or(false)
+                });
             } else {
                 // No current hover target (fade-out): all tracks under the
                 // fading overlay, no focused track in Phase 3.
                 self.paint_match_halos(ui, &geometries, &style, |_| true);
                 self.paint_tracklines(ui, &geometries, |_| true);
-                self.paint_tpv_layers(
-                    ui,
-                    &geometries,
-                    sat_labels,
-                    sky_glyphs,
-                    &style,
-                    &transform,
-                    max_rect,
-                    |_| true,
-                );
+                self.paint_tpv_layers(ui, &geometries, &style, &transform, max_rect, |_| true);
                 paint_fade_overlay(ui, max_rect, fade);
             }
         } else {
             self.paint_match_halos(ui, &geometries, &style, |_| true);
             self.paint_tracklines(ui, &geometries, |_| true);
-            self.paint_tpv_layers(
-                ui,
-                &geometries,
-                sat_labels,
-                sky_glyphs,
-                &style,
-                &transform,
-                max_rect,
-                |_| true,
-            );
+            self.paint_tpv_layers(ui, &geometries, &style, &transform, max_rect, |_| true);
         }
 
         tpv_renderer::draw_plot_hover_overlay(ui, self.files, self.highlight, &style, &transform);
@@ -609,17 +579,13 @@ impl<'a> TrackLayers<'a> {
 
     /// Paint the TPV layer per track: the sky rings underneath, the
     /// fix-quality line, the fix icons on top, then the selected satellite
-    /// labels, for the entries that pass the `filter(index)` predicate.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "per-frame paint context; a wrapper struct would not add clarity"
-    )]
+    /// labels, for the entries that pass the `filter(index)` predicate. The
+    /// flags at the ends of those tracks close the pass, clustered across all
+    /// of them.
     fn paint_tpv_layers<F>(
-        &self,
+        &mut self,
         ui: &Ui,
         geometries: &[TrackGeometry],
-        sat_labels: &[Vec<usize>],
-        sky_glyphs: &[Vec<usize>],
         style: &TpvDrawStyle,
         transform: &MercTransform,
         max_rect: egui::Rect,
@@ -628,13 +594,16 @@ impl<'a> TrackLayers<'a> {
         F: Fn(usize) -> bool,
     {
         let icon_view_rect = tpv_renderer::icon_cull_rect(max_rect);
+        // Each phase gathers the flags of the tracks drawn in it without a
+        // highlight, which the cluster pass at the end of this call paints.
+        self.endpoint_flags.clear();
         for (i, geo) in geometries.iter().enumerate() {
             if !filter(i) {
                 continue;
             }
             // Glyphs first, so the quality line, icons, and labels stay
             // legible on top of the subtle background context.
-            if let Some(glyph_indices) = sky_glyphs.get(i) {
+            if let Some(glyph_indices) = self.sky_glyph_scratch.selected().get(i) {
                 sky_glyph_renderer::draw_glyphs(
                     ui,
                     geo.track,
@@ -686,14 +655,33 @@ impl<'a> TrackLayers<'a> {
                 );
             }
             // Labels last so their backplates sit on top of the icons.
-            if let Some(label_indices) = sat_labels.get(i) {
+            if let Some(label_indices) = self.sat_label_scratch.selected().get(i) {
                 tpv_renderer::draw_sat_labels(ui, geo.track, label_indices, style, transform);
             }
-            self.paint_endpoint_flags(ui, geo, icon_view_rect, transform);
+            let flag_style = FlagStyle {
+                view_rect: icon_view_rect,
+                dark_mode: ui.visuals().dark_mode,
+                highlighted: track_renderer::is_track_highlighted(self.highlight, geo.fi, geo.ti),
+            };
+            let flags = self.endpoint_flags_of(geo, flag_style, transform);
+            if flag_style.highlighted {
+                track_endpoint_renderer::paint_flags(
+                    ui,
+                    &flags,
+                    flag_style,
+                    transform,
+                    self.icon_meshes,
+                );
+            } else {
+                self.endpoint_flags
+                    .push_flags_of_track(TrackRef::new(geo.fi, geo.ti), flags);
+            }
         }
+        self.endpoint_flags
+            .paint(ui, icon_view_rect, transform, self.icon_meshes);
     }
 
-    /// Paint the flags at the ends of a track, above its arrows, chevrons and
+    /// The flags at the ends of one track, above its arrows, chevrons and
     /// labels.
     ///
     /// Every drawn track shows them, at every zoom: a track whose fix icons
@@ -703,31 +691,24 @@ impl<'a> TrackLayers<'a> {
     ///
     /// The fade is this pass's own: a non-focused track's flags go under the
     /// fade overlay with its arrows and labels, painted in the same phase.
-    fn paint_endpoint_flags(
+    fn endpoint_flags_of(
         &self,
-        ui: &Ui,
         geo: &TrackGeometry<'_>,
-        view_rect: egui::Rect,
+        style: FlagStyle,
         transform: &MercTransform,
-    ) {
-        let Some(placed) = geo.track.placed_points() else {
-            return;
-        };
-        let Some(ends) = DrawnTrackEnds::of(placed, self.filter) else {
-            return;
+    ) -> SmallVec<[StandingFlag; 2]> {
+        let Some(ends) = geo
+            .track
+            .placed_points()
+            .and_then(|placed| DrawnTrackEnds::of(placed, self.filter))
+        else {
+            return SmallVec::new();
         };
         let ends = match geo.path {
             VisiblePath::Dot(_, _) => ends.collapsed_to_one_dot(),
             VisiblePath::OffScreen | VisiblePath::Spans(_) => ends,
         };
-        let style = FlagStyle {
-            view_rect,
-            dark_mode: ui.visuals().dark_mode,
-            highlighted: track_renderer::is_track_highlighted(self.highlight, geo.fi, geo.ti),
-        };
-        let mut batch = IconMeshBatch::gpu_when_available(ui, self.icon_meshes);
-        ends.push_flags(&mut batch, style, transform);
-        batch.paint(ui.painter());
+        ends.flags(style, transform)
     }
 }
 

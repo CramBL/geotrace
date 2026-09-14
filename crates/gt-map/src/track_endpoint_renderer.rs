@@ -3,20 +3,28 @@
 //! green and chequered where the track ends within [`ENDS_MEET_RADIUS_M`] of
 //! where it started.
 //!
+//! The flags of two or more tracks within one cloth width of each other draw
+//! as one cluster flag with a count. The highlighted track's flags stay out
+//! of every cluster: hovering a track draws its own flags at their own
+//! position and size.
+//!
 //! See [`crate::icon_mesh::FLAG_ANCHOR_OFFSET_PT`] for the anchor geometry.
 
 use std::f32::consts::FRAC_PI_2;
 use std::iter;
+use std::num::NonZeroUsize;
 
-use egui::{Color32, Pos2, Vec2};
+use egui::{Align2, Color32, FontId, Pos2, Ui, Vec2};
 use gt_filter::GlobalFilter;
-use gt_types::{Latitude, Longitude, PlacedPoints};
+use gt_types::{Latitude, Longitude, MercBounds, MercPoint, PlacedPoints, TrackRef};
 use smallvec::SmallVec;
 
+use crate::collision_grid;
 use crate::icon_mesh::{
-    self, FLAG_ANCHOR_OFFSET_PT, FLAG_CLOTH_WIDTH_PT, FLAG_HALF_EXTENTS_PT, IconId, IconInstance,
-    IconMeshBatch,
+    self, FLAG_ANCHOR_OFFSET_PT, FLAG_CLOTH_TOP_RIGHT_PT, FLAG_CLOTH_WIDTH_PT,
+    FLAG_HALF_EXTENTS_PT, IconId, IconInstance, IconMeshBatch, IconMeshLibrary,
 };
+use crate::text_badge::{BadgePlateHeight, TextBadge};
 use crate::transform::MercTransform;
 
 /// The first and the last fix the map draws for one track: a placed fix whose
@@ -59,24 +67,12 @@ impl<'a> DrawnTrackEnds<'a> {
         }
     }
 
-    pub(crate) fn push_flags(
-        self,
-        batch: &mut IconMeshBatch<'_>,
-        style: FlagStyle,
-        transform: &MercTransform,
-    ) {
-        for instance in self.flag_instances(style, transform) {
-            batch.push(instance);
-        }
-    }
-
-    /// The instances this track's flags draw as, the start flag first. A flag
-    /// whose pole foot sits outside [`FlagStyle::view_rect`] is left out.
-    fn flag_instances(
+    /// The flags at this track's ends, the start flag first.
+    pub(crate) fn flags(
         self,
         style: FlagStyle,
         transform: &MercTransform,
-    ) -> SmallVec<[IconInstance; 2]> {
+    ) -> SmallVec<[StandingFlag; 2]> {
         let Some(start) = self.drawn_end_at(self.first, transform) else {
             return SmallVec::new();
         };
@@ -90,41 +86,36 @@ impl<'a> DrawnTrackEnds<'a> {
             FLAG_CLOTH_WIDTH_PT * style.scale(),
         );
 
-        let at_the_start = |icon, pose| Flag {
-            end: start,
-            icon,
-            cloth_tint: gt_ui_theme::TRACK_START_FLAG.resolve(style.dark_mode),
+        let at_the_start = |ends, pose| StandingFlag {
+            merc: start.merc,
+            ends,
             pose,
         };
         let at_the_finish = |pose| {
-            finish.map(|end| Flag {
-                end,
-                icon: IconId::FinishFlag,
-                // White keeps the chequerboard baked into the asset.
-                cloth_tint: Color32::WHITE,
+            finish.map(|end| StandingFlag {
+                merc: end.merc,
+                ends: FlagEnds::Finish,
                 pose,
             })
         };
         let (start_flag, finish_flag) = match placement {
             EndpointFlagPlacement::Leaning => (
-                at_the_start(IconId::StartFlag, FlagPose::LeaningStart),
+                at_the_start(FlagEnds::Start, FlagPose::LeaningStart),
                 at_the_finish(FlagPose::LeaningFinish),
             ),
-            EndpointFlagPlacement::RoundTrip => {
-                (at_the_start(IconId::RoundTripFlag, FlagPose::Upright), None)
-            }
+            EndpointFlagPlacement::RoundTrip => (
+                at_the_start(FlagEnds::StartAndFinish, FlagPose::Upright),
+                None,
+            ),
             EndpointFlagPlacement::StartOnly => {
-                (at_the_start(IconId::StartFlag, FlagPose::Upright), None)
+                (at_the_start(FlagEnds::Start, FlagPose::Upright), None)
             }
             EndpointFlagPlacement::Upright => (
-                at_the_start(IconId::StartFlag, FlagPose::Upright),
+                at_the_start(FlagEnds::Start, FlagPose::Upright),
                 at_the_finish(FlagPose::Upright),
             ),
         };
-        iter::once(start_flag)
-            .chain(finish_flag)
-            .filter_map(|flag| flag.instance(style))
-            .collect()
+        iter::once(start_flag).chain(finish_flag).collect()
     }
 
     /// `None` for an index past the track's fixes.
@@ -132,8 +123,73 @@ impl<'a> DrawnTrackEnds<'a> {
         let placed = self.placed.get(point_index)?;
         Some(DrawnEnd {
             position: placed.resolved_position(),
+            merc: placed.merc(),
             pole_foot: transform.to_screen(placed.merc()),
         })
+    }
+}
+
+/// The flags of every track but the highlighted one, as this frame placed
+/// them: gathered while each track draws, and painted together once every
+/// track has placed its own.
+///
+/// A steady stream of frames reuses the buffer's allocation: the map holds
+/// the buffer across frames.
+#[derive(Default)]
+pub(crate) struct PendingEndpointFlags {
+    flags: Vec<TrackEndFlag>,
+}
+
+impl PendingEndpointFlags {
+    pub(crate) fn clear(&mut self) {
+        self.flags.clear();
+    }
+
+    pub(crate) fn push_flags_of_track(
+        &mut self,
+        track: TrackRef,
+        flags: impl IntoIterator<Item = StandingFlag>,
+    ) {
+        self.flags
+            .extend(flags.into_iter().map(|flag| TrackEndFlag { track, flag }));
+    }
+
+    /// Paints one flag per place: a cluster flag with a count where two or
+    /// more tracks meet, and every other flag where its own track placed it.
+    pub(crate) fn paint(
+        &self,
+        ui: &Ui,
+        view_rect: egui::Rect,
+        transform: &MercTransform,
+        icon_meshes: Option<&IconMeshLibrary>,
+    ) {
+        let style = FlagStyle {
+            view_rect,
+            dark_mode: ui.visuals().dark_mode,
+            highlighted: false,
+        };
+        let cloth_width_merc = f64::from(FLAG_CLOTH_WIDTH_PT) / transform.px_per_merc();
+        let grouped = group_flags_by_position(
+            &self.flags,
+            cloth_width_merc,
+            transform.viewport_merc_bounds(view_rect),
+        );
+        let mut batch = IconMeshBatch::gpu_when_available(ui, icon_meshes);
+        for grouped_flag in &grouped {
+            if let Some(instance) = grouped_flag.flag().instance(style, transform) {
+                batch.push(instance);
+            }
+        }
+        batch.paint(ui.painter());
+        // The counts go on after the batch, which puts each badge above every
+        // flag the batch drew.
+        for grouped_flag in &grouped {
+            if let GroupedFlag::Cluster { flag, count } = *grouped_flag
+                && let Some(pole_foot) = flag.pole_foot(style, transform)
+            {
+                draw_cluster_count(ui, pole_foot + FLAG_CLOTH_TOP_RIGHT_PT, count);
+            }
+        }
     }
 }
 
@@ -156,6 +212,124 @@ impl FlagStyle {
             HIGHLIGHT_SCALE
         } else {
             1.0
+        }
+    }
+}
+
+/// One flag standing on the map: a track's own, or the one the flags of
+/// several tracks at one place draw as.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct StandingFlag {
+    merc: MercPoint,
+    ends: FlagEnds,
+    pose: FlagPose,
+}
+
+impl StandingFlag {
+    fn standing_upright(self) -> Self {
+        Self {
+            pose: FlagPose::Upright,
+            ..self
+        }
+    }
+
+    /// `None` for a pole foot outside [`FlagStyle::view_rect`].
+    fn instance(self, style: FlagStyle, transform: &MercTransform) -> Option<IconInstance> {
+        let pole_foot = self.pole_foot(style, transform)?;
+        // The pole and the cloth's outline are white in both themes, the
+        // convention the pin and the chevrons follow. A highlighted track
+        // takes them to the highlight blue, as its chevrons do.
+        let outline_tint = if style.highlighted {
+            gt_ui_theme::HIGHLIGHT_BLUE
+        } else {
+            Color32::WHITE
+        };
+        let half_extents = self.pose.half_extents(style.scale());
+        let direction = self.pose.direction();
+        Some(IconInstance {
+            icon: self.ends.icon(),
+            center: pole_foot + anchor_offset(half_extents, direction),
+            half_extents,
+            direction,
+            // The round trip flag's chequer cells stay white in both themes
+            // and on a highlighted track.
+            tints: [
+                self.ends.cloth_tint(style.dark_mode),
+                outline_tint,
+                Color32::WHITE,
+            ],
+        })
+    }
+
+    /// `None` for a pole foot outside [`FlagStyle::view_rect`].
+    fn pole_foot(self, style: FlagStyle, transform: &MercTransform) -> Option<Pos2> {
+        let pole_foot = transform.to_screen(self.merc);
+        style.view_rect.contains(pole_foot).then_some(pole_foot)
+    }
+}
+
+/// One track's flag as this frame placed it. The cluster pass reads the
+/// [`TrackRef`]: a group of one track's own flags draws each of them where
+/// that track placed it.
+#[derive(Clone, Copy, Debug)]
+struct TrackEndFlag {
+    track: TrackRef,
+    flag: StandingFlag,
+}
+
+/// Which ends of its track one flag stands for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FlagEnds {
+    Finish,
+    Start,
+    StartAndFinish,
+}
+
+impl FlagEnds {
+    /// The ends of two flags merged at one place: a start merged with a
+    /// finish becomes [`Self::StartAndFinish`], which draws the split cloth.
+    fn merged_with(self, other: Self) -> Self {
+        if self == other {
+            self
+        } else {
+            Self::StartAndFinish
+        }
+    }
+
+    fn icon(self) -> IconId {
+        match self {
+            Self::Finish => IconId::FinishFlag,
+            Self::Start => IconId::StartFlag,
+            Self::StartAndFinish => IconId::RoundTripFlag,
+        }
+    }
+
+    /// White keeps the chequerboard the finish flag's asset bakes in.
+    fn cloth_tint(self, dark_mode: bool) -> Color32 {
+        match self {
+            Self::Finish => Color32::WHITE,
+            Self::Start | Self::StartAndFinish => gt_ui_theme::TRACK_START_FLAG.resolve(dark_mode),
+        }
+    }
+}
+
+/// What the flags at one place draw as.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum GroupedFlag {
+    /// The flags of two or more tracks within one cloth width of each other,
+    /// as one flag stating how many it stands for.
+    Cluster {
+        flag: StandingFlag,
+        count: NonZeroUsize,
+    },
+    /// One track's flag, where that track placed it.
+    Loose(StandingFlag),
+}
+
+impl GroupedFlag {
+    fn flag(self) -> StandingFlag {
+        match self {
+            Self::Cluster { flag, .. } | Self::Loose(flag) => flag,
         }
     }
 }
@@ -206,6 +380,7 @@ impl EndpointFlagPlacement {
 #[derive(Clone, Copy, Debug)]
 struct DrawnEnd {
     position: (Latitude, Longitude),
+    merc: MercPoint,
     pole_foot: Pos2,
 }
 
@@ -217,47 +392,11 @@ impl DrawnEnd {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Flag {
-    end: DrawnEnd,
-    icon: IconId,
-    cloth_tint: Color32,
-    pose: FlagPose,
-}
-
-impl Flag {
-    /// `None` for a pole foot outside [`FlagStyle::view_rect`].
-    fn instance(self, style: FlagStyle) -> Option<IconInstance> {
-        if !style.view_rect.contains(self.end.pole_foot) {
-            return None;
-        }
-        // The pole and the cloth's outline are white in both themes, the
-        // convention the pin and the chevrons follow. A highlighted track
-        // takes them to the highlight blue, as its chevrons do.
-        let outline_tint = if style.highlighted {
-            gt_ui_theme::HIGHLIGHT_BLUE
-        } else {
-            Color32::WHITE
-        };
-        let half_extents = self.pose.half_extents(style.scale());
-        let direction = self.pose.direction();
-        Some(IconInstance {
-            icon: self.icon,
-            center: self.end.pole_foot + anchor_offset(half_extents, direction),
-            half_extents,
-            direction,
-            // The round trip flag's chequer cells stay white in both themes
-            // and on a highlighted track.
-            tints: [self.cloth_tint, outline_tint, Color32::WHITE],
-        })
-    }
-}
-
 /// How one flag stands. A pair under one cloth width apart on screen leans
 /// apart: the start flag turns [`LEAN_DEGREES`] anticlockwise with its cloth
 /// on the left of the pole, the finish flag the same angle clockwise with its
 /// cloth on the right.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FlagPose {
     LeaningFinish,
     LeaningStart,
@@ -287,6 +426,101 @@ impl FlagPose {
     }
 }
 
+/// Paints `flags` as one batch, which is how the highlighted track's flags
+/// draw on the map: they stay out of every cluster and keep their own size.
+pub(crate) fn paint_flags(
+    ui: &Ui,
+    flags: &[StandingFlag],
+    style: FlagStyle,
+    transform: &MercTransform,
+    icon_meshes: Option<&IconMeshLibrary>,
+) {
+    let mut batch = IconMeshBatch::gpu_when_available(ui, icon_meshes);
+    for flag in flags {
+        if let Some(instance) = flag.instance(style, transform) {
+            batch.push(instance);
+        }
+    }
+    batch.paint(ui.painter());
+}
+
+/// Groups the flags several tracks placed: those of two or more tracks within
+/// `spacing_merc` of each other into one cluster flag, and every other flag as
+/// its own track placed it.
+///
+/// A flag left alone in its group stands upright. Its leaning partner joined
+/// a cluster, and nothing stands beside it to lean away from. A pair that
+/// leans is a pair that groups together: the two thresholds are the same
+/// width.
+fn group_flags_by_position(
+    flags: &[TrackEndFlag],
+    spacing_merc: f64,
+    viewport: MercBounds,
+) -> Vec<GroupedFlag> {
+    let mut grouped: Vec<GroupedFlag> = Vec::new();
+    for cluster in collision_grid::cluster_positions(
+        flags.iter().map(|flag| flag.flag.merc),
+        spacing_merc,
+        viewport,
+    ) {
+        let mut members = cluster.members.iter().filter_map(|&index| flags.get(index));
+        let Some(first) = members.next() else {
+            continue;
+        };
+        let mut ends = first.flag.ends;
+        let mut count = NonZeroUsize::MIN;
+        let mut one_track_placed_them_all = true;
+        for member in members {
+            ends = ends.merged_with(member.flag.ends);
+            count = count.saturating_add(1);
+            one_track_placed_them_all &= member.track == first.track;
+        }
+        if !one_track_placed_them_all {
+            grouped.push(GroupedFlag::Cluster {
+                flag: StandingFlag {
+                    merc: cluster.merc,
+                    ends,
+                    pose: FlagPose::Upright,
+                },
+                count,
+            });
+            continue;
+        }
+        let alone = count == NonZeroUsize::MIN;
+        grouped.extend(
+            cluster
+                .members
+                .iter()
+                .filter_map(|&index| flags.get(index))
+                .map(|member| {
+                    GroupedFlag::Loose(if alone {
+                        member.flag.standing_upright()
+                    } else {
+                        member.flag
+                    })
+                }),
+        );
+    }
+    grouped
+}
+
+/// The badge on a cluster flag's cloth, stating how many flags it stands for.
+///
+/// The backplate takes the height of the digits: the leading of the laid-out
+/// text would cover the cloth under it.
+fn draw_cluster_count(ui: &Ui, cloth_corner: Pos2, count: NonZeroUsize) {
+    TextBadge {
+        text: count.to_string(),
+        font: FontId::monospace(COUNT_BADGE_FONT_PX),
+        text_color: Color32::WHITE,
+        fill: COUNT_BADGE_FILL,
+        padding_pt: COUNT_BADGE_PADDING_PT,
+        corner_radius_pt: COUNT_BADGE_CORNER_RADIUS_PT,
+        plate_height: BadgePlateHeight::Font,
+    }
+    .draw(ui, cloth_corner, Align2::CENTER_CENTER);
+}
+
 /// Offset from a flag's pole foot to the center of the instance drawing it.
 ///
 /// [`FLAG_ANCHOR_OFFSET_PT`] is that offset for an upright instance of
@@ -310,10 +544,22 @@ const ENDS_MEET_RADIUS_M: f64 = 1.0;
 /// How far a flag of a leaning pair turns from upright.
 const LEAN_DEGREES: f32 = 22.0;
 
+/// Height of the count on a cluster flag's badge, the height of the log
+/// hexagons' own count.
+const COUNT_BADGE_FONT_PX: f32 = 11.0;
+
+const COUNT_BADGE_PADDING_PT: f32 = 1.5;
+
+const COUNT_BADGE_CORNER_RADIUS_PT: f32 = 3.0;
+
+/// Fill behind a cluster flag's count, dark enough for white digits over the
+/// cloth and over the tiles.
+const COUNT_BADGE_FILL: Color32 = Color32::from_black_alpha(200);
+
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, Duration, Utc};
-    use gt_types::{GpsTime, LoadedTrack, NavPoint, TimePositionVelocity};
+    use gt_types::{FileIdx, GpsTime, LoadedTrack, NavPoint, TimePositionVelocity, TrackIdx};
     use rstest::rstest;
 
     use super::*;
@@ -430,6 +676,18 @@ mod tests {
         (a_track_of(5), a_view_over_the_first_fix())
     }
 
+    /// The instances one track's ends draw as, in the order they are placed.
+    fn instances_of(
+        ends: DrawnTrackEnds<'_>,
+        style: FlagStyle,
+        transform: &MercTransform,
+    ) -> Vec<IconInstance> {
+        ends.flags(style, transform)
+            .iter()
+            .filter_map(|flag| flag.instance(style, transform))
+            .collect()
+    }
+
     fn icons_of(instances: &[IconInstance]) -> Vec<IconId> {
         instances.iter().map(|instance| instance.icon).collect()
     }
@@ -440,7 +698,7 @@ mod tests {
         let placed = track.placed_points().unwrap_or_default();
         let ends = DrawnTrackEnds::of(placed, &GlobalFilter::default()).expect("five fixes");
 
-        let instances = ends.flag_instances(a_style(false), &transform);
+        let instances = instances_of(ends, a_style(false), &transform);
 
         assert_eq!(
             icons_of(&instances),
@@ -456,9 +714,7 @@ mod tests {
         let placed = track.placed_points().unwrap_or_default();
         let ends = DrawnTrackEnds::of(placed, &GlobalFilter::default()).expect("five fixes");
 
-        let instances = ends
-            .collapsed_to_one_dot()
-            .flag_instances(a_style(false), &transform);
+        let instances = instances_of(ends.collapsed_to_one_dot(), a_style(false), &transform);
 
         assert_eq!(icons_of(&instances), vec![IconId::StartFlag]);
     }
@@ -469,8 +725,8 @@ mod tests {
         let placed = track.placed_points().unwrap_or_default();
         let ends = DrawnTrackEnds::of(placed, &GlobalFilter::default()).expect("five fixes");
 
-        let plain = ends.flag_instances(a_style(false), &transform);
-        let highlighted = ends.flag_instances(a_style(true), &transform);
+        let plain = instances_of(ends, a_style(false), &transform);
+        let highlighted = instances_of(ends, a_style(true), &transform);
 
         for (plain, highlighted) in plain.iter().zip(highlighted.iter()) {
             assert_eq!(plain.half_extents, FLAG_HALF_EXTENTS_PT);
@@ -541,7 +797,7 @@ mod tests {
         let placed = track.placed_points().unwrap_or_default();
         let ends = DrawnTrackEnds::of(placed, &GlobalFilter::default()).expect("three fixes");
 
-        let instances = ends.flag_instances(a_style(false), &a_view_over_the_first_fix());
+        let instances = instances_of(ends, a_style(false), &a_view_over_the_first_fix());
 
         assert_eq!(icons_of(&instances), expected);
     }
@@ -552,9 +808,11 @@ mod tests {
         let placed = track.placed_points().unwrap_or_default();
         let ends = DrawnTrackEnds::of(placed, &GlobalFilter::default()).expect("three fixes");
 
-        let instances = ends
-            .collapsed_to_one_dot()
-            .flag_instances(a_style(false), &a_view_over_the_first_fix());
+        let instances = instances_of(
+            ends.collapsed_to_one_dot(),
+            a_style(false),
+            &a_view_over_the_first_fix(),
+        );
 
         assert_eq!(icons_of(&instances), vec![IconId::RoundTripFlag]);
     }
@@ -575,7 +833,8 @@ mod tests {
         let placed = track.placed_points().unwrap_or_default();
         let ends = DrawnTrackEnds::of(placed, &GlobalFilter::default()).expect("two fixes");
 
-        let instances = ends.flag_instances(
+        let instances = instances_of(
+            ends,
             a_style(highlighted),
             &a_view_spacing_consecutive_fixes(points_between_the_feet),
         );
@@ -593,8 +852,11 @@ mod tests {
         let placed = track.placed_points().unwrap_or_default();
         let ends = DrawnTrackEnds::of(placed, &GlobalFilter::default()).expect("two fixes");
 
-        let instances =
-            ends.flag_instances(a_style(false), &a_view_spacing_consecutive_fixes(10.0));
+        let instances = instances_of(
+            ends,
+            a_style(false),
+            &a_view_spacing_consecutive_fixes(10.0),
+        );
 
         let [start, finish] = instances.as_slice() else {
             panic!("a leaning pair draws two flags, drew {instances:?}");
@@ -619,12 +881,178 @@ mod tests {
             .map(|placed| transform.to_screen(placed.merc()))
             .collect();
 
-        let instances = ends.flag_instances(a_style(false), &transform);
+        let instances = instances_of(ends, a_style(false), &transform);
 
         let feet: Vec<Pos2> = instances.iter().map(pole_foot).collect();
         assert_eq!(feet.len(), 2);
         for (foot, fix) in feet.iter().zip(fixes.iter()) {
             assert!((*foot - *fix).length() < 1e-3, "{foot:?} != {fix:?}");
         }
+    }
+
+    fn a_track(index: usize) -> TrackRef {
+        TrackRef::new(FileIdx::new(0), TrackIdx::new(index))
+    }
+
+    /// A flag of `track` standing `merc_east` east of the grouping cases'
+    /// meeting place.
+    fn a_flag(track: TrackRef, merc_east: f64, ends: FlagEnds) -> TrackEndFlag {
+        TrackEndFlag {
+            track,
+            flag: StandingFlag {
+                merc: MercPoint {
+                    x: MEETING_PLACE_MERC.x + merc_east,
+                    y: MEETING_PLACE_MERC.y,
+                },
+                ends,
+                pose: FlagPose::Upright,
+            },
+        }
+    }
+
+    fn a_leaning_flag(track: TrackRef, merc_east: f64, pose: FlagPose) -> TrackEndFlag {
+        let placed = a_flag(track, merc_east, FlagEnds::Start);
+        TrackEndFlag {
+            flag: StandingFlag {
+                pose,
+                ..placed.flag
+            },
+            ..placed
+        }
+    }
+
+    fn two() -> NonZeroUsize {
+        NonZeroUsize::MIN.saturating_add(1)
+    }
+
+    /// Where the grouping cases put the flags that meet.
+    const MEETING_PLACE_MERC: MercPoint = MercPoint { x: 0.53, y: 0.33 };
+
+    /// A grouping case keeps every flag passed to it: the bounds span the
+    /// whole Mercator square.
+    const THE_WHOLE_WORLD: MercBounds = MercBounds {
+        x_min: 0.0,
+        x_max: 1.0,
+        y_min: 0.0,
+        y_max: 1.0,
+    };
+
+    /// One cloth width in Mercator units. The grouping cases place their flags
+    /// within this width of each other, and past it.
+    const GROUPING_SPACING_MERC: f64 = 0.001;
+
+    /// A cluster flag's cloth shows what its members are: the start flag where
+    /// every one of them is a start, the finish flag where every one is an
+    /// end, and the split flag where both are there. A member that is itself a
+    /// split flag counts as both.
+    #[rstest]
+    #[case::two_starts(FlagEnds::Start, FlagEnds::Start, FlagEnds::Start)]
+    #[case::two_finishes(FlagEnds::Finish, FlagEnds::Finish, FlagEnds::Finish)]
+    #[case::a_start_and_a_finish(FlagEnds::Start, FlagEnds::Finish, FlagEnds::StartAndFinish)]
+    #[case::a_split_flag_and_a_start(
+        FlagEnds::StartAndFinish,
+        FlagEnds::Start,
+        FlagEnds::StartAndFinish
+    )]
+    fn the_flags_of_two_tracks_at_one_place_draw_one_cluster_flag(
+        #[case] one: FlagEnds,
+        #[case] other: FlagEnds,
+        #[case] expected: FlagEnds,
+    ) {
+        let flags = [
+            a_flag(a_track(0), 0.0, one),
+            a_flag(a_track(1), GROUPING_SPACING_MERC / 2.0, other),
+        ];
+
+        let grouped = group_flags_by_position(&flags, GROUPING_SPACING_MERC, THE_WHOLE_WORLD);
+
+        assert_eq!(
+            grouped,
+            vec![GroupedFlag::Cluster {
+                flag: StandingFlag {
+                    merc: MEETING_PLACE_MERC,
+                    ends: expected,
+                    pose: FlagPose::Upright,
+                },
+                count: two(),
+            }]
+        );
+    }
+
+    #[test]
+    fn one_tracks_own_pair_stays_loose_and_keeps_leaning() {
+        let flags = [
+            a_leaning_flag(a_track(0), 0.0, FlagPose::LeaningStart),
+            a_leaning_flag(
+                a_track(0),
+                GROUPING_SPACING_MERC / 2.0,
+                FlagPose::LeaningFinish,
+            ),
+        ];
+
+        let grouped = group_flags_by_position(&flags, GROUPING_SPACING_MERC, THE_WHOLE_WORLD);
+
+        assert_eq!(
+            grouped,
+            vec![
+                GroupedFlag::Loose(flags[0].flag),
+                GroupedFlag::Loose(flags[1].flag),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_flag_further_than_one_cloth_width_away_stays_loose() {
+        let flags = [
+            a_flag(a_track(0), 0.0, FlagEnds::Start),
+            a_flag(a_track(1), GROUPING_SPACING_MERC * 2.0, FlagEnds::Start),
+        ];
+
+        let grouped = group_flags_by_position(&flags, GROUPING_SPACING_MERC, THE_WHOLE_WORLD);
+
+        assert_eq!(
+            grouped,
+            vec![
+                GroupedFlag::Loose(flags[0].flag),
+                GroupedFlag::Loose(flags[1].flag),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_flag_whose_pair_joined_a_cluster_stands_alone_and_upright() {
+        let flags = [
+            a_flag(a_track(1), 0.0, FlagEnds::Start),
+            a_leaning_flag(
+                a_track(0),
+                GROUPING_SPACING_MERC * 0.75,
+                FlagPose::LeaningStart,
+            ),
+            a_leaning_flag(
+                a_track(0),
+                GROUPING_SPACING_MERC * 1.5,
+                FlagPose::LeaningFinish,
+            ),
+        ];
+
+        let grouped = group_flags_by_position(&flags, GROUPING_SPACING_MERC, THE_WHOLE_WORLD);
+
+        assert_eq!(
+            grouped,
+            vec![
+                GroupedFlag::Cluster {
+                    flag: StandingFlag {
+                        merc: MEETING_PLACE_MERC,
+                        ends: FlagEnds::Start,
+                        pose: FlagPose::Upright,
+                    },
+                    count: two(),
+                },
+                GroupedFlag::Loose(StandingFlag {
+                    pose: FlagPose::Upright,
+                    ..flags[2].flag
+                }),
+            ]
+        );
     }
 }

@@ -28,6 +28,7 @@ use uom::si::f64::Angle;
 use uom::si::length::meter;
 
 use crate::icon_mesh::{IconId, IconInstance, IconMeshBatch, IconMeshLibrary};
+use crate::text_badge::{BadgePlateHeight, TextBadge};
 use crate::transform::MapScale;
 
 /// Local on-screen fix spacing, in units of the icon size, at which a fix
@@ -1526,20 +1527,16 @@ pub(crate) fn draw_sat_labels(
         let screen_pos = transform.to_screen(point.merc());
         let label = format!("{}/{}", sats.fix_count(), sats.satellite_count());
         let text_pos = screen_pos + egui::vec2(style.base_arrow_size + 3.0, -style.base_arrow_size);
-        let text_color = Color32::WHITE;
-        let galley =
-            ui.painter()
-                .layout_no_wrap(label, egui::FontId::proportional(12.0), text_color);
-        let text_rect = egui::Rect::from_min_size(
-            egui::pos2(text_pos.x, text_pos.y - galley.size().y),
-            galley.size(),
-        );
-        ui.painter().rect_filled(
-            text_rect.expand(2.0),
-            2.0,
-            Color32::from_rgba_unmultiplied(0, 0, 0, 160),
-        );
-        ui.painter().galley(text_rect.min, galley, text_color);
+        TextBadge {
+            text: label,
+            font: egui::FontId::proportional(SAT_LABEL_FONT_PX),
+            text_color: Color32::WHITE,
+            fill: SAT_LABEL_PLATE_FILL,
+            padding_pt: SAT_LABEL_PADDING_PT,
+            corner_radius_pt: SAT_LABEL_CORNER_RADIUS_PT,
+            plate_height: BadgePlateHeight::LaidOutText,
+        }
+        .draw(ui, text_pos, egui::Align2::LEFT_BOTTOM);
     }
 }
 
@@ -1723,6 +1720,17 @@ fn draw_navigation_arrow(
         )));
     }
 }
+
+/// Height of a satellite-count label.
+const SAT_LABEL_FONT_PX: f32 = 12.0;
+
+const SAT_LABEL_PADDING_PT: f32 = 2.0;
+
+const SAT_LABEL_CORNER_RADIUS_PT: f32 = 2.0;
+
+/// Fill behind a satellite-count label, dark enough for white digits over the
+/// track line and over the tiles.
+const SAT_LABEL_PLATE_FILL: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 160);
 
 #[inline]
 fn alpha_u8(alpha: f32) -> u8 {
