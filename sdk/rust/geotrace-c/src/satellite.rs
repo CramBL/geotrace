@@ -5,6 +5,12 @@ use crate::{GtdConstellation, GtdOptF32};
 /// A satellite entry within a report (write path, input from C).
 ///
 /// Pass an array of these to `gtd_builder_add_satellite_report()`.
+///
+/// The ranges on @ref elevation_deg and @ref azimuth_deg are data quality
+/// expectations. The SDK writes a value outside its range unchanged and counts it
+/// in a satellite warning (see `gtd_nav_file_get_satellite_warning()`).
+/// A NaN @ref elevation_deg, @ref azimuth_deg or @ref snr_dbhz reads back as
+/// absent: the SDK stores `GTD_NONE_F32` as NaN.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct GtdSatellite {
@@ -14,11 +20,11 @@ pub struct GtdSatellite {
     pub prn: u32,
     /// Non-zero if this satellite contributed to the position fix.
     pub in_fix: u8,
-    /// Elevation above the horizon in degrees [0, 90].
+    /// Elevation above the horizon in degrees, expected in [0, 90].
     pub elevation_deg: GtdOptF32,
-    /// Azimuth from true north in degrees [0, 360).
+    /// Azimuth from true north in degrees, expected in [0, 360).
     pub azimuth_deg: GtdOptF32,
-    /// Signal-to-noise ratio in dB·Hz, `GTD_NONE_F32` without a measurement. The builder writes a
+    /// Signal-to-noise ratio in dB-Hz, `GTD_NONE_F32` without a measurement. The builder writes a
     /// present value unchanged: pass `GTD_NONE_F32` for a reading for which
     /// `gtd_snr_is_no_data_sentinel()` returns 1.
     pub snr_dbhz: GtdOptF32,

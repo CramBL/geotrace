@@ -17,9 +17,16 @@ use crate::error::{self, GtdStatus};
 /// @param builder Builder to finalise.
 /// @param out     Output parameter for the resulting file handle.
 ///
-/// @return `GTD_ERR_NO_NAV_FIXES` if no nav fixes were added.
+/// On a builder without nav fixes, the call returns `GTD_OK` and a file with zero nav points,
+/// unless the builder has an annotation or an event marker.
+///
+/// @return `GTD_ERR_NO_NAV_FIXES` if the builder has an annotation or an event marker and no
+///         nav fix, in lenient mode too.
 /// @return `GTD_ERR_ANNOTATIONS_OOB` if annotations fall outside the time range (unless lenient).
 /// @return `GTD_ERR_EVENT_MARKERS_OOB` if event markers fall outside the time range (unless lenient).
+/// @return `GTD_ERR_INVALID_CHANNEL` if two channels share a name.
+/// @return `GTD_ERR_INVALID_ARGUMENT` if the timestamp the builder computes for a ghost nav fix
+///         is past the range a timestamp covers.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_finish(
     builder: *mut GtdFileBuilder,

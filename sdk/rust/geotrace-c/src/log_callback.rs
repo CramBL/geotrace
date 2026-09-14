@@ -172,7 +172,10 @@ fn clear_sink() {
 /// clears it, as `gtd_clear_log_callback()` does.
 ///
 /// @param callback  Function to call per record, or NULL to stop forwarding.
-/// @param user_data Passed to every call. The SDK stores it and never reads it.
+/// @param user_data Passed to every call. The SDK stores the pointer and never dereferences it.
+///                  The data at @p user_data must stay valid until a later
+///                  `gtd_set_log_callback()` call or `gtd_clear_log_callback()` removes the
+///                  pointer.
 ///
 /// @return `GTD_ERR_INTERNAL` if the SDK could not install its log sink, in
 ///         which case the callback receives no records.

@@ -34,6 +34,8 @@ header = """
  * **Ownership:** Every function that returns a handle allocates heap memory.
  * Destroy handles exactly once with the matching `gtd_*_destroy()` function.
  * Passing a destroyed handle is undefined behaviour (same contract as `FILE*`).
+ * A caller may free or reuse a string, array or struct argument once the call returns, except
+ * the `user_data` of `gtd_set_log_callback()`: the SDK copies all other argument data.
  */"""
 
 # The version macros and the optional-value constructors have no Rust

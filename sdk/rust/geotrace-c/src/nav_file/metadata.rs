@@ -134,6 +134,8 @@ pub unsafe extern "C" fn gtd_nav_file_sdk_git_commit(file: *const GtdNavFile) ->
 /// Return the committer timestamp of `gtd_nav_file_sdk_git_commit()`.
 ///
 /// `gtd_ts_none()` if not set. Use `gtd_ts_is_none()` to check.
+///
+/// @param file File handle. Returns `gtd_ts_none()` if NULL.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_sdk_commit_time(file: *const GtdNavFile) -> GtdTimestamp {
     if file.is_null() {

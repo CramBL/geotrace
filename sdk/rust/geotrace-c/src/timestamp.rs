@@ -169,6 +169,8 @@ pub extern "C" fn gtd_ts_none() -> GtdTimestamp {
 }
 
 /// Returns non-zero if @p timestamp is the absent timestamp.
+///
+/// @param timestamp Timestamp to test.
 #[unsafe(no_mangle)]
 pub extern "C" fn gtd_ts_is_none(timestamp: GtdTimestamp) -> u8 {
     u8::from(timestamp.unix_micros == TS_NONE_SENTINEL)
