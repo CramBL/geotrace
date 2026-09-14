@@ -1674,3 +1674,53 @@ fn snap_track_endpoint_flags_with_one_fix_in_the_window() {
     map.render_one_more_frame_hovering(gt_ui_types::HighlightScope::Track(test_util::track0()));
     map.snapshot("track_endpoint_flags_one_fix_window");
 }
+
+/// Snapshot: five out-and-back tracks recorded from one door. Their flags
+/// stand on one spot and draw as one cluster flag with a count. Hovering one
+/// track takes its own flag out of the cluster, which then counts four.
+#[rstest::rstest]
+#[case::plain("track_endpoint_flag_cluster", true, false)]
+#[case::hovered_dark("track_endpoint_flag_cluster_hovered_dark", true, true)]
+#[case::hovered_light("track_endpoint_flag_cluster_hovered_light", false, true)]
+fn snap_track_endpoint_flag_cluster(
+    #[case] name: &str,
+    #[case] dark_mode: bool,
+    #[case] hovered: bool,
+) {
+    let files = test_util::a_recording_of_round_trips_from_one_door(5, DOOR_REACH_DEGREES);
+
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .theme(dark_mode)
+        .render();
+    if hovered {
+        map.render_one_more_frame_hovering(gt_ui_types::HighlightScope::Track(test_util::track0()));
+    }
+    map.snapshot(name);
+}
+
+/// How far each track of the round trip fixture walks from the door, about
+/// 450 m north or 250 m east.
+const DOOR_REACH_DEGREES: f64 = 0.004;
+
+/// Snapshot: two tracks that meet mid-route, one's end 5 m from the other's
+/// start. The two flags draw as one cluster flag with the split cloth and a
+/// count of two, and stand on their own at the zoom that separates them by
+/// more than a cloth width.
+#[rstest::rstest]
+#[case::clustered("track_endpoint_flags_meeting_mid_route", 16.0)]
+#[case::separated("track_endpoint_flags_meeting_mid_route_zoomed_in", 19.0)]
+fn snap_track_endpoint_flags_meeting_mid_route(#[case] name: &str, #[case] zoom: f64) {
+    let files = test_util::a_recording_of_two_tracks_meeting_mid_route(MID_ROUTE_METRES_APART);
+
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .centred_on(test_util::MID_ROUTE_MEETING_DEGREES)
+        .zoomed_to(zoom)
+        .render();
+    map.snapshot(name);
+}
+
+/// How far the end of the first track lies from the start of the second: one
+/// cloth width spans 19 m at zoom 16 and 2.4 m at zoom 19.
+const MID_ROUTE_METRES_APART: f64 = 5.0;

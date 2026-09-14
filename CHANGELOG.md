@@ -5,21 +5,17 @@
 ### Added
 
 - **Interface:** The file dialog offers an "All files" filter, which shows every file, including a log with no file extension.
-- **Map & Tracks:** The map draws a green flag at the start of every track and a chequered flag at its end, larger and outlined when the track is highlighted.
-- **Map & Tracks:** A track that ends where it started shows one flag split between green and chequered, and a pair of flags that would overlap leans apart.
+- **Map & Tracks:** The map draws a green flag at the start of every track and a chequered flag at its end.
 
 ### Changed
 
 - **Map & Tracks:** The satellite tables and the sky plot now show a satellite's SNR of ≈99 dB-Hz, the value some receivers send when they have no measurement, in its own violet colour.
-- **Map & Tracks:** The plot joins each clock offset marker at the axis edge to the clock offset line on either side of it, and consecutive markers to each other.
+- **Map & Tracks:** The plot joins each off-scale clock offset marker to the clock offset line, and consecutive markers to each other.
 - **Map & Tracks:** The plot's time axis puts its ticks on clock boundaries (a quarter hour, an hour, a day, a month), and a row under the ticks labels each day, month or year in view.
 
 ### Fixed
 
-- **Map & Tracks:** Fixed the plot's clock offset line drawing a segment over the samples it holds off the axis: the line now ends at the fix before them and starts again at the fix after, and a fix between two excursions draws as a point.
-- **Map & Tracks:** Fixed the plot's shared y-axis fitting the clock offset of a recording whose baseline offset is more than a day: it now marks the offset at the axis edge, with the value on hover.
-- **Map & Tracks:** Fixed the plot cutting a clock offset marker in half at the left or the right edge of the view.
-- **Map & Tracks:** Fixed the plot's shared y-axis fitting a clock offset departure on a recording's last fixes: a departure over less than a tenth of a track is now marked at the axis edge.
+- **Map & Tracks:** Fixed the plot's shared y-axis fitting an off-scale clock offset, whether a recording's baseline or a departure on its last fixes. The clock offset line no longer runs over the samples held off the axis, and a marker at the view edge is no longer cut in half.
 
 ## 0.16.0 - 2026-09-07
 

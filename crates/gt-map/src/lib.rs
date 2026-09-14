@@ -25,6 +25,7 @@ mod tec_renderer;
 pub mod test_tiles;
 #[cfg(any(test, feature = "test-util"))]
 pub mod test_util;
+mod text_badge;
 pub mod tpv_renderer;
 mod track_endpoint_renderer;
 mod track_layers;
@@ -469,6 +470,10 @@ pub struct NavMap {
     sat_label_scratch: sat_labels::LabelSelection,
     /// Reused sky-glyph decimation scratch, borrowed into the track layer.
     sky_glyph_scratch: sky_glyph_renderer::GlyphSelection,
+    /// Reused buffer for the flags at the ends of the tracks drawn without a
+    /// highlight, borrowed into the track layer, which draws the flags of
+    /// several tracks at one place as one.
+    endpoint_flags: track_endpoint_renderer::PendingEndpointFlags,
     /// The labels of everything under the pointer, filled while the plugins
     /// draw and drawn stacked once the map widget has returned.
     hover_label_stack: HoverLabelStack,
@@ -526,6 +531,7 @@ impl NavMap {
             visible_points: viewport::VisiblePoints::default(),
             sat_label_scratch: sat_labels::LabelSelection::default(),
             sky_glyph_scratch: sky_glyph_renderer::GlyphSelection::default(),
+            endpoint_flags: track_endpoint_renderer::PendingEndpointFlags::default(),
             hover_label_stack: HoverLabelStack::default(),
             hovered_log_glyph: RefCell::new(None),
             clicked_log_glyph: RefCell::new(None),
@@ -946,6 +952,7 @@ impl NavMap {
                 .maybe_icon_meshes(self.icon_meshes.as_ref())
                 .sat_label_scratch(&mut self.sat_label_scratch)
                 .sky_glyph_scratch(&mut self.sky_glyph_scratch)
+                .endpoint_flags(&mut self.endpoint_flags)
                 .build(),
         );
         if ctx.display_mask.is_visible(DisplayCategory::SnappedTracks)

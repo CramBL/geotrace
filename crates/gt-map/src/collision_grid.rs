@@ -5,8 +5,9 @@
 //! This is what keeps decimated overlays (satellite labels, sky glyphs) from
 //! shuffling while the user navigates.
 //!
-//! The map's log hexagons cluster on the same grid ([`cluster_positions`]),
-//! using it to find the neighbours a position may collapse into.
+//! The map's log hexagons and the flags at the ends of its tracks cluster on
+//! the same grid ([`cluster_positions`]), using it to find the neighbours a
+//! position may collapse into.
 
 use gt_types::{MercBounds, MercPoint};
 use rustc_hash::FxHashMap;

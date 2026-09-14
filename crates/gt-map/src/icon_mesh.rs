@@ -44,6 +44,12 @@ pub(crate) const FLAG_ANCHOR_OFFSET_PT: Vec2 = Vec2::new(7.0, -FLAG_HALF_EXTENTS
 /// assets span the cloth from x=2 to x=16 of their 18-wide viewbox.
 pub(crate) const FLAG_CLOTH_WIDTH_PT: f32 = 14.0;
 
+/// Offset in points from the pole foot of an upright flag of
+/// [FLAG_HALF_EXTENTS_PT] to the top-right corner of its cloth. All three
+/// assets hang the cloth from (2, 2) to (16, 12.5) of their 18x24 viewbox,
+/// with the pole's foot at (2, 24).
+pub(crate) const FLAG_CLOTH_TOP_RIGHT_PT: Vec2 = Vec2::new(14.0, -22.0);
+
 /// The half extent a [MarkerIcon] is drawn with when rendered as a square
 /// icon: satellites and the warning triangle get the larger size.
 pub(crate) fn marker_icon_half_extent(icon: MarkerIcon) -> f32 {
