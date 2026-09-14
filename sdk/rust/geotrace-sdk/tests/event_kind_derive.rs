@@ -1,42 +1,133 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
+use std::fs;
+use std::path::Path;
 
 use geotrace_sdk::{BuildError, EventKind, EventMarkerError, NavFile};
 use geotrace_sdk_test_util as test_util;
 use rstest::rstest;
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SharedSegmentTable {
+    derived: Vec<DerivedSegmentRow>,
+    rejected: Vec<RejectedNamesRow>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DerivedSegmentRow {
+    name: String,
+    segment: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RejectedNamesRow {
+    names: Vec<String>,
+    compile_fail: String,
+    error: String,
+}
+
+impl SharedSegmentTable {
+    #[expect(
+        clippy::expect_used,
+        reason = "a malformed table fails the test that reads it"
+    )]
+    fn parse() -> Self {
+        toml::from_str(include_str!(
+            "../../../../tests/fixtures/event_kind_variant_path_segments.toml"
+        ))
+        .expect("the shared segment table is valid")
+    }
+}
+
+macro_rules! shared_table_event {
+    ($($variant:ident),+ $(,)?) => {
+        #[derive(EventKind)]
+        #[event_kind(note = none)]
+        #[expect(
+            non_camel_case_types,
+            reason = "a keyword is a variant name only as a lower-case raw identifier"
+        )]
+        enum SharedTableEvent {
+            $($variant),+
+        }
+
+        const SHARED_TABLE_EVENTS: &[(&str, SharedTableEvent)] =
+            &[$((stringify!($variant), SharedTableEvent::$variant)),+];
+    };
+}
+
+shared_table_event!(
+    BatteryLow,
+    HTTPError,
+    GPSLock,
+    GPS3Lock,
+    V2Event,
+    r#type,
+    Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+);
+
+#[test]
+fn every_derived_name_of_the_shared_table_derives_its_segment() {
+    let derived: BTreeMap<&str, Option<String>> = SHARED_TABLE_EVENTS
+        .iter()
+        .map(|(name, event)| {
+            (
+                name.strip_prefix("r#").unwrap_or(*name),
+                event.variant_path(),
+            )
+        })
+        .collect();
+    let table = SharedSegmentTable::parse();
+    let expected: BTreeMap<&str, Option<String>> = table
+        .derived
+        .iter()
+        .map(|row| (row.name.as_str(), Some(row.segment.clone())))
+        .collect();
+    assert_eq!(derived, expected);
+}
+
+#[test]
+fn every_rejected_row_of_the_shared_table_has_a_compile_fail_fixture_with_its_names_and_error() {
+    let compile_fail_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/compile_fail");
+    for row in SharedSegmentTable::parse().rejected {
+        let read = |extension: &str| {
+            let path = compile_fail_dir.join(format!("{}.{extension}", row.compile_fail));
+            fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+        };
+        let source = read("rs");
+        for name in &row.names {
+            assert!(
+                source.contains(name.as_str()),
+                "{}.rs has no variant {name:?}",
+                row.compile_fail
+            );
+        }
+        assert!(
+            read("stderr").contains(&row.error),
+            "{}.stderr has no {:?}",
+            row.compile_fail,
+            row.error
+        );
+    }
+}
 
 #[derive(EventKind)]
 #[event_kind(note = none)]
-enum WordBoundaryEvent {
-    GPS3Lock,
-    GPSLock,
-    HTTPError,
-    V2Event,
+enum LeadingUnderscoreEvent {
     _Reserved,
 }
 
-#[derive(EventKind)]
-#[event_kind(note = none)]
-#[expect(
-    non_camel_case_types,
-    reason = "a keyword is a variant name only as a lower-case raw identifier"
-)]
-enum RawIdentifierEvent {
-    r#type,
-}
-
-#[rstest]
-#[case::an_acronym_then_a_word(&WordBoundaryEvent::HTTPError, "http_error")]
-#[case::an_acronym_then_a_short_word(&WordBoundaryEvent::GPSLock, "gps_lock")]
-#[case::an_acronym_then_a_digit(&WordBoundaryEvent::GPS3Lock, "gps3_lock")]
-#[case::a_digit_then_a_capital(&WordBoundaryEvent::V2Event, "v2_event")]
-#[case::a_leading_underscore(&WordBoundaryEvent::_Reserved, "_reserved")]
-#[case::a_raw_identifier(&RawIdentifierEvent::r#type, "type")]
-fn a_variant_name_derives_its_snake_case_segment(
-    #[case] event: &dyn EventKind,
-    #[case] expected_segment: &str,
-) {
-    assert_eq!(event.variant_path().as_deref(), Some(expected_segment));
+#[test]
+fn a_variant_name_with_a_leading_underscore_keeps_it_in_its_segment() {
+    assert_eq!(
+        LeadingUnderscoreEvent::_Reserved.variant_path().as_deref(),
+        Some("_reserved")
+    );
 }
 
 #[derive(EventKind)]
@@ -45,12 +136,12 @@ enum RenamedEvent {
     #[event_kind(rename = "groesse")]
     Größe,
     #[event_kind(rename = "radio-scan")]
-    Scan(WordBoundaryEvent),
+    Scan(SharedTableEvent),
 }
 
 #[rstest]
 #[case::a_leaf(RenamedEvent::Größe, "groesse")]
-#[case::a_delegating_variant(RenamedEvent::Scan(WordBoundaryEvent::GPSLock), "radio-scan/gps_lock")]
+#[case::a_delegating_variant(RenamedEvent::Scan(SharedTableEvent::GPSLock), "radio-scan/gps_lock")]
 fn a_rename_replaces_the_segment_of_its_variant(
     #[case] event: RenamedEvent,
     #[case] expected_path: &str,

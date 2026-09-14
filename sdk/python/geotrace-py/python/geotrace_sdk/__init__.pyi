@@ -957,13 +957,32 @@ class _SkipSentinel:
     ...
 
 @final
+class _Rename:
+    """The variant path segment ``event_kind.rename`` sets for an attribute, or for
+    the inner class it decorates."""
+
+    def __call__(self, namespace_class: type) -> _Rename: ...
+
+@final
 class _EventKindDecorator:
     """Class decorator that converts each attribute to its snake_case event path string.
 
     Attributes in the class body become path strings, and inner classes become
     nested namespaces.
+    A capital starts a word after a lower-case letter or a digit, and so does the
+    last capital of a run before a lower-case letter: ``GPS3Lock`` gives
+    ``gps3_lock`` and ``HTTPError`` gives ``http_error``, the segments the Rust
+    ``#[derive(EventKind)]`` derives.
     An attribute set to ``event_kind.skip`` returns the skip sentinel. Passing it to
     :class:`EventMarker` or :meth:`NavFileBuilder.add` is a silent no-op.
+    ``event_kind.rename("<segment>")`` sets the segment of an attribute, or of the
+    inner class it decorates.
+
+    Raises:
+        ValueError: If an attribute's segment has a character outside ASCII
+            letters, digits, ``-`` and ``_``, or is past 255 bytes, or if two
+            attributes of one class have the same segment. :class:`EventMarker`
+            raises for a nested path past 255 bytes.
 
     Example::
 
@@ -971,17 +990,24 @@ class _EventKindDecorator:
         class Event:
             boot = None
             battery_low = None
+            Größe = event_kind.rename("groesse")
 
             class Connectivity:
                 class Agps:
                     request = None
 
         assert Event.boot == "boot"
+        assert Event.Größe == "groesse"
         assert Event.Connectivity.Agps.request == "connectivity/agps/request"
     """
 
     def __call__(self, cls: type) -> _EventKindNamespace: ...
     @property
     def skip(self) -> _SkipSentinel: ...
+    def rename(self, segment: str) -> _Rename:
+        """Sets the variant path segment of an attribute, as
+        ``Größe = event_kind.rename("groesse")``, or of an inner class it decorates,
+        in place of the segment derived from its name."""
+        ...
 
 event_kind: _EventKindDecorator

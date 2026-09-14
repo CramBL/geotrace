@@ -1,0 +1,56 @@
+# Variant names with the variant path segment that the Rust `#[derive(EventKind)]`
+# and the Python `@event_kind` derive from each, or the error both report.
+# The tests of both SDKs read this table: `event_kind_derive.rs` in
+# `sdk/rust/geotrace-sdk/tests/` and `test_event_markers.py` in
+# `sdk/python/geotrace-py/tests/`.
+#
+# The `derived` names are the variants of one enum and the attributes of one class.
+# A Rust raw identifier is listed without its `r#` prefix.
+#
+# Each `rejected` row lists the variants of one enum and the attributes of one class.
+# The Rust derive fails to compile them: `compile_fail` is the stem of the fixture in
+# `sdk/rust/geotrace-sdk/tests/compile_fail/` with the same variants.
+# The Rust compile error and the Python `ValueError` both contain the row's `error`.
+
+[[derived]]
+name = "BatteryLow"
+segment = "battery_low"
+
+[[derived]]
+name = "HTTPError"
+segment = "http_error"
+
+[[derived]]
+name = "GPSLock"
+segment = "gps_lock"
+
+[[derived]]
+name = "GPS3Lock"
+segment = "gps3_lock"
+
+[[derived]]
+name = "V2Event"
+segment = "v2_event"
+
+[[derived]]
+name = "type"
+segment = "type"
+
+[[derived]]
+name = "Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+segment = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+[[rejected]]
+names = ["Größe"]
+compile_fail = "non_ascii_variant_name"
+error = "contains 'ö', outside ASCII letters, digits, '-' and '_'"
+
+[[rejected]]
+names = ["Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+compile_fail = "variant_name_past_255_bytes"
+error = "is 256 bytes, past the 255 bytes a variant path holds"
+
+[[rejected]]
+names = ["IOError", "IoError"]
+compile_fail = "two_variants_derive_one_segment"
+error = "both have the variant path segment"

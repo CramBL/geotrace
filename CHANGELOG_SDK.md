@@ -33,6 +33,7 @@ the app).
 - Rust `Velocity::try_from_knots_str` parses a speed in knots from a string, as `try_from_kmh_str` parses one in km/h.
 - Rust `Constellation::wire_code` and `MarkerIcon::wire_code` return the code the file stores for a constellation or a marker icon.
 - Rust `#[event_kind(rename = "<segment>")]` sets the variant path segment of a variant in place of the one `#[derive(EventKind)]` derives from its name.
+- Python `event_kind.rename("<segment>")` sets the variant path segment of an attribute, or of the inner class it decorates, in place of the one `@event_kind` derives from its name.
 
 ### Changed
 
@@ -83,6 +84,8 @@ the app).
 - **Breaking:** C++ `Velocity::kmh`, `Velocity::knots`, `Velocity::as_kmh`, `Velocity::as_knots`, `Angle::radians` and `Angle::as_radians` are no longer `constexpr`: they call the C SDK's conversion functions.
 - **Breaking:** Rust `#[derive(EventKind)]` fails to compile for a variant name with a non-ASCII character, a variant path segment past 255 bytes, two variants of one `enum` with the same segment, and an `event_kind` attribute without effect or in conflict with another.
 - **Breaking:** Rust `#[derive(EventKind)]` derives `gps3_lock` for a variant `GPS3Lock` and `type` for `r#type`, where files written by an earlier SDK contain `gp_s3_lock` and `r#type`.
+- **Breaking:** Python `@event_kind` raises `ValueError` when it runs on a class with an attribute name with a non-ASCII character, a variant path segment past 255 bytes, or two attributes with the same segment.
+- **Breaking:** Python `@event_kind` derives `gps3_lock` for an attribute `GPS3Lock`, where files written by an earlier SDK contain `gp_s3_lock`.
 - Updated `hdf5-pure` to 0.46.0.
 
 ### Fixed
