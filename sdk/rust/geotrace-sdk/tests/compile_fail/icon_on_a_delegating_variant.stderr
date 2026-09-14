@@ -1,0 +1,5 @@
+error: `icon = Error` has no effect on a delegating variant: set the icon on the variant of the inner event
+  --> tests/compile_fail/icon_on_a_delegating_variant.rs:11:18
+   |
+11 |     #[event_kind(icon = Error)]
+   |                  ^^^^^^^^^^^^

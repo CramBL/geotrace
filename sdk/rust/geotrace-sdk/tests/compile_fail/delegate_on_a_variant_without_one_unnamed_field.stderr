@@ -1,0 +1,5 @@
+error: `delegate` needs a variant with one unnamed field, such as `Power(PowerEvent)`
+  --> tests/compile_fail/delegate_on_a_variant_without_one_unnamed_field.rs:10:18
+   |
+10 |     #[event_kind(delegate)]
+   |                  ^^^^^^^^

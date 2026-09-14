@@ -1,0 +1,5 @@
+error: `lax` conflicts with the earlier `strict`
+ --> tests/compile_fail/strict_with_lax.rs:4:22
+  |
+4 | #[event_kind(strict, lax)]
+  |                      ^^^

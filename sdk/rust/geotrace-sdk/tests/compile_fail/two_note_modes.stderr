@@ -1,0 +1,5 @@
+error: `note = none` conflicts with the earlier `note = display`
+ --> tests/compile_fail/two_note_modes.rs:4:30
+  |
+4 | #[event_kind(note = display, note = none)]
+  |                              ^^^^^^^^^^^
