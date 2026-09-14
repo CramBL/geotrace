@@ -20,6 +20,8 @@ set(GEOTRACE_CPP_UNRECOGNIZED_MARKER_ICON_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../c/tests/fixtures/unrecognized_marker_icon.gtd")
 set(GEOTRACE_CPP_UNRECOGNIZED_STYLE_VALUES_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../c/tests/fixtures/unrecognized_style_values.gtd")
+set(GEOTRACE_CPP_METADATA_WITH_A_NUL_BYTE_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../c/tests/fixtures/metadata_with_a_nul_byte.gtd")
 
 function(add_cpp_test name)
     add_executable(${name} ${name}.cpp ${ARGN})
@@ -63,6 +65,11 @@ function(add_cpp_test name)
     if(EXISTS "${GEOTRACE_CPP_UNRECOGNIZED_STYLE_VALUES_FIXTURE}")
         target_compile_definitions(${name} PRIVATE
             GTD_UNRECOGNIZED_STYLE_VALUES_FIXTURE_PATH="${GEOTRACE_CPP_UNRECOGNIZED_STYLE_VALUES_FIXTURE}"
+        )
+    endif()
+    if(EXISTS "${GEOTRACE_CPP_METADATA_WITH_A_NUL_BYTE_FIXTURE}")
+        target_compile_definitions(${name} PRIVATE
+            GTD_METADATA_WITH_A_NUL_BYTE_FIXTURE_PATH="${GEOTRACE_CPP_METADATA_WITH_A_NUL_BYTE_FIXTURE}"
         )
     endif()
 

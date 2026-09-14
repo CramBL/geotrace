@@ -16,6 +16,7 @@ the app).
 - C `gtd_set_log_callback` and `gtd_clear_log_callback` send the SDK's log records to a callback, which receives each record's `GtdLogLevel`, target and message.
 - C `gtd_set_log_level` sets the lowest severity the SDK forwards, `GTD_LOG_WARN` until it is called.
 - C `gtd_nav_file_satellite_warning_count` and `gtd_nav_file_get_satellite_warning` read the satellite data warnings the builder's checks raise for a file, through the new `GtdSatelliteWarningInfo`.
+- C `gtd_nav_file_title_with_length`, `gtd_nav_file_device_with_length`, `gtd_nav_file_notes_with_length`, `gtd_nav_file_identity_with_length` and `gtd_nav_file_travel_mode_with_length` return a metadata value with its byte length, nul bytes included.
 - C++ `FixTime::from_recorded()`, which takes a `RecordedFixTimestamps` and returns `std::nullopt` when the recorder holds neither timestamp.
 - C++ `NavFile::marker_count`, `marker`, `try_marker`, `event_marker_style_count`, `event_marker_style` and `try_event_marker_style` read them through `MarkerView` and `EventMarkerStyleView`.
 - C++ `geotrace::set_log_callback`, `try_set_log_callback` and `clear_log_callback` take a `std::function` over the same records, with the level as the new `LogLevel`. `geotrace::set_log_level` sets the lowest severity forwarded.
@@ -109,6 +110,7 @@ the app).
 - C: Fixed `gtd_nav_file_open` leaving `*out` unchanged when `path` is NULL or not valid UTF-8: it now sets `*out` to NULL on every failure with a non-null `out`.
 - C: Fixed `gtd_nav_file_get_event_marker_style` shortening a variant path or a color longer than its `GtdEventMarkerStyleInfo` field, for a file handle from `gtd_builder_finish`: it returns `GTD_ERR_FIELD_TOO_LONG`.
 - C++: Fixed `NavFile::channel` and `try_channel` shortening a channel name past 255 bytes, a description past 1023 bytes and a component label past 255 bytes: they return each string whole.
+- C++: Fixed `NavFile::title`, `device`, `notes`, `identity` and `travel_mode` returning an empty view for a value with a nul byte: they return the whole value.
 - **Breaking:** C++: Fixed `FileBuilder` writing a string argument with a nul byte up to that byte, and `ChannelUnit::custom` and `parse_recognized` reading a label with one up to that byte: they throw `InvalidChannelError` for a channel string, `InvalidPathError` for a variant path and `std::invalid_argument` for the other strings, with a message stating the string and the byte offset.
 
 ## [0.6.0] - 2026-09-03

@@ -2032,24 +2032,29 @@ class [[nodiscard]] NavFile {
         return try_to_bytes().value_or_throw();
     }
 
-    /** @name Metadata (returns empty `std::string_view` when field is absent). */
+    /** @name Metadata (the whole value, nul bytes included, or an empty `std::string_view`
+     * when the field is absent). */
     ///@{
 
     [[nodiscard]] std::string_view title() const noexcept {
-        const char *title = ::gtd_nav_file_title(impl_.get());
-        return title != nullptr ? std::string_view{title} : std::string_view{};
+        std::size_t length = 0;
+        const char *title = ::gtd_nav_file_title_with_length(impl_.get(), &length);
+        return title != nullptr ? std::string_view{title, length} : std::string_view{};
     }
     [[nodiscard]] std::string_view device() const noexcept {
-        const char *device = ::gtd_nav_file_device(impl_.get());
-        return device != nullptr ? std::string_view{device} : std::string_view{};
+        std::size_t length = 0;
+        const char *device = ::gtd_nav_file_device_with_length(impl_.get(), &length);
+        return device != nullptr ? std::string_view{device, length} : std::string_view{};
     }
     [[nodiscard]] std::string_view notes() const noexcept {
-        const char *notes = ::gtd_nav_file_notes(impl_.get());
-        return notes != nullptr ? std::string_view{notes} : std::string_view{};
+        std::size_t length = 0;
+        const char *notes = ::gtd_nav_file_notes_with_length(impl_.get(), &length);
+        return notes != nullptr ? std::string_view{notes, length} : std::string_view{};
     }
     [[nodiscard]] std::string_view identity() const noexcept {
-        const char *identity = ::gtd_nav_file_identity(impl_.get());
-        return identity != nullptr ? std::string_view{identity} : std::string_view{};
+        std::size_t length = 0;
+        const char *identity = ::gtd_nav_file_identity_with_length(impl_.get(), &length);
+        return identity != nullptr ? std::string_view{identity, length} : std::string_view{};
     }
 
     /**
@@ -2061,8 +2066,9 @@ class [[nodiscard]] NavFile {
      * returned here verbatim, never dropped.
      */
     [[nodiscard]] std::string_view travel_mode() const noexcept {
-        const char *mode = ::gtd_nav_file_travel_mode(impl_.get());
-        return mode != nullptr ? std::string_view{mode} : std::string_view{};
+        std::size_t length = 0;
+        const char *mode = ::gtd_nav_file_travel_mode_with_length(impl_.get(), &length);
+        return mode != nullptr ? std::string_view{mode, length} : std::string_view{};
     }
 
     ///@}
