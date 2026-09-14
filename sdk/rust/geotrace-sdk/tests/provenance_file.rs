@@ -1,9 +1,5 @@
 use rstest::rstest;
 
-include!("../build_script/provenance_file.rs");
-
-const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
-
 #[rstest]
 #[case::trailing_newline("0123456789abcdef0123456789abcdef01234567\n2026-02-01T16:00:00+01:00\n")]
 #[case::no_trailing_newline("0123456789abcdef0123456789abcdef01234567\n2026-02-01T16:00:00+01:00")]
@@ -23,3 +19,7 @@ fn a_well_formed_file_gives_the_commit_and_its_time_in_utc(#[case] contents: &st
 fn a_malformed_file_is_rejected(#[case] contents: &str) {
     parse_provenance_file(contents).unwrap_err();
 }
+
+include!("../build_script/provenance_file.rs");
+
+const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";

@@ -18,10 +18,6 @@ use crate::check::{
 use crate::metric::QueryMetric;
 use crate::wrap::WrapPeriod;
 
-/// Points evaluated between cancellation checks. Small enough to stop within
-/// a frame or two, large enough that the check never shows up in a profile.
-pub(crate) const CANCEL_CHECK_INTERVAL: usize = 4096;
-
 /// A channel's samples over a time span: row-major values in the evaluator's
 /// base units, `columns` per row. A scalar channel has one column. A vector
 /// channel has one column per component (`@accel.x` is column 0). Empty when
@@ -810,9 +806,6 @@ struct WindowScope {
 #[derive(Clone, Copy)]
 enum Scope<'a> {
     Point(usize),
-    /// A point aggregate reduces its metric over the window's points. A channel
-    /// aggregate reduces the channel's samples over the window's time span.
-    Window(WindowScope),
     /// One native channel sample: the row of component values (one for a scalar
     /// channel). A `@name.x` node reads its column. `norm` reads the whole row.
     Sample(&'a [f64]),
@@ -822,6 +815,9 @@ enum Scope<'a> {
         rows: &'a [f64],
         columns: usize,
     },
+    /// A point aggregate reduces its metric over the window's points. A channel
+    /// aggregate reduces the channel's samples over the window's time span.
+    Window(WindowScope),
 }
 
 struct Ctx<'a, P: MetricProvider> {
@@ -1144,6 +1140,10 @@ pub(crate) fn ranges_from(matched: &[bool]) -> Vec<Range<usize>> {
     }
     ranges
 }
+
+/// Points evaluated between cancellation checks. Small enough to stop within
+/// a frame or two, large enough that the check never shows up in a profile.
+pub(crate) const CANCEL_CHECK_INTERVAL: usize = 4096;
 
 #[cfg(test)]
 mod tests {

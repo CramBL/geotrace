@@ -6,10 +6,6 @@ use gt_filter::GlobalFilter;
 use gt_map::test_util::{self, CENTER_LON, MapScene, WALKING_STEP_DEGREES};
 use gt_ui_types::MatchRevealTarget;
 
-/// How far apart two longitudes may read and still be the same camera, well
-/// under the 0.001° a fix moves.
-const LONGITUDE_TOLERANCE_DEGREES: f64 = 1e-9;
-
 /// The query window's map buttons frame what the run drew. A match whose
 /// points the time window hides is drawn nowhere. The camera stays on the
 /// recording.
@@ -78,3 +74,7 @@ fn revealing_matches_of_a_recording_under_the_minimum_duration_leaves_the_camera
         after.lon_max
     );
 }
+
+/// How far apart two longitudes may read and still be the same camera, well
+/// under the 0.001° a fix moves.
+const LONGITUDE_TOLERANCE_DEGREES: f64 = 1e-9;

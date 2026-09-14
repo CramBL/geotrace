@@ -15,10 +15,6 @@ use gt_flare::SolarFlare;
 use gt_flare::test_util;
 use gt_flare::wire;
 
-/// How far into the captured storm the truncation property cuts: past the end
-/// of the largest capture, so a whole response is reachable too.
-const MAX_TRUNCATION_BYTES: usize = 32_768;
-
 /// The capture the truncation property cuts, read once for the whole run.
 fn captured_storm() -> Result<&'static str, String> {
     static JSON: OnceLock<Result<String, String>> = OnceLock::new();
@@ -119,3 +115,7 @@ proptest::proptest! {
         }
     }
 }
+
+/// How far into the captured storm the truncation property cuts: past the end
+/// of the largest capture, so a whole response is reachable too.
+const MAX_TRUNCATION_BYTES: usize = 32_768;

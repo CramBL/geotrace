@@ -120,12 +120,6 @@ fn satellite_report_without_either_timestamp_fails_the_read() {
     );
 }
 
-const RECEIVER_TIME_US: u64 = 1_700_000_000_000_000;
-
-/// A microsecond count past chrono's latest representable instant, and not the
-/// count [`u64::MAX`] reserved for an absent timestamp.
-const TIME_PAST_THE_UTC_RANGE_US: u64 = i64::MAX.cast_unsigned();
-
 fn version_2_file() -> FileBuilder {
     let mut fb = FileBuilder::new();
     fb.set_attr("geotrace_version", AttrValue::String("2".into()));
@@ -683,3 +677,9 @@ fn a_file_without_a_markers_group_reads_with_no_markers() {
 
     assert!(nav_file.markers().is_empty());
 }
+
+const RECEIVER_TIME_US: u64 = 1_700_000_000_000_000;
+
+/// A microsecond count past chrono's latest representable instant, and not the
+/// count [`u64::MAX`] reserved for an absent timestamp.
+const TIME_PAST_THE_UTC_RANGE_US: u64 = i64::MAX.cast_unsigned();

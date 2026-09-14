@@ -8,20 +8,6 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::str::FromStr;
 
-/// Peak flux, in W/m², where each class begins.
-const A_CLASS_FLUX: f64 = 1e-8;
-const B_CLASS_FLUX: f64 = 1e-7;
-const C_CLASS_FLUX: f64 = 1e-6;
-const M_CLASS_FLUX: f64 = 1e-5;
-const X_CLASS_FLUX: f64 = 1e-4;
-
-/// Peak flux, in W/m², where each NOAA radio blackout level begins.
-const R1_FLUX: f64 = 1e-5;
-const R2_FLUX: f64 = 5e-5;
-const R3_FLUX: f64 = 1e-4;
-const R4_FLUX: f64 = 1e-3;
-const R5_FLUX: f64 = 2e-3;
-
 /// The decade of a flare's peak soft X-ray flux, as the catalog letters it.
 #[derive(
     Debug,
@@ -68,10 +54,6 @@ impl FlareClass {
         }
     }
 }
-
-/// Lowest magnitude a class is published with. Below it the flux belongs to
-/// the class below.
-const MIN_MAGNITUDE: f64 = 1.0;
 
 /// One flare's classification, as the catalog writes it: `M1.8`.
 ///
@@ -147,9 +129,6 @@ impl fmt::Display for FlareClassification {
 /// Why a `classType` could not be parsed as a classification.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum ClassificationParseError {
-    #[error("{class:?} names no flare class, which is one of A, B, C, M or X")]
-    UnknownClass { class: String },
-
     #[error("{magnitude:?} is not a magnitude: {detail}")]
     Magnitude { magnitude: String, detail: String },
 
@@ -157,6 +136,9 @@ pub enum ClassificationParseError {
         "magnitude {magnitude} is outside what a class publishes, which starts at {MIN_MAGNITUDE}"
     )]
     MagnitudeOutsideClass { magnitude: f64 },
+
+    #[error("{class:?} names no flare class, which is one of A, B, C, M or X")]
+    UnknownClass { class: String },
 }
 
 impl FromStr for FlareClassification {
@@ -217,6 +199,24 @@ impl RadioBlackoutClass {
         }
     }
 }
+
+/// Peak flux, in W/m², where each class begins.
+const A_CLASS_FLUX: f64 = 1e-8;
+const B_CLASS_FLUX: f64 = 1e-7;
+const C_CLASS_FLUX: f64 = 1e-6;
+const M_CLASS_FLUX: f64 = 1e-5;
+const X_CLASS_FLUX: f64 = 1e-4;
+
+/// Peak flux, in W/m², where each NOAA radio blackout level begins.
+const R1_FLUX: f64 = 1e-5;
+const R2_FLUX: f64 = 5e-5;
+const R3_FLUX: f64 = 1e-4;
+const R4_FLUX: f64 = 1e-3;
+const R5_FLUX: f64 = 2e-3;
+
+/// Lowest magnitude a class is published with. Below it the flux belongs to
+/// the class below.
+const MIN_MAGNITUDE: f64 = 1.0;
 
 #[cfg(test)]
 mod tests {

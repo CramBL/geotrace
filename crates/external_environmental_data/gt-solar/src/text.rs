@@ -16,29 +16,6 @@ use crate::GeomagneticIndex;
 use crate::activity::GeomagneticActivity;
 use crate::reference::GEOMAGNETIC_ACTIVITY;
 
-/// Name of the data everywhere it is offered: the display-toggle row, the
-/// plot line, the legend.
-pub const LAYER_LABEL: &str = "Geomagnetic activity";
-
-/// One-line description of what a value is, for hover text on the toggle row
-/// and the plot line.
-pub const LAYER_SUMMARY: &str =
-    "Planetary geomagnetic activity index over the time each fix was recorded.";
-
-/// The standing caveat, shown wherever a value is. Never abbreviated, even
-/// when another surface already said it.
-pub const SOURCE_CAVEAT: &str = "Averaged over magnetometer stations worldwide, so a value \
-                                 describes the planet over a period, not the ionosphere above \
-                                 one receiver.";
-
-/// What the scale means, shown alongside the first value on a surface.
-pub const SCALE_CAVEAT: &str = "The scale is quasi logarithmic and published in thirds of a \
-                                unit. Storm levels start at 5 (G1), Kp stops at 9, and Hp30 \
-                                keeps climbing past it in an extreme storm.";
-
-/// Shown for a period the service published no value for.
-pub const NO_VALUE_CAVEAT: &str = "No value was published for this period.";
-
 /// The lines describing one period, leading with the value that classified
 /// it. `period_start` is the UTC time the period begins at, which the service
 /// publishes to the minute.
@@ -115,6 +92,29 @@ impl GeomagneticIndex {
         }
     }
 }
+
+/// Name of the data everywhere it is offered: the display-toggle row, the
+/// plot line, the legend.
+pub const LAYER_LABEL: &str = "Geomagnetic activity";
+
+/// One-line description of what a value is, for hover text on the toggle row
+/// and the plot line.
+pub const LAYER_SUMMARY: &str =
+    "Planetary geomagnetic activity index over the time each fix was recorded.";
+
+/// The standing caveat, shown wherever a value is. Never abbreviated, even
+/// when another surface already said it.
+pub const SOURCE_CAVEAT: &str = "Averaged over magnetometer stations worldwide, so a value \
+                                 describes the planet over a period, not the ionosphere above \
+                                 one receiver.";
+
+/// What the scale means, shown alongside the first value on a surface.
+pub const SCALE_CAVEAT: &str = "The scale is quasi logarithmic and published in thirds of a \
+                                unit. Storm levels start at 5 (G1), Kp stops at 9, and Hp30 \
+                                keeps climbing past it in an extreme storm.";
+
+/// Shown for a period the service published no value for.
+pub const NO_VALUE_CAVEAT: &str = "No value was published for this period.";
 
 static KP_PLOT_HOVER: LazyLock<MetricChipHover> =
     LazyLock::new(|| GeomagneticIndex::Kp.build_plot_hover());

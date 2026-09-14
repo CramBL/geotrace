@@ -6,17 +6,17 @@
 //! shows it as its own signal-quality class. Both classify a reading here, so
 //! one value has one class on either side of a file.
 
+/// Whether `snr_db_hz` is the value firmware sends when it has no measurement.
+pub fn is_no_data_sentinel(snr_db_hz: f32) -> bool {
+    (snr_db_hz - NO_DATA_SENTINEL_DB_HZ).abs() < NO_DATA_SENTINEL_TOLERANCE_DB_HZ
+}
+
 /// The SNR in dB-Hz some receiver firmware sends when it has no measurement.
 pub const NO_DATA_SENTINEL_DB_HZ: f32 = 99.0;
 
 /// How far from [`NO_DATA_SENTINEL_DB_HZ`] a reading still counts as that
 /// value, in dB-Hz.
 pub const NO_DATA_SENTINEL_TOLERANCE_DB_HZ: f32 = 0.5;
-
-/// Whether `snr_db_hz` is the value firmware sends when it has no measurement.
-pub fn is_no_data_sentinel(snr_db_hz: f32) -> bool {
-    (snr_db_hz - NO_DATA_SENTINEL_DB_HZ).abs() < NO_DATA_SENTINEL_TOLERANCE_DB_HZ
-}
 
 #[cfg(test)]
 mod tests {

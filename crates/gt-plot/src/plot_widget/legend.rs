@@ -11,29 +11,6 @@ use gt_loaded_files::RecordingNames;
 use super::PlotState;
 use super::style;
 
-/// Default legend overlay position, anchored just inside the plot's top-left
-/// corner.
-pub const LEGEND_DOCK_OFFSET: egui::Vec2 = egui::vec2(10.0, 10.0);
-/// Sub-pixel tolerance for [`legend_is_docked`]'s "is this exactly the dock
-/// position" check - not to be confused with [`LEGEND_DOCK_SNAP_RADIUS`],
-/// the much larger radius used to *move* the legend onto the dock position.
-const LEGEND_DOCK_POSITION_TOLERANCE: f32 = 1.0;
-/// Background opacity of the file-style legend overlay, matching the default
-/// `background_alpha` of egui_plot's built-in legend.
-const LEGEND_BACKGROUND_ALPHA: f32 = 0.75;
-/// Minimum distance the dragged legend keeps from the plot edges.
-const LEGEND_EDGE_MARGIN: f32 = 6.0;
-/// Distance from the docked top-left position within which a dragged legend
-/// snaps back to docking, so dropping it near the corner re-docks it without
-/// requiring a click on the re-dock button.
-const LEGEND_DOCK_SNAP_RADIUS: f32 = 32.0;
-const LEGEND_AREA_ID_SALT: &str = "plot_file_legend_overlay";
-/// Dimensions of the line-style swatch painted next to each legend entry.
-const SWATCH_SIZE: egui::Vec2 = egui::vec2(26.0, 10.0);
-const SWATCH_STROKE_WIDTH: f32 = 2.0;
-/// Gap between dashes as a fraction of the dash length.
-const SWATCH_DASH_GAP_RATIO: f32 = 0.62;
-const SWATCH_DOT_RADIUS: f32 = 1.7;
 fn paint_line_style_swatch(ui: &mut egui::Ui, style: LineStyle, color: Color32) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(SWATCH_SIZE, egui::Sense::hover());
     let y = rect.center().y;
@@ -212,6 +189,30 @@ pub fn legend_is_docked(offset: egui::Vec2) -> bool {
         && (offset.y - LEGEND_DOCK_OFFSET.y).abs() < LEGEND_DOCK_POSITION_TOLERANCE
 }
 
+/// Default legend overlay position, anchored just inside the plot's top-left
+/// corner.
+pub const LEGEND_DOCK_OFFSET: egui::Vec2 = egui::vec2(10.0, 10.0);
+/// Sub-pixel tolerance for [`legend_is_docked`]'s "is this exactly the dock
+/// position" check - not to be confused with [`LEGEND_DOCK_SNAP_RADIUS`],
+/// the much larger radius used to *move* the legend onto the dock position.
+const LEGEND_DOCK_POSITION_TOLERANCE: f32 = 1.0;
+/// Background opacity of the file-style legend overlay, matching the default
+/// `background_alpha` of egui_plot's built-in legend.
+const LEGEND_BACKGROUND_ALPHA: f32 = 0.75;
+/// Minimum distance the dragged legend keeps from the plot edges.
+const LEGEND_EDGE_MARGIN: f32 = 6.0;
+/// Distance from the docked top-left position within which a dragged legend
+/// snaps back to docking, so dropping it near the corner re-docks it without
+/// requiring a click on the re-dock button.
+const LEGEND_DOCK_SNAP_RADIUS: f32 = 32.0;
+const LEGEND_AREA_ID_SALT: &str = "plot_file_legend_overlay";
+/// Dimensions of the line-style swatch painted next to each legend entry.
+const SWATCH_SIZE: egui::Vec2 = egui::vec2(26.0, 10.0);
+const SWATCH_STROKE_WIDTH: f32 = 2.0;
+/// Gap between dashes as a fraction of the dash length.
+const SWATCH_DASH_GAP_RATIO: f32 = 0.62;
+const SWATCH_DOT_RADIUS: f32 = 1.7;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,9 +221,6 @@ mod tests {
     fn plot_rect_400_by_300() -> egui::Rect {
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))
     }
-
-    /// The size every offset case below gives the legend.
-    const LEGEND_SIZE: egui::Vec2 = egui::vec2(100.0, 50.0);
 
     #[test]
     fn file_legend_overlay_draws_below_floating_windows() {
@@ -309,4 +307,7 @@ mod tests {
 
         assert_eq!(offset, expected);
     }
+
+    /// The size every offset case gives the legend.
+    const LEGEND_SIZE: egui::Vec2 = egui::vec2(100.0, 50.0);
 }

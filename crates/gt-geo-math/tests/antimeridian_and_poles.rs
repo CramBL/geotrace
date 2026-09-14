@@ -10,16 +10,6 @@
 use gt_geo_math::GreatCircleArc;
 use gt_types::coordinates::{Latitude, Longitude};
 
-/// Mean earth radius [`geo::Haversine`] measures on, in metres.
-const EARTH_RADIUS_M: f64 = 6_371_008.8;
-
-/// Length of one degree of great circle on that sphere, in metres:
-/// `6_371_008.8 * π / 180`.
-const DEGREE_M: f64 = 111_195.080_233_532_92;
-
-/// Metres of slack allowed against a hand-computed great-circle length.
-const TOLERANCE_M: f64 = 0.1;
-
 /// A track running east over the antimeridian: 179.0° E, then 179.0° W, then
 /// 179.9° W, all on the equator. Its two extreme fixes are 2° apart, which is
 /// both the diameter of the set and the length of its first segment.
@@ -267,3 +257,13 @@ fn great_circle_arc_between_fixes_either_side_of_the_pole_runs_over_it() {
         "the midpoint at {mid_lat:?}, {mid_lon:?} is {from_pole_m} m from the pole"
     );
 }
+
+/// Mean earth radius [`geo::Haversine`] measures on, in metres.
+const EARTH_RADIUS_M: f64 = 6_371_008.8;
+
+/// Length of one degree of great circle on that sphere, in metres:
+/// `6_371_008.8 * π / 180`.
+const DEGREE_M: f64 = 111_195.080_233_532_92;
+
+/// Metres of slack allowed against a hand-computed great-circle length.
+const TOLERANCE_M: f64 = 0.1;

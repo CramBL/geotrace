@@ -21,15 +21,6 @@ use crate::filter::{
     pattern::CompiledFilter,
 };
 
-/// Bitset words one chunk of a scan fills. At 64 entries per word this is
-/// 65,536 entries per chunk: enough work per dispatch to cover the worker's
-/// cost, small enough for the pool to keep stealing work on a log of a few
-/// hundred thousand lines.
-const WORDS_PER_CHUNK: NonZeroUsize = match NonZeroUsize::new(1024) {
-    Some(words) => words,
-    None => NonZeroUsize::MIN,
-};
-
 /// One filter's matches, and the scan keeping them up to date with the text the
 /// user is typing.
 #[derive(Debug)]
@@ -205,6 +196,15 @@ fn scan_entries_in_chunks_of(
     };
     Some(EntryMatches::from_chunks(chunks?, entries.len()))
 }
+
+/// Bitset words one chunk of a scan fills. At 64 entries per word this is
+/// 65,536 entries per chunk: enough work per dispatch to cover the worker's
+/// cost, small enough for the pool to keep stealing work on a log of a few
+/// hundred thousand lines.
+const WORDS_PER_CHUNK: NonZeroUsize = match NonZeroUsize::new(1024) {
+    Some(words) => words,
+    None => NonZeroUsize::MIN,
+};
 
 #[cfg(test)]
 mod tests {

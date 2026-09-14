@@ -38,41 +38,6 @@ use crate::polyline::{self, CULL_MARGIN_PX, VisiblePath};
 use crate::track_renderer::{self, DashPattern};
 use crate::transform::MercTransform;
 
-/// The area id of the edge's label, distinct from `response.id.with("popup")`,
-/// which the map response's context menu uses. Sharing that id fires egui's
-/// debug assertion for one widget at two layers on the frame the menu opens.
-const SNAPPED_EDGE_LABEL_ID: &str = "map_snapped_edge_label";
-
-/// Stroke width. Thinner than the recorded trackline (3.0), so the snapped
-/// geometry does not look like a second track.
-const SNAPPED_STROKE_WIDTH: f32 = 2.0;
-
-/// Alpha the track color is reduced to for the snapped track.
-const SNAPPED_ALPHA: f32 = 0.55;
-
-/// Shorter than [`crate::track_renderer::GHOST_FIX_DASH`], so the two dashed
-/// styles stay distinguishable.
-const SNAPPED_DASH: DashPattern = DashPattern {
-    dash_px: 5.0,
-    gap_px: 4.0,
-};
-
-/// Hover hit radius around the snapped line, screen pixels. Tighter than
-/// the recorded data's 20 px point hit-test: a line is a precise target,
-/// and the recorded elements should win the contested band around them.
-const SNAPPED_HOVER_RADIUS_PX: f32 = 10.0;
-
-/// Scale gate for the error whiskers, pixels per metre at the viewport
-/// centre. At 1 px/m a typical snap error (a few metres) spans a legible
-/// few pixels. Further out the whiskers would collapse into noise on the
-/// trackline. Roughly zoom 16-17 at mid latitudes.
-const WHISKER_MIN_PX_PER_METER: f64 = 1.0;
-
-/// Whisker stroke width, screen pixels. Hairline - the whisker makes the
-/// error's direction and size legible without competing with the lines it
-/// connects.
-const WHISKER_STROKE_WIDTH: f32 = 1.0;
-
 /// The nearest snapped-line hit under the cursor.
 struct HoverHit {
     distance_sq: f32,
@@ -318,6 +283,41 @@ fn edge_tooltip_rows(ui: &mut Ui, edge: &SnappedEdgeInfo) {
             }
         });
 }
+
+/// The area id of the edge's label, distinct from `response.id.with("popup")`,
+/// which the map response's context menu uses. Sharing that id fires egui's
+/// debug assertion for one widget at two layers on the frame the menu opens.
+const SNAPPED_EDGE_LABEL_ID: &str = "map_snapped_edge_label";
+
+/// Stroke width. Thinner than the recorded trackline (3.0), so the snapped
+/// geometry does not look like a second track.
+const SNAPPED_STROKE_WIDTH: f32 = 2.0;
+
+/// Alpha the track color is reduced to for the snapped track.
+const SNAPPED_ALPHA: f32 = 0.55;
+
+/// Shorter than [`crate::track_renderer::GHOST_FIX_DASH`], so the two dashed
+/// styles stay distinguishable.
+const SNAPPED_DASH: DashPattern = DashPattern {
+    dash_px: 5.0,
+    gap_px: 4.0,
+};
+
+/// Hover hit radius around the snapped line, screen pixels. Tighter than
+/// the recorded data's 20 px point hit-test: a line is a precise target,
+/// and the recorded elements should win the contested band around them.
+const SNAPPED_HOVER_RADIUS_PX: f32 = 10.0;
+
+/// Scale gate for the error whiskers, pixels per metre at the viewport
+/// centre. At 1 px/m a typical snap error (a few metres) spans a legible
+/// few pixels. Further out the whiskers would collapse into noise on the
+/// trackline. Roughly zoom 16-17 at mid latitudes.
+const WHISKER_MIN_PX_PER_METER: f64 = 1.0;
+
+/// Whisker stroke width, screen pixels. Hairline - the whisker makes the
+/// error's direction and size legible without competing with the lines it
+/// connects.
+const WHISKER_STROKE_WIDTH: f32 = 1.0;
 
 #[cfg(test)]
 mod tests {

@@ -17,27 +17,20 @@ pub struct SyntheticLogSpec {
 /// The timestamp form the generated lines carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyntheticLogTimestamps {
-    /// The year-less short form journald's own export writes, whose year the
-    /// parser infers from the clock.
-    SyslogShort,
-
     /// ISO 8601 with a space separator, carrying the year: the form a test
     /// whose expectations name absolute times needs.
     Iso8601Space,
-}
 
-/// 2026-05-29 18:48:25 UTC, the moment the first generated line is logged at.
-const FIRST_LINE_UNIX_SECS: i64 = 1_780_080_505;
+    /// The year-less short form journald's own export writes, whose year the
+    /// parser infers from the clock.
+    SyslogShort,
+}
 
 /// The moment [`synthetic_journald_log`] logs its first line at, for a test
 /// building a recording that runs alongside the generated log.
 pub fn synthetic_log_start() -> DateTime<Utc> {
     DateTime::from_timestamp(FIRST_LINE_UNIX_SECS, 0).unwrap_or(DateTime::UNIX_EPOCH)
 }
-
-/// 2026-09-21 05:33:20 UTC, past every timestamp [`synthetic_journald_log`]
-/// writes.
-const AFTER_THE_LOG_UNIX_SECS: i64 = 1_790_000_000;
 
 /// A moment past every timestamp [`syslog_journald_log`] writes, for a parse
 /// that infers the year of a syslog-short line from the clock.
@@ -54,102 +47,6 @@ pub fn syslog_journald_log(approx_bytes: usize, seed: u64) -> String {
         timestamps: SyntheticLogTimestamps::SyslogShort,
     })
 }
-
-/// Milliseconds one line can advance the clock, so several lines share the
-/// second that the syslog-short format records them at.
-const MAX_LINE_INTERVAL_MILLIS: usize = 400;
-
-const MONTH_ABBREVS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
-
-const UNITS: [&str; 8] = [
-    "kernel",
-    "systemd[1]",
-    "gpsd[412]",
-    "NetworkManager[588]",
-    "connmand[431]",
-    "navsyncd[770]",
-    "sshd[1032]",
-    "dbus-daemon[401]",
-];
-
-const MESSAGES: [&str; 10] = [
-    "Booting Linux on physical CPU 0x0",
-    "Memory policy: Data cache writealloc",
-    "gnss: fix acquired, 9 satellites in view",
-    "can0: bus-off state entered, restarting",
-    "Started Network Time Synchronization.",
-    "wlan0: authenticate with 02:00:5e:2f:aa:01",
-    "navsyncd: uploaded 2 recordings, queue empty",
-    "Failed to start Modem Manager, retrying in 30s",
-    "systemd-journald: file /var/log/journal rotated",
-    "usb 1-1: new high-speed USB device number 4",
-];
-
-/// Tails that stretch a line out to the widths a real journal shows.
-const MESSAGE_TAILS: [&str; 6] = [
-    " (state=0x1f flags=0x00c0)",
-    " [ 0x0000c3f4 0x0000c410 0x0000c44c ]",
-    " uid=0 pid=770 comm=navsyncd exe=/usr/bin/navsyncd",
-    " rc=-110 retries=3 backoff=250ms",
-    " ttyS1 115200n8 rts/cts off dtr on",
-    "",
-];
-
-/// Lines carrying no timestamp: blank lines and the continuation lines of
-/// anything that logs more than one line at a time.
-const UNTIMED_LINES: [&str; 4] = [
-    "",
-    "Stack trace follows:",
-    "  at 0x0000c3f4 in gnss_task+0x54",
-    "  ... 3 frames omitted ...",
-];
-
-/// One in this many lines opens a run of lines carrying no timestamp.
-const UNTIMED_LINE_ONE_IN: usize = 50;
-
-/// Lines one such run can be long, covering both runs and lone lines.
-const MAX_UNTIMED_RUN_LINES: usize = 3;
-
-/// One in this many lines is a reboot marker, after which the clock restarts
-/// behind where it left off, as it does on a device that has not set its clock
-/// yet.
-const REBOOT_ONE_IN: usize = 512;
-
-const REBOOT_MARKER: &str = "--- Device reboot ---";
-
-/// Seconds a reboot can set the clock back by.
-const MAX_REBOOT_CLOCK_STEP_BACK_SECS: usize = 60;
-
-/// One in this many lines is preceded by a clock correction: the device syncs
-/// against a time server mid-session and journald says so on the next line.
-const CLOCK_ADJUSTMENT_ONE_IN: usize = 1024;
-
-/// Seconds a mid-session clock correction can set the clock back by, always
-/// larger than [`MAX_LINE_INTERVAL_MILLIS`]: every correction steps the clock
-/// backwards.
-const MAX_ADJUSTMENT_CLOCK_STEP_BACK_SECS: usize = 30;
-
-const CLOCK_ADJUSTMENT_UNIT: &str = "systemd-journald";
-
-const CLOCK_ADJUSTMENT_MESSAGE: &str = "Time jumped backwards, rotating.";
-
-const SUMMARY_BLOCK_HEADER: &str = "----------- Journal summary -----------";
-
-const SUMMARY_DEVICE_TYPE: &str = "nav-devkit-mk2";
-
-/// `Fri 29-May-2026 18:48:25 UTC`, how the exporter writes the log's span.
-const SUMMARY_TIME_FORMAT: &str = "%a %d-%b-%Y %H:%M:%S UTC";
-
-/// `2026-05-29 18:48:25`, the ISO form carrying the year.
-const ISO_8601_SPACE_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
-
-/// The head of the per-service tables of a real export.
-const SUMMARY_ERROR_ROWS: [(&str, u32); 3] =
-    [("hal-powerd", 56429), ("ofonod", 1092), ("hal-gnssd", 1027)];
-
-const SUMMARY_WARNING_ROWS: [(&str, u32); 2] = [("core-appd", 29562), ("kernel", 315)];
 
 /// Syslog-short text of about [`SyntheticLogSpec::approx_bytes`], shaped like a
 /// journald export from an embedded device: several lines per second, message
@@ -337,6 +234,109 @@ impl DeterministicRng {
         options.get(index).copied().unwrap_or_default()
     }
 }
+
+/// 2026-05-29 18:48:25 UTC, the moment the first generated line is logged at.
+const FIRST_LINE_UNIX_SECS: i64 = 1_780_080_505;
+
+/// 2026-09-21 05:33:20 UTC, past every timestamp [`synthetic_journald_log`]
+/// writes.
+const AFTER_THE_LOG_UNIX_SECS: i64 = 1_790_000_000;
+
+/// Milliseconds one line can advance the clock, so several lines share the
+/// second that the syslog-short format records them at.
+const MAX_LINE_INTERVAL_MILLIS: usize = 400;
+
+const MONTH_ABBREVS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+const UNITS: [&str; 8] = [
+    "kernel",
+    "systemd[1]",
+    "gpsd[412]",
+    "NetworkManager[588]",
+    "connmand[431]",
+    "navsyncd[770]",
+    "sshd[1032]",
+    "dbus-daemon[401]",
+];
+
+const MESSAGES: [&str; 10] = [
+    "Booting Linux on physical CPU 0x0",
+    "Memory policy: Data cache writealloc",
+    "gnss: fix acquired, 9 satellites in view",
+    "can0: bus-off state entered, restarting",
+    "Started Network Time Synchronization.",
+    "wlan0: authenticate with 02:00:5e:2f:aa:01",
+    "navsyncd: uploaded 2 recordings, queue empty",
+    "Failed to start Modem Manager, retrying in 30s",
+    "systemd-journald: file /var/log/journal rotated",
+    "usb 1-1: new high-speed USB device number 4",
+];
+
+/// Tails that stretch a line out to the widths a real journal shows.
+const MESSAGE_TAILS: [&str; 6] = [
+    " (state=0x1f flags=0x00c0)",
+    " [ 0x0000c3f4 0x0000c410 0x0000c44c ]",
+    " uid=0 pid=770 comm=navsyncd exe=/usr/bin/navsyncd",
+    " rc=-110 retries=3 backoff=250ms",
+    " ttyS1 115200n8 rts/cts off dtr on",
+    "",
+];
+
+/// Lines carrying no timestamp: blank lines and the continuation lines of
+/// anything that logs more than one line at a time.
+const UNTIMED_LINES: [&str; 4] = [
+    "",
+    "Stack trace follows:",
+    "  at 0x0000c3f4 in gnss_task+0x54",
+    "  ... 3 frames omitted ...",
+];
+
+/// One in this many lines opens a run of lines carrying no timestamp.
+const UNTIMED_LINE_ONE_IN: usize = 50;
+
+/// Lines one such run can be long, covering both runs and lone lines.
+const MAX_UNTIMED_RUN_LINES: usize = 3;
+
+/// One in this many lines is a reboot marker, after which the clock restarts
+/// behind where it left off, as it does on a device that has not set its clock
+/// yet.
+const REBOOT_ONE_IN: usize = 512;
+
+const REBOOT_MARKER: &str = "--- Device reboot ---";
+
+/// Seconds a reboot can set the clock back by.
+const MAX_REBOOT_CLOCK_STEP_BACK_SECS: usize = 60;
+
+/// One in this many lines is preceded by a clock correction: the device syncs
+/// against a time server mid-session and journald says so on the next line.
+const CLOCK_ADJUSTMENT_ONE_IN: usize = 1024;
+
+/// Seconds a mid-session clock correction can set the clock back by, always
+/// larger than [`MAX_LINE_INTERVAL_MILLIS`]: every correction steps the clock
+/// backwards.
+const MAX_ADJUSTMENT_CLOCK_STEP_BACK_SECS: usize = 30;
+
+const CLOCK_ADJUSTMENT_UNIT: &str = "systemd-journald";
+
+const CLOCK_ADJUSTMENT_MESSAGE: &str = "Time jumped backwards, rotating.";
+
+const SUMMARY_BLOCK_HEADER: &str = "----------- Journal summary -----------";
+
+const SUMMARY_DEVICE_TYPE: &str = "nav-devkit-mk2";
+
+/// `Fri 29-May-2026 18:48:25 UTC`, how the exporter writes the log's span.
+const SUMMARY_TIME_FORMAT: &str = "%a %d-%b-%Y %H:%M:%S UTC";
+
+/// `2026-05-29 18:48:25`, the ISO form carrying the year.
+const ISO_8601_SPACE_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+
+/// The head of the per-service tables of a real export.
+const SUMMARY_ERROR_ROWS: [(&str, u32); 3] =
+    [("hal-powerd", 56429), ("ofonod", 1092), ("hal-gnssd", 1027)];
+
+const SUMMARY_WARNING_ROWS: [(&str, u32); 2] = [("core-appd", 29562), ("kernel", 315)];
 
 #[cfg(test)]
 mod tests {

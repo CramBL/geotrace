@@ -2,10 +2,6 @@
 //! and a directory of captured tiles. A snapshot taken over either one
 //! shows where the map was framed. A blank base layer shows nothing of it.
 
-pub mod captured;
-pub mod glyph;
-pub mod synthetic;
-
 use std::collections::BTreeSet;
 
 use egui::{Context, Rect};
@@ -19,12 +15,13 @@ pub use crate::test_tiles::captured::{
 };
 pub use crate::test_tiles::synthetic::SyntheticTiles;
 
-/// A piece covers its texture entirely: both sources serve whole tiles.
-const FULL_TILE_UV: Rect = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+pub mod captured;
+pub mod glyph;
+pub mod synthetic;
 
 pub(crate) enum TestTileSource {
-    Synthetic(SyntheticTiles),
     Captured(CapturedTiles),
+    Synthetic(SyntheticTiles),
 }
 
 impl TestTileSource {
@@ -81,6 +78,9 @@ impl Tiles for TestTileSource {
         }
     }
 }
+
+/// A piece covers its texture entirely: both sources serve whole tiles.
+const FULL_TILE_UV: Rect = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
 
 #[cfg(test)]
 mod tests {

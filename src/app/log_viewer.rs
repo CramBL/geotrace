@@ -1,16 +1,6 @@
 //! The log viewer window: the loaded logs, the parse summary each of them
 //! expands into, and the virtualized table of the selected log's lines.
 
-pub(super) mod association_dialog;
-mod association_window;
-pub(super) mod filters;
-mod line_table;
-pub(super) mod log_list;
-pub(super) mod restored_logs_badge;
-mod summary_panel;
-#[cfg(test)]
-mod tests;
-
 use egui::{Button, ComboBox, DragValue, Label, RichText, Window};
 use egui_phosphor::regular::X as ICON_X;
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
@@ -29,71 +19,13 @@ use restored_logs_badge::RestoredLogsBadge;
 
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 
-/// The three ways a log gets in, shown by the viewer's empty state and by the
-/// drag-and-drop overlay alike.
-pub(super) const LOG_LOAD_HINT: &str = "Open a log file, drop it here, or paste log text (Ctrl+V)";
-
-/// How the summary panel writes a moment. The line table composes the same
-/// shape from one format constant per run of its timestamp column.
-const TIMESTAMP_FORMAT: &str = gt_fmt::UTC_SECOND_FORMAT;
-
-/// The date run of a timestamp, which the table's day divider states on its
-/// own.
-const DATE_FORMAT: &str = "%Y-%m-%d";
-
-pub(super) const LOG_VIEWER_TITLE: &str = "Log viewer";
-
-/// Wide enough for the footer's association controls to sit on one row.
-const DEFAULT_WINDOW_WIDTH_PX: f32 = 800.0;
-
-/// Rows of the line table the sections above it leave room for before they
-/// start scrolling among themselves.
-const TABLE_ROWS_THE_HEADER_LEAVES: usize = 3;
-
-const SUMMARY_HOVER: &str = "Show what the parse read from this log";
-
-const ASSOCIATION_WINDOW_HOVER: &str = "Furthest a line's timestamp may be from a fix of the anchored recording for the line \
-     to take its position";
-
-const NO_RECORDING_HOVER: &str = "Take this log's positions from no recording";
-
-const NO_RECORDING_ATTACHED_HOVER: &str =
-    "Remove the attachment first: this log is stored with a recording in history";
-
-/// Why a recording that ran at no time the log covers is still a choice: a
-/// clock-skewed source is a recording too.
-pub(super) const NO_OVERLAP_HOVER: &str =
-    "This recording ran at no time the log covers: every line would stay unassociated";
-
-pub(in crate::app) const ATTACH_LABEL: &str = "Attach to recording…";
-
-const ATTACH_HOVER: &str = "Choose the recording this log belongs to, and store it there";
-
-const ATTACH_NO_RECORDING_HOVER: &str = "Load a recording to attach this log to it";
-
-pub(in crate::app) const DETACH_LABEL: &str = "Remove attachment";
-
-const DETACH_HOVER: &str =
-    "Take this log out of the recording in history. It stays loaded in this session.";
-
-const DETACH_UNATTACHED_HOVER: &str = "This log is not stored with a recording in history";
-
-const NOTICE_DISMISS_HOVER: &str = "Dismiss this warning";
-
-/// What the list and the footer append to the name of a recording that is not
-/// loaded.
-pub(super) const NOT_LOADED_MARKER: &str = "not loaded";
-
-pub(in crate::app) const LOAD_RECORDING_LABEL: &str = "Load recording";
-
-const LOAD_RECORDING_HOVER: &str =
-    "Gives this log's lines positions by opening its recording from history";
-
-const LOAD_RECORDING_NO_DATABASE_HOVER: &str = "The recordings database is unavailable";
-
-/// Fixed width for the unit dropdown: a wider unit label must not shift the
-/// controls beside it.
-const UNIT_DROPDOWN_WIDTH_PX: f32 = 52.0;
+pub(super) mod association_dialog;
+mod association_window;
+pub(super) mod filters;
+mod line_table;
+pub(super) mod log_list;
+pub(super) mod restored_logs_badge;
+mod summary_panel;
 
 /// The floating log viewer: which log it shows, how much of that log's parse
 /// summary is unfolded, and the unit its association window is entered in.
@@ -638,3 +570,72 @@ fn recording_names_by_id<'a>(
         })
         .collect()
 }
+
+/// The three ways a log gets in, shown by the viewer's empty state and by the
+/// drag-and-drop overlay alike.
+pub(super) const LOG_LOAD_HINT: &str = "Open a log file, drop it here, or paste log text (Ctrl+V)";
+
+/// How the summary panel writes a moment. The line table composes the same
+/// shape from one format constant per run of its timestamp column.
+const TIMESTAMP_FORMAT: &str = gt_fmt::UTC_SECOND_FORMAT;
+
+/// The date run of a timestamp, which the table's day divider states on its
+/// own.
+const DATE_FORMAT: &str = "%Y-%m-%d";
+
+pub(super) const LOG_VIEWER_TITLE: &str = "Log viewer";
+
+/// Wide enough for the footer's association controls to sit on one row.
+const DEFAULT_WINDOW_WIDTH_PX: f32 = 800.0;
+
+/// Rows of the line table the sections above it leave room for before they
+/// start scrolling among themselves.
+const TABLE_ROWS_THE_HEADER_LEAVES: usize = 3;
+
+const SUMMARY_HOVER: &str = "Show what the parse read from this log";
+
+const ASSOCIATION_WINDOW_HOVER: &str = "Furthest a line's timestamp may be from a fix of the anchored recording for the line \
+     to take its position";
+
+const NO_RECORDING_HOVER: &str = "Take this log's positions from no recording";
+
+const NO_RECORDING_ATTACHED_HOVER: &str =
+    "Remove the attachment first: this log is stored with a recording in history";
+
+/// Why a recording that ran at no time the log covers is still a choice: a
+/// clock-skewed source is a recording too.
+pub(super) const NO_OVERLAP_HOVER: &str =
+    "This recording ran at no time the log covers: every line would stay unassociated";
+
+pub(in crate::app) const ATTACH_LABEL: &str = "Attach to recording…";
+
+const ATTACH_HOVER: &str = "Choose the recording this log belongs to, and store it there";
+
+const ATTACH_NO_RECORDING_HOVER: &str = "Load a recording to attach this log to it";
+
+pub(in crate::app) const DETACH_LABEL: &str = "Remove attachment";
+
+const DETACH_HOVER: &str =
+    "Take this log out of the recording in history. It stays loaded in this session.";
+
+const DETACH_UNATTACHED_HOVER: &str = "This log is not stored with a recording in history";
+
+const NOTICE_DISMISS_HOVER: &str = "Dismiss this warning";
+
+/// What the list and the footer append to the name of a recording that is not
+/// loaded.
+pub(super) const NOT_LOADED_MARKER: &str = "not loaded";
+
+pub(in crate::app) const LOAD_RECORDING_LABEL: &str = "Load recording";
+
+const LOAD_RECORDING_HOVER: &str =
+    "Gives this log's lines positions by opening its recording from history";
+
+const LOAD_RECORDING_NO_DATABASE_HOVER: &str = "The recordings database is unavailable";
+
+/// Fixed width for the unit dropdown: a wider unit label must not shift the
+/// controls beside it.
+const UNIT_DROPDOWN_WIDTH_PX: f32 = 52.0;
+
+#[cfg(test)]
+mod tests;

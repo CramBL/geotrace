@@ -15,21 +15,6 @@ use gt_hdf5_archive::prune::{
 use gt_hdf5_archive::test_util;
 use gt_hdf5_archive::{ArchiveError, Column, ColumnFormat};
 
-const FORMAT: ColumnFormat = ColumnFormat {
-    chunk_rows: 4_096,
-    deflate_level: 6,
-};
-
-const DAYS: &str = "days";
-const NOTE: &str = "note";
-const ROWS: &str = "rows";
-const VALUE: &str = "value";
-const LABEL: &str = "label";
-const HOST: &str = "https://example.invalid";
-
-const DAY_COLUMNS: [&str; 1] = [NOTE];
-const ROW_COLUMNS: [&str; 2] = [VALUE, LABEL];
-
 fn labels_of(day: NaiveDate, rows: usize) -> Vec<String> {
     (0..rows).map(|row| format!("{day}-{row}")).collect()
 }
@@ -262,15 +247,6 @@ impl TestArchive {
             .map_err(|err| format!("mark the delete: {err}"))
     }
 }
-
-/// Days stored out of the order they fall in, which is what a backfill does:
-/// the index rows are not in day order.
-const STORED_DAYS: [(NaiveDate, usize); 4] = [
-    (test_util::day_at(2), 5),
-    (test_util::day_at(0), 3),
-    (test_util::day_at(3), 6),
-    (test_util::day_at(1), 4),
-];
 
 fn rows_of(day: NaiveDate) -> usize {
     STORED_DAYS
@@ -585,19 +561,6 @@ fn an_index_column_that_lost_rows_is_rejected() {
     assert!(err.contains("count holds 2 rows, requested"), "{err}");
 }
 
-const MAPS: &str = "maps";
-const VALUES: &str = "values";
-const EPOCH: &str = "epoch";
-const VALUE_OFFSET: &str = "value_offset";
-const VALUE_COUNT: &str = "value_count";
-const TECU: &str = "tecu";
-
-const MAP_COLUMNS: [&str; 1] = [EPOCH];
-const VALUE_COLUMNS: [&str; 1] = [TECU];
-
-/// Nodes per map, small enough to check every one of them.
-const NODES: usize = 3;
-
 /// The TEC archive's shape: a day contains maps, and a map contains values.
 struct NestedArchive {
     _dir: TempDir,
@@ -791,3 +754,40 @@ fn deleting_days_rebases_the_maps_and_the_values_they_name() {
         "the deleted day's values are still stored"
     );
 }
+
+const FORMAT: ColumnFormat = ColumnFormat {
+    chunk_rows: 4_096,
+    deflate_level: 6,
+};
+
+const DAYS: &str = "days";
+const NOTE: &str = "note";
+const ROWS: &str = "rows";
+const VALUE: &str = "value";
+const LABEL: &str = "label";
+const HOST: &str = "https://example.invalid";
+
+const DAY_COLUMNS: [&str; 1] = [NOTE];
+const ROW_COLUMNS: [&str; 2] = [VALUE, LABEL];
+
+/// Days stored out of the order they fall in, which is what a backfill does:
+/// the index rows are not in day order.
+const STORED_DAYS: [(NaiveDate, usize); 4] = [
+    (test_util::day_at(2), 5),
+    (test_util::day_at(0), 3),
+    (test_util::day_at(3), 6),
+    (test_util::day_at(1), 4),
+];
+
+const MAPS: &str = "maps";
+const VALUES: &str = "values";
+const EPOCH: &str = "epoch";
+const VALUE_OFFSET: &str = "value_offset";
+const VALUE_COUNT: &str = "value_count";
+const TECU: &str = "tecu";
+
+const MAP_COLUMNS: [&str; 1] = [EPOCH];
+const VALUE_COLUMNS: [&str; 1] = [TECU];
+
+/// Nodes per map, small enough to check every one of them.
+const NODES: usize = 3;

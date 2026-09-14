@@ -40,10 +40,10 @@ pub(super) fn archive_one_day<W: std::ops::Deref<Target = R>, R, E: std::fmt::De
 /// The days a delete removed from an archive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrunedDays {
-    /// Every archived day before this one.
-    Before(NaiveDate),
     /// Every day the archive held.
     All,
+    /// Every archived day before this one.
+    Before(NaiveDate),
 }
 
 impl PrunedDays {
@@ -100,9 +100,9 @@ pub fn auto_prune_cutoff(
 /// How one archive's delete ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArchivePruneOutcome {
-    Removed(usize),
     /// What the archive said when its rewrite failed.
     Failed(String),
+    Removed(usize),
     /// The archive kept its days: the registry rejected the rewrite before it
     /// started.
     Skipped(WriteRejection),

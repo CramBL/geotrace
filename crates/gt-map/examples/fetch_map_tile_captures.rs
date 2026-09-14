@@ -40,14 +40,6 @@ use walkers::TileId;
 use gt_map::mapbox_tiles;
 use gt_map::test_tiles::{CapturedTileFormat, CapturedTileId, CapturedTileManifest};
 
-/// Recorded in the manifest in place of the URL, which holds the token.
-const HOST: &str = "api.mapbox.com";
-
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// Pause between requests, far below what a Mapbox account is allowed.
-const REQUEST_INTERVAL: Duration = Duration::from_millis(200);
-
 fn main() -> Result<(), Box<dyn Error>> {
     let token = mapbox_tiles::TOKEN_ENVS
         .iter()
@@ -170,3 +162,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     Ok(())
 }
+
+/// Recorded in the manifest in place of the URL, which holds the token.
+const HOST: &str = "api.mapbox.com";
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Pause between requests, far below what a Mapbox account is allowed.
+const REQUEST_INTERVAL: Duration = Duration::from_millis(200);

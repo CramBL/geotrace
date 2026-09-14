@@ -515,28 +515,16 @@ pub(crate) fn is_spatial_point_visible(sp: &SpatialPoint, scope: MapScope<'_>) -
     })
 }
 
-/// Longitude the normalized Mercator world spans: dividing a longitude span
-/// by it gives that span's x extent.
-const WORLD_WIDTH_DEGREES: f64 = 360.0;
-
-/// Floor on a bounding box's extent in normalized Mercator units, keeping the
-/// fit of a single position finite. A thousandth of a degree of longitude,
-/// which every viewport frames past the maximum zoom.
-const MIN_FIT_EXTENT_MERC: f64 = 0.001 / WORLD_WIDTH_DEGREES;
-
-/// The share of the viewport a fit fills with the bounding box.
-const FIT_FILL: f64 = 0.8;
-
 /// What a fit could put on the map.
 ///
 /// Web Mercator ends at [`mercator::MAX_LATITUDE_DEGREES`]. No zoom draws a
 /// fix past that parallel, and the fit centres on the limit instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FitOutcome {
-    Framed,
+    FixesPastBothLimits,
     FixesPastTheNorthernLimit,
     FixesPastTheSouthernLimit,
-    FixesPastBothLimits,
+    Framed,
 }
 
 impl FitOutcome {
@@ -609,6 +597,18 @@ pub(crate) fn zoom_to_fit(
     }
 }
 
+/// Longitude the normalized Mercator world spans: dividing a longitude span
+/// by it gives that span's x extent.
+const WORLD_WIDTH_DEGREES: f64 = 360.0;
+
+/// Floor on a bounding box's extent in normalized Mercator units, keeping the
+/// fit of a single position finite. A thousandth of a degree of longitude,
+/// which every viewport frames past the maximum zoom.
+const MIN_FIT_EXTENT_MERC: f64 = 0.001 / WORLD_WIDTH_DEGREES;
+
+/// The share of the viewport a fit fills with the bounding box.
+const FIT_FILL: f64 = 0.8;
+
 #[cfg(test)]
 mod tests {
     use chrono::{Duration, TimeZone, Utc};
@@ -620,21 +620,6 @@ mod tests {
 
     use super::*;
     use crate::{test_util, tests};
-
-    /// The viewport every case here collects from or frames into, in logical pixels.
-    const VIEWPORT: egui::Rect =
-        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 600.0));
-
-    /// The zoom every case collects at, unless it states another.
-    const ZOOM: f64 = 12.0;
-
-    /// The first fix of every track built here, and the position the map is
-    /// centred on unless a case states another.
-    const TRACK_START: (f64, f64) = (55.0, 12.0);
-
-    /// The zoom at which [`VIEWPORT`] holds every meridian at once: the world
-    /// spans 512 px.
-    const WHOLE_WORLD_ZOOM: f64 = 1.0;
 
     /// Fixes at `positions`, one second apart.
     fn fixes_over(positions: &[(f64, f64)]) -> Vec<gt_types::NavPoint> {
@@ -901,15 +886,6 @@ mod tests {
         assert_eq!(collected_fixes(&visible, test_util::track0()), vec![0, 1]);
     }
 
-    /// A receiver carried around the north pole a quarter turn at a time, on
-    /// a ring 22.24 km across.
-    const AROUND_THE_NORTH_POLE: &[(f64, f64)] =
-        &[(89.9, 0.0), (89.9, 90.0), (89.9, 180.0), (89.9, -90.0)];
-
-    /// The same lap around the south pole, walked the other way.
-    const AROUND_THE_SOUTH_POLE: &[(f64, f64)] =
-        &[(-89.9, 0.0), (-89.9, -90.0), (-89.9, 180.0), (-89.9, 90.0)];
-
     /// Fixes one second apart at `positions`, given as (latitude, longitude)
     /// in degrees.
     fn fixes_at(positions: &[(f64, f64)]) -> Vec<NavPoint> {
@@ -1127,4 +1103,28 @@ mod tests {
             expected
         );
     }
+
+    /// The viewport every case here collects from or frames into, in logical pixels.
+    const VIEWPORT: egui::Rect =
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 600.0));
+
+    /// The zoom every case collects at, unless it states another.
+    const ZOOM: f64 = 12.0;
+
+    /// The first fix of every track built here, and the position the map is
+    /// centred on unless a case states another.
+    const TRACK_START: (f64, f64) = (55.0, 12.0);
+
+    /// The zoom at which [`VIEWPORT`] holds every meridian at once: the world
+    /// spans 512 px.
+    const WHOLE_WORLD_ZOOM: f64 = 1.0;
+
+    /// A receiver carried around the north pole a quarter turn at a time, on
+    /// a ring 22.24 km across.
+    const AROUND_THE_NORTH_POLE: &[(f64, f64)] =
+        &[(89.9, 0.0), (89.9, 90.0), (89.9, 180.0), (89.9, -90.0)];
+
+    /// The same lap around the south pole, walked the other way.
+    const AROUND_THE_SOUTH_POLE: &[(f64, f64)] =
+        &[(-89.9, 0.0), (-89.9, -90.0), (-89.9, 180.0), (-89.9, 90.0)];
 }

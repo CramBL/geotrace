@@ -10,13 +10,6 @@
 //! filter stack: the live filter the user is typing, and the chips added from
 //! it.
 
-mod anchor;
-mod association;
-mod attachment;
-mod filter;
-mod loaded_log;
-mod test_util;
-
 pub use anchor::RecordingKey;
 pub use association::{AssociationCandidate, AssociationCandidates};
 pub use attachment::{LogAttachmentRef, SessionLogAttachments};
@@ -26,3 +19,10 @@ pub use filter::{
     TimestampTick, VisibleEntries,
 };
 pub use loaded_log::{LoadedLog, LoadedLogs, LogPushOutcome, RestoredAttachmentAdoption};
+
+mod anchor;
+mod association;
+mod attachment;
+mod filter;
+mod loaded_log;
+mod test_util;

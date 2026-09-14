@@ -10,12 +10,6 @@ use gt_pending_writes::WriteAccess;
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use crate::settings::StorageSettings;
 
-pub const AUTO_STORE_LABEL: &str = "Auto-store recordings";
-
-const ENABLE_AUTO_STORE_FIRST: &str = "Enable 'Auto-store recordings' to use auto-pruning";
-
-const ENABLE_AUTO_PRUNE_FIRST: &str = "Tick 'Auto-prune when over' to configure this";
-
 /// What a grayed auto-prune control says on hover.
 ///
 /// The "Auto-prune when over" checkbox takes input whenever `storage.enabled`
@@ -104,6 +98,12 @@ pub fn show_auto_prune_confirm_checkbox(
     .on_hover_text("Show a confirmation dialog before auto-pruning deletes recordings")
     .on_disabled_hover_text(disabled_hover);
 }
+
+pub const AUTO_STORE_LABEL: &str = "Auto-store recordings";
+
+const ENABLE_AUTO_STORE_FIRST: &str = "Enable 'Auto-store recordings' to use auto-pruning";
+
+const ENABLE_AUTO_PRUNE_FIRST: &str = "Tick 'Auto-prune when over' to configure this";
 
 #[cfg(test)]
 mod tests {

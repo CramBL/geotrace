@@ -16,13 +16,6 @@
 use std::fmt;
 use std::mem;
 
-const MARKER_OPEN: char = '[';
-
-const MARKER_CLOSE: char = ']';
-
-/// Prefixes a marker body containing a citation key.
-const CITATION_SIGIL: char = '^';
-
 /// An abbreviation the prose marks up, shown with its full form on hover.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Abbreviation {
@@ -62,6 +55,8 @@ pub struct ReferenceDocument {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReferenceBlock {
+    Equation(ReferenceEquation),
+    Illustration(ReferenceIllustration),
     Paragraph(&'static str),
     /// A query the reader can run as written, under a line introducing it.
     QueryExample {
@@ -72,8 +67,6 @@ pub enum ReferenceBlock {
     /// block and keeping the source's own punctuation.
     Quotation(&'static str),
     Table(ReferenceTable),
-    Equation(ReferenceEquation),
-    Illustration(ReferenceIllustration),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,11 +92,11 @@ pub enum ColumnWidth {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TableCell {
+    /// A cell the source leaves blank for that row.
+    Empty,
     Prose(&'static str),
     /// Words as the source published them, punctuation included.
     Quotation(&'static str),
-    /// A cell the source leaves blank for that row.
-    Empty,
 }
 
 /// An image committed alongside the text it belongs to.
@@ -151,9 +144,9 @@ pub struct IllustrationFrame {
 /// raised source number.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProseSpan {
-    Text(&'static str),
     Abbreviation(Abbreviation),
     Citation(Citation),
+    Text(&'static str),
 }
 
 /// A cited source together with the number it carries in the document's
@@ -168,24 +161,24 @@ pub struct Citation {
 /// [`ReferenceDocument::defects`] finds none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DocumentDefect {
-    /// A marker with an abbreviation or a citation key the document does not
-    /// declare, which the window shows with its brackets.
-    UnresolvedMarker { prose: &'static str },
+    /// Two sources under one key, which makes the marker resolve to whichever
+    /// is listed first.
+    DuplicateCitationKey { citation_key: &'static str },
     /// Prose is written without em-dashes. A quotation keeps its source's
     /// punctuation and is exempt, which is why quotations are data of their
     /// own.
     EmDashInProse { prose: &'static str },
     /// Prose is written without semicolons, quotations again exempt.
     SemicolonInProse { prose: &'static str },
-    /// Two sources under one key, which makes the marker resolve to whichever
-    /// is listed first.
-    DuplicateCitationKey { citation_key: &'static str },
+    /// A table row with a cell count other than the column count.
+    TableRowLength { table_title: &'static str },
     /// A source standing in the footer under a number no prose points at.
     UncitedSource { citation_key: &'static str },
     /// An abbreviation defining a term the window never shows.
     UnmarkedAbbreviation { short_form: &'static str },
-    /// A table row with a cell count other than the column count.
-    TableRowLength { table_title: &'static str },
+    /// A marker with an abbreviation or a citation key the document does not
+    /// declare, which the window shows with its brackets.
+    UnresolvedMarker { prose: &'static str },
 }
 
 impl ReferenceDocument {
@@ -505,40 +498,18 @@ impl Iterator for ProseSpans<'_> {
     }
 }
 
+const MARKER_OPEN: char = '[';
+
+const MARKER_CLOSE: char = ']';
+
+/// Prefixes a marker body containing a citation key.
+const CITATION_SIGIL: char = '^';
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
 
     use super::*;
-
-    const GNSS: Abbreviation = Abbreviation {
-        short_form: "GNSS",
-        full_form: "Global Navigation Satellite System",
-    };
-
-    const ABBREVIATIONS: &[Abbreviation] = &[GNSS];
-
-    const GFZ_KP: Source = Source {
-        citation_key: "gfz-kp",
-        name: "GFZ Kp",
-        url: "https://kp.gfz.de/en/",
-    };
-
-    const MATZKA: Source = Source {
-        citation_key: "matzka-2021",
-        name: "Matzka et al. 2021",
-        url: "https://doi.org/10.1029/2020SW002641",
-    };
-
-    const SOURCES: &[Source] = &[GFZ_KP, MATZKA];
-
-    const DOCUMENT: ReferenceDocument = ReferenceDocument {
-        title: "Test document",
-        link_question: "How does the test topic affect GNSS?",
-        blocks: &[],
-        abbreviations: ABBREVIATIONS,
-        sources: SOURCES,
-    };
 
     fn spans(prose: &'static str) -> Vec<ProseSpan> {
         DOCUMENT.prose_spans(prose).collect()
@@ -633,31 +604,6 @@ mod tests {
         );
     }
 
-    const EQUATION_IMAGE: ReferenceImage = ReferenceImage {
-        image_bytes: &[],
-        asset_name: "test_equation",
-    };
-
-    const ILLUSTRATION_IMAGE: ReferenceImage = ReferenceImage {
-        image_bytes: &[],
-        asset_name: "test_illustration",
-    };
-
-    const IMAGE_BLOCKS: &[ReferenceBlock] = &[
-        ReferenceBlock::Equation(ReferenceEquation {
-            image: EQUATION_IMAGE,
-            alt_text: "STEC = integral of N_e along the signal path",
-        }),
-        ReferenceBlock::Illustration(ReferenceIllustration {
-            frames: &[IllustrationFrame {
-                image: ILLUSTRATION_IMAGE,
-                label: "Storm peak",
-            }],
-            caption: "A caption citing[^gfz-kp]",
-            credit: None,
-        }),
-    ];
-
     /// This list holds an equation's asset as well as every illustration
     /// frame's, which the test that decodes what the window uploads walks.
     #[test]
@@ -698,8 +644,6 @@ mod tests {
         assert_eq!(document.defects(), vec![]);
     }
 
-    const UNRESOLVED_MARKER_QUOTATION: &str = "Storms disturb [TEC].[^gfz-kp][^matzka-2021]";
-
     #[test]
     fn an_unresolved_marker_in_a_quotation_is_a_defect() {
         const BLOCKS: &[ReferenceBlock] = &[ReferenceBlock::Quotation(UNRESOLVED_MARKER_QUOTATION)];
@@ -717,17 +661,6 @@ mod tests {
             ]
         );
     }
-
-    const UNRESOLVED_MARKER_PROSE: &str = "Storms disturb [TEC] and [GNSS].[^gfz-kp][^matzka-2021]";
-
-    const EM_DASH_PROSE: &str = "Storms — the largest ones — disturb [GNSS].[^gfz-kp]\
-                                 [^matzka-2021]";
-
-    const SEMICOLON_PROSE: &str = "Storms disturb [GNSS]; badly.[^gfz-kp][^matzka-2021]";
-
-    const UNCITED_SOURCE_PROSE: &str = "Storms disturb [GNSS].[^gfz-kp]";
-
-    const UNMARKED_ABBREVIATION_PROSE: &str = "Storms disturb GNSS.[^gfz-kp][^matzka-2021]";
 
     #[rstest]
     #[case(
@@ -810,4 +743,71 @@ mod tests {
             }]
         );
     }
+
+    const GNSS: Abbreviation = Abbreviation {
+        short_form: "GNSS",
+        full_form: "Global Navigation Satellite System",
+    };
+
+    const ABBREVIATIONS: &[Abbreviation] = &[GNSS];
+
+    const GFZ_KP: Source = Source {
+        citation_key: "gfz-kp",
+        name: "GFZ Kp",
+        url: "https://kp.gfz.de/en/",
+    };
+
+    const MATZKA: Source = Source {
+        citation_key: "matzka-2021",
+        name: "Matzka et al. 2021",
+        url: "https://doi.org/10.1029/2020SW002641",
+    };
+
+    const SOURCES: &[Source] = &[GFZ_KP, MATZKA];
+
+    const DOCUMENT: ReferenceDocument = ReferenceDocument {
+        title: "Test document",
+        link_question: "How does the test topic affect GNSS?",
+        blocks: &[],
+        abbreviations: ABBREVIATIONS,
+        sources: SOURCES,
+    };
+
+    const EQUATION_IMAGE: ReferenceImage = ReferenceImage {
+        image_bytes: &[],
+        asset_name: "test_equation",
+    };
+
+    const ILLUSTRATION_IMAGE: ReferenceImage = ReferenceImage {
+        image_bytes: &[],
+        asset_name: "test_illustration",
+    };
+
+    const IMAGE_BLOCKS: &[ReferenceBlock] = &[
+        ReferenceBlock::Equation(ReferenceEquation {
+            image: EQUATION_IMAGE,
+            alt_text: "STEC = integral of N_e along the signal path",
+        }),
+        ReferenceBlock::Illustration(ReferenceIllustration {
+            frames: &[IllustrationFrame {
+                image: ILLUSTRATION_IMAGE,
+                label: "Storm peak",
+            }],
+            caption: "A caption citing[^gfz-kp]",
+            credit: None,
+        }),
+    ];
+
+    const UNRESOLVED_MARKER_QUOTATION: &str = "Storms disturb [TEC].[^gfz-kp][^matzka-2021]";
+
+    const UNRESOLVED_MARKER_PROSE: &str = "Storms disturb [TEC] and [GNSS].[^gfz-kp][^matzka-2021]";
+
+    const EM_DASH_PROSE: &str = "Storms — the largest ones — disturb [GNSS].[^gfz-kp]\
+                                 [^matzka-2021]";
+
+    const SEMICOLON_PROSE: &str = "Storms disturb [GNSS]; badly.[^gfz-kp][^matzka-2021]";
+
+    const UNCITED_SOURCE_PROSE: &str = "Storms disturb [GNSS].[^gfz-kp]";
+
+    const UNMARKED_ABBREVIATION_PROSE: &str = "Storms disturb GNSS.[^gfz-kp][^matzka-2021]";
 }

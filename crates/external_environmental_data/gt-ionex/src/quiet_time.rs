@@ -17,32 +17,6 @@ use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 
 use crate::tec::TotalElectronContent;
 
-/// Days before the day assessed the quiet-time median is taken over.
-///
-/// The index takes its quiet reference over one solar rotation as seen from
-/// Earth, which is 27 days.
-pub const BACKGROUND_WINDOW_DAYS: usize = 27;
-
-/// Archived days of the window a median is formed from at all.
-///
-/// An ionospheric storm and its recovery run over several days, so a median
-/// drawn from a minority of the window can be a storm's own level. 14 is the
-/// smallest majority of the 27 days.
-pub const MINIMUM_BACKGROUND_DAYS: usize = 14;
-
-/// The deviation, in log10 units, past which the index leaves the quiet
-/// grade. Table 3 closes each grade at its own boundary, so a deviation of
-/// exactly this much is still quiet.
-pub const QUIET_GRADE_LIMIT_LOG_RATIO: f64 = 0.046;
-
-/// The deviation, in log10 units, past which the index reaches the moderate
-/// storm grade, W = 3 above the median and W = -3 below it.
-pub const MODERATE_STORM_LOG_RATIO: f64 = 0.155;
-
-/// The deviation, in log10 units, past which the index reaches the intense
-/// storm grade, W = 4 above the median and W = -4 below it.
-pub const INTENSE_STORM_LOG_RATIO: f64 = 0.301;
-
 /// The 27 UTC days one day's quiet-time median is taken over, oldest first.
 ///
 /// Days that fall past the start of the calendar are left out.
@@ -57,10 +31,10 @@ pub fn background_days(day: NaiveDate) -> Vec<NaiveDate> {
 /// quiet-time median, by the magnitude of that deviation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IonosphericStormGrade {
-    Quiet,
+    IntenseStorm,
     ModerateDisturbance,
     ModerateStorm,
-    IntenseStorm,
+    Quiet,
 }
 
 impl IonosphericStormGrade {
@@ -298,6 +272,32 @@ fn median_tecu(values: &[TotalElectronContent]) -> Option<f64> {
     let lower = *sorted.get(above.checked_sub(1)?)?;
     Some((lower + upper) / 2.0)
 }
+
+/// Days before the day assessed the quiet-time median is taken over.
+///
+/// The index takes its quiet reference over one solar rotation as seen from
+/// Earth, which is 27 days.
+pub const BACKGROUND_WINDOW_DAYS: usize = 27;
+
+/// Archived days of the window a median is formed from at all.
+///
+/// An ionospheric storm and its recovery run over several days, so a median
+/// drawn from a minority of the window can be a storm's own level. 14 is the
+/// smallest majority of the 27 days.
+pub const MINIMUM_BACKGROUND_DAYS: usize = 14;
+
+/// The deviation, in log10 units, past which the index leaves the quiet
+/// grade. Table 3 closes each grade at its own boundary, so a deviation of
+/// exactly this much is still quiet.
+pub const QUIET_GRADE_LIMIT_LOG_RATIO: f64 = 0.046;
+
+/// The deviation, in log10 units, past which the index reaches the moderate
+/// storm grade, W = 3 above the median and W = -3 below it.
+pub const MODERATE_STORM_LOG_RATIO: f64 = 0.155;
+
+/// The deviation, in log10 units, past which the index reaches the intense
+/// storm grade, W = 4 above the median and W = -4 below it.
+pub const INTENSE_STORM_LOG_RATIO: f64 = 0.301;
 
 #[cfg(test)]
 mod tests {

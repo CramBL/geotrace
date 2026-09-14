@@ -24,16 +24,6 @@ use std::{env, error::Error, fs};
 
 use geotrace_sdk::{Angle, DateTime, NavFileBuilder, NavFix, NavFixTime, Velocity};
 
-const CSV_DATA: &str = "\
-timestamp_s,lat,lon,heading_deg,speed_mps
-1705309200,51.5074,-0.1278,90.0,12.5
-1705309201,51.5075,-0.1276,91.0,12.6
-1705309202,51.5076,-0.1274,89.5,12.4
-1705309203,51.5077,-0.1272,88.0,12.3
-1705309204,51.5078,-0.1270,90.0,12.5
-1705309205,51.5079,-0.1268,90.5,12.6
-";
-
 fn main() -> Result<(), Box<dyn Error>> {
     let mut recorder = NavFileBuilder::new()
         .with_title("Imported from CSV")?
@@ -77,3 +67,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     fs::remove_file(&path)?;
     Ok(())
 }
+
+const CSV_DATA: &str = "\
+timestamp_s,lat,lon,heading_deg,speed_mps
+1705309200,51.5074,-0.1278,90.0,12.5
+1705309201,51.5075,-0.1276,91.0,12.6
+1705309202,51.5076,-0.1274,89.5,12.4
+1705309203,51.5077,-0.1272,88.0,12.3
+1705309204,51.5078,-0.1270,90.0,12.5
+1705309205,51.5079,-0.1268,90.5,12.6
+";

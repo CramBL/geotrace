@@ -14,14 +14,6 @@ use gt_fetch::{Classified, HttpRequest, HttpResponse, Transport};
 
 use crate::{ApiKey, DateWindow};
 
-/// Minimum gap between requests, enforced by the transport the fetch worker
-/// connects with.
-///
-/// api.nasa.gov allows a registered key 1000 requests an hour, and one day of
-/// flares costs one request, so this keeps even a five-year backfill under
-/// that ceiling.
-pub const REQUEST_INTERVAL: Duration = Duration::from_secs(4);
-
 /// Why one window could not be fetched.
 ///
 /// The detail is redacted: it can quote the URL that was tried, which holds
@@ -68,6 +60,14 @@ fn classify(response: HttpResponse) -> Classified<Result<String, FetchFailure>> 
     }))
 }
 
+/// Minimum gap between requests, enforced by the transport the fetch worker
+/// connects with.
+///
+/// api.nasa.gov allows a registered key 1000 requests an hour, and one day of
+/// flares costs one request, so this keeps even a five-year backfill under
+/// that ceiling.
+pub const REQUEST_INTERVAL: Duration = Duration::from_secs(4);
+
 #[cfg(test)]
 mod tests {
     use chrono::NaiveDate;
@@ -76,10 +76,6 @@ mod tests {
 
     use super::*;
     use crate::{DEFAULT_BASE_URL, REDACTED_KEY};
-
-    /// The key the tests fetch with. Never a real one: a capture holding a
-    /// working key would publish it.
-    const TEST_KEY: &str = "test-key";
 
     fn key() -> ApiKey {
         ApiKey::new(TEST_KEY).expect("a key")
@@ -163,4 +159,8 @@ mod tests {
             })
         );
     }
+
+    /// The key the tests fetch with. Never a real one: a capture holding a
+    /// working key would publish it.
+    const TEST_KEY: &str = "test-key";
 }

@@ -523,17 +523,6 @@ mod tests {
 
     use super::*;
 
-    /// One day of the May 2024 storm, as the catalog returns it.
-    const ONE_FLARE: &str = r#"[{"flrID":"2024-05-09T08:45:00-FLR-001",
-        "beginTime":"2024-05-09T08:45Z","peakTime":"2024-05-09T09:13Z",
-        "endTime":"2024-05-09T09:36Z","classType":"X2.2",
-        "sourceLocation":"S20W25","activeRegionNum":13664}]"#;
-
-    /// A day the catalog lists nothing for.
-    const NO_FLARES: &str = "[]";
-
-    const TEST_KEY: &str = "test-key";
-
     fn key() -> Option<ApiKey> {
         ApiKey::new(TEST_KEY)
     }
@@ -1258,4 +1247,15 @@ mod tests {
             1
         );
     }
+
+    /// One day of the May 2024 storm, as the catalog returns it.
+    const ONE_FLARE: &str = r#"[{"flrID":"2024-05-09T08:45:00-FLR-001",
+        "beginTime":"2024-05-09T08:45Z","peakTime":"2024-05-09T09:13Z",
+        "endTime":"2024-05-09T09:36Z","classType":"X2.2",
+        "sourceLocation":"S20W25","activeRegionNum":13664}]"#;
+
+    /// A day the catalog lists nothing for.
+    const NO_FLARES: &str = "[]";
+
+    const TEST_KEY: &str = "test-key";
 }

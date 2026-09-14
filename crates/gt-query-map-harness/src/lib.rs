@@ -42,6 +42,13 @@
 //! [`gt_ui_types::MapHighlight::pin_this_frame`].
 //! A field added to a loaded recording therefore never reaches here.
 
+pub use classify::PointClass;
+pub use dataset::{Dataset, EPOCH_SECS, FileSpec, PointSpec, TrackSpec, epoch, track};
+pub use gt_ui_types::PointVisibility;
+pub use panel::{PanelView, RunAttempt};
+pub use picture::{MapPicture, TrackPicture};
+pub use scenario::MapScenario;
+
 mod classify;
 mod dataset;
 mod panel;
@@ -49,10 +56,3 @@ mod picture;
 mod scenario;
 #[cfg(any(test, feature = "test-util"))]
 pub mod test_util;
-
-pub use classify::PointClass;
-pub use dataset::{Dataset, EPOCH_SECS, FileSpec, PointSpec, TrackSpec, epoch, track};
-pub use gt_ui_types::PointVisibility;
-pub use panel::{PanelView, RunAttempt};
-pub use picture::{MapPicture, TrackPicture};
-pub use scenario::MapScenario;

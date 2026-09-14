@@ -24,13 +24,13 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub(crate) enum InternalError {
+    /// A rename could not proceed without losing or overwriting data.
+    #[error("{0}")]
+    Conflict(String),
     #[error(transparent)]
     Hdf5(#[from] hdf5_pure::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    /// A rename could not proceed without losing or overwriting data.
-    #[error("{0}")]
-    Conflict(String),
     #[error("no recording {identity:?}/{group_name:?} in the history database")]
     NoSuchRecording {
         identity: String,
@@ -51,14 +51,12 @@ impl From<InternalError> for DbError {
     }
 }
 
-const CHUNK_SIZE: u64 = 8_192;
-
 enum DatasetData {
-    F64(Vec<f64>),
     F32(Vec<f32>),
+    F64(Vec<f64>),
     I64(Vec<i64>),
-    U64(Vec<u64>),
     U32(Vec<u32>),
+    U64(Vec<u64>),
     U8(Vec<u8>),
 }
 
@@ -1241,3 +1239,5 @@ fn chunk_for_shape(shape: &[u64]) -> Vec<u64> {
         _ => shape.to_vec(),
     }
 }
+
+const CHUNK_SIZE: u64 = 8_192;

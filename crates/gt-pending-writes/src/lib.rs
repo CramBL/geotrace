@@ -13,9 +13,6 @@ use std::time::Duration;
 
 use parking_lot::{Condvar, Mutex};
 
-/// How many finished labels are kept for the shutdown window to list as done.
-const RECENTLY_FINISHED_KEPT: usize = 8;
-
 /// Whether this run writes anything the user keeps: the data directory and
 /// the settings file.
 ///
@@ -38,8 +35,8 @@ impl WriteAccess {
 /// Why the registry rejects a write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteRejection {
-    ShuttingDown,
     ReadOnlySession,
+    ShuttingDown,
 }
 
 impl fmt::Display for WriteRejection {
@@ -71,11 +68,11 @@ pub enum WriteKind {
     /// Opening the databases at startup, which finishes any delete or repair a
     /// previous run left part-way through.
     DatabaseOpen,
+    RecordingDatabase,
+    Settings,
     /// Recording in the data directory that this instance took write access
     /// from the instance holding it.
     TakeOverRecord,
-    RecordingDatabase,
-    Settings,
 }
 
 impl WriteKind {
@@ -364,6 +361,9 @@ impl Drop for PendingWriteGuard {
     }
 }
 
+/// How many finished labels are kept for the shutdown window to list as done.
+const RECENTLY_FINISHED_KEPT: usize = 8;
+
 #[cfg(test)]
 mod tests {
     use std::thread;
@@ -372,10 +372,6 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-
-    const TEC: WriteKind = WriteKind::ArchiveCompaction {
-        archive: "ionospheric TEC",
-    };
 
     #[test]
     fn a_write_that_started_before_shutdown_keeps_the_registry_busy() {
@@ -663,4 +659,8 @@ mod tests {
         );
         drop(guards);
     }
+
+    const TEC: WriteKind = WriteKind::ArchiveCompaction {
+        archive: "ionospheric TEC",
+    };
 }

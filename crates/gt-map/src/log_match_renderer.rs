@@ -42,55 +42,6 @@ use crate::hover_labels::{HoverLabelEntry, HoverLabelStack};
 use crate::icon_mesh::{IconId, IconInstance, IconMeshBatch, IconMeshLibrary};
 use crate::transform::MercTransform;
 
-/// Circumradius of one match's hexagon, comparable to the fix dot it sits on.
-const GLYPH_CIRCUMRADIUS_PX: f32 = 8.0;
-
-/// Gap between a glyph's circumradius and the cross-highlight ring around it,
-/// so the ring encloses the glyph.
-const HOVER_RING_GAP_PX: f32 = 5.0;
-
-/// Stroke width of the cross-highlight ring.
-const HOVER_RING_STROKE_WIDTH_PX: f32 = 3.0;
-
-/// Circumradius of a cluster's hexagon, which carries a count.
-const CLUSTER_CIRCUMRADIUS_PX: f32 = 11.0;
-
-/// The share of an instance's half extent the hexagon asset's circumradius
-/// takes, the rest being the room its outline needs (see `hexagon.svg`).
-const ASSET_CIRCUMRADIUS_FRACTION: f32 = 0.925;
-
-/// Screen distance under which two matches of one filter collapse into a
-/// single hexagon: a glyph and a half across. Collapsing leaves the surviving
-/// hexagons of a filter at least this far apart, so they never cover each
-/// other's count.
-const CLUSTER_SPACING_PX: f32 = 3.0 * GLYPH_CIRCUMRADIUS_PX;
-
-/// Matches a cluster must stand for before it draws larger and states its
-/// count. Below it the cluster is a plain glyph: a count of "2" says less than
-/// the hexagon already does.
-const CLUSTER_COUNT_FROM: usize = 5;
-
-/// Height of the count inside a cluster's hexagon.
-const CLUSTER_COUNT_FONT_PX: f32 = 11.0;
-
-/// How far outside the glyph the ring around a shared colour sits. Two filters
-/// handed the same colour still read as two: one of them is ringed.
-const SHARED_COLOR_RING_SCALE: f32 = 1.35;
-
-/// Lines the hover label writes out before it states how many are left.
-const HOVER_LINE_CAP: usize = 5;
-
-/// Characters of a message the hover label shows: one long line must not
-/// stretch the label across the map.
-const HOVER_MESSAGE_MAX_CHARS: NonZeroUsize = match NonZeroUsize::new(64) {
-    Some(chars) => chars,
-    None => NonZeroUsize::MIN,
-};
-
-/// How the hover label writes a line's moment, as the map's other hover
-/// labels write a fix's.
-const HOVER_TIME_FORMAT: &str = "%H:%M:%S";
-
 /// Draws what the loaded logs' filters selected, above the track line and
 /// below the markers.
 #[derive(bon::Builder)]
@@ -335,3 +286,52 @@ fn hexagon(center: egui::Pos2, circumradius: f32, tints: HexagonTints) -> IconIn
         tints: [tints.fill, tints.outline, Color32::WHITE],
     }
 }
+
+/// Circumradius of one match's hexagon, comparable to the fix dot it sits on.
+const GLYPH_CIRCUMRADIUS_PX: f32 = 8.0;
+
+/// Gap between a glyph's circumradius and the cross-highlight ring around it,
+/// so the ring encloses the glyph.
+const HOVER_RING_GAP_PX: f32 = 5.0;
+
+/// Stroke width of the cross-highlight ring.
+const HOVER_RING_STROKE_WIDTH_PX: f32 = 3.0;
+
+/// Circumradius of a cluster's hexagon, which carries a count.
+const CLUSTER_CIRCUMRADIUS_PX: f32 = 11.0;
+
+/// The share of an instance's half extent the hexagon asset's circumradius
+/// takes, the rest being the room its outline needs (see `hexagon.svg`).
+const ASSET_CIRCUMRADIUS_FRACTION: f32 = 0.925;
+
+/// Screen distance under which two matches of one filter collapse into a
+/// single hexagon: a glyph and a half across. Collapsing leaves the surviving
+/// hexagons of a filter at least this far apart, so they never cover each
+/// other's count.
+const CLUSTER_SPACING_PX: f32 = 3.0 * GLYPH_CIRCUMRADIUS_PX;
+
+/// Matches a cluster must stand for before it draws larger and states its
+/// count. Below it the cluster is a plain glyph: a count of "2" says less than
+/// the hexagon already does.
+const CLUSTER_COUNT_FROM: usize = 5;
+
+/// Height of the count inside a cluster's hexagon.
+const CLUSTER_COUNT_FONT_PX: f32 = 11.0;
+
+/// How far outside the glyph the ring around a shared colour sits. Two filters
+/// handed the same colour still read as two: one of them is ringed.
+const SHARED_COLOR_RING_SCALE: f32 = 1.35;
+
+/// Lines the hover label writes out before it states how many are left.
+const HOVER_LINE_CAP: usize = 5;
+
+/// Characters of a message the hover label shows: one long line must not
+/// stretch the label across the map.
+const HOVER_MESSAGE_MAX_CHARS: NonZeroUsize = match NonZeroUsize::new(64) {
+    Some(chars) => chars,
+    None => NonZeroUsize::MIN,
+};
+
+/// How the hover label writes a line's moment, as the map's other hover
+/// labels write a fix's.
+const HOVER_TIME_FORMAT: &str = "%H:%M:%S";

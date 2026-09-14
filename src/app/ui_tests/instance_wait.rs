@@ -83,11 +83,11 @@ fn a_data_directory_another_instance_holds_is_waited_for_and_nothing_is_opened()
 /// its status file.
 #[derive(Debug, Clone, Copy)]
 enum StatusFileOnDisk {
-    Removed,
     /// A directory in its place, which `fs::read` fails on with an error
     /// other than `NotFound`.
     ADirectory,
     NotJson,
+    Removed,
 }
 
 /// The lock is what says the directory is in use: the dialog says so however
@@ -121,8 +121,6 @@ fn a_held_data_directory_without_a_readable_status_still_says_it_is_held(
     harness.get_by_label_contains(DATA_DIRECTORY_HELD_TITLE);
     harness.get_by_label_contains(expected_label);
 }
-
-const STALE_STATUS_WRITTEN_SECONDS_AGO: u64 = 60;
 
 /// Puts a shutting-down status in `directory`, with `written_at` left to the
 /// caller, over the one `DataDirectoryLock::acquire` wrote.
@@ -444,12 +442,6 @@ fn the_take_over_confirmation_names_what_the_other_instance_is_doing() {
         "the databases opened before the user made a choice in the confirmation"
     );
 }
-
-/// The frame time the wait dialog's harness pins its clock at. The dialog
-/// paints the same however many frames a case runs: a raw input keeps its
-/// time until something sets a new one. egui draws the dialog's spinner from
-/// that clock, and its arc is at its longest here.
-const PINNED_FRAME_TIME: f64 = std::f64::consts::FRAC_PI_2;
 
 /// The wait over a data directory held by a GeoTrace that reported a shutdown
 /// [`STALE_STATUS_WRITTEN_SECONDS_AGO`] ago and has not reported since. That
@@ -1035,3 +1027,11 @@ fn log_text_pasted_while_waiting_loads_in_the_read_only_session_it_starts() {
 
     test_util::harness::step_until_a_log_is_loaded(&mut harness);
 }
+
+const STALE_STATUS_WRITTEN_SECONDS_AGO: u64 = 60;
+
+/// The frame time the wait dialog's harness pins its clock at. The dialog
+/// paints the same however many frames a case runs: a raw input keeps its
+/// time until something sets a new one. egui draws the dialog's spinner from
+/// that clock, and its arc is at its longest here.
+const PINNED_FRAME_TIME: f64 = std::f64::consts::FRAC_PI_2;

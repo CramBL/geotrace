@@ -8,18 +8,6 @@ use gt_types::satellites::{
     Constellation, NO_DATA_SNR_EXPLANATION, Prn, Satellite, SignalQuality, Snr,
 };
 
-/// Width of the tooltip's value column. Values are right-aligned in it.
-const TOOLTIP_VALUE_WIDTH_PX: f32 = 74.0;
-
-/// Gap between the tooltip's designator and its fix-state chip.
-const TOOLTIP_HEADER_GAP_PX: f32 = 12.0;
-
-/// Diameter of the fix-state chip's glyph, matching the plot's scrub marker.
-const CHIP_GLYPH_PX: f32 = 9.0;
-
-/// Stroke width of the hollow (tracked, not in fix) chip glyph.
-const CHIP_RING_PX: f32 = 1.5;
-
 /// The `"G05 GPS"` designator: RINEX prefix, zero-padded PRN, constellation
 /// name. Single source for both plots' hover labels.
 pub(crate) fn satellite_designator(constellation: Constellation, prn: Prn) -> String {
@@ -137,3 +125,15 @@ pub(crate) fn nearest_within<'a, T>(
         .min_by(|(_, a), (_, b)| a.total_cmp(b))
         .map(|(item, _)| item)
 }
+
+/// Width of the tooltip's value column. Values are right-aligned in it.
+const TOOLTIP_VALUE_WIDTH_PX: f32 = 74.0;
+
+/// Gap between the tooltip's designator and its fix-state chip.
+const TOOLTIP_HEADER_GAP_PX: f32 = 12.0;
+
+/// Diameter of the fix-state chip's glyph, matching the plot's scrub marker.
+const CHIP_GLYPH_PX: f32 = 9.0;
+
+/// Stroke width of the hollow (tracked, not in fix) chip glyph.
+const CHIP_RING_PX: f32 = 1.5;

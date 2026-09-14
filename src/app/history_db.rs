@@ -41,12 +41,12 @@ use crate::app::recording_from_disk::{self, RecordingFromDisk, ScreenedRecording
 /// Why recordings are being deleted - selects the completion toast.
 #[derive(Clone, Copy)]
 pub enum DeleteReason {
+    /// Auto-prune (after the user confirmed, or when confirmation is off).
+    AutoPrune,
     /// A recording deleted from the History list.
     Manual,
     /// The manual prune dialog.
     Prune,
-    /// Auto-prune (after the user confirmed, or when confirmation is off).
-    AutoPrune,
 }
 
 /// Which recordings a delete of shelved data covers.
@@ -70,6 +70,19 @@ impl DeleteShelvedTracksScope {
 
 /// A completed mutation, carried back so the UI can show the right toast.
 pub enum DbOp {
+    /// An identity was renamed. Carries both names so loaded recordings filed
+    /// under `old` can be re-pointed to `new`.
+    IdentityRenamed {
+        old: String,
+        new: String,
+    },
+    RecordingsDeleted {
+        count: usize,
+        reason: DeleteReason,
+    },
+    TracksDeleted {
+        count: usize,
+    },
     TracksShelved {
         count: usize,
     },
@@ -78,19 +91,6 @@ pub enum DbOp {
     TracksUnshelved {
         count: usize,
         db_ref: DatabaseRef,
-    },
-    TracksDeleted {
-        count: usize,
-    },
-    RecordingsDeleted {
-        count: usize,
-        reason: DeleteReason,
-    },
-    /// An identity was renamed. Carries both names so loaded recordings filed
-    /// under `old` can be re-pointed to `new`.
-    IdentityRenamed {
-        old: String,
-        new: String,
     },
 }
 
@@ -103,79 +103,41 @@ enum Request {
 /// A request served from the read methods, which [`RecordingsHandle::read`]
 /// gives for either variant.
 enum ReadRequest {
-    List,
-    Open {
-        db_ref: DatabaseRef,
-        placement: LoadedRecordingPlacement,
-    },
-    PrunePreview(PruneMode),
-    /// Fetch a recording's stored snap runs, if any.
-    LoadSnapRuns(DatabaseRef),
-    /// Read a recording's stored track table for the History window's shelf.
-    LoadStoredTrackTable(DatabaseRef),
-    /// Read the UI state stored with a recording the user loaded from disk.
-    /// Opening a recording from history reads its UI state in that same
-    /// request instead.
-    LoadRecordingUiState(DatabaseRef),
-    /// Read back every log attached to a recording that just opened.
-    LoadAttachedLogs(DatabaseRef),
-    /// Read back the one log `attachment` names, which the log viewer requests
-    /// when the user loads it from the list.
-    LoadAttachedLog {
-        attachment: LogAttachmentRef,
-        name: String,
-    },
-    /// Look each of the recordings that arrived from disk up in the database.
-    ScreenRecordingsFromDisk(Vec<RecordingFromDisk>),
     /// Whether a recording already holds this exact log.
     FindDuplicateAttachment {
         db_ref: DatabaseRef,
         log: LoadedLogId,
         text: Arc<str>,
     },
+    List,
+    /// Read back the one log `attachment` names, which the log viewer requests
+    /// when the user loads it from the list.
+    LoadAttachedLog {
+        attachment: LogAttachmentRef,
+        name: String,
+    },
+    /// Read back every log attached to a recording that just opened.
+    LoadAttachedLogs(DatabaseRef),
+    /// Read the UI state stored with a recording the user loaded from disk.
+    /// Opening a recording from history reads its UI state in that same
+    /// request instead.
+    LoadRecordingUiState(DatabaseRef),
+    /// Fetch a recording's stored snap runs, if any.
+    LoadSnapRuns(DatabaseRef),
+    /// Read a recording's stored track table for the History window's shelf.
+    LoadStoredTrackTable(DatabaseRef),
+    Open {
+        db_ref: DatabaseRef,
+        placement: LoadedRecordingPlacement,
+    },
+    PrunePreview(PruneMode),
+    /// Look each of the recordings that arrived from disk up in the database.
+    ScreenRecordingsFromDisk(Vec<RecordingFromDisk>),
 }
 
 /// A request that changes the database, which only [`RecordingsHandle::writer`]
 /// can run.
 enum WriteRequest {
-    SetTracksShelved {
-        db_ref: DatabaseRef,
-        rows: Vec<usize>,
-        shelved: bool,
-    },
-    /// Permanently remove the nav points of the tracks in these stored table
-    /// rows from one recording (re-encode).
-    DeleteTracks {
-        db_ref: DatabaseRef,
-        rows: Vec<usize>,
-    },
-    /// Permanently remove the shelved tracks of every recording the scope
-    /// covers (re-encode).
-    DeleteShelvedTracks {
-        scope: DeleteShelvedTracksScope,
-    },
-    DeleteRecordings {
-        refs: Vec<DatabaseRef>,
-        reason: DeleteReason,
-    },
-    RenameIdentity {
-        old: String,
-        new: String,
-    },
-    AutoPrune {
-        max_bytes: u64,
-        confirm: bool,
-    },
-    /// Store a recording's serialized snap runs (opaque to the database).
-    StoreSnapRuns {
-        db_ref: DatabaseRef,
-        blob: Vec<u8>,
-    },
-    /// Store the UI state of a recording, which holds its hidden tracks.
-    StoreRecordingUiState {
-        db_ref: DatabaseRef,
-        ui_state: RecordingUiState,
-    },
     /// Store a log with a recording, log bytes and all.
     AttachLog {
         db_ref: DatabaseRef,
@@ -184,16 +146,54 @@ enum WriteRequest {
         text: Arc<str>,
         filters: Vec<StoredLogFilter>,
     },
-    /// Rewrite one attachment's stored filter stack.
-    SetAttachedLogFilters {
-        attachment: LogAttachmentRef,
-        filters: Vec<StoredLogFilter>,
+    AutoPrune {
+        max_bytes: u64,
+        confirm: bool,
+    },
+    DeleteRecordings {
+        refs: Vec<DatabaseRef>,
+        reason: DeleteReason,
+    },
+    /// Permanently remove the shelved tracks of every recording the scope
+    /// covers (re-encode).
+    DeleteShelvedTracks {
+        scope: DeleteShelvedTracksScope,
+    },
+    /// Permanently remove the nav points of the tracks in these stored table
+    /// rows from one recording (re-encode).
+    DeleteTracks {
+        db_ref: DatabaseRef,
+        rows: Vec<usize>,
     },
     /// Remove one attachment: its attribute, and the log stored with it.
     DetachLog {
         attachment: LogAttachmentRef,
         log: LoadedLogId,
         name: String,
+    },
+    RenameIdentity {
+        old: String,
+        new: String,
+    },
+    /// Rewrite one attachment's stored filter stack.
+    SetAttachedLogFilters {
+        attachment: LogAttachmentRef,
+        filters: Vec<StoredLogFilter>,
+    },
+    SetTracksShelved {
+        db_ref: DatabaseRef,
+        rows: Vec<usize>,
+        shelved: bool,
+    },
+    /// Store the UI state of a recording, which holds its hidden tracks.
+    StoreRecordingUiState {
+        db_ref: DatabaseRef,
+        ui_state: RecordingUiState,
+    },
+    /// Store a recording's serialized snap runs (opaque to the database).
+    StoreSnapRuns {
+        db_ref: DatabaseRef,
+        blob: Vec<u8>,
     },
 }
 
@@ -251,61 +251,34 @@ pub struct OpenedRecording {
 
 /// A result delivered back to the UI thread, drained via [`HistoryWorker::poll`].
 pub enum Response {
-    Listed(Result<Vec<RecordingEntry>, DbError>),
-    Opened {
-        db_ref: DatabaseRef,
-        /// Where the app puts the recording once it is loaded, as the request
-        /// set it.
-        placement: LoadedRecordingPlacement,
-        result: Result<OpenedRecording, DbError>,
-    },
-    Mutated {
-        op: DbOp,
-        result: Result<(), DbError>,
-    },
-    PrunePreview(Result<Vec<DatabaseRef>, DbError>),
-    AutoPruned(Result<AutoPruneOutcome, DbError>),
-    /// Outcome of a snap-run store. Failures cost only the cache entry
-    /// (the session stores keep working), so the app logs them.
-    SnapRunsStored(Result<(), DbError>),
-    /// A recording's stored snap runs, `None` when it has no stored runs.
-    SnapRunsLoaded {
-        db_ref: DatabaseRef,
-        blob: Result<Option<Vec<u8>>, DbError>,
-    },
-    /// Outcome of a UI state store. The app logs a failure: the hidden tracks
-    /// the session shows stay as they are.
-    RecordingUiStateStored(Result<(), DbError>),
-    /// The UI state stored with a recording the user loaded from disk.
-    RecordingUiStateLoaded {
-        db_ref: DatabaseRef,
-        ui_state: Result<RecordingUiState, DbError>,
-    },
-    /// Every row of a recording's stored track table, tombstones and all.
-    StoredTrackTableLoaded {
-        db_ref: DatabaseRef,
-        tracks: Result<Vec<TrackRange>, DbError>,
-    },
-    /// Outcome of storing a log with a recording.
-    LogAttached {
-        log: LoadedLogId,
-        name: String,
-        result: Result<StoredLogAttachment, LogAttachmentError>,
-    },
-    /// The logs a recording carries, one entry per attachment it holds.
-    AttachedLogsLoaded {
-        db_ref: DatabaseRef,
-        attachments: Result<Vec<RestoredLogAttachment>, DbError>,
-    },
+    /// Outcome of a filter-stack write. A failure costs only the stored copy:
+    /// the loaded log keeps the stack the user is looking at.
+    AttachedLogFiltersStored(Result<(), LogAttachmentError>),
     /// The one log the viewer requested out of a recording.
     AttachedLogLoaded {
         attachment: LogAttachmentRef,
         name: String,
         log: Result<AttachedLog, LogAttachmentError>,
     },
-    /// Outcome of a filter-stack write. A failure costs only the stored copy:
-    /// the loaded log keeps the stack the user is looking at.
-    AttachedLogFiltersStored(Result<(), LogAttachmentError>),
+    /// The logs a recording carries, one entry per attachment it holds.
+    AttachedLogsLoaded {
+        db_ref: DatabaseRef,
+        attachments: Result<Vec<RestoredLogAttachment>, DbError>,
+    },
+    AutoPruned(Result<AutoPruneOutcome, DbError>),
+    /// What `recording` already holds the dialog's log as, if anything.
+    DuplicateAttachmentFound {
+        log: LoadedLogId,
+        recording: DatabaseRef,
+        existing: Result<Option<ExistingLogAttachment>, DbError>,
+    },
+    Listed(Result<Vec<RecordingEntry>, DbError>),
+    /// Outcome of storing a log with a recording.
+    LogAttached {
+        log: LoadedLogId,
+        name: String,
+        result: Result<StoredLogAttachment, LogAttachmentError>,
+    },
     /// Outcome of removing an attachment.
     LogDetached {
         attachment: LogAttachmentRef,
@@ -313,14 +286,41 @@ pub enum Response {
         name: String,
         result: Result<(), LogAttachmentError>,
     },
+    Mutated {
+        op: DbOp,
+        result: Result<(), DbError>,
+    },
+    Opened {
+        db_ref: DatabaseRef,
+        /// Where the app puts the recording once it is loaded, as the request
+        /// set it.
+        placement: LoadedRecordingPlacement,
+        result: Result<OpenedRecording, DbError>,
+    },
+    PrunePreview(Result<Vec<DatabaseRef>, DbError>),
+    /// The UI state stored with a recording the user loaded from disk.
+    RecordingUiStateLoaded {
+        db_ref: DatabaseRef,
+        ui_state: Result<RecordingUiState, DbError>,
+    },
+    /// Outcome of a UI state store. The app logs a failure: the hidden tracks
+    /// the session shows stay as they are.
+    RecordingUiStateStored(Result<(), DbError>),
     /// Which of the recordings that arrived from disk the database already
     /// holds.
     RecordingsFromDiskScreened(ScreenedRecordings),
-    /// What `recording` already holds the dialog's log as, if anything.
-    DuplicateAttachmentFound {
-        log: LoadedLogId,
-        recording: DatabaseRef,
-        existing: Result<Option<ExistingLogAttachment>, DbError>,
+    /// A recording's stored snap runs, `None` when it has no stored runs.
+    SnapRunsLoaded {
+        db_ref: DatabaseRef,
+        blob: Result<Option<Vec<u8>>, DbError>,
+    },
+    /// Outcome of a snap-run store. Failures cost only the cache entry
+    /// (the session stores keep working), so the app logs them.
+    SnapRunsStored(Result<(), DbError>),
+    /// Every row of a recording's stored track table, tombstones and all.
+    StoredTrackTableLoaded {
+        db_ref: DatabaseRef,
+        tracks: Result<Vec<TrackRange>, DbError>,
     },
     /// The registry rejected the write, and the worker returned without
     /// touching the database.

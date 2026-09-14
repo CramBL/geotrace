@@ -14,18 +14,6 @@ use std::time::{Duration, Instant};
 use egui::Context;
 use gt_store::{ArchiveHandle, DayArchiveError, EnvironmentArchive};
 
-/// Interval before the first re-read, and the interval every further one
-/// doubles from.
-const FIRST_DAY_INDEX_REREAD_INTERVAL: Duration = Duration::from_millis(250);
-
-/// Longest interval the doubling reaches, which bounds how long a session
-/// goes without its days once the other instance lets go of the file.
-const SLOWEST_DAY_INDEX_REREAD_INTERVAL: Duration = Duration::from_secs(10);
-
-/// Re-reads that run at [`FIRST_DAY_INDEX_REREAD_INTERVAL`] before the
-/// interval starts doubling, which is the first two seconds.
-const REREADS_AT_THE_FIRST_INTERVAL: u32 = 8;
-
 /// The re-read of one archive's day index that a failed read left due.
 pub struct DayIndexReadRetry {
     archive: EnvironmentArchive,
@@ -127,6 +115,18 @@ impl DayIndexReadRetry {
         self.due.as_ref().map_or(0, |due| due.failed_reads)
     }
 }
+
+/// Interval before the first re-read, and the interval every further one
+/// doubles from.
+const FIRST_DAY_INDEX_REREAD_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Longest interval the doubling reaches, which bounds how long a session
+/// goes without its days once the other instance lets go of the file.
+const SLOWEST_DAY_INDEX_REREAD_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Re-reads that run at [`FIRST_DAY_INDEX_REREAD_INTERVAL`] before the
+/// interval starts doubling, which is the first two seconds.
+const REREADS_AT_THE_FIRST_INTERVAL: u32 = 8;
 
 #[cfg(test)]
 mod tests {

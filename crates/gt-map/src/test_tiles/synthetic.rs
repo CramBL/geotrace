@@ -13,19 +13,6 @@ use crate::test_tiles::{FULL_TILE_UV, glyph};
 
 mod palette;
 
-/// The edge of a generated tile, which is the slippy default.
-const TILE_SIZE_PX: usize = 256;
-
-const GRID_SPACING_PX: usize = 32;
-/// Wide enough that nearest-neighbour sampling still catches a line where the
-/// map draws a tile smaller than its texture.
-const GRID_LINE_WIDTH_PX: usize = 2;
-const BORDER_WIDTH_PX: usize = 3;
-const GLYPH_SCALE: usize = 2;
-const GLYPH_ADVANCE_PX: usize = (glyph::WIDTH_PX + 1) * GLYPH_SCALE;
-const LABEL_ORIGIN: TilePixel = TilePixel { x: 10, y: 10 };
-const LABEL_LINE_SPACING_PX: usize = glyph::HEIGHT_PX * GLYPH_SCALE + 4;
-
 /// A pixel of a tile, x rightwards from its west edge and y downwards from its
 /// north edge.
 #[derive(Clone, Copy)]
@@ -219,6 +206,19 @@ impl Tiles for SyntheticTiles {
         TILE_SIZE_PX as u32
     }
 }
+
+/// The edge of a generated tile, which is the slippy default.
+const TILE_SIZE_PX: usize = 256;
+
+const GRID_SPACING_PX: usize = 32;
+/// Wide enough that nearest-neighbour sampling still catches a line where the
+/// map draws a tile smaller than its texture.
+const GRID_LINE_WIDTH_PX: usize = 2;
+const BORDER_WIDTH_PX: usize = 3;
+const GLYPH_SCALE: usize = 2;
+const GLYPH_ADVANCE_PX: usize = (glyph::WIDTH_PX + 1) * GLYPH_SCALE;
+const LABEL_ORIGIN: TilePixel = TilePixel { x: 10, y: 10 };
+const LABEL_LINE_SPACING_PX: usize = glyph::HEIGHT_PX * GLYPH_SCALE + 4;
 
 #[cfg(test)]
 mod tests {

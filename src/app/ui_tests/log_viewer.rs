@@ -132,9 +132,6 @@ fn a_drag_over_the_app_shows_the_hint_naming_every_way_a_log_gets_in() {
     harness.get_by_label(log_viewer::LOG_LOAD_HINT);
 }
 
-/// A log line whose timestamp the pasted-log name is taken from.
-const PASTED_LOG: &str = "2026-01-01 14:02:11 navsyncd: uploaded 2 recordings\n";
-
 /// Pastes `text` as Ctrl+V does, and runs until the load it started has
 /// finished.
 fn paste_and_wait_for_load(harness: &mut Harness<App>, text: &str) {
@@ -332,8 +329,6 @@ fn type_into_log_filter(harness: &mut TestHarness<'_, App>, text: &str) {
 fn add_log_filter(harness: &mut TestHarness<'_, App>, text: &str) {
     ui_tests::add_log_filter_in(&mut harness.inner, text);
 }
-
-const PASSES_THE_POOL_HOLDS_A_FILTER_SCAN_QUEUED: u64 = 20;
 
 /// Holds every thread of [`gt_logfile::log_worker_pool`] busy, leaving the
 /// filter scans spawned onto it queued until the pool is released.
@@ -666,3 +661,8 @@ fn choosing_a_target_in_the_footer_associates_the_log_against_it() {
         "picking a target associates the log against it right away"
     );
 }
+
+/// A log line whose timestamp the pasted-log name is taken from.
+const PASTED_LOG: &str = "2026-01-01 14:02:11 navsyncd: uploaded 2 recordings\n";
+
+const PASSES_THE_POOL_HOLDS_A_FILTER_SCAN_QUEUED: u64 = 20;

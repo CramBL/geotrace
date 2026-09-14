@@ -7,10 +7,6 @@ use gt_solar::{test_util, wire};
 use gt_solar_store::SolarStore;
 use gt_test_utils::day_archive;
 
-/// The May 2024 storm, at both cadences.
-const KP_STORM_CAPTURE: &str = "kp-storm";
-const HP30_STORM_CAPTURE: &str = "hp30-storm";
-
 /// The captured response for `name`, and the first UTC day of the window it
 /// was requested over, which is the day the samples are archived under.
 fn captured_response(name: &str) -> Result<(NaiveDate, String), String> {
@@ -72,3 +68,7 @@ fn a_captured_hp30_day_round_trips() {
         .expect("store");
     assert_eq!(store.hp30_series(day).expect("read back"), Some(published));
 }
+
+/// The May 2024 storm, at both cadences.
+const KP_STORM_CAPTURE: &str = "kp-storm";
+const HP30_STORM_CAPTURE: &str = "hp30-storm";

@@ -626,15 +626,6 @@ mod tests {
         }
     }
 
-    /// Longitude between consecutive fixes of [`a_track_stamped_at`].
-    const FIX_STEP_DEGREES: f64 = 0.001;
-
-    /// The rect the instance cases cull against, the size of the map viewport.
-    const VIEW_RECT: egui::Rect = egui::Rect {
-        min: egui::pos2(0.0, 0.0),
-        max: egui::pos2(800.0, 600.0),
-    };
-
     /// A view over the fixture's first fix, at a scale that puts its five
     /// fixes about 12 px apart.
     fn a_view_over_the_first_fix() -> MercTransform {
@@ -925,22 +916,6 @@ mod tests {
         NonZeroUsize::MIN.saturating_add(1)
     }
 
-    /// Where the grouping cases put the flags that meet.
-    const MEETING_PLACE_MERC: MercPoint = MercPoint { x: 0.53, y: 0.33 };
-
-    /// A grouping case keeps every flag passed to it: the bounds span the
-    /// whole Mercator square.
-    const THE_WHOLE_WORLD: MercBounds = MercBounds {
-        x_min: 0.0,
-        x_max: 1.0,
-        y_min: 0.0,
-        y_max: 1.0,
-    };
-
-    /// One cloth width in Mercator units. The grouping cases place their flags
-    /// within this width of each other, and past it.
-    const GROUPING_SPACING_MERC: f64 = 0.001;
-
     /// A cluster flag's cloth shows what its members are: the start flag where
     /// every one of them is a start, the finish flag where every one is an
     /// end, and the split flag where both are there. A member that is itself a
@@ -1055,4 +1030,29 @@ mod tests {
             ]
         );
     }
+
+    /// Longitude between consecutive fixes of [`a_track_stamped_at`].
+    const FIX_STEP_DEGREES: f64 = 0.001;
+
+    /// The rect the instance cases cull against, the size of the map viewport.
+    const VIEW_RECT: egui::Rect = egui::Rect {
+        min: egui::pos2(0.0, 0.0),
+        max: egui::pos2(800.0, 600.0),
+    };
+
+    /// Where the grouping cases put the flags that meet.
+    const MEETING_PLACE_MERC: MercPoint = MercPoint { x: 0.53, y: 0.33 };
+
+    /// A grouping case keeps every flag passed to it: the bounds span the
+    /// whole Mercator square.
+    const THE_WHOLE_WORLD: MercBounds = MercBounds {
+        x_min: 0.0,
+        x_max: 1.0,
+        y_min: 0.0,
+        y_max: 1.0,
+    };
+
+    /// One cloth width in Mercator units. The grouping cases place their flags
+    /// within this width of each other, and past it.
+    const GROUPING_SPACING_MERC: f64 = 0.001;
 }

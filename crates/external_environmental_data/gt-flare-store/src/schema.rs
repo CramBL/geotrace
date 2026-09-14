@@ -21,6 +21,68 @@
 use gt_flare::class::FlareClass;
 use gt_hdf5_archive::ColumnFormat;
 
+/// How [`FlareClass`] is written in the [`EVENT_CLASS`] column.
+///
+/// Reordering [`FlareClass`]'s variants cannot change what an archived day
+/// means: the codes here are fixed independently of that declaration order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredFlareClass {
+    A,
+    B,
+    C,
+    M,
+    X,
+}
+
+impl StoredFlareClass {
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::A => 0,
+            Self::B => 1,
+            Self::C => 2,
+            Self::M => 3,
+            Self::X => 4,
+        }
+    }
+
+    /// The class `code` stands for, or [`None`] for a code the schema does
+    /// not define.
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(Self::A),
+            1 => Some(Self::B),
+            2 => Some(Self::C),
+            3 => Some(Self::M),
+            4 => Some(Self::X),
+            _ => None,
+        }
+    }
+}
+
+impl From<FlareClass> for StoredFlareClass {
+    fn from(class: FlareClass) -> Self {
+        match class {
+            FlareClass::A => Self::A,
+            FlareClass::B => Self::B,
+            FlareClass::C => Self::C,
+            FlareClass::M => Self::M,
+            FlareClass::X => Self::X,
+        }
+    }
+}
+
+impl From<StoredFlareClass> for FlareClass {
+    fn from(class: StoredFlareClass) -> Self {
+        match class {
+            StoredFlareClass::A => Self::A,
+            StoredFlareClass::B => Self::B,
+            StoredFlareClass::C => Self::C,
+            StoredFlareClass::M => Self::M,
+            StoredFlareClass::X => Self::X,
+        }
+    }
+}
+
 /// Group holding the per-event columns.
 pub const EVENTS_GROUP: &str = "events";
 
@@ -97,65 +159,3 @@ pub const EVENT_COLUMNS: [&str; 11] = [
     EVENT_ACTIVE_REGION,
     EVENT_ACTIVE_REGION_PRESENCE,
 ];
-
-/// How [`FlareClass`] is written in the [`EVENT_CLASS`] column.
-///
-/// Reordering [`FlareClass`]'s variants cannot change what an archived day
-/// means: the codes here are fixed independently of that declaration order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StoredFlareClass {
-    A,
-    B,
-    C,
-    M,
-    X,
-}
-
-impl StoredFlareClass {
-    pub const fn code(self) -> u8 {
-        match self {
-            Self::A => 0,
-            Self::B => 1,
-            Self::C => 2,
-            Self::M => 3,
-            Self::X => 4,
-        }
-    }
-
-    /// The class `code` stands for, or [`None`] for a code the schema does
-    /// not define.
-    pub const fn from_code(code: u8) -> Option<Self> {
-        match code {
-            0 => Some(Self::A),
-            1 => Some(Self::B),
-            2 => Some(Self::C),
-            3 => Some(Self::M),
-            4 => Some(Self::X),
-            _ => None,
-        }
-    }
-}
-
-impl From<FlareClass> for StoredFlareClass {
-    fn from(class: FlareClass) -> Self {
-        match class {
-            FlareClass::A => Self::A,
-            FlareClass::B => Self::B,
-            FlareClass::C => Self::C,
-            FlareClass::M => Self::M,
-            FlareClass::X => Self::X,
-        }
-    }
-}
-
-impl From<StoredFlareClass> for FlareClass {
-    fn from(class: StoredFlareClass) -> Self {
-        match class {
-            StoredFlareClass::A => Self::A,
-            StoredFlareClass::B => Self::B,
-            StoredFlareClass::C => Self::C,
-            StoredFlareClass::M => Self::M,
-            StoredFlareClass::X => Self::X,
-        }
-    }
-}

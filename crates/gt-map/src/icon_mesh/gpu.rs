@@ -21,11 +21,6 @@ use wgpu::util::DeviceExt as _;
 
 use crate::icon_mesh::{IconId, IconMeshLibrary};
 
-/// Minimum instances in a flush segment for the GPU path. Smaller segments go
-/// through the CPU mesh path, so barrier-heavy zoomed-in frames do not create a
-/// stream of tiny buffers and draw calls.
-pub const GPU_MIN_INSTANCES: usize = 32;
-
 /// Marker in the egui context data store: GPU icon resources are installed
 /// in this context's renderer.
 fn installed_flag() -> egui::Id {
@@ -405,3 +400,8 @@ impl CallbackTrait for IconDrawCallback {
         }
     }
 }
+
+/// Minimum instances in a flush segment for the GPU path. Smaller segments go
+/// through the CPU mesh path, so barrier-heavy zoomed-in frames do not create a
+/// stream of tiny buffers and draw calls.
+pub const GPU_MIN_INSTANCES: usize = 32;

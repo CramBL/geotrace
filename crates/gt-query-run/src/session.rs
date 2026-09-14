@@ -10,13 +10,13 @@ use crate::run::{PreparedRun, RunHandle, RunKind, RunOutcome, RunProduct};
 /// What [`QuerySession::sync_checks`] found changed since the last check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckRefresh {
-    /// Text and schema both unchanged, so the chunks were kept.
-    Unchanged,
     /// The channel schema changed - a file load or unload - but the text did
     /// not, so a `@name` error may have resolved on its own.
     SchemaChanged,
     /// The text changed, possibly along with the schema.
     TextChanged,
+    /// Text and schema both unchanged, so the chunks were kept.
+    Unchanged,
 }
 
 /// How far a run in flight has come, for the progress line.

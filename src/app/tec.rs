@@ -722,9 +722,6 @@ mod tests {
 
     use super::*;
 
-    /// Column the record label starts at.
-    const LABEL_COLUMN: usize = 60;
-
     fn record(values: &str, label: &str) -> String {
         format!("{values:<LABEL_COLUMN$}{label}\n")
     }
@@ -2415,4 +2412,7 @@ mod tests {
             .expect("the archived day reached the track");
         assert_eq!(points.first().map(|point| point.tecu), Some(Some(10.0)));
     }
+
+    /// Column the record label starts at.
+    const LABEL_COLUMN: usize = 60;
 }

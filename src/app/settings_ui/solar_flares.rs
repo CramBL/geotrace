@@ -8,38 +8,6 @@ use crate::app::day_fetch_status::{self, FetchRowHoverText};
 use crate::app::settings_ui::SettingsPage;
 use crate::app::settings_ui::source_page::{self, ReferenceLink, SourcePageSlots};
 
-pub(super) const API_KEY_LABEL: &str = "API key";
-
-const REFERENCE_LINK_LABEL: &str = gt_flare::reference::SOLAR_FLARES.link_question;
-
-const REFERENCE_LINK_HOVER: &str = "Reference material on solar flares, the NOAA radio blackout \
-                                    scale, and the effect on satellite navigation";
-
-pub(super) const SEARCHABLE_LABELS: &[&str] = &[
-    source_page::BASE_URL_LABEL,
-    API_KEY_LABEL,
-    day_fetch_status::FETCH_QUEUE_LABEL,
-    day_fetch_status::RECORDING_DAYS_LABEL,
-    backfill_ui::DOWNLOAD_HISTORY_LABEL,
-    REFERENCE_LINK_LABEL,
-];
-
-const URL_HOVER: &str = "Base URL of the host serving the solar flare catalog. The default is \
-                         api.nasa.gov, which serves DONKI. Point it at a proxy or an offline copy \
-                         to fetch from there instead. Requests carry a date range and nothing \
-                         about your recordings.";
-
-const KEY_HOVER: &str = "Your own api.nasa.gov key, which every request to the catalog carries. \
-                         It is stored in the settings file as entered, and never written to a log \
-                         or a download failure.";
-
-const FETCH_ROW_HOVER: FetchRowHoverText = FetchRowHoverText {
-    queue: "Catalog days waiting to be downloaded. One day is requested at a time, and one day \
-            costs one request.",
-    coverage: "UTC days the recordings loaded this session span, and how many of them the archive \
-               holds the catalog's flares for. Days downloaded by a backfill are not counted here.",
-};
-
 impl App {
     pub(super) fn show_solar_flare_page(&mut self, ui: &mut egui::Ui) {
         let mut settings = self.solar_flare_settings.clone();
@@ -119,3 +87,35 @@ fn show_api_key_row(ui: &mut Ui, api_key: &mut String) -> bool {
     ui.end_row();
     changed
 }
+
+pub(super) const API_KEY_LABEL: &str = "API key";
+
+const REFERENCE_LINK_LABEL: &str = gt_flare::reference::SOLAR_FLARES.link_question;
+
+const REFERENCE_LINK_HOVER: &str = "Reference material on solar flares, the NOAA radio blackout \
+                                    scale, and the effect on satellite navigation";
+
+pub(super) const SEARCHABLE_LABELS: &[&str] = &[
+    source_page::BASE_URL_LABEL,
+    API_KEY_LABEL,
+    day_fetch_status::FETCH_QUEUE_LABEL,
+    day_fetch_status::RECORDING_DAYS_LABEL,
+    backfill_ui::DOWNLOAD_HISTORY_LABEL,
+    REFERENCE_LINK_LABEL,
+];
+
+const URL_HOVER: &str = "Base URL of the host serving the solar flare catalog. The default is \
+                         api.nasa.gov, which serves DONKI. Point it at a proxy or an offline copy \
+                         to fetch from there instead. Requests carry a date range and nothing \
+                         about your recordings.";
+
+const KEY_HOVER: &str = "Your own api.nasa.gov key, which every request to the catalog carries. \
+                         It is stored in the settings file as entered, and never written to a log \
+                         or a download failure.";
+
+const FETCH_ROW_HOVER: FetchRowHoverText = FetchRowHoverText {
+    queue: "Catalog days waiting to be downloaded. One day is requested at a time, and one day \
+            costs one request.",
+    coverage: "UTC days the recordings loaded this session span, and how many of them the archive \
+               holds the catalog's flares for. Days downloaded by a backfill are not counted here.",
+};

@@ -11,15 +11,6 @@ use strum::IntoEnumIterator as _;
 
 use crate::GeomagneticIndex;
 
-/// Lowest value the service publishes for either index.
-pub const MIN_VALUE: f64 = 0.0;
-
-/// Highest value Kp is defined for. Hp30 has no ceiling.
-pub const KP_MAX_VALUE: f64 = 9.0;
-
-const UNSETTLED_LOWEST_VALUE: f64 = 3.0;
-const ACTIVE_LOWEST_VALUE: f64 = 4.0;
-
 /// One index value on the Kp scale.
 ///
 /// Constructed through [`from_published_value`](Self::from_published_value),
@@ -126,10 +117,10 @@ impl GeomagneticStormClass {
 /// levels below the G-scale.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumCount)]
 pub enum GeomagneticActivityClass {
-    Quiet,
-    Unsettled,
     Active,
+    Quiet,
     Storm(GeomagneticStormClass),
+    Unsettled,
 }
 
 impl GeomagneticActivityClass {
@@ -143,6 +134,15 @@ impl GeomagneticActivityClass {
         }
     }
 }
+
+/// Lowest value the service publishes for either index.
+pub const MIN_VALUE: f64 = 0.0;
+
+/// Highest value Kp is defined for. Hp30 has no ceiling.
+pub const KP_MAX_VALUE: f64 = 9.0;
+
+const UNSETTLED_LOWEST_VALUE: f64 = 3.0;
+const ACTIVE_LOWEST_VALUE: f64 = 4.0;
 
 #[cfg(test)]
 mod tests {

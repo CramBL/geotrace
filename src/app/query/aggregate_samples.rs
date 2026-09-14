@@ -13,16 +13,6 @@ use super::column_format::{self, ColumnFormat};
 use super::match_row::MatchKey;
 use super::results::ROW_PADDING;
 
-/// Samples a channel's table shows at most before it scrolls. The listing sits
-/// between the picked match's caption and its rows, and shows fewer in a tab
-/// with less room for it.
-pub(crate) const VISIBLE_SAMPLE_ROWS: usize = 6;
-
-/// The label of the control opening the listing.
-pub(crate) const TOGGLE_LABEL: &str = "Samples";
-
-const TIME_COLUMN_NAME: &str = "time";
-
 /// One channel's samples under a match: the samples every aggregate column
 /// over that channel reduced, and how they read.
 #[derive(Debug)]
@@ -270,6 +260,16 @@ impl SampleRowHeights {
         self.stride * rows as f32
     }
 }
+
+/// Samples a channel's table shows at most before it scrolls. The listing sits
+/// between the picked match's caption and its rows, and shows fewer in a tab
+/// with less room for it.
+pub(crate) const VISIBLE_SAMPLE_ROWS: usize = 6;
+
+/// The label of the control opening the listing.
+pub(crate) const TOGGLE_LABEL: &str = "Samples";
+
+const TIME_COLUMN_NAME: &str = "time";
 
 #[cfg(test)]
 mod tests {

@@ -19,11 +19,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::wire::{Edge, SnapPointKind, SnappedPoint, TraceAttributesResponse};
 
-/// Precision of the wire's encoded shape polylines: 6 decimal digits
-/// (`trace_attributes` returns "6 digit precision" shapes). Decode and any
-/// test-side encode must share this constant or they silently drift.
-pub const SHAPE_POLYLINE_PRECISION: u32 = 6;
-
 /// One vertex of the snapped track, degrees.
 ///
 /// Named fields guard against lat/lon transposition: the polyline decoder
@@ -82,10 +77,10 @@ pub struct SnappedEdgeSpan {
 /// them per chunk through the warning reporter.
 #[derive(Debug, PartialEq, thiserror::Error)]
 pub enum SnappedTrackError {
-    #[error("undecodable shape polyline: {0}")]
-    UndecodableShape(#[from] polyline::errors::PolylineError),
     #[error("point references edge {edge} but the response has {edges} edges")]
     EdgeIndexOutOfBounds { edge: u64, edges: usize },
+    #[error("edge {edge} carries no shape index range")]
+    MissingShapeRange { edge: u64 },
     #[error("edge {edge} covers shape indices {begin}..={end} but the shape has {points} points")]
     ShapeIndexOutOfBounds {
         edge: u64,
@@ -93,8 +88,8 @@ pub enum SnappedTrackError {
         end: usize,
         points: usize,
     },
-    #[error("edge {edge} carries no shape index range")]
-    MissingShapeRange { edge: u64 },
+    #[error("undecodable shape polyline: {0}")]
+    UndecodableShape(#[from] polyline::errors::PolylineError),
 }
 
 /// Decode the response shape and split it into snapped-track segments.
@@ -368,3 +363,8 @@ fn group_shape_range(
     }
     Ok(range)
 }
+
+/// Precision of the wire's encoded shape polylines: 6 decimal digits
+/// (`trace_attributes` returns "6 digit precision" shapes). Decode and any
+/// test-side encode must share this constant or they silently drift.
+pub const SHAPE_POLYLINE_PRECISION: u32 = 6;

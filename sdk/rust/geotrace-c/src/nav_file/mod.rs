@@ -1,15 +1,5 @@
 //! The opaque handle for a parsed or built nav file.
 
-mod channel;
-mod event_marker;
-mod marker;
-mod metadata;
-mod nav_point;
-mod read;
-mod satellite_warning;
-mod style;
-mod write;
-
 use std::ffi::{CString, c_char};
 use std::fmt;
 
@@ -26,6 +16,16 @@ pub use marker::GtdMarkerInfo;
 pub use nav_point::GtdNavPointInfo;
 pub use satellite_warning::GtdSatelliteWarningInfo;
 pub use style::GtdEventMarkerStyleInfo;
+
+mod channel;
+mod event_marker;
+mod marker;
+mod metadata;
+mod nav_point;
+mod read;
+mod satellite_warning;
+mod style;
+mod write;
 
 /// Opaque handle for a parsed or freshly-built navigation file.
 pub struct GtdNavFile {

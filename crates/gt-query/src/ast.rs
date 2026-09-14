@@ -31,8 +31,8 @@ impl Span {
 /// loaded nav points. A channel source iterates that channel's own samples.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Source {
-    Points,
     Channel(ChannelRef),
+    Points,
 }
 
 /// A parsed query: a source followed by its stages, in canonical order.
@@ -134,13 +134,6 @@ pub struct MetricRef {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
-    Number(NumberLit),
-    Metric(MetricRef),
-    Unary {
-        op: UnaryOp,
-        operand: Box<Expr>,
-        span: Span,
-    },
     Binary {
         op: BinaryOp,
         lhs: Box<Expr>,
@@ -152,6 +145,10 @@ pub enum Expr {
         arg: Box<Expr>,
         span: Span,
     },
+    /// A channel reference, resolved by the checker against the channel schema.
+    Channel(ChannelRef),
+    Metric(MetricRef),
+    Number(NumberLit),
     /// A postfix integer power, `base²` or `base⁻³`. The exponent is a whole
     /// number in `i8` range. The parser rejects a fractional or out-of-range
     /// power.
@@ -160,8 +157,11 @@ pub enum Expr {
         exponent: i8,
         span: Span,
     },
-    /// A channel reference, resolved by the checker against the channel schema.
-    Channel(ChannelRef),
+    Unary {
+        op: UnaryOp,
+        operand: Box<Expr>,
+        span: Span,
+    },
 }
 
 /// A channel reference occurrence in the source: `@name`, or a vector component
@@ -200,24 +200,24 @@ impl Expr {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
-    Not,
     Neg,
+    Not,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
-    Or,
-    And,
-    Lt,
-    Le,
-    Gt,
-    Ge,
-    Eq,
-    Ne,
     Add,
-    Sub,
-    Mul,
+    And,
     Div,
+    Eq,
+    Ge,
+    Gt,
+    Le,
+    Lt,
+    Mul,
+    Ne,
+    Or,
+    Sub,
 }
 
 impl BinaryOp {

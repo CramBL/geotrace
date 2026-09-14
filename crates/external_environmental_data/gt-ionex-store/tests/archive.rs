@@ -20,8 +20,6 @@ use gt_test_utils::day_archive::conformance::{self, StoredDayOperations};
 use gt_test_utils::day_archive::{self, ColumnName, GroupPath};
 use gt_types::{Latitude, Longitude};
 
-const HOST: &str = "https://sideshow.jpl.nasa.gov/pub/iono_daily";
-
 fn day(offset: i64) -> NaiveDate {
     NaiveDate::from_ymd_opt(2024, 5, 10).unwrap_or_default() + TimeDelta::days(offset)
 }
@@ -108,12 +106,6 @@ fn day_with_a_gap(day: NaiveDate) -> Result<GlobalIonosphereMaps, String> {
         ],
     ))
 }
-
-const DAY_OPERATIONS: StoredDayOperations<IonexStore, GlobalIonosphereMaps> = StoredDayOperations {
-    insert_a_day,
-    read_a_day,
-    indexed_days,
-};
 
 fn insert_a_day(store: &IonexStore, day: NaiveDate) -> Result<GlobalIonosphereMaps, String> {
     let maps = published_day(day)?;
@@ -550,10 +542,6 @@ fn the_columns_beside_the_day_index_move_with_the_days_that_stay() {
     assert_eq!(store.day_maps(day(1)).expect("archive read"), Some(kept));
 }
 
-/// The archive's day index, which is where a delete records that it is
-/// part-way through.
-const DAYS: GroupPath<'static> = GroupPath(schema::DAYS_GROUP);
-
 /// Write access taken from an instance part-way through a delete must not
 /// discard its days behind the user's back. The archive reports what
 /// recovering costs before either choice is made.
@@ -617,3 +605,15 @@ fn a_declined_recovery_keeps_the_interrupted_days_and_an_accepted_one_discards_t
 fn a_settled_archive_reports_no_interrupted_delete() {
     conformance::a_settled_archive_reports_no_interrupted_delete(&DAY_OPERATIONS, day(0));
 }
+
+const HOST: &str = "https://sideshow.jpl.nasa.gov/pub/iono_daily";
+
+const DAY_OPERATIONS: StoredDayOperations<IonexStore, GlobalIonosphereMaps> = StoredDayOperations {
+    insert_a_day,
+    read_a_day,
+    indexed_days,
+};
+
+/// The archive's day index, which is where a delete records that it is
+/// part-way through.
+const DAYS: GroupPath<'static> = GroupPath(schema::DAYS_GROUP);

@@ -101,8 +101,6 @@ mod tests {
 
     use super::*;
 
-    const REPLACEMENT: char = char::REPLACEMENT_CHARACTER;
-
     #[test]
     fn utf8_input_is_taken_as_it_stands() {
         let decoded = LogText::decode_lossy("navsyncd: fix acquired ±2 m\n".as_bytes());
@@ -149,4 +147,6 @@ mod tests {
             );
         }
     }
+
+    const REPLACEMENT: char = char::REPLACEMENT_CHARACTER;
 }

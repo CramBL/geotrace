@@ -17,6 +17,56 @@ use strum::{EnumCount, EnumIter};
 
 use crate::{DayArchiveError, SharedArchive, Store, WritableDayArchive};
 
+/// Implements [`StoredDayArchive`] for each archive listed, and
+/// `EnvironmentArchive::file_name` over the four variants. Defines
+/// `for_each_stored_archive!` over the same list, which a test covering every
+/// archive expands.
+///
+/// The first argument is a literal `$`: a nested `macro_rules!` has no other
+/// way to write its own `$archive` and `$body`.
+macro_rules! stored_day_archives {
+    ($dollar:tt $($writable:ty {
+        archive: $variant:ident,
+        shared_from: $slot:ident,
+    })+) => {
+        impl EnvironmentArchive {
+            const fn file_name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => <<$writable as WritableDayArchive>::ReadOnly
+                        as crate::ReadOnlyDayArchive>::FILE_NAME,)+
+                }
+            }
+        }
+
+        $(
+            impl StoredDayArchive for $writable {
+                const ARCHIVE: EnvironmentArchive = EnvironmentArchive::$variant;
+
+                fn shared_in(store: &Store) -> &SharedArchive<Self, Self::ReadOnly> {
+                    &store.$slot
+                }
+            }
+        )+
+
+        /// Expands the body once per stored archive, with `$archive` declared
+        /// inside the body as a type alias for that archive's writable type.
+        #[cfg(test)]
+        macro_rules! for_each_stored_archive {
+            ($dollar archive:ident => $dollar body:block) => {
+                $(
+                    {
+                        type $dollar archive = $writable;
+                        $dollar body
+                    }
+                )+
+            };
+        }
+
+        #[cfg(test)]
+        pub(crate) use for_each_stored_archive;
+    };
+}
+
 /// One of the archives, as the settings rows and the delete controls name it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumCount, EnumIter)]
 pub enum EnvironmentArchive {
@@ -84,56 +134,6 @@ pub trait StoredDayArchive: WritableDayArchive<Error: DayArchiveError> {
     fn shared_in(store: &Store) -> &SharedArchive<Self, Self::ReadOnly>;
 }
 
-/// Implements [`StoredDayArchive`] for each archive listed, and
-/// `EnvironmentArchive::file_name` over the four variants. Defines
-/// `for_each_stored_archive!` over the same list, which a test covering every
-/// archive expands.
-///
-/// The first argument is a literal `$`: a nested `macro_rules!` has no other
-/// way to write its own `$archive` and `$body`.
-macro_rules! stored_day_archives {
-    ($dollar:tt $($writable:ty {
-        archive: $variant:ident,
-        shared_from: $slot:ident,
-    })+) => {
-        impl EnvironmentArchive {
-            const fn file_name(self) -> &'static str {
-                match self {
-                    $(Self::$variant => <<$writable as WritableDayArchive>::ReadOnly
-                        as crate::ReadOnlyDayArchive>::FILE_NAME,)+
-                }
-            }
-        }
-
-        $(
-            impl StoredDayArchive for $writable {
-                const ARCHIVE: EnvironmentArchive = EnvironmentArchive::$variant;
-
-                fn shared_in(store: &Store) -> &SharedArchive<Self, Self::ReadOnly> {
-                    &store.$slot
-                }
-            }
-        )+
-
-        /// Expands the body once per stored archive, with `$archive` declared
-        /// inside the body as a type alias for that archive's writable type.
-        #[cfg(test)]
-        macro_rules! for_each_stored_archive {
-            ($dollar archive:ident => $dollar body:block) => {
-                $(
-                    {
-                        type $dollar archive = $writable;
-                        $dollar body
-                    }
-                )+
-            };
-        }
-
-        #[cfg(test)]
-        pub(crate) use for_each_stored_archive;
-    };
-}
-
 stored_day_archives! {
     $
     JamStore {
@@ -163,8 +163,6 @@ mod tests {
 
     use super::*;
     use crate::{DeclinedRecovery, InterruptedDelete, SchemaVersions};
-
-    const INTERRUPTED: InterruptedDelete = InterruptedDelete { archived_days: 3 };
 
     fn held_and_unrecovered<E: DayArchiveError>(err: &E) -> (bool, Option<InterruptedDelete>) {
         (
@@ -245,4 +243,6 @@ mod tests {
             declined
         );
     }
+
+    const INTERRUPTED: InterruptedDelete = InterruptedDelete { archived_days: 3 };
 }

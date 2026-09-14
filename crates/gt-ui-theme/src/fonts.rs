@@ -32,10 +32,6 @@ mod tests {
 
     use super::*;
 
-    /// The superscripts and the multiplication sign the reference material
-    /// writes in prose.
-    const SUPERSCRIPT_CHARACTERS: &str = "⁰¹²³⁴⁵⁶⁷⁸⁹⁻×";
-
     #[test]
     fn the_proportional_family_covers_every_superscript_the_material_writes() {
         let ctx = Context::default();
@@ -53,4 +49,8 @@ mod tests {
             );
         }
     }
+
+    /// The superscripts and the multiplication sign the reference material
+    /// writes in prose.
+    const SUPERSCRIPT_CHARACTERS: &str = "⁰¹²³⁴⁵⁶⁷⁸⁹⁻×";
 }

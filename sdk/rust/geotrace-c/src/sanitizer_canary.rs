@@ -3,8 +3,6 @@
 
 use std::hint;
 
-const LEAKED_BYTES: usize = 64;
-
 /// Leaks one heap allocation, so that the address sanitizer prints a leak
 /// report whose allocation stack reaches into this library.
 ///
@@ -19,3 +17,5 @@ const LEAKED_BYTES: usize = 64;
 pub extern "C" fn gtd_leak_allocation_for_sanitizer_canary() {
     hint::black_box(Box::leak(Box::new([0_u8; LEAKED_BYTES])));
 }
+
+const LEAKED_BYTES: usize = 64;

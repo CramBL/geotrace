@@ -34,29 +34,6 @@ pub mod text;
 pub mod transport;
 pub mod wire;
 
-/// Base URL of the default dataset host. Configurable in settings, for a
-/// self-hosted mirror or an offline copy.
-pub const DEFAULT_BASE_URL: &str = "https://gpsjam.org";
-
-/// Path segment preceding a dataset's date, appended to the base URL.
-const DATASET_PATH_PREFIX: &str = "/data/";
-
-/// Separates a dataset's date from its H3 resolution in the file name.
-const RESOLUTION_MARKER: &str = "-h3_";
-
-/// Extension of a published dataset.
-const DATASET_EXTENSION: &str = ".csv";
-
-/// H3 resolution of the published cells: about 22 km edge, about 1770 km2
-/// per cell.
-///
-/// [`dataset_file_name`] builds the file name from this, so the address and
-/// the cells [`wire::parse_dataset`] accepts cannot drift apart.
-pub const H3_RESOLUTION: Resolution = Resolution::Four;
-
-/// Date format of the dataset filenames (ISO 8601 calendar date).
-const DATE_FORMAT: &str = "%Y-%m-%d";
-
 /// The URL of `day`'s dataset on `base_url`, which must not end in a slash.
 ///
 /// [`calendar::day_outlook`] determines whether the day is worth requesting,
@@ -96,8 +73,6 @@ pub struct CapturedDay {
     pub purpose: &'static str,
 }
 
-const HTTP_OK: u16 = 200;
-
 impl CapturedDay {
     /// Whether the host served this day, and so whether it has a dataset
     /// file. A refused day exists only in the capture manifest.
@@ -105,6 +80,42 @@ impl CapturedDay {
         self.http_status == HTTP_OK
     }
 }
+
+/// Directory holding the captured datasets.
+///
+/// Resolved from the crate manifest dir, so it is only meaningful to
+/// development tooling running inside the workspace, never to the shipped
+/// application.
+pub fn captures_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("captures")
+}
+
+/// Base URL of the default dataset host. Configurable in settings, for a
+/// self-hosted mirror or an offline copy.
+pub const DEFAULT_BASE_URL: &str = "https://gpsjam.org";
+
+/// Path segment preceding a dataset's date, appended to the base URL.
+const DATASET_PATH_PREFIX: &str = "/data/";
+
+/// Separates a dataset's date from its H3 resolution in the file name.
+const RESOLUTION_MARKER: &str = "-h3_";
+
+/// Extension of a published dataset.
+const DATASET_EXTENSION: &str = ".csv";
+
+/// H3 resolution of the published cells: about 22 km edge, about 1770 km2
+/// per cell.
+///
+/// [`dataset_file_name`] builds the file name from this, so the address and
+/// the cells [`wire::parse_dataset`] accepts cannot drift apart.
+pub const H3_RESOLUTION: Resolution = Resolution::Four;
+
+/// Date format of the dataset filenames (ISO 8601 calendar date).
+const DATE_FORMAT: &str = "%Y-%m-%d";
+
+const HTTP_OK: u16 = 200;
 
 /// The captured days, in the order the manifest lists them.
 pub const CAPTURED_DAYS: [CapturedDay; 2] = [
@@ -125,17 +136,6 @@ pub const CAPTURED_DAYS: [CapturedDay; 2] = [
 /// File name of the capture manifest written beside the captures, recording
 /// when each day was captured and what status the host returned.
 pub const CAPTURE_MANIFEST: &str = "capture.json";
-
-/// Directory holding the captured datasets.
-///
-/// Resolved from the crate manifest dir, so it is only meaningful to
-/// development tooling running inside the workspace, never to the shipped
-/// application.
-pub fn captures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("captures")
-}
 
 #[cfg(test)]
 mod tests {

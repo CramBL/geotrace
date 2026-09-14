@@ -289,10 +289,6 @@ mod tests {
 
     use super::*;
 
-    const NEEDS_FETCH: Result<bool, &str> = Ok(true);
-    const ARCHIVED: Result<bool, &str> = Ok(false);
-    const UNREADABLE_ARCHIVE: Result<bool, &str> = Err("the archive is locked");
-
     #[test]
     fn a_recording_day_the_archive_lacks_is_queued_once() {
         let mut queue = DayFetchQueue::default();
@@ -634,4 +630,8 @@ mod tests {
 
         assert_eq!(queue.oldest_needed_day(), Some(fixtures::date(2026, 6, 23)));
     }
+
+    const NEEDS_FETCH: Result<bool, &str> = Ok(true);
+    const ARCHIVED: Result<bool, &str> = Ok(false);
+    const UNREADABLE_ARCHIVE: Result<bool, &str> = Err("the archive is locked");
 }

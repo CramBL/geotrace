@@ -11,15 +11,6 @@ use crate::{
     structure::{self, StructuralLine, StructuralLineKind},
 };
 
-/// Entries either side of a backwards timestamp step that are read for a clock
-/// adjustment explaining it. A 622,286-line journald export logs an adjustment
-/// within one entry of every one of its 31 backwards steps. Three leaves room
-/// for an exporter that interleaves more between the two.
-const CLOCK_ADJUSTMENT_NEIGHBOUR_ENTRIES: usize = 3;
-
-const MICROSECONDS_PER_SECOND: i64 = 1_000_000;
-const NANOSECONDS_PER_MICROSECOND: i64 = 1_000;
-
 /// One run of the device: the entries between two reboot separators.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BootSession {
@@ -242,3 +233,12 @@ fn duration_of_micros(micros: i64) -> Option<Duration> {
         u32::try_from(nanos).ok()?,
     )
 }
+
+/// Entries either side of a backwards timestamp step that are read for a clock
+/// adjustment explaining it. A 622,286-line journald export logs an adjustment
+/// within one entry of every one of its 31 backwards steps. Three leaves room
+/// for an exporter that interleaves more between the two.
+const CLOCK_ADJUSTMENT_NEIGHBOUR_ENTRIES: usize = 3;
+
+const MICROSECONDS_PER_SECOND: i64 = 1_000_000;
+const NANOSECONDS_PER_MICROSECOND: i64 = 1_000;

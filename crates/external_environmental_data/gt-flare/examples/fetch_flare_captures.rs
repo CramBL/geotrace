@@ -37,19 +37,6 @@ use serde_json::{Value, json};
 use gt_flare::wire;
 use gt_flare::{ApiKey, CAPTURE_MANIFEST, CAPTURED_WINDOWS, CapturedWindow, DEFAULT_BASE_URL};
 
-/// Holds the key the endpoint needs. `DEMO_KEY` works for a handful of
-/// requests an hour, which is what a capture costs.
-const API_KEY_ENV: &str = "GEOTRACE_FLARE_API_KEY";
-
-/// Points the capture at a proxy. The capture requests from `DEFAULT_BASE_URL`
-/// when it is unset.
-const HOST_ENV: &str = "GEOTRACE_FLARE_HOST";
-
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// Pause between requests, well inside what a registered key is allowed.
-const REQUEST_INTERVAL: Duration = Duration::from_secs(4);
-
 fn main() -> Result<(), Box<dyn Error>> {
     let key = env::var(API_KEY_ENV)
         .ok()
@@ -167,3 +154,16 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+/// Holds the key the endpoint needs. `DEMO_KEY` works for a handful of
+/// requests an hour, which is what a capture costs.
+const API_KEY_ENV: &str = "GEOTRACE_FLARE_API_KEY";
+
+/// Points the capture at a proxy. The capture requests from `DEFAULT_BASE_URL`
+/// when it is unset.
+const HOST_ENV: &str = "GEOTRACE_FLARE_HOST";
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Pause between requests, well inside what a registered key is allowed.
+const REQUEST_INTERVAL: Duration = Duration::from_secs(4);

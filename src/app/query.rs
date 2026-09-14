@@ -37,93 +37,12 @@ pub(crate) mod results;
 pub(crate) mod results_split;
 mod value_bar;
 
-/// Unpinned history entries kept before the oldest is evicted. Pinned
-/// entries never count against this cap.
-const MAX_UNPINNED_HISTORY: usize = 50;
-
-/// Characters of a history entry's first line shown before eliding.
-const HISTORY_LINE_MAX_CHARS: NonZeroUsize = match NonZeroUsize::new(48) {
-    Some(chars) => chars,
-    None => NonZeroUsize::MIN,
-};
-
-/// Width the query window opens at. It grows only when the user drags it
-/// wider: nothing inside it may widen it, or the window covers the map.
-pub(crate) const DEFAULT_WINDOW_WIDTH: f32 = 460.0;
-
-/// Height the query window opens at, title bar and frame included. Like its
-/// width, it grows only when the user drags it: nothing inside the window may
-/// claim more height than the window has, or the window covers the plot below
-/// it.
-pub(crate) const DEFAULT_WINDOW_HEIGHT: f32 = 520.0;
-
-/// Max width of an editor hover tooltip, shared by the construct and channel
-/// tooltips so they stay the same size.
-const TOOLTIP_MAX_WIDTH: f32 = 360.0;
-
-/// Id salt for the query editor's text field. Fixed (not derived from the
-/// enclosing `Ui`) so the autocomplete caret/focus integration - and the UI
-/// snapshot test - can address the widget directly.
-pub(crate) const EDITOR_ID_SALT: &str = "query_editor";
-
-/// Candidate rows the autocomplete popup shows before it scrolls. A footer
-/// notes how many more there are.
-const AUTOCOMPLETE_VISIBLE_ROWS: usize = 5;
-
-/// Seconds the pointer must rest before the editor hover doc appears, so the
-/// tooltip does not flicker over every token the pointer crosses. Only entering
-/// a token arms the delay. The doc already on display survives pointer motion
-/// within its token.
-const HOVER_DOC_DELAY_SECS: f32 = 0.15;
-
-/// Seconds after the last keystroke before the caret chunk's diagnostic shows.
-/// A query is structurally broken for most of the time it is being typed
-/// (`points |` until the keyword lands). Flashing red on every keystroke reads
-/// as noise, so the chunk under the caret gets this grace period. Errors in
-/// other chunks (and the disabled Run button) are immediate.
-const DIAGNOSTIC_IDLE_SECS: f64 = 0.6;
-
 /// A built-in query offered in the examples list.
 struct QueryExample {
     name: &'static str,
     description: &'static str,
     text: &'static str,
 }
-
-/// Starter queries, mirroring the documented use cases. Embedded, not
-/// persisted. Every one is asserted to parse, check, and run by a test.
-const EXAMPLES: &[QueryExample] = &[
-    QueryExample {
-        name: "Steady acceleration",
-        description: "Stretches of constant-heading speed-up",
-        text: "points\n| window 10\n| where spread(heading) <= 10 deg\n    and avg(accel) >= 0.3 m/s2\n    and avg(velocity) > 30 km/h\n| draw\n| table time, velocity, heading, accel",
-    },
-    QueryExample {
-        name: "Poor accuracy while moving",
-        description: "eph worse than 20m above walking speed",
-        text: "points\n| where eph > 20 m and velocity > 5 km/h",
-    },
-    QueryExample {
-        name: "Weak fix",
-        description: "Fewer than 6 satellites used in the fix",
-        text: "points\n| where sats_fix < 6",
-    },
-    QueryExample {
-        name: "Heading jitter",
-        description: "Heading spread above 90 deg within 5 points while moving - a multipath indicator",
-        text: "points\n| window 5\n| where spread(heading) > 90 deg and min(velocity) > 15 km/h\n| draw\n| table time, heading, velocity",
-    },
-    QueryExample {
-        name: "Low GPS utilization",
-        description: "In-fix share of visible GPS satellites below 50%",
-        text: "points\n| with mask 15 deg\n| where util_gps < 50 %\n| draw\n| table time, util_gps, sats_fix",
-    },
-    QueryExample {
-        name: "Hide stationary points",
-        description: "Drop points below walking speed to declutter a parked track",
-        text: "points\n| where velocity < 2 km/h\n| hide",
-    },
-];
 
 /// The list the query window shows below its editor, one at a time.
 #[derive(Clone, Copy, Default, PartialEq, Eq, EnumIter)]
@@ -1668,6 +1587,87 @@ fn segments(range: Range<usize>, underlines: &[(usize, usize)]) -> Vec<Range<usi
         })
         .collect()
 }
+
+/// Unpinned history entries kept before the oldest is evicted. Pinned
+/// entries never count against this cap.
+const MAX_UNPINNED_HISTORY: usize = 50;
+
+/// Characters of a history entry's first line shown before eliding.
+const HISTORY_LINE_MAX_CHARS: NonZeroUsize = match NonZeroUsize::new(48) {
+    Some(chars) => chars,
+    None => NonZeroUsize::MIN,
+};
+
+/// Width the query window opens at. It grows only when the user drags it
+/// wider: nothing inside it may widen it, or the window covers the map.
+pub(crate) const DEFAULT_WINDOW_WIDTH: f32 = 460.0;
+
+/// Height the query window opens at, title bar and frame included. Like its
+/// width, it grows only when the user drags it: nothing inside the window may
+/// claim more height than the window has, or the window covers the plot below
+/// it.
+pub(crate) const DEFAULT_WINDOW_HEIGHT: f32 = 520.0;
+
+/// Max width of an editor hover tooltip, shared by the construct and channel
+/// tooltips so they stay the same size.
+const TOOLTIP_MAX_WIDTH: f32 = 360.0;
+
+/// Id salt for the query editor's text field. Fixed (not derived from the
+/// enclosing `Ui`) so the autocomplete caret/focus integration - and the UI
+/// snapshot test - can address the widget directly.
+pub(crate) const EDITOR_ID_SALT: &str = "query_editor";
+
+/// Candidate rows the autocomplete popup shows before it scrolls. A footer
+/// notes how many more there are.
+const AUTOCOMPLETE_VISIBLE_ROWS: usize = 5;
+
+/// Seconds the pointer must rest before the editor hover doc appears, so the
+/// tooltip does not flicker over every token the pointer crosses. Only entering
+/// a token arms the delay. The doc already on display survives pointer motion
+/// within its token.
+const HOVER_DOC_DELAY_SECS: f32 = 0.15;
+
+/// Seconds after the last keystroke before the caret chunk's diagnostic shows.
+/// A query is structurally broken for most of the time it is being typed
+/// (`points |` until the keyword lands). Flashing red on every keystroke reads
+/// as noise, so the chunk under the caret gets this grace period. Errors in
+/// other chunks (and the disabled Run button) are immediate.
+const DIAGNOSTIC_IDLE_SECS: f64 = 0.6;
+
+/// Starter queries, mirroring the documented use cases. Embedded, not
+/// persisted. Every one is asserted to parse, check, and run by a test.
+const EXAMPLES: &[QueryExample] = &[
+    QueryExample {
+        name: "Steady acceleration",
+        description: "Stretches of constant-heading speed-up",
+        text: "points\n| window 10\n| where spread(heading) <= 10 deg\n    and avg(accel) >= 0.3 m/s2\n    and avg(velocity) > 30 km/h\n| draw\n| table time, velocity, heading, accel",
+    },
+    QueryExample {
+        name: "Poor accuracy while moving",
+        description: "eph worse than 20m above walking speed",
+        text: "points\n| where eph > 20 m and velocity > 5 km/h",
+    },
+    QueryExample {
+        name: "Weak fix",
+        description: "Fewer than 6 satellites used in the fix",
+        text: "points\n| where sats_fix < 6",
+    },
+    QueryExample {
+        name: "Heading jitter",
+        description: "Heading spread above 90 deg within 5 points while moving - a multipath indicator",
+        text: "points\n| window 5\n| where spread(heading) > 90 deg and min(velocity) > 15 km/h\n| draw\n| table time, heading, velocity",
+    },
+    QueryExample {
+        name: "Low GPS utilization",
+        description: "In-fix share of visible GPS satellites below 50%",
+        text: "points\n| with mask 15 deg\n| where util_gps < 50 %\n| draw\n| table time, util_gps, sats_fix",
+    },
+    QueryExample {
+        name: "Hide stationary points",
+        description: "Drop points below walking speed to declutter a parked track",
+        text: "points\n| where velocity < 2 km/h\n| hide",
+    },
+];
 
 #[cfg(test)]
 mod tests {

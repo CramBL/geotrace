@@ -12,12 +12,12 @@
 //! dependency) adds the [tessellate] module with the actual SVG-to-mesh
 //! pipeline on top of usvg and lyon.
 
-mod template;
-#[cfg(feature = "tessellate")]
-pub mod tessellate;
-
 pub use template::{
     BucketMesh, FEATHER_PX, IconMeshTemplate, IconTessellation, SIZE_BUCKETS_PX, TemplateVertex,
 };
 #[cfg(feature = "tessellate")]
 pub use tessellate::{IconTessellateError, StrokeWidthUnit};
+
+mod template;
+#[cfg(feature = "tessellate")]
+pub mod tessellate;

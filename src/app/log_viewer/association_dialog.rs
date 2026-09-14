@@ -17,60 +17,20 @@ use crate::app::history_db::ExistingLogAttachment;
 use crate::app::modals::{DialogActionRow, DialogBody};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 
-#[cfg(test)]
-pub(in crate::app) mod tests;
-
 use super::NO_OVERLAP_HOVER;
-
-pub(in crate::app) const TITLE: &str = "Associate log";
-
-pub(in crate::app) const ATTACH_LABEL: &str = "Also attach to this recording in history";
-
-pub(in crate::app) const DONT_SHOW_AGAIN_LABEL: &str = "Don't show this again";
-
-pub(in crate::app) const CONFIRM_LABEL: &str = "Associate";
-
-const CANCEL_LABEL: &str = "Cancel";
-
-pub(in crate::app) const NO_OVERLAP_LABEL: &str = "no overlap";
-
-/// The region of the body listing the recordings, which keeps the height it
-/// had when the dialog opened.
-const CANDIDATES_REGION: &str = "association_candidates";
-
-/// The region of the body the duplicate-attachment result lands in.
-const STORED_ATTACHMENT_REGION: &str = "stored_attachment_note";
-
-/// Lines the [`STORED_ATTACHMENT_REGION`] holds from the frame the dialog
-/// opens, which is what the note takes for an attachment name of ordinary
-/// length.
-const STORED_ATTACHMENT_LINES: u8 = 2;
-
-const ATTACH_HOVER: &str = "Store this log with the recording, so it comes back with its filters when the recording is \
-     opened from history";
-
-const ATTACH_UNSTORED_HOVER: &str =
-    "Only a recording stored in the history database can hold an attachment";
-
-const ATTACH_NO_TARGET_HOVER: &str = "Choose a recording to attach this log to";
-
-const DONT_SHOW_AGAIN_HOVER: &str = "Associate a loading log by itself when exactly one loaded recording overlaps it, and leave it \
-     untargeted otherwise. Switchable back on under Processing in the settings.";
-
-const CONFIRM_HOVER: &str = "Take this log's positions from the chosen recording";
 
 /// What the user decided in the association dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::app) enum LogAssociationChoice {
+    /// Leave the log associated as it is, and store nothing.
+    Cancelled,
+
     /// Take the log's positions from `target`, and store it with that
     /// recording when `attach`.
     Confirmed {
         target: Option<LoadedFileId>,
         attach: bool,
     },
-
-    /// Leave the log associated as it is, and store nothing.
-    Cancelled,
 }
 
 /// The association dialog of one log: shown when a log finishes loading, and
@@ -323,3 +283,43 @@ impl LogAssociationDialog {
         }
     }
 }
+
+pub(in crate::app) const TITLE: &str = "Associate log";
+
+pub(in crate::app) const ATTACH_LABEL: &str = "Also attach to this recording in history";
+
+pub(in crate::app) const DONT_SHOW_AGAIN_LABEL: &str = "Don't show this again";
+
+pub(in crate::app) const CONFIRM_LABEL: &str = "Associate";
+
+const CANCEL_LABEL: &str = "Cancel";
+
+pub(in crate::app) const NO_OVERLAP_LABEL: &str = "no overlap";
+
+/// The region of the body listing the recordings, which keeps the height it
+/// had when the dialog opened.
+const CANDIDATES_REGION: &str = "association_candidates";
+
+/// The region of the body the duplicate-attachment result lands in.
+const STORED_ATTACHMENT_REGION: &str = "stored_attachment_note";
+
+/// Lines the [`STORED_ATTACHMENT_REGION`] holds from the frame the dialog
+/// opens, which is what the note takes for an attachment name of ordinary
+/// length.
+const STORED_ATTACHMENT_LINES: u8 = 2;
+
+const ATTACH_HOVER: &str = "Store this log with the recording, so it comes back with its filters when the recording is \
+     opened from history";
+
+const ATTACH_UNSTORED_HOVER: &str =
+    "Only a recording stored in the history database can hold an attachment";
+
+const ATTACH_NO_TARGET_HOVER: &str = "Choose a recording to attach this log to";
+
+const DONT_SHOW_AGAIN_HOVER: &str = "Associate a loading log by itself when exactly one loaded recording overlaps it, and leave it \
+     untargeted otherwise. Switchable back on under Processing in the settings.";
+
+const CONFIRM_HOVER: &str = "Take this log's positions from the chosen recording";
+
+#[cfg(test)]
+pub(in crate::app) mod tests;

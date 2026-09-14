@@ -28,21 +28,6 @@ use super::{
     LogAssociationDialog, TITLE,
 };
 
-/// Three entries spanning nine seconds from [`log_start`].
-const LOG: &str = "\
-2026-05-29 18:48:25 navsyncd: starting
-2026-05-29 18:48:27 navsyncd: fix acquired
-2026-05-29 18:48:34 navsyncd: fix lost
-";
-
-/// The span the fixture log covers, which the listed overlaps are shares of.
-const LOG_SPAN_SECS: i64 = 9;
-
-const DIALOG_SIZE: egui::Vec2 = egui::vec2(560.0, 420.0);
-
-/// The log the dialog is shown for, the only one in these tests.
-const SHOWN_LOG: LoadedLogId = LoadedLogId::new(0);
-
 fn log_start() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 5, 29, 18, 48, 25)
         .single()
@@ -553,3 +538,18 @@ fn the_dialog_fits_every_viewport(
     harness.assert_window_fits_the_viewport(AuditedWindow::titled(TITLE));
     harness.assert_control_is_reachable(AuditedWindow::titled(TITLE), ControlLabel(CANCEL_LABEL));
 }
+
+/// Three entries spanning nine seconds from [`log_start`].
+const LOG: &str = "\
+2026-05-29 18:48:25 navsyncd: starting
+2026-05-29 18:48:27 navsyncd: fix acquired
+2026-05-29 18:48:34 navsyncd: fix lost
+";
+
+/// The span the fixture log covers, which the listed overlaps are shares of.
+const LOG_SPAN_SECS: i64 = 9;
+
+const DIALOG_SIZE: egui::Vec2 = egui::vec2(560.0, 420.0);
+
+/// The log the dialog is shown for, the only one in these tests.
+const SHOWN_LOG: LoadedLogId = LoadedLogId::new(0);

@@ -14,26 +14,6 @@ use parking_lot::Mutex;
 
 use crate::DatabaseRef;
 
-/// DB-internal subgroup (under each recording group) holding that recording's
-/// UI state. Prefixed like [`TRACKS_GROUP`](crate::TRACKS_GROUP), skipped when
-/// reconstructing the GTD file, and deleted with the recording group.
-pub const UI_STATE_GROUP: &str = "__geotrace_ui_state__";
-
-/// The [`UI_STATE_GROUP`] attribute holding the version its layout was written
-/// at.
-pub const UI_STATE_VERSION_ATTR: &str = "ui_state_version";
-
-/// The UI state layout this build writes.
-///
-/// This number and [`CURRENT_SCHEMA_VERSION`](crate::CURRENT_SCHEMA_VERSION)
-/// move independently: UI state changes shape without a database schema
-/// change, and a schema change leaves this at the value it had.
-pub const CURRENT_UI_STATE_VERSION: i64 = 1;
-
-/// The [`UI_STATE_GROUP`] dataset holding
-/// [`RecordingUiState::hidden_track_numbers`] as `u64`.
-pub const HIDDEN_TRACKS_DATASET: &str = "hidden_tracks";
-
 /// The UI state stored with one recording.
 ///
 /// Each field is one kind of UI state, and one dataset of
@@ -66,14 +46,14 @@ pub enum StoredUiStateVersion {
     /// kinds of UI state a later build added.
     Current,
 
-    /// A version below [`CURRENT_UI_STATE_VERSION`]. A write replaces the
-    /// whole group, which removes the datasets of the older layout.
-    Older(i64),
-
     /// A version above [`CURRENT_UI_STATE_VERSION`]. This build leaves the
     /// group as it stands and reports the version through
     /// [`UiStateVersionReporter`].
     Newer(i64),
+
+    /// A version below [`CURRENT_UI_STATE_VERSION`]. A write replaces the
+    /// whole group, which removes the datasets of the older layout.
+    Older(i64),
 }
 
 impl StoredUiStateVersion {
@@ -125,3 +105,23 @@ impl UiStateVersionReporter {
         self.findings.lock().is_empty()
     }
 }
+
+/// DB-internal subgroup (under each recording group) holding that recording's
+/// UI state. Prefixed like [`TRACKS_GROUP`](crate::TRACKS_GROUP), skipped when
+/// reconstructing the GTD file, and deleted with the recording group.
+pub const UI_STATE_GROUP: &str = "__geotrace_ui_state__";
+
+/// The [`UI_STATE_GROUP`] attribute holding the version its layout was written
+/// at.
+pub const UI_STATE_VERSION_ATTR: &str = "ui_state_version";
+
+/// The UI state layout this build writes.
+///
+/// This number and [`CURRENT_SCHEMA_VERSION`](crate::CURRENT_SCHEMA_VERSION)
+/// move independently: UI state changes shape without a database schema
+/// change, and a schema change leaves this at the value it had.
+pub const CURRENT_UI_STATE_VERSION: i64 = 1;
+
+/// The [`UI_STATE_GROUP`] dataset holding
+/// [`RecordingUiState::hidden_track_numbers`] as `u64`.
+pub const HIDDEN_TRACKS_DATASET: &str = "hidden_tracks";

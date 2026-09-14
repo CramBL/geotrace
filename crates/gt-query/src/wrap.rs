@@ -7,8 +7,6 @@ use std::f64::consts::TAU;
 
 use nalgebra::{Complex, UnitComplex};
 
-const FULL_TURN_DEGREES: f64 = 360.0;
-
 /// The period an angular value repeats at, in degrees.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct WrapPeriod(f64);
@@ -86,6 +84,8 @@ impl WrapPeriod {
         (-2.0 * mean_resultant.ln()).sqrt() / scale
     }
 }
+
+const FULL_TURN_DEGREES: f64 = 360.0;
 
 #[cfg(test)]
 mod tests {

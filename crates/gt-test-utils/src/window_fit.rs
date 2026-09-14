@@ -6,44 +6,12 @@
 use egui_kittest::Harness;
 use egui_kittest::kittest::{By, Queryable as _};
 
-/// Small enough in both axes that any window holding a few screenfuls of
-/// content overflows it.
-pub const CRAMPED_VIEWPORT: egui::Vec2 = egui::vec2(520.0, 380.0);
-
-/// Narrow but tall: catches content that only overflows sideways, such as an
-/// unbroken identity or log line in a horizontal layout.
-pub const NARROW_VIEWPORT: egui::Vec2 = egui::vec2(360.0, 900.0);
-
-/// Wide but short: catches content that only overflows downwards, such as a
-/// long list above a footer.
-pub const SHORT_VIEWPORT: egui::Vec2 = egui::vec2(1200.0, 300.0);
-
-/// Characters [`oversized_text`] runs to: more than the widest audit viewport
-/// fits, with no break for a wrap to take.
-pub const OVERSIZED_TEXT_LENGTH: usize = 2000;
-
-/// Rows an audit fixture lists: more than the tallest audit viewport shows at
-/// once.
-pub const OVERSIZED_ROW_COUNT: usize = 200;
-
 /// An unbroken run of `fill`, standing in for the identity, path, URL or error
 /// a window is handed. `fill` identifies the fixture it came from when it
 /// turns up in a failure message.
 pub fn oversized_text(fill: char) -> String {
     String::from(fill).repeat(OVERSIZED_TEXT_LENGTH)
 }
-
-/// Wheel points one scroll step sends, and how many steps
-/// [`WindowFitAssertions::assert_control_is_reachable`] takes before it gives
-/// up. Together they cover a list far longer than any window shows at once.
-const WHEEL_POINTS_PER_STEP: f32 = 240.0;
-const WHEEL_STEPS: usize = 60;
-
-/// Frames a smooth scroll takes to come to rest.
-const WHEEL_SETTLE_FRAMES: usize = 4;
-
-/// Rounding slack when comparing a window rect against the viewport, in points.
-const CONTAINMENT_SLACK: f32 = 1.0;
 
 /// The [`egui::Window`] under audit: what to call it in a failure message, and
 /// where egui keeps its rect.
@@ -179,3 +147,35 @@ fn control_rect<State>(
         .map(|node| node.rect())
         .max_by(|a, b| a.top().total_cmp(&b.top()))
 }
+
+/// Small enough in both axes that any window holding a few screenfuls of
+/// content overflows it.
+pub const CRAMPED_VIEWPORT: egui::Vec2 = egui::vec2(520.0, 380.0);
+
+/// Narrow but tall: catches content that only overflows sideways, such as an
+/// unbroken identity or log line in a horizontal layout.
+pub const NARROW_VIEWPORT: egui::Vec2 = egui::vec2(360.0, 900.0);
+
+/// Wide but short: catches content that only overflows downwards, such as a
+/// long list above a footer.
+pub const SHORT_VIEWPORT: egui::Vec2 = egui::vec2(1200.0, 300.0);
+
+/// Characters [`oversized_text`] runs to: more than the widest audit viewport
+/// fits, with no break for a wrap to take.
+pub const OVERSIZED_TEXT_LENGTH: usize = 2000;
+
+/// Rows an audit fixture lists: more than the tallest audit viewport shows at
+/// once.
+pub const OVERSIZED_ROW_COUNT: usize = 200;
+
+/// Wheel points one scroll step sends, and how many steps
+/// [`WindowFitAssertions::assert_control_is_reachable`] takes before it gives
+/// up. Together they cover a list far longer than any window shows at once.
+const WHEEL_POINTS_PER_STEP: f32 = 240.0;
+const WHEEL_STEPS: usize = 60;
+
+/// Frames a smooth scroll takes to come to rest.
+const WHEEL_SETTLE_FRAMES: usize = 4;
+
+/// Rounding slack when comparing a window rect against the viewport, in points.
+const CONTAINMENT_SLACK: f32 = 1.0;

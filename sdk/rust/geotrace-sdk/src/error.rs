@@ -42,14 +42,16 @@ pub enum EventMarkerError {
     #[error("invalid event marker variant path {path:?}: path is empty")]
     Empty { path: String },
 
-    #[error("invalid event marker variant path {path:?}: starts with '/'")]
-    LeadingSlash { path: String },
-
-    #[error("invalid event marker variant path {path:?}: ends with '/'")]
-    TrailingSlash { path: String },
-
     #[error("invalid event marker variant path {path:?}: contains '//'")]
     EmptySegment { path: String },
+
+    #[error(
+        "invalid event marker variant path {path:?}: contains characters outside ASCII alphanumeric, hyphen, underscore, and slash"
+    )]
+    InvalidChars { path: String },
+
+    #[error("invalid event marker variant path {path:?}: starts with '/'")]
+    LeadingSlash { path: String },
 
     #[error(
         "invalid event marker variant path {path:?}: {len} bytes, past the {} bytes the field holds",
@@ -57,10 +59,8 @@ pub enum EventMarkerError {
     )]
     TooLong { path: String, len: usize },
 
-    #[error(
-        "invalid event marker variant path {path:?}: contains characters outside ASCII alphanumeric, hyphen, underscore, and slash"
-    )]
-    InvalidChars { path: String },
+    #[error("invalid event marker variant path {path:?}: ends with '/'")]
+    TrailingSlash { path: String },
 
     #[error("invalid event marker annotation: {source}")]
     UnwritableAnnotation { source: FixedWidthStringError },
@@ -69,10 +69,11 @@ pub enum EventMarkerError {
 /// Errors that can occur when building a [`Channel`](crate::Channel).
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ChannelError {
-    #[error(
-        "invalid channel name {name:?}: must be a lowercase identifier (a lowercase letter or underscore, then lowercase letters, digits, or underscores)"
-    )]
-    InvalidName { name: String },
+    #[error("channel {name:?}: the description has a nul byte at offset {offset}")]
+    DescriptionWithNul { name: String, offset: usize },
+
+    #[error("channel {name:?}: duplicate component label {component:?}")]
+    DuplicateComponent { name: String, component: String },
 
     #[error("channel {name:?}: a vector channel needs at least one component")]
     EmptyComponents { name: String },
@@ -82,8 +83,13 @@ pub enum ChannelError {
     )]
     InvalidComponent { name: String, component: String },
 
-    #[error("channel {name:?}: duplicate component label {component:?}")]
-    DuplicateComponent { name: String, component: String },
+    #[error(
+        "invalid channel name {name:?}: must be a lowercase identifier (a lowercase letter or underscore, then lowercase letters, digits, or underscores)"
+    )]
+    InvalidName { name: String },
+
+    #[error("channel {name:?}: wrap period must be finite and positive")]
+    InvalidPeriod { name: String },
 
     #[error("channel {name:?}: expected {expected} values but got {actual}")]
     LengthMismatch {
@@ -92,17 +98,11 @@ pub enum ChannelError {
         actual: usize,
     },
 
-    #[error("channel {name:?}: wrap period must be finite and positive")]
-    InvalidPeriod { name: String },
-
     #[error("channel {name:?}: wrap period requires a recognized angular unit")]
     PeriodNeedsAngularUnit { name: String },
 
     #[error("channel {name:?}: legacy unit metadata {unit:?} is not valid writer input")]
     UnwritableUnit { name: String, unit: String },
-
-    #[error("channel {name:?}: the description has a nul byte at offset {offset}")]
-    DescriptionWithNul { name: String, offset: usize },
 }
 
 /// A lowercase identifier: a lowercase letter or underscore, then lowercase
@@ -196,11 +196,6 @@ pub struct MetaStringWithNul {
 /// Errors that can occur when building a [`NavFile`](crate::NavFile).
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum BuildError {
-    /// The builder has a satellite report, an annotation or an event marker and no nav fix
-    /// to take its position from. This is returned even in lenient mode.
-    #[error("{0} have no nav fix to take a position from: at least one nav fix is required")]
-    NoNavFixes(UnplacedRecordCounts),
-
     /// One or more annotations fall outside the time range of the nav track.
     ///
     /// Only emitted in strict mode (the default). Use
@@ -209,6 +204,11 @@ pub enum BuildError {
     #[error("{count} annotation(s) fall outside the nav fix time range")]
     AnnotationsOutsideRange { count: usize },
 
+    /// Two channels share a name. Names are the primary key (queries reference
+    /// them as `@name`) and become HDF5 group names, so they must be unique.
+    #[error("two channels share the name {name:?}; channel names must be unique")]
+    DuplicateChannelName { name: String },
+
     /// One or more event markers fall outside the time range of the nav track.
     ///
     /// Only emitted in strict mode (the default). Use
@@ -216,11 +216,6 @@ pub enum BuildError {
     /// to clamp each to the nearest endpoint and continue.
     #[error("{count} event marker(s) fall outside the nav fix time range")]
     EventMarkersOutsideRange { count: usize },
-
-    /// Two channels share a name. Names are the primary key (queries reference
-    /// them as `@name`) and become HDF5 group names, so they must be unique.
-    #[error("two channels share the name {name:?}; channel names must be unique")]
-    DuplicateChannelName { name: String },
 
     /// The builder computes a ghost nav fix's timestamp from a satellite
     /// report's own timestamp and the clock offset of the nav fixes around it.
@@ -237,6 +232,11 @@ pub enum BuildError {
     /// to drop each such event, log an error and continue.
     #[error(transparent)]
     InvalidEventMarkerVariantPath { source: EventMarkerError },
+
+    /// The builder has a satellite report, an annotation or an event marker and no nav fix
+    /// to take its position from. This is returned even in lenient mode.
+    #[error("{0} have no nav fix to take a position from: at least one nav fix is required")]
+    NoNavFixes(UnplacedRecordCounts),
 }
 
 /// The satellite reports, annotations and event markers of a build without a nav fix, counted by
@@ -280,70 +280,14 @@ impl Display for UnplacedRecordCounts {
 /// Errors that can occur when reading or writing a `.gtd` file.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("HDF5 error: {0}")]
-    Hdf5(String),
-
-    #[error("unsupported GeoTrace file version: {version:?}")]
-    UnsupportedVersion { version: String },
-
-    #[error("unknown constellation code {code} in dataset {dataset:?}")]
-    UnknownConstellation { code: i16, dataset: &'static str },
-
-    #[error("dataset {dataset:?} in group {group:?}: expected {expected} rows but found {actual}")]
-    ShapeMismatch {
-        group: &'static str,
-        dataset: &'static str,
-        expected: usize,
-        actual: usize,
-    },
-
-    #[error("unknown constellation name {name:?}")]
-    UnknownConstellationName { name: String },
-
-    #[error("unknown marker icon name {name:?}")]
-    UnknownMarkerIcon { name: String },
-
-    #[error("failed to parse {unit} from {input:?}: {reason}")]
-    ParseError {
-        unit: &'static str,
-        input: String,
-        reason: String,
-    },
-
-    #[error("{group}/{dataset}: {source}")]
-    UnwritableField {
-        group: &'static str,
-        dataset: &'static str,
-        source: FixedWidthStringError,
-    },
-
-    #[error("{group}/{dataset}: {source}")]
-    UnreadableField {
-        group: &'static str,
-        dataset: &'static str,
-        source: FixedWidthStringError,
-    },
-
     #[error(
-        "{group}/{dataset}: record {record} has the microsecond count reserved for an absent timestamp"
+        "dataset {path:?} declares {declared_bytes} bytes of data, past what a {file_bytes}-byte file can hold"
     )]
-    TimestampIsTheAbsentValue {
-        group: &'static str,
-        dataset: &'static str,
-        record: usize,
+    DatasetSizePastFileLength {
+        path: String,
+        declared_bytes: u128,
+        file_bytes: u64,
     },
-
-    #[error("nav point {record} has neither a receiver nor a host timestamp")]
-    FixWithoutTimestamp { record: usize },
-
-    #[error("satellite report {report} has neither a receiver nor a host timestamp")]
-    ReportWithoutTimestamp { report: usize },
-
-    #[error("event marker {record} has no timestamp")]
-    EventMarkerWithoutTimestamp { record: usize },
 
     #[error("{group}/{dataset}: record {record} is empty")]
     EmptyField {
@@ -351,6 +295,15 @@ pub enum Error {
         dataset: &'static str,
         record: usize,
     },
+
+    #[error("event marker {record} has no timestamp")]
+    EventMarkerWithoutTimestamp { record: usize },
+
+    #[error("nav point {record} has neither a receiver nor a host timestamp")]
+    FixWithoutTimestamp { record: usize },
+
+    #[error("HDF5 error: {0}")]
+    Hdf5(String),
 
     #[error(
         "{group}/{dataset}: record {record} holds index {index}, past the row count of {table} ({table_len})"
@@ -364,6 +317,39 @@ pub enum Error {
         table_len: usize,
     },
 
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("failed to parse {unit} from {input:?}: {reason}")]
+    ParseError {
+        unit: &'static str,
+        input: String,
+        reason: String,
+    },
+
+    #[error("satellite report {report} has neither a receiver nor a host timestamp")]
+    ReportWithoutTimestamp { report: usize },
+
+    #[error("dataset {dataset:?} in group {group:?}: expected {expected} rows but found {actual}")]
+    ShapeMismatch {
+        group: &'static str,
+        dataset: &'static str,
+        expected: usize,
+        actual: usize,
+    },
+
+    #[error("{count} {unit} since the Unix epoch is past the range a UTC timestamp covers")]
+    TimestampCountOutOfRange { count: i64, unit: &'static str },
+
+    #[error(
+        "{group}/{dataset}: record {record} has the microsecond count reserved for an absent timestamp"
+    )]
+    TimestampIsTheAbsentValue {
+        group: &'static str,
+        dataset: &'static str,
+        record: usize,
+    },
+
     #[error(
         "{group}/{dataset}: record {record} holds {micros} microseconds, past the range a UTC timestamp covers"
     )]
@@ -374,16 +360,30 @@ pub enum Error {
         micros: i64,
     },
 
-    #[error("{count} {unit} since the Unix epoch is past the range a UTC timestamp covers")]
-    TimestampCountOutOfRange { count: i64, unit: &'static str },
+    #[error("unknown constellation code {code} in dataset {dataset:?}")]
+    UnknownConstellation { code: i16, dataset: &'static str },
 
-    #[error(
-        "dataset {path:?} declares {declared_bytes} bytes of data, past what a {file_bytes}-byte file can hold"
-    )]
-    DatasetSizePastFileLength {
-        path: String,
-        declared_bytes: u128,
-        file_bytes: u64,
+    #[error("unknown constellation name {name:?}")]
+    UnknownConstellationName { name: String },
+
+    #[error("unknown marker icon name {name:?}")]
+    UnknownMarkerIcon { name: String },
+
+    #[error("{group}/{dataset}: {source}")]
+    UnreadableField {
+        group: &'static str,
+        dataset: &'static str,
+        source: FixedWidthStringError,
+    },
+
+    #[error("unsupported GeoTrace file version: {version:?}")]
+    UnsupportedVersion { version: String },
+
+    #[error("{group}/{dataset}: {source}")]
+    UnwritableField {
+        group: &'static str,
+        dataset: &'static str,
+        source: FixedWidthStringError,
     },
 }
 
@@ -394,13 +394,6 @@ pub(crate) struct FieldLocation {
     pub(crate) group: &'static str,
     pub(crate) dataset: &'static str,
 }
-
-/// The `markers/label` field, named both by `Annotation::builder().build()` and
-/// by the writer.
-pub(crate) const MARKER_LABEL_LOCATION: FieldLocation = FieldLocation {
-    group: "markers",
-    dataset: "label",
-};
 
 impl Error {
     pub(crate) fn unwritable_field(location: FieldLocation, source: FixedWidthStringError) -> Self {
@@ -417,3 +410,10 @@ impl From<hdf5_pure::Error> for Error {
         Self::Hdf5(e.to_string())
     }
 }
+
+/// The `markers/label` field, named both by `Annotation::builder().build()` and
+/// by the writer.
+pub(crate) const MARKER_LABEL_LOCATION: FieldLocation = FieldLocation {
+    group: "markers",
+    dataset: "label",
+};

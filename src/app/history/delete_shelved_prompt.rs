@@ -19,23 +19,6 @@ use crate::app::modals::{self, CountdownToTheClose, PointerOverTheDialog, TimeUn
 
 use super::DESTRUCTIVE_DELETE_HOVER;
 
-#[cfg(test)]
-mod tests;
-
-pub(super) const DELETE_SHELVED_WINDOW_TITLE: &str = "Delete shelved data?";
-
-pub(super) const DELETE_SHELVED_TRACKS_LABEL: &str = "Delete shelved tracks";
-
-const NOTHING_LEFT_TO_DELETE_HOVER: &str = "Every track is live again";
-
-const CLOSE_BUTTON_HOVER: &str = "Closes this confirmation now. It closes on its own when the \
-                                  count reaches zero. The count holds while the pointer is over \
-                                  this window.";
-
-/// Holds the list to a readable height whatever the database holds: how many
-/// recordings the confirmation writes out before it counts the rest.
-const RECORDINGS_WRITTEN_OUT: usize = 5;
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DeleteShelvedTracksChoice {
     Delete,
@@ -81,13 +64,13 @@ impl ShelvedTracksToDelete {
 /// What the open confirmation shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum DeleteShelvedTracksPromptContents {
+    /// Nothing is left for the delete to remove.
+    EveryTrackIsLive(TimeUntilTheClose),
     /// What the delete removes, as the recording list last counted it.
     ShelvedTracks {
         scope: DeleteShelvedTracksScope,
         shelved: ShelvedTracksToDelete,
     },
-    /// Nothing is left for the delete to remove.
-    EveryTrackIsLive(TimeUntilTheClose),
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -334,3 +317,20 @@ fn recordings_deleted_whole_ui(ui: &mut egui::Ui, names: &[String]) {
         }
     }
 }
+
+pub(super) const DELETE_SHELVED_WINDOW_TITLE: &str = "Delete shelved data?";
+
+pub(super) const DELETE_SHELVED_TRACKS_LABEL: &str = "Delete shelved tracks";
+
+const NOTHING_LEFT_TO_DELETE_HOVER: &str = "Every track is live again";
+
+const CLOSE_BUTTON_HOVER: &str = "Closes this confirmation now. It closes on its own when the \
+                                  count reaches zero. The count holds while the pointer is over \
+                                  this window.";
+
+/// Holds the list to a readable height whatever the database holds: how many
+/// recordings the confirmation writes out before it counts the rest.
+const RECORDINGS_WRITTEN_OUT: usize = 5;
+
+#[cfg(test)]
+mod tests;

@@ -11,12 +11,6 @@ use gt_fetch::{Classified, HttpRequest, HttpResponse, Transport};
 
 use crate::{GeomagneticIndex, TimeWindow};
 
-/// Minimum gap between requests to the service, enforced by the transport the
-/// fetch worker connects with.
-///
-/// One day costs one request per index, and a backfill walks hundreds of days.
-pub const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
-
 /// Why one window could not be fetched.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{detail}")]
@@ -55,6 +49,12 @@ fn classify(response: HttpResponse) -> Classified<Result<String, FetchFailure>> 
         detail: format!("HTTP {}", response.status_line()),
     }))
 }
+
+/// Minimum gap between requests to the service, enforced by the transport the
+/// fetch worker connects with.
+///
+/// One day costs one request per index, and a backfill walks hundreds of days.
+pub const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
 
 #[cfg(test)]
 mod tests {

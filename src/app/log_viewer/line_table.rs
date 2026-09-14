@@ -22,45 +22,6 @@ use rustc_hash::FxHashMap;
 
 use super::{AssociationWindowUnit, DATE_FORMAT, LogViewerWindow};
 
-/// The prefix of an anchored timestamp, as wide as the interpolated marker so
-/// that the timestamp column stays aligned.
-const ANCHORED_TIMESTAMP_PREFIX: &str = " ";
-
-/// The run of the timestamp column the timestamp tick colours.
-const HOUR_MINUTE_FORMAT: &str = "%H:%M";
-
-/// The run of the timestamp column after the hour and the minute, always drawn
-/// in the quiet colour.
-const SECONDS_FORMAT: &str = ":%S";
-
-pub(super) const INTERPOLATED_TIMESTAMP_HOVER: &str =
-    "Timestamp interpolated between neighbouring entries";
-
-pub(super) const ASSOCIATED_ROW_HOVER: &str = "Centre the map on this line";
-
-/// Width of the gutter column holding the order-anomaly marker, keeping the
-/// timestamp column aligned on the rows without one.
-const ANOMALY_COLUMN_WIDTH_PX: f32 = 6.0;
-
-const ANOMALY_MARKER_WIDTH_PX: f32 = 3.0;
-
-/// Width of the bar a row takes in the gutter column of a layer chip it
-/// matches.
-const LAYER_BAR_WIDTH_PX: f32 = 4.0;
-
-/// Gap between one layer chip's bars and the next chip's.
-const LAYER_BAR_GAP_PX: f32 = 1.0;
-
-/// Width one layer chip claims in the gutter: its bar and the gap after it.
-const LAYER_COLUMN_WIDTH_PX: f32 = LAYER_BAR_WIDTH_PX + LAYER_BAR_GAP_PX;
-
-const GUTTER_MARKER_CORNER_RADIUS: u8 = 1;
-
-/// How strongly the rows of a marking hexagon are tinted in that hexagon's
-/// colour: enough to find them in a scrolling table, light enough to read the
-/// line through.
-const CROSS_HIGHLIGHT_ROW_ALPHA: f32 = 0.3;
-
 /// One row of the table: a boot session's divider, a new day's divider, or one
 /// entry of the log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -872,6 +833,45 @@ fn boot_divider_row_ui(ui: &mut egui::Ui, session: &BootSession) {
     divider_row_ui(ui, RichText::new(label).monospace().strong());
 }
 
+/// The prefix of an anchored timestamp, as wide as the interpolated marker so
+/// that the timestamp column stays aligned.
+const ANCHORED_TIMESTAMP_PREFIX: &str = " ";
+
+/// The run of the timestamp column the timestamp tick colours.
+const HOUR_MINUTE_FORMAT: &str = "%H:%M";
+
+/// The run of the timestamp column after the hour and the minute, always drawn
+/// in the quiet colour.
+const SECONDS_FORMAT: &str = ":%S";
+
+pub(super) const INTERPOLATED_TIMESTAMP_HOVER: &str =
+    "Timestamp interpolated between neighbouring entries";
+
+pub(super) const ASSOCIATED_ROW_HOVER: &str = "Centre the map on this line";
+
+/// Width of the gutter column holding the order-anomaly marker, keeping the
+/// timestamp column aligned on the rows without one.
+const ANOMALY_COLUMN_WIDTH_PX: f32 = 6.0;
+
+const ANOMALY_MARKER_WIDTH_PX: f32 = 3.0;
+
+/// Width of the bar a row takes in the gutter column of a layer chip it
+/// matches.
+const LAYER_BAR_WIDTH_PX: f32 = 4.0;
+
+/// Gap between one layer chip's bars and the next chip's.
+const LAYER_BAR_GAP_PX: f32 = 1.0;
+
+/// Width one layer chip claims in the gutter: its bar and the gap after it.
+const LAYER_COLUMN_WIDTH_PX: f32 = LAYER_BAR_WIDTH_PX + LAYER_BAR_GAP_PX;
+
+const GUTTER_MARKER_CORNER_RADIUS: u8 = 1;
+
+/// How strongly the rows of a marking hexagon are tinted in that hexagon's
+/// colour: enough to find them in a scrolling table, light enough to read the
+/// line through.
+const CROSS_HIGHLIGHT_ROW_ALPHA: f32 = 0.3;
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -883,18 +883,6 @@ mod tests {
 
     use super::*;
     use crate::app::log_viewer::TIMESTAMP_FORMAT;
-
-    /// The log the viewer is showing in the cross-highlight cases.
-    const SHOWN_LOG: LoadedLogId = LoadedLogId::new(1);
-
-    const OTHER_LOG: LoadedLogId = LoadedLogId::new(2);
-
-    /// Two phenomena a filter can pick out, one of them logged twice.
-    const GUTTER_LOG: &str = "\
-2026-01-01 14:02:11 navsyncd: gnss fix acquired
-2026-01-01 14:02:12 hal-powerd: battery low
-2026-01-01 14:02:13 navsyncd: gnss fix lost
-";
 
     fn gutter_log_start() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 1, 1, 14, 2, 11)
@@ -1187,16 +1175,6 @@ mod tests {
         assert_eq!(marked.fill_of(entry_index), expected);
     }
 
-    /// A line stating a service and an error level, as the two colouring cases
-    /// below read it.
-    const ERROR_LINE: &str =
-        "2026-01-01 14:02:11 hal-modem: [ERROR modem::manager::modem] timed out";
-
-    const ERROR_MESSAGE: &str = "hal-modem: [ERROR modem::manager::modem] timed out";
-
-    /// The theme the runs below resolve in.
-    const DARK_MODE: bool = true;
-
     /// What the parse read out of the one entry of `text`.
     fn recognised_message_of(text: &str) -> RecognisedMessage {
         let parsed =
@@ -1320,4 +1298,26 @@ mod tests {
 
         assert_eq!(LayerGutter::of(&stack, true).columns.len(), 0);
     }
+
+    /// The log the viewer is showing in the cross-highlight cases.
+    const SHOWN_LOG: LoadedLogId = LoadedLogId::new(1);
+
+    const OTHER_LOG: LoadedLogId = LoadedLogId::new(2);
+
+    /// Two phenomena a filter can pick out, one of them logged twice.
+    const GUTTER_LOG: &str = "\
+2026-01-01 14:02:11 navsyncd: gnss fix acquired
+2026-01-01 14:02:12 hal-powerd: battery low
+2026-01-01 14:02:13 navsyncd: gnss fix lost
+";
+
+    /// A line stating a service and an error level, as the two colouring cases
+    /// read it.
+    const ERROR_LINE: &str =
+        "2026-01-01 14:02:11 hal-modem: [ERROR modem::manager::modem] timed out";
+
+    const ERROR_MESSAGE: &str = "hal-modem: [ERROR modem::manager::modem] timed out";
+
+    /// The theme the runs resolve in.
+    const DARK_MODE: bool = true;
 }

@@ -13,10 +13,6 @@ use serde_json::Value;
 
 use gt_snap::{CAPTURE_SCENARIOS, DEFAULT_SERVER_URL, test_util};
 
-/// The one scenario whose response is deliberately not JSON: the reverse
-/// proxy's HTML 413 page.
-const HTML_RESPONSE_SCENARIO: &str = "too_large_body";
-
 fn parse_json(name: &str) -> Result<Value, String> {
     serde_json::from_str(&test_util::read_capture(name)?).map_err(|err| format!("{name}: {err}"))
 }
@@ -95,3 +91,7 @@ fn capture_metadata_pins_server_and_statuses() {
     // reviewed deliberately.
     insta::assert_debug_snapshot!(statuses);
 }
+
+/// The one scenario whose response is deliberately not JSON: the reverse
+/// proxy's HTML 413 page.
+const HTML_RESPONSE_SCENARIO: &str = "too_large_body";

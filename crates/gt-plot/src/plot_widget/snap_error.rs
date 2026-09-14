@@ -30,13 +30,6 @@ pub(super) fn snap_error_available(
         })
 }
 
-/// Plot y of an unsnapped point's marker: rejected points have no error value.
-const UNSNAPPED_MARKER_Y: f64 = 0.0;
-
-/// Radius of the snapped-point markers on the snap error line. Small - the
-/// markers annotate the line's anchor points, they are not anomaly flags.
-const SNAPPED_MARKER_RADIUS: f32 = 2.5;
-
 /// Per-track plot-side cache of a snap error series: the line runs as
 /// mipmap cascades (downsampled like every other metric), plus the raw
 /// per-kind point lists for the marker overlays. Rebuilt only when the
@@ -250,6 +243,13 @@ pub(super) fn add_snap_error_series<'a>(
         });
     }
 }
+
+/// Plot y of an unsnapped point's marker: rejected points have no error value.
+const UNSNAPPED_MARKER_Y: f64 = 0.0;
+
+/// Radius of the snapped-point markers on the snap error line. Small - the
+/// markers annotate the line's anchor points, they are not anomaly flags.
+const SNAPPED_MARKER_RADIUS: f32 = 2.5;
 
 #[cfg(test)]
 mod tests {

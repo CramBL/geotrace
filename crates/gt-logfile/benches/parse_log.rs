@@ -20,11 +20,6 @@ use std::{hint, sync::Arc};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use gt_test_utils::log_fixtures;
 
-const MIB: usize = 1024 * 1024;
-
-/// This much text indexes on one thread, under gt-logfile's chunk size.
-const SINGLE_CHUNK_BYTES: usize = 12 * MIB;
-
 fn fixture(approx_bytes: usize) -> Arc<str> {
     Arc::from(log_fixtures::syslog_journald_log(approx_bytes, 1))
 }
@@ -77,3 +72,8 @@ fn bench_parse_log_single_chunk(c: &mut Criterion) {
 
 criterion_group!(benches, bench_parse_log, bench_parse_log_single_chunk);
 criterion_main!(benches);
+
+const MIB: usize = 1024 * 1024;
+
+/// This much text indexes on one thread, under gt-logfile's chunk size.
+const SINGLE_CHUNK_BYTES: usize = 12 * MIB;

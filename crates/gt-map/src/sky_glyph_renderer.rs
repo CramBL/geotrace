@@ -23,82 +23,12 @@ use smallvec::SmallVec;
 use crate::collision_grid;
 use crate::transform::MercTransform;
 
-/// Minimum on-screen spacing between sky rings. The decimation cell size,
-/// so denser reports thin to at most one ring per this many pixels.
-const RING_MIN_SPACING_PX: f32 = 72.0;
-
-/// Minimum on-screen spacing between sky discs. Wider than the rings, since
-/// an offset disc occupies more room than a centered ring.
-const DISC_MIN_SPACING_PX: f32 = 112.0;
-
 pub(crate) fn min_spacing_px(variant: SkyGlyphVariant) -> f32 {
     match variant {
         SkyGlyphVariant::Ring => RING_MIN_SPACING_PX,
         SkyGlyphVariant::Disc => DISC_MIN_SPACING_PX,
     }
 }
-
-/// Zoom at or above which sky glyphs draw, matching where per-fix icons become
-/// legible. Below it a track collapses to a few pixels.
-pub(crate) const MIN_ZOOM: f64 = 13.0;
-
-/// Outer radius of the ring annulus. The hole keeps the fix's heading arrow
-/// visible.
-const RING_RADIUS_PX: f32 = 15.0;
-
-/// Stroke width of the ring baseline and the disc rim.
-const BASELINE_STROKE_PX: f32 = 1.0;
-
-/// Alpha of the ring baseline, kept low so the ring reads as background
-/// context.
-const BASELINE_ALPHA: f32 = 0.35;
-
-/// Radius of a satellite bead on the ring.
-const BEAD_RADIUS_PX: f32 = 3.0;
-
-/// Stroke width of a hollow (fix-loss) bead.
-const HOLLOW_BEAD_STROKE_PX: f32 = 1.4;
-
-/// Dash and gap lengths of the fix-loss baseline ring / disc rim.
-const FIX_LOSS_DASH_PX: f32 = 3.0;
-const FIX_LOSS_GAP_PX: f32 = 3.0;
-/// Polyline segments approximating a dashed fix-loss circle.
-const FIX_LOSS_SEGMENTS: u32 = 48;
-/// Vertices in that polyline (segments plus the closing point). The circle is
-/// a per-glyph, per-frame temporary, so it stacks in a [`SmallVec`] of this
-/// capacity.
-const FIX_LOSS_RING_POINTS: usize = FIX_LOSS_SEGMENTS as usize + 1;
-
-/// Radius of the sky disc.
-const DISC_RADIUS_PX: f32 = 20.0;
-
-/// Fallback offset from the fix to the disc center where the track is
-/// straight or the anchor has no usable neighbor - up and to the side, like
-/// the satellite-label anchor, so the disc and its leader clear the fix and
-/// its heading arrow. On a curve the disc is placed perpendicular to the
-/// track instead (see [`disc_offset`]). This vector's length sets that
-/// perpendicular distance.
-const DISC_OFFSET_PX: Vec2 = Vec2::new(14.0, -36.0);
-
-/// A neighbor sample must lie at least this far from the anchor on screen
-/// before it defines the local track tangent, so nearly-coincident points
-/// don't yield a noisy direction.
-const TANGENT_SAMPLE_MIN_PX: f32 = 8.0;
-
-/// A bend sharper than this (perpendicular offset of the neighbor midpoint
-/// from the fix, in screen px) places the disc on the bend's outer side.
-/// Below it the track is treated as straight and the disc goes up.
-const CURVE_MIN_PX: f32 = 1.5;
-
-/// Alpha of the disc's translucent backing fill, for contrast against map
-/// tiles without hiding them.
-const DISC_BACKING_ALPHA: f32 = 0.78;
-
-/// Alpha of the disc rim and leader, low like the ring baseline.
-const DISC_RIM_ALPHA: f32 = 0.6;
-
-/// Radius of a satellite dot inside the disc.
-const DISC_DOT_RADIUS_PX: f32 = 2.2;
 
 /// Reusable glyph-decimation scratch, held across frames by the map widget.
 /// Its per-geometry output lists are indexed like the caller's geometry list,
@@ -456,6 +386,76 @@ fn draw_disc(
     }
 }
 
+/// Minimum on-screen spacing between sky rings. The decimation cell size,
+/// so denser reports thin to at most one ring per this many pixels.
+const RING_MIN_SPACING_PX: f32 = 72.0;
+
+/// Minimum on-screen spacing between sky discs. Wider than the rings, since
+/// an offset disc occupies more room than a centered ring.
+const DISC_MIN_SPACING_PX: f32 = 112.0;
+
+/// Zoom at or above which sky glyphs draw, matching where per-fix icons become
+/// legible. Below it a track collapses to a few pixels.
+pub(crate) const MIN_ZOOM: f64 = 13.0;
+
+/// Outer radius of the ring annulus. The hole keeps the fix's heading arrow
+/// visible.
+const RING_RADIUS_PX: f32 = 15.0;
+
+/// Stroke width of the ring baseline and the disc rim.
+const BASELINE_STROKE_PX: f32 = 1.0;
+
+/// Alpha of the ring baseline, kept low so the ring reads as background
+/// context.
+const BASELINE_ALPHA: f32 = 0.35;
+
+/// Radius of a satellite bead on the ring.
+const BEAD_RADIUS_PX: f32 = 3.0;
+
+/// Stroke width of a hollow (fix-loss) bead.
+const HOLLOW_BEAD_STROKE_PX: f32 = 1.4;
+
+/// Dash and gap lengths of the fix-loss baseline ring / disc rim.
+const FIX_LOSS_DASH_PX: f32 = 3.0;
+const FIX_LOSS_GAP_PX: f32 = 3.0;
+/// Polyline segments approximating a dashed fix-loss circle.
+const FIX_LOSS_SEGMENTS: u32 = 48;
+/// Vertices in that polyline (segments plus the closing point). The circle is
+/// a per-glyph, per-frame temporary, so it stacks in a [`SmallVec`] of this
+/// capacity.
+const FIX_LOSS_RING_POINTS: usize = FIX_LOSS_SEGMENTS as usize + 1;
+
+/// Radius of the sky disc.
+const DISC_RADIUS_PX: f32 = 20.0;
+
+/// Fallback offset from the fix to the disc center where the track is
+/// straight or the anchor has no usable neighbor - up and to the side, like
+/// the satellite-label anchor, so the disc and its leader clear the fix and
+/// its heading arrow. On a curve the disc is placed perpendicular to the
+/// track instead (see [`disc_offset`]). This vector's length sets that
+/// perpendicular distance.
+const DISC_OFFSET_PX: Vec2 = Vec2::new(14.0, -36.0);
+
+/// A neighbor sample must lie at least this far from the anchor on screen
+/// before it defines the local track tangent, so nearly-coincident points
+/// don't yield a noisy direction.
+const TANGENT_SAMPLE_MIN_PX: f32 = 8.0;
+
+/// A bend sharper than this (perpendicular offset of the neighbor midpoint
+/// from the fix, in screen px) places the disc on the bend's outer side.
+/// Below it the track is treated as straight and the disc goes up.
+const CURVE_MIN_PX: f32 = 1.5;
+
+/// Alpha of the disc's translucent backing fill, for contrast against map
+/// tiles without hiding them.
+const DISC_BACKING_ALPHA: f32 = 0.78;
+
+/// Alpha of the disc rim and leader, low like the ring baseline.
+const DISC_RIM_ALPHA: f32 = 0.6;
+
+/// Radius of a satellite dot inside the disc.
+const DISC_DOT_RADIUS_PX: f32 = 2.2;
+
 #[cfg(test)]
 mod tests {
     use crate::test_util;
@@ -464,13 +464,6 @@ mod tests {
     use gt_ui_types::{SkyGlyphVariant, TrackMatchView};
 
     use super::{DISC_OFFSET_PX, DISC_RADIUS_PX, GlyphSelection, RING_RADIUS_PX};
-
-    const WORLD: gt_types::MercBounds = gt_types::MercBounds {
-        x_min: 0.0,
-        x_max: 1.0,
-        y_min: 0.0,
-        y_max: 1.0,
-    };
 
     fn sat(constellation: Constellation, azimuth: f32, in_fix: bool) -> Satellite {
         Satellite::new(
@@ -819,4 +812,11 @@ mod tests {
                 > super::min_spacing_px(SkyGlyphVariant::Ring)
         );
     }
+
+    const WORLD: gt_types::MercBounds = gt_types::MercBounds {
+        x_min: 0.0,
+        x_max: 1.0,
+        y_min: 0.0,
+        y_max: 1.0,
+    };
 }

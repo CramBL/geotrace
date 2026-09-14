@@ -16,15 +16,47 @@ use hdf5::Group;
 use std::path::Path;
 use thiserror::Error;
 
+/// The fixed-capacity ladder the string-attribute readers share: pick the
+/// smallest compile-time capacity that holds the on-disk size `$len`, then hand
+/// the concrete `$fixed<CAP>` type to the `$read` macro.
+///
+/// libhdf5 converts between fixed string sizes but offers no fixed -> variable
+/// conversion path, so a fixed-length attribute cannot be read straight into
+/// `VarLenUnicode`. It must be read into a fixed buffer at least as large as the
+/// on-disk capacity.
+///
+/// This ladder keys off the *on-disk capacity* `n` reported by the descriptor,
+/// while [`write_string_attr`] chooses its capacity from the string's *byte
+/// length*. The `<=` bounds here (against the `<` bounds there) make the reader
+/// land in the exact bucket the writer emitted.
+macro_rules! read_at_capacity {
+    ($read:ident, $fixed:ident, $len:expr) => {{
+        let len = $len;
+        if len <= 64 {
+            $read!($fixed<64>)
+        } else if len <= 256 {
+            $read!($fixed<256>)
+        } else if len <= 1024 {
+            $read!($fixed<1024>)
+        } else if len <= 8192 {
+            $read!($fixed<8192>)
+        } else {
+            return Err(InternalError::Hdf5(hdf5::Error::from(format!(
+                "string attribute too long to copy in place ({len} bytes)"
+            ))));
+        }
+    }};
+}
+
 #[derive(Debug, Error)]
 pub(crate) enum InternalError {
+    /// A rename could not proceed without losing or overwriting data.
+    #[error("{0}")]
+    Conflict(String),
     #[error(transparent)]
     Hdf5(#[from] hdf5::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    /// A rename could not proceed without losing or overwriting data.
-    #[error("{0}")]
-    Conflict(String),
 }
 
 impl From<InternalError> for DbError {
@@ -386,12 +418,6 @@ pub(crate) fn is_duplicate(
     Ok(false)
 }
 
-/// The 8-byte magic that begins every HDF5 file (and its superblock).
-const HDF5_SIGNATURE: [u8; 8] = [0x89, b'H', b'D', b'F', b'\r', b'\n', 0x1a, b'\n'];
-/// Length of a version-2/3 superblock with 8-byte offsets and lengths: the
-/// fixed prefix (12) + four 8-byte addresses (32) + the 4-byte checksum.
-const SUPERBLOCK_V2_LEN: usize = 48;
-
 /// HDF5's metadata checksum (Jenkins `lookup3`, little-endian, `initval = 0`),
 /// matching libhdf5's `H5_checksum_lookup3`.
 ///
@@ -538,9 +564,6 @@ pub(crate) fn clear_write_lock(db_path: &Path) -> Result<bool, InternalError> {
     file.flush()?;
     Ok(true)
 }
-
-/// Name of the throwaway group used to probe whether libhdf5 can write to a file.
-const WRITE_PROBE_GROUP: &str = "__geotrace_write_probe__";
 
 /// Returns `true` if libhdf5 can create (and remove) a group in `db_path`.
 ///
@@ -708,15 +731,6 @@ pub(crate) fn insert_recording(
         group_name,
     })
 }
-
-/// Name of the group [`replace_recording`] builds a recording's replacement
-/// in, under `/meta` and one per recording.
-///
-/// A stage stays out of the listing: [`list_recordings`] reads the recordings
-/// under `by_identity`. [`resolve_replacement_stage`] resolves a stage, from
-/// [`replace_recording`] on the next replacement of that recording, and from
-/// [`repair_unindexed_recordings`] ahead of its own scan on the next open.
-const REPLACEMENT_STAGE_PREFIX: &str = "__geotrace_replacement__";
 
 /// Resolve one replacement stage, in each of the three states an interrupted
 /// [`replace_recording`] leaves one in.
@@ -1134,38 +1148,6 @@ fn write_string_attr(group: &Group, name: &str, val: &str) -> Result<(), Interna
             .write_scalar(&v)?;
     }
     Ok(())
-}
-
-/// The fixed-capacity ladder the string-attribute readers share: pick the
-/// smallest compile-time capacity that holds the on-disk size `$len`, then hand
-/// the concrete `$fixed<CAP>` type to the `$read` macro.
-///
-/// libhdf5 converts between fixed string sizes but offers no fixed -> variable
-/// conversion path, so a fixed-length attribute cannot be read straight into
-/// `VarLenUnicode`. It must be read into a fixed buffer at least as large as the
-/// on-disk capacity.
-///
-/// This ladder keys off the *on-disk capacity* `n` reported by the descriptor,
-/// while [`write_string_attr`] chooses its capacity from the string's *byte
-/// length*. The `<=` bounds here (against the `<` bounds there) make the reader
-/// land in the exact bucket the writer emitted.
-macro_rules! read_at_capacity {
-    ($read:ident, $fixed:ident, $len:expr) => {{
-        let len = $len;
-        if len <= 64 {
-            $read!($fixed<64>)
-        } else if len <= 256 {
-            $read!($fixed<256>)
-        } else if len <= 1024 {
-            $read!($fixed<1024>)
-        } else if len <= 8192 {
-            $read!($fixed<8192>)
-        } else {
-            return Err(InternalError::Hdf5(hdf5::Error::from(format!(
-                "string attribute too long to copy in place ({len} bytes)"
-            ))));
-        }
-    }};
 }
 
 /// Read a string attribute (fixed- or variable-length, Unicode or ASCII) into an
@@ -1667,11 +1649,6 @@ pub(crate) fn list_recordings(
     Ok(entries)
 }
 
-/// The status flags an interrupted SWMR writer leaves: open for write, plus
-/// the SWMR marker. Observed on a file `hdf5-pure` flagged and abandoned.
-#[cfg(test)]
-const WRITER_FLAGS: u8 = 5;
-
 /// Set the superblock status flags a crashed writer leaves behind, the
 /// mirror of [`clear_write_lock`].
 ///
@@ -1699,6 +1676,29 @@ pub(crate) fn mark_write_locked(db_path: &Path) -> Result<(), InternalError> {
     file.flush()?;
     Ok(())
 }
+
+/// The 8-byte magic that begins every HDF5 file (and its superblock).
+const HDF5_SIGNATURE: [u8; 8] = [0x89, b'H', b'D', b'F', b'\r', b'\n', 0x1a, b'\n'];
+/// Length of a version-2/3 superblock with 8-byte offsets and lengths: the
+/// fixed prefix (12) + four 8-byte addresses (32) + the 4-byte checksum.
+const SUPERBLOCK_V2_LEN: usize = 48;
+
+/// Name of the throwaway group used to probe whether libhdf5 can write to a file.
+const WRITE_PROBE_GROUP: &str = "__geotrace_write_probe__";
+
+/// Name of the group [`replace_recording`] builds a recording's replacement
+/// in, under `/meta` and one per recording.
+///
+/// A stage stays out of the listing: [`list_recordings`] reads the recordings
+/// under `by_identity`. [`resolve_replacement_stage`] resolves a stage, from
+/// [`replace_recording`] on the next replacement of that recording, and from
+/// [`repair_unindexed_recordings`] ahead of its own scan on the next open.
+const REPLACEMENT_STAGE_PREFIX: &str = "__geotrace_replacement__";
+
+/// The status flags an interrupted SWMR writer leaves: open for write, plus
+/// the SWMR marker. Observed on a file `hdf5-pure` flagged and abandoned.
+#[cfg(test)]
+const WRITER_FLAGS: u8 = 5;
 
 #[cfg(test)]
 mod tests {

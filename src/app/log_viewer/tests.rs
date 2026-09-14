@@ -35,91 +35,6 @@ use super::{
     filters, line_table, log_list,
 };
 
-/// One log holding every row kind the table draws: an entry timestamped from
-/// its neighbours, a reboot separator, and a backwards timestamp step no clock
-/// adjustment explains.
-const LOG_WITH_EVERY_ROW_KIND: &str = "\
-2026-05-29 18:48:25 navsyncd: starting
-  at 0x0000c3f4 in gnss_task+0x54
-2026-05-29 18:48:27 navsyncd: fix acquired
---- Device reboot ---
-2026-05-29 18:48:30 navsyncd: starting
-2026-05-29 18:44:00 navsyncd: telemetry queued
-2026-05-29 18:48:40 navsyncd: fix acquired
-";
-
-/// A log whose two lines fall on either side of midnight, for the divider the
-/// table opens the new day with.
-const LOG_ACROSS_MIDNIGHT: &str = "\
-2026-05-29 23:59:58 navsyncd: fix acquired
-2026-05-30 00:00:03 navsyncd: fix lost
-";
-
-/// A second log sharing none of the first one's messages: switching the
-/// selected row switches what the filter row shows.
-const SECOND_LOG: &str = "\
-2026-05-29 18:48:26 hal-powerd: battery low
-2026-05-29 18:48:28 hal-powerd: battery critical
-";
-
-/// A third log, for the group of logs that take their positions from no
-/// recording.
-const THIRD_LOG: &str = "\
-2026-05-29 18:48:29 kernel: usb 1-1 disconnect
-";
-
-/// The timestamp column of the log's first entry, as the table writes it: a
-/// leading space where an interpolated entry carries its marker.
-const FIRST_ENTRY_TIMESTAMP: &str = " 2026-05-29 18:48:25";
-
-/// The message of the log's first entry, which its last boot repeats.
-const FIRST_ENTRY_MESSAGE: &str = "navsyncd: starting";
-
-/// A log whose one line states both a service and a level, for the two
-/// colouring tickboxes.
-const LOG_WITH_A_SERVICE_AND_A_LEVEL: &str = "\
-2026-05-29 18:48:25 navsyncd: [WARN gnss::fix] signal lost
-";
-
-/// The message of [`LOG_WITH_A_SERVICE_AND_A_LEVEL`]'s one entry, as the table
-/// writes it.
-const SERVICE_AND_LEVEL_MESSAGE: &str = "navsyncd: [WARN gnss::fix] signal lost";
-
-/// The timestamp column of the log's third entry, which follows the entry above
-/// it inside the same minute.
-const SAME_MINUTE_ENTRY_TIMESTAMP: &str = " 2026-05-29 18:48:27";
-
-/// The format the parse read the fixture log in, as the summary panel names
-/// it.
-const FIXTURE_LOG_FORMAT: &str = "ISO 8601";
-
-/// The second row of the fixture log, whose line carries no timestamp of its
-/// own.
-const INTERPOLATED_ENTRY_TIMESTAMP: &str = "≈2026-05-29 18:48:26";
-
-/// A log that was never loaded here, standing in for one the viewer is not
-/// showing.
-const UNLOADED_LOG: LoadedLogId = LoadedLogId::new(7);
-
-/// The association window a freshly loaded log starts with, matching the app's
-/// default.
-const ASSOCIATION_WINDOW_SECS: i64 = 60;
-
-/// Frames the cursor rests on a row before egui opens its hover text: the
-/// harness clock ticks a quarter second per frame, past the tooltip delay.
-const TOOLTIP_DELAY_FRAMES: usize = 3;
-
-/// The window the viewer is driven in, wide enough for the footer's controls
-/// to sit on one row.
-const VIEWER_SIZE: egui::Vec2 = egui::vec2(760.0, 560.0);
-
-/// A scroll to one of [`long_log`]'s entries leaves the head of the log off
-/// screen: the log has more lines than the table draws at once.
-const LONG_LOG_ENTRIES: usize = 200;
-
-/// The first entry of [`long_log`] the map's clicked hexagon groups.
-const CLICKED_ENTRY: usize = 120;
-
 fn log_start() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 5, 29, 18, 48, 25)
         .single()
@@ -387,13 +302,6 @@ fn the_table_opens_each_boot_with_a_divider_and_marks_an_interpolated_timestamp(
     // The line between 18:48:25 and 18:48:27 carries no timestamp of its own.
     harness.get_by_label("≈2026-05-29 18:48:26");
 }
-
-/// The date the table opens the second day of [`LOG_ACROSS_MIDNIGHT`] with.
-const SECOND_DAY_DIVIDER_LABEL: &str = "2026-05-30";
-
-/// The date the log's first line falls on, which no divider states: the table
-/// opens on that day.
-const FIRST_DAY_LABEL: &str = "2026-05-29";
 
 #[test]
 fn the_table_opens_a_new_day_with_a_divider_naming_its_date() {
@@ -1246,8 +1154,8 @@ fn the_unload_hover_says_whether_the_log_stays_attached(
 /// Whether the shown log is stored with the recording it is anchored to.
 #[derive(Debug, Clone, Copy)]
 enum ShownLogStorage {
-    StoredWithTheRecording,
     StoredNowhere,
+    StoredWithTheRecording,
 }
 
 /// A stored log that is not loaded is listed under its recording, and the row
@@ -1284,10 +1192,6 @@ fn harness_over_a_log_whose_recording_is_not_loaded() -> Harness<'static, Viewer
     load_the_stored_log(&mut state, &stored_attachment());
     harness_from(state)
 }
-
-/// The heading the list gives the group of a recording that is not loaded, and
-/// the row the footer states it on.
-const NOT_LOADED_RECORDING: &str = "nav-devkit-mk2 (not loaded)";
 
 /// A log whose recording is not loaded is listed under that recording, and the
 /// footer states the anchor and offers to open the recording from history.
@@ -1426,10 +1330,6 @@ fn switch_chip_mode(harness: &mut Harness<ViewerState>, index: usize) {
         .click();
     run_until_the_scans_land(harness);
 }
-
-/// The tickboxes the filter row draws above the chips, "Colour services" and
-/// "Colour levels", which come before every chip's own tickbox.
-const FILTER_ROW_TICKBOXES: usize = 2;
 
 /// Clicks the tickbox of the chip at `index`.
 fn toggle_chip(harness: &mut Harness<ViewerState>, index: usize) {
@@ -1666,27 +1566,6 @@ fn the_live_filter_belongs_to_the_log_it_was_written_for() {
     assert_eq!(live_filter_text(&harness), "battery low");
 }
 
-/// Tolerance for a scroll read off the screen, in points: the table's rows are
-/// laid out at whole points, and a step is compared against a height measured
-/// the same way.
-const SCROLL_READING_TOLERANCE_PX: f32 = 0.5;
-
-/// Points one wheel scroll sends, which falls between two rows: the lines
-/// cannot land on that distance by rounding to a row.
-const WHEEL_SCROLL_PX: f32 = 30.0;
-
-/// Frames a wheel scroll takes to come to rest, which egui smooths over
-/// several.
-const WHEEL_SETTLE_FRAMES: usize = 4;
-
-/// A pointer position off the viewer, which is where the pointer sits while
-/// the user works on the map or on another window.
-const POINTER_OFF_EVERY_WINDOW: egui::Pos2 = egui::Pos2::new(-10.0, -10.0);
-
-/// Page steps [`scroll_to_the_end`] takes before it gives up, which covers
-/// [`LONG_LOG_ENTRIES`] rows at any table height.
-const PAGE_STEPS_TO_THE_END: usize = 60;
-
 /// The viewer over a log longer than the table shows at once, with the pointer
 /// resting on the window: the scrolling keys fire nowhere else.
 fn keyboard_scroll_harness() -> Harness<'static, ViewerState> {
@@ -1908,3 +1787,124 @@ fn log_viewer_window_fits_every_viewport(
         ControlLabel("Associated with"),
     );
 }
+
+/// One log holding every row kind the table draws: an entry timestamped from
+/// its neighbours, a reboot separator, and a backwards timestamp step no clock
+/// adjustment explains.
+const LOG_WITH_EVERY_ROW_KIND: &str = "\
+2026-05-29 18:48:25 navsyncd: starting
+  at 0x0000c3f4 in gnss_task+0x54
+2026-05-29 18:48:27 navsyncd: fix acquired
+--- Device reboot ---
+2026-05-29 18:48:30 navsyncd: starting
+2026-05-29 18:44:00 navsyncd: telemetry queued
+2026-05-29 18:48:40 navsyncd: fix acquired
+";
+
+/// A log whose two lines fall on either side of midnight, for the divider the
+/// table opens the new day with.
+const LOG_ACROSS_MIDNIGHT: &str = "\
+2026-05-29 23:59:58 navsyncd: fix acquired
+2026-05-30 00:00:03 navsyncd: fix lost
+";
+
+/// A second log sharing none of the first one's messages: switching the
+/// selected row switches what the filter row shows.
+const SECOND_LOG: &str = "\
+2026-05-29 18:48:26 hal-powerd: battery low
+2026-05-29 18:48:28 hal-powerd: battery critical
+";
+
+/// A third log, for the group of logs that take their positions from no
+/// recording.
+const THIRD_LOG: &str = "\
+2026-05-29 18:48:29 kernel: usb 1-1 disconnect
+";
+
+/// The timestamp column of the log's first entry, as the table writes it: a
+/// leading space where an interpolated entry carries its marker.
+const FIRST_ENTRY_TIMESTAMP: &str = " 2026-05-29 18:48:25";
+
+/// The message of the log's first entry, which its last boot repeats.
+const FIRST_ENTRY_MESSAGE: &str = "navsyncd: starting";
+
+/// A log whose one line states both a service and a level, for the two
+/// colouring tickboxes.
+const LOG_WITH_A_SERVICE_AND_A_LEVEL: &str = "\
+2026-05-29 18:48:25 navsyncd: [WARN gnss::fix] signal lost
+";
+
+/// The message of [`LOG_WITH_A_SERVICE_AND_A_LEVEL`]'s one entry, as the table
+/// writes it.
+const SERVICE_AND_LEVEL_MESSAGE: &str = "navsyncd: [WARN gnss::fix] signal lost";
+
+/// The timestamp column of the log's third entry, which follows the entry above
+/// it inside the same minute.
+const SAME_MINUTE_ENTRY_TIMESTAMP: &str = " 2026-05-29 18:48:27";
+
+/// The format the parse read the fixture log in, as the summary panel names
+/// it.
+const FIXTURE_LOG_FORMAT: &str = "ISO 8601";
+
+/// The second row of the fixture log, whose line carries no timestamp of its
+/// own.
+const INTERPOLATED_ENTRY_TIMESTAMP: &str = "≈2026-05-29 18:48:26";
+
+/// A log that was never loaded here, standing in for one the viewer is not
+/// showing.
+const UNLOADED_LOG: LoadedLogId = LoadedLogId::new(7);
+
+/// The association window a freshly loaded log starts with, matching the app's
+/// default.
+const ASSOCIATION_WINDOW_SECS: i64 = 60;
+
+/// Frames the cursor rests on a row before egui opens its hover text: the
+/// harness clock ticks a quarter second per frame, past the tooltip delay.
+const TOOLTIP_DELAY_FRAMES: usize = 3;
+
+/// The window the viewer is driven in, wide enough for the footer's controls
+/// to sit on one row.
+const VIEWER_SIZE: egui::Vec2 = egui::vec2(760.0, 560.0);
+
+/// A scroll to one of [`long_log`]'s entries leaves the head of the log off
+/// screen: the log has more lines than the table draws at once.
+const LONG_LOG_ENTRIES: usize = 200;
+
+/// The first entry of [`long_log`] the map's clicked hexagon groups.
+const CLICKED_ENTRY: usize = 120;
+
+/// The date the table opens the second day of [`LOG_ACROSS_MIDNIGHT`] with.
+const SECOND_DAY_DIVIDER_LABEL: &str = "2026-05-30";
+
+/// The date the log's first line falls on, which no divider states: the table
+/// opens on that day.
+const FIRST_DAY_LABEL: &str = "2026-05-29";
+
+/// The heading the list gives the group of a recording that is not loaded, and
+/// the row the footer states it on.
+const NOT_LOADED_RECORDING: &str = "nav-devkit-mk2 (not loaded)";
+
+/// The tickboxes the filter row draws above the chips, "Colour services" and
+/// "Colour levels", which come before every chip's own tickbox.
+const FILTER_ROW_TICKBOXES: usize = 2;
+
+/// Tolerance for a scroll read off the screen, in points: the table's rows are
+/// laid out at whole points, and a step is compared against a height measured
+/// the same way.
+const SCROLL_READING_TOLERANCE_PX: f32 = 0.5;
+
+/// Points one wheel scroll sends, which falls between two rows: the lines
+/// cannot land on that distance by rounding to a row.
+const WHEEL_SCROLL_PX: f32 = 30.0;
+
+/// Frames a wheel scroll takes to come to rest, which egui smooths over
+/// several.
+const WHEEL_SETTLE_FRAMES: usize = 4;
+
+/// A pointer position off the viewer, which is where the pointer sits while
+/// the user works on the map or on another window.
+const POINTER_OFF_EVERY_WINDOW: egui::Pos2 = egui::Pos2::new(-10.0, -10.0);
+
+/// Page steps [`scroll_to_the_end`] takes before it gives up, which covers
+/// [`LONG_LOG_ENTRIES`] rows at any table height.
+const PAGE_STEPS_TO_THE_END: usize = 60;

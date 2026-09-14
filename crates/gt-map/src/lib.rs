@@ -1,43 +1,6 @@
 use egui::{Area, Button, Frame, Grid, Label, RichText, Window};
 use egui_phosphor::regular::GLOBE_HEMISPHERE_WEST as ICON_GLOBE_HEMISPHERE_WEST;
 use egui_phosphor::regular::MAP_TRIFOLD as ICON_MAP_TRIFOLD;
-mod collision_grid;
-pub mod display_counts;
-mod display_toggle;
-pub mod event_marker_renderer;
-pub(crate) mod generated_marker_renderer;
-mod hover_labels;
-pub mod icon_mesh;
-mod jamming_renderer;
-mod log_match_renderer;
-pub mod mapbox_tiles;
-pub mod marker_renderer;
-mod match_reveal;
-mod polyline;
-mod query_match_renderer;
-mod recording_labels;
-mod sat_labels;
-mod sky_glyph_renderer;
-mod sky_trails_window;
-mod snapped_track_renderer;
-mod space_weather_indicator;
-mod tec_renderer;
-pub mod test_tiles;
-#[cfg(any(test, feature = "test-util"))]
-pub mod test_util;
-mod text_badge;
-pub mod tpv_renderer;
-mod track_endpoint_renderer;
-mod track_layers;
-pub mod track_renderer;
-mod transform;
-mod viewport;
-
-pub use display_toggle::{DISPLAY_TOGGLE_BUTTON_AREA_ID, DISPLAY_TOGGLE_POPUP_AREA_ID};
-pub use sky_trails_window::SkyTrailsWindow;
-pub use space_weather_indicator::SpaceWeatherIndicator;
-pub use tec_renderer::{TecHeatmapSnapshot, TecLayer};
-pub use viewport::ViewportBounds;
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -75,6 +38,44 @@ use crate::tpv_renderer::FixPlacement;
 use crate::track_layers::TrackLayers;
 use crate::transform::{MapScale, MercTransform};
 
+pub use display_toggle::{DISPLAY_TOGGLE_BUTTON_AREA_ID, DISPLAY_TOGGLE_POPUP_AREA_ID};
+pub use sky_trails_window::SkyTrailsWindow;
+pub use space_weather_indicator::SpaceWeatherIndicator;
+pub use tec_renderer::{TecHeatmapSnapshot, TecLayer};
+pub use viewport::ViewportBounds;
+
+mod collision_grid;
+pub mod display_counts;
+mod display_toggle;
+pub mod event_marker_renderer;
+pub(crate) mod generated_marker_renderer;
+mod hover_labels;
+pub mod icon_mesh;
+mod jamming_renderer;
+mod log_match_renderer;
+pub mod mapbox_tiles;
+pub mod marker_renderer;
+mod match_reveal;
+mod polyline;
+mod query_match_renderer;
+mod recording_labels;
+mod sat_labels;
+mod sky_glyph_renderer;
+mod sky_trails_window;
+mod snapped_track_renderer;
+mod space_weather_indicator;
+mod tec_renderer;
+pub mod test_tiles;
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
+mod text_badge;
+pub mod tpv_renderer;
+mod track_endpoint_renderer;
+mod track_layers;
+pub mod track_renderer;
+mod transform;
+mod viewport;
+
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum MapLayer {
     #[default]
@@ -86,34 +87,25 @@ pub enum MapLayer {
 /// set.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SatelliteLayerAccess {
+    /// Grayed until a token is set.
+    TokenRequired,
     /// Selectable with no token: picking it opens the application's token
     /// dialog.
     WithoutToken,
-    /// Grayed until a token is set.
-    TokenRequired,
 }
-
-pub const SATELLITE_LAYER_NEEDS_TOKEN: &str = "Enter a Mapbox token to use the satellite layer";
-
-/// Lowest zoom the satellite layer draws Mapbox tiles at. See
-/// [`NavMap::use_mapbox_tiles`] for what happens below it.
-pub(crate) const MAPBOX_MIN_SAFE_ZOOM: u8 = 2;
 
 /// Action the user asked for through a map context menu or popup, returned by
 /// [`NavMap::draw`] for the caller to apply to the state it owns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapAction {
-    ShowOnlyTrack(TrackRef),
-    ShowOnlyFile(FileIdx),
-    /// Open the sky trails window, per the request's track and instant.
-    ShowSkyTrails(SkyTrailsRequest),
     /// Open the reference window on this document, requested by a link in the
     /// environment warning indicator's popup.
     OpenReferenceDocument(ReferenceDocument),
+    ShowOnlyFile(FileIdx),
+    ShowOnlyTrack(TrackRef),
+    /// Open the sky trails window, per the request's track and instant.
+    ShowSkyTrails(SkyTrailsRequest),
 }
-
-const BLINK_DURATION_SEC: f32 = 3.0;
-const BLINK_PULSE_HZ: f32 = 2.0;
 
 /// Timestamps are egui clock seconds (`InputState::time`), so the pulse is
 /// deterministic under `egui_kittest`'s simulated time.
@@ -150,30 +142,6 @@ impl BlinkState {
         self.start.is_some()
     }
 }
-
-/// How far from the cursor the hit test takes an element as hovered.
-const HOVER_RADIUS_PX: f64 = 20.0;
-
-/// Minimum time (seconds) the cursor must hold the same focused track before
-/// the fade-in begins.
-const HOVER_HYSTERESIS_SEC: f64 = 0.15;
-/// Fade-in rate in overlay-progress units per second (0→1 in ≈ 330 ms).
-const HOVER_FADE_IN_RATE: f32 = 3.0;
-/// Fade-out rate when the overlay is near-opaque (start of departure).
-const HOVER_FADE_OUT_SLOW: f32 = 0.1;
-/// Fade-out rate when the overlay is near-transparent (end of departure).
-/// Combined with `HOVER_FADE_OUT_SLOW` the overlay stays ≈ 78 % visible
-/// after 1 s and reaches zero in ≈ 2 s, a quadratic ease-in curve.
-const HOVER_FADE_OUT_FAST: f32 = 1.5;
-
-/// Opening size of the clicked-point window, wide enough for the sky plot
-/// beside two columns of satellites and tall enough that a typical fix needs
-/// no scrolling.
-const POINT_WINDOW_DEFAULT_SIZE: [f32; 2] = [600.0, 460.0];
-/// Floor for the point window, below which the plot and satellite columns stop
-/// fitting side by side.
-const POINT_WINDOW_MIN_WIDTH_PX: f32 = 340.0;
-const POINT_WINDOW_MIN_HEIGHT_PX: f32 = 260.0;
 
 /// Whether this category's sticky window shows the sky plot beside the
 /// per-constellation satellite tables, in a resizable frame.
@@ -261,13 +229,13 @@ impl Default for HoverFadeState {
 /// builds no tile source at all and leaves the base layer blank.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TileAccess {
+    /// Captured tiles read from `{directory}/{zoom}/{x}/{y}.png`.
+    Captured(PathBuf),
     Network,
     Offline,
     /// Tiles drawn in process, each labelled with its id and the degrees of
     /// its north-west corner.
     Synthetic,
-    /// Captured tiles read from `{directory}/{zoom}/{x}/{y}.png`.
-    Captured(PathBuf),
 }
 
 impl TileAccess {
@@ -1605,6 +1573,39 @@ fn show_marker_window_body(ui: &mut egui::Ui, files: &[LoadedFile], sticky_ref: 
         DataCategory::Tpv | DataCategory::SatelliteReport | DataCategory::Track => {}
     });
 }
+
+pub const SATELLITE_LAYER_NEEDS_TOKEN: &str = "Enter a Mapbox token to use the satellite layer";
+
+/// Lowest zoom the satellite layer draws Mapbox tiles at. See
+/// [`NavMap::use_mapbox_tiles`] for what happens below it.
+pub(crate) const MAPBOX_MIN_SAFE_ZOOM: u8 = 2;
+
+const BLINK_DURATION_SEC: f32 = 3.0;
+const BLINK_PULSE_HZ: f32 = 2.0;
+
+/// How far from the cursor the hit test takes an element as hovered.
+const HOVER_RADIUS_PX: f64 = 20.0;
+
+/// Minimum time (seconds) the cursor must hold the same focused track before
+/// the fade-in begins.
+const HOVER_HYSTERESIS_SEC: f64 = 0.15;
+/// Fade-in rate in overlay-progress units per second (0→1 in ≈ 330 ms).
+const HOVER_FADE_IN_RATE: f32 = 3.0;
+/// Fade-out rate when the overlay is near-opaque (start of departure).
+const HOVER_FADE_OUT_SLOW: f32 = 0.1;
+/// Fade-out rate when the overlay is near-transparent (end of departure).
+/// Combined with `HOVER_FADE_OUT_SLOW` the overlay stays ≈ 78 % visible
+/// after 1 s and reaches zero in ≈ 2 s, a quadratic ease-in curve.
+const HOVER_FADE_OUT_FAST: f32 = 1.5;
+
+/// Opening size of the clicked-point window, wide enough for the sky plot
+/// beside two columns of satellites and tall enough that a typical fix needs
+/// no scrolling.
+const POINT_WINDOW_DEFAULT_SIZE: [f32; 2] = [600.0, 460.0];
+/// Floor for the point window, below which the plot and satellite columns stop
+/// fitting side by side.
+const POINT_WINDOW_MIN_WIDTH_PX: f32 = 340.0;
+const POINT_WINDOW_MIN_HEIGHT_PX: f32 = 260.0;
 
 #[cfg(test)]
 mod tests;

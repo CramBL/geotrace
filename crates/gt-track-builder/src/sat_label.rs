@@ -3,11 +3,6 @@ use std::collections::BTreeMap;
 use gt_types::sat_label::{SatLabelAnchor, SatLabelTier};
 use gt_types::{FixQuality, PlacedPoints, PointIdx};
 
-/// Along-track spacing of [`SatLabelTier::Fill`] anchors. Dense enough that
-/// labels appear on every screen at street-level zoom. The renderer's
-/// collision resolution thins them everywhere else.
-const FILL_SPACING_M: f64 = 100.0;
-
 /// A satellite-report point of the track, with the fields the anchor
 /// selection passes reason about. Snapshotting the count and quality up
 /// front keeps the windowed passes free of repeated `Option` boilerplate.
@@ -137,6 +132,11 @@ fn add_fill(anchors: &mut BTreeMap<usize, SatLabelTier>, points: PlacedPoints<'_
         }
     }
 }
+
+/// Along-track spacing of [`SatLabelTier::Fill`] anchors. Dense enough that
+/// labels appear on every screen at street-level zoom. The renderer's
+/// collision resolution thins them everywhere else.
+const FILL_SPACING_M: f64 = 100.0;
 
 #[cfg(test)]
 mod tests {

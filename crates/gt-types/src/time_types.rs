@@ -23,8 +23,6 @@ use chrono::{DateTime, Duration, Utc};
 use std::fmt;
 use std::ops::Sub;
 
-const NANOS_PER_SEC: f64 = 1e9;
-
 /// Unix seconds with the sub-second fraction, the conversion both clock types
 /// read their timestamps through.
 fn secs_f64_with_subseconds(dt: DateTime<Utc>) -> f64 {
@@ -186,6 +184,8 @@ impl From<GpsTime> for FixTimestamp {
         Self::FromGpsReceiver(gps)
     }
 }
+
+const NANOS_PER_SEC: f64 = 1e9;
 
 #[cfg(test)]
 mod tests {

@@ -18,17 +18,6 @@ impl MarkerColor {
     }
 }
 
-const EVENT_FALLBACK_COLORS: [MarkerColor; 8] = [
-    MarkerColor::new(230, 57, 70),
-    MarkerColor::new(255, 149, 0),
-    MarkerColor::new(255, 190, 11),
-    MarkerColor::new(6, 214, 160),
-    MarkerColor::new(46, 196, 182),
-    MarkerColor::new(131, 56, 236),
-    MarkerColor::new(255, 45, 85),
-    MarkerColor::new(238, 66, 102),
-];
-
 /// Deterministic fallback color for an unstyled event marker variant.
 pub fn event_marker_fallback_color(variant_path: &str) -> MarkerColor {
     let mut hash: u64 = 5381;
@@ -49,11 +38,6 @@ pub fn event_marker_fallback_color(variant_path: &str) -> MarkerColor {
 /// satellites (with `f32` SNR/elevation/azimuth).
 #[derive(Debug, Clone, PartialEq)]
 pub enum GeneratedMarkerKind {
-    GnssFixLost,
-    GnssFixRegained {
-        /// How long the fix was lost before being regained.
-        fix_lost_duration: Duration,
-    },
     /// The GPS−system clock offset jumped abruptly at this sample relative to
     /// the previous one, e.g. a device resuming from suspend, where a stale
     /// pre-suspend GPS timestamp meets a post-wake system timestamp.
@@ -77,6 +61,11 @@ pub enum GeneratedMarkerKind {
         offset: Duration,
         /// How many consecutive samples were out of band.
         samples: u32,
+    },
+    GnssFixLost,
+    GnssFixRegained {
+        /// How long the fix was lost before being regained.
+        fix_lost_duration: Duration,
     },
     /// The receiver lost lock on one or more satellites that should still have
     /// been trackable - each vanished while above the elevation mask, or its SNR
@@ -156,100 +145,6 @@ pub struct GeneratedMarker {
     pub lon: Longitude,
     /// Pre-computed normalized Mercator coordinates, see [`crate::mercator`].
     pub merc: MercPoint,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Pins the canonical marker wording.
-    #[test]
-    fn label_is_canonical_wording() {
-        assert_eq!(
-            GeneratedMarkerKind::GnssFixLost.to_string(),
-            "GNSS fix lost"
-        );
-        assert_eq!(
-            GeneratedMarkerKind::GnssFixRegained {
-                fix_lost_duration: Duration::zero()
-            }
-            .to_string(),
-            "GNSS fix regained"
-        );
-        assert_eq!(
-            GeneratedMarkerKind::ClockDiscontinuity {
-                step: Duration::zero()
-            }
-            .to_string(),
-            "Clock discontinuity"
-        );
-        assert_eq!(
-            GeneratedMarkerKind::ClockOffsetExcursion {
-                deviation: Duration::zero(),
-                offset: Duration::zero(),
-                samples: 1,
-            }
-            .to_string(),
-            "Clock offset excursion"
-        );
-        assert_eq!(
-            GeneratedMarkerKind::Slip(crate::satellites::SlipEvent {
-                slips: vec![crate::satellites::Slip {
-                    constellation: crate::satellites::Constellation::Gps,
-                    prn: crate::satellites::Prn::new(1),
-                    cause: crate::satellites::SlipCause::LostLock,
-                    from: crate::satellites::SatSample {
-                        elevation: None,
-                        azimuth: None,
-                        snr: None,
-                    },
-                    to: None,
-                }],
-            })
-            .to_string(),
-            "Satellite slip"
-        );
-    }
-
-    /// Each kind's `tag().label()` must match its own `Display`, so the side
-    /// panel's per-type headings never drift from the marker wording.
-    #[test]
-    fn tag_label_matches_display() {
-        use strum::IntoEnumIterator as _;
-
-        let sample = |tag: GeneratedMarkerKindTag| -> GeneratedMarkerKind {
-            match tag {
-                GeneratedMarkerKindTag::GnssFixLost => GeneratedMarkerKind::GnssFixLost,
-                GeneratedMarkerKindTag::GnssFixRegained => GeneratedMarkerKind::GnssFixRegained {
-                    fix_lost_duration: Duration::zero(),
-                },
-                GeneratedMarkerKindTag::ClockDiscontinuity => {
-                    GeneratedMarkerKind::ClockDiscontinuity {
-                        step: Duration::zero(),
-                    }
-                }
-                GeneratedMarkerKindTag::ClockOffsetExcursion => {
-                    GeneratedMarkerKind::ClockOffsetExcursion {
-                        deviation: Duration::zero(),
-                        offset: Duration::zero(),
-                        samples: 1,
-                    }
-                }
-                GeneratedMarkerKindTag::Slip => {
-                    GeneratedMarkerKind::Slip(crate::satellites::SlipEvent { slips: vec![] })
-                }
-            }
-        };
-        for tag in GeneratedMarkerKindTag::iter() {
-            let kind = sample(tag);
-            assert_eq!(kind.tag(), tag, "tag() round-trips for {tag:?}");
-            assert_eq!(
-                tag.label(),
-                kind.to_string(),
-                "label matches Display for {tag:?}"
-            );
-        }
-    }
 }
 
 impl GeneratedMarker {
@@ -363,6 +258,111 @@ impl EventMarker {
             lat,
             lon,
             resolved_position: ResolvedPosition::measured(lat, lon),
+        }
+    }
+}
+
+const EVENT_FALLBACK_COLORS: [MarkerColor; 8] = [
+    MarkerColor::new(230, 57, 70),
+    MarkerColor::new(255, 149, 0),
+    MarkerColor::new(255, 190, 11),
+    MarkerColor::new(6, 214, 160),
+    MarkerColor::new(46, 196, 182),
+    MarkerColor::new(131, 56, 236),
+    MarkerColor::new(255, 45, 85),
+    MarkerColor::new(238, 66, 102),
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins the canonical marker wording.
+    #[test]
+    fn label_is_canonical_wording() {
+        assert_eq!(
+            GeneratedMarkerKind::GnssFixLost.to_string(),
+            "GNSS fix lost"
+        );
+        assert_eq!(
+            GeneratedMarkerKind::GnssFixRegained {
+                fix_lost_duration: Duration::zero()
+            }
+            .to_string(),
+            "GNSS fix regained"
+        );
+        assert_eq!(
+            GeneratedMarkerKind::ClockDiscontinuity {
+                step: Duration::zero()
+            }
+            .to_string(),
+            "Clock discontinuity"
+        );
+        assert_eq!(
+            GeneratedMarkerKind::ClockOffsetExcursion {
+                deviation: Duration::zero(),
+                offset: Duration::zero(),
+                samples: 1,
+            }
+            .to_string(),
+            "Clock offset excursion"
+        );
+        assert_eq!(
+            GeneratedMarkerKind::Slip(crate::satellites::SlipEvent {
+                slips: vec![crate::satellites::Slip {
+                    constellation: crate::satellites::Constellation::Gps,
+                    prn: crate::satellites::Prn::new(1),
+                    cause: crate::satellites::SlipCause::LostLock,
+                    from: crate::satellites::SatSample {
+                        elevation: None,
+                        azimuth: None,
+                        snr: None,
+                    },
+                    to: None,
+                }],
+            })
+            .to_string(),
+            "Satellite slip"
+        );
+    }
+
+    /// Each kind's `tag().label()` must match its own `Display`, so the side
+    /// panel's per-type headings never drift from the marker wording.
+    #[test]
+    fn tag_label_matches_display() {
+        use strum::IntoEnumIterator as _;
+
+        let sample = |tag: GeneratedMarkerKindTag| -> GeneratedMarkerKind {
+            match tag {
+                GeneratedMarkerKindTag::GnssFixLost => GeneratedMarkerKind::GnssFixLost,
+                GeneratedMarkerKindTag::GnssFixRegained => GeneratedMarkerKind::GnssFixRegained {
+                    fix_lost_duration: Duration::zero(),
+                },
+                GeneratedMarkerKindTag::ClockDiscontinuity => {
+                    GeneratedMarkerKind::ClockDiscontinuity {
+                        step: Duration::zero(),
+                    }
+                }
+                GeneratedMarkerKindTag::ClockOffsetExcursion => {
+                    GeneratedMarkerKind::ClockOffsetExcursion {
+                        deviation: Duration::zero(),
+                        offset: Duration::zero(),
+                        samples: 1,
+                    }
+                }
+                GeneratedMarkerKindTag::Slip => {
+                    GeneratedMarkerKind::Slip(crate::satellites::SlipEvent { slips: vec![] })
+                }
+            }
+        };
+        for tag in GeneratedMarkerKindTag::iter() {
+            let kind = sample(tag);
+            assert_eq!(kind.tag(), tag, "tag() round-trips for {tag:?}");
+            assert_eq!(
+                tag.label(),
+                kind.to_string(),
+                "label matches Display for {tag:?}"
+            );
         }
     }
 }

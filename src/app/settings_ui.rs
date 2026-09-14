@@ -1,16 +1,3 @@
-mod analysis;
-mod application;
-mod geomagnetic_indices;
-mod interface;
-mod interference;
-mod persist;
-pub(super) mod processing;
-pub(super) mod search;
-mod snap;
-mod solar_flares;
-mod source_page;
-mod tec;
-
 use egui::{ScrollArea, Window};
 use egui_phosphor::regular::AIRPLANE_TILT as ICON_AIRPLANE_TILT;
 use egui_phosphor::regular::GAUGE as ICON_GAUGE;
@@ -28,6 +15,19 @@ use egui_phosphor::regular::APP_WINDOW as ICON_APP_WINDOW;
 
 use super::App;
 use super::backfill_ui::BackfillReadiness;
+
+mod analysis;
+mod application;
+mod geomagnetic_indices;
+mod interface;
+mod interference;
+mod persist;
+pub(super) mod processing;
+pub(super) mod search;
+mod snap;
+mod solar_flares;
+mod source_page;
+mod tec;
 
 /// One category of the settings window, in the order the rail lists them.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug, EnumIter)]
@@ -100,22 +100,6 @@ impl SettingsPage {
         ui.separator();
     }
 }
-
-/// Id the settings window registers its area under, and the key egui remembers
-/// its position and size by.
-pub(super) const WINDOW_ID: &str = "settings_window";
-
-/// Width of the category rail, wide enough for the longest label with its icon.
-const RAIL_WIDTH: f32 = 176.0;
-
-/// Size the window opens at, large enough for the tallest page to render
-/// without scrolling. Changing the page never resizes the window: egui keeps
-/// the size it remembers under [`WINDOW_ID`].
-const DEFAULT_WINDOW_SIZE: egui::Vec2 = egui::vec2(700.0, 480.0);
-
-const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(520.0, 380.0);
-
-const NO_MATCHES_TEXT: &str = "No matching settings";
 
 impl App {
     /// What a download control may do right now. An archive still opening or
@@ -321,3 +305,19 @@ fn theme_pref_from_setting(s: crate::settings::ThemeSetting) -> egui::ThemePrefe
         crate::settings::ThemeSetting::Dark => egui::ThemePreference::Dark,
     }
 }
+
+/// Id the settings window registers its area under, and the key egui remembers
+/// its position and size by.
+pub(super) const WINDOW_ID: &str = "settings_window";
+
+/// Width of the category rail, wide enough for the longest label with its icon.
+const RAIL_WIDTH: f32 = 176.0;
+
+/// Size the window opens at, large enough for the tallest page to render
+/// without scrolling. Changing the page never resizes the window: egui keeps
+/// the size it remembers under [`WINDOW_ID`].
+const DEFAULT_WINDOW_SIZE: egui::Vec2 = egui::vec2(700.0, 480.0);
+
+const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(520.0, 380.0);
+
+const NO_MATCHES_TEXT: &str = "No matching settings";

@@ -12,6 +12,12 @@ use hdf5::filters::Filter;
 use hdf5::types::VarLenUnicode;
 use hdf5::{Dataset, Extents, Group, SimpleExtents};
 
+pub use archive_file::{ArchiveFile, FileSpaceMigration, OpenArchive};
+pub use day_archive::{
+    ArchiveFileBeingOpened, DayArchiveError, ReadOnlyDayArchive, SchemaVersions, WritableDayArchive,
+};
+pub use usage::{ArchiveUsage, ArchivedDaySpan};
+
 mod archive_file;
 pub mod attributes;
 pub mod dates;
@@ -23,24 +29,12 @@ pub mod prune;
 pub mod test_util;
 mod usage;
 
-pub use archive_file::{ArchiveFile, FileSpaceMigration, OpenArchive};
-pub use day_archive::{
-    ArchiveFileBeingOpened, DayArchiveError, ReadOnlyDayArchive, SchemaVersions, WritableDayArchive,
-};
-pub use usage::{ArchiveUsage, ArchivedDaySpan};
-
 /// Why an archive access failed. Each archive converts this into its own
 /// error type.
 #[derive(Debug, thiserror::Error)]
 pub enum ArchiveError {
     #[error("archive error: {0}")]
     Backend(String),
-
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("archive schema version {found} is newer than supported {supported}")]
-    SchemaTooNew { found: i64, supported: i64 },
 
     #[error("archive is inconsistent: {0}")]
     Corrupt(String),
@@ -49,6 +43,12 @@ pub enum ArchiveError {
     /// duration of an open, readers included.
     #[error("another process has the archive open")]
     HeldByAnotherProcess,
+
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("archive schema version {found} is newer than supported {supported}")]
+    SchemaTooNew { found: i64, supported: i64 },
 }
 
 /// A lock conflict is the one failure the hdf5 crate reports structurally, as
@@ -70,8 +70,8 @@ impl From<hdf5::Error> for ArchiveError {
 /// nothing, and a fill is never read back as a value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StoredPresence {
-    Unpublished,
     Published,
+    Unpublished,
 }
 
 impl StoredPresence {

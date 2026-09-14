@@ -24,6 +24,23 @@
     reason = "four enums are named for the C constants they declare"
 )]
 
+pub use builder::GtdFileBuilder;
+pub use channel::{GtdChannel, GtdChannelUnitMode};
+pub use constellation::GtdConstellation;
+pub use error::GtdStatus;
+pub use icon::GtdMarkerIcon;
+pub use log_callback::{GtdLogCallback, GtdLogLevel};
+pub use nav_file::{
+    GtdChannelInfo, GtdEventMarkerInfo, GtdEventMarkerStyleInfo, GtdMarkerInfo, GtdNavFile,
+    GtdNavPointInfo, GtdSatelliteWarningInfo,
+};
+pub use optf32::GtdOptF32;
+pub use optf64::GtdOptF64;
+pub use satellite::GtdSatellite;
+pub use satinfo::GtdSatInfo;
+pub use timestamp::GtdTimestamp;
+pub use travel_mode::GtdTravelMode;
+
 #[macro_use]
 mod macros;
 
@@ -45,20 +62,3 @@ mod snr;
 mod timestamp;
 mod travel_mode;
 mod velocity;
-
-pub use builder::GtdFileBuilder;
-pub use channel::{GtdChannel, GtdChannelUnitMode};
-pub use constellation::GtdConstellation;
-pub use error::GtdStatus;
-pub use icon::GtdMarkerIcon;
-pub use log_callback::{GtdLogCallback, GtdLogLevel};
-pub use nav_file::{
-    GtdChannelInfo, GtdEventMarkerInfo, GtdEventMarkerStyleInfo, GtdMarkerInfo, GtdNavFile,
-    GtdNavPointInfo, GtdSatelliteWarningInfo,
-};
-pub use optf32::GtdOptF32;
-pub use optf64::GtdOptF64;
-pub use satellite::GtdSatellite;
-pub use satinfo::GtdSatInfo;
-pub use timestamp::GtdTimestamp;
-pub use travel_mode::GtdTravelMode;

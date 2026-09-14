@@ -10,28 +10,6 @@ use gt_ui_types::QueryMatches;
 
 use crate::tpv_renderer::{self, TpvDrawStyle};
 
-/// How long a reveal takes to settle.
-const REVEAL_DURATION_SEC: f32 = 0.8;
-
-/// Width of the settled halo band. Deliberately wider than the trackline, the
-/// quality line (5.0), and typical accuracy-circle bands, so the halo is drawn
-/// as a band around the track.
-const SETTLED_BAND_WIDTH: f32 = 22.0;
-
-/// Stroke width of the settled ring drawn around a single-point match.
-const SETTLED_RING_STROKE_WIDTH: f32 = 3.0;
-
-/// Padding between the icon size and the single-point ring radius, so the ring
-/// encloses the fix icon like the plot-hover ring does.
-const RING_RADIUS_PADDING: f32 = 5.0;
-
-/// Screen pixels the reveal adds to each dimension at its start, before the
-/// zoom scale. Zoomed out the whole budget shrinks with the fix icons, so
-/// dense tracks inflate modestly and the alpha boost carries the signal.
-const REVEAL_BAND_WIDTH_BUDGET_PX: f32 = 24.0;
-const REVEAL_RING_RADIUS_BUDGET_PX: f32 = 18.0;
-const REVEAL_RING_STROKE_BUDGET_PX: f32 = 3.0;
-
 /// Reveal clock for the query-match halos.
 ///
 /// Timestamps are egui clock seconds (`InputState::time`), so the animation is
@@ -147,17 +125,34 @@ impl HaloStyle {
     }
 }
 
+/// How long a reveal takes to settle.
+const REVEAL_DURATION_SEC: f32 = 0.8;
+
+/// Width of the settled halo band. Deliberately wider than the trackline, the
+/// quality line (5.0), and typical accuracy-circle bands, so the halo is drawn
+/// as a band around the track.
+const SETTLED_BAND_WIDTH: f32 = 22.0;
+
+/// Stroke width of the settled ring drawn around a single-point match.
+const SETTLED_RING_STROKE_WIDTH: f32 = 3.0;
+
+/// Padding between the icon size and the single-point ring radius, so the ring
+/// encloses the fix icon like the plot-hover ring does.
+const RING_RADIUS_PADDING: f32 = 5.0;
+
+/// Screen pixels the reveal adds to each dimension at its start, before the
+/// zoom scale. Zoomed out the whole budget shrinks with the fix icons, so
+/// dense tracks inflate modestly and the alpha boost carries the signal.
+const REVEAL_BAND_WIDTH_BUDGET_PX: f32 = 24.0;
+const REVEAL_RING_RADIUS_BUDGET_PX: f32 = 18.0;
+const REVEAL_RING_STROKE_BUDGET_PX: f32 = 3.0;
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
 
     use super::*;
     use crate::test_util;
-
-    /// The zoom ends of [`tpv_renderer::glyph_size_scale`]: fully shrunk icons
-    /// at zoom 12 and below, full size at zoom 18 and above.
-    const ZOOMED_OUT: f64 = 12.0;
-    const ZOOMED_IN: f64 = 18.0;
 
     #[test]
     #[expect(clippy::float_cmp, reason = "the easing endpoints are exact")]
@@ -308,4 +303,9 @@ mod tests {
             "seeing the same run again leaves it running"
         );
     }
+
+    /// The zoom ends of [`tpv_renderer::glyph_size_scale`]: fully shrunk icons
+    /// at zoom 12 and below, full size at zoom 18 and above.
+    const ZOOMED_OUT: f64 = 12.0;
+    const ZOOMED_IN: f64 = 18.0;
 }

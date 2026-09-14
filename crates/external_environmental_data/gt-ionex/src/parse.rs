@@ -18,79 +18,96 @@ use crate::grid::{
 use crate::maps::{GlobalIonosphereMaps, TecMap};
 use crate::tec::{ScalingExponent, TotalElectronContent};
 
-const VERSION_TYPE_LABEL: &str = "IONEX VERSION / TYPE";
-const EPOCH_OF_FIRST_MAP_LABEL: &str = "EPOCH OF FIRST MAP";
-const EPOCH_OF_LAST_MAP_LABEL: &str = "EPOCH OF LAST MAP";
-const INTERVAL_LABEL: &str = "INTERVAL";
-const MAP_COUNT_LABEL: &str = "# OF MAPS IN FILE";
-const EXPONENT_LABEL: &str = "EXPONENT";
-const HEIGHT_AXIS_LABEL: &str = "HGT1 / HGT2 / DHGT";
-const LATITUDE_AXIS_LABEL: &str = "LAT1 / LAT2 / DLAT";
-const LONGITUDE_AXIS_LABEL: &str = "LON1 / LON2 / DLON";
-const END_OF_HEADER_LABEL: &str = "END OF HEADER";
-const START_OF_TEC_MAP_LABEL: &str = "START OF TEC MAP";
-const END_OF_TEC_MAP_LABEL: &str = "END OF TEC MAP";
-const START_OF_RMS_MAP_LABEL: &str = "START OF RMS MAP";
-const END_OF_RMS_MAP_LABEL: &str = "END OF RMS MAP";
-const START_OF_HEIGHT_MAP_LABEL: &str = "START OF HEIGHT MAP";
-const END_OF_HEIGHT_MAP_LABEL: &str = "END OF HEIGHT MAP";
-const EPOCH_OF_CURRENT_MAP_LABEL: &str = "EPOCH OF CURRENT MAP";
-const LATITUDE_BAND_LABEL: &str = "LAT/LON1/LON2/DLON/H";
-const END_OF_FILE_LABEL: &str = "END OF FILE";
-
-/// What a value row is named in an error that expected one.
-const VALUE_ROW_EXPECTATION: &str = "a row of TEC values";
-
-/// Column the record label starts at.
-const LABEL_COLUMN: usize = 60;
-
-/// Columns the version record writes its number in.
-const VERSION_FIELD: FieldSpan = FieldSpan { start: 0, width: 8 };
-
-/// Column the version record writes its file type in.
-const FILE_TYPE_COLUMN: usize = 20;
-
-/// Fields of a grid record, `2X,5F6.1`.
-const GRID_FIELD_OFFSET: usize = 2;
-const GRID_FIELD_WIDTH: usize = 6;
-
-/// Fields of an epoch record, `6I6`.
-const EPOCH_FIELD_WIDTH: usize = 6;
-const EPOCH_FIELD_COUNT: usize = 6;
-
-/// Fields of a value row, `16I5`.
-const VALUE_FIELD_WIDTH: usize = 5;
-const VALUES_PER_ROW: usize = 16;
-
-/// The stored integer standing for a node without a published value.
-const MISSING_VALUE: i32 = 9999;
-
-/// How far a band's declared height may stand from the shell the header
-/// declares.
-const HEIGHT_TOLERANCE_KM: f64 = 1e-6;
-
-/// Labels that structure the file, which a value row never carries.
-const BLOCK_LABELS: [&str; 7] = [
-    START_OF_TEC_MAP_LABEL,
-    END_OF_TEC_MAP_LABEL,
-    START_OF_RMS_MAP_LABEL,
-    END_OF_RMS_MAP_LABEL,
-    START_OF_HEIGHT_MAP_LABEL,
-    END_OF_HEIGHT_MAP_LABEL,
-    END_OF_FILE_LABEL,
-];
-
 /// Why a file could not be read as global ionosphere maps.
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
+    #[error("line {line_number}: {label}: {source}")]
+    Axis {
+        line_number: usize,
+        label: &'static str,
+        source: AxisError,
+    },
+
+    #[error(
+        "line {line_number}: the band's height of {found_km}km is not the shell at {expected_km}km"
+    )]
+    BandHeightDiffers {
+        line_number: usize,
+        found_km: f64,
+        expected_km: f64,
+    },
+
+    #[error("line {line_number}: the band's longitudes are not the ones the header declares")]
+    BandLongitudesDiffer { line_number: usize },
+
+    #[error("the header declares {label} at {declared} and the file holds {found}")]
+    DeclaredEpochMismatch {
+        label: &'static str,
+        declared: DateTime<Utc>,
+        found: DateTime<Utc>,
+    },
+
+    #[error("line {line_number}: {label} record {text:?} is not a calendar date and time")]
+    Epoch {
+        line_number: usize,
+        label: &'static str,
+        text: String,
+    },
+
+    #[error("line {line_number}: TEC values cannot be scaled by 10^{exponent}")]
+    Exponent { line_number: usize, exponent: i64 },
+
+    #[error("line {line_number}: an interval of {seconds} seconds is not a time between maps")]
+    Interval { line_number: usize, seconds: i64 },
+
+    #[error("the header declares {declared} maps and the file holds {found}")]
+    MapCountMismatch { declared: usize, found: usize },
+
+    #[error("the map at {epoch} does not follow the one at {previous}")]
+    MapEpochsOutOfOrder {
+        previous: DateTime<Utc>,
+        epoch: DateTime<Utc>,
+    },
+
     #[error("the file has no {END_OF_HEADER_LABEL} record")]
     MissingHeaderEnd,
 
     #[error("the header has no {label} record")]
     MissingHeaderRecord { label: &'static str },
 
-    #[error("line {line_number}: IONEX version {version} is not 1.x")]
-    UnsupportedVersion { line_number: usize, version: f64 },
+    #[error("line {line_number}: {label} field {text:?} is not a number")]
+    NumberField {
+        line_number: usize,
+        label: &'static str,
+        text: String,
+    },
+
+    #[error(
+        "line {line_number}: the row holds fewer than the {expected_values} values of its band"
+    )]
+    TruncatedValueRow {
+        line_number: usize,
+        expected_values: usize,
+    },
+
+    #[error("the file ends where {expected} was expected")]
+    UnexpectedEndOfFile { expected: &'static str },
+
+    #[error(
+        "line {line_number}: a band at {found_degrees} deg stands where the grid has {expected_degrees} deg"
+    )]
+    UnexpectedLatitudeBand {
+        line_number: usize,
+        found_degrees: f64,
+        expected_degrees: f64,
+    },
+
+    #[error("line {line_number}: found {found:?} where {expected} was expected")]
+    UnexpectedRecord {
+        line_number: usize,
+        expected: &'static str,
+        found: String,
+    },
 
     #[error(
         "line {line_number}: file type {file_type:?} is not the ionosphere maps type {IONOSPHERE_MAPS_TYPE}"
@@ -110,42 +127,8 @@ pub enum ParseError {
         step_km: f64,
     },
 
-    #[error("line {line_number}: {label}: {source}")]
-    Axis {
-        line_number: usize,
-        label: &'static str,
-        source: AxisError,
-    },
-
-    #[error("line {line_number}: {label} field {text:?} is not a number")]
-    NumberField {
-        line_number: usize,
-        label: &'static str,
-        text: String,
-    },
-
-    #[error("line {line_number}: {label} record {text:?} is not a calendar date and time")]
-    Epoch {
-        line_number: usize,
-        label: &'static str,
-        text: String,
-    },
-
-    #[error("line {line_number}: an interval of {seconds} seconds is not a time between maps")]
-    Interval { line_number: usize, seconds: i64 },
-
-    #[error("line {line_number}: TEC values cannot be scaled by 10^{exponent}")]
-    Exponent { line_number: usize, exponent: i64 },
-
-    #[error("line {line_number}: found {found:?} where {expected} was expected")]
-    UnexpectedRecord {
-        line_number: usize,
-        expected: &'static str,
-        found: String,
-    },
-
-    #[error("the file ends where {expected} was expected")]
-    UnexpectedEndOfFile { expected: &'static str },
+    #[error("line {line_number}: IONEX version {version} is not 1.x")]
+    UnsupportedVersion { line_number: usize, version: f64 },
 
     #[error("line {line_number}: the block opened here has no {label} record")]
     UnterminatedBlock {
@@ -153,53 +136,8 @@ pub enum ParseError {
         label: &'static str,
     },
 
-    #[error(
-        "line {line_number}: a band at {found_degrees} deg stands where the grid has {expected_degrees} deg"
-    )]
-    UnexpectedLatitudeBand {
-        line_number: usize,
-        found_degrees: f64,
-        expected_degrees: f64,
-    },
-
-    #[error("line {line_number}: the band's longitudes are not the ones the header declares")]
-    BandLongitudesDiffer { line_number: usize },
-
-    #[error(
-        "line {line_number}: the band's height of {found_km}km is not the shell at {expected_km}km"
-    )]
-    BandHeightDiffers {
-        line_number: usize,
-        found_km: f64,
-        expected_km: f64,
-    },
-
     #[error("line {line_number}: TEC value {text:?} is not an integer")]
     ValueNotAnInteger { line_number: usize, text: String },
-
-    #[error(
-        "line {line_number}: the row holds fewer than the {expected_values} values of its band"
-    )]
-    TruncatedValueRow {
-        line_number: usize,
-        expected_values: usize,
-    },
-
-    #[error("the header declares {declared} maps and the file holds {found}")]
-    MapCountMismatch { declared: usize, found: usize },
-
-    #[error("the map at {epoch} does not follow the one at {previous}")]
-    MapEpochsOutOfOrder {
-        previous: DateTime<Utc>,
-        epoch: DateTime<Utc>,
-    },
-
-    #[error("the header declares {label} at {declared} and the file holds {found}")]
-    DeclaredEpochMismatch {
-        label: &'static str,
-        declared: DateTime<Utc>,
-        found: DateTime<Utc>,
-    },
 }
 
 /// Read a decompressed IONEX file.
@@ -732,6 +670,68 @@ fn check_maps_against_header(maps: &[TecMap], header: Header) -> Result<(), Pars
     Ok(())
 }
 
+const VERSION_TYPE_LABEL: &str = "IONEX VERSION / TYPE";
+const EPOCH_OF_FIRST_MAP_LABEL: &str = "EPOCH OF FIRST MAP";
+const EPOCH_OF_LAST_MAP_LABEL: &str = "EPOCH OF LAST MAP";
+const INTERVAL_LABEL: &str = "INTERVAL";
+const MAP_COUNT_LABEL: &str = "# OF MAPS IN FILE";
+const EXPONENT_LABEL: &str = "EXPONENT";
+const HEIGHT_AXIS_LABEL: &str = "HGT1 / HGT2 / DHGT";
+const LATITUDE_AXIS_LABEL: &str = "LAT1 / LAT2 / DLAT";
+const LONGITUDE_AXIS_LABEL: &str = "LON1 / LON2 / DLON";
+const END_OF_HEADER_LABEL: &str = "END OF HEADER";
+const START_OF_TEC_MAP_LABEL: &str = "START OF TEC MAP";
+const END_OF_TEC_MAP_LABEL: &str = "END OF TEC MAP";
+const START_OF_RMS_MAP_LABEL: &str = "START OF RMS MAP";
+const END_OF_RMS_MAP_LABEL: &str = "END OF RMS MAP";
+const START_OF_HEIGHT_MAP_LABEL: &str = "START OF HEIGHT MAP";
+const END_OF_HEIGHT_MAP_LABEL: &str = "END OF HEIGHT MAP";
+const EPOCH_OF_CURRENT_MAP_LABEL: &str = "EPOCH OF CURRENT MAP";
+const LATITUDE_BAND_LABEL: &str = "LAT/LON1/LON2/DLON/H";
+const END_OF_FILE_LABEL: &str = "END OF FILE";
+
+/// What a value row is named in an error that expected one.
+const VALUE_ROW_EXPECTATION: &str = "a row of TEC values";
+
+/// Column the record label starts at.
+const LABEL_COLUMN: usize = 60;
+
+/// Columns the version record writes its number in.
+const VERSION_FIELD: FieldSpan = FieldSpan { start: 0, width: 8 };
+
+/// Column the version record writes its file type in.
+const FILE_TYPE_COLUMN: usize = 20;
+
+/// Fields of a grid record, `2X,5F6.1`.
+const GRID_FIELD_OFFSET: usize = 2;
+const GRID_FIELD_WIDTH: usize = 6;
+
+/// Fields of an epoch record, `6I6`.
+const EPOCH_FIELD_WIDTH: usize = 6;
+const EPOCH_FIELD_COUNT: usize = 6;
+
+/// Fields of a value row, `16I5`.
+const VALUE_FIELD_WIDTH: usize = 5;
+const VALUES_PER_ROW: usize = 16;
+
+/// The stored integer standing for a node without a published value.
+const MISSING_VALUE: i32 = 9999;
+
+/// How far a band's declared height may stand from the shell the header
+/// declares.
+const HEIGHT_TOLERANCE_KM: f64 = 1e-6;
+
+/// Labels that structure the file, which a value row never carries.
+const BLOCK_LABELS: [&str; 7] = [
+    START_OF_TEC_MAP_LABEL,
+    END_OF_TEC_MAP_LABEL,
+    START_OF_RMS_MAP_LABEL,
+    END_OF_RMS_MAP_LABEL,
+    START_OF_HEIGHT_MAP_LABEL,
+    END_OF_HEIGHT_MAP_LABEL,
+    END_OF_FILE_LABEL,
+];
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
@@ -750,18 +750,6 @@ mod tests {
         hour: u32,
         bands: [&'static str; 2],
     }
-
-    const FIRST_MAP: TecMapText = TecMapText {
-        number: 1,
-        hour: 0,
-        bands: ["  100  200  100", "  300  400  300"],
-    };
-
-    const SECOND_MAP: TecMapText = TecMapText {
-        number: 2,
-        hour: 2,
-        bands: ["  200  300  200", "  400  500  400"],
-    };
 
     /// One record, values padded out to the label columns.
     fn record(values: &str, label: &str) -> String {
@@ -1188,4 +1176,16 @@ mod tests {
         lines.insert(9, record("   250", "# OF STATIONS"));
         global_ionosphere_maps(&file_text(&lines)).unwrap();
     }
+
+    const FIRST_MAP: TecMapText = TecMapText {
+        number: 1,
+        hour: 0,
+        bands: ["  100  200  100", "  300  400  300"],
+    };
+
+    const SECOND_MAP: TecMapText = TecMapText {
+        number: 2,
+        hour: 2,
+        bands: ["  200  300  200", "  400  500  400"],
+    };
 }

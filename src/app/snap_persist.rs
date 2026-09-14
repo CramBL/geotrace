@@ -19,11 +19,6 @@ use gt_types::LoadedTrack;
 
 use super::snap::{SnapRun, TrackContentKey};
 
-/// Version of the envelope layout itself (not the inner result schema).
-/// Bumped only on incompatible layout changes. A blob written by a newer
-/// version is treated as absent.
-const STORED_SNAP_FORMAT_VERSION: u32 = 1;
-
 /// The envelope stored as the recording's snap blob.
 #[derive(Debug, Serialize, Deserialize)]
 struct StoredSnapRuns {
@@ -108,6 +103,11 @@ pub fn decode(blob: &[u8]) -> Option<Vec<StoredTrackRun>> {
     }
     Some(envelope.runs)
 }
+
+/// Version of the envelope layout itself (not the inner result schema).
+/// Bumped only on incompatible layout changes. A blob written by a newer
+/// version is treated as absent.
+const STORED_SNAP_FORMAT_VERSION: u32 = 1;
 
 #[cfg(test)]
 mod tests {

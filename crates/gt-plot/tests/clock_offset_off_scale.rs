@@ -11,47 +11,6 @@ use gt_plot::{EDGE_MARKER_INSET, PlotState};
 use gt_types::{LoadedFile, MetricKind};
 use strum::IntoEnumIterator as _;
 
-/// Fixes in the recording, one per second.
-const FIX_COUNT: usize = 60;
-
-/// Fixes of the crowded recording, one per second. Their markers fall closer
-/// together than a glyph is wide at the width of the drawn plot.
-const CROWDED_FIX_COUNT: usize = 600;
-
-/// Seconds between the fixes of the drifting-clock recording: one fix per
-/// minute over [`FIX_COUNT`] minutes.
-const DRIFT_STEP_SECS: i64 = 60;
-
-/// How much further the drifting host clock runs past the receiver's own with
-/// every fix, in milliseconds.
-const DRIFT_PER_FIX_MS: i64 = 100;
-
-/// How far the host clock of a healthy logger runs past the receiver's own, in
-/// milliseconds. The excursion recordings depart from this baseline and return
-/// to it.
-const BASELINE_HOST_AHEAD_MS: i64 = 200;
-
-/// The fixes of the excursion recordings whose host clock departs from the
-/// baseline, halfway along the track.
-const EXCURSION_FIXES: Range<usize> = 20..30;
-
-/// The fixes of the second excursion of
-/// [`recording_with_an_excursion_on_either_side_of_one_fix`]. One fix at the
-/// baseline stands between the two excursions.
-const SECOND_EXCURSION_FIXES: Range<usize> = 31..41;
-
-/// How far the host clock departs from the baseline over [`EXCURSION_FIXES`],
-/// in either direction.
-const EXCURSION_HOURS: i64 = 1;
-
-/// How long the tracker suspended before it stamped its last fix on resume.
-/// The clock offset of that fix is the whole suspend.
-const SUSPEND_HOURS: i64 = 2;
-
-/// Above the recording's velocity of 15 km/h and its heading of 45°, the two
-/// values the shared y-axis fits without the clock offset line.
-const VELOCITY_AND_HEADING_LIMIT: f64 = 100.0;
-
 /// The host clock of a tracker that came up with its real-time clock unset
 /// runs 56 years behind the receiver. Its stamps fall on 1968-01-15, while the
 /// receiver reports the recording's own day.
@@ -526,3 +485,44 @@ fn the_hover_of_a_departure_on_the_last_fix_says_the_recording_ends_there() {
         "the marker's tooltip reads {label:?}"
     );
 }
+
+/// Fixes in the recording, one per second.
+const FIX_COUNT: usize = 60;
+
+/// Fixes of the crowded recording, one per second. Their markers fall closer
+/// together than a glyph is wide at the width of the drawn plot.
+const CROWDED_FIX_COUNT: usize = 600;
+
+/// Seconds between the fixes of the drifting-clock recording: one fix per
+/// minute over [`FIX_COUNT`] minutes.
+const DRIFT_STEP_SECS: i64 = 60;
+
+/// How much further the drifting host clock runs past the receiver's own with
+/// every fix, in milliseconds.
+const DRIFT_PER_FIX_MS: i64 = 100;
+
+/// How far the host clock of a healthy logger runs past the receiver's own, in
+/// milliseconds. The excursion recordings depart from this baseline and return
+/// to it.
+const BASELINE_HOST_AHEAD_MS: i64 = 200;
+
+/// The fixes of the excursion recordings whose host clock departs from the
+/// baseline, halfway along the track.
+const EXCURSION_FIXES: Range<usize> = 20..30;
+
+/// The fixes of the second excursion of
+/// [`recording_with_an_excursion_on_either_side_of_one_fix`]. One fix at the
+/// baseline stands between the two excursions.
+const SECOND_EXCURSION_FIXES: Range<usize> = 31..41;
+
+/// How far the host clock departs from the baseline over [`EXCURSION_FIXES`],
+/// in either direction.
+const EXCURSION_HOURS: i64 = 1;
+
+/// How long the tracker suspended before it stamped its last fix on resume.
+/// The clock offset of that fix is the whole suspend.
+const SUSPEND_HOURS: i64 = 2;
+
+/// Above the recording's velocity of 15 km/h and its heading of 45°, the two
+/// values the shared y-axis fits without the clock offset line.
+const VELOCITY_AND_HEADING_LIMIT: f64 = 100.0;

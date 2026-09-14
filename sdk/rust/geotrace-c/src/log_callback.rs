@@ -23,16 +23,6 @@ pub enum GtdLogLevel {
     GTD_LOG_TRACE = 5,
 }
 
-// Pin every discriminant at compile time. These are the C ABI numbers, which a
-// reordering of the variants must not change.
-const _: () = {
-    assert!(GtdLogLevel::GTD_LOG_ERROR as u32 == 1);
-    assert!(GtdLogLevel::GTD_LOG_WARN as u32 == 2);
-    assert!(GtdLogLevel::GTD_LOG_INFO as u32 == 3);
-    assert!(GtdLogLevel::GTD_LOG_DEBUG as u32 == 4);
-    assert!(GtdLogLevel::GTD_LOG_TRACE as u32 == 5);
-};
-
 impl GtdLogLevel {
     pub(crate) fn from_abi_value(value: u32) -> Option<Self> {
         Self::from_repr(usize::try_from(value).ok()?)
@@ -88,18 +78,6 @@ struct CallbackSink {
 // thread may read the caller's `user_data` out of the shared sink. The header
 // states both.
 unsafe impl Send for CallbackSink {}
-
-static SINK: Mutex<Option<CallbackSink>> = Mutex::new(None);
-
-/// The level a record must reach to be forwarded, kept across a clear of the
-/// callback so that a re-registered callback runs at the level last set.
-static FORWARDED_LEVEL: Mutex<LevelFilter> = Mutex::new(LevelFilter::Warn);
-
-static LOGGER_INSTALLED: OnceLock<bool> = OnceLock::new();
-
-static FORWARDING_LOGGER: ForwardingLogger = ForwardingLogger;
-
-const NUL_BYTE_PLACEHOLDER: &CStr = c"(contained a null byte)";
 
 struct ForwardingLogger;
 
@@ -236,3 +214,25 @@ pub extern "C" fn gtd_set_log_level(level: u32) -> GtdStatus {
 pub extern "C" fn gtd_clear_log_callback() {
     clear_sink();
 }
+
+// Pin every discriminant at compile time. These are the C ABI numbers, which a
+// reordering of the variants must not change.
+const _: () = {
+    assert!(GtdLogLevel::GTD_LOG_ERROR as u32 == 1);
+    assert!(GtdLogLevel::GTD_LOG_WARN as u32 == 2);
+    assert!(GtdLogLevel::GTD_LOG_INFO as u32 == 3);
+    assert!(GtdLogLevel::GTD_LOG_DEBUG as u32 == 4);
+    assert!(GtdLogLevel::GTD_LOG_TRACE as u32 == 5);
+};
+
+static SINK: Mutex<Option<CallbackSink>> = Mutex::new(None);
+
+/// The level a record must reach to be forwarded, kept across a clear of the
+/// callback so that a re-registered callback runs at the level last set.
+static FORWARDED_LEVEL: Mutex<LevelFilter> = Mutex::new(LevelFilter::Warn);
+
+static LOGGER_INSTALLED: OnceLock<bool> = OnceLock::new();
+
+static FORWARDING_LOGGER: ForwardingLogger = ForwardingLogger;
+
+const NUL_BYTE_PLACEHOLDER: &CStr = c"(contained a null byte)";

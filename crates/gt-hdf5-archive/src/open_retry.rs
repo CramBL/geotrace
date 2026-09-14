@@ -6,21 +6,6 @@ use std::time::{Duration, Instant};
 
 use crate::ArchiveError;
 
-/// Interval between two attempts at an open that failed with
-/// [`ArchiveError::HeldByAnotherProcess`].
-const RETRY_INTERVAL: Duration = Duration::from_millis(8);
-
-/// How long one open waits in total before it returns
-/// [`ArchiveError::HeldByAnotherProcess`]. The wait blocks the calling thread,
-/// which is the GUI thread for the archive lookups a UI action makes.
-const TOTAL_RETRY_BUDGET: Duration = Duration::from_millis(40);
-
-/// How often one [`OpenRetry`] spends the whole budget. A backfill opens the
-/// archive once per day of its range: at one budget per open, a year-long
-/// range over an archive another process holds blocks the calling thread for
-/// 14 seconds.
-const SHORTEST_INTERVAL_BETWEEN_RETRY_BUDGETS: Duration = Duration::from_secs(1);
-
 /// The retrying of one archive's read-only opens, over the lifetime of the
 /// [`crate::ArchiveFile`] that holds it.
 #[derive(Debug, Default)]
@@ -78,6 +63,21 @@ impl OpenRetry {
         }
     }
 }
+
+/// Interval between two attempts at an open that failed with
+/// [`ArchiveError::HeldByAnotherProcess`].
+const RETRY_INTERVAL: Duration = Duration::from_millis(8);
+
+/// How long one open waits in total before it returns
+/// [`ArchiveError::HeldByAnotherProcess`]. The wait blocks the calling thread,
+/// which is the GUI thread for the archive lookups a UI action makes.
+const TOTAL_RETRY_BUDGET: Duration = Duration::from_millis(40);
+
+/// How often one [`OpenRetry`] spends the whole budget. A backfill opens the
+/// archive once per day of its range: at one budget per open, a year-long
+/// range over an archive another process holds blocks the calling thread for
+/// 14 seconds.
+const SHORTEST_INTERVAL_BETWEEN_RETRY_BUDGETS: Duration = Duration::from_secs(1);
 
 #[cfg(test)]
 mod tests {

@@ -4,19 +4,15 @@
 use egui::TextEdit;
 use gt_map::NavMap;
 
-pub const TOKEN_LABEL: &str = "Mapbox token";
-
-const TOKEN_FIELD_WIDTH: f32 = 260.0;
-
 /// When the field hands its text to the map.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MapboxTokenCommit {
-    /// Enter, or leaving the field: what the settings row applies an edit on,
-    /// like every other control on the page.
-    OnEnterOrFocusLoss,
     /// Enter alone. The dialog's Cancel and its title-bar close take focus off
     /// the field, and must leave the map's token as it was.
     OnEnter,
+    /// Enter, or leaving the field: what the settings row applies an edit on,
+    /// like every other control on the page.
+    OnEnterOrFocusLoss,
 }
 
 /// The token as it is being typed. An unfocused field shows the token the map
@@ -59,6 +55,10 @@ impl MapboxTokenField {
     }
 }
 
+pub const TOKEN_LABEL: &str = "Mapbox token";
+
+const TOKEN_FIELD_WIDTH: f32 = 260.0;
+
 #[cfg(test)]
 mod tests {
     use egui::accesskit::Role;
@@ -76,8 +76,6 @@ mod tests {
         map: NavMap,
         commit: MapboxTokenCommit,
     }
-
-    const ELSEWHERE: &str = "Elsewhere";
 
     fn editor(token: &str, commit: MapboxTokenCommit) -> TestHarness<'static, EditorState> {
         let mut map = NavMap::new(egui::Context::default(), TileAccess::Offline);
@@ -153,4 +151,6 @@ mod tests {
 
         assert_eq!(harness.state().map.mapbox_token(), expected);
     }
+
+    const ELSEWHERE: &str = "Elsewhere";
 }

@@ -337,18 +337,18 @@ pub fn stale_reasons(
 /// ([`SnapScheduler::latest_run_for`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SnapActivity {
-    Queued,
-    InFlight {
-        completed_chunks: usize,
-        total_chunks: usize,
-    },
     /// The run produced no result at all (e.g. every chunk failed).
     Failed {
         error: String,
     },
+    InFlight {
+        completed_chunks: usize,
+        total_chunks: usize,
+    },
     /// The track has no fix to send: it is empty, or the receiver
     /// dead-reckoned all of it (ghost fixes are never sent).
     NothingToSend,
+    Queued,
 }
 
 /// The scheduler's global activity summary (see [`SnapScheduler::progress`]).
@@ -368,11 +368,6 @@ pub struct SnapInFlight {
 
 /// A worker-to-app message.
 enum SnapMessage {
-    Progress {
-        track: TrackRef,
-        completed_chunks: usize,
-        total_chunks: usize,
-    },
     Done {
         track: TrackRef,
         key: SnapCacheKey,
@@ -382,18 +377,23 @@ enum SnapMessage {
         track: TrackRef,
         error: String,
     },
+    Progress {
+        track: TrackRef,
+        completed_chunks: usize,
+        total_chunks: usize,
+    },
 }
 
 /// Why a run entered the queue: manual triggers outrank automatic entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapPriority {
+    /// Enqueued by auto mode: served only while its track is shown on the
+    /// map, parked (not dropped) while hidden.
+    Auto,
     /// A user trigger: served before any automatic entry, FIFO among
     /// manuals, and never gated on visibility - the user asked for exactly
     /// this track.
     Manual,
-    /// Enqueued by auto mode: served only while its track is shown on the
-    /// map, parked (not dropped) while hidden.
-    Auto,
 }
 
 /// One queued request, carrying everything the worker thread needs.

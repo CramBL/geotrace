@@ -19,21 +19,6 @@ use xxhash_rust::xxh3;
 
 use crate::DbError;
 
-/// Start of the attribute key one attachment is stored under, followed by the
-/// attachment's UUID. Registered in
-/// [`is_db_recording_attr`](crate::is_db_recording_attr) as database
-/// bookkeeping, which keeps it off the restored GTD root.
-pub const LOG_ATTACHMENT_ATTR_PREFIX: &str = "log-attachment-";
-
-/// Directory holding the attached logs, beside the database file.
-pub const LOGS_DIRECTORY: &str = "logs";
-
-const LOG_ATTACHMENT_FILE_SUFFIX: &str = ".zst";
-
-/// Version of the attribute JSON layout, bumped only on a change older builds
-/// cannot read. An attachment written in a newer version is ignored.
-const LOG_ATTACHMENT_FORMAT_VERSION: u32 = 1;
-
 /// Where the database at `db_path` keeps its attached logs.
 pub fn logs_directory_for_database(db_path: &Path) -> PathBuf {
     db_path
@@ -244,6 +229,21 @@ pub fn delete_files(logs_directory: &Path, ids: &[LogAttachmentId]) {
         }
     }
 }
+
+/// Start of the attribute key one attachment is stored under, followed by the
+/// attachment's UUID. Registered in
+/// [`is_db_recording_attr`](crate::is_db_recording_attr) as database
+/// bookkeeping, which keeps it off the restored GTD root.
+pub const LOG_ATTACHMENT_ATTR_PREFIX: &str = "log-attachment-";
+
+/// Directory holding the attached logs, beside the database file.
+pub const LOGS_DIRECTORY: &str = "logs";
+
+const LOG_ATTACHMENT_FILE_SUFFIX: &str = ".zst";
+
+/// Version of the attribute JSON layout, bumped only on a change older builds
+/// cannot read. An attachment written in a newer version is ignored.
+const LOG_ATTACHMENT_FORMAT_VERSION: u32 = 1;
 
 #[cfg(test)]
 mod tests {

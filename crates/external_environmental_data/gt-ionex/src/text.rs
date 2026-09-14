@@ -18,56 +18,6 @@ use crate::quiet_time::{self, QuietTimeDeviation};
 use crate::reference::IONOSPHERIC_TEC;
 use crate::tec::{L1_DELAY_METERS_PER_TECU, TotalElectronContent};
 
-/// The maps GeoTrace downloads, as every control offering them names them.
-pub const MAP_NAMES: &str = "global ionosphere maps";
-
-/// The local archive of downloaded days, as the download controls name it.
-pub const ARCHIVE_NAME: &str = "TEC map archive";
-
-/// Name of the data everywhere it is offered: the plot chip, the hover label,
-/// the map layer's display-toggle row.
-pub const LAYER_LABEL: &str = "Ionospheric TEC";
-
-/// One-line description of what the map layer draws, for hover text on the
-/// display-toggle row.
-pub const LAYER_SUMMARY: &str = "Colours the published grid by vertical total electron content at \
-                                 the instant shown, under the tracks.";
-
-/// Unit the legend labels its scale in.
-pub const LEGEND_UNIT: &str = "TECU";
-
-/// Hover text of the heatmap's opacity control.
-pub const OPACITY_HOVER: &str = "How strongly the heatmap is drawn over the base map";
-
-/// Hover text of the instant the heatmap draws.
-pub const INSTANT_HOVER: &str = "The map epoch the heatmap draws";
-
-/// Hover text of the instant stepper while a hovered or selected fix is
-/// driving the instant.
-pub const FOLLOWING_A_FIX: &str = "The heatmap follows the hovered or selected fix. Deselect it to \
-                                   step map epochs.";
-
-/// Hover text of the instant stepper while the layer is hidden.
-pub const HIDDEN_LAYER_STEPPER: &str = "Show the TEC heatmap to step map epochs";
-
-/// Hover text of the opacity control while the layer is hidden.
-pub const HIDDEN_LAYER_OPACITY: &str = "Show the TEC heatmap to change its opacity";
-
-/// The standing caveat, shown wherever a value is. Never abbreviated, even
-/// when another surface already said it.
-pub const SOURCE_CAVEAT: &str = "Modelled from ground stations onto a global grid and published \
-                                 as vertical content on a 450km shell, so a value describes the \
-                                 ionosphere over a region, not the slant path one receiver saw.";
-
-/// What the unit means, shown alongside the first value on a surface.
-pub static SCALE_CAVEAT: LazyLock<String> = LazyLock::new(|| {
-    format!(
-        "One TEC unit is 10¹⁶ electrons per square metre and adds about \
-         {L1_DELAY_METERS_PER_TECU:.2}m of range on L1. A quiet mid-latitude day stays under 20 \
-         TECU, and a storm reaches past 150."
-    )
-});
-
 /// The lines describing one value, leading with the value itself. `instant`
 /// is the UTC time it was interpolated at.
 pub fn value_summary(content: TotalElectronContent, instant: DateTime<Utc>) -> Vec<String> {
@@ -120,6 +70,56 @@ fn node_position(latitude: Latitude, longitude: Longitude) -> String {
         degrees_east.abs()
     )
 }
+
+/// The maps GeoTrace downloads, as every control offering them names them.
+pub const MAP_NAMES: &str = "global ionosphere maps";
+
+/// The local archive of downloaded days, as the download controls name it.
+pub const ARCHIVE_NAME: &str = "TEC map archive";
+
+/// Name of the data everywhere it is offered: the plot chip, the hover label,
+/// the map layer's display-toggle row.
+pub const LAYER_LABEL: &str = "Ionospheric TEC";
+
+/// One-line description of what the map layer draws, for hover text on the
+/// display-toggle row.
+pub const LAYER_SUMMARY: &str = "Colours the published grid by vertical total electron content at \
+                                 the instant shown, under the tracks.";
+
+/// Unit the legend labels its scale in.
+pub const LEGEND_UNIT: &str = "TECU";
+
+/// Hover text of the heatmap's opacity control.
+pub const OPACITY_HOVER: &str = "How strongly the heatmap is drawn over the base map";
+
+/// Hover text of the instant the heatmap draws.
+pub const INSTANT_HOVER: &str = "The map epoch the heatmap draws";
+
+/// Hover text of the instant stepper while a hovered or selected fix is
+/// driving the instant.
+pub const FOLLOWING_A_FIX: &str = "The heatmap follows the hovered or selected fix. Deselect it to \
+                                   step map epochs.";
+
+/// Hover text of the instant stepper while the layer is hidden.
+pub const HIDDEN_LAYER_STEPPER: &str = "Show the TEC heatmap to step map epochs";
+
+/// Hover text of the opacity control while the layer is hidden.
+pub const HIDDEN_LAYER_OPACITY: &str = "Show the TEC heatmap to change its opacity";
+
+/// The standing caveat, shown wherever a value is. Never abbreviated, even
+/// when another surface already said it.
+pub const SOURCE_CAVEAT: &str = "Modelled from ground stations onto a global grid and published \
+                                 as vertical content on a 450km shell, so a value describes the \
+                                 ionosphere over a region, not the slant path one receiver saw.";
+
+/// What the unit means, shown alongside the first value on a surface.
+pub static SCALE_CAVEAT: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "One TEC unit is 10¹⁶ electrons per square metre and adds about \
+         {L1_DELAY_METERS_PER_TECU:.2}m of range on L1. A quiet mid-latitude day stays under 20 \
+         TECU, and a storm reaches past 150."
+    )
+});
 
 pub static PLOT_HOVER: LazyLock<MetricChipHover> = LazyLock::new(|| MetricChipHover {
     definition: "Total electron content of the ionosphere above the fix's position.".to_owned(),

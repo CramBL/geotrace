@@ -17,31 +17,6 @@ use crate::class::RadioBlackoutClass;
 use crate::flare::{MarkedFlare, SolarFlare};
 use crate::reference::SOLAR_FLARES;
 
-/// Name of the data everywhere it is offered: the plot chip, the settings
-/// page, the legend.
-pub const LAYER_LABEL: &str = "Solar flares";
-
-/// The standing caveat, shown wherever a flare is. Never abbreviated, even
-/// when another surface already said it.
-pub const SOURCE_CAVEAT: &str = "Lists every flare on the Sun. Only one on the receiver's sunlit \
-                                 side raises the ionization above it.";
-
-/// Shown for a flare whose peak flux stays under the radio blackout scale's
-/// first level.
-pub static BELOW_BLACKOUT_SCALE: LazyLock<String> =
-    LazyLock::new(|| format!("Below {}", RadioBlackoutClass::Minor.scale_name()));
-
-/// Closes the time range of a flare the catalog published no end time for.
-pub const NO_END_TIME: &str = "end not published";
-
-/// Which side of Earth the receiver was on when the flare peaked, shown once
-/// a loaded recording places it.
-pub const RECEIVER_SUNLIT: &str = "Receiver: sunlit side";
-pub const RECEIVER_NIGHT: &str = "Receiver: night side";
-
-/// How the flare hover writes an hour and a minute of the peak's own UTC day.
-const HOUR_MINUTE_FORMAT: &str = "%H:%M";
-
 /// The lines describing one flare, leading with the classification that
 /// places it on the scale and closing with where the receiver stood.
 pub fn flare_summary(marked: &MarkedFlare) -> Vec<String> {
@@ -113,6 +88,31 @@ impl SolarFlare {
         }
     }
 }
+
+/// Name of the data everywhere it is offered: the plot chip, the settings
+/// page, the legend.
+pub const LAYER_LABEL: &str = "Solar flares";
+
+/// The standing caveat, shown wherever a flare is. Never abbreviated, even
+/// when another surface already said it.
+pub const SOURCE_CAVEAT: &str = "Lists every flare on the Sun. Only one on the receiver's sunlit \
+                                 side raises the ionization above it.";
+
+/// Shown for a flare whose peak flux stays under the radio blackout scale's
+/// first level.
+pub static BELOW_BLACKOUT_SCALE: LazyLock<String> =
+    LazyLock::new(|| format!("Below {}", RadioBlackoutClass::Minor.scale_name()));
+
+/// Closes the time range of a flare the catalog published no end time for.
+pub const NO_END_TIME: &str = "end not published";
+
+/// Which side of Earth the receiver was on when the flare peaked, shown once
+/// a loaded recording places it.
+pub const RECEIVER_SUNLIT: &str = "Receiver: sunlit side";
+pub const RECEIVER_NIGHT: &str = "Receiver: night side";
+
+/// How the flare hover writes an hour and a minute of the peak's own UTC day.
+const HOUR_MINUTE_FORMAT: &str = "%H:%M";
 
 pub static PLOT_HOVER: LazyLock<MetricChipHover> = LazyLock::new(|| MetricChipHover {
     definition: format!("Solar flares from the {SOURCE_NAME} catalog, marked at their peak."),

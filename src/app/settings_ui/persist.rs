@@ -9,10 +9,6 @@ use strum::IntoEnumIterator;
 
 use crate::app::App;
 
-/// The label the shutdown window and the force-quit confirmation list the
-/// settings write under.
-const SETTINGS_FLUSH_LABEL: &str = "Saving settings";
-
 impl App {
     /// Apply loaded settings on startup.
     pub(in crate::app) fn apply_startup_settings(&mut self, s: &crate::settings::Settings) {
@@ -319,6 +315,10 @@ impl App {
         }
     }
 }
+
+/// The label the shutdown window and the force-quit confirmation list the
+/// settings write under.
+const SETTINGS_FLUSH_LABEL: &str = "Saving settings";
 
 #[cfg(test)]
 mod tests {

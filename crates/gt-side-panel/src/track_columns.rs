@@ -4,15 +4,6 @@ use gt_types::{LoadedTrack, TrackMetadata};
 
 use crate::widgets;
 
-/// The header over the track numbers, which are drawn bare.
-const NUMBER_COLUMN_HEADER: &str = "#";
-
-/// The header over the distances, which are drawn without their unit.
-const DISTANCE_COLUMN_HEADER: &str = "km";
-
-/// The header over the durations, which are drawn as `h:mm:ss`.
-const DURATION_COLUMN_HEADER: &str = ICON_CLOCK;
-
 /// The cells of one track row, in the Visible section and in the tree. The
 /// units are stated once in the header row, not repeated per cell.
 pub struct TrackColumnCells {
@@ -248,3 +239,12 @@ pub fn render_row_as_one_surface<T>(
     paint_row_background(ui, background, &response, is_selected);
     (response, row.inner)
 }
+
+/// The header over the track numbers, which are drawn bare.
+const NUMBER_COLUMN_HEADER: &str = "#";
+
+/// The header over the distances, which are drawn without their unit.
+const DISTANCE_COLUMN_HEADER: &str = "km";
+
+/// The header over the durations, which are drawn as `h:mm:ss`.
+const DURATION_COLUMN_HEADER: &str = ICON_CLOCK;

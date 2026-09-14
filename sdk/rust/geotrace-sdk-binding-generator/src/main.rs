@@ -12,12 +12,6 @@ use geotrace_sdk_units::Unit;
 
 mod python_enums;
 
-struct CppConversionFactor {
-    cpp_name: &'static str,
-    rust_name: &'static str,
-    value: f64,
-}
-
 /// Writes `rust_name` and `value` from one identifier, so the two agree in every row.
 macro_rules! cpp_conversion_factor {
     ($cpp_name:ident, $rust_name:ident) => {
@@ -29,10 +23,11 @@ macro_rules! cpp_conversion_factor {
     };
 }
 
-const CPP_CONVERSION_FACTORS: [CppConversionFactor; 2] = [
-    cpp_conversion_factor!(kMpsPerKmh, MPS_PER_KMH),
-    cpp_conversion_factor!(kMpsPerKnot, MPS_PER_KNOT),
-];
+struct CppConversionFactor {
+    cpp_name: &'static str,
+    rust_name: &'static str,
+    value: f64,
+}
 
 fn generated_files(root: &Path) -> [(PathBuf, String); 5] {
     let mut cpp = String::from(
@@ -129,3 +124,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
+
+const CPP_CONVERSION_FACTORS: [CppConversionFactor; 2] = [
+    cpp_conversion_factor!(kMpsPerKmh, MPS_PER_KMH),
+    cpp_conversion_factor!(kMpsPerKnot, MPS_PER_KNOT),
+];

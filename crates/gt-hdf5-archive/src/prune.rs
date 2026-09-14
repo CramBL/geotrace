@@ -40,14 +40,6 @@ use hdf5::{Dataset, Extents, Group, SimpleExtents};
 use crate::day_index;
 use crate::{ArchiveError, Column, attributes, dates};
 
-/// Attribute of a day index group recording whether a delete is part-way
-/// through it.
-///
-/// The index holds it from the moment it is created: an attribute added
-/// later costs the file a header block past the rows a delete is about to
-/// free, which pins the file's length.
-pub const DELETE_IN_FLIGHT_ATTR: &str = "delete_in_flight";
-
 /// An interrupted delete found in an index, and what recovering it costs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InterruptedDelete {
@@ -60,8 +52,8 @@ pub struct InterruptedDelete {
 /// archive as it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterruptedDeleteRecovery {
-    Recover,
     Decline,
+    Recover,
 }
 
 /// An archive left unopened because the caller declined to recover the
@@ -77,8 +69,8 @@ pub struct DeclinedRecovery(pub InterruptedDelete);
 /// Whether a delete is part-way through the index it is read from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteState {
-    Settled,
     InFlight,
+    Settled,
 }
 
 impl DeleteState {
@@ -503,13 +495,13 @@ fn read_extents(
 
 /// Rows lifted out of a column, in the type the column stores them as.
 enum ColumnValues {
+    F64(Vec<f64>),
     I32(Vec<i32>),
     I64(Vec<i64>),
-    U8(Vec<u8>),
+    Text(Vec<VarLenUnicode>),
     U32(Vec<u32>),
     U64(Vec<u64>),
-    F64(Vec<f64>),
-    Text(Vec<VarLenUnicode>),
+    U8(Vec<u8>),
 }
 
 impl ColumnValues {
@@ -672,3 +664,11 @@ fn overwrite_column<T: hdf5::H5Type>(
     column.write_rows(0, values)?;
     column.truncate(values.len())
 }
+
+/// Attribute of a day index group recording whether a delete is part-way
+/// through it.
+///
+/// The index holds it from the moment it is created: an attribute added
+/// later costs the file a header block past the rows a delete is about to
+/// free, which pins the file's length.
+pub const DELETE_IN_FLIGHT_ATTR: &str = "delete_in_flight";

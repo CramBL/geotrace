@@ -1,29 +1,5 @@
-mod bitset;
-pub mod channel;
-pub mod coordinates;
-pub mod extent;
-#[cfg(any(test, feature = "fixtures"))]
-pub mod fixtures;
-pub mod geo_bounds;
-pub mod highlight;
-pub mod load_warning;
 pub use load_warning::{AlterationWording, LoadWarning};
-pub mod markers;
-pub mod mercator;
-pub mod metrics;
-pub mod nav_point;
-pub mod placed_point;
-pub mod query;
-pub mod sat_label;
-pub mod satellites;
 pub use satellites::{Prn, SignalQuality, Snr};
-pub mod solar_position;
-mod test_util;
-pub mod time_types;
-pub mod tpv;
-pub mod track;
-pub mod utc_days;
-pub mod versioned;
 
 pub use channel::{BackwardTimeStep, Channel};
 pub use coordinates::{
@@ -56,3 +32,28 @@ pub use track::{
     TotalDistance, TrackAggregates, TrackGeometry, TrackLod, TrackMetadata, TravelMode,
 };
 pub use versioned::{Generation, Versionable, Versioned};
+
+mod bitset;
+pub mod channel;
+pub mod coordinates;
+pub mod extent;
+#[cfg(any(test, feature = "fixtures"))]
+pub mod fixtures;
+pub mod geo_bounds;
+pub mod highlight;
+pub mod load_warning;
+pub mod markers;
+pub mod mercator;
+pub mod metrics;
+pub mod nav_point;
+pub mod placed_point;
+pub mod query;
+pub mod sat_label;
+pub mod satellites;
+pub mod solar_position;
+mod test_util;
+pub mod time_types;
+pub mod tpv;
+pub mod track;
+pub mod utc_days;
+pub mod versioned;

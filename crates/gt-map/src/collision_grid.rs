@@ -87,12 +87,6 @@ impl<C: Ord + Copy> DecimationScratch<C> {
     }
 }
 
-/// Zoom-level step the decimation cell size snaps to. Rounding to the nearest
-/// bucket leaves the bucketed zoom at most a quarter-level off the true value
-/// (2^0.25 ≈ 1.19x scale drift at a bucket's edges, none at its centre), while
-/// a smooth zoom still crosses only a few boundaries.
-const ZOOM_DECIMATION_BUCKET: f64 = 0.5;
-
 /// Zoom snapped to a coarse bucket, used only to size the collision-grid cell
 /// that thins satellite labels and sky glyphs.
 ///
@@ -212,6 +206,12 @@ fn cell_key(x: f64, y: f64, cell_merc: f64) -> (i64, i64) {
     let key = |v: f64| v.algebraic_div(cell_merc).floor() as i64;
     (key(x), key(y))
 }
+
+/// Zoom-level step the decimation cell size snaps to. Rounding to the nearest
+/// bucket leaves the bucketed zoom at most a quarter-level off the true value
+/// (2^0.25 ≈ 1.19x scale drift at a bucket's edges, none at its centre), while
+/// a smooth zoom still crosses only a few boundaries.
+const ZOOM_DECIMATION_BUCKET: f64 = 0.5;
 
 #[cfg(test)]
 mod tests {

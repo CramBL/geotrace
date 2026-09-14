@@ -20,15 +20,15 @@ use crate::app::ui_tests;
 /// viewports.
 #[derive(Debug, Clone, Copy)]
 enum OversizedAppWindow {
+    AutoPrune,
+    HistoryDatabaseCorrupted,
     HistoryDatabaseInUse,
     HistoryDatabaseLocked,
-    HistoryDatabaseCorrupted,
-    TrackSettingsDiffer,
-    AutoPrune,
-    Settings,
-    Query,
-    TrackData,
     LoadingProgress,
+    Query,
+    Settings,
+    TrackData,
+    TrackSettingsDiffer,
 }
 
 impl OversizedAppWindow {

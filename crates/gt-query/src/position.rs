@@ -485,22 +485,22 @@ pub fn construct_at(src: &str, cursor: usize) -> Option<&'static Construct> {
 /// Which family of constructs a position accepts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Slot {
-    /// The `points` source (start of the query).
-    Source,
-    /// A stage keyword (just after `|`).
-    Stage,
-    /// A `with` parameter name.
-    Param,
-    /// A metric or function (the start of a `where` atom).
-    ValueName,
     /// A `table` column - a metric or an aggregate.
     Column,
-    /// A unit suffix (just after a number).
-    Unit,
     /// After a complete `where` atom: `and`, `or`.
     Connective,
     /// Nothing is offered here.
     None,
+    /// A `with` parameter name.
+    Param,
+    /// The `points` source (start of the query).
+    Source,
+    /// A stage keyword (just after `|`).
+    Stage,
+    /// A unit suffix (just after a number).
+    Unit,
+    /// A metric or function (the start of a `where` atom).
+    ValueName,
 }
 
 impl Slot {

@@ -14,20 +14,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use egui::Context;
 
 #[cfg(unix)]
+pub(crate) use unix_installation::install_handler;
+
+#[cfg(unix)]
 mod unix_installation;
-
-pub(crate) static TERMINATION_SIGNAL_FLAG: TerminationSignalFlag = TerminationSignalFlag::new();
-
-/// Woken once a signal arrives so the frame loop reads the flag without
-/// waiting for input. Empty until the app is built: a signal raised before
-/// that is left for the first frame to read.
-static GUI_CONTEXT_TO_WAKE: OnceLock<Context> = OnceLock::new();
 
 /// What the reader of a termination signal does about it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TerminationSignalAction {
-    KeepRunning,
     BeginShutdown,
+    KeepRunning,
     /// The process ends without waiting for the writes: the user signalled
     /// twice.
     QuitLeavingWritesUnfinished,
@@ -78,11 +74,15 @@ pub(crate) fn set_gui_context_to_wake(ctx: &Context) {
     GUI_CONTEXT_TO_WAKE.set(ctx.clone()).ok();
 }
 
-#[cfg(unix)]
-pub(crate) use unix_installation::install_handler;
-
 #[cfg(not(unix))]
 pub(crate) fn install_handler() {}
+
+pub(crate) static TERMINATION_SIGNAL_FLAG: TerminationSignalFlag = TerminationSignalFlag::new();
+
+/// Woken once a signal arrives so the frame loop reads the flag without
+/// waiting for input. Empty until the app is built: a signal raised before
+/// that is left for the first frame to read.
+static GUI_CONTEXT_TO_WAKE: OnceLock<Context> = OnceLock::new();
 
 #[cfg(test)]
 mod tests {

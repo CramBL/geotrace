@@ -10,8 +10,6 @@
 //! images.
 //! Anything else is a hard error: a bad asset fails the build.
 
-mod fringe;
-
 use lyon_tessellation::math::Point;
 use lyon_tessellation::path::Path as LyonPath;
 use lyon_tessellation::{
@@ -25,31 +23,26 @@ use crate::template::{
     BucketMesh, FEATHER_PX, IconMeshTemplate, IconTessellation, SIZE_BUCKETS_PX, TemplateVertex,
 };
 
-/// Curve flattening tolerance, in bucket pixels.
-///
-/// Applied after the per-bucket scale in [`bucket_mesh`], i.e. in already-scaled
-/// bucket-pixel space, so the same absolute tolerance yields proportionally
-/// finer curves for larger buckets.
-const TOLERANCE_PX: f32 = 0.1;
+mod fringe;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IconTessellateError {
+    #[error("dashed strokes are not supported")]
+    DashedStroke,
+    #[error("tessellated mesh has a non-manifold boundary, cannot build the anti-alias fringe")]
+    FringeBoundary,
     #[error("failed to parse SVG")]
     SvgParse(#[from] usvg::Error),
+    #[error("path tessellation failed: {0:?}")]
+    Tessellation(TessellationError),
+    #[error("mesh exceeds the u32 index range")]
+    TooManyVertices,
+    #[error("unsupported group: opacity, clip paths, masks, and filters are not supported")]
+    UnsupportedGroup,
     #[error("unsupported SVG node kind {kind:?}: only groups and paths are supported")]
     UnsupportedNode { kind: &'static str },
     #[error("unsupported paint: only plain colors are supported")]
     UnsupportedPaint,
-    #[error("unsupported group: opacity, clip paths, masks, and filters are not supported")]
-    UnsupportedGroup,
-    #[error("dashed strokes are not supported")]
-    DashedStroke,
-    #[error("path tessellation failed: {0:?}")]
-    Tessellation(TessellationError),
-    #[error("tessellated mesh has a non-manifold boundary, cannot build the anti-alias fringe")]
-    FringeBoundary,
-    #[error("mesh exceeds the u32 index range")]
-    TooManyVertices,
 }
 
 /// One paint operation (a fill or a stroke) of one SVG path, in paint order.
@@ -60,14 +53,6 @@ struct Element {
     tint_slot: u8,
     op: PaintOp,
 }
-
-/// The SVG `id` that assigns an element's vertices to the secondary tint
-/// slot. Every element with neither this `id` nor [TERTIARY_TINT_ID] uses the
-/// primary slot. See [crate::TemplateVertex::tint_slot].
-const SECONDARY_TINT_ID: &str = "tint2";
-
-/// The SVG `id` that assigns an element's vertices to the tertiary tint slot.
-const TERTIARY_TINT_ID: &str = "tint3";
 
 enum PaintOp {
     Fill { rule: FillRule },
@@ -90,12 +75,12 @@ struct StrokeStyle {
 /// so the interpretation is chosen per asset at the bake site instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StrokeWidthUnit {
-    /// User units: strokes scale with the icon, like any other geometry.
-    #[default]
-    UserUnits,
     /// Physical pixels: strokes keep the same on-screen width at every
     /// bucket, matching painter-drawn outlines whose width is in pixels.
     PhysicalPixels,
+    /// User units: strokes scale with the icon, like any other geometry.
+    #[default]
+    UserUnits,
 }
 
 /// Tessellate one SVG icon into a mesh per size bucket in [SIZE_BUCKETS_PX].
@@ -481,6 +466,21 @@ fn normalize(mesh: &mut IconMeshTemplate, extent_x_px: f32, extent_y_px: f32) {
     }
 }
 
+/// Curve flattening tolerance, in bucket pixels.
+///
+/// Applied after the per-bucket scale in [`bucket_mesh`], i.e. in already-scaled
+/// bucket-pixel space, so the same absolute tolerance yields proportionally
+/// finer curves for larger buckets.
+const TOLERANCE_PX: f32 = 0.1;
+
+/// The SVG `id` that assigns an element's vertices to the secondary tint
+/// slot. Every element with neither this `id` nor [TERTIARY_TINT_ID] uses the
+/// primary slot. See [crate::TemplateVertex::tint_slot].
+const SECONDARY_TINT_ID: &str = "tint2";
+
+/// The SVG `id` that assigns an element's vertices to the tertiary tint slot.
+const TERTIARY_TINT_ID: &str = "tint3";
+
 #[cfg(test)]
 mod tests {
     use std::env;
@@ -493,31 +493,35 @@ mod tests {
     use super::*;
     use crate::template::FEATHER_PX;
 
-    /// Every icon asset, sorted. Kept in sync with `assets/icons/` by
-    /// [`icon_names_match_assets_dir`]. The rstest cases below must mirror it.
-    const ICON_NAMES: [&str; 21] = [
-        "check",
-        "circle_marker",
-        "connection_lost",
-        "cross",
-        "download",
-        "error",
-        "finish_flag",
-        "gear",
-        "ghost_fix",
-        "hexagon",
-        "lightning",
-        "nav_arrow",
-        "pin",
-        "refresh",
-        "round_trip_flag",
-        "satellite",
-        "satellite_lost",
-        "start_flag",
-        "upload",
-        "warning",
-        "wrench",
-    ];
+    /// One row per icon of [`ICON_NAMES`], so a failing case identifies the
+    /// icon it tessellated.
+    macro_rules! a_case_per_icon {
+        ($test:item) => {
+            #[rstest]
+            #[case::check("check")]
+            #[case::circle_marker("circle_marker")]
+            #[case::connection_lost("connection_lost")]
+            #[case::cross("cross")]
+            #[case::download("download")]
+            #[case::error("error")]
+            #[case::finish_flag("finish_flag")]
+            #[case::gear("gear")]
+            #[case::ghost_fix("ghost_fix")]
+            #[case::hexagon("hexagon")]
+            #[case::lightning("lightning")]
+            #[case::nav_arrow("nav_arrow")]
+            #[case::pin("pin")]
+            #[case::refresh("refresh")]
+            #[case::round_trip_flag("round_trip_flag")]
+            #[case::satellite("satellite")]
+            #[case::satellite_lost("satellite_lost")]
+            #[case::start_flag("start_flag")]
+            #[case::upload("upload")]
+            #[case::warning("warning")]
+            #[case::wrench("wrench")]
+            $test
+        };
+    }
 
     fn icons_dir() -> PathBuf {
         let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR");
@@ -578,36 +582,6 @@ mod tests {
             .unwrap();
         }
         stats
-    }
-
-    /// One row per icon of [`ICON_NAMES`], so a failing case identifies the
-    /// icon it tessellated.
-    macro_rules! a_case_per_icon {
-        ($test:item) => {
-            #[rstest]
-            #[case::check("check")]
-            #[case::circle_marker("circle_marker")]
-            #[case::connection_lost("connection_lost")]
-            #[case::cross("cross")]
-            #[case::download("download")]
-            #[case::error("error")]
-            #[case::finish_flag("finish_flag")]
-            #[case::gear("gear")]
-            #[case::ghost_fix("ghost_fix")]
-            #[case::hexagon("hexagon")]
-            #[case::lightning("lightning")]
-            #[case::nav_arrow("nav_arrow")]
-            #[case::pin("pin")]
-            #[case::refresh("refresh")]
-            #[case::round_trip_flag("round_trip_flag")]
-            #[case::satellite("satellite")]
-            #[case::satellite_lost("satellite_lost")]
-            #[case::start_flag("start_flag")]
-            #[case::upload("upload")]
-            #[case::warning("warning")]
-            #[case::wrench("wrench")]
-            $test
-        };
     }
 
     a_case_per_icon! {
@@ -677,14 +651,6 @@ mod tests {
         }
     }
 
-    /// Every tint slot gets vertices: one filled rectangle per slot.
-    const THREE_TINT_SLOTS_SVG: &[u8] =
-        br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <path d="M 2 2 H 8 V 8 H 2 Z" fill="white"/>
-  <path id="tint2" d="M 10 2 H 16 V 8 H 10 Z" fill="white"/>
-  <path id="tint3" d="M 18 2 H 22 V 8 H 18 Z" fill="white"/>
-</svg>"#;
-
     /// The x of a vertex says which element it came from: the three
     /// rectangles of [`THREE_TINT_SLOTS_SVG`] stand side by side. The viewbox
     /// maps to -1 to 1, and the ranges leave room for the anti-alias fringe.
@@ -719,13 +685,6 @@ mod tests {
         let decoded: IconTessellation = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(tess, decoded);
     }
-
-    /// A single horizontal stroke through the viewbox center: its normalized
-    /// y extent is the stroke's half thickness, isolating the width behavior.
-    const HORIZONTAL_STROKE_SVG: &[u8] =
-        br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <line x1="4" y1="12" x2="20" y2="12" stroke="white" stroke-width="4"/>
-</svg>"#;
 
     fn normalized_half_thickness(tess: &IconTessellation, bucket_px: f32) -> f32 {
         tess.mesh_for(bucket_px)
@@ -770,4 +729,45 @@ mod tests {
             "modes must coincide at scale 1: {user_at_unity} vs {physical_at_unity}"
         );
     }
+
+    /// Every icon asset, sorted. Kept in sync with `assets/icons/` by
+    /// [`icon_names_match_assets_dir`]. The rstest cases of `a_case_per_icon!` must mirror it.
+    const ICON_NAMES: [&str; 21] = [
+        "check",
+        "circle_marker",
+        "connection_lost",
+        "cross",
+        "download",
+        "error",
+        "finish_flag",
+        "gear",
+        "ghost_fix",
+        "hexagon",
+        "lightning",
+        "nav_arrow",
+        "pin",
+        "refresh",
+        "round_trip_flag",
+        "satellite",
+        "satellite_lost",
+        "start_flag",
+        "upload",
+        "warning",
+        "wrench",
+    ];
+
+    /// Every tint slot gets vertices: one filled rectangle per slot.
+    const THREE_TINT_SLOTS_SVG: &[u8] =
+        br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <path d="M 2 2 H 8 V 8 H 2 Z" fill="white"/>
+  <path id="tint2" d="M 10 2 H 16 V 8 H 10 Z" fill="white"/>
+  <path id="tint3" d="M 18 2 H 22 V 8 H 18 Z" fill="white"/>
+</svg>"#;
+
+    /// A single horizontal stroke through the viewbox center: its normalized
+    /// y extent is the stroke's half thickness, isolating the width behavior.
+    const HORIZONTAL_STROKE_SVG: &[u8] =
+        br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <line x1="4" y1="12" x2="20" y2="12" stroke="white" stroke-width="4"/>
+</svg>"#;
 }

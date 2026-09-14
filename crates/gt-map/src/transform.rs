@@ -64,9 +64,6 @@ pub(crate) struct MapScale {
     total_px: f64,
 }
 
-/// The pixel width of the world at zoom 0: a single tile.
-const WORLD_PX_AT_ZOOM_0: f64 = 256.0;
-
 impl MapScale {
     pub(crate) fn from_zoom(zoom: f64) -> Self {
         Self {
@@ -237,12 +234,6 @@ impl MercTransform {
     }
 }
 
-/// How far the cull bounds reach past the cull rect the caller compares
-/// screen positions against. The slack keeps a point outside those bounds
-/// outside the rect once `to_screen` has rounded its f64 result to f32, a
-/// rounding that moves a point by a fraction of a pixel.
-const CULL_BOUNDS_SLACK_PX: f32 = 1.0;
-
 /// What one frame's geometry walk cuts a track's chunks against: the Mercator
 /// bounds the map draws inside, and `filter`'s time window.
 #[derive(Debug, Clone, Copy)]
@@ -296,16 +287,16 @@ impl<'a> GeometryCull<'a> {
 /// What the walk visits of one chunk.
 #[derive(Debug, Clone, Copy)]
 enum ChunkVisit {
-    /// No fix of the chunk falls in the window.
-    Nothing,
-    /// The first and the last slot alone, which keep the segment entering the
-    /// chunk and the one leaving it. The chunk is drawn beyond one edge of
-    /// the cull bounds, and every fix of it falls in the window.
-    FirstAndLastSlot,
     EverySlot,
     /// Every slot whose fix falls in the window. The chunk's span reaches
     /// past one end of the window.
     EverySlotInTheWindow,
+    /// The first and the last slot alone, which keep the segment entering the
+    /// chunk and the one leaving it. The chunk is drawn beyond one edge of
+    /// the cull bounds, and every fix of it falls in the window.
+    FirstAndLastSlot,
+    /// No fix of the chunk falls in the window.
+    Nothing,
 }
 
 /// Iterate `(index, point)` over the track's LOD level appropriate for the
@@ -353,12 +344,12 @@ pub(crate) fn lod_points<'a>(
 /// What [`lod_points`] walks: the entries of one stored [`LodLevel`], or the
 /// track's full point list.
 pub(crate) enum LodPoints<'a> {
-    Level {
-        indices: &'a [u32],
+    Full {
         placed: PlacedPoints<'a>,
         walk: ChunkedWalk<'a>,
     },
-    Full {
+    Level {
+        indices: &'a [u32],
         placed: PlacedPoints<'a>,
         walk: ChunkedWalk<'a>,
     },
@@ -522,6 +513,15 @@ impl<'a> ChunkedWalk<'a> {
     }
 }
 
+/// The pixel width of the world at zoom 0: a single tile.
+const WORLD_PX_AT_ZOOM_0: f64 = 256.0;
+
+/// How far the cull bounds reach past the cull rect the caller compares
+/// screen positions against. The slack keeps a point outside those bounds
+/// outside the rect once `to_screen` has rounded its f64 result to f32, a
+/// rounding that moves a point by a fraction of a pixel.
+const CULL_BOUNDS_SLACK_PX: f32 = 1.0;
+
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, TimeDelta, Utc};
@@ -553,15 +553,6 @@ mod tests {
             "lat {lat_deg}: derived {derived} vs direct {direct}"
         );
     }
-
-    /// The map widget rect the walk tests frame their tracks in.
-    const MAP_RECT: egui::Rect = egui::Rect {
-        min: egui::pos2(0.0, 0.0),
-        max: egui::pos2(800.0, 600.0),
-    };
-
-    /// The instant the first fix of every fixture track is stamped at.
-    const FIRST_FIX_TIME: DateTime<Utc> = DateTime::<Utc>::UNIX_EPOCH;
 
     fn at_second(offset_secs: i64) -> DateTime<Utc> {
         FIRST_FIX_TIME + TimeDelta::seconds(offset_secs)
@@ -888,4 +879,13 @@ mod tests {
             "walked {walked} of {unbounded} points"
         );
     }
+
+    /// The map widget rect the walk tests frame their tracks in.
+    const MAP_RECT: egui::Rect = egui::Rect {
+        min: egui::pos2(0.0, 0.0),
+        max: egui::pos2(800.0, 600.0),
+    };
+
+    /// The instant the first fix of every fixture track is stamped at.
+    const FIRST_FIX_TIME: DateTime<Utc> = DateTime::<Utc>::UNIX_EPOCH;
 }

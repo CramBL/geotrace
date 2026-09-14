@@ -16,29 +16,6 @@ use gt_types::{FileSource, Latitude, LoadedFile, Longitude, NavPoint, mercator};
 use uom::si::angle::degree;
 use uom::si::f64::Angle;
 
-const SECONDS_BETWEEN_FIXES: i64 = 30;
-
-/// Fixes of each leg, at [`LONGITUDE_STEP_DEGREES`] apart.
-const FIXES_PER_LEG: usize = 6;
-
-/// The fix at the turning point, between the two legs.
-const TURN_FIX_INDEX: usize = FIXES_PER_LEG;
-
-const FIRST_LONGITUDE_DEGREES: f64 = 12.550;
-
-/// Longitude between consecutive fixes of a leg, about 420 m at these
-/// latitudes. The six steps of a leg fill four fifths of the viewport once the
-/// map frames the recording.
-const LONGITUDE_STEP_DEGREES: f64 = 0.006_69;
-
-/// The latitude of the leg running east, and of the leg running west. They are
-/// about 222 m apart, which is a tenth of the viewport.
-const EASTBOUND_LATITUDE_DEGREES: f64 = 55.674;
-const WESTBOUND_LATITUDE_DEGREES: f64 = 55.676;
-
-const EAST_HEADING_DEGREES: f64 = 90.0;
-const WEST_HEADING_DEGREES: f64 = 270.0;
-
 fn time_of(index: usize) -> DateTime<Utc> {
     test_util::epoch() + Duration::seconds(index as i64 * SECONDS_BETWEEN_FIXES)
 }
@@ -113,3 +90,26 @@ fn snapshot_a_fix_measured_without_a_heading_is_drawn_at_the_tip_of_the_track() 
     let mut map = MapScene::of(files).render();
     map.snapshot("fix_measured_without_a_heading");
 }
+
+const SECONDS_BETWEEN_FIXES: i64 = 30;
+
+/// Fixes of each leg, at [`LONGITUDE_STEP_DEGREES`] apart.
+const FIXES_PER_LEG: usize = 6;
+
+/// The fix at the turning point, between the two legs.
+const TURN_FIX_INDEX: usize = FIXES_PER_LEG;
+
+const FIRST_LONGITUDE_DEGREES: f64 = 12.550;
+
+/// Longitude between consecutive fixes of a leg, about 420 m at these
+/// latitudes. The six steps of a leg fill four fifths of the viewport once the
+/// map frames the recording.
+const LONGITUDE_STEP_DEGREES: f64 = 0.006_69;
+
+/// The latitude of the leg running east, and of the leg running west. They are
+/// about 222 m apart, which is a tenth of the viewport.
+const EASTBOUND_LATITUDE_DEGREES: f64 = 55.674;
+const WESTBOUND_LATITUDE_DEGREES: f64 = 55.676;
+
+const EAST_HEADING_DEGREES: f64 = 90.0;
+const WEST_HEADING_DEGREES: f64 = 270.0;

@@ -12,8 +12,6 @@ use parking_lot::Mutex;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
-static DB_LOCK: Mutex<()> = Mutex::new(());
-
 pub mod copy;
 
 /// Map an `hdf5-pure` failure onto the [`DbError`] the app acts on.
@@ -565,3 +563,5 @@ pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
         gtd_size_bytes: bytes.len() as u64,
     })
 }
+
+static DB_LOCK: Mutex<()> = Mutex::new(());

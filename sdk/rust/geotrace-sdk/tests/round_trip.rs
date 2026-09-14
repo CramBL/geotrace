@@ -171,10 +171,6 @@ fn an_annotation_built_without_an_icon_reads_back_as_pin() -> Result<(), Box<dyn
     Ok(())
 }
 
-/// A `markers/icon` code outside the set this build has, as a newer build
-/// could write it.
-const UNRECOGNIZED_ICON_CODE: u8 = 200;
-
 #[test]
 fn an_icon_code_outside_the_marker_icon_set_reads_back_and_writes_back_unchanged()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -796,3 +792,7 @@ fn a_fix_keeps_the_clock_that_stamped_it(
     assert_eq!(fix.time, time);
     Ok(())
 }
+
+/// A `markers/icon` code outside the set this build has, as a newer build
+/// could write it.
+const UNRECOGNIZED_ICON_CODE: u8 = 200;

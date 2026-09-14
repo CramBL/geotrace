@@ -6,27 +6,13 @@
 //! [`HttpResponse`]s into its own outcome type via [`send_classified`], which
 //! retries a transient failure once, the same policy for every pipeline.
 
-#[cfg(any(test, feature = "test-util"))]
-pub mod test_util;
-
 use std::fmt;
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
-/// Retries per classified send, for transient failures only.
-const RETRIES: usize = 1;
-
-/// Timeout per request. Generous, because some hosts do server-side work
-/// before responding.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// Request header (name, value) a host can use to attribute traffic, sent
-/// with every request.
-pub const CLIENT_ID_HEADER: (&str, &str) = ("X-Client-Id", "geotrace");
-
-/// Replaces a secret wherever text that may hold one is written down.
-pub const REDACTED_SECRET: &str = "[redacted]";
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
 
 /// A credential the user registers for and enters in settings, which a host
 /// takes in a request header or a query parameter.
@@ -180,9 +166,6 @@ pub trait Transport<B = String> {
     /// block until the host can be contacted again.
     fn send(&self, request: &HttpRequest) -> Result<HttpResponse<B>, TransportError>;
 }
-
-/// Why a request failed while offline, in logs and in the UI.
-pub const OFFLINE_DETAIL: &str = "GeoTrace is running offline";
 
 /// Fails every request with [`OFFLINE_DETAIL`].
 #[derive(Debug, Clone, Copy, Default)]
@@ -367,6 +350,23 @@ pub fn send_classified<B, T>(
     }
     failure(last_failure)
 }
+
+/// Retries per classified send, for transient failures only.
+const RETRIES: usize = 1;
+
+/// Timeout per request. Generous, because some hosts do server-side work
+/// before responding.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Request header (name, value) a host can use to attribute traffic, sent
+/// with every request.
+pub const CLIENT_ID_HEADER: (&str, &str) = ("X-Client-Id", "geotrace");
+
+/// Replaces a secret wherever text that may hold one is written down.
+pub const REDACTED_SECRET: &str = "[redacted]";
+
+/// Why a request failed while offline, in logs and in the UI.
+pub const OFFLINE_DETAIL: &str = "GeoTrace is running offline";
 
 #[cfg(test)]
 mod tests {

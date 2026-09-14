@@ -22,21 +22,11 @@ use serde::Deserialize;
 use crate::class::{ClassificationParseError, FlareClassification};
 use crate::flare::SolarFlare;
 
-/// Format the three event times are written in, to the minute.
-const EVENT_TIME_FORMAT: &str = "%Y-%m-%dT%H:%MZ";
-
 /// Why a response could not be read as flare events.
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
-    #[error("response is not JSON in the published shape: {0}")]
-    Json(#[from] serde_json::Error),
-
-    #[error("{flare}: {field} is {value:?}, expected a time like 2024-05-09T00:58Z")]
-    EventTime {
-        flare: String,
-        field: &'static str,
-        value: String,
-    },
+    #[error("{flare}: activeRegionNum is {number}, expected an active region number")]
+    ActiveRegion { flare: String, number: i64 },
 
     #[error("{flare}: classType is unreadable: {source}")]
     Classification {
@@ -45,8 +35,15 @@ pub enum ParseError {
         source: ClassificationParseError,
     },
 
-    #[error("{flare}: activeRegionNum is {number}, expected an active region number")]
-    ActiveRegion { flare: String, number: i64 },
+    #[error("{flare}: {field} is {value:?}, expected a time like 2024-05-09T00:58Z")]
+    EventTime {
+        flare: String,
+        field: &'static str,
+        value: String,
+    },
+
+    #[error("response is not JSON in the published shape: {0}")]
+    Json(#[from] serde_json::Error),
 }
 
 /// The response fields this parser reads.
@@ -124,22 +121,15 @@ fn read_flare(wire: WireFlare) -> Result<SolarFlare, ParseError> {
     })
 }
 
+/// Format the three event times are written in, to the minute.
+const EVENT_TIME_FORMAT: &str = "%Y-%m-%dT%H:%MZ";
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
 
     use super::*;
     use crate::class::{FlareClass, RadioBlackoutClass};
-
-    /// The published shape, with every field the parser reads.
-    const ONE_FLARE: &str = r#"[{"flrID":"2024-05-09T08:45:00-FLR-001",
-        "catalog":"M2M_CATALOG",
-        "instruments":[{"displayName":"GOES-P: EXIS 1.0-8.0"}],
-        "beginTime":"2024-05-09T08:45Z","peakTime":"2024-05-09T09:13Z",
-        "endTime":"2024-05-09T09:36Z","classType":"X2.2",
-        "sourceLocation":"S20W25","activeRegionNum":13664,
-        "note":"","submissionTime":"2024-05-09T16:18Z","versionId":1,
-        "linkedEvents":null}]"#;
 
     fn only_flare(json: &str) -> SolarFlare {
         let mut flares = parse_flares(json).expect("the published shape");
@@ -288,4 +278,14 @@ mod tests {
         );
         assert!(error.to_string().starts_with("response is not JSON"));
     }
+
+    /// The published shape, with every field the parser reads.
+    const ONE_FLARE: &str = r#"[{"flrID":"2024-05-09T08:45:00-FLR-001",
+        "catalog":"M2M_CATALOG",
+        "instruments":[{"displayName":"GOES-P: EXIS 1.0-8.0"}],
+        "beginTime":"2024-05-09T08:45Z","peakTime":"2024-05-09T09:13Z",
+        "endTime":"2024-05-09T09:36Z","classType":"X2.2",
+        "sourceLocation":"S20W25","activeRegionNum":13664,
+        "note":"","submissionTime":"2024-05-09T16:18Z","versionId":1,
+        "linkedEvents":null}]"#;
 }

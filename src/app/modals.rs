@@ -26,13 +26,6 @@ use crate::app::mapbox_token::{MapboxTokenCommit, MapboxTokenField};
 #[cfg(test)]
 mod anchored_dialog_layout_tests;
 
-/// Label of the tickbox that escalates the shelve to a permanent delete.
-const PERMANENT_DELETE_LABEL: &str = "Delete permanently from history";
-
-pub(in crate::app) const SHELVE_BUTTON_LABEL: &str = "Shelve";
-
-pub(in crate::app) const DELETE_PERMANENTLY_BUTTON_LABEL: &str = "Delete permanently";
-
 /// The tracks of one stored recording that the confirmed action applies to.
 pub struct RecordingTrackRemoval {
     pub db_ref: DatabaseRef,
@@ -45,8 +38,8 @@ pub struct RecordingTrackRemoval {
 /// takes out of the view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StoredTrackAction {
-    Shelve,
     DeletePermanently,
+    Shelve,
 }
 
 impl StoredTrackAction {
@@ -69,9 +62,6 @@ pub struct ShelveOutcome {
     /// of the session.
     pub removed_recordings: Vec<RecordingKey>,
 }
-
-/// Gap between a dialog's body and the action row below it.
-const DIALOG_ACTIONS_GAP: f32 = 6.0;
 
 /// What a dialog scrolls: everything the user reads before acting.
 pub(super) struct DialogBody<F>(F);
@@ -174,6 +164,10 @@ pub(super) fn dialog_body_above_the_action_row<R>(
 /// What a dialog's body does with the height above its actions.
 #[derive(Clone, Copy)]
 pub(super) enum DialogBodyHeight {
+    /// The whole height above the actions, which keeps the actions at the
+    /// bottom edge of a window whose height is held.
+    TheHeldHeight,
+
     /// As much as its content needs, and it scrolls past what the window
     /// leaves above the actions.
     UpToWhatTheWindowLeaves,
@@ -181,10 +175,6 @@ pub(super) enum DialogBodyHeight {
     /// As much as its content needs, in no scroll area, which is how a dialog
     /// measures its own height on the frame it opens.
     WhatItsContentNeeds,
-
-    /// The whole height above the actions, which keeps the actions at the
-    /// bottom edge of a window whose height is held.
-    TheHeldHeight,
 }
 
 pub(super) fn dialog_body_above_the_action_row_taking<R>(
@@ -261,23 +251,6 @@ pub(super) fn destructive_button(ui: &mut egui::Ui, label: &str) -> egui::Respon
     ui.button(RichText::new(label).color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)))
         .on_hover_text("This cannot be undone")
 }
-
-/// The region listing the items that the confirmation takes out of the view.
-const SHELVED_ITEMS_REGION: &str = "shelved_items";
-
-/// Lines the [`SHELVED_ITEMS_REGION`] holds at most, however many items the
-/// confirmation takes: the rest of the rows scroll inside it. Twelve is the
-/// room ten item rows take, each a line of body text with the spacing under it.
-const SHELVED_ITEMS_MOST_LINES: u8 = 12;
-
-/// The region counting the logs attached to the recordings the confirmation
-/// takes out. A restored attachment that arrives while the dialog is open joins
-/// that count.
-const ATTACHED_LOGS_REGION: &str = "shelve_attached_logs";
-
-/// Lines the [`ATTACHED_LOGS_REGION`] holds from the frame the dialog opens.
-/// The longer of its two wordings takes one line at this width.
-const ATTACHED_LOGS_LINES: u8 = 1;
 
 /// Show the shelve confirmation, which the side panel's "Shelve filtered data"
 /// button raises over the tracks that the filter excludes.
@@ -742,9 +715,6 @@ pub fn show_recording_details_dialog(ui: &egui::Ui, request: &mut Option<Recordi
     }
 }
 
-/// The region holding the version and the attributions.
-const ABOUT_BODY_REGION: &str = "about_body";
-
 /// Show the About dialog: version and the data/service attributions.
 ///
 /// Map tiles and snap-to-road matching both build on OpenStreetMap data
@@ -806,11 +776,6 @@ pub fn show_about_dialog(ui: &egui::Ui, open: &mut bool, version: &str) {
         *open = false;
     }
 }
-
-/// The region holding what the dialog states about the upload. The service
-/// link shows only for the default host: pointing the setting at another
-/// server while the dialog is open takes that line away.
-const SNAP_CONSENT_BODY_REGION: &str = "snap_consent_body";
 
 /// The user's decision in the snap upload-consent dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -931,16 +896,13 @@ pub fn show_snap_consent_dialog(
     choice
 }
 
-/// The region stating what snapping again does to the stored result.
-const SNAP_REPLACE_BODY_REGION: &str = "snap_replace_body";
-
 /// The user's decision in the replace-cached-run confirmation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapReplaceChoice {
-    /// Run against the server again, replacing the stored result.
-    SnapAgain,
     /// Keeps the stored result: nothing is uploaded.
     Cancel,
+    /// Run against the server again, replacing the stored result.
+    SnapAgain,
 }
 
 /// Ask the user before a "Snap again as" choice replaces the result this
@@ -1021,27 +983,19 @@ pub struct SnapScopeCounts {
 /// Which of a recording's tracks a "Snap again as" choice covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapScope {
-    /// Only the recording's tracks selected in the panel.
-    SelectedTracks,
     /// Every track of the recording.
     AllTracks,
+    /// Only the recording's tracks selected in the panel.
+    SelectedTracks,
 }
 
 /// The user's decision in the scope dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapScopeChoice {
-    Snap(SnapScope),
     /// Nothing is uploaded.
     Cancel,
+    Snap(SnapScope),
 }
-
-/// The region stating that snapping again replaces the tracks' existing data.
-/// A snap result that arrives while the dialog is open fills it.
-const REPLACED_DATA_REGION: &str = "snap_scope_replaced_data";
-
-/// Lines the [`REPLACED_DATA_REGION`] holds from the frame the dialog opens,
-/// which is the two lines that statement wraps onto at this width.
-const REPLACED_DATA_LINES: u8 = 2;
 
 /// Ask the user which of a recording's tracks a "Snap again as" choice
 /// covers, and how many of them already have data for `costing_name`.
@@ -1137,10 +1091,6 @@ fn scope_summary(count: SnapScopeCount, costing_name: &str) -> String {
     )
 }
 
-/// The region holding what the prompt states about automatic snapping and the
-/// server it uploads to.
-const SNAP_AUTO_PROMPT_BODY_REGION: &str = "snap_auto_prompt_body";
-
 /// The user's decision in the one-time auto-snap prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapAutoChoice {
@@ -1214,9 +1164,6 @@ pub fn show_snap_auto_prompt(ui: &egui::Ui, server_url: &str) -> Option<SnapAuto
     choice
 }
 
-/// The region holding the token field and the two lines above it.
-const MAPBOX_TOKEN_BODY_REGION: &str = "mapbox_token_body";
-
 pub fn show_mapbox_token_dialog(
     ui: &egui::Ui,
     map: &mut NavMap,
@@ -1277,24 +1224,9 @@ pub struct EnvironmentPrunePrompt<'a> {
 }
 
 pub enum EnvironmentPruneChoice {
-    Delete,
     Cancel,
+    Delete,
 }
-
-const DELETE_ARCHIVED_DAYS_TITLE: &str = "Delete archived days?";
-
-/// The region listing the loaded recordings. A recording that finishes loading
-/// while the dialog is open joins that list.
-const LOADED_RECORDINGS_REGION: &str = "environment_prune_loaded_recordings";
-
-/// Lines the [`LOADED_RECORDINGS_REGION`] holds from the frame the dialog
-/// opens. Three is the fewest that hold the note above the names and the
-/// first name under it.
-const LOADED_RECORDINGS_LINES: u8 = 3;
-
-/// Lines the [`LOADED_RECORDINGS_REGION`] holds at most, however many
-/// recordings are loaded: the rest of the names scroll inside it.
-const LOADED_RECORDINGS_MOST_LINES: u8 = 9;
 
 /// Confirm an environment-data delete, stating what goes and which loaded
 /// recordings are downloaded again straight after.
@@ -1392,9 +1324,9 @@ fn prune_scope_line(request: PruneRequest) -> String {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ForceQuitChoice {
-    Quit,
     /// Close the confirmation and leave the process running.
     Dismiss,
+    Quit,
 }
 
 /// Whether the pointer rests over a dialog's own window this frame.
@@ -1404,8 +1336,8 @@ pub enum ForceQuitChoice {
 /// was drawn over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PointerOverTheDialog {
-    Resting,
     Away,
+    Resting,
 }
 
 impl PointerOverTheDialog {
@@ -1447,11 +1379,6 @@ impl TimeUntilTheClose {
         format!("Close ({seconds}s)")
     }
 }
-
-/// A dialog that reports its action has nothing left to do runs this count
-/// before it closes itself, which is long enough to read the one sentence it
-/// reports.
-pub(super) const COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES: Duration = Duration::from_secs(4);
 
 /// What a dialog reporting that its action has nothing left to do has left
 /// before it closes itself, and the frame that time was last taken off it.
@@ -1496,21 +1423,6 @@ impl CountdownToTheClose {
         ctx.request_repaint_after(Self::REPAINT_INTERVAL);
     }
 }
-
-/// The region listing what each running write costs. The dialog drops the line
-/// for a write that finishes while it is open.
-const INTERRUPTION_COSTS_REGION: &str = "force_quit_interruption_costs";
-
-/// egui derives the confirmation's window id from its title, and one window
-/// draws both of [`ForceQuitPromptContents`]: the title stays put while the
-/// body and the actions change.
-const FORCE_QUIT_TITLE: &str = "Force quit?";
-
-const FORCE_QUIT_LABEL: &str = "Force quit";
-
-const CLOSE_BUTTON_HOVER: &str = "Closes GeoTrace now. GeoTrace closes on its own when the count \
-                                  reaches zero. The count holds while the pointer is over this \
-                                  window.";
 
 /// What the force-quit confirmation reports for the frame it drew.
 pub struct ForceQuitPromptResponse {
@@ -1582,6 +1494,94 @@ pub fn show_force_quit_confirmation(
     ForceQuitPromptResponse { choice, pointer }
 }
 
+/// Label of the tickbox that escalates the shelve to a permanent delete.
+const PERMANENT_DELETE_LABEL: &str = "Delete permanently from history";
+
+pub(in crate::app) const SHELVE_BUTTON_LABEL: &str = "Shelve";
+
+pub(in crate::app) const DELETE_PERMANENTLY_BUTTON_LABEL: &str = "Delete permanently";
+
+/// Gap between a dialog's body and the action row below it.
+const DIALOG_ACTIONS_GAP: f32 = 6.0;
+
+/// The region listing the items that the confirmation takes out of the view.
+const SHELVED_ITEMS_REGION: &str = "shelved_items";
+
+/// Lines the [`SHELVED_ITEMS_REGION`] holds at most, however many items the
+/// confirmation takes: the rest of the rows scroll inside it. Twelve is the
+/// room ten item rows take, each a line of body text with the spacing under it.
+const SHELVED_ITEMS_MOST_LINES: u8 = 12;
+
+/// The region counting the logs attached to the recordings the confirmation
+/// takes out. A restored attachment that arrives while the dialog is open joins
+/// that count.
+const ATTACHED_LOGS_REGION: &str = "shelve_attached_logs";
+
+/// Lines the [`ATTACHED_LOGS_REGION`] holds from the frame the dialog opens.
+/// The longer of its two wordings takes one line at this width.
+const ATTACHED_LOGS_LINES: u8 = 1;
+
+/// The region holding the version and the attributions.
+const ABOUT_BODY_REGION: &str = "about_body";
+
+/// The region holding what the dialog states about the upload. The service
+/// link shows only for the default host: pointing the setting at another
+/// server while the dialog is open takes that line away.
+const SNAP_CONSENT_BODY_REGION: &str = "snap_consent_body";
+
+/// The region stating what snapping again does to the stored result.
+const SNAP_REPLACE_BODY_REGION: &str = "snap_replace_body";
+
+/// The region stating that snapping again replaces the tracks' existing data.
+/// A snap result that arrives while the dialog is open fills it.
+const REPLACED_DATA_REGION: &str = "snap_scope_replaced_data";
+
+/// Lines the [`REPLACED_DATA_REGION`] holds from the frame the dialog opens,
+/// which is the two lines that statement wraps onto at this width.
+const REPLACED_DATA_LINES: u8 = 2;
+
+/// The region holding what the prompt states about automatic snapping and the
+/// server it uploads to.
+const SNAP_AUTO_PROMPT_BODY_REGION: &str = "snap_auto_prompt_body";
+
+/// The region holding the token field and the two lines above it.
+const MAPBOX_TOKEN_BODY_REGION: &str = "mapbox_token_body";
+
+const DELETE_ARCHIVED_DAYS_TITLE: &str = "Delete archived days?";
+
+/// The region listing the loaded recordings. A recording that finishes loading
+/// while the dialog is open joins that list.
+const LOADED_RECORDINGS_REGION: &str = "environment_prune_loaded_recordings";
+
+/// Lines the [`LOADED_RECORDINGS_REGION`] holds from the frame the dialog
+/// opens. Three is the fewest that hold the note above the names and the
+/// first name under it.
+const LOADED_RECORDINGS_LINES: u8 = 3;
+
+/// Lines the [`LOADED_RECORDINGS_REGION`] holds at most, however many
+/// recordings are loaded: the rest of the names scroll inside it.
+const LOADED_RECORDINGS_MOST_LINES: u8 = 9;
+
+/// A dialog that reports its action has nothing left to do runs this count
+/// before it closes itself, which is long enough to read the one sentence it
+/// reports.
+pub(super) const COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES: Duration = Duration::from_secs(4);
+
+/// The region listing what each running write costs. The dialog drops the line
+/// for a write that finishes while it is open.
+const INTERRUPTION_COSTS_REGION: &str = "force_quit_interruption_costs";
+
+/// egui derives the confirmation's window id from its title, and one window
+/// draws both of [`ForceQuitPromptContents`]: the title stays put while the
+/// body and the actions change.
+const FORCE_QUIT_TITLE: &str = "Force quit?";
+
+const FORCE_QUIT_LABEL: &str = "Force quit";
+
+const CLOSE_BUTTON_HOVER: &str = "Closes GeoTrace now. GeoTrace closes on its own when the count \
+                                  reaches zero. The count holds while the pointer is over this \
+                                  window.";
+
 #[cfg(test)]
 mod tests {
     //! A harness that changes what it renders between frames holds that input
@@ -1646,11 +1646,6 @@ mod tests {
         covered
     }
 
-    /// Every dialog opened by these tests is drawn at its full width, with no
-    /// control clipped by the screen. This is wider and taller than all of
-    /// them.
-    pub(super) const DIALOG_VIEWPORT: egui::Vec2 = egui::vec2(640.0, 480.0);
-
     /// Renders the confirmation and reports the choice it took.
     pub(super) fn prune_dialog<'a>(
         scope: PruneScope,
@@ -1687,9 +1682,6 @@ mod tests {
         harness.inner.run_steps(4);
         harness
     }
-
-    /// The costing the snap scope dialog is opened for.
-    pub(super) const SNAP_COSTING: &str = "car";
 
     /// Four tracks, none of them snapped as [`SNAP_COSTING`] yet, one of them
     /// selected in the panel.
@@ -1800,8 +1792,6 @@ mod tests {
         harness.run();
         harness
     }
-
-    const TIME_UNTIL_THE_CLOSE: TimeUntilTheClose = TimeUntilTheClose(Duration::from_secs(4));
 
     fn force_quit_dialog_once_the_writes_finish(
         choice: &RefCell<Option<ForceQuitChoice>>,
@@ -2261,12 +2251,6 @@ mod tests {
         let mut harness = shelve_confirmation(2);
         harness.snapshot("shelve_confirmation");
     }
-
-    /// Items enough to fill the room the list caps at
-    /// [`SHELVED_ITEMS_MOST_LINES`].
-    const ITEMS_PAST_THE_CAPPED_ROOM: usize = 12;
-
-    const ITEMS_FAR_PAST_THE_CAPPED_ROOM: usize = 40;
 
     /// The list past the room it caps at, scrolling inside that room.
     #[test]
@@ -2762,18 +2746,18 @@ mod tests {
     /// of the audit viewports.
     #[derive(Debug, Clone, Copy)]
     enum OversizedDialog {
-        Shelve,
-        OrphanedEventMarkers,
-        LoadWarnings,
-        RecordingDetails,
         About,
+        EnvironmentPrune,
+        ForceQuit,
+        LoadWarnings,
+        MapboxToken,
+        OrphanedEventMarkers,
+        RecordingDetails,
+        Shelve,
+        SnapAutoPrompt,
         SnapConsent,
         SnapReplace,
         SnapScope,
-        SnapAutoPrompt,
-        MapboxToken,
-        EnvironmentPrune,
-        ForceQuit,
     }
 
     impl OversizedDialog {
@@ -2976,4 +2960,20 @@ mod tests {
                 .assert_control_is_reachable(AuditedWindow::titled(&title), ControlLabel(button));
         }
     }
+
+    /// Every dialog opened by these tests is drawn at its full width, with no
+    /// control clipped by the screen. This is wider and taller than all of
+    /// them.
+    pub(super) const DIALOG_VIEWPORT: egui::Vec2 = egui::vec2(640.0, 480.0);
+
+    /// The costing the snap scope dialog is opened for.
+    pub(super) const SNAP_COSTING: &str = "car";
+
+    const TIME_UNTIL_THE_CLOSE: TimeUntilTheClose = TimeUntilTheClose(Duration::from_secs(4));
+
+    /// Items enough to fill the room the list caps at
+    /// [`SHELVED_ITEMS_MOST_LINES`].
+    const ITEMS_PAST_THE_CAPPED_ROOM: usize = 12;
+
+    const ITEMS_FAR_PAST_THE_CAPPED_ROOM: usize = 40;
 }

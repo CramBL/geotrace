@@ -5,9 +5,6 @@ use egui::{Color32, emath};
 
 use super::results::ROW_PADDING;
 
-/// How round the ends of a value bar are.
-const BAR_CORNER_RADIUS_PX: f32 = 2.0;
-
 /// The lowest and highest value one column of the points table takes over every
 /// matched row of its query in the run.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -105,6 +102,9 @@ impl RunColumnRanges {
         self.queries.get(query_index).map_or(&[], Vec::as_slice)
     }
 }
+
+/// How round the ends of a value bar are.
+const BAR_CORNER_RADIUS_PX: f32 = 2.0;
 
 #[cfg(test)]
 mod tests {

@@ -15,10 +15,10 @@ use crate::{Dataset, FileSpec, MapScenario, PointSpec, TrackSpec};
 /// predicates only (see [`agg_metric`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Metric {
-    Velocity,
+    Accel,
     Eph,
     Heading,
-    Accel,
+    Velocity,
 }
 
 impl Metric {
@@ -58,8 +58,8 @@ impl Metric {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Agg {
     Avg,
-    Min,
     Max,
+    Min,
     Spread,
 }
 
@@ -79,8 +79,8 @@ impl Agg {
 /// aggregate without one, so a stage's window determines which of these it holds.
 #[derive(Debug, Clone, Copy)]
 pub enum Term {
-    Point(Metric),
     Agg { func: Agg, metric: Metric },
+    Point(Metric),
 }
 
 impl Term {
@@ -100,10 +100,10 @@ impl Term {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmpOp {
-    Lt,
-    Le,
-    Gt,
     Ge,
+    Gt,
+    Le,
+    Lt,
 }
 
 impl CmpOp {
@@ -120,14 +120,14 @@ impl CmpOp {
 /// A generated predicate tree.
 #[derive(Debug, Clone)]
 pub enum Predicate {
+    And(Box<Predicate>, Box<Predicate>),
     Cmp {
         term: Term,
         op: CmpOp,
         threshold: f64,
     },
-    And(Box<Predicate>, Box<Predicate>),
-    Or(Box<Predicate>, Box<Predicate>),
     Not(Box<Predicate>),
+    Or(Box<Predicate>, Box<Predicate>),
 }
 
 impl Predicate {
@@ -168,9 +168,9 @@ impl Predicate {
 /// What a stage does with the points it matched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    Keep,
-    Hide,
     Draw,
+    Hide,
+    Keep,
 }
 
 impl Mode {
@@ -286,8 +286,8 @@ impl Program {
 /// source used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Newline {
-    Lf,
     Crlf,
+    Lf,
 }
 
 impl Newline {
@@ -304,11 +304,11 @@ impl Newline {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Separator {
     OneBlank,
-    TwoBlanks,
-    ThreeBlanks,
+    SpacesAndBlanks,
     SpacesOnly,
     TabsOnly,
-    SpacesAndBlanks,
+    ThreeBlanks,
+    TwoBlanks,
 }
 
 impl Separator {

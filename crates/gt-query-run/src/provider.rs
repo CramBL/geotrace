@@ -370,13 +370,13 @@ fn unix_seconds(time: &DateTime<Utc>) -> f64 {
 /// How a channel's samples are found by time.
 #[derive(Clone)]
 enum ChannelSampleOrder {
-    /// The stored timestamps never decrease, so a binary search over them
-    /// locates a time span.
-    StoredOrderIsChronological,
     /// The sample positions in timestamp order, for a channel whose stored
     /// timestamps step backwards somewhere. The channel itself keeps the order
     /// the file gave it.
     PositionsInTimeOrder(Vec<SampleAtTime>),
+    /// The stored timestamps never decrease, so a binary search over them
+    /// locates a time span.
+    StoredOrderIsChronological,
 }
 
 impl ChannelSampleOrder {

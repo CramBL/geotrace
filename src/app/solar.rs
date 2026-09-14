@@ -746,13 +746,6 @@ mod tests {
 
     use super::*;
 
-    /// One period of each index, so the same body parses as either.
-    const ONE_PERIOD_OF_BOTH_INDICES: &str = r#"{"Kp":[2.667],"Hp30":[3.0],
-        "datetime":["2026-07-20T00:00:00Z"],"status":["def"]}"#;
-
-    /// A window the service has no values for.
-    const NO_VALUES: &str = r#"{"Kp":[],"Hp30":[],"datetime":[],"status":[]}"#;
-
     fn archive() -> (TempDir, GeomagneticIndexArchive) {
         let dir = tempfile::tempdir().expect("temp dir");
         let store = Store::open_in(dir.path())
@@ -1928,4 +1921,11 @@ mod tests {
                 .is_empty()
         );
     }
+
+    /// One period of each index, so the same body parses as either.
+    const ONE_PERIOD_OF_BOTH_INDICES: &str = r#"{"Kp":[2.667],"Hp30":[3.0],
+        "datetime":["2026-07-20T00:00:00Z"],"status":["def"]}"#;
+
+    /// A window the service has no values for.
+    const NO_VALUES: &str = r#"{"Kp":[],"Hp30":[],"datetime":[],"status":[]}"#;
 }

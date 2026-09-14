@@ -11,9 +11,6 @@ pub struct LoadWarning {
     pub description: String,
 }
 
-/// How many entries a warning lists before it only counts the rest.
-const MAX_LISTED_ENTRIES: usize = 5;
-
 /// Renders the first `MAX_LISTED_ENTRIES` of `entries`, followed by how many
 /// more there are.
 pub fn first_few_listed<T: fmt::Display>(entries: &[T]) -> String {
@@ -52,3 +49,6 @@ impl AlterationWording {
         })
     }
 }
+
+/// How many entries a warning lists before it only counts the rest.
+const MAX_LISTED_ENTRIES: usize = 5;

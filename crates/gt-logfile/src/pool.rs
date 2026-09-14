@@ -6,12 +6,6 @@ use std::{num::NonZeroUsize, sync::OnceLock, thread};
 
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
-/// The share of the machine's cores the pool may occupy. A log pass is a
-/// background job behind a desktop the user is still working in, and a log is
-/// large enough to saturate every core for long enough to be felt: measured on
-/// an 80 MiB journal, half the cores index it as fast as all of them.
-const CORES_PER_WORKER: usize = 2;
-
 /// The pool, or `None` when it could not be built and the caller must do the
 /// work on the calling thread.
 ///
@@ -38,6 +32,12 @@ pub fn log_worker_pool() -> Option<&'static ThreadPool> {
         })
         .as_ref()
 }
+
+/// The share of the machine's cores the pool may occupy. A log pass is a
+/// background job behind a desktop the user is still working in, and a log is
+/// large enough to saturate every core for long enough to be felt: measured on
+/// an 80 MiB journal, half the cores index it as fast as all of them.
+const CORES_PER_WORKER: usize = 2;
 
 #[cfg(test)]
 mod tests {

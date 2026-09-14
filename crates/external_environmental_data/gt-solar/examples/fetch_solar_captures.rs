@@ -38,15 +38,6 @@ use gt_solar::{
     CAPTURE_MANIFEST, CAPTURED_WINDOWS, CapturedWindow, DEFAULT_BASE_URL, GeomagneticIndex,
 };
 
-/// Points the capture at a mirror. The capture requests from `DEFAULT_BASE_URL`
-/// when it is unset.
-const HOST_ENV: &str = "GEOTRACE_SOLAR_HOST";
-
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// Pause between requests: the service is a small public research endpoint.
-const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
-
 fn main() -> Result<(), Box<dyn Error>> {
     let host = env::var(HOST_ENV).unwrap_or_else(|_| DEFAULT_BASE_URL.to_owned());
     let dir = gt_solar::captures_dir();
@@ -160,3 +151,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+/// Points the capture at a mirror. The capture requests from `DEFAULT_BASE_URL`
+/// when it is unset.
+const HOST_ENV: &str = "GEOTRACE_SOLAR_HOST";
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Pause between requests: the service is a small public research endpoint.
+const REQUEST_INTERVAL: Duration = Duration::from_secs(2);

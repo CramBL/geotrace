@@ -33,28 +33,18 @@ use super::anchored_dialog::AnchoredDialogKind;
 use super::storage::StorageOpen;
 use super::{App, modals, storage};
 
-pub(in crate::app) const RECOVER_BUTTON_LABEL: &str = "Recover";
-
-pub(in crate::app) const LEAVE_UNRECOVERED_BUTTON_LABEL: &str = "Leave unrecovered";
-
-pub(in crate::app) const ARCHIVE_IN_USE_BUTTON_LABEL: &str = "Continue";
-
-/// Starts the line an interrupted-delete prompt states a take-over on.
-pub(in crate::app) const WRITE_ACCESS_TAKEN_FROM: &str =
-    "Write access to this data directory was taken from";
-
 /// What reading one archive found, where the user has to choose what to do
 /// about it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::app) enum InterruptedDeleteFinding {
+    /// Nothing here can read the file: the other GeoTrace has it open.
+    HeldByTheOtherInstance,
     /// A delete was interrupted part-way through the archive, leaving the
     /// days recovering it would discard.
     Interrupted {
         interrupted: InterruptedDelete,
         take_over: Option<TakeOverAfterTheArchiveWasLastWritten>,
     },
-    /// Nothing here can read the file: the other GeoTrace has it open.
-    HeldByTheOtherInstance,
 }
 
 /// A take-over recorded in the data directory, where the archive was last
@@ -211,11 +201,11 @@ impl InterruptedDeleteFinding {
 /// user chose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArchiveUnavailable {
+    /// The GeoTrace the user took write access from has the file open.
+    HeldByTheOtherInstance,
     /// The archive keeps the days it holds: the user left the interrupted
     /// delete in it unrecovered.
     InterruptedDeleteLeftUnrecovered,
-    /// The GeoTrace the user took write access from has the file open.
-    HeldByTheOtherInstance,
     /// The data directory holds no such archive, and a read-only session
     /// creates none.
     MissingInAReadOnlySession,
@@ -244,13 +234,13 @@ pub type UnavailableArchives = PerArchive<Option<ArchiveUnavailable>>;
 /// What an open does with one archive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::app) enum ArchiveOpenPlan {
+    /// Left closed for this session, for the reason the user was given.
+    LeaveClosed(ArchiveUnavailable),
     /// Open it, creating it where it is not there, and recover an interrupted
     /// delete as the choice says.
     Open(InterruptedDeleteRecovery),
     /// Open the archive that is already there without writing to it.
     OpenReadOnly,
-    /// Left closed for this session, for the reason the user was given.
-    LeaveClosed(ArchiveUnavailable),
 }
 
 impl ArchiveOpenPlan {
@@ -271,11 +261,11 @@ impl ArchiveOpenPlan {
 /// What an open does with the interrupted deletes it meets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::app) enum ArchiveRecovery {
+    /// Follow the user's choice for each archive after taking write access.
+    AsTheUserChose(ArchiveRecoveryChoices),
     /// Recover whatever is found: the process that left it behind is gone,
     /// and this instance has the data directory to itself.
     Automatic,
-    /// Follow the user's choice for each archive after taking write access.
-    AsTheUserChose(ArchiveRecoveryChoices),
 }
 
 impl ArchiveRecovery {
@@ -329,13 +319,13 @@ impl InterruptedDeletePrompts {
 /// What the user chose for one archive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InterruptedDeleteChoice {
-    /// Discard the archived days and open the archive.
-    Recover,
-    /// Keep the file as it is, which leaves the archive closed.
-    LeaveUnrecovered,
     /// Read the notice about an archive the other GeoTrace has open, which is
     /// not opened here.
     LeaveToTheOtherInstance,
+    /// Keep the file as it is, which leaves the archive closed.
+    LeaveUnrecovered,
+    /// Discard the archived days and open the archive.
+    Recover,
 }
 
 impl InterruptedDeleteChoice {
@@ -550,6 +540,16 @@ impl App {
     }
 }
 
+pub(in crate::app) const RECOVER_BUTTON_LABEL: &str = "Recover";
+
+pub(in crate::app) const LEAVE_UNRECOVERED_BUTTON_LABEL: &str = "Leave unrecovered";
+
+pub(in crate::app) const ARCHIVE_IN_USE_BUTTON_LABEL: &str = "Continue";
+
+/// Starts the line an interrupted-delete prompt states a take-over on.
+pub(in crate::app) const WRITE_ACCESS_TAKEN_FROM: &str =
+    "Write access to this data directory was taken from";
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -557,8 +557,6 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-
-    const TAKEN_FROM_PROCESS_ID: u32 = 4321;
 
     /// A take-over of a data directory, stamped as the case says.
     const fn take_over_recorded_at(written_at: Option<u64>) -> TakeOverRecord {
@@ -643,4 +641,6 @@ mod tests {
             expected
         );
     }
+
+    const TAKEN_FROM_PROCESS_ID: u32 = 4321;
 }

@@ -29,83 +29,6 @@ use super::anchored_dialog::{AnchoredDialog, AnchoredDialogKind, DialogRegions, 
 use super::modals::{self, DialogActionRow, DialogBody};
 use super::storage::{QueuedLoad, StorageOpen};
 
-/// How often the wait tries the data directory again, and with it re-reads
-/// why it does not have it.
-pub(in crate::app) const DATA_DIRECTORY_RETRY_INTERVAL: Duration = Duration::from_millis(250);
-
-/// How many attempts the background retry makes at
-/// [`DATA_DIRECTORY_RETRY_INTERVAL`] before the interval starts doubling.
-const BACKGROUND_MARK_ATTEMPTS_AT_THE_WAIT_RATE: u32 = 20;
-
-/// The ceiling the doubling background-retry interval stops at.
-const SLOWEST_BACKGROUND_MARK_RETRY_INTERVAL: Duration = Duration::from_secs(30);
-
-/// How many retries in a row may fail to open the lock file before the wait
-/// ends and the databases open without the mark. At
-/// [`DATA_DIRECTORY_RETRY_INTERVAL`] this is five seconds, enough to cover a
-/// remount or a lock daemon restart.
-const UNUSABLE_LOCK_FILE_RETRIES_BEFORE_THE_WAIT_ENDS: u32 = 20;
-
-pub(in crate::app) const DATA_DIRECTORY_HELD_TITLE: &str =
-    "Another GeoTrace is using this data directory";
-
-pub(in crate::app) const LOCK_FILE_UNUSABLE_TITLE: &str =
-    "GeoTrace cannot lock this data directory";
-
-pub(in crate::app) const TAKE_OVER_BUTTON_LABEL: &str = "Take over write access…";
-
-/// No suffix: the button needs no further input, because a read-only session
-/// destroys nothing and overrides nothing.
-pub(in crate::app) const START_READ_ONLY_BUTTON_LABEL: &str = "Start read-only";
-
-pub(in crate::app) const TAKE_OVER_CONFIRMATION_TITLE: &str = "Take over write access?";
-
-pub(in crate::app) const TAKE_OVER_WARNING: &str = "Writing to the recordings and archives while the other GeoTrace is still \
-     writing to them can leave either of them inconsistent. GeoTrace asks first about \
-     an archive the other GeoTrace is part-way through deleting from. Both windows also \
-     write the same settings file, and the settings of whichever closes last are the \
-     ones kept.";
-
-const TAKE_OVER_BUTTON_HOVER: &str =
-    "Open the recordings and archives here without waiting for the other GeoTrace";
-
-const START_READ_ONLY_BUTTON_HOVER: &str = "Read the recordings and archives here while the other GeoTrace keeps them: \
-     nothing is stored, downloaded, deleted or saved. The session stays read-only until \
-     GeoTrace is restarted.";
-
-/// Ends every wait dialog line about a status file that produced no status.
-const OPENS_HERE_ONCE_THE_HOLDER_LETS_GO: &str =
-    "GeoTrace opens the recordings and archives here as soon as it lets go.";
-
-/// What the write recording a take-over registers under.
-const RECORDING_THE_TAKE_OVER: &str = "Recording the take-over";
-
-/// The region of both dialogs that shows what the instance holding the data
-/// directory is doing. What it shows changes while either dialog is open: the
-/// wait re-reads the status file every [`DATA_DIRECTORY_RETRY_INTERVAL`].
-const HOLDER_STATE_REGION: &str = "holder_state";
-
-/// Lines [`HOLDER_STATE_REGION`] holds in the wait dialog: three for the
-/// longest of its statements, and two for the line marking the report as out
-/// of date, which appears once the other instance stops refreshing it.
-const WAIT_DIALOG_HOLDER_STATE_LEAST_LINES: u8 = 5;
-
-/// Lines [`HOLDER_STATE_REGION`] holds at most in the wait dialog: the five
-/// it reserves plus four for the writes a shutting-down instance lists. A
-/// status file that cannot be read gives an error, which scrolls inside that
-/// room.
-const WAIT_DIALOG_HOLDER_STATE_MOST_LINES: u8 = 9;
-
-/// Lines [`HOLDER_STATE_REGION`] holds in the take-over confirmation, which
-/// is wider than the wait dialog: two for the longest of its statements, and
-/// two for the line marking the report as out of date.
-const TAKE_OVER_HOLDER_STATE_LEAST_LINES: u8 = 4;
-
-/// Lines [`HOLDER_STATE_REGION`] holds at most in the take-over
-/// confirmation: the four it reserves plus four for the writes a
-/// shutting-down instance lists.
-const TAKE_OVER_HOLDER_STATE_MOST_LINES: u8 = 8;
-
 /// Why this instance does not have the data directory, as the wait last
 /// found it.
 #[derive(Debug)]
@@ -121,8 +44,6 @@ enum DataDirectoryUnavailable {
 /// Whether the retry ended the wait.
 #[derive(Debug, PartialEq, Eq)]
 enum DataDirectoryRetry {
-    Taken,
-    StillWaiting,
     /// `open_lock_file` failed for
     /// [`UNUSABLE_LOCK_FILE_RETRIES_BEFORE_THE_WAIT_ENDS`] retries in a row,
     /// with the cause of the last one. Which process holds the directory is
@@ -130,6 +51,8 @@ enum DataDirectoryRetry {
     GaveUpOnTheLockFile {
         cause: String,
     },
+    StillWaiting,
+    Taken,
 }
 
 /// What the user chose in the wait dialog this frame.
@@ -137,18 +60,18 @@ enum DataDirectoryRetry {
 enum WaitChoice {
     /// The dialog is up and the wait goes on.
     KeepWaiting,
-    /// Open the databases here, overriding the instance holding the data
-    /// directory.
-    TakeOverWriteAccess,
     /// Read the databases beside the instance holding the data directory,
     /// writing nothing.
     StartReadOnly,
+    /// Open the databases here, overriding the instance holding the data
+    /// directory.
+    TakeOverWriteAccess,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 enum TakeOverChoice {
-    TakeOver,
     Cancel,
+    TakeOver,
 }
 
 /// The wait for the data directory this instance has yet to take.
@@ -737,11 +660,86 @@ impl App {
     }
 }
 
+/// How often the wait tries the data directory again, and with it re-reads
+/// why it does not have it.
+pub(in crate::app) const DATA_DIRECTORY_RETRY_INTERVAL: Duration = Duration::from_millis(250);
+
+/// How many attempts the background retry makes at
+/// [`DATA_DIRECTORY_RETRY_INTERVAL`] before the interval starts doubling.
+const BACKGROUND_MARK_ATTEMPTS_AT_THE_WAIT_RATE: u32 = 20;
+
+/// The ceiling the doubling background-retry interval stops at.
+const SLOWEST_BACKGROUND_MARK_RETRY_INTERVAL: Duration = Duration::from_secs(30);
+
+/// How many retries in a row may fail to open the lock file before the wait
+/// ends and the databases open without the mark. At
+/// [`DATA_DIRECTORY_RETRY_INTERVAL`] this is five seconds, enough to cover a
+/// remount or a lock daemon restart.
+const UNUSABLE_LOCK_FILE_RETRIES_BEFORE_THE_WAIT_ENDS: u32 = 20;
+
+pub(in crate::app) const DATA_DIRECTORY_HELD_TITLE: &str =
+    "Another GeoTrace is using this data directory";
+
+pub(in crate::app) const LOCK_FILE_UNUSABLE_TITLE: &str =
+    "GeoTrace cannot lock this data directory";
+
+pub(in crate::app) const TAKE_OVER_BUTTON_LABEL: &str = "Take over write access…";
+
+/// No suffix: the button needs no further input, because a read-only session
+/// destroys nothing and overrides nothing.
+pub(in crate::app) const START_READ_ONLY_BUTTON_LABEL: &str = "Start read-only";
+
+pub(in crate::app) const TAKE_OVER_CONFIRMATION_TITLE: &str = "Take over write access?";
+
+pub(in crate::app) const TAKE_OVER_WARNING: &str = "Writing to the recordings and archives while the other GeoTrace is still \
+     writing to them can leave either of them inconsistent. GeoTrace asks first about \
+     an archive the other GeoTrace is part-way through deleting from. Both windows also \
+     write the same settings file, and the settings of whichever closes last are the \
+     ones kept.";
+
+const TAKE_OVER_BUTTON_HOVER: &str =
+    "Open the recordings and archives here without waiting for the other GeoTrace";
+
+const START_READ_ONLY_BUTTON_HOVER: &str = "Read the recordings and archives here while the other GeoTrace keeps them: \
+     nothing is stored, downloaded, deleted or saved. The session stays read-only until \
+     GeoTrace is restarted.";
+
+/// Ends every wait dialog line about a status file that produced no status.
+const OPENS_HERE_ONCE_THE_HOLDER_LETS_GO: &str =
+    "GeoTrace opens the recordings and archives here as soon as it lets go.";
+
+/// What the write recording a take-over registers under.
+const RECORDING_THE_TAKE_OVER: &str = "Recording the take-over";
+
+/// The region of both dialogs that shows what the instance holding the data
+/// directory is doing. What it shows changes while either dialog is open: the
+/// wait re-reads the status file every [`DATA_DIRECTORY_RETRY_INTERVAL`].
+const HOLDER_STATE_REGION: &str = "holder_state";
+
+/// Lines [`HOLDER_STATE_REGION`] holds in the wait dialog: three for the
+/// longest of its statements, and two for the line marking the report as out
+/// of date, which appears once the other instance stops refreshing it.
+const WAIT_DIALOG_HOLDER_STATE_LEAST_LINES: u8 = 5;
+
+/// Lines [`HOLDER_STATE_REGION`] holds at most in the wait dialog: the five
+/// it reserves plus four for the writes a shutting-down instance lists. A
+/// status file that cannot be read gives an error, which scrolls inside that
+/// room.
+const WAIT_DIALOG_HOLDER_STATE_MOST_LINES: u8 = 9;
+
+/// Lines [`HOLDER_STATE_REGION`] holds in the take-over confirmation, which
+/// is wider than the wait dialog: two for the longest of its statements, and
+/// two for the line marking the report as out of date.
+const TAKE_OVER_HOLDER_STATE_LEAST_LINES: u8 = 4;
+
+/// Lines [`HOLDER_STATE_REGION`] holds at most in the take-over
+/// confirmation: the four it reserves plus four for the writes a
+/// shutting-down instance lists.
+const TAKE_OVER_HOLDER_STATE_MOST_LINES: u8 = 8;
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const UNUSABLE_LOCK_FILE_CAUSE: &str = "the lock file cannot be opened";
 
     /// A wait as it stands the moment another instance is found holding the
     /// data directory, with nothing readable about that instance yet.
@@ -901,4 +899,6 @@ mod tests {
             .inner
             .assert_control_is_reachable(AuditedWindow::titled(title), ControlLabel(control));
     }
+
+    const UNUSABLE_LOCK_FILE_CAUSE: &str = "the lock file cannot be opened";
 }

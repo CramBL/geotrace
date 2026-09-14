@@ -8,10 +8,6 @@ use smallvec::SmallVec;
 use crate::projection;
 use crate::style;
 
-/// Vertices in the dashed mask ring (segments plus the closing point), sized so
-/// the per-frame SmallVec stays on the stack.
-const MASK_RING_POINTS: usize = style::MASK_RING_SEGMENTS as usize + 1;
-
 /// Draw the grid: the horizon rim, the inner elevation rings, and the
 /// cardinal spokes. `full` labels the rings and all four cardinals. The
 /// compact size labels north only and ticks the other cardinals.
@@ -146,6 +142,10 @@ pub(crate) fn mask_ring_hit(center: Pos2, radius: f32, mask_deg: f32, pointer: P
     let distance = (pointer - center).length();
     (distance - ring_radius).abs() <= style::MASK_RING_HOVER_BAND_PX
 }
+
+/// Vertices in the dashed mask ring (segments plus the closing point), sized so
+/// the per-frame SmallVec stays on the stack.
+const MASK_RING_POINTS: usize = style::MASK_RING_SEGMENTS as usize + 1;
 
 #[cfg(test)]
 mod tests {

@@ -6,21 +6,6 @@ use chrono::DateTime;
 use gt_logfile::{LogText, ParsedLog, RecognisedLevel, RecognisedService, TextSlice};
 use libfuzzer_sys::fuzz_target;
 
-/// A moment past every timestamp an input can state, so the year-less syslog
-/// formats resolve the same way from one run to the next.
-const NOW_UNIX_SECS: i64 = 4_102_444_800;
-
-/// Bytes up to which the chunked path is run against the one-chunk path, which
-/// costs a second parse of the input.
-const CHUNKED_COMPARISON_LIMIT_BYTES: usize = 2048;
-
-/// Small enough to cut a fuzz input into several chunks, so the chunk merge is
-/// what the comparison drives.
-const FUZZED_CHUNK_TARGET_BYTES: NonZeroUsize = match NonZeroUsize::new(64) {
-    Some(bytes) => bytes,
-    None => NonZeroUsize::MIN,
-};
-
 // Feed arbitrary bytes to the log parser. It must return `Ok`/`Err` and index
 // what it read consistently, never panic or abort. Mirrors the properties
 // gt-logfile's own `parse.rs` asserts over generated logs.
@@ -115,3 +100,18 @@ fn check_the_parse_indexes_what_it_read(parsed: &ParsedLog) {
         }
     }
 }
+
+/// A moment past every timestamp an input can state, so the year-less syslog
+/// formats resolve the same way from one run to the next.
+const NOW_UNIX_SECS: i64 = 4_102_444_800;
+
+/// Bytes up to which the chunked path is run against the one-chunk path, which
+/// costs a second parse of the input.
+const CHUNKED_COMPARISON_LIMIT_BYTES: usize = 2048;
+
+/// Small enough to cut a fuzz input into several chunks, so the chunk merge is
+/// what the comparison drives.
+const FUZZED_CHUNK_TARGET_BYTES: NonZeroUsize = match NonZeroUsize::new(64) {
+    Some(bytes) => bytes,
+    None => NonZeroUsize::MIN,
+};

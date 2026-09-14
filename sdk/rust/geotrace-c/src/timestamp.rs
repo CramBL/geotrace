@@ -49,9 +49,6 @@ impl GtdTimestamp {
     }
 }
 
-/// The `unix_micros` value that marks an absent timestamp.
-const TS_NONE_SENTINEL: i64 = i64::MIN;
-
 pub(crate) fn ts_from_datetime(dt: DateTime<Utc>) -> GtdTimestamp {
     GtdTimestamp {
         unix_micros: dt.timestamp_micros(),
@@ -175,3 +172,6 @@ pub extern "C" fn gtd_ts_none() -> GtdTimestamp {
 pub extern "C" fn gtd_ts_is_none(timestamp: GtdTimestamp) -> u8 {
     u8::from(timestamp.unix_micros == TS_NONE_SENTINEL)
 }
+
+/// The `unix_micros` value that marks an absent timestamp.
+const TS_NONE_SENTINEL: i64 = i64::MIN;

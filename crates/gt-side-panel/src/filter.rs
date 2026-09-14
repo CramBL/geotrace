@@ -249,29 +249,6 @@ impl TimeRangeBarScale {
     }
 }
 
-/// Inset of a bar's track from either end of the rectangle the bar allocates.
-pub const TRACK_INSET_PX: f32 = 8.0;
-
-/// `chrono` format of the two window bounds stated under a bar.
-const BOUND_LABEL_FORMAT: &str = "%m/%d %H:%M";
-
-/// The span a drag on the fine bar leaves between the window's two bounds. A
-/// window this short still covers a fix: one second is the fix interval of a
-/// receiver logging at 1 Hz.
-pub const FINE_BAR_MINIMUM_WINDOW_SPAN: Duration = Duration::seconds(1);
-
-/// The span a drag on the coarse bar leaves between the window's two bounds.
-/// The bar over the whole loaded time range takes this minimum only while the
-/// active range bar is shown under it, and frames whole days for it.
-pub const COARSE_BAR_MINIMUM_WINDOW_SPAN: Duration = Duration::hours(24);
-
-/// How many times a minimum window span fits inside the span it applies to. A
-/// bar caps its own minimum at this fraction of the span it lays out, and the
-/// panel shows the active range bar only where the active range and
-/// [`COARSE_BAR_MINIMUM_WINDOW_SPAN`] each fit this many times inside the
-/// loaded time range.
-pub const MINIMUM_WINDOW_SPAN_RATIO: i32 = 5;
-
 /// The span a bar lays its track out over: the whole loaded time range for the
 /// primary bar, the zoom viewport for the secondary one.
 #[derive(Debug, Clone, Copy)]
@@ -298,8 +275,8 @@ struct LoadedTimeRange(TimeRange);
 /// Which window bound a press on a bar grabbed.
 #[derive(Debug, Clone, Copy)]
 enum GrabbedBound {
-    Start,
     End,
+    Start,
 }
 
 /// What a press on a bar latched: the bound it grabbed and the minimum window
@@ -474,6 +451,29 @@ fn parse_duration_input(s: &str) -> Option<Duration> {
         None
     }
 }
+
+/// Inset of a bar's track from either end of the rectangle the bar allocates.
+pub const TRACK_INSET_PX: f32 = 8.0;
+
+/// `chrono` format of the two window bounds stated under a bar.
+const BOUND_LABEL_FORMAT: &str = "%m/%d %H:%M";
+
+/// The span a drag on the fine bar leaves between the window's two bounds. A
+/// window this short still covers a fix: one second is the fix interval of a
+/// receiver logging at 1 Hz.
+pub const FINE_BAR_MINIMUM_WINDOW_SPAN: Duration = Duration::seconds(1);
+
+/// The span a drag on the coarse bar leaves between the window's two bounds.
+/// The bar over the whole loaded time range takes this minimum only while the
+/// active range bar is shown under it, and frames whole days for it.
+pub const COARSE_BAR_MINIMUM_WINDOW_SPAN: Duration = Duration::hours(24);
+
+/// How many times a minimum window span fits inside the span it applies to. A
+/// bar caps its own minimum at this fraction of the span it lays out, and the
+/// panel shows the active range bar only where the active range and
+/// [`COARSE_BAR_MINIMUM_WINDOW_SPAN`] each fit this many times inside the
+/// loaded time range.
+pub const MINIMUM_WINDOW_SPAN_RATIO: i32 = 5;
 
 #[cfg(test)]
 mod tests {

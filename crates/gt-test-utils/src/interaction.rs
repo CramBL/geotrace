@@ -5,16 +5,6 @@ use egui::accesskit::Role;
 use egui_kittest::kittest::{By, NodeT as _, Queryable as _};
 use egui_kittest::{Harness, Node};
 
-/// How long [`HarnessInteraction::step_until`] runs before giving up. The
-/// deadline is wall clock: the work it waits for runs on a background thread,
-/// and a machine under load takes longer per frame, so a budget counted in
-/// frames ends the wait while that work is still running. Ten seconds covers a
-/// file load or a database write on such a machine, and a wait for work that
-/// never finishes ends inside a test's own time.
-const STEP_UNTIL_DEADLINE: Duration = Duration::from_secs(10);
-
-const PAUSE_BETWEEN_FRAMES: Duration = Duration::from_millis(10);
-
 /// Queues `clicks` press-and-release pairs of `button` at `target`, all read
 /// by the frame that runs next.
 fn queue_clicks<State>(
@@ -260,3 +250,13 @@ impl<State> HarnessInteraction for Harness<'_, State> {
         self.window_rect(title).map(|rect| rect.size())
     }
 }
+
+/// How long [`HarnessInteraction::step_until`] runs before giving up. The
+/// deadline is wall clock: the work it waits for runs on a background thread,
+/// and a machine under load takes longer per frame, so a budget counted in
+/// frames ends the wait while that work is still running. Ten seconds covers a
+/// file load or a database write on such a machine, and a wait for work that
+/// never finishes ends inside a test's own time.
+const STEP_UNTIL_DEADLINE: Duration = Duration::from_secs(10);
+
+const PAUSE_BETWEEN_FRAMES: Duration = Duration::from_millis(10);

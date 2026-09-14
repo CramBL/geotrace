@@ -16,14 +16,6 @@ use gt_ionex::tec::TotalElectronContent;
 use gt_ionex::{parse, test_util};
 use gt_types::{Latitude, Longitude};
 
-/// How far into a capture the truncation property cuts: past the header and
-/// the first maps, where the structural work is.
-const MAX_TRUNCATION_BYTES: usize = 60_000;
-
-/// How many lines into a capture the rewriting property reaches, which covers
-/// its header and its first map.
-const MAX_REWRITTEN_LINE: usize = 400;
-
 /// The values a capture holds, which no interpolated value may leave.
 #[derive(Debug, Clone, Copy)]
 struct ValueRange {
@@ -185,3 +177,11 @@ proptest::proptest! {
         }
     }
 }
+
+/// How far into a capture the truncation property cuts: past the header and
+/// the first maps, where the structural work is.
+const MAX_TRUNCATION_BYTES: usize = 60_000;
+
+/// How many lines into a capture the rewriting property reaches, which covers
+/// its header and its first map.
+const MAX_REWRITTEN_LINE: usize = 400;

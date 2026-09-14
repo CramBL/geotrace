@@ -1,9 +1,4 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-pub mod app;
-pub mod settings;
-mod termination_signal;
-pub mod terms;
-
 use std::time::Duration;
 use std::{path::PathBuf, process::ExitCode};
 
@@ -13,24 +8,10 @@ use gt_pending_writes::{PendingWrites, WriteAccess};
 use crate::app::shutdown;
 use crate::termination_signal::{TERMINATION_SIGNAL_FLAG, TerminationSignalAction};
 
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
-/// Minimum 2D texture dimension to request from wgpu, matching eframe's
-/// default: the surface/depth textures must cover 4k+ displays.
-const MIN_TEXTURE_DIMENSION_2D: u32 = 8192;
-
-/// Under this flag GeoTrace is offline: no map tiles, no downloads, no
-/// snapping, no update check.
-const OFFLINE_FLAG: &str = "--offline";
-
-/// Extra `--help` line for the `--update` flag, present only in dist builds
-/// that carry the updater. Empty otherwise so the flag is never advertised by a
-/// build that cannot honor it.
-#[cfg(feature = "self-update")]
-const SELF_UPDATE_HELP: &str = "\n      --update     Update in place and exit";
-#[cfg(not(feature = "self-update"))]
-const SELF_UPDATE_HELP: &str = "";
+pub mod app;
+pub mod settings;
+mod termination_signal;
+pub mod terms;
 
 /// The action requested on the command line, resolved before any GUI setup.
 ///
@@ -98,23 +79,19 @@ fn run_self_update_cli() -> ExitCode {
     ExitCode::FAILURE
 }
 
-/// How often the wait for the last writes stops to read the
-/// termination-signal flag.
-const TERMINATION_SIGNAL_CHECK_INTERVAL: Duration = Duration::from_millis(100);
-
 /// What the wait for the last writes does about the termination-signal flag
 /// it just read.
 #[derive(Debug, PartialEq, Eq)]
 enum SignalDuringTheWait {
     KeepWaiting,
+    /// The user signalled a second time: the process ends with the writes
+    /// still running.
+    QuitLeavingWritesUnfinished,
     /// A signal reached a shutdown that is already under way. The wait logs the
     /// shutdown and how many writes quitting now would abandon.
     ReportTheShutdownAlreadyUnderWay {
         writes_still_running: usize,
     },
-    /// The user signalled a second time: the process ends with the writes
-    /// still running.
-    QuitLeavingWritesUnfinished,
 }
 
 impl SignalDuringTheWait {
@@ -320,6 +297,29 @@ fn main() -> ExitCode {
     }
 }
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+/// Minimum 2D texture dimension to request from wgpu, matching eframe's
+/// default: the surface/depth textures must cover 4k+ displays.
+const MIN_TEXTURE_DIMENSION_2D: u32 = 8192;
+
+/// Under this flag GeoTrace is offline: no map tiles, no downloads, no
+/// snapping, no update check.
+const OFFLINE_FLAG: &str = "--offline";
+
+/// Extra `--help` line for the `--update` flag, present only in dist builds
+/// that carry the updater. Empty otherwise so the flag is never advertised by a
+/// build that cannot honor it.
+#[cfg(feature = "self-update")]
+const SELF_UPDATE_HELP: &str = "\n      --update     Update in place and exit";
+#[cfg(not(feature = "self-update"))]
+const SELF_UPDATE_HELP: &str = "";
+
+/// How often the wait for the last writes stops to read the
+/// termination-signal flag.
+const TERMINATION_SIGNAL_CHECK_INTERVAL: Duration = Duration::from_millis(100);
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -334,10 +334,6 @@ mod tests {
     use crate::app::shutdown;
     use crate::termination_signal::{TERMINATION_SIGNAL_FLAG, TerminationSignalAction};
     use crate::{CliAction, SignalDuringTheWait};
-
-    const TEC_COMPACTION: WriteKind = WriteKind::ArchiveCompaction {
-        archive: "ionospheric TEC",
-    };
 
     /// The first signal after the window closed reaches a shutdown that is
     /// already under way: nothing changes, and the wait reports the writes a
@@ -367,9 +363,6 @@ mod tests {
             ExitCode::SUCCESS
         );
     }
-
-    /// How long the write the shutdown wait finds still running is held.
-    const SHUTDOWN_HELD_WRITE_RELEASED_AFTER: Duration = Duration::from_millis(150);
 
     /// An instance started meanwhile can read what this one is waiting for:
     /// the wait after the window closes names it in the status file.
@@ -407,11 +400,6 @@ mod tests {
         );
         holder.join().expect("the holding thread finished");
     }
-
-    /// Longer than [`TERMINATION_SIGNAL_CHECK_INTERVAL`]: the second signal
-    /// always ends the wait first. Short enough that a wait that stopped
-    /// reading the flag fails.
-    const HELD_WRITE_RELEASED_AFTER: Duration = Duration::from_secs(5);
 
     /// The wait after the window closes reads the flag too: a signal there,
     /// with one already read, abandons the write still running.
@@ -507,4 +495,16 @@ mod tests {
         let args = vec!["--version".to_owned(), "foo.gtd".to_owned()];
         assert_eq!(CliAction::parse(&args), CliAction::Version);
     }
+
+    const TEC_COMPACTION: WriteKind = WriteKind::ArchiveCompaction {
+        archive: "ionospheric TEC",
+    };
+
+    /// How long the write the shutdown wait finds still running is held.
+    const SHUTDOWN_HELD_WRITE_RELEASED_AFTER: Duration = Duration::from_millis(150);
+
+    /// Longer than [`TERMINATION_SIGNAL_CHECK_INTERVAL`]: the second signal
+    /// always ends the wait first. Short enough that a wait that stopped
+    /// reading the flag fails.
+    const HELD_WRITE_RELEASED_AFTER: Duration = Duration::from_secs(5);
 }

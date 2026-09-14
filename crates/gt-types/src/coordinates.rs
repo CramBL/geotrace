@@ -1,19 +1,6 @@
 use std::cmp::Ordering;
 use std::fmt;
 
-pub(crate) const FULL_CIRCLE_DEGREES: f64 = 360.0;
-pub(crate) const HALF_CIRCLE_DEGREES: f64 = 180.0;
-const QUARTER_CIRCLE_DEGREES: f64 = 90.0;
-
-/// U+00B0 DEGREE SIGN, the unit a coordinate is written in.
-const DEGREE_SIGN: &str = "°";
-
-/// Marks a recorded coordinate the receiver wrote outside its axis' range.
-const INVALID_MARKER: &str = "(invalid)";
-
-/// Decimal places a coordinate is written with: 1e-6° is about 0.1 m.
-const WRITTEN_DECIMALS: usize = 6;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CoordinateAxis {
     Latitude,
@@ -194,8 +181,8 @@ impl fmt::Display for RawDegrees {
 /// receiver wrote degrees inside that axis' range.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RecordedCoordinate<C> {
-    Valid(C),
     Invalid(RawDegrees),
+    Valid(C),
 }
 
 pub type RecordedLatitude = RecordedCoordinate<Latitude>;
@@ -255,6 +242,19 @@ impl<C: Coordinate> fmt::Display for RecordedCoordinate<C> {
     }
 }
 
+pub(crate) const FULL_CIRCLE_DEGREES: f64 = 360.0;
+pub(crate) const HALF_CIRCLE_DEGREES: f64 = 180.0;
+const QUARTER_CIRCLE_DEGREES: f64 = 90.0;
+
+/// U+00B0 DEGREE SIGN, the unit a coordinate is written in.
+const DEGREE_SIGN: &str = "°";
+
+/// Marks a recorded coordinate the receiver wrote outside its axis' range.
+const INVALID_MARKER: &str = "(invalid)";
+
+/// Decimal places a coordinate is written with: 1e-6° is about 0.1 m.
+const WRITTEN_DECIMALS: usize = 6;
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
@@ -262,9 +262,6 @@ mod tests {
     use super::{
         CoordinateAxis, Latitude, Longitude, RawDegrees, RecordedLatitude, RecordedLongitude,
     };
-
-    /// 1e-9° is about 0.1 mm.
-    const ARC_TOLERANCE_DEGREES: f64 = 1e-9;
 
     #[rstest]
     #[case::the_south_pole(-90.0)]
@@ -462,4 +459,7 @@ mod tests {
             );
         }
     }
+
+    /// 1e-9° is about 0.1 mm.
+    const ARC_TOLERANCE_DEGREES: f64 = 1e-9;
 }

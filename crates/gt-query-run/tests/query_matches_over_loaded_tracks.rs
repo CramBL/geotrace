@@ -30,24 +30,6 @@ use rustc_hash::FxHashMap;
 use uom::si::f64::Velocity;
 use uom::si::velocity::kilometer_per_hour;
 
-/// The Unix second the fixtures start at.
-const EPOCH: i64 = 1_700_000_000;
-
-/// Fixes of the recording whose host clock departs from its baseline.
-const EXCURSION_FIX_COUNT: usize = 60;
-
-/// The fixes of that recording whose host clock stands [`EXCURSION_HOURS`] off
-/// the receiver's own.
-const EXCURSION_FIXES: Range<usize> = 20..30;
-
-/// How far the host clock runs past the receiver's own over
-/// [`EXCURSION_FIXES`].
-const EXCURSION_HOURS: i64 = 1;
-
-/// How far the host clock runs past the receiver's own outside
-/// [`EXCURSION_FIXES`], in milliseconds.
-const BASELINE_HOST_AHEAD_MS: i64 = 200;
-
 /// The one track every fixture builds.
 fn track_zero() -> TrackRef {
     TrackRef::new(FileIdx::new(0), TrackIdx::new(0))
@@ -877,3 +859,21 @@ fn clock_delta_reads_below_zero_for_a_fix_whose_host_clock_is_500_microseconds_a
 
     assert_eq!(drawn_ranges(&session), vec![0..3]);
 }
+
+/// The Unix second the fixtures start at.
+const EPOCH: i64 = 1_700_000_000;
+
+/// Fixes of the recording whose host clock departs from its baseline.
+const EXCURSION_FIX_COUNT: usize = 60;
+
+/// The fixes of that recording whose host clock stands [`EXCURSION_HOURS`] off
+/// the receiver's own.
+const EXCURSION_FIXES: Range<usize> = 20..30;
+
+/// How far the host clock runs past the receiver's own over
+/// [`EXCURSION_FIXES`].
+const EXCURSION_HOURS: i64 = 1;
+
+/// How far the host clock runs past the receiver's own outside
+/// [`EXCURSION_FIXES`], in milliseconds.
+const BASELINE_HOST_AHEAD_MS: i64 = 200;

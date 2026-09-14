@@ -11,10 +11,6 @@ use gt_ui_types::LogMatches;
 
 use crate::{LoadedLog, LoadedLogs, RecordingKey};
 
-/// The template the fixtures resolve recording names under, as the app's
-/// default does.
-const RECORDING_NAME_TEMPLATE: &str = "{filename}";
-
 /// The window the tests associate with, matching the app's default.
 pub(crate) fn association_window() -> Duration {
     Duration::seconds(60)
@@ -202,3 +198,7 @@ pub(crate) fn map_matches<'a>(
         &RecordingNames::resolve(recordings.view(), RECORDING_NAME_TEMPLATE),
     )
 }
+
+/// The template the fixtures resolve recording names under, as the app's
+/// default does.
+const RECORDING_NAME_TEMPLATE: &str = "{filename}";

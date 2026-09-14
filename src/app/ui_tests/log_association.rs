@@ -40,9 +40,6 @@ fn drop_the_log(harness: &mut Harness<App>) {
     drop_a_log(harness, FIXTURE_LOG_SEED);
 }
 
-/// The seed [`drop_the_log`] writes its lines from.
-const FIXTURE_LOG_SEED: u64 = 7;
-
 /// Drops a log generated from `seed`. Two drops in one test need two
 /// seeds: the session holds one log per content.
 fn drop_a_log(harness: &mut Harness<App>, seed: u64) {
@@ -59,9 +56,6 @@ fn fixture_log_text(seed: u64) -> String {
         timestamps: SyntheticLogTimestamps::Iso8601Space,
     })
 }
-
-/// The name the fixture log is loaded and stored under.
-const FIXTURE_LOG_NAME: &str = "navsyncd.log";
 
 fn dialog_is_open(harness: &Harness<App>) -> bool {
     harness.state().association_dialog.is_some()
@@ -1136,3 +1130,9 @@ fn the_stored_stack_holds_every_chips_mode_and_colour() {
         ]
     );
 }
+
+/// The seed [`drop_the_log`] writes its lines from.
+const FIXTURE_LOG_SEED: u64 = 7;
+
+/// The name the fixture log is loaded and stored under.
+const FIXTURE_LOG_NAME: &str = "navsyncd.log";

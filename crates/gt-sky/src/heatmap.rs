@@ -11,49 +11,6 @@ use egui::{Color32, Painter, Pos2, Shape, Vec2};
 
 use gt_types::satellites::Snr;
 
-/// SNR band mapped onto the heat weight `[0, 1]`: at or below the floor a
-/// satellite barely registers, at or above the ceiling it glows at full
-/// strength. Brackets the useful GNSS carrier-to-noise range in dB-Hz.
-const SNR_FLOOR_DBHZ: f32 = 20.0;
-const SNR_CEIL_DBHZ: f32 = 48.0;
-
-/// The faintest an in-fix satellite glows.
-const MIN_WEIGHT: f32 = 0.15;
-
-/// Weight of an in-fix satellite with a missing SNR, and of one whose
-/// receiver reported the no-data value.
-const NO_SNR_WEIGHT: f32 = 0.3;
-
-/// Standard deviation of a single satellite's glow, as a fraction of the disc
-/// radius. Wide enough that a handful of satellites merge into a smooth field.
-const GLOW_SIGMA_FRACTION: f32 = 0.22;
-
-/// Cells per side of the square mesh laid over the disc's bounding box. The
-/// field is sampled at each vertex and egui interpolates between them, so this
-/// trades smoothness against per-frame triangles (fixed, independent of the
-/// track's length).
-const GRID_STEPS: usize = 48;
-
-/// Peak alpha of the field, so even a saturated hot spot stays translucent and
-/// the trails, markers, and grid read through it.
-const MAX_ALPHA: f32 = 0.55;
-
-/// Intensity at which the alpha reaches [`MAX_ALPHA`]. Below it the field fades
-/// toward transparent.
-const ALPHA_FULL_AT: f32 = 0.5;
-
-/// Fixed-point denominator for the ramp interpolation handed to [`gt_ui_theme::lerp_channel`].
-const RAMP_SCALE: i32 = 1000;
-
-/// The warm colour ramp, low to high intensity: deep red, through orange, to a
-/// warm yellow-white. Interpolated between the stops in [`heat_color`].
-const RAMP: [(f32, [u8; 3]); 4] = [
-    (0.0, [120, 25, 12]),
-    (0.35, [214, 74, 16]),
-    (0.7, [240, 152, 26]),
-    (1.0, [252, 232, 140]),
-];
-
 /// The heat weight of an in-fix satellite from its SNR, normalized to
 /// `[MIN_WEIGHT, 1]`. A satellite with no reported SNR gets [`NO_SNR_WEIGHT`],
 /// and so does one whose receiver reported the no-data value.
@@ -169,6 +126,49 @@ fn field_intensity(
         .map(|&(pos, weight)| weight * (-p.distance_sq(pos) * inv_two_sigma_sq).exp())
         .sum()
 }
+
+/// SNR band mapped onto the heat weight `[0, 1]`: at or below the floor a
+/// satellite barely registers, at or above the ceiling it glows at full
+/// strength. Brackets the useful GNSS carrier-to-noise range in dB-Hz.
+const SNR_FLOOR_DBHZ: f32 = 20.0;
+const SNR_CEIL_DBHZ: f32 = 48.0;
+
+/// The faintest an in-fix satellite glows.
+const MIN_WEIGHT: f32 = 0.15;
+
+/// Weight of an in-fix satellite with a missing SNR, and of one whose
+/// receiver reported the no-data value.
+const NO_SNR_WEIGHT: f32 = 0.3;
+
+/// Standard deviation of a single satellite's glow, as a fraction of the disc
+/// radius. Wide enough that a handful of satellites merge into a smooth field.
+const GLOW_SIGMA_FRACTION: f32 = 0.22;
+
+/// Cells per side of the square mesh laid over the disc's bounding box. The
+/// field is sampled at each vertex and egui interpolates between them, so this
+/// trades smoothness against per-frame triangles (fixed, independent of the
+/// track's length).
+const GRID_STEPS: usize = 48;
+
+/// Peak alpha of the field, so even a saturated hot spot stays translucent and
+/// the trails, markers, and grid read through it.
+const MAX_ALPHA: f32 = 0.55;
+
+/// Intensity at which the alpha reaches [`MAX_ALPHA`]. Below it the field fades
+/// toward transparent.
+const ALPHA_FULL_AT: f32 = 0.5;
+
+/// Fixed-point denominator for the ramp interpolation handed to [`gt_ui_theme::lerp_channel`].
+const RAMP_SCALE: i32 = 1000;
+
+/// The warm colour ramp, low to high intensity: deep red, through orange, to a
+/// warm yellow-white. Interpolated between the stops in [`heat_color`].
+const RAMP: [(f32, [u8; 3]); 4] = [
+    (0.0, [120, 25, 12]),
+    (0.35, [214, 74, 16]),
+    (0.7, [240, 152, 26]),
+    (1.0, [252, 232, 140]),
+];
 
 #[cfg(test)]
 mod tests {

@@ -11,14 +11,6 @@ use gt_types::markers::{GeneratedMarker, GeneratedMarkerKind};
 use gt_types::nav_point::NavPoint;
 use gt_types::track::FileSource;
 
-/// Every fix of the track shares this latitude.
-const LATITUDE_DEGREES: f64 = 55.0;
-
-/// 1e-7° is about 1 cm. The great circle between two fixes at one latitude
-/// arcs a few 1e-9° poleward at its midpoint, so the drawn epoch does not sit
-/// at exactly 55°.
-const DEGREES_TOLERANCE: f64 = 1e-7;
-
 fn utc_time(secs: i64) -> DateTime<Utc> {
     DateTime::<Utc>::UNIX_EPOCH + Duration::seconds(secs)
 }
@@ -108,3 +100,11 @@ fn a_clock_excursion_marker_sits_where_its_fix_is_drawn() {
         marker.lon.as_degrees()
     );
 }
+
+/// Every fix of the track shares this latitude.
+const LATITUDE_DEGREES: f64 = 55.0;
+
+/// 1e-7° is about 1 cm. The great circle between two fixes at one latitude
+/// arcs a few 1e-9° poleward at its midpoint, so the drawn epoch does not sit
+/// at exactly 55°.
+const DEGREES_TOLERANCE: f64 = 1e-7;

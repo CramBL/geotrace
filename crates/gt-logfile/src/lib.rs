@@ -6,17 +6,6 @@
 //! The log is kept as one shared text buffer with a compact index over its
 //! lines, in the order the file wrote them.
 
-mod associate;
-mod format;
-mod parse;
-mod pool;
-mod recognise;
-mod session;
-mod structure;
-mod summary;
-mod test_util;
-mod text;
-
 pub use associate::{EntryPlacement, associate_entries, associate_position};
 pub use format::{LogFormat, detect_format, infer_year};
 pub use parse::{
@@ -31,3 +20,14 @@ pub use session::{AnchoredBounds, BootSession, OrderAnomaly};
 pub use structure::{StructuralLine, StructuralLineKind};
 pub use summary::{EntryCountMismatch, ServiceCount, ServiceIssueCounts, SummaryBlock};
 pub use text::LogText;
+
+mod associate;
+mod format;
+mod parse;
+mod pool;
+mod recognise;
+mod session;
+mod structure;
+mod summary;
+mod test_util;
+mod text;

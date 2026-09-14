@@ -18,9 +18,6 @@ fn snapshot_update_prompt_self_update() {
     harness.snapshot_with_color_tolerance("update_prompt_self_update");
 }
 
-/// What a failed install reports in the cases below.
-const UPDATE_INSTALL_FAILURE: &str = "the release asset could not be downloaded";
-
 /// The prompt as it opens, with an update offered and no install started yet.
 fn app_showing_the_update_prompt() -> TestHarness<'static, App> {
     let (mut harness, _config_path) = TestHarness::builder()
@@ -83,3 +80,6 @@ fn non_self_update_uses_badge_not_dialog() {
     let self_updatable = crate::app::update::UpdateChecker::available_for_test("0.2.0", true);
     assert_eq!(self_updatable.badge_version(), None);
 }
+
+/// What a failed install reports in these cases.
+const UPDATE_INSTALL_FAILURE: &str = "the release asset could not be downloaded";

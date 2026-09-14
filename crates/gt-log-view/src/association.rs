@@ -113,9 +113,6 @@ mod tests {
 
     use super::*;
 
-    /// The fixture log runs from its first to its tenth entry, one per second.
-    const LOG_SPAN_SECS: i64 = 9;
-
     #[test]
     fn recordings_rank_by_overlap_and_the_ones_missing_the_log_stay_listed() {
         let files = test_util::loaded(vec![
@@ -212,4 +209,7 @@ mod tests {
             expected.map(|index| test_util::id_of(&files, index))
         );
     }
+
+    /// The fixture log runs from its first to its tenth entry, one per second.
+    const LOG_SPAN_SECS: i64 = 9;
 }

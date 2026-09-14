@@ -23,38 +23,6 @@ use super::{
     LOADED_RECORDINGS_MOST_LINES, PERMANENT_DELETE_LABEL, PruneScope, SnapScopeChoice, tests,
 };
 
-const CANCEL_LABEL: &str = "Cancel";
-
-/// Items the tickbox measurement shelves, all of them tracks of one
-/// stored recording.
-const SHELVED_ITEMS: usize = 2;
-
-/// The ending the two wordings of the shelve confirmation's history
-/// sentence share.
-const DETAIL_SENTENCE_ENDING: &str = "takes them out of the view.";
-
-/// Fixes of each recording the association dialog lists.
-const FIX_COUNT: usize = 10;
-
-/// The attachment the history database reports for the chosen recording,
-/// with a name long enough that the note about it wraps onto three lines.
-const STORED_ATTACHMENT_NAME: &str = "navsyncd-export-2026-05-29-evening-run.log";
-
-/// The recording name added to the prune confirmation once the pending
-/// load finishes.
-const LOADED_RECORDING: &str = "Evening ferry crossing";
-
-/// Loaded recordings enough to fill the room the prune confirmation caps
-/// at [`LOADED_RECORDINGS_MOST_LINES`].
-const RECORDINGS_PAST_THE_CAPPED_ROOM: usize = 12;
-
-/// Loaded recordings far past that cap, to read the capped room's height
-/// against.
-const RECORDINGS_FAR_PAST_THE_CAPPED_ROOM: usize = 40;
-
-/// Writes still running once two of the four have finished.
-const WRITES_STILL_RUNNING: usize = 2;
-
 /// The costs the force-quit confirmation lists while four writes run.
 fn four_write_costs() -> Vec<String> {
     vec![
@@ -337,3 +305,35 @@ fn the_association_dialog_keeps_its_recording_rows_in_place_while_the_result_arr
          where the user aimed misses it"
     );
 }
+
+const CANCEL_LABEL: &str = "Cancel";
+
+/// Items the tickbox measurement shelves, all of them tracks of one
+/// stored recording.
+const SHELVED_ITEMS: usize = 2;
+
+/// The ending the two wordings of the shelve confirmation's history
+/// sentence share.
+const DETAIL_SENTENCE_ENDING: &str = "takes them out of the view.";
+
+/// Fixes of each recording the association dialog lists.
+const FIX_COUNT: usize = 10;
+
+/// The attachment the history database reports for the chosen recording,
+/// with a name long enough that the note about it wraps onto three lines.
+const STORED_ATTACHMENT_NAME: &str = "navsyncd-export-2026-05-29-evening-run.log";
+
+/// The recording name added to the prune confirmation once the pending
+/// load finishes.
+const LOADED_RECORDING: &str = "Evening ferry crossing";
+
+/// Loaded recordings enough to fill the room the prune confirmation caps
+/// at [`LOADED_RECORDINGS_MOST_LINES`].
+const RECORDINGS_PAST_THE_CAPPED_ROOM: usize = 12;
+
+/// Loaded recordings far past that cap, to read the capped room's height
+/// against.
+const RECORDINGS_FAR_PAST_THE_CAPPED_ROOM: usize = 40;
+
+/// Writes still running once two of the four have finished.
+const WRITES_STILL_RUNNING: usize = 2;

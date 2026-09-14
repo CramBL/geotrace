@@ -20,9 +20,6 @@ use gt_ionex::maps::GlobalIonosphereMaps;
 use gt_ionex::tec::TotalElectronContent;
 use gt_ionex::{IonexProduct, Mirror, MirrorLayout, test_util, transport};
 
-/// How far a recorded peak may stand from the one the file parses to.
-const TECU_TOLERANCE: f64 = 1e-9;
-
 /// One captured file, read through the addressing that identifies it.
 struct CapturedFile {
     file_name: String,
@@ -182,3 +179,6 @@ fn a_capture_of_a_day_with_a_jpl_file_reads_as_that_file() {
         "no capture covers a day the workspace holds a JPL file of"
     );
 }
+
+/// How far a recorded peak may stand from the one the file parses to.
+const TECU_TOLERANCE: f64 = 1e-9;

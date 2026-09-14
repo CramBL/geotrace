@@ -63,10 +63,6 @@
 //! as plain numbers, so a unit literal cannot be compared against them. Stored
 //! and plotted values always stay in the scale the recorder declared.
 
-pub mod snr;
-
-mod conversion_factor;
-
 use std::{fmt, str::FromStr};
 
 use uom::si::acceleration::{meter_per_second_squared, standard_gravity};
@@ -74,9 +70,9 @@ use uom::si::f64::Acceleration;
 
 pub use conversion_factor::{MPS_PER_KMH, MPS_PER_KNOT};
 
-const S_PER_MIN: f64 = 60.0;
-const MIN_PER_H: f64 = 60.0;
-const PERCENT: f64 = 100.0;
+pub mod snr;
+
+mod conversion_factor;
 
 /// The physical quantity represented by a recognized [`Unit`].
 ///
@@ -88,13 +84,13 @@ const PERCENT: f64 = 100.0;
 /// (`100 %` is `1.0`), and per second for [`Rate`](Self::Rate).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PhysicalQuantity {
-    Angle,
-    Length,
-    Speed,
     Acceleration,
+    Angle,
     Duration,
-    Ratio,
+    Length,
     Rate,
+    Ratio,
+    Speed,
 }
 
 /// An SI prefix scaling a [`BaseUnit`].
@@ -103,11 +99,11 @@ pub enum PhysicalQuantity {
 /// pairs them, so the catalog holds `mm` and `mg` but no `kg` or `cs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::EnumIter, strum::EnumCount)]
 pub enum SiPrefix {
-    Nano,
-    Micro,
-    Milli,
     Centi,
     Kilo,
+    Micro,
+    Milli,
+    Nano,
 }
 
 impl SiPrefix {
@@ -161,20 +157,20 @@ impl SiPrefix {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::EnumIter, strum::EnumCount)]
 pub enum BaseUnit {
     Deg,
-    M,
-    KmPerH,
-    MPerS,
-    Kn,
-    MPerS2,
     G,
-    KmPerHPerS,
-    S,
-    Min,
     H,
-    Percent,
-    PerS,
-    PerMin,
+    KmPerH,
+    KmPerHPerS,
+    Kn,
+    M,
+    MPerS,
+    MPerS2,
+    Min,
     PerH,
+    PerMin,
+    PerS,
+    Percent,
+    S,
 }
 
 impl BaseUnit {
@@ -830,20 +826,20 @@ impl fmt::Display for CustomUnit {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum ChannelUnitValue {
-    Recognized(Unit),
     Custom(CustomUnit),
     Legacy(String),
+    Recognized(Unit),
 }
 
 /// The classification of a channel unit read from a file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChannelUnitKind {
-    /// A [`Unit`] from the catalog, with a quantity and a conversion factor.
-    Recognized,
     /// A [`CustomUnit`], displayed verbatim and dimensionless in queries.
     Custom,
     /// Losslessly preserved metadata that is not valid writer input.
     Legacy,
+    /// A [`Unit`] from the catalog, with a quantity and a conversion factor.
+    Recognized,
 }
 
 /// A recognized, convertible unit or an explicit display-only custom label.
@@ -979,14 +975,14 @@ impl FromStr for ChannelUnit {
 /// [`CustomUnit::new`] and [`ChannelUnit::custom`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum UnitParseError {
-    #[error("unrecognized channel unit {label:?}; use ChannelUnit::custom for a display-only unit")]
-    Unrecognized { label: String },
-    #[error("a custom channel unit cannot be empty")]
-    EmptyCustom,
     #[error("a custom channel unit cannot contain control characters")]
     CustomControlCharacter,
     #[error("channel unit {label:?} is recognized; use ChannelUnit::recognized instead")]
     CustomIsRecognized { label: String },
+    #[error("a custom channel unit cannot be empty")]
+    EmptyCustom,
+    #[error("unrecognized channel unit {label:?}; use ChannelUnit::custom for a display-only unit")]
+    Unrecognized { label: String },
 }
 
 fn normalize_label(label: &str) -> String {
@@ -1006,6 +1002,10 @@ fn normalize_label(label: &str) -> String {
         value => value.replace('²', "2").replace("^2", "2"),
     }
 }
+
+const S_PER_MIN: f64 = 60.0;
+const MIN_PER_H: f64 = 60.0;
+const PERCENT: f64 = 100.0;
 
 #[cfg(test)]
 mod tests {

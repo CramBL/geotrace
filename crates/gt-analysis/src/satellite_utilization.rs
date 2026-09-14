@@ -6,11 +6,6 @@
 use gt_types::nav_point::NavPoint;
 use gt_types::satellites::{Constellation, Prn, Satellites};
 
-/// Y-position for an anomaly marker when the masked baseline is empty (no
-/// in-view satellite above the mask), where the rate is undefined.  The marker
-/// lands at the 0 % line - no above-mask satellite was usable, let alone used.
-const ANOMALY_FALLBACK_RATE: f64 = 0.0;
-
 /// The masked "in view" baseline - denominator of the utilization rate.
 ///
 /// Satellites with no reported elevation are excluded: their position above the
@@ -215,6 +210,11 @@ pub fn compute_util(points: &[NavPoint], mask_deg: f32) -> UtilPoints {
 
     out
 }
+
+/// Y-position for an anomaly marker when the masked baseline is empty (no
+/// in-view satellite above the mask), where the rate is undefined.  The marker
+/// lands at the 0 % line - no above-mask satellite was usable, let alone used.
+const ANOMALY_FALLBACK_RATE: f64 = 0.0;
 
 #[cfg(test)]
 mod tests {

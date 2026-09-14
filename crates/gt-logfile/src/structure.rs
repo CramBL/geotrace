@@ -6,8 +6,8 @@ use crate::parse::TextSlice;
 /// How a registry pattern is matched against one trimmed line.
 #[derive(Debug, Clone, Copy)]
 enum LineMatcher {
-    Exact(&'static str),
     Contains(&'static str),
+    Exact(&'static str),
 }
 
 impl LineMatcher {
@@ -18,12 +18,6 @@ impl LineMatcher {
         }
     }
 }
-
-/// The line a device's exporter writes where the device rebooted.
-pub(crate) const REBOOT_SEPARATOR_LINE: &str = "--- Device reboot ---";
-
-/// The line the exporter opens its trailing summary block with.
-pub(crate) const SUMMARY_BLOCK_HEADER_LINE: &str = "----------- Journal summary -----------";
 
 /// What a recognized non-entry line marks. A structural line states the log's
 /// structure and is kept out of the entries.
@@ -48,21 +42,6 @@ struct StructuralPattern {
     kind: StructuralLineKind,
     extent: StructuralExtent,
 }
-
-/// The exporter idioms the parser recognizes. Teaching it another one is one
-/// row here. A line matching no row is parsed as an entry.
-const STRUCTURAL_LINE_REGISTRY: &[StructuralPattern] = &[
-    StructuralPattern {
-        matcher: LineMatcher::Exact(REBOOT_SEPARATOR_LINE),
-        kind: StructuralLineKind::RebootSeparator,
-        extent: StructuralExtent::OwnLine,
-    },
-    StructuralPattern {
-        matcher: LineMatcher::Exact(SUMMARY_BLOCK_HEADER_LINE),
-        kind: StructuralLineKind::SummaryBlock,
-        extent: StructuralExtent::ToEndOfLog,
-    },
-];
 
 impl StructuralLineKind {
     pub(crate) fn matching_line(line: &str) -> Option<Self> {
@@ -92,6 +71,33 @@ pub struct StructuralLine {
     pub text: TextSlice,
 }
 
+pub(crate) fn reports_a_clock_adjustment(message: &str) -> bool {
+    TIME_CHANGE_REGISTRY
+        .iter()
+        .any(|matcher| matcher.matches(message))
+}
+
+/// The line a device's exporter writes where the device rebooted.
+pub(crate) const REBOOT_SEPARATOR_LINE: &str = "--- Device reboot ---";
+
+/// The line the exporter opens its trailing summary block with.
+pub(crate) const SUMMARY_BLOCK_HEADER_LINE: &str = "----------- Journal summary -----------";
+
+/// The exporter idioms the parser recognizes. Teaching it another one is one
+/// row here. A line matching no row is parsed as an entry.
+const STRUCTURAL_LINE_REGISTRY: &[StructuralPattern] = &[
+    StructuralPattern {
+        matcher: LineMatcher::Exact(REBOOT_SEPARATOR_LINE),
+        kind: StructuralLineKind::RebootSeparator,
+        extent: StructuralExtent::OwnLine,
+    },
+    StructuralPattern {
+        matcher: LineMatcher::Exact(SUMMARY_BLOCK_HEADER_LINE),
+        kind: StructuralLineKind::SummaryBlock,
+        extent: StructuralExtent::ToEndOfLog,
+    },
+];
+
 /// What the system logs when it moves the clock. A backwards timestamp step
 /// beside one of these is an intentional clock change, not an order anomaly.
 /// These lines stay ordinary anchored entries.
@@ -110,12 +116,6 @@ const TIME_CHANGE_REGISTRY: &[LineMatcher] = &[
     LineMatcher::Contains("adjusting local clock by"), // openntpd
     LineMatcher::Contains("setting time to"),  // busybox ntpd
 ];
-
-pub(crate) fn reports_a_clock_adjustment(message: &str) -> bool {
-    TIME_CHANGE_REGISTRY
-        .iter()
-        .any(|matcher| matcher.matches(message))
-}
 
 #[cfg(test)]
 mod tests {

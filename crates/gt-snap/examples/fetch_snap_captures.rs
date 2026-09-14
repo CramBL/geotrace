@@ -42,71 +42,8 @@ use gt_snap::{
     TRACE_ATTRIBUTES_PATH,
 };
 
-/// Fixed base timestamp for synthetic traces: 2026-01-01T12:00:00Z.
-/// Fixed so re-captures diff cleanly.
-const BASE_TIME_UNIX: i64 = 1_767_268_800;
-
-/// Coordinate rounding sent to the server: six decimals is about 0.1 m,
-/// tighter than any GNSS receiver and keeps request bodies small.
-const COORD_DECIMALS: i32 = 6;
-
-/// Observed FOSSGIS per-request shape point limit (`error_code` 153 names it).
-/// One point past it captures the limit error.
-const OBSERVED_POINT_LIMIT: usize = 16_000;
-
 /// A lat/lon pair, degrees.
 type Coord = (f64, f64);
-
-/// H.C. Andersens Boulevard toward Langebro, Copenhagen. Anchors sampled from
-/// the server's own `/route` geometry, so every interpolated point lies on
-/// the street: the clean-snap reference route.
-const BOULEVARD_ROUTE: &[Coord] = &[
-    (55.678_74, 12.564_49),
-    (55.677_32, 12.566_07),
-    (55.675_76, 12.567_77),
-    (55.674_34, 12.570_53),
-    (55.672_76, 12.573_62),
-    (55.671_80, 12.575_22),
-];
-
-/// A street run in Østerbro, ~4 km from the boulevard (beyond the default
-/// 2 km breakage distance): the far side of the teleport gap. Sampled from
-/// the server's `/route` geometry like [`BOULEVARD_ROUTE`].
-const OSTERBRO_ROUTE: &[Coord] = &[
-    (55.706_09, 12.580_53),
-    (55.706_34, 12.582_36),
-    (55.706_61, 12.584_86),
-];
-
-/// A short dense stretch on the boulevard for the 10 Hz scenario.
-const BOULEVARD_DENSE: &[Coord] = &[(55.676_00, 12.567_20), (55.674_20, 12.569_90)];
-
-/// Mid-channel of the inner harbor south of Langebro: mostly water, but close
-/// enough to bridges and quays that some points still snap - the
-/// partially-snappable mix of matched/unmatched the plot must surface.
-const HARBOR_LINE: &[Coord] = &[(55.666_80, 12.572_30), (55.663_60, 12.575_80)];
-
-/// Open sea in the Øresund, kilometers from any mapped way: guaranteed fully
-/// off-network, and stable against future OSM edits near the shore.
-const SEA_LINE: &[Coord] = &[(55.680_00, 12.660_00), (55.674_00, 12.674_00)];
-
-/// Roskilde direction: the far end of the deliberately oversized traces.
-const ROSKILDE: Coord = (55.642, 12.081);
-
-/// Amplitude of the deterministic cross-track jitter, degrees latitude
-/// (about 3 m) - realistic GNSS noise without randomness, so re-captures
-/// send byte-identical requests.
-const JITTER_DEG: f64 = 3.0e-5;
-
-/// The tuned scenario's non-default trace options: values inside the
-/// server-accepted ranges but distinct from any default, so the capture pins
-/// both the tuned-request serialization and the server accepting it.
-const TUNED_PARAMS: SnapParams = SnapParams {
-    costing: Costing::Auto,
-    search_radius_m: Some(25.0),
-    turn_penalty_factor: Some(300.0),
-    gps_accuracy_override_m: Some(10.0),
-};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let server = env::var("GEOTRACE_SNAP_SERVER").unwrap_or_else(|_| DEFAULT_SERVER_URL.to_owned());
@@ -384,3 +321,66 @@ fn round_coord(value: f64) -> f64 {
     let scale = 10f64.powi(COORD_DECIMALS);
     (value * scale).round() / scale
 }
+
+/// Fixed base timestamp for synthetic traces: 2026-01-01T12:00:00Z.
+/// Fixed so re-captures diff cleanly.
+const BASE_TIME_UNIX: i64 = 1_767_268_800;
+
+/// Coordinate rounding sent to the server: six decimals is about 0.1 m,
+/// tighter than any GNSS receiver and keeps request bodies small.
+const COORD_DECIMALS: i32 = 6;
+
+/// Observed FOSSGIS per-request shape point limit (`error_code` 153 names it).
+/// One point past it captures the limit error.
+const OBSERVED_POINT_LIMIT: usize = 16_000;
+
+/// H.C. Andersens Boulevard toward Langebro, Copenhagen. Anchors sampled from
+/// the server's own `/route` geometry, so every interpolated point lies on
+/// the street: the clean-snap reference route.
+const BOULEVARD_ROUTE: &[Coord] = &[
+    (55.678_74, 12.564_49),
+    (55.677_32, 12.566_07),
+    (55.675_76, 12.567_77),
+    (55.674_34, 12.570_53),
+    (55.672_76, 12.573_62),
+    (55.671_80, 12.575_22),
+];
+
+/// A street run in Østerbro, ~4 km from the boulevard (beyond the default
+/// 2 km breakage distance): the far side of the teleport gap. Sampled from
+/// the server's `/route` geometry like [`BOULEVARD_ROUTE`].
+const OSTERBRO_ROUTE: &[Coord] = &[
+    (55.706_09, 12.580_53),
+    (55.706_34, 12.582_36),
+    (55.706_61, 12.584_86),
+];
+
+/// A short dense stretch on the boulevard for the 10 Hz scenario.
+const BOULEVARD_DENSE: &[Coord] = &[(55.676_00, 12.567_20), (55.674_20, 12.569_90)];
+
+/// Mid-channel of the inner harbor south of Langebro: mostly water, but close
+/// enough to bridges and quays that some points still snap - the
+/// partially-snappable mix of matched/unmatched the plot must surface.
+const HARBOR_LINE: &[Coord] = &[(55.666_80, 12.572_30), (55.663_60, 12.575_80)];
+
+/// Open sea in the Øresund, kilometers from any mapped way: guaranteed fully
+/// off-network, and stable against future OSM edits near the shore.
+const SEA_LINE: &[Coord] = &[(55.680_00, 12.660_00), (55.674_00, 12.674_00)];
+
+/// Roskilde direction: the far end of the deliberately oversized traces.
+const ROSKILDE: Coord = (55.642, 12.081);
+
+/// Amplitude of the deterministic cross-track jitter, degrees latitude
+/// (about 3 m) - realistic GNSS noise without randomness, so re-captures
+/// send byte-identical requests.
+const JITTER_DEG: f64 = 3.0e-5;
+
+/// The tuned scenario's non-default trace options: values inside the
+/// server-accepted ranges but distinct from any default, so the capture pins
+/// both the tuned-request serialization and the server accepting it.
+const TUNED_PARAMS: SnapParams = SnapParams {
+    costing: Costing::Auto,
+    search_radius_m: Some(25.0),
+    turn_penalty_factor: Some(300.0),
+    gps_accuracy_override_m: Some(10.0),
+};

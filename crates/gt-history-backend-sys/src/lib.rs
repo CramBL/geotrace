@@ -9,8 +9,6 @@ use parking_lot::Mutex;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
-static DB_LOCK: Mutex<()> = Mutex::new(());
-
 pub mod copy;
 
 /// Extract recording metadata from raw GTD file bytes.
@@ -470,6 +468,8 @@ impl HistoryDatabase for SysDb {
         crate::copy::rename_identity(&self.path, old, new).map_err(Into::into)
     }
 }
+
+static DB_LOCK: Mutex<()> = Mutex::new(());
 
 #[cfg(test)]
 mod tests {

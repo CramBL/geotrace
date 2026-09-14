@@ -14,15 +14,6 @@ use h3o::{CellIndex, LatLng};
 use crate::H3_RESOLUTION;
 use crate::wire::HexObservation;
 
-/// Longitude degrees spanning the whole world, the widest any padding can
-/// usefully be.
-const FULL_LON_SPAN: f64 = 360.0;
-
-/// Cosine of a latitude close enough to a pole that longitude padding stops
-/// being meaningful (about 89.9 degrees). Below it, the whole longitude
-/// range is taken.
-const MIN_COS_LAT: f64 = 0.001;
-
 /// The cell containing a position, at the published resolution.
 ///
 /// [`None`] only for a coordinate outside the globe. [`Latitude`] and
@@ -159,6 +150,15 @@ impl JamDataset {
     }
 }
 
+/// Longitude degrees spanning the whole world, the widest any padding can
+/// usefully be.
+const FULL_LON_SPAN: f64 = 360.0;
+
+/// Cosine of a latitude close enough to a pole that longitude padding stops
+/// being meaningful (about 89.9 degrees). Below it, the whole longitude
+/// range is taken.
+const MIN_COS_LAT: f64 = 0.001;
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr as _;
@@ -166,11 +166,6 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-
-    // Cells from the captured day, far enough apart to sit in
-    // different windows. The comment is where each one's centre is.
-    const BALTIC: &str = "841f0c9ffffffff"; // 55.016 N, 15.413 E
-    const WYOMING: &str = "8426b45ffffffff"; // 43.818 N, 109.957 W
 
     fn day() -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 7, 20).unwrap()
@@ -334,4 +329,9 @@ mod tests {
         let cell = cell_at(Latitude::new(55.68), Longitude::new(12.57)).unwrap();
         assert_eq!(cell.resolution(), H3_RESOLUTION);
     }
+
+    // Cells from the captured day, far enough apart to sit in
+    // different windows. The comment is where each one's centre is.
+    const BALTIC: &str = "841f0c9ffffffff"; // 55.016 N, 15.413 E
+    const WYOMING: &str = "8426b45ffffffff"; // 43.818 N, 109.957 W
 }

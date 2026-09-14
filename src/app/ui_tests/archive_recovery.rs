@@ -29,18 +29,6 @@ use crate::app::storage_controls::AUTO_STORE_LABEL;
 use crate::app::test_util;
 use crate::app::ui_tests;
 
-/// The interference archive's day index, which is where a delete records
-/// that it is part-way through.
-const INTERFERENCE_DAYS: GroupPath<'static> = GroupPath(schema::DAYS_GROUP);
-
-/// The instance a recorded take-over in these cases took write access from.
-const TAKEN_FROM_PROCESS_ID: u32 = 4321;
-
-/// Stamps the take-over these cases record as one the archive was not written
-/// after: it is later than the modification time of any archive written during
-/// the test.
-const TAKE_OVER_STAMPED_AHEAD_OF_THIS_MACHINES_CLOCK: u64 = 2_000_000_000;
-
 /// A data directory whose interference archive holds two days with a delete
 /// marked part-way through it, as an instance killed mid-delete leaves it.
 fn data_directory_with_an_interrupted_interference_delete() -> tempfile::TempDir {
@@ -572,3 +560,15 @@ fn the_download_control_is_grayed_while_the_archive_opens() {
     harness.hover_and_settle(By::new().label_contains(DOWNLOAD_HISTORY_LABEL), 3);
     harness.get_by_label_contains("The interference archive is still opening");
 }
+
+/// The interference archive's day index, which is where a delete records
+/// that it is part-way through.
+const INTERFERENCE_DAYS: GroupPath<'static> = GroupPath(schema::DAYS_GROUP);
+
+/// The instance a recorded take-over in these cases took write access from.
+const TAKEN_FROM_PROCESS_ID: u32 = 4321;
+
+/// Stamps the take-over these cases record as one the archive was not written
+/// after: it is later than the modification time of any archive written during
+/// the test.
+const TAKE_OVER_STAMPED_AHEAD_OF_THIS_MACHINES_CLOCK: u64 = 2_000_000_000;

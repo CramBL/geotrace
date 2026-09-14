@@ -17,10 +17,6 @@ use gt_jam::H3_RESOLUTION;
 use gt_jam::test_util;
 use gt_jam::wire::{self, HexObservation, ParseWarningReporter};
 
-/// How far into the captured day the truncation property cuts: enough for
-/// the header and the first rows, without re-parsing 900 KiB per case.
-const MAX_TRUNCATION_BYTES: usize = 4096;
-
 /// The captured world day, read once for the whole run.
 fn captured_world_day() -> Result<&'static str, String> {
     static CSV: OnceLock<Result<String, String>> = OnceLock::new();
@@ -86,3 +82,7 @@ proptest::proptest! {
         }
     }
 }
+
+/// How far into the captured day the truncation property cuts: enough for
+/// the header and the first rows, without re-parsing 900 KiB per case.
+const MAX_TRUNCATION_BYTES: usize = 4096;

@@ -1,10 +1,3 @@
-pub mod lod;
-pub mod sat_label;
-pub mod segment;
-pub mod spatial;
-#[cfg(any(test, feature = "test-util"))]
-pub mod test_util;
-
 pub use lod::{LOD_CHUNK_POINTS, build_track_lod};
 pub use sat_label::build_sat_label_anchors;
 pub use segment::{
@@ -14,3 +7,10 @@ pub use segment::{
     reassemble_channels, segment_tracks,
 };
 pub use spatial::SpatialIndex;
+
+pub mod lod;
+pub mod sat_label;
+pub mod segment;
+pub mod spatial;
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;

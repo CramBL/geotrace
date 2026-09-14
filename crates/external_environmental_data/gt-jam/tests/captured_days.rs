@@ -13,9 +13,6 @@ use gt_jam::test_util;
 use gt_jam::wire::{self, HexObservation, ParseWarningReporter};
 use gt_jam::{CAPTURED_DAYS, CapturedDay};
 
-/// Floor for a world day, so a truncated re-capture fails here.
-const MIN_WORLD_DAY_CELLS: usize = 40_000;
-
 /// The days with a dataset on disk.
 fn served_days() -> impl Iterator<Item = &'static CapturedDay> {
     CAPTURED_DAYS.iter().filter(|capture| capture.is_served())
@@ -158,3 +155,6 @@ fn the_captured_world_day_carries_usable_tallies() {
         }
     }
 }
+
+/// Floor for a world day, so a truncated re-capture fails here.
+const MIN_WORLD_DAY_CELLS: usize = 40_000;

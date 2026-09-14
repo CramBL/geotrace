@@ -14,16 +14,6 @@ use gt_types::tpv::TimePositionVelocity;
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Length};
 
-/// Canvas the sticky-content snapshots render into: as wide as the real point
-/// window, where the plot sits beside the satellite tables, and tall enough to
-/// hold the whole plot column. A column clipped at its scroll edge leaves a
-/// part-drawn row that each GPU backend antialiases differently.
-const STICKY_CONTENT_CANVAS: egui::Vec2 = egui::vec2(600.0, 500.0);
-
-/// The position every fix built here sits at.
-const FIXTURE_LAT: f64 = 51.5;
-const FIXTURE_LON: f64 = -0.1;
-
 /// The instant fix 0 of every fixture track is stamped at. It is a constant,
 /// so the snapshots that draw the time row stay deterministic.
 fn fixture_epoch() -> chrono::DateTime<chrono::Utc> {
@@ -842,16 +832,6 @@ fn chevron_direction_follows_the_neighbouring_fixes(
     );
 }
 
-// With a 12 px icon, the fade band spans local spacings of 2.4 px
-// (LO, 0.2 icon sizes - arrows share almost all pixels) to 6 px
-// (HI, 0.5 icon sizes - arrows overlap but stay readable).
-const TEST_ICON_PX: f32 = 12.0;
-
-// At low zoom icons shrink to 3 px and the proportional band would be
-// 0.6-1.5 px. The absolute floors widen it to 2-5 px so dot-sized
-// arrows stacked a couple of pixels apart fade into the quality line.
-const SMALL_ICON_PX: f32 = 3.0;
-
 /// Arrows a spacing apart fade linearly from opaque at the top of the band to
 /// invisible at its foot. A degenerate icon size and a spacing that overflowed
 /// to infinity both clamp the alpha to opaque.
@@ -912,11 +892,6 @@ fn classify_icon_fade_reads_the_segment_length_range(
         expected
     );
 }
-
-/// Same value as `MercTransform::pixels_per_meter`'s internal constant.
-/// With `for_test(EARTH_CIRCUMFERENCE_M)` the map scale is 1 px/m at the
-/// equator, so test geometry can be written directly in metres.
-const EARTH_CIRCUMFERENCE_M: f64 = 40_030_173.0;
 
 fn unit_transform() -> crate::transform::MercTransform {
     crate::transform::MercTransform::for_test(EARTH_CIRCUMFERENCE_M)
@@ -1222,3 +1197,28 @@ fn a_tracks_arrows_are_one_mesh_whatever_the_accuracy_circle_count() {
         .count();
     assert_eq!((circles, meshes), (FIX_COUNT, 1));
 }
+
+/// Canvas the sticky-content snapshots render into: as wide as the real point
+/// window, where the plot sits beside the satellite tables, and tall enough to
+/// hold the whole plot column. A column clipped at its scroll edge leaves a
+/// part-drawn row that each GPU backend antialiases differently.
+const STICKY_CONTENT_CANVAS: egui::Vec2 = egui::vec2(600.0, 500.0);
+
+/// The position every fix built here sits at.
+const FIXTURE_LAT: f64 = 51.5;
+const FIXTURE_LON: f64 = -0.1;
+
+// With a 12 px icon, the fade band spans local spacings of 2.4 px
+// (LO, 0.2 icon sizes - arrows share almost all pixels) to 6 px
+// (HI, 0.5 icon sizes - arrows overlap but stay readable).
+const TEST_ICON_PX: f32 = 12.0;
+
+// At low zoom icons shrink to 3 px and the proportional band would be
+// 0.6-1.5 px. The absolute floors widen it to 2-5 px so dot-sized
+// arrows stacked a couple of pixels apart fade into the quality line.
+const SMALL_ICON_PX: f32 = 3.0;
+
+/// Same value as `MercTransform::pixels_per_meter`'s internal constant.
+/// With `for_test(EARTH_CIRCUMFERENCE_M)` the map scale is 1 px/m at the
+/// equator, so test geometry can be written directly in metres.
+const EARTH_CIRCUMFERENCE_M: f64 = 40_030_173.0;

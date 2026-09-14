@@ -22,16 +22,6 @@ use gt_log_view::FilterStack;
 use gt_logfile::ParsedLog;
 use gt_test_utils::log_fixtures;
 
-const MIB: usize = 1024 * 1024;
-
-/// Three terms of a line a real journal writes often, none of them the first
-/// thing on the line.
-const PLAIN_TERMS: &str = "navsyncd uploaded queue";
-
-/// A pattern the literal optimizer cannot reduce to one substring search: an
-/// alternation of two units, a digit run, and a suffix.
-const REGEX: &str = r"(gpsd|navsyncd)\[\d+\]: .*(fix|queue)\b";
-
 fn fixture(approx_bytes: usize) -> Arc<ParsedLog> {
     let text = log_fixtures::syslog_journald_log(approx_bytes, 1);
     Arc::new(
@@ -94,3 +84,13 @@ fn bench_live_filter_edit(c: &mut Criterion) {
 
 criterion_group!(benches, bench_scan, bench_live_filter_edit);
 criterion_main!(benches);
+
+const MIB: usize = 1024 * 1024;
+
+/// Three terms of a line a real journal writes often, none of them the first
+/// thing on the line.
+const PLAIN_TERMS: &str = "navsyncd uploaded queue";
+
+/// A pattern the literal optimizer cannot reduce to one substring search: an
+/// alternation of two units, a digit run, and a suffix.
+const REGEX: &str = r"(gpsd|navsyncd)\[\d+\]: .*(fix|queue)\b";

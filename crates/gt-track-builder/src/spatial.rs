@@ -73,8 +73,6 @@ mod tests {
     use crate::segment::{self, FileMeta, SegmentationConfig};
     use crate::test_util;
 
-    const LATITUDE_DEGREES: f64 = 55.0;
-
     /// The builder places this fix where the receiver wrote it and generates
     /// no marker for it: it has a heading and a full solution behind it, as a
     /// receiver-measured fix would.
@@ -144,4 +142,6 @@ mod tests {
             vec![DataCategory::CustomMarker, DataCategory::EventMarker]
         );
     }
+
+    const LATITUDE_DEGREES: f64 = 55.0;
 }

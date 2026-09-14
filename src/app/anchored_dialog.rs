@@ -16,15 +16,6 @@ use strum::EnumIter;
 
 use crate::app::modals::{self, DialogActionRow, DialogBody, DialogBodyHeight};
 
-#[cfg(test)]
-mod tests;
-
-/// The share of the viewport a dialog may take before the user resizes it.
-const MAX_VIEWPORT_FRACTION: f32 = 0.9;
-
-/// Where a dialog's frozen region heights sit under its window id.
-const FROZEN_REGIONS: &str = "frozen_regions";
-
 /// Every dialog [`AnchoredDialog`] draws. A new dialog names itself here and
 /// the suite in `tests` then holds it to the layout guarantees.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, EnumIter)]
@@ -408,3 +399,12 @@ impl<'a> AnchoredDialog<'a> {
         laid_out.and_then(|window| window.inner)
     }
 }
+
+/// The share of the viewport a dialog may take before the user resizes it.
+const MAX_VIEWPORT_FRACTION: f32 = 0.9;
+
+/// Where a dialog's frozen region heights sit under its window id.
+const FROZEN_REGIONS: &str = "frozen_regions";
+
+#[cfg(test)]
+mod tests;

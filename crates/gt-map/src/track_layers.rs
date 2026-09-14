@@ -29,10 +29,6 @@ use crate::track_renderer;
 use crate::transform::{self, GeometryCull, MercTransform};
 use crate::viewport::{TrackEntry, TrackPlan};
 
-/// Minimum animated progress at which the overlay and three-phase rendering
-/// are active.  Below this the overlay is invisible and the normal path runs.
-const FADE_VISIBLE_THRESHOLD: f32 = 0.01;
-
 /// Per-point styling key for the unified line passes: the trackline dashes
 /// ghost stretches. The quality line colors by fix quality and crossfade
 /// bucket. One key drives both layers, so each track's points are
@@ -840,6 +836,10 @@ fn paint_quality_path(ui: &Ui, path: &VisiblePath<LinePointKey>) {
     }
 }
 
+/// Minimum animated progress at which the overlay and three-phase rendering
+/// are active.  Below this the overlay is invisible and the normal path runs.
+const FADE_VISIBLE_THRESHOLD: f32 = 0.01;
+
 #[cfg(test)]
 mod tests {
     use std::iter;
@@ -977,35 +977,6 @@ mod tests {
             super::focus_scrim_alpha(true, 1.0)
         );
     }
-
-    /// The map rect every case frames the fixture in.
-    const MAP_RECT: egui::Rect = egui::Rect {
-        min: egui::pos2(0.0, 0.0),
-        max: egui::pos2(800.0, 600.0),
-    };
-
-    const FIRST_FIX_TIME: DateTime<Utc> = DateTime::<Utc>::UNIX_EPOCH;
-
-    const FIX_COUNT: usize = 2_700;
-
-    /// The fixes the receiver dead-reckoned, which the map draws as chevrons.
-    const DEAD_RECKONED: Range<usize> = 100..2_600;
-
-    /// The dead-reckoned fixes the receiver wrote while it stood still. A walk
-    /// over the finest stored LOD level yields a handful of them: their
-    /// spacing sits far below that level's tolerance.
-    const PARKED: Range<usize> = 200..2_600;
-
-    /// Longitude between consecutive fixes of the moving stretches, about 13 m
-    /// at the fixture's latitude.
-    const MOVING_STEP_DEGREES: f64 = 0.000_2;
-
-    /// Longitude between consecutive fixes of the parked stretch, about 6 mm.
-    const PARKED_STEP_DEGREES: f64 = 0.000_000_1;
-
-    const LATITUDE_DEGREES: f64 = 55.0;
-
-    const FIRST_LONGITUDE_DEGREES: f64 = 12.0;
 
     /// The fixture's positions: a stretch east, the parked stretch, then a
     /// stretch east again.
@@ -1236,4 +1207,33 @@ mod tests {
             "no viewport of the case held a fix the walked level drops"
         );
     }
+
+    /// The map rect every case frames the fixture in.
+    const MAP_RECT: egui::Rect = egui::Rect {
+        min: egui::pos2(0.0, 0.0),
+        max: egui::pos2(800.0, 600.0),
+    };
+
+    const FIRST_FIX_TIME: DateTime<Utc> = DateTime::<Utc>::UNIX_EPOCH;
+
+    const FIX_COUNT: usize = 2_700;
+
+    /// The fixes the receiver dead-reckoned, which the map draws as chevrons.
+    const DEAD_RECKONED: Range<usize> = 100..2_600;
+
+    /// The dead-reckoned fixes the receiver wrote while it stood still. A walk
+    /// over the finest stored LOD level yields a handful of them: their
+    /// spacing sits far below that level's tolerance.
+    const PARKED: Range<usize> = 200..2_600;
+
+    /// Longitude between consecutive fixes of the moving stretches, about 13 m
+    /// at the fixture's latitude.
+    const MOVING_STEP_DEGREES: f64 = 0.000_2;
+
+    /// Longitude between consecutive fixes of the parked stretch, about 6 mm.
+    const PARKED_STEP_DEGREES: f64 = 0.000_000_1;
+
+    const LATITUDE_DEGREES: f64 = 55.0;
+
+    const FIRST_LONGITUDE_DEGREES: f64 = 12.0;
 }

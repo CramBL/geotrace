@@ -10,39 +10,6 @@ use crate::app::settings_ui::source_page::{self, ReferenceLink, SourcePageSlots}
 use crate::app::tec_mirrors_ui::EarthdataToken;
 use crate::app::{App, tec_mirrors_ui};
 
-const MIRRORS_LABEL: &str = "Mirrors";
-
-const REFERENCE_LINK_LABEL: &str = gt_ionex::reference::IONOSPHERIC_TEC.link_question;
-
-const REFERENCE_LINK_HOVER: &str = "Reference material on the ionosphere, total electron content, \
-                                    and the delay it adds to satellite navigation signals";
-
-pub(super) const EARTHDATA_TOKEN_LABEL: &str = "Earthdata token";
-
-pub(super) const SEARCHABLE_LABELS: &[&str] = &[
-    MIRRORS_LABEL,
-    EARTHDATA_TOKEN_LABEL,
-    day_fetch_status::FETCH_QUEUE_LABEL,
-    day_fetch_status::RECORDING_DAYS_LABEL,
-    day_fetch_status::BACKGROUND_DAYS_LABEL,
-    backfill_ui::DOWNLOAD_HISTORY_LABEL,
-    REFERENCE_LINK_LABEL,
-];
-
-const MIRRORS_HOVER: &str = "Hosts serving the global ionosphere maps, tried in order until one \
-                             has the day's file. The default is JPL, which publishes them, \
-                             followed by the CDDIS archive. Add a mirror or an offline copy \
-                             serving either layout to fetch from there instead.";
-
-const TOKEN_HOVER: &str = "Your own NASA Earthdata token, sent to the CDDIS mirrors and to no \
-                           other host. It is stored in the settings file as entered, and never \
-                           written to a log or a download failure.";
-
-const FETCH_ROW_HOVER: FetchRowHoverText = FetchRowHoverText {
-    queue: gt_ionex::text::FETCH_QUEUE_HOVER,
-    coverage: gt_ionex::text::RECORDING_DAY_COVERAGE_HOVER,
-};
-
 impl App {
     pub(super) fn show_tec_page(&mut self, ui: &mut egui::Ui) {
         let mut settings = self.tec_settings.clone();
@@ -143,3 +110,36 @@ fn show_earthdata_token_row(ui: &mut Ui, earthdata_token: &mut String) -> bool {
     ui.end_row();
     changed
 }
+
+const MIRRORS_LABEL: &str = "Mirrors";
+
+const REFERENCE_LINK_LABEL: &str = gt_ionex::reference::IONOSPHERIC_TEC.link_question;
+
+const REFERENCE_LINK_HOVER: &str = "Reference material on the ionosphere, total electron content, \
+                                    and the delay it adds to satellite navigation signals";
+
+pub(super) const EARTHDATA_TOKEN_LABEL: &str = "Earthdata token";
+
+pub(super) const SEARCHABLE_LABELS: &[&str] = &[
+    MIRRORS_LABEL,
+    EARTHDATA_TOKEN_LABEL,
+    day_fetch_status::FETCH_QUEUE_LABEL,
+    day_fetch_status::RECORDING_DAYS_LABEL,
+    day_fetch_status::BACKGROUND_DAYS_LABEL,
+    backfill_ui::DOWNLOAD_HISTORY_LABEL,
+    REFERENCE_LINK_LABEL,
+];
+
+const MIRRORS_HOVER: &str = "Hosts serving the global ionosphere maps, tried in order until one \
+                             has the day's file. The default is JPL, which publishes them, \
+                             followed by the CDDIS archive. Add a mirror or an offline copy \
+                             serving either layout to fetch from there instead.";
+
+const TOKEN_HOVER: &str = "Your own NASA Earthdata token, sent to the CDDIS mirrors and to no \
+                           other host. It is stored in the settings file as entered, and never \
+                           written to a log or a download failure.";
+
+const FETCH_ROW_HOVER: FetchRowHoverText = FetchRowHoverText {
+    queue: gt_ionex::text::FETCH_QUEUE_HOVER,
+    coverage: gt_ionex::text::RECORDING_DAY_COVERAGE_HOVER,
+};

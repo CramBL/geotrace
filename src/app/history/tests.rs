@@ -486,11 +486,6 @@ fn one_live_a_tombstone_and_two_shelved_tracks() -> Vec<TrackRange> {
     ]
 }
 
-/// How far the shelf tests drag the History window's bottom-right corner down:
-/// enough to show the shelf's lines under the recording's row along with the
-/// footer.
-const SHELF_WINDOW_GROWN_BY: egui::Vec2 = egui::vec2(0.0, 140.0);
-
 /// Drag the window tall enough for the shelf's lines and the footer, then open
 /// the shelf of the only listed recording.
 fn open_the_shelf(h: &mut TestHarness<HistoryHarness>) {
@@ -584,8 +579,8 @@ fn the_shelf_numbers_a_shelved_track_by_its_stored_row() {
 
 /// What the listing does with the open shelf once the unshelve lands.
 enum ShelfAfterTheUnshelve {
-    StaysOpen,
     Closes,
+    StaysOpen,
 }
 
 /// Unshelving through the shelf writes the stored track states, which the
@@ -725,24 +720,6 @@ fn one_live_track_and_shelved_tracks(shelved: usize) -> Vec<TrackRange> {
     tracks
 }
 
-/// Nav points a track of [`one_live_track_and_shelved_tracks`] spans, few
-/// enough that the whole table fits the gold recording's fixes.
-const NAV_POINTS_PER_TRACK: u64 = 5;
-
-/// Shelved tracks of a recording whose shelf is longer than the window it
-/// opens in: the closing line starts below the fold.
-const SHELVED_TRACKS_PAST_THE_FOLD: usize = 40;
-
-const LISTING_SCROLL_STEP_PX: f32 = 200.0;
-
-/// Wheel steps the scroll to the shelf's closing line takes before it gives
-/// up.
-const LISTING_SCROLL_STEPS: usize = 30;
-
-/// Frames each wheel step runs for: the smooth scroll comes to rest, and the
-/// column widths settle on the rows it left in view.
-const LISTING_SETTLE_FRAMES: usize = 8;
-
 /// The action column reserves the width of the shelf's closing line, which
 /// holds its widest controls. Every column keeps its width as the user scrolls
 /// down to that line, and the window keeps the size it had.
@@ -813,41 +790,11 @@ fn scrolling_to_the_closing_line_of_the_shelf_keeps_every_column_width() {
     );
 }
 
-/// The figures the listing's recordings take, laid down again and again until
-/// the listing is longer than the window shows: a long recording, a two-fix
-/// one, and a middling one with logs stored beside it. A column sized on the
-/// rows in view alone changes width as the listing scrolls, because every
-/// column draws a different width for each of the three.
-const LISTED_FIGURES: [ListedFigures; 3] = [
-    ListedFigures {
-        nav_points: 200,
-        stored_logs: 0,
-    },
-    ListedFigures {
-        nav_points: 2,
-        stored_logs: 0,
-    },
-    ListedFigures {
-        nav_points: 60,
-        stored_logs: 2,
-    },
-];
-
 /// What one recording of [`LISTED_FIGURES`] holds.
 struct ListedFigures {
     nav_points: usize,
     stored_logs: usize,
 }
-
-/// Recordings [`history_harness_with_a_shelf_over_more_recordings`] stores. The
-/// window settles at the height it opens at and scrolls its rows: the listing is
-/// longer than that.
-const LISTED_RECORDING_COUNT: usize = 12;
-
-/// Shelved tracks the first listed recording holds. The listing scrolls through
-/// lines of the shelf alone before the next recording's row comes back into
-/// view: the shelf is longer than the window shows at once.
-const SHELVED_TRACKS_OVER_A_WINDOW: usize = 25;
 
 /// The identity of the recording listed at `index`, counting from the top of
 /// the listing.
@@ -1001,10 +948,6 @@ fn column_lefts(h: &TestHarness<HistoryHarness>) -> Vec<(&'static str, f32)> {
         .chain(std::iter::once((ACTION_COLUMN, action_column_left(h))))
         .collect()
 }
-
-/// What a failure calls the column of a row's actions, which has no header of
-/// its own.
-const ACTION_COLUMN: &str = "action";
 
 /// Where the action column starts. A cell lays its controls out from its left
 /// edge. The first Open or Unshelve button on screen starts the column.
@@ -1204,10 +1147,6 @@ fn scanned_counts_up_to(n: u64) -> impl Iterator<Item = u64> {
     let step = (n / SCANNED_COUNTS_PER_RECORDING).max(1);
     (0..=n).step_by(usize::try_from(step).unwrap_or(usize::MAX))
 }
-
-/// Counts [`scanned_counts_up_to`] takes from a recording's range. The forms
-/// the formatter writes hold over runs far longer than the step this leaves.
-const SCANNED_COUNTS_PER_RECORDING: u64 = 2_000;
 
 /// The shelf open on a recording: one line per shelved track with its number
 /// and nav-point count, and the closing line that unshelves all of them.
@@ -2354,13 +2293,6 @@ fn crowded_history_harness() -> HistoryHarness {
     history_harness(entries)
 }
 
-/// Size given to each of [`crowded_history_harness`]'s recordings, so the footer
-/// states a total.
-const CROWDED_RECORDING_BYTES: u64 = 1024;
-
-/// The stats line the footer ends on for [`crowded_history_harness`].
-const CROWDED_FOOTER_STATS: &str = "200 recordings - 200.0 KB";
-
 /// The History window keeps its footer reachable at any viewport: the listing
 /// takes the room that is left and scrolls its own rows.
 #[rstest::rstest]
@@ -2562,10 +2494,6 @@ fn delete_shelved_confirmation_fits_every_viewport(
     );
 }
 
-/// Screen the height audit runs against: taller than a handful of recordings
-/// need, shorter than [`OVERSIZED_ROW_COUNT`] of them.
-const HEIGHT_AUDIT_VIEWPORT: egui::Vec2 = egui::vec2(1000.0, 800.0);
-
 /// Settled height of the History window listing `rows` recordings, through the
 /// real rendering path ([`HistoryWindow::show`]).
 fn settled_history_window_height(rows: usize) -> f32 {
@@ -2662,13 +2590,6 @@ fn a_drag_on_the_bottom_edge_shortens_the_window_for_good() {
     );
 }
 
-/// How far the drag audits pull the window's bottom edge up.
-const DRAGGED_UP_BY_PX: f32 = 200.0;
-
-/// Recordings the height audits call a short listing: fewer than the window
-/// shows at once.
-const SHORT_LIST_ROWS: usize = 3;
-
 /// A harness listing `rows` recordings under names sorting in the order they
 /// are built, with the database path kept out of the image.
 fn history_harness_for_the_height_audit(rows: usize) -> HistoryHarness {
@@ -2720,3 +2641,82 @@ fn snapshot_window_dragged_shorter_than_its_listing() {
         .hover_at_and_settle(egui::pos2(HEIGHT_AUDIT_VIEWPORT.x - 1.0, 1.0), 8);
     h.snapshot_with_color_tolerance("history_window_dragged_shorter");
 }
+
+/// How far the shelf tests drag the History window's bottom-right corner down:
+/// enough to show the shelf's lines under the recording's row along with the
+/// footer.
+const SHELF_WINDOW_GROWN_BY: egui::Vec2 = egui::vec2(0.0, 140.0);
+
+/// Nav points a track of [`one_live_track_and_shelved_tracks`] spans, few
+/// enough that the whole table fits the gold recording's fixes.
+const NAV_POINTS_PER_TRACK: u64 = 5;
+
+/// Shelved tracks of a recording whose shelf is longer than the window it
+/// opens in: the closing line starts below the fold.
+const SHELVED_TRACKS_PAST_THE_FOLD: usize = 40;
+
+const LISTING_SCROLL_STEP_PX: f32 = 200.0;
+
+/// Wheel steps the scroll to the shelf's closing line takes before it gives
+/// up.
+const LISTING_SCROLL_STEPS: usize = 30;
+
+/// Frames each wheel step runs for: the smooth scroll comes to rest, and the
+/// column widths settle on the rows it left in view.
+const LISTING_SETTLE_FRAMES: usize = 8;
+
+/// The figures the listing's recordings take, laid down again and again until
+/// the listing is longer than the window shows: a long recording, a two-fix
+/// one, and a middling one with logs stored beside it. A column sized on the
+/// rows in view alone changes width as the listing scrolls, because every
+/// column draws a different width for each of the three.
+const LISTED_FIGURES: [ListedFigures; 3] = [
+    ListedFigures {
+        nav_points: 200,
+        stored_logs: 0,
+    },
+    ListedFigures {
+        nav_points: 2,
+        stored_logs: 0,
+    },
+    ListedFigures {
+        nav_points: 60,
+        stored_logs: 2,
+    },
+];
+
+/// Recordings [`history_harness_with_a_shelf_over_more_recordings`] stores. The
+/// window settles at the height it opens at and scrolls its rows: the listing is
+/// longer than that.
+const LISTED_RECORDING_COUNT: usize = 12;
+
+/// Shelved tracks the first listed recording holds. The listing scrolls through
+/// lines of the shelf alone before the next recording's row comes back into
+/// view: the shelf is longer than the window shows at once.
+const SHELVED_TRACKS_OVER_A_WINDOW: usize = 25;
+
+/// What a failure calls the column of a row's actions, which has no header of
+/// its own.
+const ACTION_COLUMN: &str = "action";
+
+/// Counts [`scanned_counts_up_to`] takes from a recording's range. The forms
+/// the formatter writes hold over runs far longer than the step this leaves.
+const SCANNED_COUNTS_PER_RECORDING: u64 = 2_000;
+
+/// Size given to each of [`crowded_history_harness`]'s recordings, so the footer
+/// states a total.
+const CROWDED_RECORDING_BYTES: u64 = 1024;
+
+/// The stats line the footer ends on for [`crowded_history_harness`].
+const CROWDED_FOOTER_STATS: &str = "200 recordings - 200.0 KB";
+
+/// Screen the height audit runs against: taller than a handful of recordings
+/// need, shorter than [`OVERSIZED_ROW_COUNT`] of them.
+const HEIGHT_AUDIT_VIEWPORT: egui::Vec2 = egui::vec2(1000.0, 800.0);
+
+/// How far the drag audits pull the window's bottom edge up.
+const DRAGGED_UP_BY_PX: f32 = 200.0;
+
+/// Recordings the height audits call a short listing: fewer than the window
+/// shows at once.
+const SHORT_LIST_ROWS: usize = 3;

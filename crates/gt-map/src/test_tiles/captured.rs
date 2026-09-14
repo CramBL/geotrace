@@ -31,15 +31,15 @@ pub struct CapturedTileId {
 
 #[derive(Debug, thiserror::Error)]
 pub enum CapturedTileIdParseError {
-    #[error("{0:?} is not three /-separated fields")]
-    FieldCount(String),
-
     #[error("field {field:?} of the tile id {text:?} is not a number: {source}")]
     Field {
         text: String,
         field: String,
         source: ParseIntError,
     },
+
+    #[error("{0:?} is not three /-separated fields")]
+    FieldCount(String),
 }
 
 impl CapturedTileId {
@@ -292,12 +292,6 @@ mod tests {
 
     use super::*;
 
-    const TILE_ID: TileId = TileId {
-        x: 4,
-        y: 5,
-        zoom: 3,
-    };
-
     fn manifest(tile_size_px: u32, tile_format: CapturedTileFormat) -> CapturedTileManifest {
         CapturedTileManifest {
             tile_size_px,
@@ -482,4 +476,10 @@ mod tests {
             );
         }
     }
+
+    const TILE_ID: TileId = TileId {
+        x: 4,
+        y: 5,
+        zoom: 3,
+    };
 }

@@ -14,9 +14,6 @@ use gt_hdf5_archive::{ReadOnlyDayArchive as _, WritableDayArchive as _};
 use gt_test_utils::day_archive::conformance::{self, StoredDayOperations};
 use gt_test_utils::day_archive::{self, ColumnName, GroupPath};
 
-/// The base URL the archive records. The API key is never part of it.
-const HOST: &str = "https://api.nasa.gov";
-
 fn day(offset: i64) -> NaiveDate {
     NaiveDate::from_ymd_opt(2024, 5, 9).unwrap_or_default() + TimeDelta::days(offset)
 }
@@ -59,12 +56,6 @@ fn flare_day(day: NaiveDate) -> Option<Vec<SolarFlare>> {
         },
     ])
 }
-
-const DAY_OPERATIONS: StoredDayOperations<FlareStore, Vec<SolarFlare>> = StoredDayOperations {
-    insert_a_day,
-    read_a_day,
-    indexed_days,
-};
 
 fn insert_a_day(store: &FlareStore, day: NaiveDate) -> Result<Vec<SolarFlare>, String> {
     let flares = flare_day(day).ok_or_else(|| format!("a day of flares for {day}"))?;
@@ -433,10 +424,6 @@ fn deleting_every_day_empties_the_archive() {
     conformance::deleting_every_day_empties_the_archive(&DAY_OPERATIONS, &[day(0)]);
 }
 
-/// The archive's day index, which is where a delete records that it is
-/// part-way through.
-const DAYS: GroupPath<'static> = GroupPath(schema::DAYS_GROUP);
-
 /// Write access taken from an instance part-way through a delete must not
 /// discard its days behind the user's back. The archive reports what
 /// recovering costs before either choice is made.
@@ -499,3 +486,16 @@ fn a_declined_recovery_keeps_the_interrupted_days_and_an_accepted_one_discards_t
 fn a_settled_archive_reports_no_interrupted_delete() {
     conformance::a_settled_archive_reports_no_interrupted_delete(&DAY_OPERATIONS, day(0));
 }
+
+/// The base URL the archive records. The API key is never part of it.
+const HOST: &str = "https://api.nasa.gov";
+
+const DAY_OPERATIONS: StoredDayOperations<FlareStore, Vec<SolarFlare>> = StoredDayOperations {
+    insert_a_day,
+    read_a_day,
+    indexed_days,
+};
+
+/// The archive's day index, which is where a delete records that it is
+/// part-way through.
+const DAYS: GroupPath<'static> = GroupPath(schema::DAYS_GROUP);

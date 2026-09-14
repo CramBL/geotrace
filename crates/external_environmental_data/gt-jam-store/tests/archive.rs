@@ -17,16 +17,6 @@ use gt_jam_store::{FILE_NAME, JamStore, JamStoreError, ReadOnlyJamStore, schema}
 use gt_test_utils::day_archive::conformance::{self, StoredDayOperations};
 use gt_test_utils::day_archive::{self, ColumnName, GroupPath};
 
-/// Cells copied from the captured day.
-const CELLS: [&str; 4] = [
-    "84005c7ffffffff",
-    "840104bffffffff",
-    "8401221ffffffff",
-    "8401255ffffffff",
-];
-
-const HOST: &str = "https://gpsjam.org";
-
 fn day(offset: i64) -> NaiveDate {
     NaiveDate::from_ymd_opt(2026, 7, 20).unwrap_or_default() + TimeDelta::days(offset)
 }
@@ -52,16 +42,6 @@ fn observations(count: usize) -> Vec<HexObservation> {
         })
         .collect()
 }
-
-/// The archive's day index, which is where a delete records that it is
-/// part-way through.
-const DAYS: GroupPath<'static> = GroupPath(schema::DAYS_GROUP);
-
-const DAY_OPERATIONS: StoredDayOperations<JamStore, Vec<HexObservation>> = StoredDayOperations {
-    insert_a_day,
-    read_a_day,
-    indexed_days,
-};
 
 fn insert_a_day(store: &JamStore, day: NaiveDate) -> Result<Vec<HexObservation>, String> {
     let observations = observations(4);
@@ -500,3 +480,23 @@ fn a_declined_recovery_keeps_the_interrupted_days_and_an_accepted_one_discards_t
 fn a_settled_archive_reports_no_interrupted_delete() {
     conformance::a_settled_archive_reports_no_interrupted_delete(&DAY_OPERATIONS, day(0));
 }
+
+/// Cells copied from the captured day.
+const CELLS: [&str; 4] = [
+    "84005c7ffffffff",
+    "840104bffffffff",
+    "8401221ffffffff",
+    "8401255ffffffff",
+];
+
+const HOST: &str = "https://gpsjam.org";
+
+/// The archive's day index, which is where a delete records that it is
+/// part-way through.
+const DAYS: GroupPath<'static> = GroupPath(schema::DAYS_GROUP);
+
+const DAY_OPERATIONS: StoredDayOperations<JamStore, Vec<HexObservation>> = StoredDayOperations {
+    insert_a_day,
+    read_a_day,
+    indexed_days,
+};

@@ -94,23 +94,6 @@ pub struct SnapInFlightView {
 /// scheduler states plus the settings-derived unsnappable case.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SnapRowView {
-    /// Snappable, no run this session. The default for tracks without an entry.
-    Idle,
-    /// The file declares a travel mode without a road network (boat, rail,
-    /// aircraft). The value is the mode's display name for the hover text.
-    Unsnappable {
-        travel_mode: String,
-    },
-    Queued,
-    InFlight {
-        completed_chunks: usize,
-        total_chunks: usize,
-    },
-    Failed {
-        error: String,
-    },
-    /// The track has no real fix a snap run could send.
-    NothingToSend,
     Done {
         snapped: usize,
         interpolated: usize,
@@ -129,15 +112,32 @@ pub enum SnapRowView {
         /// gt-snap dependency), shown in the status hover.
         warnings: Vec<String>,
     },
+    Failed {
+        error: String,
+    },
+    /// Snappable, no run this session. The default for tracks without an entry.
+    Idle,
+    InFlight {
+        completed_chunks: usize,
+        total_chunks: usize,
+    },
+    /// The track has no real fix a snap run could send.
+    NothingToSend,
+    Queued,
+    /// The file declares a travel mode without a road network (boat, rail,
+    /// aircraft). The value is the mode's display name for the hover text.
+    Unsnappable {
+        travel_mode: String,
+    },
 }
 
 /// What a "Snap again as" choice applies to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapCostingTarget {
-    Track(TrackRef),
     /// The recording's tracks, narrowed to a scope by the dialog the app
     /// raises next.
     Recording(FileIdx),
+    Track(TrackRef),
 }
 
 pub struct PanelContext<'a> {
@@ -251,32 +251,6 @@ impl<'a> PanelContext<'a> {
         self.loaded_files.entry_for(file).and_then(|e| e.identity())
     }
 }
-
-/// Label of the button that shelves every track that the filter excludes,
-/// without the icon before it or the `…` suffix after it.
-pub const SHELVE_FILTERED_DATA_LABEL: &str = "Shelve filtered data";
-
-const SHELVE_FILTERED_DATA_HOVER: &str = "Takes every track that the filter excludes out of the \
-                                          view and shelves it in the recording history";
-
-/// Hover text of the shelve button while the filter excludes nothing.
-pub const EVERY_TRACK_PASSES_THE_FILTER_HOVER: &str = "Every loaded track passes the filter";
-
-/// Hover text of every shelve control while the tracks it would act on sit
-/// outside the recording history.
-pub const ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER: &str =
-    "Only a track stored in the recording history can be shelved";
-
-pub const SHELVE_TRACK_LABEL: &str = "Shelve…";
-
-const SHELVE_TRACK_HOVER: &str = "Shelves this track in the recording history and takes it out of \
-                                  the view. Opening the recording again leaves the track shelved.";
-
-pub const SHELVE_SELECTED_TRACKS_LABEL: &str = "Shelve selected…";
-
-const SHELVE_SELECTED_TRACKS_HOVER: &str = "Shelves the selected tracks in the recording \
-                                            history and takes them out of the view. Opening a \
-                                            recording again leaves its shelved tracks shelved.";
 
 pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
     let header = ui.horizontal(|ui| {
@@ -452,40 +426,6 @@ fn snap_progress_strip(
     }
     ui.add_space(STRIP_PADDING);
 }
-
-const PROGRESS_BAR_HEIGHT: f32 = 4.0;
-
-/// Vertical padding above and below the strip contents.
-const STRIP_PADDING: f32 = 2.0;
-
-/// Spacing between a recording row's leading controls.
-const CHECKBOX_GROUP_SPACING: f32 = 2.0;
-
-/// Id of the visible-tracks panel. Its rows take their widget ids from it,
-/// which keeps them distinct from the tree row of the same track.
-const VISIBLE_SECTION_ID: &str = "visible_tracks_section";
-
-/// The share of the region the section and the tree divide that the section
-/// takes until the divider is dragged.
-pub const VISIBLE_SECTION_DEFAULT_FRACTION: f32 = 0.25;
-
-/// The largest share of that region the divider can give the section.
-const VISIBLE_SECTION_MAX_FRACTION: f32 = 0.75;
-
-/// The smallest section height, in track rows.
-const VISIBLE_SECTION_MIN_ROWS: f32 = 2.0;
-
-/// The interact height the section lays its rows out to, tighter than the
-/// tree's so more rows fit.
-const VISIBLE_SECTION_INTERACT_HEIGHT: f32 = 13.0;
-
-/// The vertical gap between the section's rows.
-const VISIBLE_SECTION_ROW_SPACING: f32 = 1.0;
-
-/// The icon width the section draws its checkboxes from. The glyph is drawn at
-/// the width plus four points, small enough that a row stays as tall as its
-/// label.
-const VISIBLE_SECTION_ICON_WIDTH: f32 = 10.0;
 
 /// A track row of the section. The cells are built before any row draws: the
 /// column widths come from measuring them.
@@ -1074,21 +1014,6 @@ impl fmt::Display for ChunkProgress {
     }
 }
 
-/// Extra dimming applied to the status glyph while the snapped track is
-/// hidden, so the toggle state is readable at a glance.
-const HIDDEN_GLYPH_ALPHA: f32 = 0.5;
-
-/// Label of the costing submenu wherever it re-runs existing results: one
-/// track's, or a scope of a recording's.
-const SNAP_AGAIN_AS_LABEL: &str = "Snap again as";
-
-/// Hover text of every snap control grayed out by offline mode.
-const OFFLINE_HOVER: &str = "Snapping disabled: offline mode";
-
-/// Hover text of the snap control of a track with no fix worth sending.
-const NOTHING_TO_SEND_HOVER: &str =
-    "Nothing to snap: no measured fixes, only dead-reckoned estimates";
-
 /// The label with the `…` suffix while a click still needs the consent
 /// dialog (the suffix marks exactly that, per the design).
 fn consent_suffixed(label: &str, consent_pending: bool) -> String {
@@ -1247,12 +1172,6 @@ fn snap_control(
         *ctx.snap_request = Some(track_ref);
     }
 }
-
-/// Corner badge size of the queued-state clock, in points.
-const QUEUED_BADGE_FONT: f32 = 9.0;
-
-/// Spinner diameter over the in-flight trigger, in points.
-const IN_FLIGHT_SPINNER_SIZE: f32 = 10.0;
 
 /// The in-progress overlays on the (disabled, therefore faded) trigger
 /// glyph: a clock badge while queued, a spinner while the request is in
@@ -2162,6 +2081,87 @@ fn file_bounding_center(file: Option<&LoadedFile>) -> Option<(f64, f64)> {
     let (lat, lon) = bounds.center();
     Some((lat.as_degrees(), lon.as_degrees()))
 }
+
+/// Label of the button that shelves every track that the filter excludes,
+/// without the icon before it or the `…` suffix after it.
+pub const SHELVE_FILTERED_DATA_LABEL: &str = "Shelve filtered data";
+
+const SHELVE_FILTERED_DATA_HOVER: &str = "Takes every track that the filter excludes out of the \
+                                          view and shelves it in the recording history";
+
+/// Hover text of the shelve button while the filter excludes nothing.
+pub const EVERY_TRACK_PASSES_THE_FILTER_HOVER: &str = "Every loaded track passes the filter";
+
+/// Hover text of every shelve control while the tracks it would act on sit
+/// outside the recording history.
+pub const ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER: &str =
+    "Only a track stored in the recording history can be shelved";
+
+pub const SHELVE_TRACK_LABEL: &str = "Shelve…";
+
+const SHELVE_TRACK_HOVER: &str = "Shelves this track in the recording history and takes it out of \
+                                  the view. Opening the recording again leaves the track shelved.";
+
+pub const SHELVE_SELECTED_TRACKS_LABEL: &str = "Shelve selected…";
+
+const SHELVE_SELECTED_TRACKS_HOVER: &str = "Shelves the selected tracks in the recording \
+                                            history and takes them out of the view. Opening a \
+                                            recording again leaves its shelved tracks shelved.";
+
+const PROGRESS_BAR_HEIGHT: f32 = 4.0;
+
+/// Vertical padding above and below the strip contents.
+const STRIP_PADDING: f32 = 2.0;
+
+/// Spacing between a recording row's leading controls.
+const CHECKBOX_GROUP_SPACING: f32 = 2.0;
+
+/// Id of the visible-tracks panel. Its rows take their widget ids from it,
+/// which keeps them distinct from the tree row of the same track.
+const VISIBLE_SECTION_ID: &str = "visible_tracks_section";
+
+/// The share of the region the section and the tree divide that the section
+/// takes until the divider is dragged.
+pub const VISIBLE_SECTION_DEFAULT_FRACTION: f32 = 0.25;
+
+/// The largest share of that region the divider can give the section.
+const VISIBLE_SECTION_MAX_FRACTION: f32 = 0.75;
+
+/// The smallest section height, in track rows.
+const VISIBLE_SECTION_MIN_ROWS: f32 = 2.0;
+
+/// The interact height the section lays its rows out to, tighter than the
+/// tree's so more rows fit.
+const VISIBLE_SECTION_INTERACT_HEIGHT: f32 = 13.0;
+
+/// The vertical gap between the section's rows.
+const VISIBLE_SECTION_ROW_SPACING: f32 = 1.0;
+
+/// The icon width the section draws its checkboxes from. The glyph is drawn at
+/// the width plus four points, small enough that a row stays as tall as its
+/// label.
+const VISIBLE_SECTION_ICON_WIDTH: f32 = 10.0;
+
+/// Extra dimming applied to the status glyph while the snapped track is
+/// hidden, so the toggle state is readable at a glance.
+const HIDDEN_GLYPH_ALPHA: f32 = 0.5;
+
+/// Label of the costing submenu wherever it re-runs existing results: one
+/// track's, or a scope of a recording's.
+const SNAP_AGAIN_AS_LABEL: &str = "Snap again as";
+
+/// Hover text of every snap control grayed out by offline mode.
+const OFFLINE_HOVER: &str = "Snapping disabled: offline mode";
+
+/// Hover text of the snap control of a track with no fix worth sending.
+const NOTHING_TO_SEND_HOVER: &str =
+    "Nothing to snap: no measured fixes, only dead-reckoned estimates";
+
+/// Corner badge size of the queued-state clock, in points.
+const QUEUED_BADGE_FONT: f32 = 9.0;
+
+/// Spinner diameter over the in-flight trigger, in points.
+const IN_FLIGHT_SPINNER_SIZE: f32 = 10.0;
 
 #[cfg(test)]
 mod tests {

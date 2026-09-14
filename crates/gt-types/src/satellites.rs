@@ -4,6 +4,11 @@ use geotrace_sdk_units::snr;
 use std::cmp::Ordering;
 use std::fmt;
 
+/// The SNR in dB-Hz some receiver firmware sends when it has no measurement. The
+/// `.gtd` format defines it, and the SDKs and the application classify a
+/// reading with the one definition.
+pub use geotrace_sdk_units::snr::NO_DATA_SENTINEL_DB_HZ;
+
 /// Pseudo-Random Noise code number that uniquely identifies a satellite within its constellation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Prn(u32);
@@ -49,16 +54,6 @@ pub enum SignalQuality {
     /// when it has no measurement.
     NoDataSentinel,
 }
-
-/// The hover text beside a reading of [`SignalQuality::NoDataSentinel`], for
-/// every surface that shows one.
-pub const NO_DATA_SNR_EXPLANATION: &str =
-    "Some receivers send this value when they have no measurement";
-
-/// The SNR in dB-Hz some receiver firmware sends when it has no measurement. The
-/// `.gtd` format defines it, and the SDKs and the application classify a
-/// reading with the one definition.
-pub use geotrace_sdk_units::snr::NO_DATA_SENTINEL_DB_HZ;
 
 /// Signal-to-Noise Ratio for a satellite signal, in dB-Hz.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
@@ -425,6 +420,11 @@ impl Satellites {
     }
 }
 
+/// The hover text beside a reading of [`SignalQuality::NoDataSentinel`], for
+/// every surface that shows one.
+pub const NO_DATA_SNR_EXPLANATION: &str =
+    "Some receivers send this value when they have no measurement";
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
@@ -544,16 +544,6 @@ mod tests {
         assert_eq!(satellite.snr().map(Snr::value), Some(snr_db));
     }
 
-    const PRN: u32 = 7;
-
-    const FIRST_ELEVATION_DEG: f32 = 40.0;
-
-    const FIRST_AZIMUTH_DEG: f32 = 90.0;
-
-    const SECOND_ELEVATION_DEG: f32 = 10.0;
-
-    const SECOND_AZIMUTH_DEG: f32 = 200.0;
-
     fn row_with_snr(snr_db: Option<f32>) -> Satellite {
         Satellite::new(Constellation::Gps, PRN, None, None, snr_db, false)
     }
@@ -662,4 +652,14 @@ mod tests {
 
         assert!(satellite.in_fix());
     }
+
+    const PRN: u32 = 7;
+
+    const FIRST_ELEVATION_DEG: f32 = 40.0;
+
+    const FIRST_AZIMUTH_DEG: f32 = 90.0;
+
+    const SECOND_ELEVATION_DEG: f32 = 10.0;
+
+    const SECOND_AZIMUTH_DEG: f32 = 200.0;
 }

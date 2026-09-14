@@ -6,9 +6,6 @@
 //! [IconMeshLibrary::embedded] decodes that blob once into per-icon
 //! [IconTessellation]s, and renderers draw them through [IconMeshBatch].
 
-mod batch;
-pub mod gpu;
-
 use std::collections::BTreeMap;
 
 use egui::Vec2;
@@ -18,37 +15,8 @@ use gt_types::MarkerIcon;
 pub(crate) use batch::rotate_up_to;
 pub use batch::{IconInstance, IconMeshBatch};
 
-/// Half extent in points of the standard square marker icons (20 pt across).
-pub(crate) const ICON_HALF_EXTENT_PT: f32 = 10.0;
-
-/// Half extent in points of the larger square marker icons (24 pt across).
-pub(crate) const ICON_HALF_EXTENT_LARGE_PT: f32 = 12.0;
-
-/// Half extents in points of the bottom-anchored [IconId::Pin]: an aspect-true
-/// 18x24 pt rect whose tip sits one y-half-extent below the instance center.
-pub(crate) const PIN_HALF_EXTENTS_PT: Vec2 = Vec2::new(9.0, 12.0);
-
-/// Half extents in points of the three flag assets at their normal size: an
-/// aspect-true 18x24 pt rect.
-pub(crate) const FLAG_HALF_EXTENTS_PT: Vec2 = Vec2::new(9.0, 12.0);
-
-/// Offset from a fix to the center of an upright flag instance of
-/// [FLAG_HALF_EXTENTS_PT], which puts the pole's foot on the fix and the
-/// cloth above the track line. All three flag assets stand the pole at x=2 of
-/// their 18x24 viewbox, its foot on the bottom edge. An instance drawn larger
-/// scales this offset by the same factor, which keeps the foot on the fix,
-/// and one drawn with a negative x half extent mirrors it about the pole.
-pub(crate) const FLAG_ANCHOR_OFFSET_PT: Vec2 = Vec2::new(7.0, -FLAG_HALF_EXTENTS_PT.y);
-
-/// Width in points of a flag's cloth at [FLAG_HALF_EXTENTS_PT]: all three
-/// assets span the cloth from x=2 to x=16 of their 18-wide viewbox.
-pub(crate) const FLAG_CLOTH_WIDTH_PT: f32 = 14.0;
-
-/// Offset in points from the pole foot of an upright flag of
-/// [FLAG_HALF_EXTENTS_PT] to the top-right corner of its cloth. All three
-/// assets hang the cloth from (2, 2) to (16, 12.5) of their 18x24 viewbox,
-/// with the pole's foot at (2, 24).
-pub(crate) const FLAG_CLOTH_TOP_RIGHT_PT: Vec2 = Vec2::new(14.0, -22.0);
+mod batch;
+pub mod gpu;
 
 /// The half extent a [MarkerIcon] is drawn with when rendered as a square
 /// icon: satellites and the warning triangle get the larger size.
@@ -135,20 +103,16 @@ impl From<MarkerIcon> for IconId {
     }
 }
 
-/// The postcard blob baked by the build script: sorted
-/// `(file stem, tessellation)` pairs for every icon asset.
-static ICON_MESH_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icon_meshes.postcard"));
-
 #[derive(Debug, thiserror::Error)]
 pub enum IconMeshLibraryError {
     #[error("failed to decode the embedded icon meshes")]
     Decode(#[from] postcard::Error),
-    #[error("embedded icon meshes contain unknown icon {name:?}")]
-    UnknownIcon { name: String },
-    #[error("embedded icon meshes are missing {icon}")]
-    MissingIcon { icon: IconId },
     #[error("embedded icon meshes contain {icon} twice")]
     DuplicateIcon { icon: IconId },
+    #[error("embedded icon meshes are missing {icon}")]
+    MissingIcon { icon: IconId },
+    #[error("embedded icon meshes contain unknown icon {name:?}")]
+    UnknownIcon { name: String },
 }
 
 /// All pre-tessellated icon meshes, one [IconTessellation] per [IconId].
@@ -258,6 +222,42 @@ impl IconMeshLibrary {
         }
     }
 }
+
+/// Half extent in points of the standard square marker icons (20 pt across).
+pub(crate) const ICON_HALF_EXTENT_PT: f32 = 10.0;
+
+/// Half extent in points of the larger square marker icons (24 pt across).
+pub(crate) const ICON_HALF_EXTENT_LARGE_PT: f32 = 12.0;
+
+/// Half extents in points of the bottom-anchored [IconId::Pin]: an aspect-true
+/// 18x24 pt rect whose tip sits one y-half-extent below the instance center.
+pub(crate) const PIN_HALF_EXTENTS_PT: Vec2 = Vec2::new(9.0, 12.0);
+
+/// Half extents in points of the three flag assets at their normal size: an
+/// aspect-true 18x24 pt rect.
+pub(crate) const FLAG_HALF_EXTENTS_PT: Vec2 = Vec2::new(9.0, 12.0);
+
+/// Offset from a fix to the center of an upright flag instance of
+/// [FLAG_HALF_EXTENTS_PT], which puts the pole's foot on the fix and the
+/// cloth above the track line. All three flag assets stand the pole at x=2 of
+/// their 18x24 viewbox, its foot on the bottom edge. An instance drawn larger
+/// scales this offset by the same factor, which keeps the foot on the fix,
+/// and one drawn with a negative x half extent mirrors it about the pole.
+pub(crate) const FLAG_ANCHOR_OFFSET_PT: Vec2 = Vec2::new(7.0, -FLAG_HALF_EXTENTS_PT.y);
+
+/// Width in points of a flag's cloth at [FLAG_HALF_EXTENTS_PT]: all three
+/// assets span the cloth from x=2 to x=16 of their 18-wide viewbox.
+pub(crate) const FLAG_CLOTH_WIDTH_PT: f32 = 14.0;
+
+/// Offset in points from the pole foot of an upright flag of
+/// [FLAG_HALF_EXTENTS_PT] to the top-right corner of its cloth. All three
+/// assets hang the cloth from (2, 2) to (16, 12.5) of their 18x24 viewbox,
+/// with the pole's foot at (2, 24).
+pub(crate) const FLAG_CLOTH_TOP_RIGHT_PT: Vec2 = Vec2::new(14.0, -22.0);
+
+/// The postcard blob baked by the build script: sorted
+/// `(file stem, tessellation)` pairs for every icon asset.
+static ICON_MESH_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icon_meshes.postcard"));
 
 #[cfg(test)]
 mod tests {

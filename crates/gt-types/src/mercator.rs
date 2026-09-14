@@ -7,11 +7,6 @@
 use crate::coordinates::{Latitude, Longitude};
 use std::f64::consts::PI;
 
-/// The latitude Web Mercator ends at, north and south: `asinh(tan(lat))`
-/// reaches π there, which [`normalize`] places on the edge of the world. No
-/// tile covers anything past it.
-pub const MAX_LATITUDE_DEGREES: f64 = 85.051_128_779_806_59;
-
 impl Latitude {
     /// This latitude pulled back to [`MAX_LATITUDE_DEGREES`] when it lies
     /// past the parallel Web Mercator ends on.
@@ -84,6 +79,11 @@ pub fn denormalize(point: MercPoint) -> (f64, f64) {
     let lat = ((1.0 - point.y * 2.0) * PI).sinh().atan();
     (lat.to_degrees(), wrap_longitude_degrees(lon.to_degrees()))
 }
+
+/// The latitude Web Mercator ends at, north and south: `asinh(tan(lat))`
+/// reaches π there, which [`normalize`] places on the edge of the world. No
+/// tile covers anything past it.
+pub const MAX_LATITUDE_DEGREES: f64 = 85.051_128_779_806_59;
 
 #[cfg(test)]
 mod tests {

@@ -16,20 +16,6 @@ use gt_ionex::tec::TotalElectronContent;
 use gt_ionex::{CAPTURED_FILES, test_util};
 use gt_types::{Latitude, Longitude};
 
-/// How far an interpolated value may stand from the mean of the nodes it
-/// falls between: the interpolation and the mean do not round alike.
-const TECU_TOLERANCE: f64 = 1e-9;
-
-/// How far a captured shell height may stand from the one JPL declares.
-const HEIGHT_TOLERANCE_KM: f64 = 1e-9;
-
-const HTTP_OK: u64 = 200;
-
-/// The grid JPL publishes its global maps on.
-const LATITUDE_NODES: usize = 71;
-const LONGITUDE_NODES: usize = 73;
-const SHELL_HEIGHT_KM: f64 = 450.0;
-
 /// A capture covers one UTC day, so its times are named by how far they
 /// stand from its first map.
 fn value_at(
@@ -330,3 +316,17 @@ fn the_storm_peak_delays_l1_by_the_published_relation() {
         "{delay} m of L1 delay at {peak:?}"
     );
 }
+
+/// How far an interpolated value may stand from the mean of the nodes it
+/// falls between: the interpolation and the mean do not round alike.
+const TECU_TOLERANCE: f64 = 1e-9;
+
+/// How far a captured shell height may stand from the one JPL declares.
+const HEIGHT_TOLERANCE_KM: f64 = 1e-9;
+
+const HTTP_OK: u64 = 200;
+
+/// The grid JPL publishes its global maps on.
+const LATITUDE_NODES: usize = 71;
+const LONGITUDE_NODES: usize = 73;
+const SHELL_HEIGHT_KM: f64 = 450.0;

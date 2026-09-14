@@ -10,12 +10,6 @@ use chrono::{DateTime, TimeZone as _, Utc};
 
 use gt_logfile::{HostnameColumn, LogLevelKind, LogParseError, ParsedLog, RecognisedService};
 
-const DEVICE_EXPORT: &str = include_str!("fixtures/device_journald.log");
-
-const WORKSTATION_JOURNALCTL: &str = include_str!("fixtures/workstation_journalctl.log");
-
-const PI_JOURNALCTL: &str = include_str!("fixtures/pi_journalctl.log");
-
 /// After the last line of every fixture, so the year-less timestamps resolve
 /// to the year the fixtures were written in.
 fn now() -> DateTime<Utc> {
@@ -371,3 +365,9 @@ fn the_device_exports_summary_block_agrees_with_the_parse() {
         Some("nav-devkit-mk2".to_owned())
     );
 }
+
+const DEVICE_EXPORT: &str = include_str!("fixtures/device_journald.log");
+
+const WORKSTATION_JOURNALCTL: &str = include_str!("fixtures/workstation_journalctl.log");
+
+const PI_JOURNALCTL: &str = include_str!("fixtures/pi_journalctl.log");

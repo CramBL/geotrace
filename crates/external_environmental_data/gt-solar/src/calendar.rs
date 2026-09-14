@@ -11,26 +11,16 @@ use strum::IntoEnumIterator as _;
 
 use crate::GeomagneticIndex;
 
-/// First day any index has values for, and so the earliest day worth
-/// requesting. Kp reaches furthest back.
-pub const COVERAGE_START: NaiveDate = GeomagneticIndex::Kp.coverage_start();
-
-/// Most UTC days one recording is allowed to pull in.
-///
-/// A recording spanning longer than this is left to an explicit backfill: a
-/// recording should not silently turn into hundreds of requests.
-pub const MAX_DAYS_PER_TRACK: usize = 7;
-
 /// What the calendar alone says about one index on one day, before any
 /// request is made.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, strum::EnumIter)]
 #[strum(serialize_all = "snake_case")]
 pub enum DayOutlook {
+    /// Earlier than the index's first published day.
+    BeforeCoverage,
     /// Inside the index's coverage and not in the future. Worth requesting,
     /// even if the service turns out to have no value for it.
     Fetchable,
-    /// Earlier than the index's first published day.
-    BeforeCoverage,
     /// Later than the current UTC day.
     InFuture,
 }
@@ -67,6 +57,16 @@ pub fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> V
         fetchable_indices(day, today_utc).next().is_some()
     })
 }
+
+/// First day any index has values for, and so the earliest day worth
+/// requesting. Kp reaches furthest back.
+pub const COVERAGE_START: NaiveDate = GeomagneticIndex::Kp.coverage_start();
+
+/// Most UTC days one recording is allowed to pull in.
+///
+/// A recording spanning longer than this is left to an explicit backfill: a
+/// recording should not silently turn into hundreds of requests.
+pub const MAX_DAYS_PER_TRACK: usize = 7;
 
 #[cfg(test)]
 mod tests {

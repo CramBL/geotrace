@@ -18,27 +18,6 @@ use crate::{
     text::LogText,
 };
 
-/// Non-empty lines the format detector reads before giving up on the log.
-const FORMAT_DETECTION_LINE_LIMIT: usize = 10;
-
-/// Lines from the head of the log the hostname decision reads. One exporter
-/// writes one layout, so the head decides for the whole log, as it decides the
-/// timestamp format.
-const HOSTNAME_DETECTION_LINE_LIMIT: usize = 200;
-
-/// Characters of the offending line quoted in [`LogParseError::NoRecognisedFormat`].
-const ERROR_LINE_EXCERPT_CHARS: NonZeroUsize = match NonZeroUsize::new(120) {
-    Some(chars) => chars,
-    None => NonZeroUsize::MIN,
-};
-
-/// Text one worker indexes, before the chunk's end is aligned forward to the
-/// next newline. A log shorter than this is indexed on the calling thread.
-const CHUNK_TARGET_BYTES: NonZeroUsize = match NonZeroUsize::new(16 * 1024 * 1024) {
-    Some(bytes) => bytes,
-    None => NonZeroUsize::MIN,
-};
-
 /// A byte range of a [`ParsedLog`]'s text, read with [`TextSlice::in_text`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextSlice {
@@ -791,6 +770,27 @@ fn positioned_lines(
         }
     })
 }
+
+/// Non-empty lines the format detector reads before giving up on the log.
+const FORMAT_DETECTION_LINE_LIMIT: usize = 10;
+
+/// Lines from the head of the log the hostname decision reads. One exporter
+/// writes one layout, so the head decides for the whole log, as it decides the
+/// timestamp format.
+const HOSTNAME_DETECTION_LINE_LIMIT: usize = 200;
+
+/// Characters of the offending line quoted in [`LogParseError::NoRecognisedFormat`].
+const ERROR_LINE_EXCERPT_CHARS: NonZeroUsize = match NonZeroUsize::new(120) {
+    Some(chars) => chars,
+    None => NonZeroUsize::MIN,
+};
+
+/// Text one worker indexes, before the chunk's end is aligned forward to the
+/// next newline. A log shorter than this is indexed on the calling thread.
+const CHUNK_TARGET_BYTES: NonZeroUsize = match NonZeroUsize::new(16 * 1024 * 1024) {
+    Some(bytes) => bytes,
+    None => NonZeroUsize::MIN,
+};
 
 #[cfg(test)]
 mod tests;

@@ -11,19 +11,6 @@ use gt_plot::test_util::{self, DrawnPlot, PlotSources};
 use gt_types::{LoadedFile, MetricKind};
 use rstest::rstest;
 
-/// Fixes in the recording, one per second.
-const FIX_COUNT: usize = 60;
-
-/// The one channel the recording carries.
-const CHANNEL_NAME: &str = "Incline";
-
-/// A channel of a recording this test never loads.
-const UNLOADED_CHANNEL_NAME: &str = "Brake pressure";
-
-/// Where the archived flare peaks, in seconds from the first fix: inside the
-/// recording, so the flare chip enables.
-const FLARE_PEAK_SECS: i64 = 30;
-
 /// A recording of one track at 1 Hz carrying a scalar channel sampled at the
 /// same rate.
 fn recording_with_a_channel() -> LoadedFile {
@@ -122,9 +109,9 @@ fn the_icon_states_what_a_click_changes(#[case] hidden: HiddenSeries, #[case] ex
 /// Which series is hidden while every other one in scope is visible.
 #[derive(Clone, Copy)]
 enum HiddenSeries {
-    Nothing,
     Channel,
     FlareMarkers,
+    Nothing,
 }
 
 /// A collapsed Channels section offers no channel chip, which leaves its
@@ -186,3 +173,16 @@ fn hiding_all_leaves_a_metric_with_no_chip_untouched() {
     assert!(plot.state().metric_vis.field(MetricKind::UtilAll));
     assert!(plot.state().metric_vis.field(MetricKind::GpsSeen));
 }
+
+/// Fixes in the recording, one per second.
+const FIX_COUNT: usize = 60;
+
+/// The one channel the recording carries.
+const CHANNEL_NAME: &str = "Incline";
+
+/// A channel of a recording this test never loads.
+const UNLOADED_CHANNEL_NAME: &str = "Brake pressure";
+
+/// Where the archived flare peaks, in seconds from the first fix: inside the
+/// recording, so the flare chip enables.
+const FLARE_PEAK_SECS: i64 = 30;

@@ -12,94 +12,95 @@ use crate::ast::Span;
 // this shape (the SDK channel-name rule), so define it once.
 #[logos(subpattern ident = r"[a-z_][a-z0-9_]*")]
 pub enum Token {
-    #[token("|")]
-    Pipe,
-    #[token(",")]
-    Comma,
-    #[token("(")]
-    LParen,
-    #[token(")")]
-    RParen,
-    #[token("<=")]
-    Le,
-    #[token("<")]
-    Lt,
-    #[token(">=")]
-    Ge,
-    #[token(">")]
-    Gt,
-    #[token("==")]
-    EqEq,
-    #[token("!=")]
-    Ne,
-    #[token("+")]
-    Plus,
-    #[token("-")]
-    Minus,
-    #[token("*")]
-    Star,
-    #[token("/")]
-    Slash,
-    #[token("%")]
-    Percent,
-    // A postfix power. The superscript form is canonical (`x²`, `x⁻³`). The
-    // caret form (`x^2`, `x^-3`) is accepted so pasted text still parses. Both
-    // hold an integer the parser resolves. A fractional caret power lexes here
-    // so the parser can reject it with a pointed message.
-    #[regex(r"[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+")]
-    Superscript,
-    #[regex(r"\^-?[0-9]+(\.[0-9]+)?")]
-    CaretPower,
-    #[token("points")]
-    Points,
-    #[token("with")]
-    With,
-    #[token("window")]
-    Window,
-    #[token("where")]
-    Where,
-    #[token("draw")]
-    Draw,
-    #[token("keep")]
-    Keep,
-    #[token("hide")]
-    Hide,
-    #[token("table")]
-    Table,
     #[token("and")]
     And,
-    #[token("or")]
-    Or,
-    #[token("not")]
-    Not,
-    #[token("per")]
-    Per,
-    #[regex(r"[0-9]+(\.[0-9]+)?")]
-    Number,
-    #[regex(r"(?&ident)")]
-    Ident,
+    // The caret form of a postfix power (`x^2`, `x^-3`), accepted so pasted text
+    // still parses. A fractional caret power lexes here so the parser can reject
+    // it with a pointed message.
+    #[regex(r"\^-?[0-9]+(\.[0-9]+)?")]
+    CaretPower,
     // A channel reference: `@name` or a vector component `@name.x`. The parser
     // splits the name from the optional component.
     #[regex(r"@(?&ident)(\.(?&ident))?")]
     Channel,
+    #[token(",")]
+    Comma,
     // A real token so the highlighter can color comments: `lex` filters it out
     // before parsing. Consuming to end of line needs the greedy-repetition
     // opt-in logos 0.16 requires.
     #[regex(r"#[^\n]*", allow_greedy = true)]
     Comment,
+    #[token("draw")]
+    Draw,
+    #[token("==")]
+    EqEq,
+    #[token(">=")]
+    Ge,
+    #[token(">")]
+    Gt,
+    #[token("hide")]
+    Hide,
+    #[regex(r"(?&ident)")]
+    Ident,
+    #[token("keep")]
+    Keep,
+    #[token("(")]
+    LParen,
+    #[token("<=")]
+    Le,
+    #[token("<")]
+    Lt,
+    #[token("-")]
+    Minus,
+    #[token("!=")]
+    Ne,
+    #[token("not")]
+    Not,
+    #[regex(r"[0-9]+(\.[0-9]+)?")]
+    Number,
+    #[token("or")]
+    Or,
+    #[token("per")]
+    Per,
+    #[token("%")]
+    Percent,
+    #[token("|")]
+    Pipe,
+    #[token("+")]
+    Plus,
+    #[token("points")]
+    Points,
+    #[token(")")]
+    RParen,
+    #[token("/")]
+    Slash,
+    #[token("*")]
+    Star,
+    // A postfix power in its canonical superscript form (`x²`, `x⁻³`). Both
+    // forms hold an integer the parser resolves.
+    #[regex(r"[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+")]
+    Superscript,
+    #[token("table")]
+    Table,
+    #[token("where")]
+    Where,
+    #[token("window")]
+    Window,
+    #[token("with")]
+    With,
 }
 
 /// Coarse token grouping for syntax highlighting. Defined here so the
 /// highlighter derives directly from the one lexer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenClass {
-    Keyword,
-    Number,
-    Ident,
-    Punctuation,
     Comment,
     /// A character the lexer rejects - highlighted as an error while typing.
     Error,
+    Ident,
+    Keyword,
+    Number,
+    Punctuation,
 }
 
 impl Token {

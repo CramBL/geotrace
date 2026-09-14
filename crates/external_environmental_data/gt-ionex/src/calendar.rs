@@ -9,14 +9,6 @@ use chrono::NaiveDate;
 
 use crate::IonexProduct;
 
-/// First UTC day JPL published a final map for, day 324 of 2008.
-///
-/// Read off the earliest `JPLG` file in `IONEX_final/y2008/`, checked on
-/// 2026-08-17.
-pub const COVERAGE_START: NaiveDate = coverage_start(COVERAGE_START_YMD);
-
-const COVERAGE_START_YMD: (i32, u32, u32) = (2008, 11, 19);
-
 const fn coverage_start((year, month, day): (i32, u32, u32)) -> NaiveDate {
     match NaiveDate::from_ymd_opt(year, month, day) {
         Some(date) => date,
@@ -26,29 +18,15 @@ const fn coverage_start((year, month, day): (i32, u32, u32)) -> NaiveDate {
     }
 }
 
-const _: () = {
-    let (year, month, day) = COVERAGE_START_YMD;
-    assert!(
-        NaiveDate::from_ymd_opt(year, month, day).is_some(),
-        "COVERAGE_START_YMD must name a real calendar date"
-    );
-};
-
-/// Most UTC days one recording is allowed to pull in.
-///
-/// A recording spanning longer than this is left to an explicit backfill: a
-/// recording should not silently turn into hundreds of requests.
-pub const MAX_DAYS_PER_TRACK: usize = 7;
-
 /// What the calendar alone says about one day, before any request is made.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, strum::EnumIter)]
 #[strum(serialize_all = "snake_case")]
 pub enum DayOutlook {
+    /// Earlier than the first published day.
+    BeforeCoverage,
     /// Inside JPL's coverage and not in the future. Worth requesting, even if
     /// neither product turns out to have a file for it.
     Fetchable,
-    /// Earlier than the first published day.
-    BeforeCoverage,
     /// Later than the current UTC day.
     InFuture,
 }
@@ -80,6 +58,28 @@ pub fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> V
         !fetchable_products(day, today_utc).is_empty()
     })
 }
+
+/// First UTC day JPL published a final map for, day 324 of 2008.
+///
+/// Read off the earliest `JPLG` file in `IONEX_final/y2008/`, checked on
+/// 2026-08-17.
+pub const COVERAGE_START: NaiveDate = coverage_start(COVERAGE_START_YMD);
+
+const COVERAGE_START_YMD: (i32, u32, u32) = (2008, 11, 19);
+
+const _: () = {
+    let (year, month, day) = COVERAGE_START_YMD;
+    assert!(
+        NaiveDate::from_ymd_opt(year, month, day).is_some(),
+        "COVERAGE_START_YMD must name a real calendar date"
+    );
+};
+
+/// Most UTC days one recording is allowed to pull in.
+///
+/// A recording spanning longer than this is left to an explicit backfill: a
+/// recording should not silently turn into hundreds of requests.
+pub const MAX_DAYS_PER_TRACK: usize = 7;
 
 #[cfg(test)]
 mod tests {

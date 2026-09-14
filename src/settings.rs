@@ -1,5 +1,14 @@
 use std::{collections::HashMap, ops::RangeInclusive, path::PathBuf};
 
+/// One variant per plot metric.
+///
+/// New variants can be added freely. Old config files simply won't have the key,
+/// and the apply step treats a missing entry as `true` (the default).
+///
+/// Re-exported from `gt_types` so the settings and the plot widget
+/// (`gt_plot::plot_widget`) share one definition.
+pub use gt_types::MetricKind;
+
 /// All user settings that survive restarts.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -457,15 +466,6 @@ impl Default for PlotSettings {
     }
 }
 
-/// One variant per plot metric.
-///
-/// New variants can be added freely. Old config files simply won't have the key,
-/// and the apply step treats a missing entry as `true` (the default).
-///
-/// Re-exported from `gt_types` so the settings and the plot widget
-/// (`gt_plot::plot_widget`) share one definition.
-pub use gt_types::MetricKind;
-
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct MapSettings {
@@ -516,9 +516,6 @@ pub enum MapLayerSetting {
     Satellite,
 }
 
-/// Default recording-name template: the prefix-stripped filename.
-pub const DEFAULT_RECORDING_NAME_TEMPLATE: &str = "{filename}";
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct UiSettings {
@@ -546,10 +543,10 @@ impl Default for UiSettings {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeSetting {
+    Dark,
+    Light,
     #[default]
     System,
-    Light,
-    Dark,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -629,6 +626,9 @@ pub fn load_settings() -> Settings {
     };
     load_settings_from(&path)
 }
+
+/// Default recording-name template: the prefix-stripped filename.
+pub const DEFAULT_RECORDING_NAME_TEMPLATE: &str = "{filename}";
 
 #[cfg(test)]
 mod tests {

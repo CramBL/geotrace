@@ -165,9 +165,6 @@ mod tests {
 
     use super::*;
 
-    /// Longest badge the display-toggle row has space for.
-    const MAX_BADGE_CHARS: usize = 18;
-
     fn today() -> NaiveDate {
         fixtures::date(2026, 7, 31)
     }
@@ -347,4 +344,7 @@ mod tests {
             .collect();
         insta::assert_debug_snapshot!("empty_messages", wording);
     }
+
+    /// Longest badge the display-toggle row has space for.
+    const MAX_BADGE_CHARS: usize = 18;
 }

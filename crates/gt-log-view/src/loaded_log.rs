@@ -19,12 +19,6 @@ use crate::{
     filter::{EntryMatches, FilterStack, LayerColorSlots},
 };
 
-/// How a log that arrived without a filename is named, followed by the time of
-/// its first anchored entry.
-const UNNAMED_LOG_NAME_PREFIX: &str = "pasted";
-
-const UNNAMED_LOG_NAME_TIME_FORMAT: &str = "%H:%M:%S";
-
 /// One loaded log: the text it was parsed from, the recording it is anchored
 /// to, the filters over it, and whether it draws on the map.
 #[derive(Debug)]
@@ -423,15 +417,15 @@ impl LoadedLog {
 /// What [`LoadedLog::adopt_restored_attachment`] left the loaded log as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RestoredAttachmentAdoption {
-    /// The log holds the attachment and the filter stack stored with it.
-    Recorded,
+    /// The log already holds an attachment of its own, and kept it.
+    AlreadyAttached,
 
     /// The log is anchored to another recording, or to none at all, and kept
     /// that anchor.
     NotAnchoredToThatRecording,
 
-    /// The log already holds an attachment of its own, and kept it.
-    AlreadyAttached,
+    /// The log holds the attachment and the filter stack stored with it.
+    Recorded,
 }
 
 /// One loaded log under the identity it was loaded with.
@@ -458,11 +452,11 @@ impl StoredLog {
 /// name the log the session holds that content under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogPushOutcome {
-    NewlyLoaded(LoadedLogId),
-
     /// A log with the same content hash was loaded already, and the pushed one
     /// was dropped.
     AlreadyLoaded(LoadedLogId),
+
+    NewlyLoaded(LoadedLogId),
 }
 
 impl LogPushOutcome {
@@ -759,6 +753,12 @@ fn name_from_first_anchored_entry(parsed: &ParsedLog) -> String {
         None => UNNAMED_LOG_NAME_PREFIX.to_owned(),
     }
 }
+
+/// How a log that arrived without a filename is named, followed by the time of
+/// its first anchored entry.
+const UNNAMED_LOG_NAME_PREFIX: &str = "pasted";
+
+const UNNAMED_LOG_NAME_TIME_FORMAT: &str = "%H:%M:%S";
 
 #[cfg(test)]
 mod tests;

@@ -7,22 +7,6 @@ use strum::IntoEnumIterator;
 use crate::app::App;
 use crate::app::settings_ui::SettingsPage;
 
-const SERVER_URL_LABEL: &str = "Server URL";
-const COSTING_LABEL: &str = "Costing";
-const AUTO_SNAP_LABEL: &str = "Auto snap";
-const SEARCH_RADIUS_LABEL: &str = "Search radius";
-const TURN_PENALTY_LABEL: &str = "Turn penalty";
-const GPS_ACCURACY_LABEL: &str = "GPS accuracy";
-
-pub(super) const SEARCHABLE_LABELS: &[&str] = &[
-    SERVER_URL_LABEL,
-    COSTING_LABEL,
-    AUTO_SNAP_LABEL,
-    SEARCH_RADIUS_LABEL,
-    TURN_PENALTY_LABEL,
-    GPS_ACCURACY_LABEL,
-];
-
 impl App {
     pub(super) fn show_snap_page(&mut self, ui: &mut egui::Ui) {
         SettingsPage::SnapToRoad.show_header(ui);
@@ -159,16 +143,6 @@ impl App {
     }
 }
 
-/// Value an advanced snap option is seeded with when enabled. Search radius:
-/// the tuned fixture's value, comfortably wider than typical GNSS noise.
-const SEARCH_RADIUS_SEED_M: f64 = 25.0;
-/// Turn penalty seed: Valhalla's own suggestion for smoothing wandering
-/// matches (see the design doc's parameter inventory).
-const TURN_PENALTY_SEED: f64 = 500.0;
-/// GPS accuracy seed: a plausible mid-grade receiver's eph, inside the
-/// derivation clamp and comfortably within the server-accepted range.
-const GPS_ACCURACY_SEED_M: f64 = 10.0;
-
 /// One optional advanced snap setting's presentation: label, hover help,
 /// server-accepted bounds, the value enabling seeds, and the unit suffix.
 struct OptionalSnapSetting {
@@ -211,3 +185,29 @@ fn optional_snap_setting(ui: &mut egui::Ui, value: &mut Option<f64>, setting: Op
         }
     });
 }
+
+const SERVER_URL_LABEL: &str = "Server URL";
+const COSTING_LABEL: &str = "Costing";
+const AUTO_SNAP_LABEL: &str = "Auto snap";
+const SEARCH_RADIUS_LABEL: &str = "Search radius";
+const TURN_PENALTY_LABEL: &str = "Turn penalty";
+const GPS_ACCURACY_LABEL: &str = "GPS accuracy";
+
+pub(super) const SEARCHABLE_LABELS: &[&str] = &[
+    SERVER_URL_LABEL,
+    COSTING_LABEL,
+    AUTO_SNAP_LABEL,
+    SEARCH_RADIUS_LABEL,
+    TURN_PENALTY_LABEL,
+    GPS_ACCURACY_LABEL,
+];
+
+/// Value an advanced snap option is seeded with when enabled. Search radius:
+/// the tuned fixture's value, comfortably wider than typical GNSS noise.
+const SEARCH_RADIUS_SEED_M: f64 = 25.0;
+/// Turn penalty seed: Valhalla's own suggestion for smoothing wandering
+/// matches (see the design doc's parameter inventory).
+const TURN_PENALTY_SEED: f64 = 500.0;
+/// GPS accuracy seed: a plausible mid-grade receiver's eph, inside the
+/// derivation clamp and comfortably within the server-accepted range.
+const GPS_ACCURACY_SEED_M: f64 = 10.0;

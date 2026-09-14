@@ -1,28 +1,3 @@
-pub mod arc_identity;
-pub mod context_series;
-pub mod display_mask;
-pub mod drawn_position;
-pub mod event_marker_visibility;
-pub mod generated_marker_visibility;
-pub mod geomagnetic_series;
-pub mod highlight;
-pub mod jamming_series;
-pub mod log_hover;
-pub mod log_matches;
-pub mod metric_chip_hover;
-pub mod point_window;
-pub mod query_matches;
-pub mod reference;
-pub mod sky_glyphs;
-pub mod sky_trails_request;
-pub mod snap_error_series;
-pub mod snapped_tracks;
-pub mod space_weather_warning;
-pub mod tec_series;
-#[cfg(test)]
-mod test_util;
-pub mod visibility;
-
 pub use arc_identity::ArcIdentity;
 pub use context_series::{
     ContextLines, GeomagneticContextLines, IndexContextSample, JammingContextSample,
@@ -64,3 +39,28 @@ pub use tec_series::{TecPoint, TecSeries};
 pub use visibility::{
     FileVisibility, MapScope, PointVisibility, TrackDataVisibility, TrackVisibility,
 };
+
+pub mod arc_identity;
+pub mod context_series;
+pub mod display_mask;
+pub mod drawn_position;
+pub mod event_marker_visibility;
+pub mod generated_marker_visibility;
+pub mod geomagnetic_series;
+pub mod highlight;
+pub mod jamming_series;
+pub mod log_hover;
+pub mod log_matches;
+pub mod metric_chip_hover;
+pub mod point_window;
+pub mod query_matches;
+pub mod reference;
+pub mod sky_glyphs;
+pub mod sky_trails_request;
+pub mod snap_error_series;
+pub mod snapped_tracks;
+pub mod space_weather_warning;
+pub mod tec_series;
+#[cfg(test)]
+mod test_util;
+pub mod visibility;

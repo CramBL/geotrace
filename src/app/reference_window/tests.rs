@@ -15,19 +15,6 @@ use rstest::rstest;
 
 use super::{CITATION_SEPARATOR, ReferenceWindow, WRAPPING_COLUMN_WIDTH};
 
-/// Room for the window at its default size.
-const HARNESS_SIZE: egui::Vec2 = egui::vec2(1120.0, 820.0);
-
-/// Far enough to reach the end of any document the window holds.
-const SCROLL_TO_END_POINTS: f32 = 6000.0;
-
-/// Frames the scroll's smooth animation takes to come to rest.
-const SCROLL_SETTLE_FRAMES: usize = 12;
-
-/// Coverage an equation asset's darkest pixel reaches, below which its glyphs
-/// would tint to a wash of the text colour.
-const MIN_EQUATION_PEAK_COVERAGE: u8 = 200;
-
 fn harness_showing<'a>(
     document: ReferenceDocument,
     dark_mode: bool,
@@ -64,14 +51,6 @@ fn scroll_to_end(harness: &mut TestHarness<'_, ReferenceWindow>, document: Refer
         SCROLL_SETTLE_FRAMES,
     );
 }
-
-/// One wheel step of the search below, small enough that a block cannot be
-/// scrolled past in a single step.
-const SCROLL_STEP_POINTS: f32 = 300.0;
-
-/// Steps the search takes before giving up, which covers any document the
-/// window holds.
-const SCROLL_STEP_LIMIT: usize = 20;
 
 /// Scrolls until the widget labelled `label` sits in the upper half of the
 /// window, so a snapshot of one block does not depend on how much prose runs
@@ -118,8 +97,8 @@ fn opened_urls(harness: &TestHarness<'_, ReferenceWindow>) -> Vec<String> {
 
 #[derive(Debug, Clone, Copy)]
 enum DocumentPosition {
-    Top,
     End,
+    Top,
 }
 
 /// Each document in both themes at both of its ends. A top holds the
@@ -236,10 +215,6 @@ fn snapshot_reference_window_tec_storm_plot() {
 
     harness.snapshot_with_color_tolerance("reference_window_tec_storm_plot");
 }
-
-/// The frame label of the TEC document's plot illustration, which the scroll
-/// searches for.
-const STORM_PLOT_FRAME_LABEL: &str = "grid node 40 N";
 
 /// A reader who cannot see the equation image is offered the equation as one
 /// line of text.
@@ -404,29 +379,6 @@ fn every_query_example_checks_clean(#[case] document: ReferenceDocument) {
     }
 }
 
-/// Prose citing two sources at once, written without a comma of its own so the
-/// only comma the window renders is the one it writes between the citations.
-const ADJACENT_CITATION_DOCUMENT: ReferenceDocument = ReferenceDocument {
-    title: "Adjacent citations",
-    link_question: "How do adjacent citations affect GNSS?",
-    blocks: &[ReferenceBlock::Paragraph(
-        "Two sources say so.[^first][^second]",
-    )],
-    abbreviations: &[],
-    sources: &[
-        Source {
-            citation_key: "first",
-            name: "First source",
-            url: "https://example.invalid/first",
-        },
-        Source {
-            citation_key: "second",
-            name: "Second source",
-            url: "https://example.invalid/second",
-        },
-    ],
-};
-
 /// The window snapshots show the comma raised with the numbers.
 #[test]
 fn adjacent_citations_are_separated_by_a_comma() {
@@ -440,28 +392,6 @@ fn adjacent_citations_are_separated_by_a_comma() {
         "the comma at {separator:?} sits between {first:?} and {second:?}"
     );
 }
-
-/// A cell long enough to need a second line in the column it belongs to.
-const WRAPPING_CELL_PROSE: &str = "A cell whose sentence runs past the width of the column it \
-                                   belongs to, ending on [GNSS].";
-
-const WRAPPING_TABLE_DOCUMENT: ReferenceDocument = ReferenceDocument {
-    title: "Wrapping table",
-    link_question: "How does a wrapping table affect GNSS?",
-    blocks: &[ReferenceBlock::Table(ReferenceTable {
-        title: "One wrapping column",
-        columns: &[TableColumn {
-            header: "Effects",
-            width: ColumnWidth::Wraps,
-        }],
-        rows: &[&[TableCell::Prose(WRAPPING_CELL_PROSE)]],
-    })],
-    abbreviations: &[Abbreviation {
-        short_form: "GNSS",
-        full_form: "Global Navigation Satellite System",
-    }],
-    sources: &[],
-};
 
 /// Prose in a column with a width of its own wraps inside that width.
 #[test]
@@ -504,3 +434,73 @@ fn the_reference_window_fits_every_viewport(
         .inner
         .assert_window_fits_the_viewport(AuditedWindow::titled(document.title));
 }
+
+/// Room for the window at its default size.
+const HARNESS_SIZE: egui::Vec2 = egui::vec2(1120.0, 820.0);
+
+/// Far enough to reach the end of any document the window holds.
+const SCROLL_TO_END_POINTS: f32 = 6000.0;
+
+/// Frames the scroll's smooth animation takes to come to rest.
+const SCROLL_SETTLE_FRAMES: usize = 12;
+
+/// Coverage an equation asset's darkest pixel reaches, below which its glyphs
+/// would tint to a wash of the text colour.
+const MIN_EQUATION_PEAK_COVERAGE: u8 = 200;
+
+/// One wheel step of the search, small enough that a block cannot be
+/// scrolled past in a single step.
+const SCROLL_STEP_POINTS: f32 = 300.0;
+
+/// Steps the search takes before giving up, which covers any document the
+/// window holds.
+const SCROLL_STEP_LIMIT: usize = 20;
+
+/// The frame label of the TEC document's plot illustration, which the scroll
+/// searches for.
+const STORM_PLOT_FRAME_LABEL: &str = "grid node 40 N";
+
+/// Prose citing two sources at once, written without a comma of its own so the
+/// only comma the window renders is the one it writes between the citations.
+const ADJACENT_CITATION_DOCUMENT: ReferenceDocument = ReferenceDocument {
+    title: "Adjacent citations",
+    link_question: "How do adjacent citations affect GNSS?",
+    blocks: &[ReferenceBlock::Paragraph(
+        "Two sources say so.[^first][^second]",
+    )],
+    abbreviations: &[],
+    sources: &[
+        Source {
+            citation_key: "first",
+            name: "First source",
+            url: "https://example.invalid/first",
+        },
+        Source {
+            citation_key: "second",
+            name: "Second source",
+            url: "https://example.invalid/second",
+        },
+    ],
+};
+
+/// A cell long enough to need a second line in the column it belongs to.
+const WRAPPING_CELL_PROSE: &str = "A cell whose sentence runs past the width of the column it \
+                                   belongs to, ending on [GNSS].";
+
+const WRAPPING_TABLE_DOCUMENT: ReferenceDocument = ReferenceDocument {
+    title: "Wrapping table",
+    link_question: "How does a wrapping table affect GNSS?",
+    blocks: &[ReferenceBlock::Table(ReferenceTable {
+        title: "One wrapping column",
+        columns: &[TableColumn {
+            header: "Effects",
+            width: ColumnWidth::Wraps,
+        }],
+        rows: &[&[TableCell::Prose(WRAPPING_CELL_PROSE)]],
+    })],
+    abbreviations: &[Abbreviation {
+        short_form: "GNSS",
+        full_form: "Global Navigation Satellite System",
+    }],
+    sources: &[],
+};

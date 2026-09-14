@@ -39,22 +39,6 @@ use super::lines::{
 use super::overlay::{EDGE_MARKER_INSET, OverlayItem, OverlayPainter};
 use crate::series::TrackSeries;
 
-/// Half-width of a marker glyph, in points.
-const MARKER_HALF_WIDTH: f32 = ANOMALY_MARKER_RADIUS;
-
-/// Width of a connector between a marker and what it joins.
-const CONNECTOR_WIDTH: f32 = 1.0;
-
-/// Radius of the dot drawn for a stretch of one sample, as a multiple of the
-/// line width.  egui_plot draws a one-point line as a dot of half the line
-/// width, which is under a pixel across at the widths this plot offers.
-const LONE_SAMPLE_RADIUS_MULTIPLE: f32 = 1.5;
-
-/// Screen distance below which two markers overlap into one glyph, in points.
-/// The drawn markers are spaced by this much: a whole track goes off-scale at
-/// once.  Every sample stays a hover target.
-const MARKER_MIN_SPACING_PX: f32 = 2.0 * MARKER_HALF_WIDTH;
-
 /// The y range the plot currently shows.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct VisibleYRange {
@@ -66,12 +50,12 @@ struct VisibleYRange {
 /// account.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Placement {
-    /// Below the visible range - the marker points down at the bottom edge.
-    OffScaleBelow,
-    /// Above the visible range - the marker points up at the top edge.
-    OffScaleAbove,
     /// Inside the visible range, so the sample is drawn where it belongs.
     InView,
+    /// Above the visible range - the marker points up at the top edge.
+    OffScaleAbove,
+    /// Below the visible range - the marker points down at the bottom edge.
+    OffScaleBelow,
 }
 
 impl Placement {
@@ -645,6 +629,22 @@ fn format_ms(ms: i64, fmt: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Half-width of a marker glyph, in points.
+const MARKER_HALF_WIDTH: f32 = ANOMALY_MARKER_RADIUS;
+
+/// Width of a connector between a marker and what it joins.
+const CONNECTOR_WIDTH: f32 = 1.0;
+
+/// Radius of the dot drawn for a stretch of one sample, as a multiple of the
+/// line width.  egui_plot draws a one-point line as a dot of half the line
+/// width, which is under a pixel across at the widths this plot offers.
+const LONE_SAMPLE_RADIUS_MULTIPLE: f32 = 1.5;
+
+/// Screen distance below which two markers overlap into one glyph, in points.
+/// The drawn markers are spaced by this much: a whole track goes off-scale at
+/// once.  Every sample stays a hover target.
+const MARKER_MIN_SPACING_PX: f32 = 2.0 * MARKER_HALF_WIDTH;
+
 const EXCURSION_TITLE: &str = "Clock offset excursion";
 const OFF_SCALE_BASELINE_TITLE: &str = "Clock offset off the plot's scale";
 
@@ -655,18 +655,6 @@ mod tests {
     use vec1::{Vec1, vec1};
 
     use super::*;
-
-    /// 2024-01-15 12:00:00 UTC, the x of the excursion sample below.
-    const T: f64 = 1_705_320_000.0;
-
-    /// The plot area the paint cases draw into, in points.
-    const FRAME: Vec2 = Vec2::new(700.0, 400.0);
-
-    /// The y range the paint cases show, in milliseconds of offset.
-    const VISIBLE_Y: VisibleYRange = VisibleYRange {
-        min: -100.0,
-        max: 100.0,
-    };
 
     /// The `gnss.h5.gtd` sample: a steady −234 ms offset, and this one carrying
     /// the whole 1 h 09 m recording gap.
@@ -975,9 +963,6 @@ mod tests {
         assert_eq!(hover.cause, FormattedCause::Baseline);
     }
 
-    /// The line runs from [`T`] over this many seconds, one sample a second.
-    const LINE_SECONDS: usize = 6;
-
     /// The clock offset line of a track whose samples at `held_back` seconds
     /// the plot holds off it, and the times of those samples.
     fn line_holding_back(held_back: &[usize]) -> (Vec<PlotPoint>, Vec<f64>) {
@@ -993,10 +978,6 @@ mod tests {
     fn line_point(second: usize) -> PlotPoint {
         PlotPoint::new(T + second as f64, 0.0)
     }
-
-    /// The drawn range of the line the cases below walk against, in seconds
-    /// from [`T`].
-    const DRAWN_RANGE_SECONDS: Range<usize> = 7..13;
 
     /// A run reaching into the drawn range of the line is walked whole, the
     /// samples it holds outside that range included. A run outside the range
@@ -1066,4 +1047,23 @@ mod tests {
             .collect();
         assert_eq!(stretches, expected);
     }
+
+    /// 2024-01-15 12:00:00 UTC, the x of the excursion sample.
+    const T: f64 = 1_705_320_000.0;
+
+    /// The plot area the paint cases draw into, in points.
+    const FRAME: Vec2 = Vec2::new(700.0, 400.0);
+
+    /// The y range the paint cases show, in milliseconds of offset.
+    const VISIBLE_Y: VisibleYRange = VisibleYRange {
+        min: -100.0,
+        max: 100.0,
+    };
+
+    /// The line runs from [`T`] over this many seconds, one sample a second.
+    const LINE_SECONDS: usize = 6;
+
+    /// The drawn range of the line the cases walk against, in seconds
+    /// from [`T`].
+    const DRAWN_RANGE_SECONDS: Range<usize> = 7..13;
 }

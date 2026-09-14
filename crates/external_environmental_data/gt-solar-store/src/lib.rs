@@ -30,28 +30,25 @@ use crate::schema::{IndexArchiveLayout as _, StoredKpStatus};
 
 pub mod schema;
 
-/// Name of the archive file, joined to the data directory by the caller.
-pub const FILE_NAME: &str = "geomagnetic.h5";
-
 #[derive(Debug, thiserror::Error)]
 pub enum SolarStoreError {
     #[error("archive error: {0}")]
     Backend(String),
+
+    #[error("archive is inconsistent: {0}")]
+    Corrupt(String),
+
+    #[error(transparent)]
+    DeclinedRecovery(#[from] DeclinedRecovery),
+
+    #[error("another process has the archive open")]
+    HeldByAnotherProcess,
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
     #[error("archive schema version {found} is newer than supported {supported}")]
     SchemaTooNew { found: i64, supported: i64 },
-
-    #[error("archive is inconsistent: {0}")]
-    Corrupt(String),
-
-    #[error("another process has the archive open")]
-    HeldByAnotherProcess,
-
-    #[error(transparent)]
-    DeclinedRecovery(#[from] DeclinedRecovery),
 }
 
 gt_hdf5_archive::impl_day_archive_error!(SolarStoreError);
@@ -604,3 +601,6 @@ fn with_layout<T>(
         levels: &levels,
     })?)
 }
+
+/// Name of the archive file, joined to the data directory by the caller.
+pub const FILE_NAME: &str = "geomagnetic.h5";

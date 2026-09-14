@@ -8,22 +8,12 @@ use egui::{Button, RichText};
 use gt_fetch::{HttpRequest, Transport, TransportSource};
 use parking_lot::Mutex;
 
-const TEST_BUTTON_LABEL: &str = "Test";
-const TEST_HOVER: &str = "Fetch one satellite map tile with the entered token";
-const RUNNING_HOVER: &str = "The tile request is still running";
-const WITHOUT_TOKEN_HOVER: &str = "Enter a token to test it";
-const OFFLINE_HOVER: &str = "Testing is disabled in offline mode";
-const RUNNING_STATUS: &str = "Testing…";
-
-/// The statuses Mapbox returns when it does not accept the token.
-const TOKEN_REJECTED_STATUSES: [u16; 2] = [401, 403];
-
 /// What the tile request reported.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MapboxTokenTestOutcome {
+    RequestFailed { detail: String },
     TileFetched,
     TokenRejected { status_line: String },
-    RequestFailed { detail: String },
 }
 
 impl std::fmt::Display for MapboxTokenTestOutcome {
@@ -51,21 +41,21 @@ impl MapboxTokenTestOutcome {
 
 #[derive(Default)]
 enum MapboxTokenTestState {
+    Finished(MapboxTokenTestOutcome),
     #[default]
     Idle,
     Running,
-    Finished(MapboxTokenTestOutcome),
 }
 
 /// Whether a test can start, and what stops it when it cannot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MapboxTokenTestReadiness {
-    Ready,
     /// No request may leave the machine: GeoTrace runs offline.
     Offline,
-    WithoutToken,
+    Ready,
     /// One test at a time: a request is in flight.
     Running,
+    WithoutToken,
 }
 
 impl MapboxTokenTestReadiness {
@@ -192,6 +182,16 @@ fn fetch_test_tile(transport: &impl Transport<Vec<u8>>, token: &str) -> MapboxTo
         detail: response.status_line(),
     }
 }
+
+const TEST_BUTTON_LABEL: &str = "Test";
+const TEST_HOVER: &str = "Fetch one satellite map tile with the entered token";
+const RUNNING_HOVER: &str = "The tile request is still running";
+const WITHOUT_TOKEN_HOVER: &str = "Enter a token to test it";
+const OFFLINE_HOVER: &str = "Testing is disabled in offline mode";
+const RUNNING_STATUS: &str = "Testing…";
+
+/// The statuses Mapbox returns when it does not accept the token.
+const TOKEN_REJECTED_STATUSES: [u16; 2] = [401, 403];
 
 #[cfg(test)]
 mod tests {

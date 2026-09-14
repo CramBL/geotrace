@@ -15,39 +15,18 @@ use crate::satellites::{Constellation, Satellite, Satellites, Snr};
 use crate::time_types::{GpsTime, SysTime};
 use crate::tpv::TimePositionVelocity;
 
-/// The heading of every fixture fix that has one.
-const EASTWARD_HEADING_DEGREES: f64 = 90.0;
-
-/// How far the walking fixtures step per fix, in degrees of latitude and of
-/// longitude alike.
-const WALK_STRIDE_DEGREES: f64 = 0.001;
-
-/// The satellites in the fix of a [`FixKind`] the receiver measured.
-const SATELLITES_IN_FIX: u32 = 12;
-
-/// The satellites in view of a [`FixKind`] with nothing in its fix.
-const SATELLITES_IN_VIEW_ONLY: u32 = 4;
-
-/// The latitude that the fixtures over a recording without a position write.
-/// It lies past the 90° that the latitude axis ends at.
-const LATITUDE_OUT_OF_RANGE_DEGREES: f64 = 91.0;
-
-/// The signal quality every satellite of [`nav_points_with_drifting_satellites`]
-/// reports.
-const DRIFTING_SATELLITE_SNR_DB: f32 = 40.0;
-
 /// The heading and satellite report a fixture fix is built with.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum FixKind {
+    /// No heading and no satellite report.
+    GhostWithoutHeading,
+    /// Heading 90°, a report of 4 satellites in view and none in fix.
+    GhostWithoutSatellitesInFix,
     /// Heading 90°, 12 GPS satellites in fix.
     #[default]
     Measured,
     /// No heading, 12 satellites in fix.
     MeasuredWithoutHeading,
-    /// No heading and no satellite report.
-    GhostWithoutHeading,
-    /// Heading 90°, a report of 4 satellites in view and none in fix.
-    GhostWithoutSatellitesInFix,
     /// [`FixKind::Measured`] with a latitude of NaN in place of the one the
     /// caller passes.
     WithoutAPosition,
@@ -638,6 +617,27 @@ pub fn utc_instant(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> D
 pub fn date(year: i32, month: u32, day: u32) -> NaiveDate {
     NaiveDate::from_ymd_opt(year, month, day).expect("a calendar date")
 }
+
+/// The heading of every fixture fix that has one.
+const EASTWARD_HEADING_DEGREES: f64 = 90.0;
+
+/// How far the walking fixtures step per fix, in degrees of latitude and of
+/// longitude alike.
+const WALK_STRIDE_DEGREES: f64 = 0.001;
+
+/// The satellites in the fix of a [`FixKind`] the receiver measured.
+const SATELLITES_IN_FIX: u32 = 12;
+
+/// The satellites in view of a [`FixKind`] with nothing in its fix.
+const SATELLITES_IN_VIEW_ONLY: u32 = 4;
+
+/// The latitude that the fixtures over a recording without a position write.
+/// It lies past the 90° that the latitude axis ends at.
+const LATITUDE_OUT_OF_RANGE_DEGREES: f64 = 91.0;
+
+/// The signal quality every satellite of [`nav_points_with_drifting_satellites`]
+/// reports.
+const DRIFTING_SATELLITE_SNR_DB: f32 = 40.0;
 
 #[cfg(test)]
 mod tests {

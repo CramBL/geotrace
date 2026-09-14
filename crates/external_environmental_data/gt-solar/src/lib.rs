@@ -35,17 +35,6 @@ pub mod text;
 pub mod transport;
 pub mod wire;
 
-/// Base URL of the default index host. Configurable in settings, for a
-/// self-hosted mirror or an offline copy.
-pub const DEFAULT_BASE_URL: &str = "https://kp.gfz.de";
-
-/// Path of the index endpoint, appended to the base URL.
-const INDEX_PATH: &str = "/app/json/";
-
-/// Timestamp format the endpoint's `start` and `end` parameters take, and the
-/// format the response's period start times arrive in.
-const TIMESTAMP_FORMAT: &str = "%Y-%m-%dT%H:%M:%SZ";
-
 /// One of the indices GeoTrace requests.
 ///
 /// The variant names are the endpoint's `index` parameter values.
@@ -120,13 +109,6 @@ impl GeomagneticIndex {
     }
 }
 
-/// First day of each index's coverage, as (year, month, day).
-const KP_COVERAGE_START_YMD: (i32, u32, u32) = (1932, 1, 1);
-const HP30_COVERAGE_START_YMD: (i32, u32, u32) = (1985, 1, 1);
-
-const KP_COVERAGE_START: NaiveDate = coverage_start(KP_COVERAGE_START_YMD);
-const HP30_COVERAGE_START: NaiveDate = coverage_start(HP30_COVERAGE_START_YMD);
-
 const fn coverage_start((year, month, day): (i32, u32, u32)) -> NaiveDate {
     match NaiveDate::from_ymd_opt(year, month, day) {
         Some(date) => date,
@@ -135,19 +117,6 @@ const fn coverage_start((year, month, day): (i32, u32, u32)) -> NaiveDate {
         None => NaiveDate::MIN,
     }
 }
-
-const _: () = {
-    let (year, month, day) = KP_COVERAGE_START_YMD;
-    assert!(
-        NaiveDate::from_ymd_opt(year, month, day).is_some(),
-        "KP_COVERAGE_START_YMD must name a real calendar date"
-    );
-    let (year, month, day) = HP30_COVERAGE_START_YMD;
-    assert!(
-        NaiveDate::from_ymd_opt(year, month, day).is_some(),
-        "HP30_COVERAGE_START_YMD must name a real calendar date"
-    );
-};
 
 /// The UTC window one request covers, inclusive of both ends: a request from
 /// midnight to midnight also returns the following day's first period.
@@ -167,18 +136,6 @@ impl TimeWindow {
         }
     }
 }
-
-const LAST_SECOND_OF_DAY: NaiveTime = match NaiveTime::from_hms_opt(23, 59, 59) {
-    Some(time) => time,
-    // Dead arm: `const` evaluation cannot unwrap without panicking, and the
-    // assertion below fails the build if it ever stops being dead.
-    None => NaiveTime::MIN,
-};
-
-const _: () = assert!(
-    NaiveTime::from_hms_opt(23, 59, 59).is_some(),
-    "LAST_SECOND_OF_DAY must name a real time of day"
-);
 
 /// The URL of `index` over `window` on `base_url`, which must not end in a
 /// slash.
@@ -229,6 +186,60 @@ impl CapturedWindow {
     }
 }
 
+/// Directory holding the captured responses.
+///
+/// Resolved from the crate manifest dir, so it is only meaningful to
+/// development tooling running inside the workspace, never to the shipped
+/// application.
+pub fn captures_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("captures")
+}
+
+/// Base URL of the default index host. Configurable in settings, for a
+/// self-hosted mirror or an offline copy.
+pub const DEFAULT_BASE_URL: &str = "https://kp.gfz.de";
+
+/// Path of the index endpoint, appended to the base URL.
+const INDEX_PATH: &str = "/app/json/";
+
+/// Timestamp format the endpoint's `start` and `end` parameters take, and the
+/// format the response's period start times arrive in.
+const TIMESTAMP_FORMAT: &str = "%Y-%m-%dT%H:%M:%SZ";
+
+/// First day of each index's coverage, as (year, month, day).
+const KP_COVERAGE_START_YMD: (i32, u32, u32) = (1932, 1, 1);
+const HP30_COVERAGE_START_YMD: (i32, u32, u32) = (1985, 1, 1);
+
+const KP_COVERAGE_START: NaiveDate = coverage_start(KP_COVERAGE_START_YMD);
+const HP30_COVERAGE_START: NaiveDate = coverage_start(HP30_COVERAGE_START_YMD);
+
+const _: () = {
+    let (year, month, day) = KP_COVERAGE_START_YMD;
+    assert!(
+        NaiveDate::from_ymd_opt(year, month, day).is_some(),
+        "KP_COVERAGE_START_YMD must name a real calendar date"
+    );
+    let (year, month, day) = HP30_COVERAGE_START_YMD;
+    assert!(
+        NaiveDate::from_ymd_opt(year, month, day).is_some(),
+        "HP30_COVERAGE_START_YMD must name a real calendar date"
+    );
+};
+
+const LAST_SECOND_OF_DAY: NaiveTime = match NaiveTime::from_hms_opt(23, 59, 59) {
+    Some(time) => time,
+    // Dead arm: `const` evaluation cannot unwrap without panicking, and the
+    // assertion below fails the build if it ever stops being dead.
+    None => NaiveTime::MIN,
+};
+
+const _: () = assert!(
+    NaiveTime::from_hms_opt(23, 59, 59).is_some(),
+    "LAST_SECOND_OF_DAY must name a real time of day"
+);
+
 /// The captured windows, in the order the manifest lists them.
 pub const CAPTURED_WINDOWS: [CapturedWindow; 4] = [
     CapturedWindow {
@@ -264,17 +275,6 @@ pub const CAPTURED_WINDOWS: [CapturedWindow; 4] = [
 /// File name of the capture manifest written beside the captures, recording
 /// when each window was captured and what the service returned.
 pub const CAPTURE_MANIFEST: &str = "capture.json";
-
-/// Directory holding the captured responses.
-///
-/// Resolved from the crate manifest dir, so it is only meaningful to
-/// development tooling running inside the workspace, never to the shipped
-/// application.
-pub fn captures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("captures")
-}
 
 #[cfg(test)]
 mod tests {

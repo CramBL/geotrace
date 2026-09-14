@@ -25,12 +25,6 @@ use crate::{
     tpv_renderer,
 };
 
-/// The parent widget id the stacked labels share, which is what makes egui
-/// place each of them below the ones already shown. It is the stack's own and
-/// not the map response's: the snapped edge's label is anchored at that
-/// response, and would otherwise push the stack below the map.
-const HOVER_LABEL_STACK_ID: &str = "map_hover_label_stack";
-
 /// The map layer a hover label comes from. The declaration order is the
 /// order the map registers its plugins in, reversed: the marker pins drawn
 /// last are at the top of the stack and the TEC grid drawn first at its
@@ -75,9 +69,9 @@ impl HoverLabelSources<'_> {
 
 /// One layer's label, holding what that layer found under the pointer.
 pub(crate) enum HoverLabelEntry {
-    RecordedElement(RecordedElementLabel),
-    LogHexagon(LogHexagonLabel),
     InterferenceCell(InterferenceCellLabel),
+    LogHexagon(LogHexagonLabel),
+    RecordedElement(RecordedElementLabel),
     TecNode(TecNodeLabel),
 }
 
@@ -266,20 +260,6 @@ impl HoverLabelStack {
     }
 }
 
-/// Spacing between an icon and the text following it in labels.
-const ICON_GAP: &str = "  ";
-
-/// Gap between the pointer and the first label of the stack, and between one
-/// stacked label and the next.
-const TOOLTIP_POINTER_GAP_PX: f32 = 12.0;
-
-/// Alpha of the hover band drawn over a sky-plot highlight target, low enough
-/// to keep the text underneath legible.
-const HOVER_BAND_ALPHA: f32 = 0.3;
-/// The band's outward pad and corner rounding around the element's rect.
-const HOVER_BAND_PAD_PX: f32 = 2.0;
-const HOVER_BAND_ROUNDING_PX: f32 = 3.0;
-
 /// Whether `rect` is hovered, and, when it is, paints a highlight band over
 /// the element and sets the pointer cursor.
 ///
@@ -341,19 +321,19 @@ pub(crate) fn draw_multi_hover_label_contents(
 }
 
 enum ResolvedCandidate<'a> {
-    Tpv {
-        point: PlacedPoint<'a>,
-        track: &'a LoadedTrack,
-        point_index: PointIdx,
-    },
+    CustomMarker(&'a CustomMarker),
+    EventMarker(&'a EventMarker),
     GeneratedMarker {
         marker: &'a GeneratedMarker,
         /// The track the marker was derived from, whose fix at the marker's
         /// instant its label states.
         track: &'a LoadedTrack,
     },
-    EventMarker(&'a EventMarker),
-    CustomMarker(&'a CustomMarker),
+    Tpv {
+        point: PlacedPoint<'a>,
+        track: &'a LoadedTrack,
+        point_index: PointIdx,
+    },
 }
 
 fn resolve_candidate<'a>(
@@ -513,6 +493,26 @@ pub(crate) fn candidate_label(candidate: DataPointRef, files: &[LoadedFile]) -> 
     }
 }
 
+/// The parent widget id the stacked labels share, which is what makes egui
+/// place each of them below the ones already shown. It is the stack's own and
+/// not the map response's: the snapped edge's label is anchored at that
+/// response, and would otherwise push the stack below the map.
+const HOVER_LABEL_STACK_ID: &str = "map_hover_label_stack";
+
+/// Spacing between an icon and the text following it in labels.
+const ICON_GAP: &str = "  ";
+
+/// Gap between the pointer and the first label of the stack, and between one
+/// stacked label and the next.
+const TOOLTIP_POINTER_GAP_PX: f32 = 12.0;
+
+/// Alpha of the hover band drawn over a sky-plot highlight target, low enough
+/// to keep the text underneath legible.
+const HOVER_BAND_ALPHA: f32 = 0.3;
+/// The band's outward pad and corner rounding around the element's rect.
+const HOVER_BAND_PAD_PX: f32 = 2.0;
+const HOVER_BAND_ROUNDING_PX: f32 = 3.0;
+
 #[cfg(test)]
 mod tests {
     use gt_types::DataCategory;
@@ -521,9 +521,6 @@ mod tests {
 
     use super::{OpenPopups, RecordedElementLabel};
     use crate::test_util;
-
-    const FIX: DataCategory = DataCategory::Tpv;
-    const EVENT_MARKER: DataCategory = DataCategory::EventMarker;
 
     fn candidates(categories: &[DataCategory]) -> HoverCandidates {
         let mut candidates = HoverCandidates::default();
@@ -615,4 +612,7 @@ mod tests {
             expected
         );
     }
+
+    const FIX: DataCategory = DataCategory::Tpv;
+    const EVENT_MARKER: DataCategory = DataCategory::EventMarker;
 }

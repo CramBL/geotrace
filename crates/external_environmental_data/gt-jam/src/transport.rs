@@ -14,27 +14,17 @@ use chrono::NaiveDate;
 
 use gt_fetch::{Classified, HttpRequest, HttpResponse, Transport};
 
-/// Minimum gap between requests to the same host, left to the fetch worker
-/// to enforce between days.
-///
-/// The datasets are static files on a third-party server, and a backfill
-/// walks hundreds of them.
-pub const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
-
-/// HTTP status for a day the host has no file for.
-const HTTP_NOT_FOUND: u16 = 404;
-
 /// What one fetch produced.
 #[derive(Debug, Clone, PartialEq, Eq, strum::EnumCount, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum FetchOutcome {
+    /// The fetch failed and retrying did not help.
+    Failed(String),
+    /// The host has no file for this day.
+    Missing,
     /// The dataset, as served. Whether it parses is determined by
     /// [`crate::wire::parse_dataset`].
     Served(String),
-    /// The host has no file for this day.
-    Missing,
-    /// The fetch failed and retrying did not help.
-    Failed(String),
 }
 
 /// Fetch `day` from `base_url`, retrying transient failures once.
@@ -65,6 +55,16 @@ fn classify(response: HttpResponse) -> Classified<FetchOutcome> {
         response.status_line()
     )))
 }
+
+/// Minimum gap between requests to the same host, left to the fetch worker
+/// to enforce between days.
+///
+/// The datasets are static files on a third-party server, and a backfill
+/// walks hundreds of them.
+pub const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
+
+/// HTTP status for a day the host has no file for.
+const HTTP_NOT_FOUND: u16 = 404;
 
 #[cfg(test)]
 mod tests {

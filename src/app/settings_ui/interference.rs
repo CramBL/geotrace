@@ -8,29 +8,6 @@ use crate::app::day_fetch_status::{self, FetchRowHoverText};
 use crate::app::settings_ui::SettingsPage;
 use crate::app::settings_ui::source_page::{self, ReferenceLink, SourcePageSlots};
 
-const REFERENCE_LINK_LABEL: &str = gt_jam::reference::AIRCRAFT_INTERFERENCE.link_question;
-
-const REFERENCE_LINK_HOVER: &str = "Reference material on what aircraft report, how the daily \
-                                    cells are computed, and what the data does and does not show";
-
-pub(super) const SEARCHABLE_LABELS: &[&str] = &[
-    source_page::BASE_URL_LABEL,
-    day_fetch_status::FETCH_QUEUE_LABEL,
-    day_fetch_status::RECORDING_DAYS_LABEL,
-    backfill_ui::DOWNLOAD_HISTORY_LABEL,
-    REFERENCE_LINK_LABEL,
-];
-
-const URL_HOVER: &str = "Base URL of the host serving the daily interference datasets. The \
-                         default is gpsjam.org. Point it at a mirror or an offline copy to fetch \
-                         from there instead. Requests carry a date and nothing about your \
-                         recordings.";
-
-const FETCH_ROW_HOVER: FetchRowHoverText = FetchRowHoverText {
-    queue: gt_jam::text::FETCH_QUEUE_HOVER,
-    coverage: gt_jam::text::RECORDING_DAY_COVERAGE_HOVER,
-};
-
 impl App {
     pub(super) fn show_interference_page(&mut self, ui: &mut egui::Ui) {
         let mut base_url = self.interference_settings.base_url.clone();
@@ -79,3 +56,26 @@ impl App {
         }
     }
 }
+
+const REFERENCE_LINK_LABEL: &str = gt_jam::reference::AIRCRAFT_INTERFERENCE.link_question;
+
+const REFERENCE_LINK_HOVER: &str = "Reference material on what aircraft report, how the daily \
+                                    cells are computed, and what the data does and does not show";
+
+pub(super) const SEARCHABLE_LABELS: &[&str] = &[
+    source_page::BASE_URL_LABEL,
+    day_fetch_status::FETCH_QUEUE_LABEL,
+    day_fetch_status::RECORDING_DAYS_LABEL,
+    backfill_ui::DOWNLOAD_HISTORY_LABEL,
+    REFERENCE_LINK_LABEL,
+];
+
+const URL_HOVER: &str = "Base URL of the host serving the daily interference datasets. The \
+                         default is gpsjam.org. Point it at a mirror or an offline copy to fetch \
+                         from there instead. Requests carry a date and nothing about your \
+                         recordings.";
+
+const FETCH_ROW_HOVER: FetchRowHoverText = FetchRowHoverText {
+    queue: gt_jam::text::FETCH_QUEUE_HOVER,
+    coverage: gt_jam::text::RECORDING_DAY_COVERAGE_HOVER,
+};

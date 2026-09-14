@@ -1,7 +1,3 @@
-pub mod buttons;
-pub mod fonts;
-pub mod labels;
-
 use egui::Color32;
 
 /// U+2248 ALMOST EQUAL TO - marks a value that stands for another. Defined
@@ -25,10 +21,10 @@ pub use gt_fmt::MINUS_SIGN;
 /// Defined by [`gt_fmt`], which formats values for both the UI and non-UI
 /// callers.
 pub use gt_fmt::RIGHTWARDS_ARROW;
-/// U+0394 GREEK CAPITAL LETTER DELTA - used as a mathematical difference symbol.
-pub const DELTA: &str = "Δ";
-/// U+00B0 DEGREE SIGN.
-pub const DEGREE_SIGN: &str = "°";
+
+pub mod buttons;
+pub mod fonts;
+pub mod labels;
 
 /// Installs the font stack and the interaction defaults every GeoTrace window,
 /// popup and modal inherits: labels do not select, and text worth copying opts
@@ -67,40 +63,6 @@ impl ThemedColor {
     }
 }
 
-/// Highlight blue used for selected/hovered elements across map and panel.
-pub const HIGHLIGHT_BLUE: Color32 = Color32::from_rgb(100, 200, 255);
-
-/// Same hue as [`HIGHLIGHT_BLUE`] with reduced alpha - used for the plot seek-bar line.
-///
-/// Premultiplied equivalent of `(100, 200, 255, 200)`.
-pub const HIGHLIGHT_BLUE_SEEK: Color32 = Color32::from_rgba_premultiplied(78, 157, 200, 200);
-
-/// [`HIGHLIGHT_BLUE`] at query-halo alpha - the map's halo band for the match
-/// hovered in the query results table, distinct from the draw-layer palette.
-///
-/// Premultiplied equivalent of `(100, 200, 255, 150)`.
-pub const QUERY_MATCH_HOVER_HALO: Color32 = Color32::from_rgba_premultiplied(59, 118, 150, 150);
-
-/// [`HIGHLIGHT_BLUE`] at low alpha - the plot's shaded time band for the match
-/// hovered in the query results table.
-///
-/// Premultiplied equivalent of `(100, 200, 255, 40)`.
-pub const HIGHLIGHT_BLUE_BAND: Color32 = Color32::from_rgba_premultiplied(16, 31, 40, 40);
-
-/// Colour used for inline load-error labels.
-pub const ERROR_INDICATOR: Color32 = Color32::from_rgb(220, 70, 50);
-
-/// Amber colour used for data quality warning icons and indicators. Bright
-/// enough for dark backgrounds. Use [`warning_amber`] where the surface may be
-/// light.
-pub const WARNING_AMBER: Color32 = Color32::from_rgb(255, 180, 0);
-
-/// The dimmed amber for light backgrounds, where [`WARNING_AMBER`] glares.
-pub const WARNING_AMBER_LIGHT: Color32 = Color32::from_rgb(176, 112, 0);
-
-/// Warning amber for either theme: [`WARNING_AMBER`] on dark, [`WARNING_AMBER_LIGHT`] on light.
-pub const WARNING: ThemedColor = ThemedColor::new(WARNING_AMBER, WARNING_AMBER_LIGHT);
-
 /// The warning amber for the current theme. Pass `ui.visuals().dark_mode`.
 pub const fn warning_amber(dark_mode: bool) -> Color32 {
     WARNING.resolve(dark_mode)
@@ -113,20 +75,6 @@ pub const fn error_indicator(dark_mode: bool) -> Color32 {
     ERROR.resolve(dark_mode)
 }
 
-/// [`ERROR_INDICATOR`] paired with a deeper light-surface variant.
-pub const ERROR: ThemedColor = ThemedColor::new(ERROR_INDICATOR, Color32::from_rgb(178, 40, 25));
-
-/// Affirmative green for a primary call-to-action, e.g. the "Update and restart"
-/// button in the update prompt.
-pub const SUCCESS_GREEN: Color32 = Color32::from_rgb(46, 160, 67);
-
-/// The cloth of the flag the map draws at the first fix of a track, whether
-/// or not that track is highlighted. The light variant is a deeper green than
-/// [`SUCCESS_GREEN`]: this flag draws over the map's tiles, not the app's
-/// panels.
-pub const TRACK_START_FLAG: ThemedColor =
-    ThemedColor::new(SUCCESS_GREEN, Color32::from_rgb(20, 105, 42));
-
 /// Background colour for a hovered map element.
 ///
 /// Pass `ui.visuals().dark_mode`.
@@ -137,25 +85,6 @@ pub fn map_hover_color(dark_mode: bool) -> Color32 {
         Color32::from_rgba_unmultiplied(200, 140, 0, 55)
     }
 }
-
-/// Blue/cyan palette assigned to track polylines - chosen to stand out on both
-/// OSM and satellite map backgrounds without implying error or warning semantics.
-/// The palette cycles over `(file_index, track_index)` using a mixing function
-/// so adjacent tracks get distinct shades.
-pub const TRACK_COLORS: [Color32; 12] = [
-    Color32::from_rgb(30, 160, 255),  // vivid blue
-    Color32::from_rgb(0, 220, 220),   // cyan
-    Color32::from_rgb(80, 200, 255),  // powder blue
-    Color32::from_rgb(0, 180, 200),   // deep cyan
-    Color32::from_rgb(60, 120, 255),  // royal blue
-    Color32::from_rgb(0, 240, 180),   // cyan-green
-    Color32::from_rgb(120, 220, 255), // ice blue
-    Color32::from_rgb(0, 140, 255),   // azure
-    Color32::from_rgb(40, 200, 160),  // teal
-    Color32::from_rgb(160, 230, 255), // pale blue
-    Color32::from_rgb(0, 200, 130),   // seafoam
-    Color32::from_rgb(100, 180, 240), // cornflower
-];
 
 /// Canonical themed display color for a GNSS constellation, so a constellation
 /// reads the same hue wherever it appears (plot lines, marker tables, …).
@@ -198,18 +127,6 @@ pub fn track_color(fi: usize, ti: usize) -> Color32 {
     TRACK_COLORS[idx % TRACK_COLORS.len()]
 }
 
-/// Share of aircraft below which a cell reads as clear. gpsjam's own site
-/// colours cells green under 2 %.
-pub const INTERFERENCE_LOW_BREAKPOINT: f32 = 0.02;
-
-/// Share at or above which a cell reads as heavily affected. Yellow between
-/// the two breakpoints, red from here.
-pub const INTERFERENCE_HIGH_BREAKPOINT: f32 = 0.10;
-
-/// Fill opacity of an interference cell. Low enough that the track ink drawn
-/// over it stays legible.
-pub const INTERFERENCE_FILL_ALPHA: u8 = 70;
-
 /// The themed fill for a cell where `bad_fraction` of aircraft reported low
 /// navigation accuracy.
 ///
@@ -243,37 +160,6 @@ pub fn interference_color(bad_fraction: f32) -> ThemedColor {
     ThemedColor::new(from.0.lerp_to_gamma(to.0, t), from.1.lerp_to_gamma(to.1, t))
 }
 
-/// Peak X-ray flux, in W/m², where each flare class begins. A flare marker
-/// takes the colour of the class its flux falls in.
-pub const FLARE_C_CLASS_FLUX: f64 = 1e-6;
-pub const FLARE_M_CLASS_FLUX: f64 = 1e-5;
-pub const FLARE_X_CLASS_FLUX: f64 = 1e-4;
-
-/// A flare below the C class, weaker than anything the ionosphere registers.
-pub const FLARE_BELOW_C_CLASS: ThemedColor = ThemedColor::new(
-    Color32::from_rgb(205, 195, 130),
-    Color32::from_rgb(140, 125, 70),
-);
-
-/// A C-class flare.
-pub const FLARE_C_CLASS: ThemedColor = ThemedColor::new(
-    Color32::from_rgb(240, 195, 65),
-    Color32::from_rgb(170, 120, 20),
-);
-
-/// An M-class flare, the first class NOAA counts a radio blackout from. Also
-/// the colour of the control offering the markers.
-pub const FLARE_M_CLASS: ThemedColor = ThemedColor::new(
-    Color32::from_rgb(245, 140, 45),
-    Color32::from_rgb(185, 85, 15),
-);
-
-/// An X-class flare.
-pub const FLARE_X_CLASS: ThemedColor = ThemedColor::new(
-    Color32::from_rgb(250, 80, 60),
-    Color32::from_rgb(190, 35, 25),
-);
-
 /// The themed stroke of a solar flare marker, by the class its peak flux
 /// falls in.
 pub const fn solar_flare_color(peak_flux_watts_per_square_meter: f64) -> ThemedColor {
@@ -289,11 +175,6 @@ pub const fn solar_flare_color(peak_flux_watts_per_square_meter: f64) -> ThemedC
     }
 }
 
-/// Opacity of the band marking how long a flare lasted, as a multiplier on
-/// its class colour. Low enough that the metric lines stay readable through
-/// a band covering a whole zoomed-in view.
-const FLARE_SPAN_FILL_OPACITY: f32 = 0.22;
-
 /// The themed fill of the band marking a solar flare's span: the marker
 /// colour [`solar_flare_color`] gives its class, at the band's own opacity.
 pub fn solar_flare_span_fill(peak_flux_watts_per_square_meter: f64) -> ThemedColor {
@@ -303,87 +184,6 @@ pub fn solar_flare_span_fill(peak_flux_watts_per_square_meter: f64) -> ThemedCol
         marker.light().gamma_multiply(FLARE_SPAN_FILL_OPACITY),
     )
 }
-
-/// Colour of a node holding no measurable content, and the bottom of the
-/// scale.
-const TEC_SCALE_BOTTOM: ThemedColor = ThemedColor::new(
-    Color32::from_rgb(40, 50, 120),
-    Color32::from_rgb(30, 40, 100),
-);
-
-/// The colour stops of the TEC heatmap, as (TEC units, themed colour) pairs in
-/// ascending order.
-///
-/// The stops double, so the quiet range a mid-latitude recording sits in
-/// (under 20 TECU) takes as much of the ramp as the disturbed range above it.
-/// The top stop is roughly double the highest value ever measured, so a storm's
-/// 175 TECU takes a colour of its own.
-const TEC_SCALE: [(f64, ThemedColor); 8] = [
-    (0.0, TEC_SCALE_BOTTOM),
-    (
-        5.0,
-        ThemedColor::new(
-            Color32::from_rgb(30, 110, 200),
-            Color32::from_rgb(20, 80, 165),
-        ),
-    ),
-    (
-        10.0,
-        ThemedColor::new(
-            Color32::from_rgb(0, 170, 190),
-            Color32::from_rgb(0, 125, 145),
-        ),
-    ),
-    (
-        20.0,
-        ThemedColor::new(
-            Color32::from_rgb(40, 175, 90),
-            Color32::from_rgb(25, 130, 65),
-        ),
-    ),
-    (
-        40.0,
-        ThemedColor::new(
-            Color32::from_rgb(225, 200, 0),
-            Color32::from_rgb(160, 135, 0),
-        ),
-    ),
-    (
-        80.0,
-        ThemedColor::new(
-            Color32::from_rgb(240, 140, 20),
-            Color32::from_rgb(180, 95, 10),
-        ),
-    ),
-    (
-        160.0,
-        ThemedColor::new(
-            Color32::from_rgb(225, 55, 40),
-            Color32::from_rgb(175, 30, 20),
-        ),
-    ),
-    (
-        320.0,
-        ThemedColor::new(
-            Color32::from_rgb(215, 60, 190),
-            Color32::from_rgb(160, 35, 140),
-        ),
-    ),
-];
-
-/// Highest TEC value the heatmap's ramp distinguishes. Values above it take the
-/// last stop's colour.
-pub const TEC_SCALE_TOP_TECU: f64 = 320.0;
-
-/// The values the heatmap legend labels, each of them a colour stop of the
-/// scale.
-pub const TEC_LEGEND_TICKS_TECU: [f64; 4] = [0.0, 20.0, 80.0, TEC_SCALE_TOP_TECU];
-
-/// Opacity of the TEC heatmap, as the percentage the user sets. It scales the
-/// fill of every grid node.
-pub const TEC_OPACITY_PERCENT_MIN: f32 = 0.0;
-pub const TEC_OPACITY_PERCENT_MAX: f32 = 100.0;
-pub const TEC_OPACITY_PERCENT_DEFAULT: f32 = 40.0;
 
 /// The fill alpha for an opacity percentage, clamped to
 /// `TEC_OPACITY_PERCENT_MIN..=TEC_OPACITY_PERCENT_MAX` first.
@@ -510,20 +310,6 @@ pub fn fix_quality_color(pct: u32, dark_mode: bool) -> Color32 {
     }
 }
 
-/// The `100%` anchor of [`fix_quality_color`].
-pub const FIX_QUALITY_GREEN: ThemedColor =
-    ThemedColor::new(Color32::from_rgb(0, 200, 0), Color32::from_rgb(0, 120, 0));
-
-/// The `95..=99%` anchor of [`fix_quality_color`].
-pub const FIX_QUALITY_YELLOW: ThemedColor = ThemedColor::new(
-    Color32::from_rgb(220, 200, 0),
-    Color32::from_rgb(150, 110, 0),
-);
-
-/// The `<=80%` anchor of [`fix_quality_color`].
-pub const FIX_QUALITY_RED: ThemedColor =
-    ThemedColor::new(Color32::from_rgb(220, 60, 0), Color32::from_rgb(188, 40, 8));
-
 /// Confidence tier for a satellite count shown in the point badge: more
 /// satellites contributing reads as higher confidence, on a green → red scale.
 ///
@@ -532,14 +318,14 @@ pub const FIX_QUALITY_RED: ThemedColor =
 /// [`SatCountTier::themed_color`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumIter, strum::EnumCount)]
 pub enum SatCountTier {
-    /// Plenty of satellites: a healthy fix.
-    Good,
-    /// Enough to fix, but with little margin.
-    Fair,
-    /// Marginal: a fix is degraded or fragile.
-    Poor,
     /// Too few to be reliable: no fix or a lone satellite.
     Critical,
+    /// Enough to fix, but with little margin.
+    Fair,
+    /// Plenty of satellites: a healthy fix.
+    Good,
+    /// Marginal: a fix is degraded or fragile.
+    Poor,
 }
 
 impl SatCountTier {
@@ -594,33 +380,6 @@ pub const fn seen_count_tier(count: u32) -> SatCountTier {
     }
 }
 
-/// The standalone semantic foreground [`ThemedColor`]s, paired with a name for
-/// diagnostics. The crate's contrast test iterates this to assert each variant
-/// keeps enough contrast against its own theme's panel background, so a new
-/// colour that is not legible on light (or dark) fails CI.
-///
-/// Enum-driven palettes ([`SatCountTier`], [`SignalQuality`](gt_types::SignalQuality))
-/// are covered by the same test via `strum` iteration, so a newly added variant
-/// is contrast-checked automatically. Add new standalone themed foreground
-/// colours here.
-pub const THEMED_FOREGROUNDS: &[(&str, ThemedColor)] = &[
-    ("WARNING", WARNING),
-    ("ERROR", ERROR),
-    ("FIX_QUALITY_GREEN", FIX_QUALITY_GREEN),
-    ("FIX_QUALITY_YELLOW", FIX_QUALITY_YELLOW),
-    ("FIX_QUALITY_RED", FIX_QUALITY_RED),
-    ("LOG_LIVE_FILTER", LOG_LIVE_FILTER),
-];
-
-/// The query editor's syntax-highlight colours. Checked against the editor
-/// background (the theme's `extreme_bg_color`).
-pub const QUERY_SYNTAX_COLORS: &[(&str, ThemedColor)] = &[
-    ("KEYWORD", QUERY_SYNTAX_KEYWORD),
-    ("NUMBER", QUERY_SYNTAX_NUMBER),
-    ("IDENT", QUERY_SYNTAX_IDENT),
-    ("COMMENT", QUERY_SYNTAX_COMMENT),
-];
-
 /// Linearly interpolates a colour channel from `a` toward `b` by `num/den`
 /// (where `0 <= num <= den`), clamped to `[0, 255]`.
 pub fn lerp_channel(a: u8, b: u8, num: i32, den: i32) -> u8 {
@@ -639,42 +398,6 @@ pub fn unit_to_u8(value: f32) -> u8 {
     u8::try_from(scaled.clamp(0, 255)).unwrap_or(0)
 }
 
-/// Halo stroke for query matches, drawn beneath the track line.
-///
-/// Magenta reads as "annotation" - it is absent from the track palette
-/// (blues/cyans), the quality gradient (green/yellow/red), and the hover
-/// amber, so a match never blends into any of them. Semi-transparent so the
-/// map background stays legible under wide strokes.
-///
-/// Premultiplied equivalent of `(235, 70, 220, 150)`.
-pub const QUERY_MATCH_HALO: Color32 = Color32::from_rgba_premultiplied(138, 41, 129, 150);
-
-/// [`QUERY_MATCH_HALO`] desaturated for stale results (the visible data
-/// changed after the run). Still clearly present, per the "gray out, never
-/// hide" rule.
-///
-/// Premultiplied equivalent of `(150, 120, 145, 110)`.
-pub const QUERY_MATCH_HALO_STALE: Color32 = Color32::from_rgba_premultiplied(65, 52, 63, 110);
-
-/// Halo colours for successive `draw` queries, so overlapping outlines stay
-/// distinguishable. The first is [`QUERY_MATCH_HALO`], so a single draw query
-/// looks unchanged. All semi-transparent and clear of the track blues.
-pub const QUERY_MATCH_HALOS: [Color32; 5] = [
-    QUERY_MATCH_HALO,
-    // (70, 200, 120, 150) green
-    Color32::from_rgba_premultiplied(41, 118, 71, 150),
-    // (240, 150, 40, 150) amber
-    Color32::from_rgba_premultiplied(141, 88, 24, 150),
-    // (90, 160, 240, 150) blue
-    Color32::from_rgba_premultiplied(53, 94, 141, 150),
-    // (220, 90, 90, 150) red
-    Color32::from_rgba_premultiplied(129, 53, 53, 150),
-];
-
-/// Alpha the match halos are drawn at while a new run's reveal animation is at
-/// its brightest, before settling back to each layer colour's own alpha.
-pub const QUERY_MATCH_REVEAL_PEAK_ALPHA: u8 = 230;
-
 /// Halo colour for the `index`-th `draw` query, or the stale grey when the
 /// visible data changed after the run. The palette cycles past its length.
 pub fn query_halo_color(index: usize, stale: bool) -> Color32 {
@@ -688,11 +411,6 @@ pub fn query_halo_color(index: usize, stale: bool) -> Color32 {
         .unwrap_or(QUERY_MATCH_HALO)
 }
 
-/// Alpha the query results table paints the magnitude bar behind a value cell
-/// at: enough tint for the bar's length to read at a glance, faint enough for
-/// the number over it to stay legible on either theme.
-pub const QUERY_VALUE_BAR_ALPHA: u8 = 64;
-
 /// `color` as the magnitude bar behind a value cell of the query results
 /// table. Two draw queries paint bars of different colours: the caller passes
 /// the halo colour of the query that matched, or the theme's text colour for a
@@ -701,35 +419,6 @@ pub fn query_value_bar_color(color: Color32) -> Color32 {
     let [red, green, blue, _] = color.to_srgba_unmultiplied();
     Color32::from_rgba_unmultiplied(red, green, blue, QUERY_VALUE_BAR_ALPHA)
 }
-
-/// Query editor syntax highlighting: keywords (`points`, `where`, `and`, …).
-///
-/// The code editor uses the theme's `extreme_bg_color` (near-black on dark,
-/// white on light), so each token colour (this and its siblings below) carries
-/// a light variant deepened enough to read on white, like the rest of the
-/// themed palette.
-pub const QUERY_SYNTAX_KEYWORD: ThemedColor = ThemedColor::new(
-    Color32::from_rgb(198, 120, 221),
-    Color32::from_rgb(137, 42, 168),
-);
-
-/// Numeric literals.
-pub const QUERY_SYNTAX_NUMBER: ThemedColor = ThemedColor::new(
-    Color32::from_rgb(229, 192, 123),
-    Color32::from_rgb(140, 96, 18),
-);
-
-/// Metric, unit, and parameter names.
-pub const QUERY_SYNTAX_IDENT: ThemedColor = ThemedColor::new(
-    Color32::from_rgb(120, 200, 255),
-    Color32::from_rgb(20, 110, 190),
-);
-
-/// Comments.
-pub const QUERY_SYNTAX_COMMENT: ThemedColor = ThemedColor::new(
-    Color32::from_rgb(128, 148, 128),
-    Color32::from_rgb(92, 110, 92),
-);
 
 /// The identifier syntax colour for the `dark_mode` theme. Pass
 /// `ui.visuals().dark_mode`.
@@ -828,6 +517,349 @@ pub const fn metric_color(kind: gt_types::MetricKind, dark_mode: bool) -> Color3
     metric_themed_color(kind).resolve(dark_mode)
 }
 
+/// The colour of service palette slot `slot_index`. Slots past the last one
+/// cycle the palette, as the seventh and later service of a log does.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "the slot is reduced modulo the palette length, so always in bounds"
+)]
+pub fn log_service_slot_color(slot_index: usize) -> ThemedColor {
+    LOG_SERVICE_SLOTS[slot_index % LOG_SERVICE_SLOTS.len()]
+}
+
+/// The colour of layer palette slot `slot_index`. Slots past the last one cycle
+/// the palette, as the sixth and later layer chip of a session do.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "the slot is reduced modulo the palette length, so always in bounds"
+)]
+pub fn log_layer_slot_color(slot_index: usize) -> ThemedColor {
+    LOG_LAYER_SLOTS[slot_index % LOG_LAYER_SLOTS.len()]
+}
+
+/// The colour one of a log's filters draws in, on the map and in the viewer
+/// alike.
+pub fn log_match_color(color: gt_ui_types::LogMatchColor, dark_mode: bool) -> Color32 {
+    match color {
+        gt_ui_types::LogMatchColor::LiveFilter => LOG_LIVE_FILTER.resolve(dark_mode),
+        gt_ui_types::LogMatchColor::LayerSlot { index, .. } => {
+            log_layer_slot_color(index).resolve(dark_mode)
+        }
+    }
+}
+
+/// U+0394 GREEK CAPITAL LETTER DELTA - used as a mathematical difference symbol.
+pub const DELTA: &str = "Δ";
+/// U+00B0 DEGREE SIGN.
+pub const DEGREE_SIGN: &str = "°";
+
+/// Highlight blue used for selected/hovered elements across map and panel.
+pub const HIGHLIGHT_BLUE: Color32 = Color32::from_rgb(100, 200, 255);
+
+/// Same hue as [`HIGHLIGHT_BLUE`] with reduced alpha - used for the plot seek-bar line.
+///
+/// Premultiplied equivalent of `(100, 200, 255, 200)`.
+pub const HIGHLIGHT_BLUE_SEEK: Color32 = Color32::from_rgba_premultiplied(78, 157, 200, 200);
+
+/// [`HIGHLIGHT_BLUE`] at query-halo alpha - the map's halo band for the match
+/// hovered in the query results table, distinct from the draw-layer palette.
+///
+/// Premultiplied equivalent of `(100, 200, 255, 150)`.
+pub const QUERY_MATCH_HOVER_HALO: Color32 = Color32::from_rgba_premultiplied(59, 118, 150, 150);
+
+/// [`HIGHLIGHT_BLUE`] at low alpha - the plot's shaded time band for the match
+/// hovered in the query results table.
+///
+/// Premultiplied equivalent of `(100, 200, 255, 40)`.
+pub const HIGHLIGHT_BLUE_BAND: Color32 = Color32::from_rgba_premultiplied(16, 31, 40, 40);
+
+/// Colour used for inline load-error labels.
+pub const ERROR_INDICATOR: Color32 = Color32::from_rgb(220, 70, 50);
+
+/// Amber colour used for data quality warning icons and indicators. Bright
+/// enough for dark backgrounds. Use [`warning_amber`] where the surface may be
+/// light.
+pub const WARNING_AMBER: Color32 = Color32::from_rgb(255, 180, 0);
+
+/// The dimmed amber for light backgrounds, where [`WARNING_AMBER`] glares.
+pub const WARNING_AMBER_LIGHT: Color32 = Color32::from_rgb(176, 112, 0);
+
+/// Warning amber for either theme: [`WARNING_AMBER`] on dark, [`WARNING_AMBER_LIGHT`] on light.
+pub const WARNING: ThemedColor = ThemedColor::new(WARNING_AMBER, WARNING_AMBER_LIGHT);
+
+/// [`ERROR_INDICATOR`] paired with a deeper light-surface variant.
+pub const ERROR: ThemedColor = ThemedColor::new(ERROR_INDICATOR, Color32::from_rgb(178, 40, 25));
+
+/// Affirmative green for a primary call-to-action, e.g. the "Update and restart"
+/// button in the update prompt.
+pub const SUCCESS_GREEN: Color32 = Color32::from_rgb(46, 160, 67);
+
+/// The cloth of the flag the map draws at the first fix of a track, whether
+/// or not that track is highlighted. The light variant is a deeper green than
+/// [`SUCCESS_GREEN`]: this flag draws over the map's tiles, not the app's
+/// panels.
+pub const TRACK_START_FLAG: ThemedColor =
+    ThemedColor::new(SUCCESS_GREEN, Color32::from_rgb(20, 105, 42));
+
+/// Blue/cyan palette assigned to track polylines - chosen to stand out on both
+/// OSM and satellite map backgrounds without implying error or warning semantics.
+/// The palette cycles over `(file_index, track_index)` using a mixing function
+/// so adjacent tracks get distinct shades.
+pub const TRACK_COLORS: [Color32; 12] = [
+    Color32::from_rgb(30, 160, 255),  // vivid blue
+    Color32::from_rgb(0, 220, 220),   // cyan
+    Color32::from_rgb(80, 200, 255),  // powder blue
+    Color32::from_rgb(0, 180, 200),   // deep cyan
+    Color32::from_rgb(60, 120, 255),  // royal blue
+    Color32::from_rgb(0, 240, 180),   // cyan-green
+    Color32::from_rgb(120, 220, 255), // ice blue
+    Color32::from_rgb(0, 140, 255),   // azure
+    Color32::from_rgb(40, 200, 160),  // teal
+    Color32::from_rgb(160, 230, 255), // pale blue
+    Color32::from_rgb(0, 200, 130),   // seafoam
+    Color32::from_rgb(100, 180, 240), // cornflower
+];
+
+/// Share of aircraft below which a cell reads as clear. gpsjam's own site
+/// colours cells green under 2 %.
+pub const INTERFERENCE_LOW_BREAKPOINT: f32 = 0.02;
+
+/// Share at or above which a cell reads as heavily affected. Yellow between
+/// the two breakpoints, red from here.
+pub const INTERFERENCE_HIGH_BREAKPOINT: f32 = 0.10;
+
+/// Fill opacity of an interference cell. Low enough that the track ink drawn
+/// over it stays legible.
+pub const INTERFERENCE_FILL_ALPHA: u8 = 70;
+
+/// Peak X-ray flux, in W/m², where each flare class begins. A flare marker
+/// takes the colour of the class its flux falls in.
+pub const FLARE_C_CLASS_FLUX: f64 = 1e-6;
+pub const FLARE_M_CLASS_FLUX: f64 = 1e-5;
+pub const FLARE_X_CLASS_FLUX: f64 = 1e-4;
+
+/// A flare below the C class, weaker than anything the ionosphere registers.
+pub const FLARE_BELOW_C_CLASS: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(205, 195, 130),
+    Color32::from_rgb(140, 125, 70),
+);
+
+/// A C-class flare.
+pub const FLARE_C_CLASS: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(240, 195, 65),
+    Color32::from_rgb(170, 120, 20),
+);
+
+/// An M-class flare, the first class NOAA counts a radio blackout from. Also
+/// the colour of the control offering the markers.
+pub const FLARE_M_CLASS: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(245, 140, 45),
+    Color32::from_rgb(185, 85, 15),
+);
+
+/// An X-class flare.
+pub const FLARE_X_CLASS: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(250, 80, 60),
+    Color32::from_rgb(190, 35, 25),
+);
+
+/// Opacity of the band marking how long a flare lasted, as a multiplier on
+/// its class colour. Low enough that the metric lines stay readable through
+/// a band covering a whole zoomed-in view.
+const FLARE_SPAN_FILL_OPACITY: f32 = 0.22;
+
+/// Colour of a node holding no measurable content, and the bottom of the
+/// scale.
+const TEC_SCALE_BOTTOM: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(40, 50, 120),
+    Color32::from_rgb(30, 40, 100),
+);
+
+/// The colour stops of the TEC heatmap, as (TEC units, themed colour) pairs in
+/// ascending order.
+///
+/// The stops double, so the quiet range a mid-latitude recording sits in
+/// (under 20 TECU) takes as much of the ramp as the disturbed range above it.
+/// The top stop is roughly double the highest value ever measured, so a storm's
+/// 175 TECU takes a colour of its own.
+const TEC_SCALE: [(f64, ThemedColor); 8] = [
+    (0.0, TEC_SCALE_BOTTOM),
+    (
+        5.0,
+        ThemedColor::new(
+            Color32::from_rgb(30, 110, 200),
+            Color32::from_rgb(20, 80, 165),
+        ),
+    ),
+    (
+        10.0,
+        ThemedColor::new(
+            Color32::from_rgb(0, 170, 190),
+            Color32::from_rgb(0, 125, 145),
+        ),
+    ),
+    (
+        20.0,
+        ThemedColor::new(
+            Color32::from_rgb(40, 175, 90),
+            Color32::from_rgb(25, 130, 65),
+        ),
+    ),
+    (
+        40.0,
+        ThemedColor::new(
+            Color32::from_rgb(225, 200, 0),
+            Color32::from_rgb(160, 135, 0),
+        ),
+    ),
+    (
+        80.0,
+        ThemedColor::new(
+            Color32::from_rgb(240, 140, 20),
+            Color32::from_rgb(180, 95, 10),
+        ),
+    ),
+    (
+        160.0,
+        ThemedColor::new(
+            Color32::from_rgb(225, 55, 40),
+            Color32::from_rgb(175, 30, 20),
+        ),
+    ),
+    (
+        320.0,
+        ThemedColor::new(
+            Color32::from_rgb(215, 60, 190),
+            Color32::from_rgb(160, 35, 140),
+        ),
+    ),
+];
+
+/// Highest TEC value the heatmap's ramp distinguishes. Values above it take the
+/// last stop's colour.
+pub const TEC_SCALE_TOP_TECU: f64 = 320.0;
+
+/// The values the heatmap legend labels, each of them a colour stop of the
+/// scale.
+pub const TEC_LEGEND_TICKS_TECU: [f64; 4] = [0.0, 20.0, 80.0, TEC_SCALE_TOP_TECU];
+
+/// Opacity of the TEC heatmap, as the percentage the user sets. It scales the
+/// fill of every grid node.
+pub const TEC_OPACITY_PERCENT_MIN: f32 = 0.0;
+pub const TEC_OPACITY_PERCENT_MAX: f32 = 100.0;
+pub const TEC_OPACITY_PERCENT_DEFAULT: f32 = 40.0;
+
+/// The `100%` anchor of [`fix_quality_color`].
+pub const FIX_QUALITY_GREEN: ThemedColor =
+    ThemedColor::new(Color32::from_rgb(0, 200, 0), Color32::from_rgb(0, 120, 0));
+
+/// The `95..=99%` anchor of [`fix_quality_color`].
+pub const FIX_QUALITY_YELLOW: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(220, 200, 0),
+    Color32::from_rgb(150, 110, 0),
+);
+
+/// The `<=80%` anchor of [`fix_quality_color`].
+pub const FIX_QUALITY_RED: ThemedColor =
+    ThemedColor::new(Color32::from_rgb(220, 60, 0), Color32::from_rgb(188, 40, 8));
+
+/// The standalone semantic foreground [`ThemedColor`]s, paired with a name for
+/// diagnostics. The crate's contrast test iterates this to assert each variant
+/// keeps enough contrast against its own theme's panel background, so a new
+/// colour that is not legible on light (or dark) fails CI.
+///
+/// Enum-driven palettes ([`SatCountTier`], [`SignalQuality`](gt_types::SignalQuality))
+/// are covered by the same test via `strum` iteration, so a newly added variant
+/// is contrast-checked automatically. Add new standalone themed foreground
+/// colours here.
+pub const THEMED_FOREGROUNDS: &[(&str, ThemedColor)] = &[
+    ("WARNING", WARNING),
+    ("ERROR", ERROR),
+    ("FIX_QUALITY_GREEN", FIX_QUALITY_GREEN),
+    ("FIX_QUALITY_YELLOW", FIX_QUALITY_YELLOW),
+    ("FIX_QUALITY_RED", FIX_QUALITY_RED),
+    ("LOG_LIVE_FILTER", LOG_LIVE_FILTER),
+];
+
+/// The query editor's syntax-highlight colours. Checked against the editor
+/// background (the theme's `extreme_bg_color`).
+pub const QUERY_SYNTAX_COLORS: &[(&str, ThemedColor)] = &[
+    ("KEYWORD", QUERY_SYNTAX_KEYWORD),
+    ("NUMBER", QUERY_SYNTAX_NUMBER),
+    ("IDENT", QUERY_SYNTAX_IDENT),
+    ("COMMENT", QUERY_SYNTAX_COMMENT),
+];
+
+/// Halo stroke for query matches, drawn beneath the track line.
+///
+/// Magenta reads as "annotation" - it is absent from the track palette
+/// (blues/cyans), the quality gradient (green/yellow/red), and the hover
+/// amber, so a match never blends into any of them. Semi-transparent so the
+/// map background stays legible under wide strokes.
+///
+/// Premultiplied equivalent of `(235, 70, 220, 150)`.
+pub const QUERY_MATCH_HALO: Color32 = Color32::from_rgba_premultiplied(138, 41, 129, 150);
+
+/// [`QUERY_MATCH_HALO`] desaturated for stale results (the visible data
+/// changed after the run). Still clearly present, per the "gray out, never
+/// hide" rule.
+///
+/// Premultiplied equivalent of `(150, 120, 145, 110)`.
+pub const QUERY_MATCH_HALO_STALE: Color32 = Color32::from_rgba_premultiplied(65, 52, 63, 110);
+
+/// Halo colours for successive `draw` queries, so overlapping outlines stay
+/// distinguishable. The first is [`QUERY_MATCH_HALO`], so a single draw query
+/// looks unchanged. All semi-transparent and clear of the track blues.
+pub const QUERY_MATCH_HALOS: [Color32; 5] = [
+    QUERY_MATCH_HALO,
+    // (70, 200, 120, 150) green
+    Color32::from_rgba_premultiplied(41, 118, 71, 150),
+    // (240, 150, 40, 150) amber
+    Color32::from_rgba_premultiplied(141, 88, 24, 150),
+    // (90, 160, 240, 150) blue
+    Color32::from_rgba_premultiplied(53, 94, 141, 150),
+    // (220, 90, 90, 150) red
+    Color32::from_rgba_premultiplied(129, 53, 53, 150),
+];
+
+/// Alpha the match halos are drawn at while a new run's reveal animation is at
+/// its brightest, before settling back to each layer colour's own alpha.
+pub const QUERY_MATCH_REVEAL_PEAK_ALPHA: u8 = 230;
+
+/// Alpha the query results table paints the magnitude bar behind a value cell
+/// at: enough tint for the bar's length to read at a glance, faint enough for
+/// the number over it to stay legible on either theme.
+pub const QUERY_VALUE_BAR_ALPHA: u8 = 64;
+
+/// Query editor syntax highlighting: keywords (`points`, `where`, `and`, …).
+///
+/// The code editor uses the theme's `extreme_bg_color` (near-black on dark,
+/// white on light), so each token colour (this and its siblings below) carries
+/// a light variant deepened enough to read on white, like the rest of the
+/// themed palette.
+pub const QUERY_SYNTAX_KEYWORD: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(198, 120, 221),
+    Color32::from_rgb(137, 42, 168),
+);
+
+/// Numeric literals.
+pub const QUERY_SYNTAX_NUMBER: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(229, 192, 123),
+    Color32::from_rgb(140, 96, 18),
+);
+
+/// Metric, unit, and parameter names.
+pub const QUERY_SYNTAX_IDENT: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(120, 200, 255),
+    Color32::from_rgb(20, 110, 190),
+);
+
+/// Comments.
+pub const QUERY_SYNTAX_COMMENT: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(128, 148, 128),
+    Color32::from_rgb(92, 110, 92),
+);
+
 /// The plot canvas fill on a light theme: a faint grey that keeps the deepened
 /// light-variant series lines (see [`metric_themed_color`]) separated from the
 /// background.
@@ -916,41 +948,10 @@ pub const LOG_SERVICE_SLOTS: [ThemedColor; 6] = [
     ),
 ];
 
-/// The colour of service palette slot `slot_index`. Slots past the last one
-/// cycle the palette, as the seventh and later service of a log does.
-#[expect(
-    clippy::indexing_slicing,
-    reason = "the slot is reduced modulo the palette length, so always in bounds"
-)]
-pub fn log_service_slot_color(slot_index: usize) -> ThemedColor {
-    LOG_SERVICE_SLOTS[slot_index % LOG_SERVICE_SLOTS.len()]
-}
-
 /// Outline tone of the map's log hexagons. One dark tone separates a glyph
 /// from the track line and the tiles on either theme: the background here is
 /// the map's tiles, not the app's.
 pub const LOG_HEXAGON_OUTLINE: Color32 = Color32::from_gray(24);
-
-/// The colour of layer palette slot `slot_index`. Slots past the last one cycle
-/// the palette, as the sixth and later layer chip of a session do.
-#[expect(
-    clippy::indexing_slicing,
-    reason = "the slot is reduced modulo the palette length, so always in bounds"
-)]
-pub fn log_layer_slot_color(slot_index: usize) -> ThemedColor {
-    LOG_LAYER_SLOTS[slot_index % LOG_LAYER_SLOTS.len()]
-}
-
-/// The colour one of a log's filters draws in, on the map and in the viewer
-/// alike.
-pub fn log_match_color(color: gt_ui_types::LogMatchColor, dark_mode: bool) -> Color32 {
-    match color {
-        gt_ui_types::LogMatchColor::LiveFilter => LOG_LIVE_FILTER.resolve(dark_mode),
-        gt_ui_types::LogMatchColor::LayerSlot { index, .. } => {
-            log_layer_slot_color(index).resolve(dark_mode)
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -973,11 +974,6 @@ mod tests {
             expected
         );
     }
-
-    /// How far a channel may move as a colour round-trips through the
-    /// premultiplied storage [`Color32`] keeps: one step of the bar alpha,
-    /// which is a quarter of full opacity.
-    const BAR_TINT_ROUNDING: u8 = 4;
 
     /// A value bar keeps the hue of the halo it was tinted from, at the alpha
     /// the table paints its bars with.
@@ -1090,12 +1086,6 @@ mod tests {
         let (hi, lo) = if la >= lb { (la, lb) } else { (lb, la) };
         (hi + 0.05) / (lo + 0.05)
     }
-
-    /// Contrast floor for status foreground colours. These are bold badge
-    /// glyphs and small status labels drawn over the panel/window fill, i.e.
-    /// graphical status indicators, so the WCAG 1.4.11 non-text /
-    /// large-bold-text threshold of 3.0 is the right bar.
-    const MIN_CONTRAST: f64 = 3.0;
 
     /// Every themed foreground the test checks: the standalone registry plus
     /// the enum-driven palettes, gathered via `strum` iteration so a newly
@@ -1298,4 +1288,15 @@ mod tests {
         assert_eq!(unit_to_u8(-1.0), 0);
         assert_eq!(unit_to_u8(2.0), 255);
     }
+
+    /// How far a channel may move as a colour round-trips through the
+    /// premultiplied storage [`Color32`] keeps: one step of the bar alpha,
+    /// which is a quarter of full opacity.
+    const BAR_TINT_ROUNDING: u8 = 4;
+
+    /// Contrast floor for status foreground colours. These are bold badge
+    /// glyphs and small status labels drawn over the panel/window fill, i.e.
+    /// graphical status indicators, so the WCAG 1.4.11 non-text /
+    /// large-bold-text threshold of 3.0 is the right bar.
+    const MIN_CONTRAST: f64 = 3.0;
 }

@@ -14,9 +14,6 @@ use gt_test_utils::SyntheticGtdSpec;
 
 use crate::app::history_db::{HistoryWorker, Response};
 
-/// The nav points [`sample_bytes`] holds.
-pub const SAMPLE_POINT_COUNT: u64 = 20;
-
 /// `point_count` nav points one second apart from `start_secs`.
 pub fn bytes_starting_at(start_secs: i64, point_count: usize) -> Vec<u8> {
     gt_test_utils::synthetic_gtd_bytes(SyntheticGtdSpec {
@@ -167,3 +164,6 @@ pub fn only_recording(worker: &HistoryWorker) -> RecordingEntry {
     assert_eq!(entries.len(), 1, "expected exactly one recording");
     entries.remove(0)
 }
+
+/// The nav points [`sample_bytes`] holds.
+pub const SAMPLE_POINT_COUNT: u64 = 20;

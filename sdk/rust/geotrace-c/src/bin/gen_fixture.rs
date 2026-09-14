@@ -22,19 +22,6 @@ use geotrace_sdk::{
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 
-/// The `markers/icon` code of the unrecognized marker icon fixture, outside
-/// the 0 to 13 the `MarkerIcon` set covers.
-const UNRECOGNIZED_MARKER_ICON_CODE: u8 = 200;
-
-/// The root attribute and the value of each metadata string in `metadata_with_a_nul_byte.gtd`.
-const METADATA_WITH_A_NUL_BYTE: [(&str, &str); 5] = [
-    ("meta_title", "title\0after"),
-    ("meta_device", "device\0after"),
-    ("meta_notes", "notes\0after"),
-    ("meta_identity", "identity\0after"),
-    ("meta_travel_mode", "car\0after"),
-];
-
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR");
     let fixtures = PathBuf::from(manifest_dir).join("../../c/tests/fixtures");
@@ -402,3 +389,16 @@ fn nav_point_idx_past_the_nav_points() -> Vec<u8> {
 
     fb.finish().expect("gen_fixture: build failed")
 }
+
+/// The `markers/icon` code of the unrecognized marker icon fixture, outside
+/// the 0 to 13 the `MarkerIcon` set covers.
+const UNRECOGNIZED_MARKER_ICON_CODE: u8 = 200;
+
+/// The root attribute and the value of each metadata string in `metadata_with_a_nul_byte.gtd`.
+const METADATA_WITH_A_NUL_BYTE: [(&str, &str); 5] = [
+    ("meta_title", "title\0after"),
+    ("meta_device", "device\0after"),
+    ("meta_notes", "notes\0after"),
+    ("meta_identity", "identity\0after"),
+    ("meta_travel_mode", "car\0after"),
+];

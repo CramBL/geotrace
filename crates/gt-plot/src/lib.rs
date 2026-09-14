@@ -1,37 +1,13 @@
-mod plot_widget;
-mod series;
-#[cfg(any(test, feature = "test-util"))]
-pub mod test_util;
-
 pub use plot_widget::{
     ArchiveOverlays, DEFAULT_PLOT_LINE_WIDTH, EDGE_MARKER_INSET, LEGEND_DOCK_OFFSET,
     PLOT_LINE_WIDTH_RANGE, PlotState, TRACK_PLOT_ID_SALT, find_closest_tpv, legend_is_docked,
     show_track_plot,
 };
 
-/// Default elevation mask, in degrees, shared by the satellite utilization rate
-/// and the slip rate.
-///
-/// 15 deg is the conventional GNSS baseline: below it atmospheric delay and
-/// multipath dominate, so receivers routinely ignore those satellites.
-pub const DEFAULT_ELEVATION_MASK_DEG: f32 = 15.0;
-
-/// Default SNR drop, in dB-Hz between consecutive epochs, that counts as a
-/// loss-of-lock slip.
-pub const DEFAULT_SNR_DROP_DB: f32 = 10.0;
-
-/// Default averaging window, in minutes, over which the slip rate is computed.
-pub const DEFAULT_SLIP_WINDOW_MIN: f32 = 10.0;
-
-/// Default deviation from a track's baseline clock offset, in seconds, above
-/// which a sample is treated as a clock offset excursion.  Re-exported from the
-/// detector so the plot and the generated markers share one default.
-pub const DEFAULT_CLOCK_EXCURSION_THRESHOLD_S: f32 =
-    gt_analysis::clock_offset::DEFAULT_EXCURSION_THRESHOLD_S;
-
-/// Range the clock-excursion threshold may be set to, in seconds.  Shared by
-/// the settings control and the clamp applied to persisted settings on load.
-pub const CLOCK_EXCURSION_THRESHOLD_RANGE_S: std::ops::RangeInclusive<f32> = 1.0..=3600.0;
+mod plot_widget;
+mod series;
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
 
 /// Tunable parameters for the derived satellite-analysis series (utilization
 /// rate and slip rate).  Threaded into series building so a change re-derives
@@ -82,3 +58,27 @@ pub fn prepare_file_series(
 ) -> PreparedSeries {
     PreparedSeries(series::build_file_series(file, analysis))
 }
+
+/// Default elevation mask, in degrees, shared by the satellite utilization rate
+/// and the slip rate.
+///
+/// 15 deg is the conventional GNSS baseline: below it atmospheric delay and
+/// multipath dominate, so receivers routinely ignore those satellites.
+pub const DEFAULT_ELEVATION_MASK_DEG: f32 = 15.0;
+
+/// Default SNR drop, in dB-Hz between consecutive epochs, that counts as a
+/// loss-of-lock slip.
+pub const DEFAULT_SNR_DROP_DB: f32 = 10.0;
+
+/// Default averaging window, in minutes, over which the slip rate is computed.
+pub const DEFAULT_SLIP_WINDOW_MIN: f32 = 10.0;
+
+/// Default deviation from a track's baseline clock offset, in seconds, above
+/// which a sample is treated as a clock offset excursion.  Re-exported from the
+/// detector so the plot and the generated markers share one default.
+pub const DEFAULT_CLOCK_EXCURSION_THRESHOLD_S: f32 =
+    gt_analysis::clock_offset::DEFAULT_EXCURSION_THRESHOLD_S;
+
+/// Range the clock-excursion threshold may be set to, in seconds.  Shared by
+/// the settings control and the clamp applied to persisted settings on load.
+pub const CLOCK_EXCURSION_THRESHOLD_RANGE_S: std::ops::RangeInclusive<f32> = 1.0..=3600.0;

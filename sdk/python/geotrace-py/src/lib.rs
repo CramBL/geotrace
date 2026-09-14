@@ -34,6 +34,91 @@ use crate::python_enum::PythonEnumMirror;
 
 mod python_enum;
 
+/// Declares a sequence view over one of a [`NavFile`]'s collections together
+/// with its iterator, both holding the file through an [`Arc`], and the class
+/// documentation the Python side reads.
+///
+/// `methods` declares the columnar accessors of a collection that has them.
+/// This macro emits them inside the generated `#[pymethods]` block, since PyO3
+/// accepts one such block per class.
+macro_rules! nav_file_sequence {
+    (
+        summary: $summary:literal,
+        sequence: $sequence:ident as $sequence_name:literal,
+        iterator: $iterator:ident as $iterator_name:literal,
+        element: $element:ty as $element_name:literal,
+        collection: $collection:ident,
+        $(methods: { $($method:item)* },)?
+    ) => {
+        #[doc = $summary]
+        #[doc = ""]
+        #[doc = concat!(
+            "Supports ``len()``, indexing, slicing and iteration, and builds one :class:`",
+            $element_name,
+            "` per element read. The sequence keeps working after the :class:`NavFile` object ",
+            "is gone."
+        )]
+        #[pyclass(sequence, skip_from_py_object, name = $sequence_name)]
+        pub struct $sequence {
+            file: Arc<NavFile>,
+        }
+
+        #[pymethods]
+        impl $sequence {
+            fn __len__(&self) -> usize {
+                self.file.$collection().len()
+            }
+
+            fn __getitem__<'py>(
+                &self,
+                py: Python<'py>,
+                key: &Bound<'py, PyAny>,
+            ) -> PyResult<Bound<'py, PyAny>> {
+                sequence_item_or_slice::<$element, _>(py, key, self.file.$collection())
+            }
+
+            fn __iter__(&self) -> $iterator {
+                $iterator {
+                    file: Arc::clone(&self.file),
+                    position: 0,
+                }
+            }
+
+            fn __repr__(&self) -> String {
+                format!(
+                    concat!($sequence_name, "(len={})"),
+                    self.file.$collection().len()
+                )
+            }
+
+            $($($method)*)?
+        }
+
+        #[pyclass(skip_from_py_object, name = $iterator_name)]
+        pub struct $iterator {
+            file: Arc<NavFile>,
+            position: usize,
+        }
+
+        #[pymethods]
+        impl $iterator {
+            fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+                slf
+            }
+
+            fn __next__(&mut self) -> Option<$element> {
+                let element = self
+                    .file
+                    .$collection()
+                    .get(self.position)
+                    .map(<$element>::from)?;
+                self.position += 1;
+                Some(element)
+            }
+        }
+    };
+}
+
 fn to_fixed(dt: DateTime<Utc>) -> DateTime<FixedOffset> {
     dt.fixed_offset()
 }
@@ -106,10 +191,10 @@ fn nav_fix_time_or_value_error(
 #[derive(Clone, Copy, Debug, Eq, PartialEq, strum::EnumString, strum::IntoStaticStr)]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum PyConstellation {
-    Gps,
-    Glonass,
-    Galileo,
     Beidou,
+    Galileo,
+    Glonass,
+    Gps,
     Navic,
     Qzss,
 }
@@ -220,19 +305,19 @@ fn snr_is_no_data_sentinel(snr: f32) -> bool {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, strum::EnumString, strum::IntoStaticStr)]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum PyMarkerIcon {
-    Pin,
-    Cross,
-    Circle,
-    Lightning,
-    Warning,
-    Error,
     Check,
+    Circle,
+    Cross,
+    Download,
+    Error,
+    Gear,
+    Lightning,
+    Pin,
+    Refresh,
     Satellite,
     SatelliteLost,
-    Gear,
-    Refresh,
-    Download,
     Upload,
+    Warning,
     Wrench,
 }
 
@@ -320,13 +405,13 @@ fn marker_icon_from_name(name: &str) -> PyResult<PyMarkerIcon> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, strum::EnumString, strum::IntoStaticStr)]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum PyTravelMode {
+    Aircraft,
+    Bicycle,
+    Boat,
     Car,
     Motorcycle,
-    Bicycle,
     Pedestrian,
-    Boat,
     Rail,
-    Aircraft,
 }
 
 impl PythonEnumMirror for PyTravelMode {
@@ -1521,8 +1606,6 @@ impl PyEventMarkerPoint {
     }
 }
 
-const INDEX_OUT_OF_RANGE: &str = "index out of range";
-
 fn position_or_index_error(index: isize, len: usize) -> PyResult<usize> {
     let length = isize::try_from(len).map_err(|_| PyIndexError::new_err(INDEX_OUT_OF_RANGE))?;
     let position = if index < 0 {
@@ -1572,91 +1655,6 @@ where
         .get(position)
         .ok_or_else(|| PyIndexError::new_err(INDEX_OUT_OF_RANGE))?;
     Exposed::from(element).into_bound_py_any(py)
-}
-
-/// Declares a sequence view over one of a [`NavFile`]'s collections together
-/// with its iterator, both holding the file through an [`Arc`], and the class
-/// documentation the Python side reads.
-///
-/// `methods` declares the columnar accessors of a collection that has them.
-/// This macro emits them inside the generated `#[pymethods]` block, since PyO3
-/// accepts one such block per class.
-macro_rules! nav_file_sequence {
-    (
-        summary: $summary:literal,
-        sequence: $sequence:ident as $sequence_name:literal,
-        iterator: $iterator:ident as $iterator_name:literal,
-        element: $element:ty as $element_name:literal,
-        collection: $collection:ident,
-        $(methods: { $($method:item)* },)?
-    ) => {
-        #[doc = $summary]
-        #[doc = ""]
-        #[doc = concat!(
-            "Supports ``len()``, indexing, slicing and iteration, and builds one :class:`",
-            $element_name,
-            "` per element read. The sequence keeps working after the :class:`NavFile` object ",
-            "is gone."
-        )]
-        #[pyclass(sequence, skip_from_py_object, name = $sequence_name)]
-        pub struct $sequence {
-            file: Arc<NavFile>,
-        }
-
-        #[pymethods]
-        impl $sequence {
-            fn __len__(&self) -> usize {
-                self.file.$collection().len()
-            }
-
-            fn __getitem__<'py>(
-                &self,
-                py: Python<'py>,
-                key: &Bound<'py, PyAny>,
-            ) -> PyResult<Bound<'py, PyAny>> {
-                sequence_item_or_slice::<$element, _>(py, key, self.file.$collection())
-            }
-
-            fn __iter__(&self) -> $iterator {
-                $iterator {
-                    file: Arc::clone(&self.file),
-                    position: 0,
-                }
-            }
-
-            fn __repr__(&self) -> String {
-                format!(
-                    concat!($sequence_name, "(len={})"),
-                    self.file.$collection().len()
-                )
-            }
-
-            $($($method)*)?
-        }
-
-        #[pyclass(skip_from_py_object, name = $iterator_name)]
-        pub struct $iterator {
-            file: Arc<NavFile>,
-            position: usize,
-        }
-
-        #[pymethods]
-        impl $iterator {
-            fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-                slf
-            }
-
-            fn __next__(&mut self) -> Option<$element> {
-                let element = self
-                    .file
-                    .$collection()
-                    .get(self.position)
-                    .map(<$element>::from)?;
-                self.position += 1;
-                Some(element)
-            }
-        }
-    };
 }
 
 nav_file_sequence! {
@@ -2179,3 +2177,5 @@ fn _geotrace_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(rust_sdk_enum_members, m)?)?;
     Ok(())
 }
+
+const INDEX_OUT_OF_RANGE: &str = "index out of range";

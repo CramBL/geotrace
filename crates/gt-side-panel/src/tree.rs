@@ -13,9 +13,9 @@ use gt_ui_types::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckState {
-    On,
-    Off,
     Mixed,
+    Off,
+    On,
 }
 
 impl CheckState {

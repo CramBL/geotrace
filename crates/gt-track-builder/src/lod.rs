@@ -2,25 +2,6 @@ use gt_types::extent::{DrawnFix, Extent};
 use gt_types::placed_point::{PlacedPoint, PlacedPoints};
 use gt_types::track::{LOD_BASE_TOLERANCE_MERC, LodChunk, LodLevel, TrackLod};
 
-/// How many consecutive points of a [`LodLevel`], or of a track's full point
-/// list, one [`LodChunk`] covers.
-pub const LOD_CHUNK_POINTS: usize = 64;
-
-/// Stop building coarser levels once one has this few points - drawing them
-/// costs nothing, and coarser levels would only erase the track's shape.
-const MIN_LEVEL_POINTS: usize = 64;
-
-/// Hard cap on stored levels. With doubling tolerances this spans a zoom
-/// range far beyond what the map can express.
-const MAX_LEVELS: usize = 24;
-
-/// A level must shrink to at most 3/4 of its predecessor to be worth
-/// storing. Otherwise its tolerance is below the recording's own point
-/// spacing and the predecessor (or the full list) serves that scale.
-/// Expressed as a ratio of integers to avoid float comparisons.
-const MAX_KEPT_NUMERATOR: usize = 3;
-const MAX_KEPT_DENOMINATOR: usize = 4;
-
 /// Build the multi-resolution render LOD for a track's points.
 ///
 /// Levels apply a Mercator-space radial-distance filter with doubling
@@ -190,6 +171,25 @@ fn decimate(
     kept
 }
 
+/// How many consecutive points of a [`LodLevel`], or of a track's full point
+/// list, one [`LodChunk`] covers.
+pub const LOD_CHUNK_POINTS: usize = 64;
+
+/// Stop building coarser levels once one has this few points - drawing them
+/// costs nothing, and coarser levels would only erase the track's shape.
+const MIN_LEVEL_POINTS: usize = 64;
+
+/// Hard cap on stored levels. With doubling tolerances this spans a zoom
+/// range far beyond what the map can express.
+const MAX_LEVELS: usize = 24;
+
+/// A level must shrink to at most 3/4 of its predecessor to be worth
+/// storing. Otherwise its tolerance is below the recording's own point
+/// spacing and the predecessor (or the full list) serves that scale.
+/// Expressed as a ratio of integers to avoid float comparisons.
+const MAX_KEPT_NUMERATOR: usize = 3;
+const MAX_KEPT_DENOMINATOR: usize = 4;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,9 +200,6 @@ mod tests {
     use gt_types::nav_point::NavPoint;
     use gt_types::{FixQuality, MercBounds, TrackLod};
     use vec1::Vec1;
-
-    /// The instant the first fix of every fixture track is stamped at.
-    const FIRST_FIX_TIME: DateTime<Utc> = DateTime::<Utc>::UNIX_EPOCH;
 
     /// Every fixture fix records a position, so it is drawn where it was
     /// recorded.
@@ -533,4 +530,7 @@ mod tests {
             );
         }
     }
+
+    /// The instant the first fix of every fixture track is stamped at.
+    const FIRST_FIX_TIME: DateTime<Utc> = DateTime::<Utc>::UNIX_EPOCH;
 }

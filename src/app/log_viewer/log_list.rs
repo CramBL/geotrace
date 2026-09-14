@@ -15,18 +15,6 @@ use gt_ui_types::LoadedLogId;
 
 use super::AttachmentToLoad;
 
-/// Heading of the group holding the logs that take their positions from no
-/// recording.
-pub(super) const NOT_ANCHORED_HEADING: &str = "Not anchored";
-
-pub(super) const UNLOAD_HOVER: &str = "Unload this log";
-
-const VISIBILITY_HOVER: &str = "Draw this log's matches on the map";
-
-pub(in crate::app) const LOAD_ATTACHMENT_LABEL: &str = "Load";
-
-const LOAD_ATTACHMENT_HOVER: &str = "Read this log back out of the recording and load it";
-
 /// One group of the list: the rows sharing a [`LogGroupHeading`].
 #[derive(Debug, PartialEq)]
 pub(super) struct LogGroup {
@@ -42,12 +30,12 @@ pub(super) enum LogGroupHeading {
     /// logs anchored to it and the attachments it holds that are not loaded.
     LoadedRecording(String),
 
+    /// The logs anchored to no recording.
+    NotAnchored,
+
     /// A recording that is not loaded, under the display form of its identity
     /// in the history database, with the logs anchored to it.
     RecordingNotLoaded(String),
-
-    /// The logs anchored to no recording.
-    NotAnchored,
 }
 
 impl LogGroupHeading {
@@ -65,8 +53,8 @@ impl LogGroupHeading {
 
 #[derive(Debug, PartialEq)]
 pub(super) enum LogRow {
-    Loaded(LoadedLogRow),
     Available(AvailableAttachmentRow),
+    Loaded(LoadedLogRow),
 }
 
 /// A log of this session, selectable and unloadable, drawn on the map while
@@ -313,3 +301,15 @@ impl AvailableAttachmentRow {
         .inner
     }
 }
+
+/// Heading of the group holding the logs that take their positions from no
+/// recording.
+pub(super) const NOT_ANCHORED_HEADING: &str = "Not anchored";
+
+pub(super) const UNLOAD_HOVER: &str = "Unload this log";
+
+const VISIBILITY_HOVER: &str = "Draw this log's matches on the map";
+
+pub(in crate::app) const LOAD_ATTACHMENT_LABEL: &str = "Load";
+
+const LOAD_ATTACHMENT_HOVER: &str = "Read this log back out of the recording and load it";

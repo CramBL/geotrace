@@ -16,32 +16,6 @@ use crate::app::App;
 use crate::app::settings_ui::SettingsPage;
 use crate::app::settings_ui::analysis::CLOCK_OFFSET_EXCURSION_LABEL;
 
-const TRACK_SPLIT_GAP_LABEL: &str = "Track split gap";
-const LOG_ASSOCIATION_WINDOW_LABEL: &str = "Log association window";
-pub(in crate::app) const ASK_LOG_ASSOCIATION_TARGET_LABEL: &str =
-    "Ask which recording a log belongs to";
-const GENERATED_MARKERS_LABEL: &str = "Generated markers";
-const GNSS_FIX_LOST_LABEL: &str = "GNSS fix lost";
-const GNSS_FIX_REGAINED_LABEL: &str = "GNSS fix regained";
-const CLOCK_DISCONTINUITY_LABEL: &str = "Clock discontinuity";
-const SATELLITE_SLIP_LABEL: &str = "Satellite slip";
-const APPLY_TO_LOADED_DATA_LABEL: &str = "Apply to loaded data";
-const RESTORE_DEFAULTS_LABEL: &str = "Restore defaults";
-
-pub(super) const SEARCHABLE_LABELS: &[&str] = &[
-    TRACK_SPLIT_GAP_LABEL,
-    LOG_ASSOCIATION_WINDOW_LABEL,
-    ASK_LOG_ASSOCIATION_TARGET_LABEL,
-    GENERATED_MARKERS_LABEL,
-    GNSS_FIX_LOST_LABEL,
-    GNSS_FIX_REGAINED_LABEL,
-    CLOCK_DISCONTINUITY_LABEL,
-    CLOCK_OFFSET_EXCURSION_LABEL,
-    SATELLITE_SLIP_LABEL,
-    APPLY_TO_LOADED_DATA_LABEL,
-    RESTORE_DEFAULTS_LABEL,
-];
-
 impl App {
     /// Returns `true` in the frame when the user clicks "Apply to loaded data".
     pub(super) fn show_processing_page(&mut self, ui: &mut egui::Ui) -> bool {
@@ -334,3 +308,29 @@ fn compound_duration_input(
         *value_secs = total.clamp(min_secs, max_secs);
     }
 }
+
+const TRACK_SPLIT_GAP_LABEL: &str = "Track split gap";
+const LOG_ASSOCIATION_WINDOW_LABEL: &str = "Log association window";
+pub(in crate::app) const ASK_LOG_ASSOCIATION_TARGET_LABEL: &str =
+    "Ask which recording a log belongs to";
+const GENERATED_MARKERS_LABEL: &str = "Generated markers";
+const GNSS_FIX_LOST_LABEL: &str = "GNSS fix lost";
+const GNSS_FIX_REGAINED_LABEL: &str = "GNSS fix regained";
+const CLOCK_DISCONTINUITY_LABEL: &str = "Clock discontinuity";
+const SATELLITE_SLIP_LABEL: &str = "Satellite slip";
+const APPLY_TO_LOADED_DATA_LABEL: &str = "Apply to loaded data";
+const RESTORE_DEFAULTS_LABEL: &str = "Restore defaults";
+
+pub(super) const SEARCHABLE_LABELS: &[&str] = &[
+    TRACK_SPLIT_GAP_LABEL,
+    LOG_ASSOCIATION_WINDOW_LABEL,
+    ASK_LOG_ASSOCIATION_TARGET_LABEL,
+    GENERATED_MARKERS_LABEL,
+    GNSS_FIX_LOST_LABEL,
+    GNSS_FIX_REGAINED_LABEL,
+    CLOCK_DISCONTINUITY_LABEL,
+    CLOCK_OFFSET_EXCURSION_LABEL,
+    SATELLITE_SLIP_LABEL,
+    APPLY_TO_LOADED_DATA_LABEL,
+    RESTORE_DEFAULTS_LABEL,
+];

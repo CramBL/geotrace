@@ -58,10 +58,6 @@ impl ChannelInfo {
 /// One incompatible metadata definition found for a shared channel name.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChannelConflict {
-    Unit {
-        expected: Option<ChannelUnit>,
-        found: Option<ChannelUnit>,
-    },
     Components {
         expected: Vec<String>,
         found: Vec<String>,
@@ -69,6 +65,10 @@ pub enum ChannelConflict {
     Period {
         expected_deg: Option<f64>,
         found_deg: Option<f64>,
+    },
+    Unit {
+        expected: Option<ChannelUnit>,
+        found: Option<ChannelUnit>,
     },
 }
 
@@ -134,8 +134,8 @@ pub enum Window {
 /// name. The evaluator dispatches its timeline and match granularity on this.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CheckedSource {
-    Points,
     Channel(String),
+    Points,
 }
 
 /// A query that passed all static checks, ready to run.
@@ -207,10 +207,10 @@ impl CheckedQuery {
 /// One column of the match table.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TableColumn {
-    /// A metric, valued at each point of a match.
-    Metric(QueryMetric),
     /// An aggregate, valued once over a whole match.
     Aggregate(AggregateColumn),
+    /// A metric, valued at each point of a match.
+    Metric(QueryMetric),
 }
 
 impl TableColumn {
@@ -288,71 +288,71 @@ pub(crate) struct ChannelKey {
 /// sample. The checker resolves this once (see [`aggregate_source`]).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum AggSource {
-    Points,
     Channel(String),
+    Points,
 }
 
 /// Checked expression: literals in base units, aggregates tagged with the
 /// period their argument wraps at.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum CExpr {
-    Const(f64),
-    Metric(QueryMetric),
-    /// A scalar channel or one component of a vector channel. Only ever appears
-    /// inside an aggregate, which reduces its native samples over the window
-    /// span.
-    Channel(ChannelKey),
-    /// The Euclidean magnitude of a whole vector channel (`norm(@accel)`), by
-    /// name. A per-sample scalar in the channel's own unit, reduced by the
-    /// enclosing aggregate.
-    Norm(String),
+    Abs(Box<CExpr>),
     Agg {
         func: Func,
         wrap: Option<WrapPeriod>,
         source: AggSource,
         arg: Box<CExpr>,
     },
-    Abs(Box<CExpr>),
-    Sqrt(Box<CExpr>),
-    Neg(Box<CExpr>),
-    Not(Box<CExpr>),
-    Cmp {
-        op: CmpOp,
-        lhs: Box<CExpr>,
-        rhs: Box<CExpr>,
-    },
-    Logic {
-        and: bool,
-        lhs: Box<CExpr>,
-        rhs: Box<CExpr>,
-    },
     Arith {
         op: ArithOp,
         lhs: Box<CExpr>,
         rhs: Box<CExpr>,
     },
+    /// A scalar channel or one component of a vector channel. Only ever appears
+    /// inside an aggregate, which reduces its native samples over the window
+    /// span.
+    Channel(ChannelKey),
+    Cmp {
+        op: CmpOp,
+        lhs: Box<CExpr>,
+        rhs: Box<CExpr>,
+    },
+    Const(f64),
+    Logic {
+        and: bool,
+        lhs: Box<CExpr>,
+        rhs: Box<CExpr>,
+    },
+    Metric(QueryMetric),
+    Neg(Box<CExpr>),
+    /// The Euclidean magnitude of a whole vector channel (`norm(@accel)`), by
+    /// name. A per-sample scalar in the channel's own unit, reduced by the
+    /// enclosing aggregate.
+    Norm(String),
+    Not(Box<CExpr>),
     Power {
         base: Box<CExpr>,
         exponent: i8,
     },
+    Sqrt(Box<CExpr>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CmpOp {
-    Lt,
-    Le,
-    Gt,
-    Ge,
     Eq,
+    Ge,
+    Gt,
+    Le,
+    Lt,
     Ne,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ArithOp {
     Add,
-    Sub,
-    Mul,
     Div,
+    Mul,
+    Sub,
 }
 
 /// The static type the checker gives an expression. Dimensionless values carry
@@ -362,7 +362,6 @@ pub(crate) enum ArithOp {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ValueType {
     Condition,
-    Timestamp,
     /// A dimensioned value. The dimension is never dimensionless - that case is
     /// [`ValueType::Dimensionless`]. `wrap` is the period the value repeats at,
     /// `None` for a value that does not wrap, and is only ever set when the
@@ -372,6 +371,7 @@ enum ValueType {
         wrap: Option<WrapPeriod>,
     },
     Dimensionless(Kind),
+    Timestamp,
 }
 
 /// How the language treats a dimensionless value. All three share the zero
@@ -379,14 +379,14 @@ enum ValueType {
 /// categories (a count is not a ratio is not a bare number).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
-    /// A bare number with no unit, and the result of dimensionless arithmetic.
-    Number,
     /// A discrete tally (satellite counts). The only kind `==`/`!=` accept.
     Count,
-    /// A percentage-denominated share (satellite utilization).
-    Ratio,
     /// A number on a published scale (the geomagnetic indices, TEC units).
     Index,
+    /// A bare number with no unit, and the result of dimensionless arithmetic.
+    Number,
+    /// A percentage-denominated share (satellite utilization).
+    Ratio,
 }
 
 impl ValueType {

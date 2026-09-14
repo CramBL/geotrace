@@ -20,10 +20,6 @@ use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use crate::app::storage_controls;
 use crate::settings::StorageSettings;
 
-/// Shown in place of the list while the startup open runs: the database is
-/// not unavailable, it is not open yet.
-pub(in crate::app) const OPENING_RECORDINGS_DATABASE: &str = "Opening the recordings database";
-
 mod delete_shelved_prompt;
 mod table;
 
@@ -31,36 +27,9 @@ mod table;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PruneKind {
     Age,
-    TotalSize,
     Count,
+    TotalSize,
 }
-
-const PRUNE_WINDOW_TITLE: &str = "Prune History…";
-
-/// What a permanent delete of stored recordings costs, and what it leaves
-/// alone. Shared by the prune dialog, the auto-prune prompt and the
-/// delete-shelved confirmation.
-pub(super) const DESTRUCTIVE_DELETE_HOVER: &str =
-    "This cannot be undone. The original source files are unaffected.";
-
-/// The width the window opens at, which is the width the listing's columns
-/// have to fit in.
-const DEFAULT_WINDOW_WIDTH_PX: f32 = 640.0;
-
-/// The height the window opens at, whatever the length of the listing it
-/// opens on.
-const DEFAULT_WINDOW_HEIGHT_PX: f32 = 480.0;
-
-/// Floor on the listing's height, so a very short screen still shows part of
-/// the list.
-const MIN_LISTING_HEIGHT: f32 = 100.0;
-
-/// Lines of body text the listing keeps for the footer before the footer has
-/// been drawn once, which is more than its rule, its stats line and the
-/// database path take. A first frame that kept too little would put the
-/// content past the window's bottom edge, and egui grows the window by the
-/// difference and never back.
-const FOOTER_LINES_BEFORE_IT_IS_DRAWN: f32 = 4.0;
 
 struct PruneDialog {
     open: bool,
@@ -506,15 +475,15 @@ pub(super) struct OpenShelf {
 /// How far the open shelf has got in reading its recording's stored track
 /// table.
 pub(super) enum ShelfTracks {
-    /// Where a freshly opened shelf starts, and where a mutation puts one that
-    /// had already read its table.
-    Unrequested,
-    /// Set once the listing sends the read request, until the worker's reply
-    /// arrives.
-    Requested,
     /// [`gt_store::ReadOnlyHistoryDatabase::stored_track_table`]'s result
     /// verbatim.
     Read(Vec<TrackRange>),
+    /// Set once the listing sends the read request, until the worker's reply
+    /// arrives.
+    Requested,
+    /// Where a freshly opened shelf starts, and where a mutation puts one that
+    /// had already read its table.
+    Unrequested,
 }
 
 /// State for the inline identity-rename editor on one History row.
@@ -1072,6 +1041,37 @@ fn date_to_end_us(s: &str) -> Option<i64> {
     let dt = date.and_hms_opt(23, 59, 59)?.and_utc();
     Some(dt.timestamp_micros())
 }
+
+/// Shown in place of the list while the startup open runs: the database is
+/// not unavailable, it is not open yet.
+pub(in crate::app) const OPENING_RECORDINGS_DATABASE: &str = "Opening the recordings database";
+
+const PRUNE_WINDOW_TITLE: &str = "Prune History…";
+
+/// What a permanent delete of stored recordings costs, and what it leaves
+/// alone. Shared by the prune dialog, the auto-prune prompt and the
+/// delete-shelved confirmation.
+pub(super) const DESTRUCTIVE_DELETE_HOVER: &str =
+    "This cannot be undone. The original source files are unaffected.";
+
+/// The width the window opens at, which is the width the listing's columns
+/// have to fit in.
+const DEFAULT_WINDOW_WIDTH_PX: f32 = 640.0;
+
+/// The height the window opens at, whatever the length of the listing it
+/// opens on.
+const DEFAULT_WINDOW_HEIGHT_PX: f32 = 480.0;
+
+/// Floor on the listing's height, so a very short screen still shows part of
+/// the list.
+const MIN_LISTING_HEIGHT: f32 = 100.0;
+
+/// Lines of body text the listing keeps for the footer before the footer has
+/// been drawn once, which is more than its rule, its stats line and the
+/// database path take. A first frame that kept too little would put the
+/// content past the window's bottom edge, and egui grows the window by the
+/// difference and never back.
+const FOOTER_LINES_BEFORE_IT_IS_DRAWN: f32 = 4.0;
 
 #[cfg(test)]
 mod tests;

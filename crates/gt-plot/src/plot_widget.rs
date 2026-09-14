@@ -1,28 +1,6 @@
 //! The track plot widget: [`PlotState`], the frame loop
 //! ([`show_track_plot`]), and the submodules it orchestrates.
 
-mod backward_time_step;
-mod chips;
-mod clock_offset;
-mod context;
-mod flares;
-mod geomagnetic;
-mod jamming;
-mod legend;
-mod levels;
-mod lines;
-mod overlay;
-#[cfg(test)]
-mod reference_illustration;
-mod snap_error;
-mod style;
-mod tec;
-mod time_axis;
-
-pub use chips::{ChannelVisibility, MetricVisibility};
-pub use legend::{LEGEND_DOCK_OFFSET, legend_is_docked};
-pub use overlay::EDGE_MARKER_INSET;
-
 use backward_time_step::BackwardTimeStepViewport;
 use chips::{FlareChipState, HoveredChip, MetricAvailability, MetricChipState, SectionGates};
 use clock_offset::ClockOffsetViewport;
@@ -54,39 +32,27 @@ use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::ops::RangeInclusive;
 
-/// Grid base-color intensity, as a multiplier on the theme text color.
-/// egui_plot fixes the grid stroke width at 1.0, so brightness is the only way
-/// to keep the grid from dominating the thinner data lines.
-const GRID_COLOR_STRENGTH: f32 = 0.5;
-/// Default stroke width of the metric and channel plot lines.  Slightly below
-/// egui_plot's 1.0 default: many lines are enabled by default, and a thinner
-/// stroke keeps overlapping lines readable.
-pub const DEFAULT_PLOT_LINE_WIDTH: f32 = 0.75;
-/// Allowed plot line width, shared by the display-settings slider and the
-/// clamp applied to persisted settings on load.
-pub const PLOT_LINE_WIDTH_RANGE: RangeInclusive<f32> = 0.5..=5.0;
-/// Stroke width of the vertical seek lines (hovered match, map position). Above
-/// the data lines so the marker stays findable across a crowded plot.
-const SEEK_LINE_WIDTH: f32 = 1.5;
-/// Stroke width of a band-row divider. egui_plot fixes its grid stroke at 1.0,
-/// and a divider continues the grid line above it.
-const BAND_DIVIDER_WIDTH: f32 = 1.0;
+pub use chips::{ChannelVisibility, MetricVisibility};
+pub use legend::{LEGEND_DOCK_OFFSET, legend_is_docked};
+pub use overlay::EDGE_MARKER_INSET;
 
-/// The salt [`show_track_plot`] passes to its plot. `egui_plot` derives the
-/// plot's memory id from it, which is how a test reads the transform of the
-/// frame the plot last drew.
-pub const TRACK_PLOT_ID_SALT: &str = "track_plot";
-
-/// Padding either side of the data when the view resets to fit it, as a
-/// fraction of the data's own span.
-const RESET_X_MARGIN_FRACTION: f64 = 0.05;
-/// Floor on that padding, so a recording of a single instant still resets to
-/// a view with width.
-const RESET_X_MARGIN_MIN_SECS: f64 = 1.0;
-
-/// Fallback label for a file index with no loaded recording behind it, so a
-/// stale index still shows something readable.
-const UNKNOWN_RECORDING: &str = "Unknown file";
+mod backward_time_step;
+mod chips;
+mod clock_offset;
+mod context;
+mod flares;
+mod geomagnetic;
+mod jamming;
+mod legend;
+mod levels;
+mod lines;
+mod overlay;
+#[cfg(test)]
+mod reference_illustration;
+mod snap_error;
+mod style;
+mod tec;
+mod time_axis;
 
 /// The global filter's time window in Unix seconds. Everything the plot draws,
 /// fits and reports is clamped to it. The default is the window of
@@ -1108,6 +1074,40 @@ pub fn find_closest_tpv(
     best.map(|(fi, ti, pi, _)| (fi, ti, pi))
 }
 
+/// Grid base-color intensity, as a multiplier on the theme text color.
+/// egui_plot fixes the grid stroke width at 1.0, so brightness is the only way
+/// to keep the grid from dominating the thinner data lines.
+const GRID_COLOR_STRENGTH: f32 = 0.5;
+/// Default stroke width of the metric and channel plot lines.  Slightly below
+/// egui_plot's 1.0 default: many lines are enabled by default, and a thinner
+/// stroke keeps overlapping lines readable.
+pub const DEFAULT_PLOT_LINE_WIDTH: f32 = 0.75;
+/// Allowed plot line width, shared by the display-settings slider and the
+/// clamp applied to persisted settings on load.
+pub const PLOT_LINE_WIDTH_RANGE: RangeInclusive<f32> = 0.5..=5.0;
+/// Stroke width of the vertical seek lines (hovered match, map position). Above
+/// the data lines so the marker stays findable across a crowded plot.
+const SEEK_LINE_WIDTH: f32 = 1.5;
+/// Stroke width of a band-row divider. egui_plot fixes its grid stroke at 1.0,
+/// and a divider continues the grid line above it.
+const BAND_DIVIDER_WIDTH: f32 = 1.0;
+
+/// The salt [`show_track_plot`] passes to its plot. `egui_plot` derives the
+/// plot's memory id from it, which is how a test reads the transform of the
+/// frame the plot last drew.
+pub const TRACK_PLOT_ID_SALT: &str = "track_plot";
+
+/// Padding either side of the data when the view resets to fit it, as a
+/// fraction of the data's own span.
+const RESET_X_MARGIN_FRACTION: f64 = 0.05;
+/// Floor on that padding, so a recording of a single instant still resets to
+/// a view with width.
+const RESET_X_MARGIN_MIN_SECS: f64 = 1.0;
+
+/// Fallback label for a file index with no loaded recording behind it, so a
+/// stale index still shows something readable.
+const UNKNOWN_RECORDING: &str = "Unknown file";
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
@@ -1131,9 +1131,6 @@ mod tests {
     fn a_split_recording_numbers_its_tracks() {
         assert_eq!(super::track_label("Morning ride", 1, 3), "Morning ride T2");
     }
-
-    /// 2024-01-15 12:00:00 UTC.
-    const T: f64 = 1_705_320_000.0;
 
     #[test]
     fn a_snapped_point_is_captioned_by_its_line() {
@@ -1189,10 +1186,6 @@ mod tests {
         crate::series::build_all_series(&files, AnalysisConfig::default())
     }
 
-    /// A day is the widest offset the shared y-axis shows. This baseline still
-    /// draws on the line.
-    const ON_SCALE_HOURS: i64 = 20;
-
     #[rstest::rstest]
     #[case::every_baseline_on_the_axis(&[ON_SCALE_HOURS], &[true], None)]
     #[case::one_baseline_off_it(&[-48], &[true], Some("+48h"))]
@@ -1213,4 +1206,11 @@ mod tests {
 
         assert_eq!(baseline.as_deref(), expected);
     }
+
+    /// 2024-01-15 12:00:00 UTC.
+    const T: f64 = 1_705_320_000.0;
+
+    /// A day is the widest offset the shared y-axis shows. This baseline still
+    /// draws on the line.
+    const ON_SCALE_HOURS: i64 = 20;
 }

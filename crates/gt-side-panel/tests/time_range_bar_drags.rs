@@ -118,8 +118,8 @@ struct DragAlongTheTrack {
 /// bar.
 #[derive(Debug, Clone, Copy)]
 enum WindowBound {
-    Start,
     End,
+    Start,
 }
 
 impl WindowBound {

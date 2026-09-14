@@ -21,38 +21,6 @@ use crate::tec_renderer::{self, TecHeatmapSnapshot};
 use crate::test_util;
 use crate::transform::MercTransform;
 
-/// Where the rendered TEC map lands, resolved from this crate's manifest dir.
-const TEC_ASSET_PATH: &str =
-    "../external_environmental_data/gt-ionex/assets/tec_map_2024_05_10_gannon_storm.png";
-
-/// Where the rendered interference map lands, resolved from this crate's
-/// manifest dir.
-const INTERFERENCE_ASSET_PATH: &str =
-    "../external_environmental_data/gt-jam/assets/interference_map_2026_07_20.png";
-
-/// Zoom at which the world spans `256 * 2^2 = 1024` pixels, which is the
-/// canvas width below. The canvas height then covers 66 degrees of latitude
-/// either side of the equator, the band the published grid carries its
-/// structure in.
-const WORLD_ZOOM: f64 = 2.0;
-
-const CANVAS_SIZE: egui::Vec2 = egui::vec2(1024.0, 512.0);
-
-/// Zoom at which the world spans `256 * 2^3 = 2048` pixels, where one
-/// published cell of about 22 km is two pixels across.
-const INTERFERENCE_WORLD_ZOOM: f64 = 3.0;
-
-const INTERFERENCE_CANVAS_SIZE: egui::Vec2 = egui::vec2(2048.0, 1024.0);
-
-/// The interference canvas is drawn at twice the width the asset is written
-/// at and downsampled: a cell covering half a pixel of the written asset
-/// lands as coverage.
-const INTERFERENCE_SUPERSAMPLE: u32 = 2;
-
-/// Drawn without the transparency the app lays the heatmap over its tiles
-/// with: the illustration has no tiles under it.
-const OPACITY_PERCENT: f32 = 100.0;
-
 /// The archived epoch of 10 May 2024 whose map peaks highest, which is the
 /// value the reference material quotes.
 fn storm_peak_instant() -> DateTime<Utc> {
@@ -176,3 +144,35 @@ fn generate_interference_reference_illustration() {
     written.save(&path).expect("the asset is written");
     println!("wrote {}", path.display());
 }
+
+/// Where the rendered TEC map lands, resolved from this crate's manifest dir.
+const TEC_ASSET_PATH: &str =
+    "../external_environmental_data/gt-ionex/assets/tec_map_2024_05_10_gannon_storm.png";
+
+/// Where the rendered interference map lands, resolved from this crate's
+/// manifest dir.
+const INTERFERENCE_ASSET_PATH: &str =
+    "../external_environmental_data/gt-jam/assets/interference_map_2026_07_20.png";
+
+/// Zoom at which the world spans `256 * 2^2 = 1024` pixels, which is the
+/// canvas width below. The canvas height then covers 66 degrees of latitude
+/// either side of the equator, the band the published grid carries its
+/// structure in.
+const WORLD_ZOOM: f64 = 2.0;
+
+const CANVAS_SIZE: egui::Vec2 = egui::vec2(1024.0, 512.0);
+
+/// Zoom at which the world spans `256 * 2^3 = 2048` pixels, where one
+/// published cell of about 22 km is two pixels across.
+const INTERFERENCE_WORLD_ZOOM: f64 = 3.0;
+
+const INTERFERENCE_CANVAS_SIZE: egui::Vec2 = egui::vec2(2048.0, 1024.0);
+
+/// The interference canvas is drawn at twice the width the asset is written
+/// at and downsampled: a cell covering half a pixel of the written asset
+/// lands as coverage.
+const INTERFERENCE_SUPERSAMPLE: u32 = 2;
+
+/// Drawn without the transparency the app lays the heatmap over its tiles
+/// with: the illustration has no tiles under it.
+const OPACITY_PERCENT: f32 = 100.0;

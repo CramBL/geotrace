@@ -73,21 +73,6 @@ impl From<gt_types::DataCategory> for DisplayCategory {
     }
 }
 
-/// Every category's bit set - the `hide_all` state.
-const ALL_HIDDEN: u16 = u16::MAX >> (u16::BITS as usize - DisplayCategory::COUNT);
-
-/// The categories hidden on a fresh install.
-///
-/// [`DisplayCategory::JammingHexes`] and [`DisplayCategory::TecHeatmap`] are
-/// opt-in: they colour the whole map from data the user did not record.
-const DEFAULT_HIDDEN: [DisplayCategory; 2] =
-    [DisplayCategory::JammingHexes, DisplayCategory::TecHeatmap];
-
-const _: () = assert!(
-    DisplayCategory::COUNT <= u16::BITS as usize,
-    "DisplayMask stores one bit per category in a u16"
-);
-
 /// Global per-category visibility of the map's ink - the render-side AND
 /// on top of the per-track tree visibility.
 ///
@@ -185,6 +170,21 @@ impl From<DisplayMask> for ChangedCategories {
         )
     }
 }
+
+/// Every category's bit set - the `hide_all` state.
+const ALL_HIDDEN: u16 = u16::MAX >> (u16::BITS as usize - DisplayCategory::COUNT);
+
+/// The categories hidden on a fresh install.
+///
+/// [`DisplayCategory::JammingHexes`] and [`DisplayCategory::TecHeatmap`] are
+/// opt-in: they colour the whole map from data the user did not record.
+const DEFAULT_HIDDEN: [DisplayCategory; 2] =
+    [DisplayCategory::JammingHexes, DisplayCategory::TecHeatmap];
+
+const _: () = assert!(
+    DisplayCategory::COUNT <= u16::BITS as usize,
+    "DisplayMask stores one bit per category in a u16"
+);
 
 #[cfg(test)]
 mod tests {

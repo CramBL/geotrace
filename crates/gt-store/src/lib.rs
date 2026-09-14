@@ -38,13 +38,6 @@ pub use gt_ionex_store::{ArchivedMapDay, IonexStore, IonexStoreError, ReadOnlyIo
 pub use gt_jam_store::{JamStore, JamStoreError, ReadOnlyJamStore, StoredDay};
 pub use gt_solar_store::{ArchivedIndexDay, ReadOnlySolarStore, SolarStore, SolarStoreError};
 
-mod archive_handle;
-mod day_archive;
-pub mod log_attachments;
-mod per_archive;
-mod recordings_handle;
-mod writable_archive;
-
 pub use archive_handle::ArchiveHandle;
 pub use day_archive::{EnvironmentArchive, StoredDayArchive};
 pub use log_attachments::{
@@ -53,6 +46,13 @@ pub use log_attachments::{
 pub use per_archive::PerArchive;
 pub use recordings_handle::RecordingsHandle;
 pub use writable_archive::WritableArchive;
+
+mod archive_handle;
+mod day_archive;
+pub mod log_attachments;
+mod per_archive;
+mod recordings_handle;
+mod writable_archive;
 
 /// The recording history database. Named for what it holds, since the store
 /// fronts more than one.
@@ -72,9 +72,6 @@ pub type TecMapArchive = ArchiveHandle<IonexStore, ReadOnlyIonexStore>;
 
 /// The solar flare archive as this session opened it.
 pub type SolarFlareArchive = ArchiveHandle<FlareStore, ReadOnlyFlareStore>;
-
-/// Directory holding every database, under the platform data directory.
-const DIRECTORY: &str = "geotrace";
 
 /// Everything [`Store`] itself can fail at. Opening a database yields that
 /// database's own error type.
@@ -222,6 +219,9 @@ impl<W, R> SharedArchive<W, R> {
         Ok(shared.insert(open()?).clone())
     }
 }
+
+/// Directory holding every database, under the platform data directory.
+const DIRECTORY: &str = "geotrace";
 
 #[cfg(test)]
 mod tests {

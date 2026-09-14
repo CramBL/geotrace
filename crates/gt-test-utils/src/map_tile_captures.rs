@@ -7,10 +7,6 @@ use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-/// The environment variable holding the path a snapshot run appends the tiles
-/// its map could not draw to. Defined here, so no library code reads it.
-const RECORD_MISSES_ENV: &str = "GEOTRACE_RECORD_TILE_MISSES";
-
 /// Where `just map-tile-captures` writes the captured tiles and their
 /// manifest.
 pub fn map_tile_capture_dir() -> PathBuf {
@@ -60,3 +56,7 @@ pub fn assert_map_tile_capture_is_complete(
         missing.join(" ")
     );
 }
+
+/// The environment variable holding the path a snapshot run appends the tiles
+/// its map could not draw to. Defined here, so no library code reads it.
+const RECORD_MISSES_ENV: &str = "GEOTRACE_RECORD_TILE_MISSES";

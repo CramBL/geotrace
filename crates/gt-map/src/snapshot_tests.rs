@@ -183,12 +183,12 @@ fn complement(ranges: &[std::ops::Range<usize>], len: usize) -> Vec<std::ops::Ra
 /// When a matches snapshot captures the map.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MatchCapture {
-    /// Once the halos and every load animation have settled. The matches carry
-    /// no run number, so the reveal never fires.
-    Settled,
     /// On the single frame a completed run's reveal fires, with the halos at
     /// their most inflated.
     RevealStart,
+    /// Once the halos and every load animation have settled. The matches carry
+    /// no run number, so the reveal never fires.
+    Settled,
 }
 
 /// The fixture track under a completed run, drawn through the whole
@@ -385,10 +385,10 @@ fn snapshot_many_track_warnings() -> Vec<gt_ui_types::TrackSpaceWeatherWarning> 
 
 /// How the glyph is interacted with before the snapshot is taken.
 enum IndicatorInteraction {
-    /// Hold the pointer on it, which opens its hover.
-    Hover,
     /// Click it, which opens the levels popup under it.
     Click,
+    /// Hold the pointer on it, which opens its hover.
+    Hover,
 }
 
 /// The warning indicator in the map's top-right corner, with the pointer on
@@ -440,10 +440,6 @@ fn snapshot_space_weather_warning(
     map.snapshot(name);
 }
 
-/// Zoom at which the whole world fits the snapshot canvas: the world spans
-/// `256 * 2^zoom` pixels.
-const WORLD_ZOOM: f64 = 1.5;
-
 /// The TEC heatmap under the fixture track, at the 10 May 2024 storm's peak
 /// hours. The whole world is in view, so one snapshot covers the ramp from the
 /// quiet night side to the equatorial crests past 150 TECU.
@@ -482,11 +478,6 @@ fn snapshot_tec_heatmap(
     }
     map.snapshot(name);
 }
-
-/// Nudge north (smaller Mercator y) by roughly ten pixels at the
-/// snapped-track snapshot tests' zoom, so the snapped line is drawn beside
-/// the recorded one.
-const SNAPPED_OFFSET_MERC_Y: f64 = -1.5e-6;
 
 /// A snapped segment following the recorded points in `range`, nudged
 /// north by [`SNAPPED_OFFSET_MERC_Y`].
@@ -590,11 +581,6 @@ fn a_named_snapped_edge_across_the_viewport(
         y: f64::midpoint(min.1, max.1),
     })
 }
-
-/// Eastward Mercator offset of the synthetic whisker tests' snapped
-/// positions: ~9 m at the fixture latitude, so whiskers are clearly
-/// longer than the strokes they connect.
-const WHISKER_OFFSET_MERC_X: f64 = 4.0e-7;
 
 /// Whisker anchors and the matching snapped polyline for a run over
 /// the fixes drawn at `drawn`: every one snaps [`WHISKER_OFFSET_MERC_X`] east.
@@ -952,10 +938,6 @@ fn snap_log_matches(
     map.snapshot(name);
 }
 
-/// Entries the live-filter layer's cluster at the centre of the fixture stands
-/// for: more than the tooltip writes out, leaving it a tail to state.
-const HOVERED_CLUSTER_ENTRIES: usize = 8;
-
 /// The map framed on the fixture recording, drawing the matches the caller
 /// puts at its centre. That centre is where the map frames the recording, so
 /// it lands at the centre of the viewport.
@@ -1072,10 +1054,6 @@ fn hovering_a_hexagon_names_the_lines_of_the_topmost_layer_it_is_on() {
     );
 }
 
-/// The name the layers of the tooltip test were built with, as a session of
-/// two logs of one name gives it.
-const TOOLTIP_LOG_NAME: &str = "navsyncd.log · walk.gtd";
-
 /// The tooltip writes the name over the hexagon's lines while the layers were
 /// built with one, and the lines alone while they were not.
 #[rstest::rstest]
@@ -1161,21 +1139,6 @@ fn snap_display_mask_hides_markers() {
         .render();
     map.snapshot("display_mask_hides_markers");
 }
-
-/// Fix stride along the close-up snapshot's road. Eleven fixes at this stride
-/// draw the line across two thirds of the 800 px canvas at the map's maximum
-/// zoom, where a metre is 2.97 px.
-const CLOSE_UP_STRIDE_M: f64 = 18.0;
-
-/// How far the road bends north at its middle.
-const CLOSE_UP_BEND_M: f64 = 12.0;
-
-/// The horizontal accuracy each fix of the close-up snapshot reports, in
-/// metres: the receiver loses accuracy through the middle of the road and
-/// recovers by its end. The map draws them as circles 42 px to 95 px across,
-/// and the widest reach over their neighbours' arrows.
-const CLOSE_UP_ACCURACIES_M: [f32; 11] =
-    [7.0, 8.0, 10.0, 13.0, 15.0, 16.0, 14.0, 11.0, 9.0, 8.0, 7.0];
 
 /// Metres east and north of the first fix that the close-up snapshot's fix
 /// `index` sits at.
@@ -1388,10 +1351,6 @@ fn snap_sticky_point_window() {
     map.snapshot("sticky_point_window");
 }
 
-/// Wheel points the scroll test sends over the sky column: several rows of the
-/// fix metrics.
-const POINT_WINDOW_WHEEL_POINTS: f32 = 200.0;
-
 /// The point window's body has no scroll of its own: the wheel over the sky
 /// column moves that column inside its own scroll area, and the title bar
 /// renders the same before and after. Both layouts of the body are covered,
@@ -1596,10 +1555,6 @@ fn snap_track_endpoint_flags_with_the_fix_icons_faded_out() {
     map.snapshot("track_endpoint_flags_icons_faded_out");
 }
 
-/// The map scale at which the walking track's fixes sit closer together than
-/// the fade band's floor, so every fix icon is fully transparent.
-const ZOOM_BELOW_THE_ICON_FADE_BAND: f64 = 10.0;
-
 /// Snapshot: a track zoomed out until its whole line packs below one pixel,
 /// which the map draws as a dot. One start flag stands there, where two flags
 /// would cover each other.
@@ -1614,10 +1569,6 @@ fn snap_track_endpoint_flags_on_a_track_drawn_as_one_dot() {
     map.render_one_more_frame_hovering(gt_ui_types::HighlightScope::Track(test_util::track0()));
     map.snapshot("track_endpoint_flags_on_a_dot");
 }
-
-/// The map scale at which the walking track's whole 1.9 km span is under one
-/// pixel wide.
-const ZOOM_THAT_COLLAPSES_THE_TRACK: f64 = 5.0;
 
 /// Snapshot: a track shows one flag split between the start green and the
 /// finish chequerboard where its two ends meet. This one walks a rectangle
@@ -1643,10 +1594,6 @@ fn snap_track_endpoint_round_trip_flag(
     map.snapshot(name);
 }
 
-/// The side of the rectangle the round trip fixture walks, about 250 m east
-/// and 450 m north.
-const LOOP_SIDE_DEGREES: f64 = 0.004;
-
 /// Snapshot: a 63 m track at three zooms. Its flags lean apart while their
 /// feet are under a cloth width apart, and stand up once the zoom separates
 /// them. The highlighted pair leans at a zoom where the plain pair stands.
@@ -1671,10 +1618,6 @@ fn snap_track_endpoint_flags_on_a_short_track(
     }
     map.snapshot(name);
 }
-
-/// Longitude between consecutive fixes of the short track, about 13 m at the
-/// map's default centre.
-const SHORT_TRACK_STEP_DEGREES: f64 = 0.000_2;
 
 /// Snapshot: a highlighted track whose time window keeps one fix shows the
 /// start flag at that fix, and no finish flag.
@@ -1714,10 +1657,6 @@ fn snap_track_endpoint_flag_cluster(
     map.snapshot(name);
 }
 
-/// How far each track of the round trip fixture walks from the door, about
-/// 450 m north or 250 m east.
-const DOOR_REACH_DEGREES: f64 = 0.004;
-
 /// Snapshot: two tracks that meet mid-route, one's end 5 m from the other's
 /// start. The two flags draw as one cluster flag with the split cloth and a
 /// count of two, and stand on their own at the zoom that separates them by
@@ -1735,6 +1674,67 @@ fn snap_track_endpoint_flags_meeting_mid_route(#[case] name: &str, #[case] zoom:
         .render();
     map.snapshot(name);
 }
+
+/// Zoom at which the whole world fits the snapshot canvas: the world spans
+/// `256 * 2^zoom` pixels.
+const WORLD_ZOOM: f64 = 1.5;
+
+/// Nudge north (smaller Mercator y) by roughly ten pixels at the
+/// snapped-track snapshot tests' zoom, so the snapped line is drawn beside
+/// the recorded one.
+const SNAPPED_OFFSET_MERC_Y: f64 = -1.5e-6;
+
+/// Eastward Mercator offset of the synthetic whisker tests' snapped
+/// positions: ~9 m at the fixture latitude, so whiskers are clearly
+/// longer than the strokes they connect.
+const WHISKER_OFFSET_MERC_X: f64 = 4.0e-7;
+
+/// Entries the live-filter layer's cluster at the centre of the fixture stands
+/// for: more than the tooltip writes out, leaving it a tail to state.
+const HOVERED_CLUSTER_ENTRIES: usize = 8;
+
+/// The name the layers of the tooltip test were built with, as a session of
+/// two logs of one name gives it.
+const TOOLTIP_LOG_NAME: &str = "navsyncd.log · walk.gtd";
+
+/// Fix stride along the close-up snapshot's road. Eleven fixes at this stride
+/// draw the line across two thirds of the 800 px canvas at the map's maximum
+/// zoom, where a metre is 2.97 px.
+const CLOSE_UP_STRIDE_M: f64 = 18.0;
+
+/// How far the road bends north at its middle.
+const CLOSE_UP_BEND_M: f64 = 12.0;
+
+/// The horizontal accuracy each fix of the close-up snapshot reports, in
+/// metres: the receiver loses accuracy through the middle of the road and
+/// recovers by its end. The map draws them as circles 42 px to 95 px across,
+/// and the widest reach over their neighbours' arrows.
+const CLOSE_UP_ACCURACIES_M: [f32; 11] =
+    [7.0, 8.0, 10.0, 13.0, 15.0, 16.0, 14.0, 11.0, 9.0, 8.0, 7.0];
+
+/// Wheel points the scroll test sends over the sky column: several rows of the
+/// fix metrics.
+const POINT_WINDOW_WHEEL_POINTS: f32 = 200.0;
+
+/// The map scale at which the walking track's fixes sit closer together than
+/// the fade band's floor, so every fix icon is fully transparent.
+const ZOOM_BELOW_THE_ICON_FADE_BAND: f64 = 10.0;
+
+/// The map scale at which the walking track's whole 1.9 km span is under one
+/// pixel wide.
+const ZOOM_THAT_COLLAPSES_THE_TRACK: f64 = 5.0;
+
+/// The side of the rectangle the round trip fixture walks, about 250 m east
+/// and 450 m north.
+const LOOP_SIDE_DEGREES: f64 = 0.004;
+
+/// Longitude between consecutive fixes of the short track, about 13 m at the
+/// map's default centre.
+const SHORT_TRACK_STEP_DEGREES: f64 = 0.000_2;
+
+/// How far each track of the round trip fixture walks from the door, about
+/// 450 m north or 250 m east.
+const DOOR_REACH_DEGREES: f64 = 0.004;
 
 /// How far the end of the first track lies from the start of the second: one
 /// cloth width spans 19 m at zoom 16 and 2.4 m at zoom 19.

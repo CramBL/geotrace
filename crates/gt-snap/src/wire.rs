@@ -15,33 +15,6 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
-/// The response attributes production requests specify: the matched-point
-/// group, the matched shape, the map-data version and run confidence for
-/// cache metadata and the snap status, and the edge attribute subset shown on
-/// snapped-track hover (see the feature inventory in docs/snap/design.md).
-///
-/// Captured reality: top-level fields like `osm_changeset` and
-/// `confidence_score` are dropped by the server unless explicitly listed.
-pub const INCLUDED_ATTRIBUTES: &[&str] = &[
-    "matched.point",
-    "matched.type",
-    "matched.edge_index",
-    "matched.distance_along_edge",
-    "matched.distance_from_trace_point",
-    "matched.begin_route_discontinuity",
-    "matched.end_route_discontinuity",
-    "shape",
-    "osm_changeset",
-    "confidence_score",
-    "edge.names",
-    "edge.way_id",
-    "edge.road_class",
-    "edge.speed_limit",
-    "edge.surface",
-    "edge.begin_shape_index",
-    "edge.end_shape_index",
-];
-
 /// One input shape point: a recorded position, optionally timestamped.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ShapePoint {
@@ -109,8 +82,8 @@ impl Costing {
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum FilterAction {
-    Include,
     Exclude,
+    Include,
 }
 
 /// The `filters` request object trimming the response to a deliberate subset.
@@ -208,12 +181,12 @@ impl TraceAttributesRequest {
     Deserialize,
 )]
 pub enum SnapPointKind {
-    #[serde(rename = "matched")]
-    #[strum(serialize = "matched")]
-    Snapped,
     #[serde(rename = "interpolated")]
     #[strum(serialize = "interpolated")]
     Interpolated,
+    #[serde(rename = "matched")]
+    #[strum(serialize = "matched")]
+    Snapped,
     #[serde(rename = "unmatched")]
     #[strum(serialize = "unmatched")]
     Unsnapped,
@@ -253,9 +226,6 @@ pub struct SnappedPoint {
     pub end_route_discontinuity: bool,
 }
 
-/// The wire value Valhalla uses for "this point has no edge association".
-const EDGE_INDEX_NONE: u64 = u64::MAX;
-
 /// Fold the wire's no-edge sentinel value into `None` (see
 /// [`SnappedPoint::edge_index`]).
 fn edge_index_from_wire<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
@@ -276,13 +246,13 @@ where
 #[serde(rename_all = "snake_case")]
 pub enum RoadClass {
     Motorway,
-    Trunk,
     Primary,
-    Secondary,
-    Tertiary,
-    Unclassified,
     Residential,
+    Secondary,
     ServiceOther,
+    Tertiary,
+    Trunk,
+    Unclassified,
     /// Forward compatibility: a class unknown to this client.
     #[serde(other)]
     Unknown,
@@ -314,14 +284,14 @@ impl RoadClass {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumCount, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Surface {
-    PavedSmooth,
-    Paved,
-    PavedRough,
     Compacted,
     Dirt,
     Gravel,
-    Path,
     Impassable,
+    Path,
+    Paved,
+    PavedRough,
+    PavedSmooth,
     /// Forward compatibility: a surface unknown to this client.
     #[serde(other)]
     Unknown,
@@ -357,9 +327,6 @@ pub enum SpeedLimit {
     /// Explicitly derestricted - `"unlimited"` on the wire.
     Unlimited,
 }
-
-/// The one non-numeric value Valhalla documents for `edge.speed_limit`.
-const SPEED_LIMIT_UNLIMITED: &str = "unlimited";
 
 impl SpeedLimit {
     /// Hover-text rendering: `"120 km/h"` or `"Unlimited"`.
@@ -466,17 +433,17 @@ pub struct ErrorResponse {
 pub enum ErrorCode {
     /// 114: request lacks `shape` (or `encoded_polyline`).
     MissingShape,
+    /// 444: the matcher found no path - every point is off the road network.
+    /// Not a failure for merging: it maps to all-unsnapped points.
+    OffNetwork,
+    /// A code unknown to this client, kept verbatim.
+    Other(u32),
     /// 153: more shape points than the server accepts per request. The
     /// error text states the limit (16 000 on the FOSSGIS instance).
     TooManyShapePoints,
     /// 158: a trace option is out of bounds. Captured reality: out-of-range
     /// options are rejected, never clamped.
     TraceOptionOutOfBounds,
-    /// 444: the matcher found no path - every point is off the road network.
-    /// Not a failure for merging: it maps to all-unsnapped points.
-    OffNetwork,
-    /// A code unknown to this client, kept verbatim.
-    Other(u32),
 }
 
 impl From<u32> for ErrorCode {
@@ -502,3 +469,36 @@ impl From<ErrorCode> for u32 {
         }
     }
 }
+
+/// The response attributes production requests specify: the matched-point
+/// group, the matched shape, the map-data version and run confidence for
+/// cache metadata and the snap status, and the edge attribute subset shown on
+/// snapped-track hover (see the feature inventory in docs/snap/design.md).
+///
+/// Captured reality: top-level fields like `osm_changeset` and
+/// `confidence_score` are dropped by the server unless explicitly listed.
+pub const INCLUDED_ATTRIBUTES: &[&str] = &[
+    "matched.point",
+    "matched.type",
+    "matched.edge_index",
+    "matched.distance_along_edge",
+    "matched.distance_from_trace_point",
+    "matched.begin_route_discontinuity",
+    "matched.end_route_discontinuity",
+    "shape",
+    "osm_changeset",
+    "confidence_score",
+    "edge.names",
+    "edge.way_id",
+    "edge.road_class",
+    "edge.speed_limit",
+    "edge.surface",
+    "edge.begin_shape_index",
+    "edge.end_shape_index",
+];
+
+/// The wire value Valhalla uses for "this point has no edge association".
+const EDGE_INDEX_NONE: u64 = u64::MAX;
+
+/// The one non-numeric value Valhalla documents for `edge.speed_limit`.
+const SPEED_LIMIT_UNLIMITED: &str = "unlimited";

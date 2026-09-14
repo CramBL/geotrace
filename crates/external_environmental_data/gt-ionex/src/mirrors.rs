@@ -270,14 +270,14 @@ impl MirrorAttempt {
 /// Why a mirror did not serve a day's file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MirrorOutcome {
+    /// The request did not complete, or the file the mirror served could not
+    /// be read.
+    Failed(String),
     /// The mirror has no file of this product for the day.
     NoFile,
     /// The mirror serves the maps to registered callers only and no Earthdata
     /// token is set, so nothing was requested from it.
     SkippedWithoutToken,
-    /// The request did not complete, or the file the mirror served could not
-    /// be read.
-    Failed(String),
 }
 
 /// One mirror's failure to serve a day's file.

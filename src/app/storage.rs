@@ -40,10 +40,6 @@ use super::environment_storage;
 use super::history_db::HistoryWorker;
 use super::instance_wait::DataDirectoryWait;
 
-/// What the open is called wherever it is shown: the loading overlay while it
-/// runs, and the shutdown window when a close waits for it.
-pub(in crate::app) const OPENING_DATABASES: &str = "Opening the databases";
-
 /// Where a run's databases live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Storage {
@@ -114,7 +110,6 @@ impl OpenStorage {
 /// A recording loaded without them would not be stored, and its tracks would
 /// resolve against no archive and cache that they have no environment data.
 pub(in crate::app) enum QueuedLoad {
-    Path(PathBuf),
     /// A drop or a paste, which carries the bytes themselves.
     Bytes {
         bytes: Arc<[u8]>,
@@ -122,30 +117,33 @@ pub(in crate::app) enum QueuedLoad {
     },
     /// Log text pasted into the window.
     PastedText(String),
+    Path(PathBuf),
 }
 
 /// Why the databases are not open yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::app) enum DatabasesPending {
-    /// This instance does not have the data directory, so the open has not
-    /// started.
-    WaitingForTheDataDirectory,
-    /// The open is running.
-    Opening,
     /// The open is waiting for the user's choice about an archive a delete
     /// was interrupted in.
     AwaitingAnInterruptedDeleteChoice,
+    /// The open is running.
+    Opening,
+    /// This instance does not have the data directory, so the open has not
+    /// started.
+    WaitingForTheDataDirectory,
 }
 
 /// How far the startup open has got.
 pub(in crate::app) enum StorageOpen {
-    /// Another instance holds the data directory, so nothing has been opened
-    /// yet. [`App::wait_for_the_data_directory`] starts the open once this
-    /// instance takes the directory.
-    WaitingForTheDataDirectory {
-        wait: DataDirectoryWait,
+    /// Asking the user about each archive the inspection found an interrupted
+    /// delete in. No write guard is held here: the open waits on a person.
+    AskingAboutInterruptedDeletes {
+        prompts: InterruptedDeletePrompts,
         queued_loads: Vec<QueuedLoad>,
     },
+    /// The open landed: its databases were adopted, or dropped because the
+    /// app was already closing.
+    Finished,
     /// The first step of an open after the user took write access: the
     /// archives are read for interrupted deletes, and nothing is written or
     /// opened.
@@ -153,19 +151,17 @@ pub(in crate::app) enum StorageOpen {
         inspected: mpsc::Receiver<InspectedArchives>,
         queued_loads: Vec<QueuedLoad>,
     },
-    /// Asking the user about each archive the inspection found an interrupted
-    /// delete in. No write guard is held here: the open waits on a person.
-    AskingAboutInterruptedDeletes {
-        prompts: InterruptedDeletePrompts,
-        queued_loads: Vec<QueuedLoad>,
-    },
     Opening {
         opened: mpsc::Receiver<OpenStorage>,
         queued_loads: Vec<QueuedLoad>,
     },
-    /// The open landed: its databases were adopted, or dropped because the
-    /// app was already closing.
-    Finished,
+    /// Another instance holds the data directory, so nothing has been opened
+    /// yet. [`App::wait_for_the_data_directory`] starts the open once this
+    /// instance takes the directory.
+    WaitingForTheDataDirectory {
+        wait: DataDirectoryWait,
+        queued_loads: Vec<QueuedLoad>,
+    },
 }
 
 impl StorageOpen {
@@ -631,6 +627,10 @@ impl App {
         self.load_arriving_files(queued_loads);
     }
 }
+
+/// What the open is called wherever it is shown: the loading overlay while it
+/// runs, and the shutdown window when a close waits for it.
+pub(in crate::app) const OPENING_DATABASES: &str = "Opening the databases";
 
 #[cfg(test)]
 mod tests {
