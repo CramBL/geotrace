@@ -40,6 +40,26 @@ Test(null_guards, finish_consumes_the_builder_when_out_is_null) {
     cr_assert_str_eq(gtd_last_error(), "null pointer argument (out)");
 }
 
+Test(null_guards, open_sets_out_to_null_when_the_path_is_null) {
+    static char stale_handle_target;
+    GtdNavFile *out = (GtdNavFile *)&stale_handle_target;
+
+    GtdStatus status = gtd_nav_file_open(NULL, &out);
+    cr_assert_eq(status, GTD_ERR_NULL_ARGUMENT);
+    cr_assert_null(out);
+    cr_assert_str_eq(gtd_last_error(), "null string argument");
+}
+
+Test(null_guards, open_sets_out_to_null_when_the_path_is_not_utf8) {
+    static char stale_handle_target;
+    GtdNavFile *out = (GtdNavFile *)&stale_handle_target;
+
+    GtdStatus status = gtd_nav_file_open("\xff.gtd", &out);
+    cr_assert_eq(status, GTD_ERR_UTF8);
+    cr_assert_null(out);
+    cr_assert_str_eq(gtd_last_error(), "string argument is not valid UTF-8");
+}
+
 Test(null_guards, nav_file_null) {
     cr_assert_eq(gtd_nav_file_nav_point_count(NULL), 0);
     cr_assert_eq(gtd_nav_file_event_marker_count(NULL), 0);
@@ -99,12 +119,6 @@ Test(null_guards, marker_icon_from_name_null) {
     GtdMarkerIcon icon;
     cr_assert_eq(gtd_marker_icon_from_name(NULL, &icon), GTD_ERR_NULL_ARGUMENT);
     cr_assert_eq(gtd_marker_icon_from_name("pin", NULL), GTD_ERR_NULL_ARGUMENT);
-}
-
-Test(null_guards, open_null_path) {
-    GtdNavFile *file = NULL;
-    cr_assert_eq(gtd_nav_file_open(NULL, &file), GTD_ERR_NULL_ARGUMENT);
-    cr_assert_null(file);
 }
 
 Test(null_guards, from_bytes_null_data) {

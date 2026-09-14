@@ -62,3 +62,13 @@ macro_rules! cstr_opt {
         }
     }};
 }
+
+/// Sets `*out` to NULL for a non-null `*mut *mut T` out parameter `out`.
+macro_rules! write_null_if_nonnull {
+    ($out:expr) => {{
+        // SAFETY: a non-null out parameter points to a writable pointer (caller contract).
+        if let Some(out) = unsafe { ($out).as_mut() } {
+            *out = std::ptr::null_mut();
+        }
+    }};
+}

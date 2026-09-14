@@ -11,7 +11,8 @@ use crate::error::{self, GtdStatus};
 /// Open and parse a `.gtd` navigation file.
 ///
 /// On success, `*out` is set to a new handle.
-/// On failure, `*out` is NULL and `gtd_last_error()` describes the error.
+/// On failure, `*out` is set to NULL for a non-null `out`, including when `path` is NULL or not
+/// valid UTF-8, and `gtd_last_error()` describes the error.
 ///
 /// @param path File path to open.
 /// @param out  Output parameter for the file handle.
@@ -23,9 +24,9 @@ pub unsafe extern "C" fn gtd_nav_file_open(
     out: *mut *mut GtdNavFile,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
+        write_null_if_nonnull!(out);
         let path_str = cstr!(path);
         let out_ref = nonnull_mut!(out);
-        *out_ref = std::ptr::null_mut();
 
         match NavFile::open(path_str) {
             Ok(file) => {
@@ -44,6 +45,10 @@ pub unsafe extern "C" fn gtd_nav_file_open(
 ///
 /// The caller retains ownership of @p data. It may be freed after this call returns.
 ///
+/// On success, `*out` is set to a new handle.
+/// On failure, `*out` is set to NULL for a non-null `out`, and `gtd_last_error()` describes the
+/// error.
+///
 /// @param data   Pointer to the serialised file data.
 /// @param length Length of the data in bytes.
 /// @param out    Output parameter for the file handle.
@@ -54,8 +59,8 @@ pub unsafe extern "C" fn gtd_nav_file_from_bytes(
     out: *mut *mut GtdNavFile,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
+        write_null_if_nonnull!(out);
         let out_ref = nonnull_mut!(out);
-        *out_ref = std::ptr::null_mut();
         if data.is_null() && length > 0 {
             error::set_last_error("data is null but length > 0");
             return GtdStatus::GTD_ERR_NULL_ARGUMENT;
