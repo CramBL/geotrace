@@ -14,10 +14,7 @@ use crate::fingerprint::RunInputs;
 use crate::provider::{
     CapturedTrackValues, SliceProvider, TimeFilteredPoints, TrackProvider, TrackQueryData,
 };
-use crate::results::{
-    ChannelTrackResult, MatchValues, MatchedTrackPoints, TrackMatchValues, channel_query_matches,
-    matched_point_ranges,
-};
+use crate::results::{self, ChannelTrackResult, MatchValues, MatchedTrackPoints, TrackMatchValues};
 
 /// Per-track derived series of one run, keyed by the track they came from.
 pub(crate) type RunTrackData = FxHashMap<TrackRef, TrackQueryData>;
@@ -283,7 +280,11 @@ impl PreparedRun {
                     .iter()
                     .find(|result| result.track == snapshot.track_ref)
                     .map(|result| {
-                        matched_point_ranges(&snapshot.points, &result.timeline, &result.matches)
+                        results::matched_point_ranges(
+                            &snapshot.points,
+                            &result.timeline,
+                            &result.matches,
+                        )
                     })
                     .unwrap_or_default();
                 (
@@ -295,7 +296,7 @@ impl PreparedRun {
                 )
             })
             .collect();
-        let matches = channel_query_matches(query.mode(), &per_track);
+        let matches = results::channel_query_matches(query.mode(), &per_track);
 
         RunOutcome::completed(
             RunProduct::Channel(Box::new(ChannelRun {

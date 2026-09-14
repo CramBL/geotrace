@@ -1069,7 +1069,7 @@ mod tests {
 
     use chrono::DateTime;
     use gt_store::{HistoryDatabase, ReadOnlyHistoryDatabase, Recordings};
-    use gt_test_utils::{SyntheticGtdSpec, synthetic_gtd_bytes};
+    use gt_test_utils::SyntheticGtdSpec;
     use rstest::rstest;
 
     use super::*;
@@ -1248,7 +1248,7 @@ mod tests {
     }
 
     fn write_sample_gtd(dir: &std::path::Path) -> PathBuf {
-        let bytes = synthetic_gtd_bytes(SyntheticGtdSpec {
+        let bytes = gt_test_utils::synthetic_gtd_bytes(SyntheticGtdSpec {
             start: DateTime::from_timestamp(1_748_000_000, 0).expect("valid timestamp"),
             point_count: 20,
             step_secs: 1,

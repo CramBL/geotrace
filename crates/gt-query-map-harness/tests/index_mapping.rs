@@ -1,7 +1,7 @@
 //! Point indices across a time-filtered slice and across several tracks: the
 //! evaluator sees slice-relative indices, the map needs absolute ones.
 
-use gt_query_map_harness::{Dataset, FileSpec, MapScenario, TrackSpec, track};
+use gt_query_map_harness::{Dataset, FileSpec, MapScenario, TrackSpec};
 
 /// Six points: slow, fast, fast, slow, fast, fast.
 fn sliced_scenario() -> MapScenario {
@@ -51,7 +51,13 @@ fn panel_match_ranges_are_absolute() {
     let mut scenario = sliced_scenario();
     scenario.run("points | where velocity > 30 km/h | draw");
     let matches = scenario.panel_matches(0);
-    assert_eq!(matches, [(track(0, 0), 2..3), (track(0, 0), 4..6)]);
+    assert_eq!(
+        matches,
+        [
+            (gt_query_map_harness::track(0, 0), 2..3),
+            (gt_query_map_harness::track(0, 0), 4..6)
+        ]
+    );
     scenario.hover_match(0, 1);
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  --0.00
@@ -102,9 +108,9 @@ fn a_window_holding_no_points_leaves_keep_nothing_to_do() {
     counts: shown 0, halos 0
     ");
     assert!(
-        scenario
-            .matches()
-            .is_some_and(|matches| matches.hidden_ranges(track(0, 0)).is_empty()),
+        scenario.matches().is_some_and(|matches| matches
+            .hidden_ranges(gt_query_map_harness::track(0, 0))
+            .is_empty()),
         "an empty slice gives the query nothing to hide"
     );
 }

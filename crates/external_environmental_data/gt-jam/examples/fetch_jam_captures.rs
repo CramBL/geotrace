@@ -35,10 +35,7 @@ use reqwest::header::CONTENT_TYPE;
 use serde_json::{Value, json};
 
 use gt_jam::wire::{self, ParseWarningReporter};
-use gt_jam::{
-    CAPTURE_MANIFEST, CAPTURED_DAYS, CapturedDay, DEFAULT_BASE_URL, captures_dir,
-    dataset_file_name, dataset_url, parse_day,
-};
+use gt_jam::{CAPTURE_MANIFEST, CAPTURED_DAYS, CapturedDay, DEFAULT_BASE_URL};
 
 /// Points the capture at a mirror. The capture requests from `DEFAULT_BASE_URL`
 /// when it is unset.
@@ -52,7 +49,7 @@ const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
 
 fn main() -> Result<(), Box<dyn Error>> {
     let host = env::var(HOST_ENV).unwrap_or_else(|_| DEFAULT_BASE_URL.to_owned());
-    let dir = captures_dir();
+    let dir = gt_jam::captures_dir();
     fs::create_dir_all(&dir)?;
 
     // Positional arguments select a subset. Without them the capture covers
@@ -95,8 +92,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         if index > 0 {
             thread::sleep(REQUEST_INTERVAL);
         }
-        let day = parse_day(capture.day)?;
-        let response = client.get(dataset_url(&host, day)).send()?;
+        let day = gt_jam::parse_day(capture.day)?;
+        let response = client.get(gt_jam::dataset_url(&host, day)).send()?;
         let served = response.status().is_success();
         let status = response.status().as_u16();
         let content_type = response
@@ -133,7 +130,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             if warnings > 0 {
                 println!("  note: {warnings} unusable rows");
             }
-            fs::write(dir.join(dataset_file_name(day)), &body)?;
+            fs::write(dir.join(gt_jam::dataset_file_name(day)), &body)?;
             (json!(observations.len()), Value::Null)
         } else {
             (Value::Null, json!(body))

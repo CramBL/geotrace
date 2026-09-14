@@ -11,8 +11,6 @@ use gt_history_types::{
     StoredRecording, StoredSegmentation, StoredTrackSplitRule, StoredUiStateVersion,
     TRACK_END_DATASET, TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, TrackRange,
     TrackState, UI_STATE_GROUP, UI_STATE_VERSION_ATTR, UiStateVersionReporter,
-    identity_from_group_name, identity_group_name, is_db_internal_group, is_db_recording_attr,
-    make_group_name,
 };
 use hdf5::Group;
 use std::path::Path;
@@ -102,12 +100,12 @@ fn recording_identity(group: &Group) -> Option<String> {
 fn identity_for_group(group: &Group, storage_name: &str) -> String {
     read_group_string_attr(group, ATTR_IDENTITY)
         .ok()
-        .or_else(|| identity_from_group_name(storage_name))
+        .or_else(|| gt_history_types::identity_from_group_name(storage_name))
         .unwrap_or_else(|| storage_name.to_owned())
 }
 
 fn ensure_identity_group(by_id: &Group, identity: &str) -> Result<Group, InternalError> {
-    let storage_name = identity_group_name(identity);
+    let storage_name = gt_history_types::identity_group_name(identity);
     let id_grp = by_id
         .create_group(&storage_name)
         .or_else(|_| by_id.group(&storage_name))?;
@@ -120,7 +118,7 @@ fn ensure_identity_group(by_id: &Group, identity: &str) -> Result<Group, Interna
 /// The name `by_identity` holds `identity` under: the encoded one, or the raw
 /// one a legacy database was written with.
 fn identity_storage_name(by_id: &Group, identity: &str) -> Option<String> {
-    let encoded = identity_group_name(identity);
+    let encoded = gt_history_types::identity_group_name(identity);
     if by_id.link_exists(&encoded) {
         return Some(encoded);
     }
@@ -128,8 +126,8 @@ fn identity_storage_name(by_id: &Group, identity: &str) -> Option<String> {
 }
 
 fn open_identity_group(by_id: &Group, identity: &str) -> Result<Group, InternalError> {
-    let storage_name =
-        identity_storage_name(by_id, identity).unwrap_or_else(|| identity_group_name(identity));
+    let storage_name = identity_storage_name(by_id, identity)
+        .unwrap_or_else(|| gt_history_types::identity_group_name(identity));
     by_id.group(&storage_name).map_err(Into::into)
 }
 
@@ -200,7 +198,7 @@ pub(crate) fn rename_identity(
     }
 
     // Drop the now-vacated old identity group (under whichever name it existed).
-    let old_storage = identity_group_name(old);
+    let old_storage = gt_history_types::identity_group_name(old);
     if by_id.link_exists(&old_storage) {
         by_id.unlink(&old_storage)?;
     } else if !old.contains('/') && by_id.link_exists(old) {
@@ -216,7 +214,12 @@ fn is_indexed_recording_path(path: &str, identity: &str) -> bool {
     let Some((parent, _)) = path.rsplit_once('/') else {
         return false;
     };
-    if parent == format!("/by_identity/{}", identity_group_name(identity)) {
+    if parent
+        == format!(
+            "/by_identity/{}",
+            gt_history_types::identity_group_name(identity)
+        )
+    {
         return true;
     }
     !identity.contains('/') && parent == format!("/by_identity/{identity}")
@@ -677,7 +680,10 @@ pub(crate) fn insert_recording(
 
     let by_id = file.group("by_identity")?;
     let id_grp = ensure_identity_group(&by_id, identity)?;
-    let group_name = make_group_name(meta.stored_start_us(), &uuid::Uuid::new_v4().to_string());
+    let group_name = gt_history_types::make_group_name(
+        meta.stored_start_us(),
+        &uuid::Uuid::new_v4().to_string(),
+    );
     let rec_grp = id_grp.create_group(&group_name)?;
 
     write_meta_attrs(&rec_grp, identity, meta)?;
@@ -736,8 +742,8 @@ fn resolve_replacement_stage(file: &hdf5::File, stage_name: &str) -> Result<(), 
         return meta_grp.unlink(stage_name).map_err(Into::into);
     };
 
-    let identity_name =
-        identity_storage_name(&by_id, &identity).unwrap_or_else(|| identity_group_name(&identity));
+    let identity_name = identity_storage_name(&by_id, &identity)
+        .unwrap_or_else(|| gt_history_types::identity_group_name(&identity));
     let id_grp = match by_id.group(&identity_name) {
         Ok(id_grp) => id_grp,
         Err(_) => ensure_identity_group(&by_id, &identity)?,
@@ -781,7 +787,7 @@ pub(crate) fn replace_recording(
     let file = hdf5::File::open_rw(db_path)?;
     let by_id = file.group("by_identity")?;
     let identity_name = identity_storage_name(&by_id, &db_ref.identity)
-        .unwrap_or_else(|| identity_group_name(&db_ref.identity));
+        .unwrap_or_else(|| gt_history_types::identity_group_name(&db_ref.identity));
     let id_grp = by_id.group(&identity_name)?;
     let meta_grp = file.group("meta").or_else(|_| file.create_group("meta"))?;
 
@@ -1023,7 +1029,7 @@ fn write_meta_attrs(
 fn copy_members(src: &Group, dst: &Group) -> Result<(), InternalError> {
     for name in src.member_names()? {
         // Never copy DB-internal bookkeeping (the track table) as GTD data.
-        if is_db_internal_group(&name) {
+        if gt_history_types::is_db_internal_group(&name) {
             continue;
         }
         if let Ok(grp) = src.group(&name) {
@@ -1261,7 +1267,9 @@ pub(crate) fn load_recording(
         // skipped by `copy_members`), and restore the original GTD root
         // attributes (skipping the database's own recording metadata).
         copy_members(&rec_grp, &root)?;
-        copy_attrs(&rec_grp, &root, |name| !is_db_recording_attr(name))?;
+        copy_attrs(&rec_grp, &root, |name| {
+            !gt_history_types::is_db_recording_attr(name)
+        })?;
 
         // Fall back to the default version for recordings stored before
         // attribute preservation existed.
@@ -1696,17 +1704,14 @@ pub(crate) fn mark_write_locked(db_path: &Path) -> Result<(), InternalError> {
 mod tests {
     use rstest::rstest;
 
-    use super::{
-        SUPERBLOCK_V2_LEN, WRITER_FLAGS, clear_write_lock, create_native_file, jenkins_lookup3,
-        mark_write_locked, read_string_attr, write_string_attr,
-    };
+    use super::{SUPERBLOCK_V2_LEN, WRITER_FLAGS};
 
     /// The repair round trip: flags set by an interrupted writer are cleared,
     /// the superblock checksum is left valid, and the file still opens.
     ///
     /// Deliberately does not assert that the flagged file is rejected before
     /// clearing. libhdf5 opens a flagged v2 superblock read-write, which is
-    /// what [`create_native_file`] writes. Only a v3 superblock is rejected.
+    /// what [`super::create_native_file`] writes. Only a v3 superblock is rejected.
     /// The path that reaches [`crate::classify_open_error`] for these files is
     /// covered by `clear_write_lock_repairs_an_unreadable_superblock` in
     /// `gt-history`.
@@ -1715,8 +1720,8 @@ mod tests {
         use std::io::Read as _;
 
         let tmp = tempfile::NamedTempFile::new().expect("temp file");
-        drop(create_native_file(tmp.path()).expect("create"));
-        mark_write_locked(tmp.path()).expect("set the flags");
+        drop(super::create_native_file(tmp.path()).expect("create"));
+        super::mark_write_locked(tmp.path()).expect("set the flags");
 
         let flags = |tag: &str| {
             let mut file = std::fs::File::open(tmp.path()).unwrap_or_else(|e| panic!("{tag}: {e}"));
@@ -1728,7 +1733,7 @@ mod tests {
         assert_eq!(flags("after marking"), WRITER_FLAGS);
 
         assert!(
-            clear_write_lock(tmp.path()).expect("clear"),
+            super::clear_write_lock(tmp.path()).expect("clear"),
             "a flag was set"
         );
         assert_eq!(flags("after clearing"), 0);
@@ -1740,10 +1745,10 @@ mod tests {
     #[test]
     fn clearing_an_unflagged_file_changes_nothing() {
         let tmp = tempfile::NamedTempFile::new().expect("temp file");
-        drop(create_native_file(tmp.path()).expect("create"));
+        drop(super::create_native_file(tmp.path()).expect("create"));
 
         assert!(
-            !clear_write_lock(tmp.path()).expect("clear"),
+            !super::clear_write_lock(tmp.path()).expect("clear"),
             "no flag was set"
         );
         hdf5::File::open_rw(tmp.path()).expect("still writable");
@@ -1762,7 +1767,7 @@ mod tests {
         for len in [0_usize, 1, 63, 64, 255, 256, 1023, 1024, 8191, 8192, 9000] {
             let value = "x".repeat(len);
             let name = format!("attr_{len}");
-            write_string_attr(&group, &name, &value).expect("write");
+            super::write_string_attr(&group, &name, &value).expect("write");
 
             let attr = group.attr(&name).expect("attr");
             let descriptor = attr
@@ -1770,7 +1775,7 @@ mod tests {
                 .expect("dtype")
                 .to_descriptor()
                 .expect("descriptor");
-            let got = read_string_attr(&attr, &descriptor).expect("read");
+            let got = super::read_string_attr(&attr, &descriptor).expect("read");
             assert_eq!(got, value, "string of length {len} must round-trip");
         }
     }
@@ -1779,9 +1784,9 @@ mod tests {
     fn jenkins_lookup3_matches_known_vectors() {
         // Canonical Jenkins lookup3 (`hashlittle`) self-test vectors with
         // `initval` 0, matching libhdf5's `H5_checksum_lookup3`.
-        assert_eq!(jenkins_lookup3(b""), 0xdead_beef);
+        assert_eq!(super::jenkins_lookup3(b""), 0xdead_beef);
         assert_eq!(
-            jenkins_lookup3(b"Four score and seven years ago"),
+            super::jenkins_lookup3(b"Four score and seven years ago"),
             0x1777_0551
         );
     }
@@ -1808,7 +1813,7 @@ mod tests {
         #[case] expected: u32,
     ) {
         let data = CHECKSUM_INPUT.get(..length).expect("a prefix of the input");
-        assert_eq!(jenkins_lookup3(data), expected);
+        assert_eq!(super::jenkins_lookup3(data), expected);
     }
 
     const CHECKSUM_INPUT: [u8; 24] = [

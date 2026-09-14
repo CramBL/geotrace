@@ -7,6 +7,7 @@ from pathlib import Path
 from qa import (
     check_fixed_width_integers,
     check_floating_comments,
+    check_function_imports,
     check_inline_modules,
     check_narrative_comments,
     check_no_network,
@@ -18,6 +19,7 @@ from qa._check import repo_root, run_check
 _CHECKS = [
     check_fixed_width_integers.DEFINITION,
     check_floating_comments.DEFINITION,
+    check_function_imports.DEFINITION,
     check_inline_modules.DEFINITION,
     check_narrative_comments.DEFINITION,
     check_no_network.DEFINITION,

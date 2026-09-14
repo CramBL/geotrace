@@ -35,10 +35,7 @@ use reqwest::header::CONTENT_TYPE;
 use serde_json::{Value, json};
 
 use gt_flare::wire;
-use gt_flare::{
-    ApiKey, CAPTURE_MANIFEST, CAPTURED_WINDOWS, CapturedWindow, DEFAULT_BASE_URL, captures_dir,
-    flare_url,
-};
+use gt_flare::{ApiKey, CAPTURE_MANIFEST, CAPTURED_WINDOWS, CapturedWindow, DEFAULT_BASE_URL};
 
 /// Holds the key the endpoint needs. `DEMO_KEY` works for a handful of
 /// requests an hour, which is what a capture costs.
@@ -59,7 +56,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .and_then(|entered| ApiKey::new(&entered))
         .ok_or_else(|| format!("set {API_KEY_ENV} to an api.nasa.gov key"))?;
     let host = env::var(HOST_ENV).unwrap_or_else(|_| DEFAULT_BASE_URL.to_owned());
-    let dir = captures_dir();
+    let dir = gt_flare::captures_dir();
     fs::create_dir_all(&dir)?;
 
     // Positional arguments select a subset. Without them the capture covers
@@ -107,7 +104,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         // Failures are reported through the key's own redaction: the client
         // quotes the URL it tried, and the URL holds the key.
         let response = client
-            .get(flare_url(&host, capture.window()?, &key))
+            .get(gt_flare::flare_url(&host, capture.window()?, &key))
             .send()
             .map_err(|err| key.redact(&format!("{err:#}")))?;
         let status = response.status().as_u16();

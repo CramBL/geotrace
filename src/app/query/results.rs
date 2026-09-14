@@ -23,7 +23,7 @@ use gt_query_run::{
     ChannelResults, ChannelTrackResult, PointsResults, QuerySummary, RunResults, SliceProvider,
     TimeFilteredPoints, TrackProvider,
 };
-use gt_side_panel::widgets::{PointClickRequests, apply_point_click};
+use gt_side_panel::widgets::{self, PointClickRequests};
 use gt_types::{
     Channel, DataCategory, LoadedFile, PlacedPoints, PointIdx, ResolvedPosition, TrackRef,
 };
@@ -1207,7 +1207,7 @@ impl<'a> ResultsTables<'a> {
         // Applied out here, where the panel's `Ui` places the pinned window
         // beside it.
         if let Some(click) = click {
-            apply_point_click(
+            widgets::apply_point_click(
                 ui,
                 &click.response,
                 click.point,

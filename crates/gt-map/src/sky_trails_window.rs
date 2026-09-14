@@ -11,7 +11,7 @@ use gt_types::satellites::{Constellation, ConstellationSet};
 use gt_types::{GpsTime, LoadedFile, TrackRef};
 use gt_ui_types::{MapHighlight, SkyTrailsRequest};
 
-use crate::tpv_renderer::{constellation_swatch, fix_count_color, seen_count_color};
+use crate::tpv_renderer;
 
 /// Width of the left stats/filter column's label area: the checkbox, the
 /// colour swatch and the constellation name. The count columns are added to
@@ -584,13 +584,13 @@ fn stats_row(ui: &mut egui::Ui, shown: &mut ConstellationSet, count: &EpochCount
             if ui.checkbox(&mut checked, "").changed() {
                 shown.set(count.constellation, checked);
             }
-            constellation_swatch(ui, count.constellation);
+            tpv_renderer::constellation_swatch(ui, count.constellation);
             ui.label(dimmed_if_off(count.constellation.display_name().into(), on));
             // Right to left, so the columns anchor to the row's right edge and
             // line up regardless of the constellation name's width.
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 seen_columns(ui, count, on);
-                count_cell(ui, count.fix, fix_count_color, on);
+                count_cell(ui, count.fix, tpv_renderer::fix_count_color, on);
             });
         })
         .response;
@@ -626,7 +626,7 @@ fn seen_columns(ui: &mut egui::Ui, count: &EpochCount, on: bool) {
             count.seen, count.seen_unfiltered
         ));
     }
-    count_cell(ui, count.seen, seen_count_color, on);
+    count_cell(ui, count.seen, tpv_renderer::seen_count_color, on);
 }
 
 /// The total row: summed fix and seen across every constellation. The bold
@@ -650,7 +650,7 @@ fn stats_total_row(ui: &mut egui::Ui, counts: &[EpochCount]) {
         ui.label(RichText::new("Total").strong());
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             seen_columns(ui, &total, true);
-            count_cell(ui, fix, fix_count_color, true);
+            count_cell(ui, fix, tpv_renderer::fix_count_color, true);
         });
     });
 }
@@ -1031,8 +1031,7 @@ mod tests {
     use super::{
         ConstellationSet, DEFAULT_WINDOW_SIZE, MAX_PLAYBACK_FRAME_SECS, MIN_PLOT_DIAMETER_PX,
         MIN_WINDOW_HEIGHT_PX, MIN_WINDOW_WIDTH_PX, MapHighlight, SEEK_TAP_SECS, STATS_COL_WIDTH_PX,
-        SkyTrails, SkyTrailsRequest, SkyTrailsWindow, TrackRef, Window, WindowBody, advanced_scrub,
-        apply_scrub_highlight, floor_epoch, offset_time, scrub_offset_of, track_total_secs,
+        SkyTrails, SkyTrailsRequest, SkyTrailsWindow, TrackRef, Window, WindowBody,
     };
 
     /// What a case drives the window body with. Every field the body reads and
@@ -1418,12 +1417,18 @@ mod tests {
     fn opening_at_an_instant_scrubs_to_it() {
         let trails = demo_trails();
         let first = trails.epochs[0].time;
-        let total = track_total_secs(&trails).expect("has epochs");
+        let total = super::track_total_secs(&trails).expect("has epochs");
 
-        assert!((scrub_offset_of(first, offset_time(first, 3.0), total) - 3.0).abs() < 1e-9);
+        assert!(
+            (super::scrub_offset_of(first, super::offset_time(first, 3.0), total) - 3.0).abs()
+                < 1e-9
+        );
         // Before the first epoch and after the last both clamp.
-        assert!(scrub_offset_of(first, offset_time(first, -5.0), total).abs() < 1e-9);
-        assert!((scrub_offset_of(first, offset_time(first, 99.0), total) - total).abs() < 1e-9);
+        assert!(super::scrub_offset_of(first, super::offset_time(first, -5.0), total).abs() < 1e-9);
+        assert!(
+            (super::scrub_offset_of(first, super::offset_time(first, 99.0), total) - total).abs()
+                < 1e-9
+        );
 
         let mut window = SkyTrailsWindow {
             playing: true,
@@ -1509,7 +1514,7 @@ mod tests {
     #[test]
     fn holding_an_arrow_sweeps_the_scrubber() {
         let trails = long_demo_trails();
-        let total = track_total_secs(&trails).expect("has epochs");
+        let total = super::track_total_secs(&trails).expect("has epochs");
         let state = std::rc::Rc::new(std::cell::Cell::new(0.0_f64));
         let seen = state.clone();
         let mut harness = test_util::harness_builder()
@@ -1611,14 +1616,14 @@ mod tests {
     #[test]
     fn track_total_secs_spans_first_to_last_epoch() {
         // `demo_trails` has eight epochs one second apart, so the span is 7s.
-        assert!((track_total_secs(&demo_trails()).expect("has epochs") - 7.0).abs() < 1e-9);
-        assert_eq!(track_total_secs(&SkyTrails::default()), None);
+        assert!((super::track_total_secs(&demo_trails()).expect("has epochs") - 7.0).abs() < 1e-9);
+        assert_eq!(super::track_total_secs(&SkyTrails::default()), None);
     }
 
     #[test]
     fn offset_time_advances_from_the_first_epoch() {
         let first = demo_trails().epochs[0].time;
-        let at_three = offset_time(first, 3.0);
+        let at_three = super::offset_time(first, 3.0);
         assert_eq!(at_three.utc(), first.utc() + chrono::Duration::seconds(3));
     }
 
@@ -1708,12 +1713,12 @@ mod tests {
     fn advanced_scrub_runs_then_stops_at_the_end() {
         // Mid-track: advances by speed x elapsed time (60 x 0.1 = 6s) and
         // keeps playing.
-        let (secs, playing) = advanced_scrub(10.0, 60.0, 0.1, 100.0);
+        let (secs, playing) = super::advanced_scrub(10.0, 60.0, 0.1, 100.0);
         assert!((secs - 16.0).abs() < 1e-4);
         assert!(playing);
 
         // Reaching the end clamps to the total and stops.
-        let (secs, playing) = advanced_scrub(98.0, 60.0, 0.1, 100.0);
+        let (secs, playing) = super::advanced_scrub(98.0, 60.0, 0.1, 100.0);
         assert!((secs - 100.0).abs() < 1e-4);
         assert!(!playing);
     }
@@ -1762,13 +1767,13 @@ mod tests {
         let trails = demo_trails();
         let first = trails.epochs[0].time;
         // Between epoch 2 (t=2s) and 3 (t=3s): the report in effect is epoch 2.
-        let mid = floor_epoch(&trails, offset_time(first, 2.5)).expect("floor");
+        let mid = super::floor_epoch(&trails, super::offset_time(first, 2.5)).expect("floor");
         assert_eq!(mid.time, trails.epochs[2].time);
         // Exactly on an epoch returns that epoch.
-        let exact = floor_epoch(&trails, trails.epochs[4].time).expect("floor");
+        let exact = super::floor_epoch(&trails, trails.epochs[4].time).expect("floor");
         assert_eq!(exact.time, trails.epochs[4].time);
         // Past the end clamps to the last epoch.
-        let past = floor_epoch(&trails, offset_time(first, 99.0)).expect("floor");
+        let past = super::floor_epoch(&trails, super::offset_time(first, 99.0)).expect("floor");
         assert_eq!(past.time, trails.epochs[7].time);
     }
 
@@ -1850,7 +1855,7 @@ mod tests {
         let trails = demo_trails();
         let epoch = trails.epochs[3];
         let mut highlight = MapHighlight::default();
-        apply_scrub_highlight(&mut highlight, test_util::track0(), &epoch);
+        super::apply_scrub_highlight(&mut highlight, test_util::track0(), &epoch);
         assert_eq!(
             highlight.plot_hover_point,
             Some((FileIdx::new(0), TrackIdx::new(0), epoch.point_index))

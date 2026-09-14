@@ -9,8 +9,7 @@ use egui_plot::LineStyle;
 use gt_loaded_files::RecordingNames;
 
 use super::PlotState;
-use super::recording_name;
-use super::style::file_line_style;
+use super::style;
 
 /// Default legend overlay position, anchored just inside the plot's top-left
 /// corner.
@@ -141,8 +140,8 @@ pub(super) fn show_file_legend_overlay(
                         if !state.file_legend_collapsed {
                             for &fi in visible_files {
                                 let row = ui.horizontal(|ui| {
-                                    let style = file_line_style(fi);
-                                    let file_name = recording_name(names, fi);
+                                    let style = style::file_line_style(fi);
+                                    let file_name = super::recording_name(names, fi);
                                     let swatch = paint_line_style_swatch(
                                         ui,
                                         style,

@@ -26,16 +26,12 @@ use gt_ui_types::{
 };
 use rustc_hash::FxHashMap;
 
-use crate::filter::{FilterPanelState, render_filter_panel};
+use crate::filter::{self, FilterPanelState};
 use crate::track_columns::{
     self, TrackColumnCells, TrackColumnWidths, TrackRowCellColor, TrackRowControls,
 };
 use crate::tree::{CheckState, NodeKey, ShelveConfirmState, TreeState};
-use crate::widgets::{
-    CHECKBOX_PADDING, MetadataView, PointClickRequests, checkbox_width, expand_arrow,
-    expand_arrow_width, has_metadata_details, paint_map_hover_bg, point_item_row,
-    recording_tooltip_rows, tri_checkbox,
-};
+use crate::widgets::{self, CHECKBOX_PADDING, MetadataView, PointClickRequests};
 
 /// A recording's metadata, captured when its note icon is clicked so the app can
 /// open the details dialog. Owns its data so it outlives the source file.
@@ -310,7 +306,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
     }
 
     ui.separator();
-    if render_filter_panel(ui, ctx.files(), ctx.filter, ctx.filter_state) {
+    if filter::render_filter_panel(ui, ctx.files(), ctx.filter, ctx.filter_state) {
         *ctx.clear_query_request = true;
     }
 
@@ -552,8 +548,9 @@ fn render_visible_tracks_section(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) 
                         });
                         return;
                     }
-                    let leading_space =
-                        ui.spacing().indent + checkbox_width(ui) + ui.spacing().item_spacing.x;
+                    let leading_space = ui.spacing().indent
+                        + widgets::checkbox_width(ui)
+                        + ui.spacing().item_spacing.x;
                     track_columns::render_header(ui, leading_space, column_widths);
                     let names = ctx.recording_names;
                     for (group, rows) in groups.iter().zip(&rows) {
@@ -659,10 +656,10 @@ fn render_visible_file_caption(
 
     let response = ui
         .add(Label::new(RichText::new(display_name).small().weak().italics()).truncate())
-        .on_hover_ui(|ui| recording_tooltip_rows(ui, &file.metadata));
+        .on_hover_ui(|ui| widgets::recording_tooltip_rows(ui, &file.metadata));
 
     if map_hovered {
-        paint_map_hover_bg(
+        widgets::paint_map_hover_bg(
             ui,
             response.rect,
             gt_ui_theme::map_hover_color(ui.visuals().dark_mode),
@@ -701,7 +698,7 @@ fn render_visible_track_row(
         cells,
         is_selected,
         |ui, controls| {
-            let checkbox = tri_checkbox(ui, CheckState::On);
+            let checkbox = widgets::tri_checkbox(ui, CheckState::On);
             controls.register(&checkbox);
             if checkbox.clicked() {
                 ctx.tree.hide_track(track_ref);
@@ -710,7 +707,7 @@ fn render_visible_track_row(
         },
     );
     if map_hovered {
-        paint_map_hover_bg(
+        widgets::paint_map_hover_bg(
             ui,
             response.rect,
             gt_ui_theme::map_hover_color(ui.visuals().dark_mode),
@@ -775,7 +772,7 @@ impl TreeTrackColumns {
         Self {
             cells: cells.into_iter().collect(),
             widths,
-            arrow_width: expand_arrow_width(ui),
+            arrow_width: widgets::expand_arrow_width(ui),
             header_file,
         }
     }
@@ -783,7 +780,7 @@ impl TreeTrackColumns {
     /// What a track row draws before its first column: the checkbox and the
     /// expand arrow, each followed by the layout's gap.
     fn leading_space(&self, ui: &egui::Ui) -> f32 {
-        checkbox_width(ui) + self.arrow_width + 2.0 * ui.spacing().item_spacing.x
+        widgets::checkbox_width(ui) + self.arrow_width + 2.0 * ui.spacing().item_spacing.x
     }
 }
 
@@ -813,7 +810,7 @@ fn render_file_row(
 
     let row_response = ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = CHECKBOX_GROUP_SPACING;
-        let chk_resp = tri_checkbox(ui, check);
+        let chk_resp = widgets::tri_checkbox(ui, check);
         if chk_resp.clicked() {
             ctx.tree.toggle_file_check(fi);
         }
@@ -821,7 +818,10 @@ fn render_file_row(
         // dialog, so metadata is one click away without pushing a block under the
         // row. Only shown when there is something to reveal.
         let identity = ctx.identity(fi);
-        if has_metadata_details(&MetadataView::from_file_metadata(&file.metadata, identity)) {
+        if widgets::has_metadata_details(&MetadataView::from_file_metadata(
+            &file.metadata,
+            identity,
+        )) {
             let icon = FramelessIconButton::new(ICON_NOTE).hover_text_ui(ui, "Recording details");
             if icon.clicked() {
                 *ctx.metadata_request = Some(RecordingDetails {
@@ -830,7 +830,7 @@ fn render_file_row(
                 });
             }
         }
-        let arrow = expand_arrow(is_expanded);
+        let arrow = widgets::expand_arrow(is_expanded);
         let dist = file
             .metadata
             .total_distance
@@ -889,7 +889,7 @@ fn render_file_row(
                     .on_hover_text("Total distance");
             },
         );
-        resp.on_hover_ui(|ui| recording_tooltip_rows(ui, &file.metadata))
+        resp.on_hover_ui(|ui| widgets::recording_tooltip_rows(ui, &file.metadata))
     });
 
     let file_label_resp = row_response.inner;
@@ -897,7 +897,7 @@ fn render_file_row(
         file_label_resp.scroll_to_me(Some(egui::Align::Center));
     }
     if file_map_hovered {
-        paint_map_hover_bg(ui, row_response.response.rect, map_hover_bg);
+        widgets::paint_map_hover_bg(ui, row_response.response.rect, map_hover_bg);
     }
     if file_label_resp.hovered() {
         ctx.highlight.hover = Some(HighlightScope::File { file_index: fi });
@@ -1482,7 +1482,7 @@ fn render_track_row(
         cells,
         is_selected,
         |ui, controls| {
-            let chk_resp = tri_checkbox(ui, check);
+            let chk_resp = widgets::tri_checkbox(ui, check);
             controls.register(&chk_resp);
             if chk_resp.clicked() {
                 ctx.tree.toggle_track_check(track_ref);
@@ -1491,7 +1491,7 @@ fn render_track_row(
             track_columns::paint_column_cell(
                 ui,
                 columns.arrow_width,
-                expand_arrow(is_expanded),
+                widgets::expand_arrow(is_expanded),
                 &font,
                 cell_color,
                 egui::Align2::CENTER_CENTER,
@@ -1512,7 +1512,7 @@ fn render_track_row(
     );
 
     if map_hovered {
-        paint_map_hover_bg(ui, response.rect, map_hover_bg);
+        widgets::paint_map_hover_bg(ui, response.rect, map_hover_bg);
     }
     if ctx.tree.reveal_request == Some(key) {
         response.scroll_to_me(Some(egui::Align::Center));
@@ -1591,7 +1591,7 @@ fn render_category_section(
         return;
     }
     let header = ui.horizontal(|ui| {
-        let chk = tri_checkbox(
+        let chk = widgets::tri_checkbox(
             ui,
             if visible {
                 CheckState::On
@@ -1602,7 +1602,7 @@ fn render_category_section(
         if chk.clicked() {
             tree.set_category_visible(track_ref, cat, !visible);
         }
-        let arrow = expand_arrow(expanded);
+        let arrow = widgets::expand_arrow(expanded);
         let resp = ui.selectable_label(expanded, format!("{arrow} {label}  {count}"));
         if resp.clicked() {
             tree.toggle_category_expanded(track_ref, cat);
@@ -1652,7 +1652,7 @@ fn render_track_categories(
     let event_filter = track_node.event_filter.clone();
 
     let track_resp = ui.horizontal(|ui| {
-        let chk = tri_checkbox(
+        let chk = widgets::tri_checkbox(
             ui,
             if track_visible {
                 CheckState::On
@@ -1786,8 +1786,8 @@ fn render_channels_section(
     let header = ui.horizontal(|ui| {
         // Pad the checkbox column so the label aligns with the toggleable
         // sections above, even though channels have nothing to toggle.
-        ui.add_space(checkbox_width(ui));
-        let arrow = expand_arrow(is_open);
+        ui.add_space(widgets::checkbox_width(ui));
+        let arrow = widgets::expand_arrow(is_open);
         ui.selectable_label(is_open, format!("{arrow} Channels  {count}"))
     });
     if header.inner.clicked() {
@@ -1830,11 +1830,11 @@ fn render_event_markers_section(
 ) {
     let count = track.event_markers.len();
     let header_response = ui.horizontal(|ui| {
-        let chk_resp = tri_checkbox(ui, em_agg);
+        let chk_resp = widgets::tri_checkbox(ui, em_agg);
         if chk_resp.clicked() {
             ctx.tree.toggle_all_event_paths(track_ref);
         }
-        let arrow = expand_arrow(is_open);
+        let arrow = widgets::expand_arrow(is_open);
         let label = format!("{arrow} Events  {count}");
         let resp = ui.selectable_label(false, label);
         masked_hint(ui, ctx.display_mask, DataCategory::EventMarker);
@@ -1932,7 +1932,7 @@ fn render_event_markers_section(
 
         ui.horizontal(|ui| {
             ui.add_space(16.0 + depth as f32 * 12.0);
-            let chk_resp = tri_checkbox(ui, node_check);
+            let chk_resp = widgets::tri_checkbox(ui, node_check);
             if chk_resp.clicked() {
                 ctx.tree.toggle_event_path(track_ref, prefix);
             }
@@ -1957,7 +1957,7 @@ fn render_tpv_items(
         };
         let label = point.tpv.time().utc().format("%H:%M:%S").to_string();
         let lat_lon = drawn_at(track, pi);
-        point_item_row(ui, point_ref, label, lat_lon, scope, highlight, requests);
+        widgets::point_item_row(ui, point_ref, label, lat_lon, scope, highlight, requests);
     }
 }
 
@@ -1988,7 +1988,7 @@ fn render_satellite_report_items(
             sats.satellite_count()
         );
         let lat_lon = drawn_at(track, pi);
-        point_item_row(ui, point_ref, label, lat_lon, scope, highlight, requests);
+        widgets::point_item_row(ui, point_ref, label, lat_lon, scope, highlight, requests);
     }
 }
 
@@ -2014,7 +2014,7 @@ fn render_custom_marker_items(
         };
         let label = format!("{}  {}", marker.time.format("%H:%M:%S"), marker.label);
         let lat_lon = Some((marker.lat.as_degrees(), marker.lon.as_degrees()));
-        point_item_row(ui, point_ref, label, lat_lon, scope, highlight, requests);
+        widgets::point_item_row(ui, point_ref, label, lat_lon, scope, highlight, requests);
     }
 }
 
@@ -2041,7 +2041,7 @@ fn render_generated_markers_section(
         .contains(DataCategory::GeneratedMarker);
 
     let header = ui.horizontal(|ui| {
-        let chk = tri_checkbox(
+        let chk = widgets::tri_checkbox(
             ui,
             if visible {
                 CheckState::On
@@ -2053,7 +2053,7 @@ fn render_generated_markers_section(
             ctx.tree
                 .set_category_visible(track_ref, DataCategory::GeneratedMarker, !visible);
         }
-        let arrow = expand_arrow(expanded);
+        let arrow = widgets::expand_arrow(expanded);
         let resp = ui.selectable_label(expanded, format!("{arrow} Generated markers  {count}"));
         masked_hint(ui, ctx.display_mask, DataCategory::GeneratedMarker);
         resp
@@ -2086,7 +2086,7 @@ fn render_generated_markers_section(
             let tag_expanded = ctx.tree.generated_kind_expanded(track_ref, tag);
 
             let row = ui.horizontal(|ui| {
-                let chk = tri_checkbox(
+                let chk = widgets::tri_checkbox(
                     ui,
                     if tag_hidden {
                         CheckState::Off
@@ -2097,7 +2097,7 @@ fn render_generated_markers_section(
                 if chk.clicked() {
                     ctx.tree.toggle_generated_kind_hidden(track_ref, tag);
                 }
-                let arrow = expand_arrow(tag_expanded);
+                let arrow = widgets::expand_arrow(tag_expanded);
                 ui.selectable_label(
                     tag_expanded,
                     format!("{arrow} {}  {tag_count}", tag.label()),
@@ -2129,7 +2129,7 @@ fn render_generated_markers_section(
                     };
                     let label = format!("{}{detail}", marker.time.format("%H:%M:%S"));
                     let lat_lon = Some((marker.lat.as_degrees(), marker.lon.as_degrees()));
-                    point_item_row(
+                    widgets::point_item_row(
                         ui,
                         point_ref,
                         label,

@@ -149,22 +149,22 @@ pub(crate) fn mask_ring_hit(center: Pos2, radius: f32, mask_deg: f32, pointer: P
 
 #[cfg(test)]
 mod tests {
-    use egui::pos2;
     use rstest::rstest;
-
-    use super::mask_ring_hit;
 
     // A mask at 0 degrees sits on the horizon rim, so the ring radius equals
     // the plot radius (100 here). Distances are measured from the centre.
     #[rstest]
-    #[case::on_the_ring(pos2(100.0, 0.0), true)]
-    #[case::just_inside_the_band(pos2(105.0, 0.0), true)]
-    #[case::outside_the_band(pos2(110.0, 0.0), false)]
-    #[case::well_inside_the_ring(pos2(50.0, 0.0), false)]
+    #[case::on_the_ring(egui::pos2(100.0, 0.0), true)]
+    #[case::just_inside_the_band(egui::pos2(105.0, 0.0), true)]
+    #[case::outside_the_band(egui::pos2(110.0, 0.0), false)]
+    #[case::well_inside_the_ring(egui::pos2(50.0, 0.0), false)]
     fn mask_ring_hit_matches_a_band_around_the_ring(
         #[case] pointer: egui::Pos2,
         #[case] hit: bool,
     ) {
-        assert_eq!(mask_ring_hit(pos2(0.0, 0.0), 100.0, 0.0, pointer), hit);
+        assert_eq!(
+            super::mask_ring_hit(egui::pos2(0.0, 0.0), 100.0, 0.0, pointer),
+            hit
+        );
     }
 }

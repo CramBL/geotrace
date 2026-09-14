@@ -532,7 +532,7 @@ mod tests {
     use rstest::rstest;
 
     use super::{GeometryCull, Latitude, MercTransform};
-    use crate::polyline::{CULL_MARGIN_PX, MAX_LOD_ERROR_PX, VisiblePath, visible_path};
+    use crate::polyline::{self, CULL_MARGIN_PX, MAX_LOD_ERROR_PX, VisiblePath};
 
     /// The centre-latitude scale inverts `mercator::normalize`'s y exactly:
     /// for a viewport centred at a known latitude, the derived pixels per
@@ -716,7 +716,7 @@ mod tests {
         transform: &MercTransform,
         cull_rect: egui::Rect,
     ) -> VisiblePath<bool> {
-        visible_path(
+        polyline::visible_path(
             points.map(|(_, point)| {
                 (
                     point.fix.tpv.heading().is_none(),

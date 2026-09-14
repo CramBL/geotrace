@@ -10,10 +10,10 @@ use gt_types::coordinates::{Latitude, Longitude};
 use h3o::LatLng;
 use proptest::test_runner::TestCaseError;
 
+use gt_jam::H3_RESOLUTION;
 use gt_jam::dataset::{self, JamDataset};
 use gt_jam::test_util;
 use gt_jam::wire::{self, ParseWarningReporter};
-use gt_jam::{H3_RESOLUTION, parse_day};
 
 /// How far past one cell edge a containing cell's centre is allowed to sit.
 /// H3's pentagons and projection distortion stretch the ideal hexagon.
@@ -25,7 +25,7 @@ fn captured_day() -> Result<&'static JamDataset, String> {
     DATASET
         .get_or_init(|| {
             let capture = test_util::served_day()?;
-            let day = parse_day(capture.day)
+            let day = gt_jam::parse_day(capture.day)
                 .map_err(|err| format!("{} is not a calendar date: {err}", capture.day))?;
             let csv = test_util::captured_csv(capture.day)?;
             let observations = wire::parse_dataset(&csv, &ParseWarningReporter::default())

@@ -19,9 +19,7 @@ use super::App;
 use super::background_thread;
 use super::day_fetch_queue::DayFetchQueue;
 use super::environment_storage_ui::DeleteBlocker;
-use super::modals::{
-    EnvironmentPruneChoice, EnvironmentPrunePrompt, show_environment_prune_confirmation,
-};
+use super::modals::{self, EnvironmentPruneChoice, EnvironmentPrunePrompt};
 
 /// Archive one day through `handle` with the write registered, as a fetch
 /// worker archives one.
@@ -607,7 +605,7 @@ impl App {
             covered: self.environment_days_covered(request.days),
             loaded_recordings: &self.recordings_spanning_pruned_days(request.days),
         };
-        match show_environment_prune_confirmation(ui, &prompt) {
+        match modals::show_environment_prune_confirmation(ui, &prompt) {
             Some(EnvironmentPruneChoice::Delete) => {
                 self.pending_environment_prune = None;
                 self.start_environment_prune(ui.ctx(), request);

@@ -95,7 +95,6 @@ pub(crate) fn match_header_ui(
 
 #[cfg(test)]
 mod tests {
-    use egui::pos2;
     use rstest::rstest;
 
     use super::*;
@@ -104,7 +103,7 @@ mod tests {
         flags
             .iter()
             .enumerate()
-            .map(|(i, &matched)| (matched, pos2(i as f32, 0.0)))
+            .map(|(i, &matched)| (matched, egui::pos2(i as f32, 0.0)))
             .collect()
     }
 

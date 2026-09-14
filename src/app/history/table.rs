@@ -9,11 +9,10 @@ use egui_phosphor::regular::TRASH as ICON_TRASH;
 use gt_fmt::UTC_MINUTE_FORMAT;
 use gt_log_view::LogAttachmentRef;
 use gt_pending_writes::WriteAccess;
-use gt_side_panel::widgets::{self, MetadataView, has_metadata_details, metadata_detail_rows};
+use gt_side_panel::widgets::{self, MetadataView};
 use gt_store::{ChannelSummary, DatabaseRef, NavPointTimeRange, RecordingEntry, TrackState};
 use gt_ui_theme::EM_DASH;
 use gt_ui_theme::buttons::{FramelessIconButton, SortHeaderButton};
-use gt_ui_theme::warning_amber;
 use strum::{EnumCount as _, IntoEnumIterator as _};
 
 use super::{HistorySort, OpenShelf, RenameEdit, ShelfTracks, SortColumn};
@@ -346,7 +345,7 @@ fn render_shelf_row(
         // fit inside the width the recording row's own Open and Delete already
         // claim.
         let delete = FramelessIconButton::new(
-            RichText::new(ICON_TRASH).color(warning_amber(ui.visuals().dark_mode)),
+            RichText::new(ICON_TRASH).color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
         )
         .enabled(writes_recordings)
         .hover_text_ui(
@@ -826,7 +825,7 @@ fn identity_cell(
         identity: None,
         notes: entry.notes.as_deref(),
     };
-    let has_metadata = has_metadata_details(&meta);
+    let has_metadata = widgets::has_metadata_details(&meta);
     let label = ui
         .horizontal(|ui| {
             if is_auto {
@@ -859,7 +858,7 @@ fn identity_cell(
         })
         .on_hover_ui(|ui| {
             ui.label(identity);
-            metadata_detail_rows(ui, &meta);
+            widgets::metadata_detail_rows(ui, &meta);
             // The same breakdown hover as the value cells.
             ui.separator();
             data_breakdown_ui(ui, entry);

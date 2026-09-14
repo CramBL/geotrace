@@ -20,7 +20,7 @@ use gt_ui_types::MetricChipHover;
 use rustc_hash::FxHashMap;
 use strum::IntoEnumIterator;
 
-use super::style::{channel_color, effective_component_color};
+use super::style;
 use super::{DEFAULT_PLOT_LINE_WIDTH, PLOT_LINE_WIDTH_RANGE};
 
 /// What a chip shows on hover: a paragraph of prose, or the three scannable
@@ -748,7 +748,7 @@ fn channel_chip_group(
             ui,
             &mut enabled,
             &label,
-            channel_color(channel.color_index),
+            style::channel_color(channel.color_index),
             channel,
             component_colors,
         );
@@ -1109,7 +1109,7 @@ fn channel_chip(
                 );
             picker.ui(ui, |ui| {
                 let mut edited =
-                    effective_component_color(component_colors, &channel.name, color, index);
+                    style::effective_component_color(component_colors, &channel.name, color, index);
                 if egui::color_picker::color_picker_color32(
                     ui,
                     &mut edited,
@@ -1150,7 +1150,7 @@ fn channel_chip(
                 ui.painter().rect_filled(
                     square,
                     CHIP_BAR_CORNER_RADIUS,
-                    effective_component_color(component_colors, &channel.name, color, index),
+                    style::effective_component_color(component_colors, &channel.name, color, index),
                 );
                 ui.label(label);
             });
@@ -1181,7 +1181,7 @@ fn channel_chip(
         ui.painter().rect_filled(
             bar,
             CHIP_BAR_CORNER_RADIUS,
-            effective_component_color(component_colors, &channel.name, color, index)
+            style::effective_component_color(component_colors, &channel.name, color, index)
                 .gamma_multiply(alpha),
         );
     }
@@ -1351,7 +1351,10 @@ mod tests {
         // across files.
         assert_eq!(channels[0].color_index, 0);
         assert_eq!(channels[1].color_index, 1);
-        assert_eq!(channel_color(0), channel_color(CHANNEL_PALETTE.len()));
+        assert_eq!(
+            style::channel_color(0),
+            style::channel_color(CHANNEL_PALETTE.len())
+        );
     }
 
     /// Every metric in the Environment group hovers with the three scannable

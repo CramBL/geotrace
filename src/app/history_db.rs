@@ -35,7 +35,7 @@ use gt_ui_types::LoadedLogId;
 
 use crate::app::auto_prune::{self, AutoPruneOutcome};
 use crate::app::background_thread;
-use crate::app::loader::stored_segmentation_from_config;
+use crate::app::loader;
 use crate::app::recording_from_disk::{self, RecordingFromDisk, ScreenedRecordings};
 
 /// Why recordings are being deleted - selects the completion toast.
@@ -975,7 +975,7 @@ fn purge_tracks_with_stored(
 
     let settings = stored
         .segmentation
-        .unwrap_or_else(|| stored_segmentation_from_config(&SegmentationConfig::default()));
+        .unwrap_or_else(|| loader::stored_segmentation_from_config(&SegmentationConfig::default()));
     let meta = gt_store::extract_meta(&new_bytes)?;
 
     db.replace_recording_in_place(db_ref, &meta, &new_tracks, settings, &new_bytes)

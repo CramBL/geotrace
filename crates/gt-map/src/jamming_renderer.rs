@@ -13,7 +13,7 @@ use gt_jam::dataset::JamDataset;
 use gt_jam::wire::HexObservation;
 use gt_types::mercator::MercPoint;
 use gt_types::{Latitude, Longitude, mercator};
-use gt_ui_theme::{INTERFERENCE_FILL_ALPHA, interference_color};
+use gt_ui_theme::INTERFERENCE_FILL_ALPHA;
 use h3o::{CellIndex, LatLng};
 
 use walkers::{MapMemory, Plugin, Projector};
@@ -106,7 +106,7 @@ pub(crate) fn visible_cells(
             let outline = cell_outline(observation.cell, transform)?;
             Some(CellShape {
                 outline,
-                fill: interference_color(rate.bad_fraction)
+                fill: gt_ui_theme::interference_color(rate.bad_fraction)
                     .resolve(dark_mode)
                     .gamma_multiply_u8(INTERFERENCE_FILL_ALPHA),
                 low_sample: is_low_sample(observation),

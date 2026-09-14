@@ -441,8 +441,6 @@ fn select_github_token(lookup: impl Fn(&str) -> Option<String>) -> Option<String
 mod tests {
     use rstest::rstest;
 
-    use super::select_github_token;
-
     #[rstest]
     // GITHUB_TOKEN wins over GH_TOKEN when both are set.
     #[case(&[("GITHUB_TOKEN", "primary"), ("GH_TOKEN", "fallback")], Some("primary"))]
@@ -455,7 +453,7 @@ mod tests {
     // No token when the only value present is empty.
     #[case(&[("GITHUB_TOKEN", "")], None)]
     fn selects_first_non_empty_token(#[case] env: &[(&str, &str)], #[case] expected: Option<&str>) {
-        let selected = select_github_token(|var| {
+        let selected = super::select_github_token(|var| {
             env.iter()
                 .find(|(name, _)| *name == var)
                 .map(|(_, value)| (*value).to_owned())

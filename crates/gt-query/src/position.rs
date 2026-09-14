@@ -15,7 +15,7 @@ use geotrace_sdk_units::ChannelUnit;
 
 use crate::ast::{Func, ParamName};
 use crate::check::{ChannelInfo, ChannelSchema};
-use crate::construct::{Construct, ConstructKind, catalog};
+use crate::construct::{self, Construct, ConstructKind};
 use crate::lexer::{self, Token, TokenClass};
 use crate::metric::{Quantity, QueryMetric};
 use crate::unit::{self, Unit};
@@ -108,7 +108,7 @@ pub fn completions_at(
         };
     }
 
-    let mut items: Vec<(i32, Construct)> = catalog()
+    let mut items: Vec<(i32, Construct)> = construct::catalog()
         .iter()
         .copied()
         .filter(|c| slot.accepts(c))
@@ -660,7 +660,7 @@ fn by_name() -> &'static HashMap<&'static str, Vec<Construct>> {
     static MAP: OnceLock<HashMap<&'static str, Vec<Construct>>> = OnceLock::new();
     MAP.get_or_init(|| {
         let mut map: HashMap<&'static str, Vec<Construct>> = HashMap::new();
-        for c in catalog() {
+        for c in construct::catalog() {
             map.entry(c.name).or_default().push(*c);
         }
         map

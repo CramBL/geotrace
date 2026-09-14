@@ -114,7 +114,7 @@ mod tests {
     use gt_snap::merge::{self, SnapWarningReporter};
     use gt_snap::request_plan::SnapParams;
     use gt_snap::wire::Costing;
-    use gt_snap::{DEFAULT_SERVER_URL, request_plan, server_host};
+    use gt_snap::{DEFAULT_SERVER_URL, request_plan};
     use gt_test_utils::fixtures;
 
     use super::*;
@@ -136,7 +136,7 @@ mod tests {
                 &SnapWarningReporter::default(),
             ),
             Vec::new(),
-            server_host(DEFAULT_SERVER_URL),
+            gt_snap::server_host(DEFAULT_SERVER_URL),
         )
     }
 
@@ -162,7 +162,10 @@ mod tests {
             .expect("b's run")
             .into_run();
         assert_eq!(restored.result.params.costing, Costing::Bicycle);
-        assert_eq!(restored.server_host, server_host(DEFAULT_SERVER_URL));
+        assert_eq!(
+            restored.server_host,
+            gt_snap::server_host(DEFAULT_SERVER_URL)
+        );
     }
 
     /// Garbage and newer-versioned blobs decode as absent, never as an

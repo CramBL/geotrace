@@ -1,9 +1,7 @@
 //! Data a query cannot say much about: no points, one point, fewer points than
 //! the window, and a metric the track never carried.
 
-use gt_query_map_harness::{
-    Dataset, FileSpec, MapScenario, PointSpec, PointVisibility, TrackSpec, track,
-};
+use gt_query_map_harness::{Dataset, FileSpec, MapScenario, PointSpec, PointVisibility, TrackSpec};
 
 /// A recording with no fixes has no tracks, so a run over it evaluates
 /// nothing.
@@ -150,7 +148,9 @@ fn short_tracks_survive_a_windowed_program() {
     counts: shown 0, halos 0
     ");
     assert_eq!(
-        scenario.classify(track(0, 0), 0).visibility,
+        scenario
+            .classify(gt_query_map_harness::track(0, 0), 0)
+            .visibility,
         PointVisibility::HiddenByQuery,
         "a keep whose window never fits keeps nothing"
     );

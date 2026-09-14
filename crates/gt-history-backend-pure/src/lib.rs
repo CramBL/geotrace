@@ -5,7 +5,7 @@ use gt_history_types::{
     GTD_META_TRAVEL_MODE_ATTR, HistoryDatabase, LogAttachment, LogAttachmentEntry, LogAttachmentId,
     NavPointTimeRange, ReadOnlyHistoryDatabase, RecordingEntry, RecordingMeta, RecordingUiState,
     SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation, TrackRange, TrackState,
-    UiStateVersionReporter, identity_from_group_name,
+    UiStateVersionReporter,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 use parking_lot::Mutex;
@@ -120,7 +120,7 @@ impl ReadOnlyHistoryDatabase for ReadOnlyPureDb {
             };
             let id_attrs = id_grp.attrs().map_err(classify_hdf5_error)?;
             let display_identity = string_attr(&id_attrs, ATTR_IDENTITY)
-                .or_else(|| identity_from_group_name(&identity))
+                .or_else(|| gt_history_types::identity_from_group_name(&identity))
                 .unwrap_or_else(|| identity.clone());
             for rec_name in id_grp.groups().map_err(classify_hdf5_error)? {
                 let Ok(rec_grp) = id_grp.group(&rec_name) else {

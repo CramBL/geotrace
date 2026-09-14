@@ -7,7 +7,6 @@
 
 use egui::RichText;
 use gt_pending_writes::WriteAccess;
-use gt_ui_theme::warning_amber;
 
 use super::App;
 
@@ -36,7 +35,7 @@ impl App {
         ui.label(
             RichText::new(READ_ONLY_MARKER_LABEL)
                 .small()
-                .color(warning_amber(ui.visuals().dark_mode)),
+                .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
         )
         .on_hover_text(self.read_only_marker_hover_text());
     }

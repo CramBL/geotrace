@@ -274,14 +274,14 @@ fn extract_slips(track: &LoadedTrack) -> Vec<SlipMark> {
 mod tests {
     use gt_types::satellites::Constellation;
 
-    use super::{PointIdx, extract_trails};
+    use super::PointIdx;
     use crate::test_util::{self, Azimuth, Elevation};
 
     #[test]
     fn counts_at_splits_seen_and_fix_per_constellation() {
         // One epoch: two GPS satellites up but only one in the fix, one Galileo
         // in the fix.
-        let trails = extract_trails(&gt_test_utils::loaded_track_with_points(vec![
+        let trails = super::extract_trails(&gt_test_utils::loaded_track_with_points(vec![
             test_util::nav_point_reporting(
                 0,
                 Some(vec![
@@ -339,7 +339,7 @@ mod tests {
 
     #[test]
     fn ever_in_fix_reflects_any_fix_over_the_track() {
-        let trails = extract_trails(&gt_test_utils::loaded_track_with_points(vec![
+        let trails = super::extract_trails(&gt_test_utils::loaded_track_with_points(vec![
             test_util::nav_point_reporting(
                 0,
                 Some(vec![test_util::sat(
@@ -363,7 +363,7 @@ mod tests {
         ]));
         assert!(trails.trails[0].ever_in_fix());
 
-        let never = extract_trails(&gt_test_utils::loaded_track_with_points(vec![
+        let never = super::extract_trails(&gt_test_utils::loaded_track_with_points(vec![
             test_util::nav_point_reporting(
                 0,
                 Some(vec![test_util::sat(
@@ -382,7 +382,7 @@ mod tests {
     fn counts_at_between_epochs_finds_nobody() {
         // `counts_at` matches an epoch exactly (no interpolation), so a time
         // between reports yields zero everywhere.
-        let trails = extract_trails(&gt_test_utils::loaded_track_with_points(vec![
+        let trails = super::extract_trails(&gt_test_utils::loaded_track_with_points(vec![
             test_util::nav_point_reporting(
                 0,
                 Some(vec![test_util::sat(
@@ -454,7 +454,7 @@ mod tests {
             merc: mercator::normalize(lat, lon),
         }];
 
-        let slips = extract_trails(&track).slips;
+        let slips = super::extract_trails(&track).slips;
         assert_eq!(slips.len(), 1);
         assert_eq!(slips[0].constellation, Constellation::Gps);
         assert_eq!(slips[0].azimuth, 120.0);
@@ -499,7 +499,7 @@ mod tests {
             ),
         ]);
 
-        let trails = extract_trails(&track);
+        let trails = super::extract_trails(&track);
 
         // Two report epochs, at points 0 and 2.
         assert_eq!(trails.epochs.len(), 2);
@@ -543,7 +543,7 @@ mod tests {
                 true,
             )]),
         )]);
-        let sample = extract_trails(&track).trails[0].samples[0];
+        let sample = super::extract_trails(&track).trails[0].samples[0];
         assert_eq!(sample.point_index, PointIdx::new(0));
         assert_eq!(sample.azimuth, 45.0);
         assert_eq!(sample.elevation, 60.0);
@@ -586,7 +586,7 @@ mod tests {
                 )]),
             ),
         ]);
-        let present: Vec<_> = extract_trails(&track).constellations().collect();
+        let present: Vec<_> = super::extract_trails(&track).constellations().collect();
         assert_eq!(present, vec![Constellation::Gps, Constellation::Galileo]);
     }
 
@@ -613,7 +613,7 @@ mod tests {
                 ),
             ]),
         )]);
-        let trails = extract_trails(&track);
+        let trails = super::extract_trails(&track);
         assert_eq!(trails.trails.len(), 2);
         assert_eq!(trails.trails[0].constellation, Constellation::Gps);
         assert_eq!(trails.trails[1].constellation, Constellation::Galileo);
@@ -633,7 +633,7 @@ mod tests {
                 true,
             )]),
         )]);
-        let trails = extract_trails(&track);
+        let trails = super::extract_trails(&track);
         assert!(trails.trails.is_empty());
         // The epoch still exists - the report was there, just unplaceable.
         assert_eq!(trails.epochs.len(), 1);
@@ -641,7 +641,7 @@ mod tests {
 
     #[test]
     fn a_track_without_reports_has_no_trails() {
-        let trails = extract_trails(&gt_test_utils::loaded_track_with_points(vec![
+        let trails = super::extract_trails(&gt_test_utils::loaded_track_with_points(vec![
             test_util::nav_point_reporting(0, None),
             test_util::nav_point_reporting(1, None),
         ]));

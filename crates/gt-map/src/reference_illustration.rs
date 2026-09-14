@@ -17,7 +17,7 @@ use gt_jam::dataset::JamDataset;
 use gt_jam::wire::{self, ParseWarningReporter};
 use walkers::{MapMemory, Projector};
 
-use crate::tec_renderer::{TecHeatmapSnapshot, visible_cells};
+use crate::tec_renderer::{self, TecHeatmapSnapshot};
 use crate::test_util;
 use crate::transform::MercTransform;
 
@@ -83,7 +83,7 @@ fn draw_world_heatmap(ui: &egui::Ui, maps: &GlobalIonosphereMaps) {
         maps,
         instant: storm_peak_instant(),
     };
-    let cells = visible_cells(
+    let cells = tec_renderer::visible_cells(
         &snapshot,
         &transform,
         rect,

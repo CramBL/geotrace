@@ -250,7 +250,6 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::is_db_recording_attr;
 
     fn attachment() -> LogAttachment {
         LogAttachment::new(
@@ -319,7 +318,7 @@ mod tests {
         let key = id.attr_key();
 
         assert_eq!(LogAttachmentId::from_attr_key(&key), Some(id));
-        assert!(is_db_recording_attr(&key));
+        assert!(crate::is_db_recording_attr(&key));
         assert_eq!(LogAttachmentId::from_attr_key("meta_title"), None);
         assert_eq!(
             LogAttachmentId::from_attr_key("log-attachment-nav-devkit-mk2"),

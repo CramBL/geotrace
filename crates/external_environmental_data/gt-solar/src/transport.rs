@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use gt_fetch::{Classified, HttpRequest, HttpResponse, Transport};
 
-use crate::{GeomagneticIndex, TimeWindow, index_url};
+use crate::{GeomagneticIndex, TimeWindow};
 
 /// Minimum gap between requests to the service, enforced by the transport the
 /// fetch worker connects with.
@@ -32,7 +32,7 @@ pub fn fetch_index_window(
     index: GeomagneticIndex,
     window: TimeWindow,
 ) -> Result<String, FetchFailure> {
-    let request = HttpRequest::get(index_url(base_url, index, window));
+    let request = HttpRequest::get(crate::index_url(base_url, index, window));
     gt_fetch::send_classified(transport, &request, classify, |detail| {
         Err(FetchFailure { detail })
     })

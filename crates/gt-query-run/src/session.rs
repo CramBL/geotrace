@@ -2,7 +2,7 @@ use gt_query::lexer;
 use gt_query::{ChannelSchema, CheckedQuery, Span};
 use gt_ui_types::QueryMatches;
 
-use crate::check::{QueryChunk, check_all};
+use crate::check::{self, QueryChunk};
 use crate::fingerprint::{RunFingerprint, RunInputs};
 use crate::results::{ChannelResults, PointsResults, RunResults};
 use crate::run::{PreparedRun, RunHandle, RunKind, RunOutcome, RunProduct};
@@ -80,7 +80,7 @@ impl QuerySession {
     pub fn new() -> Self {
         let text = String::new();
         Self {
-            chunks: check_all(&text, &ChannelSchema::new()),
+            chunks: check::check_all(&text, &ChannelSchema::new()),
             checked_text: text.clone(),
             checked_schema: ChannelSchema::new(),
             text,
@@ -116,7 +116,7 @@ impl QuerySession {
         if !text_changed && !schema_changed {
             return CheckRefresh::Unchanged;
         }
-        self.chunks = check_all(&self.text, schema);
+        self.chunks = check::check_all(&self.text, schema);
         self.checked_text = self.text.clone();
         self.checked_schema = schema.clone();
         if text_changed {

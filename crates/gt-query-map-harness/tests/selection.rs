@@ -1,12 +1,12 @@
 //! The selected point and the hovered results-table match, against what a
 //! query does to the map underneath them.
 
-use gt_query_map_harness::{Dataset, FileSpec, MapScenario, TrackSpec, track};
+use gt_query_map_harness::{Dataset, FileSpec, MapScenario, TrackSpec};
 
 #[test]
 fn clicking_a_point_pins_it_and_clicking_again_unpins_it() {
     let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 40.0, 40.0, 5.0]);
-    scenario.select_point(track(0, 0), 2);
+    scenario.select_point(gt_query_map_harness::track(0, 0), 2);
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  ....
          select    ^
@@ -14,7 +14,7 @@ fn clicking_a_point_pins_it_and_clicking_again_unpins_it() {
     counts: shown 4, halos 0
     ");
 
-    scenario.select_point(track(0, 0), 2);
+    scenario.select_point(gt_query_map_harness::track(0, 0), 2);
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  ....
     counts: shown 4, halos 0
@@ -24,8 +24,8 @@ fn clicking_a_point_pins_it_and_clicking_again_unpins_it() {
 #[test]
 fn clicking_another_point_moves_the_pin() {
     let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 40.0, 40.0, 5.0]);
-    scenario.select_point(track(0, 0), 1);
-    scenario.select_point(track(0, 0), 3);
+    scenario.select_point(gt_query_map_harness::track(0, 0), 1);
+    scenario.select_point(gt_query_map_harness::track(0, 0), 3);
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  ....
          select     ^
@@ -41,7 +41,7 @@ fn clicking_another_point_moves_the_pin() {
 #[test]
 fn a_query_that_hides_the_selected_point_withholds_its_popup() {
     let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 40.0, 40.0, 5.0]);
-    scenario.select_point(track(0, 0), 1);
+    scenario.select_point(gt_query_map_harness::track(0, 0), 1);
     scenario.run("points | where velocity > 30 km/h | hide");
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  .xx.
@@ -64,7 +64,7 @@ fn a_query_that_hides_the_selected_point_withholds_its_popup() {
 #[test]
 fn a_time_filter_that_excludes_the_selected_point_withholds_its_popup() {
     let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 40.0, 40.0, 5.0]);
-    scenario.select_point(track(0, 0), 0);
+    scenario.select_point(gt_query_map_harness::track(0, 0), 0);
     scenario.set_time_filter_secs(Some(2), None);
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  --..
@@ -87,8 +87,8 @@ fn a_time_filter_that_excludes_the_selected_point_withholds_its_popup() {
 #[test]
 fn a_track_switched_off_withholds_its_pinned_popup() {
     let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 40.0, 40.0, 5.0]);
-    scenario.select_point(track(0, 0), 1);
-    scenario.set_track_visible(track(0, 0), false);
+    scenario.select_point(gt_query_map_harness::track(0, 0), 1);
+    scenario.set_track_visible(gt_query_map_harness::track(0, 0), false);
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  oooo
          select   ^
@@ -103,7 +103,7 @@ fn a_track_switched_off_withholds_its_pinned_popup() {
 fn clicking_a_hidden_point_pins_nothing() {
     let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 40.0, 40.0, 5.0]);
     scenario.run("points | where velocity > 30 km/h | hide");
-    scenario.select_point(track(0, 0), 1);
+    scenario.select_point(gt_query_map_harness::track(0, 0), 1);
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  .xx.
     counts: shown 2, halos 0
@@ -115,7 +115,7 @@ fn clicking_a_hidden_point_pins_nothing() {
 #[test]
 fn a_later_stage_hiding_the_pinned_point_withholds_its_popup() {
     let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 40.0, 40.0, 5.0]);
-    scenario.select_point(track(0, 0), 1);
+    scenario.select_point(gt_query_map_harness::track(0, 0), 1);
     scenario.run(
         "points | where velocity > 1 km/h | draw\n\n\
          points | where velocity > 30 km/h | hide",
@@ -183,7 +183,7 @@ fn hovering_a_hide_query_match_bands_hidden_points() {
 fn a_point_can_be_selected_and_hovered_at_once() {
     let mut scenario = MapScenario::of_speeds_kmh(&[5.0, 40.0, 40.0, 5.0]);
     scenario.run("points | where velocity > 30 km/h | draw");
-    scenario.select_point(track(0, 0), 1);
+    scenario.select_point(gt_query_map_harness::track(0, 0), 1);
     scenario.hover_match(0, 0);
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  .00.

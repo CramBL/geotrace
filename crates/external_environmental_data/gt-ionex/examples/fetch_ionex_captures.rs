@@ -33,7 +33,7 @@ use flate2::read::GzDecoder;
 use serde_json::{Value, json};
 
 use gt_ionex::tec::TotalElectronContent;
-use gt_ionex::{CAPTURED_FILES, CapturedFile, captures_dir, parse};
+use gt_ionex::{CAPTURED_FILES, CapturedFile, parse};
 
 #[path = "shared/capture_manifest.rs"]
 mod capture_manifest;
@@ -44,7 +44,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let dir = captures_dir();
+    let dir = gt_ionex::captures_dir();
     fs::create_dir_all(&dir)?;
 
     // Positional arguments select a subset. Without them the capture covers

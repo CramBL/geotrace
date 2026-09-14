@@ -4,7 +4,7 @@ use gt_history::{
     Database, DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentId,
     LogContentHash, ReadOnlyDatabase, ReadOnlyHistoryDatabase, RecordingMeta,
     StoredFixPlacementRule, StoredRecording, StoredSegmentation, StoredTrackSplitRule, TrackRange,
-    TrackState, extract_meta,
+    TrackState,
 };
 use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
@@ -319,7 +319,7 @@ fn a_gtd_without_a_version_attribute_loads_with_the_default_version() {
         std::fs::read(tmp.path()).expect("read temp gtd")
     };
 
-    let meta = extract_meta(&bytes).expect("parse meta");
+    let meta = gt_history::extract_meta(&bytes).expect("parse meta");
     let db_ref = db
         .insert_simple("test_device", &meta, &bytes)
         .expect("insert");
@@ -358,7 +358,7 @@ fn a_recording_inserted_twice_is_listed_once() {
     let n = 10_u64;
     let bytes = make_gtd_bytes(start_us, n);
 
-    let meta = extract_meta(&bytes).expect("parse meta");
+    let meta = gt_history::extract_meta(&bytes).expect("parse meta");
 
     db.insert_simple("test_device", &meta, &bytes)
         .expect("insert 1");
@@ -433,7 +433,7 @@ fn an_inserted_recording_gets_a_group_under_its_identity() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(1_000_000, 10);
-    let meta = extract_meta(&bytes).expect("parse meta");
+    let meta = gt_history::extract_meta(&bytes).expect("parse meta");
     let db_ref = db
         .insert_simple("test_device", &meta, &bytes)
         .expect("insert");
@@ -460,7 +460,7 @@ fn insert_duplicate_returns_same_group_name() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(2_000_000, 5);
-    let meta = extract_meta(&bytes).expect("parse meta");
+    let meta = gt_history::extract_meta(&bytes).expect("parse meta");
 
     let first = db
         .insert_simple("device_a", &meta, &bytes)
@@ -493,8 +493,8 @@ fn insert_different_identities_are_independent() {
 
     let bytes_a = make_gtd_bytes(3_000_000, 8);
     let bytes_b = make_gtd_bytes(4_000_000, 12);
-    let meta_a = extract_meta(&bytes_a).expect("meta a");
-    let meta_b = extract_meta(&bytes_b).expect("meta b");
+    let meta_a = gt_history::extract_meta(&bytes_a).expect("meta a");
+    let meta_b = gt_history::extract_meta(&bytes_b).expect("meta b");
 
     db.insert_simple("alpha", &meta_a, &bytes_a)
         .expect("insert a");
@@ -516,7 +516,7 @@ fn is_duplicate_matches_only_exact_meta() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(5_000_000, 20);
-    let meta = extract_meta(&bytes).expect("parse meta");
+    let meta = gt_history::extract_meta(&bytes).expect("parse meta");
 
     assert!(!db.is_duplicate(&meta).expect("check before insert"));
 
@@ -543,7 +543,7 @@ fn nav_point_data_round_trips() {
     let expected: Vec<i64> = (0..n as i64).map(|i| start_us + i).collect();
 
     let bytes = make_gtd_bytes(start_us, n);
-    let meta = extract_meta(&bytes).expect("parse meta");
+    let meta = gt_history::extract_meta(&bytes).expect("parse meta");
     let db_ref = db
         .insert_simple("round_trip_test", &meta, &bytes)
         .expect("insert");
@@ -583,7 +583,7 @@ fn a_recording_whose_clock_steps_backwards_is_indexed_over_every_nav_point_time(
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes_from_times(&CLOCK_STEP_BACK_TIMES);
-    let meta = extract_meta(&bytes).expect("parse meta");
+    let meta = gt_history::extract_meta(&bytes).expect("parse meta");
     let time_range = meta.time_range.expect("the recording has nav points");
     assert_eq!(time_range.start_us(), 1_700_000_000_000_000);
     assert_eq!(time_range.end_us(), 1_700_003_660_000_000);
@@ -663,8 +663,8 @@ fn list_recordings_returns_entries_sorted_descending() {
 
     let bytes_a = make_gtd_bytes(1_000, 3);
     let bytes_b = make_gtd_bytes(2_000, 5);
-    let meta_a = extract_meta(&bytes_a).expect("meta a");
-    let meta_b = extract_meta(&bytes_b).expect("meta b");
+    let meta_a = gt_history::extract_meta(&bytes_a).expect("meta a");
+    let meta_b = gt_history::extract_meta(&bytes_b).expect("meta b");
 
     db.insert_simple("dev", &meta_a, &bytes_a)
         .expect("insert a");
@@ -693,13 +693,13 @@ fn list_recordings_surfaces_sdk_metadata() {
         Some("cross-town commute"),
         Some("bicycle"),
     );
-    let meta = extract_meta(&with_meta).expect("meta");
+    let meta = gt_history::extract_meta(&with_meta).expect("meta");
     db.insert_simple("auto:ride", &meta, &with_meta)
         .expect("insert with metadata");
 
     // A recording with no SDK metadata attributes.
     let plain = make_gtd_bytes(2_000, 3);
-    let plain_meta = extract_meta(&plain).expect("plain meta");
+    let plain_meta = gt_history::extract_meta(&plain).expect("plain meta");
     db.insert_simple("auto:plain", &plain_meta, &plain)
         .expect("insert plain");
 
@@ -733,12 +733,12 @@ fn list_recordings_summarizes_custom_channels() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let with_channels = make_gtd_bytes_with_channels(1_000, 3, 16);
-    let meta = extract_meta(&with_channels).expect("meta");
+    let meta = gt_history::extract_meta(&with_channels).expect("meta");
     db.insert_simple("auto:sensors", &meta, &with_channels)
         .expect("insert with channels");
 
     let plain = make_gtd_bytes(2_000, 3);
-    let plain_meta = extract_meta(&plain).expect("plain meta");
+    let plain_meta = gt_history::extract_meta(&plain).expect("plain meta");
     db.insert_simple("auto:plain", &plain_meta, &plain)
         .expect("insert plain");
 
@@ -797,13 +797,13 @@ fn channels_survive_a_database_rewrite() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let keeper_bytes = make_gtd_bytes_with_channels(1_000, 3, 16);
-    let keeper_meta = extract_meta(&keeper_bytes).expect("keeper meta");
+    let keeper_meta = gt_history::extract_meta(&keeper_bytes).expect("keeper meta");
     let keeper = db
         .insert_simple("auto:keeper", &keeper_meta, &keeper_bytes)
         .expect("insert keeper");
 
     let doomed_bytes = make_gtd_bytes_with_channels(50_000, 3, 4);
-    let doomed_meta = extract_meta(&doomed_bytes).expect("doomed meta");
+    let doomed_meta = gt_history::extract_meta(&doomed_bytes).expect("doomed meta");
     let doomed = db
         .insert_simple("auto:doomed", &doomed_meta, &doomed_bytes)
         .expect("insert doomed");
@@ -850,13 +850,13 @@ fn rename_identity_moves_recordings_to_a_fresh_name() {
     let bytes_b = make_gtd_bytes(2_000, 5);
     db.insert_simple(
         "auto:old",
-        &extract_meta(&bytes_a).expect("meta a"),
+        &gt_history::extract_meta(&bytes_a).expect("meta a"),
         &bytes_a,
     )
     .expect("insert a");
     db.insert_simple(
         "auto:old",
-        &extract_meta(&bytes_b).expect("meta b"),
+        &gt_history::extract_meta(&bytes_b).expect("meta b"),
         &bytes_b,
     )
     .expect("insert b");
@@ -884,10 +884,18 @@ fn rename_identity_merges_into_an_existing_name() {
 
     let bytes_a = make_gtd_bytes(1_000, 3);
     let bytes_b = make_gtd_bytes(2_000, 5);
-    db.insert_simple("auto:a", &extract_meta(&bytes_a).expect("meta a"), &bytes_a)
-        .expect("insert a");
-    db.insert_simple("keep", &extract_meta(&bytes_b).expect("meta b"), &bytes_b)
-        .expect("insert b");
+    db.insert_simple(
+        "auto:a",
+        &gt_history::extract_meta(&bytes_a).expect("meta a"),
+        &bytes_a,
+    )
+    .expect("insert a");
+    db.insert_simple(
+        "keep",
+        &gt_history::extract_meta(&bytes_b).expect("meta b"),
+        &bytes_b,
+    )
+    .expect("insert b");
 
     db.rename_identity("auto:a", "keep").expect("rename-merge");
 
@@ -906,8 +914,12 @@ fn rename_identity_no_op_when_absent_or_unchanged() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(1_000, 3);
-    db.insert_simple("auto:only", &extract_meta(&bytes).expect("meta"), &bytes)
-        .expect("insert");
+    db.insert_simple(
+        "auto:only",
+        &gt_history::extract_meta(&bytes).expect("meta"),
+        &bytes,
+    )
+    .expect("insert");
 
     db.rename_identity("does-not-exist", "whatever")
         .expect("absent old is a no-op");
@@ -938,7 +950,7 @@ fn contains_finds_an_inserted_recording() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(1_000, 3);
-    let meta = extract_meta(&bytes).expect("meta");
+    let meta = gt_history::extract_meta(&bytes).expect("meta");
     let db_ref = db.insert_simple("dev", &meta, &bytes).expect("insert");
 
     assert!(db.contains(&db_ref).expect("contains"));
@@ -956,7 +968,7 @@ fn contains_is_false_outside_the_stored_recordings(
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(1_000, 3);
-    let meta = extract_meta(&bytes).expect("meta");
+    let meta = gt_history::extract_meta(&bytes).expect("meta");
     let stored = db.insert_simple("dev", &meta, &bytes).expect("insert");
 
     let db_ref = DatabaseRef {
@@ -973,7 +985,7 @@ fn delete_removes_recording() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(3_000, 4);
-    let meta = extract_meta(&bytes).expect("meta");
+    let meta = gt_history::extract_meta(&bytes).expect("meta");
     let db_ref = db.insert_simple("dev", &meta, &bytes).expect("insert");
 
     assert_eq!(db.list_recordings().expect("list before").len(), 1);
@@ -1010,7 +1022,7 @@ fn load_gtd_bytes_round_trips_nav_point_timestamps() {
     let expected: Vec<i64> = (0..n as i64).map(|i| start_us + i).collect();
 
     let bytes = make_gtd_bytes(start_us, n);
-    let meta = extract_meta(&bytes).expect("meta");
+    let meta = gt_history::extract_meta(&bytes).expect("meta");
     let db_ref = db
         .insert_simple("reload_test", &meta, &bytes)
         .expect("insert");
@@ -1060,7 +1072,7 @@ fn nav_point_f64_data_round_trips() {
         std::fs::read(tmp.path()).expect("read gtd")
     };
 
-    let meta = extract_meta(&bytes).expect("meta");
+    let meta = gt_history::extract_meta(&bytes).expect("meta");
     let db_ref = db
         .insert_simple("f64_round_trip", &meta, &bytes)
         .expect("insert");
@@ -1101,7 +1113,7 @@ fn prune_by_count_keeps_most_recent() {
 
     for i in 0..5_u64 {
         let bytes = make_gtd_bytes((i * 1_000_000) as i64, 2);
-        let meta = extract_meta(&bytes).expect("meta");
+        let meta = gt_history::extract_meta(&bytes).expect("meta");
         db.insert_simple("dev", &meta, &bytes).expect("insert");
     }
 
@@ -1119,8 +1131,8 @@ fn prune_by_total_size_removes_oldest_first() {
 
     let bytes_a = make_gtd_bytes(1_000, 2);
     let bytes_b = make_gtd_bytes(2_000, 2);
-    let meta_a = extract_meta(&bytes_a).expect("meta a");
-    let meta_b = extract_meta(&bytes_b).expect("meta b");
+    let meta_a = gt_history::extract_meta(&bytes_a).expect("meta a");
+    let meta_b = gt_history::extract_meta(&bytes_b).expect("meta b");
 
     db.insert_simple("dev", &meta_a, &bytes_a)
         .expect("insert a");
@@ -1150,9 +1162,9 @@ fn delete_batch_removes_multiple_in_one_pass() {
     let bytes_a = make_gtd_bytes(10_000, 2);
     let bytes_b = make_gtd_bytes(20_000, 3);
     let bytes_c = make_gtd_bytes(30_000, 4);
-    let meta_a = extract_meta(&bytes_a).expect("meta a");
-    let meta_b = extract_meta(&bytes_b).expect("meta b");
-    let meta_c = extract_meta(&bytes_c).expect("meta c");
+    let meta_a = gt_history::extract_meta(&bytes_a).expect("meta a");
+    let meta_b = gt_history::extract_meta(&bytes_b).expect("meta b");
+    let meta_c = gt_history::extract_meta(&bytes_c).expect("meta c");
 
     let ref_a = db
         .insert_simple("dev", &meta_a, &bytes_a)
@@ -1177,7 +1189,7 @@ fn set_tracks_shelved_shelves_tracks_and_is_reversible() {
 
     // A recording with two tracks.
     let bytes = make_gtd_bytes(8_000, 6);
-    let meta = extract_meta(&bytes).expect("meta");
+    let meta = gt_history::extract_meta(&bytes).expect("meta");
     let tracks = [
         TrackRange {
             start: 0,
@@ -1238,7 +1250,7 @@ fn sys_insert_with_colon_identity_into_fresh_db() {
     let db_path = dir.path().join("fresh.h5");
     let mut db = Database::open_or_create(&db_path).expect("open");
     let bytes = make_gtd_bytes(1_000, 5);
-    let meta = extract_meta(&bytes).expect("meta");
+    let meta = gt_history::extract_meta(&bytes).expect("meta");
     db.insert_simple("auto:p3.gtd", &meta, &bytes)
         .expect("insert colon identity into fresh db");
     assert_eq!(db.list_recordings().expect("list").len(), 1);
@@ -1250,7 +1262,7 @@ fn path_like_identity_is_stored_as_one_listed_identity() {
     let db_path = dir.path().join("history.h5");
     let mut db = Database::open_or_create(&db_path).expect("open");
     let bytes = make_gtd_bytes(1_000, 5);
-    let meta = extract_meta(&bytes).expect("meta");
+    let meta = gt_history::extract_meta(&bytes).expect("meta");
     let identity = "/example.invalid/history/identity/with/slashes/";
 
     let db_ref = db
@@ -1263,7 +1275,7 @@ fn path_like_identity_is_stored_as_one_listed_identity() {
     assert_eq!(entries[0].db_ref.identity, identity);
     assert_eq!(entries[0].db_ref.group_name, db_ref.group_name);
     let loaded_bytes = db.load_bytes(&db_ref).expect("load");
-    let loaded_meta = extract_meta(&loaded_bytes).expect("loaded meta");
+    let loaded_meta = gt_history::extract_meta(&loaded_bytes).expect("loaded meta");
     assert!(meta.same_recording(&loaded_meta));
 
     db.insert_simple(identity, &meta, &bytes)
@@ -1295,7 +1307,7 @@ fn open_repairs_absolute_identity_recording_stored_outside_by_identity() {
     let identity = "/example.invalid/history/identity/with/slashes/";
     let group_name = "2026-01-02T03:04:05Z_00000000-1111-2222-3333-444444444444";
     let bytes = make_gtd_bytes(1_000, 5);
-    let meta = extract_meta(&bytes).expect("meta");
+    let meta = gt_history::extract_meta(&bytes).expect("meta");
 
     Database::open_or_create(&db_path).expect("create");
     {
@@ -1382,8 +1394,12 @@ fn rename_identity_merges_into_a_legacy_raw_named_target() {
     // onto the legacy "keep".
     let mut db = Database::open_or_create(&db_path).expect("reopen");
     let bytes = make_gtd_bytes(1_000, 3);
-    db.insert_simple("auto:a", &extract_meta(&bytes).expect("meta"), &bytes)
-        .expect("insert");
+    db.insert_simple(
+        "auto:a",
+        &gt_history::extract_meta(&bytes).expect("meta"),
+        &bytes,
+    )
+    .expect("insert");
     db.rename_identity("auto:a", "keep")
         .expect("rename onto legacy");
 
@@ -1422,7 +1438,7 @@ fn clear_write_lock_repairs_an_unreadable_superblock() {
     {
         let mut db = Database::open_or_create(&db_path).expect("create");
         let bytes = make_gtd_bytes(1_000, 5);
-        let meta = extract_meta(&bytes).expect("meta");
+        let meta = gt_history::extract_meta(&bytes).expect("meta");
         db.insert_simple("dev", &meta, &bytes).expect("insert");
     }
 
@@ -1528,7 +1544,7 @@ fn sys_migrates_and_writes_a_pure_created_database() {
 
     // A brand-new recording inserts into the migrated database.
     let bytes = make_gtd_bytes(9_000, 4);
-    let meta = extract_meta(&bytes).expect("meta");
+    let meta = gt_history::extract_meta(&bytes).expect("meta");
     db.insert_simple("auto:new.gtd", &meta, &bytes)
         .expect("insert into a migrated database");
 
@@ -1546,7 +1562,7 @@ fn reinserting_a_recording_keeps_its_track_table() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(4_000, 6);
-    let meta = extract_meta(&bytes).expect("meta");
+    let meta = gt_history::extract_meta(&bytes).expect("meta");
     let tracks = [
         TrackRange {
             start: 0,
@@ -1597,7 +1613,7 @@ fn set_tracks_shelved_shelves_only_the_given_tracks() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(1_000, 9);
-    let meta = extract_meta(&bytes).expect("meta");
+    let meta = gt_history::extract_meta(&bytes).expect("meta");
     let tracks = [
         TrackRange {
             start: 0,
@@ -1887,7 +1903,7 @@ fn a_database_with_an_older_schema_version_opens() {
     {
         let mut db = Database::open_or_create(&db_path).expect("create");
         let bytes = make_gtd_bytes(7_000_000, 3);
-        let meta = extract_meta(&bytes).expect("meta");
+        let meta = gt_history::extract_meta(&bytes).expect("meta");
         db.insert_simple("dev", &meta, &bytes).expect("insert");
     }
 
@@ -1922,7 +1938,7 @@ fn a_database_with_an_older_schema_version_opens() {
 #[test]
 fn extract_meta_reads_the_time_range_and_size_from_the_bytes() {
     let bytes = make_gtd_bytes(5_000, 10);
-    let meta = extract_meta(&bytes).expect("meta");
+    let meta = gt_history::extract_meta(&bytes).expect("meta");
 
     let time_range = meta.time_range.expect("the recording has nav points");
     assert_eq!(time_range.start_us(), 5_000);
@@ -1981,7 +1997,7 @@ fn concurrent_insert_does_not_panic() {
                 .spawn(move || {
                     let mut db = Database::open_or_create(&path).expect("open_or_create");
                     let bytes = make_gtd_bytes(i * 1_000_000, 5);
-                    let meta = extract_meta(&bytes).expect("parse meta");
+                    let meta = gt_history::extract_meta(&bytes).expect("parse meta");
                     db.insert_simple(&format!("device_{}", i), &meta, &bytes)
                         .expect("insert");
                 })
@@ -1997,7 +2013,7 @@ fn concurrent_insert_does_not_panic() {
 #[test]
 fn extract_meta_rejects_bytes_that_are_not_a_recording() {
     let malformed_bytes = vec![0, 1, 2, 3, 4]; // Not a GTD file
-    let meta = extract_meta(&malformed_bytes);
+    let meta = gt_history::extract_meta(&malformed_bytes);
     assert!(
         meta.is_err(),
         "Should have failed to extract meta from malformed data"
@@ -2013,7 +2029,7 @@ fn a_recording_large_enough_to_be_chunked_round_trips_its_times() {
     // Insert a larger dataset to trigger HDF5 chunking
     let n = 20_000_u64;
     let bytes = make_gtd_bytes(1_000_000, n);
-    let meta = extract_meta(&bytes).expect("parse meta");
+    let meta = gt_history::extract_meta(&bytes).expect("parse meta");
 
     db.insert_simple("large_device", &meta, &bytes)
         .expect("insert large recording");
@@ -2048,7 +2064,7 @@ fn inserting_the_loaded_bytes_again_returns_the_same_reference() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(1_000_000, 5);
-    let meta = extract_meta(&bytes).expect("parse meta");
+    let meta = gt_history::extract_meta(&bytes).expect("parse meta");
     let identity = "auto:snapshot.gtd";
     let db_ref = db
         .insert_simple(identity, &meta, &bytes)
@@ -2057,7 +2073,7 @@ fn inserting_the_loaded_bytes_again_returns_the_same_reference() {
 
     // Load the file back and try to re-insert it, as the app does on restart.
     let loaded_bytes = db.load_bytes(&db_ref).expect("load_bytes");
-    let meta2 = extract_meta(&loaded_bytes).expect("parse meta");
+    let meta2 = gt_history::extract_meta(&loaded_bytes).expect("parse meta");
 
     // The insert should detect this as a duplicate and return the existing `db_ref`
     let db_ref2 = db
@@ -2082,7 +2098,7 @@ fn an_inserted_recording_is_found_by_the_hdf5_pure_reader() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(1_000_000, 5);
-    let meta = extract_meta(&bytes).expect("parse meta");
+    let meta = gt_history::extract_meta(&bytes).expect("parse meta");
 
     let _db_ref = db.insert_simple("device", &meta, &bytes).expect("insert");
 
@@ -2116,7 +2132,7 @@ fn sys_backend_load_bytes_rebuilds_the_recording_file() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(1_000_000, 5);
-    let meta = extract_meta(&bytes).expect("parse meta");
+    let meta = gt_history::extract_meta(&bytes).expect("parse meta");
 
     let db_ref = db.insert_simple("device", &meta, &bytes).expect("insert");
     let loaded_bytes = db.load_bytes(&db_ref).expect("load_bytes");
@@ -2147,7 +2163,7 @@ fn pure_backend_database_is_readable_by_metno() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(1_000_000, 9);
-    let meta = extract_meta(&bytes).expect("parse meta");
+    let meta = gt_history::extract_meta(&bytes).expect("parse meta");
     let tracks = [
         TrackRange {
             start: 0,
@@ -2226,8 +2242,8 @@ fn recordings_in_the_same_second_get_distinct_group_names() {
     // content (so not deduplicated) but an identical legacy group name.
     let bytes_a = make_gtd_bytes(1_000_000, 5);
     let bytes_b = make_gtd_bytes(1_000_500, 5);
-    let meta_a = extract_meta(&bytes_a).expect("meta a");
-    let meta_b = extract_meta(&bytes_b).expect("meta b");
+    let meta_a = gt_history::extract_meta(&bytes_a).expect("meta a");
+    let meta_b = gt_history::extract_meta(&bytes_b).expect("meta b");
     assert!(
         !meta_a.same_recording(&meta_b),
         "the two must not be duplicates"
@@ -2258,7 +2274,7 @@ fn recordings_in_the_same_second_get_distinct_group_names() {
 )]
 fn insert_two_track(db: &mut Database, identity: &str, start_us: i64, n: u64) -> DatabaseRef {
     let bytes = make_gtd_bytes(start_us, n);
-    let meta = extract_meta(&bytes).expect("meta");
+    let meta = gt_history::extract_meta(&bytes).expect("meta");
     let half = meta.nav_point_count / 2;
     let tracks = [
         TrackRange {
@@ -2502,7 +2518,7 @@ fn chunked_recordings_reuse_freed_space_on_interior_delete() {
     let start_for = |i: usize| 1_000_000_000_i64 + i as i64 * 1_000_000;
     let insert = |db: &mut Database, i: usize| -> DatabaseRef {
         let bytes = make_chunked_gtd_bytes(start_for(i), 500);
-        let meta = extract_meta(&bytes).expect("meta");
+        let meta = gt_history::extract_meta(&bytes).expect("meta");
         let half = meta.nav_point_count / 2;
         let tracks = [
             TrackRange {
@@ -2554,7 +2570,7 @@ fn set_tracks_replaces_the_table_and_settings() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(1_000, 9);
-    let meta = extract_meta(&bytes).expect("meta");
+    let meta = gt_history::extract_meta(&bytes).expect("meta");
     let two = [
         TrackRange {
             start: 0,
@@ -2632,7 +2648,7 @@ fn replacing_a_recording_in_place_stores_the_new_bytes_under_the_same_reference(
     let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
 
     let shorter = make_gtd_bytes(1_000_000_025, 25);
-    let meta = extract_meta(&shorter).expect("meta");
+    let meta = gt_history::extract_meta(&shorter).expect("meta");
     let tracks = [TrackRange {
         start: 0,
         end: 25,
@@ -2650,7 +2666,7 @@ fn replacing_a_recording_in_place_stores_the_new_bytes_under_the_same_reference(
     let stored = db.load_full(&db_ref).expect("load");
     assert_eq!(stored.tracks, tracks.to_vec());
     assert_eq!(stored.segmentation, Some(fixtures::default_segmentation()));
-    let reconstructed = extract_meta(&stored.bytes).expect("meta");
+    let reconstructed = gt_history::extract_meta(&stored.bytes).expect("meta");
     assert_eq!(reconstructed.nav_point_count, 25);
     assert_eq!(reconstructed.time_range, meta.time_range);
 
@@ -2675,7 +2691,7 @@ fn replacing_a_recording_in_place_keeps_the_logs_attached_to_it() {
     let id = attach_placeholder_log(&mut db, &db_ref, "field-notes.log");
 
     let shorter = make_gtd_bytes(1_000_000_025, 25);
-    let meta = extract_meta(&shorter).expect("meta");
+    let meta = gt_history::extract_meta(&shorter).expect("meta");
     let tracks = [TrackRange {
         start: 0,
         end: 25,
@@ -2718,7 +2734,7 @@ fn replacing_a_recording_in_place_drops_its_snap_run_and_its_ui_state() {
     .expect("store");
 
     let shorter = make_gtd_bytes(1_000_000_025, 25);
-    let meta = extract_meta(&shorter).expect("meta");
+    let meta = gt_history::extract_meta(&shorter).expect("meta");
     let tracks = [TrackRange {
         start: 0,
         end: 25,
@@ -2749,7 +2765,7 @@ fn replacing_a_recording_that_is_not_stored_reports_an_error() {
     let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
 
     let bytes = make_gtd_bytes(2_000_000_000, 10);
-    let meta = extract_meta(&bytes).expect("meta");
+    let meta = gt_history::extract_meta(&bytes).expect("meta");
     let tracks = [TrackRange {
         start: 0,
         end: 10,
@@ -2786,7 +2802,7 @@ fn replacing_a_recording_with_bytes_that_are_not_a_recording_keeps_the_stored_on
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open");
     let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
-    let meta = extract_meta(&make_gtd_bytes(1_000_000_025, 25)).expect("meta");
+    let meta = gt_history::extract_meta(&make_gtd_bytes(1_000_000_025, 25)).expect("meta");
     let tracks = [TrackRange {
         start: 0,
         end: 25,
@@ -2807,7 +2823,9 @@ fn replacing_a_recording_with_bytes_that_are_not_a_recording_keeps_the_stored_on
     let stored = db.load_full(&db_ref).expect("load");
     assert_eq!(stored.tracks.len(), 2);
     assert_eq!(
-        extract_meta(&stored.bytes).expect("meta").nav_point_count,
+        gt_history::extract_meta(&stored.bytes)
+            .expect("meta")
+            .nav_point_count,
         50
     );
     let entries = db.list_recordings().expect("list");
@@ -2853,7 +2871,7 @@ fn a_replacement_interrupted_before_it_was_linked_in_puts_the_recording_back() {
     );
 
     let shorter = make_gtd_bytes(1_000_000_025, 25);
-    let meta = extract_meta(&shorter).expect("meta");
+    let meta = gt_history::extract_meta(&shorter).expect("meta");
     let tracks = [TrackRange {
         start: 0,
         end: 25,
@@ -2929,7 +2947,7 @@ fn a_stored_recording_reads_back_the_rules_it_was_written_with(
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
     let bytes = make_gtd_bytes(1_000, 4);
-    let meta = extract_meta(&bytes).expect("meta");
+    let meta = gt_history::extract_meta(&bytes).expect("meta");
     let tracks = [TrackRange {
         start: 0,
         end: meta.nav_point_count,
@@ -2960,7 +2978,7 @@ fn segmentation_attributes_stay_out_of_the_reconstructed_gtd() {
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
     let bytes = make_gtd_bytes(1_000, 4);
-    let meta = extract_meta(&bytes).expect("meta");
+    let meta = gt_history::extract_meta(&bytes).expect("meta");
     let db_ref = db.insert_simple("dev", &meta, &bytes).expect("insert");
 
     let rebuilt = db.load_bytes(&db_ref).expect("load");
@@ -3070,8 +3088,8 @@ fn snap_blob_stays_out_of_the_reconstructed_gtd() {
         "storing a blob must not add anything to the reconstructed GTD file"
     );
     assert_eq!(
-        extract_meta(&after).expect("meta"),
-        extract_meta(&baseline).expect("meta"),
+        gt_history::extract_meta(&after).expect("meta"),
+        gt_history::extract_meta(&baseline).expect("meta"),
         "the reconstructed recording must be unchanged"
     );
     assert_eq!(
@@ -3461,8 +3479,12 @@ fn a_write_locked_database_is_rejected_and_repaired_on_the_pure_backend() {
     {
         let mut db = Database::open_or_create(&path).expect("create");
         let bytes = make_gtd_bytes(1_000, 5);
-        db.insert_simple("dev", &extract_meta(&bytes).expect("meta"), &bytes)
-            .expect("insert");
+        db.insert_simple(
+            "dev",
+            &gt_history::extract_meta(&bytes).expect("meta"),
+            &bytes,
+        )
+        .expect("insert");
     }
 
     // A crashed writer: the superblock status-flags byte set with a valid

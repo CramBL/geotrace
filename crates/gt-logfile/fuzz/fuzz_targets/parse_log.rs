@@ -3,10 +3,7 @@
 use std::num::NonZeroUsize;
 
 use chrono::DateTime;
-use gt_logfile::{
-    parse_log, parse_log_in_chunks_of, LogText, ParsedLog, RecognisedLevel, RecognisedService,
-    TextSlice,
-};
+use gt_logfile::{LogText, ParsedLog, RecognisedLevel, RecognisedService, TextSlice};
 use libfuzzer_sys::fuzz_target;
 
 /// A moment past every timestamp an input can state, so the year-less syslog
@@ -30,7 +27,7 @@ const FUZZED_CHUNK_TARGET_BYTES: NonZeroUsize = match NonZeroUsize::new(64) {
 fuzz_target!(|data: &[u8]| {
     let now = DateTime::from_timestamp(NOW_UNIX_SECS, 0).unwrap_or(DateTime::UNIX_EPOCH);
     let text = LogText::decode_lossy(data);
-    let Ok(parsed) = parse_log(text.clone(), now) else {
+    let Ok(parsed) = gt_logfile::parse_log(text.clone(), now) else {
         return;
     };
     check_the_parse_indexes_what_it_read(&parsed);
@@ -38,7 +35,7 @@ fuzz_target!(|data: &[u8]| {
     if data.len() <= CHUNKED_COMPARISON_LIMIT_BYTES {
         assert_eq!(
             Ok(parsed),
-            parse_log_in_chunks_of(text, now, FUZZED_CHUNK_TARGET_BYTES),
+            gt_logfile::parse_log_in_chunks_of(text, now, FUZZED_CHUNK_TARGET_BYTES),
             "the chunked parse disagrees with the one-chunk parse"
         );
     }

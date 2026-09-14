@@ -2,7 +2,7 @@ use std::ops::RangeInclusive;
 
 use egui::{Color32, Stroke};
 use gt_types::{DataCategory, FileIdx, TrackIdx, TrackRef};
-use gt_ui_theme::{HIGHLIGHT_BLUE, track_color};
+use gt_ui_theme::HIGHLIGHT_BLUE;
 use gt_ui_types::{HighlightScope, MapHighlight};
 
 /// Dashing of the stretches drawn through ghost fixes.
@@ -45,7 +45,10 @@ pub(crate) fn track_stroke(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) 
     if is_track_highlighted(highlight, fi, ti) {
         Stroke::new(4.0_f32, HIGHLIGHT_BLUE)
     } else {
-        Stroke::new(3.0_f32, track_color(fi.as_usize(), ti.as_usize()))
+        Stroke::new(
+            3.0_f32,
+            gt_ui_theme::track_color(fi.as_usize(), ti.as_usize()),
+        )
     }
 }
 
@@ -298,21 +301,23 @@ pub(crate) fn skip_trackline(
 
 #[cfg(test)]
 mod tests {
-    use super::skip_trackline;
     use crate::tpv_renderer::TrackIconFade;
 
     #[test]
     fn trackline_is_replaced_only_when_the_quality_line_covers_it() {
         // Fully faded icons with the TPV layer on: the quality line paints
         // over the trackline, so the pass is skipped.
-        assert!(skip_trackline(Some(TrackIconFade::AllHidden), false));
+        assert!(super::skip_trackline(Some(TrackIconFade::AllHidden), false));
         // TPV layer hidden: no quality line exists, the trackline must stay.
-        assert!(!skip_trackline(None, false));
+        assert!(!super::skip_trackline(None, false));
         // Icons partially or fully visible: the quality line is transparent
         // or absent along opaque stretches, the trackline must stay.
-        assert!(!skip_trackline(Some(TrackIconFade::PerFix), false));
-        assert!(!skip_trackline(Some(TrackIconFade::AllVisible), false));
+        assert!(!super::skip_trackline(Some(TrackIconFade::PerFix), false));
+        assert!(!super::skip_trackline(
+            Some(TrackIconFade::AllVisible),
+            false
+        ));
         // A blinking (newly loaded) track draws its overlay in this pass.
-        assert!(!skip_trackline(Some(TrackIconFade::AllHidden), true));
+        assert!(!super::skip_trackline(Some(TrackIconFade::AllHidden), true));
     }
 }

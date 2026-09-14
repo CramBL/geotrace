@@ -3,7 +3,7 @@
 
 use egui::{Grid, Label, Popup, RichText};
 use egui_phosphor::regular::TAG as ICON_TAG;
-use gt_fmt::{EM_DASH, NameFields, Token, render_name_template};
+use gt_fmt::{EM_DASH, NameFields, Token};
 use gt_loaded_files::LoadedFileEntry;
 use gt_store::RecordingEntry;
 use strum::IntoEnumIterator as _;
@@ -80,7 +80,7 @@ impl TemplatePreviewRecording {
     }
 
     fn render(&self, template: &str) -> String {
-        render_name_template(
+        gt_fmt::render_name_template(
             template,
             &NameFields {
                 title: self.title.as_deref(),
@@ -144,7 +144,7 @@ fn show_template_guide(
 
                     ui.label(RichText::new("Structure").weak())
                         .on_hover_text("Your template with every token filled by its own name");
-                    ui.label(render_name_template(template, &STRUCTURE_FIELDS));
+                    ui.label(gt_fmt::render_name_template(template, &STRUCTURE_FIELDS));
                     ui.end_row();
 
                     ui.label(RichText::new("Preview").weak())
@@ -175,7 +175,7 @@ fn show_template_guide(
 
 #[cfg(test)]
 mod tests {
-    use gt_fmt::{NameFields, Token, render_name_template};
+    use gt_fmt::{NameFields, Token};
     use strum::IntoEnumIterator as _;
 
     use super::{STRUCTURE_FIELDS, TOKEN_LIMIT_EXAMPLE_CHARS};
@@ -187,7 +187,7 @@ mod tests {
         for token in Token::iter() {
             let name = token.to_string();
             assert_eq!(
-                render_name_template(&format!("{{{name}}}"), &STRUCTURE_FIELDS),
+                gt_fmt::render_name_template(&format!("{{{name}}}"), &STRUCTURE_FIELDS),
                 name
             );
         }
@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn hinted_limit_cuts_the_structure_preview() {
         let template = format!("{{identity:{TOKEN_LIMIT_EXAMPLE_CHARS}}}");
-        let rendered = render_name_template(&template, &STRUCTURE_FIELDS);
+        let rendered = gt_fmt::render_name_template(&template, &STRUCTURE_FIELDS);
         assert_eq!(rendered, "identity");
 
         let long_identity = NameFields {
@@ -206,7 +206,7 @@ mod tests {
             ..STRUCTURE_FIELDS
         };
         assert_eq!(
-            render_name_template(&template, &long_identity),
+            gt_fmt::render_name_template(&template, &long_identity),
             "Kongelig Dan…"
         );
     }

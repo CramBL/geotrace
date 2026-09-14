@@ -373,7 +373,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::test_util::{ScriptedTransport, TransportResponse, response, transport_error};
+    use crate::test_util::{self, ScriptedTransport, TransportResponse};
 
     /// The classifier every retry test runs: 2xx is a final `Ok`-like
     /// outcome, 5xx is transient, anything else fails outright.
@@ -396,7 +396,7 @@ mod tests {
 
     #[test]
     fn a_success_returns_the_classified_outcome() {
-        let (outcome, sends) = send(vec![response(200, "body")]);
+        let (outcome, sends) = send(vec![test_util::response(200, "body")]);
         assert_eq!(outcome, Ok("body".to_owned()));
         assert_eq!(sends, 1);
     }
@@ -406,7 +406,7 @@ mod tests {
     #[case::not_found(404)]
     #[case::too_many_requests(429)]
     fn a_final_outcome_is_never_retried(#[case] status: u16) {
-        let (outcome, sends) = send(vec![response(status, "")]);
+        let (outcome, sends) = send(vec![test_util::response(status, "")]);
         assert!(outcome.is_err(), "{outcome:?}");
         assert_eq!(sends, 1);
     }
@@ -415,14 +415,20 @@ mod tests {
     #[case::internal(500)]
     #[case::unavailable(503)]
     fn a_transient_response_is_retried_once(#[case] status: u16) {
-        let (outcome, sends) = send(vec![response(status, ""), response(status, "")]);
+        let (outcome, sends) = send(vec![
+            test_util::response(status, ""),
+            test_util::response(status, ""),
+        ]);
         assert!(outcome.is_err(), "{outcome:?}");
         assert_eq!(sends, 2);
     }
 
     #[test]
     fn a_retried_transient_that_succeeds_returns_the_outcome() {
-        let (outcome, sends) = send(vec![response(503, ""), response(200, "body")]);
+        let (outcome, sends) = send(vec![
+            test_util::response(503, ""),
+            test_util::response(200, "body"),
+        ]);
         assert_eq!(outcome, Ok("body".to_owned()));
         assert_eq!(sends, 2);
     }
@@ -430,8 +436,8 @@ mod tests {
     #[test]
     fn a_transport_failure_is_retried_once() {
         let (outcome, sends) = send(vec![
-            transport_error("connection reset"),
-            response(200, "body"),
+            test_util::transport_error("connection reset"),
+            test_util::response(200, "body"),
         ]);
         assert_eq!(outcome, Ok("body".to_owned()));
         assert_eq!(sends, 2);
@@ -440,8 +446,8 @@ mod tests {
     #[test]
     fn a_failure_reports_the_last_detail() {
         let (outcome, _) = send(vec![
-            transport_error("connection reset"),
-            transport_error("timed out"),
+            test_util::transport_error("connection reset"),
+            test_util::transport_error("timed out"),
         ]);
         assert_eq!(outcome, Err("request failed: timed out".to_owned()));
     }
@@ -551,8 +557,8 @@ mod tests {
     fn a_bytes_body_reaches_the_classifier_undecoded() {
         let gzip_magic = vec![0x1f, 0x8b, 0x08, 0x00];
         let transport = ScriptedTransport::in_order(vec![
-            response(503, Vec::new()),
-            response(200, gzip_magic.clone()),
+            test_util::response(503, Vec::new()),
+            test_util::response(200, gzip_magic.clone()),
         ]);
 
         let outcome = send_classified(

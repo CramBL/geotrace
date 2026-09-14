@@ -15,7 +15,6 @@ use gt_ionex::maps::GlobalIonosphereMaps;
 use gt_ionex::tec::TotalElectronContent;
 use gt_types::mercator::MercPoint;
 use gt_types::{Latitude, Longitude, mercator};
-use gt_ui_theme::{tec_color, tec_fill_alpha};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::hover_labels::{HoverLabelEntry, HoverLabelStack};
@@ -114,7 +113,7 @@ pub(crate) fn visible_cells(
     opacity_percent: f32,
 ) -> Vec<NodeCell> {
     let grid = snapshot.maps.grid();
-    let alpha = tec_fill_alpha(opacity_percent);
+    let alpha = gt_ui_theme::tec_fill_alpha(opacity_percent);
     let mut cells = Vec::new();
     for latitude_index in 0..grid.latitudes.node_count() {
         for longitude_index in 0..grid.longitudes.node_count() {
@@ -143,7 +142,7 @@ pub(crate) fn visible_cells(
             };
             cells.push(NodeCell {
                 rect: cell_rect,
-                fill: tec_color(content.tecu())
+                fill: gt_ui_theme::tec_color(content.tecu())
                     .resolve(dark_mode)
                     .gamma_multiply_u8(alpha),
                 content,

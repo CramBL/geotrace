@@ -5,7 +5,7 @@
 //! input panics, what comes back stays inside the declared output limit, and
 //! a stream cut short decodes to what it did hold.
 
-use proptest::prelude::any;
+use proptest::arbitrary;
 use proptest::test_runner::TestCaseError;
 
 use gt_ionex::test_util;
@@ -36,7 +36,7 @@ proptest::proptest! {
     /// Any input at all. Most cases are rejected for having no magic.
     #[test]
     fn arbitrary_input_is_decoded_or_rejected(
-        compressed in proptest::collection::vec(any::<u8>(), 0..2048)
+        compressed in proptest::collection::vec(arbitrary::any::<u8>(), 0..2048)
     ) {
         if let Ok(decompressed) = unix_compress::decompress(&compressed) {
             check_within_the_limit(&decompressed)?;
@@ -48,8 +48,8 @@ proptest::proptest! {
     #[test]
     fn an_arbitrary_payload_behind_a_header_is_decoded_or_rejected(
         flags in 9_u8..=16,
-        block_mode in any::<bool>(),
-        payload in proptest::collection::vec(any::<u8>(), 0..2048),
+        block_mode in arbitrary::any::<bool>(),
+        payload in proptest::collection::vec(arbitrary::any::<u8>(), 0..2048),
     ) {
         let mut compressed = vec![0x1f, 0x9d, if block_mode { flags | 0x80 } else { flags }];
         compressed.extend(payload);

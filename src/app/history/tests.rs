@@ -22,15 +22,11 @@ use gt_store::{ChannelSummary, TrackRange, TrackState};
 use gt_ui_theme::EM_DASH;
 
 use super::delete_shelved_prompt::{DELETE_SHELVED_TRACKS_LABEL, DELETE_SHELVED_WINDOW_TITLE};
-use super::table::{
-    MAX_HOVER_CHANNELS, OPEN_LOG_LABEL, UNSHELVE_ALL_LABEL, UNSHELVE_LABEL, breakdown_cell_id,
-    channel_title, data_breakdown_ui, duration_text, started_at_text, time_range_text,
-    track_count_text,
-};
+use super::table::{self, MAX_HOVER_CHANNELS, OPEN_LOG_LABEL, UNSHELVE_ALL_LABEL, UNSHELVE_LABEL};
 use super::{
     DEFAULT_WINDOW_HEIGHT_PX, DEFAULT_WINDOW_WIDTH_PX, DatabaseRef, HistorySort, HistoryWindow,
     HistoryWorker, ICON_CARET_DOWN, ICON_CARET_UP, NavPointTimeRange, PRUNE_WINDOW_TITLE,
-    RecordingEntry, SortColumn, SortDirection, identity_display_parts, travel_mode_display,
+    RecordingEntry, SortColumn, SortDirection,
 };
 use crate::app::test_util::listing;
 use crate::app::test_util::listing::{ShelvedTracks, TotalTracks};
@@ -605,7 +601,7 @@ fn unshelving_from_the_shelf_leaves_the_tracks_live(
                 .entries
                 .as_ref()
                 .and_then(|entries| entries.first())
-                .is_some_and(|entry| track_count_text(entry) == expected_track_count)
+                .is_some_and(|entry| table::track_count_text(entry) == expected_track_count)
         }),
         "the refreshed listing should report the unshelved tracks as live"
     );
@@ -687,7 +683,7 @@ fn deleting_the_shelved_tracks_from_the_shelf_leaves_the_recording_its_live_trac
                 .entries
                 .as_ref()
                 .and_then(|entries| entries.first())
-                .is_some_and(|entry| track_count_text(entry) == "1")
+                .is_some_and(|entry| table::track_count_text(entry) == "1")
         }),
         "the refreshed listing should report the one live track the recording keeps"
     );
@@ -908,7 +904,7 @@ fn every_sort_column_describes_itself() {
 #[case("bicycle", "Bicycle")]
 #[case("hovercraft", "hovercraft")]
 fn travel_mode_display_humanizes_the_wire_value(#[case] wire: &str, #[case] expected: &str) {
-    assert_eq!(travel_mode_display(wire), expected);
+    assert_eq!(super::travel_mode_display(wire), expected);
 }
 
 /// A travel mode alone must badge the row with the note icon, proving
@@ -1335,10 +1331,10 @@ fn a_row_reads_its_date_duration_and_time_range_from_the_earliest_and_latest_nav
         1_700_000_060_000_000,
     ]);
 
-    assert_eq!(started_at_text(time_range), "2023-11-14 22:13");
-    assert_eq!(duration_text(time_range), "1h 01m");
+    assert_eq!(table::started_at_text(time_range), "2023-11-14 22:13");
+    assert_eq!(table::duration_text(time_range), "1h 01m");
     assert_eq!(
-        time_range_text(time_range),
+        table::time_range_text(time_range),
         "2023-11-14 22:13:20 – 23:14:20"
     );
 }
@@ -1347,9 +1343,9 @@ fn a_row_reads_its_date_duration_and_time_range_from_the_earliest_and_latest_nav
 /// range line of its breakdown.
 #[test]
 fn a_row_of_a_recording_with_no_time_range_reads_em_dashes() {
-    assert_eq!(started_at_text(None), EM_DASH);
-    assert_eq!(duration_text(None), EM_DASH);
-    assert_eq!(time_range_text(None), EM_DASH);
+    assert_eq!(table::started_at_text(None), EM_DASH);
+    assert_eq!(table::duration_text(None), EM_DASH);
+    assert_eq!(table::time_range_text(None), EM_DASH);
 }
 
 /// A recording with no time range has no date and no duration to order on, and
@@ -1479,7 +1475,7 @@ fn topmost_labelled(h: &TestHarness<HistoryHarness>, label: &str) -> egui::Pos2 
 fn snapshot_breakdown(entry: &RecordingEntry, name: &str) {
     let mut h = TestHarness::builder()
         .size(egui::vec2(420.0, 560.0))
-        .ui(|ui| data_breakdown_ui(ui, entry));
+        .ui(|ui| table::data_breakdown_ui(ui, entry));
     for _ in 0..3 {
         h.run();
     }
@@ -1543,7 +1539,7 @@ fn channel_title_appends_vector_components(#[case] components: &[&str], #[case] 
         sample_count: 0,
     };
 
-    assert_eq!(channel_title(&channel), expected);
+    assert_eq!(table::channel_title(&channel), expected);
 }
 
 /// The cursor the window requests right now.
@@ -1774,8 +1770,8 @@ fn breakdown_cell_ids_are_distinct_per_cell() {
     let cells: Vec<egui::Id> = SortColumn::iter()
         .flat_map(|column| {
             [
-                breakdown_cell_id(first, column),
-                breakdown_cell_id(second, column),
+                table::breakdown_cell_id(first, column),
+                table::breakdown_cell_id(second, column),
             ]
         })
         .collect();
@@ -1805,14 +1801,14 @@ fn track_count_text_states_the_shelved_tracks(
     entry.total_tracks = total_tracks;
     entry.shelved_tracks = shelved_tracks;
 
-    assert_eq!(track_count_text(&entry), expected);
+    assert_eq!(table::track_count_text(&entry), expected);
 }
 
 #[test]
 fn identity_display_keeps_full_manual_identity_visible() {
     let identity = "/example.invalid/history/identity/with/slashes/";
 
-    assert_eq!(identity_display_parts(identity), (identity, false));
+    assert_eq!(super::identity_display_parts(identity), (identity, false));
 }
 
 #[test]
@@ -1820,7 +1816,7 @@ fn identity_display_marks_auto_identity_without_losing_original() {
     let identity = "auto:recording-2026-07-09.gtd";
 
     assert_eq!(
-        identity_display_parts(identity),
+        super::identity_display_parts(identity),
         ("recording-2026-07-09.gtd", true)
     );
 }

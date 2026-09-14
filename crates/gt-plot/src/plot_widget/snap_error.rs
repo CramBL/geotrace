@@ -11,8 +11,8 @@ use rustc_hash::FxHashMap;
 use super::chips::MetricKindUi;
 use super::levels::LineViewport;
 use super::lines::{
-    ANOMALY_HOVER_RADIUS_PX, ANOMALY_MARKER_RADIUS, LineStroke, NearestHoverLabel, PlotHoverLabel,
-    add_line, nearest_fix_under_pointer, visible_by_x,
+    self, ANOMALY_HOVER_RADIUS_PX, ANOMALY_MARKER_RADIUS, LineStroke, NearestHoverLabel,
+    PlotHoverLabel,
 };
 use crate::series::PlacedTrackSeries;
 
@@ -199,7 +199,7 @@ pub(super) fn add_snap_error_series<'a>(
     let selections = viewport.select_run_levels(&cache.runs);
     let full_detail = every_shown_run_is_at_full_detail(&cache.runs, &selections, viewport);
     for (run, selection) in cache.runs.iter().zip(selections) {
-        add_line(
+        lines::add_line(
             plot_ui,
             run.slice_at(selection),
             format!("{prefix}{}", MetricKind::SnapError.label()),
@@ -208,7 +208,7 @@ pub(super) fn add_snap_error_series<'a>(
     }
 
     if full_detail && !cache.snapped.is_empty() {
-        let visible = visible_by_x(&cache.snapped, |p| p.x, viewport.x_min, viewport.x_max);
+        let visible = lines::visible_by_x(&cache.snapped, |p| p.x, viewport.x_min, viewport.x_max);
         if !visible.is_empty() {
             plot_ui.points(
                 Points::new(
@@ -223,7 +223,8 @@ pub(super) fn add_snap_error_series<'a>(
         }
     }
 
-    let visible_unsnapped = visible_by_x(&cache.unsnapped, |p| p.x, viewport.x_min, viewport.x_max);
+    let visible_unsnapped =
+        lines::visible_by_x(&cache.unsnapped, |p| p.x, viewport.x_min, viewport.x_max);
     if !visible_unsnapped.is_empty() {
         plot_ui.points(
             Points::new("Unsnapped points", PlotPoints::Borrowed(visible_unsnapped))
@@ -237,7 +238,7 @@ pub(super) fn add_snap_error_series<'a>(
     let Some(pointer) = pointer else {
         return;
     };
-    if let Some((distance, point)) = nearest_fix_under_pointer(
+    if let Some((distance, point)) = lines::nearest_fix_under_pointer(
         plot_ui,
         visible_unsnapped,
         |point| *point,

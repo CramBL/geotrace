@@ -1,4 +1,4 @@
-use std::thread::sleep;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use egui::accesskit::Role;
@@ -131,7 +131,7 @@ impl<State> HarnessInteraction for Harness<'_, State> {
             if started.elapsed() >= STEP_UNTIL_DEADLINE {
                 return None;
             }
-            sleep(PAUSE_BETWEEN_FRAMES);
+            thread::sleep(PAUSE_BETWEEN_FRAMES);
             self.step();
         }
     }

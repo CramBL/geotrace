@@ -102,7 +102,7 @@ pub fn associate_entries(
 #[cfg(test)]
 mod tests {
     use chrono::TimeZone as _;
-    use gt_test_utils::fixtures::nav_points_from;
+    use gt_test_utils::fixtures;
     use gt_types::{FileIdx, LoadedTrack, PointIdx, TrackIdx, TrackRef};
     use proptest::{prelude::*, proptest};
     use rstest::rstest;
@@ -112,7 +112,7 @@ mod tests {
 
     /// `count` fixes a second apart from `start()`, as a track of their own.
     fn track_of(count: usize) -> LoadedTrack {
-        gt_test_utils::loaded_track_with_points(nav_points_from(start(), count, 1))
+        gt_test_utils::loaded_track_with_points(fixtures::nav_points_from(start(), count, 1))
     }
 
     /// The track's fixes with where the builder places each of them,

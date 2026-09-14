@@ -149,7 +149,12 @@ fn snap_disambig_popup_big_icons() {
             Frame::popup(ui.style()).show(ui, |ui| {
                 ui.set_min_width(200.0);
                 for candidate in candidates.iter().flatten().copied() {
-                    draw_disambig_row(ui, candidate, &files, sticky == Some(candidate));
+                    hover_labels::draw_disambig_row(
+                        ui,
+                        candidate,
+                        &files,
+                        sticky == Some(candidate),
+                    );
                 }
             });
         });

@@ -17,21 +17,16 @@ use walkers::{MapMemory, Plugin, Projector};
 use crate::collision_grid;
 use crate::icon_mesh::IconMeshLibrary;
 use crate::match_reveal::HaloStyle;
-use crate::polyline::{CULL_MARGIN_PX, VisiblePath, visible_path};
+use crate::polyline::{self, CULL_MARGIN_PX, VisiblePath};
 use crate::query_match_renderer;
 use crate::sat_labels::{self, LabelSelection};
 use crate::sky_glyph_renderer::{self, GlyphSelection};
-use crate::tpv_renderer::{
-    self, ChevronFix, QUALITY_LINE_WIDTH, TpvDrawStyle, TrackIconFade, bucket_alpha,
-    fix_icon_alpha, line_alpha_bucket, quality_line_color,
-};
+use crate::tpv_renderer::{self, ChevronFix, QUALITY_LINE_WIDTH, TpvDrawStyle, TrackIconFade};
 use crate::track_endpoint_renderer::{
     self, DrawnTrackEnds, FlagStyle, PendingEndpointFlags, StandingFlag,
 };
-use crate::track_renderer::{
-    self, blink_stroke, draw_track_with_ghost, skip_trackline, track_stroke,
-};
-use crate::transform::{GeometryCull, MercTransform, lod_points};
+use crate::track_renderer;
+use crate::transform::{self, GeometryCull, MercTransform};
 use crate::viewport::{TrackEntry, TrackPlan};
 
 /// Minimum animated progress at which the overlay and three-phase rendering
@@ -302,7 +297,8 @@ impl<'a> TrackLayers<'a> {
                 // Blink overlay: a bright pulsing stroke on top of newly
                 // loaded tracks for the first 3 seconds after load.
                 let need_blink = self.blink_alpha > 0.0 && fi.as_usize() >= self.new_file_boundary;
-                let paint_trackline = entry.trackline && !skip_trackline(entry.fade, need_blink);
+                let paint_trackline =
+                    entry.trackline && !track_renderer::skip_trackline(entry.fade, need_blink);
                 let paint_icons = matches!(
                     entry.fade,
                     Some(TrackIconFade::PerFix | TrackIconFade::AllVisible)
@@ -330,14 +326,14 @@ impl<'a> TrackLayers<'a> {
                 let Some(placed) = track.placed_points() else {
                     continue;
                 };
-                let walk = lod_points(track, placed, transform, cull);
+                let walk = transform::lod_points(track, placed, transform, cull);
                 let walked_level_indices = walk.walked_level_indices();
                 let pts = walk.map(|(pi, p)| {
                     let screen_pos = transform.to_screen(p.merc());
                     let bucket = match fade {
                         None | Some(TrackIconFade::AllVisible) => 0,
-                        Some(fade) => line_alpha_bucket(
-                            1.0 - fix_icon_alpha(
+                        Some(fade) => tpv_renderer::line_alpha_bucket(
+                            1.0 - tpv_renderer::fix_icon_alpha(
                                 fade,
                                 placed,
                                 pi,
@@ -349,7 +345,7 @@ impl<'a> TrackLayers<'a> {
                     };
                     let key = LinePointKey {
                         ghost: p.fix.tpv.heading().is_none(),
-                        quality: quality_line_color(p.fix),
+                        quality: tpv_renderer::quality_line_color(p.fix),
                         bucket,
                         matched: query_view.draw_mask(pi),
                         hidden: query_view.is_hidden(pi),
@@ -357,7 +353,7 @@ impl<'a> TrackLayers<'a> {
                     };
                     (key, screen_pos)
                 });
-                let path = visible_path(pts, cull_rect);
+                let path = polyline::visible_path(pts, cull_rect);
                 geometries.push(TrackGeometry {
                     fi,
                     ti,
@@ -473,8 +469,10 @@ impl<'a> TrackLayers<'a> {
             if !filter(i) || !geo.paint_trackline {
                 continue;
             }
-            let stroke = track_stroke(self.highlight, geo.fi, geo.ti);
-            let blink = geo.need_blink.then(|| blink_stroke(self.blink_alpha));
+            let stroke = track_renderer::track_stroke(self.highlight, geo.fi, geo.ti);
+            let blink = geo
+                .need_blink
+                .then(|| track_renderer::blink_stroke(self.blink_alpha));
             paint_trackline_path(ui, &geo.path, stroke, blink);
         }
     }
@@ -745,7 +743,9 @@ fn paint_trackline_path(
         VisiblePath::Spans(spans) => {
             for span in spans.iter() {
                 for run in shown_runs(span) {
-                    draw_track_with_ghost(ui.painter(), run, stroke, |key| key.ghost);
+                    track_renderer::draw_track_with_ghost(ui.painter(), run, stroke, |key| {
+                        key.ghost
+                    });
                     if let Some(blink) = blink {
                         let bp: Vec<egui::Pos2> = run.iter().map(|&(_, pos)| pos).collect();
                         ui.painter().add(egui::Shape::line(bp, blink));
@@ -807,7 +807,8 @@ fn paint_quality_path(ui: &Ui, path: &VisiblePath<LinePointKey>) {
                 painter.circle_filled(
                     *pos,
                     QUALITY_LINE_WIDTH,
-                    key.quality.gamma_multiply(bucket_alpha(key.bucket)),
+                    key.quality
+                        .gamma_multiply(tpv_renderer::bucket_alpha(key.bucket)),
                 );
             }
         }
@@ -829,7 +830,7 @@ fn paint_quality_path(ui: &Ui, path: &VisiblePath<LinePointKey>) {
                             sub_span_points.iter().map(|&(_, pos)| pos).collect(),
                             Stroke::new(
                                 QUALITY_LINE_WIDTH,
-                                quality.gamma_multiply(bucket_alpha(bucket)),
+                                quality.gamma_multiply(tpv_renderer::bucket_alpha(bucket)),
                             ),
                         ));
                     }
@@ -845,7 +846,7 @@ mod tests {
     use std::ops::Range;
 
     use chrono::{DateTime, TimeDelta, Utc};
-    use egui::{Color32, Rect, pos2};
+    use egui::{Color32, Rect};
     use gt_filter::GlobalFilter;
     use gt_types::{GpsTime, Latitude, LoadedTrack, Longitude, NavPoint, TimePositionVelocity};
     use gt_ui_types::{DrawLayerMask, QueryMatches, TrackMatchView};
@@ -904,7 +905,7 @@ mod tests {
                     hidden,
                     hover_matched: false,
                 };
-                (key, pos2(i as f32, 0.0))
+                (key, egui::pos2(i as f32, 0.0))
             })
             .collect()
     }
@@ -933,8 +934,8 @@ mod tests {
     #[test]
     fn sub_pixel_quality_transition_yields_spans_not_dot() {
         let rect = Rect {
-            min: pos2(0.0, 0.0),
-            max: pos2(100.0, 100.0),
+            min: egui::pos2(0.0, 0.0),
+            max: egui::pos2(100.0, 100.0),
         };
         let key = |quality| LinePointKey {
             ghost: false,
@@ -945,8 +946,8 @@ mod tests {
             hover_matched: false,
         };
         let pts = vec![
-            (key(Color32::BLUE), pos2(10.0, 10.0)),
-            (key(Color32::YELLOW), pos2(10.2, 10.0)),
+            (key(Color32::BLUE), egui::pos2(10.0, 10.0)),
+            (key(Color32::YELLOW), egui::pos2(10.2, 10.0)),
         ];
         let path = polyline::visible_path(pts.into_iter(), rect);
         assert!(matches!(path, VisiblePath::Spans(_)));

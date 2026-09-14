@@ -18,7 +18,7 @@ use chrono::{DateTime, Utc};
 use egui::text::{CCursor, CCursorRange, LayoutJob};
 use gt_query::lexer::{self, TokenClass};
 use gt_query::{ChannelSchema, CompletionTrigger, Construct, ConstructKind, Diagnostic, Span};
-use gt_query_run::{CheckRefresh, QuerySession, RunInputs, RunKind, RunOutcome, schema_from_files};
+use gt_query_run::{CheckRefresh, QuerySession, RunInputs, RunKind, RunOutcome};
 use gt_side_panel::widgets::PointClickRequests;
 use gt_ui_types::{
     DisplayMask, MapHighlight, MapScope, MatchRevealTarget, QueryMatches, StaleRunNote,
@@ -465,7 +465,7 @@ impl QueryWindow {
         let files = loaded_files.files();
         // The channels the editor checks `@name` against, gathered across every
         // loaded track.
-        let schema = schema_from_files(files);
+        let schema = gt_query_run::schema_from_files(files);
         // Read before the window renders: `editor_ui` updates the field.
         let editor_was_focused = self.editor_had_focus;
         let mut open = self.open;

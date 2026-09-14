@@ -1,6 +1,6 @@
 //! Clearing between runs: nothing of the first run may reach the second.
 
-use gt_query_map_harness::{Dataset, MapScenario, TrackSpec, track};
+use gt_query_map_harness::{Dataset, MapScenario, TrackSpec};
 
 fn scenario() -> MapScenario {
     MapScenario::new(Dataset::single_track(
@@ -82,7 +82,7 @@ fn running_again_without_clearing_replaces_the_results() {
 fn the_selection_survives_clearing_and_the_next_run() {
     let mut scenario = scenario();
     scenario.run("points | where velocity > 30 km/h | draw");
-    scenario.select_point(track(0, 0), 1);
+    scenario.select_point(gt_query_map_harness::track(0, 0), 1);
     scenario.clear();
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  ....

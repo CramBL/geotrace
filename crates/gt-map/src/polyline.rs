@@ -161,31 +161,31 @@ pub(crate) fn segment_outside(a: egui::Pos2, b: egui::Pos2, rect: egui::Rect) ->
 
 #[cfg(test)]
 mod tests {
-    use egui::{Pos2, Rect, pos2};
+    use egui::{Pos2, Rect};
 
-    use super::{PolylineSpans, VisiblePath, segment_outside, visible_path};
+    use super::{PolylineSpans, VisiblePath};
 
     fn spans<K: Copy + PartialEq>(nested: Vec<Vec<(K, Pos2)>>) -> VisiblePath<K> {
         VisiblePath::Spans(PolylineSpans::from_nested(nested))
     }
 
     const RECT: Rect = Rect {
-        min: pos2(0.0, 0.0),
-        max: pos2(100.0, 100.0),
+        min: egui::pos2(0.0, 0.0),
+        max: egui::pos2(100.0, 100.0),
     };
 
     fn real(x: f32, y: f32) -> (bool, Pos2) {
-        (false, pos2(x, y))
+        (false, egui::pos2(x, y))
     }
 
     fn ghost(x: f32, y: f32) -> (bool, Pos2) {
-        (true, pos2(x, y))
+        (true, egui::pos2(x, y))
     }
 
     #[test]
     fn spaced_points_inside_view_form_a_single_full_span() {
         let pts = vec![real(10.0, 10.0), real(20.0, 10.0), real(30.0, 10.0)];
-        let path = visible_path(pts.clone().into_iter(), RECT);
+        let path = super::visible_path(pts.clone().into_iter(), RECT);
         assert_eq!(path, spans(vec![pts]));
     }
 
@@ -197,14 +197,14 @@ mod tests {
             real(10.4, 10.0),
             real(20.0, 10.0),
         ];
-        let path = visible_path(pts.into_iter(), RECT);
+        let path = super::visible_path(pts.into_iter(), RECT);
         assert_eq!(path, spans(vec![vec![real(10.0, 10.0), real(20.0, 10.0)]]));
     }
 
     #[test]
     fn key_transition_is_kept_even_at_sub_pixel_distance() {
         let pts = vec![real(10.0, 10.0), ghost(10.2, 10.0), real(10.4, 10.0)];
-        let path = visible_path(pts.clone().into_iter(), RECT);
+        let path = super::visible_path(pts.clone().into_iter(), RECT);
         assert_eq!(path, spans(vec![pts]));
     }
 
@@ -214,12 +214,12 @@ mod tests {
         let blue = Color32::BLUE;
         let yellow = Color32::YELLOW;
         let pts = vec![
-            (blue, pos2(10.0, 10.0)),
-            (blue, pos2(20.0, 10.0)),
-            (yellow, pos2(30.0, 10.0)),
-            (yellow, pos2(40.0, 10.0)),
+            (blue, egui::pos2(10.0, 10.0)),
+            (blue, egui::pos2(20.0, 10.0)),
+            (yellow, egui::pos2(30.0, 10.0)),
+            (yellow, egui::pos2(40.0, 10.0)),
         ];
-        let path = visible_path(pts.clone().into_iter(), RECT);
+        let path = super::visible_path(pts.clone().into_iter(), RECT);
         assert_eq!(path, spans(vec![pts]));
     }
 
@@ -228,7 +228,7 @@ mod tests {
         // All points are above the rect, so every segment is trivially
         // outside - even though the path spans the rect horizontally.
         let pts = vec![real(-50.0, -50.0), real(150.0, -60.0), real(-50.0, -70.0)];
-        let path = visible_path(pts.into_iter(), RECT);
+        let path = super::visible_path(pts.into_iter(), RECT);
         assert_eq!(path, VisiblePath::OffScreen);
     }
 
@@ -242,7 +242,7 @@ mod tests {
             real(60.0, -500.0),
             real(60.0, 50.0),
         ];
-        let path = visible_path(pts.into_iter(), RECT);
+        let path = super::visible_path(pts.into_iter(), RECT);
         assert_eq!(
             path,
             spans(vec![
@@ -255,17 +255,17 @@ mod tests {
     #[test]
     fn single_visible_point_becomes_a_dot() {
         assert_eq!(
-            visible_path(std::iter::empty::<(bool, Pos2)>(), RECT),
+            super::visible_path(std::iter::empty::<(bool, Pos2)>(), RECT),
             VisiblePath::OffScreen
         );
         // A lone fix inside the view must stay discoverable (drawn as a dot
         // by the caller). A lone fix outside the view yields nothing.
         assert_eq!(
-            visible_path(std::iter::once(real(10.0, 10.0)), RECT),
-            VisiblePath::Dot(false, pos2(10.0, 10.0))
+            super::visible_path(std::iter::once(real(10.0, 10.0)), RECT),
+            VisiblePath::Dot(false, egui::pos2(10.0, 10.0))
         );
         assert_eq!(
-            visible_path(std::iter::once(real(-10.0, 10.0)), RECT),
+            super::visible_path(std::iter::once(real(-10.0, 10.0)), RECT),
             VisiblePath::OffScreen
         );
     }
@@ -275,8 +275,8 @@ mod tests {
         // A whole track merging below one pixel (extreme zoom-out) must not
         // vanish: the first visible point comes back as a dot.
         let pts = vec![real(10.0, 10.0), real(10.2, 10.0), real(10.4, 10.0)];
-        let path = visible_path(pts.into_iter(), RECT);
-        assert_eq!(path, VisiblePath::Dot(false, pos2(10.0, 10.0)));
+        let path = super::visible_path(pts.into_iter(), RECT);
+        assert_eq!(path, VisiblePath::Dot(false, egui::pos2(10.0, 10.0)));
     }
 
     #[test]
@@ -288,10 +288,10 @@ mod tests {
         // Upstream projection should not produce NaN.
         let pts = vec![
             real(10.0, 10.0),
-            (false, pos2(f32::NAN, 10.0)),
+            (false, egui::pos2(f32::NAN, 10.0)),
             real(20.0, 10.0),
         ];
-        let path = visible_path(pts.into_iter(), RECT);
+        let path = super::visible_path(pts.into_iter(), RECT);
         assert_eq!(path, spans(vec![vec![real(10.0, 10.0), real(20.0, 10.0)]]));
     }
 
@@ -314,11 +314,11 @@ mod tests {
             // Constructed directly (not via `from_two_pos`) so inverted and
             // NaN rects are exercised too.
             let rect = Rect {
-                min: pos2(rect_min.0, rect_min.1),
-                max: pos2(rect_max.0, rect_max.1),
+                min: egui::pos2(rect_min.0, rect_min.1),
+                max: egui::pos2(rect_max.0, rect_max.1),
             };
-            let points = pts.iter().map(|&(key, x, y)| (key, pos2(x, y)));
-            if let VisiblePath::Spans(spans) = visible_path(points, rect) {
+            let points = pts.iter().map(|&(key, x, y)| (key, egui::pos2(x, y)));
+            if let VisiblePath::Spans(spans) = super::visible_path(points, rect) {
                 proptest::prop_assert!(spans.iter().next().is_some());
                 proptest::prop_assert!(spans.iter().all(|span| span.len() >= 2));
             }
@@ -328,13 +328,33 @@ mod tests {
     #[test]
     fn segment_outside_rejects_only_same_side_pairs() {
         // Both beyond the same edge: rejected.
-        assert!(segment_outside(pos2(-10.0, 50.0), pos2(-5.0, 60.0), RECT));
-        assert!(segment_outside(pos2(50.0, 110.0), pos2(60.0, 200.0), RECT));
+        assert!(super::segment_outside(
+            egui::pos2(-10.0, 50.0),
+            egui::pos2(-5.0, 60.0),
+            RECT
+        ));
+        assert!(super::segment_outside(
+            egui::pos2(50.0, 110.0),
+            egui::pos2(60.0, 200.0),
+            RECT
+        ));
         // Crossing the rect: kept.
-        assert!(!segment_outside(pos2(-10.0, 50.0), pos2(110.0, 50.0), RECT));
+        assert!(!super::segment_outside(
+            egui::pos2(-10.0, 50.0),
+            egui::pos2(110.0, 50.0),
+            RECT
+        ));
         // Inside: kept.
-        assert!(!segment_outside(pos2(10.0, 10.0), pos2(20.0, 20.0), RECT));
+        assert!(!super::segment_outside(
+            egui::pos2(10.0, 10.0),
+            egui::pos2(20.0, 20.0),
+            RECT
+        ));
         // Diagonal near a corner (conservatively kept even though it misses).
-        assert!(!segment_outside(pos2(-10.0, 50.0), pos2(50.0, -10.0), RECT));
+        assert!(!super::segment_outside(
+            egui::pos2(-10.0, 50.0),
+            egui::pos2(50.0, -10.0),
+            RECT
+        ));
     }
 }
