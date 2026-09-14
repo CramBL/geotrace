@@ -15,20 +15,16 @@ use strum::IntoEnumIterator;
 
 use super::backward_time_step::BackwardTimeStepHover;
 use super::chips::{
-    ChannelVisibility, HoveredChip, LoadedChannel, MetricKindUi, MetricVisibility, SectionGates,
-    metric_is_shown,
+    self, ChannelVisibility, HoveredChip, LoadedChannel, MetricKindUi, MetricVisibility,
+    SectionGates,
 };
 use super::clock_offset::{self, ClockOffsetHover};
 use super::flares::SolarFlareHover;
 use super::geomagnetic::GeomagneticHover;
 use super::jamming::JammingHover;
 use super::levels::{LineViewport, TrackLevelCache};
-use super::snap_error::{
-    SnapErrorHover, SnapErrorPlotCache, SnapErrorStyle, add_snap_error_series,
-};
-use super::style::{
-    channel_line_color, effective_component_color, file_line_style, metric_line_color,
-};
+use super::snap_error::{self, SnapErrorHover, SnapErrorPlotCache, SnapErrorStyle};
+use super::style;
 use super::tec::TecHover;
 use crate::series::{PlacedTrackSeries, TrackSeries};
 
@@ -144,7 +140,7 @@ pub(super) fn add_series_lines<'a>(
     let focused = placed.matches_hover_scope(hover_scope);
     let has_track_focus = hover_scope.is_some();
 
-    let line_style = file_line_style(placed.fi);
+    let line_style = style::file_line_style(placed.fi);
     // The hover-dim treatment every line shares: full color plus highlight
     // while its own chip is hovered, dimmed while any other chip is.
     let stroke_with_hover_treatment = |base: Color32, is_hovered_chip: bool| {
@@ -168,15 +164,17 @@ pub(super) fn add_series_lines<'a>(
         // Skip metrics with no chip on screen - collapsed advanced section, or a
         // per-constellation metric whose constellation is absent from the data -
         // so a hidden chip never leaves a stray line on the plot.
-        if !metric_is_shown(kind, present, sections.show_advanced) {
+        if !chips::metric_is_shown(kind, present, sections.show_advanced) {
             continue;
         }
         if !metric_vis.field(kind) {
             continue;
         }
         let is_hovered = hovered_chip == Some(&HoveredChip::Metric(kind));
-        let stroke =
-            stroke_with_hover_treatment(metric_line_color(kind, placed.fi, dark_mode), is_hovered);
+        let stroke = stroke_with_hover_treatment(
+            style::metric_line_color(kind, placed.fi, dark_mode),
+            is_hovered,
+        );
         // Snap error has no mipmap. It draws from the external per-run series
         // right after this loop.
         let (Some(mipmap), Some(level)) = (placed.series.mipmap_for(kind), cache.level_for(kind))
@@ -203,7 +201,7 @@ pub(super) fn add_series_lines<'a>(
     if metric_vis.field(MetricKind::SnapError)
         && let Some(cache) = snap_error
     {
-        add_snap_error_series(
+        snap_error::add_snap_error_series(
             plot_ui,
             &prefix,
             track_label,
@@ -213,7 +211,7 @@ pub(super) fn add_series_lines<'a>(
             nearest,
             SnapErrorStyle {
                 stroke: stroke_with_hover_treatment(
-                    metric_line_color(MetricKind::SnapError, placed.fi, dark_mode),
+                    style::metric_line_color(MetricKind::SnapError, placed.fi, dark_mode),
                     hovered_chip == Some(&HoveredChip::Metric(MetricKind::SnapError)),
                 ),
                 dark_mode,
@@ -241,7 +239,7 @@ pub(super) fn add_series_lines<'a>(
         };
         let is_hovered =
             matches!(hovered_chip, Some(HoveredChip::Channel(name)) if *name == channel.name);
-        let base = channel_line_color(color_index, placed.fi);
+        let base = style::channel_line_color(color_index, placed.fi);
         let unit_suffix = channel
             .unit
             .as_deref()
@@ -252,7 +250,7 @@ pub(super) fn add_series_lines<'a>(
             // Rotate before the hover treatment, so dimming applies to the
             // component's own hue.
             let stroke = stroke_with_hover_treatment(
-                effective_component_color(component_colors, &channel.name, base, index),
+                style::effective_component_color(component_colors, &channel.name, base, index),
                 is_hovered,
             );
             let name = format!("{prefix}{}{unit_suffix}", component.label);
@@ -507,7 +505,7 @@ pub(super) fn add_util_anomalies<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{NearestCandidate, visible_by_x};
+    use super::NearestCandidate;
 
     /// Every series of every recording offers into one slot, so the closest
     /// candidate is the only one left to draw - the label anchors at the
@@ -557,6 +555,9 @@ mod tests {
         #[case] expected: Vec<f64>,
     ) {
         let xs = [0.0_f64, 1.0, 2.0, 3.0, 4.0];
-        assert_eq!(visible_by_x(&xs, |&x| x, x_min, x_max), expected.as_slice());
+        assert_eq!(
+            super::visible_by_x(&xs, |&x| x, x_min, x_max),
+            expected.as_slice()
+        );
     }
 }

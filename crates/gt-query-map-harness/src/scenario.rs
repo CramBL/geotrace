@@ -3,7 +3,7 @@ use std::ops::Range;
 use chrono::Duration;
 use gt_filter::GlobalFilter;
 use gt_map::display_counts::{DisplayCounts, SuppliedCounts};
-use gt_query_run::{QuerySession, RunInputs, RunResults, schema_from_files};
+use gt_query_run::{QuerySession, RunInputs, RunResults};
 use gt_types::{DataCategory, FileIdx, PointIdx, TrackRef};
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
@@ -87,7 +87,7 @@ impl MapScenario {
             session,
             ..
         } = self;
-        session.sync_checks(&schema_from_files(dataset.files().files()));
+        session.sync_checks(&gt_query_run::schema_from_files(dataset.files().files()));
         let inputs = RunInputs {
             loaded_files: dataset.files().view(),
             visibility,

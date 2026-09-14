@@ -6,7 +6,6 @@
 
 use std::collections::HashMap;
 
-use crate::matches_attrs;
 use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
@@ -18,9 +17,7 @@ use gt_history_types::{
     RecordingUiState, SCHEMA_VERSION_ATTR, SNAP_BLOB_DATASET, SNAP_GROUP, StoredFixPlacementRule,
     StoredRecording, StoredSegmentation, StoredTrackSplitRule, StoredUiStateVersion,
     TRACK_END_DATASET, TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, TrackRange,
-    TrackState, UI_STATE_GROUP, UI_STATE_VERSION_ATTR, UiStateVersionReporter,
-    identity_from_group_name, identity_group_name, is_db_internal_group, is_db_recording_attr,
-    log_attachment, make_group_name,
+    TrackState, UI_STATE_GROUP, UI_STATE_VERSION_ATTR, UiStateVersionReporter, log_attachment,
 };
 use hdf5_pure::{AttrValue, DType, FileBuilder, Group, GroupBuilder};
 use thiserror::Error;
@@ -91,7 +88,7 @@ fn ensure_identity_node<'a>(
     identity_nodes: &'a mut Vec<GroupNode>,
     identity: &str,
 ) -> &'a mut GroupNode {
-    let storage_name = identity_group_name(identity);
+    let storage_name = gt_history_types::identity_group_name(identity);
     let found = identity_nodes
         .iter()
         .position(|n| n.name == storage_name)
@@ -130,7 +127,7 @@ fn find_identity_node_mut<'a>(
     identity_nodes: &'a mut [GroupNode],
     identity: &str,
 ) -> Option<&'a mut GroupNode> {
-    let storage_name = identity_group_name(identity);
+    let storage_name = gt_history_types::identity_group_name(identity);
     identity_nodes
         .iter_mut()
         .find(|n| n.name == storage_name || (!identity.contains('/') && n.name == identity))
@@ -148,7 +145,7 @@ fn find_recording_node_mut<'a>(
 }
 
 fn find_identity_group(by_id: &Group, identity: &str) -> Result<Group, hdf5_pure::Error> {
-    let storage_name = identity_group_name(identity);
+    let storage_name = gt_history_types::identity_group_name(identity);
     match by_id.group(&storage_name) {
         Ok(group) => Ok(group),
         Err(encoded_err) => {
@@ -484,12 +481,12 @@ pub(crate) fn insert_recording(
                     .get(ATTR_IDENTITY)
                     .and_then(AttrValue::as_str)
                     .map(str::to_owned)
-                    .or_else(|| identity_from_group_name(&storage_name))
+                    .or_else(|| gt_history_types::identity_from_group_name(&storage_name))
                     .unwrap_or_else(|| storage_name.clone());
                 for rec_name in id_grp.groups()? {
                     if let Ok(rec_grp) = id_grp.group(&rec_name)
                         && let Ok(attrs) = rec_grp.attrs()
-                        && matches_attrs(meta, &attrs)
+                        && crate::matches_attrs(meta, &attrs)
                     {
                         found = Some(DatabaseRef {
                             identity: existing_identity,
@@ -514,7 +511,10 @@ pub(crate) fn insert_recording(
 
     let mut identity_nodes = snapshot_by_identity(&existing_db)?;
 
-    let rec_name = make_group_name(meta.stored_start_us(), &uuid::Uuid::new_v4().to_string());
+    let rec_name = gt_history_types::make_group_name(
+        meta.stored_start_us(),
+        &uuid::Uuid::new_v4().to_string(),
+    );
 
     let gtd_file = hdf5_pure::File::from_bytes(gtd_bytes.to_vec())?;
     let new_recording =
@@ -654,7 +654,7 @@ pub(crate) fn rename_identity(
     let mut identity_nodes = snapshot_by_identity(&existing_db)?;
     drop(existing_db);
 
-    let old_storage = identity_group_name(old);
+    let old_storage = gt_history_types::identity_group_name(old);
     let Some(old_idx) = identity_nodes
         .iter()
         .position(|n| n.name == old_storage || (!old.contains('/') && n.name == old))
@@ -667,7 +667,7 @@ pub(crate) fn rename_identity(
         set_identity_attr(rec, new);
     }
 
-    let new_storage = identity_group_name(new);
+    let new_storage = gt_history_types::identity_group_name(new);
     match identity_nodes
         .iter_mut()
         .find(|n| n.name == new_storage || (!new.contains('/') && n.name == new))
@@ -1175,7 +1175,7 @@ pub(crate) fn load_recording(
     let segmentation = read_segmentation(&rec_attrs);
     let mut has_version = false;
     for (k, v) in &rec_attrs {
-        if !is_db_recording_attr(k) {
+        if !gt_history_types::is_db_recording_attr(k) {
             fb.set_attr(k, v.clone());
             if k == GTD_VERSION_ATTR {
                 has_version = true;
@@ -1191,7 +1191,7 @@ pub(crate) fn load_recording(
 
     for child_name in rec_grp.groups()? {
         // Skip the DB-internal groups. They are not part of the GTD file.
-        if is_db_internal_group(&child_name) {
+        if gt_history_types::is_db_internal_group(&child_name) {
             continue;
         }
         let child = rec_grp.group(&child_name)?;

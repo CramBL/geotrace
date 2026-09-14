@@ -10,7 +10,7 @@ use egui::{Color32, Pos2};
 use egui_plot::{PlotPoint, PlotTransform};
 
 use super::chips::ChannelVisibility;
-use super::lines::{ANOMALY_HOVER_RADIUS_PX, NearestHoverLabel, PlotHoverLabel, visible_by_x};
+use super::lines::{self, ANOMALY_HOVER_RADIUS_PX, NearestHoverLabel, PlotHoverLabel};
 use super::overlay::{EDGE_MARKER_INSET, OverlayItem, OverlayPainter};
 use crate::series::{ChannelSeries, PlacedBackwardTimeStep};
 
@@ -134,7 +134,7 @@ pub(super) fn add_backward_time_steps(
         if !viewport.channel_vis.is_visible(&channel.name) {
             continue;
         }
-        for placed in visible_by_x(
+        for placed in lines::visible_by_x(
             &channel.backward_time_steps,
             |placed| placed.x_secs,
             viewport.x_min,

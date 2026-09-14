@@ -48,7 +48,7 @@ use geotrace_sdk::{
     EventMarkerIconChoice as SdkEventMarkerIconChoice, EventMarkerPoint,
     EventMarkerStyle as SdkEventMarkerStyle, Marker as SdkMarker, MarkerIcon as SdkMarkerIcon,
     NavFile, NavFileBuilder, NavFixTime, Satellite as SdkSatellite, SatelliteReport,
-    TravelMode as SdkTravelMode, collect_satellite_warnings,
+    TravelMode as SdkTravelMode,
 };
 use gt_types::coordinates::{CoordinateAxis, OutOfRange, RawDegrees};
 use gt_types::load_warning;
@@ -290,7 +290,7 @@ pub fn reencode_dropping_ranges(
 }
 
 fn satellite_warnings_from_nav_file(nav_file: &NavFile) -> Vec<LoadWarning> {
-    collect_satellite_warnings(
+    geotrace_sdk::collect_satellite_warnings(
         nav_file
             .nav_points()
             .iter()

@@ -12,7 +12,6 @@ use std::time::Instant;
 
 use egui::{Button, Label, RichText};
 use gt_store::RecordingEntry;
-use gt_ui_theme::warning_amber;
 
 use crate::app::anchored_dialog::AnchoredDialogKind;
 use crate::app::history_db::DeleteShelvedTracksScope;
@@ -268,7 +267,7 @@ fn show_delete_shelved_tracks_confirmation(
                     if ui
                         .button(
                             RichText::new(DELETE_SHELVED_TRACKS_LABEL)
-                                .color(warning_amber(ui.visuals().dark_mode)),
+                                .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
                         )
                         .on_hover_text(DESTRUCTIVE_DELETE_HOVER)
                         .clicked()
@@ -308,7 +307,10 @@ fn recordings_deleted_whole_ui(ui: &mut egui::Ui, names: &[String]) {
             let line =
                 format!("{name} holds only shelved tracks, so this delete removes it entirely.");
             ui.add(
-                Label::new(RichText::new(line).color(warning_amber(ui.visuals().dark_mode))).wrap(),
+                Label::new(
+                    RichText::new(line).color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                )
+                .wrap(),
             );
         }
         _ => {
@@ -317,7 +319,10 @@ fn recordings_deleted_whole_ui(ui: &mut egui::Ui, names: &[String]) {
                 names.len()
             );
             ui.add(
-                Label::new(RichText::new(line).color(warning_amber(ui.visuals().dark_mode))).wrap(),
+                Label::new(
+                    RichText::new(line).color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                )
+                .wrap(),
             );
             for name in names.iter().take(RECORDINGS_WRITTEN_OUT) {
                 ui.add(Label::new(name.as_str()).truncate());

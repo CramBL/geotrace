@@ -519,7 +519,7 @@ mod tests {
     use gt_ui_types::{DataPointRef, HoverCandidates, MapHighlight};
     use rstest::rstest;
 
-    use super::{OpenPopups, RecordedElementLabel, recorded_element_label};
+    use super::{OpenPopups, RecordedElementLabel};
     use crate::test_util;
 
     const FIX: DataCategory = DataCategory::Tpv;
@@ -611,7 +611,7 @@ mod tests {
         };
 
         assert_eq!(
-            recorded_element_label(&highlight, candidates(current_categories), frame.popups),
+            super::recorded_element_label(&highlight, candidates(current_categories), frame.popups),
             expected
         );
     }

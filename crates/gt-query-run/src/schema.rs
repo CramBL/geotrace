@@ -74,7 +74,7 @@ mod tests {
     use uom::si::f64::Angle;
 
     use super::*;
-    use crate::check::check_text;
+    use crate::check;
     use crate::test_util;
 
     #[test]
@@ -86,9 +86,9 @@ mod tests {
         ])];
         let schema = schema_from_files(&files);
 
-        check_text("points | window 2 | where max(@accel) > 1 g", &schema)
+        check::check_text("points | window 2 | where max(@accel) > 1 g", &schema)
             .expect("a g channel checks against an acceleration literal");
-        let err = check_text("points | window 2 | where max(@accel) > 30 km/h", &schema)
+        let err = check::check_text("points | window 2 | where max(@accel) > 30 km/h", &schema)
             .expect_err("an acceleration cannot compare to a speed");
         assert!(err.message.contains("acceleration"), "{}", err.message);
     }
@@ -112,7 +112,7 @@ mod tests {
             test_util::file_with_channels(vec![g]),
         ];
         let schema = schema_from_files(&compatible);
-        check_text("points | window 2 | where max(@accel.x) > 10 mg", &schema)
+        check::check_text("points | window 2 | where max(@accel.x) > 10 mg", &schema)
             .expect("g and mg are compatible acceleration units");
 
         let degrees = test_util::vector_channel(
@@ -126,7 +126,7 @@ mod tests {
             test_util::file_with_channels(vec![degrees]),
         ];
         let schema = schema_from_files(&incompatible);
-        let err = check_text("points | window 2 | where max(@accel.x) > 10 mg", &schema)
+        let err = check::check_text("points | window 2 | where max(@accel.x) > 10 mg", &schema)
             .expect_err("acceleration and angle units conflict");
         assert_eq!(
             err.message,
@@ -148,7 +148,7 @@ mod tests {
             test_util::file_with_channels(vec![scalar]),
             test_util::file_with_channels(vec![vector]),
         ]);
-        let err = check_text("points | window 2 | where max(@sensor) > 1 deg", &schema)
+        let err = check::check_text("points | window 2 | where max(@sensor) > 1 deg", &schema)
             .expect_err("scalar and vector definitions conflict");
         assert_eq!(
             err.help.as_deref(),
@@ -171,7 +171,7 @@ mod tests {
             test_util::file_with_channels(vec![xyz]),
             test_util::file_with_channels(vec![zyx]),
         ]);
-        let err = check_text("points | window 2 | where max(@sensor.x) > 1 deg", &schema)
+        let err = check::check_text("points | window 2 | where max(@sensor.x) > 1 deg", &schema)
             .expect_err("component order must agree");
         assert_eq!(
             err.help.as_deref(),
@@ -186,7 +186,7 @@ mod tests {
             test_util::file_with_channels(vec![linear]),
             test_util::file_with_channels(vec![circular]),
         ]);
-        let err = check_text("points | window 2 | where max(@sensor) > 1 deg", &schema)
+        let err = check::check_text("points | window 2 | where max(@sensor) > 1 deg", &schema)
             .expect_err("linear and circular definitions conflict");
         assert_eq!(err.help.as_deref(), Some("periods None and Some(360.0)"));
     }

@@ -20,7 +20,7 @@ use super::chips::{MetricAvailability, MetricKindUi, MetricVisibility};
 use super::geomagnetic::GeomagneticHover;
 use super::jamming::JammingHover;
 use super::levels::LineViewport;
-use super::lines::{HOVER_RADIUS_PX, LineStroke, NearestHoverLabel, PlotHoverLabel, add_line};
+use super::lines::{self, HOVER_RADIUS_PX, LineStroke, NearestHoverLabel, PlotHoverLabel};
 use super::tec::TecHover;
 
 /// How long one interference sample holds: the dataset is published per whole
@@ -343,7 +343,7 @@ fn add_context_line<'a, S: ContextSample>(
         .iter()
         .zip(draw.viewport.select_run_levels(&cache.runs))
     {
-        add_line(
+        lines::add_line(
             plot_ui,
             run.slice_at(selection),
             draw.kind.label().to_owned(),

@@ -39,7 +39,7 @@ use gt_ionex::node_series::{CapturedNodeDay, NodeSeriesCapture};
 use gt_ionex::tec::TotalElectronContent;
 use gt_ionex::{
     DEFAULT_BASE_URL, IonexProduct, NODE_SERIES_CAPTURE, NODE_SERIES_DAYS, NODE_SERIES_NODES,
-    NodeSeriesNode, captures_dir, parse,
+    NodeSeriesNode, parse,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -48,7 +48,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let dir = captures_dir();
+    let dir = gt_ionex::captures_dir();
     fs::create_dir_all(&dir)?;
 
     let client = reqwest::blocking::Client::builder()

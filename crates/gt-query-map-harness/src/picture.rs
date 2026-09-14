@@ -135,7 +135,7 @@ mod tests {
     use gt_ui_types::{DrawLayerMask, PointVisibility};
 
     use super::*;
-    use crate::dataset::track;
+    use crate::dataset;
 
     fn shown(layer: Option<usize>) -> PointClass {
         let mut draw_layers = DrawLayerMask::default();
@@ -162,7 +162,7 @@ mod tests {
         }
         let picture = MapPicture {
             tracks: vec![TrackPicture {
-                track: track(0, 0),
+                track: dataset::track(0, 0),
                 label: "a.gtd#0".to_owned(),
                 points,
             }],
@@ -183,7 +183,7 @@ mod tests {
     fn staleness_reads_as_its_own_line() {
         let picture = MapPicture {
             tracks: vec![TrackPicture {
-                track: track(0, 0),
+                track: dataset::track(0, 0),
                 label: "a.gtd#0".to_owned(),
                 points: vec![shown(None), shown(None)],
             }],

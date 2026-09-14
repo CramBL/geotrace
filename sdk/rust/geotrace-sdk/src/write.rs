@@ -1,7 +1,7 @@
 use chrono::SecondsFormat;
 use hdf5_pure::{AttrValue, FileBuilder};
 
-use crate::builder::{datetime_to_micros, datetime_to_u64, opt_datetime_to_u64};
+use crate::builder;
 use crate::error::{Error, FieldLocation, MARKER_LABEL_LOCATION};
 use crate::fixed_width_string::{
     AnnotationField, ColorHexField, FixedWidthString, FixedWidthStringError, IconNameField,
@@ -94,7 +94,7 @@ fn write_channels(nav_file: &NavFile, fb: &mut FileBuilder) {
             .times
             .iter()
             .copied()
-            .map(datetime_to_micros)
+            .map(builder::datetime_to_micros)
             .collect();
 
         let mut grp = root.create_group(&channel.name);
@@ -148,13 +148,13 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Erro
 
     let times: Vec<i64> = points
         .iter()
-        .map(|p| datetime_to_micros(p.fix.effective_gps_time()))
+        .map(|p| builder::datetime_to_micros(p.fix.effective_gps_time()))
         .collect();
     let gps_times: Vec<u64> = points
         .iter()
         .enumerate()
         .map(|(record, p)| {
-            opt_datetime_to_u64(
+            builder::opt_datetime_to_u64(
                 p.fix.gps_time(),
                 FieldLocation {
                     group: "nav_points",
@@ -168,7 +168,7 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Erro
         .iter()
         .enumerate()
         .map(|(record, p)| {
-            opt_datetime_to_u64(
+            builder::opt_datetime_to_u64(
                 p.fix.sys_time(),
                 FieldLocation {
                     group: "nav_points",
@@ -294,7 +294,7 @@ fn write_satellite_data(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), 
         };
 
         report_nav_point_idx.push(nav_idx as u64);
-        report_gps_times.push(opt_datetime_to_u64(
+        report_gps_times.push(builder::opt_datetime_to_u64(
             report.gps_time(),
             FieldLocation {
                 group: "sat_reports",
@@ -302,7 +302,7 @@ fn write_satellite_data(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), 
             },
             report_idx,
         )?);
-        report_sys_times.push(opt_datetime_to_u64(
+        report_sys_times.push(builder::opt_datetime_to_u64(
             report.sys_time(),
             FieldLocation {
                 group: "sat_reports",
@@ -458,7 +458,7 @@ fn write_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> 
     let mut label_flat: Vec<u8> = Vec::with_capacity(k * 256);
 
     for marker in markers {
-        times.push(datetime_to_micros(marker.annotation.time));
+        times.push(builder::datetime_to_micros(marker.annotation.time));
         lats.push(marker.lat.as_degrees());
         lons.push(marker.lon.as_degrees());
         icons.push(marker.annotation.icon.wire_code());
@@ -544,7 +544,7 @@ fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), E
         let mut ann_flat: Vec<u8> = Vec::with_capacity(n * 512);
 
         for (record, m) in em.iter().enumerate() {
-            sys_times.push(datetime_to_u64(
+            sys_times.push(builder::datetime_to_u64(
                 m.sys_time,
                 FieldLocation {
                     group: "event_markers",

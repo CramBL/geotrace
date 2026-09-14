@@ -13,7 +13,7 @@ use gt_ui_types::reference::{
 };
 use rstest::rstest;
 
-use super::{CITATION_SEPARATOR, ReferenceWindow, WRAPPING_COLUMN_WIDTH, decode_image};
+use super::{CITATION_SEPARATOR, ReferenceWindow, WRAPPING_COLUMN_WIDTH};
 
 /// Room for the window at its default size.
 const HARNESS_SIZE: egui::Vec2 = egui::vec2(1120.0, 820.0);
@@ -344,7 +344,7 @@ fn closing_the_window_drops_the_document() {
 fn every_image_decodes(#[case] document: ReferenceDocument) {
     for asset in document.images() {
         assert!(
-            decode_image(asset).is_some(),
+            super::decode_image(asset).is_some(),
             "{} decodes",
             asset.asset_name
         );
@@ -365,7 +365,7 @@ fn every_equation_asset_is_black_with_its_coverage_in_alpha(#[case] document: Re
         let ReferenceBlock::Equation(equation) = block else {
             continue;
         };
-        let decoded = decode_image(equation.image).expect("the asset decodes");
+        let decoded = super::decode_image(equation.image).expect("the asset decodes");
         assert!(
             decoded
                 .pixels

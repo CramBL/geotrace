@@ -65,9 +65,7 @@ use walkers::{HttpTiles, Map, MapMemory};
 
 use crate::event_marker_renderer::EventMarkerRenderer;
 use crate::generated_marker_renderer::GeneratedMarkerRenderer;
-use crate::hover_labels::{
-    HoverLabelEntry, HoverLabelSources, HoverLabelStack, OpenPopups, draw_disambig_row,
-};
+use crate::hover_labels::{HoverLabelEntry, HoverLabelSources, HoverLabelStack, OpenPopups};
 use crate::marker_renderer::MarkerRenderer;
 use crate::match_reveal::MatchRevealState;
 use crate::recording_labels::RecordingLabels;
@@ -76,10 +74,6 @@ use crate::test_tiles::{CapturedTileId, TestTileSource};
 use crate::tpv_renderer::FixPlacement;
 use crate::track_layers::TrackLayers;
 use crate::transform::{MapScale, MercTransform};
-use crate::viewport::{
-    compute_viewport_bounds, compute_visible_bounding_box, is_spatial_point_visible,
-    match_bounding_box, matched_bounding_box, zoom_to_fit,
-};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum MapLayer {
@@ -342,7 +336,12 @@ impl<'a> MapDrawContext<'a> {
 
     /// The bounding box around every element currently drawn, for framing.
     fn visible_bounding_box(&self) -> Option<GeoBounds> {
-        compute_visible_bounding_box(self.files, self.visibility, self.filter, *self.display_mask)
+        viewport::compute_visible_bounding_box(
+            self.files,
+            self.visibility,
+            self.filter,
+            *self.display_mask,
+        )
     }
 
     /// The bounding box a reveal request frames: every match the run drew, or
@@ -351,10 +350,10 @@ impl<'a> MapDrawContext<'a> {
     fn reveal_bounding_box(&self, target: &MatchRevealTarget) -> Option<GeoBounds> {
         match target {
             MatchRevealTarget::WholeRun => {
-                matched_bounding_box(self.files, self.query_matches?, self.filter)
+                viewport::matched_bounding_box(self.files, self.query_matches?, self.filter)
             }
             MatchRevealTarget::OneMatch { track, points } => {
-                match_bounding_box(self.files, *track, points, self.filter)
+                viewport::match_bounding_box(self.files, *track, points, self.filter)
             }
         }
     }
@@ -703,7 +702,10 @@ impl NavMap {
         }
 
         let map_rect = map_response.rect;
-        self.last_viewport_bounds = Some(compute_viewport_bounds(&self.map_memory, map_rect));
+        self.last_viewport_bounds = Some(viewport::compute_viewport_bounds(
+            &self.map_memory,
+            map_rect,
+        ));
 
         // The mask is copied, so the display toggle below changes it only for
         // the next frame.
@@ -755,7 +757,7 @@ impl NavMap {
     /// Frame `bounds`, keeping what the projection could not show for
     /// [`NavMap::take_fit_notice`].
     fn fit_to_bounds(&mut self, viewport: egui::Rect, bounds: GeoBounds) {
-        self.fit_notice = zoom_to_fit(&mut self.map_memory, viewport, bounds).notice();
+        self.fit_notice = viewport::zoom_to_fit(&mut self.map_memory, viewport, bounds).notice();
     }
 
     /// What the last fit could not put on the map, cleared as it is taken.
@@ -1077,7 +1079,7 @@ impl NavMap {
             .nearest_neighbor_iter(cursor_merc)
             .take_while(within_threshold);
         for sp in fixes.chain(markers) {
-            if !is_spatial_point_visible(sp, scope) {
+            if !viewport::is_spatial_point_visible(sp, scope) {
                 continue;
             }
             hover.keep_nearest(DataPointRef {
@@ -1246,7 +1248,7 @@ impl NavMap {
                 Frame::popup(ui.style()).show(ui, |ui| {
                     ui.set_min_width(160.0);
                     for candidate in candidates.iter() {
-                        if draw_disambig_row(
+                        if hover_labels::draw_disambig_row(
                             ui,
                             candidate,
                             ctx.files,

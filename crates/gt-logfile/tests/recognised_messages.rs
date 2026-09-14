@@ -8,9 +8,7 @@
 
 use chrono::{DateTime, TimeZone as _, Utc};
 
-use gt_logfile::{
-    HostnameColumn, LogLevelKind, LogParseError, ParsedLog, RecognisedService, parse_log,
-};
+use gt_logfile::{HostnameColumn, LogLevelKind, LogParseError, ParsedLog, RecognisedService};
 
 const DEVICE_EXPORT: &str = include_str!("fixtures/device_journald.log");
 
@@ -27,7 +25,7 @@ fn now() -> DateTime<Utc> {
 }
 
 fn parse(text: &str) -> Result<ParsedLog, LogParseError> {
-    parse_log(text.into(), now())
+    gt_logfile::parse_log(text.into(), now())
 }
 
 /// The service of every entry, in file order, empty where the entry names none.

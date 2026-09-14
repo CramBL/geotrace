@@ -25,15 +25,13 @@ pub fn median_i64(values: &[i64]) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
-    use super::median_i64;
-
     #[test]
     fn median_i64_is_none_when_empty_and_the_overflow_safe_midpoint_otherwise() {
-        assert_eq!(median_i64(&[3, 1, 2]), Some(2));
-        assert_eq!(median_i64(&[1, 2, 3, 4]), Some(2)); // (2 + 3) / 2, truncated
-        assert_eq!(median_i64(&[]), None);
-        assert_eq!(median_i64(&[7]), Some(7));
+        assert_eq!(super::median_i64(&[3, 1, 2]), Some(2));
+        assert_eq!(super::median_i64(&[1, 2, 3, 4]), Some(2)); // (2 + 3) / 2, truncated
+        assert_eq!(super::median_i64(&[]), None);
+        assert_eq!(super::median_i64(&[7]), Some(7));
         // Midpoint of the full i64 span: computed in i128, so no overflow.
-        assert_eq!(median_i64(&[i64::MIN, i64::MAX]), Some(0));
+        assert_eq!(super::median_i64(&[i64::MIN, i64::MAX]), Some(0));
     }
 }

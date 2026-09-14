@@ -13,7 +13,7 @@ use crate::ast::{
     BinaryOp, ChannelRef, Expr, Func, MetricRef, ModeStage, NumberLit, ParamDecl, ParamName, Query,
     Source, Span, TableSpec, UnaryOp, Window,
 };
-use crate::lexer::{Tok, Token, lex};
+use crate::lexer::{self, Tok, Token};
 use crate::metric::QueryMetric;
 use crate::unit::Unit;
 
@@ -27,7 +27,7 @@ const TABLE_COLUMN_EXPECTED: &str =
     "expected a column: a metric, or an aggregate like max(@accel.x)";
 
 pub fn parse(src: &str) -> Result<Query, Diagnostic> {
-    let toks = lex(src)?;
+    let toks = lexer::lex(src)?;
     Parser {
         toks,
         pos: 0,

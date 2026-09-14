@@ -8,7 +8,7 @@ pub mod synthetic;
 
 use std::collections::BTreeSet;
 
-use egui::{Context, Rect, pos2};
+use egui::{Context, Rect};
 use walkers::sources::Attribution;
 use walkers::{TileId, TilePiece, Tiles};
 
@@ -20,7 +20,7 @@ pub use crate::test_tiles::captured::{
 pub use crate::test_tiles::synthetic::SyntheticTiles;
 
 /// A piece covers its texture entirely: both sources serve whole tiles.
-const FULL_TILE_UV: Rect = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+const FULL_TILE_UV: Rect = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
 
 pub(crate) enum TestTileSource {
     Synthetic(SyntheticTiles),

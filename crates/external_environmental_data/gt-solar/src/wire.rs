@@ -23,9 +23,9 @@ use serde::Deserialize;
 use serde_json::Value;
 use strum::VariantNames as _;
 
+use crate::GeomagneticIndex;
 use crate::activity::GeomagneticActivity;
 use crate::series::{Hp30Sample, Hp30Series, KpSample, KpSeries, KpStatus};
-use crate::{GeomagneticIndex, parse_timestamp};
 
 /// Why a response could not be parsed as a series.
 #[derive(Debug, thiserror::Error)]
@@ -158,7 +158,7 @@ fn parse_periods(body: &ResponseBody, index: GeomagneticIndex) -> Result<Vec<Per
         .enumerate()
         .map(|(position, (timestamp, value))| {
             Ok(Period {
-                start: parse_timestamp(timestamp).map_err(|err| ParseError::Timestamp {
+                start: crate::parse_timestamp(timestamp).map_err(|err| ParseError::Timestamp {
                     position,
                     timestamp: timestamp.clone(),
                     detail: err.to_string(),
@@ -247,7 +247,7 @@ mod tests {
     }
 
     fn timestamp(text: &str) -> DateTime<Utc> {
-        parse_timestamp(text).unwrap()
+        crate::parse_timestamp(text).unwrap()
     }
 
     #[test]

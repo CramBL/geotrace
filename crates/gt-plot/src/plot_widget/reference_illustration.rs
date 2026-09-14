@@ -16,10 +16,10 @@ use gt_ui_types::{ContextLines, TecContextSample};
 
 use super::FilterTimeWindow;
 use super::chips::{MetricAvailability, MetricVisibility};
-use super::context::{ContextLineGates, ContextPlotCaches, add_context_lines};
+use super::context::{self, ContextLineGates, ContextPlotCaches};
 use super::levels::LineViewport;
-use super::lines::{LineStroke, NearestHoverLabel, add_line};
-use super::style::metric_line_color;
+use super::lines::{self, LineStroke, NearestHoverLabel};
+use super::style;
 
 /// Where the rendered plot lands, resolved from this crate's manifest dir.
 const ASSET_PATH: &str =
@@ -159,19 +159,19 @@ fn generate_tec_reference_plot() {
                                 [x_min, 0.0],
                                 [x_max, y_max],
                             ));
-                            add_line(
+                            lines::add_line(
                                 plot_ui,
                                 &median,
                                 MEDIAN_LINE_LABEL.to_owned(),
                                 LineStroke {
-                                    color: metric_line_color(MetricKind::Tec, 0, dark_mode)
+                                    color: style::metric_line_color(MetricKind::Tec, 0, dark_mode)
                                         .gamma_multiply(MEDIAN_DIM),
                                     style: LineStyle::Dashed { length: 6.0 },
                                     width: TEC_LINE_WIDTH,
                                     highlighted: false,
                                 },
                             );
-                            add_context_lines(
+                            context::add_context_lines(
                                 plot_ui,
                                 &caches,
                                 ContextLineGates {
@@ -179,7 +179,7 @@ fn generate_tec_reference_plot() {
                                     available,
                                 },
                                 |kind| LineStroke {
-                                    color: metric_line_color(kind, 0, dark_mode),
+                                    color: style::metric_line_color(kind, 0, dark_mode),
                                     style: LineStyle::Solid,
                                     width: TEC_LINE_WIDTH,
                                     highlighted: false,

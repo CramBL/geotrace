@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use gt_filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
+use gt_filter::GlobalFilter;
 use gt_types::{
     DataCategory, DataCategorySet, FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef,
 };
@@ -136,7 +136,7 @@ pub fn track_in_scope<'a>(
         return None;
     }
     let track = track_ref.resolve(files)?;
-    track_passes_filter(track, filter).then_some((track, track_vis))
+    gt_filter::track_passes_filter(track, filter).then_some((track, track_vis))
 }
 
 /// [`track_in_scope`] refined by one category's tree toggle - the gate the
@@ -250,7 +250,7 @@ impl MapScope<'_> {
         {
             return PointVisibility::HiddenByQuery;
         }
-        if point_passes_time_filter(time, self.filter) {
+        if gt_filter::point_passes_time_filter(time, self.filter) {
             PointVisibility::Shown
         } else {
             PointVisibility::OutsideTimeFilter

@@ -32,7 +32,7 @@ use gt_ui_types::{
 use rustc_hash::{FxHashMap, FxHashSet};
 use strum::IntoEnumIterator as _;
 
-use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
+use super::context_line::{self, ContextSampleCache, ContextSource, ContextSpan};
 use super::day_fetch_dispatch::{self, DayFetch};
 use super::day_fetch_queue::DayFetchQueue;
 use super::day_fetch_transport::DayFetchTransport;
@@ -421,7 +421,7 @@ impl GeomagneticIndexScheduler {
         let store = self.store.clone();
         let gap_at = |day| {
             Some(IndexContextSample {
-                start_secs: midnight_secs(day),
+                start_secs: context_line::midnight_secs(day),
                 value: None,
             })
         };

@@ -87,10 +87,7 @@ pub fn denormalize(point: MercPoint) -> (f64, f64) {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Latitude, Longitude, MAX_LATITUDE_DEGREES, MercPoint, denormalize, normalize,
-        normalize_past_the_projection_limit, wrap_longitude_degrees,
-    };
+    use super::{Latitude, Longitude, MAX_LATITUDE_DEGREES, MercPoint};
 
     proptest::proptest! {
         /// `normalize` must never return NaN or Inf for any geographically valid input.
@@ -99,7 +96,7 @@ mod tests {
             lon in -180.0_f64..=180.0_f64,
             lat in -90.0_f64..=90.0_f64,
         ) {
-            let pt = normalize(Latitude::new(lat), Longitude::new(lon));
+            let pt = super::normalize(Latitude::new(lat), Longitude::new(lon));
             proptest::prop_assert!(pt.x.is_finite(), "x is not finite for lon={lon}, lat={lat}");
             proptest::prop_assert!(pt.y.is_finite(), "y is not finite for lon={lon}, lat={lat}");
         }
@@ -107,22 +104,22 @@ mod tests {
         /// x must lie in [0, 1]: west edge (lon = -180) → 0, east edge → 1.
         #[test]
         fn normalize_x_in_unit_range(lon in -180.0_f64..=180.0_f64) {
-            let pt = normalize(Latitude::new(0.0), Longitude::new(lon));
+            let pt = super::normalize(Latitude::new(0.0), Longitude::new(lon));
             proptest::prop_assert!(pt.x >= 0.0 && pt.x <= 1.0, "x={} out of [0,1] for lon={lon}", pt.x);
         }
 
         /// y must lie in [0, 1]: the north pole → 0, the south pole → 1.
         #[test]
         fn normalize_y_in_unit_range(lat in -90.0_f64..=90.0_f64) {
-            let pt = normalize(Latitude::new(lat), Longitude::new(0.0));
+            let pt = super::normalize(Latitude::new(lat), Longitude::new(0.0));
             proptest::prop_assert!(pt.y >= 0.0 && pt.y <= 1.0, "y={} out of [0,1] for lat={lat}", pt.y);
         }
     }
 
     #[test]
     fn the_projection_limit_maps_to_the_edge_of_the_world() {
-        let north = normalize(Latitude::new(MAX_LATITUDE_DEGREES), Longitude::new(0.0));
-        let south = normalize(Latitude::new(-MAX_LATITUDE_DEGREES), Longitude::new(0.0));
+        let north = super::normalize(Latitude::new(MAX_LATITUDE_DEGREES), Longitude::new(0.0));
+        let south = super::normalize(Latitude::new(-MAX_LATITUDE_DEGREES), Longitude::new(0.0));
         assert!(north.y.abs() < 1e-12, "north edge at y={}", north.y);
         assert!((south.y - 1.0).abs() < 1e-12, "south edge at y={}", south.y);
     }
@@ -134,7 +131,7 @@ mod tests {
         #[case] latitude_degrees: f64,
         #[case] expected_y: f64,
     ) {
-        let pole = normalize(Latitude::new(latitude_degrees), Longitude::new(0.0));
+        let pole = super::normalize(Latitude::new(latitude_degrees), Longitude::new(0.0));
         assert!(
             (pole.y - expected_y).abs() < 1e-12,
             "y={} for latitude {latitude_degrees}",
@@ -144,28 +141,29 @@ mod tests {
 
     #[test]
     fn normalize_past_the_projection_limit_places_the_pole_off_the_world() {
-        let pole = normalize_past_the_projection_limit(Latitude::new(90.0), Longitude::new(0.0));
+        let pole =
+            super::normalize_past_the_projection_limit(Latitude::new(90.0), Longitude::new(0.0));
         assert!(pole.y < 0.0, "y={} for the north pole", pole.y);
     }
 
     #[test]
     fn normalize_origin_maps_to_half() {
-        let pt = normalize(Latitude::new(0.0), Longitude::new(0.0));
+        let pt = super::normalize(Latitude::new(0.0), Longitude::new(0.0));
         assert!((pt.x - 0.5).abs() < 1e-12);
         assert!((pt.y - 0.5).abs() < 1e-12);
     }
 
     #[test]
     fn normalize_x_increases_east() {
-        let pt1 = normalize(Latitude::new(0.0), Longitude::new(-90.0));
-        let pt2 = normalize(Latitude::new(0.0), Longitude::new(90.0));
+        let pt1 = super::normalize(Latitude::new(0.0), Longitude::new(-90.0));
+        let pt2 = super::normalize(Latitude::new(0.0), Longitude::new(90.0));
         assert!(pt1.x < pt2.x);
     }
 
     #[test]
     fn normalize_y_increases_south() {
-        let pt_north = normalize(Latitude::new(60.0), Longitude::new(0.0));
-        let pt_south = normalize(Latitude::new(-60.0), Longitude::new(0.0));
+        let pt_north = super::normalize(Latitude::new(60.0), Longitude::new(0.0));
+        let pt_south = super::normalize(Latitude::new(-60.0), Longitude::new(0.0));
         assert!(pt_north.y < pt_south.y);
     }
 
@@ -176,8 +174,8 @@ mod tests {
             lat in -85.0_f64..=85.0,
             lon in -180.0_f64..=180.0,
         ) {
-            let point = normalize(Latitude::new(lat), Longitude::new(lon));
-            let (back_lat, back_lon) = denormalize(point);
+            let point = super::normalize(Latitude::new(lat), Longitude::new(lon));
+            let (back_lat, back_lon) = super::denormalize(point);
             proptest::prop_assert!((back_lat - lat).abs() < 1e-9, "lat {lat} -> {back_lat}");
             proptest::prop_assert!((back_lon - lon).abs() < 1e-9, "lon {lon} -> {back_lon}");
         }
@@ -185,18 +183,24 @@ mod tests {
 
     #[test]
     fn wrap_longitude_degrees_wraps_past_the_antimeridian() {
-        assert!((wrap_longitude_degrees(180.3) - -179.7).abs() < 1e-9);
-        assert!((wrap_longitude_degrees(-180.3) - 179.7).abs() < 1e-9);
-        assert!((wrap_longitude_degrees(12.5) - 12.5).abs() < 1e-9);
+        assert!((super::wrap_longitude_degrees(180.3) - -179.7).abs() < 1e-9);
+        assert!((super::wrap_longitude_degrees(-180.3) - 179.7).abs() < 1e-9);
+        assert!((super::wrap_longitude_degrees(12.5) - 12.5).abs() < 1e-9);
         // A full extra revolution lands on the same meridian.
-        assert!((wrap_longitude_degrees(540.0) - wrap_longitude_degrees(180.0)).abs() < 1e-9);
-        assert!((wrap_longitude_degrees(-541.0) - wrap_longitude_degrees(-181.0)).abs() < 1e-9);
+        assert!(
+            (super::wrap_longitude_degrees(540.0) - super::wrap_longitude_degrees(180.0)).abs()
+                < 1e-9
+        );
+        assert!(
+            (super::wrap_longitude_degrees(-541.0) - super::wrap_longitude_degrees(-181.0)).abs()
+                < 1e-9
+        );
     }
 
     /// A viewport past the antimeridian denormalizes to a real longitude.
     #[test]
     fn denormalize_wraps_past_the_antimeridian() {
-        let (_, lon) = denormalize(MercPoint { x: 1.001, y: 0.5 });
+        let (_, lon) = super::denormalize(MercPoint { x: 1.001, y: 0.5 });
         assert!(
             lon < 0.0,
             "past the date line is a western longitude, got {lon}"

@@ -47,7 +47,6 @@ mod tests {
 
     use gt_types::satellites::Constellation;
 
-    use super::{mark_position, unit_disc_position};
     use crate::test_util::{self, Azimuth, Elevation};
 
     const EPSILON: f32 = 1e-5;
@@ -81,7 +80,10 @@ mod tests {
         #[case] elevation_deg: f32,
         #[case] expected: egui::Vec2,
     ) {
-        assert_close(unit_disc_position(azimuth_deg, elevation_deg), expected);
+        assert_close(
+            super::unit_disc_position(azimuth_deg, elevation_deg),
+            expected,
+        );
     }
 
     #[rstest]
@@ -94,7 +96,7 @@ mod tests {
     ) {
         let satellite = test_util::sat(Constellation::Gps, 1, azimuth, elevation, true);
 
-        assert_eq!(mark_position(&satellite), None);
+        assert_eq!(super::mark_position(&satellite), None);
     }
 
     #[test]
@@ -108,7 +110,7 @@ mod tests {
         );
 
         assert_close(
-            mark_position(&satellite).unwrap_or_default(),
+            super::mark_position(&satellite).unwrap_or_default(),
             egui::vec2(0.5, 0.0),
         );
     }

@@ -15,7 +15,7 @@
 //!
 //! Dashing emits one shape per dash period of *screen-space* path length,
 //! which grows linearly with zoom regardless of the segment's vertex count.
-//! Segments therefore go through the [`visible_path`] culling machinery like
+//! Segments therefore go through the [`polyline::visible_path`] culling machinery like
 //! the recorded trackline: off-screen stretches never generate dashes and
 //! sub-pixel detail is merged, bounding the per-frame shape count by what is
 //! actually on screen.
@@ -34,8 +34,8 @@ use gt_ui_types::{SnappedEdgeInfo, SnappedTracks};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::hover_labels::OpenPopups;
-use crate::polyline::{CULL_MARGIN_PX, VisiblePath, segment_outside, visible_path};
-use crate::track_renderer::{DashPattern, draw_dashed_line};
+use crate::polyline::{self, CULL_MARGIN_PX, VisiblePath};
+use crate::track_renderer::{self, DashPattern};
 use crate::transform::MercTransform;
 
 /// The area id of the edge's label, distinct from `response.id.with("popup")`,
@@ -163,7 +163,7 @@ impl Plugin for SnappedTrackRenderer<'_> {
                     };
                     let from = transform.to_screen(recorded.merc());
                     let to = transform.to_screen(anchor.snapped);
-                    if segment_outside(from, to, cull_rect) {
+                    if polyline::segment_outside(from, to, cull_rect) {
                         continue;
                     }
                     ui.painter().line_segment([from, to], whisker_stroke);
@@ -202,7 +202,8 @@ impl Plugin for SnappedTrackRenderer<'_> {
                 }
 
                 // Segments carry no per-point styling, so the key is unit.
-                match visible_path(projected.iter().map(|&(_, pos)| ((), pos)), cull_rect) {
+                match polyline::visible_path(projected.iter().map(|&(_, pos)| ((), pos)), cull_rect)
+                {
                     VisiblePath::OffScreen => {}
                     // A segment collapsed below one pixel (extreme zoom-out)
                     // stays discoverable as a dot, like the recorded track.
@@ -213,7 +214,12 @@ impl Plugin for SnappedTrackRenderer<'_> {
                         for span in spans.iter() {
                             span_points.clear();
                             span_points.extend(span.iter().map(|&((), pos)| pos));
-                            draw_dashed_line(ui.painter(), &span_points, stroke, SNAPPED_DASH);
+                            track_renderer::draw_dashed_line(
+                                ui.painter(),
+                                &span_points,
+                                stroke,
+                                SNAPPED_DASH,
+                            );
                         }
                     }
                 }
@@ -256,7 +262,7 @@ fn hit_test(
         let [(vertex, a), (_, b)] = window else {
             continue;
         };
-        if segment_outside(*a, *b, cursor_rect) {
+        if polyline::segment_outside(*a, *b, cursor_rect) {
             continue;
         }
         let distance_sq = point_segment_distance_sq(cursor, *a, *b);
@@ -315,24 +321,40 @@ fn edge_tooltip_rows(ui: &mut Ui, edge: &SnappedEdgeInfo) {
 
 #[cfg(test)]
 mod tests {
-    use egui::pos2;
-
-    use super::point_segment_distance_sq;
-
     /// Interior projection, endpoint clamping, and the degenerate
     /// zero-length segment.
     #[rstest::rstest]
-    #[case::perpendicular_to_interior(pos2(5.0, 3.0), pos2(0.0, 0.0), pos2(10.0, 0.0), 9.0)]
-    #[case::clamps_to_start(pos2(-4.0, 3.0), pos2(0.0, 0.0), pos2(10.0, 0.0), 25.0)]
-    #[case::clamps_to_end(pos2(14.0, 3.0), pos2(0.0, 0.0), pos2(10.0, 0.0), 25.0)]
-    #[case::zero_length_segment(pos2(3.0, 4.0), pos2(0.0, 0.0), pos2(0.0, 0.0), 25.0)]
+    #[case::perpendicular_to_interior(
+        egui::pos2(5.0, 3.0),
+        egui::pos2(0.0, 0.0),
+        egui::pos2(10.0, 0.0),
+        9.0
+    )]
+    #[case::clamps_to_start(
+        egui::pos2(-4.0, 3.0),
+        egui::pos2(0.0, 0.0),
+        egui::pos2(10.0, 0.0),
+        25.0
+    )]
+    #[case::clamps_to_end(
+        egui::pos2(14.0, 3.0),
+        egui::pos2(0.0, 0.0),
+        egui::pos2(10.0, 0.0),
+        25.0
+    )]
+    #[case::zero_length_segment(
+        egui::pos2(3.0, 4.0),
+        egui::pos2(0.0, 0.0),
+        egui::pos2(0.0, 0.0),
+        25.0
+    )]
     fn distance_to_segment(
         #[case] p: egui::Pos2,
         #[case] a: egui::Pos2,
         #[case] b: egui::Pos2,
         #[case] expected_sq: f32,
     ) {
-        let got = point_segment_distance_sq(p, a, b);
+        let got = super::point_segment_distance_sq(p, a, b);
         assert!(
             (got - expected_sq).abs() < 1e-4,
             "expected {expected_sq}, got {got}"

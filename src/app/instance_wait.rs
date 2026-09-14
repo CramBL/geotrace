@@ -23,7 +23,6 @@ use gt_instance_lock::{
     TakeOverRecord,
 };
 use gt_pending_writes::WriteKind;
-use gt_ui_theme::warning_amber;
 
 use super::App;
 use super::anchored_dialog::{AnchoredDialog, AnchoredDialogKind, DialogRegions, HeldBodyLines};
@@ -526,7 +525,7 @@ impl DataDirectoryUnavailable {
             return;
         };
         ui.add_space(4.0);
-        ui.label(RichText::new(note).color(warning_amber(ui.visuals().dark_mode)));
+        ui.label(RichText::new(note).color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)));
     }
 }
 
@@ -549,7 +548,10 @@ fn show_take_over_confirmation(
             unavailable.take_over_confirmation_ui(ui, regions);
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(ICON_WARNING).color(warning_amber(ui.visuals().dark_mode)));
+                ui.label(
+                    RichText::new(ICON_WARNING)
+                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                );
                 ui.label(TAKE_OVER_WARNING);
             });
         },

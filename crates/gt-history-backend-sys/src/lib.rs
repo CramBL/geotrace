@@ -1,4 +1,3 @@
-use crate::copy::list_recordings;
 use gt_history_types::{
     CURRENT_SCHEMA_VERSION, DatabaseRef, DbError, HistoryDatabase, LogAttachment,
     LogAttachmentEntry, LogAttachmentId, NavPointTimeRange, ReadOnlyHistoryDatabase,
@@ -161,7 +160,7 @@ impl ReadOnlyHistoryDatabase for ReadOnlySysDb {
 
     fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError> {
         let _guard = DB_LOCK.lock();
-        list_recordings(&self.path).map_err(Into::into)
+        copy::list_recordings(&self.path).map_err(Into::into)
     }
 
     fn contains(&self, db_ref: &DatabaseRef) -> Result<bool, DbError> {
@@ -474,7 +473,7 @@ impl HistoryDatabase for SysDb {
 
 #[cfg(test)]
 mod tests {
-    use super::{DbError, classify_open_error};
+    use super::DbError;
 
     /// Each wording libhdf5 uses for the flags an unclean shutdown leaves.
     /// Carried on [`hdf5::Error::Internal`], which has no code stack, the way
@@ -488,7 +487,7 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    classify_open_error(hdf5::Error::Internal(msg.to_owned())),
+                    super::classify_open_error(hdf5::Error::Internal(msg.to_owned())),
                     DbError::WriteLocked
                 ),
                 "{msg}"
@@ -500,7 +499,7 @@ mod tests {
     fn anything_else_keeps_its_message() {
         let err = hdf5::Error::Internal("bad superblock".to_owned());
         assert!(matches!(
-            classify_open_error(err),
+            super::classify_open_error(err),
             DbError::Backend(msg) if msg.contains("bad superblock")
         ));
     }

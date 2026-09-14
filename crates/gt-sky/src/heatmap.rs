@@ -10,7 +10,6 @@ use egui::epaint::{Mesh, Vertex, WHITE_UV};
 use egui::{Color32, Painter, Pos2, Shape, Vec2};
 
 use gt_types::satellites::Snr;
-use gt_ui_theme::{lerp_channel, unit_to_u8};
 
 /// SNR band mapped onto the heat weight `[0, 1]`: at or below the floor a
 /// satellite barely registers, at or above the ceiling it glows at full
@@ -43,7 +42,7 @@ const MAX_ALPHA: f32 = 0.55;
 /// toward transparent.
 const ALPHA_FULL_AT: f32 = 0.5;
 
-/// Fixed-point denominator for the ramp interpolation handed to [`lerp_channel`].
+/// Fixed-point denominator for the ramp interpolation handed to [`gt_ui_theme::lerp_channel`].
 const RAMP_SCALE: i32 = 1000;
 
 /// The warm colour ramp, low to high intensity: deep red, through orange, to a
@@ -74,7 +73,7 @@ pub fn snr_weight(snr: Option<Snr>) -> f32 {
 pub fn heat_color(t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
     let [r, g, b] = ramp_rgb(t);
-    let alpha = unit_to_u8(MAX_ALPHA * (t / ALPHA_FULL_AT).min(1.0));
+    let alpha = gt_ui_theme::unit_to_u8(MAX_ALPHA * (t / ALPHA_FULL_AT).min(1.0));
     Color32::from_rgba_unmultiplied(r, g, b, alpha)
 }
 
@@ -104,9 +103,9 @@ fn ramp_rgb(t: f32) -> [u8; 3] {
     let [lr, lg, lb] = lo.1;
     let [hr, hg, hb] = hi.1;
     [
-        lerp_channel(lr, hr, num, RAMP_SCALE),
-        lerp_channel(lg, hg, num, RAMP_SCALE),
-        lerp_channel(lb, hb, num, RAMP_SCALE),
+        gt_ui_theme::lerp_channel(lr, hr, num, RAMP_SCALE),
+        gt_ui_theme::lerp_channel(lg, hg, num, RAMP_SCALE),
+        gt_ui_theme::lerp_channel(lb, hb, num, RAMP_SCALE),
     ]
 }
 
@@ -173,15 +172,11 @@ fn field_intensity(
 
 #[cfg(test)]
 mod tests {
-    use egui::pos2;
     use rstest::rstest;
 
     use gt_types::satellites::{NO_DATA_SENTINEL_DB_HZ, Snr};
 
-    use super::{
-        ALPHA_FULL_AT, GLOW_SIGMA_FRACTION, MIN_WEIGHT, NO_SNR_WEIGHT, field_intensity, heat_color,
-        snr_weight,
-    };
+    use super::{ALPHA_FULL_AT, GLOW_SIGMA_FRACTION, MIN_WEIGHT, NO_SNR_WEIGHT};
 
     #[rstest]
     // Below the floor pins to the minimum, above the ceiling to full strength.
@@ -191,45 +186,45 @@ mod tests {
     // The no-data value weighs what a missing reading weighs.
     #[case::the_no_data_value(Some(NO_DATA_SENTINEL_DB_HZ), NO_SNR_WEIGHT)]
     fn snr_weight_clamps_to_the_band(#[case] snr: Option<f32>, #[case] expected: f32) {
-        let weight = snr_weight(snr.map(Snr::new));
+        let weight = super::snr_weight(snr.map(Snr::new));
         assert!((weight - expected).abs() < 1e-6, "{weight} != {expected}");
     }
 
     #[test]
     fn snr_weight_is_monotonic_and_floored() {
         // A stronger signal never weighs less than a weaker one.
-        let weak = snr_weight(Some(Snr::new(25.0)));
-        let strong = snr_weight(Some(Snr::new(42.0)));
+        let weak = super::snr_weight(Some(Snr::new(25.0)));
+        let strong = super::snr_weight(Some(Snr::new(42.0)));
         assert!(strong > weak);
         // Every real reading and a missing SNR stay at or above the floor.
         assert!(weak >= MIN_WEIGHT);
         const { assert!(NO_SNR_WEIGHT >= MIN_WEIGHT) };
-        assert!((snr_weight(None) - NO_SNR_WEIGHT).abs() < 1e-6);
+        assert!((super::snr_weight(None) - NO_SNR_WEIGHT).abs() < 1e-6);
     }
 
     #[test]
     fn heat_color_fades_in_from_transparent() {
         // Zero intensity is fully transparent, so bare disc shows through.
-        assert_eq!(heat_color(0.0).a(), 0);
+        assert_eq!(super::heat_color(0.0).a(), 0);
         // Alpha rises with intensity and saturates at the full-alpha point.
-        let low = heat_color(ALPHA_FULL_AT / 2.0).a();
-        let full = heat_color(ALPHA_FULL_AT).a();
-        let over = heat_color(1.0).a();
+        let low = super::heat_color(ALPHA_FULL_AT / 2.0).a();
+        let full = super::heat_color(ALPHA_FULL_AT).a();
+        let over = super::heat_color(1.0).a();
         assert!(low > 0 && low < full, "low {low} not between 0 and {full}");
         assert_eq!(full, over, "alpha holds past the full-alpha point");
     }
 
     #[test]
     fn field_intensity_peaks_at_a_source_and_decays() {
-        let center = pos2(100.0, 100.0);
+        let center = egui::pos2(100.0, 100.0);
         let radius = 100.0_f32;
-        let source = pos2(120.0, 100.0);
+        let source = egui::pos2(120.0, 100.0);
         let sources = [(source, 1.0)];
         let inv_two_sigma_sq = 1.0 / (2.0 * (radius * GLOW_SIGMA_FRACTION).powi(2));
 
-        let at_source = field_intensity(source, center, radius, &sources, inv_two_sigma_sq);
-        let away = field_intensity(
-            pos2(160.0, 100.0),
+        let at_source = super::field_intensity(source, center, radius, &sources, inv_two_sigma_sq);
+        let away = super::field_intensity(
+            egui::pos2(160.0, 100.0),
             center,
             radius,
             &sources,
@@ -238,8 +233,8 @@ mod tests {
         assert!(at_source > away, "intensity must fall off from the source");
         // Outside the disc the field is clipped to nothing - an exact 0.0
         // early return, so a bit-exact comparison is right here.
-        let outside = field_intensity(
-            pos2(250.0, 100.0),
+        let outside = super::field_intensity(
+            egui::pos2(250.0, 100.0),
             center,
             radius,
             &sources,

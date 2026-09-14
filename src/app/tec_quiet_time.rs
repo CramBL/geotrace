@@ -34,7 +34,7 @@ use gt_types::{FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::environment_storage::PrunedDays;
-use super::tec::read_archived_maps;
+use super::tec;
 
 /// One node's value on one archived day, read from that day's own file at an
 /// offset from the start of the day.
@@ -266,7 +266,7 @@ impl QuietTimeDeviationCache {
         }
 
         for (day, samples) in missing {
-            let maps = read_archived_maps(store, day);
+            let maps = tec::read_archived_maps(store, day);
             for sample in samples {
                 let value = maps
                     .as_ref()
@@ -381,7 +381,7 @@ fn assessment_points(
             let day = time.date_naive();
             let maps = own_days
                 .entry(day)
-                .or_insert_with(|| read_archived_maps(store, day))
+                .or_insert_with(|| tec::read_archived_maps(store, day))
                 .as_ref()?;
             let epoch = maps.nearest_epoch(time)?;
             let (latitude, longitude) = point.resolved_position();

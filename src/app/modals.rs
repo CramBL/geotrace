@@ -12,7 +12,6 @@ use gt_map::{MapLayer, NavMap};
 use gt_side_panel::{NodeKey, RecordingDetails, TreeState};
 use gt_store::{DatabaseRef, EnvironmentArchive};
 use gt_types::{LoadWarning, TrackAggregates, TrackRef};
-use gt_ui_theme::warning_amber;
 use strum::IntoEnumIterator as _;
 
 use gt_loaded_files::{LoadedFiles, LoadedFilesView, RecordingNames};
@@ -259,7 +258,7 @@ pub(super) fn anchored_confirmation_dialog<T>(
 }
 
 pub(super) fn destructive_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
-    ui.button(RichText::new(label).color(warning_amber(ui.visuals().dark_mode)))
+    ui.button(RichText::new(label).color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)))
         .on_hover_text("This cannot be undone")
 }
 
@@ -675,7 +674,7 @@ pub fn show_load_warnings_dialog(ui: &egui::Ui, popup: &mut Option<(String, Vec<
                             for w in warnings.iter() {
                                 ui.label(
                                     RichText::new(ICON_WARNING)
-                                        .color(warning_amber(ui.visuals().dark_mode)),
+                                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
                                 );
                                 ui.label(RichText::new(w.count.to_string()).strong());
                                 ui.label(&w.issue);
@@ -1355,7 +1354,10 @@ pub fn show_environment_prune_confirmation(
         |ui| {
             let mut choice = None;
             if ui
-                .button(RichText::new("Delete").color(warning_amber(ui.visuals().dark_mode)))
+                .button(
+                    RichText::new("Delete")
+                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                )
                 .on_hover_text(
                     "This cannot be undone. The days are downloaded again as they are needed.",
                 )
@@ -1614,12 +1616,7 @@ mod tests {
         ForceQuitChoice, ForceQuitPromptContents, LoadedLogs, MapLayer, MapboxTokenField, NavMap,
         NodeKey, PruneRequest, PruneScope, PrunedDays, RecordingDetails, SHELVE_BUTTON_LABEL,
         SHELVED_ITEMS_MOST_LINES, ShelveOutcome, SnapScopeChoice, SnapScopeCount, SnapScopeCounts,
-        StoredTrackAction, TimeUntilTheClose, TrackRef, files_fully_removed, prune_scope_line,
-        remove_items_from_view, show_about_dialog, show_environment_prune_confirmation,
-        show_force_quit_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
-        show_orphaned_event_markers_popup, show_recording_details_dialog, show_shelve_confirmation,
-        show_snap_auto_prompt, show_snap_consent_dialog, show_snap_replace_dialog,
-        show_snap_scope_dialog, track_removals,
+        StoredTrackAction, TimeUntilTheClose, TrackRef,
     };
     use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
     use gt_side_panel::tree::CheckState;
@@ -1669,7 +1666,7 @@ mod tests {
                 covered,
                 loaded_recordings: &listed,
             };
-            if let Some(made) = show_environment_prune_confirmation(ui, &prompt) {
+            if let Some(made) = super::show_environment_prune_confirmation(ui, &prompt) {
                 *choice.borrow_mut() = Some(made);
             }
         });
@@ -1683,7 +1680,7 @@ mod tests {
         choice: &'a RefCell<Option<SnapScopeChoice>>,
     ) -> TestHarness<'a, ()> {
         let mut harness = TestHarness::builder().size(DIALOG_VIEWPORT).ui(move |ui| {
-            if let Some(made) = show_snap_scope_dialog(ui, SNAP_COSTING, *counts.borrow()) {
+            if let Some(made) = super::show_snap_scope_dialog(ui, SNAP_COSTING, *counts.borrow()) {
                 *choice.borrow_mut() = Some(made);
             }
         });
@@ -1796,7 +1793,7 @@ mod tests {
             shutdown_window(ui);
             let contents =
                 ForceQuitPromptContents::InterruptionCosts(interruption_costs.borrow().clone());
-            if let Some(made) = show_force_quit_confirmation(ui, &contents).choice {
+            if let Some(made) = super::show_force_quit_confirmation(ui, &contents).choice {
                 *choice.borrow_mut() = Some(made);
             }
         });
@@ -1810,7 +1807,7 @@ mod tests {
         choice: &RefCell<Option<ForceQuitChoice>>,
     ) -> TestHarness<'_, ()> {
         let mut harness = TestHarness::builder().size(DIALOG_VIEWPORT).ui(move |ui| {
-            let response = show_force_quit_confirmation(
+            let response = super::show_force_quit_confirmation(
                 ui,
                 &ForceQuitPromptContents::WritesFinished(TIME_UNTIL_THE_CLOSE),
             );
@@ -1935,7 +1932,10 @@ mod tests {
         #[case] days: PrunedDays,
         #[case] expected: &str,
     ) {
-        assert_eq!(prune_scope_line(PruneRequest { scope, days }), expected);
+        assert_eq!(
+            super::prune_scope_line(PruneRequest { scope, days }),
+            expected
+        );
     }
 
     /// The dialog as the user meets it: what goes, and which loaded recordings
@@ -1991,7 +1991,7 @@ mod tests {
     #[test]
     fn snapshot_the_snap_replace_confirmation() {
         let mut harness = TestHarness::builder().size(DIALOG_VIEWPORT).ui(|ui| {
-            show_snap_replace_dialog(ui, SNAP_COSTING);
+            super::show_snap_replace_dialog(ui, SNAP_COSTING);
         });
         harness.inner.run_steps(4);
         harness.snapshot("snap_to_road_replace_confirmation");
@@ -2007,7 +2007,7 @@ mod tests {
         map.set_layer(MapLayer::Satellite);
         let mut harness = TestHarness::builder().ui_state(
             |ui, state: &mut TokenDialogState| {
-                show_mapbox_token_dialog(ui, &mut state.map, &mut state.field);
+                super::show_mapbox_token_dialog(ui, &mut state.map, &mut state.field);
             },
             TokenDialogState {
                 map,
@@ -2083,7 +2083,7 @@ mod tests {
             .size(egui::vec2(520.0, 320.0))
             .ui_state(
                 |ui, request: &mut Option<RecordingDetails>| {
-                    show_recording_details_dialog(ui, request);
+                    super::show_recording_details_dialog(ui, request);
                 },
                 Some(RecordingDetails {
                     metadata,
@@ -2166,7 +2166,7 @@ mod tests {
 
     fn shelve_confirmation_ui(ui: &mut egui::Ui, state: &mut ShelveConfirmationState) {
         let names = RecordingNames::resolve(state.loaded_files.view(), "{filename}");
-        let outcome = show_shelve_confirmation(
+        let outcome = super::show_shelve_confirmation(
             ui,
             &mut state.tree,
             &mut state.loaded_files,
@@ -2366,7 +2366,7 @@ mod tests {
         for case in cases {
             let files = make_loaded_files(&case.files);
 
-            let removed: Vec<usize> = files_fully_removed(&case.keys, files.view())
+            let removed: Vec<usize> = super::files_fully_removed(&case.keys, files.view())
                 .into_iter()
                 .collect();
             assert_eq!(
@@ -2375,7 +2375,7 @@ mod tests {
                 case.name
             );
 
-            let removals = track_removals(&case.keys, files.view());
+            let removals = super::track_removals(&case.keys, files.view());
             assert_eq!(
                 removals.len(),
                 case.expect_recordings,
@@ -2433,7 +2433,7 @@ mod tests {
     }
 
     /// Remove the track at view position `ti` from the view, and send the
-    /// permanent delete for the stored rows that [`remove_items_from_view`]
+    /// permanent delete for the stored rows that [`super::remove_items_from_view`]
     /// returns, the way `App::apply_shelve_outcome` sends it.
     fn remove_the_track_permanently(
         worker: &HistoryWorker,
@@ -2442,7 +2442,7 @@ mod tests {
         db_ref: &DatabaseRef,
         ti: usize,
     ) {
-        let removals = remove_items_from_view(&[track_key(0, ti)], loaded, tree);
+        let removals = super::remove_items_from_view(&[track_key(0, ti)], loaded, tree);
         let [removal] = removals.as_slice() else {
             panic!("expected one affected recording, got {}", removals.len());
         };
@@ -2514,7 +2514,7 @@ mod tests {
         // keep the numbers of the rows they came from.
         let mut loaded = loaded_recording_in_stored_rows(&[0, 2], &db_ref);
         let mut tree = TreeState::default();
-        let removals = remove_items_from_view(&[track_key(0, 1)], &mut loaded, &mut tree);
+        let removals = super::remove_items_from_view(&[track_key(0, 1)], &mut loaded, &mut tree);
         let [removal] = removals.as_slice() else {
             panic!("expected one affected recording, got {}", removals.len());
         };
@@ -2544,7 +2544,7 @@ mod tests {
     }
 
     /// Shelving a track and unloading one both take it out of the view through
-    /// [`remove_items_from_view`]. The recording then reports the distance, the
+    /// [`super::remove_items_from_view`]. The recording then reports the distance, the
     /// recorded time, the time range and the fix losses of its other two
     /// tracks.
     #[test]
@@ -2554,7 +2554,7 @@ mod tests {
         let mut tree = TreeState::new();
         tree.sync_from_loaded_files(loaded.view());
 
-        remove_items_from_view(&[track_key(0, 0)], &mut loaded, &mut tree);
+        super::remove_items_from_view(&[track_key(0, 0)], &mut loaded, &mut tree);
 
         let metadata = &loaded.get(0).expect("the recording stays loaded").metadata;
         assert_eq!(
@@ -2580,7 +2580,7 @@ mod tests {
         let mut loaded = make_loaded_files(&[(0, true)]);
         let mut tree = TreeState::default();
 
-        let removals = remove_items_from_view(&[file_key(0)], &mut loaded, &mut tree);
+        let removals = super::remove_items_from_view(&[file_key(0)], &mut loaded, &mut tree);
 
         assert!(
             removals.is_empty(),
@@ -2640,7 +2640,7 @@ mod tests {
     ) {
         let (mut loaded, mut tree) = two_recordings_with_hidden_tracks();
 
-        remove_items_from_view(&removed, &mut loaded, &mut tree);
+        super::remove_items_from_view(&removed, &mut loaded, &mut tree);
 
         assert_eq!(track_checks(&tree), expected);
     }
@@ -2659,7 +2659,7 @@ mod tests {
         tree.toggle_generated_kind_hidden(track, GeneratedMarkerKindTag::Slip);
         tree.toggle_generated_kind_expanded(track, GeneratedMarkerKindTag::Slip);
 
-        remove_items_from_view(&[file_key(0)], &mut loaded, &mut tree);
+        super::remove_items_from_view(&[file_key(0)], &mut loaded, &mut tree);
 
         let moved = track_ref(0, 1);
         assert!(
@@ -2692,7 +2692,7 @@ mod tests {
         tree.apply_click(track_key(0, 0), false, false);
         tree.apply_click(track_key(0, 2), true, false);
 
-        remove_items_from_view(&[track_key(0, 0)], &mut loaded, &mut tree);
+        super::remove_items_from_view(&[track_key(0, 0)], &mut loaded, &mut tree);
 
         assert_eq!(
             tree.selection.iter().copied().collect::<Vec<NodeKey>>(),
@@ -2709,7 +2709,7 @@ mod tests {
         tree.sync_from_loaded_files(loaded.view());
         tree.reveal(track_key(1, 1));
 
-        remove_items_from_view(&[file_key(0)], &mut loaded, &mut tree);
+        super::remove_items_from_view(&[file_key(0)], &mut loaded, &mut tree);
 
         assert_eq!(tree.reveal_request, Some(track_key(0, 1)));
         assert_eq!(tree.selection_anchor, Some(track_key(0, 1)));
@@ -2735,7 +2735,7 @@ mod tests {
             delete_permanently: false,
         });
 
-        remove_items_from_view(&[track_key(0, 0)], &mut loaded, &mut tree);
+        super::remove_items_from_view(&[track_key(0, 0)], &mut loaded, &mut tree);
 
         assert_eq!(
             tree.shelve_confirm.map(|confirm| confirm.items),
@@ -2753,7 +2753,7 @@ mod tests {
         tree.sync_from_loaded_files(loaded.view());
         tree.pending_unload = Some(vec![track_key(0, 2)]);
 
-        remove_items_from_view(&[track_key(0, 0)], &mut loaded, &mut tree);
+        super::remove_items_from_view(&[track_key(0, 0)], &mut loaded, &mut tree);
 
         assert_eq!(tree.pending_unload, Some(vec![track_key(0, 1)]));
     }
@@ -2888,7 +2888,7 @@ mod tests {
         match state.dialog {
             OversizedDialog::Shelve => {
                 let names = RecordingNames::resolve(state.loaded_files.view(), "{filename}");
-                show_shelve_confirmation(
+                super::show_shelve_confirmation(
                     ui,
                     &mut state.tree,
                     &mut state.loaded_files,
@@ -2897,32 +2897,32 @@ mod tests {
                 );
             }
             OversizedDialog::OrphanedEventMarkers => {
-                show_orphaned_event_markers_popup(ui, &mut state.orphaned_event_markers);
+                super::show_orphaned_event_markers_popup(ui, &mut state.orphaned_event_markers);
             }
             OversizedDialog::LoadWarnings => {
-                show_load_warnings_dialog(ui, &mut state.load_warnings);
+                super::show_load_warnings_dialog(ui, &mut state.load_warnings);
             }
             OversizedDialog::RecordingDetails => {
-                show_recording_details_dialog(ui, &mut state.recording_details);
+                super::show_recording_details_dialog(ui, &mut state.recording_details);
             }
-            OversizedDialog::About => show_about_dialog(ui, &mut state.about_open, &long),
+            OversizedDialog::About => super::show_about_dialog(ui, &mut state.about_open, &long),
             OversizedDialog::SnapConsent => {
-                show_snap_consent_dialog(ui, &long, true);
+                super::show_snap_consent_dialog(ui, &long, true);
             }
             OversizedDialog::SnapReplace => {
-                show_snap_replace_dialog(ui, &long);
+                super::show_snap_replace_dialog(ui, &long);
             }
             OversizedDialog::SnapScope => {
-                show_snap_scope_dialog(ui, &long, SnapScopeCounts::default());
+                super::show_snap_scope_dialog(ui, &long, SnapScopeCounts::default());
             }
             OversizedDialog::SnapAutoPrompt => {
-                show_snap_auto_prompt(ui, &long);
+                super::show_snap_auto_prompt(ui, &long);
             }
             OversizedDialog::MapboxToken => {
-                show_mapbox_token_dialog(ui, &mut state.map, &mut state.token_field);
+                super::show_mapbox_token_dialog(ui, &mut state.map, &mut state.token_field);
             }
             OversizedDialog::EnvironmentPrune => {
-                show_environment_prune_confirmation(
+                super::show_environment_prune_confirmation(
                     ui,
                     &EnvironmentPrunePrompt {
                         request: prune_request(PruneScope::Every),
@@ -2932,7 +2932,7 @@ mod tests {
                 );
             }
             OversizedDialog::ForceQuit => {
-                show_force_quit_confirmation(
+                super::show_force_quit_confirmation(
                     ui,
                     &ForceQuitPromptContents::InterruptionCosts(state.interruption_costs.clone()),
                 );

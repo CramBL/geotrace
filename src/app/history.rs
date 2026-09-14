@@ -12,7 +12,6 @@ use gt_store::{
 };
 use gt_types::TravelMode;
 use gt_ui_theme::labels::LabelWithHover;
-use gt_ui_theme::warning_amber;
 use strum::{EnumCount, EnumIter};
 
 use crate::app::history::delete_shelved_prompt::DeleteShelvedTracksPrompt;
@@ -234,7 +233,7 @@ impl PruneDialog {
                             if ui
                                 .button(
                                     RichText::new("Delete these recordings")
-                                        .color(warning_amber(ui.visuals().dark_mode)),
+                                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
                                 )
                                 .on_hover_text(DESTRUCTIVE_DELETE_HOVER)
                                 .clicked()
@@ -741,13 +740,16 @@ impl HistoryWindow {
                 if !worker.available() {
                     ui.label(
                         RichText::new("History database is unavailable.")
-                            .color(warning_amber(ui.visuals().dark_mode)),
+                            .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
                     );
                     return;
                 }
 
                 if let Some(err) = &self.error {
-                    ui.label(RichText::new(err).color(warning_amber(ui.visuals().dark_mode)));
+                    ui.label(
+                        RichText::new(err)
+                            .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                    );
                     ui.add_space(4.0);
                 }
 

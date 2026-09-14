@@ -501,12 +501,12 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::check::check_text;
+    use crate::check;
     use crate::test_util::{self, TEST_EPOCH};
 
     #[test]
     fn summary_notes_every_skip_and_unused_param() {
-        let query = check_text(
+        let query = check::check_text(
             "points | with mask 15 deg, snr_drop 10 | where util_all < 50 %",
             &gt_query::ChannelSchema::new(),
         )
@@ -552,7 +552,7 @@ mod tests {
     #[test]
     fn summary_counts_the_points_keep_and_hide_remove() {
         // 5 points, 2 matched.
-        let query = check_text(
+        let query = check::check_text(
             "points | where velocity > 30 km/h",
             &gt_query::ChannelSchema::new(),
         )

@@ -14,8 +14,8 @@ use gt_types::{DisplayMode, TrackRef};
 
 use crate::check::{CheckedQuery, TableColumn};
 use crate::eval::{
-    CANCEL_CHECK_INTERVAL, ChannelSamples, ChannelTimeline, MetricProvider, RunSummary, TrackInput,
-    TrackMatches, evaluate_track, ranges_from,
+    self, CANCEL_CHECK_INTERVAL, ChannelSamples, ChannelTimeline, MetricProvider, RunSummary,
+    TrackInput, TrackMatches,
 };
 use crate::metric::QueryMetric;
 
@@ -190,7 +190,7 @@ fn fold_track<P: MetricProvider>(
     let mut draw_matched: Vec<Vec<bool>> = Vec::new();
 
     for query in queries {
-        let runs = ranges_from(&visible);
+        let runs = eval::ranges_from(&visible);
         let visible_points = runs.iter().map(Range::len).sum();
         let mut matched = vec![false; len];
         let mut skipped: BTreeMap<QueryMetric, usize> = BTreeMap::new();
@@ -203,7 +203,7 @@ fn fold_track<P: MetricProvider>(
                 start: run.start,
                 len: run.len(),
             };
-            let eval = evaluate_track(query, &view, should_cancel, check_interval)?;
+            let eval = eval::evaluate_track(query, &view, should_cancel, check_interval)?;
             if let Some(dest) = matched.get_mut(run.clone()) {
                 for (slot, hit) in dest.iter_mut().zip(&eval.matched) {
                     *slot |= *hit;
@@ -218,7 +218,7 @@ fn fold_track<P: MetricProvider>(
 
         let matched_points = matched.iter().filter(|m| **m).count();
         per_query.push(QueryContribution {
-            ranges: ranges_from(&matched),
+            ranges: eval::ranges_from(&matched),
             matched_points,
             visible_points,
             skipped,
@@ -245,14 +245,14 @@ fn fold_track<P: MetricProvider>(
             .zip(&visible)
             .map(|(&hit, &vis)| hit && vis)
             .collect();
-        draw_ranges.push(ranges_from(&shown));
+        draw_ranges.push(eval::ranges_from(&shown));
     }
     let hidden_mask: Vec<bool> = visible.iter().map(|&v| !v).collect();
 
     Some(TrackFold {
         per_query,
         draw_ranges,
-        hidden: ranges_from(&hidden_mask),
+        hidden: eval::ranges_from(&hidden_mask),
     })
 }
 

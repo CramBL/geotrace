@@ -23,25 +23,18 @@ pub use chips::{ChannelVisibility, MetricVisibility};
 pub use legend::{LEGEND_DOCK_OFFSET, legend_is_docked};
 pub use overlay::EDGE_MARKER_INSET;
 
-use backward_time_step::{BackwardTimeStepViewport, add_backward_time_steps};
+use backward_time_step::BackwardTimeStepViewport;
 use chips::{FlareChipState, HoveredChip, MetricAvailability, MetricChipState, SectionGates};
 use clock_offset::ClockOffsetViewport;
-use context::{ContextLineGates, ContextPlotCaches, add_context_lines};
-use flares::{FlareSpanMarking, FlareViewport, add_flare_markers};
-use geomagnetic::geomagnetic_availability;
-use jamming::jamming_available;
-use legend::show_file_legend_overlay;
-use levels::{LineViewport, TrackLevelCache, budget_cap, compute_level_cache, single_target};
-use lines::{
-    LineStroke, NearestHoverLabel, add_series_lines, add_util_anomalies, show_nearest_hover_label,
-};
-use snap_error::{SnapErrorPlotCache, snap_error_available, sync_snap_error_cache};
-use style::metric_line_color;
-use tec::tec_available;
+use context::{ContextLineGates, ContextPlotCaches};
+use flares::{FlareSpanMarking, FlareViewport};
+use levels::{LineViewport, TrackLevelCache};
+use lines::{LineStroke, NearestHoverLabel};
+use snap_error::SnapErrorPlotCache;
 use time_axis::{BandUnit, TimeAxisBandRow, TimeAxisFrame, TimeAxisLabeling};
 
 use crate::AnalysisConfig;
-use crate::series::{PlacedTrackSeries, build_all_series};
+use crate::series::{self, PlacedTrackSeries};
 use chrono::{DateTime, Utc};
 use egui::{Align2, Color32, RichText, Stroke, TextStyle};
 use egui_plot::{AxisHints, LineStyle, PlotTransform, Span, VLine};
@@ -319,7 +312,7 @@ pub struct PlotState {
     /// re-applying the same range every frame (which would prevent manual zoom).
     applied_map_x_range: Option<(u64, u64)>,
     /// Per-track snap error mipmaps and marker lists, rebuilt only when a
-    /// track's series `Arc` changes (see [`sync_snap_error_cache`]).
+    /// track's series `Arc` changes (see [`snap_error::sync_snap_error_cache`]).
     snap_error_cache: FxHashMap<TrackRef, SnapErrorPlotCache>,
     /// The context metric lines, rebuilt when the app resolves new samples
     /// for them (see [`ContextPlotCaches::sync`]).
@@ -402,7 +395,7 @@ impl PlotState {
     /// Called after file deletion - runs on the UI thread since deletion is
     /// cheap (files already parsed, just re-indexing the surviving files).
     pub fn rebuild_all(&mut self, files: &[LoadedFile]) {
-        self.series_cache = build_all_series(files, self.analysis);
+        self.series_cache = series::build_all_series(files, self.analysis);
         self.invalidate_level_cache();
     }
 
@@ -544,13 +537,14 @@ pub fn show_track_plot(
     // Whether any visible track has a completed snap run: gates the snap
     // error chip (disabled with hover text until a run completes) and the
     // per-point hover hit-testing.
-    let snap_error_available = snap_error_available(&state.series_cache, &visible, snap_error);
-    let jamming_available = jamming_available(&state.series_cache, &visible, jamming);
-    let geomagnetic_available = geomagnetic_availability(
+    let snap_error_available =
+        snap_error::snap_error_available(&state.series_cache, &visible, snap_error);
+    let jamming_available = jamming::jamming_available(&state.series_cache, &visible, jamming);
+    let geomagnetic_available = geomagnetic::geomagnetic_availability(
         visible_series(&state.series_cache, &visible).map(|series| series.track_ref()),
         geomagnetic,
     );
-    let tec_available = tec_available(
+    let tec_available = tec::tec_available(
         visible_series(&state.series_cache, &visible).map(|series| series.track_ref()),
         tec,
     );
@@ -590,7 +584,7 @@ pub fn show_track_plot(
     );
 
     let available_width = ui.available_width();
-    let sample_cap = budget_cap(available_width, visible_count);
+    let sample_cap = levels::budget_cap(available_width, visible_count);
 
     let time_window = FilterTimeWindow::from(filter);
 
@@ -601,7 +595,7 @@ pub fn show_track_plot(
 
     let reset_extent = reset_extent(&state.series_cache, &visible, time_window);
 
-    sync_snap_error_cache(&mut state.snap_error_cache, snap_error);
+    snap_error::sync_snap_error_cache(&mut state.snap_error_cache, snap_error);
     state.context_caches.sync(archive.context_lines);
 
     // Split borrows: extract immutable refs to the caches and metric visibility
@@ -698,7 +692,7 @@ pub fn show_track_plot(
     // hover alone: full color while its own chip is hovered, dimmed while
     // another one is.
     let context_stroke = |kind: MetricKind| {
-        let base = metric_line_color(kind, 0, dark_mode);
+        let base = style::metric_line_color(kind, 0, dark_mode);
         let (color, highlighted) = match hovered_chip.as_ref() {
             Some(HoveredChip::Metric(hovered)) if *hovered == kind => (base, true),
             Some(_) => (base.gamma_multiply(0.2), false),
@@ -751,7 +745,7 @@ pub fn show_track_plot(
         // (single ≈ 2 × `plot_width_px`, always ≥ 400).  The cache also depends
         // on the plot width and visible count (both feed the per-track targets),
         // so those are part of the validity check, not just the view bounds.
-        let single = single_target(available_width);
+        let single = levels::single_target(available_width);
         let threshold = 20.0 * (eff_x_max - eff_x_min) / single as f64;
         let cache_valid = last_level_cache_inputs.is_some_and(|last| {
             last.available_width_bits == inputs.available_width_bits
@@ -769,7 +763,7 @@ pub fn show_track_plot(
         } else {
             let fresh: Vec<TrackLevelCache> = series_cache
                 .par_iter()
-                .map(|s| compute_level_cache(&s.series, line_viewport))
+                .map(|s| levels::compute_level_cache(&s.series, line_viewport))
                 .collect();
             new_level_cache_inputs = Some(inputs);
             std::borrow::Cow::Owned(fresh)
@@ -816,7 +810,7 @@ pub fn show_track_plot(
 
         // Before the recordings' own lines, so a track's metrics stay on
         // top of the archive's context.
-        add_context_lines(
+        context::add_context_lines(
             plot_ui,
             context_caches,
             ContextLineGates {
@@ -832,7 +826,7 @@ pub fn show_track_plot(
         // Full-height lines, drawn before the recordings' own so a track's
         // metrics stay on top of them.
         if show_solar_flares {
-            add_flare_markers(
+            flares::add_flare_markers(
                 plot_ui,
                 archive.solar_flares,
                 FlareViewport {
@@ -856,7 +850,7 @@ pub fn show_track_plot(
                 continue;
             };
             let track_label = series_labels.get(si).and_then(Option::as_deref);
-            add_series_lines(
+            lines::add_series_lines(
                 plot_ui,
                 series,
                 track_label,
@@ -892,7 +886,7 @@ pub fn show_track_plot(
                 series_pointer,
                 &mut hovered_label,
             );
-            add_backward_time_steps(
+            backward_time_step::add_backward_time_steps(
                 plot_ui,
                 &series.series.channels,
                 track_label,
@@ -907,7 +901,7 @@ pub fn show_track_plot(
                 &mut hovered_label,
             );
             if show_anomalies {
-                add_util_anomalies(
+                lines::add_util_anomalies(
                     plot_ui,
                     &series.series,
                     track_label,
@@ -962,9 +956,9 @@ pub fn show_track_plot(
     state.plot_cursor_snapped =
         plot_response.response.hovered() && plot_response.hovered_plot_item.is_some();
 
-    show_nearest_hover_label(ui, &plot_response.response, hovered_label);
+    lines::show_nearest_hover_label(ui, &plot_response.response, hovered_label);
 
-    state.legend_hover_file = show_file_legend_overlay(
+    state.legend_hover_file = legend::show_file_legend_overlay(
         ui,
         names,
         &visible_files,

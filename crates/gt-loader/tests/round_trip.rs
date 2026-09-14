@@ -2,7 +2,6 @@ use geotrace_sdk::{
     Angle, Annotation, Constellation as SdkConst, MarkerIcon as SdkIcon, NavFileBuilder, NavFix,
     NavFixTime, RecordedFixTimestamps, Satellite as SdkSat, SatelliteReport, Velocity,
 };
-use gt_test_utils::{marker_test_data, nav_test_data};
 use gt_types::satellites::Constellation;
 
 fn sdk_constellation(c: Constellation) -> SdkConst {
@@ -38,8 +37,8 @@ fn sdk_icon(icon: gt_types::MarkerIcon) -> SdkIcon {
 #[test]
 #[expect(clippy::float_cmp, reason = "exact coordinate round-trip")]
 fn round_trip_from_gt_types_test_data() {
-    let nav_data = nav_test_data();
-    let marker_data = marker_test_data();
+    let nav_data = gt_test_utils::nav_test_data();
+    let marker_data = gt_test_utils::marker_test_data();
 
     let mut recorder = NavFileBuilder::new().open();
 

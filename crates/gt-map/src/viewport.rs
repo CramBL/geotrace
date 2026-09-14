@@ -4,7 +4,7 @@
 
 use std::ops::Range;
 
-use gt_filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
+use gt_filter::GlobalFilter;
 use gt_track_builder::SpatialIndex;
 use gt_types::{
     DataCategory, FileIdx, GeoBounds, Latitude, LoadedFile, LoadedTrack, Longitude, MercBounds,
@@ -269,7 +269,7 @@ impl TrackPlan {
                 let track_vis = file_vis.and_then(|fv| TrackIdx::new(ti).get(&fv.tracks));
                 let enabled = file_enabled
                     && track_vis.is_some_and(|tv| tv.enabled)
-                    && track_passes_filter(track, filter);
+                    && gt_filter::track_passes_filter(track, filter);
                 let tpv_on =
                     enabled && track_vis.is_some_and(|tv| tv.category_visible(DataCategory::Tpv));
                 // The fade classification runs last so it is skipped for
@@ -357,7 +357,9 @@ pub(crate) fn compute_visible_bounding_box(
         .zip(&visibility.files)
         .filter(|(_, file_vis)| file_vis.enabled)
         .flat_map(|(file, file_vis)| file.tracks.iter().zip(&file_vis.tracks))
-        .filter(|(track, track_vis)| track_vis.enabled && track_passes_filter(track, filter))
+        .filter(|(track, track_vis)| {
+            track_vis.enabled && gt_filter::track_passes_filter(track, filter)
+        })
         .filter_map(|(track, _)| {
             let fixes = || {
                 points_displayed
@@ -383,7 +385,7 @@ fn drawn_fix_positions<'a>(
 ) -> impl Iterator<Item = (Latitude, Longitude)> + 'a {
     placed
         .iter()
-        .filter(|point| point_passes_time_filter(point.fix.tpv.time().utc(), filter))
+        .filter(|point| gt_filter::point_passes_time_filter(point.fix.tpv.time().utc(), filter))
         .map(PlacedPoint::resolved_position)
 }
 
@@ -394,7 +396,7 @@ fn drawn_custom_marker_positions<'a>(
     track
         .custom_markers
         .iter()
-        .filter(|marker| point_passes_time_filter(marker.time, filter))
+        .filter(|marker| gt_filter::point_passes_time_filter(marker.time, filter))
         .map(|marker| (marker.lat, marker.lon))
 }
 
@@ -421,7 +423,7 @@ pub(crate) fn matched_bounding_box(
         matched_ranges
             .into_iter()
             .filter_map(|(track_ref, ranges)| Some((track_ref.resolve(files)?, ranges)))
-            .filter(|(track, _)| track_passes_filter(track, filter))
+            .filter(|(track, _)| gt_filter::track_passes_filter(track, filter))
             .filter_map(|(track, ranges)| Some((track.placed_points()?, ranges)))
             .flat_map(|(placed, ranges)| {
                 ranges.iter().flat_map(move |range| {
@@ -442,7 +444,7 @@ pub(crate) fn match_bounding_box(
     filter: &GlobalFilter,
 ) -> Option<GeoBounds> {
     let track = track_ref.resolve(files)?;
-    if !track_passes_filter(track, filter) {
+    if !gt_filter::track_passes_filter(track, filter) {
         return None;
     }
     let matched = track.placed_points()?.range(points.clone())?;

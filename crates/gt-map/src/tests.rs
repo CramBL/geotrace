@@ -1,10 +1,9 @@
 use std::path::PathBuf;
 
 use super::*;
-use crate::hover_labels::candidate_label;
+use crate::hover_labels;
 use crate::test_util::{self, DrawState, MapScene};
-use crate::viewport::match_bounding_box;
-use gt_test_utils::nav_test_data;
+use crate::viewport;
 use gt_types::{
     DataCategory, EventMarker, FileIdx, FileMetadata, GeoBounds, Latitude, LoadedFile, LoadedTrack,
     Longitude, MercBounds, MercPoint, PointIdx, SpatialPoint, TimeRange, TotalDistance, TrackIdx,
@@ -59,7 +58,7 @@ fn visible_tpv_point_is_hoverable() {
         55.0, 12.0,
     )])];
     let vis = vis_all_visible();
-    assert!(is_spatial_point_visible(
+    assert!(viewport::is_spatial_point_visible(
         &sp,
         scope(&files, &vis, &GlobalFilter::default())
     ));
@@ -74,7 +73,7 @@ fn hidden_file_blocks_hover() {
     )])];
     let mut vis = vis_all_visible();
     vis.files[0].enabled = false;
-    assert!(!is_spatial_point_visible(
+    assert!(!viewport::is_spatial_point_visible(
         &sp,
         scope(&files, &vis, &GlobalFilter::default())
     ));
@@ -89,7 +88,7 @@ fn hidden_track_blocks_hover() {
     )])];
     let mut vis = vis_all_visible();
     vis.files[0].tracks[0].enabled = false;
-    assert!(!is_spatial_point_visible(
+    assert!(!viewport::is_spatial_point_visible(
         &sp,
         scope(&files, &vis, &GlobalFilter::default())
     ));
@@ -120,8 +119,9 @@ fn visible_bounding_box_excludes_hidden_tracks() {
 
     // Everything visible: the box spans both tracks.
     let filter = GlobalFilter::default();
-    let all_visible = compute_visible_bounding_box(&files, &vis, &filter, DisplayMask::default())
-        .expect("visible data has a bbox");
+    let all_visible =
+        viewport::compute_visible_bounding_box(&files, &vis, &filter, DisplayMask::default())
+            .expect("visible data has a bbox");
     assert_eq!(
         all_visible,
         GeoBounds::from_positions([
@@ -133,8 +133,9 @@ fn visible_bounding_box_excludes_hidden_tracks() {
 
     // Hide the north-east track: its corner drops out of the box.
     vis.files[0].tracks[1].enabled = false;
-    let only_first = compute_visible_bounding_box(&files, &vis, &filter, DisplayMask::default())
-        .expect("track 0 still visible");
+    let only_first =
+        viewport::compute_visible_bounding_box(&files, &vis, &filter, DisplayMask::default())
+            .expect("track 0 still visible");
     assert_eq!(
         only_first,
         GeoBounds::single_position(Latitude::new(55.0), Longitude::new(12.0))
@@ -150,7 +151,7 @@ fn hidden_tpv_layer_blocks_hover() {
     )])];
     let mut vis = vis_all_visible();
     vis.files[0].tracks[0].set_category_visible(DataCategory::Tpv, false);
-    assert!(!is_spatial_point_visible(
+    assert!(!viewport::is_spatial_point_visible(
         &sp,
         scope(&files, &vis, &GlobalFilter::default())
     ));
@@ -167,7 +168,7 @@ fn masked_track_points_block_hover() {
     let vis = vis_all_visible();
     let mut mask = DisplayMask::default();
     mask.set_visible(DisplayCategory::TrackPoints, false);
-    assert!(!is_spatial_point_visible(
+    assert!(!viewport::is_spatial_point_visible(
         &sp,
         MapScope {
             display_mask: mask,
@@ -250,11 +251,11 @@ fn fully_masked_map_has_no_bounding_box() {
         mask.set_visible(category, false);
     }
     assert_eq!(
-        compute_visible_bounding_box(&files, &vis, &filter, mask),
+        viewport::compute_visible_bounding_box(&files, &vis, &filter, mask),
         None
     );
     mask.set_visible(DisplayCategory::Tracks, true);
-    assert!(compute_visible_bounding_box(&files, &vis, &filter, mask).is_some());
+    assert!(viewport::compute_visible_bounding_box(&files, &vis, &filter, mask).is_some());
 }
 
 /// A fix at `time` with no heading and no satellite report.
@@ -297,11 +298,17 @@ fn time_filtered_point_is_not_hoverable() {
         ..GlobalFilter::default()
     };
     assert!(
-        !is_spatial_point_visible(&tpv_spatial_point(0, 0, 0), scope(&files, &vis, &filter)),
+        !viewport::is_spatial_point_visible(
+            &tpv_spatial_point(0, 0, 0),
+            scope(&files, &vis, &filter)
+        ),
         "the pre-window point must not be hoverable"
     );
     assert!(
-        is_spatial_point_visible(&tpv_spatial_point(0, 0, 1), scope(&files, &vis, &filter)),
+        viewport::is_spatial_point_visible(
+            &tpv_spatial_point(0, 0, 1),
+            scope(&files, &vis, &filter)
+        ),
         "the in-window point must stay hoverable"
     );
 }
@@ -326,7 +333,7 @@ fn query_hidden_point_is_not_hoverable() {
         ..QueryMatches::default()
     };
     assert!(
-        !is_spatial_point_visible(
+        !viewport::is_spatial_point_visible(
             &tpv_spatial_point(0, 0, 0),
             MapScope {
                 query_matches: Some(&matches),
@@ -336,7 +343,7 @@ fn query_hidden_point_is_not_hoverable() {
         "the query-hidden point must not be hoverable"
     );
     assert!(
-        is_spatial_point_visible(
+        viewport::is_spatial_point_visible(
             &tpv_spatial_point(0, 0, 1),
             MapScope {
                 query_matches: Some(&matches),
@@ -346,7 +353,10 @@ fn query_hidden_point_is_not_hoverable() {
         "the point the query kept must stay hoverable"
     );
     assert!(
-        is_spatial_point_visible(&tpv_spatial_point(0, 0, 0), scope(&files, &vis, &filter)),
+        viewport::is_spatial_point_visible(
+            &tpv_spatial_point(0, 0, 0),
+            scope(&files, &vis, &filter)
+        ),
         "without a query run the point is hoverable"
     );
 }
@@ -387,7 +397,7 @@ fn hover_skips_hidden_nearest_and_finds_visible() {
     let found = tree
         .nearest_neighbor_iter([0.5_f64, 0.5_f64])
         .take_while(|sp| sp.distance_2(&[0.5, 0.5]) <= f64::MAX)
-        .find(|sp| is_spatial_point_visible(sp, scope(&files, &vis, &filter)));
+        .find(|sp| viewport::is_spatial_point_visible(sp, scope(&files, &vis, &filter)));
     assert!(found.is_some(), "should find the visible track");
     assert_eq!(
         found.unwrap().track_index,
@@ -401,7 +411,7 @@ fn hover_skips_hidden_nearest_and_finds_visible() {
 /// and cause out-of-bounds panics in the renderers.
 #[test]
 fn spatial_index_valid_after_file_deletion() {
-    let all_points = nav_test_data(); // 1 200 points, all with headings
+    let all_points = gt_test_utils::nav_test_data(); // 1 200 points, all with headings
     let points_a: Vec<_> = all_points.iter().take(700).cloned().collect();
     let points_b: Vec<_> = all_points.iter().take(340).cloned().collect();
 
@@ -637,7 +647,7 @@ fn candidate_label_generated_marker_matches_header() {
         },
     );
     assert_eq!(
-        candidate_label(candidate, &[file]),
+        hover_labels::candidate_label(candidate, &[file]),
         expected,
         "candidate_label must delegate to generated_marker_header"
     );
@@ -653,14 +663,14 @@ fn matched_bounding_box_covers_only_the_drawn_matches() {
     ])];
     let matches = test_util::a_run_drawing(TrackRef::new(FileIdx::new(0), TrackIdx::new(1)), 0..1);
     assert_eq!(
-        matched_bounding_box(&files, &matches, &GlobalFilter::default()),
+        viewport::matched_bounding_box(&files, &matches, &GlobalFilter::default()),
         Some(GeoBounds::single_position(
             Latitude::new(56.0),
             Longitude::new(13.0)
         ))
     );
     assert_eq!(
-        matched_bounding_box(&files, &QueryMatches::default(), &GlobalFilter::default()),
+        viewport::matched_bounding_box(&files, &QueryMatches::default(), &GlobalFilter::default()),
         None
     );
 }
@@ -692,7 +702,7 @@ fn matched_bounding_box_across_the_antimeridian_frames_the_arc_the_matches_cover
         ..QueryMatches::default()
     };
 
-    let bounds = matched_bounding_box(&files, &matches, &GlobalFilter::default())
+    let bounds = viewport::matched_bounding_box(&files, &matches, &GlobalFilter::default())
         .expect("all three tracks are loaded");
     let (_, center_lon) = bounds.center();
     assert!(
@@ -716,7 +726,7 @@ fn match_bounding_box_covers_one_match() {
     )])];
     let track = test_util::track0();
     assert_eq!(
-        match_bounding_box(&files, track, &(0..1), &GlobalFilter::default()),
+        viewport::match_bounding_box(&files, track, &(0..1), &GlobalFilter::default()),
         Some(GeoBounds::single_position(
             Latitude::new(55.0),
             Longitude::new(12.0)
@@ -724,12 +734,12 @@ fn match_bounding_box_covers_one_match() {
     );
     // A range reaching past the track frames nothing: its points are gone.
     assert_eq!(
-        match_bounding_box(&files, track, &(0..10_000), &GlobalFilter::default()),
+        viewport::match_bounding_box(&files, track, &(0..10_000), &GlobalFilter::default()),
         None
     );
     let missing_file = TrackRef::new(FileIdx::new(9), TrackIdx::new(0));
     assert_eq!(
-        match_bounding_box(&files, missing_file, &(0..1), &GlobalFilter::default()),
+        viewport::match_bounding_box(&files, missing_file, &(0..1), &GlobalFilter::default()),
         None
     );
 }
@@ -761,7 +771,7 @@ fn map_framing_covers_where_the_points_are_drawn() {
     let expected = Some(GeoBounds::single_position(drawn.0, drawn.1));
 
     assert_eq!(
-        compute_visible_bounding_box(
+        viewport::compute_visible_bounding_box(
             &files,
             &vis_all_visible(),
             &GlobalFilter::default(),
@@ -771,7 +781,7 @@ fn map_framing_covers_where_the_points_are_drawn() {
         "zoom to fit"
     );
     assert_eq!(
-        matched_bounding_box(
+        viewport::matched_bounding_box(
             &files,
             &test_util::a_run_drawing(track_ref, 0..1),
             &GlobalFilter::default()
@@ -780,7 +790,7 @@ fn map_framing_covers_where_the_points_are_drawn() {
         "the run's map button"
     );
     assert_eq!(
-        match_bounding_box(&files, track_ref, &(0..1), &GlobalFilter::default()),
+        viewport::match_bounding_box(&files, track_ref, &(0..1), &GlobalFilter::default()),
         expected,
         "a match row's map button"
     );
@@ -797,7 +807,7 @@ fn a_file_whose_only_track_has_no_geometry_has_nothing_to_frame() {
     ])];
 
     assert_eq!(
-        compute_visible_bounding_box(
+        viewport::compute_visible_bounding_box(
             &files,
             &vis_all_visible(),
             &GlobalFilter::default(),

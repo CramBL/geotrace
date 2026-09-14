@@ -36,7 +36,6 @@ use serde_json::{Value, json};
 use gt_solar::wire;
 use gt_solar::{
     CAPTURE_MANIFEST, CAPTURED_WINDOWS, CapturedWindow, DEFAULT_BASE_URL, GeomagneticIndex,
-    captures_dir, index_url,
 };
 
 /// Points the capture at a mirror. The capture requests from `DEFAULT_BASE_URL`
@@ -50,7 +49,7 @@ const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
 
 fn main() -> Result<(), Box<dyn Error>> {
     let host = env::var(HOST_ENV).unwrap_or_else(|_| DEFAULT_BASE_URL.to_owned());
-    let dir = captures_dir();
+    let dir = gt_solar::captures_dir();
     fs::create_dir_all(&dir)?;
 
     // Positional arguments select a subset. Without them the capture covers
@@ -96,7 +95,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             thread::sleep(REQUEST_INTERVAL);
         }
         let response = client
-            .get(index_url(&host, capture.index, capture.window()?))
+            .get(gt_solar::index_url(&host, capture.index, capture.window()?))
             .send()?;
         let status = response.status().as_u16();
         let content_type = response

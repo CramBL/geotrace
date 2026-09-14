@@ -1,7 +1,7 @@
 //! Windowed queries, whose matches are stretches of points, and the other
 //! per-point metrics a recording carries.
 
-use gt_query_map_harness::{Dataset, MapScenario, PointSpec, TrackSpec, track};
+use gt_query_map_harness::{Dataset, MapScenario, PointSpec, TrackSpec};
 use gt_ui_types::{GeomagneticPoint, TecPoint};
 
 /// A window match bands every point of the window, not just the one the
@@ -14,7 +14,10 @@ fn a_window_match_bands_the_whole_window() {
     track.gtd#0  ..000.
     counts: shown 6, halos 1
     ");
-    assert_eq!(scenario.panel_matches(0), [(track(0, 0), 2..5)]);
+    assert_eq!(
+        scenario.panel_matches(0),
+        [(gt_query_map_harness::track(0, 0), 2..5)]
+    );
 }
 
 /// Heading spread over a window - the multipath indicator from the examples

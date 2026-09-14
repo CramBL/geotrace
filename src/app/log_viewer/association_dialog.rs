@@ -20,7 +20,7 @@ use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 #[cfg(test)]
 pub(in crate::app) mod tests;
 
-use super::{NO_OVERLAP_HOVER, recording_names_by_id};
+use super::NO_OVERLAP_HOVER;
 
 pub(in crate::app) const TITLE: &str = "Associate log";
 
@@ -168,7 +168,7 @@ impl LogAssociationDialog {
             ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         let mut choice = escape_pressed.then_some(LogAssociationChoice::Cancelled);
 
-        let names = recording_names_by_id(recordings, recording_names);
+        let names = super::recording_names_by_id(recordings, recording_names);
         let candidates = log.rank_association_candidates(&recordings);
         let attachable = write_access.allows_writing()
             && self

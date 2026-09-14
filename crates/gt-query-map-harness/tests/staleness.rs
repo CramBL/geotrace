@@ -1,7 +1,7 @@
 //! Results whose inputs moved under them: the map keeps drawing the last run,
 //! marked stale, until it runs again.
 
-use gt_query_map_harness::{Dataset, FileSpec, MapScenario, TrackSpec, track};
+use gt_query_map_harness::{Dataset, FileSpec, MapScenario, TrackSpec};
 use gt_types::FileIdx;
 
 fn scenario() -> MapScenario {
@@ -58,7 +58,7 @@ fn disabling_an_evaluated_track_grays_the_results_out() {
     ");
 
     scenario
-        .set_track_visible(track(0, 0), false)
+        .set_track_visible(gt_query_map_harness::track(0, 0), false)
         .refresh_staleness();
     insta::assert_snapshot!(scenario.picture(), @"
     a.gtd#0  ooo

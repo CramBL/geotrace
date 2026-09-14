@@ -37,7 +37,7 @@ use gt_snap::merge::{self, SnapResult, SnapWarning, SnapWarningReporter};
 use gt_snap::request_plan::{self, RequestPlan, SnapParams};
 use gt_snap::snapped_track::Position;
 use gt_snap::wire::{Costing, SpeedLimit};
-use gt_snap::{DEFAULT_SERVER_URL, REQUEST_INTERVAL, server_host, transport};
+use gt_snap::{DEFAULT_SERVER_URL, REQUEST_INTERVAL, transport};
 use gt_types::mercator::{self};
 use gt_types::{LoadedTrack, TrackRef, TravelMode};
 use gt_ui_types::{
@@ -482,7 +482,7 @@ impl SnapScheduler {
     /// The host the next run would go to - the staleness comparison side of
     /// [`SnapRun::server_host`].
     pub fn current_host(&self) -> Option<String> {
-        server_host(&self.server_url)
+        gt_snap::server_host(&self.server_url)
     }
 
     /// Whether a completed run for this track under these parameters and
@@ -872,7 +872,7 @@ mod tests {
     }
 
     fn key(track: &LoadedTrack, params: SnapParams) -> SnapCacheKey {
-        SnapCacheKey::new(track, params, server_host(DEFAULT_SERVER_URL))
+        SnapCacheKey::new(track, params, gt_snap::server_host(DEFAULT_SERVER_URL))
     }
 
     fn empty_run(params: SnapParams) -> SnapRun {
@@ -884,7 +884,7 @@ mod tests {
                 &SnapWarningReporter::default(),
             ),
             Vec::new(),
-            server_host(DEFAULT_SERVER_URL),
+            gt_snap::server_host(DEFAULT_SERVER_URL),
         )
     }
 
@@ -960,7 +960,7 @@ mod tests {
         assert_ne!(key(&track, auto), key(&track, tuned));
         assert_ne!(
             key(&track, auto),
-            SnapCacheKey::new(&track, auto, server_host("http://localhost:8002")),
+            SnapCacheKey::new(&track, auto, gt_snap::server_host("http://localhost:8002")),
         );
     }
 
@@ -1104,35 +1104,35 @@ mod tests {
     /// Staleness reasons: each differing component contributes one line
     /// stating the stored and the current value. Identical runs are fresh.
     #[rstest::rstest]
-    #[case::fresh(SnapParams::new(Costing::Auto), server_host(DEFAULT_SERVER_URL), &[])]
+    #[case::fresh(SnapParams::new(Costing::Auto), gt_snap::server_host(DEFAULT_SERVER_URL), &[])]
     #[case::costing_differs(
         SnapParams::new(Costing::Bicycle),
-        server_host(DEFAULT_SERVER_URL),
+        gt_snap::server_host(DEFAULT_SERVER_URL),
         &["Snapped as Auto - would now snap as Bicycle"],
     )]
     #[case::search_radius_differs(
         SnapParams { search_radius_m: Some(25.0), ..SnapParams::new(Costing::Auto) },
-        server_host(DEFAULT_SERVER_URL),
+        gt_snap::server_host(DEFAULT_SERVER_URL),
         &["Search radius was unset - the setting is now 25m"],
     )]
     #[case::turn_penalty_differs(
         SnapParams { turn_penalty_factor: Some(300.0), ..SnapParams::new(Costing::Auto) },
-        server_host(DEFAULT_SERVER_URL),
+        gt_snap::server_host(DEFAULT_SERVER_URL),
         &["Turn penalty factor was unset - the setting is now 300"],
     )]
     #[case::gps_accuracy_differs(
         SnapParams { gps_accuracy_override_m: Some(10.0), ..SnapParams::new(Costing::Auto) },
-        server_host(DEFAULT_SERVER_URL),
+        gt_snap::server_host(DEFAULT_SERVER_URL),
         &["GPS accuracy override was unset - the setting is now 10m"],
     )]
     #[case::host_differs(
         SnapParams::new(Costing::Auto),
-        server_host("http://localhost:8002"),
+        gt_snap::server_host("http://localhost:8002"),
         &["Snapped against valhalla1.openstreetmap.de - the server is now localhost"],
     )]
     #[case::multiple_differences(
         SnapParams { search_radius_m: Some(25.0), ..SnapParams::new(Costing::Bicycle) },
-        server_host(DEFAULT_SERVER_URL),
+        gt_snap::server_host(DEFAULT_SERVER_URL),
         &[
             "Snapped as Auto - would now snap as Bicycle",
             "Search radius was unset - the setting is now 25m",

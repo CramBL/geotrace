@@ -1,8 +1,6 @@
 #![no_main]
 
-use gt_logfile::{
-    recognise_message, HostnameColumn, RecognisedLevel, RecognisedMessage, RecognisedService,
-};
+use gt_logfile::{HostnameColumn, RecognisedLevel, RecognisedMessage, RecognisedService};
 use libfuzzer_sys::fuzz_target;
 
 // Feed one arbitrary message to the recogniser, read as both layouts a log can
@@ -10,7 +8,10 @@ use libfuzzer_sys::fuzz_target;
 // puts it, whatever the message holds.
 fuzz_target!(|message: &str| {
     for hostname_column in [HostnameColumn::Present, HostnameColumn::Absent] {
-        check_the_spans_slice_the_message(message, recognise_message(message, hostname_column));
+        check_the_spans_slice_the_message(
+            message,
+            gt_logfile::recognise_message(message, hostname_column),
+        );
     }
 });
 

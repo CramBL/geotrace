@@ -459,15 +459,11 @@ fn draw_disc(
 #[cfg(test)]
 mod tests {
     use crate::test_util;
-    use egui::{pos2, vec2};
     use gt_types::fixtures::MetricOffset;
     use gt_types::satellites::{Constellation, Satellite, Satellites};
     use gt_ui_types::{SkyGlyphVariant, TrackMatchView};
 
-    use super::{
-        DISC_OFFSET_PX, DISC_RADIUS_PX, GlyphSelection, RING_RADIUS_PX, disc_offset_for_samples,
-        draw_disc, draw_ring, min_spacing_px, outward_normal, select_glyphs,
-    };
+    use super::{DISC_OFFSET_PX, DISC_RADIUS_PX, GlyphSelection, RING_RADIUS_PX};
 
     const WORLD: gt_types::MercBounds = gt_types::MercBounds {
         x_min: 0.0,
@@ -511,7 +507,7 @@ mod tests {
 
     fn select(track: &gt_types::LoadedTrack, cell_merc: f64) -> Vec<Vec<usize>> {
         let mut scratch = GlyphSelection::default();
-        select_glyphs(
+        super::select_glyphs(
             &mut scratch,
             [(0, test_util::track0(), track, TrackMatchView::default())].into_iter(),
             1,
@@ -617,7 +613,7 @@ mod tests {
             y_max: 1.0,
         };
         let mut scratch = GlyphSelection::default();
-        let selected = select_glyphs(
+        let selected = super::select_glyphs(
             &mut scratch,
             [(0, test_util::track0(), &track, TrackMatchView::default())].into_iter(),
             1,
@@ -656,9 +652,9 @@ mod tests {
                 let dark = ui.visuals().dark_mode;
                 let y = 60.0;
                 let gap = RING_RADIUS_PX * 4.0;
-                draw_ring(ui, egui::pos2(gap, y), &spread(true), baseline, dark, 1.0);
-                draw_ring(ui, egui::pos2(gap * 2.0, y), &gapped, baseline, dark, 1.0);
-                draw_ring(
+                super::draw_ring(ui, egui::pos2(gap, y), &spread(true), baseline, dark, 1.0);
+                super::draw_ring(ui, egui::pos2(gap * 2.0, y), &gapped, baseline, dark, 1.0);
+                super::draw_ring(
                     ui,
                     egui::pos2(gap * 3.0, y),
                     &spread(false),
@@ -706,7 +702,7 @@ mod tests {
                 let y = 110.0;
                 let gap = DISC_RADIUS_PX * 3.0;
                 let disc = |ui: &egui::Ui, fix: egui::Pos2, sats: &Satellites| {
-                    draw_disc(ui, fix, fix + DISC_OFFSET_PX, sats, rim, dark, 1.0);
+                    super::draw_disc(ui, fix, fix + DISC_OFFSET_PX, sats, rim, dark, 1.0);
                 };
                 disc(ui, egui::pos2(gap, y), &spread);
                 disc(ui, egui::pos2(gap * 2.0, y), &southern);
@@ -721,14 +717,14 @@ mod tests {
     /// perpendicular, so the tie breaks rightward).
     #[test]
     fn straight_track_places_the_disc_above() {
-        let fix = pos2(50.0, 50.0);
-        let up = outward_normal(vec2(1.0, 0.0), fix, None, None);
+        let fix = egui::pos2(50.0, 50.0);
+        let up = super::outward_normal(egui::vec2(1.0, 0.0), fix, None, None);
         assert!(
             up.y < 0.0,
             "horizontal track should push the disc up: {up:?}"
         );
 
-        let side = outward_normal(vec2(0.0, 1.0), fix, None, None);
+        let side = super::outward_normal(egui::vec2(0.0, 1.0), fix, None, None);
         assert!(
             side.x > 0.0 && side.y.abs() < f32::EPSILON,
             "vertical track should push the disc to the right: {side:?}"
@@ -740,23 +736,23 @@ mod tests {
     /// disc up. A valley (neighbors above) pushes it down.
     #[test]
     fn curved_track_places_the_disc_on_the_outer_side() {
-        let fix = pos2(50.0, 50.0);
+        let fix = egui::pos2(50.0, 50.0);
         // Peak: both neighbors sit below the fix (larger y), so the outer side
         // is up.
-        let peak = outward_normal(
-            vec2(1.0, 0.0),
+        let peak = super::outward_normal(
+            egui::vec2(1.0, 0.0),
             fix,
-            Some(pos2(30.0, 60.0)),
-            Some(pos2(70.0, 60.0)),
+            Some(egui::pos2(30.0, 60.0)),
+            Some(egui::pos2(70.0, 60.0)),
         );
         assert!(peak.y < 0.0, "peak should push the disc up: {peak:?}");
 
         // Valley: both neighbors sit above the fix, so the outer side is down.
-        let valley = outward_normal(
-            vec2(1.0, 0.0),
+        let valley = super::outward_normal(
+            egui::vec2(1.0, 0.0),
             fix,
-            Some(pos2(30.0, 40.0)),
-            Some(pos2(70.0, 40.0)),
+            Some(egui::pos2(30.0, 40.0)),
+            Some(egui::pos2(70.0, 40.0)),
         );
         assert!(
             valley.y > 0.0,
@@ -775,13 +771,13 @@ mod tests {
     /// not masquerade as curvature and flip the disc across the line.
     #[test]
     fn asymmetric_spacing_on_a_straight_run_still_reads_as_straight() {
-        let fix = pos2(50.0, 50.0);
+        let fix = egui::pos2(50.0, 50.0);
         // Collinear, but the next sample is far more distant than the prev one.
-        let normal = outward_normal(
-            vec2(1.0, 0.0),
+        let normal = super::outward_normal(
+            egui::vec2(1.0, 0.0),
             fix,
-            Some(pos2(40.0, 50.0)),
-            Some(pos2(95.0, 50.0)),
+            Some(egui::pos2(40.0, 50.0)),
+            Some(egui::pos2(95.0, 50.0)),
         );
         assert!(
             normal.y < 0.0,
@@ -794,9 +790,9 @@ mod tests {
     /// distance.
     #[test]
     fn track_end_uses_the_straight_fallback() {
-        let fix = pos2(50.0, 50.0);
+        let fix = egui::pos2(50.0, 50.0);
         // Only a prev sample (anchor is the last point), horizontal track.
-        let offset = disc_offset_for_samples(Some(pos2(30.0, 50.0)), None, fix, 1.0);
+        let offset = super::disc_offset_for_samples(Some(egui::pos2(30.0, 50.0)), None, fix, 1.0);
         assert!(
             offset.y < 0.0,
             "one-sided anchor should place up: {offset:?}"
@@ -807,7 +803,7 @@ mod tests {
         );
 
         // No neighbors at all falls back to the fixed offset verbatim.
-        let none = disc_offset_for_samples(None, None, fix, 1.0);
+        let none = super::disc_offset_for_samples(None, None, fix, 1.0);
         assert!(
             (none - DISC_OFFSET_PX).length() < 1e-4,
             "expected fixed fallback: {none:?}"
@@ -818,6 +814,9 @@ mod tests {
     /// sparsely - a swap of the two match arms would flip this ordering.
     #[test]
     fn discs_decimate_more_sparsely_than_rings() {
-        assert!(min_spacing_px(SkyGlyphVariant::Disc) > min_spacing_px(SkyGlyphVariant::Ring));
+        assert!(
+            super::min_spacing_px(SkyGlyphVariant::Disc)
+                > super::min_spacing_px(SkyGlyphVariant::Ring)
+        );
     }
 }

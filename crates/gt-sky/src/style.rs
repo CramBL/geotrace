@@ -155,8 +155,6 @@ mod tests {
 
     use gt_types::SignalQuality;
 
-    use super::mark_radius;
-
     /// The tiers measured from a reading, strongest first.
     fn measured_tiers() -> impl Iterator<Item = SignalQuality> {
         SignalQuality::iter().filter(|quality| *quality != SignalQuality::NoDataSentinel)
@@ -166,7 +164,9 @@ mod tests {
     /// monotonic even if the radii are retuned.
     #[test]
     fn mark_radius_is_monotonic_in_quality() {
-        let radii: Vec<f32> = measured_tiers().map(|q| mark_radius(Some(q))).collect();
+        let radii: Vec<f32> = measured_tiers()
+            .map(|q| super::mark_radius(Some(q)))
+            .collect();
         for pair in radii.windows(2) {
             let [better, worse] = pair else {
                 continue;
@@ -182,9 +182,9 @@ mod tests {
         #[case] quality: Option<SignalQuality>,
     ) {
         let smallest = measured_tiers()
-            .map(|q| mark_radius(Some(q)))
+            .map(|q| super::mark_radius(Some(q)))
             .fold(f32::INFINITY, f32::min);
-        assert!(mark_radius(quality) <= smallest);
+        assert!(super::mark_radius(quality) <= smallest);
     }
 
     /// The opacity percentage maps to an alpha scale of `1.0` at the calibrated
@@ -195,18 +195,29 @@ mod tests {
     fn trail_opacity_multiplier_is_one_at_the_default_and_scales_the_range() {
         use super::{
             TRAIL_OPACITY_PERCENT_DEFAULT, TRAIL_OPACITY_PERCENT_MAX, TRAIL_OPACITY_PERCENT_MIN,
-            trail_opacity_multiplier as mult,
         };
         let approx = |a: f32, b: f32| (a - b).abs() < 1e-6;
 
-        assert!(approx(mult(TRAIL_OPACITY_PERCENT_DEFAULT), 1.0));
-        assert!(approx(mult(TRAIL_OPACITY_PERCENT_MIN), 0.0));
+        assert!(approx(
+            super::trail_opacity_multiplier(TRAIL_OPACITY_PERCENT_DEFAULT),
+            1.0
+        ));
+        assert!(approx(
+            super::trail_opacity_multiplier(TRAIL_OPACITY_PERCENT_MIN),
+            0.0
+        ));
         assert!(
-            mult(TRAIL_OPACITY_PERCENT_MAX) > 1.0,
+            super::trail_opacity_multiplier(TRAIL_OPACITY_PERCENT_MAX) > 1.0,
             "the top of the range must exceed the default so trails can be bolder"
         );
         // Clamped both ways: nothing below the min or above the max.
-        assert!(approx(mult(-50.0), mult(TRAIL_OPACITY_PERCENT_MIN)));
-        assert!(approx(mult(1000.0), mult(TRAIL_OPACITY_PERCENT_MAX)));
+        assert!(approx(
+            super::trail_opacity_multiplier(-50.0),
+            super::trail_opacity_multiplier(TRAIL_OPACITY_PERCENT_MIN)
+        ));
+        assert!(approx(
+            super::trail_opacity_multiplier(1000.0),
+            super::trail_opacity_multiplier(TRAIL_OPACITY_PERCENT_MAX)
+        ));
     }
 }

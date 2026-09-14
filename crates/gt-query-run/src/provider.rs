@@ -653,8 +653,8 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::check::check_text;
-    use crate::schema::schema_from_files;
+    use crate::check;
+    use crate::schema;
     use crate::test_util::{self, FixClocksMicros, TEST_EPOCH};
 
     /// The points of a track from the second one on, as a window starting at
@@ -811,9 +811,9 @@ mod tests {
                 RecordedLongitude::from_degrees(-181.0),
             ),
         ]);
-        let query = check_text(
+        let query = check::check_text(
             "points | where invalid_coordinates > 0",
-            &schema_from_files(&[]),
+            &schema::schema_from_files(&[]),
         )
         .expect("a count compares against a bare number");
 
@@ -843,9 +843,9 @@ mod tests {
             RecordedLongitude::from_degrees(12.25),
         );
         let points = test_util::points_at_recorded_coordinates(&coordinates);
-        let query = check_text(
+        let query = check::check_text(
             "points | window 10 | where max(invalid_coordinates) > 0",
-            &schema_from_files(&[]),
+            &schema::schema_from_files(&[]),
         )
         .expect("an aggregated count compares against a bare number");
 
@@ -940,8 +940,8 @@ mod tests {
             }),
             ..TrackQueryData::default()
         };
-        let schema = schema_from_files(&[]);
-        let query = check_text(
+        let schema = schema::schema_from_files(&[]);
+        let query = check::check_text(
             "points | with mask 15 deg, snr_drop 10, slip_window 5 min | \
              where hp30 > 5 and slip_all > 2 per min",
             &schema,
@@ -985,8 +985,8 @@ mod tests {
             }),
             ..TrackQueryData::default()
         };
-        let schema = schema_from_files(&[]);
-        let query = check_text(
+        let schema = schema::schema_from_files(&[]);
+        let query = check::check_text(
             "points | with mask 15 deg, snr_drop 10, slip_window 5 min | \
              where tec > 100 and slip_all > 2 per min",
             &schema,
@@ -1355,8 +1355,8 @@ mod tests {
         #[case] text: &str,
     ) {
         let files = [test_util::file_with_channels(vec![channel.clone()])];
-        let schema = schema_from_files(&files);
-        let query = check_text(text, &schema).expect("checks against the loaded schema");
+        let schema = schema::schema_from_files(&files);
+        let query = check::check_text(text, &schema).expect("checks against the loaded schema");
 
         let points = test_util::test_points();
         let channels = [channel];
@@ -1383,9 +1383,9 @@ mod tests {
             &["x", "y", "z"],
             &[(0, [20.0, 0.0, 0.0]), (1, [80.0, 0.0, 0.0])],
         );
-        let schema = schema_from_files(&[test_util::file_with_channels(vec![channel])]);
+        let schema = schema::schema_from_files(&[test_util::file_with_channels(vec![channel])]);
 
-        check_text("points | window 2 | where max(@accel.x) > 0.05 g", &schema)
+        check::check_text("points | window 2 | where max(@accel.x) > 0.05 g", &schema)
             .expect("an mg channel compares to a g literal");
     }
 

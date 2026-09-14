@@ -212,7 +212,7 @@ pub fn render_name_template(template: &str, fields: &NameFields<'_>) -> String {
     reason = "template literals intentionally contain {token} placeholders, not format args"
 )]
 mod tests {
-    use super::{NameFields, Token, render_name_template};
+    use super::{NameFields, Token};
     use rstest::rstest;
 
     fn fields<'a>(
@@ -258,7 +258,7 @@ mod tests {
         #[case] expected: &str,
     ) {
         assert_eq!(
-            render_name_template(template, &fields(title, device, None)),
+            super::render_name_template(template, &fields(title, device, None)),
             expected
         );
     }
@@ -274,7 +274,7 @@ mod tests {
         #[case] expected: &str,
     ) {
         assert_eq!(
-            render_name_template(template, &fields(title, Some("Bravo"), None)),
+            super::render_name_template(template, &fields(title, Some("Bravo"), None)),
             expected
         );
     }
@@ -287,7 +287,7 @@ mod tests {
     #[case::an_explicitly_positive_limit("{title:+3}")]
     fn malformed_limit_renders_as_literal(#[case] template: &str) {
         assert_eq!(
-            render_name_template(template, &fields(Some("Alpha"), None, None)),
+            super::render_name_template(template, &fields(Some("Alpha"), None, None)),
             template
         );
     }
@@ -296,7 +296,7 @@ mod tests {
     fn middle_token_absent_keeps_one_separator() {
         let f = fields(Some("Alpha"), None, Some("Charlie"));
         assert_eq!(
-            render_name_template("{title}/{device}/{identity}", &f),
+            super::render_name_template("{title}/{device}/{identity}", &f),
             "Alpha/Charlie"
         );
     }
@@ -304,13 +304,16 @@ mod tests {
     #[test]
     fn identity_token_resolves() {
         let f = fields(None, None, Some("auto:ride.gtd"));
-        assert_eq!(render_name_template("{identity}", &f), "auto:ride.gtd");
+        assert_eq!(
+            super::render_name_template("{identity}", &f),
+            "auto:ride.gtd"
+        );
     }
 
     #[test]
     fn unmatched_brace_is_literal() {
         let f = fields(Some("Alpha"), None, None);
-        assert_eq!(render_name_template("{title", &f), "{title");
+        assert_eq!(super::render_name_template("{title", &f), "{title");
     }
 
     #[test]
@@ -337,7 +340,10 @@ mod tests {
         /// including stray braces and multi-byte characters around them.
         #[test]
         fn render_never_panics(template in ".*") {
-            let _ = render_name_template(&template, &fields(Some("Alpha"), None, Some("auto:x")));
+            let _ = super::render_name_template(
+                &template,
+                &fields(Some("Alpha"), None, Some("auto:x")),
+            );
         }
 
         /// Any limit spec, well-formed or not, renders a multi-byte value
@@ -345,7 +351,7 @@ mod tests {
         #[test]
         fn render_limited_token_never_panics(limit in "[^{}]{0,8}") {
             let template = format!("{{title:{limit}}}");
-            let _ = render_name_template(&template, &fields(Some("ærøskøbing"), None, None));
+            let _ = super::render_name_template(&template, &fields(Some("ærøskøbing"), None, None));
         }
     }
 }

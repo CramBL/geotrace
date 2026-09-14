@@ -28,7 +28,6 @@ use gt_store::{
     InterruptedDeleteRecovery, IonexStore, JamStore, PerArchive, ReadOnlyDayArchive as _,
     SolarStore, Store, StoredDayArchive,
 };
-use gt_ui_theme::warning_amber;
 
 use super::anchored_dialog::AnchoredDialogKind;
 use super::storage::StorageOpen;
@@ -393,7 +392,10 @@ fn show_interrupted_delete_prompt(
             }
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(ICON_WARNING).color(warning_amber(ui.visuals().dark_mode)));
+                ui.label(
+                    RichText::new(ICON_WARNING)
+                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                );
                 ui.label(format!(
                     "Recovering discards the {} {} it holds. They are downloaded again as they \
                      are needed.",

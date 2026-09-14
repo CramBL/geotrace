@@ -36,7 +36,7 @@ use gt_types::{LoadedFile, TrackRef};
 use gt_ui_types::{ArcIdentity, JammingContextSample, JammingPoint, JammingSeries};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
+use super::context_line::{self, ContextSampleCache, ContextSource, ContextSpan};
 use super::day_fetch_dispatch::{self, DayFetch};
 use super::day_fetch_queue::DayFetchQueue;
 use super::day_fetch_transport::DayFetchTransport;
@@ -470,7 +470,7 @@ impl JammingScheduler {
             },
             |day| {
                 Some(JammingContextSample {
-                    start_secs: midnight_secs(day),
+                    start_secs: context_line::midnight_secs(day),
                     percent: None,
                     aircraft: 0,
                     bad: 0,

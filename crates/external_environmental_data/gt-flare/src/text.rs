@@ -154,10 +154,10 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::wire::parse_flare_time;
+    use crate::wire;
 
     fn time(text: &str) -> DateTime<Utc> {
-        parse_flare_time(text).expect("a catalog time")
+        wire::parse_flare_time(text).expect("a catalog time")
     }
 
     /// The May 2024 X2.2, with every field the catalog gave it.

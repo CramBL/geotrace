@@ -735,8 +735,7 @@ mod tests {
     use gt_types::satellites::{Constellation, ConstellationSet, Prn, SlipCause, Snr};
     use gt_types::{GpsTime, GpsTimeRange, PointIdx};
 
-    use super::{SkyTrail, SkyTrailsPlot, SlipMark, marker_at};
-    use crate::extract_trails;
+    use super::{SkyTrail, SkyTrailsPlot, SlipMark};
     use crate::test_util::{self, Azimuth, Elevation};
     use crate::trails::{EpochIdx, SkyTrails, TrailEpoch, TrailSample};
 
@@ -1029,7 +1028,7 @@ mod tests {
                 test_util::nav_point_reporting(i as i64, Some(list))
             })
             .collect();
-        extract_trails(&gt_test_utils::loaded_track_with_points(points))
+        crate::extract_trails(&gt_test_utils::loaded_track_with_points(points))
     }
 
     /// Shapes emitted for one frame of the plot at [`PLOT_DIAMETER_PX`].
@@ -1151,7 +1150,7 @@ mod tests {
         #[case] time: GpsTime,
         #[case] expected: Option<(f32, f32)>,
     ) {
-        let position = marker_at(&gapped_trail(), time).map(|(az, el, _)| (az, el));
+        let position = super::marker_at(&gapped_trail(), time).map(|(az, el, _)| (az, el));
         assert_eq!(position, expected);
     }
 
@@ -1170,11 +1169,11 @@ mod tests {
     fn marker_at_carries_the_report_in_effect_between_reports() {
         let trail = unbroken_trail();
         // Exactly on a report: that report.
-        let (_, _, report) = marker_at(&trail, test_util::at(0)).expect("hit");
+        let (_, _, report) = super::marker_at(&trail, test_util::at(0)).expect("hit");
         assert_eq!(report.time, test_util::at(0));
         // Between reports: interpolated position, earlier report still in
         // effect.
-        let (az, el, report) = marker_at(&trail, test_util::at(1)).expect("interpolated");
+        let (az, el, report) = super::marker_at(&trail, test_util::at(1)).expect("interpolated");
         assert_eq!((az, el), (50.0, 50.0));
         assert_eq!(
             report.time,
@@ -1191,7 +1190,7 @@ mod tests {
             10,
             DEMO_DRIFTS,
         );
-        extract_trails(&gt_test_utils::loaded_track_with_points(points))
+        crate::extract_trails(&gt_test_utils::loaded_track_with_points(points))
     }
 
     /// Every trail time-ramped with the BeiDou gap, GPS focused so the rest

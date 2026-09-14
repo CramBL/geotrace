@@ -22,7 +22,7 @@ pub fn is_no_data_sentinel(snr_db_hz: f32) -> bool {
 mod tests {
     use rstest::rstest;
 
-    use super::{NO_DATA_SENTINEL_DB_HZ, is_no_data_sentinel};
+    use super::NO_DATA_SENTINEL_DB_HZ;
 
     #[rstest]
     #[case::the_value_itself(NO_DATA_SENTINEL_DB_HZ, true)]
@@ -31,6 +31,6 @@ mod tests {
     #[case::at_the_upper_edge_of_the_band(99.5, false)]
     #[case::a_measurement(40.0, false)]
     fn the_band_is_half_a_db_wide_either_side(#[case] snr_db_hz: f32, #[case] expected: bool) {
-        assert_eq!(is_no_data_sentinel(snr_db_hz), expected);
+        assert_eq!(super::is_no_data_sentinel(snr_db_hz), expected);
     }
 }

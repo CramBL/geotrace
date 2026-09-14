@@ -13,7 +13,7 @@ use gt_ionex::quiet_time::QuietTimeDeviationPeak;
 use gt_loaded_files::RecordingNames;
 use gt_map::MapLayer;
 use gt_query_run::RunInputs;
-use gt_side_panel::{PanelContext, SnapCostingTarget, SnapPanelView, show_side_panel};
+use gt_side_panel::{PanelContext, SnapCostingTarget, SnapPanelView};
 use gt_store::DatabaseRef;
 use gt_types::{DataCategory, FileIdx, LoadedFile, TrackIdx, TrackRef};
 use gt_ui_types::{
@@ -26,12 +26,7 @@ use super::context_line::ContextSpan;
 use super::fix_positions::FixPositionTimeline;
 use super::loader::{CompletedLoad, FINISHED_JOB_EXPIRE_SECS, FINISHED_JOB_FADE_START_SECS};
 use super::log_viewer::{self, LogViewerContext};
-use super::modals::{
-    SnapAutoChoice, SnapConsentChoice, SnapReplaceChoice, SnapScopeChoice, show_about_dialog,
-    show_load_warnings_dialog, show_mapbox_token_dialog, show_orphaned_event_markers_popup,
-    show_recording_details_dialog, show_shelve_confirmation, show_snap_auto_prompt,
-    show_snap_consent_dialog, show_snap_replace_dialog, show_snap_scope_dialog,
-};
+use super::modals::{SnapAutoChoice, SnapConsentChoice, SnapReplaceChoice, SnapScopeChoice};
 use super::panes::MainBehavior;
 use super::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use super::shutdown::FrameContents;
@@ -111,10 +106,10 @@ impl eframe::App for App {
         self.reference_window.show(ui.ctx());
 
         if self.map.layer() == MapLayer::Satellite && !self.map.has_mapbox_token() {
-            show_mapbox_token_dialog(ui, &mut self.map, &mut self.mapbox_token_field);
+            modals::show_mapbox_token_dialog(ui, &mut self.map, &mut self.mapbox_token_field);
         }
 
-        show_about_dialog(ui, &mut self.about_open, self.app_version);
+        modals::show_about_dialog(ui, &mut self.about_open, self.app_version);
 
         self.show_snap_prompts(ui);
         self.show_loading_progress_overlay(ui);
@@ -122,9 +117,9 @@ impl eframe::App for App {
         self.show_load_error_bar(ui);
         self.apply_pending_unload_and_removal(ui);
 
-        show_orphaned_event_markers_popup(ui, &mut self.orphaned_event_markers);
-        show_load_warnings_dialog(ui, &mut self.shared.borrow_mut().warnings_popup);
-        show_recording_details_dialog(ui, &mut self.shared.borrow_mut().metadata_popup);
+        modals::show_orphaned_event_markers_popup(ui, &mut self.orphaned_event_markers);
+        modals::show_load_warnings_dialog(ui, &mut self.shared.borrow_mut().warnings_popup);
+        modals::show_recording_details_dialog(ui, &mut self.shared.borrow_mut().metadata_popup);
 
         self.show_history_window(ui);
         self.show_history_failure_prompt(ui);
@@ -438,7 +433,7 @@ impl App {
                     let mut refmut = self.shared.borrow_mut();
                     let s = &mut *refmut;
                     let loaded_files = s.loaded_files.view();
-                    show_side_panel(
+                    gt_side_panel::show_side_panel(
                         ui,
                         &mut PanelContext {
                             loaded_files,
@@ -485,7 +480,7 @@ impl App {
                     let mut refmut = self.shared.borrow_mut();
                     let s = &mut *refmut;
                     let loaded_files = s.loaded_files.view();
-                    show_side_panel(
+                    gt_side_panel::show_side_panel(
                         ui,
                         &mut PanelContext {
                             loaded_files,
@@ -952,7 +947,7 @@ impl App {
 
         if let Some(prompt) = self.snap_replace_prompt {
             let costing_name = Self::costing_from_choice(prompt.choice).display_name();
-            match show_snap_replace_dialog(ui, costing_name) {
+            match modals::show_snap_replace_dialog(ui, costing_name) {
                 Some(SnapReplaceChoice::SnapAgain) => {
                     self.snap_replace_prompt = None;
                     self.snap_tracks_as(vec![prompt.track_ref], prompt.choice);
@@ -965,7 +960,7 @@ impl App {
         if let Some(prompt) = self.snap_scope_prompt {
             let costing_name = Self::costing_from_choice(prompt.choice).display_name();
             let counts = self.snap_scope_counts(prompt);
-            match show_snap_scope_dialog(ui, costing_name, counts) {
+            match modals::show_snap_scope_dialog(ui, costing_name, counts) {
                 Some(SnapScopeChoice::Snap(scope)) => {
                     self.snap_scope_prompt = None;
                     let track_refs = self.scoped_track_refs(prompt.fi, scope);
@@ -978,7 +973,7 @@ impl App {
 
         if self.snap_consent_prompt {
             let ask_auto = self.snap_settings.auto_snap.is_none();
-            match show_snap_consent_dialog(ui, &self.snap_settings.server_url, ask_auto) {
+            match modals::show_snap_consent_dialog(ui, &self.snap_settings.server_url, ask_auto) {
                 Some(SnapConsentChoice::Accepted { auto_snap }) => {
                     self.snap_settings.acknowledge_consent();
                     if let Some(auto) = auto_snap {
@@ -1006,7 +1001,8 @@ impl App {
         {
             // Uploads were acknowledged before auto mode existed: prompt for
             // the mode choice once, before anything would auto-upload.
-            if let Some(choice) = show_snap_auto_prompt(ui, &self.snap_settings.server_url) {
+            if let Some(choice) = modals::show_snap_auto_prompt(ui, &self.snap_settings.server_url)
+            {
                 self.snap_settings.auto_snap = Some(choice == SnapAutoChoice::Automatic);
                 self.snap_auto_sweep = true;
             }
@@ -1184,7 +1180,7 @@ impl App {
                 let recording_names = s
                     .recording_names
                     .names(&s.loaded_files, &s.recording_name_template);
-                show_shelve_confirmation(
+                modals::show_shelve_confirmation(
                     ui,
                     &mut s.tree,
                     &mut s.loaded_files,

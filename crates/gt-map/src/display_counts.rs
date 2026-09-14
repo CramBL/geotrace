@@ -15,7 +15,7 @@
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
 
-use gt_filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
+use gt_filter::GlobalFilter;
 use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef};
 use gt_ui_types::{
     DisplayCategory, EventMarkerVisibility, GeneratedMarkerVisibility, LogMatches, QueryMatches,
@@ -126,7 +126,7 @@ impl DisplayCounts {
                     .filter(|(track_ref, _)| {
                         track_ref
                             .resolve(files)
-                            .is_some_and(|track| track_passes_filter(track, filter))
+                            .is_some_and(|track| gt_filter::track_passes_filter(track, filter))
                     })
                     .count()
             }),
@@ -144,7 +144,7 @@ impl DisplayCounts {
                 let hidden_ranges = query_matches.map_or(NO_RANGES, |m| m.hidden_ranges(track_ref));
                 let point_in_scope = |pi: usize| {
                     track.points.get(pi).is_some_and(|p| {
-                        point_passes_time_filter(p.tpv.time().utc(), filter)
+                        gt_filter::point_passes_time_filter(p.tpv.time().utc(), filter)
                             && QueryMatches::range_at(hidden_ranges, pi).is_none()
                     })
                 };
@@ -178,7 +178,7 @@ impl DisplayCounts {
                     counts.custom_markers += track
                         .custom_markers
                         .iter()
-                        .filter(|m| point_passes_time_filter(m.time, filter))
+                        .filter(|m| gt_filter::point_passes_time_filter(m.time, filter))
                         .count();
                 }
                 if track_vis.category_visible(DataCategory::GeneratedMarker) {
@@ -186,7 +186,7 @@ impl DisplayCounts {
                         .generated_markers
                         .iter()
                         .filter(|m| {
-                            point_passes_time_filter(m.time, filter)
+                            gt_filter::point_passes_time_filter(m.time, filter)
                                 && generated_marker_visibility.is_visible(track_ref, m.kind.tag())
                         })
                         .count();
@@ -196,7 +196,7 @@ impl DisplayCounts {
                         .event_markers
                         .iter()
                         .filter(|m| {
-                            point_passes_time_filter(m.time, filter)
+                            gt_filter::point_passes_time_filter(m.time, filter)
                                 && event_marker_visibility.is_visible(track_ref, &m.variant_path)
                         })
                         .count();

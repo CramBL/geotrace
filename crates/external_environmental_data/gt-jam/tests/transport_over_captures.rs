@@ -7,17 +7,17 @@
 use serde_json::Value;
 
 use gt_fetch::test_util::{self as scripted_transport, ScriptedTransport};
+use gt_jam::DEFAULT_BASE_URL;
 use gt_jam::test_util;
 use gt_jam::transport::{self, FetchOutcome};
 use gt_jam::wire::{self, ParseWarningReporter};
-use gt_jam::{DEFAULT_BASE_URL, dataset_url, parse_day};
 
 /// The captured world day classifies as served, and its body parses.
 #[test]
 fn the_captured_day_is_served_and_parses() {
     let capture = test_util::served_day().unwrap();
     let csv = test_util::captured_csv(capture.day).unwrap();
-    let day = parse_day(capture.day).unwrap();
+    let day = gt_jam::parse_day(capture.day).unwrap();
 
     let transport = ScriptedTransport::always(scripted_transport::response(
         capture.http_status,
@@ -28,7 +28,7 @@ fn the_captured_day_is_served_and_parses() {
     assert_eq!(outcome, FetchOutcome::Served(csv.clone()));
     assert_eq!(
         transport.requested_urls(),
-        [dataset_url(DEFAULT_BASE_URL, day)]
+        [gt_jam::dataset_url(DEFAULT_BASE_URL, day)]
     );
 
     let reporter = ParseWarningReporter::default();
@@ -47,7 +47,7 @@ fn the_captured_refusal_is_missing() {
         .get("body")
         .and_then(Value::as_str)
         .expect("a refused day records its body");
-    let day = parse_day(capture.day).unwrap();
+    let day = gt_jam::parse_day(capture.day).unwrap();
 
     let transport =
         ScriptedTransport::always(scripted_transport::response(capture.http_status, body));

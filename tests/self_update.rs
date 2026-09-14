@@ -16,8 +16,6 @@
 
 use std::{fs, process::Command};
 
-use tempfile::tempdir;
-
 /// Must match the package/binary name and the repository `axoupdater` queries.
 const APP: &str = "geotrace";
 const OWNER: &str = "CramBL";
@@ -32,8 +30,8 @@ fn headless_update_replaces_the_binary() {
         return;
     }
 
-    let bin_dir = tempdir().expect("temp bin dir");
-    let config_dir = tempdir().expect("temp config dir");
+    let bin_dir = tempfile::tempdir().expect("temp bin dir");
+    let config_dir = tempfile::tempdir().expect("temp config dir");
 
     // Install the freshly built binary into the sandbox.
     let installed = bin_dir.path().join(APP);

@@ -217,7 +217,6 @@ fn cell_key(x: f64, y: f64, cell_merc: f64) -> (i64, i64) {
 mod tests {
     use super::{
         DecimationScratch, MercBounds, MercPoint, PositionCluster, ZOOM_DECIMATION_BUCKET,
-        cell_key, cluster_positions, decimation_cell_merc, decimation_zoom,
     };
 
     /// Candidate carrying its cell winner value plus the geometry/point it
@@ -276,7 +275,7 @@ mod tests {
             merc(0.400, 0.400),
         ];
 
-        let clusters = cluster_positions(positions, 0.01, whole_world());
+        let clusters = super::cluster_positions(positions, 0.01, whole_world());
 
         assert_eq!(
             clusters,
@@ -302,7 +301,7 @@ mod tests {
         let positions = [merc(0.009_999, 0.1), merc(0.010_001, 0.1)];
 
         assert_eq!(
-            cluster_positions(positions, 0.01, whole_world()),
+            super::cluster_positions(positions, 0.01, whole_world()),
             [PositionCluster {
                 merc: merc(0.009_999, 0.1),
                 members: vec![0, 1],
@@ -322,7 +321,7 @@ mod tests {
             })
             .collect();
 
-        let counts: Vec<usize> = cluster_positions(positions, 0.01, whole_world())
+        let counts: Vec<usize> = super::cluster_positions(positions, 0.01, whole_world())
             .iter()
             .map(|cluster| cluster.members.len())
             .collect();
@@ -348,7 +347,8 @@ mod tests {
         ) {
             let positions: Vec<MercPoint> = points.iter().map(|&(x, y)| merc(x, y)).collect();
 
-            let clusters = cluster_positions(positions.iter().copied(), spacing, whole_world());
+            let clusters =
+                super::cluster_positions(positions.iter().copied(), spacing, whole_world());
 
             proptest::prop_assert_eq!(
                 clusters.iter().map(|cluster| cluster.members.len()).sum::<usize>(),
@@ -377,8 +377,14 @@ mod tests {
     fn a_smaller_spacing_splits_a_cluster() {
         let positions = [merc(0.1000, 0.1), merc(0.1050, 0.1)];
 
-        assert_eq!(cluster_positions(positions, 0.01, whole_world()).len(), 1);
-        assert_eq!(cluster_positions(positions, 0.001, whole_world()).len(), 2);
+        assert_eq!(
+            super::cluster_positions(positions, 0.01, whole_world()).len(),
+            1
+        );
+        assert_eq!(
+            super::cluster_positions(positions, 0.001, whole_world()).len(),
+            2
+        );
     }
 
     /// Panning moves what is on screen without regrouping anything: positions
@@ -404,8 +410,8 @@ mod tests {
         };
 
         assert_eq!(
-            cluster_positions(positions, 0.01, wide),
-            cluster_positions(positions, 0.01, panned)
+            super::cluster_positions(positions, 0.01, wide),
+            super::cluster_positions(positions, 0.01, panned)
         );
     }
 
@@ -420,7 +426,7 @@ mod tests {
         };
 
         assert_eq!(
-            cluster_positions(positions, 0.01, viewport),
+            super::cluster_positions(positions, 0.01, viewport),
             [PositionCluster {
                 merc: merc(0.1, 0.1),
                 members: vec![0],
@@ -436,7 +442,7 @@ mod tests {
         let start = 12.0;
         let sweep: Vec<(f64, f64)> = (0u16..50)
             .map(|i| start + f64::from(i) / 50.0 * ZOOM_DECIMATION_BUCKET)
-            .map(|real| (real, decimation_zoom(real)))
+            .map(|real| (real, super::decimation_zoom(real)))
             .collect();
         // Every step across one bucket width maps to at most two distinct
         // bucketed zooms (the one boundary the sweep may cross), never a fresh
@@ -486,14 +492,14 @@ mod tests {
             1.0,
             0.125,
             1.0 / 3.0,
-            decimation_cell_merc(24.0, 4.0),
-            decimation_cell_merc(24.0, 16.0),
+            super::decimation_cell_merc(24.0, 4.0),
+            super::decimation_cell_merc(24.0, 16.0),
         ] {
             for index in -100i64..=100 {
                 let boundary = index as f64 * cell;
                 for v in [boundary, boundary + cell * 0.5] {
                     assert_eq!(
-                        cell_key(v, -v, cell),
+                        super::cell_key(v, -v, cell),
                         (exact_key(v, cell), exact_key(-v, cell)),
                         "cell {cell}, coordinate {v}"
                     );

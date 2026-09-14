@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use gt_fetch::{Classified, HttpRequest, HttpResponse, Transport};
 
-use crate::{ApiKey, DateWindow, flare_url};
+use crate::{ApiKey, DateWindow};
 
 /// Minimum gap between requests, enforced by the transport the fetch worker
 /// connects with.
@@ -40,7 +40,7 @@ pub fn fetch_flare_window(
     key: &ApiKey,
     window: DateWindow,
 ) -> Result<String, FetchFailure> {
-    let request = HttpRequest::get(flare_url(base_url, window, key));
+    let request = HttpRequest::get(crate::flare_url(base_url, window, key));
     gt_fetch::send_classified(transport, &request, classify, |detail| {
         Err(FetchFailure { detail })
     })
@@ -141,7 +141,7 @@ mod tests {
     fn a_transport_failure_reports_its_detail_without_the_key() {
         let quoted = format!(
             "error sending request for url ({})",
-            flare_url(DEFAULT_BASE_URL, window(), &key())
+            crate::flare_url(DEFAULT_BASE_URL, window(), &key())
         );
         let (outcome, _) = fetch(vec![
             scripted_transport::transport_error(&quoted),

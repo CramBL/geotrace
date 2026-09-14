@@ -35,7 +35,7 @@ use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{ArcIdentity, TecContextSample, TecPoint, TecSeries};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
+use super::context_line::{self, ContextSampleCache, ContextSource, ContextSpan};
 use super::day_fetch_dispatch::{self, DayFetch};
 use super::day_fetch_queue::DayFetchQueue;
 use super::day_fetch_status::ArchivedDayCount;
@@ -498,7 +498,7 @@ impl TecMapScheduler {
             |day| context_day(store.as_ref().map(TecMapArchive::read), &positions, day),
             |day| {
                 Some(TecContextSample {
-                    x_secs: midnight_secs(day),
+                    x_secs: context_line::midnight_secs(day),
                     tecu: None,
                 })
             },

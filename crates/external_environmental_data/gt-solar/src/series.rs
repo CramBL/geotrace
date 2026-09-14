@@ -152,13 +152,12 @@ mod tests {
 
     use crate::GeomagneticIndex;
     use crate::activity::GeomagneticStormClass;
-    use crate::parse_timestamp;
 
     use super::*;
 
     fn hp30_sample(period_start: &str, value: f64) -> Hp30Sample {
         Hp30Sample {
-            period_start: parse_timestamp(period_start).unwrap(),
+            period_start: crate::parse_timestamp(period_start).unwrap(),
             activity: GeomagneticActivity::from_published_value(GeomagneticIndex::Hp30, value),
         }
     }
@@ -186,7 +185,7 @@ mod tests {
     fn a_series_of_only_gaps_has_no_peak() {
         let series = Hp30Series {
             samples: vec![Hp30Sample {
-                period_start: parse_timestamp("2024-05-10T00:00:00Z").unwrap(),
+                period_start: crate::parse_timestamp("2024-05-10T00:00:00Z").unwrap(),
                 activity: None,
             }],
         };
@@ -202,7 +201,7 @@ mod tests {
                 hp30_sample("2024-05-10T00:00:00Z", 3.0),
                 hp30_sample("2024-05-10T00:30:00Z", 11.333),
                 Hp30Sample {
-                    period_start: parse_timestamp("2024-05-10T01:00:00Z").unwrap(),
+                    period_start: crate::parse_timestamp("2024-05-10T01:00:00Z").unwrap(),
                     activity: None,
                 },
                 hp30_sample("2024-05-10T01:30:00Z", 4.667),
@@ -221,7 +220,7 @@ mod tests {
     fn a_value_holds_for_its_whole_period(#[case] time: &str, #[case] expected: Option<f64>) {
         assert_eq!(
             hp30_day()
-                .activity_at(parse_timestamp(time).unwrap())
+                .activity_at(crate::parse_timestamp(time).unwrap())
                 .map(GeomagneticActivity::value),
             expected
         );
@@ -236,7 +235,7 @@ mod tests {
         };
         let at = |time: &str| {
             series
-                .activity_at(parse_timestamp(time).unwrap())
+                .activity_at(crate::parse_timestamp(time).unwrap())
                 .map(GeomagneticActivity::value)
         };
         assert_eq!(at("2024-05-10T02:59:59Z"), Some(3.0));
@@ -247,7 +246,7 @@ mod tests {
     fn an_empty_series_has_no_value_at_any_time() {
         assert_eq!(
             Hp30Series { samples: vec![] }
-                .activity_at(parse_timestamp("2024-05-10T00:00:00Z").unwrap()),
+                .activity_at(crate::parse_timestamp("2024-05-10T00:00:00Z").unwrap()),
             None
         );
     }
@@ -261,7 +260,7 @@ mod tests {
 
     fn kp_sample(status: KpStatus) -> KpSample {
         KpSample {
-            period_start: parse_timestamp("2024-05-10T00:00:00Z").unwrap(),
+            period_start: crate::parse_timestamp("2024-05-10T00:00:00Z").unwrap(),
             activity: GeomagneticActivity::from_published_value(GeomagneticIndex::Kp, 3.0),
             status,
         }

@@ -20,7 +20,7 @@ use crate::ast::{
 use crate::dimension::Dimension;
 use crate::fmt::Superscript;
 use crate::metric::{Quantity, QueryMetric};
-use crate::unit::{self, example_literal, unit_list};
+use crate::unit;
 use crate::wrap::WrapPeriod;
 
 /// What type-checking a reference to one ad-hoc channel requires.
@@ -1696,7 +1696,7 @@ fn unit_mismatch(lhs: &Expr, lt: ValueType, rhs: &Expr, rt: ValueType) -> Option
         let other_q = named_quantity(other_t);
         match lit.unit {
             None => {
-                let example = other_q.and_then(example_literal)?;
+                let example = other_q.and_then(unit::example_literal)?;
                 return Some(err(
                     lit.span,
                     format!("{desc} needs a unit, e.g. {example}"),
@@ -1711,7 +1711,7 @@ fn unit_mismatch(lhs: &Expr, lt: ValueType, rhs: &Expr, rt: ValueType) -> Option
                     ));
                 }
                 let quantity = other_q?;
-                let list = unit_list(quantity)?;
+                let list = unit::unit_list(quantity)?;
                 return Some(err(
                     lit.span,
                     format!("expected a {quantity} unit ({list}), found {}", unit.text()),

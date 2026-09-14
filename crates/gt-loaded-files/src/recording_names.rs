@@ -1,6 +1,6 @@
 //! Per-file recording display names, resolved from the user's name template.
 
-use gt_fmt::{NameFields, render_name_template};
+use gt_fmt::NameFields;
 use gt_types::{FileIdx, LoadedFile, TrackRef};
 
 use crate::{LoadedFileId, LoadedFilesView};
@@ -51,7 +51,7 @@ impl RecordingNames {
                     identity: entry.identity().map(|id| crate::display_identity(id).0),
                     filename: stripped,
                 };
-                render_name_template(template, &fields)
+                gt_fmt::render_name_template(template, &fields)
             })
             .collect();
         Self { names }
@@ -147,7 +147,7 @@ fn common_path_prefix_len(names: &[&str]) -> usize {
 mod tests {
     use gt_types::{FileIdx, TrackIdx, TrackRef};
 
-    use super::{RecordingNames, common_path_prefix_len};
+    use super::RecordingNames;
     use crate::test_util;
     use crate::{FileHistory, LoadedFiles};
 
@@ -258,7 +258,7 @@ mod tests {
         #[case] names: &[&str],
         #[case] expected_len: usize,
     ) {
-        assert_eq!(common_path_prefix_len(names), expected_len);
+        assert_eq!(super::common_path_prefix_len(names), expected_len);
     }
 
     /// A track is named by its recording, and by its number within it once
