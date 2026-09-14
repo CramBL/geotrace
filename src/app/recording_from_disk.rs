@@ -417,6 +417,7 @@ impl App {
                             db_ref,
                             stored_tracks,
                             applied_current_marker_settings: false,
+                            placement: loader::LoadedRecordingPlacement::AddAnEntry,
                         })
                     } else {
                         None

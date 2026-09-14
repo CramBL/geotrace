@@ -714,6 +714,7 @@ fn resegment_prompt_named(filename: &str) -> crate::app::ResegmentPrompt {
         },
         stored_tracks: Vec::new(),
         marker_settings_changed: false,
+        placement: crate::app::loader::LoadedRecordingPlacement::AddAnEntry,
     }
 }
 

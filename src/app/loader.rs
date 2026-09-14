@@ -78,6 +78,8 @@ pub enum LoadOutcome {
         /// settings. False when those settings match the recording's stored marker
         /// settings, and for a recording that stored none.
         applied_current_marker_settings: bool,
+        /// Where the app puts this recording in the view.
+        placement: LoadedRecordingPlacement,
     },
     /// A successfully parsed log, not yet associated with a recording.
     Log {
@@ -135,6 +137,14 @@ pub(super) struct CompletedLoad {
     pub outcome: Result<LoadOutcome, String>,
 }
 
+/// Where the app puts a recording a load finished: in an entry of its own, or
+/// over the entry the view already holds for that recording.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum LoadedRecordingPlacement {
+    AddAnEntry,
+    ReplaceTheLoadedEntry,
+}
+
 /// What a load thread does with the recording the history database holds for
 /// the file it loads, beyond storing that file.
 pub(super) enum HistoryOpen {
@@ -145,6 +155,7 @@ pub(super) enum HistoryOpen {
         db_ref: gt_store::DatabaseRef,
         stored_tracks: Vec<gt_store::TrackRange>,
         applied_current_marker_settings: bool,
+        placement: LoadedRecordingPlacement,
     },
     /// Overwrite the recording's stored track table and segmentation settings with
     /// a fresh segmentation under the load config (recalculation), which makes
@@ -152,6 +163,7 @@ pub(super) enum HistoryOpen {
     Recalculate {
         db_ref: gt_store::DatabaseRef,
         applied_current_marker_settings: bool,
+        placement: LoadedRecordingPlacement,
     },
 }
 
@@ -172,6 +184,14 @@ impl HistoryOpen {
     fn db_ref(&self) -> &gt_store::DatabaseRef {
         match self {
             Self::ApplyShelved { db_ref, .. } | Self::Recalculate { db_ref, .. } => db_ref,
+        }
+    }
+
+    fn placement(&self) -> LoadedRecordingPlacement {
+        match self {
+            Self::ApplyShelved { placement, .. } | Self::Recalculate { placement, .. } => {
+                *placement
+            }
         }
     }
 }
@@ -944,6 +964,9 @@ impl ParsedRecording<'_> {
             applied_current_marker_settings: open
                 .as_ref()
                 .is_some_and(HistoryOpen::applied_current_marker_settings),
+            placement: open
+                .as_ref()
+                .map_or(LoadedRecordingPlacement::AddAnEntry, HistoryOpen::placement),
         }
     }
 }

@@ -35,7 +35,7 @@ use gt_ui_types::LoadedLogId;
 
 use crate::app::auto_prune::{self, AutoPruneOutcome};
 use crate::app::background_thread;
-use crate::app::loader;
+use crate::app::loader::{self, LoadedRecordingPlacement};
 use crate::app::recording_from_disk::{self, RecordingFromDisk, ScreenedRecordings};
 
 /// Why recordings are being deleted - selects the completion toast.
@@ -73,8 +73,11 @@ pub enum DbOp {
     TracksShelved {
         count: usize,
     },
+    /// Tracks went back into a recording's working set. The app requests the
+    /// recording `db_ref` from this worker again where the view holds it.
     TracksUnshelved {
         count: usize,
+        db_ref: DatabaseRef,
     },
     TracksDeleted {
         count: usize,
@@ -101,7 +104,10 @@ enum Request {
 /// gives for either variant.
 enum ReadRequest {
     List,
-    Open(DatabaseRef),
+    Open {
+        db_ref: DatabaseRef,
+        placement: LoadedRecordingPlacement,
+    },
     PrunePreview(PruneMode),
     /// Fetch a recording's stored snap runs, if any.
     LoadSnapRuns(DatabaseRef),
@@ -248,6 +254,9 @@ pub enum Response {
     Listed(Result<Vec<RecordingEntry>, DbError>),
     Opened {
         db_ref: DatabaseRef,
+        /// Where the app puts the recording once it is loaded, as the request
+        /// set it.
+        placement: LoadedRecordingPlacement,
         result: Result<OpenedRecording, DbError>,
     },
     Mutated {
@@ -417,7 +426,19 @@ impl HistoryWorker {
     }
 
     pub fn open(&self, db_ref: DatabaseRef) {
-        self.send_read(ReadRequest::Open(db_ref));
+        self.send_read(ReadRequest::Open {
+            db_ref,
+            placement: LoadedRecordingPlacement::AddAnEntry,
+        });
+    }
+
+    /// Read a recording back to put it over the entry the view already holds
+    /// for it, which an unshelve of a loaded recording requests.
+    pub fn open_over_the_loaded_entry(&self, db_ref: DatabaseRef) {
+        self.send_read(ReadRequest::Open {
+            db_ref,
+            placement: LoadedRecordingPlacement::ReplaceTheLoadedEntry,
+        });
     }
 
     /// Shelve the tracks in the stored table rows `rows` of a recording, or
@@ -647,12 +668,16 @@ fn handle_read_request(
 ) -> Response {
     match req {
         ReadRequest::List => Response::Listed(db.list_recordings()),
-        ReadRequest::Open(db_ref) => {
+        ReadRequest::Open { db_ref, placement } => {
             let result = db.load(&db_ref).map(|stored| OpenedRecording {
                 stored,
                 ui_state: db.recording_ui_state(&db_ref, ui_state_versions),
             });
-            Response::Opened { db_ref, result }
+            Response::Opened {
+                db_ref,
+                placement,
+                result,
+            }
         }
         ReadRequest::PrunePreview(mode) => Response::PrunePreview(db.prune_candidates(&mode)),
         ReadRequest::LoadSnapRuns(db_ref) => {
@@ -727,7 +752,7 @@ fn handle_write_request(
             let op = if shelved {
                 DbOp::TracksShelved { count }
             } else {
-                DbOp::TracksUnshelved { count }
+                DbOp::TracksUnshelved { count, db_ref }
             };
             Response::Mutated { op, result }
         }

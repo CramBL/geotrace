@@ -195,6 +195,14 @@ impl<'a> LoadedFilesView<'a> {
             })
     }
 
+    /// Where the recording stored under `db_ref` sits in the list, and
+    /// [`None`] where this session has not loaded it.
+    pub fn stored_recording_index(&self, db_ref: &DatabaseRef) -> Option<FileIdx> {
+        self.entries()
+            .find(|entry| entry.history().db_ref() == Some(db_ref))
+            .map(|entry| entry.fi)
+    }
+
     pub fn file_stored_in_history(&self, file: FileIdx) -> bool {
         self.entry_for(file)
             .is_some_and(|entry| entry.is_stored_in_history())
@@ -381,6 +389,24 @@ impl LoadedFiles {
         debug_assert_eq!(storage.files.len(), storage.ids.len());
     }
 
+    /// Replace the file at `index` and the history entry beside it, keeping
+    /// that entry's position in the list and its [`LoadedFileId`]. Leaves the
+    /// list as it is where `index` is past the end.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "the early return leaves index inside both vectors, which hold one entry each per loaded file"
+    )]
+    pub fn replace_file(&mut self, index: usize, file: LoadedFile, history: FileHistory) {
+        if index >= self.storage.get().files.len() {
+            return;
+        }
+        let storage = self.storage.get_mut();
+        storage.files[index] = file;
+        storage.history[index] = history;
+        debug_assert_eq!(storage.files.len(), storage.history.len());
+        debug_assert_eq!(storage.files.len(), storage.ids.len());
+    }
+
     /// Re-point loaded recordings after their history identity was renamed from
     /// `old` to `new`. Only the identity changes. The recording `group_name`
     /// is stable across a rename, so the [`DatabaseRef`] stays valid.
@@ -561,6 +587,9 @@ mod tests {
     #[case::remove_file(|files: &mut LoadedFiles| {
         assert!(files.remove_file(0).is_some());
     })]
+    #[case::replace_file(|files: &mut LoadedFiles| {
+        files.replace_file(0, test_util::empty_file(), FileHistory::None);
+    })]
     #[case::rename_identity(|files: &mut LoadedFiles| files.rename_identity("auto:old", "Trip"))]
     #[case::files_mut(|files: &mut LoadedFiles| {
         for file in files.files_mut() {
@@ -597,6 +626,18 @@ mod tests {
         assert!(files.remove_file(1).is_none());
 
         assert_eq!(files.generation(), before);
+    }
+
+    #[test]
+    fn replacing_a_file_that_is_not_loaded_keeps_the_generation() {
+        let mut files = LoadedFiles::new();
+        files.push(test_util::empty_file(), FileHistory::None);
+        let before = files.generation();
+
+        files.replace_file(1, test_util::empty_file(), FileHistory::None);
+
+        assert_eq!(files.generation(), before);
+        assert_eq!(files.len(), 1);
     }
 
     #[test]
