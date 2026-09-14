@@ -15,8 +15,8 @@ const METADATA_BEFORE_DATA: &str = "metadata must be set before adding data";
 
 /// Opaque handle for a file-under-construction.
 ///
-/// Created by `gtd_builder_create()`. Freed either by `gtd_builder_destroy()`
-/// (on error paths) or consumed by `gtd_builder_finish()` (on success).
+/// Created by `gtd_builder_create()`. Freed by `gtd_builder_finish()`, whatever status it
+/// returns, or by `gtd_builder_destroy()` for a builder the caller does not finish.
 pub struct GtdFileBuilder {
     builder: Option<NavFileBuilder>,
     recorder: Option<NavRecorder>,
