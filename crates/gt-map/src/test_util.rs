@@ -11,6 +11,7 @@
     reason = "the harness is not covered by clippy's in-test relaxations"
 )]
 
+use std::iter;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -127,10 +128,50 @@ fn fix_at(index: usize, step_degrees: f64) -> NavPoint {
 }
 
 /// One file over one track of `count` fixes, a minute apart, walking east in
-/// steps of `step_degrees`. The metadata has the time range and the duration
-/// the track filter reads.
+/// steps of `step_degrees`.
 pub fn a_recording_of(count: usize, step_degrees: f64) -> Vec<LoadedFile> {
-    let points: Vec<NavPoint> = (0..count).map(|i| fix_at(i, step_degrees)).collect();
+    a_recording_over((0..count).map(|i| fix_at(i, step_degrees)).collect())
+}
+
+/// One file over one track of four sides of `per_side` fixes, a minute apart,
+/// walking a rectangle `step_degrees` on a side and ending on the fix it
+/// started at.
+pub fn a_recording_looping_back_to_its_start(
+    per_side: usize,
+    step_degrees: f64,
+) -> Vec<LoadedFile> {
+    let corners = [(0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 0.0)];
+    let points = corners
+        .iter()
+        .zip(corners.iter().cycle().skip(1))
+        .flat_map(|(&(north, east), &(next_north, next_east))| {
+            (0..per_side).map(move |step| {
+                let along = step as f64 / per_side as f64;
+                (
+                    north + (next_north - north) * along,
+                    east + (next_east - east) * along,
+                )
+            })
+        })
+        .chain(iter::once((0.0, 0.0)))
+        .enumerate()
+        .map(|(index, (north, east))| {
+            let tpv = gt_types::TimePositionVelocity::builder()
+                .time(gt_types::GpsTime::from_utc(
+                    epoch() + Duration::minutes(index as i64),
+                ))
+                .lat(Latitude::new(CENTER_LAT + north * step_degrees))
+                .lon(Longitude::new(CENTER_LON + east * step_degrees))
+                .build();
+            NavPoint::new(tpv, None)
+        })
+        .collect();
+    a_recording_over(points)
+}
+
+/// One file over one track of `points`. The metadata has the time range and
+/// the duration the track filter reads.
+fn a_recording_over(points: Vec<NavPoint>) -> Vec<LoadedFile> {
     let first = points.first().map_or_else(epoch, |p| p.tpv.time().utc());
     let last = points.last().map_or_else(epoch, |p| p.tpv.time().utc());
     let track = LoadedTrack {

@@ -36,10 +36,10 @@ pub struct TemplateVertex {
     /// The outer edge of the anti-alias fringe ramps to fully transparent
     /// (all zeros). Renderers multiply this with a per-instance tint.
     pub color: [u8; 4],
-    /// Which per-instance tint applies: 0 for the primary tint, 1 for the
-    /// secondary (SVG elements with `id="tint2"`). Lets one template carry
-    /// independently tinted parts, like the nav arrow's fill and rim, so
-    /// they stay one instance with per-element paint order intact.
+    /// Which per-instance tint applies: 0 for the primary tint, 1 for SVG
+    /// elements with `id="tint2"` and 2 for those with `id="tint3"`. One
+    /// instance draws independently tinted parts, like the nav arrow's fill
+    /// and rim, with their per-element paint order intact.
     pub tint_slot: u8,
 }
 

@@ -6,6 +6,7 @@
 
 - **Interface:** The file dialog offers an "All files" filter, which shows every file, including a log with no file extension.
 - **Map & Tracks:** The map draws a green flag at the start of every track and a chequered flag at its end, larger and outlined when the track is highlighted.
+- **Map & Tracks:** A track that ends where it started shows one flag split between green and chequered, and a pair of flags that would overlap leans apart.
 
 ### Changed
 

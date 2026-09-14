@@ -1607,7 +1607,7 @@ fn draw_chevron(
         center,
         half_extents: Vec2::splat(size),
         direction: Some(direction),
-        tints: [tint; 2],
+        tints: [tint; 3],
     });
 }
 
@@ -1649,7 +1649,11 @@ fn draw_navigation_arrow(
             center,
             half_extents: Vec2::splat(base_size),
             direction: Some(dir),
-            tints: [color, Color32::WHITE.gamma_multiply(rim_alpha)],
+            tints: [
+                color,
+                Color32::WHITE.gamma_multiply(rim_alpha),
+                Color32::WHITE,
+            ],
         });
         return;
     }

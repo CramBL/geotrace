@@ -36,21 +36,25 @@ fn instances(count: usize) -> Vec<IconInstance> {
                     center,
                     half_extents: Vec2::splat(9.0),
                     direction,
-                    tints: [Color32::from_rgb(219, 68, 55); 2],
+                    tints: [Color32::from_rgb(219, 68, 55); 3],
                 },
                 1 => IconInstance {
                     icon: IconId::Warning,
                     center,
                     half_extents: Vec2::splat(12.0),
                     direction: None,
-                    tints: [Color32::WHITE; 2],
+                    tints: [Color32::WHITE; 3],
                 },
                 _ => IconInstance {
                     icon: IconId::NavArrow,
                     center,
                     half_extents: Vec2::splat(9.0),
                     direction,
-                    tints: [Color32::from_rgb(66, 133, 244), Color32::WHITE],
+                    tints: [
+                        Color32::from_rgb(66, 133, 244),
+                        Color32::WHITE,
+                        Color32::WHITE,
+                    ],
                 },
             }
         })

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 24">
+  <!-- Round trip flag: the pole and cloth of start_flag.svg and
+       finish_flag.svg, with the cloth split on the diagonal from its top-left
+       to its bottom-right corner. The triangle above the diagonal is white
+       and takes the primary tint, which the renderer sets to the theme's
+       start green. Below the diagonal is the chequerboard of finish_flag.svg
+       clipped to that lower triangle: two pale cells stay whole and three are
+       cut to a triangle. The pale cells stay white whatever the primary
+       tint: they take the tertiary tint under id="tint3", which the renderer
+       always sets to white.
+       Pale cells that meet at a corner go in separate paths: two cells of one
+       path meeting at a corner would leave the tessellated mesh non-manifold,
+       and the mesh bake cannot build an anti-alias fringe there.
+       The pole and the cloth's outline take the secondary tint under
+       id="tint2" (see gt-icon-tessellate). -->
+  <path d="M 2 2 H 16 V 12.5 H 2 Z" fill="#0F1114"/>
+  <path d="M 2 2 H 16 V 12.5 Z" fill="white"/>
+  <path id="tint3" d="M 2 5.5 H 5.5 V 9 H 2 Z M 9 7.25 V 9 H 11.3333 Z
+           M 12.5 9.875 V 12.5 H 16 Z" fill="white"/>
+  <path id="tint3" d="M 5.5 4.625 V 5.5 H 6.6667 Z M 5.5 9 H 9 V 12.5 H 5.5 Z"
+        fill="white"/>
+  <path id="tint2" d="M 2 2 V 24" fill="none" stroke="white" stroke-width="2"/>
+  <path id="tint2" d="M 2 2 H 16 V 12.5 H 2 Z" fill="none" stroke="white"
+        stroke-width="1" stroke-linejoin="miter"/>
+</svg>

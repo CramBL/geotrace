@@ -379,7 +379,7 @@ fn draw_generated_marker(
                 center,
                 half_extents: egui::Vec2::splat(icon_extent / 2.0),
                 direction: None,
-                tints: [faded_stroke; 2],
+                tints: [faded_stroke; 3],
             });
             batch.paint(painter);
         }

@@ -37,7 +37,7 @@ pub(crate) fn is_installed(ctx: &egui::Context) -> bool {
         .unwrap_or(false)
 }
 
-/// One instance, as laid out in the wgpu instance buffer (32 bytes).
+/// One instance, as laid out in the wgpu instance buffer (36 bytes).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct GpuIconInstance {
@@ -46,7 +46,7 @@ pub(crate) struct GpuIconInstance {
     pub col_y: [f32; 2],
     /// Premultiplied sRGB tints, packed like egui vertex colors
     /// (r in the low byte), one per template tint slot.
-    pub tints: [u32; 2],
+    pub tints: [u32; 3],
 }
 
 /// A template vertex as laid out in the static GPU vertex buffer (16 bytes).
@@ -220,6 +220,7 @@ pub fn install(
                         5 => Float32x2,
                         6 => Unorm8x4,
                         7 => Unorm8x4,
+                        8 => Unorm8x4,
                     ],
                 }),
             ],
