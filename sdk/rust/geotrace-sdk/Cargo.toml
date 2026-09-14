@@ -17,6 +17,11 @@ readme = "README.md"
 # dev-dependency that `cargo publish` removes from the published manifest.
 exclude = ["tests/"]
 
+# cargo-shear sees the `trybuild` fixtures as unlinked: the test in
+# tests/compile_fail.rs compiles them, not cargo.
+[package.metadata.cargo-shear]
+ignored-paths = ["tests/compile_fail/*.rs"]
+
 [package.metadata.dist]
 # Excluded from dist: SDKs release on their own track (geotrace-sdk-v* tags).
 dist = false
@@ -44,6 +49,7 @@ insta.workspace = true
 proptest.workspace = true
 rstest.workspace = true
 tempfile.workspace = true
+trybuild.workspace = true
 
 [lints]
 workspace = true

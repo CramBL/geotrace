@@ -7,6 +7,15 @@ use crate::__private::Sealed;
 /// `enum` types produce paths like `"power/boot"` or
 /// `"connectivity/agps/request"` by chaining segments.
 ///
+/// A run of capitals is one word, apart from a last capital before a lower-case
+/// letter: `GPS3Lock` gives `gps3_lock` and `HTTPError` gives `http_error`. A
+/// raw identifier loses its `r#` (`r#type` gives `type`). A segment has only ASCII
+/// letters, digits, `-` and `_`, and at most 255 bytes, and no two variants of
+/// one `enum` have the same segment. The derive reports a compile error on a
+/// variant that breaks either rule, and `#[event_kind(rename = "<segment>")]`
+/// sets another segment for it. A nested path past 255 bytes makes
+/// [`NavRecorder::finish`](crate::NavRecorder::finish) fail.
+///
 /// [`variant_path`](EventKind::variant_path) returns `None` for variants
 /// marked `#[event_kind(skip)]`. Callers such as
 /// [`NavRecorder::add_event`](crate::NavRecorder::add_event) treat `None` as a
@@ -32,9 +41,15 @@ use crate::__private::Sealed;
 /// | Attribute | Effect |
 /// |-----------|--------|
 /// | `#[event_kind(leaf)]` | Always emit only this variant's segment. Never delegate, even if the inner type implements `EventKind`. |
-/// | `#[event_kind(delegate)]` | Always delegate to the inner `EventKind` implementation, appending its path after this variant's segment.  Required in `lax` mode when you *do* want delegation. |
+/// | `#[event_kind(delegate)]` | Always delegate to the inner `EventKind` implementation, appending its path after this variant's segment.  Required in `lax` mode when you *do* want delegation. Only a variant with one unnamed field delegates. |
 /// | `#[event_kind(skip)]` | `variant_path()` returns `None` for this variant. `add_event` silently ignores it. |
-/// | `#[event_kind(icon = <Name>)]` | Sets the [`MarkerIcon`](crate::MarkerIcon) for this variant.  `<Name>` must be a variant of `MarkerIcon` (e.g. `Warning`, `Check`).  Has no effect on delegating variants - their icon comes from the inner type's leaf. |
+/// | `#[event_kind(icon = <Name>)]` | Sets the [`MarkerIcon`](crate::MarkerIcon) for this variant.  `<Name>` must be a variant of `MarkerIcon` (e.g. `Warning`, `Check`).  A delegating variant takes its icon from the inner type's leaf. |
+/// | `#[event_kind(rename = "<segment>")]` | Sets this variant's segment in place of the one derived from its name. |
+///
+/// The derive reports a compile error for an attribute without effect on its
+/// variant, such as `icon` on a skipped or a delegating variant, and for a
+/// second attribute of one kind, such as `leaf` after `delegate`, `lax` after
+/// `strict` or a second `note`.
 ///
 /// # Example
 ///

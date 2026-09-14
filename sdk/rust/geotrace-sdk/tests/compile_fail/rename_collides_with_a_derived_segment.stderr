@@ -1,0 +1,5 @@
+error: variants `Boot` and `ColdStart` both have the variant path segment "boot": set another with #[event_kind(rename = "<segment>")]
+ --> tests/compile_fail/rename_collides_with_a_derived_segment.rs:7:5
+  |
+7 |     ColdStart,
+  |     ^^^^^^^^^

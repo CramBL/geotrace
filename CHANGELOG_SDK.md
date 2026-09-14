@@ -32,6 +32,7 @@ the app).
 - Rust `geotrace_sdk_units::MPS_PER_KMH` and `MPS_PER_KNOT` are the factors `Velocity` converts with.
 - Rust `Velocity::try_from_knots_str` parses a speed in knots from a string, as `try_from_kmh_str` parses one in km/h.
 - Rust `Constellation::wire_code` and `MarkerIcon::wire_code` return the code the file stores for a constellation or a marker icon.
+- Rust `#[event_kind(rename = "<segment>")]` sets the variant path segment of a variant in place of the one `#[derive(EventKind)]` derives from its name.
 
 ### Changed
 
@@ -76,6 +77,8 @@ the app).
 - **Breaking:** Python `EventMarker` raises `TypeError` for a `variant_path` that is neither a `str`, `None` nor `event_kind.skip`, where it read any other value as `None`.
 - **Breaking:** Python `Constellation`, `MarkerIcon` and `TravelMode` are `enum.Enum` classes: each member has `.name` and `.value` and works as a `set` element and a `dict` key, and `list()` and `len()` over the class give the members and their count. A `Constellation` or `MarkerIcon` member's `.value` is the code the file stores, and a `TravelMode` member's `.value` is the name the file stores, such as `"car"`.
 - **Breaking:** C++ `Velocity::kmh`, `Velocity::knots`, `Velocity::as_kmh`, `Velocity::as_knots`, `Angle::radians` and `Angle::as_radians` are no longer `constexpr`: they call the C SDK's conversion functions.
+- **Breaking:** Rust `#[derive(EventKind)]` fails to compile for a variant name with a non-ASCII character, a variant path segment past 255 bytes, two variants of one `enum` with the same segment, and an `event_kind` attribute without effect or in conflict with another.
+- **Breaking:** Rust `#[derive(EventKind)]` derives `gps3_lock` for a variant `GPS3Lock` and `type` for `r#type`, where files written by an earlier SDK contain `gp_s3_lock` and `r#type`.
 - Updated `hdf5-pure` to 0.46.0.
 
 ### Fixed
@@ -90,7 +93,7 @@ the app).
 - Fixed an annotation or event marker inside the nav fix time range being reported as outside it, where a recording's receiver and host timestamps put its fixes in different orders: it is placed between the two fixes whose host timestamps surround its time.
 - Fixed a marker, event marker or ghost fix interpolated between two fixes on either side of the antimeridian being placed near longitude 0: it is placed on the short arc between the two fixes.
 - **Breaking:** Fixed the reader accepting any `geotrace_version` beginning with a 1 or a 2, such as `10` or `1abc`: it reads the attribute as an integer and accepts 1 and 2 alone.
-- **Breaking:** Fixed Rust `NavRecorder::add_event` and `add_event_with_note` writing a variant path that `EventMarker::builder()` rejects, such as a path derived from a variant name with a non-ASCII character or from a raw identifier: `NavRecorder::finish` now fails with the new `BuildError::InvalidEventMarkerVariantPath`, in lenient mode too.
+- **Breaking:** Fixed Rust `NavRecorder::add_event` and `add_event_with_note` writing a variant path that `EventMarker::builder()` rejects, such as a path of nested `#[derive(EventKind)]` variants past 255 bytes: `NavRecorder::finish` now fails with the new `BuildError::InvalidEventMarkerVariantPath`, in lenient mode too.
 - Fixed the `encoding` attribute of the `markers/icon` and `tracked_sats/constellation` datasets listing 7 of the 14 marker icons and 4 of the 6 constellations: the writer builds each attribute from the full set of codes.
 - C, C++: Fixed the examples taking a CSV number's decimal separator from `LC_NUMERIC`: they read '.' as the separator under every locale and reject a field with trailing characters.
 - **Breaking:** C: Fixed `gtd_builder_finish` leaving the builder allocated when `out` is NULL, and leaving `*out` unchanged when `builder` is NULL: it now frees a non-null builder whatever status it returns, and sets `*out` to NULL on every failure with a non-null `out`.

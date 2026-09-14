@@ -1,0 +1,5 @@
+error: variants `IOError` and `IoError` both have the variant path segment "io_error": set another with #[event_kind(rename = "<segment>")]
+ --> tests/compile_fail/two_variants_derive_one_segment.rs:6:5
+  |
+6 |     IoError,
+  |     ^^^^^^^

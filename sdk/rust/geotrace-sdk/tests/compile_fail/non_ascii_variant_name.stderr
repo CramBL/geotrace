@@ -1,0 +1,5 @@
+error: variant path segment "größe" contains 'ö', outside ASCII letters, digits, '-' and '_': set another with #[event_kind(rename = "<segment>")]
+ --> tests/compile_fail/non_ascii_variant_name.rs:5:5
+  |
+5 |     Größe,
+  |     ^^^^^

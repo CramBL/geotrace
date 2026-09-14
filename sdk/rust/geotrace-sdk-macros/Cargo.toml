@@ -17,13 +17,17 @@ dist = false
 
 [lib]
 proc-macro = true
-test = false
 doctest = false
 
 [dependencies]
 proc-macro2.workspace = true
 quote.workspace = true
 syn = { workspace = true, features = ["full"] }
+
+[dev-dependencies]
+# Path-only, so `cargo publish` removes it from the published manifest.
+geotrace-sdk = { path = "../geotrace-sdk" }
+rstest.workspace = true
 
 [lints]
 workspace = true
