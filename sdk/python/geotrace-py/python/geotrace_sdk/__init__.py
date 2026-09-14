@@ -61,6 +61,9 @@ from geotrace_sdk._geotrace_sdk import (
     mps_from_knots,
     snr_is_no_data_sentinel,
 )
+from geotrace_sdk._geotrace_sdk import (
+    _rust_sdk_enum_members as _rust_sdk_enum_members,
+)
 from geotrace_sdk.enums import Constellation, MarkerIcon, TravelMode
 from geotrace_sdk.event_kind import event_kind
 

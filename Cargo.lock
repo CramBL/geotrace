@@ -2255,6 +2255,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "geotrace-sdk-binding-generator"
+version = "0.0.0"
+dependencies = [
+ "geotrace-sdk",
+ "geotrace-sdk-units",
+ "heck",
+ "strum",
+]
+
+[[package]]
 name = "geotrace-sdk-macros"
 version = "0.6.0"
 dependencies = [

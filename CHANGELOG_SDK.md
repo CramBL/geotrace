@@ -31,6 +31,7 @@ the app).
 - C `gtd_snr_is_no_data_sentinel`, C++ `geotrace::snr_is_no_data_sentinel`, `Satellite::snr_is_no_data_sentinel` and `SatelliteView::snr_is_no_data_sentinel`, and Python `snr_is_no_data_sentinel` and `Satellite.snr_is_no_data_sentinel` return whether an SNR reading is the 99 dB-Hz some receiver firmware sends when it has no measurement, with the same result as the Rust `geotrace_sdk_units::snr::is_no_data_sentinel`.
 - Rust `geotrace_sdk_units::MPS_PER_KMH` and `MPS_PER_KNOT` are the factors `Velocity` converts with.
 - Rust `Velocity::try_from_knots_str` parses a speed in knots from a string, as `try_from_kmh_str` parses one in km/h.
+- Rust `Constellation::wire_code` and `MarkerIcon::wire_code` return the code the file stores for a constellation or a marker icon.
 
 ### Changed
 
@@ -71,7 +72,7 @@ the app).
 - **Breaking:** Python `NavFile.points`, `markers`, `event_markers`, `channels` and `event_marker_styles` return a sequence supporting `len()`, indexing, slicing and iteration, in place of a list rebuilt on every attribute access.
 - **Breaking:** Python `NavFix` and `SatelliteReport` raise `ValueError` when `gps_time` and `sys_time` are both `None`.
 - **Breaking:** Python `EventMarker` raises `TypeError` for a `variant_path` that is neither a `str`, `None` nor `event_kind.skip`, where it read any other value as `None`.
-- **Breaking:** Python `Constellation`, `MarkerIcon` and `TravelMode` are `enum.Enum` classes: each member has `.name` and `.value` and works as a `set` element and a `dict` key, and `list()` and `len()` over the class give the members and their count.
+- **Breaking:** Python `Constellation`, `MarkerIcon` and `TravelMode` are `enum.Enum` classes: each member has `.name` and `.value` and works as a `set` element and a `dict` key, and `list()` and `len()` over the class give the members and their count. A `Constellation` or `MarkerIcon` member's `.value` is the code the file stores, and a `TravelMode` member's `.value` is the name the file stores, such as `"car"`.
 - **Breaking:** C++ `Velocity::kmh`, `Velocity::knots`, `Velocity::as_kmh`, `Velocity::as_knots`, `Angle::radians` and `Angle::as_radians` are no longer `constexpr`: they call the C SDK's conversion functions.
 
 ### Fixed

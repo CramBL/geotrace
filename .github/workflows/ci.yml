@@ -250,6 +250,9 @@ jobs:
       - name: C header
         run: just check-c-header
 
+      - name: SDK bindings
+        run: just check-bindings
+
       - name: Docs
         run: just doc
 

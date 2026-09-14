@@ -1429,7 +1429,7 @@ fn constellation_names(codes: &[u8]) -> Vec<&'static str> {
         }
     }
     Constellation::iter()
-        .filter(|c| seen.get(c.to_u8() as usize) == Some(&true))
+        .filter(|c| seen.get(c.wire_code() as usize) == Some(&true))
         .map(Constellation::display_name)
         .collect()
 }

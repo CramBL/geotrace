@@ -313,7 +313,7 @@ fn write_satellite_data(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), 
 
         for sat in &report.tracked {
             tracked_rep_idx.push(report_idx as u64);
-            tracked_constellation.push(sat.constellation.to_u8());
+            tracked_constellation.push(sat.constellation.wire_code());
             tracked_prn.push(sat.prn);
             tracked_in_fix.push(u8::from(sat.in_fix));
             tracked_elevation.push(sat.elevation.unwrap_or(f32::NAN));
@@ -696,7 +696,7 @@ fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), E
 }
 
 pub(crate) fn decode_tracked_constellation(code: u8) -> Result<Constellation, Error> {
-    Constellation::from_u8(code, "tracked_sats/constellation")
+    Constellation::from_wire_code(code, "tracked_sats/constellation")
 }
 
 #[cfg(test)]

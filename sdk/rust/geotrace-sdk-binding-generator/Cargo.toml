@@ -1,0 +1,17 @@
+[package]
+name = "geotrace-sdk-binding-generator"
+description = "Generates the C++ and Python SDK files from the Rust SDK's unit catalog, conversion factors and enums"
+edition.workspace = true
+rust-version = "1.89"
+license = "MIT"
+authors.workspace = true
+publish = false
+
+[dependencies]
+geotrace-sdk = { path = "../geotrace-sdk" }
+geotrace-sdk-units = { path = "../geotrace-sdk-units" }
+heck.workspace = true
+strum.workspace = true
+
+[lints]
+workspace = true
