@@ -23,16 +23,19 @@ pub struct IconInstance {
     ///
     /// The template's stretched square viewbox maps to this rect, so extents
     /// matching the SVG's aspect ratio (the pins are 18x24) draw undistorted,
-    /// while [Vec2::splat] stretches them into a square.
+    /// while [Vec2::splat] stretches them into a square. A negative component
+    /// mirrors the icon about that axis, which the leaning start flag uses to
+    /// hang its cloth on the left of the pole.
     pub half_extents: Vec2,
     /// Unit direction the icon's "up" aligns to. `None` draws it upright.
     pub direction: Option<Vec2>,
     /// Per-slot tints multiplied onto the template's baked colors, like a
     /// texture tint: [Color32::WHITE] keeps the SVG colors, alpha fades.
     /// Slot 0 is the default. Slot 1 covers template elements marked
-    /// `id="tint2"` in the SVG (the nav arrow's rim). Single-slot icons
-    /// simply repeat the tint.
-    pub tints: [Color32; 2],
+    /// `id="tint2"` in the SVG (the nav arrow's rim) and slot 2 those marked
+    /// `id="tint3"` (the round trip flag's chequer cells). An icon that uses
+    /// fewer slots repeats a tint into the rest.
+    pub tints: [Color32; 3],
 }
 
 /// Collects the icon instances of one renderer pass.
@@ -123,7 +126,7 @@ impl<'a> IconMeshBatch<'a> {
         // a white tint is the identity multiply, so the common untinted case
         // skips the color math entirely.
         let [col_x, col_y] = rotation_columns(instance.direction, instance.half_extents);
-        let tint_is_white = instance.tints == [Color32::WHITE; 2];
+        let tint_is_white = instance.tints == [Color32::WHITE; 3];
         // extend with exact-size iterators: one reserve per template.
         mesh.vertices.extend(template.vertices.iter().map(|vertex| {
             let [px, py] = vertex.pos;
@@ -133,11 +136,11 @@ impl<'a> IconMeshBatch<'a> {
                 color: if tint_is_white {
                     premultiplied(vertex.color)
                 } else {
-                    let [primary, secondary] = instance.tints;
-                    let tint = if vertex.tint_slot == 0 {
-                        primary
-                    } else {
-                        secondary
+                    let [primary, secondary, tertiary] = instance.tints;
+                    let tint = match vertex.tint_slot {
+                        1 => secondary,
+                        2 => tertiary,
+                        _ => primary,
                     };
                     tinted_color(vertex.color, tint)
                 },
@@ -212,10 +215,7 @@ impl<'a> IconMeshBatch<'a> {
                 center: [instance.center.x, instance.center.y],
                 col_x: [col_x.x, col_x.y],
                 col_y: [col_y.x, col_y.y],
-                tints: [
-                    gpu::pack_color32(instance.tints[0]),
-                    gpu::pack_color32(instance.tints[1]),
-                ],
+                tints: instance.tints.map(gpu::pack_color32),
             };
             match groups
                 .iter_mut()
@@ -235,7 +235,7 @@ impl<'a> IconMeshBatch<'a> {
 
 /// Rotate `offset` so the template's "up" direction `(0, -1)` aligns with
 /// `direction` (a unit vector).
-fn rotate_up_to(offset: Vec2, direction: Vec2) -> Vec2 {
+pub(crate) fn rotate_up_to(offset: Vec2, direction: Vec2) -> Vec2 {
     Vec2::new(
         -offset.x * direction.y - offset.y * direction.x,
         offset.x * direction.x - offset.y * direction.y,
@@ -269,7 +269,7 @@ fn premultiplied(template: [u8; 4]) -> Color32 {
 /// size bucket - matching the template's larger viewbox axis, so an aspect-true
 /// draw uses the bucket whose curve tolerance and fringe were baked for it.
 fn physical_extent_px(half_extents_pt: Vec2, pixels_per_point: f32) -> f32 {
-    half_extents_pt.max_elem() * 2.0 * pixels_per_point
+    half_extents_pt.abs().max_elem() * 2.0 * pixels_per_point
 }
 
 /// Multiply a template's baked premultiplied color with a premultiplied
@@ -338,6 +338,17 @@ mod tests {
         assert!(faded.r() < 200);
     }
 
+    /// A mirrored instance has a negative x half extent, and its size bucket
+    /// follows the extent it draws at.
+    #[rstest]
+    #[case::upright(Vec2::new(15.0, 10.0))]
+    #[case::mirrored(Vec2::new(-15.0, 10.0))]
+    fn physical_extent_px_reads_the_larger_axis(#[case] half_extents_pt: Vec2) {
+        // 15 pt of half extent at 2 pixels per point is 60 physical px across.
+        let extent = physical_extent_px(half_extents_pt, 2.0);
+        assert!((extent - 60.0).abs() < 1e-6, "{extent}");
+    }
+
     #[test]
     fn push_uses_the_physical_size_bucket() {
         let library = crate::icon_mesh::IconMeshLibrary::embedded().unwrap();
@@ -347,7 +358,7 @@ mod tests {
             center: Pos2::ZERO,
             half_extents: Vec2::splat(10.0),
             direction: None,
-            tints: [Color32::WHITE; 2],
+            tints: [Color32::WHITE; 3],
         });
         // Half extent 10 pt at 2 pixels per point = 40 physical px.
         let expected = library.tessellation(IconId::Pin).mesh_for(40.0);
@@ -364,7 +375,7 @@ mod tests {
             center: Pos2::ZERO,
             half_extents: Vec2::new(9.0, 12.0),
             direction: None,
-            tints: [Color32::WHITE; 2],
+            tints: [Color32::WHITE; 3],
         });
         let max_x = batch
             .cpu_mesh()
@@ -394,7 +405,7 @@ mod tests {
             center: Pos2::ZERO,
             half_extents: Vec2::splat(10.0),
             direction: None,
-            tints: [Color32::WHITE; 2],
+            tints: [Color32::WHITE; 3],
         });
         assert!(batch.cpu_mesh().is_empty());
     }
@@ -417,7 +428,7 @@ mod tests {
             center: Pos2::new(x, 0.0),
             half_extents: Vec2::splat(half_extent),
             direction: None,
-            tints: [Color32::WHITE; 2],
+            tints: [Color32::WHITE; 3],
         };
         // Ghost first, then arrows, then a differently sized ghost (its own
         // bucket, so its own group), then another ghost at the first size.
@@ -463,9 +474,10 @@ mod tests {
         Gpu,
     }
 
-    /// Draw an 8x8 grid of identical icons - 64 instances, comfortably above
-    /// [gpu::GPU_MIN_INSTANCES] so the GPU backend takes the instanced-draw
-    /// path - inside `clip`, using `backend`, and return the rendered frame.
+    /// Draw an 8x8 grid of `icon` under `tints` - 64 instances, comfortably
+    /// above [gpu::GPU_MIN_INSTANCES] so the GPU backend takes the
+    /// instanced-draw path - inside `clip`, using `backend`, and return the
+    /// rendered frame.
     ///
     /// The painter handed to [IconMeshBatch::paint] is clipped to `clip`, so on
     /// the GPU path the paint callback's rect (hence egui-wgpu's render-pass
@@ -473,6 +485,8 @@ mod tests {
     fn render_icon_grid(
         size: egui::Vec2,
         clip: egui::Rect,
+        icon: IconId,
+        tints: [Color32; 3],
         backend: IconBackend,
     ) -> image::RgbaImage {
         let library = IconMeshLibrary::embedded().unwrap();
@@ -490,14 +504,14 @@ mod tests {
             for row in 0..rows {
                 for col in 0..cols {
                     batch.push(IconInstance {
-                        icon: IconId::Pin,
+                        icon,
                         center: egui::pos2(
                             clip.min.x + (col as f32 + 0.5) * cell_w,
                             clip.min.y + (row as f32 + 0.5) * cell_h,
                         ),
                         half_extents: Vec2::splat(8.0),
                         direction: None,
-                        tints: [Color32::WHITE; 2],
+                        tints,
                     });
                 }
             }
@@ -525,7 +539,7 @@ mod tests {
                     .map(|i| i32::from(pa[i]).abs_diff(i32::from(pb[i])))
                     .max()
                     .unwrap_or(0);
-                if max_delta > 24 {
+                if max_delta > u32::from(COLOR_TOLERANCE) {
                     differing += 1;
                 }
             }
@@ -556,8 +570,21 @@ mod tests {
         egui::vec2(220.0, 200.0)
     ))]
     fn gpu_instanced_icons_match_cpu_placement(#[case] clip_rect: egui::Rect) {
-        let cpu = render_icon_grid(GPU_PARITY_CANVAS, clip_rect, IconBackend::Cpu);
-        let gpu = render_icon_grid(GPU_PARITY_CANVAS, clip_rect, IconBackend::Gpu);
+        let tints = [Color32::WHITE; 3];
+        let cpu = render_icon_grid(
+            GPU_PARITY_CANVAS,
+            clip_rect,
+            IconId::Pin,
+            tints,
+            IconBackend::Cpu,
+        );
+        let gpu = render_icon_grid(
+            GPU_PARITY_CANVAS,
+            clip_rect,
+            IconId::Pin,
+            tints,
+            IconBackend::Gpu,
+        );
         let frac = diff_fraction(&cpu, &gpu);
         assert!(
             frac < 0.01,
@@ -567,8 +594,68 @@ mod tests {
         );
     }
 
+    /// A colour per slot separates the three tint slots of
+    /// [`IconId::RoundTripFlag`], the one asset with geometry in all three.
+    /// The pixel count per colour is the area that slot paints, because the
+    /// white parts of the asset take a tint unchanged.
+    #[test]
+    fn the_gpu_shader_tints_each_slot_like_the_cpu_mesh() {
+        let tints = [
+            Color32::from_rgb(220, 40, 40),
+            Color32::from_rgb(40, 220, 40),
+            Color32::from_rgb(40, 40, 220),
+        ];
+        let clip_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, GPU_PARITY_CANVAS);
+        let cpu = render_icon_grid(
+            GPU_PARITY_CANVAS,
+            clip_rect,
+            IconId::RoundTripFlag,
+            tints,
+            IconBackend::Cpu,
+        );
+        let gpu = render_icon_grid(
+            GPU_PARITY_CANVAS,
+            clip_rect,
+            IconId::RoundTripFlag,
+            tints,
+            IconBackend::Gpu,
+        );
+
+        for (slot, tint) in tints.into_iter().enumerate() {
+            let cpu_pixels = pixels_matching(&cpu, tint);
+            let gpu_pixels = pixels_matching(&gpu, tint);
+            assert!(cpu_pixels > 0, "slot {slot} paints nothing on the CPU mesh");
+            assert!(
+                cpu_pixels.abs_diff(gpu_pixels) * 100 <= cpu_pixels * MAX_TINT_AREA_DRIFT_PERCENT,
+                "slot {slot}: {cpu_pixels} CPU pixels against {gpu_pixels} GPU pixels"
+            );
+        }
+    }
+
+    /// Pixels of `frame` within [`COLOR_TOLERANCE`] of `color` on every
+    /// channel.
+    fn pixels_matching(frame: &image::RgbaImage, color: Color32) -> usize {
+        let [r, g, b, _] = color.to_array();
+        frame
+            .pixels()
+            .filter(|pixel| {
+                let [pixel_r, pixel_g, pixel_b, _] = pixel.0;
+                pixel_r.abs_diff(r) <= COLOR_TOLERANCE
+                    && pixel_g.abs_diff(g) <= COLOR_TOLERANCE
+                    && pixel_b.abs_diff(b) <= COLOR_TOLERANCE
+            })
+            .count()
+    }
+
     /// The canvas both icon pipelines draw the grid into.
     const GPU_PARITY_CANVAS: egui::Vec2 = egui::vec2(400.0, 320.0);
+
+    /// How far a channel may drift before two pixels count as different.
+    const COLOR_TOLERANCE: u8 = 24;
+
+    /// How far the pixel count of one tint may drift between the two
+    /// pipelines, over the count the CPU mesh paints.
+    const MAX_TINT_AREA_DRIFT_PERCENT: usize = 5;
 
     /// Every icon at several sizes plus a rotated, a tinted, a faded, and a
     /// non-square variant - the mesh-pipeline counterpart of
@@ -611,7 +698,7 @@ mod tests {
                             center: egui::pos2(margin + (col as f32 + 0.5) * cell, y),
                             half_extents,
                             direction,
-                            tints: [tint; 2],
+                            tints: [tint; 3],
                         });
                     }
                 }

@@ -216,7 +216,7 @@ fn draw_event_icon(
         center,
         half_extents: Vec2::splat(half_extent),
         direction: None,
-        tints: [track_renderer::apply_fade_alpha(Color32::WHITE, fade); 2],
+        tints: [track_renderer::apply_fade_alpha(Color32::WHITE, fade); 3],
     });
 }
 

@@ -15,6 +15,7 @@ use egui::Vec2;
 use gt_icon_tessellate::IconTessellation;
 use gt_types::MarkerIcon;
 
+pub(crate) use batch::rotate_up_to;
 pub use batch::{IconInstance, IconMeshBatch};
 
 /// Half extent in points of the standard square marker icons (20 pt across).
@@ -27,16 +28,21 @@ pub(crate) const ICON_HALF_EXTENT_LARGE_PT: f32 = 12.0;
 /// 18x24 pt rect whose tip sits one y-half-extent below the instance center.
 pub(crate) const PIN_HALF_EXTENTS_PT: Vec2 = Vec2::new(9.0, 12.0);
 
-/// Half extents in points of [IconId::StartFlag] and [IconId::FinishFlag] at
-/// their normal size: an aspect-true 18x24 pt rect.
+/// Half extents in points of the three flag assets at their normal size: an
+/// aspect-true 18x24 pt rect.
 pub(crate) const FLAG_HALF_EXTENTS_PT: Vec2 = Vec2::new(9.0, 12.0);
 
-/// Offset from a fix to the center of a flag instance of
+/// Offset from a fix to the center of an upright flag instance of
 /// [FLAG_HALF_EXTENTS_PT], which puts the pole's foot on the fix and the
-/// cloth above the track line. Both flag assets stand the pole at x=2 of
+/// cloth above the track line. All three flag assets stand the pole at x=2 of
 /// their 18x24 viewbox, its foot on the bottom edge. An instance drawn larger
-/// scales this offset by the same factor, which keeps the foot on the fix.
+/// scales this offset by the same factor, which keeps the foot on the fix,
+/// and one drawn with a negative x half extent mirrors it about the pole.
 pub(crate) const FLAG_ANCHOR_OFFSET_PT: Vec2 = Vec2::new(7.0, -FLAG_HALF_EXTENTS_PT.y);
+
+/// Width in points of a flag's cloth at [FLAG_HALF_EXTENTS_PT]: all three
+/// assets span the cloth from x=2 to x=16 of their 18-wide viewbox.
+pub(crate) const FLAG_CLOTH_WIDTH_PT: f32 = 14.0;
 
 /// The half extent a [MarkerIcon] is drawn with when rendered as a square
 /// icon: satellites and the warning triangle get the larger size.
@@ -93,6 +99,7 @@ pub enum IconId {
     NavArrow,
     Pin,
     Refresh,
+    RoundTripFlag,
     Satellite,
     SatelliteLost,
     StartFlag,
@@ -159,6 +166,7 @@ pub struct IconMeshLibrary {
     nav_arrow: IconTessellation,
     pin: IconTessellation,
     refresh: IconTessellation,
+    round_trip_flag: IconTessellation,
     satellite: IconTessellation,
     satellite_lost: IconTessellation,
     start_flag: IconTessellation,
@@ -208,6 +216,7 @@ impl IconMeshLibrary {
             nav_arrow: take(IconId::NavArrow)?,
             pin: take(IconId::Pin)?,
             refresh: take(IconId::Refresh)?,
+            round_trip_flag: take(IconId::RoundTripFlag)?,
             satellite: take(IconId::Satellite)?,
             satellite_lost: take(IconId::SatelliteLost)?,
             start_flag: take(IconId::StartFlag)?,
@@ -233,6 +242,7 @@ impl IconMeshLibrary {
             IconId::NavArrow => &self.nav_arrow,
             IconId::Pin => &self.pin,
             IconId::Refresh => &self.refresh,
+            IconId::RoundTripFlag => &self.round_trip_flag,
             IconId::Satellite => &self.satellite,
             IconId::SatelliteLost => &self.satellite_lost,
             IconId::StartFlag => &self.start_flag,
@@ -290,6 +300,7 @@ mod tests {
             (IconId::NavArrow, "nav_arrow"),
             (IconId::Pin, "pin"),
             (IconId::Refresh, "refresh"),
+            (IconId::RoundTripFlag, "round_trip_flag"),
             (IconId::Satellite, "satellite"),
             (IconId::SatelliteLost, "satellite_lost"),
             (IconId::StartFlag, "start_flag"),

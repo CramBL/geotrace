@@ -322,6 +322,6 @@ fn hexagon(center: egui::Pos2, circumradius: f32, tints: HexagonTints) -> IconIn
         center,
         half_extents: Vec2::splat(circumradius / ASSET_CIRCUMRADIUS_FRACTION),
         direction: None,
-        tints: [tints.fill, tints.outline],
+        tints: [tints.fill, tints.outline, Color32::WHITE],
     }
 }

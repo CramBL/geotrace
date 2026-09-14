@@ -23,6 +23,7 @@ egui-phosphor.workspace = true
 egui-wgpu.workspace = true
 gt-filter = { path = "../gt-filter" }
 gt-fmt = { path = "../gt-fmt" }
+gt-geo-math = { path = "../gt-geo-math" }
 gt-icon-tessellate = { path = "../gt-icon-tessellate", default-features = false }
 gt-ionex = { path = "../external_environmental_data/gt-ionex" }
 gt-jam = { path = "../external_environmental_data/gt-jam" }
@@ -58,7 +59,6 @@ postcard.workspace = true
 [dev-dependencies]
 criterion.workspace = true
 egui_kittest.workspace = true
-gt-geo-math = { path = "../gt-geo-math" }
 # The crate's own harness, which the integration test binaries draw through.
 gt-map = { path = ".", features = ["test-util"] }
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }

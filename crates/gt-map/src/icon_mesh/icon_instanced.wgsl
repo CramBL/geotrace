@@ -31,6 +31,7 @@ fn vs_main(
     @location(5) i_col_y: vec2<f32>,
     @location(6) i_tint0: vec4<f32>,
     @location(7) i_tint1: vec4<f32>,
+    @location(8) i_tint2: vec4<f32>,
 ) -> VertexOutput {
     var out: VertexOutput;
     let screen_pos = i_center + i_col_x * t_pos.x + i_col_y * t_pos.y;
@@ -40,7 +41,11 @@ fn vs_main(
         0.0,
         1.0,
     );
-    let tint = select(i_tint0, i_tint1, t_tint_slot == 1u);
+    let tint = select(
+        select(i_tint0, i_tint1, t_tint_slot == 1u),
+        i_tint2,
+        t_tint_slot == 2u,
+    );
     // Componentwise gamma-space multiply of premultiplied colors: identical
     // to the CPU path's Color32 multiply, up to float rounding.
     out.color = t_color * tint;

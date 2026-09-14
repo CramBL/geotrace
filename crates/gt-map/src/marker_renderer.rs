@@ -119,14 +119,14 @@ fn draw_marker_icon(
             center: center - egui::vec2(0.0, PIN_HALF_EXTENTS_PT.y),
             half_extents: PIN_HALF_EXTENTS_PT,
             direction: None,
-            tints: [tint; 2],
+            tints: [tint; 3],
         },
         icon => IconInstance {
             icon: icon.into(),
             center,
             half_extents: Vec2::splat(crate::icon_mesh::marker_icon_half_extent(icon)),
             direction: None,
-            tints: [tint; 2],
+            tints: [tint; 3],
         },
     };
     batch.push(instance);

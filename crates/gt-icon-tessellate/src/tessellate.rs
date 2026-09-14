@@ -62,9 +62,12 @@ struct Element {
 }
 
 /// The SVG `id` that assigns an element's vertices to the secondary tint
-/// slot. Every other element uses the primary slot. See
-/// [crate::TemplateVertex::tint_slot].
+/// slot. Every element with neither this `id` nor [TERTIARY_TINT_ID] uses the
+/// primary slot. See [crate::TemplateVertex::tint_slot].
 const SECONDARY_TINT_ID: &str = "tint2";
+
+/// The SVG `id` that assigns an element's vertices to the tertiary tint slot.
+const TERTIARY_TINT_ID: &str = "tint3";
 
 enum PaintOp {
     Fill { rule: FillRule },
@@ -160,7 +163,11 @@ fn collect_path(path: &usvg::Path, out: &mut Vec<Element>) -> Result<(), IconTes
     if !path.is_visible() {
         return Ok(());
     }
-    let tint_slot = u8::from(path.id() == SECONDARY_TINT_ID);
+    let tint_slot = match path.id() {
+        SECONDARY_TINT_ID => 1,
+        TERTIARY_TINT_ID => 2,
+        _ => 0,
+    };
     let fill = path
         .fill()
         .map(|fill| fill_element(path, fill, tint_slot))
@@ -488,7 +495,7 @@ mod tests {
 
     /// Every icon asset, sorted. Kept in sync with `assets/icons/` by
     /// [`icon_names_match_assets_dir`]. The rstest cases below must mirror it.
-    const ICON_NAMES: [&str; 20] = [
+    const ICON_NAMES: [&str; 21] = [
         "check",
         "circle_marker",
         "connection_lost",
@@ -503,6 +510,7 @@ mod tests {
         "nav_arrow",
         "pin",
         "refresh",
+        "round_trip_flag",
         "satellite",
         "satellite_lost",
         "start_flag",
@@ -591,6 +599,7 @@ mod tests {
             #[case::nav_arrow("nav_arrow")]
             #[case::pin("pin")]
             #[case::refresh("refresh")]
+            #[case::round_trip_flag("round_trip_flag")]
             #[case::satellite("satellite")]
             #[case::satellite_lost("satellite_lost")]
             #[case::start_flag("start_flag")]
@@ -665,6 +674,41 @@ mod tests {
             let first = tessellate_icon(&svg).unwrap();
             let second = tessellate_icon(&svg).unwrap();
             assert_eq!(first, second, "{name}: non-deterministic tessellation");
+        }
+    }
+
+    /// Every tint slot gets vertices: one filled rectangle per slot.
+    const THREE_TINT_SLOTS_SVG: &[u8] =
+        br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <path d="M 2 2 H 8 V 8 H 2 Z" fill="white"/>
+  <path id="tint2" d="M 10 2 H 16 V 8 H 10 Z" fill="white"/>
+  <path id="tint3" d="M 18 2 H 22 V 8 H 18 Z" fill="white"/>
+</svg>"#;
+
+    /// The x of a vertex says which element it came from: the three
+    /// rectangles of [`THREE_TINT_SLOTS_SVG`] stand side by side. The viewbox
+    /// maps to -1 to 1, and the ranges leave room for the anti-alias fringe.
+    #[rstest]
+    #[case::primary(0, -1.0..-0.25)]
+    #[case::secondary(1, -0.25..0.4)]
+    #[case::tertiary(2, 0.4..1.0)]
+    fn each_tint_slot_takes_the_element_written_under_its_id(
+        #[case] slot: u8,
+        #[case] expected_x: std::ops::Range<f32>,
+    ) {
+        let tess = tessellate_icon(THREE_TINT_SLOTS_SVG).unwrap();
+
+        let xs: Vec<f32> = tess
+            .mesh_for(24.0)
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.tint_slot == slot)
+            .map(|vertex| vertex.pos[0])
+            .collect();
+
+        assert!(!xs.is_empty(), "slot {slot} has no vertices");
+        for x in xs {
+            assert!(expected_x.contains(&x), "slot {slot} reaches x {x}");
         }
     }
 

@@ -1604,6 +1604,63 @@ fn snap_track_endpoint_flags_on_a_track_drawn_as_one_dot() {
 /// pixel wide.
 const ZOOM_THAT_COLLAPSES_THE_TRACK: f64 = 5.0;
 
+/// Snapshot: a track shows one flag split between the start green and the
+/// finish chequerboard where its two ends meet. This one walks a rectangle
+/// back to the fix it started at.
+#[rstest::rstest]
+#[case::unhighlighted("track_endpoint_round_trip_flag", true, false)]
+#[case::highlighted_dark("track_endpoint_round_trip_flag_highlighted_dark", true, true)]
+#[case::highlighted_light("track_endpoint_round_trip_flag_highlighted_light", false, true)]
+fn snap_track_endpoint_round_trip_flag(
+    #[case] name: &str,
+    #[case] dark_mode: bool,
+    #[case] highlighted: bool,
+) {
+    let files = test_util::a_recording_looping_back_to_its_start(8, LOOP_SIDE_DEGREES);
+
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .theme(dark_mode)
+        .render();
+    if highlighted {
+        map.render_one_more_frame_hovering(gt_ui_types::HighlightScope::Track(test_util::track0()));
+    }
+    map.snapshot(name);
+}
+
+/// The side of the rectangle the round trip fixture walks, about 250 m east
+/// and 450 m north.
+const LOOP_SIDE_DEGREES: f64 = 0.004;
+
+/// Snapshot: a 63 m track at three zooms. Its flags lean apart while their
+/// feet are under a cloth width apart, and stand up once the zoom separates
+/// them. The highlighted pair leans at a zoom where the plain pair stands.
+#[rstest::rstest]
+#[case::leaning("track_endpoint_flags_leaning", 13.0, false)]
+#[case::upright("track_endpoint_flags_upright", 15.0, false)]
+#[case::close_up("track_endpoint_flags_close_up", 18.0, false)]
+#[case::leaning_highlighted("track_endpoint_flags_leaning_highlighted", 15.0, true)]
+fn snap_track_endpoint_flags_on_a_short_track(
+    #[case] name: &str,
+    #[case] zoom: f64,
+    #[case] highlighted: bool,
+) {
+    let files = test_util::a_recording_of(6, SHORT_TRACK_STEP_DEGREES);
+
+    let mut map = MapScene::of(files)
+        .tiles(TileAccess::Synthetic)
+        .zoomed_to(zoom)
+        .render();
+    if highlighted {
+        map.render_one_more_frame_hovering(gt_ui_types::HighlightScope::Track(test_util::track0()));
+    }
+    map.snapshot(name);
+}
+
+/// Longitude between consecutive fixes of the short track, about 13 m at the
+/// map's default centre.
+const SHORT_TRACK_STEP_DEGREES: f64 = 0.000_2;
+
 /// Snapshot: a highlighted track whose time window keeps one fix shows the
 /// start flag at that fix, and no finish flag.
 #[test]

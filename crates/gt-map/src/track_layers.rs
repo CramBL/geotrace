@@ -703,8 +703,6 @@ impl<'a> TrackLayers<'a> {
     ///
     /// The fade is this pass's own: a non-focused track's flags go under the
     /// fade overlay with its arrows and labels, painted in the same phase.
-    ///
-    /// A track whose whole line draws as one dot shows the start flag alone.
     fn paint_endpoint_flags(
         &self,
         ui: &Ui,
@@ -719,7 +717,7 @@ impl<'a> TrackLayers<'a> {
             return;
         };
         let ends = match geo.path {
-            VisiblePath::Dot(_, _) => ends.collapsed_to_the_start(),
+            VisiblePath::Dot(_, _) => ends.collapsed_to_one_dot(),
             VisiblePath::OffScreen | VisiblePath::Spans(_) => ends,
         };
         let style = FlagStyle {
