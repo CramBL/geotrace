@@ -183,8 +183,8 @@ Test(builder, no_fixes_error) {
     GtdTimestamp timestamp;
     cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
 
-    /* NoNavFixes is returned when a marker requires interpolation and no fix
-       exists to interpolate from. An empty builder is valid and returns OK. */
+    /* NoNavFixes is returned when a record needs a position and no fix exists
+       to take it from. An empty builder is valid and returns OK. */
     cr_assert_eq(gtd_builder_add_annotation(builder, timestamp, "note", GTD_ICON_PIN), GTD_OK);
 
     GtdNavFile *file = NULL;
@@ -206,6 +206,32 @@ Test(builder, event_marker_without_a_nav_fix_error) {
     cr_assert_eq(gtd_builder_finish(builder, &file), GTD_ERR_NO_NAV_FIXES);
     cr_assert_null(file);
     cr_assert_not_null(gtd_last_error());
+}
+
+Test(builder, satellite_reports_without_a_nav_fix_error) {
+    GtdFileBuilder *builder = gtd_builder_create();
+    cr_assert_not_null(builder);
+
+    GtdTimestamp first_report_time;
+    GtdTimestamp second_report_time;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &first_report_time), GTD_OK);
+    cr_assert_eq(gtd_ts_from_seconds(1700000001, &second_report_time), GTD_OK);
+    GtdSatellite sats[] = {
+        {GTD_CONSTELLATION_GPS, 7, 0, GTD_SOME_F32(55.0F), GTD_SOME_F32(120.0F),
+         GTD_SOME_F32(40.0F)},
+    };
+    cr_assert_eq(
+        gtd_builder_add_satellite_report(builder, first_report_time, gtd_ts_none(), sats, 1),
+        GTD_OK);
+    cr_assert_eq(
+        gtd_builder_add_satellite_report(builder, second_report_time, gtd_ts_none(), sats, 1),
+        GTD_OK);
+
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_ERR_NO_NAV_FIXES);
+    cr_assert_null(file);
+    cr_assert_str_eq(gtd_last_error(), "2 satellite report(s) have no nav fix to take a position "
+                                       "from: at least one nav fix is required");
 }
 
 Test(builder, event_marker_after_the_last_fix_error) {

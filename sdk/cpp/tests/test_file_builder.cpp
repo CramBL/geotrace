@@ -226,6 +226,19 @@ TEST_CASE("FileBuilder: NoNavFixesError thrown when an event marker exists but n
     CHECK_THROWS_AS(static_cast<void>(builder.finish()), NoNavFixesError);
 }
 
+TEST_CASE("FileBuilder: NoNavFixesError thrown when satellite reports exist but no fixes") {
+    const Satellite satellite_out_of_fix{Constellation::Gps, 7, false, 55.0F, 120.0F, 40.0F};
+    FileBuilder builder;
+    builder.add_satellite_report(
+        SatelliteReport{FixTime::receiver(FIRST_TIME), {satellite_out_of_fix}});
+    builder.add_satellite_report(
+        SatelliteReport{FixTime::receiver(SECOND_TIME), {satellite_out_of_fix}});
+    CHECK_THROWS_WITH_AS(static_cast<void>(builder.finish()),
+                         "2 satellite report(s) have no nav fix to take a position from: at least "
+                         "one nav fix is required",
+                         NoNavFixesError);
+}
+
 TEST_CASE("FileBuilder: FieldTooLongError thrown for a label past the field capacity") {
     FileBuilder builder;
     Annotation ann{FIRST_TIME};

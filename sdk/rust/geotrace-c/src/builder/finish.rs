@@ -18,10 +18,11 @@ use crate::error::{self, GtdStatus};
 /// @param out     Output parameter for the resulting file handle.
 ///
 /// On a builder without nav fixes, the call returns `GTD_OK` and a file with zero nav points,
-/// unless the builder has an annotation or an event marker.
+/// unless the builder has a satellite report, an annotation or an event marker.
 ///
-/// @return `GTD_ERR_NO_NAV_FIXES` if the builder has an annotation or an event marker and no
-///         nav fix, in lenient mode too.
+/// @return `GTD_ERR_NO_NAV_FIXES` if the builder has a satellite report, an annotation or an
+///         event marker and no nav fix, in lenient mode too. `gtd_last_error()` states the
+///         number of each.
 /// @return `GTD_ERR_ANNOTATIONS_OOB` if annotations fall outside the time range (unless lenient).
 /// @return `GTD_ERR_EVENT_MARKERS_OOB` if event markers fall outside the time range (unless lenient).
 /// @return `GTD_ERR_INVALID_CHANNEL` if two channels share a name.
@@ -55,8 +56,8 @@ pub unsafe extern "C" fn gtd_builder_finish(
                 *out_ref = Box::into_raw(handle);
                 GtdStatus::GTD_OK
             }
-            Err(BuildError::NoNavFixes) => {
-                error::set_last_error("no nav fixes were added; at least one is required");
+            Err(error @ BuildError::NoNavFixes(_)) => {
+                error::set_last_error(error);
                 GtdStatus::GTD_ERR_NO_NAV_FIXES
             }
             Err(BuildError::AnnotationsOutsideRange { count }) => {

@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 
-use crate::error::{BuildError, Error, FieldLocation};
+use crate::error::{BuildError, Error, FieldLocation, UnplacedRecordCounts};
 use crate::time_types::{GpsTime, SysTime};
 use crate::types::{
     Annotation, Channel, Constellation, EventMarker, EventMarkerColor, EventMarkerIconChoice,
@@ -469,6 +469,9 @@ impl NavRecorder {
 
     /// Validate and process all added data.
     ///
+    /// Returns [`BuildError::NoNavFixes`] for a recorder with a satellite report, an annotation
+    /// or an event marker and no nav fix, in lenient mode too.
+    ///
     /// Steps performed in order:
     /// 1. Sort fixes, satellite reports, and annotations by time.
     /// 2. Associate each satellite report to its nearest nav fix within the
@@ -505,10 +508,15 @@ impl NavRecorder {
         self.satellite_reports.sort_by_key(|r| r.time.effective());
         self.annotations.sort_by_key(|a| a.time);
 
-        let markers_need_a_position =
-            !self.annotations.is_empty() || !self.pending_event_markers.is_empty();
-        if self.fixes.is_empty() && markers_need_a_position {
-            return Err(BuildError::NoNavFixes);
+        let records_need_a_position = !self.satellite_reports.is_empty()
+            || !self.annotations.is_empty()
+            || !self.pending_event_markers.is_empty();
+        if self.fixes.is_empty() && records_need_a_position {
+            return Err(BuildError::NoNavFixes(UnplacedRecordCounts {
+                satellite_reports: self.satellite_reports.len(),
+                annotations: self.annotations.len(),
+                event_markers: self.pending_event_markers.len(),
+            }));
         }
 
         let (sat_assignments, unassociated) =
@@ -624,9 +632,16 @@ fn ghost_nav_points_for(
     real_fixes: &[InternalFix],
     orphan_reports: Vec<InternalSatReport>,
 ) -> Result<Vec<InternalPoint>, BuildError> {
-    if real_fixes.is_empty() || orphan_reports.is_empty() {
+    if orphan_reports.is_empty() {
         return Ok(Vec::new());
     }
+    let (Some(first), Some(last)) = (real_fixes.first(), real_fixes.last()) else {
+        return Err(BuildError::NoNavFixes(UnplacedRecordCounts {
+            satellite_reports: orphan_reports.len(),
+            annotations: 0,
+            event_markers: 0,
+        }));
+    };
 
     // `delta_us = gps_us - sys_us` at each fix that has both a genuine GPS lock
     // and a `sys_time`.  Stored as `(gps_us, delta_us)` sorted by `gps_us`.
@@ -660,9 +675,7 @@ fn ghost_nav_points_for(
 
     let mut ghost_points = Vec::new();
 
-    if let Some(first) = real_fixes.first() {
-        ghost_points.extend(ghosts_on_first_fix(first, before_first)?);
-    }
+    ghost_points.extend(ghosts_on_first_fix(first, before_first)?);
 
     for (seg_idx, reports) in segments.into_iter().enumerate() {
         if reports.is_empty() {
@@ -736,9 +749,7 @@ fn ghost_nav_points_for(
         }
     }
 
-    if let Some(last) = real_fixes.last() {
-        ghost_points.extend(ghosts_after_last_fix(last, after_last)?);
-    }
+    ghost_points.extend(ghosts_after_last_fix(last, after_last)?);
 
     Ok(ghost_points)
 }
@@ -1742,6 +1753,25 @@ mod tests {
             collect_satellite_issues(&reports),
             SatelliteIssues::default()
         );
+    }
+
+    #[test]
+    fn ghost_nav_points_for_fails_on_reports_without_a_nav_fix() {
+        let orphan_reports = vec![
+            report(vec![sat(Constellation::Gps, 1)]),
+            report(vec![sat(Constellation::Gps, 2)]),
+        ];
+
+        let result = ghost_nav_points_for(&[], orphan_reports);
+
+        assert!(matches!(
+            result,
+            Err(BuildError::NoNavFixes(UnplacedRecordCounts {
+                satellite_reports: 2,
+                annotations: 0,
+                event_markers: 0,
+            }))
+        ));
     }
 
     #[test]

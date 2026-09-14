@@ -419,7 +419,20 @@ def test_an_event_marker_without_a_nav_fix_fails_the_build() -> None:
     b = NavFileBuilder()
     b.add(EventMarker("power/boot", T0))
 
-    with pytest.raises(ValueError, match="no nav fixes were added"):
+    with pytest.raises(ValueError, match=r"^1 event marker\(s\) have no nav fix"):
+        b.finish()
+
+
+def test_satellite_reports_without_a_nav_fix_fail_the_build() -> None:
+    b = NavFileBuilder()
+    b.add(SatelliteReport([Satellite(Constellation.GPS, 7, in_fix=False)], gps_time=T0))
+    b.add(SatelliteReport([Satellite(Constellation.GPS, 7, in_fix=False)], gps_time=T1))
+
+    with pytest.raises(
+        ValueError,
+        match=r"^2 satellite report\(s\) have no nav fix to take a position from: "
+        r"at least one nav fix is required$",
+    ):
         b.finish()
 
 

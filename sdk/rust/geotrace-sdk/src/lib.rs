@@ -44,7 +44,7 @@ mod write;
 pub use builder::{
     NavFileBuilder, NavRecord, NavRecorder, SatelliteWarning, collect_satellite_warnings,
 };
-pub use error::{BuildError, ChannelError, Error, EventMarkerError};
+pub use error::{BuildError, ChannelError, Error, EventMarkerError, UnplacedRecordCounts};
 pub use fixed_width_string::{
     AnnotationField, ColorHexField, FixedWidthString, FixedWidthStringError, IconNameField,
     MarkerLabelField, VariantPathField,
