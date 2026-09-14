@@ -400,17 +400,15 @@ impl EventKind for HandWrittenEvent {
     "power/größe",
     |error: &EventMarkerError| matches!(error, EventMarkerError::InvalidChars { .. })
 )]
-fn an_event_with_a_malformed_variant_path_fails_the_build(
+fn an_event_with_a_malformed_variant_path_fails_the_build_in_strict_mode(
     #[case] variant_path: &'static str,
     #[case] is_expected_rejection: fn(&EventMarkerError) -> bool,
-    #[values(NavFileBuilder::new(), NavFileBuilder::new().with_lenient_errors())]
-    builder: NavFileBuilder,
     #[values(record_through_add_event, record_through_add_event_with_note)] record_event: fn(
         &mut NavRecorder,
         &HandWrittenEvent,
     ),
 ) {
-    let mut recorder = builder.open();
+    let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(fix(0, 55.0, 12.0));
     record_event(&mut recorder, &HandWrittenEvent { variant_path });
 
@@ -423,6 +421,51 @@ fn an_event_with_a_malformed_variant_path_fails_the_build(
             BuildError::InvalidEventMarkerVariantPath { source } if is_expected_rejection(source)
         ),
         "got {error:?}"
+    );
+}
+
+#[rstest]
+#[case::a_leading_slash("/power/boot")]
+#[case::an_empty_segment("power//boot")]
+#[case::a_non_ascii_character("power/größe")]
+fn an_event_with_a_malformed_variant_path_is_dropped_in_lenient_mode(
+    #[case] variant_path: &'static str,
+    #[values(record_through_add_event, record_through_add_event_with_note)] record_event: fn(
+        &mut NavRecorder,
+        &HandWrittenEvent,
+    ),
+) {
+    let mut recorder = NavFileBuilder::new().with_lenient_errors().open();
+    recorder.add_nav_fix(fix(0, 55.0, 12.0));
+    recorder.add_nav_fix(fix(2, 55.2, 12.2));
+    recorder.add_event(&IconOuter::Power(IconLeaf::TurnOn), test_util::t_s(0));
+    record_event(&mut recorder, &HandWrittenEvent { variant_path });
+    recorder.add_event(&IconOuter::Power(IconLeaf::Failed), test_util::t_s(2));
+
+    let nav_file = recorder.finish().expect("lenient mode keeps the recording");
+    let recorded_paths: Vec<&str> = nav_file
+        .event_markers()
+        .iter()
+        .map(|event_marker| event_marker.variant_path.as_str())
+        .collect();
+    assert_eq!(recorded_paths, ["power/turn_on", "power/failed"]);
+    let registered_icons: Vec<(&str, &EventMarkerIconChoice)> = nav_file
+        .event_marker_styles()
+        .iter()
+        .map(|style| (style.variant_path.as_str(), &style.icon))
+        .collect();
+    assert_eq!(
+        registered_icons,
+        [
+            (
+                "power/turn_on",
+                &EventMarkerIconChoice::Icon(MarkerIcon::Lightning)
+            ),
+            (
+                "power/failed",
+                &EventMarkerIconChoice::Icon(MarkerIcon::Error)
+            ),
+        ]
     );
 }
 
