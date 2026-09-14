@@ -154,6 +154,7 @@ syn = "2"
 tempfile = "3"
 test-log = "0.2"
 thiserror = "2"
+toml = "1"
 trybuild = "1"
 uom = "0.38.0"
 uuid = { version = "1", features = ["v4"] }
@@ -353,7 +354,7 @@ serde_json.workspace = true
 strum.workspace = true
 # Current-thread runtime for driving axoupdater's `async` API off the UI thread.
 tokio = { version = "1", features = ["rt", "net", "time"] }
-toml = "1"
+toml.workspace = true
 uom.workspace = true
 
 # Embeds the app icon into the Windows executable (see build.rs). No-op elsewhere.

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import re
+import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 from geotrace_sdk import (
@@ -224,6 +227,15 @@ def test_style_variant_path_past_the_field_capacity_raises_on_write() -> None:
 
 # @event_kind decorator
 
+SHARED_SEGMENT_TABLE = tomllib.loads(
+    (
+        Path(__file__).resolve().parents[4]
+        / "tests"
+        / "fixtures"
+        / "event_kind_variant_path_segments.toml"
+    ).read_text(encoding="utf-8")
+)
+
 
 def test_event_kind_flat_unit_attributes() -> None:
     @event_kind
@@ -237,14 +249,59 @@ def test_event_kind_flat_unit_attributes() -> None:
     assert Event.gps_lock_acquired == "gps_lock_acquired"
 
 
-def test_event_kind_snake_case_conversion() -> None:
+def test_event_kind_derives_the_segment_of_each_shared_derived_name() -> None:
+    rows = SHARED_SEGMENT_TABLE["derived"]
+    namespace = event_kind(
+        type("Event", (), dict.fromkeys(row["name"] for row in rows))
+    )
+    derived = {row["name"]: getattr(namespace, row["name"]) for row in rows}
+    assert derived == {row["name"]: row["segment"] for row in rows}
+
+
+@pytest.mark.parametrize(
+    "row", SHARED_SEGMENT_TABLE["rejected"], ids=lambda row: row["compile_fail"]
+)
+def test_event_kind_raises_for_each_shared_rejected_row(
+    row: dict[str, Any],
+) -> None:
+    with pytest.raises(ValueError, match=re.escape(row["error"])) as raised:
+        event_kind(type("Event", (), dict.fromkeys(row["names"])))
+    assert all(name in str(raised.value) for name in row["names"])
+
+
+def test_event_kind_rename_sets_the_segment_of_attributes_and_inner_classes() -> None:
     @event_kind
     class Event:
-        GPSLock = None
-        BatteryLow = None
+        Größe = event_kind.rename("groesse")
 
-    assert Event.GPSLock == "gps_lock"
-    assert Event.BatteryLow == "battery_low"
+        @event_kind.rename("radio-scan")
+        class Scan:
+            GPSLock = None
+
+    assert Event.all_paths() == ["groesse", "radio-scan/gps_lock"]  # type: ignore
+
+
+def test_event_kind_raises_for_a_rename_to_the_segment_of_another_attribute() -> None:
+    with pytest.raises(ValueError, match="both have the variant path segment 'boot'"):
+
+        @event_kind
+        class Event:
+            Boot = None
+            ColdStart = event_kind.rename("boot")
+
+
+@pytest.mark.parametrize(
+    ("segment", "error"),
+    [("", "is empty"), ("power/boot", "'power/boot' contains '/'")],
+)
+def test_event_kind_raises_for_a_rename_to_an_invalid_segment(
+    segment: str, error: str
+) -> None:
+    with pytest.raises(ValueError, match=f"Boot: variant path segment {error}"):
+
+        @event_kind
+        class Event:
+            Boot = event_kind.rename(segment)
 
 
 def test_event_kind_nested_three_levels() -> None:

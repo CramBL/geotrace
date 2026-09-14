@@ -82,6 +82,9 @@ impl Display for VariantPathSegmentError {
 /// Starts a word at a capital after a lower-case letter or a digit, and at the last capital of a
 /// run followed by a lower-case letter: `HTTPError` gives `http_error`, `GPS3Lock` gives
 /// `gps3_lock`. It copies every character outside ASCII unchanged.
+///
+/// `_to_snake_case` in the Python SDK has the same rule. The tests of both SDKs read the names in
+/// `tests/fixtures/event_kind_variant_path_segments.toml`.
 fn to_snake_case(name: &str) -> String {
     let mut snake_case = String::with_capacity(name.len());
     let mut previous: Option<char> = None;
