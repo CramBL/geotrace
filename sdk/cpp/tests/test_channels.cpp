@@ -3,11 +3,14 @@
 #include <geotrace/unit_catalog.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <type_traits>
 #include <vector>
+
+#include "test_timestamps.hpp"
 
 using geotrace::Angle;
 using geotrace::Channel;
@@ -19,38 +22,35 @@ using geotrace::NavFile;
 using geotrace::NavFix;
 using geotrace::recognized_unit_label;
 using geotrace::RecognizedUnit;
-using geotrace::Timestamp;
-
-constexpr Timestamp FIRST_TIME{1'700'000'000'000'000};
-constexpr Timestamp SECOND_TIME{1'700'000'001'000'000};
 
 static_assert(!std::is_default_constructible_v<ChannelUnit>);
 
 TEST_CASE("channels: scalar and vector survive write → from_bytes → read") {
     std::vector<std::uint8_t> bytes;
     {
-        const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(51.5), Angle::degrees(-0.1)};
+        const NavFix fix{FixTime::receiver(fix_timestamp()), Angle::degrees(51.5),
+                         Angle::degrees(-0.1)};
 
         Channel incline{};
         incline.name = "incline";
         incline.unit = geotrace::ChannelUnit::recognized(geotrace::RecognizedUnit::Deg);
         incline.period = Angle::degrees(360.0);
         incline.description = "boom inclinometer";
-        incline.times = {FIRST_TIME, SECOND_TIME};
+        incline.times = {fix_timestamp(), after_fix_timestamp(std::chrono::seconds{1})};
         incline.values = {1.5, 2.0};
 
         Channel accel{};
         accel.name = "accel";
         accel.unit = geotrace::ChannelUnit::recognized(geotrace::RecognizedUnit::G);
         accel.components = {"x", "y", "z"};
-        accel.times = {FIRST_TIME, SECOND_TIME};
+        accel.times = {fix_timestamp(), after_fix_timestamp(std::chrono::seconds{1})};
         accel.values = {0.1, 0.2, 0.98, -0.1, 0.3, 1.02};
 
         // A bare channel with no unit, period, or description exercises the
         // empty-means-none marshalling on both write and read.
         Channel temp{};
         temp.name = "temp";
-        temp.times = {FIRST_TIME};
+        temp.times = {fix_timestamp()};
         temp.values = {20.0};
 
         auto file =
@@ -70,7 +70,8 @@ TEST_CASE("channels: scalar and vector survive write → from_bytes → read") {
     CHECK(accel.components == std::vector<std::string>{"x", "y", "z"});
     CHECK_FALSE(accel.period.has_value());
     REQUIRE(accel.times.size() == 2);
-    CHECK(accel.times.at(1).unix_micros == SECOND_TIME.unix_micros);
+    CHECK(accel.times.at(1).as_unix_micros() ==
+          after_fix_timestamp(std::chrono::seconds{1}).as_unix_micros());
     REQUIRE(accel.values.size() == 6);
     CHECK(accel.values.at(0) == doctest::Approx(0.1));
     CHECK(accel.values.at(5) == doctest::Approx(1.02));
@@ -95,14 +96,14 @@ TEST_CASE("channels: a malformed channel throws InvalidChannelError") {
     SUBCASE("invalid name") {
         Channel channel{};
         channel.name = "Bad Name";
-        channel.times = {FIRST_TIME};
+        channel.times = {fix_timestamp()};
         channel.values = {1.0};
         CHECK_THROWS_AS(FileBuilder{}.add_channel(channel), InvalidChannelError);
     }
     SUBCASE("length mismatch") {
         Channel channel{};
         channel.name = "accel";
-        channel.times = {FIRST_TIME};
+        channel.times = {fix_timestamp()};
         channel.values = {1.0, 2.0};
         CHECK_THROWS_AS(FileBuilder{}.add_channel(channel), InvalidChannelError);
     }
@@ -110,7 +111,7 @@ TEST_CASE("channels: a malformed channel throws InvalidChannelError") {
         Channel channel{};
         channel.name = "accel";
         channel.components = {"x", "x"};
-        channel.times = {FIRST_TIME};
+        channel.times = {fix_timestamp()};
         channel.values = {1.0, 2.0};
         CHECK_THROWS_AS(FileBuilder{}.add_channel(channel), InvalidChannelError);
     }
@@ -121,7 +122,7 @@ TEST_CASE("channels: a malformed channel throws InvalidChannelError") {
     SUBCASE("duplicate channel name at finish") {
         Channel channel{};
         channel.name = "accel";
-        channel.times = {FIRST_TIME};
+        channel.times = {fix_timestamp()};
         channel.values = {1.0};
         CHECK_THROWS_AS(
             static_cast<void>(FileBuilder{}.add_channel(channel).add_channel(channel).finish()),
@@ -133,7 +134,7 @@ TEST_CASE("channels: a custom unit is an explicit display-only escape hatch") {
     Channel channel{};
     channel.name = "shaft_speed";
     channel.unit = geotrace::ChannelUnit::custom("rpm");
-    channel.times = {FIRST_TIME};
+    channel.times = {fix_timestamp()};
     channel.values = {1200.0};
 
     auto file = NavFile::from_bytes(FileBuilder{}.add_channel(channel).finish().to_bytes());
@@ -148,7 +149,7 @@ TEST_CASE("channels: long custom units round-trip losslessly") {
     Channel channel{};
     channel.name = "quality";
     channel.unit = geotrace::ChannelUnit::custom(label);
-    channel.times = {FIRST_TIME};
+    channel.times = {fix_timestamp()};
     channel.values = {1.0};
 
     auto file = NavFile::from_bytes(FileBuilder{}.add_channel(channel).finish().to_bytes());

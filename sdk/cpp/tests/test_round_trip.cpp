@@ -1,10 +1,13 @@
 #include <doctest/doctest.h>
 #include <geotrace/geotrace.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <type_traits>
 #include <vector>
+
+#include "test_timestamps.hpp"
 
 using geotrace::Angle;
 using geotrace::Constellation;
@@ -33,19 +36,18 @@ static constexpr double LAT = 51.5074;
 static constexpr double LON = -0.1278;
 static constexpr double LAT2 = 51.5080;
 static constexpr double LON2 = -0.1265;
-constexpr Timestamp FIRST_TIME{1'700'000'000'000'000};
-constexpr Timestamp SECOND_TIME{1'700'000'010'000'000};
 
 TEST_CASE("round-trip: nav fix fields survive write → from_bytes → read") {
     std::vector<std::uint8_t> bytes;
     {
-        NavFix first_fix{FixTime::receiver(FIRST_TIME), Angle::degrees(LAT), Angle::degrees(LON)};
+        NavFix first_fix{FixTime::receiver(fix_timestamp()), Angle::degrees(LAT),
+                         Angle::degrees(LON)};
         first_fix.heading = Angle::degrees(270.0);
         first_fix.speed = Velocity::mps(5.5);
         first_fix.eph_m = 3.2;
 
-        const NavFix second_fix{FixTime::receiver(SECOND_TIME), Angle::degrees(LAT2),
-                                Angle::degrees(LON2)};
+        const NavFix second_fix{FixTime::receiver(after_fix_timestamp(std::chrono::seconds{10})),
+                                Angle::degrees(LAT2), Angle::degrees(LON2)};
 
         auto file = FileBuilder{}.add_nav_fix(first_fix).add_nav_fix(second_fix).finish();
         bytes = file.to_bytes();
@@ -66,7 +68,7 @@ TEST_CASE("round-trip: nav fix fields survive write → from_bytes → read") {
     REQUIRE(first_point.eph_m.has_value());
     CHECK(first_point.eph_m.value() == doctest::Approx(3.2).epsilon(1e-4));
     REQUIRE(first_point.gps_time.has_value());
-    CHECK(first_point.gps_time->unix_micros == FIRST_TIME.unix_micros);
+    CHECK(first_point.gps_time->as_unix_micros() == fix_timestamp().as_unix_micros());
     CHECK_FALSE(first_point.sys_time.has_value());
 
     auto second_point = file2.nav_point(1);
@@ -75,7 +77,7 @@ TEST_CASE("round-trip: nav fix fields survive write → from_bytes → read") {
 }
 
 TEST_CASE("round-trip: satellite report survives write → from_bytes → read") {
-    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(LAT), Angle::degrees(LON)};
+    const NavFix fix{FixTime::receiver(fix_timestamp()), Angle::degrees(LAT), Angle::degrees(LON)};
 
     Satellite gps_satellite{};
     gps_satellite.constellation = Constellation::Gps;
@@ -91,7 +93,8 @@ TEST_CASE("round-trip: satellite report survives write → from_bytes → read")
     galileo_satellite.in_fix = false;
     galileo_satellite.snr_dbhz = 25.0F;
 
-    const SatelliteReport report{FixTime::receiver(FIRST_TIME), {gps_satellite, galileo_satellite}};
+    const SatelliteReport report{FixTime::receiver(fix_timestamp()),
+                                 {gps_satellite, galileo_satellite}};
 
     auto file = FileBuilder{}.add_nav_fix(fix).add_satellite_report(report).finish();
 
@@ -116,17 +119,18 @@ TEST_CASE("round-trip: satellite report survives write → from_bytes → read")
 }
 
 TEST_CASE("round-trip: a satellite report's timestamps survive write → from_bytes → read") {
-    const NavFix first_fix{FixTime::receiver(FIRST_TIME), Angle::degrees(LAT), Angle::degrees(LON)};
-    const NavFix second_fix{FixTime::receiver(SECOND_TIME), Angle::degrees(LAT2),
-                            Angle::degrees(LON2)};
+    const NavFix first_fix{FixTime::receiver(fix_timestamp()), Angle::degrees(LAT),
+                           Angle::degrees(LON)};
+    const NavFix second_fix{FixTime::receiver(after_fix_timestamp(std::chrono::seconds{10})),
+                            Angle::degrees(LAT2), Angle::degrees(LON2)};
 
     Satellite satellite{};
     satellite.constellation = Constellation::Gps;
     satellite.prn = 7;
     satellite.in_fix = true;
 
-    constexpr Timestamp REPORT_SYS_TIME{FIRST_TIME.unix_micros + 1'000'000};
-    const SatelliteReport report{FixTime::both(FIRST_TIME, REPORT_SYS_TIME), {satellite}};
+    const Timestamp REPORT_SYS_TIME = after_fix_timestamp(std::chrono::seconds{1});
+    const SatelliteReport report{FixTime::both(fix_timestamp(), REPORT_SYS_TIME), {satellite}};
 
     auto file = FileBuilder{}
                     .add_nav_fix(first_fix)
@@ -137,9 +141,11 @@ TEST_CASE("round-trip: a satellite report's timestamps survive write → from_by
 
     const auto with_report = reread.nav_point(0);
     REQUIRE(with_report.satellite_report_gps_time.has_value());
-    CHECK(with_report.satellite_report_gps_time->unix_micros == FIRST_TIME.unix_micros);
+    CHECK(with_report.satellite_report_gps_time->as_unix_micros() ==
+          fix_timestamp().as_unix_micros());
     REQUIRE(with_report.satellite_report_sys_time.has_value());
-    CHECK(with_report.satellite_report_sys_time->unix_micros == REPORT_SYS_TIME.unix_micros);
+    CHECK(with_report.satellite_report_sys_time->as_unix_micros() ==
+          REPORT_SYS_TIME.as_unix_micros());
 
     const auto without_report = reread.nav_point(1);
     CHECK(without_report.satellite_count == 0);
@@ -148,42 +154,42 @@ TEST_CASE("round-trip: a satellite report's timestamps survive write → from_by
 }
 
 TEST_CASE("round-trip: a report with only a receiver time reads back without a host time") {
-    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(LAT), Angle::degrees(LON)};
+    const NavFix fix{FixTime::receiver(fix_timestamp()), Angle::degrees(LAT), Angle::degrees(LON)};
 
     Satellite satellite{};
     satellite.constellation = Constellation::Gps;
     satellite.prn = 7;
 
-    const SatelliteReport report{FixTime::receiver(FIRST_TIME), {satellite}};
+    const SatelliteReport report{FixTime::receiver(fix_timestamp()), {satellite}};
     auto file = FileBuilder{}.add_nav_fix(fix).add_satellite_report(report).finish();
     auto reread = NavFile::from_bytes(file.to_bytes());
 
     const auto point = reread.nav_point(0);
     REQUIRE(point.satellite_report_gps_time.has_value());
-    CHECK(point.satellite_report_gps_time->unix_micros == FIRST_TIME.unix_micros);
+    CHECK(point.satellite_report_gps_time->as_unix_micros() == fix_timestamp().as_unix_micros());
     CHECK_FALSE(point.satellite_report_sys_time.has_value());
 }
 
 TEST_CASE("round-trip: a report with only a host time reads back without a receiver time") {
-    const NavFix fix{FixTime::both(FIRST_TIME, FIRST_TIME), Angle::degrees(LAT),
+    const NavFix fix{FixTime::both(fix_timestamp(), fix_timestamp()), Angle::degrees(LAT),
                      Angle::degrees(LON)};
 
     Satellite satellite{};
     satellite.constellation = Constellation::Gps;
     satellite.prn = 7;
 
-    const SatelliteReport report{FixTime::host(FIRST_TIME), {satellite}};
+    const SatelliteReport report{FixTime::host(fix_timestamp()), {satellite}};
     auto file = FileBuilder{}.add_nav_fix(fix).add_satellite_report(report).finish();
     auto reread = NavFile::from_bytes(file.to_bytes());
 
     const auto point = reread.nav_point(0);
     CHECK_FALSE(point.satellite_report_gps_time.has_value());
     REQUIRE(point.satellite_report_sys_time.has_value());
-    CHECK(point.satellite_report_sys_time->unix_micros == FIRST_TIME.unix_micros);
+    CHECK(point.satellite_report_sys_time->as_unix_micros() == fix_timestamp().as_unix_micros());
 }
 
 TEST_CASE("round-trip: satellite metrics survive write → from_bytes → read bit-exact") {
-    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(LAT), Angle::degrees(LON)};
+    const NavFix fix{FixTime::receiver(fix_timestamp()), Angle::degrees(LAT), Angle::degrees(LON)};
 
     Satellite satellite{};
     satellite.constellation = Constellation::Gps;
@@ -193,7 +199,7 @@ TEST_CASE("round-trip: satellite metrics survive write → from_bytes → read b
     satellite.azimuth_deg = 359.9999F;
     satellite.snr_dbhz = 38.123456789F;
 
-    const SatelliteReport report{FixTime::receiver(FIRST_TIME), {satellite}};
+    const SatelliteReport report{FixTime::receiver(fix_timestamp()), {satellite}};
 
     auto file = FileBuilder{}.add_nav_fix(fix).add_satellite_report(report).finish();
 
@@ -210,9 +216,9 @@ TEST_CASE("round-trip: satellite metrics survive write → from_bytes → read b
 }
 
 TEST_CASE("round-trip: event marker survives write → from_bytes → read") {
-    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(LAT), Angle::degrees(LON)};
+    const NavFix fix{FixTime::receiver(fix_timestamp()), Angle::degrees(LAT), Angle::degrees(LON)};
 
-    const EventMarker m_in{"engine/start", FIRST_TIME, "Engine started"};
+    const EventMarker m_in{"engine/start", fix_timestamp(), "Engine started"};
 
     auto file = FileBuilder{}.add_nav_fix(fix).add_event_marker(m_in).finish();
 
@@ -223,11 +229,11 @@ TEST_CASE("round-trip: event marker survives write → from_bytes → read") {
     auto m_out = file2.event_marker(0);
     CHECK(m_out.variant_path == "engine/start");
     CHECK(m_out.annotation == "Engine started");
-    CHECK(m_out.sys_time.unix_micros == FIRST_TIME.unix_micros);
+    CHECK(m_out.sys_time.as_unix_micros() == fix_timestamp().as_unix_micros());
 }
 
 TEST_CASE("round-trip: metadata survives write → to_bytes → from_bytes") {
-    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(0.0), Angle::degrees(0.0)};
+    const NavFix fix{FixTime::receiver(fix_timestamp()), Angle::degrees(0.0), Angle::degrees(0.0)};
 
     auto file = FileBuilder{}.title("test title").device("test device").add_nav_fix(fix).finish();
 
@@ -239,7 +245,7 @@ TEST_CASE("round-trip: metadata survives write → to_bytes → from_bytes") {
 }
 
 TEST_CASE("round-trip: travel mode survives write → to_bytes → from_bytes") {
-    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(0.0), Angle::degrees(0.0)};
+    const NavFix fix{FixTime::receiver(fix_timestamp()), Angle::degrees(0.0), Angle::degrees(0.0)};
 
     auto file = FileBuilder{}.travel_mode(TravelMode::Rail).add_nav_fix(fix).finish();
 
@@ -251,7 +257,7 @@ TEST_CASE("round-trip: travel mode survives write → to_bytes → from_bytes") 
 }
 
 TEST_CASE("a build without provenance writes only the sdk version") {
-    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(LAT), Angle::degrees(LON)};
+    const NavFix fix{FixTime::receiver(fix_timestamp()), Angle::degrees(LAT), Angle::degrees(LON)};
 
     auto file = NavFile::from_bytes(FileBuilder{}.add_nav_fix(fix).finish().to_bytes());
 
@@ -273,7 +279,7 @@ TEST_CASE("travel mode names round-trip through travel_mode_from_name") {
 }
 
 TEST_CASE("round-trip: velocity unit conversions are consistent") {
-    NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(LAT), Angle::degrees(LON)};
+    NavFix fix{FixTime::receiver(fix_timestamp()), Angle::degrees(LAT), Angle::degrees(LON)};
     fix.speed = Velocity::kmh(72.0); // 20 m/s
 
     auto file = FileBuilder{}.add_nav_fix(fix).finish();

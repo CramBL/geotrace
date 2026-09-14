@@ -6,6 +6,7 @@
 #include <optional>
 #include <stdexcept>
 
+#include "test_timestamps.hpp"
 #include "test_undeclared_enums.hpp"
 
 using geotrace::Angle;
@@ -18,10 +19,7 @@ using geotrace::MarkerIcon;
 using geotrace::NavFix;
 using geotrace::Satellite;
 using geotrace::SatelliteReport;
-using geotrace::Timestamp;
 using geotrace::TravelMode;
-
-constexpr Timestamp FIX_TIME{1'700'000'000'000'000};
 
 constexpr std::uint8_t FIRST_UNDECLARED_CONSTELLATION_CODE =
     static_cast<std::uint8_t>(Constellation::Qzss) + 1;
@@ -33,7 +31,7 @@ constexpr std::uint8_t FIRST_UNDECLARED_TRAVEL_MODE_CODE =
 namespace {
 
 NavFix one_fix() {
-    return NavFix{FixTime::receiver(FIX_TIME), Angle::degrees(51.5), Angle::degrees(-0.1)};
+    return NavFix{FixTime::receiver(fix_timestamp()), Angle::degrees(51.5), Angle::degrees(-0.1)};
 }
 
 } // namespace
@@ -47,7 +45,7 @@ TEST_CASE("an undeclared travel mode throws std::invalid_argument") {
 }
 
 TEST_CASE("an undeclared constellation throws and states the satellite's index") {
-    SatelliteReport report{FixTime::receiver(FIX_TIME), {}};
+    SatelliteReport report{FixTime::receiver(fix_timestamp()), {}};
     report.tracked.push_back(
         Satellite{Constellation::Galileo, 1, true, std::nullopt, std::nullopt, std::nullopt});
     report.tracked.push_back(Satellite{undeclared_enum_value<Constellation>(), 2, true,
@@ -64,7 +62,7 @@ TEST_CASE("an undeclared constellation throws and states the satellite's index")
 TEST_CASE("an annotation with an undeclared icon throws std::invalid_argument") {
     FileBuilder builder;
     builder.add(one_fix());
-    const Annotation annotation{FIX_TIME, "waypoint", undeclared_enum_value<MarkerIcon>()};
+    const Annotation annotation{fix_timestamp(), "waypoint", undeclared_enum_value<MarkerIcon>()};
     CHECK_THROWS_AS(builder.add_annotation(annotation), std::invalid_argument);
     CHECK(builder.status().code == GTD_ERR_INVALID_ARGUMENT);
     CHECK(builder.status().description == "MarkerIcon has no enumerator with the value 200");
