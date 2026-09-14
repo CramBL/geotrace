@@ -52,6 +52,22 @@ fn legacy_invalid_unit_metadata_cannot_be_new_writer_input() {
 }
 
 #[test]
+fn a_channel_description_with_a_nul_byte_is_rejected() {
+    let error = Channel::builder()
+        .name("speed")
+        .description("before\0after")
+        .times(vec![test_util::base()])
+        .values(vec![1.0])
+        .build()
+        .expect_err("the description has a nul byte");
+
+    assert_eq!(
+        error.to_string(),
+        "channel \"speed\": the description has a nul byte at offset 6"
+    );
+}
+
+#[test]
 fn channel_period_requires_a_positive_angular_unit() {
     let build = |unit: Option<ChannelUnit>, period: Option<Angle>| {
         Channel::builder()

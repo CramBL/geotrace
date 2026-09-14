@@ -91,6 +91,14 @@ def test_malformed_channel_raises() -> None:
         Channel("accel", [T0], [1.0], unit="gm")
 
 
+def test_a_channel_description_with_a_nul_byte_raises() -> None:
+    with pytest.raises(
+        ValueError,
+        match='^channel "speed": the description has a nul byte at offset 6$',
+    ):
+        Channel("speed", [T0], [1.0], description="before\0after")
+
+
 def test_custom_channel_unit_is_an_explicit_escape_hatch() -> None:
     rpm = ChannelUnit.custom("rpm")
     channel = Channel("shaft_speed", [T0], [1200.0], unit=rpm)

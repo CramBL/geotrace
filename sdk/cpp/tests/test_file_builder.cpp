@@ -4,10 +4,12 @@
 
 #include <chrono>
 #include <cstddef>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "test_timestamps.hpp"
 
@@ -23,6 +25,7 @@
 
 using geotrace::Angle;
 using geotrace::Annotation;
+using geotrace::Channel;
 using geotrace::Constellation;
 using geotrace::EventMarker;
 using geotrace::EventMarkerStyle;
@@ -38,6 +41,24 @@ using geotrace::Satellite;
 using geotrace::SatelliteReport;
 using geotrace::Timestamp;
 using geotrace::Velocity;
+
+namespace {
+
+struct StringArgumentWithANulByte {
+    GtdStatus status;
+    std::string message;
+    std::function<void(FileBuilder &)> call;
+};
+
+Channel one_sample_channel(std::string name) {
+    Channel channel{};
+    channel.name = std::move(name);
+    channel.times = {fix_timestamp()};
+    channel.values = {1.0};
+    return channel;
+}
+
+} // namespace
 
 TEST_CASE("FileBuilder: single nav fix produces a valid NavFile") {
     const NavFix fix{FixTime::receiver(fix_timestamp()), Angle::degrees(51.5074),
@@ -256,6 +277,63 @@ TEST_CASE("FileBuilder: InvalidPathError thrown for malformed variant path") {
     const EventMarker marker{"bad path with spaces!", fix_timestamp()};
 
     CHECK_THROWS_AS(builder.add_event_marker(marker), InvalidPathError);
+}
+
+TEST_CASE("FileBuilder: a string argument with a nul byte throws and states the string") {
+    const std::string with_a_nul_byte = std::string{"before"} + '\0' + "after";
+
+    Channel described_with_a_nul_byte = one_sample_channel("speed");
+    described_with_a_nul_byte.description = with_a_nul_byte;
+    Channel labelled_with_a_nul_byte = one_sample_channel("accel");
+    labelled_with_a_nul_byte.components = {"x", with_a_nul_byte};
+    labelled_with_a_nul_byte.values = {1.0, 2.0};
+
+    const std::vector<StringArgumentWithANulByte> arguments{
+        {GTD_ERR_INVALID_ARGUMENT, "the title value has a nul byte at offset 6",
+         [&](FileBuilder &builder) { builder.title(with_a_nul_byte); }},
+        {GTD_ERR_INVALID_ARGUMENT, "the device value has a nul byte at offset 6",
+         [&](FileBuilder &builder) { builder.device(with_a_nul_byte); }},
+        {GTD_ERR_INVALID_ARGUMENT, "the notes value has a nul byte at offset 6",
+         [&](FileBuilder &builder) { builder.notes(with_a_nul_byte); }},
+        {GTD_ERR_INVALID_ARGUMENT, "the identity value has a nul byte at offset 6",
+         [&](FileBuilder &builder) { builder.identity(with_a_nul_byte); }},
+        {GTD_ERR_INVALID_CHANNEL, "the channel name has a nul byte at offset 6",
+         [&](FileBuilder &builder) { builder.add_channel(one_sample_channel(with_a_nul_byte)); }},
+        {GTD_ERR_INVALID_CHANNEL, "channel \"speed\": the description has a nul byte at offset 6",
+         [&](FileBuilder &builder) { builder.add_channel(described_with_a_nul_byte); }},
+        {GTD_ERR_INVALID_CHANNEL,
+         "channel \"accel\": the label of component 1 has a nul byte at offset 6",
+         [&](FileBuilder &builder) { builder.add_channel(labelled_with_a_nul_byte); }},
+        {GTD_ERR_INVALID_ARGUMENT, "the annotation label has a nul byte at offset 6",
+         [&](FileBuilder &builder) {
+             builder.add_annotation(Annotation{fix_timestamp(), with_a_nul_byte});
+         }},
+        {GTD_ERR_INVALID_PATH, "the event marker variant path has a nul byte at offset 6",
+         [&](FileBuilder &builder) {
+             builder.add_event_marker(EventMarker{with_a_nul_byte, fix_timestamp()});
+         }},
+        {GTD_ERR_INVALID_ARGUMENT, "the event marker annotation has a nul byte at offset 6",
+         [&](FileBuilder &builder) {
+             builder.add_event_marker(EventMarker{"power/boot", fix_timestamp(), with_a_nul_byte});
+         }},
+        {GTD_ERR_INVALID_PATH, "the event marker style variant path has a nul byte at offset 6",
+         [&](FileBuilder &builder) {
+             builder.add_event_marker_style(EventMarkerStyle{with_a_nul_byte});
+         }},
+        {GTD_ERR_INVALID_ARGUMENT, "the event marker style color has a nul byte at offset 6",
+         [&](FileBuilder &builder) {
+             builder.add_event_marker_style(
+                 EventMarkerStyle{"power/boot", std::nullopt, with_a_nul_byte});
+         }},
+    };
+
+    for (const StringArgumentWithANulByte &argument : arguments) {
+        CAPTURE(argument.message);
+        FileBuilder builder;
+        CHECK_THROWS(argument.call(builder));
+        CHECK(builder.status().code == argument.status);
+        CHECK(builder.status().description == argument.message);
+    }
 }
 
 TEST_CASE("FileBuilder: move semantics work") {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import struct
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -221,6 +222,23 @@ def test_meta_travel_mode_affects_eq() -> None:
     assert Meta(travel_mode=TravelMode.CAR) != Meta()
 
 
+@pytest.mark.parametrize(
+    ("field", "field_name"),
+    [
+        ("title", "title"),
+        ("device", "device"),
+        ("notes", "notes"),
+        ("identity", "identity"),
+        ("travel_mode", "travel mode"),
+    ],
+)
+def test_meta_with_a_nul_byte_raises(field: str, field_name: str) -> None:
+    with pytest.raises(
+        ValueError, match=f"^the {field_name} value has a nul byte at offset 6$"
+    ):
+        Meta(**{field: "before\0after"})
+
+
 def _three_point_builder() -> NavFileBuilder:
     b = NavFileBuilder()
     for i, (lat, lon) in enumerate([(51.5, -0.1), (51.51, -0.11), (51.52, -0.12)]):
@@ -283,6 +301,27 @@ def test_builder_with_title_only() -> None:
     assert f.meta.title == "Solo title"
     assert f.meta.device is None
     assert f.meta.notes is None
+
+
+@pytest.mark.parametrize(
+    ("set_value", "field"),
+    [
+        (NavFileBuilder.with_title, "title"),
+        (NavFileBuilder.with_device, "device"),
+        (NavFileBuilder.with_notes, "notes"),
+    ],
+)
+def test_a_builder_setter_with_a_nul_byte_raises_and_leaves_the_builder_usable(
+    set_value: Callable[[NavFileBuilder, str], NavFileBuilder], field: str
+) -> None:
+    builder = NavFileBuilder()
+    with pytest.raises(
+        ValueError, match=f"^the {field} value has a nul byte at offset 6$"
+    ):
+        set_value(builder, "before\0after")
+
+    nav_file = builder.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0)).finish()
+    assert getattr(nav_file.meta, field) is None
 
 
 def test_builder_with_satellite_reports() -> None:
