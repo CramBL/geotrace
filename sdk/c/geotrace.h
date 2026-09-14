@@ -1411,7 +1411,8 @@ GtdStatus gtd_nav_file_get_satellite(const GtdNavFile *file,
  * Open and parse a `.gtd` navigation file.
  *
  * On success, `*out` is set to a new handle.
- * On failure, `*out` is NULL and `gtd_last_error()` describes the error.
+ * On failure, `*out` is set to NULL for a non-null `out`, including when `path` is NULL or not
+ * valid UTF-8, and `gtd_last_error()` describes the error.
  *
  * @param path File path to open.
  * @param out  Output parameter for the file handle.
@@ -1424,6 +1425,10 @@ GtdStatus gtd_nav_file_open(const char *path, GtdNavFile **out);
  * Parse a navigation file from an in-memory buffer.
  *
  * The caller retains ownership of @p data. It may be freed after this call returns.
+ *
+ * On success, `*out` is set to a new handle.
+ * On failure, `*out` is set to NULL for a non-null `out`, and `gtd_last_error()` describes the
+ * error.
  *
  * @param data   Pointer to the serialised file data.
  * @param length Length of the data in bytes.

@@ -1,7 +1,5 @@
 //! Consuming a builder into a `GtdNavFile`.
 
-use std::ptr;
-
 use geotrace_sdk::BuildError;
 
 use super::GtdFileBuilder;
@@ -38,10 +36,7 @@ pub unsafe extern "C" fn gtd_builder_finish(
     out: *mut *mut GtdNavFile,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
-        // SAFETY: a non-null `out` points to a writable `GtdNavFile *` (caller contract).
-        if let Some(out) = unsafe { out.as_mut() } {
-            *out = ptr::null_mut();
-        }
+        write_null_if_nonnull!(out);
         // SAFETY: a non-null `builder` comes from `gtd_builder_create` through `Box::into_raw`,
         // and no earlier `gtd_builder_finish` or `gtd_builder_destroy` call has freed it (caller
         // contract).
