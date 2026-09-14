@@ -38,7 +38,8 @@ _NOTE = [
 ]
 _HELP = [
     "move the helpers into `src/test_util.rs` behind the crate's `test-util` feature and",
-    "call them as `<crate>::test_util::…`, or exempt the file on its first line with:",
+    "call them as `<crate>::test_util::…`, or, for a published crate, into an unpublished",
+    "test-only crate, or exempt the file on its first line with:",
 ]
 
 DEFINITION = Check(

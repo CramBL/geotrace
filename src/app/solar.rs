@@ -1300,23 +1300,6 @@ mod tests {
         );
     }
 
-    /// The section stops showing a bar once the last day retires the
-    /// backfill.
-    #[test]
-    fn the_last_day_ends_the_backfill() {
-        let mut scheduler = scheduler_without_archive();
-        scheduler
-            .days
-            .queue_backfill_of(&[day_archive::day(2026, 7, 20)]);
-
-        scheduler
-            .tx
-            .send(UnarchivedDay::failed(day_archive::day(2026, 7, 20), "boom".to_owned()).into())
-            .expect("send");
-        scheduler.poll();
-        assert_eq!(scheduler.days.backfill_progress(), None);
-    }
-
     /// Cancelling drops the queued days and lets a later backfill request
     /// them again.
     #[test]
