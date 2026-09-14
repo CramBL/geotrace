@@ -89,11 +89,13 @@ typedef enum {
      */
     GTD_ERR_PARSE = 9,
     /**
-     * Malformed channel (bad name/component or length mismatch).
+     * Malformed channel: a bad name or component label, a length mismatch, or a
+     * string with a nul byte.
      */
     GTD_ERR_INVALID_CHANNEL = 10,
     /**
-     * A string is longer than the `.gtd` field that holds it.
+     * A string is longer than the `.gtd` field that stores it, or than the struct
+     * field that a read copies it into.
      */
     GTD_ERR_FIELD_TOO_LONG = 11,
     /**
@@ -437,12 +439,9 @@ typedef void (*GtdLogCallback)(GtdLogLevel level,
 /**
  * Channel metadata returned by `gtd_nav_file_get_channel()`.
  *
- * Sample timestamps, values, and component labels are fetched separately with
- * `gtd_nav_file_channel_times()`, `gtd_nav_file_channel_values()`, and
- * `gtd_nav_file_get_channel_component()`. A @ref component_count of zero marks
- * a scalar channel. All string fields are null-terminated and truncated to
- * their buffer size if longer. `gtd_nav_file_get_channel_unit()` reads the unit
- * without that limit and reports whether it is a recognized unit.
+ * Every string pointer points into the file handle and is valid until
+ * `gtd_nav_file_destroy()`. Sample timestamps and values are fetched separately
+ * with `gtd_nav_file_channel_times()` and `gtd_nav_file_channel_values()`.
  *
  * Only a channel with @ref period_deg set wraps: a `deg` channel without it
  * holds an unbounded angle.
@@ -451,27 +450,25 @@ typedef struct {
     /**
      * Channel name.
      */
-    char name[256];
+    const char *name;
     /**
-     * Non-zero if @ref unit is set.
+     * Unit of the values, or NULL for a channel without a unit.
+     * `gtd_nav_file_get_channel_unit()` reports whether it is a recognized unit.
      */
-    uint8_t has_unit;
-    /**
-     * Unit of the values, when @ref has_unit.
-     */
-    char unit[64];
+    const char *unit;
     /**
      * Wrap period in degrees, or absent for a linear channel.
      */
     GtdOptF64 period_deg;
     /**
-     * Non-zero if @ref description is set.
+     * Description, or NULL for a channel without one.
      */
-    uint8_t has_description;
+    const char *description;
     /**
-     * Description, when @ref has_description.
+     * The @ref component_count component labels of a vector channel, or NULL
+     * for a scalar channel.
      */
-    char description[1024];
+    const char *const *components;
     /**
      * Number of vector components (0 = scalar channel).
      */
@@ -1184,17 +1181,19 @@ size_t gtd_nav_file_channel_count(const GtdNavFile *file);
  * @param out   Caller-allocated struct to fill.
  *
  * @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last channel.
+ * @return `GTD_ERR_INVALID_CHANNEL` if a string of the channel has a nul byte.
+ *         `gtd_last_error()` states the string and the byte offset.
  */
 GtdStatus gtd_nav_file_get_channel(const GtdNavFile *file, size_t index, GtdChannelInfo *out);
 
 /**
- * Read a channel unit without the fixed-size @ref GtdChannelInfo buffer limit.
+ * Copy the unit label of the channel at @p index into @p out, and report whether
+ * it is a recognized unit.
  *
  * Pass NULL @p out and zero @p out_capacity to query the required byte length,
  * including the trailing null byte. A channel without a unit reports zero.
- * With a non-zero @p out_capacity below the required length, the SDK writes the
- * first `out_capacity - 1` bytes of the label and a null byte, and returns
- * `GTD_OK`.
+ * With a non-zero @p out_capacity below the required length, the SDK leaves
+ * @p out unwritten and returns `GTD_ERR_OUT_OF_RANGE`.
  *
  * @p is_custom is non-zero for any label that is not a recognized unit. That
  * covers both a custom label and a legacy label an older writer stored, which
@@ -1209,7 +1208,8 @@ GtdStatus gtd_nav_file_get_channel(const GtdNavFile *file, size_t index, GtdChan
  * @param required_length Receives the label's byte length including the null byte.
  * @param is_custom       Receives the recognized/custom distinction. May be NULL.
  *
- * @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last channel.
+ * @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last channel or
+ *         @p out_capacity is below the required length.
  */
 GtdStatus gtd_nav_file_get_channel_unit(const GtdNavFile *file,
                                         size_t index,
@@ -1217,25 +1217,6 @@ GtdStatus gtd_nav_file_get_channel_unit(const GtdNavFile *file,
                                         size_t out_capacity,
                                         size_t *required_length,
                                         uint8_t *is_custom);
-
-/**
- * Copy the label of a vector channel's component into @p out (null-terminated,
- * truncated to @p out_capacity bytes).
- *
- * @param file            File handle.
- * @param channel_index   Channel index.
- * @param component_index Component index. Must be less than `GtdChannelInfo::component_count`.
- * @param out             Caller-allocated buffer of @p out_capacity bytes.
- * @param out_capacity    Capacity of @p out in bytes.
- *
- * @return `GTD_ERR_OUT_OF_RANGE` if an index is past the end or @p out_capacity
- *         is zero, `GTD_ERR_NULL_ARGUMENT` if @p out is NULL.
- */
-GtdStatus gtd_nav_file_get_channel_component(const GtdNavFile *file,
-                                             size_t channel_index,
-                                             size_t component_index,
-                                             char *out,
-                                             size_t out_capacity);
 
 /**
  * Copy up to @p out_capacity sample timestamps of the channel at @p channel_index into @p out.
@@ -1477,6 +1458,8 @@ size_t gtd_nav_file_event_marker_style_count(const GtdNavFile *file);
  * @param out   Caller-allocated struct to fill.
  *
  * @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last event marker style.
+ * @return `GTD_ERR_FIELD_TOO_LONG` if a string of the style is longer than its
+ *         field of @ref GtdEventMarkerStyleInfo. `gtd_last_error()` states the field.
  */
 GtdStatus gtd_nav_file_get_event_marker_style(const GtdNavFile *file,
                                               size_t index,

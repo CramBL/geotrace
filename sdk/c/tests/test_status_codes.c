@@ -45,11 +45,6 @@ Test(status_codes, index_past_the_end_is_out_of_range) {
     cr_assert_eq(gtd_nav_file_get_channel(file, 99, &channel), GTD_ERR_OUT_OF_RANGE);
 
     char label[16];
-    cr_assert_eq(gtd_nav_file_get_channel_component(file, 0, 99, label, sizeof label),
-                 GTD_ERR_OUT_OF_RANGE);
-    cr_assert_eq(gtd_nav_file_get_channel_component(file, 99, 0, label, sizeof label),
-                 GTD_ERR_OUT_OF_RANGE);
-
     size_t required = 0;
     cr_assert_eq(gtd_nav_file_get_channel_unit(file, 99, label, sizeof label, &required, NULL),
                  GTD_ERR_OUT_OF_RANGE);
@@ -66,25 +61,13 @@ Test(status_codes, index_within_the_file_is_ok) {
     GtdChannelInfo channel;
     cr_assert_eq(gtd_nav_file_get_channel(file, 0, &channel), GTD_OK);
 
-    char label[16];
-    cr_assert_eq(gtd_nav_file_get_channel_component(file, 0, 1, label, sizeof label), GTD_OK);
-    cr_assert_str_eq(label, "y");
+    cr_assert_str_eq(channel.components[1], "y");
 
+    char label[16];
     size_t required = 0;
     cr_assert_eq(gtd_nav_file_get_channel_unit(file, 0, label, sizeof label, &required, NULL),
                  GTD_OK);
     cr_assert_str_eq(label, "m/s2");
-
-    gtd_nav_file_destroy(file);
-}
-
-Test(status_codes, zero_component_buffer_capacity_is_out_of_range) {
-    GtdNavFile *file = build_file();
-
-    char label[16];
-    cr_assert_eq(gtd_nav_file_get_channel_component(file, 0, 0, label, 0), GTD_ERR_OUT_OF_RANGE);
-    cr_assert_eq(gtd_nav_file_get_channel_component(file, 0, 0, NULL, sizeof label),
-                 GTD_ERR_NULL_ARGUMENT);
 
     gtd_nav_file_destroy(file);
 }

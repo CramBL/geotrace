@@ -2,9 +2,9 @@
 
 use std::ffi::c_char;
 
-use geotrace_sdk::AnnotationIcon;
+use geotrace_sdk::{AnnotationIcon, Marker};
 
-use super::GtdNavFile;
+use super::{GtdNavFile, StructFieldName};
 use crate::GtdTimestamp;
 use crate::error::{self, GtdStatus};
 use crate::icon::GtdMarkerIcon;
@@ -68,21 +68,37 @@ pub unsafe extern "C" fn gtd_nav_file_get_marker(
             return GtdStatus::GTD_ERR_OUT_OF_RANGE;
         };
 
-        let label = marker.annotation.label();
-        super::fill_c_str(&mut out.label, label.unwrap_or(""));
-        out.has_label = u8::from(label.is_some());
-
-        let icon = marker.annotation.icon();
-        out.icon = match icon {
-            AnnotationIcon::Icon(icon) => GtdMarkerIcon::from(icon),
-            AnnotationIcon::Unrecognized(_) => GtdMarkerIcon::GTD_ICON_PIN,
-        };
-        out.icon_code = icon.wire_code();
-
-        out.time = timestamp::ts_from_datetime(marker.annotation.time());
-        out.lat_deg = marker.lat.as_degrees();
-        out.lon_deg = marker.lon.as_degrees();
-
-        GtdStatus::GTD_OK
+        match GtdMarkerInfo::new(marker) {
+            Ok(info) => {
+                *out = info;
+                GtdStatus::GTD_OK
+            }
+            Err(status) => status,
+        }
     })
+}
+
+impl GtdMarkerInfo {
+    fn new(marker: &Marker) -> Result<Self, GtdStatus> {
+        let label = marker.annotation.label();
+        let icon = marker.annotation.icon();
+        let mut info = Self {
+            label: [0; 256],
+            has_label: u8::from(label.is_some()),
+            icon: match icon {
+                AnnotationIcon::Icon(icon) => GtdMarkerIcon::from(icon),
+                AnnotationIcon::Unrecognized(_) => GtdMarkerIcon::GTD_ICON_PIN,
+            },
+            icon_code: icon.wire_code(),
+            time: timestamp::ts_from_datetime(marker.annotation.time()),
+            lat_deg: marker.lat.as_degrees(),
+            lon_deg: marker.lon.as_degrees(),
+        };
+        super::fill_struct_field(
+            &mut info.label,
+            label.unwrap_or(""),
+            StructFieldName("GtdMarkerInfo::label"),
+        )?;
+        Ok(info)
+    }
 }

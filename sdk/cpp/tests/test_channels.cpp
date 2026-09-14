@@ -159,6 +159,35 @@ TEST_CASE("channels: long custom units round-trip losslessly") {
     CHECK(read.unit->is_custom());
 }
 
+TEST_CASE("channels: a long multibyte name, unit, description and component label read back "
+          "whole") {
+    const std::string name = "n" + std::string(299, 'a');
+    const std::string component = "c" + std::string(299, 'b');
+    std::string unit;
+    for (int i = 0; i < 40; ++i) {
+        unit += "µ";
+    }
+    std::string description;
+    for (int i = 0; i < 600; ++i) {
+        description += "µ";
+    }
+    Channel channel{};
+    channel.name = name;
+    channel.unit = geotrace::ChannelUnit::custom(unit);
+    channel.description = description;
+    channel.components = {component, "y"};
+    channel.times = {fix_timestamp()};
+    channel.values = {1.0, 2.0};
+
+    auto file = NavFile::from_bytes(FileBuilder{}.add_channel(channel).finish().to_bytes());
+    auto read = file.channel(0);
+    CHECK(read.name == name);
+    REQUIRE(read.unit.has_value());
+    CHECK(read.unit->label() == unit);
+    CHECK(read.description == description);
+    CHECK(read.components == std::vector<std::string>{component, "y"});
+}
+
 TEST_CASE("channels: generated unit catalog exposes every canonical label") {
     std::vector<std::string> labels;
     for (std::uint8_t raw = 0; raw <= static_cast<std::uint8_t>(RecognizedUnit::PerH); ++raw) {

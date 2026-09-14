@@ -15,9 +15,9 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use geotrace_sdk::{
-    Angle, Annotation, AnnotationIcon, Constellation, DateTime, Duration, EventMarkerColor,
-    EventMarkerIconChoice, EventMarkerStyle, NavFile, NavFileBuilder, NavFix, NavFixTime,
-    Satellite, SatelliteReport, Velocity,
+    Angle, Annotation, AnnotationIcon, Channel, Constellation, DateTime, Duration,
+    EventMarkerColor, EventMarkerIconChoice, EventMarkerStyle, NavFile, NavFileBuilder, NavFix,
+    NavFixTime, Satellite, SatelliteReport, Velocity,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 
@@ -40,6 +40,10 @@ fn main() {
     write_fixture(
         &unrecognized_marker_icon(),
         &fixtures.join("unrecognized_marker_icon.gtd"),
+    );
+    write_fixture(
+        &channel_description_with_a_nul_byte(),
+        &fixtures.join("channel_description_with_a_nul_byte.gtd"),
     );
     write_bytes(
         &nav_point_idx_past_the_nav_points(),
@@ -230,6 +234,38 @@ fn unrecognized_marker_icon() -> NavFile {
             .icon(AnnotationIcon::Unrecognized(UNRECOGNIZED_MARKER_ICON_CODE))
             .build()
             .expect("gen_fixture: annotation label fits the field"),
+    );
+
+    recorder.finish().expect("gen_fixture: build failed")
+}
+
+/// A channel whose description has a nul byte at offset 6.
+fn channel_description_with_a_nul_byte() -> NavFile {
+    let t0 = DateTime::from_timestamp_micros(1_700_000_000_000_000).expect("valid timestamp");
+
+    let mut recorder = NavFileBuilder::new()
+        .with_scrubbed_provenance()
+        .with_title("channel description with a nul byte fixture")
+        .with_device("gen_fixture")
+        .open();
+
+    recorder.add_nav_fix(NavFix {
+        time: NavFixTime::Receiver(t0),
+        lat: Angle::degrees(51.5074),
+        lon: Angle::degrees(-0.1278),
+        heading: None,
+        speed: None,
+        eph_m: None,
+    });
+
+    recorder.add_channel(
+        Channel::builder()
+            .name("speed")
+            .description("before\0after")
+            .times(vec![t0])
+            .values(vec![1.0])
+            .build()
+            .expect("gen_fixture: channel is valid"),
     );
 
     recorder.finish().expect("gen_fixture: build failed")

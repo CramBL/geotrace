@@ -2210,7 +2210,10 @@ class [[nodiscard]] NavFile {
         return ::gtd_nav_file_channel_count(impl_.get());
     }
 
-    /** Return the channel at @p idx, or an out-of-range error. */
+    /**
+     * Return the channel at @p idx, or an out-of-range error, or
+     * `GTD_ERR_INVALID_CHANNEL` for a channel string with a nul byte.
+     */
     Result<ChannelView> try_channel(std::size_t idx) const {
         GtdChannelInfo info{};
         const GtdStatus status = ::gtd_nav_file_get_channel(impl_.get(), idx, &info);
@@ -2218,53 +2221,36 @@ class [[nodiscard]] NavFile {
             return Status::from(status);
         }
 
-        // GtdChannelInfo holds its strings in fixed C buffers, and the component
-        // accessor fills a buffer that the caller declares.
-        // NOLINTBEGIN(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
         ChannelView view{};
         view.name = info.name;
-        size_t unit_len = 0;
-        std::uint8_t unit_is_custom = 0;
-        const GtdStatus unit_size_status = ::gtd_nav_file_get_channel_unit(
-            impl_.get(), idx, nullptr, 0, &unit_len, &unit_is_custom);
-        if (unit_size_status != GTD_OK) {
-            return Status::from(unit_size_status);
-        }
-        if (unit_len > 0) {
-            std::vector<char> unit_buffer(unit_len);
-            const GtdStatus unit_status =
-                ::gtd_nav_file_get_channel_unit(impl_.get(), idx, unit_buffer.data(),
-                                                unit_buffer.size(), &unit_len, &unit_is_custom);
+        if (info.unit != nullptr) {
+            std::size_t unit_length = 0;
+            std::uint8_t unit_is_custom = 0;
+            const GtdStatus unit_status = ::gtd_nav_file_get_channel_unit(
+                impl_.get(), idx, nullptr, 0, &unit_length, &unit_is_custom);
             if (unit_status != GTD_OK) {
                 return Status::from(unit_status);
             }
-            const std::string label{unit_buffer.data()};
-            view.unit = ChannelUnit::from_file_label(label, unit_is_custom != 0);
+            view.unit = ChannelUnit::from_file_label(info.unit, unit_is_custom != 0);
         }
         view.period = info.period_deg.present != 0
                           ? std::optional<Angle>{Angle::degrees(info.period_deg.value)}
                           : std::nullopt;
         view.description =
-            info.has_description != 0 ? std::string{info.description} : std::string{};
+            info.description != nullptr ? std::string{info.description} : std::string{};
+        // The C SDK points `components` at `component_count` labels.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+        view.components.assign(info.components, info.components + info.component_count);
 
-        view.components.reserve(info.component_count);
-        for (std::size_t c = 0; c < info.component_count; ++c) {
-            // Matches GtdChannelInfo::name[256]. The C API truncates a longer
-            // label and cannot report the untruncated length.
-            static constexpr std::size_t kChannelLabelCap = 256;
-            char buf[kChannelLabelCap] = {};
-            if (::gtd_nav_file_get_channel_component(impl_.get(), idx, c, buf, sizeof(buf)) ==
-                GTD_OK) {
-                view.components.emplace_back(buf);
-            }
-        }
-
-        // The buffer sizes come from `info`, which holds the authoritative
-        // counts.
         const std::size_t columns = info.component_count > 0 ? info.component_count : 1;
         std::vector<GtdTimestamp> raw_times(info.sample_count);
-        if (info.sample_count > 0) {
+        const std::size_t time_count =
             ::gtd_nav_file_channel_times(impl_.get(), idx, raw_times.data(), raw_times.size());
+        if (time_count != info.sample_count) {
+            return Status{GTD_ERR_INTERNAL,
+                          "gtd_nav_file_channel_times returned " + std::to_string(time_count) +
+                              " timestamps, and GtdChannelInfo::sample_count is " +
+                              std::to_string(info.sample_count)};
         }
         view.times.reserve(info.sample_count);
         for (const auto &time : raw_times) {
@@ -2272,17 +2258,22 @@ class [[nodiscard]] NavFile {
         }
 
         view.values.resize(info.sample_count * columns);
-        if (!view.values.empty()) {
+        const std::size_t value_count =
             ::gtd_nav_file_channel_values(impl_.get(), idx, view.values.data(), view.values.size());
+        if (value_count != view.values.size()) {
+            return Status{GTD_ERR_INTERNAL, "gtd_nav_file_channel_values returned " +
+                                                std::to_string(value_count) +
+                                                " values, and the GtdChannelInfo counts give " +
+                                                std::to_string(view.values.size())};
         }
 
         return view;
-        // NOLINTEND(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
     }
 
     /**
      * Return the channel at @p idx.
      * @throws std::out_of_range if `idx >= channel_count()`.
+     * @throws InvalidChannelError if a string of the channel has a nul byte.
      */
     [[nodiscard]] ChannelView channel(std::size_t idx) const {
         return try_channel(idx).value_or_throw();

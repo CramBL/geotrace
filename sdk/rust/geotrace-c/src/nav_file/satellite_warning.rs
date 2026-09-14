@@ -2,7 +2,9 @@
 
 use std::ffi::c_char;
 
-use super::GtdNavFile;
+use geotrace_sdk::SatelliteWarning;
+
+use super::{GtdNavFile, StructFieldName};
 use crate::error::{self, GtdStatus};
 
 /// One satellite data quality issue, returned by `gtd_nav_file_get_satellite_warning()`.
@@ -58,10 +60,33 @@ pub unsafe extern "C" fn gtd_nav_file_get_satellite_warning(
             return GtdStatus::GTD_ERR_OUT_OF_RANGE;
         };
 
-        out.count = warning.count;
-        super::fill_c_str(&mut out.issue, warning.issue);
-        super::fill_c_str(&mut out.description, warning.description);
-
-        GtdStatus::GTD_OK
+        match GtdSatelliteWarningInfo::new(warning) {
+            Ok(info) => {
+                *out = info;
+                GtdStatus::GTD_OK
+            }
+            Err(status) => status,
+        }
     })
+}
+
+impl GtdSatelliteWarningInfo {
+    fn new(warning: &SatelliteWarning) -> Result<Self, GtdStatus> {
+        let mut info = Self {
+            count: warning.count,
+            issue: [0; 128],
+            description: [0; 512],
+        };
+        super::fill_struct_field(
+            &mut info.issue,
+            warning.issue,
+            StructFieldName("GtdSatelliteWarningInfo::issue"),
+        )?;
+        super::fill_struct_field(
+            &mut info.description,
+            warning.description,
+            StructFieldName("GtdSatelliteWarningInfo::description"),
+        )?;
+        Ok(info)
+    }
 }
