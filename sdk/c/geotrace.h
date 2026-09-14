@@ -1292,30 +1292,93 @@ GtdStatus gtd_nav_file_get_marker(const GtdNavFile *file, size_t index, GtdMarke
 /**
  * Return the file title, or NULL if not set.
  *
+ * Returns NULL for a title with a nul byte. `gtd_nav_file_title_with_length()` returns the whole
+ * title.
+ *
  * The returned pointer is valid for the lifetime of @p file.
  */
 const char *gtd_nav_file_title(const GtdNavFile *file);
 
 /**
+ * Return the file title and write its byte length to @p length, or return NULL if not set.
+ *
+ * Returns the whole title, nul bytes included. The byte after the title is 0.
+ *
+ * @param file   File handle. Returns NULL if NULL.
+ * @param length Receives the byte length of the title, or 0 with a NULL return. May be NULL.
+ *
+ * The returned pointer is valid for the lifetime of @p file.
+ */
+const char *gtd_nav_file_title_with_length(const GtdNavFile *file, size_t *length);
+
+/**
  * Return the recording device name, or NULL if not set.
+ *
+ * Returns NULL for a device name with a nul byte. `gtd_nav_file_device_with_length()` returns
+ * the whole device name.
  *
  * The returned pointer is valid for the lifetime of @p file.
  */
 const char *gtd_nav_file_device(const GtdNavFile *file);
 
 /**
+ * Return the recording device name and write its byte length to @p length, or return NULL if
+ * not set.
+ *
+ * Returns the whole device name, nul bytes included. The byte after the device name is 0.
+ *
+ * @param file   File handle. Returns NULL if NULL.
+ * @param length Receives the byte length of the device name, or 0 with a NULL return. May be
+ *               NULL.
+ *
+ * The returned pointer is valid for the lifetime of @p file.
+ */
+const char *gtd_nav_file_device_with_length(const GtdNavFile *file, size_t *length);
+
+/**
  * Return the notes string, or NULL if not set.
+ *
+ * Returns NULL for notes with a nul byte. `gtd_nav_file_notes_with_length()` returns the whole
+ * notes string.
  *
  * The returned pointer is valid for the lifetime of @p file.
  */
 const char *gtd_nav_file_notes(const GtdNavFile *file);
 
 /**
+ * Return the notes string and write its byte length to @p length, or return NULL if not set.
+ *
+ * Returns the whole notes string, nul bytes included. The byte after the notes string is 0.
+ *
+ * @param file   File handle. Returns NULL if NULL.
+ * @param length Receives the byte length of the notes string, or 0 with a NULL return. May be
+ *               NULL.
+ *
+ * The returned pointer is valid for the lifetime of @p file.
+ */
+const char *gtd_nav_file_notes_with_length(const GtdNavFile *file, size_t *length);
+
+/**
  * Return the identity string, or NULL if not set.
+ *
+ * Returns NULL for an identity with a nul byte. `gtd_nav_file_identity_with_length()` returns
+ * the whole identity.
  *
  * The returned pointer is valid for the lifetime of @p file.
  */
 const char *gtd_nav_file_identity(const GtdNavFile *file);
+
+/**
+ * Return the identity string and write its byte length to @p length, or return NULL if not set.
+ *
+ * Returns the whole identity, nul bytes included. The byte after the identity is 0.
+ *
+ * @param file   File handle. Returns NULL if NULL.
+ * @param length Receives the byte length of the identity, or 0 with a NULL return. May be NULL.
+ *
+ * The returned pointer is valid for the lifetime of @p file.
+ */
+const char *gtd_nav_file_identity_with_length(const GtdNavFile *file, size_t *length);
 
 /**
  * Return the travel mode wire name, or NULL if not set.
@@ -1325,9 +1388,25 @@ const char *gtd_nav_file_identity(const GtdNavFile *file);
  * by a newer SDK may carry a wire name that fails to parse - such values are
  * still returned here verbatim, never dropped.
  *
+ * Returns NULL for a wire name with a nul byte. `gtd_nav_file_travel_mode_with_length()`
+ * returns the whole wire name.
+ *
  * The returned pointer is valid for the lifetime of @p file.
  */
 const char *gtd_nav_file_travel_mode(const GtdNavFile *file);
+
+/**
+ * Return the travel mode wire name and write its byte length to @p length, or return NULL if not
+ * set.
+ *
+ * Returns the whole wire name, nul bytes included. The byte after the wire name is 0.
+ *
+ * @param file   File handle. Returns NULL if NULL.
+ * @param length Receives the byte length of the wire name, or 0 with a NULL return. May be NULL.
+ *
+ * The returned pointer is valid for the lifetime of @p file.
+ */
+const char *gtd_nav_file_travel_mode_with_length(const GtdNavFile *file, size_t *length);
 
 /**
  * Return the version of the SDK build that wrote the file, or NULL if not set.

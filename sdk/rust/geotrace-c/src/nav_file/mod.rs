@@ -18,6 +18,7 @@ use geotrace_sdk::{NavFile, SatelliteWarning};
 use crate::GtdTimestamp;
 use crate::error::{self, GtdStatus};
 use crate::timestamp;
+use metadata::TerminatedMetaValue;
 
 pub use channel::GtdChannelInfo;
 pub use event_marker::GtdEventMarkerInfo;
@@ -29,11 +30,11 @@ pub use style::GtdEventMarkerStyleInfo;
 /// Opaque handle for a parsed or freshly-built navigation file.
 pub struct GtdNavFile {
     file: NavFile,
-    title: Option<CString>,
-    device: Option<CString>,
-    notes: Option<CString>,
-    identity: Option<CString>,
-    travel_mode: Option<CString>,
+    title: Option<TerminatedMetaValue>,
+    device: Option<TerminatedMetaValue>,
+    notes: Option<TerminatedMetaValue>,
+    identity: Option<TerminatedMetaValue>,
+    travel_mode: Option<TerminatedMetaValue>,
     sdk_version: Option<CString>,
     sdk_git_commit: Option<CString>,
     sdk_commit_time: GtdTimestamp,
@@ -45,15 +46,15 @@ impl GtdNavFile {
     pub(crate) fn from_nav_file(file: NavFile) -> Self {
         let to_cstring = |s: &str| CString::new(s).ok();
         Self {
-            title: file.meta().title().and_then(to_cstring),
-            device: file.meta().device().and_then(to_cstring),
-            notes: file.meta().notes().and_then(to_cstring),
-            identity: file.meta().identity().and_then(to_cstring),
+            title: file.meta().title().map(TerminatedMetaValue::new),
+            device: file.meta().device().map(TerminatedMetaValue::new),
+            notes: file.meta().notes().map(TerminatedMetaValue::new),
+            identity: file.meta().identity().map(TerminatedMetaValue::new),
             travel_mode: file
                 .meta()
                 .travel_mode()
                 .map(geotrace_sdk::TravelMode::name)
-                .and_then(to_cstring),
+                .map(TerminatedMetaValue::new),
             sdk_version: file.meta().sdk_version().and_then(to_cstring),
             sdk_git_commit: file.meta().sdk_git_commit().and_then(to_cstring),
             sdk_commit_time: file

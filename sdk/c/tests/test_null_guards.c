@@ -1,5 +1,7 @@
 #include "../geotrace.h"
 #include <criterion/criterion.h>
+#include <stddef.h>
+#include <stdint.h>
 
 Test(null_guards, builder_null) {
     cr_assert_eq(gtd_builder_set_title(NULL, "x"), GTD_ERR_NULL_ARGUMENT);
@@ -71,6 +73,22 @@ Test(null_guards, nav_file_null) {
     cr_assert_null(gtd_nav_file_notes(NULL));
     cr_assert_null(gtd_nav_file_identity(NULL));
     cr_assert_null(gtd_nav_file_travel_mode(NULL));
+
+    size_t length = SIZE_MAX;
+    cr_assert_null(gtd_nav_file_title_with_length(NULL, &length));
+    cr_assert_eq(length, 0);
+    length = SIZE_MAX;
+    cr_assert_null(gtd_nav_file_device_with_length(NULL, &length));
+    cr_assert_eq(length, 0);
+    length = SIZE_MAX;
+    cr_assert_null(gtd_nav_file_notes_with_length(NULL, &length));
+    cr_assert_eq(length, 0);
+    length = SIZE_MAX;
+    cr_assert_null(gtd_nav_file_identity_with_length(NULL, &length));
+    cr_assert_eq(length, 0);
+    length = SIZE_MAX;
+    cr_assert_null(gtd_nav_file_travel_mode_with_length(NULL, &length));
+    cr_assert_eq(length, 0);
 
     GtdNavPointInfo point;
     cr_assert_eq(gtd_nav_file_get_nav_point(NULL, 0, &point), GTD_ERR_NULL_ARGUMENT);
