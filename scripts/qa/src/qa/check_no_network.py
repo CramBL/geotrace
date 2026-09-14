@@ -119,7 +119,7 @@ _ALLOWED: dict[str, frozenset[str]] = {
     "src/app/solar.rs": _URL_LITERAL_ONLY,
     "src/app/tec.rs": _URL_LITERAL_ONLY,
     "src/app/tec_mirrors_ui.rs": _URL_LITERAL_ONLY,
-    "src/app/ui_tests.rs": _URL_LITERAL_ONLY,
+    "src/app/ui_tests/snap.rs": _URL_LITERAL_ONLY,
     "src/settings.rs": _URL_LITERAL_ONLY,
     # The token test's own tests, which pass `TransportSource::Network` to the
     # settings row and never click the button. `MapboxTokenTest::start` opens
