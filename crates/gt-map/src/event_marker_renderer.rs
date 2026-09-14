@@ -124,58 +124,6 @@ fn resolve_icon(variant_path: &str, style_map: &FxHashMap<String, EventMarkerSty
         .map_or(MarkerIcon::Pin, |s| s.icon)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use gt_types::{EventMarkerStyle, MarkerColor, MarkerIcon};
-
-    fn style(path: &str, icon: MarkerIcon) -> EventMarkerStyle {
-        EventMarkerStyle {
-            variant_path: path.to_string(),
-            icon,
-            color: MarkerColor::new(0, 0, 0),
-        }
-    }
-
-    #[test]
-    fn resolve_icon_returns_icon_from_style_map() {
-        let s = style("power/turn_on", MarkerIcon::Lightning);
-        let map = FxHashMap::from_iter([(s.variant_path.clone(), s)]);
-        assert_eq!(resolve_icon("power/turn_on", &map), MarkerIcon::Lightning);
-    }
-
-    #[test]
-    fn resolve_icon_falls_back_to_pin_when_path_not_in_map() {
-        let map = FxHashMap::default();
-        assert_eq!(resolve_icon("unknown/path", &map), MarkerIcon::Pin);
-    }
-
-    #[test]
-    fn resolve_icon_distinguishes_all_icon_variants() {
-        let icons = [
-            MarkerIcon::Pin,
-            MarkerIcon::Cross,
-            MarkerIcon::Circle,
-            MarkerIcon::Lightning,
-            MarkerIcon::Warning,
-            MarkerIcon::Error,
-            MarkerIcon::Check,
-            MarkerIcon::Satellite,
-            MarkerIcon::SatelliteLost,
-            MarkerIcon::Gear,
-            MarkerIcon::Refresh,
-            MarkerIcon::Download,
-            MarkerIcon::Upload,
-            MarkerIcon::Wrench,
-        ];
-        for icon in icons {
-            let s = style("p", icon);
-            let map = FxHashMap::from_iter([(s.variant_path.clone(), s)]);
-            assert_eq!(resolve_icon("p", &map), icon);
-        }
-    }
-}
-
 fn is_highlighted(highlight: &MapHighlight, point_ref: DataPointRef) -> bool {
     if highlight.sticky.is_some_and(|r| r == point_ref) {
         return true;
@@ -273,14 +221,55 @@ fn draw_event_icon(
 }
 
 #[cfg(test)]
-mod snapshot_tests {
-    use super::*;
-    use crate::test_util;
+mod tests {
+    use gt_types::{EventMarkerStyle, MarkerColor, MarkerIcon};
     use strum::IntoEnumIterator;
 
+    use super::*;
+    use crate::test_util;
+
+    fn style(path: &str, icon: MarkerIcon) -> EventMarkerStyle {
+        EventMarkerStyle {
+            variant_path: path.to_string(),
+            icon,
+            color: MarkerColor::new(0, 0, 0),
+        }
+    }
+
     #[test]
-    fn all_icons_render_correctly() {
-        let icons: Vec<gt_types::MarkerIcon> = gt_types::MarkerIcon::iter().collect();
+    fn resolve_icon_falls_back_to_pin_when_path_not_in_map() {
+        let map = FxHashMap::default();
+        assert_eq!(resolve_icon("unknown/path", &map), MarkerIcon::Pin);
+    }
+
+    #[test]
+    fn resolve_icon_distinguishes_all_icon_variants() {
+        let icons = [
+            MarkerIcon::Pin,
+            MarkerIcon::Cross,
+            MarkerIcon::Circle,
+            MarkerIcon::Lightning,
+            MarkerIcon::Warning,
+            MarkerIcon::Error,
+            MarkerIcon::Check,
+            MarkerIcon::Satellite,
+            MarkerIcon::SatelliteLost,
+            MarkerIcon::Gear,
+            MarkerIcon::Refresh,
+            MarkerIcon::Download,
+            MarkerIcon::Upload,
+            MarkerIcon::Wrench,
+        ];
+        for icon in icons {
+            let s = style("p", icon);
+            let map = FxHashMap::from_iter([(s.variant_path.clone(), s)]);
+            assert_eq!(resolve_icon("p", &map), icon);
+        }
+    }
+
+    #[test]
+    fn snapshot_all_icons_render_correctly() {
+        let icons: Vec<MarkerIcon> = MarkerIcon::iter().collect();
         let cols: usize = 5;
         let spacing = 64.0_f32;
         let margin = 40.0_f32;

@@ -353,6 +353,9 @@ fn channel_line(channel: &str, steps: &[PlacedBackwardTimeStep]) -> String {
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, Utc};
+    use egui_plot::{Line, PlotBounds, PlotPoints};
+    use gt_test_utils::TestHarness;
+    use rstest::rstest;
 
     use super::*;
 
@@ -582,80 +585,71 @@ mod tests {
         );
     }
 
-    mod snapshot_tests {
-        use egui_plot::{Line, PlotBounds, PlotPoints};
-        use gt_test_utils::TestHarness;
-        use rstest::rstest;
+    /// The plot's right edge, a minute past [`T`].
+    const T_END: f64 = T + 60.0;
 
-        use super::*;
-
-        /// The plot's right edge, a minute past [`T`].
-        const T_END: f64 = T + 60.0;
-
-        fn channel(name: &str, offsets_secs: &[f64]) -> ChannelSeries {
-            ChannelSeries {
-                name: name.to_owned(),
-                unit: None,
-                components: Vec::new(),
-                backward_time_steps: offsets_secs
-                    .iter()
-                    .map(|&offset| {
-                        step(StepSpec {
-                            offset: TimeDelta::milliseconds((offset * 1000.0) as i64),
-                            back: TimeDelta::seconds(1),
-                        })
+    fn channel(name: &str, offsets_secs: &[f64]) -> ChannelSeries {
+        ChannelSeries {
+            name: name.to_owned(),
+            unit: None,
+            components: Vec::new(),
+            backward_time_steps: offsets_secs
+                .iter()
+                .map(|&offset| {
+                    step(StepSpec {
+                        offset: TimeDelta::milliseconds((offset * 1000.0) as i64),
+                        back: TimeDelta::seconds(1),
                     })
-                    .collect(),
-            }
+                })
+                .collect(),
         }
+    }
 
-        /// One isolated step, a second one a channel away, and a jittering stretch
-        /// whose steps land inside a pitch of each other.
-        fn channels() -> Vec<ChannelSeries> {
-            let jitter: Vec<f64> = (0..40).map(|i| 40.0 + f64::from(i) * 0.2).collect();
-            vec![
-                channel("accel", &[10.0]),
-                channel("gyro", &[[25.0].as_slice(), &jitter].concat()),
-            ]
-        }
+    /// One isolated step, a second one a channel away, and a jittering stretch
+    /// whose steps land inside a pitch of each other.
+    fn channels() -> Vec<ChannelSeries> {
+        let jitter: Vec<f64> = (0..40).map(|i| 40.0 + f64::from(i) * 0.2).collect();
+        vec![
+            channel("accel", &[10.0]),
+            channel("gyro", &[[25.0].as_slice(), &jitter].concat()),
+        ]
+    }
 
-        #[rstest]
-        #[case::dark("backward_time_step_marks_dark", true)]
-        #[case::light("backward_time_step_marks_light", false)]
-        fn backward_time_step_marks(#[case] name: &str, #[case] dark_mode: bool) {
-            let channels = channels();
-            let channel_vis = ChannelVisibility::default();
-            let mut harness = TestHarness::builder()
-                .size(egui::vec2(420.0, 220.0))
-                .theme(dark_mode)
-                .ui(|ui| {
-                    egui_plot::Plot::new("backward_time_step_marks")
-                        .show_grid(false)
-                        .show(ui, |plot_ui| {
-                            plot_ui
-                                .set_plot_bounds(PlotBounds::from_min_max([T, 0.0], [T_END, 10.0]));
-                            plot_ui.line(Line::new(
-                                "Channel",
-                                PlotPoints::new(vec![[T, 2.0], [T_END, 6.0]]),
-                            ));
-                            add_backward_time_steps(
-                                plot_ui,
-                                &channels,
-                                None,
-                                BackwardTimeStepViewport {
-                                    x_min: T,
-                                    x_max: T_END,
-                                    marks_shown: true,
-                                    channel_vis: &channel_vis,
-                                    dark_mode,
-                                },
-                                None,
-                                &mut NearestHoverLabel::default(),
-                            );
-                        });
-                });
-            harness.run();
-            harness.snapshot_with_color_tolerance(name);
-        }
+    #[rstest]
+    #[case::dark("backward_time_step_marks_dark", true)]
+    #[case::light("backward_time_step_marks_light", false)]
+    fn snapshot_backward_time_step_marks(#[case] name: &str, #[case] dark_mode: bool) {
+        let channels = channels();
+        let channel_vis = ChannelVisibility::default();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(420.0, 220.0))
+            .theme(dark_mode)
+            .ui(|ui| {
+                egui_plot::Plot::new("backward_time_step_marks")
+                    .show_grid(false)
+                    .show(ui, |plot_ui| {
+                        plot_ui.set_plot_bounds(PlotBounds::from_min_max([T, 0.0], [T_END, 10.0]));
+                        plot_ui.line(Line::new(
+                            "Channel",
+                            PlotPoints::new(vec![[T, 2.0], [T_END, 6.0]]),
+                        ));
+                        add_backward_time_steps(
+                            plot_ui,
+                            &channels,
+                            None,
+                            BackwardTimeStepViewport {
+                                x_min: T,
+                                x_max: T_END,
+                                marks_shown: true,
+                                channel_vis: &channel_vis,
+                                dark_mode,
+                            },
+                            None,
+                            &mut NearestHoverLabel::default(),
+                        );
+                    });
+            });
+        harness.run();
+        harness.snapshot_with_color_tolerance(name);
     }
 }

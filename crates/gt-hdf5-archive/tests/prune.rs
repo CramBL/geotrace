@@ -585,214 +585,209 @@ fn an_index_column_that_lost_rows_is_rejected() {
     assert!(err.contains("count holds 2 rows, requested"), "{err}");
 }
 
+const MAPS: &str = "maps";
+const VALUES: &str = "values";
+const EPOCH: &str = "epoch";
+const VALUE_OFFSET: &str = "value_offset";
+const VALUE_COUNT: &str = "value_count";
+const TECU: &str = "tecu";
+
+const MAP_COLUMNS: [&str; 1] = [EPOCH];
+const VALUE_COLUMNS: [&str; 1] = [TECU];
+
+/// Nodes per map, small enough to check every one of them.
+const NODES: usize = 3;
+
 /// The TEC archive's shape: a day contains maps, and a map contains values.
-/// Both sets of offsets are rebased when days go.
-mod three_levels {
-    use super::*;
+struct NestedArchive {
+    _dir: TempDir,
+    file: File,
+}
 
-    const MAPS: &str = "maps";
-    const VALUES: &str = "values";
-    const EPOCH: &str = "epoch";
-    const VALUE_OFFSET: &str = "value_offset";
-    const VALUE_COUNT: &str = "value_count";
-    const TECU: &str = "tecu";
+impl NestedArchive {
+    fn create() -> Result<Self, String> {
+        let dir = tempfile::tempdir().map_err(|err| format!("temp dir: {err}"))?;
+        let file =
+            File::create(dir.path().join("nested.h5")).map_err(|err| format!("create: {err}"))?;
 
-    const MAP_COLUMNS: [&str; 1] = [EPOCH];
-    const VALUE_COLUMNS: [&str; 1] = [TECU];
+        let days = file
+            .create_group(DAYS)
+            .map_err(|err| format!("days group: {err}"))?;
+        DayIndex::create_columns(&days, FORMAT).map_err(|err| format!("day index: {err}"))?;
 
-    /// Nodes per map, small enough to check every one of them.
-    const NODES: usize = 3;
+        let maps = file
+            .create_group(MAPS)
+            .map_err(|err| format!("maps group: {err}"))?;
+        Column::create::<i64>(&maps, EPOCH, FORMAT).map_err(|err| format!("epoch: {err}"))?;
+        Column::create::<u64>(&maps, VALUE_OFFSET, FORMAT)
+            .map_err(|err| format!("value offset: {err}"))?;
+        Column::create::<u64>(&maps, VALUE_COUNT, FORMAT)
+            .map_err(|err| format!("value count: {err}"))?;
 
-    struct NestedArchive {
-        _dir: TempDir,
-        file: File,
+        let values = file
+            .create_group(VALUES)
+            .map_err(|err| format!("values group: {err}"))?;
+        Column::create::<f64>(&values, TECU, FORMAT).map_err(|err| format!("tecu: {err}"))?;
+        Ok(Self { _dir: dir, file })
     }
 
-    impl NestedArchive {
-        fn create() -> Result<Self, String> {
-            let dir = tempfile::tempdir().map_err(|err| format!("temp dir: {err}"))?;
-            let file = File::create(dir.path().join("nested.h5"))
-                .map_err(|err| format!("create: {err}"))?;
+    fn group(&self, name: &str) -> Result<Group, String> {
+        self.file
+            .group(name)
+            .map_err(|err| format!("{name} group: {err}"))
+    }
 
-            let days = file
-                .create_group(DAYS)
-                .map_err(|err| format!("days group: {err}"))?;
-            DayIndex::create_columns(&days, FORMAT).map_err(|err| format!("day index: {err}"))?;
+    /// Append `maps` maps of [`NODES`] nodes each, valued from `day`.
+    fn insert_day(&self, day: NaiveDate, maps: usize) -> Result<(), String> {
+        let value_group = self.group(VALUES)?;
+        let map_group = self.group(MAPS)?;
+        let first_map = Column::new(&map_group, EPOCH)
+            .rows()
+            .map_err(|err| format!("map count: {err}"))?;
+        let mut next_value = Column::new(&value_group, TECU)
+            .rows()
+            .map_err(|err| format!("value count: {err}"))?;
 
-            let maps = file
-                .create_group(MAPS)
-                .map_err(|err| format!("maps group: {err}"))?;
-            Column::create::<i64>(&maps, EPOCH, FORMAT).map_err(|err| format!("epoch: {err}"))?;
-            Column::create::<u64>(&maps, VALUE_OFFSET, FORMAT)
-                .map_err(|err| format!("value offset: {err}"))?;
-            Column::create::<u64>(&maps, VALUE_COUNT, FORMAT)
-                .map_err(|err| format!("value count: {err}"))?;
-
-            let values = file
-                .create_group(VALUES)
-                .map_err(|err| format!("values group: {err}"))?;
-            Column::create::<f64>(&values, TECU, FORMAT).map_err(|err| format!("tecu: {err}"))?;
-            Ok(Self { _dir: dir, file })
+        for map in 0..maps {
+            Column::new(&value_group, TECU)
+                .append(&nodes_of(day, map))
+                .map_err(|err| format!("append nodes: {err}"))?;
+            Column::new(&map_group, EPOCH)
+                .append(&[i64::from(day.to_epoch_days()) * 100 + map as i64])
+                .map_err(|err| format!("append epoch: {err}"))?;
+            Column::new(&map_group, VALUE_OFFSET)
+                .append(&[next_value as u64])
+                .map_err(|err| format!("append value offset: {err}"))?;
+            Column::new(&map_group, VALUE_COUNT)
+                .append(&[NODES as u64])
+                .map_err(|err| format!("append value count: {err}"))?;
+            next_value += NODES;
         }
 
-        fn group(&self, name: &str) -> Result<Group, String> {
-            self.file
-                .group(name)
-                .map_err(|err| format!("{name} group: {err}"))
-        }
-
-        /// Append `maps` maps of [`NODES`] nodes each, valued from `day`.
-        fn insert_day(&self, day: NaiveDate, maps: usize) -> Result<(), String> {
-            let value_group = self.group(VALUES)?;
-            let map_group = self.group(MAPS)?;
-            let first_map = Column::new(&map_group, EPOCH)
-                .rows()
-                .map_err(|err| format!("map count: {err}"))?;
-            let mut next_value = Column::new(&value_group, TECU)
-                .rows()
-                .map_err(|err| format!("value count: {err}"))?;
-
-            for map in 0..maps {
-                Column::new(&value_group, TECU)
-                    .append(&nodes_of(day, map))
-                    .map_err(|err| format!("append nodes: {err}"))?;
-                Column::new(&map_group, EPOCH)
-                    .append(&[i64::from(day.to_epoch_days()) * 100 + map as i64])
-                    .map_err(|err| format!("append epoch: {err}"))?;
-                Column::new(&map_group, VALUE_OFFSET)
-                    .append(&[next_value as u64])
-                    .map_err(|err| format!("append value offset: {err}"))?;
-                Column::new(&map_group, VALUE_COUNT)
-                    .append(&[NODES as u64])
-                    .map_err(|err| format!("append value count: {err}"))?;
-                next_value += NODES;
-            }
-
-            let days = self.group(DAYS)?;
-            DayIndex::new(&days)
-                .insert_or_replace(
-                    day,
-                    RowPlacement {
-                        offset: first_map as u64,
-                        rows: u32::try_from(maps).map_err(|err| format!("maps: {err}"))?,
-                    },
-                    DateTime::<Utc>::default(),
-                    HOST,
-                )
-                .map_err(|err| format!("index {day}: {err}"))
-        }
-
-        fn with_layout<T>(
-            &self,
-            act: impl FnOnce(&ArchiveLayout<'_>) -> Result<T, ArchiveError>,
-        ) -> Result<T, String> {
-            let maps = self.group(MAPS)?;
-            let values = self.group(VALUES)?;
-            let levels = [
-                RowLevel {
-                    group: &maps,
-                    columns: &MAP_COLUMNS,
-                    extent: Some(ExtentColumns {
-                        offset: VALUE_OFFSET,
-                        count: VALUE_COUNT,
-                    }),
+        let days = self.group(DAYS)?;
+        DayIndex::new(&days)
+            .insert_or_replace(
+                day,
+                RowPlacement {
+                    offset: first_map as u64,
+                    rows: u32::try_from(maps).map_err(|err| format!("maps: {err}"))?,
                 },
-                RowLevel {
-                    group: &values,
-                    columns: &VALUE_COLUMNS,
-                    extent: None,
-                },
-            ];
-            act(&ArchiveLayout {
-                parent: &self.file,
-                index_name: DAYS,
-                day_columns: &[],
-                levels: &levels,
-            })
-            .map_err(|err| format!("layout: {err}"))
-        }
-
-        /// The nodes of every map of `day`, read the way a store reads them:
-        /// through the day entry, then through each map's own extent.
-        fn day_nodes(&self, day: NaiveDate) -> Result<Option<Vec<Vec<f64>>>, String> {
-            let days = self.group(DAYS)?;
-            let Some(map_rows) = DayIndex::new(&days)
-                .extent_of(day)
-                .map_err(|err| format!("extent of {day}: {err}"))?
-            else {
-                return Ok(None);
-            };
-            let maps = self.group(MAPS)?;
-            let values = self.group(VALUES)?;
-            let offsets: Vec<u64> = Column::new(&maps, VALUE_OFFSET)
-                .read_slice(map_rows.clone())
-                .map_err(|err| format!("value offsets: {err}"))?;
-            let counts: Vec<u64> = Column::new(&maps, VALUE_COUNT)
-                .read_slice(map_rows)
-                .map_err(|err| format!("value counts: {err}"))?;
-
-            let mut nodes = Vec::with_capacity(offsets.len());
-            for (&offset, &count) in offsets.iter().zip(&counts) {
-                let start = usize::try_from(offset).map_err(|err| format!("offset: {err}"))?;
-                let rows = usize::try_from(count).map_err(|err| format!("count: {err}"))?;
-                nodes.push(
-                    Column::new(&values, TECU)
-                        .read_slice::<f64>(start..start + rows)
-                        .map_err(|err| format!("nodes of {day}: {err}"))?,
-                );
-            }
-            Ok(Some(nodes))
-        }
-
-        fn stored_values(&self) -> Result<usize, String> {
-            let values = self.group(VALUES)?;
-            Column::new(&values, TECU)
-                .rows()
-                .map_err(|err| format!("value count: {err}"))
-        }
-    }
-
-    fn nodes_of(day: NaiveDate, map: usize) -> Vec<f64> {
-        (0..NODES)
-            .map(|node| f64::from(day.to_epoch_days()) + map as f64 / 10.0 + node as f64 / 100.0)
-            .collect()
-    }
-
-    #[test]
-    fn deleting_days_rebases_the_maps_and_the_values_they_name() {
-        let archive = NestedArchive::create().expect("archive");
-        archive.insert_day(test_util::day(0), 2).expect("insert");
-        archive.insert_day(test_util::day(1), 3).expect("insert");
-        archive.insert_day(test_util::day(2), 1).expect("insert");
-        let reported = std::cell::RefCell::new(Vec::new());
-
-        let removed = archive
-            .with_layout(|layout| {
-                let report = |progress: PruneProgress| reported.borrow_mut().push(progress);
-                layout.delete_days_before(test_util::day(1), Some(&report))
-            })
-            .expect("delete");
-
-        assert_eq!(removed, 1);
-        test_util::assert_progress_ran_to_completion(&reported.into_inner());
-        assert_eq!(
-            archive.day_nodes(test_util::day(1)).expect("nodes"),
-            Some(
-                (0..3)
-                    .map(|map| nodes_of(test_util::day(1), map))
-                    .collect::<Vec<_>>()
+                DateTime::<Utc>::default(),
+                HOST,
             )
-        );
-        assert_eq!(
-            archive.day_nodes(test_util::day(2)).expect("nodes"),
-            Some(vec![nodes_of(test_util::day(2), 0)]),
-            "the newest day reads through its rebased offsets"
-        );
-        assert_eq!(archive.day_nodes(test_util::day(0)).expect("nodes"), None);
-        assert_eq!(
-            archive.stored_values().expect("value count"),
-            4 * NODES,
-            "the deleted day's values are still stored"
-        );
+            .map_err(|err| format!("index {day}: {err}"))
     }
+
+    fn with_layout<T>(
+        &self,
+        act: impl FnOnce(&ArchiveLayout<'_>) -> Result<T, ArchiveError>,
+    ) -> Result<T, String> {
+        let maps = self.group(MAPS)?;
+        let values = self.group(VALUES)?;
+        let levels = [
+            RowLevel {
+                group: &maps,
+                columns: &MAP_COLUMNS,
+                extent: Some(ExtentColumns {
+                    offset: VALUE_OFFSET,
+                    count: VALUE_COUNT,
+                }),
+            },
+            RowLevel {
+                group: &values,
+                columns: &VALUE_COLUMNS,
+                extent: None,
+            },
+        ];
+        act(&ArchiveLayout {
+            parent: &self.file,
+            index_name: DAYS,
+            day_columns: &[],
+            levels: &levels,
+        })
+        .map_err(|err| format!("layout: {err}"))
+    }
+
+    /// The nodes of every map of `day`, read the way a store reads them:
+    /// through the day entry, then through each map's own extent.
+    fn day_nodes(&self, day: NaiveDate) -> Result<Option<Vec<Vec<f64>>>, String> {
+        let days = self.group(DAYS)?;
+        let Some(map_rows) = DayIndex::new(&days)
+            .extent_of(day)
+            .map_err(|err| format!("extent of {day}: {err}"))?
+        else {
+            return Ok(None);
+        };
+        let maps = self.group(MAPS)?;
+        let values = self.group(VALUES)?;
+        let offsets: Vec<u64> = Column::new(&maps, VALUE_OFFSET)
+            .read_slice(map_rows.clone())
+            .map_err(|err| format!("value offsets: {err}"))?;
+        let counts: Vec<u64> = Column::new(&maps, VALUE_COUNT)
+            .read_slice(map_rows)
+            .map_err(|err| format!("value counts: {err}"))?;
+
+        let mut nodes = Vec::with_capacity(offsets.len());
+        for (&offset, &count) in offsets.iter().zip(&counts) {
+            let start = usize::try_from(offset).map_err(|err| format!("offset: {err}"))?;
+            let rows = usize::try_from(count).map_err(|err| format!("count: {err}"))?;
+            nodes.push(
+                Column::new(&values, TECU)
+                    .read_slice::<f64>(start..start + rows)
+                    .map_err(|err| format!("nodes of {day}: {err}"))?,
+            );
+        }
+        Ok(Some(nodes))
+    }
+
+    fn stored_values(&self) -> Result<usize, String> {
+        let values = self.group(VALUES)?;
+        Column::new(&values, TECU)
+            .rows()
+            .map_err(|err| format!("value count: {err}"))
+    }
+}
+
+fn nodes_of(day: NaiveDate, map: usize) -> Vec<f64> {
+    (0..NODES)
+        .map(|node| f64::from(day.to_epoch_days()) + map as f64 / 10.0 + node as f64 / 100.0)
+        .collect()
+}
+
+#[test]
+fn deleting_days_rebases_the_maps_and_the_values_they_name() {
+    let archive = NestedArchive::create().expect("archive");
+    archive.insert_day(test_util::day(0), 2).expect("insert");
+    archive.insert_day(test_util::day(1), 3).expect("insert");
+    archive.insert_day(test_util::day(2), 1).expect("insert");
+    let reported = std::cell::RefCell::new(Vec::new());
+
+    let removed = archive
+        .with_layout(|layout| {
+            let report = |progress: PruneProgress| reported.borrow_mut().push(progress);
+            layout.delete_days_before(test_util::day(1), Some(&report))
+        })
+        .expect("delete");
+
+    assert_eq!(removed, 1);
+    test_util::assert_progress_ran_to_completion(&reported.into_inner());
+    assert_eq!(
+        archive.day_nodes(test_util::day(1)).expect("nodes"),
+        Some(
+            (0..3)
+                .map(|map| nodes_of(test_util::day(1), map))
+                .collect::<Vec<_>>()
+        )
+    );
+    assert_eq!(
+        archive.day_nodes(test_util::day(2)).expect("nodes"),
+        Some(vec![nodes_of(test_util::day(2), 0)]),
+        "the newest day reads through its rebased offsets"
+    );
+    assert_eq!(archive.day_nodes(test_util::day(0)).expect("nodes"), None);
+    assert_eq!(
+        archive.stored_values().expect("value count"),
+        4 * NODES,
+        "the deleted day's values are still stored"
+    );
 }

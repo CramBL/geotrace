@@ -997,6 +997,8 @@ pub fn make_group_name(start_us: i64, unique: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
 
     fn meta() -> RecordingMeta {
@@ -1069,15 +1071,6 @@ mod tests {
     fn legacy_identity_group_names_do_not_decode() {
         assert_eq!(identity_from_group_name("auto:recording.gtd"), None);
     }
-}
-
-#[cfg(test)]
-mod track_column_properties {
-    use proptest::prelude::*;
-
-    use super::{
-        TrackRange, TrackState, TrackStateColumn, track_columns, track_ranges_from_columns,
-    };
 
     fn state_strategy() -> impl Strategy<Value = TrackState> {
         prop_oneof![
@@ -1108,7 +1101,7 @@ mod track_column_properties {
         /// The on-disk column split is lossless for any valid track table: the
         /// exact ranges, states and all, come back.
         #[test]
-        fn columns_round_trip(
+        fn track_columns_round_trip(
             raw in proptest::collection::vec(
                 (any::<u64>(), any::<u64>(), state_strategy()),
                 0..64,
@@ -1167,7 +1160,7 @@ mod track_column_properties {
         /// Mismatched column lengths are rejected, so a partially-written table is
         /// treated as absent.
         #[test]
-        fn mismatched_lengths_reject(
+        fn mismatched_track_column_lengths_reject(
             starts in proptest::collection::vec(any::<u64>(), 0..16),
             ends in proptest::collection::vec(any::<u64>(), 0..16),
             states in proptest::collection::vec(any::<u64>(), 0..16),
@@ -1181,7 +1174,7 @@ mod track_column_properties {
 
         /// A single inverted range (`start > end`) rejects the whole table.
         #[test]
-        fn one_inverted_range_rejects_table(
+        fn one_inverted_track_range_rejects_table(
             pairs in proptest::collection::vec((0u64..1_000, 0u64..1_000), 1..32),
             bad in any::<usize>(),
         ) {

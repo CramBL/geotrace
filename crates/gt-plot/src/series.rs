@@ -464,6 +464,12 @@ fn build_track_series(
 #[cfg(test)]
 mod tests {
     use geotrace_sdk_units::Unit;
+    use gt_types::coordinates::{Latitude, Longitude};
+    use gt_types::nav_point::NavPoint;
+    use gt_types::time_types::GpsTime;
+    use gt_types::tpv::TimePositionVelocity;
+    use rstest::rstest;
+    use uom::si::f64::Angle;
 
     use super::*;
 
@@ -816,145 +822,128 @@ mod tests {
         );
     }
 
-    /// Heading, a quantity that wraps at 360°, from the fix values through the
-    /// [`MipMap`] levels to what the plot draws.
-    ///
-    /// Lives in the source file because [`build_track_series`] and
-    /// [`build_channel_series`] are private to this module.
-    mod heading_wrap {
-        use geotrace_sdk_units::Unit;
-        use gt_types::coordinates::{Latitude, Longitude};
-        use gt_types::nav_point::NavPoint;
-        use gt_types::time_types::GpsTime;
-        use gt_types::tpv::TimePositionVelocity;
-        use rstest::rstest;
-        use uom::si::f64::Angle;
+    /// Target sample count that selects the first downsampled level of an
+    /// eight-fix track.
+    const COARSE_TARGET_FOR_AN_EIGHT_FIX_TRACK: usize = 4;
 
-        use super::*;
+    /// A 1 Hz track whose fixes carry `headings`, in degrees. `None` is a ghost
+    /// fix: the receiver reported a position but no direction.
+    fn track_with_headings(headings: &[Option<f64>]) -> gt_types::LoadedTrack {
+        let points = headings
+            .iter()
+            .enumerate()
+            .map(|(i, heading)| {
+                let tpv = TimePositionVelocity::builder()
+                    .time(GpsTime::from_utc(at_second(i as i64)))
+                    .lat(Latitude::new(55.0))
+                    .lon(Longitude::new(12.0))
+                    .maybe_heading(heading.map(Angle::new::<degree>))
+                    .build();
+                NavPoint::new(tpv, None)
+            })
+            .collect();
+        gt_test_utils::loaded_track_with_points(points)
+    }
 
-        /// Target sample count that selects the first downsampled level of an
-        /// eight-fix track.
-        const COARSE_TARGET_FOR_AN_EIGHT_FIX_TRACK: usize = 4;
+    fn heading_series(headings: &[Option<f64>]) -> MipMap {
+        let track = track_with_headings(headings);
+        build_track_series(0, &track, AnalysisConfig::default()).heading_deg
+    }
 
-        /// A 1 Hz track whose fixes carry `headings`, in degrees. `None` is a ghost
-        /// fix: the receiver reported a position but no direction.
-        fn track_with_headings(headings: &[Option<f64>]) -> gt_types::LoadedTrack {
-            let points = headings
-                .iter()
-                .enumerate()
-                .map(|(i, heading)| {
-                    let tpv = TimePositionVelocity::builder()
-                        .time(GpsTime::from_utc(at_second(i as i64)))
-                        .lat(Latitude::new(55.0))
-                        .lon(Longitude::new(12.0))
-                        .maybe_heading(heading.map(Angle::new::<degree>))
-                        .build();
-                    NavPoint::new(tpv, None)
-                })
-                .collect();
-            gt_test_utils::loaded_track_with_points(points)
+    /// A scalar channel of `values` in degrees, sampled at 1 Hz, declaring
+    /// `period_deg` as its wrap period.
+    fn degree_channel(period_deg: Option<f64>, values: &[f64]) -> gt_types::Channel {
+        gt_types::Channel {
+            name: "compass".to_owned(),
+            unit: Some(Unit::DEG.into()),
+            period: period_deg.map(Angle::new::<degree>),
+            description: None,
+            components: vec![],
+            times: (0..values.len() as i64).map(at_second).collect(),
+            values: values.to_vec(),
         }
+    }
 
-        fn heading_series(headings: &[Option<f64>]) -> MipMap {
-            let track = track_with_headings(headings);
-            build_track_series(0, &track, AnalysisConfig::default()).heading_deg
-        }
+    /// The y values the plot draws for one series at the level a view wanting
+    /// `target` samples selects, in the order they are drawn.
+    fn drawn_values(mipmap: &MipMap, target: usize) -> Vec<f64> {
+        drawn_points(mipmap, target)
+            .into_iter()
+            .map(|(_, y)| y)
+            .collect()
+    }
 
-        /// A scalar channel of `values` in degrees, sampled at 1 Hz, declaring
-        /// `period_deg` as its wrap period.
-        fn degree_channel(period_deg: Option<f64>, values: &[f64]) -> gt_types::Channel {
-            gt_types::Channel {
-                name: "compass".to_owned(),
-                unit: Some(Unit::DEG.into()),
-                period: period_deg.map(Angle::new::<degree>),
-                description: None,
-                components: vec![],
-                times: (0..values.len() as i64).map(at_second).collect(),
-                values: values.to_vec(),
-            }
-        }
+    /// The one component of a scalar channel's series.
+    fn scalar_channel_values(channel: &gt_types::Channel, target: usize) -> Vec<f64> {
+        let series = build_channel_series(channel);
+        let [component] = series.components.as_slice() else {
+            panic!("a scalar channel has one component");
+        };
+        let [run] = component.runs.as_slice() else {
+            panic!("a channel whose timestamps never step backwards is one run");
+        };
+        drawn_values(run, target)
+    }
 
-        /// The y values the plot draws for one series at the level a view wanting
-        /// `target` samples selects, in the order they are drawn.
-        fn drawn_values(mipmap: &MipMap, target: usize) -> Vec<f64> {
-            drawn_points(mipmap, target)
-                .into_iter()
-                .map(|(_, y)| y)
-                .collect()
-        }
+    /// Around north a bucket's linear minimum and maximum are ~0° and ~359°,
+    /// and the U-turn between them is the outlier the mip-map exists to keep.
+    #[test]
+    fn a_southward_swing_survives_a_bucket_of_northward_headings() {
+        let headings = [359.0, 1.0, 180.0, 2.0, 358.0, 0.0, 359.0, 1.0].map(Some);
+        let drawn = drawn_values(
+            &heading_series(&headings),
+            COARSE_TARGET_FOR_AN_EIGHT_FIX_TRACK,
+        );
+        assert!(
+            drawn.contains(&180.0),
+            "the southward fix must survive downsampling, drawn values are {drawn:?}"
+        );
+    }
 
-        /// The one component of a scalar channel's series.
-        fn scalar_channel_values(channel: &gt_types::Channel, target: usize) -> Vec<f64> {
-            let series = build_channel_series(channel);
-            let [component] = series.components.as_slice() else {
-                panic!("a scalar channel has one component");
-            };
-            let [run] = component.runs.as_slice() else {
-                panic!("a channel whose timestamps never step backwards is one run");
-            };
-            drawn_values(run, target)
-        }
+    /// A channel states its own wrap period, which is the period its samples
+    /// are downsampled over.
+    #[rstest]
+    #[case::full_turn(360.0, [359.0, 1.0, 180.0, 2.0, 358.0, 0.0, 359.0, 1.0], 180.0)]
+    #[case::half_turn(180.0, [179.0, 1.0, 90.0, 2.0, 178.0, 0.0, 179.0, 1.0], 90.0)]
+    fn a_swing_survives_a_bucket_of_a_channel_declaring_a_wrap_period(
+        #[case] period_deg: f64,
+        #[case] values: [f64; 8],
+        #[case] swing: f64,
+    ) {
+        let channel = degree_channel(Some(period_deg), &values);
+        let drawn = scalar_channel_values(&channel, COARSE_TARGET_FOR_AN_EIGHT_FIX_TRACK);
+        assert!(
+            drawn.contains(&swing),
+            "the {swing}° sample must survive downsampling, drawn values are {drawn:?}"
+        );
+    }
 
-        /// Around north a bucket's linear minimum and maximum are ~0° and ~359°,
-        /// and the U-turn between them is the outlier the mip-map exists to keep.
-        #[test]
-        fn a_southward_swing_survives_a_bucket_of_northward_headings() {
-            let headings = [359.0, 1.0, 180.0, 2.0, 358.0, 0.0, 359.0, 1.0].map(Some);
-            let drawn = drawn_values(
-                &heading_series(&headings),
-                COARSE_TARGET_FOR_AN_EIGHT_FIX_TRACK,
-            );
-            assert!(
-                drawn.contains(&180.0),
-                "the southward fix must survive downsampling, drawn values are {drawn:?}"
-            );
-        }
+    /// A channel that declares no period keeps each bucket's linear minimum and
+    /// maximum, however angular its unit reads.
+    #[test]
+    fn a_degree_channel_without_a_declared_period_is_downsampled_linearly() {
+        let channel = degree_channel(None, &[359.0, 1.0, 180.0, 2.0, 358.0, 0.0, 359.0, 1.0]);
+        assert_eq!(
+            scalar_channel_values(&channel, COARSE_TARGET_FOR_AN_EIGHT_FIX_TRACK),
+            [359.0, 1.0, 0.0, 359.0]
+        );
+    }
 
-        /// A channel states its own wrap period, which is the period its samples
-        /// are downsampled over.
-        #[rstest]
-        #[case::full_turn(360.0, [359.0, 1.0, 180.0, 2.0, 358.0, 0.0, 359.0, 1.0], 180.0)]
-        #[case::half_turn(180.0, [179.0, 1.0, 90.0, 2.0, 178.0, 0.0, 179.0, 1.0], 90.0)]
-        fn a_swing_survives_a_bucket_of_a_channel_declaring_a_wrap_period(
-            #[case] period_deg: f64,
-            #[case] values: [f64; 8],
-            #[case] swing: f64,
-        ) {
-            let channel = degree_channel(Some(period_deg), &values);
-            let drawn = scalar_channel_values(&channel, COARSE_TARGET_FOR_AN_EIGHT_FIX_TRACK);
-            assert!(
-                drawn.contains(&swing),
-                "the {swing}° sample must survive downsampling, drawn values are {drawn:?}"
-            );
-        }
+    /// At full detail the plot draws the headings the receiver reported, in
+    /// the values it reported them.
+    #[test]
+    fn every_recorded_heading_is_drawn_at_full_detail() {
+        let headings = [359.0, 1.0, 180.0, 2.0, 358.0, 0.0, 359.0, 1.0];
+        assert_eq!(
+            drawn_values(&heading_series(&headings.map(Some)), usize::MAX),
+            headings
+        );
+    }
 
-        /// A channel that declares no period keeps each bucket's linear minimum and
-        /// maximum, however angular its unit reads.
-        #[test]
-        fn a_degree_channel_without_a_declared_period_is_downsampled_linearly() {
-            let channel = degree_channel(None, &[359.0, 1.0, 180.0, 2.0, 358.0, 0.0, 359.0, 1.0]);
-            assert_eq!(
-                scalar_channel_values(&channel, COARSE_TARGET_FOR_AN_EIGHT_FIX_TRACK),
-                [359.0, 1.0, 0.0, 359.0]
-            );
-        }
-
-        /// At full detail the plot draws the headings the receiver reported, in
-        /// the values it reported them.
-        #[test]
-        fn every_recorded_heading_is_drawn_at_full_detail() {
-            let headings = [359.0, 1.0, 180.0, 2.0, 358.0, 0.0, 359.0, 1.0];
-            assert_eq!(
-                drawn_values(&heading_series(&headings.map(Some)), usize::MAX),
-                headings
-            );
-        }
-
-        /// A ghost fix has no heading, which is not a heading of north.
-        #[test]
-        fn a_ghost_fixs_missing_heading_contributes_no_sample() {
-            let series = heading_series(&[Some(10.0), None, None, Some(20.0)]);
-            assert_eq!(drawn_values(&series, usize::MAX), [10.0, 20.0]);
-        }
+    /// A ghost fix has no heading, which is not a heading of north.
+    #[test]
+    fn a_ghost_fixs_missing_heading_contributes_no_sample() {
+        let series = heading_series(&[Some(10.0), None, None, Some(20.0)]);
+        assert_eq!(drawn_values(&series, usize::MAX), [10.0, 20.0]);
     }
 }

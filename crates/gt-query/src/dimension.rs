@@ -104,6 +104,8 @@ impl Div for Dimension {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
 
     #[test]
@@ -177,42 +179,36 @@ mod tests {
         assert_eq!(tiny.length, i8::MIN);
     }
 
-    mod properties {
-        use proptest::prelude::*;
+    // Exponents kept small - real dimensions never leave this range, and it
+    // keeps the doubled exponents from a square well clear of overflow.
+    fn dimension() -> impl Strategy<Value = Dimension> {
+        (-4..=4i8, -4..=4i8, -4..=4i8).prop_map(|(length, time, angle)| Dimension {
+            length,
+            time,
+            angle,
+        })
+    }
 
-        use super::super::Dimension;
-
-        // Exponents kept small - real dimensions never leave this range, and it
-        // keeps the doubled exponents from a square well clear of overflow.
-        fn dimension() -> impl Strategy<Value = Dimension> {
-            (-4..=4i8, -4..=4i8, -4..=4i8).prop_map(|(length, time, angle)| Dimension {
-                length,
-                time,
-                angle,
-            })
+    proptest! {
+        #[test]
+        fn multiplication_commutes(a in dimension(), b in dimension()) {
+            prop_assert_eq!(a * b, b * a);
         }
 
-        proptest! {
-            #[test]
-            fn multiplication_commutes(a in dimension(), b in dimension()) {
-                prop_assert_eq!(a * b, b * a);
-            }
+        #[test]
+        fn dimensionless_is_the_identity(d in dimension()) {
+            prop_assert_eq!(d * Dimension::DIMENSIONLESS, d);
+            prop_assert_eq!(d / Dimension::DIMENSIONLESS, d);
+        }
 
-            #[test]
-            fn dimensionless_is_the_identity(d in dimension()) {
-                prop_assert_eq!(d * Dimension::DIMENSIONLESS, d);
-                prop_assert_eq!(d / Dimension::DIMENSIONLESS, d);
-            }
+        #[test]
+        fn division_inverts_multiplication(a in dimension(), b in dimension()) {
+            prop_assert_eq!((a * b) / b, a);
+        }
 
-            #[test]
-            fn division_inverts_multiplication(a in dimension(), b in dimension()) {
-                prop_assert_eq!((a * b) / b, a);
-            }
-
-            #[test]
-            fn square_root_undoes_squaring(d in dimension()) {
-                prop_assert_eq!(d.powi(2).sqrt(), Some(d));
-            }
+        #[test]
+        fn square_root_undoes_squaring(d in dimension()) {
+            prop_assert_eq!(d.powi(2).sqrt(), Some(d));
         }
     }
 }
