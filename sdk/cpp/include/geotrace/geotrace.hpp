@@ -2032,43 +2032,33 @@ class [[nodiscard]] NavFile {
         return try_to_bytes().value_or_throw();
     }
 
-    /** @name Metadata (the whole value, nul bytes included, or an empty `std::string_view`
-     * when the field is absent). */
+    /** @name Metadata (the whole value, nul bytes included, or `std::nullopt` when the field
+     * is absent). */
     ///@{
 
-    [[nodiscard]] std::string_view title() const noexcept {
-        std::size_t length = 0;
-        const char *title = ::gtd_nav_file_title_with_length(impl_.get(), &length);
-        return title != nullptr ? std::string_view{title, length} : std::string_view{};
+    [[nodiscard]] std::optional<std::string_view> title() const noexcept {
+        return metadata_value_from_c(::gtd_nav_file_title_with_length);
     }
-    [[nodiscard]] std::string_view device() const noexcept {
-        std::size_t length = 0;
-        const char *device = ::gtd_nav_file_device_with_length(impl_.get(), &length);
-        return device != nullptr ? std::string_view{device, length} : std::string_view{};
+    [[nodiscard]] std::optional<std::string_view> device() const noexcept {
+        return metadata_value_from_c(::gtd_nav_file_device_with_length);
     }
-    [[nodiscard]] std::string_view notes() const noexcept {
-        std::size_t length = 0;
-        const char *notes = ::gtd_nav_file_notes_with_length(impl_.get(), &length);
-        return notes != nullptr ? std::string_view{notes, length} : std::string_view{};
+    [[nodiscard]] std::optional<std::string_view> notes() const noexcept {
+        return metadata_value_from_c(::gtd_nav_file_notes_with_length);
     }
-    [[nodiscard]] std::string_view identity() const noexcept {
-        std::size_t length = 0;
-        const char *identity = ::gtd_nav_file_identity_with_length(impl_.get(), &length);
-        return identity != nullptr ? std::string_view{identity, length} : std::string_view{};
+    [[nodiscard]] std::optional<std::string_view> identity() const noexcept {
+        return metadata_value_from_c(::gtd_nav_file_identity_with_length);
     }
 
     /**
-     * Travel mode wire name, or an empty view when the field is absent.
+     * Travel mode wire name, or `std::nullopt` when the field is absent.
      *
      * The value is the raw wire string (e.g. `"car"`). Pass it to
      * travel_mode_from_name() for the typed `enum`. A file written by a newer
      * SDK may carry a wire name outside the known set - such values are still
      * returned here verbatim, never dropped.
      */
-    [[nodiscard]] std::string_view travel_mode() const noexcept {
-        std::size_t length = 0;
-        const char *mode = ::gtd_nav_file_travel_mode_with_length(impl_.get(), &length);
-        return mode != nullptr ? std::string_view{mode, length} : std::string_view{};
+    [[nodiscard]] std::optional<std::string_view> travel_mode() const noexcept {
+        return metadata_value_from_c(::gtd_nav_file_travel_mode_with_length);
     }
 
     ///@}
@@ -2369,6 +2359,16 @@ class [[nodiscard]] NavFile {
   private:
     friend class FileBuilder;
     explicit NavFile(GtdNavFile *impl) noexcept : impl_(impl) {}
+
+    [[nodiscard]] std::optional<std::string_view> metadata_value_from_c(
+        const char *(*getter_with_length)(const GtdNavFile *, std::size_t *)) const noexcept {
+        std::size_t length = 0;
+        const char *value = getter_with_length(impl_.get(), &length);
+        if (value == nullptr) {
+            return std::nullopt;
+        }
+        return std::string_view{value, length};
+    }
 
     [[nodiscard]] static std::optional<Timestamp>
     timestamp_from_c(GtdTimestamp timestamp) noexcept {

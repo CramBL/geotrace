@@ -204,17 +204,6 @@ static void repeat_into(char *out, const char *piece, size_t count) {
     out[count * piece_length] = '\0';
 }
 
-static GtdNavFile *reload_through_bytes(GtdNavFile *file) {
-    uint8_t *bytes = NULL;
-    size_t length = 0;
-    cr_assert_eq(gtd_nav_file_to_bytes(file, &bytes, &length), GTD_OK);
-    gtd_nav_file_destroy(file);
-    GtdNavFile *reloaded = NULL;
-    cr_assert_eq(gtd_nav_file_from_bytes(bytes, length, &reloaded), GTD_OK);
-    gtd_free_bytes(bytes, length);
-    return reloaded;
-}
-
 Test(channels, get_channel_returns_long_multibyte_strings_whole) {
     char name[301];
     name[0] = 'n';
@@ -256,6 +245,30 @@ Test(channels, get_channel_returns_long_multibyte_strings_whole) {
     cr_assert_eq(info.component_count, 2);
     cr_assert_str_eq(info.components[0], first_component);
     cr_assert_str_eq(info.components[1], "y");
+    gtd_nav_file_destroy(reloaded);
+}
+
+Test(channels, get_channel_returns_an_empty_description_as_an_empty_string) {
+    GtdTimestamp timestamp;
+    GtdFileBuilder *builder = builder_with_a_nav_fix(&timestamp);
+    double value = 1.0;
+    GtdChannel channel = {0};
+    channel.name = "raw";
+    channel.period_deg = GTD_NONE_F64;
+    channel.description = "";
+    channel.times = &timestamp;
+    channel.n_times = 1;
+    channel.values = &value;
+    channel.n_values = 1;
+    cr_assert_eq(gtd_builder_add_channel(builder, &channel), GTD_OK);
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_OK);
+    GtdNavFile *reloaded = reload_through_bytes(file);
+
+    GtdChannelInfo info;
+    cr_assert_eq(gtd_nav_file_get_channel(reloaded, 0, &info), GTD_OK);
+    cr_assert_not_null(info.description);
+    cr_assert_str_eq(info.description, "");
     gtd_nav_file_destroy(reloaded);
 }
 

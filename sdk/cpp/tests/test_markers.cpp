@@ -13,6 +13,7 @@
 
 using geotrace::Angle;
 using geotrace::Annotation;
+using geotrace::EventMarker;
 using geotrace::EventMarkerStyle;
 using geotrace::FileBuilder;
 using geotrace::FixTime;
@@ -55,6 +56,20 @@ TEST_CASE("NavFile: a labelled marker reads back with its icon, time and positio
           after_fix_timestamp(std::chrono::seconds{5}).as_unix_micros());
     CHECK(marker.lat.as_degrees() == doctest::Approx(51.5).epsilon(1e-9));
     CHECK(marker.lon.as_degrees() == doctest::Approx(-1.5).epsilon(1e-9));
+}
+
+TEST_CASE("NavFile: a whitespace-only label and annotation read back whole") {
+    const NavFix fix{FixTime::receiver(fix_timestamp()), Angle::degrees(51.0),
+                     Angle::degrees(-1.0)};
+    const auto file =
+        NavFile::from_bytes(FileBuilder{}
+                                .add_nav_fix(fix)
+                                .add_annotation(Annotation{fix_timestamp(), "   ", MarkerIcon::Pin})
+                                .add_event_marker(EventMarker{"power/boot", fix_timestamp(), "   "})
+                                .finish()
+                                .to_bytes());
+    CHECK(file.marker(0).label == "   ");
+    CHECK(file.event_marker(0).annotation == "   ");
 }
 
 TEST_CASE("NavFile: an unlabelled marker reads back with an empty label") {

@@ -308,6 +308,29 @@ fn event_marker_styles_are_stored() {
     );
 }
 
+#[test]
+fn an_empty_style_color_is_auto() {
+    let style = EventMarkerStyle::builder()
+        .variant_path("power/on")
+        .color("")
+        .build()
+        .expect("an empty color is accepted");
+    assert_eq!(style.color, EventMarkerColor::Auto);
+}
+
+#[test]
+fn a_whitespace_only_style_color_is_rejected() {
+    let error = EventMarkerStyle::builder()
+        .variant_path("power/on")
+        .color("   ")
+        .build()
+        .expect_err("a whitespace-only color is not of the #RRGGBB form");
+    assert_eq!(
+        error.to_string(),
+        r#"failed to parse EventMarkerColor (hex) from "   ": expected #RRGGBB format"#
+    );
+}
+
 // The `enum` types used only by the icon tests below.
 #[derive(Debug, EventKind)]
 #[event_kind(note = none)]

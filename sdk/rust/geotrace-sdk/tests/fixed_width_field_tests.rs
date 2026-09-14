@@ -70,6 +70,41 @@ fn a_marker_label_round_trips(#[case] label: Option<String>) {
 }
 
 #[rstest]
+#[case::empty_is_absent("", None)]
+#[case::whitespace_only_is_kept("   ", Some("   "))]
+fn a_marker_label_and_an_event_marker_annotation_read_back_as_built(
+    #[case] value: &str,
+    #[case] expected: Option<&str>,
+) {
+    let annotation = Annotation::builder()
+        .time(test_util::t_s(5))
+        .label(value)
+        .build()
+        .expect("a label within the field capacity is accepted");
+    let event_marker = EventMarker::builder()
+        .variant_path("power/boot")
+        .sys_time(test_util::t_s(5))
+        .annotation(value)
+        .build()
+        .expect("an annotation within the field capacity is accepted");
+    assert_eq!(annotation.label(), expected);
+    assert_eq!(event_marker.annotation(), expected);
+
+    let mut recorder = recorder_with_fixes_bracketing_an_annotation();
+    recorder.add_annotation(annotation);
+    recorder.add_event_marker(event_marker);
+    let loaded = test_util::round_trip(&recorder.finish().expect("the recording builds"))
+        .expect("the label and the annotation are written and read back");
+    let marker = loaded.markers().first().expect("the file holds the marker");
+    let event_marker = loaded
+        .event_markers()
+        .first()
+        .expect("the file holds the event marker");
+    assert_eq!(marker.annotation.label(), expected);
+    assert_eq!(event_marker.annotation.as_deref(), expected);
+}
+
+#[rstest]
 #[case::one_ascii_byte_past_the_capacity("l".repeat(MarkerLabelField::CONTENT_CAPACITY + 1))]
 #[case::a_two_byte_character_across_the_capacity(
     format!("{}é", "l".repeat(MarkerLabelField::CONTENT_CAPACITY - 1))

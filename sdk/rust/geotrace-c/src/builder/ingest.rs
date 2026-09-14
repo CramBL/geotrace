@@ -158,7 +158,8 @@ pub unsafe extern "C" fn gtd_builder_add_satellite_report(
 ///
 /// @param builder Builder handle.
 /// @param time    Timestamp of the annotation. Must not be `gtd_ts_none()`.
-/// @param label   Human-readable label, or NULL to leave the marker unlabelled.
+/// @param label   Human-readable label, or NULL or an empty string to leave the marker
+///                unlabelled.
 /// @param icon    Icon to display. A @ref GtdMarkerIcon value other than
 ///                `GTD_ICON_AUTO`.
 ///
@@ -221,7 +222,7 @@ pub unsafe extern "C" fn gtd_builder_add_annotation(
 /// @param builder      Builder handle.
 /// @param variant_path Hierarchical event type path.
 /// @param sys_time     Time of the event. Must not be `gtd_ts_none()`.
-/// @param annotation   Optional human-readable text. Pass NULL for none.
+/// @param annotation   Optional human-readable text. Pass NULL or an empty string for none.
 ///
 /// @return `GTD_ERR_INVALID_PATH` if @p variant_path is malformed.
 /// @return `GTD_ERR_FIELD_TOO_LONG` if @p variant_path is longer than 255 bytes,

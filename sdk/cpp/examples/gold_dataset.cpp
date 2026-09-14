@@ -395,9 +395,13 @@ void verify_counts(const geotrace::NavFile &file) {
         }
     };
 
-    check(file.title().find("Gold Dataset") != std::string_view::npos, "title missing");
-    check(file.device().find("Synthetic Generator") != std::string_view::npos, "device missing");
-    check(file.notes().find("cross-SDK") != std::string_view::npos, "notes missing");
+    auto contains = [](std::optional<std::string_view> value, std::string_view part) {
+        return value && value->find(part) != std::string_view::npos;
+    };
+
+    check(contains(file.title(), "Gold Dataset"), "title missing");
+    check(contains(file.device(), "Synthetic Generator"), "device missing");
+    check(contains(file.notes(), "cross-SDK"), "notes missing");
     check(file.identity() == "gold-standard-v2", "identity wrong");
     check(file.travel_mode() == "bicycle", "travel mode wrong");
 

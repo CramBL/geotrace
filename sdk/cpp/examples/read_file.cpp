@@ -193,11 +193,11 @@ int main(int argc, char **argv) {
 
         const geotrace::NavFile file = geotrace::NavFile::open(path);
 
-        if (!file.title().empty()) {
-            std::cout << "Title:  " << file.title() << "\n";
+        if (const auto title = file.title()) {
+            std::cout << "Title:  " << *title << "\n";
         }
-        if (!file.device().empty()) {
-            std::cout << "Device: " << file.device() << "\n";
+        if (const auto device = file.device()) {
+            std::cout << "Device: " << *device << "\n";
         }
 
         print_nav_points(file);

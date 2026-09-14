@@ -6,10 +6,11 @@
 
 use geotrace_sdk::{Angle, ChannelUnit, Duration, Unit, Velocity};
 use geotrace_sdk::{
-    Annotation, AnnotationIcon, Channel, Constellation, MarkerIcon, Meta, NavFileBuilder, NavFix,
-    NavFixTime, Satellite, SatelliteReport, TravelMode,
+    Annotation, AnnotationIcon, Channel, Constellation, MarkerIcon, Meta, MetaStringWithNul,
+    NavFileBuilder, NavFix, NavFixTime, Satellite, SatelliteReport, TravelMode,
 };
 use geotrace_sdk_test_util as test_util;
+use geotrace_sdk_test_util::{Lat, Lon};
 use rstest::rstest;
 
 #[test]
@@ -375,6 +376,48 @@ fn identity_via_meta_builder() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn builder_with_every_metadata_string_through_meta_builder(
+    value: &str,
+) -> Result<NavFileBuilder, MetaStringWithNul> {
+    let meta = Meta::builder()
+        .title(value)
+        .device(value)
+        .notes(value)
+        .identity(value)
+        .build()?;
+    Ok(NavFileBuilder::new().with_meta(meta))
+}
+
+fn builder_with_every_metadata_string_through_the_setters(
+    value: &str,
+) -> Result<NavFileBuilder, MetaStringWithNul> {
+    NavFileBuilder::new()
+        .with_title(value)?
+        .with_device(value)?
+        .with_notes(value)?
+        .with_identity(value)
+}
+
+#[rstest]
+fn an_empty_or_whitespace_only_metadata_string_round_trips_as_given(
+    #[values("", "   ")] value: &str,
+    #[values(
+        builder_with_every_metadata_string_through_meta_builder,
+        builder_with_every_metadata_string_through_the_setters
+    )]
+    builder_with_every_metadata_string: fn(&str) -> Result<NavFileBuilder, MetaStringWithNul>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut recorder = builder_with_every_metadata_string(value)?.open();
+    recorder.add_nav_fix(test_util::fix_at(0, Lat(55.0), Lon(12.0)));
+    let rt = test_util::round_trip(&recorder.finish()?)?;
+    let meta = rt.meta();
+    assert_eq!(
+        [meta.title(), meta.device(), meta.notes(), meta.identity()],
+        [Some(value); 4]
+    );
+    Ok(())
+}
+
 #[test]
 fn travel_mode_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = test_util::base();
@@ -528,6 +571,24 @@ fn a_bare_channel_round_trips_with_no_optional_fields() -> Result<(), Box<dyn st
     assert_eq!(channel.unit(), None);
     assert_eq!(channel.period(), None);
     assert_eq!(channel.description(), None);
+    Ok(())
+}
+
+#[rstest]
+fn an_empty_or_whitespace_only_channel_description_round_trips_as_given(
+    #[values("", "   ")] description: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_channel(
+        Channel::builder()
+            .name("raw")
+            .description(description)
+            .times(vec![test_util::base()])
+            .values(vec![1.0])
+            .build()?,
+    );
+    let rt = test_util::round_trip(&recorder.finish()?)?;
+    assert_eq!(rt.channels()[0].description(), Some(description));
     Ok(())
 }
 

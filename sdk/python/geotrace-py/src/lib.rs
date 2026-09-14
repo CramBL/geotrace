@@ -960,8 +960,9 @@ impl PyNavFix {
 
 /// A user-defined map annotation with an optional label and an icon.
 ///
-/// `time` must be a timezone-aware `datetime.datetime`. A `label` longer than
-/// the 255 bytes the `markers/label` field holds raises `ValueError`.
+/// `time` must be a timezone-aware `datetime.datetime`. An empty `label` gives a
+/// `label` of `None`. A `label` longer than the 255 bytes the `markers/label`
+/// field holds raises `ValueError`.
 #[pyclass(skip_from_py_object, name = "Annotation")]
 #[derive(Debug, Clone)]
 pub struct PyAnnotation {
@@ -1306,7 +1307,7 @@ fn is_skip_sentinel(value: &Bound<'_, PyAny>) -> PyResult<bool> {
 /// Allowed characters: ASCII alphanumeric, hyphen, underscore, and slash.
 /// No leading or trailing slash. No empty segments (``//``). Max 255 bytes.
 /// ``annotation`` holds at most 511 bytes, checked when ``NavFileBuilder.add()``
-/// takes the marker.
+/// takes the marker. ``NavFileBuilder.add()`` stores an empty ``annotation`` as none.
 ///
 /// ``sys_time`` must be a timezone-aware ``datetime.datetime``.
 #[pyclass(skip_from_py_object, name = "EventMarker")]
@@ -1386,7 +1387,9 @@ impl PyEventMarker {
 ///
 /// ``variant_path`` must exactly match a path used in an event marker.
 /// ``icon`` is a :class:`MarkerIcon` value, or ``None`` for the application default (Pin).
-/// ``color`` is ``#RRGGBB``, e.g. ``"#FF9900"``, or ``None`` for the deterministic hash color.
+/// ``color`` is ``#RRGGBB``, e.g. ``"#FF9900"``, or ``None`` or an empty string for the
+/// deterministic hash color. ``NavFileBuilder.add_event_marker_style`` raises ``ValueError`` for
+/// any other color.
 #[pyclass(skip_from_py_object, name = "EventMarkerStyle")]
 #[derive(Debug, Clone)]
 pub struct PyEventMarkerStyle {

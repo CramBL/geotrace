@@ -145,6 +145,49 @@ Test(markers, a_style_path_or_color_past_its_struct_field_is_field_too_long) {
     gtd_nav_file_destroy(file);
 }
 
+typedef struct {
+    const char *value;
+    uint8_t has_value;
+    const char *read_back;
+} EmptyOrWhitespaceOnlyString;
+
+static const EmptyOrWhitespaceOnlyString EMPTY_OR_WHITESPACE_ONLY_STRINGS[] = {
+    {"", 0, ""},
+    {"   ", 1, "   "},
+};
+
+static void assert_label_and_annotation(const GtdNavFile *file,
+                                        const EmptyOrWhitespaceOnlyString *expected) {
+    GtdMarkerInfo marker;
+    cr_assert_eq(gtd_nav_file_get_marker(file, 0, &marker), GTD_OK);
+    cr_assert_eq(marker.has_label, expected->has_value);
+    cr_assert_str_eq(marker.label, expected->read_back);
+    GtdEventMarkerInfo event_marker;
+    cr_assert_eq(gtd_nav_file_get_event_marker(file, 0, &event_marker), GTD_OK);
+    cr_assert_eq(event_marker.has_annotation, expected->has_value);
+    cr_assert_str_eq(event_marker.annotation, expected->read_back);
+}
+
+Test(markers, a_label_or_annotation_is_absent_when_empty_and_kept_when_whitespace_only) {
+    size_t case_count =
+        sizeof(EMPTY_OR_WHITESPACE_ONLY_STRINGS) / sizeof(EMPTY_OR_WHITESPACE_ONLY_STRINGS[0]);
+    for (size_t i = 0; i < case_count; i++) {
+        const EmptyOrWhitespaceOnlyString *string = &EMPTY_OR_WHITESPACE_ONLY_STRINGS[i];
+        GtdTimestamp timestamp;
+        GtdFileBuilder *builder = builder_with_a_nav_fix(&timestamp);
+        cr_assert_eq(gtd_builder_add_annotation(builder, timestamp, string->value, GTD_ICON_PIN),
+                     GTD_OK);
+        cr_assert_eq(gtd_builder_add_event_marker(builder, "power/boot", timestamp, string->value),
+                     GTD_OK);
+        GtdNavFile *built = NULL;
+        cr_assert_eq(gtd_builder_finish(builder, &built), GTD_OK);
+        assert_label_and_annotation(built, string);
+        GtdNavFile *read_back = reload_through_bytes(built);
+        assert_label_and_annotation(read_back, string);
+        gtd_nav_file_destroy(read_back);
+    }
+}
+
 #ifdef GTD_UNRECOGNIZED_MARKER_ICON_FIXTURE_PATH
 Test(markers, an_icon_code_outside_the_icon_set_reads_back_as_a_pin_with_its_code) {
     GtdNavFile *file = NULL;

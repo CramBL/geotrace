@@ -382,7 +382,8 @@ class Annotation:
 
     Args:
         time: Timezone-aware timestamp.
-        label: Display label, or ``None`` to render as unlabelled.
+        label: Display label, or ``None`` or an empty string to render as
+            unlabelled.
         icon: Visual icon.
 
     Raises:
@@ -587,7 +588,8 @@ class EventMarker:
         variant_path: Slash-separated path, e.g. ``"power/boot"``, or ``None`` /
             ``event_kind.skip`` to skip this marker.
         sys_time: Timezone-aware timestamp for this event.
-        annotation: Optional free-text note shown on hover.
+        annotation: Optional free-text note shown on hover, or ``None`` or an
+            empty string for none.
 
     Raises:
         TypeError: If ``variant_path`` is of any other type.
@@ -614,7 +616,8 @@ class EventMarkerStyle:
     Args:
         variant_path: Must exactly match a ``variant_path`` used in an event marker.
         icon: Icon shape, or ``None`` for the application default (Pin).
-        color: Fill color as ``#RRGGBB``, or ``None`` for the deterministic hash color.
+        color: Fill color as ``#RRGGBB``, or ``None`` or an empty string for the
+            deterministic hash color.
     """
 
     def __init__(
@@ -945,7 +948,12 @@ class NavFileBuilder:
         ...
 
     def add_event_marker_style(self, style: EventMarkerStyle) -> NavFileBuilder:
-        """Add a per-variant style override. Returns ``self``."""
+        """Add a per-variant style override. Returns ``self``.
+
+        Raises:
+            ValueError: If the style's color is neither empty nor of the
+                ``#RRGGBB`` form.
+        """
         ...
 
     def finish(self) -> NavFile:

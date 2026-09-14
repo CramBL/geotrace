@@ -51,6 +51,16 @@ impl<const ROW_BYTES: usize> FixedWidthString<ROW_BYTES> {
         Ok(Self(value))
     }
 
+    /// `Ok(None)` for `None` and for an empty value, the `.gtd` encoding of an absent value.
+    pub(crate) fn new_unless_empty(
+        value: Option<String>,
+    ) -> Result<Option<Self>, FixedWidthStringError> {
+        value
+            .filter(|value| !value.is_empty())
+            .map(Self::new)
+            .transpose()
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

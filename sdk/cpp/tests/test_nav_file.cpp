@@ -45,14 +45,22 @@ TEST_CASE("NavFile: event_marker out-of-range throws std::out_of_range") {
     CHECK_THROWS_AS(static_cast<void>(file.event_marker(0)), std::out_of_range);
 }
 
-TEST_CASE("NavFile: absent metadata returns empty string_view") {
+TEST_CASE("NavFile: absent metadata returns std::nullopt") {
     auto file = make_minimal();
-    CHECK(file.title() == "");
-    CHECK(file.device() == "");
-    CHECK(file.notes() == "");
-    CHECK(file.identity() == "");
-    CHECK(file.travel_mode() == "");
-    CHECK(file.title().empty());
+    CHECK_FALSE(file.title().has_value());
+    CHECK_FALSE(file.device().has_value());
+    CHECK_FALSE(file.notes().has_value());
+    CHECK_FALSE(file.identity().has_value());
+    CHECK_FALSE(file.travel_mode().has_value());
+}
+
+TEST_CASE("NavFile: an empty title returns an empty view") {
+    const NavFix fix{FixTime::receiver(Timestamp::from_seconds(1700000000)),
+                     Angle::degrees(51.5074), Angle::degrees(-0.1278)};
+    const auto file =
+        NavFile::from_bytes(FileBuilder{}.title("").add_nav_fix(fix).finish().to_bytes());
+    REQUIRE(file.title().has_value());
+    CHECK(file.title()->empty());
 }
 
 #ifdef GTD_METADATA_WITH_A_NUL_BYTE_FIXTURE_PATH

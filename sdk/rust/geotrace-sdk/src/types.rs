@@ -282,19 +282,17 @@ pub struct Annotation {
 impl Annotation {
     /// Build a validated [`Annotation`].
     ///
-    /// An empty or whitespace-only `label` becomes `None`. Returns `Err` if
-    /// `label` does not fit a [`MarkerLabelField`](crate::MarkerLabelField).
+    /// An empty `label` gives `None`, the value the reader returns for an empty `markers/label`
+    /// row. Returns `Err` if `label` does not fit a [`MarkerLabelField`](crate::MarkerLabelField).
     #[builder(finish_fn = build)]
     pub fn new(
         #[builder(into)] time: DateTime<Utc>,
         #[builder(into)] label: Option<String>,
         #[builder(into, default = AnnotationIcon::Icon(MarkerIcon::Pin))] icon: AnnotationIcon,
     ) -> Result<Self, Error> {
-        let label = label.filter(|s| !s.trim().is_empty());
-        if let Some(label) = label.as_deref() {
-            MarkerLabelField::new(label)
-                .map_err(|source| Error::unwritable_field(MARKER_LABEL_LOCATION, source))?;
-        }
+        let label = MarkerLabelField::new_unless_empty(label)
+            .map_err(|source| Error::unwritable_field(MARKER_LABEL_LOCATION, source))?
+            .map(String::from);
         Ok(Self { time, label, icon })
     }
 }
@@ -616,8 +614,7 @@ impl Meta {
 impl Meta {
     /// Build a new [`Meta`] object.
     ///
-    /// Empty or whitespace-only strings are automatically converted to `None`. Returns `Err` for
-    /// a value with a nul byte.
+    /// Returns `Err` for a value with a nul byte.
     #[builder(finish_fn = build)]
     pub fn new(
         #[builder(into)] title: Option<String>,
@@ -642,10 +639,10 @@ impl Meta {
             }
         }
         Ok(Self {
-            title: title.filter(|s| !s.trim().is_empty()),
-            device: device.filter(|s| !s.trim().is_empty()),
-            notes: notes.filter(|s| !s.trim().is_empty()),
-            identity: identity.filter(|s| !s.trim().is_empty()),
+            title,
+            device,
+            notes,
+            identity,
             travel_mode,
             sdk_version: None,
             sdk_git_commit: None,
@@ -717,7 +714,8 @@ impl EventMarker {
     /// Returns `Err` if `variant_path` is malformed (empty, leading/trailing slash,
     /// consecutive slashes, non-ASCII-alphanumeric/hyphen/underscore, or longer than
     /// [`VariantPathField::CONTENT_CAPACITY`](crate::VariantPathField::CONTENT_CAPACITY)
-    /// bytes), and if `annotation` does not fit an [`AnnotationField`].
+    /// bytes), and if `annotation` does not fit an [`AnnotationField`]. An empty `annotation`
+    /// gives `None`, the value the reader returns for an empty `event_markers/annotation` row.
     #[builder(finish_fn = build)]
     pub fn new(
         #[builder(into)] variant_path: String,
@@ -725,10 +723,9 @@ impl EventMarker {
         #[builder(into)] annotation: Option<String>,
     ) -> Result<Self, EventMarkerError> {
         crate::error::validate_variant_path(&variant_path)?;
-        if let Some(annotation) = annotation.as_deref() {
-            AnnotationField::new(annotation)
-                .map_err(|source| EventMarkerError::UnwritableAnnotation { source })?;
-        }
+        let annotation = AnnotationField::new_unless_empty(annotation)
+            .map_err(|source| EventMarkerError::UnwritableAnnotation { source })?
+            .map(String::from);
         Ok(Self {
             variant_path,
             sys_time,
@@ -877,7 +874,9 @@ pub struct EventMarkerStyle {
 impl EventMarkerStyle {
     /// Build a new [`EventMarkerStyle`].
     ///
-    /// Empty or whitespace-only colors are automatically converted to `Auto`.
+    /// An empty `color` gives [`EventMarkerColor::Auto`], the value the reader returns for an empty
+    /// `color_hex` row. Returns `Err` for any other `color` outside the `#RRGGBB` form, a
+    /// whitespace-only one included.
     #[builder(finish_fn = build)]
     pub fn new(
         #[builder(into)] variant_path: String,
@@ -888,7 +887,6 @@ impl EventMarkerStyle {
             variant_path,
             icon: icon.unwrap_or_default(),
             color: color
-                .filter(|s| !s.trim().is_empty())
                 .map(EventMarkerColor::try_from)
                 .transpose()?
                 .unwrap_or_default(),
@@ -1011,7 +1009,7 @@ impl Channel {
             name,
             unit,
             period,
-            description: description.filter(|s| !s.trim().is_empty()),
+            description,
             components,
             times,
             values,
