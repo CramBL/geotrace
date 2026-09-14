@@ -1,23 +1,12 @@
-//! Dates for the environment schedulers, and days written into an archive.
+//! Days written into an archive.
 
-use chrono::{DateTime, NaiveDate, NaiveTime, TimeDelta, Utc};
+use chrono::{NaiveDate, NaiveTime, TimeDelta, Utc};
 use gt_store::{
     EnvironmentArchive, GeomagneticIndexArchive, InterferenceArchive, SolarFlareArchive,
     TecMapArchive,
 };
 
 use crate::app::environment_storage;
-
-pub fn day(year: i32, month: u32, day: u32) -> NaiveDate {
-    NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
-}
-
-pub fn at(year: i32, month: u32, day: u32, hour: u32) -> DateTime<Utc> {
-    NaiveDate::from_ymd_opt(year, month, day)
-        .and_then(|date| date.and_hms_opt(hour, 0, 0))
-        .map(|naive| naive.and_utc())
-        .unwrap_or_default()
-}
 
 /// Archive `day` in `store` with no aircraft observations. The fetch worker
 /// writes an empty day when the service reports none.

@@ -285,7 +285,7 @@ impl DayFetchQueue {
 
 #[cfg(test)]
 mod tests {
-    use crate::app::test_util::day_archive;
+    use gt_types::fixtures;
 
     use super::*;
 
@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn a_recording_day_the_archive_lacks_is_queued_once() {
         let mut queue = DayFetchQueue::default();
-        let day = day_archive::day(2026, 7, 20);
+        let day = fixtures::date(2026, 7, 20);
 
         queue.request_recording_day(day, NEEDS_FETCH);
         queue.request_recording_day(day, NEEDS_FETCH);
@@ -318,7 +318,7 @@ mod tests {
     fn an_archived_recording_day_is_not_queued_and_counts_as_archived() {
         let mut queue = DayFetchQueue::default();
 
-        queue.request_recording_day(day_archive::day(2026, 7, 20), ARCHIVED);
+        queue.request_recording_day(fixtures::date(2026, 7, 20), ARCHIVED);
 
         assert_eq!(queue.queued(), 0);
         assert!(queue.requested_days().is_empty());
@@ -334,7 +334,7 @@ mod tests {
     #[test]
     fn an_unreadable_archive_awaits_the_recording_day_and_reports_one_failure() {
         let mut queue = DayFetchQueue::default();
-        let day = day_archive::day(2026, 7, 20);
+        let day = fixtures::date(2026, 7, 20);
 
         queue.request_recording_day(day, UNREADABLE_ARCHIVE);
         queue.request_recording_day(day, UNREADABLE_ARCHIVE);
@@ -359,7 +359,7 @@ mod tests {
     #[test]
     fn a_background_day_a_recording_spans_stays_in_the_recording_count() {
         let mut queue = DayFetchQueue::default();
-        let day = day_archive::day(2026, 7, 20);
+        let day = fixtures::date(2026, 7, 20);
         queue.request_recording_day(day, NEEDS_FETCH);
 
         queue.request_background_day(day, NEEDS_FETCH);
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn a_background_day_a_recording_later_spans_moves_to_the_recording_count() {
         let mut queue = DayFetchQueue::default();
-        let day = day_archive::day(2026, 7, 20);
+        let day = fixtures::date(2026, 7, 20);
         queue.request_background_day(day, NEEDS_FETCH);
 
         queue.request_recording_day(day, NEEDS_FETCH);
@@ -396,10 +396,10 @@ mod tests {
     #[test]
     fn a_backfill_queues_the_days_the_archive_lacks_and_reports_their_total() {
         let mut queue = DayFetchQueue::default();
-        let archived = day_archive::day(2026, 7, 21);
+        let archived = fixtures::date(2026, 7, 21);
 
         let total = queue.start_backfill(
-            (20..=22).map(|number| day_archive::day(2026, 7, number)),
+            (20..=22).map(|number| fixtures::date(2026, 7, number)),
             |day| {
                 if day == archived {
                     ARCHIVED
@@ -422,7 +422,7 @@ mod tests {
         let mut queue = DayFetchQueue::default();
 
         let total = queue.start_backfill(
-            (20..=22).map(|number| day_archive::day(2026, 7, number)),
+            (20..=22).map(|number| fixtures::date(2026, 7, number)),
             |_| ARCHIVED,
         );
 
@@ -434,10 +434,10 @@ mod tests {
     #[test]
     fn a_backfill_skips_a_day_a_recording_already_requested() {
         let mut queue = DayFetchQueue::default();
-        let recording_day = day_archive::day(2026, 7, 20);
+        let recording_day = fixtures::date(2026, 7, 20);
         queue.request_recording_day(recording_day, NEEDS_FETCH);
 
-        let total = queue.start_backfill([recording_day, day_archive::day(2026, 7, 21)], |_| {
+        let total = queue.start_backfill([recording_day, fixtures::date(2026, 7, 21)], |_| {
             NEEDS_FETCH
         });
 
@@ -449,7 +449,7 @@ mod tests {
     #[test]
     fn an_unreadable_archive_in_a_backfill_queues_nothing_and_reports_a_failure() {
         let mut queue = DayFetchQueue::default();
-        let day = day_archive::day(2026, 7, 20);
+        let day = fixtures::date(2026, 7, 20);
 
         let total = queue.start_backfill([day], |_| UNREADABLE_ARCHIVE);
 
@@ -468,8 +468,8 @@ mod tests {
     #[test]
     fn starting_a_backfill_drops_the_days_the_running_one_queued() {
         let mut queue = DayFetchQueue::default();
-        let replaced = day_archive::day(2026, 7, 20);
-        let started = day_archive::day(2026, 7, 25);
+        let replaced = fixtures::date(2026, 7, 20);
+        let started = fixtures::date(2026, 7, 25);
         queue.start_backfill([replaced], |_| NEEDS_FETCH);
 
         let total = queue.start_backfill([started], |_| NEEDS_FETCH);
@@ -483,7 +483,7 @@ mod tests {
     fn cancelling_a_backfill_releases_the_days_it_queued() {
         let mut queue = DayFetchQueue::default();
         queue.start_backfill(
-            [day_archive::day(2026, 7, 20), day_archive::day(2026, 7, 21)],
+            [fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 21)],
             |_| NEEDS_FETCH,
         );
 
@@ -499,8 +499,8 @@ mod tests {
     #[test]
     fn cancelling_a_backfill_keeps_the_day_in_flight_requested() {
         let mut queue = DayFetchQueue::default();
-        let in_flight = day_archive::day(2026, 7, 20);
-        let queued = day_archive::day(2026, 7, 21);
+        let in_flight = fixtures::date(2026, 7, 20);
+        let queued = fixtures::date(2026, 7, 21);
         queue.start_backfill([in_flight, queued], |_| NEEDS_FETCH);
         assert_eq!(queue.take_next_day(), Some(in_flight));
 
@@ -513,9 +513,9 @@ mod tests {
     #[test]
     fn cancelling_a_backfill_leaves_a_recording_day_queued() {
         let mut queue = DayFetchQueue::default();
-        let recording_day = day_archive::day(2026, 7, 19);
+        let recording_day = fixtures::date(2026, 7, 19);
         queue.request_recording_day(recording_day, NEEDS_FETCH);
-        queue.start_backfill([day_archive::day(2026, 7, 20)], |_| NEEDS_FETCH);
+        queue.start_backfill([fixtures::date(2026, 7, 20)], |_| NEEDS_FETCH);
 
         queue.cancel_backfill();
 
@@ -527,8 +527,8 @@ mod tests {
     #[test]
     fn take_next_day_dispatches_one_day_at_a_time_in_queue_order() {
         let mut queue = DayFetchQueue::default();
-        let first = day_archive::day(2026, 7, 20);
-        let second = day_archive::day(2026, 7, 21);
+        let first = fixtures::date(2026, 7, 20);
+        let second = fixtures::date(2026, 7, 21);
         queue.request_recording_day(first, NEEDS_FETCH);
         queue.request_recording_day(second, NEEDS_FETCH);
 
@@ -543,8 +543,8 @@ mod tests {
     #[test]
     fn the_last_day_of_a_backfill_ends_it() {
         let mut queue = DayFetchQueue::default();
-        let first = day_archive::day(2026, 7, 20);
-        let last = day_archive::day(2026, 7, 21);
+        let first = fixtures::date(2026, 7, 20);
+        let last = fixtures::date(2026, 7, 21);
         queue.start_backfill([first, last], |_| NEEDS_FETCH);
 
         queue.finish_day(first);
@@ -560,7 +560,7 @@ mod tests {
     #[test]
     fn a_changed_host_drops_the_queue_its_failures_and_the_backfill() {
         let mut queue = DayFetchQueue::default();
-        let day = day_archive::day(2026, 7, 20);
+        let day = fixtures::date(2026, 7, 20);
         queue.start_backfill([day], |_| NEEDS_FETCH);
         queue.report_failure(day, "HTTP 500 Internal Server Error".to_owned());
 
@@ -575,8 +575,8 @@ mod tests {
     #[test]
     fn a_changed_host_keeps_what_the_archive_holds_for_the_recording_days() {
         let mut queue = DayFetchQueue::default();
-        queue.request_recording_day(day_archive::day(2026, 7, 20), ARCHIVED);
-        queue.request_recording_day(day_archive::day(2026, 7, 21), NEEDS_FETCH);
+        queue.request_recording_day(fixtures::date(2026, 7, 20), ARCHIVED);
+        queue.request_recording_day(fixtures::date(2026, 7, 21), NEEDS_FETCH);
 
         queue.forget_host();
 
@@ -592,15 +592,15 @@ mod tests {
     #[test]
     fn pruned_days_are_requestable_again_and_lose_their_failures() {
         let mut queue = DayFetchQueue::default();
-        let pruned = day_archive::day(2026, 7, 20);
-        let kept = day_archive::day(2026, 7, 25);
+        let pruned = fixtures::date(2026, 7, 20);
+        let kept = fixtures::date(2026, 7, 25);
         queue.request_recording_day(pruned, NEEDS_FETCH);
         queue.request_recording_day(kept, NEEDS_FETCH);
         queue.mark_archived(pruned);
         queue.mark_archived(kept);
         queue.report_failure(pruned, "HTTP 500 Internal Server Error".to_owned());
 
-        queue.forget_pruned_days(PrunedDays::Before(day_archive::day(2026, 7, 21)));
+        queue.forget_pruned_days(PrunedDays::Before(fixtures::date(2026, 7, 21)));
 
         assert!(!queue.requested_days().contains(&pruned));
         assert!(queue.requested_days().contains(&kept));
@@ -617,7 +617,7 @@ mod tests {
     #[test]
     fn a_prune_keeps_the_day_in_flight_requested() {
         let mut queue = DayFetchQueue::default();
-        let day = day_archive::day(2026, 7, 20);
+        let day = fixtures::date(2026, 7, 20);
         queue.request_recording_day(day, NEEDS_FETCH);
         assert_eq!(queue.take_next_day(), Some(day));
 
@@ -629,12 +629,9 @@ mod tests {
     #[test]
     fn the_oldest_needed_day_is_the_earliest_recording_or_background_day() {
         let mut queue = DayFetchQueue::default();
-        queue.request_recording_day(day_archive::day(2026, 7, 20), NEEDS_FETCH);
-        queue.request_background_day(day_archive::day(2026, 6, 23), NEEDS_FETCH);
+        queue.request_recording_day(fixtures::date(2026, 7, 20), NEEDS_FETCH);
+        queue.request_background_day(fixtures::date(2026, 6, 23), NEEDS_FETCH);
 
-        assert_eq!(
-            queue.oldest_needed_day(),
-            Some(day_archive::day(2026, 6, 23))
-        );
+        assert_eq!(queue.oldest_needed_day(), Some(fixtures::date(2026, 6, 23)));
     }
 }

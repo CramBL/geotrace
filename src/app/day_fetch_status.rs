@@ -156,22 +156,21 @@ pub fn show_background_day_row(ui: &mut Ui, coverage: ArchivedDayCount, hover: &
 
 #[cfg(test)]
 mod tests {
+    use gt_types::fixtures;
     use rstest::rstest;
-
-    use crate::app::test_util::day_archive;
 
     use super::*;
 
     #[rstest]
     #[case::idle(None, 0, "Idle")]
-    #[case::fetching_the_last_day(Some(day_archive::day(2026, 7, 20)), 0, "Fetching 2026-07-20")]
+    #[case::fetching_the_last_day(Some(fixtures::date(2026, 7, 20)), 0, "Fetching 2026-07-20")]
     #[case::fetching_with_a_queue(
-        Some(day_archive::day(2026, 7, 20)),
+        Some(fixtures::date(2026, 7, 20)),
         3,
         "Fetching 2026-07-20, 3 days queued"
     )]
     #[case::one_day_behind(
-        Some(day_archive::day(2026, 7, 20)),
+        Some(fixtures::date(2026, 7, 20)),
         1,
         "Fetching 2026-07-20, 1 day queued"
     )]
@@ -208,9 +207,9 @@ mod tests {
     #[test]
     fn archiving_a_day_outside_the_loaded_recordings_changes_no_count() {
         let mut coverage = DayArchiveCoverage::default();
-        coverage.record(day_archive::day(2026, 7, 20), DayArchiveState::Awaited);
+        coverage.record(fixtures::date(2026, 7, 20), DayArchiveState::Awaited);
 
-        coverage.mark_archived(day_archive::day(2026, 7, 25));
+        coverage.mark_archived(fixtures::date(2026, 7, 25));
 
         assert_eq!(
             coverage.counts(),

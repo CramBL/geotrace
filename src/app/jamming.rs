@@ -704,13 +704,12 @@ mod tests {
     use gt_pending_writes::{WriteAccess, WriteRejection};
     use gt_store::WritableDayArchive as _;
     use gt_test_utils::pending_writes;
+    use gt_types::fixtures;
 
     use crate::app::backfill::BackfillProgress;
     use crate::app::day_failures::DayFailure;
     use crate::app::day_fetch_status::{ArchivedDayCount, DayFetchStatus};
     use crate::app::fix_positions::FixPositions;
-
-    use crate::app::test_util::day_archive;
 
     use super::*;
 
@@ -770,12 +769,11 @@ mod tests {
     #[test]
     fn a_backfill_queues_only_the_unarchived_days_in_range() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        for archived in [day_archive::day(2026, 7, 21), day_archive::day(2026, 7, 22)] {
+        for archived in [fixtures::date(2026, 7, 21), fixtures::date(2026, 7, 22)] {
             archive_day(&store, archived, &[]);
         }
 
-        let queued =
-            scheduler.backfill(day_archive::day(2026, 7, 20), day_archive::day(2026, 7, 26));
+        let queued = scheduler.backfill(fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 26));
         assert_eq!(queued, Some(5), "seven days in range, two already held");
     }
 
@@ -784,7 +782,7 @@ mod tests {
     fn a_backfill_outside_coverage_queues_nothing() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         assert_eq!(
-            scheduler.backfill(day_archive::day(2019, 1, 1), day_archive::day(2020, 1, 1)),
+            scheduler.backfill(fixtures::date(2019, 1, 1), fixtures::date(2020, 1, 1)),
             Some(0)
         );
         assert_eq!(scheduler.days.backfill_progress(), None);
@@ -796,7 +794,7 @@ mod tests {
         let mut scheduler = scheduler();
         assert!(!scheduler.archive_available());
         assert_eq!(
-            scheduler.backfill(day_archive::day(2026, 7, 20), day_archive::day(2026, 7, 26)),
+            scheduler.backfill(fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 26)),
             None
         );
         assert_eq!(scheduler.days.backfill_progress(), None);
@@ -805,13 +803,15 @@ mod tests {
     /// Every outcome retires its day, so a range of missing or failing days
     /// still reaches its total.
     #[rstest]
-    #[case::stored(JamMessage::Stored { day: day_archive::day(2026, 7, 20), cells: 1 })]
-    #[case::missing(JamMessage::Missing { day: day_archive::day(2026, 7, 20), pending: false })]
-    #[case::failed(UnarchivedDay::failed(day_archive::day(2026, 7, 20), "boom".to_owned()).into())]
-    #[case::rejected(UnarchivedDay::rejected(day_archive::day(2026, 7, 20), WriteRejection::ShuttingDown).into())]
+    #[case::stored(JamMessage::Stored { day: fixtures::date(2026, 7, 20), cells: 1 })]
+    #[case::missing(JamMessage::Missing { day: fixtures::date(2026, 7, 20), pending: false })]
+    #[case::failed(UnarchivedDay::failed(fixtures::date(2026, 7, 20), "boom".to_owned()).into())]
+    #[case::rejected(
+        UnarchivedDay::rejected(fixtures::date(2026, 7, 20), WriteRejection::ShuttingDown).into()
+    )]
     fn progress_advances_on_every_outcome(#[case] message: JamMessage) {
         let mut scheduler = scheduler();
-        let days = [day_archive::day(2026, 7, 20), day_archive::day(2026, 7, 21)];
+        let days = [fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 21)];
         scheduler.days.queue_backfill_of(&days);
         assert_eq!(
             scheduler.days.backfill_progress(),
@@ -855,7 +855,7 @@ mod tests {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler
             .days
-            .queue_backfill_of(&[day_archive::day(2026, 7, 20), day_archive::day(2026, 7, 21)]);
+            .queue_backfill_of(&[fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 21)]);
         scheduler.start_next();
 
         assert!(scheduler.days.is_fetching());
@@ -873,7 +873,7 @@ mod tests {
             .tx
             .send(
                 UnarchivedDay::failed(
-                    day_archive::day(2026, 7, 20),
+                    fixtures::date(2026, 7, 20),
                     "HTTP 500 Internal Server Error".to_owned(),
                 )
                 .into(),
@@ -884,7 +884,7 @@ mod tests {
         assert_eq!(
             scheduler.days.failures(),
             [DayFailure {
-                day: day_archive::day(2026, 7, 20),
+                day: fixtures::date(2026, 7, 20),
                 detail: "HTTP 500 Internal Server Error".to_owned(),
             }]
         );
@@ -899,7 +899,7 @@ mod tests {
             .tx
             .send(
                 UnarchivedDay::rejected(
-                    day_archive::day(2026, 7, 20),
+                    fixtures::date(2026, 7, 20),
                     WriteRejection::ReadOnlySession,
                 )
                 .into(),
@@ -921,8 +921,8 @@ mod tests {
         scheduler.pending_writes = pending_writes;
 
         scheduler.request_days_for(range(
-            day_archive::at(2026, 7, 20, 8),
-            day_archive::at(2026, 7, 20, 17),
+            fixtures::utc_instant(2026, 7, 20, 8, 0),
+            fixtures::utc_instant(2026, 7, 20, 17, 0),
         ));
 
         assert_eq!(scheduler.days.queued(), 1);
@@ -947,8 +947,8 @@ mod tests {
         );
 
         scheduler.request_days_for(range(
-            day_archive::at(2026, 7, 20, 8),
-            day_archive::at(2026, 7, 20, 17),
+            fixtures::utc_instant(2026, 7, 20, 8, 0),
+            fixtures::utc_instant(2026, 7, 20, 17, 0),
         ));
 
         assert_eq!(scheduler.days.queued(), 1);
@@ -995,17 +995,17 @@ mod tests {
     #[test]
     fn the_status_reports_the_queue_and_the_archived_recording_days() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        archive_day(&store, day_archive::day(2026, 7, 20), &[]);
+        archive_day(&store, fixtures::date(2026, 7, 20), &[]);
 
         scheduler.request_days_for(range(
-            day_archive::at(2026, 7, 20, 8),
-            day_archive::at(2026, 7, 21, 17),
+            fixtures::utc_instant(2026, 7, 20, 8, 0),
+            fixtures::utc_instant(2026, 7, 21, 17, 0),
         ));
 
         assert_eq!(
             scheduler.days.fetch_status(),
             DayFetchStatus {
-                fetching: Some(day_archive::day(2026, 7, 21)),
+                fetching: Some(fixtures::date(2026, 7, 21)),
                 queued: 0,
                 recording_days: ArchivedDayCount {
                     days: 2,
@@ -1021,8 +1021,8 @@ mod tests {
     fn a_day_outside_coverage_is_no_recording_day() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.request_days_for(range(
-            day_archive::at(2020, 1, 1, 0),
-            day_archive::at(2020, 1, 1, 1),
+            fixtures::utc_instant(2020, 1, 1, 0, 0),
+            fixtures::utc_instant(2020, 1, 1, 1, 0),
         ));
 
         assert_eq!(scheduler.days.fetch_status().recording_days.days, 0);
@@ -1034,12 +1034,12 @@ mod tests {
         let mut scheduler = scheduler();
         scheduler
             .days
-            .await_recording_day(day_archive::day(2026, 7, 20));
+            .await_recording_day(fixtures::date(2026, 7, 20));
 
         scheduler
             .tx
             .send(JamMessage::Stored {
-                day: day_archive::day(2026, 7, 20),
+                day: fixtures::date(2026, 7, 20),
                 cells: 1,
             })
             .expect("send");
@@ -1052,8 +1052,8 @@ mod tests {
     fn a_scheduler_without_an_archive_queues_nothing() {
         let mut scheduler = scheduler();
         scheduler.request_days_for(range(
-            day_archive::at(2026, 7, 20, 8),
-            day_archive::at(2026, 7, 20, 17),
+            fixtures::utc_instant(2026, 7, 20, 8, 0),
+            fixtures::utc_instant(2026, 7, 20, 17, 0),
         ));
         assert_eq!(scheduler.days.queued(), 0);
         assert!(!scheduler.days.is_fetching());
@@ -1068,8 +1068,8 @@ mod tests {
 
         // Before coverage: rejected by the calendar, never requested.
         scheduler.request_days_for(range(
-            day_archive::at(2020, 1, 1, 0),
-            day_archive::at(2020, 1, 1, 1),
+            fixtures::utc_instant(2020, 1, 1, 0, 0),
+            fixtures::utc_instant(2020, 1, 1, 1, 0),
         ));
         assert_eq!(scheduler.days.queued(), 0);
 
@@ -1082,8 +1082,8 @@ mod tests {
         let archived = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
         archive_day(&store, archived, &[]);
         scheduler.request_days_for(range(
-            day_archive::at(2026, 7, 20, 8),
-            day_archive::at(2026, 7, 20, 17),
+            fixtures::utc_instant(2026, 7, 20, 8, 0),
+            fixtures::utc_instant(2026, 7, 20, 17, 0),
         ));
         assert_eq!(scheduler.days.queued(), 0);
     }
@@ -1095,7 +1095,7 @@ mod tests {
     #[test]
     fn a_day_index_read_that_failed_on_another_process_is_run_again_and_finds_the_days() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        let archived = day_archive::day(2026, 7, 20);
+        let archived = fixtures::date(2026, 7, 20);
         archive_day(&store, archived, &[]);
         let failed = scheduler.day_index_read.record_read(
             &scheduler.ctx,
@@ -1118,8 +1118,8 @@ mod tests {
         archive_day(&store, archived, &[]);
         scheduler.archived_cells.insert(archived, 0);
         let recording = range(
-            day_archive::at(2026, 7, 20, 8),
-            day_archive::at(2026, 7, 20, 17),
+            fixtures::utc_instant(2026, 7, 20, 8, 0),
+            fixtures::utc_instant(2026, 7, 20, 17, 0),
         );
         scheduler.request_days_for(recording);
         assert_eq!(scheduler.days.queued(), 0, "an archived day is not fetched");
@@ -1149,8 +1149,8 @@ mod tests {
     fn a_queued_day_is_dispatched() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.request_days_for(range(
-            day_archive::at(2026, 7, 20, 8),
-            day_archive::at(2026, 7, 20, 17),
+            fixtures::utc_instant(2026, 7, 20, 8, 0),
+            fixtures::utc_instant(2026, 7, 20, 17, 0),
         ));
 
         assert_eq!(scheduler.days.queued(), 0);
@@ -1163,8 +1163,8 @@ mod tests {
     fn an_overlong_recording_queues_nothing() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.request_days_for(range(
-            day_archive::at(2026, 6, 1, 0),
-            day_archive::at(2026, 7, 20, 0),
+            fixtures::utc_instant(2026, 6, 1, 0, 0),
+            fixtures::utc_instant(2026, 7, 20, 0, 0),
         ));
         assert_eq!(scheduler.days.queued(), 0);
         assert!(scheduler.days.requested_days().is_empty());
@@ -1229,12 +1229,12 @@ mod tests {
     fn the_earliest_loaded_day_is_shown() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.request_days_for(range(
-            day_archive::at(2026, 7, 25, 8),
-            day_archive::at(2026, 7, 25, 9),
+            fixtures::utc_instant(2026, 7, 25, 8, 0),
+            fixtures::utc_instant(2026, 7, 25, 9, 0),
         ));
         scheduler.request_days_for(range(
-            day_archive::at(2026, 7, 20, 8),
-            day_archive::at(2026, 7, 20, 9),
+            fixtures::utc_instant(2026, 7, 20, 8, 0),
+            fixtures::utc_instant(2026, 7, 20, 9, 0),
         ));
 
         let (_, selection) = scheduler.overlay_state();
@@ -1246,14 +1246,14 @@ mod tests {
     fn a_later_load_does_not_move_a_stepped_day() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.request_days_for(range(
-            day_archive::at(2026, 7, 25, 8),
-            day_archive::at(2026, 7, 25, 9),
+            fixtures::utc_instant(2026, 7, 25, 8, 0),
+            fixtures::utc_instant(2026, 7, 25, 9, 0),
         ));
         scheduler.overlay_state().1.step_back();
 
         scheduler.request_days_for(range(
-            day_archive::at(2026, 7, 20, 8),
-            day_archive::at(2026, 7, 20, 9),
+            fixtures::utc_instant(2026, 7, 20, 8, 0),
+            fixtures::utc_instant(2026, 7, 20, 9, 0),
         ));
         let (_, selection) = scheduler.overlay_state();
         assert_eq!(selection.day(), NaiveDate::from_ymd_opt(2026, 7, 24));
@@ -1265,8 +1265,8 @@ mod tests {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         let day = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
         scheduler.request_days_for(range(
-            day_archive::at(2026, 7, 20, 8),
-            day_archive::at(2026, 7, 20, 9),
+            fixtures::utc_instant(2026, 7, 20, 8, 0),
+            fixtures::utc_instant(2026, 7, 20, 9, 0),
         ));
         assert_eq!(scheduler.empty_reason(), Some(EmptyReason::NotFetched));
 
@@ -1482,7 +1482,7 @@ mod tests {
     #[test]
     fn the_context_line_needs_a_recording_to_place_a_day_at() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        let archived = day_archive::day(2026, 7, 20);
+        let archived = fixtures::date(2026, 7, 20);
         archive_day(&store, archived, &[]);
         scheduler.archived_cells.insert(archived, 1);
 
@@ -1509,8 +1509,8 @@ mod tests {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         let day = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
         scheduler.request_days_for(range(
-            day_archive::at(2026, 7, 20, 8),
-            day_archive::at(2026, 7, 20, 17),
+            fixtures::utc_instant(2026, 7, 20, 8, 0),
+            fixtures::utc_instant(2026, 7, 20, 17, 0),
         ));
         scheduler.refused.insert(day);
         scheduler.archived_cells.insert(day, 44_546);
@@ -1536,8 +1536,8 @@ mod tests {
         let day = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
         scheduler.refused.insert(day);
         scheduler.request_days_for(range(
-            day_archive::at(2026, 7, 20, 8),
-            day_archive::at(2026, 7, 20, 17),
+            fixtures::utc_instant(2026, 7, 20, 8, 0),
+            fixtures::utc_instant(2026, 7, 20, 17, 0),
         ));
         let seen = scheduler.days.requested_days().len();
 

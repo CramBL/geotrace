@@ -514,14 +514,12 @@ mod tests {
     use gt_pending_writes::{WriteAccess, WriteRejection};
     use gt_store::Store;
     use gt_test_utils::pending_writes;
-    use gt_types::{Latitude, Longitude};
+    use gt_types::{Latitude, Longitude, fixtures};
     use rustc_hash::FxHashMap;
 
     use crate::app::day_failures::DayFailure;
     use crate::app::day_fetch_status::{ArchivedDayCount, DayFetchStatus};
     use crate::app::fix_positions::FixPositions;
-
-    use crate::app::test_util::day_archive;
 
     use super::*;
 
@@ -609,8 +607,8 @@ mod tests {
 
     fn a_recording_day() -> TimeRange {
         TimeRange::new(
-            day_archive::at(2024, 5, 9, 8),
-            day_archive::at(2024, 5, 9, 17),
+            fixtures::utc_instant(2024, 5, 9, 8, 0),
+            fixtures::utc_instant(2024, 5, 9, 17, 0),
         )
     }
 
@@ -635,7 +633,7 @@ mod tests {
         assert!(!scheduler.days.is_fetching());
         assert!(scheduler.days.failures().is_empty());
         assert_eq!(
-            scheduler.backfill(day_archive::day(2024, 5, 1), day_archive::day(2024, 5, 9)),
+            scheduler.backfill(fixtures::date(2024, 5, 1), fixtures::date(2024, 5, 9)),
             None
         );
     }
@@ -675,8 +673,8 @@ mod tests {
     fn a_day_before_the_catalog_begins_is_never_queued() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.request_days_for(TimeRange::new(
-            day_archive::at(2009, 1, 1, 0),
-            day_archive::at(2009, 1, 1, 1),
+            fixtures::utc_instant(2009, 1, 1, 0, 0),
+            fixtures::utc_instant(2009, 1, 1, 1, 0),
         ));
         assert_eq!(scheduler.days.queued(), 0);
         assert!(!scheduler.days.is_fetching());
@@ -695,7 +693,7 @@ mod tests {
     #[test]
     fn an_archived_day_is_not_requested_again() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        archive_day(&store, day_archive::day(2024, 5, 9), &[]);
+        archive_day(&store, fixtures::date(2024, 5, 9), &[]);
 
         scheduler.request_days_for(a_recording_day());
 
@@ -724,8 +722,8 @@ mod tests {
     fn an_overlong_recording_queues_nothing() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.request_days_for(TimeRange::new(
-            day_archive::at(2024, 4, 1, 0),
-            day_archive::at(2024, 5, 9, 0),
+            fixtures::utc_instant(2024, 4, 1, 0, 0),
+            fixtures::utc_instant(2024, 5, 9, 0, 0),
         ));
         assert_eq!(scheduler.days.queued(), 0);
         assert!(scheduler.days.requested_days().is_empty());
@@ -744,10 +742,9 @@ mod tests {
     ) {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.request_days_for(a_recording_day());
-        scheduler.days.report_failure(
-            day_archive::day(2024, 5, 9),
-            "HTTP 403 Forbidden".to_owned(),
-        );
+        scheduler
+            .days
+            .report_failure(fixtures::date(2024, 5, 9), "HTTP 403 Forbidden".to_owned());
 
         change(&mut scheduler);
 
@@ -778,11 +775,8 @@ mod tests {
         scheduler
             .tx
             .send(
-                UnarchivedDay::failed(
-                    day_archive::day(2024, 5, 9),
-                    "HTTP 403 Forbidden".to_owned(),
-                )
-                .into(),
+                UnarchivedDay::failed(fixtures::date(2024, 5, 9), "HTTP 403 Forbidden".to_owned())
+                    .into(),
             )
             .expect("send");
         scheduler.poll();
@@ -790,7 +784,7 @@ mod tests {
         assert_eq!(
             scheduler.days.failures(),
             [DayFailure {
-                day: day_archive::day(2024, 5, 9),
+                day: fixtures::date(2024, 5, 9),
                 detail: "HTTP 403 Forbidden".to_owned(),
             }]
         );
@@ -804,7 +798,7 @@ mod tests {
     #[test]
     fn a_day_index_read_that_failed_on_another_process_is_run_again_and_finds_the_days() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        archive_day(&store, day_archive::day(2024, 5, 10), &[]);
+        archive_day(&store, fixtures::date(2024, 5, 10), &[]);
         let failed = scheduler.day_index_read.record_read(
             &scheduler.ctx,
             Err::<BTreeSet<NaiveDate>, _>(FlareStoreError::HeldByAnotherProcess),
@@ -821,12 +815,11 @@ mod tests {
     #[test]
     fn a_backfill_queues_only_the_days_the_archive_lacks() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        for archived in [day_archive::day(2024, 5, 10), day_archive::day(2024, 5, 11)] {
+        for archived in [fixtures::date(2024, 5, 10), fixtures::date(2024, 5, 11)] {
             archive_day(&store, archived, &[]);
         }
 
-        let queued =
-            scheduler.backfill(day_archive::day(2024, 5, 9), day_archive::day(2024, 5, 15));
+        let queued = scheduler.backfill(fixtures::date(2024, 5, 9), fixtures::date(2024, 5, 15));
         assert_eq!(queued, Some(5), "seven days in range, two already held");
     }
 
@@ -835,7 +828,7 @@ mod tests {
     fn a_backfill_before_coverage_queues_nothing() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         assert_eq!(
-            scheduler.backfill(day_archive::day(2009, 1, 1), day_archive::day(2010, 4, 2)),
+            scheduler.backfill(fixtures::date(2009, 1, 1), fixtures::date(2010, 4, 2)),
             Some(0)
         );
         assert_eq!(scheduler.days.backfill_progress(), None);
@@ -846,17 +839,17 @@ mod tests {
     #[test]
     fn the_status_reports_the_queue_and_the_archived_recording_days() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        archive_day(&store, day_archive::day(2024, 5, 9), &[]);
+        archive_day(&store, fixtures::date(2024, 5, 9), &[]);
 
         scheduler.request_days_for(TimeRange::new(
-            day_archive::at(2024, 5, 9, 8),
-            day_archive::at(2024, 5, 10, 17),
+            fixtures::utc_instant(2024, 5, 9, 8, 0),
+            fixtures::utc_instant(2024, 5, 10, 17, 0),
         ));
 
         assert_eq!(
             scheduler.days.fetch_status(),
             DayFetchStatus {
-                fetching: Some(day_archive::day(2024, 5, 10)),
+                fetching: Some(fixtures::date(2024, 5, 10)),
                 queued: 0,
                 recording_days: ArchivedDayCount {
                     days: 2,
@@ -902,7 +895,7 @@ mod tests {
                 .writer(&pending_writes)
                 .expect("an owner session opens the archive writable"),
             &endpoint(),
-            day_archive::day(2024, 5, 9),
+            fixtures::date(2024, 5, 9),
         );
 
         let FlareDayMessage::Unarchived(UnarchivedDay::Rejected { rejection, .. }) = message else {
@@ -917,7 +910,7 @@ mod tests {
     #[test]
     fn an_ingested_day_archives_its_flares_and_the_host() {
         let (_dir, store) = archive();
-        let ingested = day_archive::day(2024, 5, 9);
+        let ingested = fixtures::date(2024, 5, 9);
         let transport = serving(ONE_FLARE);
 
         let message = ingest(&transport, &writable(&store), &endpoint(), ingested);
@@ -949,7 +942,7 @@ mod tests {
             &transport,
             &writable(&store),
             &endpoint(),
-            day_archive::day(2024, 5, 9),
+            fixtures::date(2024, 5, 9),
         );
 
         assert!(
@@ -975,7 +968,7 @@ mod tests {
     #[test]
     fn a_day_without_flares_is_archived_empty() {
         let (_dir, store) = archive();
-        let ingested = day_archive::day(2024, 5, 9);
+        let ingested = fixtures::date(2024, 5, 9);
         let transport = serving(NO_FLARES);
 
         let message = ingest(&transport, &writable(&store), &endpoint(), ingested);
@@ -1001,14 +994,14 @@ mod tests {
             &transport,
             &writable(&store),
             &endpoint(),
-            day_archive::day(2024, 5, 9),
+            fixtures::date(2024, 5, 9),
         );
 
         assert!(matches!(message, FlareDayMessage::Stored { flares: 1, .. }));
         assert_eq!(
             store
                 .read()
-                .flares(day_archive::day(2024, 5, 9))
+                .flares(fixtures::date(2024, 5, 9))
                 .expect("flares")
                 .map(|flares| flares.iter().map(|flare| flare.id.clone()).collect()),
             Some(vec!["a".to_owned()])
@@ -1030,7 +1023,7 @@ mod tests {
             &transport,
             &writable(&store),
             &endpoint(),
-            day_archive::day(2024, 5, 9),
+            fixtures::date(2024, 5, 9),
         );
 
         assert!(matches!(
@@ -1050,7 +1043,7 @@ mod tests {
                 "error sending request for url ({})",
                 gt_flare::flare_url(
                     DEFAULT_BASE_URL,
-                    DateWindow::covering_utc_day(day_archive::day(2024, 5, 9)),
+                    DateWindow::covering_utc_day(fixtures::date(2024, 5, 9)),
                     &ApiKey::new(TEST_KEY).expect("a key"),
                 )
             ),
@@ -1060,7 +1053,7 @@ mod tests {
             &transport,
             &writable(&store),
             &endpoint(),
-            day_archive::day(2024, 5, 9),
+            fixtures::date(2024, 5, 9),
         );
 
         let FlareDayMessage::Unarchived(UnarchivedDay::Failed { detail, .. }) = message else {
@@ -1091,10 +1084,10 @@ mod tests {
     /// A recording of four hourly fixes from 08:00 on the archived day, at the
     /// position the caller places the receiver at.
     fn timeline_at(latitude: Latitude, longitude: Longitude) -> Arc<FixPositionTimeline> {
-        let start = day_archive::at(2024, 5, 9, 8);
-        let mut track = gt_test_utils::loaded_track_with_points(
-            gt_test_utils::fixtures::nav_points_walking_from(start, 4, 3600, latitude, longitude),
-        );
+        let start = fixtures::utc_instant(2024, 5, 9, 8, 0);
+        let mut track = gt_test_utils::loaded_track_with_points(fixtures::nav_points_walking_from(
+            start, 4, 3600, latitude, longitude,
+        ));
         track.metadata.time_range = TimeRange::new(start, start + TimeDelta::hours(3));
         let files = vec![gt_types::LoadedFile {
             metadata: gt_test_utils::empty_file_metadata(),
@@ -1139,7 +1132,7 @@ mod tests {
         #[case] expected: Option<SunlitSide>,
     ) {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        let archived = day_archive::day(2024, 5, 9);
+        let archived = fixtures::date(2024, 5, 9);
         archive_one_flare(&store, archived, "X2.2");
         scheduler.archived_days.insert(archived);
         let positions = receiver.map_or_else(no_recording_loaded, |(latitude, longitude)| {
@@ -1160,8 +1153,8 @@ mod tests {
     fn the_markers_carry_every_archived_flare_of_the_span() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         for (archived, class_type) in [
-            (day_archive::day(2024, 5, 9), "X2.2"),
-            (day_archive::day(2024, 5, 11), "X5.8"),
+            (fixtures::date(2024, 5, 9), "X2.2"),
+            (fixtures::date(2024, 5, 11), "X5.8"),
         ] {
             archive_one_flare(&store, archived, class_type);
             scheduler.archived_days.insert(archived);
@@ -1170,7 +1163,7 @@ mod tests {
         let markers = markers_over(
             &mut scheduler,
             &no_recording_loaded(),
-            day_archive::day(2024, 5, 9)..=day_archive::day(2024, 5, 11),
+            fixtures::date(2024, 5, 9)..=fixtures::date(2024, 5, 11),
         );
 
         assert_eq!(
@@ -1187,15 +1180,15 @@ mod tests {
     #[test]
     fn only_the_flares_peaking_over_the_recording_are_read() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        let archived = day_archive::day(2024, 5, 9);
+        let archived = fixtures::date(2024, 5, 9);
         archive_one_flare(&store, archived, "X2.2");
         scheduler.archived_days.insert(archived);
         let positions = timeline_at(Latitude::new(55.0), Longitude::new(12.0));
 
         let peaking = scheduler.flares_peaking_in(
             TimeRange::new(
-                day_archive::at(2024, 5, 9, 9),
-                day_archive::at(2024, 5, 9, 10),
+                fixtures::utc_instant(2024, 5, 9, 9, 0),
+                fixtures::utc_instant(2024, 5, 9, 10, 0),
             ),
             &positions,
         );
@@ -1212,8 +1205,8 @@ mod tests {
             scheduler
                 .flares_peaking_in(
                     TimeRange::new(
-                        day_archive::at(2024, 5, 9, 10),
-                        day_archive::at(2024, 5, 9, 12)
+                        fixtures::utc_instant(2024, 5, 9, 10, 0),
+                        fixtures::utc_instant(2024, 5, 9, 12, 0)
                     ),
                     &positions,
                 )
@@ -1227,16 +1220,16 @@ mod tests {
     #[test]
     fn the_day_before_the_range_is_read_for_a_flare_that_crossed_midnight() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        for archived in [day_archive::day(2024, 5, 9), day_archive::day(2024, 5, 10)] {
+        for archived in [fixtures::date(2024, 5, 9), fixtures::date(2024, 5, 10)] {
             scheduler.archived_days.insert(archived);
         }
 
         assert_eq!(
             scheduler.archived_days_for(TimeRange::new(
-                day_archive::at(2024, 5, 10, 0),
-                day_archive::at(2024, 5, 10, 6)
+                fixtures::utc_instant(2024, 5, 10, 0, 0),
+                fixtures::utc_instant(2024, 5, 10, 6, 0)
             )),
-            [day_archive::day(2024, 5, 9), day_archive::day(2024, 5, 10)]
+            [fixtures::date(2024, 5, 9), fixtures::date(2024, 5, 10)]
         );
     }
 
@@ -1245,7 +1238,7 @@ mod tests {
     #[test]
     fn archiving_a_day_gives_the_plot_its_markers() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        let archived = day_archive::day(2024, 5, 9);
+        let archived = fixtures::date(2024, 5, 9);
         assert!(
             markers_over(&mut scheduler, &no_recording_loaded(), archived..=archived).is_empty()
         );

@@ -203,16 +203,13 @@ impl<S: Clone> ContextSampleCache<S> {
 
 #[cfg(test)]
 mod tests {
+    use gt_types::fixtures;
     use rstest::rstest;
-
-    use crate::app::test_util::day_archive;
 
     use super::*;
 
     fn at(year: i32, month: u32, day_of_month: u32, hour: u32) -> f64 {
-        day_archive::day(year, month, day_of_month)
-            .and_hms_opt(hour, 0, 0)
-            .map_or(0.0, |naive| naive.and_utc().timestamp() as f64)
+        fixtures::utc_instant(year, month, day_of_month, hour, 0).timestamp() as f64
     }
 
     /// A span shorter than the bucket count is snapped out to whole days on
@@ -222,7 +219,7 @@ mod tests {
         let span = ContextSpan::covering(at(2026, 7, 20, 8)..=at(2026, 7, 20, 17));
         assert_eq!(
             span.days(),
-            day_archive::day(2026, 7, 20)..=day_archive::day(2026, 7, 20)
+            fixtures::date(2026, 7, 20)..=fixtures::date(2026, 7, 20)
         );
     }
 
@@ -233,8 +230,8 @@ mod tests {
         let span = ContextSpan::covering(at(2026, 1, 1, 0)..=at(2026, 3, 1, 0));
         let moved = ContextSpan::covering(at(2026, 1, 2, 0)..=at(2026, 3, 2, 0));
         assert_eq!(span, moved);
-        assert!(span.days().contains(&day_archive::day(2026, 1, 1)));
-        assert!(span.days().contains(&day_archive::day(2026, 3, 1)));
+        assert!(span.days().contains(&fixtures::date(2026, 1, 1)));
+        assert!(span.days().contains(&fixtures::date(2026, 3, 1)));
     }
 
     /// The snapped span never loses a day of the view.
@@ -253,7 +250,7 @@ mod tests {
     #[test]
     fn a_view_beyond_the_calendar_still_produces_a_span() {
         let span = ContextSpan::covering(f64::MIN..=f64::MAX);
-        assert!(span.days().contains(&day_archive::day(2026, 7, 20)));
+        assert!(span.days().contains(&fixtures::date(2026, 7, 20)));
     }
 
     #[derive(Debug, Clone, Copy, PartialEq)]
@@ -287,9 +284,9 @@ mod tests {
     fn a_missing_day_breaks_the_line() {
         let mut cache = ContextSampleCache::default();
         let archived = [
-            day_archive::day(2026, 7, 20),
-            day_archive::day(2026, 7, 21),
-            day_archive::day(2026, 7, 24),
+            fixtures::date(2026, 7, 20),
+            fixtures::date(2026, 7, 21),
+            fixtures::date(2026, 7, 24),
         ];
 
         let line = cache.resolve(source(&archived), valued, gap);
@@ -298,19 +295,19 @@ mod tests {
             line.as_slice(),
             [
                 Sample {
-                    day: day_archive::day(2026, 7, 20),
+                    day: fixtures::date(2026, 7, 20),
                     value: Some(1)
                 },
                 Sample {
-                    day: day_archive::day(2026, 7, 21),
+                    day: fixtures::date(2026, 7, 21),
                     value: Some(1)
                 },
                 Sample {
-                    day: day_archive::day(2026, 7, 22),
+                    day: fixtures::date(2026, 7, 22),
                     value: None
                 },
                 Sample {
-                    day: day_archive::day(2026, 7, 24),
+                    day: fixtures::date(2026, 7, 24),
                     value: Some(1)
                 },
             ]
@@ -323,15 +320,15 @@ mod tests {
     fn an_archived_day_without_samples_breaks_the_line() {
         let mut cache = ContextSampleCache::default();
         let archived = [
-            day_archive::day(2026, 7, 20),
-            day_archive::day(2026, 7, 21),
-            day_archive::day(2026, 7, 22),
+            fixtures::date(2026, 7, 20),
+            fixtures::date(2026, 7, 21),
+            fixtures::date(2026, 7, 22),
         ];
 
         let line = cache.resolve(
             source(&archived),
             |read| {
-                if read == day_archive::day(2026, 7, 21) {
+                if read == fixtures::date(2026, 7, 21) {
                     Vec::new()
                 } else {
                     valued(read)
@@ -352,14 +349,14 @@ mod tests {
     #[test]
     fn an_unchanged_source_hands_back_the_same_line() {
         let mut cache = ContextSampleCache::default();
-        let archived = [day_archive::day(2026, 7, 20)];
+        let archived = [fixtures::date(2026, 7, 20)];
 
         let first = cache.resolve(source(&archived), valued, gap);
         let again = cache.resolve(source(&archived), valued, gap);
         assert_eq!(ArcIdentity::of(&first), ArcIdentity::of(&again));
 
         let extended = cache.resolve(
-            source(&[day_archive::day(2026, 7, 20), day_archive::day(2026, 7, 21)]),
+            source(&[fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 21)]),
             valued,
             gap,
         );
@@ -377,16 +374,16 @@ mod tests {
             valued(read)
         };
 
-        cache.resolve(source(&[day_archive::day(2026, 7, 20)]), &mut read_day, gap);
+        cache.resolve(source(&[fixtures::date(2026, 7, 20)]), &mut read_day, gap);
         cache.resolve(
-            source(&[day_archive::day(2026, 7, 20), day_archive::day(2026, 7, 21)]),
+            source(&[fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 21)]),
             &mut read_day,
             gap,
         );
 
         assert_eq!(
             reads,
-            [day_archive::day(2026, 7, 20), day_archive::day(2026, 7, 21)]
+            [fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 21)]
         );
     }
 
@@ -402,7 +399,7 @@ mod tests {
         };
         let positioned = |positions| ContextSource {
             positions: Some(positions),
-            ..source(&[day_archive::day(2026, 7, 20)])
+            ..source(&[fixtures::date(2026, 7, 20)])
         };
         let (first, second) = (Arc::new(0_u8), Arc::new(0_u8));
 
@@ -411,7 +408,7 @@ mod tests {
 
         assert_eq!(
             reads,
-            [day_archive::day(2026, 7, 20), day_archive::day(2026, 7, 20)]
+            [fixtures::date(2026, 7, 20), fixtures::date(2026, 7, 20)]
         );
     }
 }
