@@ -38,7 +38,7 @@ pub use highlight::{
     PinnedPopup,
 };
 pub use jamming_series::{JammingPoint, JammingSeries};
-pub use log_hover::LogMatchHover;
+pub use log_hover::{LogMatchHover, LogRowPlacement};
 pub use log_matches::{
     LoadedLogId, LogMatch, LogMatchColor, LogMatchGlyph, LogMatchLayer, LogMatchSource, LogMatches,
 };

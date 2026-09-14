@@ -299,7 +299,7 @@ impl LogViewerWindow {
         logs.apply_finished_queries();
         // The ring on the map lives exactly as long as the cursor is on a
         // row: the rows below fill this in again while they draw.
-        log_hover.row_position = None;
+        log_hover.row_placement = None;
         if let Some(clicked) = clicked_glyph.take() {
             self.open_on_clicked_glyph(clicked, logs);
         }

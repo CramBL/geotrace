@@ -20,7 +20,9 @@
 //! The global filter applies here as it does to the recorded track. Nothing
 //! draws for a match whose entry falls outside the time window, or whose fix
 //! sits on a track the filter rejects: such a match is left out of every
-//! cluster's count, and the cursor finds nothing where it was recorded.
+//! cluster's count, and the cursor finds nothing where it was recorded. The
+//! side panel tree gates a match the same way, through the enablement of its
+//! fix's file and track, and so it gates the ring at the viewer's hovered row.
 
 use std::cell::RefCell;
 use std::num::NonZeroUsize;
@@ -28,8 +30,11 @@ use std::num::NonZeroUsize;
 use egui::{Align2, Color32, FontId, Response, RichText, Ui, Vec2};
 use gt_filter::GlobalFilter;
 use gt_fmt::ELLIPSIS;
-use gt_types::{LoadedFile, MercPoint};
-use gt_ui_types::{LogMatch, LogMatchColor, LogMatchGlyph, LogMatchSource, LogMatches};
+use gt_types::LoadedFile;
+use gt_ui_types::{
+    LogMatch, LogMatchColor, LogMatchGlyph, LogMatchSource, LogMatches, LogRowPlacement,
+    TrackDataVisibility, visibility,
+};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::collision_grid;
@@ -95,6 +100,7 @@ pub(crate) struct LogMatchRenderer<'a> {
     /// The loaded files, resolving a match's fix to the track it was recorded
     /// on.
     files: &'a [LoadedFile],
+    visibility: &'a TrackDataVisibility,
     filter: &'a GlobalFilter,
     icon_meshes: Option<&'a IconMeshLibrary>,
     dark_mode: bool,
@@ -103,8 +109,9 @@ pub(crate) struct LogMatchRenderer<'a> {
     /// the track line and the layers under it.
     hover_labels: &'a HoverLabelStack,
 
-    /// Where the log viewer's hovered row was recorded, which the map rings.
-    hovered_row_position: Option<MercPoint>,
+    /// Where the log viewer's hovered row was recorded, which the map rings
+    /// while that row's track is in scope.
+    hovered_row_placement: Option<LogRowPlacement>,
 
     /// Where the hexagon under the cursor is published for the viewer.
     hovered_glyph: &'a RefCell<Option<LogMatchGlyph>>,
@@ -147,7 +154,7 @@ impl Plugin for LogMatchRenderer<'_> {
             let shared = matches!(layer.color, LogMatchColor::LayerSlot { shared: true, .. });
             counted_clusters.clear();
             drawn_matches.clear();
-            drawn_matches.extend(layer.matches_passing_filter(self.files, self.filter));
+            drawn_matches.extend(layer.matches_in_scope(self.files, self.visibility, self.filter));
             for cluster in collision_grid::cluster_positions(
                 drawn_matches.iter().map(|entry| entry.merc),
                 cluster_spacing_merc,
@@ -219,10 +226,13 @@ impl Plugin for LogMatchRenderer<'_> {
         // under the cursor. Log hover rings are the live-filter gold, keeping
         // the log layer's hover language in its reserved colour.
         let hover_ring = gt_ui_theme::LOG_LIVE_FILTER.resolve(self.dark_mode);
-        if let Some(merc) = self.hovered_row_position {
+        if let Some(placement) = self.hovered_row_placement
+            && visibility::track_in_scope(self.files, self.visibility, self.filter, placement.track)
+                .is_some()
+        {
             draw_hover_ring(
                 ui,
-                transform.to_screen(merc),
+                transform.to_screen(placement.merc),
                 GLYPH_CIRCUMRADIUS_PX,
                 hover_ring,
             );

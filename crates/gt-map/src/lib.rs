@@ -968,17 +968,18 @@ impl NavMap {
         // also draws the ring at the viewer's hovered row, which has a
         // position even where the filters selected no line of its log.
         if ctx.display_mask.is_visible(DisplayCategory::LogMatches)
-            && (!ctx.log_matches.is_empty() || ctx.log_hover.row_position.is_some())
+            && (!ctx.log_matches.is_empty() || ctx.log_hover.row_placement.is_some())
         {
             map = map.with_plugin(
                 log_match_renderer::LogMatchRenderer::builder()
                     .matches(ctx.log_matches)
                     .files(ctx.files)
+                    .visibility(ctx.visibility)
                     .filter(ctx.filter)
                     .maybe_icon_meshes(self.icon_meshes.as_ref())
                     .dark_mode(ui.visuals().dark_mode)
                     .hover_labels(&self.hover_label_stack)
-                    .maybe_hovered_row_position(ctx.log_hover.row_position)
+                    .maybe_hovered_row_placement(ctx.log_hover.row_placement)
                     .hovered_glyph(&self.hovered_log_glyph)
                     .clicked_glyph(&self.clicked_log_glyph)
                     .build(),

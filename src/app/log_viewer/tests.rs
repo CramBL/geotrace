@@ -371,7 +371,11 @@ fn attach_the_shown_log(harness: &mut Harness<ViewerState>) {
 
 /// The position the map draws its cross-highlight ring at.
 fn ringed_position(harness: &Harness<ViewerState>) -> Option<gt_types::MercPoint> {
-    harness.state().log_hover.row_position
+    harness
+        .state()
+        .log_hover
+        .row_placement
+        .map(|placement| placement.merc)
 }
 
 #[test]
