@@ -8,25 +8,22 @@ pub use gt_history_types::{
     listed_track_rows, log_attachment, logs_directory_for_database, make_group_name,
 };
 
+#[cfg(feature = "backend-pure")]
+use gt_history_backend_pure::{PureDb, ReadOnlyPureDb};
+#[cfg(feature = "backend-sys")]
+use gt_history_backend_sys::{ReadOnlySysDb, SysDb};
+
 // Pure-Rust backend
 #[cfg(feature = "backend-pure")]
-pub mod pure_impl {
-    pub use gt_history_backend_pure::{PureDb, ReadOnlyPureDb, extract_meta};
-}
+pub type ActiveDb = PureDb;
 #[cfg(feature = "backend-pure")]
-pub type ActiveDb = pure_impl::PureDb;
-#[cfg(feature = "backend-pure")]
-pub type ActiveReadOnlyDb = pure_impl::ReadOnlyPureDb;
+pub type ActiveReadOnlyDb = ReadOnlyPureDb;
 
 // C-backed (libhdf5) backend
 #[cfg(feature = "backend-sys")]
-pub mod sys_impl {
-    pub use gt_history_backend_sys::{ReadOnlySysDb, SysDb};
-}
+pub type ActiveDb = SysDb;
 #[cfg(feature = "backend-sys")]
-pub type ActiveDb = sys_impl::SysDb;
-#[cfg(feature = "backend-sys")]
-pub type ActiveReadOnlyDb = sys_impl::ReadOnlySysDb;
+pub type ActiveReadOnlyDb = ReadOnlySysDb;
 
 #[cfg(all(feature = "backend-sys", feature = "backend-pure"))]
 compile_error!("Features 'backend-sys' and 'backend-pure' are mutually exclusive.");

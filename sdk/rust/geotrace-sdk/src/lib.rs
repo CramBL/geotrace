@@ -27,6 +27,8 @@
 /// surface it, for example `println!("geotrace-sdk {}", geotrace_sdk::VERSION)`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[doc(hidden)]
+pub mod __private;
 mod builder;
 mod error;
 mod fixed_width_string;
@@ -61,8 +63,6 @@ pub use types::{
     NavFix, NavFixTime, NavPoint, RecordedFixTimestamps, Satellite, SatelliteReport, TravelMode,
 };
 pub use units::{Angle, Timestamp, Velocity};
-#[doc(hidden)]
-pub use variant_path::__private;
 pub use variant_path::EventKind;
 
 // Re-export the derive macro
