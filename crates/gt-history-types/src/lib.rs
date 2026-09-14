@@ -4,11 +4,6 @@ use std::path::Path;
 
 use thiserror::Error;
 
-#[cfg(any(test, feature = "fixtures"))]
-pub mod fixtures;
-pub mod log_attachment;
-pub mod ui_state;
-
 pub use log_attachment::{
     LOG_ATTACHMENT_ATTR_PREFIX, LOGS_DIRECTORY, LogAttachment, LogAttachmentEntry, LogAttachmentId,
     LogContentHash, StoredLogFilter, StoredLogFilterMode, logs_directory_for_database,
@@ -18,91 +13,10 @@ pub use ui_state::{
     UI_STATE_GROUP, UI_STATE_VERSION_ATTR, UiStateVersionReporter, UiStateVersionTooNew,
 };
 
-/// The schema version this build writes.
-///
-/// Version 1 stores each track's [`TrackState`] in the track table's
-/// [`TRACK_STATE_DATASET`] column. Version 0 stored one boolean per track in a
-/// [`LEGACY_TRACK_HIDDEN_DATASET`] column, which [`TrackStateColumn`] reads.
-pub const CURRENT_SCHEMA_VERSION: i64 = 1;
-pub const SCHEMA_VERSION_ATTR: &str = "schema_version";
-
-pub const ATTR_IDENTITY: &str = "identity";
-pub const ATTR_START_US: &str = "start_us";
-pub const ATTR_END_US: &str = "end_us";
-pub const ATTR_NAV_POINT_COUNT: &str = "nav_point_count";
-pub const ATTR_SAT_REPORT_COUNT: &str = "sat_report_count";
-pub const ATTR_MARKER_COUNT: &str = "marker_count";
-pub const ATTR_EVENT_MARKER_COUNT: &str = "event_marker_count";
-pub const ATTR_GTD_SIZE_BYTES: &str = "gtd_size_bytes";
-
-/// Segmentation settings the stored tracks were produced with. `track_split_gap`
-/// is stored in microseconds.
-pub const ATTR_SEG_GAP_US: &str = "seg_track_split_gap_us";
-pub const ATTR_SEG_DETECT_CLOCK: &str = "seg_detect_clock_discontinuities";
-pub const ATTR_SEG_CLOCK_SIGMAS: &str = "seg_clock_discontinuity_sigmas";
-/// The [`StoredTrackSplitRule`] the stored tracks were split by, written as the
-/// rule's [`StoredTrackSplitRule::attribute_value`].
-pub const ATTR_SEG_SPLIT_RULE: &str = "seg_track_split_rule";
-/// The [`StoredFixPlacementRule`] the stored geometry was placed by, written as
-/// the rule's [`StoredFixPlacementRule::attribute_value`].
-pub const ATTR_SEG_PLACEMENT_RULE: &str = "seg_fix_placement_rule";
-
-/// DB-internal subgroup (under each recording group) holding the stored track
-/// ranges as parallel `start`/`end`/`state` datasets. The name is prefixed so
-/// it cannot collide with a GTD data group, and is skipped when reconstructing
-/// the original GTD file on load.
-pub const TRACKS_GROUP: &str = "__geotrace_tracks__";
-pub const TRACK_START_DATASET: &str = "start";
-pub const TRACK_END_DATASET: &str = "end";
-/// Each track's [`TrackState`], as its [`TrackState::column_value`].
-pub const TRACK_STATE_DATASET: &str = "state";
-/// The state column of a track table written before [`TRACK_STATE_DATASET`]:
-/// `0` for a live track, any other value for a shelved one.
-pub const LEGACY_TRACK_HIDDEN_DATASET: &str = "hidden";
-
-/// DB-internal subgroup (under each recording group) holding the recording's
-/// cached snap-to-road run as one opaque byte dataset. The bytes are the
-/// app's own serialization (a versioned envelope). The history layer never
-/// inspects them. Prefixed like [`TRACKS_GROUP`], skipped when
-/// reconstructing the GTD file, and dropped automatically when the
-/// recording group is deleted.
-pub const SNAP_GROUP: &str = "__geotrace_snap__";
-pub const SNAP_BLOB_DATASET: &str = "blob";
-
-/// The GTD file-format root attribute carrying the format version, and the
-/// value assumed for recordings stored before it was preserved.
-pub const GTD_VERSION_ATTR: &str = "geotrace_version";
-pub const GTD_VERSION_FALLBACK: &str = "1";
-
-/// GTD root attributes carrying the recording's SDK metadata (title, device,
-/// notes, travel mode). Written on the GTD root by `geotrace_sdk` and copied
-/// verbatim onto each recording group, so the history listing can read them via
-/// [`RecordingEntry`] without re-parsing the embedded GTD file. These are GTD
-/// attributes, not DB bookkeeping - deliberately absent from
-/// [`is_db_recording_attr`] so they are restored to the root on load.
-pub const GTD_META_TITLE_ATTR: &str = "meta_title";
-pub const GTD_META_DEVICE_ATTR: &str = "meta_device";
-pub const GTD_META_NOTES_ATTR: &str = "meta_notes";
-pub const GTD_META_TRAVEL_MODE_ATTR: &str = "meta_travel_mode";
-
-/// GTD layout of the ad-hoc sensor channels, written by `geotrace_sdk` as
-/// `channels/{name}/{time,value}` with the channel's metadata on the per-channel
-/// group. The recording's GTD tree is copied verbatim into its database group,
-/// so the History listing reads these back straight from storage - no GTD
-/// re-parse, and recordings stored before the listing surfaced channels are
-/// covered too.
-pub const GTD_CHANNELS_GROUP: &str = "channels";
-/// Sample timestamps of one channel: its row count is the sample count.
-pub const GTD_CHANNEL_TIME_DATASET: &str = "time";
-/// Per-channel unit label (`"g"`, `"deg"`), absent for a unitless channel.
-pub const GTD_CHANNEL_UNIT_ATTR: &str = "unit";
-/// Per-channel free-text description, absent when the producer set none.
-pub const GTD_CHANNEL_DESCRIPTION_ATTR: &str = "description";
-/// Component labels of a vector channel (`["x", "y", "z"]`), absent for a
-/// scalar channel.
-pub const GTD_CHANNEL_COMPONENTS_ATTR: &str = "components";
-
-const IDENTITY_GROUP_PREFIX: &str = "identity-v1-";
+#[cfg(any(test, feature = "fixtures"))]
+pub mod fixtures;
+pub mod log_attachment;
+pub mod ui_state;
 
 /// Return the HDF5 child-group name used to store an identity.
 ///
@@ -194,15 +108,15 @@ pub struct TrackRange {
 /// own visibility state, which lives outside the database.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrackState {
+    /// A tombstone for a track that the user deleted permanently. It keeps the
+    /// rows after it in place. Its range is empty, at the offset where the
+    /// deleted track's nav points began.
+    Deleted,
     /// A track of the recording's working set: the state every stored track
     /// starts in.
     Live,
     /// A track the user took out of the working set, restored by unshelving it.
     Shelved,
-    /// A tombstone for a track that the user deleted permanently. It keeps the
-    /// rows after it in place. Its range is empty, at the offset where the
-    /// deleted track's nav points began.
-    Deleted,
 }
 
 impl TrackState {
@@ -244,12 +158,12 @@ impl TrackState {
 /// [`track_ranges_from_columns`] decodes it according to the variant given.
 #[derive(Debug, Clone, Copy)]
 pub enum TrackStateColumn<'a> {
-    /// The [`TRACK_STATE_DATASET`] column, which a recording's track table
-    /// holds from schema version 1 on.
-    State(&'a [u64]),
     /// The [`LEGACY_TRACK_HIDDEN_DATASET`] column, the state column of a track
     /// table written before schema version 1.
     LegacyHidden(&'a [u64]),
+    /// The [`TRACK_STATE_DATASET`] column, which a recording's track table
+    /// holds from schema version 1 on.
+    State(&'a [u64]),
 }
 
 impl<'a> TrackStateColumn<'a> {
@@ -676,21 +590,28 @@ pub struct StoredRecording {
 pub enum PruneMode {
     /// Remove recordings whose last nav-point is older than `now - max_age`.
     ByAge { max_age_secs: u64 },
+    /// Keep at most `keep` recordings per identity (by start timestamp descending).
+    ByCount { keep: usize },
     /// Remove the oldest recordings (by start timestamp) until total
     /// `gtd_size_bytes` across all remaining recordings is ≤ `max_bytes`.
     ByTotalSize { max_bytes: u64 },
-    /// Keep at most `keep` recordings per identity (by start timestamp descending).
-    ByCount { keep: usize },
 }
 
 #[derive(Debug, Error)]
 pub enum DbError {
     #[error("Backend error: {0}")]
     Backend(String),
+    /// Another process holds the database open. Unlike [`DbError::WriteLocked`]
+    /// there is nothing to repair: the lock goes away when that process
+    /// releases the file.
+    #[error("the database is open in another process")]
+    Busy,
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("database schema version {found} is newer than supported {supported}")]
     SchemaTooNew { found: i64, supported: i64 },
+    #[error("track {index} of the recording was already deleted permanently")]
+    TrackAlreadyDeleted { index: usize },
     #[error(
         "track index {index} is past the end of the recording's {stored_track_count} stored tracks"
     )]
@@ -698,18 +619,11 @@ pub enum DbError {
         index: usize,
         stored_track_count: usize,
     },
-    #[error("track {index} of the recording was already deleted permanently")]
-    TrackAlreadyDeleted { index: usize },
     /// The database is marked as open for write - typically a stale flag left by
     /// an unclean shutdown. Recoverable via [`HistoryDatabase::clear_write_lock`]
     /// once the user confirms no other process is using it.
     #[error("database is marked as open for write (it may not have been closed cleanly)")]
     WriteLocked,
-    /// Another process holds the database open. Unlike [`DbError::WriteLocked`]
-    /// there is nothing to repair: the lock goes away when that process
-    /// releases the file.
-    #[error("the database is open in another process")]
-    Busy,
 }
 
 impl PruneMode {
@@ -994,6 +908,92 @@ pub fn make_group_name(start_us: i64, unique: &str) -> String {
         .to_string();
     format!("{ts}_{unique}")
 }
+
+/// The schema version this build writes.
+///
+/// Version 1 stores each track's [`TrackState`] in the track table's
+/// [`TRACK_STATE_DATASET`] column. Version 0 stored one boolean per track in a
+/// [`LEGACY_TRACK_HIDDEN_DATASET`] column, which [`TrackStateColumn`] reads.
+pub const CURRENT_SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION_ATTR: &str = "schema_version";
+
+pub const ATTR_IDENTITY: &str = "identity";
+pub const ATTR_START_US: &str = "start_us";
+pub const ATTR_END_US: &str = "end_us";
+pub const ATTR_NAV_POINT_COUNT: &str = "nav_point_count";
+pub const ATTR_SAT_REPORT_COUNT: &str = "sat_report_count";
+pub const ATTR_MARKER_COUNT: &str = "marker_count";
+pub const ATTR_EVENT_MARKER_COUNT: &str = "event_marker_count";
+pub const ATTR_GTD_SIZE_BYTES: &str = "gtd_size_bytes";
+
+/// Segmentation settings the stored tracks were produced with. `track_split_gap`
+/// is stored in microseconds.
+pub const ATTR_SEG_GAP_US: &str = "seg_track_split_gap_us";
+pub const ATTR_SEG_DETECT_CLOCK: &str = "seg_detect_clock_discontinuities";
+pub const ATTR_SEG_CLOCK_SIGMAS: &str = "seg_clock_discontinuity_sigmas";
+/// The [`StoredTrackSplitRule`] the stored tracks were split by, written as the
+/// rule's [`StoredTrackSplitRule::attribute_value`].
+pub const ATTR_SEG_SPLIT_RULE: &str = "seg_track_split_rule";
+/// The [`StoredFixPlacementRule`] the stored geometry was placed by, written as
+/// the rule's [`StoredFixPlacementRule::attribute_value`].
+pub const ATTR_SEG_PLACEMENT_RULE: &str = "seg_fix_placement_rule";
+
+/// DB-internal subgroup (under each recording group) holding the stored track
+/// ranges as parallel `start`/`end`/`state` datasets. The name is prefixed so
+/// it cannot collide with a GTD data group, and is skipped when reconstructing
+/// the original GTD file on load.
+pub const TRACKS_GROUP: &str = "__geotrace_tracks__";
+pub const TRACK_START_DATASET: &str = "start";
+pub const TRACK_END_DATASET: &str = "end";
+/// Each track's [`TrackState`], as its [`TrackState::column_value`].
+pub const TRACK_STATE_DATASET: &str = "state";
+/// The state column of a track table written before [`TRACK_STATE_DATASET`]:
+/// `0` for a live track, any other value for a shelved one.
+pub const LEGACY_TRACK_HIDDEN_DATASET: &str = "hidden";
+
+/// DB-internal subgroup (under each recording group) holding the recording's
+/// cached snap-to-road run as one opaque byte dataset. The bytes are the
+/// app's own serialization (a versioned envelope). The history layer never
+/// inspects them. Prefixed like [`TRACKS_GROUP`], skipped when
+/// reconstructing the GTD file, and dropped automatically when the
+/// recording group is deleted.
+pub const SNAP_GROUP: &str = "__geotrace_snap__";
+pub const SNAP_BLOB_DATASET: &str = "blob";
+
+/// The GTD file-format root attribute carrying the format version, and the
+/// value assumed for recordings stored before it was preserved.
+pub const GTD_VERSION_ATTR: &str = "geotrace_version";
+pub const GTD_VERSION_FALLBACK: &str = "1";
+
+/// GTD root attributes carrying the recording's SDK metadata (title, device,
+/// notes, travel mode). Written on the GTD root by `geotrace_sdk` and copied
+/// verbatim onto each recording group, so the history listing can read them via
+/// [`RecordingEntry`] without re-parsing the embedded GTD file. These are GTD
+/// attributes, not DB bookkeeping - deliberately absent from
+/// [`is_db_recording_attr`] so they are restored to the root on load.
+pub const GTD_META_TITLE_ATTR: &str = "meta_title";
+pub const GTD_META_DEVICE_ATTR: &str = "meta_device";
+pub const GTD_META_NOTES_ATTR: &str = "meta_notes";
+pub const GTD_META_TRAVEL_MODE_ATTR: &str = "meta_travel_mode";
+
+/// GTD layout of the ad-hoc sensor channels, written by `geotrace_sdk` as
+/// `channels/{name}/{time,value}` with the channel's metadata on the per-channel
+/// group. The recording's GTD tree is copied verbatim into its database group,
+/// so the History listing reads these back straight from storage - no GTD
+/// re-parse, and recordings stored before the listing surfaced channels are
+/// covered too.
+pub const GTD_CHANNELS_GROUP: &str = "channels";
+/// Sample timestamps of one channel: its row count is the sample count.
+pub const GTD_CHANNEL_TIME_DATASET: &str = "time";
+/// Per-channel unit label (`"g"`, `"deg"`), absent for a unitless channel.
+pub const GTD_CHANNEL_UNIT_ATTR: &str = "unit";
+/// Per-channel free-text description, absent when the producer set none.
+pub const GTD_CHANNEL_DESCRIPTION_ATTR: &str = "description";
+/// Component labels of a vector channel (`["x", "y", "z"]`), absent for a
+/// scalar channel.
+pub const GTD_CHANNEL_COMPONENTS_ATTR: &str = "components";
+
+const IDENTITY_GROUP_PREFIX: &str = "identity-v1-";
 
 #[cfg(test)]
 mod tests {

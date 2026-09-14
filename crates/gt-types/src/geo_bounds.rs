@@ -1,20 +1,12 @@
 use crate::coordinates::{FULL_CIRCLE_DEGREES, HALF_CIRCLE_DEGREES, Latitude, Longitude};
 
-const NORTH_POLE_DEGREES: f64 = 90.0;
-const SOUTH_POLE_DEGREES: f64 = -90.0;
-
-/// Slack for the arc comparisons below, 1e-6° of it: an evenly sampled lap
-/// closes with an arc as long as its others, and a closed path's arcs sum to
-/// an exact multiple of 360°, both only up to floating-point rounding.
-const ARC_TOLERANCE_DEGREES: f64 = 1e-6;
-
 /// Whether the closed path through a track's fixes encircles a pole, and
 /// which one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PoleWinding {
-    None,
     AroundNorthPole,
     AroundSouthPole,
+    None,
 }
 
 impl PoleWinding {
@@ -382,6 +374,14 @@ impl GeoBounds {
     }
 }
 
+const NORTH_POLE_DEGREES: f64 = 90.0;
+const SOUTH_POLE_DEGREES: f64 = -90.0;
+
+/// Slack for the arc comparisons, 1e-6° of it: an evenly sampled lap
+/// closes with an arc as long as its others, and a closed path's arcs sum to
+/// an exact multiple of 360°, both only up to floating-point rounding.
+const ARC_TOLERANCE_DEGREES: f64 = 1e-6;
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
@@ -390,13 +390,6 @@ mod tests {
     use crate::coordinates::{Latitude, Longitude};
     use crate::mercator;
     use crate::test_util;
-
-    /// An eastbound track over the antimeridian, 1.5° wide.
-    const ACROSS_THE_ANTIMERIDIAN: &[f64] = &[179.0, 179.5, -179.9, -179.5];
-
-    /// A receiver carried around the north pole, sampled a quarter turn apart.
-    const AROUND_THE_NORTH_POLE: &[(f64, f64)] =
-        &[(89.9, 0.0), (89.9, 90.0), (89.9, 180.0), (89.9, -90.0)];
 
     fn positions_of(fixes: &[(f64, f64)]) -> impl Iterator<Item = (Latitude, Longitude)> {
         fixes
@@ -719,4 +712,11 @@ mod tests {
             }
         }
     }
+
+    /// An eastbound track over the antimeridian, 1.5° wide.
+    const ACROSS_THE_ANTIMERIDIAN: &[f64] = &[179.0, 179.5, -179.9, -179.5];
+
+    /// A receiver carried around the north pole, sampled a quarter turn apart.
+    const AROUND_THE_NORTH_POLE: &[(f64, f64)] =
+        &[(89.9, 0.0), (89.9, 90.0), (89.9, 180.0), (89.9, -90.0)];
 }

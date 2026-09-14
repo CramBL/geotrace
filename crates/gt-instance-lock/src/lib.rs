@@ -22,33 +22,6 @@ use gt_pending_writes::{PendingWriteStatus, PendingWrites};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
-/// The file the lock is taken on. Its contents are never read: only whether
-/// a process holds it.
-pub const LOCK_FILE_NAME: &str = "instance.lock";
-
-/// The file stating what the instance holding the lock is doing.
-pub const STATUS_FILE_NAME: &str = "instance-status.json";
-
-/// A reader never finds half a status: each one is written here and renamed
-/// over [`STATUS_FILE_NAME`].
-const STATUS_FILE_BEING_WRITTEN_NAME: &str = "instance-status.json.new";
-
-/// The file the last take-over of the data directory is written to.
-pub const TAKE_OVER_FILE_NAME: &str = "take-over.json";
-
-/// A reader never finds half a take-over record: each one is written here and
-/// renamed over [`TAKE_OVER_FILE_NAME`].
-const TAKE_OVER_FILE_BEING_WRITTEN_NAME: &str = "take-over.json.new";
-
-/// Shortest time between two status writes, well above the interval the
-/// shutdown wait reads the registry at.
-pub const MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES: Duration = Duration::from_millis(500);
-
-/// A status this old counts as [`StatusFreshness::Stale`]: ten status writes
-/// at [`MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES`], five seconds.
-pub const AGE_AT_WHICH_A_STATUS_COUNTS_AS_STALE: Duration =
-    MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES.saturating_mul(10);
-
 /// What the instance holding the data directory is doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -117,14 +90,14 @@ pub struct InstanceStatus {
 pub enum StatusFreshness {
     /// The status is younger than [`AGE_AT_WHICH_A_STATUS_COUNTS_AS_STALE`].
     Current,
+    /// An [`InstanceState::Running`] status, written once when this instance
+    /// takes the mark, and not rewritten until the shutdown begins.
+    NotRefreshedWhileRunning,
     /// The status is `age` old, at or past
     /// [`AGE_AT_WHICH_A_STATUS_COUNTS_AS_STALE`].
     Stale { age: Duration },
     /// The status has no `written_at`.
     UnknownAge,
-    /// An [`InstanceState::Running`] status, written once when this instance
-    /// takes the mark, and not rewritten until the shutdown begins.
-    NotRefreshedWhileRunning,
 }
 
 impl InstanceStatus {
@@ -165,13 +138,13 @@ impl InstanceStatus {
 /// What a read of [`STATUS_FILE_NAME`] in a data directory found.
 #[derive(Debug, Clone, PartialEq)]
 pub enum InstanceStatusRead {
-    Status(InstanceStatus),
     Absent,
+    /// `serde_json` rejected the file, with the error it reported.
+    Malformed(String),
+    Status(InstanceStatus),
     /// `fs::read` failed with something other than
     /// [`io::ErrorKind::NotFound`], with the error it reported.
     Unreadable(String),
-    /// `serde_json` rejected the file, with the error it reported.
-    Malformed(String),
 }
 
 impl InstanceStatusRead {
@@ -264,14 +237,14 @@ impl TakeOverRecord {
 /// What this run found when it went to mark the data directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataDirectoryOwnership {
-    /// This process holds the lock and keeps the status file.
-    MarkedByThisInstance,
     /// Another instance holds the lock. Nothing here may open the databases
     /// under it, and its status file says what it is doing.
     HeldByAnotherInstance,
     /// The lock file could not be opened or locked, so nothing marks the
     /// directory.
     LockFileUnavailable,
+    /// This process holds the lock and keeps the status file.
+    MarkedByThisInstance,
     /// The run has no data directory to mark.
     NoDataDirectory,
 }
@@ -289,7 +262,6 @@ pub struct DataDirectoryLock(Arc<Mutex<DataDirectoryMark>>);
 /// The mark, with what each outcome leaves this run holding.
 #[derive(Debug)]
 enum DataDirectoryMark {
-    MarkedByThisInstance(MarkedDataDirectory),
     /// The directory is kept: the wait retries the mark on it and reads the
     /// status of the instance holding it.
     HeldByAnotherInstance {
@@ -301,6 +273,7 @@ enum DataDirectoryMark {
         directory: PathBuf,
         cause: String,
     },
+    MarkedByThisInstance(MarkedDataDirectory),
     NoDataDirectory,
 }
 
@@ -607,6 +580,33 @@ fn open_lock_file(directory: &Path) -> io::Result<File> {
         .open(directory.join(LOCK_FILE_NAME))
 }
 
+/// The file the lock is taken on. Its contents are never read: only whether
+/// a process holds it.
+pub const LOCK_FILE_NAME: &str = "instance.lock";
+
+/// The file stating what the instance holding the lock is doing.
+pub const STATUS_FILE_NAME: &str = "instance-status.json";
+
+/// A reader never finds half a status: each one is written here and renamed
+/// over [`STATUS_FILE_NAME`].
+const STATUS_FILE_BEING_WRITTEN_NAME: &str = "instance-status.json.new";
+
+/// The file the last take-over of the data directory is written to.
+pub const TAKE_OVER_FILE_NAME: &str = "take-over.json";
+
+/// A reader never finds half a take-over record: each one is written here and
+/// renamed over [`TAKE_OVER_FILE_NAME`].
+const TAKE_OVER_FILE_BEING_WRITTEN_NAME: &str = "take-over.json.new";
+
+/// Shortest time between two status writes, well above the interval the
+/// shutdown wait reads the registry at.
+pub const MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES: Duration = Duration::from_millis(500);
+
+/// A status this old counts as [`StatusFreshness::Stale`]: ten status writes
+/// at [`MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES`], five seconds.
+pub const AGE_AT_WHICH_A_STATUS_COUNTS_AS_STALE: Duration =
+    MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES.saturating_mul(10);
+
 #[cfg(test)]
 mod tests {
     use std::thread;
@@ -615,13 +615,6 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-
-    const TEC_COMPACTION: WriteKind = WriteKind::ArchiveCompaction {
-        archive: "ionospheric TEC",
-    };
-
-    /// The clock the freshness cases read the status against.
-    const READING_CLOCK_SECONDS_SINCE_THE_EPOCH: u64 = 1_700_000_000;
 
     /// The status the instance holding `directory` wrote, where the read
     /// found and parsed one.
@@ -1098,9 +1091,6 @@ mod tests {
         ));
     }
 
-    /// The instance the take-over in these cases took write access from.
-    const TAKEN_FROM_PROCESS_ID: u32 = 4321;
-
     /// A wait that found `directory` held by another instance, which is the
     /// state a take-over starts from.
     fn lock_waiting_for(directory: &Path) -> DataDirectoryLock {
@@ -1274,4 +1264,14 @@ mod tests {
             expected
         );
     }
+
+    const TEC_COMPACTION: WriteKind = WriteKind::ArchiveCompaction {
+        archive: "ionospheric TEC",
+    };
+
+    /// The clock the freshness cases read the status against.
+    const READING_CLOCK_SECONDS_SINCE_THE_EPOCH: u64 = 1_700_000_000;
+
+    /// The instance the take-over in these cases took write access from.
+    const TAKEN_FROM_PROCESS_ID: u32 = 4321;
 }

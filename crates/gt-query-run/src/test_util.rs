@@ -37,9 +37,6 @@ use crate::results::MatchValues;
 use crate::schema;
 use crate::session::QuerySession;
 
-/// The Unix epoch the fixtures place their first point and sample at.
-pub const TEST_EPOCH: i64 = 1_700_000_000;
-
 /// The loaded state a session runs against, owned so the borrowed [`RunInputs`]
 /// can be rebuilt per call.
 pub struct LoadedState {
@@ -299,3 +296,6 @@ pub fn loaded_file() -> LoadedFile {
         vec![],
     )
 }
+
+/// The Unix epoch the fixtures place their first point and sample at.
+pub const TEST_EPOCH: i64 = 1_700_000_000;

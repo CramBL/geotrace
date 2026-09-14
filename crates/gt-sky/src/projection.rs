@@ -49,8 +49,6 @@ mod tests {
 
     use crate::test_util::{self, Azimuth, Elevation};
 
-    const EPSILON: f32 = 1e-5;
-
     fn assert_close(actual: egui::Vec2, expected: egui::Vec2) {
         assert!(
             (actual - expected).length() < EPSILON,
@@ -114,4 +112,6 @@ mod tests {
             egui::vec2(0.5, 0.0),
         );
     }
+
+    const EPSILON: f32 = 1e-5;
 }

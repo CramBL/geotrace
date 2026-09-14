@@ -175,10 +175,6 @@ fn a_permanent_offset_step_stays_a_discontinuity() {
     ));
 }
 
-/// Five minutes of host-clock offset, far past the jitter of a healthy
-/// clock and steady across the track.
-const FIVE_MINUTES_MS: i64 = 5 * 60 * 1000;
-
 /// No sample of a host clock offset that stands far from GPS across
 /// the whole track is an outlier: the median is taken over the track's
 /// own offsets.
@@ -225,3 +221,7 @@ fn clock_discontinuity_needs_enough_samples() {
         );
     }
 }
+
+/// Five minutes of host-clock offset, far past the jitter of a healthy
+/// clock and steady across the track.
+const FIVE_MINUTES_MS: i64 = 5 * 60 * 1000;

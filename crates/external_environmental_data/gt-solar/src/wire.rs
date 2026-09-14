@@ -33,14 +33,27 @@ pub enum ParseError {
     #[error("response is not JSON in the published shape: {0}")]
     Json(#[from] serde_json::Error),
 
+    #[error("Kp has {statuses} statuses for {timestamps} timestamps")]
+    KpStatusCountMismatch { statuses: usize, timestamps: usize },
+
+    #[error("response has no status array, which Kp publishes one entry of per value")]
+    MissingKpStatus,
+
     #[error("response has no {index} array")]
     MissingValues { index: GeomagneticIndex },
 
-    #[error("{index} is {found}, expected an array of values")]
-    ValuesNotAnArray {
-        index: GeomagneticIndex,
-        found: &'static str,
+    #[error("timestamp {position} ({timestamp:?}) is not an RFC 3339 time: {detail}")]
+    Timestamp {
+        position: usize,
+        timestamp: String,
+        detail: String,
     },
+
+    #[error(
+        "Kp status {position} is {status:?}, expected one of {:?}",
+        KpStatus::VARIANTS
+    )]
+    UnrecognizedKpStatus { position: usize, status: String },
 
     #[error("{index} has {values} values for {timestamps} timestamps")]
     ValueCountMismatch {
@@ -63,24 +76,11 @@ pub enum ParseError {
         value: f64,
     },
 
-    #[error("timestamp {position} ({timestamp:?}) is not an RFC 3339 time: {detail}")]
-    Timestamp {
-        position: usize,
-        timestamp: String,
-        detail: String,
+    #[error("{index} is {found}, expected an array of values")]
+    ValuesNotAnArray {
+        index: GeomagneticIndex,
+        found: &'static str,
     },
-
-    #[error("response has no status array, which Kp publishes one entry of per value")]
-    MissingKpStatus,
-
-    #[error("Kp has {statuses} statuses for {timestamps} timestamps")]
-    KpStatusCountMismatch { statuses: usize, timestamps: usize },
-
-    #[error(
-        "Kp status {position} is {status:?}, expected one of {:?}",
-        KpStatus::VARIANTS
-    )]
-    UnrecognizedKpStatus { position: usize, status: String },
 }
 
 /// The response fields this parser reads. The value array arrives under the
@@ -230,17 +230,6 @@ mod tests {
     use crate::activity::GeomagneticStormClass;
 
     use super::*;
-
-    /// The published Kp shape, with one definitive and one nowcast value.
-    const KP_RESPONSE: &str = r#"{"Kp":[2.667,9.0],
-        "datetime":["2024-05-10T00:00:00Z","2024-05-10T03:00:00Z"],
-        "meta":{"license":"CC BY 4.0","source":"GFZ Potsdam"},
-        "status":["def","pre"]}"#;
-
-    /// The published Hp30 shape, which has no status array.
-    const HP30_RESPONSE: &str = r#"{"Hp30":[1.667,11.333],
-        "datetime":["2024-05-10T00:00:00Z","2024-05-10T00:30:00Z"],
-        "meta":{"license":"CC BY 4.0","source":"GFZ Potsdam"}}"#;
 
     fn kp_value(value: f64) -> Option<GeomagneticActivity> {
         GeomagneticActivity::from_published_value(GeomagneticIndex::Kp, value)
@@ -399,4 +388,15 @@ mod tests {
         );
         assert!(error.to_string().starts_with("response is not JSON"));
     }
+
+    /// The published Kp shape, with one definitive and one nowcast value.
+    const KP_RESPONSE: &str = r#"{"Kp":[2.667,9.0],
+        "datetime":["2024-05-10T00:00:00Z","2024-05-10T03:00:00Z"],
+        "meta":{"license":"CC BY 4.0","source":"GFZ Potsdam"},
+        "status":["def","pre"]}"#;
+
+    /// The published Hp30 shape, which has no status array.
+    const HP30_RESPONSE: &str = r#"{"Hp30":[1.667,11.333],
+        "datetime":["2024-05-10T00:00:00Z","2024-05-10T00:30:00Z"],
+        "meta":{"license":"CC BY 4.0","source":"GFZ Potsdam"}}"#;
 }

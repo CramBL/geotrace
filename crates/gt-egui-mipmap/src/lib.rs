@@ -39,25 +39,6 @@ use std::ops::{Range, RangeInclusive};
 
 use egui_plot::PlotPoint;
 
-/// Smallest mipmap level the cascade builds down to: two points, i.e. a single
-/// line segment.  Driving the cascade all the way down lets a track that only
-/// occupies a few screen pixels be drawn with a handful of points.  (A 2-point
-/// level downsamples to itself, so [`MipMap::build`] also stops when a level
-/// stops shrinking.)
-const MIN_LEVEL_POINTS: usize = 2;
-
-/// Number of input points grouped into one output pair (min + max) at each
-/// downsampling step.
-/// A window of 4 emits 2 points, a ~2× point-count reduction per level: the
-/// level selection lands on at most about twice the target sample count.
-const DOWNSAMPLE_WINDOW: usize = 4;
-
-const FULL_TURN_DEGREES: f64 = 360.0;
-
-/// Length below which the summed sample directions of a window cancel out and
-/// leave its mean direction undefined.
-const MEAN_RESULTANT_FLOOR: f64 = 1e-9;
-
 /// The period at which a series' values wrap: a compass heading repeats every
 /// 360°, and a `.gtd` channel declares its own.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -433,6 +414,25 @@ fn extremes_either_side_of_mean_direction(
     Some((counterclockwise, clockwise))
 }
 
+/// Smallest mipmap level the cascade builds down to: two points, i.e. a single
+/// line segment.  Driving the cascade all the way down lets a track that only
+/// occupies a few screen pixels be drawn with a handful of points.  (A 2-point
+/// level downsamples to itself, so [`MipMap::build`] also stops when a level
+/// stops shrinking.)
+const MIN_LEVEL_POINTS: usize = 2;
+
+/// Number of input points grouped into one output pair (min + max) at each
+/// downsampling step.
+/// A window of 4 emits 2 points, a ~2× point-count reduction per level: the
+/// level selection lands on at most about twice the target sample count.
+const DOWNSAMPLE_WINDOW: usize = 4;
+
+const FULL_TURN_DEGREES: f64 = 360.0;
+
+/// Length below which the summed sample directions of a window cancel out and
+/// leave its mean direction undefined.
+const MEAN_RESULTANT_FLOOR: f64 = 1e-9;
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
@@ -504,11 +504,6 @@ mod tests {
     fn int_data(n: usize) -> Vec<[f64; 2]> {
         (0..n).map(|i| [i as f64, i as f64]).collect()
     }
-
-    /// Target that exceeds every `int_data` fixture below, forcing finest-level
-    /// selection: the exact integer x values a selection holds are then
-    /// deterministic while the ±1 edge extension still runs.
-    const FINEST: usize = 100;
 
     /// The x values a selection over 50 points at x = 0 to 49 holds.
     fn selected_x(range: SelectionRange) -> Vec<i64> {
@@ -927,4 +922,9 @@ mod tests {
             }
         }
     }
+
+    /// Target that exceeds every `int_data` fixture, forcing finest-level
+    /// selection: the exact integer x values a selection holds are then
+    /// deterministic while the ±1 edge extension still runs.
+    const FINEST: usize = 100;
 }

@@ -17,12 +17,6 @@ use super::{
     DeleteShelvedTracksPromptContents, ShelvedTracksToDelete,
 };
 
-const CANCEL_LABEL: &str = "Cancel";
-
-/// Nothing the test measures is clipped by the screen. This is wider and
-/// taller than the confirmation.
-const VIEWPORT: egui::Vec2 = egui::vec2(640.0, 480.0);
-
 /// Two recordings, one of them with a live track left: three shelved tracks in
 /// all, and one recording that a sweep would delete whole.
 fn listing() -> Vec<RecordingEntry> {
@@ -302,3 +296,9 @@ fn the_confirmation_reporting_that_every_track_is_live_grays_its_delete_out() {
             .is_disabled()
     );
 }
+
+const CANCEL_LABEL: &str = "Cancel";
+
+/// Nothing the test measures is clipped by the screen. This is wider and
+/// taller than the confirmation.
+const VIEWPORT: egui::Vec2 = egui::vec2(640.0, 480.0);

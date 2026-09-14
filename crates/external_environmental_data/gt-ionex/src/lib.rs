@@ -33,6 +33,9 @@ use chrono::{Datelike as _, NaiveDate};
 use crate::maps::GlobalIonosphereMaps;
 use crate::node_series::NodeSeriesCapture;
 
+pub use instant_selection::{ShownInstant, TecEmptyReason, TecInstantSelection};
+pub use mirrors::{Mirror, MirrorBaseUrl, MirrorLayout, MirrorList};
+
 pub mod calendar;
 pub mod cddis;
 pub mod grid;
@@ -49,17 +52,6 @@ pub mod test_util;
 pub mod text;
 pub mod transport;
 pub mod unix_compress;
-
-pub use instant_selection::{ShownInstant, TecEmptyReason, TecInstantSelection};
-pub use mirrors::{Mirror, MirrorBaseUrl, MirrorLayout, MirrorList};
-
-/// Suffix of the gzipped files the archives serve. The parser reads the
-/// decompressed text.
-pub const COMPRESSED_SUFFIX: &str = ".gz";
-
-/// Base URL of the host that publishes the maps, and the sole entry of a
-/// default [`MirrorList`].
-pub const DEFAULT_BASE_URL: &str = "https://sideshow.jpl.nasa.gov/pub/iono_daily";
 
 /// Which of JPL's two daily map products a file comes from.
 ///
@@ -139,14 +131,6 @@ impl IonexProduct {
     }
 }
 
-/// Digit distinguishing several files for one day. Both daily products
-/// publish a single file, numbered zero.
-pub(crate) const FILE_SEQUENCE_DIGIT: char = '0';
-
-/// File type letter of ionosphere maps, which ends a file name and which the
-/// header's type record declares.
-pub(crate) const IONOSPHERE_MAPS_TYPE: char = 'I';
-
 /// One file captured under [`captures_dir`] by `just ionex-captures`.
 ///
 /// Captures are frozen once committed. A re-capture's diff is reviewed like
@@ -163,6 +147,119 @@ pub struct CapturedFile {
     /// What this capture exists to exercise.
     pub purpose: &'static str,
 }
+
+/// One grid node the node-series capture follows across
+/// [`NODE_SERIES_DAYS`].
+///
+/// Every node sits on the grid JPL publishes its global maps on: 2.5 degrees
+/// in latitude, 5 in longitude.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NodeSeriesNode {
+    /// Keys the node in the capture and names it on the capture command line.
+    pub name: &'static str,
+    pub latitude_degrees: f64,
+    pub longitude_degrees: f64,
+    /// What this node exists to show.
+    pub purpose: &'static str,
+}
+
+/// Directory holding the captured files.
+///
+/// Resolved from the crate manifest dir, so it is only meaningful to
+/// development tooling running inside the workspace, never to the shipped
+/// application.
+pub fn captures_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("captures")
+}
+
+/// Directory holding the files CDDIS served, captured by
+/// `just cddis-verify --capture` with a manifest of the same shape beside
+/// them.
+pub fn cddis_captures_dir() -> PathBuf {
+    captures_dir().join(CDDIS_CAPTURE_DIR)
+}
+
+/// Why a captured file did not reach the caller as maps.
+#[derive(Debug, thiserror::Error)]
+pub enum CaptureError {
+    #[error("{file_name}: {source}")]
+    Parse {
+        file_name: &'static str,
+        source: parse::ParseError,
+    },
+    #[error("reading {}: {source}", path.display())]
+    Read {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("reading the node series: {source}")]
+    ReadNodeSeries { source: serde_json::Error },
+    #[error("{name} is not declared in CAPTURED_FILES")]
+    Undeclared { name: String },
+}
+
+/// The capture [`CAPTURED_FILES`] declares under `name`.
+pub fn declared_capture(name: &str) -> Option<&'static CapturedFile> {
+    CAPTURED_FILES.iter().find(|capture| capture.name == name)
+}
+
+/// The capture [`CAPTURED_FILES`] holds of `product` on `day`, [`None`] for a
+/// day no capture was taken on.
+pub fn declared_capture_for_day(
+    product: IonexProduct,
+    day: NaiveDate,
+) -> Option<&'static CapturedFile> {
+    let published = product.file_name(day);
+    let stored = published.strip_suffix(COMPRESSED_SUFFIX)?;
+    CAPTURED_FILES
+        .iter()
+        .find(|capture| capture.file_name == stored)
+}
+
+/// The decompressed text of one capture, as the archive published it.
+pub fn captured_text(capture: &CapturedFile) -> Result<String, CaptureError> {
+    let path = captures_dir().join(capture.file_name);
+    std::fs::read_to_string(&path).map_err(|source| CaptureError::Read { path, source })
+}
+
+/// The maps of the capture declared under `name`, which the tests and the
+/// asset generators of the workspace read their archived day from.
+pub fn captured_maps(name: &str) -> Result<GlobalIonosphereMaps, CaptureError> {
+    let capture = declared_capture(name).ok_or_else(|| CaptureError::Undeclared {
+        name: name.to_owned(),
+    })?;
+    parse::global_ionosphere_maps(&captured_text(capture)?).map_err(|source| CaptureError::Parse {
+        file_name: capture.file_name,
+        source,
+    })
+}
+
+/// The node-series capture, which the grading tests and the reference
+/// illustration read the storm days from.
+pub fn captured_node_series() -> Result<NodeSeriesCapture, CaptureError> {
+    let path = captures_dir().join(NODE_SERIES_CAPTURE);
+    let text =
+        std::fs::read_to_string(&path).map_err(|source| CaptureError::Read { path, source })?;
+    serde_json::from_str(&text).map_err(|source| CaptureError::ReadNodeSeries { source })
+}
+
+/// Suffix of the gzipped files the archives serve. The parser reads the
+/// decompressed text.
+pub const COMPRESSED_SUFFIX: &str = ".gz";
+
+/// Base URL of the host that publishes the maps, and the sole entry of a
+/// default [`MirrorList`].
+pub const DEFAULT_BASE_URL: &str = "https://sideshow.jpl.nasa.gov/pub/iono_daily";
+
+/// Digit distinguishing several files for one day. Both daily products
+/// publish a single file, numbered zero.
+pub(crate) const FILE_SEQUENCE_DIGIT: char = '0';
+
+/// File type letter of ionosphere maps, which ends a file name and which the
+/// header's type record declares.
+pub(crate) const IONOSPHERE_MAPS_TYPE: char = 'I';
 
 /// Name of the capture taken on the May 2024 storm day.
 pub const STORM_CAPTURE: &str = "jpl-final-storm";
@@ -186,21 +283,6 @@ pub const CAPTURED_FILES: [CapturedFile; 2] = [
         purpose: "1 April 2024, a geomagnetically quiet day on the same grid",
     },
 ];
-
-/// One grid node the node-series capture follows across
-/// [`NODE_SERIES_DAYS`].
-///
-/// Every node sits on the grid JPL publishes its global maps on: 2.5 degrees
-/// in latitude, 5 in longitude.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NodeSeriesNode {
-    /// Keys the node in the capture and names it on the capture command line.
-    pub name: &'static str,
-    pub latitude_degrees: f64,
-    pub longitude_degrees: f64,
-    /// What this node exists to show.
-    pub purpose: &'static str,
-}
 
 /// Name of the mid-latitude European node.
 pub const EUROPE_NODE: &str = "europe-mid-latitude";
@@ -260,89 +342,7 @@ pub const NODE_SERIES_CAPTURE: &str = "node_series.json";
 /// when each file was captured and what the archive served.
 pub const CAPTURE_MANIFEST: &str = "capture.json";
 
-/// Directory holding the captured files.
-///
-/// Resolved from the crate manifest dir, so it is only meaningful to
-/// development tooling running inside the workspace, never to the shipped
-/// application.
-pub fn captures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("captures")
-}
-
-/// Directory holding the files CDDIS served, captured by
-/// `just cddis-verify --capture` with a manifest of the same shape beside
-/// them.
-pub fn cddis_captures_dir() -> PathBuf {
-    captures_dir().join(CDDIS_CAPTURE_DIR)
-}
-
 const CDDIS_CAPTURE_DIR: &str = "cddis";
-
-/// Why a captured file did not reach the caller as maps.
-#[derive(Debug, thiserror::Error)]
-pub enum CaptureError {
-    #[error("{name} is not declared in CAPTURED_FILES")]
-    Undeclared { name: String },
-    #[error("reading {}: {source}", path.display())]
-    Read {
-        path: PathBuf,
-        source: std::io::Error,
-    },
-    #[error("{file_name}: {source}")]
-    Parse {
-        file_name: &'static str,
-        source: parse::ParseError,
-    },
-    #[error("reading the node series: {source}")]
-    ReadNodeSeries { source: serde_json::Error },
-}
-
-/// The capture [`CAPTURED_FILES`] declares under `name`.
-pub fn declared_capture(name: &str) -> Option<&'static CapturedFile> {
-    CAPTURED_FILES.iter().find(|capture| capture.name == name)
-}
-
-/// The capture [`CAPTURED_FILES`] holds of `product` on `day`, [`None`] for a
-/// day no capture was taken on.
-pub fn declared_capture_for_day(
-    product: IonexProduct,
-    day: NaiveDate,
-) -> Option<&'static CapturedFile> {
-    let published = product.file_name(day);
-    let stored = published.strip_suffix(COMPRESSED_SUFFIX)?;
-    CAPTURED_FILES
-        .iter()
-        .find(|capture| capture.file_name == stored)
-}
-
-/// The decompressed text of one capture, as the archive published it.
-pub fn captured_text(capture: &CapturedFile) -> Result<String, CaptureError> {
-    let path = captures_dir().join(capture.file_name);
-    std::fs::read_to_string(&path).map_err(|source| CaptureError::Read { path, source })
-}
-
-/// The maps of the capture declared under `name`, which the tests and the
-/// asset generators of the workspace read their archived day from.
-pub fn captured_maps(name: &str) -> Result<GlobalIonosphereMaps, CaptureError> {
-    let capture = declared_capture(name).ok_or_else(|| CaptureError::Undeclared {
-        name: name.to_owned(),
-    })?;
-    parse::global_ionosphere_maps(&captured_text(capture)?).map_err(|source| CaptureError::Parse {
-        file_name: capture.file_name,
-        source,
-    })
-}
-
-/// The node-series capture, which the grading tests and the reference
-/// illustration read the storm days from.
-pub fn captured_node_series() -> Result<NodeSeriesCapture, CaptureError> {
-    let path = captures_dir().join(NODE_SERIES_CAPTURE);
-    let text =
-        std::fs::read_to_string(&path).map_err(|source| CaptureError::Read { path, source })?;
-    serde_json::from_str(&text).map_err(|source| CaptureError::ReadNodeSeries { source })
-}
 
 #[cfg(test)]
 mod tests {

@@ -61,11 +61,11 @@ impl fmt::Display for StaleRunNote {
 /// window: every match the run drew, or the one match on a name row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MatchRevealTarget {
-    WholeRun,
     OneMatch {
         track: TrackRef,
         points: Range<usize>,
     },
+    WholeRun,
 }
 
 /// Which `draw` layers cover one point, as a fixed-width bitset (bit `i` for

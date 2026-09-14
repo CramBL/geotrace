@@ -19,21 +19,6 @@
 //! This crate is pure language and evaluation - no data loading, no UI, no
 //! rendering.
 
-pub mod ast;
-mod check;
-pub mod construct;
-mod dimension;
-mod eval;
-mod fmt;
-pub mod lexer;
-mod metric;
-mod parser;
-mod pipeline;
-mod position;
-mod test_util;
-mod unit;
-mod wrap;
-
 pub use ast::{ParamName, Query, Span};
 pub use check::{
     AggregateColumn, ChannelConflict, ChannelInfo, ChannelSchema, CheckedQuery, Params,
@@ -53,6 +38,21 @@ pub use position::{
     channel_completions_at, completions_at, construct_at,
 };
 pub use unit::Unit;
+
+pub mod ast;
+mod check;
+pub mod construct;
+mod dimension;
+mod eval;
+mod fmt;
+pub mod lexer;
+mod metric;
+mod parser;
+mod pipeline;
+mod position;
+mod test_util;
+mod unit;
+mod wrap;
 
 /// A parse or type error: what went wrong, where, and optionally how to fix
 /// it. Rendered by the editor as an underline plus message.

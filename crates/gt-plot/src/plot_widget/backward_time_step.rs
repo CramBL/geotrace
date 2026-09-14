@@ -14,57 +14,11 @@ use super::lines::{self, ANOMALY_HOVER_RADIUS_PX, NearestHoverLabel, PlotHoverLa
 use super::overlay::{EDGE_MARKER_INSET, OverlayItem, OverlayPainter};
 use crate::series::{ChannelSeries, PlacedBackwardTimeStep};
 
-/// Screen distance between two marks, in points, below which the steps share
-/// one mark. Wider than [`MARK_WIDTH`], which leaves a gap between two
-/// neighbouring marks.
-///
-/// A jittering recorder clock steps back on a large fraction of its samples: a
-/// channel sampled at 10 Hz for an hour holds 36 000 of them, far past the 100
-/// marks a 1000 point wide plot fits at this pitch. Drawing each one paints a
-/// solid band along the axis, which says less than the count in one mark's
-/// hover text does.
-const MARK_PITCH_PX: f32 = MARK_WIDTH + 4.0;
-
-/// How the hover text writes the two timestamps of a step. Milliseconds: a
-/// channel sampled faster than 1 Hz steps back by less than a second.
-const STEP_TIME_FORMAT: &str = "%H:%M:%S%.3f";
-
-/// How the hover text writes the two timestamps of a step under a millisecond,
-/// which [`STEP_TIME_FORMAT`] renders as one and the same time. Microseconds
-/// are the resolution the channel timestamps hold.
-const SUB_MILLISECOND_STEP_TIME_FORMAT: &str = "%H:%M:%S%.6f";
-
 /// One backward time step together with the channel it belongs to.
 struct ChannelBackwardTimeStep<'a> {
     channel: &'a str,
     placed: PlacedBackwardTimeStep,
 }
-
-/// Length of the leader descending to the step, in points. Short on purpose: a
-/// full-height line would look like a cursor, and the plot already has two of
-/// those.
-const LEADER_LENGTH: f32 = 22.0;
-
-/// Half the width of the step's horizontal run, in points. The leader descends
-/// this far right of the anchor, and the drop falls this far left of it.
-const STEP_HALF_WIDTH: f32 = 2.5;
-
-/// How far above the anchor the step's horizontal run sits, in points.
-const STEP_ABOVE_ANCHOR: f32 = 1.0;
-
-/// How far below the anchor the drop ends, in points.
-const DROP_BELOW_ANCHOR: f32 = 2.5;
-
-/// Stroke width of the mark, in points.
-const MARK_STROKE_WIDTH: f32 = 1.0;
-
-/// Width a mark covers, in points.
-const MARK_WIDTH: f32 = 2.0 * STEP_HALF_WIDTH + MARK_STROKE_WIDTH;
-
-/// How far above the bottom of the view a mark's anchor sits at the least, in
-/// points. [`EDGE_MARKER_INSET`] is a fraction of the visible y range: that fraction
-/// of a short view is less than the drop below the anchor.
-const MIN_MARK_HEIGHT_ABOVE_EDGE: f32 = DROP_BELOW_ANCHOR + MARK_STROKE_WIDTH;
 
 /// The marks of one track's channels.
 struct BackwardTimeStepMarks {
@@ -350,6 +304,52 @@ fn channel_line(channel: &str, steps: &[PlacedBackwardTimeStep]) -> String {
     }
 }
 
+/// Screen distance between two marks, in points, below which the steps share
+/// one mark. Wider than [`MARK_WIDTH`], which leaves a gap between two
+/// neighbouring marks.
+///
+/// A jittering recorder clock steps back on a large fraction of its samples: a
+/// channel sampled at 10 Hz for an hour holds 36 000 of them, far past the 100
+/// marks a 1000 point wide plot fits at this pitch. Drawing each one paints a
+/// solid band along the axis, which says less than the count in one mark's
+/// hover text does.
+const MARK_PITCH_PX: f32 = MARK_WIDTH + 4.0;
+
+/// How the hover text writes the two timestamps of a step. Milliseconds: a
+/// channel sampled faster than 1 Hz steps back by less than a second.
+const STEP_TIME_FORMAT: &str = "%H:%M:%S%.3f";
+
+/// How the hover text writes the two timestamps of a step under a millisecond,
+/// which [`STEP_TIME_FORMAT`] renders as one and the same time. Microseconds
+/// are the resolution the channel timestamps hold.
+const SUB_MILLISECOND_STEP_TIME_FORMAT: &str = "%H:%M:%S%.6f";
+
+/// Length of the leader descending to the step, in points. Short on purpose: a
+/// full-height line would look like a cursor, and the plot already has two of
+/// those.
+const LEADER_LENGTH: f32 = 22.0;
+
+/// Half the width of the step's horizontal run, in points. The leader descends
+/// this far right of the anchor, and the drop falls this far left of it.
+const STEP_HALF_WIDTH: f32 = 2.5;
+
+/// How far above the anchor the step's horizontal run sits, in points.
+const STEP_ABOVE_ANCHOR: f32 = 1.0;
+
+/// How far below the anchor the drop ends, in points.
+const DROP_BELOW_ANCHOR: f32 = 2.5;
+
+/// Stroke width of the mark, in points.
+const MARK_STROKE_WIDTH: f32 = 1.0;
+
+/// Width a mark covers, in points.
+const MARK_WIDTH: f32 = 2.0 * STEP_HALF_WIDTH + MARK_STROKE_WIDTH;
+
+/// How far above the bottom of the view a mark's anchor sits at the least, in
+/// points. [`EDGE_MARKER_INSET`] is a fraction of the visible y range: that fraction
+/// of a short view is less than the drop below the anchor.
+const MIN_MARK_HEIGHT_ABOVE_EDGE: f32 = DROP_BELOW_ANCHOR + MARK_STROKE_WIDTH;
+
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, Utc};
@@ -358,9 +358,6 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-
-    /// 2024-01-15 12:00:00 UTC, where the channels below are sampled.
-    const T: f64 = 1_705_320_000.0;
 
     fn at(offset: TimeDelta) -> DateTime<Utc> {
         DateTime::from_timestamp(T as i64, 0).unwrap_or_default() + offset
@@ -585,9 +582,6 @@ mod tests {
         );
     }
 
-    /// The plot's right edge, a minute past [`T`].
-    const T_END: f64 = T + 60.0;
-
     fn channel(name: &str, offsets_secs: &[f64]) -> ChannelSeries {
         ChannelSeries {
             name: name.to_owned(),
@@ -652,4 +646,10 @@ mod tests {
         harness.run();
         harness.snapshot_with_color_tolerance(name);
     }
+
+    /// 2024-01-15 12:00:00 UTC, where the channels are sampled.
+    const T: f64 = 1_705_320_000.0;
+
+    /// The plot's right edge, a minute past [`T`].
+    const T_END: f64 = T + 60.0;
 }

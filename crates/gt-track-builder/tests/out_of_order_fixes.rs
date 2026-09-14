@@ -79,8 +79,6 @@ fn recorded_time_spans_every_fix_when_one_steps_backwards() {
     assert_eq!(file.metadata.total_duration, Duration::seconds(10));
 }
 
-const HOUR_MILLIS: i64 = 3_600_000;
-
 /// A recording whose clock steps back an hour in the middle, which
 /// segmentation splits into a later track followed by an earlier one.
 fn recording_whose_clock_steps_back_an_hour() -> LoadedFile {
@@ -144,3 +142,5 @@ proptest::proptest! {
         proptest::prop_assert_eq!(cursor, points.len());
     }
 }
+
+const HOUR_MILLIS: i64 = 3_600_000;

@@ -7,11 +7,6 @@
 
 use chrono::NaiveDate;
 
-/// First day the catalog lists an event for, probed against the endpoint.
-pub const COVERAGE_START: NaiveDate = coverage_start();
-
-const COVERAGE_START_YMD: (i32, u32, u32) = (2010, 4, 3);
-
 const fn coverage_start() -> NaiveDate {
     let (year, month, day) = COVERAGE_START_YMD;
     match NaiveDate::from_ymd_opt(year, month, day) {
@@ -22,29 +17,15 @@ const fn coverage_start() -> NaiveDate {
     }
 }
 
-const _: () = {
-    let (year, month, day) = COVERAGE_START_YMD;
-    assert!(
-        NaiveDate::from_ymd_opt(year, month, day).is_some(),
-        "COVERAGE_START_YMD must name a real calendar date"
-    );
-};
-
-/// Most UTC days one recording is allowed to pull in.
-///
-/// A recording spanning longer than this is left to an explicit backfill: a
-/// recording should not silently turn into hundreds of requests.
-pub const MAX_DAYS_PER_TRACK: usize = 7;
-
 /// What the calendar alone says about one day, before any request is made.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, strum::EnumIter)]
 #[strum(serialize_all = "snake_case")]
 pub enum DayOutlook {
+    /// Earlier than the catalog's first listed day.
+    BeforeCoverage,
     /// Inside the catalog's coverage and not in the future. Worth requesting,
     /// even if the catalog turns out to have no flare for it.
     Fetchable,
-    /// Earlier than the catalog's first listed day.
-    BeforeCoverage,
     /// Later than the current UTC day.
     InFuture,
 }
@@ -67,6 +48,25 @@ pub fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> V
         day_outlook(day, today_utc) == DayOutlook::Fetchable
     })
 }
+
+/// First day the catalog lists an event for, probed against the endpoint.
+pub const COVERAGE_START: NaiveDate = coverage_start();
+
+const COVERAGE_START_YMD: (i32, u32, u32) = (2010, 4, 3);
+
+const _: () = {
+    let (year, month, day) = COVERAGE_START_YMD;
+    assert!(
+        NaiveDate::from_ymd_opt(year, month, day).is_some(),
+        "COVERAGE_START_YMD must name a real calendar date"
+    );
+};
+
+/// Most UTC days one recording is allowed to pull in.
+///
+/// A recording spanning longer than this is left to an explicit backfill: a
+/// recording should not silently turn into hundreds of requests.
+pub const MAX_DAYS_PER_TRACK: usize = 7;
 
 #[cfg(test)]
 mod tests {

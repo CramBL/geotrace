@@ -146,10 +146,6 @@ impl MercBounds {
     }
 }
 
-/// What the normalised Mercator world spans in x, from the antimeridian back
-/// to itself.
-const WORLD_WIDTH_MERC: f64 = 1.0;
-
 /// A longitude range crossing the antimeridian projects to `x_min > x_max`,
 /// and a full circle to the world's whole width.
 impl From<GeoBounds> for MercBounds {
@@ -263,13 +259,13 @@ impl TimeRange {
 /// `CustomMarker` is a strict subset of `AnyMarker`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MarkerRequirement {
-    /// No marker constraint - all tracks pass.
-    #[default]
-    None,
     /// Track must have at least one custom *or* generated marker.
     AnyMarker,
     /// Track must have at least one *custom* marker.
     CustomMarker,
+    /// No marker constraint - all tracks pass.
+    #[default]
+    None,
 }
 
 /// Aggregate GNSS fix-quality statistics computed from satellite reports.
@@ -320,12 +316,6 @@ pub struct SegmentLengthRange {
     pub min: Length,
     pub max: Length,
 }
-
-/// Mercator-space radial tolerance of a track LOD's finest stored level
-/// before the per-track level offset is applied: ≈ 0.6 m at the equator.
-/// Stored level `i` of a [`TrackLod`] with offset `e` has tolerance
-/// `LOD_BASE_TOLERANCE_MERC × 2^(e + i)`.
-pub const LOD_BASE_TOLERANCE_MERC: f64 = 1.0 / (1u64 << 26) as f64;
 
 /// Multi-resolution decimation of a track's points for rendering.
 ///
@@ -586,11 +576,6 @@ pub struct LoadedTrack {
     pub channels: Vec<Channel>,
 }
 
-/// How far from a point a satellite report may be borrowed for display, in
-/// seconds. Satellites move arc-minutes per second, so a report this close is
-/// geometrically accurate as long as its age is shown.
-pub const SKY_REPORT_MAX_AGE_SECS: i64 = 10;
-
 /// A satellite report resolved for a track point by
 /// [`LoadedTrack::nearest_satellite_report`].
 #[derive(Debug, Clone, Copy)]
@@ -694,13 +679,13 @@ impl TrackRef {
 )]
 #[strum(serialize_all = "snake_case")]
 pub enum TravelMode {
+    Aircraft,
+    Bicycle,
+    Boat,
     Car,
     Motorcycle,
-    Bicycle,
     Pedestrian,
-    Boat,
     Rail,
-    Aircraft,
     /// A wire value not in the known set, preserved verbatim.
     #[strum(default)]
     Unknown(String),
@@ -853,10 +838,10 @@ impl Default for AssociationConfig {
 /// re-processed under new settings.
 #[derive(Debug, Clone)]
 pub enum FileSource {
-    /// Loaded from a path on disk (GTD file).
-    GtdPath(PathBuf),
     /// Loaded from bytes delivered via drag-and-drop (GTD file).
     GtdBytes(Arc<[u8]>),
+    /// Loaded from a path on disk (GTD file).
+    GtdPath(PathBuf),
 }
 
 #[derive(Debug, Clone)]
@@ -872,6 +857,21 @@ pub struct LoadedFile {
     /// Data quality warnings detected when the file was loaded (empty when clean).
     pub load_warnings: Vec<LoadWarning>,
 }
+
+/// What the normalised Mercator world spans in x, from the antimeridian back
+/// to itself.
+const WORLD_WIDTH_MERC: f64 = 1.0;
+
+/// Mercator-space radial tolerance of a track LOD's finest stored level
+/// before the per-track level offset is applied: ≈ 0.6 m at the equator.
+/// Stored level `i` of a [`TrackLod`] with offset `e` has tolerance
+/// `LOD_BASE_TOLERANCE_MERC × 2^(e + i)`.
+pub const LOD_BASE_TOLERANCE_MERC: f64 = 1.0 / (1u64 << 26) as f64;
+
+/// How far from a point a satellite report may be borrowed for display, in
+/// seconds. Satellites move arc-minutes per second, so a report this close is
+/// geometrically accurate as long as its age is shown.
+pub const SKY_REPORT_MAX_AGE_SECS: i64 = 10;
 
 #[cfg(test)]
 mod tests {
@@ -1188,8 +1188,6 @@ mod tests {
         assert!(track.nearest_satellite_report(PointIdx::new(9)).is_none());
     }
 
-    const MERC_TOLERANCE: f64 = 1e-9;
-
     /// 1.5° of longitude wide, from 179.0° E to 179.5° W.
     fn bounds_across_the_antimeridian() -> GeoBounds {
         GeoBounds::from_positions([
@@ -1399,4 +1397,6 @@ mod tests {
 
         assert!(!bounds.intersects(south_of_the_track));
     }
+
+    const MERC_TOLERANCE: f64 = 1e-9;
 }

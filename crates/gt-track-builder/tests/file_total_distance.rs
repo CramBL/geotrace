@@ -11,14 +11,6 @@ use gt_types::nav_point::NavPoint;
 use gt_types::track::{FileSource, TotalDistance};
 use uom::si::length::meter;
 
-const LATITUDE_DEGREES: f64 = 55.0;
-const FIRST_LONGITUDE_DEGREES: f64 = 12.0;
-const LAST_LONGITUDE_DEGREES: f64 = 12.002;
-
-/// A millimetre over a track 128 m long, covering the projection and the
-/// haversine round trip.
-const METERS_TOLERANCE: f64 = 0.001;
-
 fn fix(seconds: i64, longitude: Longitude, kind: FixKind) -> NavPoint {
     fixtures::nav_point(
         DateTime::<Utc>::UNIX_EPOCH + Duration::seconds(seconds),
@@ -91,3 +83,11 @@ fn a_recording_of_one_measured_track_reports_the_length_of_its_polyline() {
         "total distance reported as {measured} m, the drawn polyline is {expected_m} m"
     );
 }
+
+const LATITUDE_DEGREES: f64 = 55.0;
+const FIRST_LONGITUDE_DEGREES: f64 = 12.0;
+const LAST_LONGITUDE_DEGREES: f64 = 12.002;
+
+/// A millimetre over a track 128 m long, covering the projection and the
+/// haversine round trip.
+const METERS_TOLERANCE: f64 = 0.001;

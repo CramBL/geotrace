@@ -7,15 +7,10 @@ use gt_types::{
     TrackIdx, TrackRef, Versionable, Versioned,
 };
 
-mod recording_names;
-mod test_util;
-
 pub use recording_names::RecordingNames;
 
-/// Prefix marking an identity that GeoTrace derived automatically from the
-/// recording's title/device/filename. An identity the SDK supplied is stored
-/// unprefixed. Produced by `gt_loader::derive_identity`.
-pub const AUTO_IDENTITY_PREFIX: &str = "auto:";
+mod recording_names;
+mod test_util;
 
 /// Split an identity into its user-facing text and whether it was auto-derived.
 ///
@@ -487,6 +482,11 @@ impl<'a> IntoIterator for &'a mut LoadedFiles {
         self.iter_mut()
     }
 }
+
+/// Prefix marking an identity that GeoTrace derived automatically from the
+/// recording's title/device/filename. An identity the SDK supplied is stored
+/// unprefixed. Produced by `gt_loader::derive_identity`.
+pub const AUTO_IDENTITY_PREFIX: &str = "auto:";
 
 #[cfg(test)]
 mod tests {

@@ -1,5 +1,3 @@
-const COMMIT_HASH_LEN: usize = 40;
-
 /// The commit hash and the committer timestamp in UTC, or what makes
 /// `contents` unusable: a commit hash on the first line, an RFC 3339 timestamp
 /// on the second.
@@ -18,3 +16,5 @@ fn parse_provenance_file(contents: &str) -> Result<(&str, String), String> {
 
     Ok((commit, commit_time))
 }
+
+const COMMIT_HASH_LEN: usize = 40;

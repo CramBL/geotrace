@@ -33,8 +33,8 @@ pub struct UrlPrefixResponses<B> {
 
 enum ScriptedResponses<B> {
     Always(TransportResponse<B>),
-    InOrder(VecDeque<TransportResponse<B>>),
     ByUrlPrefix(UrlPrefixResponses<B>),
+    InOrder(VecDeque<TransportResponse<B>>),
 }
 
 /// Records every request it is sent, for tests asserting which URLs a pipeline

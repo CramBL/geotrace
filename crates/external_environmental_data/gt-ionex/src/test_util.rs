@@ -28,11 +28,6 @@ pub fn captured_maps(name: &str) -> Result<GlobalIonosphereMaps, String> {
     crate::captured_maps(name).map_err(|error| error.to_string())
 }
 
-/// The capture the generated streams hold, and how much of it the partial
-/// ones do, declared the same way on the generator's side.
-pub const COMPRESSED_CAPTURE: &str = "JPLG0920.24I";
-pub const COMPRESSED_HEAD_BYTES: usize = 65_536;
-
 /// One of the `.Z` streams `just qa::generate-unix-compress-fixtures`
 /// constructs under `tests/fixtures/unix_compress/`.
 pub fn compressed_fixture(name: &str) -> Result<Vec<u8>, String> {
@@ -101,3 +96,8 @@ pub fn cddis_capture_bytes(file_name: &str) -> Result<Vec<u8>, String> {
     let path = crate::cddis_captures_dir().join(file_name);
     fs::read(&path).map_err(|err| format!("reading {}: {err}", path.display()))
 }
+
+/// The capture the generated streams hold, and how much of it the partial
+/// ones do, declared the same way on the generator's side.
+pub const COMPRESSED_CAPTURE: &str = "JPLG0920.24I";
+pub const COMPRESSED_HEAD_BYTES: usize = 65_536;

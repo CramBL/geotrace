@@ -6,8 +6,6 @@ use signal_hook::iterator::Signals;
 
 use super::{GUI_CONTEXT_TO_WAKE, TERMINATION_SIGNAL_FLAG};
 
-const TERMINATION_SIGNALS: [i32; 3] = [SIGINT, SIGTERM, SIGHUP];
-
 /// Install this once the frame loop that reads the flag is about to run:
 /// from here on a termination signal only raises
 /// [`TERMINATION_SIGNAL_FLAG`].
@@ -38,6 +36,8 @@ fn spawn_termination_signal_thread() -> io::Result<()> {
     Ok(())
 }
 
+const TERMINATION_SIGNALS: [i32; 3] = [SIGINT, SIGTERM, SIGHUP];
+
 #[cfg(test)]
 mod tests {
     use std::thread;
@@ -47,9 +47,6 @@ mod tests {
     use signal_hook::low_level;
 
     use crate::termination_signal::{TERMINATION_SIGNAL_FLAG, TerminationSignalAction};
-
-    const FLAG_POLL_INTERVAL: Duration = Duration::from_millis(10);
-    const FLAG_DEADLINE: Duration = Duration::from_secs(5);
 
     /// Sending the process a real SIGTERM reaches the flag. A failed
     /// install leaves SIGTERM's default disposition, which kills this
@@ -72,4 +69,7 @@ mod tests {
 
         assert_eq!(action, TerminationSignalAction::BeginShutdown);
     }
+
+    const FLAG_POLL_INTERVAL: Duration = Duration::from_millis(10);
+    const FLAG_DEADLINE: Duration = Duration::from_secs(5);
 }

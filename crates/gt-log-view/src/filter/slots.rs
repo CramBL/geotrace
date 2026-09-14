@@ -1,9 +1,5 @@
 //! The palette slots the layer chips draw their map colour from.
 
-/// Colours the log-layer palette holds for layer chips, beside the one reserved
-/// for the live filter.
-pub const LAYER_COLOR_SLOT_COUNT: usize = 5;
-
 /// One slot of the log-layer palette, held by a layer chip for as long as that
 /// chip exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -87,6 +83,10 @@ impl LayerColorSlots {
         self.holders.get(slot.index()).copied().unwrap_or(0)
     }
 }
+
+/// Colours the log-layer palette holds for layer chips, beside the one reserved
+/// for the live filter.
+pub const LAYER_COLOR_SLOT_COUNT: usize = 5;
 
 #[cfg(test)]
 mod tests {

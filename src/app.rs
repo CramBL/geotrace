@@ -1,3 +1,37 @@
+use std::{cell::RefCell, env, path::PathBuf, rc::Rc};
+
+use egui_tiles::{Container, Linear, LinearDir, Tile, TileId, Tiles, Tree};
+use gt_fetch::TransportSource;
+use gt_filter::GlobalFilter;
+use gt_instance_lock::{DataDirectoryLock, DataDirectoryOwnership};
+use gt_loaded_files::LoadedFiles;
+use gt_log_view::{LoadedLog, LoadedLogs, LogPushOutcome, RecordingKey, SessionLogAttachments};
+use gt_logfile::ParsedLog;
+use gt_map::NavMap;
+use gt_map::mapbox_tiles;
+use gt_pending_writes::PendingWrites;
+use gt_plot::PlotState;
+use gt_side_panel::{FilterPanelState, TreeState};
+use gt_snap::wire::Costing;
+use gt_track_builder::SegmentationConfig;
+use gt_types::{AssociationConfig, LoadWarning, TrackRef};
+use gt_ui_types::{DisplayMask, LoadedLogId, MapHighlight, SkyGlyphVariant};
+use loader::{CompletedLoad, FinishedJob, LoadJobs, LoadOutcome};
+use log_viewer::LogViewerRequests;
+use log_viewer::association_dialog::LogAssociationDialog;
+use panes::MainPane;
+use recording_name_template::TemplatePreviewRecording;
+use rustc_hash::{FxHashMap, FxHashSet};
+use settings_autosave::{AppSnapshot, SettingsAutosaver};
+use settings_ui::SettingsPage;
+use settings_ui::search::SettingsSearch;
+use snap_state::{PendingSnapRequest, SnapErrorDerived, SnapReplacePrompt, SnapScopePrompt};
+use strum::IntoEnumIterator;
+
+use crate::termination_signal;
+
+pub use storage::Storage;
+
 mod anchored_dialog;
 mod archive_recovery;
 mod archives_unreachable;
@@ -54,41 +88,8 @@ mod tec_quiet_time;
 mod test_util;
 mod track_day_values;
 mod unarchived_day;
-pub use storage::Storage;
 #[cfg(feature = "self-update")]
 pub mod update;
-
-use std::{cell::RefCell, env, path::PathBuf, rc::Rc};
-
-use egui_tiles::{Container, Linear, LinearDir, Tile, TileId, Tiles, Tree};
-use gt_fetch::TransportSource;
-use gt_filter::GlobalFilter;
-use gt_instance_lock::{DataDirectoryLock, DataDirectoryOwnership};
-use gt_loaded_files::LoadedFiles;
-use gt_log_view::{LoadedLog, LoadedLogs, LogPushOutcome, RecordingKey, SessionLogAttachments};
-use gt_logfile::ParsedLog;
-use gt_map::NavMap;
-use gt_map::mapbox_tiles;
-use gt_pending_writes::PendingWrites;
-use gt_plot::PlotState;
-use gt_side_panel::{FilterPanelState, TreeState};
-use gt_snap::wire::Costing;
-use gt_track_builder::SegmentationConfig;
-use gt_types::{AssociationConfig, LoadWarning, TrackRef};
-use gt_ui_types::{DisplayMask, LoadedLogId, MapHighlight, SkyGlyphVariant};
-use loader::{CompletedLoad, FinishedJob, LoadJobs, LoadOutcome};
-use log_viewer::LogViewerRequests;
-use log_viewer::association_dialog::LogAssociationDialog;
-use panes::MainPane;
-use recording_name_template::TemplatePreviewRecording;
-use rustc_hash::{FxHashMap, FxHashSet};
-use settings_autosave::{AppSnapshot, SettingsAutosaver};
-use settings_ui::SettingsPage;
-use settings_ui::search::SettingsSearch;
-use snap_state::{PendingSnapRequest, SnapErrorDerived, SnapReplacePrompt, SnapScopePrompt};
-use strum::IntoEnumIterator;
-
-use crate::termination_signal;
 
 struct SharedAppState {
     loaded_files: LoadedFiles,

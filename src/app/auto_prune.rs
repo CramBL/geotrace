@@ -3,12 +3,12 @@ use gt_store::{
 };
 
 pub enum AutoPruneOutcome {
+    /// Caller must present the user with a confirmation dialog before deleting.
+    NeedsConfirmation(Vec<DatabaseRef>),
     /// Total stored size is within the limit, nothing to delete.
     NotNeeded,
     /// Pruning was performed, this many recordings were deleted.
     PrunedSilently(usize),
-    /// Caller must present the user with a confirmation dialog before deleting.
-    NeedsConfirmation(Vec<DatabaseRef>),
 }
 
 /// Check whether the database exceeds `max_bytes` and prune the oldest

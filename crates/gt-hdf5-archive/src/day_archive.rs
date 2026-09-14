@@ -13,6 +13,43 @@ use crate::prune::{
 };
 use crate::{ArchiveError, ArchiveFile};
 
+/// Implements [`DayArchiveError`] for an archive error with a
+/// `HeldByAnotherProcess`, a `SchemaTooNew { found, supported }` and a
+/// `DeclinedRecovery` variant.
+///
+/// The macro expands in the crate that owns the error type, which the orphan
+/// rule requires.
+#[macro_export]
+macro_rules! impl_day_archive_error {
+    ($error:ty) => {
+        impl $crate::DayArchiveError for $error {
+            fn is_held_by_another_process(&self) -> bool {
+                matches!(self, Self::HeldByAnotherProcess)
+            }
+
+            fn interrupted_delete_left_unrecovered(
+                &self,
+            ) -> Option<$crate::prune::InterruptedDelete> {
+                match self {
+                    Self::DeclinedRecovery($crate::prune::DeclinedRecovery(interrupted)) => {
+                        Some(*interrupted)
+                    }
+                    _ => None,
+                }
+            }
+
+            fn schema_too_new(&self) -> Option<$crate::SchemaVersions> {
+                match *self {
+                    Self::SchemaTooNew { found, supported } => {
+                        Some($crate::SchemaVersions { found, supported })
+                    }
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
 /// An [`ArchiveFile`] part-way through one of the opens in this module.
 /// Nothing outside constructs one, so the methods taking it cannot run on an
 /// archive whose schema version and interrupted delete were never checked.
@@ -179,41 +216,4 @@ pub trait DayArchiveError: std::error::Error {
 pub struct SchemaVersions {
     pub found: i64,
     pub supported: i64,
-}
-
-/// Implements [`DayArchiveError`] for an archive error with a
-/// `HeldByAnotherProcess`, a `SchemaTooNew { found, supported }` and a
-/// `DeclinedRecovery` variant.
-///
-/// The macro expands in the crate that owns the error type, which the orphan
-/// rule requires.
-#[macro_export]
-macro_rules! impl_day_archive_error {
-    ($error:ty) => {
-        impl $crate::DayArchiveError for $error {
-            fn is_held_by_another_process(&self) -> bool {
-                matches!(self, Self::HeldByAnotherProcess)
-            }
-
-            fn interrupted_delete_left_unrecovered(
-                &self,
-            ) -> Option<$crate::prune::InterruptedDelete> {
-                match self {
-                    Self::DeclinedRecovery($crate::prune::DeclinedRecovery(interrupted)) => {
-                        Some(*interrupted)
-                    }
-                    _ => None,
-                }
-            }
-
-            fn schema_too_new(&self) -> Option<$crate::SchemaVersions> {
-                match *self {
-                    Self::SchemaTooNew { found, supported } => {
-                        Some($crate::SchemaVersions { found, supported })
-                    }
-                    _ => None,
-                }
-            }
-        }
-    };
 }

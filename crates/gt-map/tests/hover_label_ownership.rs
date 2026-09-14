@@ -16,47 +16,11 @@ use gt_map::test_util::{self, MapScene, RenderedMap, VIEWPORT, WALKING_STEP_DEGR
 use gt_ui_theme::EM_DASH;
 use rstest::rstest;
 
-/// Fixes of the walking recording every case but the last draws.
-const FIX_COUNT: usize = 30;
-
-/// The fix the camera is held on, which puts it at [`viewport_center`].
-const CENTRE_FIX: usize = 15;
-
-/// How far north of the track the bare-map point sits, in points.
-const NORTH_OF_THE_TRACK_OFFSET_PT: f32 = 150.0;
-
-/// Fixes of a recording sparse enough for the snapped edge to run on past the
-/// last of them, where the pointer reaches the edge alone.
-const SPARSE_FIX_COUNT: usize = 4;
-
-/// How far east of the last fix the pointer rests on the bare edge, in points.
-/// The fit puts the fixes about 200 pt apart, and a fix takes the pointer
-/// within 20 pt.
-const BARE_EDGE_OFFSET_PT: f32 = 120.0;
-
-/// The margin `egui_kittest` lays a `ui_state` harness out with, which insets
-/// the map from the viewport.
-const HARNESS_OUTER_MARGIN_PT: f32 = 8.0;
-
 /// A point of bare map north of the track: out of reach of every fix, and
 /// inside the interference cell where a case draws one.
 fn bare_map_north_of_the_track() -> egui::Pos2 {
     test_util::viewport_center() + egui::vec2(0.0, -NORTH_OF_THE_TRACK_OFFSET_PT)
 }
-
-/// The label of the edge from [`a_snapped_edge_through`].
-const THE_SNAPPED_EDGE_LABEL: &str = "H.C. Andersens Boulevard\n\
-    Road class\nTertiary\n\
-    Speed limit\n50 km/h\n\
-    Surface\nPaved smooth";
-
-/// The label of the cell from [`an_interference_cell_around`].
-const THE_INTERFERENCE_CELL_LABEL: &str = "2 of 100 aircraft reported low navigation accuracy\n\
-    2.0% over 2023-11-14 (UTC)";
-
-/// The label of the hexagon over the centre fix, listing the one entry
-/// [`a_log_over`] wrote there.
-const THE_LOG_HEXAGON_LABEL: &str = "22:28:20  tracklogd[311]: heading hold engaged";
 
 /// The table of the fix at [`CENTRE_FIX`], which is the fix the pointer
 /// reaches at [`viewport_center`].
@@ -89,8 +53,8 @@ fn assert_the_snapped_edge_label_is_in_the_map_corner(map: &RenderedMap) {
 /// stacks over.
 #[derive(Clone, Copy)]
 enum TheLayerUnderTheHexagon {
-    InterferenceCell,
     DrawnFix,
+    InterferenceCell,
 }
 
 /// The hexagon's label stands at the pointer and the label of the layer under
@@ -200,9 +164,9 @@ fn snapshot_the_compound_label_stacks_over_the_label_of_the_interference_cell_un
 /// corner whatever else labels the pointer.
 #[derive(Clone, Copy)]
 enum TheLayerOverTheSnappedEdge {
-    LogHexagon,
     DrawnFix,
     InterferenceCell,
+    LogHexagon,
 }
 
 /// The layer over the snapped edge labels the pointer, and the edge labels the
@@ -299,12 +263,12 @@ fn snapshot_the_snapped_edge_label_is_drawn_in_the_map_corner_and_not_beside_the
 /// interference cell.
 #[derive(Clone, Copy)]
 enum PopupOverTheMap {
-    /// What a click opens where a fix and an event marker sit at one position.
-    Disambiguation,
     /// What a secondary click opens on the element under the pointer. A
     /// secondary click on bare map opens nothing: the menu closes itself on the
     /// first frame with no element under the pointer.
     ContextMenu,
+    /// What a click opens where a fix and an event marker sit at one position.
+    Disambiguation,
 }
 
 impl PopupOverTheMap {
@@ -500,3 +464,39 @@ fn snapshot_the_fix_table_opens_the_frame_after_the_pointer_reaches_a_fix_on_a_s
     );
     map.snapshot("hover_label_a_fix_that_the_pointer_reached_on_a_snapped_edge");
 }
+
+/// Fixes of the walking recording every case but the last draws.
+const FIX_COUNT: usize = 30;
+
+/// The fix the camera is held on, which puts it at [`viewport_center`].
+const CENTRE_FIX: usize = 15;
+
+/// How far north of the track the bare-map point sits, in points.
+const NORTH_OF_THE_TRACK_OFFSET_PT: f32 = 150.0;
+
+/// Fixes of a recording sparse enough for the snapped edge to run on past the
+/// last of them, where the pointer reaches the edge alone.
+const SPARSE_FIX_COUNT: usize = 4;
+
+/// How far east of the last fix the pointer rests on the bare edge, in points.
+/// The fit puts the fixes about 200 pt apart, and a fix takes the pointer
+/// within 20 pt.
+const BARE_EDGE_OFFSET_PT: f32 = 120.0;
+
+/// The margin `egui_kittest` lays a `ui_state` harness out with, which insets
+/// the map from the viewport.
+const HARNESS_OUTER_MARGIN_PT: f32 = 8.0;
+
+/// The label of the edge from [`a_snapped_edge_through`].
+const THE_SNAPPED_EDGE_LABEL: &str = "H.C. Andersens Boulevard\n\
+    Road class\nTertiary\n\
+    Speed limit\n50 km/h\n\
+    Surface\nPaved smooth";
+
+/// The label of the cell from [`an_interference_cell_around`].
+const THE_INTERFERENCE_CELL_LABEL: &str = "2 of 100 aircraft reported low navigation accuracy\n\
+    2.0% over 2023-11-14 (UTC)";
+
+/// The label of the hexagon over the centre fix, listing the one entry
+/// [`a_log_over`] wrote there.
+const THE_LOG_HEXAGON_LABEL: &str = "22:28:20  tracklogd[311]: heading hold engaged";

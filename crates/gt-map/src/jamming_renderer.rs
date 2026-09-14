@@ -21,23 +21,6 @@ use walkers::{MapMemory, Plugin, Projector};
 use crate::hover_labels::{HoverLabelEntry, HoverLabelStack};
 use crate::transform::MercTransform;
 
-/// Aircraft below which a cell's share carries no weight and the cell draws
-/// hatched. gpsjam publishes cells with as few as two aircraft, where one
-/// bad report reads as 50 %.
-pub const MIN_AIRCRAFT_FOR_SOLID_FILL: u32 = 5;
-
-/// Span of the whole world in normalised Mercator x, which is what a
-/// longitude past the antimeridian wraps by.
-const WORLD_WIDTH: f64 = 1.0;
-
-const HALF_WORLD_WIDTH: f64 = WORLD_WIDTH / 2.0;
-
-/// Spacing between hatch lines, in pixels.
-const HATCH_SPACING_PX: f32 = 6.0;
-
-/// Width of a hatch line.
-const HATCH_STROKE_WIDTH: f32 = 1.0;
-
 /// A cell projected to screen space, ready to paint and to hit-test.
 pub(crate) struct CellShape {
     pub(crate) outline: Vec<Pos2>,
@@ -115,9 +98,6 @@ pub(crate) fn visible_cells(
         })
         .collect()
 }
-
-/// The whole world's longitudes, for a window that wraps.
-const FULL_LON_RANGE: RangeInclusive<f64> = -180.0..=180.0;
 
 /// The geographic window a Mercator viewport covers, as the inclusive
 /// degree ranges [`JamDataset::observations_within`] takes.
@@ -360,6 +340,26 @@ fn bounding_rect(outline: &[Pos2]) -> Option<egui::Rect> {
     Some(rect)
 }
 
+/// Aircraft below which a cell's share carries no weight and the cell draws
+/// hatched. gpsjam publishes cells with as few as two aircraft, where one
+/// bad report reads as 50 %.
+pub const MIN_AIRCRAFT_FOR_SOLID_FILL: u32 = 5;
+
+/// Span of the whole world in normalised Mercator x, which is what a
+/// longitude past the antimeridian wraps by.
+const WORLD_WIDTH: f64 = 1.0;
+
+const HALF_WORLD_WIDTH: f64 = WORLD_WIDTH / 2.0;
+
+/// Spacing between hatch lines, in pixels.
+const HATCH_SPACING_PX: f32 = 6.0;
+
+/// Width of a hatch line.
+const HATCH_STROKE_WIDTH: f32 = 1.0;
+
+/// The whole world's longitudes, for a window that wraps.
+const FULL_LON_RANGE: RangeInclusive<f64> = -180.0..=180.0;
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr as _;
@@ -369,20 +369,6 @@ mod tests {
 
     use super::*;
     use crate::test_util;
-
-    /// Pixels the whole world spans in the transforms below, which is the
-    /// width a cell wrapped across the antimeridian would project to.
-    const WORLD_PX: f64 = 1024.0;
-
-    /// A cell from the captured fixture day: 55.016 N, 15.413 E.
-    const BALTIC: &str = "841f0c9ffffffff";
-
-    /// Side of the test viewport, in pixels.
-    const CANVAS_PX: f32 = 400.0;
-
-    /// World width in pixels for the test view: about 100 km across the
-    /// canvas, so a ring of 22 km cells fits with room around it.
-    const TEST_VIEW_TOTAL_PX: f64 = 160_000.0;
 
     /// The Baltic cell, a 100 km view centred on it, and the canvas that view
     /// is drawn on.
@@ -705,4 +691,18 @@ mod tests {
         assert_eq!(hit.observation.cell, center_cell);
         assert!(cell_at_pointer(&cells, egui::pos2(-9000.0, -9000.0)).is_none());
     }
+
+    /// Pixels the whole world spans in the test transforms, which is the
+    /// width a cell wrapped across the antimeridian would project to.
+    const WORLD_PX: f64 = 1024.0;
+
+    /// A cell from the captured fixture day: 55.016 N, 15.413 E.
+    const BALTIC: &str = "841f0c9ffffffff";
+
+    /// Side of the test viewport, in pixels.
+    const CANVAS_PX: f32 = 400.0;
+
+    /// World width in pixels for the test view: about 100 km across the
+    /// canvas, so a ring of 22 km cells fits with room around it.
+    const TEST_VIEW_TOTAL_PX: f64 = 160_000.0;
 }

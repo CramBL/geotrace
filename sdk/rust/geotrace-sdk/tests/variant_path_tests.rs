@@ -5,8 +5,8 @@ use geotrace_sdk_test_util as test_util;
 #[derive(EventKind)]
 #[event_kind(note = none)]
 enum FlatEvent {
-    Boot,
     BatteryLow,
+    Boot,
     GpsLockAcquired,
 }
 
@@ -56,11 +56,11 @@ struct NotEventKind;
 #[derive(EventKind)]
 #[event_kind(lax, note = none)]
 enum LaxEvent {
-    #[expect(dead_code, reason = "field only used as delegation target")]
-    Typed(Inner),
-    Raw(NotEventKind),
     #[event_kind(delegate)]
     Explicit(Inner),
+    Raw(NotEventKind),
+    #[expect(dead_code, reason = "field only used as delegation target")]
+    Typed(Inner),
 }
 
 #[test]
@@ -180,11 +180,11 @@ fn leaf_attr_prevents_delegation() {
 #[derive(EventKind)]
 #[event_kind(strict, note = none)]
 enum StrictEvent {
-    Typed(Inner),
-    #[event_kind(lax)]
-    Optional(NotEventKind),
     #[event_kind(leaf)]
     LeafOnly(NotEventKind),
+    #[event_kind(lax)]
+    Optional(NotEventKind),
+    Typed(Inner),
 }
 
 #[test]

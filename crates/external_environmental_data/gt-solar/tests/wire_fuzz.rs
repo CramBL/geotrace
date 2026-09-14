@@ -16,10 +16,6 @@ use gt_solar::series::{Hp30Series, KpSeries};
 use gt_solar::test_util;
 use gt_solar::wire;
 
-/// How far into the captured storm the truncation property cuts: past the end
-/// of the largest capture, so a whole response is reachable too.
-const MAX_TRUNCATION_BYTES: usize = 4096;
-
 /// The capture the truncation property cuts, read once for the whole run.
 fn captured_storm() -> Result<&'static str, String> {
     static JSON: OnceLock<Result<String, String>> = OnceLock::new();
@@ -118,3 +114,7 @@ proptest::proptest! {
         }
     }
 }
+
+/// How far into the captured storm the truncation property cuts: past the end
+/// of the largest capture, so a whole response is reachable too.
+const MAX_TRUNCATION_BYTES: usize = 4096;

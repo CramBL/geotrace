@@ -1,22 +1,3 @@
-pub mod cargo_env;
-pub mod clock_reset_fixtures;
-#[cfg(feature = "archive")]
-pub mod day_archive;
-#[cfg(feature = "snapshot")]
-pub mod interaction;
-#[cfg(feature = "ionex")]
-pub mod ionex_fixtures;
-pub mod log_fixtures;
-pub mod map_tile_captures;
-pub mod pending_writes;
-pub mod recording_fixtures;
-#[cfg(feature = "snapshot")]
-pub mod snapshot_harness;
-#[cfg(feature = "tracks")]
-pub mod track_fixtures;
-#[cfg(feature = "snapshot")]
-pub mod window_fit;
-
 pub use cargo_env::cargo_manifest_dir;
 pub use clock_reset_fixtures::recording_whose_clock_restarts_at_every_boot;
 #[cfg(feature = "archive")]
@@ -46,6 +27,25 @@ pub use track_fixtures::{
 };
 #[cfg(feature = "snapshot")]
 pub use window_fit::{AuditedWindow, ControlLabel, WindowFitAssertions, oversized_text};
+
+pub mod cargo_env;
+pub mod clock_reset_fixtures;
+#[cfg(feature = "archive")]
+pub mod day_archive;
+#[cfg(feature = "snapshot")]
+pub mod interaction;
+#[cfg(feature = "ionex")]
+pub mod ionex_fixtures;
+pub mod log_fixtures;
+pub mod map_tile_captures;
+pub mod pending_writes;
+pub mod recording_fixtures;
+#[cfg(feature = "snapshot")]
+pub mod snapshot_harness;
+#[cfg(feature = "tracks")]
+pub mod track_fixtures;
+#[cfg(feature = "snapshot")]
+pub mod window_fit;
 
 pub const GOLD_BYTES: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),

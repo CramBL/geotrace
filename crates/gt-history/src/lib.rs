@@ -13,6 +13,14 @@ use gt_history_backend_pure::{PureDb, ReadOnlyPureDb};
 #[cfg(feature = "backend-sys")]
 use gt_history_backend_sys::{ReadOnlySysDb, SysDb};
 
+/// Re-export `extract_meta` from the active backend so the default build does
+/// not pull in the pure backend (and `hdf5-pure`) just for it.
+#[cfg(feature = "backend-pure")]
+pub use gt_history_backend_pure::extract_meta;
+
+#[cfg(feature = "backend-sys")]
+pub use gt_history_backend_sys::extract_meta;
+
 // Pure-Rust backend
 #[cfg(feature = "backend-pure")]
 pub type ActiveDb = PureDb;
@@ -39,11 +47,3 @@ pub type ReadOnlyDatabase = ActiveReadOnlyDb;
 
 /// Name of the database file. Where it sits is `gt-store`'s decision.
 pub const FILE_NAME: &str = "geotrace.h5";
-
-/// Re-export `extract_meta` from the active backend so the default build does
-/// not pull in the pure backend (and `hdf5-pure`) just for it.
-#[cfg(feature = "backend-pure")]
-pub use gt_history_backend_pure::extract_meta;
-
-#[cfg(feature = "backend-sys")]
-pub use gt_history_backend_sys::extract_meta;

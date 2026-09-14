@@ -524,15 +524,6 @@ mod tests {
     use super::*;
     use crate::{filter::slots::LAYER_COLOR_SLOT_COUNT, test_util};
 
-    /// A filter can select a service, a phenomenon, or one line: two services
-    /// write two lines each.
-    const LOG: &str = "\
-2026-01-01 14:02:11 navsyncd: gnss fix acquired
-2026-01-01 14:02:12 hal-powerd: battery low
-2026-01-01 14:02:13 navsyncd: gnss fix lost
-2026-01-01 14:02:14 hal-powerd: battery critical
-";
-
     fn unfiltered_stack() -> (FilterStack, LayerColorSlots) {
         let log = Arc::new(test_util::parsed_log_of_text(LOG));
         (FilterStack::new(log), LayerColorSlots::default())
@@ -955,4 +946,13 @@ mod tests {
             prop_assert!(expected.len() <= stack.entry_count());
         }
     }
+
+    /// A filter can select a service, a phenomenon, or one line: two services
+    /// write two lines each.
+    const LOG: &str = "\
+2026-01-01 14:02:11 navsyncd: gnss fix acquired
+2026-01-01 14:02:12 hal-powerd: battery low
+2026-01-01 14:02:13 navsyncd: gnss fix lost
+2026-01-01 14:02:14 hal-powerd: battery critical
+";
 }

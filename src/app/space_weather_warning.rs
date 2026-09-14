@@ -26,86 +26,6 @@ use gt_ui_types::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 
-/// Leads the toast raised the first time a loaded recording is found to
-/// overlap an archived value that can disturb reception. The recording's name
-/// follows on the same line, and each metric's finding on a line below it.
-const SPACE_WEATHER_DURING: &str = "Space weather during";
-
-/// Share of aircraft, in percent, at or above which a cell-day a track
-/// crossed counts. It is the share gpsjam starts colouring its cells at.
-const INTERFERENCE_TRIGGER_PERCENT: f32 = gt_ui_theme::INTERFERENCE_LOW_BREAKPOINT * 100.0;
-
-/// Leads the geomagnetic line. The metric is named "geomagnetic activity"
-/// where any value is shown. Only storm-level values reach a line here.
-const GEOMAGNETIC_STORM: &str = "Geomagnetic storm";
-
-/// Leads the solar flare line, which states one flare.
-const SOLAR_FLARE: &str = "Solar flare";
-
-/// Leads the TEC line, which states a range of values.
-const TEC_OVER_TRACK: &str = "TEC over track";
-
-/// Leads the TEC deviation line, which states one share of the quiet median,
-/// the storm grade it reaches, how long that grade held, and the geomagnetic
-/// activity before it.
-const TEC_DEVIATION: &str = "ΔTEC";
-
-/// Hours before a TEC deviation's peak epoch the archived geomagnetic indices
-/// are read over, looking for a storm that would account for the deviation.
-///
-/// A day-long window would miss the storm behind a late depletion: the
-/// negative phase of an ionospheric storm follows the geomagnetic storm
-/// driving it by up to about a day. Twice that lag is GeoTrace's own choice,
-/// as the reference material states no figure to take.
-const GEOMAGNETIC_LOOKBACK_HOURS: i64 = 48;
-
-/// Closes the solar flare line's limit. Only a flare that peaked while the
-/// receiver was in daylight counts.
-const SUNLIT_RECEIVER: &str = "sunlit";
-
-/// The weakest flare classification the NOAA radio blackout scale covers, as
-/// the catalog writes it. The scale's own floor is a peak flux, so the test
-/// `the_stated_flare_class_is_the_first_blackout_level` pins this string
-/// against the scale.
-const FLARE_TRIGGER_CLASSIFICATION: &str = "M1";
-
-/// One row per environment metric, stating the level at which it raises a
-/// warning, listed by the popup behind the map's warning icon.
-pub static WARNING_LEVELS: LazyLock<Vec<WarningLevelExplanation>> = LazyLock::new(|| {
-    vec![
-        WarningLevelExplanation {
-            trigger: format!(
-                "{}: ≥{INTERFERENCE_TRIGGER_PERCENT:.0}% of aircraft in a crossed cell reported \
-                 low navigation accuracy (gpsjam.org's yellow level).",
-                gt_jam::text::LAYER_LABEL
-            ),
-            reference: gt_jam::reference::AIRCRAFT_INTERFERENCE,
-        },
-        WarningLevelExplanation {
-            trigger: format!(
-                "Geomagnetic activity: {} or {} ≥{} (NOAA {}).",
-                GeomagneticIndex::Kp,
-                GeomagneticIndex::Hp30,
-                GeomagneticStormClass::Minor.lowest_value(),
-                GeomagneticStormClass::Minor.scale_name()
-            ),
-            reference: gt_solar::reference::GEOMAGNETIC_ACTIVITY,
-        },
-        WarningLevelExplanation {
-            trigger: format!(
-                "Solar flares: class {FLARE_TRIGGER_CLASSIFICATION} or stronger (NOAA {}), \
-                 receiver is on the sunlit side.",
-                RadioBlackoutClass::Minor.scale_name()
-            ),
-            reference: gt_flare::reference::SOLAR_FLARES,
-        },
-        WarningLevelExplanation {
-            trigger: gt_ionex::text::DEVIATION_WARNING_TRIGGER.clone(),
-            reference: gt_ionex::reference::IONOSPHERIC_TEC,
-        },
-    ]
-});
-
 /// One metric's finding: the metric that reached its disturbance level, the
 /// level it warns from, and the value it reached there.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -789,6 +709,86 @@ impl SpaceWeatherWarning {
         &self.track_warnings
     }
 }
+
+/// Leads the toast raised the first time a loaded recording is found to
+/// overlap an archived value that can disturb reception. The recording's name
+/// follows on the same line, and each metric's finding on a line below it.
+const SPACE_WEATHER_DURING: &str = "Space weather during";
+
+/// Share of aircraft, in percent, at or above which a cell-day a track
+/// crossed counts. It is the share gpsjam starts colouring its cells at.
+const INTERFERENCE_TRIGGER_PERCENT: f32 = gt_ui_theme::INTERFERENCE_LOW_BREAKPOINT * 100.0;
+
+/// Leads the geomagnetic line. The metric is named "geomagnetic activity"
+/// where any value is shown. Only storm-level values reach a line here.
+const GEOMAGNETIC_STORM: &str = "Geomagnetic storm";
+
+/// Leads the solar flare line, which states one flare.
+const SOLAR_FLARE: &str = "Solar flare";
+
+/// Leads the TEC line, which states a range of values.
+const TEC_OVER_TRACK: &str = "TEC over track";
+
+/// Leads the TEC deviation line, which states one share of the quiet median,
+/// the storm grade it reaches, how long that grade held, and the geomagnetic
+/// activity before it.
+const TEC_DEVIATION: &str = "ΔTEC";
+
+/// Hours before a TEC deviation's peak epoch the archived geomagnetic indices
+/// are read over, looking for a storm that would account for the deviation.
+///
+/// A day-long window would miss the storm behind a late depletion: the
+/// negative phase of an ionospheric storm follows the geomagnetic storm
+/// driving it by up to about a day. Twice that lag is GeoTrace's own choice,
+/// as the reference material states no figure to take.
+const GEOMAGNETIC_LOOKBACK_HOURS: i64 = 48;
+
+/// Closes the solar flare line's limit. Only a flare that peaked while the
+/// receiver was in daylight counts.
+const SUNLIT_RECEIVER: &str = "sunlit";
+
+/// The weakest flare classification the NOAA radio blackout scale covers, as
+/// the catalog writes it. The scale's own floor is a peak flux, so the test
+/// `the_stated_flare_class_is_the_first_blackout_level` pins this string
+/// against the scale.
+const FLARE_TRIGGER_CLASSIFICATION: &str = "M1";
+
+/// One row per environment metric, stating the level at which it raises a
+/// warning, listed by the popup behind the map's warning icon.
+pub static WARNING_LEVELS: LazyLock<Vec<WarningLevelExplanation>> = LazyLock::new(|| {
+    vec![
+        WarningLevelExplanation {
+            trigger: format!(
+                "{}: ≥{INTERFERENCE_TRIGGER_PERCENT:.0}% of aircraft in a crossed cell reported \
+                 low navigation accuracy (gpsjam.org's yellow level).",
+                gt_jam::text::LAYER_LABEL
+            ),
+            reference: gt_jam::reference::AIRCRAFT_INTERFERENCE,
+        },
+        WarningLevelExplanation {
+            trigger: format!(
+                "Geomagnetic activity: {} or {} ≥{} (NOAA {}).",
+                GeomagneticIndex::Kp,
+                GeomagneticIndex::Hp30,
+                GeomagneticStormClass::Minor.lowest_value(),
+                GeomagneticStormClass::Minor.scale_name()
+            ),
+            reference: gt_solar::reference::GEOMAGNETIC_ACTIVITY,
+        },
+        WarningLevelExplanation {
+            trigger: format!(
+                "Solar flares: class {FLARE_TRIGGER_CLASSIFICATION} or stronger (NOAA {}), \
+                 receiver is on the sunlit side.",
+                RadioBlackoutClass::Minor.scale_name()
+            ),
+            reference: gt_flare::reference::SOLAR_FLARES,
+        },
+        WarningLevelExplanation {
+            trigger: gt_ionex::text::DEVIATION_WARNING_TRIGGER.clone(),
+            reference: gt_ionex::reference::IONOSPHERIC_TEC,
+        },
+    ]
+});
 
 #[cfg(test)]
 mod tests {

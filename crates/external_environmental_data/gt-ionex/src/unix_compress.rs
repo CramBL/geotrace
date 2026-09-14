@@ -11,51 +11,21 @@ use std::ops::RangeInclusive;
 
 use thiserror::Error;
 
-/// Bytes every stream starts with, followed by the flags byte.
-const MAGIC: [u8; 2] = [0x1f, 0x9d];
-
-const HEADER_LEN: usize = 3;
-
-/// Flags bit set when the encoder may restart the table with [`CLEAR_CODE`].
-const BLOCK_MODE_FLAG: u8 = 0x80;
-
-/// Flags bits holding the widest code the stream reaches.
-const CODE_WIDTH_LIMIT_MASK: u8 = 0x1f;
-
-const INITIAL_CODE_WIDTH: u32 = 9;
-
-/// Code widths the format defines. A stream declaring anything else was not
-/// written by an encoder GeoTrace can read.
-const CODE_WIDTH_LIMITS: RangeInclusive<u32> = 9..=16;
-
-/// Codes standing for a single byte, which every table starts with.
-const BYTE_CODES: u16 = 256;
-
-/// Restarts the string table, in block mode only.
-const CLEAR_CODE: u16 = 256;
-
-/// Most bytes one stream may decode to.
-///
-/// A published IONEX day is under 1 MB decompressed. The format lets a short
-/// stream expand into orders of magnitude more, so the decode stops once the
-/// output reaches this many bytes.
-pub const MAX_DECOMPRESSED_BYTES: usize = 64 * 1024 * 1024;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum UnixCompressError {
     #[error("not a compress stream: the 0x1f 0x9d magic is missing")]
     NotCompressed,
 
-    #[error(
-        "the stream declares {max_code_width} bit codes, outside the 9 to 16 bits the format defines"
-    )]
-    UnsupportedCodeWidthLimit { max_code_width: u8 },
+    #[error("the stream decodes to more than {MAX_DECOMPRESSED_BYTES} bytes")]
+    TooLarge,
 
     #[error("code {code} is not in the string table")]
     UndefinedCode { code: u16 },
 
-    #[error("the stream decodes to more than {MAX_DECOMPRESSED_BYTES} bytes")]
-    TooLarge,
+    #[error(
+        "the stream declares {max_code_width} bit codes, outside the 9 to 16 bits the format defines"
+    )]
+    UnsupportedCodeWidthLimit { max_code_width: u8 },
 }
 
 /// The bytes `compressed` stands for.
@@ -263,6 +233,36 @@ impl StringTable {
     }
 }
 
+/// Bytes every stream starts with, followed by the flags byte.
+const MAGIC: [u8; 2] = [0x1f, 0x9d];
+
+const HEADER_LEN: usize = 3;
+
+/// Flags bit set when the encoder may restart the table with [`CLEAR_CODE`].
+const BLOCK_MODE_FLAG: u8 = 0x80;
+
+/// Flags bits holding the widest code the stream reaches.
+const CODE_WIDTH_LIMIT_MASK: u8 = 0x1f;
+
+const INITIAL_CODE_WIDTH: u32 = 9;
+
+/// Code widths the format defines. A stream declaring anything else was not
+/// written by an encoder GeoTrace can read.
+const CODE_WIDTH_LIMITS: RangeInclusive<u32> = 9..=16;
+
+/// Codes standing for a single byte, which every table starts with.
+const BYTE_CODES: u16 = 256;
+
+/// Restarts the string table, in block mode only.
+const CLEAR_CODE: u16 = 256;
+
+/// Most bytes one stream may decode to.
+///
+/// A published IONEX day is under 1 MB decompressed. The format lets a short
+/// stream expand into orders of magnitude more, so the decode stops once the
+/// output reaches this many bytes.
+pub const MAX_DECOMPRESSED_BYTES: usize = 64 * 1024 * 1024;
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
@@ -289,8 +289,6 @@ mod tests {
         }
         bytes
     }
-
-    const BLOCK_MODE_AT_SIXTEEN_BITS: u8 = BLOCK_MODE_FLAG | 16;
 
     #[rstest]
     #[case::empty(Vec::new(), UnixCompressError::NotCompressed)]
@@ -363,4 +361,6 @@ mod tests {
             Ok(b"AAA".to_vec())
         );
     }
+
+    const BLOCK_MODE_AT_SIXTEEN_BITS: u8 = BLOCK_MODE_FLAG | 16;
 }

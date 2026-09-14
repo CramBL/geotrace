@@ -13,89 +13,6 @@ use gt_ui_types::{MapHighlight, SkyTrailsRequest};
 
 use crate::tpv_renderer;
 
-/// Width of the left stats/filter column's label area: the checkbox, the
-/// colour swatch and the constellation name. The count columns are added to
-/// this, so a wider seen column widens the whole column.
-const STATS_LABEL_WIDTH_PX: f32 = 100.0;
-
-/// Gap between the stats column and the plot.
-const COLUMN_GAP_PX: f32 = 12.0;
-
-/// Smallest the trails plot shrinks to as the window resizes, so it stays
-/// legible even in a small window.
-const MIN_PLOT_DIAMETER_PX: f32 = 240.0;
-
-/// First-frame estimate of the vertical space below the plot (the transport
-/// and the gap above it). Only ever used before the real height has been
-/// measured. Every later frame sizes the plot against the measurement, so an
-/// inexact seed costs one frame of settling.
-const TRANSPORT_RESERVE_PX: f32 = 78.0;
-
-/// Fixed width of a count column (fix, seen), sized for the column heading and
-/// a couple of digits. Every count is right-aligned in one of these, so the
-/// digits line up down the column and across rows whatever their width.
-const STATS_COUNT_COL_PX: f32 = 38.0;
-
-/// Fixed width of the parenthesised unfiltered-total column, which holds a
-/// total only on a row the not-in-fix filter cuts. Reserved on every row of
-/// every frame, so neither the seen numbers nor the plot beside them move when
-/// a row starts or stops hiding satellites.
-const STATS_PAREN_COL_PX: f32 = 34.0;
-
-/// The stats column's total width: the label area, the two count columns and
-/// the parenthesised total beside the seen count.
-const STATS_COL_WIDTH_PX: f32 =
-    STATS_LABEL_WIDTH_PX + STATS_COUNT_COL_PX * 2.0 + STATS_PAREN_COL_PX;
-
-/// Right-hand padding inside a count cell, so a digit does not sit flush
-/// against the next column.
-const STATS_CELL_PAD_PX: f32 = 2.0;
-
-/// Default and minimum window size, chosen so the plot opens comfortably
-/// above [`MIN_PLOT_DIAMETER_PX`] with the stats column beside it.
-const DEFAULT_WINDOW_SIZE: [f32; 2] = [560.0, 420.0];
-const MIN_WINDOW_WIDTH_PX: f32 = 460.0;
-const MIN_WINDOW_HEIGHT_PX: f32 = 360.0;
-
-/// Default playback rate: one track-minute per real second.
-const DEFAULT_PLAYBACK_SPEED: f32 = 60.0;
-
-/// Playback rates offered in the speed selector, in track-seconds per real
-/// second.
-const PLAYBACK_SPEEDS: [f32; 7] = [1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0];
-
-/// The per-frame time step is clamped to this many seconds, so a stall (the
-/// window occluded, a breakpoint) doesn't jump the scrubber across the whole
-/// track on the next frame.
-const MAX_PLAYBACK_FRAME_SECS: f32 = 0.1;
-
-/// How far one press of an arrow key seeks. One second is one report on a 1 Hz
-/// recording, so a tap steps report by report.
-const SEEK_TAP_SECS: f64 = 1.0;
-
-/// How long an arrow key must be held before seeking turns from single steps
-/// into a continuous sweep, so a tap stays a tap.
-const HOLD_BEFORE_FAST_SEEK_SECS: f64 = 0.35;
-
-/// Held-down seeking crosses this fraction of the track per real second, so a
-/// sweep takes about the same time whether the recording ran for a minute or
-/// for a day.
-const HELD_SEEK_TRACK_FRACTION_PER_SEC: f64 = 0.25;
-
-/// Floor for the held-down seek rate, so seeking a very short track is still
-/// quicker than playing it.
-const MIN_HELD_SEEK_SECS_PER_SEC: f64 = 10.0;
-
-/// Glyph size of the play / pause button.
-const PLAY_ICON_SIZE_PX: f32 = 16.0;
-
-/// Width of the speed selector, sized to its widest label ("300x").
-const SPEED_SELECTOR_WIDTH_PX: f32 = 52.0;
-
-/// Alpha of the underline under an explained term, low enough that it marks
-/// the term without reading as a link.
-const TERM_UNDERLINE_ALPHA: f32 = 0.5;
-
 /// The whole-track sky trails window. Owned by the app and drawn each frame.
 /// Opened by [`SkyTrailsWindow::open`] from the context menus and the
 /// clicked-point window.
@@ -1018,6 +935,89 @@ fn apply_scrub_highlight(highlight: &mut MapHighlight, track_ref: TrackRef, epoc
     highlight.plot_hover_snapped = true;
 }
 
+/// Width of the left stats/filter column's label area: the checkbox, the
+/// colour swatch and the constellation name. The count columns are added to
+/// this, so a wider seen column widens the whole column.
+const STATS_LABEL_WIDTH_PX: f32 = 100.0;
+
+/// Gap between the stats column and the plot.
+const COLUMN_GAP_PX: f32 = 12.0;
+
+/// Smallest the trails plot shrinks to as the window resizes, so it stays
+/// legible even in a small window.
+const MIN_PLOT_DIAMETER_PX: f32 = 240.0;
+
+/// First-frame estimate of the vertical space below the plot (the transport
+/// and the gap above it). Only ever used before the real height has been
+/// measured. Every later frame sizes the plot against the measurement, so an
+/// inexact seed costs one frame of settling.
+const TRANSPORT_RESERVE_PX: f32 = 78.0;
+
+/// Fixed width of a count column (fix, seen), sized for the column heading and
+/// a couple of digits. Every count is right-aligned in one of these, so the
+/// digits line up down the column and across rows whatever their width.
+const STATS_COUNT_COL_PX: f32 = 38.0;
+
+/// Fixed width of the parenthesised unfiltered-total column, which holds a
+/// total only on a row the not-in-fix filter cuts. Reserved on every row of
+/// every frame, so neither the seen numbers nor the plot beside them move when
+/// a row starts or stops hiding satellites.
+const STATS_PAREN_COL_PX: f32 = 34.0;
+
+/// The stats column's total width: the label area, the two count columns and
+/// the parenthesised total beside the seen count.
+const STATS_COL_WIDTH_PX: f32 =
+    STATS_LABEL_WIDTH_PX + STATS_COUNT_COL_PX * 2.0 + STATS_PAREN_COL_PX;
+
+/// Right-hand padding inside a count cell, so a digit does not sit flush
+/// against the next column.
+const STATS_CELL_PAD_PX: f32 = 2.0;
+
+/// Default and minimum window size, chosen so the plot opens comfortably
+/// above [`MIN_PLOT_DIAMETER_PX`] with the stats column beside it.
+const DEFAULT_WINDOW_SIZE: [f32; 2] = [560.0, 420.0];
+const MIN_WINDOW_WIDTH_PX: f32 = 460.0;
+const MIN_WINDOW_HEIGHT_PX: f32 = 360.0;
+
+/// Default playback rate: one track-minute per real second.
+const DEFAULT_PLAYBACK_SPEED: f32 = 60.0;
+
+/// Playback rates offered in the speed selector, in track-seconds per real
+/// second.
+const PLAYBACK_SPEEDS: [f32; 7] = [1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0];
+
+/// The per-frame time step is clamped to this many seconds, so a stall (the
+/// window occluded, a breakpoint) doesn't jump the scrubber across the whole
+/// track on the next frame.
+const MAX_PLAYBACK_FRAME_SECS: f32 = 0.1;
+
+/// How far one press of an arrow key seeks. One second is one report on a 1 Hz
+/// recording, so a tap steps report by report.
+const SEEK_TAP_SECS: f64 = 1.0;
+
+/// How long an arrow key must be held before seeking turns from single steps
+/// into a continuous sweep, so a tap stays a tap.
+const HOLD_BEFORE_FAST_SEEK_SECS: f64 = 0.35;
+
+/// Held-down seeking crosses this fraction of the track per real second, so a
+/// sweep takes about the same time whether the recording ran for a minute or
+/// for a day.
+const HELD_SEEK_TRACK_FRACTION_PER_SEC: f64 = 0.25;
+
+/// Floor for the held-down seek rate, so seeking a very short track is still
+/// quicker than playing it.
+const MIN_HELD_SEEK_SECS_PER_SEC: f64 = 10.0;
+
+/// Glyph size of the play / pause button.
+const PLAY_ICON_SIZE_PX: f32 = 16.0;
+
+/// Width of the speed selector, sized to its widest label ("300x").
+const SPEED_SELECTOR_WIDTH_PX: f32 = 52.0;
+
+/// Alpha of the underline under an explained term, low enough that it marks
+/// the term without reading as a link.
+const TERM_UNDERLINE_ALPHA: f32 = 0.5;
+
 #[cfg(test)]
 mod tests {
     use crate::test_util;
@@ -1066,10 +1066,6 @@ mod tests {
             }
         }
     }
-
-    /// The elevation mask every case draws the body at. The application takes
-    /// its own from the settings, and no case here is about that value.
-    const TEST_ELEVATION_MASK_DEG: f32 = 10.0;
 
     /// The window body over `trails`, reading and writing `inputs`, on the
     /// first track of the first recording at [`TEST_ELEVATION_MASK_DEG`].
@@ -1893,4 +1889,8 @@ mod tests {
             .inner
             .assert_window_fits_the_viewport(gt_test_utils::AuditedWindow::titled("Sky trails"));
     }
+
+    /// The elevation mask every case draws the body at. The application takes
+    /// its own from the settings, and no case here is about that value.
+    const TEST_ELEVATION_MASK_DEG: f32 = 10.0;
 }

@@ -18,48 +18,6 @@ use gt_types::{PlacedPoint, PlacedPoints, PointIdx};
 
 use crate::wire::{Costing, ShapePoint, TraceAttributesRequest, TraceOptions};
 
-/// Minimum time between two sent points. Input at a higher rate is thinned.
-pub const MIN_POINT_INTERVAL: Duration = Duration::from_secs(1);
-
-/// Maximum sent points per request chunk. Far under the server's observed
-/// 16 000-point cap. Sized so one failed chunk loses little work and
-/// progress updates stay frequent.
-pub const CHUNK_POINTS: usize = 1000;
-
-/// Points of context shared between consecutive chunks (~40 s at 1 Hz):
-/// enough HMM warm-up that match quality does not degrade at chunk cuts.
-pub const CHUNK_OVERLAP_POINTS: usize = 40;
-
-const _: () = assert!(
-    CHUNK_OVERLAP_POINTS.is_multiple_of(2),
-    "CHUNK_OVERLAP_POINTS must be even so both chunks split the overlap \
-     without double-owning or dropping a point"
-);
-
-/// Bounds for the derived `gps_accuracy`, meters. The lower bound keeps a
-/// receiver's optimistic eph from starving the candidate search. The upper
-/// bound keeps outlier eph from letting the match wander off the road.
-pub const GPS_ACCURACY_RANGE_M: RangeInclusive<f64> = 5.0..=30.0;
-
-/// Server-accepted range for `trace_options.search_radius`, meters.
-/// Pinned empirically against the FOSSGIS server (2026-07): 100 is
-/// accepted, 101 and negative values are rejected with error 158.
-pub const SEARCH_RADIUS_RANGE_M: RangeInclusive<f64> = 0.0..=100.0;
-
-/// Server-accepted range for a user-supplied `gps_accuracy`, meters.
-/// Pinned empirically like [`SEARCH_RADIUS_RANGE_M`]. Deliberately wider
-/// than [`GPS_ACCURACY_RANGE_M`], which bounds the value *derived* from
-/// eph - an explicit override may use the server's full range.
-pub const GPS_ACCURACY_OVERRIDE_RANGE_M: RangeInclusive<f64> = 0.0..=100.0;
-
-/// Client-side range for `trace_options.turn_penalty_factor`.
-/// Empirically the server enforces only the lower bound (negative values
-/// are rejected with error 158, and 10^9 was accepted), so the upper bound is
-/// this client's own sanity cap - Valhalla's guidance suggests around 500
-/// to smooth wandering matches, and far larger values stop changing the
-/// match.
-pub const TURN_PENALTY_FACTOR_RANGE: RangeInclusive<f64> = 0.0..=100_000.0;
-
 /// The user-facing parameters of a snap run: the costing plus the optional
 /// advanced trace options. An unset option means server default - except
 /// [`gps_accuracy_override_m`](Self::gps_accuracy_override_m), where unset
@@ -350,3 +308,45 @@ fn derive_gps_accuracy<'a>(sent: impl Iterator<Item = &'a SentPoint>) -> Option<
     };
     Some(median.clamp(*GPS_ACCURACY_RANGE_M.start(), *GPS_ACCURACY_RANGE_M.end()))
 }
+
+/// Minimum time between two sent points. Input at a higher rate is thinned.
+pub const MIN_POINT_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Maximum sent points per request chunk. Far under the server's observed
+/// 16 000-point cap. Sized so one failed chunk loses little work and
+/// progress updates stay frequent.
+pub const CHUNK_POINTS: usize = 1000;
+
+/// Points of context shared between consecutive chunks (~40 s at 1 Hz):
+/// enough HMM warm-up that match quality does not degrade at chunk cuts.
+pub const CHUNK_OVERLAP_POINTS: usize = 40;
+
+const _: () = assert!(
+    CHUNK_OVERLAP_POINTS.is_multiple_of(2),
+    "CHUNK_OVERLAP_POINTS must be even so both chunks split the overlap \
+     without double-owning or dropping a point"
+);
+
+/// Bounds for the derived `gps_accuracy`, meters. The lower bound keeps a
+/// receiver's optimistic eph from starving the candidate search. The upper
+/// bound keeps outlier eph from letting the match wander off the road.
+pub const GPS_ACCURACY_RANGE_M: RangeInclusive<f64> = 5.0..=30.0;
+
+/// Server-accepted range for `trace_options.search_radius`, meters.
+/// Pinned empirically against the FOSSGIS server (2026-07): 100 is
+/// accepted, 101 and negative values are rejected with error 158.
+pub const SEARCH_RADIUS_RANGE_M: RangeInclusive<f64> = 0.0..=100.0;
+
+/// Server-accepted range for a user-supplied `gps_accuracy`, meters.
+/// Pinned empirically like [`SEARCH_RADIUS_RANGE_M`]. Deliberately wider
+/// than [`GPS_ACCURACY_RANGE_M`], which bounds the value *derived* from
+/// eph - an explicit override may use the server's full range.
+pub const GPS_ACCURACY_OVERRIDE_RANGE_M: RangeInclusive<f64> = 0.0..=100.0;
+
+/// Client-side range for `trace_options.turn_penalty_factor`.
+/// Empirically the server enforces only the lower bound (negative values
+/// are rejected with error 158, and 10^9 was accepted), so the upper bound is
+/// this client's own sanity cap - Valhalla's guidance suggests around 500
+/// to smooth wandering matches, and far larger values stop changing the
+/// match.
+pub const TURN_PENALTY_FACTOR_RANGE: RangeInclusive<f64> = 0.0..=100_000.0;

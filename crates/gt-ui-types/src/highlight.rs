@@ -43,12 +43,12 @@ pub enum HighlightScope {
     File {
         file_index: FileIdx,
     },
+    Point(DataPointRef),
     Track(TrackRef),
     TrackCategory {
         track: TrackRef,
         category: DataCategory,
     },
-    Point(DataPointRef),
 }
 
 /// The nearest visible element per category group under the cursor.
@@ -262,14 +262,14 @@ pub enum PinnedPopup {
 /// [`PointVisibility`] additionally covers "drawn" and "no such element".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PinWithheld {
-    /// The file or track is off in the tree, or the track fails the filter.
-    TrackNotShown,
     /// The element's category is off in the tree or in the display mask.
     CategoryHidden,
     /// A `keep` or `hide` query removed the point.
     HiddenByQuery,
     /// Outside the global time filter's window.
     OutsideTimeFilter,
+    /// The file or track is off in the tree, or the track fails the filter.
+    TrackNotShown,
 }
 
 impl Default for MapHighlight {

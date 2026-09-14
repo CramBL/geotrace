@@ -48,14 +48,14 @@ use super::unarchived_day::UnarchivedDay;
 
 /// What one day's fetch produced.
 enum JamMessage {
-    Stored {
-        day: NaiveDate,
-        cells: usize,
-    },
     /// The host has no dataset for the day.
     Missing {
         day: NaiveDate,
         pending: bool,
+    },
+    Stored {
+        day: NaiveDate,
+        cells: usize,
     },
     Unarchived(UnarchivedDay),
 }

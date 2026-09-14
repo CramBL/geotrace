@@ -22,68 +22,6 @@ use gt_hdf5_archive::ColumnFormat;
 use gt_solar::GeomagneticIndex;
 use gt_solar::series::KpStatus;
 
-/// Group holding the Kp columns.
-pub const KP_GROUP: &str = "kp";
-
-/// Group holding the Hp30 columns.
-pub const HP30_GROUP: &str = "hp30";
-
-/// Subgroup holding an index's per-period columns.
-pub const SAMPLES_GROUP: &str = "samples";
-
-/// Subgroup holding an index's day index.
-pub const DAYS_GROUP: &str = "days";
-
-/// Start of the period a sample covers, Unix seconds.
-pub const SAMPLE_PERIOD_START: &str = "period_start";
-/// The period's value on the Kp scale, read only where
-/// [`SAMPLE_ACTIVITY_PRESENCE`] says the service published one.
-pub const SAMPLE_ACTIVITY: &str = "activity";
-/// Whether the service published a value for the period, coded by
-/// [`gt_hdf5_archive::StoredPresence`].
-pub const SAMPLE_ACTIVITY_PRESENCE: &str = "activity_presence";
-/// The status of a Kp value, coded by [`StoredKpStatus`].
-pub const SAMPLE_KP_STATUS: &str = "status";
-
-/// Written in [`SAMPLE_ACTIVITY`] for a period the service published no value
-/// for. Never read back: [`SAMPLE_ACTIVITY_PRESENCE`] is what says the value
-/// is a gap.
-pub const UNPUBLISHED_ACTIVITY_FILL: f64 = 0.0;
-
-/// Attribute holding the archive's schema version.
-pub const SCHEMA_VERSION_ATTR: &str = "schema_version";
-
-/// Schema this build writes and can read.
-pub const CURRENT_SCHEMA_VERSION: i64 = 1;
-
-const DEFLATE_LEVEL: u8 = 6;
-
-/// Chunking of the sample columns. One chunk holds about three weeks of Hp30
-/// at 48 samples a day, or four months of Kp at 8.
-pub const SAMPLE_FORMAT: ColumnFormat = ColumnFormat {
-    chunk_rows: 1_024,
-    deflate_level: DEFLATE_LEVEL,
-};
-
-/// Chunking of the day index. One row per day, so a chunk holds several years.
-pub const DAY_FORMAT: ColumnFormat = ColumnFormat {
-    chunk_rows: 1_024,
-    deflate_level: DEFLATE_LEVEL,
-};
-
-const KP_SAMPLE_COLUMNS: [&str; 4] = [
-    SAMPLE_PERIOD_START,
-    SAMPLE_ACTIVITY,
-    SAMPLE_ACTIVITY_PRESENCE,
-    SAMPLE_KP_STATUS,
-];
-
-const HP30_SAMPLE_COLUMNS: [&str; 3] = [
-    SAMPLE_PERIOD_START,
-    SAMPLE_ACTIVITY,
-    SAMPLE_ACTIVITY_PRESENCE,
-];
-
 /// Where one index's columns sit in the archive.
 pub trait IndexArchiveLayout {
     /// Group holding everything stored for the index.
@@ -169,3 +107,65 @@ impl From<StoredKpStatus> for KpStatus {
         }
     }
 }
+
+/// Group holding the Kp columns.
+pub const KP_GROUP: &str = "kp";
+
+/// Group holding the Hp30 columns.
+pub const HP30_GROUP: &str = "hp30";
+
+/// Subgroup holding an index's per-period columns.
+pub const SAMPLES_GROUP: &str = "samples";
+
+/// Subgroup holding an index's day index.
+pub const DAYS_GROUP: &str = "days";
+
+/// Start of the period a sample covers, Unix seconds.
+pub const SAMPLE_PERIOD_START: &str = "period_start";
+/// The period's value on the Kp scale, read only where
+/// [`SAMPLE_ACTIVITY_PRESENCE`] says the service published one.
+pub const SAMPLE_ACTIVITY: &str = "activity";
+/// Whether the service published a value for the period, coded by
+/// [`gt_hdf5_archive::StoredPresence`].
+pub const SAMPLE_ACTIVITY_PRESENCE: &str = "activity_presence";
+/// The status of a Kp value, coded by [`StoredKpStatus`].
+pub const SAMPLE_KP_STATUS: &str = "status";
+
+/// Written in [`SAMPLE_ACTIVITY`] for a period the service published no value
+/// for. Never read back: [`SAMPLE_ACTIVITY_PRESENCE`] is what says the value
+/// is a gap.
+pub const UNPUBLISHED_ACTIVITY_FILL: f64 = 0.0;
+
+/// Attribute holding the archive's schema version.
+pub const SCHEMA_VERSION_ATTR: &str = "schema_version";
+
+/// Schema this build writes and can read.
+pub const CURRENT_SCHEMA_VERSION: i64 = 1;
+
+const DEFLATE_LEVEL: u8 = 6;
+
+/// Chunking of the sample columns. One chunk holds about three weeks of Hp30
+/// at 48 samples a day, or four months of Kp at 8.
+pub const SAMPLE_FORMAT: ColumnFormat = ColumnFormat {
+    chunk_rows: 1_024,
+    deflate_level: DEFLATE_LEVEL,
+};
+
+/// Chunking of the day index. One row per day, so a chunk holds several years.
+pub const DAY_FORMAT: ColumnFormat = ColumnFormat {
+    chunk_rows: 1_024,
+    deflate_level: DEFLATE_LEVEL,
+};
+
+const KP_SAMPLE_COLUMNS: [&str; 4] = [
+    SAMPLE_PERIOD_START,
+    SAMPLE_ACTIVITY,
+    SAMPLE_ACTIVITY_PRESENCE,
+    SAMPLE_KP_STATUS,
+];
+
+const HP30_SAMPLE_COLUMNS: [&str; 3] = [
+    SAMPLE_PERIOD_START,
+    SAMPLE_ACTIVITY,
+    SAMPLE_ACTIVITY_PRESENCE,
+];

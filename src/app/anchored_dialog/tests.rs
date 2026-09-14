@@ -17,38 +17,6 @@ use strum::IntoEnumIterator as _;
 use super::{AnchoredDialog, AnchoredDialogKind, HeldBodyLines};
 use crate::app::modals::{DialogActionRow, DialogBody};
 
-/// A control moves only because its own window moved it, never because the
-/// screen clipped it: this is wider and taller than every dialog.
-const VIEWPORT: egui::Vec2 = egui::vec2(1000.0, 800.0);
-
-const CANCEL_LABEL: &str = "Cancel";
-
-/// The tickbox a dialog puts at the left end of its action row.
-const SUPPRESS_LABEL: &str = "Don't show this again";
-
-/// The body's one line before the result arrives, drawn above the room the
-/// result lands in.
-const PROMPT: &str = "Which recording should this log take its positions from?";
-
-/// The region of the body the result lands in.
-const RESULT_REGION: &str = "result";
-
-/// Lines the result's region holds from the frame the dialog opens.
-const RESERVED_RESULT_LINES: u8 = 2;
-
-/// Lines the result adds, more than its region holds: they scroll inside it.
-const ARRIVING_LINE_COUNT: usize = 40;
-
-/// The width a dialog opens at here is the viewport-relative cap: this is
-/// narrower than every dialog.
-const VIEWPORT_NARROWER_THAN_EVERY_DIALOG: egui::Vec2 = egui::vec2(400.0, 300.0);
-
-/// Rounding slack when comparing the room on one side of the window against
-/// the room on the other, in points.
-const CENTRING_SLACK: f32 = 1.0;
-
-const USER_CORNER_DRAG: egui::Vec2 = egui::vec2(60.0, 40.0);
-
 struct DialogUnderTest {
     kind: AnchoredDialogKind,
     shown: bool,
@@ -69,10 +37,6 @@ enum DialogOpening {
     First,
     Second,
 }
-
-/// Passes the dialog stays closed between two openings. The machinery
-/// discards the held layout after a gap of more than one pass.
-const PASSES_CLOSED: usize = 3;
 
 fn dialog_ui(ui: &mut egui::Ui, state: &mut DialogUnderTest) {
     // The app under the dialog: what a press that misses the dialog reaches.
@@ -309,3 +273,39 @@ fn a_user_resize_is_honoured_and_kept_while_the_result_arrives() {
         );
     }
 }
+
+/// A control moves only because its own window moved it, never because the
+/// screen clipped it: this is wider and taller than every dialog.
+const VIEWPORT: egui::Vec2 = egui::vec2(1000.0, 800.0);
+
+const CANCEL_LABEL: &str = "Cancel";
+
+/// The tickbox a dialog puts at the left end of its action row.
+const SUPPRESS_LABEL: &str = "Don't show this again";
+
+/// The body's one line before the result arrives, drawn above the room the
+/// result lands in.
+const PROMPT: &str = "Which recording should this log take its positions from?";
+
+/// The region of the body the result lands in.
+const RESULT_REGION: &str = "result";
+
+/// Lines the result's region holds from the frame the dialog opens.
+const RESERVED_RESULT_LINES: u8 = 2;
+
+/// Lines the result adds, more than its region holds: they scroll inside it.
+const ARRIVING_LINE_COUNT: usize = 40;
+
+/// The width a dialog opens at here is the viewport-relative cap: this is
+/// narrower than every dialog.
+const VIEWPORT_NARROWER_THAN_EVERY_DIALOG: egui::Vec2 = egui::vec2(400.0, 300.0);
+
+/// Rounding slack when comparing the room on one side of the window against
+/// the room on the other, in points.
+const CENTRING_SLACK: f32 = 1.0;
+
+const USER_CORNER_DRAG: egui::Vec2 = egui::vec2(60.0, 40.0);
+
+/// Passes the dialog stays closed between two openings. The machinery
+/// discards the held layout after a gap of more than one pass.
+const PASSES_CLOSED: usize = 3;

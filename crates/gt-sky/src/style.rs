@@ -3,6 +3,27 @@
 
 use gt_types::SignalQuality;
 
+/// The alpha scale for an opacity percentage, clamped to
+/// `TRAIL_OPACITY_PERCENT_MIN..=TRAIL_OPACITY_PERCENT_MAX` first.
+pub fn trail_opacity_multiplier(percent: f32) -> f32 {
+    percent.clamp(TRAIL_OPACITY_PERCENT_MIN, TRAIL_OPACITY_PERCENT_MAX)
+        / TRAIL_OPACITY_PERCENT_DEFAULT
+}
+
+/// Mark radius at full size for a satellite's signal quality, so weak
+/// satellites read as small at a glance. `None` (no reported SNR) and
+/// [`SignalQuality::NoDataSentinel`] get the smallest radius: neither states a
+/// signal strength. The no-data mark is told apart by its colour.
+pub const fn mark_radius(quality: Option<SignalQuality>) -> f32 {
+    match quality {
+        Some(SignalQuality::Excellent) => 4.5,
+        Some(SignalQuality::Good) => 4.0,
+        Some(SignalQuality::Moderate) => 3.5,
+        Some(SignalQuality::Weak) => 3.0,
+        Some(SignalQuality::VeryWeak | SignalQuality::NoDataSentinel) | None => 2.5,
+    }
+}
+
 /// Diameter of the compact sky plot shown in the hover badge.
 pub const COMPACT_DIAMETER_PX: f32 = 128.0;
 
@@ -68,13 +89,6 @@ pub const TRAIL_OPACITY_PERCENT_MIN: f32 = 0.0;
 pub const TRAIL_OPACITY_PERCENT_MAX: f32 = 100.0;
 pub const TRAIL_OPACITY_PERCENT_DEFAULT: f32 = 40.0;
 
-/// The alpha scale for an opacity percentage, clamped to
-/// `TRAIL_OPACITY_PERCENT_MIN..=TRAIL_OPACITY_PERCENT_MAX` first.
-pub fn trail_opacity_multiplier(percent: f32) -> f32 {
-    percent.clamp(TRAIL_OPACITY_PERCENT_MIN, TRAIL_OPACITY_PERCENT_MAX)
-        / TRAIL_OPACITY_PERCENT_DEFAULT
-}
-
 /// Alpha applied to trails of the constellations not currently focused
 /// (hovered), so the focused constellation stands out.
 pub const TRAIL_DIMMED_ALPHA: f32 = 0.12;
@@ -133,20 +147,6 @@ pub const FULL_CARDINAL_LABEL_OFFSET_PX: f32 = 9.0;
 pub const COMPACT_CARDINAL_LABEL_OFFSET_PX: f32 = 6.0;
 /// Length of the rim ticks marking E/S/W in the compact plot.
 pub const COMPACT_CARDINAL_TICK_PX: f32 = 3.5;
-
-/// Mark radius at full size for a satellite's signal quality, so weak
-/// satellites read as small at a glance. `None` (no reported SNR) and
-/// [`SignalQuality::NoDataSentinel`] get the smallest radius: neither states a
-/// signal strength. The no-data mark is told apart by its colour.
-pub const fn mark_radius(quality: Option<SignalQuality>) -> f32 {
-    match quality {
-        Some(SignalQuality::Excellent) => 4.5,
-        Some(SignalQuality::Good) => 4.0,
-        Some(SignalQuality::Moderate) => 3.5,
-        Some(SignalQuality::Weak) => 3.0,
-        Some(SignalQuality::VeryWeak | SignalQuality::NoDataSentinel) | None => 2.5,
-    }
-}
 
 #[cfg(test)]
 mod tests {

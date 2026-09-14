@@ -7,9 +7,6 @@ use gt_plot::PlotState;
 use gt_plot::test_util::{self, DrawnPlot, PlotSources};
 use gt_types::LoadedFile;
 
-/// Fixes in the recording, one per second.
-const FIX_COUNT: usize = 60;
-
 /// A recording of one track at 1 Hz carrying a scalar channel sampled at the
 /// same rate, whose timestamps step back by ten seconds halfway through.
 fn recording_with_a_backward_time_step() -> LoadedFile {
@@ -129,3 +126,6 @@ fn a_collapsed_channels_section_draws_no_mark() {
         "the setting must draw nothing while the Channels section is collapsed"
     );
 }
+
+/// Fixes in the recording, one per second.
+const FIX_COUNT: usize = 60;

@@ -19,8 +19,6 @@ use gt_solar_store::{FILE_NAME, ReadOnlySolarStore, SolarStore, SolarStoreError,
 use gt_test_utils::day_archive::conformance::{self, StoredDayOperations};
 use gt_test_utils::day_archive::{self, ColumnName, GroupPath};
 
-const HOST: &str = "https://kp.gfz.de";
-
 fn day(offset: i64) -> NaiveDate {
     NaiveDate::from_ymd_opt(2024, 5, 10).unwrap_or_default() + TimeDelta::days(offset)
 }
@@ -73,20 +71,6 @@ fn hp30_day(day: NaiveDate) -> Hp30Series {
         .collect();
     Hp30Series { samples }
 }
-
-/// A conformance case runs over the operations of the index it pins. The
-/// archive keeps a day index per geomagnetic index.
-const KP_DAY_OPERATIONS: StoredDayOperations<SolarStore, KpSeries> = StoredDayOperations {
-    insert_a_day: insert_a_kp_day,
-    read_a_day: read_a_kp_day,
-    indexed_days: indexed_kp_days,
-};
-
-const HP30_DAY_OPERATIONS: StoredDayOperations<SolarStore, Hp30Series> = StoredDayOperations {
-    insert_a_day: insert_an_hp30_day,
-    read_a_day: read_an_hp30_day,
-    indexed_days: indexed_hp30_days,
-};
 
 fn insert_a_kp_day(store: &SolarStore, day: NaiveDate) -> Result<KpSeries, String> {
     let series = kp_day(day);
@@ -704,3 +688,19 @@ fn declining_recovery_leaves_the_interrupted_archive_as_it_was() {
 fn a_settled_archive_reports_no_interrupted_delete() {
     conformance::a_settled_archive_reports_no_interrupted_delete(&KP_DAY_OPERATIONS, day(0));
 }
+
+const HOST: &str = "https://kp.gfz.de";
+
+/// A conformance case runs over the operations of the index it pins. The
+/// archive keeps a day index per geomagnetic index.
+const KP_DAY_OPERATIONS: StoredDayOperations<SolarStore, KpSeries> = StoredDayOperations {
+    insert_a_day: insert_a_kp_day,
+    read_a_day: read_a_kp_day,
+    indexed_days: indexed_kp_days,
+};
+
+const HP30_DAY_OPERATIONS: StoredDayOperations<SolarStore, Hp30Series> = StoredDayOperations {
+    insert_a_day: insert_an_hp30_day,
+    read_a_day: read_an_hp30_day,
+    indexed_days: indexed_hp30_days,
+};

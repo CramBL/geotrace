@@ -37,16 +37,6 @@ use serde_json::{Value, json};
 use gt_jam::wire::{self, ParseWarningReporter};
 use gt_jam::{CAPTURE_MANIFEST, CAPTURED_DAYS, CapturedDay, DEFAULT_BASE_URL};
 
-/// Points the capture at a mirror. The capture requests from `DEFAULT_BASE_URL`
-/// when it is unset.
-const HOST_ENV: &str = "GEOTRACE_JAM_HOST";
-
-/// A full day is about 900 KiB uncompressed.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
-
-/// Pause between requests: the host is a volunteer-run static site.
-const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
-
 fn main() -> Result<(), Box<dyn Error>> {
     let host = env::var(HOST_ENV).unwrap_or_else(|_| DEFAULT_BASE_URL.to_owned());
     let dir = gt_jam::captures_dir();
@@ -166,3 +156,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+/// Points the capture at a mirror. The capture requests from `DEFAULT_BASE_URL`
+/// when it is unset.
+const HOST_ENV: &str = "GEOTRACE_JAM_HOST";
+
+/// A full day is about 900 KiB uncompressed.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Pause between requests: the host is a volunteer-run static site.
+const REQUEST_INTERVAL: Duration = Duration::from_secs(2);

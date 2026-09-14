@@ -12,22 +12,6 @@ use gt_ui_types::{GeomagneticPoint, IndexContextSample, TecContextSample, TecPoi
 use rstest::rstest;
 use strum::IntoEnumIterator as _;
 
-const CHANNEL_NAME: &str = "Incline";
-const SECOND_CHANNEL_NAME: &str = "Brake pressure";
-
-/// Fixes of the recording whose velocity line the plot draws downsampled: far
-/// past the ~2 samples per pixel the finest level would hand over.
-const DOWNSAMPLED_FIX_COUNT: usize = 12_000;
-
-/// Value between the two constant channel lines of
-/// [`snapshot_the_plot_labels_the_line_it_added_last`], which sets them about
-/// 3 points apart on screen.
-const CHANNEL_LINE_GAP_VALUE: f64 = 0.15;
-
-/// The constant velocity of every fix [`gt_test_utils::fixtures::nav_points_from`]
-/// builds, in km/h, which is where the velocity line is drawn.
-const FIXTURE_VELOCITY_KMH: f64 = 15.0;
-
 /// A scalar channel sampled at `times`, one value per sample.
 fn scalar_channel(name: &str, times: Vec<DateTime<Utc>>, values: Vec<f64>) -> Channel {
     gt_test_utils::fixtures::scalar_channel(name, None, times, values)
@@ -128,15 +112,6 @@ impl PlotScene {
         test_util::drawn_plot(vec![file], sources, plot)
     }
 }
-
-/// The tooltip of the archived X2.2 flare, which both flare cases below
-/// assert.
-const THE_FLARE_HOVER_LABEL: &str = "X2.2 solar flare\n\
-    R3 strong radio blackout\n\
-    Peak: 2024-01-15 12:00 UTC\n\
-    11:32–12:23 UTC\n\
-    Lists every flare on the Sun. Only one on the receiver's sunlit side raises the \
-    ionization above it.";
 
 /// The label states the channel's first sample and the rulers draw at it, far
 /// to the left of the pointer. The channel's two samples draw one segment
@@ -418,3 +393,28 @@ fn snapshot_both_runs_of_one_channel_are_labelled_by_the_channel_name() {
     assert_eq!(plot.hover_label(), "Incline\n12:00:40\n8.00");
     plot.snapshot("hover_the_second_run_of_a_channel");
 }
+
+const CHANNEL_NAME: &str = "Incline";
+const SECOND_CHANNEL_NAME: &str = "Brake pressure";
+
+/// Fixes of the recording whose velocity line the plot draws downsampled: far
+/// past the ~2 samples per pixel the finest level would hand over.
+const DOWNSAMPLED_FIX_COUNT: usize = 12_000;
+
+/// Value between the two constant channel lines of
+/// [`snapshot_the_plot_labels_the_line_it_added_last`], which sets them about
+/// 3 points apart on screen.
+const CHANNEL_LINE_GAP_VALUE: f64 = 0.15;
+
+/// The constant velocity of every fix [`gt_test_utils::fixtures::nav_points_from`]
+/// builds, in km/h, which is where the velocity line is drawn.
+const FIXTURE_VELOCITY_KMH: f64 = 15.0;
+
+/// The tooltip of the archived X2.2 flare, which both flare cases
+/// assert.
+const THE_FLARE_HOVER_LABEL: &str = "X2.2 solar flare\n\
+    R3 strong radio blackout\n\
+    Peak: 2024-01-15 12:00 UTC\n\
+    11:32–12:23 UTC\n\
+    Lists every flare on the Sun. Only one on the receiver's sunlit side raises the \
+    ionization above it.";

@@ -14,6 +14,22 @@ use gt_ui_types::reference::{
     TableColumn,
 };
 
+/// One committed equation asset, named by the stem the generation recipe
+/// writes it under.
+macro_rules! equation_image {
+    ($asset_name:literal) => {
+        ReferenceImage {
+            image_bytes: include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/equations/",
+                $asset_name,
+                ".png"
+            )),
+            asset_name: $asset_name,
+        }
+    };
+}
+
 pub const IONOSPHERIC_TEC: ReferenceDocument = ReferenceDocument {
     title: "Ionospheric TEC and GNSS",
     link_question: "How does ionospheric TEC affect GNSS?",
@@ -152,22 +168,6 @@ const BLOCKS: &[ReferenceBlock] = &[
                 slip_all > 2 per min",
     },
 ];
-
-/// One committed equation asset, named by the stem the generation recipe
-/// writes it under.
-macro_rules! equation_image {
-    ($asset_name:literal) => {
-        ReferenceImage {
-            image_bytes: include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/assets/equations/",
-                $asset_name,
-                ".png"
-            )),
-            asset_name: $asset_name,
-        }
-    };
-}
 
 const SLANT_TEC_EQUATION: ReferenceEquation = ReferenceEquation {
     image: equation_image!("slant_tec"),
@@ -343,9 +343,6 @@ mod tests {
 
     use super::*;
 
-    /// Where the share of the median sits in a row of [`STORM_INDEX_TABLE`].
-    const SHARE_COLUMN: usize = 2;
-
     /// The share of the median each threshold comes to, as
     /// [`crate::quiet_time`] computes it, rounded the way the table states it.
     fn share_of_the_median(log_ratio: f64) -> i64 {
@@ -429,4 +426,7 @@ mod tests {
             "the peak delays L1 by {delay_meters} m"
         );
     }
+
+    /// Where the share of the median sits in a row of [`STORM_INDEX_TABLE`].
+    const SHARE_COLUMN: usize = 2;
 }

@@ -98,8 +98,8 @@ fn a_restored_attachment_puts_back_the_stack_it_was_stored_with() {
 /// [`LoadedLog::adopt_restored_attachment`] is called on it.
 #[derive(Debug, Clone, Copy)]
 enum LoadedLogBeforeTheRestore {
-    AnchoredToTheRestoringRecording,
     AnchoredToAnotherRecording,
+    AnchoredToTheRestoringRecording,
     HoldingAnAttachmentOfItsOwn,
 }
 

@@ -6,22 +6,6 @@
 //! what is actually visible: off-screen stretches are culled and sub-pixel
 //! detail is merged.
 
-/// Screen-space margin added around the viewport when culling polyline
-/// segments, so strokes and feathering right at the edge are not visibly
-/// clipped.
-pub(crate) const CULL_MARGIN_PX: f32 = 8.0;
-
-/// Minimum squared screen-space distance between kept polyline points.
-/// Consecutive points with the same key closer than this are merged, bounding
-/// the tessellated vertex count by the on-screen path length.
-pub(crate) const MIN_POINT_DIST_SQ: f32 = 1.0;
-
-/// Maximum screen-space error allowed when substituting a precomputed track
-/// LOD level for the full point list. Kept below the sub-pixel merge
-/// threshold ([`MIN_POINT_DIST_SQ`]) so LOD-fed rendering stays visually
-/// identical to runtime decimation of the full recording.
-pub(crate) const MAX_LOD_ERROR_PX: f32 = 0.75;
-
 /// The on-screen drawable form of a path, as computed by [`visible_path`].
 ///
 /// Matching on this is what guarantees a track can never silently vanish
@@ -29,12 +13,12 @@ pub(crate) const MAX_LOD_ERROR_PX: f32 = 0.75;
 /// compiler forces every caller to handle.
 #[cfg_attr(test, derive(Debug, PartialEq))]
 pub(crate) enum VisiblePath<K> {
-    /// No part of the path lies inside the cull rect.
-    OffScreen,
     /// The path's entire on-screen extent packs below one pixel (extreme
     /// zoom-out, or a single fix). Draw a dot at this point so the path
     /// stays discoverable.
     Dot(K, egui::Pos2),
+    /// No part of the path lies inside the cull rect.
+    OffScreen,
     /// Drawable polyline spans. Every span has at least two points.
     Spans(PolylineSpans<K>),
 }
@@ -159,6 +143,22 @@ pub(crate) fn segment_outside(a: egui::Pos2, b: egui::Pos2, rect: egui::Rect) ->
         || (a.y > rect.max.y && b.y > rect.max.y)
 }
 
+/// Screen-space margin added around the viewport when culling polyline
+/// segments, so strokes and feathering right at the edge are not visibly
+/// clipped.
+pub(crate) const CULL_MARGIN_PX: f32 = 8.0;
+
+/// Minimum squared screen-space distance between kept polyline points.
+/// Consecutive points with the same key closer than this are merged, bounding
+/// the tessellated vertex count by the on-screen path length.
+pub(crate) const MIN_POINT_DIST_SQ: f32 = 1.0;
+
+/// Maximum screen-space error allowed when substituting a precomputed track
+/// LOD level for the full point list. Kept below the sub-pixel merge
+/// threshold ([`MIN_POINT_DIST_SQ`]) so LOD-fed rendering stays visually
+/// identical to runtime decimation of the full recording.
+pub(crate) const MAX_LOD_ERROR_PX: f32 = 0.75;
+
 #[cfg(test)]
 mod tests {
     use egui::{Pos2, Rect};
@@ -168,11 +168,6 @@ mod tests {
     fn spans<K: Copy + PartialEq>(nested: Vec<Vec<(K, Pos2)>>) -> VisiblePath<K> {
         VisiblePath::Spans(PolylineSpans::from_nested(nested))
     }
-
-    const RECT: Rect = Rect {
-        min: egui::pos2(0.0, 0.0),
-        max: egui::pos2(100.0, 100.0),
-    };
 
     fn real(x: f32, y: f32) -> (bool, Pos2) {
         (false, egui::pos2(x, y))
@@ -357,4 +352,9 @@ mod tests {
             RECT
         ));
     }
+
+    const RECT: Rect = Rect {
+        min: egui::pos2(0.0, 0.0),
+        max: egui::pos2(100.0, 100.0),
+    };
 }

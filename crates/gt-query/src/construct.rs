@@ -23,22 +23,22 @@ use crate::unit::{self, Unit};
 /// The category of a construct - drives grouping and the hover header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConstructKind {
-    /// The `points` source.
-    Source,
-    /// A pipeline stage keyword (`with`, `window`, `where`, `table`).
-    Stage,
-    /// A display-mode stage (`draw`, `keep`, `hide`).
-    Mode,
+    /// A logical connective in a `where` condition (`and`, `or`, `not`).
+    Connective,
     /// An expression function (`avg`, `spread`, …).
     Function,
     /// A per-point metric (`velocity`, `util_gps`, …).
     Metric,
-    /// A unit literal suffix (`km/h`, `deg`, …).
-    Unit,
+    /// A display-mode stage (`draw`, `keep`, `hide`).
+    Mode,
     /// A `with` parameter (`mask`, `snr_drop`, `slip_window`).
     Param,
-    /// A logical connective in a `where` condition (`and`, `or`, `not`).
-    Connective,
+    /// The `points` source.
+    Source,
+    /// A pipeline stage keyword (`with`, `window`, `where`, `table`).
+    Stage,
+    /// A unit literal suffix (`km/h`, `deg`, …).
+    Unit,
 }
 
 impl ConstructKind {
@@ -100,80 +100,6 @@ pub fn catalog() -> &'static [Construct] {
         out
     })
 }
-
-/// The pipeline stage keywords (the display modes are catalogued separately
-/// via [`DisplayMode`]).
-const STAGES: &[Construct] = &[
-    Construct {
-        name: "with",
-        kind: ConstructKind::Stage,
-        summary: "set satellite-analysis parameters",
-        doc: "Supplies the parameters the util/slip metrics need (`mask`, \
-              `snr_drop`, `slip_window`). Must come directly after `points`.",
-        examples: &["points | with mask 15 deg | where util_gps < 50 %"],
-    },
-    Construct {
-        name: "window",
-        kind: ConstructKind::Stage,
-        summary: "slide an N-point window along the track",
-        doc: "Evaluates the `where` condition over a sliding group of N \
-              consecutive points instead of one point at a time. Aggregates \
-              (`avg`, `spread`, …) operate over the window.",
-        examples: &["points | window 10 | where avg(velocity) > 30 km/h"],
-    },
-    Construct {
-        name: "where",
-        kind: ConstructKind::Stage,
-        summary: "keep points (or windows) matching a condition",
-        doc: "The condition that defines a match. Combine terms with `and`, \
-              `or`, `not`. Several `where` stages combine as if joined with \
-              `and`.",
-        examples: &["points | where eph > 20 m and velocity > 5 km/h"],
-    },
-    Construct {
-        name: "table",
-        kind: ConstructKind::Stage,
-        summary: "choose the columns of the match table",
-        doc: "Sets which columns appear, in order, in each match's point \
-              table. A column is a metric, valued at each point, or an \
-              aggregate, valued once over the whole match. `time` is always \
-              the first column. Without it, the table shows every metric the \
-              query referenced.",
-        examples: &[
-            "points | where velocity > 30 km/h | table time, velocity, heading",
-            "points | window 10 | where max(@accel.x) > 1 g | table max(@accel.x)",
-        ],
-    },
-];
-
-/// The logical connectives of a `where` condition. No `enum` backs these, so
-/// they are catalogued by hand like the stages.
-const CONNECTIVES: &[Construct] = &[
-    Construct {
-        name: "and",
-        kind: ConstructKind::Connective,
-        summary: "both conditions must hold",
-        doc: "Joins two conditions. A point (or window) matches only when \
-              both sides do. Binds tighter than `or`.",
-        examples: &["points | where eph > 20 m and velocity > 5 km/h"],
-    },
-    Construct {
-        name: "or",
-        kind: ConstructKind::Connective,
-        summary: "either condition may hold",
-        doc: "Joins two conditions. A point (or window) matches when either \
-              side does. `and` binds tighter, so parenthesize to override.",
-        examples: &["points | where velocity < 2 km/h or eph > 50 m"],
-    },
-    Construct {
-        name: "not",
-        kind: ConstructKind::Connective,
-        summary: "invert a condition",
-        doc: "Matches where the condition does not. Applies to the next \
-              atom. Parenthesize a compound condition to negate all of it.",
-        examples: &["points | where not (velocity > 5 km/h and eph < 10 m)"],
-    },
-];
 
 fn mode_construct(mode: DisplayMode) -> Construct {
     let (summary, doc, examples): (_, _, &[&str]) = match mode {
@@ -519,6 +445,80 @@ fn metric_docs(metric: QueryMetric) -> (&'static str, &'static str, &'static [&'
         ),
     }
 }
+
+/// The pipeline stage keywords (the display modes are catalogued separately
+/// via [`DisplayMode`]).
+const STAGES: &[Construct] = &[
+    Construct {
+        name: "with",
+        kind: ConstructKind::Stage,
+        summary: "set satellite-analysis parameters",
+        doc: "Supplies the parameters the util/slip metrics need (`mask`, \
+              `snr_drop`, `slip_window`). Must come directly after `points`.",
+        examples: &["points | with mask 15 deg | where util_gps < 50 %"],
+    },
+    Construct {
+        name: "window",
+        kind: ConstructKind::Stage,
+        summary: "slide an N-point window along the track",
+        doc: "Evaluates the `where` condition over a sliding group of N \
+              consecutive points instead of one point at a time. Aggregates \
+              (`avg`, `spread`, …) operate over the window.",
+        examples: &["points | window 10 | where avg(velocity) > 30 km/h"],
+    },
+    Construct {
+        name: "where",
+        kind: ConstructKind::Stage,
+        summary: "keep points (or windows) matching a condition",
+        doc: "The condition that defines a match. Combine terms with `and`, \
+              `or`, `not`. Several `where` stages combine as if joined with \
+              `and`.",
+        examples: &["points | where eph > 20 m and velocity > 5 km/h"],
+    },
+    Construct {
+        name: "table",
+        kind: ConstructKind::Stage,
+        summary: "choose the columns of the match table",
+        doc: "Sets which columns appear, in order, in each match's point \
+              table. A column is a metric, valued at each point, or an \
+              aggregate, valued once over the whole match. `time` is always \
+              the first column. Without it, the table shows every metric the \
+              query referenced.",
+        examples: &[
+            "points | where velocity > 30 km/h | table time, velocity, heading",
+            "points | window 10 | where max(@accel.x) > 1 g | table max(@accel.x)",
+        ],
+    },
+];
+
+/// The logical connectives of a `where` condition. No `enum` backs these, so
+/// they are catalogued by hand like the stages.
+const CONNECTIVES: &[Construct] = &[
+    Construct {
+        name: "and",
+        kind: ConstructKind::Connective,
+        summary: "both conditions must hold",
+        doc: "Joins two conditions. A point (or window) matches only when \
+              both sides do. Binds tighter than `or`.",
+        examples: &["points | where eph > 20 m and velocity > 5 km/h"],
+    },
+    Construct {
+        name: "or",
+        kind: ConstructKind::Connective,
+        summary: "either condition may hold",
+        doc: "Joins two conditions. A point (or window) matches when either \
+              side does. `and` binds tighter, so parenthesize to override.",
+        examples: &["points | where velocity < 2 km/h or eph > 50 m"],
+    },
+    Construct {
+        name: "not",
+        kind: ConstructKind::Connective,
+        summary: "invert a condition",
+        doc: "Matches where the condition does not. Applies to the next \
+              atom. Parenthesize a compound condition to negate all of it.",
+        examples: &["points | where not (velocity > 5 km/h and eph < 10 m)"],
+    },
+];
 
 #[cfg(test)]
 mod tests {

@@ -20,53 +20,6 @@
 use chrono::{DateTime, Duration, Utc};
 use geotrace_sdk as sdk;
 
-/// Where the tracker's clock stands at boot, before the receiver corrects it.
-const RTC_DEFAULT: &str = "2025-01-01T00:00:00Z";
-
-/// The first true-epoch timestamp: where the receiver puts the clock once it
-/// has a lock, 530 days past the RTC default.
-const CORRECTED_CLOCK_START: &str = "2026-06-15T09:00:00Z";
-
-/// Fixes of the track recorded before the receiver ever corrected the clock,
-/// at 1 Hz.
-pub const COLD_BOOT_FIX_COUNT: i64 = 30;
-
-/// Boots that follow, each its own track.
-pub const BOOT_COUNT: i64 = 4;
-
-/// Fixes each boot records, at 1 Hz.
-pub const FIXES_PER_BOOT: i64 = 200;
-
-/// Fixes at the head of each boot whose host timestamp is still at the RTC
-/// default, the receiver not yet having corrected the clock.
-pub const FIXES_BEFORE_THE_CLOCK_IS_CORRECTED: i64 = 40;
-
-/// Seconds between the starts of two boots, in the true epoch.
-const SECONDS_BETWEEN_BOOTS: i64 = 3_600;
-
-/// How far the host clock runs ahead of the receiver's once corrected, in
-/// milliseconds.
-pub const HOST_AHEAD_MS: i64 = 200;
-
-/// Sample rate of the `accel` channel, in hertz.
-pub const CHANNEL_RATE_HZ: i64 = 20;
-
-/// Samples in each run of the `accel` channel, in stored order.
-pub const CHANNEL_RUN_LENGTHS: [i64; 4] = [250, 200, 300, 250];
-
-/// Seconds after the RTC default at which every run of the `accel` channel
-/// starts.
-pub const CHANNEL_RUN_START_SECS: i64 = 1;
-
-/// First latitude of the invented route, in degrees.
-const ORIGIN_LAT_DEG: f64 = 10.0;
-
-/// Longitude of the invented route, in degrees. It runs due north.
-const ROUTE_LON_DEG: f64 = 20.0;
-
-/// Degrees of latitude between two fixes of the invented route.
-const LAT_STEP_DEG: f64 = 1e-5;
-
 /// How far the true epoch lies past the RTC default: the offset a fix carries
 /// while the receiver has not yet corrected the clock.
 pub fn gap_between_the_clock_epochs() -> Duration {
@@ -210,6 +163,53 @@ fn parse_time(iso8601: &str) -> DateTime<Utc> {
         .parse()
         .expect("the fixture's timestamps are well formed")
 }
+
+/// Where the tracker's clock stands at boot, before the receiver corrects it.
+const RTC_DEFAULT: &str = "2025-01-01T00:00:00Z";
+
+/// The first true-epoch timestamp: where the receiver puts the clock once it
+/// has a lock, 530 days past the RTC default.
+const CORRECTED_CLOCK_START: &str = "2026-06-15T09:00:00Z";
+
+/// Fixes of the track recorded before the receiver ever corrected the clock,
+/// at 1 Hz.
+pub const COLD_BOOT_FIX_COUNT: i64 = 30;
+
+/// Boots that follow, each its own track.
+pub const BOOT_COUNT: i64 = 4;
+
+/// Fixes each boot records, at 1 Hz.
+pub const FIXES_PER_BOOT: i64 = 200;
+
+/// Fixes at the head of each boot whose host timestamp is still at the RTC
+/// default, the receiver not yet having corrected the clock.
+pub const FIXES_BEFORE_THE_CLOCK_IS_CORRECTED: i64 = 40;
+
+/// Seconds between the starts of two boots, in the true epoch.
+const SECONDS_BETWEEN_BOOTS: i64 = 3_600;
+
+/// How far the host clock runs ahead of the receiver's once corrected, in
+/// milliseconds.
+pub const HOST_AHEAD_MS: i64 = 200;
+
+/// Sample rate of the `accel` channel, in hertz.
+pub const CHANNEL_RATE_HZ: i64 = 20;
+
+/// Samples in each run of the `accel` channel, in stored order.
+pub const CHANNEL_RUN_LENGTHS: [i64; 4] = [250, 200, 300, 250];
+
+/// Seconds after the RTC default at which every run of the `accel` channel
+/// starts.
+pub const CHANNEL_RUN_START_SECS: i64 = 1;
+
+/// First latitude of the invented route, in degrees.
+const ORIGIN_LAT_DEG: f64 = 10.0;
+
+/// Longitude of the invented route, in degrees. It runs due north.
+const ROUTE_LON_DEG: f64 = 20.0;
+
+/// Degrees of latitude between two fixes of the invented route.
+const LAT_STEP_DEG: f64 = 1e-5;
 
 #[cfg(test)]
 mod tests {

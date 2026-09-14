@@ -19,17 +19,6 @@ use super::archives_unreachable::ArchivesUnreachable;
 use super::backfill::BackfillProgress;
 use super::civil_date;
 
-pub const DOWNLOAD_HISTORY_LABEL: &str = "Download history";
-
-/// Estimates above this display in minutes.
-const MINUTES_CUTOFF_SECS: u64 = 90;
-
-/// Estimates above this display in hours.
-const HOURS_CUTOFF_MINS: u64 = 90;
-
-/// Days the range covers before the user picks one.
-const DEFAULT_RANGE_DAYS: u64 = 30;
-
 /// One range preset, offered as a button beside the pickers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BackfillPreset {
@@ -241,24 +230,24 @@ impl BackfillDataset for SolarFlareBackfill {
 /// Whether a download can start, and what stops it when it cannot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackfillReadiness {
-    Ready,
-    /// There is nowhere to download to.
-    ArchivesUnreachable(ArchivesUnreachable),
     /// There is nowhere to download to: the archive is closed for the
     /// session, on the choice the user made for it.
     ArchiveUnavailable(ArchiveUnavailable),
-    /// There is nowhere to download to: the archive could not be opened.
-    WithoutArchive,
+    /// There is nowhere to download to.
+    ArchivesUnreachable(ArchivesUnreachable),
     /// No request may leave the machine: GeoTrace runs offline.
     Offline,
+    Ready,
     /// The host needs a key the user has not entered.
     WithoutApiKey,
+    /// There is nowhere to download to: the archive could not be opened.
+    WithoutArchive,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackfillAction {
-    Start { from: NaiveDate, to: NaiveDate },
     Cancel,
+    Start { from: NaiveDate, to: NaiveDate },
 }
 
 /// Session state of the control: the two ends of the range.
@@ -455,6 +444,17 @@ impl<D: BackfillDataset> BackfillUi<D> {
         }
     }
 }
+
+pub const DOWNLOAD_HISTORY_LABEL: &str = "Download history";
+
+/// Estimates above this display in minutes.
+const MINUTES_CUTOFF_SECS: u64 = 90;
+
+/// Estimates above this display in hours.
+const HOURS_CUTOFF_MINS: u64 = 90;
+
+/// Days the range covers before the user picks one.
+const DEFAULT_RANGE_DAYS: u64 = 30;
 
 #[cfg(test)]
 mod tests {

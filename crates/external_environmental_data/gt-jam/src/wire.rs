@@ -19,21 +19,6 @@ use parking_lot::Mutex;
 
 use crate::H3_RESOLUTION;
 
-/// Name of the cell-index column, as published.
-const HEX_COLUMN: &str = "hex";
-
-/// Name of the good-aircraft count column, as published.
-const GOOD_COLUMN: &str = "count_good_aircraft";
-
-/// Name of the low-accuracy aircraft count column, as published.
-const BAD_COLUMN: &str = "count_bad_aircraft";
-
-/// The published columns, in order. The header must match exactly.
-const COLUMNS: [&str; 3] = [HEX_COLUMN, GOOD_COLUMN, BAD_COLUMN];
-
-/// Field separator. The published data has no quoting or escaping.
-const FIELD_SEPARATOR: char = ',';
-
 /// The header row as the host writes it.
 fn header_line() -> String {
     COLUMNS.join(&FIELD_SEPARATOR.to_string())
@@ -118,8 +103,8 @@ pub enum ParseError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumCount)]
 #[strum(serialize_all = "snake_case")]
 pub enum CountColumn {
-    Good,
     Bad,
+    Good,
 }
 
 impl CountColumn {
@@ -138,9 +123,6 @@ impl CountColumn {
 #[derive(Debug, Clone, PartialEq, Eq, strum::EnumCount, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum ParseWarning {
-    /// The row did not have the published number of fields.
-    FieldCount { line: usize, fields: usize },
-
     /// An empty line inside the dataset. The host serves none.
     BlankLine { line: usize },
 
@@ -151,10 +133,6 @@ pub enum ParseWarning {
         detail: String,
     },
 
-    /// A valid cell index, but not at [`H3_RESOLUTION`], so it does not tile
-    /// with the rest of the dataset.
-    Resolution { line: usize, cell: CellIndex },
-
     /// A count field was not a non-negative integer.
     Count {
         line: usize,
@@ -163,20 +141,23 @@ pub enum ParseWarning {
         detail: String,
     },
 
-    /// Zero aircraft, so the row has no share. The host omits such cells.
-    EmptyTally { line: usize, cell: CellIndex },
-
     /// A cell already seen earlier in the dataset. The first row is kept.
     DuplicateCell {
         line: usize,
         cell: CellIndex,
         first_seen_line: usize,
     },
-}
 
-/// How many warnings a [`ParseWarningReporter`] retains before it only
-/// counts them. A malformed response can be bad in all 44 000 rows.
-pub const MAX_RETAINED_WARNINGS: usize = 64;
+    /// Zero aircraft, so the row has no share. The host omits such cells.
+    EmptyTally { line: usize, cell: CellIndex },
+
+    /// The row did not have the published number of fields.
+    FieldCount { line: usize, fields: usize },
+
+    /// A valid cell index, but not at [`H3_RESOLUTION`], so it does not tile
+    /// with the rest of the dataset.
+    Resolution { line: usize, cell: CellIndex },
+}
 
 /// Accumulates [`ParseWarning`]s across one dataset.
 ///
@@ -309,6 +290,25 @@ fn parse_count(line: usize, column: CountColumn, value: &str) -> Result<u32, Par
     })
 }
 
+/// Name of the cell-index column, as published.
+const HEX_COLUMN: &str = "hex";
+
+/// Name of the good-aircraft count column, as published.
+const GOOD_COLUMN: &str = "count_good_aircraft";
+
+/// Name of the low-accuracy aircraft count column, as published.
+const BAD_COLUMN: &str = "count_bad_aircraft";
+
+/// The published columns, in order. The header must match exactly.
+const COLUMNS: [&str; 3] = [HEX_COLUMN, GOOD_COLUMN, BAD_COLUMN];
+
+/// Field separator. The published data has no quoting or escaping.
+const FIELD_SEPARATOR: char = ',';
+
+/// How many warnings a [`ParseWarningReporter`] retains before it only
+/// counts them. A malformed response can be bad in all 44 000 rows.
+pub const MAX_RETAINED_WARNINGS: usize = 64;
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -317,23 +317,6 @@ mod tests {
     use strum::EnumCount as _;
 
     use super::*;
-
-    // Cells at the published resolution, copied from the captured day.
-    // Each is named for its row in the malformed dataset.
-    const GOOD_CELL: &str = "84005c7ffffffff";
-    const SECOND_GOOD_CELL: &str = "8401255ffffffff";
-    const SHORT_ROW_CELL: &str = "840104bffffffff";
-    const LONG_ROW_CELL: &str = "8401221ffffffff";
-    const WORDED_COUNT_CELL: &str = "8401227ffffffff";
-    const NEGATIVE_COUNT_CELL: &str = "8401233ffffffff";
-    const OVERFLOWING_COUNT_CELL: &str = "840124bffffffff";
-    const EMPTY_TALLY_CELL: &str = "8401251ffffffff";
-
-    /// A valid H3 index at resolution 0, for the resolution check.
-    const CELL_RES_0: &str = "8005fffffffffff";
-
-    /// A string that is not an H3 index at all.
-    const NOT_A_CELL: &str = "not-a-cell";
 
     fn cell(hex: &str) -> CellIndex {
         CellIndex::from_str(hex).unwrap()
@@ -597,4 +580,21 @@ mod tests {
     fn the_header_line_is_the_published_one() {
         assert_eq!(header_line(), "hex,count_good_aircraft,count_bad_aircraft");
     }
+
+    // Cells at the published resolution, copied from the captured day.
+    // Each is named for its row in the malformed dataset.
+    const GOOD_CELL: &str = "84005c7ffffffff";
+    const SECOND_GOOD_CELL: &str = "8401255ffffffff";
+    const SHORT_ROW_CELL: &str = "840104bffffffff";
+    const LONG_ROW_CELL: &str = "8401221ffffffff";
+    const WORDED_COUNT_CELL: &str = "8401227ffffffff";
+    const NEGATIVE_COUNT_CELL: &str = "8401233ffffffff";
+    const OVERFLOWING_COUNT_CELL: &str = "840124bffffffff";
+    const EMPTY_TALLY_CELL: &str = "8401251ffffffff";
+
+    /// A valid H3 index at resolution 0, for the resolution check.
+    const CELL_RES_0: &str = "8005fffffffffff";
+
+    /// A string that is not an H3 index at all.
+    const NOT_A_CELL: &str = "not-a-cell";
 }

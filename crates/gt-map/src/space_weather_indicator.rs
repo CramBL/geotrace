@@ -10,43 +10,6 @@ use egui_phosphor::regular::CLOUD_LIGHTNING as ICON_CLOUD_LIGHTNING;
 use gt_ui_types::reference::ReferenceDocument;
 use gt_ui_types::{TrackSpaceWeatherWarning, WarningLevelExplanation};
 
-/// Inset from the map's top-right corner, matching the layer picker's inset
-/// from the bottom-right one.
-const CORNER_INSET_PX: f32 = 8.0;
-
-const IDLE_HOVER_TEXT: &str = "No environment warnings. Warnings appear here when archived \
-                               interference, geomagnetic, solar flare or TEC deviation data \
-                               crosses a warning level during a loaded recording.";
-
-/// Closes the hover, since a hover cannot be clicked through to the tracks it
-/// left out.
-const CLICK_FOR_EVERY_TRACK: &str = "Click for every affected track and the warning levels";
-
-const AFFECTED_TRACKS_TITLE: &str = "Affected tracks";
-
-const NO_AFFECTED_TRACKS: &str = "No loaded track reached a warning level";
-
-const LEVELS_TITLE: &str = "Environment warning levels";
-
-/// How many affected tracks the hover names before summarizing the rest, so a
-/// session of many disturbed tracks still produces a readable tooltip. The
-/// popup a click opens lists every one of them.
-const MAX_HOVER_TRACKS: usize = 5;
-
-/// Width the level rows wrap at, which is what sets the popup's width.
-const LEVELS_WIDTH_PX: f32 = 420.0;
-
-/// Height the affected-track list scrolls past, which keeps the levels below
-/// it on screen.
-const AFFECTED_TRACKS_MAX_HEIGHT_PX: f32 = 240.0;
-
-/// Space above each level row, separating it from the row's link above.
-const LEVEL_ROW_SPACING_PX: f32 = 8.0;
-
-/// Space above each affected track after the first, separating it from the
-/// lines of the track above.
-const TRACK_SPACING_PX: f32 = 6.0;
-
 /// What the indicator shows: the tracks its hover names, and the levels its
 /// popup explains.
 #[derive(Clone, Copy)]
@@ -245,6 +208,43 @@ fn levels_ui(ui: &mut Ui, levels: &[WarningLevelExplanation]) -> Option<Referenc
     opened_document
 }
 
+/// Inset from the map's top-right corner, matching the layer picker's inset
+/// from the bottom-right one.
+const CORNER_INSET_PX: f32 = 8.0;
+
+const IDLE_HOVER_TEXT: &str = "No environment warnings. Warnings appear here when archived \
+                               interference, geomagnetic, solar flare or TEC deviation data \
+                               crosses a warning level during a loaded recording.";
+
+/// Closes the hover, since a hover cannot be clicked through to the tracks it
+/// left out.
+const CLICK_FOR_EVERY_TRACK: &str = "Click for every affected track and the warning levels";
+
+const AFFECTED_TRACKS_TITLE: &str = "Affected tracks";
+
+const NO_AFFECTED_TRACKS: &str = "No loaded track reached a warning level";
+
+const LEVELS_TITLE: &str = "Environment warning levels";
+
+/// How many affected tracks the hover names before summarizing the rest, so a
+/// session of many disturbed tracks still produces a readable tooltip. The
+/// popup a click opens lists every one of them.
+const MAX_HOVER_TRACKS: usize = 5;
+
+/// Width the level rows wrap at, which is what sets the popup's width.
+const LEVELS_WIDTH_PX: f32 = 420.0;
+
+/// Height the affected-track list scrolls past, which keeps the levels below
+/// it on screen.
+const AFFECTED_TRACKS_MAX_HEIGHT_PX: f32 = 240.0;
+
+/// Space above each level row, separating it from the row's link above.
+const LEVEL_ROW_SPACING_PX: f32 = 8.0;
+
+/// Space above each affected track after the first, separating it from the
+/// lines of the track above.
+const TRACK_SPACING_PX: f32 = 6.0;
+
 #[cfg(test)]
 mod tests {
     use crate::test_util;
@@ -253,9 +253,6 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-
-    /// Frames the pointer holds still for, which covers egui's tooltip delay.
-    const TOOLTIP_SETTLE_FRAMES: usize = 60;
 
     /// What the indicator keeps between frames, plus the document the user
     /// opened from its popup, which the harness reads back after the click.
@@ -569,4 +566,7 @@ mod tests {
         );
         assert!(!popup_is_open(&harness));
     }
+
+    /// Frames the pointer holds still for, which covers egui's tooltip delay.
+    const TOOLTIP_SETTLE_FRAMES: usize = 60;
 }

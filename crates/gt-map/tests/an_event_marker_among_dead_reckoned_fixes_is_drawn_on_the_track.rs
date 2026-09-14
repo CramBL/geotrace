@@ -15,33 +15,6 @@ use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::fixtures::FixKind;
 use gt_types::{EventMarker, FileSource, Latitude, LoadedFile, Longitude, NavPoint, mercator};
 
-/// Fixes of the recording, one every [`SECONDS_BETWEEN_FIXES`].
-const FIX_COUNT: usize = 21;
-
-const SECONDS_BETWEEN_FIXES: i64 = 10;
-
-/// The fixes the receiver dead-reckoned, between the measured ones at each
-/// end.
-const DEAD_RECKONED_FIXES: Range<usize> = 6..15;
-
-/// The fix whose time the event marker is stamped at, in the middle of the
-/// dead-reckoned stretch.
-const MARKER_FIX_INDEX: usize = 10;
-
-/// The latitude the receiver measured every fix at.
-const MEASURED_LATITUDE_DEGREES: f64 = 55.676;
-
-const FIRST_LONGITUDE_DEGREES: f64 = 12.560;
-
-/// Longitude between consecutive fixes, about 31 m at this latitude. The
-/// twenty steps fill four fifths of the viewport once the map frames the
-/// recording.
-const LONGITUDE_STEP_DEGREES: f64 = 0.000_5;
-
-/// How far north of the measured line the receiver's dead reckoning wrote its
-/// coordinates, about 222 m.
-const DEAD_RECKONED_OFFSET_DEGREES: f64 = 0.002;
-
 fn time_of(index: usize) -> DateTime<Utc> {
     test_util::epoch() + Duration::seconds(index as i64 * SECONDS_BETWEEN_FIXES)
 }
@@ -128,3 +101,30 @@ fn snapshot_an_event_marker_among_dead_reckoned_fixes_is_drawn_on_the_dashed_tra
     let mut map = MapScene::of(files).render();
     map.snapshot("event_marker_among_dead_reckoned_fixes");
 }
+
+/// Fixes of the recording, one every [`SECONDS_BETWEEN_FIXES`].
+const FIX_COUNT: usize = 21;
+
+const SECONDS_BETWEEN_FIXES: i64 = 10;
+
+/// The fixes the receiver dead-reckoned, between the measured ones at each
+/// end.
+const DEAD_RECKONED_FIXES: Range<usize> = 6..15;
+
+/// The fix whose time the event marker is stamped at, in the middle of the
+/// dead-reckoned stretch.
+const MARKER_FIX_INDEX: usize = 10;
+
+/// The latitude the receiver measured every fix at.
+const MEASURED_LATITUDE_DEGREES: f64 = 55.676;
+
+const FIRST_LONGITUDE_DEGREES: f64 = 12.560;
+
+/// Longitude between consecutive fixes, about 31 m at this latitude. The
+/// twenty steps fill four fifths of the viewport once the map frames the
+/// recording.
+const LONGITUDE_STEP_DEGREES: f64 = 0.000_5;
+
+/// How far north of the measured line the receiver's dead reckoning wrote its
+/// coordinates, about 222 m.
+const DEAD_RECKONED_OFFSET_DEGREES: f64 = 0.002;

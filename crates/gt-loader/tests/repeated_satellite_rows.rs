@@ -19,46 +19,6 @@ use gt_types::satellites::{Constellation, NO_DATA_SENTINEL_DB_HZ, Satellites, Sl
 use gt_types::{LoadedFile, LoadedTrack};
 use rstest::rstest;
 
-/// Elevation mask, in degrees.
-const MASK_DEG: f32 = 15.0;
-
-/// SNR fall that counts as a slip, in dB-Hz.
-const SNR_DROP_DB: f32 = 10.0;
-
-/// Elevation every synthetic satellite is reported at, well above the mask.
-const ELEVATION_DEG: f32 = 40.0;
-
-const AZIMUTH_DEG: f32 = 120.0;
-
-/// The strongest SNR the rows of one merged satellite report.
-const HIGHEST_ROW_SNR_DB: f32 = 45.0;
-
-const AZIMUTH_JUST_WEST_OF_NORTH_DEG: f32 = 359.0;
-
-const AZIMUTH_JUST_EAST_OF_NORTH_DEG: f32 = 2.0;
-
-/// The issue the loader lists a merged satellite under.
-const MERGED_ROWS_ISSUE: &str = "satellite(s) merged from several rows of one report";
-
-/// The satellite each report holds two rows for.
-const REPEATED_PRN: u32 = 7;
-
-/// The satellite that stays in view after the repeated one drops out.
-const REMAINING_PRN: u32 = 1;
-
-/// The GPS satellite the gold dataset's satellite-stress track reports on two
-/// rows: once with the ≈99 dB-Hz no-data value, once with
-/// [`GOLD_MEASURED_SNR_DB`].
-const GOLD_REPEATED_PRN: u32 = 1;
-
-/// The out-of-range PRN that identifies the gold dataset's satellite-stress track.
-const GOLD_STRESS_TRACK_PRN: u32 = 0;
-
-const GOLD_MEASURED_SNR_DB: f32 = 40.0;
-
-/// Satellite reports the gold dataset's satellite-stress track holds.
-const GOLD_STRESS_TRACK_REPORTS: usize = 5;
-
 fn base_time() -> DateTime<Utc> {
     DateTime::from_timestamp(1_700_000_000, 0).expect("fixed timestamp is within range")
 }
@@ -243,9 +203,6 @@ fn the_gold_dataset_keeps_the_measured_snr_of_the_satellite_it_also_reports_as_n
         vec![vec![GOLD_MEASURED_SNR_DB]; GOLD_STRESS_TRACK_REPORTS]
     );
 }
-
-/// A measured SNR, for the epoch after the no-data value.
-const MEASURED_SNR_DB: f32 = 40.0;
 
 /// The no-data value reaches the app as the file holds it, and the fall from
 /// it to a measured reading at the next epoch is no signal loss.
@@ -436,3 +393,46 @@ fn a_no_data_snr_loads_with_the_sdk_warning_alone() {
         )]
     );
 }
+
+/// Elevation mask, in degrees.
+const MASK_DEG: f32 = 15.0;
+
+/// SNR fall that counts as a slip, in dB-Hz.
+const SNR_DROP_DB: f32 = 10.0;
+
+/// Elevation every synthetic satellite is reported at, well above the mask.
+const ELEVATION_DEG: f32 = 40.0;
+
+const AZIMUTH_DEG: f32 = 120.0;
+
+/// The strongest SNR the rows of one merged satellite report.
+const HIGHEST_ROW_SNR_DB: f32 = 45.0;
+
+const AZIMUTH_JUST_WEST_OF_NORTH_DEG: f32 = 359.0;
+
+const AZIMUTH_JUST_EAST_OF_NORTH_DEG: f32 = 2.0;
+
+/// The issue the loader lists a merged satellite under.
+const MERGED_ROWS_ISSUE: &str = "satellite(s) merged from several rows of one report";
+
+/// The satellite each report holds two rows for.
+const REPEATED_PRN: u32 = 7;
+
+/// The satellite that stays in view after the repeated one drops out.
+const REMAINING_PRN: u32 = 1;
+
+/// The GPS satellite the gold dataset's satellite-stress track reports on two
+/// rows: once with the ≈99 dB-Hz no-data value, once with
+/// [`GOLD_MEASURED_SNR_DB`].
+const GOLD_REPEATED_PRN: u32 = 1;
+
+/// The out-of-range PRN that identifies the gold dataset's satellite-stress track.
+const GOLD_STRESS_TRACK_PRN: u32 = 0;
+
+const GOLD_MEASURED_SNR_DB: f32 = 40.0;
+
+/// Satellite reports the gold dataset's satellite-stress track holds.
+const GOLD_STRESS_TRACK_REPORTS: usize = 5;
+
+/// A measured SNR, for the epoch after the no-data value.
+const MEASURED_SNR_DB: f32 = 40.0;

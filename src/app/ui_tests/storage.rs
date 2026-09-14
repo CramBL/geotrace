@@ -325,9 +325,6 @@ fn environment_pruning_does_not_start_during_shutdown() {
 #[derive(Clone, Copy)]
 struct WindowTitle<'a>(&'a str);
 
-const SETTINGS_WINDOW: WindowTitle<'static> = WindowTitle("Settings");
-const HISTORY_WINDOW: WindowTitle<'static> = WindowTitle("History");
-
 /// Runs frames until the window titled `title` shows the control labelled
 /// `label`, settles the pointer on it and clicks it, then runs the frames the
 /// click's effect needs to reach the app state.
@@ -692,9 +689,6 @@ fn snapshot_history_busy_dialog() {
     harness.snapshot_with_color_tolerance("history_busy_dialog");
 }
 
-/// The button that dismisses a history database prompt.
-const CANCEL_LABEL: &str = "Cancel";
-
 /// A re-segment prompt for the recording named `filename`, stored with a split
 /// rule and a placement rule that both differ from the current ones.
 fn resegment_prompt_named(filename: &str) -> crate::app::ResegmentPrompt {
@@ -735,9 +729,6 @@ struct MarksOnThePromptedRecording {
     hidden_tracks: usize,
 }
 
-/// Nav points per track of the stored track table the prompt is built with.
-const STORED_TRACK_NAV_POINTS: u64 = 100;
-
 /// A stored track table of `shelved_tracks` shelved tracks and one live one.
 fn stored_track_table_with_shelved_tracks(shelved_tracks: usize) -> Vec<gt_store::TrackRange> {
     let mut table = Vec::new();
@@ -775,9 +766,6 @@ fn app_showing_the_resegment_prompt_with(
     harness.run();
     harness
 }
-
-/// What every warning about the marks a recalculation drops opens with.
-const RECALCULATION_WARNING_OPENING: &str = "Recalculating ";
 
 #[rstest]
 #[case::shelved_tracks(
@@ -898,12 +886,6 @@ fn app_showing_the_auto_prune_confirmation(count: usize) -> TestHarness<'static,
     harness
 }
 
-/// Candidates enough to fill the room the list caps at
-/// [`AUTO_PRUNE_RECORDINGS_MOST_LINES`].
-const AUTO_PRUNE_CANDIDATES_PAST_THE_CAPPED_ROOM: usize = 12;
-
-const AUTO_PRUNE_CANDIDATES_FAR_PAST_THE_CAPPED_ROOM: usize = 40;
-
 #[test]
 fn snapshot_auto_prune_dialog() {
     let mut harness = app_showing_the_auto_prune_confirmation(3);
@@ -959,3 +941,21 @@ fn the_auto_prune_confirmation_keeps_its_buttons_in_place_while_more_candidates_
          misses it"
     );
 }
+
+const SETTINGS_WINDOW: WindowTitle<'static> = WindowTitle("Settings");
+const HISTORY_WINDOW: WindowTitle<'static> = WindowTitle("History");
+
+/// The button that dismisses a history database prompt.
+const CANCEL_LABEL: &str = "Cancel";
+
+/// Nav points per track of the stored track table the prompt is built with.
+const STORED_TRACK_NAV_POINTS: u64 = 100;
+
+/// What every warning about the marks a recalculation drops opens with.
+const RECALCULATION_WARNING_OPENING: &str = "Recalculating ";
+
+/// Candidates enough to fill the room the list caps at
+/// [`AUTO_PRUNE_RECORDINGS_MOST_LINES`].
+const AUTO_PRUNE_CANDIDATES_PAST_THE_CAPPED_ROOM: usize = 12;
+
+const AUTO_PRUNE_CANDIDATES_FAR_PAST_THE_CAPPED_ROOM: usize = 40;

@@ -9,17 +9,6 @@ use gt_jam::CAPTURED_DAYS;
 use gt_jam::wire::{self, ParseWarningReporter};
 use gt_jam_store::{FILE_NAME, JamStore};
 
-const HOST: &str = "https://gpsjam.org";
-
-/// Ceiling for one stored day. It measures about 81 KiB. The headroom
-/// absorbs HDF5 version differences without letting a lost filter through,
-/// which would cost 891 KiB.
-const MAX_ARCHIVE_BYTES: u64 = 200_000;
-
-/// Days stored for the delete measurement, half of which are then deleted and
-/// half of those stored again.
-const STORED_DAYS: i64 = 10;
-
 /// The day every measurement here is made against, and its observations.
 fn captured_day() -> Result<(chrono::NaiveDate, Vec<gt_jam::wire::HexObservation>), String> {
     let capture = CAPTURED_DAYS
@@ -118,3 +107,14 @@ fn days_stored_after_a_delete_reuse_the_space_it_freed() {
         "the days stored after the delete grew the file from {filled} to {refilled}"
     );
 }
+
+const HOST: &str = "https://gpsjam.org";
+
+/// Ceiling for one stored day. It measures about 81 KiB. The headroom
+/// absorbs HDF5 version differences without letting a lost filter through,
+/// which would cost 891 KiB.
+const MAX_ARCHIVE_BYTES: u64 = 200_000;
+
+/// Days stored for the delete measurement, half of which are then deleted and
+/// half of those stored again.
+const STORED_DAYS: i64 = 10;

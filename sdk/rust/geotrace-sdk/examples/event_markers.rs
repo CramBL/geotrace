@@ -24,29 +24,6 @@ use geotrace_sdk::{
     NavFile, NavFileBuilder, NavFix, NavFixTime, Utc,
 };
 
-/// A short London track, one fix every 30 s: second offset, latitude, longitude.
-const TRACK: &[(i64, f64, f64)] = &[
-    (0, 51.5074, -0.1278),
-    (30, 51.5080, -0.1265),
-    (60, 51.5088, -0.1248),
-    (90, 51.5095, -0.1233),
-    (120, 51.5103, -0.1217),
-    (150, 51.5110, -0.1200),
-];
-
-/// Flat and nested variant paths: second offset, path, annotation.
-const EVENTS: &[(i64, &str, Option<&str>)] = &[
-    (2, "power/boot", Some("cold start")),
-    (5, "connectivity/agps/request", Some("EPO fetch started")),
-    (
-        18,
-        "connectivity/agps/success",
-        Some("EPO applied, TTFF reduced"),
-    ),
-    (20, "sensor/gps/lock_acquired", None),
-    (145, "power/sleep", None),
-];
-
 fn main() -> Result<(), Box<dyn Error>> {
     let start = "2024-06-01T08:00:00Z".parse::<DateTime<Utc>>()?;
 
@@ -119,3 +96,26 @@ fn main() -> Result<(), Box<dyn Error>> {
     fs::remove_file(&path)?;
     Ok(())
 }
+
+/// A short London track, one fix every 30 s: second offset, latitude, longitude.
+const TRACK: &[(i64, f64, f64)] = &[
+    (0, 51.5074, -0.1278),
+    (30, 51.5080, -0.1265),
+    (60, 51.5088, -0.1248),
+    (90, 51.5095, -0.1233),
+    (120, 51.5103, -0.1217),
+    (150, 51.5110, -0.1200),
+];
+
+/// Flat and nested variant paths: second offset, path, annotation.
+const EVENTS: &[(i64, &str, Option<&str>)] = &[
+    (2, "power/boot", Some("cold start")),
+    (5, "connectivity/agps/request", Some("EPO fetch started")),
+    (
+        18,
+        "connectivity/agps/success",
+        Some("EPO applied, TTFF reduced"),
+    ),
+    (20, "sensor/gps/lock_acquired", None),
+    (145, "power/sleep", None),
+];

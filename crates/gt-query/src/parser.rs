@@ -17,15 +17,6 @@ use crate::lexer::{self, Tok, Token};
 use crate::metric::QueryMetric;
 use crate::unit::Unit;
 
-/// Recursion cap for nested expressions, far above anything hand-written.
-const MAX_DEPTH: usize = 64;
-
-const UNIT_HELP: &str =
-    "units are deg, m, km, km/h, m/s, kn, m/s2, g, km/h/s, ms, s, min, h, %, per s/min/h";
-
-const TABLE_COLUMN_EXPECTED: &str =
-    "expected a column: a metric, or an aggregate like max(@accel.x)";
-
 pub fn parse(src: &str) -> Result<Query, Diagnostic> {
     let toks = lexer::lex(src)?;
     Parser {
@@ -767,3 +758,12 @@ fn superscript_digit(c: char) -> Option<i32> {
         _ => return None,
     })
 }
+
+/// Recursion cap for nested expressions, far above anything hand-written.
+const MAX_DEPTH: usize = 64;
+
+const UNIT_HELP: &str =
+    "units are deg, m, km, km/h, m/s, kn, m/s2, g, km/h/s, ms, s, min, h, %, per s/min/h";
+
+const TABLE_COLUMN_EXPECTED: &str =
+    "expected a column: a metric, or an aggregate like max(@accel.x)";

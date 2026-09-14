@@ -1,5 +1,30 @@
-mod error;
+use std::fmt;
+use std::fs::File;
+use std::path::Path;
+use std::sync::Arc;
+
+use chrono::Duration;
+use geotrace_sdk::{
+    AnnotationIcon as SdkAnnotationIcon, Constellation as SdkConstellation,
+    EventMarker as SdkEventMarker, EventMarkerColor as SdkEventMarkerColor,
+    EventMarkerIconChoice as SdkEventMarkerIconChoice, EventMarkerPoint,
+    EventMarkerStyle as SdkEventMarkerStyle, Marker as SdkMarker, MarkerIcon as SdkMarkerIcon,
+    NavFile, NavFileBuilder, NavFixTime, Satellite as SdkSatellite, SatelliteReport,
+    TravelMode as SdkTravelMode,
+};
+use gt_types::coordinates::{CoordinateAxis, OutOfRange, RawDegrees};
+use gt_types::load_warning;
+use gt_types::satellites::{Constellation, Satellite, Satellites};
+use gt_types::time_types::{FixTimestamp, GpsTime, SysTime};
+use gt_types::{
+    AlterationWording, Channel, CustomMarker, EventMarker, EventMarkerStyle, FileSource, Latitude,
+    LoadWarning, LoadedFile, Longitude, MarkerColor, MarkerIcon, NavPoint, RecordedLatitude,
+    RecordedLongitude, TimePositionVelocity, TravelMode,
+};
+
 pub use error::LoadError;
+
+mod error;
 
 /// Derive a stable grouping identity from GTD file metadata.
 ///
@@ -30,35 +55,6 @@ pub fn derive_identity(
         (None, None) => format!("auto:{filename}"),
     }
 }
-
-const STAGE_READING: &str = "Reading…";
-const STAGE_PARSING: &str = "Parsing…";
-const STAGE_CONVERTING: &str = "Converting…";
-const STAGE_SEGMENTING: &str = "Segmenting…";
-
-use std::fmt;
-use std::fs::File;
-use std::path::Path;
-use std::sync::Arc;
-
-use chrono::Duration;
-use geotrace_sdk::{
-    AnnotationIcon as SdkAnnotationIcon, Constellation as SdkConstellation,
-    EventMarker as SdkEventMarker, EventMarkerColor as SdkEventMarkerColor,
-    EventMarkerIconChoice as SdkEventMarkerIconChoice, EventMarkerPoint,
-    EventMarkerStyle as SdkEventMarkerStyle, Marker as SdkMarker, MarkerIcon as SdkMarkerIcon,
-    NavFile, NavFileBuilder, NavFixTime, Satellite as SdkSatellite, SatelliteReport,
-    TravelMode as SdkTravelMode,
-};
-use gt_types::coordinates::{CoordinateAxis, OutOfRange, RawDegrees};
-use gt_types::load_warning;
-use gt_types::satellites::{Constellation, Satellite, Satellites};
-use gt_types::time_types::{FixTimestamp, GpsTime, SysTime};
-use gt_types::{
-    AlterationWording, Channel, CustomMarker, EventMarker, EventMarkerStyle, FileSource, Latitude,
-    LoadWarning, LoadedFile, Longitude, MarkerColor, MarkerIcon, NavPoint, RecordedLatitude,
-    RecordedLongitude, TimePositionVelocity, TravelMode,
-};
 
 pub struct LoadedGtd {
     pub file: LoadedFile,
@@ -517,31 +513,6 @@ fn dropped_markers_warning(issue: &str, dropped: &[DroppedMarker]) -> Option<Loa
     })
 }
 
-const MERGED_SATELLITE_ROWS: AlterationWording = AlterationWording {
-    issue: "satellite(s) merged from several rows of one report",
-    consequence: "Every satellite count shown is one per satellite, not one per row: \
-        the merged satellite takes the highest SNR measured on its rows, the first \
-        elevation and azimuth reported, and is in the fix when any row was.",
-};
-
-const REPLACED_EVENT_MARKER_ICONS: AlterationWording = AlterationWording {
-    issue: "event marker icon(s) replaced with the pin",
-    consequence: "Those markers are drawn as a pin: the style names an icon this version \
-        of GeoTrace does not have.",
-};
-
-const REPLACED_CUSTOM_MARKER_ICONS: AlterationWording = AlterationWording {
-    issue: "custom marker icon(s) replaced with the pin",
-    consequence: "Those markers are drawn as a pin: the file holds an icon code this version \
-        of GeoTrace does not have.",
-};
-
-const REPLACED_EVENT_MARKER_COLORS: AlterationWording = AlterationWording {
-    issue: "event marker color(s) replaced with gray",
-    consequence: "Those markers are drawn mid-gray: the style holds a color that is not \
-        a #RRGGBB hex value.",
-};
-
 struct NavFileContents {
     nav_points: Vec<NavPoint>,
     markers: Vec<CustomMarker>,
@@ -686,10 +657,6 @@ fn convert_event_marker(m: &EventMarkerPoint) -> Result<EventMarker, DroppedMark
         }),
     }
 }
-
-/// Drawn for an event marker whose style holds a color field that is not a
-/// `#RRGGBB` hex value.
-const UNRECOGNIZED_COLOR_REPLACEMENT: MarkerColor = MarkerColor::new(128, 128, 128);
 
 fn convert_event_marker_style(
     s: &SdkEventMarkerStyle,
@@ -873,6 +840,40 @@ fn convert_icon(icon: SdkMarkerIcon) -> MarkerIcon {
         SdkMarkerIcon::Wrench => MarkerIcon::Wrench,
     }
 }
+
+const STAGE_READING: &str = "Reading…";
+const STAGE_PARSING: &str = "Parsing…";
+const STAGE_CONVERTING: &str = "Converting…";
+const STAGE_SEGMENTING: &str = "Segmenting…";
+
+const MERGED_SATELLITE_ROWS: AlterationWording = AlterationWording {
+    issue: "satellite(s) merged from several rows of one report",
+    consequence: "Every satellite count shown is one per satellite, not one per row: \
+        the merged satellite takes the highest SNR measured on its rows, the first \
+        elevation and azimuth reported, and is in the fix when any row was.",
+};
+
+const REPLACED_EVENT_MARKER_ICONS: AlterationWording = AlterationWording {
+    issue: "event marker icon(s) replaced with the pin",
+    consequence: "Those markers are drawn as a pin: the style names an icon this version \
+        of GeoTrace does not have.",
+};
+
+const REPLACED_CUSTOM_MARKER_ICONS: AlterationWording = AlterationWording {
+    issue: "custom marker icon(s) replaced with the pin",
+    consequence: "Those markers are drawn as a pin: the file holds an icon code this version \
+        of GeoTrace does not have.",
+};
+
+const REPLACED_EVENT_MARKER_COLORS: AlterationWording = AlterationWording {
+    issue: "event marker color(s) replaced with gray",
+    consequence: "Those markers are drawn mid-gray: the style holds a color that is not \
+        a #RRGGBB hex value.",
+};
+
+/// Drawn for an event marker whose style holds a color field that is not a
+/// `#RRGGBB` hex value.
+const UNRECOGNIZED_COLOR_REPLACEMENT: MarkerColor = MarkerColor::new(128, 128, 128);
 
 #[cfg(test)]
 mod tests {
@@ -1363,9 +1364,6 @@ mod tests {
         );
     }
 
-    /// 1e-9° is about 0.1 mm.
-    const DEGREE_TOLERANCE: f64 = 1e-9;
-
     /// Ten fixes a second apart along the equator at longitudes 0 to 9, with
     /// an unusable latitude at record 3 and an unusable longitude at record 5.
     /// A position kept as recorded is distinguishable from one placed between
@@ -1506,9 +1504,6 @@ mod tests {
         assert_eq!(warnings, vec![(3, "fix(es) with a latitude out of range")]);
     }
 
-    /// A color field a file can hold that is not a `#RRGGBB` hex value.
-    const COLOR_THAT_IS_NOT_HEX: &str = "#ZZZZZZ";
-
     /// Three fixes a second apart, and the event marker styles in `styles`, in
     /// the order they are written.
     fn recording_with_event_marker_styles(styles: Vec<SdkEventMarkerStyle>) -> Vec<u8> {
@@ -1622,4 +1617,10 @@ mod tests {
             )]
         );
     }
+
+    /// 1e-9° is about 0.1 mm.
+    const DEGREE_TOLERANCE: f64 = 1e-9;
+
+    /// A color field a file can hold that is not a `#RRGGBB` hex value.
+    const COLOR_THAT_IS_NOT_HEX: &str = "#ZZZZZZ";
 }

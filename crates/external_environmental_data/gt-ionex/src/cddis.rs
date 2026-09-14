@@ -19,21 +19,6 @@ use chrono::{Datelike as _, NaiveDate};
 use crate::mirrors::FileCandidate;
 use crate::{COMPRESSED_SUFFIX, FILE_SEQUENCE_DIGIT, IONOSPHERE_MAPS_TYPE, IonexProduct};
 
-/// Base URL of the archive's IONEX tree, without a trailing slash.
-pub const DEFAULT_BASE_URL: &str = "https://cddis.nasa.gov/archive/gnss/products/ionex";
-
-/// Analysis centre, version and campaign fields of the long names GeoTrace
-/// reads: JPL's operational solution.
-const LONG_NAME_PRODUCER: &str = "JPL0OPS";
-
-/// Content and format fields ending a long name: global ionosphere maps in
-/// IONEX, over one day.
-const LONG_NAME_CONTENT: &str = "01D";
-const LONG_NAME_FORMAT: &str = "GIM.INX";
-
-/// Suffix of the legacy short names, which are LZW compressed.
-const LEGACY_SUFFIX: &str = ".Z";
-
 /// The files `product` may sit under for `day`, in the order they are
 /// requested.
 ///
@@ -112,6 +97,21 @@ fn legacy_name(product: IonexProduct, day: NaiveDate) -> String {
         maps_type = IONOSPHERE_MAPS_TYPE.to_ascii_lowercase(),
     )
 }
+
+/// Base URL of the archive's IONEX tree, without a trailing slash.
+pub const DEFAULT_BASE_URL: &str = "https://cddis.nasa.gov/archive/gnss/products/ionex";
+
+/// Analysis centre, version and campaign fields of the long names GeoTrace
+/// reads: JPL's operational solution.
+const LONG_NAME_PRODUCER: &str = "JPL0OPS";
+
+/// Content and format fields ending a long name: global ionosphere maps in
+/// IONEX, over one day.
+const LONG_NAME_CONTENT: &str = "01D";
+const LONG_NAME_FORMAT: &str = "GIM.INX";
+
+/// Suffix of the legacy short names, which are LZW compressed.
+const LEGACY_SUFFIX: &str = ".Z";
 
 #[cfg(test)]
 mod tests {

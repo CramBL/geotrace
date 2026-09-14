@@ -11,16 +11,16 @@ use super::storage::DatabasesPending;
 /// [`super::backfill_ui::BackfillReadiness`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArchivesUnreachable {
+    ArchivesOpening,
+    /// The open is waiting for the user's choice about an archive a delete
+    /// was interrupted in.
+    AwaitingAnInterruptedDeleteChoice,
     /// This session reads the archives beside the instance that owns the data
     /// directory, and changes none of them.
     ReadOnlySession,
     /// This instance does not have the data directory, so it has opened no
     /// archive.
     WaitingForTheDataDirectory,
-    /// The open is waiting for the user's choice about an archive a delete
-    /// was interrupted in.
-    AwaitingAnInterruptedDeleteChoice,
-    ArchivesOpening,
 }
 
 impl App {

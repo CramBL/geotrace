@@ -11,18 +11,6 @@ use gt_ui_theme::{DEGREE_SIGN, EM_DASH};
 
 use super::value_bar::ValueBar;
 
-/// Decimals a channel sample prints, matching the plot's channel readout.
-const CHANNEL_DECIMALS: usize = 3;
-
-/// Decimal places for a column with no quantity: a bare number, or an
-/// aggregate whose dimension has no quantity name (`var`'s squared result).
-const UNITLESS_DECIMALS: usize = 3;
-
-/// Integer digits a value column budgets for: its width is then the same
-/// whichever rows are on screen. Four covers every metric a column holds
-/// today - a wider value is cut off where its column ends.
-const BUDGETED_INTEGER_DIGITS: usize = 4;
-
 /// How one column of a match table prints its values.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ColumnFormat<'a> {
@@ -39,15 +27,15 @@ pub(super) struct ColumnFormat<'a> {
 /// What a column's cells hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColumnKind {
+    /// Nothing printable. Only [`Quantity::Condition`] lands here, and no
+    /// metric carries it.
+    Blank,
+    Number,
     /// A wall-clock time, to the millisecond where the values are timed finer
     /// than the points are.
     TimeOfDay {
         millis: bool,
     },
-    Number,
-    /// Nothing printable. Only [`Quantity::Condition`] lands here, and no
-    /// metric carries it.
-    Blank,
 }
 
 impl<'a> ColumnFormat<'a> {
@@ -290,6 +278,18 @@ fn time_of_day(seconds: f64, millis: bool) -> String {
 pub(super) fn wall_clock(unix_secs: f64) -> Option<DateTime<Utc>> {
     DateTime::<Utc>::from_timestamp_micros((unix_secs * MICROS_PER_SEC) as i64)
 }
+
+/// Decimals a channel sample prints, matching the plot's channel readout.
+const CHANNEL_DECIMALS: usize = 3;
+
+/// Decimal places for a column with no quantity: a bare number, or an
+/// aggregate whose dimension has no quantity name (`var`'s squared result).
+const UNITLESS_DECIMALS: usize = 3;
+
+/// Integer digits a value column budgets for: its width is then the same
+/// whichever rows are on screen. Four covers every metric a column holds
+/// today - a wider value is cut off where its column ends.
+const BUDGETED_INTEGER_DIGITS: usize = 4;
 
 #[cfg(test)]
 mod tests {

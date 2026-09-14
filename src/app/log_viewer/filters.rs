@@ -14,103 +14,14 @@ use gt_ui_types::LoadedLogId;
 
 use super::LogViewerWindow;
 
-/// Id of the live-filter field. A test puts the keyboard into it by this id,
-/// whatever else is on screen.
-pub(in crate::app) const LIVE_FILTER_FIELD_ID: &str = "log_viewer_live_filter";
-
-const FIELD_HINT: &str = "Filter lines";
-
-const FIELD_HOVER: &str = "Show the lines whose message holds every term written here";
-
-/// Width of the live-filter field, wide enough for the several terms a filter
-/// usually holds.
-const FIELD_WIDTH_PX: f32 = 260.0;
-
-pub(super) const REGEX_TOGGLE_LABEL: &str = ".*";
-
-const REGEX_TOGGLE_HOVER: &str = "Read the field as a regular expression instead of a set of terms";
-
-pub(in crate::app) const ADD_FILTER_LABEL: &str = "+ Add filter";
-
-const ADD_FILTER_HOVER: &str = "Keep the live filter as a chip and empty the field";
-
-pub(super) const ADD_FILTER_EMPTY_HOVER: &str = "Write a live filter to add it as a chip";
-
-pub(super) const ADD_FILTER_INVALID_HOVER: &str =
-    "The live filter is added once its regular expression compiles";
-
-const CLEAR_LABEL: &str = "Clear";
-
-const CLEAR_HOVER: &str = "Empty the live filter";
-
-const CLEAR_EMPTY_HOVER: &str = "The live filter is empty already";
-
-const MATCH_COUNT_HOVER: &str = "Lines the filters show, of the log's entries";
-
-pub(super) const COLOR_SERVICES_LABEL: &str = "Colour services";
-
-const COLOR_SERVICES_HOVER: &str = "Draw each service name in a colour of its own";
-
-pub(super) const COLOR_LEVELS_LABEL: &str = "Colour levels";
-
-const COLOR_LEVELS_HOVER: &str =
-    "Draw each error, warning and debug level in the colour of its severity";
-
-/// What the viewer says while a scan of the log is still running. U+2026
-/// HORIZONTAL ELLIPSIS marks the work in flight.
-pub(in crate::app) const PENDING_NOTE: &str = "Filtering…";
-
-/// How long a scan has to run before the viewer says it is running. Below this
-/// the note would only flicker.
-const PENDING_NOTE_DELAY_SECS: f64 = 0.1;
-
-/// Characters of a chip's filter text the chip shows, the rest on hover.
-const CHIP_TEXT_CHARS: NonZeroUsize = match NonZeroUsize::new(28) {
-    Some(chars) => chars,
-    None => NonZeroUsize::MIN,
-};
-
-const CHIP_CORNER_RADIUS: u8 = 10;
-
-const CHIP_INNER_MARGIN: egui::Margin = egui::Margin::symmetric(8, 2);
-
-const CHIP_BORDER_WIDTH_PX: f32 = 1.0;
-
-const CHIP_DASH_LENGTH_PX: f32 = 3.0;
-
-const CHIP_DASH_GAP_PX: f32 = 2.0;
-
-/// Side of the square a layer chip shows its palette colour in.
-const CHIP_SWATCH_SIZE_PX: f32 = 10.0;
-
-const CHIP_SWATCH_CORNER_RADIUS: u8 = 1;
-
-/// Width of the ring drawn around the swatch of a chip sharing its colour with
-/// another one.
-const CHIP_SHARED_SWATCH_RING_PX: f32 = 2.0;
-
-const SHARED_SWATCH_HOVER: &str = "Another filter draws in this colour too";
-
-const LAYER_CHIP_HOVER: &str = "Draw the lines this filter matches";
-
-const REFINE_CHIP_HOVER: &str = "Narrow the table to the lines this filter matches";
-
-const SWITCH_TO_LAYER_HOVER: &str =
-    "Switch to layer mode: this filter colours the lines it matches without narrowing the table";
-
-const SWITCH_TO_REFINE_HOVER: &str =
-    "Switch to refine mode: only the lines this filter matches stay in the table";
-
-const REMOVE_CHIP_HOVER: &str = "Remove this filter";
-
 /// The edit the filter row or the chip row produced while rendering. It reaches
 /// the engine once rendering has finished: every chip of a frame is drawn from
 /// one state.
 enum FilterEdit {
-    WriteLiveFilter(String),
-    ReadLiveFilterAsRegex(bool),
-    ClearLiveFilter,
     AddLiveFilterAsChip,
+    ClearLiveFilter,
+    ReadLiveFilterAsRegex(bool),
+    RemoveChip(FilterChipId),
     SetChipEnabled {
         chip: FilterChipId,
         enabled: bool,
@@ -119,7 +30,7 @@ enum FilterEdit {
         chip: FilterChipId,
         to: FilterChipMode,
     },
-    RemoveChip(FilterChipId),
+    WriteLiveFilter(String),
 }
 
 impl LogViewerWindow {
@@ -397,3 +308,92 @@ fn paint_chip_border(
         )),
     }
 }
+
+/// Id of the live-filter field. A test puts the keyboard into it by this id,
+/// whatever else is on screen.
+pub(in crate::app) const LIVE_FILTER_FIELD_ID: &str = "log_viewer_live_filter";
+
+const FIELD_HINT: &str = "Filter lines";
+
+const FIELD_HOVER: &str = "Show the lines whose message holds every term written here";
+
+/// Width of the live-filter field, wide enough for the several terms a filter
+/// usually holds.
+const FIELD_WIDTH_PX: f32 = 260.0;
+
+pub(super) const REGEX_TOGGLE_LABEL: &str = ".*";
+
+const REGEX_TOGGLE_HOVER: &str = "Read the field as a regular expression instead of a set of terms";
+
+pub(in crate::app) const ADD_FILTER_LABEL: &str = "+ Add filter";
+
+const ADD_FILTER_HOVER: &str = "Keep the live filter as a chip and empty the field";
+
+pub(super) const ADD_FILTER_EMPTY_HOVER: &str = "Write a live filter to add it as a chip";
+
+pub(super) const ADD_FILTER_INVALID_HOVER: &str =
+    "The live filter is added once its regular expression compiles";
+
+const CLEAR_LABEL: &str = "Clear";
+
+const CLEAR_HOVER: &str = "Empty the live filter";
+
+const CLEAR_EMPTY_HOVER: &str = "The live filter is empty already";
+
+const MATCH_COUNT_HOVER: &str = "Lines the filters show, of the log's entries";
+
+pub(super) const COLOR_SERVICES_LABEL: &str = "Colour services";
+
+const COLOR_SERVICES_HOVER: &str = "Draw each service name in a colour of its own";
+
+pub(super) const COLOR_LEVELS_LABEL: &str = "Colour levels";
+
+const COLOR_LEVELS_HOVER: &str =
+    "Draw each error, warning and debug level in the colour of its severity";
+
+/// What the viewer says while a scan of the log is still running. U+2026
+/// HORIZONTAL ELLIPSIS marks the work in flight.
+pub(in crate::app) const PENDING_NOTE: &str = "Filtering…";
+
+/// How long a scan has to run before the viewer says it is running. Below this
+/// the note would only flicker.
+const PENDING_NOTE_DELAY_SECS: f64 = 0.1;
+
+/// Characters of a chip's filter text the chip shows, the rest on hover.
+const CHIP_TEXT_CHARS: NonZeroUsize = match NonZeroUsize::new(28) {
+    Some(chars) => chars,
+    None => NonZeroUsize::MIN,
+};
+
+const CHIP_CORNER_RADIUS: u8 = 10;
+
+const CHIP_INNER_MARGIN: egui::Margin = egui::Margin::symmetric(8, 2);
+
+const CHIP_BORDER_WIDTH_PX: f32 = 1.0;
+
+const CHIP_DASH_LENGTH_PX: f32 = 3.0;
+
+const CHIP_DASH_GAP_PX: f32 = 2.0;
+
+/// Side of the square a layer chip shows its palette colour in.
+const CHIP_SWATCH_SIZE_PX: f32 = 10.0;
+
+const CHIP_SWATCH_CORNER_RADIUS: u8 = 1;
+
+/// Width of the ring drawn around the swatch of a chip sharing its colour with
+/// another one.
+const CHIP_SHARED_SWATCH_RING_PX: f32 = 2.0;
+
+const SHARED_SWATCH_HOVER: &str = "Another filter draws in this colour too";
+
+const LAYER_CHIP_HOVER: &str = "Draw the lines this filter matches";
+
+const REFINE_CHIP_HOVER: &str = "Narrow the table to the lines this filter matches";
+
+const SWITCH_TO_LAYER_HOVER: &str =
+    "Switch to layer mode: this filter colours the lines it matches without narrowing the table";
+
+const SWITCH_TO_REFINE_HOVER: &str =
+    "Switch to refine mode: only the lines this filter matches stay in the table";
+
+const REMOVE_CHIP_HOVER: &str = "Remove this filter";

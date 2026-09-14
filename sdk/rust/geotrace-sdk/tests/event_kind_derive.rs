@@ -9,6 +9,23 @@ use geotrace_sdk_test_util as test_util;
 use rstest::rstest;
 use serde::Deserialize;
 
+macro_rules! shared_table_event {
+    ($($variant:ident),+ $(,)?) => {
+        #[derive(EventKind)]
+        #[event_kind(note = none)]
+        #[expect(
+            non_camel_case_types,
+            reason = "a keyword is a variant name only as a lower-case raw identifier"
+        )]
+        enum SharedTableEvent {
+            $($variant),+
+        }
+
+        const SHARED_TABLE_EVENTS: &[(&str, SharedTableEvent)] =
+            &[$((stringify!($variant), SharedTableEvent::$variant)),+];
+    };
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SharedSegmentTable {
@@ -43,33 +60,6 @@ impl SharedSegmentTable {
         .expect("the shared segment table is valid")
     }
 }
-
-macro_rules! shared_table_event {
-    ($($variant:ident),+ $(,)?) => {
-        #[derive(EventKind)]
-        #[event_kind(note = none)]
-        #[expect(
-            non_camel_case_types,
-            reason = "a keyword is a variant name only as a lower-case raw identifier"
-        )]
-        enum SharedTableEvent {
-            $($variant),+
-        }
-
-        const SHARED_TABLE_EVENTS: &[(&str, SharedTableEvent)] =
-            &[$((stringify!($variant), SharedTableEvent::$variant)),+];
-    };
-}
-
-shared_table_event!(
-    BatteryLow,
-    HTTPError,
-    GPSLock,
-    GPS3Lock,
-    V2Event,
-    r#type,
-    Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
-);
 
 #[test]
 fn every_derived_name_of_the_shared_table_derives_its_segment() {
@@ -275,3 +265,13 @@ fn record_one_event(event: &impl EventKind) -> Result<NavFile, BuildError> {
     recorder.add_event(event, test_util::base());
     recorder.finish()
 }
+
+shared_table_event!(
+    BatteryLow,
+    HTTPError,
+    GPSLock,
+    GPS3Lock,
+    V2Event,
+    r#type,
+    Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+);

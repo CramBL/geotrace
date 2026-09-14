@@ -9,12 +9,6 @@ use gt_logfile::{BootSession, ParsedLog};
 
 use crate::filter::stack::VisibleEntries;
 
-const SECONDS_PER_MINUTE: i64 = 60;
-
-const SECONDS_PER_HOUR: i64 = 60 * SECONDS_PER_MINUTE;
-
-const SECONDS_PER_DAY: i64 = 24 * SECONDS_PER_HOUR;
-
 /// How strongly the line table draws one row's timestamp: the largest UTC
 /// wall-clock field that differs from the previous shown row picks it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -140,6 +134,12 @@ impl ClockTicks {
     }
 }
 
+const SECONDS_PER_MINUTE: i64 = 60;
+
+const SECONDS_PER_HOUR: i64 = 60 * SECONDS_PER_MINUTE;
+
+const SECONDS_PER_DAY: i64 = 24 * SECONDS_PER_HOUR;
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -149,10 +149,6 @@ mod tests {
 
     use super::*;
     use crate::{FilterStack, test_util};
-
-    /// A minute boundary, an hour boundary and a day boundary, each reached
-    /// from the second before it.
-    const START: &str = "2026-01-01 14:02:11";
 
     fn at(text: &str) -> DateTime<Utc> {
         NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S")
@@ -435,4 +431,8 @@ mod tests {
             "the fixture writes one entry a second"
         );
     }
+
+    /// A minute boundary, an hour boundary and a day boundary, each reached
+    /// from the second before it.
+    const START: &str = "2026-01-01 14:02:11";
 }

@@ -47,17 +47,6 @@ use crate::{
     TileAccess, ViewportBounds, icon_mesh,
 };
 
-/// The viewport every case draws into, in logical pixels.
-pub const VIEWPORT: egui::Vec2 = egui::vec2(800.0, 600.0);
-
-/// Frames a case runs before it reads what the map drew: the first one frames
-/// the recording, and the rest settle the load animation.
-pub const FRAMES_TO_SETTLE: usize = 8;
-
-/// Frames a case runs after it moves the pointer, past egui's hover delay and
-/// the layout of the tooltip that opens.
-pub const TOOLTIP_SETTLE_FRAMES: usize = 60;
-
 /// [`TestHarness::builder`] plus the GPU icon pipeline the application
 /// installs at startup.
 pub fn harness_builder<'a>() -> TestHarnessBuilder<'a> {
@@ -70,15 +59,6 @@ pub fn harness_builder<'a>() -> TestHarnessBuilder<'a> {
 pub fn viewport_center() -> egui::Pos2 {
     egui::Rect::from_min_size(egui::Pos2::ZERO, VIEWPORT).center()
 }
-
-/// The map's own default centre, which it keeps while no fit runs.
-const CENTER_LAT: f64 = 55.676;
-pub const CENTER_LON: f64 = 12.565;
-
-/// Longitude between consecutive fixes of a walking track, about 63 m at this
-/// latitude. The whole track draws without a fit: thirty of these steps span a
-/// third of the viewport at the map's default zoom of 16.
-pub const WALKING_STEP_DEGREES: f64 = 0.001;
 
 /// The instant every recording here starts at.
 pub fn epoch() -> DateTime<Utc> {
@@ -233,26 +213,6 @@ pub fn a_recording_of_two_tracks_meeting_mid_route(metres_apart: f64) -> Vec<Loa
         a_track_over(leaving.collect()),
     ])]
 }
-
-/// Where the two tracks of [`a_recording_of_two_tracks_meeting_mid_route`]
-/// meet, in degrees.
-pub const MID_ROUTE_MEETING_DEGREES: (f64, f64) = (CENTER_LAT, CENTER_LON);
-
-/// Fixes per leg of a track of [`a_recording_of_round_trips_from_one_door`],
-/// which walks each leg out and back.
-const ROUND_TRIP_STEPS_PER_LEG: usize = 10;
-
-/// How far the first fix of each track of
-/// [`a_recording_of_round_trips_from_one_door`] sits from the door: about 11 m
-/// north, 6 m east.
-const DOOR_SCATTER_DEGREES: f64 = 0.000_1;
-
-/// Fixes per track of [`a_recording_of_two_tracks_meeting_mid_route`].
-const MID_ROUTE_FIXES: usize = 12;
-
-/// Ground distance between consecutive fixes of a track of
-/// [`a_recording_of_two_tracks_meeting_mid_route`].
-const MID_ROUTE_STEP_METRES: f64 = 20.0;
 
 /// One fix `north` and `east` of the map's default centre, in degrees.
 fn fix_at_time(time: DateTime<Utc>, north: f64, east: f64) -> NavPoint {
@@ -416,17 +376,6 @@ pub fn a_recording_with_every_marker_kind() -> LoadedFile {
         ..gt_test_utils::loaded_file_with_tracks(vec![track])
     }
 }
-
-/// Where every marker of [`a_recording_with_every_marker_kind`] sits, in
-/// degrees.
-pub const MARKER_POSITION_DEGREES: (f64, f64) = (55.686_7, 12.563_8);
-
-/// The path [`a_recording_with_every_marker_kind`] was loaded from.
-const RECORDING_FILENAME: &str = "snapshot_test.gtd";
-
-/// The distance [`a_recording_with_every_marker_kind`] states, which is what
-/// the map frames its baselines at.
-const RECORDING_DISTANCE_KM: f64 = 5.0;
 
 /// A window that keeps the fixes up to and including `index`.
 pub fn window_ending_at(index: usize) -> GlobalFilter {
@@ -1060,18 +1009,6 @@ pub fn an_interference_cell_around(position: (f64, f64)) -> JamDataset {
     )
 }
 
-/// The tallies of [`an_interference_ring_around`], from a cell no aircraft
-/// reported trouble in to two cells too thinly sampled to colour.
-const INTERFERENCE_RING_TALLIES: [(u32, u32); 7] = [
-    (400, 0),
-    (98, 2),
-    (94, 6),
-    (90, 10),
-    (60, 40),
-    (2, 2),
-    (1, 1),
-];
-
 /// The interference layer over a ring of seven cells around `position`, one
 /// per tally of [`INTERFERENCE_RING_TALLIES`], which covers the whole ramp
 /// from clear to heavy and both low-sample fills.
@@ -1088,11 +1025,6 @@ pub fn an_interference_ring_around(position: (f64, f64)) -> JamDataset {
         .collect();
     JamDataset::new(epoch().date_naive(), observations)
 }
-
-/// Half the length of the snapped edge, in normalized Mercator: about 2 km
-/// each way, which crosses the whole viewport at the zoom that frames a
-/// walking track.
-const SNAPPED_EDGE_HALF_LENGTH_MERC: f64 = 1.0e-4;
 
 /// One straight snapped edge running west to east through `merc`, matched to a
 /// named road whose class, speed limit and surface the edge's hover label
@@ -1136,3 +1068,71 @@ pub fn a_snapped_edge_through(position: (f64, f64)) -> SnappedTracks {
     snapped.insert(track0(), Arc::new(a_snapped_edge_at(merc)));
     snapped
 }
+
+/// The viewport every case draws into, in logical pixels.
+pub const VIEWPORT: egui::Vec2 = egui::vec2(800.0, 600.0);
+
+/// Frames a case runs before it reads what the map drew: the first one frames
+/// the recording, and the rest settle the load animation.
+pub const FRAMES_TO_SETTLE: usize = 8;
+
+/// Frames a case runs after it moves the pointer, past egui's hover delay and
+/// the layout of the tooltip that opens.
+pub const TOOLTIP_SETTLE_FRAMES: usize = 60;
+
+/// The map's own default centre, which it keeps while no fit runs.
+const CENTER_LAT: f64 = 55.676;
+pub const CENTER_LON: f64 = 12.565;
+
+/// Longitude between consecutive fixes of a walking track, about 63 m at this
+/// latitude. The whole track draws without a fit: thirty of these steps span a
+/// third of the viewport at the map's default zoom of 16.
+pub const WALKING_STEP_DEGREES: f64 = 0.001;
+
+/// Where the two tracks of [`a_recording_of_two_tracks_meeting_mid_route`]
+/// meet, in degrees.
+pub const MID_ROUTE_MEETING_DEGREES: (f64, f64) = (CENTER_LAT, CENTER_LON);
+
+/// Fixes per leg of a track of [`a_recording_of_round_trips_from_one_door`],
+/// which walks each leg out and back.
+const ROUND_TRIP_STEPS_PER_LEG: usize = 10;
+
+/// How far the first fix of each track of
+/// [`a_recording_of_round_trips_from_one_door`] sits from the door: about 11 m
+/// north, 6 m east.
+const DOOR_SCATTER_DEGREES: f64 = 0.000_1;
+
+/// Fixes per track of [`a_recording_of_two_tracks_meeting_mid_route`].
+const MID_ROUTE_FIXES: usize = 12;
+
+/// Ground distance between consecutive fixes of a track of
+/// [`a_recording_of_two_tracks_meeting_mid_route`].
+const MID_ROUTE_STEP_METRES: f64 = 20.0;
+
+/// Where every marker of [`a_recording_with_every_marker_kind`] sits, in
+/// degrees.
+pub const MARKER_POSITION_DEGREES: (f64, f64) = (55.686_7, 12.563_8);
+
+/// The path [`a_recording_with_every_marker_kind`] was loaded from.
+const RECORDING_FILENAME: &str = "snapshot_test.gtd";
+
+/// The distance [`a_recording_with_every_marker_kind`] states, which is what
+/// the map frames its baselines at.
+const RECORDING_DISTANCE_KM: f64 = 5.0;
+
+/// The tallies of [`an_interference_ring_around`], from a cell no aircraft
+/// reported trouble in to two cells too thinly sampled to colour.
+const INTERFERENCE_RING_TALLIES: [(u32, u32); 7] = [
+    (400, 0),
+    (98, 2),
+    (94, 6),
+    (90, 10),
+    (60, 40),
+    (2, 2),
+    (1, 1),
+];
+
+/// Half the length of the snapped edge, in normalized Mercator: about 2 km
+/// each way, which crosses the whole viewport at the zoom that frames a
+/// walking track.
+const SNAPPED_EDGE_HALF_LENGTH_MERC: f64 = 1.0e-4;

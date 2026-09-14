@@ -14,17 +14,6 @@ use gt_flare::test_util;
 use gt_flare::wire;
 use gt_flare::{CAPTURED_WINDOWS, CapturedWindow, SolarFlare};
 
-/// The May 2024 storm.
-const STORM_CAPTURE: &str = "storm-may-2024";
-
-/// Solar minimum, where the catalog closed off no end time.
-const QUIET_CAPTURE: &str = "quiet-january-2019";
-
-/// The year before the catalog begins.
-const BEFORE_COVERAGE_CAPTURE: &str = "before-coverage";
-
-const HTTP_OK: u64 = 200;
-
 fn parse_capture(capture: &CapturedWindow) -> Result<Vec<SolarFlare>, String> {
     let json = test_util::captured_response(capture)?;
     wire::parse_flares(&json).map_err(|err| format!("{}: {err}", capture.name))
@@ -204,3 +193,14 @@ fn a_window_before_the_catalog_begins_is_captured_as_an_empty_array() {
         "a window before coverage is served, not refused"
     );
 }
+
+/// The May 2024 storm.
+const STORM_CAPTURE: &str = "storm-may-2024";
+
+/// Solar minimum, where the catalog closed off no end time.
+const QUIET_CAPTURE: &str = "quiet-january-2019";
+
+/// The year before the catalog begins.
+const BEFORE_COVERAGE_CAPTURE: &str = "before-coverage";
+
+const HTTP_OK: u64 = 200;

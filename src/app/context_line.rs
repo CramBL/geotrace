@@ -14,11 +14,6 @@ use gt_ui_types::ArcIdentity;
 
 use super::environment_storage::PrunedDays;
 
-/// How many buckets one visible span is divided into. The span is snapped
-/// out to bucket boundaries, so panning re-resolves the lines only once the
-/// view has moved by this fraction of what it shows.
-const BUCKETS_PER_SPAN: i64 = 8;
-
 /// The UTC days a context line is sampled over: the days the plot shows,
 /// widened to whole buckets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,6 +195,11 @@ impl<S: Clone> ContextSampleCache<S> {
         Arc::clone(&self.line)
     }
 }
+
+/// How many buckets one visible span is divided into. The span is snapped
+/// out to bucket boundaries, so panning re-resolves the lines only once the
+/// view has moved by this fraction of what it shows.
+const BUCKETS_PER_SPAN: i64 = 8;
 
 #[cfg(test)]
 mod tests {

@@ -21,47 +21,6 @@ use super::levels::LineViewport;
 use super::lines::{self, LineStroke, NearestHoverLabel};
 use super::style;
 
-/// Where the rendered plot lands, resolved from this crate's manifest dir.
-const ASSET_PATH: &str =
-    "../external_environmental_data/gt-ionex/assets/tec_plot_2024_05_gannon_storm.png";
-
-/// The same width as the map illustration beside it in the document, at the
-/// height the plot pane opens with.
-const CANVAS_SIZE: egui::Vec2 = egui::vec2(1024.0, 400.0);
-
-/// First and last day drawn: the quiet days before the storm, its main phase
-/// late on 10 May, and the recovery.
-const DRAWN_DAYS: (NaiveDate, NaiveDate) = (
-    match NaiveDate::from_ymd_opt(2024, 5, 6) {
-        Some(day) => day,
-        None => panic!("a calendar date"),
-    },
-    match NaiveDate::from_ymd_opt(2024, 5, 12) {
-        Some(day) => day,
-        None => panic!("a calendar date"),
-    },
-);
-
-/// The node drawn: it carries both phases of the storm, the enhancement late
-/// on 10 May and the depletion through 11 May.
-const DRAWN_NODE: &str = gt_ionex::NORTH_AMERICA_NODE;
-
-const TEC_LINE_WIDTH: f32 = 1.5;
-
-/// Empty span left either side of the drawn days, so the axis labels of the
-/// first and last day are not cut off by the edge of the canvas.
-const X_MARGIN: TimeDelta = TimeDelta::hours(6);
-
-/// Headroom above the highest value drawn, so the storm's peak is not against
-/// the top edge.
-const Y_HEADROOM: f64 = 1.15;
-
-/// Space around the plot inside the canvas, which the axis labels sit in.
-const CANVAS_MARGIN_PX: i8 = 6;
-
-/// How far the median line's colour is dimmed from the metric's own.
-const MEDIAN_DIM: f32 = 0.55;
-
 fn midnight(day: NaiveDate) -> DateTime<Utc> {
     day.and_time(NaiveTime::MIN).and_utc()
 }
@@ -204,9 +163,6 @@ fn generate_tec_reference_plot() {
     println!("wrote {}", path.display());
 }
 
-/// The quiet reference's label in the plot's legend.
-const MEDIAN_LINE_LABEL: &str = "27-day median";
-
 /// Grid marks landing on every UTC day and every six hours between them, so
 /// the axis of a week-long span is labelled in days.
 fn day_and_six_hour_marks(bounds: (f64, f64)) -> Vec<GridMark> {
@@ -239,3 +195,47 @@ fn day_or_hour_label(seconds: f64) -> String {
     }
     instant.format("%H:%M").to_string()
 }
+
+/// Where the rendered plot lands, resolved from this crate's manifest dir.
+const ASSET_PATH: &str =
+    "../external_environmental_data/gt-ionex/assets/tec_plot_2024_05_gannon_storm.png";
+
+/// The same width as the map illustration beside it in the document, at the
+/// height the plot pane opens with.
+const CANVAS_SIZE: egui::Vec2 = egui::vec2(1024.0, 400.0);
+
+/// First and last day drawn: the quiet days before the storm, its main phase
+/// late on 10 May, and the recovery.
+const DRAWN_DAYS: (NaiveDate, NaiveDate) = (
+    match NaiveDate::from_ymd_opt(2024, 5, 6) {
+        Some(day) => day,
+        None => panic!("a calendar date"),
+    },
+    match NaiveDate::from_ymd_opt(2024, 5, 12) {
+        Some(day) => day,
+        None => panic!("a calendar date"),
+    },
+);
+
+/// The node drawn: it carries both phases of the storm, the enhancement late
+/// on 10 May and the depletion through 11 May.
+const DRAWN_NODE: &str = gt_ionex::NORTH_AMERICA_NODE;
+
+const TEC_LINE_WIDTH: f32 = 1.5;
+
+/// Empty span left either side of the drawn days, so the axis labels of the
+/// first and last day are not cut off by the edge of the canvas.
+const X_MARGIN: TimeDelta = TimeDelta::hours(6);
+
+/// Headroom above the highest value drawn, so the storm's peak is not against
+/// the top edge.
+const Y_HEADROOM: f64 = 1.15;
+
+/// Space around the plot inside the canvas, which the axis labels sit in.
+const CANVAS_MARGIN_PX: i8 = 6;
+
+/// How far the median line's colour is dimmed from the metric's own.
+const MEDIAN_DIM: f32 = 0.55;
+
+/// The quiet reference's label in the plot's legend.
+const MEDIAN_LINE_LABEL: &str = "27-day median";

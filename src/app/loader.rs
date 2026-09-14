@@ -19,21 +19,6 @@ use gt_types::{LoadedFile, TrackAggregates};
 
 use crate::app::background_thread;
 
-/// A finished load stays fully opaque in the status list this long before its
-/// entry starts fading.
-pub(super) const FINISHED_JOB_FADE_START_SECS: f32 = 2.0;
-/// A finished load's entry reaches full transparency and is dropped from the
-/// status list this long after it completed.
-pub(super) const FINISHED_JOB_EXPIRE_SECS: f32 = 3.0;
-
-pub(super) const STAGE_STARTING: &str = "Starting…";
-pub(super) const STAGE_READING: &str = "Reading…";
-pub(super) const STAGE_PARSING: &str = "Parsing…";
-pub(super) const STAGE_PLOTTING: &str = "Building plot data…";
-
-/// Where [`STAGE_PLOTTING`] starts on a load job's progress bar.
-const PLOTTING_FRACTION: f32 = 0.95;
-
 /// State for a single in-flight background load job, shown in the progress UI.
 pub struct LoadingJob {
     pub id: u64,
@@ -119,14 +104,14 @@ pub(super) enum AttachedLogRequester {
     reason = "Completed carries a full LoadOutcome by design; boxing would add an allocation on the infrequent completion path"
 )]
 pub enum LoadMessage {
+    Completed {
+        id: u64,
+        outcome: Result<LoadOutcome, String>,
+    },
     Progress {
         id: u64,
         fraction: f32,
         stage: &'static str,
-    },
-    Completed {
-        id: u64,
-        outcome: Result<LoadOutcome, String>,
     },
 }
 
@@ -1085,6 +1070,21 @@ impl HistoryInsert<'_> {
         }
     }
 }
+
+/// A finished load stays fully opaque in the status list this long before its
+/// entry starts fading.
+pub(super) const FINISHED_JOB_FADE_START_SECS: f32 = 2.0;
+/// A finished load's entry reaches full transparency and is dropped from the
+/// status list this long after it completed.
+pub(super) const FINISHED_JOB_EXPIRE_SECS: f32 = 3.0;
+
+pub(super) const STAGE_STARTING: &str = "Starting…";
+pub(super) const STAGE_READING: &str = "Reading…";
+pub(super) const STAGE_PARSING: &str = "Parsing…";
+pub(super) const STAGE_PLOTTING: &str = "Building plot data…";
+
+/// Where [`STAGE_PLOTTING`] starts on a load job's progress bar.
+const PLOTTING_FRACTION: f32 = 0.95;
 
 #[cfg(test)]
 mod tests {

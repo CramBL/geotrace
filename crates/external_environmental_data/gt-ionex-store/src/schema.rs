@@ -26,6 +26,53 @@
 use gt_hdf5_archive::ColumnFormat;
 use gt_ionex::IonexProduct;
 
+/// How [`IonexProduct`] is written in the [`DAY_PRODUCT`] column.
+///
+/// Reordering [`IonexProduct`]'s variants cannot change what an archived day
+/// means: the codes here are fixed independently of that declaration order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredProduct {
+    Final,
+    Rapid,
+}
+
+impl StoredProduct {
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Final => 0,
+            Self::Rapid => 1,
+        }
+    }
+
+    /// The product `code` stands for, or [`None`] for a code the schema does
+    /// not define.
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(Self::Final),
+            1 => Some(Self::Rapid),
+            _ => None,
+        }
+    }
+}
+
+impl From<IonexProduct> for StoredProduct {
+    fn from(product: IonexProduct) -> Self {
+        match product {
+            IonexProduct::Final => Self::Final,
+            IonexProduct::Rapid => Self::Rapid,
+        }
+    }
+}
+
+impl From<StoredProduct> for IonexProduct {
+    fn from(product: StoredProduct) -> Self {
+        match product {
+            StoredProduct::Final => Self::Final,
+            StoredProduct::Rapid => Self::Rapid,
+        }
+    }
+}
+
 /// Group holding everything stored for TEC maps.
 pub const TEC_GROUP: &str = "tec";
 
@@ -125,50 +172,3 @@ pub const MAP_COLUMNS: [&str; 3] = [MAP_EPOCH, MAP_VALUE_OFFSET, MAP_VALUE_COUNT
 
 /// The per-node columns, for checks that must cover all of them.
 pub const VALUE_COLUMNS: [&str; 2] = [VALUE_TECU, VALUE_PRESENCE];
-
-/// How [`IonexProduct`] is written in the [`DAY_PRODUCT`] column.
-///
-/// Reordering [`IonexProduct`]'s variants cannot change what an archived day
-/// means: the codes here are fixed independently of that declaration order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StoredProduct {
-    Final,
-    Rapid,
-}
-
-impl StoredProduct {
-    pub const fn code(self) -> u8 {
-        match self {
-            Self::Final => 0,
-            Self::Rapid => 1,
-        }
-    }
-
-    /// The product `code` stands for, or [`None`] for a code the schema does
-    /// not define.
-    pub const fn from_code(code: u8) -> Option<Self> {
-        match code {
-            0 => Some(Self::Final),
-            1 => Some(Self::Rapid),
-            _ => None,
-        }
-    }
-}
-
-impl From<IonexProduct> for StoredProduct {
-    fn from(product: IonexProduct) -> Self {
-        match product {
-            IonexProduct::Final => Self::Final,
-            IonexProduct::Rapid => Self::Rapid,
-        }
-    }
-}
-
-impl From<StoredProduct> for IonexProduct {
-    fn from(product: StoredProduct) -> Self {
-        match product {
-            StoredProduct::Final => Self::Final,
-            StoredProduct::Rapid => Self::Rapid,
-        }
-    }
-}

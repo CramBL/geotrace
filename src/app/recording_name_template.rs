@@ -8,26 +8,11 @@ use gt_loaded_files::LoadedFileEntry;
 use gt_store::RecordingEntry;
 use strum::IntoEnumIterator as _;
 
-pub const RECORDING_NAME_LABEL: &str = "Recording name";
-
-/// Field values for the structure preview: every token resolves to its own name.
-const STRUCTURE_FIELDS: NameFields<'static> = NameFields {
-    title: Some("title"),
-    device: Some("device"),
-    identity: Some("identity"),
-    filename: "filename",
-};
-
-const GUIDE_WIDTH: f32 = 400.0;
-
-/// The character limit the guide's `{token:N}` hint line demonstrates.
-const TOKEN_LIMIT_EXAMPLE_CHARS: usize = 12;
-
 /// Where the recording behind the preview line came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PreviewOrigin {
-    LoadedFile,
     History,
+    LoadedFile,
 }
 
 /// The name fields of one recording, rendered through the template the user is
@@ -172,6 +157,21 @@ fn show_template_guide(
             ui.label(RichText::new(limit_hint).weak());
         });
 }
+
+pub const RECORDING_NAME_LABEL: &str = "Recording name";
+
+/// Field values for the structure preview: every token resolves to its own name.
+const STRUCTURE_FIELDS: NameFields<'static> = NameFields {
+    title: Some("title"),
+    device: Some("device"),
+    identity: Some("identity"),
+    filename: "filename",
+};
+
+const GUIDE_WIDTH: f32 = 400.0;
+
+/// The character limit the guide's `{token:N}` hint line demonstrates.
+const TOKEN_LIMIT_EXAMPLE_CHARS: usize = 12;
 
 #[cfg(test)]
 mod tests {

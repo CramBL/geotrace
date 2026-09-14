@@ -14,6 +14,18 @@ use gt_ui_types::MetricChipHover;
 
 use crate::reference::AIRCRAFT_INTERFERENCE;
 
+/// The lines describing one cell, leading with the counts that produced the
+/// share. Shared so the map hover and the plot hover agree.
+pub fn cell_summary(day: &str, good: u32, bad: u32, bad_percent: f64) -> Vec<String> {
+    vec![
+        format!(
+            "{bad} of {} aircraft reported low navigation accuracy",
+            good.saturating_add(bad)
+        ),
+        format!("{bad_percent:.1}% over {day} (UTC)"),
+    ]
+}
+
 /// Name of the data everywhere it is offered: the display-toggle row, the
 /// plot line, the legend.
 ///
@@ -40,18 +52,6 @@ pub const RESOLUTION_CAVEAT: &str = "One cell spans roughly 22km and one value c
 /// anything, alongside their hatched fill on the map.
 pub const LOW_SAMPLE_CAVEAT: &str =
     "Too few aircraft passed through this cell for the share to carry weight.";
-
-/// The lines describing one cell, leading with the counts that produced the
-/// share. Shared so the map hover and the plot hover agree.
-pub fn cell_summary(day: &str, good: u32, bad: u32, bad_percent: f64) -> Vec<String> {
-    vec![
-        format!(
-            "{bad} of {} aircraft reported low navigation accuracy",
-            good.saturating_add(bad)
-        ),
-        format!("{bad_percent:.1}% over {day} (UTC)"),
-    ]
-}
 
 /// The query metric's documentation body, composed from the shared caveats.
 pub static QUERY_DOC: LazyLock<String> = LazyLock::new(|| {

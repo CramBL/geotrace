@@ -3,22 +3,6 @@
 use chrono::Duration;
 use strum::EnumIter;
 
-/// Longest association window the footer offers, in nanoseconds: one year, past
-/// any clock offset a log and a recording could plausibly have.
-const MAX_ASSOCIATION_WINDOW_NANOS: f64 = 365.0 * 24.0 * 60.0 * 60.0 * 1e9;
-
-/// Decimals a window is written to in a hover text. Two are enough to
-/// distinguish one association window from another without spelling out a
-/// repeating fraction.
-const DESCRIBED_DECIMALS: usize = 2;
-
-const NANOS_PER_MICROSECOND: f64 = 1e3;
-const NANOS_PER_MILLISECOND: f64 = 1e6;
-const NANOS_PER_SECOND: f64 = 1e9;
-const NANOS_PER_MINUTE: f64 = 60.0 * NANOS_PER_SECOND;
-const NANOS_PER_HOUR: f64 = 60.0 * NANOS_PER_MINUTE;
-const NANOS_PER_DAY: f64 = 24.0 * NANOS_PER_HOUR;
-
 /// The unit an association window is written in. A log from a device whose
 /// clock drifted against its recording needs a window in minutes or hours. One
 /// checked against the fix rate needs milliseconds.
@@ -83,6 +67,22 @@ impl AssociationWindowUnit {
         format!("{value}{}", self.label())
     }
 }
+
+/// Longest association window the footer offers, in nanoseconds: one year, past
+/// any clock offset a log and a recording could plausibly have.
+const MAX_ASSOCIATION_WINDOW_NANOS: f64 = 365.0 * 24.0 * 60.0 * 60.0 * 1e9;
+
+/// Decimals a window is written to in a hover text. Two are enough to
+/// distinguish one association window from another without spelling out a
+/// repeating fraction.
+const DESCRIBED_DECIMALS: usize = 2;
+
+const NANOS_PER_MICROSECOND: f64 = 1e3;
+const NANOS_PER_MILLISECOND: f64 = 1e6;
+const NANOS_PER_SECOND: f64 = 1e9;
+const NANOS_PER_MINUTE: f64 = 60.0 * NANOS_PER_SECOND;
+const NANOS_PER_HOUR: f64 = 60.0 * NANOS_PER_MINUTE;
+const NANOS_PER_DAY: f64 = 24.0 * NANOS_PER_HOUR;
 
 #[cfg(test)]
 mod tests {

@@ -31,35 +31,6 @@ use crate::icon_mesh::{IconId, IconInstance, IconMeshBatch, IconMeshLibrary};
 use crate::text_badge::{BadgePlateHeight, TextBadge};
 use crate::transform::MapScale;
 
-/// Local on-screen fix spacing, in units of the icon size, at which a fix
-/// icon is fully opaque (`HI`) respectively fully transparent (`LO`).
-/// Between the two, the icon crossfades with the continuous quality line.
-///
-/// Icons are deliberately kept while they merely overlap - partially
-/// overlapping arrows are still readable. Fading starts only below half an
-/// icon size of spacing and completes when neighbouring arrows share almost
-/// all of their pixels, at which point skipping them also keeps the
-/// tessellated vertex count bounded by screen content.
-///
-/// The spacing is measured per fix (see [`local_fix_spacing_px`]), not per
-/// track, so a parked phase fades out without dragging down the rest of the
-/// track.
-const ICON_FADE_HI_SPACING_FACTOR: f32 = 0.5;
-const ICON_FADE_LO_SPACING_FACTOR: f32 = 0.2;
-
-/// Absolute floors for the fade band, in pixels. At low zoom the proportional
-/// thresholds collapse below one pixel of spacing, where packed icons are
-/// already unreadable and better replaced by the quality line. Fading completes
-/// below [`ICON_FADE_LO_MIN_SPACING_PX`] and starts below
-/// [`ICON_FADE_HI_MIN_SPACING_PX`]. The HI floor exceeding the LO floor keeps
-/// the band non-empty for any icon size.
-const ICON_FADE_LO_MIN_SPACING_PX: f32 = 2.0;
-const ICON_FADE_HI_MIN_SPACING_PX: f32 = 5.0;
-
-/// How far past the map rect the icon of a fix reaches into it. A fix drawn
-/// this far outside paints part of its icon inside the rect.
-const ICON_VIEW_MARGIN_PX: f32 = 50.0;
-
 /// What the icon pass culls a fix against: `map_rect` grown by
 /// [`ICON_VIEW_MARGIN_PX`], so an icon whose shape crosses the edge draws.
 /// [`crate::viewport::collect_visible_points`] queries the fixes of this rect.
@@ -67,85 +38,16 @@ pub(crate) fn icon_cull_rect(map_rect: egui::Rect) -> egui::Rect {
     map_rect.expand(ICON_VIEW_MARGIN_PX)
 }
 
-/// Number of discrete opacity steps for the quality line's crossfade.
-/// Per-point line alphas are quantized to this many levels so that long
-/// stretches share one key and stay mergeable into single polyline spans.
-const QUALITY_LINE_ALPHA_STEPS: u8 = 3;
-
-/// Side length, corner rounding, and inset of the constellation colour swatch
-/// shown before a satellite-table header.
-const SWATCH_SIZE_PX: f32 = 10.0;
-const SWATCH_ROUNDING_PX: f32 = 2.0;
-const SWATCH_MARGIN_PX: f32 = 1.0;
-
-/// Size of the solid fold triangle. Big enough to show its constellation
-/// tint, the colour key to the plot's marks.
-const FOLD_ARROW_SIZE_PX: f32 = 9.0;
-
-/// Box the fold triangle is allocated in, leaving a little air around it.
-const FOLD_ARROW_BOX_PX: f32 = 12.0;
-
-/// Gap between the sticky popup's plot column and its satellite column, and
-/// between the two satellite columns.
-const STICKY_COLUMN_GAP_PX: f32 = 12.0;
-
-/// Width a satellite column occupies: its PRN, SNR and fix-mark cells laid
-/// out at the default text size. Both width thresholds below are derived from
-/// it, so retuning a column only needs changing here.
-const MIN_SATELLITE_COLUMN_WIDTH_PX: f32 = 140.0;
-
-/// Width the satellite area needs before it splits into two columns - two
-/// readable columns and the gap between them. Below it the constellations
-/// stack in one column.
-const MIN_TWO_COLUMN_WIDTH_PX: f32 = 2.0 * MIN_SATELLITE_COLUMN_WIDTH_PX + STICKY_COLUMN_GAP_PX;
-
-/// Width the window needs to put the sky plot beside the satellite tables:
-/// the full plot's own diameter, the column gap, and enough left for a
-/// readable table. Narrower than this the plot stacks above them instead.
-const MIN_SIDE_BY_SIDE_WIDTH_PX: f32 =
-    SkyPlotSize::Full.diameter() + STICKY_COLUMN_GAP_PX + MIN_SATELLITE_COLUMN_WIDTH_PX;
-
-/// Rows a constellation panel costs beyond its satellites: its own header plus
-/// the PRN/SNR/Fix header row. Counted so a one-satellite constellation is not
-/// treated as free when balancing the columns.
-const PANEL_HEADER_ROWS: usize = 2;
-
-/// Rows a folded constellation panel costs - just its own header.
-const FOLDED_PANEL_ROWS: usize = 1;
-
-/// Stroke width of the continuous fix-quality line that replaces the fix
-/// icons when they fade out - slightly thicker than the 3 px trackline
-/// underneath so the quality colors stay readable on top of it.
-pub(crate) const QUALITY_LINE_WIDTH: f32 = 5.0;
-
-/// Accuracy circles with a smaller pixel radius than this are skipped - they
-/// would be invisible at that size.
-const MIN_ACCURACY_CIRCLE_RADIUS_PX: f32 = 2.0;
-
-/// An accuracy circle smaller than this fraction of the directional icon's
-/// size is entirely covered by the icon, so drawing it is wasted geometry.
-const ACCURACY_CIRCLE_MIN_VISIBLE_FACTOR: f32 = 0.5;
-
-const ACCURACY_CIRCLE_FILL: Color32 = Color32::from_rgba_unmultiplied_const(30, 120, 255, 20);
-const ACCURACY_CIRCLE_STROKE: Color32 = Color32::from_rgba_unmultiplied_const(30, 120, 255, 60);
-const ACCURACY_CIRCLE_STROKE_WIDTH_PX: f32 = 1.0;
-
-/// Fix-quality palette shared by the per-fix icons and the continuous
-/// quality line.
-const FIX_STRONG_BLUE: Color32 = Color32::from_rgb(66, 133, 244);
-const FIX_MARGINAL_YELLOW: Color32 = Color32::from_rgb(244, 180, 0);
-const FIX_LOST_RED: Color32 = Color32::from_rgb(219, 68, 55);
-
 /// Why the map draws a fix as a hollow chevron where the track builder
 /// placed it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ChevronFix {
-    /// The receiver dead-reckoned the fix: it reported no heading, or nothing
-    /// in fix. See [`NavPoint::is_ghost_fix`].
-    DeadReckoned,
     /// No position recorded for this fix: the receiver wrote a latitude or a
     /// longitude outside its range.
     CoordinateOutOfRange,
+    /// The receiver dead-reckoned the fix: it reported no heading, or nothing
+    /// in fix. See [`NavPoint::is_ghost_fix`].
+    DeadReckoned,
 }
 
 impl ChevronFix {
@@ -394,11 +296,11 @@ fn draw_accuracy_circles(
 
 /// The sky column of the hover badge.
 pub(crate) enum SkySection<'a> {
-    /// The point's own satellite report, or one borrowed from a nearby point.
-    Report(NearestSatelliteReport<'a>),
     /// The track has satellite reports, but none within the age window of
     /// this point.
     NoReportNearby,
+    /// The point's own satellite report, or one borrowed from a nearby point.
+    Report(NearestSatelliteReport<'a>),
     /// The track carries no satellite reports at all, so the badge has no
     /// sky column.
     TrackWithoutReports,
@@ -1251,17 +1153,6 @@ pub(crate) struct TpvDrawStyle {
     pub(crate) icon_alpha: f32,
 }
 
-/// Zoom range over which the fix icons scale from dot size up to their
-/// full design size: dots at low zoom keep dense clusters from blending
-/// into a solid mass.
-const ICON_MIN_SIZE_ZOOM: f64 = 12.0;
-const ICON_MAX_SIZE_ZOOM: f64 = 18.0;
-
-/// Fix-icon size at [`ICON_MIN_SIZE_ZOOM`] and below respectively
-/// [`ICON_MAX_SIZE_ZOOM`] and above.
-const MIN_ARROW_SIZE_PX: f32 = 3.0;
-const MAX_ARROW_SIZE_PX: f32 = 12.0;
-
 /// Zoom interpolation factor for icon sizing: 0.0 at
 /// [`ICON_MIN_SIZE_ZOOM`] and below, 1.0 at [`ICON_MAX_SIZE_ZOOM`] and
 /// above, linear in between.
@@ -1557,14 +1448,14 @@ fn tpv_point_color(point: &NavPoint) -> Color32 {
 /// Classifies a GPS point for a single render pass, carrying everything the
 /// draw step needs so `render_track` only matches `heading()` once.
 enum PointKind {
-    /// Real GPS fix - heading known, precomputed Mercator coordinates used.
-    Real { color: Color32, heading: Angle },
     /// A fix drawn where the track builder placed it, see [`ChevronFix`].
     ///
     /// `direction` is a normalised screen-space vector pointing in the inferred
     /// travel direction. When the GPS reported a heading it is converted directly,
     /// otherwise it is derived from the surrounding fixes' Mercator positions.
     Chevron { direction: Vec2, fix: ChevronFix },
+    /// Real GPS fix - heading known, precomputed Mercator coordinates used.
+    Real { color: Color32, heading: Angle },
 }
 
 /// Compute the travel direction for a chevron from its neighbouring Mercator positions.
@@ -1721,6 +1612,125 @@ fn draw_navigation_arrow(
     }
 }
 
+#[inline]
+fn alpha_u8(alpha: f32) -> u8 {
+    #[expect(
+        clippy::cast_sign_loss,
+        reason = "value is clamped to [0.0,1.0] so the product is always non-negative"
+    )]
+    let v = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
+    v
+}
+
+/// Local on-screen fix spacing, in units of the icon size, at which a fix
+/// icon is fully opaque (`HI`) respectively fully transparent (`LO`).
+/// Between the two, the icon crossfades with the continuous quality line.
+///
+/// Icons are deliberately kept while they merely overlap - partially
+/// overlapping arrows are still readable. Fading starts only below half an
+/// icon size of spacing and completes when neighbouring arrows share almost
+/// all of their pixels, at which point skipping them also keeps the
+/// tessellated vertex count bounded by screen content.
+///
+/// The spacing is measured per fix (see [`local_fix_spacing_px`]), not per
+/// track, so a parked phase fades out without dragging down the rest of the
+/// track.
+const ICON_FADE_HI_SPACING_FACTOR: f32 = 0.5;
+const ICON_FADE_LO_SPACING_FACTOR: f32 = 0.2;
+
+/// Absolute floors for the fade band, in pixels. At low zoom the proportional
+/// thresholds collapse below one pixel of spacing, where packed icons are
+/// already unreadable and better replaced by the quality line. Fading completes
+/// below [`ICON_FADE_LO_MIN_SPACING_PX`] and starts below
+/// [`ICON_FADE_HI_MIN_SPACING_PX`]. The HI floor exceeding the LO floor keeps
+/// the band non-empty for any icon size.
+const ICON_FADE_LO_MIN_SPACING_PX: f32 = 2.0;
+const ICON_FADE_HI_MIN_SPACING_PX: f32 = 5.0;
+
+/// How far past the map rect the icon of a fix reaches into it. A fix drawn
+/// this far outside paints part of its icon inside the rect.
+const ICON_VIEW_MARGIN_PX: f32 = 50.0;
+
+/// Number of discrete opacity steps for the quality line's crossfade.
+/// Per-point line alphas are quantized to this many levels so that long
+/// stretches share one key and stay mergeable into single polyline spans.
+const QUALITY_LINE_ALPHA_STEPS: u8 = 3;
+
+/// Side length, corner rounding, and inset of the constellation colour swatch
+/// shown before a satellite-table header.
+const SWATCH_SIZE_PX: f32 = 10.0;
+const SWATCH_ROUNDING_PX: f32 = 2.0;
+const SWATCH_MARGIN_PX: f32 = 1.0;
+
+/// Size of the solid fold triangle. Big enough to show its constellation
+/// tint, the colour key to the plot's marks.
+const FOLD_ARROW_SIZE_PX: f32 = 9.0;
+
+/// Box the fold triangle is allocated in, leaving a little air around it.
+const FOLD_ARROW_BOX_PX: f32 = 12.0;
+
+/// Gap between the sticky popup's plot column and its satellite column, and
+/// between the two satellite columns.
+const STICKY_COLUMN_GAP_PX: f32 = 12.0;
+
+/// Width a satellite column occupies: its PRN, SNR and fix-mark cells laid
+/// out at the default text size. Both width thresholds below are derived from
+/// it, so retuning a column only needs changing here.
+const MIN_SATELLITE_COLUMN_WIDTH_PX: f32 = 140.0;
+
+/// Width the satellite area needs before it splits into two columns - two
+/// readable columns and the gap between them. Below it the constellations
+/// stack in one column.
+const MIN_TWO_COLUMN_WIDTH_PX: f32 = 2.0 * MIN_SATELLITE_COLUMN_WIDTH_PX + STICKY_COLUMN_GAP_PX;
+
+/// Width the window needs to put the sky plot beside the satellite tables:
+/// the full plot's own diameter, the column gap, and enough left for a
+/// readable table. Narrower than this the plot stacks above them instead.
+const MIN_SIDE_BY_SIDE_WIDTH_PX: f32 =
+    SkyPlotSize::Full.diameter() + STICKY_COLUMN_GAP_PX + MIN_SATELLITE_COLUMN_WIDTH_PX;
+
+/// Rows a constellation panel costs beyond its satellites: its own header plus
+/// the PRN/SNR/Fix header row. Counted so a one-satellite constellation is not
+/// treated as free when balancing the columns.
+const PANEL_HEADER_ROWS: usize = 2;
+
+/// Rows a folded constellation panel costs - just its own header.
+const FOLDED_PANEL_ROWS: usize = 1;
+
+/// Stroke width of the continuous fix-quality line that replaces the fix
+/// icons when they fade out - slightly thicker than the 3 px trackline
+/// underneath so the quality colors stay readable on top of it.
+pub(crate) const QUALITY_LINE_WIDTH: f32 = 5.0;
+
+/// Accuracy circles with a smaller pixel radius than this are skipped - they
+/// would be invisible at that size.
+const MIN_ACCURACY_CIRCLE_RADIUS_PX: f32 = 2.0;
+
+/// An accuracy circle smaller than this fraction of the directional icon's
+/// size is entirely covered by the icon, so drawing it is wasted geometry.
+const ACCURACY_CIRCLE_MIN_VISIBLE_FACTOR: f32 = 0.5;
+
+const ACCURACY_CIRCLE_FILL: Color32 = Color32::from_rgba_unmultiplied_const(30, 120, 255, 20);
+const ACCURACY_CIRCLE_STROKE: Color32 = Color32::from_rgba_unmultiplied_const(30, 120, 255, 60);
+const ACCURACY_CIRCLE_STROKE_WIDTH_PX: f32 = 1.0;
+
+/// Fix-quality palette shared by the per-fix icons and the continuous
+/// quality line.
+const FIX_STRONG_BLUE: Color32 = Color32::from_rgb(66, 133, 244);
+const FIX_MARGINAL_YELLOW: Color32 = Color32::from_rgb(244, 180, 0);
+const FIX_LOST_RED: Color32 = Color32::from_rgb(219, 68, 55);
+
+/// Zoom range over which the fix icons scale from dot size up to their
+/// full design size: dots at low zoom keep dense clusters from blending
+/// into a solid mass.
+const ICON_MIN_SIZE_ZOOM: f64 = 12.0;
+const ICON_MAX_SIZE_ZOOM: f64 = 18.0;
+
+/// Fix-icon size at [`ICON_MIN_SIZE_ZOOM`] and below respectively
+/// [`ICON_MAX_SIZE_ZOOM`] and above.
+const MIN_ARROW_SIZE_PX: f32 = 3.0;
+const MAX_ARROW_SIZE_PX: f32 = 12.0;
+
 /// Height of a satellite-count label.
 const SAT_LABEL_FONT_PX: f32 = 12.0;
 
@@ -1731,16 +1741,6 @@ const SAT_LABEL_CORNER_RADIUS_PT: f32 = 2.0;
 /// Fill behind a satellite-count label, dark enough for white digits over the
 /// track line and over the tiles.
 const SAT_LABEL_PLATE_FILL: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 160);
-
-#[inline]
-fn alpha_u8(alpha: f32) -> u8 {
-    #[expect(
-        clippy::cast_sign_loss,
-        reason = "value is clamped to [0.0,1.0] so the product is always non-negative"
-    )]
-    let v = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
-    v
-}
 
 #[cfg(test)]
 mod tests;

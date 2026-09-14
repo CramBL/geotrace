@@ -413,70 +413,6 @@ pub(super) fn loaded_channels<'a>(
         .collect()
 }
 
-/// The chip groups always shown, in row order.
-const BASIC_GROUPS: [&[MetricKind]; 2] = [
-    // Summary metrics (total satellite counts, velocity, EPH, heading, clock delta).
-    &[
-        MetricKind::SatsSeen,
-        MetricKind::SatsFix,
-        MetricKind::Velocity,
-        MetricKind::Eph,
-        MetricKind::SnapError,
-        MetricKind::HeadingDeg,
-        MetricKind::ClockDeltaMs,
-    ],
-    // Per-constellation satellite counts.  Chips for a constellation
-    // absent from the loaded data are skipped by `chip_group`.
-    &[
-        MetricKind::GpsSeen,
-        MetricKind::GpsFix,
-        MetricKind::GlonassSeen,
-        MetricKind::GlonassFix,
-        MetricKind::GalileoSeen,
-        MetricKind::GalileoFix,
-        MetricKind::BeidouSeen,
-        MetricKind::BeidouFix,
-        MetricKind::NavicSeen,
-        MetricKind::NavicFix,
-        MetricKind::QzssSeen,
-        MetricKind::QzssFix,
-    ],
-];
-
-/// The Environment group: phenomena around the receiver, downloaded from an
-/// archive for the days in view. The solar flare chip closes the group and
-/// carries no [`MetricKind`], so it is not listed here.
-const ENVIRONMENT_GROUP: &[MetricKind] = &[
-    MetricKind::Jamming,
-    MetricKind::Kp,
-    MetricKind::Hp30,
-    MetricKind::Tec,
-];
-
-/// The chip groups shown only while the advanced section is open.
-const ADVANCED_GROUPS: [&[MetricKind]; 2] = [
-    // Satellite utilization rate.
-    &[
-        MetricKind::UtilAll,
-        MetricKind::UtilGps,
-        MetricKind::UtilGlonass,
-        MetricKind::UtilGalileo,
-        MetricKind::UtilBeidou,
-        MetricKind::UtilNavic,
-        MetricKind::UtilQzss,
-    ],
-    // Loss-of-lock (slip) rate.
-    &[
-        MetricKind::SlipAll,
-        MetricKind::SlipGps,
-        MetricKind::SlipGlonass,
-        MetricKind::SlipGalileo,
-        MetricKind::SlipBeidou,
-        MetricKind::SlipNavic,
-        MetricKind::SlipQzss,
-    ],
-];
-
 /// Which data-backed metrics have values for the visible tracks. Their
 /// chips stay visible and disabled without them, per DESIGN.md.
 #[derive(Debug, Clone, Copy)]
@@ -563,13 +499,6 @@ pub(super) struct FlareChipState<'a> {
     pub(super) available: bool,
 }
 
-/// Why the flare chip is disabled. Never hidden, per DESIGN.md.
-const NO_ARCHIVED_FLARES: &str = "No solar flares are archived for the days in view";
-
-/// The span-shading toggle in the flare chip's context menu.
-const ALWAYS_SHOW_SPANS: &str = "Always show each flare's span";
-const ALWAYS_SHOW_SPANS_HOVER: &str = "Shade every flare's active time";
-
 /// The flare markers' toggle: the metric chip's look, with a context menu
 /// holding the span-shading setting.
 ///
@@ -628,8 +557,8 @@ pub(super) struct SectionGates {
 /// line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum HoveredChip {
-    Metric(MetricKind),
     Channel(String),
+    Metric(MetricKind),
     SolarFlare,
 }
 /// Render one separator-delimited group of metric chips, folding any
@@ -1064,24 +993,6 @@ fn chip_button(
     (show_only, response)
 }
 
-/// Height of the component color bars along a channel chip's bottom edge.
-const CHIP_BAR_HEIGHT: f32 = 3.0;
-
-/// Gap between adjacent component color bars, in points.
-const CHIP_BAR_GAP: f32 = 1.0;
-
-/// Corner radius of one component bar - subtler than the chip's 4.0, a bar
-/// is only [`CHIP_BAR_HEIGHT`] tall.
-const CHIP_BAR_CORNER_RADIUS: f32 = 1.0;
-
-/// Alpha of the component bars on a disabled chip. Stronger than the chip
-/// fill's 0.12: the bars are a few pixels tall and vanish entirely at the
-/// fill's dimming, and they are the only place the component colors show.
-const CHIP_BAR_DISABLED_ALPHA: f32 = 0.25;
-
-/// Side of one color square in the chip's hover legend, in points.
-const LEGEND_SQUARE_SIZE: f32 = 10.0;
-
 /// A channel's chip: the metric chip extended with a bar strip along the
 /// bottom edge, one bar per component in that component's line color - the
 /// legend for a vector channel's x/y/z hues.
@@ -1188,16 +1099,101 @@ fn channel_chip(
     (show_only, hovered)
 }
 
+/// The chip groups always shown, in row order.
+const BASIC_GROUPS: [&[MetricKind]; 2] = [
+    // Summary metrics (total satellite counts, velocity, EPH, heading, clock delta).
+    &[
+        MetricKind::SatsSeen,
+        MetricKind::SatsFix,
+        MetricKind::Velocity,
+        MetricKind::Eph,
+        MetricKind::SnapError,
+        MetricKind::HeadingDeg,
+        MetricKind::ClockDeltaMs,
+    ],
+    // Per-constellation satellite counts.  Chips for a constellation
+    // absent from the loaded data are skipped by `chip_group`.
+    &[
+        MetricKind::GpsSeen,
+        MetricKind::GpsFix,
+        MetricKind::GlonassSeen,
+        MetricKind::GlonassFix,
+        MetricKind::GalileoSeen,
+        MetricKind::GalileoFix,
+        MetricKind::BeidouSeen,
+        MetricKind::BeidouFix,
+        MetricKind::NavicSeen,
+        MetricKind::NavicFix,
+        MetricKind::QzssSeen,
+        MetricKind::QzssFix,
+    ],
+];
+
+/// The Environment group: phenomena around the receiver, downloaded from an
+/// archive for the days in view. The solar flare chip closes the group and
+/// carries no [`MetricKind`], so it is not listed here.
+const ENVIRONMENT_GROUP: &[MetricKind] = &[
+    MetricKind::Jamming,
+    MetricKind::Kp,
+    MetricKind::Hp30,
+    MetricKind::Tec,
+];
+
+/// The chip groups shown only while the advanced section is open.
+const ADVANCED_GROUPS: [&[MetricKind]; 2] = [
+    // Satellite utilization rate.
+    &[
+        MetricKind::UtilAll,
+        MetricKind::UtilGps,
+        MetricKind::UtilGlonass,
+        MetricKind::UtilGalileo,
+        MetricKind::UtilBeidou,
+        MetricKind::UtilNavic,
+        MetricKind::UtilQzss,
+    ],
+    // Loss-of-lock (slip) rate.
+    &[
+        MetricKind::SlipAll,
+        MetricKind::SlipGps,
+        MetricKind::SlipGlonass,
+        MetricKind::SlipGalileo,
+        MetricKind::SlipBeidou,
+        MetricKind::SlipNavic,
+        MetricKind::SlipQzss,
+    ],
+];
+
+/// Why the flare chip is disabled. Never hidden, per DESIGN.md.
+const NO_ARCHIVED_FLARES: &str = "No solar flares are archived for the days in view";
+
+/// The span-shading toggle in the flare chip's context menu.
+const ALWAYS_SHOW_SPANS: &str = "Always show each flare's span";
+const ALWAYS_SHOW_SPANS_HOVER: &str = "Shade every flare's active time";
+
+/// Height of the component color bars along a channel chip's bottom edge.
+const CHIP_BAR_HEIGHT: f32 = 3.0;
+
+/// Gap between adjacent component color bars, in points.
+const CHIP_BAR_GAP: f32 = 1.0;
+
+/// Corner radius of one component bar - subtler than the chip's 4.0, a bar
+/// is only [`CHIP_BAR_HEIGHT`] tall.
+const CHIP_BAR_CORNER_RADIUS: f32 = 1.0;
+
+/// Alpha of the component bars on a disabled chip. Stronger than the chip
+/// fill's 0.12: the bars are a few pixels tall and vanish entirely at the
+/// fill's dimming, and they are the only place the component colors show.
+const CHIP_BAR_DISABLED_ALPHA: f32 = 0.25;
+
+/// Side of one color square in the chip's hover legend, in points.
+const LEGEND_SQUARE_SIZE: f32 = 10.0;
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
 
     use super::*;
     use crate::plot_widget::style::CHANNEL_PALETTE;
-
-    /// The formatted baseline of the visible recording whose clock offset the
-    /// shared y-axis cannot show.
-    const OFF_SCALE_BASELINE: &str = "+491h5m";
 
     /// The chip row over one off-scale recording, for the label and hover
     /// cases below.
@@ -1422,4 +1418,8 @@ mod tests {
         assert!(missing.is_empty(), "no chip for {missing:?}");
         assert_eq!(seen.len(), <MetricKind as strum::EnumCount>::COUNT);
     }
+
+    /// The formatted baseline of the visible recording whose clock offset the
+    /// shared y-axis cannot show.
+    const OFF_SCALE_BASELINE: &str = "+491h5m";
 }

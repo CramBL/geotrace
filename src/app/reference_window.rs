@@ -4,9 +4,6 @@
 //! One document is shown at a time. Opening another replaces it, so the
 //! reference material never stacks up in windows the reader has to close.
 
-#[cfg(test)]
-mod tests;
-
 use std::collections::HashMap;
 
 use egui::{Grid, Label, RichText, ScrollArea, Window};
@@ -18,54 +15,6 @@ use gt_ui_types::reference::{
 };
 
 use crate::app::query;
-
-/// Wide enough to lay an illustration frame out at its own pixel width, where
-/// the temperature scale drawn into it stays legible.
-const DEFAULT_WINDOW_SIZE: egui::Vec2 = egui::vec2(1080.0, 720.0);
-
-/// The narrowest the window goes, wide enough for the tables to render
-/// without clipping: their columns have a width of their own and the window
-/// scrolls vertically only.
-const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(680.0, 320.0);
-
-const BLOCK_SPACING: f32 = 10.0;
-
-/// Space above and below a display equation, on top of [`BLOCK_SPACING`], so
-/// it stands clear of the prose it sits between.
-const EQUATION_SPACING: f32 = 12.0;
-
-/// Equation assets are rendered at twice the size the window draws them at, so
-/// their glyphs stay sharp on a high-dpi display.
-const EQUATION_ASSET_SCALE: f32 = 2.0;
-
-/// Width a wrapping table column lays its cells out in, wide enough for the
-/// longest quotation to take two lines.
-const WRAPPING_COLUMN_WIDTH: f32 = 380.0;
-
-/// Width a paragraph wraps at, short of the width an illustration frame
-/// renders at, past which a line of prose is hard to follow back to the next.
-const PROSE_MAX_WIDTH: f32 = 760.0;
-
-/// Padding around the query text inside its code background.
-const QUERY_BLOCK_MARGIN: egui::Margin = egui::Margin::symmetric(6, 3);
-
-/// Space above and below a quotation, on top of [`BLOCK_SPACING`], and how
-/// far it is indented past the prose it sits between.
-const QUOTATION_SPACING: f32 = 6.0;
-const QUOTATION_INDENT: i8 = 12;
-
-/// The rule drawn down the indent, which is what sets the quotation off from
-/// the prose.
-const QUOTATION_RULE_WIDTH: f32 = 2.0;
-
-/// Raised comma written between two adjacent citation numbers.
-const CITATION_SEPARATOR: &str = ",";
-
-/// The dots of an abbreviation's underline: how far apart they sit, how big
-/// they are, and how far above the bottom of the text row they run.
-const UNDERLINE_DOT_SPACING: f32 = 3.0;
-const UNDERLINE_DOT_RADIUS: f32 = 0.6;
-const UNDERLINE_RISE_FROM_ROW_BOTTOM: f32 = 3.0;
 
 /// What an image needs doing to it before it is uploaded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,9 +32,9 @@ enum ImagePreparation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProseStyle {
     Body,
+    Caption,
     Heading,
     Label,
-    Caption,
     Quotation,
 }
 
@@ -449,3 +398,54 @@ fn decode_image(asset: ReferenceImage) -> Option<egui::ColorImage> {
         decoded.as_raw(),
     ))
 }
+
+/// Wide enough to lay an illustration frame out at its own pixel width, where
+/// the temperature scale drawn into it stays legible.
+const DEFAULT_WINDOW_SIZE: egui::Vec2 = egui::vec2(1080.0, 720.0);
+
+/// The narrowest the window goes, wide enough for the tables to render
+/// without clipping: their columns have a width of their own and the window
+/// scrolls vertically only.
+const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(680.0, 320.0);
+
+const BLOCK_SPACING: f32 = 10.0;
+
+/// Space above and below a display equation, on top of [`BLOCK_SPACING`], so
+/// it stands clear of the prose it sits between.
+const EQUATION_SPACING: f32 = 12.0;
+
+/// Equation assets are rendered at twice the size the window draws them at, so
+/// their glyphs stay sharp on a high-dpi display.
+const EQUATION_ASSET_SCALE: f32 = 2.0;
+
+/// Width a wrapping table column lays its cells out in, wide enough for the
+/// longest quotation to take two lines.
+const WRAPPING_COLUMN_WIDTH: f32 = 380.0;
+
+/// Width a paragraph wraps at, short of the width an illustration frame
+/// renders at, past which a line of prose is hard to follow back to the next.
+const PROSE_MAX_WIDTH: f32 = 760.0;
+
+/// Padding around the query text inside its code background.
+const QUERY_BLOCK_MARGIN: egui::Margin = egui::Margin::symmetric(6, 3);
+
+/// Space above and below a quotation, on top of [`BLOCK_SPACING`], and how
+/// far it is indented past the prose it sits between.
+const QUOTATION_SPACING: f32 = 6.0;
+const QUOTATION_INDENT: i8 = 12;
+
+/// The rule drawn down the indent, which is what sets the quotation off from
+/// the prose.
+const QUOTATION_RULE_WIDTH: f32 = 2.0;
+
+/// Raised comma written between two adjacent citation numbers.
+const CITATION_SEPARATOR: &str = ",";
+
+/// The dots of an abbreviation's underline: how far apart they sit, how big
+/// they are, and how far above the bottom of the text row they run.
+const UNDERLINE_DOT_SPACING: f32 = 3.0;
+const UNDERLINE_DOT_RADIUS: f32 = 0.6;
+const UNDERLINE_RISE_FROM_ROW_BOTTOM: f32 = 3.0;
+
+#[cfg(test)]
+mod tests;

@@ -435,18 +435,6 @@ mod tests {
         MIN_GRID_SPACING_POINTS, MINUTE_SECS, MONTHS_PER_YEAR, TimeAxisBandRow, TimeAxisFrame,
     };
 
-    /// Plot width in points, the width a track plot has on a desktop window.
-    const PLOT_WIDTH_POINTS: f32 = 960.0;
-
-    /// 2024-01-15 12:00:00 UTC, where every view below starts.
-    const VIEW_START_SECS: f64 = 1_705_320_000.0;
-
-    /// 2024-01-16 00:00:00 UTC, the one day boundary a view of a day and a half holds.
-    const MIDNIGHT_SECS: f64 = VIEW_START_SECS + 12.0 * HOUR_SECS;
-
-    /// 2024-02-01 00:00:00 UTC.
-    const FEBRUARY_SECS: f64 = 1_706_745_600.0;
-
     /// A label of seven points per character, roughly the width of a digit in the plot's body
     /// font.
     fn label_width(text: &str) -> f32 {
@@ -674,4 +662,16 @@ mod tests {
 
         assert_eq!(row, TimeAxisBandRow::default());
     }
+
+    /// Plot width in points, the width a track plot has on a desktop window.
+    const PLOT_WIDTH_POINTS: f32 = 960.0;
+
+    /// 2024-01-15 12:00:00 UTC, where every view starts.
+    const VIEW_START_SECS: f64 = 1_705_320_000.0;
+
+    /// 2024-01-16 00:00:00 UTC, the one day boundary a view of a day and a half holds.
+    const MIDNIGHT_SECS: f64 = VIEW_START_SECS + 12.0 * HOUR_SECS;
+
+    /// 2024-02-01 00:00:00 UTC.
+    const FEBRUARY_SECS: f64 = 1_706_745_600.0;
 }

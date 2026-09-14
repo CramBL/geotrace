@@ -192,9 +192,6 @@ mod tests {
     use super::*;
     use gt_types::coordinates::{Latitude, Longitude};
 
-    const TOLERANCE_KM: f64 = 0.5;
-    const TOLERANCE_M: f64 = 500.0;
-
     fn lat(v: f64) -> Latitude {
         Latitude::new(v)
     }
@@ -343,4 +340,7 @@ mod tests {
 
         assert_eq!(midpoint, position);
     }
+
+    const TOLERANCE_KM: f64 = 0.5;
+    const TOLERANCE_M: f64 = 500.0;
 }

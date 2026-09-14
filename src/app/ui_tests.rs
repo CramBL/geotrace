@@ -156,14 +156,6 @@ fn load_three_overlapping_files(harness: &mut Harness<App>) {
     }
 }
 
-/// A demo-trip query with more matches than the matches table lists at once,
-/// each of them holding rows for the points table below it.
-const MANY_MATCH_QUERY: &str = "points | where accel < -0.2 m/s2";
-
-/// The query window's title, which both its area and its accesskit node are
-/// addressed by.
-const QUERY_WINDOW_TITLE: &str = "Query";
-
 /// The query window's button moving the matches list into a window of its own.
 /// The side panel offers the same icon, so this looks only in the query window.
 fn pop_out_button<'h>(harness: &'h Harness<'_, App>) -> egui_kittest::Node<'h> {
@@ -237,10 +229,6 @@ fn key_press(key: egui::Key) -> egui::Event {
         modifiers: egui::Modifiers::NONE,
     }
 }
-
-/// The fixture stretches whose `accel` x-component exceeds 1 g, shared by the
-/// value generation and the expected-match assertion so they cannot drift.
-const ACCEL_HIGH_RANGES: [std::ops::Range<usize>; 2] = [60..120, 180..200];
 
 /// Synthetic `.gtd` bytes whose track carries an aligned 3-component `accel`
 /// channel in g, one sample per nav fix. The [`ACCEL_HIGH_RANGES`] stretches
@@ -721,3 +709,15 @@ fn open_temporary_history_database(path: &std::path::Path) -> gt_store::Recordin
     use gt_store::HistoryDatabase as _;
     gt_store::Recordings::open_or_create(path).expect("the temporary database opens")
 }
+
+/// A demo-trip query with more matches than the matches table lists at once,
+/// each of them holding rows for the points table below it.
+const MANY_MATCH_QUERY: &str = "points | where accel < -0.2 m/s2";
+
+/// The query window's title, which both its area and its accesskit node are
+/// addressed by.
+const QUERY_WINDOW_TITLE: &str = "Query";
+
+/// The fixture stretches whose `accel` x-component exceeds 1 g, shared by the
+/// value generation and the expected-match assertion so they cannot drift.
+const ACCEL_HIGH_RANGES: [std::ops::Range<usize>; 2] = [60..120, 180..200];

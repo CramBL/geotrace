@@ -8,15 +8,6 @@ use std::{env, fs};
 use gt_icon_tessellate::tessellate;
 use gt_icon_tessellate::{IconTessellation, StrokeWidthUnit};
 
-/// The one asset baked with [StrokeWidthUnit::PhysicalPixels]: the nav arrow
-/// rim keeps the painter path's constant on-screen width across zoom sizes
-/// (see the asset's comment). Everything else scales strokes with the glyph.
-///
-/// build.rs cannot see the crate's `IconId` enumeration, so the stem is a
-/// string here. [main] fails the build if the asset disappears, and the runtime
-/// decode rejects unknown stems, so a rename cannot silently change modes.
-const PHYSICAL_PIXEL_STROKE_STEMS: [&str; 1] = ["nav_arrow"];
-
 fn main() -> Result<(), Box<dyn Error>> {
     let icons_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?).join("../../assets/icons");
     // A directory path makes cargo scan it recursively, so edits, additions,
@@ -65,3 +56,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     fs::write(&out_path, blob)?;
     Ok(())
 }
+
+/// The one asset baked with [StrokeWidthUnit::PhysicalPixels]: the nav arrow
+/// rim keeps the painter path's constant on-screen width across zoom sizes
+/// (see the asset's comment). Everything else scales strokes with the glyph.
+///
+/// build.rs cannot see the crate's `IconId` enumeration, so the stem is a
+/// string here. [main] fails the build if the asset disappears, and the runtime
+/// decode rejects unknown stems, so a rename cannot silently change modes.
+const PHYSICAL_PIXEL_STROKE_STEMS: [&str; 1] = ["nav_arrow"];

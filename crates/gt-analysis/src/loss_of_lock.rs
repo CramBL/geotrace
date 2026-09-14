@@ -19,11 +19,6 @@
 use gt_types::nav_point::NavPoint;
 use gt_types::satellites::{Constellation, SatSample, Satellites, Slip, SlipCause};
 
-/// Seconds per minute, for converting the slip window (minutes) to the seconds
-/// the epoch timestamps are measured in. Public so callers converting in the
-/// opposite direction share the same factor.
-pub const SECS_PER_MIN: f64 = 60.0;
-
 /// Detect the slips at the current report `curr` relative to the previous one
 /// `prev`, under the elevation mask and SNR-drop threshold.
 pub fn slips_between(
@@ -296,6 +291,11 @@ pub fn slip_rate_per_point(
     }
 }
 
+/// Seconds per minute, for converting the slip window (minutes) to the seconds
+/// the epoch timestamps are measured in. Public so callers converting in the
+/// opposite direction share the same factor.
+pub const SECS_PER_MIN: f64 = 60.0;
+
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, Duration, Utc};
@@ -517,13 +517,6 @@ mod tests {
         assert_eq!(rates(&out), vec![1.5]);
     }
 
-    /// Window length of the generated cases, in seconds.
-    const PROPERTY_WINDOW_SECS: f64 = 60.0;
-
-    /// Window length of the generated cases, in minutes - the divisor that
-    /// turns a window count into a rate.
-    const PROPERTY_PER_MIN: f64 = 1.0;
-
     proptest::proptest! {
         /// Every epoch's rate counts exactly the events inside its own
         /// `(t - window, t]` window, whatever order the epochs and the events
@@ -549,15 +542,6 @@ mod tests {
             proptest::prop_assert_eq!(out, expected);
         }
     }
-
-    /// Elevation mask, in degrees.
-    const MASK_DEG: f32 = 15.0;
-
-    /// SNR fall that counts as a slip, in dB-Hz.
-    const SNR_DROP_DB: f32 = 10.0;
-
-    /// Trailing window of the rate, in minutes.
-    const WINDOW_MIN: f32 = 1.0;
 
     /// A GPS satellite in the fix at `elevation_deg` and `snr_db`.
     fn gps(prn: u32, elevation_deg: f32, snr_db: f32) -> Satellite {
@@ -704,4 +688,20 @@ mod tests {
         // Two slips total at the same epoch.
         assert_eq!(s.all, vec![[0.0, 0.0], [1.0, 2.0]]);
     }
+
+    /// Window length of the generated cases, in seconds.
+    const PROPERTY_WINDOW_SECS: f64 = 60.0;
+
+    /// Window length of the generated cases, in minutes - the divisor that
+    /// turns a window count into a rate.
+    const PROPERTY_PER_MIN: f64 = 1.0;
+
+    /// Elevation mask, in degrees.
+    const MASK_DEG: f32 = 15.0;
+
+    /// SNR fall that counts as a slip, in dB-Hz.
+    const SNR_DROP_DB: f32 = 10.0;
+
+    /// Trailing window of the rate, in minutes.
+    const WINDOW_MIN: f32 = 1.0;
 }

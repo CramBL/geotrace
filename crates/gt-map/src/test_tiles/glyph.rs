@@ -2,13 +2,6 @@
 //! of. Labelling a tile needs no font stack and renders the same on every
 //! machine.
 
-pub const WIDTH_PX: usize = 5;
-pub const HEIGHT_PX: usize = 7;
-
-/// Every character [`bitmap`] draws. A label built from anything else loses
-/// that character.
-pub const DRAWABLE_CHARACTERS: &str = "0123456789.-/NSEW ";
-
 /// One entry per pixel row, top row first. Within a row the leftmost pixel is
 /// bit 4 and the rightmost is bit 0.
 pub fn bitmap(character: char) -> Option<[u8; HEIGHT_PX]> {
@@ -69,3 +62,10 @@ pub fn bitmap(character: char) -> Option<[u8; HEIGHT_PX]> {
     };
     Some(rows)
 }
+
+pub const WIDTH_PX: usize = 5;
+pub const HEIGHT_PX: usize = 7;
+
+/// Every character [`bitmap`] draws. A label built from anything else loses
+/// that character.
+pub const DRAWABLE_CHARACTERS: &str = "0123456789.-/NSEW ";

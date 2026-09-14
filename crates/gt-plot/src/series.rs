@@ -7,8 +7,6 @@ use gt_types::LoadedFile;
 use gt_types::satellites::{Constellation, ConstellationSet};
 use uom::si::angle::degree;
 
-const MICROS_PER_SEC: f64 = 1_000_000.0;
-
 /// A track's mipmap series together with the index of the file it belongs to,
 /// which the plot learns only once that file joins the loaded-files list.
 #[derive(Debug, Clone)]
@@ -461,6 +459,8 @@ fn build_track_series(
     }
 }
 
+const MICROS_PER_SEC: f64 = 1_000_000.0;
+
 #[cfg(test)]
 mod tests {
     use geotrace_sdk_units::Unit;
@@ -730,10 +730,6 @@ mod tests {
         .expect("the fixture loads")
     }
 
-    /// Sample target that selects a downsampled level of a run of a few
-    /// hundred samples.
-    const COARSE_TARGET_FOR_A_RUN_OF_HUNDREDS: usize = 8;
-
     #[test]
     fn every_stretch_between_two_backward_steps_is_its_own_run() {
         let file = recording_whose_clock_restarts_at_every_boot();
@@ -821,10 +817,6 @@ mod tests {
              {epoch_gap_ms} ms, peaks are {peaks:?}"
         );
     }
-
-    /// Target sample count that selects the first downsampled level of an
-    /// eight-fix track.
-    const COARSE_TARGET_FOR_AN_EIGHT_FIX_TRACK: usize = 4;
 
     /// A 1 Hz track whose fixes carry `headings`, in degrees. `None` is a ghost
     /// fix: the receiver reported a position but no direction.
@@ -946,4 +938,12 @@ mod tests {
         let series = heading_series(&[Some(10.0), None, None, Some(20.0)]);
         assert_eq!(drawn_values(&series, usize::MAX), [10.0, 20.0]);
     }
+
+    /// Sample target that selects a downsampled level of a run of a few
+    /// hundred samples.
+    const COARSE_TARGET_FOR_A_RUN_OF_HUNDREDS: usize = 8;
+
+    /// Target sample count that selects the first downsampled level of an
+    /// eight-fix track.
+    const COARSE_TARGET_FOR_AN_EIGHT_FIX_TRACK: usize = 4;
 }

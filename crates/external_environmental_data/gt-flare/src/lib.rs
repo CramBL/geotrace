@@ -23,6 +23,9 @@ use std::path::PathBuf;
 
 use chrono::NaiveDate;
 
+pub use class::{FlareClass, FlareClassification, RadioBlackoutClass};
+pub use flare::{MarkedFlare, SolarFlare};
+
 pub mod calendar;
 pub mod class;
 pub mod flare;
@@ -32,22 +35,6 @@ pub mod test_util;
 pub mod text;
 pub mod transport;
 pub mod wire;
-
-pub use class::{FlareClass, FlareClassification, RadioBlackoutClass};
-pub use flare::{MarkedFlare, SolarFlare};
-
-/// Base URL of the default host. Configurable in settings, for a proxy or an
-/// offline copy.
-pub const DEFAULT_BASE_URL: &str = "https://api.nasa.gov";
-
-/// Path of the flare endpoint, appended to the base URL.
-const FLARE_PATH: &str = "/DONKI/FLR";
-
-/// Date format the endpoint's `startDate` and `endDate` parameters take.
-const DATE_FORMAT: &str = "%Y-%m-%d";
-
-/// Replaces the key wherever text that may hold it is written down.
-pub const REDACTED_KEY: &str = gt_fetch::REDACTED_SECRET;
 
 /// The api.nasa.gov key a user registers for and enters in settings, which
 /// every request carries in its query string.
@@ -117,6 +104,30 @@ impl CapturedWindow {
     }
 }
 
+/// Directory holding the captured responses.
+///
+/// Resolved from the crate manifest dir, so it is only meaningful to
+/// development tooling running inside the workspace, never to the shipped
+/// application.
+pub fn captures_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("captures")
+}
+
+/// Base URL of the default host. Configurable in settings, for a proxy or an
+/// offline copy.
+pub const DEFAULT_BASE_URL: &str = "https://api.nasa.gov";
+
+/// Path of the flare endpoint, appended to the base URL.
+const FLARE_PATH: &str = "/DONKI/FLR";
+
+/// Date format the endpoint's `startDate` and `endDate` parameters take.
+const DATE_FORMAT: &str = "%Y-%m-%d";
+
+/// Replaces the key wherever text that may hold it is written down.
+pub const REDACTED_KEY: &str = gt_fetch::REDACTED_SECRET;
+
 /// The captured windows, in the order the manifest lists them.
 pub const CAPTURED_WINDOWS: [CapturedWindow; 3] = [
     CapturedWindow {
@@ -143,17 +154,6 @@ pub const CAPTURED_WINDOWS: [CapturedWindow; 3] = [
 /// File name of the capture manifest written beside the captures, recording
 /// when each window was captured and what the endpoint returned.
 pub const CAPTURE_MANIFEST: &str = "capture.json";
-
-/// Directory holding the captured responses.
-///
-/// Resolved from the crate manifest dir, so it is only meaningful to
-/// development tooling running inside the workspace, never to the shipped
-/// application.
-pub fn captures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("captures")
-}
 
 #[cfg(test)]
 mod tests {

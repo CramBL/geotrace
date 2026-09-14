@@ -12,8 +12,8 @@ use crate::coordinates::{Latitude, Longitude};
 /// which is the width of the band the two sides are told apart across.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SunlitSide {
-    Sunlit,
     Night,
+    Sunlit,
 }
 
 impl SunlitSide {
@@ -25,37 +25,6 @@ impl SunlitSide {
         }
     }
 }
-
-/// Unix seconds of the J2000.0 epoch, 2000-01-01T12:00:00Z, which the solar
-/// coordinates are counted in days from.
-const J2000_UNIX_SECONDS: f64 = 946_728_000.0;
-
-const SECONDS_PER_DAY: f64 = 86_400.0;
-
-const DEGREES_PER_TURN: f64 = 360.0;
-
-/// The Sun's mean longitude, in degrees, at J2000.0 and per day after it.
-const MEAN_LONGITUDE_AT_EPOCH: f64 = 280.460;
-const MEAN_LONGITUDE_PER_DAY: f64 = 0.985_647_4;
-
-/// The Sun's mean anomaly, in degrees, at J2000.0 and per day after it.
-const MEAN_ANOMALY_AT_EPOCH: f64 = 357.528;
-const MEAN_ANOMALY_PER_DAY: f64 = 0.985_600_3;
-
-/// Coefficients, in degrees, of the equation of the centre, which corrects the
-/// mean longitude to the true one.
-const EQUATION_OF_CENTRE_FIRST: f64 = 1.915;
-const EQUATION_OF_CENTRE_SECOND: f64 = 0.020;
-
-/// Obliquity of the ecliptic, in degrees, at J2000.0 and per day after it.
-const OBLIQUITY_AT_EPOCH: f64 = 23.439;
-const OBLIQUITY_PER_DAY: f64 = -0.000_000_4;
-
-/// Greenwich mean sidereal time, in degrees, at J2000.0 and per day after it.
-/// A sidereal day is shorter than a solar one, which is the excess of the
-/// daily rate over a full turn.
-const SIDEREAL_TIME_AT_EPOCH: f64 = 280.460_618_37;
-const SIDEREAL_TIME_PER_DAY: f64 = 360.985_647_366_29;
 
 /// The Sun's elevation above the horizon, in degrees, over `latitude` and
 /// `longitude` at `time`. It is negative wherever the Sun has set.
@@ -93,6 +62,37 @@ pub fn elevation_degrees(latitude: Latitude, longitude: Longitude, time: DateTim
 fn days_since_j2000(time: DateTime<Utc>) -> f64 {
     (time.timestamp() as f64 - J2000_UNIX_SECONDS) / SECONDS_PER_DAY
 }
+
+/// Unix seconds of the J2000.0 epoch, 2000-01-01T12:00:00Z, which the solar
+/// coordinates are counted in days from.
+const J2000_UNIX_SECONDS: f64 = 946_728_000.0;
+
+const SECONDS_PER_DAY: f64 = 86_400.0;
+
+const DEGREES_PER_TURN: f64 = 360.0;
+
+/// The Sun's mean longitude, in degrees, at J2000.0 and per day after it.
+const MEAN_LONGITUDE_AT_EPOCH: f64 = 280.460;
+const MEAN_LONGITUDE_PER_DAY: f64 = 0.985_647_4;
+
+/// The Sun's mean anomaly, in degrees, at J2000.0 and per day after it.
+const MEAN_ANOMALY_AT_EPOCH: f64 = 357.528;
+const MEAN_ANOMALY_PER_DAY: f64 = 0.985_600_3;
+
+/// Coefficients, in degrees, of the equation of the centre, which corrects the
+/// mean longitude to the true one.
+const EQUATION_OF_CENTRE_FIRST: f64 = 1.915;
+const EQUATION_OF_CENTRE_SECOND: f64 = 0.020;
+
+/// Obliquity of the ecliptic, in degrees, at J2000.0 and per day after it.
+const OBLIQUITY_AT_EPOCH: f64 = 23.439;
+const OBLIQUITY_PER_DAY: f64 = -0.000_000_4;
+
+/// Greenwich mean sidereal time, in degrees, at J2000.0 and per day after it.
+/// A sidereal day is shorter than a solar one, which is the excess of the
+/// daily rate over a full turn.
+const SIDEREAL_TIME_AT_EPOCH: f64 = 280.460_618_37;
+const SIDEREAL_TIME_PER_DAY: f64 = 360.985_647_366_29;
 
 #[cfg(test)]
 mod tests {
@@ -194,9 +194,6 @@ mod tests {
         );
     }
 
-    /// Second offsets from 2010-01-01, spanning twenty years.
-    const SECONDS_OF_TWO_DECADES: std::ops::RangeInclusive<i64> = 0..=631_152_000;
-
     /// The antipode's solar elevation is as far below the horizon as the
     /// position's is above, wherever and whenever the two are read.
     #[test]
@@ -223,4 +220,7 @@ mod tests {
             );
         });
     }
+
+    /// Second offsets from 2010-01-01, spanning twenty years.
+    const SECONDS_OF_TWO_DECADES: std::ops::RangeInclusive<i64> = 0..=631_152_000;
 }

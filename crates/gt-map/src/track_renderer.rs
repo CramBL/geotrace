@@ -5,37 +5,6 @@ use gt_types::{DataCategory, FileIdx, TrackIdx, TrackRef};
 use gt_ui_theme::HIGHLIGHT_BLUE;
 use gt_ui_types::{HighlightScope, MapHighlight};
 
-/// Dashing of the stretches drawn through ghost fixes.
-pub(crate) const GHOST_FIX_DASH: DashPattern = DashPattern {
-    dash_px: 8.0,
-    gap_px: 5.0,
-};
-
-/// Alpha multiplier for elements on non-focused tracks while hover is active.
-///
-/// Used by marker renderers, which draw at this alpha on top of the fade
-/// overlay. The overlay's own opacity is [`FOCUS_SCRIM_MAX_ALPHA_LIGHT`] /
-/// [`FOCUS_SCRIM_MAX_ALPHA_DARK`], tuned independently.
-pub(crate) const HOVER_FADE_ALPHA: f32 = 0.15;
-
-/// The focus scrim always dims by darkening, in both themes: a translucent
-/// near-black rect over the whole viewport when a track is focused, so the
-/// non-focused map and tracks recede and the focused track (painted on top)
-/// stands out.
-// A slightly blue-shifted near-black, so the dimmed map keeps the cool cast of
-// the app's dark surfaces. Nothing depends on the exact channels.
-pub(crate) const FOCUS_SCRIM_COLOR: egui::Color32 = egui::Color32::from_rgb(15, 17, 20);
-
-/// Peak opacity of the focus scrim, in light and dark themes respectively.
-///
-/// The scrim unavoidably covers the map tiles as well as the non-focused
-/// tracks it means to dim, so both stay gentle: enough to push the non-focused
-/// geometry back while keeping the map legible. Light mode is lower, since a
-/// dark scrim reads as heavier over a light map than over a dark one at equal
-/// opacity.
-pub(crate) const FOCUS_SCRIM_MAX_ALPHA_LIGHT: f32 = 0.22;
-pub(crate) const FOCUS_SCRIM_MAX_ALPHA_DARK: f32 = 0.3;
-
 /// Stroke for a track's plain line: thicker highlight blue when the track
 /// is hovered or sticky-selected, its palette color at full opacity otherwise.
 ///
@@ -298,6 +267,37 @@ pub(crate) fn skip_trackline(
 ) -> bool {
     fade == Some(crate::tpv_renderer::TrackIconFade::AllHidden) && !need_blink
 }
+
+/// Dashing of the stretches drawn through ghost fixes.
+pub(crate) const GHOST_FIX_DASH: DashPattern = DashPattern {
+    dash_px: 8.0,
+    gap_px: 5.0,
+};
+
+/// Alpha multiplier for elements on non-focused tracks while hover is active.
+///
+/// Used by marker renderers, which draw at this alpha on top of the fade
+/// overlay. The overlay's own opacity is [`FOCUS_SCRIM_MAX_ALPHA_LIGHT`] /
+/// [`FOCUS_SCRIM_MAX_ALPHA_DARK`], tuned independently.
+pub(crate) const HOVER_FADE_ALPHA: f32 = 0.15;
+
+/// The focus scrim always dims by darkening, in both themes: a translucent
+/// near-black rect over the whole viewport when a track is focused, so the
+/// non-focused map and tracks recede and the focused track (painted on top)
+/// stands out.
+// A slightly blue-shifted near-black, so the dimmed map keeps the cool cast of
+// the app's dark surfaces. Nothing depends on the exact channels.
+pub(crate) const FOCUS_SCRIM_COLOR: egui::Color32 = egui::Color32::from_rgb(15, 17, 20);
+
+/// Peak opacity of the focus scrim, in light and dark themes respectively.
+///
+/// The scrim unavoidably covers the map tiles as well as the non-focused
+/// tracks it means to dim, so both stay gentle: enough to push the non-focused
+/// geometry back while keeping the map legible. Light mode is lower, since a
+/// dark scrim reads as heavier over a light map than over a dark one at equal
+/// opacity.
+pub(crate) const FOCUS_SCRIM_MAX_ALPHA_LIGHT: f32 = 0.22;
+pub(crate) const FOCUS_SCRIM_MAX_ALPHA_DARK: f32 = 0.3;
 
 #[cfg(test)]
 mod tests {

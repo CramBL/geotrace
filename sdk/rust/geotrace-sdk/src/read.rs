@@ -715,17 +715,6 @@ fn opt_f32(v: f32) -> Option<f32> {
     if v.is_nan() { None } else { Some(v) }
 }
 
-/// The most rows of a fixed-width string field the summary previews on one
-/// line, and the most unreadable rows it lists.
-const PREVIEW_ROWS: usize = 3;
-
-/// The most entries a section lists one per line, with `…` where more follow.
-const MAX_LISTED_ENTRIES: usize = 20;
-
-const ABSENT_VALUE: &str = "—";
-
-const TIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%SZ";
-
 /// One row of a fixed-width string dataset: its value, or the error
 /// [`FixedWidthString::decode_row`] gives for it. [`NavFile::read`] reports
 /// that same error as [`Error::UnreadableField`]. `inspect` lists the row and
@@ -1455,3 +1444,14 @@ fn icon_histogram(codes: &[u8]) -> String {
         .collect::<Vec<String>>()
         .join(", ")
 }
+
+/// The most rows of a fixed-width string field the summary previews on one
+/// line, and the most unreadable rows it lists.
+const PREVIEW_ROWS: usize = 3;
+
+/// The most entries a section lists one per line, with `…` where more follow.
+const MAX_LISTED_ENTRIES: usize = 20;
+
+const ABSENT_VALUE: &str = "—";
+
+const TIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%SZ";

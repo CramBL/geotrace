@@ -44,6 +44,72 @@ struct SkySatellite {
     snr_dbhz: f32,
 }
 
+fn main() -> Result<(), Box<dyn Error>> {
+    let start = "2024-06-01T08:00:00Z".parse::<DateTime<Utc>>()?;
+
+    let mut recorder = NavFileBuilder::new()
+        .with_title("Satellite quality tour")?
+        .with_device("Example GNSS v1.0")?
+        .open();
+
+    for (i, point) in TRACK.iter().enumerate() {
+        let time = start + Duration::seconds(point.offset_secs);
+        recorder.add(
+            NavFix::builder()
+                .time(NavFixTime::Receiver(time))
+                .lat(Angle::degrees(point.lat_deg))
+                .lon(Angle::degrees(point.lon_deg))
+                .heading(Angle::degrees(point.heading_deg))
+                .speed(Velocity::meter_per_second(point.speed_mps))
+                .eph_m(point.eph_m)
+                .build(),
+        );
+
+        // SNR climbs slightly along the track as the receiver settles.
+        let snr_gain = 0.5 * i as f32;
+        let tracked = SKY
+            .iter()
+            .map(|satellite| {
+                Satellite::builder()
+                    .constellation(satellite.constellation)
+                    .prn(satellite.prn)
+                    .in_fix(satellite.in_fix)
+                    .maybe_elevation(satellite.elevation_deg)
+                    .maybe_azimuth(satellite.azimuth_deg)
+                    .snr(satellite.snr_dbhz + snr_gain)
+                    .build()
+            })
+            .collect();
+        recorder.add(
+            SatelliteReport::builder()
+                .time(NavFixTime::Receiver(time))
+                .tracked(tracked)
+                .build(),
+        );
+    }
+
+    let nav_file = recorder.finish()?;
+
+    let path = env::temp_dir().join("geotrace_with_satellites.gtd");
+    nav_file.write_to_file(&path)?;
+
+    let loaded = NavFile::open(&path)?;
+    println!("Nav points: {}", loaded.nav_points().len());
+    for (i, point) in loaded.nav_points().iter().enumerate() {
+        let (tracked, in_fix) = match &point.satellites {
+            Some(report) => (
+                report.tracked.len(),
+                report.tracked.iter().filter(|s| s.in_fix).count(),
+            ),
+            None => (0, 0),
+        };
+        println!("  [{i}] {tracked} tracked, {in_fix} in fix");
+    }
+
+    fs::remove_file(&path)?;
+    Ok(())
+}
+
 /// A short urban loop through Southwark, London, one fix every 10 s.
 const TRACK: &[TrackPoint] = &[
     TrackPoint {
@@ -165,69 +231,3 @@ const SKY: &[SkySatellite] = &[
         snr_dbhz: 31.0,
     },
 ];
-
-fn main() -> Result<(), Box<dyn Error>> {
-    let start = "2024-06-01T08:00:00Z".parse::<DateTime<Utc>>()?;
-
-    let mut recorder = NavFileBuilder::new()
-        .with_title("Satellite quality tour")?
-        .with_device("Example GNSS v1.0")?
-        .open();
-
-    for (i, point) in TRACK.iter().enumerate() {
-        let time = start + Duration::seconds(point.offset_secs);
-        recorder.add(
-            NavFix::builder()
-                .time(NavFixTime::Receiver(time))
-                .lat(Angle::degrees(point.lat_deg))
-                .lon(Angle::degrees(point.lon_deg))
-                .heading(Angle::degrees(point.heading_deg))
-                .speed(Velocity::meter_per_second(point.speed_mps))
-                .eph_m(point.eph_m)
-                .build(),
-        );
-
-        // SNR climbs slightly along the track as the receiver settles.
-        let snr_gain = 0.5 * i as f32;
-        let tracked = SKY
-            .iter()
-            .map(|satellite| {
-                Satellite::builder()
-                    .constellation(satellite.constellation)
-                    .prn(satellite.prn)
-                    .in_fix(satellite.in_fix)
-                    .maybe_elevation(satellite.elevation_deg)
-                    .maybe_azimuth(satellite.azimuth_deg)
-                    .snr(satellite.snr_dbhz + snr_gain)
-                    .build()
-            })
-            .collect();
-        recorder.add(
-            SatelliteReport::builder()
-                .time(NavFixTime::Receiver(time))
-                .tracked(tracked)
-                .build(),
-        );
-    }
-
-    let nav_file = recorder.finish()?;
-
-    let path = env::temp_dir().join("geotrace_with_satellites.gtd");
-    nav_file.write_to_file(&path)?;
-
-    let loaded = NavFile::open(&path)?;
-    println!("Nav points: {}", loaded.nav_points().len());
-    for (i, point) in loaded.nav_points().iter().enumerate() {
-        let (tracked, in_fix) = match &point.satellites {
-            Some(report) => (
-                report.tracked.len(),
-                report.tracked.iter().filter(|s| s.in_fix).count(),
-            ),
-            None => (0, 0),
-        };
-        println!("  [{i}] {tracked} tracked, {in_fix} in fix");
-    }
-
-    fs::remove_file(&path)?;
-    Ok(())
-}

@@ -4,22 +4,6 @@
 use serde::{Deserialize, Serialize};
 use vec1::Vec1;
 
-/// Anti-alias fringe width baked into every template, in physical pixels at
-/// the bucket's nominal on-screen size.
-///
-/// Matches egui's feathering width, and like egui's feathering the ramp is
-/// centered on the true edge (the solid geometry is inset by half a feather),
-/// so shapes keep their perceived size.
-pub const FEATHER_PX: f32 = 1.0;
-
-/// Physical-pixel icon sizes (full extent of the larger viewbox axis) the
-/// templates are baked at, ascending.
-///
-/// Roughly log-spaced so that scaling an instance to the nearest bucket stays
-/// within a factor of about 1.25, bounding both the curve-tolerance error and
-/// the anti-alias fringe error.
-pub const SIZE_BUCKETS_PX: [f32; 9] = [4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0];
-
 /// A vertex of a pre-tessellated icon mesh.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TemplateVertex {
@@ -117,6 +101,22 @@ impl IconTessellation {
         self.buckets.len() - 1
     }
 }
+
+/// Anti-alias fringe width baked into every template, in physical pixels at
+/// the bucket's nominal on-screen size.
+///
+/// Matches egui's feathering width, and like egui's feathering the ramp is
+/// centered on the true edge (the solid geometry is inset by half a feather),
+/// so shapes keep their perceived size.
+pub const FEATHER_PX: f32 = 1.0;
+
+/// Physical-pixel icon sizes (full extent of the larger viewbox axis) the
+/// templates are baked at, ascending.
+///
+/// Roughly log-spaced so that scaling an instance to the nearest bucket stays
+/// within a factor of about 1.25, bounding both the curve-tolerance error and
+/// the anti-alias fringe error.
+pub const SIZE_BUCKETS_PX: [f32; 9] = [4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0];
 
 #[cfg(test)]
 mod tests {

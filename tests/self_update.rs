@@ -16,13 +16,6 @@
 
 use std::{fs, process::Command};
 
-/// Must match the package/binary name and the repository `axoupdater` queries.
-const APP: &str = "geotrace";
-const OWNER: &str = "CramBL";
-
-/// Environment variable that opts a run in to actually performing the network update.
-const RUN_VAR: &str = "GEOTRACE_RUN_UPDATE_TEST";
-
 #[test]
 fn headless_update_replaces_the_binary() {
     if std::env::var_os(RUN_VAR).is_none() {
@@ -71,3 +64,10 @@ fn headless_update_replaces_the_binary() {
     let after = fs::read(&installed).expect("read updated binary");
     assert_ne!(before, after, "binary was not replaced by the update");
 }
+
+/// Must match the package/binary name and the repository `axoupdater` queries.
+const APP: &str = "geotrace";
+const OWNER: &str = "CramBL";
+
+/// Environment variable that opts a run in to actually performing the network update.
+const RUN_VAR: &str = "GEOTRACE_RUN_UPDATE_TEST";

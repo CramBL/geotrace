@@ -7,12 +7,6 @@ use gt_types::MetricKind;
 use super::FilterTimeWindow;
 use crate::series::TrackSeries;
 
-/// Overlap budget expressed as a multiple of the single-track target
-/// (`≈ 2 × plot_width_px`).  Tracks that overlap in time each span the full
-/// width.  This many of them can do so at full resolution before [`budget_cap`]
-/// starts sharing the budget between them.  See [`budget_cap`].
-const BUDGET_TRACK_MULTIPLE: usize = 8;
-
 /// Full-resolution sample target for a single track filling the plot width:
 /// ~2 samples per pixel, floored so a very narrow plot still has usable detail.
 pub(super) fn single_target(available_width: f32) -> usize {
@@ -311,6 +305,12 @@ pub(super) fn compute_level_cache(series: &TrackSeries, viewport: LineViewport) 
     }
 }
 
+/// Overlap budget expressed as a multiple of the single-track target
+/// (`≈ 2 × plot_width_px`).  Tracks that overlap in time each span the full
+/// width.  This many of them can do so at full resolution before [`budget_cap`]
+/// starts sharing the budget between them.  See [`budget_cap`].
+const BUDGET_TRACK_MULTIPLE: usize = 8;
+
 #[cfg(test)]
 mod tests {
     use std::ops::RangeInclusive;
@@ -321,13 +321,6 @@ mod tests {
 
     use super::*;
     use crate::AnalysisConfig;
-
-    /// Plot width in points. Wide enough that a window of a few seconds still
-    /// reads the finest mipmap level.
-    const PLOT_WIDTH_PX: f32 = 800.0;
-
-    /// 2024-01-15 12:00:00 UTC, the first fix of every track below.
-    const FIRST_FIX_SECS: i64 = 1_705_320_000;
 
     fn at_second(offset: i64) -> DateTime<Utc> {
         DateTime::from_timestamp(FIRST_FIX_SECS + offset, 0).expect("a valid timestamp")
@@ -454,4 +447,11 @@ mod tests {
         // Zero visible count must not divide by zero.
         assert_eq!(budget_cap(width, 0), single);
     }
+
+    /// Plot width in points. Wide enough that a window of a few seconds still
+    /// reads the finest mipmap level.
+    const PLOT_WIDTH_PX: f32 = 800.0;
+
+    /// 2024-01-15 12:00:00 UTC, the first fix of every track.
+    const FIRST_FIX_SECS: i64 = 1_705_320_000;
 }

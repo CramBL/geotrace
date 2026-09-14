@@ -10,21 +10,6 @@ use gt_pending_writes::WriteAccess;
 
 use super::App;
 
-pub(in crate::app) const READ_ONLY_MARKER_LABEL: &str = "read only";
-
-/// The first sentence of the marker's hover text, which lists the writes the
-/// session skips.
-const WRITES_NOTHING: &str = "GeoTrace writes nothing this session: no recording is stored, no \
-                              day is downloaded, and no setting is saved.";
-
-/// What the controls that delete archived days or download new ones say.
-pub(in crate::app) const READ_ONLY_ARCHIVES_HOVER: &str =
-    "This session is read-only: it changes none of the archives";
-
-/// What the controls that store, delete, prune or rename recordings say.
-pub(in crate::app) const READ_ONLY_RECORDING_HISTORY_HOVER: &str =
-    "This session is read-only: it changes nothing in the recording history";
-
 impl App {
     /// The marker a read-only session keeps in the window's bottom-left
     /// corner, beside the debug-build warning.
@@ -49,3 +34,18 @@ impl App {
         }
     }
 }
+
+pub(in crate::app) const READ_ONLY_MARKER_LABEL: &str = "read only";
+
+/// The first sentence of the marker's hover text, which lists the writes the
+/// session skips.
+const WRITES_NOTHING: &str = "GeoTrace writes nothing this session: no recording is stored, no \
+                              day is downloaded, and no setting is saved.";
+
+/// What the controls that delete archived days or download new ones say.
+pub(in crate::app) const READ_ONLY_ARCHIVES_HOVER: &str =
+    "This session is read-only: it changes none of the archives";
+
+/// What the controls that store, delete, prune or rename recordings say.
+pub(in crate::app) const READ_ONLY_RECORDING_HISTORY_HOVER: &str =
+    "This session is read-only: it changes nothing in the recording history";

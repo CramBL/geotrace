@@ -23,25 +23,6 @@
 //! # }
 //! ```
 
-/// The version of this SDK, e.g. `"0.1.0"` (the crate version). Consumers can
-/// surface it, for example `println!("geotrace-sdk {}", geotrace_sdk::VERSION)`.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-#[doc(hidden)]
-pub mod __private;
-mod builder;
-mod error;
-mod fixed_width_string;
-mod format_version;
-mod provenance;
-mod read;
-mod size_checked_file;
-mod time_types;
-mod types;
-mod units;
-mod variant_path;
-mod write;
-
 // Re-export public API
 pub use builder::{
     NavFileBuilder, NavRecord, NavRecorder, SatelliteWarning, collect_satellite_warnings,
@@ -73,3 +54,22 @@ pub use geotrace_sdk_macros::EventKind;
 
 // Re-export commonly needed external types so users need no extra dependencies
 pub use chrono::{DateTime, Duration, Utc};
+
+#[doc(hidden)]
+pub mod __private;
+mod builder;
+mod error;
+mod fixed_width_string;
+mod format_version;
+mod provenance;
+mod read;
+mod size_checked_file;
+mod time_types;
+mod types;
+mod units;
+mod variant_path;
+mod write;
+
+/// The version of this SDK, e.g. `"0.1.0"` (the crate version). Consumers can
+/// surface it, for example `println!("geotrace-sdk {}", geotrace_sdk::VERSION)`.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");

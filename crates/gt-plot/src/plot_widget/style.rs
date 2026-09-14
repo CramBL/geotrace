@@ -7,38 +7,12 @@ use egui_plot::LineStyle;
 use gt_types::MetricKind;
 use rustc_hash::FxHashMap;
 
-/// Per-file shade offsets applied to each metric's base colour.
-///
-/// Keeping hue fixed and only shifting value/lightness preserves metric identity
-/// while still making overlapping lines from different files distinguishable.
-const FILE_SHADE_FACTORS: [i16; 7] = [0, 22, -22, 12, -12, 32, -32];
-
-/// File-level line styles to keep perfectly overlapping lines distinguishable.
-pub(super) const FILE_LINE_STYLES: [LineStyle; 5] = [
-    LineStyle::Solid,
-    LineStyle::Dashed { length: 6.0 },
-    LineStyle::Dotted { spacing: 5.0 },
-    LineStyle::Dashed { length: 10.0 },
-    LineStyle::Dotted { spacing: 8.0 },
-];
 pub(super) fn metric_line_color(kind: MetricKind, file_index: usize, dark_mode: bool) -> Color32 {
     shade_color(
         gt_ui_theme::metric_color(kind, dark_mode),
         file_shade_factor(file_index),
     )
 }
-
-/// The channel chip/line palette, cycled by a channel's index in the sorted
-/// union of loaded channel names. The hues avoid the strong metric colors
-/// (velocity yellow, EPH magenta, heading orange).
-pub(super) const CHANNEL_PALETTE: [Color32; 6] = [
-    Color32::from_rgb(102, 204, 153), // spring green
-    Color32::from_rgb(153, 128, 250), // lavender
-    Color32::from_rgb(64, 175, 255),  // azure
-    Color32::from_rgb(230, 126, 179), // rose
-    Color32::from_rgb(181, 204, 92),  // olive
-    Color32::from_rgb(94, 210, 217),  // teal
-];
 
 /// The chip color of the `index`-th channel (its position in the sorted name
 /// union). The palette cycles past its length.
@@ -53,11 +27,6 @@ pub(super) fn channel_color(index: usize) -> Color32 {
 pub(super) fn channel_line_color(index: usize, file_index: usize) -> Color32 {
     shade_color(channel_color(index), file_shade_factor(file_index))
 }
-
-/// Hue step between a vector channel's components, as a fraction of the
-/// full hue circle. 25 degrees proved too close to tell apart in practice.
-/// At 60 degrees x/y/z read as clearly different colors.
-const COMPONENT_HUE_STEP: f32 = 60.0 / 360.0;
 
 /// The `component`-th color of a channel, honoring a user override from
 /// the chip's right-click menu before falling back to the derived hue ladder.
@@ -114,6 +83,38 @@ pub(super) fn shade_color(color: Color32, factor_pct: i16) -> Color32 {
         gt_ui_theme::lerp_channel(color.b(), target, num, 100),
     )
 }
+
+/// Per-file shade offsets applied to each metric's base colour.
+///
+/// Keeping hue fixed and only shifting value/lightness preserves metric identity
+/// while still making overlapping lines from different files distinguishable.
+const FILE_SHADE_FACTORS: [i16; 7] = [0, 22, -22, 12, -12, 32, -32];
+
+/// File-level line styles to keep perfectly overlapping lines distinguishable.
+pub(super) const FILE_LINE_STYLES: [LineStyle; 5] = [
+    LineStyle::Solid,
+    LineStyle::Dashed { length: 6.0 },
+    LineStyle::Dotted { spacing: 5.0 },
+    LineStyle::Dashed { length: 10.0 },
+    LineStyle::Dotted { spacing: 8.0 },
+];
+
+/// The channel chip/line palette, cycled by a channel's index in the sorted
+/// union of loaded channel names. The hues avoid the strong metric colors
+/// (velocity yellow, EPH magenta, heading orange).
+pub(super) const CHANNEL_PALETTE: [Color32; 6] = [
+    Color32::from_rgb(102, 204, 153), // spring green
+    Color32::from_rgb(153, 128, 250), // lavender
+    Color32::from_rgb(64, 175, 255),  // azure
+    Color32::from_rgb(230, 126, 179), // rose
+    Color32::from_rgb(181, 204, 92),  // olive
+    Color32::from_rgb(94, 210, 217),  // teal
+];
+
+/// Hue step between a vector channel's components, as a fraction of the
+/// full hue circle. 25 degrees proved too close to tell apart in practice.
+/// At 60 degrees x/y/z read as clearly different colors.
+const COMPONENT_HUE_STEP: f32 = 60.0 / 360.0;
 
 #[cfg(test)]
 mod tests {

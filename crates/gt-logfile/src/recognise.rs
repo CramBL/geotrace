@@ -9,73 +9,21 @@ use std::{
     ops::Range,
 };
 
-/// Bytes a service name may take from where it starts. A message whose first
-/// word runs past this carries no service.
-const SERVICE_LIMIT_BYTES: usize = 64;
-
-/// Bytes a hostname may take, past which the message opens with no host.
-const HOSTNAME_LIMIT_BYTES: usize = 64;
-
-/// Bytes a level token is looked for in, past any inner timestamp.
-const LEVEL_TOKEN_HEAD_BYTES: usize = 40;
-
-/// Bytes the longest inner timestamp takes:
-/// `2026-09-02T18:33:31.123456789+02:00`.
-const INNER_TIMESTAMP_LIMIT_BYTES: usize = 35;
-
-/// Bytes after the service a level token is looked for in: an inner timestamp
-/// and the token past it.
-const LEVEL_HEAD_BYTES: usize = INNER_TIMESTAMP_LIMIT_BYTES + LEVEL_TOKEN_HEAD_BYTES;
-
-/// The shapes the date and time of an inner timestamp take, `N` standing for a
-/// digit and every other byte for itself: the ISO 8601 form a tracing
-/// subscriber writes, and the slash form a Go service writes.
-const DATE_TIME_SHAPES: [&[u8]; 2] = [b"NNNN-NN-NNTNN:NN:NN", b"NNNN/NN/NN NN:NN:NN"];
-
-/// The digits and colon an inner timestamp writes after its zone sign, as in
-/// `+02:00`.
-const ZONE_OFFSET_SHAPE: &[u8] = b"NN:NN";
-
-/// Digits of a second an inner timestamp's fraction is read to.
-const FRACTION_LIMIT_DIGITS: usize = 9;
-
-/// Bytes a level token may take, which is what its length field addresses.
-const LEVEL_LIMIT_BYTES: usize = u8::MAX as usize;
-
-/// The level words a message states its severity with, whatever their case.
-const LEVEL_VOCABULARY: &[(&str, LogLevelKind)] = &[
-    ("ERROR", LogLevelKind::Error),
-    ("ERR", LogLevelKind::Error),
-    ("CRIT", LogLevelKind::Error),
-    ("CRITICAL", LogLevelKind::Error),
-    ("FATAL", LogLevelKind::Error),
-    ("PANIC", LogLevelKind::Error),
-    ("EMERG", LogLevelKind::Error),
-    ("ALERT", LogLevelKind::Error),
-    ("WARN", LogLevelKind::Warning),
-    ("WARNING", LogLevelKind::Warning),
-    ("INFO", LogLevelKind::Info),
-    ("NOTICE", LogLevelKind::Info),
-    ("DEBUG", LogLevelKind::Debug),
-    ("TRACE", LogLevelKind::Debug),
-    ("VERBOSE", LogLevelKind::Debug),
-];
-
 /// Whether every line of a log states the host it came from. `journalctl`
 /// writes the host before the service. A device's own export leaves it out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostnameColumn {
-    Present,
     Absent,
+    Present,
 }
 
 /// The severity a level token states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogLevelKind {
-    Error,
-    Warning,
-    Info,
     Debug,
+    Error,
+    Info,
+    Warning,
 }
 
 /// The parts of one entry's message that were recognised, as byte ranges
@@ -383,6 +331,58 @@ fn past_spaces(bytes: &[u8], from: usize) -> usize {
         .count();
     from.saturating_add(spaces)
 }
+
+/// Bytes a service name may take from where it starts. A message whose first
+/// word runs past this carries no service.
+const SERVICE_LIMIT_BYTES: usize = 64;
+
+/// Bytes a hostname may take, past which the message opens with no host.
+const HOSTNAME_LIMIT_BYTES: usize = 64;
+
+/// Bytes a level token is looked for in, past any inner timestamp.
+const LEVEL_TOKEN_HEAD_BYTES: usize = 40;
+
+/// Bytes the longest inner timestamp takes:
+/// `2026-09-02T18:33:31.123456789+02:00`.
+const INNER_TIMESTAMP_LIMIT_BYTES: usize = 35;
+
+/// Bytes after the service a level token is looked for in: an inner timestamp
+/// and the token past it.
+const LEVEL_HEAD_BYTES: usize = INNER_TIMESTAMP_LIMIT_BYTES + LEVEL_TOKEN_HEAD_BYTES;
+
+/// The shapes the date and time of an inner timestamp take, `N` standing for a
+/// digit and every other byte for itself: the ISO 8601 form a tracing
+/// subscriber writes, and the slash form a Go service writes.
+const DATE_TIME_SHAPES: [&[u8]; 2] = [b"NNNN-NN-NNTNN:NN:NN", b"NNNN/NN/NN NN:NN:NN"];
+
+/// The digits and colon an inner timestamp writes after its zone sign, as in
+/// `+02:00`.
+const ZONE_OFFSET_SHAPE: &[u8] = b"NN:NN";
+
+/// Digits of a second an inner timestamp's fraction is read to.
+const FRACTION_LIMIT_DIGITS: usize = 9;
+
+/// Bytes a level token may take, which is what its length field addresses.
+const LEVEL_LIMIT_BYTES: usize = u8::MAX as usize;
+
+/// The level words a message states its severity with, whatever their case.
+const LEVEL_VOCABULARY: &[(&str, LogLevelKind)] = &[
+    ("ERROR", LogLevelKind::Error),
+    ("ERR", LogLevelKind::Error),
+    ("CRIT", LogLevelKind::Error),
+    ("CRITICAL", LogLevelKind::Error),
+    ("FATAL", LogLevelKind::Error),
+    ("PANIC", LogLevelKind::Error),
+    ("EMERG", LogLevelKind::Error),
+    ("ALERT", LogLevelKind::Error),
+    ("WARN", LogLevelKind::Warning),
+    ("WARNING", LogLevelKind::Warning),
+    ("INFO", LogLevelKind::Info),
+    ("NOTICE", LogLevelKind::Info),
+    ("DEBUG", LogLevelKind::Debug),
+    ("TRACE", LogLevelKind::Debug),
+    ("VERBOSE", LogLevelKind::Debug),
+];
 
 #[cfg(test)]
 mod tests {

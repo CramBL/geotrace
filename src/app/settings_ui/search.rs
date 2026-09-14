@@ -6,13 +6,6 @@ use strum::IntoEnumIterator as _;
 
 use crate::app::settings_ui::SettingsPage;
 
-/// Explicit id the query field registers under, which is how a test focuses it
-/// among the text fields the app behind the window renders.
-pub(in crate::app) const QUERY_FIELD_ID: &str = "settings_search_query";
-
-const FIELD_HOVER: &str = "Matches page names and the labels on each page. Escape clears the \
-                           query, and closes the window once it is empty.";
-
 /// Query the category rail is filtered by. Session state: the window opens
 /// with an empty field every run.
 #[derive(Default)]
@@ -64,3 +57,10 @@ impl SettingsSearch {
             .collect()
     }
 }
+
+/// Explicit id the query field registers under, which is how a test focuses it
+/// among the text fields the app behind the window renders.
+pub(in crate::app) const QUERY_FIELD_ID: &str = "settings_search_query";
+
+const FIELD_HOVER: &str = "Matches page names and the labels on each page. Escape clears the \
+                           query, and closes the window once it is empty.";

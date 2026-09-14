@@ -12,37 +12,20 @@ use egui_phosphor::regular::{
 use gt_ionex::{Mirror, MirrorBaseUrl, MirrorLayout, MirrorList};
 use strum::IntoEnumIterator as _;
 
-const URL_HOVER: &str = "Base URL of a host serving the global ionosphere maps. The layout beside \
-                         the field says which archive's directories and file names are expected \
-                         under it. Requests contain a date and nothing about your recordings.";
-
-const LAYOUT_HOVER: &str = "Which archive's directories and file names this host serves. Pick it \
-                            when adding the mirror.";
-
-const MIRROR_FIELD_WIDTH: f32 = 208.0;
-
-/// Width the layout name is given, so the fields of rows serving different
-/// ones line up under each other.
-const LAYOUT_COLUMN_WIDTH: f32 = 44.0;
-
-/// Width kept for the badge on every row, so a badged row's buttons sit where
-/// the rest of them do.
-const BADGE_COLUMN_WIDTH: f32 = 18.0;
-
 /// Whether the Earthdata token setting holds a token, which decides whether
 /// the mirrors needing one are fetched from at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EarthdataToken {
-    Set,
     Missing,
+    Set,
 }
 
 enum MirrorEdit {
     Add(MirrorLayout),
-    Replace(usize, Mirror),
-    Remove(usize),
-    MoveUp(usize),
     MoveDown(usize),
+    MoveUp(usize),
+    Remove(usize),
+    Replace(usize, Mirror),
 }
 
 /// The editable mirror list. Returns `true` when the list changed.
@@ -137,6 +120,23 @@ pub fn show_mirror_list(
     }
     true
 }
+
+const URL_HOVER: &str = "Base URL of a host serving the global ionosphere maps. The layout beside \
+                         the field says which archive's directories and file names are expected \
+                         under it. Requests contain a date and nothing about your recordings.";
+
+const LAYOUT_HOVER: &str = "Which archive's directories and file names this host serves. Pick it \
+                            when adding the mirror.";
+
+const MIRROR_FIELD_WIDTH: f32 = 208.0;
+
+/// Width the layout name is given, so the fields of rows serving different
+/// ones line up under each other.
+const LAYOUT_COLUMN_WIDTH: f32 = 44.0;
+
+/// Width kept for the badge on every row, so a badged row's buttons sit where
+/// the rest of them do.
+const BADGE_COLUMN_WIDTH: f32 = 18.0;
 
 #[cfg(test)]
 mod tests {

@@ -5,11 +5,6 @@
 //! [`TraceAttributesRequest`] byte-for-byte (as JSON values) - proving the
 //! types model exactly what the capture harness sent and the server returned.
 
-#[path = "wire_format/open_world_values.rs"]
-mod open_world_values;
-#[path = "wire_format/wire_names.rs"]
-mod wire_names;
-
 use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
@@ -20,35 +15,13 @@ use gt_snap::wire::{
 };
 use gt_snap::{CAPTURE_SCENARIOS, DEFAULT_SERVER_URL, test_util};
 
-/// The capture scenarios whose response is a successful match, each with a
-/// digest baseline of its own.
-const SUCCESS_SCENARIOS: &[&str] = &[
-    "clean_drive",
-    "clean_drive_tuned",
-    "dense_10hz",
-    "partially_snappable",
-    "teleport_gap",
-];
-
-/// The same drive as `clean_drive`, captured without the edge-attribute
-/// filter the app sends. Its response holds every edge attribute Valhalla
-/// knows. The test below asserts it against `clean_drive`.
-const UNFILTERED_SCENARIO: &str = "clean_drive_unfiltered";
-
-/// The capture scenarios whose response is a Valhalla JSON error.
-const ERROR_SCENARIOS: &[&str] = &[
-    "bad_request",
-    "option_out_of_bounds",
-    "oversized",
-    "unsnappable",
-];
-
-/// The capture scenarios whose response is not JSON at all (rejected by the
-/// reverse proxy before Valhalla sees them).
-const HTML_ERROR_SCENARIOS: &[&str] = &["too_large_body"];
+#[path = "wire_format/open_world_values.rs"]
+mod open_world_values;
+#[path = "wire_format/wire_names.rs"]
+mod wire_names;
 
 /// Every capture scenario must be classified into exactly one of the three
-/// lists above, so adding a scenario to [`CAPTURE_SCENARIOS`] without
+/// scenario lists, so adding a scenario to [`CAPTURE_SCENARIOS`] without
 /// classifying (and thereby parsing) it here fails loudly - the same
 /// discipline `EnumCount` applies to the wire-name tables.
 #[test]
@@ -260,3 +233,30 @@ fn server_host_extracts_the_host_and_only_the_host() {
     // A host-less URL must not count as a host either.
     assert_eq!(gt_snap::server_host("file:///tmp/x"), None);
 }
+
+/// The capture scenarios whose response is a successful match, each with a
+/// digest baseline of its own.
+const SUCCESS_SCENARIOS: &[&str] = &[
+    "clean_drive",
+    "clean_drive_tuned",
+    "dense_10hz",
+    "partially_snappable",
+    "teleport_gap",
+];
+
+/// The same drive as `clean_drive`, captured without the edge-attribute
+/// filter the app sends. Its response holds every edge attribute Valhalla
+/// knows. A test asserts it against `clean_drive`.
+const UNFILTERED_SCENARIO: &str = "clean_drive_unfiltered";
+
+/// The capture scenarios whose response is a Valhalla JSON error.
+const ERROR_SCENARIOS: &[&str] = &[
+    "bad_request",
+    "option_out_of_bounds",
+    "oversized",
+    "unsnappable",
+];
+
+/// The capture scenarios whose response is not JSON at all (rejected by the
+/// reverse proxy before Valhalla sees them).
+const HTML_ERROR_SCENARIOS: &[&str] = &["too_large_body"];

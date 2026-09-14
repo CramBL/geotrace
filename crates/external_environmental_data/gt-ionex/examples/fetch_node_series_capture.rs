@@ -42,11 +42,6 @@ use gt_ionex::{
     NodeSeriesNode, parse,
 };
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// Pause between requests: the archive is a small public research host.
-const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
-
 fn main() -> Result<(), Box<dyn Error>> {
     let dir = gt_ionex::captures_dir();
     fs::create_dir_all(&dir)?;
@@ -145,3 +140,8 @@ fn node_values(maps: &GlobalIonosphereMaps, node: &NodeSeriesNode) -> Vec<Option
         })
         .collect()
 }
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Pause between requests: the archive is a small public research host.
+const REQUEST_INTERVAL: Duration = Duration::from_secs(2);

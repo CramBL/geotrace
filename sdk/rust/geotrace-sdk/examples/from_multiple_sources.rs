@@ -25,26 +25,6 @@ use geotrace_sdk::{
     Angle, Annotation, DateTime, Duration, MarkerIcon, NavFileBuilder, NavFix, NavFixTime, Utc,
 };
 
-/// Source 1, the GPS track, one fix every 10 s: second offset, latitude,
-/// longitude, heading.
-const GPS_FIXES: &[(i64, f64, f64, f64)] = &[
-    (0, 51.5074, -0.1278, 90.0),
-    (10, 51.5075, -0.1276, 91.0),
-    (20, 51.5076, -0.1274, 89.5),
-    (30, 51.5077, -0.1272, 88.0),
-    (40, 51.5078, -0.1270, 90.0),
-    (50, 51.5079, -0.1268, 90.5),
-];
-
-/// Source 2, annotations from a separate log: second offset, label, icon. Their
-/// map positions are not supplied - `finish()` interpolates them from the GPS
-/// fixes by timestamp.
-const ANNOTATIONS: &[(i64, &str, MarkerIcon)] = &[
-    (5, "Pothole", MarkerIcon::Warning),
-    (15, "Speed camera", MarkerIcon::Circle),
-    (25, "Junction", MarkerIcon::Pin),
-];
-
 fn main() -> Result<(), Box<dyn Error>> {
     let start = "2024-06-01T08:00:00Z".parse::<DateTime<Utc>>()?;
 
@@ -89,3 +69,23 @@ fn main() -> Result<(), Box<dyn Error>> {
     fs::remove_file(&path)?;
     Ok(())
 }
+
+/// Source 1, the GPS track, one fix every 10 s: second offset, latitude,
+/// longitude, heading.
+const GPS_FIXES: &[(i64, f64, f64, f64)] = &[
+    (0, 51.5074, -0.1278, 90.0),
+    (10, 51.5075, -0.1276, 91.0),
+    (20, 51.5076, -0.1274, 89.5),
+    (30, 51.5077, -0.1272, 88.0),
+    (40, 51.5078, -0.1270, 90.0),
+    (50, 51.5079, -0.1268, 90.5),
+];
+
+/// Source 2, annotations from a separate log: second offset, label, icon. Their
+/// map positions are not supplied - `finish()` interpolates them from the GPS
+/// fixes by timestamp.
+const ANNOTATIONS: &[(i64, &str, MarkerIcon)] = &[
+    (5, "Pothole", MarkerIcon::Warning),
+    (15, "Speed camera", MarkerIcon::Circle),
+    (25, "Junction", MarkerIcon::Pin),
+];

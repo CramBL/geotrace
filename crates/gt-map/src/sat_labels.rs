@@ -110,13 +110,6 @@ mod tests {
         track
     }
 
-    const WORLD: MercBounds = MercBounds {
-        x_min: 0.0,
-        x_max: 1.0,
-        y_min: 0.0,
-        y_max: 1.0,
-    };
-
     fn select(tracks: &[LoadedTrack], viewport: MercBounds, cell_merc: f64) -> Vec<Vec<usize>> {
         let mut scratch = LabelSelection::default();
         select_sat_labels(
@@ -242,4 +235,11 @@ mod tests {
         );
         assert_eq!(selected.to_vec(), vec![vec![1]]);
     }
+
+    const WORLD: MercBounds = MercBounds {
+        x_min: 0.0,
+        x_max: 1.0,
+        y_min: 0.0,
+        y_max: 1.0,
+    };
 }

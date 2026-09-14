@@ -1134,10 +1134,10 @@ impl TimelinePosition {
 /// to give the event: the interpolated position inside the fix time span, and
 /// the position of the first or the last fix outside it.
 enum TimelinePlacement {
-    WithinFixTimeSpan(TimelinePosition),
-    BeforeFirstFix(TimelinePosition),
     AfterLastFix(TimelinePosition),
+    BeforeFirstFix(TimelinePosition),
     NoFixes,
+    WithinFixTimeSpan(TimelinePosition),
 }
 
 impl TimelinePlacement {
@@ -1590,9 +1590,6 @@ pub(crate) fn datetime_to_micros(dt: DateTime<Utc>) -> i64 {
     dt.timestamp_micros()
 }
 
-/// The value the optional timestamp datasets store for an absent timestamp.
-pub(crate) const ABSENT_TIMESTAMP_MICROS: u64 = u64::MAX;
-
 /// The writer stores a timestamp as the two's complement bits of its microsecond
 /// count. The one count whose bits equal [`ABSENT_TIMESTAMP_MICROS`] is rejected,
 /// since the reader takes that value for an absent timestamp.
@@ -1621,6 +1618,9 @@ pub(crate) fn opt_datetime_to_u64(
         datetime_to_u64(dt, location, record)
     })
 }
+
+/// The value the optional timestamp datasets store for an absent timestamp.
+pub(crate) const ABSENT_TIMESTAMP_MICROS: u64 = u64::MAX;
 
 #[cfg(test)]
 mod tests {

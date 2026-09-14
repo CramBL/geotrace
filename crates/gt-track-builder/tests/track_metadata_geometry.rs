@@ -12,17 +12,6 @@ use gt_types::nav_point::NavPoint;
 use gt_types::track::{FileSource, MeasuredTrackGeometry};
 use uom::si::length::{kilometer, meter};
 
-/// Every fix of the track shares this latitude.
-const LATITUDE_DEGREES: f64 = 55.0;
-
-const FIRST_LON_DEGREES: f64 = 12.0;
-const LAST_LON_DEGREES: f64 = 12.002;
-
-/// A millimetre over a track 128 m long: the interpolated ghost fix lands on
-/// the great circle between the measured fixes, so only the projection and the
-/// haversine round trip cost anything.
-const METERS_TOLERANCE: f64 = 0.001;
-
 fn utc_time(secs: i64) -> DateTime<Utc> {
     DateTime::<Utc>::UNIX_EPOCH + Duration::seconds(secs)
 }
@@ -130,3 +119,14 @@ fn bounding_box_covers_where_the_track_is_drawn() {
         LAST_LON_DEGREES - FIRST_LON_DEGREES,
     );
 }
+
+/// Every fix of the track shares this latitude.
+const LATITUDE_DEGREES: f64 = 55.0;
+
+const FIRST_LON_DEGREES: f64 = 12.0;
+const LAST_LON_DEGREES: f64 = 12.002;
+
+/// A millimetre over a track 128 m long: the interpolated ghost fix lands on
+/// the great circle between the measured fixes, so only the projection and the
+/// haversine round trip cost anything.
+const METERS_TOLERANCE: f64 = 0.001;

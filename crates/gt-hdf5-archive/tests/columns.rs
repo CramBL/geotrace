@@ -8,14 +8,6 @@ use tempfile::TempDir;
 use gt_hdf5_archive::day_index::{DayIndex, RowPlacement};
 use gt_hdf5_archive::{Column, ColumnFormat, attributes, dates};
 
-const FORMAT: ColumnFormat = ColumnFormat {
-    chunk_rows: 8,
-    deflate_level: 6,
-};
-
-const VALUES: &str = "values";
-const HOST: &str = "https://example.invalid";
-
 fn archive() -> Result<(TempDir, File), String> {
     let dir = tempfile::tempdir().map_err(|err| format!("temp dir: {err}"))?;
     let file =
@@ -190,3 +182,11 @@ fn a_stored_timestamp_reads_back_as_an_instant(#[case] seconds: i64, #[case] rea
         readable.then_some(seconds)
     );
 }
+
+const FORMAT: ColumnFormat = ColumnFormat {
+    chunk_rows: 8,
+    deflate_level: 6,
+};
+
+const VALUES: &str = "values";
+const HOST: &str = "https://example.invalid";

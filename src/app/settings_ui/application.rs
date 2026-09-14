@@ -19,24 +19,6 @@ use crate::app::storage_controls;
 #[cfg(feature = "self-update")]
 use egui_phosphor::regular::ARROW_CIRCLE_DOWN as ICON_ARROW_CIRCLE_DOWN;
 
-#[cfg(feature = "self-update")]
-const UPDATES_LABEL: &str = "Updates";
-const RECORDING_STORAGE_LABEL: &str = "Recording storage";
-const AUTO_PRUNE_LABEL: &str = "Auto-prune";
-const CONFIRMATION_LABEL: &str = "Confirmation";
-
-pub(super) const SEARCHABLE_LABELS: &[&str] = &[
-    #[cfg(feature = "self-update")]
-    UPDATES_LABEL,
-    RECORDING_STORAGE_LABEL,
-    AUTO_PRUNE_LABEL,
-    CONFIRMATION_LABEL,
-    ENVIRONMENT_DATA_LABEL,
-    PRUNE_LABEL,
-    DELETE_ALL_LABEL,
-    ENVIRONMENT_AUTO_PRUNE_LABEL,
-];
-
 impl App {
     pub(super) fn show_application_page(&mut self, ui: &mut egui::Ui) {
         SettingsPage::Application.show_header(ui);
@@ -119,3 +101,21 @@ impl App {
         );
     }
 }
+
+#[cfg(feature = "self-update")]
+const UPDATES_LABEL: &str = "Updates";
+const RECORDING_STORAGE_LABEL: &str = "Recording storage";
+const AUTO_PRUNE_LABEL: &str = "Auto-prune";
+const CONFIRMATION_LABEL: &str = "Confirmation";
+
+pub(super) const SEARCHABLE_LABELS: &[&str] = &[
+    #[cfg(feature = "self-update")]
+    UPDATES_LABEL,
+    RECORDING_STORAGE_LABEL,
+    AUTO_PRUNE_LABEL,
+    CONFIRMATION_LABEL,
+    ENVIRONMENT_DATA_LABEL,
+    PRUNE_LABEL,
+    DELETE_ALL_LABEL,
+    ENVIRONMENT_AUTO_PRUNE_LABEL,
+];

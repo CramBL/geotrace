@@ -15,8 +15,8 @@ use crate::run::{ChannelRun, PointsQueryRun, PointsRun, RunTrackData};
 /// points pipeline (map halos plus point match tables) or a channel-source run
 /// (sample match tables plus halos over the matched track segments).
 pub enum RunResults {
-    Points(PointsResults),
     Channel(ChannelResults),
+    Points(PointsResults),
 }
 
 impl RunResults {

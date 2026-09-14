@@ -5,10 +5,6 @@ use egui::epaint::Shape;
 use egui::{Color32, Ui};
 use egui_plot::{PlotBounds, PlotGeometry, PlotItem, PlotItemBase, PlotTransform};
 
-/// How far inside the plot's edge a marker drawn at that edge sits, as a
-/// fraction of the visible y range.  Keeps the whole glyph on screen.
-pub const EDGE_MARKER_INSET: f64 = 0.03;
-
 /// What one overlay paints over the plot.
 pub(super) trait OverlayPainter {
     /// What the plot's legend entry for the overlay is drawn in, where the
@@ -70,6 +66,10 @@ impl<P: OverlayPainter> PlotItem for OverlayItem<P> {
         &mut self.base
     }
 }
+
+/// How far inside the plot's edge a marker drawn at that edge sits, as a
+/// fraction of the visible y range.  Keeps the whole glyph on screen.
+pub const EDGE_MARKER_INSET: f64 = 0.03;
 
 #[cfg(test)]
 mod tests {

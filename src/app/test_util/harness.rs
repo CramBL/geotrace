@@ -13,17 +13,35 @@ use gt_test_utils::HarnessInteraction as _;
 use crate::app::recording_from_disk::LOAD_FROM_DISK_LABEL;
 use crate::app::{App, StartupOptions, Storage};
 
-/// The fixed version string injected in place of the real crate version in
-/// tests, so every version-bearing UI snapshot stays stable across release
-/// bumps. The one placeholder for the whole app (the About dialog and the
-/// update prompt both flow through it).
-pub const TEST_APP_VERSION: &str = "0.0.0-test";
+mod tests {
+    use egui_kittest::Harness;
 
-/// The load time that every finished job reports in a test, replacing the
-/// value that the app measures. The load overlay prints it as `0.4s`. The
-/// measured value counts the frames that the background thread ran for, and
-/// the machine's load changes that count from run to run.
-pub const TEST_LOAD_ELAPSED_SECS: f32 = 0.4;
+    use crate::app::test_util;
+
+    /// The harness reaches `App::new_with_config`, the same constructor `main`
+    /// uses. A test run opens neither the user's recordings database nor their
+    /// interference archive.
+    #[test]
+    fn the_test_harness_opens_no_user_databases() {
+        let mut harness = Harness::builder()
+            .with_wait_for_pending_images(false)
+            .build_eframe(test_util::harness::transient_app);
+        harness.step();
+
+        assert!(
+            harness.state().history.path().is_none(),
+            "no recordings database"
+        );
+        assert!(
+            !harness.state().jamming.archive_available(),
+            "no interference archive"
+        );
+        assert!(
+            harness.state().loader.db_path.is_none(),
+            "nothing for the loader to store into"
+        );
+    }
+}
 
 /// In-memory [`egui::DroppedFile`] for drag-drop tests. `bytes` drops carry a
 /// relative path holding the display name, matching how web drops expose only
@@ -259,32 +277,14 @@ pub fn step_until_a_log_is_loaded(harness: &mut Harness<'_, App>) {
     );
 }
 
-mod tests {
-    use egui_kittest::Harness;
+/// The fixed version string injected in place of the real crate version in
+/// tests, so every version-bearing UI snapshot stays stable across release
+/// bumps. The one placeholder for the whole app (the About dialog and the
+/// update prompt both flow through it).
+pub const TEST_APP_VERSION: &str = "0.0.0-test";
 
-    use crate::app::test_util;
-
-    /// The harness reaches `App::new_with_config`, the same constructor `main`
-    /// uses. A test run opens neither the user's recordings database nor their
-    /// interference archive.
-    #[test]
-    fn the_test_harness_opens_no_user_databases() {
-        let mut harness = Harness::builder()
-            .with_wait_for_pending_images(false)
-            .build_eframe(test_util::harness::transient_app);
-        harness.step();
-
-        assert!(
-            harness.state().history.path().is_none(),
-            "no recordings database"
-        );
-        assert!(
-            !harness.state().jamming.archive_available(),
-            "no interference archive"
-        );
-        assert!(
-            harness.state().loader.db_path.is_none(),
-            "nothing for the loader to store into"
-        );
-    }
-}
+/// The load time that every finished job reports in a test, replacing the
+/// value that the app measures. The load overlay prints it as `0.4s`. The
+/// measured value counts the frames that the background thread ran for, and
+/// the machine's load changes that count from run to run.
+pub const TEST_LOAD_ELAPSED_SECS: f32 = 0.4;

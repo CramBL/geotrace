@@ -165,18 +165,6 @@ pub struct SegmentationConfig {
     pub generated_markers: GeneratedMarkerConfig,
 }
 
-/// Default elevation mask (degrees) for slip detection.  Mirrors the slip-rate
-/// plot's default so a fresh config matches the plot out of the box.
-pub const DEFAULT_SLIP_ELEVATION_MASK_DEG: f32 = 15.0;
-
-/// Default SNR drop (dB-Hz) that counts as a slip.
-pub const DEFAULT_SLIP_SNR_DROP_DB: f32 = 10.0;
-
-/// Default deviation from a track's baseline clock offset, in seconds, above
-/// which a sample counts as a clock offset excursion.  Re-exported from the
-/// detector so the marker default and the plot default are one value.
-pub const DEFAULT_CLOCK_EXCURSION_THRESHOLD_S: f32 = clock_offset::DEFAULT_EXCURSION_THRESHOLD_S;
-
 /// Partitions `points` into contiguous track ranges. A new track begins where
 /// the timestamp step between consecutive points reaches
 /// `config.track_split_gap` in a direction `config.track_split_rule` covers.
@@ -203,8 +191,6 @@ pub fn segment_tracks(points: &[NavPoint], config: &TrackLayoutConfig) -> Vec<Ra
 
 /// State machine for tracking GPS fix transitions within a track.
 enum GpsFixState {
-    /// No satellite report seen yet.
-    Waiting,
     /// The most recent satellite report had `fix_count > 0`.
     HasFix {
         last_time: GpsTime,
@@ -215,6 +201,8 @@ enum GpsFixState {
         /// When the fix was last seen, for the regained-duration.
         lost_at: GpsTime,
     },
+    /// No satellite report seen yet.
+    Waiting,
 }
 
 struct GpsFixTracker {
@@ -368,30 +356,6 @@ fn detect_slip_markers(
     })
     .collect()
 }
-
-/// Fewest with-system-timestamp samples a track needs before clock-outlier
-/// detection runs.  Detection works on the step series (one shorter), and the
-/// median/MAD must survive a single outlier step, so at least three steps - four
-/// samples - are required. Below that, detection is skipped to avoid a spurious
-/// marker from an unstable estimate.
-const MIN_CLOCK_SAMPLES: usize = 4;
-
-/// Scales the median absolute deviation to an estimate of the standard
-/// deviation for normally-distributed data (the usual robust-statistics
-/// constant, `1 / Φ⁻¹(3/4)`).
-const MAD_TO_SIGMA: f64 = 1.4826;
-
-/// Default sensitivity for the clock-discontinuity outlier test (robust σ from
-/// the median step), used when no configuration overrides it.  Public so the
-/// persisted settings default and this algorithm stay in sync from one source.
-pub const DEFAULT_CLOCK_OUTLIER_SIGMAS: f64 = 5.0;
-
-/// Floor on the robust spread of the step series, in milliseconds.  A healthy
-/// clock has near-zero step-to-step change and thus a near-zero MAD. Without a
-/// floor, ordinary sub-second jitter would register as an outlier.  This is a
-/// noise gate, not the detection threshold - on a track with genuinely jittery
-/// clock steps the MAD dominates and the bar rises with the data.
-const MIN_CLOCK_SPREAD_MS: f64 = 200.0;
 
 /// Smallest clock-offset jump, in seconds, that a given sensitivity flags on a
 /// track with negligible clock jitter (where the noise floor dominates).
@@ -733,12 +697,6 @@ impl fmt::Display for RepeatedEventMarkerStyle {
     }
 }
 
-const REPEATED_EVENT_MARKER_STYLES: AlterationWording = AlterationWording {
-    issue: "event marker variant path(s) with several styles",
-    consequence: "Every marker on those paths is drawn with the last style the recording \
-        holds for it: one style is kept per variant path.",
-};
-
 /// Keeps the last style a recording holds for each variant path, which is the
 /// one every marker on that path is drawn with.
 fn keep_the_last_event_marker_style_per_variant_path(
@@ -1022,13 +980,13 @@ impl TimedArc {
 /// anchors the position the builder places it at.
 #[derive(Clone, Copy)]
 enum UnmeasuredFix {
-    /// A fix the receiver dead-reckoned, which [`FixPlacementRule`] names,
-    /// anchored by the fixes with a satellite in fix.
-    Ghost,
     /// A fix with a recorded latitude or longitude outside its range, anchored
     /// by every fix that has a recorded position: it holds none of its own to
     /// fall back on.
     CoordinateOutOfRange,
+    /// A fix the receiver dead-reckoned, which [`FixPlacementRule`] names,
+    /// anchored by the fixes with a satellite in fix.
+    Ghost,
 }
 
 impl UnmeasuredFix {
@@ -1239,6 +1197,48 @@ fn position_between_placed_fixes(
         (None, None) => None,
     }
 }
+
+/// Default elevation mask (degrees) for slip detection.  Mirrors the slip-rate
+/// plot's default so a fresh config matches the plot out of the box.
+pub const DEFAULT_SLIP_ELEVATION_MASK_DEG: f32 = 15.0;
+
+/// Default SNR drop (dB-Hz) that counts as a slip.
+pub const DEFAULT_SLIP_SNR_DROP_DB: f32 = 10.0;
+
+/// Default deviation from a track's baseline clock offset, in seconds, above
+/// which a sample counts as a clock offset excursion.  Re-exported from the
+/// detector so the marker default and the plot default are one value.
+pub const DEFAULT_CLOCK_EXCURSION_THRESHOLD_S: f32 = clock_offset::DEFAULT_EXCURSION_THRESHOLD_S;
+
+/// Fewest with-system-timestamp samples a track needs before clock-outlier
+/// detection runs.  Detection works on the step series (one shorter), and the
+/// median/MAD must survive a single outlier step, so at least three steps - four
+/// samples - are required. Below that, detection is skipped to avoid a spurious
+/// marker from an unstable estimate.
+const MIN_CLOCK_SAMPLES: usize = 4;
+
+/// Scales the median absolute deviation to an estimate of the standard
+/// deviation for normally-distributed data (the usual robust-statistics
+/// constant, `1 / Φ⁻¹(3/4)`).
+const MAD_TO_SIGMA: f64 = 1.4826;
+
+/// Default sensitivity for the clock-discontinuity outlier test (robust σ from
+/// the median step), used when no configuration overrides it.  Public so the
+/// persisted settings default and this algorithm stay in sync from one source.
+pub const DEFAULT_CLOCK_OUTLIER_SIGMAS: f64 = 5.0;
+
+/// Floor on the robust spread of the step series, in milliseconds.  A healthy
+/// clock has near-zero step-to-step change and thus a near-zero MAD. Without a
+/// floor, ordinary sub-second jitter would register as an outlier.  This is a
+/// noise gate, not the detection threshold - on a track with genuinely jittery
+/// clock steps the MAD dominates and the bar rises with the data.
+const MIN_CLOCK_SPREAD_MS: f64 = 200.0;
+
+const REPEATED_EVENT_MARKER_STYLES: AlterationWording = AlterationWording {
+    issue: "event marker variant path(s) with several styles",
+    consequence: "Every marker on those paths is drawn with the last style the recording \
+        holds for it: one style is kept per variant path.",
+};
 
 #[cfg(test)]
 mod tests;

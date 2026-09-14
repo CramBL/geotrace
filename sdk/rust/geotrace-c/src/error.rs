@@ -3,10 +3,6 @@
 use std::cell::RefCell;
 use std::ffi::{CString, c_char};
 
-thread_local! {
-    static LAST_ERROR: RefCell<Option<CString>> = const { RefCell::new(None) };
-}
-
 pub(crate) fn set_last_error(msg: impl std::fmt::Display) {
     let s = CString::new(msg.to_string()).unwrap_or_else(|_| {
         CString::new("(error message contained a null byte)").unwrap_or_default()
@@ -78,28 +74,6 @@ pub enum GtdStatus {
     GTD_ERR_INTERNAL = 99,
 }
 
-// Pin every discriminant at compile time. These are the C ABI numbers, which a
-// reordering of the variants must not change.
-const _: () = {
-    assert!(GtdStatus::GTD_OK as u32 == 0);
-    assert!(GtdStatus::GTD_ERR_NULL_ARGUMENT as u32 == 1);
-    assert!(GtdStatus::GTD_ERR_INVALID_PATH as u32 == 2);
-    assert!(GtdStatus::GTD_ERR_NO_NAV_FIXES as u32 == 3);
-    assert!(GtdStatus::GTD_ERR_ANNOTATIONS_OOB as u32 == 4);
-    assert!(GtdStatus::GTD_ERR_IO as u32 == 5);
-    assert!(GtdStatus::GTD_ERR_HDF5 as u32 == 6);
-    assert!(GtdStatus::GTD_ERR_VERSION as u32 == 7);
-    assert!(GtdStatus::GTD_ERR_UTF8 as u32 == 8);
-    assert!(GtdStatus::GTD_ERR_PARSE as u32 == 9);
-    assert!(GtdStatus::GTD_ERR_INVALID_CHANNEL as u32 == 10);
-    assert!(GtdStatus::GTD_ERR_FIELD_TOO_LONG as u32 == 11);
-    assert!(GtdStatus::GTD_ERR_INVALID_ARGUMENT as u32 == 12);
-    assert!(GtdStatus::GTD_ERR_OUT_OF_RANGE as u32 == 13);
-    assert!(GtdStatus::GTD_ERR_CALL_ORDER as u32 == 14);
-    assert!(GtdStatus::GTD_ERR_EVENT_MARKERS_OOB as u32 == 15);
-    assert!(GtdStatus::GTD_ERR_INTERNAL as u32 == 99);
-};
-
 /// Map a core SDK error to its C status code. Decode failures (malformed or
 /// corrupt file content) map to `ErrParse`, not `ErrInternal` (which means an
 /// SDK bug). Exhaustive on purpose: a new `Error` variant must choose a code.
@@ -152,3 +126,29 @@ pub(crate) fn status_for_event_marker_error(e: &geotrace_sdk::EventMarkerError) 
 pub extern "C" fn gtd_last_error() -> *const c_char {
     last_error_ptr()
 }
+
+thread_local! {
+    static LAST_ERROR: RefCell<Option<CString>> = const { RefCell::new(None) };
+}
+
+// Pin every discriminant at compile time. These are the C ABI numbers, which a
+// reordering of the variants must not change.
+const _: () = {
+    assert!(GtdStatus::GTD_OK as u32 == 0);
+    assert!(GtdStatus::GTD_ERR_NULL_ARGUMENT as u32 == 1);
+    assert!(GtdStatus::GTD_ERR_INVALID_PATH as u32 == 2);
+    assert!(GtdStatus::GTD_ERR_NO_NAV_FIXES as u32 == 3);
+    assert!(GtdStatus::GTD_ERR_ANNOTATIONS_OOB as u32 == 4);
+    assert!(GtdStatus::GTD_ERR_IO as u32 == 5);
+    assert!(GtdStatus::GTD_ERR_HDF5 as u32 == 6);
+    assert!(GtdStatus::GTD_ERR_VERSION as u32 == 7);
+    assert!(GtdStatus::GTD_ERR_UTF8 as u32 == 8);
+    assert!(GtdStatus::GTD_ERR_PARSE as u32 == 9);
+    assert!(GtdStatus::GTD_ERR_INVALID_CHANNEL as u32 == 10);
+    assert!(GtdStatus::GTD_ERR_FIELD_TOO_LONG as u32 == 11);
+    assert!(GtdStatus::GTD_ERR_INVALID_ARGUMENT as u32 == 12);
+    assert!(GtdStatus::GTD_ERR_OUT_OF_RANGE as u32 == 13);
+    assert!(GtdStatus::GTD_ERR_CALL_ORDER as u32 == 14);
+    assert!(GtdStatus::GTD_ERR_EVENT_MARKERS_OOB as u32 == 15);
+    assert!(GtdStatus::GTD_ERR_INTERNAL as u32 == 99);
+};

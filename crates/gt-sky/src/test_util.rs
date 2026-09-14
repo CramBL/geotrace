@@ -18,9 +18,6 @@ pub struct Azimuth(pub f32);
 #[derive(Clone, Copy)]
 pub struct Elevation(pub f32);
 
-/// The signal quality [`sat`] gives every satellite it builds.
-pub const FIXTURE_SNR_DB: f32 = 40.0;
-
 /// The first instant of every fixture in this crate: 2025-05-23 12:53:20 UTC.
 pub fn start() -> DateTime<Utc> {
     DateTime::<Utc>::from_timestamp(1_748_000_000, 0).unwrap_or_default()
@@ -80,3 +77,6 @@ pub fn nav_point_reporting(secs: i64, satellites: Option<Vec<Satellite>>) -> Nav
         .build();
     NavPoint::new(tpv, satellites.map(|s| Satellites::new(None, None, s)))
 }
+
+/// The signal quality [`sat`] gives every satellite it builds.
+pub const FIXTURE_SNR_DB: f32 = 40.0;

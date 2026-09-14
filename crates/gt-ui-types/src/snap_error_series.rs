@@ -8,11 +8,11 @@ use rustc_hash::FxHashMap;
 /// (like [`crate::SnappedTracks`] for the map).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapErrorKind {
-    Snapped,
     /// The common case on slow recordings, not an anomaly: matched by
     /// interpolation between independently matched neighbors. Carries a full
     /// error value and gets no special styling, only its kind in hover text.
     Interpolated,
+    Snapped,
     /// The road network rejected this point: no error value, the series line
     /// breaks, and the plot marks the point.
     Unsnapped,

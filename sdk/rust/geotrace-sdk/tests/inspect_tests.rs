@@ -175,9 +175,6 @@ fn snapshot_inspect_populated_file() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Field content no reader decodes as UTF-8.
-const NOT_UTF8: &[u8] = &[0xff];
-
 fn inspect_bytes(bytes: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
     let tmp = tempfile::NamedTempFile::new()?;
     std::fs::write(tmp.path(), bytes)?;
@@ -372,3 +369,6 @@ fn inspect_states_a_count_of_zero_for_an_empty_section(
     );
     Ok(())
 }
+
+/// Field content no reader decodes as UTF-8.
+const NOT_UTF8: &[u8] = &[0xff];

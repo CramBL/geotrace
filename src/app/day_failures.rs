@@ -9,10 +9,6 @@ use egui::{RichText, Ui};
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use gt_ui_theme::labels::LabelWithHover;
 
-/// The failure list stops after this many entries, newest first: a host that
-/// refuses every request cannot fill the dialog.
-const MAX_LISTED_FAILURES: usize = 5;
-
 /// A day that could not be added to an archive.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DayFailure {
@@ -50,6 +46,10 @@ pub fn show_failures(ui: &mut Ui, list_id: &str, failures: &[DayFailure]) {
         }
     });
 }
+
+/// The failure list stops after this many entries, newest first: a host that
+/// refuses every request cannot fill the dialog.
+const MAX_LISTED_FAILURES: usize = 5;
 
 #[cfg(test)]
 mod tests {

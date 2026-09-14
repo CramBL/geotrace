@@ -16,26 +16,6 @@ use uom::si::angle::degree;
 use uom::si::f64::{Angle, Velocity};
 use uom::si::velocity::kilometer_per_hour;
 
-/// Unix seconds the first point of every dataset sits at, so a scenario can
-/// express the time filter in whole seconds from the start.
-pub const EPOCH_SECS: i64 = 1_700_000_000;
-
-/// Seconds between one track of a file and the next.
-///
-/// A file's tracks are the segments of one recording, so the only way to get two
-/// of them is a gap the track builder splits on - which also means the tracks of
-/// one file never overlap in time. Two recordings that do overlap are two files.
-const TRACK_GAP_SECS: i64 = 600;
-
-/// Degrees of latitude and longitude between consecutive seconds, so points a
-/// second apart are a metre-scale step.
-const DEG_PER_SEC: f64 = 0.001;
-
-/// Base position of every dataset, in the Copenhagen area like the other
-/// fixtures.
-const BASE_LAT_DEG: f64 = 55.0;
-const BASE_LON_DEG: f64 = 12.0;
-
 /// The typed address of a track, for the terse call sites a scenario requires.
 pub fn track(file_index: usize, track_index: usize) -> TrackRef {
     TrackRef::new(FileIdx::new(file_index), TrackIdx::new(track_index))
@@ -367,6 +347,26 @@ fn drop_file_and_shift<V>(series: &mut FxHashMap<TrackRef, Arc<V>>, removed: Fil
         })
         .collect();
 }
+
+/// Unix seconds the first point of every dataset sits at, so a scenario can
+/// express the time filter in whole seconds from the start.
+pub const EPOCH_SECS: i64 = 1_700_000_000;
+
+/// Seconds between one track of a file and the next.
+///
+/// A file's tracks are the segments of one recording, so the only way to get two
+/// of them is a gap the track builder splits on - which also means the tracks of
+/// one file never overlap in time. Two recordings that do overlap are two files.
+const TRACK_GAP_SECS: i64 = 600;
+
+/// Degrees of latitude and longitude between consecutive seconds, so points a
+/// second apart are a metre-scale step.
+const DEG_PER_SEC: f64 = 0.001;
+
+/// Base position of every dataset, in the Copenhagen area like the other
+/// fixtures.
+const BASE_LAT_DEG: f64 = 55.0;
+const BASE_LON_DEG: f64 = 12.0;
 
 #[cfg(test)]
 mod tests {

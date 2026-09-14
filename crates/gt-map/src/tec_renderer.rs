@@ -20,10 +20,6 @@ use walkers::{MapMemory, Plugin, Projector};
 use crate::hover_labels::{HoverLabelEntry, HoverLabelStack};
 use crate::transform::MercTransform;
 
-/// Latitude of the poles, which a node's half step reaches past: the
-/// published grid's outermost nodes sit at 87.5 degrees.
-const POLE_LATITUDE_DEGREES: f64 = 90.0;
-
 /// The maps the heatmap draws from and the instant it draws them at.
 #[derive(Debug, Clone, Copy)]
 pub struct TecHeatmapSnapshot<'a> {
@@ -254,6 +250,10 @@ fn cell_at_pointer(cells: &[NodeCell], pointer: Pos2) -> Option<&NodeCell> {
     cells.iter().find(|cell| cell.rect.contains(pointer))
 }
 
+/// Latitude of the poles, which a node's half step reaches past: the
+/// published grid's outermost nodes sit at 87.5 degrees.
+const POLE_LATITUDE_DEGREES: f64 = 90.0;
+
 #[cfg(test)]
 mod tests {
     use chrono::{NaiveDate, TimeDelta};
@@ -262,12 +262,6 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-
-    /// Side of the test viewport, in pixels.
-    const CANVAS_PX: f32 = 400.0;
-
-    /// World width in pixels for a view that frames the whole grid.
-    const WORLD_VIEW_TOTAL_PX: f64 = 512.0;
 
     fn epoch(hour: u32) -> DateTime<Utc> {
         NaiveDate::from_ymd_opt(2024, 5, 10)
@@ -509,4 +503,10 @@ mod tests {
         let fill = cells.first().expect("a node").fill;
         assert_eq!(fill.a(), expected_alpha);
     }
+
+    /// Side of the test viewport, in pixels.
+    const CANVAS_PX: f32 = 400.0;
+
+    /// World width in pixels for a view that frames the whole grid.
+    const WORLD_VIEW_TOTAL_PX: f64 = 512.0;
 }

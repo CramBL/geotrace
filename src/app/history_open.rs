@@ -9,60 +9,24 @@ use gt_store::{DbError, StoredFixPlacementRule, StoredTrackSplitRule, TrackState
 use super::anchored_dialog::{AnchoredDialogKind, HeldBodyLines};
 use super::{App, ResegmentPrompt, auto_prune, history, history_db, loader, modals, storage};
 
-/// The region showing the recording the re-segment prompt is about.
-const RESEGMENT_INTRO_REGION: &str = "resegment_intro";
-
-/// Lines the [`RESEGMENT_INTRO_REGION`] holds at most, however long the
-/// recording's name: the rest of the name scrolls inside it. Three is the one
-/// line the sentence takes on its own plus two for the name.
-const RESEGMENT_INTRO_MOST_LINES: u8 = 3;
-
-/// The region listing the recordings the prune deletes. A second set of
-/// candidates that arrives while the prompt is open replaces that list.
-const AUTO_PRUNE_RECORDINGS_REGION: &str = "auto_prune_recordings";
-
-/// Lines the [`AUTO_PRUNE_RECORDINGS_REGION`] holds at most, however many
-/// recordings the prune deletes: the rest of the rows scroll inside it. Twelve
-/// is the room ten rows take, each a line of body text with the spacing under
-/// it.
-pub(in crate::app) const AUTO_PRUNE_RECORDINGS_MOST_LINES: u8 = 12;
-
-const OPENING_THE_DATABASE: &str = "Opening the recording history database";
-
-const CLEARING_THE_WRITE_LOCK: &str = "Clearing the recording history database's write lock";
-
-const RECREATING_THE_DATABASE: &str = "Recreating the recording history database";
-
-pub(in crate::app) const CLEAR_LOCK_BUTTON_LABEL: &str = "Clear lock and open";
-
-pub(in crate::app) const HISTORY_DATABASE_IN_USE_TITLE: &str = "History database in use";
-
-pub(in crate::app) const HISTORY_DATABASE_LOCKED_TITLE: &str = "History database locked";
-
-pub(in crate::app) const HISTORY_DATABASE_CORRUPTED_TITLE: &str = "History database is corrupted";
-
-pub(in crate::app) const TRACK_SETTINGS_DIFFER_TITLE: &str = "Track settings differ";
-
-pub(in crate::app) const AUTO_PRUNE_TITLE: &str = "Auto-prune";
-
 /// What the user chose in the prompt for a recordings database that would not
 /// open. Each failure offers one of the three remedies.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum HistoryFailureChoice {
-    Reopen,
     ClearTheWriteLock,
-    Recreate,
     /// Go on with the database left as it is: recordings load but are not
     /// stored.
     Dismiss,
+    Recreate,
+    Reopen,
 }
 
 /// What the user chose in the "Track settings differ" prompt.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ResegmentChoice {
+    Cancel,
     RecalculateWithCurrentSettings,
     UseStoredTracks,
-    Cancel,
 }
 
 /// The marks the user set by hand on the recording the "Track settings differ"
@@ -124,8 +88,8 @@ impl MarksDroppedByRecalculating {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AutoPruneChoice {
-    Delete,
     Cancel,
+    Delete,
 }
 
 impl App {
@@ -961,3 +925,39 @@ fn mutation_toast(op: &history_db::DbOp, loading_the_recording_again: bool) -> S
         }
     }
 }
+
+/// The region showing the recording the re-segment prompt is about.
+const RESEGMENT_INTRO_REGION: &str = "resegment_intro";
+
+/// Lines the [`RESEGMENT_INTRO_REGION`] holds at most, however long the
+/// recording's name: the rest of the name scrolls inside it. Three is the one
+/// line the sentence takes on its own plus two for the name.
+const RESEGMENT_INTRO_MOST_LINES: u8 = 3;
+
+/// The region listing the recordings the prune deletes. A second set of
+/// candidates that arrives while the prompt is open replaces that list.
+const AUTO_PRUNE_RECORDINGS_REGION: &str = "auto_prune_recordings";
+
+/// Lines the [`AUTO_PRUNE_RECORDINGS_REGION`] holds at most, however many
+/// recordings the prune deletes: the rest of the rows scroll inside it. Twelve
+/// is the room ten rows take, each a line of body text with the spacing under
+/// it.
+pub(in crate::app) const AUTO_PRUNE_RECORDINGS_MOST_LINES: u8 = 12;
+
+const OPENING_THE_DATABASE: &str = "Opening the recording history database";
+
+const CLEARING_THE_WRITE_LOCK: &str = "Clearing the recording history database's write lock";
+
+const RECREATING_THE_DATABASE: &str = "Recreating the recording history database";
+
+pub(in crate::app) const CLEAR_LOCK_BUTTON_LABEL: &str = "Clear lock and open";
+
+pub(in crate::app) const HISTORY_DATABASE_IN_USE_TITLE: &str = "History database in use";
+
+pub(in crate::app) const HISTORY_DATABASE_LOCKED_TITLE: &str = "History database locked";
+
+pub(in crate::app) const HISTORY_DATABASE_CORRUPTED_TITLE: &str = "History database is corrupted";
+
+pub(in crate::app) const TRACK_SETTINGS_DIFFER_TITLE: &str = "Track settings differ";
+
+pub(in crate::app) const AUTO_PRUNE_TITLE: &str = "Auto-prune";

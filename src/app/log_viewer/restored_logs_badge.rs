@@ -6,18 +6,6 @@ use std::f32::consts::TAU;
 use egui::RichText;
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
 
-/// What the toolbar's log button says while no log is waiting for the viewer.
-const BUTTON_HOVER: &str = "Read the loaded logs against the recordings";
-
-/// How long the badge pulses after a recording load restored a log.
-const PULSE_SECONDS: f32 = 2.0;
-
-/// How many times the badge dims and comes back over [`PULSE_SECONDS`].
-const PULSE_CYCLES: f32 = 3.0;
-
-/// How far the badge dims at the bottom of a pulse, as a share of its opacity.
-const PULSE_DEEPEST_DIP: f32 = 0.7;
-
 /// The toolbar's standing announcement of the logs that came back with a
 /// recording: how many the viewer has yet to be opened on, and what is left of
 /// the pulse.
@@ -108,6 +96,18 @@ impl RestoredLogsBadge {
         1.0 - dip * PULSE_DEEPEST_DIP
     }
 }
+
+/// What the toolbar's log button says while no log is waiting for the viewer.
+const BUTTON_HOVER: &str = "Read the loaded logs against the recordings";
+
+/// How long the badge pulses after a recording load restored a log.
+const PULSE_SECONDS: f32 = 2.0;
+
+/// How many times the badge dims and comes back over [`PULSE_SECONDS`].
+const PULSE_CYCLES: f32 = 3.0;
+
+/// How far the badge dims at the bottom of a pulse, as a share of its opacity.
+const PULSE_DEEPEST_DIP: f32 = 0.7;
 
 #[cfg(test)]
 mod tests {

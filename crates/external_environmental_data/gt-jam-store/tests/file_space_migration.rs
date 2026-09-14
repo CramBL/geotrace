@@ -14,8 +14,6 @@ use gt_jam::CAPTURED_DAYS;
 use gt_jam::wire::{self, HexObservation, ParseWarningReporter};
 use gt_jam_store::{FILE_NAME, JamStore};
 
-const HOST: &str = "https://gpsjam.org";
-
 /// The day the archive is filled with, and its observations.
 fn captured_day() -> Result<(chrono::NaiveDate, Vec<HexObservation>), String> {
     let capture = CAPTURED_DAYS
@@ -138,3 +136,5 @@ fn a_rebuilt_archive_stores_days_again() {
         [day, next]
     );
 }
+
+const HOST: &str = "https://gpsjam.org";

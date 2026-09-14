@@ -11,15 +11,6 @@ use gt_types::mercator::MercPoint;
 use gt_types::{LoadedFile, PointIdx};
 use gt_ui_types::{SnappedSegment, SnappedTrackGeometry, SnappedTracks, WhiskerAnchor};
 
-/// Longitude between consecutive fixes of a track recorded in one spot, about
-/// 6 cm. A fit over such a track reaches the maximum zoom, which is where the
-/// error whiskers draw.
-const STANDING_STEP_DEGREES: f64 = 0.000_001;
-
-/// Ten metres north in normalized Mercator at this latitude, offsetting the
-/// snapped geometry so it is its own ink beside the recorded track.
-const SNAPPED_OFFSET_MERC_Y: f64 = -1.5e-6;
-
 /// Snapped road geometry for track 0: one polyline beside the recorded fixes
 /// in `fixes`, one vertex per fix.
 fn snapped_polyline_over(files: &[LoadedFile], fixes: std::ops::Range<usize>) -> SnappedTracks {
@@ -173,3 +164,12 @@ fn a_fit_frames_the_fixes_inside_the_time_window() {
         framed.lon_max
     );
 }
+
+/// Longitude between consecutive fixes of a track recorded in one spot, about
+/// 6 cm. A fit over such a track reaches the maximum zoom, which is where the
+/// error whiskers draw.
+const STANDING_STEP_DEGREES: f64 = 0.000_001;
+
+/// Ten metres north in normalized Mercator at this latitude, offsetting the
+/// snapped geometry so it is its own ink beside the recorded track.
+const SNAPPED_OFFSET_MERC_Y: f64 = -1.5e-6;

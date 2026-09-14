@@ -31,17 +31,6 @@ use gt_ui_types::{
 
 use crate::plot_widget::{self, ArchiveOverlays, PlotState, TRACK_PLOT_ID_SALT};
 
-/// 2024-01-15 12:00:00 UTC, the first fix of every recording the binaries
-/// build.
-pub const FIRST_FIX_SECS: i64 = 1_705_320_000;
-
-/// Plot size in points. Wide enough that a chip row and a plot both lay out.
-pub const PLOT_SIZE: egui::Vec2 = egui::vec2(700.0, 400.0);
-
-/// Frames the pointer rests still for before the tooltip is read: egui opens a
-/// tooltip once the pointer has stopped moving.
-const SETTLE_FRAMES: usize = 3;
-
 pub fn at_second(offset: i64) -> DateTime<Utc> {
     DateTime::UNIX_EPOCH + TimeDelta::seconds(FIRST_FIX_SECS + offset)
 }
@@ -334,3 +323,14 @@ fn flatten_shape(shape: &Shape, flat: &mut Vec<Shape>) {
         other => flat.push(other.clone()),
     }
 }
+
+/// 2024-01-15 12:00:00 UTC, the first fix of every recording the binaries
+/// build.
+pub const FIRST_FIX_SECS: i64 = 1_705_320_000;
+
+/// Plot size in points. Wide enough that a chip row and a plot both lay out.
+pub const PLOT_SIZE: egui::Vec2 = egui::vec2(700.0, 400.0);
+
+/// Frames the pointer rests still for before the tooltip is read: egui opens a
+/// tooltip once the pointer has stopped moving.
+const SETTLE_FRAMES: usize = 3;

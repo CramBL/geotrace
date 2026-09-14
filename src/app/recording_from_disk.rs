@@ -22,25 +22,6 @@ use super::anchored_dialog::AnchoredDialogKind;
 use super::storage::QueuedLoad;
 use super::{App, loader, modals};
 
-/// The 8-byte magic every HDF5 file begins with. A drop whose bytes start with
-/// it is a recording, and every other drop is a log.
-const HDF5_MAGIC: &[u8] = b"\x89HDF\r\n\x1a\n";
-
-/// The name a drop that carried no file name is loaded under.
-const UNNAMED_DROP_FILENAME: &str = "dropped.gtd";
-
-/// Recordings the prompt lists one by one. The rest are counted.
-const MOST_LISTED_RECORDINGS: usize = 10;
-
-pub(in crate::app) const LEAVE_SHELVED_TRACKS_OUT_LABEL: &str = "Leave the shelved tracks out";
-
-pub(in crate::app) const OPEN_THE_STORED_VERSION_LABEL: &str = "Open the stored version";
-
-pub(in crate::app) const LOAD_FROM_DISK_LABEL: &str = "Load from disk";
-
-pub(in crate::app) const NO_SHELVED_TRACK_HOVER: &str =
-    "None of these recordings has a shelved track";
-
 /// The title over the `count` recordings of one batch that history holds.
 pub(in crate::app) fn recordings_already_in_history_title(count: usize) -> String {
     let recordings = gt_fmt::pluralize(count, "recording", "recordings");
@@ -57,8 +38,8 @@ pub struct RecordingFromDisk {
 /// command line and a native drop each name a path. A web drop hands over the
 /// bytes themselves.
 pub enum RecordingContent {
-    Path(PathBuf),
     Bytes(Arc<[u8]>),
+    Path(PathBuf),
 }
 
 impl RecordingFromDisk {
@@ -211,9 +192,9 @@ impl RecordingsAlreadyInHistory {
 /// holds.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AlreadyInHistoryChoice {
-    OpenTheStoredVersion,
-    LoadFromDisk,
     Cancel,
+    LoadFromDisk,
+    OpenTheStoredVersion,
 }
 
 impl App {
@@ -437,6 +418,25 @@ impl App {
         }
     }
 }
+
+/// The 8-byte magic every HDF5 file begins with. A drop whose bytes start with
+/// it is a recording, and every other drop is a log.
+const HDF5_MAGIC: &[u8] = b"\x89HDF\r\n\x1a\n";
+
+/// The name a drop that carried no file name is loaded under.
+const UNNAMED_DROP_FILENAME: &str = "dropped.gtd";
+
+/// Recordings the prompt lists one by one. The rest are counted.
+const MOST_LISTED_RECORDINGS: usize = 10;
+
+pub(in crate::app) const LEAVE_SHELVED_TRACKS_OUT_LABEL: &str = "Leave the shelved tracks out";
+
+pub(in crate::app) const OPEN_THE_STORED_VERSION_LABEL: &str = "Open the stored version";
+
+pub(in crate::app) const LOAD_FROM_DISK_LABEL: &str = "Load from disk";
+
+pub(in crate::app) const NO_SHELVED_TRACK_HOVER: &str =
+    "None of these recordings has a shelved track";
 
 #[cfg(test)]
 mod tests {

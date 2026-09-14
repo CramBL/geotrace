@@ -4,17 +4,6 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 
-pub(crate) const DEVICE_TYPE_KEY: &str = "Device type";
-pub(crate) const LOGS_BEGIN_KEY: &str = "Logs begin at";
-pub(crate) const LOGS_END_KEY: &str = "Logs end at";
-pub(crate) const ENTRY_COUNT_KEY: &str = "Log entries";
-pub(crate) const ERROR_TABLE_HEADER: &str = "--- Service error count ---";
-pub(crate) const WARNING_TABLE_HEADER: &str = "--- Service warning count ---";
-pub(crate) const SERVICE_COUNT_ARROW: &str = "->";
-
-/// `Thu 29-May-2025 18:48:25 UTC`, how the exporter writes the log's span.
-pub(crate) const EXPORTER_TIME_FORMAT: &str = "%a %d-%b-%Y %H:%M:%S UTC";
-
 /// What the exporter says about the log it wrote. Every field is optional: a
 /// truncated block yields whatever it got as far as stating.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -159,6 +148,17 @@ fn parse_exporter_time(value: &str) -> Option<DateTime<Utc>> {
         .map(|naive| naive.and_utc())
 }
 
+pub(crate) const DEVICE_TYPE_KEY: &str = "Device type";
+pub(crate) const LOGS_BEGIN_KEY: &str = "Logs begin at";
+pub(crate) const LOGS_END_KEY: &str = "Logs end at";
+pub(crate) const ENTRY_COUNT_KEY: &str = "Log entries";
+pub(crate) const ERROR_TABLE_HEADER: &str = "--- Service error count ---";
+pub(crate) const WARNING_TABLE_HEADER: &str = "--- Service warning count ---";
+pub(crate) const SERVICE_COUNT_ARROW: &str = "->";
+
+/// `Thu 29-May-2025 18:48:25 UTC`, how the exporter writes the log's span.
+pub(crate) const EXPORTER_TIME_FORMAT: &str = "%a %d-%b-%Y %H:%M:%S UTC";
+
 #[cfg(test)]
 mod tests {
     use chrono::TimeZone as _;
@@ -166,20 +166,6 @@ mod tests {
 
     use super::*;
     use crate::test_util::strategies::{self, GeneratedSummaryBlock};
-
-    /// The block a real journald export ends with, shortened to two rows per table.
-    const EXPORTED_BLOCK: &str = "\
------------ Journal summary -----------
-Device type: nav-devkit-mk2
-Logs begin at: Thu 29-May-2025 18:48:25 UTC
-Logs end at  : Fri 26-Jun-2026 07:59:50 UTC
-Log entries: 622286
---- Service error count ---
-hal-powerd           -> 56429 Errors
-ofonod               -> 1092 Errors
---- Service warning count ---
-core-appd               -> 29562 Warnings
-kernel               -> 315 Warnings";
 
     fn parse(block: &str) -> SummaryBlock {
         parse_summary_block(block.lines().map(str::trim))
@@ -295,4 +281,18 @@ kernel               -> 315 Warnings";
             prop_assert_eq!(parse_summary_block(text.lines().map(str::trim)), stated);
         }
     }
+
+    /// The block a real journald export ends with, shortened to two rows per table.
+    const EXPORTED_BLOCK: &str = "\
+----------- Journal summary -----------
+Device type: nav-devkit-mk2
+Logs begin at: Thu 29-May-2025 18:48:25 UTC
+Logs end at  : Fri 26-Jun-2026 07:59:50 UTC
+Log entries: 622286
+--- Service error count ---
+hal-powerd           -> 56429 Errors
+ofonod               -> 1092 Errors
+--- Service warning count ---
+core-appd               -> 29562 Warnings
+kernel               -> 315 Warnings";
 }

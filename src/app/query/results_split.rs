@@ -1,10 +1,6 @@
 //! How the results tab divides its height between the matches table and the
 //! points table below it.
 
-/// Rows either table keeps however far the splitter between them is dragged,
-/// so neither can be collapsed to its header alone.
-pub(crate) const MIN_SPLIT_ROWS: usize = 2;
-
 /// The share of the results tab the matches table takes. Kept for as long as
 /// the query window keeps the sort order and the picked match.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -73,6 +69,10 @@ impl SplitGeometry {
     }
 }
 
+/// Rows either table keeps however far the splitter between them is dragged,
+/// so neither can be collapsed to its header alone.
+pub(crate) const MIN_SPLIT_ROWS: usize = 2;
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
@@ -92,10 +92,6 @@ mod tests {
             splitter: 40.0,
         }
     }
-
-    /// Heights are pixels a table is laid out at: they match within a
-    /// hundredth of one, not bit for bit.
-    const HEIGHT_TOLERANCE_PX: f32 = 0.01;
 
     #[track_caller]
     fn assert_matches_height(split: ResultsSplit, geometry: SplitGeometry, expected: f32) {
@@ -185,4 +181,8 @@ mod tests {
         );
         assert_matches_height(split, geometry(), 200.0);
     }
+
+    /// Heights are pixels a table is laid out at: they match within a
+    /// hundredth of one, not bit for bit.
+    const HEIGHT_TOLERANCE_PX: f32 = 0.01;
 }

@@ -125,12 +125,6 @@ fn a_settings_flush_that_cannot_replace_the_settings_file_removes_its_temporary(
     );
 }
 
-/// The write held running while the shutdown window is on screen.
-const TEC_COMPACTION: gt_pending_writes::WriteKind =
-    gt_pending_writes::WriteKind::ArchiveCompaction {
-        archive: "ionospheric TEC",
-    };
-
 /// An app with a write running and no close request yet.
 fn app_with_a_running_write<'a>() -> (Harness<'a, App>, gt_pending_writes::PendingWriteGuard) {
     let mut harness = Harness::builder()
@@ -532,10 +526,6 @@ fn reports_the_compaction(status: &InstanceStatus) -> bool {
         .any(|write| write.label == "Compacting the TEC archive")
 }
 
-/// A close frame runs in well under this even on a loaded CI machine, while
-/// joining the held-open history worker on it would never return.
-const CLOSE_FRAME_BUDGET: StdDuration = StdDuration::from_secs(5);
-
 /// The history worker ends on a thread of its own: the close frame returns
 /// while the worker is still on its loop, and the window closes once the
 /// worker's thread ends.
@@ -649,3 +639,13 @@ fn environment_auto_pruning_waits_for_a_running_delete() {
         "a delete is already running"
     );
 }
+
+/// The write held running while the shutdown window is on screen.
+const TEC_COMPACTION: gt_pending_writes::WriteKind =
+    gt_pending_writes::WriteKind::ArchiveCompaction {
+        archive: "ionospheric TEC",
+    };
+
+/// A close frame runs in well under this even on a loaded CI machine, while
+/// joining the held-open history worker on it would never return.
+const CLOSE_FRAME_BUDGET: StdDuration = StdDuration::from_secs(5);

@@ -11,14 +11,14 @@ use crate::tpv::TimePositionVelocity;
 /// erased by downsampling).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FixQuality {
-    /// No satellite report attached - quality unknown, assume fine.
-    Unknown,
-    /// 10 or more satellites in fix.
-    Strong,
-    /// 1-9 satellites in fix.
-    Marginal,
     /// Satellite report present but zero satellites in fix.
     Lost,
+    /// 1-9 satellites in fix.
+    Marginal,
+    /// 10 or more satellites in fix.
+    Strong,
+    /// No satellite report attached - quality unknown, assume fine.
+    Unknown,
 }
 
 /// Coordinates with their Web Mercator projection, held together so the two
@@ -53,13 +53,13 @@ impl ProjectedPosition {
 /// there.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ResolvedPosition {
-    /// The coordinates the recording holds, both inside their axis' range.
-    Measured(ProjectedPosition),
     /// A position the track builder derived, in time between the fixes around
     /// it: a fix the receiver dead-reckoned, one whose recorded coordinates
     /// are out of range, or an event marker between two fixes when the builder
     /// placed either of them away from its recorded coordinates.
     Interpolated(ProjectedPosition),
+    /// The coordinates the recording holds, both inside their axis' range.
+    Measured(ProjectedPosition),
 }
 
 impl ResolvedPosition {

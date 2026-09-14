@@ -10,17 +10,6 @@ use gt_store::{
     Recordings, Store, TrackRange, TrackState,
 };
 
-/// A journald-shaped log, long enough that its stored copy is visibly
-/// compressed.
-const LOG_TEXT: &str = concat!(
-    "2026-01-01 14:02:11 navsyncd: gnss fix acquired\n",
-    "2026-01-01 14:02:12 hal-powerd: battery low\n",
-    "2026-01-01 14:02:13 navsyncd: gnss fix lost\n",
-    "2026-01-01 14:02:14 hal-powerd: battery critical\n",
-);
-
-const OTHER_LOG_TEXT: &str = "2026-01-01 14:03:01 nav-devkit-mk2: booted\n";
-
 /// A store with one recording in its history, ready to attach logs to.
 struct RecordedStore {
     _directory: tempfile::TempDir,
@@ -360,3 +349,14 @@ fn attaching_a_log_leaves_the_recording_itself_unchanged() {
         .expect("load");
     assert_eq!(after, before);
 }
+
+/// A journald-shaped log, long enough that its stored copy is visibly
+/// compressed.
+const LOG_TEXT: &str = concat!(
+    "2026-01-01 14:02:11 navsyncd: gnss fix acquired\n",
+    "2026-01-01 14:02:12 hal-powerd: battery low\n",
+    "2026-01-01 14:02:13 navsyncd: gnss fix lost\n",
+    "2026-01-01 14:02:14 hal-powerd: battery critical\n",
+);
+
+const OTHER_LOG_TEXT: &str = "2026-01-01 14:03:01 nav-devkit-mk2: booted\n";

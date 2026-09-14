@@ -34,53 +34,25 @@ use parking_lot::Mutex;
 use crate::app::anchored_dialog::{AnchoredDialog, AnchoredDialogKind, HeldBodyLines};
 use crate::app::modals::{DialogActionRow, DialogBody};
 
-pub(in crate::app) const UPDATE_DIALOG_TITLE: &str = "Update available";
-
-/// The region of the prompt's body that shows what the install reports. The
-/// prompt opens before the user starts an install, and shows the progress and
-/// the outcome of that install in the same window.
-const INSTALL_STATUS_REGION: &str = "install_status";
-
-/// Lines [`INSTALL_STATUS_REGION`] holds from the frame the prompt opens.
-/// Each of the statements the install reports takes one line at this width.
-const INSTALL_STATUS_LEAST_LINES: u8 = 1;
-
-/// Lines [`INSTALL_STATUS_REGION`] holds at most: the one it reserves plus
-/// three for the reason a failed install gives. A longer reason scrolls
-/// inside that room.
-const INSTALL_STATUS_MOST_LINES: u8 = 4;
-
-/// The app name dist records in the install receipt and uses for installer
-/// asset names. Must match the `geotrace` package/binary name.
-const APP_NAME: &str = "geotrace";
-const REPO_OWNER: &str = "CramBL";
-const REPO_NAME: &str = "geotrace";
-pub const RELEASES_URL: &str = "https://github.com/CramBL/geotrace/releases/latest";
-
-/// Environment variables consulted for a GitHub token, in precedence order.
-/// The first non-empty one authenticates release queries (see
-/// [`apply_github_token`]).
-const GITHUB_TOKEN_ENV_VARS: [&str; 2] = ["GITHUB_TOKEN", "GH_TOKEN"];
-
 /// Result of the background version check.
 enum CheckOutcome {
-    /// Already on the newest release.
-    UpToDate,
     /// A newer release exists. `self_update` is `true` when an install receipt
     /// was found and `axoupdater` can replace the binary in place.
     Available { version: String, self_update: bool },
     /// The check could not complete (offline, rate-limited, no releases yet, …).
     /// Treated as "no update" and never surfaced to the user.
     Failed,
+    /// Already on the newest release.
+    UpToDate,
 }
 
 /// Progress of an in-place self-update.
 enum InstallStatus {
-    Idle,
-    Running,
     /// The new version was installed. The user must restart to apply it.
     Done,
     Failed(String),
+    Idle,
+    Running,
 }
 
 /// Owns the startup update check and its prompt UI.
@@ -436,6 +408,34 @@ fn select_github_token(lookup: impl Fn(&str) -> Option<String>) -> Option<String
         .filter_map(lookup)
         .find(|token| !token.is_empty())
 }
+
+pub(in crate::app) const UPDATE_DIALOG_TITLE: &str = "Update available";
+
+/// The region of the prompt's body that shows what the install reports. The
+/// prompt opens before the user starts an install, and shows the progress and
+/// the outcome of that install in the same window.
+const INSTALL_STATUS_REGION: &str = "install_status";
+
+/// Lines [`INSTALL_STATUS_REGION`] holds from the frame the prompt opens.
+/// Each of the statements the install reports takes one line at this width.
+const INSTALL_STATUS_LEAST_LINES: u8 = 1;
+
+/// Lines [`INSTALL_STATUS_REGION`] holds at most: the one it reserves plus
+/// three for the reason a failed install gives. A longer reason scrolls
+/// inside that room.
+const INSTALL_STATUS_MOST_LINES: u8 = 4;
+
+/// The app name dist records in the install receipt and uses for installer
+/// asset names. Must match the `geotrace` package/binary name.
+const APP_NAME: &str = "geotrace";
+const REPO_OWNER: &str = "CramBL";
+const REPO_NAME: &str = "geotrace";
+pub const RELEASES_URL: &str = "https://github.com/CramBL/geotrace/releases/latest";
+
+/// Environment variables consulted for a GitHub token, in precedence order.
+/// The first non-empty one authenticates release queries (see
+/// [`apply_github_token`]).
+const GITHUB_TOKEN_ENV_VARS: [&str; 2] = ["GITHUB_TOKEN", "GH_TOKEN"];
 
 #[cfg(test)]
 mod tests {

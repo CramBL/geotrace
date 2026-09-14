@@ -35,12 +35,12 @@ impl LoadedLogId {
 /// The colour a group of log matches draws in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogMatchColor {
-    /// The colour reserved for the filter being typed.
-    LiveFilter,
-
     /// A layer chip's palette slot. `shared` marks a slot held by more than
     /// one chip, which the map draws with a doubled outline.
     LayerSlot { index: usize, shared: bool },
+
+    /// The colour reserved for the filter being typed.
+    LiveFilter,
 }
 
 /// One entry a filter matched, at the position it was recorded at.

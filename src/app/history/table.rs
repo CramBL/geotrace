@@ -153,10 +153,6 @@ fn identity_column_width(ui: &egui::Ui, floors: MetadataColumnFloors) -> f32 {
     (left_over * pixels_per_point).floor() / pixels_per_point
 }
 
-/// Gaps `egui_extras` leaves between the table's columns, one fewer than the
-/// columns themselves: one per sortable column, and the actions after them.
-const COLUMN_GAP_COUNT: f32 = SortColumn::COUNT as f32;
-
 /// The width each metadata column keeps, whatever the listing has scrolled into
 /// view: the widest cell that column draws for the recordings the database
 /// holds, filtered out of the listing or not.
@@ -337,23 +333,6 @@ struct CountFormBand {
     past_last: u64,
 }
 
-/// The three forms [`gt_store::format_count_suffix`] writes: plain digits under
-/// a thousand, thousands under a million, millions above it.
-const COUNT_FORM_BANDS: [CountFormBand; 3] = [
-    CountFormBand {
-        first: 0,
-        past_last: 1_000,
-    },
-    CountFormBand {
-        first: 1_000,
-        past_last: 1_000_000,
-    },
-    CountFormBand {
-        first: 1_000_000,
-        past_last: u64::MAX,
-    },
-];
-
 fn label_width(ui: &egui::Ui, text: &str) -> f32 {
     labels::text_width(ui, text, egui::TextStyle::Body)
 }
@@ -373,6 +352,8 @@ enum ListingRow<'a> {
 
 /// A line of the shelf open under a recording's row.
 enum ShelfRow {
+    /// The shelf's closing line, which unshelves every track above it.
+    EveryShelvedTrack { stored_rows: Vec<usize> },
     /// The worker's read of the recording's stored track table is in flight.
     Reading,
     /// One shelved track, addressed by its row in that table.
@@ -380,8 +361,6 @@ enum ShelfRow {
         stored_row: usize,
         nav_point_count: u64,
     },
-    /// The shelf's closing line, which unshelves every track above it.
-    EveryShelvedTrack { stored_rows: Vec<usize> },
 }
 
 /// The listing's lines: every visible recording, each followed by the lines of
@@ -567,26 +546,6 @@ fn render_shelf_row(
     });
 }
 
-pub(super) const OPEN_RECORDING_LABEL: &str = "Open";
-
-const DELETE_RECORDING_LABEL: &str = "Delete";
-
-pub(super) const UNSHELVE_LABEL: &str = "Unshelve";
-
-pub(super) const UNSHELVE_ALL_LABEL: &str = "Unshelve all";
-
-const UNSHELVE_HOVER: &str = "Put this track back in the recording";
-
-const UNSHELVE_ALL_HOVER: &str = "Put every shelved track back in the recording";
-
-const DELETE_SHELVED_HOVER: &str = "Permanently delete every shelved track of this recording";
-
-const SHOW_SHELVED_TRACKS_HOVER: &str = "List the shelved tracks of this recording";
-
-const HIDE_SHELVED_TRACKS_HOVER: &str = "Close the list of shelved tracks";
-
-const NO_SHELVED_TRACKS_HOVER: &str = "This recording has no shelved tracks";
-
 /// A clickable table header that orders the list by `column`.
 ///
 /// The active column shows a caret pointing the way its values run. Clicking
@@ -648,14 +607,6 @@ pub(super) struct HistoryTable<'a> {
     pub sort: &'a mut HistorySort,
     pub write_access: WriteAccess,
 }
-
-/// Identity's floor: room for the shelf caret and the first characters of the
-/// name. A floor high enough to keep the name readable leaves the action column
-/// past the window's right edge, where the horizontal scroll area cuts Open and
-/// Delete off. The metadata columns, the action column among them, take their
-/// content width first. Identity reaches this floor in a window too narrow for
-/// them, and the listing then scrolls sideways.
-const IDENTITY_MIN_WIDTH: f32 = 64.0;
 
 fn render_row(
     row: &mut TableRow<'_, '_>,
@@ -773,12 +724,6 @@ fn attached_logs_label(entry: &RecordingEntry) -> Option<String> {
     let count = entry.log_attachments.len();
     (count > 0).then(|| format!("{ICON_PAPERCLIP} {count}"))
 }
-
-pub(in crate::app) const OPEN_LOG_LABEL: &str = "Open log";
-
-const OPEN_LOG_HOVER: &str = "Load this log into the log viewer";
-
-const ATTACHED_LOGS_HOVER: &str = "The logs stored with this recording";
 
 /// When the recording started, an em dash for one with no time range.
 pub(super) fn started_at_text(time_range: Option<NavPointTimeRange>) -> String {
@@ -956,10 +901,6 @@ fn channels_breakdown_ui(ui: &mut egui::Ui, channels: &[ChannelSummary]) {
     }
 }
 
-/// How many channels the hover lists before summarizing the rest, so a
-/// recording carrying dozens of them still produces a readable tooltip.
-pub(super) const MAX_HOVER_CHANNELS: usize = 8;
-
 /// A channel's name, with a vector channel's component labels appended:
 /// `accel (x, y, z)`. A scalar channel is just its name.
 pub(super) fn channel_title(channel: &ChannelSummary) -> String {
@@ -1116,3 +1057,62 @@ fn identity_cell(
         }
     });
 }
+
+/// Gaps `egui_extras` leaves between the table's columns, one fewer than the
+/// columns themselves: one per sortable column, and the actions after them.
+const COLUMN_GAP_COUNT: f32 = SortColumn::COUNT as f32;
+
+/// The three forms [`gt_store::format_count_suffix`] writes: plain digits under
+/// a thousand, thousands under a million, millions above it.
+const COUNT_FORM_BANDS: [CountFormBand; 3] = [
+    CountFormBand {
+        first: 0,
+        past_last: 1_000,
+    },
+    CountFormBand {
+        first: 1_000,
+        past_last: 1_000_000,
+    },
+    CountFormBand {
+        first: 1_000_000,
+        past_last: u64::MAX,
+    },
+];
+
+pub(super) const OPEN_RECORDING_LABEL: &str = "Open";
+
+const DELETE_RECORDING_LABEL: &str = "Delete";
+
+pub(super) const UNSHELVE_LABEL: &str = "Unshelve";
+
+pub(super) const UNSHELVE_ALL_LABEL: &str = "Unshelve all";
+
+const UNSHELVE_HOVER: &str = "Put this track back in the recording";
+
+const UNSHELVE_ALL_HOVER: &str = "Put every shelved track back in the recording";
+
+const DELETE_SHELVED_HOVER: &str = "Permanently delete every shelved track of this recording";
+
+const SHOW_SHELVED_TRACKS_HOVER: &str = "List the shelved tracks of this recording";
+
+const HIDE_SHELVED_TRACKS_HOVER: &str = "Close the list of shelved tracks";
+
+const NO_SHELVED_TRACKS_HOVER: &str = "This recording has no shelved tracks";
+
+/// Identity's floor: room for the shelf caret and the first characters of the
+/// name. A floor high enough to keep the name readable leaves the action column
+/// past the window's right edge, where the horizontal scroll area cuts Open and
+/// Delete off. The metadata columns, the action column among them, take their
+/// content width first. Identity reaches this floor in a window too narrow for
+/// them, and the listing then scrolls sideways.
+const IDENTITY_MIN_WIDTH: f32 = 64.0;
+
+pub(in crate::app) const OPEN_LOG_LABEL: &str = "Open log";
+
+const OPEN_LOG_HOVER: &str = "Load this log into the log viewer";
+
+const ATTACHED_LOGS_HOVER: &str = "The logs stored with this recording";
+
+/// How many channels the hover lists before summarizing the rest, so a
+/// recording carrying dozens of them still produces a readable tooltip.
+pub(super) const MAX_HOVER_CHANNELS: usize = 8;

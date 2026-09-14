@@ -19,9 +19,6 @@ use gt_history::{
 };
 use thiserror::Error;
 
-/// zstd's default level.
-const COMPRESSION_LEVEL: i32 = 3;
-
 /// A log to store with a recording.
 #[derive(Debug)]
 pub struct LogToAttach<'a> {
@@ -45,20 +42,6 @@ pub struct AttachedLog {
 
 #[derive(Debug, Error)]
 pub enum LogAttachmentError {
-    #[error(transparent)]
-    Database(#[from] DbError),
-
-    /// The recording carries no attachment under this id.
-    #[error("the recording has no log attachment {id}")]
-    UnknownAttachment { id: LogAttachmentId },
-
-    /// The attribute refers to a log the store no longer holds.
-    #[error("the attached log at {} is missing", path.display())]
-    MissingLog { id: LogAttachmentId, path: PathBuf },
-
-    #[error("could not read or write the attached log at {}: {source}", path.display())]
-    Io { path: PathBuf, source: io::Error },
-
     /// The file decompressed to a different log than the one attached.
     #[error(
         "the attached log {id} is not the log it was stored as (hash {found}, expected {expected})"
@@ -69,12 +52,26 @@ pub enum LogAttachmentError {
         found: LogContentHash,
     },
 
+    #[error(transparent)]
+    Database(#[from] DbError),
+
+    #[error("could not read or write the attached log at {}: {source}", path.display())]
+    Io { path: PathBuf, source: io::Error },
+
+    /// The attribute refers to a log the store no longer holds.
+    #[error("the attached log at {} is missing", path.display())]
+    MissingLog { id: LogAttachmentId, path: PathBuf },
+
     #[error("the attached log {id} is not UTF-8")]
     NotUtf8 {
         id: LogAttachmentId,
         #[source]
         source: FromUtf8Error,
     },
+
+    /// The recording carries no attachment under this id.
+    #[error("the recording has no log attachment {id}")]
+    UnknownAttachment { id: LogAttachmentId },
 }
 
 /// Reading the logs stored with the recordings of a history database.
@@ -226,3 +223,6 @@ fn write_compressed_log(path: &Path, bytes: &[u8]) -> io::Result<()> {
 fn read_compressed_log(path: &Path) -> io::Result<Vec<u8>> {
     zstd::decode_all(fs::read(path)?.as_slice())
 }
+
+/// zstd's default level.
+const COMPRESSION_LEVEL: i32 = 3;

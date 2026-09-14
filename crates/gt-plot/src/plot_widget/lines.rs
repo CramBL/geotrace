@@ -56,12 +56,6 @@ pub(super) fn visible_x_range<T>(
     start..end
 }
 
-/// Pixel radius within which the pointer is considered to be hovering a
-/// masked-satellite anomaly marker.
-pub(super) const ANOMALY_HOVER_RADIUS_PX: f32 = 7.0;
-/// Pixel radius within which a fix of a per-fix line is a hover target.
-pub(super) const HOVER_RADIUS_PX: f32 = 12.0;
-
 /// The item of `items` the pointer is closest to within `radius_px`, and that
 /// distance for [`NearestCandidate::offer`]. `distance_px` measures one item
 /// against the pointer, which lets a hover target be measured along one axis
@@ -94,10 +88,6 @@ pub(super) fn nearest_fix_under_pointer<'a, T>(
         radius_px,
     )
 }
-/// On-plot radius of the anomaly cross marker.
-pub(super) const ANOMALY_MARKER_RADIUS: f32 = 4.0;
-/// Gap between the pointer and the custom hover label.
-const HOVER_LABEL_TOOLTIP_GAP: f32 = 12.0;
 /// Add all metric lines for one track to the plot using pre-computed level selections.
 ///
 /// When `hovered_chip` is `Some(kind)`, that metric is highlighted (double stroke
@@ -267,13 +257,13 @@ pub(super) fn add_series_lines<'a>(
 /// label cannot carry.
 pub(super) enum PlotHoverLabel {
     Anomaly(AnomalyHover),
-    SnapError(SnapErrorHover),
-    Jamming(JammingHover),
-    Geomagnetic(GeomagneticHover),
-    Tec(TecHover),
-    ClockOffset(ClockOffsetHover),
     BackwardTimeStep(BackwardTimeStepHover),
+    ClockOffset(ClockOffsetHover),
+    Geomagnetic(GeomagneticHover),
+    Jamming(JammingHover),
+    SnapError(SnapErrorHover),
     SolarFlare(SolarFlareHover),
+    Tec(TecHover),
 }
 
 impl PlotHoverLabel {
@@ -502,6 +492,16 @@ pub(super) fn add_util_anomalies<'a>(
         });
     }
 }
+
+/// Pixel radius within which the pointer is considered to be hovering a
+/// masked-satellite anomaly marker.
+pub(super) const ANOMALY_HOVER_RADIUS_PX: f32 = 7.0;
+/// Pixel radius within which a fix of a per-fix line is a hover target.
+pub(super) const HOVER_RADIUS_PX: f32 = 12.0;
+/// On-plot radius of the anomaly cross marker.
+pub(super) const ANOMALY_MARKER_RADIUS: f32 = 4.0;
+/// Gap between the pointer and the custom hover label.
+const HOVER_LABEL_TOOLTIP_GAP: f32 = 12.0;
 
 #[cfg(test)]
 mod tests {

@@ -15,15 +15,15 @@ use crate::{Angle, Velocity};
 /// The clock or clocks that stamped a nav fix or a satellite report.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NavFixTime {
-    /// The receiver's timestamp, with no host clock recorded.
-    Receiver(DateTime<Utc>),
-    /// The host clock's timestamp, taken while the receiver had no lock.
-    Host(DateTime<Utc>),
     /// Both timestamps, recorded under lock on a host that also stamped it.
     Both {
         gps: DateTime<Utc>,
         sys: DateTime<Utc>,
     },
+    /// The host clock's timestamp, taken while the receiver had no lock.
+    Host(DateTime<Utc>),
+    /// The receiver's timestamp, with no host clock recorded.
+    Receiver(DateTime<Utc>),
 }
 
 /// The two timestamps a recorder holds for one fix or satellite report, either

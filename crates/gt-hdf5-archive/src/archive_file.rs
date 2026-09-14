@@ -16,13 +16,6 @@ use crate::open_retry::OpenRetry;
 use crate::prune::{DeclinedRecovery, InterruptedDelete};
 use crate::{ArchiveError, attributes};
 
-/// Smallest free block the file keeps track of. Every block is worth tracking:
-/// a day's rows free whole pages, and the pages are what later days reuse.
-const FREE_SPACE_THRESHOLD_BYTES: u64 = 1;
-
-/// Appended to an archive's path for the file a rebuild writes.
-const REBUILD_SUFFIX: &str = ".rebuilding";
-
 /// What [`ArchiveFile::migrate_file_space_if_needed`] found the archive
 /// created with, and did about it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,3 +261,10 @@ fn copy_i64_attributes(
     }
     Ok(())
 }
+
+/// Smallest free block the file keeps track of. Every block is worth tracking:
+/// a day's rows free whole pages, and the pages are what later days reuse.
+const FREE_SPACE_THRESHOLD_BYTES: u64 = 1;
+
+/// Appended to an archive's path for the file a rebuild writes.
+const REBUILD_SUFFIX: &str = ".rebuilding";

@@ -8,6 +8,11 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+/// Identifying request header (name, value) required by the FOSSGIS usage
+/// policy for published apps. The shared transport sends it on every
+/// request.
+pub use gt_fetch::CLIENT_ID_HEADER;
+
 pub mod merge;
 pub mod request_plan;
 pub mod snapped_track;
@@ -15,6 +20,28 @@ pub mod snapped_track;
 pub mod test_util;
 pub mod transport;
 pub mod wire;
+
+/// The host component of a server base URL, or `None` when the URL does not
+/// parse or has no host.
+///
+/// This is the granularity at which the app tracks upload consent: recorded
+/// location data leaves the machine, so acknowledgment is per host and a URL
+/// change to a different host must re-prompt.
+pub fn server_host(url: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    parsed.host_str().map(str::to_owned)
+}
+
+/// Directory holding the captured request/response pairs.
+///
+/// Resolved from the crate manifest dir, so it is only meaningful for
+/// development tooling (the capture harness and tests) running inside the
+/// workspace - never in the shipped application.
+pub fn captures_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("captures")
+}
 
 /// Base URL of the default map-matching server: the public Valhalla instance
 /// hosted by FOSSGIS e.V. Free under a fair-usage policy - published apps must
@@ -30,25 +57,9 @@ pub const TRACE_ATTRIBUTES_PATH: &str = "/trace_attributes";
 /// has its own terms, so UI linking here must gate on the default host.
 pub const SERVICE_INFO_URL: &str = "https://routing.openstreetmap.de/about.html";
 
-/// Identifying request header (name, value) required by the FOSSGIS usage
-/// policy for published apps. The shared transport sends it on every
-/// request.
-pub use gt_fetch::CLIENT_ID_HEADER;
-
 /// Minimum spacing between requests to the public server, enforced
 /// client-side. Its rate limit is 1 request per user per second.
 pub const REQUEST_INTERVAL: Duration = Duration::from_secs(1);
-
-/// The host component of a server base URL, or `None` when the URL does not
-/// parse or has no host.
-///
-/// This is the granularity at which the app tracks upload consent: recorded
-/// location data leaves the machine, so acknowledgment is per host and a URL
-/// change to a different host must re-prompt.
-pub fn server_host(url: &str) -> Option<String> {
-    let parsed = reqwest::Url::parse(url).ok()?;
-    parsed.host_str().map(str::to_owned)
-}
 
 /// The canonical scenarios captured from the live server.
 ///
@@ -68,14 +79,3 @@ pub const CAPTURE_SCENARIOS: &[&str] = &[
     "oversized",
     "too_large_body",
 ];
-
-/// Directory holding the captured request/response pairs.
-///
-/// Resolved from the crate manifest dir, so it is only meaningful for
-/// development tooling (the capture harness and tests) running inside the
-/// workspace - never in the shipped application.
-pub fn captures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("captures")
-}

@@ -32,9 +32,6 @@ pub struct PanelState {
     pub panel: FilterPanelState,
 }
 
-/// Fixes per track of the test recordings, at one fix per second.
-pub const FIXES_PER_TRACK: usize = 60;
-
 pub fn utc(hour: u32, minute: u32, second: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 1, 1, hour, minute, second)
         .single()
@@ -112,3 +109,6 @@ pub fn point_on_track(bar: egui::Rect, fraction: f32) -> egui::Pos2 {
     let width = bar.width() - 2.0 * TRACK_INSET_PX;
     egui::pos2(left + fraction * width, bar.center().y)
 }
+
+/// Fixes per track of the test recordings, at one fix per second.
+pub const FIXES_PER_TRACK: usize = 60;

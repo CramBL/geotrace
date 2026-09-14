@@ -6,10 +6,6 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::{env, fs};
 
-include!("build_script/provenance_file.rs");
-
-const PROVENANCE_FILE: &str = "build_provenance.txt";
-
 fn main() -> Result<(), Box<dyn Error>> {
     let path = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?).join(PROVENANCE_FILE);
     if !path.is_file() {
@@ -27,3 +23,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+include!("build_script/provenance_file.rs");
+
+const PROVENANCE_FILE: &str = "build_provenance.txt";

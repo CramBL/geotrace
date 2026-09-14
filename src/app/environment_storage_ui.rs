@@ -20,34 +20,16 @@ use super::environment_storage::{
 use super::read_only_session::READ_ONLY_ARCHIVES_HOVER;
 use crate::settings::EnvironmentStorageSettings;
 
-pub const ENVIRONMENT_DATA_LABEL: &str = "Environment data";
-pub const PRUNE_LABEL: &str = "Prune days older than";
-pub const AUTO_PRUNE_LABEL: &str = "Auto-prune days older than";
-/// The button that opens the confirmation. The suffix marks a control that
-/// needs further input before it acts, as DESIGN.md has it.
-pub const PRUNE_BUTTON_LABEL: &str = "Prune…";
-/// Suffixed like the prune button: it opens a confirmation before it acts.
-pub const DELETE_ALL_LABEL: &str = "Delete all…";
-const TOTAL_LABEL: &str = "Total";
-
-/// Days back from today the cutoff starts at, the range the download controls
-/// also open on.
-const DEFAULT_CUTOFF_DAYS: u64 = 30;
-
-/// Earliest year the cutoff picker offers: archives key their days from the
-/// Unix epoch.
-const EARLIEST_PICKABLE_YEAR: i16 = 1970;
-
 /// Why the controls that delete archived days are grayed out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteBlocker {
+    /// This one archive is closed for the session, on the choice the user
+    /// made for it.
+    ArchiveUnavailable(ArchiveUnavailable),
     /// There is no archive to delete from.
     ArchivesUnreachable(ArchivesUnreachable),
     /// A delete is already rewriting the same columns.
     DeleteRunning,
-    /// This one archive is closed for the session, on the choice the user
-    /// made for it.
-    ArchiveUnavailable(ArchiveUnavailable),
 }
 
 impl DeleteBlocker {
@@ -72,9 +54,6 @@ impl DeleteBlocker {
         }
     }
 }
-
-/// Hover text of the age control while auto-pruning is off.
-const ENABLE_AUTO_PRUNE_FIRST: &str = "Tick 'Auto-prune days older than' to configure this";
 
 /// The auto-prune switch and the age past which it deletes archived days.
 ///
@@ -313,6 +292,27 @@ fn span_line(usage: Option<ArchiveUsage>) -> String {
         |span| format!("{} to {}", span.oldest, span.newest),
     )
 }
+
+pub const ENVIRONMENT_DATA_LABEL: &str = "Environment data";
+pub const PRUNE_LABEL: &str = "Prune days older than";
+pub const AUTO_PRUNE_LABEL: &str = "Auto-prune days older than";
+/// The button that opens the confirmation. The suffix marks a control that
+/// needs further input before it acts, as DESIGN.md has it.
+pub const PRUNE_BUTTON_LABEL: &str = "Prune…";
+/// Suffixed like the prune button: it opens a confirmation before it acts.
+pub const DELETE_ALL_LABEL: &str = "Delete all…";
+const TOTAL_LABEL: &str = "Total";
+
+/// Days back from today the cutoff starts at, the range the download controls
+/// also open on.
+const DEFAULT_CUTOFF_DAYS: u64 = 30;
+
+/// Earliest year the cutoff picker offers: archives key their days from the
+/// Unix epoch.
+const EARLIEST_PICKABLE_YEAR: i16 = 1970;
+
+/// Hover text of the age control while auto-pruning is off.
+const ENABLE_AUTO_PRUNE_FIRST: &str = "Tick 'Auto-prune days older than' to configure this";
 
 #[cfg(test)]
 mod tests {

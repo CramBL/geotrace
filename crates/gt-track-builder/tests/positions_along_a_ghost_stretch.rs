@@ -22,18 +22,6 @@ use gt_types::nav_point::NavPoint;
 use gt_types::track::{FileSource, LoadedFile};
 use rstest::rstest;
 
-/// Two positions this close are one place on the map.
-const POSITION_TOLERANCE_METERS: f64 = 0.1;
-
-/// Two longitudes this close are one meridian to within a millimetre, which
-/// covers the great circle's departure from a straight line over the steps
-/// these fixtures take, and the round trip through the Mercator projection.
-const POSITION_TOLERANCE_DEGREES: f64 = 1e-8;
-
-/// The longitudes alone distinguish the fixes: every fixture here shares this
-/// latitude unless it states another.
-const LATITUDE_DEGREES: f64 = 55.0;
-
 fn utc_time(millis: i64) -> DateTime<Utc> {
     DateTime::<Utc>::UNIX_EPOCH + Duration::milliseconds(millis)
 }
@@ -508,9 +496,6 @@ fn the_missing_heading_rule_draws_a_fix_stamped_before_its_anchors_outside_them(
     );
 }
 
-/// The index every test below writes its dead-reckoned fix at.
-const GHOST_INDEX: usize = 1;
-
 /// Where the map draws the ghost fix held in `file`, in normalized Web Mercator.
 fn drawn_ghost_merc(file: &LoadedFile) -> Option<MercPoint> {
     let ghost = file
@@ -606,3 +591,18 @@ fn a_ghost_fix_is_indexed_at_the_position_it_is_drawn_at() {
     assert_eq!(nearest.point_index.as_usize(), GHOST_INDEX);
     assert_eq!(nearest.merc, ghost_merc);
 }
+
+/// Two positions this close are one place on the map.
+const POSITION_TOLERANCE_METERS: f64 = 0.1;
+
+/// Two longitudes this close are one meridian to within a millimetre, which
+/// covers the great circle's departure from a straight line over the steps
+/// these fixtures take, and the round trip through the Mercator projection.
+const POSITION_TOLERANCE_DEGREES: f64 = 1e-8;
+
+/// The longitudes alone distinguish the fixes: every fixture here shares this
+/// latitude unless it states another.
+const LATITUDE_DEGREES: f64 = 55.0;
+
+/// The index every test writes its dead-reckoned fix at.
+const GHOST_INDEX: usize = 1;

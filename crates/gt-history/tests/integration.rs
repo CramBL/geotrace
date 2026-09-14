@@ -252,11 +252,6 @@ fn backend_name() -> &'static str {
     }
 }
 
-/// How far past the baseline a file may end up and still count as reusing its
-/// space. Absolute sizes move with the HDF5 libraries, so the assertion is on
-/// the ratio. The snapshot below pins the exact numbers on top of it.
-const REUSE_SLACK_PERCENT: u64 = 10;
-
 /// Snapshot the exact baseline/after database file sizes (and their delta) with
 /// `insta`, so any change in the space behaviour is caught precisely and shown for
 /// review. The size is deterministic for a given backend toolchain (static
@@ -565,16 +560,6 @@ fn nav_point_data_round_trips() {
 
     assert_eq!(stored, expected, "timestamps should round-trip losslessly");
 }
-
-/// A recorder that ran, rebooted to a clock an hour behind, and ran on. Its
-/// earliest and latest nav point times are neither the first nor the last nav
-/// point in file order.
-const CLOCK_STEP_BACK_TIMES: [i64; 4] = [
-    1_700_003_600_000_000,
-    1_700_003_660_000_000,
-    1_700_000_000_000_000,
-    1_700_000_060_000_000,
-];
 
 #[test_log::test]
 fn a_recording_whose_clock_steps_backwards_is_indexed_over_every_nav_point_time() {
@@ -3321,10 +3306,10 @@ fn ui_state_from_a_newer_build_stays_as_it_stands_and_reports_its_version() {
 /// [`writing_ui_state_for_a_recording_that_is_not_stored_writes_nothing`].
 #[derive(Debug, Clone, Copy)]
 enum AbsentRecording {
-    /// A group name under an identity that is new to the database.
-    UnderAnUnknownIdentity,
     /// A recording deleted from an identity that still holds another.
     DeletedFromAKnownIdentity,
+    /// A group name under an identity that is new to the database.
+    UnderAnUnknownIdentity,
 }
 
 /// A write for a recording the database no longer holds leaves every stored
@@ -3787,3 +3772,18 @@ fn a_read_only_open_rejects_a_schema_newer_than_supported() {
         Ok(_) => panic!("the read-only open accepted schema_version {newer}"),
     }
 }
+
+/// How far past the baseline a file may end up and still count as reusing its
+/// space. Absolute sizes move with the HDF5 libraries, so the assertion is on
+/// the ratio. The snapshot of `assert_size_snapshot` pins the exact numbers on top of it.
+const REUSE_SLACK_PERCENT: u64 = 10;
+
+/// A recorder that ran, rebooted to a clock an hour behind, and ran on. Its
+/// earliest and latest nav point times are neither the first nor the last nav
+/// point in file order.
+const CLOCK_STEP_BACK_TIMES: [i64; 4] = [
+    1_700_003_600_000_000,
+    1_700_003_660_000_000,
+    1_700_000_000_000_000,
+    1_700_000_060_000_000,
+];

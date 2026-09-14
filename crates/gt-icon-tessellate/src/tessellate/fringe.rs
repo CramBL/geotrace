@@ -341,12 +341,6 @@ mod tests {
         assert_eq!(sizes, expected_sizes);
     }
 
-    const INSET: f32 = 0.5;
-    const OUTSET: f32 = 0.5;
-    /// Where the element's solid block nominally starts in these tests, so
-    /// index-space arithmetic is exercised with a non-zero base.
-    const SOLID_BASE: u32 = 100;
-
     #[rstest]
     #[case::single_triangle(single_triangle())]
     #[case::spike_triangle(spike_triangle())]
@@ -423,4 +417,10 @@ mod tests {
         assert!(fringe.outer_vertices.is_empty());
         assert!(fringe.indices.is_empty());
     }
+
+    const INSET: f32 = 0.5;
+    const OUTSET: f32 = 0.5;
+    /// Where the element's solid block nominally starts in these tests, so
+    /// index-space arithmetic is exercised with a non-zero base.
+    const SOLID_BASE: u32 = 100;
 }

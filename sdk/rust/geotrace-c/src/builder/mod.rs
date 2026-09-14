@@ -1,17 +1,15 @@
 //! The opaque handle for a file under construction.
 
-mod finish;
-mod ingest;
-mod lifecycle;
-mod metadata;
-
 use std::time::Duration;
 
 use geotrace_sdk::{MetaStringWithNul, NavFileBuilder, NavRecorder, TravelMode};
 
 use crate::error::{self, GtdStatus};
 
-const METADATA_BEFORE_DATA: &str = "metadata must be set before adding data";
+mod finish;
+mod ingest;
+mod lifecycle;
+mod metadata;
 
 /// Opaque handle for a file-under-construction.
 ///
@@ -110,3 +108,5 @@ impl GtdFileBuilder {
         })
     }
 }
+
+const METADATA_BEFORE_DATA: &str = "metadata must be set before adding data";

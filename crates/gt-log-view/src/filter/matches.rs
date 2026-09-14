@@ -2,8 +2,6 @@
 
 use std::iter;
 
-pub(crate) const BITS_PER_WORD: usize = u64::BITS as usize;
-
 /// The entries of one log a single filter matched.
 ///
 /// The table, the gutter bars and the map all read this, and only a newer
@@ -132,6 +130,8 @@ fn set_bits(word: u64, first_entry_index: usize) -> impl Iterator<Item = usize> 
         Some(first_entry_index.saturating_add(bit))
     })
 }
+
+pub(crate) const BITS_PER_WORD: usize = u64::BITS as usize;
 
 #[cfg(test)]
 mod tests {

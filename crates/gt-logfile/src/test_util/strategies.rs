@@ -15,25 +15,6 @@ use crate::{
     },
 };
 
-/// The span every generated moment lands in: 2020-01-01 to 2030-01-01.
-const FIRST_MOMENT_UNIX_SECS: i64 = 1_577_836_800;
-const LAST_MOMENT_UNIX_SECS: i64 = 1_893_456_000;
-
-const MICROSECONDS_PER_SECOND: u32 = 1_000_000;
-const NANOSECONDS_PER_MICROSECOND: u32 = 1_000;
-
-/// Bytes the month abbreviation of a syslog timestamp takes.
-const MONTH_ABBREV_BYTES: usize = 3;
-
-/// Lines one generated log holds, before its summary block.
-const MAX_GENERATED_LINES: usize = 24;
-
-/// Rows one generated summary block lists per table.
-const MAX_GENERATED_TABLE_ROWS: usize = 3;
-
-/// Five words the level vocabulary knows, and one it does not.
-const LEVEL_WORDS: [&str; 6] = ["ERROR", "WARN", "INFO", "DEBUG", "NOTICE", "BLOCK"];
-
 /// The case a month abbreviation is written in: `journalctl` capitalises it
 /// under `LC_TIME=C` and lower-cases it under some other locales.
 #[derive(Debug, Clone, Copy)]
@@ -382,3 +363,22 @@ fn any_exported_log() -> impl Strategy<Value = String> {
             })
     })
 }
+
+/// The span every generated moment lands in: 2020-01-01 to 2030-01-01.
+const FIRST_MOMENT_UNIX_SECS: i64 = 1_577_836_800;
+const LAST_MOMENT_UNIX_SECS: i64 = 1_893_456_000;
+
+const MICROSECONDS_PER_SECOND: u32 = 1_000_000;
+const NANOSECONDS_PER_MICROSECOND: u32 = 1_000;
+
+/// Bytes the month abbreviation of a syslog timestamp takes.
+const MONTH_ABBREV_BYTES: usize = 3;
+
+/// Lines one generated log holds, before its summary block.
+const MAX_GENERATED_LINES: usize = 24;
+
+/// Rows one generated summary block lists per table.
+const MAX_GENERATED_TABLE_ROWS: usize = 3;
+
+/// Five words the level vocabulary knows, and one it does not.
+const LEVEL_WORDS: [&str; 6] = ["ERROR", "WARN", "INFO", "DEBUG", "NOTICE", "BLOCK"];

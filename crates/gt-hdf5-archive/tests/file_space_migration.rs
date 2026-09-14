@@ -16,26 +16,6 @@ use gt_hdf5_archive::prune::{ArchiveLayout, RowLevel};
 use gt_hdf5_archive::test_util;
 use gt_hdf5_archive::{ArchiveFile, Column, ColumnFormat, FileSpaceMigration, attributes};
 
-const FORMAT: ColumnFormat = ColumnFormat {
-    chunk_rows: 4_096,
-    deflate_level: 6,
-};
-
-const DAYS: &str = "days";
-const ROWS: &str = "rows";
-const VALUE: &str = "value";
-const HOST: &str = "https://example.invalid";
-const SCHEMA_VERSION_ATTR: &str = "schema_version";
-const SCHEMA_VERSION: i64 = 3;
-
-/// The days the tests that read an archive back store, out of the order they
-/// fall in.
-const STORED_DAYS: [(NaiveDate, usize); 3] = [
-    (test_util::day_at(2), 5),
-    (test_util::day_at(0), 3),
-    (test_util::day_at(1), 4),
-];
-
 /// A day-keyed archive of one row column, left closed between operations the
 /// way a store leaves it.
 struct TestArchive {
@@ -320,3 +300,23 @@ fn fill_delete_and_refill(archive: &TestArchive) -> Result<u64, String> {
     }
     archive.size_on_disk()
 }
+
+const FORMAT: ColumnFormat = ColumnFormat {
+    chunk_rows: 4_096,
+    deflate_level: 6,
+};
+
+const DAYS: &str = "days";
+const ROWS: &str = "rows";
+const VALUE: &str = "value";
+const HOST: &str = "https://example.invalid";
+const SCHEMA_VERSION_ATTR: &str = "schema_version";
+const SCHEMA_VERSION: i64 = 3;
+
+/// The days the tests that read an archive back store, out of the order they
+/// fall in.
+const STORED_DAYS: [(NaiveDate, usize); 3] = [
+    (test_util::day_at(2), 5),
+    (test_util::day_at(0), 3),
+    (test_util::day_at(1), 4),
+];

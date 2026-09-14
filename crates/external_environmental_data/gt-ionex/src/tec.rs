@@ -2,21 +2,6 @@
 
 use std::ops::RangeInclusive;
 
-/// First-order ionospheric delay coefficient in m^3/s^2, from the standard
-/// relation `delay = 40.3 / f^2 * TEC` (IONEX 1.0 specification, section 2).
-const DELAY_COEFFICIENT_M3_PER_S2: f64 = 40.3;
-
-/// Electrons per square meter in one TEC unit.
-const ELECTRONS_PER_SQUARE_METER_PER_TECU: f64 = 1e16;
-
-/// GPS L1 carrier frequency.
-const L1_FREQUENCY_HZ: f64 = 1_575.42e6;
-
-/// Range one TEC unit adds to an L1 pseudorange: 0.162 m.
-pub const L1_DELAY_METERS_PER_TECU: f64 = DELAY_COEFFICIENT_M3_PER_S2
-    * ELECTRONS_PER_SQUARE_METER_PER_TECU
-    / (L1_FREQUENCY_HZ * L1_FREQUENCY_HZ);
-
 /// A vertical total electron content value in TEC units, one of which is
 /// 10^16 electrons per square meter.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
@@ -37,10 +22,6 @@ impl TotalElectronContent {
         self.0 * L1_DELAY_METERS_PER_TECU
     }
 }
-
-/// Exponents accepted from a file, wide enough for every published product
-/// and narrow enough to keep a scaled value finite.
-const EXPONENT_RANGE: RangeInclusive<i32> = -10..=10;
 
 /// The power of ten a file stores its TEC values scaled by, from its
 /// `EXPONENT` record.
@@ -75,6 +56,25 @@ impl ScalingExponent {
         })
     }
 }
+
+/// First-order ionospheric delay coefficient in m^3/s^2, from the standard
+/// relation `delay = 40.3 / f^2 * TEC` (IONEX 1.0 specification, section 2).
+const DELAY_COEFFICIENT_M3_PER_S2: f64 = 40.3;
+
+/// Electrons per square meter in one TEC unit.
+const ELECTRONS_PER_SQUARE_METER_PER_TECU: f64 = 1e16;
+
+/// GPS L1 carrier frequency.
+const L1_FREQUENCY_HZ: f64 = 1_575.42e6;
+
+/// Range one TEC unit adds to an L1 pseudorange: 0.162 m.
+pub const L1_DELAY_METERS_PER_TECU: f64 = DELAY_COEFFICIENT_M3_PER_S2
+    * ELECTRONS_PER_SQUARE_METER_PER_TECU
+    / (L1_FREQUENCY_HZ * L1_FREQUENCY_HZ);
+
+/// Exponents accepted from a file, wide enough for every published product
+/// and narrow enough to keep a scaled value finite.
+const EXPONENT_RANGE: RangeInclusive<i32> = -10..=10;
 
 #[cfg(test)]
 mod tests {

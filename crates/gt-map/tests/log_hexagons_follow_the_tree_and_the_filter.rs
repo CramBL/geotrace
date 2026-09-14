@@ -17,13 +17,6 @@ use gt_ui_types::{
     TrackDataVisibility,
 };
 
-/// Longitude between consecutive fixes of a recording made in one spot, about
-/// 6 cm. Every hexagon over such a recording collapses into one cluster.
-const STANDING_STEP_DEGREES: f64 = 0.000_001;
-
-/// Fixes of the recording the cases draw, one a minute apart.
-const FIX_COUNT: usize = 30;
-
 /// The map every case drives: `files` framed with no filter active over the
 /// settling frames, holding `matches`, with `filter` set after that.
 ///
@@ -318,3 +311,10 @@ fn a_log_hexagon_of_a_kept_recording_takes_the_pointer() {
         "the hexagon of a kept recording took neither the hover nor the click"
     );
 }
+
+/// Longitude between consecutive fixes of a recording made in one spot, about
+/// 6 cm. Every hexagon over such a recording collapses into one cluster.
+const STANDING_STEP_DEGREES: f64 = 0.000_001;
+
+/// Fixes of the recording the cases draw, one a minute apart.
+const FIX_COUNT: usize = 30;

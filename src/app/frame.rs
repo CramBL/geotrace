@@ -39,21 +39,6 @@ use super::storage::{DatabasesPending, OPENING_DATABASES, QueuedLoad};
 use super::update;
 use super::{App, SharedAppState, modals};
 
-const DROP_OVERLAY_SCRIM_OPACITY: f32 = 0.85;
-
-/// Width of the loading-progress overlay: enough for a progress bar and its
-/// stage, and no more than a recording name needs before it truncates.
-const LOADING_OVERLAY_MIN_WIDTH: f32 = 260.0;
-const LOADING_OVERLAY_MAX_WIDTH: f32 = 340.0;
-
-/// Id of the [`Window`] the loading progress overlay is drawn in.
-pub(super) const LOADING_OVERLAY_WINDOW_ID: &str = "##loading_progress";
-
-/// Jobs the loading progress overlay lists before it counts the rest in one
-/// line. Four running loads with their progress bars make the overlay 200
-/// points tall.
-pub(super) const LOADING_OVERLAY_MOST_LISTED_JOBS: usize = 4;
-
 impl eframe::App for App {
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
         self.flush_settings();
@@ -1263,3 +1248,18 @@ fn extract_match_hover_time_range(
     let time = |pi: usize| track.points.get(pi).map(|p| p.tpv.time().utc());
     Some((time(hm.start)?, time(hm.end.checked_sub(1)?)?))
 }
+
+const DROP_OVERLAY_SCRIM_OPACITY: f32 = 0.85;
+
+/// Width of the loading-progress overlay: enough for a progress bar and its
+/// stage, and no more than a recording name needs before it truncates.
+const LOADING_OVERLAY_MIN_WIDTH: f32 = 260.0;
+const LOADING_OVERLAY_MAX_WIDTH: f32 = 340.0;
+
+/// Id of the [`Window`] the loading progress overlay is drawn in.
+pub(super) const LOADING_OVERLAY_WINDOW_ID: &str = "##loading_progress";
+
+/// Jobs the loading progress overlay lists before it counts the rest in one
+/// line. Four running loads with their progress bars make the overlay 200
+/// points tall.
+pub(super) const LOADING_OVERLAY_MOST_LISTED_JOBS: usize = 4;

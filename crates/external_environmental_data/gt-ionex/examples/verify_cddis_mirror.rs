@@ -40,19 +40,6 @@ use gt_ionex::{CAPTURE_MANIFEST, IonexProduct, Mirror, MirrorLayout, parse, tran
 #[path = "shared/capture_manifest.rs"]
 mod capture_manifest;
 
-/// Holds the NASA Earthdata token the archive requires.
-const TOKEN_ENV: &str = "EARTHDATA_TOKEN";
-
-/// The day this runs against unless `--day` names another. The committed JPL
-/// capture holds it, which gives the served files something to be read
-/// against.
-const DEFAULT_DAY: &str = "2024-05-10";
-
-const DAY_FORMAT: &str = "%Y-%m-%d";
-
-/// The product this addresses: the settled one, which every archived day has.
-const REQUESTED_PRODUCT: IonexProduct = IonexProduct::Final;
-
 struct Arguments {
     day: NaiveDate,
     capture: bool,
@@ -206,3 +193,16 @@ fn file_name(url: &str) -> Result<&str, Box<dyn Error>> {
         .next()
         .ok_or_else(|| format!("{url} names no file").into())
 }
+
+/// Holds the NASA Earthdata token the archive requires.
+const TOKEN_ENV: &str = "EARTHDATA_TOKEN";
+
+/// The day this runs against unless `--day` names another. The committed JPL
+/// capture holds it, which gives the served files something to be read
+/// against.
+const DEFAULT_DAY: &str = "2024-05-10";
+
+const DAY_FORMAT: &str = "%Y-%m-%d";
+
+/// The product this addresses: the settled one, which every archived day has.
+const REQUESTED_PRODUCT: IonexProduct = IonexProduct::Final;

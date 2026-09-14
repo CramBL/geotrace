@@ -9,10 +9,6 @@ use rayon::prelude::*;
 
 use crate::{parse::LogEntry, pool};
 
-/// Entries below which associating a whole log on the calling thread beats
-/// handing it to [`pool::log_worker_pool`].
-const PARALLEL_ASSOCIATION_MIN_ENTRIES: usize = 16 * 1024;
-
 /// Where an entry sits on the recording it was associated against.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EntryPlacement {
@@ -99,6 +95,10 @@ pub fn associate_entries(
     }
 }
 
+/// Entries below which associating a whole log on the calling thread beats
+/// handing it to [`pool::log_worker_pool`].
+const PARALLEL_ASSOCIATION_MIN_ENTRIES: usize = 16 * 1024;
+
 #[cfg(test)]
 mod tests {
     use chrono::TimeZone as _;
@@ -132,11 +132,6 @@ mod tests {
             })
             .collect()
     }
-
-    /// Positions this close are the same place to within a centimetre, which
-    /// covers the great circle's departure from a straight line in degrees
-    /// over the fixtures' steps.
-    const POSITION_TOLERANCE_DEGREES: f64 = 1e-7;
 
     /// The window every test runs with, matching the app's default.
     fn window() -> Duration {
@@ -323,4 +318,9 @@ mod tests {
             }
         }
     }
+
+    /// Positions this close are the same place to within a centimetre, which
+    /// covers the great circle's departure from a straight line in degrees
+    /// over the fixtures' steps.
+    const POSITION_TOLERANCE_DEGREES: f64 = 1e-7;
 }

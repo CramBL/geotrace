@@ -24,8 +24,8 @@ pub(crate) enum LogAnchor {
 /// session identity it holds for as long as it stays loaded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecordingKey {
-    Stored(DatabaseRef),
     Session(LoadedFileId),
+    Stored(DatabaseRef),
 }
 
 impl RecordingKey {

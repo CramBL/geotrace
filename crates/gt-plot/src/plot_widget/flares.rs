@@ -15,13 +15,6 @@ use gt_flare::{MarkedFlare, SolarFlare};
 use super::lines::{self, NearestHoverLabel, PlotHoverLabel};
 use super::overlay::{OverlayItem, OverlayPainter};
 
-/// Stroke width of a marker line, above the data lines' default so a flare
-/// stays findable across a crowded plot.
-const MARKER_WIDTH: f32 = 1.5;
-
-/// Pixel distance from a marker within which the pointer is hovering it.
-const HOVER_RADIUS_PX: f32 = 5.0;
-
 /// The flare markers of one span.
 struct FlareMarkers {
     /// Peak time in Unix seconds and the class colour, in the order they were
@@ -233,6 +226,13 @@ impl SolarFlareHover {
         ui.label(text::SOURCE_CAVEAT);
     }
 }
+
+/// Stroke width of a marker line, above the data lines' default so a flare
+/// stays findable across a crowded plot.
+const MARKER_WIDTH: f32 = 1.5;
+
+/// Pixel distance from a marker within which the pointer is hovering it.
+const HOVER_RADIUS_PX: f32 = 5.0;
 
 #[cfg(test)]
 mod tests {

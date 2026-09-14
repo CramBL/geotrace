@@ -147,9 +147,6 @@ pub fn build_file(
     )
 }
 
-/// How long each track of [`segmented_recording`] runs.
-const SEGMENTED_TRACK_DURATION: Duration = Duration::minutes(10);
-
 /// A recording of `track_count` tracks, numbered from one the way the track
 /// builder numbers a fresh segmentation. Track 1 starts at the Unix epoch and
 /// track `n` starts twenty minutes after track `n - 1`. Each track runs ten
@@ -182,6 +179,9 @@ pub fn segmented_recording(track_count: usize) -> LoadedFile {
         .collect();
     loaded_file_with_tracks(tracks)
 }
+
+/// How long each track of [`segmented_recording`] runs.
+const SEGMENTED_TRACK_DURATION: Duration = Duration::minutes(10);
 
 #[cfg(test)]
 mod tests {

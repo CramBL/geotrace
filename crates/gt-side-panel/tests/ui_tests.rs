@@ -1853,19 +1853,6 @@ fn make_harness_in_bounded_steps(state: State) -> TestHarness<'static, State> {
     harness
 }
 
-/// The first line of a track row's stats tooltip for a recording of
-/// [`gt_test_utils::nav_test_data`].
-const TRACK_STATS_TIME_RANGE: &str = "2026-01-01 12:00:00 – 12:19:59";
-
-/// Frames a hover is held for before its tooltip is read and snapshotted:
-/// egui opens a tooltip after its delay, and lays a newly opened one out over
-/// the frames that follow.
-const TOOLTIP_SETTLE_FRAMES: usize = 5;
-
-/// One digit longer than the duration [`gt_test_utils::nav_test_data`] gives
-/// a track ("0:19:59"), which widens the duration column by that digit.
-const WIDER_TRACK_DURATION: chrono::TimeDelta = chrono::TimeDelta::seconds(37_199);
-
 /// How many tooltips egui shows: each one is an area of its own in the
 /// tooltip layer order.
 fn open_tooltip_count(harness: &TestHarness<'static, State>) -> usize {
@@ -2202,9 +2189,6 @@ fn snapshot_hovering_the_row_beside_a_control_opens_the_track_stats_tooltip(
     );
     harness.snapshot(snapshot_name);
 }
-
-/// A stand-in for the read-only wording, which the app owns.
-const READ_ONLY_HOVER: &str = "This session is read-only";
 
 /// The recording the shelve tests load, as the recording history addresses it.
 fn stored_recording_ref() -> gt_history_types::DatabaseRef {
@@ -2669,3 +2653,19 @@ fn clicking_the_shelved_track_mark_requests_the_recordings_shelf() {
 
     assert_eq!(harness.state().shelf_request, Some(stored_recording_ref()));
 }
+
+/// The first line of a track row's stats tooltip for a recording of
+/// [`gt_test_utils::nav_test_data`].
+const TRACK_STATS_TIME_RANGE: &str = "2026-01-01 12:00:00 – 12:19:59";
+
+/// Frames a hover is held for before its tooltip is read and snapshotted:
+/// egui opens a tooltip after its delay, and lays a newly opened one out over
+/// the frames that follow.
+const TOOLTIP_SETTLE_FRAMES: usize = 5;
+
+/// One digit longer than the duration [`gt_test_utils::nav_test_data`] gives
+/// a track ("0:19:59"), which widens the duration column by that digit.
+const WIDER_TRACK_DURATION: chrono::TimeDelta = chrono::TimeDelta::seconds(37_199);
+
+/// A stand-in for the read-only wording, which the app owns.
+const READ_ONLY_HOVER: &str = "This session is read-only";

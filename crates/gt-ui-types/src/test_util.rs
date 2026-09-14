@@ -20,9 +20,6 @@ use crate::highlight::DataPointRef;
 use crate::query_matches::{QueryMatches, TrackRanges};
 use crate::visibility::{MapScope, TrackDataVisibility};
 
-/// Points in the one fixture track.
-pub const POINT_COUNT: usize = 4;
-
 /// The fixture's first point, one second per point after it.
 pub fn start() -> DateTime<Utc> {
     DateTime::from_timestamp(1_748_000_000, 0).expect("fixed timestamp is valid")
@@ -114,3 +111,6 @@ impl ScopeFixture {
         }
     }
 }
+
+/// Points in the one fixture track.
+pub const POINT_COUNT: usize = 4;

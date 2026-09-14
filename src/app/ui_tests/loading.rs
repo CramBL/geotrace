@@ -91,16 +91,6 @@ fn snapshot_load_warnings_dialog() {
     harness.snapshot_with_color_tolerance("load_warnings_dialog");
 }
 
-/// Recordings dropped in one batch, one more than the overlay lists at once.
-const BATCH_PAST_THE_LISTED_JOBS: usize = LOADING_OVERLAY_MOST_LISTED_JOBS + 1;
-
-/// Recordings dropped in one batch, far more than the overlay lists at once.
-const BATCH_FAR_PAST_THE_LISTED_JOBS: usize = LOADING_OVERLAY_MOST_LISTED_JOBS + 40;
-
-/// 1280x800, where the map fills the top two thirds of the window and the plot
-/// the bottom third.
-const DESKTOP_VIEWPORT: egui::Vec2 = egui::vec2(1280.0, 800.0);
-
 /// Loads still running, which the overlay lists with a progress bar each.
 #[derive(Clone, Copy)]
 struct RunningJobCount(usize);
@@ -249,3 +239,13 @@ fn the_map_display_toggle_opens_on_a_press_under_the_loading_overlay() {
          overlay instead"
     );
 }
+
+/// Recordings dropped in one batch, one more than the overlay lists at once.
+const BATCH_PAST_THE_LISTED_JOBS: usize = LOADING_OVERLAY_MOST_LISTED_JOBS + 1;
+
+/// Recordings dropped in one batch, far more than the overlay lists at once.
+const BATCH_FAR_PAST_THE_LISTED_JOBS: usize = LOADING_OVERLAY_MOST_LISTED_JOBS + 40;
+
+/// 1280x800, where the map fills the top two thirds of the window and the plot
+/// the bottom third.
+const DESKTOP_VIEWPORT: egui::Vec2 = egui::vec2(1280.0, 800.0);

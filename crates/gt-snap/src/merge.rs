@@ -25,15 +25,15 @@ use crate::wire::{Edge, SnapPointKind, TraceAttributesResponse};
 /// The outcome of sending one chunk, as classified by the transport.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChunkOutcome {
-    /// The server matched the chunk.
-    Success(TraceAttributesResponse),
+    /// The chunk failed even after the transport's retry. The string is the
+    /// transport's rendered error. Its points have no data.
+    Failed(String),
     /// The server rejected the whole chunk with error 444: every point is
     /// off the road network. Captured reality: merging maps this to
     /// all-unsnapped points.
     OffNetwork,
-    /// The chunk failed even after the transport's retry. The string is the
-    /// transport's rendered error. Its points have no data.
-    Failed(String),
+    /// The server matched the chunk.
+    Success(TraceAttributesResponse),
 }
 
 /// One warning accumulated while merging. Structured per the warning
@@ -47,6 +47,12 @@ pub enum ChunkOutcome {
 pub enum SnapWarning {
     /// A chunk failed after retry. Its owned points have no snap data.
     ChunkFailed { chunk_index: usize, detail: String },
+    /// The chunk's snapped-track geometry was internally inconsistent. The
+    /// per-point data is kept but the chunk contributes no geometry.
+    Geometry { chunk_index: usize, detail: String },
+    /// Chunks were matched against different OSM data versions (the map
+    /// updated mid-run). The first version is kept as the result's.
+    OsmChangesetMismatch { first: u64, later: u64 },
     /// The server response did not have one matched point per sent point.
     /// Results cannot be mapped back to the track, so the chunk is treated
     /// as failed.
@@ -55,12 +61,6 @@ pub enum SnapWarning {
         sent: usize,
         received: usize,
     },
-    /// The chunk's snapped-track geometry was internally inconsistent. The
-    /// per-point data is kept but the chunk contributes no geometry.
-    Geometry { chunk_index: usize, detail: String },
-    /// Chunks were matched against different OSM data versions (the map
-    /// updated mid-run). The first version is kept as the result's.
-    OsmChangesetMismatch { first: u64, later: u64 },
     /// The server attached warnings to a chunk's response, passed through
     /// verbatim. No live exemplar exists to model them more tightly.
     Server {

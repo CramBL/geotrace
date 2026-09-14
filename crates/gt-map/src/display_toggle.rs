@@ -20,37 +20,6 @@ use strum::IntoEnumIterator;
 
 use crate::display_counts::DisplayCounts;
 
-/// Id of the [`egui::Area`] the eye button is drawn in.
-pub const DISPLAY_TOGGLE_BUTTON_AREA_ID: &str = "display_toggle_button";
-
-/// Id of the [`egui::Area`] the category popup is drawn in while it is open.
-pub const DISPLAY_TOGGLE_POPUP_AREA_ID: &str = "display_toggle_popup";
-
-/// Width of the right-aligned count column, sized for the widest expected
-/// count (`999,999`) so the eye glyphs stay aligned across rows.
-const COUNT_COLUMN_WIDTH_PX: f32 = 48.0;
-
-/// Indent of the interference row's day stepper, marking it as that row's
-/// detail.
-const STEPPER_INDENT_PX: f32 = 24.0;
-
-/// Disabled hover text while the interference layer is hidden.
-const HIDDEN_LAYER_TEXT: &str = "Show the interference layer to step days";
-
-/// Width and height of the TEC legend's colour strip.
-const LEGEND_WIDTH_PX: f32 = 168.0;
-const LEGEND_STRIP_HEIGHT_PX: f32 = 10.0;
-
-/// Gap between the legend's strip and its tick labels.
-const LEGEND_LABEL_GAP_PX: f32 = 2.0;
-
-/// Columns the legend's gradient is painted in. The ramp is piecewise linear,
-/// so this many columns of vertex-interpolated colour render it smoothly.
-const LEGEND_COLUMNS: usize = 48;
-
-/// Alpha the legend and its labels draw at while the layer is hidden.
-const DISABLED_ALPHA: f32 = 0.4;
-
 /// The interference row's own state: which day it shows, and why it has
 /// nothing to draw.
 pub(crate) struct InterferenceRow<'a> {
@@ -613,6 +582,37 @@ pub(crate) fn popup_contents(
         }
     });
 }
+
+/// Id of the [`egui::Area`] the eye button is drawn in.
+pub const DISPLAY_TOGGLE_BUTTON_AREA_ID: &str = "display_toggle_button";
+
+/// Id of the [`egui::Area`] the category popup is drawn in while it is open.
+pub const DISPLAY_TOGGLE_POPUP_AREA_ID: &str = "display_toggle_popup";
+
+/// Width of the right-aligned count column, sized for the widest expected
+/// count (`999,999`) so the eye glyphs stay aligned across rows.
+const COUNT_COLUMN_WIDTH_PX: f32 = 48.0;
+
+/// Indent of the interference row's day stepper, marking it as that row's
+/// detail.
+const STEPPER_INDENT_PX: f32 = 24.0;
+
+/// Disabled hover text while the interference layer is hidden.
+const HIDDEN_LAYER_TEXT: &str = "Show the interference layer to step days";
+
+/// Width and height of the TEC legend's colour strip.
+const LEGEND_WIDTH_PX: f32 = 168.0;
+const LEGEND_STRIP_HEIGHT_PX: f32 = 10.0;
+
+/// Gap between the legend's strip and its tick labels.
+const LEGEND_LABEL_GAP_PX: f32 = 2.0;
+
+/// Columns the legend's gradient is painted in. The ramp is piecewise linear,
+/// so this many columns of vertex-interpolated colour render it smoothly.
+const LEGEND_COLUMNS: usize = 48;
+
+/// Alpha the legend and its labels draw at while the layer is hidden.
+const DISABLED_ALPHA: f32 = 0.4;
 
 #[cfg(test)]
 mod tests {

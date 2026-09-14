@@ -7,48 +7,11 @@ pub use egui_kittest::Node;
 pub use egui_kittest::kittest::{By, NodeT, Queryable};
 use std::path::{Path, PathBuf};
 
-/// Pixel-count tolerance for [`TestHarness::snapshot`]. Anti-aliased edges
-/// differ by a gray level or two between driver versions: on three
-/// `gt-side-panel` baselines 769 to 1582 pixels differed, 1 to 2 of them past
-/// the 0.6 threshold. The smallest deliberate UI change measured against those
-/// baselines, a 0.05 alpha step on one status glyph, put 8 pixels past it.
-const STRICT_PIXEL_COUNT_TOLERANCE: usize = 4;
-
 fn snapshot_options() -> SnapshotOptions {
     SnapshotOptions::new()
         .threshold(0.6_f32)
         .max_failed_pixels(STRICT_PIXEL_COUNT_TOLERANCE)
 }
-
-/// Per-pixel color tolerance shared by
-/// [`TestHarness::snapshot_with_color_tolerance`] and
-/// [`TestHarness::snapshot_with_mesh_edge_tolerance`], as a squared YIQ
-/// distance. 5.0 admits a difference of three gray levels per channel, whose
-/// distance is 4.55, and stops at four, whose distance is 8.08. Three levels
-/// is the whole spread that two rasterizers put on an anti-aliased edge. The
-/// macOS runner left 5 pixels of a 1000x800 History window past 0.6 and none
-/// past 3.0. A hardware Vulkan adapter left one pixel of the flare reference
-/// window past 4.0 and none past 5.0, against baselines that Mesa's llvmpipe
-/// recorded.
-pub const CROSS_BACKEND_COLOR_TOLERANCE: f32 = 5.0;
-
-/// Differing-pixel budget for [`TestHarness::snapshot_with_color_tolerance`].
-/// Zero, because [`CROSS_BACKEND_COLOR_TOLERANCE`] absorbs the whole spread
-/// that two backends put between them. The suite passes at this budget under
-/// Mesa's llvmpipe (`LIBGL_ALWAYS_SOFTWARE=1 WGPU_BACKEND=gl`, the Linux CI
-/// configuration) and on a hardware Vulkan adapter alike. The budget of 32
-/// that this comparison ran at before held 34 baselines stale, twenty of which
-/// drew a button icon that a merged commit had already replaced.
-const COLOR_TOLERANCE_PIXEL_COUNT_BUDGET: usize = 0;
-
-/// Differing-pixel budget for
-/// [`TestHarness::snapshot_with_mesh_edge_tolerance`]. The edges of a rotated,
-/// textured icon mesh landed on different pixels between the Linux baseline
-/// and the macOS runner's Metal backend. That finding is the budget's whole
-/// record, and no count came with it. Mesa's llvmpipe and a hardware Vulkan
-/// adapter put no pixel of a map surface or an icon grid past
-/// [`CROSS_BACKEND_COLOR_TOLERANCE`].
-const MESH_EDGE_PIXEL_COUNT_BUDGET: usize = 32;
 
 /// Snapshot comparison runs locally, on macOS CI (Metal), and on Linux CI
 /// (Mesa's software rasterizer via `WGPU_BACKEND=gl`, deterministic across
@@ -369,3 +332,40 @@ impl<'a> TestHarnessBuilder<'a> {
         )
     }
 }
+
+/// Pixel-count tolerance for [`TestHarness::snapshot`]. Anti-aliased edges
+/// differ by a gray level or two between driver versions: on three
+/// `gt-side-panel` baselines 769 to 1582 pixels differed, 1 to 2 of them past
+/// the 0.6 threshold. The smallest deliberate UI change measured against those
+/// baselines, a 0.05 alpha step on one status glyph, put 8 pixels past it.
+const STRICT_PIXEL_COUNT_TOLERANCE: usize = 4;
+
+/// Per-pixel color tolerance shared by
+/// [`TestHarness::snapshot_with_color_tolerance`] and
+/// [`TestHarness::snapshot_with_mesh_edge_tolerance`], as a squared YIQ
+/// distance. 5.0 admits a difference of three gray levels per channel, whose
+/// distance is 4.55, and stops at four, whose distance is 8.08. Three levels
+/// is the whole spread that two rasterizers put on an anti-aliased edge. The
+/// macOS runner left 5 pixels of a 1000x800 History window past 0.6 and none
+/// past 3.0. A hardware Vulkan adapter left one pixel of the flare reference
+/// window past 4.0 and none past 5.0, against baselines that Mesa's llvmpipe
+/// recorded.
+pub const CROSS_BACKEND_COLOR_TOLERANCE: f32 = 5.0;
+
+/// Differing-pixel budget for [`TestHarness::snapshot_with_color_tolerance`].
+/// Zero, because [`CROSS_BACKEND_COLOR_TOLERANCE`] absorbs the whole spread
+/// that two backends put between them. The suite passes at this budget under
+/// Mesa's llvmpipe (`LIBGL_ALWAYS_SOFTWARE=1 WGPU_BACKEND=gl`, the Linux CI
+/// configuration) and on a hardware Vulkan adapter alike. The budget of 32
+/// that this comparison ran at before held 34 baselines stale, twenty of which
+/// drew a button icon that a merged commit had already replaced.
+const COLOR_TOLERANCE_PIXEL_COUNT_BUDGET: usize = 0;
+
+/// Differing-pixel budget for
+/// [`TestHarness::snapshot_with_mesh_edge_tolerance`]. The edges of a rotated,
+/// textured icon mesh landed on different pixels between the Linux baseline
+/// and the macOS runner's Metal backend. That finding is the budget's whole
+/// record, and no count came with it. Mesa's llvmpipe and a hardware Vulkan
+/// adapter put no pixel of a map surface or an icon grid past
+/// [`CROSS_BACKEND_COLOR_TOLERANCE`].
+const MESH_EDGE_PIXEL_COUNT_BUDGET: usize = 32;

@@ -40,16 +40,16 @@ use geotrace_sdk::{
 
 #[derive(Debug, EventKind)]
 enum Event {
+    Connectivity(ConnectivityEvent),
     Power(PowerEvent),
     Sensor(SensorEvent),
-    Connectivity(ConnectivityEvent),
 }
 
 #[derive(Debug, EventKind)]
 enum PowerEvent {
+    BatteryLow,
     Boot,
     Sleep,
-    BatteryLow,
 }
 
 #[derive(Debug, EventKind)]

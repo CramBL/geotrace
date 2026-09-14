@@ -38,11 +38,6 @@ use gt_ionex::{CAPTURED_FILES, CapturedFile, parse};
 #[path = "shared/capture_manifest.rs"]
 mod capture_manifest;
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// Pause between requests: the archive is a small public research host.
-const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
-
 fn main() -> Result<(), Box<dyn Error>> {
     let dir = gt_ionex::captures_dir();
     fs::create_dir_all(&dir)?;
@@ -129,3 +124,8 @@ fn naming_fields(capture: &CapturedFile, http_status: u16) -> Value {
         "http_status": http_status,
     })
 }
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Pause between requests: the archive is a small public research host.
+const REQUEST_INTERVAL: Duration = Duration::from_secs(2);

@@ -10,24 +10,6 @@ use egui_phosphor::regular::WAVE_SINE as ICON_WAVE_SINE;
 use crate::app::App;
 use crate::app::settings_ui::SettingsPage;
 
-const ELEVATION_MASK_LABEL: &str = "Elevation mask";
-const SNR_DROP_THRESHOLD_LABEL: &str = "SNR drop threshold";
-const SLIP_WINDOW_LABEL: &str = "Slip window";
-/// The Processing page's generated-marker row for the same excursions carries
-/// this label too, and reads the threshold from this page.
-pub(super) const CLOCK_OFFSET_EXCURSION_LABEL: &str = "Clock offset excursion";
-const MARK_MASKED_SATELLITES_LABEL: &str = "Mark masked-out used satellites";
-const MARK_BACKWARD_TIME_STEPS_LABEL: &str = "Mark backward time steps";
-
-pub(super) const SEARCHABLE_LABELS: &[&str] = &[
-    ELEVATION_MASK_LABEL,
-    SNR_DROP_THRESHOLD_LABEL,
-    SLIP_WINDOW_LABEL,
-    CLOCK_OFFSET_EXCURSION_LABEL,
-    MARK_MASKED_SATELLITES_LABEL,
-    MARK_BACKWARD_TIME_STEPS_LABEL,
-];
-
 impl App {
     pub(super) fn show_analysis_page(&mut self, ui: &mut egui::Ui) {
         SettingsPage::Analysis.show_header(ui);
@@ -173,3 +155,21 @@ impl App {
             });
     }
 }
+
+const ELEVATION_MASK_LABEL: &str = "Elevation mask";
+const SNR_DROP_THRESHOLD_LABEL: &str = "SNR drop threshold";
+const SLIP_WINDOW_LABEL: &str = "Slip window";
+/// The Processing page's generated-marker row for the same excursions carries
+/// this label too, and reads the threshold from this page.
+pub(super) const CLOCK_OFFSET_EXCURSION_LABEL: &str = "Clock offset excursion";
+const MARK_MASKED_SATELLITES_LABEL: &str = "Mark masked-out used satellites";
+const MARK_BACKWARD_TIME_STEPS_LABEL: &str = "Mark backward time steps";
+
+pub(super) const SEARCHABLE_LABELS: &[&str] = &[
+    ELEVATION_MASK_LABEL,
+    SNR_DROP_THRESHOLD_LABEL,
+    SLIP_WINDOW_LABEL,
+    CLOCK_OFFSET_EXCURSION_LABEL,
+    MARK_MASKED_SATELLITES_LABEL,
+    MARK_BACKWARD_TIME_STEPS_LABEL,
+];

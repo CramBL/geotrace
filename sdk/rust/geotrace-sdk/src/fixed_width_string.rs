@@ -139,18 +139,8 @@ pub(crate) fn first_nul_byte_offset(value: &str) -> Option<usize> {
 /// decode to one.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum FixedWidthStringError {
-    #[error("{value:?} is {len} bytes, past the {capacity} bytes the field holds")]
-    TooLong {
-        value: String,
-        len: usize,
-        capacity: usize,
-    },
-
     #[error("{value:?} has a nul byte at offset {offset}")]
     InteriorNul { value: String, offset: usize },
-
-    #[error("a field row of {actual} bytes, where the field is {expected} bytes wide")]
-    RowWidth { expected: usize, actual: usize },
 
     #[error("the field row has no nul terminator in its {width} bytes")]
     MissingTerminator { width: usize },
@@ -160,4 +150,14 @@ pub enum FixedWidthStringError {
 
     #[error("the field row has a non-nul byte at offset {offset}, past its nul terminator")]
     PaddingNotNul { offset: usize },
+
+    #[error("a field row of {actual} bytes, where the field is {expected} bytes wide")]
+    RowWidth { expected: usize, actual: usize },
+
+    #[error("{value:?} is {len} bytes, past the {capacity} bytes the field holds")]
+    TooLong {
+        value: String,
+        len: usize,
+        capacity: usize,
+    },
 }

@@ -40,46 +40,6 @@ use super::match_row::{MatchColumn, MatchKey, MatchRow, MatchRows, MatchSort, Ro
 use super::results_split::{MIN_SPLIT_ROWS, ResultsSplit, SplitGeometry};
 use super::value_bar::{ColumnValueRange, RunColumnRanges, ValueBar};
 
-/// Vertical padding a row adds around its text.
-pub(super) const ROW_PADDING: f32 = 2.0;
-
-/// Matches listed before the matches table scrolls, so the points table below
-/// it keeps most of the window. The splitter under the table moves the
-/// boundary from there.
-const VISIBLE_MATCH_ROWS: usize = 5;
-
-/// Height of the splitter band between the two tables: thin, and still wide
-/// enough to grab.
-const SPLITTER_HEIGHT: f32 = 8.0;
-
-/// The grip painted at the middle of that band, so it reads as draggable.
-const SPLITTER_GRIP_WIDTH: f32 = 40.0;
-const SPLITTER_GRIP_HEIGHT: f32 = 2.0;
-const SPLITTER_GRIP_CORNER_RADIUS: f32 = 1.0;
-
-/// What a screen reader announces the splitter as.
-pub(crate) const SPLITTER_LABEL: &str = "Resize the matches list";
-
-/// The window the matches list moves into when it is popped out of the results
-/// tab.
-pub(crate) const MATCH_LIST_WINDOW_TITLE: &str = "Query matches";
-
-/// Size that window opens at. Like the query window it grows only when the
-/// user drags it: the table inside scrolls.
-pub(crate) const MATCH_LIST_WINDOW_WIDTH: f32 = 460.0;
-pub(crate) const MATCH_LIST_WINDOW_HEIGHT: f32 = 320.0;
-
-/// Width the track column never falls below, however narrow the window is.
-const MIN_TRACK_COLUMN_WIDTH: f32 = 30.0;
-
-/// How far the painted swatch sits inside the square allocated for it, and how
-/// round its corners are.
-const SWATCH_INSET_PX: f32 = 1.0;
-const SWATCH_CORNER_RADIUS_PX: f32 = 2.0;
-
-/// The second line of a sample row's hover, under its index.
-const SAMPLE_WITHOUT_POSITION: &str = "Samples have no position: nothing to pin";
-
 /// What the results tab writes back to the app: the cross-highlight its rows
 /// drive, the point a click pins, and what to frame the map on.
 pub(super) struct ResultsOutputs<'a, 'b> {
@@ -150,15 +110,15 @@ impl ResultColumn<'static> {
 /// Where one points-table column reads its value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColumnSource {
-    Metric(QueryMetric),
-    /// When a channel sample was recorded.
-    SampleTime,
-    /// One component of a channel, by its index into the sample's values.
-    ChannelComponent(usize),
     /// An aggregate valued once over a match, by its index among the query's
     /// aggregate columns. The table shows that one value in every row of the
     /// match.
     Aggregate(usize),
+    /// One component of a channel, by its index into the sample's values.
+    ChannelComponent(usize),
+    Metric(QueryMetric),
+    /// When a channel sample was recorded.
+    SampleTime,
 }
 
 /// One track's values, as the run computed them. A row reads its value without
@@ -217,12 +177,12 @@ impl<'a> TrackValues<'a> {
 /// Where the rows of one run come from: the nav points a points query matched,
 /// or the samples a channel-source query matched on the channel's own timeline.
 enum RowSource<'a> {
+    ChannelSamples {
+        results: &'a ChannelResults,
+    },
     NavPoints {
         /// One entry per track the run matched, in track order.
         track_values: Vec<(TrackRef, TrackValues<'a>)>,
-    },
-    ChannelSamples {
-        results: &'a ChannelResults,
     },
 }
 
@@ -373,18 +333,18 @@ struct PointClick {
 
 /// What a click in the matches table selects.
 enum MatchAction {
-    Select(MatchKey),
     FrameOnMap(MatchRevealTarget),
+    Select(MatchKey),
 }
 
 /// Where the matches list is drawn, which is what gives its table a height.
 #[derive(Clone, Copy)]
 enum MatchListPlacement {
+    /// In a window of its own, which it fills.
+    OwnWindow,
     /// In the results tab, over the splitter that divides the tab between the
     /// list and the picked match's rows below it.
     ResultsTab,
-    /// In a window of its own, which it fills.
-    OwnWindow,
 }
 
 /// The heights the matches table lays its header and rows out at.
@@ -1525,6 +1485,46 @@ fn track_values<'a>(
         slice: SliceProvider::new(provider, filtered_points),
     })
 }
+
+/// Vertical padding a row adds around its text.
+pub(super) const ROW_PADDING: f32 = 2.0;
+
+/// Matches listed before the matches table scrolls, so the points table below
+/// it keeps most of the window. The splitter under the table moves the
+/// boundary from there.
+const VISIBLE_MATCH_ROWS: usize = 5;
+
+/// Height of the splitter band between the two tables: thin, and still wide
+/// enough to grab.
+const SPLITTER_HEIGHT: f32 = 8.0;
+
+/// The grip painted at the middle of that band, so it reads as draggable.
+const SPLITTER_GRIP_WIDTH: f32 = 40.0;
+const SPLITTER_GRIP_HEIGHT: f32 = 2.0;
+const SPLITTER_GRIP_CORNER_RADIUS: f32 = 1.0;
+
+/// What a screen reader announces the splitter as.
+pub(crate) const SPLITTER_LABEL: &str = "Resize the matches list";
+
+/// The window the matches list moves into when it is popped out of the results
+/// tab.
+pub(crate) const MATCH_LIST_WINDOW_TITLE: &str = "Query matches";
+
+/// Size that window opens at. Like the query window it grows only when the
+/// user drags it: the table inside scrolls.
+pub(crate) const MATCH_LIST_WINDOW_WIDTH: f32 = 460.0;
+pub(crate) const MATCH_LIST_WINDOW_HEIGHT: f32 = 320.0;
+
+/// Width the track column never falls below, however narrow the window is.
+const MIN_TRACK_COLUMN_WIDTH: f32 = 30.0;
+
+/// How far the painted swatch sits inside the square allocated for it, and how
+/// round its corners are.
+const SWATCH_INSET_PX: f32 = 1.0;
+const SWATCH_CORNER_RADIUS_PX: f32 = 2.0;
+
+/// The second line of a sample row's hover, under its index.
+const SAMPLE_WITHOUT_POSITION: &str = "Samples have no position: nothing to pin";
 
 #[cfg(test)]
 mod tests {

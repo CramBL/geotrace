@@ -6,21 +6,6 @@ use walkers::sources::{Mapbox, MapboxStyle, TileSource as _};
 
 use crate::MAPBOX_MIN_SAFE_ZOOM;
 
-/// The tile a token test requests: the top-left one at the lowest zoom the
-/// satellite layer draws.
-const TOKEN_TEST_TILE: TileId = TileId {
-    x: 0,
-    y: 0,
-    zoom: MAPBOX_MIN_SAFE_ZOOM,
-};
-
-/// The style slug the satellite layer requests, which a capture of its tiles
-/// records in its manifest.
-pub const SATELLITE_STYLE: &str = "satellite-v9";
-
-/// The variables an access token is taken from, in the order they are read.
-pub const TOKEN_ENVS: [&str; 2] = ["MAPBOX_TOKEN", "MAPBOX_ACCESS_TOKEN"];
-
 pub(crate) fn satellite_source(access_token: String) -> Mapbox {
     Mapbox {
         style: MapboxStyle::Satellite,
@@ -42,6 +27,21 @@ pub fn satellite_tile_size_px() -> u32 {
 pub fn token_test_tile_url(access_token: &str) -> String {
     satellite_tile_url(access_token, TOKEN_TEST_TILE)
 }
+
+/// The tile a token test requests: the top-left one at the lowest zoom the
+/// satellite layer draws.
+const TOKEN_TEST_TILE: TileId = TileId {
+    x: 0,
+    y: 0,
+    zoom: MAPBOX_MIN_SAFE_ZOOM,
+};
+
+/// The style slug the satellite layer requests, which a capture of its tiles
+/// records in its manifest.
+pub const SATELLITE_STYLE: &str = "satellite-v9";
+
+/// The variables an access token is taken from, in the order they are read.
+pub const TOKEN_ENVS: [&str; 2] = ["MAPBOX_TOKEN", "MAPBOX_ACCESS_TOKEN"];
 
 #[cfg(test)]
 mod tests {

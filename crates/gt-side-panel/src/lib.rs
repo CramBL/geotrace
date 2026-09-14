@@ -1,11 +1,3 @@
-pub mod filter;
-mod render;
-#[cfg(any(test, feature = "test-util"))]
-pub mod test_util;
-mod track_columns;
-pub mod tree;
-pub mod widgets;
-
 pub use filter::{FilterPanelState, render_filter_panel};
 pub use render::{
     EVERY_TRACK_PASSES_THE_FILTER_HOVER, ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER, PanelContext,
@@ -16,3 +8,11 @@ pub use render::{
 pub use tree::{
     CheckState, FileNode, NodeKey, ShelveConfirmState, TrackNode, TreeState, VisibleTracksInFile,
 };
+
+pub mod filter;
+mod render;
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
+mod track_columns;
+pub mod tree;
+pub mod widgets;

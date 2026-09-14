@@ -11,12 +11,6 @@ use geotrace_sdk::{
 };
 use gt_types::MarkerIcon;
 
-/// A `markers/icon` code outside the set this build has, as a newer build
-/// could write it.
-const UNRECOGNIZED_ICON_CODE: u8 = 200;
-
-const MARKER_LABEL: &str = "from a newer build";
-
 fn base_time() -> DateTime<Utc> {
     DateTime::from_timestamp(1_700_000_000, 0).expect("fixed timestamp is within range")
 }
@@ -89,3 +83,9 @@ fn a_marker_with_an_icon_code_this_build_does_not_have_is_drawn_as_a_pin_and_rep
          code this version of GeoTrace does not have."
     );
 }
+
+/// A `markers/icon` code outside the set this build has, as a newer build
+/// could write it.
+const UNRECOGNIZED_ICON_CODE: u8 = 200;
+
+const MARKER_LABEL: &str = "from a newer build";

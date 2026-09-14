@@ -15,10 +15,6 @@ use gt_jam::dataset::{self, JamDataset};
 use gt_jam::test_util;
 use gt_jam::wire::{self, ParseWarningReporter};
 
-/// How far past one cell edge a containing cell's centre is allowed to sit.
-/// H3's pentagons and projection distortion stretch the ideal hexagon.
-const DISTORTION_ALLOWANCE: f64 = 2.0;
-
 /// The captured day, indexed once for the whole run.
 fn captured_day() -> Result<&'static JamDataset, String> {
     static DATASET: OnceLock<Result<JamDataset, String>> = OnceLock::new();
@@ -143,3 +139,7 @@ proptest::proptest! {
         );
     }
 }
+
+/// How far past one cell edge a containing cell's centre is allowed to sit.
+/// H3's pentagons and projection distortion stretch the ideal hexagon.
+const DISTORTION_ALLOWANCE: f64 = 2.0;

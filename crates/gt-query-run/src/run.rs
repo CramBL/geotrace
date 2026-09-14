@@ -22,13 +22,13 @@ pub(crate) type RunTrackData = FxHashMap<TrackRef, TrackQueryData>;
 /// How a run dispatches, determined from the checked queries' sources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunKind {
-    /// Every query is points-source: run the composing pipeline.
-    Points,
     /// A single channel-source query: run it standalone over its samples.
     Channel,
     /// A channel source mixed with other queries - not allowed, since a channel
     /// has its own timeline and cannot compose in one pipeline.
     MixedChannel,
+    /// Every query is points-source: run the composing pipeline.
+    Points,
 }
 
 /// The handle shared between a run and its driver: the driver's cancel flag and
@@ -348,11 +348,11 @@ fn merge_params(queries: &[CheckedQuery]) -> Params {
 pub struct RunOutcome(Evaluation);
 
 enum Evaluation {
+    Cancelled,
     Completed {
         product: RunProduct,
         track_data: RunTrackData,
     },
-    Cancelled,
 }
 
 impl RunOutcome {
@@ -381,11 +381,11 @@ impl RunOutcome {
 
 /// A run's product, dispatched on the source of its queries.
 pub(crate) enum RunProduct {
-    /// A composed points pipeline.
-    Points(PointsRun),
     /// A standalone channel-source run. Boxed: several times the size of the
     /// pipeline variant.
     Channel(Box<ChannelRun>),
+    /// A composed points pipeline.
+    Points(PointsRun),
 }
 
 /// A points pipeline's output with every query's aggregate table columns

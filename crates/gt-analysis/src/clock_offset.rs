@@ -18,35 +18,6 @@
 use gt_types::nav_point::NavPoint;
 use vec1::Vec1;
 
-/// Default deviation from the track baseline, in seconds, above which a sample
-/// counts as an excursion.
-///
-/// Well above the sub-second offsets of a healthy logger and the few-second
-/// offsets of a host clock left to drift, and far below the minutes-to-hours
-/// excursions a resume-from-gap sample produces.
-pub const DEFAULT_EXCURSION_THRESHOLD_S: f32 = 10.0;
-
-/// Widest GPS−system clock offset a plot's shared y-axis shows, in seconds.
-///
-/// A day.  Past it the clock offset line alone sets the auto-bounds.  Every
-/// other metric on the axis becomes a flat line.  The configured excursion
-/// threshold is clamped to the same limit.  That also keeps its conversion to
-/// milliseconds inside `i64`.
-pub const MAX_PLOTTED_OFFSET_S: f32 = 86_400.0;
-
-/// Smallest share of a track's samples a run reaching its last sample must
-/// hold to count as a level shift, written as the divisor of that share: a
-/// tenth.
-///
-/// A level shift holds a substantial part of the track: a clock that steps and
-/// stays keeps logging at its new level whatever the fix rate.  A device that
-/// suspends before it stamps its last fixes leaves a handful of samples there
-/// instead, and holding those on the line costs every other metric the shared
-/// y-axis.  On a track of ten samples or fewer a single trailing sample already
-/// holds a tenth, and the line keeps it: too little of the track follows the
-/// departure to tell the two apart.
-const TRAILING_LEVEL_SHIFT_MIN_SHARE_DIVISOR: usize = 10;
-
 /// One sample whose offset sits outside the baseline band.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ExcursionSample {
@@ -250,6 +221,35 @@ fn offset_ms(offset_s: f32) -> i64 {
     let ms = ms as i64;
     ms
 }
+
+/// Default deviation from the track baseline, in seconds, above which a sample
+/// counts as an excursion.
+///
+/// Well above the sub-second offsets of a healthy logger and the few-second
+/// offsets of a host clock left to drift, and far below the minutes-to-hours
+/// excursions a resume-from-gap sample produces.
+pub const DEFAULT_EXCURSION_THRESHOLD_S: f32 = 10.0;
+
+/// Widest GPS−system clock offset a plot's shared y-axis shows, in seconds.
+///
+/// A day.  Past it the clock offset line alone sets the auto-bounds.  Every
+/// other metric on the axis becomes a flat line.  The configured excursion
+/// threshold is clamped to the same limit.  That also keeps its conversion to
+/// milliseconds inside `i64`.
+pub const MAX_PLOTTED_OFFSET_S: f32 = 86_400.0;
+
+/// Smallest share of a track's samples a run reaching its last sample must
+/// hold to count as a level shift, written as the divisor of that share: a
+/// tenth.
+///
+/// A level shift holds a substantial part of the track: a clock that steps and
+/// stays keeps logging at its new level whatever the fix rate.  A device that
+/// suspends before it stamps its last fixes leaves a handful of samples there
+/// instead, and holding those on the line costs every other metric the shared
+/// y-axis.  On a track of ten samples or fewer a single trailing sample already
+/// holds a tenth, and the line keeps it: too little of the track follows the
+/// departure to tell the two apart.
+const TRAILING_LEVEL_SHIFT_MIN_SHARE_DIVISOR: usize = 10;
 
 #[cfg(test)]
 mod tests {

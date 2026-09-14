@@ -11,6 +11,65 @@
 use chrono::{DateTime, Days, NaiveDate, Utc};
 use gt_types::TimeRange;
 
+/// What the calendar alone says about a day, before any request is made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, strum::EnumIter)]
+#[strum(serialize_all = "snake_case")]
+pub enum DayOutlook {
+    /// Earlier than [`COVERAGE_START`].
+    BeforeCoverage,
+    /// Inside the coverage window and not in the future. Worth requesting,
+    /// even if it turns out to be unpublished or a gap.
+    Fetchable,
+    /// Later than the current UTC day.
+    InFuture,
+}
+
+/// The calendar's verdict on `day`.
+pub fn day_outlook(day: NaiveDate, today_utc: NaiveDate) -> DayOutlook {
+    if day < COVERAGE_START {
+        DayOutlook::BeforeCoverage
+    } else if day > today_utc {
+        DayOutlook::InFuture
+    } else {
+        DayOutlook::Fetchable
+    }
+}
+
+/// Whether `day` is recent enough that the host is not expected to have
+/// published it yet.
+///
+/// Distinguishes a pending day from a gap in the record when a dataset is
+/// missing. Never determines whether to request one.
+pub fn awaiting_publication(day: NaiveDate, today_utc: NaiveDate) -> bool {
+    match today_utc.checked_sub_days(TYPICAL_PUBLICATION_LAG) {
+        Some(newest_expected) => day > newest_expected,
+        // Only reachable within three days of `NaiveDate::MIN`.
+        None => true,
+    }
+}
+
+/// The UTC days `start..=end` touches, oldest first.
+///
+/// [`None`] when the span covers more than [`MAX_DAYS_PER_TRACK`], or when
+/// `end` precedes `start`.
+pub fn days_spanned(start: DateTime<Utc>, end: DateTime<Utc>) -> Option<Vec<NaiveDate>> {
+    TimeRange::new(start, end).utc_days(MAX_DAYS_PER_TRACK)
+}
+
+/// Every [`DayOutlook::Fetchable`] day in `from..=to`, oldest first.
+pub fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> Vec<NaiveDate> {
+    // The lower bound keeps a range starting in the year 1 out of the walk.
+    gt_types::utc_days::days_in_range(from.max(COVERAGE_START)..=to, |day| {
+        day_outlook(day, today_utc) == DayOutlook::Fetchable
+    })
+}
+
+/// The current UTC day. Datasets are UTC-day granular, so a local date is
+/// never the right input.
+pub fn today_utc() -> NaiveDate {
+    Utc::now().date_naive()
+}
+
 /// The first day of coverage, as (year, month, day).
 ///
 /// Probed, not taken from the publisher's prose, which states February 2022
@@ -42,70 +101,11 @@ const _: () = {
 /// as not published yet.
 pub const TYPICAL_PUBLICATION_LAG: Days = Days::new(3);
 
-/// What the calendar alone says about a day, before any request is made.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, strum::EnumIter)]
-#[strum(serialize_all = "snake_case")]
-pub enum DayOutlook {
-    /// Inside the coverage window and not in the future. Worth requesting,
-    /// even if it turns out to be unpublished or a gap.
-    Fetchable,
-    /// Earlier than [`COVERAGE_START`].
-    BeforeCoverage,
-    /// Later than the current UTC day.
-    InFuture,
-}
-
-/// The calendar's verdict on `day`.
-pub fn day_outlook(day: NaiveDate, today_utc: NaiveDate) -> DayOutlook {
-    if day < COVERAGE_START {
-        DayOutlook::BeforeCoverage
-    } else if day > today_utc {
-        DayOutlook::InFuture
-    } else {
-        DayOutlook::Fetchable
-    }
-}
-
-/// Whether `day` is recent enough that the host is not expected to have
-/// published it yet.
-///
-/// Distinguishes a pending day from a gap in the record when a dataset is
-/// missing. Never determines whether to request one.
-pub fn awaiting_publication(day: NaiveDate, today_utc: NaiveDate) -> bool {
-    match today_utc.checked_sub_days(TYPICAL_PUBLICATION_LAG) {
-        Some(newest_expected) => day > newest_expected,
-        // Only reachable within three days of `NaiveDate::MIN`.
-        None => true,
-    }
-}
-
 /// Most UTC days one recording is allowed to pull in.
 ///
 /// A track spanning longer than this is left to an explicit backfill: a
 /// recording should not silently turn into hundreds of requests.
 pub const MAX_DAYS_PER_TRACK: usize = 7;
-
-/// The UTC days `start..=end` touches, oldest first.
-///
-/// [`None`] when the span covers more than [`MAX_DAYS_PER_TRACK`], or when
-/// `end` precedes `start`.
-pub fn days_spanned(start: DateTime<Utc>, end: DateTime<Utc>) -> Option<Vec<NaiveDate>> {
-    TimeRange::new(start, end).utc_days(MAX_DAYS_PER_TRACK)
-}
-
-/// Every [`DayOutlook::Fetchable`] day in `from..=to`, oldest first.
-pub fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> Vec<NaiveDate> {
-    // The lower bound keeps a range starting in the year 1 out of the walk.
-    gt_types::utc_days::days_in_range(from.max(COVERAGE_START)..=to, |day| {
-        day_outlook(day, today_utc) == DayOutlook::Fetchable
-    })
-}
-
-/// The current UTC day. Datasets are UTC-day granular, so a local date is
-/// never the right input.
-pub fn today_utc() -> NaiveDate {
-    Utc::now().date_naive()
-}
 
 #[cfg(test)]
 mod tests {

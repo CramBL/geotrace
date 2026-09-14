@@ -647,16 +647,6 @@ mod tests {
             .count()
     }
 
-    /// The canvas both icon pipelines draw the grid into.
-    const GPU_PARITY_CANVAS: egui::Vec2 = egui::vec2(400.0, 320.0);
-
-    /// How far a channel may drift before two pixels count as different.
-    const COLOR_TOLERANCE: u8 = 24;
-
-    /// How far the pixel count of one tint may drift between the two
-    /// pipelines, over the count the CPU mesh paints.
-    const MAX_TINT_AREA_DRIFT_PERCENT: usize = 5;
-
     /// Every icon at several sizes plus a rotated, a tinted, a faded, and a
     /// non-square variant - the mesh-pipeline counterpart of
     /// `all_marker_icons`.
@@ -708,4 +698,14 @@ mod tests {
         harness.run();
         harness.snapshot_with_mesh_edge_tolerance("icon_mesh_grid");
     }
+
+    /// The canvas both icon pipelines draw the grid into.
+    const GPU_PARITY_CANVAS: egui::Vec2 = egui::vec2(400.0, 320.0);
+
+    /// How far a channel may drift before two pixels count as different.
+    const COLOR_TOLERANCE: u8 = 24;
+
+    /// How far the pixel count of one tint may drift between the two
+    /// pipelines, over the count the CPU mesh paints.
+    const MAX_TINT_AREA_DRIFT_PERCENT: usize = 5;
 }

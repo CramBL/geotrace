@@ -13,17 +13,6 @@ use hdf5::types::VarLenUnicode;
 use crate::prune::DeleteState;
 use crate::{ArchiveError, Column, ColumnFormat, dates};
 
-/// Days since the Unix epoch, per stored day.
-pub const DAY: &str = "day";
-/// First row of the day in the data columns.
-pub const OFFSET: &str = "offset";
-/// How many rows the day holds.
-pub const COUNT: &str = "count";
-/// When the day was fetched, Unix seconds.
-pub const FETCHED_AT: &str = "fetched_at";
-/// Host that served the day.
-pub const HOST: &str = "host";
-
 /// One stored day, as the index holds it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DayEntry {
@@ -199,3 +188,14 @@ impl<'a> DayIndex<'a> {
         Ok(reached)
     }
 }
+
+/// Days since the Unix epoch, per stored day.
+pub const DAY: &str = "day";
+/// First row of the day in the data columns.
+pub const OFFSET: &str = "offset";
+/// How many rows the day holds.
+pub const COUNT: &str = "count";
+/// When the day was fetched, Unix seconds.
+pub const FETCHED_AT: &str = "fetched_at";
+/// Host that served the day.
+pub const HOST: &str = "host";

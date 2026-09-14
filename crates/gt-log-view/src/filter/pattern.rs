@@ -134,10 +134,10 @@ fn merged_spans(mut spans: Vec<Range<usize>>, message: &str) -> Vec<Range<usize>
 
 #[derive(Debug)]
 enum Matcher {
-    MatchesNothing,
-
     /// Every term must occur in the message.
     AllTerms(Vec<PlainTerm>),
+
+    MatchesNothing,
 
     /// Case-insensitive unless the pattern turns that off with `(?-i)`.
     Regex(Box<Regex>),

@@ -313,15 +313,6 @@ fn plot_pane_point(harness: &Harness<'_, App>, fraction_across: f32) -> egui::Po
     )
 }
 
-const PLOT_PANE_MIDDLE: f32 = 0.5;
-
-/// Well inside the later half of the span, which
-/// [`the_plot_cursor_over_a_hidden_stretch_reaches_for_no_drawn_fix`] hides.
-const PLOT_PANE_LATE: f32 = 0.9;
-
-/// Frames a cross-highlight takes to reach the map after the pointer moved.
-const HIGHLIGHT_SETTLE_FRAMES: usize = 2;
-
 /// The guard the row cases below rest on: hovering a point row cross-highlights
 /// that row's fix, which the map draws.
 #[test]
@@ -509,22 +500,6 @@ fn demo_app_with_query_run(query: &str) -> Harness<'static, App> {
     harness
 }
 
-/// A demo-trip query with two matches of clearly different length, for the
-/// tests that pick, sort and frame one of them.
-const TWO_MATCH_QUERY: &str = "points | window 10 | where avg(velocity) > 25 km/h";
-
-/// Wheel points sent over the results, past the rows one viewport holds.
-const RESULTS_WHEEL_POINTS: f32 = 200.0;
-
-/// Frames a wheel scroll's smooth animation takes to come to rest.
-const WHEEL_SETTLE_FRAMES: usize = 12;
-
-/// Motion below which a widget counts as having stayed where it was.
-const STATIONARY_TOLERANCE_PX: f32 = 0.5;
-
-/// Length of the bare wall-clock label a point row's time column states.
-const ROW_TIME_LEN: usize = "14:00:19".len();
-
 /// Every widget labeled with a bare wall-clock time: the start and end columns
 /// of the matches table, and the time column of the points table. A channel
 /// run's samples are timed to the millisecond, so the time carries a fraction
@@ -634,10 +609,6 @@ fn match_row_map_button<'h>(harness: &'h Harness<'_, App>, index: usize) -> egui
         .expect("the results tab lists that match")
 }
 
-/// How far a cell may sit from the tab's left edge and still count as starting
-/// there, and how far two cells' tops may differ and still be one row.
-const INDENT_TOLERANCE_PX: f32 = 2.0;
-
 /// Which of the results tab's two tables a test reads.
 #[derive(Clone, Copy)]
 enum ResultsTable {
@@ -728,11 +699,6 @@ fn the_wheel_over_the_matches_scrolls_only_them() {
         "the points of the picked match stay where they are"
     );
 }
-
-/// Pixels the splitter is dragged to give the matches table the height of the
-/// points table below it, and the far longer drag that runs into either clamp.
-const SPLITTER_DRAG_PX: f32 = 120.0;
-const SPLITTER_DRAG_PAST_THE_CLAMP_PX: f32 = 400.0;
 
 /// The centre of the splitter band, read again after every drag: it sits where
 /// the matches table now ends.
@@ -1023,10 +989,6 @@ fn scrolling_and_switching_tabs_leave_the_query_window_at_its_default_width() {
         "the examples tab widened the window to {switched}"
     );
 }
-
-/// Height a row and the gap under it take, as a tolerance on where the last
-/// listed row ends.
-const ROW_HEIGHT_ALLOWANCE: f32 = 40.0;
 
 /// The points table reaches down to the bottom of the window: it takes what
 /// the matches table above it leaves.
@@ -1333,10 +1295,6 @@ fn channel_app_with_query_run() -> Harness<'static, App> {
     ui_tests::run_query(&mut harness, "@accel | where @accel.x > 1 g");
     harness
 }
-
-/// The x component the crafted stretches reach, as the listing prints it in the
-/// g the fixture declares.
-const ACCEL_HIGH_X_CELL: &str = "1.500";
 
 /// The accel fixture with a points query whose table holds an aggregate over
 /// the channel. Each match then has the samples that aggregate reduced under
@@ -1975,3 +1933,45 @@ fn snapshot_query_pipeline() {
 
     harness.snapshot_with_color_tolerance("query_pipeline");
 }
+
+const PLOT_PANE_MIDDLE: f32 = 0.5;
+
+/// Well inside the later half of the span, which
+/// [`the_plot_cursor_over_a_hidden_stretch_reaches_for_no_drawn_fix`] hides.
+const PLOT_PANE_LATE: f32 = 0.9;
+
+/// Frames a cross-highlight takes to reach the map after the pointer moved.
+const HIGHLIGHT_SETTLE_FRAMES: usize = 2;
+
+/// A demo-trip query with two matches of clearly different length, for the
+/// tests that pick, sort and frame one of them.
+const TWO_MATCH_QUERY: &str = "points | window 10 | where avg(velocity) > 25 km/h";
+
+/// Wheel points sent over the results, past the rows one viewport holds.
+const RESULTS_WHEEL_POINTS: f32 = 200.0;
+
+/// Frames a wheel scroll's smooth animation takes to come to rest.
+const WHEEL_SETTLE_FRAMES: usize = 12;
+
+/// Motion below which a widget counts as having stayed where it was.
+const STATIONARY_TOLERANCE_PX: f32 = 0.5;
+
+/// Length of the bare wall-clock label a point row's time column states.
+const ROW_TIME_LEN: usize = "14:00:19".len();
+
+/// How far a cell may sit from the tab's left edge and still count as starting
+/// there, and how far two cells' tops may differ and still be one row.
+const INDENT_TOLERANCE_PX: f32 = 2.0;
+
+/// Pixels the splitter is dragged to give the matches table the height of the
+/// points table below it, and the far longer drag that runs into either clamp.
+const SPLITTER_DRAG_PX: f32 = 120.0;
+const SPLITTER_DRAG_PAST_THE_CLAMP_PX: f32 = 400.0;
+
+/// Height a row and the gap under it take, as a tolerance on where the last
+/// listed row ends.
+const ROW_HEIGHT_ALLOWANCE: f32 = 40.0;
+
+/// The x component the crafted stretches reach, as the listing prints it in the
+/// g the fixture declares.
+const ACCEL_HIGH_X_CELL: &str = "1.500";

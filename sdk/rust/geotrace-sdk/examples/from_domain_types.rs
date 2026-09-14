@@ -52,10 +52,10 @@ struct SatView {
 
 #[derive(Clone, Copy)]
 enum GnssConst {
-    Gps,
-    Glonass,
-    Galileo,
     Beidou,
+    Galileo,
+    Glonass,
+    Gps,
 }
 
 struct LogEntry {

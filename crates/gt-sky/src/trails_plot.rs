@@ -472,10 +472,6 @@ fn trail_fade(time: GpsTime, scrub: Option<GpsTime>) -> f32 {
     1.0 - tail_share * tail_share
 }
 
-/// Minimum distance a sample must project from the last kept one to become its
-/// own vertex. Closer samples are collapsed into the run.
-const MIN_SEGMENT_PX: f32 = 1.0;
-
 /// One kept vertex of a trail run: where it projects and when, so the fade can
 /// alpha it by distance from the scrubbed instant.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -723,6 +719,10 @@ fn marker_at(trail: &SkyTrail, time: GpsTime) -> Option<(f32, f32, &TrailSample)
     ))
 }
 
+/// Minimum distance a sample must project from the last kept one to become its
+/// own vertex. Closer samples are collapsed into the run.
+const MIN_SEGMENT_PX: f32 = 1.0;
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
@@ -738,54 +738,6 @@ mod tests {
     use super::{SkyTrail, SkyTrailsPlot, SlipMark};
     use crate::test_util::{self, Azimuth, Elevation};
     use crate::trails::{EpochIdx, SkyTrails, TrailEpoch, TrailSample};
-
-    /// The plot diameter the shape-count cases draw at.
-    const PLOT_DIAMETER_PX: f32 = 400.0;
-
-    /// The five satellites of [`demo_trails`], drifting across the sky over
-    /// its ten epochs. BeiDou 14 drops out at epochs 4 and 5, leaving a gap.
-    const DEMO_DRIFTS: &[SatelliteDrift] = &[
-        SatelliteDrift {
-            constellation: Constellation::Gps,
-            prn: 5,
-            azimuth_deg: (40.0, 95.0),
-            elevation_deg: (58.0, 71.0),
-            in_fix: true,
-            absent_at: &[],
-        },
-        SatelliteDrift {
-            constellation: Constellation::Gps,
-            prn: 12,
-            azimuth_deg: (85.0, 130.0),
-            elevation_deg: (20.0, 47.0),
-            in_fix: true,
-            absent_at: &[],
-        },
-        SatelliteDrift {
-            constellation: Constellation::Galileo,
-            prn: 3,
-            azimuth_deg: (60.0, 30.0),
-            elevation_deg: (52.0, 40.0),
-            in_fix: true,
-            absent_at: &[],
-        },
-        SatelliteDrift {
-            constellation: Constellation::Glonass,
-            prn: 9,
-            azimuth_deg: (170.0, 205.0),
-            elevation_deg: (48.0, 28.0),
-            in_fix: true,
-            absent_at: &[],
-        },
-        SatelliteDrift {
-            constellation: Constellation::Beidou,
-            prn: 14,
-            azimuth_deg: (250.0, 230.0),
-            elevation_deg: (66.0, 51.0),
-            in_fix: true,
-            absent_at: &[4, 5],
-        },
-    ];
 
     /// A frame big enough that the test's coordinates are unambiguous.
     fn frame_of_180_px() -> super::Frame {
@@ -1299,10 +1251,6 @@ mod tests {
         plot.snapshot_with_color_tolerance("sky_trails_mask_ring_hover");
     }
 
-    /// Frames the pointer rests still for before a tooltip is read: egui opens
-    /// one once the pointer has stopped moving.
-    const TOOLTIP_SETTLE_FRAMES: usize = 60;
-
     #[test]
     fn sky_trails_marker_hover_shows_the_satellite() {
         // The GPS-5 satellite's position at the scrubbed epoch, so the hover
@@ -1804,4 +1752,56 @@ mod tests {
         .is_some();
         assert_eq!(hit, expected);
     }
+
+    /// The plot diameter the shape-count cases draw at.
+    const PLOT_DIAMETER_PX: f32 = 400.0;
+
+    /// The five satellites of [`demo_trails`], drifting across the sky over
+    /// its ten epochs. BeiDou 14 drops out at epochs 4 and 5, leaving a gap.
+    const DEMO_DRIFTS: &[SatelliteDrift] = &[
+        SatelliteDrift {
+            constellation: Constellation::Gps,
+            prn: 5,
+            azimuth_deg: (40.0, 95.0),
+            elevation_deg: (58.0, 71.0),
+            in_fix: true,
+            absent_at: &[],
+        },
+        SatelliteDrift {
+            constellation: Constellation::Gps,
+            prn: 12,
+            azimuth_deg: (85.0, 130.0),
+            elevation_deg: (20.0, 47.0),
+            in_fix: true,
+            absent_at: &[],
+        },
+        SatelliteDrift {
+            constellation: Constellation::Galileo,
+            prn: 3,
+            azimuth_deg: (60.0, 30.0),
+            elevation_deg: (52.0, 40.0),
+            in_fix: true,
+            absent_at: &[],
+        },
+        SatelliteDrift {
+            constellation: Constellation::Glonass,
+            prn: 9,
+            azimuth_deg: (170.0, 205.0),
+            elevation_deg: (48.0, 28.0),
+            in_fix: true,
+            absent_at: &[],
+        },
+        SatelliteDrift {
+            constellation: Constellation::Beidou,
+            prn: 14,
+            azimuth_deg: (250.0, 230.0),
+            elevation_deg: (66.0, 51.0),
+            in_fix: true,
+            absent_at: &[4, 5],
+        },
+    ];
+
+    /// Frames the pointer rests still for before a tooltip is read: egui opens
+    /// one once the pointer has stopped moving.
+    const TOOLTIP_SETTLE_FRAMES: usize = 60;
 }

@@ -5,10 +5,6 @@ use chrono::{DateTime, NaiveDate, NaiveTime, TimeDelta, Utc};
 
 use crate::calendar::{self, COVERAGE_START, DayOutlook};
 
-/// Time between maps the stepper moves by until an archived day declares its
-/// own interval. JPL's final product publishes a map every two hours.
-pub const DEFAULT_MAP_INTERVAL: TimeDelta = TimeDelta::hours(2);
-
 /// Why the heatmap is drawing nothing, and what the display toggle says about
 /// it.
 #[derive(
@@ -225,6 +221,10 @@ impl TecInstantSelection {
         "Later instants have not happened yet".to_owned()
     }
 }
+
+/// Time between maps the stepper moves by until an archived day declares its
+/// own interval. JPL's final product publishes a map every two hours.
+pub const DEFAULT_MAP_INTERVAL: TimeDelta = TimeDelta::hours(2);
 
 #[cfg(test)]
 mod tests {

@@ -16,11 +16,6 @@ use gt_store::{DatabaseRef, DbError, RecordingUiState};
 
 use super::App;
 
-/// What the user is told once a session where a newer version of GeoTrace
-/// wrote UI state this version does not read.
-pub(in crate::app) const NEWER_VERSION_STORED_DISPLAY_SETTINGS: &str = "A newer version of GeoTrace saved display settings with some recordings. Update GeoTrace to \
-     use them.";
-
 /// One `ui.hidden_tracks` entry of the settings file. An earlier version of
 /// GeoTrace kept the hidden tracks there, before the history database held
 /// them.
@@ -175,6 +170,11 @@ impl App {
         self.toasts.warning(NEWER_VERSION_STORED_DISPLAY_SETTINGS);
     }
 }
+
+/// What the user is told once a session where a newer version of GeoTrace
+/// wrote UI state this version does not read.
+pub(in crate::app) const NEWER_VERSION_STORED_DISPLAY_SETTINGS: &str = "A newer version of GeoTrace saved display settings with some recordings. Update GeoTrace to \
+     use them.";
 
 #[cfg(test)]
 mod tests {

@@ -8,48 +8,14 @@ use std::{
 use chrono::{DateTime, Utc};
 use gt_types::LoadedTrack;
 use gt_types::track::FixStats;
-
-pub mod name_template;
-pub use name_template::{NameFields, Token, render_name_template};
 use uom::si::{
     f64,
     length::{kilometer, meter},
 };
 
-/// U+2014 EM DASH, standing in for a value that is absent.
-pub const EM_DASH: &str = "—";
+pub use name_template::{NameFields, Token, render_name_template};
 
-/// U+2212 MINUS SIGN, visually distinct from a hyphen in front of a number.
-/// Re-exported by `gt-ui-theme` alongside the other UI glyphs.
-pub const MINUS_SIGN: &str = "−";
-
-/// U+2026 HORIZONTAL ELLIPSIS, marking a value cut short.
-/// Re-exported by `gt-ui-theme` alongside the other UI glyphs.
-pub const ELLIPSIS: &str = "…";
-
-/// U+00B7 MIDDLE DOT, separating the fields of a one-line summary.
-pub const MIDDLE_DOT: &str = "·";
-
-/// U+2013 EN DASH, joining the two ends of a numeric range.
-pub const EN_DASH: &str = "–";
-
-/// U+2192 RIGHTWARDS ARROW, leading from where a span starts to where it ends.
-pub const RIGHTWARDS_ARROW: &str = "→";
-
-/// U+2248 ALMOST EQUAL TO, marking a value that stands for another.
-pub const ALMOST_EQUAL_TO: &str = "≈";
-
-/// A UTC instant to the minute, the precision the solar flare, geomagnetic
-/// index and TEC map archives publish. The surface showing it writes `UTC`
-/// after it.
-pub const UTC_MINUTE_FORMAT: &str = "%Y-%m-%d %H:%M";
-
-/// A UTC instant to the second, the precision a fix or a plot sample has.
-/// The surface showing it writes `UTC` after it.
-pub const UTC_SECOND_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
-
-/// Two spaces, U+00B7 MIDDLE DOT, two spaces, joins fields inside tooltip strings.
-const TOOLTIP_JOINER: &str = "  ·  ";
+pub mod name_template;
 
 /// Returns the percentage of time spent with a satellite fix, rounded to the
 /// nearest integer in `[0, 100]`.
@@ -199,12 +165,6 @@ pub fn format_human_terse_duration(d: chrono::Duration) -> String {
     out
 }
 
-const MICROS_PER_MILLISECOND: u64 = 1_000;
-
-const MICROS_PER_SECOND: u64 = 1_000 * MICROS_PER_MILLISECOND;
-
-const MICROS_PER_MINUTE: u64 = 60 * MICROS_PER_SECOND;
-
 /// A magnitude as whole units and thousandths of a unit, written `4`, `4.5` or
 /// `4.512`.
 struct UnitsAndThousandths {
@@ -339,17 +299,14 @@ pub fn format_match_duration(secs: i64) -> String {
     }
 }
 
-/// Seconds in one hour, the point a clock reading grows an hours field.
-const SECONDS_PER_HOUR: u64 = 3_600;
-
 /// How a duration prints as a clock reading. A table picks one format for a
 /// whole column: cells of different magnitudes then line up under each other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DurationClockFormat {
-    /// `1:01`. The minutes count on past 59 for a duration past an hour.
-    MinutesSeconds,
     /// `1:23:45`.
     HoursMinutesSeconds,
+    /// `1:01`. The minutes count on past 59 for a duration past an hour.
+    MinutesSeconds,
 }
 
 impl DurationClockFormat {
@@ -382,12 +339,6 @@ impl DurationClockFormat {
 pub fn pluralize<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
     if count == 1 { singular } else { plural }
 }
-
-/// Bytes in one kibibyte. The steps between display units.
-pub const BYTES_PER_KB: u64 = 1_024;
-
-/// Bytes in one gibibyte, the unit storage limits are entered in.
-pub const BYTES_PER_GB: u64 = BYTES_PER_KB * BYTES_PER_KB * BYTES_PER_KB;
 
 /// Format a byte count in binary units (`1.5 KB`, `126.6 MB`, `10.0 GB`).
 ///
@@ -447,6 +398,56 @@ fn group_thousands(digits: &str) -> String {
     }
     out
 }
+
+/// U+2014 EM DASH, standing in for a value that is absent.
+pub const EM_DASH: &str = "—";
+
+/// U+2212 MINUS SIGN, visually distinct from a hyphen in front of a number.
+/// Re-exported by `gt-ui-theme` alongside the other UI glyphs.
+pub const MINUS_SIGN: &str = "−";
+
+/// U+2026 HORIZONTAL ELLIPSIS, marking a value cut short.
+/// Re-exported by `gt-ui-theme` alongside the other UI glyphs.
+pub const ELLIPSIS: &str = "…";
+
+/// U+00B7 MIDDLE DOT, separating the fields of a one-line summary.
+pub const MIDDLE_DOT: &str = "·";
+
+/// U+2013 EN DASH, joining the two ends of a numeric range.
+pub const EN_DASH: &str = "–";
+
+/// U+2192 RIGHTWARDS ARROW, leading from where a span starts to where it ends.
+pub const RIGHTWARDS_ARROW: &str = "→";
+
+/// U+2248 ALMOST EQUAL TO, marking a value that stands for another.
+pub const ALMOST_EQUAL_TO: &str = "≈";
+
+/// A UTC instant to the minute, the precision the solar flare, geomagnetic
+/// index and TEC map archives publish. The surface showing it writes `UTC`
+/// after it.
+pub const UTC_MINUTE_FORMAT: &str = "%Y-%m-%d %H:%M";
+
+/// A UTC instant to the second, the precision a fix or a plot sample has.
+/// The surface showing it writes `UTC` after it.
+pub const UTC_SECOND_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+
+/// Two spaces, U+00B7 MIDDLE DOT, two spaces, joins fields inside tooltip strings.
+const TOOLTIP_JOINER: &str = "  ·  ";
+
+const MICROS_PER_MILLISECOND: u64 = 1_000;
+
+const MICROS_PER_SECOND: u64 = 1_000 * MICROS_PER_MILLISECOND;
+
+const MICROS_PER_MINUTE: u64 = 60 * MICROS_PER_SECOND;
+
+/// Seconds in one hour, the point a clock reading grows an hours field.
+const SECONDS_PER_HOUR: u64 = 3_600;
+
+/// Bytes in one kibibyte. The steps between display units.
+pub const BYTES_PER_KB: u64 = 1_024;
+
+/// Bytes in one gibibyte, the unit storage limits are entered in.
+pub const BYTES_PER_GB: u64 = BYTES_PER_KB * BYTES_PER_KB * BYTES_PER_KB;
 
 #[cfg(test)]
 mod tests;

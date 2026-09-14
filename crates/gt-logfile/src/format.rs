@@ -4,10 +4,10 @@ use chrono::{DateTime, Datelike as _, Duration, NaiveDate, NaiveDateTime, NaiveT
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumIter)]
 pub enum LogFormat {
-    SyslogShort,
-    SyslogShortMicro,
     Iso8601Space,
     Iso8601T,
+    SyslogShort,
+    SyslogShortMicro,
 }
 
 impl LogFormat {
@@ -133,12 +133,6 @@ fn parse_iso_t(line: &str) -> Option<(DateTime<Utc>, &str)> {
     Some((dt, rest))
 }
 
-/// The English month abbreviations, in month order. `journalctl` writes them
-/// capitalised under `LC_TIME=C` and lower case under some other locales.
-const MONTH_ABBREVS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
-
 fn parse_month_abbrev(s: &str) -> Option<u32> {
     let index = MONTH_ABBREVS
         .iter()
@@ -178,6 +172,12 @@ pub(crate) fn parse_line(
         LogFormat::Iso8601T => parse_iso_t(line),
     }
 }
+
+/// The English month abbreviations, in month order. `journalctl` writes them
+/// capitalised under `LC_TIME=C` and lower case under some other locales.
+const MONTH_ABBREVS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
 
 #[cfg(test)]
 mod tests {

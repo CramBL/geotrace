@@ -129,10 +129,6 @@ pub struct FetchRowHoverText {
     pub coverage: &'static str,
 }
 
-pub const FETCH_QUEUE_LABEL: &str = "Fetch queue";
-pub const RECORDING_DAYS_LABEL: &str = "Recording days";
-pub const BACKGROUND_DAYS_LABEL: &str = "Background days";
-
 /// Two rows of a data source page's grid: what is being fetched, and what the
 /// archive holds for the loaded recordings.
 pub fn show_fetch_rows(ui: &mut Ui, status: DayFetchStatus, hover: FetchRowHoverText) {
@@ -153,6 +149,10 @@ pub fn show_background_day_row(ui: &mut Ui, coverage: ArchivedDayCount, hover: &
     ui.label(coverage.line()).on_hover_text(hover);
     ui.end_row();
 }
+
+pub const FETCH_QUEUE_LABEL: &str = "Fetch queue";
+pub const RECORDING_DAYS_LABEL: &str = "Recording days";
+pub const BACKGROUND_DAYS_LABEL: &str = "Background days";
 
 #[cfg(test)]
 mod tests {

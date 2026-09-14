@@ -5,11 +5,6 @@ use hdf5_pure::{AttrValue, Dataset, File, FormatError, Group};
 
 use crate::error::Error;
 
-/// A dataset of a well-formed file decodes to at most this multiple of the
-/// file's byte length: deflate's maximum expansion ratio is 1032:1. Every
-/// `.gtd` dataset is stored whole, with no chunk left to the fill value.
-const MAX_DECODED_BYTES_PER_FILE_BYTE: u128 = 1032;
-
 /// A `.gtd` file whose datasets are reachable only through a check of the size
 /// they declare against the bytes the file holds.
 ///
@@ -138,6 +133,11 @@ fn none_for_a_missing_path<T>(lookup: Result<T, hdf5_pure::Error>) -> Result<Opt
         Err(error) => Err(error.into()),
     }
 }
+
+/// A dataset of a well-formed file decodes to at most this multiple of the
+/// file's byte length: deflate's maximum expansion ratio is 1032:1. Every
+/// `.gtd` dataset is stored whole, with no chunk left to the fill value.
+const MAX_DECODED_BYTES_PER_FILE_BYTE: u128 = 1032;
 
 #[cfg(test)]
 mod tests {

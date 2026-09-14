@@ -5,15 +5,6 @@ use gt_ui_types::{PinWithheld, PinnedPopup};
 
 use crate::classify::PointClass;
 
-/// Space between the widest label and the glyph column.
-const LABEL_GAP: usize = 2;
-
-/// Marker for a point covered by the hovered results-table match.
-const HOVER_MARKER: char = '~';
-
-/// Marker for the point whose popup is pinned.
-const SELECT_MARKER: char = '^';
-
 /// One track's points as glyphs, plus the sparse annotation rows.
 pub struct TrackPicture {
     pub track: TrackRef,
@@ -109,9 +100,6 @@ impl fmt::Display for MapPicture {
     }
 }
 
-const HOVER_LABEL: &str = "hover";
-const SELECT_LABEL: &str = "select";
-
 /// The pinned popup as one line: drawn, or withheld with the reason the map
 /// withheld it.
 fn popup_line(pin: PinnedPopup) -> String {
@@ -129,6 +117,18 @@ fn withheld_reason(reason: PinWithheld) -> &'static str {
         PinWithheld::CategoryHidden => "category hidden",
     }
 }
+
+/// Space between the widest label and the glyph column.
+const LABEL_GAP: usize = 2;
+
+/// Marker for a point covered by the hovered results-table match.
+const HOVER_MARKER: char = '~';
+
+/// Marker for the point whose popup is pinned.
+const SELECT_MARKER: char = '^';
+
+const HOVER_LABEL: &str = "hover";
+const SELECT_LABEL: &str = "select";
 
 #[cfg(test)]
 mod tests {

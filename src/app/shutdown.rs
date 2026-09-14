@@ -17,25 +17,6 @@ use super::modals::{
 use super::{App, history_db};
 use crate::termination_signal::{TERMINATION_SIGNAL_FLAG, TerminationSignalAction};
 
-/// Under this a close with nothing pending never leaves the normal UI.
-pub(in crate::app) const SHUTDOWN_WINDOW_GRACE: Duration = Duration::from_millis(200);
-
-/// Shutdown repaints on this interval so the writes it lists advance without
-/// new input.
-const SHUTDOWN_REPAINT_INTERVAL: Duration = Duration::from_millis(100);
-
-const SHUTDOWN_WINDOW_INNER_SIZE: egui::Vec2 = egui::vec2(420.0, 260.0);
-
-/// Non-zero, so a shell or a supervisor sees that the writes still running
-/// were abandoned.
-pub(crate) const FORCE_QUIT_EXIT_CODE: u8 = 3;
-
-/// Logged by both places a second signal can reach: the frame loop and the
-/// wait that outlives the window.
-pub(crate) const SECOND_SIGNAL_QUIT_CAUSE: &str = "Quitting on a second termination signal";
-
-const HISTORY_SHUTDOWN_LABEL: &str = "Finishing recording history work";
-
 /// Reports the writes the process is about to abandon, wherever it ends
 /// before they finish.
 pub(crate) fn log_writes_left_unfinished(cause: &str, pending_writes: &PendingWrites) {
@@ -398,6 +379,25 @@ fn running_write_ui(ui: &mut egui::Ui, status: &PendingWriteStatus) {
     ui.add_space(2.0);
 }
 
+/// Under this a close with nothing pending never leaves the normal UI.
+pub(in crate::app) const SHUTDOWN_WINDOW_GRACE: Duration = Duration::from_millis(200);
+
+/// Shutdown repaints on this interval so the writes it lists advance without
+/// new input.
+const SHUTDOWN_REPAINT_INTERVAL: Duration = Duration::from_millis(100);
+
+const SHUTDOWN_WINDOW_INNER_SIZE: egui::Vec2 = egui::vec2(420.0, 260.0);
+
+/// Non-zero, so a shell or a supervisor sees that the writes still running
+/// were abandoned.
+pub(crate) const FORCE_QUIT_EXIT_CODE: u8 = 3;
+
+/// Logged by both places a second signal can reach: the frame loop and the
+/// wait that outlives the window.
+pub(crate) const SECOND_SIGNAL_QUIT_CAUSE: &str = "Quitting on a second termination signal";
+
+const HISTORY_SHUTDOWN_LABEL: &str = "Finishing recording history work";
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
@@ -420,10 +420,6 @@ mod tests {
             recently_finished: Vec::new(),
         }
     }
-
-    const TEC_COMPACTION: WriteKind = WriteKind::ArchiveCompaction {
-        archive: "ionospheric TEC",
-    };
 
     fn opened_force_quit_prompt() -> ForceQuitPrompt {
         let mut prompt = ForceQuitPrompt::default();
@@ -718,4 +714,8 @@ mod tests {
             Some(SHUTDOWN_WINDOW_GRACE)
         );
     }
+
+    const TEC_COMPACTION: WriteKind = WriteKind::ArchiveCompaction {
+        archive: "ionospheric TEC",
+    };
 }

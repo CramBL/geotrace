@@ -11,16 +11,6 @@ use crate::format_version::WRITTEN_FORMAT_VERSION;
 use crate::provenance::{SDK_COMMIT_TIME_ATTR, SDK_GIT_COMMIT_ATTR, SDK_VERSION_ATTR};
 use crate::types::{Constellation, EventMarkerColor, MarkerIcon, Meta, NavFile};
 
-/// Number of elements per chunk for 1-D compressed datasets.
-///
-/// 8 192 elements gives ≥ 8 KiB per chunk across all element sizes used here
-/// (1 B for u8, 4 B for f32/u32, 8 B for f64/i64/u64), which is enough for
-/// deflate to compress effectively.
-const CHUNK_SIZE: u64 = 8_192;
-
-/// The `units` attribute value shared by every microsecond timestamp dataset.
-const MICROS_SINCE_EPOCH_UNITS: &str = "microseconds since 1970-01-01T00:00:00Z";
-
 /// Serialise `nav_file` to HDF5 bytes.
 pub(crate) fn build_hdf5(nav_file: &NavFile) -> Result<Vec<u8>, Error> {
     let mut fb = FileBuilder::new();
@@ -698,6 +688,16 @@ fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), E
 pub(crate) fn decode_tracked_constellation(code: u8) -> Result<Constellation, Error> {
     Constellation::from_wire_code(code, "tracked_sats/constellation")
 }
+
+/// Number of elements per chunk for 1-D compressed datasets.
+///
+/// 8 192 elements gives ≥ 8 KiB per chunk across all element sizes used here
+/// (1 B for u8, 4 B for f32/u32, 8 B for f64/i64/u64), which is enough for
+/// deflate to compress effectively.
+const CHUNK_SIZE: u64 = 8_192;
+
+/// The `units` attribute value shared by every microsecond timestamp dataset.
+const MICROS_SINCE_EPOCH_UNITS: &str = "microseconds since 1970-01-01T00:00:00Z";
 
 #[cfg(test)]
 mod tests {

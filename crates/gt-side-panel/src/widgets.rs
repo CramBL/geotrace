@@ -48,9 +48,6 @@ pub fn has_metadata_details(view: &MetadataView<'_>) -> bool {
         || view.notes.is_some()
 }
 
-/// Column and row spacing shared by every recording-details grid.
-const DETAIL_GRID_SPACING: [f32; 2] = [12.0, 6.0];
-
 /// A recording-details row: a weak caption and its value, which wraps to the
 /// available width. No colon after the caption, per DESIGN.md.
 fn detail_row(ui: &mut egui::Ui, caption: &str, value: &str) {
@@ -173,9 +170,6 @@ pub fn expand_arrow_width(ui: &egui::Ui) -> f32 {
     text_width(ui, ICON_CARET_DOWN, &font).max(text_width(ui, ICON_CARET_RIGHT, &font))
 }
 
-/// How much larger than the interact height a [`tri_checkbox`] is drawn.
-pub const CHECKBOX_PADDING: f32 = 4.0;
-
 /// Width of the tri-state checkbox column, for padding a checkbox-less row so it
 /// aligns with the checkboxed sections. Single source of truth for [`tri_checkbox`].
 pub fn checkbox_width(ui: &egui::Ui) -> f32 {
@@ -281,3 +275,9 @@ pub fn apply_point_click(
         *requests.map_center = lat_lon;
     }
 }
+
+/// Column and row spacing shared by every recording-details grid.
+const DETAIL_GRID_SPACING: [f32; 2] = [12.0, 6.0];
+
+/// How much larger than the interact height a [`tri_checkbox`] is drawn.
+pub const CHECKBOX_PADDING: f32 = 4.0;

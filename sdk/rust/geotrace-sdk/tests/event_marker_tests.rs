@@ -335,10 +335,10 @@ fn a_whitespace_only_style_color_is_rejected() {
 #[derive(Debug, EventKind)]
 #[event_kind(note = none)]
 enum IconLeaf {
-    #[event_kind(icon = Lightning)]
-    TurnOn,
     #[event_kind(icon = Error)]
     Failed,
+    #[event_kind(icon = Lightning)]
+    TurnOn,
 }
 
 #[derive(Debug, EventKind)]

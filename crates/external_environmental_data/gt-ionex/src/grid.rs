@@ -2,23 +2,6 @@
 
 use gt_types::{Latitude, Longitude};
 
-/// Degrees in a full turn of longitude, which separates the two conventions
-/// a grid is declared in: -180 to 180, or 0 to 360.
-const FULL_TURN_DEGREES: f64 = 360.0;
-
-/// How far two declared degree values may differ and still name the same
-/// node. Grid records are written to one decimal.
-pub const DEGREES_TOLERANCE: f64 = 1e-6;
-
-/// How far outside an axis, in node widths, a query may fall and still count
-/// as its edge node.
-const EDGE_TOLERANCE_NODES: f64 = 1e-9;
-
-/// Nodes one axis may declare at most, which bounds what a malformed header
-/// makes the parser allocate. A global grid at a hundredth of a degree stays
-/// under it.
-const MAX_NODE_COUNT: usize = 40_000;
-
 /// One axis as a header or map record declares it: `LAT1 / LAT2 / DLAT`,
 /// `LON1 / LON2 / DLON`, and the longitude fields of a latitude band.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -34,8 +17,14 @@ pub enum AxisError {
     #[error("the bounds and step must be finite")]
     NotFinite,
 
-    #[error("the step of {step_degrees} deg is below the {DEGREES_TOLERANCE} deg resolution")]
-    StepBelowResolution { step_degrees: f64 },
+    #[error(
+        "{first_degrees} deg to {last_degrees} deg is not a whole number of {step_degrees} deg steps"
+    )]
+    PartialStep {
+        first_degrees: f64,
+        last_degrees: f64,
+        step_degrees: f64,
+    },
 
     #[error(
         "the step of {step_degrees} deg runs away from the last node, {first_degrees} deg to {last_degrees} deg"
@@ -46,14 +35,8 @@ pub enum AxisError {
         step_degrees: f64,
     },
 
-    #[error(
-        "{first_degrees} deg to {last_degrees} deg is not a whole number of {step_degrees} deg steps"
-    )]
-    PartialStep {
-        first_degrees: f64,
-        last_degrees: f64,
-        step_degrees: f64,
-    },
+    #[error("the step of {step_degrees} deg is below the {DEGREES_TOLERANCE} deg resolution")]
+    StepBelowResolution { step_degrees: f64 },
 
     #[error(
         "{first_degrees} deg to {last_degrees} deg in steps of {step_degrees} deg holds more than {MAX_NODE_COUNT} nodes"
@@ -287,6 +270,23 @@ pub struct GridPoint {
     pub latitude_index: usize,
     pub longitude_index: usize,
 }
+
+/// Degrees in a full turn of longitude, which separates the two conventions
+/// a grid is declared in: -180 to 180, or 0 to 360.
+const FULL_TURN_DEGREES: f64 = 360.0;
+
+/// How far two declared degree values may differ and still name the same
+/// node. Grid records are written to one decimal.
+pub const DEGREES_TOLERANCE: f64 = 1e-6;
+
+/// How far outside an axis, in node widths, a query may fall and still count
+/// as its edge node.
+const EDGE_TOLERANCE_NODES: f64 = 1e-9;
+
+/// Nodes one axis may declare at most, which bounds what a malformed header
+/// makes the parser allocate. A global grid at a hundredth of a degree stays
+/// under it.
+const MAX_NODE_COUNT: usize = 40_000;
 
 #[cfg(test)]
 mod tests {

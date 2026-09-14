@@ -8,8 +8,6 @@ use gt_ui_types::reference::ReferenceDocument;
 use crate::app::day_failures::{self, DayFailure};
 use crate::app::settings_ui::SettingsPage;
 
-pub(super) const BASE_URL_LABEL: &str = "Base URL";
-
 /// The reference material a source page links under its layout, and what the
 /// link says on hover.
 #[derive(Debug, Clone, Copy)]
@@ -89,6 +87,8 @@ pub(super) fn show_base_url_row(ui: &mut Ui, hover_text: &str, base_url: &mut St
     ui.end_row();
     changed
 }
+
+pub(super) const BASE_URL_LABEL: &str = "Base URL";
 
 #[cfg(test)]
 mod tests {

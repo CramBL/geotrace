@@ -17,18 +17,6 @@ use gt_solar::text;
 use gt_solar::wire;
 use gt_solar::{CAPTURED_WINDOWS, CapturedWindow, GeomagneticIndex};
 
-/// The day no storm reached.
-const QUIET_CAPTURE: &str = "kp-quiet";
-
-/// The May 2024 storm, at both cadences.
-const KP_STORM_CAPTURE: &str = "kp-storm";
-const HP30_STORM_CAPTURE: &str = "hp30-storm";
-
-/// The window before Hp30 begins.
-const BEFORE_COVERAGE_CAPTURE: &str = "hp30-before-coverage";
-
-const HTTP_OK: u64 = 200;
-
 /// A capture, reduced to what these tests check.
 struct CapturedSeries {
     period_starts: Vec<DateTime<Utc>>,
@@ -254,3 +242,15 @@ fn every_capture_records_the_services_license_and_source() {
         );
     }
 }
+
+/// The day no storm reached.
+const QUIET_CAPTURE: &str = "kp-quiet";
+
+/// The May 2024 storm, at both cadences.
+const KP_STORM_CAPTURE: &str = "kp-storm";
+const HP30_STORM_CAPTURE: &str = "hp30-storm";
+
+/// The window before Hp30 begins.
+const BEFORE_COVERAGE_CAPTURE: &str = "hp30-before-coverage";
+
+const HTTP_OK: u64 = 200;

@@ -24,34 +24,28 @@ use parking_lot::Mutex;
 
 pub mod schema;
 
-/// Name of the archive file, joined to the data directory by the caller.
-pub const FILE_NAME: &str = "jamming.h5";
-
-/// The archive's name in messages about its columns.
-const ARCHIVE_NAME: &str = "interference archive";
-
 #[derive(Debug, thiserror::Error)]
 pub enum JamStoreError {
     #[error("archive error: {0}")]
     Backend(String),
+
+    #[error("archive is inconsistent: {0}")]
+    Corrupt(String),
+
+    #[error("{day} is already stored")]
+    DayAlreadyStored { day: NaiveDate },
+
+    #[error(transparent)]
+    DeclinedRecovery(#[from] DeclinedRecovery),
+
+    #[error("another process has the archive open")]
+    HeldByAnotherProcess,
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
     #[error("archive schema version {found} is newer than supported {supported}")]
     SchemaTooNew { found: i64, supported: i64 },
-
-    #[error("{day} is already stored")]
-    DayAlreadyStored { day: NaiveDate },
-
-    #[error("archive is inconsistent: {0}")]
-    Corrupt(String),
-
-    #[error("another process has the archive open")]
-    HeldByAnotherProcess,
-
-    #[error(transparent)]
-    DeclinedRecovery(#[from] DeclinedRecovery),
 }
 
 gt_hdf5_archive::impl_day_archive_error!(JamStoreError);
@@ -359,3 +353,9 @@ fn with_layout<T>(
         levels: &levels,
     })?)
 }
+
+/// Name of the archive file, joined to the data directory by the caller.
+pub const FILE_NAME: &str = "jamming.h5";
+
+/// The archive's name in messages about its columns.
+const ARCHIVE_NAME: &str = "interference archive";

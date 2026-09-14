@@ -11,21 +11,6 @@ use gt_ui_theme::EM_DASH;
 use super::line_table::LineTableRows;
 use super::{LogViewerWindow, TIMESTAMP_FORMAT};
 
-/// Height the panel scrolls past: a log of many boots must still leave the
-/// table its share of the window.
-const MAX_PANEL_HEIGHT_PX: f32 = 260.0;
-
-/// Width of the column the per-boot uptime bars are drawn across.
-const UPTIME_BAR_WIDTH_PX: f32 = 90.0;
-
-const UPTIME_BAR_HEIGHT_PX: f32 = 6.0;
-
-const FILTERED_OUT_HOVER: &str = "The filters show no line of this";
-
-/// Column and row spacing shared by the panel's grids, so their rows sit
-/// tighter than the window's default.
-const GRID_SPACING: egui::Vec2 = egui::vec2(8.0, 2.0);
-
 impl LogViewerWindow {
     pub(super) fn summary_panel_ui(&mut self, ui: &mut egui::Ui, log: &LoadedLog) {
         let parsed = log.parsed();
@@ -283,3 +268,18 @@ impl UptimeBar {
             .rect_filled(bar, 1.0, ui.visuals().selection.bg_fill);
     }
 }
+
+/// Height the panel scrolls past: a log of many boots must still leave the
+/// table its share of the window.
+const MAX_PANEL_HEIGHT_PX: f32 = 260.0;
+
+/// Width of the column the per-boot uptime bars are drawn across.
+const UPTIME_BAR_WIDTH_PX: f32 = 90.0;
+
+const UPTIME_BAR_HEIGHT_PX: f32 = 6.0;
+
+const FILTERED_OUT_HOVER: &str = "The filters show no line of this";
+
+/// Column and row spacing shared by the panel's grids, so their rows sit
+/// tighter than the window's default.
+const GRID_SPACING: egui::Vec2 = egui::vec2(8.0, 2.0);

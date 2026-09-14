@@ -23,10 +23,6 @@ use super::levels::LineViewport;
 use super::lines::{self, HOVER_RADIUS_PX, LineStroke, NearestHoverLabel, PlotHoverLabel};
 use super::tec::TecHover;
 
-/// How long one interference sample holds: the dataset is published per whole
-/// UTC day.
-const INTERFERENCE_PERIOD_SECS: f64 = 24.0 * 60.0 * 60.0;
-
 /// A context line's sample: where it starts, and what the line is worth
 /// there.
 trait ContextSample: Copy {
@@ -149,11 +145,11 @@ impl<S: ContextSample> ContextLineCache<S> {
 /// How a line runs between its samples.
 #[derive(Debug, Clone, Copy)]
 enum LineShape {
+    /// Values run linearly from one sample to the next.
+    Interpolated,
     /// Each sample's value holds unchanged for `period_secs` from its start,
     /// which is what the source publishes.
     Step { period_secs: f64 },
-    /// Values run linearly from one sample to the next.
-    Interpolated,
 }
 
 /// The staircase a stepped source draws: each valued sample holds for
@@ -358,6 +354,10 @@ fn add_context_line<'a, S: ContextSample>(
         nearest.offer(distance, || hover(point, sample));
     }
 }
+
+/// How long one interference sample holds: the dataset is published per whole
+/// UTC day.
+const INTERFERENCE_PERIOD_SECS: f64 = 24.0 * 60.0 * 60.0;
 
 #[cfg(test)]
 mod tests {
