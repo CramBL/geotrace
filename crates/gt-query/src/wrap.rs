@@ -89,6 +89,7 @@ impl WrapPeriod {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
     use rstest::rstest;
 
     use super::*;
@@ -157,52 +158,46 @@ mod tests {
         assert!((on_a_full_turn - 2.0 * on_a_half_turn).abs() < 1e-12);
     }
 
-    mod properties {
-        use proptest::prelude::*;
+    proptest! {
+        /// Circular std is invariant under a rigid rotation of all the
+        /// values, including across the wrap - the property that justifies
+        /// the whole helper. Tested on tight clusters (within a twelfth of
+        /// the period) where the statistic is well conditioned, so the
+        /// invariant holds to a fine tolerance.
+        #[test]
+        fn std_is_rotation_invariant(
+            period_deg in 1.0f64..720.0,
+            fractions in proptest::collection::vec(-1.0f64 / 12.0..1.0 / 12.0, 1..20),
+            center in 0.0f64..1.0,
+            offset in 0.0f64..1.0,
+        ) {
+            let period = WrapPeriod::from_degrees(period_deg).expect("a positive period");
+            let cluster = |base: f64| -> Vec<f64> {
+                fractions
+                    .iter()
+                    .map(|f| ((base + f) * period_deg).rem_euclid(period_deg))
+                    .collect()
+            };
+            let here = period.std(&cluster(center));
+            let there = period.std(&cluster(center + offset));
+            prop_assert!(here.is_finite() && here >= 0.0);
+            prop_assert!(
+                (here - there).abs() < 1e-6 * period_deg,
+                "here {here} there {there}"
+            );
+        }
 
-        use super::super::WrapPeriod;
-
-        proptest! {
-            /// Circular std is invariant under a rigid rotation of all the
-            /// values, including across the wrap - the property that justifies
-            /// the whole helper. Tested on tight clusters (within a twelfth of
-            /// the period) where the statistic is well conditioned, so the
-            /// invariant holds to a fine tolerance.
-            #[test]
-            fn std_is_rotation_invariant(
-                period_deg in 1.0f64..720.0,
-                fractions in proptest::collection::vec(-1.0f64 / 12.0..1.0 / 12.0, 1..20),
-                center in 0.0f64..1.0,
-                offset in 0.0f64..1.0,
-            ) {
-                let period = WrapPeriod::from_degrees(period_deg).expect("a positive period");
-                let cluster = |base: f64| -> Vec<f64> {
-                    fractions
-                        .iter()
-                        .map(|f| ((base + f) * period_deg).rem_euclid(period_deg))
-                        .collect()
-                };
-                let here = period.std(&cluster(center));
-                let there = period.std(&cluster(center + offset));
-                prop_assert!(here.is_finite() && here >= 0.0);
-                prop_assert!(
-                    (here - there).abs() < 1e-6 * period_deg,
-                    "here {here} there {there}"
-                );
-            }
-
-            /// The R clamp keeps the statistic real over arbitrary values:
-            /// never NaN, never negative.
-            #[test]
-            fn std_is_never_nan(
-                period_deg in 1.0f64..720.0,
-                fractions in proptest::collection::vec(0.0f64..1.0, 1..50),
-            ) {
-                let period = WrapPeriod::from_degrees(period_deg).expect("a positive period");
-                let values: Vec<f64> = fractions.iter().map(|f| f * period_deg).collect();
-                let std = period.std(&values);
-                prop_assert!(!std.is_nan() && std >= 0.0);
-            }
+        /// The R clamp keeps the statistic real over arbitrary values:
+        /// never NaN, never negative.
+        #[test]
+        fn std_is_never_nan(
+            period_deg in 1.0f64..720.0,
+            fractions in proptest::collection::vec(0.0f64..1.0, 1..50),
+        ) {
+            let period = WrapPeriod::from_degrees(period_deg).expect("a positive period");
+            let values: Vec<f64> = fractions.iter().map(|f| f * period_deg).collect();
+            let std = period.std(&values);
+            prop_assert!(!std.is_nan() && std >= 0.0);
         }
     }
 }

@@ -608,17 +608,18 @@ pub(crate) fn zoom_to_fit(
 }
 
 #[cfg(test)]
-mod collection {
+mod tests {
+    use chrono::{Duration, TimeZone, Utc};
+    use gt_types::NavPoint;
     use gt_types::markers::{
         CustomMarker, EventMarker, GeneratedMarker, GeneratedMarkerKind, MarkerIcon,
     };
     use rstest::rstest;
 
     use super::*;
-    use crate::test_util;
-    use crate::tests;
+    use crate::{test_util, tests};
 
-    /// The viewport every case here collects from, in logical pixels.
+    /// The viewport every case here collects from or frames into, in logical pixels.
     const VIEWPORT: egui::Rect =
         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 600.0));
 
@@ -897,20 +898,6 @@ mod collection {
 
         assert_eq!(collected_fixes(&visible, test_util::track0()), vec![0, 1]);
     }
-}
-
-#[cfg(test)]
-mod zoom_to_fit {
-    use chrono::{Duration, TimeZone, Utc};
-    use gt_types::NavPoint;
-    use rstest::rstest;
-
-    use super::*;
-    use crate::tests;
-
-    /// The viewport every case here frames into, in logical pixels.
-    const VIEWPORT: egui::Rect =
-        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 600.0));
 
     /// A receiver carried around the north pole a quarter turn at a time, on
     /// a ring 22.24 km across.

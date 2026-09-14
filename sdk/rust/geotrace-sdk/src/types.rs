@@ -452,225 +452,6 @@ impl MarkerIcon {
     }
 }
 
-#[cfg(test)]
-mod marker_icon_tests {
-    use strum::IntoEnumIterator;
-
-    use super::*;
-
-    /// `name()`/`try_from_lower_case` are derived from the same variant list, so
-    /// every variant must round-trip through its wire form back to itself.
-    #[test]
-    fn name_and_try_from_lower_case_round_trip() {
-        for icon in MarkerIcon::iter() {
-            let wire = icon.name();
-            let parsed = MarkerIcon::try_from_lower_case(wire)
-                .unwrap_or_else(|err| panic!("{wire:?} should parse back to {icon:?}: {err}"));
-            assert_eq!(parsed, icon);
-        }
-    }
-
-    /// The wire form is part of the on-disk `.gtd` format
-    /// (`Annotation::icon`/`EventMarkerIconChoice::Icon`). Pin it down so a
-    /// rename of a variant - which would silently change `strum`'s derived
-    /// `snake_case` form - is caught by this test.
-    #[test]
-    fn name_is_stable_wire_form() {
-        assert_eq!(MarkerIcon::Pin.name(), "pin");
-        assert_eq!(MarkerIcon::SatelliteLost.name(), "satellite_lost");
-        assert_eq!(MarkerIcon::Wrench.name(), "wrench");
-    }
-
-    #[test]
-    fn try_from_lower_case_rejects_unknown_strings() {
-        let err = MarkerIcon::try_from_lower_case("not_an_icon").unwrap_err();
-        assert!(matches!(err, Error::UnknownMarkerIcon { name } if name == "not_an_icon"));
-    }
-
-    #[test]
-    fn encoding_attribute_lists_every_variant() {
-        assert_eq!(
-            MarkerIcon::encoding_attribute(),
-            "0=pin,1=cross,2=circle,3=lightning,4=warning,5=error,6=check,7=satellite,\
-             8=satellite_lost,9=gear,10=refresh,11=download,12=upload,13=wrench"
-        );
-    }
-}
-
-#[cfg(test)]
-mod annotation_icon_tests {
-    use rstest::rstest;
-    use strum::IntoEnumIterator;
-
-    use super::*;
-
-    #[test]
-    fn a_code_in_the_marker_icon_set_reads_as_that_icon_and_writes_back_unchanged() {
-        for icon in MarkerIcon::iter() {
-            let code = icon.wire_code();
-            assert_eq!(
-                AnnotationIcon::from_wire_code(code),
-                AnnotationIcon::Icon(icon)
-            );
-            assert_eq!(AnnotationIcon::Icon(icon).wire_code(), code);
-        }
-    }
-
-    #[rstest]
-    #[case(14)]
-    #[case(200)]
-    #[case(255)]
-    fn a_code_outside_the_marker_icon_set_reads_as_unrecognized_and_writes_back_unchanged(
-        #[case] code: u8,
-    ) {
-        let icon = AnnotationIcon::from_wire_code(code);
-        assert_eq!(icon, AnnotationIcon::Unrecognized(code));
-        assert_eq!(icon.wire_code(), code);
-    }
-}
-
-#[cfg(test)]
-mod travel_mode_tests {
-    use strum::{EnumCount, IntoEnumIterator};
-
-    use super::*;
-
-    /// `name()` is a hand-written match (it must borrow from `Unknown`), while
-    /// `Display` and `from_lower_case` are strum-derived. Round-tripping every
-    /// variant through both pins the three representations together.
-    #[test]
-    fn name_display_and_from_lower_case_agree() {
-        for mode in TravelMode::iter() {
-            assert_eq!(mode.name(), mode.to_string());
-            assert_eq!(TravelMode::from_lower_case(mode.name()), mode);
-        }
-    }
-
-    /// The wire form is part of the on-disk `.gtd` format (`meta_travel_mode`).
-    /// Pin it down so a variant rename - which would silently change `strum`'s
-    /// derived `snake_case` form - is caught by this test.
-    #[test]
-    fn name_is_stable_wire_form() {
-        let known = [
-            (TravelMode::Car, "car"),
-            (TravelMode::Motorcycle, "motorcycle"),
-            (TravelMode::Bicycle, "bicycle"),
-            (TravelMode::Pedestrian, "pedestrian"),
-            (TravelMode::Boat, "boat"),
-            (TravelMode::Rail, "rail"),
-            (TravelMode::Aircraft, "aircraft"),
-        ];
-        // Every variant except the `Unknown` carrier must appear in the table.
-        assert_eq!(known.len(), TravelMode::COUNT - 1);
-        for (mode, wire) in known {
-            assert_eq!(mode.name(), wire);
-        }
-    }
-
-    #[test]
-    fn unknown_values_are_preserved_verbatim() {
-        let mode = TravelMode::from_lower_case("hovercraft");
-        assert_eq!(mode, TravelMode::Unknown("hovercraft".into()));
-        assert_eq!(mode.name(), "hovercraft");
-    }
-}
-
-#[cfg(test)]
-mod constellation_tests {
-    use strum::IntoEnumIterator;
-
-    use super::*;
-
-    /// `try_from_lower_case` is derived from the variant list (via `EnumString`),
-    /// so every variant's lowercase wire form must parse back to itself.
-    #[test]
-    fn try_from_lower_case_round_trips_through_display_name() {
-        for c in Constellation::iter() {
-            let lower = c.display_name().to_lowercase();
-            let parsed = Constellation::try_from_lower_case(&lower)
-                .unwrap_or_else(|err| panic!("{lower:?} should parse back to {c:?}: {err}"));
-            assert_eq!(parsed, c);
-        }
-    }
-
-    /// The display name is the single source of truth for the "BeiDou" vs
-    /// "Beidou" vs "BEIDOU" spelling that was previously re-typed independently
-    /// at every call site (UI labels, `read::constellation_names`, Python
-    /// bindings). Pin it down so a future edit has to change it here.
-    #[test]
-    fn display_name_is_canonical_spelling() {
-        assert_eq!(Constellation::Gps.display_name(), "GPS");
-        assert_eq!(Constellation::Glonass.display_name(), "GLONASS");
-        assert_eq!(Constellation::Galileo.display_name(), "Galileo");
-        assert_eq!(Constellation::Beidou.display_name(), "BeiDou");
-        assert_eq!(Constellation::Navic.display_name(), "NavIC");
-        assert_eq!(Constellation::Qzss.display_name(), "QZSS");
-    }
-
-    /// The lowercase wire form is part of the on-disk `.gtd` format
-    /// (`tracked_sats/constellation` group attributes). Pin it down so a rename
-    /// of a variant - which would silently change `strum`'s derived lowercase
-    /// form - is caught by this test.
-    #[test]
-    fn try_from_lower_case_accepts_stable_wire_form() {
-        for (lower, expected) in [
-            ("gps", Constellation::Gps),
-            ("glonass", Constellation::Glonass),
-            ("galileo", Constellation::Galileo),
-            ("beidou", Constellation::Beidou),
-            ("navic", Constellation::Navic),
-            ("qzss", Constellation::Qzss),
-        ] {
-            assert_eq!(Constellation::try_from_lower_case(lower).unwrap(), expected);
-        }
-    }
-
-    #[test]
-    fn try_from_lower_case_rejects_unknown_strings() {
-        let err = Constellation::try_from_lower_case("not_a_constellation").unwrap_err();
-        assert!(
-            matches!(err, Error::UnknownConstellationName { name } if name == "not_a_constellation")
-        );
-    }
-
-    #[test]
-    fn encoding_attribute_lists_every_variant() {
-        assert_eq!(
-            Constellation::encoding_attribute(),
-            "0=GPS,1=GLONASS,2=Galileo,3=BeiDou,4=NavIC,5=QZSS"
-        );
-    }
-
-    /// `wire_code`/`from_wire_code` are the on-disk binary codes in the `.gtd`
-    /// `tracked_sats/constellation` dataset - the highest-consequence mapping
-    /// for this type. Pin the exact codes (a wrong number silently corrupts
-    /// files) and assert the table is exhaustive against `COUNT`, then check
-    /// every variant roundtrips so no new variant can lack a `from_wire_code` arm.
-    #[test]
-    fn u8_wire_codes_are_stable_and_round_trip() {
-        use strum::{EnumCount, IntoEnumIterator};
-        let expected = [
-            (Constellation::Gps, 0u8),
-            (Constellation::Glonass, 1),
-            (Constellation::Galileo, 2),
-            (Constellation::Beidou, 3),
-            (Constellation::Navic, 4),
-            (Constellation::Qzss, 5),
-        ];
-        assert_eq!(expected.len(), Constellation::COUNT);
-        for (c, code) in expected {
-            assert_eq!(c.wire_code(), code, "{c:?} wire code");
-            assert_eq!(Constellation::from_wire_code(code, "test").unwrap(), c);
-        }
-        for c in Constellation::iter() {
-            assert_eq!(
-                Constellation::from_wire_code(c.wire_code(), "test").unwrap(),
-                c
-            );
-        }
-    }
-}
-
 /// Platform a recording was made on, declared by the recorder.
 ///
 /// The field describes what carried the receiver, not how an application
@@ -1039,62 +820,6 @@ impl From<Option<MarkerIcon>> for EventMarkerIconChoice {
     }
 }
 
-#[cfg(test)]
-mod event_marker_style_wire_tests {
-    use rstest::rstest;
-
-    use super::*;
-
-    #[rstest]
-    #[case("", EventMarkerColor::Auto)]
-    #[case("#ff9900", EventMarkerColor::Hex("#ff9900".to_owned()))]
-    #[case("#FF990", EventMarkerColor::Unrecognized("#FF990".to_owned()))]
-    #[case("#GG9900", EventMarkerColor::Unrecognized("#GG9900".to_owned()))]
-    #[case("FF9900", EventMarkerColor::Unrecognized("FF9900".to_owned()))]
-    fn from_wire_value_reads_a_color_hex_field(
-        #[case] wire: &str,
-        #[case] expected: EventMarkerColor,
-    ) {
-        assert_eq!(EventMarkerColor::from_wire_value(wire), expected);
-    }
-
-    #[rstest]
-    #[case("", EventMarkerIconChoice::Auto)]
-    #[case("wrench", EventMarkerIconChoice::Icon(MarkerIcon::Wrench))]
-    #[case("Wrench", EventMarkerIconChoice::Unrecognized("Wrench".to_owned()))]
-    #[case("hovercraft", EventMarkerIconChoice::Unrecognized("hovercraft".to_owned()))]
-    fn from_wire_name_reads_an_icon_name_field(
-        #[case] wire: &str,
-        #[case] expected: EventMarkerIconChoice,
-    ) {
-        assert_eq!(EventMarkerIconChoice::from_wire_name(wire), expected);
-    }
-
-    #[rstest]
-    #[case(EventMarkerIconChoice::Auto, "")]
-    #[case(
-        EventMarkerIconChoice::Icon(MarkerIcon::SatelliteLost),
-        "satellite_lost"
-    )]
-    #[case(EventMarkerIconChoice::Unrecognized("hovercraft".to_owned()), "hovercraft")]
-    fn wire_name_writes_an_icon_name_field(
-        #[case] choice: EventMarkerIconChoice,
-        #[case] expected: &str,
-    ) {
-        assert_eq!(choice.wire_name(), expected);
-    }
-
-    #[test]
-    fn try_from_rejects_a_value_that_is_not_rrggbb() {
-        let err = EventMarkerColor::try_from("FF9900".to_owned())
-            .expect_err("a value that is not #RRGGBB is rejected");
-        assert_eq!(
-            err.to_string(),
-            "failed to parse EventMarkerColor (hex) from \"FF9900\": expected #RRGGBB format"
-        );
-    }
-}
-
 /// Per-variant icon and color override stored in the file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EventMarkerStyle {
@@ -1406,10 +1131,250 @@ impl NavFile {
 }
 
 #[cfg(test)]
-mod nav_file_comparison_tests {
+mod tests {
     use rstest::rstest;
+    use strum::{EnumCount, IntoEnumIterator};
 
     use super::*;
+
+    /// `name()`/`try_from_lower_case` are derived from the same variant list, so
+    /// every variant must round-trip through its wire form back to itself.
+    #[test]
+    fn marker_icon_name_and_try_from_lower_case_round_trip() {
+        for icon in MarkerIcon::iter() {
+            let wire = icon.name();
+            let parsed = MarkerIcon::try_from_lower_case(wire)
+                .unwrap_or_else(|err| panic!("{wire:?} should parse back to {icon:?}: {err}"));
+            assert_eq!(parsed, icon);
+        }
+    }
+
+    /// The wire form is part of the on-disk `.gtd` format
+    /// (`Annotation::icon`/`EventMarkerIconChoice::Icon`). Pin it down so a
+    /// rename of a variant - which would silently change `strum`'s derived
+    /// `snake_case` form - is caught by this test.
+    #[test]
+    fn marker_icon_name_is_stable_wire_form() {
+        assert_eq!(MarkerIcon::Pin.name(), "pin");
+        assert_eq!(MarkerIcon::SatelliteLost.name(), "satellite_lost");
+        assert_eq!(MarkerIcon::Wrench.name(), "wrench");
+    }
+
+    #[test]
+    fn marker_icon_try_from_lower_case_rejects_unknown_strings() {
+        let err = MarkerIcon::try_from_lower_case("not_an_icon").unwrap_err();
+        assert!(matches!(err, Error::UnknownMarkerIcon { name } if name == "not_an_icon"));
+    }
+
+    #[test]
+    fn marker_icon_encoding_attribute_lists_every_variant() {
+        assert_eq!(
+            MarkerIcon::encoding_attribute(),
+            "0=pin,1=cross,2=circle,3=lightning,4=warning,5=error,6=check,7=satellite,\
+             8=satellite_lost,9=gear,10=refresh,11=download,12=upload,13=wrench"
+        );
+    }
+
+    #[test]
+    fn a_code_in_the_marker_icon_set_reads_as_that_icon_and_writes_back_unchanged() {
+        for icon in MarkerIcon::iter() {
+            let code = icon.wire_code();
+            assert_eq!(
+                AnnotationIcon::from_wire_code(code),
+                AnnotationIcon::Icon(icon)
+            );
+            assert_eq!(AnnotationIcon::Icon(icon).wire_code(), code);
+        }
+    }
+
+    #[rstest]
+    #[case(14)]
+    #[case(200)]
+    #[case(255)]
+    fn a_code_outside_the_marker_icon_set_reads_as_unrecognized_and_writes_back_unchanged(
+        #[case] code: u8,
+    ) {
+        let icon = AnnotationIcon::from_wire_code(code);
+        assert_eq!(icon, AnnotationIcon::Unrecognized(code));
+        assert_eq!(icon.wire_code(), code);
+    }
+
+    /// `name()` is a hand-written match (it must borrow from `Unknown`), while
+    /// `Display` and `from_lower_case` are strum-derived. Round-tripping every
+    /// variant through both pins the three representations together.
+    #[test]
+    fn travel_mode_name_display_and_from_lower_case_agree() {
+        for mode in TravelMode::iter() {
+            assert_eq!(mode.name(), mode.to_string());
+            assert_eq!(TravelMode::from_lower_case(mode.name()), mode);
+        }
+    }
+
+    /// The wire form is part of the on-disk `.gtd` format (`meta_travel_mode`).
+    /// Pin it down so a variant rename - which would silently change `strum`'s
+    /// derived `snake_case` form - is caught by this test.
+    #[test]
+    fn travel_mode_name_is_stable_wire_form() {
+        let known = [
+            (TravelMode::Car, "car"),
+            (TravelMode::Motorcycle, "motorcycle"),
+            (TravelMode::Bicycle, "bicycle"),
+            (TravelMode::Pedestrian, "pedestrian"),
+            (TravelMode::Boat, "boat"),
+            (TravelMode::Rail, "rail"),
+            (TravelMode::Aircraft, "aircraft"),
+        ];
+        // Every variant except the `Unknown` carrier must appear in the table.
+        assert_eq!(known.len(), TravelMode::COUNT - 1);
+        for (mode, wire) in known {
+            assert_eq!(mode.name(), wire);
+        }
+    }
+
+    #[test]
+    fn an_unknown_travel_mode_is_preserved_verbatim() {
+        let mode = TravelMode::from_lower_case("hovercraft");
+        assert_eq!(mode, TravelMode::Unknown("hovercraft".into()));
+        assert_eq!(mode.name(), "hovercraft");
+    }
+
+    /// `try_from_lower_case` is derived from the variant list (via `EnumString`),
+    /// so every variant's lowercase wire form must parse back to itself.
+    #[test]
+    fn constellation_try_from_lower_case_round_trips_through_display_name() {
+        for c in Constellation::iter() {
+            let lower = c.display_name().to_lowercase();
+            let parsed = Constellation::try_from_lower_case(&lower)
+                .unwrap_or_else(|err| panic!("{lower:?} should parse back to {c:?}: {err}"));
+            assert_eq!(parsed, c);
+        }
+    }
+
+    /// The display name is the single source of truth for the "BeiDou" vs
+    /// "Beidou" vs "BEIDOU" spelling that was previously re-typed independently
+    /// at every call site (UI labels, `read::constellation_names`, Python
+    /// bindings). Pin it down so a future edit has to change it here.
+    #[test]
+    fn constellation_display_name_is_canonical_spelling() {
+        assert_eq!(Constellation::Gps.display_name(), "GPS");
+        assert_eq!(Constellation::Glonass.display_name(), "GLONASS");
+        assert_eq!(Constellation::Galileo.display_name(), "Galileo");
+        assert_eq!(Constellation::Beidou.display_name(), "BeiDou");
+        assert_eq!(Constellation::Navic.display_name(), "NavIC");
+        assert_eq!(Constellation::Qzss.display_name(), "QZSS");
+    }
+
+    /// The lowercase wire form is part of the on-disk `.gtd` format
+    /// (`tracked_sats/constellation` group attributes). Pin it down so a rename
+    /// of a variant - which would silently change `strum`'s derived lowercase
+    /// form - is caught by this test.
+    #[test]
+    fn constellation_try_from_lower_case_accepts_stable_wire_form() {
+        for (lower, expected) in [
+            ("gps", Constellation::Gps),
+            ("glonass", Constellation::Glonass),
+            ("galileo", Constellation::Galileo),
+            ("beidou", Constellation::Beidou),
+            ("navic", Constellation::Navic),
+            ("qzss", Constellation::Qzss),
+        ] {
+            assert_eq!(Constellation::try_from_lower_case(lower).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn constellation_try_from_lower_case_rejects_unknown_strings() {
+        let err = Constellation::try_from_lower_case("not_a_constellation").unwrap_err();
+        assert!(
+            matches!(err, Error::UnknownConstellationName { name } if name == "not_a_constellation")
+        );
+    }
+
+    #[test]
+    fn constellation_encoding_attribute_lists_every_variant() {
+        assert_eq!(
+            Constellation::encoding_attribute(),
+            "0=GPS,1=GLONASS,2=Galileo,3=BeiDou,4=NavIC,5=QZSS"
+        );
+    }
+
+    /// `wire_code`/`from_wire_code` are the on-disk binary codes in the `.gtd`
+    /// `tracked_sats/constellation` dataset - the highest-consequence mapping
+    /// for this type. Pin the exact codes (a wrong number silently corrupts
+    /// files) and assert the table is exhaustive against `COUNT`, then check
+    /// every variant roundtrips so no new variant can lack a `from_wire_code` arm.
+    #[test]
+    fn constellation_u8_wire_codes_are_stable_and_round_trip() {
+        use strum::{EnumCount, IntoEnumIterator};
+        let expected = [
+            (Constellation::Gps, 0u8),
+            (Constellation::Glonass, 1),
+            (Constellation::Galileo, 2),
+            (Constellation::Beidou, 3),
+            (Constellation::Navic, 4),
+            (Constellation::Qzss, 5),
+        ];
+        assert_eq!(expected.len(), Constellation::COUNT);
+        for (c, code) in expected {
+            assert_eq!(c.wire_code(), code, "{c:?} wire code");
+            assert_eq!(Constellation::from_wire_code(code, "test").unwrap(), c);
+        }
+        for c in Constellation::iter() {
+            assert_eq!(
+                Constellation::from_wire_code(c.wire_code(), "test").unwrap(),
+                c
+            );
+        }
+    }
+
+    #[rstest]
+    #[case("", EventMarkerColor::Auto)]
+    #[case("#ff9900", EventMarkerColor::Hex("#ff9900".to_owned()))]
+    #[case("#FF990", EventMarkerColor::Unrecognized("#FF990".to_owned()))]
+    #[case("#GG9900", EventMarkerColor::Unrecognized("#GG9900".to_owned()))]
+    #[case("FF9900", EventMarkerColor::Unrecognized("FF9900".to_owned()))]
+    fn from_wire_value_reads_a_color_hex_field(
+        #[case] wire: &str,
+        #[case] expected: EventMarkerColor,
+    ) {
+        assert_eq!(EventMarkerColor::from_wire_value(wire), expected);
+    }
+
+    #[rstest]
+    #[case("", EventMarkerIconChoice::Auto)]
+    #[case("wrench", EventMarkerIconChoice::Icon(MarkerIcon::Wrench))]
+    #[case("Wrench", EventMarkerIconChoice::Unrecognized("Wrench".to_owned()))]
+    #[case("hovercraft", EventMarkerIconChoice::Unrecognized("hovercraft".to_owned()))]
+    fn from_wire_name_reads_an_icon_name_field(
+        #[case] wire: &str,
+        #[case] expected: EventMarkerIconChoice,
+    ) {
+        assert_eq!(EventMarkerIconChoice::from_wire_name(wire), expected);
+    }
+
+    #[rstest]
+    #[case(EventMarkerIconChoice::Auto, "")]
+    #[case(
+        EventMarkerIconChoice::Icon(MarkerIcon::SatelliteLost),
+        "satellite_lost"
+    )]
+    #[case(EventMarkerIconChoice::Unrecognized("hovercraft".to_owned()), "hovercraft")]
+    fn wire_name_writes_an_icon_name_field(
+        #[case] choice: EventMarkerIconChoice,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(choice.wire_name(), expected);
+    }
+
+    #[test]
+    fn try_from_rejects_a_value_that_is_not_rrggbb() {
+        let err = EventMarkerColor::try_from("FF9900".to_owned())
+            .expect_err("a value that is not #RRGGBB is rejected");
+        assert_eq!(
+            err.to_string(),
+            "failed to parse EventMarkerColor (hex) from \"FF9900\": expected #RRGGBB format"
+        );
+    }
 
     fn a_nav_file() -> NavFile {
         let time = DateTime::from_timestamp(1_748_000_000, 0).expect("a valid timestamp");

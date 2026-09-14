@@ -774,15 +774,6 @@ mod tests {
             );
         }
     }
-}
-
-/// Downsampling a series whose values wrap, where the linear minimum and
-/// maximum of a bucket sit next to each other on the circle.
-#[cfg(test)]
-mod wrapping_series {
-    use rstest::rstest;
-
-    use super::*;
 
     /// A 1 Hz series of `values`, one sample per second.
     fn sampled_per_second(values: &[f64]) -> Vec<[f64; 2]> {
@@ -800,22 +791,6 @@ mod wrapping_series {
             .get(1)
             .map(|level| level.iter().map(|p| p.y).collect())
             .unwrap_or_default()
-    }
-
-    /// The mip-map preserves every bucket's outliers, and around north a
-    /// southward sample is neither the linear minimum (~0°) nor the linear
-    /// maximum (~359°) of its bucket.
-    #[test]
-    fn a_southward_sample_survives_a_bucket_of_northward_headings() {
-        let mipmap = MipMap::build_wrapping(
-            sampled_per_second(&[359.0, 1.0, 180.0, 2.0, 358.0, 0.0, 359.0, 1.0]),
-            WrapPeriod::full_turn_degrees(),
-        );
-        let coarse = coarse_values(&mipmap);
-        assert!(
-            coarse.contains(&180.0),
-            "the southward sample must survive downsampling, got {coarse:?}"
-        );
     }
 
     /// Every sample a bucket of north jitter emits is as close to north as the
@@ -868,7 +843,7 @@ mod wrapping_series {
     #[case::within_one_period([359.0, 1.0, 180.0, 2.0], [359.0, 180.0])]
     #[case::past_a_full_turn([0.0, 315.0, 360.0, 675.0], [0.0, 675.0])]
     #[case::not_finite([0.0, 315.0, f64::INFINITY, 350.0], [0.0, f64::INFINITY])]
-    fn a_bucket_is_downsampled_by_the_rule_its_samples_fall_under(
+    fn a_wrapping_bucket_is_downsampled_by_the_rule_its_samples_fall_under(
         #[case] headings: [f64; 4],
         #[case] expected: [f64; 2],
     ) {
@@ -918,7 +893,7 @@ mod wrapping_series {
         /// A bucket holding a value outside one period keeps its linear minimum
         /// and maximum, whichever side of the period the value falls.
         #[test]
-        fn a_bucket_of_out_of_range_values_keeps_its_linear_extremes(
+        fn a_wrapping_bucket_of_out_of_range_values_keeps_its_linear_extremes(
             buckets in proptest::collection::vec(
                 proptest::array::uniform4(-720.0_f64..1080.0),
                 1..25,

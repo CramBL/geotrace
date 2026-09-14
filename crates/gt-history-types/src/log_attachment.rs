@@ -247,6 +247,8 @@ pub fn delete_files(logs_directory: &Path, ids: &[LogAttachmentId]) {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
     use crate::is_db_recording_attr;
 
@@ -337,13 +339,6 @@ mod tests {
             Path::new("/store/logs").join(format!("{id}.zst"))
         );
     }
-}
-
-#[cfg(test)]
-mod attribute_json_properties {
-    use proptest::prelude::*;
-
-    use super::{LogAttachment, LogContentHash, StoredLogFilter, StoredLogFilterMode};
 
     fn filters() -> impl Strategy<Value = Vec<StoredLogFilter>> {
         proptest::collection::vec(

@@ -387,11 +387,10 @@ fn draw_generated_marker(
 }
 
 #[cfg(test)]
-mod snapshot_tests {
+mod tests {
     use gt_types::satellites::{Constellation, SatSample, Slip, SlipCause, SlipEvent, Snr};
     use rstest::rstest;
 
-    use super::show_slip_table;
     use crate::test_util;
 
     fn sample(elevation: Option<f32>, azimuth: Option<f32>, snr: Option<f32>) -> SatSample {
@@ -446,13 +445,13 @@ mod snapshot_tests {
     #[rstest]
     #[case::dark("slip_detail_table_dark", true)]
     #[case::light("slip_detail_table_light", false)]
-    fn snap_slip_table(#[case] name: &str, #[case] dark_mode: bool) {
+    fn snapshot_slip_table(#[case] name: &str, #[case] dark_mode: bool) {
         let event = mixed_slip_event();
         let mut harness = test_util::harness_builder()
             .size(egui::vec2(420.0, 200.0))
             .theme(dark_mode)
             .ui(move |ui| {
-                show_slip_table(ui, &event);
+                super::show_slip_table(ui, &event);
             });
         harness.run();
         harness.snapshot(name);

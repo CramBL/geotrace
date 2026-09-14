@@ -294,9 +294,14 @@ impl IconMeshBatch<'_> {
 
 #[cfg(test)]
 mod tests {
+    use std::f32::consts::FRAC_1_SQRT_2;
+
     use rstest::rstest;
+    use strum::IntoEnumIterator as _;
 
     use super::*;
+    use crate::icon_mesh::IconMeshLibrary;
+    use crate::test_util;
 
     #[rstest]
     #[case::up_is_identity(Vec2::new(0.0, -1.0), Vec2::new(3.0, 4.0), Vec2::new(3.0, 4.0))]
@@ -451,18 +456,9 @@ mod tests {
             .collect();
         assert_eq!(xs, vec![0, 4]);
     }
-}
-
-#[cfg(test)]
-mod gpu_projection_tests {
-    use rstest::rstest;
-
-    use super::*;
-    use crate::icon_mesh::IconMeshLibrary;
-    use crate::test_util;
 
     #[derive(Clone, Copy)]
-    enum Backend {
+    enum IconBackend {
         Cpu,
         Gpu,
     }
@@ -474,7 +470,11 @@ mod gpu_projection_tests {
     /// The painter handed to [IconMeshBatch::paint] is clipped to `clip`, so on
     /// the GPU path the paint callback's rect (hence egui-wgpu's render-pass
     /// viewport) is exactly `clip`.
-    fn render_icon_grid(size: egui::Vec2, clip: egui::Rect, backend: Backend) -> image::RgbaImage {
+    fn render_icon_grid(
+        size: egui::Vec2,
+        clip: egui::Rect,
+        backend: IconBackend,
+    ) -> image::RgbaImage {
         let library = IconMeshLibrary::embedded().unwrap();
         let mut harness = test_util::harness_builder().size(size).ui(move |ui| {
             ui.painter()
@@ -484,8 +484,8 @@ mod gpu_projection_tests {
             let cell_w = clip.width() / cols as f32;
             let cell_h = clip.height() / rows as f32;
             let mut batch = match backend {
-                Backend::Cpu => IconMeshBatch::new(Some(&library), ui.pixels_per_point()),
-                Backend::Gpu => IconMeshBatch::gpu_when_available(ui, Some(&library)),
+                IconBackend::Cpu => IconMeshBatch::new(Some(&library), ui.pixels_per_point()),
+                IconBackend::Gpu => IconMeshBatch::gpu_when_available(ui, Some(&library)),
             };
             for row in 0..rows {
                 for col in 0..cols {
@@ -556,8 +556,8 @@ mod gpu_projection_tests {
         egui::vec2(220.0, 200.0)
     ))]
     fn gpu_instanced_icons_match_cpu_placement(#[case] clip_rect: egui::Rect) {
-        let cpu = render_icon_grid(GPU_PARITY_CANVAS, clip_rect, Backend::Cpu);
-        let gpu = render_icon_grid(GPU_PARITY_CANVAS, clip_rect, Backend::Gpu);
+        let cpu = render_icon_grid(GPU_PARITY_CANVAS, clip_rect, IconBackend::Cpu);
+        let gpu = render_icon_grid(GPU_PARITY_CANVAS, clip_rect, IconBackend::Gpu);
         let frac = diff_fraction(&cpu, &gpu);
         assert!(
             frac < 0.01,
@@ -569,24 +569,12 @@ mod gpu_projection_tests {
 
     /// The canvas both icon pipelines draw the grid into.
     const GPU_PARITY_CANVAS: egui::Vec2 = egui::vec2(400.0, 320.0);
-}
-
-#[cfg(test)]
-mod snapshot_tests {
-    use std::f32::consts::FRAC_1_SQRT_2;
-
-    use crate::test_util;
-
-    use strum::IntoEnumIterator as _;
-
-    use super::*;
-    use crate::icon_mesh::IconMeshLibrary;
 
     /// Every icon at several sizes plus a rotated, a tinted, a faded, and a
     /// non-square variant - the mesh-pipeline counterpart of
     /// `all_marker_icons`.
     #[test]
-    fn icon_mesh_grid_renders_correctly() {
+    fn snapshot_icon_mesh_grid_renders_correctly() {
         let icons: Vec<IconId> = IconId::iter().collect();
         let library = IconMeshLibrary::embedded().unwrap();
         let cell = 44.0_f32;
