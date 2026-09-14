@@ -274,6 +274,23 @@ def test_roundtrip_no_travel_mode() -> None:
     assert nav_file.meta.travel_mode is None
 
 
+@pytest.mark.parametrize("value", ["", "   "])
+def test_roundtrip_meta_keeps_an_empty_or_whitespace_only_value(value: str) -> None:
+    meta = Meta(title=value, device=value, notes=value, identity=value)
+    b = NavFileBuilder()
+    b.with_meta(meta)
+    b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
+    read_back = _write_and_read(b).meta
+
+    assert (meta.title, meta.device, meta.notes, meta.identity) == (value,) * 4
+    assert (
+        read_back.title,
+        read_back.device,
+        read_back.notes,
+        read_back.identity,
+    ) == (value,) * 4
+
+
 def test_open_missing_file_raises() -> None:
     with pytest.raises(OSError):
         NavFile.open("/nonexistent/path/that/does/not/exist.gtd")

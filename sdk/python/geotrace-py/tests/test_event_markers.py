@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from geotrace_sdk import (
+    Annotation,
     EventMarker,
     EventMarkerPoint,
     EventMarkerStyle,
@@ -119,6 +120,22 @@ def test_event_marker_point_has_interpolated_position() -> None:
     assert abs(em.lon - 22.0) < 1e-6
 
 
+@pytest.mark.parametrize(("value", "expected"), [("", None), ("   ", "   ")])
+def test_a_label_and_an_annotation_read_back_as_built(
+    value: str, expected: str | None
+) -> None:
+    annotation = Annotation(T1, label=value)
+    assert annotation.label == expected
+    b = _builder_with_fixes()
+    b.add(annotation)
+    b.add(EventMarker("power/boot", T1, annotation=value))
+    built = b.finish()
+
+    for nav_file in (built, NavFile.from_bytes(built.to_bytes())):
+        assert nav_file.markers[0].label == expected
+        assert nav_file.event_markers[0].annotation == expected
+
+
 def test_event_marker_point_annotation_preserved() -> None:
     b = _builder_with_fixes()
     b.add(EventMarker("power/boot", T1, annotation="cold start"))
@@ -216,6 +233,19 @@ def test_style_color_outside_the_known_form_is_rejected_when_written_back() -> N
     b = _builder_with_fixes()
     with pytest.raises(ValueError, match="#RRGGBB"):
         b.add_event_marker_style(style)
+
+
+def test_an_empty_style_color_is_the_hash_color() -> None:
+    b = _builder_with_fixes()
+    b.add(EventMarker("power/boot", T1))
+    b.add_event_marker_style(EventMarkerStyle("power/boot", color=""))
+    assert b.finish().event_marker_styles[0].color is None
+
+
+def test_a_whitespace_only_style_color_is_rejected_when_added() -> None:
+    b = _builder_with_fixes()
+    with pytest.raises(ValueError, match="#RRGGBB"):
+        b.add_event_marker_style(EventMarkerStyle("power/boot", color="   "))
 
 
 def test_style_variant_path_past_the_field_capacity_raises_on_write() -> None:

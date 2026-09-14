@@ -4,6 +4,8 @@
 #include "../geotrace.h"
 #include <criterion/criterion.h>
 #include <math.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #define assert_near(a, b, eps) cr_assert(fabs((a) - (b)) < (eps))
 
@@ -21,6 +23,18 @@ static inline GtdFileBuilder *builder_with_a_nav_fix(GtdTimestamp *time) {
                                          GTD_NONE_F64, GTD_NONE_F64),
                  GTD_OK);
     return builder;
+}
+
+/* Write `file` to bytes, destroy it, and return the file read back from those bytes. */
+static inline GtdNavFile *reload_through_bytes(GtdNavFile *file) {
+    uint8_t *bytes = NULL;
+    size_t length = 0;
+    cr_assert_eq(gtd_nav_file_to_bytes(file, &bytes, &length), GTD_OK);
+    gtd_nav_file_destroy(file);
+    GtdNavFile *reloaded = NULL;
+    cr_assert_eq(gtd_nav_file_from_bytes(bytes, length, &reloaded), GTD_OK);
+    gtd_free_bytes(bytes, length);
+    return reloaded;
 }
 
 /* One fix and one satellite report whose satellites have a PRN of 0 and an SNR
