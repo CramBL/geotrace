@@ -628,6 +628,7 @@ mod tests {
     use rstest::rstest;
 
     use gt_pending_writes::{PendingWrites, WriteAccess};
+    use gt_types::fixtures;
 
     use crate::app::test_util::day_archive;
 
@@ -695,25 +696,25 @@ mod tests {
     /// The configured age decides the cutoff, except where the schedulers
     /// still need older days.
     #[rstest]
-    #[case::nothing_loaded(None, day_archive::day(2025, 8, 21))]
+    #[case::nothing_loaded(None, fixtures::date(2025, 8, 21))]
     #[case::a_recording_older_than_the_age(
-        Some(day_archive::day(2024, 3, 2)),
-        day_archive::day(2024, 3, 2)
+        Some(fixtures::date(2024, 3, 2)),
+        fixtures::date(2024, 3, 2)
     )]
     #[case::a_recording_newer_than_the_age(
-        Some(day_archive::day(2026, 6, 4)),
-        day_archive::day(2025, 8, 21)
+        Some(fixtures::date(2026, 6, 4)),
+        fixtures::date(2025, 8, 21)
     )]
     #[case::a_quiet_time_window_reaching_past_the_age(
-        Some(day_archive::day(2025, 7, 26)),
-        day_archive::day(2025, 7, 26)
+        Some(fixtures::date(2025, 7, 26)),
+        fixtures::date(2025, 7, 26)
     )]
     fn the_auto_prune_cutoff_keeps_the_days_the_schedulers_need(
         #[case] oldest_needed_day: Option<NaiveDate>,
         #[case] expected: NaiveDate,
     ) {
         assert_eq!(
-            auto_prune_cutoff(day_archive::day(2026, 8, 21), 12, oldest_needed_day),
+            auto_prune_cutoff(fixtures::date(2026, 8, 21), 12, oldest_needed_day),
             Some(expected)
         );
     }

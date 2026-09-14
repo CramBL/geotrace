@@ -55,14 +55,13 @@ pub fn show_failures(ui: &mut Ui, list_id: &str, failures: &[DayFailure]) {
 mod tests {
     use egui_kittest::kittest::Queryable as _;
     use gt_test_utils::{HarnessInteraction as _, TestHarness};
-
-    use crate::app::test_util::day_archive;
+    use gt_types::fixtures;
 
     use super::*;
 
     fn failure(day_of_july: u32) -> DayFailure {
         DayFailure {
-            day: day_archive::day(2026, 7, day_of_july),
+            day: fixtures::date(2026, 7, day_of_july),
             detail: "Kp: HTTP 500 Internal Server Error".to_owned(),
         }
     }
