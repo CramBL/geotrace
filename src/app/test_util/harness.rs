@@ -258,3 +258,33 @@ pub fn step_until_a_log_is_loaded(harness: &mut Harness<'_, App>) {
         "no log reached the viewer"
     );
 }
+
+mod tests {
+    use egui_kittest::Harness;
+
+    use crate::app::test_util;
+
+    /// The harness reaches `App::new_with_config`, the same constructor `main`
+    /// uses. A test run opens neither the user's recordings database nor their
+    /// interference archive.
+    #[test]
+    fn the_test_harness_opens_no_user_databases() {
+        let mut harness = Harness::builder()
+            .with_wait_for_pending_images(false)
+            .build_eframe(test_util::harness::transient_app);
+        harness.step();
+
+        assert!(
+            harness.state().history.path().is_none(),
+            "no recordings database"
+        );
+        assert!(
+            !harness.state().jamming.archive_available(),
+            "no interference archive"
+        );
+        assert!(
+            harness.state().loader.db_path.is_none(),
+            "nothing for the loader to store into"
+        );
+    }
+}

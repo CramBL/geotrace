@@ -56,8 +56,20 @@ fn harness_with_settings_window_open<'a>() -> (TestHarness<'a, App>, PathBuf) {
     // never hidden): the snap page shows both states of its optional rows.
     harness.inner.state_mut().snap_settings.search_radius_m = Some(25.0);
     harness.inner.state_mut().settings_open = true;
-    ui_tests::pin_settings_dates(harness.inner.state_mut());
+    pin_settings_dates(harness.inner.state_mut());
     (harness, config_path)
+}
+
+/// Fixes every date the settings window seeds from today, or its snapshots
+/// would redate every day.
+fn pin_settings_dates(app: &mut App) {
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 8, 2).unwrap_or_default();
+    app.interference_backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(today);
+    app.geomagnetic_index_backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(today);
+    app.tec_map_backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(today);
+    app.solar_flare_backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(today);
+    app.environment_storage_ui =
+        crate::app::environment_storage_ui::EnvironmentStorageUi::with_today(today);
 }
 
 // The Application page renders a `self-update`-only row (the update check), so
@@ -497,4 +509,80 @@ fn snapshot_recording_name_template_guide() {
         .focus();
     harness.inner.run_steps(3);
     harness.snapshot_with_color_tolerance("recording_name_template_guide");
+}
+
+/// Regression: the settings window used to close immediately after opening
+/// because `clicked_elsewhere()` fired on the same frame as the button click.
+#[test]
+fn settings_window_stays_open_after_step() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(test_util::harness::transient_app);
+    harness.step(); // initial render
+    harness.state_mut().settings_open = true;
+    harness.step(); // frame where window is first shown
+    assert!(
+        harness.state().settings_open,
+        "settings window must stay open after opening"
+    );
+    harness.step(); // second frame - must still be open with no interaction
+    assert!(
+        harness.state().settings_open,
+        "settings window must remain open across multiple frames"
+    );
+}
+
+#[test]
+fn settings_window_closes_on_esc() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(test_util::harness::transient_app);
+    harness.step();
+    harness.state_mut().settings_open = true;
+    harness.step(); // window open
+    ui_tests::press_escape(&mut harness);
+    harness.step();
+    assert!(
+        !harness.state().settings_open,
+        "ESC must close the settings window"
+    );
+}
+
+/// The query history survives the settings flush/load roundtrip: a run is
+/// captured by `collect_settings_for_flush` and restored by
+/// `apply_startup_settings`.
+#[test]
+fn query_history_persists_across_settings_roundtrip() {
+    let gtd_bytes = ui_tests::minimal_gtd_bytes();
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(gtd_bytes.as_slice(), "test.gtd"),
+    );
+
+    {
+        let app = harness.state_mut();
+        app.query_window.open = true;
+        app.query_window
+            .set_text("points | where velocity > 1 km/h".to_owned());
+    }
+    harness.run_steps(3);
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
+        .click();
+    test_util::harness::step_until_query_result(&mut harness);
+    harness.run_steps(3);
+
+    // The flushed settings carry the run, and re-applying them restores it.
+    let flushed = harness.state().collect_settings_for_flush();
+    assert_eq!(flushed.query.history.len(), 1);
+    assert_eq!(
+        flushed.query.history[0].text,
+        "points | where velocity > 1 km/h"
+    );
+
+    harness.state_mut().apply_startup_settings(&flushed);
+    assert_eq!(harness.state().query_window.history().len(), 1);
 }

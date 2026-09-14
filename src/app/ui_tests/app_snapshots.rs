@@ -1045,3 +1045,34 @@ fn snap_error_view_resolves_point_times_and_kinds() {
     assert_eq!(points[25].kind, gt_ui_types::SnapErrorKind::Interpolated);
     assert!(points[25].error_m.is_some());
 }
+
+#[test]
+fn snapshot_recording_details_dialog() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1024.0, 768.0))
+        .eframe(test_util::harness::build_app);
+    harness.inner.step();
+    // The recorded time reads well short of the range it covers: this
+    // recording idled between its tracks.
+    let day = chrono::NaiveDate::from_ymd_opt(2025, 5, 23).unwrap_or_default();
+    let morning = day.and_hms_opt(7, 12, 4).unwrap_or_default().and_utc();
+    let noon = day.and_hms_opt(11, 48, 30).unwrap_or_default().and_utc();
+    harness.inner.state().shared.borrow_mut().metadata_popup =
+        Some(gt_side_panel::RecordingDetails {
+            metadata: gt_types::FileMetadata {
+                filename: "ride_2025-05-23.gtd".to_owned(),
+                title: Some("Morning commute".to_owned()),
+                device: Some("uBlox ZED-F9P".to_owned()),
+                notes: Some("Rooftop antenna, clear sky.".to_owned()),
+                travel_mode: Some(gt_types::TravelMode::Bicycle),
+                time_range: Some(gt_types::TimeRange::new(morning, noon)),
+                total_duration: chrono::TimeDelta::minutes(88),
+                ..gt_test_utils::empty_file_metadata()
+            },
+            // A long, auto-derived, path-like identity to show the dialog gives
+            // it room.
+            identity: Some("auto:/home/user/recordings/2025/05/ride_2025-05-23.gtd".to_owned()),
+        });
+    harness.run();
+    harness.snapshot_with_color_tolerance("recording_details_dialog");
+}
