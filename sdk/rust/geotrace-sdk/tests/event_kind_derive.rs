@@ -4,7 +4,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::fs;
 use std::path::Path;
 
-use geotrace_sdk::{BuildError, EventKind, EventMarkerError, NavFile};
+use geotrace_sdk::{BuildError, EventKind, NavFile, VariantPathError};
 use geotrace_sdk_test_util as test_util;
 use rstest::rstest;
 use serde::Deserialize;
@@ -163,7 +163,7 @@ fn finish_rejects_a_nested_variant_path_past_255_bytes() {
         matches!(
             error,
             BuildError::InvalidEventMarkerVariantPath {
-                source: EventMarkerError::TooLong { len: 256, .. }
+                source: VariantPathError::TooLong { len: 256, .. }
             }
         ),
         "{error:?}"

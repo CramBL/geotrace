@@ -2784,6 +2784,7 @@ version = "0.17.0"
 dependencies = [
  "chrono",
  "geotrace-sdk",
+ "geotrace-sdk-test-util",
  "gt-analysis",
  "gt-fmt",
  "gt-test-utils",

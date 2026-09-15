@@ -9,9 +9,9 @@
 
 use geotrace_sdk::{Angle, Unit, Velocity};
 use geotrace_sdk::{
-    Annotation, AnnotationIcon, Channel, Constellation, EventMarker, EventMarkerColor,
-    EventMarkerIconChoice, EventMarkerStyle, MarkerIcon, NavFile, NavFileBuilder, NavFix,
-    NavFixTime, NavRecorder, Satellite, SatelliteReport, TravelMode,
+    Annotation, AnnotationIcon, Channel, Constellation, EventMarker, EventMarkerIconChoice,
+    EventMarkerStyle, MarkerIcon, NavFile, NavFileBuilder, NavFix, NavFixTime, NavRecorder,
+    Satellite, SatelliteReport, TravelMode,
 };
 use geotrace_sdk_test_util as test_util;
 use geotrace_sdk_test_util::{
@@ -140,11 +140,21 @@ fn snapshot_inspect_populated_file() -> Result<(), Box<dyn std::error::Error>> {
     );
     // An icon and a color a newer writer set, which this build reads back
     // unchanged.
-    recorder.add_event_marker_style(EventMarkerStyle {
-        variant_path: "sensor/fault".to_owned(),
-        icon: EventMarkerIconChoice::Unrecognized("hovercraft".to_owned()),
-        color: EventMarkerColor::Unrecognized("FF9900".to_owned()),
-    });
+    let written_by_a_newer_build = NavFile::read(
+        GtdFileContents {
+            styles: vec![StyleFieldRows {
+                variant_path: test_util::nul_padded_row(b"sensor/fault", VARIANT_PATH_ROW_BYTES),
+                icon_name: test_util::nul_padded_row(b"hovercraft", ICON_NAME_ROW_BYTES),
+                color_hex: test_util::nul_padded_row(b"FF9900", COLOR_HEX_ROW_BYTES),
+            }],
+            ..GtdFileContents::default()
+        }
+        .into_gtd_bytes()
+        .as_slice(),
+    )?;
+    for style in written_by_a_newer_build.event_marker_styles() {
+        recorder.add_event_marker_style(style.clone());
+    }
 
     recorder.add_channel(
         Channel::builder()

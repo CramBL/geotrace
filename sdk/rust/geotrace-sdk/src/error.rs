@@ -7,21 +7,21 @@ use crate::fixed_width_string::{self, FixedWidthStringError, VariantPathField};
 ///
 /// Rules: non-empty, ASCII alphanumeric + `-` + `_` + `/`, no leading/trailing slash,
 /// no empty segments (`//`), at most [`VariantPathField::CONTENT_CAPACITY`] bytes.
-pub(crate) fn validate_variant_path(path: &str) -> Result<(), EventMarkerError> {
+pub(crate) fn validate_variant_path(path: &str) -> Result<(), VariantPathError> {
     if path.is_empty() {
-        return Err(EventMarkerError::Empty { path: path.into() });
+        return Err(VariantPathError::Empty { path: path.into() });
     }
     if path.starts_with('/') {
-        return Err(EventMarkerError::LeadingSlash { path: path.into() });
+        return Err(VariantPathError::LeadingSlash { path: path.into() });
     }
     if path.ends_with('/') {
-        return Err(EventMarkerError::TrailingSlash { path: path.into() });
+        return Err(VariantPathError::TrailingSlash { path: path.into() });
     }
     if path.contains("//") {
-        return Err(EventMarkerError::EmptySegment { path: path.into() });
+        return Err(VariantPathError::EmptySegment { path: path.into() });
     }
     if path.len() > VariantPathField::CONTENT_CAPACITY {
-        return Err(EventMarkerError::TooLong {
+        return Err(VariantPathError::TooLong {
             path: path.into(),
             len: path.len(),
         });
@@ -30,15 +30,17 @@ pub(crate) fn validate_variant_path(path: &str) -> Result<(), EventMarkerError> 
         .bytes()
         .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'/')
     {
-        return Err(EventMarkerError::InvalidChars { path: path.into() });
+        return Err(VariantPathError::InvalidChars { path: path.into() });
     }
     Ok(())
 }
 
-/// Error returned by `EventMarker::builder().build()` when the variant path is
-/// malformed, or when the annotation does not fit the field that holds it.
+/// A malformed event marker variant path, rejected by
+/// [`EventMarker::builder`](crate::EventMarker::builder) and
+/// [`EventMarkerStyle::builder`](crate::EventMarkerStyle::builder).
 #[derive(Debug, Clone, thiserror::Error)]
-pub enum EventMarkerError {
+#[non_exhaustive]
+pub enum VariantPathError {
     #[error("invalid event marker variant path {path:?}: path is empty")]
     Empty { path: String },
 
@@ -61,9 +63,35 @@ pub enum EventMarkerError {
 
     #[error("invalid event marker variant path {path:?}: ends with '/'")]
     TrailingSlash { path: String },
+}
+
+/// Error returned by `EventMarker::builder().build()` when the variant path is
+/// malformed, or when the annotation does not fit the field that holds it.
+#[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
+pub enum EventMarkerError {
+    #[error(transparent)]
+    InvalidVariantPath {
+        #[from]
+        source: VariantPathError,
+    },
 
     #[error("invalid event marker annotation: {source}")]
     UnwritableAnnotation { source: FixedWidthStringError },
+}
+
+/// Error returned by `EventMarkerStyle::builder().build()`.
+#[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
+pub enum EventMarkerStyleError {
+    #[error("invalid event marker color {color:?}: expected the #RRGGBB form")]
+    InvalidColor { color: String },
+
+    #[error(transparent)]
+    InvalidVariantPath {
+        #[from]
+        source: VariantPathError,
+    },
 }
 
 /// Errors that can occur when building a [`Channel`](crate::Channel).
@@ -231,7 +259,7 @@ pub enum BuildError {
     /// [`NavFileBuilder::with_lenient_errors`](crate::NavFileBuilder::with_lenient_errors)
     /// to drop each such event, log an error and continue.
     #[error(transparent)]
-    InvalidEventMarkerVariantPath { source: EventMarkerError },
+    InvalidEventMarkerVariantPath { source: VariantPathError },
 
     /// The builder has a satellite report, an annotation or an event marker and no nav fix
     /// to take its position from. This is returned even in lenient mode.

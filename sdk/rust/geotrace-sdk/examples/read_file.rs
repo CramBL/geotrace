@@ -123,15 +123,18 @@ fn print_event_marker_styles(file: &NavFile) {
 
     println!("Event marker styles: {}", file.event_marker_styles().len());
     for (i, style) in file.event_marker_styles().iter().enumerate() {
-        let icon = match style.icon.wire_name() {
+        let icon = match style.icon().wire_name() {
             "" => "auto",
             name => name,
         };
-        let color = match &style.color {
+        let color = match style.color() {
             EventMarkerColor::Auto => "auto",
-            EventMarkerColor::Hex(hex) | EventMarkerColor::Unrecognized(hex) => hex,
+            EventMarkerColor::Hex(hex) | EventMarkerColor::Unrecognized(hex) => hex.as_str(),
         };
-        println!("  [{i}] {}  icon={icon}  color={color}", style.variant_path);
+        println!(
+            "  [{i}] {}  icon={icon}  color={color}",
+            style.variant_path()
+        );
     }
 }
 

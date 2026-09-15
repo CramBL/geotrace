@@ -120,29 +120,50 @@ Test(markers, style_index_past_the_last_style_is_out_of_range) {
     gtd_nav_file_destroy(file);
 }
 
-Test(markers, a_style_path_or_color_past_its_struct_field_is_field_too_long) {
-    GtdFileBuilder *builder = gtd_builder_create();
-    GtdTimestamp first_fix;
-    cr_assert_eq(gtd_ts_from_seconds(FIRST_FIX_SECONDS, &first_fix), GTD_OK);
-    cr_assert_eq(gtd_builder_add_nav_fix(builder, first_fix, gtd_ts_none(), 51.0, -1.0,
-                                         GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
-                 GTD_OK);
-    char long_path[301];
+typedef struct {
+    const char *variant_path;
+    const char *color_hex;
+    GtdStatus status;
+    const char *message;
+} RejectedStyle;
+
+static const RejectedStyle REJECTED_STYLES[] = {
+    {"power/boot", "red", GTD_ERR_INVALID_ARGUMENT,
+     "invalid event marker color \"red\": expected the #RRGGBB form"},
+    {"power/boot", "FF9900", GTD_ERR_INVALID_ARGUMENT,
+     "invalid event marker color \"FF9900\": expected the #RRGGBB form"},
+    {"power/boot", "   ", GTD_ERR_INVALID_ARGUMENT,
+     "invalid event marker color \"   \": expected the #RRGGBB form"},
+    {"", NULL, GTD_ERR_INVALID_PATH, "invalid event marker variant path \"\": path is empty"},
+    {"über_lang", NULL, GTD_ERR_INVALID_PATH,
+     "invalid event marker variant path \"über_lang\": contains characters outside ASCII "
+     "alphanumeric, hyphen, underscore, and slash"},
+};
+
+Test(markers, a_style_the_rust_builder_rejects_is_rejected_where_it_is_added) {
+    size_t case_count = sizeof(REJECTED_STYLES) / sizeof(REJECTED_STYLES[0]);
+    for (size_t i = 0; i < case_count; i++) {
+        const RejectedStyle *rejected = &REJECTED_STYLES[i];
+        GtdTimestamp timestamp;
+        GtdFileBuilder *builder = builder_with_a_nav_fix(&timestamp);
+        cr_assert_eq(gtd_builder_add_event_marker_style(builder, rejected->variant_path,
+                                                        GTD_ICON_AUTO, rejected->color_hex),
+                     rejected->status);
+        cr_assert_str_eq(gtd_last_error(), rejected->message);
+        gtd_builder_destroy(builder);
+    }
+}
+
+Test(markers, a_style_path_past_its_field_is_rejected_where_it_is_added) {
+    GtdTimestamp timestamp;
+    GtdFileBuilder *builder = builder_with_a_nav_fix(&timestamp);
+    char long_path[257];
     memset(long_path, 'p', sizeof long_path - 1);
     long_path[sizeof long_path - 1] = '\0';
     cr_assert_eq(gtd_builder_add_event_marker_style(builder, long_path, GTD_ICON_AUTO, NULL),
-                 GTD_OK);
-    cr_assert_eq(gtd_builder_add_event_marker_style(builder, "power/boot", GTD_ICON_AUTO,
-                                                    "#12AB9F-and-more"),
-                 GTD_OK);
-    GtdNavFile *file = NULL;
-    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_OK);
-
-    GtdEventMarkerStyleInfo style;
-    cr_assert_eq(gtd_nav_file_get_event_marker_style(file, 0, &style), GTD_ERR_FIELD_TOO_LONG);
-    cr_assert_eq(gtd_nav_file_get_event_marker_style(file, 1, &style), GTD_ERR_FIELD_TOO_LONG);
-
-    gtd_nav_file_destroy(file);
+                 GTD_ERR_FIELD_TOO_LONG);
+    cr_assert_not_null(strstr(gtd_last_error(), "256 bytes, past the 255 bytes the field holds"));
+    gtd_builder_destroy(builder);
 }
 
 typedef struct {

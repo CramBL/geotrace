@@ -6,7 +6,8 @@ use geotrace_sdk_units::{ChannelUnit, PhysicalQuantity};
 use strum::IntoEnumIterator as _;
 
 use crate::error::{
-    ChannelError, Error, EventMarkerError, MARKER_LABEL_LOCATION, MetaField, MetaStringWithNul,
+    ChannelError, Error, EventMarkerError, EventMarkerStyleError, MARKER_LABEL_LOCATION, MetaField,
+    MetaStringWithNul,
 };
 use crate::fixed_width_string::{self, AnnotationField, MarkerLabelField};
 use crate::provenance;
@@ -789,21 +790,6 @@ impl EventMarkerColor {
     }
 }
 
-impl TryFrom<String> for EventMarkerColor {
-    type Error = Error;
-
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        match Self::from_wire_value(s) {
-            Self::Unrecognized(input) => Err(Error::ParseError {
-                unit: "EventMarkerColor (hex)",
-                input,
-                reason: "expected #RRGGBB format".to_owned(),
-            }),
-            color => Ok(color),
-        }
-    }
-}
-
 /// Icon shape for an event marker variant.
 ///
 /// `Auto` resolves to `MarkerIcon::Pin` when the file is loaded.
@@ -860,37 +846,60 @@ impl From<Option<MarkerIcon>> for EventMarkerIconChoice {
 }
 
 /// Per-variant icon and color override stored in the file.
+///
+/// Construct via `EventMarkerStyle::builder().build()`, which rejects a color outside the
+/// `#RRGGBB` form. A style read from a file keeps such a color, and the writer writes it back
+/// verbatim.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EventMarkerStyle {
-    /// Must exactly match a `variant_path` used in the event markers.
-    pub variant_path: String,
-    /// Icon shape. Defaults to `Auto` (Pin).
-    pub icon: EventMarkerIconChoice,
-    /// Fill color. Defaults to `Auto` (hash-derived from the variant path).
-    pub color: EventMarkerColor,
+    pub(crate) variant_path: String,
+    pub(crate) icon: EventMarkerIconChoice,
+    pub(crate) color: EventMarkerColor,
 }
 
 #[bon::bon]
 impl EventMarkerStyle {
-    /// Build a new [`EventMarkerStyle`].
+    /// Build a validated [`EventMarkerStyle`].
     ///
-    /// An empty `color` gives [`EventMarkerColor::Auto`], the value the reader returns for an empty
-    /// `color_hex` row. Returns `Err` for any other `color` outside the `#RRGGBB` form, a
-    /// whitespace-only one included.
+    /// Returns `Err` for a `variant_path` that [`EventMarker::builder`] rejects, and for a
+    /// `color` outside the `#RRGGBB` form, a whitespace-only one included. An empty `color` gives
+    /// [`EventMarkerColor::Auto`], the value the reader returns for an empty `color_hex` row.
     #[builder(finish_fn = build)]
     pub fn new(
         #[builder(into)] variant_path: String,
         icon: Option<EventMarkerIconChoice>,
         #[builder(into)] color: Option<String>,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, EventMarkerStyleError> {
+        crate::error::validate_variant_path(&variant_path)?;
+        let color = match color.map(EventMarkerColor::from_wire_value) {
+            None => EventMarkerColor::Auto,
+            Some(EventMarkerColor::Unrecognized(color)) => {
+                return Err(EventMarkerStyleError::InvalidColor { color });
+            }
+            Some(color) => color,
+        };
         Ok(Self {
             variant_path,
             icon: icon.unwrap_or_default(),
-            color: color
-                .map(EventMarkerColor::try_from)
-                .transpose()?
-                .unwrap_or_default(),
+            color,
         })
+    }
+}
+
+impl EventMarkerStyle {
+    /// The event marker variant path.
+    pub fn variant_path(&self) -> &str {
+        &self.variant_path
+    }
+
+    /// Icon shape, [`EventMarkerIconChoice::Auto`] (Pin) unless set.
+    pub fn icon(&self) -> &EventMarkerIconChoice {
+        &self.icon
+    }
+
+    /// Fill color, [`EventMarkerColor::Auto`] (hash-derived from the variant path) unless set.
+    pub fn color(&self) -> &EventMarkerColor {
+        &self.color
     }
 }
 
@@ -1411,16 +1420,6 @@ mod tests {
         #[case] expected: &str,
     ) {
         assert_eq!(choice.wire_name(), expected);
-    }
-
-    #[test]
-    fn try_from_rejects_a_value_that_is_not_rrggbb() {
-        let err = EventMarkerColor::try_from("FF9900".to_owned())
-            .expect_err("a value that is not #RRGGBB is rejected");
-        assert_eq!(
-            err.to_string(),
-            "failed to parse EventMarkerColor (hex) from \"FF9900\": expected #RRGGBB format"
-        );
     }
 
     fn a_nav_file() -> NavFile {

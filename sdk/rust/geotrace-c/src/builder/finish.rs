@@ -82,7 +82,7 @@ pub unsafe extern "C" fn gtd_builder_finish(
             // Unreachable through the C API: `gtd_builder_add_event_marker` validates the variant
             // path before the recorder takes the event marker.
             Err(BuildError::InvalidEventMarkerVariantPath { source }) => {
-                let status = error::status_for_event_marker_error(&source);
+                let status = error::status_for_variant_path_error(&source);
                 error::set_last_error(source);
                 status
             }
