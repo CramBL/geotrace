@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.18.0 - 2026-09-15
+
 ### Added
 
 - **Log Viewer:** The line table scrolls with the arrow keys (one line) and Page Up / Page Down (one page) while the pointer rests on the window.
