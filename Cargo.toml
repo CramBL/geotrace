@@ -344,7 +344,7 @@ gt-ui-types = { path = "crates/gt-ui-types" }
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 jiff.workspace = true
 log.workspace = true
-mimalloc = { version = "0.1.48", features = ["v3"] }
+mimalloc = { version = "0.1.52" }
 parking_lot.workspace = true
 rfd = "0.17.2"
 rustc-hash.workspace = true
