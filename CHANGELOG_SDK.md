@@ -7,6 +7,8 @@ the app).
 
 ## [unreleased]
 
+## [0.7.0] - 2026-09-15
+
 ### Added
 
 - Every SDK reports whether an SNR reading is the 99 dB-Hz some receiver firmware sends when it has no measurement (`snr_is_no_data_sentinel`).

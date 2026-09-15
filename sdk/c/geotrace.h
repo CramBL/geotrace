@@ -24,9 +24,9 @@
 #include <stdint.h>
 
 /** SDK version string. */
-#define GEOTRACE_C_VERSION       "0.6.0"
+#define GEOTRACE_C_VERSION       "0.7.0"
 #define GEOTRACE_C_VERSION_MAJOR 0
-#define GEOTRACE_C_VERSION_MINOR 6
+#define GEOTRACE_C_VERSION_MINOR 7
 #define GEOTRACE_C_VERSION_PATCH 0
 
 /** An absent optional double. */

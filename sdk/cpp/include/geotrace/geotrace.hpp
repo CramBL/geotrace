@@ -54,9 +54,9 @@
 
 // A user tests the version with `#if`, where an `enum` is not visible.
 // NOLINTBEGIN(cppcoreguidelines-macro-to-enum,modernize-macro-to-enum)
-#define GEOTRACE_CPP_VERSION       "0.6.0"
+#define GEOTRACE_CPP_VERSION       "0.7.0"
 #define GEOTRACE_CPP_VERSION_MAJOR 0
-#define GEOTRACE_CPP_VERSION_MINOR 6
+#define GEOTRACE_CPP_VERSION_MINOR 7
 #define GEOTRACE_CPP_VERSION_PATCH 0
 // NOLINTEND(cppcoreguidelines-macro-to-enum,modernize-macro-to-enum)
 
