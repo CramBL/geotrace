@@ -60,4 +60,6 @@ exclude = [
     # a response never validates the archived file itself.
     '^https://cddis\.nasa\.gov/',
     '^https://urs\.earthdata\.nasa\.gov/',
+    # Avoid checking updated deterministic release links (fails on PRs for releases)
+    '^https://github.com/CramBL/geotrace/releases/download/geotrace-sdk-v'
 ]
