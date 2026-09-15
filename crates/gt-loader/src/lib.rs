@@ -1524,12 +1524,15 @@ mod tests {
         bytes
     }
 
-    fn event_marker_style(variant_path: &str, color_hex: &str) -> SdkEventMarkerStyle {
-        SdkEventMarkerStyle::builder()
-            .variant_path(variant_path)
-            .color(color_hex)
-            .build()
-            .unwrap()
+    fn style_field_rows(variant_path: &str, color_hex: &str) -> StyleFieldRows {
+        StyleFieldRows {
+            variant_path: test_util::nul_padded_row(
+                variant_path.as_bytes(),
+                VARIANT_PATH_ROW_BYTES,
+            ),
+            icon_name: test_util::nul_padded_row(b"", ICON_NAME_ROW_BYTES),
+            color_hex: test_util::nul_padded_row(color_hex.as_bytes(), COLOR_HEX_ROW_BYTES),
+        }
     }
 
     /// `GtdFileContents` writes a file with one style of `color_hex`, and the SDK reads the style
@@ -1539,14 +1542,7 @@ mod tests {
         color_hex: &str,
     ) -> SdkEventMarkerStyle {
         let bytes = GtdFileContents {
-            styles: vec![StyleFieldRows {
-                variant_path: test_util::nul_padded_row(
-                    variant_path.as_bytes(),
-                    VARIANT_PATH_ROW_BYTES,
-                ),
-                icon_name: test_util::nul_padded_row(b"", ICON_NAME_ROW_BYTES),
-                color_hex: test_util::nul_padded_row(color_hex.as_bytes(), COLOR_HEX_ROW_BYTES),
-            }],
+            styles: vec![style_field_rows(variant_path, color_hex)],
             ..GtdFileContents::default()
         }
         .into_gtd_bytes();
@@ -1619,11 +1615,15 @@ mod tests {
     /// them.
     #[test]
     fn several_styles_for_one_variant_path_load_as_the_last_one_with_a_warning_listing_the_path() {
-        let bytes = recording_with_event_marker_styles(vec![
-            event_marker_style("power/boot", "#112233"),
-            event_marker_style("power/boot", "#445566"),
-            event_marker_style("power/shutdown", "#778899"),
-        ]);
+        let bytes = GtdFileContents {
+            styles: vec![
+                style_field_rows("power/boot", "#112233"),
+                style_field_rows("power/boot", "#445566"),
+                style_field_rows("power/shutdown", "#778899"),
+            ],
+            ..GtdFileContents::default()
+        }
+        .into_gtd_bytes();
 
         let file = load_bytes(&bytes, "repeated_style.gtd".to_owned()).unwrap();
 

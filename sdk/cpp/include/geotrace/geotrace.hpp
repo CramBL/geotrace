@@ -1702,9 +1702,8 @@ class FileBuilder {
     /**
      * Register a display style for an event marker variant.
      *
-     * The application draws a path's markers with the style of the last call
-     * for that path. Each call writes its own row, so two calls for one path
-     * write two.
+     * The builder keeps one style per variant path, the style of the last
+     * call for that path. The file lists the styles in variant path order.
      *
      * An absent `icon` reaches the file as `GTD_ICON_AUTO`, where the
      * application picks it.

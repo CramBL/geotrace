@@ -2099,8 +2099,10 @@ impl PyNavFileBuilder {
 
     /// Add a per-variant style override to the file.
     ///
-    /// Returns ``self`` to allow chaining. A style from ``NavFile.event_marker_styles`` is written
-    /// back verbatim, a color outside the ``#RRGGBB`` form included.
+    /// Returns ``self`` to allow chaining. The builder keeps one style per variant path, the style
+    /// of the last call for that path. The file lists the styles in variant path order. A style
+    /// from ``NavFile.event_marker_styles`` is written back verbatim, a color outside the
+    /// ``#RRGGBB`` form included.
     fn add_event_marker_style(
         slf: Bound<'_, Self>,
         style: &PyEventMarkerStyle,

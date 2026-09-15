@@ -42,8 +42,8 @@ Event Markers           5 records
   annotations           "antenna unplugged"
 
 Event Marker Styles     3 records
-  power/boot            wrench, #FF9900
   gnss/fix_lost         —
+  power/boot            wrench, #FF9900
   sensor/fault          unrecognized icon "hovercraft", unrecognized color "FF9900"
 
 Channels                2 channels

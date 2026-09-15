@@ -956,6 +956,8 @@ class NavFileBuilder:
     def add_event_marker_style(self, style: EventMarkerStyle) -> NavFileBuilder:
         """Add a per-variant style override. Returns ``self``.
 
+        The builder keeps one style per variant path, the style of the last
+        call for that path. The file lists the styles in variant path order.
         A style from :attr:`NavFile.event_marker_styles` is written back
         verbatim, a color outside the ``#RRGGBB`` form included.
         """
