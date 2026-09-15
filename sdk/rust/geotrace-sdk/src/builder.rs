@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -291,9 +292,8 @@ impl NavFileBuilder {
             satellite_reports: Vec::new(),
             annotations: Vec::new(),
             pending_event_markers: Vec::new(),
-            event_marker_styles: Vec::new(),
+            event_marker_styles_by_variant_path: BTreeMap::new(),
             channels: Vec::new(),
-            styled_paths: std::collections::HashSet::new(),
             first_event_variant_path_rejection: None,
             meta: self.meta,
             satellite_window: self.satellite_window,
@@ -318,9 +318,8 @@ pub struct NavRecorder {
     satellite_reports: Vec<InternalSatReport>,
     annotations: Vec<Annotation>,
     pending_event_markers: Vec<(String, chrono::DateTime<chrono::Utc>, Option<String>)>,
-    event_marker_styles: Vec<EventMarkerStyle>,
+    event_marker_styles_by_variant_path: BTreeMap<String, EventMarkerStyle>,
     channels: Vec<Channel>,
-    styled_paths: std::collections::HashSet<String>,
     first_event_variant_path_rejection: Option<VariantPathError>,
     meta: Option<Meta>,
     satellite_window: Duration,
@@ -483,31 +482,40 @@ impl NavRecorder {
             }
             return;
         }
-        self.register_icon_for_path(&path, event);
+        self.register_derived_icon_for_unstyled_path(&path, event);
         self.pending_event_markers
             .push((path, sys_time, annotation));
     }
 
-    fn register_icon_for_path(&mut self, path: &str, event: &impl EventKind) {
-        if let Some(icon) = event.marker_icon()
-            && self.styled_paths.insert(path.to_owned())
-        {
-            self.event_marker_styles.push(EventMarkerStyle {
+    fn register_derived_icon_for_unstyled_path(&mut self, path: &str, event: &impl EventKind) {
+        let Some(icon) = event.marker_icon() else {
+            return;
+        };
+        // `BTreeMap::entry` takes an owned key and costs one `String` allocation per event.
+        // `contains_key` takes a `&str`, and the insert below runs for the first event of a path.
+        if self.event_marker_styles_by_variant_path.contains_key(path) {
+            return;
+        }
+        self.event_marker_styles_by_variant_path.insert(
+            path.to_owned(),
+            EventMarkerStyle {
                 variant_path: path.to_owned(),
                 icon: EventMarkerIconChoice::Icon(icon),
                 color: EventMarkerColor::Auto,
-            });
-        }
+            },
+        );
     }
 
     /// Register an icon and color for a variant path.
     ///
     /// Variants with no registered style use the fallback hash color and Pin icon.
-    /// When called before `add_event`, the manual style takes precedence over any
-    /// icon declared via `#[event_kind(icon = …)]`.
+    /// The recorder keeps one style per variant path, the style of the last call for that path.
+    /// It keeps that style over an `#[event_kind(icon = …)]` icon, before or after
+    /// [`add_event`](Self::add_event) records the variant. [`finish`](Self::finish) returns the
+    /// styles in variant path order.
     pub fn add_event_marker_style(&mut self, style: EventMarkerStyle) -> &mut Self {
-        self.styled_paths.insert(style.variant_path.clone());
-        self.event_marker_styles.push(style);
+        self.event_marker_styles_by_variant_path
+            .insert(style.variant_path.clone(), style);
         self
     }
 
@@ -653,7 +661,10 @@ impl NavRecorder {
             nav_points,
             markers,
             event_markers: placed_event_markers.markers,
-            event_marker_styles: self.event_marker_styles,
+            event_marker_styles: self
+                .event_marker_styles_by_variant_path
+                .into_values()
+                .collect(),
             channels,
         })
     }

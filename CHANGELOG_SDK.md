@@ -46,6 +46,7 @@ the app).
 - **Breaking:** Rust `Meta` and `EventMarkerStyle` have private fields. `Meta::builder()` and the `NavFileBuilder` metadata setters return a `Result`, and `EventMarkerStyle::builder()` returns the new `EventMarkerStyleError`.
 - **Breaking:** Rust `EventMarkerError` reports a malformed variant path through the new `VariantPathError`.
 - **Breaking:** Rust `EventMarkerColor` no longer implements `TryFrom<String>`.
+- **Breaking:** Rust `EventMarkerStyle::builder()` builds an `Unrecognized` icon with the name of a `MarkerIcon` as that `Icon`, and one with an empty name as `Auto`.
 - **Breaking:** Rust, C, C++: A timestamp built from a count of seconds, milliseconds, microseconds or nanoseconds takes a signed 64-bit count and reports an error for a count past the range a timestamp covers.
 - **Breaking:** Rust, Python: `#[derive(EventKind)]` and `@event_kind` reject a variant name with a non-ASCII character, a segment past 255 bytes and two variants with the same segment, and the derive rejects an attribute without effect. Both derive `gps3_lock` for `GPS3Lock`, and the derive `type` for `r#type`, where files written by an earlier SDK contain `gp_s3_lock` and `r#type`.
 - **Breaking:** C takes an enumeration value as a `uint32_t`, the unit mode of `gtd_builder_add_channel_with_unit_mode` included, and returns `GTD_ERR_INVALID_ARGUMENT`, or `"unknown"` from `gtd_travel_mode_name`, for a value no variant declares. The builder keeps the records it already has, and `gtd_set_log_level` returns a `GtdStatus`.
@@ -73,8 +74,11 @@ the app).
 - **Breaking:** Fixed the SDK writing a metadata or channel string with a nul byte: it rejects the string with an error stating the byte offset.
 - **Breaking:** Fixed the SDK storing an empty or whitespace-only title, device, notes, identity, channel description or marker label as absent: it stores each as given.
 - **Breaking:** Fixed the SDK accepting an event marker style with a malformed variant path or a color outside the `#RRGGBB` form, a whitespace-only color included: it rejects the style where it is built. An empty color still gets the hash color.
+- **Breaking:** Fixed the builder writing several styles for one event marker variant path: it writes the style of the last call for the path, and writes the styles in variant path order.
 - Fixed the `encoding` attribute of the `markers/icon` and `tracked_sats/constellation` datasets listing part of the codes: it lists every code.
 - **Breaking:** Fixed Rust `NavRecorder::add_event` writing a variant path that `EventMarker::builder()` rejects: the build fails in strict mode, and lenient mode drops the event and logs an error.
+- **Breaking:** Rust: Fixed `NavRecorder` writing an `#[event_kind(icon = ...)]` icon beside a style from `add_event_marker_style` for the same path: it writes the style from `add_event_marker_style` alone, whatever the order of the calls.
+- **Breaking:** Rust: Fixed `EventMarkerStyle::builder()` accepting an icon name longer than 31 bytes or with a nul byte: it rejects the name where the style is built.
 - **Breaking:** C: Fixed `gtd_builder_finish` leaving `*out` unchanged or the builder allocated on a failure: it sets `*out` to NULL and frees the builder.
 - C: Fixed `gtd_nav_file_open` leaving `*out` unchanged on a failure: it sets `*out` to NULL.
 - C, C++: Fixed the examples taking a CSV number's decimal separator from `LC_NUMERIC`: they read '.' under every locale and reject a field with trailing characters.

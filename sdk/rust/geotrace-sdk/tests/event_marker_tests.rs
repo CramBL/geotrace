@@ -625,12 +625,12 @@ fn an_event_with_a_malformed_variant_path_is_dropped_in_lenient_mode(
         registered_icons,
         [
             (
-                "power/turn_on",
-                &EventMarkerIconChoice::Icon(MarkerIcon::Lightning)
-            ),
-            (
                 "power/failed",
                 &EventMarkerIconChoice::Icon(MarkerIcon::Error)
+            ),
+            (
+                "power/turn_on",
+                &EventMarkerIconChoice::Icon(MarkerIcon::Lightning)
             ),
         ]
     );

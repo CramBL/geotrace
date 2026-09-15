@@ -92,6 +92,9 @@ pub enum EventMarkerStyleError {
         #[from]
         source: VariantPathError,
     },
+
+    #[error("invalid event marker icon name: {source}")]
+    UnwritableIconName { source: FixedWidthStringError },
 }
 
 /// Errors that can occur when building a [`Channel`](crate::Channel).

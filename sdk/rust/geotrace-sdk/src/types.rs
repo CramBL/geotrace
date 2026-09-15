@@ -9,7 +9,7 @@ use crate::error::{
     ChannelError, Error, EventMarkerError, EventMarkerStyleError, MARKER_LABEL_LOCATION, MetaField,
     MetaStringWithNul,
 };
-use crate::fixed_width_string::{self, AnnotationField, MarkerLabelField};
+use crate::fixed_width_string::{self, AnnotationField, IconNameField, MarkerLabelField};
 use crate::provenance;
 use crate::{Angle, Velocity};
 
@@ -848,8 +848,8 @@ impl From<Option<MarkerIcon>> for EventMarkerIconChoice {
 /// Per-variant icon and color override stored in the file.
 ///
 /// Construct via `EventMarkerStyle::builder().build()`, which rejects a color outside the
-/// `#RRGGBB` form. A style read from a file keeps such a color, and the writer writes it back
-/// verbatim.
+/// `#RRGGBB` form and an icon name that does not fit the `icon_name` field. A style read from a
+/// file keeps such a color, and the writer writes it back verbatim.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EventMarkerStyle {
     pub(crate) variant_path: String,
@@ -861,9 +861,13 @@ pub struct EventMarkerStyle {
 impl EventMarkerStyle {
     /// Build a validated [`EventMarkerStyle`].
     ///
-    /// Returns `Err` for a `variant_path` that [`EventMarker::builder`] rejects, and for a
-    /// `color` outside the `#RRGGBB` form, a whitespace-only one included. An empty `color` gives
-    /// [`EventMarkerColor::Auto`], the value the reader returns for an empty `color_hex` row.
+    /// Returns `Err` for a `variant_path` that [`EventMarker::builder`] rejects, for an `icon`
+    /// whose wire name does not fit an [`IconNameField`], and for a `color` outside the `#RRGGBB`
+    /// form, a whitespace-only one included. The builder stores `icon` as the reader reads its
+    /// wire name: [`EventMarkerIconChoice::Unrecognized`] with the name of a [`MarkerIcon`] gives
+    /// [`EventMarkerIconChoice::Icon`], and with an empty name [`EventMarkerIconChoice::Auto`].
+    /// An empty `color` gives [`EventMarkerColor::Auto`], as the reader gives for an empty
+    /// `color_hex` row.
     #[builder(finish_fn = build)]
     pub fn new(
         #[builder(into)] variant_path: String,
@@ -871,6 +875,8 @@ impl EventMarkerStyle {
         #[builder(into)] color: Option<String>,
     ) -> Result<Self, EventMarkerStyleError> {
         crate::error::validate_variant_path(&variant_path)?;
+        let icon_name = IconNameField::new(icon.unwrap_or_default().wire_name())
+            .map_err(|source| EventMarkerStyleError::UnwritableIconName { source })?;
         let color = match color.map(EventMarkerColor::from_wire_value) {
             None => EventMarkerColor::Auto,
             Some(EventMarkerColor::Unrecognized(color)) => {
@@ -880,7 +886,7 @@ impl EventMarkerStyle {
         };
         Ok(Self {
             variant_path,
-            icon: icon.unwrap_or_default(),
+            icon: EventMarkerIconChoice::from_wire_name(icon_name),
             color,
         })
     }
