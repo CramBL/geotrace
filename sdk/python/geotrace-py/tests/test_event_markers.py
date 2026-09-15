@@ -263,6 +263,22 @@ def test_a_style_read_from_a_file_is_written_back_verbatim() -> None:
     assert written_back_style.color == "FFAA00"
 
 
+def test_a_later_style_for_a_variant_path_replaces_the_earlier_one() -> None:
+    b = _builder_with_fixes()
+    b.add_event_marker_style(
+        EventMarkerStyle("power/boot", icon=MarkerIcon.WARNING, color="#FF9900")
+    )
+    b.add_event_marker_style(
+        EventMarkerStyle("power/boot", icon=MarkerIcon.CHECK, color="#00FF00")
+    )
+    written = NavFile.from_bytes(b.finish().to_bytes())
+
+    styles = written.event_marker_styles
+    assert len(styles) == 1
+    assert styles[0].icon == MarkerIcon.CHECK
+    assert styles[0].color == "#00FF00"
+
+
 def test_an_empty_style_color_is_the_hash_color() -> None:
     b = _builder_with_fixes()
     b.add(EventMarker("power/boot", T1))

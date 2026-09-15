@@ -166,6 +166,29 @@ Test(markers, a_style_path_past_its_field_is_rejected_where_it_is_added) {
     gtd_builder_destroy(builder);
 }
 
+Test(markers, a_later_style_for_a_variant_path_replaces_the_earlier_one) {
+    GtdTimestamp timestamp;
+    GtdFileBuilder *builder = builder_with_a_nav_fix(&timestamp);
+    cr_assert_eq(
+        gtd_builder_add_event_marker_style(builder, "power/boot", GTD_ICON_WARNING, "#FF9900"),
+        GTD_OK);
+    cr_assert_eq(
+        gtd_builder_add_event_marker_style(builder, "power/boot", GTD_ICON_CHECK, "#00FF00"),
+        GTD_OK);
+    GtdNavFile *built = NULL;
+    cr_assert_eq(gtd_builder_finish(builder, &built), GTD_OK);
+    GtdNavFile *read_back = reload_through_bytes(built);
+    cr_assert_eq(gtd_nav_file_event_marker_style_count(read_back), 1);
+
+    GtdEventMarkerStyleInfo style;
+    cr_assert_eq(gtd_nav_file_get_event_marker_style(read_back, 0, &style), GTD_OK);
+    cr_assert_str_eq(style.variant_path, "power/boot");
+    cr_assert_eq(style.icon, GTD_ICON_CHECK);
+    cr_assert_str_eq(style.color_hex, "#00FF00");
+
+    gtd_nav_file_destroy(read_back);
+}
+
 typedef struct {
     const char *value;
     uint8_t has_value;

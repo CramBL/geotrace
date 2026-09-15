@@ -1,8 +1,8 @@
 use geotrace_sdk::__private::Sealed;
 use geotrace_sdk::{
     Angle, AnnotationField, BuildError, EventKind, EventMarker, EventMarkerColor, EventMarkerError,
-    EventMarkerIconChoice, EventMarkerStyle, MarkerIcon, NavFileBuilder, NavFix, NavFixTime,
-    NavRecorder, UnplacedRecordCounts, VariantPathError, VariantPathField,
+    EventMarkerIconChoice, EventMarkerStyle, IconNameField, MarkerIcon, NavFileBuilder, NavFix,
+    NavFixTime, NavRecorder, UnplacedRecordCounts, VariantPathError, VariantPathField,
 };
 use geotrace_sdk_test_util as test_util;
 use rstest::rstest;
@@ -347,6 +347,59 @@ fn a_style_variant_path_is_rejected_by_the_event_marker_rules(#[case] variant_pa
     assert_eq!(style_error.to_string(), marker_error.to_string());
 }
 
+#[rstest]
+#[case::one_byte_past_the_capacity(
+    &"a".repeat(IconNameField::CONTENT_CAPACITY + 1),
+    "is 32 bytes, past the 31 bytes the field holds"
+)]
+#[case::a_nul_byte("hover\0craft", "has a nul byte at offset 5")]
+fn a_style_icon_name_that_does_not_fit_the_field_is_rejected(
+    #[case] icon_name: &str,
+    #[case] expected_reason: &str,
+) {
+    let error = EventMarkerStyle::builder()
+        .variant_path("power/on")
+        .icon(EventMarkerIconChoice::Unrecognized(icon_name.to_owned()))
+        .build()
+        .expect_err("the icon_name field cannot hold the name");
+    assert_eq!(
+        error.to_string(),
+        format!("invalid event marker icon name: {icon_name:?} {expected_reason}")
+    );
+}
+
+#[rstest]
+#[case::an_unrecognized_name_at_the_field_capacity(
+    EventMarkerIconChoice::Unrecognized("a".repeat(IconNameField::CONTENT_CAPACITY)),
+    EventMarkerIconChoice::Unrecognized("a".repeat(IconNameField::CONTENT_CAPACITY))
+)]
+#[case::the_name_of_a_known_icon(
+    EventMarkerIconChoice::Unrecognized("wrench".to_owned()),
+    EventMarkerIconChoice::Icon(MarkerIcon::Wrench)
+)]
+#[case::an_empty_name(
+    EventMarkerIconChoice::Unrecognized(String::new()),
+    EventMarkerIconChoice::Auto
+)]
+fn a_style_icon_is_built_as_the_reader_returns_it(
+    #[case] icon: EventMarkerIconChoice,
+    #[case] expected_icon: EventMarkerIconChoice,
+) {
+    let style = EventMarkerStyle::builder()
+        .variant_path("power/on")
+        .icon(icon)
+        .build()
+        .expect("the icon_name field holds the name");
+    assert_eq!(style.icon(), &expected_icon);
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix(0, 55.0, 12.0));
+    recorder.add_event_marker_style(style.clone());
+
+    let loaded = test_util::round_trip(&recorder.finish().unwrap()).unwrap();
+
+    assert_eq!(loaded.event_marker_styles(), [style]);
+}
+
 // The `enum` types used only by the icon tests below.
 #[derive(Debug, EventKind)]
 #[event_kind(note = none)]
@@ -407,6 +460,81 @@ fn add_event_icon_survives_round_trip() {
         styles[0].icon(),
         &EventMarkerIconChoice::Icon(MarkerIcon::Lightning),
         "Lightning icon must survive write/read round-trip"
+    );
+}
+
+#[rstest]
+#[case::style_before_the_events(record_the_style_before_the_events)]
+#[case::style_between_the_events(record_the_style_between_the_events)]
+fn an_explicit_style_wins_over_the_derived_icon_of_its_path(
+    #[case] record: fn(&mut NavRecorder, EventMarkerStyle),
+) {
+    let style = EventMarkerStyle::builder()
+        .variant_path("power/turn_on")
+        .icon(EventMarkerIconChoice::Icon(MarkerIcon::Check))
+        .color("#00FF00")
+        .build()
+        .expect("the variant path and the color are well formed");
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix(0, 55.0, 12.0));
+    recorder.add_nav_fix(fix(1, 55.1, 12.1));
+    record(&mut recorder, style.clone());
+
+    let loaded = test_util::round_trip(&recorder.finish().unwrap()).unwrap();
+
+    assert_eq!(loaded.event_marker_styles(), [style]);
+}
+
+#[test]
+fn a_later_explicit_style_replaces_an_earlier_one_for_its_path() {
+    let earlier = EventMarkerStyle::builder()
+        .variant_path("power/on")
+        .icon(EventMarkerIconChoice::Icon(MarkerIcon::Warning))
+        .color("#FF9900")
+        .build()
+        .expect("the variant path and the color are well formed");
+    let later = EventMarkerStyle::builder()
+        .variant_path("power/on")
+        .icon(EventMarkerIconChoice::Icon(MarkerIcon::Check))
+        .color("#00FF00")
+        .build()
+        .expect("the variant path and the color are well formed");
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix(0, 55.0, 12.0));
+    recorder.add_event_marker_style(earlier);
+    recorder.add_event_marker_style(later.clone());
+
+    let loaded = test_util::round_trip(&recorder.finish().unwrap()).unwrap();
+
+    assert_eq!(loaded.event_marker_styles(), [later]);
+}
+
+#[test]
+fn the_recorder_writes_the_styles_in_variant_path_order() {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix(0, 55.0, 12.0));
+    recorder.add_nav_fix(fix(1, 55.1, 12.1));
+    recorder.add_event(&IconOuter::Power(IconLeaf::TurnOn), test_util::t_s(0));
+    for variant_path in ["power/sleep", "power/boot"] {
+        recorder.add_event_marker_style(
+            EventMarkerStyle::builder()
+                .variant_path(variant_path)
+                .build()
+                .expect("the variant path is well formed"),
+        );
+    }
+    recorder.add_event(&IconOuter::Power(IconLeaf::Failed), test_util::t_s(1));
+
+    let loaded = test_util::round_trip(&recorder.finish().unwrap()).unwrap();
+
+    let written_paths: Vec<&str> = loaded
+        .event_marker_styles()
+        .iter()
+        .map(EventMarkerStyle::variant_path)
+        .collect();
+    assert_eq!(
+        written_paths,
+        ["power/boot", "power/failed", "power/sleep", "power/turn_on"]
     );
 }
 
@@ -506,6 +634,18 @@ fn an_event_with_a_malformed_variant_path_is_dropped_in_lenient_mode(
             ),
         ]
     );
+}
+
+fn record_the_style_before_the_events(recorder: &mut NavRecorder, style: EventMarkerStyle) {
+    recorder.add_event_marker_style(style);
+    recorder.add_event(&IconOuter::Power(IconLeaf::TurnOn), test_util::t_s(0));
+    recorder.add_event(&IconOuter::Power(IconLeaf::TurnOn), test_util::t_s(1));
+}
+
+fn record_the_style_between_the_events(recorder: &mut NavRecorder, style: EventMarkerStyle) {
+    recorder.add_event(&IconOuter::Power(IconLeaf::TurnOn), test_util::t_s(0));
+    recorder.add_event_marker_style(style);
+    recorder.add_event(&IconOuter::Power(IconLeaf::TurnOn), test_util::t_s(1));
 }
 
 fn record_through_add_event(recorder: &mut NavRecorder, event: &HandWrittenEvent) {

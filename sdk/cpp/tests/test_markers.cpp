@@ -115,6 +115,25 @@ TEST_CASE("NavFile: event_marker_style out-of-range throws std::out_of_range") {
     CHECK(file.try_event_marker_style(2).error().code == GTD_ERR_OUT_OF_RANGE);
 }
 
+TEST_CASE("NavFile: a later style for a variant path replaces the earlier one") {
+    const NavFix fix{FixTime::receiver(fix_timestamp()), Angle::degrees(51.0),
+                     Angle::degrees(-1.0)};
+    const auto file = NavFile::from_bytes(
+        FileBuilder{}
+            .add_nav_fix(fix)
+            .add_event_marker_style(EventMarkerStyle{"power/boot", MarkerIcon::Warning, "#FF9900"})
+            .add_event_marker_style(EventMarkerStyle{"power/boot", MarkerIcon::Check, "#00FF00"})
+            .finish()
+            .to_bytes());
+    REQUIRE(file.event_marker_style_count() == 1);
+
+    const auto style = file.event_marker_style(0);
+    CHECK(style.variant_path == "power/boot");
+    REQUIRE(style.icon.has_value());
+    CHECK(style.icon.value() == MarkerIcon::Check);
+    CHECK(style.color_hex == "#00FF00");
+}
+
 #ifdef GTD_UNRECOGNIZED_MARKER_ICON_FIXTURE_PATH
 TEST_CASE("NavFile: an icon code outside MarkerIcon reads back as nullopt with its code") {
     auto file = NavFile::open(GTD_UNRECOGNIZED_MARKER_ICON_FIXTURE_PATH);
