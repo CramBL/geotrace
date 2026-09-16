@@ -8,6 +8,9 @@ find_package(GeoTraceC REQUIRED)
 
 add_executable(smoke_c smoke_c.c)
 target_link_libraries(smoke_c PRIVATE GeoTrace::C)
+target_compile_definitions(smoke_c PRIVATE
+    GEOTRACE_SMOKE_PATH="${CMAKE_CURRENT_BINARY_DIR}/smoke_c.gtd"
+)
 
 # Embed an RPATH so `ctest` finds the shared library without LD_LIBRARY_PATH /
 # DYLD_LIBRARY_PATH.  For a static GeoTrace::C the RPATH entry is harmless

@@ -68,19 +68,23 @@ jobs:
         working-directory: consumer
         run: |
           cat > src/main.rs <<'RS'
-          use geotrace_sdk::{Angle, NavFileBuilder, NavFix, Utc};
+          use geotrace_sdk::{Angle, DateTime, NavFile, NavFileBuilder, NavFix, NavFixTime, Utc};
 
-          fn main() {
+          fn main() -> Result<(), Box<dyn std::error::Error>> {
+              let fix_time = "2024-06-01T08:00:00Z".parse::<DateTime<Utc>>()?;
               let mut sink = NavFileBuilder::new().open();
               sink.add_nav_fix(
                   NavFix::builder()
-                      .gps_time(Utc::now())
+                      .time(NavFixTime::Receiver(fix_time))
                       .lat(Angle::degrees(51.5074))
                       .lon(Angle::degrees(-0.1278))
                       .build(),
               );
-              sink.finish().expect("finish").write_to_file("out.gtd").expect("write");
+              let file = sink.finish()?;
+              file.write_to_file("out.gtd")?;
+              assert_eq!(NavFile::open("out.gtd")?.nav_points().len(), 1);
               println!("geotrace-sdk {}", geotrace_sdk::VERSION);
+              Ok(())
           }
           RS
 
