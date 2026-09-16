@@ -23,6 +23,7 @@ pub fn entry_with_identity(identity: &str) -> RecordingEntry {
             marker_count: 0,
             event_marker_count: 0,
             gtd_size_bytes: 0,
+            debug_tag: None,
         },
         total_tracks: 0,
         shelved_tracks: 0,

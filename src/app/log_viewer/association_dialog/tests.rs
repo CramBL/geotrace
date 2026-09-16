@@ -81,6 +81,7 @@ pub(in crate::app) fn stored_in_history(identity: &str) -> FileHistory {
             marker_count: 0,
             event_marker_count: 0,
             gtd_size_bytes: 0,
+            debug_tag: None,
         },
         Some(DatabaseRef {
             identity: identity.to_owned(),

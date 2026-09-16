@@ -2132,6 +2132,7 @@ mod tests {
                         marker_count: 0,
                         event_marker_count: 0,
                         gtd_size_bytes: 0,
+                        debug_tag: None,
                     },
                     Some(gt_store::DatabaseRef {
                         identity: "id".to_owned(),
@@ -2408,6 +2409,7 @@ mod tests {
                 marker_count: 0,
                 event_marker_count: 0,
                 gtd_size_bytes: 0,
+                debug_tag: None,
             },
             Some(db_ref.clone()),
         );

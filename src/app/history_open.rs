@@ -9,6 +9,32 @@ use gt_store::{DbError, StoredFixPlacementRule, StoredTrackSplitRule, TrackState
 use super::anchored_dialog::{AnchoredDialogKind, HeldBodyLines};
 use super::{App, ResegmentPrompt, auto_prune, history, history_db, loader, modals, storage};
 
+fn load_mode_for_stored_recording(stored: &gt_store::StoredRecording) -> loader::GtdLoadMode {
+    match stored.debug_tag {
+        Some(gt_store::RecordingDebugTag::TimeRepair) => {
+            let backward_jump_threshold = stored.segmentation.map_or_else(
+                || {
+                    chrono::Duration::seconds(i64::from(
+                        loader::DEBUG_TIME_REPAIR_DEFAULT_THRESHOLD_SECONDS,
+                    ))
+                },
+                |settings| chrono::Duration::microseconds(settings.track_split_gap_us),
+            );
+            loader::GtdLoadMode::DebugTimeRepair {
+                backward_jump_threshold,
+            }
+        }
+        Some(debug_tag) => {
+            log::warn!(
+                "History recording has an unknown debug tag {}",
+                debug_tag.attribute_value()
+            );
+            loader::GtdLoadMode::Regular
+        }
+        None => loader::GtdLoadMode::Regular,
+    }
+}
+
 /// What the user chose in the prompt for a recordings database that would not
 /// open. Each failure offers one of the three remedies.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -265,6 +291,7 @@ impl App {
             .unwrap_or(&db_ref.identity)
             .to_owned();
 
+        let mode = load_mode_for_stored_recording(&stored);
         let stored_tracks = stored.tracks;
 
         match stored.segmentation {
@@ -300,6 +327,7 @@ impl App {
                     stored: stored_settings,
                     stored_tracks,
                     marker_settings_changed,
+                    mode,
                     placement,
                 });
             }
@@ -319,6 +347,7 @@ impl App {
                     stored.bytes.into(),
                     filename,
                     config,
+                    mode,
                     Some(loader::HistoryOpen::ApplyShelved {
                         db_ref,
                         stored_tracks,
@@ -333,6 +362,7 @@ impl App {
                     stored.bytes.into(),
                     filename,
                     self.processing_config,
+                    mode,
                     Some(loader::HistoryOpen::ApplyShelved {
                         db_ref,
                         stored_tracks,
@@ -783,6 +813,7 @@ impl App {
                     prompt.bytes,
                     prompt.filename,
                     self.processing_config,
+                    prompt.mode,
                     Some(loader::HistoryOpen::Recalculate {
                         db_ref: prompt.db_ref,
                         applied_current_marker_settings: prompt.marker_settings_changed,
@@ -798,6 +829,7 @@ impl App {
                     prompt.bytes,
                     prompt.filename,
                     config,
+                    prompt.mode,
                     Some(loader::HistoryOpen::ApplyShelved {
                         db_ref: prompt.db_ref,
                         stored_tracks: prompt.stored_tracks,

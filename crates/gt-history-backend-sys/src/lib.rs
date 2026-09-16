@@ -55,6 +55,7 @@ pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
         marker_count: count_rows("markers", "time"),
         event_marker_count: count_rows("event_markers", "sys_time_us"),
         gtd_size_bytes: bytes.len() as u64,
+        debug_tag: None,
     })
 }
 

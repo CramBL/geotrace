@@ -385,6 +385,7 @@ fn recordings_already_in_history(count: usize) -> RecordingsAlreadyInHistory {
                     content: RecordingContent::Path(PathBuf::from(format!(
                         "/recordings/ride-{index}.gtd"
                     ))),
+                    mode: crate::app::loader::GtdLoadMode::Regular,
                 },
                 db_ref: gt_store::DatabaseRef {
                     identity: format!("auto:ride-{index}.gtd"),
@@ -474,6 +475,7 @@ fn resegment_prompt_for(
             },
         ],
         marker_settings_changed: false,
+        mode: crate::app::loader::GtdLoadMode::Regular,
         placement: crate::app::loader::LoadedRecordingPlacement::AddAnEntry,
     }
 }
@@ -532,6 +534,7 @@ fn opening_a_recording_stored_by_another_rule_raises_the_resegment_prompt(
             stored_split_rule,
             stored_placement_rule,
         )),
+        debug_tag: None,
     };
 
     harness

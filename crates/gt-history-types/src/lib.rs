@@ -77,6 +77,7 @@ pub fn is_db_recording_attr(key: &str) -> bool {
             | ATTR_MARKER_COUNT
             | ATTR_EVENT_MARKER_COUNT
             | ATTR_GTD_SIZE_BYTES
+            | ATTR_DEBUG_TAG
             | ATTR_SEG_GAP_US
             | ATTR_SEG_DETECT_CLOCK
             | ATTR_SEG_CLOCK_SIGMAS
@@ -301,6 +302,39 @@ pub struct StoredSegmentation {
     pub clock_discontinuity_sigmas: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub enum RecordingDebugTag {
+    TimeRepair,
+    Unrecognized(u64),
+}
+
+impl RecordingDebugTag {
+    const TIME_REPAIR_VALUE: u64 = 1;
+
+    pub fn from_attribute_value(value: Option<u64>) -> Option<Self> {
+        match value {
+            None | Some(0) => None,
+            Some(Self::TIME_REPAIR_VALUE) => Some(Self::TimeRepair),
+            Some(other) => Some(Self::Unrecognized(other)),
+        }
+    }
+
+    pub fn attribute_value(self) -> u64 {
+        match self {
+            Self::TimeRepair => Self::TIME_REPAIR_VALUE,
+            Self::Unrecognized(value) => value,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::TimeRepair => "debug time repair",
+            Self::Unrecognized(_) => "debug load",
+        }
+    }
+}
+
 /// Split track ranges into the parallel on-disk columns (`start`/`end`/`state`).
 pub fn track_columns(tracks: &[TrackRange]) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
     let starts = tracks.iter().map(|t| t.start).collect();
@@ -465,6 +499,7 @@ pub struct RecordingMeta {
     pub event_marker_count: u64,
     /// Size of the original GTD bytes at import time.
     pub gtd_size_bytes: u64,
+    pub debug_tag: Option<RecordingDebugTag>,
 }
 
 impl RecordingMeta {
@@ -487,12 +522,14 @@ impl RecordingMeta {
         sat_report_count: u64,
         marker_count: u64,
         event_marker_count: u64,
+        debug_tag: Option<RecordingDebugTag>,
     ) -> bool {
         self.stored_start_us() == start_us
             && self.nav_point_count == nav_point_count
             && self.sat_report_count == sat_report_count
             && self.marker_count == marker_count
             && self.event_marker_count == event_marker_count
+            && self.debug_tag == debug_tag
     }
 
     /// Whether `other` describes the same recording as `self`.
@@ -508,6 +545,7 @@ impl RecordingMeta {
             other.sat_report_count,
             other.marker_count,
             other.event_marker_count,
+            other.debug_tag,
         )
     }
 }
@@ -583,6 +621,7 @@ pub struct StoredRecording {
     pub bytes: Vec<u8>,
     pub tracks: Vec<TrackRange>,
     pub segmentation: Option<StoredSegmentation>,
+    pub debug_tag: Option<RecordingDebugTag>,
 }
 
 /// Criteria for selecting recordings to prune.
@@ -925,6 +964,7 @@ pub const ATTR_SAT_REPORT_COUNT: &str = "sat_report_count";
 pub const ATTR_MARKER_COUNT: &str = "marker_count";
 pub const ATTR_EVENT_MARKER_COUNT: &str = "event_marker_count";
 pub const ATTR_GTD_SIZE_BYTES: &str = "gtd_size_bytes";
+pub const ATTR_DEBUG_TAG: &str = "debug_tag";
 
 /// Segmentation settings the stored tracks were produced with. `track_split_gap`
 /// is stored in microseconds.
@@ -1009,6 +1049,7 @@ mod tests {
             marker_count: 3,
             event_marker_count: 1,
             gtd_size_bytes: 4_096,
+            debug_tag: None,
         }
     }
 
@@ -1049,6 +1090,10 @@ mod tests {
             },
             RecordingMeta {
                 event_marker_count: 0,
+                ..a
+            },
+            RecordingMeta {
+                debug_tag: Some(RecordingDebugTag::TimeRepair),
                 ..a
             },
         ] {

@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, mpsc},
 };
 
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use egui::Context;
 use gt_loaded_files::FileHistory;
 use gt_log_view::LogAttachmentRef;
@@ -130,6 +130,52 @@ pub enum LoadedRecordingPlacement {
     ReplaceTheLoadedEntry,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GtdLoadMode {
+    DebugTimeRepair { backward_jump_threshold: Duration },
+    Regular,
+}
+
+pub const DEBUG_TIME_REPAIR_DEFAULT_THRESHOLD_SECONDS: u32 =
+    crate::settings::DEFAULT_DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_SECONDS;
+pub const DEBUG_TIME_REPAIR_MIN_THRESHOLD_SECONDS: u32 = 1;
+pub const DEBUG_TIME_REPAIR_MAX_THRESHOLD_SECONDS: u32 = 86_400;
+
+impl GtdLoadMode {
+    pub fn debug_tag(self) -> Option<gt_store::RecordingDebugTag> {
+        match self {
+            Self::DebugTimeRepair { .. } => Some(gt_store::RecordingDebugTag::TimeRepair),
+            Self::Regular => None,
+        }
+    }
+
+    fn time_repair_config(self) -> Option<gt_loader::DebugTimeRepairConfig> {
+        match self {
+            Self::DebugTimeRepair {
+                backward_jump_threshold,
+            } => Some(gt_loader::DebugTimeRepairConfig {
+                backward_jump_threshold,
+            }),
+            Self::Regular => None,
+        }
+    }
+
+    fn config_for_load(self, config: SegmentationConfig) -> SegmentationConfig {
+        match self {
+            Self::DebugTimeRepair {
+                backward_jump_threshold,
+            } => SegmentationConfig {
+                track_layout: TrackLayoutConfig {
+                    track_split_gap: backward_jump_threshold,
+                    track_split_rule: TrackSplitRule::StepInEitherDirection,
+                },
+                ..config
+            },
+            Self::Regular => config,
+        }
+    }
+}
+
 /// What a load thread does with the recording the history database holds for
 /// the file it loads, beyond storing that file.
 pub(super) enum HistoryOpen {
@@ -191,7 +237,7 @@ pub(super) struct LoadJobs {
     pub loading_jobs: Vec<LoadingJob>,
     pub finishing_jobs: Vec<FinishedJob>,
     next_id: u64,
-    file_dialog_rx: Option<mpsc::Receiver<Option<PathBuf>>>,
+    file_dialog_rx: Option<mpsc::Receiver<Option<(PathBuf, GtdLoadMode)>>>,
     /// Path to the history database file, forwarded to background load threads
     /// so they can insert recordings after parsing.  `None` when storage is
     /// unavailable (DB failed to open at startup).
@@ -238,6 +284,7 @@ impl LoadJobs {
         &mut self,
         path: PathBuf,
         config: SegmentationConfig,
+        mode: GtdLoadMode,
         open: Option<HistoryOpen>,
     ) {
         let id = self.alloc_id();
@@ -259,6 +306,7 @@ impl LoadJobs {
         let db_path = self.db_path.clone();
         let analysis = self.analysis_config;
         let pending_writes = self.pending_writes.clone();
+        let config = mode.config_for_load(config);
         let log_name = filename.clone();
         log::info!("Loading file '{filename}'");
         background_thread::spawn_or_panic(format!("load-{filename}"), move || {
@@ -275,7 +323,16 @@ impl LoadJobs {
                 .ok();
                 r_ctx.request_repaint();
             };
-            let outcome = gt_loader::load_gtd_file_with_progress(&path, report, &config)
+            let loaded = match mode.time_repair_config() {
+                Some(time_repair) => gt_loader::load_gtd_file_with_debug_time_repair_progress(
+                    &path,
+                    report,
+                    &config,
+                    time_repair,
+                ),
+                None => gt_loader::load_gtd_file_with_progress(&path, report, &config),
+            };
+            let outcome = loaded
                 .map(|loaded| {
                     // Read the bytes once for both the content fingerprint
                     // and the optional history insert.
@@ -298,6 +355,7 @@ impl LoadJobs {
                         pending_writes: &pending_writes,
                         open,
                         analysis,
+                        mode,
                     }
                     .into_outcome(|| {
                         tx.send(LoadMessage::Progress {
@@ -323,6 +381,7 @@ impl LoadJobs {
         bytes: Arc<[u8]>,
         filename: String,
         config: SegmentationConfig,
+        mode: GtdLoadMode,
         open: Option<HistoryOpen>,
     ) {
         let id = self.alloc_id();
@@ -339,6 +398,7 @@ impl LoadJobs {
         let db_path = self.db_path.clone();
         let analysis = self.analysis_config;
         let pending_writes = self.pending_writes.clone();
+        let config = mode.config_for_load(config);
         let log_name = filename.clone();
         log::info!("Loading file '{filename}'");
         background_thread::spawn_or_panic(format!("load-{filename}"), move || {
@@ -355,30 +415,40 @@ impl LoadJobs {
                 .ok();
                 r_ctx.request_repaint();
             };
-            let outcome =
-                gt_loader::load_gtd_bytes_with_progress(&bytes, filename, report, &config)
-                    .map(|loaded| {
-                        ParsedRecording {
-                            loaded,
-                            db_path: db_path.as_deref(),
-                            bytes: Some(&bytes),
-                            config: &config,
-                            filename: &log_name,
-                            pending_writes: &pending_writes,
-                            open,
-                            analysis,
-                        }
-                        .into_outcome(|| {
-                            tx.send(LoadMessage::Progress {
-                                id,
-                                fraction: PLOTTING_FRACTION,
-                                stage: STAGE_PLOTTING,
-                            })
-                            .ok();
-                            ctx.request_repaint();
+            let loaded = match mode.time_repair_config() {
+                Some(time_repair) => gt_loader::load_gtd_bytes_with_debug_time_repair_progress(
+                    &bytes,
+                    filename,
+                    report,
+                    &config,
+                    time_repair,
+                ),
+                None => gt_loader::load_gtd_bytes_with_progress(&bytes, filename, report, &config),
+            };
+            let outcome = loaded
+                .map(|loaded| {
+                    ParsedRecording {
+                        loaded,
+                        db_path: db_path.as_deref(),
+                        bytes: Some(&bytes),
+                        config: &config,
+                        filename: &log_name,
+                        pending_writes: &pending_writes,
+                        open,
+                        analysis,
+                        mode,
+                    }
+                    .into_outcome(|| {
+                        tx.send(LoadMessage::Progress {
+                            id,
+                            fraction: PLOTTING_FRACTION,
+                            stage: STAGE_PLOTTING,
                         })
+                        .ok();
+                        ctx.request_repaint();
                     })
-                    .map_err(|e| e.to_string());
+                })
+                .map_err(|e| e.to_string());
             tx.send(LoadMessage::Completed { id, outcome }).ok();
             ctx.request_repaint();
         });
@@ -505,7 +575,7 @@ impl LoadJobs {
     /// then stops delivering events, making the window appear unresponsive.
     /// The dialog runs on a dedicated thread instead. The chosen path arrives
     /// via `drain_file_dialog` each frame.
-    pub fn open_file_dialog(&mut self) {
+    pub fn open_file_dialog(&mut self, mode: GtdLoadMode) {
         let (tx, rx) = mpsc::channel();
         self.file_dialog_rx = Some(rx);
         let ctx = self.ctx.clone();
@@ -515,12 +585,12 @@ impl LoadJobs {
                 .add_filter("Log files", &["log", "txt"])
                 .add_filter("All files", &["*"])
                 .pick_file();
-            tx.send(path).ok();
+            tx.send(path.map(|path| (path, mode))).ok();
             ctx.request_repaint();
         });
     }
 
-    pub fn drain_file_dialog(&mut self) -> Option<PathBuf> {
+    pub fn drain_file_dialog(&mut self) -> Option<(PathBuf, GtdLoadMode)> {
         let rx = self.file_dialog_rx.as_ref()?;
         let Ok(path_opt) = rx.try_recv() else {
             return None;
@@ -867,6 +937,7 @@ struct ParsedRecording<'a> {
     pending_writes: &'a PendingWrites,
     open: Option<HistoryOpen>,
     analysis: AnalysisConfig,
+    mode: GtdLoadMode,
 }
 
 impl ParsedRecording<'_> {
@@ -885,10 +956,14 @@ impl ParsedRecording<'_> {
             pending_writes,
             open,
             analysis,
+            mode,
         } = self;
         let mut file = loaded.file;
         let meta = match bytes.map(gt_store::extract_meta) {
-            Some(Ok(meta)) => Some(meta),
+            Some(Ok(mut meta)) => {
+                meta.debug_tag = mode.debug_tag();
+                Some(meta)
+            }
             Some(Err(e)) => {
                 log::warn!("Could not extract history metadata from '{filename}': {e}");
                 None
@@ -1270,6 +1345,31 @@ mod tests {
         assert!(marker_settings_match_config(&stored, &current));
     }
 
+    #[test]
+    fn debug_time_repair_load_config_uses_the_debug_threshold_as_the_split_gap() {
+        let current = SegmentationConfig {
+            track_layout: TrackLayoutConfig {
+                track_split_gap: chrono::Duration::seconds(900),
+                track_split_rule: TrackSplitRule::ForwardGapOnly,
+            },
+            ..SegmentationConfig::default()
+        };
+
+        let config = GtdLoadMode::DebugTimeRepair {
+            backward_jump_threshold: chrono::Duration::seconds(42),
+        }
+        .config_for_load(current);
+
+        assert_eq!(
+            config.track_layout.track_split_gap,
+            chrono::Duration::seconds(42)
+        );
+        assert_eq!(
+            config.track_layout.track_split_rule,
+            TrackSplitRule::StepInEitherDirection
+        );
+    }
+
     fn write_sample_gtd(dir: &std::path::Path) -> PathBuf {
         let bytes = gt_test_utils::synthetic_gtd_bytes(SyntheticGtdSpec {
             start: DateTime::from_timestamp(1_748_000_000, 0).expect("valid timestamp"),
@@ -1370,7 +1470,12 @@ mod tests {
 
         let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
         jobs.db_path = Some(db_path.clone());
-        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default(), None);
+        jobs.spawn_gtd_path(
+            gtd_path,
+            SegmentationConfig::default(),
+            GtdLoadMode::Regular,
+            None,
+        );
 
         let completed = drain_until_complete(&mut jobs);
         let outcome = completed.outcome.expect("load should succeed");
@@ -1391,6 +1496,51 @@ mod tests {
         );
     }
 
+    #[test]
+    fn debug_time_repair_load_stores_the_debug_tag_and_threshold() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let gtd_path = write_sample_gtd(dir.path());
+        let original_meta = gt_store::extract_meta(&std::fs::read(&gtd_path).expect("read gtd"))
+            .expect("read metadata");
+        let db_path = dir.path().join("history.h5");
+
+        let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
+        jobs.db_path = Some(db_path.clone());
+        jobs.spawn_gtd_path(
+            gtd_path,
+            SegmentationConfig::default(),
+            GtdLoadMode::DebugTimeRepair {
+                backward_jump_threshold: chrono::Duration::milliseconds(42_500),
+            },
+            None,
+        );
+
+        let completed = drain_until_complete(&mut jobs);
+        let LoadOutcome::GtdFile { history, .. } = completed.outcome.expect("load should succeed")
+        else {
+            panic!("expected a GtdFile outcome");
+        };
+        let db_ref = history
+            .db_ref()
+            .expect("loaded file must be stored in history");
+        let db = Recordings::open_or_create(&db_path).expect("open history db");
+        let stored = db.load(db_ref).expect("load stored recording");
+        let stored_meta = gt_store::extract_meta(&stored.bytes).expect("read stored metadata");
+
+        assert!(original_meta.same_recording(&stored_meta));
+        assert_eq!(
+            stored.debug_tag,
+            Some(gt_store::RecordingDebugTag::TimeRepair)
+        );
+        assert_eq!(
+            stored
+                .segmentation
+                .expect("stored segmentation")
+                .track_split_gap_us,
+            42_500_000
+        );
+    }
+
     /// With no database path (storage disabled) the file still loads, but nothing
     /// is written to history.
     #[test]
@@ -1400,7 +1550,12 @@ mod tests {
 
         let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
         jobs.db_path = None;
-        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default(), None);
+        jobs.spawn_gtd_path(
+            gtd_path,
+            SegmentationConfig::default(),
+            GtdLoadMode::Regular,
+            None,
+        );
 
         let completed = drain_until_complete(&mut jobs);
         let outcome = completed.outcome.expect("load should succeed");
@@ -1425,7 +1580,12 @@ mod tests {
 
         let mut jobs = LoadJobs::new(egui::Context::default(), pending_writes);
         jobs.db_path = Some(db_path.clone());
-        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default(), None);
+        jobs.spawn_gtd_path(
+            gtd_path,
+            SegmentationConfig::default(),
+            GtdLoadMode::Regular,
+            None,
+        );
 
         let completed = drain_until_complete(&mut jobs);
         let outcome = completed.outcome.expect("load should succeed");
@@ -1445,7 +1605,12 @@ mod tests {
         let db_path = dir.join("history.h5");
         let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
         jobs.db_path = Some(db_path.clone());
-        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default(), None);
+        jobs.spawn_gtd_path(
+            gtd_path,
+            SegmentationConfig::default(),
+            GtdLoadMode::Regular,
+            None,
+        );
 
         let completed = drain_until_complete(&mut jobs);
         let LoadOutcome::GtdFile { file, history, .. } =
@@ -1622,7 +1787,12 @@ mod tests {
 
         let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
         jobs.db_path = Some(db_path.clone());
-        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default(), None);
+        jobs.spawn_gtd_path(
+            gtd_path,
+            SegmentationConfig::default(),
+            GtdLoadMode::Regular,
+            None,
+        );
         let completed = drain_until_complete(&mut jobs);
         let LoadOutcome::GtdFile { history, .. } = completed.outcome.expect("load should succeed")
         else {

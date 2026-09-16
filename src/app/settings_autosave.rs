@@ -65,6 +65,7 @@ pub(super) struct AppSnapshot {
     pub recording_name_template: String,
     pub visible_section_fraction: StableF32,
     pub track_split_gap_seconds: u64,
+    pub debug_time_repair_backward_jump_threshold_seconds: u32,
     pub log_association_window_s: u64,
     pub ask_log_association_target: bool,
     pub detect_gnss_fix_lost: bool,
@@ -137,6 +138,8 @@ impl Default for AppSnapshot {
                 gt_side_panel::VISIBLE_SECTION_DEFAULT_FRACTION,
             ),
             track_split_gap_seconds: 300,
+            debug_time_repair_backward_jump_threshold_seconds: processing
+                .debug_time_repair_backward_jump_threshold_seconds,
             log_association_window_s: 60,
             ask_log_association_target: processing.ask_log_association_target,
             detect_gnss_fix_lost: processing.detect_gnss_fix_lost,

@@ -3,9 +3,9 @@ use gt_history_types::{
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US, CURRENT_SCHEMA_VERSION,
     DatabaseRef, DbError, GTD_META_DEVICE_ATTR, GTD_META_NOTES_ATTR, GTD_META_TITLE_ATTR,
     GTD_META_TRAVEL_MODE_ATTR, HistoryDatabase, LogAttachment, LogAttachmentEntry, LogAttachmentId,
-    NavPointTimeRange, ReadOnlyHistoryDatabase, RecordingEntry, RecordingMeta, RecordingUiState,
-    SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation, TrackRange, TrackState,
-    UiStateVersionReporter,
+    NavPointTimeRange, ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingEntry, RecordingMeta,
+    RecordingUiState, SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation, TrackRange,
+    TrackState, UiStateVersionReporter,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 use parking_lot::Mutex;
@@ -472,6 +472,11 @@ fn recording_meta_from_attrs(
         marker_count,
         event_marker_count,
         gtd_size_bytes,
+        debug_tag: RecordingDebugTag::from_attribute_value(
+            attrs
+                .get(gt_history_types::ATTR_DEBUG_TAG)
+                .and_then(AttrValue::as_u64),
+        ),
     })
 }
 
@@ -504,6 +509,11 @@ fn matches_attrs(
         sat_report_count,
         marker_count,
         event_marker_count,
+        RecordingDebugTag::from_attribute_value(
+            attrs
+                .get(gt_history_types::ATTR_DEBUG_TAG)
+                .and_then(AttrValue::as_u64),
+        ),
     )
 }
 
@@ -561,6 +571,7 @@ pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
         marker_count,
         event_marker_count,
         gtd_size_bytes: bytes.len() as u64,
+        debug_tag: None,
     })
 }
 

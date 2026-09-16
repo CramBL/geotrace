@@ -13,6 +13,7 @@ pub fn empty_recording_meta() -> RecordingMeta {
         marker_count: 0,
         event_marker_count: 0,
         gtd_size_bytes: 0,
+        debug_tag: None,
     }
 }
 

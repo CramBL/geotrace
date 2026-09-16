@@ -32,6 +32,7 @@ pub(in crate::app) fn recordings_already_in_history_title(count: usize) -> Strin
 pub struct RecordingFromDisk {
     pub filename: String,
     pub content: RecordingContent,
+    pub mode: loader::GtdLoadMode,
 }
 
 /// Where a [`RecordingFromDisk`]'s bytes come from. The file dialog, the
@@ -63,7 +64,10 @@ impl RecordingFromDisk {
             RecordingContent::Bytes(bytes) => Cow::Borrowed(bytes),
         };
         match gt_store::extract_meta(&bytes) {
-            Ok(meta) => Some(meta),
+            Ok(mut meta) => {
+                meta.debug_tag = self.mode.debug_tag();
+                Some(meta)
+            }
             Err(e) => {
                 log::debug!(
                     "Could not read recording metadata from '{}': {e}",
@@ -212,7 +216,7 @@ impl App {
         let mut recordings = Vec::new();
         for file in arriving {
             match file {
-                QueuedLoad::Path(path) => {
+                QueuedLoad::Path { path, mode } => {
                     let extension = path
                         .extension()
                         .and_then(|extension| extension.to_str())
@@ -225,6 +229,7 @@ impl App {
                         recordings.push(RecordingFromDisk {
                             filename,
                             content: RecordingContent::Path(path),
+                            mode,
                         });
                     } else {
                         self.loader.spawn_log_path(path);
@@ -242,6 +247,7 @@ impl App {
                         recordings.push(RecordingFromDisk {
                             filename,
                             content: RecordingContent::Bytes(bytes),
+                            mode: loader::GtdLoadMode::Regular,
                         });
                     } else {
                         // A log takes its name from its first entry when the
@@ -295,15 +301,19 @@ impl App {
         recording: RecordingFromDisk,
         open: Option<loader::HistoryOpen>,
     ) {
-        let RecordingFromDisk { filename, content } = recording;
+        let RecordingFromDisk {
+            filename,
+            content,
+            mode,
+        } = recording;
         match content {
             RecordingContent::Path(path) => {
                 self.loader
-                    .spawn_gtd_path(path, self.processing_config, open);
+                    .spawn_gtd_path(path, self.processing_config, mode, open);
             }
             RecordingContent::Bytes(bytes) => {
                 self.loader
-                    .spawn_gtd_bytes(bytes, filename, self.processing_config, open);
+                    .spawn_gtd_bytes(bytes, filename, self.processing_config, mode, open);
             }
         }
     }
@@ -474,6 +484,7 @@ mod tests {
             vec![RecordingFromDisk {
                 filename: "ride.gtd".to_owned(),
                 content: RecordingContent::Bytes(bytes.into()),
+                mode: loader::GtdLoadMode::Regular,
             }],
         );
 

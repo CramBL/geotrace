@@ -1,16 +1,17 @@
 use gt_history_types::{
-    ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
-    ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
-    ATTR_SEG_GAP_US, ATTR_SEG_PLACEMENT_RULE, ATTR_SEG_SPLIT_RULE, ATTR_START_US,
-    CURRENT_UI_STATE_VERSION, ChannelSummary, DatabaseRef, DbError, GTD_CHANNEL_COMPONENTS_ATTR,
-    GTD_CHANNEL_DESCRIPTION_ATTR, GTD_CHANNEL_TIME_DATASET, GTD_CHANNEL_UNIT_ATTR,
-    GTD_CHANNELS_GROUP, GTD_META_DEVICE_ATTR, GTD_META_NOTES_ATTR, GTD_META_TITLE_ATTR,
-    GTD_META_TRAVEL_MODE_ATTR, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK, HIDDEN_TRACKS_DATASET,
-    LogAttachment, LogAttachmentEntry, LogAttachmentId, NavPointTimeRange, RecordingEntry,
-    RecordingMeta, RecordingUiState, SNAP_BLOB_DATASET, SNAP_GROUP, StoredFixPlacementRule,
-    StoredRecording, StoredSegmentation, StoredTrackSplitRule, StoredUiStateVersion,
-    TRACK_END_DATASET, TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, TrackRange,
-    TrackState, UI_STATE_GROUP, UI_STATE_VERSION_ATTR, UiStateVersionReporter,
+    ATTR_DEBUG_TAG, ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY,
+    ATTR_MARKER_COUNT, ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS,
+    ATTR_SEG_DETECT_CLOCK, ATTR_SEG_GAP_US, ATTR_SEG_PLACEMENT_RULE, ATTR_SEG_SPLIT_RULE,
+    ATTR_START_US, CURRENT_UI_STATE_VERSION, ChannelSummary, DatabaseRef, DbError,
+    GTD_CHANNEL_COMPONENTS_ATTR, GTD_CHANNEL_DESCRIPTION_ATTR, GTD_CHANNEL_TIME_DATASET,
+    GTD_CHANNEL_UNIT_ATTR, GTD_CHANNELS_GROUP, GTD_META_DEVICE_ATTR, GTD_META_NOTES_ATTR,
+    GTD_META_TITLE_ATTR, GTD_META_TRAVEL_MODE_ATTR, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
+    HIDDEN_TRACKS_DATASET, LogAttachment, LogAttachmentEntry, LogAttachmentId, NavPointTimeRange,
+    RecordingDebugTag, RecordingEntry, RecordingMeta, RecordingUiState, SNAP_BLOB_DATASET,
+    SNAP_GROUP, StoredFixPlacementRule, StoredRecording, StoredSegmentation, StoredTrackSplitRule,
+    StoredUiStateVersion, TRACK_END_DATASET, TRACK_START_DATASET, TRACK_STATE_DATASET,
+    TRACKS_GROUP, TrackRange, TrackState, UI_STATE_GROUP, UI_STATE_VERSION_ATTR,
+    UiStateVersionReporter,
 };
 use hdf5::Group;
 use std::path::Path;
@@ -95,6 +96,11 @@ pub(crate) fn matches_attrs(meta: &RecordingMeta, group: &Group) -> bool {
         sat_report_count,
         marker_count,
         event_marker_count,
+        group
+            .attr(ATTR_DEBUG_TAG)
+            .and_then(|a| a.read_scalar::<u64>())
+            .ok()
+            .and_then(|value| RecordingDebugTag::from_attribute_value(Some(value))),
     )
 }
 
@@ -113,6 +119,7 @@ fn read_recording_meta(group: &Group) -> Option<RecordingMeta> {
         marker_count: read_u64(ATTR_MARKER_COUNT)?,
         event_marker_count: read_u64(ATTR_EVENT_MARKER_COUNT)?,
         gtd_size_bytes: read_u64(ATTR_GTD_SIZE_BYTES).unwrap_or(0),
+        debug_tag: RecordingDebugTag::from_attribute_value(read_u64(ATTR_DEBUG_TAG)),
     })
 }
 
@@ -1029,6 +1036,9 @@ fn write_meta_attrs(
     write_u64(ATTR_MARKER_COUNT, meta.marker_count)?;
     write_u64(ATTR_EVENT_MARKER_COUNT, meta.event_marker_count)?;
     write_u64(ATTR_GTD_SIZE_BYTES, meta.gtd_size_bytes)?;
+    if let Some(debug_tag) = meta.debug_tag {
+        write_u64(ATTR_DEBUG_TAG, debug_tag.attribute_value())?;
+    }
 
     Ok(())
 }
@@ -1233,7 +1243,7 @@ pub(crate) fn load_recording(
     // byte-range lock for as long as any handle to the file is open, so reading a
     // locked range otherwise fails with ERROR_LOCK_VIOLATION. The enclosing scope
     // drops every handle before the read.
-    let (tracks, segmentation) = {
+    let (tracks, segmentation, debug_tag) = {
         let db = hdf5::File::open(db_path)?;
         let by_id = db.group("by_identity")?;
         let id_grp = open_identity_group(&by_id, identity)?;
@@ -1241,6 +1251,11 @@ pub(crate) fn load_recording(
 
         let tracks = stored_track_table(&rec_grp).unwrap_or_default();
         let segmentation = read_segmentation(&rec_grp);
+        let debug_tag = rec_grp
+            .attr(ATTR_DEBUG_TAG)
+            .and_then(|a| a.read_scalar::<u64>())
+            .ok()
+            .and_then(|value| RecordingDebugTag::from_attribute_value(Some(value)));
 
         let out = hdf5::File::create(tmp.path())?;
         let root = out.group("/")?;
@@ -1266,13 +1281,14 @@ pub(crate) fn load_recording(
         }
 
         out.flush().map_err(InternalError::Hdf5)?;
-        (tracks, segmentation)
+        (tracks, segmentation, debug_tag)
     };
 
     Ok(StoredRecording {
         bytes: std::fs::read(tmp.path())?,
         tracks,
         segmentation,
+        debug_tag,
     })
 }
 

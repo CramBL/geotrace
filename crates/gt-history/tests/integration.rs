@@ -2,7 +2,7 @@
 use geotrace_sdk::NavFile;
 use gt_history::{
     Database, DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentId,
-    LogContentHash, ReadOnlyDatabase, ReadOnlyHistoryDatabase, RecordingMeta,
+    LogContentHash, ReadOnlyDatabase, ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingMeta,
     StoredFixPlacementRule, StoredRecording, StoredSegmentation, StoredTrackSplitRule, TrackRange,
     TrackState,
 };
@@ -478,6 +478,35 @@ fn insert_duplicate_returns_same_group_name() {
         .expect("identity group");
     let groups = id_grp.groups().expect("groups");
     assert_eq!(groups.len(), 1, "expected 1 group, found: {groups:?}");
+}
+
+#[test]
+fn debug_time_repair_tag_separates_duplicates() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let bytes = make_gtd_bytes(2_000_000, 5);
+    let regular_meta = gt_history::extract_meta(&bytes).expect("regular meta");
+    let debug_meta = RecordingMeta {
+        debug_tag: Some(RecordingDebugTag::TimeRepair),
+        ..regular_meta
+    };
+
+    let regular = db
+        .insert_simple("device_a", &regular_meta, &bytes)
+        .expect("regular insert");
+    let debug = db
+        .insert_simple("device_a", &debug_meta, &bytes)
+        .expect("debug insert");
+
+    assert_ne!(regular.group_name, debug.group_name);
+    assert!(db.is_duplicate(&regular_meta).expect("regular duplicate"));
+    assert!(db.is_duplicate(&debug_meta).expect("debug duplicate"));
+    assert_eq!(
+        db.load_full(&debug).expect("load debug").debug_tag,
+        Some(RecordingDebugTag::TimeRepair)
+    );
 }
 
 #[test]
@@ -2663,6 +2692,48 @@ fn replacing_a_recording_in_place_stores_the_new_bytes_under_the_same_reference(
     assert_eq!(entry.total_tracks, 1);
     assert_eq!(entry.shelved_tracks, 1);
     assert_eq!(entry.meta, meta, "the listing describes the new bytes");
+}
+
+#[test_log::test]
+fn replacing_a_debug_recording_with_regular_meta_clears_the_debug_tag() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+
+    let bytes = make_gtd_bytes(1_000_000_000, 50);
+    let regular_meta = gt_history::extract_meta(&bytes).expect("meta");
+    let debug_meta = RecordingMeta {
+        debug_tag: Some(RecordingDebugTag::TimeRepair),
+        ..regular_meta
+    };
+    let db_ref = db
+        .insert_simple("dev", &debug_meta, &bytes)
+        .expect("insert debug");
+
+    let replacement = make_gtd_bytes(1_000_000_025, 25);
+    let replacement_meta = gt_history::extract_meta(&replacement).expect("replacement meta");
+    let tracks = [TrackRange {
+        start: 0,
+        end: replacement_meta.nav_point_count,
+        state: TrackState::Live,
+    }];
+    db.replace_recording_in_place(
+        &db_ref,
+        &replacement_meta,
+        &tracks,
+        fixtures::default_segmentation(),
+        &replacement,
+    )
+    .expect("replace");
+
+    let stored = db.load_full(&db_ref).expect("load");
+    assert_eq!(stored.debug_tag, None);
+
+    let entries = db.list_recordings().expect("list");
+    let [entry] = entries.as_slice() else {
+        panic!("expected exactly one recording, got {}", entries.len());
+    };
+    assert_eq!(entry.meta.debug_tag, None);
 }
 
 /// The logs a user stored with a recording belong to the recording, not to the
