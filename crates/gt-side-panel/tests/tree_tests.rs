@@ -66,6 +66,7 @@ fn stored_history() -> FileHistory {
         marker_count: 0,
         event_marker_count: 0,
         gtd_size_bytes: 0,
+        debug_tag: None,
     };
     FileHistory::recording("dev".to_owned(), meta, Some(db_ref()))
 }

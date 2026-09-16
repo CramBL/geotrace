@@ -2795,6 +2795,7 @@ dependencies = [
  "gt-test-utils",
  "gt-track-builder",
  "gt-types",
+ "hdf5-pure",
  "proptest",
  "rstest",
  "strum",

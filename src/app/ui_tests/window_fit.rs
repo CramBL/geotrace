@@ -111,6 +111,7 @@ impl OversizedAppWindow {
                     },
                     stored_tracks: Vec::new(),
                     marker_settings_changed: false,
+                    mode: crate::app::loader::GtdLoadMode::Regular,
                     placement: crate::app::loader::LoadedRecordingPlacement::AddAnEntry,
                 });
             }

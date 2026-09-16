@@ -167,6 +167,7 @@ struct ResegmentPrompt {
     /// Whether marker-generation settings differ from the stored/default marker
     /// settings and will be rebuilt from the current app settings when opened.
     marker_settings_changed: bool,
+    mode: loader::GtdLoadMode,
     /// Where the app puts the recording once the user's choice has loaded it.
     placement: loader::LoadedRecordingPlacement,
 }
@@ -413,6 +414,7 @@ pub struct App {
     /// How many recordings are out with the history worker, waiting to be
     /// looked up there before they load.
     recordings_awaiting_a_history_lookup: usize,
+    debug_time_repair_threshold_seconds: u32,
 
     storage_settings: crate::settings::StorageSettings,
     /// Recordings selected for auto-pruning, waiting for the user to confirm.
@@ -688,6 +690,8 @@ impl App {
             pending_resegment: None,
             pending_recordings_already_in_history: None,
             recordings_awaiting_a_history_lookup: 0,
+            debug_time_repair_threshold_seconds:
+                loader::DEBUG_TIME_REPAIR_DEFAULT_THRESHOLD_SECONDS,
             storage_settings: crate::settings::StorageSettings::default(),
             pending_auto_prune: None,
             environment_storage_settings: crate::settings::EnvironmentStorageSettings::default(),
@@ -716,7 +720,10 @@ impl App {
         app.load_arriving_files(
             paths
                 .iter()
-                .map(|path| storage::QueuedLoad::Path(path.clone()))
+                .map(|path| storage::QueuedLoad::Path {
+                    path: path.clone(),
+                    mode: loader::GtdLoadMode::Regular,
+                })
                 .collect(),
         );
 
@@ -816,6 +823,8 @@ impl App {
                 .track_split_gap
                 .to_std()
                 .map_or(300, |d| d.as_secs()),
+            debug_time_repair_backward_jump_threshold_seconds: self
+                .debug_time_repair_threshold_seconds,
             log_association_window_s: self.assoc_config.log_association_window_s,
             ask_log_association_target: self.ask_log_association_target,
             detect_gnss_fix_lost: self

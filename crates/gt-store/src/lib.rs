@@ -28,7 +28,7 @@ pub use gt_hdf5_archive::{
 pub use gt_history::{
     ChannelSummary, DatabaseRef, DbError, HistoryDatabase, LOGS_DIRECTORY, LogAttachment,
     LogAttachmentEntry, LogAttachmentId, LogContentHash, NavPointTimeRange, PruneMode,
-    ReadOnlyHistoryDatabase, RecordingEntry, RecordingMeta, RecordingUiState,
+    ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingEntry, RecordingMeta, RecordingUiState,
     StoredFixPlacementRule, StoredLogFilter, StoredLogFilterMode, StoredRecording,
     StoredSegmentation, StoredTrackSplitRule, TrackRange, TrackState, UiStateVersionReporter,
     UiStateVersionTooNew, extract_meta, format_count_suffix, identity_from_group_name,

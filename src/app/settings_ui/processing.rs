@@ -6,6 +6,7 @@ use egui_phosphor::regular::ARROWS_IN_LINE_HORIZONTAL as ICON_ARROWS_IN_LINE_HOR
 use egui_phosphor::regular::CHAT_CIRCLE_TEXT as ICON_CHAT_CIRCLE_TEXT;
 use egui_phosphor::regular::CHECK as ICON_CHECK;
 use egui_phosphor::regular::CHECK_CIRCLE as ICON_CHECK_CIRCLE;
+use egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE as ICON_CLOCK_COUNTER_CLOCKWISE;
 use egui_phosphor::regular::LINK_BREAK as ICON_LINK_BREAK;
 use egui_phosphor::regular::MAP_PIN as ICON_MAP_PIN;
 use egui_phosphor::regular::SCISSORS as ICON_SCISSORS;
@@ -13,6 +14,7 @@ use egui_phosphor::regular::WARNING as ICON_WARNING;
 use egui_phosphor::regular::X_CIRCLE as ICON_X_CIRCLE;
 
 use crate::app::App;
+use crate::app::loader;
 use crate::app::settings_ui::SettingsPage;
 use crate::app::settings_ui::analysis::CLOCK_OFFSET_EXCURSION_LABEL;
 
@@ -43,6 +45,33 @@ impl App {
                 });
                 self.processing_config.track_layout.track_split_gap =
                     chrono::Duration::seconds(gap_secs as i64);
+                ui.end_row();
+
+                let debug_time_repair_help =
+                    "Open debug… splits a recording when timestamps step backwards by at least \
+                     this much, then loads each chronological run as a separate track. The \
+                     Open… menu item starts a regular load with no time repair.";
+                ui.label(format!(
+                    "{ICON_CLOCK_COUNTER_CLOCKWISE} {DEBUG_BACKWARD_JUMP_THRESHOLD_LABEL}"
+                ))
+                .on_hover_text(debug_time_repair_help);
+                let mut debug_time_repair_threshold_seconds =
+                    u64::from(self.debug_time_repair_threshold_seconds);
+                ui.horizontal(|ui| {
+                    compound_duration_input(
+                        ui,
+                        &mut debug_time_repair_threshold_seconds,
+                        u64::from(loader::DEBUG_TIME_REPAIR_MIN_THRESHOLD_SECONDS),
+                        u64::from(loader::DEBUG_TIME_REPAIR_MAX_THRESHOLD_SECONDS),
+                        true,
+                        true,
+                    );
+                })
+                .response
+                .on_hover_text(debug_time_repair_help);
+                if let Ok(value) = u32::try_from(debug_time_repair_threshold_seconds) {
+                    self.debug_time_repair_threshold_seconds = value;
+                }
                 ui.end_row();
 
                 ui.label(format!(
@@ -93,6 +122,8 @@ impl App {
                 let defaults = crate::settings::ProcessingSettings::default();
                 self.processing_config.track_layout.track_split_gap =
                     chrono::Duration::seconds(defaults.track_split_gap_seconds as i64);
+                self.debug_time_repair_threshold_seconds =
+                    defaults.debug_time_repair_backward_jump_threshold_seconds;
                 self.assoc_config.log_association_window_s = defaults.log_association_window_s;
                 self.ask_log_association_target = defaults.ask_log_association_target;
                 self.processing_config
@@ -310,6 +341,7 @@ fn compound_duration_input(
 }
 
 const TRACK_SPLIT_GAP_LABEL: &str = "Track split gap";
+const DEBUG_BACKWARD_JUMP_THRESHOLD_LABEL: &str = "Debug backward jump threshold";
 const LOG_ASSOCIATION_WINDOW_LABEL: &str = "Log association window";
 pub(in crate::app) const ASK_LOG_ASSOCIATION_TARGET_LABEL: &str =
     "Ask which recording a log belongs to";
@@ -323,6 +355,7 @@ const RESTORE_DEFAULTS_LABEL: &str = "Restore defaults";
 
 pub(super) const SEARCHABLE_LABELS: &[&str] = &[
     TRACK_SPLIT_GAP_LABEL,
+    DEBUG_BACKWARD_JUMP_THRESHOLD_LABEL,
     LOG_ASSOCIATION_WINDOW_LABEL,
     ASK_LOG_ASSOCIATION_TARGET_LABEL,
     GENERATED_MARKERS_LABEL,

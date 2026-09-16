@@ -24,7 +24,9 @@ use rustc_hash::FxHashMap;
 
 use super::context_line::ContextSpan;
 use super::fix_positions::FixPositionTimeline;
-use super::loader::{CompletedLoad, FINISHED_JOB_EXPIRE_SECS, FINISHED_JOB_FADE_START_SECS};
+use super::loader::{
+    CompletedLoad, FINISHED_JOB_EXPIRE_SECS, FINISHED_JOB_FADE_START_SECS, GtdLoadMode,
+};
 use super::log_viewer::{self, LogViewerContext};
 use super::modals::{SnapAutoChoice, SnapConsentChoice, SnapReplaceChoice, SnapScopeChoice};
 use super::panes::MainBehavior;
@@ -179,8 +181,8 @@ impl App {
 
     fn load_files_from_dialog_drops_and_paste(&mut self, ui: &egui::Ui) {
         // Consume a pending file-picker result and dispatch the chosen path.
-        if let Some(path) = self.loader.drain_file_dialog() {
-            self.load_arriving_files(vec![QueuedLoad::Path(path)]);
+        if let Some((path, mode)) = self.loader.drain_file_dialog() {
+            self.load_arriving_files(vec![QueuedLoad::Path { path, mode }]);
         }
 
         // The recordings history already holds raise one prompt between them:
@@ -192,7 +194,10 @@ impl App {
             // Native drops carry an absolute path, web drops only a relative
             // file name plus bytes read through the handle.
             if path.is_absolute() {
-                arriving.push(QueuedLoad::Path(path.to_path_buf()));
+                arriving.push(QueuedLoad::Path {
+                    path: path.to_path_buf(),
+                    mode: GtdLoadMode::Regular,
+                });
             } else if let Ok(bytes) = file.bytes() {
                 let name = path.file_name().map_or_else(
                     || "dropped file".to_owned(),
@@ -261,7 +266,15 @@ impl App {
                 // Left zone - the File menu
                 ui.menu_button("File", |ui| {
                     if ui.button("Open…").clicked() {
-                        self.loader.open_file_dialog();
+                        self.loader.open_file_dialog(GtdLoadMode::Regular);
+                        ui.close();
+                    }
+                    if ui.button("Open debug…").clicked() {
+                        self.loader.open_file_dialog(GtdLoadMode::DebugTimeRepair {
+                            backward_jump_threshold: chrono::Duration::seconds(i64::from(
+                                self.debug_time_repair_threshold_seconds,
+                            )),
+                        });
                         ui.close();
                     }
                     ui.separator();

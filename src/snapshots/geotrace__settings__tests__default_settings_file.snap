@@ -40,6 +40,7 @@ visible_section_fraction = 0.25
 
 [processing]
 track_split_gap_seconds = 300
+debug_time_repair_backward_jump_threshold_seconds = 300
 log_association_window_s = 60
 ask_log_association_target = true
 detect_gnss_fix_lost = true

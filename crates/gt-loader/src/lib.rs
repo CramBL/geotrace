@@ -3,7 +3,7 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
-use chrono::Duration;
+use chrono::{DateTime, Duration, Utc};
 use geotrace_sdk::{
     AnnotationIcon as SdkAnnotationIcon, Constellation as SdkConstellation,
     EventMarker as SdkEventMarker, EventMarkerColor as SdkEventMarkerColor,
@@ -61,6 +61,11 @@ pub struct LoadedGtd {
     pub identity: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DebugTimeRepairConfig {
+    pub backward_jump_threshold: Duration,
+}
+
 fn to_uom_velocity(v: geotrace_sdk::Velocity) -> uom::si::f64::Velocity {
     uom::si::f64::Velocity::new::<uom::si::velocity::meter_per_second>(v.as_meters_per_second())
 }
@@ -104,6 +109,24 @@ pub fn load_gtd_file_with_progress(
     progress: impl Fn(f32, &'static str),
     config: &gt_track_builder::SegmentationConfig,
 ) -> Result<LoadedGtd, LoadError> {
+    load_gtd_file_with_progress_and_time_repair(path, progress, config, None)
+}
+
+pub fn load_gtd_file_with_debug_time_repair_progress(
+    path: impl AsRef<Path>,
+    progress: impl Fn(f32, &'static str),
+    config: &gt_track_builder::SegmentationConfig,
+    time_repair: DebugTimeRepairConfig,
+) -> Result<LoadedGtd, LoadError> {
+    load_gtd_file_with_progress_and_time_repair(path, progress, config, Some(time_repair))
+}
+
+fn load_gtd_file_with_progress_and_time_repair(
+    path: impl AsRef<Path>,
+    progress: impl Fn(f32, &'static str),
+    config: &gt_track_builder::SegmentationConfig,
+    time_repair: Option<DebugTimeRepairConfig>,
+) -> Result<LoadedGtd, LoadError> {
     let path = path.as_ref();
     let filename = path
         .file_name()
@@ -114,10 +137,24 @@ pub fn load_gtd_file_with_progress(
     let file = File::open(path)?;
     progress(0.20, STAGE_PARSING);
     let nav_file = NavFile::read(file)?;
-    progress(0.65, STAGE_CONVERTING);
-    let contents = from_nav_file(&nav_file);
-    progress(0.90, STAGE_SEGMENTING);
     let source = FileSource::GtdPath(path.to_path_buf());
+    build_loaded_gtd(&nav_file, filename, source, progress, config, time_repair)
+}
+
+fn build_loaded_gtd(
+    nav_file: &NavFile,
+    filename: String,
+    source: FileSource,
+    progress: impl Fn(f32, &'static str),
+    config: &gt_track_builder::SegmentationConfig,
+    time_repair: Option<DebugTimeRepairConfig>,
+) -> Result<LoadedGtd, LoadError> {
+    progress(0.65, STAGE_CONVERTING);
+    let mut contents = from_nav_file(nav_file);
+    if let Some(time_repair) = time_repair {
+        repair_repeated_time_spans(&mut contents, time_repair);
+    }
+    progress(0.90, STAGE_SEGMENTING);
     let identity = derive_identity(
         nav_file.meta().identity(),
         nav_file.meta().title(),
@@ -133,7 +170,7 @@ pub fn load_gtd_file_with_progress(
         &contents.channels,
         config,
         source,
-        file_meta_from_nav(&nav_file),
+        file_meta_from_nav(nav_file),
         contents.load_warnings,
     );
     Ok(LoadedGtd { file, identity })
@@ -183,31 +220,36 @@ pub fn load_gtd_bytes_with_progress(
     progress: impl Fn(f32, &'static str),
     config: &gt_track_builder::SegmentationConfig,
 ) -> Result<LoadedGtd, LoadError> {
+    load_gtd_bytes_with_progress_and_time_repair(bytes, filename, progress, config, None)
+}
+
+pub fn load_gtd_bytes_with_debug_time_repair_progress(
+    bytes: &[u8],
+    filename: String,
+    progress: impl Fn(f32, &'static str),
+    config: &gt_track_builder::SegmentationConfig,
+    time_repair: DebugTimeRepairConfig,
+) -> Result<LoadedGtd, LoadError> {
+    load_gtd_bytes_with_progress_and_time_repair(
+        bytes,
+        filename,
+        progress,
+        config,
+        Some(time_repair),
+    )
+}
+
+fn load_gtd_bytes_with_progress_and_time_repair(
+    bytes: &[u8],
+    filename: String,
+    progress: impl Fn(f32, &'static str),
+    config: &gt_track_builder::SegmentationConfig,
+    time_repair: Option<DebugTimeRepairConfig>,
+) -> Result<LoadedGtd, LoadError> {
     progress(0.15, STAGE_PARSING);
     let nav_file = NavFile::read(bytes)?;
-    progress(0.60, STAGE_CONVERTING);
-    let contents = from_nav_file(&nav_file);
-    progress(0.90, STAGE_SEGMENTING);
     let source = FileSource::GtdBytes(Arc::from(bytes));
-    let identity = derive_identity(
-        nav_file.meta().identity(),
-        nav_file.meta().title(),
-        nav_file.meta().device(),
-        &filename,
-    );
-    let file = gt_track_builder::build_loaded_file(
-        filename,
-        &contents.nav_points,
-        &contents.markers,
-        contents.event_markers,
-        contents.event_marker_styles,
-        &contents.channels,
-        config,
-        source,
-        file_meta_from_nav(&nav_file),
-        contents.load_warnings,
-    );
-    Ok(LoadedGtd { file, identity })
+    build_loaded_gtd(&nav_file, filename, source, progress, config, time_repair)
 }
 
 /// Re-encode a `.gtd` recording with the nav points in `drop_ranges` removed.
@@ -627,6 +669,217 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
     }
 }
 
+fn repair_repeated_time_spans(contents: &mut NavFileContents, config: DebugTimeRepairConfig) {
+    let repair_map = TimeRepairMap::from_nav_times(
+        contents
+            .nav_points
+            .iter()
+            .map(|point| point.tpv.time().utc()),
+        config.backward_jump_threshold,
+    );
+    for (point, shift) in contents
+        .nav_points
+        .iter_mut()
+        .zip(repair_map.nav_shifts.iter().copied())
+    {
+        shift_nav_point(point, shift);
+    }
+
+    let mut marker_cursor = TimeRepairCursor::default();
+    for marker in &mut contents.markers {
+        let shift = repair_map.shift_for_series_time(marker.time, &mut marker_cursor);
+        *marker = CustomMarker::new(
+            marker.time + shift,
+            marker.label.clone(),
+            marker.icon,
+            marker.lat,
+            marker.lon,
+        );
+    }
+
+    let mut event_marker_cursor = TimeRepairCursor::default();
+    for event_marker in &mut contents.event_markers {
+        let shift = repair_map.shift_for_series_time(event_marker.time, &mut event_marker_cursor);
+        *event_marker = EventMarker::new(
+            event_marker.time + shift,
+            event_marker.variant_path.clone(),
+            event_marker.annotation.clone(),
+            event_marker.lat,
+            event_marker.lon,
+        );
+    }
+    for channel in &mut contents.channels {
+        let mut channel_cursor = TimeRepairCursor::default();
+        for time in &mut channel.times {
+            let shift = repair_map.shift_for_series_time(*time, &mut channel_cursor);
+            *time += shift;
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct TimeRepairCursor {
+    span_index: usize,
+    previous_repaired: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug)]
+struct TimeRepairMap {
+    nav_shifts: Vec<Duration>,
+    spans: Vec<TimeRepairSpan>,
+}
+
+impl TimeRepairMap {
+    fn from_nav_times(
+        times: impl IntoIterator<Item = DateTime<Utc>>,
+        backward_jump_threshold: Duration,
+    ) -> Self {
+        let mut nav_shifts = Vec::new();
+        let mut spans: Vec<TimeRepairSpan> = Vec::new();
+        let mut current_shift = Duration::zero();
+        let mut current_span: Option<TimeRepairSpan> = None;
+        let mut previous_original = None;
+        let mut previous_repaired = None;
+        for time in times {
+            if let (Some(original), Some(repaired)) = (previous_original, previous_repaired)
+                && original - time >= backward_jump_threshold
+            {
+                if let Some(span) = current_span.take() {
+                    spans.push(span);
+                }
+                current_shift = repaired + backward_jump_threshold - time;
+            }
+            current_span = Some(match current_span {
+                Some(span) => span.with_time(time),
+                None => TimeRepairSpan::new(time, current_shift),
+            });
+
+            let repaired = time + current_shift;
+            nav_shifts.push(current_shift);
+            previous_original = Some(time);
+            previous_repaired = Some(repaired);
+        }
+        if let Some(span) = current_span {
+            spans.push(span);
+        }
+        Self { nav_shifts, spans }
+    }
+
+    fn shift_for_series_time(
+        &self,
+        time: DateTime<Utc>,
+        cursor: &mut TimeRepairCursor,
+    ) -> Duration {
+        let Some((span_index, span)) = self.best_span_for_series_time(time, cursor) else {
+            return Duration::zero();
+        };
+        cursor.span_index = span_index;
+        cursor.previous_repaired = Some(time + span.shift);
+        span.shift
+    }
+
+    fn best_span_for_series_time(
+        &self,
+        time: DateTime<Utc>,
+        cursor: &TimeRepairCursor,
+    ) -> Option<(usize, TimeRepairSpan)> {
+        let containing_span = self
+            .spans
+            .iter()
+            .copied()
+            .enumerate()
+            .skip(cursor.span_index)
+            .find(|(_, span)| span.contains(time));
+
+        self.spans
+            .iter()
+            .copied()
+            .enumerate()
+            .skip(cursor.span_index)
+            .find(|(_, span)| {
+                span.contains(time)
+                    && cursor
+                        .previous_repaired
+                        .is_none_or(|previous| time + span.shift >= previous)
+            })
+            .or(containing_span)
+            .or_else(|| {
+                let span_index = cursor.span_index.min(self.spans.len().saturating_sub(1));
+                self.spans
+                    .get(span_index)
+                    .copied()
+                    .map(|span| (span_index, span))
+            })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TimeRepairSpan {
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    shift: Duration,
+}
+
+impl TimeRepairSpan {
+    fn new(time: DateTime<Utc>, shift: Duration) -> Self {
+        Self {
+            start: time,
+            end: time,
+            shift,
+        }
+    }
+
+    fn with_time(self, time: DateTime<Utc>) -> Self {
+        Self {
+            start: self.start.min(time),
+            end: self.end.max(time),
+            shift: self.shift,
+        }
+    }
+
+    fn contains(self, time: DateTime<Utc>) -> bool {
+        self.start <= time && time <= self.end
+    }
+}
+
+fn shift_nav_point(point: &mut NavPoint, shift: Duration) {
+    point.tpv = shift_tpv(point.tpv, shift);
+    if let Some(satellites) = &point.satellites {
+        point.satellites = Some(shift_satellites(satellites, shift));
+    }
+}
+
+fn shift_tpv(tpv: TimePositionVelocity, shift: Duration) -> TimePositionVelocity {
+    let time = match tpv.gps_time() {
+        Some(gps) => FixTimestamp::FromGpsReceiver(GpsTime::from_utc(gps.utc() + shift)),
+        None => FixTimestamp::FromHostClock(SysTime::from_utc(tpv.time().utc() + shift)),
+    };
+    TimePositionVelocity::builder()
+        .time(time)
+        .lat(tpv.lat())
+        .lon(tpv.lon())
+        .maybe_heading(tpv.heading())
+        .maybe_velocity(tpv.velocity())
+        .maybe_sys_time(
+            tpv.sys_time()
+                .map(|sys| SysTime::from_utc(sys.utc() + shift)),
+        )
+        .maybe_eph_m(tpv.eph_m())
+        .build()
+}
+
+fn shift_satellites(satellites: &Satellites, shift: Duration) -> Satellites {
+    Satellites::new(
+        satellites
+            .gps_time()
+            .map(|time| GpsTime::from_utc(time.utc() + shift)),
+        satellites
+            .sys_time()
+            .map(|time| SysTime::from_utc(time.utc() + shift)),
+        satellites.satellites().copied().collect(),
+    )
+}
+
 fn convert_channel(sdk: &geotrace_sdk::Channel) -> Channel {
     Channel {
         name: sdk.name().to_owned(),
@@ -884,10 +1137,12 @@ mod tests {
     };
     use geotrace_sdk_test_util as test_util;
     use geotrace_sdk_test_util::{
-        COLOR_HEX_ROW_BYTES, GtdFileContents, ICON_NAME_ROW_BYTES, StyleFieldRows,
-        VARIANT_PATH_ROW_BYTES,
+        ANNOTATION_ROW_BYTES, COLOR_HEX_ROW_BYTES, GtdFileContents, ICON_NAME_ROW_BYTES,
+        MARKER_LABEL_ROW_BYTES, StyleFieldRows, VARIANT_PATH_ROW_BYTES,
     };
+    use gt_track_builder::{SegmentationConfig, TrackLayoutConfig, TrackSplitRule};
     use gt_types::TrackGeometry;
+    use hdf5_pure::{AttrValue, FileBuilder};
     use proptest::prelude::*;
     use rstest::rstest;
     use strum::{EnumCount, IntoEnumIterator};
@@ -911,6 +1166,196 @@ mod tests {
     fn build(nav_file: &NavFile) -> (Vec<NavPoint>, Vec<CustomMarker>) {
         let contents = from_nav_file(nav_file);
         (contents.nav_points, contents.markers)
+    }
+
+    fn debug_repeated_span_gtd_bytes(t0: DateTime<Utc>) -> Vec<u8> {
+        let offsets = [0, 3, 6, 0, 3, 6, 0, 3, 6].map(Duration::seconds);
+        let times_us: Vec<i64> = offsets
+            .iter()
+            .map(|offset| (t0 + *offset).timestamp_micros())
+            .collect();
+        let times_us_as_u64: Vec<u64> = times_us
+            .iter()
+            .map(|time| u64::try_from(*time).expect("positive timestamp"))
+            .collect();
+        let count = times_us.len();
+        let shape = [count as u64];
+        let mut fb = FileBuilder::new();
+        fb.set_attr("geotrace_version", AttrValue::String("1".to_owned()));
+
+        let mut nav_points = fb.create_group("nav_points");
+        nav_points
+            .create_dataset("time")
+            .with_i64_data(&times_us)
+            .with_shape(&shape);
+        nav_points
+            .create_dataset("gps_time_us")
+            .with_u64_data(&times_us_as_u64)
+            .with_shape(&shape);
+        nav_points
+            .create_dataset("sys_time_us")
+            .with_u64_data(&times_us_as_u64)
+            .with_shape(&shape);
+        for (name, value) in [
+            ("lat", 55.0),
+            ("lon", 12.0),
+            ("heading", 0.0),
+            ("speed_mps", f64::NAN),
+            ("eph_m", f64::NAN),
+        ] {
+            nav_points
+                .create_dataset(name)
+                .with_f64_data(&vec![value; count])
+                .with_shape(&shape);
+        }
+        fb.add_group(nav_points.finish());
+
+        let nav_point_indices: Vec<u64> = (0..count as u64).collect();
+        let mut sat_reports = fb.create_group("sat_reports");
+        sat_reports
+            .create_dataset("nav_point_idx")
+            .with_u64_data(&nav_point_indices)
+            .with_shape(&shape);
+        sat_reports
+            .create_dataset("time")
+            .with_i64_data(&times_us)
+            .with_shape(&shape);
+        sat_reports
+            .create_dataset("gps_time_us")
+            .with_u64_data(&times_us_as_u64)
+            .with_shape(&shape);
+        sat_reports
+            .create_dataset("sys_time_us")
+            .with_u64_data(&times_us_as_u64)
+            .with_shape(&shape);
+        fb.add_group(sat_reports.finish());
+
+        let mut tracked_sats = fb.create_group("tracked_sats");
+        tracked_sats
+            .create_dataset("sat_report_idx")
+            .with_u64_data(&nav_point_indices)
+            .with_shape(&shape);
+        tracked_sats
+            .create_dataset("constellation")
+            .with_u8_data(&vec![SdkConst::Gps.wire_code(); count])
+            .with_shape(&shape);
+        tracked_sats
+            .create_dataset("prn")
+            .with_u32_data(&vec![3; count])
+            .with_shape(&shape);
+        tracked_sats
+            .create_dataset("in_fix")
+            .with_u8_data(&vec![1; count])
+            .with_shape(&shape);
+        for name in ["elevation", "azimuth", "snr"] {
+            tracked_sats
+                .create_dataset(name)
+                .with_f32_data(&vec![f32::NAN; count])
+                .with_shape(&shape);
+        }
+        fb.add_group(tracked_sats.finish());
+
+        let marker_times = [
+            (t0 + Duration::seconds(6)).timestamp_micros(),
+            (t0 + Duration::seconds(3)).timestamp_micros(),
+        ];
+        let mut markers = fb.create_group("markers");
+        markers
+            .create_dataset("time")
+            .with_i64_data(&marker_times)
+            .with_shape(&[2]);
+        markers
+            .create_dataset("lat")
+            .with_f64_data(&[55.0, 55.0])
+            .with_shape(&[2]);
+        markers
+            .create_dataset("lon")
+            .with_f64_data(&[12.0, 12.0])
+            .with_shape(&[2]);
+        markers
+            .create_dataset("icon")
+            .with_u8_data(&[SdkIcon::Pin.wire_code(), SdkIcon::Pin.wire_code()])
+            .with_shape(&[2]);
+        markers
+            .create_dataset("label")
+            .with_u8_data(
+                &[
+                    test_util::nul_padded_row(b"first", MARKER_LABEL_ROW_BYTES),
+                    test_util::nul_padded_row(b"second", MARKER_LABEL_ROW_BYTES),
+                ]
+                .concat(),
+            )
+            .with_shape(&[2, MARKER_LABEL_ROW_BYTES as u64]);
+        fb.add_group(markers.finish());
+
+        let event_times = [
+            u64::try_from((t0 + Duration::seconds(6)).timestamp_micros())
+                .expect("positive timestamp"),
+            u64::try_from((t0 + Duration::seconds(3)).timestamp_micros())
+                .expect("positive timestamp"),
+        ];
+        let mut event_markers = fb.create_group("event_markers");
+        event_markers
+            .create_dataset("sys_time_us")
+            .with_u64_data(&event_times)
+            .with_shape(&[2]);
+        event_markers
+            .create_dataset("lat")
+            .with_f64_data(&[55.0, 55.0])
+            .with_shape(&[2]);
+        event_markers
+            .create_dataset("lon")
+            .with_f64_data(&[12.0, 12.0])
+            .with_shape(&[2]);
+        event_markers
+            .create_dataset("variant_path")
+            .with_u8_data(
+                &[
+                    test_util::nul_padded_row(b"debug/first", VARIANT_PATH_ROW_BYTES),
+                    test_util::nul_padded_row(b"debug/second", VARIANT_PATH_ROW_BYTES),
+                ]
+                .concat(),
+            )
+            .with_shape(&[2, VARIANT_PATH_ROW_BYTES as u64]);
+        event_markers
+            .create_dataset("annotation")
+            .with_u8_data(
+                &[
+                    test_util::nul_padded_row(b"", ANNOTATION_ROW_BYTES),
+                    test_util::nul_padded_row(b"", ANNOTATION_ROW_BYTES),
+                ]
+                .concat(),
+            )
+            .with_shape(&[2, ANNOTATION_ROW_BYTES as u64]);
+        fb.add_group(event_markers.finish());
+
+        let mut channels = fb.create_group("channels");
+        let mut clock = channels.create_group("clock");
+        clock
+            .create_dataset("time")
+            .with_i64_data(&times_us)
+            .with_shape(&shape);
+        clock
+            .create_dataset("value")
+            .with_f64_data(&[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
+            .with_shape(&shape);
+        channels.add_group(clock.finish());
+        let mut sparse = channels.create_group("sparse");
+        sparse
+            .create_dataset("time")
+            .with_i64_data(&[
+                (t0 + Duration::seconds(6)).timestamp_micros(),
+                (t0 + Duration::seconds(3)).timestamp_micros(),
+            ])
+            .with_shape(&[2]);
+        sparse
+            .create_dataset("value")
+            .with_f64_data(&[10.0, 11.0])
+            .with_shape(&[2]);
+        channels.add_group(sparse.finish());
+        fb.add_group(channels.finish());
+
+        fb.finish().expect("valid debug recording")
     }
 
     /// The identity the recording states wins. Without one, the title and
@@ -1024,6 +1469,112 @@ mod tests {
         );
         assert_eq!(orientation.times.len(), 2);
         assert_eq!(orientation.values, vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02]);
+    }
+
+    #[test]
+    fn debug_time_repair_lays_repeated_spans_out_as_later_tracks() {
+        let t0 = base();
+        let bytes = debug_repeated_span_gtd_bytes(t0);
+        let config = SegmentationConfig {
+            track_layout: TrackLayoutConfig {
+                track_split_gap: Duration::seconds(5),
+                track_split_rule: TrackSplitRule::StepInEitherDirection,
+            },
+            ..SegmentationConfig::default()
+        };
+
+        let file = load_gtd_bytes_with_debug_time_repair_progress(
+            &bytes,
+            "sim.gtd".to_owned(),
+            |_, _| {},
+            &config,
+            DebugTimeRepairConfig {
+                backward_jump_threshold: Duration::seconds(5),
+            },
+        )
+        .expect("debug load succeeds")
+        .file;
+
+        assert_eq!(file.tracks.len(), 3);
+        assert_eq!(
+            file.tracks
+                .iter()
+                .map(|track| track
+                    .points
+                    .iter()
+                    .map(|point| point.tpv.time().utc())
+                    .collect::<Vec<_>>())
+                .collect::<Vec<_>>(),
+            vec![
+                vec![t0, t0 + Duration::seconds(3), t0 + Duration::seconds(6)],
+                vec![
+                    t0 + Duration::seconds(11),
+                    t0 + Duration::seconds(14),
+                    t0 + Duration::seconds(17)
+                ],
+                vec![
+                    t0 + Duration::seconds(22),
+                    t0 + Duration::seconds(25),
+                    t0 + Duration::seconds(28)
+                ]
+            ]
+        );
+        assert_eq!(
+            file.tracks[1].points[0]
+                .satellites
+                .as_ref()
+                .and_then(Satellites::gps_time)
+                .map(GpsTime::utc),
+            Some(t0 + Duration::seconds(11))
+        );
+        assert_eq!(
+            file.tracks[1]
+                .channels
+                .first()
+                .map(|channel| channel.times.clone()),
+            Some(vec![
+                t0 + Duration::seconds(11),
+                t0 + Duration::seconds(14),
+                t0 + Duration::seconds(17)
+            ])
+        );
+        assert_eq!(
+            file.tracks[2]
+                .channels
+                .first()
+                .map(|channel| channel.times.clone()),
+            Some(vec![
+                t0 + Duration::seconds(22),
+                t0 + Duration::seconds(25),
+                t0 + Duration::seconds(28)
+            ])
+        );
+        let sparse_track_one = file.tracks[0]
+            .channels
+            .iter()
+            .find(|channel| channel.name == "sparse")
+            .expect("track one sparse channel");
+        assert_eq!(sparse_track_one.times, vec![t0 + Duration::seconds(6)]);
+        let sparse_track_two = file.tracks[1]
+            .channels
+            .iter()
+            .find(|channel| channel.name == "sparse")
+            .expect("track two sparse channel");
+        assert_eq!(sparse_track_two.times, vec![t0 + Duration::seconds(14)]);
+        assert_eq!(
+            file.tracks[1]
+                .custom_markers
+                .first()
+                .map(|marker| marker.time),
+            Some(t0 + Duration::seconds(14))
+        );
+        assert_eq!(
+            file.tracks[1]
+                .event_markers
+                .first()
+                .map(|marker| marker.time),
+            Some(t0 + Duration::seconds(14))
+        );
     }
 
     #[rstest]

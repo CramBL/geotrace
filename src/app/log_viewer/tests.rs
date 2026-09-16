@@ -1016,6 +1016,7 @@ fn stored_in_history() -> FileHistory {
             marker_count: 0,
             event_marker_count: 0,
             gtd_size_bytes: 0,
+            debug_tag: None,
         },
         Some(stored_recording_ref()),
     )

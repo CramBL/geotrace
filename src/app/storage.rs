@@ -111,13 +111,13 @@ impl OpenStorage {
 /// resolve against no archive and cache that they have no environment data.
 pub(in crate::app) enum QueuedLoad {
     /// A drop or a paste, which carries the bytes themselves.
-    Bytes {
-        bytes: Arc<[u8]>,
-        name: String,
-    },
+    Bytes { bytes: Arc<[u8]>, name: String },
     /// Log text pasted into the window.
     PastedText(String),
-    Path(PathBuf),
+    Path {
+        path: PathBuf,
+        mode: super::loader::GtdLoadMode,
+    },
 }
 
 /// Why the databases are not open yet.

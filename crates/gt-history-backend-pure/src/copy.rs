@@ -7,11 +7,11 @@
 use std::collections::HashMap;
 
 use gt_history_types::{
-    ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
-    ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
-    ATTR_SEG_GAP_US, ATTR_SEG_PLACEMENT_RULE, ATTR_SEG_SPLIT_RULE, ATTR_START_US,
-    CURRENT_SCHEMA_VERSION, CURRENT_UI_STATE_VERSION, ChannelSummary, DatabaseRef, DbError,
-    GTD_CHANNEL_COMPONENTS_ATTR, GTD_CHANNEL_DESCRIPTION_ATTR, GTD_CHANNEL_TIME_DATASET,
+    ATTR_DEBUG_TAG, ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY,
+    ATTR_MARKER_COUNT, ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS,
+    ATTR_SEG_DETECT_CLOCK, ATTR_SEG_GAP_US, ATTR_SEG_PLACEMENT_RULE, ATTR_SEG_SPLIT_RULE,
+    ATTR_START_US, CURRENT_SCHEMA_VERSION, CURRENT_UI_STATE_VERSION, ChannelSummary, DatabaseRef,
+    DbError, GTD_CHANNEL_COMPONENTS_ATTR, GTD_CHANNEL_DESCRIPTION_ATTR, GTD_CHANNEL_TIME_DATASET,
     GTD_CHANNEL_UNIT_ATTR, GTD_CHANNELS_GROUP, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
     HIDDEN_TRACKS_DATASET, LogAttachment, LogAttachmentEntry, LogAttachmentId, RecordingMeta,
     RecordingUiState, SCHEMA_VERSION_ATTR, SNAP_BLOB_DATASET, SNAP_GROUP, StoredFixPlacementRule,
@@ -411,6 +411,12 @@ fn build_new_recording(
         datasets: Vec::new(),
         groups: Vec::new(),
     };
+    if let Some(debug_tag) = meta.debug_tag {
+        rec.attrs.push((
+            ATTR_DEBUG_TAG.to_owned(),
+            AttrValue::U64(debug_tag.attribute_value()),
+        ));
+    }
 
     for grp_name in gtd_root.groups()? {
         let data_src = gtd_root.group(&grp_name)?;
@@ -764,13 +770,21 @@ pub(crate) fn set_tracks(
     {
         rec.groups.retain(|g| g.name != TRACKS_GROUP);
         rec.groups.push(track_table_node(tracks));
+        let debug_tag = recording_debug_tag(rec);
         rec.attrs.retain(|(k, _)| {
             k != ATTR_SEG_GAP_US
                 && k != ATTR_SEG_SPLIT_RULE
                 && k != ATTR_SEG_PLACEMENT_RULE
                 && k != ATTR_SEG_DETECT_CLOCK
                 && k != ATTR_SEG_CLOCK_SIGMAS
+                && k != ATTR_DEBUG_TAG
         });
+        if let Some(debug_tag) = debug_tag {
+            rec.attrs.push((
+                ATTR_DEBUG_TAG.to_owned(),
+                AttrValue::U64(debug_tag.attribute_value()),
+            ));
+        }
         rec.attrs.push((
             ATTR_SEG_GAP_US.to_owned(),
             AttrValue::I64(settings.track_split_gap_us),
@@ -795,6 +809,15 @@ pub(crate) fn set_tracks(
 
     write_db(&identity_nodes, db_path)?;
     Ok(())
+}
+
+fn recording_debug_tag(rec: &GroupNode) -> Option<gt_history_types::RecordingDebugTag> {
+    gt_history_types::RecordingDebugTag::from_attribute_value(
+        rec.attrs
+            .iter()
+            .find(|(key, _)| key == ATTR_DEBUG_TAG)
+            .and_then(|(_, value)| value.as_u64()),
+    )
 }
 
 /// Replace a recording's stored snap run with the opaque bytes in `blob`.
@@ -1171,6 +1194,9 @@ pub(crate) fn load_recording(
     // predates attribute preservation.
     let rec_attrs = rec_grp.attrs()?;
     let segmentation = read_segmentation(&rec_attrs);
+    let debug_tag = gt_history_types::RecordingDebugTag::from_attribute_value(
+        rec_attrs.get(ATTR_DEBUG_TAG).and_then(AttrValue::as_u64),
+    );
     let mut has_version = false;
     for (k, v) in &rec_attrs {
         if !gt_history_types::is_db_recording_attr(k) {
@@ -1217,6 +1243,7 @@ pub(crate) fn load_recording(
         bytes,
         tracks,
         segmentation,
+        debug_tag,
     })
 }
 

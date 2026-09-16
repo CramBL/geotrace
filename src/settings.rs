@@ -554,6 +554,8 @@ pub enum ThemeSetting {
 pub struct ProcessingSettings {
     /// Gap between consecutive GPS points that triggers a new track segment, in seconds.
     pub track_split_gap_seconds: u64,
+    /// Backward jump threshold for debug time repair loading, in seconds.
+    pub debug_time_repair_backward_jump_threshold_seconds: u32,
     /// Association window a freshly loaded log starts with, in seconds: how far
     /// an entry may be from the nearest fix of the recording it is anchored to
     /// and still take a position from it.
@@ -586,6 +588,8 @@ impl Default for ProcessingSettings {
     fn default() -> Self {
         Self {
             track_split_gap_seconds: 300,
+            debug_time_repair_backward_jump_threshold_seconds:
+                DEFAULT_DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_SECONDS,
             log_association_window_s: 60,
             ask_log_association_target: true,
             detect_gnss_fix_lost: true,
@@ -629,6 +633,8 @@ pub fn load_settings() -> Settings {
 
 /// Default recording-name template: the prefix-stripped filename.
 pub const DEFAULT_RECORDING_NAME_TEMPLATE: &str = "{filename}";
+
+pub(crate) const DEFAULT_DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_SECONDS: u32 = 300;
 
 #[cfg(test)]
 mod tests {

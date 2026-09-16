@@ -7,7 +7,7 @@ use gt_track_builder::{
 use gt_types::AssociationConfig;
 use strum::IntoEnumIterator;
 
-use crate::app::App;
+use crate::app::{App, loader};
 
 impl App {
     /// Apply loaded settings on startup.
@@ -46,6 +46,13 @@ impl App {
                 slip_snr_drop_db: s.analysis.snr_drop_db,
             },
         };
+        self.debug_time_repair_threshold_seconds = s
+            .processing
+            .debug_time_repair_backward_jump_threshold_seconds
+            .clamp(
+                loader::DEBUG_TIME_REPAIR_MIN_THRESHOLD_SECONDS,
+                loader::DEBUG_TIME_REPAIR_MAX_THRESHOLD_SECONDS,
+            );
         self.assoc_config = AssociationConfig {
             log_association_window_s: s.processing.log_association_window_s,
         };
@@ -188,6 +195,8 @@ impl App {
                     .track_split_gap
                     .to_std()
                     .map_or(300, |d| d.as_secs()),
+                debug_time_repair_backward_jump_threshold_seconds: self
+                    .debug_time_repair_threshold_seconds,
                 log_association_window_s: self.assoc_config.log_association_window_s,
                 ask_log_association_target: self.ask_log_association_target,
                 detect_gnss_fix_lost: self
@@ -518,6 +527,31 @@ mod tests {
                 .display_mask
                 .is_visible(DisplayCategory::JammingHexes)
         );
+    }
+
+    #[test]
+    fn debug_time_repair_threshold_persists_across_settings_roundtrip() {
+        let mut harness = Harness::builder()
+            .with_wait_for_pending_images(false)
+            .build_eframe(harness::transient_app);
+        harness.step();
+
+        let before = harness.state().collect_snapshot();
+        harness.state_mut().debug_time_repair_threshold_seconds = 42;
+
+        assert!(harness.state().collect_snapshot() != before);
+        let flushed = harness.state().collect_settings_for_flush();
+        assert_eq!(
+            flushed
+                .processing
+                .debug_time_repair_backward_jump_threshold_seconds,
+            42
+        );
+        let toml = toml::to_string(&flushed).expect("settings serialize");
+        let reloaded: Settings = toml::from_str(&toml).expect("settings parse");
+        harness.state_mut().apply_startup_settings(&reloaded);
+
+        assert_eq!(harness.state().debug_time_repair_threshold_seconds, 42);
     }
 
     /// The interference layer is off until enabled, and stays on once it is.

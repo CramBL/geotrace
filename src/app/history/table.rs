@@ -809,6 +809,9 @@ pub(super) fn data_breakdown_ui(ui: &mut egui::Ui, entry: &RecordingEntry) {
                 ui.end_row();
             };
             row("Duration", duration_text(meta.time_range));
+            if let Some(debug_tag) = meta.debug_tag {
+                row("Load", debug_tag.label().to_owned());
+            }
             row("Size", gt_fmt::format_bytes(meta.gtd_size_bytes));
             row("Tracks", track_count_text(entry));
             row("Nav points", format_stored_count(meta.nav_point_count));
@@ -999,6 +1002,13 @@ fn identity_cell(
             }
             if has_metadata {
                 ui.label(RichText::new(ICON_NOTE).weak());
+            }
+            if let Some(debug_tag) = entry.meta.debug_tag {
+                ui.label(
+                    RichText::new(debug_tag.label())
+                        .small()
+                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                );
             }
             // The label itself senses clicks: it is the rename target. Its
             // elided-text tooltip is off: the cell's hover already leads with
