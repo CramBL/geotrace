@@ -658,6 +658,7 @@ impl NavRecorder {
 
         Ok(NavFile {
             meta,
+            debug_time_repair: None,
             nav_points,
             markers,
             event_markers: placed_event_markers.markers,

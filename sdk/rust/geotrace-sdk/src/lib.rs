@@ -28,8 +28,8 @@ pub use builder::{
     NavFileBuilder, NavRecord, NavRecorder, SatelliteWarning, collect_satellite_warnings,
 };
 pub use error::{
-    BuildError, ChannelError, Error, EventMarkerError, EventMarkerStyleError, MetaField,
-    MetaStringWithNul, UnplacedRecordCounts, VariantPathError,
+    BuildError, ChannelError, DebugTimeRepairError, Error, EventMarkerError, EventMarkerStyleError,
+    MetaField, MetaStringWithNul, UnplacedRecordCounts, VariantPathError,
 };
 pub use fixed_width_string::{
     AnnotationField, ColorHexField, FixedWidthString, FixedWidthStringError, IconNameField,
@@ -42,9 +42,10 @@ pub use provenance::{
     SCRUBBED_SDK_VERSION, SDK_COMMIT_TIME_ATTR, SDK_GIT_COMMIT_ATTR, SDK_VERSION_ATTR,
 };
 pub use types::{
-    Annotation, AnnotationIcon, Channel, Constellation, EventMarker, EventMarkerColor,
-    EventMarkerIconChoice, EventMarkerPoint, EventMarkerStyle, Marker, MarkerIcon, Meta, NavFile,
-    NavFix, NavFixTime, NavPoint, RecordedFixTimestamps, Satellite, SatelliteReport, TravelMode,
+    Annotation, AnnotationIcon, Channel, Constellation, DebugTimeRepair, EventMarker,
+    EventMarkerColor, EventMarkerIconChoice, EventMarkerPoint, EventMarkerStyle, Marker,
+    MarkerIcon, Meta, NavFile, NavFileOpenMode, NavFix, NavFixTime, NavPoint,
+    RecordedFixTimestamps, Satellite, SatelliteReport, TravelMode,
 };
 pub use units::{Angle, Timestamp, Velocity};
 pub use variant_path::EventKind;
@@ -64,6 +65,7 @@ mod format_version;
 mod provenance;
 mod read;
 mod size_checked_file;
+mod time_repair;
 mod time_types;
 mod types;
 mod units;

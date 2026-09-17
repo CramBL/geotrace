@@ -270,6 +270,17 @@ pub enum BuildError {
     NoNavFixes(UnplacedRecordCounts),
 }
 
+/// Error returned by [`DebugTimeRepair::new`](crate::DebugTimeRepair::new).
+#[derive(Debug, Clone, Copy, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
+pub enum DebugTimeRepairError {
+    #[error("debug time repair threshold must be positive")]
+    NonPositiveThreshold,
+
+    #[error("debug time repair threshold is past the microsecond range the tag stores")]
+    ThresholdOutOfRange,
+}
+
 /// The satellite reports, annotations and event markers of a build without a nav fix, counted by
 /// kind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -318,6 +329,14 @@ pub enum Error {
         path: String,
         declared_bytes: u128,
         file_bytes: u64,
+    },
+
+    #[error(
+        "debug time repair shifts {timestamp} by {shift_us} microseconds, past the range a UTC timestamp covers"
+    )]
+    DebugTimeRepairTimestampOutOfRange {
+        timestamp: chrono::DateTime<chrono::Utc>,
+        shift_us: i64,
     },
 
     #[error("{group}/{dataset}: record {record} is empty")]
