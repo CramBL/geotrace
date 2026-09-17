@@ -158,6 +158,7 @@ fn file_err(e: geotrace_sdk::Error) -> PyErr {
         | Error::EventMarkerWithoutTimestamp { .. }
         | Error::EmptyField { .. }
         | Error::IndexPastTable { .. }
+        | Error::DebugTimeRepairTimestampOutOfRange { .. }
         | Error::TimestampOutOfRange { .. }
         | Error::TimestampCountOutOfRange { .. }
         | Error::TimestampIsTheAbsentValue { .. }

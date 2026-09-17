@@ -1,13 +1,13 @@
 use std::{fs::File, io, path::Path};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use geotrace_sdk_units::snr;
 use geotrace_sdk_units::{ChannelUnit, PhysicalQuantity};
 use strum::IntoEnumIterator as _;
 
 use crate::error::{
-    ChannelError, Error, EventMarkerError, EventMarkerStyleError, MARKER_LABEL_LOCATION, MetaField,
-    MetaStringWithNul,
+    ChannelError, DebugTimeRepairError, Error, EventMarkerError, EventMarkerStyleError,
+    MARKER_LABEL_LOCATION, MetaField, MetaStringWithNul,
 };
 use crate::fixed_width_string::{self, AnnotationField, IconNameField, MarkerLabelField};
 use crate::provenance;
@@ -34,6 +34,62 @@ pub enum NavFixTime {
 pub struct RecordedFixTimestamps {
     pub gps: Option<DateTime<Utc>>,
     pub sys: Option<DateTime<Utc>>,
+}
+
+/// Configuration for debug time repair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DebugTimeRepair {
+    backward_jump_threshold_micros: i64,
+}
+
+impl DebugTimeRepair {
+    /// Create a debug time repair configuration.
+    ///
+    /// The threshold is the minimum backward jump that starts a later repeated
+    /// span of time.
+    pub fn new(backward_jump_threshold: Duration) -> Result<Self, DebugTimeRepairError> {
+        let Some(backward_jump_threshold_micros) = backward_jump_threshold.num_microseconds()
+        else {
+            return Err(DebugTimeRepairError::ThresholdOutOfRange);
+        };
+        Self::from_threshold_micros(backward_jump_threshold_micros)
+            .ok_or(DebugTimeRepairError::NonPositiveThreshold)
+    }
+
+    /// The minimum backward jump that starts a later repeated span of time.
+    pub fn backward_jump_threshold(self) -> Duration {
+        Duration::microseconds(self.backward_jump_threshold_micros)
+    }
+
+    pub(crate) fn backward_jump_threshold_micros(self) -> i64 {
+        self.backward_jump_threshold_micros
+    }
+
+    pub(crate) fn from_threshold_micros(backward_jump_threshold_micros: i64) -> Option<Self> {
+        (backward_jump_threshold_micros > 0).then_some(Self {
+            backward_jump_threshold_micros,
+        })
+    }
+}
+
+/// How [`NavFile::read_with_mode`] and [`NavFile::open_with_mode`] read time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NavFileOpenMode {
+    /// Shift repeated spans of time using this debug time repair configuration.
+    DebugTimeRepair(DebugTimeRepair),
+    /// Read timestamps exactly as the file stores them, unless the file has a
+    /// debug time repair tag.
+    Regular,
+}
+
+impl NavFileOpenMode {
+    /// Create the explicit debug time repair mode.
+    pub fn debug_time_repair(
+        backward_jump_threshold: Duration,
+    ) -> Result<Self, DebugTimeRepairError> {
+        DebugTimeRepair::new(backward_jump_threshold).map(Self::DebugTimeRepair)
+    }
 }
 
 impl NavFixTime {
@@ -1101,6 +1157,7 @@ impl Channel {
 #[derive(Debug, Clone, PartialEq)]
 pub struct NavFile {
     pub(crate) meta: Meta,
+    pub(crate) debug_time_repair: Option<DebugTimeRepair>,
     pub(crate) nav_points: Vec<NavPoint>,
     pub(crate) markers: Vec<Marker>,
     pub(crate) event_markers: Vec<EventMarkerPoint>,
@@ -1111,6 +1168,11 @@ pub struct NavFile {
 impl NavFile {
     pub fn meta(&self) -> &Meta {
         &self.meta
+    }
+
+    /// The debug time repair tag read from or written to the file.
+    pub fn debug_time_repair_tag(&self) -> Option<DebugTimeRepair> {
+        self.debug_time_repair
     }
 
     pub fn nav_points(&self) -> &[NavPoint] {
@@ -1133,6 +1195,22 @@ impl NavFile {
         &self.channels
     }
 
+    /// Set the debug time repair tag written as root metadata.
+    pub fn set_debug_time_repair_tag(&mut self, tag: DebugTimeRepair) {
+        self.debug_time_repair = Some(tag);
+    }
+
+    /// Return this file with a debug time repair tag.
+    pub fn with_debug_time_repair_tag(mut self, tag: DebugTimeRepair) -> Self {
+        self.set_debug_time_repair_tag(tag);
+        self
+    }
+
+    /// Clear the debug time repair tag.
+    pub fn clear_debug_time_repair_tag(&mut self) {
+        self.debug_time_repair = None;
+    }
+
     /// Compares two files' recorded content, ignoring their SDK build stamp.
     ///
     /// [`Meta::sdk_version`], [`Meta::sdk_git_commit`] and
@@ -1142,6 +1220,7 @@ impl NavFile {
     pub fn equals_ignoring_build_provenance(&self, other: &Self) -> bool {
         let Self {
             meta,
+            debug_time_repair,
             nav_points,
             markers,
             event_markers,
@@ -1149,6 +1228,7 @@ impl NavFile {
             channels,
         } = self;
         meta.equals_ignoring_build_provenance(&other.meta)
+            && *debug_time_repair == other.debug_time_repair
             && *nav_points == other.nav_points
             && *markers == other.markers
             && *event_markers == other.event_markers
@@ -1175,15 +1255,31 @@ impl NavFile {
     }
 
     /// Read a `.gtd` file from `reader`.
-    pub fn read<R: io::Read>(mut reader: R) -> Result<Self, crate::error::Error> {
+    pub fn read<R: io::Read>(reader: R) -> Result<Self, crate::error::Error> {
+        Self::read_with_mode(reader, NavFileOpenMode::Regular)
+    }
+
+    /// Read a `.gtd` file from `reader` with an explicit open mode.
+    pub fn read_with_mode<R: io::Read>(
+        mut reader: R,
+        mode: NavFileOpenMode,
+    ) -> Result<Self, crate::error::Error> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes)?;
-        crate::read::parse_hdf5(bytes)
+        crate::read::parse_hdf5(bytes, mode)
     }
 
     /// Open a `.gtd` file at `path` and parse it.
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, crate::error::Error> {
         Self::read(File::open(path)?)
+    }
+
+    /// Open a `.gtd` file at `path` with an explicit open mode.
+    pub fn open_with_mode(
+        path: impl AsRef<std::path::Path>,
+        mode: NavFileOpenMode,
+    ) -> Result<Self, crate::error::Error> {
+        Self::read_with_mode(File::open(path)?, mode)
     }
 
     /// Pretty-print a summary of the `.gtd` file at `path`.
@@ -1437,6 +1533,7 @@ mod tests {
                 .title("A recording")
                 .build()
                 .expect("a title without a nul byte"),
+            debug_time_repair: None,
             nav_points: vec![NavPoint {
                 fix: NavFix::builder()
                     .time(NavFixTime::Receiver(time))

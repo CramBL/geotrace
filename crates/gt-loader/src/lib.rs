@@ -3,14 +3,14 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::Duration;
 use geotrace_sdk::{
     AnnotationIcon as SdkAnnotationIcon, Constellation as SdkConstellation,
-    EventMarker as SdkEventMarker, EventMarkerColor as SdkEventMarkerColor,
-    EventMarkerIconChoice as SdkEventMarkerIconChoice, EventMarkerPoint,
-    EventMarkerStyle as SdkEventMarkerStyle, Marker as SdkMarker, MarkerIcon as SdkMarkerIcon,
-    NavFile, NavFileBuilder, NavFixTime, Satellite as SdkSatellite, SatelliteReport,
-    TravelMode as SdkTravelMode,
+    DebugTimeRepair as SdkDebugTimeRepair, EventMarker as SdkEventMarker,
+    EventMarkerColor as SdkEventMarkerColor, EventMarkerIconChoice as SdkEventMarkerIconChoice,
+    EventMarkerPoint, EventMarkerStyle as SdkEventMarkerStyle, Marker as SdkMarker,
+    MarkerIcon as SdkMarkerIcon, NavFile, NavFileBuilder, NavFileOpenMode, NavFixTime,
+    Satellite as SdkSatellite, SatelliteReport, TravelMode as SdkTravelMode,
 };
 use gt_types::coordinates::{CoordinateAxis, OutOfRange, RawDegrees};
 use gt_types::load_warning;
@@ -136,9 +136,15 @@ fn load_gtd_file_with_progress_and_time_repair(
     progress(0.05, STAGE_READING);
     let file = File::open(path)?;
     progress(0.20, STAGE_PARSING);
-    let nav_file = NavFile::read(file)?;
+    let open_mode = match time_repair {
+        Some(config) => NavFileOpenMode::DebugTimeRepair(SdkDebugTimeRepair::new(
+            config.backward_jump_threshold,
+        )?),
+        None => NavFileOpenMode::Regular,
+    };
+    let nav_file = NavFile::read_with_mode(file, open_mode)?;
     let source = FileSource::GtdPath(path.to_path_buf());
-    build_loaded_gtd(&nav_file, filename, source, progress, config, time_repair)
+    build_loaded_gtd(&nav_file, filename, source, progress, config)
 }
 
 fn build_loaded_gtd(
@@ -147,13 +153,9 @@ fn build_loaded_gtd(
     source: FileSource,
     progress: impl Fn(f32, &'static str),
     config: &gt_track_builder::SegmentationConfig,
-    time_repair: Option<DebugTimeRepairConfig>,
 ) -> Result<LoadedGtd, LoadError> {
     progress(0.65, STAGE_CONVERTING);
-    let mut contents = from_nav_file(nav_file);
-    if let Some(time_repair) = time_repair {
-        repair_repeated_time_spans(&mut contents, time_repair);
-    }
+    let contents = from_nav_file(nav_file);
     progress(0.90, STAGE_SEGMENTING);
     let identity = derive_identity(
         nav_file.meta().identity(),
@@ -247,9 +249,15 @@ fn load_gtd_bytes_with_progress_and_time_repair(
     time_repair: Option<DebugTimeRepairConfig>,
 ) -> Result<LoadedGtd, LoadError> {
     progress(0.15, STAGE_PARSING);
-    let nav_file = NavFile::read(bytes)?;
+    let open_mode = match time_repair {
+        Some(config) => NavFileOpenMode::DebugTimeRepair(SdkDebugTimeRepair::new(
+            config.backward_jump_threshold,
+        )?),
+        None => NavFileOpenMode::Regular,
+    };
+    let nav_file = NavFile::read_with_mode(bytes, open_mode)?;
     let source = FileSource::GtdBytes(Arc::from(bytes));
-    build_loaded_gtd(&nav_file, filename, source, progress, config, time_repair)
+    build_loaded_gtd(&nav_file, filename, source, progress, config)
 }
 
 /// Re-encode a `.gtd` recording with the nav points in `drop_ranges` removed.
@@ -667,217 +675,6 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
         channels,
         load_warnings,
     }
-}
-
-fn repair_repeated_time_spans(contents: &mut NavFileContents, config: DebugTimeRepairConfig) {
-    let repair_map = TimeRepairMap::from_nav_times(
-        contents
-            .nav_points
-            .iter()
-            .map(|point| point.tpv.time().utc()),
-        config.backward_jump_threshold,
-    );
-    for (point, shift) in contents
-        .nav_points
-        .iter_mut()
-        .zip(repair_map.nav_shifts.iter().copied())
-    {
-        shift_nav_point(point, shift);
-    }
-
-    let mut marker_cursor = TimeRepairCursor::default();
-    for marker in &mut contents.markers {
-        let shift = repair_map.shift_for_series_time(marker.time, &mut marker_cursor);
-        *marker = CustomMarker::new(
-            marker.time + shift,
-            marker.label.clone(),
-            marker.icon,
-            marker.lat,
-            marker.lon,
-        );
-    }
-
-    let mut event_marker_cursor = TimeRepairCursor::default();
-    for event_marker in &mut contents.event_markers {
-        let shift = repair_map.shift_for_series_time(event_marker.time, &mut event_marker_cursor);
-        *event_marker = EventMarker::new(
-            event_marker.time + shift,
-            event_marker.variant_path.clone(),
-            event_marker.annotation.clone(),
-            event_marker.lat,
-            event_marker.lon,
-        );
-    }
-    for channel in &mut contents.channels {
-        let mut channel_cursor = TimeRepairCursor::default();
-        for time in &mut channel.times {
-            let shift = repair_map.shift_for_series_time(*time, &mut channel_cursor);
-            *time += shift;
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-struct TimeRepairCursor {
-    span_index: usize,
-    previous_repaired: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug)]
-struct TimeRepairMap {
-    nav_shifts: Vec<Duration>,
-    spans: Vec<TimeRepairSpan>,
-}
-
-impl TimeRepairMap {
-    fn from_nav_times(
-        times: impl IntoIterator<Item = DateTime<Utc>>,
-        backward_jump_threshold: Duration,
-    ) -> Self {
-        let mut nav_shifts = Vec::new();
-        let mut spans: Vec<TimeRepairSpan> = Vec::new();
-        let mut current_shift = Duration::zero();
-        let mut current_span: Option<TimeRepairSpan> = None;
-        let mut previous_original = None;
-        let mut previous_repaired = None;
-        for time in times {
-            if let (Some(original), Some(repaired)) = (previous_original, previous_repaired)
-                && original - time >= backward_jump_threshold
-            {
-                if let Some(span) = current_span.take() {
-                    spans.push(span);
-                }
-                current_shift = repaired + backward_jump_threshold - time;
-            }
-            current_span = Some(match current_span {
-                Some(span) => span.with_time(time),
-                None => TimeRepairSpan::new(time, current_shift),
-            });
-
-            let repaired = time + current_shift;
-            nav_shifts.push(current_shift);
-            previous_original = Some(time);
-            previous_repaired = Some(repaired);
-        }
-        if let Some(span) = current_span {
-            spans.push(span);
-        }
-        Self { nav_shifts, spans }
-    }
-
-    fn shift_for_series_time(
-        &self,
-        time: DateTime<Utc>,
-        cursor: &mut TimeRepairCursor,
-    ) -> Duration {
-        let Some((span_index, span)) = self.best_span_for_series_time(time, cursor) else {
-            return Duration::zero();
-        };
-        cursor.span_index = span_index;
-        cursor.previous_repaired = Some(time + span.shift);
-        span.shift
-    }
-
-    fn best_span_for_series_time(
-        &self,
-        time: DateTime<Utc>,
-        cursor: &TimeRepairCursor,
-    ) -> Option<(usize, TimeRepairSpan)> {
-        let containing_span = self
-            .spans
-            .iter()
-            .copied()
-            .enumerate()
-            .skip(cursor.span_index)
-            .find(|(_, span)| span.contains(time));
-
-        self.spans
-            .iter()
-            .copied()
-            .enumerate()
-            .skip(cursor.span_index)
-            .find(|(_, span)| {
-                span.contains(time)
-                    && cursor
-                        .previous_repaired
-                        .is_none_or(|previous| time + span.shift >= previous)
-            })
-            .or(containing_span)
-            .or_else(|| {
-                let span_index = cursor.span_index.min(self.spans.len().saturating_sub(1));
-                self.spans
-                    .get(span_index)
-                    .copied()
-                    .map(|span| (span_index, span))
-            })
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct TimeRepairSpan {
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
-    shift: Duration,
-}
-
-impl TimeRepairSpan {
-    fn new(time: DateTime<Utc>, shift: Duration) -> Self {
-        Self {
-            start: time,
-            end: time,
-            shift,
-        }
-    }
-
-    fn with_time(self, time: DateTime<Utc>) -> Self {
-        Self {
-            start: self.start.min(time),
-            end: self.end.max(time),
-            shift: self.shift,
-        }
-    }
-
-    fn contains(self, time: DateTime<Utc>) -> bool {
-        self.start <= time && time <= self.end
-    }
-}
-
-fn shift_nav_point(point: &mut NavPoint, shift: Duration) {
-    point.tpv = shift_tpv(point.tpv, shift);
-    if let Some(satellites) = &point.satellites {
-        point.satellites = Some(shift_satellites(satellites, shift));
-    }
-}
-
-fn shift_tpv(tpv: TimePositionVelocity, shift: Duration) -> TimePositionVelocity {
-    let time = match tpv.gps_time() {
-        Some(gps) => FixTimestamp::FromGpsReceiver(GpsTime::from_utc(gps.utc() + shift)),
-        None => FixTimestamp::FromHostClock(SysTime::from_utc(tpv.time().utc() + shift)),
-    };
-    TimePositionVelocity::builder()
-        .time(time)
-        .lat(tpv.lat())
-        .lon(tpv.lon())
-        .maybe_heading(tpv.heading())
-        .maybe_velocity(tpv.velocity())
-        .maybe_sys_time(
-            tpv.sys_time()
-                .map(|sys| SysTime::from_utc(sys.utc() + shift)),
-        )
-        .maybe_eph_m(tpv.eph_m())
-        .build()
-}
-
-fn shift_satellites(satellites: &Satellites, shift: Duration) -> Satellites {
-    Satellites::new(
-        satellites
-            .gps_time()
-            .map(|time| GpsTime::from_utc(time.utc() + shift)),
-        satellites
-            .sys_time()
-            .map(|time| SysTime::from_utc(time.utc() + shift)),
-        satellites.satellites().copied().collect(),
-    )
 }
 
 fn convert_channel(sdk: &geotrace_sdk::Channel) -> Channel {

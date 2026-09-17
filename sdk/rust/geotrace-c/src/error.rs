@@ -96,7 +96,8 @@ pub(crate) fn status_for_error(e: &geotrace_sdk::Error) -> GtdStatus {
         | Error::IndexPastTable { .. }
         | Error::TimestampOutOfRange { .. }
         | Error::DatasetSizePastFileLength { .. } => GtdStatus::GTD_ERR_PARSE,
-        Error::TimestampCountOutOfRange { .. } => GtdStatus::GTD_ERR_OUT_OF_RANGE,
+        Error::DebugTimeRepairTimestampOutOfRange { .. }
+        | Error::TimestampCountOutOfRange { .. } => GtdStatus::GTD_ERR_OUT_OF_RANGE,
         Error::UnwritableField { .. } => GtdStatus::GTD_ERR_FIELD_TOO_LONG,
         Error::TimestampIsTheAbsentValue { .. } => GtdStatus::GTD_ERR_INVALID_ARGUMENT,
     }

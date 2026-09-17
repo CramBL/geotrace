@@ -21,6 +21,12 @@ pub(crate) fn build_hdf5(nav_file: &NavFile) -> Result<Vec<u8>, Error> {
         AttrValue::String(WRITTEN_FORMAT_VERSION.to_string()),
     );
     set_provenance_attrs(&mut fb, &nav_file.meta);
+    if let Some(repair) = nav_file.debug_time_repair {
+        fb.set_attr(
+            DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_US_ATTR,
+            AttrValue::I64(repair.backward_jump_threshold_micros()),
+        );
+    }
     if let Some(title) = &nav_file.meta.title {
         fb.set_attr("meta_title", AttrValue::String(title.clone()));
     }
@@ -699,6 +705,9 @@ const CHUNK_SIZE: u64 = 8_192;
 /// The `units` attribute value shared by every microsecond timestamp dataset.
 const MICROS_SINCE_EPOCH_UNITS: &str = "microseconds since 1970-01-01T00:00:00Z";
 
+pub(crate) const DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_US_ATTR: &str =
+    "debug_time_repair_backward_jump_threshold_us";
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -719,6 +728,7 @@ mod tests {
     fn a_written_file_stamps_format_version_2() {
         let nav_file = NavFile {
             meta: Meta::default(),
+            debug_time_repair: None,
             nav_points: Vec::new(),
             markers: Vec::new(),
             event_markers: Vec::new(),

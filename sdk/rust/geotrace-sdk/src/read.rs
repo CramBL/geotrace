@@ -13,9 +13,10 @@ use crate::format_version::SUPPORTED_FORMAT_VERSIONS;
 use crate::provenance;
 use crate::size_checked_file::{SizeCheckedFile, SizeCheckedGroup};
 use crate::types::{
-    Annotation, AnnotationIcon, Channel, Constellation, EventMarkerColor, EventMarkerIconChoice,
-    EventMarkerPoint, EventMarkerStyle, Marker, Meta, NavFile, NavFix, NavFixTime, NavPoint,
-    RecordedFixTimestamps, Satellite, SatelliteReport, TravelMode,
+    Annotation, AnnotationIcon, Channel, Constellation, DebugTimeRepair, EventMarkerColor,
+    EventMarkerIconChoice, EventMarkerPoint, EventMarkerStyle, Marker, Meta, NavFile,
+    NavFileOpenMode, NavFix, NavFixTime, NavPoint, RecordedFixTimestamps, Satellite,
+    SatelliteReport, TravelMode,
 };
 use crate::write;
 use crate::{Angle, Velocity};
@@ -23,7 +24,7 @@ use geotrace_sdk_units::{ChannelUnit, snr};
 use hdf5_pure::AttrValue;
 use strum::IntoEnumIterator;
 
-pub(crate) fn parse_hdf5(bytes: Vec<u8>) -> Result<NavFile, Error> {
+pub(crate) fn parse_hdf5(bytes: Vec<u8>, mode: NavFileOpenMode) -> Result<NavFile, Error> {
     let file = SizeCheckedFile::from_bytes(bytes)?;
     let root = file.root();
 
@@ -50,15 +51,41 @@ pub(crate) fn parse_hdf5(bytes: Vec<u8>) -> Result<NavFile, Error> {
     let event_markers = read_event_markers(&file)?;
     let event_marker_styles = read_event_marker_styles(&file)?;
     let channels = read_channels(&file)?;
+    let debug_time_repair = read_debug_time_repair_tag(&attrs);
 
-    Ok(NavFile {
+    let mut nav_file = NavFile {
         meta,
+        debug_time_repair,
         nav_points,
         markers,
         event_markers,
         event_marker_styles,
         channels,
-    })
+    };
+    let repair = match mode {
+        NavFileOpenMode::Regular => debug_time_repair,
+        NavFileOpenMode::DebugTimeRepair(repair) => Some(repair),
+    };
+    if let Some(repair) = repair {
+        crate::time_repair::repair_repeated_time_spans(&mut nav_file, repair)?;
+    }
+    Ok(nav_file)
+}
+
+fn read_debug_time_repair_tag(attrs: &HashMap<String, AttrValue>) -> Option<DebugTimeRepair> {
+    let value = attrs.get(write::DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_US_ATTR)?;
+    let Some(micros) = value.as_i64() else {
+        log::warn!(
+            "debug time repair tag ignored: {:?} is not an integer",
+            write::DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_US_ATTR
+        );
+        return None;
+    };
+    let tag = DebugTimeRepair::from_threshold_micros(micros);
+    if tag.is_none() {
+        log::warn!("debug time repair tag ignored: threshold must be positive");
+    }
+    tag
 }
 
 fn read_meta(attrs: &HashMap<String, AttrValue>) -> Meta {
