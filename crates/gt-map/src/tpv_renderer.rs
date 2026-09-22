@@ -1718,7 +1718,7 @@ const ACCURACY_CIRCLE_STROKE_WIDTH_PX: f32 = 1.0;
 /// quality line.
 const FIX_STRONG_BLUE: Color32 = Color32::from_rgb(66, 133, 244);
 const FIX_MARGINAL_YELLOW: Color32 = Color32::from_rgb(244, 180, 0);
-const FIX_LOST_RED: Color32 = Color32::from_rgb(219, 68, 55);
+pub(crate) const FIX_LOST_RED: Color32 = Color32::from_rgb(219, 68, 55);
 
 /// Zoom range over which the fix icons scale from dot size up to their
 /// full design size: dots at low zoom keep dense clusters from blending

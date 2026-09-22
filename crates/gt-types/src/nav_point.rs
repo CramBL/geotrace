@@ -144,7 +144,7 @@ impl NavPoint {
     /// the trackline's ghost flag and the fix-quality tier. The LOD builder
     /// always keeps points where this changes.
     pub fn render_class(&self) -> (bool, FixQuality) {
-        (self.tpv.heading().is_none(), self.fix_quality())
+        (self.is_ghost_fix(), self.fix_quality())
     }
 }
 
