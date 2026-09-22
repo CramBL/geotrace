@@ -130,17 +130,22 @@ pub(crate) struct TracklineVisibility {
     pub(crate) ghost: bool,
 }
 
-/// Draw a track polyline where ghost-fix edges (either endpoint has `heading == None`)
-/// are rendered as dashed lines when `visibility.ghost` is true, or skipped as gaps when
-/// false, and real edges as solid lines when `visibility.solid` is true.
+/// Strokes for the solid and ghost portions of a trackline.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TracklineStrokes {
+    pub(crate) solid: Stroke,
+    pub(crate) ghost: Stroke,
+}
+
+/// Draw a track polyline with separate strokes and visibility for solid and ghost-fix edges.
 ///
-/// An edge is ghost when either endpoint is a ghost fix, so the dashed region
-/// extends one segment on each side of every ghost point - ensuring the
-/// visual uncertainty is clear even at the real→ghost boundary.
+/// An edge is ghost when either endpoint is a ghost fix: the dashed region
+/// extends one segment on each side of each ghost point, marking the
+/// transition into dead reckoning.
 pub(crate) fn draw_track_with_ghost<K: Copy>(
     painter: &egui::Painter,
     pts: &[(K, egui::Pos2)],
-    stroke: Stroke,
+    strokes: TracklineStrokes,
     visibility: TracklineVisibility,
     is_ghost: impl Fn(K) -> bool,
 ) {
@@ -154,7 +159,7 @@ pub(crate) fn draw_track_with_ghost<K: Copy>(
         {
             painter.add(egui::Shape::line(
                 run_points.iter().map(|&(_, pos)| pos).collect(),
-                stroke,
+                strokes.solid,
             ));
         }
     };
@@ -181,7 +186,7 @@ pub(crate) fn draw_track_with_ghost<K: Copy>(
             }
         } else {
             if visibility.ghost && ghost_span.len() >= 2 {
-                draw_dashed_line(painter, &ghost_span, stroke, GHOST_FIX_DASH);
+                draw_dashed_line(painter, &ghost_span, strokes.ghost, GHOST_FIX_DASH);
             }
             ghost_span.clear();
             let run_start = solid_run.as_ref().map_or(edge, |run| *run.start());
@@ -193,7 +198,7 @@ pub(crate) fn draw_track_with_ghost<K: Copy>(
         paint_solid_run(run);
     }
     if visibility.ghost && ghost_span.len() >= 2 {
-        draw_dashed_line(painter, &ghost_span, stroke, GHOST_FIX_DASH);
+        draw_dashed_line(painter, &ghost_span, strokes.ghost, GHOST_FIX_DASH);
     }
 }
 
@@ -268,13 +273,9 @@ pub(crate) fn draw_dashed_line(
     }
 }
 
-/// True when this track's trackline should not paint at all: the fix icons
-/// are fully faded, so the quality line paints exactly over this track's
-/// geometry and the plain trackline (highlight stroke included) would be
-/// entirely occluded. `fade` is `None` when the TPV layer is hidden - then
-/// no quality line exists and the trackline must stay. The blink overlay
-/// draws on top of everything and still needs the pass.
-pub(crate) fn skip_trackline(
+/// True when the quality line covers the entire solid trackline and no blink overlay is active.
+/// Ghost stretches are not covered by the quality line and paint regardless.
+pub(crate) fn skip_solid_trackline(
     fade: Option<crate::tpv_renderer::TrackIconFade>,
     need_blink: bool,
 ) -> bool {
@@ -321,19 +322,28 @@ mod tests {
     #[test]
     fn trackline_is_replaced_only_when_the_quality_line_covers_it() {
         // Fully faded icons with the TPV layer on: the quality line paints
-        // over the trackline, so the pass is skipped.
-        assert!(super::skip_trackline(Some(TrackIconFade::AllHidden), false));
-        // TPV layer hidden: no quality line exists, the trackline must stay.
-        assert!(!super::skip_trackline(None, false));
+        // over the trackline, so the solid pass is skipped.
+        assert!(super::skip_solid_trackline(
+            Some(TrackIconFade::AllHidden),
+            false
+        ));
+        // TPV layer hidden: no quality line exists, the solid trackline must stay.
+        assert!(!super::skip_solid_trackline(None, false));
         // Icons partially or fully visible: the quality line is transparent
-        // or absent along opaque stretches, the trackline must stay.
-        assert!(!super::skip_trackline(Some(TrackIconFade::PerFix), false));
-        assert!(!super::skip_trackline(
+        // or absent along opaque stretches, the solid trackline must stay.
+        assert!(!super::skip_solid_trackline(
+            Some(TrackIconFade::PerFix),
+            false
+        ));
+        assert!(!super::skip_solid_trackline(
             Some(TrackIconFade::AllVisible),
             false
         ));
         // A blinking (newly loaded) track draws its overlay in this pass.
-        assert!(!super::skip_trackline(Some(TrackIconFade::AllHidden), true));
+        assert!(!super::skip_solid_trackline(
+            Some(TrackIconFade::AllHidden),
+            true
+        ));
     }
 
     #[test]
@@ -346,11 +356,16 @@ mod tests {
             (false, Pos2::new(40.0, 0.0)),
             (false, Pos2::new(50.0, 0.0)),
         ];
-        let stroke = Stroke::new(2.0, Color32::WHITE);
+        let solid_stroke = Stroke::new(2.0, Color32::WHITE);
+        let ghost_stroke = Stroke::new(2.0, crate::tpv_renderer::FIX_LOST_RED);
+        let strokes = super::TracklineStrokes {
+            solid: solid_stroke,
+            ghost: ghost_stroke,
+        };
 
-        let paint_count = |visibility| {
+        let paint_shapes = |visibility| {
             let mut harness = crate::test_util::harness_builder().ui(|ui| {
-                super::draw_track_with_ghost(ui.painter(), &pts, stroke, visibility, |is_ghost| {
+                super::draw_track_with_ghost(ui.painter(), &pts, strokes, visibility, |is_ghost| {
                     is_ghost
                 });
             });
@@ -361,36 +376,48 @@ mod tests {
                 .shapes
                 .iter()
                 .filter(|clipped| !matches!(clipped.shape, egui::Shape::Rect(_)))
-                .count()
+                .map(|clipped| clipped.shape.clone())
+                .collect::<Vec<_>>()
         };
 
-        assert_eq!(
-            paint_count(super::TracklineVisibility {
-                solid: true,
-                ghost: false,
-            }),
-            2
-        );
-        assert_eq!(
-            paint_count(super::TracklineVisibility {
-                solid: true,
-                ghost: true,
-            }),
-            5
-        );
-        assert_eq!(
-            paint_count(super::TracklineVisibility {
-                solid: false,
-                ghost: true,
-            }),
-            3
-        );
-        assert_eq!(
-            paint_count(super::TracklineVisibility {
-                solid: false,
-                ghost: false,
-            }),
-            0
-        );
+        let has_stroke_color = |shapes: &[egui::Shape], color: Color32| {
+            shapes.iter().any(|shape| match shape {
+                egui::Shape::LineSegment { stroke: s, .. } => s.color == color,
+                egui::Shape::Path(path) => {
+                    path.stroke.color == egui::epaint::ColorMode::Solid(color)
+                }
+                _ => false,
+            })
+        };
+
+        let solid_only = paint_shapes(super::TracklineVisibility {
+            solid: true,
+            ghost: false,
+        });
+        assert_eq!(solid_only.len(), 2);
+        assert!(has_stroke_color(&solid_only, solid_stroke.color));
+        assert!(!has_stroke_color(&solid_only, ghost_stroke.color));
+
+        let both = paint_shapes(super::TracklineVisibility {
+            solid: true,
+            ghost: true,
+        });
+        assert_eq!(both.len(), 5);
+        assert!(has_stroke_color(&both, solid_stroke.color));
+        assert!(has_stroke_color(&both, ghost_stroke.color));
+
+        let ghost_only = paint_shapes(super::TracklineVisibility {
+            solid: false,
+            ghost: true,
+        });
+        assert_eq!(ghost_only.len(), 3);
+        assert!(has_stroke_color(&ghost_only, ghost_stroke.color));
+        assert!(!has_stroke_color(&ghost_only, solid_stroke.color));
+
+        let neither = paint_shapes(super::TracklineVisibility {
+            solid: false,
+            ghost: false,
+        });
+        assert_eq!(neither.len(), 0);
     }
 }

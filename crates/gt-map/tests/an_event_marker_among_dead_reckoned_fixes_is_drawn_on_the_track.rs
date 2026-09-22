@@ -1,8 +1,8 @@
-//! Where the map draws an event marker stamped inside a stretch of fixes the
-//! receiver dead-reckoned.
+//! Where the map draws dead-reckoned track stretches and event markers stamped
+//! inside them.
 //!
-//! The builder draws such a fix between the fixes with a satellite in fix
-//! around it, and the map dashes the edges into it. The marker holds the
+//! The builder draws dead-reckoned fixes between measured fixes, and the map
+//! dashes edges connecting them. An event marker inside dead-reckoning holds
 //! coordinates the recorder interpolated over the dead-reckoned ones, 222 m
 //! north of the line the receiver measured.
 
@@ -47,6 +47,36 @@ fn dead_reckoned_fix(index: usize) -> NavPoint {
         longitude_of(index),
         FixKind::GhostWithoutHeading,
     )
+}
+
+fn dead_reckoned_fix_with_heading(index: usize) -> NavPoint {
+    gt_types::fixtures::nav_point(
+        time_of(index),
+        dead_reckoned_latitude(),
+        longitude_of(index),
+        FixKind::GhostWithoutSatellitesInFix,
+    )
+}
+
+fn a_recording_with_dead_reckoned_fixes_with_headings() -> Vec<LoadedFile> {
+    let points: Vec<NavPoint> = (0..FIX_COUNT)
+        .map(|index| match DEAD_RECKONED_FIXES.contains(&index) {
+            true => dead_reckoned_fix_with_heading(index),
+            false => measured_fix(index),
+        })
+        .collect();
+    vec![gt_track_builder::build_loaded_file(
+        "heading_ghost_stretch.gtd".to_owned(),
+        &points,
+        &[],
+        vec![],
+        vec![],
+        &[],
+        &SegmentationConfig::default(),
+        FileSource::GtdPath(PathBuf::from("heading_ghost_stretch.gtd")),
+        FileMeta::default(),
+        vec![],
+    )]
 }
 
 fn a_recording_with_an_event_marker_among_dead_reckoned_fixes() -> Vec<LoadedFile> {
@@ -126,6 +156,26 @@ fn snapshot_solo_ghost_fixes_draws_only_dead_reckoned_ink() {
         })
         .render();
     map.snapshot("ghost_fixes_soloed");
+}
+
+#[test]
+fn snapshot_dead_reckoned_fixes_with_headings_draw_dashed_red() {
+    let files = a_recording_with_dead_reckoned_fixes_with_headings();
+    let mut map = MapScene::of(files).render();
+    map.snapshot("dead_reckoned_fixes_with_headings_draw_dashed_red");
+}
+
+#[test]
+fn snapshot_hidden_ghost_fixes_with_headings_leave_a_gap() {
+    let files = a_recording_with_dead_reckoned_fixes_with_headings();
+    let mut map = MapScene::of(files)
+        .draw_state(|state| {
+            state
+                .display_mask
+                .set_visible(gt_ui_types::DisplayCategory::GhostFixes, false);
+        })
+        .render();
+    map.snapshot("ghost_fixes_with_headings_hidden_leave_a_gap");
 }
 
 /// Fixes of the recording, one every [`SECONDS_BETWEEN_FIXES`].

@@ -708,12 +708,7 @@ mod tests {
         cull_rect: egui::Rect,
     ) -> VisiblePath<bool> {
         polyline::visible_path(
-            points.map(|(_, point)| {
-                (
-                    point.fix.tpv.heading().is_none(),
-                    transform.to_screen(point.merc()),
-                )
-            }),
+            points.map(|(_, point)| (point.fix.is_ghost_fix(), transform.to_screen(point.merc()))),
             cull_rect,
         )
     }

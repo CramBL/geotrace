@@ -302,8 +302,9 @@ impl<'a> TrackLayers<'a> {
                 // Blink overlay: a bright pulsing stroke on top of newly
                 // loaded tracks for the first 3 seconds after load.
                 let need_blink = self.blink_alpha > 0.0 && fi.as_usize() >= self.new_file_boundary;
-                let paint_trackline = (entry.trackline || entry.ghost_fixes)
-                    && !track_renderer::skip_trackline(entry.fade, need_blink);
+                let skip_solid = track_renderer::skip_solid_trackline(entry.fade, need_blink);
+                let paint_trackline =
+                    (entry.trackline && !skip_solid) || entry.ghost_fixes || need_blink;
                 let paint_icons = matches!(
                     entry.fade.or(entry.ghost_fade),
                     Some(TrackIconFade::PerFix | TrackIconFade::AllVisible)
@@ -349,7 +350,7 @@ impl<'a> TrackLayers<'a> {
                         ),
                     };
                     let key = LinePointKey {
-                        ghost: p.fix.tpv.heading().is_none(),
+                        ghost: p.fix.is_ghost_fix(),
                         quality: tpv_renderer::quality_line_color(p.fix),
                         bucket,
                         matched: query_view.draw_mask(pi),
@@ -478,8 +479,9 @@ impl<'a> TrackLayers<'a> {
             let blink = geo
                 .need_blink
                 .then(|| track_renderer::blink_stroke(self.blink_alpha));
+            let skip_solid = track_renderer::skip_solid_trackline(geo.entry.fade, geo.need_blink);
             let visibility = track_renderer::TracklineVisibility {
-                solid: geo.entry.trackline,
+                solid: geo.entry.trackline && !skip_solid,
                 ghost: geo.entry.ghost_fixes,
             };
             paint_trackline_path(ui, &geo.path, stroke, blink, visibility);
@@ -742,6 +744,7 @@ fn paint_trackline_path(
     blink: Option<Stroke>,
     visibility: track_renderer::TracklineVisibility,
 ) {
+    let ghost_stroke = Stroke::new(stroke.width, tpv_renderer::FIX_LOST_RED);
     match path {
         VisiblePath::OffScreen => {}
         VisiblePath::Dot(key, pos) => {
@@ -756,26 +759,37 @@ fn paint_trackline_path(
             if !dot_visible {
                 return;
             }
-            ui.painter().circle_filled(*pos, stroke.width, stroke.color);
+            let color = if key.ghost {
+                tpv_renderer::FIX_LOST_RED
+            } else {
+                stroke.color
+            };
+            ui.painter().circle_filled(*pos, stroke.width, color);
             if let Some(blink) = blink {
                 ui.painter().circle_filled(*pos, blink.width, blink.color);
             }
         }
         VisiblePath::Spans(spans) => {
+            let strokes = track_renderer::TracklineStrokes {
+                solid: stroke,
+                ghost: ghost_stroke,
+            };
+            let blink_strokes =
+                blink.map(|b| track_renderer::TracklineStrokes { solid: b, ghost: b });
             for span in spans.iter() {
                 for run in shown_runs(span) {
                     track_renderer::draw_track_with_ghost(
                         ui.painter(),
                         run,
-                        stroke,
+                        strokes,
                         visibility,
                         |key| key.ghost,
                     );
-                    if let Some(blink) = blink {
+                    if let Some(blink_strokes) = blink_strokes {
                         track_renderer::draw_track_with_ghost(
                             ui.painter(),
                             run,
-                            blink,
+                            blink_strokes,
                             visibility,
                             |key| key.ghost,
                         );
@@ -830,7 +844,7 @@ fn paint_quality_path(ui: &Ui, path: &VisiblePath<LinePointKey>) {
     match path {
         VisiblePath::OffScreen => {}
         VisiblePath::Dot(key, pos) => {
-            if key.hidden {
+            if key.hidden || key.ghost {
                 return;
             }
             if key.bucket > 0 {
@@ -844,25 +858,28 @@ fn paint_quality_path(ui: &Ui, path: &VisiblePath<LinePointKey>) {
         }
         VisiblePath::Spans(spans) => {
             for span in spans.iter() {
-                // Restrict to shown runs first (keep/hide), then color each
-                // run by fix quality as before.
                 for run in shown_runs(span) {
-                    for ((quality, bucket), sub_span) in
-                        tpv_renderer::sub_span_ranges(run, |key| (key.quality, key.bucket))
+                    for real_run in run
+                        .split(|&(key, _)| key.ghost)
+                        .filter(|slice| slice.len() >= 2)
                     {
-                        if bucket == 0 {
-                            continue;
+                        for ((quality, bucket), sub_span) in
+                            tpv_renderer::sub_span_ranges(real_run, |key| (key.quality, key.bucket))
+                        {
+                            if bucket == 0 {
+                                continue;
+                            }
+                            let Some(sub_span_points) = real_run.get(sub_span) else {
+                                continue;
+                            };
+                            painter.add(egui::Shape::line(
+                                sub_span_points.iter().map(|&(_, pos)| pos).collect(),
+                                Stroke::new(
+                                    QUALITY_LINE_WIDTH,
+                                    quality.gamma_multiply(tpv_renderer::bucket_alpha(bucket)),
+                                ),
+                            ));
                         }
-                        let Some(sub_span_points) = run.get(sub_span) else {
-                            continue;
-                        };
-                        painter.add(egui::Shape::line(
-                            sub_span_points.iter().map(|&(_, pos)| pos).collect(),
-                            Stroke::new(
-                                QUALITY_LINE_WIDTH,
-                                quality.gamma_multiply(tpv_renderer::bucket_alpha(bucket)),
-                            ),
-                        ));
                     }
                 }
             }
@@ -880,22 +897,29 @@ mod tests {
     use std::ops::Range;
 
     use chrono::{DateTime, TimeDelta, Utc};
-    use egui::{Color32, Rect};
+    use egui::{Color32, Rect, Stroke};
     use gt_filter::GlobalFilter;
+    use gt_types::fixtures::FixKind;
     use gt_types::{
         GpsTime, Latitude, LoadedTrack, Longitude, NavPoint, RecordedLatitude, TimePositionVelocity,
     };
-    use gt_ui_types::{DrawLayerMask, QueryMatches, TrackMatchView};
+    use gt_ui_types::{
+        DisplayMask, DrawLayerMask, MapHighlight, QueryMatches, SkyGlyphVariant, TrackMatchView,
+    };
     use rstest::rstest;
     use uom::si::angle::degree;
     use uom::si::f64::Angle;
 
-    use super::{LinePointKey, TrackGeometry};
+    use super::{LinePointKey, TrackGeometry, TrackLayers};
     use crate::polyline::{self, CULL_MARGIN_PX, VisiblePath};
+    use crate::sat_labels::LabelSelection;
+    use crate::sky_glyph_renderer::GlyphSelection;
     use crate::test_util;
     use crate::tpv_renderer::{self, ChevronFix, TrackIconFade};
+    use crate::track_endpoint_renderer::PendingEndpointFlags;
+    use crate::track_renderer::TracklineVisibility;
     use crate::transform::{self, GeometryCull, MercTransform};
-    use crate::viewport::TrackEntry;
+    use crate::viewport::{TrackEntry, TrackPlan};
 
     /// Snapshot: the focus scrim at full progress dims the scene by darkening
     /// it, in both themes. A regression guard for the light-mode wash-out (the
@@ -962,28 +986,31 @@ mod tests {
         assert_eq!(runs, expected);
     }
 
-    /// A parked cluster with mixed fix quality at sub-pixel distance: the
-    /// quality transition forces point retention, so the unified key paints
-    /// a short span where the old trackline-only reduction (keyed on ghost
-    /// alone) collapsed to a dot. Pins this intentional divergence of the
-    /// unified geometry walk.
-    #[test]
-    fn sub_pixel_quality_transition_yields_spans_not_dot() {
-        let rect = Rect {
-            min: egui::pos2(0.0, 0.0),
-            max: egui::pos2(100.0, 100.0),
-        };
-        let key = |quality| LinePointKey {
+    fn default_line_key() -> LinePointKey {
+        LinePointKey {
             ghost: false,
-            quality,
+            quality: Color32::BLUE,
             bucket: 3,
             matched: DrawLayerMask::default(),
             hidden: false,
             hover_matched: false,
+        }
+    }
+
+    /// A parked cluster with mixed fix quality or ghost state at sub-pixel distance:
+    /// the key transition forces point retention, so the unified key paints
+    /// a short span where reduction would otherwise collapse to a dot.
+    #[rstest]
+    #[case::quality_transition(LinePointKey { quality: Color32::YELLOW, ..default_line_key() })]
+    #[case::ghost_transition(LinePointKey { ghost: true, ..default_line_key() })]
+    fn sub_pixel_key_transition_yields_spans_not_dot(#[case] second_key: LinePointKey) {
+        let rect = Rect {
+            min: egui::pos2(0.0, 0.0),
+            max: egui::pos2(100.0, 100.0),
         };
         let pts = vec![
-            (key(Color32::BLUE), egui::pos2(10.0, 10.0)),
-            (key(Color32::YELLOW), egui::pos2(10.2, 10.0)),
+            (default_line_key(), egui::pos2(10.0, 10.0)),
+            (second_key, egui::pos2(10.2, 10.0)),
         ];
         let path = polyline::visible_path(pts.into_iter(), rect);
         assert!(matches!(path, VisiblePath::Spans(_)));
@@ -1276,13 +1303,23 @@ mod tests {
                 .build(),
             None,
         );
-        let track =
-            gt_test_utils::loaded_track_with_points(vec![real_fix, ghost_fix, out_of_range_fix]);
+        let ghost_with_heading = gt_types::fixtures::nav_point(
+            FIRST_FIX_TIME + TimeDelta::seconds(3),
+            lat,
+            lon,
+            FixKind::GhostWithoutSatellitesInFix,
+        );
+        let track = gt_test_utils::loaded_track_with_points(vec![
+            real_fix,
+            ghost_fix,
+            out_of_range_fix,
+            ghost_with_heading,
+        ]);
         let transform =
             MercTransform::for_test_view(2_f64.powi(20), lat, lon, egui::pos2(400.0, 300.0));
         let filter = GlobalFilter::default();
         let query_view = TrackMatchView::for_track(None, test_util::track0());
-        let hits = vec![0, 1, 2];
+        let hits = vec![0, 1, 2, 3];
 
         let mut geometry = geometry_of(&track, &transform, &filter);
         geometry.entry.ghost_fixes = true;
@@ -1292,6 +1329,7 @@ mod tests {
             vec![
                 (1, ChevronFix::DeadReckoned),
                 (2, ChevronFix::CoordinateOutOfRange),
+                (3, ChevronFix::DeadReckoned),
             ]
         );
 
@@ -1303,11 +1341,137 @@ mod tests {
         geometry.entry.fade = None;
         geometry.entry.ghost_fixes = true;
         let chevrons = geometry.chevrons_of(&hits, &filter, &query_view);
-        assert_eq!(chevrons, vec![(1, ChevronFix::DeadReckoned)]);
+        assert_eq!(
+            chevrons,
+            vec![(1, ChevronFix::DeadReckoned), (3, ChevronFix::DeadReckoned),]
+        );
 
         geometry.entry.ghost_fixes = false;
         let chevrons = geometry.chevrons_of(&hits, &filter, &query_view);
         assert!(chevrons.is_empty());
+    }
+
+    #[test]
+    fn dead_reckoned_stretches_with_headings_are_classified_ghost_and_drawn_red() {
+        let lat = Latitude::new(LATITUDE_DEGREES);
+        let mut lon = FIRST_LONGITUDE_DEGREES;
+        let step_degrees = 0.005;
+        let kinds = [
+            FixKind::GhostWithoutSatellitesInFix,
+            FixKind::GhostWithoutSatellitesInFix,
+            FixKind::Measured,
+            FixKind::Measured,
+            FixKind::GhostWithoutSatellitesInFix,
+            FixKind::GhostWithoutSatellitesInFix,
+        ];
+        let points: Vec<NavPoint> = kinds
+            .iter()
+            .enumerate()
+            .map(|(i, &kind)| {
+                let time = FIRST_FIX_TIME + TimeDelta::seconds(i as i64);
+                let p = gt_types::fixtures::nav_point(time, lat, Longitude::new(lon), kind);
+                lon += step_degrees;
+                p
+            })
+            .collect();
+        let track = gt_test_utils::loaded_track_with_points(points);
+        let transform = MercTransform::for_test_view(
+            2_f64.powi(20),
+            lat,
+            Longitude::new(FIRST_LONGITUDE_DEGREES),
+            MAP_RECT.center(),
+        );
+        let filter = GlobalFilter::default();
+        let file = gt_test_utils::loaded_file_with_tracks(vec![track]);
+        let files = [file];
+        let vis = crate::tests::vis_all_visible();
+        let mask = DisplayMask::default();
+        let plan = TrackPlan::compute(&files, &vis, &filter, mask, 15.0);
+        let mut sat_label_scratch = LabelSelection::default();
+        let mut sky_glyph_scratch = GlyphSelection::default();
+        let mut endpoint_flags = PendingEndpointFlags::default();
+        let highlight = MapHighlight::default();
+        let layers = TrackLayers::builder()
+            .files(&files)
+            .plan(&plan)
+            .highlight(&highlight)
+            .filter(&filter)
+            .tpv_by_track(None)
+            .new_file_boundary(0)
+            .blink_alpha(0.0)
+            .hover_fade_alpha(0.0)
+            .match_reveal(0.0)
+            .display_query_highlights(false)
+            .sky_glyph_variant(SkyGlyphVariant::default())
+            .sat_label_scratch(&mut sat_label_scratch)
+            .sky_glyph_scratch(&mut sky_glyph_scratch)
+            .endpoint_flags(&mut endpoint_flags)
+            .build();
+        let style = tpv_renderer::frame_style(15.0);
+        let geometries = layers.prepare_track_geometries(MAP_RECT, &style, &transform);
+        assert_eq!(geometries.len(), 1);
+        let geo = &geometries[0];
+
+        let VisiblePath::Spans(spans) = &geo.path else {
+            panic!("expected spans path");
+        };
+        let ghost_flags: Vec<bool> = spans.iter().flatten().map(|&(key, _)| key.ghost).collect();
+        assert_eq!(ghost_flags, vec![true, true, false, false, true, true]);
+
+        let stroke = Stroke::new(3.0, Color32::BLUE);
+        let paint_shapes = |visibility| {
+            let mut harness = test_util::harness_builder().ui(|ui| {
+                super::paint_trackline_path(ui, &geo.path, stroke, None, visibility);
+            });
+            harness.run();
+            harness
+                .inner
+                .output()
+                .shapes
+                .iter()
+                .filter(|clipped| !matches!(clipped.shape, egui::Shape::Rect(_)))
+                .map(|clipped| clipped.shape.clone())
+                .collect::<Vec<_>>()
+        };
+
+        let hidden_ghost_shapes = paint_shapes(TracklineVisibility {
+            solid: true,
+            ghost: false,
+        });
+        assert_eq!(hidden_ghost_shapes.len(), 1);
+        let has_red = |shapes: &[egui::Shape]| {
+            shapes.iter().any(|shape| match shape {
+                egui::Shape::LineSegment { stroke: s, .. } => s.color == tpv_renderer::FIX_LOST_RED,
+                egui::Shape::Path(path) => {
+                    path.stroke.color == egui::epaint::ColorMode::Solid(tpv_renderer::FIX_LOST_RED)
+                }
+                _ => false,
+            })
+        };
+        assert!(!has_red(&hidden_ghost_shapes));
+
+        let visible_shapes = paint_shapes(TracklineVisibility {
+            solid: true,
+            ghost: true,
+        });
+        assert!(has_red(&visible_shapes));
+
+        let solo_ghost_shapes = paint_shapes(TracklineVisibility {
+            solid: false,
+            ghost: true,
+        });
+        assert!(!solo_ghost_shapes.is_empty());
+        assert!(has_red(&solo_ghost_shapes));
+        let has_track_color = |shapes: &[egui::Shape]| {
+            shapes.iter().any(|shape| match shape {
+                egui::Shape::LineSegment { stroke: s, .. } => s.color == stroke.color,
+                egui::Shape::Path(path) => {
+                    path.stroke.color == egui::epaint::ColorMode::Solid(stroke.color)
+                }
+                _ => false,
+            })
+        };
+        assert!(!has_track_color(&solo_ghost_shapes));
     }
 
     /// The map rect every case frames the fixture in.
