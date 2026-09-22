@@ -55,6 +55,7 @@ fn popup_label(category: DisplayCategory) -> &'static str {
     match category {
         DisplayCategory::Tracks => "Tracks",
         DisplayCategory::TrackPoints => "Track points",
+        DisplayCategory::GhostFixes => "Ghost fixes",
         DisplayCategory::SatelliteLabels => "Satellite labels",
         DisplayCategory::CustomMarkers => "Custom markers",
         DisplayCategory::GeneratedMarkers => "Generated markers",
@@ -86,6 +87,9 @@ fn empty_hover_text(category: DisplayCategory) -> String {
 fn row_hover_text(category: DisplayCategory, visible: bool) -> String {
     let verb = if visible { "Hide" } else { "Show" };
     let description = match category {
+        DisplayCategory::GhostFixes => {
+            " Ghost fixes are dead-reckoned points with no heading or no satellites in fix."
+        }
         DisplayCategory::SkyGlyphs => {
             " Sky glyphs show the directions of the satellites used in each fix."
         }
@@ -626,6 +630,7 @@ mod tests {
         DisplayCounts::from_fn(|category| match category {
             DisplayCategory::Tracks => 12,
             DisplayCategory::TrackPoints => 8940,
+            DisplayCategory::GhostFixes => 142,
             DisplayCategory::SatelliteLabels => 214,
             DisplayCategory::CustomMarkers => 37,
             DisplayCategory::GeneratedMarkers => 1482,

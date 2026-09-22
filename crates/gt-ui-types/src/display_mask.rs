@@ -24,8 +24,10 @@ use strum::{EnumCount, IntoEnumIterator};
 pub enum DisplayCategory {
     /// The tracklines.
     Tracks,
-    /// The per-fix icons (arrows, ghost chevrons) and the quality line.
+    /// The per-fix icons (arrows) and the quality line.
     TrackPoints,
+    /// Dead-reckoned fixes and the dashed trackline stretches through them.
+    GhostFixes,
     /// The satellite-count labels.
     SatelliteLabels,
     /// User-authored markers.
@@ -203,6 +205,7 @@ mod tests {
         let expected = [
             (DisplayCategory::Tracks, "tracks"),
             (DisplayCategory::TrackPoints, "track_points"),
+            (DisplayCategory::GhostFixes, "ghost_fixes"),
             (DisplayCategory::SatelliteLabels, "satellite_labels"),
             (DisplayCategory::CustomMarkers, "custom_markers"),
             (DisplayCategory::GeneratedMarkers, "generated_markers"),

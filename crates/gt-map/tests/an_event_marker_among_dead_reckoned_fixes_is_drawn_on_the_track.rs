@@ -102,6 +102,32 @@ fn snapshot_an_event_marker_among_dead_reckoned_fixes_is_drawn_on_the_dashed_tra
     map.snapshot("event_marker_among_dead_reckoned_fixes");
 }
 
+#[test]
+fn snapshot_hidden_ghost_fixes_leave_a_gap_in_the_trackline() {
+    let files = a_recording_with_an_event_marker_among_dead_reckoned_fixes();
+    let mut map = MapScene::of(files)
+        .draw_state(|state| {
+            state
+                .display_mask
+                .set_visible(gt_ui_types::DisplayCategory::GhostFixes, false);
+        })
+        .render();
+    map.snapshot("ghost_fixes_hidden_leave_a_gap");
+}
+
+#[test]
+fn snapshot_solo_ghost_fixes_draws_only_dead_reckoned_ink() {
+    let files = a_recording_with_an_event_marker_among_dead_reckoned_fixes();
+    let mut map = MapScene::of(files)
+        .draw_state(|state| {
+            state
+                .display_mask
+                .solo(gt_ui_types::DisplayCategory::GhostFixes);
+        })
+        .render();
+    map.snapshot("ghost_fixes_soloed");
+}
+
 /// Fixes of the recording, one every [`SECONDS_BETWEEN_FIXES`].
 const FIX_COUNT: usize = 21;
 

@@ -123,8 +123,16 @@ pub(crate) fn blink_stroke(blink_alpha: f32) -> Stroke {
     )
 }
 
+/// Which portions of the trackline are visible.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TracklineVisibility {
+    pub(crate) solid: bool,
+    pub(crate) ghost: bool,
+}
+
 /// Draw a track polyline where ghost-fix edges (either endpoint has `heading == None`)
-/// are rendered as dashed lines and real edges as solid lines.
+/// are rendered as dashed lines when `visibility.ghost` is true, or skipped as gaps when
+/// false, and real edges as solid lines when `visibility.solid` is true.
 ///
 /// An edge is ghost when either endpoint is a ghost fix, so the dashed region
 /// extends one segment on each side of every ghost point - ensuring the
@@ -133,6 +141,7 @@ pub(crate) fn draw_track_with_ghost<K: Copy>(
     painter: &egui::Painter,
     pts: &[(K, egui::Pos2)],
     stroke: Stroke,
+    visibility: TracklineVisibility,
     is_ghost: impl Fn(K) -> bool,
 ) {
     if pts.len() < 2 {
@@ -140,7 +149,9 @@ pub(crate) fn draw_track_with_ghost<K: Copy>(
     }
 
     let paint_solid_run = |run: RangeInclusive<usize>| {
-        if let Some(run_points) = pts.get(run) {
+        if visibility.solid
+            && let Some(run_points) = pts.get(run)
+        {
             painter.add(egui::Shape::line(
                 run_points.iter().map(|&(_, pos)| pos).collect(),
                 stroke,
@@ -162,12 +173,14 @@ pub(crate) fn draw_track_with_ghost<K: Copy>(
             if let Some(run) = solid_run.take() {
                 paint_solid_run(run);
             }
-            if ghost_span.is_empty() {
-                ghost_span.push(pos_a);
+            if visibility.ghost {
+                if ghost_span.is_empty() {
+                    ghost_span.push(pos_a);
+                }
+                ghost_span.push(pos_b);
             }
-            ghost_span.push(pos_b);
         } else {
-            if ghost_span.len() >= 2 {
+            if visibility.ghost && ghost_span.len() >= 2 {
                 draw_dashed_line(painter, &ghost_span, stroke, GHOST_FIX_DASH);
             }
             ghost_span.clear();
@@ -179,7 +192,7 @@ pub(crate) fn draw_track_with_ghost<K: Copy>(
     if let Some(run) = solid_run {
         paint_solid_run(run);
     }
-    if ghost_span.len() >= 2 {
+    if visibility.ghost && ghost_span.len() >= 2 {
         draw_dashed_line(painter, &ghost_span, stroke, GHOST_FIX_DASH);
     }
 }
@@ -301,6 +314,8 @@ pub(crate) const FOCUS_SCRIM_MAX_ALPHA_DARK: f32 = 0.3;
 
 #[cfg(test)]
 mod tests {
+    use egui::{Color32, Pos2, Stroke};
+
     use crate::tpv_renderer::TrackIconFade;
 
     #[test]
@@ -319,5 +334,63 @@ mod tests {
         ));
         // A blinking (newly loaded) track draws its overlay in this pass.
         assert!(!super::skip_trackline(Some(TrackIconFade::AllHidden), true));
+    }
+
+    #[test]
+    fn draw_track_with_ghost_respects_solid_and_ghost_visibility() {
+        let pts = vec![
+            (false, Pos2::new(0.0, 0.0)),
+            (false, Pos2::new(10.0, 0.0)),
+            (true, Pos2::new(20.0, 0.0)),
+            (true, Pos2::new(30.0, 0.0)),
+            (false, Pos2::new(40.0, 0.0)),
+            (false, Pos2::new(50.0, 0.0)),
+        ];
+        let stroke = Stroke::new(2.0, Color32::WHITE);
+
+        let paint_count = |visibility| {
+            let mut harness = crate::test_util::harness_builder().ui(|ui| {
+                super::draw_track_with_ghost(ui.painter(), &pts, stroke, visibility, |is_ghost| {
+                    is_ghost
+                });
+            });
+            harness.run();
+            harness
+                .inner
+                .output()
+                .shapes
+                .iter()
+                .filter(|clipped| !matches!(clipped.shape, egui::Shape::Rect(_)))
+                .count()
+        };
+
+        assert_eq!(
+            paint_count(super::TracklineVisibility {
+                solid: true,
+                ghost: false,
+            }),
+            2
+        );
+        assert_eq!(
+            paint_count(super::TracklineVisibility {
+                solid: true,
+                ghost: true,
+            }),
+            5
+        );
+        assert_eq!(
+            paint_count(super::TracklineVisibility {
+                solid: false,
+                ghost: true,
+            }),
+            3
+        );
+        assert_eq!(
+            paint_count(super::TracklineVisibility {
+                solid: false,
+                ghost: false,
+            }),
+            0
+        );
     }
 }

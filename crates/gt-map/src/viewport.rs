@@ -217,17 +217,30 @@ pub(crate) struct TrackEntry {
     /// track's map visibility and its own display category, independent of
     /// the track-points toggle.
     pub(crate) sky_glyphs: bool,
+    /// Dead-reckoned chevrons and dashed trackline stretches are permitted to
+    /// draw for this track.
+    pub(crate) ghost_fixes: bool,
+    /// Icon fade for dead-reckoned chevrons when ghost fixes are active, or
+    /// None when zoomed out to AllHidden or when TPV is disabled.
+    pub(crate) ghost_fade: Option<TrackIconFade>,
 }
 
 impl TrackEntry {
     /// TPV viewport points are worth collecting only when icons can draw.
     fn tpv_collectable(self) -> bool {
         self.fade.is_some_and(|f| f != TrackIconFade::AllHidden)
+            || self
+                .ghost_fade
+                .is_some_and(|f| f != TrackIconFade::AllHidden)
     }
 
     /// No layer draws. The renderer can skip the track outright.
     pub(crate) fn draws_nothing(self) -> bool {
-        !self.trackline && self.fade.is_none() && !self.sat_labels && !self.sky_glyphs
+        !self.trackline
+            && self.fade.is_none()
+            && !self.sat_labels
+            && !self.sky_glyphs
+            && !self.ghost_fixes
     }
 }
 
@@ -274,8 +287,18 @@ impl TrackPlan {
                     enabled && track_vis.is_some_and(|tv| tv.category_visible(DataCategory::Tpv));
                 // The fade classification runs last so it is skipped for
                 // tracks that are hidden or filtered out anyway.
-                let fade = (tpv_on && display_mask.is_visible(DisplayCategory::TrackPoints))
-                    .then(|| tpv_renderer::classify_icon_fade(track, scale, icon_size));
+                let icon_fade = (tpv_on
+                    && (display_mask.is_visible(DisplayCategory::TrackPoints)
+                        || display_mask.is_visible(DisplayCategory::GhostFixes)))
+                .then(|| tpv_renderer::classify_icon_fade(track, scale, icon_size));
+                let fade = display_mask
+                    .is_visible(DisplayCategory::TrackPoints)
+                    .then_some(icon_fade)
+                    .flatten();
+                let ghost_fade = display_mask
+                    .is_visible(DisplayCategory::GhostFixes)
+                    .then_some(icon_fade)
+                    .flatten();
                 let entry = TrackEntry {
                     trackline: enabled
                         && track_vis.is_some_and(|tv| tv.category_visible(DataCategory::Track))
@@ -283,6 +306,8 @@ impl TrackPlan {
                     fade,
                     sat_labels: tpv_on && display_mask.is_visible(DisplayCategory::SatelliteLabels),
                     sky_glyphs: enabled && display_mask.is_visible(DisplayCategory::SkyGlyphs),
+                    ghost_fixes: enabled && display_mask.is_visible(DisplayCategory::GhostFixes),
+                    ghost_fade,
                 };
                 if entry.tpv_collectable()
                     && let Some(geometry) = track.geometry.measured()
