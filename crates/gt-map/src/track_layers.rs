@@ -96,7 +96,15 @@ impl TrackGeometry<'_> {
                 if !gt_filter::point_passes_time_filter(point.fix.tpv.time().utc(), filter) {
                     return None;
                 }
-                Some((pi, ChevronFix::for_fix(point.fix)?))
+                let chevron = ChevronFix::for_fix(point.fix)?;
+                let visible = match chevron {
+                    ChevronFix::DeadReckoned => self.entry.ghost_fixes,
+                    ChevronFix::CoordinateOutOfRange => self.entry.fade.is_some(),
+                };
+                if !visible {
+                    return None;
+                }
+                Some((pi, chevron))
             })
             .collect();
         chevrons.sort_unstable_by_key(|&(pi, _)| pi);
@@ -126,6 +134,7 @@ impl TrackGeometry<'_> {
     fn icon_fade(&self) -> Option<TrackIconFade> {
         self.entry
             .fade
+            .or(self.entry.ghost_fade)
             .filter(|&fade| fade != TrackIconFade::AllHidden)
     }
 }
@@ -293,10 +302,10 @@ impl<'a> TrackLayers<'a> {
                 // Blink overlay: a bright pulsing stroke on top of newly
                 // loaded tracks for the first 3 seconds after load.
                 let need_blink = self.blink_alpha > 0.0 && fi.as_usize() >= self.new_file_boundary;
-                let paint_trackline =
-                    entry.trackline && !track_renderer::skip_trackline(entry.fade, need_blink);
+                let paint_trackline = (entry.trackline || entry.ghost_fixes)
+                    && !track_renderer::skip_trackline(entry.fade, need_blink);
                 let paint_icons = matches!(
-                    entry.fade,
+                    entry.fade.or(entry.ghost_fade),
                     Some(TrackIconFade::PerFix | TrackIconFade::AllVisible)
                 );
                 let paint_quality = matches!(
@@ -469,7 +478,11 @@ impl<'a> TrackLayers<'a> {
             let blink = geo
                 .need_blink
                 .then(|| track_renderer::blink_stroke(self.blink_alpha));
-            paint_trackline_path(ui, &geo.path, stroke, blink);
+            let visibility = track_renderer::TracklineVisibility {
+                solid: geo.entry.trackline,
+                ghost: geo.entry.ghost_fixes,
+            };
+            paint_trackline_path(ui, &geo.path, stroke, blink, visibility);
         }
     }
 
@@ -632,21 +645,24 @@ impl<'a> TrackLayers<'a> {
                 } else {
                     tpv
                 };
-                tpv_renderer::draw_track_icons(
-                    ui,
-                    icon_view_rect,
-                    geo.fi,
-                    geo.ti,
-                    geo.track,
-                    tpv,
-                    &chevrons,
-                    style,
-                    fade,
-                    transform,
-                    self.highlight,
-                    self.filter,
-                    self.icon_meshes,
-                );
+                let real_tpv = if geo.entry.fade.is_some() { tpv } else { None };
+                if real_tpv.is_some() || !chevrons.is_empty() {
+                    tpv_renderer::draw_track_icons(
+                        ui,
+                        icon_view_rect,
+                        geo.fi,
+                        geo.ti,
+                        geo.track,
+                        real_tpv,
+                        &chevrons,
+                        style,
+                        fade,
+                        transform,
+                        self.highlight,
+                        self.filter,
+                        self.icon_meshes,
+                    );
+                }
             }
             // Labels last so their backplates sit on top of the icons.
             if let Some(label_indices) = self.sat_label_scratch.selected().get(i) {
@@ -724,11 +740,20 @@ fn paint_trackline_path(
     path: &VisiblePath<LinePointKey>,
     stroke: Stroke,
     blink: Option<Stroke>,
+    visibility: track_renderer::TracklineVisibility,
 ) {
     match path {
         VisiblePath::OffScreen => {}
         VisiblePath::Dot(key, pos) => {
             if key.hidden {
+                return;
+            }
+            let dot_visible = if key.ghost {
+                visibility.ghost
+            } else {
+                visibility.solid
+            };
+            if !dot_visible {
                 return;
             }
             ui.painter().circle_filled(*pos, stroke.width, stroke.color);
@@ -739,12 +764,21 @@ fn paint_trackline_path(
         VisiblePath::Spans(spans) => {
             for span in spans.iter() {
                 for run in shown_runs(span) {
-                    track_renderer::draw_track_with_ghost(ui.painter(), run, stroke, |key| {
-                        key.ghost
-                    });
+                    track_renderer::draw_track_with_ghost(
+                        ui.painter(),
+                        run,
+                        stroke,
+                        visibility,
+                        |key| key.ghost,
+                    );
                     if let Some(blink) = blink {
-                        let bp: Vec<egui::Pos2> = run.iter().map(|&(_, pos)| pos).collect();
-                        ui.painter().add(egui::Shape::line(bp, blink));
+                        track_renderer::draw_track_with_ghost(
+                            ui.painter(),
+                            run,
+                            blink,
+                            visibility,
+                            |key| key.ghost,
+                        );
                     }
                 }
             }
@@ -848,7 +882,9 @@ mod tests {
     use chrono::{DateTime, TimeDelta, Utc};
     use egui::{Color32, Rect};
     use gt_filter::GlobalFilter;
-    use gt_types::{GpsTime, Latitude, LoadedTrack, Longitude, NavPoint, TimePositionVelocity};
+    use gt_types::{
+        GpsTime, Latitude, LoadedTrack, Longitude, NavPoint, RecordedLatitude, TimePositionVelocity,
+    };
     use gt_ui_types::{DrawLayerMask, QueryMatches, TrackMatchView};
     use rstest::rstest;
     use uom::si::angle::degree;
@@ -1069,6 +1105,8 @@ mod tests {
                 fade: Some(TrackIconFade::PerFix),
                 sat_labels: false,
                 sky_glyphs: false,
+                ghost_fixes: true,
+                ghost_fade: Some(TrackIconFade::PerFix),
             },
             paint_trackline: true,
             need_blink: false,
@@ -1206,6 +1244,70 @@ mod tests {
             hits_the_level_drops > 0,
             "no viewport of the case held a fix the walked level drops"
         );
+    }
+
+    #[test]
+    fn hiding_ghost_fixes_drops_dead_reckoned_chevrons_while_keeping_out_of_range_chevrons() {
+        let lat = Latitude::new(LATITUDE_DEGREES);
+        let lon = Longitude::new(FIRST_LONGITUDE_DEGREES);
+        let real_fix = NavPoint::new(
+            TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(FIRST_FIX_TIME))
+                .lat(lat)
+                .lon(lon)
+                .heading(Angle::new::<degree>(90.0))
+                .build(),
+            None,
+        );
+        let ghost_fix = NavPoint::new(
+            TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(FIRST_FIX_TIME + TimeDelta::seconds(1)))
+                .lat(lat)
+                .lon(lon)
+                .build(),
+            None,
+        );
+        let out_of_range_fix = NavPoint::new(
+            TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(FIRST_FIX_TIME + TimeDelta::seconds(2)))
+                .lat(RecordedLatitude::from_degrees(95.0))
+                .lon(lon)
+                .heading(Angle::new::<degree>(90.0))
+                .build(),
+            None,
+        );
+        let track =
+            gt_test_utils::loaded_track_with_points(vec![real_fix, ghost_fix, out_of_range_fix]);
+        let transform =
+            MercTransform::for_test_view(2_f64.powi(20), lat, lon, egui::pos2(400.0, 300.0));
+        let filter = GlobalFilter::default();
+        let query_view = TrackMatchView::for_track(None, test_util::track0());
+        let hits = vec![0, 1, 2];
+
+        let mut geometry = geometry_of(&track, &transform, &filter);
+        geometry.entry.ghost_fixes = true;
+        let chevrons = geometry.chevrons_of(&hits, &filter, &query_view);
+        assert_eq!(
+            chevrons,
+            vec![
+                (1, ChevronFix::DeadReckoned),
+                (2, ChevronFix::CoordinateOutOfRange),
+            ]
+        );
+
+        geometry.entry.ghost_fixes = false;
+        let chevrons = geometry.chevrons_of(&hits, &filter, &query_view);
+        assert_eq!(chevrons, vec![(2, ChevronFix::CoordinateOutOfRange)]);
+
+        // Soloing ghost fixes: TrackPoints is hidden (fade is None), ghost fixes is visible.
+        geometry.entry.fade = None;
+        geometry.entry.ghost_fixes = true;
+        let chevrons = geometry.chevrons_of(&hits, &filter, &query_view);
+        assert_eq!(chevrons, vec![(1, ChevronFix::DeadReckoned)]);
+
+        geometry.entry.ghost_fixes = false;
+        let chevrons = geometry.chevrons_of(&hits, &filter, &query_view);
+        assert!(chevrons.is_empty());
     }
 
     /// The map rect every case frames the fixture in.

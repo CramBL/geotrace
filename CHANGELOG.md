@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **Map & Tracks:** The eye menu has a "Ghost fixes" category that shows or hides dead-reckoned chevron icons and dashed trackline stretches.
+
 ## 0.18.0 - 2026-09-15
 
 ### Added

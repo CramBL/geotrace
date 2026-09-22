@@ -49,6 +49,7 @@ pub struct SuppliedCounts<'a> {
 pub struct DisplayCounts {
     tracks: usize,
     track_points: usize,
+    ghost_fixes: usize,
     satellite_labels: usize,
     custom_markers: usize,
     generated_markers: usize,
@@ -70,6 +71,7 @@ impl DisplayCounts {
         match category {
             DisplayCategory::Tracks => self.tracks,
             DisplayCategory::TrackPoints => self.track_points,
+            DisplayCategory::GhostFixes => self.ghost_fixes,
             DisplayCategory::SatelliteLabels => self.satellite_labels,
             DisplayCategory::CustomMarkers => self.custom_markers,
             DisplayCategory::GeneratedMarkers => self.generated_markers,
@@ -90,6 +92,7 @@ impl DisplayCounts {
         Self {
             tracks: get(DisplayCategory::Tracks),
             track_points: get(DisplayCategory::TrackPoints),
+            ghost_fixes: get(DisplayCategory::GhostFixes),
             satellite_labels: get(DisplayCategory::SatelliteLabels),
             custom_markers: get(DisplayCategory::CustomMarkers),
             generated_markers: get(DisplayCategory::GeneratedMarkers),
@@ -172,6 +175,16 @@ impl DisplayCounts {
                         .iter()
                         .enumerate()
                         .filter(|(pi, p)| p.satellites.is_some() && point_in_scope(*pi))
+                        .count();
+                }
+                if track_vis.category_visible(DataCategory::Track)
+                    || track_vis.category_visible(DataCategory::Tpv)
+                {
+                    counts.ghost_fixes += track
+                        .points
+                        .iter()
+                        .enumerate()
+                        .filter(|(pi, p)| p.is_ghost_fix() && point_in_scope(*pi))
                         .count();
                 }
                 if track_vis.category_visible(DataCategory::CustomMarker) {
@@ -496,6 +509,7 @@ mod tests {
         let expected = [
             (DisplayCategory::Tracks, 1),
             (DisplayCategory::TrackPoints, 4),
+            (DisplayCategory::GhostFixes, 4),
             (DisplayCategory::SatelliteLabels, 2),
             (DisplayCategory::CustomMarkers, 2),
             (DisplayCategory::GeneratedMarkers, 1),

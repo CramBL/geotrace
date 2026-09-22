@@ -194,12 +194,13 @@ fn track_plan_respects_the_display_mask() {
         .expect("track is in the plan");
     assert!(all_on.trackline);
     assert!(all_on.fade.is_some());
-
     assert!(all_on.sky_glyphs);
+    assert!(all_on.ghost_fixes);
 
     let mut mask = DisplayMask::default();
     mask.set_visible(DisplayCategory::Tracks, false);
     mask.set_visible(DisplayCategory::TrackPoints, false);
+    mask.set_visible(DisplayCategory::GhostFixes, false);
     mask.set_visible(DisplayCategory::SatelliteLabels, false);
     mask.set_visible(DisplayCategory::SkyGlyphs, false);
     let all_off = viewport::TrackPlan::compute(&files, &vis, &filter, mask, 15.0)
@@ -207,29 +208,59 @@ fn track_plan_respects_the_display_mask() {
         .expect("track is in the plan");
     assert!(!all_off.trackline);
     assert!(all_off.fade.is_none());
+    assert!(!all_off.ghost_fixes);
     assert!(all_off.draws_nothing());
+}
 
-    // Track points masked alone: the line, the labels, and the sky
-    // glyphs stay - they have their own categories.
+#[rstest::rstest]
+#[case::track_points(DisplayCategory::TrackPoints, true, false, true, true)]
+#[case::ghost_fixes(DisplayCategory::GhostFixes, true, true, false, true)]
+#[case::sky_glyphs(DisplayCategory::SkyGlyphs, true, true, true, false)]
+fn masking_a_single_category_leaves_independent_categories_in_the_plan(
+    #[case] masked: DisplayCategory,
+    #[case] expected_trackline: bool,
+    #[case] expected_fade: bool,
+    #[case] expected_ghost: bool,
+    #[case] expected_glyphs: bool,
+) {
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![track_at(
+        55.0, 12.0,
+    )])];
+    let vis = vis_all_visible();
+    let filter = GlobalFilter::default();
+    let track = test_util::track0();
+
     let mut mask = DisplayMask::default();
-    mask.set_visible(DisplayCategory::TrackPoints, false);
-    let points_off = viewport::TrackPlan::compute(&files, &vis, &filter, mask, 15.0)
+    mask.set_visible(masked, false);
+    let entry = viewport::TrackPlan::compute(&files, &vis, &filter, mask, 15.0)
         .entry(track)
         .expect("track is in the plan");
-    assert!(points_off.trackline);
-    assert!(points_off.fade.is_none());
-    assert!(points_off.sat_labels);
-    assert!(points_off.sky_glyphs);
+    assert_eq!(entry.trackline, expected_trackline);
+    assert_eq!(entry.fade.is_some(), expected_fade);
+    assert_eq!(entry.ghost_fixes, expected_ghost);
+    assert_eq!(entry.sky_glyphs, expected_glyphs);
+}
 
-    // Sky glyphs masked alone: everything else stays.
+#[test]
+fn soloing_ghost_fixes_plans_ghost_fixes_without_standard_lines_or_icons() {
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![track_at(
+        55.0, 12.0,
+    )])];
+    let vis = vis_all_visible();
+    let filter = GlobalFilter::default();
+    let track = test_util::track0();
+
     let mut mask = DisplayMask::default();
-    mask.set_visible(DisplayCategory::SkyGlyphs, false);
-    let glyphs_off = viewport::TrackPlan::compute(&files, &vis, &filter, mask, 15.0)
+    mask.solo(DisplayCategory::GhostFixes);
+    let entry = viewport::TrackPlan::compute(&files, &vis, &filter, mask, 15.0)
         .entry(track)
         .expect("track is in the plan");
-    assert!(!glyphs_off.sky_glyphs);
-    assert!(glyphs_off.trackline);
-    assert!(glyphs_off.fade.is_some());
+    assert!(!entry.draws_nothing());
+    assert!(!entry.trackline);
+    assert!(entry.fade.is_none());
+    assert!(entry.ghost_fixes);
+    assert!(entry.ghost_fade.is_some());
+    assert!(!entry.sky_glyphs);
 }
 
 /// With every position-carrying category masked there is no visible
