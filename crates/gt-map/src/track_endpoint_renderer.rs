@@ -32,15 +32,17 @@ use crate::transform::MercTransform;
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DrawnTrackEnds<'a> {
     placed: PlacedPoints<'a>,
-    first: usize,
-    last: usize,
+    pub(crate) first: usize,
+    pub(crate) last: usize,
     drawn_as_one_dot: bool,
 }
 
 impl<'a> DrawnTrackEnds<'a> {
-    /// `Some` where the window holds the time of at least one fix. `first`
-    /// equals `last` where it holds exactly one, and that fix then gets the
-    /// start flag alone.
+    /// `Some` where the window holds the time of at least one fix. The start flag
+    /// sits on the first fix with satellites in fix, or falls back to the first
+    /// point of the window when the track has no measured fix. `first` equals
+    /// `last` where it holds exactly one, and that fix then gets the start flag
+    /// alone.
     ///
     /// The ends come from [`gt_filter::time_filtered_range`], which reads the
     /// fixes outside the window and stops at each end of it. A window that
@@ -50,9 +52,18 @@ impl<'a> DrawnTrackEnds<'a> {
     pub(crate) fn of(placed: PlacedPoints<'a>, filter: &GlobalFilter) -> Option<Self> {
         let range = gt_filter::time_filtered_range(placed.fixes(), filter);
         let last = range.end.checked_sub(1)?;
+        let fixes = placed.fixes();
+        let first_with_fix = (range.start..=last)
+            .filter(|&i| {
+                fixes.get(i).is_some_and(|p| {
+                    gt_filter::point_passes_time_filter(p.tpv.time().utc(), filter)
+                })
+            })
+            .find(|&i| fixes.get(i).is_some_and(|p| p.fix_count() > 0));
+        let first = first_with_fix.unwrap_or(range.start);
         Some(Self {
             placed,
-            first: range.start,
+            first,
             last,
             drawn_as_one_dot: false,
         })
@@ -559,6 +570,7 @@ const COUNT_BADGE_FILL: Color32 = Color32::from_black_alpha(200);
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, Duration, Utc};
+    use gt_types::fixtures::FixKind;
     use gt_types::{FileIdx, GpsTime, LoadedTrack, NavPoint, TimePositionVelocity, TrackIdx};
     use rstest::rstest;
 
@@ -589,6 +601,22 @@ mod tests {
     /// A track of `count` fixes a minute apart, walking east.
     fn a_track_of(count: usize) -> LoadedTrack {
         a_track_stamped_at(&(0..count as i64).collect::<Vec<_>>())
+    }
+
+    fn a_track_with_fix_kinds(kinds: &[FixKind]) -> LoadedTrack {
+        let points: Vec<NavPoint> = kinds
+            .iter()
+            .enumerate()
+            .map(|(i, &kind)| {
+                gt_types::fixtures::nav_point(
+                    epoch() + Duration::minutes(i as i64),
+                    Latitude::new(55.0),
+                    Longitude::new(12.0 + i as f64 * FIX_STEP_DEGREES),
+                    kind,
+                )
+            })
+            .collect();
+        gt_test_utils::loaded_track_with_points(points)
     }
 
     /// A track of three fixes whose last lies `metres` east of its first.
@@ -806,6 +834,107 @@ mod tests {
         );
 
         assert_eq!(icons_of(&instances), vec![IconId::RoundTripFlag]);
+    }
+
+    #[test]
+    fn a_track_whose_first_n_points_are_ghosts_places_the_start_flag_on_the_first_fix() {
+        let kinds = [
+            FixKind::GhostWithoutHeading,
+            FixKind::GhostWithoutSatellitesInFix,
+            FixKind::Measured,
+            FixKind::Measured,
+        ];
+        let track = a_track_with_fix_kinds(&kinds);
+        let placed = track.placed_points().unwrap_or_default();
+        let ends = DrawnTrackEnds::of(placed, &GlobalFilter::default()).expect("four points");
+
+        assert_eq!(ends.first, 2);
+        assert_eq!(ends.last, 3);
+
+        let transform = a_view_over_the_first_fix();
+        let instances = instances_of(ends, a_style(false), &transform);
+        assert_eq!(
+            icons_of(&instances),
+            vec![IconId::StartFlag, IconId::FinishFlag]
+        );
+        let Some(placed_point) = placed.get(2) else {
+            panic!("missing placed point");
+        };
+        let first_fix_pos = transform.to_screen(placed_point.merc());
+        let [start_instance, _] = instances.as_slice() else {
+            panic!("expected two flag instances");
+        };
+        let start_flag_foot = pole_foot(start_instance);
+        assert!((start_flag_foot - first_fix_pos).length() < 1e-3);
+    }
+
+    #[test]
+    fn a_track_that_is_all_ghosts_falls_back_to_the_first_point() {
+        let kinds = [
+            FixKind::GhostWithoutHeading,
+            FixKind::GhostWithoutSatellitesInFix,
+            FixKind::GhostWithoutHeading,
+        ];
+        let track = a_track_with_fix_kinds(&kinds);
+        let placed = track.placed_points().unwrap_or_default();
+        let ends = DrawnTrackEnds::of(placed, &GlobalFilter::default()).expect("three points");
+
+        assert_eq!(ends.first, 0);
+        assert_eq!(ends.last, 2);
+
+        let transform = a_view_over_the_first_fix();
+        let instances = instances_of(ends, a_style(false), &transform);
+        let Some(placed_point) = placed.get(0) else {
+            panic!("missing placed point");
+        };
+        let first_point_pos = transform.to_screen(placed_point.merc());
+        let [start_instance, _] = instances.as_slice() else {
+            panic!("expected two flag instances");
+        };
+        let start_flag_foot = pole_foot(start_instance);
+        assert!((start_flag_foot - first_point_pos).length() < 1e-3);
+    }
+
+    #[test]
+    fn a_single_fix_track_places_the_start_flag_alone() {
+        let track = a_track_with_fix_kinds(&[FixKind::Measured]);
+        let placed = track.placed_points().unwrap_or_default();
+        let ends = DrawnTrackEnds::of(placed, &GlobalFilter::default()).expect("one point");
+
+        assert_eq!(ends.first, 0);
+        assert_eq!(ends.last, 0);
+
+        let instances = instances_of(ends, a_style(false), &a_view_over_the_first_fix());
+        assert_eq!(icons_of(&instances), vec![IconId::StartFlag]);
+    }
+
+    #[test]
+    fn a_track_with_ghosts_before_a_single_fix_places_the_start_flag_alone_on_that_fix() {
+        let kinds = [
+            FixKind::GhostWithoutHeading,
+            FixKind::GhostWithoutHeading,
+            FixKind::Measured,
+        ];
+        let track = a_track_with_fix_kinds(&kinds);
+        let placed = track.placed_points().unwrap_or_default();
+        let ends = DrawnTrackEnds::of(placed, &GlobalFilter::default()).expect("three points");
+
+        assert_eq!(ends.first, 2);
+        assert_eq!(ends.last, 2);
+
+        let transform = a_view_over_the_first_fix();
+        let instances = instances_of(ends, a_style(false), &transform);
+        assert_eq!(icons_of(&instances), vec![IconId::StartFlag]);
+
+        let Some(placed_point) = placed.get(2) else {
+            panic!("missing placed point");
+        };
+        let fix_pos = transform.to_screen(placed_point.merc());
+        let [start_instance] = instances.as_slice() else {
+            panic!("expected one flag instance");
+        };
+        let start_flag_foot = pole_foot(start_instance);
+        assert!((start_flag_foot - fix_pos).length() < 1e-3);
     }
 
     /// A highlighted pair stands up at twice the separation the plain pair

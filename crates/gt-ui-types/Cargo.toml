@@ -22,6 +22,7 @@ strum.workspace = true
 
 [dev-dependencies]
 gt-track-builder = { path = "../gt-track-builder" }
+gt-types = { path = "../gt-types", features = ["fixtures"] }
 rstest.workspace = true
 serde_json.workspace = true
 

@@ -10,9 +10,10 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use gt_filter::GlobalFilter;
+use gt_types::fixtures::FixKind;
 use gt_types::{
-    DataCategory, FileIdx, FileSource, GpsTime, Latitude, LoadedFile, Longitude, NavPoint,
-    PointIdx, TimePositionVelocity, TrackIdx, TrackRef,
+    DataCategory, FileIdx, FileSource, Latitude, LoadedFile, Longitude, NavPoint, PointIdx,
+    TrackIdx, TrackRef,
 };
 
 use crate::display_mask::DisplayMask;
@@ -30,14 +31,12 @@ pub fn start() -> DateTime<Utc> {
 pub fn one_track_file() -> Vec<LoadedFile> {
     let points: Vec<NavPoint> = (0..POINT_COUNT)
         .map(|index| {
-            let tpv = TimePositionVelocity::builder()
-                .time(GpsTime::from_utc(
-                    start() + TimeDelta::seconds(index as i64),
-                ))
-                .lat(Latitude::new(55.0))
-                .lon(Longitude::new(12.0))
-                .build();
-            NavPoint::new(tpv, None)
+            gt_types::fixtures::nav_point(
+                start() + TimeDelta::seconds(index as i64),
+                Latitude::new(55.0),
+                Longitude::new(12.0),
+                FixKind::Measured,
+            )
         })
         .collect();
     vec![gt_track_builder::build_loaded_file(

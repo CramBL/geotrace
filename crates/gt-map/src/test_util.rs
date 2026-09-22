@@ -572,6 +572,9 @@ impl MapScene {
         self.draw
             .display_mask
             .set_visible(DisplayCategory::TrackPoints, false);
+        self.draw
+            .display_mask
+            .set_visible(DisplayCategory::GhostFixes, false);
         self
     }
 
