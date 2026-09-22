@@ -9,7 +9,7 @@ use gt_types::{
     Longitude, MercBounds, MercPoint, PointIdx, SpatialPoint, TimeRange, TotalDistance, TrackIdx,
     TrackMetadata,
 };
-use gt_ui_types::{DrawLayer, FileVisibility, TrackRanges, TrackVisibility};
+use gt_ui_types::{DisplayCategory, DrawLayer, FileVisibility, TrackRanges, TrackVisibility};
 use rustc_hash::FxHashMap;
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
@@ -95,7 +95,12 @@ fn hidden_track_blocks_hover() {
 }
 
 fn track_at(lat: f64, lon: f64) -> LoadedTrack {
-    gt_test_utils::loaded_track_with_points(vec![nav_at(chrono::Utc::now(), lat, lon)])
+    gt_test_utils::loaded_track_with_points(vec![gt_test_utils::fixtures::nav_point(
+        chrono::Utc::now(),
+        Latitude::new(lat),
+        Longitude::new(lon),
+        gt_types::fixtures::FixKind::Measured,
+    )])
 }
 
 /// Regression test: "zoom to fit" frames only the visible tracks. Hiding a
@@ -535,6 +540,96 @@ fn hover_finds_the_nearest_fix_and_the_nearest_event_marker() {
         hover.event_marker.map(|point| point.point_index),
         Some(PointIdx::new(0))
     );
+}
+
+#[test]
+fn hiding_ghost_fixes_prevents_hovering_ghost_points_while_keeping_real_points() {
+    let t0 = chrono::DateTime::from_timestamp(0, 0).expect("valid timestamp");
+    let real_fix_0 = gt_test_utils::fixtures::nav_point(
+        t0,
+        Latitude::new(55.0),
+        Longitude::new(12.0),
+        gt_types::fixtures::FixKind::Measured,
+    );
+    let ghost_fix = nav_at(t0 + chrono::Duration::seconds(1), 55.0, 12.05);
+    let real_fix_1 = gt_test_utils::fixtures::nav_point(
+        t0 + chrono::Duration::seconds(2),
+        Latitude::new(55.0),
+        Longitude::new(12.1),
+        gt_types::fixtures::FixKind::Measured,
+    );
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![
+        gt_test_utils::loaded_track_with_points(vec![real_fix_0, ghost_fix, real_fix_1]),
+    ])];
+    let mut map = NavMap::new(egui::Context::default(), TileAccess::Offline);
+    map.rebuild_spatial_index(&files);
+    let vis = vis_all_visible();
+    let filter = GlobalFilter::default();
+
+    let ghost_cursor = gt_types::mercator::normalize(Latitude::new(55.0), Longitude::new(12.05));
+    let real_cursor = gt_types::mercator::normalize(Latitude::new(55.0), Longitude::new(12.0));
+    let radius_merc_sq = 1e-10;
+
+    let default_scope = MapScope {
+        files: &files,
+        visibility: &vis,
+        filter: &filter,
+        display_mask: DisplayMask::default(),
+        query_matches: None,
+    };
+    let hover_ghost = map.nearest_hover_candidates(
+        [ghost_cursor.x, ghost_cursor.y],
+        radius_merc_sq,
+        default_scope,
+    );
+    assert_eq!(
+        hover_ghost
+            .tpv_or_satellite_report
+            .map(|point| point.point_index),
+        Some(PointIdx::new(1))
+    );
+
+    let mut mask = DisplayMask::default();
+    mask.set_visible(DisplayCategory::GhostFixes, false);
+    let hidden_ghost_scope = MapScope {
+        display_mask: mask,
+        ..default_scope
+    };
+    let hover_ghost_hidden = map.nearest_hover_candidates(
+        [ghost_cursor.x, ghost_cursor.y],
+        radius_merc_sq,
+        hidden_ghost_scope,
+    );
+    assert_eq!(hover_ghost_hidden.tpv_or_satellite_report, None);
+
+    let hover_real = map.nearest_hover_candidates(
+        [real_cursor.x, real_cursor.y],
+        radius_merc_sq,
+        hidden_ghost_scope,
+    );
+    assert_eq!(
+        hover_real
+            .tpv_or_satellite_report
+            .map(|point| point.point_index),
+        Some(PointIdx::new(0))
+    );
+}
+
+#[test]
+fn start_flag_remains_anchored_on_first_fix_when_ghost_fixes_are_hidden() {
+    let ghost_fix = nav_at(chrono::Utc::now(), 55.0, 12.0);
+    let real_fix = gt_test_utils::fixtures::nav_point(
+        chrono::Utc::now() + chrono::Duration::seconds(1),
+        Latitude::new(55.0),
+        Longitude::new(12.001),
+        gt_types::fixtures::FixKind::Measured,
+    );
+    let track = gt_test_utils::loaded_track_with_points(vec![ghost_fix, real_fix]);
+    let placed = track.placed_points().expect("placed points");
+    let ends = track_endpoint_renderer::DrawnTrackEnds::of(placed, &GlobalFilter::default())
+        .expect("drawn track ends");
+    assert_eq!(ends.first, 1);
+    assert_eq!(ends.last, 1);
 }
 
 fn hover_ref(category: DataCategory) -> DataPointRef {

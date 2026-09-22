@@ -511,6 +511,7 @@ impl<'a> TrackLayers<'a> {
         // leaving `self.sat_label_scratch` free to borrow mutably.
         let filter = self.filter;
         let query_matches = self.query_matches;
+        let ghost_fixes = geometries.iter().any(|geo| geo.entry.ghost_fixes);
         sat_labels::select_sat_labels(
             &mut *self.sat_label_scratch,
             geometries
@@ -528,6 +529,7 @@ impl<'a> TrackLayers<'a> {
             move |query_view, pi, point| {
                 gt_filter::point_passes_time_filter(point.tpv.time().utc(), filter)
                     && !query_view.is_hidden(pi)
+                    && (!point.is_ghost_fix() || ghost_fixes)
             },
         );
     }
@@ -904,7 +906,8 @@ mod tests {
         GpsTime, Latitude, LoadedTrack, Longitude, NavPoint, RecordedLatitude, TimePositionVelocity,
     };
     use gt_ui_types::{
-        DisplayMask, DrawLayerMask, MapHighlight, QueryMatches, SkyGlyphVariant, TrackMatchView,
+        DisplayCategory, DisplayMask, DrawLayerMask, MapHighlight, QueryMatches, SkyGlyphVariant,
+        TrackMatchView,
     };
     use rstest::rstest;
     use uom::si::angle::degree;
@@ -1472,6 +1475,121 @@ mod tests {
             })
         };
         assert!(!has_track_color(&solo_ghost_shapes));
+    }
+
+    #[test]
+    fn hiding_ghost_fixes_suppresses_labels_on_ghost_anchors_and_keeps_recovery_labels() {
+        let lat = Latitude::new(LATITUDE_DEGREES);
+        let mut lon = FIRST_LONGITUDE_DEGREES;
+        let step_degrees = 0.005;
+        let kinds = [
+            FixKind::GhostWithoutSatellitesInFix,
+            FixKind::GhostWithoutHeading,
+            FixKind::Measured,
+            FixKind::Measured,
+        ];
+        let points: Vec<NavPoint> = kinds
+            .iter()
+            .enumerate()
+            .map(|(i, &kind)| {
+                let time = FIRST_FIX_TIME + TimeDelta::seconds(i as i64);
+                let p = gt_types::fixtures::nav_point(time, lat, Longitude::new(lon), kind);
+                lon += step_degrees;
+                p
+            })
+            .collect();
+        let mut track = gt_test_utils::loaded_track_with_points(points);
+        let Some(placed) = track.placed_points() else {
+            panic!("missing placed points");
+        };
+        track.sat_label_anchors = gt_track_builder::build_sat_label_anchors(placed);
+
+        let anchor_indices: Vec<usize> = track
+            .sat_label_anchors
+            .iter()
+            .map(|a| a.point.as_usize())
+            .collect();
+        assert!(anchor_indices.contains(&0));
+        assert!(anchor_indices.contains(&2));
+
+        let transform = MercTransform::for_test_view(
+            2_f64.powi(20),
+            lat,
+            Longitude::new(FIRST_LONGITUDE_DEGREES),
+            MAP_RECT.center(),
+        );
+        let filter = GlobalFilter::default();
+        let file = gt_test_utils::loaded_file_with_tracks(vec![track]);
+        let files = [file];
+        let vis = crate::tests::vis_all_visible();
+
+        let mask = DisplayMask::default();
+        let plan = TrackPlan::compute(&files, &vis, &filter, mask, 15.0);
+        let mut sat_label_scratch = LabelSelection::default();
+        let mut sky_glyph_scratch = GlyphSelection::default();
+        let mut endpoint_flags = PendingEndpointFlags::default();
+        let highlight = MapHighlight::default();
+        let mut layers = TrackLayers::builder()
+            .files(&files)
+            .plan(&plan)
+            .highlight(&highlight)
+            .filter(&filter)
+            .tpv_by_track(None)
+            .new_file_boundary(0)
+            .blink_alpha(0.0)
+            .hover_fade_alpha(0.0)
+            .match_reveal(0.0)
+            .display_query_highlights(false)
+            .sky_glyph_variant(SkyGlyphVariant::default())
+            .sat_label_scratch(&mut sat_label_scratch)
+            .sky_glyph_scratch(&mut sky_glyph_scratch)
+            .endpoint_flags(&mut endpoint_flags)
+            .build();
+        let style = tpv_renderer::frame_style(15.0);
+        let geometries = layers.prepare_track_geometries(MAP_RECT, &style, &transform);
+        layers.select_sat_labels(&geometries, MAP_RECT, &transform, 15.0);
+        let selected = layers
+            .sat_label_scratch
+            .selected()
+            .first()
+            .cloned()
+            .unwrap_or_default();
+        assert!(selected.contains(&0));
+        assert!(selected.contains(&2));
+
+        let mut mask_no_ghost = DisplayMask::default();
+        mask_no_ghost.set_visible(DisplayCategory::GhostFixes, false);
+        let plan_no_ghost = TrackPlan::compute(&files, &vis, &filter, mask_no_ghost, 15.0);
+        let mut sat_label_scratch = LabelSelection::default();
+        let mut sky_glyph_scratch = GlyphSelection::default();
+        let mut endpoint_flags = PendingEndpointFlags::default();
+        let mut layers_no_ghost = TrackLayers::builder()
+            .files(&files)
+            .plan(&plan_no_ghost)
+            .highlight(&highlight)
+            .filter(&filter)
+            .tpv_by_track(None)
+            .new_file_boundary(0)
+            .blink_alpha(0.0)
+            .hover_fade_alpha(0.0)
+            .match_reveal(0.0)
+            .display_query_highlights(false)
+            .sky_glyph_variant(SkyGlyphVariant::default())
+            .sat_label_scratch(&mut sat_label_scratch)
+            .sky_glyph_scratch(&mut sky_glyph_scratch)
+            .endpoint_flags(&mut endpoint_flags)
+            .build();
+        let geometries_no_ghost =
+            layers_no_ghost.prepare_track_geometries(MAP_RECT, &style, &transform);
+        layers_no_ghost.select_sat_labels(&geometries_no_ghost, MAP_RECT, &transform, 15.0);
+        let selected_no_ghost = layers_no_ghost
+            .sat_label_scratch
+            .selected()
+            .first()
+            .cloned()
+            .unwrap_or_default();
+        assert!(!selected_no_ghost.contains(&0));
+        assert!(selected_no_ghost.contains(&2));
     }
 
     /// The map rect every case frames the fixture in.

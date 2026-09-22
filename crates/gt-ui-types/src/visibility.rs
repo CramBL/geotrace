@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use gt_filter::GlobalFilter;
 use gt_types::{
-    DataCategory, DataCategorySet, FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef,
+    DataCategory, DataCategorySet, FileIdx, LoadedFile, LoadedTrack, NavPoint, TrackIdx, TrackRef,
 };
 use strum::EnumCount;
 
@@ -221,11 +221,10 @@ impl MapScope<'_> {
         let index = point.point_index.as_usize();
         // Resolved before the tree and filter gates so an index past the end of
         // its array reads as addressing nothing, whatever those gates would say.
-        let Some(time) = point
-            .track
-            .resolve(self.files)
-            .and_then(|track| element_time(track, category, index))
-        else {
+        let Some(track) = point.track.resolve(self.files) else {
+            return PointVisibility::NoSuchElement;
+        };
+        let Some(time) = element_time(track, category, index) else {
             return PointVisibility::NoSuchElement;
         };
         let Some((_, track_vis)) =
@@ -233,10 +232,17 @@ impl MapScope<'_> {
         else {
             return PointVisibility::TrackNotShown;
         };
-        if !track_vis.category_visible(category)
-            || !self
-                .display_mask
-                .is_visible(DisplayCategory::from(category))
+        let display_category = match category {
+            DataCategory::Tpv => {
+                if track.points.get(index).is_some_and(NavPoint::is_ghost_fix) {
+                    DisplayCategory::GhostFixes
+                } else {
+                    DisplayCategory::TrackPoints
+                }
+            }
+            _ => DisplayCategory::from(category),
+        };
+        if !track_vis.category_visible(category) || !self.display_mask.is_visible(display_category)
         {
             return PointVisibility::CategoryHidden;
         }
@@ -276,7 +282,11 @@ fn element_time(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use chrono::TimeDelta;
+    use gt_types::fixtures::FixKind;
+    use gt_types::{FileSource, GpsTime, Latitude, Longitude, PointIdx, TimePositionVelocity};
 
     use super::*;
     use crate::test_util;
@@ -423,6 +433,84 @@ mod tests {
         assert!(
             !vis.track_shown(TrackRef::new(FileIdx::new(1), TrackIdx::new(0))),
             "an out-of-range ref is never shown"
+        );
+    }
+
+    #[test]
+    fn ghost_fixes_track_ghost_fixes_display_category() {
+        let ghost_point = NavPoint::new(
+            TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(test_util::start()))
+                .lat(Latitude::new(55.0))
+                .lon(Longitude::new(12.0))
+                .build(),
+            None,
+        );
+        let real_point = gt_types::fixtures::nav_point(
+            test_util::start() + TimeDelta::seconds(1),
+            Latitude::new(55.0),
+            Longitude::new(12.0),
+            FixKind::Measured,
+        );
+        let track = gt_track_builder::build_loaded_file(
+            "test.gtd".to_owned(),
+            &[ghost_point, real_point],
+            &[],
+            Vec::new(),
+            Vec::new(),
+            &[],
+            &gt_track_builder::SegmentationConfig::default(),
+            FileSource::GtdPath(PathBuf::from("test.gtd")),
+            gt_track_builder::FileMeta::default(),
+            Vec::new(),
+        );
+        let files = vec![track];
+        let vis = TrackDataVisibility::from_loaded(&files);
+        let filter = GlobalFilter::default();
+
+        let ghost_ref = DataPointRef {
+            track: test_util::track0(),
+            category: DataCategory::Tpv,
+            point_index: PointIdx::new(0),
+        };
+        let real_ref = DataPointRef {
+            track: test_util::track0(),
+            category: DataCategory::Tpv,
+            point_index: PointIdx::new(1),
+        };
+
+        let mut mask = DisplayMask::default();
+        let scope = MapScope {
+            files: &files,
+            visibility: &vis,
+            filter: &filter,
+            display_mask: mask,
+            query_matches: None,
+        };
+        assert_eq!(scope.point_visibility(ghost_ref), PointVisibility::Shown);
+        assert_eq!(scope.point_visibility(real_ref), PointVisibility::Shown);
+
+        mask.set_visible(DisplayCategory::GhostFixes, false);
+        let scope = MapScope {
+            display_mask: mask,
+            ..scope
+        };
+        assert_eq!(
+            scope.point_visibility(ghost_ref),
+            PointVisibility::CategoryHidden
+        );
+        assert_eq!(scope.point_visibility(real_ref), PointVisibility::Shown);
+
+        mask = DisplayMask::default();
+        mask.solo(DisplayCategory::GhostFixes);
+        let scope = MapScope {
+            display_mask: mask,
+            ..scope
+        };
+        assert_eq!(scope.point_visibility(ghost_ref), PointVisibility::Shown);
+        assert_eq!(
+            scope.point_visibility(real_ref),
+            PointVisibility::CategoryHidden
         );
     }
 }
