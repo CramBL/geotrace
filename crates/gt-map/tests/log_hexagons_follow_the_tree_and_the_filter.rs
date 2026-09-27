@@ -55,22 +55,9 @@ fn shapes_with(files: &[LoadedFile], filter: GlobalFilter, matches: LogMatches) 
 /// at the track: the camera stays where the earlier frames put it.
 fn shapes_with_the_track_unchecked(files: &[LoadedFile], matches: LogMatches) -> usize {
     let mut map = map_framed_on(files, matches, GlobalFilter::default());
-    *map.tree() = with_the_track_unchecked(files);
+    *map.tree() = test_util::a_tree_with_every_track_unchecked(files);
     map.render_one_more_frame();
     map.shapes_painted()
-}
-
-/// The tree of `files` with every track unchecked and every file left
-/// checked, the state the side panel reaches with the one track of the
-/// fixture recording unchecked.
-fn with_the_track_unchecked(files: &[LoadedFile]) -> TrackDataVisibility {
-    let mut visibility = TrackDataVisibility::from_loaded(files);
-    for file in &mut visibility.files {
-        for track in &mut file.tracks {
-            track.enabled = false;
-        }
-    }
-    visibility
 }
 
 /// Points at the hexagon sitting on the fix at `fix_index`, which the camera
@@ -264,7 +251,7 @@ fn the_log_match_count_leaves_out_a_track_unchecked_in_the_tree() {
 
     let counts = DisplayCounts::compute(
         &files,
-        &with_the_track_unchecked(&files),
+        &test_util::a_tree_with_every_track_unchecked(&files),
         &GlobalFilter::default(),
         &EventMarkerVisibility::default(),
         &GeneratedMarkerVisibility::default(),

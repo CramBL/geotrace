@@ -15,7 +15,7 @@ use gt_ui_types::MatchRevealTarget;
 fn revealing_matches_does_not_frame_the_points_the_time_window_hides(
     #[case] target: MatchRevealTarget,
 ) {
-    let files = test_util::a_recording_of(30, WALKING_STEP_DEGREES);
+    let files = test_util::a_walking_recording();
     // Every matched fix is outside the window: the window keeps the first ten
     // fixes, from before the run was made.
     let mut map = MapScene::of(files)
@@ -46,7 +46,7 @@ fn revealing_matches_does_not_frame_the_points_the_time_window_hides(
 fn revealing_matches_of_a_recording_under_the_minimum_duration_leaves_the_camera_where_it_was(
     #[case] target: MatchRevealTarget,
 ) {
-    let files = test_util::a_recording_of(30, WALKING_STEP_DEGREES);
+    let files = test_util::a_walking_recording();
     // `min_duration` filters the whole track out, although every one of its
     // fixes is inside the time window: the recording runs for 29 minutes.
     let mut map = MapScene::of(files)

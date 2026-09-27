@@ -20,9 +20,7 @@ use gt_query::lexer::{self, TokenClass};
 use gt_query::{ChannelSchema, CompletionTrigger, Construct, ConstructKind, Diagnostic, Span};
 use gt_query_run::{CheckRefresh, QuerySession, RunInputs, RunKind, RunOutcome};
 use gt_side_panel::widgets::PointClickRequests;
-use gt_ui_types::{
-    DisplayMask, MapHighlight, MapScope, MatchRevealTarget, QueryMatches, StaleRunNote,
-};
+use gt_ui_types::{MapHighlight, MapScope, MatchRevealTarget, QueryMatches, StaleRunNote};
 use strum::{EnumIter, IntoEnumIterator as _};
 
 use crate::app::background_thread;
@@ -359,11 +357,14 @@ impl QueryWindow {
     /// Render the window and handle runs. Call after the plot-hover
     /// forwarding: match-table row hover writes the same cross-highlight
     /// fields and must win for the frame.
+    ///
+    /// The window replaces the `query_matches` of `map_scope` with its own
+    /// run's effect.
     pub fn show(
         &mut self,
         ctx: &egui::Context,
         inputs: RunInputs<'_>,
-        display_mask: DisplayMask,
+        map_scope: MapScope<'_>,
         highlight: &mut MapHighlight,
         requests: &mut PointClickRequests<'_>,
         reveal_matches_request: &mut Option<MatchRevealTarget>,
@@ -407,7 +408,7 @@ impl QueryWindow {
                         self.results_ui(
                             ui,
                             inputs,
-                            display_mask,
+                            map_scope,
                             highlight,
                             requests,
                             reveal_matches_request,
@@ -1114,7 +1115,7 @@ impl QueryWindow {
         &mut self,
         ui: &mut egui::Ui,
         inputs: RunInputs<'_>,
-        display_mask: DisplayMask,
+        map_scope: MapScope<'_>,
         highlight: &mut MapHighlight,
         requests: &mut PointClickRequests<'_>,
         reveal_matches_request: &mut Option<MatchRevealTarget>,
@@ -1131,11 +1132,8 @@ impl QueryWindow {
         // What the map draws right now: a point row can only pin a point that
         // is on it.
         let scope = MapScope {
-            files,
-            visibility: inputs.visibility,
-            filter: inputs.filter,
-            display_mask,
             query_matches: session.matches(),
+            ..map_scope
         };
         let Some(results) = session.results() else {
             ui.label(RichText::new("No runs yet").weak());

@@ -287,6 +287,8 @@ fn highlighted_fix_visibility(harness: &Harness<'_, App>) -> Option<PointVisibil
     let scope = MapScope {
         files: shared.loaded_files.files(),
         visibility: shared.tree.visibility(),
+        event_marker_visibility: shared.tree.event_marker_visibility(),
+        generated_marker_visibility: shared.tree.generated_marker_visibility(),
         filter: &shared.filter,
         display_mask: shared.display_mask,
         query_matches: app.query_window.matches(),

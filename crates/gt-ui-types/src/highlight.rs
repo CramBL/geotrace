@@ -235,6 +235,7 @@ impl MapHighlight {
             }
             PointVisibility::TrackNotShown => withheld(PinWithheld::TrackNotShown),
             PointVisibility::CategoryHidden => withheld(PinWithheld::CategoryHidden),
+            PointVisibility::MarkerTypeHidden => withheld(PinWithheld::MarkerTypeHidden),
             PointVisibility::HiddenByQuery => withheld(PinWithheld::HiddenByQuery),
             PointVisibility::OutsideTimeFilter => withheld(PinWithheld::OutsideTimeFilter),
         }
@@ -266,6 +267,9 @@ pub enum PinWithheld {
     CategoryHidden,
     /// A `keep` or `hide` query removed the point.
     HiddenByQuery,
+    /// The marker's type is off in the tree: the kind of a generated marker,
+    /// or the variant path of an event marker or a parent path of it.
+    MarkerTypeHidden,
     /// Outside the global time filter's window.
     OutsideTimeFilter,
     /// The file or track is off in the tree, or the track fails the filter.
@@ -292,6 +296,7 @@ impl Default for MapHighlight {
 #[cfg(test)]
 mod tests {
     use chrono::TimeDelta;
+    use gt_types::GeneratedMarkerKindTag;
 
     use super::*;
     use crate::display_mask::DisplayCategory;
@@ -350,6 +355,38 @@ mod tests {
             highlight.sticky,
             Some(test_util::point(1)),
             "a point that still exists keeps its pin"
+        );
+    }
+
+    /// A marker of a type the tree hides keeps its pin and shows nothing, and
+    /// its popup opens again once the tree shows the type.
+    #[rstest::rstest]
+    #[case::generated_marker_of_a_hidden_kind(HiddenMarkerType::GeneratedMarkerKind)]
+    #[case::event_marker_with_a_hidden_path(HiddenMarkerType::EventMarkerPath)]
+    #[case::event_marker_under_a_hidden_parent_path(HiddenMarkerType::EventMarkerParentPath)]
+    fn a_pin_on_a_marker_of_a_hidden_type_is_withheld_until_the_type_is_shown(
+        #[case] hidden: HiddenMarkerType,
+    ) {
+        let mut fixture = ScopeFixture::all_drawn();
+        hidden.hide(&mut fixture);
+        let pinned = hidden.marker();
+        let mut highlight = MapHighlight {
+            sticky: Some(pinned),
+            ..MapHighlight::default()
+        };
+
+        assert_eq!(
+            highlight.pin_this_frame(fixture.scope()),
+            Some(PinnedPopup::Withheld {
+                pinned,
+                reason: PinWithheld::MarkerTypeHidden,
+            })
+        );
+        assert_eq!(highlight.sticky, Some(pinned));
+        fixture.show_every_marker_type();
+        assert_eq!(
+            highlight.pin_this_frame(fixture.scope()),
+            Some(PinnedPopup::Drawn(pinned))
         );
     }
 
@@ -436,6 +473,29 @@ mod tests {
         assert_eq!(highlight.sticky, Some(test_util::point(0)));
     }
 
+    /// A click pins a marker only while the tree shows its type.
+    #[rstest::rstest]
+    #[case::generated_marker_of_a_hidden_kind(HiddenMarkerType::GeneratedMarkerKind)]
+    #[case::event_marker_with_a_hidden_path(HiddenMarkerType::EventMarkerPath)]
+    #[case::event_marker_under_a_hidden_parent_path(HiddenMarkerType::EventMarkerParentPath)]
+    fn a_click_on_a_marker_of_a_hidden_type_pins_nothing(#[case] hidden: HiddenMarkerType) {
+        let mut fixture = ScopeFixture::all_drawn();
+        hidden.hide(&mut fixture);
+        let mut highlight = MapHighlight::default();
+
+        assert!(
+            !highlight.toggle_sticky_if_drawn(fixture.scope(), hidden.marker()),
+            "the marker of a hidden type pinned"
+        );
+        assert_eq!(highlight.sticky, None);
+        fixture.show_every_marker_type();
+        assert!(
+            highlight.toggle_sticky_if_drawn(fixture.scope(), hidden.marker()),
+            "the marker did not pin once its type was shown"
+        );
+        assert_eq!(highlight.sticky, Some(hidden.marker()));
+    }
+
     #[test]
     fn toggling_the_same_point_unpins_it_and_another_takes_over() {
         let mut highlight = MapHighlight::default();
@@ -519,5 +579,35 @@ mod tests {
         assert!(hm.contains(299));
         assert!(!hm.contains(149));
         assert!(!hm.contains(300));
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum HiddenMarkerType {
+        EventMarkerParentPath,
+        EventMarkerPath,
+        GeneratedMarkerKind,
+    }
+
+    impl HiddenMarkerType {
+        fn marker(self) -> DataPointRef {
+            match self {
+                Self::EventMarkerParentPath | Self::EventMarkerPath => test_util::event_marker(),
+                Self::GeneratedMarkerKind => test_util::generated_marker(),
+            }
+        }
+
+        fn hide(self, fixture: &mut ScopeFixture) {
+            match self {
+                Self::EventMarkerParentPath => {
+                    fixture.hide_event_marker_path(test_util::EVENT_MARKER_PARENT_PATH);
+                }
+                Self::EventMarkerPath => {
+                    fixture.hide_event_marker_path(test_util::EVENT_MARKER_PATH)
+                }
+                Self::GeneratedMarkerKind => {
+                    fixture.hide_generated_marker_kind(GeneratedMarkerKindTag::GnssFixLost);
+                }
+            }
+        }
     }
 }

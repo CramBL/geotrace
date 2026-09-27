@@ -115,6 +115,7 @@ fn withheld_reason(reason: PinWithheld) -> &'static str {
         PinWithheld::OutsideTimeFilter => "outside the time filter",
         PinWithheld::TrackNotShown => "track not shown",
         PinWithheld::CategoryHidden => "category hidden",
+        PinWithheld::MarkerTypeHidden => "marker type hidden",
     }
 }
 

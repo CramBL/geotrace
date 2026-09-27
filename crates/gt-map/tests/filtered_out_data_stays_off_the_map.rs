@@ -93,7 +93,7 @@ fn shapes_with(
     ..GlobalFilter::default()
 })]
 fn a_snapped_track_of_a_filtered_out_recording_is_not_drawn(#[case] filter: GlobalFilter) {
-    let files = test_util::a_recording_of(30, WALKING_STEP_DEGREES);
+    let files = test_util::a_walking_recording();
 
     assert_eq!(
         shapes_with(&files, filter, Some(snapped_polyline_over(&files, 0..30))),
@@ -107,7 +107,7 @@ fn a_snapped_track_of_a_filtered_out_recording_is_not_drawn(#[case] filter: Glob
 /// whole snapped geometry as for the stretch the window keeps.
 #[test]
 fn a_snapped_track_is_not_drawn_past_the_end_of_the_time_window() {
-    let files = test_util::a_recording_of(30, WALKING_STEP_DEGREES);
+    let files = test_util::a_walking_recording();
     let filter = test_util::window_ending_at(14);
 
     assert_eq!(
@@ -135,7 +135,7 @@ fn an_error_whisker_of_a_fix_outside_the_time_window_is_not_drawn() {
 /// keeps still draws its snapped track.
 #[test]
 fn a_snapped_track_of_a_kept_recording_is_drawn() {
-    let files = test_util::a_recording_of(30, WALKING_STEP_DEGREES);
+    let files = test_util::a_walking_recording();
 
     assert!(
         shapes_with(
@@ -151,7 +151,7 @@ fn a_snapped_track_of_a_kept_recording_is_drawn() {
 /// and fix 10 lies well outside it.
 #[test]
 fn a_fit_frames_the_fixes_inside_the_time_window() {
-    let files = test_util::a_recording_of(30, WALKING_STEP_DEGREES);
+    let files = test_util::a_walking_recording();
     let map = MapScene::of(files)
         .draw_state(|state| state.filter = test_util::window_ending_at(4))
         .render_one_frame();

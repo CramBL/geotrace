@@ -28,8 +28,9 @@ use gt_test_utils::{
     By, HarnessInteraction as _, NodeT as _, Queryable as _, TestHarness, TestHarnessBuilder,
 };
 use gt_types::{
-    DataCategory, EventMarker, FileIdx, FileSource, FixRef, Latitude, LoadedFile, LoadedTrack,
-    Longitude, MercPoint, NavPoint, PointIdx, TimeRange, TrackIdx, TrackRef,
+    CustomMarker, DataCategory, EventMarker, FileIdx, FileSource, FixRef, GeneratedMarker,
+    GeneratedMarkerKind, Latitude, LoadedFile, LoadedTrack, Longitude, MarkerIcon, MercPoint,
+    NavPoint, PointIdx, TimeRange, TrackIdx, TrackRef,
 };
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, DrawLayer, EventMarkerVisibility,
@@ -111,6 +112,12 @@ fn fix_at(index: usize, step_degrees: f64) -> NavPoint {
 /// steps of `step_degrees`.
 pub fn a_recording_of(count: usize, step_degrees: f64) -> Vec<LoadedFile> {
     a_recording_over((0..count).map(|i| fix_at(i, step_degrees)).collect())
+}
+
+/// One file over one track of [`WALKING_FIX_COUNT`] fixes, a minute apart,
+/// walking east in steps of [`WALKING_STEP_DEGREES`].
+pub fn a_walking_recording() -> Vec<LoadedFile> {
+    a_recording_of(WALKING_FIX_COUNT, WALKING_STEP_DEGREES)
 }
 
 /// One file over one track of four sides of `per_side` fixes, a minute apart,
@@ -385,6 +392,17 @@ pub fn window_ending_at(index: usize) -> GlobalFilter {
     }
 }
 
+/// The tree of `files` with every track unchecked and every file checked.
+pub fn a_tree_with_every_track_unchecked(files: &[LoadedFile]) -> TrackDataVisibility {
+    let mut tree = TrackDataVisibility::from_loaded(files);
+    for file in &mut tree.files {
+        for track in &mut file.tracks {
+            track.enabled = false;
+        }
+    }
+    tree
+}
+
 /// The per-frame state a [`MapDrawContext`] borrows, owned so a case spells
 /// out only the inputs it is about and takes the defaults for the rest.
 pub struct DrawState {
@@ -554,6 +572,13 @@ impl MapScene {
     pub fn centred_on(mut self, position: (f64, f64)) -> Self {
         self.draw.center_request = Some(position);
         self
+    }
+
+    /// [`Self::centred_on`] the fix at `index` of the first track of the first
+    /// recording.
+    pub fn centred_on_fix(self, index: usize) -> Self {
+        let position = fix_position(&self.files, index);
+        self.centred_on(position)
     }
 
     /// Draws `dataset` and shows the interference category, which a fresh
@@ -759,6 +784,21 @@ impl RenderedMap {
     pub fn move_pointer_to(&mut self, target: egui::Pos2) {
         self.harness.inner.hover_at(target);
         self.harness.step();
+    }
+
+    /// The primary hover candidate one frame after the frame that reads the
+    /// pointer move to `target`: egui reads a widget's hover against the
+    /// widget rect of the previous frame.
+    pub fn primary_hover_candidate_at(&mut self, target: egui::Pos2) -> Option<DataPointRef> {
+        self.move_pointer_to(target);
+        self.render_one_more_frame();
+        self.draw_state().highlight.hover_candidates.primary()
+    }
+
+    /// The pinned point after [`Self::click_at`] `target`.
+    pub fn point_pinned_by_a_click_at(&mut self, target: egui::Pos2) -> Option<DataPointRef> {
+        self.click_at(target);
+        self.draw_state().highlight.sticky
     }
 
     /// Moves the pointer to `target` and runs past egui's hover delay, which
@@ -967,28 +1007,62 @@ pub fn matches_over(
 /// A click on the fix at `fix_index` reaches two elements, the fix and an
 /// event marker: `files` with that marker added at the fix's position and
 /// instant.
-pub fn with_an_event_marker_on_a_fix(
-    mut files: Vec<LoadedFile>,
+pub fn with_an_event_marker_on_a_fix(files: Vec<LoadedFile>, fix_index: usize) -> Vec<LoadedFile> {
+    with_a_marker_on_a_fix(files, fix_index, |track, time, lat, lon| {
+        track.event_markers.push(EventMarker::new(
+            time,
+            EVENT_MARKER_ON_A_FIX_PATH.to_owned(),
+            None,
+            lat,
+            lon,
+        ));
+    })
+}
+
+/// `files` with a [`GeneratedMarkerKind::GnssFixLost`] marker added at the
+/// position and instant of the fix at `fix_index`.
+pub fn with_a_generated_marker_on_a_fix(
+    files: Vec<LoadedFile>,
     fix_index: usize,
 ) -> Vec<LoadedFile> {
-    let marker = files
-        .first()
-        .and_then(|file| file.tracks.first())
-        .and_then(|track| track.points.get(fix_index))
-        .and_then(|fix| {
-            let (latitude, longitude) = fix.tpv.position()?;
-            Some(EventMarker::new(
-                fix.tpv.time().utc(),
-                "power/boot".to_owned(),
-                None,
-                latitude,
-                longitude,
-            ))
+    with_a_marker_on_a_fix(files, fix_index, |track, time, lat, lon| {
+        track.generated_markers.push(GeneratedMarker {
+            time,
+            kind: GeneratedMarkerKind::GnssFixLost,
+            lat,
+            lon,
+            merc: gt_types::mercator::normalize(lat, lon),
         });
-    if let Some(marker) = marker
-        && let Some(track) = files.first_mut().and_then(|file| file.tracks.first_mut())
+    })
+}
+
+/// `files` with a custom marker added at the position and instant of the fix
+/// at `fix_index`.
+pub fn with_a_custom_marker_on_a_fix(files: Vec<LoadedFile>, fix_index: usize) -> Vec<LoadedFile> {
+    with_a_marker_on_a_fix(files, fix_index, |track, time, lat, lon| {
+        track.custom_markers.push(CustomMarker::new(
+            time,
+            CUSTOM_MARKER_ON_A_FIX_LABEL.to_owned(),
+            MarkerIcon::Pin,
+            lat,
+            lon,
+        ));
+    })
+}
+
+/// `files` after `push_marker` runs on the first track with the instant and the
+/// position of the fix at `fix_index`.
+fn with_a_marker_on_a_fix(
+    mut files: Vec<LoadedFile>,
+    fix_index: usize,
+    push_marker: impl FnOnce(&mut LoadedTrack, DateTime<Utc>, Latitude, Longitude),
+) -> Vec<LoadedFile> {
+    if let Some(track) = files.first_mut().and_then(|file| file.tracks.first_mut())
+        && let Some(fix) = track.points.get(fix_index)
+        && let Some((lat, lon)) = fix.tpv.position()
     {
-        track.event_markers.push(marker);
+        let time = fix.tpv.time().utc();
+        push_marker(track, time, lat, lon);
     }
     files
 }
@@ -1092,6 +1166,13 @@ pub const CENTER_LON: f64 = 12.565;
 /// third of the viewport at the map's default zoom of 16.
 pub const WALKING_STEP_DEGREES: f64 = 0.001;
 
+/// Fixes of [`a_walking_recording`].
+pub const WALKING_FIX_COUNT: usize = 30;
+
+/// The fix mid-way along [`a_walking_recording`]. A scene
+/// [`MapScene::centred_on_fix`] with it draws that fix at [`viewport_center`].
+pub const CENTRE_FIX: usize = 15;
+
 /// Where the two tracks of [`a_recording_of_two_tracks_meeting_mid_route`]
 /// meet, in degrees.
 pub const MID_ROUTE_MEETING_DEGREES: (f64, f64) = (CENTER_LAT, CENTER_LON);
@@ -1111,6 +1192,12 @@ const MID_ROUTE_FIXES: usize = 12;
 /// Ground distance between consecutive fixes of a track of
 /// [`a_recording_of_two_tracks_meeting_mid_route`].
 const MID_ROUTE_STEP_METRES: f64 = 20.0;
+
+/// The variant path of the event marker that [`with_an_event_marker_on_a_fix`]
+/// adds.
+pub const EVENT_MARKER_ON_A_FIX_PATH: &str = "power/boot";
+
+const CUSTOM_MARKER_ON_A_FIX_LABEL: &str = "Coffee stop";
 
 /// Where every marker of [`a_recording_with_every_marker_kind`] sits, in
 /// degrees.

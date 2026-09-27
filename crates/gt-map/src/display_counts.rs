@@ -8,9 +8,9 @@
 //! popup shows next to each row, and why a viewport-dependent number would
 //! be wrong here.
 //!
-//! The gating comes from the crate's `scope` module, the same predicates
-//! the renderers apply, so the counts cannot drift from what actually
-//! draws.
+//! The track gate is [`visibility::track_in_scope`]. This module checks the
+//! time filter and the marker type toggles per element, with the same calls
+//! that [`gt_ui_types::MapScope::point_visibility`] makes.
 
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
