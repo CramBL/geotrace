@@ -28,6 +28,10 @@ use crate::picture::{MapPicture, TrackPicture};
 pub struct MapScenario {
     dataset: Dataset,
     visibility: TrackDataVisibility,
+    // Both marker type toggles stay at the default, which shows every marker
+    // type. The tracks of a `Dataset` contain fixes alone.
+    event_marker_visibility: EventMarkerVisibility,
+    generated_marker_visibility: GeneratedMarkerVisibility,
     filter: GlobalFilter,
     /// Left at the default, and deliberately without a step to change it:
     /// [`DisplayCounts`] is defined pre-display-mask, and
@@ -50,6 +54,8 @@ impl MapScenario {
         Self {
             dataset,
             visibility,
+            event_marker_visibility: EventMarkerVisibility::default(),
+            generated_marker_visibility: GeneratedMarkerVisibility::default(),
             filter: GlobalFilter::default(),
             display_mask: DisplayMask::default(),
             highlight: MapHighlight::default(),
@@ -162,6 +168,8 @@ impl MapScenario {
         let scope = map_scope(
             &self.dataset,
             &self.visibility,
+            &self.event_marker_visibility,
+            &self.generated_marker_visibility,
             &self.filter,
             self.display_mask,
             &self.session,
@@ -227,6 +235,8 @@ impl MapScenario {
         map_scope(
             &self.dataset,
             &self.visibility,
+            &self.event_marker_visibility,
+            &self.generated_marker_visibility,
             &self.filter,
             self.display_mask,
             &self.session,
@@ -256,8 +266,8 @@ impl MapScenario {
             self.dataset.files().files(),
             &self.visibility,
             &self.filter,
-            &EventMarkerVisibility::default(),
-            &GeneratedMarkerVisibility::default(),
+            &self.event_marker_visibility,
+            &self.generated_marker_visibility,
             self.session.matches(),
             SuppliedCounts::default(),
         )
@@ -330,6 +340,8 @@ impl MapScenario {
         let Self {
             dataset,
             visibility,
+            event_marker_visibility,
+            generated_marker_visibility,
             filter,
             display_mask,
             highlight,
@@ -349,6 +361,8 @@ impl MapScenario {
         *pin = highlight.pin_this_frame(map_scope(
             dataset,
             visibility,
+            event_marker_visibility,
+            generated_marker_visibility,
             filter,
             *display_mask,
             session,
@@ -393,6 +407,8 @@ impl MapScenario {
 fn map_scope<'a>(
     dataset: &'a Dataset,
     visibility: &'a TrackDataVisibility,
+    event_marker_visibility: &'a EventMarkerVisibility,
+    generated_marker_visibility: &'a GeneratedMarkerVisibility,
     filter: &'a GlobalFilter,
     display_mask: DisplayMask,
     session: &'a QuerySession,
@@ -400,6 +416,8 @@ fn map_scope<'a>(
     MapScope {
         files: dataset.files().files(),
         visibility,
+        event_marker_visibility,
+        generated_marker_visibility,
         filter,
         display_mask,
         query_matches: session.matches(),

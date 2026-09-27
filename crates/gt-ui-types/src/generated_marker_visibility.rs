@@ -1,5 +1,5 @@
 use gt_types::{GeneratedMarkerKindSet, GeneratedMarkerKindTag, TrackRef};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 
 /// Per-track visibility of generated-marker event types.
 ///
@@ -13,8 +13,10 @@ pub struct GeneratedMarkerVisibility {
 }
 
 impl GeneratedMarkerVisibility {
-    pub fn new() -> Self {
-        Self::default()
+    pub const fn new() -> Self {
+        Self {
+            hidden: FxHashMap::with_hasher(FxBuildHasher),
+        }
     }
 
     /// Returns `true` when markers of `tag` should be rendered for `track`.

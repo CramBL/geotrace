@@ -6,17 +6,20 @@
 
 #![cfg(test)]
 
+use std::iter;
 use std::path::PathBuf;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use gt_filter::GlobalFilter;
 use gt_types::fixtures::FixKind;
 use gt_types::{
-    DataCategory, FileIdx, FileSource, Latitude, LoadedFile, Longitude, NavPoint, PointIdx,
-    TrackIdx, TrackRef,
+    DataCategory, EventMarker, FileIdx, FileSource, GeneratedMarkerKindTag, Latitude, LoadedFile,
+    Longitude, NavPoint, PointIdx, TrackIdx, TrackRef,
 };
 
 use crate::display_mask::DisplayMask;
+use crate::event_marker_visibility::EventMarkerVisibility;
+use crate::generated_marker_visibility::GeneratedMarkerVisibility;
 use crate::highlight::DataPointRef;
 use crate::query_matches::{QueryMatches, TrackRanges};
 use crate::visibility::{MapScope, TrackDataVisibility};
@@ -26,24 +29,40 @@ pub fn start() -> DateTime<Utc> {
     DateTime::from_timestamp(1_748_000_000, 0).expect("fixed timestamp is valid")
 }
 
-/// One track of [`POINT_COUNT`] points, a second apart, built the way loading
-/// builds it.
+/// One track of [`MEASURED_FIX_COUNT`] measured fixes and one ghost fix after
+/// them, a second apart, built the way loading builds it.
+///
+/// The track has one event marker at [`EVENT_MARKER_PATH`] and one
+/// [`GeneratedMarkerKindTag::GnssFixLost`] marker, which the track builder
+/// places at the last measured fix.
 pub fn one_track_file() -> Vec<LoadedFile> {
     let points: Vec<NavPoint> = (0..POINT_COUNT)
         .map(|index| {
+            let kind = if index < MEASURED_FIX_COUNT {
+                FixKind::Measured
+            } else {
+                FixKind::GhostWithoutSatellitesInFix
+            };
             gt_types::fixtures::nav_point(
                 start() + TimeDelta::seconds(index as i64),
                 Latitude::new(55.0),
                 Longitude::new(12.0),
-                FixKind::Measured,
+                kind,
             )
         })
         .collect();
+    let event_marker = EventMarker::new(
+        start() + TimeDelta::seconds(1),
+        EVENT_MARKER_PATH.to_owned(),
+        None,
+        Latitude::new(55.0),
+        Longitude::new(12.0),
+    );
     vec![gt_track_builder::build_loaded_file(
         "scope.gtd".to_owned(),
         &points,
         &[],
-        Vec::new(),
+        vec![event_marker],
         Vec::new(),
         &[],
         &gt_track_builder::SegmentationConfig::default(),
@@ -67,11 +86,29 @@ pub fn point(index: usize) -> DataPointRef {
     }
 }
 
+pub fn event_marker() -> DataPointRef {
+    DataPointRef {
+        track: track0(),
+        category: DataCategory::EventMarker,
+        point_index: PointIdx::new(0),
+    }
+}
+
+pub fn generated_marker() -> DataPointRef {
+    DataPointRef {
+        track: track0(),
+        category: DataCategory::GeneratedMarker,
+        point_index: PointIdx::new(0),
+    }
+}
+
 /// The owned pieces a [`MapScope`] borrows, letting a test withhold a point in
 /// each of the ways the map can and evaluate the real visibility rule.
 pub struct ScopeFixture {
     pub files: Vec<LoadedFile>,
     pub visibility: TrackDataVisibility,
+    pub event_marker_visibility: EventMarkerVisibility,
+    pub generated_marker_visibility: GeneratedMarkerVisibility,
     pub filter: GlobalFilter,
     pub display_mask: DisplayMask,
     pub query_matches: Option<QueryMatches>,
@@ -84,6 +121,8 @@ impl ScopeFixture {
         Self {
             visibility: TrackDataVisibility::from_loaded(&files),
             files,
+            event_marker_visibility: EventMarkerVisibility::default(),
+            generated_marker_visibility: GeneratedMarkerVisibility::default(),
             filter: GlobalFilter::default(),
             display_mask: DisplayMask::default(),
             query_matches: None,
@@ -100,10 +139,31 @@ impl ScopeFixture {
         });
     }
 
+    /// Hide `path` in the fixture track's event marker tree, which hides every
+    /// event marker at `path` or under it.
+    pub fn hide_event_marker_path(&mut self, path: &str) {
+        self.event_marker_visibility
+            .set_hidden(track0(), iter::once(path.to_owned()));
+    }
+
+    pub fn hide_generated_marker_kind(&mut self, kind: GeneratedMarkerKindTag) {
+        self.generated_marker_visibility
+            .set_hidden(track0(), iter::once(kind));
+    }
+
+    /// Show every event marker path and generated marker kind again, as the
+    /// tree does once the user ticks them.
+    pub fn show_every_marker_type(&mut self) {
+        self.event_marker_visibility.clear_all();
+        self.generated_marker_visibility.clear_all();
+    }
+
     pub fn scope(&self) -> MapScope<'_> {
         MapScope {
             files: &self.files,
             visibility: &self.visibility,
+            event_marker_visibility: &self.event_marker_visibility,
+            generated_marker_visibility: &self.generated_marker_visibility,
             filter: &self.filter,
             display_mask: self.display_mask,
             query_matches: self.query_matches.as_ref(),
@@ -112,4 +172,12 @@ impl ScopeFixture {
 }
 
 /// Points in the one fixture track.
-pub const POINT_COUNT: usize = 4;
+pub const POINT_COUNT: usize = MEASURED_FIX_COUNT + 1;
+
+const MEASURED_FIX_COUNT: usize = 4;
+
+/// The variant path of the fixture track's event marker.
+pub const EVENT_MARKER_PATH: &str = "power/boot";
+
+/// The parent path of [`EVENT_MARKER_PATH`].
+pub const EVENT_MARKER_PARENT_PATH: &str = "power";

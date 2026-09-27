@@ -236,7 +236,7 @@ mod tests {
         |gates: &mut Gates| gates.filter.min_duration = Some(TimeDelta::hours(1)),
         0
     )]
-    #[case::line_outside_the_time_window(window_from_the_third_line, 2)]
+    #[case::line_outside_the_time_window(window_from_the_third_line, test_util::POINT_COUNT - 2)]
     fn matches_in_scope_applies_the_tree_and_the_filter(
         #[case] withhold: fn(&mut Gates),
         #[case] expected: usize,

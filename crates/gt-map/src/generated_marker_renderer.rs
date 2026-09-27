@@ -1,27 +1,19 @@
 use egui::Grid;
 use egui::{Color32, Pos2, Response, Stroke, Ui};
 use egui_phosphor::regular::ARROW_RIGHT as ICON_ARROW_RIGHT;
-use gt_filter::GlobalFilter;
 use gt_types::{
-    DataCategory, GeneratedMarker, GeneratedMarkerKind, LoadedFile, LoadedTrack, PointIdx,
-    SpatialPoint,
+    DataCategory, GeneratedMarker, GeneratedMarkerKind, LoadedTrack, PointIdx, SpatialPoint,
 };
-use gt_ui_types::{
-    DataPointRef, GeneratedMarkerVisibility, HighlightScope, MapHighlight, TrackDataVisibility,
-    visibility,
-};
+use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, MapScope};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::icon_mesh::{IconId, IconInstance, IconMeshBatch, IconMeshLibrary};
-use crate::{tpv_renderer, track_renderer};
+use crate::{tpv_renderer, track_renderer, viewport};
 
 #[derive(bon::Builder)]
 pub struct GeneratedMarkerRenderer<'a> {
-    files: &'a [LoadedFile],
-    visibility: &'a TrackDataVisibility,
+    scope: MapScope<'a>,
     highlight: &'a MapHighlight,
-    filter: &'a GlobalFilter,
-    generated_vis: &'a GeneratedMarkerVisibility,
     visible_generated: &'a [SpatialPoint],
     icon_meshes: Option<&'a IconMeshLibrary>,
 }
@@ -95,28 +87,16 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             crate::transform::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
         for sp in self.visible_generated {
-            let Some(track) = visibility::category_in_scope(
-                self.files,
-                self.visibility,
-                self.filter,
-                sp.track_ref(),
-                DataCategory::GeneratedMarker,
-            ) else {
-                continue;
-            };
-            let Some(marker) = sp.point_index.get(&track.generated_markers) else {
-                continue;
-            };
-            // Per-event-type show/hide (refines the category-level toggle).
-            if !self
-                .generated_vis
-                .is_visible(sp.track_ref(), marker.kind.tag())
-            {
+            if !viewport::is_spatial_point_visible(sp, self.scope) {
                 continue;
             }
-            if !gt_filter::point_passes_time_filter(marker.time, self.filter) {
+            let Some(marker) = sp
+                .track_ref()
+                .resolve(self.scope.files)
+                .and_then(|track| sp.point_index.get(&track.generated_markers))
+            else {
                 continue;
-            }
+            };
             let point_ref = DataPointRef {
                 track: sp.track_ref(),
                 category: DataCategory::GeneratedMarker,

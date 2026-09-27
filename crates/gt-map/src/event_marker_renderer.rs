@@ -1,44 +1,31 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui, Vec2};
-use gt_filter::GlobalFilter;
 use gt_fmt::UTC_SECOND_FORMAT;
-use gt_types::{DataCategory, EventMarker, EventMarkerStyle, LoadedFile, MarkerIcon, SpatialPoint};
+use gt_types::{DataCategory, EventMarker, EventMarkerStyle, MarkerIcon, SpatialPoint};
 use gt_ui_theme::HIGHLIGHT_BLUE;
-use gt_ui_types::{
-    DataPointRef, EventMarkerVisibility, HighlightScope, MapHighlight, TrackDataVisibility,
-    visibility,
-};
+use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, MapScope};
 use rustc_hash::FxHashMap;
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::icon_mesh::{IconInstance, IconMeshBatch, IconMeshLibrary};
-use crate::track_renderer;
+use crate::{track_renderer, viewport};
 
 pub struct EventMarkerRenderer<'a> {
-    files: &'a [LoadedFile],
-    visibility: &'a TrackDataVisibility,
+    scope: MapScope<'a>,
     highlight: &'a MapHighlight,
-    filter: &'a GlobalFilter,
-    event_vis: &'a EventMarkerVisibility,
     visible_event: &'a [SpatialPoint],
     icon_meshes: Option<&'a IconMeshLibrary>,
 }
 
 impl<'a> EventMarkerRenderer<'a> {
     pub fn new(
-        files: &'a [LoadedFile],
-        visibility: &'a TrackDataVisibility,
+        scope: MapScope<'a>,
         highlight: &'a MapHighlight,
-        filter: &'a GlobalFilter,
-        event_vis: &'a EventMarkerVisibility,
         visible_event: &'a [SpatialPoint],
         icon_meshes: Option<&'a IconMeshLibrary>,
     ) -> Self {
         Self {
-            files,
-            visibility,
+            scope,
             highlight,
-            filter,
-            event_vis,
             visible_event,
             icon_meshes,
         }
@@ -58,36 +45,25 @@ impl Plugin for EventMarkerRenderer<'_> {
 
         let mut batch = IconMeshBatch::new(self.icon_meshes, ui.pixels_per_point());
         for sp in self.visible_event {
-            let Some(track) = visibility::category_in_scope(
-                self.files,
-                self.visibility,
-                self.filter,
-                sp.track_ref(),
-                DataCategory::EventMarker,
-            ) else {
-                continue;
-            };
-            let Some(marker) = sp.point_index.get(&track.event_markers) else {
-                continue;
-            };
-            if !self
-                .event_vis
-                .is_visible(sp.track_ref(), &marker.variant_path)
-            {
+            if !viewport::is_spatial_point_visible(sp, self.scope) {
                 continue;
             }
-            if !gt_filter::point_passes_time_filter(marker.time, self.filter) {
+            let Some(file) = sp.file_index.get(self.scope.files) else {
                 continue;
-            }
+            };
+            let Some(marker) = sp
+                .track_index
+                .get(&file.tracks)
+                .and_then(|track| sp.point_index.get(&track.event_markers))
+            else {
+                continue;
+            };
             let point_ref = DataPointRef {
                 track: sp.track_ref(),
                 category: DataCategory::EventMarker,
                 point_index: sp.point_index,
             };
             let screen_pos = transform.to_screen(sp.merc);
-            let Some(file) = sp.file_index.get(self.files) else {
-                continue;
-            };
             let style_map = &file.event_marker_styles;
             let color = resolve_color(marker, style_map);
             let icon = resolve_icon(&marker.variant_path, style_map);

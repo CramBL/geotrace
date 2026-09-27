@@ -522,13 +522,12 @@ pub(crate) fn compute_viewport_bounds(
     }
 }
 
-/// Returns `true` when a spatial point should participate in hover and click
-/// detection.
+/// Whether hover and click reach a spatial point. The marker renderers draw a
+/// marker under the same condition.
 ///
 /// A trackline and a raw satellite report have no hover target of their own -
 /// neither is ever inserted into the spatial index, and neither is clickable.
-/// Everything else is hit-testable exactly while the map draws it, queried from
-/// [`MapScope::draws`] so hit-testing cannot drift from what is on screen.
+/// Every other point follows [`MapScope::draws`].
 pub(crate) fn is_spatial_point_visible(sp: &SpatialPoint, scope: MapScope<'_>) -> bool {
     !matches!(
         sp.category,

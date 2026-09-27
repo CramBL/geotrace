@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use gt_types::TrackRef;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 
 /// Per-track visibility state for event marker variant paths.
 ///
@@ -14,8 +14,10 @@ pub struct EventMarkerVisibility {
 }
 
 impl EventMarkerVisibility {
-    pub fn new() -> Self {
-        Self::default()
+    pub const fn new() -> Self {
+        Self {
+            hidden: FxHashMap::with_hasher(FxBuildHasher),
+        }
     }
 
     /// Returns `true` when the variant should be rendered (not hidden).

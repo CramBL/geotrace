@@ -286,20 +286,31 @@ pub struct MapDrawContext<'a> {
 }
 
 impl<'a> MapDrawContext<'a> {
-    fn recording_labels(&self) -> RecordingLabels<'a> {
-        RecordingLabels::new(self.files, self.recording_names)
-    }
-
-    /// What the map draws this frame. Hit-testing, the pinned popup, and the
-    /// headless tests all read it.
-    fn scope(&self) -> MapScope<'a> {
+    /// What the map draws this frame. The marker renderers, hit-testing, the
+    /// pinned popup and the headless tests read it.
+    pub fn scope(&self) -> MapScope<'a> {
         MapScope {
             files: self.files,
             visibility: self.visibility,
+            event_marker_visibility: self.event_marker_visibility,
+            generated_marker_visibility: self.generated_marker_visibility,
             filter: self.filter,
             display_mask: *self.display_mask,
             query_matches: self.query_matches,
         }
+    }
+
+    /// Suppress the individual hover labels of the recorded elements when the
+    /// disambiguation popup owns the cursor area, or when several of them were
+    /// under the pointer last frame - the compound label states them all in
+    /// their place.
+    fn suppress_overlapping_hover_labels(&mut self, disambig_open: bool) {
+        self.highlight.suppress_hover_labels =
+            disambig_open || self.highlight.hover_candidates.is_ambiguous();
+    }
+
+    fn recording_labels(&self) -> RecordingLabels<'a> {
+        RecordingLabels::new(self.files, self.recording_names)
     }
 
     /// The bounding box around every element currently drawn, for framing.
@@ -333,15 +344,6 @@ impl<'a> MapDrawContext<'a> {
             recording_labels: self.recording_labels(),
             query_matches: self.query_matches,
         }
-    }
-
-    /// Suppress the individual hover labels of the recorded elements when the
-    /// disambiguation popup owns the cursor area, or when several of them were
-    /// under the pointer last frame - the compound label states them all in
-    /// their place.
-    fn suppress_overlapping_hover_labels(&mut self, disambig_open: bool) {
-        self.highlight.suppress_hover_labels =
-            disambig_open || self.highlight.hover_candidates.is_ambiguous();
     }
 }
 
@@ -957,10 +959,8 @@ impl NavMap {
         }
         if let Some(custom) = self.visible_points.custom() {
             map = map.with_plugin(MarkerRenderer::new(
-                ctx.files,
-                ctx.visibility,
+                ctx.scope(),
                 ctx.highlight,
-                ctx.filter,
                 custom,
                 self.icon_meshes.as_ref(),
             ));
@@ -968,11 +968,8 @@ impl NavMap {
         if let Some(generated) = self.visible_points.generated() {
             map = map.with_plugin(
                 GeneratedMarkerRenderer::builder()
-                    .files(ctx.files)
-                    .visibility(ctx.visibility)
+                    .scope(ctx.scope())
                     .highlight(ctx.highlight)
-                    .filter(ctx.filter)
-                    .generated_vis(ctx.generated_marker_visibility)
                     .visible_generated(generated)
                     .maybe_icon_meshes(self.icon_meshes.as_ref())
                     .build(),
@@ -980,11 +977,8 @@ impl NavMap {
         }
         if let Some(event) = self.visible_points.event() {
             map = map.with_plugin(EventMarkerRenderer::new(
-                ctx.files,
-                ctx.visibility,
+                ctx.scope(),
                 ctx.highlight,
-                ctx.filter,
-                ctx.event_marker_visibility,
                 event,
                 self.icon_meshes.as_ref(),
             ));

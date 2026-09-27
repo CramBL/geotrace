@@ -1,36 +1,29 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui, Vec2};
-use gt_filter::GlobalFilter;
-use gt_types::{CustomMarker, DataCategory, LoadedFile, MarkerIcon, SpatialPoint};
+use gt_types::{CustomMarker, DataCategory, MarkerIcon, SpatialPoint};
 use gt_ui_theme::HIGHLIGHT_BLUE;
-use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, TrackDataVisibility, visibility};
+use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, MapScope};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::icon_mesh::{IconInstance, IconMeshBatch, IconMeshLibrary, PIN_HALF_EXTENTS_PT};
-use crate::track_renderer;
+use crate::{track_renderer, viewport};
 
 pub struct MarkerRenderer<'a> {
-    files: &'a [LoadedFile],
-    visibility: &'a TrackDataVisibility,
+    scope: MapScope<'a>,
     highlight: &'a MapHighlight,
-    filter: &'a GlobalFilter,
     visible_custom: &'a [SpatialPoint],
     icon_meshes: Option<&'a IconMeshLibrary>,
 }
 
 impl<'a> MarkerRenderer<'a> {
     pub fn new(
-        files: &'a [LoadedFile],
-        visibility: &'a TrackDataVisibility,
+        scope: MapScope<'a>,
         highlight: &'a MapHighlight,
-        filter: &'a GlobalFilter,
         visible_custom: &'a [SpatialPoint],
         icon_meshes: Option<&'a IconMeshLibrary>,
     ) -> Self {
         Self {
-            files,
-            visibility,
+            scope,
             highlight,
-            filter,
             visible_custom,
             icon_meshes,
         }
@@ -64,21 +57,16 @@ impl Plugin for MarkerRenderer<'_> {
 
         let mut batch = IconMeshBatch::new(self.icon_meshes, ui.pixels_per_point());
         for sp in self.visible_custom {
-            let Some(track) = visibility::category_in_scope(
-                self.files,
-                self.visibility,
-                self.filter,
-                sp.track_ref(),
-                DataCategory::CustomMarker,
-            ) else {
-                continue;
-            };
-            let Some(marker) = sp.point_index.get(&track.custom_markers) else {
-                continue;
-            };
-            if !gt_filter::point_passes_time_filter(marker.time, self.filter) {
+            if !viewport::is_spatial_point_visible(sp, self.scope) {
                 continue;
             }
+            let Some(marker) = sp
+                .track_ref()
+                .resolve(self.scope.files)
+                .and_then(|track| sp.point_index.get(&track.custom_markers))
+            else {
+                continue;
+            };
             let point_ref = DataPointRef {
                 track: sp.track_ref(),
                 category: DataCategory::CustomMarker,

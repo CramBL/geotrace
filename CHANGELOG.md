@@ -6,6 +6,10 @@
 
 - **Map & Tracks:** The eye menu has a "Ghost fixes" category that shows or hides dead-reckoned chevron icons and dashed trackline stretches.
 
+### Fixed
+
+- **Map & Tracks:** Fixed the map letting a generated or event marker be hovered, clicked and pinned while its type or event path is hidden in the side panel tree.
+
 ## 0.18.0 - 2026-09-15
 
 ### Added

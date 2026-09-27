@@ -1528,7 +1528,7 @@ fn snap_track_endpoint_flags(
     #[case] dark_mode: bool,
     #[case] highlighted: bool,
 ) {
-    let files = test_util::a_recording_of(30, test_util::WALKING_STEP_DEGREES);
+    let files = test_util::a_walking_recording();
 
     let mut map = MapScene::of(files)
         .tiles(TileAccess::Synthetic)
@@ -1545,7 +1545,7 @@ fn snap_track_endpoint_flags(
 /// recording opened from history is framed at.
 #[test]
 fn snap_track_endpoint_flags_with_the_fix_icons_faded_out() {
-    let files = test_util::a_recording_of(30, test_util::WALKING_STEP_DEGREES);
+    let files = test_util::a_walking_recording();
 
     let mut map = MapScene::of(files)
         .tiles(TileAccess::Synthetic)
@@ -1560,7 +1560,7 @@ fn snap_track_endpoint_flags_with_the_fix_icons_faded_out() {
 /// would cover each other.
 #[test]
 fn snap_track_endpoint_flags_on_a_track_drawn_as_one_dot() {
-    let files = test_util::a_recording_of(30, test_util::WALKING_STEP_DEGREES);
+    let files = test_util::a_walking_recording();
 
     let mut map = MapScene::of(files)
         .tiles(TileAccess::Synthetic)
@@ -1623,7 +1623,7 @@ fn snap_track_endpoint_flags_on_a_short_track(
 /// start flag at that fix, and no finish flag.
 #[test]
 fn snap_track_endpoint_flags_with_one_fix_in_the_window() {
-    let files = test_util::a_recording_of(30, test_util::WALKING_STEP_DEGREES);
+    let files = test_util::a_walking_recording();
 
     let mut map = MapScene::of(files)
         .tiles(TileAccess::Synthetic)

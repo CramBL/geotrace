@@ -12,7 +12,7 @@
 
 use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
 use egui_phosphor::regular::FLAG as ICON_FLAG;
-use gt_map::test_util::{self, MapScene, RenderedMap, VIEWPORT, WALKING_STEP_DEGREES};
+use gt_map::test_util::{self, CENTRE_FIX, MapScene, RenderedMap, VIEWPORT, WALKING_STEP_DEGREES};
 use gt_ui_theme::EM_DASH;
 use rstest::rstest;
 
@@ -75,7 +75,7 @@ fn snapshot_a_log_hexagon_stacks_its_label_over_the_label_of_the_layer_under_it(
     #[case] the_label_underneath: String,
     #[case] snapshot_name: &str,
 ) {
-    let files = test_util::a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES);
+    let files = test_util::a_walking_recording();
     let centre = test_util::fix_position(&files, CENTRE_FIX);
     let log = test_util::a_log_over(&files);
     let matches = test_util::matches_over(&files, &log, CENTRE_FIX..CENTRE_FIX + 1);
@@ -105,7 +105,7 @@ fn snapshot_a_log_hexagon_stacks_its_label_over_the_label_of_the_layer_under_it(
 /// track line draws over the cells.
 #[test]
 fn snapshot_a_fix_stacks_its_table_over_the_label_of_the_interference_cell_under_it() {
-    let files = test_util::a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES);
+    let files = test_util::a_walking_recording();
     let centre = test_util::fix_position(&files, CENTRE_FIX);
     let mut map = MapScene::of(files)
         .showing_the_interference_layer(test_util::an_interference_cell_around(centre))
@@ -139,10 +139,8 @@ fn snapshot_the_compound_label_stacks_over_the_label_of_the_interference_cell_un
          Heading\n{EM_DASH}\n\
          {ICON_FLAG}  power/boot"
     );
-    let files = test_util::with_an_event_marker_on_a_fix(
-        test_util::a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES),
-        CENTRE_FIX,
-    );
+    let files =
+        test_util::with_an_event_marker_on_a_fix(test_util::a_walking_recording(), CENTRE_FIX);
     let centre = test_util::fix_position(&files, CENTRE_FIX);
     let mut map = MapScene::of(files)
         .showing_the_interference_layer(test_util::an_interference_cell_around(centre))
@@ -192,7 +190,7 @@ fn snapshot_the_snapped_edge_labels_the_map_corner_while_the_layer_over_it_label
     #[case] the_label_at_the_pointer: String,
     #[case] snapshot_name: &str,
 ) {
-    let files = test_util::a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES);
+    let files = test_util::a_walking_recording();
     let centre = test_util::fix_position(&files, CENTRE_FIX);
     let log = test_util::a_log_over(&files);
     let matches = test_util::matches_over(&files, &log, CENTRE_FIX..CENTRE_FIX + 1);
@@ -233,7 +231,7 @@ fn snapshot_the_snapped_edge_label_is_drawn_in_the_map_corner_and_not_beside_the
     /// bottom-left corner.
     const DISTANCE_FROM_THE_POINTER_PT: f32 = 300.0;
 
-    let files = test_util::a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES);
+    let files = test_util::a_walking_recording();
     let centre = test_util::fix_position(&files, CENTRE_FIX);
     let mut map = MapScene::of(files)
         .overlays(|overlays| {
@@ -316,10 +314,8 @@ fn snapshot_no_hover_label_draws_while_a_popup_holds_the_map(
     #[case] on_the_escape_frame: LabelsOnTheEscapeFrame,
     #[case] snapshot_name: &str,
 ) {
-    let files = test_util::with_an_event_marker_on_a_fix(
-        test_util::a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES),
-        CENTRE_FIX,
-    );
+    let files =
+        test_util::with_an_event_marker_on_a_fix(test_util::a_walking_recording(), CENTRE_FIX);
     let centre = test_util::fix_position(&files, CENTRE_FIX);
     let mut map = MapScene::of(files)
         .showing_the_interference_layer(test_util::an_interference_cell_around(centre))
@@ -397,12 +393,9 @@ fn snapshot_the_compound_label_opens_the_frame_after_the_pointer_reaches_two_ele
          Heading\n{EM_DASH}\n\
          {ICON_FLAG}  power/boot"
     );
-    let files = test_util::with_an_event_marker_on_a_fix(
-        test_util::a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES),
-        CENTRE_FIX,
-    );
-    let centre = test_util::fix_position(&files, CENTRE_FIX);
-    let mut map = MapScene::of(files).centred_on(centre).render();
+    let files =
+        test_util::with_an_event_marker_on_a_fix(test_util::a_walking_recording(), CENTRE_FIX);
+    let mut map = MapScene::of(files).centred_on_fix(CENTRE_FIX).render();
 
     map.move_pointer_to(bare_map_north_of_the_track());
     map.render_one_more_frame();
@@ -464,12 +457,6 @@ fn snapshot_the_fix_table_opens_the_frame_after_the_pointer_reaches_a_fix_on_a_s
     );
     map.snapshot("hover_label_a_fix_that_the_pointer_reached_on_a_snapped_edge");
 }
-
-/// Fixes of the walking recording every case but the last draws.
-const FIX_COUNT: usize = 30;
-
-/// The fix the camera is held on, which puts it at [`viewport_center`].
-const CENTRE_FIX: usize = 15;
 
 /// How far north of the track the bare-map point sits, in points.
 const NORTH_OF_THE_TRACK_OFFSET_PT: f32 = 150.0;

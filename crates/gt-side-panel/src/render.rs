@@ -343,9 +343,13 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
     // from, so a point row's pin gate agrees with what is on screen. Toggles
     // made further down this frame land on the next one.
     let frame_visibility = ctx.tree.visibility().clone();
+    let frame_event_marker_visibility = ctx.tree.event_marker_visibility().clone();
+    let frame_generated_marker_visibility = ctx.tree.generated_marker_visibility().clone();
     let scope = MapScope {
         files: ctx.files(),
         visibility: &frame_visibility,
+        event_marker_visibility: &frame_event_marker_visibility,
+        generated_marker_visibility: &frame_generated_marker_visibility,
         filter: &filter_snapshot,
         display_mask: ctx.display_mask,
         query_matches: ctx.query_matches,

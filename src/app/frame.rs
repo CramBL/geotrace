@@ -812,6 +812,8 @@ impl App {
                     let scope = MapScope {
                         files: s.loaded_files.files(),
                         visibility: s.tree.visibility(),
+                        event_marker_visibility: s.tree.event_marker_visibility(),
+                        generated_marker_visibility: s.tree.generated_marker_visibility(),
                         filter: &s.filter,
                         display_mask: s.display_mask,
                         query_matches: self.query_window.matches(),
@@ -898,7 +900,15 @@ impl App {
                     filter,
                     snap_errors: &snap_error_values,
                 },
-                *display_mask,
+                MapScope {
+                    files: loaded_files.files(),
+                    visibility: tree.visibility(),
+                    event_marker_visibility: tree.event_marker_visibility(),
+                    generated_marker_visibility: tree.generated_marker_visibility(),
+                    filter,
+                    display_mask: *display_mask,
+                    query_matches: None,
+                },
                 highlight,
                 &mut gt_side_panel::widgets::PointClickRequests {
                     map_center: map_center_request,

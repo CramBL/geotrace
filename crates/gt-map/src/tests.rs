@@ -33,9 +33,9 @@ pub(crate) fn vis_all_visible() -> TrackDataVisibility {
     }
 }
 
-/// Everything visible: no display category masked, no query run. Cases that
-/// need either override the field they are about - `MapScope { query_matches:
-/// Some(&matches), ..scope(&files, &vis, &filter) }`.
+/// Everything visible: no marker type hidden, no display category masked, no
+/// query run. A case that needs one of those overrides the matching field -
+/// `MapScope { query_matches: Some(&matches), ..scope(&files, &vis, &filter) }`.
 fn scope<'a>(
     files: &'a [LoadedFile],
     visibility: &'a TrackDataVisibility,
@@ -44,6 +44,8 @@ fn scope<'a>(
     MapScope {
         files,
         visibility,
+        event_marker_visibility: &NO_EVENT_MARKER_PATH_HIDDEN,
+        generated_marker_visibility: &NO_GENERATED_MARKER_KIND_HIDDEN,
         filter,
         display_mask: DisplayMask::default(),
         query_matches: None,
@@ -570,13 +572,7 @@ fn hiding_ghost_fixes_prevents_hovering_ghost_points_while_keeping_real_points()
     let real_cursor = gt_types::mercator::normalize(Latitude::new(55.0), Longitude::new(12.0));
     let radius_merc_sq = 1e-10;
 
-    let default_scope = MapScope {
-        files: &files,
-        visibility: &vis,
-        filter: &filter,
-        display_mask: DisplayMask::default(),
-        query_matches: None,
-    };
+    let default_scope = scope(&files, &vis, &filter);
     let hover_ghost = map.nearest_hover_candidates(
         [ghost_cursor.x, ghost_cursor.y],
         radius_merc_sq,
@@ -1001,3 +997,8 @@ fn revealing_matches_frames_the_map_on_them() {
         "the reveal frames the matched track alone, got {framed_matches:?}"
     );
 }
+
+static NO_EVENT_MARKER_PATH_HIDDEN: EventMarkerVisibility = EventMarkerVisibility::new();
+
+static NO_GENERATED_MARKER_KIND_HIDDEN: GeneratedMarkerVisibility =
+    GeneratedMarkerVisibility::new();

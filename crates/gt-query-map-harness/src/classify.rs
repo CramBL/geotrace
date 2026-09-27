@@ -35,6 +35,7 @@ impl PointClass {
             PointVisibility::NoSuchElement => '?',
             PointVisibility::TrackNotShown => 'o',
             PointVisibility::CategoryHidden => 'm',
+            PointVisibility::MarkerTypeHidden => 't',
             PointVisibility::HiddenByQuery => 'x',
             PointVisibility::OutsideTimeFilter => '-',
         }
@@ -82,6 +83,7 @@ mod tests {
     #[case(PointVisibility::NoSuchElement, &[], '?')]
     #[case(PointVisibility::TrackNotShown, &[], 'o')]
     #[case(PointVisibility::CategoryHidden, &[], 'm')]
+    #[case(PointVisibility::MarkerTypeHidden, &[], 't')]
     #[case(PointVisibility::HiddenByQuery, &[], 'x')]
     #[case(PointVisibility::OutsideTimeFilter, &[], '-')]
     fn each_state_has_its_own_glyph(
@@ -101,6 +103,7 @@ mod tests {
             PointVisibility::NoSuchElement,
             PointVisibility::TrackNotShown,
             PointVisibility::CategoryHidden,
+            PointVisibility::MarkerTypeHidden,
             PointVisibility::HiddenByQuery,
             PointVisibility::OutsideTimeFilter,
         ];
@@ -120,7 +123,7 @@ mod tests {
     /// would read a layer as a withheld point.
     #[test]
     fn halo_digits_never_collide_with_the_not_shown_glyphs() {
-        let reserved = ['?', 'o', 'm', 'x', '-', '.', '*'];
+        let reserved = ['?', 'o', 'm', 't', 'x', '-', '.', '*'];
         for layer in 0..DrawLayerMask::MAX_LAYERS {
             let glyph = class(PointVisibility::Shown, &[layer]).glyph();
             assert!(
