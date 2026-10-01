@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
-use egui::{Button, Grid, Label, RichText, TextEdit};
+use egui::{Button, ComboBox, Grid, Label, RichText, TextEdit};
 use egui_extras::{Column, TableBuilder, TableRow};
+use egui_phosphor::regular::DOTS_THREE as ICON_MORE;
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
 use egui_phosphor::regular::TRASH as ICON_TRASH;
@@ -8,28 +9,19 @@ use gt_fmt::UTC_MINUTE_FORMAT;
 use gt_log_view::LogAttachmentRef;
 use gt_pending_writes::WriteAccess;
 use gt_store::{ChannelSummary, DatabaseRef, NavPointTimeRange, RecordingEntry, TrackState};
-use gt_ui_components::{DetailsTooltip, MetadataView};
+use gt_ui_components::{
+    ActionPresentation, ColumnBudget, ColumnFallback, ColumnPlan, ColumnRole, ColumnSpec,
+    DetailsTooltip, MetadataView,
+};
 use gt_ui_theme::EM_DASH;
 use gt_ui_theme::buttons::{self, FramelessIconButton, SortHeaderButton};
 use gt_ui_theme::labels;
-use strum::{EnumCount as _, IntoEnumIterator as _};
+use strum::IntoEnumIterator as _;
 
 use super::{HistorySort, OpenShelf, RenameEdit, ShelfTracks, SortColumn};
 use crate::app::history_db::{DeleteReason, HistoryWorker};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 
-/// The scrolling recordings table, laid out like a file manager's list: the
-/// metadata columns (date, duration, points, size, logs, actions) take the
-/// width of their own header or of the widest cell they draw for the stored
-/// recordings (see [`MetadataColumnFloors`]), and the identity column fills
-/// whatever width is left, clipping long names. Its width is a function of the window's width, so
-/// the table is always exactly as wide as the window.
-///
-/// Identity is sized as a [`Column::exact`] computed from the floors the other
-/// columns take (see [`identity_column_width`]). A [`Column::remainder`] that is
-/// not the *last* column ratchets in `egui_extras`: it feeds its clipped width
-/// back into its own minimum every frame, so it can never shrink again, which
-/// stops the window from being made narrower and lets it creep wider.
 pub(super) fn history_table(
     ui: &mut egui::Ui,
     HistoryTable {
@@ -55,50 +47,64 @@ pub(super) fn history_table(
         (max_listing_height - row_height - ui.spacing().item_spacing.y).max(0.0);
 
     let floors = metadata_column_floors(ui, entries, entries_revision);
-    let identity_width = identity_column_width(ui, floors);
-
-    let mut table = TableBuilder::new(ui)
-        .id_salt("history_list")
-        .striped(true)
-        // Cells lay out in a row (no vertical wrapping): dates stay on one
-        // line and the action buttons sit side by side.
-        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        // Don't shrink to content: the table fills the window's width, which the
-        // computed identity column already accounts for.
-        .auto_shrink([false, true])
-        .max_scroll_height(max_scroll_height)
-        // `egui_extras` keeps a 200px floor by default, which on a short window
-        // pushes the footer off the bottom. The body takes exactly the height
-        // it is given.
-        .min_scrolled_height(0.0)
-        // Identity fills the leftover width (see above) and clips long names.
-        .column(Column::exact(identity_width).clip(true));
-
-    // The metadata columns, every sortable column except identity, which was
-    // added above, and the action column after them. They are not resizable:
-    // there is nothing to gain from resizing a date or a byte count, and it
-    // keeps the table's width fully determined by the window. Each takes the
-    // floor of the widest cell it can draw (see [`MetadataColumnFloors`]).
-    for floor in SortColumn::iter()
-        .filter_map(|column| floors.of_sortable_column(column))
-        .chain(std::iter::once(floors.action))
+    let plan = floors.column_plan(ui);
+    let sort_height = if plan
+        .columns
+        .iter()
+        .filter(|column| matches!(column.key, HistoryColumn::Sortable(_)))
+        .count()
+        < SortColumn::iter().count()
     {
-        table = table.column(Column::auto().resizable(false).at_least(floor));
+        let response = ui.horizontal_wrapped(|ui| {
+            ComboBox::new(HIDDEN_SORT_ID, "Sort by")
+                .selected_text(sort.column.title())
+                .show_ui(ui, |ui| {
+                    for column in SortColumn::iter() {
+                        if ui
+                            .selectable_label(sort.column == column, column.title())
+                            .clicked()
+                        {
+                            sort.clicked(column);
+                        }
+                    }
+                });
+            if ui
+                .button(sort.column.order_hint(sort.direction))
+                .on_hover_text("Reverse sort order")
+                .clicked()
+            {
+                sort.clicked(sort.column);
+            }
+        });
+        response.response.rect.height() + ui.spacing().item_spacing.y
+    } else {
+        0.0
+    };
+    if plan.fallback == ColumnFallback::HorizontalScroll {
+        ui.set_min_width(plan.width + ui.spacing().scroll.allocated_width());
+    }
+    let mut table = TableBuilder::new(ui)
+        .id_salt(HISTORY_TABLE_ID)
+        .striped(true)
+        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+        .auto_shrink([false, true])
+        .max_scroll_height((max_scroll_height - sort_height).max(0.0))
+        .min_scrolled_height(0.0);
+    for column in &plan.columns {
+        table = table.column(Column::exact(column.width).clip(true));
     }
 
     table
         .header(row_height, |mut header| {
-            // Driven off `SortColumn`, so a new sortable column cannot be added
-            // without a header appearing.
-            for column in SortColumn::iter() {
+            for column in &plan.columns {
                 header.col(|ui| {
-                    // Identity is the term-explained column. Every other one is
-                    // a plain sortable header.
-                    let term = (column == SortColumn::Identity).then_some(crate::terms::IDENTITY);
-                    sort_header(ui, column, sort, term);
+                    if let HistoryColumn::Sortable(column) = column.key {
+                        let term =
+                            (column == SortColumn::Identity).then_some(crate::terms::IDENTITY);
+                        sort_header(ui, column, sort, term);
+                    }
                 });
             }
-            header.col(|_| {});
         })
         .body(|body| {
             body.rows(row_height, listing.len(), |mut row| {
@@ -112,12 +118,15 @@ pub(super) fn history_table(
                             loaded_metas.iter().any(|m| m.same_recording(&entry.meta));
                         render_row(
                             &mut row,
-                            entry,
-                            already_loaded,
-                            worker,
-                            rename,
-                            shelf,
-                            write_access,
+                            RecordingRowRender {
+                                entry,
+                                already_loaded,
+                                worker,
+                                rename,
+                                shelf,
+                                write_access,
+                                plan: &plan,
+                            },
                         );
                     }
                     ListingRow::Shelf(shelf_row) => {
@@ -126,6 +135,7 @@ pub(super) fn history_table(
                             &mut row,
                             ShelfRowRender {
                                 shelf_row,
+                                plan: &plan,
                                 recording,
                                 worker,
                                 raised_the_delete: shelf_raised_the_delete,
@@ -138,33 +148,14 @@ pub(super) fn history_table(
         });
 }
 
-/// The width left for the identity column: what the table has, less the gap
-/// between each pair of columns and the floor every other column takes.
-///
-/// It lands on the pixel grid, always down, never up: half a pixel over sets the
-/// listing scrolling sideways, and the scroll area's drag then takes the hover
-/// off the rows.
-fn identity_column_width(ui: &egui::Ui, floors: MetadataColumnFloors) -> f32 {
-    // What `egui_extras` lays the table's columns out in.
-    let table_width = ui.available_width() - ui.spacing().scroll.allocated_width();
-    let gaps = ui.spacing().item_spacing.x * COLUMN_GAP_COUNT;
-    let left_over = (table_width - gaps - floors.total()).max(IDENTITY_MIN_WIDTH);
-    let pixels_per_point = ui.pixels_per_point();
-    (left_over * pixels_per_point).floor() / pixels_per_point
+#[derive(Clone, Copy)]
+enum HistoryColumn {
+    Actions,
+    Sortable(SortColumn),
 }
 
-/// The width each metadata column keeps, whatever the listing has scrolled into
-/// view: the widest cell that column draws for the recordings the database
-/// holds, filtered out of the listing or not.
-///
-/// An `egui_extras` auto column takes the width of the cells laid out this
-/// frame, and the body draws the rows in view alone. Without these floors the
-/// columns, and the identity column that fills what they leave, change width as
-/// the user scrolls.
-///
-/// A line of an open shelf draws a subset of the same cells: its track's
-/// nav-point count under Points, its two controls under the actions, and
-/// nothing under Date, Duration, Size and Logs.
+/// Widths are measured across the complete listing to preserve alignment during
+/// scrolling and filtering.
 #[derive(Clone, Copy)]
 struct MetadataColumnFloors {
     date: f32,
@@ -176,9 +167,6 @@ struct MetadataColumnFloors {
 }
 
 impl MetadataColumnFloors {
-    /// A floor covers the column's header as well as its cells, and lands on a
-    /// whole pixel: the identity column takes the width these leave, and a
-    /// fraction of a pixel over sends the table past the window's edge.
     fn measure(ui: &egui::Ui, entries: &[RecordingEntry]) -> Self {
         let widest = |column: SortColumn, cell_width: fn(&egui::Ui, &RecordingEntry) -> f32| {
             let widest = entries
@@ -205,13 +193,45 @@ impl MetadataColumnFloors {
         }
     }
 
-    /// What every column but identity takes.
-    fn total(self) -> f32 {
-        self.date + self.duration + self.points + self.size + self.logs + self.action
+    fn column_plan(self, ui: &egui::Ui) -> ColumnPlan<HistoryColumn> {
+        let mut specs: Vec<_> = SortColumn::iter()
+            .map(|column| {
+                let role = match column {
+                    SortColumn::Identity => ColumnRole::Primary,
+                    SortColumn::Date | SortColumn::Points => ColumnRole::Required,
+                    SortColumn::Logs => ColumnRole::Optional { priority: 0 },
+                    SortColumn::Duration => ColumnRole::Optional { priority: 1 },
+                    SortColumn::Size => ColumnRole::Optional { priority: 2 },
+                };
+                ColumnSpec {
+                    key: HistoryColumn::Sortable(column),
+                    role,
+                    minimum_width: self.of_sortable_column(column).unwrap_or_else(|| {
+                        ui.text_style_height(&egui::TextStyle::Body) * IDENTITY_MIN_EMS
+                    }),
+                }
+            })
+            .collect();
+        let compact_width = buttons::button_width(ui, OPEN_RECORDING_LABEL)
+            + ui.spacing().item_spacing.x
+            + buttons::button_width(ui, ICON_MORE)
+            + ui.spacing().icon_width
+            + ui.spacing().icon_spacing;
+        specs.push(ColumnSpec {
+            key: HistoryColumn::Actions,
+            role: ColumnRole::Actions { compact_width },
+            minimum_width: self.action,
+        });
+        ColumnPlan::allocate(
+            &specs,
+            ColumnBudget {
+                available_width: ui.available_width() - ui.spacing().scroll.allocated_width(),
+                gap: ui.spacing().item_spacing.x,
+                pixels_per_point: ui.pixels_per_point(),
+            },
+        )
     }
 
-    /// The floor of a sortable column, and [`None`] for identity, which takes
-    /// the width the other columns leave.
     fn of_sortable_column(self, column: SortColumn) -> Option<f32> {
         match column {
             SortColumn::Identity => None,
@@ -443,6 +463,7 @@ fn shelf_caret(ui: &mut egui::Ui, entry: &RecordingEntry, shelf: &mut Option<Ope
 /// What one line of the open shelf draws, and where it reports a press.
 struct ShelfRowRender<'a> {
     shelf_row: &'a ShelfRow,
+    plan: &'a ColumnPlan<HistoryColumn>,
     /// The recording the shelf is open on, and [`None`] on the frame the shelf
     /// closes under the row being drawn.
     recording: Option<&'a DatabaseRef>,
@@ -453,97 +474,104 @@ struct ShelfRowRender<'a> {
     write_access: WriteAccess,
 }
 
-/// One line of an open shelf: the track's number and nav-point count with the
-/// button that unshelves it, or the closing line, whose two buttons unshelve
-/// every track the shelf lists and delete every one of them permanently.
-///
-/// A track's number is its stored row plus one. That holds for the life of the
-/// recording: a permanent delete leaves a tombstone in its row, and the rows
-/// after it keep their position. The shelf lists "#3" when rows 1 and 2 are a
-/// live and a deleted track.
+/// Stored row numbers remain stable after deletion because the database preserves tombstones.
 fn render_shelf_row(
     row: &mut TableRow<'_, '_>,
     ShelfRowRender {
         shelf_row,
+        plan,
         recording,
         worker,
         raised_the_delete,
         write_access,
     }: ShelfRowRender<'_>,
 ) {
-    row.col(|ui| {
-        ui.add_space(ui.spacing().indent);
-        match shelf_row {
-            ShelfRow::Reading => {
-                ui.spinner();
+    for column in &plan.columns {
+        row.col(|ui| match column.key {
+            HistoryColumn::Sortable(SortColumn::Identity) => {
+                ui.add_space(ui.spacing().indent);
+                match shelf_row {
+                    ShelfRow::Reading => {
+                        ui.spinner();
+                    }
+                    ShelfRow::ShelvedTrack { stored_row, .. } => {
+                        ui.label(format!("#{}", stored_row.saturating_add(1)));
+                    }
+                    ShelfRow::EveryShelvedTrack { stored_rows } => {
+                        let count = stored_rows.len();
+                        ui.weak(format!(
+                            "{count} shelved {}",
+                            gt_fmt::pluralize(count, "track", "tracks")
+                        ));
+                    }
+                }
             }
-            ShelfRow::ShelvedTrack { stored_row, .. } => {
-                ui.label(format!("#{}", stored_row.saturating_add(1)));
+            HistoryColumn::Sortable(SortColumn::Points) => {
+                if let ShelfRow::ShelvedTrack {
+                    nav_point_count, ..
+                } = shelf_row
+                {
+                    ui.label(gt_store::format_count_suffix(*nav_point_count));
+                }
             }
-            ShelfRow::EveryShelvedTrack { stored_rows } => {
-                let count = stored_rows.len();
-                ui.weak(format!(
-                    "{count} shelved {}",
-                    gt_fmt::pluralize(count, "track", "tracks")
-                ));
-            }
-        }
-    });
-    // Date and Duration: a stored track table states neither.
-    row.col(|_| {});
-    row.col(|_| {});
-    row.col(|ui| {
-        if let ShelfRow::ShelvedTrack {
-            nav_point_count, ..
-        } = shelf_row
-        {
-            ui.label(gt_store::format_count_suffix(*nav_point_count));
-        }
-    });
-    // Size and Logs: both are per recording.
-    row.col(|_| {});
-    row.col(|_| {});
-    row.col(|ui| {
-        let writes_recordings = write_access.allows_writing();
-        let (label, hover, rows) = match shelf_row {
-            ShelfRow::Reading => return,
-            ShelfRow::ShelvedTrack { stored_row, .. } => {
-                (UNSHELVE_LABEL, UNSHELVE_HOVER, vec![*stored_row])
-            }
-            ShelfRow::EveryShelvedTrack { stored_rows } => {
-                (UNSHELVE_ALL_LABEL, UNSHELVE_ALL_HOVER, stored_rows.clone())
-            }
-        };
-        let clicked = ui
-            .add_enabled(writes_recordings, Button::new(label).small())
-            .on_hover_text(hover)
-            .on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER)
-            .clicked();
-        if clicked && let Some(recording) = recording {
-            worker.set_tracks_shelved(recording.clone(), rows, false);
-        }
+            HistoryColumn::Sortable(_) => {}
+            HistoryColumn::Actions => {
+                if matches!(shelf_row, ShelfRow::Reading) {
+                    return;
+                }
+                let mut actions_ui = |ui: &mut egui::Ui| {
+                    let writes_recordings = write_access.allows_writing();
+                    let (label, hover, rows) = match shelf_row {
+                        ShelfRow::Reading => return,
+                        ShelfRow::ShelvedTrack { stored_row, .. } => {
+                            (UNSHELVE_LABEL, UNSHELVE_HOVER, vec![*stored_row])
+                        }
+                        ShelfRow::EveryShelvedTrack { stored_rows } => {
+                            (UNSHELVE_ALL_LABEL, UNSHELVE_ALL_HOVER, stored_rows.clone())
+                        }
+                    };
+                    let clicked = ui
+                        .add_enabled(writes_recordings, Button::new(label).small())
+                        .on_hover_text(hover)
+                        .on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER)
+                        .clicked();
+                    if clicked && let Some(recording) = recording {
+                        worker.set_tracks_shelved(recording.clone(), rows, false);
+                    }
 
-        let ShelfRow::EveryShelvedTrack { .. } = shelf_row else {
-            return;
-        };
-        let delete = FramelessIconButton::new(
-            RichText::new(ICON_TRASH).color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
-        )
-        .enabled(writes_recordings)
-        .hover_text_ui(
-            ui,
-            if writes_recordings {
-                DELETE_SHELVED_HOVER
-            } else {
-                READ_ONLY_RECORDING_HISTORY_HOVER
-            },
-        );
-        if delete.clicked()
-            && let Some(recording) = recording
-        {
-            *raised_the_delete = Some(recording.clone());
-        }
-    });
+                    let ShelfRow::EveryShelvedTrack { .. } = shelf_row else {
+                        return;
+                    };
+                    let delete = FramelessIconButton::new(
+                        RichText::new(ICON_TRASH)
+                            .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                    )
+                    .enabled(writes_recordings)
+                    .hover_text_ui(
+                        ui,
+                        if writes_recordings {
+                            DELETE_SHELVED_HOVER
+                        } else {
+                            READ_ONLY_RECORDING_HISTORY_HOVER
+                        },
+                    );
+                    if delete.clicked()
+                        && let Some(recording) = recording
+                    {
+                        *raised_the_delete = Some(recording.clone());
+                    }
+                };
+                match plan.actions {
+                    ActionPresentation::Compact => {
+                        ui.menu_button(ICON_MORE, actions_ui)
+                            .response
+                            .on_hover_text("Shelf actions");
+                    }
+                    ActionPresentation::Full => actions_ui(ui),
+                }
+            }
+        });
+    }
 }
 
 /// A clickable table header that orders the list by `column`.
@@ -608,72 +636,116 @@ pub(super) struct HistoryTable<'a> {
     pub write_access: WriteAccess,
 }
 
+struct RecordingRowRender<'a> {
+    entry: &'a RecordingEntry,
+    already_loaded: bool,
+    worker: &'a HistoryWorker,
+    rename: &'a mut Option<RenameEdit>,
+    shelf: &'a mut Option<OpenShelf>,
+    write_access: WriteAccess,
+    plan: &'a ColumnPlan<HistoryColumn>,
+}
+
 fn render_row(
     row: &mut TableRow<'_, '_>,
-    entry: &RecordingEntry,
-    already_loaded: bool,
-    worker: &HistoryWorker,
-    rename: &mut Option<RenameEdit>,
-    shelf: &mut Option<OpenShelf>,
-    write_access: WriteAccess,
+    RecordingRowRender {
+        entry,
+        already_loaded,
+        worker,
+        rename,
+        shelf,
+        write_access,
+        plan,
+    }: RecordingRowRender<'_>,
 ) {
-    // Identity column: the shelf caret, then the inline editor when this row is
-    // being renamed and the normal cell otherwise.
-    row.col(|ui| {
-        shelf_caret(ui, entry, shelf);
-        if rename
-            .as_ref()
-            .is_some_and(|r| r.identity == entry.db_ref.identity)
-        {
-            render_rename_editor(ui, rename, worker);
-        } else {
-            identity_cell(ui, entry, worker, rename, write_access);
+    for column in &plan.columns {
+        match column.key {
+            HistoryColumn::Sortable(SortColumn::Identity) => {
+                row.col(|ui| {
+                    shelf_caret(ui, entry, shelf);
+                    if rename
+                        .as_ref()
+                        .is_some_and(|r| r.identity == entry.db_ref.identity)
+                    {
+                        render_rename_editor(ui, rename, worker);
+                    } else {
+                        identity_cell(ui, entry, worker, rename, write_access);
+                    }
+                });
+            }
+            HistoryColumn::Sortable(SortColumn::Date) => {
+                breakdown_cell(row, entry, SortColumn::Date, |ui| {
+                    ui.label(started_at_text(entry.meta.time_range));
+                });
+            }
+            HistoryColumn::Sortable(SortColumn::Duration) => {
+                breakdown_cell(row, entry, SortColumn::Duration, |ui| {
+                    ui.label(duration_text(entry.meta.time_range));
+                });
+            }
+            HistoryColumn::Sortable(SortColumn::Points) => {
+                breakdown_cell(row, entry, SortColumn::Points, |ui| {
+                    let (count, shelved_note) = points_cell_texts(entry);
+                    ui.label(count);
+                    if let Some(note) = shelved_note {
+                        ui.weak(note);
+                    }
+                });
+            }
+            HistoryColumn::Sortable(SortColumn::Size) => {
+                breakdown_cell(row, entry, SortColumn::Size, |ui| {
+                    ui.label(gt_fmt::format_bytes(entry.meta.gtd_size_bytes));
+                });
+            }
+            HistoryColumn::Sortable(SortColumn::Logs) => {
+                row.col(|ui| {
+                    attached_logs_cell(ui, entry, worker);
+                });
+            }
+            HistoryColumn::Actions => {
+                row.col(|ui| {
+                    let open =
+                        ui.add_enabled(!already_loaded, Button::new(OPEN_RECORDING_LABEL).small());
+                    if already_loaded {
+                        open.on_hover_text("Already loaded");
+                    } else if open.clicked() {
+                        worker.open(entry.db_ref.clone());
+                    }
+                    let secondary_actions = |ui: &mut egui::Ui| {
+                        if ui
+                            .add_enabled(
+                                write_access.allows_writing(),
+                                Button::new(DELETE_RECORDING_LABEL).small(),
+                            )
+                            .on_hover_text("Permanently delete this recording from history")
+                            .on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER)
+                            .clicked()
+                        {
+                            worker.delete_recordings(
+                                vec![entry.db_ref.clone()],
+                                DeleteReason::Manual,
+                            );
+                        }
+                        if plan.actions == ActionPresentation::Compact
+                            && !plan.columns.iter().any(|column| {
+                                matches!(column.key, HistoryColumn::Sortable(SortColumn::Logs))
+                            })
+                        {
+                            attached_logs_cell(ui, entry, worker);
+                        }
+                    };
+                    match plan.actions {
+                        ActionPresentation::Compact => {
+                            ui.menu_button(ICON_MORE, secondary_actions)
+                                .response
+                                .on_hover_text("Recording actions");
+                        }
+                        ActionPresentation::Full => secondary_actions(ui),
+                    }
+                });
+            }
         }
-    });
-
-    breakdown_cell(row, entry, SortColumn::Date, |ui| {
-        ui.label(started_at_text(entry.meta.time_range));
-    });
-
-    breakdown_cell(row, entry, SortColumn::Duration, |ui| {
-        ui.label(duration_text(entry.meta.time_range));
-    });
-
-    breakdown_cell(row, entry, SortColumn::Points, |ui| {
-        let (count, shelved_note) = points_cell_texts(entry);
-        ui.label(count);
-        if let Some(note) = shelved_note {
-            ui.weak(note);
-        }
-    });
-
-    breakdown_cell(row, entry, SortColumn::Size, |ui| {
-        ui.label(gt_fmt::format_bytes(entry.meta.gtd_size_bytes));
-    });
-
-    row.col(|ui| {
-        attached_logs_cell(ui, entry, worker);
-    });
-
-    row.col(|ui| {
-        let open = ui.add_enabled(!already_loaded, Button::new(OPEN_RECORDING_LABEL).small());
-        if already_loaded {
-            open.on_hover_text("Already loaded");
-        } else if open.clicked() {
-            worker.open(entry.db_ref.clone());
-        }
-        if ui
-            .add_enabled(
-                write_access.allows_writing(),
-                Button::new(DELETE_RECORDING_LABEL).small(),
-            )
-            .on_hover_text("Permanently delete this recording from history")
-            .on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER)
-            .clicked()
-        {
-            worker.delete_recordings(vec![entry.db_ref.clone()], DeleteReason::Manual);
-        }
-    });
+    }
 }
 
 /// The Logs column of a History row: how many logs the recording stores, and
@@ -967,8 +1039,6 @@ fn begin_rename(rename: &mut Option<RenameEdit>, entry: &RecordingEntry) {
     *rename = Some(RenameEdit { identity, buffer });
 }
 
-/// The identity column of a History row. Double-clicking the cell opens the
-/// inline rename editor. Right-clicking offers Rename and Delete.
 fn identity_cell(
     ui: &mut egui::Ui,
     entry: &RecordingEntry,
@@ -1048,6 +1118,7 @@ fn identity_cell(
         begin_rename(rename, entry);
     }
     label.context_menu(|ui| {
+        attached_logs_cell(ui, entry, worker);
         if ui
             .add_enabled(writes_recordings, Button::new("Rename"))
             .on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER)
@@ -1066,10 +1137,6 @@ fn identity_cell(
         }
     });
 }
-
-/// Gaps `egui_extras` leaves between the table's columns, one fewer than the
-/// columns themselves: one per sortable column, and the actions after them.
-const COLUMN_GAP_COUNT: f32 = SortColumn::COUNT as f32;
 
 /// The three forms [`gt_store::format_count_suffix`] writes: plain digits under
 /// a thousand, thousands under a million, millions above it.
@@ -1108,13 +1175,9 @@ const HIDE_SHELVED_TRACKS_HOVER: &str = "Close the list of shelved tracks";
 
 const NO_SHELVED_TRACKS_HOVER: &str = "This recording has no shelved tracks";
 
-/// Identity's floor: room for the shelf caret and the first characters of the
-/// name. A floor high enough to keep the name readable leaves the action column
-/// past the window's right edge, where the horizontal scroll area cuts Open and
-/// Delete off. The metadata columns, the action column among them, take their
-/// content width first. Identity reaches this floor in a window too narrow for
-/// them, and the listing then scrolls sideways.
-const IDENTITY_MIN_WIDTH: f32 = 64.0;
+const IDENTITY_MIN_EMS: f32 = 14.0;
+const HISTORY_TABLE_ID: &str = "history_list";
+const HIDDEN_SORT_ID: &str = "history_hidden_sort";
 
 pub(in crate::app) const OPEN_LOG_LABEL: &str = "Open log";
 

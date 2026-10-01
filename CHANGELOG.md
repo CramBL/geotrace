@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- **Interface:** History preserves readable recording identities and hides optional columns when the window narrows.
+
 - **Interface:** The Track data panel opens at the pointer when dragged out of its dock.
 
 - **Interface:** History opens centered with a size based on the screen when first shown.

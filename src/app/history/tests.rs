@@ -2,38 +2,39 @@ use std::num::NonZeroUsize;
 use std::time::Instant;
 
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
+use egui_phosphor::regular::CARET_RIGHT as ICON_CARET_RIGHT;
+use egui_phosphor::regular::DOTS_THREE as ICON_MORE;
+use egui_phosphor::regular::NOTE as ICON_NOTE;
+use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
+use egui_phosphor::regular::TRASH as ICON_TRASH;
 use gt_pending_writes::{PendingWrites, WriteAccess};
-use gt_store::{HistoryDatabase as _, RecordingsHandle};
+use gt_store::{
+    ChannelSummary, DatabaseRef, HistoryDatabase as _, NavPointTimeRange, RecordingEntry,
+    RecordingsHandle, TrackRange, TrackState,
+};
 use gt_test_utils::window_fit::{
     CRAMPED_VIEWPORT, NARROW_VIEWPORT, OVERSIZED_ROW_COUNT, SHORT_VIEWPORT,
 };
 use gt_test_utils::{
     AuditedWindow, By, ControlLabel, HarnessInteraction as _, TestHarness, WindowFitAssertions as _,
 };
-
-use crate::app::history_db::{DeleteShelvedTracksScope, Response};
-use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
-use crate::app::storage_controls::AUTO_STORE_LABEL;
-
-use egui_phosphor::regular::CARET_RIGHT as ICON_CARET_RIGHT;
-use egui_phosphor::regular::NOTE as ICON_NOTE;
-use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
-use egui_phosphor::regular::TRASH as ICON_TRASH;
-use gt_store::{ChannelSummary, TrackRange, TrackState};
 use gt_ui_theme::EM_DASH;
 use gt_ui_theme::buttons::SortCaret;
 use gt_ui_theme::labels;
+use strum::{EnumCount as _, IntoEnumIterator as _};
 
 use super::delete_shelved_prompt::{DELETE_SHELVED_TRACKS_LABEL, DELETE_SHELVED_WINDOW_TITLE};
 use super::table::{self, MAX_HOVER_CHANNELS, OPEN_LOG_LABEL, UNSHELVE_ALL_LABEL, UNSHELVE_LABEL};
 use super::{
-    DatabaseRef, HISTORY_WINDOW_SIZING, HistorySort, HistoryWindow, HistoryWorker,
-    NavPointTimeRange, PRUNE_WINDOW_TITLE, RecordingEntry, SortColumn, SortDirection,
+    HISTORY_WINDOW_SIZING, HistorySort, HistoryWindow, OpenShelf, PRUNE_WINDOW_TITLE, ShelfTracks,
+    SortColumn, SortDirection,
 };
+use crate::app::history_db::{DeleteShelvedTracksScope, HistoryWorker, Response};
+use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
+use crate::app::storage_controls::AUTO_STORE_LABEL;
 use crate::app::test_util::listing;
 use crate::app::test_util::listing::{ShelvedTracks, TotalTracks};
 use crate::app::test_util::recordings;
-use strum::{EnumCount as _, IntoEnumIterator as _};
 
 /// Harness state for driving the History window: the window, a live (empty)
 /// worker so the list branch renders, and the settings toggles `show` needs.
@@ -525,8 +526,13 @@ fn open_the_shelf_at_the_window_size_it_is_shown_at(h: &mut TestHarness<HistoryH
     }
     h.inner.get_by_label(ICON_CARET_RIGHT).click();
     assert!(
-        h.inner
-            .step_until(|h| h.query_all_by_label(UNSHELVE_LABEL).next().is_some()),
+        h.inner.step_until(|h| {
+            h.state()
+                .window
+                .shelf
+                .as_ref()
+                .is_some_and(|shelf| matches!(shelf.tracks, ShelfTracks::Read(_)))
+        }),
         "the shelf should list the recording's shelved tracks"
     );
 }
@@ -596,20 +602,59 @@ enum ShelfAfterTheUnshelve {
 /// Unshelving through the shelf writes the stored track states, which the
 /// refreshed listing reports.
 #[rstest::rstest]
-#[case::one_track(UNSHELVE_LABEL, "3 (1 shelved)", ShelfAfterTheUnshelve::StaysOpen)]
-#[case::every_track(UNSHELVE_ALL_LABEL, "3", ShelfAfterTheUnshelve::Closes)]
+#[case::one_track(
+    UNSHELVE_LABEL,
+    "3 (1 shelved)",
+    ShelfAfterTheUnshelve::StaysOpen,
+    900.0,
+    false
+)]
+#[case::every_track(UNSHELVE_ALL_LABEL, "3", ShelfAfterTheUnshelve::Closes, 900.0, false)]
+#[case::compact_one_track(
+    UNSHELVE_LABEL,
+    "3 (1 shelved)",
+    ShelfAfterTheUnshelve::StaysOpen,
+    600.0,
+    true
+)]
+#[case::compact_every_track(UNSHELVE_ALL_LABEL, "3", ShelfAfterTheUnshelve::Closes, 600.0, true)]
 fn unshelving_from_the_shelf_leaves_the_tracks_live(
     #[case] button: &str,
     #[case] expected_track_count: &str,
     #[case] expected_shelf: ShelfAfterTheUnshelve,
+    #[case] viewport_width: f32,
+    #[case] compact: bool,
 ) {
     let harness =
         history_harness_with_stored_tracks(&one_live_a_tombstone_and_two_shelved_tracks());
     let mut h = TestHarness::builder()
-        .size(egui::vec2(900.0, 500.0))
+        .size(egui::vec2(viewport_width, 500.0))
         .ui_state(pump_history, harness);
+    if compact {
+        h.inner.ctx.all_styles_mut(|style| {
+            for font in style.text_styles.values_mut() {
+                font.size *= 1.1;
+            }
+        });
+    }
     open_the_shelf(&mut h);
+    h.inner.run_steps(8);
 
+    if compact {
+        let more = if button == UNSHELVE_LABEL {
+            h.inner
+                .get_all_by_label(ICON_MORE)
+                .nth(1)
+                .expect("first shelf actions")
+        } else {
+            h.inner
+                .get_all_by_label(ICON_MORE)
+                .last()
+                .expect("shelf closing actions")
+        };
+        more.click();
+        h.inner.run_steps(2);
+    }
     h.inner.nth_matching(By::new().label(button), 0).click();
 
     assert!(
@@ -671,15 +716,36 @@ fn the_write_controls_of_the_shelf_are_grayed_in_a_read_only_session() {
 
 /// The recording stays in history with the live track it keeps: the shelf's
 /// delete takes the shelved tracks of its own recording only.
-#[test]
-fn deleting_the_shelved_tracks_from_the_shelf_leaves_the_recording_its_live_track() {
+#[rstest::rstest]
+#[case::full(900.0, false)]
+#[case::compact(600.0, true)]
+fn deleting_the_shelved_tracks_from_the_shelf_leaves_the_recording_its_live_track(
+    #[case] viewport_width: f32,
+    #[case] compact: bool,
+) {
     let harness =
         history_harness_with_stored_tracks(&one_live_a_tombstone_and_two_shelved_tracks());
     let mut h = TestHarness::builder()
-        .size(egui::vec2(900.0, 500.0))
+        .size(egui::vec2(viewport_width, 500.0))
         .ui_state(pump_history, harness);
+    if compact {
+        h.inner.ctx.all_styles_mut(|style| {
+            for font in style.text_styles.values_mut() {
+                font.size *= 1.1;
+            }
+        });
+    }
     open_the_shelf(&mut h);
+    h.inner.run_steps(8);
 
+    if compact {
+        h.inner
+            .get_all_by_label(ICON_MORE)
+            .last()
+            .expect("shelf closing actions")
+            .click();
+        h.inner.run_steps(2);
+    }
     h.inner.get_by_label(ICON_TRASH).click();
     // The confirmation is laid out over two passes, and egui reports a click
     // on its buttons from the second pass on.
@@ -1003,7 +1069,7 @@ fn scroll_the_listing_until(
 #[test]
 fn every_column_keeps_its_width_through_the_shelf_the_scroll_and_the_sort() {
     let mut h = TestHarness::builder()
-        .size(egui::vec2(900.0, 500.0))
+        .size(egui::vec2(1200.0, 500.0))
         .ui_state(
             pump_history,
             history_harness_with_a_shelf_over_more_recordings(),
@@ -1024,8 +1090,13 @@ fn every_column_keeps_its_width_through_the_shelf_the_scroll_and_the_sort() {
         .topmost_matching(By::new().label(ICON_CARET_RIGHT))
         .click();
     assert!(
-        h.inner
-            .step_until(|h| h.query_all_by_label(UNSHELVE_LABEL).next().is_some()),
+        h.inner.step_until(|h| {
+            h.state()
+                .window
+                .shelf
+                .as_ref()
+                .is_some_and(|shelf| matches!(shelf.tracks, ShelfTracks::Read(_)))
+        }),
         "the shelf should list the recording's shelved tracks"
     );
     for _ in 0..4 {
@@ -1081,7 +1152,7 @@ fn every_column_keeps_its_width_through_the_shelf_the_scroll_and_the_sort() {
 #[test]
 fn every_column_keeps_its_width_while_a_filter_narrows_the_listing() {
     let mut h = TestHarness::builder()
-        .size(egui::vec2(900.0, 500.0))
+        .size(egui::vec2(1200.0, 500.0))
         .ui_state(
             pump_history,
             history_harness_with_a_shelf_over_more_recordings(),
@@ -1529,14 +1600,15 @@ fn resize_harness() -> TestHarness<'static, HistoryHarness> {
 /// edge. Identity fills the leftover width, so this "gap" is only the
 /// window's frame padding - at every window size.
 fn content_gap_to_window_edge(h: &TestHarness<HistoryHarness>) -> f32 {
-    window_rect(h).right() - last_row_delete_button_rect(h).right()
+    window_rect(h).right() - last_row_action_button_rect(h).right()
 }
 
-fn last_row_delete_button_rect(h: &TestHarness<HistoryHarness>) -> egui::Rect {
+fn last_row_action_button_rect(h: &TestHarness<HistoryHarness>) -> egui::Rect {
     h.inner
-        .get_all_by_label("Delete")
+        .query_all_by_label("Delete")
+        .chain(h.inner.query_all_by_label(ICON_MORE))
         .last()
-        .expect("the Delete button of the listing's last row")
+        .expect("last row action")
         .rect()
 }
 
@@ -1652,7 +1724,7 @@ fn the_action_column_stays_inside_the_window_at_the_width_it_opens_at(#[case] fi
     let window = window_rect(&h);
     let preferred_width = 900.0 * HISTORY_WINDOW_SIZING.preferred_fraction.x;
     assert!((window.width() - preferred_width).abs() < 1.0);
-    let delete = last_row_delete_button_rect(&h);
+    let delete = last_row_action_button_rect(&h);
     // The window lays its content out inside the frame margin.
     let ctx = &h.inner.ctx;
     let margin = ctx.style_of(ctx.theme()).spacing.window_margin.right;
@@ -2753,6 +2825,225 @@ fn snapshot_window_dragged_shorter_than_its_listing() {
     h.inner
         .hover_at_and_settle(egui::pos2(HEIGHT_AUDIT_VIEWPORT.x - 1.0, 1.0), 8);
     h.snapshot_with_color_tolerance("history_window_dragged_shorter");
+}
+
+#[rstest::rstest]
+#[case::wide(1400.0, 1.0, 1.0, true)]
+#[case::normal(900.0, 1.0, 1.0, false)]
+#[case::scaled(900.0, 1.5, 1.0, false)]
+#[case::narrow(500.0, 1.0, 1.0, false)]
+#[case::larger_font(1200.0, 1.0, 1.25, true)]
+fn responsive_columns_preserve_identity_and_header_row_alignment(
+    #[case] viewport_width: f32,
+    #[case] scale: f32,
+    #[case] font_scale: f32,
+    #[case] size_visible: bool,
+) {
+    let entry = row_filling_every_metadata_column(RowFigures {
+        nav_points: 12_300_000,
+        total_tracks: 333,
+        shelved_tracks: 222,
+        gtd_size_bytes: 132_746_444,
+    });
+    let date_id = table::breakdown_cell_id(&entry, SortColumn::Date);
+    let points_id = table::breakdown_cell_id(&entry, SortColumn::Points);
+    let recording = entry.db_ref.clone();
+    let mut harness = history_harness(vec![entry]);
+    harness.window.shelf = Some(OpenShelf {
+        recording,
+        tracks: ShelfTracks::Read(one_live_a_tombstone_and_two_shelved_tracks()),
+    });
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(viewport_width, 700.0))
+        .ui_state(show_history, harness);
+    h.inner.set_pixels_per_point(scale);
+    h.inner.ctx.all_styles_mut(|style| {
+        for font in style.text_styles.values_mut() {
+            font.size *= font_scale;
+        }
+    });
+    h.inner.run_steps(8);
+    let date = h
+        .inner
+        .ctx
+        .read_response(date_id)
+        .expect("recording date cell")
+        .rect;
+    let identity_start = header_node(&h, "Identity").rect().left();
+    let minimum_identity = h
+        .inner
+        .ctx
+        .style_of(h.inner.ctx.theme())
+        .text_styles
+        .get(&egui::TextStyle::Body)
+        .expect("body font")
+        .size
+        * 14.0;
+    assert!(date.left() - identity_start >= minimum_identity - 2.0);
+    let points = h
+        .inner
+        .ctx
+        .read_response(points_id)
+        .expect("recording points cell")
+        .rect;
+    let shelf_points = h
+        .inner
+        .get_all_by_label("15")
+        .next()
+        .expect("shelf count")
+        .rect();
+    assert!((points.left() - shelf_points.left()).abs() < 2.0);
+    let header_points = header_node(&h, "Points").rect();
+    assert!((header_points.left() - points.left()).abs() < 2.0);
+    h.inner.get_by_label("Open");
+    if size_visible {
+        h.inner.get_by_label("Size");
+    } else {
+        assert!(h.inner.query_by_label("Size").is_none());
+        h.inner.get_by_label("Sort by");
+    }
+    if (800.0..1000.0).contains(&viewport_width) {
+        let action = last_row_action_button_rect(&h);
+        assert!(window_rect(&h).contains_rect(action));
+    }
+}
+
+#[test]
+fn resizing_restores_optional_columns_and_preserves_the_active_sort() {
+    let entry = row_filling_every_metadata_column(RowFigures {
+        nav_points: 12_300_000,
+        total_tracks: 333,
+        shelved_tracks: 222,
+        gtd_size_bytes: 132_746_444,
+    });
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(1400.0, 700.0))
+        .ui_state(show_history, history_harness(vec![entry]));
+    h.inner.run_steps(8);
+    header_node(&h, "Size").click();
+    h.inner.run_steps(2);
+    let wide = window_rect(&h);
+    h.inner.press_drag_release(
+        egui::pos2(wide.right() - 1.0, wide.bottom() - 1.0),
+        egui::vec2(-400.0, 0.0),
+        8,
+    );
+    h.inner.run_steps(4);
+    assert!(h.inner.query_by_label("Size").is_none());
+    assert_eq!(h.state().window.sort.column, SortColumn::Size);
+    assert_eq!(
+        h.inner
+            .get_by_label("Sort by")
+            .accesskit_node()
+            .value()
+            .as_deref(),
+        Some("Size")
+    );
+    let narrow = window_rect(&h);
+    assert!(narrow.width() < wide.width() - 300.0);
+    h.inner.press_drag_release(
+        egui::pos2(narrow.right() - 1.0, narrow.bottom() - 1.0),
+        egui::vec2(400.0, 0.0),
+        8,
+    );
+    h.inner.run_steps(4);
+    header_node(&h, "Size");
+    assert!(h.inner.query_by_label("Sort by").is_none());
+    assert_eq!(h.state().window.sort.column, SortColumn::Size);
+    assert_eq!(h.state().window.sort.direction, SortDirection::Descending);
+}
+
+#[test]
+fn hidden_sort_columns_remain_selectable_and_show_the_active_order() {
+    let entry = row_filling_every_metadata_column(RowFigures {
+        nav_points: 12_300_000,
+        total_tracks: 333,
+        shelved_tracks: 222,
+        gtd_size_bytes: 132_746_444,
+    });
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 600.0))
+        .ui_state(show_history, history_harness(vec![entry]));
+    h.inner.run_steps(6);
+    assert!(h.inner.query_by_label("Size").is_none());
+    h.inner.get_by_label("Sort by").click();
+    h.inner.run_steps(2);
+    h.inner.get_by_label("Size").click();
+    h.inner.run_steps(2);
+    assert_eq!(h.state().window.sort.column, SortColumn::Size);
+    assert_eq!(h.state().window.sort.direction, SortDirection::Descending);
+    assert_eq!(
+        h.inner
+            .get_by_label("Sort by")
+            .accesskit_node()
+            .value()
+            .as_deref(),
+        Some("Size")
+    );
+    h.inner.get_by_label("largest first").click();
+    h.inner.run_steps(2);
+    assert_eq!(h.state().window.sort.direction, SortDirection::Ascending);
+    h.inner.get_by_label("smallest first");
+}
+
+#[test]
+fn compact_recording_actions_open_logs_when_the_logs_column_is_hidden() {
+    let mut harness = history_harness_with_recording("auto:ride.gtd", &["receiver.log"]);
+    harness.load_recordings_before_first_frame();
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(500.0, 600.0))
+        .ui_state(pump_history, harness);
+    h.inner.run_steps(8);
+    assert!(h.inner.query_by_label("Logs").is_none());
+    h.inner.get_by_label(ICON_MORE).click_accesskit();
+    h.inner.run_steps(2);
+    h.inner
+        .get_by_label_contains(format!("{ICON_PAPERCLIP} 1").as_str())
+        .click_accesskit();
+    h.inner.run_steps(2);
+    h.inner.get_by_label("receiver.log");
+    h.inner.get_by_label(OPEN_LOG_LABEL).click_accesskit();
+    assert!(h.inner.step_until(|h| h.state().opened_log.is_some()));
+    assert_eq!(
+        h.state().opened_log.as_ref().map(|log| log.name.as_str()),
+        Some("receiver.log")
+    );
+}
+
+#[test]
+fn compact_shelf_actions_preserve_read_only_recovery_and_delete_controls() {
+    let entry = row_filling_every_metadata_column(RowFigures {
+        nav_points: 12_300_000,
+        total_tracks: 333,
+        shelved_tracks: 222,
+        gtd_size_bytes: 132_746_444,
+    });
+    let recording = entry.db_ref.clone();
+    let mut harness = history_harness(vec![entry]);
+    harness.write_access = WriteAccess::ReadOnly;
+    harness.window.shelf = Some(OpenShelf {
+        recording,
+        tracks: ShelfTracks::Read(one_live_a_tombstone_and_two_shelved_tracks()),
+    });
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 700.0))
+        .ui_state(show_history, harness);
+    h.inner.run_steps(8);
+    let more = h
+        .inner
+        .get_all_by_label(ICON_MORE)
+        .last()
+        .expect("shelf closing actions");
+    more.click();
+    h.inner.run_steps(2);
+    let unshelve = h.inner.get_by_label(UNSHELVE_ALL_LABEL);
+    assert!(unshelve.accesskit_node().is_disabled());
+    let delete = h.inner.get_by_label(ICON_TRASH);
+    assert!(delete.accesskit_node().is_disabled());
+    let center = delete.rect().center();
+    h.inner.hover_at_and_settle(center, 4);
+    h.inner
+        .get_by_label_contains(READ_ONLY_RECORDING_HISTORY_HOVER);
 }
 
 /// How far the shelf tests drag the History window's bottom-right corner down:
