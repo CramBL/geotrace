@@ -253,32 +253,59 @@ impl<'a> PanelContext<'a> {
     }
 }
 
-pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
+#[derive(Clone, Copy, Debug)]
+pub struct DragDetach {
+    pub pointer_position: egui::Pos2,
+    pub press_origin: egui::Pos2,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum DetachRequest {
+    Drag(DragDetach),
+    PopOut,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum SidePanelEvent {
+    Detach(DetachRequest),
+    Dock,
+}
+
+pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) -> Option<SidePanelEvent> {
     let detached = ctx.tree.detached;
+    let mut event = None;
     let header = ui.horizontal(|ui| {
-        let (_, grip) = ui.allocate_exact_size(egui::vec2(10.0, 18.0), egui::Sense::drag());
+        let (rect, _) = ui.allocate_exact_size(TRACK_DATA_GRIP_SIZE, egui::Sense::hover());
+        let grip = ui.interact(
+            rect,
+            egui::Id::new((TRACK_DATA_GRIP_ID, detached)),
+            egui::Sense::drag(),
+        );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ctx.tree.detached {
+            if detached {
                 if ui.small_button("Dock").clicked() {
-                    ctx.tree.detached = false;
+                    event = Some(SidePanelEvent::Dock);
                 }
             } else if ui
                 .small_button(ICON_ARROW_SQUARE_OUT)
                 .on_hover_text("Pop out")
                 .clicked()
             {
-                ctx.tree.detached = true;
+                event = Some(SidePanelEvent::Detach(DetachRequest::PopOut));
             }
         });
         grip
     });
-    if header.inner.dragged()
-        && ui
-            .ctx()
-            .pointer_latest_pos()
-            .is_some_and(|p| !ui.clip_rect().contains(p))
+    if !detached
+        && header.inner.dragged()
+        && let Some(pointer_position) = ui.ctx().pointer_latest_pos()
+        && !ui.clip_rect().contains(pointer_position)
+        && let Some(press_origin) = ui.input(|input| input.pointer.press_origin())
     {
-        ctx.tree.detached = true;
+        event = Some(SidePanelEvent::Detach(DetachRequest::Drag(DragDetach {
+            pointer_position,
+            press_origin,
+        })));
     }
 
     ui.separator();
@@ -376,6 +403,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
                 });
         });
     ctx.tree.reveal_request = None;
+    event
 }
 
 /// The global snap progress strip: the in-flight run with its chunk
@@ -2154,6 +2182,9 @@ const QUEUED_BADGE_FONT: f32 = 9.0;
 
 /// Spinner diameter over the in-flight trigger, in points.
 const IN_FLIGHT_SPINNER_SIZE: f32 = 10.0;
+
+pub const TRACK_DATA_GRIP_ID: &str = "track_data_grip";
+const TRACK_DATA_GRIP_SIZE: egui::Vec2 = egui::vec2(10.0, 18.0);
 
 #[cfg(test)]
 mod tests {

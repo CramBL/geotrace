@@ -216,6 +216,45 @@ fn pending_rectangle_applies_once_to_current_geometry_and_waits_while_closed() {
     );
 }
 
+#[rstest]
+#[case::minimum(
+    egui::vec2(400.0, 300.0),
+    WINDOW_SIZING,
+    egui::Vec2::ZERO,
+    egui::vec2(320.0, 120.0)
+)]
+#[case::maximum(
+    egui::vec2(400.0, 300.0),
+    WINDOW_SIZING,
+    egui::vec2(1000.0, 1000.0),
+    egui::vec2(360.0, 270.0)
+)]
+#[case::viewport_below_minimum(
+    egui::vec2(100.0, 80.0),
+    WINDOW_SIZING,
+    egui::Vec2::ZERO,
+    egui::vec2(90.0, 72.0)
+)]
+#[case::invalid_bounds(
+    egui::vec2(400.0, 300.0),
+    ToolWindowSizing {
+        preferred_fraction: egui::Vec2::ZERO,
+        minimum_size: egui::vec2(-10.0, 160.0),
+        maximum_fraction: egui::vec2(2.0, -0.5),
+    },
+    egui::vec2(1000.0, 1000.0),
+    egui::vec2(400.0, 0.0),
+)]
+fn requested_window_size_uses_viewport_bounds(
+    #[case] viewport_size: egui::Vec2,
+    #[case] sizing: ToolWindowSizing,
+    #[case] requested_size: egui::Vec2,
+    #[case] expected: egui::Vec2,
+) {
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, viewport_size);
+    assert_eq!(sizing.constrain_size(viewport, requested_size), expected);
+}
+
 const WINDOW_ID: &str = "geometry-test-window";
 const WINDOW_SIZING: ToolWindowSizing = ToolWindowSizing {
     preferred_fraction: egui::vec2(0.7, 0.6),

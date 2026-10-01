@@ -28,6 +28,7 @@ use settings_ui::search::SettingsSearch;
 use snap_state::{PendingSnapRequest, SnapErrorDerived, SnapReplacePrompt, SnapScopePrompt};
 use strum::IntoEnumIterator;
 
+use crate::app::frame::PendingTrackDataDetach;
 use crate::termination_signal;
 
 pub use storage::Storage;
@@ -429,6 +430,7 @@ pub struct App {
 
     /// History window state.
     history_window: history::HistoryWindow,
+    pending_track_data_detach: Option<PendingTrackDataDetach>,
     query_window: query::QueryWindow,
     /// The log viewer window, opened whenever a log finishes loading.
     log_viewer: log_viewer::LogViewerWindow,
@@ -699,6 +701,7 @@ impl App {
             pending_environment_prune: None,
             environment_prune: environment_storage::EnvironmentPruneRun::default(),
             history_window: history::HistoryWindow::new(),
+            pending_track_data_detach: None,
             query_window: query::QueryWindow::new(),
             log_viewer: log_viewer::LogViewerWindow::new(),
             log_viewer_requests: LogViewerRequests::default(),

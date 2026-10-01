@@ -13,9 +13,12 @@ use gt_ionex::quiet_time::QuietTimeDeviationPeak;
 use gt_loaded_files::RecordingNames;
 use gt_map::MapLayer;
 use gt_query_run::RunInputs;
-use gt_side_panel::{PanelContext, SnapCostingTarget, SnapPanelView};
+use gt_side_panel::{
+    DetachRequest, DragDetach, PanelContext, SidePanelEvent, SnapCostingTarget, SnapPanelView,
+};
 use gt_store::DatabaseRef;
 use gt_types::{DataCategory, FileIdx, LoadedFile, TrackIdx, TrackRef};
+use gt_ui_components::{ToolWindow, ToolWindowSizing};
 use gt_ui_types::{
     ArcIdentity, ContextLines, DataPointRef, GeomagneticSeries, HighlightScope, JammingSeries,
     MapHighlight, MapScope, TecSeries,
@@ -40,6 +43,22 @@ use super::storage::{DatabasesPending, OPENING_DATABASES, QueuedLoad};
 #[cfg(feature = "self-update")]
 use super::update;
 use super::{App, SharedAppState, modals};
+
+pub(super) struct PendingTrackDataDetach {
+    pub(super) docked_rect: egui::Rect,
+    pub(super) drag: DragDetach,
+}
+
+impl PendingTrackDataDetach {
+    fn floating_rect(self, ctx: &egui::Context, viewport: egui::Rect) -> egui::Rect {
+        let Self { docked_rect, drag } = self;
+        let size = TRACK_DATA_WINDOW_SIZING.constrain_size(viewport, docked_rect.size());
+        let pointer = ctx.pointer_latest_pos().unwrap_or(drag.pointer_position);
+        let grab_offset = drag.press_origin - docked_rect.min;
+        let position = (pointer - grab_offset).clamp(viewport.min, viewport.max - size);
+        egui::Rect::from_min_size(position, size)
+    }
+}
 
 impl eframe::App for App {
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
@@ -424,8 +443,10 @@ impl App {
                 .then_some(READ_ONLY_RECORDING_HISTORY_HOVER);
 
         let detached = self.shared.borrow().tree.detached;
+        let surface_event;
+        let mut docked_rect = None;
         if !detached {
-            egui::Panel::left("track_data_panel")
+            let shown = egui::Panel::left("track_data_panel")
                 .min_size(240.0)
                 .show(ui, |ui| {
                     let mut refmut = self.shared.borrow_mut();
@@ -456,58 +477,87 @@ impl App {
                             snap_costing_request: &mut snap_costing_request,
                             sky_trails_request: &mut sky_trails_request,
                         },
-                    );
+                    )
                 });
+            surface_event = shown.inner;
+            docked_rect = Some(shown.response.rect);
         } else {
-            // Render the panel as a floating egui Window inside the same OS window
-            // as the map. A separate OS viewport caused Wayland compositors to
-            // suspend event delivery when the child was minimised or occluded,
-            // freezing both windows. The floating-window approach is fully
-            // platform-independent.
+            // Separate Wayland surfaces can suspend event delivery and block the application.
             let mut is_open = !ui
                 .ctx()
                 .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            Window::new("Track data")
-                .id(egui::Id::new("detached_panel"))
-                .open(&mut is_open)
-                .default_pos(egui::pos2(10.0, 30.0))
-                .default_width(320.0)
-                .min_width(240.0)
-                .resizable(true)
-                .show(ui.ctx(), |ui| {
-                    let mut refmut = self.shared.borrow_mut();
-                    let s = &mut *refmut;
-                    let loaded_files = s.loaded_files.view();
-                    gt_side_panel::show_side_panel(
-                        ui,
-                        &mut PanelContext {
-                            loaded_files,
-                            tree: &mut s.tree,
-                            highlight: &mut s.highlight,
-                            filter: &mut s.filter,
-                            filter_state: &mut s.filter_state,
-                            map_center_request: &mut s.map_center_request,
-                            popup_pos_request: &mut s.popup_pos_request,
-                            query_matches: self.query_window.matches(),
-                            zoom_to_visible_request: &mut s.zoom_to_visible_request,
-                            warnings_request: &mut s.warnings_popup,
-                            shelf_request: &mut shelf_request,
-                            read_only_recording_history_hover,
-                            clear_query_request: &mut s.clear_query_request,
-                            display_mask: s.display_mask,
-                            recording_names,
-                            metadata_request: &mut s.metadata_popup,
-                            snap: snap_view,
-                            snap_request: &mut snap_request,
-                            snap_visibility_request: &mut snap_visibility_request,
-                            snap_costing_request: &mut snap_costing_request,
-                            sky_trails_request: &mut sky_trails_request,
-                        },
-                    );
-                });
+            let viewport = ui.ctx().content_rect();
+            let transfer_drag = self.pending_track_data_detach.is_some()
+                && ui.input(|input| input.pointer.primary_down());
+            let mut pending_rect = self
+                .pending_track_data_detach
+                .take()
+                .map(|pending| pending.floating_rect(ui.ctx(), viewport));
+            let shown = ToolWindow {
+                id: egui::Id::new(TRACK_DATA_WINDOW_ID),
+                title: "Track data",
+                viewport,
+                sizing: TRACK_DATA_WINDOW_SIZING,
+                movable: true,
+                resizable: true,
+            }
+            .show_ui(ui.ctx(), &mut is_open, Some(&mut pending_rect), |ui| {
+                let mut refmut = self.shared.borrow_mut();
+                let s = &mut *refmut;
+                let loaded_files = s.loaded_files.view();
+                gt_side_panel::show_side_panel(
+                    ui,
+                    &mut PanelContext {
+                        loaded_files,
+                        tree: &mut s.tree,
+                        highlight: &mut s.highlight,
+                        filter: &mut s.filter,
+                        filter_state: &mut s.filter_state,
+                        map_center_request: &mut s.map_center_request,
+                        popup_pos_request: &mut s.popup_pos_request,
+                        query_matches: self.query_window.matches(),
+                        zoom_to_visible_request: &mut s.zoom_to_visible_request,
+                        warnings_request: &mut s.warnings_popup,
+                        shelf_request: &mut shelf_request,
+                        read_only_recording_history_hover,
+                        clear_query_request: &mut s.clear_query_request,
+                        display_mask: s.display_mask,
+                        recording_names,
+                        metadata_request: &mut s.metadata_popup,
+                        snap: snap_view,
+                        snap_request: &mut snap_request,
+                        snap_visibility_request: &mut snap_visibility_request,
+                        snap_costing_request: &mut snap_costing_request,
+                        sky_trails_request: &mut sky_trails_request,
+                    },
+                )
+            });
+            surface_event = shown.and_then(|shown| shown.inner.flatten());
+            if transfer_drag && is_open {
+                ToolWindow::transfer_pointer_drag(ui.ctx(), egui::Id::new(TRACK_DATA_WINDOW_ID));
+            }
             if !is_open {
                 self.shared.borrow_mut().tree.detached = false;
             }
+        }
+
+        match surface_event {
+            Some(SidePanelEvent::Dock) => {
+                self.shared.borrow_mut().tree.detached = false;
+                self.pending_track_data_detach = None;
+                ui.ctx().request_repaint();
+            }
+            Some(SidePanelEvent::Detach(request)) => {
+                self.shared.borrow_mut().tree.detached = true;
+                self.pending_track_data_detach = match request {
+                    DetachRequest::PopOut => None,
+                    DetachRequest::Drag(drag) => {
+                        docked_rect.map(|docked_rect| PendingTrackDataDetach { docked_rect, drag })
+                    }
+                };
+                ui.ctx().request_repaint();
+            }
+            None => {}
         }
 
         // The mark counting a recording's shelved tracks opens the History
@@ -1286,3 +1336,11 @@ pub(super) const LOADING_OVERLAY_WINDOW_ID: &str = "##loading_progress";
 /// line. Four running loads with their progress bars make the overlay 200
 /// points tall.
 pub(super) const LOADING_OVERLAY_MOST_LISTED_JOBS: usize = 4;
+
+const TRACK_DATA_WINDOW_ID: &str = "detached_panel";
+
+pub(super) const TRACK_DATA_WINDOW_SIZING: ToolWindowSizing = ToolWindowSizing {
+    preferred_fraction: egui::vec2(0.35, 0.7),
+    minimum_size: egui::vec2(240.0, 160.0),
+    maximum_fraction: egui::vec2(0.9, 0.9),
+};
