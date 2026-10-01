@@ -16,7 +16,23 @@ pub struct ToolWindow<'a> {
     pub resizable: bool,
 }
 
+impl ToolWindowSizing {
+    pub fn constrain_size(self, viewport: egui::Rect, requested_size: egui::Vec2) -> egui::Vec2 {
+        let maximum = viewport.size()
+            * self
+                .maximum_fraction
+                .clamp(egui::Vec2::ZERO, egui::Vec2::splat(1.0));
+        let minimum = self.minimum_size.max(egui::Vec2::ZERO).min(maximum);
+        requested_size.clamp(minimum, maximum)
+    }
+}
+
 impl ToolWindow<'_> {
+    pub fn transfer_pointer_drag(ctx: &egui::Context, window_id: egui::Id) {
+        // egui 0.36 uses this private title-bar ID for pointer deltas before area restoration.
+        ctx.set_dragged_id(window_id.with(EGUI_TITLE_DRAG_ID));
+    }
+
     /// egui preserves subsequent user geometry. Short content can reduce the initial height.
     /// A pending rectangle applies once when the window is open.
     pub fn show_ui<R>(
@@ -37,12 +53,10 @@ impl ToolWindow<'_> {
             movable,
             resizable,
         } = self;
-        let maximum = viewport.size()
-            * sizing
-                .maximum_fraction
-                .clamp(egui::Vec2::ZERO, egui::Vec2::splat(1.0));
-        let minimum = sizing.minimum_size.max(egui::Vec2::ZERO).min(maximum);
-        let preferred = (viewport.size() * sizing.preferred_fraction).clamp(minimum, maximum);
+        let maximum = sizing.constrain_size(viewport, viewport.size());
+        let minimum = sizing.constrain_size(viewport, egui::Vec2::ZERO);
+        let preferred =
+            sizing.constrain_size(viewport, viewport.size() * sizing.preferred_fraction);
         let area_state = AreaState::load(ctx, id);
         let placement_id = id.with(INITIAL_CENTER_ID);
         if area_state.is_none() {
@@ -51,7 +65,7 @@ impl ToolWindow<'_> {
         let center_initial_frame =
             ctx.data(|data| data.get_temp::<bool>(placement_id).unwrap_or(false));
         let current_rect = pending_rect.and_then(Option::take).map(|rect| {
-            let size = rect.size().clamp(minimum, maximum);
+            let size = sizing.constrain_size(viewport, rect.size());
             let center = rect
                 .center()
                 .clamp(viewport.min + size * 0.5, viewport.max - size * 0.5);
@@ -121,3 +135,4 @@ impl ToolWindow<'_> {
 }
 
 const INITIAL_CENTER_ID: &str = "initial-center";
+const EGUI_TITLE_DRAG_ID: &str = "__title_click";

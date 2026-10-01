@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- **Interface:** The Track data panel opens at the pointer when dragged out of its dock.
+
 - **Interface:** History opens centered with a size based on the screen when first shown.
 - **Interface:** The Visible section preserves its chosen proportion when the Track data panel changes size.
 

@@ -4,6 +4,7 @@
 )]
 
 use egui::CentralPanel;
+use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::CARET_RIGHT as ICON_CARET_RIGHT;
 use egui_phosphor::regular::CHECK_SQUARE as ICON_CHECK_SQUARE;
 use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
@@ -20,10 +21,10 @@ use gt_filter::GlobalFilter;
 use gt_history_types::RecordingMeta;
 use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
 use gt_side_panel::{
-    EVERY_TRACK_PASSES_THE_FILTER_HOVER, FilterPanelState, NodeKey,
+    DetachRequest, EVERY_TRACK_PASSES_THE_FILTER_HOVER, FilterPanelState, NodeKey,
     ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER, PanelContext, SHELVE_FILTERED_DATA_LABEL,
-    SHELVE_SELECTED_TRACKS_LABEL, SHELVE_TRACK_LABEL, SnapCostingTarget, SnapPanelView,
-    SnapRowView, TreeState, test_util,
+    SHELVE_SELECTED_TRACKS_LABEL, SHELVE_TRACK_LABEL, SidePanelEvent, SnapCostingTarget,
+    SnapPanelView, SnapRowView, TreeState, test_util,
 };
 use gt_test_utils::fixtures::FixCountsAroundAGap;
 use gt_test_utils::{
@@ -67,6 +68,7 @@ struct State {
     snap_costing_request: Option<(SnapCostingTarget, SnapCosting)>,
     sky_trails_request: Option<gt_ui_types::SkyTrailsRequest>,
     shelf_request: Option<gt_history_types::DatabaseRef>,
+    surface_event: Option<SidePanelEvent>,
 }
 
 /// The panel state over `files`, with the tree synced to them, no request
@@ -99,6 +101,7 @@ fn make_state_from_files(files: LoadedFiles) -> State {
         snap_costing_request: None,
         sky_trails_request: None,
         shelf_request: None,
+        surface_event: None,
     }
 }
 
@@ -181,7 +184,7 @@ fn make_harness_sized(state: State, size: egui::Vec2) -> TestHarness<'static, St
         |ui, s: &mut State| {
             let names = RecordingNames::resolve(s.files.view(), &s.recording_name_template);
             let mut ctx = panel_context(s, &names);
-            gt_side_panel::show_side_panel(ui, &mut ctx);
+            s.surface_event = gt_side_panel::show_side_panel(ui, &mut ctx);
         },
         state,
     )
@@ -2747,6 +2750,28 @@ fn clicking_the_shelved_track_mark_requests_the_recordings_shelf() {
     harness.run();
 
     assert_eq!(harness.state().shelf_request, Some(stored_recording_ref()));
+}
+
+#[rstest]
+#[case::pop_out(false, ICON_ARROW_SQUARE_OUT)]
+#[case::dock(true, "Dock")]
+fn surface_buttons_return_a_request_without_changing_docked_state(
+    #[case] detached: bool,
+    #[case] label: &str,
+) {
+    let mut state = make_state(0);
+    state.tree.detached = detached;
+    let mut harness = make_harness(state);
+    harness.inner.get_by_label(label).click();
+    harness.inner.step();
+    match harness.inner.state().surface_event {
+        Some(SidePanelEvent::Detach(DetachRequest::PopOut)) => {
+            assert!(!detached)
+        }
+        Some(SidePanelEvent::Dock) => assert!(detached),
+        other => panic!("unexpected surface event {other:?}"),
+    }
+    assert_eq!(harness.inner.state().tree.detached, detached);
 }
 
 /// The first line of a track row's stats tooltip for a recording of
