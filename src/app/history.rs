@@ -243,10 +243,7 @@ impl PruneDialog {
     }
 }
 
-/// A column of the History table, and the order it can impose on the list.
-///
-/// The variants are in table order: [`table::history_table`] renders one header per
-/// variant, so adding a column here is what adds it to the table.
+/// The variants specify the table order before optional columns are omitted.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, EnumCount, EnumIter)]
 enum SortColumn {
     Identity,
@@ -792,9 +789,6 @@ impl HistoryWindow {
             });
             let max_listing_height = (ui.available_height() - footer_room).max(MIN_LISTING_HEIGHT);
 
-            // The listing scrolls sideways once its metadata columns alone
-            // need more width than the window has, identity having clamped
-            // to its minimum by then.
             ScrollArea::horizontal()
                 .id_salt("history_listing")
                 .show(ui, |ui| {
