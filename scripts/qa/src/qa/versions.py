@@ -177,6 +177,7 @@ _APP_LOCK_CRATES: list[str] = [
     "gt-test-utils",
     "gt-track-builder",
     "gt-types",
+    "gt-ui-components",
     "gt-ui-theme",
     "gt-ui-types",
 ]

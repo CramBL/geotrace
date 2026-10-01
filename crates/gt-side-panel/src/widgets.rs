@@ -1,94 +1,11 @@
-use egui::{Button, Grid, Label, RichText, WidgetText};
-use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
-use egui_phosphor::regular::CARET_RIGHT as ICON_CARET_RIGHT;
+use egui::{Button, RichText, WidgetText};
 use egui_phosphor::regular::CHECK_SQUARE as ICON_CHECK_SQUARE;
 use egui_phosphor::regular::MINUS_SQUARE as ICON_MINUS_SQUARE;
 use egui_phosphor::regular::SQUARE as ICON_SQUARE;
-use gt_types::{FileMetadata, FixStats, TimeRange, TrackMetadata, TravelMode};
+use gt_types::{FileMetadata, FixStats, TimeRange, TrackMetadata};
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, MapScope};
 
 use crate::tree::CheckState;
-
-/// A borrowed view of the metadata fields shown in the recording-details UI.
-///
-/// Lets the side panel (from a [`FileMetadata`]) and the History window (from a
-/// `RecordingEntry`) share one presence check and one renderer. A caller sets
-/// `identity` to `None` when the identity is shown elsewhere (e.g. the History
-/// row already displays it).
-#[derive(Debug, Clone, Copy, Default)]
-pub struct MetadataView<'a> {
-    pub title: Option<&'a str>,
-    pub device: Option<&'a str>,
-    /// Display form of the declared travel mode (see [`TravelMode::display_name`]).
-    pub travel_mode: Option<&'a str>,
-    pub identity: Option<&'a str>,
-    pub notes: Option<&'a str>,
-}
-
-impl<'a> MetadataView<'a> {
-    /// View of a loaded file's SDK metadata, with the recording `identity`
-    /// supplied separately (it lives outside [`FileMetadata`]).
-    pub fn from_file_metadata(metadata: &'a FileMetadata, identity: Option<&'a str>) -> Self {
-        Self {
-            title: metadata.title.as_deref(),
-            device: metadata.device.as_deref(),
-            travel_mode: metadata.travel_mode.as_ref().map(TravelMode::display_name),
-            identity,
-            notes: metadata.notes.as_deref(),
-        }
-    }
-}
-
-/// Kept in step with the fields rendered by [`metadata_detail_rows`].
-pub fn has_metadata_details(view: &MetadataView<'_>) -> bool {
-    view.title.is_some()
-        || view.device.is_some()
-        || view.travel_mode.is_some()
-        || view.identity.is_some()
-        || view.notes.is_some()
-}
-
-/// A recording-details row: a weak caption and its value, which wraps to the
-/// available width. No colon after the caption, per DESIGN.md.
-fn detail_row(ui: &mut egui::Ui, caption: &str, value: &str) {
-    ui.label(RichText::new(caption).weak());
-    // Values select: a reader copies a recording's times, its identity, its
-    // device name or a note out of the details dialog.
-    ui.add(Label::new(value).wrap().selectable(true));
-    ui.end_row();
-}
-
-/// Render the present metadata fields as a two-column grid (weak label, value),
-/// in a stable order: title, device, travel mode, identity, notes. Values wrap
-/// to the available width, so the enclosing (resizable) container governs how
-/// much is shown. Renders nothing when the view is empty.
-pub fn metadata_detail_rows(ui: &mut egui::Ui, view: &MetadataView<'_>) {
-    Grid::new("recording_metadata_grid")
-        .num_columns(2)
-        .spacing(DETAIL_GRID_SPACING)
-        .show(ui, |ui| {
-            if let Some(title) = view.title {
-                detail_row(ui, "Title", title);
-            }
-            if let Some(device) = view.device {
-                detail_row(ui, "Device", device);
-            }
-            if let Some(travel_mode) = view.travel_mode {
-                detail_row(ui, "Travel mode", travel_mode);
-            }
-            if let Some(identity) = view.identity {
-                // Strip the internal `auto:` marker.
-                detail_row(
-                    ui,
-                    "Identity",
-                    gt_loaded_files::display_identity(identity).0,
-                );
-            }
-            if let Some(notes) = view.notes {
-                detail_row(ui, "Notes", notes);
-            }
-        });
-}
 
 /// The span a recording covers, an em dash for a recording with no track.
 fn time_range_text(time_range: Option<TimeRange>) -> String {
@@ -96,24 +13,6 @@ fn time_range_text(time_range: Option<TimeRange>) -> String {
         || gt_ui_theme::EM_DASH.to_owned(),
         |range| gt_fmt::format_time_range(range.start, range.end),
     )
-}
-
-/// Render a recording's time range and its recorded time as a two-column grid
-/// beside [`metadata_detail_rows`]. The recorded time is the sum of the track
-/// durations: it is shorter than the time range whenever the recording idled
-/// between tracks.
-pub fn recording_time_detail_rows(ui: &mut egui::Ui, metadata: &FileMetadata) {
-    Grid::new("recording_times_grid")
-        .num_columns(2)
-        .spacing(DETAIL_GRID_SPACING)
-        .show(ui, |ui| {
-            detail_row(ui, "Time range", &time_range_text(metadata.time_range));
-            detail_row(
-                ui,
-                "Recorded time",
-                &gt_fmt::format_human_terse_duration(metadata.total_duration),
-            );
-        });
 }
 
 /// The hover text of a recording row, in the tree and in the Visible section.
@@ -146,15 +45,6 @@ pub fn track_tooltip_rows(ui: &mut egui::Ui, metadata: &TrackMetadata) {
     }
 }
 
-/// Caret icon for an expand/collapse toggle.
-pub fn expand_arrow(expanded: bool) -> &'static str {
-    if expanded {
-        ICON_CARET_DOWN
-    } else {
-        ICON_CARET_RIGHT
-    }
-}
-
 pub fn text_width(ui: &egui::Ui, text: &str, font: &egui::FontId) -> f32 {
     ui.painter()
         .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::PLACEHOLDER)
@@ -163,11 +53,15 @@ pub fn text_width(ui: &egui::Ui, text: &str, font: &egui::FontId) -> f32 {
 }
 
 /// What follows the arrow starts at the same place whether the row is
-/// expanded or not: this is the width that fits either [`expand_arrow`]
+/// expanded or not: this is the width that fits either [`gt_ui_theme::expand_arrow`]
 /// caret.
 pub fn expand_arrow_width(ui: &egui::Ui) -> f32 {
     let font = egui::TextStyle::Body.resolve(ui.style());
-    text_width(ui, ICON_CARET_DOWN, &font).max(text_width(ui, ICON_CARET_RIGHT, &font))
+    text_width(ui, gt_ui_theme::expand_arrow(true), &font).max(text_width(
+        ui,
+        gt_ui_theme::expand_arrow(false),
+        &font,
+    ))
 }
 
 /// Width of the tri-state checkbox column, for padding a checkbox-less row so it
@@ -275,9 +169,6 @@ pub fn apply_point_click(
         *requests.map_center = lat_lon;
     }
 }
-
-/// Column and row spacing shared by every recording-details grid.
-const DETAIL_GRID_SPACING: [f32; 2] = [12.0, 6.0];
 
 /// How much larger than the interact height a [`tri_checkbox`] is drawn.
 pub const CHECKBOX_PADDING: f32 = 4.0;

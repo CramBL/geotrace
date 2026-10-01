@@ -33,6 +33,7 @@ use gt_types::{
     CustomMarker, FileIdx, FixStats, LoadWarning, MarkerIcon, MarkerRequirement, NavPoint,
     PointIdx, TrackIdx, TrackRef,
 };
+use gt_ui_components::MetadataView;
 use gt_ui_types::{DisplayCategory, DisplayMask, HighlightScope, MapHighlight, SnapCosting};
 use rustc_hash::FxHashMap;
 use uom::si::f64::Length;
@@ -1470,22 +1471,18 @@ fn snapshot_recording_name_template() {
 
 #[test]
 fn snapshot_metadata_detail_rows_content() {
-    // Directly exercise the grid renderer used by the recording-details dialog,
-    // independent of the note-icon click that opens it.
     let mut h = TestHarness::builder()
         .size(egui::vec2(480.0, 150.0))
         .ui(move |ui| {
             ui.add_space(4.0);
-            gt_side_panel::widgets::metadata_detail_rows(
-                ui,
-                &gt_side_panel::widgets::MetadataView {
-                    title: Some("Morning ride"),
-                    device: Some("uBlox F9P"),
-                    travel_mode: Some("Bicycle"),
-                    identity: Some("auto:Morning ride::uBlox F9P"),
-                    notes: Some("cross-town commute"),
-                },
-            );
+            MetadataView {
+                title: Some("Morning ride"),
+                device: Some("uBlox F9P"),
+                travel_mode: Some("Bicycle"),
+                identity: Some("Morning ride::uBlox F9P"),
+                notes: Some("cross-town commute"),
+            }
+            .show_ui(ui);
         });
     h.run();
     h.snapshot("metadata_detail_rows_content");
@@ -1494,18 +1491,16 @@ fn snapshot_metadata_detail_rows_content() {
 /// One drag covers several values: selection runs across labels, and the
 /// captions between them stay out of what it copies.
 #[test]
-fn a_drag_down_the_metadata_grid_copies_every_value_it_covered() {
+fn a_drag_down_the_metadata_rows_copies_every_value_it_covered() {
     let mut h = TestHarness::builder()
         .size(egui::vec2(480.0, 150.0))
         .ui(move |ui| {
-            gt_side_panel::widgets::metadata_detail_rows(
-                ui,
-                &gt_side_panel::widgets::MetadataView {
-                    device: Some("uBlox F9P"),
-                    notes: Some("cross-town commute"),
-                    ..gt_side_panel::widgets::MetadataView::default()
-                },
-            );
+            MetadataView {
+                device: Some("uBlox F9P"),
+                notes: Some("cross-town commute"),
+                ..MetadataView::default()
+            }
+            .show_ui(ui);
         });
     h.run();
 
@@ -1529,8 +1524,6 @@ fn a_drag_down_the_metadata_grid_copies_every_value_it_covered() {
         })
         .expect("the drag selected text to copy");
 
-    // Blank lines between the values vary with the grid's row spacing: egui
-    // spaces copied galleys by how far apart they sat.
     let copied_values: Vec<&str> = copied.lines().filter(|line| !line.is_empty()).collect();
     assert_eq!(copied_values, ["uBlox F9P", "cross-town commute"]);
 }
@@ -1547,13 +1540,11 @@ fn the_metadata_values_select_and_their_captions_do_not(
     let mut h = TestHarness::builder()
         .size(egui::vec2(480.0, 150.0))
         .ui(move |ui| {
-            gt_side_panel::widgets::metadata_detail_rows(
-                ui,
-                &gt_side_panel::widgets::MetadataView {
-                    device: Some("uBlox F9P"),
-                    ..gt_side_panel::widgets::MetadataView::default()
-                },
-            );
+            MetadataView {
+                device: Some("uBlox F9P"),
+                ..MetadataView::default()
+            }
+            .show_ui(ui);
         });
     h.run();
 

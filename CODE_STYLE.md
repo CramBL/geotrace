@@ -257,10 +257,12 @@ Variants are in alphabetical order.
 An external source that fixes an order overrides this, and the definition then states that source.
 A variant name is an active verb (`Allow`, and not `Allowed`), and an `enum` of `Yes` and `No` is a `bool`.
 
-A public `enum` is marked `#[non_exhaustive]`, or `#[allow(clippy::exhaustive_enums, reason = "the set is complete")]` where the set of variants is complete by definition, as `enum ByteOrder { LittleEndian, BigEndian }` is.
-Err on the side of `#[non_exhaustive]`.
-The same holds for a public struct, and a struct with at least one private field is already non-exhaustive.
-This weighs most on the SDK crates, which are published: adding a variant to an exhaustive public `enum` breaks a downstream `match`.
+Internal application crates use exhaustive enums and structs.
+The compiler checks exhaustive matches and struct construction when a variant or field is added.
+
+Published SDK APIs use `#[non_exhaustive]` on public enums and on public structs whose fields are all public.
+An SDK type may remain exhaustive when its fields or variants form a complete set, such as `enum ByteOrder { LittleEndian, BigEndian }`.
+A public struct with private fields already prevents external struct initialization.
 
 ### Functions
 

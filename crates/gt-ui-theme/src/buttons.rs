@@ -163,7 +163,6 @@ impl<'a> SortHeaderButton<'a> {
 /// Which way the values of the column a table is ordered by run, as the caret
 /// its header draws for them.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[expect(clippy::exhaustive_enums, reason = "the set is complete")]
 pub enum SortCaret {
     Ascending,
     Descending,

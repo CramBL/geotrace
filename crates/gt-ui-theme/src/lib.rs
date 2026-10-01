@@ -22,6 +22,10 @@ pub use gt_fmt::MINUS_SIGN;
 /// callers.
 pub use gt_fmt::RIGHTWARDS_ARROW;
 
+mod carets;
+
+pub use carets::expand_arrow;
+
 pub mod buttons;
 pub mod fonts;
 pub mod labels;

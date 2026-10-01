@@ -70,6 +70,7 @@ members = [
     "crates/gt-test-utils",
     "crates/gt-track-builder",
     "crates/gt-types",
+    "crates/gt-ui-components",
     "crates/gt-ui-theme",
     "crates/gt-ui-types",
     "sdk/rust/geotrace-c",
@@ -337,6 +338,7 @@ gt-solar = { path = "crates/external_environmental_data/gt-solar" }
 gt-store = { path = "crates/gt-store" }
 gt-track-builder = { path = "crates/gt-track-builder" }
 gt-types = { path = "crates/gt-types" }
+gt-ui-components = { path = "crates/gt-ui-components" }
 gt-ui-theme = { path = "crates/gt-ui-theme" }
 gt-ui-types = { path = "crates/gt-ui-types" }
 # Decodes the images committed alongside the reference material. Only the
