@@ -7,8 +7,8 @@ use egui_phosphor::regular::TRASH as ICON_TRASH;
 use gt_fmt::UTC_MINUTE_FORMAT;
 use gt_log_view::LogAttachmentRef;
 use gt_pending_writes::WriteAccess;
-use gt_side_panel::widgets::{self, MetadataView};
 use gt_store::{ChannelSummary, DatabaseRef, NavPointTimeRange, RecordingEntry, TrackState};
+use gt_ui_components::{DetailsTooltip, MetadataView};
 use gt_ui_theme::EM_DASH;
 use gt_ui_theme::buttons::{self, FramelessIconButton, SortHeaderButton};
 use gt_ui_theme::labels;
@@ -428,7 +428,7 @@ fn shelf_caret(ui: &mut egui::Ui, entry: &RecordingEntry, shelf: &mut Option<Ope
         (true, false) => SHOW_SHELVED_TRACKS_HOVER,
         (true, true) => HIDE_SHELVED_TRACKS_HOVER,
     };
-    let clicked = FramelessIconButton::new(widgets::expand_arrow(open))
+    let clicked = FramelessIconButton::new(gt_ui_theme::expand_arrow(open))
         .enabled(has_shelved_tracks)
         .hover_text_ui(ui, hover)
         .clicked();
@@ -990,7 +990,7 @@ fn identity_cell(
         identity: None,
         notes: entry.notes.as_deref(),
     };
-    let has_metadata = widgets::has_metadata_details(&meta);
+    let has_metadata = meta.has_details();
     let label = ui
         .horizontal(|ui| {
             if is_auto {
@@ -1027,24 +1027,23 @@ fn identity_cell(
             egui::CursorIcon::PointingHand
         } else {
             egui::CursorIcon::Default
-        })
-        .on_hover_ui(|ui| {
-            ui.label(identity);
-            widgets::metadata_detail_rows(ui, &meta);
-            // The same breakdown hover as the value cells.
-            ui.separator();
-            data_breakdown_ui(ui, entry);
-            ui.separator();
-            ui.label(
-                RichText::new(if writes_recordings {
-                    "Double-click to rename"
-                } else {
-                    READ_ONLY_RECORDING_HISTORY_HOVER
-                })
-                .small()
-                .color(ui.visuals().weak_text_color()),
-            );
         });
+    DetailsTooltip::new(&label).show(|ui| {
+        ui.label(identity);
+        meta.show_ui(ui);
+        ui.separator();
+        data_breakdown_ui(ui, entry);
+        ui.separator();
+        ui.label(
+            RichText::new(if writes_recordings {
+                "Double-click to rename"
+            } else {
+                READ_ONLY_RECORDING_HISTORY_HOVER
+            })
+            .small()
+            .color(ui.visuals().weak_text_color()),
+        );
+    });
     if label.double_clicked() && writes_recordings {
         begin_rename(rename, entry);
     }

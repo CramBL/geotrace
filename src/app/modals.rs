@@ -12,6 +12,7 @@ use gt_map::{MapLayer, NavMap};
 use gt_side_panel::{NodeKey, RecordingDetails, TreeState};
 use gt_store::{DatabaseRef, EnvironmentArchive};
 use gt_types::{LoadWarning, TrackAggregates, TrackRef};
+use gt_ui_components::{DetailRow, DetailsLayout, MetadataView};
 use strum::IntoEnumIterator as _;
 
 use gt_loaded_files::{LoadedFiles, LoadedFilesView, RecordingNames};
@@ -696,16 +697,33 @@ pub fn show_recording_details_dialog(ui: &egui::Ui, request: &mut Option<Recordi
                         .truncate(),
                 );
                 ui.separator();
-                gt_side_panel::widgets::recording_time_detail_rows(ui, &details.metadata);
-                let metadata_view = gt_side_panel::widgets::MetadataView::from_file_metadata(
-                    &details.metadata,
-                    details.identity.as_deref(),
+                let time_range = details.metadata.time_range.map_or_else(
+                    || gt_ui_theme::EM_DASH.to_owned(),
+                    |range| gt_fmt::format_time_range(range.start, range.end),
                 );
-                // The separator introduces the metadata grid, so it shows only
-                // where that grid has rows of its own.
-                if gt_side_panel::widgets::has_metadata_details(&metadata_view) {
+                let recorded_time =
+                    gt_fmt::format_human_terse_duration(details.metadata.total_duration);
+                DetailsLayout::new(&[
+                    DetailRow {
+                        caption: "Time range",
+                        value: &time_range,
+                    },
+                    DetailRow {
+                        caption: "Recorded time",
+                        value: &recorded_time,
+                    },
+                ])
+                .show_ui(ui);
+                let metadata_view = MetadataView::from_file_metadata(
+                    &details.metadata,
+                    details
+                        .identity
+                        .as_deref()
+                        .map(|identity| gt_loaded_files::display_identity(identity).0),
+                );
+                if metadata_view.has_details() {
                     ui.separator();
-                    gt_side_panel::widgets::metadata_detail_rows(ui, &metadata_view);
+                    metadata_view.show_ui(ui);
                 }
             });
         });

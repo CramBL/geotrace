@@ -2203,6 +2203,7 @@ dependencies = [
  "gt-test-utils",
  "gt-track-builder",
  "gt-types",
+ "gt-ui-components",
  "gt-ui-theme",
  "gt-ui-types",
  "image",
@@ -3015,6 +3016,7 @@ dependencies = [
  "gt-test-utils",
  "gt-track-builder",
  "gt-types",
+ "gt-ui-components",
  "gt-ui-theme",
  "gt-ui-types",
  "rstest",
@@ -3181,6 +3183,17 @@ dependencies = [
  "thiserror 2.0.20",
  "trybuild",
  "uom",
+]
+
+[[package]]
+name = "gt-ui-components"
+version = "0.18.0"
+dependencies = [
+ "egui",
+ "egui_kittest",
+ "gt-types",
+ "gt-ui-theme",
+ "rstest",
 ]
 
 [[package]]

@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- **Interface:** History recording tooltips wrap long metadata within a bounded width on the first hover.
 - **Map & Tracks:** Fixed the map letting a generated or event marker be hovered, clicked and pinned while its type or event path is hidden in the side panel tree.
 
 ## 0.18.0 - 2026-09-15

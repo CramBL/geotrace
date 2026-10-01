@@ -1,3 +1,4 @@
+use std::num::NonZeroUsize;
 use std::time::Instant;
 
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
@@ -2146,6 +2147,89 @@ fn hovering_the_identity_cell_shows_metadata_and_the_breakdown() {
             "the identity hover should mention {expected:?}",
         );
     }
+}
+
+#[rstest::rstest]
+#[case::normal(1.0)]
+#[case::scaled(1.5)]
+fn identity_tooltip_first_hover_matches_reopen_with_long_metadata(#[case] pixels_per_point: f32) {
+    let mut entry = entry_with_channels();
+    entry.title =
+        Some("A long recording title with enough words to wrap across several lines".to_owned());
+    entry.device =
+        Some("A receiver with a descriptive device name and firmware version".to_owned());
+    entry.notes = Some("Recording notes with several observations about the route and reception.\nA second line with further details about the recording.".to_owned());
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 900.0))
+        .ui_state(show_history, history_harness(vec![entry]));
+    h.inner.set_pixels_per_point(pixels_per_point);
+    h.inner
+        .ctx
+        .options_mut(|options| options.max_passes = NonZeroUsize::MIN);
+    h.inner.ctx.all_styles_mut(|style| {
+        style.interaction.tooltip_delay = 0.0;
+        style.interaction.show_tooltips_only_when_still = false;
+    });
+    h.run();
+    let target = topmost_labelled(&h, "sensors.gtd");
+    h.inner.hover_at(target);
+    let mut first_rect = None;
+    let mut last_rect = None;
+    for _ in 0..5 {
+        h.inner.step();
+        let layer = h.inner.ctx.memory(|memory| {
+            memory
+                .areas()
+                .visible_layer_ids()
+                .iter()
+                .find(|layer| layer.order == egui::Order::Tooltip)
+                .copied()
+        });
+        if let Some(rect) = layer
+            .and_then(|layer| egui::AreaState::load(&h.inner.ctx, layer.id))
+            .map(|area| area.rect())
+        {
+            first_rect.get_or_insert(rect);
+            last_rect = Some(rect);
+        }
+    }
+    let first = first_rect.expect("first tooltip geometry");
+    let stable = last_rect.expect("stable tooltip geometry");
+    assert!(first.width() >= 320.0 && first.width() <= 900.0);
+    assert!(first.height() < 650.0, "first tooltip rectangle: {first:?}");
+    assert!((first.width() - stable.width()).abs() <= 1.0);
+    assert!((first.height() - stable.height()).abs() <= 1.0);
+    assert!(
+        h.inner
+            .query_by_label_contains("2 custom channels")
+            .is_some()
+    );
+    assert!(
+        h.inner
+            .query_by_label_contains("Double-click to rename")
+            .is_some()
+    );
+
+    h.inner.hover_at_and_settle(egui::pos2(890.0, 890.0), 4);
+    assert_eq!(visible_tooltips(&h), 0);
+    h.inner.hover_at_and_settle(target, 4);
+    let layer = h
+        .inner
+        .ctx
+        .memory(|memory| {
+            memory
+                .areas()
+                .visible_layer_ids()
+                .iter()
+                .find(|layer| layer.order == egui::Order::Tooltip)
+                .copied()
+        })
+        .expect("reopened tooltip layer");
+    let reopened = egui::AreaState::load(&h.inner.ctx, layer.id)
+        .expect("reopened tooltip geometry")
+        .rect();
+    assert!((first.width() - reopened.width()).abs() <= 1.0);
+    assert!((first.height() - reopened.height()).abs() <= 1.0);
 }
 
 /// An identity too long for its column opens one tooltip, not two: egui

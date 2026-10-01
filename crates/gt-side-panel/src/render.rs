@@ -18,6 +18,7 @@ use gt_types::{
     DataCategory, FileIdx, GeneratedMarkerKind, GeoBounds, LoadWarning, LoadedFile, LoadedTrack,
     PointIdx, TrackGeometry, TrackIdx, TrackRef,
 };
+use gt_ui_components::MetadataView;
 use gt_ui_theme::ELLIPSIS;
 use gt_ui_theme::buttons::FramelessIconButton;
 use gt_ui_types::{
@@ -31,7 +32,7 @@ use crate::track_columns::{
     self, TrackColumnCells, TrackColumnWidths, TrackRowCellColor, TrackRowControls,
 };
 use crate::tree::{CheckState, NodeKey, ShelveConfirmState, TreeState};
-use crate::widgets::{self, CHECKBOX_PADDING, MetadataView, PointClickRequests};
+use crate::widgets::{self, CHECKBOX_PADDING, PointClickRequests};
 
 /// A recording's metadata, captured when its note icon is clicked so the app can
 /// open the details dialog. Owns its data so it outlives the source file.
@@ -762,10 +763,7 @@ fn render_file_row(
         // dialog, so metadata is one click away without pushing a block under the
         // row. Only shown when there is something to reveal.
         let identity = ctx.identity(fi);
-        if widgets::has_metadata_details(&MetadataView::from_file_metadata(
-            &file.metadata,
-            identity,
-        )) {
+        if MetadataView::from_file_metadata(&file.metadata, identity).has_details() {
             let icon = FramelessIconButton::new(ICON_NOTE).hover_text_ui(ui, "Recording details");
             if icon.clicked() {
                 *ctx.metadata_request = Some(RecordingDetails {
@@ -774,7 +772,7 @@ fn render_file_row(
                 });
             }
         }
-        let arrow = widgets::expand_arrow(is_expanded);
+        let arrow = gt_ui_theme::expand_arrow(is_expanded);
         let dist = file
             .metadata
             .total_distance
@@ -1414,7 +1412,7 @@ fn render_track_row(
             track_columns::paint_column_cell(
                 ui,
                 columns.arrow_width,
-                widgets::expand_arrow(is_expanded),
+                gt_ui_theme::expand_arrow(is_expanded),
                 &font,
                 cell_color,
                 egui::Align2::CENTER_CENTER,
@@ -1525,7 +1523,7 @@ fn render_category_section(
         if chk.clicked() {
             tree.set_category_visible(track_ref, cat, !visible);
         }
-        let arrow = widgets::expand_arrow(expanded);
+        let arrow = gt_ui_theme::expand_arrow(expanded);
         let resp = ui.selectable_label(expanded, format!("{arrow} {label}  {count}"));
         if resp.clicked() {
             tree.toggle_category_expanded(track_ref, cat);
@@ -1710,7 +1708,7 @@ fn render_channels_section(
         // Pad the checkbox column so the label aligns with the toggleable
         // sections above, even though channels have nothing to toggle.
         ui.add_space(widgets::checkbox_width(ui));
-        let arrow = widgets::expand_arrow(is_open);
+        let arrow = gt_ui_theme::expand_arrow(is_open);
         ui.selectable_label(is_open, format!("{arrow} Channels  {count}"))
     });
     if header.inner.clicked() {
@@ -1757,7 +1755,7 @@ fn render_event_markers_section(
         if chk_resp.clicked() {
             ctx.tree.toggle_all_event_paths(track_ref);
         }
-        let arrow = widgets::expand_arrow(is_open);
+        let arrow = gt_ui_theme::expand_arrow(is_open);
         let label = format!("{arrow} Events  {count}");
         let resp = ui.selectable_label(false, label);
         masked_hint(ui, ctx.display_mask, DataCategory::EventMarker);
@@ -1976,7 +1974,7 @@ fn render_generated_markers_section(
             ctx.tree
                 .set_category_visible(track_ref, DataCategory::GeneratedMarker, !visible);
         }
-        let arrow = widgets::expand_arrow(expanded);
+        let arrow = gt_ui_theme::expand_arrow(expanded);
         let resp = ui.selectable_label(expanded, format!("{arrow} Generated markers  {count}"));
         masked_hint(ui, ctx.display_mask, DataCategory::GeneratedMarker);
         resp
@@ -2020,7 +2018,7 @@ fn render_generated_markers_section(
                 if chk.clicked() {
                     ctx.tree.toggle_generated_kind_hidden(track_ref, tag);
                 }
-                let arrow = widgets::expand_arrow(tag_expanded);
+                let arrow = gt_ui_theme::expand_arrow(tag_expanded);
                 ui.selectable_label(
                     tag_expanded,
                     format!("{arrow} {}  {tag_count}", tag.label()),
