@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- **Interface:** The Visible section preserves its chosen proportion when the Track data panel changes size.
+
 - **Interface:** History recording tooltips wrap long metadata within a bounded width on the first hover.
 - **Map & Tracks:** Fixed the map letting a generated or event marker be hovered, clicked and pinned while its type or event path is hidden in the side panel tree.
 

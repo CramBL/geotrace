@@ -18,7 +18,7 @@ use gt_types::{
     DataCategory, FileIdx, GeneratedMarkerKind, GeoBounds, LoadWarning, LoadedFile, LoadedTrack,
     PointIdx, TrackGeometry, TrackIdx, TrackRef,
 };
-use gt_ui_components::MetadataView;
+use gt_ui_components::{FractionalSection, FractionalSectionSizing, MetadataView};
 use gt_ui_theme::ELLIPSIS;
 use gt_ui_theme::buttons::FramelessIconButton;
 use gt_ui_types::{
@@ -254,6 +254,7 @@ impl<'a> PanelContext<'a> {
 }
 
 pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
+    let detached = ctx.tree.detached;
     let header = ui.horizontal(|ui| {
         let (_, grip) = ui.allocate_exact_size(egui::vec2(10.0, 18.0), egui::Sense::drag());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -358,7 +359,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show(ui, |ui| {
-            render_visible_tracks_section(ui, ctx);
+            render_visible_tracks_section(ui, ctx, detached);
             // A scroll area defaults to at least 64 points tall, which would
             // push the tree past the height the section leaves it.
             ScrollArea::vertical()
@@ -439,14 +440,7 @@ struct VisibleTrackRow {
     cells: TrackColumnCells,
 }
 
-/// The visible-tracks section above the tree: the recordings and the tracks
-/// toggled on right now, however far the tree is scrolled. Its height is a
-/// fixed share of the region it shares with the tree, changed only by dragging
-/// the divider on its lower edge. The share comes from
-/// [`TreeState::visible_section_fraction`], clamped to what the divider
-/// reaches, and this function writes the rendered share back there for the app
-/// to persist.
-fn render_visible_tracks_section(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
+fn render_visible_tracks_section(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>, detached: bool) {
     let groups = ctx.tree.visible_tracks_by_file();
     let rows: Vec<Vec<VisibleTrackRow>> = groups
         .iter()
@@ -462,62 +456,58 @@ fn render_visible_tracks_section(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) 
         })
         .collect();
     let column_widths = TrackColumnWidths::measure(ui, rows.iter().flatten().map(|row| &row.cells));
-    let region_height = ui.available_height();
     let row_pitch =
         VISIBLE_SECTION_INTERACT_HEIGHT + CHECKBOX_PADDING + VISIBLE_SECTION_ROW_SPACING;
-    let min_height = row_pitch * VISIBLE_SECTION_MIN_ROWS;
-    let max_height = (region_height * VISIBLE_SECTION_MAX_FRACTION).max(min_height);
-    let stored_height =
-        (region_height * ctx.tree.visible_section_fraction()).clamp(min_height, max_height);
+    let section = FractionalSection {
+        id: egui::Id::new((VISIBLE_SECTION_ID, detached)),
+        sizing: FractionalSectionSizing {
+            preferred_fraction: ctx.tree.visible_section_fraction(),
+            minimum_height: row_pitch * VISIBLE_SECTION_MIN_ROWS,
+            maximum_fraction: VISIBLE_SECTION_MAX_FRACTION,
+        },
+        frame: egui::Frame::side_top_panel(ui.style()).fill(ui.visuals().faint_bg_color),
+    }
+    .show_ui(ui, |ui| {
+        let spacing = ui.spacing_mut();
+        spacing.item_spacing.y = VISIBLE_SECTION_ROW_SPACING;
+        spacing.interact_size.y = VISIBLE_SECTION_INTERACT_HEIGHT;
+        spacing.icon_width = VISIBLE_SECTION_ICON_WIDTH;
 
-    let section = egui::Panel::top(VISIBLE_SECTION_ID)
-        .resizable(true)
-        .frame(egui::Frame::side_top_panel(ui.style()).fill(ui.visuals().faint_bg_color))
-        .default_size(stored_height)
-        .size_range(min_height..=max_height)
-        .show(ui, |ui| {
-            let spacing = ui.spacing_mut();
-            spacing.item_spacing.y = VISIBLE_SECTION_ROW_SPACING;
-            spacing.interact_size.y = VISIBLE_SECTION_INTERACT_HEIGHT;
-            spacing.icon_width = VISIBLE_SECTION_ICON_WIDTH;
+        ScrollArea::vertical()
+            .min_scrolled_height(0.0)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if groups.is_empty() {
+                    ui.centered_and_justified(|ui| {
+                        ui.label(RichText::new("No tracks visible").weak());
+                    });
+                    return;
+                }
+                let leading_space =
+                    ui.spacing().indent + widgets::checkbox_width(ui) + ui.spacing().item_spacing.x;
+                track_columns::render_header(ui, leading_space, column_widths);
+                let names = ctx.recording_names;
+                for (group, rows) in groups.iter().zip(&rows) {
+                    let display_name = names.get(group.file).unwrap_or_default();
+                    render_visible_file_caption(ui, group.file, display_name, ctx);
+                    ui.indent(group.file, |ui| {
+                        for row in rows {
+                            render_visible_track_row(
+                                ui,
+                                row.track_ref,
+                                &row.cells,
+                                column_widths,
+                                ctx,
+                            );
+                        }
+                    });
+                }
+            });
+    });
 
-            // The scroll area fills the section's height whatever it holds, so
-            // the tree below keeps its place when the last track is hidden.
-            ScrollArea::vertical()
-                .min_scrolled_height(0.0)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    if groups.is_empty() {
-                        ui.centered_and_justified(|ui| {
-                            ui.label(RichText::new("No tracks visible").weak());
-                        });
-                        return;
-                    }
-                    let leading_space = ui.spacing().indent
-                        + widgets::checkbox_width(ui)
-                        + ui.spacing().item_spacing.x;
-                    track_columns::render_header(ui, leading_space, column_widths);
-                    let names = ctx.recording_names;
-                    for (group, rows) in groups.iter().zip(&rows) {
-                        let display_name = names.get(group.file).unwrap_or_default();
-                        render_visible_file_caption(ui, group.file, display_name, ctx);
-                        ui.indent(group.file, |ui| {
-                            for row in rows {
-                                render_visible_track_row(
-                                    ui,
-                                    row.track_ref,
-                                    &row.cells,
-                                    column_widths,
-                                    ctx,
-                                );
-                            }
-                        });
-                    }
-                });
-        });
-
-    ctx.tree
-        .set_visible_section_fraction(section.response.rect.height() / region_height);
+    if let Some(fraction) = section.changed_fraction {
+        ctx.tree.set_visible_section_fraction(fraction);
+    }
 }
 
 /// The "Show only this track" entry of a track row's context menu, in the tree
@@ -2124,7 +2114,7 @@ const VISIBLE_SECTION_ID: &str = "visible_tracks_section";
 
 /// The share of the region the section and the tree divide that the section
 /// takes until the divider is dragged.
-pub const VISIBLE_SECTION_DEFAULT_FRACTION: f32 = 0.25;
+pub const VISIBLE_SECTION_DEFAULT_FRACTION: f32 = 1.0 / 3.0;
 
 /// The largest share of that region the divider can give the section.
 const VISIBLE_SECTION_MAX_FRACTION: f32 = 0.75;

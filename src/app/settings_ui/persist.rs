@@ -332,6 +332,7 @@ const SETTINGS_FLUSH_LABEL: &str = "Saving settings";
 #[cfg(test)]
 mod tests {
     use egui_kittest::Harness;
+    use gt_test_utils::HarnessInteraction as _;
     use gt_ui_types::{DisplayCategory, DisplayMask};
 
     use crate::app::test_util::harness;
@@ -452,29 +453,110 @@ mod tests {
         assert_eq!(colors.get(1), Some(&Some(magenta)));
     }
 
-    /// The side panel's Visible section opens at the share the settings file
-    /// holds, and the app writes the rendered share back out.
     #[test]
-    fn the_visible_section_opens_at_the_share_the_settings_file_holds() {
+    fn visible_section_drag_persists_across_flush_and_fresh_context_restart() {
         let config_dir = tempfile::tempdir().expect("temp config dir");
         let config_path = config_dir.path().join("config.toml");
         std::fs::write(&config_path, "[ui]\nvisible_section_fraction = 0.5\n")
             .expect("write the settings file");
-
         let built_from = config_path.clone();
-        let mut harness = Harness::builder()
+        let mut first = Harness::builder()
+            .with_size(egui::vec2(900.0, 900.0))
             .with_wait_for_pending_images(false)
             .build_eframe(move |cc| harness::build_app(cc, &built_from, false));
-        harness.step();
-
-        let share = harness
+        first.run_steps(4);
+        assert_eq!(
+            first
+                .state()
+                .collect_settings_for_flush()
+                .ui
+                .visible_section_fraction
+                .to_bits(),
+            0.5_f32.to_bits()
+        );
+        let section_id = egui::Id::new(("visible_tracks_section", false));
+        let before = first
+            .ctx
+            .read_response(section_id)
+            .expect("visible section")
+            .rect;
+        let divider = first
+            .ctx
+            .read_response(section_id.with("divider"))
+            .expect("divider")
+            .rect
+            .center();
+        first.press_drag_release(divider, egui::vec2(0.0, 70.0), 4);
+        first.run_steps(3);
+        let chosen = first
             .state()
             .collect_settings_for_flush()
             .ui
             .visible_section_fraction;
-        assert!(
-            (share - 0.5).abs() < 0.02,
-            "the section opened at {share} of the region"
+        let dragged = first
+            .ctx
+            .read_response(section_id)
+            .expect("visible section")
+            .rect;
+        assert!((dragged.height() - before.height() - 70.0).abs() < 1.0);
+        assert!(chosen > 0.5);
+        first.set_size(egui::vec2(900.0, 600.0));
+        first.run_steps(4);
+        assert_eq!(
+            first
+                .state()
+                .collect_settings_for_flush()
+                .ui
+                .visible_section_fraction
+                .to_bits(),
+            chosen.to_bits()
+        );
+        let resized = first
+            .ctx
+            .read_response(section_id)
+            .expect("visible section")
+            .rect;
+        assert!((dragged.height() - resized.height() - chosen * 300.0).abs() < 1.0);
+        first.state().flush_settings();
+        drop(first);
+
+        let built_from = config_path.clone();
+        let mut restarted = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_wait_for_pending_images(false)
+            .build_eframe(move |cc| harness::build_app(cc, &built_from, false));
+        restarted.run_steps(4);
+        assert_eq!(
+            restarted
+                .state()
+                .collect_settings_for_flush()
+                .ui
+                .visible_section_fraction
+                .to_bits(),
+            chosen.to_bits()
+        );
+        let restored = restarted
+            .ctx
+            .read_response(section_id)
+            .expect("restored section")
+            .rect;
+        assert!((restored.height() - resized.height()).abs() < 1.0);
+        restarted.set_size(egui::vec2(900.0, 900.0));
+        restarted.run_steps(4);
+        let enlarged = restarted
+            .ctx
+            .read_response(section_id)
+            .expect("enlarged section")
+            .rect;
+        assert!((enlarged.height() - dragged.height()).abs() < 1.0);
+        assert_eq!(
+            restarted
+                .state()
+                .collect_settings_for_flush()
+                .ui
+                .visible_section_fraction
+                .to_bits(),
+            chosen.to_bits()
         );
     }
 
