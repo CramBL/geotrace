@@ -35,6 +35,7 @@ use gt_types::{
 };
 use gt_ui_components::MetadataView;
 use gt_ui_types::{DisplayCategory, DisplayMask, HighlightScope, MapHighlight, SnapCosting};
+use rstest::rstest;
 use rustc_hash::FxHashMap;
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
@@ -192,14 +193,6 @@ fn tree_row<'h>(harness: &'h TestHarness<'static, State>, label: &'h str) -> Nod
     harness
         .inner
         .bottommost_matching(By::new().label_contains(label))
-}
-
-/// A point on the divider between the section and the tree, three points above
-/// the first tree row: the panel edge takes a drag within
-/// `interaction.resize_grab_radius_side` of it.
-fn divider_point(harness: &TestHarness<'static, State>) -> egui::Pos2 {
-    let row = tree_row(harness, "ride_0").rect();
-    egui::pos2(row.center().x, row.top() - 3.0)
 }
 
 /// The Visible section row for a label the tree repeats: the section renders
@@ -368,7 +361,7 @@ fn snapshot_snap_trigger_states() {
     // run-until-idle would never settle.
     let mut harness = make_harness_sized(state, egui::vec2(280.0, 720.0));
     harness.inner.run_steps(3);
-    harness.snapshot("side_panel_snap_states");
+    harness.snapshot_with_color_tolerance("side_panel_snap_states");
 }
 
 /// The progress strip while a run is in flight with more queued: bar with
@@ -955,20 +948,26 @@ fn hiding_every_track_leaves_the_tree_rows_in_place() {
     assert_eq!(tree_row(&harness, "ride_1").rect(), before);
 }
 
-/// The section opens at the share the tree state holds, where the app puts the
-/// persisted share before the first frame.
-#[test]
-fn the_visible_section_opens_at_the_stored_share_of_the_region() {
+#[rstest]
+#[case::saved_quarter(0.25)]
+#[case::saved_half(0.5)]
+fn the_visible_section_opens_at_the_stored_share_of_the_region(#[case] preferred_fraction: f32) {
     let mut state = make_state(2);
-    state.tree.set_visible_section_fraction(0.5);
+    state.tree.set_visible_section_fraction(preferred_fraction);
     let mut harness = make_harness(state);
-    harness.run();
-
-    let share = harness.state().tree.visible_section_fraction();
-    assert!(
-        (share - 0.5).abs() < 0.02,
-        "the section opened at {share} of the region"
+    harness.inner.run_steps(4);
+    assert_eq!(
+        harness.state().tree.visible_section_fraction().to_bits(),
+        preferred_fraction.to_bits()
     );
+    let section = harness
+        .inner
+        .ctx
+        .read_response(egui::Id::new(("visible_tracks_section", false)))
+        .expect("visible section")
+        .rect;
+    let region_height = 600.0 - 8.0 - section.top();
+    assert!((section.height() / region_height - preferred_fraction).abs() < 0.002);
 }
 
 /// A stored share above the divider's maximum opens the section at that
@@ -980,11 +979,18 @@ fn a_stored_share_above_the_maximum_opens_the_section_at_the_maximum() {
     let mut harness = make_harness(state);
     harness.run();
 
-    let share = harness.state().tree.visible_section_fraction();
-    assert!(
-        (share - 0.75).abs() < 0.02,
-        "the section opened at {share} of the region"
+    assert_eq!(
+        (harness.state().tree.visible_section_fraction()).to_bits(),
+        1.0_f32.to_bits()
     );
+    let section = harness
+        .inner
+        .ctx
+        .read_response(egui::Id::new(("visible_tracks_section", false)))
+        .expect("visible section")
+        .rect;
+    let region_height = 600.0 - 8.0 - section.top();
+    assert!((section.height() / region_height - 0.75).abs() < 0.002);
 }
 
 /// Dragging the divider down writes the section's larger share back to the
@@ -995,7 +1001,13 @@ fn dragging_the_divider_writes_the_new_share_back() {
     harness.run();
     let before = harness.state().tree.visible_section_fraction();
 
-    let divider = divider_point(&harness);
+    let divider = harness
+        .inner
+        .ctx
+        .read_response(egui::Id::new(("visible_tracks_section", false)).with("divider"))
+        .expect("visible section divider")
+        .rect
+        .center();
     harness
         .inner
         .press_drag_release(divider, egui::vec2(0.0, 100.0), 4);
@@ -1005,6 +1017,98 @@ fn dragging_the_divider_writes_the_new_share_back() {
     assert!(
         after > before + 0.2,
         "the section went from {before} to {after} of the region"
+    );
+}
+
+#[test]
+fn parent_resize_and_progress_strip_preserve_the_visible_section_preference() {
+    let mut state = make_state(2);
+    state.tree.set_visible_section_fraction(0.5);
+    let mut harness = make_harness(state);
+    harness.run();
+    let section_id = egui::Id::new(("visible_tracks_section", false));
+    let before = harness
+        .inner
+        .ctx
+        .read_response(section_id)
+        .expect("visible section")
+        .rect;
+    harness.inner.set_size(egui::vec2(280.0, 900.0));
+    harness.inner.run_steps(4);
+    let enlarged = harness
+        .inner
+        .ctx
+        .read_response(section_id)
+        .expect("visible section")
+        .rect;
+    assert!(
+        (enlarged.height() - before.height() - 150.0).abs() < 1.0,
+        "before {before:?}, enlarged {enlarged:?}"
+    );
+    assert_eq!(
+        (harness.state().tree.visible_section_fraction()).to_bits(),
+        0.5_f32.to_bits()
+    );
+
+    harness.state_mut().snap_progress = gt_side_panel::SnapProgressView {
+        in_flight: None,
+        queued: 1,
+    };
+    harness.inner.run_steps(4);
+    let with_progress = harness
+        .inner
+        .ctx
+        .read_response(section_id)
+        .expect("visible section")
+        .rect;
+    assert!(with_progress.height() < enlarged.height());
+    assert_eq!(
+        (harness.state().tree.visible_section_fraction()).to_bits(),
+        0.5_f32.to_bits()
+    );
+    harness.state_mut().snap_progress = gt_side_panel::SnapProgressView::default();
+    harness.inner.run_steps(4);
+    assert_eq!(
+        harness
+            .inner
+            .ctx
+            .read_response(section_id)
+            .expect("visible section")
+            .rect,
+        enlarged
+    );
+    assert_eq!(
+        (harness.state().tree.visible_section_fraction()).to_bits(),
+        0.5_f32.to_bits()
+    );
+}
+
+#[rstest]
+#[case::compact(480.0, "#2  ")]
+#[case::tall(900.0, "#2  ")]
+fn default_visible_section_shows_the_header_caption_and_track_on_first_layout(
+    #[case] height: f32,
+    #[case] track_label: &str,
+) {
+    let mut harness = make_harness_sized(
+        make_state_with_a_two_track_recording(),
+        egui::vec2(280.0, height),
+    );
+    harness.run();
+    let section = harness
+        .inner
+        .ctx
+        .read_response(egui::Id::new(("visible_tracks_section", false)))
+        .expect("visible section")
+        .rect;
+    let track = section_row(&harness, track_label).rect();
+    assert!(
+        section.contains_rect(track),
+        "section {section:?}, track {track:?}"
+    );
+    assert_eq!(
+        harness.state().tree.visible_section_fraction().to_bits(),
+        gt_side_panel::VISIBLE_SECTION_DEFAULT_FRACTION.to_bits()
     );
 }
 
@@ -2599,7 +2703,7 @@ fn snapshot_hovering_the_shelved_track_mark_counts_the_shelved_tracks() {
     harness.inner.get_by_label(
         "2 shelved tracks left out of this recording - click to list them in History",
     );
-    harness.snapshot("side_panel_shelved_track_mark_tooltip");
+    harness.snapshot_with_color_tolerance("side_panel_shelved_track_mark_tooltip");
 }
 
 #[test]

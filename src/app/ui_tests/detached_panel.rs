@@ -67,3 +67,81 @@ fn detached_panel_steps_complete_within_time_budget() {
     harness.step();
     assert!(!harness.state().shared.borrow().tree.detached);
 }
+
+#[test]
+fn visible_section_fraction_and_geometry_survive_dock_detach_dock() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(900.0, 900.0))
+        .with_wait_for_pending_images(false)
+        .build_eframe(test_util::harness::transient_app);
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .tree
+        .set_visible_section_fraction(0.5);
+    harness.run_steps(4);
+    let docked_id = egui::Id::new(("visible_tracks_section", false));
+    let detached_id = egui::Id::new(("visible_tracks_section", true));
+    let docked = harness
+        .ctx
+        .read_response(docked_id)
+        .expect("docked section")
+        .rect;
+    harness.state_mut().shared.borrow_mut().tree.detached = true;
+    harness.run_steps(4);
+    let detached = harness
+        .ctx
+        .read_response(detached_id)
+        .expect("detached section")
+        .rect;
+    assert!(detached.height() < docked.height());
+    assert_eq!(
+        harness
+            .state()
+            .shared
+            .borrow()
+            .tree
+            .visible_section_fraction()
+            .to_bits(),
+        0.5_f32.to_bits()
+    );
+    harness.set_size(egui::vec2(900.0, 600.0));
+    harness.run_steps(4);
+    assert_eq!(
+        harness
+            .state()
+            .shared
+            .borrow()
+            .tree
+            .visible_section_fraction()
+            .to_bits(),
+        0.5_f32.to_bits()
+    );
+    harness.state_mut().shared.borrow_mut().tree.detached = false;
+    harness.run_steps(4);
+    let restored = harness
+        .ctx
+        .read_response(docked_id)
+        .expect("restored section")
+        .rect;
+    assert!((docked.height() - restored.height() - 150.0).abs() < 1.0);
+    assert_eq!(
+        harness
+            .state()
+            .shared
+            .borrow()
+            .tree
+            .visible_section_fraction()
+            .to_bits(),
+        0.5_f32.to_bits()
+    );
+    harness.set_size(egui::vec2(900.0, 900.0));
+    harness.run_steps(4);
+    let enlarged = harness
+        .ctx
+        .read_response(docked_id)
+        .expect("enlarged section")
+        .rect;
+    assert!((enlarged.height() - docked.height()).abs() < 1.0);
+}
