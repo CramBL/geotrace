@@ -27,9 +27,8 @@ use gt_ui_theme::labels;
 use super::delete_shelved_prompt::{DELETE_SHELVED_TRACKS_LABEL, DELETE_SHELVED_WINDOW_TITLE};
 use super::table::{self, MAX_HOVER_CHANNELS, OPEN_LOG_LABEL, UNSHELVE_ALL_LABEL, UNSHELVE_LABEL};
 use super::{
-    DEFAULT_WINDOW_HEIGHT_PX, DEFAULT_WINDOW_WIDTH_PX, DatabaseRef, HistorySort, HistoryWindow,
-    HistoryWorker, NavPointTimeRange, PRUNE_WINDOW_TITLE, RecordingEntry, SortColumn,
-    SortDirection,
+    DatabaseRef, HISTORY_WINDOW_SIZING, HistorySort, HistoryWindow, HistoryWorker,
+    NavPointTimeRange, PRUNE_WINDOW_TITLE, RecordingEntry, SortColumn, SortDirection,
 };
 use crate::app::test_util::listing;
 use crate::app::test_util::listing::{ShelvedTracks, TotalTracks};
@@ -52,6 +51,16 @@ struct HistoryHarness {
     /// The log the worker last read back for the Logs menu's "Open log".
     opened_log: Option<gt_store::AttachedLog>,
     _dir: tempfile::TempDir,
+}
+
+impl HistoryHarness {
+    fn load_recordings_before_first_frame(&mut self) {
+        self.window.request_recording_list_if_missing(&self.worker);
+        let Response::Listed(Ok(entries)) = recordings::next_response(&self.worker) else {
+            panic!("expected the recording list");
+        };
+        self.window.set_entries(entries);
+    }
 }
 
 fn history_harness(entries: Vec<RecordingEntry>) -> HistoryHarness {
@@ -1156,6 +1165,7 @@ fn snapshot_history_window_shelf_open() {
     let mut harness =
         history_harness_with_stored_tracks(&one_live_a_tombstone_and_two_shelved_tracks());
     harness.worker.hide_path();
+    harness.load_recordings_before_first_frame();
     let mut h = TestHarness::builder()
         .size(egui::vec2(900.0, 500.0))
         .ui_state(pump_history, harness);
@@ -1173,6 +1183,7 @@ fn snapshot_history_window_shelf_open_read_only() {
     let mut harness =
         history_harness_with_stored_tracks(&one_live_a_tombstone_and_two_shelved_tracks());
     harness.worker.hide_path();
+    harness.load_recordings_before_first_frame();
     harness.write_access = WriteAccess::ReadOnly;
     let mut h = TestHarness::builder()
         .size(egui::vec2(900.0, 500.0))
@@ -1411,27 +1422,53 @@ fn long_identity_does_not_widen_history_window() {
     );
 }
 
-/// The metadata-width measurement is ignored during the table's sizing pass:
-/// on the first frame the auto columns have not grown to their content, so
-/// the reserve reads far too small and, if cached, would inflate identity and
-/// stick the window permanently wide. A freshly opened window must therefore
-/// settle to its content width, not a bloated one.
 #[test]
-fn fresh_window_settles_to_content_width_not_a_bloated_one() {
-    // Room to bloat into: the screen is 1600px, the content needs well under
-    // half that. A leaked sizing-pass measurement pushed this past 900px.
+fn fresh_history_window_uses_the_preferred_viewport_width() {
     let width = history_window_width("auto:ride.gtd");
+    let preferred = 1600.0 * HISTORY_WINDOW_SIZING.preferred_fraction.x;
     assert!(
-        width < 750.0,
-        "the History window settled far wider than its content ({width:.0}px); \
-         the sizing-pass metadata measurement likely leaked into the identity fill",
+        (width - preferred).abs() < 1.0,
+        "width={width} preferred={preferred}"
     );
 }
 
-/// The identity filter field fills the toolbar space to the left of the
-/// action controls and must yield as the window narrows, never growing into
-/// them. Previously the field kept a fixed width and the "Auto-store
-/// recordings" checkbox slid left underneath it, overlapping.
+#[rstest::rstest]
+#[case::short_listing(SHORT_LIST_ROWS)]
+#[case::scrolling_listing(OVERSIZED_ROW_COUNT)]
+fn cold_history_placement_and_reopen_preserve_user_geometry(#[case] rows: usize) {
+    let mut h = TestHarness::builder()
+        .size(HEIGHT_AUDIT_VIEWPORT)
+        .ui_state(show_history, history_harness_for_the_height_audit(rows));
+    for _ in 0..4 {
+        if h.inner.query_by_label("Auto-store recordings").is_some() {
+            break;
+        }
+        h.step();
+    }
+    assert!(h.inner.query_by_label("Auto-store recordings").is_some());
+    let first_visible = window_rect(&h);
+    let viewport = h.inner.ctx.content_rect();
+    assert!((first_visible.center() - viewport.center()).length() < 1.0);
+    assert!(viewport.contains_rect(first_visible));
+    h.inner.run_steps(8);
+    let settled = window_rect(&h);
+    h.inner.press_drag_release(
+        settled.left_top() + egui::vec2(80.0, 12.0),
+        egui::vec2(60.0, -40.0),
+        8,
+    );
+    let moved = window_rect(&h);
+    assert!((moved.min - settled.min).length() > 30.0);
+    assert!(viewport.contains_rect(moved));
+    h.inner.state_mut().window.open = false;
+    h.step();
+    h.inner.state_mut().window.open = true;
+    h.inner.run_steps(8);
+    let reopened = window_rect(&h);
+    assert!((reopened.min - moved.min).length() < 1.0);
+    assert!((reopened.size() - moved.size()).length() < 1.0);
+}
+
 #[test]
 fn filter_field_does_not_overlap_the_toolbar_controls() {
     let harness = history_harness(vec![listing::entry_with_identity("auto:ride.gtd")]);
@@ -1523,7 +1560,7 @@ fn identity_fills_the_window_at_every_size() {
         h.step();
     }
     assert!(
-        window_rect(&h).width() > before.width() + 200.0,
+        (window_rect(&h).width() - 1400.0 * HISTORY_WINDOW_SIZING.maximum_fraction.x).abs() < 1.0,
         "the window did not grow: {:.0}px -> {:.0}px",
         before.width(),
         window_rect(&h).width(),
@@ -1613,12 +1650,8 @@ fn the_action_column_stays_inside_the_window_at_the_width_it_opens_at(#[case] fi
     }
 
     let window = window_rect(&h);
-    assert!(
-        (window.width() - DEFAULT_WINDOW_WIDTH_PX).abs() < 4.0,
-        "the window is {:.1}px wide, and this test measures the \
-         {DEFAULT_WINDOW_WIDTH_PX:.0}px width it opens at",
-        window.width(),
-    );
+    let preferred_width = 900.0 * HISTORY_WINDOW_SIZING.preferred_fraction.x;
+    assert!((window.width() - preferred_width).abs() < 1.0);
     let delete = last_row_delete_button_rect(&h);
     // The window lays its content out inside the frame margin.
     let ctx = &h.inner.ctx;
@@ -2608,12 +2641,8 @@ fn a_short_list_settles_the_window_at_its_content_height() {
 #[test]
 fn a_list_longer_than_the_window_leaves_it_at_the_height_it_opened_at() {
     let height = settled_history_window_height(OVERSIZED_ROW_COUNT);
-    assert!(
-        (height - DEFAULT_WINDOW_HEIGHT_PX).abs() < 1.0,
-        "the History window settled at {height:.0}px listing {OVERSIZED_ROW_COUNT} \
-         recordings, not the {DEFAULT_WINDOW_HEIGHT_PX:.0}px it opens at: its rows grew \
-         it instead of scrolling inside it",
-    );
+    let preferred_height = HEIGHT_AUDIT_VIEWPORT.y * HISTORY_WINDOW_SIZING.preferred_fraction.y;
+    assert!((height - preferred_height).abs() < 1.0);
 }
 
 /// A window that grew for a long listing fits a short one again: its height
