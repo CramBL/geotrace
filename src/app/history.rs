@@ -9,6 +9,7 @@ use gt_store::{
     DatabaseRef, DbError, NavPointTimeRange, PruneMode, RecordingEntry, RecordingMeta, TrackRange,
 };
 use gt_types::TravelMode;
+use gt_ui_components::{ToolWindow, ToolWindowSizing};
 use gt_ui_theme::buttons::SortCaret;
 use gt_ui_theme::labels::LabelWithHover;
 use strum::{EnumCount, EnumIter};
@@ -691,181 +692,163 @@ impl HistoryWindow {
         // of the listing the confirmation reads its figures from.
         let mut shelf_raised_the_delete: Option<DatabaseRef> = None;
 
-        Window::new("History")
-            .open(&mut open)
-            .resizable(true)
-            .default_width(DEFAULT_WINDOW_WIDTH_PX)
-            // The height the window opens at, and the height the empty listing
-            // centres its notice in.
-            .default_height(DEFAULT_WINDOW_HEIGHT_PX)
-            // egui keeps a resizable window's height in memory and grows it
-            // towards the window's content, never back. Declaring the cap every
-            // frame holds that memory to the screen the app is on now.
-            .max_height(ctx.content_rect().height())
-            .show(ctx, |ui| {
-                if databases_opening {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(OPENING_RECORDINGS_DATABASE);
-                    });
-                    return;
-                }
-                if !worker.available() {
-                    ui.label(
-                        RichText::new("History database is unavailable.")
-                            .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
-                    );
-                    return;
-                }
-
-                if let Some(err) = &self.error {
-                    ui.label(
-                        RichText::new(err)
-                            .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
-                    );
-                    ui.add_space(4.0);
-                }
-
-                // The count arrives with the recording list: the spinner
-                // stands until both are there.
-                let Some(shelved_track_count) = shelved_track_count else {
+        ToolWindow {
+            id: egui::Id::new(Some(HISTORY_WINDOW_TITLE)),
+            title: HISTORY_WINDOW_TITLE,
+            viewport: ctx.content_rect(),
+            sizing: HISTORY_WINDOW_SIZING,
+            movable: true,
+            resizable: true,
+        }
+        .show_ui(ctx, &mut open, None, |ui| {
+            if databases_opening {
+                ui.horizontal(|ui| {
                     ui.spinner();
-                    return;
-                };
-
-                // Snapshot filter active state before the closures that mutably
-                // borrow individual filter fields - avoids whole-self method calls
-                // inside closures where `entries` also holds an immutable borrow.
-                let filter_active = self.any_filter_active();
-
-                self.toolbar_ui(
-                    ui,
-                    storage,
-                    write_access,
-                    shelved_track_count,
-                    filter_active,
+                    ui.label(OPENING_RECORDINGS_DATABASE);
+                });
+                return;
+            }
+            if !worker.available() {
+                ui.label(
+                    RichText::new("History database is unavailable.")
+                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
                 );
+                return;
+            }
 
-                let Some(entries) = &self.entries else {
-                    return;
-                };
+            if let Some(err) = &self.error {
+                ui.label(
+                    RichText::new(err).color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                );
+                ui.add_space(4.0);
+            }
 
-                let filter_identity = self.filter_text.to_lowercase();
-                let filter_min_points: Option<u64> = self.filter_min_points.parse().ok();
-                let filter_max_points: Option<u64> = self.filter_max_points.parse().ok();
-                let filter_from_us = date_to_start_us(&self.filter_date_from);
-                let filter_to_us = date_to_end_us(&self.filter_date_to);
+            let Some(shelved_track_count) = shelved_track_count else {
+                ui.spinner();
+                return;
+            };
 
-                let mut visible: Vec<&RecordingEntry> = entries
-                    .iter()
-                    .filter(|e| {
-                        if !filter_identity.is_empty()
-                            && !e
-                                .db_ref
-                                .identity
-                                .to_lowercase()
-                                .contains(filter_identity.as_str())
-                        {
-                            return false;
-                        }
-                        if filter_min_points.is_some_and(|min| e.meta.nav_point_count < min) {
-                            return false;
-                        }
-                        if filter_max_points.is_some_and(|max| e.meta.nav_point_count > max) {
-                            return false;
-                        }
-                        let started_at = e.meta.time_range.map(NavPointTimeRange::start_us);
-                        if filter_from_us
-                            .is_some_and(|from| started_at.is_none_or(|start| start < from))
-                        {
-                            return false;
-                        }
-                        if filter_to_us.is_some_and(|to| started_at.is_none_or(|start| start > to))
-                        {
-                            return false;
-                        }
-                        true
-                    })
-                    .collect();
-                self.sort.apply(&mut visible);
+            let filter_active = self.any_filter_active();
 
-                if entries.is_empty() {
-                    ui.centered_and_justified(|ui| {
-                        ui.label("No recordings in history yet");
-                    });
-                    return;
-                }
+            self.toolbar_ui(
+                ui,
+                storage,
+                write_access,
+                shelved_track_count,
+                filter_active,
+            );
 
-                // The listing takes the room the window leaves below the
-                // toolbar, minus the footer that sits under it, and scrolls its
-                // rows inside that. The window is as tall as the user left it,
-                // however long the listing is.
-                let footer_room = footer_height.unwrap_or_else(|| {
-                    FOOTER_LINES_BEFORE_IT_IS_DRAWN * ui.text_style_height(&egui::TextStyle::Body)
-                });
-                let max_listing_height =
-                    (ui.available_height() - footer_room).max(MIN_LISTING_HEIGHT);
+            let Some(entries) = &self.entries else {
+                return;
+            };
 
-                // The listing scrolls sideways once its metadata columns alone
-                // need more width than the window has, identity having clamped
-                // to its minimum by then.
-                ScrollArea::horizontal()
-                    .id_salt("history_listing")
-                    .show(ui, |ui| {
-                        table::history_table(
-                            ui,
-                            table::HistoryTable {
-                                max_listing_height,
-                                visible: &visible,
-                                entries,
-                                entries_revision: self.entries_revision,
-                                loaded_metas,
-                                worker,
-                                rename: &mut rename,
-                                shelf: &mut shelf,
-                                shelf_raised_the_delete: &mut shelf_raised_the_delete,
-                                sort: &mut self.sort,
-                                write_access,
-                            },
-                        );
-                    });
-                if let Some(recording) = shelf_raised_the_delete.take() {
-                    self.delete_shelved_prompt
-                        .open(DeleteShelvedTracksScope::OneRecording(recording), entries);
-                }
-                let listing_bottom = ui.min_rect().bottom();
+            let filter_identity = self.filter_text.to_lowercase();
+            let filter_min_points: Option<u64> = self.filter_min_points.parse().ok();
+            let filter_max_points: Option<u64> = self.filter_max_points.parse().ok();
+            let filter_from_us = date_to_start_us(&self.filter_date_from);
+            let filter_to_us = date_to_end_us(&self.filter_date_to);
 
-                ui.separator();
-                // Footer stats cover every stored recording. Shelved tracks
-                // are reported separately: they are what the permanent delete
-                // takes.
-                let stored_count = entries.len();
-                let total_size: u64 = entries.iter().map(|e| e.meta.gtd_size_bytes).sum();
-                ui.horizontal_wrapped(|ui| {
-                    let rec_label = gt_fmt::pluralize(stored_count, "recording", "recordings");
-                    ui.label(format!(
-                        "{stored_count} {rec_label} - {}",
-                        gt_fmt::format_bytes(total_size)
-                    ));
-                    if filter_active && visible.len() != stored_count {
-                        ui.weak(format!("({} shown)", visible.len()));
+            let mut visible: Vec<&RecordingEntry> = entries
+                .iter()
+                .filter(|e| {
+                    if !filter_identity.is_empty()
+                        && !e
+                            .db_ref
+                            .identity
+                            .to_lowercase()
+                            .contains(filter_identity.as_str())
+                    {
+                        return false;
                     }
-                    if shelved_track_count > 0 {
-                        let track_label = gt_fmt::pluralize(shelved_track_count, "track", "tracks");
-                        ui.weak(format!("- {shelved_track_count} shelved {track_label}"));
+                    if filter_min_points.is_some_and(|min| e.meta.nav_point_count < min) {
+                        return false;
                     }
-                });
-                if let Some(path) = worker.path() {
-                    // Kept selectable for copying.
-                    ui.add(
-                        Label::new(RichText::new(path.display().to_string()).weak())
-                            .truncate()
-                            .selectable(true),
-                    );
-                }
+                    if filter_max_points.is_some_and(|max| e.meta.nav_point_count > max) {
+                        return false;
+                    }
+                    let started_at = e.meta.time_range.map(NavPointTimeRange::start_us);
+                    if filter_from_us
+                        .is_some_and(|from| started_at.is_none_or(|start| start < from))
+                    {
+                        return false;
+                    }
+                    if filter_to_us.is_some_and(|to| started_at.is_none_or(|start| start > to)) {
+                        return false;
+                    }
+                    true
+                })
+                .collect();
+            self.sort.apply(&mut visible);
 
-                footer_height = Some(ui.min_rect().bottom() - listing_bottom);
+            if entries.is_empty() {
+                ui.centered_and_justified(|ui| {
+                    ui.label("No recordings in history yet");
+                });
+                return;
+            }
+
+            let footer_room = footer_height.unwrap_or_else(|| {
+                FOOTER_LINES_BEFORE_IT_IS_DRAWN * ui.text_style_height(&egui::TextStyle::Body)
             });
+            let max_listing_height = (ui.available_height() - footer_room).max(MIN_LISTING_HEIGHT);
+
+            // The listing scrolls sideways once its metadata columns alone
+            // need more width than the window has, identity having clamped
+            // to its minimum by then.
+            ScrollArea::horizontal()
+                .id_salt("history_listing")
+                .show(ui, |ui| {
+                    table::history_table(
+                        ui,
+                        table::HistoryTable {
+                            max_listing_height,
+                            visible: &visible,
+                            entries,
+                            entries_revision: self.entries_revision,
+                            loaded_metas,
+                            worker,
+                            rename: &mut rename,
+                            shelf: &mut shelf,
+                            shelf_raised_the_delete: &mut shelf_raised_the_delete,
+                            sort: &mut self.sort,
+                            write_access,
+                        },
+                    );
+                });
+            if let Some(recording) = shelf_raised_the_delete.take() {
+                self.delete_shelved_prompt
+                    .open(DeleteShelvedTracksScope::OneRecording(recording), entries);
+            }
+            let listing_bottom = ui.min_rect().bottom();
+
+            ui.separator();
+            // Footer totals include recordings excluded by the active filters.
+            let stored_count = entries.len();
+            let total_size: u64 = entries.iter().map(|e| e.meta.gtd_size_bytes).sum();
+            ui.horizontal_wrapped(|ui| {
+                let rec_label = gt_fmt::pluralize(stored_count, "recording", "recordings");
+                ui.label(format!(
+                    "{stored_count} {rec_label} - {}",
+                    gt_fmt::format_bytes(total_size)
+                ));
+                if filter_active && visible.len() != stored_count {
+                    ui.weak(format!("({} shown)", visible.len()));
+                }
+                if shelved_track_count > 0 {
+                    let track_label = gt_fmt::pluralize(shelved_track_count, "track", "tracks");
+                    ui.weak(format!("- {shelved_track_count} shelved {track_label}"));
+                }
+            });
+            if let Some(path) = worker.path() {
+                ui.add(
+                    Label::new(RichText::new(path.display().to_string()).weak())
+                        .truncate()
+                        .selectable(true),
+                );
+            }
+
+            footer_height = Some(ui.min_rect().bottom() - listing_bottom);
+        });
 
         self.rename = rename;
         self.shelf = shelf;
@@ -1054,13 +1037,12 @@ const PRUNE_WINDOW_TITLE: &str = "Prune History…";
 pub(super) const DESTRUCTIVE_DELETE_HOVER: &str =
     "This cannot be undone. The original source files are unaffected.";
 
-/// The width the window opens at, which is the width the listing's columns
-/// have to fit in.
-const DEFAULT_WINDOW_WIDTH_PX: f32 = 640.0;
-
-/// The height the window opens at, whatever the length of the listing it
-/// opens on.
-const DEFAULT_WINDOW_HEIGHT_PX: f32 = 480.0;
+const HISTORY_WINDOW_TITLE: &str = "History";
+const HISTORY_WINDOW_SIZING: ToolWindowSizing = ToolWindowSizing {
+    preferred_fraction: egui::vec2(0.8, 0.6),
+    minimum_size: egui::vec2(640.0, 160.0),
+    maximum_fraction: egui::vec2(0.9, 0.9),
+};
 
 /// Floor on the listing's height, so a very short screen still shows part of
 /// the list.

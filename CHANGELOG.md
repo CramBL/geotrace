@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- **Interface:** History opens centered with a size based on the screen when first shown.
 - **Interface:** The Visible section preserves its chosen proportion when the Track data panel changes size.
 
 - **Interface:** History recording tooltips wrap long metadata within a bounded width on the first hover.
