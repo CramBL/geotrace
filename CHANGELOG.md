@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- **Log Viewer:** Fixed the interface stalling repeatedly when dragging the association window value for a large log.
 - **Log Viewer:** Fixed logs remaining without a position source or selecting the wrong recording when opened together with recordings that finish loading later.
 - **Log Viewer:** Fixed a log attachment failing to open when another recording had a loaded log with identical text.
 - **Log Viewer:** Fixed changing a log attachment's position source leaving it saved with the previous recording.

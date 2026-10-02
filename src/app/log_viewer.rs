@@ -13,7 +13,7 @@ use gt_ui_types::{LoadedLogId, LogMatchGlyph, LogMatchHover};
 use rustc_hash::FxHashMap;
 use strum::IntoEnumIterator as _;
 
-use association_window::AssociationWindowUnit;
+use association_window::{AssociationWindowEdit, AssociationWindowUnit};
 use line_table::{LineTableRequests, RowHoverDwell};
 use restored_logs_badge::RestoredLogsBadge;
 
@@ -39,6 +39,9 @@ pub(super) struct LogViewerWindow {
 
     summary_expanded: bool,
     association_window_unit: AssociationWindowUnit,
+    association_window_edit: Option<AssociationWindowEdit>,
+    #[cfg(test)]
+    association_window_commits: usize,
 
     /// Whether the line table draws each service name, and the hostname beside
     /// it, in its own colour. Belongs to the window, and starts on for every
@@ -142,6 +145,9 @@ impl LogViewerWindow {
             selected: None,
             summary_expanded: false,
             association_window_unit: AssociationWindowUnit::Seconds,
+            association_window_edit: None,
+            #[cfg(test)]
+            association_window_commits: 0,
             color_services: true,
             color_levels: true,
             query_pending_since: None,
@@ -241,6 +247,14 @@ impl LogViewerWindow {
             self.open_on_clicked_glyph(clicked, logs);
         }
         self.resolve_selected_log(logs);
+        if !self.open
+            || self
+                .association_window_edit
+                .as_ref()
+                .is_some_and(|edit| Some(edit.log) != self.selected)
+        {
+            self.commit_association_window(logs, recordings);
+        }
         if !self.open {
             return;
         }
@@ -248,7 +262,7 @@ impl LogViewerWindow {
 
         let mut open = self.open;
         let mut unload = None;
-        Window::new(LOG_VIEWER_TITLE)
+        let window = Window::new(LOG_VIEWER_TITLE)
             .open(&mut open)
             .default_width(DEFAULT_WINDOW_WIDTH_PX)
             .default_height(520.0)
@@ -342,6 +356,15 @@ impl LogViewerWindow {
             // The next frame resolves the selection against what is left.
             self.selected = None;
         }
+        if !self.open
+            || window.is_none_or(|response| response.inner.is_none())
+            || self
+                .association_window_edit
+                .as_ref()
+                .is_some_and(|edit| Some(edit.log) != self.selected)
+        {
+            self.commit_association_window(logs, recordings);
+        }
     }
 
     /// The warnings this session's attachments produced, each dismissed on its
@@ -418,10 +441,14 @@ impl LogViewerWindow {
         let target = log.associated_recording();
         let candidates = log.rank_association_candidates(&recordings);
         let entered_unit = self.association_window_unit;
-        let mut value = entered_unit.measure(log.association_window());
+        let window = self
+            .association_window_edit
+            .as_ref()
+            .map_or(log.association_window(), |edit| edit.window);
+        let mut value = entered_unit.measure(window);
         let mut unit = entered_unit;
         let mut chosen_target = target;
-        let mut window_edited = false;
+        let mut window_response = None;
 
         let attached = log.attachment().is_some();
         // The anchored recording while it is not loaded, which is always one of
@@ -512,10 +539,13 @@ impl LogViewerWindow {
 
             ui.separator();
             ui.label("Association window");
-            window_edited = ui
-                .add(DragValue::new(&mut value).range(0.0..=entered_unit.largest_value()))
-                .on_hover_text(ASSOCIATION_WINDOW_HOVER)
-                .changed();
+            window_response = Some(
+                ui.push_id(selected, |ui| {
+                    ui.add(DragValue::new(&mut value).range(0.0..=entered_unit.largest_value()))
+                        .on_hover_text(ASSOCIATION_WINDOW_HOVER)
+                })
+                .inner,
+            );
             ComboBox::from_id_salt("log_viewer_association_window_unit")
                 .selected_text(unit.label())
                 .width(UNIT_DROPDOWN_WIDTH_PX)
@@ -555,14 +585,43 @@ impl LogViewerWindow {
         });
 
         self.association_window_unit = unit;
+        if let Some(response) = window_response {
+            if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+                self.association_window_edit = None;
+            } else if response.changed()
+                && let Some(log) = selected
+            {
+                self.association_window_edit = Some(AssociationWindowEdit {
+                    log,
+                    window: entered_unit.window_of(value),
+                });
+            }
+            if !response.dragged() && !response.has_focus() {
+                self.commit_association_window(logs, recordings);
+            }
+        }
         let Some(log) = selected.and_then(|id| logs.get_mut_by_id(id)) else {
             return;
         };
-        if window_edited {
-            log.set_association_window(entered_unit.window_of(value), &recordings);
-        }
         if chosen_target != target {
             log.anchor_to_loaded_recording(chosen_target, &recordings);
+        }
+    }
+
+    fn commit_association_window(
+        &mut self,
+        logs: &mut LoadedLogs,
+        recordings: LoadedFilesView<'_>,
+    ) {
+        if let Some(edit) = self.association_window_edit.take()
+            && let Some(log) = logs.get_mut_by_id(edit.log)
+            && edit.window != log.association_window()
+        {
+            log.set_association_window(edit.window, &recordings);
+            #[cfg(test)]
+            {
+                self.association_window_commits += 1;
+            }
         }
     }
 }

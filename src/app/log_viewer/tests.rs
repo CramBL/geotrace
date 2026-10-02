@@ -816,6 +816,7 @@ fn the_footer_reads_the_association_window_in_the_unit_its_dropdown_shows() {
         .get_by_label(AssociationWindowUnit::Minutes.label())
         .click();
     harness.run_steps(2);
+    assert_eq!(harness.state().viewer.association_window_commits, 0);
 
     // Clicking the drag value selects its text for typing. egui keeps reporting
     // the field as the spin button while it is edited: the keys go to the
@@ -845,6 +846,191 @@ fn the_footer_reads_the_association_window_in_the_unit_its_dropdown_shows() {
         Some(Duration::minutes(2)),
         "the value is read as minutes, the unit the dropdown was switched to"
     );
+}
+
+#[test]
+fn dragging_the_association_window_commits_one_pass_with_the_final_placements() {
+    let text = format!(
+        "{}{} navsyncd: after recording\n",
+        long_log(1),
+        (log_start() + Duration::seconds(690)).format(super::TIMESTAMP_FORMAT)
+    );
+    let mut harness = harness_of(vec![recording("walk.gtd", 55.0)], &[("nav.log", &text)]);
+    let from = harness
+        .get(By::new().role(Role::SpinButton))
+        .rect()
+        .center();
+    harness.hover_at(from);
+    harness.step();
+    harness.drag_at(from);
+    harness.step();
+    let mut previous = Duration::seconds(ASSOCIATION_WINDOW_SECS);
+    for offset in [20.0, 40.0, 100.0] {
+        harness.hover_at(from + egui::vec2(offset, 0.0));
+        harness.step();
+        let state = harness.state();
+        let draft = state
+            .viewer
+            .association_window_edit
+            .as_ref()
+            .unwrap()
+            .window;
+        assert!(draft > previous);
+        previous = draft;
+        assert_eq!(state.viewer.association_window_commits, 0);
+        let log = state.shown_log().unwrap();
+        assert_eq!(
+            log.association_window(),
+            Duration::seconds(ASSOCIATION_WINDOW_SECS)
+        );
+        assert_eq!(log.entry_placement(1), None);
+    }
+    harness.drop_at(from + egui::vec2(100.0, 0.0));
+    harness.step();
+    let state = harness.state();
+    let log = state.shown_log().unwrap();
+    assert_eq!(state.viewer.association_window_commits, 1);
+    assert_eq!(log.association_window(), previous);
+    let recording = state.recordings.view().entries().next().unwrap();
+    let expected = gt_logfile::associate_entries(
+        log.parsed().entries(),
+        &recording.addressed_fixes(),
+        previous,
+    );
+    assert!(expected.get(1).is_some_and(Option::is_some));
+    for (index, placement) in expected.into_iter().enumerate() {
+        assert_eq!(log.entry_placement(index), placement);
+    }
+    harness.run_steps(3);
+    assert_eq!(harness.state().viewer.association_window_commits, 1);
+}
+
+#[rstest]
+#[case::enter(egui::Key::Enter, 120)]
+#[case::focus_loss(egui::Key::Tab, 120)]
+#[case::escape(egui::Key::Escape, ASSOCIATION_WINDOW_SECS)]
+fn keyboard_association_window_edits_commit_on_completion(
+    #[case] completion: egui::Key,
+    #[case] expected_seconds: i64,
+) {
+    let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
+    harness.get(By::new().role(Role::SpinButton)).click();
+    harness.run_steps(2);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text("120".to_owned()));
+    harness.run_steps(2);
+    assert_eq!(harness.state().viewer.association_window_commits, 0);
+    assert_eq!(
+        harness.state().shown_log().unwrap().association_window(),
+        Duration::seconds(ASSOCIATION_WINDOW_SECS)
+    );
+    harness.key_press(completion);
+    harness.run_steps(3);
+    assert_eq!(
+        harness.state().shown_log().unwrap().association_window(),
+        Duration::seconds(expected_seconds)
+    );
+    assert_eq!(
+        harness.state().viewer.association_window_commits,
+        usize::from(expected_seconds != ASSOCIATION_WINDOW_SECS)
+    );
+}
+
+#[derive(Debug)]
+enum AssociationWindowEditTransition {
+    ChangePositionSource,
+    CloseViewer,
+    SelectOtherLog,
+    UnloadLog,
+}
+
+#[rstest]
+#[case::selection(AssociationWindowEditTransition::SelectOtherLog)]
+#[case::unload(AssociationWindowEditTransition::UnloadLog)]
+#[case::close(AssociationWindowEditTransition::CloseViewer)]
+#[case::source(AssociationWindowEditTransition::ChangePositionSource)]
+fn association_window_drafts_apply_to_the_edited_log(
+    #[case] transition: AssociationWindowEditTransition,
+) {
+    let mut harness = harness_of(
+        vec![recording("walk.gtd", 55.0), recording("other.gtd", 56.0)],
+        &[
+            ("first.log", &long_log(1)),
+            ("second.log", LOG_WITH_EVERY_ROW_KIND),
+        ],
+    );
+    let edited = harness.state().viewer.selected_log().unwrap();
+    let other = harness.state().logs.first_id().unwrap();
+    let from = harness
+        .get(By::new().role(Role::SpinButton))
+        .rect()
+        .center();
+    harness.hover_at(from);
+    harness.step();
+    harness.drag_at(from);
+    harness.step();
+    harness.hover_at(from + egui::vec2(30.0, 0.0));
+    harness.step();
+    let draft = harness
+        .state()
+        .viewer
+        .association_window_edit
+        .as_ref()
+        .unwrap()
+        .window;
+    {
+        let state = harness.state_mut();
+        match transition {
+            AssociationWindowEditTransition::SelectOtherLog => state.viewer.open_on_log(other),
+            AssociationWindowEditTransition::UnloadLog => {
+                state.logs.remove_by_id(edited);
+            }
+            AssociationWindowEditTransition::CloseViewer => state.viewer.open = false,
+            AssociationWindowEditTransition::ChangePositionSource => {
+                let source = state.recordings.view().entries().nth(1).unwrap().id();
+                state
+                    .logs
+                    .get_mut_by_id(edited)
+                    .unwrap()
+                    .anchor_to_loaded_recording(Some(source), &state.recordings.view());
+            }
+        }
+    }
+    harness.step();
+    harness.drop_at(from + egui::vec2(30.0, 0.0));
+    harness.run_steps(3);
+    let state = harness.state();
+    assert!(state.viewer.association_window_edit.is_none());
+    assert_eq!(
+        state.logs.get_by_id(other).unwrap().association_window(),
+        Duration::seconds(ASSOCIATION_WINDOW_SECS)
+    );
+    if let Some(log) = state.logs.get_by_id(edited) {
+        assert_eq!(log.association_window(), draft);
+        assert_eq!(state.viewer.association_window_commits, 1);
+        if matches!(
+            transition,
+            AssociationWindowEditTransition::ChangePositionSource
+        ) {
+            assert_eq!(
+                log.associated_recording(),
+                state
+                    .recordings
+                    .view()
+                    .entries()
+                    .nth(1)
+                    .map(|entry| entry.id())
+            );
+            assert_eq!(
+                log.entry_placement(0).unwrap().position.0,
+                Latitude::new(56.0)
+            );
+        }
+    } else {
+        assert_eq!(state.viewer.association_window_commits, 0);
+    }
 }
 
 /// The manual path to the association dialog, which the app opens on the log

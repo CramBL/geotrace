@@ -1,7 +1,13 @@
 //! The unit the footer's association-window value is entered and shown in.
 
 use chrono::Duration;
+use gt_ui_types::LoadedLogId;
 use strum::EnumIter;
+
+pub(super) struct AssociationWindowEdit {
+    pub log: LoadedLogId,
+    pub window: Duration,
+}
 
 /// The unit an association window is written in. A log from a device whose
 /// clock drifted against its recording needs a window in minutes or hours. One

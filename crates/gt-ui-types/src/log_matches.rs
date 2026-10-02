@@ -19,7 +19,7 @@ use crate::visibility::{self, TrackDataVisibility};
 /// Stable while the log stays loaded, and never handed out again once it is
 /// unloaded. The hexagon under the cursor identifies its log by this, and the
 /// viewer resolves that back to the log's rows.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct LoadedLogId(u64);
 
 impl LoadedLogId {
