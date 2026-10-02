@@ -2,7 +2,7 @@
 
 use std::num::NonZeroUsize;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Datelike as _, Duration, NaiveDate, Utc};
 use gt_logfile::{LogFormat, LogText, ParsedLog, RecognisedLevel, RecognisedService, TextSlice};
 use libfuzzer_sys::fuzz_target;
 
@@ -10,6 +10,24 @@ use libfuzzer_sys::fuzz_target;
 // what it read consistently, never panic or abort. Mirrors the properties
 // gt-logfile's own `parse.rs` asserts over generated logs.
 fuzz_target!(|data: &[u8]| {
+    if let [year_low, year_high, fraction_low, fraction_high, ..] = data {
+        let reference_year = 1900 + i32::from(u16::from_le_bytes([*year_low, *year_high]) % 300);
+        let fraction = u32::from(u16::from_le_bytes([*fraction_low, *fraction_high]));
+        let reference = NaiveDate::from_ymd_opt(reference_year, 10, 1)
+            .and_then(|date| date.and_hms_opt(0, 0, 0))
+            .expect("valid reference date")
+            .and_utc();
+        let pair =
+            format!("Feb 29 23:59:59.{fraction:06} first\nMar  1 00:00:00.{fraction:06} second\n");
+        let parsed =
+            gt_logfile::parse_log(pair.as_str().into(), reference).expect("valid leap-day pair");
+        let first = parsed.entries().first().expect("first line").timestamp;
+        let last = parsed.entries().last().expect("last line").timestamp;
+        assert_eq!(last - first, Duration::seconds(1));
+        assert_eq!(first.timestamp_subsec_micros(), fraction);
+        assert!(last <= reference);
+        assert!(reference_year - first.year() <= 8);
+    }
     let now = DateTime::from_timestamp(NOW_UNIX_SECS, 0).unwrap_or(DateTime::UNIX_EPOCH);
     let text = LogText::decode_lossy(data);
     for reference in [DateTime::<Utc>::MIN_UTC, DateTime::<Utc>::MAX_UTC] {
@@ -49,6 +67,11 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     check_the_parse_indexes_what_it_read(&parsed);
+    assert_eq!(
+        gt_logfile::parse_log(text.clone(), parsed.year_reference()),
+        Ok(parsed.clone()),
+        "reusing the saved year reference changes the parse"
+    );
     if let Some(summary) = parsed.summary_block().filter(|_| {
         matches!(
             parsed.format(),

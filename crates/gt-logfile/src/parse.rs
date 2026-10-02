@@ -9,7 +9,7 @@ use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    format::{self, LogFormat},
+    format::{self, LogFormat, RawTimestamp},
     pool,
     recognise::{self, HostnameColumn, RecognisedMessage},
     session::{self, BootSession, OrderAnomaly},
@@ -259,30 +259,27 @@ pub fn parse_log_in_chunks_of(
     };
     let mut index = index_lines_in_file_order(&text, layout, chunk_target_bytes);
     let summary_block = index.take_trailing_summary_block(&text);
-    if matches!(format, LogFormat::SyslogShort | LogFormat::SyslogShortMicro) {
-        years::resolve_years(&mut index.entries, summary_block.as_ref(), year_reference)?;
+    if !index.entries.iter().any(|entry| entry.timestamp.is_some()) {
+        return Err(index.no_anchored_entry_error(&text));
     }
-
-    let mut anchored_entry_count = 0;
-    let mut first_anchor = None;
-    for entry in &index.entries {
-        if entry.is_anchored() {
-            anchored_entry_count += 1;
-            first_anchor.get_or_insert(entry.timestamp);
-        }
-    }
-    let Some(first_anchor) = first_anchor else {
+    let mut entries =
+        years::resolve_entries(&index.entries, summary_block.as_ref(), year_reference)?;
+    let anchored_entry_count = entries.iter().filter(|entry| entry.is_anchored()).count();
+    let Some(first_anchor) = entries
+        .iter()
+        .find(|entry| entry.is_anchored())
+        .map(|entry| entry.timestamp)
+    else {
         return Err(index.no_anchored_entry_error(&text));
     };
 
-    let boot_sessions =
-        session::segment_into_boot_sessions(&index.entries, &index.structural_lines);
+    let boot_sessions = session::segment_into_boot_sessions(&entries, &index.structural_lines);
     let order_anomalies =
-        check_order_and_interpolate(&text, &mut index.entries, &boot_sessions, first_anchor);
+        check_order_and_interpolate(&text, &mut entries, &boot_sessions, first_anchor);
 
     Ok(ParsedLog {
         text,
-        entries: index.entries,
+        entries,
         recognised_messages: index.recognised_messages,
         services: index.services,
         hostname_column,
@@ -296,6 +293,13 @@ pub fn parse_log_in_chunks_of(
         replaced_byte_count,
         year_reference,
     })
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PendingLogEntry {
+    pub timestamp: Option<RawTimestamp>,
+    pub line_number: u32,
+    pub message: TextSlice,
 }
 
 /// Both per-session passes in one walk: the order check that records anomalies,
@@ -452,7 +456,7 @@ fn detect_head_format(text: &str) -> Result<LogFormat, LogParseError> {
 
 #[derive(Default)]
 struct LineIndex {
-    entries: Vec<LogEntry>,
+    entries: Vec<PendingLogEntry>,
 
     /// One per entry, pushed and dropped with it.
     recognised_messages: Vec<RecognisedMessage>,
@@ -481,7 +485,7 @@ impl LineIndex {
             let lines_before = joined.line_count;
             joined
                 .entries
-                .extend(chunk.entries.iter().map(|entry| LogEntry {
+                .extend(chunk.entries.iter().map(|entry| PendingLogEntry {
                     line_number: entry.line_number.saturating_add(lines_before),
                     ..*entry
                 }));
@@ -544,11 +548,8 @@ impl LineIndex {
                 text,
             }),
             None => self.push_entry(
-                LogEntry {
-                    // Replaced by the interpolation pass, which reaches every
-                    // entry this branch pushes.
-                    timestamp: DateTime::UNIX_EPOCH,
-                    timestamp_kind: TimestampKind::Interpolated,
+                PendingLogEntry {
+                    timestamp: None,
                     line_number: line.line_number,
                     message: text,
                 },
@@ -564,7 +565,7 @@ impl LineIndex {
     /// `services`.
     fn push_entry<'text>(
         &mut self,
-        entry: LogEntry,
+        entry: PendingLogEntry,
         message: &'text str,
         hostname_column: HostnameColumn,
         services: &mut ServiceTable<'text>,
@@ -582,7 +583,7 @@ impl LineIndex {
     fn push_anchored_entry<'text>(
         &mut self,
         line: PositionedLine<'text>,
-        timestamp: DateTime<Utc>,
+        timestamp: RawTimestamp,
         message: &'text str,
         hostname_column: HostnameColumn,
         services: &mut ServiceTable<'text>,
@@ -602,9 +603,8 @@ impl LineIndex {
         });
         match slice {
             Some(slice) => self.push_entry(
-                LogEntry {
-                    timestamp,
-                    timestamp_kind: TimestampKind::Anchored,
+                PendingLogEntry {
+                    timestamp: Some(timestamp),
                     line_number: line.line_number,
                     message: slice,
                 },

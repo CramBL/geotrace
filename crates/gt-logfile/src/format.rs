@@ -82,8 +82,7 @@ fn parse_fractional_seconds(rest: &str) -> Option<(u32, &str)> {
     Some((nano, after))
 }
 
-/// `"May 29 18:48:24"` or `"May 29 18:48:24.123456"` - returns `(NaiveDateTime, rest)`.
-fn parse_syslog(line: &str, micro: bool) -> Option<(NaiveDateTime, &str)> {
+fn parse_syslog(line: &str, micro: bool) -> Option<(YearlessTimestamp, &str)> {
     // Pattern: "MMM DD HH:MM:SS[.ffffff] rest"
     let bytes = line.as_bytes();
     if bytes.len() < 15 {
@@ -105,11 +104,12 @@ fn parse_syslog(line: &str, micro: bool) -> Option<(NaiveDateTime, &str)> {
     } else {
         (0u32, line.get(time_end..).unwrap_or("").trim_start())
     };
-    let dt = NaiveDateTime::new(
-        NaiveDate::from_ymd_opt(2000, month, day)?,
-        NaiveTime::from_hms_nano_opt(hour, min, sec, nano)?,
-    );
-    Some((dt, after_time))
+    let dt = YearlessTimestamp::from_calendar_fields(YearlessCalendarFields {
+        month,
+        day,
+        time: NaiveTime::from_hms_nano_opt(hour, min, sec, nano)?,
+    });
+    Some((dt?, after_time))
 }
 
 fn parse_iso_space(line: &str) -> Option<(DateTime<Utc>, &str)> {
@@ -142,22 +142,79 @@ fn parse_month_abbrev(s: &str) -> Option<u32> {
 
 /// Uses the latest valid year whose timestamp is at most one hour after `now`.
 pub fn infer_year(naive: NaiveDateTime, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
-    let latest = now.checked_add_signed(Duration::hours(1)).unwrap_or(now);
+    let latest = now
+        .checked_add_signed(YEAR_REFERENCE_FUTURE_TOLERANCE)
+        .unwrap_or(now);
     (0..=LEAP_YEAR_SEARCH_YEARS)
         .filter_map(|offset| naive.with_year(now.year().checked_sub(offset)?))
         .map(|candidate| candidate.and_utc())
         .find(|candidate| *candidate <= latest)
 }
 
-/// The parser uses the leap year 2000 for syslog dates until file-level year resolution.
-pub(crate) fn parse_line(line: &str, format: LogFormat) -> Option<(DateTime<Utc>, &str)> {
+pub(crate) fn parse_line(line: &str, format: LogFormat) -> Option<(RawTimestamp, &str)> {
     match format {
         LogFormat::SyslogShort | LogFormat::SyslogShortMicro => {
-            let (naive, rest) = parse_syslog(line, format == LogFormat::SyslogShortMicro)?;
-            Some((naive.and_utc(), rest))
+            let (timestamp, rest) = parse_syslog(line, format == LogFormat::SyslogShortMicro)?;
+            Some((RawTimestamp::Yearless(timestamp), rest))
         }
-        LogFormat::Iso8601Space => parse_iso_space(line),
-        LogFormat::Iso8601T => parse_iso_t(line),
+        LogFormat::Iso8601Space => {
+            parse_iso_space(line).map(|(time, rest)| (RawTimestamp::Absolute(time), rest))
+        }
+        LogFormat::Iso8601T => {
+            parse_iso_t(line).map(|(time, rest)| (RawTimestamp::Absolute(time), rest))
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RawTimestamp {
+    Absolute(DateTime<Utc>),
+    Yearless(YearlessTimestamp),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct YearlessTimestamp {
+    month: u32,
+    day: u32,
+    time: NaiveTime,
+    leap_year_ordinal_day: u32,
+}
+
+struct YearlessCalendarFields {
+    month: u32,
+    day: u32,
+    time: NaiveTime,
+}
+
+impl YearlessTimestamp {
+    fn from_calendar_fields(
+        YearlessCalendarFields { month, day, time }: YearlessCalendarFields,
+    ) -> Option<Self> {
+        let validation_date =
+            NaiveDate::from_ymd_opt(YEARLESS_DATE_VALIDATION_LEAP_YEAR, month, day)?;
+        Some(Self {
+            month,
+            day,
+            time,
+            leap_year_ordinal_day: validation_date.ordinal(),
+        })
+    }
+
+    pub(crate) fn in_year(self, year: i32) -> Option<DateTime<Utc>> {
+        Some(
+            NaiveDate::from_ymd_opt(year, self.month, self.day)?
+                .and_time(self.time)
+                .and_utc(),
+        )
+    }
+
+    pub(crate) fn calendar_step_from(self, previous: Self) -> Duration {
+        self.calendar_offset() - previous.calendar_offset()
+    }
+
+    fn calendar_offset(self) -> Duration {
+        Duration::days(i64::from(self.leap_year_ordinal_day) - 1)
+            + self.time.signed_duration_since(NaiveTime::MIN)
     }
 }
 
@@ -166,6 +223,10 @@ pub(crate) fn parse_line(line: &str, format: LogFormat) -> Option<(DateTime<Utc>
 const MONTH_ABBREVS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
+
+const YEARLESS_DATE_VALIDATION_LEAP_YEAR: i32 = 2000;
+
+pub(crate) const YEAR_REFERENCE_FUTURE_TOLERANCE: Duration = Duration::hours(1);
 
 // A leap day can be eight years from the next leap day across a century boundary.
 pub(crate) const LEAP_YEAR_SEARCH_YEARS: i32 = 8;
@@ -231,6 +292,18 @@ mod tests {
         );
     }
 
+    #[rstest]
+    #[case::leap_day("Feb 29 00:00:00 entry", true)]
+    #[case::short_month_end("Apr 30 00:00:00 entry", true)]
+    #[case::long_month_end("Jan 31 00:00:00 entry", true)]
+    #[case::short_month_overflow("Apr 31 00:00:00 entry", false)]
+    #[case::february_overflow("Feb 30 00:00:00 entry", false)]
+    #[case::zero_day("Jan  0 00:00:00 entry", false)]
+    #[case::invalid_time("Jan  1 24:00:00 entry", false)]
+    fn yearless_dates_require_valid_calendar_fields(#[case] line: &str, #[case] accepted: bool) {
+        assert_eq!(parse_syslog(line, false).is_some(), accepted);
+    }
+
     proptest! {
         /// A line one format wrote is detected as that format, and writing the
         /// moment it was read as back in that format restates its fields. Only
@@ -246,6 +319,10 @@ mod tests {
             prop_assert_eq!(detect_format(&line), Some(format));
             let Some((moment, rest)) = parse_line(&line, format) else {
                 return Err(TestCaseError::fail(format!("{line:?} does not parse as {format:?}")));
+            };
+            let moment = match moment {
+                RawTimestamp::Absolute(moment) => moment,
+                RawTimestamp::Yearless(moment) => moment.in_year(2000).expect("valid generated date"),
             };
             prop_assert_eq!(rest, message.trim_start());
             prop_assert!(
