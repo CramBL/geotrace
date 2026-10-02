@@ -289,8 +289,13 @@ impl App {
         if already_in_history.is_empty() {
             return;
         }
-        self.pending_recordings_already_in_history =
-            Some(RecordingsAlreadyInHistory::over(already_in_history));
+        match &mut self.pending_recordings_already_in_history {
+            Some(prompt) => prompt.recordings.extend(already_in_history),
+            None => {
+                self.pending_recordings_already_in_history =
+                    Some(RecordingsAlreadyInHistory::over(already_in_history))
+            }
+        }
     }
 
     /// Start the load of one recording that arrived from disk, under `open`

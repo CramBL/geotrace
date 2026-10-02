@@ -440,6 +440,7 @@ pub struct App {
     /// The association dialog of the log it refers to, shown until the user
     /// decides.
     association_dialog: Option<LogAssociationDialog>,
+    pending_initial_log_associations: Vec<LoadedLogId>,
     /// Whether a loading log raises the association dialog. Off leaves a log
     /// to associate by itself where exactly one loaded recording overlaps it.
     ask_log_association_target: bool,
@@ -706,6 +707,7 @@ impl App {
             log_viewer: log_viewer::LogViewerWindow::new(),
             log_viewer_requests: LogViewerRequests::default(),
             association_dialog: None,
+            pending_initial_log_associations: Vec::new(),
             ask_log_association_target: true,
             reference_window: reference_window::ReferenceWindow::new(),
             sky_trails_window: gt_map::SkyTrailsWindow::default(),
@@ -1041,8 +1043,6 @@ impl App {
         }
     }
 
-    /// Loads a log the worker finished parsing and associates it.
-    ///
     /// The viewer opens on a log the user opened, and on one they chose in its
     /// list. A log that came back with its recording is counted on the
     /// toolbar's log button instead.
@@ -1060,7 +1060,6 @@ impl App {
         );
         let mut log = LoadedLog::new(filename, parsed, window);
         let requested_by = restored.as_ref().map(|restore| restore.requested_by);
-        let restored_from_history = restored.is_some();
         if let Some(restore) = &restored {
             let already_loaded = self.logs.id_of_attachment(&restore.attachment);
             let adopting = if already_loaded.is_none() {
@@ -1096,16 +1095,6 @@ impl App {
         if let Some(restore) = restored {
             log.restore_attachment(restore.attachment, restore.filters, &recordings);
         }
-        let unambiguous = log
-            .rank_association_candidates(&recordings)
-            .unambiguous_target();
-        let ask =
-            self.ask_log_association_target && !restored_from_history && !recordings.is_empty();
-        // Anchoring without the user choosing is safe only where there is
-        // nothing to choose between, and the dialog is that choice.
-        if !restored_from_history && !ask {
-            log.anchor_to_loaded_recording(unambiguous, &recordings);
-        }
         drop(shared);
         let entry_count = log.parsed().entries().len();
         let associated_entry_count = log.associated_entry_count();
@@ -1125,10 +1114,7 @@ impl App {
                     }
                     None => {
                         self.log_viewer.open_on_log(id);
-                        if ask {
-                            self.association_dialog =
-                                Some(LogAssociationDialog::new(id, unambiguous));
-                        }
+                        self.pending_initial_log_associations.push(id);
                     }
                 }
             }

@@ -28,6 +28,7 @@ mod detached_panel;
 mod instance_wait;
 mod loading;
 mod log_association;
+mod log_load_order;
 mod log_viewer;
 mod plot;
 mod query_editor;

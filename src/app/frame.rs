@@ -177,6 +177,7 @@ impl App {
         for resp in self.history.poll() {
             self.handle_history_response(resp);
         }
+        self.resolve_initial_log_associations();
         self.warn_once_that_a_newer_version_stored_ui_state();
         self.jamming.poll();
         self.geomagnetic_indices.poll();
