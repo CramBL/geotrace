@@ -91,6 +91,11 @@ pub struct FilterStack {
 }
 
 impl FilterStack {
+    pub(crate) fn share_equal_parsed_log(&mut self, parsed: Arc<ParsedLog>) {
+        debug_assert_eq!(self.log, parsed);
+        self.log = parsed;
+    }
+
     /// The unfiltered stack of a freshly loaded log.
     pub fn new(log: Arc<ParsedLog>) -> Self {
         let entry_count = log.entries().len();

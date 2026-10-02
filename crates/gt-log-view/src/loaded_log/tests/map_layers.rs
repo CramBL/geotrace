@@ -111,12 +111,12 @@ fn hiding_a_log_takes_its_layers_off_the_map() {
     fixtures::wait_for_scans(&mut logs);
     assert_eq!(test_util::map_matches(&mut logs, &files).match_count(), 10);
 
-    if let Some(log) = logs.get_mut_by_id(id) {
+    if let Some(mut log) = logs.get_mut_by_id(id) {
         log.set_visible(false);
     }
     assert!(test_util::map_matches(&mut logs, &files).is_empty());
 
-    if let Some(log) = logs.get_mut_by_id(id) {
+    if let Some(mut log) = logs.get_mut_by_id(id) {
         log.set_visible(true);
     }
     assert_eq!(test_util::map_matches(&mut logs, &files).match_count(), 10);

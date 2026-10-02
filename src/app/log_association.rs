@@ -6,7 +6,7 @@ use std::mem;
 use std::sync::Arc;
 
 use gt_loaded_files::{LoadedFileId, RecordingNames};
-use gt_log_view::{LogAttachmentRef, RestoredAttachmentAdoption};
+use gt_log_view::{LogAttachmentRef, LogSaveOutcome};
 use gt_store::{AttachedLog, DatabaseRef, DbError, LogAttachmentError, StoredLogFilter};
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::LoadedLogId;
@@ -46,7 +46,7 @@ impl App {
                 break;
             }
             self.pending_initial_log_associations.remove(0);
-            let Some(log) = self.logs.get_mut_by_id(id) else {
+            let Some(mut log) = self.logs.get_mut_by_id(id) else {
                 continue;
             };
             if log.anchor_key().is_some() {
@@ -200,35 +200,6 @@ impl App {
         }
     }
 
-    pub(super) fn adopt_restored_attachment(
-        &mut self,
-        log_id: LoadedLogId,
-        attachment: LogAttachmentRef,
-        stored_filters: Vec<StoredLogFilter>,
-    ) {
-        let shared = self.shared.borrow();
-        let Some(log) = self.logs.get_mut_by_id(log_id) else {
-            return;
-        };
-        let name = log.name().to_owned();
-        let adoption =
-            log.adopt_restored_attachment(attachment, stored_filters, &shared.loaded_files.view());
-        drop(shared);
-        match adoption {
-            RestoredAttachmentAdoption::Recorded => {
-                log::info!("The loaded log {name:?} took the attachment it is stored as");
-            }
-            RestoredAttachmentAdoption::NotAnchoredToThatRecording => {
-                log::info!(
-                    "Left the loaded log {name:?} as it is: it is not anchored to the recording that holds the attachment"
-                );
-            }
-            RestoredAttachmentAdoption::AlreadyAttached => {
-                log::info!("Left the loaded log {name:?} as it is: it already holds an attachment");
-            }
-        }
-    }
-
     /// Notes the attachment a log was stored as, or reports why it was not.
     pub(super) fn apply_log_attach_outcome(
         &mut self,
@@ -244,17 +215,23 @@ impl App {
                 };
                 let filters = entry.attachment.filters.clone();
                 self.log_attachments.record_attachment(recording, entry);
-                if self.focus_existing_attachment_context(log_id, &attachment) {
-                    return;
-                }
                 let shared = self.shared.borrow();
-                match self.logs.get_mut_by_id(log_id) {
-                    Some(log) => {
-                        log.record_attachment(attachment, filters, &shared.loaded_files.view());
+                let outcome = self.logs.save_attachment(
+                    log_id,
+                    attachment,
+                    filters,
+                    &shared.loaded_files.view(),
+                );
+                drop(shared);
+                match outcome {
+                    LogSaveOutcome::AlreadyLoaded(id) => self.log_viewer.open_on_log(id),
+                    LogSaveOutcome::LogUnloaded => {
+                        log::info!("The log {name:?} was unloaded before it finished saving")
                     }
-                    None => {
-                        log::info!("The log {name:?} was unloaded before it finished attaching")
+                    LogSaveOutcome::AlreadySaved => {
+                        log::warn!("The log {name:?} is already saved with another recording")
                     }
+                    LogSaveOutcome::Saved(_) => {}
                 }
             }
             Err(err) => self.log_viewer.report_warning(format!(
@@ -268,16 +245,14 @@ impl App {
     pub(super) fn apply_log_detach_outcome(
         &mut self,
         attachment: &LogAttachmentRef,
-        log_id: LoadedLogId,
+        _log_id: LoadedLogId,
         name: &str,
         result: Result<(), LogAttachmentError>,
     ) {
         match result {
             Ok(()) => {
                 self.log_attachments.remove_attachment(attachment);
-                if let Some(log) = self.logs.get_mut_by_id(log_id) {
-                    log.forget_attachment();
-                }
+                self.logs.forget_attachment(attachment);
                 self.toasts
                     .info(format!("Removed {name} from recording history"));
             }
@@ -336,7 +311,7 @@ impl App {
         let log_id = dialog.log();
         let shared = self.shared.borrow();
         let recordings = shared.loaded_files.view();
-        if let Some(log) = self.logs.get_mut_by_id(log_id) {
+        if let Some(mut log) = self.logs.get_mut_by_id(log_id) {
             log.anchor_to_loaded_recording(target, &recordings);
         }
         drop(shared);
@@ -394,35 +369,22 @@ impl App {
         attachment: LogAttachmentRef,
         filters: Vec<StoredLogFilter>,
     ) {
-        if self.focus_existing_attachment_context(log_id, &attachment) {
-            return;
-        }
         let shared = self.shared.borrow();
-        if let Some(log) = self.logs.get_mut_by_id(log_id) {
-            log.record_attachment(
-                attachment.clone(),
-                filters.clone(),
-                &shared.loaded_files.view(),
-            );
-        }
+        let outcome = self.logs.save_attachment(
+            log_id,
+            attachment.clone(),
+            filters.clone(),
+            &shared.loaded_files.view(),
+        );
         drop(shared);
-        self.history.set_attached_log_filters(attachment, filters);
-    }
-
-    fn focus_existing_attachment_context(
-        &mut self,
-        log_id: LoadedLogId,
-        attachment: &LogAttachmentRef,
-    ) -> bool {
-        let Some(existing) = self
-            .logs
-            .id_of_attachment(attachment)
-            .filter(|id| *id != log_id)
-        else {
-            return false;
-        };
-        self.log_viewer.open_on_log(existing);
-        true
+        match outcome {
+            LogSaveOutcome::Saved(_) => self.history.set_attached_log_filters(attachment, filters),
+            LogSaveOutcome::AlreadyLoaded(id) => self.log_viewer.open_on_log(id),
+            LogSaveOutcome::LogUnloaded => {}
+            LogSaveOutcome::AlreadySaved => {
+                log::warn!("The log is already saved with another recording")
+            }
+        }
     }
 
     fn detach_log(&self, log_id: LoadedLogId) {

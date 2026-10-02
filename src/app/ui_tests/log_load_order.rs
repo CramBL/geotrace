@@ -5,7 +5,7 @@ use gt_loaded_files::FileHistory;
 use gt_log_view::{LoadedLog, LogAttachmentRef, RecordingKey};
 use gt_logfile::ParsedLog;
 use gt_plot::AnalysisConfig;
-use gt_store::{DatabaseRef, LogAttachmentId};
+use gt_store::{DatabaseRef, LogAttachmentId, StoredLogFilter, StoredLogFilterMode};
 use gt_test_utils::{By, HarnessInteraction as _};
 use rstest::rstest;
 
@@ -443,7 +443,7 @@ fn restored_attachments_preserve_their_recording_during_other_loads() {
     let loaded = harness.state().first_log().expect("saved log");
     assert_eq!(loaded.attachment(), Some(&attachment));
     assert_eq!(
-        loaded.anchor_key(),
+        loaded.anchor_key().as_ref(),
         Some(&RecordingKey::Stored(recording_key))
     );
     assert_eq!(loaded.associated_recording(), None);
@@ -554,4 +554,94 @@ fn successive_history_screening_responses_preserve_every_recording_before_associ
         }
     }));
     assert_initial_association(&mut harness, false, 2);
+}
+
+#[rstest]
+fn loose_and_saved_contexts_are_independent_of_completion_order(#[values(true, false)] ask: bool) {
+    let attachment = LogAttachmentRef {
+        recording: DatabaseRef {
+            identity: "saved".to_owned(),
+            group_name: "recording".to_owned(),
+        },
+        id: LogAttachmentId::new_random(),
+    };
+    let saved_filters = vec![StoredLogFilter {
+        text: "shared".to_owned(),
+        regex: false,
+        enabled: false,
+        mode: StoredLogFilterMode::Refine,
+    }];
+    let mut results = Vec::new();
+    for loose_first in [true, false] {
+        let mut harness = harness(ask);
+        let recording = harness
+            .state_mut()
+            .loader
+            .controlled_load_for_test("recording.gtd");
+        recording(Ok(recording_outcome("recording.gtd")));
+        harness.step();
+        let loose = harness
+            .state_mut()
+            .loader
+            .controlled_load_for_test("loose.log");
+        let saved = harness
+            .state_mut()
+            .loader
+            .controlled_load_for_test("saved.log");
+        let loose_outcome = LoadOutcome::Log {
+            filename: Some("loose.log".to_owned()),
+            parsed: parsed_log("shared"),
+            restored: None,
+        };
+        let saved_outcome = LoadOutcome::Log {
+            filename: Some("saved.log".to_owned()),
+            parsed: parsed_log("shared"),
+            restored: Some(loader::AttachedLogRestore {
+                attachment: attachment.clone(),
+                filters: saved_filters.clone(),
+                requested_by: loader::AttachedLogRequester::RecordingLoad,
+                year_reference: ui_tests::base_time(),
+            }),
+        };
+        if loose_first {
+            loose(Ok(loose_outcome));
+            harness.step();
+            saved(Ok(saved_outcome));
+        } else {
+            saved(Ok(saved_outcome));
+            harness.step();
+            loose(Ok(loose_outcome));
+        }
+        harness.run_steps(3);
+        assert_eq!(harness.state().association_dialog.is_some(), ask);
+        if ask {
+            harness
+                .get_by_label(association_dialog::CONFIRM_LABEL)
+                .click();
+            harness.run_steps(2);
+        }
+        let mut contexts: Vec<_> = harness
+            .state()
+            .logs
+            .iter()
+            .map(|log| {
+                (
+                    log.name().to_owned(),
+                    log.content_hash(),
+                    log.context_origin(),
+                    log.attachment().cloned(),
+                    log.anchor_key(),
+                    log.filters().to_stored_filters(),
+                    log.association_window(),
+                    log.associated_entry_count(),
+                    log.entry_placement(0),
+                    log.is_visible(),
+                )
+            })
+            .collect();
+        contexts.sort_by(|left, right| left.0.cmp(&right.0));
+        results.push(contexts);
+    }
+    assert_eq!(results.first(), results.last());
+    assert_eq!(results.first().expect("context set").len(), 2);
 }

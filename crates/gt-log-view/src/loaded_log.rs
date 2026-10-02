@@ -1,6 +1,9 @@
 //! The loaded logs of a session and each log's association state.
 
-use std::{fmt::Write as _, mem, sync::Arc};
+use std::fmt::Write as _;
+use std::mem;
+use std::ops::Deref;
+use std::sync::Arc;
 
 use chrono::Duration;
 use gt_fmt::MIDDLE_DOT;
@@ -12,26 +15,47 @@ use gt_ui_types::{
     LoadedLogId, LogMatch, LogMatchColor, LogMatchLayer, LogMatchSource, LogMatches,
 };
 
-use crate::{
-    anchor::{LogAnchor, RecordingKey},
-    association::AssociationCandidates,
-    attachment::{LogAttachmentRef, LogAttachmentState},
-    filter::{EntryMatches, FilterStack, LayerColorSlots},
-};
+use crate::anchor::RecordingKey;
+use crate::association::AssociationCandidates;
+use crate::attachment::{LogAttachmentRef, LogAttachmentState};
+use crate::filter::{EntryMatches, FilterStack, LayerColorSlots};
 
-/// One loaded log: the text it was parsed from, the recording it is anchored
-/// to, the filters over it, and whether it draws on the map.
+#[derive(Debug)]
+struct LogDocument {
+    parsed: Arc<ParsedLog>,
+    content_hash: LogContentHash,
+    entry_time_range: Option<TimeRange>,
+}
+
+impl LogDocument {
+    fn new(parsed: ParsedLog) -> Self {
+        Self {
+            content_hash: LogContentHash::of_log_bytes(parsed.text().as_bytes()),
+            entry_time_range: parsed.time_range(),
+            parsed: Arc::new(parsed),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LogContextOrigin {
+    DetachedAttachment,
+    LooseImport,
+    SavedAttachment,
+}
+
+#[derive(Debug)]
+enum LogContext {
+    DetachedAttachment { source: Option<RecordingKey> },
+    LooseImport { source: Option<RecordingKey> },
+    SavedAttachment(LogAttachmentState),
+}
+
 #[derive(Debug)]
 pub struct LoadedLog {
     name: String,
-
-    /// Shared with the workers scanning the log for its filters.
-    parsed: Arc<ParsedLog>,
-
-    content_hash: LogContentHash,
-
-    entry_time_range: Option<TimeRange>,
-    anchor: LogAnchor,
+    document: Arc<LogDocument>,
+    context: LogContext,
     association: Association,
     filters: FilterStack,
     visible: bool,
@@ -58,14 +82,12 @@ impl LoadedLog {
     /// name from the time of its first anchored entry, e.g. "pasted 14:02:11".
     pub fn new(filename: Option<String>, parsed: ParsedLog, association_window: Duration) -> Self {
         let name = filename.unwrap_or_else(|| name_from_first_anchored_entry(&parsed));
-        let parsed = Arc::new(parsed);
+        let document = Arc::new(LogDocument::new(parsed));
         Self {
             name,
-            content_hash: LogContentHash::of_log_bytes(parsed.text().as_bytes()),
-            entry_time_range: parsed.time_range(),
-            filters: FilterStack::new(Arc::clone(&parsed)),
-            parsed,
-            anchor: LogAnchor::None,
+            filters: FilterStack::new(Arc::clone(&document.parsed)),
+            document,
+            context: LogContext::LooseImport { source: None },
             association: Association {
                 window: association_window,
                 entry_placements: Vec::new(),
@@ -76,79 +98,18 @@ impl LoadedLog {
         }
     }
 
-    /// Puts back the filter stack this log was stored with, and anchors it to
-    /// the recording holding `attachment`.
-    ///
-    /// The restored layer chips take their palette slots when the log is
-    /// loaded with [`LoadedLogs::push`].
-    pub fn restore_attachment(
-        &mut self,
-        attachment: LogAttachmentRef,
-        stored_filters: Vec<StoredLogFilter>,
-        recordings: &LoadedFilesView<'_>,
-    ) {
-        self.filters = FilterStack::from_stored_filters(Arc::clone(&self.parsed), &stored_filters);
-        self.record_attachment(attachment, stored_filters, recordings);
-    }
-
-    /// Notes that this log is now stored as `attachment`, holding
-    /// `stored_filters`, and anchors it to the recording holding it.
-    pub fn record_attachment(
-        &mut self,
-        attachment: LogAttachmentRef,
-        stored_filters: Vec<StoredLogFilter>,
-        recordings: &LoadedFilesView<'_>,
-    ) {
-        self.anchor = LogAnchor::Recording {
-            key: RecordingKey::Stored(attachment.recording.clone()),
-            attachment: Some(LogAttachmentState {
-                reference: attachment,
-                stored_filters,
-            }),
-        };
-        self.reassociate(recordings);
-    }
-
-    /// Records `attachment` on this log. The log's text is assumed to already
-    /// match what is stored under `attachment`.
-    ///
-    /// The log keeps the filter stack the user is reading it under.
-    pub fn adopt_restored_attachment(
-        &mut self,
-        attachment: LogAttachmentRef,
-        stored_filters: Vec<StoredLogFilter>,
-        recordings: &LoadedFilesView<'_>,
-    ) -> RestoredAttachmentAdoption {
-        if self.attachment().is_some() {
-            return RestoredAttachmentAdoption::AlreadyAttached;
+    pub fn context_origin(&self) -> LogContextOrigin {
+        match self.context {
+            LogContext::LooseImport { .. } => LogContextOrigin::LooseImport,
+            LogContext::SavedAttachment(_) => LogContextOrigin::SavedAttachment,
+            LogContext::DetachedAttachment { .. } => LogContextOrigin::DetachedAttachment,
         }
-        if !self.is_anchored_to(&RecordingKey::Stored(attachment.recording.clone())) {
-            return RestoredAttachmentAdoption::NotAnchoredToThatRecording;
-        }
-        self.record_attachment(attachment, stored_filters, recordings);
-        RestoredAttachmentAdoption::Recorded
     }
 
-    /// The attachment this log is stored as, `None` for one that lives only in
-    /// this session.
     pub fn attachment(&self) -> Option<&LogAttachmentRef> {
-        match &self.anchor {
-            LogAnchor::None
-            | LogAnchor::Recording {
-                attachment: None, ..
-            } => None,
-            LogAnchor::Recording {
-                attachment: Some(state),
-                ..
-            } => Some(&state.reference),
-        }
-    }
-
-    /// Drops the attachment and leaves the log anchored to the recording that
-    /// held it: what "Remove attachment" does once the database has removed it.
-    pub fn forget_attachment(&mut self) {
-        if let LogAnchor::Recording { attachment, .. } = &mut self.anchor {
-            *attachment = None;
+        match &self.context {
+            LogContext::SavedAttachment(state) => Some(&state.reference),
+            LogContext::LooseImport { .. } | LogContext::DetachedAttachment { .. } => None,
         }
     }
 
@@ -157,11 +118,7 @@ impl LoadedLog {
     pub fn take_filter_stack_edits_to_store(
         &mut self,
     ) -> Option<(LogAttachmentRef, Vec<StoredLogFilter>)> {
-        let LogAnchor::Recording {
-            attachment: Some(state),
-            ..
-        } = &mut self.anchor
-        else {
+        let LogContext::SavedAttachment(state) = &mut self.context else {
             return None;
         };
         let filters = self.filters.to_stored_filters();
@@ -177,11 +134,11 @@ impl LoadedLog {
     }
 
     pub fn parsed(&self) -> &ParsedLog {
-        &self.parsed
+        &self.document.parsed
     }
 
     pub fn content_hash(&self) -> LogContentHash {
-        self.content_hash
+        self.document.content_hash
     }
 
     /// The filters over this log. Mutating them goes through
@@ -195,15 +152,15 @@ impl LoadedLog {
     /// detected format, entry count with the interpolated portion, boot count,
     /// how many entries took no position, and what a lossy decode cost.
     pub fn parse_summary_line(&self) -> String {
-        let entries = self.parsed.entries().len();
-        let interpolated = self.parsed.interpolated_entry_count();
-        let boots = self.parsed.boot_sessions().len();
+        let entries = self.document.parsed.entries().len();
+        let interpolated = self.document.parsed.interpolated_entry_count();
+        let boots = self.document.parsed.boot_sessions().len();
         let unassociated = self.unassociated_entry_count();
-        let replaced_bytes = self.parsed.replaced_byte_count();
+        let replaced_bytes = self.document.parsed.replaced_byte_count();
 
         let mut summary = format!(
             "{} {MIDDLE_DOT} {} {}",
-            self.parsed.format().display_name(),
+            self.document.parsed.format().display_name(),
             gt_fmt::format_count(entries),
             gt_fmt::pluralize(entries, "entry", "entries"),
         );
@@ -237,7 +194,7 @@ impl LoadedLog {
 
     /// First to last entry timestamp, `None` for a log with no entries.
     pub fn entry_time_range(&self) -> Option<TimeRange> {
-        self.entry_time_range
+        self.document.entry_time_range
     }
 
     pub fn is_visible(&self) -> bool {
@@ -248,17 +205,19 @@ impl LoadedLog {
         self.visible = visible;
     }
 
-    /// The recording this log is anchored to, `None` for a log that takes its
-    /// positions from no recording.
-    pub fn anchor_key(&self) -> Option<&RecordingKey> {
-        match &self.anchor {
-            LogAnchor::None => None,
-            LogAnchor::Recording { key, .. } => Some(key),
+    pub fn anchor_key(&self) -> Option<RecordingKey> {
+        match &self.context {
+            LogContext::LooseImport { source } | LogContext::DetachedAttachment { source } => {
+                source.clone()
+            }
+            LogContext::SavedAttachment(state) => {
+                Some(RecordingKey::Stored(state.reference.recording.clone()))
+            }
         }
     }
 
     pub fn is_anchored_to(&self, recording_key: &RecordingKey) -> bool {
-        self.anchor_key() == Some(recording_key)
+        self.anchor_key().as_ref() == Some(recording_key)
     }
 
     /// The loaded recording the anchor resolved to, `None` while the anchored
@@ -287,33 +246,19 @@ impl LoadedLog {
     }
 
     pub fn unassociated_entry_count(&self) -> usize {
-        self.parsed
+        self.document
+            .parsed
             .entries()
             .len()
             .saturating_sub(self.association.associated_entry_count)
     }
 
-    /// An attached log keeps the recording identified by its attachment until
-    /// [`Self::forget_attachment`] removes that attachment.
     pub fn anchor_to(&mut self, recording_key: RecordingKey, recordings: &LoadedFilesView<'_>) {
-        if self
-            .attachment()
-            .is_some_and(|attachment| recording_key.database_ref() != Some(&attachment.recording))
-        {
-            log::warn!(
-                "Kept the recording of the log {:?}: it is stored with a recording in history",
-                self.name
-            );
-            return;
-        }
-        match &mut self.anchor {
-            LogAnchor::Recording { key, .. } => *key = recording_key,
-            anchor @ LogAnchor::None => {
-                *anchor = LogAnchor::Recording {
-                    key: recording_key,
-                    attachment: None,
-                };
+        match &mut self.context {
+            LogContext::LooseImport { source } | LogContext::DetachedAttachment { source } => {
+                *source = Some(recording_key);
             }
+            LogContext::SavedAttachment(_) => {}
         }
         self.reassociate(recordings);
     }
@@ -332,21 +277,14 @@ impl LoadedLog {
         }
     }
 
-    /// Takes the anchor off a log stored nowhere, leaving its entries without a
-    /// position.
-    ///
-    /// An attached log keeps its anchor: a log stored with a recording takes
-    /// its positions from one, until the attachment is removed.
     pub fn remove_anchor(&mut self) {
-        if self.attachment().is_some() {
-            log::warn!(
-                "Kept the recording of the log {:?}: it is stored with a recording in history",
-                self.name
-            );
-            return;
+        match &mut self.context {
+            LogContext::LooseImport { source } | LogContext::DetachedAttachment { source } => {
+                *source = None;
+                self.clear_entry_placements();
+            }
+            LogContext::SavedAttachment(_) => {}
         }
-        self.anchor = LogAnchor::None;
-        self.clear_entry_placements();
     }
 
     /// Sets how far an entry may be from a fix to take its position, and
@@ -363,17 +301,16 @@ impl LoadedLog {
     /// without a position and stays: no log ever re-anchors to another
     /// recording without being pointed at it.
     pub fn reassociate(&mut self, recordings: &LoadedFilesView<'_>) {
-        let anchored = match &self.anchor {
-            LogAnchor::None => None,
-            LogAnchor::Recording { key, .. } => key.loaded_recording(recordings),
-        };
+        let anchored = self
+            .anchor_key()
+            .and_then(|key| key.loaded_recording(recordings));
         let Some(recording) = anchored else {
             self.clear_entry_placements();
             return;
         };
         self.association.recording = Some(recording.id());
         let entry_placements = gt_logfile::associate_entries(
-            self.parsed.entries(),
+            self.document.parsed.entries(),
             &recording.addressed_fixes(),
             self.association.window,
         );
@@ -389,9 +326,41 @@ impl LoadedLog {
         &self,
         recordings: &LoadedFilesView<'_>,
     ) -> AssociationCandidates {
-        match self.entry_time_range {
+        match self.document.entry_time_range {
             Some(log_range) => AssociationCandidates::rank(log_range, recordings),
             None => AssociationCandidates::none(),
+        }
+    }
+
+    fn restore_attachment(
+        &mut self,
+        attachment: LogAttachmentRef,
+        stored_filters: Vec<StoredLogFilter>,
+        recordings: &LoadedFilesView<'_>,
+    ) {
+        self.filters =
+            FilterStack::from_stored_filters(Arc::clone(&self.document.parsed), &stored_filters);
+        self.record_attachment(attachment, stored_filters, recordings);
+    }
+
+    fn record_attachment(
+        &mut self,
+        attachment: LogAttachmentRef,
+        stored_filters: Vec<StoredLogFilter>,
+        recordings: &LoadedFilesView<'_>,
+    ) {
+        self.context = LogContext::SavedAttachment(LogAttachmentState {
+            reference: attachment,
+            stored_filters,
+        });
+        self.reassociate(recordings);
+    }
+
+    fn forget_attachment(&mut self) {
+        if let LogContext::SavedAttachment(state) = &self.context {
+            self.context = LogContext::DetachedAttachment {
+                source: Some(RecordingKey::Stored(state.reference.recording.clone())),
+            };
         }
     }
 
@@ -421,18 +390,47 @@ impl LoadedLog {
     }
 }
 
-/// What [`LoadedLog::adopt_restored_attachment`] left the loaded log as.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RestoredAttachmentAdoption {
-    /// The log already holds an attachment of its own, and kept it.
-    AlreadyAttached,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LogSaveOutcome {
+    AlreadyLoaded(LoadedLogId),
+    AlreadySaved,
+    LogUnloaded,
+    Saved(LoadedLogId),
+}
 
-    /// The log is anchored to another recording, or to none at all, and kept
-    /// that anchor.
-    NotAnchoredToThatRecording,
+/// Attachment transitions require collection methods.
+pub struct LoadedLogEditor<'a> {
+    log: &'a mut LoadedLog,
+}
 
-    /// The log holds the attachment and the filter stack stored with it.
-    Recorded,
+impl LoadedLogEditor<'_> {
+    pub fn anchor_to(&mut self, key: RecordingKey, recordings: &LoadedFilesView<'_>) {
+        self.log.anchor_to(key, recordings);
+    }
+
+    pub fn anchor_to_loaded_recording(
+        &mut self,
+        chosen: Option<LoadedFileId>,
+        recordings: &LoadedFilesView<'_>,
+    ) {
+        self.log.anchor_to_loaded_recording(chosen, recordings);
+    }
+
+    pub fn set_visible(&mut self, visible: bool) {
+        self.log.set_visible(visible);
+    }
+
+    pub fn set_association_window(&mut self, window: Duration, recordings: &LoadedFilesView<'_>) {
+        self.log.set_association_window(window, recordings);
+    }
+}
+
+impl Deref for LoadedLogEditor<'_> {
+    type Target = LoadedLog;
+
+    fn deref(&self) -> &Self::Target {
+        self.log
+    }
 }
 
 /// One loaded log under the identity it was loaded with.
@@ -449,7 +447,7 @@ impl StoredLog {
     fn source(&self, display_name: Option<String>) -> LogMatchSource {
         LogMatchSource {
             id: self.id,
-            parsed: Arc::clone(&self.log.parsed),
+            parsed: Arc::clone(&self.log.document.parsed),
             display_name,
         }
     }
@@ -520,23 +518,37 @@ impl LoadedLogs {
         self.logs.first().map(|stored| stored.id)
     }
 
-    /// Returns the identity of the first loaded log with this content.
-    pub fn id_of_content(&self, content_hash: LogContentHash) -> Option<LoadedLogId> {
+    pub fn id_of_loose_import(&self, content_hash: LogContentHash) -> Option<LoadedLogId> {
         self.logs
             .iter()
-            .find(|stored| stored.log.content_hash == content_hash)
+            .find(|stored| {
+                stored.log.context_origin() == LogContextOrigin::LooseImport
+                    && stored.log.content_hash() == content_hash
+            })
             .map(|stored| stored.id)
     }
 
-    /// Deduplicates saved logs by attachment reference and loose imports
-    /// by content across all loaded logs.
     pub fn push(&mut self, mut log: LoadedLog) -> LogPushOutcome {
-        let duplicate = match log.attachment() {
-            Some(attachment) => self.id_of_attachment(attachment),
-            None => self.id_of_content(log.content_hash),
+        let duplicate = match &log.context {
+            LogContext::SavedAttachment(state) => self.id_of_attachment(&state.reference),
+            LogContext::LooseImport { .. } => self.id_of_loose_import(log.content_hash()),
+            LogContext::DetachedAttachment { .. } => None,
         };
         if let Some(loaded) = duplicate {
             return LogPushOutcome::AlreadyLoaded(loaded);
+        }
+        if let Some(document) =
+            self.logs
+                .iter()
+                .map(|stored| &stored.log.document)
+                .find(|document| {
+                    document.content_hash == log.content_hash()
+                        && document.parsed == log.document.parsed
+                })
+        {
+            log.document = Arc::clone(document);
+            log.filters
+                .share_equal_parsed_log(Arc::clone(&document.parsed));
         }
         log.filters
             .take_layer_color_slots(&mut self.layer_color_slots);
@@ -554,12 +566,63 @@ impl LoadedLogs {
             .map(|stored| &stored.log)
     }
 
-    pub fn get_mut_by_id(&mut self, id: LoadedLogId) -> Option<&mut LoadedLog> {
+    pub fn get_mut_by_id(&mut self, id: LoadedLogId) -> Option<LoadedLogEditor<'_>> {
         self.map_matches_stale = true;
         self.logs
             .iter_mut()
             .find(|stored| stored.id == id)
-            .map(|stored| &mut stored.log)
+            .map(|stored| LoadedLogEditor {
+                log: &mut stored.log,
+            })
+    }
+
+    pub fn restore_attachment(
+        &mut self,
+        mut log: LoadedLog,
+        attachment: LogAttachmentRef,
+        stored_filters: Vec<StoredLogFilter>,
+        recordings: &LoadedFilesView<'_>,
+    ) -> LogPushOutcome {
+        if let Some(id) = self.id_of_attachment(&attachment) {
+            return LogPushOutcome::AlreadyLoaded(id);
+        }
+        log.restore_attachment(attachment, stored_filters, recordings);
+        self.push(log)
+    }
+
+    pub fn save_attachment(
+        &mut self,
+        id: LoadedLogId,
+        attachment: LogAttachmentRef,
+        stored_filters: Vec<StoredLogFilter>,
+        recordings: &LoadedFilesView<'_>,
+    ) -> LogSaveOutcome {
+        if let Some(existing) = self.id_of_attachment(&attachment) {
+            return LogSaveOutcome::AlreadyLoaded(existing);
+        }
+        let Some(stored) = self.logs.iter_mut().find(|stored| stored.id == id) else {
+            return LogSaveOutcome::LogUnloaded;
+        };
+        if stored.log.attachment().is_some() {
+            return LogSaveOutcome::AlreadySaved;
+        }
+        stored
+            .log
+            .record_attachment(attachment, stored_filters, recordings);
+        self.map_matches_stale = true;
+        LogSaveOutcome::Saved(id)
+    }
+
+    /// Retains the removed attachment's context independently of loose imports.
+    pub fn forget_attachment(&mut self, attachment: &LogAttachmentRef) {
+        if let Some(stored) = self
+            .logs
+            .iter_mut()
+            .find(|stored| stored.log.attachment() == Some(attachment))
+        {
+            stored.log.forget_attachment();
+            self.map_matches_stale = true;
+        }
     }
 
     pub fn id_of_attachment(&self, attachment: &LogAttachmentRef) -> Option<LoadedLogId> {

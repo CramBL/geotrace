@@ -144,7 +144,10 @@ pub(super) fn group_logs_by_recording(
             gt_loaded_files::display_identity(&db_ref.identity).0
         });
         let row = LogRow::of_loaded_log(id, log, Some(recording));
-        match not_loaded.iter_mut().find(|(anchored, ..)| anchored == key) {
+        match not_loaded
+            .iter_mut()
+            .find(|(anchored, ..)| anchored == &key)
+        {
             Some((.., rows)) => rows.push(row),
             None => not_loaded.push((key.clone(), recording.to_owned(), vec![row])),
         }
@@ -252,7 +255,7 @@ impl LoadedLogRow {
                 .selectable_label(self.visible, eye)
                 .on_hover_text(VISIBILITY_HOVER)
                 .clicked()
-                && let Some(log) = logs.get_mut_by_id(self.id)
+                && let Some(mut log) = logs.get_mut_by_id(self.id)
             {
                 log.set_visible(!self.visible);
             }

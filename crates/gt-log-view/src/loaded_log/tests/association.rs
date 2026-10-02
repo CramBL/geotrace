@@ -62,7 +62,7 @@ fn unloading_the_anchored_recording_leaves_the_log_anchored_without_positions() 
     logs.reassociate_all(&files.view());
 
     let log = logs.get_by_id(id).expect("the log stays loaded");
-    assert_eq!(log.anchor_key(), Some(&anchored));
+    assert_eq!(log.anchor_key().as_ref(), Some(&anchored));
     assert_eq!(log.associated_recording(), None);
     assert_eq!(log.associated_entry_count(), 0);
     assert_eq!(log.entry_placement(0), None);
@@ -93,7 +93,10 @@ fn a_log_anchored_to_a_stored_recording_associates_again_when_it_is_opened_again
     );
     log.reassociate(&files.view());
 
-    assert_eq!(log.anchor_key(), Some(&RecordingKey::Stored(db_ref)));
+    assert_eq!(
+        log.anchor_key().as_ref(),
+        Some(&RecordingKey::Stored(db_ref))
+    );
     assert_eq!(log.associated_entry_count(), 10);
     assert_eq!(
         log.associated_recording(),
@@ -114,11 +117,11 @@ fn an_attached_log_keeps_its_anchor() {
     let mut log = test_util::log_of(10);
     test_util::anchor_to(&mut log, &files, 0);
     log.record_attachment(fixtures::attachment_ref(), Vec::new(), &files.view());
-    let anchored = log.anchor_key().cloned();
+    let anchored = log.anchor_key();
 
     log.remove_anchor();
 
-    assert_eq!(log.anchor_key(), anchored.as_ref());
+    assert_eq!(log.anchor_key().as_ref(), anchored.as_ref());
 
     log.forget_attachment();
     log.remove_anchor();

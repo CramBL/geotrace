@@ -1058,48 +1058,26 @@ impl App {
         let window = chrono::Duration::seconds(
             i64::try_from(self.assoc_config.log_association_window_s).unwrap_or(i64::MAX),
         );
-        let mut log = LoadedLog::new(filename, parsed, window);
+        let log = LoadedLog::new(filename, parsed, window);
         let requested_by = restored.as_ref().map(|restore| restore.requested_by);
-        if let Some(restore) = &restored {
-            let already_loaded = self.logs.id_of_attachment(&restore.attachment);
-            let adopting = if already_loaded.is_none() {
-                let recording_key = RecordingKey::Stored(restore.attachment.recording.clone());
-                self.logs.iter_with_ids().find_map(|(id, loaded)| {
-                    (loaded.content_hash() == log.content_hash()
-                        && loaded.attachment().is_none()
-                        && loaded.is_anchored_to(&recording_key))
-                    .then_some(id)
-                })
-            } else {
-                None
-            };
-            if let Some(loaded) = already_loaded.or(adopting) {
-                if adopting.is_some() {
-                    self.adopt_restored_attachment(
-                        loaded,
-                        restore.attachment.clone(),
-                        restore.filters.clone(),
-                    );
-                }
-                if requested_by == Some(loader::AttachedLogRequester::UserOpenedTheAttachment) {
-                    self.show_the_log_this_content_is_already_loaded_as(loaded, log.name());
-                }
-                return;
-            }
-        }
-        // Associating runs on the UI thread, as the spatial-index rebuild
-        // after a recording load does: one binary search per entry, spread
-        // over gt-logfile's workers.
-        let shared = self.shared.borrow();
-        let recordings = shared.loaded_files.view();
-        if let Some(restore) = restored {
-            log.restore_attachment(restore.attachment, restore.filters, &recordings);
-        }
-        drop(shared);
         let entry_count = log.parsed().entries().len();
-        let associated_entry_count = log.associated_entry_count();
         let name = log.name().to_owned();
-        match self.logs.push(log) {
+        let shared = self.shared.borrow();
+        let outcome = match restored {
+            Some(restore) => self.logs.restore_attachment(
+                log,
+                restore.attachment,
+                restore.filters,
+                &shared.loaded_files.view(),
+            ),
+            None => self.logs.push(log),
+        };
+        drop(shared);
+        let associated_entry_count = self
+            .logs
+            .get_by_id(outcome.id())
+            .map_or(0, LoadedLog::associated_entry_count);
+        match outcome {
             LogPushOutcome::NewlyLoaded(id) => {
                 log::info!(
                     "Loaded log {name:?}: {entry_count} entries, {associated_entry_count} of them associated"
@@ -1119,7 +1097,9 @@ impl App {
                 }
             }
             LogPushOutcome::AlreadyLoaded(id) => {
-                self.show_the_log_this_content_is_already_loaded_as(id, &name);
+                if requested_by != Some(loader::AttachedLogRequester::RecordingLoad) {
+                    self.show_the_log_this_content_is_already_loaded_as(id, &name);
+                }
             }
         }
     }

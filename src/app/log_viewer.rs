@@ -454,9 +454,10 @@ impl LogViewerWindow {
         // The anchored recording while it is not loaded, which is always one of
         // the history database's: a log anchored to a recording missing
         // from the database unloads with that recording.
+        let anchor_key = log.anchor_key();
         let unresolved_anchor = match target {
             Some(_) => None,
-            None => log.anchor_key().and_then(RecordingKey::database_ref),
+            None => anchor_key.as_ref().and_then(RecordingKey::database_ref),
         };
         let names = recording_names_by_id(recordings, recording_names);
 
@@ -600,7 +601,7 @@ impl LogViewerWindow {
                 self.commit_association_window(logs, recordings);
             }
         }
-        let Some(log) = selected.and_then(|id| logs.get_mut_by_id(id)) else {
+        let Some(mut log) = selected.and_then(|id| logs.get_mut_by_id(id)) else {
             return;
         };
         if chosen_target != target {
@@ -614,7 +615,7 @@ impl LogViewerWindow {
         recordings: LoadedFilesView<'_>,
     ) {
         if let Some(edit) = self.association_window_edit.take()
-            && let Some(log) = logs.get_mut_by_id(edit.log)
+            && let Some(mut log) = logs.get_mut_by_id(edit.log)
             && edit.window != log.association_window()
         {
             log.set_association_window(edit.window, &recordings);
