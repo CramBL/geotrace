@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- **Log Viewer:** Fixed consecutive syslog lines around February 29 being dated years apart when their timestamps omit the year.
 - **Log Viewer:** Fixed a loose log failing to open when an identical log attachment finished loading first.
 - **Log Viewer:** Fixed the interface stalling repeatedly when dragging the association window value for a large log.
 - **Log Viewer:** Fixed logs remaining without a position source or selecting the wrong recording when opened together with recordings that finish loading later.
