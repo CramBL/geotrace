@@ -1,6 +1,5 @@
-//! Placing a log entry on a recorded track: it takes the position of the fix
-//! nearest in time, interpolated along the great circle between the two fixes
-//! it falls between, and is attributed to the nearer of those two.
+//! Interpolation requires adjacent fixes from the same track. At a track boundary,
+//! association uses the nearest fix position within the time window.
 
 use chrono::{DateTime, Duration, Utc};
 use gt_geo_math::GreatCircleArc;
@@ -40,6 +39,17 @@ pub fn associate_position(
             if gap_before.min(gap_after) > window {
                 return None;
             }
+            let nearer = if gap_before <= gap_after {
+                before
+            } else {
+                after
+            };
+            if before.fix.track != after.fix.track {
+                return Some(EntryPlacement {
+                    position: nearer.placed.resolved_position(),
+                    fix: nearer.fix,
+                });
+            }
             let span = (fix_time(after) - fix_time(before))
                 .num_microseconds()
                 .unwrap_or(1);
@@ -48,11 +58,6 @@ pub fn associate_position(
                 0.0f64
             } else {
                 elapsed as f64 / span as f64
-            };
-            let nearer = if gap_before <= gap_after {
-                before
-            } else {
-                after
             };
             Some(EntryPlacement {
                 position: GreatCircleArc {
@@ -163,6 +168,73 @@ mod tests {
             .position;
         assert!((lat.as_degrees() - 55.0005).abs() < POSITION_TOLERANCE_DEGREES);
         assert!((lon.as_degrees() - 12.0005).abs() < POSITION_TOLERANCE_DEGREES);
+    }
+
+    #[rstest]
+    #[case::nearer_before(50, Duration::seconds(60), Some(1))]
+    #[case::nearer_after(70, Duration::seconds(60), Some(2))]
+    #[case::tie_uses_before(60, Duration::seconds(60), Some(1))]
+    #[case::before_at_window_limit(50, Duration::seconds(40), Some(1))]
+    #[case::after_at_window_limit(70, Duration::seconds(40), Some(2))]
+    #[case::outside_window(60, Duration::seconds(49), None)]
+    #[case::exact_boundary_fix_with_zero_window(10, Duration::zero(), Some(1))]
+    fn an_entry_between_tracks_uses_the_nearest_fix_position_within_the_window(
+        #[case] offset_secs: i64,
+        #[case] window: Duration,
+        #[case] expected_fix_index: Option<usize>,
+    ) {
+        let tracks = [
+            gt_test_utils::loaded_track_with_points(fixtures::nav_points_stamped(
+                start(),
+                &[
+                    (Latitude::new(54.0), Longitude::new(11.0)),
+                    (Latitude::new(55.0), Longitude::new(12.0)),
+                ],
+                |index| index as i64 * 10,
+            )),
+            gt_test_utils::loaded_track_with_points(fixtures::nav_points_stamped(
+                start() + Duration::seconds(110),
+                &[
+                    (Latitude::new(-33.0), Longitude::new(151.0)),
+                    (Latitude::new(-34.0), Longitude::new(152.0)),
+                ],
+                |index| index as i64 * 10,
+            )),
+        ];
+        let fixes: Vec<_> = tracks
+            .iter()
+            .enumerate()
+            .flat_map(|(track_index, track)| {
+                track
+                    .placed_points()
+                    .expect("fixture fixes have positions")
+                    .iter()
+                    .enumerate()
+                    .map(move |(point_index, placed)| AddressedFix {
+                        fix: FixRef::new(
+                            TrackRef::new(FileIdx::new(0), TrackIdx::new(track_index)),
+                            PointIdx::new(point_index),
+                        ),
+                        placed,
+                    })
+            })
+            .collect();
+        let expected = expected_fix_index.map(|index| {
+            let fix = fixes.get(index).expect("expected fixture fix exists");
+            EntryPlacement {
+                position: fix.placed.resolved_position(),
+                fix: fix.fix,
+            }
+        });
+
+        assert_eq!(
+            associate_entries(
+                &[entry_at(start() + Duration::seconds(offset_secs))],
+                &fixes,
+                window,
+            ),
+            vec![expected],
+        );
     }
 
     /// Two fixes a second apart, 0.2 deg of longitude apart across the date
