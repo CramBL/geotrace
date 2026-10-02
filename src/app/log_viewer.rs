@@ -114,7 +114,6 @@ pub(super) struct LogViewerContext<'a> {
 pub(super) struct LogViewerRequests {
     /// Open the association dialog on this log.
     pub open_association_dialog: Option<LoadedLogId>,
-    pub chosen_position_source: Option<LoadedLogId>,
 
     /// Remove this log's attachment from the history database.
     pub detach: Option<LoadedLogId>,
@@ -447,7 +446,7 @@ impl LogViewerWindow {
             .map_or(log.association_window(), |edit| edit.window);
         let mut value = entered_unit.measure(window);
         let mut unit = entered_unit;
-        let mut chosen_target = target;
+        let mut chosen_target = None;
         let mut window_response = None;
 
         let attached = log.attachment().is_some();
@@ -475,8 +474,7 @@ impl LogViewerWindow {
                         let no_recording = ui
                             .add_enabled(!attached, Button::selectable(target.is_none(), EM_DASH));
                         if no_recording.clicked() {
-                            chosen_target = None;
-                            requests.chosen_position_source = selected;
+                            chosen_target = Some(None);
                         }
                         no_recording
                             .on_hover_text(NO_RECORDING_HOVER)
@@ -513,8 +511,7 @@ impl LogViewerWindow {
                                 .on_disabled_hover_text(NO_RECORDING_ATTACHED_HOVER)
                                 .clicked()
                             {
-                                chosen_target = Some(candidate.recording);
-                                requests.chosen_position_source = selected;
+                                chosen_target = Some(Some(candidate.recording));
                             }
                         }
                     })
@@ -604,7 +601,7 @@ impl LogViewerWindow {
         let Some(mut log) = selected.and_then(|id| logs.get_mut_by_id(id)) else {
             return;
         };
-        if chosen_target != target {
+        if let Some(chosen_target) = chosen_target {
             log.anchor_to_loaded_recording(chosen_target, &recordings);
         }
     }

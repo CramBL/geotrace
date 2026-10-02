@@ -20,6 +20,7 @@ pub use filter::{
 };
 pub use loaded_log::{
     LoadedLog, LoadedLogEditor, LoadedLogs, LogContextOrigin, LogPushOutcome, LogSaveOutcome,
+    PositionSourceState,
 };
 
 mod anchor;

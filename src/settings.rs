@@ -1,5 +1,7 @@
 use std::{collections::HashMap, ops::RangeInclusive, path::PathBuf};
 
+mod legacy_position_source_policy;
+
 /// One variant per plot metric.
 ///
 /// New variants can be added freely. Old config files simply won't have the key,
@@ -549,6 +551,27 @@ pub enum ThemeSetting {
     System,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum InitialPositionSourcePolicy {
+    #[default]
+    Ask,
+    AutomaticallyUseUnambiguous,
+}
+
+impl InitialPositionSourcePolicy {
+    pub fn from_automatic_selection(enabled: bool) -> Self {
+        if enabled {
+            Self::AutomaticallyUseUnambiguous
+        } else {
+            Self::Ask
+        }
+    }
+
+    pub fn automatically_chooses_position_source(self) -> bool {
+        self == Self::AutomaticallyUseUnambiguous
+    }
+}
+
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct ProcessingSettings {
@@ -561,10 +584,11 @@ pub struct ProcessingSettings {
     /// and still take a position from it.
     #[serde(alias = "log_marker_window_s")]
     pub log_association_window_s: u64,
-    /// Whether a loading log raises the dialog choosing the recording it
-    /// associates against. Off leaves a log to associate by itself where
-    /// exactly one loaded recording overlaps it.
-    pub ask_log_association_target: bool,
+    #[serde(
+        rename = "ask_log_association_target",
+        with = "legacy_position_source_policy"
+    )]
+    pub initial_position_source_policy: InitialPositionSourcePolicy,
     /// Whether to emit a marker when the GNSS fix drops.
     pub detect_gnss_fix_lost: bool,
     /// Whether to emit a marker when the GNSS fix returns.
@@ -591,7 +615,7 @@ impl Default for ProcessingSettings {
             debug_time_repair_backward_jump_threshold_seconds:
                 DEFAULT_DEBUG_TIME_REPAIR_BACKWARD_JUMP_THRESHOLD_SECONDS,
             log_association_window_s: 60,
-            ask_log_association_target: true,
+            initial_position_source_policy: InitialPositionSourcePolicy::Ask,
             detect_gnss_fix_lost: true,
             detect_gnss_fix_regained: true,
             detect_clock_discontinuities: true,
@@ -1011,6 +1035,32 @@ mod tests {
         let stored = "[processing]\nlog_marker_window_s = 15\n";
         let settings: Settings = toml::from_str(stored).expect("parse");
         assert_eq!(settings.processing.log_association_window_s, 15);
+    }
+
+    #[rstest]
+    #[case::missing("[processing]", InitialPositionSourcePolicy::Ask)]
+    #[case::ask(
+        "[processing]\nask_log_association_target = true",
+        InitialPositionSourcePolicy::Ask
+    )]
+    #[case::automatic(
+        "[processing]\nask_log_association_target = false",
+        InitialPositionSourcePolicy::AutomaticallyUseUnambiguous
+    )]
+    fn initial_position_source_policy_preserves_legacy_settings(
+        #[case] stored: &str,
+        #[case] expected: InitialPositionSourcePolicy,
+    ) {
+        let settings: Settings = toml::from_str(stored).expect("parse settings");
+        assert_eq!(settings.processing.initial_position_source_policy, expected);
+        let serialized = toml::to_string(&settings).expect("serialize settings");
+        let reloaded: Settings = toml::from_str(&serialized).expect("reload settings");
+        assert_eq!(reloaded.processing.initial_position_source_policy, expected);
+        assert!(serialized.contains(&format!(
+            "ask_log_association_target = {}",
+            expected == InitialPositionSourcePolicy::Ask
+        )));
+        assert!(!serialized.contains("initial_position_source_policy"));
     }
 
     /// The settings file a fresh install writes.

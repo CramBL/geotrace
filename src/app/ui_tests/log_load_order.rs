@@ -2,7 +2,7 @@ use chrono::Duration;
 use egui::accesskit::Role;
 use egui_kittest::{Harness, kittest::Queryable as _};
 use gt_loaded_files::FileHistory;
-use gt_log_view::{LoadedLog, LogAttachmentRef, RecordingKey};
+use gt_log_view::{LoadedLog, LogAttachmentRef, PositionSourceState, RecordingKey};
 use gt_logfile::ParsedLog;
 use gt_plot::AnalysisConfig;
 use gt_store::{DatabaseRef, LogAttachmentId, StoredLogFilter, StoredLogFilterMode};
@@ -18,13 +18,18 @@ use crate::app::recording_from_disk::{
     ScreenedRecordings,
 };
 use crate::app::{loader, test_util, ui_tests};
+use crate::settings::InitialPositionSourcePolicy;
 
 fn harness(ask: bool) -> Harness<'static, App> {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
-    harness.state_mut().ask_log_association_target = ask;
+    harness.state_mut().initial_position_source_policy = if ask {
+        InitialPositionSourcePolicy::Ask
+    } else {
+        InitialPositionSourcePolicy::AutomaticallyUseUnambiguous
+    };
     harness
 }
 
@@ -57,7 +62,14 @@ fn recording_outcome(name: &str) -> LoadOutcome {
 
 fn assert_initial_association(harness: &mut Harness<App>, ask: bool, overlapping: usize) {
     harness.run_steps(3);
-    assert!(harness.state().pending_initial_log_associations.is_empty());
+    assert_eq!(
+        harness
+            .state()
+            .logs
+            .pending_initial_position_sources()
+            .len(),
+        usize::from(ask)
+    );
     assert_eq!(harness.state().association_dialog.is_some(), ask);
     if ask {
         assert_eq!(
@@ -72,6 +84,13 @@ fn assert_initial_association(harness: &mut Harness<App>, ask: bool, overlapping
             .click();
         harness.run_steps(2);
     }
+    assert!(
+        harness
+            .state()
+            .logs
+            .pending_initial_position_sources()
+            .is_empty()
+    );
     let associated = overlapping == 1;
     assert_eq!(
         harness
@@ -207,7 +226,14 @@ fn initial_association_waits_for_history_screening_and_the_recording_load(
     log(Ok(log_outcome("log.txt")));
     harness.step();
     assert!(harness.state().association_dialog.is_none());
-    assert_eq!(harness.state().pending_initial_log_associations.len(), 1);
+    assert_eq!(
+        harness
+            .state()
+            .logs
+            .pending_initial_position_sources()
+            .len(),
+        1
+    );
     harness
         .state_mut()
         .handle_history_response(history_db::Response::RecordingsFromDiskScreened(
@@ -248,12 +274,25 @@ fn initial_association_waits_for_history_open_results(#[values(true, false)] suc
         .state_mut()
         .load_parsed_log(Some("log.txt".to_owned()), parsed_log("log"), None);
     harness.state_mut().resolve_initial_log_associations();
-    assert_eq!(harness.state().pending_initial_log_associations.len(), 1);
+    assert_eq!(
+        harness
+            .state()
+            .logs
+            .pending_initial_position_sources()
+            .len(),
+        1
+    );
     assert!(
         harness.step_until(|h| !h.state().history.has_pending_recording_opens()
             && h.state().loader.loading_jobs.is_empty())
     );
-    assert!(harness.state().pending_initial_log_associations.is_empty());
+    assert!(
+        harness
+            .state()
+            .logs
+            .pending_initial_position_sources()
+            .is_empty()
+    );
     assert_eq!(
         harness
             .state()
@@ -320,8 +359,9 @@ fn pending_logs_receive_separate_dialogs_in_filename_order() {
             .state()
             .logs
             .get_by_id(first)
-            .and_then(LoadedLog::associated_recording),
-        None
+            .expect("first log")
+            .position_source_state(),
+        PositionSourceState::None
     );
     assert!(
         harness
@@ -355,7 +395,13 @@ fn a_later_unrelated_recording_load_preserves_a_resolved_log_without_a_source() 
             .and_then(LoadedLog::associated_recording),
         None
     );
-    assert!(harness.state().pending_initial_log_associations.is_empty());
+    assert!(
+        harness
+            .state()
+            .logs
+            .pending_initial_position_sources()
+            .is_empty()
+    );
 }
 
 #[rstest]
@@ -379,6 +425,14 @@ fn an_explicit_footer_choice_preserves_the_source_when_pending_loads_finish(
         .controlled_load_for_test("log.txt");
     log(Ok(log_outcome("log.txt")));
     harness.run_steps(2);
+    assert_eq!(
+        harness
+            .state()
+            .first_log()
+            .expect("pending log")
+            .position_source_state(),
+        PositionSourceState::PendingInitialSelection
+    );
     harness
         .get(By::new().role(Role::ComboBox).value(gt_ui_theme::EM_DASH))
         .click();
@@ -390,12 +444,30 @@ fn an_explicit_footer_choice_preserves_the_source_when_pending_loads_finish(
     };
     harness.bottommost_matching(By::new().label(label)).click();
     harness.run_steps(2);
-    assert!(harness.state().pending_initial_log_associations.is_empty());
+    assert!(
+        harness
+            .state()
+            .logs
+            .pending_initial_position_sources()
+            .is_empty()
+    );
     let selected = harness
         .state()
         .first_log()
         .and_then(LoadedLog::associated_recording);
     assert_eq!(selected.is_some(), choose_recording);
+    let source = harness
+        .state()
+        .first_log()
+        .expect("resolved log")
+        .position_source_state();
+    assert_eq!(
+        matches!(source, PositionSourceState::Recording(_)),
+        choose_recording
+    );
+    if !choose_recording {
+        assert_eq!(source, PositionSourceState::None);
+    }
     second(Ok(recording_outcome("second.gtd")));
     harness.run_steps(2);
     assert_eq!(
@@ -447,7 +519,13 @@ fn restored_attachments_preserve_their_recording_during_other_loads() {
         Some(&RecordingKey::Stored(recording_key))
     );
     assert_eq!(loaded.associated_recording(), None);
-    assert!(harness.state().pending_initial_log_associations.is_empty());
+    assert!(
+        harness
+            .state()
+            .logs
+            .pending_initial_position_sources()
+            .is_empty()
+    );
     assert!(harness.state().association_dialog.is_none());
 }
 
@@ -481,11 +559,24 @@ fn cancelling_the_history_recording_prompt_releases_pending_logs() {
             },
         ));
     harness.run_steps(2);
-    assert_eq!(harness.state().pending_initial_log_associations.len(), 1);
+    assert_eq!(
+        harness
+            .state()
+            .logs
+            .pending_initial_position_sources()
+            .len(),
+        1
+    );
     assert!(harness.state().association_dialog.is_none());
     harness.get_by_label("Cancel").click();
     harness.run_steps(2);
-    assert!(harness.state().pending_initial_log_associations.is_empty());
+    assert!(
+        harness
+            .state()
+            .logs
+            .pending_initial_position_sources()
+            .is_empty()
+    );
     assert_eq!(
         harness
             .state()
@@ -524,7 +615,14 @@ fn successive_history_screening_responses_preserve_every_recording_before_associ
             }),
         );
         harness.run_steps(2);
-        assert_eq!(harness.state().pending_initial_log_associations.len(), 1);
+        assert_eq!(
+            harness
+                .state()
+                .logs
+                .pending_initial_position_sources()
+                .len(),
+            1
+        );
         assert!(harness.state().association_dialog.is_none());
     }
     let names: Vec<_> = harness
@@ -542,7 +640,7 @@ fn successive_history_screening_responses_preserve_every_recording_before_associ
         let state = h.state();
         let loaded_count = state.shared.borrow().loaded_files.len();
         if loaded_count < 2 {
-            assert_eq!(state.pending_initial_log_associations.len(), 1);
+            assert_eq!(state.logs.pending_initial_position_sources().len(), 1);
             assert_eq!(
                 state.first_log().and_then(LoadedLog::associated_recording),
                 None
@@ -550,7 +648,7 @@ fn successive_history_screening_responses_preserve_every_recording_before_associ
             false
         } else {
             assert!(state.loader.loading_jobs.is_empty());
-            state.pending_initial_log_associations.is_empty()
+            state.logs.pending_initial_position_sources().is_empty()
         }
     }));
     assert_initial_association(&mut harness, false, 2);

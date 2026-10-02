@@ -8,7 +8,9 @@ use gt_types::FileIdx;
 use crate::anchor::RecordingKey;
 use crate::attachment::LogAttachmentRef;
 use crate::loaded_log::tests::fixtures;
-use crate::loaded_log::{LoadedLog, LoadedLogs, LogContextOrigin, LogPushOutcome, LogSaveOutcome};
+use crate::loaded_log::{
+    LoadedLog, LoadedLogs, LogContextOrigin, LogPushOutcome, LogSaveOutcome, PositionSourceState,
+};
 use crate::test_util;
 
 #[rstest::rstest]
@@ -40,6 +42,10 @@ fn an_attached_log_keeps_its_recording_after_another_source_is_selected(
     let key = RecordingKey::Stored(attachment.recording.clone());
     let placement = log.entry_placement(0);
     let associated = log.associated_recording();
+    assert_eq!(
+        log.position_source_state(),
+        PositionSourceState::Recording(key.clone())
+    );
     assert_eq!(log.anchor_key().as_ref(), Some(&key));
     assert_eq!(
         log.associated_entry_count(),

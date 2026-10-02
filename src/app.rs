@@ -29,6 +29,7 @@ use snap_state::{PendingSnapRequest, SnapErrorDerived, SnapReplacePrompt, SnapSc
 use strum::IntoEnumIterator;
 
 use crate::app::frame::PendingTrackDataDetach;
+use crate::settings::InitialPositionSourcePolicy;
 use crate::termination_signal;
 
 pub use storage::Storage;
@@ -440,10 +441,7 @@ pub struct App {
     /// The association dialog of the log it refers to, shown until the user
     /// decides.
     association_dialog: Option<LogAssociationDialog>,
-    pending_initial_log_associations: Vec<LoadedLogId>,
-    /// Whether a loading log raises the association dialog. Off leaves a log
-    /// to associate by itself where exactly one loaded recording overlaps it.
-    ask_log_association_target: bool,
+    initial_position_source_policy: InitialPositionSourcePolicy,
     /// The reference material window, opened from the settings page of the
     /// data source it describes.
     reference_window: reference_window::ReferenceWindow,
@@ -707,8 +705,7 @@ impl App {
             log_viewer: log_viewer::LogViewerWindow::new(),
             log_viewer_requests: LogViewerRequests::default(),
             association_dialog: None,
-            pending_initial_log_associations: Vec::new(),
-            ask_log_association_target: true,
+            initial_position_source_policy: InitialPositionSourcePolicy::Ask,
             reference_window: reference_window::ReferenceWindow::new(),
             sky_trails_window: gt_map::SkyTrailsWindow::default(),
             toasts: egui_notify::Toasts::default(),
@@ -831,7 +828,7 @@ impl App {
             debug_time_repair_backward_jump_threshold_seconds: self
                 .debug_time_repair_threshold_seconds,
             log_association_window_s: self.assoc_config.log_association_window_s,
-            ask_log_association_target: self.ask_log_association_target,
+            initial_position_source_policy: self.initial_position_source_policy,
             detect_gnss_fix_lost: self
                 .processing_config
                 .generated_markers
@@ -1087,12 +1084,8 @@ impl App {
                         .log_viewer
                         .restored_logs
                         .note_log_loaded_with_a_recording(),
-                    Some(loader::AttachedLogRequester::UserOpenedTheAttachment) => {
+                    Some(loader::AttachedLogRequester::UserOpenedTheAttachment) | None => {
                         self.log_viewer.open_on_log(id);
-                    }
-                    None => {
-                        self.log_viewer.open_on_log(id);
-                        self.pending_initial_log_associations.push(id);
                     }
                 }
             }

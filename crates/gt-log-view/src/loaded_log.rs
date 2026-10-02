@@ -44,10 +44,17 @@ pub enum LogContextOrigin {
     SavedAttachment,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PositionSourceState {
+    None,
+    PendingInitialSelection,
+    Recording(RecordingKey),
+}
+
 #[derive(Debug)]
 enum LogContext {
     DetachedAttachment { source: Option<RecordingKey> },
-    LooseImport { source: Option<RecordingKey> },
+    LooseImport { source: PositionSourceState },
     SavedAttachment(LogAttachmentState),
 }
 
@@ -87,7 +94,9 @@ impl LoadedLog {
             name,
             filters: FilterStack::new(Arc::clone(&document.parsed)),
             document,
-            context: LogContext::LooseImport { source: None },
+            context: LogContext::LooseImport {
+                source: PositionSourceState::PendingInitialSelection,
+            },
             association: Association {
                 window: association_window,
                 entry_placements: Vec::new(),
@@ -205,14 +214,22 @@ impl LoadedLog {
         self.visible = visible;
     }
 
-    pub fn anchor_key(&self) -> Option<RecordingKey> {
+    pub fn position_source_state(&self) -> PositionSourceState {
         match &self.context {
-            LogContext::LooseImport { source } | LogContext::DetachedAttachment { source } => {
-                source.clone()
-            }
-            LogContext::SavedAttachment(state) => {
-                Some(RecordingKey::Stored(state.reference.recording.clone()))
-            }
+            LogContext::LooseImport { source } => source.clone(),
+            LogContext::DetachedAttachment { source } => source
+                .clone()
+                .map_or(PositionSourceState::None, PositionSourceState::Recording),
+            LogContext::SavedAttachment(state) => PositionSourceState::Recording(
+                RecordingKey::Stored(state.reference.recording.clone()),
+            ),
+        }
+    }
+
+    pub fn anchor_key(&self) -> Option<RecordingKey> {
+        match self.position_source_state() {
+            PositionSourceState::Recording(key) => Some(key),
+            PositionSourceState::PendingInitialSelection | PositionSourceState::None => None,
         }
     }
 
@@ -255,7 +272,10 @@ impl LoadedLog {
 
     pub fn anchor_to(&mut self, recording_key: RecordingKey, recordings: &LoadedFilesView<'_>) {
         match &mut self.context {
-            LogContext::LooseImport { source } | LogContext::DetachedAttachment { source } => {
+            LogContext::LooseImport { source } => {
+                *source = PositionSourceState::Recording(recording_key);
+            }
+            LogContext::DetachedAttachment { source } => {
                 *source = Some(recording_key);
             }
             LogContext::SavedAttachment(_) => {}
@@ -279,7 +299,11 @@ impl LoadedLog {
 
     pub fn remove_anchor(&mut self) {
         match &mut self.context {
-            LogContext::LooseImport { source } | LogContext::DetachedAttachment { source } => {
+            LogContext::LooseImport { source } => {
+                *source = PositionSourceState::None;
+                self.clear_entry_placements();
+            }
+            LogContext::DetachedAttachment { source } => {
                 *source = None;
                 self.clear_entry_placements();
             }
@@ -510,6 +534,26 @@ impl LoadedLogs {
     /// Every loaded log under the identity it was loaded with, in load order.
     pub fn iter_with_ids(&self) -> impl Iterator<Item = (LoadedLogId, &LoadedLog)> {
         self.logs.iter().map(|stored| (stored.id, &stored.log))
+    }
+
+    pub fn pending_initial_position_sources(&self) -> Vec<LoadedLogId> {
+        let mut pending: Vec<_> = self
+            .logs
+            .iter()
+            .filter(|stored| {
+                matches!(
+                    stored.log.context,
+                    LogContext::LooseImport {
+                        source: PositionSourceState::PendingInitialSelection
+                    }
+                )
+            })
+            .collect();
+        pending.sort_by(|left, right| {
+            (left.log.name(), left.log.parsed().text().as_bytes())
+                .cmp(&(right.log.name(), right.log.parsed().text().as_bytes()))
+        });
+        pending.into_iter().map(|stored| stored.id).collect()
     }
 
     /// The log that loaded first, which is what the viewer falls back to when

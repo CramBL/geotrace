@@ -12,6 +12,7 @@ use gt_pending_writes::WriteAccess;
 
 use crate::app::history_db::ExistingLogAttachment;
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
+use crate::settings::InitialPositionSourcePolicy;
 use gt_store::{DatabaseRef, LogAttachmentId, RecordingMeta};
 use gt_test_utils::window_fit::{
     CRAMPED_VIEWPORT, NARROW_VIEWPORT, OVERSIZED_ROW_COUNT, SHORT_VIEWPORT,
@@ -41,7 +42,7 @@ pub(in crate::app) struct DialogState {
     pub(in crate::app) choice: Option<LogAssociationChoice>,
     /// What the session may write, which is what grays the attach tickbox.
     write_access: WriteAccess,
-    ask_log_association_target: bool,
+    initial_position_source_policy: InitialPositionSourcePolicy,
 }
 
 /// A recording of `seconds` fixes starting `offset` after the log does.
@@ -127,7 +128,7 @@ fn dialog_state(recordings: Vec<(gt_types::LoadedFile, FileHistory)>) -> DialogS
         recordings: loaded_recordings,
         choice: None,
         write_access: WriteAccess::Owner,
-        ask_log_association_target: true,
+        initial_position_source_policy: InitialPositionSourcePolicy::Ask,
     }
 }
 
@@ -151,7 +152,7 @@ fn dialog_ui(ui: &mut egui::Ui, state: &mut DialogState) {
         state.recordings.view(),
         &names,
         state.write_access,
-        &mut state.ask_log_association_target,
+        &mut state.initial_position_source_policy,
     );
     if choice.is_some() {
         state.choice = choice;

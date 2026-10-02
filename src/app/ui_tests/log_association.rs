@@ -28,6 +28,7 @@ use crate::app::settings_ui;
 use crate::app::test_util;
 use crate::app::test_util::harness::TestDroppedFile;
 use crate::app::ui_tests;
+use crate::settings::InitialPositionSourcePolicy;
 
 /// An app whose history worker owns a database of its own, so a log can be
 /// stored with a recording and read back.
@@ -345,16 +346,23 @@ fn enabling_automatic_position_source_in_the_dialog_and_disabling_in_settings_re
         .get_by_label(association_dialog::AUTOMATIC_POSITION_SOURCE_LABEL)
         .click();
     harness.run_steps(2);
-    assert!(!harness.state().ask_log_association_target);
-    assert!(
-        !harness
+    assert_eq!(
+        harness.state().initial_position_source_policy,
+        InitialPositionSourcePolicy::AutomaticallyUseUnambiguous
+    );
+    assert_eq!(
+        harness
             .state()
             .collect_settings_for_flush()
             .processing
-            .ask_log_association_target
+            .initial_position_source_policy,
+        InitialPositionSourcePolicy::AutomaticallyUseUnambiguous
     );
     cancel(&mut harness);
-    assert!(!harness.state().ask_log_association_target);
+    assert_eq!(
+        harness.state().initial_position_source_policy,
+        InitialPositionSourcePolicy::AutomaticallyUseUnambiguous
+    );
 
     drop_a_log(&mut harness, FIXTURE_LOG_SEED + 1);
 
@@ -385,7 +393,10 @@ fn enabling_automatic_position_source_in_the_dialog_and_disabling_in_settings_re
     harness.run_steps(2);
     harness.state_mut().settings_open = false;
     harness.run_steps(2);
-    assert!(harness.state().ask_log_association_target);
+    assert_eq!(
+        harness.state().initial_position_source_policy,
+        InitialPositionSourcePolicy::Ask
+    );
 
     drop_a_log(&mut harness, FIXTURE_LOG_SEED + 2);
 
@@ -429,10 +440,16 @@ fn enabling_automatic_position_source_in_settings_and_disabling_in_the_dialog(
         settings_ui::processing::AUTOMATIC_LOG_POSITION_SOURCE_LABEL,
     );
     let persisted = harness.state().collect_settings_for_flush();
-    assert!(!persisted.processing.ask_log_association_target);
-    harness.state_mut().ask_log_association_target = true;
+    assert_eq!(
+        persisted.processing.initial_position_source_policy,
+        InitialPositionSourcePolicy::AutomaticallyUseUnambiguous
+    );
+    harness.state_mut().initial_position_source_policy = InitialPositionSourcePolicy::Ask;
     harness.state_mut().apply_startup_settings(&persisted);
-    assert!(!harness.state().ask_log_association_target);
+    assert_eq!(
+        harness.state().initial_position_source_policy,
+        InitialPositionSourcePolicy::AutomaticallyUseUnambiguous
+    );
     harness.state_mut().settings_open = false;
     harness.run_steps(2);
 
@@ -457,13 +474,17 @@ fn enabling_automatic_position_source_in_settings_and_disabling_in_the_dialog(
     assert_eq!(checkbox.accesskit_node().toggled(), Some(Toggled::True));
     checkbox.click();
     harness.run_steps(2);
-    assert!(harness.state().ask_log_association_target);
-    assert!(
+    assert_eq!(
+        harness.state().initial_position_source_policy,
+        InitialPositionSourcePolicy::Ask
+    );
+    assert_eq!(
         harness
             .state()
             .collect_settings_for_flush()
             .processing
-            .ask_log_association_target
+            .initial_position_source_policy,
+        InitialPositionSourcePolicy::Ask
     );
     confirm(&mut harness);
 
