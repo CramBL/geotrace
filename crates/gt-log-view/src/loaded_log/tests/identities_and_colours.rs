@@ -75,8 +75,6 @@ fn a_log_loaded_again_takes_colours_for_the_chips_it_kept() {
     );
 }
 
-/// One log per content: a second copy of a text the session already holds
-/// is rejected, whatever name it arrived under.
 #[test]
 fn pushing_content_that_is_already_loaded_returns_the_loaded_log() {
     let mut logs = LoadedLogs::default();
@@ -100,9 +98,13 @@ fn pushing_content_that_is_already_loaded_returns_the_loaded_log() {
 /// The rejected copy leaves the loaded log as it was, chips and colour
 /// slots included.
 #[test]
-fn a_refused_copy_takes_no_colour_slot_from_the_loaded_log() {
+fn a_duplicate_attachment_takes_no_colour_slot_from_the_loaded_log() {
     let mut logs = LoadedLogs::default();
-    let id = logs.push(test_util::log_of(10)).id();
+    let attachment = fixtures::attachment_ref();
+    let recordings = test_util::loaded(Vec::new());
+    let mut log = test_util::log_of(10);
+    log.record_attachment(attachment.clone(), Vec::new(), &recordings.view());
+    let id = logs.push(log).id();
     fixtures::add_layer_chip(&mut logs, id, "entry 1");
 
     let stored = vec![StoredLogFilter {
@@ -112,22 +114,17 @@ fn a_refused_copy_takes_no_colour_slot_from_the_loaded_log() {
         mode: StoredLogFilterMode::Layer { color_slot: 1 },
     }];
     let mut copy = test_util::log_of(10);
-    copy.restore_attachment(
-        fixtures::attachment_ref(),
-        stored,
-        &test_util::loaded(Vec::new()).view(),
-    );
+    copy.restore_attachment(attachment.clone(), stored, &recordings.view());
     logs.push(copy);
 
     assert_eq!(fixtures::first_chip_slot(&logs, id), Some(0));
     assert_eq!(
         logs.get_by_id(id).and_then(LoadedLog::attachment),
-        None,
-        "the loaded log took nothing from the copy that was refused"
+        Some(&attachment)
     );
     assert_eq!(
         fixtures::add_layer_chip(&mut logs, id, "entry 2"),
         Some(1),
-        "the refused copy left the palette as the loaded log had it"
+        "the duplicate attachment leaves the palette unchanged"
     );
 }

@@ -1047,8 +1047,8 @@ impl App {
     /// list. A log that came back with its recording is counted on the
     /// toolbar's log button instead.
     ///
-    /// The session holds one log per content: text it already holds is not
-    /// loaded a second time.
+    /// Deduplicates saved logs by attachment reference and loose imports
+    /// by content.
     fn load_parsed_log(
         &mut self,
         filename: Option<String>,
@@ -1061,18 +1061,32 @@ impl App {
         let mut log = LoadedLog::new(filename, parsed, window);
         let requested_by = restored.as_ref().map(|restore| restore.requested_by);
         let restored_from_history = restored.is_some();
-        if let Some(restore) = &restored
-            && let Some(loaded) = self.logs.id_of_content(log.content_hash())
-        {
-            self.adopt_restored_attachment(
-                loaded,
-                restore.attachment.clone(),
-                restore.filters.clone(),
-            );
-            if requested_by == Some(loader::AttachedLogRequester::UserOpenedTheAttachment) {
-                self.show_the_log_this_content_is_already_loaded_as(loaded, log.name());
+        if let Some(restore) = &restored {
+            let already_loaded = self.logs.id_of_attachment(&restore.attachment);
+            let adopting = if already_loaded.is_none() {
+                let recording_key = RecordingKey::Stored(restore.attachment.recording.clone());
+                self.logs.iter_with_ids().find_map(|(id, loaded)| {
+                    (loaded.content_hash() == log.content_hash()
+                        && loaded.attachment().is_none()
+                        && loaded.is_anchored_to(&recording_key))
+                    .then_some(id)
+                })
+            } else {
+                None
+            };
+            if let Some(loaded) = already_loaded.or(adopting) {
+                if adopting.is_some() {
+                    self.adopt_restored_attachment(
+                        loaded,
+                        restore.attachment.clone(),
+                        restore.filters.clone(),
+                    );
+                }
+                if requested_by == Some(loader::AttachedLogRequester::UserOpenedTheAttachment) {
+                    self.show_the_log_this_content_is_already_loaded_as(loaded, log.name());
+                }
+                return;
             }
-            return;
         }
         // Associating runs on the UI thread, as the spatial-index rebuild
         // after a recording load does: one binary search per entry, spread

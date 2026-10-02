@@ -150,11 +150,6 @@ impl App {
         }
     }
 
-    /// Hands a restored attachment to the loaded log that already holds its
-    /// text.
-    ///
-    /// The loaded log keeps the anchor and the attachment it has: an anchor
-    /// moves only where the user chooses.
     pub(super) fn adopt_restored_attachment(
         &mut self,
         log_id: LoadedLogId,
@@ -199,6 +194,9 @@ impl App {
                 };
                 let filters = entry.attachment.filters.clone();
                 self.log_attachments.record_attachment(recording, entry);
+                if self.focus_existing_attachment_context(log_id, &attachment) {
+                    return;
+                }
                 let shared = self.shared.borrow();
                 match self.logs.get_mut_by_id(log_id) {
                     Some(log) => {
@@ -341,15 +339,15 @@ impl App {
         }
     }
 
-    /// Records `attachment` on the log, and writes the stack the user is
-    /// looking at to it. The log bytes the database holds stay as they are:
-    /// they are this log's own text.
     fn adopt_the_attachment_the_recording_holds(
         &mut self,
         log_id: LoadedLogId,
         attachment: LogAttachmentRef,
         filters: Vec<StoredLogFilter>,
     ) {
+        if self.focus_existing_attachment_context(log_id, &attachment) {
+            return;
+        }
         let shared = self.shared.borrow();
         if let Some(log) = self.logs.get_mut_by_id(log_id) {
             log.record_attachment(
@@ -360,6 +358,22 @@ impl App {
         }
         drop(shared);
         self.history.set_attached_log_filters(attachment, filters);
+    }
+
+    fn focus_existing_attachment_context(
+        &mut self,
+        log_id: LoadedLogId,
+        attachment: &LogAttachmentRef,
+    ) -> bool {
+        let Some(existing) = self
+            .logs
+            .id_of_attachment(attachment)
+            .filter(|id| *id != log_id)
+        else {
+            return false;
+        };
+        self.log_viewer.open_on_log(existing);
+        true
     }
 
     fn detach_log(&self, log_id: LoadedLogId) {

@@ -9,15 +9,19 @@ use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
 use gt_loaded_files::FileHistory;
 use gt_log_view::{LoadedLog, LogAttachmentRef, RecordingKey};
 use gt_store::{
-    HistoryDatabase as _, LogAttachmentEntry, ReadOnlyHistoryDatabase as _, Recordings,
-    RecordingsHandle, StoredLogFilter, StoredLogFilterMode,
+    DatabaseRef, HistoryDatabase as _, LogAttachmentEntry, LogAttachments as _, LogToAttach,
+    ReadOnlyHistoryDatabase as _, Recordings, RecordingsHandle, StoredLogFilter,
+    StoredLogFilterMode, TrackRange, TrackState,
 };
-use gt_test_utils::{By, HarnessInteraction as _, SyntheticLogSpec, SyntheticLogTimestamps};
+use gt_test_utils::{
+    By, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec, SyntheticLogTimestamps,
+};
+use gt_track_builder::SegmentationConfig;
 use gt_types::{FileIdx, Latitude, Longitude};
 
 use crate::app::App;
-use crate::app::history_db::HistoryWorker;
-use crate::app::loader::AttachedLogRestore;
+use crate::app::history_db::{HistoryWorker, StoredLogAttachment};
+use crate::app::loader::{self, AttachedLogRequester, AttachedLogRestore};
 use crate::app::log_viewer::{self, association_dialog};
 use crate::app::modals::{DELETE_PERMANENTLY_BUTTON_LABEL, SHELVE_BUTTON_LABEL};
 use crate::app::settings_ui;
@@ -44,15 +48,11 @@ fn drop_the_log(harness: &mut Harness<App>) {
     drop_a_log(harness, FIXTURE_LOG_SEED);
 }
 
-/// Drops a log generated from `seed`. Two drops in one test need two
-/// seeds: the session holds one log per content.
 fn drop_a_log(harness: &mut Harness<App>, seed: u64) {
     ui_tests::drop_log_and_wait_for_load(harness, &fixture_log_text(seed), FIXTURE_LOG_NAME);
     harness.run_steps(3);
 }
 
-/// The log text of `seed`, which is one log however often it is generated:
-/// the session holds one log per content.
 fn fixture_log_text(seed: u64) -> String {
     gt_test_utils::synthetic_journald_log(SyntheticLogSpec {
         approx_bytes: 8 * 1024,
@@ -787,8 +787,6 @@ fn attaching_a_log_the_recording_already_holds_reuses_the_stored_attachment() {
 fn seed_a_recording_and_the_log_stored_with_it(
     db_path: &std::path::Path,
 ) -> (gt_store::DatabaseRef, gt_store::LogAttachmentId) {
-    use gt_store::{LogAttachments as _, LogToAttach, TrackRange, TrackState};
-
     let bytes = ui_tests::recording_bytes_alongside_the_log(55.0);
     let meta = gt_store::extract_meta(&bytes).expect("the fixture recording carries metadata");
     let tracks = [TrackRange {
@@ -802,9 +800,7 @@ fn seed_a_recording_and_the_log_stored_with_it(
             "walk.gtd",
             &meta,
             &tracks,
-            crate::app::loader::stored_segmentation_from_config(
-                &gt_track_builder::SegmentationConfig::default(),
-            ),
+            crate::app::loader::stored_segmentation_from_config(&SegmentationConfig::default()),
             &bytes,
         )
         .expect("the fixture recording is stored");
@@ -901,8 +897,6 @@ fn opening_a_stored_log_alone_loads_it_anchored_and_without_positions() {
     );
 }
 
-/// The same stored log opened twice: the session holds one log per
-/// content, whichever way that content arrives.
 #[test]
 fn opening_a_stored_log_that_is_already_loaded_loads_no_second_copy() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -1234,6 +1228,300 @@ fn the_stored_stack_holds_every_chips_mode_and_colour() {
                 StoredLogFilterMode::Layer { color_slot: 1 }
             ),
         ]
+    );
+}
+
+#[rstest::rstest]
+#[case(AttachedLogRequester::RecordingLoad)]
+#[case(AttachedLogRequester::UserOpenedTheAttachment)]
+fn identical_attachments_in_two_recordings_load_with_independent_sources_and_filters(
+    #[case] requested_by: AttachedLogRequester,
+) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let (first_recording, first_attachment) = seed_a_recording_and_the_log_stored_with_it(&db_path);
+    let bytes = gt_test_utils::synthetic_gtd_bytes(SyntheticGtdSpec {
+        start: gt_test_utils::synthetic_log_start() + Duration::days(1),
+        point_count: 600,
+        step_secs: 1,
+        start_lat_deg: 60.0,
+        start_lon_deg: 12.0,
+        lat_step_deg: 0.00005,
+        lon_step_deg: 0.00008,
+        heading_deg: 20.0,
+        speed_kmh: 28.0,
+        eph_m: 1.8,
+        sats_seen: 14,
+        sats_in_fix: 11,
+    });
+    let meta = gt_store::extract_meta(&bytes).expect("fixture metadata");
+    let filters = vec![StoredLogFilter {
+        text: "systemd".to_owned(),
+        regex: false,
+        enabled: false,
+        mode: StoredLogFilterMode::Refine,
+    }];
+    let mut db = ui_tests::open_temporary_history_database(&db_path);
+    let second_recording = db
+        .insert(
+            "drive.gtd",
+            &meta,
+            &[TrackRange {
+                start: 0,
+                end: meta.nav_point_count,
+                state: TrackState::Live,
+            }],
+            loader::stored_segmentation_from_config(&SegmentationConfig::default()),
+            &bytes,
+        )
+        .expect("second recording is stored");
+    assert_ne!(first_recording, second_recording);
+    let second_attachment = db
+        .attach_log(
+            &second_recording,
+            &LogToAttach {
+                name: FIXTURE_LOG_NAME,
+                text: &fixture_log_text(FIXTURE_LOG_SEED),
+                filters: filters.clone(),
+                year_reference: None,
+            },
+        )
+        .expect("second attachment is stored")
+        .id;
+    drop(db);
+    let mut harness = app_over_a_history_database(&db_path);
+    open_the_stored_log(&harness, &first_recording, first_attachment);
+    test_util::harness::step_until_a_log_is_loaded(&mut harness);
+    let first_id = harness
+        .state()
+        .logs
+        .first_id()
+        .expect("first log is loaded");
+    let first_ref = LogAttachmentRef {
+        recording: first_recording.clone(),
+        id: first_attachment,
+    };
+    let second_ref = LogAttachmentRef {
+        recording: second_recording.clone(),
+        id: second_attachment,
+    };
+    let first_filters = harness
+        .state()
+        .logs
+        .get_by_id(first_id)
+        .expect("first log")
+        .filters()
+        .to_stored_filters();
+
+    match requested_by {
+        AttachedLogRequester::RecordingLoad => {
+            restore_the_stored_attachment(&mut harness, &db_path, &second_recording)
+        }
+        AttachedLogRequester::UserOpenedTheAttachment => {
+            open_the_stored_log(&harness, &second_recording, second_attachment);
+            assert!(harness.step_until(|harness| harness.state().logs.len() == 2));
+        }
+    }
+
+    assert_eq!(harness.state().logs.len(), 2);
+    let second_id = harness
+        .state()
+        .logs
+        .id_of_attachment(&second_ref)
+        .expect("second attachment is loaded");
+    assert_ne!(first_id, second_id);
+    for (id, attachment, stored_filters) in [
+        (first_id, &first_ref, &first_filters),
+        (second_id, &second_ref, &filters),
+    ] {
+        let log = harness.state().logs.get_by_id(id).expect("saved log");
+        assert_eq!(log.attachment(), Some(attachment));
+        assert_eq!(
+            log.anchor_key(),
+            Some(&RecordingKey::Stored(attachment.recording.clone()))
+        );
+        assert_eq!(log.filters().to_stored_filters(), *stored_filters);
+        assert!(harness.state().logs.any_loaded_log_holds(attachment));
+    }
+    assert_eq!(
+        harness.state().log_viewer.selected_log(),
+        Some(match requested_by {
+            AttachedLogRequester::RecordingLoad => first_id,
+            AttachedLogRequester::UserOpenedTheAttachment => second_id,
+        })
+    );
+    harness.state_mut().toasts.dismiss_all_toasts();
+    open_the_stored_log(&harness, &second_recording, second_attachment);
+    assert!(harness.step_until(|harness| harness.state().toasts.len() == 1));
+    assert_eq!(harness.state().logs.len(), 2);
+    assert_eq!(harness.state().log_viewer.selected_log(), Some(second_id));
+
+    let text = fixture_log_text(FIXTURE_LOG_SEED);
+    let parsed = gt_logfile::parse_log(text.as_str().into(), gt_test_utils::synthetic_log_start())
+        .expect("fixture log");
+    harness
+        .state_mut()
+        .load_parsed_log(Some("loose.log".to_owned()), parsed, None);
+    assert_eq!(harness.state().logs.len(), 2);
+    assert_eq!(harness.state().log_viewer.selected_log(), Some(first_id));
+
+    harness
+        .state_mut()
+        .logs
+        .get_mut_by_id(second_id)
+        .expect("second log")
+        .forget_attachment();
+    harness.state_mut().toasts.dismiss_all_toasts();
+    open_the_stored_log(&harness, &second_recording, second_attachment);
+    assert!(harness.step_until(|harness| harness.state().logs.any_loaded_log_holds(&second_ref)));
+    assert_eq!(harness.state().logs.len(), 2);
+    assert_eq!(
+        harness.state().logs.id_of_attachment(&second_ref),
+        Some(second_id)
+    );
+    assert_eq!(
+        harness
+            .state()
+            .logs
+            .get_by_id(second_id)
+            .expect("second log")
+            .filters()
+            .to_stored_filters(),
+        filters
+    );
+    assert_eq!(harness.state().log_viewer.selected_log(), Some(second_id));
+}
+
+#[rstest::rstest]
+#[case(None)]
+#[case(Some(RecordingKey::Stored(DatabaseRef { identity: "other".to_owned(), group_name: "other".to_owned() })))]
+fn a_saved_log_loads_separately_from_incompatible_loose_content(
+    #[case] anchor: Option<RecordingKey>,
+) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let (recording, attachment_id) = seed_a_recording_and_the_log_stored_with_it(&db_path);
+    let mut harness = app_over_a_history_database(&db_path);
+    let text = fixture_log_text(FIXTURE_LOG_SEED);
+    let parsed = gt_logfile::parse_log(text.as_str().into(), gt_test_utils::synthetic_log_start())
+        .expect("fixture log");
+    harness
+        .state_mut()
+        .load_parsed_log(Some("loose.log".to_owned()), parsed, None);
+    let loose_id = harness
+        .state()
+        .logs
+        .first_id()
+        .expect("loose log is loaded");
+    if let Some(key) = &anchor {
+        let shared = harness.state().shared.clone();
+        harness
+            .state_mut()
+            .logs
+            .get_mut_by_id(loose_id)
+            .expect("loose log")
+            .anchor_to(key.clone(), &shared.borrow().loaded_files.view());
+    }
+    open_the_stored_log(&harness, &recording, attachment_id);
+    assert!(harness.step_until(|harness| harness.state().logs.len() == 2));
+    let loose = harness.state().logs.get_by_id(loose_id).expect("loose log");
+    assert_eq!(loose.anchor_key(), anchor.as_ref());
+    assert_eq!(loose.attachment(), None);
+    let attachment = LogAttachmentRef {
+        recording,
+        id: attachment_id,
+    };
+    let saved_id = harness
+        .state()
+        .logs
+        .id_of_attachment(&attachment)
+        .expect("saved log is loaded");
+    assert_ne!(loose_id, saved_id);
+    assert_eq!(harness.state().log_viewer.selected_log(), Some(saved_id));
+    let entry = stored_attachments(&db_path, &attachment.recording)
+        .into_iter()
+        .next()
+        .expect("saved attachment");
+    let saved_filters = entry.attachment.filters.clone();
+    let stored = StoredLogAttachment {
+        recording: attachment.recording.clone(),
+        entry,
+    };
+    harness.state_mut().log_viewer.open_on_log(loose_id);
+
+    harness
+        .state_mut()
+        .apply_log_attach_outcome(loose_id, "loose.log", Ok(stored));
+
+    assert_eq!(harness.state().logs.len(), 2);
+    assert_eq!(harness.state().log_viewer.selected_log(), Some(saved_id));
+    assert_eq!(
+        harness
+            .state()
+            .logs
+            .get_by_id(loose_id)
+            .expect("loose log")
+            .attachment(),
+        None
+    );
+    assert_eq!(
+        harness
+            .state()
+            .logs
+            .get_by_id(saved_id)
+            .expect("saved log")
+            .filters()
+            .to_stored_filters(),
+        saved_filters
+    );
+    harness.state_mut().log_viewer.open_on_log(loose_id);
+
+    harness.state().history.open(attachment.recording.clone());
+    test_util::harness::step_until_a_recording_is_loaded(&mut harness);
+    harness
+        .state_mut()
+        .log_viewer_requests
+        .open_association_dialog = Some(loose_id);
+    harness.state_mut().apply_log_viewer_requests();
+    harness.run_steps(3);
+    assert!(harness.step_until(|harness| {
+        harness
+            .query_by_label_contains("Attaching reuses that attachment")
+            .is_some()
+    }));
+    harness
+        .get_by_label(association_dialog::ATTACH_LABEL)
+        .click();
+    confirm(&mut harness);
+
+    assert_eq!(harness.state().logs.len(), 2);
+    assert_eq!(harness.state().log_viewer.selected_log(), Some(saved_id));
+    assert_eq!(
+        harness
+            .state()
+            .logs
+            .get_by_id(loose_id)
+            .expect("loose log")
+            .attachment(),
+        None
+    );
+    assert_eq!(
+        harness
+            .state()
+            .logs
+            .get_by_id(saved_id)
+            .expect("saved log")
+            .filters()
+            .to_stored_filters(),
+        saved_filters
+    );
+    assert_eq!(
+        stored_attachments(&db_path, &attachment.recording)
+            .first()
+            .expect("saved attachment")
+            .attachment
+            .filters,
+        saved_filters
     );
 }
 
