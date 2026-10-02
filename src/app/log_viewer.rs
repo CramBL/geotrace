@@ -111,6 +111,7 @@ pub(super) struct LogViewerContext<'a> {
 pub(super) struct LogViewerRequests {
     /// Open the association dialog on this log.
     pub open_association_dialog: Option<LoadedLogId>,
+    pub chosen_position_source: Option<LoadedLogId>,
 
     /// Remove this log's attachment from the history database.
     pub detach: Option<LoadedLogId>,
@@ -447,6 +448,7 @@ impl LogViewerWindow {
                             .add_enabled(!attached, Button::selectable(target.is_none(), EM_DASH));
                         if no_recording.clicked() {
                             chosen_target = None;
+                            requests.chosen_position_source = selected;
                         }
                         no_recording
                             .on_hover_text(NO_RECORDING_HOVER)
@@ -484,6 +486,7 @@ impl LogViewerWindow {
                                 .clicked()
                             {
                                 chosen_target = Some(candidate.recording);
+                                requests.chosen_position_source = selected;
                             }
                         }
                     })

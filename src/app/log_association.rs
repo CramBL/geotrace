@@ -18,6 +18,51 @@ use super::log_viewer::AttachmentToLoad;
 use super::log_viewer::association_dialog::{LogAssociationChoice, LogAssociationDialog};
 
 impl App {
+    pub(super) fn resolve_initial_log_associations(&mut self) {
+        if !self.loader.loading_jobs.is_empty()
+            || self.recordings_awaiting_a_history_lookup > 0
+            || self.pending_recordings_already_in_history.is_some()
+            || self.history.has_pending_recording_opens()
+            || self.pending_resegment.is_some()
+        {
+            return;
+        }
+        let shared = self.shared.borrow();
+        let recordings = shared.loaded_files.view();
+        self.pending_initial_log_associations
+            .retain(|id| self.logs.get_by_id(*id).is_some());
+        self.pending_initial_log_associations
+            .sort_by(|left, right| {
+                let left = self.logs.get_by_id(*left);
+                let right = self.logs.get_by_id(*right);
+                left.map(|log| (log.name(), log.parsed().text().as_bytes()))
+                    .cmp(&right.map(|log| (log.name(), log.parsed().text().as_bytes())))
+            });
+        while let Some(id) = self.pending_initial_log_associations.first().copied() {
+            if self.ask_log_association_target
+                && !recordings.is_empty()
+                && self.association_dialog.is_some()
+            {
+                break;
+            }
+            self.pending_initial_log_associations.remove(0);
+            let Some(log) = self.logs.get_mut_by_id(id) else {
+                continue;
+            };
+            if log.anchor_key().is_some() {
+                continue;
+            }
+            let unambiguous = log
+                .rank_association_candidates(&recordings)
+                .unambiguous_target();
+            if self.ask_log_association_target && !recordings.is_empty() {
+                self.association_dialog = Some(LogAssociationDialog::new(id, unambiguous));
+                break;
+            }
+            log.anchor_to_loaded_recording(unambiguous, &recordings);
+        }
+    }
+
     /// Draws the association dialog of the log it is open on, and applies what
     /// the user decided.
     pub(super) fn show_log_association_dialog(&mut self, ui: &egui::Ui) {
@@ -57,6 +102,10 @@ impl App {
     /// Applies the requests the log viewer's footer made while it drew.
     pub(super) fn apply_log_viewer_requests(&mut self) {
         let requests = mem::take(&mut self.log_viewer_requests);
+        if let Some(log_id) = requests.chosen_position_source {
+            self.pending_initial_log_associations
+                .retain(|id| *id != log_id);
+        }
         if let Some(log_id) = requests.open_association_dialog {
             self.open_log_association_dialog(log_id);
         }
@@ -262,6 +311,8 @@ impl App {
     /// Opens the dialog on a log already loaded, on the recording it is
     /// associated with, or the only one overlapping it.
     fn open_log_association_dialog(&mut self, log_id: LoadedLogId) {
+        self.pending_initial_log_associations
+            .retain(|id| *id != log_id);
         let shared = self.shared.borrow();
         let selected = self.logs.get_by_id(log_id).and_then(|log| {
             log.associated_recording().or_else(|| {

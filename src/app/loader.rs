@@ -269,6 +269,26 @@ impl LoadJobs {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn controlled_load_for_test(
+        &mut self,
+        filename: &str,
+    ) -> impl FnOnce(Result<LoadOutcome, String>) + use<> {
+        let id = self.alloc_id();
+        self.loading_jobs.push(LoadingJob {
+            id,
+            filename: filename.to_owned(),
+            progress: 0.0,
+            stage: STAGE_STARTING,
+            started_at: self.frame_time(),
+        });
+        let tx = self.load_tx.clone();
+        move |outcome| {
+            tx.send(LoadMessage::Completed { id, outcome })
+                .expect("the app receives controlled completions");
+        }
+    }
+
     fn alloc_id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id += 1;

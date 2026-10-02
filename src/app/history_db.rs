@@ -13,6 +13,7 @@
 //! read-only session has no writer, and a rejected write comes back as
 //! [`Response::WriteRejected`] holding the [`WriteRejection`].
 
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -341,6 +342,7 @@ pub struct HistoryWorker {
     handle: Option<JoinHandle<()>>,
     path: Option<PathBuf>,
     ui_state_versions: Arc<UiStateVersionReporter>,
+    pending_recording_opens: Cell<usize>,
 }
 
 impl HistoryWorker {
@@ -355,6 +357,7 @@ impl HistoryWorker {
             handle: None,
             path: None,
             ui_state_versions: Arc::default(),
+            pending_recording_opens: Cell::new(0),
         }
     }
 
@@ -374,6 +377,7 @@ impl HistoryWorker {
             handle: Some(handle),
             path,
             ui_state_versions,
+            pending_recording_opens: Cell::new(0),
         }
     }
 
@@ -417,11 +421,19 @@ impl HistoryWorker {
     }
 
     fn send_read(&self, req: ReadRequest) {
+        if self.available() && matches!(req, ReadRequest::Open { .. }) {
+            self.pending_recording_opens
+                .set(self.pending_recording_opens.get() + 1);
+        }
         self.send(Request::Read(req));
     }
 
     fn send_write(&self, req: WriteRequest) {
         self.send(Request::Write(req));
+    }
+
+    pub fn has_pending_recording_opens(&self) -> bool {
+        self.pending_recording_opens.get() > 0
     }
 
     pub fn list(&self) {
@@ -565,6 +577,10 @@ impl HistoryWorker {
     pub fn poll(&self) -> Vec<Response> {
         let mut out = Vec::new();
         while let Ok(resp) = self.resp_rx.try_recv() {
+            if matches!(resp, Response::Opened { .. }) {
+                self.pending_recording_opens
+                    .set(self.pending_recording_opens.get().saturating_sub(1));
+            }
             out.push(resp);
         }
         out

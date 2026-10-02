@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- **Log Viewer:** Fixed logs remaining without a position source or selecting the wrong recording when opened together with recordings that finish loading later.
 - **Log Viewer:** Fixed a log attachment failing to open when another recording had a loaded log with identical text.
 - **Log Viewer:** Fixed changing a log attachment's position source leaving it saved with the previous recording.
 - **Log Viewer:** Fixed log entries being placed between separate tracks on the map when their timestamps fall in a track gap.
