@@ -115,6 +115,23 @@ pub(crate) fn recording_in_two_tracks(first_track: usize, second_track: usize) -
     recording_of_tracks(vec![first.to_vec(), second.to_vec()])
 }
 
+pub(crate) fn recording_with_track_offsets(tracks: &[(Duration, usize)]) -> LoadedFile {
+    recording_of_tracks(
+        tracks
+            .iter()
+            .map(|(offset, count)| {
+                fixtures::nav_points_walking_from(
+                    start() + *offset,
+                    *count,
+                    1,
+                    Latitude::new(55.0),
+                    Longitude::new(12.0),
+                )
+            })
+            .collect(),
+    )
+}
+
 fn recording_of(points: Vec<NavPoint>) -> LoadedFile {
     recording_of_tracks(vec![points])
 }
