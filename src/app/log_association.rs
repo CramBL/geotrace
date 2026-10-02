@@ -83,6 +83,7 @@ impl App {
             recordings,
             &names,
             self.pending_writes.write_access(),
+            &mut self.ask_log_association_target,
         );
         let duplicate_query = dialog
             .duplicate_query_to_send(recordings)
@@ -329,9 +330,6 @@ impl App {
         dialog: &LogAssociationDialog,
         choice: LogAssociationChoice,
     ) {
-        if dialog.dont_show_again() {
-            self.ask_log_association_target = false;
-        }
         let LogAssociationChoice::Confirmed { target, attach } = choice else {
             return;
         };

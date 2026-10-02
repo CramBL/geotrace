@@ -8,6 +8,7 @@
 
 ### Changed
 
+- **Log Viewer:** The position-source dialog and Processing settings now offer an explicit preference to automatically choose a position source when exactly one loaded recording overlaps the log.
 - **Log Viewer:** Footer and dialog labels now distinguish position sources from saving logs with recordings in history.
 
 ### Fixed

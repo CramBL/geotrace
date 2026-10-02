@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+#[cfg(feature = "self-update")]
+use egui::accesskit::Role;
 use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
 use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
 use strum::IntoEnumIterator as _;
@@ -125,6 +127,74 @@ fn settings_window_keeps_one_size_across_pages() {
             "{page:?} resized the window"
         );
     }
+}
+
+#[cfg(feature = "self-update")]
+#[rstest::rstest]
+#[case::default_width(false)]
+#[case::resized_width(true)]
+fn snapshot_processing_controls_fit_with_a_multiline_position_source_label(#[case] resize: bool) {
+    let (mut harness, _config_path) = harness_with_settings_window_open();
+    harness.run();
+    let window_id = egui::Id::new(settings_ui::WINDOW_ID);
+    let opened = harness
+        .inner
+        .ctx
+        .memory(|memory| memory.area_rect(window_id))
+        .expect("settings window");
+    assert!((opened.width() - 700.0).abs() < 2.0);
+    let shrink = if resize { 80.0 } else { 0.0 };
+    if resize {
+        harness.inner.press_drag_release(
+            opened.max - egui::vec2(1.0, 1.0),
+            egui::vec2(-shrink, 0.0),
+            4,
+        );
+        harness.run();
+    }
+    let window = harness
+        .inner
+        .ctx
+        .memory(|memory| memory.area_rect(window_id))
+        .expect("settings window");
+    assert!((window.width() - (opened.width() - shrink)).abs() < 2.0);
+    let label = harness
+        .inner
+        .get_by_label_contains(settings_ui::processing::AUTOMATIC_LOG_POSITION_SOURCE_LABEL)
+        .rect();
+    let first_row = harness
+        .inner
+        .get_by_label_contains("Track split gap")
+        .rect();
+    assert!(window.contains_rect(label));
+    let checkbox = harness
+        .inner
+        .query_all(By::new().role(Role::CheckBox))
+        .find(|node| label.y_range().contains(node.rect().center().y))
+        .expect("position source checkbox");
+    assert!(window.contains_rect(checkbox.rect()));
+    assert!(label.max.x < checkbox.rect().min.x);
+    let duration_controls: Vec<_> = harness
+        .inner
+        .query_all(By::new().role(Role::SpinButton))
+        .filter(|node| {
+            node.rect().center().y >= first_row.min.y && node.rect().center().y < label.min.y
+        })
+        .collect();
+    assert_eq!(duration_controls.len(), 10);
+    for control in duration_controls {
+        assert!(
+            window.contains_rect(control.rect()),
+            "duration control extends outside the settings window: {:?}",
+            control.rect()
+        );
+    }
+    assert!(label.height() > first_row.height());
+    harness.snapshot_with_color_tolerance(if resize {
+        "settings_window_processing_narrow"
+    } else {
+        "settings_window_processing"
+    });
 }
 
 /// Types `query` into the settings window's search field. The field is focused

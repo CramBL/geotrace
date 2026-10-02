@@ -15,8 +15,10 @@ use egui_phosphor::regular::X_CIRCLE as ICON_X_CIRCLE;
 
 use crate::app::App;
 use crate::app::loader;
+use crate::app::log_viewer::association_dialog::AUTOMATIC_POSITION_SOURCE_HOVER;
 use crate::app::settings_ui::SettingsPage;
 use crate::app::settings_ui::analysis::CLOCK_OFFSET_EXCURSION_LABEL;
+use crate::app::settings_ui::label::SettingsLabel;
 
 impl App {
     /// Returns `true` in the frame when the user clicks "Apply to loaded data".
@@ -91,17 +93,16 @@ impl App {
                 self.assoc_config.log_association_window_s = window_s;
                 ui.end_row();
 
-                let ask_help =
-                    "Show the dialog choosing which of the loaded recordings a log takes its \
-                     positions from, and whether to store the log with that recording. With this \
-                     off a log only associates by itself when exactly one loaded recording \
-                     overlaps it.";
-                ui.label(format!(
-                    "{ICON_CHAT_CIRCLE_TEXT} {ASK_LOG_ASSOCIATION_TARGET_LABEL}"
-                ))
-                .on_hover_text(ask_help);
-                ui.checkbox(&mut self.ask_log_association_target, "")
-                    .on_hover_text(ask_help);
+                let mut automatically_choose_position_source = !self.ask_log_association_target;
+                SettingsLabel {
+                    icon: ICON_CHAT_CIRCLE_TEXT,
+                    text: "Automatically choose an\nunambiguous log position source",
+                }
+                .ui(ui)
+                .on_hover_text(AUTOMATIC_POSITION_SOURCE_HOVER);
+                ui.checkbox(&mut automatically_choose_position_source, "")
+                    .on_hover_text(AUTOMATIC_POSITION_SOURCE_HOVER);
+                self.ask_log_association_target = !automatically_choose_position_source;
                 ui.end_row();
             });
 
@@ -343,8 +344,8 @@ fn compound_duration_input(
 const TRACK_SPLIT_GAP_LABEL: &str = "Track split gap";
 const DEBUG_BACKWARD_JUMP_THRESHOLD_LABEL: &str = "Debug backward jump threshold";
 const LOG_ASSOCIATION_WINDOW_LABEL: &str = "Log association window";
-pub(in crate::app) const ASK_LOG_ASSOCIATION_TARGET_LABEL: &str =
-    "Ask which recording a log belongs to";
+pub(in crate::app) const AUTOMATIC_LOG_POSITION_SOURCE_LABEL: &str =
+    "Automatically choose an unambiguous log position source";
 const GENERATED_MARKERS_LABEL: &str = "Generated markers";
 const GNSS_FIX_LOST_LABEL: &str = "GNSS fix lost";
 const GNSS_FIX_REGAINED_LABEL: &str = "GNSS fix regained";
@@ -357,7 +358,7 @@ pub(super) const SEARCHABLE_LABELS: &[&str] = &[
     TRACK_SPLIT_GAP_LABEL,
     DEBUG_BACKWARD_JUMP_THRESHOLD_LABEL,
     LOG_ASSOCIATION_WINDOW_LABEL,
-    ASK_LOG_ASSOCIATION_TARGET_LABEL,
+    AUTOMATIC_LOG_POSITION_SOURCE_LABEL,
     GENERATED_MARKERS_LABEL,
     GNSS_FIX_LOST_LABEL,
     GNSS_FIX_REGAINED_LABEL,
