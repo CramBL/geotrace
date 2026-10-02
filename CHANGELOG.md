@@ -8,24 +8,17 @@
 
 ### Fixed
 
-- **Log Viewer:** GeoTrace loads saved logs with identical text independently with their recording sources and filters.
-
-- **Log Viewer:** Saved logs keep the position source of their attachment until the attachment is removed.
-
-- **Log Viewer:** GeoTrace places log entries between tracks at the nearest fix within the association window.
-
-- **Log Viewer:** GeoTrace ranks position sources by track time coverage, excluding gaps between tracks.
-
-- **Log Viewer:** GeoTrace resolves timestamps across calendar years and preserves their years when saved logs reopen.
-
-- **Interface:** History preserves readable recording identities and hides optional columns when the window narrows.
-
-- **Interface:** The Track data panel opens at the pointer when dragged out of its dock.
-
-- **Interface:** History opens centered with a size based on the screen when first shown.
-- **Interface:** The Visible section preserves its chosen proportion when the Track data panel changes size.
-
-- **Interface:** History recording tooltips wrap long metadata within a bounded width on the first hover.
+- **Log Viewer:** Fixed a log attachment failing to open when another recording had a loaded log with identical text.
+- **Log Viewer:** Fixed changing a log attachment's position source leaving it saved with the previous recording.
+- **Log Viewer:** Fixed log entries being placed between separate tracks on the map when their timestamps fall in a track gap.
+- **Log Viewer:** Fixed log position-source candidates reporting overlap with gaps between tracks and being selected automatically for logs in those gaps.
+- **Log Viewer:** Fixed incorrect years in syslog timestamps without a year when a log spans multiple calendar years.
+- **Log Viewer:** Fixed syslog timestamps changing when a log saved with a recording is reopened in a later calendar year.
+- **Interface:** Fixed recording identities becoming too narrow to read in the History table at normal window widths.
+- **Interface:** Fixed the Track data panel jumping to the upper-left corner when dragged out of its dock.
+- **Interface:** Fixed the History window opening at an arbitrary position and a fixed size regardless of the screen size.
+- **Interface:** Fixed the Visible section losing its chosen height proportion when the Track data panel is resized, docked or detached.
+- **Interface:** Fixed History recording tooltips becoming extremely narrow and tall on first hover when metadata contains long text.
 - **Map & Tracks:** Fixed the map letting a generated or event marker be hovered, clicked and pinned while its type or event path is hidden in the side panel tree.
 
 ## 0.18.0 - 2026-09-15
