@@ -7,12 +7,11 @@ use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
 use gt_log_view::{AssociationCandidate, LoadedLog};
 use gt_pending_writes::WriteAccess;
 use gt_store::DatabaseRef;
+use gt_ui_components::{FrozenRegions, HeldBodyLines};
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::LoadedLogId;
 
-use crate::app::anchored_dialog::{
-    AnchoredDialog, AnchoredDialogKind, DialogRegions, HeldBodyLines,
-};
+use crate::app::anchored_dialog::{AnchoredDialog, AnchoredDialogKind};
 use crate::app::history_db::ExistingLogAttachment;
 use crate::app::modals::{DialogActionRow, DialogBody};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
@@ -156,10 +155,10 @@ impl LogAssociationDialog {
                     .wrap(),
                 );
                 ui.add_space(4.0);
-                regions.frozen_at_open(
+                regions.freeze_at_open_ui(
                     ui,
                     CANDIDATES_REGION,
-                    HeldBodyLines::what_the_content_took(),
+                    HeldBodyLines::measured_content(),
                     |ui| {
                         Grid::new("log_association_candidates")
                             .num_columns(2)
@@ -250,11 +249,11 @@ impl LogAssociationDialog {
     fn attach_ui(
         &mut self,
         ui: &mut egui::Ui,
-        regions: DialogRegions,
+        regions: FrozenRegions,
         attachable: bool,
         write_access: WriteAccess,
     ) {
-        regions.frozen_at_open(
+        regions.freeze_at_open_ui(
             ui,
             STORED_ATTACHMENT_REGION,
             HeldBodyLines::at_least(STORED_ATTACHMENT_LINES),

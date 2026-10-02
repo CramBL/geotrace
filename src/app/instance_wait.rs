@@ -23,9 +23,10 @@ use gt_instance_lock::{
     TakeOverRecord,
 };
 use gt_pending_writes::WriteKind;
+use gt_ui_components::{FrozenRegions, HeldBodyLines};
 
 use super::App;
-use super::anchored_dialog::{AnchoredDialog, AnchoredDialogKind, DialogRegions, HeldBodyLines};
+use super::anchored_dialog::{AnchoredDialog, AnchoredDialogKind};
 use super::modals::{self, DialogActionRow, DialogBody};
 use super::storage::{QueuedLoad, StorageOpen};
 
@@ -292,8 +293,8 @@ impl DataDirectoryUnavailable {
         }
     }
 
-    fn wait_dialog_ui(&self, ui: &mut egui::Ui, regions: DialogRegions) {
-        regions.frozen_at_open(
+    fn wait_dialog_ui(&self, ui: &mut egui::Ui, regions: FrozenRegions) {
+        regions.freeze_at_open_ui(
             ui,
             HOLDER_STATE_REGION,
             HeldBodyLines::at_least(WAIT_DIALOG_HOLDER_STATE_LEAST_LINES)
@@ -356,8 +357,8 @@ impl DataDirectoryUnavailable {
         self.freshness_note_ui(ui);
     }
 
-    fn take_over_confirmation_ui(&self, ui: &mut egui::Ui, regions: DialogRegions) {
-        regions.frozen_at_open(
+    fn take_over_confirmation_ui(&self, ui: &mut egui::Ui, regions: FrozenRegions) {
+        regions.freeze_at_open_ui(
             ui,
             HOLDER_STATE_REGION,
             HeldBodyLines::at_least(TAKE_OVER_HOLDER_STATE_LEAST_LINES)

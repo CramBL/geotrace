@@ -5,8 +5,9 @@ use std::time::Instant;
 use egui::{Button, Grid, Label, RichText};
 use gt_pending_writes::{PendingWriteGuard, WriteKind};
 use gt_store::{DbError, StoredFixPlacementRule, StoredTrackSplitRule, TrackState};
+use gt_ui_components::HeldBodyLines;
 
-use super::anchored_dialog::{AnchoredDialogKind, HeldBodyLines};
+use super::anchored_dialog::AnchoredDialogKind;
 use super::{App, ResegmentPrompt, auto_prune, history, history_db, loader, modals, storage};
 
 fn load_mode_for_stored_recording(stored: &gt_store::StoredRecording) -> loader::GtdLoadMode {
@@ -734,10 +735,10 @@ impl App {
             TRACK_SETTINGS_DIFFER_TITLE,
             ResegmentChoice::Cancel,
             |ui, regions| {
-                regions.frozen_at_open(
+                regions.freeze_at_open_ui(
                     ui,
                     RESEGMENT_INTRO_REGION,
-                    HeldBodyLines::what_the_content_took().and_at_most(RESEGMENT_INTRO_MOST_LINES),
+                    HeldBodyLines::measured_content().and_at_most(RESEGMENT_INTRO_MOST_LINES),
                     |ui| {
                         ui.add(Label::new(intro).wrap());
                     },
@@ -864,11 +865,10 @@ impl App {
                     .wrap(),
                 );
                 ui.add_space(4.0);
-                regions.frozen_at_open(
+                regions.freeze_at_open_ui(
                     ui,
                     AUTO_PRUNE_RECORDINGS_REGION,
-                    HeldBodyLines::what_the_content_took()
-                        .and_at_most(AUTO_PRUNE_RECORDINGS_MOST_LINES),
+                    HeldBodyLines::measured_content().and_at_most(AUTO_PRUNE_RECORDINGS_MOST_LINES),
                     |ui| {
                         for r in refs {
                             let label = format!("{}/{}", r.identity, r.group_name);
