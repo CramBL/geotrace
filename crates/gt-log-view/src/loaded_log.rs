@@ -28,8 +28,6 @@ pub struct LoadedLog {
     /// Shared with the workers scanning the log for its filters.
     parsed: Arc<ParsedLog>,
 
-    /// Over the text the parse read, which is what tells this log apart from
-    /// every other loaded one and from the attachments of a recording.
     content_hash: LogContentHash,
 
     entry_time_range: Option<TimeRange>,
@@ -457,12 +455,8 @@ impl StoredLog {
     }
 }
 
-/// What [`LoadedLogs::push`] did with the log it was handed. Both variants
-/// name the log the session holds that content under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogPushOutcome {
-    /// A log with the same content hash was loaded already, and the pushed one
-    /// was dropped.
     AlreadyLoaded(LoadedLogId),
 
     NewlyLoaded(LoadedLogId),
@@ -476,7 +470,6 @@ impl LogPushOutcome {
     }
 }
 
-/// Every log loaded in this session, in load order, one per content hash.
 #[derive(Debug, Default)]
 pub struct LoadedLogs {
     logs: Vec<StoredLog>,
@@ -527,8 +520,7 @@ impl LoadedLogs {
         self.logs.first().map(|stored| stored.id)
     }
 
-    /// The loaded log whose text hashes to `content_hash`, `None` while no
-    /// loaded log holds that content.
+    /// Returns the identity of the first loaded log with this content.
     pub fn id_of_content(&self, content_hash: LogContentHash) -> Option<LoadedLogId> {
         self.logs
             .iter()
@@ -536,13 +528,14 @@ impl LoadedLogs {
             .map(|stored| stored.id)
     }
 
-    /// Loads `log` under a fresh identity, taking a colour slot for each layer
-    /// chip it arrives with.
-    ///
-    /// Content already loaded is rejected: the outcome states which log the
-    /// session holds it under, and `log` is dropped.
+    /// Deduplicates saved logs by attachment reference and loose imports
+    /// by content across all loaded logs.
     pub fn push(&mut self, mut log: LoadedLog) -> LogPushOutcome {
-        if let Some(loaded) = self.id_of_content(log.content_hash) {
+        let duplicate = match log.attachment() {
+            Some(attachment) => self.id_of_attachment(attachment),
+            None => self.id_of_content(log.content_hash),
+        };
+        if let Some(loaded) = duplicate {
             return LogPushOutcome::AlreadyLoaded(loaded);
         }
         log.filters
@@ -569,10 +562,15 @@ impl LoadedLogs {
             .map(|stored| &mut stored.log)
     }
 
-    pub fn any_loaded_log_holds(&self, attachment: &LogAttachmentRef) -> bool {
+    pub fn id_of_attachment(&self, attachment: &LogAttachmentRef) -> Option<LoadedLogId> {
         self.logs
             .iter()
-            .any(|stored| stored.log.attachment() == Some(attachment))
+            .find(|stored| stored.log.attachment() == Some(attachment))
+            .map(|stored| stored.id)
+    }
+
+    pub fn any_loaded_log_holds(&self, attachment: &LogAttachmentRef) -> bool {
+        self.id_of_attachment(attachment).is_some()
     }
 
     /// Every loaded log anchored to one of `recording_keys`, in load order.

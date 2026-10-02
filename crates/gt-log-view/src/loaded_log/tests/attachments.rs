@@ -1,10 +1,11 @@
 use gt_history_types::{LogAttachmentId, StoredLogFilter, StoredLogFilterMode};
 use gt_loaded_files::{FileHistory, LoadedFiles};
+use gt_types::FileIdx;
 
 use crate::anchor::RecordingKey;
 use crate::attachment::LogAttachmentRef;
 use crate::loaded_log::tests::fixtures;
-use crate::loaded_log::{LoadedLog, LoadedLogs, RestoredAttachmentAdoption};
+use crate::loaded_log::{LoadedLog, LoadedLogs, LogPushOutcome, RestoredAttachmentAdoption};
 use crate::test_util;
 
 #[rstest::rstest]
@@ -297,5 +298,120 @@ fn a_log_that_takes_a_restored_attachment_keeps_its_own_filter_stack() {
             .collect::<Vec<(LogAttachmentRef, Vec<String>)>>(),
         [(restored, vec!["entry 1".to_owned()])],
         "the stack the user is reading is what the attachment is written"
+    );
+}
+
+#[rstest::rstest]
+#[case(true)]
+#[case(false)]
+fn identical_saved_logs_keep_distinct_attachment_contexts(#[case] same_recording: bool) {
+    let first = fixtures::attachment_ref();
+    let second = LogAttachmentRef {
+        recording: if same_recording {
+            first.recording.clone()
+        } else {
+            test_util::recording_ref_of_group("2026-01-02T14-02-11")
+        },
+        id: LogAttachmentId::new_random(),
+    };
+    let mut files = LoadedFiles::new();
+    files.push(
+        test_util::recording_named("walk.gtd", 55.0, 10),
+        test_util::stored_in_history(&first.recording),
+    );
+    if !same_recording {
+        files.push(
+            test_util::recording_named("drive.gtd", 60.0, 10),
+            test_util::stored_in_history(&second.recording),
+        );
+    }
+    let mut logs = LoadedLogs::default();
+    let contexts = [
+        (first.clone(), "entry 1", 0),
+        (second.clone(), "entry 2", 1),
+    ];
+    let mut ids = Vec::new();
+    for (attachment, pattern, slot) in &contexts {
+        let stored = vec![StoredLogFilter {
+            text: (*pattern).to_owned(),
+            regex: false,
+            enabled: true,
+            mode: StoredLogFilterMode::Layer { color_slot: *slot },
+        }];
+        let mut log = test_util::log_of(10);
+        log.restore_attachment(attachment.clone(), stored.clone(), &files.view());
+        let outcome = logs.push(log);
+        assert!(matches!(outcome, LogPushOutcome::NewlyLoaded(_)));
+        let id = outcome.id();
+        ids.push(id);
+        let log = logs.get_by_id(id).expect("saved log is loaded");
+        assert_eq!(log.attachment(), Some(attachment));
+        assert_eq!(
+            log.anchor_key(),
+            Some(&RecordingKey::Stored(attachment.recording.clone()))
+        );
+        assert_eq!(log.filters().to_stored_filters(), stored);
+        assert!(logs.any_loaded_log_holds(attachment));
+        let mut duplicate = test_util::log_of(10);
+        duplicate.restore_attachment(attachment.clone(), Vec::new(), &files.view());
+        assert_eq!(logs.push(duplicate), LogPushOutcome::AlreadyLoaded(id));
+    }
+    let first_id = *ids.first().expect("first log is loaded");
+    let second_id = *ids.last().expect("second log is loaded");
+    assert_ne!(first_id, second_id);
+    assert_eq!(logs.len(), 2);
+    assert_eq!(
+        logs.push(test_util::log_of(10)),
+        LogPushOutcome::AlreadyLoaded(first_id)
+    );
+    fixtures::wait_for_scans(&mut logs);
+    assert!(logs.take_filter_stack_edits_to_store().is_empty());
+    let layers = test_util::map_matches(&mut logs, &files).layers();
+    assert_eq!(
+        layers.iter().map(|layer| layer.log.id).collect::<Vec<_>>(),
+        ids
+    );
+    assert_eq!(
+        layers
+            .iter()
+            .map(|layer| layer
+                .matches
+                .first()
+                .expect("layer has a match")
+                .entry_index)
+            .collect::<Vec<_>>(),
+        [1, 2]
+    );
+    assert_eq!(
+        layers
+            .iter()
+            .map(|layer| layer
+                .matches
+                .first()
+                .expect("layer has a match")
+                .fix
+                .track
+                .fi)
+            .collect::<Vec<_>>(),
+        [FileIdx::new(0), FileIdx::new(usize::from(!same_recording))]
+    );
+
+    logs.get_mut_by_id(first_id)
+        .expect("first log is loaded")
+        .forget_attachment();
+    assert_eq!(logs.id_of_attachment(&first), None);
+    assert_eq!(logs.id_of_attachment(&second), Some(second_id));
+    logs.get_mut_by_id(first_id)
+        .expect("first log is loaded")
+        .record_attachment(first.clone(), Vec::new(), &files.view());
+    assert_eq!(logs.id_of_attachment(&first), Some(first_id));
+    logs.remove_by_id(first_id);
+    assert_eq!(
+        test_util::map_matches(&mut logs, &files)
+            .layers()
+            .iter()
+            .map(|layer| layer.log.id)
+            .collect::<Vec<_>>(),
+        [second_id]
     );
 }
