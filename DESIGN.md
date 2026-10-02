@@ -35,7 +35,7 @@ Em dashes (`—`) are reserved for UI display only (e.g. as a placeholder for ab
 En dashes are reserved for numeric/range expressions (`2020–2025`, `pp. 10–15`, `~3–4 GB`).
 
 #### Line breaks in markdown
-Write one sentence per line in markdown files (`.md`, docs, READMEs, agent guides).
+Write one sentence per line in markdown files (`.md`, docs, READMEs).
 Markdown joins consecutive non-empty lines into a single paragraph, so this does not affect rendering - but it produces much cleaner diffs.
 Each edited sentence shows up as a single changed line.
 
