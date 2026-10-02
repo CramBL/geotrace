@@ -219,8 +219,8 @@ impl WriteRequest {
                 "Storing the display settings of a recording in recording history"
             }
             Self::AttachLog { .. } => "Storing a log with a recording",
-            Self::SetAttachedLogFilters { .. } => "Storing an attached log's filters",
-            Self::DetachLog { .. } => "Removing an attached log from a recording",
+            Self::SetAttachedLogFilters { .. } => "Saving filters for a log in recording history",
+            Self::DetachLog { .. } => "Removing a log from recording history",
         }
     }
 }
@@ -1799,7 +1799,7 @@ mod tests {
             attachment: attachment_ref(),
             filters: Vec::new(),
         },
-        "Storing an attached log's filters"
+        "Saving filters for a log in recording history"
     )]
     #[case(
         WriteRequest::DetachLog {
@@ -1807,7 +1807,7 @@ mod tests {
             log: LoadedLogId::new(1),
             name: "navsyncd.log".to_owned(),
         },
-        "Removing an attached log from a recording"
+        "Removing a log from recording history"
     )]
     fn each_write_request_carries_the_label_the_registry_lists_it_under(
         #[case] request: WriteRequest,

@@ -434,7 +434,7 @@ impl LogViewerWindow {
         let names = recording_names_by_id(recordings, recording_names);
 
         ui.horizontal_wrapped(|ui| {
-            ui.label("Associated with");
+            ui.label("Positions from");
             let ranked = candidates.ranked();
             ui.add_enabled_ui(!ranked.is_empty(), |ui| {
                 ComboBox::from_id_salt("log_viewer_association_target")
@@ -491,13 +491,16 @@ impl LogViewerWindow {
                         }
                     })
                     .response
-                    .on_disabled_hover_text("Load a recording to associate this log against");
+                    .on_disabled_hover_text(
+                        "Load a recording to use as this log's position source",
+                    );
             });
 
             if let Some(db_ref) = unresolved_anchor {
                 let recording = gt_loaded_files::display_identity(&db_ref.identity).0;
                 ui.label(
-                    RichText::new(format!("Anchored to {recording} ({NOT_LOADED_MARKER})")).weak(),
+                    RichText::new(format!("Positions from {recording} ({NOT_LOADED_MARKER})"))
+                        .weak(),
                 );
                 let load = ui.add_enabled(history_available, Button::new(LOAD_RECORDING_LABEL));
                 if load.clicked() {
@@ -611,31 +614,31 @@ const TABLE_ROWS_THE_HEADER_LEAVES: usize = 3;
 
 const SUMMARY_HOVER: &str = "Show what the parse read from this log";
 
-const ASSOCIATION_WINDOW_HOVER: &str = "Furthest a line's timestamp may be from a fix of the anchored recording for the line \
-     to take its position";
+const ASSOCIATION_WINDOW_HOVER: &str =
+    "Maximum time between a log entry and a fix from the position source";
 
 const NO_RECORDING_HOVER: &str = "Take this log's positions from no recording";
 
 const NO_RECORDING_ATTACHED_HOVER: &str =
-    "Remove the attachment first: this log is stored with a recording in history";
+    "Remove the saved log before changing its position source";
 
 /// Why a recording that ran at no time the log covers is still a choice: a
 /// clock-skewed source is a recording too.
-pub(super) const NO_OVERLAP_HOVER: &str =
-    "This recording ran at no time the log covers: every line would stay unassociated";
+pub(super) const NO_OVERLAP_HOVER: &str = "This recording has no overlapping track duration";
 
-pub(in crate::app) const ATTACH_LABEL: &str = "Attach to recording…";
+pub(in crate::app) const ATTACH_LABEL: &str = "Save with recording…";
 
-const ATTACH_HOVER: &str = "Choose the recording this log belongs to, and store it there";
+const ATTACH_HOVER: &str =
+    "Choose a position source and optionally save this log with the recording in history";
 
-const ATTACH_NO_RECORDING_HOVER: &str = "Load a recording to attach this log to it";
+const ATTACH_NO_RECORDING_HOVER: &str = "Load a recording to save this log with it";
 
-pub(in crate::app) const DETACH_LABEL: &str = "Remove attachment";
+pub(in crate::app) const DETACH_LABEL: &str = "Remove saved log";
 
 const DETACH_HOVER: &str =
-    "Take this log out of the recording in history. It stays loaded in this session.";
+    "Remove this log from recording history while keeping it loaded in this session";
 
-const DETACH_UNATTACHED_HOVER: &str = "This log is not stored with a recording in history";
+const DETACH_UNATTACHED_HOVER: &str = "This log is not saved with a recording in history";
 
 const NOTICE_DISMISS_HOVER: &str = "Dismiss this warning";
 
@@ -645,8 +648,7 @@ pub(super) const NOT_LOADED_MARKER: &str = "not loaded";
 
 pub(in crate::app) const LOAD_RECORDING_LABEL: &str = "Load recording";
 
-const LOAD_RECORDING_HOVER: &str =
-    "Gives this log's lines positions by opening its recording from history";
+const LOAD_RECORDING_HOVER: &str = "Open the position source from recording history";
 
 const LOAD_RECORDING_NO_DATABASE_HOVER: &str = "The recordings database is unavailable";
 

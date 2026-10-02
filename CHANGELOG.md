@@ -6,6 +6,10 @@
 
 - **Map & Tracks:** The eye menu has a "Ghost fixes" category that shows or hides dead-reckoned chevron icons and dashed trackline stretches.
 
+### Changed
+
+- **Log Viewer:** Footer and dialog labels now distinguish position sources from saving logs with recordings in history.
+
 ### Fixed
 
 - **Log Viewer:** Fixed logs remaining without a position source or selecting the wrong recording when opened together with recordings that finish loading later.

@@ -863,9 +863,6 @@ fn the_footer_requests_the_association_dialog_for_the_shown_log() {
     );
 }
 
-/// The attachment the viewer shows and takes off: the indicator states the
-/// recording holding the log, and "Remove attachment" acts only on a log that
-/// has one.
 #[test]
 fn an_attachment_is_shown_and_removable_only_while_the_log_has_one() {
     let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
@@ -1187,7 +1184,7 @@ fn the_map_toggle_of_a_row_leaves_the_selection_where_it_is() {
 #[rstest]
 #[case::attached(
     ShownLogStorage::StoredWithTheRecording,
-    "Unload this log. It stays attached to walk.gtd."
+    "Unload this log while keeping it saved with walk.gtd"
 )]
 #[case::stored_nowhere(ShownLogStorage::StoredNowhere, log_list::UNLOAD_HOVER)]
 fn the_unload_hover_says_whether_the_log_stays_attached(
@@ -1264,7 +1261,7 @@ fn the_footer_offers_the_recording_of_a_log_that_is_not_loaded() {
             vec!["navsyncd.log".to_owned()]
         )]
     );
-    harness.get_by_label(format!("Anchored to {NOT_LOADED_RECORDING}").as_str());
+    harness.get_by_label(format!("Positions from {NOT_LOADED_RECORDING}").as_str());
 
     harness.get_by_label(super::LOAD_RECORDING_LABEL).click();
     harness.run_steps(2);
@@ -1843,7 +1840,7 @@ fn log_viewer_window_fits_every_viewport(
     harness.assert_window_fits_the_viewport(AuditedWindow::titled(LOG_VIEWER_TITLE));
     harness.assert_control_is_reachable(
         AuditedWindow::titled(LOG_VIEWER_TITLE),
-        ControlLabel("Associated with"),
+        ControlLabel("Positions from"),
     );
 }
 
