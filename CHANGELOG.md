@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- **Log Viewer:** Saved logs keep the position source of their attachment until the attachment is removed.
+
 - **Log Viewer:** GeoTrace places log entries between tracks at the nearest fix within the association window.
 
 - **Log Viewer:** GeoTrace ranks position sources by track time coverage, excluding gaps between tracks.

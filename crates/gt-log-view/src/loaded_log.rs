@@ -295,10 +295,19 @@ impl LoadedLog {
             .saturating_sub(self.association.associated_entry_count)
     }
 
-    /// Anchors the log to the recording `recording_key` identifies and
-    /// associates every entry against it, keeping the attachment the log is
-    /// stored as.
+    /// An attached log keeps the recording identified by its attachment until
+    /// [`Self::forget_attachment`] removes that attachment.
     pub fn anchor_to(&mut self, recording_key: RecordingKey, recordings: &LoadedFilesView<'_>) {
+        if self
+            .attachment()
+            .is_some_and(|attachment| recording_key.database_ref() != Some(&attachment.recording))
+        {
+            log::warn!(
+                "Kept the recording of the log {:?}: it is stored with a recording in history",
+                self.name
+            );
+            return;
+        }
         match &mut self.anchor {
             LogAnchor::Recording { key, .. } => *key = recording_key,
             anchor @ LogAnchor::None => {

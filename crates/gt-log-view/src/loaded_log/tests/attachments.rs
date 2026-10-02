@@ -7,6 +7,89 @@ use crate::loaded_log::tests::fixtures;
 use crate::loaded_log::{LoadedLog, LoadedLogs, RestoredAttachmentAdoption};
 use crate::test_util;
 
+#[rstest::rstest]
+#[case(true, FileHistory::None)]
+#[case(
+    false,
+    test_util::stored_in_history(&test_util::recording_ref_of_group("2026-01-02T14-02-11"))
+)]
+fn an_attached_log_keeps_its_recording_after_another_source_is_selected(
+    #[case] attached_recording_loaded: bool,
+    #[case] other_recording_history: FileHistory,
+) {
+    let attachment = fixtures::attachment_ref();
+    let mut files = LoadedFiles::new();
+    if attached_recording_loaded {
+        files.push(
+            test_util::recording_at(55.0, 10),
+            test_util::stored_in_history(&attachment.recording),
+        );
+    }
+    files.push(test_util::recording_at(60.0, 10), other_recording_history);
+    let other_key = test_util::key_of(&files, files.len() - 1);
+    let other = test_util::id_of(&files, files.len() - 1);
+    let mut log = test_util::log_of(10);
+    log.anchor_to_loaded_recording(Some(other), &files.view());
+
+    log.record_attachment(attachment.clone(), Vec::new(), &files.view());
+
+    let key = RecordingKey::Stored(attachment.recording.clone());
+    let placement = log.entry_placement(0);
+    let associated = log.associated_recording();
+    assert_eq!(log.anchor_key(), Some(&key));
+    assert_eq!(
+        log.associated_entry_count(),
+        if attached_recording_loaded { 10 } else { 0 }
+    );
+
+    log.anchor_to_loaded_recording(Some(other), &files.view());
+
+    assert_eq!(log.anchor_key(), Some(&key));
+    assert_eq!(log.attachment(), Some(&attachment));
+    assert_eq!(log.associated_recording(), associated);
+    assert_eq!(log.entry_placement(0), placement);
+
+    log.forget_attachment();
+    log.anchor_to_loaded_recording(Some(other), &files.view());
+
+    assert_eq!(log.attachment(), None);
+    assert_eq!(log.associated_recording(), Some(other));
+    assert_eq!(log.anchor_key(), Some(&other_key));
+    assert_eq!(log.associated_entry_count(), 10);
+}
+
+#[test]
+fn an_attached_log_accepts_a_reloaded_instance_of_its_recording() {
+    let attachment = fixtures::attachment_ref();
+    let mut files = LoadedFiles::new();
+    files.push(
+        test_util::recording_at(55.0, 10),
+        test_util::stored_in_history(&attachment.recording),
+    );
+    let previous = test_util::id_of(&files, 0);
+    let mut log = test_util::log_of(10);
+    log.restore_attachment(attachment.clone(), Vec::new(), &files.view());
+    files.remove_file(0);
+    log.reassociate(&files.view());
+    assert_eq!(log.associated_recording(), None);
+    files.push(
+        test_util::recording_at(55.0, 10),
+        test_util::stored_in_history(&attachment.recording),
+    );
+    let reloaded = test_util::id_of(&files, 0);
+
+    log.anchor_to_loaded_recording(Some(reloaded), &files.view());
+
+    assert_ne!(reloaded, previous);
+    assert_eq!(
+        log.anchor_key(),
+        Some(&RecordingKey::Stored(attachment.recording.clone()))
+    );
+    assert_eq!(log.attachment(), Some(&attachment));
+    assert_eq!(log.associated_recording(), Some(reloaded));
+    assert_eq!(log.associated_entry_count(), 10);
+}
+
 /// An attachment is written again only for the edits the database has not
 /// seen, and the log stays loaded once the attachment is gone.
 #[test]

@@ -452,6 +452,12 @@ impl LogViewerWindow {
                             .on_hover_text(NO_RECORDING_HOVER)
                             .on_disabled_hover_text(NO_RECORDING_ATTACHED_HOVER);
                         for candidate in ranked {
+                            let compatible = log.attachment().is_none_or(|attachment| {
+                                recordings
+                                    .entry_for_id(candidate.recording)
+                                    .and_then(|entry| entry.history().db_ref())
+                                    == Some(&attachment.recording)
+                            });
                             let name = names.get(&candidate.recording).copied().unwrap_or(EM_DASH);
                             let overlapping = candidate.overlaps_the_log();
                             let label = if overlapping {
@@ -469,8 +475,12 @@ impl LogViewerWindow {
                                 NO_OVERLAP_HOVER.to_owned()
                             };
                             if ui
-                                .selectable_label(target == Some(candidate.recording), label)
+                                .add_enabled(
+                                    compatible,
+                                    Button::selectable(target == Some(candidate.recording), label),
+                                )
                                 .on_hover_text(hover)
+                                .on_disabled_hover_text(NO_RECORDING_ATTACHED_HOVER)
                                 .clicked()
                             {
                                 chosen_target = Some(candidate.recording);
