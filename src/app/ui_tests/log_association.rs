@@ -1,15 +1,19 @@
 //! The dialog every loaded log raises while a recording is open, and what
 //! confirming it does.
 
-use egui_kittest::{Harness, kittest::Queryable as _};
+use chrono::Duration;
+use egui::accesskit::Role;
+use egui_kittest::Harness;
+use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
-use gt_log_view::{LoadedLog, LogAttachmentRef};
+use gt_loaded_files::FileHistory;
+use gt_log_view::{LoadedLog, LogAttachmentRef, RecordingKey};
 use gt_store::{
     HistoryDatabase as _, LogAttachmentEntry, ReadOnlyHistoryDatabase as _, Recordings,
     RecordingsHandle, StoredLogFilter, StoredLogFilterMode,
 };
 use gt_test_utils::{By, HarnessInteraction as _, SyntheticLogSpec, SyntheticLogTimestamps};
-use gt_types::FileIdx;
+use gt_types::{FileIdx, Latitude, Longitude};
 
 use crate::app::App;
 use crate::app::history_db::HistoryWorker;
@@ -1052,6 +1056,106 @@ fn removing_an_attachment_leaves_the_log_loaded() {
         "the viewer noted the attachment the worker removed"
     );
     assert_eq!(harness.state().logs.len(), 1, "the session copy stays");
+}
+
+#[rstest::rstest]
+#[case(true)]
+#[case(false)]
+fn the_footer_changes_a_saved_logs_recording_only_after_attachment_removal(
+    #[case] attached_recording_loaded: bool,
+) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let (mut harness, db_ref) = if attached_recording_loaded {
+        let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
+        attach_the_log(&mut harness, &db_path, &db_ref);
+        (harness, db_ref)
+    } else {
+        let (db_ref, stored) = seed_a_recording_and_the_log_stored_with_it(&db_path);
+        let mut harness = app_over_a_history_database(&db_path);
+        open_the_stored_log(&harness, &db_ref, stored);
+        test_util::harness::step_until_a_log_is_loaded(&mut harness);
+        (harness, db_ref)
+    };
+    let attachment = harness
+        .state()
+        .first_log()
+        .expect("the log is loaded")
+        .attachment()
+        .cloned();
+    let target = shown_log_target(&harness);
+    let points = gt_test_utils::fixtures::nav_points_walking_from(
+        gt_test_utils::synthetic_log_start() + Duration::seconds(1),
+        600,
+        1,
+        Latitude::new(60.0),
+        Longitude::new(12.0),
+    );
+    ui_tests::push_points_as(&mut harness, "walk_b.gtd", &points, None, FileHistory::None);
+    harness.run_steps(3);
+
+    let current_source = if attached_recording_loaded {
+        "walk.gtd"
+    } else {
+        gt_ui_theme::EM_DASH
+    };
+    harness
+        .get(By::new().role(Role::ComboBox).value(current_source))
+        .click();
+    harness.run_steps(2);
+    let other = harness.bottommost_matching(By::new().label("walk_b.gtd"));
+    assert!(other.accesskit_node().is_disabled());
+    let position = other.rect().center();
+    harness.hover_at_and_settle(position, 3);
+    harness.get_by_label_contains("Remove the attachment first");
+    harness
+        .bottommost_matching(By::new().label("walk_b.gtd"))
+        .click();
+    harness.run_steps(2);
+
+    let log = harness.state().first_log().expect("the log stays loaded");
+    assert_eq!(
+        log.anchor_key(),
+        Some(&RecordingKey::Stored(db_ref.clone()))
+    );
+    assert_eq!(log.attachment(), attachment.as_ref());
+    assert_eq!(shown_log_target(&harness), target);
+
+    harness.get_by_label("Associated with").click();
+    harness.run_steps(2);
+    harness.get_by_label(log_viewer::DETACH_LABEL).click();
+    assert!(harness.step_until(|harness| {
+        harness
+            .state()
+            .first_log()
+            .is_some_and(|log| log.attachment().is_none())
+    }));
+    assert!(stored_attachments(&db_path, &db_ref).is_empty());
+
+    harness
+        .get(By::new().role(Role::ComboBox).value(current_source))
+        .click();
+    harness.run_steps(2);
+    let other = harness.bottommost_matching(By::new().label("walk_b.gtd"));
+    assert!(!other.accesskit_node().is_disabled());
+    other.click();
+    harness.run_steps(2);
+
+    let state = harness.state();
+    let log = state.first_log().expect("the log stays loaded");
+    let shared = state.shared.borrow();
+    let other = shared
+        .loaded_files
+        .view()
+        .entries()
+        .last()
+        .expect("recording B is loaded");
+    assert_eq!(
+        log.anchor_key(),
+        Some(&RecordingKey::of_loaded_recording(other))
+    );
+    assert_eq!(log.associated_recording(), Some(other.id()));
+    assert_eq!(log.attachment(), None);
 }
 
 /// The recording's database entry is gone by the time the attach runs: the
