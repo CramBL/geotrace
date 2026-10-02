@@ -140,33 +140,21 @@ fn parse_month_abbrev(s: &str) -> Option<u32> {
     u32::try_from(index.saturating_add(1)).ok()
 }
 
-/// Resolves the year the year-less syslog formats leave out, reading a
-/// timestamp more than an hour ahead of `now` as last year's.
-pub fn infer_year(naive: NaiveDateTime, now: DateTime<Utc>) -> DateTime<Utc> {
-    let current_year = now.year();
-    let candidate = naive.with_year(current_year).unwrap_or(naive).and_utc();
-    if candidate > now + Duration::hours(1) {
-        naive.with_year(current_year - 1).unwrap_or(naive).and_utc()
-    } else {
-        candidate
-    }
+/// Uses the latest valid year whose timestamp is at most one hour after `now`.
+pub fn infer_year(naive: NaiveDateTime, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    let latest = now.checked_add_signed(Duration::hours(1)).unwrap_or(now);
+    (0..=LEAP_YEAR_SEARCH_YEARS)
+        .filter_map(|offset| naive.with_year(now.year().checked_sub(offset)?))
+        .map(|candidate| candidate.and_utc())
+        .find(|candidate| *candidate <= latest)
 }
 
-/// Reads `line` as `format`, returning its timestamp and the message left after
-/// the timestamp. The message is a slice of `line`.
-pub(crate) fn parse_line(
-    line: &str,
-    format: LogFormat,
-    now: DateTime<Utc>,
-) -> Option<(DateTime<Utc>, &str)> {
+/// The parser uses the leap year 2000 for syslog dates until file-level year resolution.
+pub(crate) fn parse_line(line: &str, format: LogFormat) -> Option<(DateTime<Utc>, &str)> {
     match format {
-        LogFormat::SyslogShort => {
-            let (naive, rest) = parse_syslog(line, false)?;
-            Some((infer_year(naive, now), rest))
-        }
-        LogFormat::SyslogShortMicro => {
-            let (naive, rest) = parse_syslog(line, true)?;
-            Some((infer_year(naive, now), rest))
+        LogFormat::SyslogShort | LogFormat::SyslogShortMicro => {
+            let (naive, rest) = parse_syslog(line, format == LogFormat::SyslogShortMicro)?;
+            Some((naive.and_utc(), rest))
         }
         LogFormat::Iso8601Space => parse_iso_space(line),
         LogFormat::Iso8601T => parse_iso_t(line),
@@ -179,6 +167,9 @@ const MONTH_ABBREVS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
+// A leap day can be eight years from the next leap day across a century boundary.
+pub(crate) const LEAP_YEAR_SEARCH_YEARS: i32 = 8;
+
 #[cfg(test)]
 mod tests {
     use proptest::{prelude::*, proptest};
@@ -187,12 +178,6 @@ mod tests {
     use super::*;
     use crate::test_util;
     use crate::test_util::strategies::{self, GeneratedTimestamp};
-
-    /// A moment past every generated timestamp, so the year-less formats
-    /// resolve to the year the timestamp was generated in.
-    fn now() -> DateTime<Utc> {
-        test_util::utc(2030, 6, 1, 0, 0, 0)
-    }
 
     #[rstest]
     #[case("May 29 18:48:24 host proc: msg", Some(LogFormat::SyslogShort))]
@@ -240,7 +225,10 @@ mod tests {
             NaiveDate::from_ymd_opt(2000, month, day).expect("valid date"),
             NaiveTime::from_hms_opt(hour, minute, 0).expect("valid time"),
         );
-        assert_eq!(infer_year(naive, now).year(), expected_year);
+        assert_eq!(
+            infer_year(naive, now).map(|timestamp| timestamp.year()),
+            Some(expected_year)
+        );
     }
 
     proptest! {
@@ -256,7 +244,7 @@ mod tests {
             let line = format!("{text} {message}");
 
             prop_assert_eq!(detect_format(&line), Some(format));
-            let Some((moment, rest)) = parse_line(&line, format, now()) else {
+            let Some((moment, rest)) = parse_line(&line, format) else {
                 return Err(TestCaseError::fail(format!("{line:?} does not parse as {format:?}")));
             };
             prop_assert_eq!(rest, message.trim_start());

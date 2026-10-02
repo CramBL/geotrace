@@ -16,7 +16,7 @@ doctest = false
 fixtures = []
 
 [dependencies]
-chrono.workspace = true
+chrono = { workspace = true, features = ["serde"] }
 log.workspace = true
 parking_lot.workspace = true
 serde.workspace = true

@@ -29,10 +29,8 @@ fn line_of(text: &str, line_number: u32) -> &str {
 }
 
 proptest! {
-    /// A parse fails on one condition: no line before the summary block
-    /// carries a timestamp in the format the head of the log decided.
     #[test]
-    fn a_log_parses_exactly_when_a_line_outside_its_summary_block_is_timestamped(
+    fn a_log_with_timestamped_entries_parses_or_reports_inconsistent_exporter_bounds(
         text in strategies::any_log_text(),
     ) {
         let head_format = text
@@ -45,7 +43,7 @@ proptest! {
         let mut anchored = false;
         for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
             if head_format
-                .is_some_and(|format| format::parse_line(line, format, fixtures::now()).is_some())
+                .is_some_and(|format| format::parse_line(line, format).is_some())
             {
                 anchored = true;
                 break;
@@ -57,7 +55,12 @@ proptest! {
             }
         }
 
-        prop_assert_eq!(parse::parse_log(text.as_str().into(), fixtures::now()).is_ok(), anchored);
+        let outcome = parse::parse_log(text.as_str().into(), fixtures::now());
+        prop_assert_eq!(
+            outcome.is_ok()
+                || matches!(outcome, Err(parse::LogParseError::UnresolvedYear { .. })),
+            anchored
+        );
     }
 
     /// Whatever text a user drops on the app, every span the parse hands
@@ -164,7 +167,7 @@ proptest! {
             let line = line_of(&text, entry.line_number);
             prop_assert_eq!(
                 entry.is_anchored(),
-                format::parse_line(line, parsed.format(), fixtures::now()).is_some(),
+                format::parse_line(line, parsed.format()).is_some(),
                 "line {}: {:?}", entry.line_number, line
             );
         }

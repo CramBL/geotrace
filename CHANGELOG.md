@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- **Log Viewer:** GeoTrace resolves timestamps across calendar years and preserves their years when saved logs reopen.
+
 - **Interface:** History preserves readable recording identities and hides optional columns when the window narrows.
 
 - **Interface:** The Track data panel opens at the pointer when dragged out of its dock.

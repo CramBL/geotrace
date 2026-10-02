@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, mpsc},
 };
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use egui::Context;
 use gt_loaded_files::FileHistory;
 use gt_log_view::LogAttachmentRef;
@@ -83,6 +83,7 @@ pub(super) struct AttachedLogRestore {
     pub attachment: LogAttachmentRef,
     pub filters: Vec<StoredLogFilter>,
     pub requested_by: AttachedLogRequester,
+    pub year_reference: DateTime<Utc>,
 }
 
 /// What requested an attachment to be read back. The app opens the viewer on
@@ -545,6 +546,7 @@ impl LoadJobs {
             name,
             text,
             filters,
+            year_reference,
         } = log;
         self.loading_jobs.push(LoadingJob {
             id,
@@ -560,6 +562,7 @@ impl LoadJobs {
             attachment,
             filters,
             requested_by,
+            year_reference,
         };
         log::info!("Loading the log {name:?} stored with a recording in history");
         background_thread::spawn_or_panic(format!("load-log-{name}"), move || {
@@ -677,7 +680,10 @@ fn finish_log_load(
     report: impl Fn(f32, &'static str),
 ) {
     report(0.55, STAGE_PARSING);
-    let outcome = match gt_logfile::parse_log(text, Utc::now()) {
+    let year_reference = restored
+        .as_ref()
+        .map_or_else(Utc::now, |restored| restored.year_reference);
+    let outcome = match gt_logfile::parse_log(text, year_reference) {
         Ok(parsed) => {
             let unindexable_line_count = parsed.unindexable_line_count();
             if unindexable_line_count > 0 {
@@ -1420,6 +1426,38 @@ mod tests {
         };
         assert_eq!(filename, None);
         assert_eq!(parsed.entries().len(), 1);
+    }
+
+    #[test]
+    fn a_saved_log_restores_its_original_timestamp_reference() {
+        let reference = DateTime::parse_from_rfc3339("2026-10-01T00:00:00Z")
+            .expect("reference date")
+            .to_utc();
+        let text = "Dec 31 23:59:59 before\nJan  1 00:00:01 after\n";
+        let original =
+            gt_logfile::parse_log(text.into(), reference).expect("parse the original log");
+        let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
+        jobs.spawn_attached_log(
+            AttachedLog {
+                name: "syslog.log".to_owned(),
+                text: text.to_owned(),
+                filters: Vec::new(),
+                year_reference: original.year_reference(),
+            },
+            LogAttachmentRef {
+                recording: gt_store::DatabaseRef {
+                    identity: "device".to_owned(),
+                    group_name: "recording".to_owned(),
+                },
+                id: gt_store::LogAttachmentId::new_random(),
+            },
+            AttachedLogRequester::RecordingLoad,
+        );
+        let completed = drain_until_complete(&mut jobs);
+        let LoadOutcome::Log { parsed, .. } = completed.outcome.expect("restore the log") else {
+            panic!("expected a log outcome");
+        };
+        assert_eq!(parsed, original);
     }
 
     /// A log opened from a path is named after the file it was read from.

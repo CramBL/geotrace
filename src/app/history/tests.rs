@@ -123,6 +123,7 @@ fn history_harness_with_recording(identity: &str, stored_logs: &[&str]) -> Histo
                 name,
                 text: &stored_log_text(name),
                 filters: Vec::new(),
+                year_reference: None,
             },
         )
         .expect("attach a log to the recording");
@@ -926,6 +927,7 @@ fn history_harness_with_a_shelf_over_more_recordings() -> HistoryHarness {
                     name: &name,
                     text: &stored_log_text(&name),
                     filters: Vec::new(),
+                    year_reference: None,
                 },
             )
             .expect("attach a log to the recording");

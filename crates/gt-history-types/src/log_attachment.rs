@@ -12,6 +12,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -149,6 +150,10 @@ pub struct LogAttachment {
 
     /// The filter stack the log was attached with, restored with it.
     pub filters: Vec<StoredLogFilter>,
+
+    /// The original reference for timestamps without a year. Absent in older attachments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year_reference: Option<DateTime<Utc>>,
 }
 
 impl LogAttachment {
@@ -158,6 +163,7 @@ impl LogAttachment {
             name,
             content_hash,
             filters,
+            year_reference: None,
         }
     }
 
@@ -368,8 +374,10 @@ mod tests {
             name in ".*",
             log in proptest::collection::vec(any::<u8>(), 0..256),
             filters in filters(),
+            reference_seconds in proptest::option::of(0i64..4_102_444_800),
         ) {
-            let attachment = LogAttachment::new(name, LogContentHash::of_log_bytes(&log), filters);
+            let mut attachment = LogAttachment::new(name, LogContentHash::of_log_bytes(&log), filters);
+            attachment.year_reference = reference_seconds.and_then(|seconds| DateTime::from_timestamp(seconds, 0));
             let json = attachment.to_attribute_json().expect("encode");
             prop_assert_eq!(LogAttachment::from_attribute_json(&json), Some(attachment));
         }

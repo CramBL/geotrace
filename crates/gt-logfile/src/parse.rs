@@ -16,6 +16,7 @@ use crate::{
     structure::{StructuralExtent, StructuralLine, StructuralLineKind},
     summary::{self, EntryCountMismatch, SummaryBlock},
     text::LogText,
+    years,
 };
 
 /// A byte range of a [`ParsedLog`]'s text, read with [`TextSlice::in_text`].
@@ -100,6 +101,7 @@ pub struct ParsedLog {
     anchored_entry_count: usize,
     unindexable_line_count: usize,
     replaced_byte_count: usize,
+    year_reference: DateTime<Utc>,
 }
 
 impl ParsedLog {
@@ -191,6 +193,10 @@ impl ParsedLog {
         self.replaced_byte_count
     }
 
+    pub fn year_reference(&self) -> DateTime<Utc> {
+        self.year_reference
+    }
+
     pub fn message(&self, entry: &LogEntry) -> &str {
         entry.message.in_text(&self.text)
     }
@@ -225,35 +231,37 @@ pub enum LogParseError {
          (first line: {first_line:?})"
     )]
     NoRecognisedFormat { first_line: String },
+    #[error(
+        "Cannot resolve the year of log line {line_number} from its chronology, reference date and exporter bounds"
+    )]
+    UnresolvedYear { line_number: u32 },
 }
 
-/// Reads `text` into entries, taking the format from the head of the log and
-/// resolving the year of the year-less syslog formats against `now`.
-///
-/// Every non-empty line is kept: one that carries no timestamp of that format
-/// is either a structural line of a recognized exporter idiom or an entry
-/// timestamped from its anchored neighbours. Only a line the index cannot
-/// address is dropped.
-pub fn parse_log(text: LogText, now: DateTime<Utc>) -> Result<ParsedLog, LogParseError> {
-    parse_log_in_chunks_of(text, now, CHUNK_TARGET_BYTES)
+/// Saved logs must reuse `year_reference` when exporter bounds are absent.
+/// Syslog years resolve in file order before boot segmentation and interpolation.
+pub fn parse_log(text: LogText, year_reference: DateTime<Utc>) -> Result<ParsedLog, LogParseError> {
+    parse_log_in_chunks_of(text, year_reference, CHUNK_TARGET_BYTES)
 }
 
 /// Reads `text` as [`parse_log`] does, over chunks of `chunk_target_bytes`, so
 /// a test drives the chunk merge over a log of any length.
 pub fn parse_log_in_chunks_of(
     text: LogText,
-    now: DateTime<Utc>,
+    year_reference: DateTime<Utc>,
     chunk_target_bytes: NonZeroUsize,
 ) -> Result<ParsedLog, LogParseError> {
     let (text, replaced_byte_count) = text.into_parts();
     let format = detect_head_format(&text)?;
-    let hostname_column = detect_hostname_column(&text, format, now);
+    let hostname_column = detect_hostname_column(&text, format);
     let layout = LogLayout {
         format,
         hostname_column,
     };
-    let mut index = index_lines_in_file_order(&text, layout, now, chunk_target_bytes);
+    let mut index = index_lines_in_file_order(&text, layout, chunk_target_bytes);
     let summary_block = index.take_trailing_summary_block(&text);
+    if matches!(format, LogFormat::SyslogShort | LogFormat::SyslogShortMicro) {
+        years::resolve_years(&mut index.entries, summary_block.as_ref(), year_reference)?;
+    }
 
     let mut anchored_entry_count = 0;
     let mut first_anchor = None;
@@ -286,6 +294,7 @@ pub fn parse_log_in_chunks_of(
         anchored_entry_count,
         unindexable_line_count: index.unindexable_line_count,
         replaced_byte_count,
+        year_reference,
     })
 }
 
@@ -326,11 +335,11 @@ struct LogLayout {
 /// Reads the head of the log for the `journalctl` shape - a word with no colon
 /// before a word ending in one - and takes the shape most of those lines have
 /// for the whole log.
-fn detect_hostname_column(text: &str, format: LogFormat, now: DateTime<Utc>) -> HostnameColumn {
+fn detect_hostname_column(text: &str, format: LogFormat) -> HostnameColumn {
     let mut read = 0_usize;
     let mut with_a_hostname = 0_usize;
     for line in text.lines().take(HOSTNAME_DETECTION_LINE_LIMIT) {
-        let Some((_, message)) = format::parse_line(line.trim(), format, now) else {
+        let Some((_, message)) = format::parse_line(line.trim(), format) else {
             continue;
         };
         read += 1;
@@ -518,10 +527,9 @@ impl LineIndex {
         &mut self,
         line: PositionedLine<'text>,
         layout: LogLayout,
-        now: DateTime<Utc>,
         services: &mut ServiceTable<'text>,
     ) {
-        if let Some((timestamp, message)) = format::parse_line(line.trimmed, layout.format, now) {
+        if let Some((timestamp, message)) = format::parse_line(line.trimmed, layout.format) {
             self.push_anchored_entry(line, timestamp, message, layout.hostname_column, services);
             return;
         }
@@ -660,26 +668,23 @@ impl LineIndex {
 fn index_lines_in_file_order(
     text: &str,
     layout: LogLayout,
-    now: DateTime<Utc>,
     chunk_target_bytes: NonZeroUsize,
 ) -> LineIndex {
     let chunks = newline_aligned_chunks(text, chunk_target_bytes);
     match chunks.as_slice() {
         [] => LineIndex::default(),
-        [only] => only.parse(layout, now),
+        [only] => only.parse(layout),
         many => match pool::log_worker_pool() {
             Some(pool) => pool.install(|| {
-                let per_chunk: Vec<LineIndex> = many
-                    .par_iter()
-                    .map(|chunk| chunk.parse(layout, now))
-                    .collect();
+                let per_chunk: Vec<LineIndex> =
+                    many.par_iter().map(|chunk| chunk.parse(layout)).collect();
                 LineIndex::concatenated(text, &per_chunk)
             }),
             None => LineIndex::concatenated(
                 text,
                 &many
                     .iter()
-                    .map(|chunk| chunk.parse(layout, now))
+                    .map(|chunk| chunk.parse(layout))
                     .collect::<Vec<_>>(),
             ),
         },
@@ -725,7 +730,7 @@ fn newline_aligned_chunks(text: &str, chunk_target_bytes: NonZeroUsize) -> Vec<L
 impl LogChunk<'_> {
     /// Indexes every line of this chunk against the offsets of the whole log
     /// text, numbering lines from the head of the chunk.
-    fn parse(&self, layout: LogLayout, now: DateTime<Utc>) -> LineIndex {
+    fn parse(&self, layout: LogLayout) -> LineIndex {
         let mut index = LineIndex::default();
         let mut services = ServiceTable::default();
         for line in positioned_lines(self.text, self.offset_in_text, 1) {
@@ -733,7 +738,7 @@ impl LogChunk<'_> {
             if line.trimmed.is_empty() {
                 continue;
             }
-            index.push_classified_line(line, layout, now, &mut services);
+            index.push_classified_line(line, layout, &mut services);
         }
         index.services = services.names;
         index

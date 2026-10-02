@@ -2,8 +2,8 @@
 
 use std::num::NonZeroUsize;
 
-use chrono::DateTime;
-use gt_logfile::{LogText, ParsedLog, RecognisedLevel, RecognisedService, TextSlice};
+use chrono::{DateTime, Duration, Utc};
+use gt_logfile::{LogFormat, LogText, ParsedLog, RecognisedLevel, RecognisedService, TextSlice};
 use libfuzzer_sys::fuzz_target;
 
 // Feed arbitrary bytes to the log parser. It must return `Ok`/`Err` and index
@@ -12,10 +12,58 @@ use libfuzzer_sys::fuzz_target;
 fuzz_target!(|data: &[u8]| {
     let now = DateTime::from_timestamp(NOW_UNIX_SECS, 0).unwrap_or(DateTime::UNIX_EPOCH);
     let text = LogText::decode_lossy(data);
+    for reference in [DateTime::<Utc>::MIN_UTC, DateTime::<Utc>::MAX_UTC] {
+        if let Ok(parsed) = gt_logfile::parse_log(text.clone(), reference) {
+            for entry in parsed.entries().iter().filter(|entry| entry.is_anchored()) {
+                if let Some(inferred) =
+                    gt_logfile::infer_year(entry.timestamp.naive_utc(), reference)
+                {
+                    let latest = reference
+                        .checked_add_signed(Duration::hours(1))
+                        .unwrap_or(reference);
+                    assert!(inferred <= latest);
+                }
+            }
+            let without_bounds = parsed.summary_block().is_none_or(|summary| {
+                summary.logs_begin_at.is_none() && summary.logs_end_at.is_none()
+            });
+            if without_bounds
+                && matches!(
+                    parsed.format(),
+                    LogFormat::SyslogShort | LogFormat::SyslogShortMicro
+                )
+            {
+                let last = parsed
+                    .entries()
+                    .iter()
+                    .rfind(|entry| entry.is_anchored())
+                    .expect("a parsed log has an anchor");
+                let latest = reference
+                    .checked_add_signed(Duration::hours(1))
+                    .unwrap_or(reference);
+                assert!(last.timestamp <= latest);
+            }
+        }
+    }
     let Ok(parsed) = gt_logfile::parse_log(text.clone(), now) else {
         return;
     };
     check_the_parse_indexes_what_it_read(&parsed);
+    if let Some(summary) = parsed.summary_block().filter(|_| {
+        matches!(
+            parsed.format(),
+            LogFormat::SyslogShort | LogFormat::SyslogShortMicro
+        )
+    }) {
+        for entry in parsed.entries() {
+            assert!(summary
+                .logs_begin_at
+                .is_none_or(|begin| entry.timestamp >= begin));
+            assert!(summary
+                .logs_end_at
+                .is_none_or(|end| entry.timestamp.timestamp() <= end.timestamp()));
+        }
+    }
 
     if data.len() <= CHUNKED_COMPARISON_LIMIT_BYTES {
         assert_eq!(

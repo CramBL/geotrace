@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
+use chrono::DateTime;
 use gt_history_types::fixtures;
 use gt_store::{
     DatabaseRef, HistoryDatabase as _, LogAttachmentError, LogAttachmentId, LogAttachments as _,
@@ -59,6 +60,7 @@ impl RecordedStore {
                     name,
                     text,
                     filters: fixtures::log_filters(),
+                    year_reference: None,
                 },
             )
             .expect("attach")
@@ -108,6 +110,41 @@ fn an_attached_log_comes_back_with_its_name_text_and_filters() {
     assert_eq!(attached.name, "navsyncd.log");
     assert_eq!(attached.text, LOG_TEXT);
     assert_eq!(attached.filters, fixtures::log_filters());
+    assert_eq!(attached.year_reference.timestamp_micros(), 1_000_000_019);
+}
+
+#[test_log::test]
+fn a_saved_year_reference_survives_filter_updates_and_reopening() {
+    let mut recorded = RecordedStore::new();
+    let year_reference = DateTime::parse_from_rfc3339("2026-10-01T00:00:00Z")
+        .expect("reference date")
+        .to_utc();
+    let attached = recorded
+        .recordings
+        .attach_log(
+            &recorded.recording,
+            &LogToAttach {
+                name: "syslog.log",
+                text: "Dec 31 23:59:59 before\nJan  1 00:00:01 after\n",
+                filters: fixtures::log_filters(),
+                year_reference: Some(year_reference),
+            },
+        )
+        .expect("attach with a reference");
+    recorded
+        .recordings
+        .set_attached_log_filters(&recorded.recording, attached.id, Vec::new())
+        .expect("update filters");
+    let reopened = recorded
+        .store
+        .open_recordings_read_only()
+        .expect("reopen the database")
+        .expect("the database exists");
+    let restored = reopened
+        .load_attached_log(&recorded.recording, attached.id)
+        .expect("restore the log");
+    assert_eq!(restored.year_reference, year_reference);
+    assert_eq!(restored.filters, []);
 }
 
 /// The attach returns the entry the recording now lists.
@@ -123,6 +160,7 @@ fn attaching_returns_the_attachment_the_recording_now_lists() {
                 name: "navsyncd.log",
                 text: LOG_TEXT,
                 filters: fixtures::log_filters(),
+                year_reference: None,
             },
         )
         .expect("attach");
@@ -297,6 +335,7 @@ fn attaching_to_a_deleted_recording_fails_and_stores_no_log() {
             name: "navsyncd.log",
             text: LOG_TEXT,
             filters: fixtures::log_filters(),
+            year_reference: None,
         },
     );
 

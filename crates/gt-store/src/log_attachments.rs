@@ -13,6 +13,7 @@ use std::{
     string::FromUtf8Error,
 };
 
+use chrono::{DateTime, Utc};
 use gt_history::{
     DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentEntry, LogAttachmentId,
     LogContentHash, ReadOnlyHistoryDatabase, StoredLogFilter, log_attachment,
@@ -30,6 +31,9 @@ pub struct LogToAttach<'a> {
 
     /// The filter stack to restore the log with.
     pub filters: Vec<StoredLogFilter>,
+
+    /// `None` selects the recording's end time on restore.
+    pub year_reference: Option<DateTime<Utc>>,
 }
 
 /// A log read back from an attachment.
@@ -38,6 +42,7 @@ pub struct AttachedLog {
     pub name: String,
     pub text: String,
     pub filters: Vec<StoredLogFilter>,
+    pub year_reference: DateTime<Utc>,
 }
 
 #[derive(Debug, Error)]
@@ -114,11 +119,24 @@ pub trait ReadOnlyLogAttachments: ReadOnlyHistoryDatabase {
             });
         }
 
+        let year_reference = match attachment.year_reference {
+            Some(reference) => reference,
+            None => {
+                let recording = self
+                    .list_recordings()?
+                    .into_iter()
+                    .find(|entry| &entry.db_ref == db_ref)
+                    .ok_or_else(|| DbError::Backend(format!("Recording {db_ref} is missing")))?;
+                DateTime::from_timestamp_micros(recording.meta.stored_end_us())
+                    .unwrap_or(DateTime::UNIX_EPOCH)
+            }
+        };
         Ok(AttachedLog {
             name: attachment.name,
             text: String::from_utf8(bytes)
                 .map_err(|source| LogAttachmentError::NotUtf8 { id, source })?,
             filters: attachment.filters,
+            year_reference,
         })
     }
 }
@@ -150,11 +168,12 @@ pub trait LogAttachments: HistoryDatabase {
             }
         })?;
 
-        let attachment = LogAttachment::new(
+        let mut attachment = LogAttachment::new(
             log.name.to_owned(),
             LogContentHash::of_log_bytes(log.text.as_bytes()),
             log.filters.clone(),
         );
+        attachment.year_reference = log.year_reference;
         if let Err(err) = self.write_log_attachment_attribute(db_ref, id, &attachment) {
             log_attachment::delete_files(&directory, &[id]);
             return Err(err.into());
@@ -203,7 +222,8 @@ pub trait LogAttachments: HistoryDatabase {
             .ok_or(LogAttachmentError::UnknownAttachment { id })?
             .attachment;
 
-        let updated = LogAttachment::new(stored.name, stored.content_hash, filters);
+        let mut updated = stored;
+        updated.filters = filters;
         self.write_log_attachment_attribute(db_ref, id, &updated)?;
         Ok(())
     }

@@ -165,6 +165,7 @@ mod tests {
     use proptest::{prelude::*, proptest};
 
     use super::*;
+    use crate::test_util::EXPORTED_SUMMARY;
     use crate::test_util::strategies::{self, GeneratedSummaryBlock};
 
     fn parse(block: &str) -> SummaryBlock {
@@ -173,7 +174,7 @@ mod tests {
 
     #[test]
     fn an_exported_block_yields_every_figure_it_states() {
-        let summary = parse(EXPORTED_BLOCK);
+        let summary = parse(EXPORTED_SUMMARY);
         assert_eq!(summary.device_type.as_deref(), Some("nav-devkit-mk2"));
         assert_eq!(
             summary.logs_begin_at,
@@ -228,7 +229,7 @@ mod tests {
     /// order is by errors first.
     #[test]
     fn the_two_tables_merge_into_one_row_per_service_worst_first() {
-        let summary = parse(EXPORTED_BLOCK);
+        let summary = parse(EXPORTED_SUMMARY);
         assert_eq!(
             summary.service_counts_by_errors_descending(),
             [
@@ -281,18 +282,4 @@ mod tests {
             prop_assert_eq!(parse_summary_block(text.lines().map(str::trim)), stated);
         }
     }
-
-    /// The block a real journald export ends with, shortened to two rows per table.
-    const EXPORTED_BLOCK: &str = "\
------------ Journal summary -----------
-Device type: nav-devkit-mk2
-Logs begin at: Thu 29-May-2025 18:48:25 UTC
-Logs end at  : Fri 26-Jun-2026 07:59:50 UTC
-Log entries: 622286
---- Service error count ---
-hal-powerd           -> 56429 Errors
-ofonod               -> 1092 Errors
---- Service warning count ---
-core-appd               -> 29562 Warnings
-kernel               -> 315 Warnings";
 }
