@@ -56,7 +56,7 @@ impl App {
         self.assoc_config = AssociationConfig {
             log_association_window_s: s.processing.log_association_window_s,
         };
-        self.ask_log_association_target = s.processing.ask_log_association_target;
+        self.initial_position_source_policy = s.processing.initial_position_source_policy;
         self.ctx
             .set_theme(super::theme_pref_from_setting(s.ui.theme));
 
@@ -198,7 +198,7 @@ impl App {
                 debug_time_repair_backward_jump_threshold_seconds: self
                     .debug_time_repair_threshold_seconds,
                 log_association_window_s: self.assoc_config.log_association_window_s,
-                ask_log_association_target: self.ask_log_association_target,
+                initial_position_source_policy: self.initial_position_source_policy,
                 detect_gnss_fix_lost: self
                     .processing_config
                     .generated_markers

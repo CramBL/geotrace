@@ -19,6 +19,7 @@ use crate::app::log_viewer::association_dialog::AUTOMATIC_POSITION_SOURCE_HOVER;
 use crate::app::settings_ui::SettingsPage;
 use crate::app::settings_ui::analysis::CLOCK_OFFSET_EXCURSION_LABEL;
 use crate::app::settings_ui::label::SettingsLabel;
+use crate::settings::InitialPositionSourcePolicy;
 
 impl App {
     /// Returns `true` in the frame when the user clicks "Apply to loaded data".
@@ -93,7 +94,7 @@ impl App {
                 self.assoc_config.log_association_window_s = window_s;
                 ui.end_row();
 
-                let mut automatically_choose_position_source = !self.ask_log_association_target;
+                let mut automatically_choose_position_source = self.initial_position_source_policy.automatically_chooses_position_source();
                 SettingsLabel {
                     icon: ICON_CHAT_CIRCLE_TEXT,
                     text: "Automatically choose an\nunambiguous log position source",
@@ -102,7 +103,7 @@ impl App {
                 .on_hover_text(AUTOMATIC_POSITION_SOURCE_HOVER);
                 ui.checkbox(&mut automatically_choose_position_source, "")
                     .on_hover_text(AUTOMATIC_POSITION_SOURCE_HOVER);
-                self.ask_log_association_target = !automatically_choose_position_source;
+                self.initial_position_source_policy = InitialPositionSourcePolicy::from_automatic_selection(automatically_choose_position_source);
                 ui.end_row();
             });
 
@@ -126,7 +127,7 @@ impl App {
                 self.debug_time_repair_threshold_seconds =
                     defaults.debug_time_repair_backward_jump_threshold_seconds;
                 self.assoc_config.log_association_window_s = defaults.log_association_window_s;
-                self.ask_log_association_target = defaults.ask_log_association_target;
+                self.initial_position_source_policy = defaults.initial_position_source_policy;
                 self.processing_config
                     .generated_markers
                     .detect_gnss_fix_lost = defaults.detect_gnss_fix_lost;

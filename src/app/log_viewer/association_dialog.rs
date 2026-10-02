@@ -15,6 +15,7 @@ use crate::app::anchored_dialog::{AnchoredDialog, AnchoredDialogKind};
 use crate::app::history_db::ExistingLogAttachment;
 use crate::app::modals::{DialogActionRow, DialogBody};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
+use crate::settings::InitialPositionSourcePolicy;
 
 use super::NO_OVERLAP_HOVER;
 
@@ -115,7 +116,7 @@ impl LogAssociationDialog {
         recordings: LoadedFilesView<'_>,
         recording_names: &RecordingNames,
         write_access: WriteAccess,
-        ask_log_association_target: &mut bool,
+        initial_position_source_policy: &mut InitialPositionSourcePolicy,
     ) -> Option<LogAssociationChoice> {
         let escape_pressed =
             ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
@@ -133,7 +134,8 @@ impl LogAssociationDialog {
         let mut open = true;
         // Read after the window renders: the body's tickbox writes `attach`.
         let mut confirmed = false;
-        let mut automatically_choose_position_source = !*ask_log_association_target;
+        let mut automatically_choose_position_source =
+            initial_position_source_policy.automatically_chooses_position_source();
         let dialog = AnchoredDialog::new(AnchoredDialogKind::AssociateLog, TITLE)
             .with_close_button(&mut open);
         let regions = dialog.regions();
@@ -194,7 +196,9 @@ impl LogAssociationDialog {
             }),
         );
 
-        *ask_log_association_target = !automatically_choose_position_source;
+        *initial_position_source_policy = InitialPositionSourcePolicy::from_automatic_selection(
+            automatically_choose_position_source,
+        );
         if confirmed {
             choice = Some(LogAssociationChoice::Confirmed {
                 target: self.selected,

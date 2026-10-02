@@ -1,6 +1,8 @@
 use std::time::{Duration, Instant};
 use strum::EnumCount;
 
+use crate::settings::InitialPositionSourcePolicy;
+
 /// `f32` stored as its bit pattern so `AppSnapshot` can derive `PartialEq`
 /// without triggering the `float_cmp` lint.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -67,7 +69,7 @@ pub(super) struct AppSnapshot {
     pub track_split_gap_seconds: u64,
     pub debug_time_repair_backward_jump_threshold_seconds: u32,
     pub log_association_window_s: u64,
-    pub ask_log_association_target: bool,
+    pub initial_position_source_policy: InitialPositionSourcePolicy,
     pub detect_gnss_fix_lost: bool,
     pub detect_gnss_fix_regained: bool,
     pub detect_clock_discontinuities: bool,
@@ -141,7 +143,7 @@ impl Default for AppSnapshot {
             debug_time_repair_backward_jump_threshold_seconds: processing
                 .debug_time_repair_backward_jump_threshold_seconds,
             log_association_window_s: 60,
-            ask_log_association_target: processing.ask_log_association_target,
+            initial_position_source_policy: processing.initial_position_source_policy,
             detect_gnss_fix_lost: processing.detect_gnss_fix_lost,
             detect_gnss_fix_regained: processing.detect_gnss_fix_regained,
             detect_clock_discontinuities: processing.detect_clock_discontinuities,
