@@ -1,11 +1,3 @@
-//! Where a dialog's controls are while its content changes size, and what a
-//! press aimed at one of them reaches.
-//!
-//! These tests pin the case where the pointer rests on a control for as long
-//! as the user takes to decide and the dialog's content arrives in the
-//! meantime. [`crate::app::anchored_dialog`] states what egui does with such a
-//! press.
-
 use std::cell::RefCell;
 
 use chrono::Duration;

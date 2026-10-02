@@ -12,9 +12,10 @@
 use egui_kittest::Harness;
 use egui_kittest::kittest::{By, Queryable as _};
 use gt_test_utils::{AuditedWindow, HarnessInteraction as _, WindowFitAssertions as _};
+use gt_ui_components::HeldBodyLines;
 use strum::IntoEnumIterator as _;
 
-use super::{AnchoredDialog, AnchoredDialogKind, HeldBodyLines};
+use super::{AnchoredDialog, AnchoredDialogKind};
 use crate::app::modals::{DialogActionRow, DialogBody};
 
 struct DialogUnderTest {
@@ -56,7 +57,7 @@ fn dialog_ui(ui: &mut egui::Ui, state: &mut DialogUnderTest) {
         ui.ctx(),
         DialogBody::new(|ui| {
             ui.label(PROMPT);
-            regions.frozen_at_open(
+            regions.freeze_at_open_ui(
                 ui,
                 RESULT_REGION,
                 HeldBodyLines::at_least(RESERVED_RESULT_LINES),

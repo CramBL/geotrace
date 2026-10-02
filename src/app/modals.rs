@@ -12,14 +12,12 @@ use gt_map::{MapLayer, NavMap};
 use gt_side_panel::{NodeKey, RecordingDetails, TreeState};
 use gt_store::{DatabaseRef, EnvironmentArchive};
 use gt_types::{LoadWarning, TrackAggregates, TrackRef};
-use gt_ui_components::{DetailRow, DetailsLayout, MetadataView};
+use gt_ui_components::{DetailRow, DetailsLayout, FrozenRegions, HeldBodyLines, MetadataView};
 use strum::IntoEnumIterator as _;
 
 use gt_loaded_files::{LoadedFiles, LoadedFilesView, RecordingNames};
 
-use crate::app::anchored_dialog::{
-    AnchoredDialog, AnchoredDialogKind, DialogRegions, HeldBodyLines,
-};
+use crate::app::anchored_dialog::{AnchoredDialog, AnchoredDialogKind};
 use crate::app::environment_storage::{CoveredDayCounts, PruneRequest, PruneScope, PrunedDays};
 use crate::app::mapbox_token;
 use crate::app::mapbox_token::{MapboxTokenCommit, MapboxTokenField};
@@ -230,7 +228,7 @@ pub(super) fn anchored_confirmation_dialog<T>(
     kind: AnchoredDialogKind,
     title: impl Into<String>,
     escape_choice: T,
-    body: impl FnOnce(&mut egui::Ui, DialogRegions),
+    body: impl FnOnce(&mut egui::Ui, FrozenRegions),
     buttons: impl FnOnce(&mut egui::Ui) -> Option<T>,
 ) -> Option<T> {
     let mut choice = consume_escape_press(ctx, escape_choice);
@@ -301,10 +299,10 @@ pub fn show_shelve_confirmation(
     dialog.show(
         ui.ctx(),
         DialogBody::new(|ui| {
-            regions.frozen_at_open(
+            regions.freeze_at_open_ui(
                 ui,
                 SHELVED_ITEMS_REGION,
-                HeldBodyLines::what_the_content_took().and_at_most(SHELVED_ITEMS_MOST_LINES),
+                HeldBodyLines::measured_content().and_at_most(SHELVED_ITEMS_MOST_LINES),
                 |ui| {
                     let items: Vec<_> = tree
                         .shelve_confirm
@@ -364,7 +362,7 @@ pub fn show_shelve_confirmation(
                 )
             };
             ui.label(RichText::new(detail).weak().small());
-            regions.frozen_at_open(
+            regions.freeze_at_open_ui(
                 ui,
                 ATTACHED_LOGS_REGION,
                 HeldBodyLines::at_least(ATTACHED_LOGS_LINES),
@@ -754,10 +752,10 @@ pub fn show_about_dialog(ui: &egui::Ui, open: &mut bool, version: &str) {
     dialog.show(
         ui.ctx(),
         DialogBody::new(|ui| {
-            regions.frozen_at_open(
+            regions.freeze_at_open_ui(
                 ui,
                 ABOUT_BODY_REGION,
-                HeldBodyLines::what_the_content_took(),
+                HeldBodyLines::measured_content(),
                 |ui| {
                     // Selectable: the version is what a bug report quotes.
                     ui.add(
@@ -849,10 +847,10 @@ pub fn show_snap_consent_dialog(
     dialog.show(
         ui.ctx(),
         DialogBody::new(|ui| {
-            regions.frozen_at_open(
+            regions.freeze_at_open_ui(
                 ui,
                 SNAP_CONSENT_BODY_REGION,
-                HeldBodyLines::what_the_content_took(),
+                HeldBodyLines::measured_content(),
                 |ui| {
                     ui.label(
                         "Snap to road matches a recorded track against the OpenStreetMap road \
@@ -952,10 +950,10 @@ pub fn show_snap_replace_dialog(ui: &egui::Ui, costing_name: &str) -> Option<Sna
     dialog.show(
         ui.ctx(),
         DialogBody::new(|ui| {
-            regions.frozen_at_open(
+            regions.freeze_at_open_ui(
                 ui,
                 SNAP_REPLACE_BODY_REGION,
-                HeldBodyLines::what_the_content_took(),
+                HeldBodyLines::measured_content(),
                 |ui| {
                     ui.label(format!(
                         "This track already has snap to road data for {costing_name}."
@@ -1051,7 +1049,7 @@ pub fn show_snap_scope_dialog(
                     row("All", counts.all);
                 });
             ui.add_space(4.0);
-            regions.frozen_at_open(
+            regions.freeze_at_open_ui(
                 ui,
                 REPLACED_DATA_REGION,
                 HeldBodyLines::at_least(REPLACED_DATA_LINES),
@@ -1150,10 +1148,10 @@ pub fn show_snap_auto_prompt(ui: &egui::Ui, server_url: &str) -> Option<SnapAuto
     dialog.show(
         ui.ctx(),
         DialogBody::new(|ui| {
-            regions.frozen_at_open(
+            regions.freeze_at_open_ui(
                 ui,
                 SNAP_AUTO_PROMPT_BODY_REGION,
-                HeldBodyLines::what_the_content_took(),
+                HeldBodyLines::measured_content(),
                 |ui| {
                     ui.label(
                         "Snap to road can run automatically: every track you load and show on \
@@ -1203,10 +1201,10 @@ pub fn show_mapbox_token_dialog(
     let cancelled = dialog.show(
         ui.ctx(),
         DialogBody::new(|ui| {
-            regions.frozen_at_open(
+            regions.freeze_at_open_ui(
                 ui,
                 MAPBOX_TOKEN_BODY_REGION,
-                HeldBodyLines::what_the_content_took(),
+                HeldBodyLines::measured_content(),
                 |ui| {
                     ui.label("Satellite view requires a Mapbox API token");
                     ui.label("Get one free at mapbox.com");
@@ -1277,7 +1275,7 @@ pub fn show_environment_prune_confirmation(
                     }
                 });
 
-            regions.frozen_at_open(
+            regions.freeze_at_open_ui(
                 ui,
                 LOADED_RECORDINGS_REGION,
                 HeldBodyLines::at_least(LOADED_RECORDINGS_LINES)
@@ -1473,10 +1471,10 @@ pub fn show_force_quit_confirmation(
                 }
             }
             ui.add_space(4.0);
-            regions.frozen_at_open(
+            regions.freeze_at_open_ui(
                 ui,
                 INTERRUPTION_COSTS_REGION,
-                HeldBodyLines::what_the_content_took(),
+                HeldBodyLines::measured_content(),
                 |ui| {
                     let ForceQuitPromptContents::InterruptionCosts(costs) = contents else {
                         return;

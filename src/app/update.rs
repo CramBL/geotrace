@@ -29,9 +29,10 @@ use egui::{Button, Label, RichText};
 use std::{sync::Arc, thread};
 
 use axoupdater::{AxoUpdater, ReleaseSource, ReleaseSourceType};
+use gt_ui_components::HeldBodyLines;
 use parking_lot::Mutex;
 
-use crate::app::anchored_dialog::{AnchoredDialog, AnchoredDialogKind, HeldBodyLines};
+use crate::app::anchored_dialog::{AnchoredDialog, AnchoredDialogKind};
 use crate::app::modals::{DialogActionRow, DialogBody};
 
 /// Result of the background version check.
@@ -181,7 +182,7 @@ impl UpdateChecker {
                     ))
                     .wrap(),
                 );
-                regions.frozen_at_open(
+                regions.freeze_at_open_ui(
                     ui,
                     INSTALL_STATUS_REGION,
                     HeldBodyLines::at_least(INSTALL_STATUS_LEAST_LINES)
