@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- **Log Viewer:** GeoTrace ranks position sources by track time coverage, excluding gaps between tracks.
+
 - **Log Viewer:** GeoTrace resolves timestamps across calendar years and preserves their years when saved logs reopen.
 
 - **Interface:** History preserves readable recording identities and hides optional columns when the window narrows.
