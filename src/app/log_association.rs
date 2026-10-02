@@ -310,7 +310,6 @@ impl App {
             return;
         };
         let name = log.name().to_owned();
-        let text = Arc::clone(log.parsed().text());
         let filters = log.filters().to_stored_filters();
         let shared = self.shared.borrow();
         let db_ref = target
@@ -336,7 +335,9 @@ impl App {
                     existing.name
                 ));
             }
-            None => self.history.attach_log(db_ref, log_id, name, text, filters),
+            None => self
+                .history
+                .attach_log(db_ref, log_id, name, log.parsed(), filters),
         }
     }
 

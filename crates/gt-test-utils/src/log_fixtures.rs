@@ -62,8 +62,8 @@ pub fn synthetic_journald_log(spec: SyntheticLogSpec) -> String {
     let mut rng = DeterministicRng::new(seed);
     let mut text = String::with_capacity(approx_bytes);
     let mut time = synthetic_log_start();
-    let mut first_entry_time = None;
-    let mut last_entry_time = time;
+    let mut earliest_entry_time: Option<DateTime<Utc>> = None;
+    let mut latest_entry_time: Option<DateTime<Utc>> = None;
     let mut entry_count: u64 = 0;
 
     while text.len() < approx_bytes {
@@ -108,17 +108,19 @@ pub fn synthetic_journald_log(spec: SyntheticLogSpec) -> String {
             );
             entry_count += 1;
         }
-        first_entry_time.get_or_insert(time);
-        last_entry_time = time;
+        earliest_entry_time = Some(earliest_entry_time.map_or(time, |earliest| earliest.min(time)));
+        latest_entry_time = Some(latest_entry_time.map_or(time, |latest| latest.max(time)));
         entry_count += 1;
     }
 
-    if let Some(logs_begin_at) = first_entry_time {
+    if let Some(logs_begin_at) = earliest_entry_time
+        && let Some(logs_end_at) = latest_entry_time
+    {
         write_summary_block(
             &mut text,
             &SummaryFigures {
                 logs_begin_at,
-                logs_end_at: last_entry_time,
+                logs_end_at,
                 entry_count,
             },
         );

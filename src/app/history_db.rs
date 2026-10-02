@@ -20,8 +20,10 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 
+use chrono::{DateTime, Utc};
 use egui::Context;
 use gt_log_view::LogAttachmentRef;
+use gt_logfile::ParsedLog;
 use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteKind, WriteRejection};
 use gt_store::{
     AttachedLog, DatabaseRef, DbError, HistoryDatabase, LogAttachmentEntry, LogAttachmentError,
@@ -145,6 +147,7 @@ enum WriteRequest {
         name: String,
         text: Arc<str>,
         filters: Vec<StoredLogFilter>,
+        year_reference: DateTime<Utc>,
     },
     AutoPrune {
         max_bytes: u64,
@@ -504,15 +507,16 @@ impl HistoryWorker {
         db_ref: DatabaseRef,
         log: LoadedLogId,
         name: String,
-        text: Arc<str>,
+        parsed: &ParsedLog,
         filters: Vec<StoredLogFilter>,
     ) {
         self.send_write(WriteRequest::AttachLog {
             db_ref,
             log,
             name,
-            text,
+            text: Arc::clone(parsed.text()),
             filters,
+            year_reference: parsed.year_reference(),
         });
     }
 
@@ -808,6 +812,7 @@ fn handle_write_request(
             name,
             text,
             filters,
+            year_reference,
         } => {
             let result = db
                 .attach_log(
@@ -816,6 +821,7 @@ fn handle_write_request(
                         name: &name,
                         text: &text,
                         filters,
+                        year_reference: Some(year_reference),
                     },
                 )
                 .map(|entry| StoredLogAttachment {
@@ -1505,7 +1511,8 @@ mod tests {
             db_ref.clone(),
             LoadedLogId::new(1),
             "field-notes.log".to_owned(),
-            "one line".into(),
+            &gt_logfile::parse_log("2026-01-01 00:00:00 one line".into(), DateTime::UNIX_EPOCH)
+                .expect("parse the log"),
             Vec::new(),
         );
         let Response::LogAttached { result, .. } = recordings::next_response(&worker) else {
@@ -1767,6 +1774,7 @@ mod tests {
             name: "navsyncd.log".to_owned(),
             text: "boot".into(),
             filters: Vec::new(),
+            year_reference: DateTime::UNIX_EPOCH,
         },
         "Storing a log with a recording"
     )]

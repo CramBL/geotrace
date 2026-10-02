@@ -816,6 +816,7 @@ fn seed_a_recording_and_the_log_stored_with_it(
                     enabled: true,
                     mode: StoredLogFilterMode::Layer { color_slot: 0 },
                 }],
+                year_reference: None,
             },
         )
         .expect("the fixture log is stored with the recording");
@@ -978,6 +979,7 @@ fn restore_the_stored_attachment(
         },
         filters: entry.attachment.filters.clone(),
         requested_by: crate::app::loader::AttachedLogRequester::RecordingLoad,
+        year_reference: gt_test_utils::synthetic_log_start(),
     };
     harness
         .state_mut()
