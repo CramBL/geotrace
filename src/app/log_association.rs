@@ -190,9 +190,9 @@ impl App {
             Ok(attached) => self
                 .loader
                 .spawn_attached_log(attached, attachment, requested_by),
-            Err(LogAttachmentError::MissingLog { .. }) => self
-                .log_viewer
-                .report_warning(format!("{name} {EM_DASH} attachment missing")),
+            Err(LogAttachmentError::MissingLog { .. }) => self.log_viewer.report_warning(format!(
+                "{name} {EM_DASH} log missing from recording history"
+            )),
             Err(err) => self
                 .log_viewer
                 .report_warning(format!("{name} {EM_DASH} {err}")),
@@ -256,9 +256,9 @@ impl App {
                     }
                 }
             }
-            Err(err) => self
-                .log_viewer
-                .report_warning(format!("Could not attach {name} {EM_DASH} {err}")),
+            Err(err) => self.log_viewer.report_warning(format!(
+                "Could not save {name} with the recording {EM_DASH} {err}"
+            )),
         }
     }
 
@@ -278,10 +278,10 @@ impl App {
                     log.forget_attachment();
                 }
                 self.toasts
-                    .info(format!("Removed the attachment of {name}"));
+                    .info(format!("Removed {name} from recording history"));
             }
             Err(err) => self.log_viewer.report_warning(format!(
-                "Could not remove the attachment of {name} {EM_DASH} {err}"
+                "Could not remove {name} from recording history {EM_DASH} {err}"
             )),
         }
     }
@@ -380,7 +380,7 @@ impl App {
                 };
                 self.adopt_the_attachment_the_recording_holds(log_id, attachment, filters);
                 self.toasts.info(format!(
-                    "Reused this recording's attachment \"{}\"",
+                    "Using \"{}\" already saved with this recording",
                     existing.name
                 ));
             }

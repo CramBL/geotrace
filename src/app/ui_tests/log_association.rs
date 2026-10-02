@@ -747,7 +747,7 @@ fn attaching_a_log_the_recording_already_holds_reuses_the_stored_attachment() {
     drop_the_log(&mut harness);
     assert!(
         harness.step_until(|harness| harness
-            .query_by_label_contains("Attaching reuses that attachment")
+            .query_by_label_contains("Saving uses that log again")
             .is_some()),
         "the dialog states what the recording already holds"
     );
@@ -930,7 +930,7 @@ fn loading_the_recording_of_a_stored_log_gives_its_lines_positions() {
     open_the_stored_log(&harness, &db_ref, stored);
     test_util::harness::step_until_a_log_is_loaded(&mut harness);
     harness.run_steps(3);
-    harness.get_by_label("Anchored to walk.gtd (not loaded)");
+    harness.get_by_label("Positions from walk.gtd (not loaded)");
 
     harness
         .get_by_label(log_viewer::LOAD_RECORDING_LABEL)
@@ -1015,7 +1015,7 @@ fn an_attachment_whose_log_file_is_gone_is_reported_in_the_viewer() {
 
     assert!(
         harness.step_until(|harness| harness
-            .query_by_label_contains("attachment missing")
+            .query_by_label_contains("log missing from recording history")
             .is_some()),
         "the viewer says the attachment did not come back"
     );
@@ -1101,7 +1101,7 @@ fn the_footer_changes_a_saved_logs_recording_only_after_attachment_removal(
     assert!(other.accesskit_node().is_disabled());
     let position = other.rect().center();
     harness.hover_at_and_settle(position, 3);
-    harness.get_by_label_contains("Remove the attachment first");
+    harness.get_by_label_contains("Remove the saved log before changing its position source");
     harness
         .bottommost_matching(By::new().label("walk_b.gtd"))
         .click();
@@ -1115,7 +1115,7 @@ fn the_footer_changes_a_saved_logs_recording_only_after_attachment_removal(
     assert_eq!(log.attachment(), attachment.as_ref());
     assert_eq!(shown_log_target(&harness), target);
 
-    harness.get_by_label("Associated with").click();
+    harness.get_by_label("Positions from").click();
     harness.run_steps(2);
     harness.get_by_label(log_viewer::DETACH_LABEL).click();
     assert!(harness.step_until(|harness| {
@@ -1179,7 +1179,7 @@ fn attaching_to_a_recording_deleted_mid_session_reports_the_failure() {
 
     assert!(
         harness.step_until(|harness| harness
-            .query_by_label_contains("Could not attach navsyncd.log")
+            .query_by_label_contains("Could not save navsyncd.log with the recording")
             .is_some()),
         "the viewer reports what the database rejected"
     );
@@ -1486,7 +1486,7 @@ fn a_saved_log_loads_separately_from_incompatible_loose_content(
     harness.run_steps(3);
     assert!(harness.step_until(|harness| {
         harness
-            .query_by_label_contains("Attaching reuses that attachment")
+            .query_by_label_contains("Saving uses that log again")
             .is_some()
     }));
     harness

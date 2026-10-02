@@ -266,11 +266,11 @@ impl LoadedLogRow {
             }
             if let Some(recording) = &self.attached_to {
                 ui.label(ICON_PAPERCLIP)
-                    .on_hover_text(format!("Stored with the recording {recording}"));
+                    .on_hover_text(format!("Saved with {recording}"));
             }
             let unload_hover = match &self.attached_to {
                 Some(recording) => {
-                    format!("Unload this log. It stays attached to {recording}.")
+                    format!("Unload this log while keeping it saved with {recording}")
                 }
                 None => UNLOAD_HOVER.to_owned(),
             };
@@ -291,7 +291,7 @@ impl AvailableAttachmentRow {
                     .truncate(),
             )
             .on_hover_text(format!(
-                "Stored with the recording {}, not loaded in this session",
+                "Saved with {}. This log is not loaded in this session.",
                 self.recording
             ));
             ui.add(Button::new(LOAD_ATTACHMENT_LABEL).small())
@@ -304,7 +304,7 @@ impl AvailableAttachmentRow {
 
 /// Heading of the group holding the logs that take their positions from no
 /// recording.
-pub(super) const NOT_ANCHORED_HEADING: &str = "Not anchored";
+pub(super) const NOT_ANCHORED_HEADING: &str = "No position source";
 
 pub(super) const UNLOAD_HOVER: &str = "Unload this log";
 
@@ -312,4 +312,4 @@ const VISIBILITY_HOVER: &str = "Draw this log's matches on the map";
 
 pub(in crate::app) const LOAD_ATTACHMENT_LABEL: &str = "Load";
 
-const LOAD_ATTACHMENT_HOVER: &str = "Read this log back out of the recording and load it";
+const LOAD_ATTACHMENT_HOVER: &str = "Load this log saved with the recording";

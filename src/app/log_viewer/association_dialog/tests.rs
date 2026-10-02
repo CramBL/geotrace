@@ -238,7 +238,7 @@ fn a_recording_that_missed_the_log_says_why_it_is_grayed() {
     harness.get_by_label(super::NO_OVERLAP_LABEL);
     harness.hover_and_settle(By::new().label("elsewhen.gtd"), 3);
 
-    harness.get_by_label_contains("every line would stay unassociated");
+    harness.get_by_label_contains("This recording has no overlapping track duration");
 }
 
 #[test]
@@ -399,7 +399,7 @@ fn a_recording_that_already_holds_this_log_offers_that_attachment_for_reuse() {
     );
     harness.run_steps(2);
 
-    harness.get_by_label_contains("Attaching reuses that attachment");
+    harness.get_by_label_contains("Saving uses that log again");
     assert_eq!(
         harness
             .state()

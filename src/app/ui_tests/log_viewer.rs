@@ -643,7 +643,7 @@ fn choosing_a_target_in_the_footer_associates_the_log_against_it() {
         "two overlapping recordings leave the choice to the user"
     );
 
-    harness.get_by_label("Associated with");
+    harness.get_by_label("Positions from");
     harness.get(By::new().value(gt_ui_theme::EM_DASH)).click();
     harness.run_steps(2);
     // The side panel lists the same recording, so take the row the combo
