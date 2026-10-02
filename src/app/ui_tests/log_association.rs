@@ -719,10 +719,8 @@ fn a_recording_opened_again_restores_no_attachment_that_is_already_loaded() {
     );
 }
 
-/// A log loaded on its own and anchored to the recording takes the
-/// attachment that recording carries, and no second copy is loaded.
 #[test]
-fn a_restored_attachment_reaches_the_loaded_log_anchored_to_that_recording() {
+fn a_restored_attachment_keeps_a_separate_context_from_a_loose_log_with_the_same_source() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
     let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
@@ -746,17 +744,22 @@ fn a_restored_attachment_reaches_the_loaded_log_anchored_to_that_recording() {
 
     restore_the_stored_attachment(&mut harness, &db_path, &db_ref);
 
-    assert_eq!(harness.state().logs.len(), 1, "no second copy was loaded");
+    assert_eq!(harness.state().logs.len(), 2);
     assert_eq!(harness.state().logs.first_id(), loaded);
     assert_eq!(
-        harness
-            .state()
-            .first_log()
-            .and_then(LoadedLog::attachment)
-            .map(|attachment| attachment.id),
-        Some(stored),
-        "the loaded log is now the log the recording carries"
+        harness.state().first_log().and_then(LoadedLog::attachment),
+        None
     );
+    let attachment = LogAttachmentRef {
+        recording: db_ref,
+        id: stored,
+    };
+    let saved = harness
+        .state()
+        .logs
+        .id_of_attachment(&attachment)
+        .expect("saved context");
+    assert_ne!(Some(saved), loaded);
 }
 
 /// The toolbar's log button counts a log that comes back with a recording,
@@ -968,7 +971,7 @@ fn opening_a_stored_log_alone_loads_it_anchored_and_without_positions() {
     );
     assert_eq!(
         harness.state().first_log().and_then(LoadedLog::anchor_key),
-        Some(&gt_log_view::RecordingKey::Stored(db_ref)),
+        Some(gt_log_view::RecordingKey::Stored(db_ref)),
         "the log is anchored to the recording that holds it"
     );
     assert_eq!(shown_log_chips(&harness), ["kernel".to_owned()]);
@@ -1200,7 +1203,7 @@ fn the_footer_changes_a_saved_logs_recording_only_after_attachment_removal(
 
     let log = harness.state().first_log().expect("the log stays loaded");
     assert_eq!(
-        log.anchor_key(),
+        log.anchor_key().as_ref(),
         Some(&RecordingKey::Stored(db_ref.clone()))
     );
     assert_eq!(log.attachment(), attachment.as_ref());
@@ -1236,7 +1239,7 @@ fn the_footer_changes_a_saved_logs_recording_only_after_attachment_removal(
         .last()
         .expect("recording B is loaded");
     assert_eq!(
-        log.anchor_key(),
+        log.anchor_key().as_ref(),
         Some(&RecordingKey::of_loaded_recording(other))
     );
     assert_eq!(log.associated_recording(), Some(other.id()));
@@ -1428,7 +1431,7 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
         let log = harness.state().logs.get_by_id(id).expect("saved log");
         assert_eq!(log.attachment(), Some(attachment));
         assert_eq!(
-            log.anchor_key(),
+            log.anchor_key().as_ref(),
             Some(&RecordingKey::Stored(attachment.recording.clone()))
         );
         assert_eq!(log.filters().to_stored_filters(), *stored_filters);
@@ -1453,34 +1456,47 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
     harness
         .state_mut()
         .load_parsed_log(Some("loose.log".to_owned()), parsed, None);
-    assert_eq!(harness.state().logs.len(), 2);
-    assert_eq!(harness.state().log_viewer.selected_log(), Some(first_id));
+    assert_eq!(harness.state().logs.len(), 3);
+    let loose_id = harness
+        .state()
+        .log_viewer
+        .selected_log()
+        .expect("loose context");
+    assert_ne!(loose_id, first_id);
+    assert_ne!(loose_id, second_id);
 
-    harness
-        .state_mut()
-        .logs
-        .get_mut_by_id(second_id)
-        .expect("second log")
-        .forget_attachment();
+    harness.state_mut().logs.forget_attachment(&second_ref);
     harness.state_mut().toasts.dismiss_all_toasts();
     open_the_stored_log(&harness, &second_recording, second_attachment);
     assert!(harness.step_until(|harness| harness.state().logs.any_loaded_log_holds(&second_ref)));
-    assert_eq!(harness.state().logs.len(), 2);
-    assert_eq!(
-        harness.state().logs.id_of_attachment(&second_ref),
-        Some(second_id)
-    );
+    assert_eq!(harness.state().logs.len(), 4);
+    let restored_id = harness
+        .state()
+        .logs
+        .id_of_attachment(&second_ref)
+        .expect("restored context");
+    assert_ne!(restored_id, second_id);
     assert_eq!(
         harness
             .state()
             .logs
             .get_by_id(second_id)
-            .expect("second log")
+            .expect("detached context")
             .filters()
             .to_stored_filters(),
         filters
     );
-    assert_eq!(harness.state().log_viewer.selected_log(), Some(second_id));
+    assert_eq!(
+        harness
+            .state()
+            .logs
+            .get_by_id(restored_id)
+            .expect("restored context")
+            .filters()
+            .to_stored_filters(),
+        filters
+    );
+    assert_eq!(harness.state().log_viewer.selected_log(), Some(restored_id));
 }
 
 #[rstest::rstest]
@@ -1516,7 +1532,7 @@ fn a_saved_log_loads_separately_from_incompatible_loose_content(
     open_the_stored_log(&harness, &recording, attachment_id);
     assert!(harness.step_until(|harness| harness.state().logs.len() == 2));
     let loose = harness.state().logs.get_by_id(loose_id).expect("loose log");
-    assert_eq!(loose.anchor_key(), anchor.as_ref());
+    assert_eq!(loose.anchor_key().as_ref(), anchor.as_ref());
     assert_eq!(loose.attachment(), None);
     let attachment = LogAttachmentRef {
         recording,

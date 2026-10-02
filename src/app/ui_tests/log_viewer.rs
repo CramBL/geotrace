@@ -542,7 +542,7 @@ fn a_layer_chip_puts_the_lines_it_matched_on_the_map() {
     assert!(matched > 0, "the chip's lines reach the map");
 
     let loaded = harness.inner.state().logs.first_id();
-    if let Some(log) = loaded.and_then(|id| harness.inner.state_mut().logs.get_mut_by_id(id)) {
+    if let Some(mut log) = loaded.and_then(|id| harness.inner.state_mut().logs.get_mut_by_id(id)) {
         log.set_visible(false);
     }
     harness.inner.run_steps(2);

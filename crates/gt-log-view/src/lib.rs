@@ -18,7 +18,9 @@ pub use filter::{
     FilterStack, InvalidFilterPattern, LAYER_COLOR_SLOT_COUNT, LayerColorSlot, LayerColorSlots,
     TimestampTick, VisibleEntries,
 };
-pub use loaded_log::{LoadedLog, LoadedLogs, LogPushOutcome, RestoredAttachmentAdoption};
+pub use loaded_log::{
+    LoadedLog, LoadedLogEditor, LoadedLogs, LogContextOrigin, LogPushOutcome, LogSaveOutcome,
+};
 
 mod anchor;
 mod association;

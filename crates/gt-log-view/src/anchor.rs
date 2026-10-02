@@ -3,19 +3,6 @@
 use gt_history_types::DatabaseRef;
 use gt_loaded_files::{LoadedFileEntry, LoadedFileId, LoadedFilesView};
 
-use crate::attachment::LogAttachmentState;
-
-/// The recording a log takes its positions from. A log stored with a recording
-/// in history is anchored to it: only an anchored log has an attachment.
-#[derive(Debug)]
-pub(crate) enum LogAnchor {
-    None,
-    Recording {
-        key: RecordingKey,
-        attachment: Option<LogAttachmentState>,
-    },
-}
-
 /// Identifies the recording a log is anchored to.
 ///
 /// A log anchored to a recording in the history database finds that recording

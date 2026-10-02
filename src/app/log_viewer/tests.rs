@@ -278,9 +278,9 @@ fn attach_the_shown_log(harness: &mut Harness<ViewerState>) {
     let shown = harness.state().first_loaded_log();
     let state = harness.state_mut();
     let recordings = state.recordings.view();
-    if let Some(log) = state.logs.get_mut_by_id(shown) {
-        log.record_attachment(attachment_ref(), Vec::new(), &recordings);
-    }
+    state
+        .logs
+        .save_attachment(shown, attachment_ref(), Vec::new(), &recordings);
     harness.run_steps(2);
 }
 
@@ -319,7 +319,7 @@ fn take_the_recording_off_the_shown_log(harness: &mut Harness<ViewerState>) {
     let shown = harness.state().first_loaded_log();
     let state = harness.state_mut();
     let recordings = state.recordings.view();
-    if let Some(log) = state.logs.get_mut_by_id(shown) {
+    if let Some(mut log) = state.logs.get_mut_by_id(shown) {
         log.anchor_to_loaded_recording(None, &recordings);
     }
     harness.run_steps(2);
@@ -1237,20 +1237,23 @@ fn viewer_state_over_a_stored_recording(attachment: gt_store::LogAttachmentEntry
 fn load_the_stored_log(state: &mut ViewerState, attachment: &gt_store::LogAttachmentEntry) {
     let parsed = gt_logfile::parse_log(LOG_WITH_EVERY_ROW_KIND.into(), log_start())
         .unwrap_or_else(|error| panic!("the fixture log parses: {error}"));
-    let mut log = LoadedLog::new(
+    let log = LoadedLog::new(
         Some("navsyncd.log".to_owned()),
         parsed,
         Duration::seconds(ASSOCIATION_WINDOW_SECS),
     );
-    log.restore_attachment(
-        LogAttachmentRef {
-            recording: stored_recording_ref(),
-            id: attachment.id,
-        },
-        Vec::new(),
-        &state.recordings.view(),
-    );
-    let id = state.logs.push(log).id();
+    let id = state
+        .logs
+        .restore_attachment(
+            log,
+            LogAttachmentRef {
+                recording: stored_recording_ref(),
+                id: attachment.id,
+            },
+            Vec::new(),
+            &state.recordings.view(),
+        )
+        .id();
     state.viewer.open_on_log(id);
 }
 
@@ -1265,7 +1268,7 @@ fn anchor_log_to_recording(harness: &mut Harness<ViewerState>, log: &str, index:
         .map(|(id, _)| id);
     let recordings = state.recordings.view();
     let recording = recordings.get(index).map(|entry| entry.id());
-    if let Some(loaded) = chosen.and_then(|id| state.logs.get_mut_by_id(id)) {
+    if let Some(mut loaded) = chosen.and_then(|id| state.logs.get_mut_by_id(id)) {
         loaded.anchor_to_loaded_recording(recording, &recordings);
     }
     harness.run_steps(2);
