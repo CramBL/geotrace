@@ -1,7 +1,7 @@
 //! The dialog choosing the recording a log associates against, and whether the
 //! log is stored with that recording in history.
 
-use egui::{Checkbox, Grid, Label, RichText};
+use egui::{Checkbox, Grid, Label, RichText, WidgetInfo, WidgetType};
 use gt_fmt::MIDDLE_DOT;
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
 use gt_log_view::{AssociationCandidate, LoadedLog};
@@ -38,7 +38,6 @@ pub(in crate::app) struct LogAssociationDialog {
     log: LoadedLogId,
     selected: Option<LoadedFileId>,
     attach: bool,
-    dont_show_again: bool,
 
     /// The recording the duplicate-attachment query was sent for.
     duplicate_query_sent_for: Option<DatabaseRef>,
@@ -56,7 +55,6 @@ impl LogAssociationDialog {
             log,
             selected,
             attach: false,
-            dont_show_again: false,
             duplicate_query_sent_for: None,
             duplicate: None,
         }
@@ -64,11 +62,6 @@ impl LogAssociationDialog {
 
     pub(in crate::app) fn log(&self) -> LoadedLogId {
         self.log
-    }
-
-    /// Whether the user chose to decide without the dialog from here on.
-    pub(in crate::app) fn dont_show_again(&self) -> bool {
-        self.dont_show_again
     }
 
     /// The recording to query the history database about, once per recording
@@ -122,6 +115,7 @@ impl LogAssociationDialog {
         recordings: LoadedFilesView<'_>,
         recording_names: &RecordingNames,
         write_access: WriteAccess,
+        ask_log_association_target: &mut bool,
     ) -> Option<LogAssociationChoice> {
         let escape_pressed =
             ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
@@ -139,8 +133,7 @@ impl LogAssociationDialog {
         let mut open = true;
         // Read after the window renders: the body's tickbox writes `attach`.
         let mut confirmed = false;
-        // The body borrows `self`: the action row's tickbox writes a local.
-        let mut dont_show_again = self.dont_show_again;
+        let mut automatically_choose_position_source = !*ask_log_association_target;
         let dialog = AnchoredDialog::new(AnchoredDialogKind::AssociateLog, TITLE)
             .with_close_button(&mut open);
         let regions = dialog.regions();
@@ -185,12 +178,23 @@ impl LogAssociationDialog {
                 }
             })
             .with_leading_control(|ui| {
-                ui.checkbox(&mut dont_show_again, DONT_SHOW_AGAIN_LABEL)
-                    .on_hover_text(DONT_SHOW_AGAIN_HOVER);
+                let preference = ui.checkbox(
+                    &mut automatically_choose_position_source,
+                    AUTOMATIC_POSITION_SOURCE_DISPLAY_LABEL,
+                );
+                preference.widget_info(|| {
+                    WidgetInfo::selected(
+                        WidgetType::Checkbox,
+                        ui.is_enabled(),
+                        automatically_choose_position_source,
+                        AUTOMATIC_POSITION_SOURCE_LABEL,
+                    )
+                });
+                preference.on_hover_text(AUTOMATIC_POSITION_SOURCE_HOVER);
             }),
         );
 
-        self.dont_show_again = dont_show_again;
+        *ask_log_association_target = !automatically_choose_position_source;
         if confirmed {
             choice = Some(LogAssociationChoice::Confirmed {
                 target: self.selected,
@@ -287,7 +291,11 @@ pub(in crate::app) const TITLE: &str = "Choose position source";
 
 pub(in crate::app) const ATTACH_LABEL: &str = "Also save this log with the recording";
 
-pub(in crate::app) const DONT_SHOW_AGAIN_LABEL: &str = "Don't show this again";
+pub(in crate::app) const AUTOMATIC_POSITION_SOURCE_LABEL: &str =
+    "Automatically choose an unambiguous position source";
+
+const AUTOMATIC_POSITION_SOURCE_DISPLAY_LABEL: &str =
+    "Automatically choose an\nunambiguous position source";
 
 pub(in crate::app) const CONFIRM_LABEL: &str = "Use recording";
 
@@ -314,8 +322,10 @@ const ATTACH_UNSTORED_HOVER: &str = "Save the recording in history before saving
 
 const ATTACH_NO_TARGET_HOVER: &str = "Choose a recording to save this log with";
 
-const DONT_SHOW_AGAIN_HOVER: &str = "Associate a loading log by itself when exactly one loaded recording overlaps it, and leave it \
-     untargeted otherwise. Switchable back on under Processing in the settings.";
+pub(in crate::app) const AUTOMATIC_POSITION_SOURCE_HOVER: &str = "Skip the dialog for future log loads. Automatically use the recording as the position source \
+     when exactly one loaded recording has tracks overlapping the log. With zero or multiple \
+     overlapping recordings, leave the log without a position source. Turn this off to show the \
+     dialog for future log loads.";
 
 const CONFIRM_HOVER: &str = "Take this log's positions from the chosen recording";
 

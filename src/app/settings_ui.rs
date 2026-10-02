@@ -21,6 +21,7 @@ mod application;
 mod geomagnetic_indices;
 mod interface;
 mod interference;
+mod label;
 mod persist;
 pub(super) mod processing;
 pub(super) mod search;

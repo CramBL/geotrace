@@ -24,8 +24,8 @@ use gt_types::{FileSource, Latitude, Longitude};
 use gt_ui_types::LoadedLogId;
 
 use super::{
-    ATTACH_LABEL, CANCEL_LABEL, CONFIRM_LABEL, DONT_SHOW_AGAIN_LABEL, LogAssociationChoice,
-    LogAssociationDialog, TITLE,
+    ATTACH_LABEL, AUTOMATIC_POSITION_SOURCE_LABEL, CANCEL_LABEL, CONFIRM_LABEL,
+    LogAssociationChoice, LogAssociationDialog, TITLE,
 };
 
 fn log_start() -> DateTime<Utc> {
@@ -41,6 +41,7 @@ pub(in crate::app) struct DialogState {
     pub(in crate::app) choice: Option<LogAssociationChoice>,
     /// What the session may write, which is what grays the attach tickbox.
     write_access: WriteAccess,
+    ask_log_association_target: bool,
 }
 
 /// A recording of `seconds` fixes starting `offset` after the log does.
@@ -126,15 +127,17 @@ fn dialog_state(recordings: Vec<(gt_types::LoadedFile, FileHistory)>) -> DialogS
         recordings: loaded_recordings,
         choice: None,
         write_access: WriteAccess::Owner,
+        ask_log_association_target: true,
     }
 }
 
 /// The dialog in a harness that renders, which the snapshot reads.
 fn rendering_harness_over(
     recordings: Vec<(gt_types::LoadedFile, FileHistory)>,
+    viewport: egui::Vec2,
 ) -> TestHarness<'static, DialogState> {
     let mut harness = TestHarness::builder()
-        .size(DIALOG_SIZE)
+        .size(viewport)
         .ui_state(dialog_ui, dialog_state(recordings));
     harness.inner.run_steps(3);
     harness
@@ -148,6 +151,7 @@ fn dialog_ui(ui: &mut egui::Ui, state: &mut DialogState) {
         state.recordings.view(),
         &names,
         state.write_access,
+        &mut state.ask_log_association_target,
     );
     if choice.is_some() {
         state.choice = choice;
@@ -463,20 +467,6 @@ fn the_duplicate_query_is_sent_once_per_chosen_recording() {
     );
 }
 
-#[test]
-fn ticking_dont_show_this_again_is_reported_with_the_decision() {
-    let mut harness = harness_over(vec![(
-        recording("alongside.gtd", Duration::zero(), 10),
-        FileHistory::None,
-    )]);
-    assert!(!harness.state().dialog.dont_show_again());
-
-    harness.get(By::new().label(DONT_SHOW_AGAIN_LABEL)).click();
-    harness.run_steps(2);
-
-    assert!(harness.state().dialog.dont_show_again());
-}
-
 fn stored_db_ref() -> DatabaseRef {
     DatabaseRef {
         identity: "nav-devkit-mk2".to_owned(),
@@ -495,18 +485,26 @@ fn another_db_ref() -> DatabaseRef {
 /// The dialog on a recording whose duplicate-attachment query has not returned
 /// yet: the room the result takes is part of the window from the frame it
 /// opens.
-#[test]
-fn snapshot_the_association_dialog_while_the_stored_attachment_result_is_pending() {
-    let mut harness = rendering_harness_over(vec![
-        (
-            recording("alongside.gtd", Duration::zero(), 10),
-            stored_in_history("nav-devkit-mk2"),
-        ),
-        (
-            recording("late.gtd", Duration::seconds(5), 10),
-            stored_in_history("nav-devkit-mk4"),
-        ),
-    ]);
+#[rstest::rstest]
+#[case::default_width(DIALOG_SIZE, "association_dialog_answer_pending")]
+#[case::narrow_width(egui::vec2(440.0, 420.0), "association_dialog_answer_pending_narrow")]
+fn snapshot_the_association_dialog_while_the_stored_attachment_result_is_pending(
+    #[case] viewport: egui::Vec2,
+    #[case] snapshot_name: &str,
+) {
+    let mut harness = rendering_harness_over(
+        vec![
+            (
+                recording("alongside.gtd", Duration::zero(), 10),
+                stored_in_history("nav-devkit-mk2"),
+            ),
+            (
+                recording("late.gtd", Duration::seconds(5), 10),
+                stored_in_history("nav-devkit-mk4"),
+            ),
+        ],
+        viewport,
+    );
     harness.inner.get_by_label("late.gtd").click();
     harness.inner.run_steps(2);
     let state = harness.inner.state_mut();
@@ -514,7 +512,29 @@ fn snapshot_the_association_dialog_while_the_stored_attachment_result_is_pending
     state.dialog.duplicate_query_to_send(recordings);
     harness.inner.run_steps(2);
 
-    harness.snapshot("association_dialog_answer_pending");
+    let window = harness
+        .inner
+        .ctx
+        .memory(|memory| memory.area_rect(egui::Id::new(Some(TITLE))))
+        .expect("association dialog");
+    assert!(window.width() <= 460.0);
+    let confirm = harness.inner.get_by_label(CONFIRM_LABEL).rect();
+    let cancel = harness.inner.get_by_label(CANCEL_LABEL).rect();
+    let preference = harness
+        .inner
+        .get_by_label(AUTOMATIC_POSITION_SOURCE_LABEL)
+        .rect();
+    assert!((confirm.center().y - cancel.center().y).abs() < 1.0);
+    assert!(cancel.max.x < confirm.min.x);
+    assert!(preference.max.x < cancel.min.x);
+    assert!(preference.height() > confirm.height());
+    for control in [preference, cancel, confirm] {
+        assert!(window.contains_rect(control));
+    }
+    harness
+        .inner
+        .assert_window_fits_the_viewport(AuditedWindow::titled(TITLE));
+    harness.snapshot(snapshot_name);
 }
 
 /// The dialog keeps its confirm and cancel buttons reachable at any viewport,
@@ -538,6 +558,10 @@ fn the_dialog_fits_every_viewport(
 
     harness.assert_window_fits_the_viewport(AuditedWindow::titled(TITLE));
     harness.assert_control_is_reachable(AuditedWindow::titled(TITLE), ControlLabel(CANCEL_LABEL));
+    harness.assert_control_is_reachable(
+        AuditedWindow::titled(TITLE),
+        ControlLabel(AUTOMATIC_POSITION_SOURCE_LABEL),
+    );
 }
 
 /// Three entries spanning nine seconds from [`log_start`].

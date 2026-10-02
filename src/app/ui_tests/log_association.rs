@@ -2,7 +2,7 @@
 //! confirming it does.
 
 use chrono::Duration;
-use egui::accesskit::Role;
+use egui::accesskit::{Role, Toggled};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
@@ -26,6 +26,7 @@ use crate::app::log_viewer::{self, association_dialog};
 use crate::app::modals::{DELETE_PERMANENTLY_BUTTON_LABEL, SHELVE_BUTTON_LABEL};
 use crate::app::settings_ui;
 use crate::app::test_util;
+use crate::app::test_util::harness::TestDroppedFile;
 use crate::app::ui_tests;
 
 /// An app whose history worker owns a database of its own, so a log can be
@@ -329,10 +330,8 @@ fn click_settings_row_tickbox(harness: &mut Harness<App>, label: &str) {
     harness.run_steps(2);
 }
 
-/// Once the dialog is switched off, only the unambiguous case associates by
-/// itself. The settings page switches it back on.
 #[test]
-fn dont_show_this_again_leaves_the_unambiguous_case_to_associate_by_itself() {
+fn enabling_automatic_position_source_in_the_dialog_and_disabling_in_settings_restores_dialogs() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
@@ -343,29 +342,45 @@ fn dont_show_this_again_leaves_the_unambiguous_case_to_associate_by_itself() {
     drop_the_log(&mut harness);
 
     harness
-        .get_by_label(association_dialog::DONT_SHOW_AGAIN_LABEL)
+        .get_by_label(association_dialog::AUTOMATIC_POSITION_SOURCE_LABEL)
         .click();
     harness.run_steps(2);
+    assert!(!harness.state().ask_log_association_target);
+    assert!(
+        !harness
+            .state()
+            .collect_settings_for_flush()
+            .processing
+            .ask_log_association_target
+    );
     cancel(&mut harness);
     assert!(!harness.state().ask_log_association_target);
 
     drop_a_log(&mut harness, FIXTURE_LOG_SEED + 1);
 
-    assert!(!dialog_is_open(&harness), "the dialog stays away");
+    assert!(!dialog_is_open(&harness));
     assert!(
         harness
             .state()
             .last_log()
             .is_some_and(|log| log.associated_entry_count() > 0),
-        "the one overlapping recording is taken without asking"
+        "the only overlapping recording is selected automatically"
     );
 
     harness.state_mut().settings_open = true;
     harness.state_mut().settings_page = settings_ui::SettingsPage::Processing;
     harness.run_steps(2);
+    let row = harness
+        .get_by_label_contains(settings_ui::processing::AUTOMATIC_LOG_POSITION_SOURCE_LABEL)
+        .rect();
+    let tickbox = harness
+        .query_all(By::new().role(Role::CheckBox))
+        .find(|node| row.y_range().contains(node.rect().center().y))
+        .expect("automatic position source checkbox");
+    assert_eq!(tickbox.accesskit_node().toggled(), Some(Toggled::True));
     click_settings_row_tickbox(
         &mut harness,
-        settings_ui::processing::ASK_LOG_ASSOCIATION_TARGET_LABEL,
+        settings_ui::processing::AUTOMATIC_LOG_POSITION_SOURCE_LABEL,
     );
     harness.run_steps(2);
     harness.state_mut().settings_open = false;
@@ -374,10 +389,86 @@ fn dont_show_this_again_leaves_the_unambiguous_case_to_associate_by_itself() {
 
     drop_a_log(&mut harness, FIXTURE_LOG_SEED + 2);
 
-    assert!(
-        dialog_is_open(&harness),
-        "the setting brings the dialog back"
+    assert!(dialog_is_open(&harness));
+    assert_eq!(
+        harness
+            .get_by_label(association_dialog::AUTOMATIC_POSITION_SOURCE_LABEL)
+            .accesskit_node()
+            .toggled(),
+        Some(Toggled::False)
     );
+}
+
+#[rstest::rstest]
+#[case::zero_overlaps(0)]
+#[case::one_overlap(1)]
+#[case::multiple_overlaps(2)]
+fn enabling_automatic_position_source_in_settings_and_disabling_in_the_dialog(
+    #[case] overlaps: usize,
+) {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(test_util::harness::transient_app);
+    if overlaps == 0 {
+        test_util::harness::drop_file_and_wait_for_load(
+            &mut harness,
+            TestDroppedFile::bytes(ui_tests::minimal_gtd_bytes(), "earlier.gtd"),
+        );
+    }
+    for index in 0..overlaps {
+        test_util::harness::drop_file_and_wait_for_load(
+            &mut harness,
+            ui_tests::recording_alongside_the_log(&format!("walk{index}.gtd"), 55.0 + index as f64),
+        );
+    }
+    harness.state_mut().settings_open = true;
+    harness.state_mut().settings_page = settings_ui::SettingsPage::Processing;
+    harness.run_steps(2);
+    click_settings_row_tickbox(
+        &mut harness,
+        settings_ui::processing::AUTOMATIC_LOG_POSITION_SOURCE_LABEL,
+    );
+    let persisted = harness.state().collect_settings_for_flush();
+    assert!(!persisted.processing.ask_log_association_target);
+    harness.state_mut().ask_log_association_target = true;
+    harness.state_mut().apply_startup_settings(&persisted);
+    assert!(!harness.state().ask_log_association_target);
+    harness.state_mut().settings_open = false;
+    harness.run_steps(2);
+
+    drop_the_log(&mut harness);
+    assert!(!dialog_is_open(&harness));
+    assert_eq!(
+        harness
+            .state()
+            .first_log()
+            .and_then(LoadedLog::associated_recording)
+            .is_some(),
+        overlaps == 1
+    );
+    let log_id = harness.state().logs.first_id().expect("loaded log");
+    harness
+        .state_mut()
+        .log_viewer_requests
+        .open_association_dialog = Some(log_id);
+    harness.state_mut().apply_log_viewer_requests();
+    harness.run_steps(3);
+    let checkbox = harness.get_by_label(association_dialog::AUTOMATIC_POSITION_SOURCE_LABEL);
+    assert_eq!(checkbox.accesskit_node().toggled(), Some(Toggled::True));
+    checkbox.click();
+    harness.run_steps(2);
+    assert!(harness.state().ask_log_association_target);
+    assert!(
+        harness
+            .state()
+            .collect_settings_for_flush()
+            .processing
+            .ask_log_association_target
+    );
+    confirm(&mut harness);
+
+    drop_a_log(&mut harness, FIXTURE_LOG_SEED + 1);
+    assert!(dialog_is_open(&harness));
 }
 
 /// The whole attachment path over a real database: the dialog stores the
