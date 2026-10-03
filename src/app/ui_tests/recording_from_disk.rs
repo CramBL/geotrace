@@ -381,6 +381,8 @@ fn recordings_already_in_history(count: usize) -> RecordingsAlreadyInHistory {
         recordings: (0..count)
             .map(|index| RecordingAlreadyInHistory {
                 from_disk: RecordingFromDisk {
+                    arrival: crate::app::association_batches::AssociationBatches::default()
+                        .implicit_recording(),
                     filename: format!("ride-{index}.gtd"),
                     content: RecordingContent::Path(PathBuf::from(format!(
                         "/recordings/ride-{index}.gtd"
@@ -455,6 +457,8 @@ fn resegment_prompt_for(
     fix_placement_rule: gt_store::StoredFixPlacementRule,
 ) -> crate::app::ResegmentPrompt {
     crate::app::ResegmentPrompt {
+        arrival: crate::app::association_batches::AssociationBatches::default()
+            .implicit_recording(),
         db_ref: gt_store::DatabaseRef {
             identity: "auto:ride.gtd".to_owned(),
             group_name: "2025-05-23T10:00:00Z_a1b2".to_owned(),
@@ -537,9 +541,11 @@ fn opening_a_recording_stored_by_another_rule_raises_the_resegment_prompt(
         debug_tag: None,
     };
 
+    let arrival = harness.state().loader.associations.implicit_recording();
     harness
         .state_mut()
         .handle_history_response(crate::app::history_db::Response::Opened {
+            arrival,
             db_ref: gt_store::DatabaseRef {
                 identity: "auto:ride.gtd".to_owned(),
                 group_name: "2025-05-23T10:00:00Z_a1b2".to_owned(),

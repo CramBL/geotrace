@@ -19,7 +19,8 @@ use gt_store::{
 };
 
 use super::anchored_dialog::AnchoredDialogKind;
-use super::storage::QueuedLoad;
+use super::association_batches::RecordingArrival;
+use super::storage::{QueuedArrivalSet, QueuedLoad};
 use super::{App, loader, modals};
 
 /// The title over the `count` recordings of one batch that history holds.
@@ -30,6 +31,7 @@ pub(in crate::app) fn recordings_already_in_history_title(count: usize) -> Strin
 
 /// One `.gtd` on its way into the view from outside the history database.
 pub struct RecordingFromDisk {
+    pub(super) arrival: RecordingArrival,
     pub filename: String,
     pub content: RecordingContent,
     pub mode: loader::GtdLoadMode,
@@ -210,9 +212,21 @@ impl App {
     /// holds them: they are looked up in the history database first.
     pub(in crate::app) fn load_arriving_files(&mut self, arriving: Vec<QueuedLoad>) {
         if let Some(queued_loads) = self.storage_open.queued_loads_mut() {
-            queued_loads.extend(arriving);
+            queued_loads.push(QueuedArrivalSet { files: arriving });
             return;
         }
+        if arriving.is_empty() {
+            return;
+        }
+        self.loader.associations.sync_loaded(
+            self.shared
+                .borrow()
+                .loaded_files
+                .view()
+                .entries()
+                .map(|entry| entry.id()),
+        );
+        let batch = self.loader.associations.begin_submission();
         let mut recordings = Vec::new();
         for file in arriving {
             match file {
@@ -227,12 +241,13 @@ impl App {
                             .file_name()
                             .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
                         recordings.push(RecordingFromDisk {
+                            arrival: batch.recording(),
                             filename,
                             content: RecordingContent::Path(path),
                             mode,
                         });
                     } else {
-                        self.loader.spawn_log_path(path);
+                        self.loader.spawn_log_path(path, batch.log());
                     }
                 }
                 // Bytes starting with the HDF5 magic are a recording,
@@ -245,6 +260,7 @@ impl App {
                             name
                         };
                         recordings.push(RecordingFromDisk {
+                            arrival: batch.recording(),
                             filename,
                             content: RecordingContent::Bytes(bytes),
                             mode: loader::GtdLoadMode::Regular,
@@ -252,19 +268,24 @@ impl App {
                     } else {
                         // A log takes its name from its first entry when the
                         // drop carries no file name, as pasted text does.
-                        self.loader
-                            .spawn_log_bytes(bytes, (!name.is_empty()).then_some(name));
+                        self.loader.spawn_log_bytes(
+                            bytes,
+                            (!name.is_empty()).then_some(name),
+                            batch.log(),
+                        );
                     }
                 }
-                QueuedLoad::PastedText(text) => self.loader.spawn_pasted_log_text(text),
+                QueuedLoad::PastedText(text) => {
+                    self.loader.spawn_pasted_log_text(text, batch.log())
+                }
             }
         }
+        drop(batch);
         if recordings.is_empty() {
             return;
         }
         // With no history database there is nothing to look them up in.
         if self.history.available() {
-            self.recordings_awaiting_a_history_lookup += recordings.len();
             self.history.screen_recordings_from_disk(recordings);
         } else {
             for recording in recordings {
@@ -280,9 +301,6 @@ impl App {
             already_in_history,
             new_to_history,
         } = screened;
-        self.recordings_awaiting_a_history_lookup = self
-            .recordings_awaiting_a_history_lookup
-            .saturating_sub(already_in_history.len() + new_to_history.len());
         for recording in new_to_history {
             self.spawn_recording_from_disk(recording, None);
         }
@@ -307,6 +325,7 @@ impl App {
         open: Option<loader::HistoryOpen>,
     ) {
         let RecordingFromDisk {
+            arrival,
             filename,
             content,
             mode,
@@ -314,11 +333,17 @@ impl App {
         match content {
             RecordingContent::Path(path) => {
                 self.loader
-                    .spawn_gtd_path(path, self.processing_config, mode, open);
+                    .spawn_gtd_path(path, self.processing_config, mode, open, arrival);
             }
             RecordingContent::Bytes(bytes) => {
-                self.loader
-                    .spawn_gtd_bytes(bytes, filename, self.processing_config, mode, open);
+                self.loader.spawn_gtd_bytes(
+                    bytes,
+                    filename,
+                    self.processing_config,
+                    mode,
+                    open,
+                    arrival,
+                );
             }
         }
     }
@@ -398,7 +423,8 @@ impl App {
         match choice {
             Some(AlreadyInHistoryChoice::OpenTheStoredVersion) => {
                 for recording in prompt.recordings {
-                    self.history.open(recording.db_ref);
+                    let arrival = recording.from_disk.arrival;
+                    self.history.open_with_arrival(recording.db_ref, arrival);
                 }
             }
             Some(AlreadyInHistoryChoice::LoadFromDisk) => {
@@ -487,6 +513,8 @@ mod tests {
         let screened = screen_against_history(
             &db,
             vec![RecordingFromDisk {
+                arrival: super::super::association_batches::AssociationBatches::default()
+                    .implicit_recording(),
                 filename: "ride.gtd".to_owned(),
                 content: RecordingContent::Bytes(bytes.into()),
                 mode: loader::GtdLoadMode::Regular,

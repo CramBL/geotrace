@@ -693,6 +693,8 @@ fn snapshot_history_busy_dialog() {
 /// rule and a placement rule that both differ from the current ones.
 fn resegment_prompt_named(filename: &str) -> crate::app::ResegmentPrompt {
     crate::app::ResegmentPrompt {
+        arrival: crate::app::association_batches::AssociationBatches::default()
+            .implicit_recording(),
         db_ref: gt_store::DatabaseRef {
             identity: format!("auto:{filename}"),
             group_name: "2025-05-23T10:00:00Z_a1b2".to_owned(),

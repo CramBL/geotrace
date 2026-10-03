@@ -13,7 +13,6 @@
 //! read-only session has no writer, and a rejected write comes back as
 //! [`Response::WriteRejected`] holding the [`WriteRejection`].
 
-use std::cell::Cell;
 use std::collections::HashSet;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -36,6 +35,7 @@ use gt_store::{
 use gt_track_builder::SegmentationConfig;
 use gt_ui_types::LoadedLogId;
 
+use super::association_batches::{AssociationBatches, RecordingArrival};
 use crate::app::auto_prune::{self, AutoPruneOutcome};
 use crate::app::background_thread;
 use crate::app::loader::{self, LoadedRecordingPlacement};
@@ -130,6 +130,7 @@ enum ReadRequest {
     /// Read a recording's stored track table for the History window's shelf.
     LoadStoredTrackTable(DatabaseRef),
     Open {
+        arrival: RecordingArrival,
         db_ref: DatabaseRef,
         placement: LoadedRecordingPlacement,
     },
@@ -295,6 +296,7 @@ pub enum Response {
         result: Result<(), DbError>,
     },
     Opened {
+        arrival: RecordingArrival,
         db_ref: DatabaseRef,
         /// Where the app puts the recording once it is loaded, as the request
         /// set it.
@@ -342,7 +344,7 @@ pub struct HistoryWorker {
     handle: Option<JoinHandle<()>>,
     path: Option<PathBuf>,
     ui_state_versions: Arc<UiStateVersionReporter>,
-    pending_recording_opens: Cell<usize>,
+    pub(super) associations: AssociationBatches,
 }
 
 impl HistoryWorker {
@@ -357,7 +359,7 @@ impl HistoryWorker {
             handle: None,
             path: None,
             ui_state_versions: Arc::default(),
-            pending_recording_opens: Cell::new(0),
+            associations: AssociationBatches::default(),
         }
     }
 
@@ -377,7 +379,7 @@ impl HistoryWorker {
             handle: Some(handle),
             path,
             ui_state_versions,
-            pending_recording_opens: Cell::new(0),
+            associations: AssociationBatches::default(),
         }
     }
 
@@ -421,10 +423,6 @@ impl HistoryWorker {
     }
 
     fn send_read(&self, req: ReadRequest) {
-        if self.available() && matches!(req, ReadRequest::Open { .. }) {
-            self.pending_recording_opens
-                .set(self.pending_recording_opens.get() + 1);
-        }
         self.send(Request::Read(req));
     }
 
@@ -432,16 +430,17 @@ impl HistoryWorker {
         self.send(Request::Write(req));
     }
 
-    pub fn has_pending_recording_opens(&self) -> bool {
-        self.pending_recording_opens.get() > 0
-    }
-
     pub fn list(&self) {
         self.send_read(ReadRequest::List);
     }
 
     pub fn open(&self, db_ref: DatabaseRef) {
+        self.open_with_arrival(db_ref, self.associations.implicit_recording());
+    }
+
+    pub(super) fn open_with_arrival(&self, db_ref: DatabaseRef, arrival: RecordingArrival) {
         self.send_read(ReadRequest::Open {
+            arrival,
             db_ref,
             placement: LoadedRecordingPlacement::AddAnEntry,
         });
@@ -451,6 +450,7 @@ impl HistoryWorker {
     /// for it, which an unshelve of a loaded recording requests.
     pub fn open_over_the_loaded_entry(&self, db_ref: DatabaseRef) {
         self.send_read(ReadRequest::Open {
+            arrival: self.associations.implicit_recording(),
             db_ref,
             placement: LoadedRecordingPlacement::ReplaceTheLoadedEntry,
         });
@@ -577,10 +577,6 @@ impl HistoryWorker {
     pub fn poll(&self) -> Vec<Response> {
         let mut out = Vec::new();
         while let Ok(resp) = self.resp_rx.try_recv() {
-            if matches!(resp, Response::Opened { .. }) {
-                self.pending_recording_opens
-                    .set(self.pending_recording_opens.get().saturating_sub(1));
-            }
             out.push(resp);
         }
         out
@@ -688,12 +684,17 @@ fn handle_read_request(
 ) -> Response {
     match req {
         ReadRequest::List => Response::Listed(db.list_recordings()),
-        ReadRequest::Open { db_ref, placement } => {
+        ReadRequest::Open {
+            db_ref,
+            placement,
+            arrival,
+        } => {
             let result = db.load(&db_ref).map(|stored| OpenedRecording {
                 stored,
                 ui_state: db.recording_ui_state(&db_ref, ui_state_versions),
             });
             Response::Opened {
+                arrival,
                 db_ref,
                 placement,
                 result,

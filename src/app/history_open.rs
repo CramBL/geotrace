@@ -8,6 +8,7 @@ use gt_store::{DbError, StoredFixPlacementRule, StoredTrackSplitRule, TrackState
 use gt_ui_components::HeldBodyLines;
 
 use super::anchored_dialog::AnchoredDialogKind;
+use super::association_batches::RecordingArrival;
 use super::{App, ResegmentPrompt, auto_prune, history, history_db, loader, modals, storage};
 
 fn load_mode_for_stored_recording(stored: &gt_store::StoredRecording) -> loader::GtdLoadMode {
@@ -143,7 +144,8 @@ impl App {
     ///
     /// Ending the previous worker joins its thread, blocking until the request
     /// it is on finishes.
-    pub(super) fn install_history_worker(&mut self, worker: history_db::HistoryWorker) {
+    pub(super) fn install_history_worker(&mut self, mut worker: history_db::HistoryWorker) {
+        worker.associations = self.loader.associations.clone();
         let previous = std::mem::replace(&mut self.history, worker);
         previous.shutdown();
         self.sync_db_path();
@@ -283,6 +285,7 @@ impl App {
         db_ref: gt_store::DatabaseRef,
         placement: loader::LoadedRecordingPlacement,
         stored: gt_store::StoredRecording,
+        arrival: RecordingArrival,
     ) {
         // Reuse the original filename: the identity is the filename (with an
         // "auto:" prefix for auto-derived ones).
@@ -321,7 +324,8 @@ impl App {
                         "'{filename}' has fixes placed by rule {rule}, which this version does not implement. They can only be recalculated."
                     );
                 }
-                self.pending_resegment = Some(ResegmentPrompt {
+                let prompt = ResegmentPrompt {
+                    arrival,
                     db_ref,
                     filename,
                     bytes: stored.bytes.into(),
@@ -330,7 +334,12 @@ impl App {
                     marker_settings_changed,
                     mode,
                     placement,
-                });
+                };
+                if self.pending_resegment.is_some() || !self.queued_resegments.is_empty() {
+                    self.queued_resegments.push_back(prompt);
+                } else {
+                    self.pending_resegment = Some(prompt);
+                }
             }
             // Every stored track setting matches: reproduce the stored tracks,
             // leave the shelved ones out, and rebuild generated markers from
@@ -355,6 +364,7 @@ impl App {
                         applied_current_marker_settings: marker_settings_changed,
                         placement,
                     }),
+                    arrival,
                 );
             }
             // Older recording with no stored settings: load with current settings.
@@ -370,6 +380,7 @@ impl App {
                         applied_current_marker_settings: false,
                         placement,
                     }),
+                    arrival,
                 );
             }
         }
@@ -440,13 +451,14 @@ impl App {
                     .set_error(format!("Failed to load history: {e}"));
             }
             Response::Opened {
+                arrival,
                 db_ref,
                 placement,
                 result,
             } => match result {
                 Ok(opened) => {
                     self.apply_the_ui_state_stored_with_a_recording(&db_ref, opened.ui_state);
-                    self.begin_history_open(db_ref, placement, opened.stored);
+                    self.begin_history_open(db_ref, placement, opened.stored, arrival);
                 }
                 Err(e) => {
                     log::error!("Failed to load recording from history: {e}");
@@ -697,7 +709,11 @@ impl App {
     pub(super) fn show_resegment_prompt(&mut self, ui: &egui::Ui) {
         // Re-segment prompt: a recording opened from history was stored with a
         // different track setting than the current one.
-        let Some(prompt) = self.pending_resegment.take() else {
+        let Some(prompt) = self
+            .pending_resegment
+            .take()
+            .or_else(|| self.queued_resegments.pop_front())
+        else {
             return;
         };
         let current = loader::stored_segmentation_from_config(&self.processing_config);
@@ -820,6 +836,7 @@ impl App {
                         applied_current_marker_settings: prompt.marker_settings_changed,
                         placement: prompt.placement,
                     }),
+                    prompt.arrival,
                 );
                 self.history_window.invalidate();
             }
@@ -837,6 +854,7 @@ impl App {
                         applied_current_marker_settings: prompt.marker_settings_changed,
                         placement: prompt.placement,
                     }),
+                    prompt.arrival,
                 );
             }
             Some(ResegmentChoice::Cancel) => {}

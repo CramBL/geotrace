@@ -38,6 +38,12 @@ impl AssociationCandidates {
         Self(Vec::new())
     }
 
+    pub fn restrict_to_recordings(mut self, recordings: &[LoadedFileId]) -> Self {
+        self.0
+            .retain(|candidate| recordings.contains(&candidate.recording));
+        self
+    }
+
     /// Every loaded recording, best candidate first. A recording that misses
     /// the log entirely is ranked last but stays listed: a clock-skewed source
     /// is still a recording the user may pick.
