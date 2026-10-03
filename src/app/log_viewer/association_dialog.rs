@@ -138,7 +138,7 @@ impl LogAssociationDialog {
         let names = super::recording_names_by_id(recordings, recording_names);
         let candidates = log.rank_association_candidates(&recordings);
         let candidates = match &self.initial_candidates {
-            Some(scope) => candidates.restrict_to_recordings(scope),
+            Some(scope) => candidates.rank_with_recording_order(scope),
             None => candidates,
         };
         let attachable = write_access.allows_writing()

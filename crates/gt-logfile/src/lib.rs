@@ -6,7 +6,7 @@
 //! The log is kept as one shared text buffer with a compact index over its
 //! lines, in the order the file wrote them.
 
-pub use associate::{EntryPlacement, associate_entries, associate_position};
+pub use associate::{EntryPlacement, RecordingAssociationIndex};
 pub use format::{LogFormat, detect_format, infer_year};
 pub use parse::{
     LogEntry, LogParseError, ParsedLog, TextSlice, TimestampKind, parse_log, parse_log_in_chunks_of,

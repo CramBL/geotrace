@@ -2,6 +2,8 @@
 //! Fixtures shared between the test modules of gt-logfile.
 
 use chrono::{DateTime, TimeZone as _, Utc};
+use gt_loaded_files::{FileHistory, LoadedFiles};
+use gt_types::LoadedTrack;
 
 pub mod strategies;
 
@@ -11,6 +13,15 @@ pub fn utc(y: i32, mo: u32, d: u32, h: u32, m: u32, s: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(y, mo, d, h, m, s)
         .single()
         .expect("valid")
+}
+
+pub(crate) fn loaded_recording(tracks: Vec<LoadedTrack>) -> LoadedFiles {
+    let mut files = LoadedFiles::new();
+    files.push(
+        gt_test_utils::loaded_file_with_tracks(tracks),
+        FileHistory::None,
+    );
+    files
 }
 
 /// A real journald summary with two rows per service table.

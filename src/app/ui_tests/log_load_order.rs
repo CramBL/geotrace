@@ -220,7 +220,93 @@ fn initial_association_waits_for_every_overlapping_recording(
         }
     }
     harness.run_steps(2);
+    if ask {
+        let dialog = harness.get(
+            By::new()
+                .role(Role::Window)
+                .label(association_dialog::TITLE),
+        );
+        let first_row = dialog.get(By::new().role(Role::Button).label("first.gtd"));
+        let second_row = dialog.get(By::new().role(Role::Button).label("second.gtd"));
+        assert!(first_row.rect().top() < second_row.rect().top());
+    }
     assert_initial_association(&mut harness, ask, 2);
+}
+
+#[rstest]
+fn initial_chooser_ties_follow_loaded_order_then_arrival_order(
+    #[values(true, false)] second_completes_first: bool,
+) {
+    let mut harness = harness(true);
+    for name in ["existing-first.gtd", "existing-second.gtd"] {
+        let complete = harness
+            .state_mut()
+            .loader
+            .controlled_recording_load_for_test(name, RecordingOperationOrigin::Independent);
+        complete(Ok(recording_outcome(name)));
+        harness.step();
+    }
+    let initial_candidates: Vec<_> = harness
+        .state()
+        .shared
+        .borrow()
+        .loaded_files
+        .view()
+        .entries()
+        .map(|entry| entry.id())
+        .collect();
+    let batch = harness
+        .state_mut()
+        .association_batches
+        .begin_submission(initial_candidates.into_iter());
+    let log = harness
+        .state_mut()
+        .loader
+        .controlled_loose_log_load_for_test("log.txt", batch.log());
+    let first = harness
+        .state_mut()
+        .loader
+        .controlled_recording_load_for_test(
+            "arriving-first.gtd",
+            RecordingOperationOrigin::Arrival(batch.recording()),
+        );
+    let second = harness
+        .state_mut()
+        .loader
+        .controlled_recording_load_for_test(
+            "arriving-second.gtd",
+            RecordingOperationOrigin::Arrival(batch.recording()),
+        );
+    drop(batch);
+    log(Ok(log_outcome("log.txt")));
+    if second_completes_first {
+        second(Ok(recording_outcome("arriving-second.gtd")));
+        harness.step();
+        first(Ok(recording_outcome("arriving-first.gtd")));
+    } else {
+        first(Ok(recording_outcome("arriving-first.gtd")));
+        harness.step();
+        second(Ok(recording_outcome("arriving-second.gtd")));
+    }
+    harness.run_steps(3);
+    let dialog = harness.get(
+        By::new()
+            .role(Role::Window)
+            .label(association_dialog::TITLE),
+    );
+    let row_tops = [
+        "existing-first.gtd",
+        "existing-second.gtd",
+        "arriving-first.gtd",
+        "arriving-second.gtd",
+    ]
+    .map(|name| {
+        dialog
+            .get(By::new().role(Role::Button).label(name))
+            .rect()
+            .top()
+    });
+    assert!(row_tops.windows(2).all(|pair| pair.first() < pair.get(1)));
 }
 
 #[rstest]

@@ -2836,6 +2836,7 @@ dependencies = [
  "criterion",
  "gt-fmt",
  "gt-geo-math",
+ "gt-loaded-files",
  "gt-test-utils",
  "gt-types",
  "log",

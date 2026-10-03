@@ -1,5 +1,7 @@
 //! Ranking the loaded recordings a log could be associated against.
 
+use std::cmp::Reverse;
+
 use chrono::Duration;
 use gt_loaded_files::{LoadedFileId, LoadedFilesView};
 use gt_types::TimeRange;
@@ -38,9 +40,17 @@ impl AssociationCandidates {
         Self(Vec::new())
     }
 
-    pub fn restrict_to_recordings(mut self, recordings: &[LoadedFileId]) -> Self {
-        self.0
-            .retain(|candidate| recordings.contains(&candidate.recording));
+    pub fn rank_with_recording_order(mut self, recordings: &[LoadedFileId]) -> Self {
+        self.0 = recordings
+            .iter()
+            .filter_map(|recording| {
+                self.0
+                    .iter()
+                    .find(|candidate| candidate.recording == *recording)
+                    .copied()
+            })
+            .collect();
+        self.0.sort_by_key(|candidate| Reverse(candidate.overlap));
         self
     }
 
@@ -188,6 +198,36 @@ mod tests {
             ranked.get(3).map(AssociationCandidate::overlaps_the_log),
             Some(false),
             "a recording missing the log is listed, but is no candidate"
+        );
+    }
+
+    #[test]
+    fn scoped_ranking_uses_overlap_then_the_supplied_recording_order() {
+        let files = test_util::loaded(vec![
+            test_util::recording_from(Duration::seconds(5), 10),
+            test_util::recording_from(Duration::zero(), 10),
+            test_util::recording_from(Duration::seconds(5), 10),
+            test_util::recording_from(Duration::zero(), 10),
+        ]);
+        let scope = [
+            test_util::id_of(&files, 2),
+            test_util::id_of(&files, 1),
+            test_util::id_of(&files, 0),
+        ];
+        let candidates = test_util::log_of(10)
+            .rank_association_candidates(&files.view())
+            .rank_with_recording_order(&scope);
+        assert_eq!(
+            candidates
+                .ranked()
+                .iter()
+                .map(|candidate| candidate.recording)
+                .collect::<Vec<_>>(),
+            vec![
+                test_util::id_of(&files, 1),
+                test_util::id_of(&files, 2),
+                test_util::id_of(&files, 0)
+            ]
         );
     }
 
