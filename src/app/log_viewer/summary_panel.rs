@@ -7,17 +7,23 @@ use egui::{Button, Frame, Grid, Label, RichText, ScrollArea};
 use gt_log_view::LoadedLog;
 use gt_logfile::{BootSession, ParsedLog};
 use gt_ui_theme::EM_DASH;
+use gt_ui_types::LoadedLogId;
 
 use super::line_table::LineTableRows;
 use super::{LogViewerWindow, TIMESTAMP_FORMAT};
 
 impl LogViewerWindow {
-    pub(super) fn summary_panel_ui(&mut self, ui: &mut egui::Ui, log: &LoadedLog) {
+    pub(super) fn summary_panel_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        log: &LoadedLog,
+        log_id: LoadedLogId,
+    ) {
         let parsed = log.parsed();
         let rows = LineTableRows::of(log);
         Frame::group(ui.style()).show(ui, |ui| {
             ScrollArea::vertical()
-                .id_salt("log_viewer_summary_panel")
+                .id_salt(("log_viewer_summary_panel", log_id))
                 .max_height(MAX_PANEL_HEIGHT_PX)
                 .show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
