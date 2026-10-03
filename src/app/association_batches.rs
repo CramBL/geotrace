@@ -148,20 +148,19 @@ impl AssociationBatches {
     }
 
     pub(super) fn register_log(&mut self, arrival: &LogArrival, log: LoadedLogId) {
-        if let Some(batch) = self.0.batches.get_mut(&arrival.batch)
-            && !batch.logs.contains(&log)
-        {
+        let batch = self.batch_for_live_arrival_mut(arrival.batch);
+        if !batch.logs.contains(&log) {
             batch.logs.push(log);
         }
     }
 
     pub(super) fn register_recording(&mut self, arrival: &RecordingArrival, id: LoadedFileId) {
-        if let Some(batch) = self.0.batches.get_mut(&arrival.batch) {
-            batch.arrival_candidates.push(ArrivalCandidate {
+        self.batch_for_live_arrival_mut(arrival.batch)
+            .arrival_candidates
+            .push(ArrivalCandidate {
                 recording: id,
                 ordinal: arrival.ordinal,
             });
-        }
     }
 
     pub(super) fn ready_logs(
@@ -201,6 +200,17 @@ impl AssociationBatches {
             .values()
             .any(|batch| batch.progress.recordings.load(Ordering::Acquire) > 0)
     }
+
+    #[expect(
+        clippy::panic,
+        reason = "a missing batch for a live arrival token is an internal logic error"
+    )]
+    fn batch_for_live_arrival_mut(&mut self, id: AssociationBatchId) -> &mut BatchState {
+        self.0
+            .batches
+            .get_mut(&id)
+            .unwrap_or_else(|| panic!("a live arrival token must keep its association batch alive"))
+    }
 }
 
 #[cfg(test)]
@@ -209,6 +219,35 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[rstest]
+    #[case::loose_log(false)]
+    #[case::recording(true)]
+    #[should_panic(expected = "a live arrival token must keep its association batch alive")]
+    fn registration_panics_when_a_live_arrival_has_no_batch(#[case] recording: bool) {
+        let mut batches = AssociationBatches::default();
+        let submission = batches.begin_submission(std::iter::empty());
+        let log = submission.log();
+        let arrival = submission.recording();
+        drop(submission);
+        batches.0.batches.clear();
+        if recording {
+            let mut files = LoadedFiles::new();
+            files.push(
+                gt_test_utils::loaded_file_with_tracks(Vec::new()),
+                FileHistory::None,
+            );
+            let id = files
+                .view()
+                .entries()
+                .next()
+                .expect("loaded recording")
+                .id();
+            batches.register_recording(&arrival, id);
+        } else {
+            batches.register_log(&log, LoadedLogId::new(0));
+        }
+    }
 
     #[test]
     fn dropping_an_empty_submission_removes_its_registry_entry() {

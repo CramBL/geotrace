@@ -19,7 +19,7 @@ use gt_store::{
 };
 
 use super::anchored_dialog::AnchoredDialogKind;
-use super::association_batches::RecordingOperationOrigin;
+use super::association_batches::{RecordingArrival, RecordingOperationOrigin};
 use super::storage::{QueuedArrivalSet, QueuedLoad};
 use super::{App, loader, modals};
 
@@ -31,7 +31,7 @@ pub(in crate::app) fn recordings_already_in_history_title(count: usize) -> Strin
 
 /// One `.gtd` on its way into the view from outside the history database.
 pub struct RecordingFromDisk {
-    pub(super) origin: RecordingOperationOrigin,
+    pub(super) arrival: RecordingArrival,
     pub filename: String,
     pub content: RecordingContent,
     pub mode: loader::GtdLoadMode,
@@ -240,7 +240,7 @@ impl App {
                             .file_name()
                             .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
                         recordings.push(RecordingFromDisk {
-                            origin: RecordingOperationOrigin::Arrival(batch.recording()),
+                            arrival: batch.recording(),
                             filename,
                             content: RecordingContent::Path(path),
                             mode,
@@ -259,7 +259,7 @@ impl App {
                             name
                         };
                         recordings.push(RecordingFromDisk {
-                            origin: RecordingOperationOrigin::Arrival(batch.recording()),
+                            arrival: batch.recording(),
                             filename,
                             content: RecordingContent::Bytes(bytes),
                             mode: loader::GtdLoadMode::Regular,
@@ -324,11 +324,12 @@ impl App {
         open: Option<loader::HistoryOpen>,
     ) {
         let RecordingFromDisk {
-            origin,
+            arrival,
             filename,
             content,
             mode,
         } = recording;
+        let origin = RecordingOperationOrigin::Arrival(arrival);
         match content {
             RecordingContent::Path(path) => {
                 self.loader
@@ -422,7 +423,7 @@ impl App {
         match choice {
             Some(AlreadyInHistoryChoice::OpenTheStoredVersion) => {
                 for recording in prompt.recordings {
-                    let origin = recording.from_disk.origin;
+                    let origin = RecordingOperationOrigin::Arrival(recording.from_disk.arrival);
                     self.history.open_with_origin(recording.db_ref, origin);
                 }
             }
@@ -482,6 +483,7 @@ pub(in crate::app) const NO_SHELVED_TRACK_HOVER: &str =
 mod tests {
     use gt_store::{HistoryDatabase as _, Recordings};
 
+    use crate::app::association_batches::AssociationBatches;
     use crate::app::test_util::recordings;
 
     use super::*;
@@ -509,10 +511,12 @@ mod tests {
             "the overwritten database still lists its recordings"
         );
 
+        let mut batches = AssociationBatches::default();
+        let submission = batches.begin_submission(std::iter::empty());
         let screened = screen_against_history(
             &db,
             vec![RecordingFromDisk {
-                origin: RecordingOperationOrigin::Independent,
+                arrival: submission.recording(),
                 filename: "ride.gtd".to_owned(),
                 content: RecordingContent::Bytes(bytes.into()),
                 mode: loader::GtdLoadMode::Regular,

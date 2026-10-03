@@ -7,7 +7,7 @@ use gt_types::{FileIdx, TrackIdx, TrackRef};
 use rstest::rstest;
 
 use crate::app::App;
-use crate::app::association_batches::RecordingOperationOrigin;
+use crate::app::association_batches::{AssociationSubmission, RecordingOperationOrigin};
 use crate::app::recording_from_disk::{
     self, LEAVE_SHELVED_TRACKS_OUT_LABEL, LOAD_FROM_DISK_LABEL, NO_SHELVED_TRACK_HOVER,
     OPEN_THE_STORED_VERSION_LABEL, RecordingAlreadyInHistory, RecordingContent, RecordingFromDisk,
@@ -375,14 +375,17 @@ fn a_recording_loaded_from_disk_hides_the_tracks_stored_with_it_as_hidden() {
 
 /// The recordings one drop brought in that history already holds, as the
 /// prompt lists them.
-fn recordings_already_in_history(count: usize) -> RecordingsAlreadyInHistory {
+fn recordings_already_in_history(
+    submission: &AssociationSubmission,
+    count: usize,
+) -> RecordingsAlreadyInHistory {
     use gt_store::{TrackRange, TrackState};
 
     RecordingsAlreadyInHistory {
         recordings: (0..count)
             .map(|index| RecordingAlreadyInHistory {
                 from_disk: RecordingFromDisk {
-                    origin: RecordingOperationOrigin::Independent,
+                    arrival: submission.recording(),
                     filename: format!("ride-{index}.gtd"),
                     content: RecordingContent::Path(PathBuf::from(format!(
                         "/recordings/ride-{index}.gtd"
@@ -416,10 +419,13 @@ fn app_showing_the_prompt_over_stored_recordings(count: usize) -> TestHarness<'s
         .size(egui::vec2(640.0, 420.0))
         .eframe(test_util::harness::build_app);
     harness.inner.step();
+    let submission = harness.inner.state_mut().recording_submission_for_test();
     harness
         .inner
         .state_mut()
-        .pending_recordings_already_in_history = Some(recordings_already_in_history(count));
+        .pending_recordings_already_in_history =
+        Some(recordings_already_in_history(&submission, count));
+    drop(submission);
     harness.run();
     harness
 }
