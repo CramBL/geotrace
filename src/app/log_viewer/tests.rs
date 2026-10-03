@@ -29,7 +29,7 @@ use gt_test_utils::{
 };
 use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::{FileSource, Latitude, Longitude};
-use gt_ui_types::{LoadedLogId, LogMatchColor, LogMatchGlyph, LogMatchHover};
+use gt_ui_types::{LoadedLogId, LogMatchColor, LogMatchGlyph, LogMatchHover, LogMatches};
 
 use super::{
     AssociationWindowUnit, LOG_VIEWER_TITLE, LogViewerContext, LogViewerRequests, LogViewerWindow,
@@ -63,6 +63,11 @@ struct ViewerState {
 }
 
 impl ViewerState {
+    fn map_matches(&mut self) -> &LogMatches {
+        let names = RecordingNames::resolve(self.recordings.view(), "{filename}");
+        self.logs.map_matches(self.recordings.view(), &names)
+    }
+
     fn shown_log(&self) -> Option<&LoadedLog> {
         self.viewer
             .selected_log()
@@ -857,6 +862,10 @@ fn dragging_the_association_window_commits_one_pass_with_the_final_placements() 
         (log_start() + Duration::seconds(690)).format(super::TIMESTAMP_FORMAT)
     );
     let mut harness = harness_of(vec![recording("walk.gtd", 55.0)], &[("nav.log", &text)]);
+    type_into_live_filter(&mut harness, "navsyncd");
+    let cached = harness.state_mut().map_matches();
+    assert_eq!(cached.match_count(), 1);
+    let allocation = cached.layers().as_ptr();
     let from = harness
         .get(By::new().role(Role::SpinButton))
         .rect()
@@ -885,6 +894,10 @@ fn dragging_the_association_window_commits_one_pass_with_the_final_placements() 
             Duration::seconds(ASSOCIATION_WINDOW_SECS)
         );
         assert_eq!(log.entry_placement(1), None);
+        assert_eq!(
+            harness.state_mut().map_matches().layers().as_ptr(),
+            allocation
+        );
     }
     harness.drop_at(from + egui::vec2(100.0, 0.0));
     harness.step();
@@ -899,6 +912,7 @@ fn dragging_the_association_window_commits_one_pass_with_the_final_placements() 
     for (index, placement) in expected.into_iter().enumerate() {
         assert_eq!(log.entry_placement(index), placement);
     }
+    assert_eq!(harness.state_mut().map_matches().match_count(), 2);
     harness.run_steps(3);
     assert_eq!(harness.state().viewer.association_window_commits, 1);
 }
@@ -1505,6 +1519,90 @@ fn type_into_live_filter(harness: &mut Harness<ViewerState>, text: &str) {
         .events
         .push(egui::Event::Text(text.to_owned()));
     run_until_the_scans_land(harness);
+}
+
+#[test]
+fn idle_viewer_frames_preserve_cached_map_layers() {
+    let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
+    add_filter(&mut harness, "starting");
+    type_into_live_filter(&mut harness, "fix");
+    let cached = harness.state_mut().map_matches();
+    assert_eq!(cached.layers().len(), 2);
+    assert_eq!(cached.match_count(), 4);
+    let expected = cached.clone();
+    let allocation = cached.layers().as_ptr();
+    let match_allocations: Vec<_> = cached
+        .layers()
+        .iter()
+        .map(|layer| layer.matches.as_ptr())
+        .collect();
+
+    for _ in 0..3 {
+        harness.step();
+        let cached = harness.state_mut().map_matches();
+        assert_eq!(*cached, expected);
+        assert_eq!(cached.layers().as_ptr(), allocation);
+        assert_eq!(
+            cached
+                .layers()
+                .iter()
+                .map(|layer| layer.matches.as_ptr())
+                .collect::<Vec<_>>(),
+            match_allocations
+        );
+    }
+}
+
+#[derive(Debug)]
+enum MapLayerEdit {
+    DisableChip,
+    RemovePositionSource,
+    WriteLiveFilter,
+}
+
+#[rstest]
+#[case::live_filter(MapLayerEdit::WriteLiveFilter, Some(LogMatchColor::LayerSlot { index: 0, shared: false }))]
+#[case::chip(MapLayerEdit::DisableChip, Some(LogMatchColor::LiveFilter))]
+#[case::position_source(MapLayerEdit::RemovePositionSource, None)]
+fn viewer_edits_refresh_cached_map_layers(
+    #[case] edit: MapLayerEdit,
+    #[case] remaining_color: Option<LogMatchColor>,
+) {
+    let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
+    add_filter(&mut harness, "starting");
+    type_into_live_filter(&mut harness, "fix");
+    assert_eq!(harness.state_mut().map_matches().match_count(), 4);
+
+    match edit {
+        MapLayerEdit::DisableChip => toggle_chip(&mut harness, 0),
+        MapLayerEdit::RemovePositionSource => {
+            harness.get(By::new().value("walk.gtd")).click();
+            harness.run_steps(2);
+            harness
+                .bottommost_matching(By::new().label(gt_ui_theme::EM_DASH))
+                .click();
+            harness.run_steps(2);
+            assert_eq!(
+                harness.state().shown_log().unwrap().associated_recording(),
+                None
+            );
+        }
+        MapLayerEdit::WriteLiveFilter => type_into_live_filter(&mut harness, " impossible"),
+    }
+
+    let cached = harness.state_mut().map_matches();
+    assert_eq!(
+        cached.match_count(),
+        if remaining_color.is_some() { 2 } else { 0 }
+    );
+    assert_eq!(
+        cached
+            .layers()
+            .iter()
+            .map(|layer| layer.color)
+            .collect::<Vec<_>>(),
+        remaining_color.into_iter().collect::<Vec<_>>()
+    );
 }
 
 /// The count the filter row shows: the lines the table draws, of the log's

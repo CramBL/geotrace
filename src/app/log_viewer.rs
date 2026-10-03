@@ -598,10 +598,9 @@ impl LogViewerWindow {
                 self.commit_association_window(logs, recordings);
             }
         }
-        let Some(mut log) = selected.and_then(|id| logs.get_mut_by_id(id)) else {
-            return;
-        };
-        if let Some(chosen_target) = chosen_target {
+        if let Some(chosen_target) = chosen_target
+            && let Some(mut log) = selected.and_then(|id| logs.get_mut_by_id(id))
+        {
             log.anchor_to_loaded_recording(chosen_target, &recordings);
         }
     }

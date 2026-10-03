@@ -49,7 +49,10 @@ impl LogViewerWindow {
             .filter_row_ui(ui, filters)
             .or_else(|| chip_row_ui(ui, filters, logs.layer_color_slots()));
 
-        let (Some(edit), Some((stack, slots))) = (edit, logs.filter_stack_mut_by_id(shown)) else {
+        let Some(edit) = edit else {
+            return;
+        };
+        let Some((stack, slots)) = logs.filter_stack_mut_by_id(shown) else {
             return;
         };
         match edit {
