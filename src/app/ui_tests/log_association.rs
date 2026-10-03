@@ -7,6 +7,7 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
 use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
+use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use gt_loaded_files::FileHistory;
 use gt_log_view::{LoadedLog, LogAttachmentRef, RecordingKey};
 use gt_store::{
@@ -521,7 +522,7 @@ fn an_attached_log_comes_back_with_its_filters_when_the_recording_opens_again() 
         harness.step_until(|_| {
             !stored_attachments(&db_path, &db_ref)
                 .first()
-                .is_none_or(|entry| entry.attachment.filters.chips.is_empty())
+                .is_none_or(|entry| entry.attachment.filters.chips().is_empty())
         }),
         "the chip reached the stored attachment"
     );
@@ -575,7 +576,7 @@ fn an_unloaded_attachment_is_listed_under_its_recording_and_loads_back() {
     assert!(
         harness.step_until(|_| stored_attachments(&db_path, &db_ref)
             .first()
-            .is_some_and(|entry| entry.attachment.filters.chips.len() == 1)),
+            .is_some_and(|entry| entry.attachment.filters.chips().len() == 1)),
         "the chip reached the stored attachment"
     );
     let stored = stored_attachments(&db_path, &db_ref)
@@ -851,7 +852,7 @@ fn attaching_a_log_the_recording_already_holds_reuses_the_stored_attachment() {
     assert!(
         harness.step_until(|_| stored_attachments(&db_path, &db_ref)
             .first()
-            .is_some_and(|entry| entry.attachment.filters.chips.len() == 1)),
+            .is_some_and(|entry| entry.attachment.filters.chips().len() == 1)),
         "the chip reached the stored attachment"
     );
     let stored = stored_attachments(&db_path, &db_ref)
@@ -878,7 +879,7 @@ fn attaching_a_log_the_recording_already_holds_reuses_the_stored_attachment() {
     assert!(
         harness.step_until(|_| stored_attachments(&db_path, &db_ref)
             .first()
-            .is_some_and(|entry| entry.attachment.filters.chips.is_empty())),
+            .is_some_and(|entry| entry.attachment.filters.chips().is_empty())),
         "the stack of the loaded log reached the attachment it took"
     );
     assert_eq!(
@@ -929,6 +930,7 @@ fn seed_a_recording_and_the_log_stored_with_it(
                 name: FIXTURE_LOG_NAME,
                 text: &fixture_log_text(FIXTURE_LOG_SEED),
                 filters: vec![StoredLogFilter {
+                    group_id: 0,
                     text: "kernel".to_owned(),
                     regex: false,
                     enabled: true,
@@ -1330,14 +1332,24 @@ fn operator_only_edits_restore_from_the_attachment(#[case] add_conditions: bool)
     assert!(harness.step_until(|_| {
         stored_attachments(&db_path, &db_ref)
             .first()
-            .is_some_and(|entry| entry.attachment.filters.operator == StoredLogFilterOperator::Any)
+            .is_some_and(|entry| {
+                entry
+                    .attachment
+                    .filters
+                    .groups()
+                    .first()
+                    .expect("default group")
+                    .operator
+                    == StoredLogFilterOperator::Any
+            })
     }));
     let expected = harness
         .state()
         .first_log()
         .unwrap()
         .filters()
-        .to_stored_stack();
+        .to_stored_stack()
+        .expect("valid groups");
     let expected_visible = harness
         .state()
         .first_log()
@@ -1355,7 +1367,7 @@ fn operator_only_edits_restore_from_the_attachment(#[case] add_conditions: bool)
     test_util::harness::step_until_a_log_is_loaded(&mut harness);
     ui_tests::run_until_the_log_filter_scans_land(&mut harness);
     let restored = harness.state().first_log().unwrap().filters();
-    assert_eq!(restored.to_stored_stack(), expected);
+    assert_eq!(restored.to_stored_stack().expect("valid groups"), expected);
     assert_eq!(*restored.visible_entries(), expected_visible);
     assert!(!restored.is_query_pending());
     assert!(harness.query_by_label(filters::UNION_SYMBOL).is_some());
@@ -1363,7 +1375,16 @@ fn operator_only_edits_restore_from_the_attachment(#[case] add_conditions: bool)
     assert!(harness.step_until(|_| {
         stored_attachments(&db_path, &db_ref)
             .first()
-            .is_some_and(|entry| entry.attachment.filters.operator == StoredLogFilterOperator::All)
+            .is_some_and(|entry| {
+                entry
+                    .attachment
+                    .filters
+                    .groups()
+                    .first()
+                    .expect("default group")
+                    .operator
+                    == StoredLogFilterOperator::All
+            })
     }));
     let rewritten = stored_attachments(&db_path, &db_ref)
         .into_iter()
@@ -1378,7 +1399,79 @@ fn operator_only_edits_restore_from_the_attachment(#[case] add_conditions: bool)
         rewritten.attachment.year_reference,
         saved.attachment.year_reference
     );
-    assert_eq!(rewritten.attachment.filters.chips, expected.chips);
+    assert_eq!(rewritten.attachment.filters.chips(), expected.chips());
+}
+
+#[test]
+fn grouped_filter_edits_restore_with_highlight_memberships_and_empty_groups() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
+    attach_the_log(&mut harness, &db_path, &db_ref);
+    for pattern in ["kernel", "systemd"] {
+        ui_tests::add_log_filter_in(&mut harness, pattern);
+    }
+    harness.get_by_label(filters::INTERSECTION_SYMBOL).click();
+    harness.run_steps(2);
+    harness
+        .nth_matching(By::new().label(ICON_FUNNEL), 0)
+        .click();
+    harness.run_steps(2);
+    harness.get_by_label(filters::NEW_GROUP_LABEL).click();
+    harness.run_steps(2);
+    ui_tests::add_log_filter_in(&mut harness, "timeout");
+    harness.get_by_label(filters::NEW_GROUP_LABEL).click();
+    harness.run_steps(2);
+    harness.get_by_label("2").click();
+    ui_tests::run_until_the_log_filter_scans_land(&mut harness);
+    let stack = harness.state().first_log().unwrap().filters();
+    let expected = stack.to_stored_stack().expect("valid groups");
+    let visible = stack.visible_entries().clone();
+    assert_eq!(expected.groups().len(), 3);
+    assert!(harness.step_until(|_| {
+        stored_attachments(&db_path, &db_ref)
+            .first()
+            .is_some_and(|entry| entry.attachment.filters == expected)
+    }));
+    let saved = stored_attachments(&db_path, &db_ref)
+        .into_iter()
+        .next()
+        .unwrap();
+    unload_the_log(&mut harness);
+    open_the_stored_log(&harness, &db_ref, saved.id);
+    test_util::harness::step_until_a_log_is_loaded(&mut harness);
+    ui_tests::run_until_the_log_filter_scans_land(&mut harness);
+    let restored = harness.state().first_log().unwrap().filters();
+    assert_eq!(restored.to_stored_stack().expect("valid groups"), expected);
+    assert_eq!(*restored.visible_entries(), visible);
+    assert!(!restored.is_query_pending());
+    harness.get_by_label(ICON_PLUS_CIRCLE).click();
+    harness.run_steps(2);
+    let restored = harness.state().first_log().unwrap().filters();
+    assert_eq!(
+        restored.chips().first().unwrap().group(),
+        restored.groups().first().unwrap().id()
+    );
+    assert!(!restored.is_query_pending());
+    let updated = restored.to_stored_stack().expect("valid groups");
+    assert!(harness.step_until(|_| {
+        stored_attachments(&db_path, &db_ref)
+            .first()
+            .is_some_and(|entry| entry.attachment.filters == updated)
+    }));
+    let rewritten = stored_attachments(&db_path, &db_ref)
+        .into_iter()
+        .next()
+        .unwrap();
+    assert_eq!(rewritten.attachment.name, saved.attachment.name);
+    assert_eq!(
+        rewritten.attachment.content_hash,
+        saved.attachment.content_hash
+    );
+    assert_eq!(
+        rewritten.attachment.year_reference,
+        saved.attachment.year_reference
+    );
 }
 
 /// The stored stack is the chips, in the modes and colours they were in.
@@ -1397,7 +1490,7 @@ fn the_stored_stack_holds_every_chips_mode_and_colour() {
     assert!(
         harness.step_until(|_| stored_attachments(&db_path, &db_ref)
             .first()
-            .is_some_and(|entry| entry.attachment.filters.chips.len() == 2)),
+            .is_some_and(|entry| entry.attachment.filters.chips().len() == 2)),
         "both chips reached the stored attachment"
     );
 
@@ -1408,7 +1501,7 @@ fn the_stored_stack_holds_every_chips_mode_and_colour() {
         .unwrap_or_default();
     assert_eq!(
         filters
-            .chips
+            .chips()
             .iter()
             .map(|filter| (filter.text.as_str(), filter.enabled, filter.mode))
             .collect::<Vec<_>>(),
@@ -1448,6 +1541,7 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
     });
     let meta = gt_store::extract_meta(&bytes).expect("fixture metadata");
     let filters: StoredLogFilterStack = vec![StoredLogFilter {
+        group_id: 0,
         text: "systemd".to_owned(),
         regex: false,
         enabled: false,
@@ -1504,7 +1598,8 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
         .get_by_id(first_id)
         .expect("first log")
         .filters()
-        .to_stored_stack();
+        .to_stored_stack()
+        .expect("valid groups");
 
     match requested_by {
         AttachedLogRequester::RecordingLoad => {
@@ -1533,7 +1628,10 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
             log.anchor_key().as_ref(),
             Some(&RecordingKey::Stored(attachment.recording.clone()))
         );
-        assert_eq!(log.filters().to_stored_stack(), *stored_filters);
+        assert_eq!(
+            log.filters().to_stored_stack().expect("valid groups"),
+            *stored_filters
+        );
         assert!(harness.state().logs.any_loaded_log_holds(attachment));
     }
     assert_eq!(
@@ -1582,7 +1680,8 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
             .get_by_id(second_id)
             .expect("detached context")
             .filters()
-            .to_stored_stack(),
+            .to_stored_stack()
+            .expect("valid groups"),
         filters
     );
     assert_eq!(
@@ -1592,7 +1691,8 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
             .get_by_id(restored_id)
             .expect("restored context")
             .filters()
-            .to_stored_stack(),
+            .to_stored_stack()
+            .expect("valid groups"),
         filters
     );
     assert_eq!(harness.state().log_viewer.selected_log(), Some(restored_id));
@@ -1677,7 +1777,8 @@ fn a_saved_log_loads_separately_from_incompatible_loose_content(
             .get_by_id(saved_id)
             .expect("saved log")
             .filters()
-            .to_stored_stack(),
+            .to_stored_stack()
+            .expect("valid groups"),
         saved_filters
     );
     harness.state_mut().log_viewer.open_on_log(loose_id);
@@ -1718,7 +1819,8 @@ fn a_saved_log_loads_separately_from_incompatible_loose_content(
             .get_by_id(saved_id)
             .expect("saved log")
             .filters()
-            .to_stored_stack(),
+            .to_stored_stack()
+            .expect("valid groups"),
         saved_filters
     );
     assert_eq!(

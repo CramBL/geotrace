@@ -7,6 +7,7 @@
 //! exist, and it goes when the recording does.
 
 use std::{
+    collections::HashSet,
     fmt, fs, io,
     num::ParseIntError,
     path::{Path, PathBuf},
@@ -127,6 +128,8 @@ pub struct StoredLogFilter {
     /// The filter as the user wrote it in the field.
     pub text: String,
 
+    pub group_id: u64,
+
     /// Whether the `.*` toggle was on while it was written.
     pub regex: bool,
 
@@ -145,36 +148,186 @@ pub enum StoredLogFilterOperator {
     Any,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub struct StoredLogFilterStack {
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StoredLogFilterGroup {
+    pub id: u64,
     pub operator: StoredLogFilterOperator,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct StoredLogFilterStack {
+    groups: Vec<StoredLogFilterGroup>,
+    selected_group_id: u64,
+    chips: Vec<StoredLogFilter>,
+}
+
+#[derive(Debug)]
+pub struct StoredLogFilterStackParts {
+    pub groups: Vec<StoredLogFilterGroup>,
+    pub selected_group_id: u64,
     pub chips: Vec<StoredLogFilter>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum InvalidStoredLogFilterStack {
+    #[error("duplicate log filter group identity {group_id}")]
+    DuplicateGroup { group_id: u64 },
+    #[error("a log filter stack requires at least one group")]
+    EmptyGroups,
+    #[error("log filter {chip_index} has unknown group identity {group_id}")]
+    UnknownChipGroup { chip_index: usize, group_id: u64 },
+    #[error("selected log filter group identity {group_id} is unknown")]
+    UnknownSelectedGroup { group_id: u64 },
+}
+
+impl StoredLogFilterStack {
+    pub fn try_from_parts(
+        StoredLogFilterStackParts {
+            groups,
+            selected_group_id,
+            chips,
+        }: StoredLogFilterStackParts,
+    ) -> Result<Self, InvalidStoredLogFilterStack> {
+        if groups.is_empty() {
+            return Err(InvalidStoredLogFilterStack::EmptyGroups);
+        }
+        let mut ids = HashSet::new();
+        for group in &groups {
+            if !ids.insert(group.id) {
+                return Err(InvalidStoredLogFilterStack::DuplicateGroup { group_id: group.id });
+            }
+        }
+        if !ids.contains(&selected_group_id) {
+            return Err(InvalidStoredLogFilterStack::UnknownSelectedGroup {
+                group_id: selected_group_id,
+            });
+        }
+        for (chip_index, chip) in chips.iter().enumerate() {
+            if !ids.contains(&chip.group_id) {
+                return Err(InvalidStoredLogFilterStack::UnknownChipGroup {
+                    chip_index,
+                    group_id: chip.group_id,
+                });
+            }
+        }
+        Ok(Self {
+            groups,
+            selected_group_id,
+            chips,
+        })
+    }
+
+    pub fn groups(&self) -> &[StoredLogFilterGroup] {
+        &self.groups
+    }
+
+    pub fn selected_group_id(&self) -> u64 {
+        self.selected_group_id
+    }
+
+    pub fn chips(&self) -> &[StoredLogFilter] {
+        &self.chips
+    }
+}
+
+impl Default for StoredLogFilterStack {
+    fn default() -> Self {
+        Vec::new().into()
+    }
+}
+
 impl From<Vec<StoredLogFilter>> for StoredLogFilterStack {
-    fn from(chips: Vec<StoredLogFilter>) -> Self {
+    fn from(mut chips: Vec<StoredLogFilter>) -> Self {
+        for chip in &mut chips {
+            chip.group_id = 0;
+        }
         Self {
-            operator: StoredLogFilterOperator::All,
+            groups: vec![StoredLogFilterGroup {
+                id: 0,
+                operator: StoredLogFilterOperator::All,
+            }],
+            selected_group_id: 0,
             chips,
         }
     }
 }
 
-fn deserialize_filter_stack<'de, D>(deserializer: D) -> Result<StoredLogFilterStack, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum StoredStackSchema {
-        Legacy(Vec<StoredLogFilter>),
-        Stack(StoredLogFilterStack),
-    }
+impl<'de> Deserialize<'de> for StoredLogFilterStack {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct GroupedStack {
+            groups: Vec<StoredLogFilterGroup>,
+            selected_group_id: u64,
+            chips: Vec<StoredLogFilter>,
+        }
 
-    StoredStackSchema::deserialize(deserializer).map(|schema| match schema {
-        StoredStackSchema::Stack(stack) => stack,
-        StoredStackSchema::Legacy(chips) => chips.into(),
-    })
+        #[derive(Deserialize)]
+        struct LegacyFilter {
+            text: String,
+            regex: bool,
+            enabled: bool,
+            #[serde(flatten)]
+            mode: StoredLogFilterMode,
+        }
+
+        impl LegacyFilter {
+            fn migrate(self) -> StoredLogFilter {
+                StoredLogFilter {
+                    text: self.text,
+                    group_id: 0,
+                    regex: self.regex,
+                    enabled: self.enabled,
+                    mode: self.mode,
+                }
+            }
+        }
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct SingleGroupStack {
+            operator: StoredLogFilterOperator,
+            chips: Vec<LegacyFilter>,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StoredStackSchema {
+            Grouped(GroupedStack),
+            Legacy(Vec<LegacyFilter>),
+            SingleGroup(SingleGroupStack),
+        }
+
+        match StoredStackSchema::deserialize(deserializer)? {
+            StoredStackSchema::Grouped(stack) => Self::try_from_parts(StoredLogFilterStackParts {
+                groups: stack.groups,
+                selected_group_id: stack.selected_group_id,
+                chips: stack.chips,
+            })
+            .map_err(serde::de::Error::custom),
+            StoredStackSchema::Legacy(chips) => Ok(chips
+                .into_iter()
+                .map(LegacyFilter::migrate)
+                .collect::<Vec<_>>()
+                .into()),
+            StoredStackSchema::SingleGroup(stack) => {
+                let mut migrated = Self::from(
+                    stack
+                        .chips
+                        .into_iter()
+                        .map(LegacyFilter::migrate)
+                        .collect::<Vec<_>>(),
+                );
+                if let Some(group) = migrated.groups.first_mut() {
+                    group.operator = stack.operator;
+                }
+                Ok(migrated)
+            }
+        }
+    }
 }
 
 /// What a recording's attribute says about one attachment.
@@ -189,7 +342,6 @@ pub struct LogAttachment {
     pub content_hash: LogContentHash,
 
     /// The filter stack the log was attached with, restored with it.
-    #[serde(deserialize_with = "deserialize_filter_stack")]
     pub filters: StoredLogFilterStack,
 
     /// The original reference for timestamps without a year. Absent in older attachments.
@@ -291,11 +443,12 @@ const LOG_ATTACHMENT_FILE_SUFFIX: &str = ".zst";
 
 /// Version of the attribute JSON layout, bumped only on a change older builds
 /// cannot read. An attachment written in a newer version is ignored.
-const LOG_ATTACHMENT_FORMAT_VERSION: u32 = 2;
+const LOG_ATTACHMENT_FORMAT_VERSION: u32 = 3;
 
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
+    use rstest::rstest;
     use serde_json::Value;
 
     use super::*;
@@ -306,12 +459,14 @@ mod tests {
             LogContentHash::of_log_bytes(b"2026-01-01 14:02:11 navsyncd: gnss fix acquired\n"),
             vec![
                 StoredLogFilter {
+                    group_id: 0,
                     text: "gnss".to_owned(),
                     regex: false,
                     enabled: true,
                     mode: StoredLogFilterMode::Layer { color_slot: 2 },
                 },
                 StoredLogFilter {
+                    group_id: 0,
                     text: "hal-powerd|navsyncd".to_owned(),
                     regex: true,
                     enabled: false,
@@ -330,7 +485,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"format_version":2,"name":"navsyncd.log","content_hash":"b3e7a3594637c2fbf4655e82bcf507d6","filters":{"operator":"all","chips":[{"text":"gnss","regex":false,"enabled":true,"mode":"layer","color_slot":2},{"text":"hal-powerd|navsyncd","regex":true,"enabled":false,"mode":"refine"}]}}"#
+            r#"{"format_version":3,"name":"navsyncd.log","content_hash":"b3e7a3594637c2fbf4655e82bcf507d6","filters":{"groups":[{"id":0,"operator":"all"}],"selected_group_id":0,"chips":[{"text":"gnss","group_id":0,"regex":false,"enabled":true,"mode":"layer","color_slot":2},{"text":"hal-powerd|navsyncd","group_id":0,"regex":true,"enabled":false,"mode":"refine"}]}}"#
         );
         assert_eq!(
             LogAttachment::from_attribute_json(&json),
@@ -349,7 +504,7 @@ mod tests {
             .to_attribute_json()
             .expect("encode the migrated attachment");
         let json: Value = serde_json::from_str(&rewritten).expect("encoded JSON");
-        assert_eq!(json.get("format_version"), Some(&serde_json::json!(2)));
+        assert_eq!(json.get("format_version"), Some(&serde_json::json!(3)));
         assert_eq!(
             LogAttachment::from_attribute_json(&rewritten),
             Some(expected)
@@ -363,11 +518,64 @@ mod tests {
         assert_eq!(restored.filters, StoredLogFilterStack::default());
     }
 
+    #[rstest]
+    #[case::empty_groups(r#"{"groups":[],"selected_group_id":0,"chips":[]}"#)]
+    #[case::duplicate_groups(r#"{"groups":[{"id":0,"operator":"all"},{"id":0,"operator":"any"}],"selected_group_id":0,"chips":[]}"#)]
+    #[case::unknown_selection(
+        r#"{"groups":[{"id":0,"operator":"all"}],"selected_group_id":1,"chips":[]}"#
+    )]
+    #[case::unknown_membership(r#"{"groups":[{"id":0,"operator":"all"}],"selected_group_id":0,"chips":[{"group_id":1,"text":"a","regex":false,"enabled":true,"mode":"refine"}]}"#)]
+    #[case::missing_membership(r#"{"groups":[{"id":0,"operator":"all"}],"selected_group_id":0,"chips":[{"text":"a","regex":false,"enabled":true,"mode":"refine"}]}"#)]
+    fn invalid_grouped_filter_state_is_rejected(#[case] filters: &str) {
+        let json = format!(
+            r#"{{"format_version":3,"name":"bad.log","content_hash":"0","filters":{filters}}}"#
+        );
+        assert_eq!(LogAttachment::from_attribute_json(&json), None);
+    }
+
+    #[rstest]
+    #[case::empty(vec![], 0, None, InvalidStoredLogFilterStack::EmptyGroups)]
+    #[case::duplicate(vec![3, 3], 3, None, InvalidStoredLogFilterStack::DuplicateGroup { group_id: 3 })]
+    #[case::unknown_selection(vec![3], 9, None, InvalidStoredLogFilterStack::UnknownSelectedGroup { group_id: 9 })]
+    #[case::unknown_membership(vec![3], 3, Some(9), InvalidStoredLogFilterStack::UnknownChipGroup { chip_index: 0, group_id: 9 })]
+    fn invalid_stored_stack_parts_return_the_specific_construction_error(
+        #[case] group_ids: Vec<u64>,
+        #[case] selected_group_id: u64,
+        #[case] chip_group_id: Option<u64>,
+        #[case] expected: InvalidStoredLogFilterStack,
+    ) {
+        let groups = group_ids
+            .into_iter()
+            .map(|id| StoredLogFilterGroup {
+                id,
+                operator: StoredLogFilterOperator::All,
+            })
+            .collect();
+        let chips = chip_group_id
+            .into_iter()
+            .map(|group_id| StoredLogFilter {
+                text: "gnss".to_owned(),
+                group_id,
+                regex: false,
+                enabled: true,
+                mode: StoredLogFilterMode::Refine,
+            })
+            .collect();
+        assert_eq!(
+            StoredLogFilterStack::try_from_parts(StoredLogFilterStackParts {
+                groups,
+                selected_group_id,
+                chips,
+            }),
+            Err(expected)
+        );
+    }
+
     /// Neither a newer layout nor a corrupt value may fail the recording the
     /// attribute sits on.
     #[test]
     fn an_attachment_this_build_cannot_read_decodes_to_nothing() {
-        let newer = r#"{"format_version":3,"name":"navsyncd.log","content_hash":"0","filters":[]}"#;
+        let newer = r#"{"format_version":4,"name":"navsyncd.log","content_hash":"0","filters":[]}"#;
         assert_eq!(LogAttachment::from_attribute_json(newer), None);
         assert_eq!(LogAttachment::from_attribute_json("{"), None);
     }
@@ -423,6 +631,7 @@ mod tests {
                 proptest::option::of(any::<usize>()),
             )
                 .prop_map(|(text, regex, enabled, color_slot)| StoredLogFilter {
+                    group_id: 0,
                     text,
                     regex,
                     enabled,
@@ -443,11 +652,22 @@ mod tests {
             name in ".*",
             log in proptest::collection::vec(any::<u8>(), 0..256),
             filters in filters(),
-            any_operator in any::<bool>(),
+            operators in proptest::collection::vec(any::<bool>(), 1..6),
+            membership_offset in any::<usize>(),
+            selected_index in any::<usize>(),
             reference_seconds in proptest::option::of(0i64..4_102_444_800),
         ) {
             let mut attachment = LogAttachment::new(name, LogContentHash::of_log_bytes(&log), filters.into());
-            attachment.filters.operator = if any_operator { StoredLogFilterOperator::Any } else { StoredLogFilterOperator::All };
+            let groups: Vec<_> = operators.iter().enumerate().map(|(index, any_operator)| StoredLogFilterGroup {
+                id: index as u64 * 3 + 5,
+                operator: if *any_operator { StoredLogFilterOperator::Any } else { StoredLogFilterOperator::All },
+            }).collect();
+            let selected_group_id = groups.get(selected_index % operators.len()).expect("selected group").id;
+            let mut chips = attachment.filters.chips().to_vec();
+            for (index, chip) in chips.iter_mut().enumerate() {
+                chip.group_id = groups.get(index.wrapping_add(membership_offset) % operators.len()).expect("chip group").id;
+            }
+            attachment.filters = StoredLogFilterStack::try_from_parts(StoredLogFilterStackParts { groups, selected_group_id, chips }).expect("valid memberships");
             attachment.year_reference = reference_seconds.and_then(|seconds| DateTime::from_timestamp(seconds, 0));
             let json = attachment.to_attribute_json().expect("encode");
             prop_assert_eq!(LogAttachment::from_attribute_json(&json), Some(attachment));

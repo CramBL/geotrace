@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added table filter groups with independent All/Any composition in the log viewer.
 - **Log Viewer:** Table filters can match all or any conditions with the intersection and union controls.
 - **Map & Tracks:** The eye menu has a "Ghost fixes" category that shows or hides dead-reckoned chevron icons and dashed trackline stretches.
 

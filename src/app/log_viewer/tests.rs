@@ -70,21 +70,24 @@ impl ViewerState {
     }
 
     fn chip_display_index(&self, index: usize) -> usize {
-        let chips = self.shown_log().expect("a log is shown").filters().chips();
-        let mode = chips.get(index).expect("the chip exists").mode();
-        let preceding_same_mode = chips
+        let stack = self.shown_log().expect("a log is shown").filters();
+        let chip = stack.chips().get(index).expect("the chip exists");
+        stack
+            .groups()
             .iter()
-            .take(index)
-            .filter(|chip| chip.mode() == mode)
-            .count();
-        preceding_same_mode
-            + match mode {
-                FilterChipMode::Refine => 0,
-                FilterChipMode::Layer => chips
+            .flat_map(|group| {
+                stack.chips().iter().filter(|chip| {
+                    chip.mode() == FilterChipMode::Refine && chip.group() == group.id()
+                })
+            })
+            .chain(
+                stack
+                    .chips()
                     .iter()
-                    .filter(|chip| chip.mode() == FilterChipMode::Refine)
-                    .count(),
-            }
+                    .filter(|chip| chip.mode() == FilterChipMode::Layer),
+            )
+            .position(|candidate| candidate.id() == chip.id())
+            .expect("the chip is rendered")
     }
 
     fn shown_log(&self) -> Option<&LoadedLog> {
@@ -209,13 +212,19 @@ fn the_compact_group_operator_toggles_without_starting_a_scan() {
             .shown_log()
             .unwrap()
             .filters()
-            .group_operator(),
+            .groups()
+            .first()
+            .expect("default group")
+            .operator(),
         FilterGroupOperator::All
     );
     harness.get_by_label(filters::INTERSECTION_SYMBOL).click();
     harness.run_steps(2);
     let stack = harness.state().logs.get_by_id(id).unwrap().filters();
-    assert_eq!(stack.group_operator(), FilterGroupOperator::Any);
+    assert_eq!(
+        stack.groups().first().expect("default group").operator(),
+        FilterGroupOperator::Any
+    );
     assert!(!stack.is_query_pending());
     harness.get_by_label(filters::UNION_SYMBOL).click();
     harness.run_steps(2);
@@ -225,22 +234,111 @@ fn the_compact_group_operator_toggles_without_starting_a_scan() {
             .shown_log()
             .unwrap()
             .filters()
-            .group_operator(),
+            .groups()
+            .first()
+            .expect("default group")
+            .operator(),
         FilterGroupOperator::All
+    );
+}
+
+#[test]
+fn group_controls_select_live_destination_move_conditions_and_reassign_removed_memberships() {
+    let mut harness = harness_with(Vec::new());
+    add_filter(&mut harness, "gnss");
+    let first_group = harness
+        .state()
+        .shown_log()
+        .unwrap()
+        .filters()
+        .selected_group();
+    harness.get_by_label(filters::NEW_GROUP_LABEL).click();
+    harness.run_steps(2);
+    let second_group = harness
+        .state()
+        .shown_log()
+        .unwrap()
+        .filters()
+        .selected_group();
+    assert_ne!(first_group, second_group);
+    add_filter(&mut harness, "lost");
+    let stack = harness.state().shown_log().unwrap().filters();
+    let first_chip = stack.chips().first().unwrap().id();
+    let second_chip = stack.chips().get(1).unwrap().id();
+    assert_eq!(stack.chip(first_chip).unwrap().group(), first_group);
+    assert_eq!(stack.chip(second_chip).unwrap().group(), second_group);
+    harness.get_by_label("1").click();
+    harness.run_steps(2);
+    assert_eq!(
+        harness
+            .state()
+            .shown_log()
+            .unwrap()
+            .filters()
+            .selected_group(),
+        first_group
+    );
+    harness
+        .nth_matching(By::new().label(filters::MOVE_FILTER_LABEL), 1)
+        .click();
+    harness.run_steps(2);
+    harness.get_by_label("Group 1").click();
+    harness.run_steps(2);
+    let stack = harness.state().shown_log().unwrap().filters();
+    assert_eq!(stack.chip(second_chip).unwrap().group(), first_group);
+    assert!(!stack.is_query_pending());
+    harness
+        .nth_matching(By::new().label(filters::INTERSECTION_SYMBOL), 0)
+        .click();
+    harness.run_steps(2);
+    assert_eq!(
+        harness
+            .state()
+            .shown_log()
+            .unwrap()
+            .filters()
+            .groups()
+            .first()
+            .unwrap()
+            .operator(),
+        FilterGroupOperator::Any
+    );
+    switch_chip_mode(&mut harness, 1);
+    harness
+        .nth_matching(By::new().label(filters::REMOVE_GROUP_LABEL), 0)
+        .click();
+    harness.run_steps(2);
+    let stack = harness.state().shown_log().unwrap().filters();
+    assert_eq!(stack.groups().len(), 1);
+    assert_eq!(stack.selected_group(), second_group);
+    assert_eq!(stack.chip(first_chip).unwrap().group(), second_group);
+    assert_eq!(stack.chip(second_chip).unwrap().group(), second_group);
+    switch_chip_mode(&mut harness, 1);
+    let stack = harness.state().shown_log().unwrap().filters();
+    assert_eq!(
+        stack.chip(second_chip).unwrap().mode(),
+        FilterChipMode::Refine
+    );
+    assert!(!stack.is_query_pending());
+    assert!(
+        harness
+            .get_by_label(filters::REMOVE_GROUP_LABEL)
+            .accesskit_node()
+            .is_disabled()
     );
 }
 
 fn disable_display_option(harness: &mut Harness<'static, ViewerState>, label: &str) {
     let stack = harness.state().shown_log().unwrap().filters();
     let visible = stack.visible_entries().clone();
-    let stored = stack.to_stored_stack();
+    let stored = stack.to_stored_stack().expect("valid groups");
     harness.get_by_label(filters::DISPLAY_OPTIONS_LABEL).click();
     harness.run_steps(2);
     harness.get_by_label(label).click();
     harness.run_steps(2);
     let stack = harness.state().shown_log().unwrap().filters();
     assert_eq!(*stack.visible_entries(), visible);
-    assert_eq!(stack.to_stored_stack(), stored);
+    assert_eq!(stack.to_stored_stack().expect("valid groups"), stored);
     assert!(harness.query_by_label(label).is_none());
 }
 
@@ -1735,7 +1833,17 @@ fn switch_chip_mode(harness: &mut Harness<ViewerState>, index: usize) {
         FilterChipMode::Layer => ICON_PLUS_CIRCLE,
         FilterChipMode::Refine => ICON_FUNNEL,
     };
-    let among_the_same_mode = modes.iter().take(index).filter(|&&m| m == mode).count();
+    let displayed_index = harness.state().chip_display_index(index);
+    let among_the_same_mode = match mode {
+        FilterChipMode::Refine => displayed_index,
+        FilterChipMode::Layer => {
+            displayed_index
+                - modes
+                    .iter()
+                    .filter(|mode| **mode == FilterChipMode::Refine)
+                    .count()
+        }
+    };
     harness
         .nth_matching(By::new().label(glyph), among_the_same_mode)
         .click();
@@ -2435,6 +2543,20 @@ fn log_viewer_window_fits_every_viewport(
         .viewer
         .report_warning(gt_test_utils::oversized_text('w'));
     state.viewer.summary_expanded = true;
+    let id = state.logs.first_id().expect("fixture log");
+    let (stack, _) = state.logs.filter_stack_mut_by_id(id).unwrap();
+    for group in 0..5 {
+        if group > 0 {
+            stack.create_group();
+        }
+        for condition in 0..3 {
+            stack.set_live_filter_text(&format!(
+                "group {group} condition {condition} with a long filter"
+            ));
+            stack.add_live_filter_as_chip();
+        }
+    }
+    stack.wait_for_queries();
     let mut harness = Harness::builder()
         .with_size(viewport)
         .build_ui_state(viewer_ui, state);

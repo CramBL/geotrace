@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use chrono::{Datelike as _, Duration};
 use gt_history_types::{
-    LogAttachmentId, StoredLogFilter, StoredLogFilterMode, StoredLogFilterOperator,
-    StoredLogFilterStack,
+    LogAttachmentId, StoredLogFilter, StoredLogFilterMode, StoredLogFilterStack,
 };
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_types::FileIdx;
@@ -125,11 +124,12 @@ fn an_attached_log_reports_the_filter_stack_edits_the_database_has_not_seen() {
     assert_eq!(
         edits
             .iter()
-            .map(|(attachment, filters)| (attachment.id, filters.chips.as_slice()))
+            .map(|(attachment, filters)| (attachment.id, filters.chips()))
             .collect::<Vec<_>>(),
         [(
             attachment.id,
             [StoredLogFilter {
+                group_id: 0,
                 text: "entry 1".to_owned(),
                 regex: false,
                 enabled: true,
@@ -150,7 +150,7 @@ fn an_attached_log_reports_the_filter_stack_edits_the_database_has_not_seen() {
 }
 
 #[test]
-fn an_operator_only_edit_is_stored_once_and_restored_with_an_empty_stack() {
+fn group_only_edits_are_stored_once_and_restored_with_an_empty_stack() {
     let attachment = fixtures::attachment_ref();
     let recordings = test_util::loaded(Vec::new());
     let mut logs = LoadedLogs::default();
@@ -161,22 +161,25 @@ fn an_operator_only_edit_is_stored_once_and_restored_with_an_empty_stack() {
         &recordings.view(),
     );
     let id = logs.push(log).id();
-    logs.filter_stack_mut_by_id(id)
-        .unwrap()
-        .0
-        .set_group_operator(FilterGroupOperator::Any);
+    let stack = logs.filter_stack_mut_by_id(id).unwrap().0;
+    let selected = stack.create_group();
+    stack.set_group_operator(stack.selected_group(), FilterGroupOperator::Any);
+    stack.create_group();
+    stack.select_group(selected);
+    let expected = stack.to_stored_stack().expect("valid groups");
     let edits = logs.take_filter_stack_edits_to_store();
     assert_eq!(edits.len(), 1);
     let (reference, stored) = edits.into_iter().next().unwrap();
     assert_eq!(reference, attachment);
-    assert_eq!(stored.operator, StoredLogFilterOperator::Any);
-    assert!(stored.chips.is_empty());
+    assert_eq!(stored, expected);
+    assert_eq!(stored.groups().len(), 3);
+    assert!(stored.chips().is_empty());
     assert!(logs.take_filter_stack_edits_to_store().is_empty());
     let mut restored = test_util::log_of(10);
     restored.restore_attachment(reference, stored, &recordings.view());
     assert_eq!(
-        restored.filters().group_operator(),
-        FilterGroupOperator::Any
+        restored.filters().to_stored_stack().expect("valid groups"),
+        expected
     );
     assert!(restored.take_filter_stack_edits_to_store().is_none());
 }
@@ -187,12 +190,14 @@ fn an_operator_only_edit_is_stored_once_and_restored_with_an_empty_stack() {
 fn a_restored_attachment_puts_back_the_stack_it_was_stored_with() {
     let stored: StoredLogFilterStack = vec![
         StoredLogFilter {
+            group_id: 0,
             text: "entry 1".to_owned(),
             regex: false,
             enabled: true,
             mode: StoredLogFilterMode::Layer { color_slot: 2 },
         },
         StoredLogFilter {
+            group_id: 0,
             text: "entry".to_owned(),
             regex: false,
             enabled: false,
@@ -211,7 +216,7 @@ fn a_restored_attachment_puts_back_the_stack_it_was_stored_with() {
     let log = logs.get_by_id(id).expect("the restored log is loaded");
     assert_eq!(log.attachment(), Some(&attachment));
     assert_eq!(
-        log.filters().to_stored_stack(),
+        log.filters().to_stored_stack().expect("valid groups"),
         stored,
         "the restored stack is the stored one, colours and all"
     );
@@ -253,6 +258,7 @@ fn identical_saved_logs_keep_distinct_attachment_contexts(#[case] same_recording
     let mut ids = Vec::new();
     for (attachment, pattern, slot) in &contexts {
         let stored: StoredLogFilterStack = vec![StoredLogFilter {
+            group_id: 0,
             text: (*pattern).to_owned(),
             regex: false,
             enabled: true,
@@ -271,7 +277,10 @@ fn identical_saved_logs_keep_distinct_attachment_contexts(#[case] same_recording
             log.anchor_key().as_ref(),
             Some(&RecordingKey::Stored(attachment.recording.clone()))
         );
-        assert_eq!(log.filters().to_stored_stack(), stored);
+        assert_eq!(
+            log.filters().to_stored_stack().expect("valid groups"),
+            stored
+        );
         assert!(logs.any_loaded_log_holds(attachment));
         let mut duplicate = test_util::log_of(10);
         duplicate.restore_attachment(attachment.clone(), Default::default(), &files.view());
@@ -356,12 +365,14 @@ fn saving_an_attachment_reuses_its_existing_context_and_preserves_both_filter_st
         .get_by_id(first)
         .expect("saved log")
         .filters()
-        .to_stored_stack();
+        .to_stored_stack()
+        .expect("valid groups");
     let loose_filters = logs
         .get_by_id(loose)
         .expect("loose log")
         .filters()
-        .to_stored_stack();
+        .to_stored_stack()
+        .expect("valid groups");
     assert_eq!(
         logs.save_attachment(loose, attachment.clone(), Default::default(), &files.view()),
         LogSaveOutcome::AlreadyLoaded(first)
@@ -371,14 +382,16 @@ fn saving_an_attachment_reuses_its_existing_context_and_preserves_both_filter_st
         logs.get_by_id(loose)
             .expect("loose log")
             .filters()
-            .to_stored_stack(),
+            .to_stored_stack()
+            .expect("valid groups"),
         loose_filters
     );
     assert_eq!(
         logs.get_by_id(first)
             .expect("saved log")
             .filters()
-            .to_stored_stack(),
+            .to_stored_stack()
+            .expect("valid groups"),
         first_filters
     );
     assert_eq!(
@@ -423,7 +436,8 @@ fn removing_an_attachment_retains_its_context_independently_of_loose_and_restore
         .get_by_id(first)
         .expect("saved log")
         .filters()
-        .to_stored_stack();
+        .to_stored_stack()
+        .expect("valid groups");
     let loose = logs.push(test_util::log_of(10)).id();
     let placement = logs.get_by_id(first).expect("saved log").entry_placement(1);
     logs.forget_attachment(&attachment);
@@ -437,7 +451,10 @@ fn removing_an_attachment_retains_its_context_independently_of_loose_and_restore
         Some(RecordingKey::Stored(attachment.recording.clone()))
     );
     assert_eq!(detached.entry_placement(1), placement);
-    assert_eq!(detached.filters().to_stored_stack(), first_filters);
+    assert_eq!(
+        detached.filters().to_stored_stack().expect("valid groups"),
+        first_filters
+    );
     assert_eq!(
         logs.push(test_util::log_of(10)),
         LogPushOutcome::AlreadyLoaded(loose)

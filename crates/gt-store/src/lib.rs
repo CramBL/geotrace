@@ -26,12 +26,13 @@ pub use gt_hdf5_archive::{
     WritableDayArchive,
 };
 pub use gt_history::{
-    ChannelSummary, DatabaseRef, DbError, HistoryDatabase, LOGS_DIRECTORY, LogAttachment,
-    LogAttachmentEntry, LogAttachmentId, LogContentHash, NavPointTimeRange, PruneMode,
-    ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingEntry, RecordingMeta, RecordingUiState,
-    StoredFixPlacementRule, StoredLogFilter, StoredLogFilterMode, StoredLogFilterOperator,
-    StoredLogFilterStack, StoredRecording, StoredSegmentation, StoredTrackSplitRule, TrackRange,
-    TrackState, UiStateVersionReporter, UiStateVersionTooNew, extract_meta, format_count_suffix,
+    ChannelSummary, DatabaseRef, DbError, HistoryDatabase, InvalidStoredLogFilterStack,
+    LOGS_DIRECTORY, LogAttachment, LogAttachmentEntry, LogAttachmentId, LogContentHash,
+    NavPointTimeRange, PruneMode, ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingEntry,
+    RecordingMeta, RecordingUiState, StoredFixPlacementRule, StoredLogFilter, StoredLogFilterGroup,
+    StoredLogFilterMode, StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts,
+    StoredRecording, StoredSegmentation, StoredTrackSplitRule, TrackRange, TrackState,
+    UiStateVersionReporter, UiStateVersionTooNew, extract_meta, format_count_suffix,
     identity_from_group_name, identity_group_name, listed_track_rows, make_group_name,
 };
 pub use gt_ionex_store::{ArchivedMapDay, IonexStore, IonexStoreError, ReadOnlyIonexStore};

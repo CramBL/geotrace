@@ -14,6 +14,35 @@ pub struct EntryMatches {
 }
 
 impl EntryMatches {
+    pub(crate) fn intersection(sets: &[&Self]) -> Self {
+        let entry_count = sets.iter().map(|set| set.entry_count).min().unwrap_or(0);
+        let words: Vec<_> = (0..entry_count.div_ceil(BITS_PER_WORD))
+            .map(|index| {
+                sets.iter()
+                    .fold(u64::MAX, |word, set| word & set.word(index))
+            })
+            .collect();
+        let match_count = words.iter().map(|word| word.count_ones() as usize).sum();
+        Self {
+            words,
+            entry_count,
+            match_count,
+        }
+    }
+
+    pub(crate) fn union(sets: &[&Self]) -> Self {
+        let entry_count = sets.iter().map(|set| set.entry_count).max().unwrap_or(0);
+        let words: Vec<_> = (0..entry_count.div_ceil(BITS_PER_WORD))
+            .map(|index| sets.iter().fold(0, |word, set| word | set.word(index)))
+            .collect();
+        let match_count = words.iter().map(|word| word.count_ones() as usize).sum();
+        Self {
+            words,
+            entry_count,
+            match_count,
+        }
+    }
+
     pub fn none(entry_count: usize) -> Self {
         Self {
             words: vec![0; entry_count.div_ceil(BITS_PER_WORD)],
@@ -66,33 +95,6 @@ impl EntryMatches {
             match_count,
         }
     }
-}
-
-/// The entries every one of `sets` matched, ascending. An empty `sets` matches
-/// no entry: an intersection of nothing narrows nothing, and the caller decides
-/// what that means before the call.
-pub(crate) fn intersecting_entry_indices(sets: &[&EntryMatches]) -> Vec<usize> {
-    let word_count = sets.iter().map(|set| set.words.len()).min().unwrap_or(0);
-    let mut entry_indices = Vec::new();
-    for word_index in 0..word_count {
-        let word = sets
-            .iter()
-            .fold(u64::MAX, |shared, set| shared & set.word(word_index));
-        entry_indices.extend(set_bits(word, word_index.saturating_mul(BITS_PER_WORD)));
-    }
-    entry_indices
-}
-
-pub(crate) fn union_entry_indices(sets: &[&EntryMatches]) -> Vec<usize> {
-    let word_count = sets.iter().map(|set| set.words.len()).max().unwrap_or(0);
-    let mut entry_indices = Vec::new();
-    for word_index in 0..word_count {
-        let word = sets
-            .iter()
-            .fold(0, |combined, set| combined | set.word(word_index));
-        entry_indices.extend(set_bits(word, word_index.saturating_mul(BITS_PER_WORD)));
-    }
-    entry_indices
 }
 
 /// The words one chunk of a scan filled, covering that chunk's entries alone.
@@ -182,11 +184,23 @@ mod tests {
         let third = matches_of(200, &[2, 3, 64]);
 
         assert_eq!(
-            intersecting_entry_indices(&[&first, &second, &third]),
+            EntryMatches::intersection(&[&first, &second, &third])
+                .matched_entry_indices()
+                .collect::<Vec<_>>(),
             [2, 64]
         );
-        assert_eq!(intersecting_entry_indices(&[&first]), [1, 2, 64, 130]);
-        assert_eq!(intersecting_entry_indices(&[]), Vec::<usize>::new());
+        assert_eq!(
+            EntryMatches::intersection(&[&first])
+                .matched_entry_indices()
+                .collect::<Vec<_>>(),
+            [1, 2, 64, 130]
+        );
+        assert_eq!(
+            EntryMatches::intersection(&[])
+                .matched_entry_indices()
+                .collect::<Vec<_>>(),
+            Vec::<usize>::new()
+        );
     }
 
     /// No intersection invents an entry past the last one: a log whose entry
@@ -195,7 +209,12 @@ mod tests {
     fn an_intersection_stops_at_the_last_entry() {
         let first = matches_of(65, &[64]);
         let second = matches_of(65, &[64]);
-        assert_eq!(intersecting_entry_indices(&[&first, &second]), [64]);
+        assert_eq!(
+            EntryMatches::intersection(&[&first, &second])
+                .matched_entry_indices()
+                .collect::<Vec<_>>(),
+            [64]
+        );
     }
 
     #[rstest]
@@ -210,12 +229,19 @@ mod tests {
     ) {
         let first = matches_of(count, &first);
         let second = matches_of(count, &second);
-        assert_eq!(union_entry_indices(&[&first, &second]), expected);
         assert_eq!(
-            union_entry_indices(&[&first]),
+            EntryMatches::union(&[&first, &second])
+                .matched_entry_indices()
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(
+            EntryMatches::union(&[&first])
+                .matched_entry_indices()
+                .collect::<Vec<_>>(),
             first.matched_entry_indices().collect::<Vec<_>>()
         );
-        assert!(union_entry_indices(&[]).is_empty());
+        assert_eq!(EntryMatches::union(&[]).match_count(), 0);
     }
 
     proptest! {
@@ -232,8 +258,8 @@ mod tests {
             let expected_intersection: Vec<_> = (0..first.len().min(second.len()))
                 .filter(|index| first.get(*index).copied().unwrap_or(false) && second.get(*index).copied().unwrap_or(false))
                 .collect();
-            prop_assert_eq!(union_entry_indices(&[&first_set, &second_set]), expected_union);
-            prop_assert_eq!(intersecting_entry_indices(&[&first_set, &second_set]), expected_intersection);
+            prop_assert_eq!(EntryMatches::union(&[&first_set, &second_set]).matched_entry_indices().collect::<Vec<_>>(), expected_union);
+            prop_assert_eq!(EntryMatches::intersection(&[&first_set, &second_set]).matched_entry_indices().collect::<Vec<_>>(), expected_intersection);
         }
     }
 
