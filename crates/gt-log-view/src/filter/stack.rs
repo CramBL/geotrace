@@ -114,6 +114,8 @@ pub struct FilterStack {
     selected_group: FilterGroupId,
     visible: VisibleEntries,
     clock_ticks: ClockTicks,
+    semantic_revision: u64,
+    visible_revision: u64,
 }
 
 impl FilterStack {
@@ -139,6 +141,8 @@ impl FilterStack {
             selected_group: FilterGroupId(0),
             visible,
             clock_ticks,
+            semantic_revision: 0,
+            visible_revision: 0,
         }
     }
 
@@ -186,6 +190,7 @@ impl FilterStack {
     pub fn select_group(&mut self, id: FilterGroupId) {
         if self.selected_group != id && self.groups.iter().any(|group| group.id == id) {
             self.selected_group = id;
+            self.semantic_revision = self.semantic_revision.wrapping_add(1);
             self.recompose_visible_entries();
         }
     }
@@ -211,6 +216,7 @@ impl FilterStack {
             self.selected_group = survivor;
         }
         self.groups.remove(index);
+        self.semantic_revision = self.semantic_revision.wrapping_add(1);
         self.recompose_visible_entries();
     }
 
@@ -223,6 +229,7 @@ impl FilterStack {
         };
         if chip.group != group {
             chip.group = group;
+            self.semantic_revision = self.semantic_revision.wrapping_add(1);
             self.recompose_visible_entries();
         }
     }
@@ -233,6 +240,7 @@ impl FilterStack {
         };
         if group.operator != operator {
             group.operator = operator;
+            self.semantic_revision = self.semantic_revision.wrapping_add(1);
             self.recompose_visible_entries();
         }
     }
@@ -364,6 +372,7 @@ impl FilterStack {
             layer_slot: None,
             enabled: true,
         });
+        self.semantic_revision = self.semantic_revision.wrapping_add(1);
         self.recompose_visible_entries();
         Some(id)
     }
@@ -396,6 +405,7 @@ impl FilterStack {
             return;
         }
         chip.enabled = enabled;
+        self.semantic_revision = self.semantic_revision.wrapping_add(1);
         self.recompose_visible_entries();
     }
 
@@ -409,6 +419,7 @@ impl FilterStack {
             return;
         }
         chip.layer_slot = Some(slots.allocate());
+        self.semantic_revision = self.semantic_revision.wrapping_add(1);
         self.recompose_visible_entries();
     }
 
@@ -421,6 +432,7 @@ impl FilterStack {
             return;
         };
         slots.release(slot);
+        self.semantic_revision = self.semantic_revision.wrapping_add(1);
         self.recompose_visible_entries();
     }
 
@@ -432,6 +444,7 @@ impl FilterStack {
         if let Some(slot) = removed.layer_slot {
             slots.release(slot);
         }
+        self.semantic_revision = self.semantic_revision.wrapping_add(1);
         self.recompose_visible_entries();
     }
 
@@ -439,6 +452,16 @@ impl FilterStack {
     /// refine chip matched. Layer chips never narrow it.
     pub fn visible_entries(&self) -> &VisibleEntries {
         &self.visible
+    }
+
+    /// Increments on filter edits before asynchronous scans finish.
+    pub fn semantic_revision(&self) -> u64 {
+        self.semantic_revision
+    }
+
+    /// Increments only when the indexed visible entry set changes.
+    pub fn visible_revision(&self) -> u64 {
+        self.visible_revision
     }
 
     /// What the clock did along the visible rows: the tick each row's
@@ -533,6 +556,7 @@ impl FilterStack {
             return;
         }
         self.live.rewrite(pattern, &self.log);
+        self.semantic_revision = self.semantic_revision.wrapping_add(1);
         self.recompose_visible_entries();
     }
 
@@ -561,8 +585,11 @@ impl FilterStack {
             .map_or(VisibleEntries::All { entry_count }, |matches| {
                 VisibleEntries::Matching(matches.matched_entry_indices().collect())
             });
-        self.clock_ticks = ClockTicks::of(&self.log, &visible);
-        self.visible = visible;
+        if self.visible != visible {
+            self.visible_revision = self.visible_revision.wrapping_add(1);
+            self.clock_ticks = ClockTicks::of(&self.log, &visible);
+            self.visible = visible;
+        }
     }
 }
 

@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added physical line numbers and optional structural source lines to the log viewer.
 - Added service, level, and hostname conditions to log viewer filters.
 - Added table filter groups with independent All/Any composition in the log viewer.
 - **Log Viewer:** Table filters can match all or any conditions with the intersection and union controls.
@@ -17,6 +18,7 @@
 
 ### Fixed
 
+- **Log Viewer:** Fixed boot and order-anomaly navigation when table filters hide the target entries.
 - **Log Viewer:** Fixed the table expanding when adding a live filter as a saved filter.
 - **Log Viewer:** Fixed scroll positions changing when switching between loaded logs.
 - **Log Viewer:** Fixed repeated interface stalls with large filtered logs while the log viewer is open.

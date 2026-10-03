@@ -90,7 +90,7 @@ pub struct ClockTicks {
 }
 
 impl ClockTicks {
-    pub(crate) fn of(log: &ParsedLog, visible: &VisibleEntries) -> Self {
+    pub fn of(log: &ParsedLog, visible: &VisibleEntries) -> Self {
         let entries = log.entries();
         let mut sessions = log.boot_sessions().iter();
         let mut session = sessions.next();

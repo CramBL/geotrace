@@ -14,7 +14,7 @@ use rustc_hash::FxHashMap;
 use strum::IntoEnumIterator as _;
 
 use association_window::{AssociationWindowEdit, AssociationWindowUnit};
-use line_table::{LineTableRequests, RowHoverDwell};
+use line_table::{DiagnosticReveal, LineTableCache, LineTableRequests, RowHoverDwell};
 use restored_logs_badge::RestoredLogsBadge;
 
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
@@ -51,6 +51,9 @@ pub(super) struct LogViewerWindow {
     /// Whether the line table draws each level in the colour of its severity.
     /// Belongs to the window, and starts on for every session.
     color_levels: bool,
+    show_structural_lines: bool,
+    diagnostic_reveal: Option<DiagnosticReveal>,
+    line_table_cache: Option<LineTableCache>,
 
     /// When the shown log's filters started scanning, for the note the viewer
     /// shows once a scan runs long enough to notice.
@@ -149,6 +152,9 @@ impl LogViewerWindow {
             association_window_commits: 0,
             color_services: true,
             color_levels: true,
+            show_structural_lines: false,
+            diagnostic_reveal: None,
+            line_table_cache: None,
             query_pending_since: None,
             scroll_to_row: None,
             clicked_glyph: None,
@@ -182,6 +188,10 @@ impl LogViewerWindow {
 
     /// Shows the log `id` names, opening the window on it.
     pub(super) fn open_on_log(&mut self, id: LoadedLogId) {
+        if self.selected != Some(id) {
+            self.diagnostic_reveal = None;
+            self.scroll_to_row = None;
+        }
         self.selected = Some(id);
         self.open = true;
     }
@@ -195,12 +205,13 @@ impl LogViewerWindow {
         let Some(log) = logs.get_by_id(clicked.log) else {
             return;
         };
-        let rows = line_table::LineTableRows::of(log);
+        self.open_on_log(clicked.log);
+        self.diagnostic_reveal = None;
+        let rows = self.table_rows(log, clicked.log);
         self.scroll_to_row = clicked
             .entry_indices
             .first()
             .and_then(|&entry_index| rows.row_of_entry(entry_index));
-        self.open_on_log(clicked.log);
         self.clicked_glyph = Some(clicked);
     }
 
@@ -246,6 +257,15 @@ impl LogViewerWindow {
             self.open_on_clicked_glyph(clicked, logs);
         }
         self.resolve_selected_log(logs);
+        if let Some((id, log)) = self
+            .selected
+            .and_then(|id| logs.get_by_id(id).map(|log| (id, log)))
+        {
+            self.clear_invalid_diagnostic_reveal(log, id);
+        } else {
+            self.diagnostic_reveal = None;
+            self.line_table_cache = None;
+        }
         if !self.open
             || self
                 .association_window_edit

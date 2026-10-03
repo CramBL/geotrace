@@ -2790,3 +2790,5 @@ const POINTER_OFF_EVERY_WINDOW: egui::Pos2 = egui::Pos2::new(-10.0, -10.0);
 /// Page steps [`scroll_to_the_end`] takes before it gives up, which covers
 /// [`LONG_LOG_ENTRIES`] rows at any table height.
 const PAGE_STEPS_TO_THE_END: usize = 60;
+
+mod source_navigation;
