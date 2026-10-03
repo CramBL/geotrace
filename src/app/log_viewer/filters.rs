@@ -8,7 +8,8 @@ use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
 use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use egui_phosphor::regular::X as ICON_X;
 use gt_log_view::{
-    FilterChip, FilterChipId, FilterChipMode, FilterStack, LayerColorSlots, LoadedLogs,
+    FilterChip, FilterChipId, FilterChipMode, FilterGroupOperator, FilterStack, LayerColorSlots,
+    LoadedLogs,
 };
 use gt_ui_types::LoadedLogId;
 use strum::IntoEnumIterator as _;
@@ -27,6 +28,7 @@ enum FilterEdit {
         chip: FilterChipId,
         enabled: bool,
     },
+    SetGroupOperator(FilterGroupOperator),
     SwitchChipMode {
         chip: FilterChipId,
         to: FilterChipMode,
@@ -59,6 +61,7 @@ impl LogViewerWindow {
         match edit {
             FilterEdit::WriteLiveFilter(text) => stack.set_live_filter_text(&text),
             FilterEdit::ReadLiveFilterAsRegex(regex) => stack.set_live_filter_regex(regex),
+            FilterEdit::SetGroupOperator(operator) => stack.set_group_operator(operator),
             FilterEdit::ClearLiveFilter => stack.clear_live_filter(),
             FilterEdit::AddLiveFilterAsChip => {
                 stack.add_live_filter_as_chip();
@@ -99,6 +102,7 @@ impl LogViewerWindow {
         let mut edit = None;
         // Wraps onto further rows on a narrow window.
         ui.horizontal_wrapped(|ui| {
+            edit = group_operator_ui(ui, filters.group_operator());
             if ui
                 .add(
                     TextEdit::singleline(&mut text)
@@ -169,6 +173,21 @@ impl LogViewerWindow {
         let since = *self.query_pending_since.get_or_insert(now);
         (now - since >= PENDING_NOTE_DELAY_SECS).then_some(PENDING_NOTE)
     }
+}
+
+fn group_operator_ui(ui: &mut egui::Ui, operator: FilterGroupOperator) -> Option<FilterEdit> {
+    let (glyph, hover, next) = match operator {
+        FilterGroupOperator::All => (
+            INTERSECTION_SYMBOL,
+            ALL_FILTERS_HOVER,
+            FilterGroupOperator::Any,
+        ),
+        FilterGroupOperator::Any => (UNION_SYMBOL, ANY_FILTER_HOVER, FilterGroupOperator::All),
+    };
+    ui.small_button(glyph)
+        .on_hover_text(hover)
+        .clicked()
+        .then_some(FilterEdit::SetGroupOperator(next))
 }
 
 /// One chip per added filter, wrapping onto further rows when the window is too
@@ -408,3 +427,8 @@ const LAYER_CHIP_HOVER: &str = "Highlight on map";
 const REFINE_CHIP_HOVER: &str = "Filter table";
 
 const REMOVE_CHIP_HOVER: &str = "Remove this filter";
+
+pub(in crate::app) const INTERSECTION_SYMBOL: &str = "∩";
+pub(in crate::app) const UNION_SYMBOL: &str = "∪";
+const ALL_FILTERS_HOVER: &str = "Match all filters in this group; click to match any";
+const ANY_FILTER_HOVER: &str = "Match any filter in this group; click to match all";

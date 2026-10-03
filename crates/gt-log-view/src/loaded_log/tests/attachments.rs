@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use chrono::{Datelike as _, Duration};
-use gt_history_types::{LogAttachmentId, StoredLogFilter, StoredLogFilterMode};
+use gt_history_types::{
+    LogAttachmentId, StoredLogFilter, StoredLogFilterMode, StoredLogFilterOperator,
+    StoredLogFilterStack,
+};
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_types::FileIdx;
 
@@ -11,7 +14,7 @@ use crate::loaded_log::tests::fixtures;
 use crate::loaded_log::{
     LoadedLog, LoadedLogs, LogContextOrigin, LogPushOutcome, LogSaveOutcome, PositionSourceState,
 };
-use crate::test_util;
+use crate::{FilterGroupOperator, test_util};
 
 #[rstest::rstest]
 #[case(true, FileHistory::None)]
@@ -37,7 +40,7 @@ fn an_attached_log_keeps_its_recording_after_another_source_is_selected(
     let mut log = test_util::log_of(10);
     log.anchor_to_loaded_recording(Some(other), &files.view());
 
-    log.record_attachment(attachment.clone(), Vec::new(), &files.view());
+    log.record_attachment(attachment.clone(), Default::default(), &files.view());
 
     let key = RecordingKey::Stored(attachment.recording.clone());
     let placement = log.entry_placement(0);
@@ -78,7 +81,7 @@ fn an_attached_log_accepts_a_reloaded_instance_of_its_recording() {
     );
     let previous = test_util::id_of(&files, 0);
     let mut log = test_util::log_of(10);
-    log.restore_attachment(attachment.clone(), Vec::new(), &files.view());
+    log.restore_attachment(attachment.clone(), Default::default(), &files.view());
     files.remove_file(0);
     log.reassociate(&files.view());
     assert_eq!(log.associated_recording(), None);
@@ -108,7 +111,7 @@ fn an_attached_log_reports_the_filter_stack_edits_the_database_has_not_seen() {
     let recordings = test_util::loaded(Vec::new());
     let mut logs = LoadedLogs::default();
     let mut log = test_util::log_of(10);
-    log.record_attachment(attachment.clone(), Vec::new(), &recordings.view());
+    log.record_attachment(attachment.clone(), Default::default(), &recordings.view());
     let id = logs.push(log).id();
 
     assert!(
@@ -122,7 +125,7 @@ fn an_attached_log_reports_the_filter_stack_edits_the_database_has_not_seen() {
     assert_eq!(
         edits
             .iter()
-            .map(|(attachment, filters)| (attachment.id, filters.as_slice()))
+            .map(|(attachment, filters)| (attachment.id, filters.chips.as_slice()))
             .collect::<Vec<_>>(),
         [(
             attachment.id,
@@ -146,11 +149,43 @@ fn an_attached_log_reports_the_filter_stack_edits_the_database_has_not_seen() {
     assert_eq!(logs.get_by_id(id).and_then(LoadedLog::attachment), None);
 }
 
+#[test]
+fn an_operator_only_edit_is_stored_once_and_restored_with_an_empty_stack() {
+    let attachment = fixtures::attachment_ref();
+    let recordings = test_util::loaded(Vec::new());
+    let mut logs = LoadedLogs::default();
+    let mut log = test_util::log_of(10);
+    log.restore_attachment(
+        attachment.clone(),
+        StoredLogFilterStack::default(),
+        &recordings.view(),
+    );
+    let id = logs.push(log).id();
+    logs.filter_stack_mut_by_id(id)
+        .unwrap()
+        .0
+        .set_group_operator(FilterGroupOperator::Any);
+    let edits = logs.take_filter_stack_edits_to_store();
+    assert_eq!(edits.len(), 1);
+    let (reference, stored) = edits.into_iter().next().unwrap();
+    assert_eq!(reference, attachment);
+    assert_eq!(stored.operator, StoredLogFilterOperator::Any);
+    assert!(stored.chips.is_empty());
+    assert!(logs.take_filter_stack_edits_to_store().is_empty());
+    let mut restored = test_util::log_of(10);
+    restored.restore_attachment(reference, stored, &recordings.view());
+    assert_eq!(
+        restored.filters().group_operator(),
+        FilterGroupOperator::Any
+    );
+    assert!(restored.take_filter_stack_edits_to_store().is_none());
+}
+
 /// A log restored from an attachment comes back with its chips, drawing in
 /// the colours it was stored with.
 #[test]
 fn a_restored_attachment_puts_back_the_stack_it_was_stored_with() {
-    let stored = vec![
+    let stored: StoredLogFilterStack = vec![
         StoredLogFilter {
             text: "entry 1".to_owned(),
             regex: false,
@@ -163,7 +198,8 @@ fn a_restored_attachment_puts_back_the_stack_it_was_stored_with() {
             enabled: false,
             mode: StoredLogFilterMode::Refine,
         },
-    ];
+    ]
+    .into();
     let attachment = fixtures::attachment_ref();
     let recordings = test_util::loaded(Vec::new());
     let mut logs = LoadedLogs::default();
@@ -175,7 +211,7 @@ fn a_restored_attachment_puts_back_the_stack_it_was_stored_with() {
     let log = logs.get_by_id(id).expect("the restored log is loaded");
     assert_eq!(log.attachment(), Some(&attachment));
     assert_eq!(
-        log.filters().to_stored_filters(),
+        log.filters().to_stored_stack(),
         stored,
         "the restored stack is the stored one, colours and all"
     );
@@ -216,12 +252,13 @@ fn identical_saved_logs_keep_distinct_attachment_contexts(#[case] same_recording
     ];
     let mut ids = Vec::new();
     for (attachment, pattern, slot) in &contexts {
-        let stored = vec![StoredLogFilter {
+        let stored: StoredLogFilterStack = vec![StoredLogFilter {
             text: (*pattern).to_owned(),
             regex: false,
             enabled: true,
             mode: StoredLogFilterMode::Layer { color_slot: *slot },
-        }];
+        }]
+        .into();
         let mut log = test_util::log_of(10);
         log.restore_attachment(attachment.clone(), stored.clone(), &files.view());
         let outcome = logs.push(log);
@@ -234,10 +271,10 @@ fn identical_saved_logs_keep_distinct_attachment_contexts(#[case] same_recording
             log.anchor_key().as_ref(),
             Some(&RecordingKey::Stored(attachment.recording.clone()))
         );
-        assert_eq!(log.filters().to_stored_filters(), stored);
+        assert_eq!(log.filters().to_stored_stack(), stored);
         assert!(logs.any_loaded_log_holds(attachment));
         let mut duplicate = test_util::log_of(10);
-        duplicate.restore_attachment(attachment.clone(), Vec::new(), &files.view());
+        duplicate.restore_attachment(attachment.clone(), Default::default(), &files.view());
         assert_eq!(logs.push(duplicate), LogPushOutcome::AlreadyLoaded(id));
     }
     let first_id = *ids.first().expect("first log is loaded");
@@ -285,7 +322,7 @@ fn identical_saved_logs_keep_distinct_attachment_contexts(#[case] same_recording
     logs.forget_attachment(&first);
     assert_eq!(logs.id_of_attachment(&first), None);
     assert_eq!(logs.id_of_attachment(&second), Some(second_id));
-    logs.save_attachment(first_id, first.clone(), Vec::new(), &files.view());
+    logs.save_attachment(first_id, first.clone(), Default::default(), &files.view());
     assert_eq!(logs.id_of_attachment(&first), Some(first_id));
     logs.remove_by_id(first_id);
     assert_eq!(
@@ -310,7 +347,7 @@ fn saving_an_attachment_reuses_its_existing_context_and_preserves_both_filter_st
     let first = logs.push(test_util::log_of(10)).id();
     fixtures::add_layer_chip(&mut logs, first, "entry 1");
     assert_eq!(
-        logs.save_attachment(first, attachment.clone(), Vec::new(), &files.view()),
+        logs.save_attachment(first, attachment.clone(), Default::default(), &files.view()),
         LogSaveOutcome::Saved(first)
     );
     let loose = logs.push(test_util::log_of(10)).id();
@@ -319,14 +356,14 @@ fn saving_an_attachment_reuses_its_existing_context_and_preserves_both_filter_st
         .get_by_id(first)
         .expect("saved log")
         .filters()
-        .to_stored_filters();
+        .to_stored_stack();
     let loose_filters = logs
         .get_by_id(loose)
         .expect("loose log")
         .filters()
-        .to_stored_filters();
+        .to_stored_stack();
     assert_eq!(
-        logs.save_attachment(loose, attachment.clone(), Vec::new(), &files.view()),
+        logs.save_attachment(loose, attachment.clone(), Default::default(), &files.view()),
         LogSaveOutcome::AlreadyLoaded(first)
     );
     assert_eq!(logs.get_by_id(loose).expect("loose log").attachment(), None);
@@ -334,21 +371,21 @@ fn saving_an_attachment_reuses_its_existing_context_and_preserves_both_filter_st
         logs.get_by_id(loose)
             .expect("loose log")
             .filters()
-            .to_stored_filters(),
+            .to_stored_stack(),
         loose_filters
     );
     assert_eq!(
         logs.get_by_id(first)
             .expect("saved log")
             .filters()
-            .to_stored_filters(),
+            .to_stored_stack(),
         first_filters
     );
     assert_eq!(
         logs.restore_attachment(
             test_util::log_of(10),
             attachment.clone(),
-            Vec::new(),
+            Default::default(),
             &files.view()
         ),
         LogPushOutcome::AlreadyLoaded(first)
@@ -358,7 +395,7 @@ fn saving_an_attachment_reuses_its_existing_context_and_preserves_both_filter_st
         ..attachment.clone()
     };
     assert_eq!(
-        logs.save_attachment(first, other.clone(), Vec::new(), &files.view()),
+        logs.save_attachment(first, other.clone(), Default::default(), &files.view()),
         LogSaveOutcome::AlreadySaved
     );
     assert_eq!(logs.id_of_attachment(&other), None);
@@ -377,7 +414,7 @@ fn removing_an_attachment_retains_its_context_independently_of_loose_and_restore
         .restore_attachment(
             test_util::log_of(10),
             attachment.clone(),
-            Vec::new(),
+            Default::default(),
             &files.view(),
         )
         .id();
@@ -386,7 +423,7 @@ fn removing_an_attachment_retains_its_context_independently_of_loose_and_restore
         .get_by_id(first)
         .expect("saved log")
         .filters()
-        .to_stored_filters();
+        .to_stored_stack();
     let loose = logs.push(test_util::log_of(10)).id();
     let placement = logs.get_by_id(first).expect("saved log").entry_placement(1);
     logs.forget_attachment(&attachment);
@@ -400,7 +437,7 @@ fn removing_an_attachment_retains_its_context_independently_of_loose_and_restore
         Some(RecordingKey::Stored(attachment.recording.clone()))
     );
     assert_eq!(detached.entry_placement(1), placement);
-    assert_eq!(detached.filters().to_stored_filters(), first_filters);
+    assert_eq!(detached.filters().to_stored_stack(), first_filters);
     assert_eq!(
         logs.push(test_util::log_of(10)),
         LogPushOutcome::AlreadyLoaded(loose)
@@ -409,7 +446,7 @@ fn removing_an_attachment_retains_its_context_independently_of_loose_and_restore
         .restore_attachment(
             test_util::log_of(10),
             attachment.clone(),
-            Vec::new(),
+            Default::default(),
             &files.view(),
         )
         .id();
@@ -476,12 +513,12 @@ fn documents_are_shared_only_for_equal_resolved_parses(
     let (saved, loose) = if loose_first {
         let loose = logs.push(loose_log).id();
         let saved = logs
-            .restore_attachment(saved_log, attachment, Vec::new(), &files.view())
+            .restore_attachment(saved_log, attachment, Default::default(), &files.view())
             .id();
         (saved, loose)
     } else {
         let saved = logs
-            .restore_attachment(saved_log, attachment, Vec::new(), &files.view())
+            .restore_attachment(saved_log, attachment, Default::default(), &files.view())
             .id();
         let loose = logs.push(loose_log).id();
         (saved, loose)

@@ -1,6 +1,6 @@
 //! The stored values that gt-history's and gt-store's tests both write.
 
-use crate::log_attachment::{StoredLogFilter, StoredLogFilterMode};
+use crate::log_attachment::{StoredLogFilter, StoredLogFilterMode, StoredLogFilterStack};
 use crate::{StoredFixPlacementRule, StoredSegmentation, StoredTrackSplitRule};
 
 /// The values the app's `SegmentationConfig::default` stores.
@@ -15,7 +15,7 @@ pub fn default_segmentation() -> StoredSegmentation {
 }
 
 /// A stack with one chip of each mode, with and without a palette slot.
-pub fn log_filters() -> Vec<StoredLogFilter> {
+pub fn log_filters() -> StoredLogFilterStack {
     vec![
         StoredLogFilter {
             text: "gnss".to_owned(),
@@ -30,4 +30,5 @@ pub fn log_filters() -> Vec<StoredLogFilter> {
             mode: StoredLogFilterMode::Refine,
         },
     ]
+    .into()
 }

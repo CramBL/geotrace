@@ -7,7 +7,7 @@ use gt_logfile::ParsedLog;
 use gt_plot::AnalysisConfig;
 use gt_store::{
     DatabaseRef, LogAttachmentId, RecordingUiState, Store, StoredLogFilter, StoredLogFilterMode,
-    StoredRecording,
+    StoredLogFilterStack, StoredRecording,
 };
 use gt_test_utils::{By, HarnessInteraction as _};
 use rstest::rstest;
@@ -681,7 +681,7 @@ fn restored_attachments_preserve_their_recording_during_other_loads() {
         parsed: parsed_log("saved"),
         restored: loader::AttachedLogRestore {
             attachment: attachment.clone(),
-            filters: Vec::new(),
+            filters: Default::default(),
             requested_by: loader::AttachedLogRequester::RecordingLoad,
             year_reference: ui_tests::base_time(),
         },
@@ -852,12 +852,13 @@ fn loose_and_saved_contexts_are_independent_of_completion_order(#[values(true, f
         },
         id: LogAttachmentId::new_random(),
     };
-    let saved_filters = vec![StoredLogFilter {
+    let saved_filters: StoredLogFilterStack = vec![StoredLogFilter {
         text: "shared".to_owned(),
         regex: false,
         enabled: false,
         mode: StoredLogFilterMode::Refine,
-    }];
+    }]
+    .into();
     let mut results = Vec::new();
     for loose_first in [true, false] {
         let mut harness = harness(ask);
@@ -934,7 +935,7 @@ fn loose_and_saved_contexts_are_independent_of_completion_order(#[values(true, f
                     log.context_origin(),
                     log.attachment().cloned(),
                     log.anchor_key(),
-                    log.filters().to_stored_filters(),
+                    log.filters().to_stored_stack(),
                     log.association_window(),
                     log.associated_entry_count(),
                     log.entry_placement(0),
@@ -1395,7 +1396,7 @@ fn a_saved_attachment_load_preserves_an_explicit_loose_arrivals_readiness(
                 },
                 id: LogAttachmentId::new_random(),
             },
-            filters: Vec::new(),
+            filters: Default::default(),
             requested_by: loader::AttachedLogRequester::RecordingLoad,
             year_reference: ui_tests::base_time(),
         },

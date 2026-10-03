@@ -7,12 +7,14 @@
 //! filter matches the message as one pattern.
 
 pub use clock_ticks::{ClockTicks, DayDivider, TimestampTick};
+pub use composition::FilterGroupOperator;
 pub use matches::EntryMatches;
 pub use pattern::{FilterPattern, InvalidFilterPattern};
 pub use slots::{LAYER_COLOR_SLOT_COUNT, LayerColorSlot, LayerColorSlots};
 pub use stack::{FilterChip, FilterChipId, FilterChipMode, FilterStack, VisibleEntries};
 
 mod clock_ticks;
+mod composition;
 mod matches;
 mod pattern;
 mod query;

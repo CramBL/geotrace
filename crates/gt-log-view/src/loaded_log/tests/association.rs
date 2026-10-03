@@ -116,7 +116,11 @@ fn an_attached_log_keeps_its_anchor() {
     let files = test_util::loaded(vec![test_util::recording_at(55.0, 10)]);
     let mut log = test_util::log_of(10);
     test_util::anchor_to(&mut log, &files, 0);
-    log.record_attachment(fixtures::attachment_ref(), Vec::new(), &files.view());
+    log.record_attachment(
+        fixtures::attachment_ref(),
+        Default::default(),
+        &files.view(),
+    );
     let anchored = log.anchor_key();
 
     log.remove_anchor();

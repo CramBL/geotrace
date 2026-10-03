@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use gt_loaded_files::{LoadedFileId, RecordingNames};
 use gt_log_view::{LogAttachmentRef, LogSaveOutcome, PositionSourceState};
-use gt_store::{AttachedLog, DatabaseRef, DbError, LogAttachmentError, StoredLogFilter};
+use gt_store::{AttachedLog, DatabaseRef, DbError, LogAttachmentError, StoredLogFilterStack};
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::LoadedLogId;
 
@@ -327,7 +327,7 @@ impl App {
             return;
         };
         let name = log.name().to_owned();
-        let filters = log.filters().to_stored_filters();
+        let filters = log.filters().to_stored_stack();
         let shared = self.shared.borrow();
         let db_ref = target
             .and_then(|id| shared.loaded_files.view().entry_for_id(id))
@@ -362,7 +362,7 @@ impl App {
         &mut self,
         log_id: LoadedLogId,
         attachment: LogAttachmentRef,
-        filters: Vec<StoredLogFilter>,
+        filters: StoredLogFilterStack,
     ) {
         let shared = self.shared.borrow();
         let outcome = self.logs.save_attachment(

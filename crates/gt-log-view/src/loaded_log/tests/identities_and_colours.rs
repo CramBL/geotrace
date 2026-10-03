@@ -1,4 +1,4 @@
-use gt_history_types::{StoredLogFilter, StoredLogFilterMode};
+use gt_history_types::{StoredLogFilter, StoredLogFilterMode, StoredLogFilterStack};
 
 use crate::loaded_log::tests::fixtures;
 use crate::loaded_log::{LoadedLog, LoadedLogs, LogPushOutcome};
@@ -103,16 +103,17 @@ fn a_duplicate_attachment_takes_no_colour_slot_from_the_loaded_log() {
     let attachment = fixtures::attachment_ref();
     let recordings = test_util::loaded(Vec::new());
     let mut log = test_util::log_of(10);
-    log.record_attachment(attachment.clone(), Vec::new(), &recordings.view());
+    log.record_attachment(attachment.clone(), Default::default(), &recordings.view());
     let id = logs.push(log).id();
     fixtures::add_layer_chip(&mut logs, id, "entry 1");
 
-    let stored = vec![StoredLogFilter {
+    let stored: StoredLogFilterStack = vec![StoredLogFilter {
         text: "entry 2".to_owned(),
         regex: false,
         enabled: true,
         mode: StoredLogFilterMode::Layer { color_slot: 1 },
-    }];
+    }]
+    .into();
     let mut copy = test_util::log_of(10);
     copy.restore_attachment(attachment.clone(), stored, &recordings.view());
     logs.push(copy);

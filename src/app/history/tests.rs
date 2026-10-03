@@ -122,7 +122,7 @@ fn history_harness_with_recording(identity: &str, stored_logs: &[&str]) -> Histo
             &LogToAttach {
                 name,
                 text: &stored_log_text(name),
-                filters: Vec::new(),
+                filters: Default::default(),
                 year_reference: None,
             },
         )
@@ -926,7 +926,7 @@ fn history_harness_with_a_shelf_over_more_recordings() -> HistoryHarness {
                 &LogToAttach {
                     name: &name,
                     text: &stored_log_text(&name),
-                    filters: Vec::new(),
+                    filters: Default::default(),
                     year_reference: None,
                 },
             )
@@ -1306,7 +1306,7 @@ fn with_stored_logs(mut entry: RecordingEntry, count: usize) -> RecordingEntry {
             attachment: gt_store::LogAttachment::new(
                 format!("navsyncd-{index}.log"),
                 gt_store::LogContentHash::of_log_bytes(&[]),
-                Vec::new(),
+                Default::default(),
             ),
         })
         .collect();

@@ -3656,7 +3656,7 @@ fn writing_an_attachment_attribute_twice_replaces_it() {
     let refiltered = LogAttachment::new(
         "navsyncd.log".to_owned(),
         LogContentHash::of_log_bytes(b"navsyncd.log"),
-        Vec::new(),
+        Default::default(),
     );
     db.write_log_attachment_attribute(&db_ref, id, &refiltered)
         .expect("rewrite");

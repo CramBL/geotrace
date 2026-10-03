@@ -16,7 +16,7 @@ use std::{
 use chrono::{DateTime, Utc};
 use gt_history::{
     DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentEntry, LogAttachmentId,
-    LogContentHash, ReadOnlyHistoryDatabase, StoredLogFilter, log_attachment,
+    LogContentHash, ReadOnlyHistoryDatabase, StoredLogFilterStack, log_attachment,
 };
 use thiserror::Error;
 
@@ -30,7 +30,7 @@ pub struct LogToAttach<'a> {
     pub text: &'a str,
 
     /// The filter stack to restore the log with.
-    pub filters: Vec<StoredLogFilter>,
+    pub filters: StoredLogFilterStack,
 
     /// `None` selects the recording's end time on restore.
     pub year_reference: Option<DateTime<Utc>>,
@@ -41,7 +41,7 @@ pub struct LogToAttach<'a> {
 pub struct AttachedLog {
     pub name: String,
     pub text: String,
-    pub filters: Vec<StoredLogFilter>,
+    pub filters: StoredLogFilterStack,
     pub year_reference: DateTime<Utc>,
 }
 
@@ -213,7 +213,7 @@ pub trait LogAttachments: HistoryDatabase {
         &mut self,
         db_ref: &DatabaseRef,
         id: LogAttachmentId,
-        filters: Vec<StoredLogFilter>,
+        filters: StoredLogFilterStack,
     ) -> Result<(), LogAttachmentError> {
         let stored = self
             .log_attachments(db_ref)?

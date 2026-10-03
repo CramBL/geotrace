@@ -83,6 +83,18 @@ pub(crate) fn intersecting_entry_indices(sets: &[&EntryMatches]) -> Vec<usize> {
     entry_indices
 }
 
+pub(crate) fn union_entry_indices(sets: &[&EntryMatches]) -> Vec<usize> {
+    let word_count = sets.iter().map(|set| set.words.len()).max().unwrap_or(0);
+    let mut entry_indices = Vec::new();
+    for word_index in 0..word_count {
+        let word = sets
+            .iter()
+            .fold(0, |combined, set| combined | set.word(word_index));
+        entry_indices.extend(set_bits(word, word_index.saturating_mul(BITS_PER_WORD)));
+    }
+    entry_indices
+}
+
 /// The words one chunk of a scan filled, covering that chunk's entries alone.
 ///
 /// The chunks concatenate into the bitset of the whole log without shifting:
@@ -135,6 +147,9 @@ pub(crate) const BITS_PER_WORD: usize = u64::BITS as usize;
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+    use rstest::rstest;
+
     use super::*;
 
     fn matches_of(entry_count: usize, matched: &[usize]) -> EntryMatches {
@@ -181,6 +196,45 @@ mod tests {
         let first = matches_of(65, &[64]);
         let second = matches_of(65, &[64]);
         assert_eq!(intersecting_entry_indices(&[&first, &second]), [64]);
+    }
+
+    #[rstest]
+    #[case::overlap(3, vec![0, 1], vec![1, 2], vec![0, 1, 2])]
+    #[case::word_and_tail_edges(131, vec![0, 63, 64, 130], vec![63, 65, 129], vec![0, 63, 64, 65, 129, 130])]
+    #[case::empty(0, vec![], vec![], vec![])]
+    fn union_composes_matches_in_entry_order(
+        #[case] count: usize,
+        #[case] first: Vec<usize>,
+        #[case] second: Vec<usize>,
+        #[case] expected: Vec<usize>,
+    ) {
+        let first = matches_of(count, &first);
+        let second = matches_of(count, &second);
+        assert_eq!(union_entry_indices(&[&first, &second]), expected);
+        assert_eq!(
+            union_entry_indices(&[&first]),
+            first.matched_entry_indices().collect::<Vec<_>>()
+        );
+        assert!(union_entry_indices(&[]).is_empty());
+    }
+
+    proptest! {
+        #[test]
+        fn bitset_composition_matches_boolean_operations(
+            first in proptest::collection::vec(any::<bool>(), 0..260),
+            second in proptest::collection::vec(any::<bool>(), 0..260),
+        ) {
+            let first_set = EntryMatches::from_chunks(vec![MatchChunk::of(first.iter().copied())], first.len());
+            let second_set = EntryMatches::from_chunks(vec![MatchChunk::of(second.iter().copied())], second.len());
+            let expected_union: Vec<_> = (0..first.len().max(second.len()))
+                .filter(|index| first.get(*index).copied().unwrap_or(false) || second.get(*index).copied().unwrap_or(false))
+                .collect();
+            let expected_intersection: Vec<_> = (0..first.len().min(second.len()))
+                .filter(|index| first.get(*index).copied().unwrap_or(false) && second.get(*index).copied().unwrap_or(false))
+                .collect();
+            prop_assert_eq!(union_entry_indices(&[&first_set, &second_set]), expected_union);
+            prop_assert_eq!(intersecting_entry_indices(&[&first_set, &second_set]), expected_intersection);
+        }
     }
 
     #[test]
