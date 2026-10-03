@@ -21,9 +21,8 @@ use super::log_viewer::association_dialog::{LogAssociationChoice, LogAssociation
 
 impl App {
     pub(super) fn resolve_initial_log_associations(&mut self) {
-        self.loader.associations.seal_implicit();
         let pending = self.logs.pending_initial_position_sources();
-        let ready = self.loader.associations.ready_logs(&pending);
+        let ready = self.association_batches.ready_logs(&pending);
         let shared = self.shared.borrow();
         let recordings = shared.loaded_files.view();
         for (id, candidates) in ready {

@@ -5,6 +5,7 @@ use gt_test_utils::{ControlLabel, DEMO_BYTES, TestHarness, WindowFitAssertions a
 use rstest::rstest;
 
 use crate::app::App;
+use crate::app::association_batches::RecordingOperationOrigin;
 use crate::app::frame::LOADING_OVERLAY_WINDOW_ID;
 use crate::app::history_open::{
     AUTO_PRUNE_TITLE, HISTORY_DATABASE_CORRUPTED_TITLE, HISTORY_DATABASE_IN_USE_TITLE,
@@ -95,8 +96,7 @@ impl OversizedAppWindow {
             }
             Self::TrackSettingsDiffer => {
                 app.pending_resegment = Some(crate::app::ResegmentPrompt {
-                    arrival: crate::app::association_batches::AssociationBatches::default()
-                        .implicit_recording(),
+                    origin: RecordingOperationOrigin::Independent,
                     db_ref: gt_store::DatabaseRef {
                         identity: long.clone(),
                         group_name: long.clone(),
@@ -133,7 +133,6 @@ impl OversizedAppWindow {
             Self::LoadingProgress => {
                 app.loader.loading_jobs = (0..gt_test_utils::window_fit::OVERSIZED_ROW_COUNT)
                     .map(|index| crate::app::loader::LoadingJob {
-                        kind: crate::app::loader::LoadKind::SavedLog,
                         id: index as u64,
                         filename: format!("{long}/{index}"),
                         progress: 0.5,

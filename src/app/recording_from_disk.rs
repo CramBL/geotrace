@@ -19,7 +19,7 @@ use gt_store::{
 };
 
 use super::anchored_dialog::AnchoredDialogKind;
-use super::association_batches::RecordingArrival;
+use super::association_batches::RecordingOperationOrigin;
 use super::storage::{QueuedArrivalSet, QueuedLoad};
 use super::{App, loader, modals};
 
@@ -31,7 +31,7 @@ pub(in crate::app) fn recordings_already_in_history_title(count: usize) -> Strin
 
 /// One `.gtd` on its way into the view from outside the history database.
 pub struct RecordingFromDisk {
-    pub(super) arrival: RecordingArrival,
+    pub(super) origin: RecordingOperationOrigin,
     pub filename: String,
     pub content: RecordingContent,
     pub mode: loader::GtdLoadMode,
@@ -218,7 +218,7 @@ impl App {
         if arriving.is_empty() {
             return;
         }
-        self.loader.associations.sync_loaded(
+        let batch = self.association_batches.begin_submission(
             self.shared
                 .borrow()
                 .loaded_files
@@ -226,7 +226,6 @@ impl App {
                 .entries()
                 .map(|entry| entry.id()),
         );
-        let batch = self.loader.associations.begin_submission();
         let mut recordings = Vec::new();
         for file in arriving {
             match file {
@@ -241,7 +240,7 @@ impl App {
                             .file_name()
                             .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
                         recordings.push(RecordingFromDisk {
-                            arrival: batch.recording(),
+                            origin: RecordingOperationOrigin::Arrival(batch.recording()),
                             filename,
                             content: RecordingContent::Path(path),
                             mode,
@@ -260,7 +259,7 @@ impl App {
                             name
                         };
                         recordings.push(RecordingFromDisk {
-                            arrival: batch.recording(),
+                            origin: RecordingOperationOrigin::Arrival(batch.recording()),
                             filename,
                             content: RecordingContent::Bytes(bytes),
                             mode: loader::GtdLoadMode::Regular,
@@ -325,7 +324,7 @@ impl App {
         open: Option<loader::HistoryOpen>,
     ) {
         let RecordingFromDisk {
-            arrival,
+            origin,
             filename,
             content,
             mode,
@@ -333,7 +332,7 @@ impl App {
         match content {
             RecordingContent::Path(path) => {
                 self.loader
-                    .spawn_gtd_path(path, self.processing_config, mode, open, arrival);
+                    .spawn_gtd_path(path, self.processing_config, mode, open, origin);
             }
             RecordingContent::Bytes(bytes) => {
                 self.loader.spawn_gtd_bytes(
@@ -342,7 +341,7 @@ impl App {
                     self.processing_config,
                     mode,
                     open,
-                    arrival,
+                    origin,
                 );
             }
         }
@@ -423,8 +422,8 @@ impl App {
         match choice {
             Some(AlreadyInHistoryChoice::OpenTheStoredVersion) => {
                 for recording in prompt.recordings {
-                    let arrival = recording.from_disk.arrival;
-                    self.history.open_with_arrival(recording.db_ref, arrival);
+                    let origin = recording.from_disk.origin;
+                    self.history.open_with_origin(recording.db_ref, origin);
                 }
             }
             Some(AlreadyInHistoryChoice::LoadFromDisk) => {
@@ -513,8 +512,7 @@ mod tests {
         let screened = screen_against_history(
             &db,
             vec![RecordingFromDisk {
-                arrival: super::super::association_batches::AssociationBatches::default()
-                    .implicit_recording(),
+                origin: RecordingOperationOrigin::Independent,
                 filename: "ride.gtd".to_owned(),
                 content: RecordingContent::Bytes(bytes.into()),
                 mode: loader::GtdLoadMode::Regular,

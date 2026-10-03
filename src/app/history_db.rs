@@ -35,7 +35,7 @@ use gt_store::{
 use gt_track_builder::SegmentationConfig;
 use gt_ui_types::LoadedLogId;
 
-use super::association_batches::{AssociationBatches, RecordingArrival};
+use super::association_batches::RecordingOperationOrigin;
 use crate::app::auto_prune::{self, AutoPruneOutcome};
 use crate::app::background_thread;
 use crate::app::loader::{self, LoadedRecordingPlacement};
@@ -130,7 +130,7 @@ enum ReadRequest {
     /// Read a recording's stored track table for the History window's shelf.
     LoadStoredTrackTable(DatabaseRef),
     Open {
-        arrival: RecordingArrival,
+        origin: RecordingOperationOrigin,
         db_ref: DatabaseRef,
         placement: LoadedRecordingPlacement,
     },
@@ -296,7 +296,7 @@ pub enum Response {
         result: Result<(), DbError>,
     },
     Opened {
-        arrival: RecordingArrival,
+        origin: RecordingOperationOrigin,
         db_ref: DatabaseRef,
         /// Where the app puts the recording once it is loaded, as the request
         /// set it.
@@ -344,7 +344,6 @@ pub struct HistoryWorker {
     handle: Option<JoinHandle<()>>,
     path: Option<PathBuf>,
     ui_state_versions: Arc<UiStateVersionReporter>,
-    pub(super) associations: AssociationBatches,
 }
 
 impl HistoryWorker {
@@ -359,7 +358,6 @@ impl HistoryWorker {
             handle: None,
             path: None,
             ui_state_versions: Arc::default(),
-            associations: AssociationBatches::default(),
         }
     }
 
@@ -379,7 +377,6 @@ impl HistoryWorker {
             handle: Some(handle),
             path,
             ui_state_versions,
-            associations: AssociationBatches::default(),
         }
     }
 
@@ -435,12 +432,12 @@ impl HistoryWorker {
     }
 
     pub fn open(&self, db_ref: DatabaseRef) {
-        self.open_with_arrival(db_ref, self.associations.implicit_recording());
+        self.open_with_origin(db_ref, RecordingOperationOrigin::Independent);
     }
 
-    pub(super) fn open_with_arrival(&self, db_ref: DatabaseRef, arrival: RecordingArrival) {
+    pub(super) fn open_with_origin(&self, db_ref: DatabaseRef, origin: RecordingOperationOrigin) {
         self.send_read(ReadRequest::Open {
-            arrival,
+            origin,
             db_ref,
             placement: LoadedRecordingPlacement::AddAnEntry,
         });
@@ -450,7 +447,7 @@ impl HistoryWorker {
     /// for it, which an unshelve of a loaded recording requests.
     pub fn open_over_the_loaded_entry(&self, db_ref: DatabaseRef) {
         self.send_read(ReadRequest::Open {
-            arrival: self.associations.implicit_recording(),
+            origin: RecordingOperationOrigin::Independent,
             db_ref,
             placement: LoadedRecordingPlacement::ReplaceTheLoadedEntry,
         });
@@ -687,14 +684,14 @@ fn handle_read_request(
         ReadRequest::Open {
             db_ref,
             placement,
-            arrival,
+            origin,
         } => {
             let result = db.load(&db_ref).map(|stored| OpenedRecording {
                 stored,
                 ui_state: db.recording_ui_state(&db_ref, ui_state_versions),
             });
             Response::Opened {
-                arrival,
+                origin,
                 db_ref,
                 placement,
                 result,

@@ -115,7 +115,6 @@ fn app_with_a_batch_of_load_jobs(
     let app = harness.state_mut();
     app.loader.loading_jobs = (0..running.0)
         .map(|index| crate::app::loader::LoadingJob {
-            kind: crate::app::loader::LoadKind::SavedLog,
             id: index as u64,
             filename: format!("ride-2026-05-{:02}.gtd", index + 1),
             progress: 0.2 + 0.15 * (index % 5) as f32,

@@ -17,19 +17,11 @@ use gt_track_builder::{
 };
 use gt_types::{LoadedFile, TrackAggregates};
 
-use super::association_batches::{AssociationBatches, LogArrival, RecordingArrival};
+use super::association_batches::{LogArrival, RecordingOperationOrigin};
 use crate::app::background_thread;
-
-#[derive(Debug)]
-pub(super) enum LoadKind {
-    LooseLog(LogArrival),
-    Recording(RecordingArrival),
-    SavedLog,
-}
 
 /// State for a single in-flight background load job, shown in the progress UI.
 pub struct LoadingJob {
-    pub(super) kind: LoadKind,
     pub id: u64,
     pub filename: String,
     pub progress: f32,
@@ -57,32 +49,36 @@ pub struct FinishedJob {
     pub completed_at: f64,
 }
 
-/// Final result produced by a background load thread.
-pub enum LoadOutcome {
-    /// A successfully parsed `.gtd` / HDF5 file with pre-built plot series.
-    GtdFile {
-        file: LoadedFile,
-        /// Pre-built mipmap series, bound to a file index by
-        /// [`gt_plot::PlotState::integrate_file`] once the UI thread appends
-        /// the file.
-        series: PreparedSeries,
-        /// App-owned history attachment metadata for this file.
-        history: FileHistory,
-        /// True when a history load rebuilt generated markers with the current app
-        /// settings. False when those settings match the recording's stored marker
-        /// settings, and for a recording that stored none.
-        applied_current_marker_settings: bool,
-        /// Where the app puts this recording in the view.
-        placement: LoadedRecordingPlacement,
+pub(super) struct LoadedRecordingResult {
+    pub file: LoadedFile,
+    pub series: PreparedSeries,
+    pub history: FileHistory,
+    pub applied_current_marker_settings: bool,
+    pub placement: LoadedRecordingPlacement,
+}
+
+pub(super) struct LooseLogResult {
+    pub filename: Option<String>,
+    pub parsed: ParsedLog,
+}
+
+pub(super) struct SavedLogResult {
+    pub filename: Option<String>,
+    pub parsed: ParsedLog,
+    pub restored: AttachedLogRestore,
+}
+
+pub(super) enum LoadCompletion {
+    LooseLog {
+        arrival: LogArrival,
+        result: Result<LooseLogResult, String>,
     },
-    /// A successfully parsed log, not yet associated with a recording.
-    Log {
-        /// The name of the file the log was read from, `None` for text that
-        /// arrived without one.
-        filename: Option<String>,
-        parsed: ParsedLog,
-        /// Set for a log that came back with a recording opened from history.
-        restored: Option<AttachedLogRestore>,
+    Recording {
+        origin: RecordingOperationOrigin,
+        result: Result<LoadedRecordingResult, String>,
+    },
+    SavedLog {
+        result: Result<SavedLogResult, String>,
     },
 }
 
@@ -111,12 +107,12 @@ pub(super) enum AttachedLogRequester {
 /// Messages sent from background load threads to the UI thread via `mpsc`.
 #[expect(
     clippy::large_enum_variant,
-    reason = "Completed carries a full LoadOutcome by design; boxing would add an allocation on the infrequent completion path"
+    reason = "Recording results include plot series"
 )]
-pub enum LoadMessage {
+enum LoadMessage {
     Completed {
         id: u64,
-        outcome: Result<LoadOutcome, String>,
+        completion: LoadCompletion,
     },
     Progress {
         id: u64,
@@ -127,10 +123,9 @@ pub enum LoadMessage {
 
 /// The result of a single completed background load, returned by `LoadJobs::drain`.
 pub(super) struct CompletedLoad {
-    pub(super) kind: LoadKind,
     pub filename: String,
     pub elapsed_secs: f32,
-    pub outcome: Result<LoadOutcome, String>,
+    pub completion: LoadCompletion,
 }
 
 /// Where the app puts a recording a load finished: in an entry of its own, or
@@ -242,7 +237,6 @@ impl HistoryOpen {
 ///
 /// `loading_jobs` and `finishing_jobs` are public for the progress overlay UI.
 pub(super) struct LoadJobs {
-    pub(super) associations: AssociationBatches,
     ctx: Context,
     load_tx: mpsc::Sender<LoadMessage>,
     load_rx: mpsc::Receiver<LoadMessage>,
@@ -267,7 +261,6 @@ impl LoadJobs {
     pub fn new(ctx: Context, pending_writes: PendingWrites) -> Self {
         let (load_tx, load_rx) = mpsc::channel::<LoadMessage>();
         Self {
-            associations: AssociationBatches::default(),
             ctx,
             load_tx,
             load_rx,
@@ -282,36 +275,50 @@ impl LoadJobs {
     }
 
     #[cfg(test)]
-    pub(super) fn controlled_load_for_test<K: FnOnce(&AssociationBatches) -> LoadKind>(
+    pub(super) fn controlled_recording_load_for_test(
         &mut self,
         filename: &str,
-        kind: K,
-    ) -> impl FnOnce(Result<LoadOutcome, String>) + use<K> {
-        let id = self.alloc_id();
-        let kind = kind(&self.associations);
-        self.loading_jobs.push(LoadingJob {
-            kind,
-            id,
-            filename: filename.to_owned(),
-            progress: 0.0,
-            stage: STAGE_STARTING,
-            started_at: self.frame_time(),
-        });
-        let tx = self.load_tx.clone();
-        move |outcome| {
-            tx.send(LoadMessage::Completed { id, outcome })
-                .expect("the app receives controlled completions");
+        origin: RecordingOperationOrigin,
+    ) -> impl FnOnce(Result<LoadedRecordingResult, String>) + use<> {
+        let (id, tx) = self.controlled_job_for_test(filename);
+        move |result| {
+            tx.send(LoadMessage::Completed {
+                id,
+                completion: LoadCompletion::Recording { origin, result },
+            })
+            .expect("the app receives recording completions");
         }
     }
 
-    fn alloc_id(&mut self) -> u64 {
-        let id = self.next_id;
-        self.next_id += 1;
-        id
+    #[cfg(test)]
+    pub(super) fn controlled_loose_log_load_for_test(
+        &mut self,
+        filename: &str,
+        arrival: LogArrival,
+    ) -> impl FnOnce(Result<LooseLogResult, String>) + use<> {
+        let (id, tx) = self.controlled_job_for_test(filename);
+        move |result| {
+            tx.send(LoadMessage::Completed {
+                id,
+                completion: LoadCompletion::LooseLog { arrival, result },
+            })
+            .expect("the app receives loose log completions");
+        }
     }
 
-    fn frame_time(&self) -> f64 {
-        self.ctx.input(|input| input.time)
+    #[cfg(test)]
+    pub(super) fn controlled_saved_log_load_for_test(
+        &mut self,
+        filename: &str,
+    ) -> impl FnOnce(Result<SavedLogResult, String>) + use<> {
+        let (id, tx) = self.controlled_job_for_test(filename);
+        move |result| {
+            tx.send(LoadMessage::Completed {
+                id,
+                completion: LoadCompletion::SavedLog { result },
+            })
+            .expect("the app receives attachment completions");
+        }
     }
 
     /// Load a `.gtd` from a path, applying `open` to what the history database
@@ -322,7 +329,7 @@ impl LoadJobs {
         config: SegmentationConfig,
         mode: GtdLoadMode,
         open: Option<HistoryOpen>,
-        arrival: RecordingArrival,
+        origin: RecordingOperationOrigin,
     ) {
         let id = self.alloc_id();
         let started_at = self.frame_time();
@@ -332,7 +339,6 @@ impl LoadJobs {
             .unwrap_or("unknown")
             .to_owned();
         self.loading_jobs.push(LoadingJob {
-            kind: LoadKind::Recording(arrival),
             id,
             filename: filename.clone(),
             progress: 0.0,
@@ -395,7 +401,7 @@ impl LoadJobs {
                         analysis,
                         mode,
                     }
-                    .into_outcome(|| {
+                    .into_recording_result(|| {
                         tx.send(LoadMessage::Progress {
                             id,
                             fraction: PLOTTING_FRACTION,
@@ -406,7 +412,14 @@ impl LoadJobs {
                     })
                 })
                 .map_err(|e| e.to_string());
-            tx.send(LoadMessage::Completed { id, outcome }).ok();
+            tx.send(LoadMessage::Completed {
+                id,
+                completion: LoadCompletion::Recording {
+                    origin,
+                    result: outcome,
+                },
+            })
+            .ok();
             ctx.request_repaint();
         });
     }
@@ -421,12 +434,11 @@ impl LoadJobs {
         config: SegmentationConfig,
         mode: GtdLoadMode,
         open: Option<HistoryOpen>,
-        arrival: RecordingArrival,
+        origin: RecordingOperationOrigin,
     ) {
         let id = self.alloc_id();
         let started_at = self.frame_time();
         self.loading_jobs.push(LoadingJob {
-            kind: LoadKind::Recording(arrival),
             id,
             filename: filename.clone(),
             progress: 0.0,
@@ -478,7 +490,7 @@ impl LoadJobs {
                         analysis,
                         mode,
                     }
-                    .into_outcome(|| {
+                    .into_recording_result(|| {
                         tx.send(LoadMessage::Progress {
                             id,
                             fraction: PLOTTING_FRACTION,
@@ -489,7 +501,14 @@ impl LoadJobs {
                     })
                 })
                 .map_err(|e| e.to_string());
-            tx.send(LoadMessage::Completed { id, outcome }).ok();
+            tx.send(LoadMessage::Completed {
+                id,
+                completion: LoadCompletion::Recording {
+                    origin,
+                    result: outcome,
+                },
+            })
+            .ok();
             ctx.request_repaint();
         });
     }
@@ -503,7 +522,6 @@ impl LoadJobs {
             .unwrap_or("unknown")
             .to_owned();
         self.loading_jobs.push(LoadingJob {
-            kind: LoadKind::LooseLog(arrival),
             id,
             filename: filename.clone(),
             progress: 0.0,
@@ -520,7 +538,10 @@ impl LoadJobs {
                 Err(e) => {
                     tx.send(LoadMessage::Completed {
                         id,
-                        outcome: Err(format!("Failed to read {filename}: {e}")),
+                        completion: LoadCompletion::LooseLog {
+                            arrival,
+                            result: Err(format!("Failed to read {filename}: {e}")),
+                        },
                     })
                     .ok();
                     ctx.request_repaint();
@@ -528,7 +549,13 @@ impl LoadJobs {
                 }
             };
             let text = LogText::decode_lossy(&bytes);
-            finish_log_load(id, Some(filename), text, None, &tx, &ctx, report);
+            let result = parse_loaded_log(Some(filename), text, Utc::now(), report);
+            tx.send(LoadMessage::Completed {
+                id,
+                completion: LoadCompletion::LooseLog { arrival, result },
+            })
+            .ok();
+            ctx.request_repaint();
         });
     }
 
@@ -550,35 +577,6 @@ impl LoadJobs {
         self.spawn_log_load(None, arrival, move || LogText::from(text));
     }
 
-    /// Runs `decode` on a loader thread and parses what it yields, under a job
-    /// named after `filename`.
-    fn spawn_log_load(
-        &mut self,
-        filename: Option<String>,
-        arrival: LogArrival,
-        decode: impl FnOnce() -> LogText + Send + 'static,
-    ) {
-        let id = self.alloc_id();
-        let started_at = self.frame_time();
-        let job_name = filename.clone().unwrap_or_else(|| "log text".to_owned());
-        self.loading_jobs.push(LoadingJob {
-            kind: LoadKind::LooseLog(arrival),
-            id,
-            filename: job_name.clone(),
-            progress: 0.0,
-            stage: STAGE_STARTING,
-            started_at,
-        });
-        let tx = self.load_tx.clone();
-        let ctx = self.ctx.clone();
-        background_thread::spawn_or_panic(format!("load-log-{job_name}"), move || {
-            let report = progress_reporter(id, tx.clone(), ctx.clone());
-            report(0.20, STAGE_READING);
-            let text = decode();
-            finish_log_load(id, filename, text, None, &tx, &ctx, report);
-        });
-    }
-
     /// Parses a log stored with a recording, so it loads with the attachment
     /// and the filter stack it was stored with.
     pub fn spawn_attached_log(
@@ -596,7 +594,6 @@ impl LoadJobs {
             year_reference,
         } = log;
         self.loading_jobs.push(LoadingJob {
-            kind: LoadKind::SavedLog,
             id,
             filename: name.clone(),
             progress: 0.0,
@@ -615,7 +612,19 @@ impl LoadJobs {
         log::info!("Loading the log {name:?} stored with a recording in history");
         background_thread::spawn_or_panic(format!("load-log-{name}"), move || {
             let report = progress_reporter(id, tx.clone(), ctx.clone());
-            finish_log_load(id, Some(name), text, Some(restored), &tx, &ctx, report);
+            let result = parse_loaded_log(Some(name), text, restored.year_reference, report).map(
+                |LooseLogResult { filename, parsed }| SavedLogResult {
+                    filename,
+                    parsed,
+                    restored,
+                },
+            );
+            tx.send(LoadMessage::Completed {
+                id,
+                completion: LoadCompletion::SavedLog { result },
+            })
+            .ok();
+            ctx.request_repaint();
         });
     }
 
@@ -667,17 +676,16 @@ impl LoadJobs {
                         job.stage = stage;
                     }
                 }
-                LoadMessage::Completed { id, outcome } => {
+                LoadMessage::Completed { id, completion } => {
                     let Some(index) = self.loading_jobs.iter().position(|job| job.id == id) else {
                         log::warn!("Completed load {id} has no registered job");
                         continue;
                     };
                     let job = self.loading_jobs.remove(index);
                     completed.push(CompletedLoad {
-                        kind: job.kind,
                         filename: job.filename,
                         elapsed_secs: (frame_time - job.started_at) as f32,
-                        outcome,
+                        completion,
                     });
                 }
             }
@@ -690,6 +698,61 @@ impl LoadJobs {
     pub fn expire_finished(&mut self, now: f64) {
         self.finishing_jobs
             .retain(|j| now - j.completed_at < f64::from(FINISHED_JOB_EXPIRE_SECS));
+    }
+
+    fn spawn_log_load(
+        &mut self,
+        filename: Option<String>,
+        arrival: LogArrival,
+        decode: impl FnOnce() -> LogText + Send + 'static,
+    ) {
+        let id = self.alloc_id();
+        let started_at = self.frame_time();
+        let job_name = filename.clone().unwrap_or_else(|| "log text".to_owned());
+        self.loading_jobs.push(LoadingJob {
+            id,
+            filename: job_name.clone(),
+            progress: 0.0,
+            stage: STAGE_STARTING,
+            started_at,
+        });
+        let tx = self.load_tx.clone();
+        let ctx = self.ctx.clone();
+        background_thread::spawn_or_panic(format!("load-log-{job_name}"), move || {
+            let report = progress_reporter(id, tx.clone(), ctx.clone());
+            report(0.20, STAGE_READING);
+            let text = decode();
+            let result = parse_loaded_log(filename, text, Utc::now(), report);
+            tx.send(LoadMessage::Completed {
+                id,
+                completion: LoadCompletion::LooseLog { arrival, result },
+            })
+            .ok();
+            ctx.request_repaint();
+        });
+    }
+
+    #[cfg(test)]
+    fn controlled_job_for_test(&mut self, filename: &str) -> (u64, mpsc::Sender<LoadMessage>) {
+        let id = self.alloc_id();
+        self.loading_jobs.push(LoadingJob {
+            id,
+            filename: filename.to_owned(),
+            progress: 0.0,
+            stage: STAGE_STARTING,
+            started_at: self.frame_time(),
+        });
+        (id, self.load_tx.clone())
+    }
+
+    fn alloc_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+
+    fn frame_time(&self) -> f64 {
+        self.ctx.input(|input| input.time)
     }
 }
 
@@ -710,41 +773,23 @@ fn progress_reporter(
     }
 }
 
-/// Shared tail of log loading: parse `text` and send the `Completed` message.
-/// Called from both the path-based and the text-based log loader threads.
-fn finish_log_load(
-    id: u64,
+fn parse_loaded_log(
     filename: Option<String>,
     text: LogText,
-    restored: Option<AttachedLogRestore>,
-    tx: &mpsc::Sender<LoadMessage>,
-    ctx: &Context,
+    year_reference: DateTime<Utc>,
     report: impl Fn(f32, &'static str),
-) {
+) -> Result<LooseLogResult, String> {
     report(0.55, STAGE_PARSING);
-    let year_reference = restored
-        .as_ref()
-        .map_or_else(Utc::now, |restored| restored.year_reference);
-    let outcome = match gt_logfile::parse_log(text, year_reference) {
-        Ok(parsed) => {
-            let unindexable_line_count = parsed.unindexable_line_count();
-            if unindexable_line_count > 0 {
-                let noun = gt_fmt::pluralize(unindexable_line_count, "line", "lines");
-                let name = filename.as_deref().unwrap_or("log text");
-                log::warn!(
-                    "Dropped {unindexable_line_count} {noun} of {name:?} that the log index cannot address"
-                );
-            }
-            Ok(LoadOutcome::Log {
-                filename,
-                parsed,
-                restored,
-            })
-        }
-        Err(err) => Err(err.to_string()),
-    };
-    tx.send(LoadMessage::Completed { id, outcome }).ok();
-    ctx.request_repaint();
+    let parsed = gt_logfile::parse_log(text, year_reference).map_err(|err| err.to_string())?;
+    let unindexable_line_count = parsed.unindexable_line_count();
+    if unindexable_line_count > 0 {
+        let noun = gt_fmt::pluralize(unindexable_line_count, "line", "lines");
+        let name = filename.as_deref().unwrap_or("log text");
+        log::warn!(
+            "Dropped {unindexable_line_count} {noun} of {name:?} that the log index cannot address"
+        );
+    }
+    Ok(LooseLogResult { filename, parsed })
 }
 
 /// Convert the live segmentation settings into the form persisted alongside a
@@ -994,7 +1039,7 @@ impl ParsedRecording<'_> {
     ///
     /// `report_plotting` runs once those tracks are settled, before the series
     /// is built.
-    fn into_outcome(self, report_plotting: impl FnOnce()) -> LoadOutcome {
+    fn into_recording_result(self, report_plotting: impl FnOnce()) -> LoadedRecordingResult {
         let Self {
             loaded,
             db_path,
@@ -1065,7 +1110,7 @@ impl ParsedRecording<'_> {
                 shelved_tracks,
             )
         });
-        LoadOutcome::GtdFile {
+        LoadedRecordingResult {
             file,
             series,
             history,
@@ -1219,6 +1264,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    use crate::app::association_batches::AssociationBatches;
 
     #[test]
     fn stored_segmentation_records_persisted_fields() {
@@ -1455,15 +1501,20 @@ mod tests {
     #[test]
     fn loading_pasted_log_text_completes_as_a_parsed_log() {
         let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
+        let mut batches = AssociationBatches::default();
+        let batch = batches.begin_submission(std::iter::empty());
         jobs.spawn_pasted_log_text(
             "2026-01-01 14:02:11 navsyncd: uploaded 2 recordings\n".to_owned(),
-            jobs.associations.implicit_log(),
+            batch.log(),
         );
 
         let completed = drain_until_complete(&mut jobs);
-        let LoadOutcome::Log {
-            filename, parsed, ..
-        } = completed.outcome.expect("load should succeed")
+        let LoadCompletion::LooseLog {
+            result: Ok(LooseLogResult {
+                filename, parsed, ..
+            }),
+            ..
+        } = completed.completion
         else {
             panic!("expected a Log outcome");
         };
@@ -1497,7 +1548,11 @@ mod tests {
             AttachedLogRequester::RecordingLoad,
         );
         let completed = drain_until_complete(&mut jobs);
-        let LoadOutcome::Log { parsed, .. } = completed.outcome.expect("restore the log") else {
+        let LoadCompletion::SavedLog {
+            result: Ok(SavedLogResult { parsed, .. }),
+            ..
+        } = completed.completion
+        else {
             panic!("expected a log outcome");
         };
         assert_eq!(parsed, original);
@@ -1511,12 +1566,17 @@ mod tests {
         std::fs::write(&path, "2026-01-01 14:02:11 navsyncd: queue empty\n").expect("write log");
 
         let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
-        jobs.spawn_log_path(path, jobs.associations.implicit_log());
+        let mut batches = AssociationBatches::default();
+        let batch = batches.begin_submission(std::iter::empty());
+        jobs.spawn_log_path(path, batch.log());
 
         let completed = drain_until_complete(&mut jobs);
-        let LoadOutcome::Log {
-            filename, parsed, ..
-        } = completed.outcome.expect("load should succeed")
+        let LoadCompletion::LooseLog {
+            result: Ok(LooseLogResult {
+                filename, parsed, ..
+            }),
+            ..
+        } = completed.completion
         else {
             panic!("expected a Log outcome");
         };
@@ -1528,14 +1588,16 @@ mod tests {
     #[test]
     fn loading_log_text_without_a_recognised_timestamp_fails() {
         let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
-        jobs.spawn_pasted_log_text(
-            "kernel: no timestamp here\n".to_owned(),
-            jobs.associations.implicit_log(),
-        );
+        let mut batches = AssociationBatches::default();
+        let batch = batches.begin_submission(std::iter::empty());
+        jobs.spawn_pasted_log_text("kernel: no timestamp here\n".to_owned(), batch.log());
 
         let completed = drain_until_complete(&mut jobs);
         assert_eq!(
-            completed.outcome.err(),
+            match completed.completion {
+                LoadCompletion::LooseLog { result, .. } => result.err(),
+                _ => panic!("expected loose log completion"),
+            },
             Some(
                 "Not a recognised log: no line has a timestamp in a known format \
                  (first line: \"kernel: no timestamp here\")"
@@ -1559,12 +1621,15 @@ mod tests {
             SegmentationConfig::default(),
             GtdLoadMode::Regular,
             None,
-            jobs.associations.implicit_recording(),
+            RecordingOperationOrigin::Independent,
         );
 
         let completed = drain_until_complete(&mut jobs);
-        let outcome = completed.outcome.expect("load should succeed");
-        let LoadOutcome::GtdFile { history, .. } = outcome else {
+        let LoadCompletion::Recording {
+            result: Ok(LoadedRecordingResult { history, .. }),
+            ..
+        } = completed.completion
+        else {
             panic!("expected a GtdFile outcome");
         };
         assert!(
@@ -1598,11 +1663,14 @@ mod tests {
                 backward_jump_threshold: chrono::Duration::milliseconds(42_500),
             },
             None,
-            jobs.associations.implicit_recording(),
+            RecordingOperationOrigin::Independent,
         );
 
         let completed = drain_until_complete(&mut jobs);
-        let LoadOutcome::GtdFile { history, .. } = completed.outcome.expect("load should succeed")
+        let LoadCompletion::Recording {
+            result: Ok(LoadedRecordingResult { history, .. }),
+            ..
+        } = completed.completion
         else {
             panic!("expected a GtdFile outcome");
         };
@@ -1641,12 +1709,15 @@ mod tests {
             SegmentationConfig::default(),
             GtdLoadMode::Regular,
             None,
-            jobs.associations.implicit_recording(),
+            RecordingOperationOrigin::Independent,
         );
 
         let completed = drain_until_complete(&mut jobs);
-        let outcome = completed.outcome.expect("load should succeed");
-        let LoadOutcome::GtdFile { history, .. } = outcome else {
+        let LoadCompletion::Recording {
+            result: Ok(LoadedRecordingResult { history, .. }),
+            ..
+        } = completed.completion
+        else {
             panic!("expected a GtdFile outcome");
         };
         assert!(
@@ -1672,12 +1743,15 @@ mod tests {
             SegmentationConfig::default(),
             GtdLoadMode::Regular,
             None,
-            jobs.associations.implicit_recording(),
+            RecordingOperationOrigin::Independent,
         );
 
         let completed = drain_until_complete(&mut jobs);
-        let outcome = completed.outcome.expect("load should succeed");
-        let LoadOutcome::GtdFile { file, history, .. } = outcome else {
+        let LoadCompletion::Recording {
+            result: Ok(LoadedRecordingResult { file, history, .. }),
+            ..
+        } = completed.completion
+        else {
             panic!("expected a GtdFile outcome");
         };
         assert!(!file.tracks.is_empty(), "the recording still loads");
@@ -1698,12 +1772,14 @@ mod tests {
             SegmentationConfig::default(),
             GtdLoadMode::Regular,
             None,
-            jobs.associations.implicit_recording(),
+            RecordingOperationOrigin::Independent,
         );
 
         let completed = drain_until_complete(&mut jobs);
-        let LoadOutcome::GtdFile { file, history, .. } =
-            completed.outcome.expect("load should succeed")
+        let LoadCompletion::Recording {
+            result: Ok(LoadedRecordingResult { file, history, .. }),
+            ..
+        } = completed.completion
         else {
             panic!("expected a GtdFile outcome");
         };
@@ -1881,10 +1957,13 @@ mod tests {
             SegmentationConfig::default(),
             GtdLoadMode::Regular,
             None,
-            jobs.associations.implicit_recording(),
+            RecordingOperationOrigin::Independent,
         );
         let completed = drain_until_complete(&mut jobs);
-        let LoadOutcome::GtdFile { history, .. } = completed.outcome.expect("load should succeed")
+        let LoadCompletion::Recording {
+            result: Ok(LoadedRecordingResult { history, .. }),
+            ..
+        } = completed.completion
         else {
             panic!("expected a GtdFile outcome");
         };
