@@ -362,7 +362,7 @@ impl LogViewerWindow {
             ui.spacing_mut().item_spacing.y = 0.0;
             let row_height = row_height(ui);
             let mut scroll_area = ScrollArea::vertical()
-                .id_salt("log_viewer_line_table")
+                .id_salt(("log_viewer_line_table", log_id))
                 .auto_shrink([false, false])
                 // A keyboard step lands on a row boundary and a held key counts
                 // every repeat, which an animation in flight would round off.

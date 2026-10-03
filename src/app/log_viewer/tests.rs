@@ -2062,6 +2062,196 @@ fn a_wheel_scroll_over_the_table_moves_its_lines_by_the_points_it_sends() {
     );
 }
 
+#[derive(Clone, Copy)]
+enum ViewerScrollRegion {
+    Header,
+    Summary,
+    Table,
+}
+
+impl ViewerScrollRegion {
+    fn anchor_label(self) -> String {
+        match self {
+            Self::Header => "Notice 4".to_owned(),
+            Self::Table => long_log_entry_timestamp(5),
+            Self::Summary => "Structural lines".to_owned(),
+        }
+    }
+}
+
+#[rstest]
+fn switching_logs_restores_each_scroll_region_and_reloading_starts_at_the_top(
+    #[values(
+        ViewerScrollRegion::Header,
+        ViewerScrollRegion::Table,
+        ViewerScrollRegion::Summary
+    )]
+    region: ViewerScrollRegion,
+) {
+    const OVERFLOWING_BOOT_SESSION_COUNT: usize = 20;
+    const OVERFLOWING_NOTICE_COUNT: usize = 20;
+
+    let boots: String = (0..OVERFLOWING_BOOT_SESSION_COUNT)
+        .map(|index| {
+            format!("--- Device reboot ---\n2026-05-29 19:00:00 navsyncd: boot session {index}\n")
+        })
+        .collect();
+    let first = format!("{}{boots}", long_log(LONG_LOG_ENTRIES));
+    let second = first.replace("entry", "other");
+    let mut state = viewer_state(
+        Vec::new(),
+        &[
+            ("first.log", first.as_str()),
+            ("second.log", second.as_str()),
+        ],
+    );
+    match region {
+        ViewerScrollRegion::Header => {
+            state.viewer.notices = (0..OVERFLOWING_NOTICE_COUNT)
+                .map(|index| format!("Notice {index}"))
+                .collect();
+        }
+        ViewerScrollRegion::Summary => state.viewer.summary_expanded = true,
+        ViewerScrollRegion::Table => {}
+    }
+    let first_id = state.first_loaded_log();
+    let second_id = state
+        .viewer
+        .selected_log()
+        .expect("the second log is selected");
+    state.viewer.open_on_log(first_id);
+    let mut harness = harness_from(state);
+    let anchor = region.anchor_label();
+    let initial_y = harness.get_by_label(&anchor).rect().top();
+    let scroll_position = harness.get_by_label(&anchor).rect().center();
+
+    harness.scroll_wheel_at(scroll_position, -WHEEL_SCROLL_PX, WHEEL_SETTLE_FRAMES);
+    let first_y = harness.get_by_label(&anchor).rect().top();
+    assert!((initial_y - first_y - WHEEL_SCROLL_PX).abs() < SCROLL_READING_TOLERANCE_PX);
+
+    harness.state_mut().viewer.open_on_log(second_id);
+    harness.run_steps(3);
+    assert!(
+        (harness.get_by_label(&anchor).rect().top() - initial_y).abs()
+            < SCROLL_READING_TOLERANCE_PX
+    );
+    harness.scroll_wheel_at(scroll_position, -2.0 * WHEEL_SCROLL_PX, WHEEL_SETTLE_FRAMES);
+    let second_y = harness.get_by_label(&anchor).rect().top();
+    assert!((initial_y - second_y - 2.0 * WHEEL_SCROLL_PX).abs() < SCROLL_READING_TOLERANCE_PX);
+
+    for (id, expected_y) in [(first_id, first_y), (second_id, second_y)] {
+        harness.state_mut().viewer.open_on_log(id);
+        harness.run_steps(3);
+        assert!(
+            (harness.get_by_label(&anchor).rect().top() - expected_y).abs()
+                < SCROLL_READING_TOLERANCE_PX
+        );
+    }
+
+    let unloaded = harness
+        .state_mut()
+        .logs
+        .remove_by_id(second_id)
+        .expect("the second log is loaded");
+    harness.run_steps(3);
+    let reloaded_id = harness.state_mut().logs.push(unloaded).id();
+    assert_ne!(reloaded_id, second_id);
+    harness.state_mut().viewer.open_on_log(reloaded_id);
+    harness.run_steps(3);
+    assert!(
+        (harness.get_by_label(&anchor).rect().top() - initial_y).abs()
+            < SCROLL_READING_TOLERANCE_PX
+    );
+}
+
+#[test]
+fn clicking_a_log_selector_preserves_the_previous_logs_larger_header_offset() {
+    const OVERFLOWING_CHIP_COUNT: usize = 40;
+
+    let first = long_log(LONG_LOG_ENTRIES);
+    let second = first.replace("entry", "other");
+    let mut state = viewer_state(
+        Vec::new(),
+        &[
+            ("first.log", first.as_str()),
+            ("second.log", second.as_str()),
+        ],
+    );
+    let first_id = state.first_loaded_log();
+    let (stack, slots) = state
+        .logs
+        .filter_stack_mut_by_id(first_id)
+        .expect("the first log is loaded");
+    for index in 0..OVERFLOWING_CHIP_COUNT {
+        stack.set_live_filter_text(&format!("entry {index}"));
+        let chip = stack
+            .add_live_filter_as_chip(slots)
+            .expect("the filter is valid");
+        stack.set_chip_enabled(chip, false);
+    }
+    state.viewer.open_on_log(first_id);
+    let mut harness = harness_from(state);
+    let initial_y = harness.get_by_label("second.log").rect().top();
+    let header = harness.get_by_label("second.log").rect().center();
+    harness.scroll_wheel_at(header, -WHEEL_SCROLL_PX, WHEEL_SETTLE_FRAMES);
+    let saved_y = harness.get_by_label("second.log").rect().top();
+    assert!((initial_y - saved_y - WHEEL_SCROLL_PX).abs() < SCROLL_READING_TOLERANCE_PX);
+
+    select_log(&mut harness, "second.log");
+    assert!(
+        (harness.get_by_label("second.log").rect().top() - initial_y).abs()
+            < SCROLL_READING_TOLERANCE_PX
+    );
+    select_log(&mut harness, "first.log");
+    assert!(
+        (harness.get_by_label("second.log").rect().top() - saved_y).abs()
+            < SCROLL_READING_TOLERANCE_PX
+    );
+}
+
+#[test]
+fn map_navigation_overrides_the_target_logs_restored_table_offset() {
+    let first = long_log(LONG_LOG_ENTRIES);
+    let second = first.replace("entry", "other");
+    let mut harness = harness_of(
+        Vec::new(),
+        &[
+            ("first.log", first.as_str()),
+            ("second.log", second.as_str()),
+        ],
+    );
+    let first_id = harness.state().first_loaded_log();
+    select_log(&mut harness, "first.log");
+    let scroll = TableScroll::of(&harness);
+    harness.state_mut().viewer.scroll_to_row = Some(10);
+    harness.run_steps(3);
+    let previous_offset = scroll.offset_px(&harness);
+    select_log(&mut harness, "second.log");
+
+    harness.state_mut().clicked_glyph = Some(LogMatchGlyph {
+        log: first_id,
+        color: LogMatchColor::LiveFilter,
+        entry_indices: vec![CLICKED_ENTRY],
+    });
+    harness.run_steps(3);
+
+    assert_eq!(harness.state().viewer.selected_log(), Some(first_id));
+    let expected_row = harness
+        .state()
+        .shown_log()
+        .and_then(|log| line_table::LineTableRows::of(log).row_of_entry(CLICKED_ENTRY))
+        .expect("the clicked entry has a table row");
+    assert!(scroll.offset_px(&harness) > previous_offset);
+    assert!(
+        (scroll.offset_px(&harness) - expected_row as f32 * scroll.row_height_px).abs()
+            < SCROLL_READING_TOLERANCE_PX
+    );
+    harness.get_by_label(long_log_entry_timestamp(CLICKED_ENTRY).as_str());
+    select_log(&mut harness, "second.log");
+    select_log(&mut harness, "first.log");
+    harness.get_by_label(long_log_entry_timestamp(CLICKED_ENTRY).as_str());
+}
+
 #[test]
 fn a_scrolling_key_leaves_the_table_where_it_is_while_the_live_filter_has_focus() {
     let mut harness = keyboard_scroll_harness();

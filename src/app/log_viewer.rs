@@ -296,8 +296,9 @@ impl LogViewerWindow {
                 // `TABLE_ROWS_THE_HEADER_LEAVES` rows to draw in.
                 let reserved_for_the_table =
                     line_table::row_height(ui) * TABLE_ROWS_THE_HEADER_LEAVES as f32;
+                let header_log = self.selected;
                 egui::ScrollArea::both()
-                    .id_salt("log_viewer_header")
+                    .id_salt(("log_viewer_header", header_log))
                     .max_height((ui.available_height() - reserved_for_the_table).max(0.0))
                     .show(ui, |ui| {
                         self.notices_ui(ui);
@@ -310,7 +311,7 @@ impl LogViewerWindow {
                         if logs.is_empty() {
                             ui.label(RichText::new(LOG_LOAD_HINT).weak());
                         }
-                        let Some(shown) = self.selected else {
+                        let Some(shown) = header_log else {
                             return;
                         };
                         if let Some(log) = logs.get_by_id(shown) {
@@ -319,7 +320,7 @@ impl LogViewerWindow {
                         if self.summary_expanded
                             && let Some(log) = logs.get_by_id(shown)
                         {
-                            self.summary_panel_ui(ui, log);
+                            self.summary_panel_ui(ui, log, shown);
                         }
                         self.filters_ui(ui, logs, shown);
                     });
