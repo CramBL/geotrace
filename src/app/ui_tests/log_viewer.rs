@@ -441,6 +441,18 @@ fn snapshot_app_log_viewer_filters() {
         ui_tests::run_until_the_log_filter_scans_land(&mut harness.inner);
     }
     add_log_filter(&mut harness, "rc=-110");
+    harness
+        .inner
+        .get_by_label(log_viewer::filters::INTERSECTION_SYMBOL)
+        .click();
+    harness.inner.run_steps(2);
+    add_log_filter(&mut harness, "retries");
+    harness
+        .inner
+        .get_by_label(log_viewer::filters::NEW_GROUP_LABEL)
+        .click();
+    harness.inner.run_steps(2);
+    add_log_filter(&mut harness, "backoff");
     ui_tests::run_until_the_log_filter_scans_land(&mut harness.inner);
     type_into_log_filter(&mut harness, "retries");
 

@@ -853,6 +853,7 @@ fn loose_and_saved_contexts_are_independent_of_completion_order(#[values(true, f
         id: LogAttachmentId::new_random(),
     };
     let saved_filters: StoredLogFilterStack = vec![StoredLogFilter {
+        group_id: 0,
         text: "shared".to_owned(),
         regex: false,
         enabled: false,
@@ -935,7 +936,7 @@ fn loose_and_saved_contexts_are_independent_of_completion_order(#[values(true, f
                     log.context_origin(),
                     log.attachment().cloned(),
                     log.anchor_key(),
-                    log.filters().to_stored_stack(),
+                    log.filters().to_stored_stack().expect("valid groups"),
                     log.association_window(),
                     log.associated_entry_count(),
                     log.entry_placement(0),

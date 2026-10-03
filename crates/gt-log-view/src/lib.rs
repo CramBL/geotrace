@@ -14,9 +14,9 @@ pub use anchor::RecordingKey;
 pub use association::{AssociationCandidate, AssociationCandidates};
 pub use attachment::{LogAttachmentRef, SessionLogAttachments};
 pub use filter::{
-    ClockTicks, DayDivider, EntryMatches, FilterChip, FilterChipId, FilterChipMode,
-    FilterGroupOperator, FilterPattern, FilterStack, InvalidFilterPattern, LAYER_COLOR_SLOT_COUNT,
-    LayerColorSlot, LayerColorSlots, TimestampTick, VisibleEntries,
+    ClockTicks, DayDivider, EntryMatches, FilterChip, FilterChipId, FilterChipMode, FilterGroup,
+    FilterGroupId, FilterGroupOperator, FilterPattern, FilterStack, InvalidFilterPattern,
+    LAYER_COLOR_SLOT_COUNT, LayerColorSlot, LayerColorSlots, TimestampTick, VisibleEntries,
 };
 pub use loaded_log::{
     LoadedLog, LoadedLogEditor, LoadedLogs, LogContextOrigin, LogPushOutcome, LogSaveOutcome,

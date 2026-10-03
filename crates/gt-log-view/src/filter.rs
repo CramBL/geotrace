@@ -11,7 +11,10 @@ pub use composition::FilterGroupOperator;
 pub use matches::EntryMatches;
 pub use pattern::{FilterPattern, InvalidFilterPattern};
 pub use slots::{LAYER_COLOR_SLOT_COUNT, LayerColorSlot, LayerColorSlots};
-pub use stack::{FilterChip, FilterChipId, FilterChipMode, FilterStack, VisibleEntries};
+pub use stack::{
+    FilterChip, FilterChipId, FilterChipMode, FilterGroup, FilterGroupId, FilterStack,
+    VisibleEntries,
+};
 
 mod clock_ticks;
 mod composition;

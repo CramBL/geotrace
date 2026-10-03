@@ -3,7 +3,8 @@
 use std::{iter, mem, ops::Range, sync::Arc};
 
 use gt_history_types::{
-    StoredLogFilter, StoredLogFilterMode, StoredLogFilterOperator, StoredLogFilterStack,
+    InvalidStoredLogFilterStack, StoredLogFilter, StoredLogFilterGroup, StoredLogFilterMode,
+    StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts,
 };
 use gt_logfile::ParsedLog;
 
@@ -19,6 +20,25 @@ use crate::filter::{
 /// Identifies a chip for as long as it is in the stack it was added to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FilterChipId(u64);
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct FilterGroupId(u64);
+
+#[derive(Clone, Copy, Debug)]
+pub struct FilterGroup {
+    id: FilterGroupId,
+    operator: FilterGroupOperator,
+}
+
+impl FilterGroup {
+    pub fn id(&self) -> FilterGroupId {
+        self.id
+    }
+
+    pub fn operator(&self) -> FilterGroupOperator {
+        self.operator
+    }
+}
 
 /// What a chip does with the entries it matches.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, strum::EnumIter)]
@@ -90,7 +110,8 @@ pub struct FilterStack {
     live: LogFilter,
     chips: Vec<FilterChip>,
     next_chip_id: u64,
-    operator: FilterGroupOperator,
+    groups: Vec<FilterGroup>,
+    selected_group: FilterGroupId,
     visible: VisibleEntries,
     clock_ticks: ClockTicks,
 }
@@ -111,7 +132,11 @@ impl FilterStack {
             live: LogFilter::unwritten(entry_count),
             chips: Vec::new(),
             next_chip_id: 0,
-            operator: FilterGroupOperator::All,
+            groups: vec![FilterGroup {
+                id: FilterGroupId(0),
+                operator: FilterGroupOperator::All,
+            }],
+            selected_group: FilterGroupId(0),
             visible,
             clock_ticks,
         }
@@ -126,40 +151,120 @@ impl FilterStack {
     /// slots when the log is loaded.
     pub fn from_stored_stack(log: Arc<ParsedLog>, stored: &StoredLogFilterStack) -> Self {
         let mut stack = Self::new(log);
-        stack.operator = match stored.operator {
-            StoredLogFilterOperator::All => FilterGroupOperator::All,
-            StoredLogFilterOperator::Any => FilterGroupOperator::Any,
-        };
-        for filter in &stored.chips {
+        stack.groups = stored
+            .groups()
+            .iter()
+            .map(|group| FilterGroup {
+                id: FilterGroupId(group.id),
+                operator: match group.operator {
+                    StoredLogFilterOperator::All => FilterGroupOperator::All,
+                    StoredLogFilterOperator::Any => FilterGroupOperator::Any,
+                },
+            })
+            .collect();
+        stack.selected_group = FilterGroupId(stored.selected_group_id());
+        for filter in stored.chips() {
             stack.push_stored_chip(filter);
         }
         stack.recompose_visible_entries();
         stack
     }
 
-    pub fn set_group_operator(&mut self, operator: FilterGroupOperator) {
-        if self.operator != operator {
-            self.operator = operator;
+    pub fn create_group(&mut self) -> FilterGroupId {
+        let mut id = FilterGroupId(0);
+        while self.groups.iter().any(|group| group.id == id) {
+            id.0 = id.0.saturating_add(1);
+        }
+        self.groups.push(FilterGroup {
+            id,
+            operator: FilterGroupOperator::All,
+        });
+        self.select_group(id);
+        id
+    }
+
+    pub fn select_group(&mut self, id: FilterGroupId) {
+        if self.selected_group != id && self.groups.iter().any(|group| group.id == id) {
+            self.selected_group = id;
             self.recompose_visible_entries();
         }
     }
 
-    pub fn to_stored_stack(&self) -> StoredLogFilterStack {
-        StoredLogFilterStack {
-            operator: match self.operator {
-                FilterGroupOperator::All => StoredLogFilterOperator::All,
-                FilterGroupOperator::Any => StoredLogFilterOperator::Any,
-            },
+    pub fn remove_group(&mut self, id: FilterGroupId) {
+        let Some(survivor) = self
+            .groups
+            .iter()
+            .find(|group| group.id != id)
+            .map(FilterGroup::id)
+        else {
+            return;
+        };
+        let Some(index) = self.groups.iter().position(|group| group.id == id) else {
+            return;
+        };
+        for chip in &mut self.chips {
+            if chip.group == id {
+                chip.group = survivor;
+            }
+        }
+        if self.selected_group == id {
+            self.selected_group = survivor;
+        }
+        self.groups.remove(index);
+        self.recompose_visible_entries();
+    }
+
+    pub fn move_chip_to_group(&mut self, chip_id: FilterChipId, group: FilterGroupId) {
+        if !self.groups.iter().any(|candidate| candidate.id == group) {
+            return;
+        }
+        let Some(chip) = self.chips.iter_mut().find(|chip| chip.id == chip_id) else {
+            return;
+        };
+        if chip.group != group {
+            chip.group = group;
+            self.recompose_visible_entries();
+        }
+    }
+
+    pub fn set_group_operator(&mut self, id: FilterGroupId, operator: FilterGroupOperator) {
+        let Some(group) = self.groups.iter_mut().find(|group| group.id == id) else {
+            return;
+        };
+        if group.operator != operator {
+            group.operator = operator;
+            self.recompose_visible_entries();
+        }
+    }
+
+    pub fn to_stored_stack(&self) -> Result<StoredLogFilterStack, InvalidStoredLogFilterStack> {
+        StoredLogFilterStack::try_from_parts(StoredLogFilterStackParts {
+            groups: self
+                .groups
+                .iter()
+                .map(|group| StoredLogFilterGroup {
+                    id: group.id.0,
+                    operator: match group.operator {
+                        FilterGroupOperator::All => StoredLogFilterOperator::All,
+                        FilterGroupOperator::Any => StoredLogFilterOperator::Any,
+                    },
+                })
+                .collect(),
+            selected_group_id: self.selected_group.0,
             chips: self
                 .chips
                 .iter()
                 .map(FilterChip::to_stored_filter)
                 .collect(),
-        }
+        })
     }
 
-    pub fn group_operator(&self) -> FilterGroupOperator {
-        self.operator
+    pub fn groups(&self) -> &[FilterGroup] {
+        &self.groups
+    }
+
+    pub fn selected_group(&self) -> FilterGroupId {
+        self.selected_group
     }
 
     pub fn live_filter_text(&self) -> &str {
@@ -229,6 +334,7 @@ impl FilterStack {
         emptied.pattern.regex = self.live.pattern.regex;
         self.chips.push(FilterChip {
             id,
+            group: self.selected_group,
             filter: mem::replace(&mut self.live, emptied),
             layer_slot: None,
             enabled: true,
@@ -391,6 +497,7 @@ impl FilterStack {
         );
         self.chips.push(FilterChip {
             id,
+            group: FilterGroupId(stored.group_id),
             filter,
             layer_slot: match stored.mode {
                 StoredLogFilterMode::Layer { color_slot } => {
@@ -412,21 +519,29 @@ impl FilterStack {
 
     fn recompose_visible_entries(&mut self) {
         let entry_count = self.entry_count();
-        let narrowing: Vec<&EntryMatches> = iter::once(&self.live)
-            .filter(|live| live.narrows_visible_set())
-            .chain(
-                self.chips
-                    .iter()
-                    .filter(|chip| chip.narrows_visible_set())
-                    .map(|chip| &chip.filter),
-            )
-            .map(LogFilter::matches)
+        let composed_groups: Vec<EntryMatches> = self
+            .groups
+            .iter()
+            .filter_map(|group| {
+                let conditions: Vec<&EntryMatches> = iter::once(&self.live)
+                    .filter(|live| self.selected_group == group.id && live.narrows_visible_set())
+                    .chain(
+                        self.chips
+                            .iter()
+                            .filter(|chip| chip.group == group.id && chip.narrows_visible_set())
+                            .map(|chip| &chip.filter),
+                    )
+                    .map(LogFilter::matches)
+                    .collect();
+                group.operator.compose(&conditions)
+            })
             .collect();
-
-        let visible = self.operator.compose(&narrowing).map_or(
-            VisibleEntries::All { entry_count },
-            VisibleEntries::Matching,
-        );
+        let group_matches: Vec<_> = composed_groups.iter().collect();
+        let visible = FilterGroupOperator::All
+            .compose(&group_matches)
+            .map_or(VisibleEntries::All { entry_count }, |matches| {
+                VisibleEntries::Matching(matches.matched_entry_indices().collect())
+            });
         self.clock_ticks = ClockTicks::of(&self.log, &visible);
         self.visible = visible;
     }
@@ -437,6 +552,7 @@ impl FilterStack {
 #[derive(Debug)]
 pub struct FilterChip {
     id: FilterChipId,
+    group: FilterGroupId,
     filter: LogFilter,
 
     /// Held while the chip is in layer mode, whether or not it is enabled.
@@ -448,6 +564,10 @@ pub struct FilterChip {
 impl FilterChip {
     pub fn id(&self) -> FilterChipId {
         self.id
+    }
+
+    pub fn group(&self) -> FilterGroupId {
+        self.group
     }
 
     pub fn pattern(&self) -> &FilterPattern {
@@ -481,6 +601,7 @@ impl FilterChip {
 
     fn to_stored_filter(&self) -> StoredLogFilter {
         StoredLogFilter {
+            group_id: self.group.0,
             text: self.filter.pattern.text.clone(),
             regex: self.filter.pattern.regex,
             enabled: self.enabled,
@@ -547,6 +668,7 @@ impl LogFilter {
 mod tests {
     use std::ptr;
 
+    use gt_history_types::LogAttachment;
     use proptest::{prelude::*, proptest};
     use rstest::rstest;
 
@@ -581,6 +703,253 @@ mod tests {
             .chip(id)
             .and_then(FilterChip::layer_slot)
             .map(LayerColorSlot::index)
+    }
+
+    fn add_refine_chip(stack: &mut FilterStack, text: &str) -> FilterChipId {
+        stack.set_live_filter_text(text);
+        stack.add_live_filter_as_chip().expect("valid filter")
+    }
+
+    #[rstest]
+    #[case::mixed(FilterGroupOperator::Any, vec![0, 1])]
+    #[case::all(FilterGroupOperator::All, vec![1])]
+    fn groups_intersect_their_composed_matches(
+        #[case] operator: FilterGroupOperator,
+        #[case] expected: Vec<usize>,
+    ) {
+        let log = Arc::new(test_util::parsed_log_of_text(COMPOSITION_LOG));
+        let mut stack = FilterStack::new(log);
+        let first_group = stack.selected_group();
+        add_refine_chip(&mut stack, "first");
+        add_refine_chip(&mut stack, "second");
+        stack.set_group_operator(first_group, operator);
+        let second_group = stack.create_group();
+        let third = add_refine_chip(&mut stack, "first");
+        stack.wait_for_queries();
+        assert_eq!(visible(&stack), expected);
+        assert_eq!(stack.chip(third).unwrap().group(), second_group);
+        if operator == FilterGroupOperator::All {
+            stack.move_chip_to_group(third, first_group);
+            assert_eq!(visible(&stack), expected);
+        }
+    }
+
+    #[test]
+    fn groups_without_participating_conditions_leave_visibility_unchanged() {
+        let (mut stack, mut slots) = unfiltered_stack();
+        let chip = add_refine_chip(&mut stack, "acquired");
+        stack.create_group();
+        stack.set_group_operator(stack.selected_group(), FilterGroupOperator::Any);
+        let disabled = add_refine_chip(&mut stack, "missing");
+        stack.set_chip_enabled(disabled, false);
+        add_layer_chip(&mut stack, &mut slots, "battery");
+        stack.create_group();
+        stack.set_live_filter_regex(true);
+        stack.set_live_filter_text("[");
+        stack.wait_for_queries();
+        assert_eq!(visible(&stack), [0]);
+        stack.set_chip_enabled(chip, false);
+        assert_eq!(visible(&stack), [0, 1, 2, 3]);
+        stack.set_chip_enabled(disabled, true);
+        assert_eq!(visible(&stack), Vec::<usize>::new());
+    }
+
+    #[rstest]
+    #[case::first_pending(ScanState::FirstPending)]
+    #[case::landed(ScanState::Landed)]
+    #[case::replacement_pending(ScanState::ReplacementPending)]
+    fn selecting_a_group_and_adding_live_preserve_query_identity(#[case] state: ScanState) {
+        let log = Arc::new(test_util::parsed_log_of_text(COMPOSITION_LOG));
+        let mut stack = FilterStack::new(log);
+        let any_group = stack.selected_group();
+        stack.set_group_operator(any_group, FilterGroupOperator::Any);
+        add_refine_chip(&mut stack, "first");
+        let all_group = stack.create_group();
+        add_refine_chip(&mut stack, "first");
+        stack.wait_for_queries();
+        if matches!(state, ScanState::ReplacementPending) {
+            stack.set_live_filter_text("second");
+            stack.wait_for_queries();
+        }
+        stack.set_live_filter_text("second first");
+        if matches!(state, ScanState::Landed) {
+            stack.wait_for_queries();
+        }
+        let identity = stack.live.query.scan_identity();
+        let matches = stack.live_filter_matches().clone();
+        let pending = stack.is_query_pending();
+        stack.select_group(any_group);
+        assert_eq!(visible(&stack), [0, 1]);
+        assert_eq!(stack.live.query.scan_identity(), identity);
+        assert_eq!(*stack.live_filter_matches(), matches);
+        stack.select_group(all_group);
+        assert_eq!(
+            visible(&stack),
+            if matches!(state, ScanState::FirstPending) {
+                vec![0, 1]
+            } else {
+                vec![1]
+            }
+        );
+        stack.select_group(any_group);
+        let before_add = visible(&stack);
+        let chip = stack.add_live_filter_as_chip().expect("valid live filter");
+        assert_eq!(visible(&stack), before_add);
+        assert_eq!(stack.chip(chip).unwrap().group(), any_group);
+        assert_eq!(
+            stack.chip(chip).unwrap().filter.query.scan_identity(),
+            identity
+        );
+        assert_eq!(*stack.chip(chip).unwrap().matches(), matches);
+        assert_eq!(stack.is_query_pending(), pending);
+        assert_eq!(stack.live_filter_text(), "");
+        stack.wait_for_queries();
+        assert_eq!(visible(&stack), [0, 1]);
+    }
+
+    #[rstest]
+    #[case::pending(false)]
+    #[case::landed(true)]
+    fn group_edits_and_highlight_transitions_preserve_condition_scans(#[case] landed: bool) {
+        let (mut stack, mut slots) = unfiltered_stack();
+        let first_group = stack.selected_group();
+        add_refine_chip(&mut stack, "acquired");
+        stack.wait_for_queries();
+        let second_group = stack.create_group();
+        let moved = add_refine_chip(&mut stack, "lost");
+        if landed {
+            stack.wait_for_queries();
+        }
+        let identity = stack.chip(moved).unwrap().filter.query.scan_identity();
+        let matches = ptr::from_ref(stack.chip(moved).unwrap().matches());
+        let pending = stack.is_query_pending();
+        stack.move_chip_to_group(moved, first_group);
+        stack.set_group_operator(first_group, FilterGroupOperator::Any);
+        assert_eq!(visible(&stack), if landed { vec![0, 2] } else { vec![0] });
+        stack.switch_chip_to_layer_mode(moved, &mut slots);
+        assert_eq!(visible(&stack), [0]);
+        stack.select_group(second_group);
+        stack.switch_chip_to_refine_mode(moved, &mut slots);
+        assert_eq!(stack.chip(moved).unwrap().group(), first_group);
+        assert_eq!(
+            stack.chip(moved).unwrap().filter.query.scan_identity(),
+            identity
+        );
+        assert_eq!(ptr::from_ref(stack.chip(moved).unwrap().matches()), matches);
+        assert_eq!(stack.is_query_pending(), pending);
+        stack.wait_for_queries();
+        assert_eq!(visible(&stack), [0, 2]);
+    }
+
+    #[rstest]
+    #[case::remove_first(true)]
+    #[case::remove_later(false)]
+    fn removing_groups_reassigns_active_and_remembered_memberships(#[case] remove_first: bool) {
+        let (mut stack, mut slots) = unfiltered_stack();
+        let first_group = stack.selected_group();
+        let second_group = stack.create_group();
+        let (removed, survivor) = if remove_first {
+            (first_group, second_group)
+        } else {
+            (second_group, first_group)
+        };
+        stack.select_group(removed);
+        let active = add_refine_chip(&mut stack, "gnss");
+        let highlighted = add_layer_chip(&mut stack, &mut slots, "fix");
+        stack.set_chip_enabled(active, false);
+        stack.set_live_filter_text("lost");
+        stack.wait_for_queries();
+        let live_identity = stack.live.query.scan_identity();
+        let chip_identity = stack
+            .chip(highlighted)
+            .unwrap()
+            .filter
+            .query
+            .scan_identity();
+        stack.remove_group(removed);
+        assert_eq!(stack.groups().len(), 1);
+        assert_eq!(stack.selected_group(), survivor);
+        assert_eq!(stack.chip(active).unwrap().group(), survivor);
+        assert_eq!(stack.chip(highlighted).unwrap().group(), survivor);
+        assert_eq!(stack.live.query.scan_identity(), live_identity);
+        assert_eq!(
+            stack
+                .chip(highlighted)
+                .unwrap()
+                .filter
+                .query
+                .scan_identity(),
+            chip_identity
+        );
+        assert_eq!(visible(&stack), [2]);
+        stack.switch_chip_to_refine_mode(highlighted, &mut slots);
+        assert_eq!(stack.chip(highlighted).unwrap().group(), survivor);
+        stack.remove_group(survivor);
+        assert_eq!(stack.groups().len(), 1);
+        assert_eq!(visible(&stack), [2]);
+        stack.clear_live_filter();
+        stack.set_chip_enabled(highlighted, false);
+        assert_eq!(visible(&stack), [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn grouped_filters_round_trip_with_order_selection_and_highlight_memberships() {
+        let (mut stack, mut slots) = unfiltered_stack();
+        let first_group = stack.selected_group();
+        let first = add_refine_chip(&mut stack, "acquired");
+        let second = add_refine_chip(&mut stack, "lost");
+        stack.set_group_operator(first_group, FilterGroupOperator::Any);
+        let second_group = stack.create_group();
+        add_refine_chip(&mut stack, "gnss");
+        stack.switch_chip_to_layer_mode(first, &mut slots);
+        let empty_group = stack.create_group();
+        stack.select_group(second_group);
+        stack.wait_for_queries();
+        let before = visible(&stack);
+        let stored = stack.to_stored_stack().expect("valid groups");
+        let mut restored = FilterStack::from_stored_stack(Arc::clone(&stack.log), &stored);
+        restored.wait_for_queries();
+        assert_eq!(restored.to_stored_stack().expect("valid groups"), stored);
+        assert_eq!(visible(&restored), before);
+        assert_eq!(
+            restored
+                .groups()
+                .iter()
+                .map(FilterGroup::id)
+                .collect::<Vec<_>>(),
+            [first_group, second_group, empty_group]
+        );
+        restored.switch_chip_to_refine_mode(first, &mut slots);
+        assert_eq!(restored.chip(first).unwrap().group(), first_group);
+        assert_eq!(visible(&restored), [0, 2]);
+        restored.move_chip_to_group(second, second_group);
+        assert_eq!(visible(&restored), Vec::<usize>::new());
+    }
+
+    #[rstest]
+    #[case::flat(1, None, vec![1])]
+    #[case::single_all(2, Some("all"), vec![1])]
+    #[case::single_any(2, Some("any"), vec![0, 1, 2])]
+    fn legacy_attachment_filters_restore_identical_visible_entries(
+        #[case] version: u32,
+        #[case] operator: Option<&str>,
+        #[case] expected: Vec<usize>,
+    ) {
+        let chips = serde_json::json!([
+            {"text": "first", "regex": false, "enabled": true, "mode": "refine"},
+            {"text": "second", "regex": false, "enabled": true, "mode": "refine"}
+        ]);
+        let filters = operator.map_or(
+            chips.clone(),
+            |operator| serde_json::json!({"operator": operator, "chips": chips}),
+        );
+        let json = serde_json::json!({"format_version": version, "name": "legacy.log", "content_hash": "0", "filters": filters}).to_string();
+        let attachment = LogAttachment::from_attribute_json(&json).expect("legacy attachment");
+        let log = Arc::new(test_util::parsed_log_of_text(COMPOSITION_LOG));
+        let mut restored = FilterStack::from_stored_stack(log, &attachment.filters);
+        restored.wait_for_queries();
+        assert_eq!(restored.groups().len(), 1);
+        assert_eq!(visible(&restored), expected);
     }
 
     fn add_layer_chip(
@@ -619,15 +988,15 @@ mod tests {
         if add_second_chip {
             stack.add_live_filter_as_chip().expect("valid filter");
         }
-        stack.set_group_operator(operator);
+        stack.set_group_operator(stack.selected_group(), operator);
         stack.wait_for_queries();
         assert_eq!(visible(&stack), expected);
         if add_second_chip {
-            let stored = stack.to_stored_stack();
+            let stored = stack.to_stored_stack().expect("valid groups");
             let mut restored = FilterStack::from_stored_stack(log, &stored);
             restored.wait_for_queries();
             assert_eq!(visible(&restored), expected);
-            assert_eq!(restored.to_stored_stack(), stored);
+            assert_eq!(restored.to_stored_stack().expect("valid groups"), stored);
         }
     }
 
@@ -648,7 +1017,7 @@ mod tests {
         stack.set_live_filter_text("battery");
         let disabled = stack.add_live_filter_as_chip().expect("valid filter");
         stack.set_chip_enabled(disabled, false);
-        stack.set_group_operator(operator);
+        stack.set_group_operator(stack.selected_group(), operator);
         stack.set_live_filter_regex(regex);
         stack.set_live_filter_text(live);
         stack.wait_for_queries();
@@ -688,9 +1057,9 @@ mod tests {
         let chip_matches = ptr::from_ref(stack.chip(chip).unwrap().matches());
         let pending = stack.is_query_pending();
         let all_visible = visible(&stack);
-        stack.set_group_operator(FilterGroupOperator::Any);
+        stack.set_group_operator(stack.selected_group(), FilterGroupOperator::Any);
         assert_eq!(visible(&stack), expected_any);
-        stack.set_group_operator(FilterGroupOperator::All);
+        stack.set_group_operator(stack.selected_group(), FilterGroupOperator::All);
         assert_eq!(visible(&stack), all_visible);
         assert_eq!(stack.live.query.scan_identity(), live_identity);
         assert_eq!(
@@ -1039,17 +1408,19 @@ mod tests {
         stack.switch_chip_to_refine_mode(gnss, &mut slots);
         stack.set_chip_enabled(battery, false);
 
-        let stored = stack.to_stored_stack();
+        let stored = stack.to_stored_stack().expect("valid groups");
         assert_eq!(
-            stored.chips,
+            stored.chips(),
             [
                 StoredLogFilter {
+                    group_id: 0,
                     text: "gnss".to_owned(),
                     regex: false,
                     enabled: true,
                     mode: StoredLogFilterMode::Refine,
                 },
                 StoredLogFilter {
+                    group_id: 0,
                     text: "battery".to_owned(),
                     regex: false,
                     enabled: false,
@@ -1062,7 +1433,7 @@ mod tests {
         let mut restored = FilterStack::from_stored_stack(log, &stored);
         restored.wait_for_queries();
 
-        assert_eq!(restored.to_stored_stack(), stored);
+        assert_eq!(restored.to_stored_stack().expect("valid groups"), stored);
         assert_eq!(
             visible(&restored),
             [0, 2],
@@ -1084,6 +1455,7 @@ mod tests {
     #[test]
     fn a_stored_regex_chip_and_an_unknown_colour_slot_restore_as_they_were() {
         let stored: StoredLogFilterStack = vec![StoredLogFilter {
+            group_id: 0,
             text: "^navsyncd".to_owned(),
             regex: true,
             enabled: true,
@@ -1122,7 +1494,7 @@ mod tests {
                 stack.set_chip_enabled(id, chip_enabled);
             }
             stack.set_live_filter_text(&live);
-            stack.set_group_operator(if any_operator { FilterGroupOperator::Any } else { FilterGroupOperator::All });
+            stack.set_group_operator(stack.selected_group(), if any_operator { FilterGroupOperator::Any } else { FilterGroupOperator::All });
             stack.wait_for_queries();
 
             let live_filter = FilterPattern::plain(&live).compile().expect("plain compiles");

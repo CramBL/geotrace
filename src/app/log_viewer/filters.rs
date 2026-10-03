@@ -8,11 +8,10 @@ use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
 use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use egui_phosphor::regular::X as ICON_X;
 use gt_log_view::{
-    FilterChip, FilterChipId, FilterChipMode, FilterGroupOperator, FilterStack, LayerColorSlots,
-    LoadedLogs,
+    FilterChip, FilterChipId, FilterChipMode, FilterGroup, FilterGroupId, FilterGroupOperator,
+    FilterStack, LayerColorSlots, LoadedLogs,
 };
 use gt_ui_types::LoadedLogId;
-use strum::IntoEnumIterator as _;
 
 use super::LogViewerWindow;
 
@@ -22,13 +21,23 @@ use super::LogViewerWindow;
 enum FilterEdit {
     AddLiveFilterAsChip,
     ClearLiveFilter,
+    CreateGroup,
+    MoveChipToGroup {
+        chip: FilterChipId,
+        group: FilterGroupId,
+    },
     ReadLiveFilterAsRegex(bool),
     RemoveChip(FilterChipId),
+    RemoveGroup(FilterGroupId),
+    SelectGroup(FilterGroupId),
     SetChipEnabled {
         chip: FilterChipId,
         enabled: bool,
     },
-    SetGroupOperator(FilterGroupOperator),
+    SetGroupOperator {
+        group: FilterGroupId,
+        operator: FilterGroupOperator,
+    },
     SwitchChipMode {
         chip: FilterChipId,
         to: FilterChipMode,
@@ -48,9 +57,9 @@ impl LogViewerWindow {
             return;
         };
         let filters = log.filters();
-        let edit = self
-            .filter_row_ui(ui, filters)
-            .or_else(|| chip_row_ui(ui, filters, logs.layer_color_slots()));
+        let live_edit = self.filter_row_ui(ui, filters);
+        let chip_edit = chip_row_ui(ui, filters, logs.layer_color_slots());
+        let edit = live_edit.or(chip_edit);
 
         let Some(edit) = edit else {
             return;
@@ -61,7 +70,15 @@ impl LogViewerWindow {
         match edit {
             FilterEdit::WriteLiveFilter(text) => stack.set_live_filter_text(&text),
             FilterEdit::ReadLiveFilterAsRegex(regex) => stack.set_live_filter_regex(regex),
-            FilterEdit::SetGroupOperator(operator) => stack.set_group_operator(operator),
+            FilterEdit::CreateGroup => {
+                stack.create_group();
+            }
+            FilterEdit::MoveChipToGroup { chip, group } => stack.move_chip_to_group(chip, group),
+            FilterEdit::RemoveGroup(group) => stack.remove_group(group),
+            FilterEdit::SelectGroup(group) => stack.select_group(group),
+            FilterEdit::SetGroupOperator { group, operator } => {
+                stack.set_group_operator(group, operator)
+            }
             FilterEdit::ClearLiveFilter => stack.clear_live_filter(),
             FilterEdit::AddLiveFilterAsChip => {
                 stack.add_live_filter_as_chip();
@@ -102,7 +119,13 @@ impl LogViewerWindow {
         let mut edit = None;
         // Wraps onto further rows on a narrow window.
         ui.horizontal_wrapped(|ui| {
-            edit = group_operator_ui(ui, filters.group_operator());
+            if ui
+                .small_button(NEW_GROUP_LABEL)
+                .on_hover_text("Create a group and select it for the live filter")
+                .clicked()
+            {
+                edit = Some(FilterEdit::CreateGroup);
+            }
             if ui
                 .add(
                     TextEdit::singleline(&mut text)
@@ -175,8 +198,8 @@ impl LogViewerWindow {
     }
 }
 
-fn group_operator_ui(ui: &mut egui::Ui, operator: FilterGroupOperator) -> Option<FilterEdit> {
-    let (glyph, hover, next) = match operator {
+fn group_operator_ui(ui: &mut egui::Ui, group: &FilterGroup) -> Option<FilterEdit> {
+    let (glyph, hover, next) = match group.operator() {
         FilterGroupOperator::All => (
             INTERSECTION_SYMBOL,
             ALL_FILTERS_HOVER,
@@ -187,7 +210,10 @@ fn group_operator_ui(ui: &mut egui::Ui, operator: FilterGroupOperator) -> Option
     ui.small_button(glyph)
         .on_hover_text(hover)
         .clicked()
-        .then_some(FilterEdit::SetGroupOperator(next))
+        .then_some(FilterEdit::SetGroupOperator {
+            group: group.id(),
+            operator: next,
+        })
 }
 
 /// One chip per added filter, wrapping onto further rows when the window is too
@@ -197,24 +223,60 @@ fn chip_row_ui(
     filters: &FilterStack,
     slots: &LayerColorSlots,
 ) -> Option<FilterEdit> {
-    if filters.chips().is_empty() {
-        return None;
-    }
     let mut edit = None;
-    for mode in FilterChipMode::iter().rev() {
-        if !filters.chips().iter().any(|chip| chip.mode() == mode) {
-            continue;
-        }
+    for (index, group) in filters.groups().iter().enumerate() {
+        ui.push_id(group.id(), |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Table filters").weak());
+                if ui
+                    .selectable_label(
+                        filters.selected_group() == group.id(),
+                        (index + 1).to_string(),
+                    )
+                    .on_hover_text(format!("Use group {} for the live filter", index + 1))
+                    .clicked()
+                {
+                    edit = Some(FilterEdit::SelectGroup(group.id()));
+                }
+                if let Some(operator_edit) = group_operator_ui(ui, group) {
+                    edit = Some(operator_edit);
+                }
+                if ui
+                    .add_enabled(
+                        filters.groups().len() > 1,
+                        Button::new(REMOVE_GROUP_LABEL).small(),
+                    )
+                    .on_hover_text(
+                        "Remove this group and assign its filters to the first remaining group",
+                    )
+                    .on_disabled_hover_text("Keep at least one group for table filters")
+                    .clicked()
+                {
+                    edit = Some(FilterEdit::RemoveGroup(group.id()));
+                }
+                for chip in filters.chips().iter().filter(|chip| {
+                    chip.mode() == FilterChipMode::Refine && chip.group() == group.id()
+                }) {
+                    if let Some(chip_edit) = chip_ui(ui, chip, slots, filters.groups()) {
+                        edit = Some(chip_edit);
+                    }
+                }
+            });
+        });
+    }
+    if filters
+        .chips()
+        .iter()
+        .any(|chip| chip.mode() == FilterChipMode::Layer)
+    {
         ui.horizontal_wrapped(|ui| {
-            ui.label(
-                RichText::new(match mode {
-                    FilterChipMode::Refine => "Table filters",
-                    FilterChipMode::Layer => "Map highlights",
-                })
-                .weak(),
-            );
-            for chip in filters.chips().iter().filter(|chip| chip.mode() == mode) {
-                if let Some(chip_edit) = chip_ui(ui, chip, slots) {
+            ui.label(RichText::new("Map highlights").weak());
+            for chip in filters
+                .chips()
+                .iter()
+                .filter(|chip| chip.mode() == FilterChipMode::Layer)
+            {
+                if let Some(chip_edit) = chip_ui(ui, chip, slots, filters.groups()) {
                     edit = Some(chip_edit);
                 }
             }
@@ -225,7 +287,12 @@ fn chip_row_ui(
 
 /// One added filter: whether it is applied at all, the colour it draws in, what
 /// it matches, the mode it does that in, and its removal.
-fn chip_ui(ui: &mut egui::Ui, chip: &FilterChip, slots: &LayerColorSlots) -> Option<FilterEdit> {
+fn chip_ui(
+    ui: &mut egui::Ui,
+    chip: &FilterChip,
+    slots: &LayerColorSlots,
+    groups: &[FilterGroup],
+) -> Option<FilterEdit> {
     let mode = chip.mode();
     let dark_mode = ui.visuals().dark_mode;
     let color = chip.layer_slot().map_or_else(
@@ -274,6 +341,28 @@ fn chip_ui(ui: &mut egui::Ui, chip: &FilterChip, slots: &LayerColorSlots) -> Opt
                 to: switch_to,
             });
         }
+        ui.add_enabled_ui(groups.len() > 1, |ui| {
+            ui.menu_button(MOVE_FILTER_LABEL, |ui| {
+                for (index, group) in groups.iter().enumerate() {
+                    if ui
+                        .selectable_label(
+                            chip.group() == group.id(),
+                            format!("Group {}", index + 1),
+                        )
+                        .clicked()
+                    {
+                        edit = Some(FilterEdit::MoveChipToGroup {
+                            chip: chip.id(),
+                            group: group.id(),
+                        });
+                        ui.close();
+                    }
+                }
+            })
+            .response
+            .on_hover_text("Select this filter's table group")
+            .on_disabled_hover_text("Create another group to assign this filter to it");
+        });
         if ui
             .small_button(ICON_X)
             .on_hover_text(REMOVE_CHIP_HOVER)
@@ -430,5 +519,9 @@ const REMOVE_CHIP_HOVER: &str = "Remove this filter";
 
 pub(in crate::app) const INTERSECTION_SYMBOL: &str = "∩";
 pub(in crate::app) const UNION_SYMBOL: &str = "∪";
-const ALL_FILTERS_HOVER: &str = "Match all filters in this group; click to match any";
-const ANY_FILTER_HOVER: &str = "Match any filter in this group; click to match all";
+const ALL_FILTERS_HOVER: &str = "Match all filters in this group. Click to match any";
+const ANY_FILTER_HOVER: &str = "Match any filter in this group. Click to match all";
+
+pub(in crate::app) const NEW_GROUP_LABEL: &str = "⊕";
+pub(in crate::app) const REMOVE_GROUP_LABEL: &str = "−";
+pub(in crate::app) const MOVE_FILTER_LABEL: &str = "→";

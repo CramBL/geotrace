@@ -5,9 +5,10 @@ use std::path::Path;
 use thiserror::Error;
 
 pub use log_attachment::{
-    LOG_ATTACHMENT_ATTR_PREFIX, LOGS_DIRECTORY, LogAttachment, LogAttachmentEntry, LogAttachmentId,
-    LogContentHash, StoredLogFilter, StoredLogFilterMode, StoredLogFilterOperator,
-    StoredLogFilterStack, logs_directory_for_database,
+    InvalidStoredLogFilterStack, LOG_ATTACHMENT_ATTR_PREFIX, LOGS_DIRECTORY, LogAttachment,
+    LogAttachmentEntry, LogAttachmentId, LogContentHash, StoredLogFilter, StoredLogFilterGroup,
+    StoredLogFilterMode, StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts,
+    logs_directory_for_database,
 };
 pub use ui_state::{
     CURRENT_UI_STATE_VERSION, HIDDEN_TRACKS_DATASET, RecordingUiState, StoredUiStateVersion,

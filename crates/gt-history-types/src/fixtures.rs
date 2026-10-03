@@ -18,12 +18,14 @@ pub fn default_segmentation() -> StoredSegmentation {
 pub fn log_filters() -> StoredLogFilterStack {
     vec![
         StoredLogFilter {
+            group_id: 0,
             text: "gnss".to_owned(),
             regex: false,
             enabled: true,
             mode: StoredLogFilterMode::Layer { color_slot: 3 },
         },
         StoredLogFilter {
+            group_id: 0,
             text: "hal-powerd|navsyncd".to_owned(),
             regex: true,
             enabled: false,

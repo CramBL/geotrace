@@ -108,6 +108,7 @@ fn a_duplicate_attachment_takes_no_colour_slot_from_the_loaded_log() {
     fixtures::add_layer_chip(&mut logs, id, "entry 1");
 
     let stored: StoredLogFilterStack = vec![StoredLogFilter {
+        group_id: 0,
         text: "entry 2".to_owned(),
         regex: false,
         enabled: true,

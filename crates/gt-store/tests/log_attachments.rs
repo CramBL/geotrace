@@ -8,7 +8,8 @@ use gt_history_types::fixtures;
 use gt_store::{
     DatabaseRef, HistoryDatabase as _, LogAttachmentError, LogAttachmentId, LogAttachments as _,
     LogToAttach, ReadOnlyHistoryDatabase as _, ReadOnlyLogAttachments as _, RecordingMeta,
-    Recordings, Store, StoredLogFilterOperator, TrackRange, TrackState,
+    Recordings, Store, StoredLogFilterGroup, StoredLogFilterOperator, StoredLogFilterStack,
+    StoredLogFilterStackParts, TrackRange, TrackState,
 };
 
 /// A store with one recording in its history, ready to attach logs to.
@@ -286,8 +287,25 @@ fn changing_the_filters_of_an_attachment_leaves_its_log_alone() {
     let id = recorded.attach("navsyncd.log", LOG_TEXT);
     let stored_log = std::fs::read(recorded.log_path(id)).expect("read the stored log");
 
-    let mut filters = fixtures::log_filters();
-    filters.operator = StoredLogFilterOperator::Any;
+    let fixture_filters = fixtures::log_filters();
+    let mut groups = fixture_filters.groups().to_vec();
+    groups.first_mut().expect("default group").operator = StoredLogFilterOperator::Any;
+    groups.push(StoredLogFilterGroup {
+        id: 9,
+        operator: StoredLogFilterOperator::All,
+    });
+    groups.push(StoredLogFilterGroup {
+        id: 42,
+        operator: StoredLogFilterOperator::Any,
+    });
+    let mut chips = fixture_filters.chips().to_vec();
+    chips.first_mut().expect("highlighted filter").group_id = 9;
+    let filters = StoredLogFilterStack::try_from_parts(StoredLogFilterStackParts {
+        groups,
+        selected_group_id: 42,
+        chips,
+    })
+    .expect("valid group memberships");
     recorded
         .recordings
         .set_attached_log_filters(&recorded.recording, id, filters.clone())

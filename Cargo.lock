@@ -2825,6 +2825,7 @@ dependencies = [
  "rayon",
  "regex",
  "rstest",
+ "serde_json",
  "strum",
  "thiserror 2.0.20",
 ]
