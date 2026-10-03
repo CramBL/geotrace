@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use chrono::Duration;
 use gt_fmt::MIDDLE_DOT;
-use gt_history_types::{LogContentHash, StoredLogFilter};
+use gt_history_types::{LogContentHash, StoredLogFilterStack};
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
 use gt_logfile::{EntryPlacement, ParsedLog, RecordingAssociationIndex};
 use gt_types::{TimeRange, mercator};
@@ -126,11 +126,11 @@ impl LoadedLog {
     /// and `None` while the database holds the stack the user is looking at.
     pub fn take_filter_stack_edits_to_store(
         &mut self,
-    ) -> Option<(LogAttachmentRef, Vec<StoredLogFilter>)> {
+    ) -> Option<(LogAttachmentRef, StoredLogFilterStack)> {
         let LogContext::SavedAttachment(state) = &mut self.context else {
             return None;
         };
-        let filters = self.filters.to_stored_filters();
+        let filters = self.filters.to_stored_stack();
         if filters == state.stored_filters {
             return None;
         }
@@ -356,18 +356,18 @@ impl LoadedLog {
     fn restore_attachment(
         &mut self,
         attachment: LogAttachmentRef,
-        stored_filters: Vec<StoredLogFilter>,
+        stored_filters: StoredLogFilterStack,
         recordings: &LoadedFilesView<'_>,
     ) {
         self.filters =
-            FilterStack::from_stored_filters(Arc::clone(&self.document.parsed), &stored_filters);
+            FilterStack::from_stored_stack(Arc::clone(&self.document.parsed), &stored_filters);
         self.record_attachment(attachment, stored_filters, recordings);
     }
 
     fn record_attachment(
         &mut self,
         attachment: LogAttachmentRef,
-        stored_filters: Vec<StoredLogFilter>,
+        stored_filters: StoredLogFilterStack,
         recordings: &LoadedFilesView<'_>,
     ) {
         self.context = LogContext::SavedAttachment(LogAttachmentState {
@@ -621,7 +621,7 @@ impl LoadedLogs {
         &mut self,
         mut log: LoadedLog,
         attachment: LogAttachmentRef,
-        stored_filters: Vec<StoredLogFilter>,
+        stored_filters: StoredLogFilterStack,
         recordings: &LoadedFilesView<'_>,
     ) -> LogPushOutcome {
         if let Some(id) = self.id_of_attachment(&attachment) {
@@ -635,7 +635,7 @@ impl LoadedLogs {
         &mut self,
         id: LoadedLogId,
         attachment: LogAttachmentRef,
-        stored_filters: Vec<StoredLogFilter>,
+        stored_filters: StoredLogFilterStack,
         recordings: &LoadedFilesView<'_>,
     ) -> LogSaveOutcome {
         if let Some(existing) = self.id_of_attachment(&attachment) {
@@ -839,7 +839,7 @@ impl LoadedLogs {
     /// entry per log whose stack the database no longer holds.
     pub fn take_filter_stack_edits_to_store(
         &mut self,
-    ) -> Vec<(LogAttachmentRef, Vec<StoredLogFilter>)> {
+    ) -> Vec<(LogAttachmentRef, StoredLogFilterStack)> {
         self.logs
             .iter_mut()
             .filter_map(|stored| stored.log.take_filter_stack_edits_to_store())

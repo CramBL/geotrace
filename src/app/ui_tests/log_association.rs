@@ -12,7 +12,7 @@ use gt_log_view::{LoadedLog, LogAttachmentRef, RecordingKey};
 use gt_store::{
     DatabaseRef, HistoryDatabase as _, LogAttachmentEntry, LogAttachments as _, LogToAttach,
     ReadOnlyHistoryDatabase as _, Recordings, RecordingsHandle, StoredLogFilter,
-    StoredLogFilterMode, TrackRange, TrackState,
+    StoredLogFilterMode, StoredLogFilterOperator, StoredLogFilterStack, TrackRange, TrackState,
 };
 use gt_test_utils::{
     By, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec, SyntheticLogTimestamps,
@@ -23,7 +23,7 @@ use gt_types::{FileIdx, Latitude, Longitude};
 use crate::app::App;
 use crate::app::history_db::{HistoryWorker, StoredLogAttachment};
 use crate::app::loader::{self, AttachedLogRequester, AttachedLogRestore};
-use crate::app::log_viewer::{self, association_dialog};
+use crate::app::log_viewer::{self, association_dialog, filters};
 use crate::app::modals::{DELETE_PERMANENTLY_BUTTON_LABEL, SHELVE_BUTTON_LABEL};
 use crate::app::settings_ui;
 use crate::app::test_util;
@@ -292,7 +292,7 @@ fn an_attachment_whose_stored_log_changed_is_reported_in_the_viewer() {
         &gt_store::LogAttachment::new(
             entry.attachment.name.clone(),
             gt_store::LogContentHash::of_log_bytes(b"a different log"),
-            Vec::new(),
+            Default::default(),
         ),
     )
     .expect("the attribute is writable");
@@ -521,7 +521,7 @@ fn an_attached_log_comes_back_with_its_filters_when_the_recording_opens_again() 
         harness.step_until(|_| {
             !stored_attachments(&db_path, &db_ref)
                 .first()
-                .is_none_or(|entry| entry.attachment.filters.is_empty())
+                .is_none_or(|entry| entry.attachment.filters.chips.is_empty())
         }),
         "the chip reached the stored attachment"
     );
@@ -575,7 +575,7 @@ fn an_unloaded_attachment_is_listed_under_its_recording_and_loads_back() {
     assert!(
         harness.step_until(|_| stored_attachments(&db_path, &db_ref)
             .first()
-            .is_some_and(|entry| entry.attachment.filters.len() == 1)),
+            .is_some_and(|entry| entry.attachment.filters.chips.len() == 1)),
         "the chip reached the stored attachment"
     );
     let stored = stored_attachments(&db_path, &db_ref)
@@ -851,7 +851,7 @@ fn attaching_a_log_the_recording_already_holds_reuses_the_stored_attachment() {
     assert!(
         harness.step_until(|_| stored_attachments(&db_path, &db_ref)
             .first()
-            .is_some_and(|entry| entry.attachment.filters.len() == 1)),
+            .is_some_and(|entry| entry.attachment.filters.chips.len() == 1)),
         "the chip reached the stored attachment"
     );
     let stored = stored_attachments(&db_path, &db_ref)
@@ -878,7 +878,7 @@ fn attaching_a_log_the_recording_already_holds_reuses_the_stored_attachment() {
     assert!(
         harness.step_until(|_| stored_attachments(&db_path, &db_ref)
             .first()
-            .is_some_and(|entry| entry.attachment.filters.is_empty())),
+            .is_some_and(|entry| entry.attachment.filters.chips.is_empty())),
         "the stack of the loaded log reached the attachment it took"
     );
     assert_eq!(
@@ -933,7 +933,8 @@ fn seed_a_recording_and_the_log_stored_with_it(
                     regex: false,
                     enabled: true,
                     mode: StoredLogFilterMode::Layer { color_slot: 0 },
-                }],
+                }]
+                .into(),
                 year_reference: None,
             },
         )
@@ -1311,6 +1312,75 @@ fn attaching_to_a_recording_deleted_mid_session_reports_the_failure() {
     );
 }
 
+#[rstest::rstest]
+#[case::empty_stack(false)]
+#[case::table_conditions(true)]
+fn operator_only_edits_restore_from_the_attachment(#[case] add_conditions: bool) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
+    attach_the_log(&mut harness, &db_path, &db_ref);
+    if add_conditions {
+        for pattern in ["kernel", "systemd"] {
+            ui_tests::add_log_filter_in(&mut harness, pattern);
+            ui_tests::run_until_the_log_filter_scans_land(&mut harness);
+        }
+    }
+    harness.get_by_label(filters::INTERSECTION_SYMBOL).click();
+    assert!(harness.step_until(|_| {
+        stored_attachments(&db_path, &db_ref)
+            .first()
+            .is_some_and(|entry| entry.attachment.filters.operator == StoredLogFilterOperator::Any)
+    }));
+    let expected = harness
+        .state()
+        .first_log()
+        .unwrap()
+        .filters()
+        .to_stored_stack();
+    let expected_visible = harness
+        .state()
+        .first_log()
+        .unwrap()
+        .filters()
+        .visible_entries()
+        .clone();
+    let saved = stored_attachments(&db_path, &db_ref)
+        .into_iter()
+        .next()
+        .expect("saved attachment");
+    assert_eq!(saved.attachment.filters, expected);
+    unload_the_log(&mut harness);
+    open_the_stored_log(&harness, &db_ref, saved.id);
+    test_util::harness::step_until_a_log_is_loaded(&mut harness);
+    ui_tests::run_until_the_log_filter_scans_land(&mut harness);
+    let restored = harness.state().first_log().unwrap().filters();
+    assert_eq!(restored.to_stored_stack(), expected);
+    assert_eq!(*restored.visible_entries(), expected_visible);
+    assert!(!restored.is_query_pending());
+    assert!(harness.query_by_label(filters::UNION_SYMBOL).is_some());
+    harness.get_by_label(filters::UNION_SYMBOL).click();
+    assert!(harness.step_until(|_| {
+        stored_attachments(&db_path, &db_ref)
+            .first()
+            .is_some_and(|entry| entry.attachment.filters.operator == StoredLogFilterOperator::All)
+    }));
+    let rewritten = stored_attachments(&db_path, &db_ref)
+        .into_iter()
+        .next()
+        .expect("saved attachment");
+    assert_eq!(rewritten.attachment.name, saved.attachment.name);
+    assert_eq!(
+        rewritten.attachment.content_hash,
+        saved.attachment.content_hash
+    );
+    assert_eq!(
+        rewritten.attachment.year_reference,
+        saved.attachment.year_reference
+    );
+    assert_eq!(rewritten.attachment.filters.chips, expected.chips);
+}
+
 /// The stored stack is the chips, in the modes and colours they were in.
 #[test]
 fn the_stored_stack_holds_every_chips_mode_and_colour() {
@@ -1327,7 +1397,7 @@ fn the_stored_stack_holds_every_chips_mode_and_colour() {
     assert!(
         harness.step_until(|_| stored_attachments(&db_path, &db_ref)
             .first()
-            .is_some_and(|entry| entry.attachment.filters.len() == 2)),
+            .is_some_and(|entry| entry.attachment.filters.chips.len() == 2)),
         "both chips reached the stored attachment"
     );
 
@@ -1338,6 +1408,7 @@ fn the_stored_stack_holds_every_chips_mode_and_colour() {
         .unwrap_or_default();
     assert_eq!(
         filters
+            .chips
             .iter()
             .map(|filter| (filter.text.as_str(), filter.enabled, filter.mode))
             .collect::<Vec<_>>(),
@@ -1376,12 +1447,13 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
         sats_in_fix: 11,
     });
     let meta = gt_store::extract_meta(&bytes).expect("fixture metadata");
-    let filters = vec![StoredLogFilter {
+    let filters: StoredLogFilterStack = vec![StoredLogFilter {
         text: "systemd".to_owned(),
         regex: false,
         enabled: false,
         mode: StoredLogFilterMode::Refine,
-    }];
+    }]
+    .into();
     let mut db = ui_tests::open_temporary_history_database(&db_path);
     let second_recording = db
         .insert(
@@ -1432,7 +1504,7 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
         .get_by_id(first_id)
         .expect("first log")
         .filters()
-        .to_stored_filters();
+        .to_stored_stack();
 
     match requested_by {
         AttachedLogRequester::RecordingLoad => {
@@ -1461,7 +1533,7 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
             log.anchor_key().as_ref(),
             Some(&RecordingKey::Stored(attachment.recording.clone()))
         );
-        assert_eq!(log.filters().to_stored_filters(), *stored_filters);
+        assert_eq!(log.filters().to_stored_stack(), *stored_filters);
         assert!(harness.state().logs.any_loaded_log_holds(attachment));
     }
     assert_eq!(
@@ -1510,7 +1582,7 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
             .get_by_id(second_id)
             .expect("detached context")
             .filters()
-            .to_stored_filters(),
+            .to_stored_stack(),
         filters
     );
     assert_eq!(
@@ -1520,7 +1592,7 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
             .get_by_id(restored_id)
             .expect("restored context")
             .filters()
-            .to_stored_filters(),
+            .to_stored_stack(),
         filters
     );
     assert_eq!(harness.state().log_viewer.selected_log(), Some(restored_id));
@@ -1605,7 +1677,7 @@ fn a_saved_log_loads_separately_from_incompatible_loose_content(
             .get_by_id(saved_id)
             .expect("saved log")
             .filters()
-            .to_stored_filters(),
+            .to_stored_stack(),
         saved_filters
     );
     harness.state_mut().log_viewer.open_on_log(loose_id);
@@ -1646,7 +1718,7 @@ fn a_saved_log_loads_separately_from_incompatible_loose_content(
             .get_by_id(saved_id)
             .expect("saved log")
             .filters()
-            .to_stored_filters(),
+            .to_stored_stack(),
         saved_filters
     );
     assert_eq!(

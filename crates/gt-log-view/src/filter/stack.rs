@@ -2,12 +2,15 @@
 
 use std::{iter, mem, ops::Range, sync::Arc};
 
-use gt_history_types::{StoredLogFilter, StoredLogFilterMode};
+use gt_history_types::{
+    StoredLogFilter, StoredLogFilterMode, StoredLogFilterOperator, StoredLogFilterStack,
+};
 use gt_logfile::ParsedLog;
 
 use crate::filter::{
     clock_ticks::ClockTicks,
-    matches::{self, EntryMatches},
+    composition::FilterGroupOperator,
+    matches::EntryMatches,
     pattern::{CompiledFilter, FilterPattern, InvalidFilterPattern},
     query::FilterQuery,
     slots::{LayerColorSlot, LayerColorSlots},
@@ -32,9 +35,10 @@ pub enum FilterChipMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VisibleEntries {
     /// Every entry of the log: nothing narrows the table.
-    All { entry_count: usize },
+    All {
+        entry_count: usize,
+    },
 
-    /// What the live filter and every enabled refine chip all matched.
     Matching(Vec<usize>),
 }
 
@@ -86,6 +90,7 @@ pub struct FilterStack {
     live: LogFilter,
     chips: Vec<FilterChip>,
     next_chip_id: u64,
+    operator: FilterGroupOperator,
     visible: VisibleEntries,
     clock_ticks: ClockTicks,
 }
@@ -106,6 +111,7 @@ impl FilterStack {
             live: LogFilter::unwritten(entry_count),
             chips: Vec::new(),
             next_chip_id: 0,
+            operator: FilterGroupOperator::All,
             visible,
             clock_ticks,
         }
@@ -118,22 +124,42 @@ impl FilterStack {
     /// The layer chips carry the slots they were stored with as preferences:
     /// [`LoadedLogs::push`](crate::LoadedLogs::push) hands out the session's
     /// slots when the log is loaded.
-    pub fn from_stored_filters(log: Arc<ParsedLog>, stored: &[StoredLogFilter]) -> Self {
+    pub fn from_stored_stack(log: Arc<ParsedLog>, stored: &StoredLogFilterStack) -> Self {
         let mut stack = Self::new(log);
-        for filter in stored {
+        stack.operator = match stored.operator {
+            StoredLogFilterOperator::All => FilterGroupOperator::All,
+            StoredLogFilterOperator::Any => FilterGroupOperator::Any,
+        };
+        for filter in &stored.chips {
             stack.push_stored_chip(filter);
         }
         stack.recompose_visible_entries();
         stack
     }
 
-    /// The chips of this stack in the form an attachment stores them. The live
-    /// filter is not part of it: it belongs to the field, not to the stack.
-    pub fn to_stored_filters(&self) -> Vec<StoredLogFilter> {
-        self.chips
-            .iter()
-            .map(FilterChip::to_stored_filter)
-            .collect()
+    pub fn set_group_operator(&mut self, operator: FilterGroupOperator) {
+        if self.operator != operator {
+            self.operator = operator;
+            self.recompose_visible_entries();
+        }
+    }
+
+    pub fn to_stored_stack(&self) -> StoredLogFilterStack {
+        StoredLogFilterStack {
+            operator: match self.operator {
+                FilterGroupOperator::All => StoredLogFilterOperator::All,
+                FilterGroupOperator::Any => StoredLogFilterOperator::Any,
+            },
+            chips: self
+                .chips
+                .iter()
+                .map(FilterChip::to_stored_filter)
+                .collect(),
+        }
+    }
+
+    pub fn group_operator(&self) -> FilterGroupOperator {
+        self.operator
     }
 
     pub fn live_filter_text(&self) -> &str {
@@ -397,10 +423,10 @@ impl FilterStack {
             .map(LogFilter::matches)
             .collect();
 
-        let visible = match narrowing.is_empty() {
-            true => VisibleEntries::All { entry_count },
-            false => VisibleEntries::Matching(matches::intersecting_entry_indices(&narrowing)),
-        };
+        let visible = self.operator.compose(&narrowing).map_or(
+            VisibleEntries::All { entry_count },
+            VisibleEntries::Matching,
+        );
         self.clock_ticks = ClockTicks::of(&self.log, &visible);
         self.visible = visible;
     }
@@ -568,6 +594,117 @@ mod tests {
             .expect("a written filter becomes a chip");
         stack.switch_chip_to_layer_mode(chip, slots);
         chip
+    }
+
+    #[rstest]
+    #[case::all_with_live(FilterGroupOperator::All, false, vec![1])]
+    #[case::any_with_live(FilterGroupOperator::Any, false, vec![0, 1, 2])]
+    #[case::all_with_chips(FilterGroupOperator::All, true, vec![1])]
+    #[case::any_with_chips(FilterGroupOperator::Any, true, vec![0, 1, 2])]
+    fn group_composition_excludes_disabled_and_highlight_conditions(
+        #[case] operator: FilterGroupOperator,
+        #[case] add_second_chip: bool,
+        #[case] expected: Vec<usize>,
+    ) {
+        let log = Arc::new(test_util::parsed_log_of_text(COMPOSITION_LOG));
+        let mut stack = FilterStack::new(Arc::clone(&log));
+        let mut slots = LayerColorSlots::default();
+        add_layer_chip(&mut stack, &mut slots, "excluded");
+        stack.set_live_filter_text("excluded");
+        let disabled = stack.add_live_filter_as_chip().expect("valid filter");
+        stack.set_chip_enabled(disabled, false);
+        stack.set_live_filter_text("first");
+        stack.add_live_filter_as_chip().expect("valid filter");
+        stack.set_live_filter_text("second");
+        if add_second_chip {
+            stack.add_live_filter_as_chip().expect("valid filter");
+        }
+        stack.set_group_operator(operator);
+        stack.wait_for_queries();
+        assert_eq!(visible(&stack), expected);
+        if add_second_chip {
+            let stored = stack.to_stored_stack();
+            let mut restored = FilterStack::from_stored_stack(log, &stored);
+            restored.wait_for_queries();
+            assert_eq!(visible(&restored), expected);
+            assert_eq!(restored.to_stored_stack(), stored);
+        }
+    }
+
+    #[rstest]
+    #[case::all_empty(FilterGroupOperator::All, "", false)]
+    #[case::any_empty(FilterGroupOperator::Any, "", false)]
+    #[case::all_invalid(FilterGroupOperator::All, "[", true)]
+    #[case::any_invalid(FilterGroupOperator::Any, "[", true)]
+    #[case::all_whitespace(FilterGroupOperator::All, "  ", false)]
+    #[case::any_whitespace(FilterGroupOperator::Any, "  ", false)]
+    fn empty_or_invalid_live_conditions_do_not_participate(
+        #[case] operator: FilterGroupOperator,
+        #[case] live: &str,
+        #[case] regex: bool,
+    ) {
+        let (mut stack, mut slots) = unfiltered_stack();
+        add_layer_chip(&mut stack, &mut slots, "gnss");
+        stack.set_live_filter_text("battery");
+        let disabled = stack.add_live_filter_as_chip().expect("valid filter");
+        stack.set_chip_enabled(disabled, false);
+        stack.set_group_operator(operator);
+        stack.set_live_filter_regex(regex);
+        stack.set_live_filter_text(live);
+        stack.wait_for_queries();
+        assert_eq!(visible(&stack), [0, 1, 2, 3]);
+        stack.set_live_filter_regex(false);
+        stack.set_live_filter_text("acquired");
+        stack.add_live_filter_as_chip().expect("valid filter");
+        stack.set_live_filter_regex(regex);
+        stack.set_live_filter_text(live);
+        stack.wait_for_queries();
+        assert_eq!(visible(&stack), [0]);
+    }
+
+    #[rstest]
+    #[case::first_pending(ScanState::FirstPending, vec![0])]
+    #[case::landed(ScanState::Landed, vec![0, 2])]
+    #[case::replacement_pending(ScanState::ReplacementPending, vec![0, 2])]
+    fn operator_changes_preserve_landed_matches_and_pending_scans(
+        #[case] state: ScanState,
+        #[case] expected_any: Vec<usize>,
+    ) {
+        let (mut stack, _) = unfiltered_stack();
+        stack.set_live_filter_text("acquired");
+        let chip = stack.add_live_filter_as_chip().expect("valid filter");
+        stack.wait_for_queries();
+        if matches!(state, ScanState::ReplacementPending) {
+            stack.set_live_filter_text("gnss");
+            stack.wait_for_queries();
+        }
+        stack.set_live_filter_text("gnss fix");
+        if matches!(state, ScanState::Landed) {
+            stack.wait_for_queries();
+        }
+        let live_identity = stack.live.query.scan_identity();
+        let chip_identity = stack.chip(chip).unwrap().filter.query.scan_identity();
+        let live_matches = ptr::from_ref(stack.live_filter_matches());
+        let chip_matches = ptr::from_ref(stack.chip(chip).unwrap().matches());
+        let pending = stack.is_query_pending();
+        let all_visible = visible(&stack);
+        stack.set_group_operator(FilterGroupOperator::Any);
+        assert_eq!(visible(&stack), expected_any);
+        stack.set_group_operator(FilterGroupOperator::All);
+        assert_eq!(visible(&stack), all_visible);
+        assert_eq!(stack.live.query.scan_identity(), live_identity);
+        assert_eq!(
+            stack.chip(chip).unwrap().filter.query.scan_identity(),
+            chip_identity
+        );
+        assert_eq!(ptr::from_ref(stack.live_filter_matches()), live_matches);
+        assert_eq!(
+            ptr::from_ref(stack.chip(chip).unwrap().matches()),
+            chip_matches
+        );
+        assert_eq!(stack.is_query_pending(), pending);
+        stack.wait_for_queries();
+        assert_eq!(visible(&stack), [0]);
     }
 
     #[test]
@@ -902,9 +1039,9 @@ mod tests {
         stack.switch_chip_to_refine_mode(gnss, &mut slots);
         stack.set_chip_enabled(battery, false);
 
-        let stored = stack.to_stored_filters();
+        let stored = stack.to_stored_stack();
         assert_eq!(
-            stored,
+            stored.chips,
             [
                 StoredLogFilter {
                     text: "gnss".to_owned(),
@@ -922,10 +1059,10 @@ mod tests {
         );
 
         let log = Arc::new(test_util::parsed_log_of_text(LOG));
-        let mut restored = FilterStack::from_stored_filters(log, &stored);
+        let mut restored = FilterStack::from_stored_stack(log, &stored);
         restored.wait_for_queries();
 
-        assert_eq!(restored.to_stored_filters(), stored);
+        assert_eq!(restored.to_stored_stack(), stored);
         assert_eq!(
             visible(&restored),
             [0, 2],
@@ -946,17 +1083,18 @@ mod tests {
     /// does not have still restores as a layer chip.
     #[test]
     fn a_stored_regex_chip_and_an_unknown_colour_slot_restore_as_they_were() {
-        let stored = [StoredLogFilter {
+        let stored: StoredLogFilterStack = vec![StoredLogFilter {
             text: "^navsyncd".to_owned(),
             regex: true,
             enabled: true,
             mode: StoredLogFilterMode::Layer {
                 color_slot: LAYER_COLOR_SLOT_COUNT + 3,
             },
-        }];
+        }]
+        .into();
 
         let log = Arc::new(test_util::parsed_log_of_text(LOG));
-        let mut restored = FilterStack::from_stored_filters(log, &stored);
+        let mut restored = FilterStack::from_stored_stack(log, &stored);
         restored.wait_for_queries();
 
         let chip = restored.chips().first().expect("the chip was restored");
@@ -974,6 +1112,7 @@ mod tests {
             live in "[a-z ]{0,5}",
             refine in "[a-z ]{0,5}",
             chip_enabled in any::<bool>(),
+            any_operator in any::<bool>(),
         ) {
             let (mut stack, mut slots) = unfiltered_stack();
             stack.set_live_filter_text(&refine);
@@ -983,6 +1122,7 @@ mod tests {
                 stack.set_chip_enabled(id, chip_enabled);
             }
             stack.set_live_filter_text(&live);
+            stack.set_group_operator(if any_operator { FilterGroupOperator::Any } else { FilterGroupOperator::All });
             stack.wait_for_queries();
 
             let live_filter = FilterPattern::plain(&live).compile().expect("plain compiles");
@@ -995,8 +1135,15 @@ mod tests {
                 .enumerate()
                 .filter(|(_, entry)| {
                     let message = log.message(entry);
-                    (live_filter.matches_nothing() || live_filter.matches(message))
-                        && (!refine_narrows || refine_filter.matches(message))
+                    let conditions: Vec<_> = [
+                        (!live_filter.matches_nothing()).then(|| live_filter.matches(message)),
+                        refine_narrows.then(|| refine_filter.matches(message)),
+                    ].into_iter().flatten().collect();
+                    conditions.is_empty() || if any_operator {
+                        conditions.iter().any(|matched| *matched)
+                    } else {
+                        conditions.iter().all(|matched| *matched)
+                    }
                 })
                 .map(|(index, _)| index)
                 .collect();
@@ -1006,6 +1153,13 @@ mod tests {
             prop_assert!(expected.len() <= stack.entry_count());
         }
     }
+
+    const COMPOSITION_LOG: &str = "\
+2026-01-01 14:02:11 first
+2026-01-01 14:02:12 first second
+2026-01-01 14:02:13 second
+2026-01-01 14:02:14 excluded
+";
 
     /// A filter can select a service, a phenomenon, or one line: two services
     /// write two lines each.

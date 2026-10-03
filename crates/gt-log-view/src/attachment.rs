@@ -1,7 +1,7 @@
 //! What ties a loaded log to the log stored with a recording in history, and
 //! the attachments this session lists for the loaded recordings.
 
-use gt_history_types::{DatabaseRef, LogAttachmentEntry, LogAttachmentId, StoredLogFilter};
+use gt_history_types::{DatabaseRef, LogAttachmentEntry, LogAttachmentId, StoredLogFilterStack};
 
 /// Identifies the attachment a log was stored as: the recording carrying it,
 /// and the attachment's own id on that recording.
@@ -18,7 +18,7 @@ pub(crate) struct LogAttachmentState {
 
     /// The chips as they were last written. A stack that no longer serializes
     /// to this is one the next write-back stores.
-    pub(crate) stored_filters: Vec<StoredLogFilter>,
+    pub(crate) stored_filters: StoredLogFilterStack,
 }
 
 /// Every attachment of the loaded recordings, as the history database last
@@ -119,7 +119,7 @@ mod tests {
             attachment: LogAttachment::new(
                 name.to_owned(),
                 LogContentHash::of_log_bytes(name.as_bytes()),
-                Vec::new(),
+                Default::default(),
             ),
         }
     }

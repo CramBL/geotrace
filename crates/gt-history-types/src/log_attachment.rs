@@ -13,7 +13,7 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 use xxhash_rust::xxh3;
@@ -137,6 +137,46 @@ pub struct StoredLogFilter {
     pub mode: StoredLogFilterMode,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StoredLogFilterOperator {
+    #[default]
+    All,
+    Any,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StoredLogFilterStack {
+    pub operator: StoredLogFilterOperator,
+    pub chips: Vec<StoredLogFilter>,
+}
+
+impl From<Vec<StoredLogFilter>> for StoredLogFilterStack {
+    fn from(chips: Vec<StoredLogFilter>) -> Self {
+        Self {
+            operator: StoredLogFilterOperator::All,
+            chips,
+        }
+    }
+}
+
+fn deserialize_filter_stack<'de, D>(deserializer: D) -> Result<StoredLogFilterStack, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StoredStackSchema {
+        Legacy(Vec<StoredLogFilter>),
+        Stack(StoredLogFilterStack),
+    }
+
+    StoredStackSchema::deserialize(deserializer).map(|schema| match schema {
+        StoredStackSchema::Stack(stack) => stack,
+        StoredStackSchema::Legacy(chips) => chips.into(),
+    })
+}
+
 /// What a recording's attribute says about one attachment.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogAttachment {
@@ -149,7 +189,8 @@ pub struct LogAttachment {
     pub content_hash: LogContentHash,
 
     /// The filter stack the log was attached with, restored with it.
-    pub filters: Vec<StoredLogFilter>,
+    #[serde(deserialize_with = "deserialize_filter_stack")]
+    pub filters: StoredLogFilterStack,
 
     /// The original reference for timestamps without a year. Absent in older attachments.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -157,7 +198,7 @@ pub struct LogAttachment {
 }
 
 impl LogAttachment {
-    pub fn new(name: String, content_hash: LogContentHash, filters: Vec<StoredLogFilter>) -> Self {
+    pub fn new(name: String, content_hash: LogContentHash, filters: StoredLogFilterStack) -> Self {
         Self {
             format_version: LOG_ATTACHMENT_FORMAT_VERSION,
             name,
@@ -178,7 +219,8 @@ impl LogAttachment {
     /// readable.
     pub fn from_attribute_json(json: &str) -> Option<Self> {
         match serde_json::from_str::<Self>(json) {
-            Ok(attachment) if attachment.format_version <= LOG_ATTACHMENT_FORMAT_VERSION => {
+            Ok(mut attachment) if attachment.format_version <= LOG_ATTACHMENT_FORMAT_VERSION => {
+                attachment.format_version = LOG_ATTACHMENT_FORMAT_VERSION;
                 Some(attachment)
             }
             Ok(attachment) => {
@@ -249,11 +291,12 @@ const LOG_ATTACHMENT_FILE_SUFFIX: &str = ".zst";
 
 /// Version of the attribute JSON layout, bumped only on a change older builds
 /// cannot read. An attachment written in a newer version is ignored.
-const LOG_ATTACHMENT_FORMAT_VERSION: u32 = 1;
+const LOG_ATTACHMENT_FORMAT_VERSION: u32 = 2;
 
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
+    use serde_json::Value;
 
     use super::*;
 
@@ -274,7 +317,8 @@ mod tests {
                     enabled: false,
                     mode: StoredLogFilterMode::Refine,
                 },
-            ],
+            ]
+            .into(),
         )
     }
 
@@ -286,7 +330,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"format_version":1,"name":"navsyncd.log","content_hash":"b3e7a3594637c2fbf4655e82bcf507d6","filters":[{"text":"gnss","regex":false,"enabled":true,"mode":"layer","color_slot":2},{"text":"hal-powerd|navsyncd","regex":true,"enabled":false,"mode":"refine"}]}"#
+            r#"{"format_version":2,"name":"navsyncd.log","content_hash":"b3e7a3594637c2fbf4655e82bcf507d6","filters":{"operator":"all","chips":[{"text":"gnss","regex":false,"enabled":true,"mode":"layer","color_slot":2},{"text":"hal-powerd|navsyncd","regex":true,"enabled":false,"mode":"refine"}]}}"#
         );
         assert_eq!(
             LogAttachment::from_attribute_json(&json),
@@ -294,11 +338,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn legacy_flat_filters_restore_as_all_and_upgrade_on_write() {
+        let legacy = r#"{"format_version":1,"name":"navsyncd.log","content_hash":"b3e7a3594637c2fbf4655e82bcf507d6","filters":[{"text":"gnss","regex":false,"enabled":true,"mode":"layer","color_slot":2},{"text":"hal-powerd|navsyncd","regex":true,"enabled":false,"mode":"refine"}],"year_reference":"2026-01-02T00:00:00Z"}"#;
+        let mut expected = attachment();
+        expected.year_reference = DateTime::from_timestamp(1_767_312_000, 0);
+        let restored = LogAttachment::from_attribute_json(legacy).expect("legacy attachment");
+        assert_eq!(restored, expected);
+        let rewritten = restored
+            .to_attribute_json()
+            .expect("encode the migrated attachment");
+        let json: Value = serde_json::from_str(&rewritten).expect("encoded JSON");
+        assert_eq!(json.get("format_version"), Some(&serde_json::json!(2)));
+        assert_eq!(
+            LogAttachment::from_attribute_json(&rewritten),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn an_empty_legacy_stack_restores_as_all() {
+        let legacy = r#"{"format_version":1,"name":"empty.log","content_hash":"0","filters":[]}"#;
+        let restored = LogAttachment::from_attribute_json(legacy).expect("legacy attachment");
+        assert_eq!(restored.filters, StoredLogFilterStack::default());
+    }
+
     /// Neither a newer layout nor a corrupt value may fail the recording the
     /// attribute sits on.
     #[test]
     fn an_attachment_this_build_cannot_read_decodes_to_nothing() {
-        let newer = r#"{"format_version":2,"name":"navsyncd.log","content_hash":"0","filters":[]}"#;
+        let newer = r#"{"format_version":3,"name":"navsyncd.log","content_hash":"0","filters":[]}"#;
         assert_eq!(LogAttachment::from_attribute_json(newer), None);
         assert_eq!(LogAttachment::from_attribute_json("{"), None);
     }
@@ -374,9 +443,11 @@ mod tests {
             name in ".*",
             log in proptest::collection::vec(any::<u8>(), 0..256),
             filters in filters(),
+            any_operator in any::<bool>(),
             reference_seconds in proptest::option::of(0i64..4_102_444_800),
         ) {
-            let mut attachment = LogAttachment::new(name, LogContentHash::of_log_bytes(&log), filters);
+            let mut attachment = LogAttachment::new(name, LogContentHash::of_log_bytes(&log), filters.into());
+            attachment.filters.operator = if any_operator { StoredLogFilterOperator::Any } else { StoredLogFilterOperator::All };
             attachment.year_reference = reference_seconds.and_then(|seconds| DateTime::from_timestamp(seconds, 0));
             let json = attachment.to_attribute_json().expect("encode");
             prop_assert_eq!(LogAttachment::from_attribute_json(&json), Some(attachment));

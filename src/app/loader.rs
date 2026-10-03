@@ -11,7 +11,7 @@ use gt_log_view::LogAttachmentRef;
 use gt_logfile::{LogText, ParsedLog};
 use gt_pending_writes::{PendingWrites, WriteKind};
 use gt_plot::{AnalysisConfig, PreparedSeries};
-use gt_store::{AttachedLog, StoredFixPlacementRule, StoredLogFilter, StoredTrackSplitRule};
+use gt_store::{AttachedLog, StoredFixPlacementRule, StoredLogFilterStack, StoredTrackSplitRule};
 use gt_track_builder::{
     FixPlacementRule, GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig, TrackSplitRule,
 };
@@ -86,7 +86,7 @@ pub(super) enum LoadCompletion {
 /// stack stored with it, and what requested it.
 pub(super) struct AttachedLogRestore {
     pub attachment: LogAttachmentRef,
-    pub filters: Vec<StoredLogFilter>,
+    pub filters: StoredLogFilterStack,
     pub requested_by: AttachedLogRequester,
     pub year_reference: DateTime<Utc>,
 }
@@ -1535,7 +1535,7 @@ mod tests {
             AttachedLog {
                 name: "syslog.log".to_owned(),
                 text: text.to_owned(),
-                filters: Vec::new(),
+                filters: Default::default(),
                 year_reference: original.year_reference(),
             },
             LogAttachmentRef {

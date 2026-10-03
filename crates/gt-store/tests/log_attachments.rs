@@ -8,7 +8,7 @@ use gt_history_types::fixtures;
 use gt_store::{
     DatabaseRef, HistoryDatabase as _, LogAttachmentError, LogAttachmentId, LogAttachments as _,
     LogToAttach, ReadOnlyHistoryDatabase as _, ReadOnlyLogAttachments as _, RecordingMeta,
-    Recordings, Store, TrackRange, TrackState,
+    Recordings, Store, StoredLogFilterOperator, TrackRange, TrackState,
 };
 
 /// A store with one recording in its history, ready to attach logs to.
@@ -133,7 +133,7 @@ fn a_saved_year_reference_survives_filter_updates_and_reopening() {
         .expect("attach with a reference");
     recorded
         .recordings
-        .set_attached_log_filters(&recorded.recording, attached.id, Vec::new())
+        .set_attached_log_filters(&recorded.recording, attached.id, Default::default())
         .expect("update filters");
     let reopened = recorded
         .store
@@ -144,7 +144,7 @@ fn a_saved_year_reference_survives_filter_updates_and_reopening() {
         .load_attached_log(&recorded.recording, attached.id)
         .expect("restore the log");
     assert_eq!(restored.year_reference, year_reference);
-    assert_eq!(restored.filters, []);
+    assert_eq!(restored.filters, Default::default());
 }
 
 /// The attach returns the entry the recording now lists.
@@ -286,16 +286,22 @@ fn changing_the_filters_of_an_attachment_leaves_its_log_alone() {
     let id = recorded.attach("navsyncd.log", LOG_TEXT);
     let stored_log = std::fs::read(recorded.log_path(id)).expect("read the stored log");
 
+    let mut filters = fixtures::log_filters();
+    filters.operator = StoredLogFilterOperator::Any;
     recorded
         .recordings
-        .set_attached_log_filters(&recorded.recording, id, Vec::new())
+        .set_attached_log_filters(&recorded.recording, id, filters.clone())
         .expect("rewrite the filters");
 
-    let attached = recorded
-        .recordings
+    let reopened = recorded
+        .store
+        .open_recordings_read_only()
+        .expect("reopen")
+        .expect("stored database");
+    let attached = reopened
         .load_attached_log(&recorded.recording, id)
         .expect("load");
-    assert_eq!(attached.filters, Vec::new());
+    assert_eq!(attached.filters, filters);
     assert_eq!(attached.name, "navsyncd.log");
     assert_eq!(attached.text, LOG_TEXT);
     assert_eq!(

@@ -13,7 +13,8 @@ use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
 use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
 use gt_log_view::{
-    FilterChipMode, LayerColorSlot, LoadedLog, LoadedLogs, LogAttachmentRef, SessionLogAttachments,
+    FilterChipMode, FilterGroupOperator, LayerColorSlot, LoadedLog, LoadedLogs, LogAttachmentRef,
+    SessionLogAttachments,
 };
 use gt_logfile::RecordingAssociationIndex;
 use gt_pending_writes::WriteAccess;
@@ -198,17 +199,48 @@ fn colouring_harness() -> TestHarness<'static, ViewerState> {
     )
 }
 
+#[test]
+fn the_compact_group_operator_toggles_without_starting_a_scan() {
+    let mut harness = harness_with(Vec::new());
+    let id = harness.state().first_loaded_log();
+    assert_eq!(
+        harness
+            .state()
+            .shown_log()
+            .unwrap()
+            .filters()
+            .group_operator(),
+        FilterGroupOperator::All
+    );
+    harness.get_by_label(filters::INTERSECTION_SYMBOL).click();
+    harness.run_steps(2);
+    let stack = harness.state().logs.get_by_id(id).unwrap().filters();
+    assert_eq!(stack.group_operator(), FilterGroupOperator::Any);
+    assert!(!stack.is_query_pending());
+    harness.get_by_label(filters::UNION_SYMBOL).click();
+    harness.run_steps(2);
+    assert_eq!(
+        harness
+            .state()
+            .shown_log()
+            .unwrap()
+            .filters()
+            .group_operator(),
+        FilterGroupOperator::All
+    );
+}
+
 fn disable_display_option(harness: &mut Harness<'static, ViewerState>, label: &str) {
     let stack = harness.state().shown_log().unwrap().filters();
     let visible = stack.visible_entries().clone();
-    let stored = stack.to_stored_filters();
+    let stored = stack.to_stored_stack();
     harness.get_by_label(filters::DISPLAY_OPTIONS_LABEL).click();
     harness.run_steps(2);
     harness.get_by_label(label).click();
     harness.run_steps(2);
     let stack = harness.state().shown_log().unwrap().filters();
     assert_eq!(*stack.visible_entries(), visible);
-    assert_eq!(stack.to_stored_filters(), stored);
+    assert_eq!(stack.to_stored_stack(), stored);
     assert!(harness.query_by_label(label).is_none());
 }
 
@@ -312,7 +344,7 @@ fn attach_the_shown_log(harness: &mut Harness<ViewerState>) {
     let recordings = state.recordings.view();
     state
         .logs
-        .save_attachment(shown, attachment_ref(), Vec::new(), &recordings);
+        .save_attachment(shown, attachment_ref(), Default::default(), &recordings);
     harness.run_steps(2);
 }
 
@@ -1258,7 +1290,7 @@ fn stored_attachment() -> gt_store::LogAttachmentEntry {
         attachment: gt_store::LogAttachment::new(
             "navsyncd.log".to_owned(),
             gt_store::LogContentHash::of_log_bytes(LOG_WITH_EVERY_ROW_KIND.as_bytes()),
-            Vec::new(),
+            Default::default(),
         ),
     }
 }
@@ -1295,7 +1327,7 @@ fn load_the_stored_log(state: &mut ViewerState, attachment: &gt_store::LogAttach
                 recording: stored_recording_ref(),
                 id: attachment.id,
             },
-            Vec::new(),
+            Default::default(),
             &state.recordings.view(),
         )
         .id();

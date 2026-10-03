@@ -29,8 +29,8 @@ use gt_store::{
     AttachedLog, DatabaseRef, DbError, HistoryDatabase, LogAttachmentEntry, LogAttachmentError,
     LogAttachmentId, LogAttachments as _, LogContentHash, LogToAttach, PruneMode,
     ReadOnlyHistoryDatabase, ReadOnlyLogAttachments as _, ReadOnlyRecordings, RecordingEntry,
-    RecordingUiState, Recordings, RecordingsHandle, StoredLogFilter, StoredRecording, TrackRange,
-    TrackState, UiStateVersionReporter,
+    RecordingUiState, Recordings, RecordingsHandle, StoredLogFilterStack, StoredRecording,
+    TrackRange, TrackState, UiStateVersionReporter,
 };
 use gt_track_builder::SegmentationConfig;
 use gt_ui_types::LoadedLogId;
@@ -148,7 +148,7 @@ enum WriteRequest {
         log: LoadedLogId,
         name: String,
         text: Arc<str>,
-        filters: Vec<StoredLogFilter>,
+        filters: StoredLogFilterStack,
         year_reference: DateTime<Utc>,
     },
     AutoPrune {
@@ -183,7 +183,7 @@ enum WriteRequest {
     /// Rewrite one attachment's stored filter stack.
     SetAttachedLogFilters {
         attachment: LogAttachmentRef,
-        filters: Vec<StoredLogFilter>,
+        filters: StoredLogFilterStack,
     },
     SetTracksShelved {
         db_ref: DatabaseRef,
@@ -517,7 +517,7 @@ impl HistoryWorker {
         log: LoadedLogId,
         name: String,
         parsed: &ParsedLog,
-        filters: Vec<StoredLogFilter>,
+        filters: StoredLogFilterStack,
     ) {
         self.send_write(WriteRequest::AttachLog {
             db_ref,
@@ -540,7 +540,7 @@ impl HistoryWorker {
     pub fn set_attached_log_filters(
         &self,
         attachment: LogAttachmentRef,
-        filters: Vec<StoredLogFilter>,
+        filters: StoredLogFilterStack,
     ) {
         self.send_write(WriteRequest::SetAttachedLogFilters {
             attachment,
@@ -1527,7 +1527,7 @@ mod tests {
             "field-notes.log".to_owned(),
             &gt_logfile::parse_log("2026-01-01 00:00:00 one line".into(), DateTime::UNIX_EPOCH)
                 .expect("parse the log"),
-            Vec::new(),
+            Default::default(),
         );
         let Response::LogAttached { result, .. } = recordings::next_response(&worker) else {
             panic!("expected a LogAttached response");
@@ -1787,7 +1787,7 @@ mod tests {
             log: LoadedLogId::new(1),
             name: "navsyncd.log".to_owned(),
             text: "boot".into(),
-            filters: Vec::new(),
+            filters: Default::default(),
             year_reference: DateTime::UNIX_EPOCH,
         },
         "Storing a log with a recording"
@@ -1795,7 +1795,7 @@ mod tests {
     #[case(
         WriteRequest::SetAttachedLogFilters {
             attachment: attachment_ref(),
-            filters: Vec::new(),
+            filters: Default::default(),
         },
         "Saving filters for a log in recording history"
     )]
