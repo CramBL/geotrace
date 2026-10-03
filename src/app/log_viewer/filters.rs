@@ -11,6 +11,7 @@ use gt_log_view::{
     FilterChip, FilterChipId, FilterChipMode, FilterStack, LayerColorSlots, LoadedLogs,
 };
 use gt_ui_types::LoadedLogId;
+use strum::IntoEnumIterator as _;
 
 use super::LogViewerWindow;
 
@@ -60,7 +61,7 @@ impl LogViewerWindow {
             FilterEdit::ReadLiveFilterAsRegex(regex) => stack.set_live_filter_regex(regex),
             FilterEdit::ClearLiveFilter => stack.clear_live_filter(),
             FilterEdit::AddLiveFilterAsChip => {
-                stack.add_live_filter_as_chip(slots);
+                stack.add_live_filter_as_chip();
             }
             FilterEdit::SetChipEnabled { chip, enabled } => stack.set_chip_enabled(chip, enabled),
             FilterEdit::SwitchChipMode { chip, to } => match to {
@@ -69,6 +70,17 @@ impl LogViewerWindow {
             },
             FilterEdit::RemoveChip(chip) => stack.remove_chip(chip, slots),
         }
+    }
+
+    pub(super) fn display_options_ui(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button(DISPLAY_OPTIONS_LABEL, |ui| {
+            ui.checkbox(&mut self.color_services, COLOR_SERVICES_LABEL)
+                .on_hover_text(COLOR_SERVICES_HOVER);
+            ui.checkbox(&mut self.color_levels, COLOR_LEVELS_LABEL)
+                .on_hover_text(COLOR_LEVELS_HOVER);
+        })
+        .response
+        .on_hover_text("Table display options");
     }
 
     /// The field the user filters the log from, what its pattern selected, and
@@ -128,10 +140,6 @@ impl LogViewerWindow {
             {
                 edit = Some(FilterEdit::ClearLiveFilter);
             }
-            ui.checkbox(&mut self.color_services, COLOR_SERVICES_LABEL)
-                .on_hover_text(COLOR_SERVICES_HOVER);
-            ui.checkbox(&mut self.color_levels, COLOR_LEVELS_LABEL)
-                .on_hover_text(COLOR_LEVELS_HOVER);
             if let Some(note) = pending_note {
                 ui.label(RichText::new(note).weak());
             }
@@ -174,13 +182,25 @@ fn chip_row_ui(
         return None;
     }
     let mut edit = None;
-    ui.horizontal_wrapped(|ui| {
-        for chip in filters.chips() {
-            if let Some(chip_edit) = chip_ui(ui, chip, slots) {
-                edit = Some(chip_edit);
-            }
+    for mode in FilterChipMode::iter().rev() {
+        if !filters.chips().iter().any(|chip| chip.mode() == mode) {
+            continue;
         }
-    });
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                RichText::new(match mode {
+                    FilterChipMode::Refine => "Table filters",
+                    FilterChipMode::Layer => "Map highlights",
+                })
+                .weak(),
+            );
+            for chip in filters.chips().iter().filter(|chip| chip.mode() == mode) {
+                if let Some(chip_edit) = chip_ui(ui, chip, slots) {
+                    edit = Some(chip_edit);
+                }
+            }
+        });
+    }
     edit
 }
 
@@ -201,13 +221,13 @@ fn chip_ui(ui: &mut egui::Ui, chip: &FilterChip, slots: &LayerColorSlots) -> Opt
         .inner_margin(CHIP_INNER_MARGIN);
     let drawn = chip_frame.show(ui, |ui| {
         let mut enabled = chip.is_enabled();
-        let applied_hover = match mode {
+        let effect = match mode {
             FilterChipMode::Layer => LAYER_CHIP_HOVER,
             FilterChipMode::Refine => REFINE_CHIP_HOVER,
         };
         if ui
             .add(Checkbox::without_text(&mut enabled))
-            .on_hover_text(applied_hover)
+            .on_hover_text(effect)
             .changed()
         {
             edit = Some(FilterEdit::SetChipEnabled {
@@ -220,22 +240,14 @@ fn chip_ui(ui: &mut egui::Ui, chip: &FilterChip, slots: &LayerColorSlots) -> Opt
         }
 
         let text = &chip.pattern().text;
-        let mode_name = match mode {
-            FilterChipMode::Layer => "Layer",
-            FilterChipMode::Refine => "Refine",
-        };
         ui.add(Label::new(
             RichText::new(gt_fmt::truncate_with_ellipsis(text, CHIP_TEXT_CHARS)).monospace(),
         ))
-        .on_hover_text(format!("{text}\n{mode_name} filter"));
+        .on_hover_text(format!("{text}\n{effect}"));
 
         let (glyph, switch_to, switch_hover) = match mode {
-            FilterChipMode::Layer => (
-                ICON_PLUS_CIRCLE,
-                FilterChipMode::Refine,
-                SWITCH_TO_REFINE_HOVER,
-            ),
-            FilterChipMode::Refine => (ICON_FUNNEL, FilterChipMode::Layer, SWITCH_TO_LAYER_HOVER),
+            FilterChipMode::Layer => (ICON_PLUS_CIRCLE, FilterChipMode::Refine, REFINE_CHIP_HOVER),
+            FilterChipMode::Refine => (ICON_FUNNEL, FilterChipMode::Layer, LAYER_CHIP_HOVER),
         };
         if ui.small_button(glyph).on_hover_text(switch_hover).clicked() {
             edit = Some(FilterEdit::SwitchChipMode {
@@ -328,9 +340,9 @@ pub(super) const REGEX_TOGGLE_LABEL: &str = ".*";
 
 const REGEX_TOGGLE_HOVER: &str = "Read the field as a regular expression instead of a set of terms";
 
-pub(in crate::app) const ADD_FILTER_LABEL: &str = "+ Add filter";
+pub(in crate::app) const ADD_FILTER_LABEL: &str = "+";
 
-const ADD_FILTER_HOVER: &str = "Keep the live filter as a chip and empty the field";
+const ADD_FILTER_HOVER: &str = "Add this as a table filter";
 
 pub(super) const ADD_FILTER_EMPTY_HOVER: &str = "Write a live filter to add it as a chip";
 
@@ -344,6 +356,8 @@ const CLEAR_HOVER: &str = "Empty the live filter";
 const CLEAR_EMPTY_HOVER: &str = "The live filter is empty already";
 
 const MATCH_COUNT_HOVER: &str = "Lines the filters show, of the log's entries";
+
+pub(super) const DISPLAY_OPTIONS_LABEL: &str = "Aa";
 
 pub(super) const COLOR_SERVICES_LABEL: &str = "Colour services";
 
@@ -389,14 +403,8 @@ const CHIP_SHARED_SWATCH_RING_PX: f32 = 2.0;
 
 const SHARED_SWATCH_HOVER: &str = "Another filter draws in this colour too";
 
-const LAYER_CHIP_HOVER: &str = "Draw the lines this filter matches";
+const LAYER_CHIP_HOVER: &str = "Highlight on map";
 
-const REFINE_CHIP_HOVER: &str = "Narrow the table to the lines this filter matches";
-
-const SWITCH_TO_LAYER_HOVER: &str =
-    "Switch to layer mode: this filter colours the lines it matches without narrowing the table";
-
-const SWITCH_TO_REFINE_HOVER: &str =
-    "Switch to refine mode: only the lines this filter matches stay in the table";
+const REFINE_CHIP_HOVER: &str = "Filter table";
 
 const REMOVE_CHIP_HOVER: &str = "Remove this filter";

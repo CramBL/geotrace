@@ -18,7 +18,7 @@ use crate::filter::{
 pub struct FilterChipId(u64);
 
 /// What a chip does with the entries it matches.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, strum::EnumIter)]
 pub enum FilterChipMode {
     /// An independent overlay: its own colour on the map and a gutter bar on
     /// the rows it matches, without narrowing the table.
@@ -187,17 +187,12 @@ impl FilterStack {
         self.set_live_filter_text("");
     }
 
-    /// Whether the live filter can become a chip: the viewer grays "+ Add
-    /// filter" out while an empty or invalid pattern leaves nothing to add.
     pub fn can_add_live_filter_as_chip(&self) -> bool {
         self.live.selects_entries()
     }
 
-    /// Turns the live filter into a chip and clears the field.
-    ///
-    /// The chip keeps the filter's mode and the scan it already started:
-    /// adding a filter never scans the log again.
-    pub fn add_live_filter_as_chip(&mut self, slots: &mut LayerColorSlots) -> Option<FilterChipId> {
+    /// Adds an enabled table filter with the existing scan and clears the field.
+    pub fn add_live_filter_as_chip(&mut self) -> Option<FilterChipId> {
         if !self.can_add_live_filter_as_chip() {
             return None;
         }
@@ -209,7 +204,7 @@ impl FilterStack {
         self.chips.push(FilterChip {
             id,
             filter: mem::replace(&mut self.live, emptied),
-            layer_slot: Some(slots.allocate()),
+            layer_slot: None,
             enabled: true,
         });
         self.recompose_visible_entries();
@@ -524,7 +519,10 @@ impl LogFilter {
 
 #[cfg(test)]
 mod tests {
+    use std::ptr;
+
     use proptest::{prelude::*, proptest};
+    use rstest::rstest;
 
     use super::*;
     use crate::{filter::slots::LAYER_COLOR_SLOT_COUNT, test_util};
@@ -559,11 +557,17 @@ mod tests {
             .map(LayerColorSlot::index)
     }
 
-    fn add_chip(stack: &mut FilterStack, slots: &mut LayerColorSlots, text: &str) -> FilterChipId {
+    fn add_layer_chip(
+        stack: &mut FilterStack,
+        slots: &mut LayerColorSlots,
+        text: &str,
+    ) -> FilterChipId {
         stack.set_live_filter_text(text);
-        stack
-            .add_live_filter_as_chip(slots)
-            .expect("a written filter becomes a chip")
+        let chip = stack
+            .add_live_filter_as_chip()
+            .expect("a written filter becomes a chip");
+        stack.switch_chip_to_layer_mode(chip, slots);
+        chip
     }
 
     #[test]
@@ -680,19 +684,20 @@ mod tests {
 
     #[test]
     fn adding_a_chip_clears_the_field_and_leaves_the_toggle_as_it_was() {
-        let (mut stack, mut slots) = unfiltered_stack();
+        let (mut stack, _slots) = unfiltered_stack();
         stack.set_live_filter_regex(true);
         stack.set_live_filter_text("gnss|battery");
 
         let id = stack
-            .add_live_filter_as_chip(&mut slots)
+            .add_live_filter_as_chip()
             .expect("a written filter becomes a chip");
         stack.wait_for_queries();
 
         let chip = stack.chip(id).expect("the chip was added");
         assert_eq!(chip.pattern(), &FilterPattern::regex("gnss|battery"));
         assert_eq!(chip.matches().match_count(), 4);
-        assert_eq!(chip.mode(), FilterChipMode::Layer);
+        assert_eq!(chip.mode(), FilterChipMode::Refine);
+        assert_eq!(chip.layer_slot(), None);
         assert!(chip.is_enabled());
 
         assert_eq!(stack.live_filter_text(), "");
@@ -703,15 +708,65 @@ mod tests {
         assert_eq!(stack.live_filter_matches().match_count(), 0);
     }
 
+    #[derive(Debug)]
+    enum ScanState {
+        FirstPending,
+        Landed,
+        ReplacementPending,
+    }
+
+    #[rstest]
+    #[case::first_pending(ScanState::FirstPending, vec![0, 1, 2, 3])]
+    #[case::replacement_pending(ScanState::ReplacementPending, vec![1, 3])]
+    #[case::landed(ScanState::Landed, vec![0, 2])]
+    fn adding_a_table_filter_preserves_visible_entries_and_scan(
+        #[case] state: ScanState,
+        #[case] expected_before: Vec<usize>,
+    ) {
+        let (mut stack, slots) = unfiltered_stack();
+        if matches!(state, ScanState::ReplacementPending) {
+            stack.set_live_filter_text("battery");
+            stack.wait_for_queries();
+        }
+        stack.set_live_filter_text("gnss");
+        if matches!(state, ScanState::Landed) {
+            stack.wait_for_queries();
+        }
+        let identity = stack.live.query.scan_identity();
+        let matches = ptr::from_ref(stack.live_filter_matches());
+        let pending = stack.is_query_pending();
+        assert_eq!(visible(&stack), expected_before);
+
+        let id = stack
+            .add_live_filter_as_chip()
+            .expect("the filter is valid");
+        let chip = stack.chip(id).expect("the chip was added");
+        assert_eq!(chip.filter.query.scan_identity(), identity);
+        assert_eq!(ptr::from_ref(chip.matches()), matches);
+        assert_eq!(chip.mode(), FilterChipMode::Refine);
+        assert!(chip.is_enabled());
+        assert_eq!(chip.layer_slot(), None);
+        assert_eq!(stack.is_query_pending(), pending);
+        assert_eq!(visible(&stack), expected_before);
+        for index in 0..LAYER_COLOR_SLOT_COUNT {
+            assert_eq!(
+                slots.holders_of(LayerColorSlot::from_stored_index(index)),
+                0
+            );
+        }
+        stack.wait_for_queries();
+        assert_eq!(visible(&stack), [0, 2]);
+    }
+
     #[test]
     fn a_filter_that_matches_nothing_yet_cannot_become_a_chip() {
-        let (mut stack, mut slots) = unfiltered_stack();
+        let (mut stack, _slots) = unfiltered_stack();
 
-        assert_eq!(stack.add_live_filter_as_chip(&mut slots), None);
+        assert_eq!(stack.add_live_filter_as_chip(), None);
 
         stack.set_live_filter_regex(true);
         stack.set_live_filter_text("navsyncd(");
-        assert_eq!(stack.add_live_filter_as_chip(&mut slots), None);
+        assert_eq!(stack.add_live_filter_as_chip(), None);
         assert!(stack.chips().is_empty());
     }
 
@@ -720,7 +775,7 @@ mod tests {
     #[test]
     fn a_layer_chip_leaves_the_table_alone_and_a_refine_chip_narrows_it() {
         let (mut stack, mut slots) = unfiltered_stack();
-        let id = add_chip(&mut stack, &mut slots, "gnss");
+        let id = add_layer_chip(&mut stack, &mut slots, "gnss");
         stack.wait_for_queries();
         assert_eq!(visible(&stack), [0, 1, 2, 3]);
 
@@ -736,8 +791,8 @@ mod tests {
     #[test]
     fn the_visible_set_is_the_live_filter_and_every_enabled_refine_chip() {
         let (mut stack, mut slots) = unfiltered_stack();
-        let gnss = add_chip(&mut stack, &mut slots, "gnss");
-        let battery = add_chip(&mut stack, &mut slots, "battery");
+        let gnss = add_layer_chip(&mut stack, &mut slots, "gnss");
+        let battery = add_layer_chip(&mut stack, &mut slots, "battery");
         stack.switch_chip_to_refine_mode(gnss, &mut slots);
         stack.switch_chip_to_refine_mode(battery, &mut slots);
         stack.wait_for_queries();
@@ -759,7 +814,7 @@ mod tests {
     #[test]
     fn a_disabled_chip_keeps_its_matches_and_its_colour_slot() {
         let (mut stack, mut slots) = unfiltered_stack();
-        let id = add_chip(&mut stack, &mut slots, "gnss");
+        let id = add_layer_chip(&mut stack, &mut slots, "gnss");
         stack.wait_for_queries();
 
         stack.set_chip_enabled(id, false);
@@ -782,15 +837,15 @@ mod tests {
     #[test]
     fn removing_a_chip_frees_the_colour_it_held() {
         let (mut stack, mut slots) = unfiltered_stack();
-        let first = add_chip(&mut stack, &mut slots, "gnss");
-        let second = add_chip(&mut stack, &mut slots, "battery");
+        let first = add_layer_chip(&mut stack, &mut slots, "gnss");
+        let second = add_layer_chip(&mut stack, &mut slots, "battery");
         assert_eq!(slot_index(&stack, first), Some(0));
         assert_eq!(slot_index(&stack, second), Some(1));
 
         stack.remove_chip(first, &mut slots);
 
         assert_eq!(chip_ids(&stack), [second]);
-        let readded = add_chip(&mut stack, &mut slots, "critical");
+        let readded = add_layer_chip(&mut stack, &mut slots, "critical");
         assert_eq!(
             slot_index(&stack, readded),
             Some(0),
@@ -801,8 +856,8 @@ mod tests {
     #[test]
     fn switching_a_chip_out_of_layer_mode_and_back_takes_the_lowest_free_colour() {
         let (mut stack, mut slots) = unfiltered_stack();
-        let first = add_chip(&mut stack, &mut slots, "gnss");
-        let second = add_chip(&mut stack, &mut slots, "battery");
+        let first = add_layer_chip(&mut stack, &mut slots, "gnss");
+        let second = add_layer_chip(&mut stack, &mut slots, "battery");
 
         stack.switch_chip_to_refine_mode(first, &mut slots);
         assert_eq!(slot_index(&stack, first), None);
@@ -821,8 +876,8 @@ mod tests {
     #[test]
     fn every_chip_keeps_its_own_matches() {
         let (mut stack, mut slots) = unfiltered_stack();
-        let gnss = add_chip(&mut stack, &mut slots, "gnss");
-        let critical = add_chip(&mut stack, &mut slots, "battery critical");
+        let gnss = add_layer_chip(&mut stack, &mut slots, "gnss");
+        let critical = add_layer_chip(&mut stack, &mut slots, "battery critical");
         stack.wait_for_queries();
 
         assert_eq!(
@@ -842,8 +897,8 @@ mod tests {
     #[test]
     fn a_stored_stack_restores_every_chip_with_what_it_matched() {
         let (mut stack, mut slots) = unfiltered_stack();
-        let gnss = add_chip(&mut stack, &mut slots, "gnss");
-        let battery = add_chip(&mut stack, &mut slots, "battery");
+        let gnss = add_layer_chip(&mut stack, &mut slots, "gnss");
+        let battery = add_layer_chip(&mut stack, &mut slots, "battery");
         stack.switch_chip_to_refine_mode(gnss, &mut slots);
         stack.set_chip_enabled(battery, false);
 
@@ -922,7 +977,7 @@ mod tests {
         ) {
             let (mut stack, mut slots) = unfiltered_stack();
             stack.set_live_filter_text(&refine);
-            let chip = stack.add_live_filter_as_chip(&mut slots);
+            let chip = stack.add_live_filter_as_chip();
             if let Some(id) = chip {
                 stack.switch_chip_to_refine_mode(id, &mut slots);
                 stack.set_chip_enabled(id, chip_enabled);

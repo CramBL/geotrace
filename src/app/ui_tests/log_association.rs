@@ -6,6 +6,7 @@ use egui::accesskit::{Role, Toggled};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
+use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
 use gt_loaded_files::FileHistory;
 use gt_log_view::{LoadedLog, LogAttachmentRef, RecordingKey};
 use gt_store::{
@@ -514,6 +515,8 @@ fn an_attached_log_comes_back_with_its_filters_when_the_recording_opens_again() 
 
     // A chip added after the attachment was stored is written to it.
     ui_tests::add_log_filter_in(&mut harness, "kernel");
+    harness.get_by_label(ICON_FUNNEL).click();
+    ui_tests::run_until_the_log_filter_scans_land(&mut harness);
     assert!(
         harness.step_until(|_| {
             !stored_attachments(&db_path, &db_ref)
@@ -1316,8 +1319,11 @@ fn the_stored_stack_holds_every_chips_mode_and_colour() {
     let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
     attach_the_log(&mut harness, &db_path, &db_ref);
 
-    ui_tests::add_log_filter_in(&mut harness, "kernel");
-    ui_tests::add_log_filter_in(&mut harness, "rotated");
+    for pattern in ["kernel", "rotated"] {
+        ui_tests::add_log_filter_in(&mut harness, pattern);
+        harness.get_by_label(ICON_FUNNEL).click();
+        ui_tests::run_until_the_log_filter_scans_land(&mut harness);
+    }
     assert!(
         harness.step_until(|_| stored_attachments(&db_path, &db_ref)
             .first()
