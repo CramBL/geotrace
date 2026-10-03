@@ -9,6 +9,8 @@ use std::{
     ops::Range,
 };
 
+use strum::{AsRefStr, Display, EnumIter};
+
 /// Whether every line of a log states the host it came from. `journalctl`
 /// writes the host before the service. A device's own export leaves it out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,7 +20,7 @@ pub enum HostnameColumn {
 }
 
 /// The severity a level token states.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(AsRefStr, Clone, Copy, Debug, Display, EnumIter, Eq, PartialEq)]
 pub enum LogLevelKind {
     Debug,
     Error,
@@ -78,6 +80,12 @@ impl RecognisedService {
             len: NonZeroU8::new(u8::try_from(span.len()).ok()?)?,
             slot: 0,
         })
+    }
+
+    pub fn identity_in(self, message: &str) -> Option<&str> {
+        let name = message.get(self.span())?;
+        let named = name.strip_suffix(':').unwrap_or(name);
+        Some(named.split_once('[').map_or(named, |(service, _)| service))
     }
 
     pub fn span(self) -> Range<usize> {

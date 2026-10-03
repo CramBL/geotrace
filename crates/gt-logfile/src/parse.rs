@@ -1,7 +1,7 @@
 //! Detecting a log's format from its head, indexing every line against its
 //! text, and reading the structure the exporter wrote around those lines.
 
-use std::{num::NonZeroUsize, ops::Range, sync::Arc};
+use std::{num::NonZeroUsize, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use gt_types::TimeRange;
@@ -11,7 +11,7 @@ use rustc_hash::FxHashMap;
 use crate::{
     format::{self, LogFormat, RawTimestamp},
     pool,
-    recognise::{self, HostnameColumn, RecognisedMessage},
+    recognise::{self, HostnameColumn, RecognisedMessage, RecognisedService},
     session::{self, BootSession, OrderAnomaly},
     structure::{StructuralExtent, StructuralLine, StructuralLineKind},
     summary::{self, EntryCountMismatch, SummaryBlock},
@@ -372,18 +372,14 @@ struct ServiceTable<'text> {
 }
 
 impl<'text> ServiceTable<'text> {
-    /// The slot of the service `span` of `message` names.
     fn slot_of(
         &mut self,
         message: &'text str,
         message_offset: u64,
-        span: Range<usize>,
+        service: RecognisedService,
     ) -> Option<u16> {
-        let name = message.get(span.clone())?;
-        // The process id is no part of the service: `systemd[1]` and
-        // `systemd[1223]` are the same service, logging under two of them.
-        let named = name.strip_suffix(':').unwrap_or(name);
-        let identity = named.split_once('[').map_or(named, |(service, _)| service);
+        let span = service.span();
+        let identity = service.identity_in(message)?;
         let slice = TextSlice::new(
             message_offset.saturating_add(span.start as u64),
             identity.len(),
@@ -572,7 +568,7 @@ impl LineIndex {
     ) {
         let mut recognised = recognise::recognise_message(message, hostname_column);
         if let Some(service) = recognised.service()
-            && let Some(slot) = services.slot_of(message, entry.message.offset, service.span())
+            && let Some(slot) = services.slot_of(message, entry.message.offset, service)
         {
             recognised.set_service_slot(slot);
         }

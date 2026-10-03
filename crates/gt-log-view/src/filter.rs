@@ -9,7 +9,7 @@
 pub use clock_ticks::{ClockTicks, DayDivider, TimestampTick};
 pub use composition::FilterGroupOperator;
 pub use matches::EntryMatches;
-pub use pattern::{FilterPattern, InvalidFilterPattern};
+pub use pattern::{FilterPattern, FilterScope, InvalidFilterPattern};
 pub use slots::{LAYER_COLOR_SLOT_COUNT, LayerColorSlot, LayerColorSlots};
 pub use stack::{
     FilterChip, FilterChipId, FilterChipMode, FilterGroup, FilterGroupId, FilterStack,

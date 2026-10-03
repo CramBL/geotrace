@@ -2,12 +2,12 @@ pub use gt_history_types::{
     ChannelSummary, DatabaseRef, DbError, HistoryDatabase, InvalidStoredLogFilterStack,
     LOGS_DIRECTORY, LogAttachment, LogAttachmentEntry, LogAttachmentId, LogContentHash,
     NavPointTimeRange, PruneMode, ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingEntry,
-    RecordingMeta, RecordingUiState, StoredFixPlacementRule, StoredLogFilter, StoredLogFilterGroup,
-    StoredLogFilterMode, StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts,
-    StoredRecording, StoredSegmentation, StoredTrackSplitRule, TrackRange, TrackState,
-    UiStateVersionReporter, UiStateVersionTooNew, format_count_suffix, identity_from_group_name,
-    identity_group_name, listed_track_rows, log_attachment, logs_directory_for_database,
-    make_group_name,
+    RecordingMeta, RecordingUiState, StoredFixPlacementRule, StoredLogFilter,
+    StoredLogFilterCondition, StoredLogFilterGroup, StoredLogFilterMode, StoredLogFilterOperator,
+    StoredLogFilterStack, StoredLogFilterStackParts, StoredLogLevel, StoredRecording,
+    StoredSegmentation, StoredTrackSplitRule, TrackRange, TrackState, UiStateVersionReporter,
+    UiStateVersionTooNew, format_count_suffix, identity_from_group_name, identity_group_name,
+    listed_track_rows, log_attachment, logs_directory_for_database, make_group_name,
 };
 
 #[cfg(feature = "backend-pure")]

@@ -1,4 +1,6 @@
-use gt_history_types::{StoredLogFilter, StoredLogFilterMode, StoredLogFilterStack};
+use gt_history_types::{
+    StoredLogFilter, StoredLogFilterCondition, StoredLogFilterMode, StoredLogFilterStack,
+};
 
 use crate::loaded_log::tests::fixtures;
 use crate::loaded_log::{LoadedLog, LoadedLogs, LogPushOutcome};
@@ -109,8 +111,10 @@ fn a_duplicate_attachment_takes_no_colour_slot_from_the_loaded_log() {
 
     let stored: StoredLogFilterStack = vec![StoredLogFilter {
         group_id: 0,
-        text: "entry 2".to_owned(),
-        regex: false,
+        condition: StoredLogFilterCondition::Message {
+            text: "entry 2".to_owned(),
+            regex: false,
+        },
         enabled: true,
         mode: StoredLogFilterMode::Layer { color_slot: 1 },
     }]
