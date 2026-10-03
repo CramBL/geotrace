@@ -8,7 +8,7 @@ use gt_store::{DbError, StoredFixPlacementRule, StoredTrackSplitRule, TrackState
 use gt_ui_components::HeldBodyLines;
 
 use super::anchored_dialog::AnchoredDialogKind;
-use super::association_batches::RecordingArrival;
+use super::association_batches::RecordingOperationOrigin;
 use super::{App, ResegmentPrompt, auto_prune, history, history_db, loader, modals, storage};
 
 fn load_mode_for_stored_recording(stored: &gt_store::StoredRecording) -> loader::GtdLoadMode {
@@ -144,8 +144,7 @@ impl App {
     ///
     /// Ending the previous worker joins its thread, blocking until the request
     /// it is on finishes.
-    pub(super) fn install_history_worker(&mut self, mut worker: history_db::HistoryWorker) {
-        worker.associations = self.loader.associations.clone();
+    pub(super) fn install_history_worker(&mut self, worker: history_db::HistoryWorker) {
         let previous = std::mem::replace(&mut self.history, worker);
         previous.shutdown();
         self.sync_db_path();
@@ -285,7 +284,7 @@ impl App {
         db_ref: gt_store::DatabaseRef,
         placement: loader::LoadedRecordingPlacement,
         stored: gt_store::StoredRecording,
-        arrival: RecordingArrival,
+        origin: RecordingOperationOrigin,
     ) {
         // Reuse the original filename: the identity is the filename (with an
         // "auto:" prefix for auto-derived ones).
@@ -325,7 +324,7 @@ impl App {
                     );
                 }
                 let prompt = ResegmentPrompt {
-                    arrival,
+                    origin,
                     db_ref,
                     filename,
                     bytes: stored.bytes.into(),
@@ -364,7 +363,7 @@ impl App {
                         applied_current_marker_settings: marker_settings_changed,
                         placement,
                     }),
-                    arrival,
+                    origin,
                 );
             }
             // Older recording with no stored settings: load with current settings.
@@ -380,7 +379,7 @@ impl App {
                         applied_current_marker_settings: false,
                         placement,
                     }),
-                    arrival,
+                    origin,
                 );
             }
         }
@@ -451,14 +450,14 @@ impl App {
                     .set_error(format!("Failed to load history: {e}"));
             }
             Response::Opened {
-                arrival,
+                origin,
                 db_ref,
                 placement,
                 result,
             } => match result {
                 Ok(opened) => {
                     self.apply_the_ui_state_stored_with_a_recording(&db_ref, opened.ui_state);
-                    self.begin_history_open(db_ref, placement, opened.stored, arrival);
+                    self.begin_history_open(db_ref, placement, opened.stored, origin);
                 }
                 Err(e) => {
                     log::error!("Failed to load recording from history: {e}");
@@ -836,7 +835,7 @@ impl App {
                         applied_current_marker_settings: prompt.marker_settings_changed,
                         placement: prompt.placement,
                     }),
-                    prompt.arrival,
+                    prompt.origin,
                 );
                 self.history_window.invalidate();
             }
@@ -854,7 +853,7 @@ impl App {
                         applied_current_marker_settings: prompt.marker_settings_changed,
                         placement: prompt.placement,
                     }),
-                    prompt.arrival,
+                    prompt.origin,
                 );
             }
             Some(ResegmentChoice::Cancel) => {}

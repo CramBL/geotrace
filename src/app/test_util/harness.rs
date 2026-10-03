@@ -208,7 +208,7 @@ pub fn drop_file_and_wait_for_load(harness: &mut Harness<App>, file: TestDropped
     harness.step();
     assert!(
         harness.step_until(|harness| harness.state().loader.loading_jobs.is_empty()
-            && !harness.state().loader.associations.has_recording_work()),
+            && !harness.state().association_batches.has_recording_work()),
         "the background load did not finish"
     );
     pin_the_load_time_the_overlay_shows(harness);

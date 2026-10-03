@@ -4,9 +4,7 @@ use std::env;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-#[cfg(test)]
-use association_batches::LogArrival;
-use association_batches::{AssociationBatchId, RecordingArrival};
+use association_batches::{AssociationBatches, LogArrival, RecordingOperationOrigin};
 use egui_tiles::{Container, Linear, LinearDir, Tile, TileId, Tiles, Tree};
 use gt_fetch::TransportSource;
 use gt_filter::GlobalFilter;
@@ -23,7 +21,10 @@ use gt_snap::wire::Costing;
 use gt_track_builder::SegmentationConfig;
 use gt_types::{AssociationConfig, LoadWarning, TrackRef};
 use gt_ui_types::{DisplayMask, LoadedLogId, MapHighlight, SkyGlyphVariant};
-use loader::{CompletedLoad, FinishedJob, LoadJobs, LoadOutcome};
+use loader::{
+    AttachedLogRestore, CompletedLoad, FinishedJob, LoadCompletion, LoadJobs,
+    LoadedRecordingResult, LooseLogResult, SavedLogResult,
+};
 use log_viewer::LogViewerRequests;
 use log_viewer::association_dialog::LogAssociationDialog;
 use panes::MainPane;
@@ -160,13 +161,18 @@ impl SharedAppState {
     }
 }
 
+enum ParsedLogOrigin<'a> {
+    Loose(&'a LogArrival),
+    Saved(AttachedLogRestore),
+}
+
 /// A recording opened from history whose stored track settings differ from the
 /// app's current ones: the split gap, the split rule, or the fix placement
 /// rule. The user must choose to recalculate the tracks with the current
 /// settings or to use the stored tracks with the settings they were built
 /// with.
 struct ResegmentPrompt {
-    arrival: RecordingArrival,
+    origin: RecordingOperationOrigin,
     db_ref: gt_store::DatabaseRef,
     filename: String,
     bytes: std::sync::Arc<[u8]>,
@@ -275,7 +281,7 @@ pub struct App {
 
     /// Egui context - cloned into background threads for `request_repaint`.
     ctx: egui::Context,
-    /// Manages background load threads and the file-picker dialog thread.
+    association_batches: AssociationBatches,
     loader: LoadJobs,
     /// Schedules snap-to-road runs and holds per-track snap activity and the
     /// session result cache.
@@ -660,6 +666,7 @@ impl App {
             mapbox_token_field: mapbox_token::MapboxTokenField::default(),
             mapbox_token_test: mapbox_token_test::MapboxTokenTest::default(),
             ctx: cc.egui_ctx.clone(),
+            association_batches: AssociationBatches::default(),
             loader,
             snap,
             snap_settings: crate::settings::SnapSettings::default(),
@@ -939,15 +946,18 @@ impl App {
     }
 
     fn handle_completed_load(&mut self, completed: CompletedLoad, now: f64) {
-        let kind = completed.kind;
-        match completed.outcome {
-            Ok(LoadOutcome::GtdFile {
-                file,
-                series,
-                history,
-                applied_current_marker_settings,
-                placement,
-            }) => {
+        match completed.completion {
+            LoadCompletion::Recording {
+                origin,
+                result:
+                    Ok(LoadedRecordingResult {
+                        file,
+                        series,
+                        history,
+                        applied_current_marker_settings,
+                        placement,
+                    }),
+            } => {
                 let was_stored = history.is_stored();
                 log::info!(
                     "Loaded '{}': {} track(s), stored in history: {was_stored}",
@@ -998,12 +1008,10 @@ impl App {
                 s.plot_state.integrate_file(fi, series);
                 let loaded_id = s.loaded_files.view().get(fi).map(|entry| entry.id());
                 drop(s);
-                if let Some(id) = loaded_id {
-                    let arrival = match &kind {
-                        loader::LoadKind::Recording(arrival) => Some(arrival),
-                        _ => None,
-                    };
-                    self.loader.associations.record_loaded(arrival, id);
+                if let Some(id) = loaded_id
+                    && let RecordingOperationOrigin::Arrival(arrival) = &origin
+                {
+                    self.association_batches.register_recording(arrival, id);
                 }
                 if replaced.is_some() {
                     // The replaced entry holds other tracks than the one it
@@ -1036,16 +1044,11 @@ impl App {
                         .info("Applied current marker settings to loaded data");
                 }
             }
-            Ok(LoadOutcome::Log {
-                filename,
-                parsed,
-                restored,
-            }) => {
-                let batch = match &kind {
-                    loader::LoadKind::LooseLog(arrival) => Some(arrival.batch()),
-                    _ => None,
-                };
-                self.load_parsed_log_in_batch(filename, parsed, restored, batch);
+            LoadCompletion::LooseLog {
+                arrival,
+                result: Ok(LooseLogResult { filename, parsed }),
+            } => {
+                self.integrate_parsed_log(filename, parsed, ParsedLogOrigin::Loose(&arrival));
                 self.load_error = None;
                 self.loader.finishing_jobs.push(FinishedJob {
                     filename: completed.filename,
@@ -1053,7 +1056,25 @@ impl App {
                     completed_at: now,
                 });
             }
-            Err(e) => {
+            LoadCompletion::SavedLog {
+                result:
+                    Ok(SavedLogResult {
+                        filename,
+                        parsed,
+                        restored,
+                    }),
+            } => {
+                self.integrate_parsed_log(filename, parsed, ParsedLogOrigin::Saved(restored));
+                self.load_error = None;
+                self.loader.finishing_jobs.push(FinishedJob {
+                    filename: completed.filename,
+                    elapsed_secs: completed.elapsed_secs,
+                    completed_at: now,
+                });
+            }
+            LoadCompletion::Recording { result: Err(e), .. }
+            | LoadCompletion::LooseLog { result: Err(e), .. }
+            | LoadCompletion::SavedLog { result: Err(e) } => {
                 log::error!("Background load failed: {e}");
                 self.load_error = Some(e);
             }
@@ -1071,50 +1092,59 @@ impl App {
         &mut self,
         filename: Option<String>,
         parsed: ParsedLog,
-        restored: Option<loader::AttachedLogRestore>,
+        restored: Option<AttachedLogRestore>,
     ) {
-        self.loader.associations.sync_loaded(
-            self.shared
-                .borrow()
-                .loaded_files
-                .view()
-                .entries()
-                .map(|entry| entry.id()),
-        );
-        let batch = restored
-            .is_none()
-            .then(|| self.loader.associations.implicit_log());
-        self.load_parsed_log_in_batch(
-            filename,
-            parsed,
-            restored,
-            batch.as_ref().map(LogArrival::batch),
-        );
+        match restored {
+            Some(restored) => {
+                self.integrate_parsed_log(filename, parsed, ParsedLogOrigin::Saved(restored))
+            }
+            None => {
+                let batch = self.association_batches.begin_submission(
+                    self.shared
+                        .borrow()
+                        .loaded_files
+                        .view()
+                        .entries()
+                        .map(|entry| entry.id()),
+                );
+                let arrival = batch.log();
+                drop(batch);
+                self.integrate_parsed_log(filename, parsed, ParsedLogOrigin::Loose(&arrival));
+            }
+        }
     }
 
-    fn load_parsed_log_in_batch(
+    fn integrate_parsed_log(
         &mut self,
         filename: Option<String>,
         parsed: ParsedLog,
-        restored: Option<loader::AttachedLogRestore>,
-        batch: Option<AssociationBatchId>,
+        origin: ParsedLogOrigin<'_>,
     ) {
         let window = chrono::Duration::seconds(
             i64::try_from(self.assoc_config.log_association_window_s).unwrap_or(i64::MAX),
         );
         let log = LoadedLog::new(filename, parsed, window);
-        let requested_by = restored.as_ref().map(|restore| restore.requested_by);
+        let requested_by = match &origin {
+            ParsedLogOrigin::Loose(_) => None,
+            ParsedLogOrigin::Saved(restore) => Some(restore.requested_by),
+        };
         let entry_count = log.parsed().entries().len();
         let name = log.name().to_owned();
         let shared = self.shared.borrow();
-        let outcome = match restored {
-            Some(restore) => self.logs.restore_attachment(
+        let outcome = match origin {
+            ParsedLogOrigin::Saved(restore) => self.logs.restore_attachment(
                 log,
                 restore.attachment,
                 restore.filters,
                 &shared.loaded_files.view(),
             ),
-            None => self.logs.push(log),
+            ParsedLogOrigin::Loose(arrival) => {
+                let outcome = self.logs.push(log);
+                if let LogPushOutcome::NewlyLoaded(id) = outcome {
+                    self.association_batches.register_log(arrival, id);
+                }
+                outcome
+            }
         };
         drop(shared);
         let associated_entry_count = self
@@ -1123,9 +1153,6 @@ impl App {
             .map_or(0, LoadedLog::associated_entry_count);
         match outcome {
             LogPushOutcome::NewlyLoaded(id) => {
-                if let Some(batch) = batch {
-                    self.loader.associations.register_log(batch, id);
-                }
                 log::info!(
                     "Loaded log {name:?}: {entry_count} entries, {associated_entry_count} of them associated"
                 );

@@ -160,14 +160,6 @@ impl eframe::App for App {
 
 impl App {
     pub(in crate::app) fn apply_finished_background_work(&mut self, ui: &egui::Ui) {
-        self.loader.associations.sync_loaded(
-            self.shared
-                .borrow()
-                .loaded_files
-                .view()
-                .entries()
-                .map(|entry| entry.id()),
-        );
         // Adopt the databases first: what waited on them starts in the frame
         // they arrive.
         self.adopt_finished_archive_inspection();

@@ -7,6 +7,7 @@ use gt_types::{FileIdx, TrackIdx, TrackRef};
 use rstest::rstest;
 
 use crate::app::App;
+use crate::app::association_batches::RecordingOperationOrigin;
 use crate::app::recording_from_disk::{
     self, LEAVE_SHELVED_TRACKS_OUT_LABEL, LOAD_FROM_DISK_LABEL, NO_SHELVED_TRACK_HOVER,
     OPEN_THE_STORED_VERSION_LABEL, RecordingAlreadyInHistory, RecordingContent, RecordingFromDisk,
@@ -381,8 +382,7 @@ fn recordings_already_in_history(count: usize) -> RecordingsAlreadyInHistory {
         recordings: (0..count)
             .map(|index| RecordingAlreadyInHistory {
                 from_disk: RecordingFromDisk {
-                    arrival: crate::app::association_batches::AssociationBatches::default()
-                        .implicit_recording(),
+                    origin: RecordingOperationOrigin::Independent,
                     filename: format!("ride-{index}.gtd"),
                     content: RecordingContent::Path(PathBuf::from(format!(
                         "/recordings/ride-{index}.gtd"
@@ -457,8 +457,7 @@ fn resegment_prompt_for(
     fix_placement_rule: gt_store::StoredFixPlacementRule,
 ) -> crate::app::ResegmentPrompt {
     crate::app::ResegmentPrompt {
-        arrival: crate::app::association_batches::AssociationBatches::default()
-            .implicit_recording(),
+        origin: RecordingOperationOrigin::Independent,
         db_ref: gt_store::DatabaseRef {
             identity: "auto:ride.gtd".to_owned(),
             group_name: "2025-05-23T10:00:00Z_a1b2".to_owned(),
@@ -541,11 +540,11 @@ fn opening_a_recording_stored_by_another_rule_raises_the_resegment_prompt(
         debug_tag: None,
     };
 
-    let arrival = harness.state().loader.associations.implicit_recording();
+    let origin = RecordingOperationOrigin::Independent;
     harness
         .state_mut()
         .handle_history_response(crate::app::history_db::Response::Opened {
-            arrival,
+            origin,
             db_ref: gt_store::DatabaseRef {
                 identity: "auto:ride.gtd".to_owned(),
                 group_name: "2025-05-23T10:00:00Z_a1b2".to_owned(),
