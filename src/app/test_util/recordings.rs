@@ -12,7 +12,22 @@ use gt_store::{
 };
 use gt_test_utils::SyntheticGtdSpec;
 
+use crate::app::App;
+use crate::app::association_batches::AssociationSubmission;
 use crate::app::history_db::{HistoryWorker, Response};
+
+impl App {
+    pub(in crate::app) fn recording_submission_for_test(&mut self) -> AssociationSubmission {
+        self.association_batches.begin_submission(
+            self.shared
+                .borrow()
+                .loaded_files
+                .view()
+                .entries()
+                .map(|entry| entry.id()),
+        )
+    }
+}
 
 /// `point_count` nav points one second apart from `start_secs`.
 pub fn bytes_starting_at(start_secs: i64, point_count: usize) -> Vec<u8> {

@@ -376,7 +376,7 @@ fn initial_association_waits_for_history_screening_and_the_recording_load(
             ScreenedRecordings {
                 already_in_history: Vec::new(),
                 new_to_history: vec![RecordingFromDisk {
-                    origin: RecordingOperationOrigin::Arrival(screening),
+                    arrival: screening,
                     filename: "recording.gtd".to_owned(),
                     content: RecordingContent::Bytes(ui_tests::minimal_gtd_bytes().into()),
                     mode: loader::GtdLoadMode::Regular,
@@ -727,7 +727,7 @@ fn cancelling_the_history_recording_prompt_releases_pending_logs() {
             ScreenedRecordings {
                 already_in_history: vec![RecordingAlreadyInHistory {
                     from_disk: RecordingFromDisk {
-                        origin: RecordingOperationOrigin::Arrival(screening),
+                        arrival: screening,
                         filename: "recording.gtd".to_owned(),
                         content: RecordingContent::Bytes(ui_tests::minimal_gtd_bytes().into()),
                         mode: loader::GtdLoadMode::Regular,
@@ -789,7 +789,7 @@ fn successive_history_screening_responses_preserve_every_recording_before_associ
             history_db::Response::RecordingsFromDiskScreened(ScreenedRecordings {
                 already_in_history: vec![RecordingAlreadyInHistory {
                     from_disk: RecordingFromDisk {
-                        origin: RecordingOperationOrigin::Arrival(screening),
+                        arrival: screening,
                         filename: name.to_owned(),
                         content: RecordingContent::Bytes(ui_tests::minimal_gtd_bytes().into()),
                         mode: loader::GtdLoadMode::Regular,
