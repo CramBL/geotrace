@@ -7,7 +7,7 @@ use gt_logfile::ParsedLog;
 use gt_plot::AnalysisConfig;
 use gt_store::{
     DatabaseRef, LogAttachmentId, RecordingUiState, Store, StoredLogFilter,
-    StoredLogFilterCondition, StoredLogFilterMode, StoredLogFilterStack, StoredRecording,
+    StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterStack, StoredRecording,
 };
 use gt_test_utils::{By, HarnessInteraction as _};
 use rstest::rstest;
@@ -852,16 +852,14 @@ fn loose_and_saved_contexts_are_independent_of_completion_order(#[values(true, f
         },
         id: LogAttachmentId::new_random(),
     };
-    let saved_filters: StoredLogFilterStack = vec![StoredLogFilter {
+    let saved_filters = StoredLogFilterStack::single_all_group(vec![StoredLogFilter {
         group_id: 0,
         condition: StoredLogFilterCondition::Message {
             text: "shared".to_owned(),
             regex: false,
         },
-        enabled: false,
-        mode: StoredLogFilterMode::Refine,
-    }]
-    .into();
+        effects: StoredLogFilterEffects::Table { enabled: false },
+    }]);
     let mut results = Vec::new();
     for loose_first in [true, false] {
         let mut harness = harness(ask);
@@ -938,7 +936,7 @@ fn loose_and_saved_contexts_are_independent_of_completion_order(#[values(true, f
                     log.context_origin(),
                     log.attachment().cloned(),
                     log.anchor_key(),
-                    log.filters().to_stored_stack().expect("valid groups"),
+                    log.filters().to_stored_stack(),
                     log.association_window(),
                     log.associated_entry_count(),
                     log.entry_placement(0),

@@ -1,5 +1,3 @@
-//! What a filter matches a log entry's message against.
-
 use std::ops::Range;
 
 use gt_history_types::{StoredLogFilterCondition, StoredLogLevel};
@@ -103,18 +101,6 @@ impl FilterPattern {
 
     pub fn is_regex(&self) -> bool {
         matches!(self, Self::Message { regex: true, .. })
-    }
-
-    pub fn cleared_live_pattern(&self) -> Self {
-        match self {
-            Self::Message { regex, .. } => Self::Message {
-                text: String::new(),
-                regex: *regex,
-            },
-            Self::Service(_) => Self::Service(String::new()),
-            Self::Hostname(_) => Self::Hostname(String::new()),
-            Self::Level(_) => Self::default(),
-        }
     }
 
     /// Prepares the pattern for the scan that applies it to every entry.

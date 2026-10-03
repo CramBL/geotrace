@@ -4,8 +4,7 @@ use std::time::Duration as StdDuration;
 
 use egui_kittest::{Harness, kittest::Queryable as _};
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
-use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
-use gt_log_view::LoadedLog;
+use gt_log_view::{FilterGroupOperator, LoadedLog};
 use gt_store::RecordingsHandle;
 use gt_test_utils::{
     By, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec, SyntheticLogTimestamps,
@@ -437,13 +436,27 @@ fn snapshot_app_log_viewer_filters() {
 
     for pattern in ["kernel", "rotated"] {
         add_log_filter(&mut harness, pattern);
-        harness.inner.get_by_label(ICON_FUNNEL).click();
+        let index = harness
+            .inner
+            .state()
+            .shown_log()
+            .unwrap()
+            .filters()
+            .chips()
+            .len()
+            - 1;
+        ui_tests::set_other_log_filter_effect_only(&mut harness.inner, index);
         ui_tests::run_until_the_log_filter_scans_land(&mut harness.inner);
     }
     add_log_filter(&mut harness, "rc=-110");
     harness
         .inner
-        .get_by_label(log_viewer::filters::INTERSECTION_SYMBOL)
+        .get_by_label(&FilterGroupOperator::All.to_string())
+        .click();
+    harness.inner.run_steps(2);
+    harness
+        .inner
+        .get_by_label(&FilterGroupOperator::Any.to_string())
         .click();
     harness.inner.run_steps(2);
     add_log_filter(&mut harness, "retries");
@@ -547,7 +560,7 @@ fn a_layer_chip_puts_the_lines_it_matched_on_the_map() {
     );
 
     add_log_filter(&mut harness, "gnss");
-    harness.inner.get_by_label(ICON_FUNNEL).click();
+    ui_tests::set_other_log_filter_effect_only(&mut harness.inner, 0);
     ui_tests::run_until_the_log_filter_scans_land(&mut harness.inner);
 
     let matched = harness.inner.state_mut().log_map_match_count();
@@ -589,7 +602,7 @@ fn snapshot_app_log_map_hexagons() {
     harness.inner.run_steps(5);
 
     add_log_filter(&mut harness, "kernel");
-    harness.inner.get_by_label(ICON_FUNNEL).click();
+    ui_tests::set_other_log_filter_effect_only(&mut harness.inner, 0);
     ui_tests::run_until_the_log_filter_scans_land(&mut harness.inner);
     type_into_log_filter(&mut harness, "bus-off");
     harness.inner.get_by_label(ICON_ARTICLE).click();

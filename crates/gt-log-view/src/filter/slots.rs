@@ -1,7 +1,6 @@
 //! The palette slots the layer chips draw their map colour from.
 
-/// One slot of the log-layer palette, held by a layer chip for as long as that
-/// chip exists.
+/// Allocated while the condition has a map effect, including a disabled effect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LayerColorSlot(usize);
 

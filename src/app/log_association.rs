@@ -327,14 +327,7 @@ impl App {
             return;
         };
         let name = log.name().to_owned();
-        let filters = match log.filters().to_stored_stack() {
-            Ok(filters) => filters,
-            Err(error) => {
-                self.log_viewer
-                    .report_warning(format!("Could not save log filters: {error:#}"));
-                return;
-            }
-        };
+        let filters = log.filters().to_stored_stack();
         let shared = self.shared.borrow();
         let db_ref = target
             .and_then(|id| shared.loaded_files.view().entry_for_id(id))

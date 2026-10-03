@@ -4,20 +4,22 @@
 
 ### Added
 
+- **Log Viewer:** A condition can filter table rows and highlight map matches independently.
 - Added physical line numbers and optional structural source lines to the log viewer.
 - Added service, level, and hostname conditions to log viewer filters.
 - Added table filter groups with independent All/Any composition in the log viewer.
-- **Log Viewer:** Table filters can match all or any conditions with the intersection and union controls.
 - **Map & Tracks:** The eye menu has a "Ghost fixes" category that shows or hides dead-reckoned chevron icons and dashed trackline stretches.
 
 ### Changed
 
+- **Log Viewer:** Filter groups use compact rows with All/Any controls, AND composition, inline condition entry, and overflow menus.
 - **Log Viewer:** Service and level colouring controls are available in the table display menu.
 - **Log Viewer:** The position-source dialog and Processing settings now offer an explicit preference to automatically choose a position source when exactly one loaded recording overlaps the log.
 - **Log Viewer:** Footer and dialog labels now distinguish position sources from saving logs with recordings in history.
 
 ### Fixed
 
+- **Log Viewer:** Fixed selecting Level applying Info immediately and clearing a Level condition changing the editor to Message.
 - **Log Viewer:** Fixed map clicks scrolling to a different log entry when table filters hide the first entry of the clicked hexagon.
 - **Log Viewer:** Fixed boot and order-anomaly navigation when table filters hide the target entries.
 - **Log Viewer:** Fixed the table expanding when adding a live filter as a saved filter.

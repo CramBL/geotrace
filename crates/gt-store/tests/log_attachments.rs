@@ -8,8 +8,8 @@ use gt_history_types::{StoredLogFilterCondition, fixtures};
 use gt_store::{
     DatabaseRef, HistoryDatabase as _, LogAttachmentError, LogAttachmentId, LogAttachments as _,
     LogToAttach, ReadOnlyHistoryDatabase as _, ReadOnlyLogAttachments as _, RecordingMeta,
-    Recordings, Store, StoredLogFilterGroup, StoredLogFilterOperator, StoredLogFilterStack,
-    StoredLogFilterStackParts, TrackRange, TrackState,
+    Recordings, Store, StoredLogFilterEffects, StoredLogFilterGroup, StoredLogFilterOperator,
+    StoredLogFilterStack, StoredLogFilterStackParts, TrackRange, TrackState,
 };
 
 /// A store with one recording in its history, ready to attach logs to.
@@ -301,6 +301,11 @@ fn changing_the_filters_of_an_attachment_leaves_its_log_alone() {
     let mut chips = fixture_filters.chips().to_vec();
     let highlighted = chips.first_mut().expect("highlighted filter");
     highlighted.group_id = 9;
+    highlighted.effects = StoredLogFilterEffects::Both {
+        table_enabled: true,
+        map_enabled: false,
+        color_slot: 3,
+    };
     highlighted.condition = StoredLogFilterCondition::Service {
         text: "navsyncd".into(),
     };

@@ -120,7 +120,7 @@ fn hidden_diagnostics_reveal_exact_entries_without_changing_filters_or_map_match
     unfold_the_summary_panel(&mut harness);
     let stack = harness.state().shown_log().unwrap().filters();
     let visible = stack.visible_entries().clone();
-    let stored = stack.to_stored_stack().unwrap();
+    let stored = stack.to_stored_stack();
     let map = harness.state_mut().map_matches().clone();
     let node = harness.get_by_label(button);
     assert!(!node.accesskit_node().is_disabled());
@@ -132,7 +132,7 @@ fn hidden_diagnostics_reveal_exact_entries_without_changing_filters_or_map_match
     assert_eq!(reveal.entry_index, expected_entry);
     let stack = state.shown_log().unwrap().filters();
     assert_eq!(*stack.visible_entries(), visible);
-    assert_eq!(stack.to_stored_stack().unwrap(), stored);
+    assert_eq!(stack.to_stored_stack(), stored);
     assert_eq!(match_count(&harness), "1 of 6");
     assert_eq!(harness.state_mut().map_matches().layers(), map.layers());
     assert_eq!(
@@ -254,7 +254,8 @@ fn filter_semantic_edits_clear_reveals_before_scan_landing(#[case] edit: Semanti
     stack.select_group(first_group);
     stack.set_live_filter_text("fix");
     if matches!(edit, SemanticEdit::Refine) {
-        stack.switch_chip_to_layer_mode(chip, slots);
+        stack.add_chip_effect(chip, FilterEffect::Map, slots);
+        stack.remove_chip_effect(chip, FilterEffect::Table, slots);
     }
     if matches!(edit, SemanticEdit::Level) {
         stack.set_live_filter_scope(FilterScope::Level);
@@ -276,9 +277,9 @@ fn filter_semantic_edits_clear_reveals_before_scan_landing(#[case] edit: Semanti
             stack.add_live_filter_as_chip();
         }
         SemanticEdit::Remove => stack.remove_chip(chip, slots),
-        SemanticEdit::Enabled => stack.set_chip_enabled(chip, false),
-        SemanticEdit::Layer => stack.switch_chip_to_layer_mode(chip, slots),
-        SemanticEdit::Refine => stack.switch_chip_to_refine_mode(chip, slots),
+        SemanticEdit::Enabled => stack.set_chip_effect_enabled(chip, FilterEffect::Table, false),
+        SemanticEdit::Layer => stack.add_chip_effect(chip, FilterEffect::Map, slots),
+        SemanticEdit::Refine => stack.add_chip_effect(chip, FilterEffect::Table, slots),
         SemanticEdit::Operator => stack.set_group_operator(first_group, FilterGroupOperator::Any),
         SemanticEdit::Membership => stack.move_chip_to_group(chip, other_group),
         SemanticEdit::CreateGroup => {

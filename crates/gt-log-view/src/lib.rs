@@ -14,10 +14,10 @@ pub use anchor::RecordingKey;
 pub use association::{AssociationCandidate, AssociationCandidates};
 pub use attachment::{LogAttachmentRef, SessionLogAttachments};
 pub use filter::{
-    ClockTicks, DayDivider, EntryMatches, FilterChip, FilterChipId, FilterChipMode, FilterGroup,
+    ClockTicks, DayDivider, EntryMatches, FilterChip, FilterChipId, FilterEffect, FilterGroup,
     FilterGroupId, FilterGroupOperator, FilterPattern, FilterScope, FilterStack,
-    InvalidFilterPattern, LAYER_COLOR_SLOT_COUNT, LayerColorSlot, LayerColorSlots, TimestampTick,
-    VisibleEntries,
+    InvalidFilterPattern, LAYER_COLOR_SLOT_COUNT, LayerColorSlot, LayerColorSlots, LiveFilterDraft,
+    TimestampTick, VisibleEntries,
 };
 pub use loaded_log::{
     LoadedLog, LoadedLogEditor, LoadedLogs, LogContextOrigin, LogPushOutcome, LogSaveOutcome,

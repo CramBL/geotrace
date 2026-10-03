@@ -7,7 +7,7 @@ use thiserror::Error;
 pub use log_attachment::{
     InvalidStoredLogFilterStack, LOG_ATTACHMENT_ATTR_PREFIX, LOGS_DIRECTORY, LogAttachment,
     LogAttachmentEntry, LogAttachmentId, LogContentHash, StoredLogFilter, StoredLogFilterCondition,
-    StoredLogFilterGroup, StoredLogFilterMode, StoredLogFilterOperator, StoredLogFilterStack,
+    StoredLogFilterEffects, StoredLogFilterGroup, StoredLogFilterOperator, StoredLogFilterStack,
     StoredLogFilterStackParts, StoredLogLevel, logs_directory_for_database,
 };
 pub use ui_state::{

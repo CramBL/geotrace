@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use egui_kittest::{Harness, Node, kittest::Queryable as _};
 use geotrace_sdk::{Channel, DateTime, Duration, Unit, Utc};
 use gt_instance_lock::{DataDirectoryLock, DataDirectoryOwnership};
-use gt_log_view::LoadedLog;
+use gt_log_view::{FilterEffect, FilterGroupId, LoadedLog};
 use gt_pending_writes::{PendingWrites, WriteAccess};
 use gt_store::{
     FlareStore, HistoryDatabase as _, IonexStore, JamStore, Recordings, RecordingsHandle,
@@ -675,10 +675,64 @@ fn type_into_log_filter_of(harness: &mut Harness<'_, App>, text: &str) {
 }
 
 fn focus_the_live_log_filter(harness: &mut Harness<'_, App>) {
+    if harness
+        .query(By::new().predicate(|node| node.author_id() == Some(filters::LIVE_FILTER_SCOPE_ID)))
+        .is_none()
+    {
+        let group = harness
+            .state()
+            .shown_log()
+            .unwrap()
+            .filters()
+            .selected_group();
+        open_log_filter_group_editor(harness, group);
+    }
     harness.ctx.memory_mut(|memory| {
         memory.request_focus(egui::Id::new(filters::LIVE_FILTER_FIELD_ID));
     });
     harness.run_steps(2);
+}
+
+fn open_log_filter_group_editor(harness: &mut Harness<'_, App>, group: FilterGroupId) {
+    let identity = filters::GroupControl::Add.identity(group);
+    let scroll_identity = identity.clone();
+    harness
+        .get(By::new().predicate(move |node| node.author_id() == Some(scroll_identity.as_str())))
+        .scroll_to_me();
+    harness.run_steps(2);
+    harness
+        .get(By::new().predicate(move |node| node.author_id() == Some(identity.as_str())))
+        .click_accesskit();
+    harness.run_steps(2);
+}
+
+fn click_log_filter_effect_action(
+    harness: &mut Harness<'_, App>,
+    index: usize,
+    effect: FilterEffect,
+    action: filters::ChipControl,
+) {
+    let chip = harness.state().shown_log().unwrap().filters().chips()[index].id();
+    for control in [filters::ChipControl::Overflow, action] {
+        let identity = control.identity(chip, effect);
+        harness
+            .get(By::new().predicate(move |node| node.author_id() == Some(identity.as_str())))
+            .click();
+        harness.run_steps(2);
+    }
+    run_until_the_log_filter_scans_land(harness);
+}
+
+fn set_other_log_filter_effect_only(harness: &mut Harness<'_, App>, index: usize) {
+    let effect = if harness.state().shown_log().unwrap().filters().chips()[index]
+        .has_effect(FilterEffect::Table)
+    {
+        FilterEffect::Table
+    } else {
+        FilterEffect::Map
+    };
+    click_log_filter_effect_action(harness, index, effect, filters::ChipControl::OtherEffect);
+    click_log_filter_effect_action(harness, index, effect, filters::ChipControl::Remove);
 }
 
 /// Runs until every scan the shown log's filters started has landed. The scans

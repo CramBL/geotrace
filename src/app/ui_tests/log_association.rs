@@ -6,15 +6,15 @@ use egui::accesskit::{Role, Toggled};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
-use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
-use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use gt_loaded_files::FileHistory;
-use gt_log_view::{FilterPattern, LoadedLog, LogAttachmentRef, RecordingKey};
+use gt_log_view::{
+    FilterEffect, FilterGroupOperator, FilterPattern, LoadedLog, LogAttachmentRef, RecordingKey,
+};
 use gt_store::{
     DatabaseRef, HistoryDatabase as _, LogAttachmentEntry, LogAttachments as _, LogToAttach,
     ReadOnlyHistoryDatabase as _, Recordings, RecordingsHandle, StoredLogFilter,
-    StoredLogFilterCondition, StoredLogFilterMode, StoredLogFilterOperator, StoredLogFilterStack,
-    TrackRange, TrackState,
+    StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterOperator,
+    StoredLogFilterStack, TrackRange, TrackState,
 };
 use gt_test_utils::{
     By, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec, SyntheticLogTimestamps,
@@ -517,7 +517,7 @@ fn an_attached_log_comes_back_with_its_filters_when_the_recording_opens_again() 
 
     // A chip added after the attachment was stored is written to it.
     ui_tests::add_log_filter_in(&mut harness, "kernel");
-    harness.get_by_label(ICON_FUNNEL).click();
+    ui_tests::set_other_log_filter_effect_only(&mut harness, 0);
     ui_tests::run_until_the_log_filter_scans_land(&mut harness);
     assert!(
         harness.step_until(|_| {
@@ -546,13 +546,18 @@ fn an_attached_log_comes_back_with_its_filters_when_the_recording_opens_again() 
             log.filters()
                 .chips()
                 .iter()
-                .map(|chip| (chip.pattern().text().to_owned(), chip.mode()))
+                .map(|chip| {
+                    (
+                        chip.pattern().text().to_owned(),
+                        chip.has_effect(FilterEffect::Map),
+                    )
+                })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
     assert_eq!(
         restored,
-        [("kernel".to_owned(), gt_log_view::FilterChipMode::Layer)],
+        [("kernel".to_owned(), true)],
         "the restored log carries the stack it was stored with"
     );
     assert!(
@@ -930,16 +935,17 @@ fn seed_a_recording_and_the_log_stored_with_it(
             &LogToAttach {
                 name: FIXTURE_LOG_NAME,
                 text: &fixture_log_text(FIXTURE_LOG_SEED),
-                filters: vec![StoredLogFilter {
+                filters: StoredLogFilterStack::single_all_group(vec![StoredLogFilter {
                     group_id: 0,
                     condition: StoredLogFilterCondition::Message {
                         text: "kernel".to_owned(),
                         regex: false,
                     },
-                    enabled: true,
-                    mode: StoredLogFilterMode::Layer { color_slot: 0 },
-                }]
-                .into(),
+                    effects: StoredLogFilterEffects::Map {
+                        enabled: true,
+                        color_slot: 0,
+                    },
+                }]),
                 year_reference: None,
             },
         )
@@ -1331,7 +1337,13 @@ fn operator_only_edits_restore_from_the_attachment(#[case] add_conditions: bool)
             ui_tests::run_until_the_log_filter_scans_land(&mut harness);
         }
     }
-    harness.get_by_label(filters::INTERSECTION_SYMBOL).click();
+    harness
+        .get_by_label(&FilterGroupOperator::All.to_string())
+        .click();
+    harness.run_steps(2);
+    harness
+        .get_by_label(&FilterGroupOperator::Any.to_string())
+        .click();
     assert!(harness.step_until(|_| {
         stored_attachments(&db_path, &db_ref)
             .first()
@@ -1351,8 +1363,7 @@ fn operator_only_edits_restore_from_the_attachment(#[case] add_conditions: bool)
         .first_log()
         .unwrap()
         .filters()
-        .to_stored_stack()
-        .expect("valid groups");
+        .to_stored_stack();
     let expected_visible = harness
         .state()
         .first_log()
@@ -1370,11 +1381,21 @@ fn operator_only_edits_restore_from_the_attachment(#[case] add_conditions: bool)
     test_util::harness::step_until_a_log_is_loaded(&mut harness);
     ui_tests::run_until_the_log_filter_scans_land(&mut harness);
     let restored = harness.state().first_log().unwrap().filters();
-    assert_eq!(restored.to_stored_stack().expect("valid groups"), expected);
+    assert_eq!(restored.to_stored_stack(), expected);
     assert_eq!(*restored.visible_entries(), expected_visible);
     assert!(!restored.is_query_pending());
-    assert!(harness.query_by_label(filters::UNION_SYMBOL).is_some());
-    harness.get_by_label(filters::UNION_SYMBOL).click();
+    assert!(
+        harness
+            .query_by_label(&FilterGroupOperator::Any.to_string())
+            .is_some()
+    );
+    harness
+        .get_by_label(&FilterGroupOperator::Any.to_string())
+        .click();
+    harness.run_steps(2);
+    harness
+        .get_by_label(&FilterGroupOperator::All.to_string())
+        .click();
     assert!(harness.step_until(|_| {
         stored_attachments(&db_path, &db_ref)
             .first()
@@ -1405,8 +1426,12 @@ fn operator_only_edits_restore_from_the_attachment(#[case] add_conditions: bool)
     assert_eq!(rewritten.attachment.filters.chips(), expected.chips());
 }
 
-#[test]
-fn grouped_filter_edits_restore_with_highlight_memberships_and_empty_groups() {
+#[rstest::rstest]
+#[case::map_only(false)]
+#[case::both_effects(true)]
+fn grouped_filter_edits_restore_with_highlight_memberships_and_empty_groups(
+    #[case] both_effects: bool,
+) {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
     let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
@@ -1414,21 +1439,43 @@ fn grouped_filter_edits_restore_with_highlight_memberships_and_empty_groups() {
     for pattern in ["kernel", "systemd"] {
         ui_tests::add_log_filter_in(&mut harness, pattern);
     }
-    harness.get_by_label(filters::INTERSECTION_SYMBOL).click();
+    harness
+        .get_by_label(&FilterGroupOperator::All.to_string())
+        .click();
     harness.run_steps(2);
     harness
-        .nth_matching(By::new().label(ICON_FUNNEL), 0)
+        .get_by_label(&FilterGroupOperator::Any.to_string())
         .click();
+    harness.run_steps(2);
+    if both_effects {
+        ui_tests::click_log_filter_effect_action(
+            &mut harness,
+            0,
+            FilterEffect::Table,
+            filters::ChipControl::OtherEffect,
+        );
+    } else {
+        ui_tests::set_other_log_filter_effect_only(&mut harness, 0);
+    }
     harness.run_steps(2);
     harness.get_by_label(filters::NEW_GROUP_LABEL).click();
     harness.run_steps(2);
     ui_tests::add_log_filter_in(&mut harness, "timeout");
     harness.get_by_label(filters::NEW_GROUP_LABEL).click();
     harness.run_steps(2);
-    harness.get_by_label("2").click();
+    let group = harness
+        .state()
+        .first_log()
+        .unwrap()
+        .filters()
+        .groups()
+        .get(1)
+        .unwrap()
+        .id();
+    ui_tests::open_log_filter_group_editor(&mut harness, group);
     ui_tests::run_until_the_log_filter_scans_land(&mut harness);
     let stack = harness.state().first_log().unwrap().filters();
-    let expected = stack.to_stored_stack().expect("valid groups");
+    let expected = stack.to_stored_stack();
     let visible = stack.visible_entries().clone();
     assert_eq!(expected.groups().len(), 3);
     assert!(harness.step_until(|_| {
@@ -1445,10 +1492,19 @@ fn grouped_filter_edits_restore_with_highlight_memberships_and_empty_groups() {
     test_util::harness::step_until_a_log_is_loaded(&mut harness);
     ui_tests::run_until_the_log_filter_scans_land(&mut harness);
     let restored = harness.state().first_log().unwrap().filters();
-    assert_eq!(restored.to_stored_stack().expect("valid groups"), expected);
+    assert_eq!(restored.to_stored_stack(), expected);
     assert_eq!(*restored.visible_entries(), visible);
     assert!(!restored.is_query_pending());
-    harness.get_by_label(ICON_PLUS_CIRCLE).click();
+    if both_effects {
+        ui_tests::click_log_filter_effect_action(
+            &mut harness,
+            0,
+            FilterEffect::Table,
+            filters::ChipControl::OtherEffect,
+        );
+    } else {
+        ui_tests::set_other_log_filter_effect_only(&mut harness, 0);
+    }
     harness.run_steps(2);
     let restored = harness.state().first_log().unwrap().filters();
     assert_eq!(
@@ -1456,7 +1512,7 @@ fn grouped_filter_edits_restore_with_highlight_memberships_and_empty_groups() {
         restored.groups().first().unwrap().id()
     );
     assert!(!restored.is_query_pending());
-    let updated = restored.to_stored_stack().expect("valid groups");
+    let updated = restored.to_stored_stack();
     assert!(harness.step_until(|_| {
         stored_attachments(&db_path, &db_ref)
             .first()
@@ -1487,7 +1543,8 @@ fn the_stored_stack_holds_every_chips_mode_and_colour() {
 
     for pattern in ["kernel", "rotated"] {
         ui_tests::add_log_filter_in(&mut harness, pattern);
-        harness.get_by_label(ICON_FUNNEL).click();
+        let index = harness.state().first_log().unwrap().filters().chips().len() - 1;
+        ui_tests::set_other_log_filter_effect_only(&mut harness, index);
         ui_tests::run_until_the_log_filter_scans_land(&mut harness);
     }
     assert!(
@@ -1508,20 +1565,23 @@ fn the_stored_stack_holds_every_chips_mode_and_colour() {
             .iter()
             .map(|filter| (
                 FilterPattern::from(&filter.condition).text().to_owned(),
-                filter.enabled,
-                filter.mode
+                filter.effects
             ))
             .collect::<Vec<_>>(),
         [
             (
                 "kernel".to_owned(),
-                true,
-                StoredLogFilterMode::Layer { color_slot: 0 }
+                StoredLogFilterEffects::Map {
+                    enabled: true,
+                    color_slot: 0
+                }
             ),
             (
                 "rotated".to_owned(),
-                true,
-                StoredLogFilterMode::Layer { color_slot: 1 }
+                StoredLogFilterEffects::Map {
+                    enabled: true,
+                    color_slot: 1
+                }
             ),
         ]
     );
@@ -1551,16 +1611,14 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
         sats_in_fix: 11,
     });
     let meta = gt_store::extract_meta(&bytes).expect("fixture metadata");
-    let filters: StoredLogFilterStack = vec![StoredLogFilter {
+    let filters = StoredLogFilterStack::single_all_group(vec![StoredLogFilter {
         group_id: 0,
         condition: StoredLogFilterCondition::Message {
             text: "systemd".to_owned(),
             regex: false,
         },
-        enabled: false,
-        mode: StoredLogFilterMode::Refine,
-    }]
-    .into();
+        effects: StoredLogFilterEffects::Table { enabled: false },
+    }]);
     let mut db = ui_tests::open_temporary_history_database(&db_path);
     let second_recording = db
         .insert(
@@ -1611,8 +1669,7 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
         .get_by_id(first_id)
         .expect("first log")
         .filters()
-        .to_stored_stack()
-        .expect("valid groups");
+        .to_stored_stack();
 
     match requested_by {
         AttachedLogRequester::RecordingLoad => {
@@ -1641,10 +1698,7 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
             log.anchor_key().as_ref(),
             Some(&RecordingKey::Stored(attachment.recording.clone()))
         );
-        assert_eq!(
-            log.filters().to_stored_stack().expect("valid groups"),
-            *stored_filters
-        );
+        assert_eq!(log.filters().to_stored_stack(), *stored_filters);
         assert!(harness.state().logs.any_loaded_log_holds(attachment));
     }
     assert_eq!(
@@ -1693,8 +1747,7 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
             .get_by_id(second_id)
             .expect("detached context")
             .filters()
-            .to_stored_stack()
-            .expect("valid groups"),
+            .to_stored_stack(),
         filters
     );
     assert_eq!(
@@ -1704,8 +1757,7 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
             .get_by_id(restored_id)
             .expect("restored context")
             .filters()
-            .to_stored_stack()
-            .expect("valid groups"),
+            .to_stored_stack(),
         filters
     );
     assert_eq!(harness.state().log_viewer.selected_log(), Some(restored_id));
@@ -1790,8 +1842,7 @@ fn a_saved_log_loads_separately_from_incompatible_loose_content(
             .get_by_id(saved_id)
             .expect("saved log")
             .filters()
-            .to_stored_stack()
-            .expect("valid groups"),
+            .to_stored_stack(),
         saved_filters
     );
     harness.state_mut().log_viewer.open_on_log(loose_id);
@@ -1832,8 +1883,7 @@ fn a_saved_log_loads_separately_from_incompatible_loose_content(
             .get_by_id(saved_id)
             .expect("saved log")
             .filters()
-            .to_stored_stack()
-            .expect("valid groups"),
+            .to_stored_stack(),
         saved_filters
     );
     assert_eq!(

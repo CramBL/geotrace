@@ -58,6 +58,8 @@ pub(super) struct LogViewerWindow {
     /// When the shown log's filters started scanning, for the note the viewer
     /// shows once a scan runs long enough to notice.
     query_pending_since: Option<f64>,
+    filter_editor_log: Option<LoadedLogId>,
+    filter_editor_focus: bool,
 
     /// The table row the summary panel requested a scroll to, consumed by the
     /// table on the frame after the request.
@@ -156,6 +158,8 @@ impl LogViewerWindow {
             diagnostic_reveal: None,
             line_table_cache: None,
             query_pending_since: None,
+            filter_editor_log: None,
+            filter_editor_focus: false,
             scroll_to_row: None,
             clicked_glyph: None,
             row_hover_dwell: RowHoverDwell::default(),
