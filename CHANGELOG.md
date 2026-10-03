@@ -18,6 +18,7 @@
 
 ### Fixed
 
+- **Log Viewer:** Fixed map clicks scrolling to a different log entry when table filters hide the first entry of the clicked hexagon.
 - **Log Viewer:** Fixed boot and order-anomaly navigation when table filters hide the target entries.
 - **Log Viewer:** Fixed the table expanding when adding a live filter as a saved filter.
 - **Log Viewer:** Fixed scroll positions changing when switching between loaded logs.
