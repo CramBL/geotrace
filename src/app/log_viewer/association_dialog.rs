@@ -38,6 +38,7 @@ pub(in crate::app) enum LogAssociationChoice {
 pub(in crate::app) struct LogAssociationDialog {
     log: LoadedLogId,
     selected: Option<LoadedFileId>,
+    initial_candidates: Option<Vec<LoadedFileId>>,
     attach: bool,
 
     /// The recording the duplicate-attachment query was sent for.
@@ -55,9 +56,21 @@ impl LogAssociationDialog {
         Self {
             log,
             selected,
+            initial_candidates: None,
             attach: false,
             duplicate_query_sent_for: None,
             duplicate: None,
+        }
+    }
+
+    pub(in crate::app) fn for_initial_selection(
+        log: LoadedLogId,
+        selected: Option<LoadedFileId>,
+        candidates: Vec<LoadedFileId>,
+    ) -> Self {
+        Self {
+            initial_candidates: Some(candidates),
+            ..Self::new(log, selected)
         }
     }
 
@@ -124,6 +137,10 @@ impl LogAssociationDialog {
 
         let names = super::recording_names_by_id(recordings, recording_names);
         let candidates = log.rank_association_candidates(&recordings);
+        let candidates = match &self.initial_candidates {
+            Some(scope) => candidates.restrict_to_recordings(scope),
+            None => candidates,
+        };
         let attachable = write_access.allows_writing()
             && self
                 .selected

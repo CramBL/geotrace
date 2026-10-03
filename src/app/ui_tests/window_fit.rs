@@ -95,6 +95,8 @@ impl OversizedAppWindow {
             }
             Self::TrackSettingsDiffer => {
                 app.pending_resegment = Some(crate::app::ResegmentPrompt {
+                    arrival: crate::app::association_batches::AssociationBatches::default()
+                        .implicit_recording(),
                     db_ref: gt_store::DatabaseRef {
                         identity: long.clone(),
                         group_name: long.clone(),
@@ -131,6 +133,7 @@ impl OversizedAppWindow {
             Self::LoadingProgress => {
                 app.loader.loading_jobs = (0..gt_test_utils::window_fit::OVERSIZED_ROW_COUNT)
                     .map(|index| crate::app::loader::LoadingJob {
+                        kind: crate::app::loader::LoadKind::SavedLog,
                         id: index as u64,
                         filename: format!("{long}/{index}"),
                         progress: 0.5,

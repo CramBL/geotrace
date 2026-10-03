@@ -120,6 +120,10 @@ pub(in crate::app) enum QueuedLoad {
     },
 }
 
+pub(in crate::app) struct QueuedArrivalSet {
+    pub(in crate::app) files: Vec<QueuedLoad>,
+}
+
 /// Why the databases are not open yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::app) enum DatabasesPending {
@@ -139,7 +143,7 @@ pub(in crate::app) enum StorageOpen {
     /// delete in. No write guard is held here: the open waits on a person.
     AskingAboutInterruptedDeletes {
         prompts: InterruptedDeletePrompts,
-        queued_loads: Vec<QueuedLoad>,
+        queued_loads: Vec<QueuedArrivalSet>,
     },
     /// The open landed: its databases were adopted, or dropped because the
     /// app was already closing.
@@ -149,18 +153,18 @@ pub(in crate::app) enum StorageOpen {
     /// opened.
     InspectingArchives {
         inspected: mpsc::Receiver<InspectedArchives>,
-        queued_loads: Vec<QueuedLoad>,
+        queued_loads: Vec<QueuedArrivalSet>,
     },
     Opening {
         opened: mpsc::Receiver<OpenStorage>,
-        queued_loads: Vec<QueuedLoad>,
+        queued_loads: Vec<QueuedArrivalSet>,
     },
     /// Another instance holds the data directory, so nothing has been opened
     /// yet. [`App::wait_for_the_data_directory`] starts the open once this
     /// instance takes the directory.
     WaitingForTheDataDirectory {
         wait: DataDirectoryWait,
-        queued_loads: Vec<QueuedLoad>,
+        queued_loads: Vec<QueuedArrivalSet>,
     },
 }
 
@@ -195,7 +199,7 @@ impl StorageOpen {
 
     /// The loads waiting on the databases, or [`None`] once they have landed
     /// and a load can go straight to the loader.
-    pub(in crate::app) fn queued_loads_mut(&mut self) -> Option<&mut Vec<QueuedLoad>> {
+    pub(in crate::app) fn queued_loads_mut(&mut self) -> Option<&mut Vec<QueuedArrivalSet>> {
         match self {
             Self::WaitingForTheDataDirectory { queued_loads, .. }
             | Self::InspectingArchives { queued_loads, .. }
@@ -271,7 +275,7 @@ impl Storage {
         self,
         ctx: &Context,
         pending_writes: PendingWrites,
-        queued_loads: Vec<QueuedLoad>,
+        queued_loads: Vec<QueuedArrivalSet>,
     ) -> StorageOpen {
         open_in_background_under(
             self.root_to_open(),
@@ -295,7 +299,7 @@ impl Storage {
         self,
         ctx: &Context,
         previous_take_over: Option<TakeOverRecord>,
-        queued_loads: Vec<QueuedLoad>,
+        queued_loads: Vec<QueuedArrivalSet>,
     ) -> StorageOpen {
         let (sender, inspected) = mpsc::channel();
         match self.root_to_open() {
@@ -339,7 +343,7 @@ pub(in crate::app) fn open_in_background_under(
     recovery: ArchiveRecovery,
     ctx: &Context,
     pending_writes: PendingWrites,
-    queued_loads: Vec<QueuedLoad>,
+    queued_loads: Vec<QueuedArrivalSet>,
 ) -> StorageOpen {
     let (sender, opened) = mpsc::channel();
     match root {
@@ -624,7 +628,9 @@ impl App {
         );
         self.adopt_open_storage(storage);
         self.auto_prune_environment_days();
-        self.load_arriving_files(queued_loads);
+        for arriving in queued_loads {
+            self.load_arriving_files(arriving.files);
+        }
     }
 }
 

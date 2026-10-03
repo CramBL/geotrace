@@ -28,7 +28,7 @@ use gt_ui_components::{FrozenRegions, HeldBodyLines};
 use super::App;
 use super::anchored_dialog::{AnchoredDialog, AnchoredDialogKind};
 use super::modals::{self, DialogActionRow, DialogBody};
-use super::storage::{QueuedLoad, StorageOpen};
+use super::storage::{QueuedArrivalSet, StorageOpen};
 
 /// Why this instance does not have the data directory, as the wait last
 /// found it.
@@ -569,7 +569,7 @@ impl App {
         &mut self,
         ctx: &egui::Context,
         taken_over: Option<TakenOverInstance>,
-        queued_loads: Vec<QueuedLoad>,
+        queued_loads: Vec<QueuedArrivalSet>,
     ) {
         let previous_take_over =
             taken_over.and_then(|taken_over| self.record_take_over(taken_over));
@@ -608,7 +608,7 @@ impl App {
         &mut self,
         ctx: &egui::Context,
         owner_process_id: Option<u32>,
-        queued_loads: Vec<QueuedLoad>,
+        queued_loads: Vec<QueuedArrivalSet>,
     ) {
         log::info!(
             "Starting read-only beside the GeoTrace that owns the data directory: this session \

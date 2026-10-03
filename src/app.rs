@@ -1,5 +1,12 @@
-use std::{cell::RefCell, env, path::PathBuf, rc::Rc};
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::env;
+use std::path::PathBuf;
+use std::rc::Rc;
 
+#[cfg(test)]
+use association_batches::LogArrival;
+use association_batches::{AssociationBatchId, RecordingArrival};
 use egui_tiles::{Container, Linear, LinearDir, Tile, TileId, Tiles, Tree};
 use gt_fetch::TransportSource;
 use gt_filter::GlobalFilter;
@@ -37,6 +44,7 @@ pub use storage::Storage;
 mod anchored_dialog;
 mod archive_recovery;
 mod archives_unreachable;
+mod association_batches;
 mod auto_prune;
 mod backfill;
 mod backfill_ui;
@@ -158,6 +166,7 @@ impl SharedAppState {
 /// settings or to use the stored tracks with the settings they were built
 /// with.
 struct ResegmentPrompt {
+    arrival: RecordingArrival,
     db_ref: gt_store::DatabaseRef,
     filename: String,
     bytes: std::sync::Arc<[u8]>,
@@ -409,13 +418,11 @@ pub struct App {
     /// settings differ from the current ones. Drives the recalculate/use-stored
     /// prompt.
     pending_resegment: Option<ResegmentPrompt>,
+    queued_resegments: VecDeque<ResegmentPrompt>,
     /// Set when the files that arrived together include a recording the
     /// history database already holds. Drives the prompt offering the stored
     /// version or the file on disk.
     pending_recordings_already_in_history: Option<recording_from_disk::RecordingsAlreadyInHistory>,
-    /// How many recordings are out with the history worker, waiting to be
-    /// looked up there before they load.
-    recordings_awaiting_a_history_lookup: usize,
     debug_time_repair_threshold_seconds: u32,
 
     storage_settings: crate::settings::StorageSettings,
@@ -689,8 +696,8 @@ impl App {
             data_directory_owner_process_id: None,
             keep_db_backup: true,
             pending_resegment: None,
+            queued_resegments: VecDeque::new(),
             pending_recordings_already_in_history: None,
-            recordings_awaiting_a_history_lookup: 0,
             debug_time_repair_threshold_seconds:
                 loader::DEBUG_TIME_REPAIR_DEFAULT_THRESHOLD_SECONDS,
             storage_settings: crate::settings::StorageSettings::default(),
@@ -932,6 +939,7 @@ impl App {
     }
 
     fn handle_completed_load(&mut self, completed: CompletedLoad, now: f64) {
+        let kind = completed.kind;
         match completed.outcome {
             Ok(LoadOutcome::GtdFile {
                 file,
@@ -988,7 +996,15 @@ impl App {
                 };
                 s.sync_tree_from_loaded_files();
                 s.plot_state.integrate_file(fi, series);
+                let loaded_id = s.loaded_files.view().get(fi).map(|entry| entry.id());
                 drop(s);
+                if let Some(id) = loaded_id {
+                    let arrival = match &kind {
+                        loader::LoadKind::Recording(arrival) => Some(arrival),
+                        _ => None,
+                    };
+                    self.loader.associations.record_loaded(arrival, id);
+                }
                 if replaced.is_some() {
                     // The replaced entry holds other tracks than the one it
                     // took the place of, so every TrackRef-keyed state and the
@@ -1025,7 +1041,11 @@ impl App {
                 parsed,
                 restored,
             }) => {
-                self.load_parsed_log(filename, parsed, restored);
+                let batch = match &kind {
+                    loader::LoadKind::LooseLog(arrival) => Some(arrival.batch()),
+                    _ => None,
+                };
+                self.load_parsed_log_in_batch(filename, parsed, restored, batch);
                 self.load_error = None;
                 self.loader.finishing_jobs.push(FinishedJob {
                     filename: completed.filename,
@@ -1046,11 +1066,38 @@ impl App {
     ///
     /// Deduplicates saved logs by attachment reference and loose imports
     /// by content.
+    #[cfg(test)]
     fn load_parsed_log(
         &mut self,
         filename: Option<String>,
         parsed: ParsedLog,
         restored: Option<loader::AttachedLogRestore>,
+    ) {
+        self.loader.associations.sync_loaded(
+            self.shared
+                .borrow()
+                .loaded_files
+                .view()
+                .entries()
+                .map(|entry| entry.id()),
+        );
+        let batch = restored
+            .is_none()
+            .then(|| self.loader.associations.implicit_log());
+        self.load_parsed_log_in_batch(
+            filename,
+            parsed,
+            restored,
+            batch.as_ref().map(LogArrival::batch),
+        );
+    }
+
+    fn load_parsed_log_in_batch(
+        &mut self,
+        filename: Option<String>,
+        parsed: ParsedLog,
+        restored: Option<loader::AttachedLogRestore>,
+        batch: Option<AssociationBatchId>,
     ) {
         let window = chrono::Duration::seconds(
             i64::try_from(self.assoc_config.log_association_window_s).unwrap_or(i64::MAX),
@@ -1076,6 +1123,9 @@ impl App {
             .map_or(0, LoadedLog::associated_entry_count);
         match outcome {
             LogPushOutcome::NewlyLoaded(id) => {
+                if let Some(batch) = batch {
+                    self.loader.associations.register_log(batch, id);
+                }
                 log::info!(
                     "Loaded log {name:?}: {entry_count} entries, {associated_entry_count} of them associated"
                 );

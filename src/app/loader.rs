@@ -17,10 +17,19 @@ use gt_track_builder::{
 };
 use gt_types::{LoadedFile, TrackAggregates};
 
+use super::association_batches::{AssociationBatches, LogArrival, RecordingArrival};
 use crate::app::background_thread;
+
+#[derive(Debug)]
+pub(super) enum LoadKind {
+    LooseLog(LogArrival),
+    Recording(RecordingArrival),
+    SavedLog,
+}
 
 /// State for a single in-flight background load job, shown in the progress UI.
 pub struct LoadingJob {
+    pub(super) kind: LoadKind,
     pub id: u64,
     pub filename: String,
     pub progress: f32,
@@ -118,6 +127,7 @@ pub enum LoadMessage {
 
 /// The result of a single completed background load, returned by `LoadJobs::drain`.
 pub(super) struct CompletedLoad {
+    pub(super) kind: LoadKind,
     pub filename: String,
     pub elapsed_secs: f32,
     pub outcome: Result<LoadOutcome, String>,
@@ -232,6 +242,7 @@ impl HistoryOpen {
 ///
 /// `loading_jobs` and `finishing_jobs` are public for the progress overlay UI.
 pub(super) struct LoadJobs {
+    pub(super) associations: AssociationBatches,
     ctx: Context,
     load_tx: mpsc::Sender<LoadMessage>,
     load_rx: mpsc::Receiver<LoadMessage>,
@@ -256,6 +267,7 @@ impl LoadJobs {
     pub fn new(ctx: Context, pending_writes: PendingWrites) -> Self {
         let (load_tx, load_rx) = mpsc::channel::<LoadMessage>();
         Self {
+            associations: AssociationBatches::default(),
             ctx,
             load_tx,
             load_rx,
@@ -270,12 +282,15 @@ impl LoadJobs {
     }
 
     #[cfg(test)]
-    pub(super) fn controlled_load_for_test(
+    pub(super) fn controlled_load_for_test<K: FnOnce(&AssociationBatches) -> LoadKind>(
         &mut self,
         filename: &str,
-    ) -> impl FnOnce(Result<LoadOutcome, String>) + use<> {
+        kind: K,
+    ) -> impl FnOnce(Result<LoadOutcome, String>) + use<K> {
         let id = self.alloc_id();
+        let kind = kind(&self.associations);
         self.loading_jobs.push(LoadingJob {
+            kind,
             id,
             filename: filename.to_owned(),
             progress: 0.0,
@@ -307,6 +322,7 @@ impl LoadJobs {
         config: SegmentationConfig,
         mode: GtdLoadMode,
         open: Option<HistoryOpen>,
+        arrival: RecordingArrival,
     ) {
         let id = self.alloc_id();
         let started_at = self.frame_time();
@@ -316,6 +332,7 @@ impl LoadJobs {
             .unwrap_or("unknown")
             .to_owned();
         self.loading_jobs.push(LoadingJob {
+            kind: LoadKind::Recording(arrival),
             id,
             filename: filename.clone(),
             progress: 0.0,
@@ -404,10 +421,12 @@ impl LoadJobs {
         config: SegmentationConfig,
         mode: GtdLoadMode,
         open: Option<HistoryOpen>,
+        arrival: RecordingArrival,
     ) {
         let id = self.alloc_id();
         let started_at = self.frame_time();
         self.loading_jobs.push(LoadingJob {
+            kind: LoadKind::Recording(arrival),
             id,
             filename: filename.clone(),
             progress: 0.0,
@@ -475,7 +494,7 @@ impl LoadJobs {
         });
     }
 
-    pub fn spawn_log_path(&mut self, path: PathBuf) {
+    pub fn spawn_log_path(&mut self, path: PathBuf, arrival: LogArrival) {
         let id = self.alloc_id();
         let started_at = self.frame_time();
         let filename = path
@@ -484,6 +503,7 @@ impl LoadJobs {
             .unwrap_or("unknown")
             .to_owned();
         self.loading_jobs.push(LoadingJob {
+            kind: LoadKind::LooseLog(arrival),
             id,
             filename: filename.clone(),
             progress: 0.0,
@@ -514,15 +534,20 @@ impl LoadJobs {
 
     /// Loads the bytes of a dropped log, which need not be valid UTF-8.
     /// `filename` is `None` when the drop carried no name.
-    pub fn spawn_log_bytes(&mut self, bytes: Arc<[u8]>, filename: Option<String>) {
-        self.spawn_log_load(filename, move || LogText::decode_lossy(&bytes));
+    pub fn spawn_log_bytes(
+        &mut self,
+        bytes: Arc<[u8]>,
+        filename: Option<String>,
+        arrival: LogArrival,
+    ) {
+        self.spawn_log_load(filename, arrival, move || LogText::decode_lossy(&bytes));
     }
 
     /// Loads pasted log text. Pasted text has no name of its own, so the log
     /// takes its name from its first entry.
-    pub fn spawn_pasted_log_text(&mut self, text: String) {
+    pub fn spawn_pasted_log_text(&mut self, text: String, arrival: LogArrival) {
         log::info!("Loading {} bytes of pasted log text", text.len());
-        self.spawn_log_load(None, move || LogText::from(text));
+        self.spawn_log_load(None, arrival, move || LogText::from(text));
     }
 
     /// Runs `decode` on a loader thread and parses what it yields, under a job
@@ -530,12 +555,14 @@ impl LoadJobs {
     fn spawn_log_load(
         &mut self,
         filename: Option<String>,
+        arrival: LogArrival,
         decode: impl FnOnce() -> LogText + Send + 'static,
     ) {
         let id = self.alloc_id();
         let started_at = self.frame_time();
         let job_name = filename.clone().unwrap_or_else(|| "log text".to_owned());
         self.loading_jobs.push(LoadingJob {
+            kind: LoadKind::LooseLog(arrival),
             id,
             filename: job_name.clone(),
             progress: 0.0,
@@ -569,6 +596,7 @@ impl LoadJobs {
             year_reference,
         } = log;
         self.loading_jobs.push(LoadingJob {
+            kind: LoadKind::SavedLog,
             id,
             filename: name.clone(),
             progress: 0.0,
@@ -640,21 +668,15 @@ impl LoadJobs {
                     }
                 }
                 LoadMessage::Completed { id, outcome } => {
-                    let elapsed_secs = self
-                        .loading_jobs
-                        .iter()
-                        .find(|j| j.id == id)
-                        .map_or(0.0, |j| (frame_time - j.started_at) as f32);
-                    let filename = self
-                        .loading_jobs
-                        .iter()
-                        .find(|j| j.id == id)
-                        .map(|j| j.filename.clone())
-                        .unwrap_or_default();
-                    self.loading_jobs.retain(|j| j.id != id);
+                    let Some(index) = self.loading_jobs.iter().position(|job| job.id == id) else {
+                        log::warn!("Completed load {id} has no registered job");
+                        continue;
+                    };
+                    let job = self.loading_jobs.remove(index);
                     completed.push(CompletedLoad {
-                        filename,
-                        elapsed_secs,
+                        kind: job.kind,
+                        filename: job.filename,
+                        elapsed_secs: (frame_time - job.started_at) as f32,
                         outcome,
                     });
                 }
@@ -1435,6 +1457,7 @@ mod tests {
         let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
         jobs.spawn_pasted_log_text(
             "2026-01-01 14:02:11 navsyncd: uploaded 2 recordings\n".to_owned(),
+            jobs.associations.implicit_log(),
         );
 
         let completed = drain_until_complete(&mut jobs);
@@ -1488,7 +1511,7 @@ mod tests {
         std::fs::write(&path, "2026-01-01 14:02:11 navsyncd: queue empty\n").expect("write log");
 
         let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
-        jobs.spawn_log_path(path);
+        jobs.spawn_log_path(path, jobs.associations.implicit_log());
 
         let completed = drain_until_complete(&mut jobs);
         let LoadOutcome::Log {
@@ -1505,7 +1528,10 @@ mod tests {
     #[test]
     fn loading_log_text_without_a_recognised_timestamp_fails() {
         let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
-        jobs.spawn_pasted_log_text("kernel: no timestamp here\n".to_owned());
+        jobs.spawn_pasted_log_text(
+            "kernel: no timestamp here\n".to_owned(),
+            jobs.associations.implicit_log(),
+        );
 
         let completed = drain_until_complete(&mut jobs);
         assert_eq!(
@@ -1533,6 +1559,7 @@ mod tests {
             SegmentationConfig::default(),
             GtdLoadMode::Regular,
             None,
+            jobs.associations.implicit_recording(),
         );
 
         let completed = drain_until_complete(&mut jobs);
@@ -1571,6 +1598,7 @@ mod tests {
                 backward_jump_threshold: chrono::Duration::milliseconds(42_500),
             },
             None,
+            jobs.associations.implicit_recording(),
         );
 
         let completed = drain_until_complete(&mut jobs);
@@ -1613,6 +1641,7 @@ mod tests {
             SegmentationConfig::default(),
             GtdLoadMode::Regular,
             None,
+            jobs.associations.implicit_recording(),
         );
 
         let completed = drain_until_complete(&mut jobs);
@@ -1643,6 +1672,7 @@ mod tests {
             SegmentationConfig::default(),
             GtdLoadMode::Regular,
             None,
+            jobs.associations.implicit_recording(),
         );
 
         let completed = drain_until_complete(&mut jobs);
@@ -1668,6 +1698,7 @@ mod tests {
             SegmentationConfig::default(),
             GtdLoadMode::Regular,
             None,
+            jobs.associations.implicit_recording(),
         );
 
         let completed = drain_until_complete(&mut jobs);
@@ -1850,6 +1881,7 @@ mod tests {
             SegmentationConfig::default(),
             GtdLoadMode::Regular,
             None,
+            jobs.associations.implicit_recording(),
         );
         let completed = drain_until_complete(&mut jobs);
         let LoadOutcome::GtdFile { history, .. } = completed.outcome.expect("load should succeed")

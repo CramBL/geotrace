@@ -21,17 +21,12 @@ use super::log_viewer::association_dialog::{LogAssociationChoice, LogAssociation
 
 impl App {
     pub(super) fn resolve_initial_log_associations(&mut self) {
-        if !self.loader.loading_jobs.is_empty()
-            || self.recordings_awaiting_a_history_lookup > 0
-            || self.pending_recordings_already_in_history.is_some()
-            || self.history.has_pending_recording_opens()
-            || self.pending_resegment.is_some()
-        {
-            return;
-        }
+        self.loader.associations.seal_implicit();
+        let pending = self.logs.pending_initial_position_sources();
+        let ready = self.loader.associations.ready_logs(&pending);
         let shared = self.shared.borrow();
         let recordings = shared.loaded_files.view();
-        for id in self.logs.pending_initial_position_sources() {
+        for (id, candidates) in ready {
             if self
                 .association_dialog
                 .as_ref()
@@ -39,25 +34,29 @@ impl App {
             {
                 continue;
             }
-            if self.initial_position_source_policy == InitialPositionSourcePolicy::Ask
-                && !recordings.is_empty()
-                && self.association_dialog.is_some()
-            {
-                break;
-            }
-            let Some(mut log) = self.logs.get_mut_by_id(id) else {
+            let Some(log) = self.logs.get_by_id(id) else {
                 continue;
             };
-            let unambiguous = log
+            let ranked = log
                 .rank_association_candidates(&recordings)
-                .unambiguous_target();
+                .restrict_to_recordings(&candidates);
+            let unambiguous = ranked.unambiguous_target();
             if self.initial_position_source_policy == InitialPositionSourcePolicy::Ask
-                && !recordings.is_empty()
+                && !ranked.ranked().is_empty()
             {
-                self.association_dialog = Some(LogAssociationDialog::new(id, unambiguous));
+                if self.association_dialog.is_some() {
+                    break;
+                }
+                self.association_dialog = Some(LogAssociationDialog::for_initial_selection(
+                    id,
+                    unambiguous,
+                    candidates,
+                ));
                 break;
             }
-            log.anchor_to_loaded_recording(unambiguous, &recordings);
+            if let Some(mut log) = self.logs.get_mut_by_id(id) {
+                log.anchor_to_loaded_recording(unambiguous, &recordings);
+            }
         }
     }
 

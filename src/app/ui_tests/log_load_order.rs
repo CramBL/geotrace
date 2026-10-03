@@ -5,18 +5,22 @@ use gt_loaded_files::FileHistory;
 use gt_log_view::{LoadedLog, LogAttachmentRef, PositionSourceState, RecordingKey};
 use gt_logfile::ParsedLog;
 use gt_plot::AnalysisConfig;
-use gt_store::{DatabaseRef, LogAttachmentId, StoredLogFilter, StoredLogFilterMode};
+use gt_store::{
+    DatabaseRef, LogAttachmentId, RecordingUiState, Store, StoredLogFilter, StoredLogFilterMode,
+    StoredRecording,
+};
 use gt_test_utils::{By, HarnessInteraction as _};
 use rstest::rstest;
 
 use crate::app::App;
-use crate::app::history_db;
-use crate::app::loader::{LoadOutcome, LoadedRecordingPlacement};
+use crate::app::history_db::{self, OpenedRecording};
+use crate::app::loader::{LoadKind, LoadOutcome, LoadedRecordingPlacement};
 use crate::app::log_viewer::association_dialog;
 use crate::app::recording_from_disk::{
     LOAD_FROM_DISK_LABEL, RecordingAlreadyInHistory, RecordingContent, RecordingFromDisk,
     ScreenedRecordings,
 };
+use crate::app::storage::QueuedLoad;
 use crate::app::{loader, test_util, ui_tests};
 use crate::settings::InitialPositionSourcePolicy;
 
@@ -123,11 +127,13 @@ fn initial_association_is_independent_of_log_and_recording_completion_order(
     let log = harness
         .state_mut()
         .loader
-        .controlled_load_for_test("log.txt");
+        .controlled_load_for_test("log.txt", |batch| LoadKind::LooseLog(batch.implicit_log()));
     let recording = harness
         .state_mut()
         .loader
-        .controlled_load_for_test("recording.gtd");
+        .controlled_load_for_test("recording.gtd", |batch| {
+            LoadKind::Recording(batch.implicit_recording())
+        });
     if log_first {
         log(Ok(log_outcome("log.txt")));
         harness.step();
@@ -156,10 +162,27 @@ fn initial_association_waits_for_every_overlapping_recording(
     #[values(true, false)] separate_frames: bool,
 ) {
     let mut harness = harness(ask);
-    let mut completions: Vec<_> = ["log.txt", "first.gtd", "second.gtd"]
-        .into_iter()
-        .map(|name| Some(harness.state_mut().loader.controlled_load_for_test(name)))
-        .collect();
+    let mut completions: Vec<_> = [
+        ("log.txt", false),
+        ("first.gtd", true),
+        ("second.gtd", true),
+    ]
+    .into_iter()
+    .map(|(name, recording)| {
+        Some(
+            harness
+                .state_mut()
+                .loader
+                .controlled_load_for_test(name, move |batch| {
+                    if recording {
+                        LoadKind::Recording(batch.implicit_recording())
+                    } else {
+                        LoadKind::LooseLog(batch.implicit_log())
+                    }
+                }),
+        )
+    })
+    .collect();
     for (step, index) in order.into_iter().enumerate() {
         let outcome = match index {
             0 => log_outcome("log.txt"),
@@ -195,15 +218,19 @@ fn a_failed_recording_load_releases_pending_log_association(#[values(true, false
     let good = harness
         .state_mut()
         .loader
-        .controlled_load_for_test("good.gtd");
+        .controlled_load_for_test("good.gtd", |batch| {
+            LoadKind::Recording(batch.implicit_recording())
+        });
     let failed = harness
         .state_mut()
         .loader
-        .controlled_load_for_test("failed.gtd");
+        .controlled_load_for_test("failed.gtd", |batch| {
+            LoadKind::Recording(batch.implicit_recording())
+        });
     let log = harness
         .state_mut()
         .loader
-        .controlled_load_for_test("log.txt");
+        .controlled_load_for_test("log.txt", |batch| LoadKind::LooseLog(batch.implicit_log()));
     good(Ok(recording_outcome("good.gtd")));
     log(Ok(log_outcome("log.txt")));
     harness.step();
@@ -218,11 +245,12 @@ fn initial_association_waits_for_history_screening_and_the_recording_load(
     #[values(true, false)] ask: bool,
 ) {
     let mut harness = harness(ask);
-    harness.state_mut().recordings_awaiting_a_history_lookup = 1;
+    let batch = harness.state().loader.associations.clone();
+    let screening = batch.implicit_recording();
     let log = harness
         .state_mut()
         .loader
-        .controlled_load_for_test("log.txt");
+        .controlled_load_for_test("log.txt", |batch| LoadKind::LooseLog(batch.implicit_log()));
     log(Ok(log_outcome("log.txt")));
     harness.step();
     assert!(harness.state().association_dialog.is_none());
@@ -240,6 +268,7 @@ fn initial_association_waits_for_history_screening_and_the_recording_load(
             ScreenedRecordings {
                 already_in_history: Vec::new(),
                 new_to_history: vec![RecordingFromDisk {
+                    arrival: screening,
                     filename: "recording.gtd".to_owned(),
                     content: RecordingContent::Bytes(ui_tests::minimal_gtd_bytes().into()),
                     mode: loader::GtdLoadMode::Regular,
@@ -260,7 +289,9 @@ fn initial_association_waits_for_history_open_results(#[values(true, false)] suc
         &ui_tests::two_live_track_ranges(),
     );
     let mut harness = harness(false);
-    harness.state_mut().history = test_util::recordings::worker_on(&path);
+    harness
+        .state_mut()
+        .install_history_worker(test_util::recordings::worker_on(&path));
     let requested = if succeeds {
         stored
     } else {
@@ -283,7 +314,7 @@ fn initial_association_waits_for_history_open_results(#[values(true, false)] suc
         1
     );
     assert!(
-        harness.step_until(|h| !h.state().history.has_pending_recording_opens()
+        harness.step_until(|h| !h.state().loader.associations.has_recording_work()
             && h.state().loader.loading_jobs.is_empty())
     );
     assert!(
@@ -309,9 +340,17 @@ fn pending_logs_receive_separate_dialogs_in_filename_order() {
     let recording = harness
         .state_mut()
         .loader
-        .controlled_load_for_test("recording.gtd");
-    let z = harness.state_mut().loader.controlled_load_for_test("z.txt");
-    let a = harness.state_mut().loader.controlled_load_for_test("a.txt");
+        .controlled_load_for_test("recording.gtd", |batch| {
+            LoadKind::Recording(batch.implicit_recording())
+        });
+    let z = harness
+        .state_mut()
+        .loader
+        .controlled_load_for_test("z.txt", |batch| LoadKind::LooseLog(batch.implicit_log()));
+    let a = harness
+        .state_mut()
+        .loader
+        .controlled_load_for_test("a.txt", |batch| LoadKind::LooseLog(batch.implicit_log()));
     z(Ok(log_outcome("z.txt")));
     a(Ok(log_outcome("a.txt")));
     harness.step();
@@ -379,13 +418,15 @@ fn a_later_unrelated_recording_load_preserves_a_resolved_log_without_a_source() 
     let log = harness
         .state_mut()
         .loader
-        .controlled_load_for_test("log.txt");
+        .controlled_load_for_test("log.txt", |batch| LoadKind::LooseLog(batch.implicit_log()));
     log(Ok(log_outcome("log.txt")));
     harness.run_steps(2);
     let recording = harness
         .state_mut()
         .loader
-        .controlled_load_for_test("recording.gtd");
+        .controlled_load_for_test("recording.gtd", |batch| {
+            LoadKind::Recording(batch.implicit_recording())
+        });
     recording(Ok(recording_outcome("recording.gtd")));
     harness.run_steps(2);
     assert_eq!(
@@ -412,17 +453,21 @@ fn an_explicit_footer_choice_preserves_the_source_when_pending_loads_finish(
     let first = harness
         .state_mut()
         .loader
-        .controlled_load_for_test("first.gtd");
+        .controlled_load_for_test("first.gtd", |batch| {
+            LoadKind::Recording(batch.implicit_recording())
+        });
     first(Ok(recording_outcome("first.gtd")));
     harness.step();
     let second = harness
         .state_mut()
         .loader
-        .controlled_load_for_test("second.gtd");
+        .controlled_load_for_test("second.gtd", |batch| {
+            LoadKind::Recording(batch.implicit_recording())
+        });
     let log = harness
         .state_mut()
         .loader
-        .controlled_load_for_test("log.txt");
+        .controlled_load_for_test("log.txt", |batch| LoadKind::LooseLog(batch.implicit_log()));
     log(Ok(log_outcome("log.txt")));
     harness.run_steps(2);
     assert_eq!(
@@ -486,11 +531,13 @@ fn restored_attachments_preserve_their_recording_during_other_loads() {
     let recording = harness
         .state_mut()
         .loader
-        .controlled_load_for_test("unrelated.gtd");
+        .controlled_load_for_test("unrelated.gtd", |batch| {
+            LoadKind::Recording(batch.implicit_recording())
+        });
     let log = harness
         .state_mut()
         .loader
-        .controlled_load_for_test("saved.log");
+        .controlled_load_for_test("saved.log", |_| LoadKind::SavedLog);
     let recording_key = DatabaseRef {
         identity: "saved".to_owned(),
         group_name: "recording".to_owned(),
@@ -532,11 +579,12 @@ fn restored_attachments_preserve_their_recording_during_other_loads() {
 #[test]
 fn cancelling_the_history_recording_prompt_releases_pending_logs() {
     let mut harness = harness(true);
-    harness.state_mut().recordings_awaiting_a_history_lookup = 1;
+    let batch = harness.state().loader.associations.clone();
+    let screening = batch.implicit_recording();
     let log = harness
         .state_mut()
         .loader
-        .controlled_load_for_test("log.txt");
+        .controlled_load_for_test("log.txt", |batch| LoadKind::LooseLog(batch.implicit_log()));
     log(Ok(log_outcome("log.txt")));
     harness.step();
     harness
@@ -545,6 +593,7 @@ fn cancelling_the_history_recording_prompt_releases_pending_logs() {
             ScreenedRecordings {
                 already_in_history: vec![RecordingAlreadyInHistory {
                     from_disk: RecordingFromDisk {
+                        arrival: screening,
                         filename: "recording.gtd".to_owned(),
                         content: RecordingContent::Bytes(ui_tests::minimal_gtd_bytes().into()),
                         mode: loader::GtdLoadMode::Regular,
@@ -589,18 +638,20 @@ fn cancelling_the_history_recording_prompt_releases_pending_logs() {
 #[test]
 fn successive_history_screening_responses_preserve_every_recording_before_association() {
     let mut harness = harness(false);
-    harness.state_mut().recordings_awaiting_a_history_lookup = 2;
+    let batch = harness.state().loader.associations.clone();
+    let screenings = [batch.implicit_recording(), batch.implicit_recording()];
     let log = harness
         .state_mut()
         .loader
-        .controlled_load_for_test("log.txt");
+        .controlled_load_for_test("log.txt", |batch| LoadKind::LooseLog(batch.implicit_log()));
     log(Ok(log_outcome("log.txt")));
     harness.step();
-    for name in ["first.gtd", "second.gtd"] {
+    for (name, screening) in ["first.gtd", "second.gtd"].into_iter().zip(screenings) {
         harness.state_mut().handle_history_response(
             history_db::Response::RecordingsFromDiskScreened(ScreenedRecordings {
                 already_in_history: vec![RecordingAlreadyInHistory {
                     from_disk: RecordingFromDisk {
+                        arrival: screening,
                         filename: name.to_owned(),
                         content: RecordingContent::Bytes(ui_tests::minimal_gtd_bytes().into()),
                         mode: loader::GtdLoadMode::Regular,
@@ -675,17 +726,21 @@ fn loose_and_saved_contexts_are_independent_of_completion_order(#[values(true, f
         let recording = harness
             .state_mut()
             .loader
-            .controlled_load_for_test("recording.gtd");
+            .controlled_load_for_test("recording.gtd", |batch| {
+                LoadKind::Recording(batch.implicit_recording())
+            });
         recording(Ok(recording_outcome("recording.gtd")));
         harness.step();
         let loose = harness
             .state_mut()
             .loader
-            .controlled_load_for_test("loose.log");
+            .controlled_load_for_test("loose.log", |batch| {
+                LoadKind::LooseLog(batch.implicit_log())
+            });
         let saved = harness
             .state_mut()
             .loader
-            .controlled_load_for_test("saved.log");
+            .controlled_load_for_test("saved.log", |_| LoadKind::SavedLog);
         let loose_outcome = LoadOutcome::Log {
             filename: Some("loose.log".to_owned()),
             parsed: parsed_log("shared"),
@@ -742,4 +797,289 @@ fn loose_and_saved_contexts_are_independent_of_completion_order(#[values(true, f
     }
     assert_eq!(results.first(), results.last());
     assert_eq!(results.first().expect("context set").len(), 2);
+}
+
+#[rstest]
+fn a_slow_log_load_does_not_delay_another_logs_initial_selection(#[values(true, false)] ask: bool) {
+    let mut harness = harness(ask);
+    let recording = harness
+        .state_mut()
+        .loader
+        .controlled_load_for_test("recording.gtd", |batch| {
+            LoadKind::Recording(batch.implicit_recording())
+        });
+    let fast = harness
+        .state_mut()
+        .loader
+        .controlled_load_for_test("fast.log", |batch| LoadKind::LooseLog(batch.implicit_log()));
+    let slow = harness
+        .state_mut()
+        .loader
+        .controlled_load_for_test("slow.log", |batch| LoadKind::LooseLog(batch.implicit_log()));
+    fast(Ok(log_outcome("fast.log")));
+    recording(Ok(recording_outcome("recording.gtd")));
+    harness.run_steps(2);
+    assert_eq!(harness.state().loader.loading_jobs.len(), 1);
+    assert_initial_association(&mut harness, ask, 1);
+    slow(Ok(log_outcome("slow.log")));
+    harness.run_steps(2);
+    if ask {
+        assert_eq!(
+            harness.state().association_dialog.as_ref().map(|dialog| {
+                harness
+                    .state()
+                    .logs
+                    .get_by_id(dialog.log())
+                    .expect("second log")
+                    .name()
+            }),
+            Some("slow.log")
+        );
+        harness
+            .get_by_label(association_dialog::CONFIRM_LABEL)
+            .click();
+        harness.run_steps(2);
+    }
+    assert_eq!(harness.state().logs.len(), 2);
+    assert!(
+        harness
+            .state()
+            .logs
+            .iter()
+            .all(|log| log.associated_recording().is_some())
+    );
+}
+
+#[rstest]
+fn later_batches_preserve_initial_candidate_membership(
+    #[values(true, false)] ask: bool,
+    #[values(true, false)] later_completes_first: bool,
+) {
+    let mut harness = harness(ask);
+    let first_batch = harness.state().loader.associations.begin_submission();
+    let arrival = first_batch.recording();
+    let first = harness
+        .state_mut()
+        .loader
+        .controlled_load_for_test("first.gtd", move |_| LoadKind::Recording(arrival));
+    let arrival = first_batch.log();
+    let log = harness
+        .state_mut()
+        .loader
+        .controlled_load_for_test("log.txt", move |_| LoadKind::LooseLog(arrival));
+    drop(first_batch);
+    log(Ok(log_outcome("log.txt")));
+    harness.step();
+    let later_batch = harness.state().loader.associations.begin_submission();
+    let arrival = later_batch.recording();
+    let later = harness
+        .state_mut()
+        .loader
+        .controlled_load_for_test("later.gtd", move |_| LoadKind::Recording(arrival));
+    drop(later_batch);
+    if later_completes_first {
+        later(Ok(recording_outcome("later.gtd")));
+        harness.step();
+        assert_eq!(
+            harness
+                .state()
+                .first_log()
+                .expect("pending log")
+                .position_source_state(),
+            PositionSourceState::PendingInitialSelection
+        );
+        first(Ok(recording_outcome("first.gtd")));
+    } else {
+        first(Ok(recording_outcome("first.gtd")));
+        harness.run_steps(2);
+        assert_initial_association(&mut harness, ask, 1);
+        later(Ok(recording_outcome("later.gtd")));
+    }
+    harness.run_steps(2);
+    if later_completes_first {
+        if ask {
+            assert!(
+                harness
+                    .get_by_role_and_label(Role::Window, association_dialog::TITLE)
+                    .query_by_label("later.gtd")
+                    .is_none()
+            );
+        }
+        assert_initial_association(&mut harness, ask, 1);
+    }
+    let source = harness
+        .state()
+        .first_log()
+        .and_then(LoadedLog::associated_recording)
+        .expect("source");
+    let shared = harness.state().shared.borrow();
+    assert_eq!(
+        shared
+            .loaded_files
+            .view()
+            .entry_for_id(source)
+            .expect("source recording")
+            .file()
+            .metadata
+            .filename,
+        "first.gtd"
+    );
+}
+
+#[rstest]
+#[case::cancel("Cancel", 0, true)]
+#[case::recalculate("Recalculate with current settings", 1, true)]
+#[case::stored_tracks("Use stored tracks", 1, true)]
+#[case::failed_recalculate("Recalculate with current settings", 0, false)]
+fn resegment_decisions_complete_every_recording_operation(
+    #[case] first_choice: &str,
+    #[case] loaded: usize,
+    #[case] readable: bool,
+) {
+    let mut harness = harness(false);
+    let batch = harness.state().loader.associations.clone();
+    let operations = [batch.implicit_recording(), batch.implicit_recording()];
+    let log = harness
+        .state_mut()
+        .loader
+        .controlled_load_for_test("log.txt", |batch| LoadKind::LooseLog(batch.implicit_log()));
+    log(Ok(log_outcome("log.txt")));
+    harness.step();
+    let mut segmentation =
+        loader::stored_segmentation_from_config(&harness.state().processing_config);
+    segmentation.track_split_gap_us += 1;
+    for (name, arrival) in ["first.gtd", "second.gtd"].into_iter().zip(operations) {
+        harness
+            .state_mut()
+            .handle_history_response(history_db::Response::Opened {
+                arrival,
+                db_ref: DatabaseRef {
+                    identity: name.to_owned(),
+                    group_name: name.to_owned(),
+                },
+                placement: LoadedRecordingPlacement::AddAnEntry,
+                result: Ok(OpenedRecording {
+                    stored: StoredRecording {
+                        bytes: if readable {
+                            ui_tests::minimal_gtd_bytes()
+                        } else {
+                            Vec::new()
+                        },
+                        tracks: ui_tests::two_live_track_ranges().to_vec(),
+                        segmentation: Some(segmentation),
+                        debug_tag: None,
+                    },
+                    ui_state: Ok(RecordingUiState::default()),
+                }),
+            });
+    }
+    harness.run_steps(2);
+    assert_eq!(
+        harness
+            .state()
+            .pending_resegment
+            .as_ref()
+            .expect("first prompt")
+            .filename,
+        "first.gtd"
+    );
+    assert_eq!(harness.state().queued_resegments.len(), 1);
+    harness.get_by_label(first_choice).click();
+    harness.run_steps(3);
+    assert_eq!(
+        harness
+            .state()
+            .pending_resegment
+            .as_ref()
+            .expect("second prompt")
+            .filename,
+        "second.gtd"
+    );
+    assert_eq!(
+        harness
+            .state()
+            .first_log()
+            .expect("pending log")
+            .position_source_state(),
+        PositionSourceState::PendingInitialSelection
+    );
+    harness.get_by_label("Cancel").click();
+    assert!(harness.step_until(|h| h.state().logs.pending_initial_position_sources().is_empty()));
+    assert_eq!(harness.state().shared.borrow().loaded_files.len(), loaded);
+    assert_initial_association(&mut harness, false, loaded);
+}
+
+#[rstest]
+#[case::cancel("Cancel", 0)]
+#[case::disk(LOAD_FROM_DISK_LABEL, 1)]
+#[case::history("Open the stored version", 1)]
+fn arrival_batches_complete_history_screening_and_prompt_decisions(
+    #[case] choice: &str,
+    #[case] loaded: usize,
+) {
+    let dir = tempfile::tempdir().expect("temp directory");
+    let path = dir.path().join("history.h5");
+    let bytes = ui_tests::minimal_gtd_bytes();
+    test_util::recordings::store_recording(&path, &bytes, &ui_tests::two_live_track_ranges());
+    let mut harness = harness(false);
+    harness
+        .state_mut()
+        .install_history_worker(test_util::recordings::worker_on(&path));
+    harness.state_mut().load_arriving_files(vec![
+        QueuedLoad::Bytes {
+            bytes: bytes.into(),
+            name: "recording.gtd".to_owned(),
+        },
+        QueuedLoad::PastedText(parsed_log("log").text().to_string()),
+    ]);
+    assert!(harness.step_until(
+        |h| h.state().pending_recordings_already_in_history.is_some() && h.state().logs.len() == 1
+    ));
+    assert_eq!(
+        harness
+            .state()
+            .first_log()
+            .expect("pending log")
+            .position_source_state(),
+        PositionSourceState::PendingInitialSelection
+    );
+    harness.run_steps(3);
+    harness.get_by_label(choice).click();
+    harness.run_steps(3);
+    assert!(harness.step_until(|h| h.state().logs.pending_initial_position_sources().is_empty()));
+    assert_eq!(harness.state().shared.borrow().loaded_files.len(), loaded);
+    assert_initial_association(&mut harness, false, loaded);
+}
+
+#[test]
+fn deferred_arrival_sets_keep_independent_candidates_after_storage_opens() {
+    let dir = tempfile::tempdir().expect("temp directory");
+    let store = Store::open_in(dir.path());
+    let (mut harness, databases) = ui_tests::app_with_the_databases_still_opening(&[]);
+    harness.state_mut().initial_position_source_policy =
+        InitialPositionSourcePolicy::AutomaticallyUseUnambiguous;
+    harness
+        .state_mut()
+        .load_arriving_files(vec![QueuedLoad::PastedText(
+            parsed_log("log").text().to_string(),
+        )]);
+    harness
+        .state_mut()
+        .load_arriving_files(vec![QueuedLoad::Bytes {
+            bytes: ui_tests::minimal_gtd_bytes().into(),
+            name: "recording.gtd".to_owned(),
+        }]);
+    assert!(harness.state().loader.loading_jobs.is_empty());
+    ui_tests::land_the_databases(&mut harness, &databases, &store);
+    assert!(harness.step_until(|h| h.state().logs.len() == 1
+        && h.state().shared.borrow().loaded_files.len() == 1
+        && h.state().logs.pending_initial_position_sources().is_empty()));
+    assert_eq!(
+        harness
+            .state()
+            .first_log()
+            .expect("resolved log")
+            .position_source_state(),
+        PositionSourceState::None
+    );
 }
