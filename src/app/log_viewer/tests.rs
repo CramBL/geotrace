@@ -13,8 +13,8 @@ use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
 use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
 use gt_log_view::{
-    FilterChipMode, FilterGroupOperator, LayerColorSlot, LoadedLog, LoadedLogs, LogAttachmentRef,
-    SessionLogAttachments,
+    FilterChipMode, FilterGroupOperator, FilterScope, LayerColorSlot, LoadedLog, LoadedLogs,
+    LogAttachmentRef, SessionLogAttachments,
 };
 use gt_logfile::RecordingAssociationIndex;
 use gt_pending_writes::WriteAccess;
@@ -1803,7 +1803,7 @@ fn chips(harness: &Harness<ViewerState>) -> Vec<(String, FilterChipMode, Option<
                 .iter()
                 .map(|chip| {
                     (
-                        chip.pattern().text.clone(),
+                        chip.pattern().text().to_owned(),
                         chip.mode(),
                         chip.layer_slot().map(LayerColorSlot::index),
                     )
@@ -1873,6 +1873,96 @@ fn remove_chip(harness: &mut Harness<ViewerState>, index: usize) {
 fn select_log(harness: &mut Harness<ViewerState>, name: &str) {
     harness.get_by_label(name).click();
     run_until_the_scans_land(harness);
+}
+
+#[test]
+fn structured_scope_controls_select_typed_values_and_show_chip_glyphs() {
+    let mut harness = harness_of(
+        Vec::new(),
+        &[(
+            "structured.log",
+            "2026-01-01 00:00:00 receiver navsyncd: ERROR: failed\n\
+         2026-01-01 00:00:01 receiver navsyncd[123]: INFO: started\n\
+         2026-01-01 00:00:02 other kernel: INFO: navsyncd receiver\n",
+        )],
+    );
+    harness.get_by_label(filters::REGEX_TOGGLE_LABEL);
+    harness
+        .get_by_label(egui_phosphor::regular::TEXT_ALIGN_LEFT)
+        .click();
+    harness.run_steps(2);
+    for scope in ["Message", "Service", "Level", "Hostname"] {
+        harness.get_by_label(scope);
+    }
+    harness.get_by_label("Service").click();
+    run_until_the_scans_land(&mut harness);
+    assert!(
+        harness
+            .query_by_label(filters::REGEX_TOGGLE_LABEL)
+            .is_none()
+    );
+    harness.get_by_label(egui_phosphor::regular::LIST).click();
+    harness.run_steps(2);
+    harness.get_by_label("navsyncd").click();
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(live_filter_text(&harness), "navsyncd");
+    assert_eq!(match_count(&harness), "2 of 3");
+    harness.get_by_label(filters::ADD_FILTER_LABEL).click();
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(
+        harness
+            .get_all_by_label(egui_phosphor::regular::GEAR)
+            .count(),
+        2
+    );
+    assert_eq!(
+        harness
+            .state()
+            .shown_log()
+            .unwrap()
+            .filters()
+            .live_filter_pattern()
+            .scope(),
+        FilterScope::Service
+    );
+    harness
+        .nth_matching(By::new().label(egui_phosphor::regular::GEAR), 0)
+        .click();
+    harness.run_steps(2);
+    harness.get_by_label("Level").click();
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(match_count(&harness), "1 of 3");
+    harness.get_by_label("Info").click();
+    harness.run_steps(2);
+    for level in ["Debug", "Info", "Warning", "Error"] {
+        assert!(harness.get_all_by_label(level).count() >= 1);
+    }
+    harness.get_by_label("Error").click();
+    run_until_the_scans_land(&mut harness);
+    harness.get_by_label(filters::ADD_FILTER_LABEL).click();
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(match_count(&harness), "1 of 3");
+    harness
+        .nth_matching(By::new().label(egui_phosphor::regular::TEXT_ALIGN_LEFT), 0)
+        .click();
+    harness.run_steps(2);
+    harness.get_by_label("Hostname").click();
+    run_until_the_scans_land(&mut harness);
+    type_into_live_filter(&mut harness, "RECEIVER");
+    assert_eq!(match_count(&harness), "1 of 3");
+    harness.get_by_label(filters::ADD_FILTER_LABEL).click();
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(
+        harness
+            .get_all_by_label(egui_phosphor::regular::DESKTOP)
+            .count(),
+        2
+    );
+    assert!(
+        harness
+            .query_by_label(filters::REGEX_TOGGLE_LABEL)
+            .is_none()
+    );
 }
 
 #[test]

@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use chrono::{Datelike as _, Duration};
 use gt_history_types::{
-    LogAttachmentId, StoredLogFilter, StoredLogFilterMode, StoredLogFilterStack,
+    LogAttachmentId, StoredLogFilter, StoredLogFilterCondition, StoredLogFilterMode,
+    StoredLogFilterStack,
 };
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_types::FileIdx;
@@ -130,8 +131,10 @@ fn an_attached_log_reports_the_filter_stack_edits_the_database_has_not_seen() {
             attachment.id,
             [StoredLogFilter {
                 group_id: 0,
-                text: "entry 1".to_owned(),
-                regex: false,
+                condition: StoredLogFilterCondition::Message {
+                    text: "entry 1".to_owned(),
+                    regex: false
+                },
                 enabled: true,
                 mode: StoredLogFilterMode::Layer { color_slot: 0 },
             }]
@@ -191,15 +194,19 @@ fn a_restored_attachment_puts_back_the_stack_it_was_stored_with() {
     let stored: StoredLogFilterStack = vec![
         StoredLogFilter {
             group_id: 0,
-            text: "entry 1".to_owned(),
-            regex: false,
+            condition: StoredLogFilterCondition::Message {
+                text: "entry 1".to_owned(),
+                regex: false,
+            },
             enabled: true,
             mode: StoredLogFilterMode::Layer { color_slot: 2 },
         },
         StoredLogFilter {
             group_id: 0,
-            text: "entry".to_owned(),
-            regex: false,
+            condition: StoredLogFilterCondition::Message {
+                text: "entry".to_owned(),
+                regex: false,
+            },
             enabled: false,
             mode: StoredLogFilterMode::Refine,
         },
@@ -259,8 +266,10 @@ fn identical_saved_logs_keep_distinct_attachment_contexts(#[case] same_recording
     for (attachment, pattern, slot) in &contexts {
         let stored: StoredLogFilterStack = vec![StoredLogFilter {
             group_id: 0,
-            text: (*pattern).to_owned(),
-            regex: false,
+            condition: StoredLogFilterCondition::Message {
+                text: (*pattern).to_owned(),
+                regex: false,
+            },
             enabled: true,
             mode: StoredLogFilterMode::Layer { color_slot: *slot },
         }]

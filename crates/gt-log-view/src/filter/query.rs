@@ -181,15 +181,13 @@ fn scan_entries_in_chunks_of(
     words_per_chunk: NonZeroUsize,
 ) -> Option<EntryMatches> {
     let entries = log.entries();
-    let text = log.text().as_ref();
+    let services: Vec<_> = log.services_by_first_appearance().collect();
     let entries_per_chunk = words_per_chunk.get().saturating_mul(BITS_PER_WORD);
-    let scan_chunk = |chunk: &[LogEntry]| {
+    let scan_chunk = |(chunk_index, chunk): (usize, &[LogEntry])| {
         is_current().then(|| {
-            MatchChunk::of(
-                chunk
-                    .iter()
-                    .map(|entry| compiled.matches(entry.message.in_text(text))),
-            )
+            MatchChunk::of(chunk.iter().enumerate().map(|(offset, _)| {
+                compiled.matches_entry(log, chunk_index * entries_per_chunk + offset, &services)
+            }))
         })
     };
 
@@ -197,10 +195,15 @@ fn scan_entries_in_chunks_of(
         Some(pool) => pool.install(|| {
             entries
                 .par_chunks(entries_per_chunk)
+                .enumerate()
                 .map(scan_chunk)
                 .collect()
         }),
-        None => entries.chunks(entries_per_chunk).map(scan_chunk).collect(),
+        None => entries
+            .chunks(entries_per_chunk)
+            .enumerate()
+            .map(scan_chunk)
+            .collect(),
     };
     Some(EntryMatches::from_chunks(chunks?, entries.len()))
 }
@@ -218,10 +221,14 @@ const WORDS_PER_CHUNK: NonZeroUsize = match NonZeroUsize::new(1024) {
 mod tests {
     use std::sync::atomic::AtomicUsize;
 
+    use gt_logfile::LogLevelKind;
     use proptest::{prelude::*, proptest};
 
     use super::*;
-    use crate::{filter::pattern::FilterPattern, test_util};
+    use crate::{
+        filter::pattern::{FilterPattern, FilterScope},
+        test_util,
+    };
 
     fn compiled(text: &str) -> CompiledFilter {
         FilterPattern::plain(text)
@@ -236,6 +243,81 @@ mod tests {
     fn scanned(log: &ParsedLog, text: &str, words_per_chunk: NonZeroUsize) -> EntryMatches {
         scan_entries_in_chunks_of(log, &compiled(text), &|| true, words_per_chunk)
             .expect("nothing supersedes this scan")
+    }
+
+    #[rstest::rstest]
+    #[case::service(FilterPattern::Service("NAVSYNCD".into()), vec![0, 1])]
+    #[case::service_exact(FilterPattern::Service("navsync".into()), vec![])]
+    #[case::hostname(FilterPattern::Hostname("WORKSTATION".into()), vec![0, 1, 3, 4, 5, 6])]
+    #[case::hostname_exact(FilterPattern::Hostname("work".into()), vec![])]
+    #[case::error(FilterPattern::Level(LogLevelKind::Error), vec![0])]
+    #[case::info(FilterPattern::Level(LogLevelKind::Info), vec![1, 2])]
+    #[case::debug(FilterPattern::Level(LogLevelKind::Debug), vec![3])]
+    #[case::warning(FilterPattern::Level(LogLevelKind::Warning), vec![4])]
+    #[case::message(FilterPattern::plain("navsyncd"), vec![0, 1, 2])]
+    #[case::regex(FilterPattern::regex("(?-i)navsyncd\\[123\\]"), vec![1])]
+    fn structured_scans_match_only_recognized_fields(
+        #[case] pattern: FilterPattern,
+        #[case] expected: Vec<usize>,
+    ) {
+        let log = test_util::parsed_log_of_text(
+            "2026-01-01 00:00:00 workstation navsyncd: ERROR: failure\n\
+             2026-01-01 00:00:01 workstation navsyncd[123]: INFO: started\n\
+             2026-01-01 00:00:02 other kernel: INFO: navsyncd workstation ERROR\n\
+             2026-01-01 00:00:03 workstation kernel: DEBUG: logged\n\
+             2026-01-01 00:00:04 workstation kernel: WARN: logged\n\
+             2026-01-01 00:00:05 workstation kernel: no level\n\
+             2026-01-01 00:00:06 workstation no service ERROR\n",
+        );
+        let matches =
+            scan_entries_in_chunks_of(&log, &pattern.compile().unwrap(), &|| true, words(1))
+                .unwrap();
+        assert_eq!(
+            matches.matched_entry_indices().collect::<Vec<_>>(),
+            expected
+        );
+        if pattern.scope() != FilterScope::Message {
+            assert!(
+                pattern
+                    .compile()
+                    .unwrap()
+                    .match_spans("navsyncd workstation ERROR")
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn hostname_conditions_do_not_match_logs_without_a_hostname_column() {
+        let log = test_util::parsed_log_of_text("2026-01-01 00:00:00 navsyncd: workstation\n");
+        let matches = scan_entries(
+            &log,
+            &FilterPattern::Hostname("workstation".into())
+                .compile()
+                .unwrap(),
+            &|| true,
+        )
+        .unwrap();
+        assert_eq!(matches.match_count(), 0);
+    }
+
+    #[test]
+    fn service_conditions_match_exact_identities_after_slot_saturation() {
+        let mut text: String = (0..=u16::MAX)
+            .map(|index| format!("2026-01-01 00:00:00 service{index}: logged\n"))
+            .collect();
+        text.push_str("2026-01-01 00:00:01 navsyncd[123]: logged\n");
+        let log = test_util::parsed_log_of_text(&text);
+        let matches = scan_entries(
+            &log,
+            &FilterPattern::Service("navsyncd".into()).compile().unwrap(),
+            &|| true,
+        )
+        .unwrap();
+        assert_eq!(
+            matches.matched_entry_indices().collect::<Vec<_>>(),
+            [usize::from(u16::MAX) + 1]
+        );
     }
 
     #[test]

@@ -123,21 +123,66 @@ pub enum StoredLogFilterMode {
 
 /// One chip of a log's filter stack, as it is stored with an attachment: the
 /// storage schema, independent of `gt_log_view`'s session model.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct StoredLogFilter {
-    /// The filter as the user wrote it in the field.
-    pub text: String,
+    pub condition: StoredLogFilterCondition,
 
     pub group_id: u64,
-
-    /// Whether the `.*` toggle was on while it was written.
-    pub regex: bool,
 
     /// Whether the chip was drawing and narrowing when it was stored.
     pub enabled: bool,
 
     #[serde(flatten)]
     pub mode: StoredLogFilterMode,
+}
+
+impl<'de> Deserialize<'de> for StoredLogFilter {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Fields {
+            condition: Option<StoredLogFilterCondition>,
+            text: Option<String>,
+            regex: Option<bool>,
+            group_id: u64,
+            enabled: bool,
+            #[serde(flatten)]
+            mode: StoredLogFilterMode,
+        }
+        let fields = Fields::deserialize(deserializer)?;
+        let condition = match (fields.condition, fields.text, fields.regex) {
+            (Some(condition), None, None) => condition,
+            (None, Some(text), Some(regex)) => StoredLogFilterCondition::Message { text, regex },
+            _ => {
+                return Err(serde::de::Error::custom(
+                    "invalid log filter condition fields",
+                ));
+            }
+        };
+        Ok(Self {
+            condition,
+            group_id: fields.group_id,
+            enabled: fields.enabled,
+            mode: fields.mode,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "scope", rename_all = "snake_case", deny_unknown_fields)]
+pub enum StoredLogFilterCondition {
+    Hostname { text: String },
+    Level { value: StoredLogLevel },
+    Message { text: String, regex: bool },
+    Service { text: String },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StoredLogLevel {
+    Debug,
+    Error,
+    Info,
+    Warning,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -277,9 +322,11 @@ impl<'de> Deserialize<'de> for StoredLogFilterStack {
         impl LegacyFilter {
             fn migrate(self) -> StoredLogFilter {
                 StoredLogFilter {
-                    text: self.text,
+                    condition: StoredLogFilterCondition::Message {
+                        text: self.text,
+                        regex: self.regex,
+                    },
                     group_id: 0,
-                    regex: self.regex,
                     enabled: self.enabled,
                     mode: self.mode,
                 }
@@ -443,7 +490,7 @@ const LOG_ATTACHMENT_FILE_SUFFIX: &str = ".zst";
 
 /// Version of the attribute JSON layout, bumped only on a change older builds
 /// cannot read. An attachment written in a newer version is ignored.
-const LOG_ATTACHMENT_FORMAT_VERSION: u32 = 3;
+const LOG_ATTACHMENT_FORMAT_VERSION: u32 = 4;
 
 #[cfg(test)]
 mod tests {
@@ -460,15 +507,19 @@ mod tests {
             vec![
                 StoredLogFilter {
                     group_id: 0,
-                    text: "gnss".to_owned(),
-                    regex: false,
+                    condition: StoredLogFilterCondition::Message {
+                        text: "gnss".to_owned(),
+                        regex: false,
+                    },
                     enabled: true,
                     mode: StoredLogFilterMode::Layer { color_slot: 2 },
                 },
                 StoredLogFilter {
                     group_id: 0,
-                    text: "hal-powerd|navsyncd".to_owned(),
-                    regex: true,
+                    condition: StoredLogFilterCondition::Message {
+                        text: "hal-powerd|navsyncd".to_owned(),
+                        regex: true,
+                    },
                     enabled: false,
                     mode: StoredLogFilterMode::Refine,
                 },
@@ -485,7 +536,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"format_version":3,"name":"navsyncd.log","content_hash":"b3e7a3594637c2fbf4655e82bcf507d6","filters":{"groups":[{"id":0,"operator":"all"}],"selected_group_id":0,"chips":[{"text":"gnss","group_id":0,"regex":false,"enabled":true,"mode":"layer","color_slot":2},{"text":"hal-powerd|navsyncd","group_id":0,"regex":true,"enabled":false,"mode":"refine"}]}}"#
+            r#"{"format_version":4,"name":"navsyncd.log","content_hash":"b3e7a3594637c2fbf4655e82bcf507d6","filters":{"groups":[{"id":0,"operator":"all"}],"selected_group_id":0,"chips":[{"condition":{"scope":"message","text":"gnss","regex":false},"group_id":0,"enabled":true,"mode":"layer","color_slot":2},{"condition":{"scope":"message","text":"hal-powerd|navsyncd","regex":true},"group_id":0,"enabled":false,"mode":"refine"}]}}"#
         );
         assert_eq!(
             LogAttachment::from_attribute_json(&json),
@@ -504,11 +555,48 @@ mod tests {
             .to_attribute_json()
             .expect("encode the migrated attachment");
         let json: Value = serde_json::from_str(&rewritten).expect("encoded JSON");
-        assert_eq!(json.get("format_version"), Some(&serde_json::json!(3)));
+        assert_eq!(json.get("format_version"), Some(&serde_json::json!(4)));
         assert_eq!(
             LogAttachment::from_attribute_json(&rewritten),
             Some(expected)
         );
+    }
+
+    #[rstest]
+    #[case::version_two(2, r#"{"operator":"any","chips":[{"text":"gnss","regex":false,"enabled":true,"mode":"refine"}]}"#)]
+    #[case::version_three(3, r#"{"groups":[{"id":7,"operator":"any"}],"selected_group_id":7,"chips":[{"group_id":7,"text":"gnss","regex":false,"enabled":true,"mode":"refine"}]}"#)]
+    fn pre_scope_stacks_restore_message_conditions(#[case] version: u32, #[case] filters: &str) {
+        let json = format!(
+            r#"{{"format_version":{version},"name":"log","content_hash":"0","filters":{filters}}}"#
+        );
+        let restored = LogAttachment::from_attribute_json(&json).unwrap();
+        assert_eq!(
+            restored.filters.chips().first().unwrap().condition,
+            StoredLogFilterCondition::Message {
+                text: "gnss".into(),
+                regex: false
+            }
+        );
+        assert_eq!(
+            restored.filters.groups().first().unwrap().operator,
+            StoredLogFilterOperator::Any
+        );
+        assert!(
+            restored
+                .to_attribute_json()
+                .unwrap()
+                .contains("\"format_version\":4")
+        );
+    }
+
+    #[rstest]
+    #[case::structured_regex(r#"{"scope":"service","text":"navsyncd","regex":true}"#)]
+    #[case::invalid_level(r#"{"scope":"level","value":"fatal"}"#)]
+    #[case::text_level(r#"{"scope":"level","text":"error"}"#)]
+    fn invalid_stored_condition_combinations_are_rejected(#[case] condition: &str) {
+        let json =
+            format!(r#"{{"condition":{condition},"group_id":0,"enabled":true,"mode":"refine"}}"#);
+        serde_json::from_str::<StoredLogFilter>(&json).expect_err("invalid condition");
     }
 
     #[test]
@@ -554,9 +642,11 @@ mod tests {
         let chips = chip_group_id
             .into_iter()
             .map(|group_id| StoredLogFilter {
-                text: "gnss".to_owned(),
+                condition: StoredLogFilterCondition::Message {
+                    text: "gnss".to_owned(),
+                    regex: false,
+                },
                 group_id,
-                regex: false,
                 enabled: true,
                 mode: StoredLogFilterMode::Refine,
             })
@@ -575,7 +665,7 @@ mod tests {
     /// attribute sits on.
     #[test]
     fn an_attachment_this_build_cannot_read_decodes_to_nothing() {
-        let newer = r#"{"format_version":4,"name":"navsyncd.log","content_hash":"0","filters":[]}"#;
+        let newer = r#"{"format_version":5,"name":"navsyncd.log","content_hash":"0","filters":[]}"#;
         assert_eq!(LogAttachment::from_attribute_json(newer), None);
         assert_eq!(LogAttachment::from_attribute_json("{"), None);
     }
@@ -625,15 +715,26 @@ mod tests {
     fn filters() -> impl Strategy<Value = Vec<StoredLogFilter>> {
         proptest::collection::vec(
             (
-                ".*",
-                any::<bool>(),
+                prop_oneof![
+                    (".*", any::<bool>()).prop_map(|(text, regex)| {
+                        StoredLogFilterCondition::Message { text, regex }
+                    }),
+                    ".*".prop_map(|text| StoredLogFilterCondition::Service { text }),
+                    ".*".prop_map(|text| StoredLogFilterCondition::Hostname { text }),
+                    prop::sample::select(vec![
+                        StoredLogLevel::Debug,
+                        StoredLogLevel::Info,
+                        StoredLogLevel::Warning,
+                        StoredLogLevel::Error
+                    ])
+                    .prop_map(|value| StoredLogFilterCondition::Level { value }),
+                ],
                 any::<bool>(),
                 proptest::option::of(any::<usize>()),
             )
-                .prop_map(|(text, regex, enabled, color_slot)| StoredLogFilter {
+                .prop_map(|(condition, enabled, color_slot)| StoredLogFilter {
                     group_id: 0,
-                    text,
-                    regex,
+                    condition,
                     enabled,
                     mode: match color_slot {
                         Some(color_slot) => StoredLogFilterMode::Layer { color_slot },

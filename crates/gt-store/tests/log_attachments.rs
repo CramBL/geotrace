@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use chrono::DateTime;
-use gt_history_types::fixtures;
+use gt_history_types::{StoredLogFilterCondition, fixtures};
 use gt_store::{
     DatabaseRef, HistoryDatabase as _, LogAttachmentError, LogAttachmentId, LogAttachments as _,
     LogToAttach, ReadOnlyHistoryDatabase as _, ReadOnlyLogAttachments as _, RecordingMeta,
@@ -299,7 +299,14 @@ fn changing_the_filters_of_an_attachment_leaves_its_log_alone() {
         operator: StoredLogFilterOperator::Any,
     });
     let mut chips = fixture_filters.chips().to_vec();
-    chips.first_mut().expect("highlighted filter").group_id = 9;
+    let highlighted = chips.first_mut().expect("highlighted filter");
+    highlighted.group_id = 9;
+    highlighted.condition = StoredLogFilterCondition::Service {
+        text: "navsyncd".into(),
+    };
+    chips.last_mut().expect("table filter").condition = StoredLogFilterCondition::Hostname {
+        text: "receiver".into(),
+    };
     let filters = StoredLogFilterStack::try_from_parts(StoredLogFilterStackParts {
         groups,
         selected_group_id: 42,

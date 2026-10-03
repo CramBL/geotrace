@@ -9,9 +9,11 @@ use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use egui_phosphor::regular::X as ICON_X;
 use gt_log_view::{
     FilterChip, FilterChipId, FilterChipMode, FilterGroup, FilterGroupId, FilterGroupOperator,
-    FilterStack, LayerColorSlots, LoadedLogs,
+    FilterPattern, FilterScope, FilterStack, LayerColorSlots, LoadedLogs,
 };
+use gt_logfile::{LogLevelKind, ParsedLog};
 use gt_ui_types::LoadedLogId;
+use strum::IntoEnumIterator as _;
 
 use super::LogViewerWindow;
 
@@ -43,6 +45,8 @@ enum FilterEdit {
         to: FilterChipMode,
     },
     WriteLiveFilter(String),
+    SetScope(FilterScope),
+    SetLevel(LogLevelKind),
 }
 
 impl LogViewerWindow {
@@ -57,7 +61,7 @@ impl LogViewerWindow {
             return;
         };
         let filters = log.filters();
-        let live_edit = self.filter_row_ui(ui, filters);
+        let live_edit = self.filter_row_ui(ui, filters, log.parsed());
         let chip_edit = chip_row_ui(ui, filters, logs.layer_color_slots());
         let edit = live_edit.or(chip_edit);
 
@@ -68,6 +72,8 @@ impl LogViewerWindow {
             return;
         };
         match edit {
+            FilterEdit::SetScope(scope) => stack.set_live_filter_scope(scope),
+            FilterEdit::SetLevel(level) => stack.set_live_filter_level(level),
             FilterEdit::WriteLiveFilter(text) => stack.set_live_filter_text(&text),
             FilterEdit::ReadLiveFilterAsRegex(regex) => stack.set_live_filter_regex(regex),
             FilterEdit::CreateGroup => {
@@ -105,9 +111,15 @@ impl LogViewerWindow {
 
     /// The field the user filters the log from, what its pattern selected, and
     /// the controls turning it into a chip or emptying it.
-    fn filter_row_ui(&mut self, ui: &mut egui::Ui, filters: &FilterStack) -> Option<FilterEdit> {
+    fn filter_row_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        filters: &FilterStack,
+        log: &ParsedLog,
+    ) -> Option<FilterEdit> {
         let mut text = filters.live_filter_text().to_owned();
         let regex = filters.live_filter_is_regex();
+        let scope = filters.live_filter_pattern().scope();
         let match_count = format!(
             "{} of {}",
             gt_fmt::format_count(filters.visible_entries().len()),
@@ -126,22 +138,70 @@ impl LogViewerWindow {
             {
                 edit = Some(FilterEdit::CreateGroup);
             }
-            if ui
-                .add(
-                    TextEdit::singleline(&mut text)
-                        .id(egui::Id::new(LIVE_FILTER_FIELD_ID))
-                        .hint_text(FIELD_HINT)
-                        .desired_width(FIELD_WIDTH_PX),
-                )
-                .on_hover_text(FIELD_HOVER)
-                .changed()
-            {
-                edit = Some(FilterEdit::WriteLiveFilter(text));
+            ui.menu_button(FilterScopeUi(scope).glyph(), |ui| {
+                for candidate in FilterScope::iter() {
+                    if ui
+                        .selectable_label(scope == candidate, candidate.to_string())
+                        .clicked()
+                    {
+                        edit = Some(FilterEdit::SetScope(candidate));
+                        ui.close();
+                    }
+                }
+            })
+            .response
+            .on_hover_text(format!("Filter {}", scope.to_string().to_lowercase()));
+            if let FilterPattern::Level(level) = filters.live_filter_pattern() {
+                ui.menu_button(level.to_string(), |ui| {
+                    for candidate in LogLevelKind::iter() {
+                        if ui
+                            .selectable_label(*level == candidate, candidate.to_string())
+                            .clicked()
+                        {
+                            edit = Some(FilterEdit::SetLevel(candidate));
+                            ui.close();
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("Filter recognized level");
+            } else {
+                if ui
+                    .add(
+                        TextEdit::singleline(&mut text)
+                            .id(egui::Id::new(LIVE_FILTER_FIELD_ID))
+                            .hint_text(FIELD_HINT)
+                            .desired_width(FIELD_WIDTH_PX),
+                    )
+                    .on_hover_text(FIELD_HOVER)
+                    .changed()
+                {
+                    edit = Some(FilterEdit::WriteLiveFilter(text.clone()));
+                }
+                if scope == FilterScope::Service {
+                    ui.add_enabled_ui(log.services_by_first_appearance().next().is_some(), |ui| {
+                        ui.menu_button(SERVICE_SUGGESTIONS_GLYPH, |ui| {
+                            for service in log.services_by_first_appearance() {
+                                if ui
+                                    .selectable_label(text.eq_ignore_ascii_case(service), service)
+                                    .clicked()
+                                {
+                                    edit = Some(FilterEdit::WriteLiveFilter(service.to_owned()));
+                                    ui.close();
+                                }
+                            }
+                        })
+                        .response
+                        .on_hover_text("Select a recognized service")
+                        .on_disabled_hover_text("This log has no recognized services");
+                    });
+                }
             }
-            if ui
-                .selectable_label(regex, REGEX_TOGGLE_LABEL)
-                .on_hover_text(REGEX_TOGGLE_HOVER)
-                .clicked()
+            if scope == FilterScope::Message
+                && ui
+                    .selectable_label(regex, REGEX_TOGGLE_LABEL)
+                    .on_hover_text(REGEX_TOGGLE_HOVER)
+                    .clicked()
             {
                 edit = Some(FilterEdit::ReadLiveFilterAsRegex(!regex));
             }
@@ -325,7 +385,9 @@ fn chip_ui(
             swatch_ui(ui, color, slots.is_shared(slot));
         }
 
-        let text = &chip.pattern().text;
+        ui.label(FilterScopeUi(chip.pattern().scope()).glyph())
+            .on_hover_text(chip.pattern().scope().to_string());
+        let text = chip.pattern().text();
         ui.add(Label::new(
             RichText::new(gt_fmt::truncate_with_ellipsis(text, CHIP_TEXT_CHARS)).monospace(),
         ))
@@ -525,3 +587,18 @@ const ANY_FILTER_HOVER: &str = "Match any filter in this group. Click to match a
 pub(in crate::app) const NEW_GROUP_LABEL: &str = "⊕";
 pub(in crate::app) const REMOVE_GROUP_LABEL: &str = "−";
 pub(in crate::app) const MOVE_FILTER_LABEL: &str = "→";
+
+struct FilterScopeUi(FilterScope);
+
+impl FilterScopeUi {
+    fn glyph(self) -> &'static str {
+        match self.0 {
+            FilterScope::Hostname => egui_phosphor::regular::DESKTOP,
+            FilterScope::Level => egui_phosphor::regular::WARNING,
+            FilterScope::Message => egui_phosphor::regular::TEXT_ALIGN_LEFT,
+            FilterScope::Service => egui_phosphor::regular::GEAR,
+        }
+    }
+}
+
+const SERVICE_SUGGESTIONS_GLYPH: &str = egui_phosphor::regular::LIST;

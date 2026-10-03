@@ -6,8 +6,8 @@ use gt_log_view::{LoadedLog, LogAttachmentRef, PositionSourceState, RecordingKey
 use gt_logfile::ParsedLog;
 use gt_plot::AnalysisConfig;
 use gt_store::{
-    DatabaseRef, LogAttachmentId, RecordingUiState, Store, StoredLogFilter, StoredLogFilterMode,
-    StoredLogFilterStack, StoredRecording,
+    DatabaseRef, LogAttachmentId, RecordingUiState, Store, StoredLogFilter,
+    StoredLogFilterCondition, StoredLogFilterMode, StoredLogFilterStack, StoredRecording,
 };
 use gt_test_utils::{By, HarnessInteraction as _};
 use rstest::rstest;
@@ -854,8 +854,10 @@ fn loose_and_saved_contexts_are_independent_of_completion_order(#[values(true, f
     };
     let saved_filters: StoredLogFilterStack = vec![StoredLogFilter {
         group_id: 0,
-        text: "shared".to_owned(),
-        regex: false,
+        condition: StoredLogFilterCondition::Message {
+            text: "shared".to_owned(),
+            regex: false,
+        },
         enabled: false,
         mode: StoredLogFilterMode::Refine,
     }]

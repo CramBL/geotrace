@@ -3,16 +3,16 @@
 use std::{iter, mem, ops::Range, sync::Arc};
 
 use gt_history_types::{
-    InvalidStoredLogFilterStack, StoredLogFilter, StoredLogFilterGroup, StoredLogFilterMode,
-    StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts,
+    InvalidStoredLogFilterStack, StoredLogFilter, StoredLogFilterCondition, StoredLogFilterGroup,
+    StoredLogFilterMode, StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts,
 };
-use gt_logfile::ParsedLog;
+use gt_logfile::{LogLevelKind, ParsedLog};
 
 use crate::filter::{
     clock_ticks::ClockTicks,
     composition::FilterGroupOperator,
     matches::EntryMatches,
-    pattern::{CompiledFilter, FilterPattern, InvalidFilterPattern},
+    pattern::{CompiledFilter, FilterPattern, FilterScope, InvalidFilterPattern},
     query::FilterQuery,
     slots::{LayerColorSlot, LayerColorSlots},
 };
@@ -268,11 +268,11 @@ impl FilterStack {
     }
 
     pub fn live_filter_text(&self) -> &str {
-        &self.live.pattern.text
+        self.live.pattern.text()
     }
 
     pub fn live_filter_is_regex(&self) -> bool {
-        self.live.pattern.regex
+        self.live.pattern.is_regex()
     }
 
     /// What the regex engine said about a pattern it could not compile. The
@@ -297,25 +297,51 @@ impl FilterStack {
         }
     }
 
+    pub fn live_filter_pattern(&self) -> &FilterPattern {
+        &self.live.pattern
+    }
+
+    pub fn set_live_filter_scope(&mut self, scope: FilterScope) {
+        if self.live.pattern.scope() == scope {
+            return;
+        }
+        self.set_live_filter(match scope {
+            FilterScope::Message => FilterPattern::default(),
+            FilterScope::Service => FilterPattern::Service(String::new()),
+            FilterScope::Level => FilterPattern::Level(LogLevelKind::Info),
+            FilterScope::Hostname => FilterPattern::Hostname(String::new()),
+        });
+    }
+
+    pub fn set_live_filter_level(&mut self, level: LogLevelKind) {
+        if self.live.pattern.scope() == FilterScope::Level {
+            self.set_live_filter(FilterPattern::Level(level));
+        }
+    }
+
     pub fn set_live_filter_text(&mut self, text: &str) {
-        self.set_live_filter(FilterPattern {
-            text: text.to_owned(),
-            regex: self.live.pattern.regex,
+        self.set_live_filter(match &self.live.pattern {
+            FilterPattern::Message { regex, .. } => FilterPattern::Message {
+                text: text.to_owned(),
+                regex: *regex,
+            },
+            FilterPattern::Service(_) => FilterPattern::Service(text.to_owned()),
+            FilterPattern::Hostname(_) => FilterPattern::Hostname(text.to_owned()),
+            FilterPattern::Level(_) => return,
         });
     }
 
-    /// Switches the live filter between plain terms and a regex, keeping the
-    /// text the user already wrote.
     pub fn set_live_filter_regex(&mut self, regex: bool) {
-        self.set_live_filter(FilterPattern {
-            text: self.live.pattern.text.clone(),
-            regex,
-        });
+        if let FilterPattern::Message { text, .. } = &self.live.pattern {
+            self.set_live_filter(FilterPattern::Message {
+                text: text.clone(),
+                regex,
+            });
+        }
     }
 
-    /// Empties the field, leaving the `.*` toggle as the user set it.
     pub fn clear_live_filter(&mut self) {
-        self.set_live_filter_text("");
+        self.set_live_filter(self.live.pattern.cleared_live_pattern());
     }
 
     pub fn can_add_live_filter_as_chip(&self) -> bool {
@@ -330,8 +356,7 @@ impl FilterStack {
         let id = FilterChipId(self.next_chip_id);
         self.next_chip_id = self.next_chip_id.saturating_add(1);
         let mut emptied = LogFilter::unwritten(self.log.entries().len());
-        // The `.*` toggle belongs to the field and stays as the user set it.
-        emptied.pattern.regex = self.live.pattern.regex;
+        emptied.pattern = self.live.pattern.cleared_live_pattern();
         self.chips.push(FilterChip {
             id,
             group: self.selected_group,
@@ -488,13 +513,7 @@ impl FilterStack {
         let id = FilterChipId(self.next_chip_id);
         self.next_chip_id = self.next_chip_id.saturating_add(1);
         let mut filter = LogFilter::unwritten(self.log.entries().len());
-        filter.rewrite(
-            FilterPattern {
-                text: stored.text.clone(),
-                regex: stored.regex,
-            },
-            &self.log,
-        );
+        filter.rewrite(FilterPattern::from(&stored.condition), &self.log);
         self.chips.push(FilterChip {
             id,
             group: FilterGroupId(stored.group_id),
@@ -602,8 +621,7 @@ impl FilterChip {
     fn to_stored_filter(&self) -> StoredLogFilter {
         StoredLogFilter {
             group_id: self.group.0,
-            text: self.filter.pattern.text.clone(),
-            regex: self.filter.pattern.regex,
+            condition: StoredLogFilterCondition::from(&self.filter.pattern),
             enabled: self.enabled,
             mode: match self.layer_slot {
                 Some(slot) => StoredLogFilterMode::Layer {
@@ -732,6 +750,92 @@ mod tests {
             stack.move_chip_to_group(third, first_group);
             assert_eq!(visible(&stack), expected);
         }
+    }
+
+    #[rstest]
+    #[case::flat(1, r#"[{"text":"gnss","regex":false,"enabled":true,"mode":"refine"}]"#, vec![0, 2])]
+    #[case::single_group(2, r#"{"operator":"any","chips":[{"text":"gnss","regex":false,"enabled":true,"mode":"refine"},{"text":"critical","regex":false,"enabled":true,"mode":"refine"}]}"#, vec![0, 2, 3])]
+    #[case::groups(3, r#"{"groups":[{"id":7,"operator":"any"},{"id":9,"operator":"all"}],"selected_group_id":9,"chips":[{"group_id":7,"text":"gnss","regex":false,"enabled":true,"mode":"refine"},{"group_id":7,"text":"critical","regex":false,"enabled":true,"mode":"refine"},{"group_id":9,"text":"lost","regex":false,"enabled":true,"mode":"refine"}]}"#, vec![2])]
+    fn pre_scope_attachment_formats_preserve_the_visible_entry_set(
+        #[case] version: u32,
+        #[case] filters: &str,
+        #[case] expected: Vec<usize>,
+    ) {
+        let json = format!(
+            r#"{{"format_version":{version},"name":"log","content_hash":"0","filters":{filters}}}"#
+        );
+        let attachment = LogAttachment::from_attribute_json(&json).unwrap();
+        let mut restored = FilterStack::from_stored_stack(
+            Arc::new(test_util::parsed_log_of_text(LOG)),
+            &attachment.filters,
+        );
+        restored.wait_for_queries();
+        assert_eq!(visible(&restored), expected);
+        assert!(
+            restored
+                .chips()
+                .iter()
+                .all(|chip| chip.pattern().scope() == FilterScope::Message)
+        );
+    }
+
+    #[rstest]
+    #[case::pending(false)]
+    #[case::landed(true)]
+    fn structured_conditions_reuse_scans_across_group_and_highlight_edits(#[case] land: bool) {
+        let log = Arc::new(test_util::parsed_log_of_text(
+            "2026-01-01 00:00:00 host navsyncd: ERROR: failed\n\
+             2026-01-01 00:00:01 host kernel: INFO: started\n\
+             2026-01-01 00:00:02 other navsyncd[123]: INFO: started\n",
+        ));
+        let mut stack = FilterStack::new(Arc::clone(&log));
+        let mut slots = LayerColorSlots::default();
+        let first = stack.selected_group();
+        stack.set_live_filter(FilterPattern::Service("navsyncd".into()));
+        stack.wait_for_queries();
+        let service = stack.add_live_filter_as_chip().unwrap();
+        stack.set_live_filter(FilterPattern::Level(LogLevelKind::Error));
+        if land {
+            stack.wait_for_queries();
+        }
+        let identity = stack.live.query.scan_identity();
+        let level = stack.add_live_filter_as_chip().unwrap();
+        assert_eq!(
+            stack.chip(level).unwrap().filter.query.scan_identity(),
+            identity
+        );
+        stack.set_group_operator(first, FilterGroupOperator::Any);
+        let second = stack.create_group();
+        stack.set_live_filter(FilterPattern::Hostname("HOST".into()));
+        stack.wait_for_queries();
+        let hostname = stack.add_live_filter_as_chip().unwrap();
+        assert_eq!(visible(&stack), [0]);
+        stack.move_chip_to_group(level, second);
+        stack.switch_chip_to_layer_mode(level, &mut slots);
+        assert_eq!(
+            stack.chip(level).unwrap().filter.query.scan_identity(),
+            identity
+        );
+        stack.switch_chip_to_refine_mode(level, &mut slots);
+        assert_eq!(stack.chip(level).unwrap().group(), second);
+        stack.move_chip_to_group(level, first);
+        stack.switch_chip_to_layer_mode(service, &mut slots);
+        stack.set_chip_enabled(hostname, false);
+        let stored = stack.to_stored_stack().unwrap();
+        let mut restored = FilterStack::from_stored_stack(log, &stored);
+        restored.wait_for_queries();
+        assert_eq!(restored.to_stored_stack().unwrap(), stored);
+        assert_eq!(visible(&restored), [0]);
+        let restored_service = restored.chips().first().unwrap();
+        assert_eq!(
+            restored_service
+                .matches()
+                .matched_entry_indices()
+                .collect::<Vec<_>>(),
+            [0, 2]
+        );
+        restored.switch_chip_to_refine_mode(restored_service.id(), &mut slots);
+        assert_eq!(restored.chips().first().unwrap().group(), first);
     }
 
     #[test]
@@ -1414,15 +1518,19 @@ mod tests {
             [
                 StoredLogFilter {
                     group_id: 0,
-                    text: "gnss".to_owned(),
-                    regex: false,
+                    condition: StoredLogFilterCondition::Message {
+                        text: "gnss".to_owned(),
+                        regex: false
+                    },
                     enabled: true,
                     mode: StoredLogFilterMode::Refine,
                 },
                 StoredLogFilter {
                     group_id: 0,
-                    text: "battery".to_owned(),
-                    regex: false,
+                    condition: StoredLogFilterCondition::Message {
+                        text: "battery".to_owned(),
+                        regex: false
+                    },
                     enabled: false,
                     mode: StoredLogFilterMode::Layer { color_slot: 1 },
                 },
@@ -1456,8 +1564,10 @@ mod tests {
     fn a_stored_regex_chip_and_an_unknown_colour_slot_restore_as_they_were() {
         let stored: StoredLogFilterStack = vec![StoredLogFilter {
             group_id: 0,
-            text: "^navsyncd".to_owned(),
-            regex: true,
+            condition: StoredLogFilterCondition::Message {
+                text: "^navsyncd".to_owned(),
+                regex: true,
+            },
             enabled: true,
             mode: StoredLogFilterMode::Layer {
                 color_slot: LAYER_COLOR_SLOT_COUNT + 3,

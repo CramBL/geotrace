@@ -9,11 +9,12 @@ use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
 use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
 use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use gt_loaded_files::FileHistory;
-use gt_log_view::{LoadedLog, LogAttachmentRef, RecordingKey};
+use gt_log_view::{FilterPattern, LoadedLog, LogAttachmentRef, RecordingKey};
 use gt_store::{
     DatabaseRef, HistoryDatabase as _, LogAttachmentEntry, LogAttachments as _, LogToAttach,
     ReadOnlyHistoryDatabase as _, Recordings, RecordingsHandle, StoredLogFilter,
-    StoredLogFilterMode, StoredLogFilterOperator, StoredLogFilterStack, TrackRange, TrackState,
+    StoredLogFilterCondition, StoredLogFilterMode, StoredLogFilterOperator, StoredLogFilterStack,
+    TrackRange, TrackState,
 };
 use gt_test_utils::{
     By, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec, SyntheticLogTimestamps,
@@ -545,7 +546,7 @@ fn an_attached_log_comes_back_with_its_filters_when_the_recording_opens_again() 
             log.filters()
                 .chips()
                 .iter()
-                .map(|chip| (chip.pattern().text.clone(), chip.mode()))
+                .map(|chip| (chip.pattern().text().to_owned(), chip.mode()))
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
@@ -622,7 +623,7 @@ fn an_unloaded_attachment_is_listed_under_its_recording_and_loads_back() {
                 .filters()
                 .chips()
                 .iter()
-                .map(|chip| chip.pattern().text.clone())
+                .map(|chip| chip.pattern().text().to_owned())
                 .collect::<Vec<_>>())
             .unwrap_or_default(),
         ["kernel".to_owned()],
@@ -931,8 +932,10 @@ fn seed_a_recording_and_the_log_stored_with_it(
                 text: &fixture_log_text(FIXTURE_LOG_SEED),
                 filters: vec![StoredLogFilter {
                     group_id: 0,
-                    text: "kernel".to_owned(),
-                    regex: false,
+                    condition: StoredLogFilterCondition::Message {
+                        text: "kernel".to_owned(),
+                        regex: false,
+                    },
                     enabled: true,
                     mode: StoredLogFilterMode::Layer { color_slot: 0 },
                 }]
@@ -969,7 +972,7 @@ fn shown_log_chips(harness: &Harness<App>) -> Vec<String> {
             log.filters()
                 .chips()
                 .iter()
-                .map(|chip| chip.pattern().text.clone())
+                .map(|chip| chip.pattern().text().to_owned())
                 .collect()
         })
         .unwrap_or_default()
@@ -1503,12 +1506,20 @@ fn the_stored_stack_holds_every_chips_mode_and_colour() {
         filters
             .chips()
             .iter()
-            .map(|filter| (filter.text.as_str(), filter.enabled, filter.mode))
+            .map(|filter| (
+                FilterPattern::from(&filter.condition).text().to_owned(),
+                filter.enabled,
+                filter.mode
+            ))
             .collect::<Vec<_>>(),
         [
-            ("kernel", true, StoredLogFilterMode::Layer { color_slot: 0 }),
             (
-                "rotated",
+                "kernel".to_owned(),
+                true,
+                StoredLogFilterMode::Layer { color_slot: 0 }
+            ),
+            (
+                "rotated".to_owned(),
                 true,
                 StoredLogFilterMode::Layer { color_slot: 1 }
             ),
@@ -1542,8 +1553,10 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
     let meta = gt_store::extract_meta(&bytes).expect("fixture metadata");
     let filters: StoredLogFilterStack = vec![StoredLogFilter {
         group_id: 0,
-        text: "systemd".to_owned(),
-        regex: false,
+        condition: StoredLogFilterCondition::Message {
+            text: "systemd".to_owned(),
+            regex: false,
+        },
         enabled: false,
         mode: StoredLogFilterMode::Refine,
     }]

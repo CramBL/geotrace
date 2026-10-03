@@ -2,28 +2,118 @@
 
 use std::ops::Range;
 
+use gt_history_types::{StoredLogFilterCondition, StoredLogLevel};
+use gt_logfile::{LogLevelKind, ParsedLog};
 use regex::{Regex, RegexBuilder};
+use strum::{Display, EnumIter};
 
-/// A filter as the user wrote it: the text of the field, and whether the `.*`
-/// toggle was on while it was written.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct FilterPattern {
-    pub text: String,
-    pub regex: bool,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FilterPattern {
+    Hostname(String),
+    Level(LogLevelKind),
+    Message { text: String, regex: bool },
+    Service(String),
+}
+
+#[derive(Clone, Copy, Debug, Default, Display, EnumIter, Eq, PartialEq)]
+pub enum FilterScope {
+    Hostname,
+    Level,
+    #[default]
+    Message,
+    Service,
+}
+
+impl From<&StoredLogFilterCondition> for FilterPattern {
+    fn from(condition: &StoredLogFilterCondition) -> Self {
+        match condition {
+            StoredLogFilterCondition::Message { text, regex } => Self::Message {
+                text: text.clone(),
+                regex: *regex,
+            },
+            StoredLogFilterCondition::Service { text } => Self::Service(text.clone()),
+            StoredLogFilterCondition::Hostname { text } => Self::Hostname(text.clone()),
+            StoredLogFilterCondition::Level { value } => Self::Level(match value {
+                StoredLogLevel::Debug => LogLevelKind::Debug,
+                StoredLogLevel::Info => LogLevelKind::Info,
+                StoredLogLevel::Warning => LogLevelKind::Warning,
+                StoredLogLevel::Error => LogLevelKind::Error,
+            }),
+        }
+    }
+}
+
+impl From<&FilterPattern> for StoredLogFilterCondition {
+    fn from(pattern: &FilterPattern) -> Self {
+        match pattern {
+            FilterPattern::Message { text, regex } => Self::Message {
+                text: text.clone(),
+                regex: *regex,
+            },
+            FilterPattern::Service(text) => Self::Service { text: text.clone() },
+            FilterPattern::Hostname(text) => Self::Hostname { text: text.clone() },
+            FilterPattern::Level(level) => Self::Level {
+                value: match level {
+                    LogLevelKind::Debug => StoredLogLevel::Debug,
+                    LogLevelKind::Info => StoredLogLevel::Info,
+                    LogLevelKind::Warning => StoredLogLevel::Warning,
+                    LogLevelKind::Error => StoredLogLevel::Error,
+                },
+            },
+        }
+    }
+}
+
+impl Default for FilterPattern {
+    fn default() -> Self {
+        Self::plain("")
+    }
 }
 
 impl FilterPattern {
     pub fn plain(text: impl Into<String>) -> Self {
-        Self {
+        Self::Message {
             text: text.into(),
             regex: false,
         }
     }
 
     pub fn regex(text: impl Into<String>) -> Self {
-        Self {
+        Self::Message {
             text: text.into(),
             regex: true,
+        }
+    }
+
+    pub fn scope(&self) -> FilterScope {
+        match self {
+            Self::Message { .. } => FilterScope::Message,
+            Self::Service(_) => FilterScope::Service,
+            Self::Level(_) => FilterScope::Level,
+            Self::Hostname(_) => FilterScope::Hostname,
+        }
+    }
+
+    pub fn text(&self) -> &str {
+        match self {
+            Self::Message { text, .. } | Self::Service(text) | Self::Hostname(text) => text,
+            Self::Level(level) => level.as_ref(),
+        }
+    }
+
+    pub fn is_regex(&self) -> bool {
+        matches!(self, Self::Message { regex: true, .. })
+    }
+
+    pub fn cleared_live_pattern(&self) -> Self {
+        match self {
+            Self::Message { regex, .. } => Self::Message {
+                text: String::new(),
+                regex: *regex,
+            },
+            Self::Service(_) => Self::Service(String::new()),
+            Self::Hostname(_) => Self::Hostname(String::new()),
+            Self::Level(_) => Self::default(),
         }
     }
 
@@ -32,16 +122,31 @@ impl FilterPattern {
     /// What counts as an empty filter differs with the mode: whitespace
     /// separates the terms of a plain filter, and a regex takes it literally.
     pub(crate) fn compile(&self) -> Result<CompiledFilter, InvalidFilterPattern> {
-        if self.regex {
-            if self.text.is_empty() {
+        match self {
+            Self::Service(text) | Self::Hostname(text) => {
+                if text.is_empty() {
+                    return Ok(CompiledFilter::matching_nothing());
+                }
+                let exact = case_insensitive_regex(&format!("\\A{}\\z", regex::escape(text)))
+                    .map_err(|err| InvalidFilterPattern(err.to_string()))?;
+                return Ok(CompiledFilter(match self {
+                    Self::Service(_) => Matcher::Service(Box::new(exact)),
+                    _ => Matcher::Hostname(Box::new(exact)),
+                }));
+            }
+            Self::Level(level) => return Ok(CompiledFilter(Matcher::Level(*level))),
+            Self::Message { .. } => {}
+        }
+        if self.is_regex() {
+            if self.text().is_empty() {
                 return Ok(CompiledFilter::matching_nothing());
             }
-            return case_insensitive_regex(&self.text)
+            return case_insensitive_regex(self.text())
                 .map(|regex| CompiledFilter(Matcher::Regex(Box::new(regex))))
                 .map_err(|err| InvalidFilterPattern(err.to_string()));
         }
 
-        let terms: Vec<PlainTerm> = self.text.split_whitespace().map(PlainTerm::new).collect();
+        let terms: Vec<PlainTerm> = self.text().split_whitespace().map(PlainTerm::new).collect();
         Ok(match terms.is_empty() {
             true => CompiledFilter::matching_nothing(),
             false => CompiledFilter(Matcher::AllTerms(terms)),
@@ -76,9 +181,40 @@ impl CompiledFilter {
     /// timestamp: an entry's timestamp is not part of its message.
     pub(crate) fn matches(&self, message: &str) -> bool {
         match &self.0 {
-            Matcher::MatchesNothing => false,
+            Matcher::MatchesNothing
+            | Matcher::Service(_)
+            | Matcher::Hostname(_)
+            | Matcher::Level(_) => false,
             Matcher::AllTerms(terms) => terms.iter().all(|term| term.matches(message)),
             Matcher::Regex(regex) => regex.is_match(message),
+        }
+    }
+
+    pub(crate) fn matches_entry(&self, log: &ParsedLog, index: usize, services: &[&str]) -> bool {
+        let Some(entry) = log.entries().get(index) else {
+            return false;
+        };
+        let message = log.message(entry);
+        let metadata = log.recognised_messages().get(index).copied();
+        match &self.0 {
+            Matcher::Service(exact) => metadata
+                .and_then(|m| m.service())
+                .and_then(|service| {
+                    if service.slot() == u16::MAX {
+                        service.identity_in(message)
+                    } else {
+                        services.get(usize::from(service.slot())).copied()
+                    }
+                })
+                .is_some_and(|service| exact.is_match(service)),
+            Matcher::Hostname(exact) => metadata
+                .and_then(|m| m.hostname())
+                .and_then(|span| message.get(span))
+                .is_some_and(|host| exact.is_match(host)),
+            Matcher::Level(kind) => metadata
+                .and_then(|m| m.level())
+                .is_some_and(|level| level.kind() == *kind),
+            _ => self.matches(message),
         }
     }
 
@@ -95,7 +231,10 @@ impl CompiledFilter {
     pub(crate) fn match_spans(&self, message: &str) -> Vec<Range<usize>> {
         let mut spans = Vec::new();
         match &self.0 {
-            Matcher::MatchesNothing => return spans,
+            Matcher::MatchesNothing
+            | Matcher::Service(_)
+            | Matcher::Hostname(_)
+            | Matcher::Level(_) => return spans,
             Matcher::AllTerms(terms) => {
                 for term in terms {
                     let term_spans = term.spans(message);
@@ -134,13 +273,12 @@ fn merged_spans(mut spans: Vec<Range<usize>>, message: &str) -> Vec<Range<usize>
 
 #[derive(Debug)]
 enum Matcher {
-    /// Every term must occur in the message.
     AllTerms(Vec<PlainTerm>),
-
+    Hostname(Box<Regex>),
+    Level(LogLevelKind),
     MatchesNothing,
-
-    /// Case-insensitive unless the pattern turns that off with `(?-i)`.
     Regex(Box<Regex>),
+    Service(Box<Regex>),
 }
 
 /// One whitespace-separated term of a plain filter, matched as a
@@ -398,7 +536,7 @@ mod tests {
             regex in any::<bool>(),
             message in any::<String>(),
         ) {
-            let pattern = FilterPattern { text, regex };
+            let pattern = FilterPattern::Message { text, regex };
             let Ok(compiled) = pattern.compile() else {
                 return Ok(());
             };
@@ -426,7 +564,7 @@ mod tests {
             regex in any::<bool>(),
             message in any::<String>(),
         ) {
-            let pattern = FilterPattern { text: text.clone(), regex };
+            let pattern = FilterPattern::Message { text: text.clone(), regex };
             match pattern.compile() {
                 Ok(compiled) => {
                     let matches_nothing = match regex {
