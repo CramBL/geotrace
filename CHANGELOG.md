@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- **Log Viewer:** Fixed repeated interface stalls with large filtered logs while the log viewer is open.
 - **Log Viewer:** Fixed equally overlapping position-source candidates changing order when recordings opened together finish loading in a different order.
 - **Log Viewer:** Fixed unrelated log or recording loads delaying the initial position-source choice.
 - **Log Viewer:** Fixed consecutive syslog lines around February 29 being dated years apart when their timestamps omit the year.
