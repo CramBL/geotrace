@@ -252,9 +252,9 @@ impl LineTableRows {
     }
 
     pub(super) fn row_of_exact_entry(&self, target: usize) -> Option<usize> {
-        self.rows.iter().position(
-            |row| matches!(row, LineTableRow::Entry { entry_index, .. } if *entry_index == target),
-        )
+        self.row_of_entry(target).filter(|&row| {
+            matches!(self.at(row), Some(LineTableRow::Entry { entry_index, .. }) if entry_index == target)
+        })
     }
 
     pub(super) fn row_of_entry(&self, target: usize) -> Option<usize> {

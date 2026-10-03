@@ -196,9 +196,8 @@ impl LogViewerWindow {
         self.open = true;
     }
 
-    /// Shows the log the map's clicked hexagon draws matches of, with the table
-    /// scrolled to that hexagon's first line and the rows of all its lines
-    /// marked.
+    /// Opens the clicked hexagon's log and marks its entries in the table.
+    /// Scrolls to its first entry when table filters keep that entry visible.
     ///
     /// A hexagon of a log that is no longer loaded leaves the window as it is.
     fn open_on_clicked_glyph(&mut self, clicked: LogMatchGlyph, logs: &LoadedLogs) {
@@ -211,7 +210,7 @@ impl LogViewerWindow {
         self.scroll_to_row = clicked
             .entry_indices
             .first()
-            .and_then(|&entry_index| rows.row_of_entry(entry_index));
+            .and_then(|&entry_index| rows.row_of_exact_entry(entry_index));
         self.clicked_glyph = Some(clicked);
     }
 
