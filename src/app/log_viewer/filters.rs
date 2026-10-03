@@ -100,6 +100,8 @@ impl LogViewerWindow {
 
     pub(super) fn display_options_ui(&mut self, ui: &mut egui::Ui) {
         ui.menu_button(DISPLAY_OPTIONS_LABEL, |ui| {
+            ui.checkbox(&mut self.show_structural_lines, "Show structural lines")
+                .on_hover_text("Show recognized source lines between log entries");
             ui.checkbox(&mut self.color_services, COLOR_SERVICES_LABEL)
                 .on_hover_text(COLOR_SERVICES_HOVER);
             ui.checkbox(&mut self.color_levels, COLOR_LEVELS_LABEL)
@@ -170,7 +172,12 @@ impl LogViewerWindow {
                     .add(
                         TextEdit::singleline(&mut text)
                             .id(egui::Id::new(LIVE_FILTER_FIELD_ID))
-                            .hint_text(FIELD_HINT)
+                            .hint_text(match scope {
+                                FilterScope::Message => FIELD_HINT,
+                                FilterScope::Service => "Filter services",
+                                FilterScope::Hostname => "Filter hostnames",
+                                FilterScope::Level => "Filter levels",
+                            })
                             .desired_width(FIELD_WIDTH_PX),
                     )
                     .on_hover_text(FIELD_HOVER)
@@ -498,7 +505,7 @@ fn paint_chip_border(
 /// whatever else is on screen.
 pub(in crate::app) const LIVE_FILTER_FIELD_ID: &str = "log_viewer_live_filter";
 
-const FIELD_HINT: &str = "Filter lines";
+const FIELD_HINT: &str = "Filter messages";
 
 const FIELD_HOVER: &str = "Show the lines whose message holds every term written here";
 

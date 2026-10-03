@@ -9,7 +9,7 @@ use gt_logfile::{BootSession, ParsedLog};
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::LoadedLogId;
 
-use super::line_table::LineTableRows;
+use super::line_table::DiagnosticTarget;
 use super::{LogViewerWindow, TIMESTAMP_FORMAT};
 
 impl LogViewerWindow {
@@ -20,7 +20,6 @@ impl LogViewerWindow {
         log_id: LoadedLogId,
     ) {
         let parsed = log.parsed();
-        let rows = LineTableRows::of(log);
         Frame::group(ui.style()).show(ui, |ui| {
             ScrollArea::vertical()
                 .id_salt(("log_viewer_summary_panel", log_id))
@@ -28,20 +27,16 @@ impl LogViewerWindow {
                 .show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     parse_figures_ui(ui, parsed);
-                    self.boot_sessions_ui(ui, parsed, &rows);
+                    self.boot_sessions_ui(ui, log, log_id);
                     service_summary_ui(ui, parsed);
-                    self.order_anomalies_ui(ui, parsed, &rows);
+                    self.order_anomalies_ui(ui, log, log_id);
                 });
         });
     }
 
     /// One row per boot session, with a bar proportional to its uptime.
-    fn boot_sessions_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        parsed: &ParsedLog,
-        rows: &LineTableRows<'_>,
-    ) {
+    fn boot_sessions_ui(&mut self, ui: &mut egui::Ui, log: &LoadedLog, log_id: LoadedLogId) {
+        let parsed = log.parsed();
         let longest_uptime = parsed
             .boot_sessions()
             .iter()
@@ -55,17 +50,16 @@ impl LogViewerWindow {
             .spacing(GRID_SPACING)
             .show(ui, |ui| {
                 for (session_index, session) in parsed.boot_sessions().iter().enumerate() {
-                    let boot_divider_row = rows.row_of_boot_divider(session_index);
                     if ui
-                        .add_enabled(
-                            boot_divider_row.is_some(),
-                            Button::new(format!("Boot {}", session.boot_number)),
-                        )
+                        .add(Button::new(format!("Boot {}", session.boot_number)))
                         .on_hover_text("Scroll the table to this boot session")
-                        .on_disabled_hover_text(FILTERED_OUT_HOVER)
                         .clicked()
                     {
-                        self.scroll_to_row = boot_divider_row;
+                        self.navigate_to_diagnostic(
+                            log,
+                            log_id,
+                            DiagnosticTarget::BootSession(session_index),
+                        );
                     }
                     let uptime = session.uptime();
                     ui.add(
@@ -103,12 +97,8 @@ impl LogViewerWindow {
 
     /// The backwards timestamp steps no logged clock adjustment explains. Drawn
     /// only when the parse found any: a clean log says nothing here.
-    fn order_anomalies_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        parsed: &ParsedLog,
-        rows: &LineTableRows<'_>,
-    ) {
+    fn order_anomalies_ui(&mut self, ui: &mut egui::Ui, log: &LoadedLog, log_id: LoadedLogId) {
+        let parsed = log.parsed();
         if parsed.order_anomalies().is_empty() {
             return;
         }
@@ -123,20 +113,19 @@ impl LogViewerWindow {
                     let entry_index = parsed
                         .entries()
                         .partition_point(|entry| entry.line_number < anomaly.line_number);
-                    let anomaly_row = rows.row_of_entry(entry_index);
                     if ui
-                        .add_enabled(
-                            anomaly_row.is_some(),
-                            Button::new(format!(
-                                "Line {}",
-                                gt_fmt::format_count_u64(u64::from(anomaly.line_number))
-                            )),
-                        )
+                        .add(Button::new(format!(
+                            "Line {}",
+                            gt_fmt::format_count_u64(u64::from(anomaly.line_number))
+                        )))
                         .on_hover_text("Scroll the table to this line")
-                        .on_disabled_hover_text(FILTERED_OUT_HOVER)
                         .clicked()
                     {
-                        self.scroll_to_row = anomaly_row;
+                        self.navigate_to_diagnostic(
+                            log,
+                            log_id,
+                            DiagnosticTarget::Entry(entry_index),
+                        );
                     }
                     ui.add(
                         Label::new(
@@ -283,8 +272,6 @@ const MAX_PANEL_HEIGHT_PX: f32 = 260.0;
 const UPTIME_BAR_WIDTH_PX: f32 = 90.0;
 
 const UPTIME_BAR_HEIGHT_PX: f32 = 6.0;
-
-const FILTERED_OUT_HOVER: &str = "The filters show no line of this";
 
 /// Column and row spacing shared by the panel's grids, so their rows sit
 /// tighter than the window's default.
