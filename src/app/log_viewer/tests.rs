@@ -15,6 +15,7 @@ use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
 use gt_log_view::{
     FilterChipMode, LayerColorSlot, LoadedLog, LoadedLogs, LogAttachmentRef, SessionLogAttachments,
 };
+use gt_logfile::RecordingAssociationIndex;
 use gt_pending_writes::WriteAccess;
 use rstest::rstest;
 
@@ -892,11 +893,8 @@ fn dragging_the_association_window_commits_one_pass_with_the_final_placements() 
     assert_eq!(state.viewer.association_window_commits, 1);
     assert_eq!(log.association_window(), previous);
     let recording = state.recordings.view().entries().next().unwrap();
-    let expected = gt_logfile::associate_entries(
-        log.parsed().entries(),
-        &recording.addressed_fixes(),
-        previous,
-    );
+    let expected = RecordingAssociationIndex::from_recording(recording)
+        .associate_entries(log.parsed().entries(), previous);
     assert!(expected.get(1).is_some_and(Option::is_some));
     for (index, placement) in expected.into_iter().enumerate() {
         assert_eq!(log.entry_placement(index), placement);

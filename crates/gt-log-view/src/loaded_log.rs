@@ -9,7 +9,7 @@ use chrono::Duration;
 use gt_fmt::MIDDLE_DOT;
 use gt_history_types::{LogContentHash, StoredLogFilter};
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
-use gt_logfile::{EntryPlacement, ParsedLog};
+use gt_logfile::{EntryPlacement, ParsedLog, RecordingAssociationIndex};
 use gt_types::{TimeRange, mercator};
 use gt_ui_types::{
     LoadedLogId, LogMatch, LogMatchColor, LogMatchLayer, LogMatchSource, LogMatches,
@@ -333,11 +333,8 @@ impl LoadedLog {
             return;
         };
         self.association.recording = Some(recording.id());
-        let entry_placements = gt_logfile::associate_entries(
-            self.document.parsed.entries(),
-            &recording.addressed_fixes(),
-            self.association.window,
-        );
+        let entry_placements = RecordingAssociationIndex::from_recording(recording)
+            .associate_entries(self.document.parsed.entries(), self.association.window);
         self.association.associated_entry_count = entry_placements
             .iter()
             .filter(|placement| placement.is_some())

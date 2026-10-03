@@ -38,7 +38,7 @@ impl App {
             };
             let ranked = log
                 .rank_association_candidates(&recordings)
-                .restrict_to_recordings(&candidates);
+                .rank_with_recording_order(&candidates);
             let unambiguous = ranked.unambiguous_target();
             if self.initial_position_source_policy == InitialPositionSourcePolicy::Ask
                 && !ranked.ranked().is_empty()

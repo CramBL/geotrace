@@ -13,6 +13,7 @@ doctest = false
 chrono.workspace = true
 gt-fmt = { path = "../gt-fmt" }
 gt-geo-math = { path = "../gt-geo-math" }
+gt-loaded-files = { path = "../gt-loaded-files" }
 gt-types = { path = "../gt-types" }
 log.workspace = true
 memchr.workspace = true

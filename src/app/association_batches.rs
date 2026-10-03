@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -19,13 +20,17 @@ struct BatchProgress {
 pub(super) struct AssociationSubmission {
     id: AssociationBatchId,
     progress: Arc<BatchProgress>,
+    next_recording_ordinal: Cell<usize>,
 }
 
 impl AssociationSubmission {
     pub(super) fn recording(&self) -> RecordingArrival {
         self.progress.recordings.fetch_add(1, Ordering::Relaxed);
+        let ordinal = self.next_recording_ordinal.get();
+        self.next_recording_ordinal.set(ordinal + 1);
         RecordingArrival {
             batch: self.id,
+            ordinal: RecordingArrivalOrdinal(ordinal),
             progress: Arc::clone(&self.progress),
         }
     }
@@ -45,10 +50,33 @@ impl Drop for AssociationSubmission {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct RecordingArrivalOrdinal(usize);
+
+struct ArrivalCandidate {
+    recording: LoadedFileId,
+    ordinal: RecordingArrivalOrdinal,
+}
+
 struct BatchState {
-    candidates: Vec<LoadedFileId>,
+    initial_candidates: Vec<LoadedFileId>,
+    arrival_candidates: Vec<ArrivalCandidate>,
     logs: Vec<LoadedLogId>,
     progress: Arc<BatchProgress>,
+}
+
+impl BatchState {
+    fn ordered_candidates(&self) -> Vec<LoadedFileId> {
+        let mut arrivals: Vec<_> = self.arrival_candidates.iter().collect();
+        arrivals.sort_by_key(|candidate| candidate.ordinal);
+        let mut candidates = self.initial_candidates.clone();
+        for candidate in arrivals {
+            if !candidates.contains(&candidate.recording) {
+                candidates.push(candidate.recording);
+            }
+        }
+        candidates
+    }
 }
 
 #[derive(Default)]
@@ -71,6 +99,7 @@ pub enum RecordingOperationOrigin {
 #[derive(Debug)]
 pub struct RecordingArrival {
     batch: AssociationBatchId,
+    ordinal: RecordingArrivalOrdinal,
     progress: Arc<BatchProgress>,
 }
 
@@ -105,12 +134,17 @@ impl AssociationBatches {
         self.0.batches.insert(
             id,
             BatchState {
-                candidates: candidates.collect(),
+                initial_candidates: candidates.collect(),
+                arrival_candidates: Vec::new(),
                 logs: Vec::new(),
                 progress: Arc::clone(&progress),
             },
         );
-        AssociationSubmission { id, progress }
+        AssociationSubmission {
+            id,
+            progress,
+            next_recording_ordinal: Cell::new(0),
+        }
     }
 
     pub(super) fn register_log(&mut self, arrival: &LogArrival, log: LoadedLogId) {
@@ -122,10 +156,11 @@ impl AssociationBatches {
     }
 
     pub(super) fn register_recording(&mut self, arrival: &RecordingArrival, id: LoadedFileId) {
-        if let Some(batch) = self.0.batches.get_mut(&arrival.batch)
-            && !batch.candidates.contains(&id)
-        {
-            batch.candidates.push(id);
+        if let Some(batch) = self.0.batches.get_mut(&arrival.batch) {
+            batch.arrival_candidates.push(ArrivalCandidate {
+                recording: id,
+                ordinal: arrival.ordinal,
+            });
         }
     }
 
@@ -141,7 +176,7 @@ impl AssociationBatches {
                 && batch.progress.recordings.load(Ordering::Acquire) == 0
             {
                 for id in pending.iter().filter(|id| batch.logs.contains(id)) {
-                    ready.push((*id, batch.candidates.clone()));
+                    ready.push((*id, batch.ordered_candidates()));
                 }
             }
         }
@@ -170,6 +205,9 @@ impl AssociationBatches {
 
 #[cfg(test)]
 mod tests {
+    use gt_loaded_files::{FileHistory, LoadedFiles};
+    use rstest::rstest;
+
     use super::*;
 
     #[test]
@@ -201,6 +239,45 @@ mod tests {
         drop(log);
         assert!(batches.ready_logs(&[]).is_empty());
         assert!(batches.0.batches.is_empty());
+    }
+
+    #[rstest]
+    fn repeated_recording_results_use_the_first_submission_ordinal(
+        #[values(true, false)] reverse_completions: bool,
+    ) {
+        let mut files = LoadedFiles::new();
+        for _ in 0..3 {
+            files.push(
+                gt_test_utils::loaded_file_with_tracks(Vec::new()),
+                FileHistory::None,
+            );
+        }
+        let ids: Vec<_> = files.view().entries().map(|entry| entry.id()).collect();
+        let initial = *ids.first().expect("initial file");
+        let first_arrival = *ids.get(2).expect("first arriving file");
+        let second_arrival = *ids.get(1).expect("second arriving file");
+        let mut batches = AssociationBatches::default();
+        let batch = batches.begin_submission(std::iter::once(initial));
+        let log = batch.log();
+        let id = LoadedLogId::new(0);
+        batches.register_log(&log, id);
+        let mut arrivals = vec![
+            (batch.recording(), first_arrival),
+            (batch.recording(), second_arrival),
+            (batch.recording(), first_arrival),
+            (batch.recording(), initial),
+        ];
+        drop(batch);
+        if reverse_completions {
+            arrivals.reverse();
+        }
+        for (arrival, recording) in arrivals {
+            batches.register_recording(&arrival, recording);
+        }
+        assert_eq!(
+            batches.ready_logs(&[id]),
+            vec![(id, vec![initial, first_arrival, second_arrival])]
+        );
     }
 
     #[test]
