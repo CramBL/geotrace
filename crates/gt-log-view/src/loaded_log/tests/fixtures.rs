@@ -30,8 +30,7 @@ pub fn wait_for_scans(logs: &mut LoadedLogs) {
 pub fn add_layer_chip(logs: &mut LoadedLogs, id: LoadedLogId, text: &str) -> Option<usize> {
     let (stack, slots) = logs.filter_stack_mut_by_id(id)?;
     stack.set_live_filter_text(text);
-    let chip = stack.add_live_filter_as_chip()?;
-    stack.switch_chip_to_layer_mode(chip, slots);
+    let chip = stack.add_live_filter_as_map_highlight(slots)?;
     stack.chip(chip)?.layer_slot().map(LayerColorSlot::index)
 }
 

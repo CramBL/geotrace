@@ -132,12 +132,9 @@ fn the_map_holds_the_layer_chips_and_the_live_filter_over_them() {
     test_util::anchor_to(&mut log, &files, 0);
     let id = logs.push(log).id();
     fixtures::add_layer_chip(&mut logs, id, "entry 2");
-    if let Some((stack, slots)) = logs.filter_stack_mut_by_id(id) {
+    if let Some((stack, _)) = logs.filter_stack_mut_by_id(id) {
         stack.set_live_filter_text("entry 3");
-        let refined = stack.add_live_filter_as_chip();
-        if let Some(chip) = refined {
-            stack.switch_chip_to_refine_mode(chip, slots);
-        }
+        stack.add_live_filter_as_chip();
         stack.set_live_filter_text("entry");
     }
     fixtures::wait_for_scans(&mut logs);

@@ -130,13 +130,7 @@ impl LoadedLog {
         let LogContext::SavedAttachment(state) = &mut self.context else {
             return None;
         };
-        let filters = match self.filters.to_stored_stack() {
-            Ok(filters) => filters,
-            Err(error) => {
-                log::error!("Could not store log filter groups: {error:#}");
-                return None;
-            }
-        };
+        let filters = self.filters.to_stored_stack();
         if filters == state.stored_filters {
             return None;
         }

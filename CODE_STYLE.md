@@ -446,7 +446,7 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 | **order anomaly** | A backward time step inside a boot session that no time-change pattern explains. Reported and kept in file order, never sorted away. | `OrderAnomaly`, `scan_for_order_anomalies` |
 | **live filter** | The filter in the log viewer's text field, matching as it is typed. Not "search", and not "query" - that is the query window's language. | `set_live_filter_text`, `live_filter_matches` |
 | **filter chip** | A live filter kept with "+ Add filter". | `FilterChip`, `add_live_filter_as_chip` |
-| **layer chip** / **refine chip** | The two chip modes: a layer chip draws its own palette colour on the map, a refine chip narrows the table instead. Not "overlay" or "mask". | `enabled_layer_chips`, `switch_chip_to_refine_mode` |
+| **map highlight** / **table filter** | Independent effects of a log condition. A map highlight colours matching map positions, and a table filter narrows table rows within a group. One condition can have both effects. | `FilterEffect`, `add_chip_effect`, `enabled_layer_chips` |
 | **log match** | An entry a log filter selected, drawn on the map as a hexagon in that filter's colour. Not "match" - that is a query match. | `LogMatch`, `LogMatches`, `DisplayCategory::LogMatches` |
 | **log anchor** | The one recording a log takes its positions from, always chosen explicitly and never changed by anything else. A log unloads with the recording it is anchored to. | `LogAnchor`, `anchor_to`, `anchor_key` |
 | **recording key** | What identifies the recording a log anchor points at: `Stored(DatabaseRef)` for a recording in the history database, `Session(LoadedFileId)` for one that is not. | `RecordingKey`, `unload_anchored_to` |

@@ -8,17 +8,16 @@ use egui::accesskit::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use egui_phosphor::regular::EYE as ICON_EYE;
-use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
 use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
-use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
 use gt_log_view::{
-    FilterChipMode, FilterGroupOperator, FilterScope, LayerColorSlot, LoadedLog, LoadedLogs,
-    LogAttachmentRef, SessionLogAttachments,
+    FilterEffect, FilterGroupId, FilterGroupOperator, FilterScope, LayerColorSlot, LoadedLog,
+    LoadedLogs, LogAttachmentRef, SessionLogAttachments,
 };
 use gt_logfile::RecordingAssociationIndex;
 use gt_pending_writes::WriteAccess;
 use rstest::rstest;
+use strum::IntoEnumIterator as _;
 
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use gt_test_utils::window_fit::{
@@ -67,27 +66,6 @@ impl ViewerState {
     fn map_matches(&mut self) -> &LogMatches {
         let names = RecordingNames::resolve(self.recordings.view(), "{filename}");
         self.logs.map_matches(self.recordings.view(), &names)
-    }
-
-    fn chip_display_index(&self, index: usize) -> usize {
-        let stack = self.shown_log().expect("a log is shown").filters();
-        let chip = stack.chips().get(index).expect("the chip exists");
-        stack
-            .groups()
-            .iter()
-            .flat_map(|group| {
-                stack.chips().iter().filter(|chip| {
-                    chip.mode() == FilterChipMode::Refine && chip.group() == group.id()
-                })
-            })
-            .chain(
-                stack
-                    .chips()
-                    .iter()
-                    .filter(|chip| chip.mode() == FilterChipMode::Layer),
-            )
-            .position(|candidate| candidate.id() == chip.id())
-            .expect("the chip is rendered")
     }
 
     fn shown_log(&self) -> Option<&LoadedLog> {
@@ -202,44 +180,260 @@ fn colouring_harness() -> TestHarness<'static, ViewerState> {
     )
 }
 
-#[test]
-fn the_compact_group_operator_toggles_without_starting_a_scan() {
+fn choose_first_group_operator(harness: &mut Harness<ViewerState>, operator: FilterGroupOperator) {
+    let group = harness
+        .state()
+        .shown_log()
+        .unwrap()
+        .filters()
+        .groups()
+        .first()
+        .unwrap()
+        .id();
+    harness
+        .get(group_control(group, filters::GroupControl::Operator))
+        .click();
+    harness.run_steps(2);
+    harness
+        .get(group_control(
+            group,
+            filters::GroupControl::SetOperator(operator),
+        ))
+        .click();
+    harness.run_steps(2);
+}
+
+enum LiveEditorGroup {
+    Other,
+    Selected,
+}
+
+#[rstest]
+#[case::selected(LiveEditorGroup::Selected)]
+#[case::other(LiveEditorGroup::Other)]
+fn adding_a_condition_to_a_group_focuses_its_inline_editor(#[case] destination: LiveEditorGroup) {
     let mut harness = harness_with(Vec::new());
-    let id = harness.state().first_loaded_log();
-    assert_eq!(
+    harness.get_by_label(filters::NEW_GROUP_LABEL).click();
+    harness.run_steps(2);
+    let stack = harness.state().shown_log().unwrap().filters();
+    let group = match destination {
+        LiveEditorGroup::Other => stack.groups().first().unwrap().id(),
+        LiveEditorGroup::Selected => stack.selected_group(),
+    };
+    harness
+        .get(group_control(group, filters::GroupControl::Add))
+        .click();
+    harness.run_steps(2);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text("fix".to_owned()));
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(live_filter_text(&harness), "fix");
+    assert_eq!(match_count(&harness), "2 of 6");
+    let editor = filters::GroupControl::Editor.identity(group);
+    harness
+        .get(group_control(group, filters::GroupControl::Row))
+        .get(By::new().predicate(move |node| node.author_id() == Some(editor.as_str())));
+}
+
+#[test]
+fn opening_and_cancelling_the_editor_clears_the_preview_and_preserves_saved_conditions() {
+    let mut harness = harness_with(Vec::new());
+    let group = harness
+        .state()
+        .shown_log()
+        .unwrap()
+        .filters()
+        .selected_group();
+    harness.get_by_label("Table filters");
+    harness.get(group_control(group, filters::GroupControl::Operator));
+    assert!(harness.query_by_label("Group 1").is_none());
+    assert!(harness.query_by_label("Match").is_none());
+    assert!(harness.query_by_label(filters::ADD_FILTER_LABEL).is_none());
+    assert!(
         harness
+            .query(group_control(group, filters::GroupControl::Overflow))
+            .is_none()
+    );
+    open_live_editor(&mut harness);
+    harness.get_by_label("Cancel").click();
+    run_until_the_scans_land(&mut harness);
+    assert!(harness.query_by_label(filters::ADD_FILTER_LABEL).is_none());
+    assert_eq!(match_count(&harness), "6 of 6");
+    type_into_live_filter(&mut harness, "fix");
+    assert_eq!(match_count(&harness), "2 of 6");
+    harness.get_by_label("Cancel").click();
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(match_count(&harness), "6 of 6");
+    assert_eq!(live_filter_text(&harness), "");
+    assert!(harness.query_by_label(filters::ADD_FILTER_LABEL).is_none());
+    add_filter(&mut harness, "fix");
+    open_chip_actions(&mut harness, 0, FilterEffect::Table);
+    harness.get(chip_effect_control(
+        &harness,
+        0,
+        FilterEffect::Table,
+        filters::ChipControl::OtherEffect,
+    ));
+    harness.get(chip_effect_control(
+        &harness,
+        0,
+        FilterEffect::Table,
+        filters::ChipControl::Remove,
+    ));
+    assert!(
+        harness
+            .query(chip_effect_control(
+                &harness,
+                0,
+                FilterEffect::Table,
+                filters::ChipControl::MoveToGroup
+            ))
+            .is_none()
+    );
+    open_live_editor(&mut harness);
+    harness.get_by_label("Cancel").click();
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(match_count(&harness), "2 of 6");
+    assert_eq!(chips(&harness).len(), 1);
+}
+
+#[test]
+fn returning_to_a_log_with_a_live_condition_displays_its_editor() {
+    let mut harness = harness_of(
+        Vec::new(),
+        &[
+            ("first.log", LOG_WITH_EVERY_ROW_KIND),
+            ("second.log", SECOND_LOG),
+        ],
+    );
+    select_log(&mut harness, "first.log");
+    let shown = harness.state().viewer.selected_log().unwrap();
+    harness
+        .state_mut()
+        .logs
+        .filter_stack_mut_by_id(shown)
+        .unwrap()
+        .0
+        .set_live_filter_text("fix");
+    run_until_the_scans_land(&mut harness);
+    harness.get_by_label(filters::ADD_FILTER_LABEL);
+    select_log(&mut harness, "second.log");
+    assert!(harness.query_by_label(filters::ADD_FILTER_LABEL).is_none());
+    assert_eq!(match_count(&harness), "2 of 2");
+    select_log(&mut harness, "first.log");
+    harness.get_by_label(filters::ADD_FILTER_LABEL);
+    assert_eq!(match_count(&harness), "2 of 6");
+    assert_eq!(live_filter_text(&harness), "fix");
+    harness.get_by_label("Clear").click();
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(match_count(&harness), "6 of 6");
+    harness.get_by_label(filters::ADD_FILTER_LABEL);
+}
+
+#[test]
+fn choosing_any_displays_either_condition_without_starting_a_scan() {
+    let mut harness = harness_of(Vec::new(), &[("boolean.log", BOOLEAN_FILTER_LOG)]);
+    add_filter(&mut harness, "alpha");
+    add_filter(&mut harness, "beta");
+    assert_eq!(match_count(&harness), "1 of 4");
+    harness.get_by_label("Table filters");
+    assert!(harness.query_by_label("Group 1").is_none());
+    choose_first_group_operator(&mut harness, FilterGroupOperator::Any);
+    assert_eq!(match_count(&harness), "3 of 4");
+    assert!(
+        !harness
             .state()
             .shown_log()
             .unwrap()
             .filters()
-            .groups()
-            .first()
-            .expect("default group")
-            .operator(),
-        FilterGroupOperator::All
+            .is_query_pending()
     );
-    harness.get_by_label(filters::INTERSECTION_SYMBOL).click();
+    choose_first_group_operator(&mut harness, FilterGroupOperator::All);
+    assert_eq!(match_count(&harness), "1 of 4");
+}
+
+#[test]
+fn an_any_group_and_an_all_group_display_their_shared_entries() {
+    let mut harness = harness_of(Vec::new(), &[("boolean.log", BOOLEAN_FILTER_LOG)]);
+    add_filter(&mut harness, "alpha");
+    add_filter(&mut harness, "beta");
+    choose_first_group_operator(&mut harness, FilterGroupOperator::Any);
+    assert_eq!(match_count(&harness), "3 of 4");
+    harness.get_by_label(filters::NEW_GROUP_LABEL).click();
     harness.run_steps(2);
-    let stack = harness.state().logs.get_by_id(id).unwrap().filters();
-    assert_eq!(
-        stack.groups().first().expect("default group").operator(),
-        FilterGroupOperator::Any
-    );
-    assert!(!stack.is_query_pending());
-    harness.get_by_label(filters::UNION_SYMBOL).click();
+    harness.get_by_label("AND");
+    let second_group = harness
+        .state()
+        .shown_log()
+        .unwrap()
+        .filters()
+        .groups()
+        .get(1)
+        .unwrap()
+        .id();
+    harness
+        .get(group_control(second_group, filters::GroupControl::Add))
+        .click();
     harness.run_steps(2);
-    assert_eq!(
+    let identity = filters::GroupControl::Editor.identity(second_group);
+    harness
+        .get(group_control(second_group, filters::GroupControl::Row))
+        .get(By::new().predicate(move |node| node.author_id() == Some(identity.as_str())));
+    add_filter(&mut harness, "gamma");
+    assert_eq!(match_count(&harness), "2 of 4");
+    let second_group = harness
+        .state()
+        .shown_log()
+        .unwrap()
+        .filters()
+        .groups()
+        .get(1)
+        .unwrap()
+        .id();
+    harness
+        .get(group_control(second_group, filters::GroupControl::Row))
+        .get_by_label("gamma");
+    assert_eq!(harness.get_all_by_label("AND").count(), 1);
+    assert!(harness.query_by_label("Group 2").is_none());
+    set_other_chip_effect_only(&mut harness, 2);
+    assert_eq!(match_count(&harness), "3 of 4");
+    open_chip_actions(&mut harness, 2, FilterEffect::Map);
+    harness.get(chip_effect_control(
+        &harness,
+        2,
+        FilterEffect::Map,
+        filters::ChipControl::OtherEffect,
+    ));
+    assert!(
         harness
-            .state()
-            .shown_log()
-            .unwrap()
-            .filters()
-            .groups()
-            .first()
-            .expect("default group")
-            .operator(),
-        FilterGroupOperator::All
+            .query(chip_effect_control(
+                &harness,
+                2,
+                FilterEffect::Map,
+                filters::ChipControl::MoveToGroup
+            ))
+            .is_none()
     );
+    let first_group = harness
+        .state()
+        .shown_log()
+        .unwrap()
+        .filters()
+        .groups()
+        .first()
+        .unwrap()
+        .id();
+    harness
+        .get(group_control(first_group, filters::GroupControl::Add))
+        .click();
+    harness.run_steps(2);
+    set_other_chip_effect_only(&mut harness, 2);
+    assert_eq!(match_count(&harness), "2 of 4");
+    harness
+        .get(group_control(second_group, filters::GroupControl::Row))
+        .get_by_label("gamma");
 }
 
 #[test]
@@ -267,7 +461,18 @@ fn group_controls_select_live_destination_move_conditions_and_reassign_removed_m
     let second_chip = stack.chips().get(1).unwrap().id();
     assert_eq!(stack.chip(first_chip).unwrap().group(), first_group);
     assert_eq!(stack.chip(second_chip).unwrap().group(), second_group);
-    harness.get_by_label("1").click();
+    let first_group = harness
+        .state()
+        .shown_log()
+        .unwrap()
+        .filters()
+        .groups()
+        .first()
+        .unwrap()
+        .id();
+    harness
+        .get(group_control(first_group, filters::GroupControl::Add))
+        .click();
     harness.run_steps(2);
     assert_eq!(
         harness
@@ -278,34 +483,36 @@ fn group_controls_select_live_destination_move_conditions_and_reassign_removed_m
             .selected_group(),
         first_group
     );
+    open_chip_actions(&mut harness, 1, FilterEffect::Table);
     harness
-        .nth_matching(By::new().label(filters::MOVE_FILTER_LABEL), 1)
+        .get(chip_effect_control(
+            &harness,
+            1,
+            FilterEffect::Table,
+            filters::ChipControl::MoveToGroup,
+        ))
         .click();
     harness.run_steps(2);
-    harness.get_by_label("Group 1").click();
+    harness
+        .get(chip_effect_control(
+            &harness,
+            1,
+            FilterEffect::Table,
+            filters::ChipControl::Destination(first_group),
+        ))
+        .click();
     harness.run_steps(2);
     let stack = harness.state().shown_log().unwrap().filters();
     assert_eq!(stack.chip(second_chip).unwrap().group(), first_group);
     assert!(!stack.is_query_pending());
+    choose_first_group_operator(&mut harness, FilterGroupOperator::Any);
+    set_other_chip_effect_only(&mut harness, 1);
     harness
-        .nth_matching(By::new().label(filters::INTERSECTION_SYMBOL), 0)
+        .get(group_control(first_group, filters::GroupControl::Overflow))
         .click();
     harness.run_steps(2);
-    assert_eq!(
-        harness
-            .state()
-            .shown_log()
-            .unwrap()
-            .filters()
-            .groups()
-            .first()
-            .unwrap()
-            .operator(),
-        FilterGroupOperator::Any
-    );
-    switch_chip_mode(&mut harness, 1);
     harness
-        .nth_matching(By::new().label(filters::REMOVE_GROUP_LABEL), 0)
+        .get(group_control(first_group, filters::GroupControl::Remove))
         .click();
     harness.run_steps(2);
     let stack = harness.state().shown_log().unwrap().filters();
@@ -313,32 +520,38 @@ fn group_controls_select_live_destination_move_conditions_and_reassign_removed_m
     assert_eq!(stack.selected_group(), second_group);
     assert_eq!(stack.chip(first_chip).unwrap().group(), second_group);
     assert_eq!(stack.chip(second_chip).unwrap().group(), second_group);
-    switch_chip_mode(&mut harness, 1);
+    set_other_chip_effect_only(&mut harness, 1);
     let stack = harness.state().shown_log().unwrap().filters();
-    assert_eq!(
-        stack.chip(second_chip).unwrap().mode(),
-        FilterChipMode::Refine
+    assert!(
+        stack
+            .chip(second_chip)
+            .unwrap()
+            .has_effect(FilterEffect::Table)
     );
     assert!(!stack.is_query_pending());
     assert!(
         harness
-            .get_by_label(filters::REMOVE_GROUP_LABEL)
-            .accesskit_node()
-            .is_disabled()
+            .query_by_label(filters::REMOVE_GROUP_LABEL)
+            .is_none()
+    );
+    assert!(
+        harness
+            .query(group_control(second_group, filters::GroupControl::Overflow))
+            .is_none()
     );
 }
 
 fn disable_display_option(harness: &mut Harness<'static, ViewerState>, label: &str) {
     let stack = harness.state().shown_log().unwrap().filters();
     let visible = stack.visible_entries().clone();
-    let stored = stack.to_stored_stack().expect("valid groups");
+    let stored = stack.to_stored_stack();
     harness.get_by_label(filters::DISPLAY_OPTIONS_LABEL).click();
     harness.run_steps(2);
     harness.get_by_label(label).click();
     harness.run_steps(2);
     let stack = harness.state().shown_log().unwrap().filters();
     assert_eq!(*stack.visible_entries(), visible);
-    assert_eq!(stack.to_stored_stack().expect("valid groups"), stored);
+    assert_eq!(stack.to_stored_stack(), stored);
     assert!(harness.query_by_label(label).is_none());
 }
 
@@ -1673,6 +1886,7 @@ fn run_until_the_scans_land(harness: &mut Harness<ViewerState>) {
 /// land. The field is focused by its own id: the viewer renders further text
 /// inputs of its own.
 fn type_into_live_filter(harness: &mut Harness<ViewerState>, text: &str) {
+    open_live_editor(harness);
     harness.ctx.memory_mut(|memory| {
         memory.request_focus(egui::Id::new(filters::LIVE_FILTER_FIELD_ID));
     });
@@ -1737,7 +1951,7 @@ fn viewer_edits_refresh_cached_map_layers(
     assert_eq!(harness.state_mut().map_matches().match_count(), 4);
 
     match edit {
-        MapLayerEdit::DisableChip => toggle_chip(&mut harness, 0),
+        MapLayerEdit::DisableChip => toggle_chip(&mut harness, 0, FilterEffect::Map),
         MapLayerEdit::RemovePositionSource => {
             harness.get(By::new().value("walk.gtd")).click();
             harness.run_steps(2);
@@ -1771,16 +1985,11 @@ fn viewer_edits_refresh_cached_map_layers(
 /// The count the filter row shows: the lines the table draws, of the log's
 /// entries.
 fn match_count(harness: &Harness<ViewerState>) -> String {
-    let filters = harness
-        .state()
-        .shown_log()
-        .map(LoadedLog::filters)
-        .expect("a log is shown");
-    format!(
-        "{} of {}",
-        filters.visible_entries().len(),
-        filters.entry_count()
-    )
+    harness
+        .get(By::new().predicate(|node| node.author_id() == Some(filters::MATCH_COUNT_ID)))
+        .accesskit_node()
+        .value()
+        .unwrap()
 }
 
 fn live_filter_text(harness: &Harness<ViewerState>) -> String {
@@ -1791,9 +2000,7 @@ fn live_filter_text(harness: &Harness<ViewerState>) -> String {
         .unwrap_or_default()
 }
 
-/// Every chip of the shown log: its text, its mode, and the palette colour it
-/// draws in.
-fn chips(harness: &Harness<ViewerState>) -> Vec<(String, FilterChipMode, Option<usize>)> {
+fn chips(harness: &Harness<ViewerState>) -> Vec<(String, Vec<FilterEffect>, Option<usize>)> {
     harness
         .state()
         .shown_log()
@@ -1804,7 +2011,9 @@ fn chips(harness: &Harness<ViewerState>) -> Vec<(String, FilterChipMode, Option<
                 .map(|chip| {
                     (
                         chip.pattern().text().to_owned(),
-                        chip.mode(),
+                        FilterEffect::iter()
+                            .filter(|effect| chip.has_effect(*effect))
+                            .collect(),
                         chip.layer_slot().map(LayerColorSlot::index),
                     )
                 })
@@ -1815,7 +2024,7 @@ fn chips(harness: &Harness<ViewerState>) -> Vec<(String, FilterChipMode, Option<
 
 fn add_map_highlight(harness: &mut Harness<ViewerState>, text: &str) {
     add_filter(harness, text);
-    switch_chip_mode(harness, chips(harness).len() - 1);
+    set_other_chip_effect_only(harness, chips(harness).len() - 1);
 }
 
 fn add_filter(harness: &mut Harness<ViewerState>, text: &str) {
@@ -1824,47 +2033,146 @@ fn add_filter(harness: &mut Harness<ViewerState>, text: &str) {
     run_until_the_scans_land(harness);
 }
 
-/// Clicks the mode toggle of the chip at `index`, which carries the glyph of
-/// the mode that chip is in.
-fn switch_chip_mode(harness: &mut Harness<ViewerState>, index: usize) {
-    let modes: Vec<FilterChipMode> = chips(harness).iter().map(|(_, mode, _)| *mode).collect();
-    let mode = modes.get(index).copied().expect("the chip is in the stack");
-    let glyph = match mode {
-        FilterChipMode::Layer => ICON_PLUS_CIRCLE,
-        FilterChipMode::Refine => ICON_FUNNEL,
-    };
-    let displayed_index = harness.state().chip_display_index(index);
-    let among_the_same_mode = match mode {
-        FilterChipMode::Refine => displayed_index,
-        FilterChipMode::Layer => {
-            displayed_index
-                - modes
-                    .iter()
-                    .filter(|mode| **mode == FilterChipMode::Refine)
-                    .count()
-        }
-    };
+fn chip_effect_control(
+    harness: &Harness<ViewerState>,
+    index: usize,
+    effect: FilterEffect,
+    control: filters::ChipControl,
+) -> By<'static> {
+    let chip = harness.state().shown_log().unwrap().filters().chips()[index].id();
+    let identity = control.identity(chip, effect);
+    By::new().predicate(move |node| node.author_id() == Some(identity.as_str()))
+}
+
+fn click_chip_effect_action(
+    harness: &mut Harness<ViewerState>,
+    index: usize,
+    effect: FilterEffect,
+    action: filters::ChipControl,
+) {
     harness
-        .nth_matching(By::new().label(glyph), among_the_same_mode)
+        .get(chip_effect_control(
+            harness,
+            index,
+            effect,
+            filters::ChipControl::Overflow,
+        ))
+        .click();
+    harness.run_steps(2);
+    harness
+        .get(chip_effect_control(harness, index, effect, action))
         .click();
     run_until_the_scans_land(harness);
 }
 
-/// Clicks the tickbox of the chip at `index`.
-fn toggle_chip(harness: &mut Harness<ViewerState>, index: usize) {
-    let displayed_index = harness.state().chip_display_index(index);
+fn group_control(group: FilterGroupId, control: filters::GroupControl) -> By<'static> {
+    let identity = control.identity(group);
+    By::new().predicate(move |node| node.author_id() == Some(identity.as_str()))
+}
+
+fn open_live_editor(harness: &mut Harness<ViewerState>) {
+    let group = harness
+        .state()
+        .shown_log()
+        .unwrap()
+        .filters()
+        .selected_group();
+    if harness
+        .query(group_control(group, filters::GroupControl::Editor))
+        .is_none()
+    {
+        harness
+            .get(group_control(group, filters::GroupControl::Add))
+            .scroll_to_me();
+        harness.run_steps(2);
+        harness
+            .get(group_control(group, filters::GroupControl::Add))
+            .click_accesskit();
+        harness.run_steps(2);
+    }
+}
+
+fn open_chip_actions(harness: &mut Harness<ViewerState>, index: usize, effect: FilterEffect) {
+    if harness
+        .query(chip_effect_control(
+            harness,
+            index,
+            effect,
+            filters::ChipControl::OtherEffect,
+        ))
+        .is_none()
+    {
+        harness
+            .get(chip_effect_control(
+                harness,
+                index,
+                effect,
+                filters::ChipControl::Overflow,
+            ))
+            .scroll_to_me();
+        harness.run_steps(2);
+        harness
+            .get(chip_effect_control(
+                harness,
+                index,
+                effect,
+                filters::ChipControl::Overflow,
+            ))
+            .click();
+        harness.run_steps(2);
+    }
+}
+
+fn set_other_chip_effect_only(harness: &mut Harness<ViewerState>, index: usize) {
+    let effect = if harness.state().shown_log().unwrap().filters().chips()[index]
+        .has_effect(FilterEffect::Table)
+    {
+        FilterEffect::Table
+    } else {
+        FilterEffect::Map
+    };
+    open_chip_actions(harness, index, effect);
     harness
-        .nth_matching(By::new().role(Role::CheckBox), displayed_index)
+        .get(chip_effect_control(
+            harness,
+            index,
+            effect,
+            filters::ChipControl::OtherEffect,
+        ))
+        .click();
+    harness.run_steps(2);
+    let chip = harness.state().shown_log().unwrap().filters().chips()[index].id();
+    for control in [filters::ChipControl::Overflow, filters::ChipControl::Remove] {
+        let identity = control.identity(chip, effect);
+        harness
+            .get(By::new().predicate(move |node| node.author_id() == Some(identity.as_str())))
+            .click();
+        harness.run_steps(2);
+    }
+    run_until_the_scans_land(harness);
+}
+
+fn toggle_chip(harness: &mut Harness<ViewerState>, index: usize, effect: FilterEffect) {
+    harness
+        .get(chip_effect_control(
+            harness,
+            index,
+            effect,
+            filters::ChipControl::Enable,
+        ))
         .click();
     run_until_the_scans_land(harness);
 }
 
-/// Clicks the ✕ of the chip at `index`. The selector row's unload button
-/// carries the same glyph and comes before every chip.
-fn remove_chip(harness: &mut Harness<ViewerState>, index: usize) {
-    let displayed_index = harness.state().chip_display_index(index);
+fn remove_chip(harness: &mut Harness<ViewerState>, index: usize, effect: FilterEffect) {
+    open_chip_actions(harness, index, effect);
     harness
-        .nth_matching(By::new().label(super::ICON_X), displayed_index + 1)
+        .get(chip_effect_control(
+            harness,
+            index,
+            effect,
+            filters::ChipControl::Remove,
+        ))
         .click();
     run_until_the_scans_land(harness);
 }
@@ -1886,9 +2194,11 @@ fn structured_scope_controls_select_typed_values_and_show_chip_glyphs() {
          2026-01-01 00:00:02 other kernel: INFO: navsyncd receiver\n",
         )],
     );
+    open_live_editor(&mut harness);
     harness.get_by_label(filters::REGEX_TOGGLE_LABEL);
+    open_live_editor(&mut harness);
     harness
-        .get_by_label(egui_phosphor::regular::TEXT_ALIGN_LEFT)
+        .get(By::new().predicate(|node| node.author_id() == Some(filters::LIVE_FILTER_SCOPE_ID)))
         .click();
     harness.run_steps(2);
     for scope in ["Message", "Service", "Level", "Hostname"] {
@@ -1913,7 +2223,7 @@ fn structured_scope_controls_select_typed_values_and_show_chip_glyphs() {
         harness
             .get_all_by_label(egui_phosphor::regular::GEAR)
             .count(),
-        2
+        1
     );
     assert_eq!(
         harness
@@ -1921,18 +2231,25 @@ fn structured_scope_controls_select_typed_values_and_show_chip_glyphs() {
             .shown_log()
             .unwrap()
             .filters()
-            .live_filter_pattern()
+            .live_filter_draft()
             .scope(),
         FilterScope::Service
     );
+    open_live_editor(&mut harness);
     harness
-        .nth_matching(By::new().label(egui_phosphor::regular::GEAR), 0)
+        .get(By::new().predicate(|node| node.author_id() == Some(filters::LIVE_FILTER_SCOPE_ID)))
         .click();
     harness.run_steps(2);
     harness.get_by_label("Level").click();
     run_until_the_scans_land(&mut harness);
-    assert_eq!(match_count(&harness), "1 of 3");
-    harness.get_by_label("Info").click();
+    assert_eq!(match_count(&harness), "2 of 3");
+    assert!(
+        harness
+            .get_by_label(filters::ADD_FILTER_LABEL)
+            .accesskit_node()
+            .is_disabled()
+    );
+    harness.get_by_label("Choose level…").click();
     harness.run_steps(2);
     for level in ["Debug", "Info", "Warning", "Error"] {
         assert!(harness.get_all_by_label(level).count() >= 1);
@@ -1942,8 +2259,9 @@ fn structured_scope_controls_select_typed_values_and_show_chip_glyphs() {
     harness.get_by_label(filters::ADD_FILTER_LABEL).click();
     run_until_the_scans_land(&mut harness);
     assert_eq!(match_count(&harness), "1 of 3");
+    open_live_editor(&mut harness);
     harness
-        .nth_matching(By::new().label(egui_phosphor::regular::TEXT_ALIGN_LEFT), 0)
+        .get(By::new().predicate(|node| node.author_id() == Some(filters::LIVE_FILTER_SCOPE_ID)))
         .click();
     harness.run_steps(2);
     harness.get_by_label("Hostname").click();
@@ -1956,13 +2274,90 @@ fn structured_scope_controls_select_typed_values_and_show_chip_glyphs() {
         harness
             .get_all_by_label(egui_phosphor::regular::DESKTOP)
             .count(),
-        2
+        1
     );
     assert!(
         harness
             .query_by_label(filters::REGEX_TOGGLE_LABEL)
             .is_none()
     );
+}
+
+#[test]
+fn choosing_and_clearing_a_level_preserves_an_inactive_level_editor() {
+    let mut harness = harness_of(
+        Vec::new(),
+        &[(
+            "levels.log",
+            "2026-01-01 00:00:00 receiver navsyncd: ERROR: failed\n\
+         2026-01-01 00:00:01 receiver navsyncd: INFO: started\n",
+        )],
+    );
+    open_live_editor(&mut harness);
+    harness
+        .get(By::new().predicate(|node| node.author_id() == Some(filters::LIVE_FILTER_SCOPE_ID)))
+        .click();
+    harness.run_steps(2);
+    harness.get_by_label("Level").click();
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(match_count(&harness), "2 of 2");
+    assert!(
+        harness
+            .get_by_label(filters::ADD_FILTER_LABEL)
+            .accesskit_node()
+            .is_disabled()
+    );
+    harness.get_by_label("Choose level…").click();
+    harness.run_steps(2);
+    harness.get_by_label("Error").click();
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(match_count(&harness), "1 of 2");
+    harness.get_by_label("Clear").click();
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(match_count(&harness), "2 of 2");
+    harness.get_by_label("Choose level…");
+    assert!(
+        harness
+            .get_by_label(filters::ADD_FILTER_LABEL)
+            .accesskit_node()
+            .is_disabled()
+    );
+    harness.get_by_label("Choose level…").click();
+    harness.run_steps(2);
+    harness.get_by_label("Info").click();
+    run_until_the_scans_land(&mut harness);
+    harness.get_by_label(filters::ADD_FILTER_LABEL).click();
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(match_count(&harness), "1 of 2");
+    harness.get_by_label("Info");
+    assert!(harness.query_by_label("Choose level…").is_none());
+    open_live_editor(&mut harness);
+    harness.get_by_label("Choose level…");
+    assert!(
+        harness
+            .get_by_label(filters::ADD_FILTER_LABEL)
+            .accesskit_node()
+            .is_disabled()
+    );
+}
+
+#[rstest]
+#[case::service(
+    "Service",
+    "Match the recognized service identity exactly, ignoring case"
+)]
+#[case::hostname("Hostname", "Match the recognized hostname exactly, ignoring case")]
+fn structured_editor_help_describes_exact_field_matching(#[case] scope: &str, #[case] help: &str) {
+    let mut harness = harness_with(Vec::new());
+    open_live_editor(&mut harness);
+    harness
+        .get(By::new().predicate(|node| node.author_id() == Some(filters::LIVE_FILTER_SCOPE_ID)))
+        .click();
+    harness.run_steps(2);
+    harness.get_by_label(scope).click();
+    run_until_the_scans_land(&mut harness);
+    harness.hover_and_settle(By::new().role(Role::TextInput), TOOLTIP_DELAY_FRAMES);
+    harness.get_by_label(help);
 }
 
 #[test]
@@ -2027,6 +2422,7 @@ fn the_regex_toggle_switches_what_the_field_means() {
 #[test]
 fn an_invalid_regex_is_reported_under_the_field_and_leaves_the_table_whole() {
     let mut harness = harness_with(Vec::new());
+    open_live_editor(&mut harness);
     harness.get_by_label(filters::REGEX_TOGGLE_LABEL).click();
     harness.run_steps(2);
 
@@ -2047,6 +2443,7 @@ fn an_invalid_regex_is_reported_under_the_field_and_leaves_the_table_whole() {
 #[test]
 fn adding_a_filter_grays_out_while_the_field_is_empty() {
     let mut harness = harness_with(Vec::new());
+    open_live_editor(&mut harness);
     assert!(
         harness
             .get_by_label(filters::ADD_FILTER_LABEL)
@@ -2086,48 +2483,114 @@ fn adding_a_filter_preserves_the_visible_entries_and_empties_the_field() {
     let stack = harness.state().shown_log().unwrap().filters();
     assert_eq!(*stack.visible_entries(), visible);
     assert_eq!(match_count(&harness), "2 of 6");
-    assert!(stack.chips().first().unwrap().is_enabled());
+    assert!(
+        stack
+            .chips()
+            .first()
+            .unwrap()
+            .is_enabled(FilterEffect::Table)
+    );
 
     assert_eq!(
         chips(&harness),
-        [("fix".to_owned(), FilterChipMode::Refine, None)]
+        [("fix".to_owned(), vec![FilterEffect::Table], None)]
     );
     assert_eq!(live_filter_text(&harness), "");
     harness.get_by_label("fix");
+    assert!(harness.query_by_label(filters::ADD_FILTER_LABEL).is_none());
+    assert!(harness.query_by_label("Clear").is_none());
 }
 
 #[test]
-fn explicit_chip_mode_changes_update_table_filtering_and_map_highlighting() {
-    let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
+fn additive_chip_actions_preserve_table_results_and_independent_map_matches() {
+    let log = LOG_WITH_EVERY_ROW_KIND.replacen("fix acquired", "fix lost", 1);
+    let mut harness = harness_of(vec![recording("walk.gtd", 55.0)], &[("nav.log", &log)]);
     add_filter(&mut harness, "fix");
     assert_eq!(match_count(&harness), "2 of 6");
     assert_eq!(harness.state_mut().map_matches().match_count(), 0);
-    harness.hover_and_settle(By::new().label(ICON_FUNNEL), TOOLTIP_DELAY_FRAMES);
-    harness.get_by_label("Highlight on map");
-
-    switch_chip_mode(&mut harness, 0);
-    assert_eq!(match_count(&harness), "6 of 6");
-    assert_eq!(
-        chips(&harness),
-        [("fix".to_owned(), FilterChipMode::Layer, Some(0))]
+    assert!(harness.query_by_label("Also highlight on map").is_none());
+    click_chip_effect_action(
+        &mut harness,
+        0,
+        FilterEffect::Table,
+        filters::ChipControl::OtherEffect,
     );
-    assert_eq!(harness.state_mut().map_matches().match_count(), 2);
-    assert_eq!(
-        harness.state_mut().map_matches().layers()[0].color,
-        LogMatchColor::LayerSlot {
-            index: 0,
-            shared: false
-        }
-    );
-
-    harness.hover_and_settle(By::new().label(ICON_PLUS_CIRCLE), TOOLTIP_DELAY_FRAMES);
-    harness.get_by_label("Filter table");
-    switch_chip_mode(&mut harness, 0);
     assert_eq!(match_count(&harness), "2 of 6");
     assert_eq!(
         chips(&harness),
-        [("fix".to_owned(), FilterChipMode::Refine, None)]
+        [(
+            "fix".to_owned(),
+            vec![FilterEffect::Map, FilterEffect::Table],
+            Some(0)
+        )]
     );
+    assert_eq!(harness.query_all(By::new().label("fix")).count(), 2);
+    assert_eq!(harness.state_mut().map_matches().match_count(), 2);
+    let map_identity =
+        chip_effect_control(&harness, 0, FilterEffect::Map, filters::ChipControl::Enable);
+    let table_identity = chip_effect_control(
+        &harness,
+        0,
+        FilterEffect::Table,
+        filters::ChipControl::Enable,
+    );
+    assert!(
+        harness.get(table_identity.clone()).rect().bottom()
+            < harness.get(map_identity.clone()).rect().top()
+    );
+    add_filter(&mut harness, "acquired");
+    assert_eq!(match_count(&harness), "1 of 6");
+    assert_eq!(harness.state_mut().map_matches().match_count(), 2);
+}
+
+#[test]
+fn chip_effect_enable_and_remove_actions_preserve_the_other_effect() {
+    let log = LOG_WITH_EVERY_ROW_KIND.replacen("fix acquired", "fix lost", 1);
+    let mut harness = harness_of(vec![recording("walk.gtd", 55.0)], &[("nav.log", &log)]);
+    add_filter(&mut harness, "fix");
+    click_chip_effect_action(
+        &mut harness,
+        0,
+        FilterEffect::Table,
+        filters::ChipControl::OtherEffect,
+    );
+    add_filter(&mut harness, "acquired");
+    let map_identity =
+        chip_effect_control(&harness, 0, FilterEffect::Map, filters::ChipControl::Enable);
+    harness.get(map_identity.clone()).click();
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(match_count(&harness), "1 of 6");
+    assert_eq!(harness.state_mut().map_matches().match_count(), 0);
+    harness.get(map_identity).click();
+    run_until_the_scans_land(&mut harness);
+    click_chip_effect_action(
+        &mut harness,
+        0,
+        FilterEffect::Table,
+        filters::ChipControl::Remove,
+    );
+    assert_eq!(harness.state_mut().map_matches().match_count(), 2);
+    assert_eq!(match_count(&harness), "1 of 6");
+    open_chip_actions(&mut harness, 0, FilterEffect::Map);
+    assert!(harness.query_by_label(filters::MOVE_FILTER_LABEL).is_none());
+    harness
+        .get(chip_effect_control(
+            &harness,
+            0,
+            FilterEffect::Map,
+            filters::ChipControl::OtherEffect,
+        ))
+        .click();
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(harness.state_mut().map_matches().match_count(), 2);
+    assert_eq!(match_count(&harness), "1 of 6");
+    click_chip_effect_action(
+        &mut harness,
+        0,
+        FilterEffect::Map,
+        filters::ChipControl::Remove,
+    );
+    assert_eq!(match_count(&harness), "1 of 6");
     assert_eq!(harness.state_mut().map_matches().match_count(), 0);
 }
 
@@ -2144,21 +2607,27 @@ fn table_filters_and_map_highlights_use_separate_rows() {
     assert!(harness.get_by_label("acquired").rect().center().y < highlight_row.top());
     assert!(harness.get_by_label("starting").rect().center().y > table_row.bottom());
 
-    toggle_chip(&mut harness, 0);
+    toggle_chip(&mut harness, 0, FilterEffect::Map);
     let stack_chips = harness.state().shown_log().unwrap().filters().chips();
     assert_eq!(
         stack_chips
             .iter()
-            .map(|chip| chip.is_enabled())
+            .map(
+                |chip| chip.is_enabled(if chip.has_effect(FilterEffect::Table) {
+                    FilterEffect::Table
+                } else {
+                    FilterEffect::Map
+                })
+            )
             .collect::<Vec<_>>(),
         [false, true, true]
     );
-    remove_chip(&mut harness, 0);
+    remove_chip(&mut harness, 0, FilterEffect::Map);
     assert_eq!(
         chips(&harness),
         [
-            ("fix".to_owned(), FilterChipMode::Refine, None),
-            ("acquired".to_owned(), FilterChipMode::Refine, None),
+            ("fix".to_owned(), vec![FilterEffect::Table], None),
+            ("acquired".to_owned(), vec![FilterEffect::Table], None),
         ]
     );
 }
@@ -2169,10 +2638,10 @@ fn unticking_a_chip_takes_it_out_of_the_table_and_ticking_it_puts_it_back() {
     add_filter(&mut harness, "fix");
     assert_eq!(match_count(&harness), "2 of 6");
 
-    toggle_chip(&mut harness, 0);
+    toggle_chip(&mut harness, 0, FilterEffect::Table);
     assert_eq!(match_count(&harness), "6 of 6");
 
-    toggle_chip(&mut harness, 0);
+    toggle_chip(&mut harness, 0, FilterEffect::Table);
     assert_eq!(
         match_count(&harness),
         "2 of 6",
@@ -2186,14 +2655,14 @@ fn removing_a_chip_frees_the_colour_it_drew_in() {
     add_map_highlight(&mut harness, "fix");
     add_map_highlight(&mut harness, "starting");
 
-    remove_chip(&mut harness, 0);
+    remove_chip(&mut harness, 0, FilterEffect::Map);
     add_map_highlight(&mut harness, "telemetry");
 
     assert_eq!(
         chips(&harness),
         [
-            ("starting".to_owned(), FilterChipMode::Layer, Some(1)),
-            ("telemetry".to_owned(), FilterChipMode::Layer, Some(0)),
+            ("starting".to_owned(), vec![FilterEffect::Map], Some(1)),
+            ("telemetry".to_owned(), vec![FilterEffect::Map], Some(0)),
         ],
         "the freed colour is the lowest one free again"
     );
@@ -2493,7 +2962,7 @@ fn switching_logs_restores_each_scroll_region_and_reloading_starts_at_the_top(
 
 #[test]
 fn clicking_a_log_selector_preserves_the_previous_logs_larger_header_offset() {
-    const OVERFLOWING_CHIP_COUNT: usize = 40;
+    const OVERFLOWING_CHIP_COUNT: usize = 80;
 
     let first = long_log(LONG_LOG_ENTRIES);
     let second = first.replace("entry", "other");
@@ -2514,7 +2983,7 @@ fn clicking_a_log_selector_preserves_the_previous_logs_larger_header_offset() {
         let chip = stack
             .add_live_filter_as_chip()
             .expect("the filter is valid");
-        stack.set_chip_enabled(chip, false);
+        stack.set_chip_effect_enabled(chip, FilterEffect::Table, false);
     }
     state.viewer.open_on_log(first_id);
     let mut harness = harness_from(state);
@@ -2582,6 +3051,7 @@ fn map_navigation_overrides_the_target_logs_restored_table_offset() {
 #[test]
 fn a_scrolling_key_leaves_the_table_where_it_is_while_the_live_filter_has_focus() {
     let mut harness = keyboard_scroll_harness();
+    open_live_editor(&mut harness);
     let scroll = TableScroll::of(&harness);
     harness.ctx.memory_mut(|memory| {
         memory.request_focus(egui::Id::new(filters::LIVE_FILTER_FIELD_ID));
@@ -2658,7 +3128,23 @@ fn log_viewer_window_fits_every_viewport(
         AuditedWindow::titled(LOG_VIEWER_TITLE),
         ControlLabel("Positions from"),
     );
+    harness.assert_control_is_reachable(
+        AuditedWindow::titled(LOG_VIEWER_TITLE),
+        ControlLabel(filters::NEW_GROUP_LABEL),
+    );
+    open_live_editor(&mut harness);
+    harness.assert_control_is_reachable(
+        AuditedWindow::titled(LOG_VIEWER_TITLE),
+        ControlLabel("Cancel"),
+    );
 }
+
+const BOOLEAN_FILTER_LOG: &str = "\
+2026-01-01 00:00:00 receiver: alpha beta gamma
+2026-01-01 00:00:01 receiver: alpha gamma
+2026-01-01 00:00:02 receiver: beta
+2026-01-01 00:00:03 receiver: gamma
+";
 
 /// One log holding every row kind the table draws: an entry timestamped from
 /// its neighbours, a reboot separator, and a backwards timestamp step no clock

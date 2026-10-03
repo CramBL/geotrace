@@ -109,61 +109,121 @@ impl TryFrom<String> for LogContentHash {
     }
 }
 
-/// What one chip of a stored filter stack does with the entries it matches,
-/// mirroring `gt_log_view`'s chip modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "mode", rename_all = "snake_case")]
-pub enum StoredLogFilterMode {
-    /// An overlay drawing its matches on the map in the palette slot it held.
-    Layer { color_slot: usize },
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum StoredLogFilterEffects {
+    Both {
+        table_enabled: bool,
+        map_enabled: bool,
+        color_slot: usize,
+    },
+    Map {
+        enabled: bool,
+        color_slot: usize,
+    },
+    Table {
+        enabled: bool,
+    },
+}
 
-    /// A refinement of the table: it narrows the rows, with no palette slot.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+enum LegacyFilterMode {
+    Layer { color_slot: usize },
     Refine,
 }
 
-/// One chip of a log's filter stack, as it is stored with an attachment: the
-/// storage schema, independent of `gt_log_view`'s session model.
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LegacyFilterKind {
+    Layer,
+    Refine,
+}
+
+impl LegacyFilterMode {
+    fn effects(self, enabled: bool) -> StoredLogFilterEffects {
+        match self {
+            Self::Layer { color_slot } => StoredLogFilterEffects::Map {
+                enabled,
+                color_slot,
+            },
+            Self::Refine => StoredLogFilterEffects::Table { enabled },
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct StoredLogFilter {
     pub condition: StoredLogFilterCondition,
-
     pub group_id: u64,
-
-    /// Whether the chip was drawing and narrowing when it was stored.
-    pub enabled: bool,
-
-    #[serde(flatten)]
-    pub mode: StoredLogFilterMode,
+    pub effects: StoredLogFilterEffects,
 }
 
 impl<'de> Deserialize<'de> for StoredLogFilter {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         #[derive(Deserialize)]
-        struct Fields {
+        #[serde(deny_unknown_fields)]
+        struct CurrentFields {
+            condition: StoredLogFilterCondition,
+            group_id: u64,
+            effects: StoredLogFilterEffects,
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct LegacyFields {
             condition: Option<StoredLogFilterCondition>,
             text: Option<String>,
             regex: Option<bool>,
             group_id: u64,
             enabled: bool,
-            #[serde(flatten)]
-            mode: StoredLogFilterMode,
+            mode: LegacyFilterKind,
+            color_slot: Option<usize>,
         }
-        let fields = Fields::deserialize(deserializer)?;
-        let condition = match (fields.condition, fields.text, fields.regex) {
-            (Some(condition), None, None) => condition,
-            (None, Some(text), Some(regex)) => StoredLogFilterCondition::Message { text, regex },
-            _ => {
-                return Err(serde::de::Error::custom(
-                    "invalid log filter condition fields",
-                ));
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Fields {
+            Current(CurrentFields),
+            Legacy(LegacyFields),
+        }
+        match Fields::deserialize(deserializer)? {
+            Fields::Current(fields) => Ok(Self {
+                condition: fields.condition,
+                group_id: fields.group_id,
+                effects: fields.effects,
+            }),
+            Fields::Legacy(fields) => {
+                let condition = match (fields.condition, fields.text, fields.regex) {
+                    (Some(condition), None, None) => condition,
+                    (None, Some(text), Some(regex)) => {
+                        StoredLogFilterCondition::Message { text, regex }
+                    }
+                    _ => {
+                        return Err(serde::de::Error::custom(
+                            "invalid log filter condition fields",
+                        ));
+                    }
+                };
+                let effects = match (fields.mode, fields.color_slot) {
+                    (LegacyFilterKind::Layer, Some(color_slot)) => StoredLogFilterEffects::Map {
+                        enabled: fields.enabled,
+                        color_slot,
+                    },
+                    (LegacyFilterKind::Refine, None) => StoredLogFilterEffects::Table {
+                        enabled: fields.enabled,
+                    },
+                    _ => {
+                        return Err(serde::de::Error::custom(
+                            "invalid legacy log filter effect fields",
+                        ));
+                    }
+                };
+                Ok(Self {
+                    condition,
+                    group_id: fields.group_id,
+                    effects,
+                })
             }
-        };
-        Ok(Self {
-            condition,
-            group_id: fields.group_id,
-            enabled: fields.enabled,
-            mode: fields.mode,
-        })
+        }
     }
 }
 
@@ -226,6 +286,21 @@ pub enum InvalidStoredLogFilterStack {
 }
 
 impl StoredLogFilterStack {
+    /// Reassigns existing chip memberships to group 0.
+    pub fn single_all_group(mut chips: Vec<StoredLogFilter>) -> Self {
+        for chip in &mut chips {
+            chip.group_id = 0;
+        }
+        Self {
+            groups: vec![StoredLogFilterGroup {
+                id: 0,
+                operator: StoredLogFilterOperator::All,
+            }],
+            selected_group_id: 0,
+            chips,
+        }
+    }
+
     pub fn try_from_parts(
         StoredLogFilterStackParts {
             groups,
@@ -277,23 +352,7 @@ impl StoredLogFilterStack {
 
 impl Default for StoredLogFilterStack {
     fn default() -> Self {
-        Vec::new().into()
-    }
-}
-
-impl From<Vec<StoredLogFilter>> for StoredLogFilterStack {
-    fn from(mut chips: Vec<StoredLogFilter>) -> Self {
-        for chip in &mut chips {
-            chip.group_id = 0;
-        }
-        Self {
-            groups: vec![StoredLogFilterGroup {
-                id: 0,
-                operator: StoredLogFilterOperator::All,
-            }],
-            selected_group_id: 0,
-            chips,
-        }
+        Self::single_all_group(Vec::new())
     }
 }
 
@@ -316,7 +375,7 @@ impl<'de> Deserialize<'de> for StoredLogFilterStack {
             regex: bool,
             enabled: bool,
             #[serde(flatten)]
-            mode: StoredLogFilterMode,
+            mode: LegacyFilterMode,
         }
 
         impl LegacyFilter {
@@ -327,8 +386,7 @@ impl<'de> Deserialize<'de> for StoredLogFilterStack {
                         regex: self.regex,
                     },
                     group_id: 0,
-                    enabled: self.enabled,
-                    mode: self.mode,
+                    effects: self.mode.effects(self.enabled),
                 }
             }
         }
@@ -355,13 +413,14 @@ impl<'de> Deserialize<'de> for StoredLogFilterStack {
                 chips: stack.chips,
             })
             .map_err(serde::de::Error::custom),
-            StoredStackSchema::Legacy(chips) => Ok(chips
-                .into_iter()
-                .map(LegacyFilter::migrate)
-                .collect::<Vec<_>>()
-                .into()),
+            StoredStackSchema::Legacy(chips) => Ok(Self::single_all_group(
+                chips
+                    .into_iter()
+                    .map(LegacyFilter::migrate)
+                    .collect::<Vec<_>>(),
+            )),
             StoredStackSchema::SingleGroup(stack) => {
-                let mut migrated = Self::from(
+                let mut migrated = Self::single_all_group(
                     stack
                         .chips
                         .into_iter()
@@ -490,7 +549,7 @@ const LOG_ATTACHMENT_FILE_SUFFIX: &str = ".zst";
 
 /// Version of the attribute JSON layout, bumped only on a change older builds
 /// cannot read. An attachment written in a newer version is ignored.
-const LOG_ATTACHMENT_FORMAT_VERSION: u32 = 4;
+const LOG_ATTACHMENT_FORMAT_VERSION: u32 = 5;
 
 #[cfg(test)]
 mod tests {
@@ -504,15 +563,17 @@ mod tests {
         LogAttachment::new(
             "navsyncd.log".to_owned(),
             LogContentHash::of_log_bytes(b"2026-01-01 14:02:11 navsyncd: gnss fix acquired\n"),
-            vec![
+            StoredLogFilterStack::single_all_group(vec![
                 StoredLogFilter {
                     group_id: 0,
                     condition: StoredLogFilterCondition::Message {
                         text: "gnss".to_owned(),
                         regex: false,
                     },
-                    enabled: true,
-                    mode: StoredLogFilterMode::Layer { color_slot: 2 },
+                    effects: StoredLogFilterEffects::Map {
+                        enabled: true,
+                        color_slot: 2,
+                    },
                 },
                 StoredLogFilter {
                     group_id: 0,
@@ -520,11 +581,9 @@ mod tests {
                         text: "hal-powerd|navsyncd".to_owned(),
                         regex: true,
                     },
-                    enabled: false,
-                    mode: StoredLogFilterMode::Refine,
+                    effects: StoredLogFilterEffects::Table { enabled: false },
                 },
-            ]
-            .into(),
+            ]),
         )
     }
 
@@ -536,7 +595,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"format_version":4,"name":"navsyncd.log","content_hash":"b3e7a3594637c2fbf4655e82bcf507d6","filters":{"groups":[{"id":0,"operator":"all"}],"selected_group_id":0,"chips":[{"condition":{"scope":"message","text":"gnss","regex":false},"group_id":0,"enabled":true,"mode":"layer","color_slot":2},{"condition":{"scope":"message","text":"hal-powerd|navsyncd","regex":true},"group_id":0,"enabled":false,"mode":"refine"}]}}"#
+            r#"{"format_version":5,"name":"navsyncd.log","content_hash":"b3e7a3594637c2fbf4655e82bcf507d6","filters":{"groups":[{"id":0,"operator":"all"}],"selected_group_id":0,"chips":[{"condition":{"scope":"message","text":"gnss","regex":false},"group_id":0,"effects":{"kind":"map","enabled":true,"color_slot":2}},{"condition":{"scope":"message","text":"hal-powerd|navsyncd","regex":true},"group_id":0,"effects":{"kind":"table","enabled":false}}]}}"#
         );
         assert_eq!(
             LogAttachment::from_attribute_json(&json),
@@ -555,7 +614,7 @@ mod tests {
             .to_attribute_json()
             .expect("encode the migrated attachment");
         let json: Value = serde_json::from_str(&rewritten).expect("encoded JSON");
-        assert_eq!(json.get("format_version"), Some(&serde_json::json!(4)));
+        assert_eq!(json.get("format_version"), Some(&serde_json::json!(5)));
         assert_eq!(
             LogAttachment::from_attribute_json(&rewritten),
             Some(expected)
@@ -585,7 +644,7 @@ mod tests {
             restored
                 .to_attribute_json()
                 .unwrap()
-                .contains("\"format_version\":4")
+                .contains("\"format_version\":5")
         );
     }
 
@@ -647,8 +706,7 @@ mod tests {
                     regex: false,
                 },
                 group_id,
-                enabled: true,
-                mode: StoredLogFilterMode::Refine,
+                effects: StoredLogFilterEffects::Table { enabled: true },
             })
             .collect();
         assert_eq!(
@@ -665,7 +723,7 @@ mod tests {
     /// attribute sits on.
     #[test]
     fn an_attachment_this_build_cannot_read_decodes_to_nothing() {
-        let newer = r#"{"format_version":5,"name":"navsyncd.log","content_hash":"0","filters":[]}"#;
+        let newer = r#"{"format_version":6,"name":"navsyncd.log","content_hash":"0","filters":[]}"#;
         assert_eq!(LogAttachment::from_attribute_json(newer), None);
         assert_eq!(LogAttachment::from_attribute_json("{"), None);
     }
@@ -730,19 +788,49 @@ mod tests {
                     .prop_map(|value| StoredLogFilterCondition::Level { value }),
                 ],
                 any::<bool>(),
+                any::<bool>(),
                 proptest::option::of(any::<usize>()),
+                any::<bool>(),
             )
-                .prop_map(|(condition, enabled, color_slot)| StoredLogFilter {
-                    group_id: 0,
-                    condition,
-                    enabled,
-                    mode: match color_slot {
-                        Some(color_slot) => StoredLogFilterMode::Layer { color_slot },
-                        None => StoredLogFilterMode::Refine,
-                    },
+                .prop_map(|(condition, enabled, map_enabled, color_slot, both)| {
+                    StoredLogFilter {
+                        group_id: 0,
+                        condition,
+                        effects: match color_slot {
+                            Some(color_slot) if !both => StoredLogFilterEffects::Map {
+                                enabled,
+                                color_slot,
+                            },
+                            Some(color_slot) => StoredLogFilterEffects::Both {
+                                table_enabled: enabled,
+                                map_enabled,
+                                color_slot,
+                            },
+                            None => StoredLogFilterEffects::Table { enabled },
+                        },
+                    }
                 }),
             0..8,
         )
+    }
+
+    #[rstest]
+    #[case::missing_state(r#"{"kind":"table"}"#)]
+    #[case::missing_slot(r#"{"kind":"map","enabled":true}"#)]
+    #[case::missing_map_state(r#"{"kind":"both","table_enabled":true,"color_slot":0}"#)]
+    #[case::empty(r#"{"kind":"none"}"#)]
+    #[case::table_slot(r#"{"kind":"table","enabled":true,"color_slot":0}"#)]
+    fn malformed_independent_effects_are_rejected(#[case] effects: &str) {
+        let json = format!(
+            r#"{{"condition":{{"scope":"level","value":"info"}},"group_id":0,"effects":{effects}}}"#
+        );
+        serde_json::from_str::<StoredLogFilter>(&json).expect_err("invalid effect fields");
+    }
+
+    #[test]
+    fn mixed_legacy_and_independent_effect_fields_are_rejected() {
+        let json = r#"{"condition":{"scope":"level","value":"info"},"group_id":0,"effects":{"kind":"table","enabled":true},"enabled":true,"mode":"refine"}"#;
+        serde_json::from_str::<StoredLogFilter>(json).expect_err("conflicting effect encodings");
     }
 
     proptest! {
@@ -758,7 +846,7 @@ mod tests {
             selected_index in any::<usize>(),
             reference_seconds in proptest::option::of(0i64..4_102_444_800),
         ) {
-            let mut attachment = LogAttachment::new(name, LogContentHash::of_log_bytes(&log), filters.into());
+            let mut attachment = LogAttachment::new(name, LogContentHash::of_log_bytes(&log), StoredLogFilterStack::single_all_group(filters));
             let groups: Vec<_> = operators.iter().enumerate().map(|(index, any_operator)| StoredLogFilterGroup {
                 id: index as u64 * 3 + 5,
                 operator: if *any_operator { StoredLogFilterOperator::Any } else { StoredLogFilterOperator::All },

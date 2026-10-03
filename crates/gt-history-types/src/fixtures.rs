@@ -1,6 +1,6 @@
 //! The stored values that gt-history's and gt-store's tests both write.
 
-use crate::log_attachment::{StoredLogFilter, StoredLogFilterMode, StoredLogFilterStack};
+use crate::log_attachment::{StoredLogFilter, StoredLogFilterEffects, StoredLogFilterStack};
 use crate::{
     StoredFixPlacementRule, StoredLogFilterCondition, StoredSegmentation, StoredTrackSplitRule,
 };
@@ -16,17 +16,18 @@ pub fn default_segmentation() -> StoredSegmentation {
     }
 }
 
-/// A stack with one chip of each mode, with and without a palette slot.
 pub fn log_filters() -> StoredLogFilterStack {
-    vec![
+    StoredLogFilterStack::single_all_group(vec![
         StoredLogFilter {
             group_id: 0,
             condition: StoredLogFilterCondition::Message {
                 text: "gnss".to_owned(),
                 regex: false,
             },
-            enabled: true,
-            mode: StoredLogFilterMode::Layer { color_slot: 3 },
+            effects: StoredLogFilterEffects::Map {
+                enabled: true,
+                color_slot: 3,
+            },
         },
         StoredLogFilter {
             group_id: 0,
@@ -34,9 +35,7 @@ pub fn log_filters() -> StoredLogFilterStack {
                 text: "hal-powerd|navsyncd".to_owned(),
                 regex: true,
             },
-            enabled: false,
-            mode: StoredLogFilterMode::Refine,
+            effects: StoredLogFilterEffects::Table { enabled: false },
         },
-    ]
-    .into()
+    ])
 }

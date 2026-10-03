@@ -1143,7 +1143,7 @@ mod tests {
     use std::sync::Arc;
 
     use chrono::{DateTime, TimeZone as _, Utc};
-    use gt_log_view::{LayerColorSlots, LoadedLogs};
+    use gt_log_view::{FilterEffect, LayerColorSlots, LoadedLogs};
     use gt_ui_types::LogMatchColor;
 
     use super::*;
@@ -1366,7 +1366,8 @@ mod tests {
             let chip = stack
                 .add_live_filter_as_chip()
                 .expect("the filter is valid");
-            stack.switch_chip_to_layer_mode(chip, &mut slots);
+            stack.add_chip_effect(chip, FilterEffect::Map, &mut slots);
+            stack.remove_chip_effect(chip, FilterEffect::Table, &mut slots);
         }
         stack.wait_for_queries();
 
@@ -1412,11 +1413,12 @@ mod tests {
         let chip = stack
             .add_live_filter_as_chip()
             .expect("a written filter becomes a chip");
-        stack.switch_chip_to_layer_mode(chip, &mut slots);
+        stack.add_chip_effect(chip, FilterEffect::Map, &mut slots);
+        stack.remove_chip_effect(chip, FilterEffect::Table, &mut slots);
         stack.wait_for_queries();
         assert_eq!(LayerGutter::of(&stack, true).columns.len(), 1);
 
-        stack.set_chip_enabled(chip, false);
+        stack.set_chip_effect_enabled(chip, FilterEffect::Map, false);
 
         assert_eq!(LayerGutter::of(&stack, true).columns.len(), 0);
     }

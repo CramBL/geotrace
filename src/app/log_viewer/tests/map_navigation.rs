@@ -153,9 +153,10 @@ fn grouped_structured_filters_preserve_highlights_and_diagnostic_navigation_afte
     stack.add_live_filter_as_chip();
     stack.set_live_filter_text("starting");
     let highlight = stack.add_live_filter_as_chip().unwrap();
-    stack.switch_chip_to_layer_mode(highlight, slots);
+    stack.add_chip_effect(highlight, FilterEffect::Map, slots);
+    stack.remove_chip_effect(highlight, FilterEffect::Table, slots);
     stack.wait_for_queries();
-    let stored = stack.to_stored_stack().unwrap();
+    let stored = stack.to_stored_stack();
     let reference = attachment_ref();
     state.logs.save_attachment(
         id,
@@ -168,8 +169,7 @@ fn grouped_structured_filters_preserve_highlights_and_diagnostic_navigation_afte
         .get_by_id(id)
         .unwrap()
         .filters()
-        .to_stored_stack()
-        .unwrap();
+        .to_stored_stack();
     let serialized = serde_json::to_vec(&saved).unwrap();
     let restored: StoredLogFilterStack = serde_json::from_slice(&serialized).unwrap();
     state.logs.remove_by_id(id);
@@ -201,8 +201,7 @@ fn grouped_structured_filters_preserve_highlights_and_diagnostic_navigation_afte
             .shown_log()
             .unwrap()
             .filters()
-            .to_stored_stack()
-            .unwrap(),
+            .to_stored_stack(),
         stored
     );
     let cached = harness.state_mut().map_matches();
@@ -236,8 +235,7 @@ fn grouped_structured_filters_preserve_highlights_and_diagnostic_navigation_afte
             .shown_log()
             .unwrap()
             .filters()
-            .to_stored_stack()
-            .unwrap(),
+            .to_stored_stack(),
         stored
     );
 }

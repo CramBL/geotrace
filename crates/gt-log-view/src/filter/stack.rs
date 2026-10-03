@@ -3,14 +3,15 @@
 use std::{iter, mem, ops::Range, sync::Arc};
 
 use gt_history_types::{
-    InvalidStoredLogFilterStack, StoredLogFilter, StoredLogFilterCondition, StoredLogFilterGroup,
-    StoredLogFilterMode, StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts,
+    StoredLogFilter, StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterGroup,
+    StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts,
 };
 use gt_logfile::{LogLevelKind, ParsedLog};
 
 use crate::filter::{
     clock_ticks::ClockTicks,
     composition::FilterGroupOperator,
+    draft::LiveFilterDraft,
     matches::EntryMatches,
     pattern::{CompiledFilter, FilterPattern, FilterScope, InvalidFilterPattern},
     query::FilterQuery,
@@ -40,15 +41,119 @@ impl FilterGroup {
     }
 }
 
-/// What a chip does with the entries it matches.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, strum::EnumIter)]
-pub enum FilterChipMode {
-    /// An independent overlay: its own colour on the map and a gutter bar on
-    /// the rows it matches, without narrowing the table.
-    Layer,
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, strum::EnumIter)]
+pub enum FilterEffect {
+    Map,
+    Table,
+}
 
-    /// A refinement of the table: only the entries it matches stay visible.
-    Refine,
+#[derive(Clone, Copy, Debug)]
+enum FilterEffects {
+    Both {
+        table_enabled: bool,
+        map_enabled: bool,
+        slot: LayerColorSlot,
+    },
+    Map {
+        enabled: bool,
+        slot: LayerColorSlot,
+    },
+    Table {
+        enabled: bool,
+    },
+}
+
+impl FilterEffects {
+    fn enabled(self, effect: FilterEffect) -> Option<bool> {
+        match (self, effect) {
+            (Self::Table { enabled }, FilterEffect::Table)
+            | (Self::Map { enabled, .. }, FilterEffect::Map) => Some(enabled),
+            (Self::Both { table_enabled, .. }, FilterEffect::Table) => Some(table_enabled),
+            (Self::Both { map_enabled, .. }, FilterEffect::Map) => Some(map_enabled),
+            _ => None,
+        }
+    }
+
+    fn slot(self) -> Option<LayerColorSlot> {
+        match self {
+            Self::Table { .. } => None,
+            Self::Map { slot, .. } | Self::Both { slot, .. } => Some(slot),
+        }
+    }
+
+    fn set_enabled(&mut self, effect: FilterEffect, enabled: bool) {
+        match (self, effect) {
+            (Self::Table { enabled: state }, FilterEffect::Table)
+            | (Self::Map { enabled: state, .. }, FilterEffect::Map) => *state = enabled,
+            (Self::Both { table_enabled, .. }, FilterEffect::Table) => *table_enabled = enabled,
+            (Self::Both { map_enabled, .. }, FilterEffect::Map) => *map_enabled = enabled,
+            _ => {}
+        }
+    }
+
+    fn without(self, effect: FilterEffect) -> Option<Self> {
+        match (self, effect) {
+            (Self::Both { table_enabled, .. }, FilterEffect::Map) => Some(Self::Table {
+                enabled: table_enabled,
+            }),
+            (
+                Self::Both {
+                    map_enabled, slot, ..
+                },
+                FilterEffect::Table,
+            ) => Some(Self::Map {
+                enabled: map_enabled,
+                slot,
+            }),
+            (Self::Table { .. }, FilterEffect::Table) | (Self::Map { .. }, FilterEffect::Map) => {
+                None
+            }
+            _ => Some(self),
+        }
+    }
+
+    fn to_stored(self) -> StoredLogFilterEffects {
+        match self {
+            Self::Table { enabled } => StoredLogFilterEffects::Table { enabled },
+            Self::Map { enabled, slot } => StoredLogFilterEffects::Map {
+                enabled,
+                color_slot: slot.index(),
+            },
+            Self::Both {
+                table_enabled,
+                map_enabled,
+                slot,
+            } => StoredLogFilterEffects::Both {
+                table_enabled,
+                map_enabled,
+                color_slot: slot.index(),
+            },
+        }
+    }
+}
+
+impl From<StoredLogFilterEffects> for FilterEffects {
+    fn from(stored: StoredLogFilterEffects) -> Self {
+        match stored {
+            StoredLogFilterEffects::Table { enabled } => Self::Table { enabled },
+            StoredLogFilterEffects::Map {
+                enabled,
+                color_slot,
+            } => Self::Map {
+                enabled,
+                slot: LayerColorSlot::from_stored_index(color_slot),
+            },
+            StoredLogFilterEffects::Both {
+                table_enabled,
+                map_enabled,
+                color_slot,
+            } => Self::Both {
+                table_enabled,
+                map_enabled,
+                slot: LayerColorSlot::from_stored_index(color_slot),
+            },
+        }
+    }
 }
 
 /// The entries the table shows, in file order.
@@ -108,6 +213,7 @@ impl VisibleEntries {
 pub struct FilterStack {
     log: Arc<ParsedLog>,
     live: LogFilter,
+    draft: LiveFilterDraft,
     chips: Vec<FilterChip>,
     next_chip_id: u64,
     groups: Vec<FilterGroup>,
@@ -132,6 +238,7 @@ impl FilterStack {
         Self {
             log,
             live: LogFilter::unwritten(entry_count),
+            draft: LiveFilterDraft::default(),
             chips: Vec::new(),
             next_chip_id: 0,
             groups: vec![FilterGroup {
@@ -245,8 +352,12 @@ impl FilterStack {
         }
     }
 
-    pub fn to_stored_stack(&self) -> Result<StoredLogFilterStack, InvalidStoredLogFilterStack> {
-        StoredLogFilterStack::try_from_parts(StoredLogFilterStackParts {
+    #[expect(
+        clippy::panic,
+        reason = "Runtime group invariants are maintained by stack mutations"
+    )]
+    pub fn to_stored_stack(&self) -> StoredLogFilterStack {
+        let stored = StoredLogFilterStack::try_from_parts(StoredLogFilterStackParts {
             groups: self
                 .groups
                 .iter()
@@ -264,7 +375,11 @@ impl FilterStack {
                 .iter()
                 .map(FilterChip::to_stored_filter)
                 .collect(),
-        })
+        });
+        match stored {
+            Ok(stored) => stored,
+            Err(error) => panic!("Invalid runtime log filter groups: {error}"),
+        }
     }
 
     pub fn groups(&self) -> &[FilterGroup] {
@@ -276,11 +391,11 @@ impl FilterStack {
     }
 
     pub fn live_filter_text(&self) -> &str {
-        self.live.pattern.text()
+        self.draft.text()
     }
 
     pub fn live_filter_is_regex(&self) -> bool {
-        self.live.pattern.is_regex()
+        self.draft.is_regex()
     }
 
     /// What the regex engine said about a pattern it could not compile. The
@@ -305,43 +420,37 @@ impl FilterStack {
         }
     }
 
-    pub fn live_filter_pattern(&self) -> &FilterPattern {
-        &self.live.pattern
+    pub fn live_filter_draft(&self) -> &LiveFilterDraft {
+        &self.draft
     }
 
     pub fn set_live_filter_scope(&mut self, scope: FilterScope) {
-        if self.live.pattern.scope() == scope {
-            return;
+        if self.draft.scope() != scope {
+            self.set_live_draft(LiveFilterDraft::empty(scope));
         }
-        self.set_live_filter(match scope {
-            FilterScope::Message => FilterPattern::default(),
-            FilterScope::Service => FilterPattern::Service(String::new()),
-            FilterScope::Level => FilterPattern::Level(LogLevelKind::Info),
-            FilterScope::Hostname => FilterPattern::Hostname(String::new()),
-        });
     }
 
     pub fn set_live_filter_level(&mut self, level: LogLevelKind) {
-        if self.live.pattern.scope() == FilterScope::Level {
-            self.set_live_filter(FilterPattern::Level(level));
+        if self.draft.scope() == FilterScope::Level {
+            self.set_live_draft(LiveFilterDraft::Level(Some(level)));
         }
     }
 
     pub fn set_live_filter_text(&mut self, text: &str) {
-        self.set_live_filter(match &self.live.pattern {
-            FilterPattern::Message { regex, .. } => FilterPattern::Message {
+        self.set_live_draft(match &self.draft {
+            LiveFilterDraft::Message { regex, .. } => LiveFilterDraft::Message {
                 text: text.to_owned(),
                 regex: *regex,
             },
-            FilterPattern::Service(_) => FilterPattern::Service(text.to_owned()),
-            FilterPattern::Hostname(_) => FilterPattern::Hostname(text.to_owned()),
-            FilterPattern::Level(_) => return,
+            LiveFilterDraft::Service(_) => LiveFilterDraft::Service(text.to_owned()),
+            LiveFilterDraft::Hostname(_) => LiveFilterDraft::Hostname(text.to_owned()),
+            LiveFilterDraft::Level(_) => return,
         });
     }
 
     pub fn set_live_filter_regex(&mut self, regex: bool) {
-        if let FilterPattern::Message { text, .. } = &self.live.pattern {
-            self.set_live_filter(FilterPattern::Message {
+        if let LiveFilterDraft::Message { text, .. } = &self.draft {
+            self.set_live_draft(LiveFilterDraft::Message {
                 text: text.clone(),
                 regex,
             });
@@ -349,7 +458,7 @@ impl FilterStack {
     }
 
     pub fn clear_live_filter(&mut self) {
-        self.set_live_filter(self.live.pattern.cleared_live_pattern());
+        self.set_live_draft(self.draft.cleared());
     }
 
     pub fn can_add_live_filter_as_chip(&self) -> bool {
@@ -358,19 +467,36 @@ impl FilterStack {
 
     /// Adds an enabled table filter with the existing scan and clears the field.
     pub fn add_live_filter_as_chip(&mut self) -> Option<FilterChipId> {
+        self.commit_live_filter(FilterEffects::Table { enabled: true })
+    }
+
+    pub fn add_live_filter_as_map_highlight(
+        &mut self,
+        slots: &mut LayerColorSlots,
+    ) -> Option<FilterChipId> {
+        if !self.can_add_live_filter_as_chip() {
+            return None;
+        }
+        self.commit_live_filter(FilterEffects::Map {
+            enabled: true,
+            slot: slots.allocate(),
+        })
+    }
+
+    fn commit_live_filter(&mut self, effects: FilterEffects) -> Option<FilterChipId> {
         if !self.can_add_live_filter_as_chip() {
             return None;
         }
         let id = FilterChipId(self.next_chip_id);
         self.next_chip_id = self.next_chip_id.saturating_add(1);
         let mut emptied = LogFilter::unwritten(self.log.entries().len());
-        emptied.pattern = self.live.pattern.cleared_live_pattern();
+        self.draft = self.draft.cleared();
+        emptied.pattern = self.draft.pattern().unwrap_or_default();
         self.chips.push(FilterChip {
             id,
             group: self.selected_group,
             filter: mem::replace(&mut self.live, emptied),
-            layer_slot: None,
-            enabled: true,
+            effects,
         });
         self.semantic_revision = self.semantic_revision.wrapping_add(1);
         self.recompose_visible_entries();
@@ -391,47 +517,79 @@ impl FilterStack {
     pub fn enabled_layer_chips(&self) -> impl Iterator<Item = (LayerColorSlot, &FilterChip)> {
         self.chips
             .iter()
-            .filter(|chip| chip.enabled)
-            .filter_map(|chip| Some((chip.layer_slot?, chip)))
+            .filter(|chip| chip.is_enabled(FilterEffect::Map))
+            .filter_map(|chip| Some((chip.layer_slot()?, chip)))
     }
 
-    /// Takes a chip out of the map and the table, keeping everything else about
-    /// it, including its colour slot.
-    pub fn set_chip_enabled(&mut self, id: FilterChipId, enabled: bool) {
+    pub fn set_chip_effect_enabled(
+        &mut self,
+        id: FilterChipId,
+        effect: FilterEffect,
+        enabled: bool,
+    ) {
         let Some(chip) = self.chips.iter_mut().find(|chip| chip.id == id) else {
             return;
         };
-        if chip.enabled == enabled {
+        if chip
+            .effects
+            .enabled(effect)
+            .is_none_or(|state| state == enabled)
+        {
             return;
         }
-        chip.enabled = enabled;
+        chip.effects.set_enabled(effect, enabled);
         self.semantic_revision = self.semantic_revision.wrapping_add(1);
         self.recompose_visible_entries();
     }
 
-    /// Gives the chip a colour of its own on the map, and stops it narrowing
-    /// the table.
-    pub fn switch_chip_to_layer_mode(&mut self, id: FilterChipId, slots: &mut LayerColorSlots) {
+    pub fn add_chip_effect(
+        &mut self,
+        id: FilterChipId,
+        effect: FilterEffect,
+        slots: &mut LayerColorSlots,
+    ) {
         let Some(chip) = self.chips.iter_mut().find(|chip| chip.id == id) else {
             return;
         };
-        if chip.layer_slot.is_some() {
-            return;
-        }
-        chip.layer_slot = Some(slots.allocate());
+        chip.effects = match (chip.effects, effect) {
+            (FilterEffects::Table { enabled }, FilterEffect::Map) => FilterEffects::Both {
+                table_enabled: enabled,
+                map_enabled: true,
+                slot: slots.allocate(),
+            },
+            (FilterEffects::Map { enabled, slot }, FilterEffect::Table) => FilterEffects::Both {
+                table_enabled: true,
+                map_enabled: enabled,
+                slot,
+            },
+            _ => return,
+        };
         self.semantic_revision = self.semantic_revision.wrapping_add(1);
         self.recompose_visible_entries();
     }
 
-    /// Narrows the table by the chip, and frees the colour slot it held.
-    pub fn switch_chip_to_refine_mode(&mut self, id: FilterChipId, slots: &mut LayerColorSlots) {
+    pub fn remove_chip_effect(
+        &mut self,
+        id: FilterChipId,
+        effect: FilterEffect,
+        slots: &mut LayerColorSlots,
+    ) {
         let Some(chip) = self.chips.iter_mut().find(|chip| chip.id == id) else {
             return;
         };
-        let Some(slot) = chip.layer_slot.take() else {
+        if chip.effects.enabled(effect).is_none() {
+            return;
+        }
+        let Some(remaining) = chip.effects.without(effect) else {
+            self.remove_chip(id, slots);
             return;
         };
-        slots.release(slot);
+        if effect == FilterEffect::Map
+            && let Some(slot) = chip.layer_slot()
+        {
+            slots.release(slot);
+        }
+        chip.effects = remaining;
         self.semantic_revision = self.semantic_revision.wrapping_add(1);
         self.recompose_visible_entries();
     }
@@ -441,15 +599,13 @@ impl FilterStack {
             return;
         };
         let removed = self.chips.remove(position);
-        if let Some(slot) = removed.layer_slot {
+        if let Some(slot) = removed.layer_slot() {
             slots.release(slot);
         }
         self.semantic_revision = self.semantic_revision.wrapping_add(1);
         self.recompose_visible_entries();
     }
 
-    /// The entries the table shows: what the live filter and every enabled
-    /// refine chip matched. Layer chips never narrow it.
     pub fn visible_entries(&self) -> &VisibleEntries {
         &self.visible
     }
@@ -516,7 +672,7 @@ impl FilterStack {
     /// being unloaded.
     pub(crate) fn release_layer_color_slots(&self, slots: &mut LayerColorSlots) {
         for chip in &self.chips {
-            if let Some(slot) = chip.layer_slot {
+            if let Some(slot) = chip.layer_slot() {
                 slots.release(slot);
             }
         }
@@ -526,8 +682,14 @@ impl FilterStack {
     /// loaded into a session.
     pub(crate) fn take_layer_color_slots(&mut self, slots: &mut LayerColorSlots) {
         for chip in &mut self.chips {
-            if let Some(held) = chip.layer_slot {
-                chip.layer_slot = Some(slots.allocate_preferring(held));
+            if let Some(held) = chip.layer_slot() {
+                let allocated = slots.allocate_preferring(held);
+                match &mut chip.effects {
+                    FilterEffects::Map { slot, .. } | FilterEffects::Both { slot, .. } => {
+                        *slot = allocated
+                    }
+                    FilterEffects::Table { .. } => {}
+                }
             }
         }
     }
@@ -541,21 +703,17 @@ impl FilterStack {
             id,
             group: FilterGroupId(stored.group_id),
             filter,
-            layer_slot: match stored.mode {
-                StoredLogFilterMode::Layer { color_slot } => {
-                    Some(LayerColorSlot::from_stored_index(color_slot))
-                }
-                StoredLogFilterMode::Refine => None,
-            },
-            enabled: stored.enabled,
+            effects: FilterEffects::from(stored.effects),
         });
     }
 
-    fn set_live_filter(&mut self, pattern: FilterPattern) {
-        if self.live.pattern == pattern {
+    fn set_live_draft(&mut self, draft: LiveFilterDraft) {
+        if self.draft == draft {
             return;
         }
-        self.live.rewrite(pattern, &self.log);
+        self.live
+            .rewrite(draft.pattern().unwrap_or_default(), &self.log);
+        self.draft = draft;
         self.semantic_revision = self.semantic_revision.wrapping_add(1);
         self.recompose_visible_entries();
     }
@@ -593,69 +751,44 @@ impl FilterStack {
     }
 }
 
-/// One added filter: what it matches, how it shows those matches, and whether
-/// it is doing so at all.
 #[derive(Debug)]
 pub struct FilterChip {
     id: FilterChipId,
     group: FilterGroupId,
     filter: LogFilter,
-
-    /// Held while the chip is in layer mode, whether or not it is enabled.
-    layer_slot: Option<LayerColorSlot>,
-
-    enabled: bool,
+    effects: FilterEffects,
 }
 
 impl FilterChip {
     pub fn id(&self) -> FilterChipId {
         self.id
     }
-
     pub fn group(&self) -> FilterGroupId {
         self.group
     }
-
     pub fn pattern(&self) -> &FilterPattern {
         &self.filter.pattern
     }
-
-    pub fn mode(&self) -> FilterChipMode {
-        match self.layer_slot {
-            Some(_) => FilterChipMode::Layer,
-            None => FilterChipMode::Refine,
-        }
+    pub fn has_effect(&self, effect: FilterEffect) -> bool {
+        self.effects.enabled(effect).is_some()
     }
-
-    /// The palette slot this chip's matches draw in, `None` for a refine chip.
     pub fn layer_slot(&self) -> Option<LayerColorSlot> {
-        self.layer_slot
+        self.effects.slot()
     }
-
-    pub fn is_enabled(&self) -> bool {
-        self.enabled
+    pub fn is_enabled(&self, effect: FilterEffect) -> bool {
+        self.effects.enabled(effect) == Some(true)
     }
-
-    /// The entries this chip matched, whether or not it is enabled.
     pub fn matches(&self) -> &EntryMatches {
         self.filter.query.matches()
     }
-
     fn narrows_visible_set(&self) -> bool {
-        self.enabled && self.layer_slot.is_none() && self.filter.narrows_visible_set()
+        self.is_enabled(FilterEffect::Table) && self.filter.narrows_visible_set()
     }
-
     fn to_stored_filter(&self) -> StoredLogFilter {
         StoredLogFilter {
             group_id: self.group.0,
             condition: StoredLogFilterCondition::from(&self.filter.pattern),
-            enabled: self.enabled,
-            mode: match self.layer_slot {
-                Some(slot) => StoredLogFilterMode::Layer {
-                    color_slot: slot.index(),
-                },
-                None => StoredLogFilterMode::Refine,
-            },
+            effects: self.effects.to_stored(),
         }
     }
 }
@@ -818,40 +951,45 @@ mod tests {
         let mut stack = FilterStack::new(Arc::clone(&log));
         let mut slots = LayerColorSlots::default();
         let first = stack.selected_group();
-        stack.set_live_filter(FilterPattern::Service("navsyncd".into()));
+        stack.set_live_draft(LiveFilterDraft::Service("navsyncd".into()));
         stack.wait_for_queries();
         let service = stack.add_live_filter_as_chip().unwrap();
-        stack.set_live_filter(FilterPattern::Level(LogLevelKind::Error));
+        stack.set_live_draft(LiveFilterDraft::Level(Some(LogLevelKind::Error)));
         if land {
             stack.wait_for_queries();
         }
         let identity = stack.live.query.scan_identity();
         let level = stack.add_live_filter_as_chip().unwrap();
+        assert_eq!(stack.live_filter_draft(), &LiveFilterDraft::Level(None));
+        assert!(!stack.can_add_live_filter_as_chip());
         assert_eq!(
             stack.chip(level).unwrap().filter.query.scan_identity(),
             identity
         );
         stack.set_group_operator(first, FilterGroupOperator::Any);
         let second = stack.create_group();
-        stack.set_live_filter(FilterPattern::Hostname("HOST".into()));
+        stack.set_live_draft(LiveFilterDraft::Hostname("HOST".into()));
         stack.wait_for_queries();
         let hostname = stack.add_live_filter_as_chip().unwrap();
         assert_eq!(visible(&stack), [0]);
         stack.move_chip_to_group(level, second);
-        stack.switch_chip_to_layer_mode(level, &mut slots);
+        stack.add_chip_effect(level, FilterEffect::Map, &mut slots);
+        stack.remove_chip_effect(level, FilterEffect::Table, &mut slots);
         assert_eq!(
             stack.chip(level).unwrap().filter.query.scan_identity(),
             identity
         );
-        stack.switch_chip_to_refine_mode(level, &mut slots);
+        stack.add_chip_effect(level, FilterEffect::Table, &mut slots);
+        stack.remove_chip_effect(level, FilterEffect::Map, &mut slots);
         assert_eq!(stack.chip(level).unwrap().group(), second);
         stack.move_chip_to_group(level, first);
-        stack.switch_chip_to_layer_mode(service, &mut slots);
-        stack.set_chip_enabled(hostname, false);
-        let stored = stack.to_stored_stack().unwrap();
+        stack.add_chip_effect(service, FilterEffect::Map, &mut slots);
+        stack.remove_chip_effect(service, FilterEffect::Table, &mut slots);
+        stack.set_chip_effect_enabled(hostname, FilterEffect::Table, false);
+        let stored = stack.to_stored_stack();
         let mut restored = FilterStack::from_stored_stack(log, &stored);
         restored.wait_for_queries();
-        assert_eq!(restored.to_stored_stack().unwrap(), stored);
+        assert_eq!(restored.to_stored_stack(), stored);
         assert_eq!(visible(&restored), [0]);
         let restored_service = restored.chips().first().unwrap();
         assert_eq!(
@@ -861,7 +999,9 @@ mod tests {
                 .collect::<Vec<_>>(),
             [0, 2]
         );
-        restored.switch_chip_to_refine_mode(restored_service.id(), &mut slots);
+        let restored_service_id = restored_service.id();
+        restored.add_chip_effect(restored_service_id, FilterEffect::Table, &mut slots);
+        restored.remove_chip_effect(restored_service_id, FilterEffect::Map, &mut slots);
         assert_eq!(restored.chips().first().unwrap().group(), first);
     }
 
@@ -872,16 +1012,16 @@ mod tests {
         stack.create_group();
         stack.set_group_operator(stack.selected_group(), FilterGroupOperator::Any);
         let disabled = add_refine_chip(&mut stack, "missing");
-        stack.set_chip_enabled(disabled, false);
+        stack.set_chip_effect_enabled(disabled, FilterEffect::Table, false);
         add_layer_chip(&mut stack, &mut slots, "battery");
         stack.create_group();
         stack.set_live_filter_regex(true);
         stack.set_live_filter_text("[");
         stack.wait_for_queries();
         assert_eq!(visible(&stack), [0]);
-        stack.set_chip_enabled(chip, false);
+        stack.set_chip_effect_enabled(chip, FilterEffect::Table, false);
         assert_eq!(visible(&stack), [0, 1, 2, 3]);
-        stack.set_chip_enabled(disabled, true);
+        stack.set_chip_effect_enabled(disabled, FilterEffect::Table, true);
         assert_eq!(visible(&stack), Vec::<usize>::new());
     }
 
@@ -957,10 +1097,12 @@ mod tests {
         stack.move_chip_to_group(moved, first_group);
         stack.set_group_operator(first_group, FilterGroupOperator::Any);
         assert_eq!(visible(&stack), if landed { vec![0, 2] } else { vec![0] });
-        stack.switch_chip_to_layer_mode(moved, &mut slots);
+        stack.add_chip_effect(moved, FilterEffect::Map, &mut slots);
+        stack.remove_chip_effect(moved, FilterEffect::Table, &mut slots);
         assert_eq!(visible(&stack), [0]);
         stack.select_group(second_group);
-        stack.switch_chip_to_refine_mode(moved, &mut slots);
+        stack.add_chip_effect(moved, FilterEffect::Table, &mut slots);
+        stack.remove_chip_effect(moved, FilterEffect::Map, &mut slots);
         assert_eq!(stack.chip(moved).unwrap().group(), first_group);
         assert_eq!(
             stack.chip(moved).unwrap().filter.query.scan_identity(),
@@ -987,7 +1129,7 @@ mod tests {
         stack.select_group(removed);
         let active = add_refine_chip(&mut stack, "gnss");
         let highlighted = add_layer_chip(&mut stack, &mut slots, "fix");
-        stack.set_chip_enabled(active, false);
+        stack.set_chip_effect_enabled(active, FilterEffect::Table, false);
         stack.set_live_filter_text("lost");
         stack.wait_for_queries();
         let live_identity = stack.live.query.scan_identity();
@@ -1013,13 +1155,14 @@ mod tests {
             chip_identity
         );
         assert_eq!(visible(&stack), [2]);
-        stack.switch_chip_to_refine_mode(highlighted, &mut slots);
+        stack.add_chip_effect(highlighted, FilterEffect::Table, &mut slots);
+        stack.remove_chip_effect(highlighted, FilterEffect::Map, &mut slots);
         assert_eq!(stack.chip(highlighted).unwrap().group(), survivor);
         stack.remove_group(survivor);
         assert_eq!(stack.groups().len(), 1);
         assert_eq!(visible(&stack), [2]);
         stack.clear_live_filter();
-        stack.set_chip_enabled(highlighted, false);
+        stack.set_chip_effect_enabled(highlighted, FilterEffect::Table, false);
         assert_eq!(visible(&stack), [0, 1, 2, 3]);
     }
 
@@ -1032,15 +1175,16 @@ mod tests {
         stack.set_group_operator(first_group, FilterGroupOperator::Any);
         let second_group = stack.create_group();
         add_refine_chip(&mut stack, "gnss");
-        stack.switch_chip_to_layer_mode(first, &mut slots);
+        stack.add_chip_effect(first, FilterEffect::Map, &mut slots);
+        stack.remove_chip_effect(first, FilterEffect::Table, &mut slots);
         let empty_group = stack.create_group();
         stack.select_group(second_group);
         stack.wait_for_queries();
         let before = visible(&stack);
-        let stored = stack.to_stored_stack().expect("valid groups");
+        let stored = stack.to_stored_stack();
         let mut restored = FilterStack::from_stored_stack(Arc::clone(&stack.log), &stored);
         restored.wait_for_queries();
-        assert_eq!(restored.to_stored_stack().expect("valid groups"), stored);
+        assert_eq!(restored.to_stored_stack(), stored);
         assert_eq!(visible(&restored), before);
         assert_eq!(
             restored
@@ -1050,7 +1194,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             [first_group, second_group, empty_group]
         );
-        restored.switch_chip_to_refine_mode(first, &mut slots);
+        restored.add_chip_effect(first, FilterEffect::Table, &mut slots);
+        restored.remove_chip_effect(first, FilterEffect::Map, &mut slots);
         assert_eq!(restored.chip(first).unwrap().group(), first_group);
         assert_eq!(visible(&restored), [0, 2]);
         restored.move_chip_to_group(second, second_group);
@@ -1083,17 +1228,80 @@ mod tests {
         assert_eq!(visible(&restored), expected);
     }
 
+    #[rstest]
+    #[case::version_one(1)]
+    #[case::version_two(2)]
+    #[case::version_three(3)]
+    #[case::version_four(4)]
+    fn legacy_exclusive_effects_preserve_table_visibility_and_map_state(#[case] version: u32) {
+        let mut chips = serde_json::json!([
+            {"text":"gnss","regex":false,"enabled":true,"mode":"refine","group_id":0},
+            {"text":"battery","regex":false,"enabled":false,"mode":"layer","color_slot":2,"group_id":0}
+        ]);
+        if version < 3 {
+            for chip in chips.as_array_mut().unwrap() {
+                chip.as_object_mut().unwrap().remove("group_id");
+            }
+        }
+        if version == 4 {
+            for chip in chips.as_array_mut().unwrap() {
+                let fields = chip.as_object_mut().unwrap();
+                let text = fields.remove("text").unwrap();
+                let regex = fields.remove("regex").unwrap();
+                fields.insert(
+                    "condition".into(),
+                    serde_json::json!({"scope":"message","text":text,"regex":regex}),
+                );
+            }
+        }
+        let filters = match version {
+            1 => chips,
+            2 => serde_json::json!({"operator":"all","chips":chips}),
+            _ => {
+                serde_json::json!({"groups":[{"id":0,"operator":"all"}],"selected_group_id":0,"chips":chips})
+            }
+        };
+        let json = serde_json::json!({"format_version":version,"name":"legacy.log","content_hash":"0","filters":filters}).to_string();
+        let attachment = LogAttachment::from_attribute_json(&json).unwrap();
+        let (source, mut slots) = unfiltered_stack();
+        let mut restored =
+            FilterStack::from_stored_stack(Arc::clone(&source.log), &attachment.filters);
+        restored.take_layer_color_slots(&mut slots);
+        restored.wait_for_queries();
+        assert_eq!(visible(&restored), [0, 2]);
+        let table = restored.chips().first().unwrap();
+        let map = restored.chips().last().unwrap();
+        assert!(table.has_effect(FilterEffect::Table));
+        assert!(!table.has_effect(FilterEffect::Map));
+        assert!(map.has_effect(FilterEffect::Map));
+        assert!(!map.has_effect(FilterEffect::Table));
+        assert!(!map.is_enabled(FilterEffect::Map));
+        assert_eq!(map.layer_slot().unwrap().index(), 2);
+        let id = map.id();
+        restored.set_chip_effect_enabled(id, FilterEffect::Map, true);
+        assert_eq!(visible(&restored), [0, 2]);
+        assert_eq!(
+            restored
+                .enabled_layer_chips()
+                .next()
+                .unwrap()
+                .1
+                .matches()
+                .matched_entry_indices()
+                .collect::<Vec<_>>(),
+            [1, 3]
+        );
+    }
+
     fn add_layer_chip(
         stack: &mut FilterStack,
         slots: &mut LayerColorSlots,
         text: &str,
     ) -> FilterChipId {
         stack.set_live_filter_text(text);
-        let chip = stack
-            .add_live_filter_as_chip()
-            .expect("a written filter becomes a chip");
-        stack.switch_chip_to_layer_mode(chip, slots);
-        chip
+        stack
+            .add_live_filter_as_map_highlight(slots)
+            .expect("valid map filter")
     }
 
     #[rstest]
@@ -1112,7 +1320,7 @@ mod tests {
         add_layer_chip(&mut stack, &mut slots, "excluded");
         stack.set_live_filter_text("excluded");
         let disabled = stack.add_live_filter_as_chip().expect("valid filter");
-        stack.set_chip_enabled(disabled, false);
+        stack.set_chip_effect_enabled(disabled, FilterEffect::Table, false);
         stack.set_live_filter_text("first");
         stack.add_live_filter_as_chip().expect("valid filter");
         stack.set_live_filter_text("second");
@@ -1123,11 +1331,11 @@ mod tests {
         stack.wait_for_queries();
         assert_eq!(visible(&stack), expected);
         if add_second_chip {
-            let stored = stack.to_stored_stack().expect("valid groups");
+            let stored = stack.to_stored_stack();
             let mut restored = FilterStack::from_stored_stack(log, &stored);
             restored.wait_for_queries();
             assert_eq!(visible(&restored), expected);
-            assert_eq!(restored.to_stored_stack().expect("valid groups"), stored);
+            assert_eq!(restored.to_stored_stack(), stored);
         }
     }
 
@@ -1147,7 +1355,7 @@ mod tests {
         add_layer_chip(&mut stack, &mut slots, "gnss");
         stack.set_live_filter_text("battery");
         let disabled = stack.add_live_filter_as_chip().expect("valid filter");
-        stack.set_chip_enabled(disabled, false);
+        stack.set_chip_effect_enabled(disabled, FilterEffect::Table, false);
         stack.set_group_operator(stack.selected_group(), operator);
         stack.set_live_filter_regex(regex);
         stack.set_live_filter_text(live);
@@ -1333,9 +1541,9 @@ mod tests {
         let chip = stack.chip(id).expect("the chip was added");
         assert_eq!(chip.pattern(), &FilterPattern::regex("gnss|battery"));
         assert_eq!(chip.matches().match_count(), 4);
-        assert_eq!(chip.mode(), FilterChipMode::Refine);
+        assert!(chip.has_effect(FilterEffect::Table));
         assert_eq!(chip.layer_slot(), None);
-        assert!(chip.is_enabled());
+        assert!(chip.is_enabled(FilterEffect::Table));
 
         assert_eq!(stack.live_filter_text(), "");
         assert!(
@@ -1380,8 +1588,8 @@ mod tests {
         let chip = stack.chip(id).expect("the chip was added");
         assert_eq!(chip.filter.query.scan_identity(), identity);
         assert_eq!(ptr::from_ref(chip.matches()), matches);
-        assert_eq!(chip.mode(), FilterChipMode::Refine);
-        assert!(chip.is_enabled());
+        assert!(chip.has_effect(FilterEffect::Table));
+        assert!(chip.is_enabled(FilterEffect::Table));
         assert_eq!(chip.layer_slot(), None);
         assert_eq!(stack.is_query_pending(), pending);
         assert_eq!(visible(&stack), expected_before);
@@ -1407,8 +1615,148 @@ mod tests {
         assert!(stack.chips().is_empty());
     }
 
-    /// The compare-phenomena-spatially mode: a layer chip colours the map
-    /// without taking a line out of the table.
+    #[rstest]
+    #[case::pending(false, true)]
+    #[case::landed(true, true)]
+    #[case::pending_disabled(false, false)]
+    #[case::landed_disabled(true, false)]
+    fn independent_effect_edits_preserve_one_query(
+        #[case] landed: bool,
+        #[case] table_enabled: bool,
+    ) {
+        let (mut stack, mut slots) = unfiltered_stack();
+        stack.set_live_filter_text("gnss");
+        if landed {
+            stack.wait_for_queries();
+        }
+        let identity = stack.live.query.scan_identity();
+        let id = stack.add_live_filter_as_chip().unwrap();
+        stack.set_chip_effect_enabled(id, FilterEffect::Table, table_enabled);
+        let before = stack.visible_entries().clone();
+        let revision = stack.visible_revision();
+        let group = stack.selected_group();
+        stack.add_chip_effect(id, FilterEffect::Map, &mut slots);
+        let slot = stack.chip(id).unwrap().layer_slot().unwrap();
+        stack.add_chip_effect(id, FilterEffect::Map, &mut slots);
+        assert_eq!(slots.holders_of(slot), 1);
+        assert_eq!(stack.visible_entries(), &before);
+        assert_eq!(stack.visible_revision(), revision);
+        assert_eq!(stack.chip(id).unwrap().group(), group);
+        assert_eq!(
+            stack.chip(id).unwrap().is_enabled(FilterEffect::Table),
+            table_enabled
+        );
+        assert_eq!(
+            stack.chip(id).unwrap().filter.query.scan_identity(),
+            identity
+        );
+        stack.set_chip_effect_enabled(id, FilterEffect::Table, false);
+        assert!(stack.chip(id).unwrap().is_enabled(FilterEffect::Map));
+        stack.set_chip_effect_enabled(id, FilterEffect::Map, false);
+        assert_eq!(slots.holders_of(slot), 1);
+        stack.set_chip_effect_enabled(id, FilterEffect::Table, true);
+        stack.set_chip_effect_enabled(id, FilterEffect::Map, true);
+        stack.wait_for_queries();
+        assert_eq!(visible(&stack), [0, 2]);
+        assert_eq!(
+            stack
+                .enabled_layer_chips()
+                .next()
+                .unwrap()
+                .1
+                .matches()
+                .matched_entry_indices()
+                .collect::<Vec<_>>(),
+            [0, 2]
+        );
+        stack.remove_chip_effect(id, FilterEffect::Table, &mut slots);
+        assert_eq!(visible(&stack), [0, 1, 2, 3]);
+        assert_eq!(stack.enabled_layer_chips().count(), 1);
+        stack.add_chip_effect(id, FilterEffect::Table, &mut slots);
+        stack.remove_chip_effect(id, FilterEffect::Map, &mut slots);
+        assert_eq!(slots.holders_of(slot), 0);
+        assert_eq!(visible(&stack), [0, 2]);
+        assert_eq!(
+            stack.chip(id).unwrap().filter.query.scan_identity(),
+            identity
+        );
+        stack.remove_chip_effect(id, FilterEffect::Table, &mut slots);
+        assert!(stack.chips().is_empty());
+    }
+
+    #[rstest]
+    #[case::pending(false)]
+    #[case::landed(true)]
+    fn direct_map_commit_transfers_the_live_query_without_table_membership(#[case] landed: bool) {
+        let (mut stack, mut slots) = unfiltered_stack();
+        stack.set_live_filter_scope(FilterScope::Level);
+        assert_eq!(stack.add_live_filter_as_map_highlight(&mut slots), None);
+        stack.set_live_filter_level(LogLevelKind::Info);
+        if landed {
+            stack.wait_for_queries();
+        }
+        let identity = stack.live.query.scan_identity();
+        let pending = stack.is_query_pending();
+        let id = stack.add_live_filter_as_map_highlight(&mut slots).unwrap();
+        assert_eq!(stack.live_filter_draft(), &LiveFilterDraft::Level(None));
+        assert_eq!(
+            stack.chip(id).unwrap().filter.query.scan_identity(),
+            identity
+        );
+        assert_eq!(stack.is_query_pending(), pending);
+        assert!(!stack.chip(id).unwrap().has_effect(FilterEffect::Table));
+        assert_eq!(visible(&stack), [0, 1, 2, 3]);
+        stack.wait_for_queries();
+        assert_eq!(stack.enabled_layer_chips().count(), 1);
+    }
+
+    #[rstest]
+    #[case::enabled(true, true)]
+    #[case::table_disabled(false, true)]
+    #[case::map_disabled(true, false)]
+    #[case::disabled(false, false)]
+    fn both_effects_restore_independent_states_and_group_membership(
+        #[case] table_enabled: bool,
+        #[case] map_enabled: bool,
+    ) {
+        let (mut stack, mut slots) = unfiltered_stack();
+        let old = stack.selected_group();
+        let group = stack.create_group();
+        stack.set_group_operator(group, FilterGroupOperator::Any);
+        let id = add_layer_chip(&mut stack, &mut slots, "gnss");
+        stack.add_chip_effect(id, FilterEffect::Table, &mut slots);
+        stack.set_chip_effect_enabled(id, FilterEffect::Table, table_enabled);
+        stack.set_chip_effect_enabled(id, FilterEffect::Map, map_enabled);
+        stack.remove_group(old);
+        let stored = stack.to_stored_stack();
+        let mut restored = FilterStack::from_stored_stack(Arc::clone(&stack.log), &stored);
+        stack.release_layer_color_slots(&mut slots);
+        restored.take_layer_color_slots(&mut slots);
+        restored.wait_for_queries();
+        assert_eq!(restored.to_stored_stack(), stored);
+        let chip = restored.chips().first().unwrap();
+        assert_eq!(chip.group(), group);
+        assert_eq!(chip.is_enabled(FilterEffect::Table), table_enabled);
+        assert_eq!(chip.is_enabled(FilterEffect::Map), map_enabled);
+        assert_eq!(
+            visible(&restored),
+            if table_enabled {
+                vec![0, 2]
+            } else {
+                vec![0, 1, 2, 3]
+            }
+        );
+        assert_eq!(
+            restored.enabled_layer_chips().count(),
+            usize::from(map_enabled)
+        );
+        assert_eq!(
+            restored.groups().first().unwrap().operator(),
+            FilterGroupOperator::Any
+        );
+        assert!(chip.layer_slot().is_some());
+    }
+
     #[test]
     fn a_layer_chip_leaves_the_table_alone_and_a_refine_chip_narrows_it() {
         let (mut stack, mut slots) = unfiltered_stack();
@@ -1416,12 +1764,15 @@ mod tests {
         stack.wait_for_queries();
         assert_eq!(visible(&stack), [0, 1, 2, 3]);
 
-        stack.switch_chip_to_refine_mode(id, &mut slots);
+        stack.add_chip_effect(id, FilterEffect::Table, &mut slots);
+        stack.remove_chip_effect(id, FilterEffect::Map, &mut slots);
 
         assert_eq!(visible(&stack), [0, 2]);
         assert_eq!(
-            stack.chip(id).map(FilterChip::mode),
-            Some(FilterChipMode::Refine)
+            stack
+                .chip(id)
+                .map(|chip| chip.has_effect(FilterEffect::Table)),
+            Some(true)
         );
     }
 
@@ -1430,8 +1781,10 @@ mod tests {
         let (mut stack, mut slots) = unfiltered_stack();
         let gnss = add_layer_chip(&mut stack, &mut slots, "gnss");
         let battery = add_layer_chip(&mut stack, &mut slots, "battery");
-        stack.switch_chip_to_refine_mode(gnss, &mut slots);
-        stack.switch_chip_to_refine_mode(battery, &mut slots);
+        stack.add_chip_effect(gnss, FilterEffect::Table, &mut slots);
+        stack.remove_chip_effect(gnss, FilterEffect::Map, &mut slots);
+        stack.add_chip_effect(battery, FilterEffect::Table, &mut slots);
+        stack.remove_chip_effect(battery, FilterEffect::Map, &mut slots);
         stack.wait_for_queries();
 
         assert_eq!(
@@ -1440,7 +1793,7 @@ mod tests {
             "no line is both a fix and a battery"
         );
 
-        stack.set_chip_enabled(battery, false);
+        stack.set_chip_effect_enabled(battery, FilterEffect::Table, false);
         assert_eq!(visible(&stack), [0, 2], "a disabled chip narrows nothing");
 
         stack.set_live_filter_text("lost");
@@ -1454,10 +1807,10 @@ mod tests {
         let id = add_layer_chip(&mut stack, &mut slots, "gnss");
         stack.wait_for_queries();
 
-        stack.set_chip_enabled(id, false);
+        stack.set_chip_effect_enabled(id, FilterEffect::Map, false);
 
         let chip = stack.chip(id).expect("the chip is still there");
-        assert!(!chip.is_enabled());
+        assert!(!chip.is_enabled(FilterEffect::Map));
         assert_eq!(
             slot_index(&stack, id),
             Some(0),
@@ -1491,16 +1844,18 @@ mod tests {
     }
 
     #[test]
-    fn switching_a_chip_out_of_layer_mode_and_back_takes_the_lowest_free_colour() {
+    fn removing_and_adding_a_map_effect_reuses_the_lowest_free_colour() {
         let (mut stack, mut slots) = unfiltered_stack();
         let first = add_layer_chip(&mut stack, &mut slots, "gnss");
         let second = add_layer_chip(&mut stack, &mut slots, "battery");
 
-        stack.switch_chip_to_refine_mode(first, &mut slots);
+        stack.add_chip_effect(first, FilterEffect::Table, &mut slots);
+        stack.remove_chip_effect(first, FilterEffect::Map, &mut slots);
         assert_eq!(slot_index(&stack, first), None);
         assert_eq!(stack.enabled_layer_chips().count(), 1);
 
-        stack.switch_chip_to_layer_mode(first, &mut slots);
+        stack.add_chip_effect(first, FilterEffect::Map, &mut slots);
+        stack.remove_chip_effect(first, FilterEffect::Table, &mut slots);
 
         assert_eq!(
             slot_index(&stack, first),
@@ -1528,18 +1883,16 @@ mod tests {
         assert_eq!(chip_ids(&stack), [gnss, critical]);
     }
 
-    /// The stack an attachment stores and restores: every chip's text, mode,
-    /// enabled state and colour come back, and each chip scans the log again
-    /// for what it matches.
     #[test]
     fn a_stored_stack_restores_every_chip_with_what_it_matched() {
         let (mut stack, mut slots) = unfiltered_stack();
         let gnss = add_layer_chip(&mut stack, &mut slots, "gnss");
         let battery = add_layer_chip(&mut stack, &mut slots, "battery");
-        stack.switch_chip_to_refine_mode(gnss, &mut slots);
-        stack.set_chip_enabled(battery, false);
+        stack.add_chip_effect(gnss, FilterEffect::Table, &mut slots);
+        stack.remove_chip_effect(gnss, FilterEffect::Map, &mut slots);
+        stack.set_chip_effect_enabled(battery, FilterEffect::Map, false);
 
-        let stored = stack.to_stored_stack().expect("valid groups");
+        let stored = stack.to_stored_stack();
         assert_eq!(
             stored.chips(),
             [
@@ -1549,8 +1902,7 @@ mod tests {
                         text: "gnss".to_owned(),
                         regex: false
                     },
-                    enabled: true,
-                    mode: StoredLogFilterMode::Refine,
+                    effects: StoredLogFilterEffects::Table { enabled: true },
                 },
                 StoredLogFilter {
                     group_id: 0,
@@ -1558,8 +1910,10 @@ mod tests {
                         text: "battery".to_owned(),
                         regex: false
                     },
-                    enabled: false,
-                    mode: StoredLogFilterMode::Layer { color_slot: 1 },
+                    effects: StoredLogFilterEffects::Map {
+                        enabled: false,
+                        color_slot: 1
+                    },
                 },
             ]
         );
@@ -1568,7 +1922,7 @@ mod tests {
         let mut restored = FilterStack::from_stored_stack(log, &stored);
         restored.wait_for_queries();
 
-        assert_eq!(restored.to_stored_stack().expect("valid groups"), stored);
+        assert_eq!(restored.to_stored_stack(), stored);
         assert_eq!(
             visible(&restored),
             [0, 2],
@@ -1589,18 +1943,17 @@ mod tests {
     /// does not have still restores as a layer chip.
     #[test]
     fn a_stored_regex_chip_and_an_unknown_colour_slot_restore_as_they_were() {
-        let stored: StoredLogFilterStack = vec![StoredLogFilter {
+        let stored = StoredLogFilterStack::single_all_group(vec![StoredLogFilter {
             group_id: 0,
             condition: StoredLogFilterCondition::Message {
                 text: "^navsyncd".to_owned(),
                 regex: true,
             },
-            enabled: true,
-            mode: StoredLogFilterMode::Layer {
+            effects: StoredLogFilterEffects::Map {
+                enabled: true,
                 color_slot: LAYER_COLOR_SLOT_COUNT + 3,
             },
-        }]
-        .into();
+        }]);
 
         let log = Arc::new(test_util::parsed_log_of_text(LOG));
         let mut restored = FilterStack::from_stored_stack(log, &stored);
@@ -1608,14 +1961,11 @@ mod tests {
 
         let chip = restored.chips().first().expect("the chip was restored");
         assert_eq!(chip.pattern(), &FilterPattern::regex("^navsyncd"));
-        assert_eq!(chip.mode(), FilterChipMode::Layer);
+        assert!(chip.has_effect(FilterEffect::Map));
         assert_eq!(chip.matches().match_count(), 2);
     }
 
     proptest! {
-        /// Whatever the user writes into the field and adds as a refine chip,
-        /// the table shows exactly the entries a walk of the log selects, in
-        /// file order, and never an entry missing from the log.
         #[test]
         fn the_visible_entries_are_what_a_walk_of_the_log_selects(
             live in "[a-z ]{0,5}",
@@ -1623,12 +1973,11 @@ mod tests {
             chip_enabled in any::<bool>(),
             any_operator in any::<bool>(),
         ) {
-            let (mut stack, mut slots) = unfiltered_stack();
+            let (mut stack, _slots) = unfiltered_stack();
             stack.set_live_filter_text(&refine);
             let chip = stack.add_live_filter_as_chip();
             if let Some(id) = chip {
-                stack.switch_chip_to_refine_mode(id, &mut slots);
-                stack.set_chip_enabled(id, chip_enabled);
+                stack.set_chip_effect_enabled(id, FilterEffect::Table, chip_enabled);
             }
             stack.set_live_filter_text(&live);
             stack.set_group_operator(stack.selected_group(), if any_operator { FilterGroupOperator::Any } else { FilterGroupOperator::All });

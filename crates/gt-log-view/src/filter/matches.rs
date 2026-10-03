@@ -15,7 +15,11 @@ pub struct EntryMatches {
 
 impl EntryMatches {
     pub(crate) fn intersection(sets: &[&Self]) -> Self {
-        let entry_count = sets.iter().map(|set| set.entry_count).min().unwrap_or(0);
+        let entry_count = sets.first().map_or(0, |set| set.entry_count);
+        assert!(
+            sets.iter().all(|set| set.entry_count == entry_count),
+            "Match sets require the same entry count"
+        );
         let words: Vec<_> = (0..entry_count.div_ceil(BITS_PER_WORD))
             .map(|index| {
                 sets.iter()
@@ -31,7 +35,11 @@ impl EntryMatches {
     }
 
     pub(crate) fn union(sets: &[&Self]) -> Self {
-        let entry_count = sets.iter().map(|set| set.entry_count).max().unwrap_or(0);
+        let entry_count = sets.first().map_or(0, |set| set.entry_count);
+        assert!(
+            sets.iter().all(|set| set.entry_count == entry_count),
+            "Match sets require the same entry count"
+        );
         let words: Vec<_> = (0..entry_count.div_ceil(BITS_PER_WORD))
             .map(|index| sets.iter().fold(0, |word, set| word | set.word(index)))
             .collect();
@@ -244,18 +252,28 @@ mod tests {
         assert_eq!(EntryMatches::union(&[]).match_count(), 0);
     }
 
+    #[rstest]
+    #[case::intersection(EntryMatches::intersection)]
+    #[case::union(EntryMatches::union)]
+    #[should_panic(expected = "Match sets require the same entry count")]
+    fn composition_rejects_different_entry_counts(
+        #[case] compose: fn(&[&EntryMatches]) -> EntryMatches,
+    ) {
+        compose(&[&EntryMatches::none(64), &EntryMatches::none(65)]);
+    }
+
     proptest! {
         #[test]
         fn bitset_composition_matches_boolean_operations(
-            first in proptest::collection::vec(any::<bool>(), 0..260),
-            second in proptest::collection::vec(any::<bool>(), 0..260),
+            pairs in proptest::collection::vec((any::<bool>(), any::<bool>()), 0..260),
         ) {
+            let (first, second): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
             let first_set = EntryMatches::from_chunks(vec![MatchChunk::of(first.iter().copied())], first.len());
             let second_set = EntryMatches::from_chunks(vec![MatchChunk::of(second.iter().copied())], second.len());
-            let expected_union: Vec<_> = (0..first.len().max(second.len()))
+            let expected_union: Vec<_> = (0..first.len())
                 .filter(|index| first.get(*index).copied().unwrap_or(false) || second.get(*index).copied().unwrap_or(false))
                 .collect();
-            let expected_intersection: Vec<_> = (0..first.len().min(second.len()))
+            let expected_intersection: Vec<_> = (0..first.len())
                 .filter(|index| first.get(*index).copied().unwrap_or(false) && second.get(*index).copied().unwrap_or(false))
                 .collect();
             prop_assert_eq!(EntryMatches::union(&[&first_set, &second_set]).matched_entry_indices().collect::<Vec<_>>(), expected_union);

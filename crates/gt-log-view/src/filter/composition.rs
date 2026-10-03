@@ -1,6 +1,8 @@
+use strum::{Display, EnumIter};
+
 use super::matches::EntryMatches;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Display, EnumIter, Eq, PartialEq)]
 pub enum FilterGroupOperator {
     #[default]
     All,
