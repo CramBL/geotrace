@@ -4,7 +4,7 @@ use std::time::Duration as StdDuration;
 
 use egui_kittest::{Harness, kittest::Queryable as _};
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
-use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
+use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
 use gt_log_view::LoadedLog;
 use gt_store::RecordingsHandle;
 use gt_test_utils::{
@@ -435,14 +435,12 @@ fn snapshot_app_log_viewer_filters() {
     );
     harness.inner.run_steps(5);
 
-    add_log_filter(&mut harness, "kernel");
-    add_log_filter(&mut harness, "rotated");
+    for pattern in ["kernel", "rotated"] {
+        add_log_filter(&mut harness, pattern);
+        harness.inner.get_by_label(ICON_FUNNEL).click();
+        ui_tests::run_until_the_log_filter_scans_land(&mut harness.inner);
+    }
     add_log_filter(&mut harness, "rc=-110");
-    // The last chip added is the one furthest right in the chip row.
-    harness
-        .inner
-        .nth_matching(By::new().label(ICON_PLUS_CIRCLE), 2)
-        .click();
     ui_tests::run_until_the_log_filter_scans_land(&mut harness.inner);
     type_into_log_filter(&mut harness, "retries");
 
@@ -537,6 +535,8 @@ fn a_layer_chip_puts_the_lines_it_matched_on_the_map() {
     );
 
     add_log_filter(&mut harness, "gnss");
+    harness.inner.get_by_label(ICON_FUNNEL).click();
+    ui_tests::run_until_the_log_filter_scans_land(&mut harness.inner);
 
     let matched = harness.inner.state_mut().log_map_match_count();
     assert!(matched > 0, "the chip's lines reach the map");
@@ -577,6 +577,8 @@ fn snapshot_app_log_map_hexagons() {
     harness.inner.run_steps(5);
 
     add_log_filter(&mut harness, "kernel");
+    harness.inner.get_by_label(ICON_FUNNEL).click();
+    ui_tests::run_until_the_log_filter_scans_land(&mut harness.inner);
     type_into_log_filter(&mut harness, "bus-off");
     harness.inner.get_by_label(ICON_ARTICLE).click();
     harness.inner.run_steps(5);

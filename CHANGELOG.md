@@ -8,11 +8,13 @@
 
 ### Changed
 
+- **Log Viewer:** Service and level colouring controls are available in the table display menu.
 - **Log Viewer:** The position-source dialog and Processing settings now offer an explicit preference to automatically choose a position source when exactly one loaded recording overlaps the log.
 - **Log Viewer:** Footer and dialog labels now distinguish position sources from saving logs with recordings in history.
 
 ### Fixed
 
+- **Log Viewer:** Fixed the table expanding when adding a live filter as a saved filter.
 - **Log Viewer:** Fixed scroll positions changing when switching between loaded logs.
 - **Log Viewer:** Fixed repeated interface stalls with large filtered logs while the log viewer is open.
 - **Log Viewer:** Fixed equally overlapping position-source candidates changing order when recordings opened together finish loading in a different order.

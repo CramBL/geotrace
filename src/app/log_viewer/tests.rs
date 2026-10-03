@@ -68,6 +68,24 @@ impl ViewerState {
         self.logs.map_matches(self.recordings.view(), &names)
     }
 
+    fn chip_display_index(&self, index: usize) -> usize {
+        let chips = self.shown_log().expect("a log is shown").filters().chips();
+        let mode = chips.get(index).expect("the chip exists").mode();
+        let preceding_same_mode = chips
+            .iter()
+            .take(index)
+            .filter(|chip| chip.mode() == mode)
+            .count();
+        preceding_same_mode
+            + match mode {
+                FilterChipMode::Refine => 0,
+                FilterChipMode::Layer => chips
+                    .iter()
+                    .filter(|chip| chip.mode() == FilterChipMode::Refine)
+                    .count(),
+            }
+    }
+
     fn shown_log(&self) -> Option<&LoadedLog> {
         self.viewer
             .selected_log()
@@ -180,10 +198,18 @@ fn colouring_harness() -> TestHarness<'static, ViewerState> {
     )
 }
 
-/// Clicks the filter row's tickbox labelled `label`, which starts ticked.
-fn switch_off(harness: &mut Harness<'static, ViewerState>, label: &str) {
+fn disable_display_option(harness: &mut Harness<'static, ViewerState>, label: &str) {
+    let stack = harness.state().shown_log().unwrap().filters();
+    let visible = stack.visible_entries().clone();
+    let stored = stack.to_stored_filters();
+    harness.get_by_label(filters::DISPLAY_OPTIONS_LABEL).click();
+    harness.run_steps(2);
     harness.get_by_label(label).click();
     harness.run_steps(2);
+    let stack = harness.state().shown_log().unwrap().filters();
+    assert_eq!(*stack.visible_entries(), visible);
+    assert_eq!(stack.to_stored_filters(), stored);
+    assert!(harness.query_by_label(label).is_none());
 }
 
 /// One frame of the viewer, as the app draws it.
@@ -357,54 +383,61 @@ fn a_line_that_loses_its_position_takes_its_timestamp_down_from_strong() {
     );
 }
 
-#[test]
-fn switching_off_the_service_colours_leaves_the_level_coloured() {
+#[rstest]
+#[case::service_first(filters::COLOR_SERVICES_LABEL, filters::COLOR_LEVELS_LABEL, (false, true))]
+#[case::level_first(filters::COLOR_LEVELS_LABEL, filters::COLOR_SERVICES_LABEL, (true, false))]
+fn display_colour_options_toggle_independently(
+    #[case] first_option: &str,
+    #[case] second_option: &str,
+    #[case] expected_colours: (bool, bool),
+) {
     let mut harness = colouring_harness();
+    assert!(harness.state().viewer.color_services);
+    assert!(harness.state().viewer.color_levels);
+    assert!(
+        harness
+            .inner
+            .query_by_label(filters::COLOR_SERVICES_LABEL)
+            .is_none()
+    );
+    assert!(
+        harness
+            .inner
+            .query_by_label(filters::COLOR_LEVELS_LABEL)
+            .is_none()
+    );
+    add_filter(&mut harness.inner, "signal");
     let pixels_per_point = harness.inner.ctx.pixels_per_point();
     let message = harness
         .inner
         .topmost_matching(By::new().label(SERVICE_AND_LEVEL_MESSAGE))
         .rect();
 
-    switch_off(&mut harness.inner, filters::COLOR_SERVICES_LABEL);
-    assert!(
-        !harness.state().viewer.color_services,
-        "\"Colour services\" switched the service colours off"
+    disable_display_option(&mut harness.inner, first_option);
+    assert_eq!(
+        (
+            harness.state().viewer.color_services,
+            harness.state().viewer.color_levels
+        ),
+        expected_colours
     );
-    let levels_only = harness.inner.render().expect("the harness renders a frame");
+    let remaining_colour = harness.inner.render().expect("the harness renders a frame");
 
-    switch_off(&mut harness.inner, filters::COLOR_LEVELS_LABEL);
-
+    disable_display_option(&mut harness.inner, second_option);
+    assert_eq!(
+        (
+            harness.state().viewer.color_services,
+            harness.state().viewer.color_levels
+        ),
+        (false, false)
+    );
     let neither = harness.inner.render().expect("the harness renders a frame");
-    assert!(
-        snapshot_harness::pixels_differ(&levels_only, &neither, message, pixels_per_point),
-        "the level drew in the colour of its severity while \"Colour levels\" was ticked"
-    );
-}
-
-#[test]
-fn switching_off_the_level_colours_leaves_the_service_coloured() {
-    let mut harness = colouring_harness();
-    let pixels_per_point = harness.inner.ctx.pixels_per_point();
-    let message = harness
-        .inner
-        .topmost_matching(By::new().label(SERVICE_AND_LEVEL_MESSAGE))
-        .rect();
-
-    switch_off(&mut harness.inner, filters::COLOR_LEVELS_LABEL);
-    assert!(
-        !harness.state().viewer.color_levels,
-        "\"Colour levels\" switched the level colours off"
-    );
-    let services_only = harness.inner.render().expect("the harness renders a frame");
-
-    switch_off(&mut harness.inner, filters::COLOR_SERVICES_LABEL);
-
-    let neither = harness.inner.render().expect("the harness renders a frame");
-    assert!(
-        snapshot_harness::pixels_differ(&services_only, &neither, message, pixels_per_point),
-        "the service name drew in its own colour while \"Colour services\" was ticked"
-    );
+    assert!(snapshot_harness::pixels_differ(
+        &remaining_colour,
+        &neither,
+        message,
+        pixels_per_point
+    ));
 }
 
 /// The order-anomaly section is drawn only for a log the parse found one in,
@@ -1524,7 +1557,7 @@ fn type_into_live_filter(harness: &mut Harness<ViewerState>, text: &str) {
 #[test]
 fn idle_viewer_frames_preserve_cached_map_layers() {
     let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
-    add_filter(&mut harness, "starting");
+    add_map_highlight(&mut harness, "starting");
     type_into_live_filter(&mut harness, "fix");
     let cached = harness.state_mut().map_matches();
     assert_eq!(cached.layers().len(), 2);
@@ -1569,7 +1602,7 @@ fn viewer_edits_refresh_cached_map_layers(
     #[case] remaining_color: Option<LogMatchColor>,
 ) {
     let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
-    add_filter(&mut harness, "starting");
+    add_map_highlight(&mut harness, "starting");
     type_into_live_filter(&mut harness, "fix");
     assert_eq!(harness.state_mut().map_matches().match_count(), 4);
 
@@ -1650,6 +1683,11 @@ fn chips(harness: &Harness<ViewerState>) -> Vec<(String, FilterChipMode, Option<
         .unwrap_or_default()
 }
 
+fn add_map_highlight(harness: &mut Harness<ViewerState>, text: &str) {
+    add_filter(harness, text);
+    switch_chip_mode(harness, chips(harness).len() - 1);
+}
+
 fn add_filter(harness: &mut Harness<ViewerState>, text: &str) {
     type_into_live_filter(harness, text);
     harness.get_by_label(filters::ADD_FILTER_LABEL).click();
@@ -1674,8 +1712,9 @@ fn switch_chip_mode(harness: &mut Harness<ViewerState>, index: usize) {
 
 /// Clicks the tickbox of the chip at `index`.
 fn toggle_chip(harness: &mut Harness<ViewerState>, index: usize) {
+    let displayed_index = harness.state().chip_display_index(index);
     harness
-        .nth_matching(By::new().role(Role::CheckBox), FILTER_ROW_TICKBOXES + index)
+        .nth_matching(By::new().role(Role::CheckBox), displayed_index)
         .click();
     run_until_the_scans_land(harness);
 }
@@ -1683,8 +1722,9 @@ fn toggle_chip(harness: &mut Harness<ViewerState>, index: usize) {
 /// Clicks the ✕ of the chip at `index`. The selector row's unload button
 /// carries the same glyph and comes before every chip.
 fn remove_chip(harness: &mut Harness<ViewerState>, index: usize) {
+    let displayed_index = harness.state().chip_display_index(index);
     harness
-        .nth_matching(By::new().label(super::ICON_X), index + 1)
+        .nth_matching(By::new().label(super::ICON_X), displayed_index + 1)
         .click();
     run_until_the_scans_land(harness);
 }
@@ -1796,42 +1836,100 @@ fn adding_a_filter_grays_out_while_the_field_is_empty() {
 }
 
 #[test]
-fn adding_a_filter_turns_it_into_a_chip_and_empties_the_field() {
+fn adding_a_filter_preserves_the_visible_entries_and_empties_the_field() {
     let mut harness = harness_with(Vec::new());
-
-    add_filter(&mut harness, "fix");
+    type_into_live_filter(&mut harness, "fix");
+    let visible = harness
+        .state()
+        .shown_log()
+        .unwrap()
+        .filters()
+        .visible_entries()
+        .clone();
+    harness.hover_and_settle(
+        By::new().label(filters::ADD_FILTER_LABEL),
+        TOOLTIP_DELAY_FRAMES,
+    );
+    harness.get_by_label("Add this as a table filter");
+    harness.get_by_label(filters::ADD_FILTER_LABEL).click();
+    harness.run_steps(2);
+    let stack = harness.state().shown_log().unwrap().filters();
+    assert_eq!(*stack.visible_entries(), visible);
+    assert_eq!(match_count(&harness), "2 of 6");
+    assert!(stack.chips().first().unwrap().is_enabled());
 
     assert_eq!(
         chips(&harness),
-        [("fix".to_owned(), FilterChipMode::Layer, Some(0))]
+        [("fix".to_owned(), FilterChipMode::Refine, None)]
     );
     assert_eq!(live_filter_text(&harness), "");
     harness.get_by_label("fix");
 }
 
-/// The compare-phenomena-spatially mode: a layer chip colours its lines and
-/// leaves the table whole, a refine chip narrows it.
 #[test]
-fn a_layer_chip_leaves_the_table_whole_and_a_refine_chip_narrows_it() {
-    let mut harness = harness_with(Vec::new());
+fn explicit_chip_mode_changes_update_table_filtering_and_map_highlighting() {
+    let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
     add_filter(&mut harness, "fix");
-    assert_eq!(match_count(&harness), "6 of 6");
-
-    switch_chip_mode(&mut harness, 0);
-
     assert_eq!(match_count(&harness), "2 of 6");
-    assert_eq!(
-        chips(&harness),
-        [("fix".to_owned(), FilterChipMode::Refine, None)],
-        "a refine chip hands back the colour it drew in"
-    );
+    assert_eq!(harness.state_mut().map_matches().match_count(), 0);
+    harness.hover_and_settle(By::new().label(ICON_FUNNEL), TOOLTIP_DELAY_FRAMES);
+    harness.get_by_label("Highlight on map");
 
     switch_chip_mode(&mut harness, 0);
-
     assert_eq!(match_count(&harness), "6 of 6");
     assert_eq!(
         chips(&harness),
         [("fix".to_owned(), FilterChipMode::Layer, Some(0))]
+    );
+    assert_eq!(harness.state_mut().map_matches().match_count(), 2);
+    assert_eq!(
+        harness.state_mut().map_matches().layers()[0].color,
+        LogMatchColor::LayerSlot {
+            index: 0,
+            shared: false
+        }
+    );
+
+    harness.hover_and_settle(By::new().label(ICON_PLUS_CIRCLE), TOOLTIP_DELAY_FRAMES);
+    harness.get_by_label("Filter table");
+    switch_chip_mode(&mut harness, 0);
+    assert_eq!(match_count(&harness), "2 of 6");
+    assert_eq!(
+        chips(&harness),
+        [("fix".to_owned(), FilterChipMode::Refine, None)]
+    );
+    assert_eq!(harness.state_mut().map_matches().match_count(), 0);
+}
+
+#[test]
+fn table_filters_and_map_highlights_use_separate_rows() {
+    let mut harness = harness_with(Vec::new());
+    add_map_highlight(&mut harness, "starting");
+    add_filter(&mut harness, "fix");
+    add_filter(&mut harness, "acquired");
+    let table_row = harness.get_by_label("Table filters").rect();
+    let highlight_row = harness.get_by_label("Map highlights").rect();
+    assert!(table_row.bottom() < highlight_row.top());
+    assert!(harness.get_by_label("fix").rect().center().y < highlight_row.top());
+    assert!(harness.get_by_label("acquired").rect().center().y < highlight_row.top());
+    assert!(harness.get_by_label("starting").rect().center().y > table_row.bottom());
+
+    toggle_chip(&mut harness, 0);
+    let stack_chips = harness.state().shown_log().unwrap().filters().chips();
+    assert_eq!(
+        stack_chips
+            .iter()
+            .map(|chip| chip.is_enabled())
+            .collect::<Vec<_>>(),
+        [false, true, true]
+    );
+    remove_chip(&mut harness, 0);
+    assert_eq!(
+        chips(&harness),
+        [
+            ("fix".to_owned(), FilterChipMode::Refine, None),
+            ("acquired".to_owned(), FilterChipMode::Refine, None),
+        ]
     );
 }
 
@@ -1839,7 +1937,6 @@ fn a_layer_chip_leaves_the_table_whole_and_a_refine_chip_narrows_it() {
 fn unticking_a_chip_takes_it_out_of_the_table_and_ticking_it_puts_it_back() {
     let mut harness = harness_with(Vec::new());
     add_filter(&mut harness, "fix");
-    switch_chip_mode(&mut harness, 0);
     assert_eq!(match_count(&harness), "2 of 6");
 
     toggle_chip(&mut harness, 0);
@@ -1856,11 +1953,11 @@ fn unticking_a_chip_takes_it_out_of_the_table_and_ticking_it_puts_it_back() {
 #[test]
 fn removing_a_chip_frees_the_colour_it_drew_in() {
     let mut harness = harness_with(Vec::new());
-    add_filter(&mut harness, "fix");
-    add_filter(&mut harness, "starting");
+    add_map_highlight(&mut harness, "fix");
+    add_map_highlight(&mut harness, "starting");
 
     remove_chip(&mut harness, 0);
-    add_filter(&mut harness, "telemetry");
+    add_map_highlight(&mut harness, "telemetry");
 
     assert_eq!(
         chips(&harness),
@@ -2178,14 +2275,14 @@ fn clicking_a_log_selector_preserves_the_previous_logs_larger_header_offset() {
         ],
     );
     let first_id = state.first_loaded_log();
-    let (stack, slots) = state
+    let (stack, _slots) = state
         .logs
         .filter_stack_mut_by_id(first_id)
         .expect("the first log is loaded");
     for index in 0..OVERFLOWING_CHIP_COUNT {
         stack.set_live_filter_text(&format!("entry {index}"));
         let chip = stack
-            .add_live_filter_as_chip(slots)
+            .add_live_filter_as_chip()
             .expect("the filter is valid");
         stack.set_chip_enabled(chip, false);
     }
@@ -2428,10 +2525,6 @@ const FIRST_DAY_LABEL: &str = "2026-05-29";
 /// The heading the list gives the group of a recording that is not loaded, and
 /// the row the footer states it on.
 const NOT_LOADED_RECORDING: &str = "nav-devkit-mk2 (not loaded)";
-
-/// The tickboxes the filter row draws above the chips, "Colour services" and
-/// "Colour levels", which come before every chip's own tickbox.
-const FILTER_ROW_TICKBOXES: usize = 2;
 
 /// Tolerance for a scroll read off the screen, in points: the table's rows are
 /// laid out at whole points, and a step is compared against a height measured

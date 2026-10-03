@@ -1305,7 +1305,10 @@ mod tests {
         let mut slots = LayerColorSlots::default();
         for text in ["gnss", "battery"] {
             stack.set_live_filter_text(text);
-            stack.add_live_filter_as_chip(&mut slots);
+            let chip = stack
+                .add_live_filter_as_chip()
+                .expect("the filter is valid");
+            stack.switch_chip_to_layer_mode(chip, &mut slots);
         }
         stack.wait_for_queries();
 
@@ -1349,8 +1352,9 @@ mod tests {
         let mut slots = LayerColorSlots::default();
         stack.set_live_filter_text("gnss");
         let chip = stack
-            .add_live_filter_as_chip(&mut slots)
+            .add_live_filter_as_chip()
             .expect("a written filter becomes a chip");
+        stack.switch_chip_to_layer_mode(chip, &mut slots);
         stack.wait_for_queries();
         assert_eq!(LayerGutter::of(&stack, true).columns.len(), 1);
 

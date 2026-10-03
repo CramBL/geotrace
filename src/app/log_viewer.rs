@@ -315,7 +315,10 @@ impl LogViewerWindow {
                             return;
                         };
                         if let Some(log) = logs.get_by_id(shown) {
-                            self.parse_summary_row_ui(ui, log);
+                            ui.horizontal(|ui| {
+                                self.display_options_ui(ui);
+                                self.parse_summary_row_ui(ui, log);
+                            });
                         }
                         if self.summary_expanded
                             && let Some(log) = logs.get_by_id(shown)

@@ -33,6 +33,14 @@ pub(crate) struct FilterQuery {
 }
 
 impl FilterQuery {
+    #[cfg(test)]
+    pub(super) fn scan_identity(&self) -> (*const (), u64) {
+        (
+            Arc::as_ptr(&self.shared).cast(),
+            self.shared.requested_generation.load(Ordering::SeqCst),
+        )
+    }
+
     /// A query of an unwritten filter, which matches no entry of a log of
     /// `entry_count` entries.
     pub(crate) fn matching_nothing(entry_count: usize) -> Self {
