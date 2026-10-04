@@ -1,10 +1,12 @@
 use gt_loaded_files::{LoadedFiles, RecordingNames};
 use gt_types::{FileIdx, FixRef, PointIdx, TrackIdx, TrackRef};
+use gt_ui_types::LogMatchColor;
+
+use crate::filter::FilterEffect;
 
 use crate::loaded_log::tests::fixtures;
 use crate::loaded_log::{LoadedLog, LoadedLogId, LoadedLogs};
 use crate::test_util;
-use gt_ui_types::LogMatchColor;
 
 /// What the map draws for a log: the entries a chip matched, at the fixes
 /// they were associated to.
@@ -135,6 +137,7 @@ fn the_map_holds_the_layer_chips_and_the_live_filter_over_them() {
     if let Some((stack, _)) = logs.filter_stack_mut_by_id(id) {
         stack.set_live_filter_text("entry 3");
         stack.add_live_filter_as_chip();
+        stack.set_live_filter_effect(FilterEffect::Map);
         stack.set_live_filter_text("entry");
     }
     fixtures::wait_for_scans(&mut logs);

@@ -18,7 +18,7 @@ use gt_ui_types::{
 use crate::anchor::RecordingKey;
 use crate::association::AssociationCandidates;
 use crate::attachment::{LogAttachmentRef, LogAttachmentState};
-use crate::filter::{EntryMatches, FilterStack, LayerColorSlots};
+use crate::filter::{EntryMatches, FilterEffect, FilterStack, LayerColorSlots};
 
 #[derive(Debug)]
 struct LogDocument {
@@ -795,7 +795,9 @@ impl LoadedLogs {
                 });
             }
         }
-        for (stored, display_name) in shown() {
+        for (stored, display_name) in shown()
+            .filter(|(stored, _)| stored.log.filters.live_filter_effect() == FilterEffect::Map)
+        {
             layers.push(LogMatchLayer {
                 color: LogMatchColor::LiveFilter,
                 log: stored.source(display_name.clone()),

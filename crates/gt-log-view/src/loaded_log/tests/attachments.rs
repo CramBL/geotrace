@@ -192,6 +192,7 @@ fn group_only_edits_are_stored_once_and_restored_with_an_empty_stack() {
     let id = logs.push(log).id();
     let stack = logs.filter_stack_mut_by_id(id).unwrap().0;
     let selected = stack.create_group();
+    stack.select_group(selected);
     stack.set_group_operator(stack.selected_group(), FilterGroupOperator::Any);
     stack.create_group();
     stack.select_group(selected);

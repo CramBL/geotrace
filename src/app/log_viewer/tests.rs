@@ -15,7 +15,7 @@ use gt_log_view::{
     FilterEffect, FilterGroupId, FilterGroupOperator, FilterScope, LayerColorSlot, LoadedLog,
     LoadedLogs, LogAttachmentRef, SessionLogAttachments,
 };
-use gt_logfile::RecordingAssociationIndex;
+use gt_logfile::{LogLevelKind, RecordingAssociationIndex};
 use gt_pending_writes::WriteAccess;
 use rstest::rstest;
 use strum::IntoEnumIterator as _;
@@ -207,6 +207,79 @@ fn choose_first_group_operator(harness: &mut Harness<ViewerState>, operator: Fil
             .click();
         harness.run_steps(2);
     }
+}
+
+#[rstest]
+#[case::message(FilterScope::Message, "gamma")]
+#[case::invalid_regex(FilterScope::Message, "[")]
+#[case::service(FilterScope::Service, "navsyncd")]
+#[case::hostname(FilterScope::Hostname, "host")]
+#[case::level(FilterScope::Level, "")]
+fn creating_a_group_requires_adding_or_cancelling_the_current_draft(
+    #[case] scope: FilterScope,
+    #[case] text: &str,
+) {
+    let mut harness = harness_of(Vec::new(), &[("boolean.log", BOOLEAN_FILTER_LOG)]);
+    add_filter(&mut harness, "alpha");
+    add_filter(&mut harness, "beta");
+    choose_first_group_operator(&mut harness, FilterGroupOperator::Any);
+    open_live_editor(&mut harness);
+    let shown = harness.state().first_loaded_log();
+    let (stack, _) = harness
+        .state_mut()
+        .logs
+        .filter_stack_mut_by_id(shown)
+        .unwrap();
+    let destination = stack.selected_group();
+    stack.set_live_filter_scope(scope);
+    if scope == FilterScope::Level {
+        stack.set_live_filter_level(LogLevelKind::Error);
+    } else {
+        stack.set_live_filter_regex(text == "[");
+        stack.set_live_filter_text(text);
+    }
+    run_until_the_scans_land(&mut harness);
+    let before = match_count(&harness);
+    assert!(
+        harness
+            .get_by_label(filters::NEW_GROUP_LABEL)
+            .accesskit_node()
+            .is_disabled()
+    );
+    harness.get_by_label(filters::NEW_GROUP_LABEL).click();
+    harness.run_steps(2);
+    let stack = harness.state().shown_log().unwrap().filters();
+    assert_eq!(stack.groups().len(), 1);
+    assert_eq!(stack.selected_group(), destination);
+    assert_eq!(match_count(&harness), before);
+    harness.get_by_label("Cancel").click();
+    run_until_the_scans_land(&mut harness);
+    harness.get_by_label(filters::NEW_GROUP_LABEL).click();
+    harness.run_steps(2);
+    let stack = harness.state().shown_log().unwrap().filters();
+    let added = stack.groups().last().unwrap().id();
+    assert_ne!(added, destination);
+    assert_eq!(stack.selected_group(), added);
+    assert_eq!(stack.live_filter_effect(), FilterEffect::Table);
+    harness.get(group_control(added, filters::GroupControl::Editor));
+}
+
+#[test]
+fn table_drafts_filter_rows_without_creating_live_map_layers() {
+    let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
+    type_into_live_filter(&mut harness, "fix");
+    assert_eq!(match_count(&harness), "2 of 6");
+    assert_eq!(
+        harness
+            .state()
+            .shown_log()
+            .unwrap()
+            .filters()
+            .live_filter_effect(),
+        FilterEffect::Table
+    );
+    assert!(harness.state_mut().map_matches().layers().is_empty());
+    assert_eq!(harness.state_mut().map_matches().match_count(), 0);
 }
 
 enum LiveEditorGroup {
@@ -545,6 +618,73 @@ fn group_controls_select_live_destination_move_conditions_and_reassign_removed_m
             .query(group_control(second_group, filters::GroupControl::Overflow))
             .is_none()
     );
+}
+
+#[rstest]
+#[case::empty(None, FilterGroupOperator::All)]
+#[case::any(Some("alpha, beta"), FilterGroupOperator::Any)]
+#[case::long(
+    Some(
+        "long condition with extended Unicode text äöå repeated many times beyond the menu width limit"
+    ),
+    FilterGroupOperator::All
+)]
+fn group_move_destinations_show_bounded_operator_and_condition_summaries(
+    #[case] text: Option<&str>,
+    #[case] operator: FilterGroupOperator,
+) {
+    let mut harness = harness_with(Vec::new());
+    add_filter(&mut harness, "fix");
+    harness.get_by_label(filters::NEW_GROUP_LABEL).click();
+    harness.run_steps(2);
+    let stack = harness.state().shown_log().unwrap().filters();
+    let destination = stack.selected_group();
+    if let Some(text) = text {
+        add_filter(&mut harness, text);
+    }
+    let shown = harness.state().first_loaded_log();
+    harness
+        .state_mut()
+        .logs
+        .filter_stack_mut_by_id(shown)
+        .unwrap()
+        .0
+        .set_group_operator(destination, operator);
+    harness.run_steps(2);
+    open_chip_actions(&mut harness, 0, FilterEffect::Table);
+    harness
+        .get(chip_effect_control(
+            &harness,
+            0,
+            FilterEffect::Table,
+            filters::ChipControl::MoveToGroup,
+        ))
+        .click();
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Group 1").is_none());
+    assert!(harness.query_by_label("Group 2").is_none());
+    let choice = harness.get(chip_effect_control(
+        &harness,
+        0,
+        FilterEffect::Table,
+        filters::ChipControl::Destination(destination),
+    ));
+    let label = choice.accesskit_node().label().unwrap();
+    let (display_operator, summary) = label.split_once(" — ").unwrap();
+    assert_eq!(display_operator, operator.to_string());
+    assert!(summary.chars().count() <= filters::GROUP_SUMMARY_MAX_CHARACTERS + 1);
+    match text {
+        None => assert_eq!(summary, "empty group"),
+        Some(text) if text.chars().count() > filters::GROUP_SUMMARY_MAX_CHARACTERS => {
+            assert!(summary.ends_with('…'))
+        }
+        Some(text) => assert!(summary.contains(text)),
+    }
+    choice.click();
+    harness.run_steps(2);
+    let stack = harness.state().shown_log().unwrap().filters();
+    assert_eq!(stack.chips().first().unwrap().group(), destination);
+    assert!(!stack.is_query_pending());
 }
 
 fn set_display_option(harness: &mut Harness<'static, ViewerState>, label: &str, enabled: bool) {
@@ -1259,7 +1399,7 @@ fn dragging_the_association_window_commits_one_pass_with_the_final_placements() 
         (log_start() + Duration::seconds(690)).format(super::TIMESTAMP_FORMAT)
     );
     let mut harness = harness_of(vec![recording("walk.gtd", 55.0)], &[("nav.log", &text)]);
-    type_into_live_filter(&mut harness, "navsyncd");
+    type_into_map_draft(&mut harness, "navsyncd");
     let cached = harness.state_mut().map_matches();
     assert_eq!(cached.match_count(), 1);
     let generation = harness.state().logs.map_matches_generation();
@@ -1927,7 +2067,7 @@ fn type_into_live_filter(harness: &mut Harness<ViewerState>, text: &str) {
 fn idle_viewer_frames_preserve_cached_map_layers() {
     let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
     add_map_highlight(&mut harness, "starting");
-    type_into_live_filter(&mut harness, "fix");
+    type_into_map_draft(&mut harness, "fix");
     let cached = harness.state_mut().map_matches();
     assert_eq!(cached.layers().len(), 2);
     assert_eq!(cached.match_count(), 4);
@@ -1959,7 +2099,7 @@ fn viewer_edits_refresh_cached_map_layers(
 ) {
     let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
     add_map_highlight(&mut harness, "starting");
-    type_into_live_filter(&mut harness, "fix");
+    type_into_map_draft(&mut harness, "fix");
     assert_eq!(harness.state_mut().map_matches().match_count(), 4);
     let generation = harness.state().logs.map_matches_generation();
 
@@ -1977,7 +2117,7 @@ fn viewer_edits_refresh_cached_map_layers(
                 None
             );
         }
-        MapLayerEdit::WriteLiveFilter => type_into_live_filter(&mut harness, " impossible"),
+        MapLayerEdit::WriteLiveFilter => type_into_map_draft(&mut harness, " impossible"),
     }
 
     let cached = harness.state_mut().map_matches();
@@ -2044,16 +2184,33 @@ fn chips(harness: &Harness<ViewerState>) -> Vec<(String, Vec<FilterEffect>, Opti
         .unwrap_or_default()
 }
 
-fn add_map_highlight(harness: &mut Harness<ViewerState>, text: &str) {
-    harness
-        .get(By::new().predicate(|node| node.author_id() == Some(filters::MAP_HIGHLIGHT_ADD_ID)))
-        .click();
+fn type_into_map_draft(harness: &mut Harness<ViewerState>, text: &str) {
+    if harness
+        .query(
+            By::new().predicate(|node| node.author_id() == Some(filters::MAP_HIGHLIGHT_EDITOR_ID)),
+        )
+        .is_none()
+    {
+        harness
+            .get(
+                By::new().predicate(|node| node.author_id() == Some(filters::MAP_HIGHLIGHT_ADD_ID)),
+            )
+            .click();
+        harness.run_steps(2);
+    }
+    harness.ctx.memory_mut(|memory| {
+        memory.request_focus(egui::Id::new(filters::LIVE_FILTER_FIELD_ID));
+    });
     harness.run_steps(2);
     harness
         .input_mut()
         .events
         .push(egui::Event::Text(text.to_owned()));
     run_until_the_scans_land(harness);
+}
+
+fn add_map_highlight(harness: &mut Harness<ViewerState>, text: &str) {
+    type_into_map_draft(harness, text);
     harness.get_by_label(filters::ADD_FILTER_LABEL).click();
     run_until_the_scans_land(harness);
 }
@@ -3390,7 +3547,8 @@ fn log_viewer_window_fits_every_viewport(
     let (stack, _) = state.logs.filter_stack_mut_by_id(id).unwrap();
     for group in 0..5 {
         if group > 0 {
-            stack.create_group();
+            let next = stack.create_group();
+            stack.select_group(next);
         }
         for condition in 0..3 {
             stack.set_live_filter_text(&format!(
