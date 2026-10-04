@@ -672,10 +672,10 @@ fn group_move_destinations_show_bounded_operator_and_condition_summaries(
     let label = choice.accesskit_node().label().unwrap();
     let (display_operator, summary) = label.split_once(" — ").unwrap();
     assert_eq!(display_operator, operator.to_string());
-    assert!(summary.chars().count() <= filters::GROUP_SUMMARY_MAX_CHARACTERS + 1);
+    assert!(summary.chars().count() <= filters::GROUP_SUMMARY_MAX_CHARACTERS.get() + 1);
     match text {
         None => assert_eq!(summary, "empty group"),
-        Some(text) if text.chars().count() > filters::GROUP_SUMMARY_MAX_CHARACTERS => {
+        Some(text) if text.chars().count() > filters::GROUP_SUMMARY_MAX_CHARACTERS.get() => {
             assert!(summary.ends_with('…'))
         }
         Some(text) => assert!(summary.contains(text)),
@@ -684,6 +684,68 @@ fn group_move_destinations_show_bounded_operator_and_condition_summaries(
     harness.run_steps(2);
     let stack = harness.state().shown_log().unwrap().filters();
     assert_eq!(stack.chips().first().unwrap().group(), destination);
+    assert!(!stack.is_query_pending());
+}
+
+#[rstest]
+#[case::committed(false)]
+#[case::live_draft(true)]
+fn group_move_destinations_identify_scopes_and_active_table_drafts(#[case] live_destination: bool) {
+    let mut harness = harness_with(Vec::new());
+    add_filter(&mut harness, "fix");
+    let shown = harness.state().first_loaded_log();
+    let (stack, _) = harness
+        .state_mut()
+        .logs
+        .filter_stack_mut_by_id(shown)
+        .unwrap();
+    let message_group = stack.create_group();
+    stack.select_group(message_group);
+    stack.set_live_filter_text("gpsd");
+    stack.add_live_filter_as_chip();
+    let service_group = stack.create_group();
+    stack.select_group(service_group);
+    stack.set_live_filter_scope(FilterScope::Service);
+    stack.set_live_filter_text("gpsd");
+    if !live_destination {
+        stack.add_live_filter_as_chip();
+    }
+    stack.wait_for_queries();
+    harness.run_steps(2);
+    open_chip_actions(&mut harness, 0, FilterEffect::Table);
+    harness
+        .get(chip_effect_control(
+            &harness,
+            0,
+            FilterEffect::Table,
+            filters::ChipControl::MoveToGroup,
+        ))
+        .click();
+    harness.run_steps(2);
+    let message = harness.get(chip_effect_control(
+        &harness,
+        0,
+        FilterEffect::Table,
+        filters::ChipControl::Destination(message_group),
+    ));
+    let service = harness.get(chip_effect_control(
+        &harness,
+        0,
+        FilterEffect::Table,
+        filters::ChipControl::Destination(service_group),
+    ));
+    assert_eq!(
+        message.accesskit_node().label().as_deref(),
+        Some("All — Message: gpsd")
+    );
+    assert_eq!(
+        service.accesskit_node().label().as_deref(),
+        Some("All — Service: gpsd")
+    );
+    service.click();
+    harness.run_steps(2);
+    let stack = harness.state().shown_log().unwrap().filters();
+    assert_eq!(stack.chips().first().unwrap().group(), service_group);
     assert!(!stack.is_query_pending());
 }
 

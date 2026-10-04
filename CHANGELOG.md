@@ -21,6 +21,8 @@
 
 ### Fixed
 
+- **Log Viewer:** Fixed adding a table filter or editing disabled table conditions dismissing a revealed diagnostic entry.
+- **Log Viewer:** Fixed filter movement menus omitting condition scopes and unfinished table conditions.
 - **Log Viewer:** Fixed creating a group changing an unfinished table filter.
 - **Log Viewer:** Fixed table-filter drafts highlighting map matches.
 - **Log Viewer:** Fixed map-highlight edits dismissing a revealed diagnostic entry.
