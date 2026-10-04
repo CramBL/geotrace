@@ -122,7 +122,8 @@ impl LogViewerWindow {
             FilterEdit::WriteLiveFilter(text) => stack.set_live_filter_text(&text),
             FilterEdit::ReadLiveFilterAsRegex(regex) => stack.set_live_filter_regex(regex),
             FilterEdit::CreateGroup => {
-                stack.create_group();
+                let group = stack.create_group();
+                stack.select_group(group);
                 stack.set_live_filter_effect(FilterEffect::Table);
                 self.filter_editor_log = Some(shown);
                 self.filter_editor_focus = true;
@@ -370,7 +371,7 @@ impl LogViewerWindow {
                     for chip in filters.chips().iter().filter(|chip| {
                         chip.has_effect(FilterEffect::Table) && chip.group() == group.id()
                     }) {
-                        if let Some(chip_edit) = chip_ui(ui, chip, FilterEffect::Table, slots, filters.groups()) {
+                        if let Some(chip_edit) = chip_ui(ui, chip, FilterEffect::Table, slots, filters) {
                             edit = Some(chip_edit);
                         }
                     }
@@ -402,8 +403,14 @@ impl LogViewerWindow {
         }
         ui.horizontal_wrapped(|ui| {
             if ui
-                .small_button(NEW_GROUP_LABEL)
+                .add_enabled(
+                    filters.live_filter_text().is_empty(),
+                    Button::new(NEW_GROUP_LABEL).small(),
+                )
                 .on_hover_text("Create another table filter group")
+                .on_disabled_hover_text(
+                    "Add or cancel the current condition before creating a group",
+                )
                 .clicked()
             {
                 edit = Some(FilterEdit::CreateGroup);
@@ -432,9 +439,7 @@ impl LogViewerWindow {
                 .iter()
                 .filter(|chip| chip.has_effect(FilterEffect::Map))
             {
-                if let Some(chip_edit) =
-                    chip_ui(ui, chip, FilterEffect::Map, slots, filters.groups())
-                {
+                if let Some(chip_edit) = chip_ui(ui, chip, FilterEffect::Map, slots, filters) {
                     edit = Some(chip_edit);
                 }
             }
@@ -497,7 +502,7 @@ fn chip_ui(
     chip: &FilterChip,
     effect: FilterEffect,
     slots: &LayerColorSlots,
-    groups: &[FilterGroup],
+    filters: &FilterStack,
 ) -> Option<FilterEdit> {
     let dark_mode = ui.visuals().dark_mode;
     let map_slot = (effect == FilterEffect::Map)
@@ -633,7 +638,7 @@ fn chip_ui(
                     .on_hover_text(format!("{text}\n{effect_hover}"));
                 ChipControl::Value.identify(&value_response, chip.id(), effect);
 
-                if let Some(action) = chip_actions_ui(ui, chip, effect, groups) {
+                if let Some(action) = chip_actions_ui(ui, chip, effect, filters) {
                     edit = Some(action);
                 }
             })
@@ -645,11 +650,40 @@ fn chip_ui(
     edit
 }
 
+struct GroupSummary<'a> {
+    group: &'a FilterGroup,
+    filters: &'a FilterStack,
+}
+
+impl GroupSummary<'_> {
+    fn label(&self) -> String {
+        let mut summary = String::new();
+        for chip in
+            self.filters.chips().iter().filter(|chip| {
+                chip.group() == self.group.id() && chip.has_effect(FilterEffect::Table)
+            })
+        {
+            let separator = if summary.is_empty() { "" } else { ", " };
+            let mut characters = separator.chars().chain(chip.pattern().text().chars());
+            let remaining = GROUP_SUMMARY_MAX_CHARACTERS.saturating_sub(summary.chars().count());
+            summary.extend(characters.by_ref().take(remaining));
+            if characters.next().is_some() {
+                summary.push('…');
+                break;
+            }
+        }
+        if summary.is_empty() {
+            summary.push_str("empty group");
+        }
+        format!("{} — {summary}", self.group.operator())
+    }
+}
+
 fn chip_actions_ui(
     ui: &mut egui::Ui,
     chip: &FilterChip,
     effect: FilterEffect,
-    groups: &[FilterGroup],
+    filters: &FilterStack,
 ) -> Option<FilterEdit> {
     let mut edit = None;
     let overflow = ui.menu_button(OVERFLOW_LABEL, |ui| {
@@ -686,12 +720,12 @@ fn chip_actions_ui(
             });
             ui.close();
         }
-        if effect == FilterEffect::Table && groups.len() > 1 {
+        if effect == FilterEffect::Table && filters.groups().len() > 1 {
             let movement = ui.menu_button(MOVE_FILTER_LABEL, |ui| {
-                for (index, group) in groups.iter().enumerate() {
+                for group in filters.groups() {
                     let choice = ui.selectable_label(
                         chip.group() == group.id(),
-                        format!("Group {}", index + 1),
+                        GroupSummary { group, filters }.label(),
                     );
                     ChipControl::Destination(group.id()).identify(&choice, chip.id(), effect);
                     if choice.clicked() {
@@ -831,6 +865,8 @@ const CHIP_TEXT_CHARS: NonZeroUsize = match NonZeroUsize::new(28) {
     Some(chars) => chars,
     None => NonZeroUsize::MIN,
 };
+
+pub(super) const GROUP_SUMMARY_MAX_CHARACTERS: usize = 64;
 
 const CHIP_CORNER_RADIUS: u8 = 10;
 

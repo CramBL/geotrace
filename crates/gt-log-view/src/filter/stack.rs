@@ -221,7 +221,7 @@ pub struct FilterStack {
     selected_group: FilterGroupId,
     visible: Arc<VisibleEntries>,
     clock_ticks: Arc<ClockTicks>,
-    semantic_revision: u64,
+    table_semantic_revision: u64,
     visible_revision: u64,
     #[cfg(test)]
     visible_composition_generation: u64,
@@ -252,7 +252,7 @@ impl FilterStack {
             selected_group: FilterGroupId(0),
             visible: Arc::new(visible),
             clock_ticks: Arc::new(clock_ticks),
-            semantic_revision: 0,
+            table_semantic_revision: 0,
             visible_revision: 0,
             #[cfg(test)]
             visible_composition_generation: 0,
@@ -296,14 +296,15 @@ impl FilterStack {
             id,
             operator: FilterGroupOperator::All,
         });
-        self.select_group(id);
         id
     }
 
     pub fn select_group(&mut self, id: FilterGroupId) {
         if self.selected_group != id && self.groups.iter().any(|group| group.id == id) {
+            if self.live_effect == FilterEffect::Table && !self.draft.text().is_empty() {
+                self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
+            }
             self.selected_group = id;
-            self.semantic_revision = self.semantic_revision.wrapping_add(1);
             self.recompose_visible_entries();
         }
     }
@@ -320,6 +321,9 @@ impl FilterStack {
         let Some(index) = self.groups.iter().position(|group| group.id == id) else {
             return;
         };
+        if self.group_has_table_conditions_or_draft(id) {
+            self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
+        }
         for chip in &mut self.chips {
             if chip.group == id {
                 chip.group = survivor;
@@ -329,7 +333,6 @@ impl FilterStack {
             self.selected_group = survivor;
         }
         self.groups.remove(index);
-        self.semantic_revision = self.semantic_revision.wrapping_add(1);
         self.recompose_visible_entries();
     }
 
@@ -341,19 +344,24 @@ impl FilterStack {
             return;
         };
         if chip.group != group {
+            if chip.has_effect(FilterEffect::Table) {
+                self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
+            }
             chip.group = group;
-            self.semantic_revision = self.semantic_revision.wrapping_add(1);
             self.recompose_visible_entries();
         }
     }
 
     pub fn set_group_operator(&mut self, id: FilterGroupId, operator: FilterGroupOperator) {
+        let has_table_conditions_or_draft = self.group_has_table_conditions_or_draft(id);
         let Some(group) = self.groups.iter_mut().find(|group| group.id == id) else {
             return;
         };
         if group.operator != operator {
             group.operator = operator;
-            self.semantic_revision = self.semantic_revision.wrapping_add(1);
+            if has_table_conditions_or_draft {
+                self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
+            }
             self.recompose_visible_entries();
         }
     }
@@ -402,8 +410,10 @@ impl FilterStack {
 
     pub fn set_live_filter_effect(&mut self, effect: FilterEffect) {
         if self.live_effect != effect {
+            if !self.draft.text().is_empty() {
+                self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
+            }
             self.live_effect = effect;
-            self.semantic_revision = self.semantic_revision.wrapping_add(1);
             self.recompose_visible_entries();
         }
     }
@@ -422,8 +432,7 @@ impl FilterStack {
         self.live.compiled.as_ref().err()
     }
 
-    /// The entries the live filter matched, which the map draws in the colour
-    /// reserved for it. Empty while the field is empty or its regex invalid.
+    /// Empty while the draft is empty or its regex is invalid.
     pub fn live_filter_matches(&self) -> &EntryMatches {
         self.live.query.matches()
     }
@@ -505,6 +514,10 @@ impl FilterStack {
         if !self.can_add_live_filter_as_chip() {
             return None;
         }
+        if effects.enabled(FilterEffect::Table).is_some() || self.live_effect == FilterEffect::Table
+        {
+            self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
+        }
         let id = FilterChipId(self.next_chip_id);
         self.next_chip_id = self.next_chip_id.saturating_add(1);
         let mut emptied = LogFilter::unwritten(self.log.entries().len());
@@ -516,7 +529,6 @@ impl FilterStack {
             filter: mem::replace(&mut self.live, emptied),
             effects,
         });
-        self.semantic_revision = self.semantic_revision.wrapping_add(1);
         self.recompose_visible_entries();
         Some(id)
     }
@@ -556,7 +568,9 @@ impl FilterStack {
             return;
         }
         chip.effects.set_enabled(effect, enabled);
-        self.semantic_revision = self.semantic_revision.wrapping_add(1);
+        if effect == FilterEffect::Table {
+            self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
+        }
         self.recompose_visible_entries();
     }
 
@@ -582,7 +596,9 @@ impl FilterStack {
             },
             _ => return,
         };
-        self.semantic_revision = self.semantic_revision.wrapping_add(1);
+        if effect == FilterEffect::Table {
+            self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
+        }
         self.recompose_visible_entries();
     }
 
@@ -608,7 +624,9 @@ impl FilterStack {
             slots.release(slot);
         }
         chip.effects = remaining;
-        self.semantic_revision = self.semantic_revision.wrapping_add(1);
+        if effect == FilterEffect::Table {
+            self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
+        }
         self.recompose_visible_entries();
     }
 
@@ -617,10 +635,12 @@ impl FilterStack {
             return;
         };
         let removed = self.chips.remove(position);
+        if removed.has_effect(FilterEffect::Table) {
+            self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
+        }
         if let Some(slot) = removed.layer_slot() {
             slots.release(slot);
         }
-        self.semantic_revision = self.semantic_revision.wrapping_add(1);
         self.recompose_visible_entries();
     }
 
@@ -636,9 +656,9 @@ impl FilterStack {
         Arc::clone(&self.clock_ticks)
     }
 
-    /// Increments on filter edits before asynchronous scans finish.
-    pub fn semantic_revision(&self) -> u64 {
-        self.semantic_revision
+    /// Increments on table-filter edits before asynchronous scans finish.
+    pub fn table_semantic_revision(&self) -> u64 {
+        self.table_semantic_revision
     }
 
     /// Increments only when the indexed visible entry set changes.
@@ -739,13 +759,26 @@ impl FilterStack {
         if self.draft == draft {
             return;
         }
+        if self.live_effect == FilterEffect::Table
+            && (!self.draft.text().is_empty() || !draft.text().is_empty())
+        {
+            self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
+        }
         self.live
             .rewrite(draft.pattern().unwrap_or_default(), &self.log);
         self.draft = draft;
-        self.semantic_revision = self.semantic_revision.wrapping_add(1);
         if self.live_effect == FilterEffect::Table {
             self.recompose_visible_entries();
         }
+    }
+
+    fn group_has_table_conditions_or_draft(&self, id: FilterGroupId) -> bool {
+        self.chips
+            .iter()
+            .any(|chip| chip.group == id && chip.has_effect(FilterEffect::Table))
+            || (self.selected_group == id
+                && self.live_effect == FilterEffect::Table
+                && !self.draft.text().is_empty())
     }
 
     fn recompose_visible_entries(&mut self) {
@@ -931,6 +964,36 @@ mod tests {
     }
 
     #[rstest]
+    #[case::pending(false)]
+    #[case::landed(true)]
+    fn creating_a_group_preserves_live_destination_visibility_and_query(#[case] landed: bool) {
+        let (mut stack, _) = unfiltered_stack();
+        let original = stack.selected_group();
+        stack.set_group_operator(original, FilterGroupOperator::Any);
+        add_refine_chip(&mut stack, "acquired");
+        add_refine_chip(&mut stack, "lost");
+        stack.wait_for_queries();
+        stack.set_live_filter_text("battery");
+        if landed {
+            stack.wait_for_queries();
+        }
+        let visible = stack.shared_visible_entries();
+        let table_revision = stack.table_semantic_revision();
+        let query = stack.live.query.scan_identity();
+        let pending = stack.is_query_pending();
+        let new_group = stack.create_group();
+        assert_eq!(stack.selected_group(), original);
+        assert!(Arc::ptr_eq(&visible, &stack.shared_visible_entries()));
+        assert_eq!(stack.table_semantic_revision(), table_revision);
+        assert_eq!(stack.live.query.scan_identity(), query);
+        assert_eq!(stack.is_query_pending(), pending);
+        stack.select_group(new_group);
+        assert_eq!(stack.selected_group(), new_group);
+        assert_eq!(stack.live.query.scan_identity(), query);
+        assert_eq!(stack.is_query_pending(), pending);
+    }
+
+    #[rstest]
     #[case::mixed(FilterGroupOperator::Any, vec![0, 1])]
     #[case::all(FilterGroupOperator::All, vec![1])]
     fn groups_intersect_their_composed_matches(
@@ -944,6 +1007,7 @@ mod tests {
         add_refine_chip(&mut stack, "second");
         stack.set_group_operator(first_group, operator);
         let second_group = stack.create_group();
+        stack.select_group(second_group);
         let third = add_refine_chip(&mut stack, "first");
         stack.wait_for_queries();
         assert_eq!(visible(&stack), expected);
@@ -1010,6 +1074,7 @@ mod tests {
         );
         stack.set_group_operator(first, FilterGroupOperator::Any);
         let second = stack.create_group();
+        stack.select_group(second);
         stack.set_live_draft(LiveFilterDraft::Hostname("HOST".into()));
         stack.wait_for_queries();
         let hostname = stack.add_live_filter_as_chip().unwrap();
@@ -1051,12 +1116,14 @@ mod tests {
     fn groups_without_participating_conditions_leave_visibility_unchanged() {
         let (mut stack, mut slots) = unfiltered_stack();
         let chip = add_refine_chip(&mut stack, "acquired");
-        stack.create_group();
+        let group = stack.create_group();
+        stack.select_group(group);
         stack.set_group_operator(stack.selected_group(), FilterGroupOperator::Any);
         let disabled = add_refine_chip(&mut stack, "missing");
         stack.set_chip_effect_enabled(disabled, FilterEffect::Table, false);
         add_layer_chip(&mut stack, &mut slots, "battery");
-        stack.create_group();
+        let group = stack.create_group();
+        stack.select_group(group);
         stack.set_live_filter_regex(true);
         stack.set_live_filter_text("[");
         stack.wait_for_queries();
@@ -1078,6 +1145,7 @@ mod tests {
         stack.set_group_operator(any_group, FilterGroupOperator::Any);
         add_refine_chip(&mut stack, "first");
         let all_group = stack.create_group();
+        stack.select_group(all_group);
         add_refine_chip(&mut stack, "first");
         stack.wait_for_queries();
         if matches!(state, ScanState::ReplacementPending) {
@@ -1129,6 +1197,7 @@ mod tests {
         add_refine_chip(&mut stack, "acquired");
         stack.wait_for_queries();
         let second_group = stack.create_group();
+        stack.select_group(second_group);
         let moved = add_refine_chip(&mut stack, "lost");
         if landed {
             stack.wait_for_queries();
@@ -1216,6 +1285,7 @@ mod tests {
         let second = add_refine_chip(&mut stack, "lost");
         stack.set_group_operator(first_group, FilterGroupOperator::Any);
         let second_group = stack.create_group();
+        stack.select_group(second_group);
         add_refine_chip(&mut stack, "gnss");
         stack.add_chip_effect(first, FilterEffect::Map, &mut slots);
         stack.remove_chip_effect(first, FilterEffect::Table, &mut slots);
@@ -1735,9 +1805,9 @@ mod tests {
         assert_eq!(visible(&stack), [0, 2]);
         stack.set_live_filter_effect(FilterEffect::Map);
         let generation = stack.visible_composition_generation;
-        let revision = stack.semantic_revision();
+        let revision = stack.table_semantic_revision();
         stack.set_live_filter_text("battery");
-        assert_eq!(stack.semantic_revision(), revision + 1);
+        assert_eq!(stack.table_semantic_revision(), revision);
         assert_eq!(stack.visible_composition_generation, generation);
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut any_landed = false;
@@ -1785,9 +1855,9 @@ mod tests {
         let identity = stack.live.query.scan_identity();
         stack.set_live_filter_effect(FilterEffect::Table);
         assert_eq!(stack.live.query.scan_identity(), identity);
-        let revision = stack.semantic_revision();
+        let revision = stack.table_semantic_revision();
         stack.set_live_filter_effect(FilterEffect::Map);
-        assert_eq!(stack.semantic_revision(), revision + 1);
+        assert_eq!(stack.table_semantic_revision(), revision + 1);
         assert_eq!(stack.live.query.scan_identity(), identity);
         assert_eq!(visible(&stack), [0, 1, 2, 3]);
         let pending = stack.is_query_pending();
@@ -1816,6 +1886,7 @@ mod tests {
         let (mut stack, mut slots) = unfiltered_stack();
         let old = stack.selected_group();
         let group = stack.create_group();
+        stack.select_group(group);
         stack.set_group_operator(group, FilterGroupOperator::Any);
         let id = add_layer_chip(&mut stack, &mut slots, "gnss");
         stack.add_chip_effect(id, FilterEffect::Table, &mut slots);

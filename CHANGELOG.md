@@ -21,6 +21,10 @@
 
 ### Fixed
 
+- **Log Viewer:** Fixed creating a group changing an unfinished table filter.
+- **Log Viewer:** Fixed table-filter drafts highlighting map matches.
+- **Log Viewer:** Fixed map-highlight edits dismissing a revealed diagnostic entry.
+- **Log Viewer:** Fixed filter movement menus identifying groups with hidden numbers.
 - **Log Viewer:** Fixed excessive memory use when table filters change or diagnostic navigation reveals a hidden entry in a large log.
 - **Log Viewer:** Fixed selecting Level applying Info immediately and clearing a Level condition changing the editor to Message.
 - **Log Viewer:** Fixed map clicks scrolling to a different log entry when table filters hide the first entry of the clicked hexagon.

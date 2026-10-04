@@ -81,7 +81,7 @@ pub(super) enum DiagnosticTarget {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct DiagnosticReveal {
     pub(super) log: LoadedLogId,
-    pub(super) semantic_revision: u64,
+    pub(super) table_semantic_revision: u64,
     pub(super) entry_index: usize,
 }
 
@@ -540,7 +540,8 @@ impl LineTableRows {
 impl LogViewerWindow {
     pub(super) fn clear_invalid_diagnostic_reveal(&mut self, log: &LoadedLog, log_id: LoadedLogId) {
         if self.diagnostic_reveal.is_some_and(|reveal| {
-            reveal.log != log_id || reveal.semantic_revision != log.filters().semantic_revision()
+            reveal.log != log_id
+                || reveal.table_semantic_revision != log.filters().table_semantic_revision()
         }) {
             self.diagnostic_reveal = None;
             self.scroll_to_row = None;
@@ -606,7 +607,7 @@ impl LogViewerWindow {
         if hidden {
             self.diagnostic_reveal = Some(DiagnosticReveal {
                 log: log_id,
-                semantic_revision: log.filters().semantic_revision(),
+                table_semantic_revision: log.filters().table_semantic_revision(),
                 entry_index,
             });
         }

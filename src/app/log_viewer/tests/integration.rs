@@ -19,6 +19,7 @@ fn grouped_structured_filters_preserve_highlights_and_diagnostic_navigation_afte
     stack.set_live_filter_text("navsyncd");
     stack.add_live_filter_as_chip();
     let group = stack.create_group();
+    stack.select_group(group);
     stack.set_group_operator(group, FilterGroupOperator::Any);
     stack.set_live_filter_scope(FilterScope::Message);
     stack.set_live_filter_text("fix acquired");

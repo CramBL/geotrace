@@ -13,7 +13,7 @@ use gt_test_utils::{
 use gt_types::FileIdx;
 
 use crate::app::App;
-use crate::app::log_viewer;
+use crate::app::log_viewer::{self, filters};
 use crate::app::test_util;
 use crate::app::test_util::harness::TestDroppedFile;
 use crate::app::ui_tests;
@@ -609,6 +609,11 @@ fn snapshot_app_log_map_hexagons() {
     ui_tests::set_other_log_filter_effect_only(&mut harness.inner, 0);
     ui_tests::run_until_the_log_filter_scans_land(&mut harness.inner);
     type_into_log_filter(&mut harness, "bus-off");
+    harness
+        .inner
+        .get(By::new().predicate(|node| node.author_id() == Some(filters::MAP_HIGHLIGHT_ADD_ID)))
+        .click();
+    harness.inner.run_steps(2);
     harness.inner.get_by_label(ICON_ARTICLE).click();
     harness.inner.run_steps(5);
 

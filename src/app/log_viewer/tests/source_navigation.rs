@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use gt_logfile::LogLevelKind;
-
 use super::*;
 use crate::app::log_viewer::line_table::DiagnosticTarget;
 
@@ -89,6 +87,7 @@ fn structural_source_rows_remain_visible_when_entry_conditions_hide_every_entry(
     stack.set_live_filter_text("no entry matches");
     stack.add_live_filter_as_chip();
     let second = stack.create_group();
+    stack.select_group(second);
     stack.set_group_operator(second, FilterGroupOperator::Any);
     stack.set_live_filter_text("no other entry matches");
     stack.wait_for_queries();
@@ -196,9 +195,9 @@ fn idle_frames_and_scan_landing_preserve_reveals_and_cached_rows() {
         assert!(Arc::ptr_eq(&rows, &state.viewer.table_rows(log, shown)));
     }
     let (stack, _) = state.logs.filter_stack_mut_by_id(shown).unwrap();
-    let revision = stack.semantic_revision();
+    let revision = stack.table_semantic_revision();
     stack.set_live_filter_text("starting");
-    assert_eq!(stack.semantic_revision(), revision);
+    assert_eq!(stack.table_semantic_revision(), revision);
     stack.wait_for_queries();
     let log = state.logs.get_by_id(shown).unwrap();
     let landed = state.viewer.table_rows(log, shown);
@@ -212,9 +211,7 @@ fn idle_frames_and_scan_landing_preserve_reveals_and_cached_rows() {
 enum SemanticEdit {
     Add,
     Clear,
-    CreateGroup,
     Enabled,
-    Layer,
     Level,
     Membership,
     Operator,
@@ -236,11 +233,9 @@ enum SemanticEdit {
 #[case::add(SemanticEdit::Add)]
 #[case::remove(SemanticEdit::Remove)]
 #[case::enabled(SemanticEdit::Enabled)]
-#[case::layer(SemanticEdit::Layer)]
 #[case::refine(SemanticEdit::Refine)]
 #[case::operator(SemanticEdit::Operator)]
 #[case::membership(SemanticEdit::Membership)]
-#[case::create_group(SemanticEdit::CreateGroup)]
 #[case::remove_group(SemanticEdit::RemoveGroup)]
 #[case::select_group(SemanticEdit::SelectGroup)]
 fn filter_semantic_edits_clear_reveals_before_scan_landing(#[case] edit: SemanticEdit) {
@@ -278,13 +273,9 @@ fn filter_semantic_edits_clear_reveals_before_scan_landing(#[case] edit: Semanti
         }
         SemanticEdit::Remove => stack.remove_chip(chip, slots),
         SemanticEdit::Enabled => stack.set_chip_effect_enabled(chip, FilterEffect::Table, false),
-        SemanticEdit::Layer => stack.add_chip_effect(chip, FilterEffect::Map, slots),
         SemanticEdit::Refine => stack.add_chip_effect(chip, FilterEffect::Table, slots),
         SemanticEdit::Operator => stack.set_group_operator(first_group, FilterGroupOperator::Any),
         SemanticEdit::Membership => stack.move_chip_to_group(chip, other_group),
-        SemanticEdit::CreateGroup => {
-            stack.create_group();
-        }
         SemanticEdit::RemoveGroup => stack.remove_group(first_group),
         SemanticEdit::SelectGroup => stack.select_group(other_group),
     }
@@ -294,6 +285,122 @@ fn filter_semantic_edits_clear_reveals_before_scan_landing(#[case] edit: Semanti
     assert_eq!(state.viewer.diagnostic_reveal, None);
     assert_eq!(state.viewer.scroll_to_row, None);
     assert_eq!(log.filters().is_query_pending(), pending);
+}
+
+#[derive(Clone, Copy, Debug)]
+enum MapOnlyEdit {
+    AddDraft,
+    AddEffect,
+    CancelDraft,
+    CreateGroup,
+    Disable,
+    Draft,
+    EmptyDestination,
+    Enable,
+    MoveRememberedGroup,
+    RemoveChip,
+    RemoveEffect,
+}
+
+#[rstest]
+#[case::add_effect(MapOnlyEdit::AddEffect)]
+#[case::remove_effect(MapOnlyEdit::RemoveEffect)]
+#[case::disable(MapOnlyEdit::Disable)]
+#[case::enable(MapOnlyEdit::Enable)]
+#[case::draft(MapOnlyEdit::Draft)]
+#[case::add_draft(MapOnlyEdit::AddDraft)]
+#[case::cancel_draft(MapOnlyEdit::CancelDraft)]
+#[case::remove_chip(MapOnlyEdit::RemoveChip)]
+#[case::remembered_group(MapOnlyEdit::MoveRememberedGroup)]
+#[case::create_group(MapOnlyEdit::CreateGroup)]
+#[case::empty_destination(MapOnlyEdit::EmptyDestination)]
+fn map_only_edits_preserve_diagnostic_reveals_and_cached_rows(#[case] edit: MapOnlyEdit) {
+    let mut state = viewer_state(Vec::new(), &[("nav.log", LOG_WITH_EVERY_ROW_KIND)]);
+    let shown = state.first_loaded_log();
+    let (stack, slots) = state.logs.filter_stack_mut_by_id(shown).unwrap();
+    stack.set_live_filter_text("starting");
+    let table = stack.add_live_filter_as_chip().unwrap();
+    let other_group = stack.create_group();
+    stack.set_live_filter_effect(FilterEffect::Map);
+    stack.set_live_filter_text("fix");
+    let map = stack.add_live_filter_as_map_highlight(slots).unwrap();
+    if matches!(edit, MapOnlyEdit::RemoveEffect) {
+        stack.add_chip_effect(table, FilterEffect::Map, slots);
+    }
+    if matches!(edit, MapOnlyEdit::Enable) {
+        stack.set_chip_effect_enabled(map, FilterEffect::Map, false);
+    }
+    if matches!(edit, MapOnlyEdit::AddDraft | MapOnlyEdit::CancelDraft) {
+        stack.set_live_filter_text("battery");
+    }
+    stack.wait_for_queries();
+    let revision = stack.table_semantic_revision();
+    let log = state.logs.get_by_id(shown).unwrap();
+    state
+        .viewer
+        .navigate_to_diagnostic(log, shown, DiagnosticTarget::Entry(4));
+    let reveal = state.viewer.diagnostic_reveal;
+    assert!(reveal.is_some());
+    let rows = state.viewer.table_rows(log, shown);
+    let (stack, slots) = state.logs.filter_stack_mut_by_id(shown).unwrap();
+    match edit {
+        MapOnlyEdit::AddEffect => stack.add_chip_effect(table, FilterEffect::Map, slots),
+        MapOnlyEdit::RemoveEffect => stack.remove_chip_effect(table, FilterEffect::Map, slots),
+        MapOnlyEdit::Disable => stack.set_chip_effect_enabled(map, FilterEffect::Map, false),
+        MapOnlyEdit::Enable => stack.set_chip_effect_enabled(map, FilterEffect::Map, true),
+        MapOnlyEdit::Draft => stack.set_live_filter_text("battery"),
+        MapOnlyEdit::CancelDraft => stack.clear_live_filter(),
+        MapOnlyEdit::AddDraft => {
+            stack.add_live_filter_as_map_highlight(slots);
+        }
+        MapOnlyEdit::RemoveChip => stack.remove_chip(map, slots),
+        MapOnlyEdit::MoveRememberedGroup => stack.move_chip_to_group(map, other_group),
+        MapOnlyEdit::CreateGroup => {
+            stack.create_group();
+        }
+        MapOnlyEdit::EmptyDestination => {
+            stack.set_live_filter_effect(FilterEffect::Table);
+            stack.select_group(other_group);
+            stack.set_live_filter_effect(FilterEffect::Map);
+        }
+    }
+    assert_eq!(stack.table_semantic_revision(), revision);
+    stack.wait_for_queries();
+    let log = state.logs.get_by_id(shown).unwrap();
+    assert!(Arc::ptr_eq(&rows, &state.viewer.table_rows(log, shown)));
+    assert_eq!(state.viewer.diagnostic_reveal, reveal);
+    assert!(rows.row_of_exact_entry(4).is_some());
+}
+
+#[rstest]
+#[case::table_to_map(FilterEffect::Table, FilterEffect::Map)]
+#[case::map_to_table(FilterEffect::Map, FilterEffect::Table)]
+fn changing_an_active_draft_table_effect_clears_diagnostic_reveals(
+    #[case] before: FilterEffect,
+    #[case] after: FilterEffect,
+) {
+    let mut state = viewer_state(Vec::new(), &[("nav.log", LOG_WITH_EVERY_ROW_KIND)]);
+    let shown = state.first_loaded_log();
+    let (stack, _) = state.logs.filter_stack_mut_by_id(shown).unwrap();
+    stack.set_live_filter_text("starting");
+    stack.add_live_filter_as_chip();
+    stack.set_live_filter_effect(before);
+    stack.set_live_filter_text("battery");
+    stack.wait_for_queries();
+    let log = state.logs.get_by_id(shown).unwrap();
+    state
+        .viewer
+        .navigate_to_diagnostic(log, shown, DiagnosticTarget::Entry(4));
+    assert!(state.viewer.diagnostic_reveal.is_some());
+    state
+        .logs
+        .filter_stack_mut_by_id(shown)
+        .unwrap()
+        .0
+        .set_live_filter_effect(after);
+    let log = state.logs.get_by_id(shown).unwrap();
+    state.viewer.table_rows(log, shown);
+    assert_eq!(state.viewer.diagnostic_reveal, None);
 }
 
 #[test]
