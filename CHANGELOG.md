@@ -4,55 +4,36 @@
 
 ### Added
 
-- **Log Viewer:** Map highlights can be created from their own condition editor.
-- **Log Viewer:** A condition can filter table rows and highlight map matches independently.
-- Added physical line numbers and optional structural source lines to the log viewer.
-- Added service, level, and hostname conditions to log viewer filters.
-- Added table filter groups with independent All/Any composition in the log viewer.
-- **Map & Tracks:** The eye menu has a "Ghost fixes" category that shows or hides dead-reckoned chevron icons and dashed trackline stretches.
+- **Log Viewer:** Map highlights have their own condition editor, and a condition can independently filter table rows, highlight map matches, or do both.
+- **Log Viewer:** Physical line numbers and optional structural source lines let diagnostics navigate back to the original file even when table filters hide the target.
+- **Log Viewer:** Service, level and hostname conditions can filter recognized log metadata.
+- **Log Viewer:** Table filters support compact `All`/`Any` groups, with conditions composed within each group and groups combined by `AND`.
+- **Map & Tracks:** The eye menu has a **Ghost fixes** category that shows or hides dead-reckoned chevrons and dashed trackline stretches.
 
 ### Changed
 
-- **Log Viewer:** Disabled conditions use muted colours, All/Any changes with one click, and the summary shows a disclosure control.
-- **Log Viewer:** Filter groups use compact rows with All/Any controls, AND composition, inline condition entry, and overflow menus.
+- **Log Viewer:** Disabled filter conditions are visually muted, and the log summary now shows an explicit disclosure control for its details.
 - **Log Viewer:** Service and level colouring controls are available in the table display menu.
 - **Log Viewer:** The position-source dialog and Processing settings now offer an explicit preference to automatically choose a position source when exactly one loaded recording overlaps the log.
 - **Log Viewer:** Footer and dialog labels now distinguish position sources from saving logs with recordings in history.
 
 ### Fixed
 
-- **Log Viewer:** Fixed filter movement menus describing groups with invalid regex drafts as empty.
-- **Log Viewer:** Fixed adding a table filter or editing disabled table conditions dismissing a revealed diagnostic entry.
-- **Log Viewer:** Fixed filter movement menus omitting condition scopes and unfinished table conditions.
-- **Log Viewer:** Fixed creating a group changing an unfinished table filter.
-- **Log Viewer:** Fixed table-filter drafts highlighting map matches.
-- **Log Viewer:** Fixed map-highlight edits dismissing a revealed diagnostic entry.
-- **Log Viewer:** Fixed filter movement menus identifying groups with hidden numbers.
-- **Log Viewer:** Fixed excessive memory use when table filters change or diagnostic navigation reveals a hidden entry in a large log.
-- **Log Viewer:** Fixed selecting Level applying Info immediately and clearing a Level condition changing the editor to Message.
-- **Log Viewer:** Fixed map clicks scrolling to a different log entry when table filters hide the first entry of the clicked hexagon.
-- **Log Viewer:** Fixed boot and order-anomaly navigation when table filters hide the target entries.
+- **Log Viewer:** Fixed map clicks scrolling to the wrong entry when table filters hide the first entry of the clicked hexagon.
 - **Log Viewer:** Fixed the table expanding when adding a live filter as a saved filter.
 - **Log Viewer:** Fixed scroll positions changing when switching between loaded logs.
-- **Log Viewer:** Fixed repeated interface stalls with large filtered logs while the log viewer is open.
-- **Log Viewer:** Fixed equally overlapping position-source candidates changing order when recordings opened together finish loading in a different order.
-- **Log Viewer:** Fixed unrelated log or recording loads delaying the initial position-source choice.
-- **Log Viewer:** Fixed consecutive syslog lines around February 29 being dated years apart when their timestamps omit the year.
-- **Log Viewer:** Fixed a loose log failing to open when an identical log attachment finished loading first.
-- **Log Viewer:** Fixed the interface stalling repeatedly when dragging the association window value for a large log.
-- **Log Viewer:** Fixed logs remaining without a position source or selecting the wrong recording when opened together with recordings that finish loading later.
-- **Log Viewer:** Fixed a log attachment failing to open when another recording had a loaded log with identical text.
+- **Log Viewer:** Fixed repeated interface stalls with large logs while the viewer is open or while dragging the association window.
+- **Log Viewer:** Fixed initial position-source selection depending on background load order, waiting on unrelated loads, or missing recordings opened in the same batch.
+- **Log Viewer:** Fixed syslog timestamps without a year being assigned incorrect years across leap days or multi-year logs, or after reopening a log saved with a recording.
+- **Log Viewer:** Fixed logs with identical text interfering with each other's loading, including loose logs and attachments from different recordings.
 - **Log Viewer:** Fixed changing a log attachment's position source leaving it saved with the previous recording.
-- **Log Viewer:** Fixed log entries being placed between separate tracks on the map when their timestamps fall in a track gap.
-- **Log Viewer:** Fixed log position-source candidates reporting overlap with gaps between tracks and being selected automatically for logs in those gaps.
-- **Log Viewer:** Fixed incorrect years in syslog timestamps without a year when a log spans multiple calendar years.
-- **Log Viewer:** Fixed syslog timestamps changing when a log saved with a recording is reopened in a later calendar year.
+- **Log Viewer:** Fixed gaps between tracks being treated as covered recording time, which could auto-select the wrong position source or place log entries between tracks.
 - **Interface:** Fixed recording identities becoming too narrow to read in the History table at normal window widths.
 - **Interface:** Fixed the Track data panel jumping to the upper-left corner when dragged out of its dock.
 - **Interface:** Fixed the History window opening at an arbitrary position and a fixed size regardless of the screen size.
 - **Interface:** Fixed the Visible section losing its chosen height proportion when the Track data panel is resized, docked or detached.
 - **Interface:** Fixed History recording tooltips becoming extremely narrow and tall on first hover when metadata contains long text.
-- **Map & Tracks:** Fixed the map letting a generated or event marker be hovered, clicked and pinned while its type or event path is hidden in the side panel tree.
+- **Map & Tracks:** Fixed hidden generated or event markers remaining available to hover over, click or pin.
 
 ## 0.18.0 - 2026-09-15
 
