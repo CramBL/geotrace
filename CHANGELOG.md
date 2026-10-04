@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- **Log Viewer:** Fixed filter movement menus describing groups with invalid regex drafts as empty.
 - **Log Viewer:** Fixed adding a table filter or editing disabled table conditions dismissing a revealed diagnostic entry.
 - **Log Viewer:** Fixed filter movement menus omitting condition scopes and unfinished table conditions.
 - **Log Viewer:** Fixed creating a group changing an unfinished table filter.

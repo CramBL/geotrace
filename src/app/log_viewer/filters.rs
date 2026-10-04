@@ -667,7 +667,7 @@ impl GroupSummary<'_> {
             .collect();
         if self.filters.live_filter_effect() == FilterEffect::Table
             && self.filters.selected_group() == self.group.id()
-            && self.filters.can_add_live_filter_as_chip()
+            && self.filters.live_filter_draft().is_written()
         {
             let draft = self.filters.live_filter_draft();
             conditions.push(format!("{}: {}", draft.scope(), draft.text()));
