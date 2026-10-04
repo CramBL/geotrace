@@ -52,7 +52,7 @@ fn parse_summary_of_the_shown_log(harness: &Harness<App>) -> String {
     harness
         .state()
         .shown_log()
-        .map(|log| log.parse_summary_line())
+        .map(LoadedLog::parse_summary_line)
         .unwrap_or_default()
 }
 
@@ -70,7 +70,7 @@ fn a_log_that_finished_loading_opens_the_viewer_on_its_parse_summary() {
         summary.starts_with("ISO 8601 · "),
         "the summary names the detected format, got {summary:?}"
     );
-    harness.get_by_label(summary.as_str());
+    harness.get(By::new().label_contains(summary.as_str()));
 }
 
 /// One log per content: dropping a text the session already holds opens the
@@ -235,7 +235,7 @@ fn dropping_a_log_that_is_not_utf8_states_the_replacement_in_its_summary() {
         summary.ends_with("1 byte replaced"),
         "the summary states the lossy decode, got {summary:?}"
     );
-    harness.get_by_label(summary.as_str());
+    harness.get(By::new().label_contains(summary.as_str()));
 }
 
 /// With no recording loaded a log is still fully readable: nothing asks the
@@ -253,7 +253,7 @@ fn a_log_loaded_without_a_recording_stays_untargeted_and_raises_no_dialog() {
         None
     );
     assert_eq!(harness.state_mut().log_map_match_count(), 0);
-    harness.get_by_label(parse_summary_of_the_shown_log(&harness).as_str());
+    harness.get(By::new().label_contains(parse_summary_of_the_shown_log(&harness).as_str()));
 }
 
 #[test]
@@ -278,7 +278,9 @@ fn clicking_the_parse_summary_unfolds_the_boots_and_the_service_table() {
     );
 
     let summary = parse_summary_of_the_shown_log(&harness);
-    harness.get_by_label(summary.as_str()).click();
+    harness
+        .get(By::new().label_contains(summary.as_str()))
+        .click();
     harness.run_steps(3);
 
     harness.get_by_label("Boots");
@@ -311,7 +313,10 @@ fn snapshot_app_log_viewer() {
     harness.inner.run_steps(5);
 
     let summary = parse_summary_of_the_shown_log(&harness.inner);
-    harness.inner.get_by_label(summary.as_str()).click();
+    harness
+        .inner
+        .get(By::new().label_contains(summary.as_str()))
+        .click();
     harness.inner.run_steps(8);
 
     harness.snapshot_with_color_tolerance("app_log_viewer");
@@ -456,8 +461,7 @@ fn snapshot_app_log_viewer_filters() {
     harness.inner.run_steps(2);
     harness
         .inner
-        .get_by_label(&FilterGroupOperator::Any.to_string())
-        .click();
+        .get_by_label(&FilterGroupOperator::Any.to_string());
     harness.inner.run_steps(2);
     add_log_filter(&mut harness, "retries");
     harness

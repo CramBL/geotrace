@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Log Viewer:** Map highlights can be created from their own condition editor.
 - **Log Viewer:** A condition can filter table rows and highlight map matches independently.
 - Added physical line numbers and optional structural source lines to the log viewer.
 - Added service, level, and hostname conditions to log viewer filters.
@@ -12,6 +13,7 @@
 
 ### Changed
 
+- **Log Viewer:** Disabled conditions use muted colours, All/Any changes with one click, and the summary shows a disclosure control.
 - **Log Viewer:** Filter groups use compact rows with All/Any controls, AND composition, inline condition entry, and overflow menus.
 - **Log Viewer:** Service and level colouring controls are available in the table display menu.
 - **Log Viewer:** The position-source dialog and Processing settings now offer an explicit preference to automatically choose a position source when exactly one loaded recording overlaps the log.

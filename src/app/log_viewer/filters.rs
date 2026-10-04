@@ -9,6 +9,7 @@ use egui::{
     Button, Checkbox, Frame, Label, RichText, StrokeKind, TextEdit, TextStyle, TextWrapMode,
     WidgetText,
 };
+use egui_phosphor::regular::{EYE as ICON_EYE, EYE_SLASH as ICON_EYE_SLASH};
 use gt_log_view::{
     FilterChip, FilterChipId, FilterEffect, FilterGroup, FilterGroupId, FilterGroupOperator,
     FilterScope, FilterStack, LayerColorSlots, LiveFilterDraft, LoadedLogs,
@@ -42,6 +43,7 @@ enum FilterEdit {
     },
     RemoveGroup(FilterGroupId),
     SelectGroup(FilterGroupId),
+    SelectMapHighlights,
     SetChipEffectEnabled {
         chip: FilterChipId,
         effect: FilterEffect,
@@ -82,12 +84,18 @@ impl LogViewerWindow {
         let Some(edit) = edit else {
             return;
         };
-        if let FilterEdit::SelectGroup(group) = edit {
+        if matches!(
+            edit,
+            FilterEdit::SelectGroup(_) | FilterEdit::SelectMapHighlights
+        ) {
             self.filter_editor_log = Some(shown);
             self.filter_editor_focus = true;
-            if filters.selected_group() == group {
-                return;
-            }
+        }
+        if let FilterEdit::SelectGroup(group) = edit
+            && filters.selected_group() == group
+            && filters.live_filter_effect() == FilterEffect::Table
+        {
+            return;
         }
         if matches!(
             edit,
@@ -115,11 +123,15 @@ impl LogViewerWindow {
             FilterEdit::ReadLiveFilterAsRegex(regex) => stack.set_live_filter_regex(regex),
             FilterEdit::CreateGroup => {
                 stack.create_group();
-                self.filter_editor_log = None;
+                stack.set_live_filter_effect(FilterEffect::Table);
+                self.filter_editor_log = Some(shown);
+                self.filter_editor_focus = true;
             }
             FilterEdit::MoveChipToGroup { chip, group } => stack.move_chip_to_group(chip, group),
             FilterEdit::RemoveGroup(group) => stack.remove_group(group),
+            FilterEdit::SelectMapHighlights => stack.set_live_filter_effect(FilterEffect::Map),
             FilterEdit::SelectGroup(group) => {
+                stack.set_live_filter_effect(FilterEffect::Table);
                 stack.select_group(group);
             }
             FilterEdit::SetGroupOperator { group, operator } => {
@@ -127,7 +139,14 @@ impl LogViewerWindow {
             }
             FilterEdit::ClearLiveFilter | FilterEdit::CancelLiveFilter => stack.clear_live_filter(),
             FilterEdit::AddLiveFilterAsChip => {
-                stack.add_live_filter_as_chip();
+                match stack.live_filter_effect() {
+                    FilterEffect::Table => {
+                        stack.add_live_filter_as_chip();
+                    }
+                    FilterEffect::Map => {
+                        stack.add_live_filter_as_map_highlight(slots);
+                    }
+                }
                 self.filter_editor_log = None;
             }
             FilterEdit::SetChipEffectEnabled {
@@ -215,7 +234,7 @@ impl LogViewerWindow {
                     )
                     .response
                     .on_hover_text(FilterScopeUi(scope).help(regex));
-                GroupControl::Editor.identify(&field, filters.selected_group());
+                identify_editor(&field, filters);
                 if focus_editor {
                     field.request_focus();
                 }
@@ -228,7 +247,7 @@ impl LogViewerWindow {
                             .desired_width(FIELD_WIDTH_PX),
                     )
                     .on_hover_text(FilterScopeUi(scope).help(regex));
-                GroupControl::Editor.identify(&field, filters.selected_group());
+                identify_editor(&field, filters);
                 if focus_editor {
                     field.request_focus();
                 }
@@ -264,7 +283,10 @@ impl LogViewerWindow {
             }
             if ui
                 .add_enabled(addable, Button::new(ADD_FILTER_LABEL))
-                .on_hover_text(ADD_FILTER_HOVER)
+                .on_hover_text(match filters.live_filter_effect() {
+                    FilterEffect::Table => ADD_FILTER_HOVER,
+                    FilterEffect::Map => "Add this as a map highlight",
+                })
                 .on_disabled_hover_text(match filters.live_filter_error() {
                     Some(_) => ADD_FILTER_INVALID_HOVER,
                     None if scope == FilterScope::Level => "Choose a level to add a condition",
@@ -338,7 +360,7 @@ impl LogViewerWindow {
                 });
                 ui.horizontal_wrapped(|ui| {
                     if index == 0 {
-                        ui.label(RichText::new("Table filters").weak());
+                        ui.label(RichText::new("Table filters").strong());
                     } else {
                         ui.label("AND");
                     }
@@ -371,7 +393,7 @@ impl LogViewerWindow {
                         GroupControl::Overflow.identify(&overflow.response, group.id());
                     }
                 });
-                if editor_open && filters.selected_group() == group.id()
+                if editor_open && filters.live_filter_effect() == FilterEffect::Table && filters.selected_group() == group.id()
                     && let Some(live_edit) = self.filter_row_ui(ui, filters, log)
                 {
                     edit = Some(live_edit);
@@ -403,51 +425,71 @@ impl LogViewerWindow {
                 ui.label(RichText::new(note).weak());
             }
         });
-        if filters
-            .chips()
-            .iter()
-            .any(|chip| chip.has_effect(FilterEffect::Map))
-        {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Map highlights").weak());
-                for chip in filters
-                    .chips()
-                    .iter()
-                    .filter(|chip| chip.has_effect(FilterEffect::Map))
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Map highlights").strong());
+            for chip in filters
+                .chips()
+                .iter()
+                .filter(|chip| chip.has_effect(FilterEffect::Map))
+            {
+                if let Some(chip_edit) =
+                    chip_ui(ui, chip, FilterEffect::Map, slots, filters.groups())
                 {
-                    if let Some(chip_edit) =
-                        chip_ui(ui, chip, FilterEffect::Map, slots, filters.groups())
-                    {
-                        edit = Some(chip_edit);
-                    }
+                    edit = Some(chip_edit);
                 }
+            }
+            let add = ui
+                .small_button(ADD_CONDITION_LABEL)
+                .on_hover_text("Add a map highlight");
+            add.ctx.accesskit_node_builder(add.id, |node| {
+                node.set_author_id(MAP_HIGHLIGHT_ADD_ID);
+                node.set_description("Add a map highlight");
             });
+            if add.clicked() {
+                edit = Some(FilterEdit::SelectMapHighlights);
+            }
+        });
+        if editor_open
+            && filters.live_filter_effect() == FilterEffect::Map
+            && let Some(live_edit) = self.filter_row_ui(ui, filters, log)
+        {
+            edit = Some(live_edit);
         }
         edit
     }
 }
 
+fn identify_editor(response: &egui::Response, filters: &FilterStack) {
+    match filters.live_filter_effect() {
+        FilterEffect::Table => GroupControl::Editor.identify(response, filters.selected_group()),
+        FilterEffect::Map => {
+            response.ctx.accesskit_node_builder(response.id, |node| {
+                node.set_author_id(MAP_HIGHLIGHT_EDITOR_ID);
+            });
+        }
+    }
+}
+
 fn group_operator_ui(ui: &mut egui::Ui, group: &FilterGroup) -> Option<FilterEdit> {
-    let mut edit = None;
+    let operator = match group.operator() {
+        FilterGroupOperator::All => FilterGroupOperator::Any,
+        FilterGroupOperator::Any => FilterGroupOperator::All,
+    };
+    let hover = match group.operator() {
+        FilterGroupOperator::All => "Match all conditions. Click to match any condition.",
+        FilterGroupOperator::Any => "Match any condition. Click to match all conditions.",
+    };
     let response = ui
-        .menu_button(group.operator().to_string(), |ui| {
-            for operator in FilterGroupOperator::iter() {
-                let choice =
-                    ui.selectable_label(group.operator() == operator, operator.to_string());
-                GroupControl::SetOperator(operator).identify(&choice, group.id());
-                if choice.clicked() {
-                    edit = Some(FilterEdit::SetGroupOperator {
-                        group: group.id(),
-                        operator,
-                    });
-                    ui.close();
-                }
-            }
-        })
-        .response
-        .on_hover_text("Match all or any conditions in this group");
+        .small_button(group.operator().to_string())
+        .on_hover_text(hover);
+    response
+        .ctx
+        .accesskit_node_builder(response.id, |node| node.set_description(hover));
     GroupControl::Operator.identify(&response, group.id());
-    edit
+    response.clicked().then_some(FilterEdit::SetGroupOperator {
+        group: group.id(),
+        operator,
+    })
 }
 
 fn chip_ui(
@@ -461,14 +503,28 @@ fn chip_ui(
     let map_slot = (effect == FilterEffect::Map)
         .then(|| chip.layer_slot())
         .flatten();
-    let color = map_slot.map_or_else(
-        || ui.visuals().weak_text_color(),
-        |slot| gt_ui_theme::log_layer_slot_color(slot.index()).resolve(dark_mode),
-    );
+    let enabled = chip.is_enabled(effect);
+    let color = if !enabled {
+        ui.visuals().widgets.noninteractive.bg_stroke.color
+    } else {
+        map_slot.map_or_else(
+            || ui.visuals().weak_text_color(),
+            |slot| gt_ui_theme::log_layer_slot_color(slot.index()).resolve(dark_mode),
+        )
+    };
     let mut edit = None;
 
     let chip_text = gt_fmt::truncate_with_ellipsis(chip.pattern().text(), CHIP_TEXT_CHARS);
-    let value = WidgetText::from(RichText::new(chip_text.as_ref()).monospace()).into_galley(
+    let value = WidgetText::from(
+        RichText::new(chip_text.as_ref())
+            .monospace()
+            .color(if enabled {
+                ui.visuals().text_color()
+            } else {
+                ui.visuals().weak_text_color()
+            }),
+    )
+    .into_galley(
         ui,
         Some(TextWrapMode::Extend),
         f32::INFINITY,
@@ -513,22 +569,52 @@ fn chip_ui(
     }
 
     let chip_frame = Frame::new()
-        .fill(ui.visuals().widgets.inactive.bg_fill)
+        .fill(if enabled {
+            ui.visuals().widgets.inactive.bg_fill
+        } else {
+            ui.visuals().faint_bg_color
+        })
         .corner_radius(CHIP_CORNER_RADIUS)
         .inner_margin(CHIP_INNER_MARGIN);
     let drawn = ui
         .push_id((chip.id(), effect), |ui| {
             chip_frame.show(ui, |ui| {
-                let mut enabled = chip.is_enabled(effect);
+                if !enabled {
+                    ui.visuals_mut().override_text_color = Some(ui.visuals().weak_text_color());
+                }
+                let mut enabled = enabled;
                 let effect_hover = match effect {
                     FilterEffect::Map => LAYER_CHIP_HOVER,
                     FilterEffect::Table => REFINE_CHIP_HOVER,
                 };
-                let enabled_response = ui
-                    .add(Checkbox::without_text(&mut enabled))
-                    .on_hover_text(effect_hover);
+                let enabled_response = match effect {
+                    FilterEffect::Table => ui
+                        .add(Checkbox::without_text(&mut enabled))
+                        .on_hover_text(effect_hover),
+                    FilterEffect::Map => {
+                        let response = ui
+                            .small_button(if enabled { ICON_EYE } else { ICON_EYE_SLASH })
+                            .on_hover_text(if enabled {
+                                "Hide map highlight"
+                            } else {
+                                "Show map highlight"
+                            });
+                        response.widget_info(|| {
+                            egui::WidgetInfo::selected(
+                                egui::WidgetType::Checkbox,
+                                true,
+                                enabled,
+                                "Map highlight visibility",
+                            )
+                        });
+                        if response.clicked() {
+                            enabled = !enabled;
+                        }
+                        response
+                    }
+                };
                 ChipControl::Enable.identify(&enabled_response, chip.id(), effect);
-                if enabled_response.changed() {
+                if enabled != chip.is_enabled(effect) {
                     edit = Some(FilterEdit::SetChipEffectEnabled {
                         chip: chip.id(),
                         effect,
@@ -542,8 +628,10 @@ fn chip_ui(
                 ui.label(FilterScopeUi(chip.pattern().scope()).glyph())
                     .on_hover_text(chip.pattern().scope().to_string());
                 let text = chip.pattern().text();
-                ui.add(Label::new(value))
+                let value_response = ui
+                    .add(Label::new(value))
                     .on_hover_text(format!("{text}\n{effect_hover}"));
+                ChipControl::Value.identify(&value_response, chip.id(), effect);
 
                 if let Some(action) = chip_actions_ui(ui, chip, effect, groups) {
                     edit = Some(action);
@@ -784,6 +872,7 @@ pub(in crate::app) enum ChipControl {
     OtherEffect,
     Overflow,
     Remove,
+    Value,
 }
 
 impl ChipControl {
@@ -804,6 +893,8 @@ impl ChipControl {
 }
 
 const OVERFLOW_LABEL: &str = "⋯";
+pub(in crate::app) const MAP_HIGHLIGHT_ADD_ID: &str = "log-map-highlight-add";
+pub(in crate::app) const MAP_HIGHLIGHT_EDITOR_ID: &str = "log-map-highlight-editor";
 pub(in crate::app) const MATCH_COUNT_ID: &str = "log-filter-match-count";
 
 #[derive(Clone, Copy, Debug)]
@@ -814,17 +905,11 @@ pub(in crate::app) enum GroupControl {
     Overflow,
     Remove,
     Row,
-    SetOperator(FilterGroupOperator),
 }
 
 impl GroupControl {
     pub(in crate::app) fn identity(self, group: FilterGroupId) -> String {
-        match self {
-            Self::SetOperator(operator) => {
-                format!("log-filter-group-{group:?}-SetOperator-{operator:?}")
-            }
-            _ => format!("log-filter-group-{group:?}-{self:?}"),
-        }
+        format!("log-filter-group-{group:?}-{self:?}")
     }
 
     fn identify(self, response: &egui::Response, group: FilterGroupId) {
