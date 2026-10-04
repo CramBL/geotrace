@@ -41,6 +41,10 @@ impl LiveFilterDraft {
         matches!(self, Self::Message { regex: true, .. })
     }
 
+    pub fn is_written(&self) -> bool {
+        !self.text().is_empty()
+    }
+
     pub fn cleared(&self) -> Self {
         match self {
             Self::Message { regex, .. } => Self::Message {

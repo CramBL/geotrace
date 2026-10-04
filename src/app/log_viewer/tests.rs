@@ -12,8 +12,8 @@ use egui_phosphor::regular::EYE as ICON_EYE;
 use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
 use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
 use gt_log_view::{
-    FilterEffect, FilterGroupId, FilterGroupOperator, FilterScope, LayerColorSlot, LoadedLog,
-    LoadedLogs, LogAttachmentRef, SessionLogAttachments,
+    FilterEffect, FilterGroupId, FilterGroupOperator, FilterScope, LayerColorSlot, LiveFilterDraft,
+    LoadedLog, LoadedLogs, LogAttachmentRef, SessionLogAttachments,
 };
 use gt_logfile::{LogLevelKind, RecordingAssociationIndex};
 use gt_pending_writes::WriteAccess;
@@ -746,6 +746,95 @@ fn group_move_destinations_identify_scopes_and_active_table_drafts(#[case] live_
     harness.run_steps(2);
     let stack = harness.state().shown_log().unwrap().filters();
     assert_eq!(stack.chips().first().unwrap().group(), service_group);
+    assert!(!stack.is_query_pending());
+}
+
+#[rstest]
+#[case::invalid_regex(
+    LiveFilterDraft::Message { text: "navsyncd(".into(), regex: true },
+    "All — Message: navsyncd("
+)]
+#[case::empty_message(LiveFilterDraft::empty(FilterScope::Message), "All — empty group")]
+#[case::empty_service(LiveFilterDraft::empty(FilterScope::Service), "All — empty group")]
+#[case::empty_hostname(LiveFilterDraft::empty(FilterScope::Hostname), "All — empty group")]
+#[case::empty_level(LiveFilterDraft::Level(None), "All — empty group")]
+#[case::level(
+    LiveFilterDraft::Level(Some(LogLevelKind::Error)),
+    "All — Level: Error"
+)]
+#[case::hostname(LiveFilterDraft::Hostname("receiver".into()), "All — Hostname: receiver")]
+fn group_move_destinations_include_written_table_drafts(
+    #[case] draft: LiveFilterDraft,
+    #[case] expected: &str,
+) {
+    let mut harness = harness_with(Vec::new());
+    add_filter(&mut harness, "fix");
+    harness.get_by_label(filters::NEW_GROUP_LABEL).click();
+    harness.run_steps(2);
+    let destination = harness
+        .state()
+        .shown_log()
+        .unwrap()
+        .filters()
+        .selected_group();
+    harness
+        .get(By::new().predicate(|node| node.author_id() == Some(filters::LIVE_FILTER_SCOPE_ID)))
+        .click();
+    harness.run_steps(2);
+    harness.get_by_label(&draft.scope().to_string()).click();
+    harness.run_steps(2);
+    match &draft {
+        LiveFilterDraft::Level(Some(level)) => {
+            harness.get_by_label("Choose level…").click();
+            harness.run_steps(2);
+            harness.get_by_label(level.as_ref()).click();
+        }
+        LiveFilterDraft::Level(None) => {}
+        _ => {
+            if draft.is_regex() {
+                harness.get_by_label(filters::REGEX_TOGGLE_LABEL).click();
+                harness.run_steps(2);
+            }
+            type_into_live_filter(&mut harness, draft.text());
+        }
+    }
+    run_until_the_scans_land(&mut harness);
+    let stack = harness.state().shown_log().unwrap().filters();
+    assert_eq!(stack.live_filter_draft(), &draft);
+    assert_eq!(stack.chips().len(), 1);
+    if draft.is_regex() {
+        assert!(stack.live_filter_error().is_some());
+        assert!(!stack.can_add_live_filter_as_chip());
+        assert!(
+            harness
+                .get_by_label(filters::ADD_FILTER_LABEL)
+                .accesskit_node()
+                .is_disabled()
+        );
+    }
+    let revision = stack.table_semantic_revision();
+    let visible = stack.visible_entries().clone();
+    assert!(!stack.is_query_pending());
+    open_chip_actions(&mut harness, 0, FilterEffect::Table);
+    harness
+        .get(chip_effect_control(
+            &harness,
+            0,
+            FilterEffect::Table,
+            filters::ChipControl::MoveToGroup,
+        ))
+        .click();
+    harness.run_steps(2);
+    let choice = harness.get(chip_effect_control(
+        &harness,
+        0,
+        FilterEffect::Table,
+        filters::ChipControl::Destination(destination),
+    ));
+    assert_eq!(choice.accesskit_node().label().as_deref(), Some(expected));
+    let stack = harness.state().shown_log().unwrap().filters();
+    assert_eq!(stack.table_semantic_revision(), revision);
+    assert_eq!(stack.visible_entries(), &visible);
     assert!(!stack.is_query_pending());
 }
 
