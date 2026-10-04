@@ -1,6 +1,7 @@
 //! The live filter over the shown log and the chips added from it: the field
 //! with its `.*` toggle and match count, and one chip per added filter.
 
+use std::borrow::Cow;
 use std::mem;
 use std::num::NonZeroUsize;
 
@@ -657,25 +658,40 @@ struct GroupSummary<'a> {
 
 impl GroupSummary<'_> {
     fn label(&self) -> String {
-        let mut summary = String::new();
-        for chip in
-            self.filters.chips().iter().filter(|chip| {
-                chip.group() == self.group.id() && chip.has_effect(FilterEffect::Table)
-            })
+        let mut conditions: Vec<_> = self
+            .filters
+            .chips()
+            .iter()
+            .filter(|chip| chip.group() == self.group.id() && chip.has_effect(FilterEffect::Table))
+            .map(|chip| format!("{}: {}", chip.pattern().scope(), chip.pattern().text()))
+            .collect();
+        if self.filters.live_filter_effect() == FilterEffect::Table
+            && self.filters.selected_group() == self.group.id()
+            && self.filters.can_add_live_filter_as_chip()
         {
-            let separator = if summary.is_empty() { "" } else { ", " };
-            let mut characters = separator.chars().chain(chip.pattern().text().chars());
-            let remaining = GROUP_SUMMARY_MAX_CHARACTERS.saturating_sub(summary.chars().count());
-            summary.extend(characters.by_ref().take(remaining));
-            if characters.next().is_some() {
-                summary.push('…');
-                break;
-            }
+            let draft = self.filters.live_filter_draft();
+            conditions.push(format!("{}: {}", draft.scope(), draft.text()));
         }
-        if summary.is_empty() {
-            summary.push_str("empty group");
-        }
+        let summary = if conditions.is_empty() {
+            "empty group".to_owned()
+        } else {
+            conditions.join(", ")
+        };
+        let summary = self::truncate_group_summary(&summary, GROUP_SUMMARY_MAX_CHARACTERS);
         format!("{} — {summary}", self.group.operator())
+    }
+}
+
+fn truncate_group_summary(text: &str, max_chars: NonZeroUsize) -> Cow<'_, str> {
+    match gt_fmt::truncate_with_ellipsis(text, max_chars) {
+        Cow::Borrowed(text) => Cow::Borrowed(text),
+        Cow::Owned(mut summary) => {
+            let prefix = summary.strip_suffix(gt_fmt::ELLIPSIS).unwrap_or(&summary);
+            let length = prefix.trim_end_matches([',', ' ']).len();
+            summary.truncate(length);
+            summary.push_str(gt_fmt::ELLIPSIS);
+            Cow::Owned(summary)
+        }
     }
 }
 
@@ -866,7 +882,10 @@ const CHIP_TEXT_CHARS: NonZeroUsize = match NonZeroUsize::new(28) {
     None => NonZeroUsize::MIN,
 };
 
-pub(super) const GROUP_SUMMARY_MAX_CHARACTERS: usize = 64;
+pub(super) const GROUP_SUMMARY_MAX_CHARACTERS: NonZeroUsize = match NonZeroUsize::new(64) {
+    Some(chars) => chars,
+    None => NonZeroUsize::MIN,
+};
 
 const CHIP_CORNER_RADIUS: u8 = 10;
 
@@ -988,3 +1007,28 @@ impl FilterScopeUi {
 }
 
 const SERVICE_SUGGESTIONS_GLYPH: &str = egui_phosphor::regular::LIST;
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroUsize;
+
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::exact_fit("abc", 3, "abc")]
+    #[case::one_character_overflow("abcd", 3, "abc…")]
+    #[case::multiple_conditions("Message: foo, Service: gpsd", 14, "Message: foo…")]
+    #[case::unicode("äöå, 東京", 6, "äöå, 東…")]
+    #[case::comma_boundary("foo, bar", 4, "foo…")]
+    #[case::space_boundary("foo, bar", 5, "foo…")]
+    fn group_summary_truncation_preserves_characters_and_complete_separators(
+        #[case] text: &str,
+        #[case] max_chars: usize,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(
+            super::truncate_group_summary(text, NonZeroUsize::new(max_chars).unwrap()),
+            expected
+        );
+    }
+}

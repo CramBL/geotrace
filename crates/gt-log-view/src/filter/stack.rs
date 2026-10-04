@@ -301,7 +301,7 @@ impl FilterStack {
 
     pub fn select_group(&mut self, id: FilterGroupId) {
         if self.selected_group != id && self.groups.iter().any(|group| group.id == id) {
-            if self.live_effect == FilterEffect::Table && !self.draft.text().is_empty() {
+            if self.live_participates_in_table() {
                 self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
             }
             self.selected_group = id;
@@ -344,7 +344,7 @@ impl FilterStack {
             return;
         };
         if chip.group != group {
-            if chip.has_effect(FilterEffect::Table) {
+            if chip.participates_in_table() {
                 self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
             }
             chip.group = group;
@@ -410,7 +410,7 @@ impl FilterStack {
 
     pub fn set_live_filter_effect(&mut self, effect: FilterEffect) {
         if self.live_effect != effect {
-            if !self.draft.text().is_empty() {
+            if self.live.participates_in_composition() {
                 self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
             }
             self.live_effect = effect;
@@ -514,7 +514,9 @@ impl FilterStack {
         if !self.can_add_live_filter_as_chip() {
             return None;
         }
-        if effects.enabled(FilterEffect::Table).is_some() || self.live_effect == FilterEffect::Table
+        if self.live_participates_in_table()
+            != (effects.enabled(FilterEffect::Table) == Some(true)
+                && self.live.participates_in_composition())
         {
             self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
         }
@@ -567,8 +569,9 @@ impl FilterStack {
         {
             return;
         }
+        let participated = chip.participates_in_table();
         chip.effects.set_enabled(effect, enabled);
-        if effect == FilterEffect::Table {
+        if participated != chip.participates_in_table() {
             self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
         }
         self.recompose_visible_entries();
@@ -583,6 +586,7 @@ impl FilterStack {
         let Some(chip) = self.chips.iter_mut().find(|chip| chip.id == id) else {
             return;
         };
+        let participated = chip.participates_in_table();
         chip.effects = match (chip.effects, effect) {
             (FilterEffects::Table { enabled }, FilterEffect::Map) => FilterEffects::Both {
                 table_enabled: enabled,
@@ -596,7 +600,7 @@ impl FilterStack {
             },
             _ => return,
         };
-        if effect == FilterEffect::Table {
+        if participated != chip.participates_in_table() {
             self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
         }
         self.recompose_visible_entries();
@@ -623,8 +627,9 @@ impl FilterStack {
         {
             slots.release(slot);
         }
+        let participated = chip.participates_in_table();
         chip.effects = remaining;
-        if effect == FilterEffect::Table {
+        if participated != chip.participates_in_table() {
             self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
         }
         self.recompose_visible_entries();
@@ -635,7 +640,7 @@ impl FilterStack {
             return;
         };
         let removed = self.chips.remove(position);
-        if removed.has_effect(FilterEffect::Table) {
+        if removed.participates_in_table() {
             self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
         }
         if let Some(slot) = removed.layer_slot() {
@@ -759,26 +764,27 @@ impl FilterStack {
         if self.draft == draft {
             return;
         }
-        if self.live_effect == FilterEffect::Table
-            && (!self.draft.text().is_empty() || !draft.text().is_empty())
-        {
-            self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
-        }
+        let participated = self.live_participates_in_table();
         self.live
             .rewrite(draft.pattern().unwrap_or_default(), &self.log);
+        if participated || self.live_participates_in_table() {
+            self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
+        }
         self.draft = draft;
         if self.live_effect == FilterEffect::Table {
             self.recompose_visible_entries();
         }
     }
 
+    fn live_participates_in_table(&self) -> bool {
+        self.live_effect == FilterEffect::Table && self.live.participates_in_composition()
+    }
+
     fn group_has_table_conditions_or_draft(&self, id: FilterGroupId) -> bool {
         self.chips
             .iter()
-            .any(|chip| chip.group == id && chip.has_effect(FilterEffect::Table))
-            || (self.selected_group == id
-                && self.live_effect == FilterEffect::Table
-                && !self.draft.text().is_empty())
+            .any(|chip| chip.group == id && chip.participates_in_table())
+            || (self.selected_group == id && self.live_participates_in_table())
     }
 
     fn recompose_visible_entries(&mut self) {
@@ -853,6 +859,9 @@ impl FilterChip {
     pub fn matches(&self) -> &EntryMatches {
         self.filter.query.matches()
     }
+    fn participates_in_table(&self) -> bool {
+        self.is_enabled(FilterEffect::Table) && self.filter.participates_in_composition()
+    }
     fn narrows_visible_set(&self) -> bool {
         self.is_enabled(FilterEffect::Table) && self.filter.narrows_visible_set()
     }
@@ -900,6 +909,10 @@ impl LogFilter {
         self.compiled
             .as_ref()
             .is_ok_and(|compiled| !compiled.matches_nothing())
+    }
+
+    fn participates_in_composition(&self) -> bool {
+        self.selects_entries() || self.narrows_visible_set()
     }
 
     /// Whether the matches this filter has *now* narrow the table. A filter
@@ -1713,6 +1726,33 @@ mod tests {
         }
         stack.wait_for_queries();
         assert_eq!(visible(&stack), [0, 2]);
+    }
+
+    #[rstest]
+    #[case::table_to_table(FilterEffect::Table, FilterEffect::Table, false)]
+    #[case::map_to_map(FilterEffect::Map, FilterEffect::Map, false)]
+    #[case::table_to_map(FilterEffect::Table, FilterEffect::Map, true)]
+    #[case::map_to_table(FilterEffect::Map, FilterEffect::Table, true)]
+    fn committing_a_draft_changes_revision_only_when_table_participation_changes(
+        #[case] before: FilterEffect,
+        #[case] after: FilterEffect,
+        #[case] changes_table: bool,
+    ) {
+        let (mut stack, mut slots) = unfiltered_stack();
+        stack.set_live_filter_effect(before);
+        stack.set_live_filter_text("gnss");
+        let revision = stack.table_semantic_revision();
+        let query = stack.live.query.scan_identity();
+        let id = match after {
+            FilterEffect::Table => stack.add_live_filter_as_chip(),
+            FilterEffect::Map => stack.add_live_filter_as_map_highlight(&mut slots),
+        }
+        .unwrap();
+        assert_eq!(
+            stack.table_semantic_revision(),
+            revision + u64::from(changes_table)
+        );
+        assert_eq!(stack.chip(id).unwrap().filter.query.scan_identity(), query);
     }
 
     #[test]

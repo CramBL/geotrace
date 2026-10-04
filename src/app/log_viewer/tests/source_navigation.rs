@@ -1,3 +1,4 @@
+use std::ptr;
 use std::sync::Arc;
 
 use super::*;
@@ -209,7 +210,6 @@ fn idle_frames_and_scan_landing_preserve_reveals_and_cached_rows() {
 
 #[derive(Clone, Copy, Debug)]
 enum SemanticEdit {
-    Add,
     Clear,
     Enabled,
     Level,
@@ -230,7 +230,6 @@ enum SemanticEdit {
 #[case::scope(SemanticEdit::Scope)]
 #[case::level(SemanticEdit::Level)]
 #[case::clear(SemanticEdit::Clear)]
-#[case::add(SemanticEdit::Add)]
 #[case::remove(SemanticEdit::Remove)]
 #[case::enabled(SemanticEdit::Enabled)]
 #[case::refine(SemanticEdit::Refine)]
@@ -268,9 +267,6 @@ fn filter_semantic_edits_clear_reveals_before_scan_landing(#[case] edit: Semanti
         SemanticEdit::Scope => stack.set_live_filter_scope(FilterScope::Service),
         SemanticEdit::Level => stack.set_live_filter_level(LogLevelKind::Error),
         SemanticEdit::Clear => stack.clear_live_filter(),
-        SemanticEdit::Add => {
-            stack.add_live_filter_as_chip();
-        }
         SemanticEdit::Remove => stack.remove_chip(chip, slots),
         SemanticEdit::Enabled => stack.set_chip_effect_enabled(chip, FilterEffect::Table, false),
         SemanticEdit::Refine => stack.add_chip_effect(chip, FilterEffect::Table, slots),
@@ -285,6 +281,104 @@ fn filter_semantic_edits_clear_reveals_before_scan_landing(#[case] edit: Semanti
     assert_eq!(state.viewer.diagnostic_reveal, None);
     assert_eq!(state.viewer.scroll_to_row, None);
     assert_eq!(log.filters().is_query_pending(), pending);
+}
+
+#[test]
+fn adding_a_live_table_condition_preserves_diagnostic_reveal_and_cached_rows() {
+    let mut harness = harness_of(Vec::new(), &[("nav.log", LOG_WITH_EVERY_ROW_KIND)]);
+    type_into_live_filter(&mut harness, "starting");
+    let state = harness.state_mut();
+    let shown = state.first_loaded_log();
+    let log = state.logs.get_by_id(shown).unwrap();
+    state
+        .viewer
+        .navigate_to_diagnostic(log, shown, DiagnosticTarget::Entry(4));
+    let reveal = state.viewer.diagnostic_reveal;
+    assert!(reveal.is_some());
+    let rows = state.viewer.table_rows(log, shown);
+    let revision = log.filters().table_semantic_revision();
+    let visible = log.filters().shared_visible_entries();
+    let matches = ptr::from_ref(log.filters().live_filter_matches());
+    harness.get_by_label(filters::ADD_FILTER_LABEL).click();
+    harness.run_steps(2);
+    let state = harness.state_mut();
+    let log = state.logs.get_by_id(shown).unwrap();
+    let stack = log.filters();
+    assert_eq!(stack.table_semantic_revision(), revision);
+    assert!(Arc::ptr_eq(&visible, &stack.shared_visible_entries()));
+    assert_eq!(
+        ptr::from_ref(stack.chips().first().unwrap().matches()),
+        matches
+    );
+    assert!(!stack.is_query_pending());
+    assert_eq!(state.viewer.diagnostic_reveal, reveal);
+    assert!(Arc::ptr_eq(&rows, &state.viewer.table_rows(log, shown)));
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ConditionEdit {
+    Move,
+    Operator,
+    Remove,
+    RemoveEffect,
+    RemoveGroup,
+}
+
+#[rstest]
+#[case::move_condition(ConditionEdit::Move)]
+#[case::remove_condition(ConditionEdit::Remove)]
+#[case::operator(ConditionEdit::Operator)]
+#[case::remove_effect(ConditionEdit::RemoveEffect)]
+#[case::remove_group(ConditionEdit::RemoveGroup)]
+fn condition_edits_invalidate_diagnostic_reveals_only_with_enabled_table_participation(
+    #[case] edit: ConditionEdit,
+    #[values(false, true)] enabled: bool,
+) {
+    let mut state = viewer_state(Vec::new(), &[("nav.log", LOG_WITH_EVERY_ROW_KIND)]);
+    let shown = state.first_loaded_log();
+    let (stack, slots) = state.logs.filter_stack_mut_by_id(shown).unwrap();
+    stack.set_live_filter_text("starting");
+    stack.add_live_filter_as_chip();
+    let group = stack.create_group();
+    stack.select_group(group);
+    stack.set_live_filter_text("fix");
+    let chip = stack.add_live_filter_as_chip().unwrap();
+    stack.add_chip_effect(chip, FilterEffect::Map, slots);
+    stack.set_chip_effect_enabled(chip, FilterEffect::Table, enabled);
+    let destination = stack.create_group();
+    stack.wait_for_queries();
+    let revision = stack.table_semantic_revision();
+    let matches = ptr::from_ref(stack.chip(chip).unwrap().matches());
+    let log = state.logs.get_by_id(shown).unwrap();
+    state
+        .viewer
+        .navigate_to_diagnostic(log, shown, DiagnosticTarget::Entry(4));
+    let reveal = state.viewer.diagnostic_reveal;
+    assert!(reveal.is_some());
+    let rows = state.viewer.table_rows(log, shown);
+    let (stack, slots) = state.logs.filter_stack_mut_by_id(shown).unwrap();
+    match edit {
+        ConditionEdit::Move => stack.move_chip_to_group(chip, destination),
+        ConditionEdit::Operator => stack.set_group_operator(group, FilterGroupOperator::Any),
+        ConditionEdit::Remove => stack.remove_chip(chip, slots),
+        ConditionEdit::RemoveEffect => stack.remove_chip_effect(chip, FilterEffect::Table, slots),
+        ConditionEdit::RemoveGroup => stack.remove_group(group),
+    }
+    assert_eq!(
+        stack.table_semantic_revision(),
+        revision + u64::from(enabled)
+    );
+    if let Some(chip) = stack.chip(chip) {
+        assert_eq!(ptr::from_ref(chip.matches()), matches);
+    }
+    assert!(!stack.is_query_pending());
+    let log = state.logs.get_by_id(shown).unwrap();
+    let current_rows = state.viewer.table_rows(log, shown);
+    assert_eq!(
+        state.viewer.diagnostic_reveal,
+        if enabled { None } else { reveal }
+    );
+    assert_eq!(Arc::ptr_eq(&rows, &current_rows), !enabled);
 }
 
 #[derive(Clone, Copy, Debug)]
