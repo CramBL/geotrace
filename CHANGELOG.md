@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- **Log Viewer:** Fixed excessive memory use when table filters change or diagnostic navigation reveals a hidden entry in a large log.
 - **Log Viewer:** Fixed selecting Level applying Info immediately and clearing a Level condition changing the editor to Message.
 - **Log Viewer:** Fixed map clicks scrolling to a different log entry when table filters hide the first entry of the clicked hexagon.
 - **Log Viewer:** Fixed boot and order-anomaly navigation when table filters hide the target entries.

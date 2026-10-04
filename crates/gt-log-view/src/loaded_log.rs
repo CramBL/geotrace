@@ -503,6 +503,8 @@ pub struct LoadedLogs {
     layer_color_slots: LayerColorSlots,
 
     map_matches: LogMatches,
+    #[cfg(any(test, feature = "test-util"))]
+    map_matches_generation: u64,
 
     /// Raised by every path that can change what the map draws, including the
     /// ones handing out `&mut` to a log or its filters. Cleared by
@@ -754,9 +756,18 @@ impl LoadedLogs {
             || self.map_matches_recording_names != *recording_names
         {
             self.map_matches = self.build_map_matches(recordings, recording_names);
+            #[cfg(any(test, feature = "test-util"))]
+            {
+                self.map_matches_generation = self.map_matches_generation.wrapping_add(1);
+            }
             self.map_matches_recording_names = recording_names.clone();
         }
         &self.map_matches
+    }
+
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn map_matches_generation(&self) -> u64 {
+        self.map_matches_generation
     }
 
     fn build_map_matches(

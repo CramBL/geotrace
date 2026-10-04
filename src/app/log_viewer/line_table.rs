@@ -40,6 +40,38 @@ pub(super) enum LineTableRow {
     },
 }
 
+#[derive(Clone, Copy, Debug)]
+enum InsertedRowKind {
+    BootDivider {
+        session_index: usize,
+        structural_index: Option<usize>,
+    },
+    DayDivider {
+        entry_index: usize,
+    },
+    Structural {
+        structural_index: usize,
+    },
+}
+
+impl From<InsertedRowKind> for LineTableRow {
+    fn from(row: InsertedRowKind) -> Self {
+        match row {
+            InsertedRowKind::BootDivider {
+                session_index,
+                structural_index,
+            } => Self::BootDivider {
+                session_index,
+                structural_index,
+            },
+            InsertedRowKind::DayDivider { entry_index } => Self::DayDivider { entry_index },
+            InsertedRowKind::Structural { structural_index } => {
+                Self::Structural { structural_index }
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum DiagnosticTarget {
     BootSession(usize),
@@ -54,9 +86,247 @@ pub(super) struct DiagnosticReveal {
 }
 
 #[derive(Debug)]
+struct RevealedEntry {
+    entry_index: usize,
+    visible_row: usize,
+}
+
+#[derive(Debug)]
+struct DisplayedEntries {
+    filtered: Arc<VisibleEntries>,
+    reveal: Option<RevealedEntry>,
+}
+
+impl DisplayedEntries {
+    fn new(log: &LoadedLog, revealed_entry: Option<usize>) -> Self {
+        let filtered = log.filters().shared_visible_entries();
+        let reveal = revealed_entry
+            .filter(|index| *index < log.parsed().entries().len())
+            .and_then(|entry_index| {
+                let visible_row = filtered.row_at_or_after(entry_index);
+                (filtered.entry_index(visible_row) != Some(entry_index)).then_some(RevealedEntry {
+                    entry_index,
+                    visible_row,
+                })
+            });
+        Self { filtered, reveal }
+    }
+
+    fn len(&self) -> usize {
+        self.filtered.len() + usize::from(self.reveal.is_some())
+    }
+
+    fn entry_index(&self, visible_row: usize) -> Option<usize> {
+        if let Some(reveal) = &self.reveal {
+            if visible_row == reveal.visible_row {
+                return Some(reveal.entry_index);
+            }
+            if visible_row > reveal.visible_row {
+                return self.filtered.entry_index(visible_row - 1);
+            }
+        }
+        self.filtered.entry_index(visible_row)
+    }
+
+    fn row_at_or_after(&self, entry_index: usize) -> usize {
+        self.filtered.row_at_or_after(entry_index)
+            + usize::from(
+                self.reveal
+                    .as_ref()
+                    .is_some_and(|reveal| reveal.entry_index < entry_index),
+            )
+    }
+
+    fn largest_line_number(&self, parsed: &ParsedLog, show_structural_lines: bool) -> u32 {
+        let last_entry = self
+            .len()
+            .checked_sub(1)
+            .and_then(|row| self.entry_index(row))
+            .and_then(|entry| parsed.entries().get(entry))
+            .map_or(0, |entry| entry.line_number);
+        let last_structural = match show_structural_lines {
+            true => parsed
+                .structural_lines()
+                .last()
+                .map_or(0, |line| line.line_number),
+            false => 0,
+        };
+        last_entry.max(last_structural)
+    }
+}
+
+#[derive(Debug)]
+struct PendingInsertion {
+    visible_row: usize,
+    source_line: u32,
+    row: InsertedRowKind,
+}
+
+impl PendingInsertion {
+    fn index_in_source_order(mut pending: Vec<Self>) -> (Vec<InsertedRow>, Vec<(usize, usize)>) {
+        pending.sort_unstable_by_key(|insertion| {
+            (
+                insertion.visible_row,
+                insertion.source_line,
+                !matches!(insertion.row, InsertedRowKind::DayDivider { .. }),
+            )
+        });
+        let mut boot_rows = Vec::new();
+        let insertions = pending
+            .into_iter()
+            .enumerate()
+            .map(|(index, insertion)| {
+                let table_row = insertion.visible_row + index;
+                if let InsertedRowKind::BootDivider { session_index, .. } = insertion.row {
+                    boot_rows.push((session_index, table_row));
+                }
+                InsertedRow {
+                    visible_row: insertion.visible_row,
+                    table_row,
+                    row: insertion.row,
+                }
+            })
+            .collect();
+        boot_rows.sort_unstable_by_key(|(session, _)| *session);
+        (insertions, boot_rows)
+    }
+}
+
+#[derive(Debug)]
+struct InsertedRow {
+    visible_row: usize,
+    table_row: usize,
+    row: InsertedRowKind,
+}
+
+#[derive(Debug)]
+struct RevealedTicks {
+    visible_row: usize,
+    revealed: TimestampTick,
+    following: TimestampTick,
+}
+
+#[derive(Debug)]
+struct DisplayedClockTicks {
+    filtered: Arc<ClockTicks>,
+    reveal: Option<RevealedTicks>,
+}
+
+impl DisplayedClockTicks {
+    fn new(log: &LoadedLog, entries: &DisplayedEntries) -> Self {
+        let reveal = entries.reveal.as_ref().map(|reveal| RevealedTicks {
+            visible_row: reveal.visible_row,
+            revealed: ClockTicks::tick_after_entry(
+                log.parsed(),
+                reveal.entry_index,
+                reveal
+                    .visible_row
+                    .checked_sub(1)
+                    .and_then(|row| entries.entry_index(row)),
+            ),
+            following: entries.entry_index(reveal.visible_row + 1).map_or(
+                TimestampTick::Weak,
+                |following| {
+                    ClockTicks::tick_after_entry(log.parsed(), following, Some(reveal.entry_index))
+                },
+            ),
+        });
+        Self {
+            filtered: log.filters().shared_clock_ticks(),
+            reveal,
+        }
+    }
+
+    fn day_divider_rows<'a>(
+        &'a self,
+        parsed: &'a ParsedLog,
+        entries: &'a DisplayedEntries,
+    ) -> impl Iterator<Item = usize> + 'a {
+        let day_rows =
+            self.filtered
+                .day_dividers()
+                .iter()
+                .filter_map(move |divider| match &entries.reveal {
+                    Some(reveal) if divider.visible_row == reveal.visible_row => None,
+                    Some(reveal) if divider.visible_row > reveal.visible_row => {
+                        Some(divider.visible_row + 1)
+                    }
+                    _ => Some(divider.visible_row),
+                });
+        let revealed_day_rows = entries
+            .reveal
+            .iter()
+            .flat_map(|reveal| [reveal.visible_row, reveal.visible_row + 1])
+            .filter(move |&row| {
+                let previous = row
+                    .checked_sub(1)
+                    .and_then(|row| entries.entry_index(row))
+                    .and_then(|entry| parsed.entries().get(entry));
+                let current = entries
+                    .entry_index(row)
+                    .and_then(|entry| parsed.entries().get(entry));
+                previous.zip(current).is_some_and(|(previous, current)| {
+                    previous.timestamp.date_naive() != current.timestamp.date_naive()
+                })
+            });
+        day_rows.chain(revealed_day_rows)
+    }
+
+    fn append_day_divider_insertions(
+        &self,
+        parsed: &ParsedLog,
+        entries: &DisplayedEntries,
+        boot_dividers: &SourceBootDividers,
+        pending: &mut Vec<PendingInsertion>,
+    ) {
+        for visible_row in self.day_divider_rows(parsed, entries) {
+            let Some(entry_index) = entries.entry_index(visible_row) else {
+                continue;
+            };
+            let Some(entry) = parsed.entries().get(entry_index) else {
+                continue;
+            };
+            let session_index = parsed
+                .boot_sessions()
+                .partition_point(|session| session.entry_range.end <= entry_index);
+            let separator = parsed
+                .boot_sessions()
+                .get(session_index)
+                .filter(|session| entries.row_at_or_after(session.entry_range.start) == visible_row)
+                .and_then(|_| boot_dividers.separator_for_session.get(session_index))
+                .copied()
+                .flatten()
+                .and_then(|index| parsed.structural_lines().get(index));
+            pending.push(PendingInsertion {
+                visible_row,
+                source_line: separator.map_or(entry.line_number, |line| line.line_number),
+                row: InsertedRowKind::DayDivider { entry_index },
+            });
+        }
+    }
+
+    fn tick(&self, visible_row: usize) -> TimestampTick {
+        if let Some(reveal) = &self.reveal {
+            if visible_row == reveal.visible_row {
+                return reveal.revealed;
+            }
+            if visible_row == reveal.visible_row + 1 {
+                return reveal.following;
+            }
+            if visible_row > reveal.visible_row {
+                return self.filtered.tick(visible_row - 1);
+            }
+        }
+        self.filtered.tick(visible_row)
+    }
+}
+
+#[derive(Debug)]
 pub(super) struct LineTableRows {
-    rows: Vec<LineTableRow>,
-    ticks: ClockTicks,
+    entries: DisplayedEntries,
+    insertions: Vec<InsertedRow>,
+    boot_rows: Vec<(usize, usize)>,
+    ticks: DisplayedClockTicks,
     largest_line_number: u32,
 }
 
@@ -115,14 +385,66 @@ impl SourceBootDividers {
         dividers
     }
 
-    fn row_of_structural_line(&self, structural_index: usize) -> LineTableRow {
+    fn append_boot_divider_insertions(
+        &self,
+        parsed: &ParsedLog,
+        entries: &DisplayedEntries,
+        pending: &mut Vec<PendingInsertion>,
+    ) {
+        for (session_index, session) in parsed.boot_sessions().iter().enumerate() {
+            let visible_row = entries.row_at_or_after(session.entry_range.start);
+            let end = entries.row_at_or_after(session.entry_range.end);
+            if visible_row == end
+                || self
+                    .separator_for_session
+                    .get(session_index)
+                    .is_some_and(Option::is_some)
+            {
+                continue;
+            }
+            let Some(entry) = entries
+                .entry_index(visible_row)
+                .and_then(|entry| parsed.entries().get(entry))
+            else {
+                continue;
+            };
+            pending.push(PendingInsertion {
+                visible_row,
+                source_line: entry.line_number,
+                row: InsertedRowKind::BootDivider {
+                    session_index,
+                    structural_index: None,
+                },
+            });
+        }
+    }
+
+    fn append_structural_insertions(
+        &self,
+        parsed: &ParsedLog,
+        entries: &DisplayedEntries,
+        pending: &mut Vec<PendingInsertion>,
+    ) {
+        for (structural_index, line) in parsed.structural_lines().iter().enumerate() {
+            let entry_index = parsed
+                .entries()
+                .partition_point(|entry| entry.line_number < line.line_number);
+            pending.push(PendingInsertion {
+                visible_row: entries.row_at_or_after(entry_index),
+                source_line: line.line_number,
+                row: self.row_of_structural_line(structural_index),
+            });
+        }
+    }
+
+    fn row_of_structural_line(&self, structural_index: usize) -> InsertedRowKind {
         self.session_for_separator
             .get(structural_index)
             .copied()
             .flatten()
             .map_or(
-                LineTableRow::Structural { structural_index },
-                |session_index| LineTableRow::BootDivider {
+                InsertedRowKind::Structural { structural_index },
+                |session_index| InsertedRowKind::BootDivider {
                     session_index,
                     structural_index: Some(structural_index),
                 },
@@ -142,125 +464,76 @@ impl LineTableRows {
         revealed_entry: Option<usize>,
     ) -> Self {
         let parsed = log.parsed();
-        let filtered = log.filters().visible_entries();
-        let overlay;
-        let visible = if let Some(entry_index) =
-            revealed_entry.filter(|index| *index < parsed.entries().len())
-        {
-            let mut entries: Vec<_> = filtered.entry_indices().collect();
-            if let Err(position) = entries.binary_search(&entry_index) {
-                entries.insert(position, entry_index);
-            }
-            overlay = VisibleEntries::Matching(entries);
-            &overlay
-        } else {
-            filtered
-        };
-        let ticks = ClockTicks::of(parsed, visible);
+        let visible = DisplayedEntries::new(log, revealed_entry);
+        let ticks = DisplayedClockTicks::new(log, &visible);
         let source_boot_dividers = SourceBootDividers::of(parsed, show_structural_lines);
-        let mut rows = Vec::with_capacity(visible.len());
-        let mut structural = parsed.structural_lines().iter().enumerate().peekable();
-        let mut previous_session = None;
-        let mut largest_line_number = 0;
-        let mut dividers = ticks.day_dividers().iter().peekable();
-        let mut session_index = 0;
-        for (visible_row, entry_index) in visible.entry_indices().enumerate() {
-            let Some(entry) = parsed.entries().get(entry_index) else {
-                continue;
-            };
-            while parsed
-                .boot_sessions()
-                .get(session_index)
-                .is_some_and(|session| session.entry_range.end <= entry_index)
-            {
-                session_index += 1;
-            }
-            let opens_session = previous_session != Some(session_index);
-            let separator_index = source_boot_dividers
-                .separator_for_session
-                .get(session_index)
-                .copied()
-                .flatten();
-            while let Some(&(structural_index, line)) = structural.peek() {
-                if line.line_number >= entry.line_number {
-                    break;
-                }
-                structural.next();
-                if !show_structural_lines {
-                    continue;
-                }
-                largest_line_number = largest_line_number.max(line.line_number);
-                if opens_session && separator_index == Some(structural_index) {
-                    if dividers
-                        .peek()
-                        .is_some_and(|divider| divider.visible_row == visible_row)
-                    {
-                        dividers.next();
-                        rows.push(LineTableRow::DayDivider { entry_index });
-                    }
-                    rows.push(LineTableRow::BootDivider {
-                        session_index,
-                        structural_index: Some(structural_index),
-                    });
-                } else {
-                    rows.push(source_boot_dividers.row_of_structural_line(structural_index));
-                }
-            }
-            if dividers
-                .peek()
-                .is_some_and(|divider| divider.visible_row == visible_row)
-            {
-                dividers.next();
-                rows.push(LineTableRow::DayDivider { entry_index });
-            }
-            if opens_session && separator_index.is_none() {
-                rows.push(LineTableRow::BootDivider {
-                    session_index,
-                    structural_index: None,
-                });
-            }
-            previous_session = Some(session_index);
-            largest_line_number = largest_line_number.max(entry.line_number);
-            rows.push(LineTableRow::Entry {
-                entry_index,
-                visible_row,
-            });
-        }
+        let mut pending = Vec::new();
+        ticks.append_day_divider_insertions(parsed, &visible, &source_boot_dividers, &mut pending);
+        source_boot_dividers.append_boot_divider_insertions(parsed, &visible, &mut pending);
         if show_structural_lines {
-            for (structural_index, line) in structural {
-                largest_line_number = largest_line_number.max(line.line_number);
-                rows.push(source_boot_dividers.row_of_structural_line(structural_index));
-            }
+            source_boot_dividers.append_structural_insertions(parsed, &visible, &mut pending);
         }
+        let largest_line_number = visible.largest_line_number(parsed, show_structural_lines);
+        let (insertions, boot_rows) = PendingInsertion::index_in_source_order(pending);
         Self {
-            rows,
+            entries: visible,
+            insertions,
+            boot_rows,
             ticks,
             largest_line_number,
         }
     }
 
     pub(super) fn len(&self) -> usize {
-        self.rows.len()
+        self.entries.len() + self.insertions.len()
     }
 
     pub(super) fn at(&self, row: usize) -> Option<LineTableRow> {
-        self.rows.get(row).copied()
+        if row >= self.len() {
+            return None;
+        }
+        let inserted_before = self
+            .insertions
+            .partition_point(|insertion| insertion.table_row < row);
+        if let Some(insertion) = self
+            .insertions
+            .get(inserted_before)
+            .filter(|insertion| insertion.table_row == row)
+        {
+            return Some(insertion.row.into());
+        }
+        let visible_row = row - inserted_before;
+        self.entries
+            .entry_index(visible_row)
+            .map(|entry_index| LineTableRow::Entry {
+                entry_index,
+                visible_row,
+            })
     }
 
     pub(super) fn row_of_boot_divider(&self, target: usize) -> Option<usize> {
-        self.rows.iter().position(|row| matches!(row, LineTableRow::BootDivider { session_index, .. } if *session_index == target))
+        self.boot_rows
+            .binary_search_by_key(&target, |(session, _)| *session)
+            .ok()
+            .and_then(|index| self.boot_rows.get(index).map(|(_, row)| *row))
     }
 
     pub(super) fn row_of_exact_entry(&self, target: usize) -> Option<usize> {
-        self.row_of_entry(target).filter(|&row| {
+        self.row_of_entry_at_or_after(target).filter(|&row| {
             matches!(self.at(row), Some(LineTableRow::Entry { entry_index, .. }) if entry_index == target)
         })
     }
 
-    pub(super) fn row_of_entry(&self, target: usize) -> Option<usize> {
-        self.rows.iter().position(
-            |row| matches!(row, LineTableRow::Entry { entry_index, .. } if *entry_index >= target),
-        )
+    pub(super) fn row_of_entry_at_or_after(&self, target: usize) -> Option<usize> {
+        let visible_row = self.entries.row_at_or_after(target);
+        (visible_row < self.entries.len()).then(|| self.table_row_of_visible_entry(visible_row))
+    }
+
+    fn table_row_of_visible_entry(&self, visible_row: usize) -> usize {
+        visible_row
+            + self
+                .insertions
+                .partition_point(|insertion| insertion.visible_row <= visible_row)
     }
 }
 
@@ -1140,6 +1413,8 @@ const CROSS_HIGHLIGHT_ROW_ALPHA: f32 = 0.3;
 
 #[cfg(test)]
 mod tests {
+    mod row_plan;
+
     use std::sync::Arc;
 
     use chrono::{DateTime, TimeZone as _, Utc};
@@ -1167,7 +1442,9 @@ mod tests {
         );
         let rows = LineTableRows::with_overlay(&log, true, None);
         assert_eq!(
-            rows.rows,
+            (0..rows.len())
+                .map(|row| rows.at(row).unwrap())
+                .collect::<Vec<_>>(),
             [
                 LineTableRow::BootDivider {
                     session_index: 0,
@@ -1217,10 +1494,15 @@ mod tests {
         let log = logs.get_by_id(id).expect("loaded");
         let filtered = LineTableRows::of(log);
         assert_eq!(filtered.row_of_exact_entry(1), None);
-        assert_eq!(filtered.row_of_entry(1), filtered.row_of_exact_entry(2));
+        assert_eq!(
+            filtered.row_of_entry_at_or_after(1),
+            filtered.row_of_exact_entry(2)
+        );
         let revealed = LineTableRows::with_overlay(log, false, Some(1));
         assert_eq!(
-            revealed.rows,
+            (0..revealed.len())
+                .map(|row| revealed.at(row).unwrap())
+                .collect::<Vec<_>>(),
             [
                 LineTableRow::BootDivider {
                     session_index: 0,

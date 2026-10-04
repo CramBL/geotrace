@@ -219,8 +219,8 @@ pub struct FilterStack {
     next_chip_id: u64,
     groups: Vec<FilterGroup>,
     selected_group: FilterGroupId,
-    visible: VisibleEntries,
-    clock_ticks: ClockTicks,
+    visible: Arc<VisibleEntries>,
+    clock_ticks: Arc<ClockTicks>,
     semantic_revision: u64,
     visible_revision: u64,
     #[cfg(test)]
@@ -250,8 +250,8 @@ impl FilterStack {
                 operator: FilterGroupOperator::All,
             }],
             selected_group: FilterGroupId(0),
-            visible,
-            clock_ticks,
+            visible: Arc::new(visible),
+            clock_ticks: Arc::new(clock_ticks),
             semantic_revision: 0,
             visible_revision: 0,
             #[cfg(test)]
@@ -628,6 +628,14 @@ impl FilterStack {
         &self.visible
     }
 
+    pub fn shared_visible_entries(&self) -> Arc<VisibleEntries> {
+        Arc::clone(&self.visible)
+    }
+
+    pub fn shared_clock_ticks(&self) -> Arc<ClockTicks> {
+        Arc::clone(&self.clock_ticks)
+    }
+
     /// Increments on filter edits before asynchronous scans finish.
     pub fn semantic_revision(&self) -> u64 {
         self.semantic_revision
@@ -774,10 +782,10 @@ impl FilterStack {
             .map_or(VisibleEntries::All { entry_count }, |matches| {
                 VisibleEntries::Matching(matches.matched_entry_indices().collect())
             });
-        if self.visible != visible {
+        if *self.visible != visible {
             self.visible_revision = self.visible_revision.wrapping_add(1);
-            self.clock_ticks = ClockTicks::of(&self.log, &visible);
-            self.visible = visible;
+            self.clock_ticks = Arc::new(ClockTicks::of(&self.log, &visible));
+            self.visible = Arc::new(visible);
         }
     }
 }

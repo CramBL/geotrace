@@ -2,9 +2,10 @@
 //! row click requests of the map, and the footer's association controls.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use chrono::{DateTime, Duration, TimeZone as _, Utc};
-use egui::accesskit::Role;
+use egui::accesskit::{Role, Toggled};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use egui_phosphor::regular::EYE as ICON_EYE;
@@ -546,14 +547,27 @@ fn group_controls_select_live_destination_move_conditions_and_reassign_removed_m
     );
 }
 
-fn disable_display_option(harness: &mut Harness<'static, ViewerState>, label: &str) {
+fn set_display_option(harness: &mut Harness<'static, ViewerState>, label: &str, enabled: bool) {
     let stack = harness.state().shown_log().unwrap().filters();
     let visible = stack.visible_entries().clone();
     let stored = stack.to_stored_stack();
     harness.get_by_label(filters::DISPLAY_OPTIONS_LABEL).click();
     harness.run_steps(2);
-    harness.get_by_label(label).click();
-    harness.run_steps(2);
+    let expected = Some(if enabled {
+        Toggled::True
+    } else {
+        Toggled::False
+    });
+    let option = harness.get_by_label(label);
+    if option.accesskit_node().toggled() != expected {
+        option.click();
+        harness.run_steps(2);
+    }
+    if let Some(option) = harness.query_by_label(label) {
+        assert_eq!(option.accesskit_node().toggled(), expected);
+        harness.get_by_label(filters::DISPLAY_OPTIONS_LABEL).click();
+        harness.run_steps(2);
+    }
     let stack = harness.state().shown_log().unwrap().filters();
     assert_eq!(*stack.visible_entries(), visible);
     assert_eq!(stack.to_stored_stack(), stored);
@@ -761,7 +775,7 @@ fn display_colour_options_toggle_independently(
         .topmost_matching(By::new().label(SERVICE_AND_LEVEL_MESSAGE))
         .rect();
 
-    disable_display_option(&mut harness.inner, first_option);
+    set_display_option(&mut harness.inner, first_option, false);
     assert_eq!(
         (
             harness.state().viewer.color_services,
@@ -771,7 +785,7 @@ fn display_colour_options_toggle_independently(
     );
     let remaining_colour = harness.inner.render().expect("the harness renders a frame");
 
-    disable_display_option(&mut harness.inner, second_option);
+    set_display_option(&mut harness.inner, second_option, false);
     assert_eq!(
         (
             harness.state().viewer.color_services,
@@ -1248,7 +1262,7 @@ fn dragging_the_association_window_commits_one_pass_with_the_final_placements() 
     type_into_live_filter(&mut harness, "navsyncd");
     let cached = harness.state_mut().map_matches();
     assert_eq!(cached.match_count(), 1);
-    let allocation = cached.layers().as_ptr();
+    let generation = harness.state().logs.map_matches_generation();
     let from = harness
         .get(By::new().role(Role::SpinButton))
         .rect()
@@ -1277,10 +1291,8 @@ fn dragging_the_association_window_commits_one_pass_with_the_final_placements() 
             Duration::seconds(ASSOCIATION_WINDOW_SECS)
         );
         assert_eq!(log.entry_placement(1), None);
-        assert_eq!(
-            harness.state_mut().map_matches().layers().as_ptr(),
-            allocation
-        );
+        harness.state_mut().map_matches();
+        assert_eq!(harness.state().logs.map_matches_generation(), generation);
     }
     harness.drop_at(from + egui::vec2(100.0, 0.0));
     harness.step();
@@ -1295,7 +1307,13 @@ fn dragging_the_association_window_commits_one_pass_with_the_final_placements() 
     for (index, placement) in expected.into_iter().enumerate() {
         assert_eq!(log.entry_placement(index), placement);
     }
-    assert_eq!(harness.state_mut().map_matches().match_count(), 2);
+    assert_eq!(
+        (
+            harness.state_mut().map_matches().match_count(),
+            harness.state().logs.map_matches_generation()
+        ),
+        (2, generation + 1)
+    );
     harness.run_steps(3);
     assert_eq!(harness.state().viewer.association_window_commits, 1);
 }
@@ -1914,26 +1932,13 @@ fn idle_viewer_frames_preserve_cached_map_layers() {
     assert_eq!(cached.layers().len(), 2);
     assert_eq!(cached.match_count(), 4);
     let expected = cached.clone();
-    let allocation = cached.layers().as_ptr();
-    let match_allocations: Vec<_> = cached
-        .layers()
-        .iter()
-        .map(|layer| layer.matches.as_ptr())
-        .collect();
+    let generation = harness.state().logs.map_matches_generation();
 
     for _ in 0..3 {
         harness.step();
         let cached = harness.state_mut().map_matches();
         assert_eq!(*cached, expected);
-        assert_eq!(cached.layers().as_ptr(), allocation);
-        assert_eq!(
-            cached
-                .layers()
-                .iter()
-                .map(|layer| layer.matches.as_ptr())
-                .collect::<Vec<_>>(),
-            match_allocations
-        );
+        assert_eq!(harness.state().logs.map_matches_generation(), generation);
     }
 }
 
@@ -1956,6 +1961,7 @@ fn viewer_edits_refresh_cached_map_layers(
     add_map_highlight(&mut harness, "starting");
     type_into_live_filter(&mut harness, "fix");
     assert_eq!(harness.state_mut().map_matches().match_count(), 4);
+    let generation = harness.state().logs.map_matches_generation();
 
     match edit {
         MapLayerEdit::DisableChip => toggle_chip(&mut harness, 0, FilterEffect::Map),
@@ -1986,6 +1992,15 @@ fn viewer_edits_refresh_cached_map_layers(
             .map(|layer| layer.color)
             .collect::<Vec<_>>(),
         remaining_color.into_iter().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        harness.state().logs.map_matches_generation(),
+        generation + 1
+    );
+    harness.state_mut().map_matches();
+    assert_eq!(
+        harness.state().logs.map_matches_generation(),
+        generation + 1
     );
 }
 
@@ -2568,6 +2583,13 @@ fn map_condition_entry_previews_and_commits_without_filtering_table(
     #[case] matches: usize,
 ) {
     let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
+    let id = harness.state().first_loaded_log();
+    let cached_rows = {
+        let state = harness.state_mut();
+        state
+            .viewer
+            .table_rows(state.logs.get_by_id(id).unwrap(), id)
+    };
     harness.get_by_label("Map highlights");
     harness
         .get(By::new().predicate(|node| node.author_id() == Some(filters::MAP_HIGHLIGHT_ADD_ID)))
@@ -2597,6 +2619,14 @@ fn map_condition_entry_previews_and_commits_without_filtering_table(
     run_until_the_scans_land(&mut harness);
     assert_eq!(match_count(&harness), "6 of 6");
     assert_eq!(harness.state_mut().map_matches().match_count(), matches);
+    let state = harness.state_mut();
+    assert!(Arc::ptr_eq(
+        &cached_rows,
+        &state
+            .viewer
+            .table_rows(state.logs.get_by_id(id).unwrap(), id)
+    ));
+
     harness.get_by_label(filters::ADD_FILTER_LABEL).click();
     run_until_the_scans_land(&mut harness);
     assert!(harness.query(editor).is_none());
@@ -2607,6 +2637,13 @@ fn map_condition_entry_previews_and_commits_without_filtering_table(
     assert!(!chip.has_effect(FilterEffect::Table));
     assert_eq!(match_count(&harness), "6 of 6");
     assert_eq!(harness.state_mut().map_matches().match_count(), matches);
+    let state = harness.state_mut();
+    assert!(Arc::ptr_eq(
+        &cached_rows,
+        &state
+            .viewer
+            .table_rows(state.logs.get_by_id(id).unwrap(), id)
+    ));
 }
 
 #[test]
@@ -2673,7 +2710,7 @@ fn disabled_chip_effects_mute_text_fill_border_and_map_swatch(#[case] theme: egu
                 .accesskit_node()
                 .data()
                 .toggled(),
-            Some(egui::accesskit::Toggled::False)
+            Some(Toggled::False)
         );
         let value = harness
             .inner
@@ -3281,7 +3318,7 @@ fn map_navigation_overrides_the_target_logs_restored_table_offset() {
     let expected_row = harness
         .state()
         .shown_log()
-        .and_then(|log| line_table::LineTableRows::of(log).row_of_entry(CLICKED_ENTRY))
+        .and_then(|log| line_table::LineTableRows::of(log).row_of_entry_at_or_after(CLICKED_ENTRY))
         .expect("the clicked entry has a table row");
     assert!(scroll.offset_px(&harness) > previous_offset);
     assert!(
@@ -3532,5 +3569,6 @@ const POINTER_OFF_EVERY_WINDOW: egui::Pos2 = egui::Pos2::new(-10.0, -10.0);
 /// [`LONG_LOG_ENTRIES`] rows at any table height.
 const PAGE_STEPS_TO_THE_END: usize = 60;
 
+mod integration;
 mod map_navigation;
 mod source_navigation;

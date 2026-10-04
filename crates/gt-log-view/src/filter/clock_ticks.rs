@@ -124,6 +124,34 @@ impl ClockTicks {
         }
     }
 
+    pub fn tick_after_entry(
+        log: &ParsedLog,
+        entry_index: usize,
+        previous_entry: Option<usize>,
+    ) -> TimestampTick {
+        let Some(entry) = log.entries().get(entry_index) else {
+            return TimestampTick::Weak;
+        };
+        let Some(previous_entry) = previous_entry else {
+            return TimestampTick::Strong;
+        };
+        let session = log
+            .boot_sessions()
+            .partition_point(|session| session.entry_range.end <= entry_index);
+        if log
+            .boot_sessions()
+            .get(session)
+            .is_some_and(|session| previous_entry < session.entry_range.start)
+        {
+            return TimestampTick::Strong;
+        }
+        log.entries()
+            .get(previous_entry)
+            .map_or(TimestampTick::Strong, |previous| {
+                ClockFields::of(entry.timestamp).tick_after(ClockFields::of(previous.timestamp))
+            })
+    }
+
     pub fn tick(&self, visible_row: usize) -> TimestampTick {
         self.row_ticks.get(visible_row).copied().unwrap_or_default()
     }
