@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.19.0 - 2026-10-04
+
 ### Added
 
 - **Log Viewer:** Map highlights have their own condition editor, and a condition can independently filter table rows, highlight map matches, or do both.
