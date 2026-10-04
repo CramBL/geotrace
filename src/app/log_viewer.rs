@@ -1,8 +1,10 @@
 //! The log viewer window: the loaded logs, the parse summary each of them
 //! expands into, and the virtualized table of the selected log's lines.
 
-use egui::{Button, ComboBox, DragValue, Label, RichText, Window};
-use egui_phosphor::regular::X as ICON_X;
+use egui::{Button, ComboBox, DragValue, RichText, Window};
+use egui_phosphor::regular::{
+    CARET_DOWN as ICON_CARET_DOWN, CARET_RIGHT as ICON_CARET_RIGHT, X as ICON_X,
+};
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
 use gt_log_view::{LoadedLog, LoadedLogs, LogAttachmentRef, RecordingKey, SessionLogAttachments};
 use gt_pending_writes::WriteAccess;
@@ -433,15 +435,25 @@ impl LogViewerWindow {
 
     /// The parse summary of the shown log, which unfolds the summary panel.
     fn parse_summary_row_ui(&mut self, ui: &mut egui::Ui, log: &LoadedLog) {
-        if ui
-            .add(
-                Label::new(RichText::new(log.parse_summary_line()).weak())
-                    .truncate()
-                    .sense(egui::Sense::click()),
-            )
-            .on_hover_text(SUMMARY_HOVER)
-            .clicked()
-        {
+        let caret = if self.summary_expanded {
+            ICON_CARET_DOWN
+        } else {
+            ICON_CARET_RIGHT
+        };
+        let hover = if self.summary_expanded {
+            "Hide log details"
+        } else {
+            "Show log details"
+        };
+        let response = ui
+            .add(Button::new(format!("{caret} {}", log.parse_summary_line())).truncate())
+            .on_hover_text(hover);
+        response.ctx.accesskit_node_builder(response.id, |node| {
+            node.set_author_id(SUMMARY_DISCLOSURE_ID);
+            node.set_expanded(self.summary_expanded);
+            node.set_description(hover);
+        });
+        if response.clicked() {
             self.summary_expanded = !self.summary_expanded;
         }
     }
@@ -695,7 +707,7 @@ const DEFAULT_WINDOW_WIDTH_PX: f32 = 800.0;
 /// start scrolling among themselves.
 const TABLE_ROWS_THE_HEADER_LEAVES: usize = 3;
 
-const SUMMARY_HOVER: &str = "Show what the parse read from this log";
+pub(in crate::app) const SUMMARY_DISCLOSURE_ID: &str = "log-summary-disclosure";
 
 const ASSOCIATION_WINDOW_HOVER: &str =
     "Maximum time between a log entry and a fix from the position source";

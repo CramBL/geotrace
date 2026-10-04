@@ -1341,9 +1341,7 @@ fn operator_only_edits_restore_from_the_attachment(#[case] add_conditions: bool)
         .get_by_label(&FilterGroupOperator::All.to_string())
         .click();
     harness.run_steps(2);
-    harness
-        .get_by_label(&FilterGroupOperator::Any.to_string())
-        .click();
+    harness.get_by_label(&FilterGroupOperator::Any.to_string());
     assert!(harness.step_until(|_| {
         stored_attachments(&db_path, &db_ref)
             .first()
@@ -1393,9 +1391,7 @@ fn operator_only_edits_restore_from_the_attachment(#[case] add_conditions: bool)
         .get_by_label(&FilterGroupOperator::Any.to_string())
         .click();
     harness.run_steps(2);
-    harness
-        .get_by_label(&FilterGroupOperator::All.to_string())
-        .click();
+    harness.get_by_label(&FilterGroupOperator::All.to_string());
     assert!(harness.step_until(|_| {
         stored_attachments(&db_path, &db_ref)
             .first()
@@ -1443,9 +1439,7 @@ fn grouped_filter_edits_restore_with_highlight_memberships_and_empty_groups(
         .get_by_label(&FilterGroupOperator::All.to_string())
         .click();
     harness.run_steps(2);
-    harness
-        .get_by_label(&FilterGroupOperator::Any.to_string())
-        .click();
+    harness.get_by_label(&FilterGroupOperator::Any.to_string());
     harness.run_steps(2);
     if both_effects {
         ui_tests::click_log_filter_effect_action(

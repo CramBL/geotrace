@@ -214,6 +214,7 @@ pub struct FilterStack {
     log: Arc<ParsedLog>,
     live: LogFilter,
     draft: LiveFilterDraft,
+    live_effect: FilterEffect,
     chips: Vec<FilterChip>,
     next_chip_id: u64,
     groups: Vec<FilterGroup>,
@@ -222,6 +223,8 @@ pub struct FilterStack {
     clock_ticks: ClockTicks,
     semantic_revision: u64,
     visible_revision: u64,
+    #[cfg(test)]
+    visible_composition_generation: u64,
 }
 
 impl FilterStack {
@@ -239,6 +242,7 @@ impl FilterStack {
             log,
             live: LogFilter::unwritten(entry_count),
             draft: LiveFilterDraft::default(),
+            live_effect: FilterEffect::Table,
             chips: Vec::new(),
             next_chip_id: 0,
             groups: vec![FilterGroup {
@@ -250,6 +254,8 @@ impl FilterStack {
             clock_ticks,
             semantic_revision: 0,
             visible_revision: 0,
+            #[cfg(test)]
+            visible_composition_generation: 0,
         }
     }
 
@@ -388,6 +394,18 @@ impl FilterStack {
 
     pub fn selected_group(&self) -> FilterGroupId {
         self.selected_group
+    }
+
+    pub fn live_filter_effect(&self) -> FilterEffect {
+        self.live_effect
+    }
+
+    pub fn set_live_filter_effect(&mut self, effect: FilterEffect) {
+        if self.live_effect != effect {
+            self.live_effect = effect;
+            self.semantic_revision = self.semantic_revision.wrapping_add(1);
+            self.recompose_visible_entries();
+        }
     }
 
     pub fn live_filter_text(&self) -> &str {
@@ -643,7 +661,9 @@ impl FilterStack {
     pub fn apply_finished_queries(&mut self) -> bool {
         let live_landed = self.live.query.take_landed();
         let mut any_landed = live_landed;
-        let mut visible_entries_changed = live_landed && self.live.narrows_visible_set();
+        let mut visible_entries_changed = live_landed
+            && self.live_effect == FilterEffect::Table
+            && self.live.narrows_visible_set();
         for chip in &mut self.chips {
             let landed = chip.filter.query.take_landed();
             any_landed |= landed;
@@ -715,17 +735,28 @@ impl FilterStack {
             .rewrite(draft.pattern().unwrap_or_default(), &self.log);
         self.draft = draft;
         self.semantic_revision = self.semantic_revision.wrapping_add(1);
-        self.recompose_visible_entries();
+        if self.live_effect == FilterEffect::Table {
+            self.recompose_visible_entries();
+        }
     }
 
     fn recompose_visible_entries(&mut self) {
+        #[cfg(test)]
+        {
+            self.visible_composition_generation =
+                self.visible_composition_generation.wrapping_add(1);
+        }
         let entry_count = self.entry_count();
         let composed_groups: Vec<EntryMatches> = self
             .groups
             .iter()
             .filter_map(|group| {
                 let conditions: Vec<&EntryMatches> = iter::once(&self.live)
-                    .filter(|live| self.selected_group == group.id && live.narrows_visible_set())
+                    .filter(|live| {
+                        self.live_effect == FilterEffect::Table
+                            && self.selected_group == group.id
+                            && live.narrows_visible_set()
+                    })
                     .chain(
                         self.chips
                             .iter()
@@ -844,7 +875,10 @@ impl LogFilter {
 
 #[cfg(test)]
 mod tests {
-    use std::ptr;
+    use std::{
+        ptr, thread,
+        time::{Duration, Instant},
+    };
 
     use gt_history_types::LogAttachment;
     use proptest::{prelude::*, proptest};
@@ -1684,11 +1718,56 @@ mod tests {
         assert!(stack.chips().is_empty());
     }
 
+    #[test]
+    fn map_draft_edits_and_query_landing_preserve_table_composition() {
+        let (mut stack, _) = unfiltered_stack();
+        stack.set_live_filter_text("gnss");
+        stack.add_live_filter_as_chip();
+        stack.wait_for_queries();
+        assert_eq!(visible(&stack), [0, 2]);
+        stack.set_live_filter_effect(FilterEffect::Map);
+        let generation = stack.visible_composition_generation;
+        let revision = stack.semantic_revision();
+        stack.set_live_filter_text("battery");
+        assert_eq!(stack.semantic_revision(), revision + 1);
+        assert_eq!(stack.visible_composition_generation, generation);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut any_landed = false;
+        loop {
+            any_landed |= stack.apply_finished_queries();
+            if !stack.is_query_pending() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "The live scan must finish within five seconds"
+            );
+            thread::yield_now();
+        }
+        assert!(any_landed);
+        assert_eq!(
+            stack
+                .live_filter_matches()
+                .matched_entry_indices()
+                .collect::<Vec<_>>(),
+            [1, 3]
+        );
+        assert_eq!(visible(&stack), [0, 2]);
+        assert_eq!(stack.visible_composition_generation, generation);
+        stack.set_live_filter_effect(FilterEffect::Table);
+        assert_eq!(stack.visible_composition_generation, generation + 1);
+        assert!(stack.visible_entries().is_empty());
+        stack.set_live_filter_effect(FilterEffect::Map);
+        assert_eq!(stack.visible_composition_generation, generation + 2);
+        assert_eq!(visible(&stack), [0, 2]);
+    }
+
     #[rstest]
     #[case::pending(false)]
     #[case::landed(true)]
     fn direct_map_commit_transfers_the_live_query_without_table_membership(#[case] landed: bool) {
         let (mut stack, mut slots) = unfiltered_stack();
+        stack.set_live_filter_effect(FilterEffect::Map);
         stack.set_live_filter_scope(FilterScope::Level);
         assert_eq!(stack.add_live_filter_as_map_highlight(&mut slots), None);
         stack.set_live_filter_level(LogLevelKind::Info);
@@ -1696,6 +1775,13 @@ mod tests {
             stack.wait_for_queries();
         }
         let identity = stack.live.query.scan_identity();
+        stack.set_live_filter_effect(FilterEffect::Table);
+        assert_eq!(stack.live.query.scan_identity(), identity);
+        let revision = stack.semantic_revision();
+        stack.set_live_filter_effect(FilterEffect::Map);
+        assert_eq!(stack.semantic_revision(), revision + 1);
+        assert_eq!(stack.live.query.scan_identity(), identity);
+        assert_eq!(visible(&stack), [0, 1, 2, 3]);
         let pending = stack.is_query_pending();
         let id = stack.add_live_filter_as_map_highlight(&mut slots).unwrap();
         assert_eq!(stack.live_filter_draft(), &LiveFilterDraft::Level(None));

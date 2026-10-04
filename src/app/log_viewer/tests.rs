@@ -190,17 +190,22 @@ fn choose_first_group_operator(harness: &mut Harness<ViewerState>, operator: Fil
         .first()
         .unwrap()
         .id();
-    harness
-        .get(group_control(group, filters::GroupControl::Operator))
-        .click();
-    harness.run_steps(2);
-    harness
-        .get(group_control(
-            group,
-            filters::GroupControl::SetOperator(operator),
-        ))
-        .click();
-    harness.run_steps(2);
+    if harness
+        .state()
+        .shown_log()
+        .unwrap()
+        .filters()
+        .groups()
+        .first()
+        .unwrap()
+        .operator()
+        != operator
+    {
+        harness
+            .get(group_control(group, filters::GroupControl::Operator))
+            .click();
+        harness.run_steps(2);
+    }
 }
 
 enum LiveEditorGroup {
@@ -823,7 +828,9 @@ fn unfold_the_summary_panel(harness: &mut Harness<ViewerState>) {
         .shown_log()
         .map(LoadedLog::parse_summary_line)
         .unwrap_or_default();
-    harness.get_by_label(summary.as_str()).click();
+    harness
+        .get_by_label(format!("{} {summary}", super::ICON_CARET_RIGHT).as_str())
+        .click();
     harness.run_steps(3);
 }
 
@@ -2023,8 +2030,17 @@ fn chips(harness: &Harness<ViewerState>) -> Vec<(String, Vec<FilterEffect>, Opti
 }
 
 fn add_map_highlight(harness: &mut Harness<ViewerState>, text: &str) {
-    add_filter(harness, text);
-    set_other_chip_effect_only(harness, chips(harness).len() - 1);
+    harness
+        .get(By::new().predicate(|node| node.author_id() == Some(filters::MAP_HIGHLIGHT_ADD_ID)))
+        .click();
+    harness.run_steps(2);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text(text.to_owned()));
+    run_until_the_scans_land(harness);
+    harness.get_by_label(filters::ADD_FILTER_LABEL).click();
+    run_until_the_scans_land(harness);
 }
 
 fn add_filter(harness: &mut Harness<ViewerState>, text: &str) {
@@ -2541,6 +2557,236 @@ fn additive_chip_actions_preserve_table_results_and_independent_map_matches() {
     add_filter(&mut harness, "acquired");
     assert_eq!(match_count(&harness), "1 of 6");
     assert_eq!(harness.state_mut().map_matches().match_count(), 2);
+}
+
+#[rstest]
+#[case::message(FilterScope::Message, "fix", 2)]
+#[case::service(FilterScope::Service, "navsyncd", 4)]
+fn map_condition_entry_previews_and_commits_without_filtering_table(
+    #[case] scope: FilterScope,
+    #[case] text: &str,
+    #[case] matches: usize,
+) {
+    let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
+    harness.get_by_label("Map highlights");
+    harness
+        .get(By::new().predicate(|node| node.author_id() == Some(filters::MAP_HIGHLIGHT_ADD_ID)))
+        .click();
+    harness.run_steps(2);
+    let editor =
+        By::new().predicate(|node| node.author_id() == Some(filters::MAP_HIGHLIGHT_EDITOR_ID));
+    assert!(harness.get(editor.clone()).accesskit_node().is_focused());
+    if scope != FilterScope::Message {
+        harness
+            .get(
+                By::new().predicate(|node| node.author_id() == Some(filters::LIVE_FILTER_SCOPE_ID)),
+            )
+            .click();
+        harness.run_steps(2);
+        harness.get_by_label(scope.to_string().as_str()).click();
+        run_until_the_scans_land(&mut harness);
+        harness.ctx.memory_mut(|memory| {
+            memory.request_focus(egui::Id::new(filters::LIVE_FILTER_FIELD_ID))
+        });
+        harness.run_steps(2);
+    }
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text(text.to_owned()));
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(match_count(&harness), "6 of 6");
+    assert_eq!(harness.state_mut().map_matches().match_count(), matches);
+    harness.get_by_label(filters::ADD_FILTER_LABEL).click();
+    run_until_the_scans_land(&mut harness);
+    assert!(harness.query(editor).is_none());
+    let stack = harness.state().shown_log().unwrap().filters();
+    assert_eq!(stack.chips().len(), 1);
+    let chip = stack.chips().first().unwrap();
+    assert!(chip.has_effect(FilterEffect::Map));
+    assert!(!chip.has_effect(FilterEffect::Table));
+    assert_eq!(match_count(&harness), "6 of 6");
+    assert_eq!(harness.state_mut().map_matches().match_count(), matches);
+}
+
+#[test]
+fn changing_editor_destination_and_switching_logs_preserves_visible_drafts() {
+    let mut harness = harness_of(
+        Vec::new(),
+        &[
+            ("first.log", LOG_WITH_EVERY_ROW_KIND),
+            ("second.log", BOOLEAN_FILTER_LOG),
+        ],
+    );
+    select_log(&mut harness, "first.log");
+    type_into_live_filter(&mut harness, "fix");
+    assert_eq!(match_count(&harness), "2 of 6");
+    harness
+        .get(By::new().predicate(|node| node.author_id() == Some(filters::MAP_HIGHLIGHT_ADD_ID)))
+        .click();
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(live_filter_text(&harness), "fix");
+    assert_eq!(match_count(&harness), "6 of 6");
+    select_log(&mut harness, "second.log");
+    assert!(harness.query_by_label(filters::ADD_FILTER_LABEL).is_none());
+    select_log(&mut harness, "first.log");
+    harness.get(
+        By::new().predicate(|node| node.author_id() == Some(filters::MAP_HIGHLIGHT_EDITOR_ID)),
+    );
+    assert_eq!(match_count(&harness), "6 of 6");
+    open_live_editor(&mut harness);
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(match_count(&harness), "2 of 6");
+    harness.get_by_label("Cancel").click();
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(match_count(&harness), "6 of 6");
+    assert_eq!(live_filter_text(&harness), "");
+    assert!(harness.query_by_label(filters::ADD_FILTER_LABEL).is_none());
+}
+
+#[rstest]
+#[case::dark(egui::Theme::Dark)]
+#[case::light(egui::Theme::Light)]
+fn disabled_chip_effects_mute_text_fill_border_and_map_swatch(#[case] theme: egui::Theme) {
+    let mut harness = rendering_harness_with(Vec::new());
+    harness.inner.ctx.set_theme(theme);
+    harness.inner.run_steps(3);
+    add_filter(&mut harness.inner, "fix");
+    click_chip_effect_action(
+        &mut harness.inner,
+        0,
+        FilterEffect::Table,
+        filters::ChipControl::OtherEffect,
+    );
+    let palette = gt_ui_theme::log_layer_slot_color(0).resolve(theme == egui::Theme::Dark);
+    for effect in [FilterEffect::Table, FilterEffect::Map] {
+        toggle_chip(&mut harness.inner, 0, effect);
+        assert_eq!(
+            harness
+                .inner
+                .get(chip_effect_control(
+                    &harness.inner,
+                    0,
+                    effect,
+                    filters::ChipControl::Enable
+                ))
+                .accesskit_node()
+                .data()
+                .toggled(),
+            Some(egui::accesskit::Toggled::False)
+        );
+        let value = harness
+            .inner
+            .get(chip_effect_control(
+                &harness.inner,
+                0,
+                effect,
+                filters::ChipControl::Value,
+            ))
+            .rect();
+        let visuals = harness.inner.ctx.global_style().visuals.clone();
+        let shapes = &harness.inner.output().shapes;
+        let text = shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.visual_bounding_rect().intersects(value) => {
+                    Some(text)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            text.galley.job.sections.first().unwrap().format.color,
+            visuals.weak_text_color()
+        );
+        let frame = shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Rect(rect)
+                    if rect.rect.contains_rect(value)
+                        && rect.rect.height() < value.height() * 2.0 =>
+                {
+                    Some(rect)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(frame.fill, visuals.faint_bg_color);
+        let border_color = visuals.widgets.noninteractive.bg_stroke.color;
+        assert!(shapes.iter().any(|shape| match &shape.shape {
+            egui::Shape::Rect(rect) => rect.rect == frame.rect && rect.stroke.color == border_color,
+            egui::Shape::LineSegment { points, stroke } =>
+                frame.rect.contains(points[0])
+                    && frame.rect.contains(points[1])
+                    && stroke.color == border_color,
+            _ => false,
+        }));
+        if effect == FilterEffect::Map {
+            assert!(shapes.iter().any(|shape| match &shape.shape {
+                egui::Shape::Rect(rect) =>
+                    frame.rect.contains_rect(rect.rect) && rect.fill == border_color,
+                _ => false,
+            }));
+            assert!(!shapes.iter().any(|shape| match &shape.shape {
+                egui::Shape::Rect(rect) =>
+                    frame.rect.contains_rect(rect.rect)
+                        && (rect.fill == palette || rect.stroke.color == palette),
+                _ => false,
+            }));
+        }
+        let other = if effect == FilterEffect::Table {
+            FilterEffect::Map
+        } else {
+            FilterEffect::Table
+        };
+        let other_value = harness
+            .inner
+            .get(chip_effect_control(
+                &harness.inner,
+                0,
+                other,
+                filters::ChipControl::Value,
+            ))
+            .rect();
+        let other_text = shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.visual_bounding_rect().intersects(other_value) => {
+                    Some(text)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            other_text.galley.job.sections.first().unwrap().format.color,
+            visuals.text_color()
+        );
+        harness.snapshot(
+            &format!("log_viewer_disabled_{effect:?}_effect_{theme:?}").to_ascii_lowercase(),
+        );
+        toggle_chip(&mut harness.inner, 0, effect);
+    }
+}
+
+#[test]
+fn summary_disclosure_shows_expansion_state_and_details_action() {
+    let mut harness = harness_with(Vec::new());
+    let disclosure =
+        By::new().predicate(|node| node.author_id() == Some(super::SUMMARY_DISCLOSURE_ID));
+    let summary = harness.state().shown_log().unwrap().parse_summary_line();
+    for (expanded, caret, action) in [
+        (false, super::ICON_CARET_RIGHT, "Show log details"),
+        (true, super::ICON_CARET_DOWN, "Hide log details"),
+    ] {
+        let node = harness.get(disclosure.clone());
+        assert_eq!(node.accesskit_node().data().is_expanded(), Some(expanded));
+        assert_eq!(node.accesskit_node().description().as_deref(), Some(action));
+        harness.get_by_label(format!("{caret} {summary}").as_str());
+        assert_eq!(harness.query_by_label("Boots").is_some(), expanded);
+        node.click();
+        harness.run_steps(2);
+    }
+    assert!(!harness.state().viewer.summary_expanded);
 }
 
 #[test]
@@ -3133,6 +3379,15 @@ fn log_viewer_window_fits_every_viewport(
         ControlLabel(filters::NEW_GROUP_LABEL),
     );
     open_live_editor(&mut harness);
+    harness.assert_control_is_reachable(
+        AuditedWindow::titled(LOG_VIEWER_TITLE),
+        ControlLabel("Cancel"),
+    );
+    harness
+        .get(By::new().predicate(|node| node.author_id() == Some(filters::MAP_HIGHLIGHT_ADD_ID)))
+        .click_accesskit();
+    harness.run_steps(3);
+    harness.assert_window_fits_the_viewport(AuditedWindow::titled(LOG_VIEWER_TITLE));
     harness.assert_control_is_reachable(
         AuditedWindow::titled(LOG_VIEWER_TITLE),
         ControlLabel("Cancel"),
