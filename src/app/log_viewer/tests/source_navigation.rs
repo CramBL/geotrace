@@ -42,7 +42,7 @@ fn structural_source_rows_show_exact_text_and_boot_context_in_source_order() {
     let mut harness = harness_of(Vec::new(), &[("source.log", SOURCE_LOG)]);
     assert!(!harness.state().viewer.show_structural_lines);
     assert!(harness.query_by_label("--- Device reboot ---").is_none());
-    disable_display_option(&mut harness, "Show structural lines");
+    set_display_option(&mut harness, "Show structural lines", true);
     assert!(harness.state().viewer.show_structural_lines);
     let separator = harness.get_by_label("--- Device reboot ---").rect();
     let second_boot = harness.get_by_label("Boot 2 · up 10s · 2 entries").rect();
@@ -78,7 +78,7 @@ fn structural_source_rows_remain_visible_when_entry_conditions_hide_every_entry(
         vec![recording("walk.gtd", 55.0)],
         &[("source.log", SOURCE_LOG)],
     );
-    disable_display_option(&mut harness, "Show structural lines");
+    set_display_option(&mut harness, "Show structural lines", true);
     let shown = harness.state().first_loaded_log();
     let (stack, _) = harness
         .state_mut()
@@ -347,7 +347,7 @@ trailing source text
 #[test]
 fn structural_source_table_snapshot() {
     let mut harness = rendering_harness_of(Vec::new(), &[("source.log", SOURCE_LOG)]);
-    disable_display_option(&mut harness.inner, "Show structural lines");
+    set_display_option(&mut harness.inner, "Show structural lines", true);
     harness.snapshot("log_viewer_source_lines");
 }
 
@@ -380,7 +380,7 @@ fn diagnostic_navigation_scrolls_to_the_hidden_target_in_a_long_table(
         .collect();
     let mut harness = harness_of(Vec::new(), &[("long.log", &text)]);
     if structural {
-        disable_display_option(&mut harness, "Show structural lines");
+        set_display_option(&mut harness, "Show structural lines", true);
     }
     type_into_live_filter(&mut harness, "keep");
     unfold_the_summary_panel(&mut harness);

@@ -9,6 +9,9 @@ description.workspace = true
 [lib]
 doctest = false
 
+[features]
+test-util = []
+
 [dependencies]
 chrono.workspace = true
 gt-fmt = { path = "../gt-fmt" }

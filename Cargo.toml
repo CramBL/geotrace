@@ -373,6 +373,7 @@ geotrace-sdk = { path = "sdk/rust/geotrace-sdk" }
 gt-fetch = { path = "crates/gt-fetch", features = ["test-util"] }
 # Defines `schema::DAYS_GROUP`. A test marks an interrupted delete in that group.
 gt-jam-store = { path = "crates/external_environmental_data/gt-jam-store" }
+gt-log-view = { path = "crates/gt-log-view", features = ["test-util"] }
 gt-test-utils = { path = "crates/gt-test-utils", features = [
     "archive",
     "ionex",
