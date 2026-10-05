@@ -41,7 +41,7 @@ _flow TRACK KIND VERSION:
     esac
     tag="${tag_prefix}${version}"
     branch="release/${label}-v${version}"
-    msg="release ${label} v${version}"
+    msg="Release ${label} v${version}"
 
     bold=$(tput bold 2>/dev/null || true)
     dim=$(tput dim 2>/dev/null || true)
