@@ -41,7 +41,7 @@ Bump on a branch and open a PR:
 ```sh
 git switch -c release/app-vX.Y.Z
 just qa::bump-app X.Y.Z      # edits the workspace version + promotes CHANGELOG.md
-git commit -am "release app vX.Y.Z"
+git commit -am "Release app vX.Y.Z"
 git push -u origin release/app-vX.Y.Z
 ```
 
@@ -67,7 +67,7 @@ Same shape - bump on a branch, PR, merge, then tag:
 ```sh
 git switch -c release/sdk-vX.Y.Z
 just qa::bump-sdk X.Y.Z      # edits every SDK version spot + promotes CHANGELOG_SDK.md (fails if it can't)
-git commit -am "release sdk vX.Y.Z"
+git commit -am "Release sdk vX.Y.Z"
 git push -u origin release/sdk-vX.Y.Z
 # open the PR, merge, then:
 git switch trunk && git pull
@@ -89,13 +89,13 @@ Because the manifest version must match the tag, cut it from the release branch 
 ```sh
 # on the release branch
 just qa::bump-app X.Y.Z-rc.1     # or: just qa::bump-sdk X.Y.Z-rc.1
-git commit -am "release app vX.Y.Z-rc.1"
+git commit -am "Release app vX.Y.Z-rc.1"
 git push -u origin release/app-vX.Y.Z
 git tag app/vX.Y.Z-rc.1          # or geotrace-sdk-vX.Y.Z-rc.1
 git push origin app/vX.Y.Z-rc.1
 # when the prerelease + smoke are green, promote to the final version:
 just qa::bump-app X.Y.Z
-git commit -am "release app vX.Y.Z"
+git commit -am "Release app vX.Y.Z"
 # open the PR, merge, then tag the final version (see above)
 ```
 
