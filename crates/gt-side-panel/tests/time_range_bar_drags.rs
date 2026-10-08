@@ -37,8 +37,10 @@ fn middle_track() -> DateTime<Utc> {
 /// whose bounds the coarse bar draws a third and two thirds along its track.
 fn harness_with_a_two_day_window() -> TestHarness<'static, PanelState> {
     let mut harness = test_util::harness(vec![recording_spanning(6)]);
-    harness.state_mut().filter.time_start = Some(middle_track() - Duration::days(1));
-    harness.state_mut().filter.time_end = Some(middle_track() + Duration::days(1));
+    harness.state_mut().filter.set_time_bounds(
+        Some(middle_track() - Duration::days(1)),
+        Some(middle_track() + Duration::days(1)),
+    );
     harness.run();
     harness
 }
@@ -48,8 +50,10 @@ fn harness_with_a_two_day_window() -> TestHarness<'static, PanelState> {
 /// window's two bounds sit at 0.27 and 0.63 of its track.
 fn harness_with_a_half_minute_window() -> TestHarness<'static, PanelState> {
     let mut harness = test_util::harness(vec![recording_spanning(6)]);
-    harness.state_mut().filter.time_start = Some(middle_track() + Duration::seconds(10));
-    harness.state_mut().filter.time_end = Some(middle_track() + Duration::seconds(40));
+    harness.state_mut().filter.set_time_bounds(
+        Some(middle_track() + Duration::seconds(10)),
+        Some(middle_track() + Duration::seconds(40)),
+    );
     harness.run();
     harness
 }
@@ -76,7 +80,11 @@ fn a_drag_to_the_left_end_of_the_active_range_bar_keeps_the_earlier_track_filter
     assert!(
         !gt_filter::track_passes_filter(earlier_track, &state.filter),
         "the window starts at {:?}",
-        state.filter.time_start
+        state
+            .filter
+            .time_window()
+            .bounds()
+            .and_then(|(start, _)| start)
     );
 }
 
@@ -98,7 +106,10 @@ fn the_active_range_bar_states_the_ends_of_the_window_and_not_of_its_viewport() 
     // The outer tracks last four seconds and the middle one 59: a minimum
     // duration between the two narrows the active range to the middle track
     // while both window bounds stay absent.
-    harness.state_mut().filter.min_duration = Some(Duration::seconds(30));
+    harness
+        .state_mut()
+        .filter
+        .set_minimum_duration(Some(Duration::seconds(30)));
     harness.run();
     let labels = test_util::label_texts(&harness, "01/0");
     assert_eq!(
@@ -124,9 +135,10 @@ enum WindowBound {
 
 impl WindowBound {
     fn of(self, filter: &GlobalFilter) -> Option<DateTime<Utc>> {
+        let (start, end) = filter.time_window().bounds()?;
         match self {
-            Self::Start => filter.time_start,
-            Self::End => filter.time_end,
+            Self::Start => start,
+            Self::End => end,
         }
     }
 
@@ -166,8 +178,10 @@ fn the_active_range_bar_appears_over_a_loaded_range_of_more_than_five_days(
 ) {
     let mut harness = test_util::harness(vec![recording_spanning(days)]);
     let middle_track = test_util::utc(0, 0, 0) + Duration::days(days / 2);
-    harness.state_mut().filter.time_start = Some(middle_track + Duration::seconds(10));
-    harness.state_mut().filter.time_end = Some(middle_track + Duration::seconds(40));
+    harness.state_mut().filter.set_time_bounds(
+        Some(middle_track + Duration::seconds(10)),
+        Some(middle_track + Duration::seconds(40)),
+    );
     harness.run();
     assert_eq!(test_util::bar_rects(&harness).len(), bars_on_screen);
 }
@@ -269,8 +283,10 @@ fn a_drag_past_the_other_handle_on_the_only_bar_stops_a_second_short_of_it(
         "one_stint.gtd",
         &[(test_util::utc(0, 0, 0), 600)],
     )]);
-    harness.state_mut().filter.time_start = Some(test_util::utc(0, 3, 0));
-    harness.state_mut().filter.time_end = Some(test_util::utc(0, 7, 0));
+    harness
+        .state_mut()
+        .filter
+        .set_time_bounds(Some(test_util::utc(0, 3, 0)), Some(test_util::utc(0, 7, 0)));
     harness.run();
     let bars = test_util::bar_rects(&harness);
     assert_eq!(bars.len(), 1, "a ten-minute recording is under the split");
@@ -292,7 +308,10 @@ fn a_drag_past_the_other_handle_on_the_only_bar_stops_a_second_short_of_it(
 #[test]
 fn a_drag_keeps_the_minimum_its_press_latched_when_the_panel_gains_a_bar() {
     let mut harness = test_util::harness(vec![recording_spanning(6)]);
-    harness.state_mut().filter.time_end = Some(test_util::utc(0, 0, 0) + Duration::days(5));
+    harness
+        .state_mut()
+        .filter
+        .set_time_bounds(None, Some(test_util::utc(0, 0, 0) + Duration::days(5)));
     harness.run();
     let bars = test_util::bar_rects(&harness);
     assert_eq!(bars.len(), 1, "the active range spans two of the tracks");
@@ -308,7 +327,7 @@ fn a_drag_keeps_the_minimum_its_press_latched_when_the_panel_gains_a_bar() {
     );
 
     assert_eq!(
-        harness.state().filter.time_end,
+        WindowBound::End.of(&harness.state().filter),
         Some(test_util::utc(0, 0, 1)),
         "the grabbed bound stops a second from the start of the loaded time range"
     );
@@ -336,8 +355,10 @@ fn a_drag_away_from_the_other_handle_moves_only_the_bound_it_grabbed(
     #[case] moved: WindowBound,
 ) {
     let mut harness = test_util::harness(vec![recording_spanning(6)]);
-    harness.state_mut().filter.time_start = Some(middle_track());
-    harness.state_mut().filter.time_end = Some(middle_track() + Duration::hours(12));
+    harness.state_mut().filter.set_time_bounds(
+        Some(middle_track()),
+        Some(middle_track() + Duration::hours(12)),
+    );
     harness.run();
     let held = moved.other().of(&harness.state().filter);
     let bar = *test_util::bar_rects(&harness)
@@ -352,8 +373,12 @@ fn a_drag_away_from_the_other_handle_moves_only_the_bound_it_grabbed(
         held,
         "the bound the press left alone"
     );
-    let start = filter.time_start.expect("the window keeps a start");
-    let end = filter.time_end.expect("the window keeps an end");
+    let (start, end) = filter
+        .time_window()
+        .bounds()
+        .expect("the window is not empty");
+    let start = start.expect("the window keeps a start");
+    let end = end.expect("the window keeps an end");
     assert!(
         end - start > COARSE_BAR_MINIMUM_WINDOW_SPAN,
         "the window runs {start:?} to {end:?}"
@@ -380,7 +405,7 @@ fn every_drag_keeps_at_least_the_fine_minimum_between_the_window_bounds() {
                 .press_drag_release(from, test_util::point_on_track(bar, to) - from, 4);
             harness.run();
             let filter = &harness.state().filter;
-            if let (Some(start), Some(end)) = (filter.time_start, filter.time_end) {
+            if let Some((Some(start), Some(end))) = filter.time_window().bounds() {
                 assert!(
                     end - start >= FINE_BAR_MINIMUM_WINDOW_SPAN,
                     "the window runs {start:?} to {end:?}"

@@ -660,10 +660,8 @@ mod tests {
     /// The points of a track from the second one on, as a window starting at
     /// the second point's timestamp selects them.
     fn from_the_second_point(points: &[NavPoint]) -> TimeFilteredPoints {
-        let filter = GlobalFilter {
-            time_start: DateTime::from_timestamp(TEST_EPOCH + 1, 0),
-            ..GlobalFilter::default()
-        };
+        let filter = GlobalFilter::default()
+            .with_time_bounds(DateTime::from_timestamp(TEST_EPOCH + 1, 0), None);
         TimeFilteredPoints::of(points, &filter)
     }
 
@@ -1042,10 +1040,8 @@ mod tests {
         // The clock steps back at the second fix, which the window rejects
         // while it keeps the two around it.
         let points = vec![fix(0, 55.0), fix(600, 55.1), fix(1, 55.2)];
-        let filter = GlobalFilter {
-            time_end: DateTime::from_timestamp(TEST_EPOCH + 5, 0),
-            ..GlobalFilter::default()
-        };
+        let filter = GlobalFilter::default()
+            .with_time_bounds(None, DateTime::from_timestamp(TEST_EPOCH + 5, 0));
         let slice = SliceProvider::new(
             TrackProvider::new(&points, &[], None),
             TimeFilteredPoints::of(&points, &filter),
@@ -1273,10 +1269,8 @@ mod tests {
             ],
         )];
         let points = test_util::points_at_millis(&[0, 1_000, 2_000]);
-        let filter = GlobalFilter {
-            time_start: DateTime::from_timestamp(TEST_EPOCH + 2, 0),
-            ..GlobalFilter::default()
-        };
+        let filter = GlobalFilter::default()
+            .with_time_bounds(DateTime::from_timestamp(TEST_EPOCH + 2, 0), None);
         let slice = SliceProvider::new(
             TrackProvider::new(&points, &channels, None),
             TimeFilteredPoints::of(&points, &filter),
@@ -1301,10 +1295,8 @@ mod tests {
             &[(0, 0.0), (5, 5.0)],
         )];
         let points = test_util::points_at_millis(&[0, 1_000]);
-        let filter = GlobalFilter {
-            time_start: DateTime::from_timestamp(TEST_EPOCH + 4, 0),
-            ..GlobalFilter::default()
-        };
+        let filter = GlobalFilter::default()
+            .with_time_bounds(DateTime::from_timestamp(TEST_EPOCH + 4, 0), None);
         let slice = SliceProvider::new(
             TrackProvider::new(&points, &channels, None),
             TimeFilteredPoints::of(&points, &filter),

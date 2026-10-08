@@ -2371,7 +2371,10 @@ fn the_shelve_button_stays_grayed_while_the_tree_hides_a_track_that_the_filter_k
 #[test]
 fn the_shelve_button_confirms_over_the_track_that_the_filter_excludes() {
     let mut harness = harness_over_two_tracks_that_pass_the_filter();
-    harness.state_mut().filter.min_duration = Some(Duration::seconds(30));
+    harness
+        .state_mut()
+        .filter
+        .set_minimum_duration(Some(Duration::seconds(30)));
     harness.state_mut().tree.hide_track(first_track());
     harness.run();
 
@@ -2433,18 +2436,15 @@ fn state_with_a_short_unmarked_second_track() -> State {
 /// Each of these rules excludes the second track of the recording and keeps
 /// the first.
 #[rstest::rstest]
-#[case::a_minimum_distance(GlobalFilter {
-    min_distance_km: Some(Length::new::<kilometer>(5.0)),
-    ..GlobalFilter::default()
-})]
-#[case::a_minimum_spread(GlobalFilter {
-    min_spread_m: Some(Length::new::<meter>(1000.0)),
-    ..GlobalFilter::default()
-})]
-#[case::a_marker_requirement(GlobalFilter {
-    marker_requirement: MarkerRequirement::AnyMarker,
-    ..GlobalFilter::default()
-})]
+#[case::a_minimum_distance(
+    GlobalFilter::default().with_minimum_distance(Some(Length::new::<kilometer>(5.0)))
+)]
+#[case::a_minimum_spread(
+    GlobalFilter::default().with_minimum_spread(Some(Length::new::<meter>(1000.0)))
+)]
+#[case::a_marker_requirement(
+    GlobalFilter::default().with_marker_requirement(MarkerRequirement::AnyMarker)
+)]
 fn the_shelve_button_confirms_over_the_track_that_the_filter_rule_excludes(
     #[case] filter: GlobalFilter,
 ) {
@@ -2474,7 +2474,9 @@ fn the_shelve_button_confirms_over_the_track_that_the_filter_rule_excludes(
 #[test]
 fn the_shelve_button_is_grayed_in_a_read_only_session() {
     let mut state = state_with_two_tracks(Some(stored_recording_ref()));
-    state.filter.min_duration = Some(Duration::seconds(30));
+    state
+        .filter
+        .set_minimum_duration(Some(Duration::seconds(30)));
     state.read_only_recording_history_hover = Some(READ_ONLY_HOVER);
     let mut harness = make_harness(state);
     harness.run();
@@ -2489,7 +2491,9 @@ fn the_shelve_button_is_grayed_in_a_read_only_session() {
 #[test]
 fn the_shelve_button_is_grayed_for_a_recording_outside_the_recording_history() {
     let mut state = state_with_two_tracks(None);
-    state.filter.min_duration = Some(Duration::seconds(30));
+    state
+        .filter
+        .set_minimum_duration(Some(Duration::seconds(30)));
     let mut harness = make_harness(state);
     harness.run();
 

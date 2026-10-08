@@ -315,7 +315,10 @@ mod tests {
     )]
     #[case::outside_the_time_filter(
         |fixture: &mut ScopeFixture| {
-            fixture.filter.time_start = Some(test_util::start() + TimeDelta::seconds(2));
+            fixture.filter.set_time_bounds(
+                Some(test_util::start() + TimeDelta::seconds(2)),
+                None,
+            );
         },
         Some(PinnedPopup::Withheld {
             pinned: test_util::point(1),

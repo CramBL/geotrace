@@ -151,10 +151,10 @@ mod tests {
 
         let base = fingerprint(&GlobalFilter::default());
         assert_eq!(base, fingerprint(&GlobalFilter::default()));
-        let filtered = GlobalFilter {
-            min_distance_km: Some(uom::si::f64::Length::new::<uom::si::length::kilometer>(1.0)),
-            ..GlobalFilter::default()
-        };
+        let filtered =
+            GlobalFilter::default().with_minimum_distance(Some(uom::si::f64::Length::new::<
+                uom::si::length::kilometer,
+            >(1.0)));
         assert_ne!(base, fingerprint(&filtered));
     }
 

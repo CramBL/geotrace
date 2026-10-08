@@ -256,7 +256,7 @@ impl<'a> GeometryCull<'a> {
 
     fn visit(self, extent: Extent) -> ChunkVisit {
         let span = extent.time();
-        if !span.overlaps_window(self.filter.time_start, self.filter.time_end) {
+        if !self.filter.time_window().overlaps(span) {
             return ChunkVisit::Nothing;
         }
         if !self.window_reaches_past_both_ends_of(span) {
@@ -273,10 +273,7 @@ impl<'a> GeometryCull<'a> {
     /// Whether every instant of `span` falls in the window. An absent end of
     /// the window is unbounded.
     fn window_reaches_past_both_ends_of(self, span: TimeRange) -> bool {
-        self.filter
-            .time_start
-            .is_none_or(|start| start <= span.start)
-            && self.filter.time_end.is_none_or(|end| span.end <= end)
+        self.filter.time_window().covers(span)
     }
 
     fn keeps_the_fix_at(self, time: DateTime<Utc>) -> bool {
@@ -560,11 +557,8 @@ mod tests {
 
     /// The window `[start, end]` in seconds from [`FIRST_FIX_TIME`].
     fn window(start_secs: i64, end_secs: i64) -> GlobalFilter {
-        GlobalFilter {
-            time_start: Some(at_second(start_secs)),
-            time_end: Some(at_second(end_secs)),
-            ..GlobalFilter::default()
-        }
+        GlobalFilter::default()
+            .with_time_bounds(Some(at_second(start_secs)), Some(at_second(end_secs)))
     }
 
     /// A track through `positions` with its `i`th fix stamped

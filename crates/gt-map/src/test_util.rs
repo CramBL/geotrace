@@ -386,10 +386,7 @@ pub fn a_recording_with_every_marker_kind() -> LoadedFile {
 
 /// A window that keeps the fixes up to and including `index`.
 pub fn window_ending_at(index: usize) -> GlobalFilter {
-    GlobalFilter {
-        time_end: Some(epoch() + Duration::minutes(index as i64)),
-        ..GlobalFilter::default()
-    }
+    GlobalFilter::default().with_time_bounds(None, Some(epoch() + Duration::minutes(index as i64)))
 }
 
 /// The tree of `files` with every track unchecked and every file checked.

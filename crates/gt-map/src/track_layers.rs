@@ -1208,11 +1208,10 @@ mod tests {
         let second = |index: usize| {
             FIRST_FIX_TIME + TimeDelta::seconds(i64::try_from(index).unwrap_or(i64::MAX))
         };
-        GlobalFilter {
-            time_start: Some(second(PARKED.start + 100)),
-            time_end: Some(second(PARKED.end - 100)),
-            ..GlobalFilter::default()
-        }
+        GlobalFilter::default().with_time_bounds(
+            Some(second(PARKED.start + 100)),
+            Some(second(PARKED.end - 100)),
+        )
     }
 
     /// A run that hides the first half of the dead-reckoned stretch.

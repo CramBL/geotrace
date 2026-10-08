@@ -11,6 +11,8 @@ use gt_types::{DataCategory, FileIdx, TrackIdx, TrackRef};
 use gt_ui_theme::MIDDLE_DOT;
 use gt_ui_types::{DataPointRef, DisplayCategory, MapScope, PointVisibility};
 use rstest::rstest;
+use uom::si::f64::Length;
+use uom::si::length::kilometer;
 
 use crate::app::App;
 use crate::app::environment_storage;
@@ -39,9 +41,7 @@ fn query_results_go_stale_when_the_filter_changes() {
         .shared
         .borrow_mut()
         .filter
-        .min_distance_km = Some(uom::si::f64::Length::new::<uom::si::length::kilometer>(
-        999.0,
-    ));
+        .set_minimum_distance(Some(Length::new::<kilometer>(999.0)));
     harness.run_steps(3);
     let matches_stale = harness
         .state()
@@ -56,7 +56,7 @@ fn query_results_go_stale_when_the_filter_changes() {
         .shared
         .borrow_mut()
         .filter
-        .min_distance_km = None;
+        .set_minimum_distance(None);
     harness.run_steps(3);
     let stale_after_revert = harness
         .state()
@@ -89,9 +89,7 @@ fn query_results_go_stale_with_the_query_window_closed() {
         .shared
         .borrow_mut()
         .filter
-        .min_distance_km = Some(uom::si::f64::Length::new::<uom::si::length::kilometer>(
-        999.0,
-    ));
+        .set_minimum_distance(Some(Length::new::<kilometer>(999.0)));
     harness.run_steps(3);
     let matches_stale = harness
         .state()
@@ -1195,9 +1193,7 @@ fn stale_demo_query_run() -> Harness<'static, App> {
         .shared
         .borrow_mut()
         .filter
-        .min_distance_km = Some(uom::si::f64::Length::new::<uom::si::length::kilometer>(
-        999.0,
-    ));
+        .set_minimum_distance(Some(Length::new::<kilometer>(999.0)));
     harness.run_steps(3);
     harness
 }

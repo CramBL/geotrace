@@ -225,7 +225,9 @@ mod tests {
     /// The time window opens on the fixture's third line, which leaves the
     /// two lines before it out and keeps the track itself.
     fn window_from_the_third_line(gates: &mut Gates) {
-        gates.filter.time_start = Some(test_util::start() + TimeDelta::seconds(2));
+        gates
+            .filter
+            .set_time_bounds(Some(test_util::start() + TimeDelta::seconds(2)), None);
     }
 
     #[rstest::rstest]
@@ -233,7 +235,7 @@ mod tests {
     #[case::file_unchecked(|gates: &mut Gates| gates.visibility.files[0].enabled = false, 0)]
     #[case::track_unchecked(|gates: &mut Gates| gates.visibility.files[0].tracks[0].enabled = false, 0)]
     #[case::filter_rejects_the_track(
-        |gates: &mut Gates| gates.filter.min_duration = Some(TimeDelta::hours(1)),
+        |gates: &mut Gates| gates.filter.set_minimum_duration(Some(TimeDelta::hours(1))),
         0
     )]
     #[case::line_outside_the_time_window(window_from_the_third_line, test_util::POINT_COUNT - 2)]

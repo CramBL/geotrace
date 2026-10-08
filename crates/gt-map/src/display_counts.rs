@@ -534,11 +534,11 @@ mod tests {
     #[rstest::rstest]
     #[case::the_filter_keeps_the_recording(GlobalFilter::default(), 1)]
     #[case::the_time_window_misses_the_recording(
-        GlobalFilter { time_start: Some(t(10)), ..GlobalFilter::default() },
+        GlobalFilter::default().with_time_bounds(Some(t(10)), None),
         0
     )]
     #[case::the_recording_is_shorter_than_the_minimum_duration(
-        GlobalFilter { min_duration: Some(Duration::seconds(60)), ..GlobalFilter::default() },
+        GlobalFilter::default().with_minimum_duration(Some(Duration::seconds(60))),
         0
     )]
     fn snapped_tracks_are_counted_for_the_recordings_the_filter_keeps(
@@ -569,11 +569,7 @@ mod tests {
     #[test]
     fn time_filter_trims_points_anchors_and_markers() {
         let files = vec![fixture()];
-        let filter = GlobalFilter {
-            time_start: Some(t(1)),
-            time_end: Some(t(2)),
-            ..GlobalFilter::default()
-        };
+        let filter = GlobalFilter::default().with_time_bounds(Some(t(1)), Some(t(2)));
         let counts = compute(&files, &vis_all(), &filter, None);
         // Points t1 and t2 pass, both anchors (t0, t3) fall outside. The t2
         // custom marker and the t1 generated marker stay.
@@ -640,10 +636,7 @@ mod tests {
             }],
             ..QueryMatches::default()
         };
-        let filter = GlobalFilter {
-            time_start: Some(t(2)),
-            ..GlobalFilter::default()
-        };
+        let filter = GlobalFilter::default().with_time_bounds(Some(t(2)), None);
         let counts = compute(&files, &vis_all(), &filter, Some(&matches));
         assert_eq!(counts.get(DisplayCategory::QueryHighlights), 1);
     }
@@ -677,11 +670,7 @@ mod tests {
             v.files[0].tracks[0].set_category_visible(DataCategory::CustomMarker, false);
             v
         };
-        let filter_window = GlobalFilter {
-            time_start: Some(t(1)),
-            time_end: Some(t(2)),
-            ..GlobalFilter::default()
-        };
+        let filter_window = GlobalFilter::default().with_time_bounds(Some(t(1)), Some(t(2)));
         let mut gmv_hidden = GeneratedMarkerVisibility::default();
         gmv_hidden.set_hidden(
             track_ref,
@@ -763,10 +752,7 @@ mod tests {
         get(&mut cache, &GlobalFilter::default());
         assert_eq!(cache.computes, 1, "unchanged inputs must reuse the cache");
 
-        let narrowed = GlobalFilter {
-            time_start: Some(t(2)),
-            ..GlobalFilter::default()
-        };
+        let narrowed = GlobalFilter::default().with_time_bounds(Some(t(2)), None);
         get(&mut cache, &narrowed);
         assert_eq!(cache.computes, 2, "a changed input must recompute");
     }

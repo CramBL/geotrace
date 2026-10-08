@@ -75,7 +75,10 @@ fn the_active_range_heading_comes_with_a_bar_under_it() {
         ),
     ];
     let mut harness = test_util::harness(files);
-    harness.state_mut().filter.time_start = Some(test_util::utc(11, 30, 0) + six_days_on);
+    harness
+        .state_mut()
+        .filter
+        .set_time_bounds(Some(test_util::utc(11, 30, 0) + six_days_on), None);
     harness.run();
     assert_eq!(
         test_util::bar_rects(&harness).len(),
