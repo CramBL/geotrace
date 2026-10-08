@@ -21,8 +21,8 @@ use gt_map::{benchmark_support, test_util};
 use gt_track_builder::SpatialIndex;
 use gt_types::{DataCategory, FixRef, LoadedFile, NavPoint, PointIdx, SpatialPoint};
 use gt_ui_types::{
-    DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, MapElementRef, MapEligibility,
-    MapPresence, QueryMatches, TrackDataVisibility, TrackRanges,
+    DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, MapElementRef, QueryMatches,
+    TrackDataVisibility, TrackRanges,
 };
 
 const BENCH_ZOOM: f64 = 15.0;
@@ -59,25 +59,28 @@ fn bench_frame_policy_scaling(c: &mut Criterion) {
         let files = recording_with_tracks(track_count, points_per_track);
         let visibility = TrackDataVisibility::from_loaded(&files);
         let filter = GlobalFilter::default();
+        let generated_visibility = GeneratedMarkerVisibility::default();
+        let event_visibility = EventMarkerVisibility::default();
         let display_mask = DisplayMask::default();
         group.throughput(Throughput::Elements(track_count as u64));
         group.bench_function(BenchmarkId::from_parameter(name), |b| {
             b.iter(|| {
-                benchmark_support::compile_track_plan(
-                    hint::black_box(&files),
-                    hint::black_box(&visibility),
-                    hint::black_box(&filter),
-                    display_mask,
+                benchmark_support::compile_frame_plan(
+                    benchmark_support::FramePlanInputs::new(
+                        hint::black_box(&files),
+                        hint::black_box(&visibility),
+                        hint::black_box(&filter),
+                        None,
+                        hint::black_box(&generated_visibility),
+                        hint::black_box(&event_visibility),
+                        display_mask,
+                    ),
                     BENCH_ZOOM,
                 );
             });
         });
     }
     group.finish();
-}
-
-fn point_ref(category: DataCategory, point_index: usize) -> MapElementRef {
-    test_util::point_ref(category, point_index)
 }
 
 fn hidden_range(range: Range<usize>) -> QueryMatches {
@@ -150,25 +153,33 @@ fn bench_candidate_resolution(c: &mut Criterion) {
     event_visibility.set_hidden(test_util::track0(), iter::once(event_parent));
     let filter = GlobalFilter::default().with_time_bounds(None, Some(time_end));
     let query_matches = hidden_range(measured_index..measured_index + 1);
-    let scope = MapEligibility::new(
-        &files,
-        &visibility,
-        &filter,
-        Some(&query_matches),
-        &generated_visibility,
-        &event_visibility,
-    )
-    .with_display_mask(DisplayMask::default());
+    let spatial_index = SpatialIndex::build(&files);
+    let plan = benchmark_support::compile_frame_plan(
+        benchmark_support::FramePlanInputs::new(
+            &files,
+            &visibility,
+            &filter,
+            Some(&query_matches),
+            &generated_visibility,
+            &event_visibility,
+            DisplayMask::default(),
+        ),
+        BENCH_ZOOM,
+    );
+    let candidate = |category, index| {
+        *spatial_index
+            .points()
+            .find(|point| point.category == category && point.point_index.as_usize() == index)
+            .expect("benchmark candidate is indexed")
+    };
     let workload = [
-        point_ref(DataCategory::Tpv, measured_index + 1),
-        point_ref(DataCategory::SatelliteReport, measured_index + 1),
-        point_ref(DataCategory::Tpv, measured_index),
-        point_ref(DataCategory::Tpv, ghost_index),
-        point_ref(DataCategory::Tpv, outside_time_index),
-        point_ref(DataCategory::CustomMarker, 0),
-        point_ref(DataCategory::GeneratedMarker, 0),
-        point_ref(DataCategory::EventMarker, 0),
-        point_ref(DataCategory::Tpv, track.points.len() + 7),
+        candidate(DataCategory::Tpv, measured_index + 1),
+        candidate(DataCategory::Tpv, measured_index),
+        candidate(DataCategory::Tpv, ghost_index),
+        candidate(DataCategory::Tpv, outside_time_index),
+        candidate(DataCategory::CustomMarker, 0),
+        candidate(DataCategory::GeneratedMarker, 0),
+        candidate(DataCategory::EventMarker, 0),
     ];
 
     let mut group = c.benchmark_group("candidate_resolution");
@@ -176,7 +187,7 @@ fn bench_candidate_resolution(c: &mut Criterion) {
     group.bench_function("mixed", |b| {
         b.iter(|| {
             for point in workload {
-                hint::black_box(scope.point_visibility(hint::black_box(point)));
+                hint::black_box(plan.spatial_point_visible(hint::black_box(&point)));
             }
         });
     });
@@ -190,13 +201,14 @@ fn data_point_ref(point: &SpatialPoint) -> MapElementRef {
 fn nearest_visible_fix(
     spatial_index: &SpatialIndex,
     cursor: [f64; 2],
-    scope: MapPresence<'_>,
+    plan: &benchmark_support::FramePlanBench<'_>,
 ) -> Option<MapElementRef> {
     spatial_index
         .fixes
         .nearest_neighbor_iter(cursor)
         .find_map(|point| {
-            benchmark_support::spatial_point_visible(point, scope).then_some(data_point_ref(point))
+            plan.spatial_point_visible(point)
+                .then_some(data_point_ref(point))
         })
 }
 
@@ -214,16 +226,30 @@ fn bench_nearest_candidate(c: &mut Criterion) {
     let generated_visibility = GeneratedMarkerVisibility::default();
     let filter = GlobalFilter::default();
     let hidden = hidden_range(0..8);
-    let visible_scope = MapEligibility::new(
-        &files,
-        &visibility,
-        &filter,
-        None,
-        &generated_visibility,
-        &event_visibility,
-    )
-    .with_display_mask(DisplayMask::default());
-    let hidden_scope = visible_scope.with_query_matches(Some(&hidden));
+    let visible_plan = benchmark_support::compile_frame_plan(
+        benchmark_support::FramePlanInputs::new(
+            &files,
+            &visibility,
+            &filter,
+            None,
+            &generated_visibility,
+            &event_visibility,
+            DisplayMask::default(),
+        ),
+        BENCH_ZOOM,
+    );
+    let hidden_plan = benchmark_support::compile_frame_plan(
+        benchmark_support::FramePlanInputs::new(
+            &files,
+            &visibility,
+            &filter,
+            Some(&hidden),
+            &generated_visibility,
+            &event_visibility,
+            DisplayMask::default(),
+        ),
+        BENCH_ZOOM,
+    );
 
     let mut group = c.benchmark_group("nearest_candidate");
     group.bench_function("visible_first", |b| {
@@ -231,7 +257,7 @@ fn bench_nearest_candidate(c: &mut Criterion) {
             hint::black_box(nearest_visible_fix(
                 hint::black_box(&spatial_index),
                 cursor,
-                visible_scope,
+                &visible_plan,
             ));
         });
     });
@@ -240,7 +266,7 @@ fn bench_nearest_candidate(c: &mut Criterion) {
             hint::black_box(nearest_visible_fix(
                 hint::black_box(&spatial_index),
                 cursor,
-                hidden_scope,
+                &hidden_plan,
             ));
         });
     });

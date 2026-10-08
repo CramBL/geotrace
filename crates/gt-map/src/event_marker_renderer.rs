@@ -1,32 +1,30 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui, Vec2};
 use gt_fmt::UTC_SECOND_FORMAT;
-use gt_types::{
-    EventMarker, EventMarkerIdx, EventMarkerRef, EventMarkerStyle, MarkerIcon, SpatialPoint,
-};
+use gt_types::{EventMarker, EventMarkerStyle, MarkerIcon, SpatialPoint};
 use gt_ui_theme::HIGHLIGHT_BLUE;
-use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, MapPresence};
+use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, ResolvedElement};
 use rustc_hash::FxHashMap;
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::icon_mesh::{IconInstance, IconMeshBatch, IconMeshLibrary};
 use crate::{track_renderer, viewport};
 
-pub struct EventMarkerRenderer<'a> {
-    scope: MapPresence<'a>,
+pub(crate) struct EventMarkerRenderer<'a, 'p> {
+    plan: &'a viewport::MapFramePlan<'p>,
     highlight: &'a MapHighlight,
     visible_event: &'a [SpatialPoint],
     icon_meshes: Option<&'a IconMeshLibrary>,
 }
 
-impl<'a> EventMarkerRenderer<'a> {
-    pub fn new(
-        scope: MapPresence<'a>,
+impl<'a, 'p> EventMarkerRenderer<'a, 'p> {
+    pub(crate) fn new(
+        plan: &'a viewport::MapFramePlan<'p>,
         highlight: &'a MapHighlight,
         visible_event: &'a [SpatialPoint],
         icon_meshes: Option<&'a IconMeshLibrary>,
     ) -> Self {
         Self {
-            scope,
+            plan,
             highlight,
             visible_event,
             icon_meshes,
@@ -34,7 +32,7 @@ impl<'a> EventMarkerRenderer<'a> {
     }
 }
 
-impl Plugin for EventMarkerRenderer<'_> {
+impl Plugin for EventMarkerRenderer<'_, '_> {
     fn run(
         self: Box<Self>,
         ui: &mut Ui,
@@ -47,24 +45,16 @@ impl Plugin for EventMarkerRenderer<'_> {
 
         let mut batch = IconMeshBatch::new(self.icon_meshes, ui.pixels_per_point());
         for sp in self.visible_event {
-            if !viewport::is_spatial_point_visible(sp, self.scope) {
-                continue;
-            }
-            let Some(file) = sp.file_index.get(self.scope.files()) else {
+            let Some(present) = self.plan.resolve_spatial(sp) else {
                 continue;
             };
-            let marker_ref = EventMarkerRef::new(
-                sp.track_ref(),
-                EventMarkerIdx::new(sp.point_index.as_usize()),
-            );
-            let Some(marker) = sp
-                .track_index
-                .get(&file.tracks)
-                .and_then(|track| marker_ref.index.get(&track.event_markers))
-            else {
+            let ResolvedElement::EventMarker(marker) = present.element() else {
                 continue;
             };
-            let point_ref = MapElementRef::EventMarker(marker_ref);
+            let Some(file) = sp.file_index.get(self.plan.files()) else {
+                continue;
+            };
+            let point_ref = present.element_ref();
             let screen_pos = transform.to_screen(sp.merc);
             let style_map = &file.event_marker_styles;
             let color = resolve_color(marker, style_map);

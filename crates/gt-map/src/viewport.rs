@@ -7,15 +7,20 @@ use std::ops::Range;
 use gt_filter::GlobalFilter;
 use gt_track_builder::SpatialIndex;
 use gt_types::{
-    DataCategory, FileIdx, GeoBounds, Latitude, LoadedFile, LoadedTrack, Longitude, MercBounds,
-    PlacedPoint, PlacedPoints, PoleWinding, SpatialPoint, TrackIdx, TrackRef, mercator,
+    DataCategory, DataCategorySet, FileIdx, GeoBounds, Latitude, LoadedFile, LoadedTrack,
+    Longitude, MercBounds, PlacedPoint, PlacedPoints, PoleWinding, SpatialPoint, TrackIdx,
+    TrackRef, mercator,
 };
 use gt_ui_types::{
-    DisplayCategory, DisplayMask, MapElementRef, MapPresence, QueryMatches, TrackDataVisibility,
+    DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, MapElementRef,
+    QueryMatches, ResolvedElement, TrackDataVisibility,
 };
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use walkers::MapMemory;
+
+#[cfg(test)]
+use gt_ui_types::MapPresence;
 
 use crate::tpv_renderer::{self, TrackIconFade};
 use crate::transform::{MapScale, MercTransform};
@@ -114,7 +119,7 @@ impl VisiblePoints {
     fn collect_fixes(
         &mut self,
         tree: &rstar::RTree<SpatialPoint>,
-        plan: &TrackPlan,
+        plan: &MapFramePlan<'_>,
         bounds: MercBounds,
     ) {
         for sp in tree.locate_in_envelope(bounds.envelope()) {
@@ -141,10 +146,11 @@ impl VisiblePoints {
 /// index's two trees is queried only while its side collects: a frame that
 /// displays no marker category walks no marker, and one whose zoom hides
 /// every track's icons walks no fix. TPV points are gated by the frame's
-/// [`TrackPlan`]: fix icons of tracks that are disabled, filtered out,
+/// [`MapFramePlan`]: fix icons of tracks that are disabled, filtered out,
 /// TPV-layer-hidden, or classified [`TrackIconFade::AllHidden`] (the quality
-/// line draws in their place) are never drawn. Each marker category is gated by
-/// `display_mask`.
+/// line draws in their place) are never drawn. Marker categories are collected
+/// only when at least one compiled track can draw that category and its display
+/// category is enabled.
 ///
 /// The fix query covers every fix whose icon reaches into the map rect, which
 /// is the rect [`tpv_renderer::icon_cull_rect`] gives the icon pass, narrowed
@@ -153,17 +159,19 @@ impl VisiblePoints {
 pub(crate) fn collect_visible_points(
     visible: &mut VisiblePoints,
     index: &SpatialIndex,
-    plan: &TrackPlan,
-    display_mask: DisplayMask,
+    plan: &MapFramePlan<'_>,
     transform: &MercTransform,
     map_rect: egui::Rect,
 ) {
     visible.clear();
     let collected = CollectedCategories {
         tpv: plan.entries().any(TrackEntry::tpv_collectable),
-        custom: display_mask.is_visible(DisplayCategory::CustomMarkers),
-        generated: display_mask.is_visible(DisplayCategory::GeneratedMarkers),
-        event: display_mask.is_visible(DisplayCategory::EventMarkers),
+        custom: plan.collects_category(DataCategory::CustomMarker, DisplayCategory::CustomMarkers),
+        generated: plan.collects_category(
+            DataCategory::GeneratedMarker,
+            DisplayCategory::GeneratedMarkers,
+        ),
+        event: plan.collects_category(DataCategory::EventMarker, DisplayCategory::EventMarkers),
     };
     visible.collected = collected;
     let viewport = transform.viewport_merc_bounds(map_rect);
@@ -199,33 +207,118 @@ pub(crate) fn collect_visible_points(
     );
 }
 
+/// One render layer a track can contribute to in a frame plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum TrackLayer {
+    Trackline,
+    RealFixes,
+    GhostFixes,
+    SatelliteLabels,
+    SkyGlyphs,
+}
+
+impl TrackLayer {
+    const fn bit(self) -> u8 {
+        1 << (self as u8)
+    }
+}
+
+/// Closed bitset of the track layers enabled for one frame.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct TrackLayerMask(u8);
+
+impl TrackLayerMask {
+    fn set(&mut self, layer: TrackLayer, enabled: bool) {
+        if enabled {
+            self.0 |= layer.bit();
+        } else {
+            self.0 &= !layer.bit();
+        }
+    }
+
+    const fn contains(self, layer: TrackLayer) -> bool {
+        self.0 & layer.bit() != 0
+    }
+
+    const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+}
+
 /// What the renderers will do for one track this frame, derived once per
-/// frame in [`TrackPlan::compute`].
+/// frame in [`MapFramePlan::compute`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TrackEntry {
-    /// The plain trackline layer is drawn (file and track enabled, track
-    /// layer visible, filter passed, category displayed).
-    pub(crate) trackline: bool,
-    /// Icon-fade classification of the TPV layer. `None` when that layer
+    categories: DataCategorySet,
+    layers: TrackLayerMask,
+    /// Icon-fade classification of the real-fix layer. `None` when that layer
     /// is hidden or the track is disabled or filtered out.
-    pub(crate) fade: Option<TrackIconFade>,
-    /// The track's satellite-label anchors are placement candidates.
-    /// Rides the TPV tree toggle but has its own display category, so
-    /// labels survive hiding the track points (and vice versa).
-    pub(crate) sat_labels: bool,
-    /// The track's report-bearing points are sky-glyph candidates. Rides the
-    /// track's map visibility and its own display category, independent of
-    /// the track-points toggle.
-    pub(crate) sky_glyphs: bool,
-    /// Dead-reckoned chevrons and dashed trackline stretches are permitted to
-    /// draw for this track.
-    pub(crate) ghost_fixes: bool,
+    fade: Option<TrackIconFade>,
     /// Icon fade for dead-reckoned chevrons when ghost fixes are active, or
-    /// None when zoomed out to AllHidden or when TPV is disabled.
-    pub(crate) ghost_fade: Option<TrackIconFade>,
+    /// `None` when zoomed out to `AllHidden` or when TPV is disabled.
+    ghost_fade: Option<TrackIconFade>,
 }
 
 impl TrackEntry {
+    pub(crate) fn trackline(self) -> bool {
+        self.layers.contains(TrackLayer::Trackline)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn real_fixes(self) -> bool {
+        self.layers.contains(TrackLayer::RealFixes)
+    }
+
+    pub(crate) fn ghost_fixes(self) -> bool {
+        self.layers.contains(TrackLayer::GhostFixes)
+    }
+
+    pub(crate) fn sat_labels(self) -> bool {
+        self.layers.contains(TrackLayer::SatelliteLabels)
+    }
+
+    pub(crate) fn sky_glyphs(self) -> bool {
+        self.layers.contains(TrackLayer::SkyGlyphs)
+    }
+
+    pub(crate) fn fade(self) -> Option<TrackIconFade> {
+        self.fade
+    }
+
+    pub(crate) fn ghost_fade(self) -> Option<TrackIconFade> {
+        self.ghost_fade
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_fade(&mut self, fade: Option<TrackIconFade>) {
+        self.fade = fade;
+        self.layers.set(TrackLayer::RealFixes, fade.is_some());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_ghost_fixes(&mut self, enabled: bool) {
+        self.layers.set(TrackLayer::GhostFixes, enabled);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        enabled_layers: &[TrackLayer],
+        fade: Option<TrackIconFade>,
+        ghost_fade: Option<TrackIconFade>,
+    ) -> Self {
+        let mut layers = TrackLayerMask::default();
+        for &layer in enabled_layers {
+            layers.set(layer, true);
+        }
+        Self {
+            categories: DataCategorySet::all(),
+            layers,
+            fade,
+            ghost_fade,
+        }
+    }
+
     /// TPV viewport points are worth collecting only when icons can draw.
     fn tpv_collectable(self) -> bool {
         self.fade.is_some_and(|f| f != TrackIconFade::AllHidden)
@@ -236,11 +329,41 @@ impl TrackEntry {
 
     /// No layer draws. The renderer can skip the track outright.
     pub(crate) fn draws_nothing(self) -> bool {
-        !self.trackline
-            && self.fade.is_none()
-            && !self.sat_labels
-            && !self.sky_glyphs
-            && !self.ghost_fixes
+        self.layers.is_empty()
+    }
+}
+
+/// Borrowed policy inputs used to compile one frame's map plan.
+#[derive(Clone, Copy)]
+pub(crate) struct MapFrameInputs<'a> {
+    files: &'a [LoadedFile],
+    visibility: &'a TrackDataVisibility,
+    filter: &'a GlobalFilter,
+    query_matches: Option<&'a QueryMatches>,
+    generated_marker_visibility: &'a GeneratedMarkerVisibility,
+    event_marker_visibility: &'a EventMarkerVisibility,
+    display_mask: DisplayMask,
+}
+
+impl<'a> MapFrameInputs<'a> {
+    pub(crate) fn new(
+        files: &'a [LoadedFile],
+        visibility: &'a TrackDataVisibility,
+        filter: &'a GlobalFilter,
+        query_matches: Option<&'a QueryMatches>,
+        generated_marker_visibility: &'a GeneratedMarkerVisibility,
+        event_marker_visibility: &'a EventMarkerVisibility,
+        display_mask: DisplayMask,
+    ) -> Self {
+        Self {
+            files,
+            visibility,
+            filter,
+            query_matches,
+            generated_marker_visibility,
+            event_marker_visibility,
+            display_mask,
+        }
     }
 }
 
@@ -253,7 +376,13 @@ impl TrackEntry {
 /// (`entries[offsets[fi] + ti]`, with `offsets` carrying one trailing end
 /// entry), so computing the plan allocates nothing for typical workspace
 /// sizes.
-pub(crate) struct TrackPlan {
+pub(crate) struct MapFramePlan<'a> {
+    files: &'a [LoadedFile],
+    filter: &'a GlobalFilter,
+    query_matches: Option<&'a QueryMatches>,
+    generated_marker_visibility: &'a GeneratedMarkerVisibility,
+    event_marker_visibility: &'a EventMarkerVisibility,
+    display_mask: DisplayMask,
     entries: SmallVec<[TrackEntry; 128]>,
     offsets: SmallVec<[usize; 9]>,
     /// The union of the bounds of the tracks whose entry is
@@ -261,14 +390,49 @@ pub(crate) struct TrackPlan {
     collectable_fix_bounds: Option<MercBounds>,
 }
 
-impl TrackPlan {
-    pub(crate) fn compute(
-        files: &[LoadedFile],
-        visibility: &TrackDataVisibility,
-        filter: &GlobalFilter,
+impl<'a> MapFramePlan<'a> {
+    pub(crate) fn compute(inputs: MapFrameInputs<'a>, zoom: f64) -> Self {
+        Self::compute_with_track_filter(inputs, zoom, gt_filter::track_passes_filter)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn compute_for_test(
+        files: &'a [LoadedFile],
+        visibility: &'a TrackDataVisibility,
+        filter: &'a GlobalFilter,
         display_mask: DisplayMask,
         zoom: f64,
     ) -> Self {
+        static GENERATED: GeneratedMarkerVisibility = GeneratedMarkerVisibility::new();
+        static EVENT: EventMarkerVisibility = EventMarkerVisibility::new();
+        Self::compute(
+            MapFrameInputs::new(
+                files,
+                visibility,
+                filter,
+                None,
+                &GENERATED,
+                &EVENT,
+                display_mask,
+            ),
+            zoom,
+        )
+    }
+
+    fn compute_with_track_filter(
+        inputs: MapFrameInputs<'a>,
+        zoom: f64,
+        mut track_passes_filter: impl FnMut(&LoadedTrack, &GlobalFilter) -> bool,
+    ) -> Self {
+        let MapFrameInputs {
+            files,
+            visibility,
+            filter,
+            query_matches,
+            generated_marker_visibility,
+            event_marker_visibility,
+            display_mask,
+        } = inputs;
         let scale = MapScale::from_zoom(zoom);
         let icon_size = tpv_renderer::base_arrow_size(zoom);
         let mut entries: SmallVec<[TrackEntry; 128]> = SmallVec::new();
@@ -282,7 +446,7 @@ impl TrackPlan {
                 let track_vis = file_vis.and_then(|fv| TrackIdx::new(ti).get(&fv.tracks));
                 let enabled = file_enabled
                     && track_vis.is_some_and(|tv| tv.enabled)
-                    && gt_filter::track_passes_filter(track, filter);
+                    && track_passes_filter(track, filter);
                 let tpv_on =
                     enabled && track_vis.is_some_and(|tv| tv.category_visible(DataCategory::Tpv));
                 // The fade classification runs last so it is skipped for
@@ -299,14 +463,45 @@ impl TrackPlan {
                     .is_visible(DisplayCategory::GhostFixes)
                     .then_some(icon_fade)
                     .flatten();
-                let entry = TrackEntry {
-                    trackline: enabled
+                let mut layers = TrackLayerMask::default();
+                layers.set(
+                    TrackLayer::Trackline,
+                    enabled
                         && track_vis.is_some_and(|tv| tv.category_visible(DataCategory::Track))
                         && display_mask.is_visible(DisplayCategory::Tracks),
+                );
+                layers.set(TrackLayer::RealFixes, fade.is_some());
+                layers.set(
+                    TrackLayer::SatelliteLabels,
+                    tpv_on && display_mask.is_visible(DisplayCategory::SatelliteLabels),
+                );
+                layers.set(
+                    TrackLayer::SkyGlyphs,
+                    enabled && display_mask.is_visible(DisplayCategory::SkyGlyphs),
+                );
+                layers.set(
+                    TrackLayer::GhostFixes,
+                    enabled && display_mask.is_visible(DisplayCategory::GhostFixes),
+                );
+                let categories = if enabled {
+                    [
+                        DataCategory::Tpv,
+                        DataCategory::CustomMarker,
+                        DataCategory::GeneratedMarker,
+                        DataCategory::EventMarker,
+                    ]
+                    .into_iter()
+                    .filter(|&category| {
+                        track_vis.is_some_and(|visibility| visibility.category_visible(category))
+                    })
+                    .collect()
+                } else {
+                    DataCategorySet::empty()
+                };
+                let entry = TrackEntry {
+                    categories,
+                    layers,
                     fade,
-                    sat_labels: tpv_on && display_mask.is_visible(DisplayCategory::SatelliteLabels),
-                    sky_glyphs: enabled && display_mask.is_visible(DisplayCategory::SkyGlyphs),
-                    ghost_fixes: enabled && display_mask.is_visible(DisplayCategory::GhostFixes),
                     ghost_fade,
                 };
                 if entry.tpv_collectable()
@@ -321,6 +516,12 @@ impl TrackPlan {
         }
         offsets.push(entries.len());
         Self {
+            files,
+            filter,
+            query_matches,
+            generated_marker_visibility,
+            event_marker_visibility,
+            display_mask,
             entries,
             offsets,
             collectable_fix_bounds,
@@ -341,6 +542,92 @@ impl TrackPlan {
             return None;
         }
         self.entries.get(idx).copied()
+    }
+
+    pub(crate) fn files(&self) -> &'a [LoadedFile] {
+        self.files
+    }
+
+    fn collects_category(&self, category: DataCategory, display_category: DisplayCategory) -> bool {
+        self.display_mask.is_visible(display_category)
+            && self
+                .entries()
+                .any(|entry| entry.categories.contains(category))
+    }
+
+    /// Resolve a spatial-index candidate through the policy compiled for this
+    /// frame without re-running the track-level filter.
+    pub(crate) fn resolve_spatial(&self, point: &SpatialPoint) -> Option<PlannedElement<'a>> {
+        let track = point.track_ref();
+        let entry = self.entry(track)?;
+        if !entry.categories.contains(point.category) {
+            return None;
+        }
+
+        let element_ref = MapElementRef::from_spatial_point(point)?;
+        let element = element_ref.resolve(self.files)?;
+        if !gt_filter::point_passes_time_filter(element.time(), self.filter) {
+            return None;
+        }
+        if element_ref.fix().is_some_and(|fix_ref| {
+            self.query_matches
+                .is_some_and(|matches| matches.is_hidden(track, fix_ref.point.as_usize()))
+        }) {
+            return None;
+        }
+
+        let display_category = match element {
+            ResolvedElement::Fix(fix) => {
+                if fix.is_ghost_fix() {
+                    DisplayCategory::GhostFixes
+                } else {
+                    DisplayCategory::TrackPoints
+                }
+            }
+            ResolvedElement::SatelliteReport { .. } => return None,
+            ResolvedElement::CustomMarker(_) => DisplayCategory::CustomMarkers,
+            ResolvedElement::GeneratedMarker(marker) => {
+                if !self
+                    .generated_marker_visibility
+                    .is_visible(track, marker.kind.tag())
+                {
+                    return None;
+                }
+                DisplayCategory::GeneratedMarkers
+            }
+            ResolvedElement::EventMarker(marker) => {
+                if !self
+                    .event_marker_visibility
+                    .is_visible(track, &marker.variant_path)
+                {
+                    return None;
+                }
+                DisplayCategory::EventMarkers
+            }
+        };
+        self.display_mask
+            .is_visible(display_category)
+            .then_some(PlannedElement {
+                element_ref,
+                element,
+            })
+    }
+}
+
+/// A spatial element proven present by the compiled frame policy.
+#[derive(Clone, Copy)]
+pub(crate) struct PlannedElement<'a> {
+    element_ref: MapElementRef,
+    element: ResolvedElement<'a>,
+}
+
+impl<'a> PlannedElement<'a> {
+    pub(crate) fn element_ref(self) -> MapElementRef {
+        self.element_ref
+    }
+
+    pub(crate) fn element(self) -> ResolvedElement<'a> {
+        self.element
     }
 }
 
@@ -522,12 +809,9 @@ pub(crate) fn compute_viewport_bounds(
     }
 }
 
-/// Whether hover and click reach a spatial point. The marker renderers draw a
-/// marker under the same condition.
-///
-/// A trackline and a raw satellite report have no hover target of their own -
-/// neither is ever inserted into the spatial index, and neither is clickable.
-/// Every other point follows [`MapPresence::draws`].
+/// Direct visibility oracle retained for tests that compare the frame plan
+/// against [`MapPresence`].
+#[cfg(test)]
 pub(crate) fn is_spatial_point_visible(sp: &SpatialPoint, scope: MapPresence<'_>) -> bool {
     MapElementRef::from_spatial_point(sp).is_some_and(|element| scope.draws(element))
 }
@@ -633,6 +917,7 @@ mod tests {
     use gt_types::markers::{
         CustomMarker, EventMarker, GeneratedMarker, GeneratedMarkerKind, MarkerIcon,
     };
+    use proptest::prelude::*;
     use rstest::rstest;
 
     use super::*;
@@ -726,7 +1011,7 @@ mod tests {
     ) -> VisiblePoints {
         let visibility = TrackDataVisibility::from_loaded(files);
         let filter = GlobalFilter::default();
-        let plan = TrackPlan::compute(files, &visibility, &filter, display_mask, zoom);
+        let plan = MapFramePlan::compute_for_test(files, &visibility, &filter, display_mask, zoom);
         let center = walkers::lat_lon(center.0, center.1);
         let mut map_memory = MapMemory::default();
         map_memory.center_at(center);
@@ -738,7 +1023,6 @@ mod tests {
             &mut visible,
             &SpatialIndex::build(files),
             &plan,
-            display_mask,
             &transform,
             VIEWPORT,
         );
@@ -755,6 +1039,172 @@ mod tests {
             .unwrap_or_default();
         fixes.sort_unstable();
         fixes
+    }
+
+    #[test]
+    fn frame_plan_runs_the_track_filter_once_per_track() {
+        let mut files = test_util::a_recording_of(1, 0.001);
+        let file = files.first_mut().expect("fixture has one file");
+        let template = file.tracks.first().cloned().expect("fixture has one track");
+        file.tracks = (0..16).map(|_| template.clone()).collect();
+        let expected = file.tracks.len();
+        let visibility = TrackDataVisibility::from_loaded(&files);
+        let filter = GlobalFilter::default();
+        let generated = GeneratedMarkerVisibility::default();
+        let event = EventMarkerVisibility::default();
+        let mut calls = 0;
+
+        let _plan = MapFramePlan::compute_with_track_filter(
+            MapFrameInputs::new(
+                &files,
+                &visibility,
+                &filter,
+                None,
+                &generated,
+                &event,
+                DisplayMask::default(),
+            ),
+            ZOOM,
+            |track, filter| {
+                calls += 1;
+                gt_filter::track_passes_filter(track, filter)
+            },
+        );
+
+        assert_eq!(calls, expected);
+    }
+
+    #[test]
+    fn typical_frame_plan_stays_inside_the_inline_buffers() {
+        let mut files = test_util::a_recording_of(1, 0.001);
+        let file = files.first_mut().expect("fixture has one file");
+        let template = file.tracks.first().cloned().expect("fixture has one track");
+        file.tracks = (0..128).map(|_| template.clone()).collect();
+        let visibility = TrackDataVisibility::from_loaded(&files);
+        let filter = GlobalFilter::default();
+        let plan = MapFramePlan::compute_for_test(
+            &files,
+            &visibility,
+            &filter,
+            DisplayMask::default(),
+            ZOOM,
+        );
+
+        assert!(!plan.entries.spilled());
+        assert!(!plan.offsets.spilled());
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn compiled_spatial_presence_matches_uncompiled_map_presence(
+            policy_bits in any::<u16>(),
+        ) {
+            let flag = |bit| policy_bits & (1_u16 << bit) != 0_u16;
+            let file_enabled = flag(0);
+            let track_enabled = flag(1);
+            let tpv_visible = flag(2);
+            let custom_visible = flag(3);
+            let generated_visible = flag(4);
+            let event_visible = flag(5);
+            let track_points_displayed = flag(6);
+            let ghost_fixes_displayed = flag(7);
+            let custom_displayed = flag(8);
+            let generated_displayed = flag(9);
+            let event_displayed = flag(10);
+            let query_hides_first_fix = flag(11);
+            let generated_kind_hidden = flag(12);
+            let event_path_hidden = flag(13);
+            let limit_time = flag(14);
+            let track_filter_rejects = flag(15);
+
+            let files = vec![test_util::a_recording_with_every_marker_kind()];
+            let track_ref = test_util::track0();
+            let track = &files[0].tracks[0];
+            let mut visibility = TrackDataVisibility::from_loaded(&files);
+            visibility.files[0].enabled = file_enabled;
+            let track_visibility = &mut visibility.files[0].tracks[0];
+            track_visibility.enabled = track_enabled;
+            track_visibility.set_category_visible(DataCategory::Tpv, tpv_visible);
+            track_visibility.set_category_visible(DataCategory::CustomMarker, custom_visible);
+            track_visibility.set_category_visible(DataCategory::GeneratedMarker, generated_visible);
+            track_visibility.set_category_visible(DataCategory::EventMarker, event_visible);
+
+            let mut display_mask = DisplayMask::default();
+            display_mask.set_visible(DisplayCategory::TrackPoints, track_points_displayed);
+            display_mask.set_visible(DisplayCategory::GhostFixes, ghost_fixes_displayed);
+            display_mask.set_visible(DisplayCategory::CustomMarkers, custom_displayed);
+            display_mask.set_visible(DisplayCategory::GeneratedMarkers, generated_displayed);
+            display_mask.set_visible(DisplayCategory::EventMarkers, event_displayed);
+
+            let generated_tag = track.generated_markers[0].kind.tag();
+            let mut generated_marker_visibility = GeneratedMarkerVisibility::default();
+            if generated_kind_hidden {
+                generated_marker_visibility.set_hidden(track_ref, std::iter::once(generated_tag));
+            }
+
+            let event_root = track.event_markers[0]
+                .variant_path
+                .split('/')
+                .next()
+                .expect("fixture event path is non-empty")
+                .to_owned();
+            let mut event_marker_visibility = EventMarkerVisibility::default();
+            if event_path_hidden {
+                event_marker_visibility.set_hidden(track_ref, std::iter::once(event_root));
+            }
+
+            let query_matches = query_hides_first_fix.then(|| gt_ui_types::QueryMatches {
+                hidden: gt_ui_types::TrackRanges::from_iter([(
+                    track_ref,
+                    std::iter::once(0..1).collect(),
+                )]),
+                ..gt_ui_types::QueryMatches::default()
+            });
+            let mut filter = if limit_time {
+                let end = track.points[10].tpv.time().utc();
+                GlobalFilter::default().with_time_bounds(None, Some(end))
+            } else {
+                GlobalFilter::default()
+            };
+            if track_filter_rejects {
+                filter = filter.with_minimum_duration(Some(Duration::days(3_650)));
+            }
+            let presence = gt_ui_types::MapEligibility::new(
+                &files,
+                &visibility,
+                &filter,
+                query_matches.as_ref(),
+                &generated_marker_visibility,
+                &event_marker_visibility,
+            )
+            .with_display_mask(display_mask);
+            let plan = MapFramePlan::compute(
+                MapFrameInputs::new(
+                    &files,
+                    &visibility,
+                    &filter,
+                    query_matches.as_ref(),
+                    &generated_marker_visibility,
+                    &event_marker_visibility,
+                    display_mask,
+                ),
+                ZOOM,
+            );
+            let spatial_index = SpatialIndex::build(&files);
+
+            for point in spatial_index.points() {
+                let element_ref = MapElementRef::from_spatial_point(point)
+                    .expect("spatial index contains only point-like categories");
+                prop_assert_eq!(
+                    plan.resolve_spatial(point).is_some(),
+                    presence.draws(element_ref),
+                    "compiled presence disagreed for {:?}",
+                    element_ref,
+                );
+            }
+        }
     }
 
     #[rstest]

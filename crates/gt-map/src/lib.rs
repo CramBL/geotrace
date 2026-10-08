@@ -684,7 +684,7 @@ impl NavMap {
         // The mask is copied, so the display toggle below changes it only for
         // the next frame.
         let scope = ctx.scope();
-        let hover = self.detect_hover(ui, &map_response, map_center, scope);
+        let hover = self.detect_hover(ui, &map_response, map_center, &plan);
         self.show_hover_labels(ui, &ctx, hover, popups);
 
         let reference_document = self.show_overlay_controls(ui, map_rect, &mut ctx);
@@ -816,26 +816,30 @@ impl NavMap {
     ///
     /// Runs before the map widget takes its rect, so it works from the rect
     /// the layout is about to hand out.
-    fn collect_viewport_points(
+    fn collect_viewport_points<'a>(
         &mut self,
         map_rect: egui::Rect,
         map_center: walkers::Position,
-        ctx: &MapDrawContext<'_>,
-    ) -> viewport::TrackPlan {
+        ctx: &MapDrawContext<'a>,
+    ) -> viewport::MapFramePlan<'a> {
         let projector = walkers::Projector::new(map_rect, &self.map_memory, map_center);
         let transform = MercTransform::new(&projector, &self.map_memory, map_rect.center());
-        let plan = viewport::TrackPlan::compute(
-            ctx.files,
-            ctx.visibility,
-            ctx.filter,
-            *ctx.display_mask,
+        let plan = viewport::MapFramePlan::compute(
+            viewport::MapFrameInputs::new(
+                ctx.files,
+                ctx.visibility,
+                ctx.filter,
+                ctx.query_matches,
+                ctx.generated_marker_visibility,
+                ctx.event_marker_visibility,
+                *ctx.display_mask,
+            ),
             self.map_memory.zoom(),
         );
         viewport::collect_visible_points(
             &mut self.visible_points,
             &self.spatial_index,
             &plan,
-            *ctx.display_mask,
             &transform,
             map_rect,
         );
@@ -872,7 +876,7 @@ impl NavMap {
         &mut self,
         ui: &mut egui::Ui,
         ctx: &MapDrawContext<'_>,
-        plan: &viewport::TrackPlan,
+        plan: &viewport::MapFramePlan<'_>,
         animation: FrameAnimation,
         popups: OpenPopups,
     ) -> egui::Response {
@@ -963,7 +967,7 @@ impl NavMap {
         }
         if let Some(custom) = self.visible_points.custom() {
             map = map.with_plugin(MarkerRenderer::new(
-                ctx.scope(),
+                plan,
                 ctx.highlight,
                 custom,
                 self.icon_meshes.as_ref(),
@@ -972,7 +976,7 @@ impl NavMap {
         if let Some(generated) = self.visible_points.generated() {
             map = map.with_plugin(
                 GeneratedMarkerRenderer::builder()
-                    .scope(ctx.scope())
+                    .plan(plan)
                     .highlight(ctx.highlight)
                     .visible_generated(generated)
                     .maybe_icon_meshes(self.icon_meshes.as_ref())
@@ -981,7 +985,7 @@ impl NavMap {
         }
         if let Some(event) = self.visible_points.event() {
             map = map.with_plugin(EventMarkerRenderer::new(
-                ctx.scope(),
+                plan,
                 ctx.highlight,
                 event,
                 self.icon_meshes.as_ref(),
@@ -997,7 +1001,7 @@ impl NavMap {
         ui: &egui::Ui,
         map_response: &egui::Response,
         map_center: walkers::Position,
-        scope: MapPresence<'_>,
+        plan: &viewport::MapFramePlan<'_>,
     ) -> HoverCandidates {
         if !map_response.hovered() {
             return HoverCandidates::default();
@@ -1016,7 +1020,7 @@ impl NavMap {
         ];
         let px_per_merc = MapScale::from_zoom(self.map_memory.zoom()).px_per_merc();
         let threshold_merc_sq = (HOVER_RADIUS_PX / px_per_merc).powi(2);
-        self.nearest_hover_candidates(cursor_merc, threshold_merc_sq, scope)
+        self.nearest_hover_candidates(cursor_merc, threshold_merc_sq, plan)
     }
 
     /// The nearest visible element per category slot within `threshold_merc_sq`
@@ -1029,7 +1033,7 @@ impl NavMap {
         &self,
         cursor_merc: [f64; 2],
         threshold_merc_sq: f64,
-        scope: MapPresence<'_>,
+        plan: &viewport::MapFramePlan<'_>,
     ) -> HoverCandidates {
         let mut hover = HoverCandidates::default();
         let within_threshold =
@@ -1045,12 +1049,10 @@ impl NavMap {
             .nearest_neighbor_iter(cursor_merc)
             .take_while(within_threshold);
         for sp in fixes.chain(markers) {
-            if !viewport::is_spatial_point_visible(sp, scope) {
+            let Some(present) = plan.resolve_spatial(sp) else {
                 continue;
-            }
-            if let Some(element) = MapElementRef::from_spatial_point(sp) {
-                hover.keep_nearest(element);
-            }
+            };
+            hover.keep_nearest(present.element_ref());
             if hover.every_category_filled() {
                 break;
             }

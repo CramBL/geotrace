@@ -185,7 +185,7 @@ fn masked_track_points_block_hover() {
 /// toggles: tracks, track points, and satellite labels have their own
 /// categories.
 #[test]
-fn track_plan_respects_the_display_mask() {
+fn map_frame_plan_respects_the_display_mask() {
     let files = vec![gt_test_utils::loaded_file_with_tracks(vec![track_at(
         55.0, 12.0,
     )])];
@@ -193,13 +193,20 @@ fn track_plan_respects_the_display_mask() {
     let filter = GlobalFilter::default();
     let track = test_util::track0();
 
-    let all_on = viewport::TrackPlan::compute(&files, &vis, &filter, DisplayMask::default(), 15.0)
-        .entry(track)
-        .expect("track is in the plan");
-    assert!(all_on.trackline);
-    assert!(all_on.fade.is_some());
-    assert!(all_on.sky_glyphs);
-    assert!(all_on.ghost_fixes);
+    let all_on = viewport::MapFramePlan::compute_for_test(
+        &files,
+        &vis,
+        &filter,
+        DisplayMask::default(),
+        15.0,
+    )
+    .entry(track)
+    .expect("track is in the plan");
+    assert!(all_on.trackline());
+    assert!(all_on.real_fixes());
+    assert!(all_on.fade().is_some());
+    assert!(all_on.sky_glyphs());
+    assert!(all_on.ghost_fixes());
 
     let mut mask = DisplayMask::default();
     mask.set_visible(DisplayCategory::Tracks, false);
@@ -207,12 +214,13 @@ fn track_plan_respects_the_display_mask() {
     mask.set_visible(DisplayCategory::GhostFixes, false);
     mask.set_visible(DisplayCategory::SatelliteLabels, false);
     mask.set_visible(DisplayCategory::SkyGlyphs, false);
-    let all_off = viewport::TrackPlan::compute(&files, &vis, &filter, mask, 15.0)
+    let all_off = viewport::MapFramePlan::compute_for_test(&files, &vis, &filter, mask, 15.0)
         .entry(track)
         .expect("track is in the plan");
-    assert!(!all_off.trackline);
-    assert!(all_off.fade.is_none());
-    assert!(!all_off.ghost_fixes);
+    assert!(!all_off.trackline());
+    assert!(!all_off.real_fixes());
+    assert!(all_off.fade().is_none());
+    assert!(!all_off.ghost_fixes());
     assert!(all_off.draws_nothing());
 }
 
@@ -236,13 +244,13 @@ fn masking_a_single_category_leaves_independent_categories_in_the_plan(
 
     let mut mask = DisplayMask::default();
     mask.set_visible(masked, false);
-    let entry = viewport::TrackPlan::compute(&files, &vis, &filter, mask, 15.0)
+    let entry = viewport::MapFramePlan::compute_for_test(&files, &vis, &filter, mask, 15.0)
         .entry(track)
         .expect("track is in the plan");
-    assert_eq!(entry.trackline, expected_trackline);
-    assert_eq!(entry.fade.is_some(), expected_fade);
-    assert_eq!(entry.ghost_fixes, expected_ghost);
-    assert_eq!(entry.sky_glyphs, expected_glyphs);
+    assert_eq!(entry.trackline(), expected_trackline);
+    assert_eq!(entry.fade().is_some(), expected_fade);
+    assert_eq!(entry.ghost_fixes(), expected_ghost);
+    assert_eq!(entry.sky_glyphs(), expected_glyphs);
 }
 
 #[test]
@@ -256,15 +264,15 @@ fn soloing_ghost_fixes_plans_ghost_fixes_without_standard_lines_or_icons() {
 
     let mut mask = DisplayMask::default();
     mask.solo(DisplayCategory::GhostFixes);
-    let entry = viewport::TrackPlan::compute(&files, &vis, &filter, mask, 15.0)
+    let entry = viewport::MapFramePlan::compute_for_test(&files, &vis, &filter, mask, 15.0)
         .entry(track)
         .expect("track is in the plan");
     assert!(!entry.draws_nothing());
-    assert!(!entry.trackline);
-    assert!(entry.fade.is_none());
-    assert!(entry.ghost_fixes);
-    assert!(entry.ghost_fade.is_some());
-    assert!(!entry.sky_glyphs);
+    assert!(!entry.trackline());
+    assert!(entry.fade().is_none());
+    assert!(entry.ghost_fixes());
+    assert!(entry.ghost_fade().is_some());
+    assert!(!entry.sky_glyphs());
 }
 
 /// With every position-carrying category masked there is no visible
@@ -517,11 +525,14 @@ fn hover_finds_the_nearest_fix_and_the_nearest_event_marker() {
     let cursor = gt_types::mercator::normalize(Latitude::new(55.0), Longitude::new(12.0));
     let radius_merc_sq = 1e-8;
 
-    let hover = map.nearest_hover_candidates(
-        [cursor.x, cursor.y],
-        radius_merc_sq,
-        scope(&files, &vis, &filter),
+    let plan = viewport::MapFramePlan::compute_for_test(
+        &files,
+        &vis,
+        &filter,
+        DisplayMask::default(),
+        15.0,
     );
+    let hover = map.nearest_hover_candidates([cursor.x, cursor.y], radius_merc_sq, &plan);
 
     assert_eq!(
         hover
@@ -571,11 +582,17 @@ fn hiding_ghost_fixes_prevents_hovering_ghost_points_while_keeping_real_points()
     let real_cursor = gt_types::mercator::normalize(Latitude::new(55.0), Longitude::new(12.0));
     let radius_merc_sq = 1e-10;
 
-    let default_scope = scope(&files, &vis, &filter);
+    let default_plan = viewport::MapFramePlan::compute_for_test(
+        &files,
+        &vis,
+        &filter,
+        DisplayMask::default(),
+        15.0,
+    );
     let hover_ghost = map.nearest_hover_candidates(
         [ghost_cursor.x, ghost_cursor.y],
         radius_merc_sq,
-        default_scope,
+        &default_plan,
     );
     assert_eq!(
         hover_ghost
@@ -586,18 +603,19 @@ fn hiding_ghost_fixes_prevents_hovering_ghost_points_while_keeping_real_points()
 
     let mut mask = DisplayMask::default();
     mask.set_visible(DisplayCategory::GhostFixes, false);
-    let hidden_ghost_scope = default_scope.with_display_mask(mask);
+    let hidden_ghost_plan =
+        viewport::MapFramePlan::compute_for_test(&files, &vis, &filter, mask, 15.0);
     let hover_ghost_hidden = map.nearest_hover_candidates(
         [ghost_cursor.x, ghost_cursor.y],
         radius_merc_sq,
-        hidden_ghost_scope,
+        &hidden_ghost_plan,
     );
     assert_eq!(hover_ghost_hidden.tpv_or_satellite_report, None);
 
     let hover_real = map.nearest_hover_candidates(
         [real_cursor.x, real_cursor.y],
         radius_merc_sq,
-        hidden_ghost_scope,
+        &hidden_ghost_plan,
     );
     assert_eq!(
         hover_real

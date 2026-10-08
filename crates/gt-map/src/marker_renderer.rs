@@ -1,30 +1,28 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui, Vec2};
-use gt_types::{
-    CustomMarker, CustomMarkerIdx, CustomMarkerRef, DataCategory, MarkerIcon, SpatialPoint,
-};
+use gt_types::{CustomMarker, DataCategory, MarkerIcon, SpatialPoint};
 use gt_ui_theme::HIGHLIGHT_BLUE;
-use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, MapPresence};
+use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, ResolvedElement};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::icon_mesh::{IconInstance, IconMeshBatch, IconMeshLibrary, PIN_HALF_EXTENTS_PT};
 use crate::{track_renderer, viewport};
 
-pub struct MarkerRenderer<'a> {
-    scope: MapPresence<'a>,
+pub(crate) struct MarkerRenderer<'a, 'p> {
+    plan: &'a viewport::MapFramePlan<'p>,
     highlight: &'a MapHighlight,
     visible_custom: &'a [SpatialPoint],
     icon_meshes: Option<&'a IconMeshLibrary>,
 }
 
-impl<'a> MarkerRenderer<'a> {
-    pub fn new(
-        scope: MapPresence<'a>,
+impl<'a, 'p> MarkerRenderer<'a, 'p> {
+    pub(crate) fn new(
+        plan: &'a viewport::MapFramePlan<'p>,
         highlight: &'a MapHighlight,
         visible_custom: &'a [SpatialPoint],
         icon_meshes: Option<&'a IconMeshLibrary>,
     ) -> Self {
         Self {
-            scope,
+            plan,
             highlight,
             visible_custom,
             icon_meshes,
@@ -46,7 +44,7 @@ impl<'a> MarkerRenderer<'a> {
     }
 }
 
-impl Plugin for MarkerRenderer<'_> {
+impl Plugin for MarkerRenderer<'_, '_> {
     fn run(
         self: Box<Self>,
         ui: &mut Ui,
@@ -59,21 +57,13 @@ impl Plugin for MarkerRenderer<'_> {
 
         let mut batch = IconMeshBatch::new(self.icon_meshes, ui.pixels_per_point());
         for sp in self.visible_custom {
-            if !viewport::is_spatial_point_visible(sp, self.scope) {
-                continue;
-            }
-            let marker_ref = CustomMarkerRef::new(
-                sp.track_ref(),
-                CustomMarkerIdx::new(sp.point_index.as_usize()),
-            );
-            let Some(marker) = marker_ref
-                .track
-                .resolve(self.scope.files())
-                .and_then(|track| marker_ref.index.get(&track.custom_markers))
-            else {
+            let Some(present) = self.plan.resolve_spatial(sp) else {
                 continue;
             };
-            let point_ref = MapElementRef::CustomMarker(marker_ref);
+            let ResolvedElement::CustomMarker(marker) = present.element() else {
+                continue;
+            };
+            let point_ref = present.element_ref();
             let screen_pos = transform.to_screen(sp.merc);
             let highlighted = self.is_marker_highlighted(point_ref);
             let fade =
