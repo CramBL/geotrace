@@ -1,13 +1,67 @@
 use chrono::{DateTime, Utc};
-use gt_types::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
+use gt_types::{
+    CustomMarkerIdx, CustomMarkerRef, DataCategory, EventMarkerIdx, EventMarkerRef, FileIdx,
+    FixRef, GeneratedMarkerIdx, GeneratedMarkerRef, PointIdx, SpatialPoint, TrackIdx, TrackRef,
+};
 
 use crate::visibility::{MapScope, PointVisibility};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct DataPointRef {
-    pub track: TrackRef,
-    pub category: DataCategory,
-    pub point_index: PointIdx,
+pub enum MapElementRef {
+    Fix(FixRef),
+    SatelliteReport(FixRef),
+    CustomMarker(CustomMarkerRef),
+    GeneratedMarker(GeneratedMarkerRef),
+    EventMarker(EventMarkerRef),
+}
+
+impl MapElementRef {
+    pub fn track(self) -> TrackRef {
+        match self {
+            Self::Fix(point) | Self::SatelliteReport(point) => point.track,
+            Self::CustomMarker(marker) => marker.track,
+            Self::GeneratedMarker(marker) => marker.track,
+            Self::EventMarker(marker) => marker.track,
+        }
+    }
+
+    pub fn category(self) -> DataCategory {
+        match self {
+            Self::Fix(_) => DataCategory::Tpv,
+            Self::SatelliteReport(_) => DataCategory::SatelliteReport,
+            Self::CustomMarker(_) => DataCategory::CustomMarker,
+            Self::GeneratedMarker(_) => DataCategory::GeneratedMarker,
+            Self::EventMarker(_) => DataCategory::EventMarker,
+        }
+    }
+
+    pub fn fix(self) -> Option<FixRef> {
+        match self {
+            Self::Fix(point) | Self::SatelliteReport(point) => Some(point),
+            Self::CustomMarker(_) | Self::GeneratedMarker(_) | Self::EventMarker(_) => None,
+        }
+    }
+
+    pub fn from_spatial_point(point: &SpatialPoint) -> Option<Self> {
+        let track = point.track_ref();
+        let index = point.point_index.as_usize();
+        match point.category {
+            DataCategory::Track | DataCategory::SatelliteReport => None,
+            DataCategory::Tpv => Some(Self::Fix(FixRef::new(track, point.point_index))),
+            DataCategory::CustomMarker => Some(Self::CustomMarker(CustomMarkerRef::new(
+                track,
+                CustomMarkerIdx::new(index),
+            ))),
+            DataCategory::GeneratedMarker => Some(Self::GeneratedMarker(GeneratedMarkerRef::new(
+                track,
+                GeneratedMarkerIdx::new(index),
+            ))),
+            DataCategory::EventMarker => Some(Self::EventMarker(EventMarkerRef::new(
+                track,
+                EventMarkerIdx::new(index),
+            ))),
+        }
+    }
 }
 
 /// A query-result match hovered in the results table: one track's matched
@@ -43,7 +97,7 @@ pub enum HighlightScope {
     File {
         file_index: FileIdx,
     },
-    Point(DataPointRef),
+    Point(MapElementRef),
     Track(TrackRef),
     TrackCategory {
         track: TrackRef,
@@ -54,23 +108,23 @@ pub enum HighlightScope {
 /// The nearest visible element per category group under the cursor.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HoverCandidates {
-    pub tpv_or_satellite_report: Option<DataPointRef>,
-    pub event_marker: Option<DataPointRef>,
-    pub custom_marker: Option<DataPointRef>,
-    pub generated_marker: Option<DataPointRef>,
+    pub tpv_or_satellite_report: Option<MapElementRef>,
+    pub event_marker: Option<MapElementRef>,
+    pub custom_marker: Option<MapElementRef>,
+    pub generated_marker: Option<MapElementRef>,
 }
 
 impl HoverCandidates {
     /// Keeps `candidate` when its category has no closer one yet: callers feed
     /// candidates in nearest-first order.
-    pub fn keep_nearest(&mut self, candidate: DataPointRef) {
-        let Some(slot) = self.slot_for(candidate.category) else {
+    pub fn keep_nearest(&mut self, candidate: MapElementRef) {
+        let Some(slot) = self.slot_for(candidate.category()) else {
             return;
         };
         slot.get_or_insert(candidate);
     }
 
-    fn slot_for(&mut self, category: DataCategory) -> Option<&mut Option<DataPointRef>> {
+    fn slot_for(&mut self, category: DataCategory) -> Option<&mut Option<MapElementRef>> {
         match category {
             DataCategory::Tpv | DataCategory::SatelliteReport => {
                 Some(&mut self.tpv_or_satellite_report)
@@ -83,7 +137,7 @@ impl HoverCandidates {
     }
 
     /// The candidates present, in the order tooltips and popup rows list them.
-    pub fn iter(&self) -> impl Iterator<Item = DataPointRef> {
+    pub fn iter(&self) -> impl Iterator<Item = MapElementRef> {
         [
             self.tpv_or_satellite_report,
             self.event_marker,
@@ -96,7 +150,7 @@ impl HoverCandidates {
 
     /// The element a hover or a click acts on: the TPV point when it is among
     /// them, otherwise the first candidate present.
-    pub fn primary(&self) -> Option<DataPointRef> {
+    pub fn primary(&self) -> Option<MapElementRef> {
         self.iter().next()
     }
 
@@ -117,7 +171,7 @@ impl HoverCandidates {
 #[derive(Debug, Clone, Copy)]
 pub struct MapHighlight {
     pub hover: Option<HighlightScope>,
-    pub sticky: Option<DataPointRef>,
+    pub sticky: Option<MapElementRef>,
     /// Every element within the cursor radius, one per category group, so
     /// renderers can show tooltips for secondary candidates even when a TPV
     /// point is the primary hover.
@@ -164,7 +218,7 @@ impl MapHighlight {
     /// Pin `point_ref`'s popup, or unpin it when it is already the sticky point.
     /// Returns whether it ended up pinned: the caller places the popup only for
     /// one that opened.
-    pub fn toggle_sticky(&mut self, point_ref: DataPointRef) -> bool {
+    pub fn toggle_sticky(&mut self, point_ref: MapElementRef) -> bool {
         let pinned = self.sticky != Some(point_ref);
         self.sticky = pinned.then_some(point_ref);
         pinned
@@ -172,14 +226,18 @@ impl MapHighlight {
 
     /// [`Self::toggle_sticky`] for a point the map draws, and nothing at all for
     /// one it does not, reporting whether the popup ended up pinned.
-    pub fn toggle_sticky_if_drawn(&mut self, scope: MapScope<'_>, point_ref: DataPointRef) -> bool {
+    pub fn toggle_sticky_if_drawn(
+        &mut self,
+        scope: MapScope<'_>,
+        point_ref: MapElementRef,
+    ) -> bool {
         scope.draws(point_ref) && self.toggle_sticky(point_ref)
     }
 
     /// Whether the map stacks `candidate`'s own hover label at the pointer.
     /// The pinned point's window, any open popup, and the compound label each
     /// take that label's place.
-    pub fn shows_hover_label(&self, candidate: DataPointRef, any_popup_open: bool) -> bool {
+    pub fn shows_hover_label(&self, candidate: MapElementRef, any_popup_open: bool) -> bool {
         self.sticky != Some(candidate) && !any_popup_open && !self.suppress_hover_labels
     }
 
@@ -201,7 +259,7 @@ impl MapHighlight {
     /// Whether the hover or the plot cursor is on a point of `track`.
     pub fn hovers_a_point_of_track(&self, track: TrackRef) -> bool {
         self.hover.is_some_and(
-            |scope| matches!(scope, HighlightScope::Point(point) if point.track == track),
+            |scope| matches!(scope, HighlightScope::Point(point) if point.track() == track),
         ) || self.snapped_plot_hover_track() == Some(track)
     }
 
@@ -209,7 +267,7 @@ impl MapHighlight {
     /// `file`.
     pub fn hovers_anything_in_file(&self, file: FileIdx) -> bool {
         self.hover.is_some_and(|scope| match scope {
-            HighlightScope::Point(point) => point.track.fi == file,
+            HighlightScope::Point(point) => point.track().fi == file,
             HighlightScope::Track(track) | HighlightScope::TrackCategory { track, .. } => {
                 track.fi == file
             }
@@ -247,12 +305,12 @@ impl MapHighlight {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PinnedPopup {
     /// The map draws the element, so its popup opens.
-    Drawn(DataPointRef),
+    Drawn(MapElementRef),
     /// The pin is remembered but shows nothing, because the map does not draw
     /// the point. Widening the filter or clearing the query brings the popup
     /// back.
     Withheld {
-        pinned: DataPointRef,
+        pinned: MapElementRef,
         reason: PinWithheld,
     },
 }
@@ -525,10 +583,7 @@ mod tests {
     #[test]
     fn the_primary_candidate_is_the_fix_when_one_is_present() {
         let tpv = test_util::point(0);
-        let marker = DataPointRef {
-            category: DataCategory::EventMarker,
-            ..tpv
-        };
+        let marker = test_util::event_marker();
 
         let marker_only = HoverCandidates {
             event_marker: Some(marker),
@@ -555,7 +610,7 @@ mod tests {
     #[case::popup_open(None, true, false, false)]
     #[case::compound_label_took_over(None, false, true, false)]
     fn the_map_stacks_an_elements_hover_label_unless_something_else_shows_it(
-        #[case] sticky: Option<DataPointRef>,
+        #[case] sticky: Option<MapElementRef>,
         #[case] any_popup_open: bool,
         #[case] suppress_hover_labels: bool,
         #[case] expected: bool,
@@ -592,7 +647,7 @@ mod tests {
     }
 
     impl HiddenMarkerType {
-        fn marker(self) -> DataPointRef {
+        fn marker(self) -> MapElementRef {
             match self {
                 Self::EventMarkerParentPath | Self::EventMarkerPath => test_util::event_marker(),
                 Self::GeneratedMarkerKind => test_util::generated_marker(),

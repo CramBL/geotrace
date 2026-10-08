@@ -1,7 +1,9 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui, Vec2};
-use gt_types::{CustomMarker, DataCategory, MarkerIcon, SpatialPoint};
+use gt_types::{
+    CustomMarker, CustomMarkerIdx, CustomMarkerRef, DataCategory, MarkerIcon, SpatialPoint,
+};
 use gt_ui_theme::HIGHLIGHT_BLUE;
-use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, MapScope};
+use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, MapScope};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::icon_mesh::{IconInstance, IconMeshBatch, IconMeshLibrary, PIN_HALF_EXTENTS_PT};
@@ -29,15 +31,15 @@ impl<'a> MarkerRenderer<'a> {
         }
     }
 
-    fn is_marker_highlighted(&self, point_ref: DataPointRef) -> bool {
+    fn is_marker_highlighted(&self, point_ref: MapElementRef) -> bool {
         if self.highlight.sticky.is_some_and(|r| r == point_ref) {
             return true;
         }
         match self.highlight.hover {
             Some(HighlightScope::Point(r)) => r == point_ref,
-            Some(HighlightScope::Track(track)) => track == point_ref.track,
+            Some(HighlightScope::Track(track)) => track == point_ref.track(),
             Some(HighlightScope::TrackCategory { track, category }) => {
-                track == point_ref.track && category == DataCategory::CustomMarker
+                track == point_ref.track() && category == DataCategory::CustomMarker
             }
             _ => false,
         }
@@ -60,18 +62,18 @@ impl Plugin for MarkerRenderer<'_> {
             if !viewport::is_spatial_point_visible(sp, self.scope) {
                 continue;
             }
-            let Some(marker) = sp
-                .track_ref()
+            let marker_ref = CustomMarkerRef::new(
+                sp.track_ref(),
+                CustomMarkerIdx::new(sp.point_index.as_usize()),
+            );
+            let Some(marker) = marker_ref
+                .track
                 .resolve(self.scope.files)
-                .and_then(|track| sp.point_index.get(&track.custom_markers))
+                .and_then(|track| marker_ref.index.get(&track.custom_markers))
             else {
                 continue;
             };
-            let point_ref = DataPointRef {
-                track: sp.track_ref(),
-                category: DataCategory::CustomMarker,
-                point_index: sp.point_index,
-            };
+            let point_ref = MapElementRef::CustomMarker(marker_ref);
             let screen_pos = transform.to_screen(sp.merc);
             let highlighted = self.is_marker_highlighted(point_ref);
             let fade =

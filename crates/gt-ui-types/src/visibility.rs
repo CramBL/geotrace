@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use gt_filter::GlobalFilter;
+use gt_types::satellites::Satellites;
 use gt_types::{
     CustomMarker, DataCategory, DataCategorySet, EventMarker, FileIdx, GeneratedMarker, LoadedFile,
     LoadedTrack, NavPoint, TrackIdx, TrackRef,
@@ -9,7 +10,7 @@ use strum::EnumCount;
 use crate::display_mask::{DisplayCategory, DisplayMask};
 use crate::event_marker_visibility::EventMarkerVisibility;
 use crate::generated_marker_visibility::GeneratedMarkerVisibility;
-use crate::highlight::DataPointRef;
+use crate::highlight::MapElementRef;
 use crate::query_matches::QueryMatches;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -142,7 +143,7 @@ pub fn track_in_scope<'a>(
     gt_filter::track_passes_filter(track, filter).then_some((track, track_vis))
 }
 
-/// Why the element a [`DataPointRef`] addresses is, or is not, on the map.
+/// Why the element a [`MapElementRef`] addresses is, or is not, on the map.
 ///
 /// The variants are ordered the way [`MapScope::point_visibility`] evaluates
 /// them, so an element failing several gates reports the first gate the map
@@ -151,9 +152,8 @@ pub fn track_in_scope<'a>(
 pub enum PointVisibility {
     /// Drawn on the map.
     Shown,
-    /// Nothing is addressed: the file or track is not loaded, the index is past
-    /// the end of its array, or the category is a trackline, which addresses no
-    /// element of its own.
+    /// Nothing is addressed: the file or track is not loaded, or the typed
+    /// index is past the end of its array.
     NoSuchElement,
     /// The file or track is off in the tree, or the track fails the track-level
     /// filter.
@@ -197,7 +197,7 @@ pub struct MapScope<'a> {
 
 impl MapScope<'_> {
     /// Whether the map draws the element `point` addresses.
-    pub fn draws(&self, point: DataPointRef) -> bool {
+    pub fn draws(&self, point: MapElementRef) -> bool {
         self.point_visibility(point).is_shown()
     }
 
@@ -208,44 +208,49 @@ impl MapScope<'_> {
     ///
     /// A satellite report is judged as the fix it belongs to: it has no ink of
     /// its own, so its detail is on the map exactly while that point is.
-    pub fn point_visibility(&self, point: DataPointRef) -> PointVisibility {
-        let category = match point.category {
-            DataCategory::Track => return PointVisibility::NoSuchElement,
-            DataCategory::SatelliteReport => DataCategory::Tpv,
-            category => category,
+    pub fn point_visibility(&self, point: MapElementRef) -> PointVisibility {
+        let category = match point {
+            MapElementRef::Fix(_) | MapElementRef::SatelliteReport(_) => DataCategory::Tpv,
+            MapElementRef::CustomMarker(_) => DataCategory::CustomMarker,
+            MapElementRef::GeneratedMarker(_) => DataCategory::GeneratedMarker,
+            MapElementRef::EventMarker(_) => DataCategory::EventMarker,
         };
-        let index = point.point_index.as_usize();
         // Resolved before the tree and filter gates so an index past the end of
         // its array reads as addressing nothing, whatever those gates would say.
-        let Some(track) = point.track.resolve(self.files) else {
+        let Some(element) = point.resolve(self.files) else {
             return PointVisibility::NoSuchElement;
         };
-        let Some(element) = AddressedElement::resolve(track, category, index) else {
-            return PointVisibility::NoSuchElement;
-        };
-        let Some((_, track_vis)) =
-            track_in_scope(self.files, self.visibility, self.filter, point.track)
+        let track = point.track();
+        let Some((_, track_vis)) = track_in_scope(self.files, self.visibility, self.filter, track)
         else {
             return PointVisibility::TrackNotShown;
         };
         let display_category = match element {
-            AddressedElement::Fix(fix) if fix.is_ghost_fix() => DisplayCategory::GhostFixes,
-            _ => DisplayCategory::from(category),
+            ResolvedElement::Fix(fix) | ResolvedElement::SatelliteReport { fix, .. }
+                if fix.is_ghost_fix() =>
+            {
+                DisplayCategory::GhostFixes
+            }
+            ResolvedElement::Fix(_)
+            | ResolvedElement::SatelliteReport { .. }
+            | ResolvedElement::CustomMarker(_)
+            | ResolvedElement::GeneratedMarker(_)
+            | ResolvedElement::EventMarker(_) => DisplayCategory::from(category),
         };
         if !track_vis.category_visible(category) || !self.display_mask.is_visible(display_category)
         {
             return PointVisibility::CategoryHidden;
         }
-        if !self.marker_type_visible(point.track, element) {
+        if !self.marker_type_visible(track, element) {
             return PointVisibility::MarkerTypeHidden;
         }
         // A `keep`/`hide` query removes TPV points from the drawn line and icons.
         // Markers stay drawn (the hidden ranges index TPV points, not the marker
-        // arrays), so only the TPV category consults the mask.
-        if category == DataCategory::Tpv
+        // arrays), so only fix-backed elements consult the mask.
+        if let Some(fix) = point.fix()
             && self
                 .query_matches
-                .is_some_and(|matches| matches.is_hidden(point.track, index))
+                .is_some_and(|matches| matches.is_hidden(track, fix.point.as_usize()))
         {
             return PointVisibility::HiddenByQuery;
         }
@@ -258,50 +263,85 @@ impl MapScope<'_> {
 
     /// The per-type tree toggle of a generated or an event marker, `true` for a
     /// fix and a custom marker.
-    fn marker_type_visible(&self, track: TrackRef, element: AddressedElement<'_>) -> bool {
+    fn marker_type_visible(&self, track: TrackRef, element: ResolvedElement<'_>) -> bool {
         match element {
-            AddressedElement::EventMarker(marker) => self
+            ResolvedElement::EventMarker(marker) => self
                 .event_marker_visibility
                 .is_visible(track, &marker.variant_path),
-            AddressedElement::GeneratedMarker(marker) => self
+            ResolvedElement::GeneratedMarker(marker) => self
                 .generated_marker_visibility
                 .is_visible(track, marker.kind.tag()),
-            AddressedElement::CustomMarker(_) | AddressedElement::Fix(_) => true,
+            ResolvedElement::Fix(_)
+            | ResolvedElement::SatelliteReport { .. }
+            | ResolvedElement::CustomMarker(_) => true,
         }
     }
 }
 
-/// The element that a [`DataPointRef`] addresses, read from the array for its
-/// category.
+/// The borrowed element that a [`MapElementRef`] resolves to.
 #[derive(Clone, Copy)]
-enum AddressedElement<'a> {
-    CustomMarker(&'a CustomMarker),
-    EventMarker(&'a EventMarker),
+pub enum ResolvedElement<'a> {
     Fix(&'a NavPoint),
+    SatelliteReport {
+        fix: &'a NavPoint,
+        report: &'a Satellites,
+    },
+    CustomMarker(&'a CustomMarker),
     GeneratedMarker(&'a GeneratedMarker),
+    EventMarker(&'a EventMarker),
 }
 
-impl<'a> AddressedElement<'a> {
-    fn resolve(track: &'a LoadedTrack, category: DataCategory, index: usize) -> Option<Self> {
-        match category {
-            DataCategory::Tpv => track.points.get(index).map(Self::Fix),
-            DataCategory::CustomMarker => track.custom_markers.get(index).map(Self::CustomMarker),
-            DataCategory::GeneratedMarker => track
+impl MapElementRef {
+    /// Resolve this typed identity against the currently loaded recordings.
+    pub fn resolve<'a>(self, files: &'a [LoadedFile]) -> Option<ResolvedElement<'a>> {
+        match self {
+            Self::Fix(reference) => reference
+                .track
+                .resolve(files)?
+                .points
+                .get(reference.point.as_usize())
+                .map(ResolvedElement::Fix),
+            Self::SatelliteReport(reference) => {
+                let fix = reference
+                    .track
+                    .resolve(files)?
+                    .points
+                    .get(reference.point.as_usize())?;
+                Some(ResolvedElement::SatelliteReport {
+                    fix,
+                    report: fix.satellites.as_ref()?,
+                })
+            }
+            Self::CustomMarker(reference) => reference
+                .track
+                .resolve(files)?
+                .custom_markers
+                .get(reference.index.as_usize())
+                .map(ResolvedElement::CustomMarker),
+            Self::GeneratedMarker(reference) => reference
+                .track
+                .resolve(files)?
                 .generated_markers
-                .get(index)
-                .map(Self::GeneratedMarker),
-            DataCategory::EventMarker => track.event_markers.get(index).map(Self::EventMarker),
-            DataCategory::Track | DataCategory::SatelliteReport => None,
+                .get(reference.index.as_usize())
+                .map(ResolvedElement::GeneratedMarker),
+            Self::EventMarker(reference) => reference
+                .track
+                .resolve(files)?
+                .event_markers
+                .get(reference.index.as_usize())
+                .map(ResolvedElement::EventMarker),
         }
     }
+}
 
+impl ResolvedElement<'_> {
     /// The timestamp that the time filter compares against its window.
-    fn time(self) -> DateTime<Utc> {
+    pub fn time(self) -> DateTime<Utc> {
         match self {
+            Self::Fix(fix) | Self::SatelliteReport { fix, .. } => fix.tpv.time().utc(),
             Self::CustomMarker(marker) => marker.time,
-            Self::EventMarker(marker) => marker.time,
-            Self::Fix(fix) => fix.tpv.time().utc(),
             Self::GeneratedMarker(marker) => marker.time,
+            Self::EventMarker(marker) => marker.time,
         }
     }
 }
@@ -316,8 +356,9 @@ mod tests {
     use chrono::TimeDelta;
     use gt_types::fixtures::FixKind;
     use gt_types::{
-        FileSource, GeneratedMarkerKindTag, GpsTime, Latitude, Longitude, PointIdx,
-        TimePositionVelocity,
+        CustomMarkerIdx, CustomMarkerRef, EventMarkerIdx, EventMarkerRef, FileSource,
+        GeneratedMarkerIdx, GeneratedMarkerKindTag, GeneratedMarkerRef, GpsTime, Latitude,
+        Longitude, PointIdx, TimePositionVelocity,
     };
 
     use super::*;
@@ -390,6 +431,31 @@ mod tests {
         .filter(|&c| c != category)
         .all(|c| tv.category_visible(c));
         assert!(others);
+    }
+
+    #[test]
+    fn stale_typed_marker_refs_resolve_as_missing() {
+        let files = test_util::one_track_file();
+        let track = test_util::track0();
+        let stale_index = 10_000;
+        let stale = [
+            MapElementRef::CustomMarker(CustomMarkerRef::new(
+                track,
+                CustomMarkerIdx::new(stale_index),
+            )),
+            MapElementRef::GeneratedMarker(GeneratedMarkerRef::new(
+                track,
+                GeneratedMarkerIdx::new(stale_index),
+            )),
+            MapElementRef::EventMarker(EventMarkerRef::new(
+                track,
+                EventMarkerIdx::new(stale_index),
+            )),
+        ];
+
+        for element in stale {
+            assert!(element.resolve(&files).is_none());
+        }
     }
 
     /// `track_shown` requires the file, the track, and the track-line
@@ -471,7 +537,7 @@ mod tests {
         PointVisibility::Shown
     )]
     fn the_tree_hides_a_marker_by_its_path_its_parent_path_or_its_kind(
-        #[case] point: DataPointRef,
+        #[case] point: MapElementRef,
         #[case] hide: fn(&mut ScopeFixture),
         #[case] expected: PointVisibility,
     ) {
@@ -513,16 +579,10 @@ mod tests {
         let vis = TrackDataVisibility::from_loaded(&files);
         let filter = GlobalFilter::default();
 
-        let ghost_ref = DataPointRef {
-            track: test_util::track0(),
-            category: DataCategory::Tpv,
-            point_index: PointIdx::new(0),
-        };
-        let real_ref = DataPointRef {
-            track: test_util::track0(),
-            category: DataCategory::Tpv,
-            point_index: PointIdx::new(1),
-        };
+        let ghost_ref =
+            MapElementRef::Fix(gt_types::FixRef::new(test_util::track0(), PointIdx::new(0)));
+        let real_ref =
+            MapElementRef::Fix(gt_types::FixRef::new(test_util::track0(), PointIdx::new(1)));
 
         let mut mask = DisplayMask::default();
         let event_marker_visibility = EventMarkerVisibility::default();

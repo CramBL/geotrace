@@ -1,13 +1,13 @@
 use chrono::TimeDelta;
 use gt_types::{
-    CustomMarker, DataCategory, FileIdx, GeneratedMarkerKindTag, Latitude, Longitude, MarkerIcon,
-    PointIdx, TrackIdx, TrackRef,
+    CustomMarker, CustomMarkerIdx, CustomMarkerRef, DataCategory, FileIdx, FixRef,
+    GeneratedMarkerKindTag, Latitude, Longitude, MarkerIcon, PointIdx, TrackIdx, TrackRef,
 };
 use proptest::prelude::*;
 
 use super::PointVisibility;
 use crate::display_mask::{DisplayCategory, DisplayMask};
-use crate::highlight::{DataPointRef, MapHighlight};
+use crate::highlight::{MapElementRef, MapHighlight};
 use crate::query_matches::{QueryMatches, TrackRanges};
 use crate::test_util::{self, ScopeFixture};
 
@@ -21,44 +21,37 @@ enum ElementCase {
     EventMarker,
     StalePoint,
     StaleTrack,
-    Trackline,
 }
 
 impl ElementCase {
-    fn point_ref(self) -> DataPointRef {
+    fn point_ref(self) -> MapElementRef {
         match self {
             Self::MeasuredFix => test_util::point(0),
             Self::GhostFix => test_util::point(test_util::POINT_COUNT - 1),
-            Self::SatelliteReport => DataPointRef {
-                category: DataCategory::SatelliteReport,
-                ..test_util::point(0)
-            },
-            Self::CustomMarker => DataPointRef {
-                track: test_util::track0(),
-                category: DataCategory::CustomMarker,
-                point_index: PointIdx::new(0),
-            },
+            Self::SatelliteReport => {
+                MapElementRef::SatelliteReport(FixRef::new(test_util::track0(), PointIdx::new(0)))
+            }
+            Self::CustomMarker => MapElementRef::CustomMarker(CustomMarkerRef::new(
+                test_util::track0(),
+                CustomMarkerIdx::new(0),
+            )),
             Self::GeneratedMarker => test_util::generated_marker(),
             Self::EventMarker => test_util::event_marker(),
-            Self::StalePoint => DataPointRef {
-                point_index: PointIdx::new(test_util::POINT_COUNT + 7),
-                ..test_util::point(0)
-            },
-            Self::StaleTrack => DataPointRef {
-                track: TrackRef::new(FileIdx::new(0), TrackIdx::new(7)),
-                ..test_util::point(0)
-            },
-            Self::Trackline => DataPointRef {
-                category: DataCategory::Track,
-                ..test_util::point(0)
-            },
+            Self::StalePoint => MapElementRef::Fix(FixRef::new(
+                test_util::track0(),
+                PointIdx::new(test_util::POINT_COUNT + 7),
+            )),
+            Self::StaleTrack => MapElementRef::Fix(FixRef::new(
+                TrackRef::new(FileIdx::new(0), TrackIdx::new(7)),
+                PointIdx::new(0),
+            )),
         }
     }
 
     fn policy_category(self) -> DataCategory {
         match self {
             Self::SatelliteReport => DataCategory::Tpv,
-            _ => self.point_ref().category,
+            _ => self.point_ref().category(),
         }
     }
 
@@ -70,7 +63,7 @@ impl ElementCase {
     }
 
     fn is_missing(self) -> bool {
-        matches!(self, Self::StalePoint | Self::StaleTrack | Self::Trackline)
+        matches!(self, Self::StalePoint | Self::StaleTrack)
     }
 }
 
@@ -135,8 +128,14 @@ impl VisibilityScenario {
             fixture.query_matches = Some(QueryMatches {
                 hidden: TrackRanges::from_iter([(
                     test_util::track0(),
-                    std::iter::once(point.point_index.as_usize()..point.point_index.as_usize() + 1)
-                        .collect(),
+                    std::iter::once({
+                        let index = point
+                            .fix()
+                            .expect("TPV policy elements are fix-backed")
+                            .point;
+                        index.as_usize()..index.as_usize() + 1
+                    })
+                    .collect(),
                 )]),
                 ..QueryMatches::default()
             });
@@ -203,32 +202,14 @@ impl VisibilityScenario {
     }
 }
 
-fn withhold_element_by_time(fixture: &mut ScopeFixture, point: DataPointRef) {
-    let Some(track) = point.track.resolve(&fixture.files) else {
+fn withhold_element_by_time(fixture: &mut ScopeFixture, point: MapElementRef) {
+    let Some(track) = point.track().resolve(&fixture.files) else {
         return;
     };
-    let time = match point.category {
-        DataCategory::Tpv | DataCategory::SatelliteReport => track
-            .points
-            .get(point.point_index.as_usize())
-            .map(|fix| fix.tpv.time().utc()),
-        DataCategory::CustomMarker => track
-            .custom_markers
-            .get(point.point_index.as_usize())
-            .map(|marker| marker.time),
-        DataCategory::GeneratedMarker => track
-            .generated_markers
-            .get(point.point_index.as_usize())
-            .map(|marker| marker.time),
-        DataCategory::EventMarker => track
-            .event_markers
-            .get(point.point_index.as_usize())
-            .map(|marker| marker.time),
-        DataCategory::Track => None,
-    };
-    let Some(time) = time else {
+    let Some(element) = point.resolve(&fixture.files) else {
         return;
     };
+    let time = element.time();
     let track_start = track.metadata.time_range.start;
     let track_end = track.metadata.time_range.end;
     let tick = TimeDelta::nanoseconds(1);
@@ -260,7 +241,6 @@ fn element_case() -> impl Strategy<Value = ElementCase> {
         Just(ElementCase::EventMarker),
         Just(ElementCase::StalePoint),
         Just(ElementCase::StaleTrack),
-        Just(ElementCase::Trackline),
     ]
 }
 

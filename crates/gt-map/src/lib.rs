@@ -17,10 +17,10 @@ use gt_track_builder::SpatialIndex;
 use gt_types::{DataCategory, FileIdx, GeoBounds, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::reference::ReferenceDocument;
 use gt_ui_types::{
-    DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
-    HighlightScope, HoverCandidates, LogMatchGlyph, LogMatchHover, LogMatches, MapHighlight,
-    MapScope, MatchRevealTarget, PinnedPopup, PointWindowFolds, QueryMatches, SkyGlyphVariant,
-    SkyTrailsRequest, SnappedTracks, TrackDataVisibility,
+    DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, HighlightScope,
+    HoverCandidates, LogMatchGlyph, LogMatchHover, LogMatches, MapElementRef, MapHighlight,
+    MapScope, MatchRevealTarget, PinnedPopup, PointWindowFolds, QueryMatches, ResolvedElement,
+    SkyGlyphVariant, SkyTrailsRequest, SnappedTracks, TrackDataVisibility,
 };
 use rstar::PointDistance as _;
 use walkers::sources::OpenStreetMap;
@@ -418,7 +418,7 @@ pub struct NavMap {
     an_egui_popup_was_open_last_frame: bool,
     /// The element that was under the pointer when the last right-click fired.
     /// Held across frames so the context menu can reference it while it is open.
-    right_click_ref: Option<DataPointRef>,
+    right_click_ref: Option<MapElementRef>,
     /// Candidates captured at the last click that had multiple overlapping types.
     /// Displayed in a disambiguation popup until the user picks one or clicks elsewhere.
     disambiguation_candidates: HoverCandidates,
@@ -1048,11 +1048,9 @@ impl NavMap {
             if !viewport::is_spatial_point_visible(sp, scope) {
                 continue;
             }
-            hover.keep_nearest(DataPointRef {
-                track: sp.track_ref(),
-                category: sp.category,
-                point_index: sp.point_index,
-            });
+            if let Some(element) = MapElementRef::from_spatial_point(sp) {
+                hover.keep_nearest(element);
+            }
             if hover.every_category_filled() {
                 break;
             }
@@ -1248,7 +1246,7 @@ impl NavMap {
         &mut self,
         map_response: &egui::Response,
         ctx: &MapDrawContext<'_>,
-        hover_point_ref: Option<DataPointRef>,
+        hover_point_ref: Option<MapElementRef>,
     ) -> Option<MapAction> {
         if map_response.secondary_clicked() {
             self.right_click_ref = hover_point_ref;
@@ -1261,31 +1259,32 @@ impl NavMap {
                 ui.close();
                 return;
             };
-            let Some(file) = point_ref.track.fi.get(ctx.files) else {
+            let track = point_ref.track();
+            let Some(file) = track.fi.get(ctx.files) else {
                 ui.close();
                 return;
             };
-            if let Some(name) = ctx.recording_labels().display_name(point_ref.track.fi) {
+            if let Some(name) = ctx.recording_labels().display_name(track.fi) {
                 ui.add(Label::new(RichText::new(name).weak()));
             }
             if file.tracks.len() > 1 {
                 ui.add(Label::new(
-                    RichText::new(format!("#{}", point_ref.track.index.as_usize() + 1)).weak(),
+                    RichText::new(format!("#{}", track.index.as_usize() + 1)).weak(),
                 ));
             }
             ui.separator();
             if ui.button("Only show elements from this track").clicked() {
-                action = Some(MapAction::ShowOnlyTrack(point_ref.track));
+                action = Some(MapAction::ShowOnlyTrack(track));
                 ui.close();
             }
             if ui.button("Only show elements from this file").clicked() {
-                action = Some(MapAction::ShowOnlyFile(point_ref.track.fi));
+                action = Some(MapAction::ShowOnlyFile(track.fi));
                 ui.close();
             }
             ui.separator();
             if ui.button("Show sky trails…").clicked() {
                 action = Some(MapAction::ShowSkyTrails(SkyTrailsRequest::whole_track(
-                    point_ref.track,
+                    track,
                 )));
                 ui.close();
             }
@@ -1374,75 +1373,41 @@ fn show_sticky_popup(
     ctx: &egui::Context,
     files: &[LoadedFile],
     recording_labels: RecordingLabels<'_>,
-    sticky_ref: DataPointRef,
+    sticky_ref: MapElementRef,
     default_pos: egui::Pos2,
     folds: &mut PointWindowFolds,
 ) -> Option<SkyTrailsRequest> {
-    let title: String = match sticky_ref.category {
-        DataCategory::Tpv => sticky_ref
-            .track
-            .fi
-            .get(files)
-            .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-            .and_then(|t| sticky_ref.point_index.get(&t.points))
-            .map_or_else(
-                || "GNSS fix".to_string(),
-                |p| p.tpv.time().utc().format(UTC_SECOND_FORMAT).to_string(),
-            ),
-        DataCategory::SatelliteReport => sticky_ref
-            .track
-            .fi
-            .get(files)
-            .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-            .and_then(|t| sticky_ref.point_index.get(&t.points))
-            .and_then(|p| p.satellites.as_ref())
-            .map_or_else(
-                || "Satellite report".to_string(),
-                |sats| {
-                    sats.best_time().map_or_else(
-                        || "Satellite report".to_string(),
-                        |t| t.format(UTC_SECOND_FORMAT).to_string(),
-                    )
-                },
-            ),
-        DataCategory::GeneratedMarker => sticky_ref
-            .track
-            .fi
-            .get(files)
-            .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-            .and_then(|t| sticky_ref.point_index.get(&t.generated_markers))
-            .map_or_else(
-                || "GNSS event".to_string(),
-                |m| m.time.format(UTC_SECOND_FORMAT).to_string(),
-            ),
-        DataCategory::EventMarker => sticky_ref
-            .track
-            .fi
-            .get(files)
-            .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-            .and_then(|t| sticky_ref.point_index.get(&t.event_markers))
-            .map_or_else(
-                || "Event".to_string(),
-                |m| m.time.format(UTC_SECOND_FORMAT).to_string(),
-            ),
-        DataCategory::CustomMarker => sticky_ref
-            .track
-            .fi
-            .get(files)
-            .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-            .and_then(|t| sticky_ref.point_index.get(&t.custom_markers))
-            .map_or_else(
-                || "Custom marker".to_string(),
-                |m| m.time.format(UTC_SECOND_FORMAT).to_string(),
-            ),
-        DataCategory::Track => String::new(),
+    let title = match sticky_ref.resolve(files) {
+        Some(ResolvedElement::Fix(point)) => {
+            point.tpv.time().utc().format(UTC_SECOND_FORMAT).to_string()
+        }
+        Some(ResolvedElement::SatelliteReport { report, .. }) => report.best_time().map_or_else(
+            || "Satellite report".to_string(),
+            |time| time.format(UTC_SECOND_FORMAT).to_string(),
+        ),
+        Some(ResolvedElement::GeneratedMarker(marker)) => {
+            marker.time.format(UTC_SECOND_FORMAT).to_string()
+        }
+        Some(ResolvedElement::EventMarker(marker)) => {
+            marker.time.format(UTC_SECOND_FORMAT).to_string()
+        }
+        Some(ResolvedElement::CustomMarker(marker)) => {
+            marker.time.format(UTC_SECOND_FORMAT).to_string()
+        }
+        None => match sticky_ref {
+            MapElementRef::Fix(_) => "GNSS fix".to_string(),
+            MapElementRef::SatelliteReport(_) => "Satellite report".to_string(),
+            MapElementRef::CustomMarker(_) => "Custom marker".to_string(),
+            MapElementRef::GeneratedMarker(_) => "GNSS event".to_string(),
+            MapElementRef::EventMarker(_) => "Event".to_string(),
+        },
     };
 
     let window = Window::new(title)
         .id(egui::Id::new(("sticky_popup", sticky_ref)))
         .default_pos(default_pos)
         .collapsible(false);
-    let window = if sticky_uses_point_layout(sticky_ref.category) {
+    let window = if sticky_uses_point_layout(sticky_ref.category()) {
         window
             .resizable(true)
             .default_size(POINT_WINDOW_DEFAULT_SIZE)
@@ -1453,25 +1418,22 @@ fn show_sticky_popup(
     };
     let mut trails_request = None;
     window.show(ctx, |ui| {
-        if sticky_uses_point_layout(sticky_ref.category) {
-            if let Some(track) = sticky_ref
-                .track
-                .fi
-                .get(files)
-                .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-                && let Some(point) = sticky_ref.point_index.get(&track.points)
+        if sticky_uses_point_layout(sticky_ref.category()) {
+            if let Some(fix_ref) = sticky_ref.fix()
+                && let Some(track) = fix_ref.track.resolve(files)
+                && let Some(point) = fix_ref.point.get(&track.points)
             {
-                let sky = crate::tpv_renderer::SkySection::resolve(track, sticky_ref.point_index);
+                let sky = crate::tpv_renderer::SkySection::resolve(track, fix_ref.point);
                 if show_point_window_body(
                     ui,
                     point,
                     &sky,
                     folds,
-                    recording_labels.name_when_several_files_loaded(sticky_ref.track.fi),
-                    FixPlacement::resolve(track, sticky_ref.point_index),
+                    recording_labels.name_when_several_files_loaded(fix_ref.track.fi),
+                    FixPlacement::resolve(track, fix_ref.point),
                 ) {
                     trails_request = Some(SkyTrailsRequest::at_instant(
-                        sticky_ref.track,
+                        fix_ref.track,
                         point.tpv.time(),
                     ));
                 }
@@ -1489,15 +1451,13 @@ fn show_sticky_popup(
 ///
 /// The categories [`sticky_uses_point_layout`] returns `true` for are laid out
 /// by [`show_point_window_body`] instead.
-fn show_marker_window_body(ui: &mut egui::Ui, files: &[LoadedFile], sticky_ref: DataPointRef) {
-    egui::ScrollArea::both().show(ui, |ui| match sticky_ref.category {
-        DataCategory::CustomMarker => {
-            if let Some(marker) = sticky_ref
+fn show_marker_window_body(ui: &mut egui::Ui, files: &[LoadedFile], sticky_ref: MapElementRef) {
+    egui::ScrollArea::both().show(ui, |ui| match sticky_ref {
+        MapElementRef::CustomMarker(reference) => {
+            if let Some(marker) = reference
                 .track
-                .fi
-                .get(files)
-                .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-                .and_then(|t| sticky_ref.point_index.get(&t.custom_markers))
+                .resolve(files)
+                .and_then(|track| reference.index.get(&track.custom_markers))
             {
                 Grid::new("sticky_marker_grid")
                     .num_columns(2)
@@ -1510,13 +1470,11 @@ fn show_marker_window_body(ui: &mut egui::Ui, files: &[LoadedFile], sticky_ref: 
                 ui.label(RichText::new("Click to deselect").small().weak());
             }
         }
-        DataCategory::GeneratedMarker => {
-            if let Some(marker) = sticky_ref
+        MapElementRef::GeneratedMarker(reference) => {
+            if let Some(marker) = reference
                 .track
-                .fi
-                .get(files)
-                .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-                .and_then(|t| sticky_ref.point_index.get(&t.generated_markers))
+                .resolve(files)
+                .and_then(|track| reference.index.get(&track.generated_markers))
             {
                 // The window title already shows the time.
                 let header =
@@ -1544,13 +1502,11 @@ fn show_marker_window_body(ui: &mut egui::Ui, files: &[LoadedFile], sticky_ref: 
                 ui.label(RichText::new("Click to deselect").small().weak());
             }
         }
-        DataCategory::EventMarker => {
-            if let Some(marker) = sticky_ref
+        MapElementRef::EventMarker(reference) => {
+            if let Some(marker) = reference
                 .track
-                .fi
-                .get(files)
-                .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-                .and_then(|t| sticky_ref.point_index.get(&t.event_markers))
+                .resolve(files)
+                .and_then(|track| reference.index.get(&track.event_markers))
             {
                 Grid::new("sticky_event_marker_grid")
                     .num_columns(2)
@@ -1558,9 +1514,9 @@ fn show_marker_window_body(ui: &mut egui::Ui, files: &[LoadedFile], sticky_ref: 
                         ui.label("Event");
                         ui.add(Label::new(marker.variant_path.as_str()).selectable(true));
                         ui.end_row();
-                        if let Some(ann) = &marker.annotation {
+                        if let Some(annotation) = &marker.annotation {
                             ui.label("Note");
-                            ui.add(Label::new(ann.as_str()).selectable(true));
+                            ui.add(Label::new(annotation.as_str()).selectable(true));
                             ui.end_row();
                         }
                     });
@@ -1568,7 +1524,7 @@ fn show_marker_window_body(ui: &mut egui::Ui, files: &[LoadedFile], sticky_ref: 
                 ui.label(RichText::new("Click to deselect").small().weak());
             }
         }
-        DataCategory::Tpv | DataCategory::SatelliteReport | DataCategory::Track => {}
+        MapElementRef::Fix(_) | MapElementRef::SatelliteReport(_) => {}
     });
 }
 

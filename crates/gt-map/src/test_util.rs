@@ -28,14 +28,15 @@ use gt_test_utils::{
     By, HarnessInteraction as _, NodeT as _, Queryable as _, TestHarness, TestHarnessBuilder,
 };
 use gt_types::{
-    CustomMarker, DataCategory, EventMarker, FileIdx, FileSource, FixRef, GeneratedMarker,
-    GeneratedMarkerKind, Latitude, LoadedFile, LoadedTrack, Longitude, MarkerIcon, MercPoint,
-    NavPoint, PointIdx, TimeRange, TrackIdx, TrackRef,
+    CustomMarker, CustomMarkerIdx, CustomMarkerRef, DataCategory, EventMarker, EventMarkerIdx,
+    EventMarkerRef, FileIdx, FileSource, FixRef, GeneratedMarker, GeneratedMarkerIdx,
+    GeneratedMarkerKind, GeneratedMarkerRef, Latitude, LoadedFile, LoadedTrack, Longitude,
+    MarkerIcon, MercPoint, NavPoint, PointIdx, TimeRange, TrackIdx, TrackRef,
 };
 use gt_ui_types::{
-    DataPointRef, DisplayCategory, DisplayMask, DrawLayer, EventMarkerVisibility,
-    GeneratedMarkerVisibility, HighlightScope, LoadedLogId, LogMatch, LogMatchColor, LogMatchGlyph,
-    LogMatchHover, LogMatchLayer, LogMatchSource, LogMatches, MapHighlight, MatchRevealTarget,
+    DisplayCategory, DisplayMask, DrawLayer, EventMarkerVisibility, GeneratedMarkerVisibility,
+    HighlightScope, LoadedLogId, LogMatch, LogMatchColor, LogMatchGlyph, LogMatchHover,
+    LogMatchLayer, LogMatchSource, LogMatches, MapElementRef, MapHighlight, MatchRevealTarget,
     PointWindowFolds, QueryMatches, SkyGlyphVariant, SnappedEdgeInfo, SnappedEdgeSpan,
     SnappedSegment, SnappedTrackGeometry, SnappedTracks, TrackDataVisibility, TrackRanges,
     TrackSpaceWeatherWarning, WarningLevelExplanation,
@@ -71,17 +72,36 @@ pub fn track0() -> TrackRef {
 }
 
 /// The element at `point_index` of the first track of the first recording.
-pub fn point_ref(category: DataCategory, point_index: usize) -> DataPointRef {
+pub fn point_ref(category: DataCategory, point_index: usize) -> MapElementRef {
     point_ref_in(FileIdx::new(0), category, point_index)
 }
 
 /// The element at `point_index` of the first track of the recording at `file`.
-pub fn point_ref_in(file: FileIdx, category: DataCategory, point_index: usize) -> DataPointRef {
-    DataPointRef {
-        track: TrackRef::new(file, TrackIdx::new(0)),
-        category,
-        point_index: PointIdx::new(point_index),
+pub fn point_ref_in(file: FileIdx, category: DataCategory, point_index: usize) -> MapElementRef {
+    let track = TrackRef::new(file, TrackIdx::new(0));
+    match category {
+        DataCategory::Track => None,
+        DataCategory::Tpv => Some(MapElementRef::Fix(FixRef::new(
+            track,
+            PointIdx::new(point_index),
+        ))),
+        DataCategory::SatelliteReport => Some(MapElementRef::SatelliteReport(FixRef::new(
+            track,
+            PointIdx::new(point_index),
+        ))),
+        DataCategory::CustomMarker => Some(MapElementRef::CustomMarker(CustomMarkerRef::new(
+            track,
+            CustomMarkerIdx::new(point_index),
+        ))),
+        DataCategory::GeneratedMarker => Some(MapElementRef::GeneratedMarker(
+            GeneratedMarkerRef::new(track, GeneratedMarkerIdx::new(point_index)),
+        )),
+        DataCategory::EventMarker => Some(MapElementRef::EventMarker(EventMarkerRef::new(
+            track,
+            EventMarkerIdx::new(point_index),
+        ))),
     }
+    .expect("a trackline is not a point-like map element")
 }
 
 /// One completed run whose single draw layer covers `points` of `track`.
@@ -786,14 +806,14 @@ impl RenderedMap {
     /// The primary hover candidate one frame after the frame that reads the
     /// pointer move to `target`: egui reads a widget's hover against the
     /// widget rect of the previous frame.
-    pub fn primary_hover_candidate_at(&mut self, target: egui::Pos2) -> Option<DataPointRef> {
+    pub fn primary_hover_candidate_at(&mut self, target: egui::Pos2) -> Option<MapElementRef> {
         self.move_pointer_to(target);
         self.render_one_more_frame();
         self.draw_state().highlight.hover_candidates.primary()
     }
 
     /// The pinned point after [`Self::click_at`] `target`.
-    pub fn point_pinned_by_a_click_at(&mut self, target: egui::Pos2) -> Option<DataPointRef> {
+    pub fn point_pinned_by_a_click_at(&mut self, target: egui::Pos2) -> Option<MapElementRef> {
         self.click_at(target);
         self.draw_state().highlight.sticky
     }

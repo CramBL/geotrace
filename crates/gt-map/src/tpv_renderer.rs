@@ -12,13 +12,14 @@ use gt_sky::{SkyHighlight, SkyPlot, SkyPlotSize};
 use gt_types::coordinates::{Coordinate, RecordedCoordinate};
 use gt_types::satellites::{Constellation, NO_DATA_SNR_EXPLANATION, Satellite};
 use gt_types::{
-    DataCategory, FileIdx, LoadedFile, LoadedTrack, NavPoint, NearestSatelliteReport, PlacedPoint,
-    PlacedPoints, PointIdx, ResolvedPosition, SKY_REPORT_MAX_AGE_SECS, TrackIdx, TrackRef,
+    DataCategory, FileIdx, FixRef, LoadedFile, LoadedTrack, NavPoint, NearestSatelliteReport,
+    PlacedPoint, PlacedPoints, PointIdx, ResolvedPosition, SKY_REPORT_MAX_AGE_SECS, TrackIdx,
+    TrackRef,
 };
 use gt_ui_theme::labels::LabelWithHover;
 use gt_ui_theme::{DEGREE_SIGN, DELTA, EM_DASH};
 use gt_ui_types::{
-    DRAWN_AT_CAPTION, DataPointRef, HighlightScope, INTERPOLATED_POSITION_NOTE, MapHighlight,
+    DRAWN_AT_CAPTION, HighlightScope, INTERPOLATED_POSITION_NOTE, MapElementRef, MapHighlight,
     PointWindowFolds,
 };
 use smallvec::SmallVec;
@@ -74,15 +75,15 @@ impl ChevronFix {
     }
 }
 
-fn is_arrow_highlighted(highlight: &MapHighlight, point_ref: DataPointRef) -> bool {
+fn is_arrow_highlighted(highlight: &MapHighlight, point_ref: MapElementRef) -> bool {
     if highlight.sticky.is_some_and(|r| r == point_ref) {
         return true;
     }
     match highlight.hover {
         Some(HighlightScope::Point(r)) => r == point_ref,
-        Some(HighlightScope::Track(track)) => track == point_ref.track,
+        Some(HighlightScope::Track(track)) => track == point_ref.track(),
         Some(HighlightScope::TrackCategory { track, category }) => {
-            track == point_ref.track && category == DataCategory::Tpv
+            track == point_ref.track() && category == DataCategory::Tpv
         }
         _ => false,
     }
@@ -123,11 +124,10 @@ pub(crate) fn draw_track_icons(
                 icon_alpha: fix.icon_alpha,
                 ..*style
             };
-            let point_ref = DataPointRef {
-                track: TrackRef::new(fi, ti),
-                category: DataCategory::Tpv,
-                point_index: PointIdx::new(fix.point_index),
-            };
+            let point_ref = MapElementRef::Fix(FixRef::new(
+                TrackRef::new(fi, ti),
+                PointIdx::new(fix.point_index),
+            ));
             draw_tpv_point(
                 ui,
                 fix.screen_pos,
@@ -189,11 +189,7 @@ pub(crate) fn draw_track_icons(
             let merc_next = placed.get(pi + 1).map_or(point.merc(), |p| p.merc());
             chevron_direction(merc_prev, merc_next)
         };
-        let point_ref = DataPointRef {
-            track: TrackRef::new(fi, ti),
-            category: DataCategory::Tpv,
-            point_index: PointIdx::new(pi),
-        };
+        let point_ref = MapElementRef::Fix(FixRef::new(TrackRef::new(fi, ti), PointIdx::new(pi)));
         draw_tpv_point(
             ui,
             screen_pos,

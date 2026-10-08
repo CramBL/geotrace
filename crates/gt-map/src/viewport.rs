@@ -11,7 +11,7 @@ use gt_types::{
     PlacedPoint, PlacedPoints, PoleWinding, SpatialPoint, TrackIdx, TrackRef, mercator,
 };
 use gt_ui_types::{
-    DataPointRef, DisplayCategory, DisplayMask, MapScope, QueryMatches, TrackDataVisibility,
+    DisplayCategory, DisplayMask, MapElementRef, MapScope, QueryMatches, TrackDataVisibility,
 };
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -529,14 +529,7 @@ pub(crate) fn compute_viewport_bounds(
 /// neither is ever inserted into the spatial index, and neither is clickable.
 /// Every other point follows [`MapScope::draws`].
 pub(crate) fn is_spatial_point_visible(sp: &SpatialPoint, scope: MapScope<'_>) -> bool {
-    !matches!(
-        sp.category,
-        DataCategory::Track | DataCategory::SatelliteReport
-    ) && scope.draws(DataPointRef {
-        track: sp.track_ref(),
-        category: sp.category,
-        point_index: sp.point_index,
-    })
+    MapElementRef::from_spatial_point(sp).is_some_and(|element| scope.draws(element))
 }
 
 /// What a fit could put on the map.

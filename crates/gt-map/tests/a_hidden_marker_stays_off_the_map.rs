@@ -5,7 +5,7 @@ use std::iter;
 
 use gt_map::test_util::{self, CENTRE_FIX, MapScene, RenderedMap};
 use gt_types::{DataCategory, GeneratedMarkerKindTag, LoadedFile};
-use gt_ui_types::{DataPointRef, DisplayCategory};
+use gt_ui_types::{DisplayCategory, MapElementRef};
 
 /// A marker on the fix at [`CENTRE_FIX`] and one way to hide it, for each
 /// marker renderer.
@@ -37,7 +37,7 @@ impl HiddenMarker {
         }
     }
 
-    fn point_ref(self) -> DataPointRef {
+    fn point_ref(self) -> MapElementRef {
         let category = match self {
             Self::CustomMarkerMaskedByTheDisplayToggle | Self::CustomMarkerOutsideTheTimeWindow => {
                 DataCategory::CustomMarker

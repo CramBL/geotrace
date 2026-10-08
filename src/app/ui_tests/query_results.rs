@@ -7,9 +7,9 @@ use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
 use gt_jam::wire::HexObservation;
 use gt_store::{EnvironmentArchive, JamStore};
 use gt_test_utils::{By, DEMO_BYTES, HarnessInteraction as _, TestHarness};
-use gt_types::{DataCategory, FileIdx, TrackIdx, TrackRef};
+use gt_types::{DataCategory, FileIdx, FixRef, TrackIdx, TrackRef};
 use gt_ui_theme::MIDDLE_DOT;
-use gt_ui_types::{DataPointRef, DisplayCategory, MapScope, PointVisibility};
+use gt_ui_types::{DisplayCategory, MapElementRef, MapScope, PointVisibility};
 use rstest::rstest;
 use uom::si::f64::Length;
 use uom::si::length::kilometer;
@@ -270,10 +270,10 @@ fn query_point_row_click_pins_its_point() {
         .sticky
         .expect("the row click pins its point");
     assert_eq!(
-        sticky.track,
+        sticky.track(),
         TrackRef::new(FileIdx::new(0), TrackIdx::new(0))
     );
-    assert_eq!(sticky.category, gt_types::DataCategory::Tpv);
+    assert_eq!(sticky.category(), gt_types::DataCategory::Tpv);
 }
 
 /// What the map does with the fix the plot-hover cross-highlight names, judged
@@ -291,11 +291,7 @@ fn highlighted_fix_visibility(harness: &Harness<'_, App>) -> Option<PointVisibil
         display_mask: shared.display_mask,
         query_matches: app.query_window.matches(),
     };
-    Some(scope.point_visibility(DataPointRef {
-        track: TrackRef::new(fi, ti),
-        category: DataCategory::Tpv,
-        point_index: pi,
-    }))
+    Some(scope.point_visibility(MapElementRef::Fix(FixRef::new(TrackRef::new(fi, ti), pi))))
 }
 
 /// A point `fraction_across` of the way from the plot pane's left edge to its

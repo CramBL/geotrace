@@ -14,7 +14,7 @@ use gt_types::{
     PointIdx,
 };
 use gt_ui_theme::EM_DASH;
-use gt_ui_types::{DataPointRef, HoverCandidates, MapHighlight, QueryMatches};
+use gt_ui_types::{HoverCandidates, MapElementRef, MapHighlight, QueryMatches};
 
 use crate::jamming_renderer::InterferenceCellLabel;
 use crate::log_match_renderer::LogHexagonLabel;
@@ -49,21 +49,17 @@ pub(crate) struct HoverLabelSources<'a> {
 
 impl HoverLabelSources<'_> {
     /// The header of the match a hovered fix lies in, above that fix's table.
-    fn show_match_header(self, ui: &mut egui::Ui, candidate: DataPointRef) {
+    fn show_match_header(self, ui: &mut egui::Ui, candidate: MapElementRef) {
         let Some(matches) = self.query_matches else {
             return;
         };
-        let Some(range) = matches.header_range(candidate.track, candidate.point_index.as_usize())
-        else {
+        let Some(fix) = candidate.fix() else {
             return;
         };
-        query_match_renderer::match_header_ui(
-            ui,
-            self.files,
-            candidate.track,
-            range,
-            matches.stale,
-        );
+        let Some(range) = matches.header_range(fix.track, fix.point.as_usize()) else {
+            return;
+        };
+        query_match_renderer::match_header_ui(ui, self.files, fix.track, range, matches.stale);
     }
 }
 
@@ -80,7 +76,7 @@ impl HoverLabelEntry {
         match self {
             Self::RecordedElement(RecordedElementLabel::Compound(_)) => HoverLabelLayer::Marker,
             Self::RecordedElement(RecordedElementLabel::One(candidate)) => {
-                match candidate.category {
+                match candidate.category() {
                     DataCategory::Tpv | DataCategory::SatelliteReport => HoverLabelLayer::Fix,
                     DataCategory::EventMarker
                     | DataCategory::CustomMarker
@@ -121,7 +117,7 @@ impl HoverLabelEntry {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RecordedElementLabel {
     Compound(HoverCandidates),
-    One(DataPointRef),
+    One(MapElementRef),
 }
 
 impl RecordedElementLabel {
@@ -142,10 +138,10 @@ impl RecordedElementLabel {
 
 /// The label of the one recorded element under the pointer, as its own
 /// renderer writes it.
-fn show_element_label(ui: &mut egui::Ui, candidate: DataPointRef, sources: HoverLabelSources<'_>) {
+fn show_element_label(ui: &mut egui::Ui, candidate: MapElementRef, sources: HoverLabelSources<'_>) {
     let recording_name = sources
         .recording_labels
-        .name_when_several_files_loaded(candidate.track.fi);
+        .name_when_several_files_loaded(candidate.track().fi);
     match resolve_candidate(candidate, sources.files) {
         None => {}
         Some(ResolvedCandidate::Tpv {
@@ -337,43 +333,41 @@ enum ResolvedCandidate<'a> {
 }
 
 fn resolve_candidate<'a>(
-    candidate: DataPointRef,
+    candidate: MapElementRef,
     files: &'a [LoadedFile],
 ) -> Option<ResolvedCandidate<'a>> {
-    let file = candidate.track.fi.get(files)?;
-    let track = candidate.track.index.get(&file.tracks)?;
-    Some(match candidate.category {
-        DataCategory::Tpv | DataCategory::SatelliteReport => ResolvedCandidate::Tpv {
-            point: track
-                .placed_points()?
-                .get(candidate.point_index.as_usize())?,
-            track,
-            point_index: candidate.point_index,
-        },
-        DataCategory::GeneratedMarker => ResolvedCandidate::GeneratedMarker {
-            marker: candidate.point_index.get(&track.generated_markers)?,
-            track,
-        },
-        DataCategory::EventMarker => {
-            ResolvedCandidate::EventMarker(candidate.point_index.get(&track.event_markers)?)
+    let track = candidate.track().resolve(files)?;
+    Some(match candidate {
+        MapElementRef::Fix(reference) | MapElementRef::SatelliteReport(reference) => {
+            ResolvedCandidate::Tpv {
+                point: track.placed_points()?.get(reference.point.as_usize())?,
+                track,
+                point_index: reference.point,
+            }
         }
-        DataCategory::CustomMarker => {
-            ResolvedCandidate::CustomMarker(candidate.point_index.get(&track.custom_markers)?)
+        MapElementRef::GeneratedMarker(reference) => ResolvedCandidate::GeneratedMarker {
+            marker: reference.index.get(&track.generated_markers)?,
+            track,
+        },
+        MapElementRef::EventMarker(reference) => {
+            ResolvedCandidate::EventMarker(reference.index.get(&track.event_markers)?)
         }
-        DataCategory::Track => return None,
+        MapElementRef::CustomMarker(reference) => {
+            ResolvedCandidate::CustomMarker(reference.index.get(&track.custom_markers)?)
+        }
     })
 }
 
 fn draw_candidate_section(
     ui: &mut egui::Ui,
-    candidate: DataPointRef,
+    candidate: MapElementRef,
     files: &[LoadedFile],
     recording_labels: RecordingLabels<'_>,
 ) {
-    let icon = category_icon(candidate.category);
+    let icon = category_icon(candidate.category());
     match resolve_candidate(candidate, files) {
         None => {
-            let fallback = match candidate.category {
+            let fallback = match candidate.category() {
                 DataCategory::Tpv | DataCategory::SatelliteReport => "GNSS fix",
                 DataCategory::EventMarker => "Event marker",
                 DataCategory::CustomMarker => "Custom marker",
@@ -395,7 +389,7 @@ fn draw_candidate_section(
                 ui,
                 point,
                 &tpv_renderer::SkySection::resolve(track, point_index),
-                recording_labels.name_when_several_files_loaded(candidate.track.fi),
+                recording_labels.name_when_several_files_loaded(candidate.track().fi),
             );
         }
         Some(ResolvedCandidate::GeneratedMarker { marker, .. }) => {
@@ -424,11 +418,11 @@ fn draw_candidate_section(
 /// Renders a single row of the disambiguation popup.
 pub(crate) fn draw_disambig_row(
     ui: &mut egui::Ui,
-    candidate: DataPointRef,
+    candidate: MapElementRef,
     files: &[LoadedFile],
     is_selected: bool,
 ) -> egui::Response {
-    let icon = category_icon(candidate.category);
+    let icon = category_icon(candidate.category());
     let label = candidate_label(candidate, files);
     let mut job = egui::text::LayoutJob::default();
     let text_color = ui.visuals().text_color();
@@ -465,9 +459,9 @@ pub(crate) fn category_icon(cat: DataCategory) -> &'static str {
     }
 }
 
-pub(crate) fn candidate_label(candidate: DataPointRef, files: &[LoadedFile]) -> String {
+pub(crate) fn candidate_label(candidate: MapElementRef, files: &[LoadedFile]) -> String {
     match resolve_candidate(candidate, files) {
-        None => match candidate.category {
+        None => match candidate.category() {
             DataCategory::Tpv | DataCategory::SatelliteReport => "GNSS fix".to_owned(),
             DataCategory::EventMarker => "Event marker".to_owned(),
             DataCategory::CustomMarker => "Custom marker".to_owned(),
@@ -516,7 +510,7 @@ const HOVER_BAND_ROUNDING_PX: f32 = 3.0;
 #[cfg(test)]
 mod tests {
     use gt_types::DataCategory;
-    use gt_ui_types::{DataPointRef, HoverCandidates, MapHighlight};
+    use gt_ui_types::{HoverCandidates, MapElementRef, MapHighlight};
     use rstest::rstest;
 
     use super::{OpenPopups, RecordedElementLabel};
@@ -536,7 +530,7 @@ mod tests {
         /// Whether several elements were under the pointer on the previous
         /// frame, which is what the map suppresses the individual labels on.
         settled_multi_hover: bool,
-        pinned: Option<DataPointRef>,
+        pinned: Option<MapElementRef>,
         popups: OpenPopups,
     }
 
