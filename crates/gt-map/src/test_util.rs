@@ -36,10 +36,10 @@ use gt_types::{
 use gt_ui_types::{
     DisplayCategory, DisplayMask, DrawLayer, EventMarkerVisibility, GeneratedMarkerVisibility,
     HighlightScope, LoadedLogId, LogMatch, LogMatchColor, LogMatchGlyph, LogMatchHover,
-    LogMatchLayer, LogMatchSource, LogMatches, MapElementRef, MapHighlight, MatchRevealTarget,
-    PointWindowFolds, QueryMatches, SkyGlyphVariant, SnappedEdgeInfo, SnappedEdgeSpan,
-    SnappedSegment, SnappedTrackGeometry, SnappedTracks, TrackDataVisibility, TrackRanges,
-    TrackSpaceWeatherWarning, WarningLevelExplanation,
+    LogMatchLayer, LogMatchSource, LogMatches, MapElementRef, MapEligibility, MapHighlight,
+    MatchRevealTarget, PointWindowFolds, QueryMatches, SkyGlyphVariant, SnappedEdgeInfo,
+    SnappedEdgeSpan, SnappedSegment, SnappedTrackGeometry, SnappedTracks, TrackDataVisibility,
+    TrackRanges, TrackSpaceWeatherWarning, WarningLevelExplanation,
 };
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
@@ -625,6 +625,26 @@ impl MapScene {
         self
     }
 
+    /// Start the rendered scene with `point_ref` pinned through the same
+    /// complete presence policy used by production click routes.
+    pub fn pinned(mut self, point_ref: MapElementRef) -> Self {
+        let visibility = TrackDataVisibility::from_loaded(&self.files);
+        let scope = MapEligibility::new(
+            &self.files,
+            &visibility,
+            &self.draw.filter,
+            self.overlays.query_matches.as_ref(),
+            &self.draw.generated_marker_visibility,
+            &self.draw.event_marker_visibility,
+        )
+        .with_display_mask(self.draw.display_mask);
+        assert!(
+            self.draw.highlight.toggle_sticky_if_drawn(scope, point_ref),
+            "test scene can only start pinned to a present element"
+        );
+        self
+    }
+
     pub fn overlays(mut self, set: impl FnOnce(&mut Overlays)) -> Self {
         set(&mut self.overlays);
         self
@@ -809,13 +829,36 @@ impl RenderedMap {
     pub fn primary_hover_candidate_at(&mut self, target: egui::Pos2) -> Option<MapElementRef> {
         self.move_pointer_to(target);
         self.render_one_more_frame();
-        self.draw_state().highlight.hover_candidates.primary()
+        self.map().and_then(|map| map.hover_candidates.primary())
+    }
+
+    /// Pin a present recorded element through the same checked presence policy
+    /// production click routes use.
+    pub fn pin(&mut self, point_ref: MapElementRef) -> bool {
+        let state = self.harness.state_mut();
+        let MapSceneState {
+            draw,
+            overlays,
+            files,
+            visibility,
+            ..
+        } = state;
+        let scope = MapEligibility::new(
+            files,
+            visibility,
+            &draw.filter,
+            overlays.query_matches.as_ref(),
+            &draw.generated_marker_visibility,
+            &draw.event_marker_visibility,
+        )
+        .with_display_mask(draw.display_mask);
+        draw.highlight.toggle_sticky_if_drawn(scope, point_ref)
     }
 
     /// The pinned point after [`Self::click_at`] `target`.
     pub fn point_pinned_by_a_click_at(&mut self, target: egui::Pos2) -> Option<MapElementRef> {
         self.click_at(target);
-        self.draw_state().highlight.sticky
+        self.draw_state().highlight.sticky()
     }
 
     /// Moves the pointer to `target` and runs past egui's hover delay, which

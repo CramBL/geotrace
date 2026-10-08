@@ -7,9 +7,9 @@ use std::ops::Range;
 use gt_filter::GlobalFilter;
 use gt_track_builder::SpatialIndex;
 use gt_types::{
-    DataCategory, DataCategorySet, FileIdx, GeoBounds, Latitude, LoadedFile, LoadedTrack,
-    Longitude, MercBounds, PlacedPoint, PlacedPoints, PoleWinding, SpatialPoint, TrackIdx,
-    TrackRef, mercator,
+    DataCategory, DataCategorySet, FileIdx, FixRef, GeoBounds, Latitude, LoadedFile, LoadedTrack,
+    Longitude, MercBounds, PlacedPoint, PlacedPoints, PointIdx, PoleWinding, SpatialPoint,
+    TrackIdx, TrackRef, mercator,
 };
 use gt_ui_types::{
     DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, MapElementRef,
@@ -555,16 +555,21 @@ impl<'a> MapFramePlan<'a> {
                 .any(|entry| entry.categories.contains(category))
     }
 
-    /// Resolve a spatial-index candidate through the policy compiled for this
-    /// frame without re-running the track-level filter.
-    pub(crate) fn resolve_spatial(&self, point: &SpatialPoint) -> Option<PlannedElement<'a>> {
-        let track = point.track_ref();
+    /// Resolve one point-like identity through semantic policy compiled for
+    /// this frame, without applying manifestation-specific display masking.
+    fn resolve_semantic(&self, element_ref: MapElementRef) -> Option<PlannedElement<'a>> {
+        let track = element_ref.track();
         let entry = self.entry(track)?;
-        if !entry.categories.contains(point.category) {
+        let category = match element_ref {
+            MapElementRef::Fix(_) | MapElementRef::SatelliteReport(_) => DataCategory::Tpv,
+            MapElementRef::CustomMarker(_) => DataCategory::CustomMarker,
+            MapElementRef::GeneratedMarker(_) => DataCategory::GeneratedMarker,
+            MapElementRef::EventMarker(_) => DataCategory::EventMarker,
+        };
+        if !entry.categories.contains(category) {
             return None;
         }
 
-        let element_ref = MapElementRef::from_spatial_point(point)?;
         let element = element_ref.resolve(self.files)?;
         if !gt_filter::point_passes_time_filter(element.time(), self.filter) {
             return None;
@@ -575,8 +580,51 @@ impl<'a> MapFramePlan<'a> {
         }) {
             return None;
         }
+        match element {
+            ResolvedElement::GeneratedMarker(marker)
+                if !self
+                    .generated_marker_visibility
+                    .is_visible(track, marker.kind.tag()) =>
+            {
+                return None;
+            }
+            ResolvedElement::EventMarker(marker)
+                if !self
+                    .event_marker_visibility
+                    .is_visible(track, &marker.variant_path) =>
+            {
+                return None;
+            }
+            ResolvedElement::Fix(_)
+            | ResolvedElement::SatelliteReport { .. }
+            | ResolvedElement::CustomMarker(_)
+            | ResolvedElement::GeneratedMarker(_)
+            | ResolvedElement::EventMarker(_) => {}
+        }
+        Some(PlannedElement {
+            element_ref,
+            element,
+        })
+    }
 
-        let display_category = match element {
+    /// Whether a fix passes the shared semantic policy for this frame.
+    ///
+    /// Renderer-specific LOD, culling, and display layers are intentionally
+    /// separate so a fix can still anchor labels or sky glyphs when its
+    /// individual navigation icon is not drawn.
+    pub(crate) fn fix_is_semantically_present(&self, track: TrackRef, point_index: usize) -> bool {
+        self.resolve_semantic(MapElementRef::Fix(FixRef::new(
+            track,
+            PointIdx::new(point_index),
+        )))
+        .is_some()
+    }
+
+    /// Resolve a spatial-index candidate through the policy compiled for this
+    /// frame without re-running the track-level filter.
+    pub(crate) fn resolve_spatial(&self, point: &SpatialPoint) -> Option<PlannedElement<'a>> {
+        let present = self.resolve_semantic(MapElementRef::from_spatial_point(point)?)?;
+        let display_category = match present.element {
             ResolvedElement::Fix(fix) => {
                 if fix.is_ghost_fix() {
                     DisplayCategory::GhostFixes
@@ -586,31 +634,12 @@ impl<'a> MapFramePlan<'a> {
             }
             ResolvedElement::SatelliteReport { .. } => return None,
             ResolvedElement::CustomMarker(_) => DisplayCategory::CustomMarkers,
-            ResolvedElement::GeneratedMarker(marker) => {
-                if !self
-                    .generated_marker_visibility
-                    .is_visible(track, marker.kind.tag())
-                {
-                    return None;
-                }
-                DisplayCategory::GeneratedMarkers
-            }
-            ResolvedElement::EventMarker(marker) => {
-                if !self
-                    .event_marker_visibility
-                    .is_visible(track, &marker.variant_path)
-                {
-                    return None;
-                }
-                DisplayCategory::EventMarkers
-            }
+            ResolvedElement::GeneratedMarker(_) => DisplayCategory::GeneratedMarkers,
+            ResolvedElement::EventMarker(_) => DisplayCategory::EventMarkers,
         };
         self.display_mask
             .is_visible(display_category)
-            .then_some(PlannedElement {
-                element_ref,
-                element,
-            })
+            .then_some(present)
     }
 }
 
@@ -1203,6 +1232,17 @@ mod tests {
                     "compiled presence disagreed for {:?}",
                     element_ref,
                 );
+                if let Some(fix_ref) = element_ref.fix() {
+                    prop_assert_eq!(
+                        plan.fix_is_semantically_present(fix_ref.track, fix_ref.point.as_usize()),
+                        matches!(
+                            presence.eligibility().element_eligibility(element_ref),
+                            gt_ui_types::MapEligibilityResult::Eligible
+                        ),
+                        "compiled semantic fix policy disagreed for {:?}",
+                        element_ref,
+                    );
+                }
             }
         }
     }

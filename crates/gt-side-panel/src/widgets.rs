@@ -127,7 +127,7 @@ pub fn point_item_row(
     highlight: &mut MapHighlight,
     requests: &mut PointClickRequests<'_>,
 ) {
-    let is_sticky = highlight.sticky.is_some_and(|r| r == point_ref);
+    let is_sticky = highlight.is_sticky(point_ref);
     let response = ui.selectable_label(is_sticky, label);
     if response.hovered() {
         highlight.hover = Some(HighlightScope::Point(point_ref));

@@ -536,12 +536,12 @@ fn hover_finds_the_nearest_fix_and_the_nearest_event_marker() {
 
     assert_eq!(
         hover
-            .tpv_or_satellite_report
+            .tpv_or_satellite_report()
             .map(|point| point.fix().expect("fix hover").point),
         Some(PointIdx::new(0))
     );
     assert_eq!(
-        hover.event_marker.and_then(|point| match point {
+        hover.event_marker().and_then(|point| match point {
             MapElementRef::EventMarker(reference) => {
                 Some(PointIdx::new(reference.index.as_usize()))
             }
@@ -551,6 +551,48 @@ fn hover_finds_the_nearest_fix_and_the_nearest_event_marker() {
             | MapElementRef::GeneratedMarker(_) => None,
         }),
         Some(PointIdx::new(0))
+    );
+}
+
+#[test]
+fn hover_skips_a_hidden_nearest_fix_and_keeps_searching() {
+    let start = chrono::DateTime::from_timestamp(0, 0).expect("valid timestamp");
+    let track = gt_test_utils::loaded_track_with_points(vec![
+        nav_at(start, 55.0, 12.0),
+        nav_at(start + chrono::Duration::seconds(1), 55.0, 12.0001),
+    ]);
+    let files = vec![gt_test_utils::loaded_file_with_tracks(vec![track])];
+    let mut map = NavMap::new(egui::Context::default(), TileAccess::Offline);
+    map.rebuild_spatial_index(&files);
+    let vis = vis_all_visible();
+    let filter = GlobalFilter::default();
+    let hidden_range = |start: usize, end: usize| start..end;
+    let matches = QueryMatches {
+        hidden: TrackRanges::from_iter([(test_util::track0(), vec![hidden_range(0, 1)])]),
+        ..QueryMatches::default()
+    };
+    let plan = viewport::MapFramePlan::compute(
+        viewport::MapFrameInputs::new(
+            &files,
+            &vis,
+            &filter,
+            Some(&matches),
+            &NO_GENERATED_MARKER_KIND_HIDDEN,
+            &NO_EVENT_MARKER_PATH_HIDDEN,
+            DisplayMask::default(),
+        ),
+        15.0,
+    );
+    let cursor = gt_types::mercator::normalize(Latitude::new(55.0), Longitude::new(12.0));
+
+    let hover = map.nearest_hover_candidates([cursor.x, cursor.y], 1e-8, &plan);
+
+    assert_eq!(
+        hover
+            .tpv_or_satellite_report()
+            .map(|point| point.fix().expect("fix hover").point),
+        Some(PointIdx::new(1)),
+        "a hidden nearest fix must not stop nearest-first candidate search",
     );
 }
 
@@ -596,7 +638,7 @@ fn hiding_ghost_fixes_prevents_hovering_ghost_points_while_keeping_real_points()
     );
     assert_eq!(
         hover_ghost
-            .tpv_or_satellite_report
+            .tpv_or_satellite_report()
             .map(|point| point.fix().expect("fix hover").point),
         Some(PointIdx::new(1))
     );
@@ -610,7 +652,7 @@ fn hiding_ghost_fixes_prevents_hovering_ghost_points_while_keeping_real_points()
         radius_merc_sq,
         &hidden_ghost_plan,
     );
-    assert_eq!(hover_ghost_hidden.tpv_or_satellite_report, None);
+    assert_eq!(hover_ghost_hidden.tpv_or_satellite_report(), None);
 
     let hover_real = map.nearest_hover_candidates(
         [real_cursor.x, real_cursor.y],
@@ -619,7 +661,7 @@ fn hiding_ghost_fixes_prevents_hovering_ghost_points_while_keeping_real_points()
     );
     assert_eq!(
         hover_real
-            .tpv_or_satellite_report
+            .tpv_or_satellite_report()
             .map(|point| point.fix().expect("fix hover").point),
         Some(PointIdx::new(0))
     );
@@ -681,18 +723,15 @@ fn the_individual_hover_labels_yield_to_the_popup_and_to_a_previous_multi_hover(
 ) {
     let visibility = TrackDataVisibility::from_loaded(&[]);
     let mut state = DrawState::default();
-    for category in [DataCategory::Tpv, DataCategory::EventMarker]
-        .into_iter()
-        .take(previous_candidates)
-    {
-        state
-            .highlight
-            .hover_candidates
-            .keep_nearest(hover_ref(category));
-    }
+    let previous_hover = HoverCandidates::from_refs_for_test(
+        [DataCategory::Tpv, DataCategory::EventMarker]
+            .into_iter()
+            .take(previous_candidates)
+            .map(hover_ref),
+    );
 
     let mut ctx = state.context(&[], &visibility);
-    ctx.suppress_overlapping_hover_labels(disambig_open);
+    ctx.suppress_overlapping_hover_labels(disambig_open, previous_hover);
 
     assert_eq!(ctx.highlight.suppress_hover_labels, expected);
 }

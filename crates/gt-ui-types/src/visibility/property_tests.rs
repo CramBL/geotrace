@@ -353,7 +353,7 @@ proptest! {
         let mut highlight = MapHighlight::default();
 
         prop_assert_eq!(highlight.toggle_sticky_if_drawn(fixture.scope(), point), shown);
-        prop_assert_eq!(highlight.sticky, shown.then_some(point));
+        prop_assert_eq!(highlight.sticky(), shown.then_some(point));
     }
 
     #[test]
@@ -368,14 +368,12 @@ proptest! {
         };
         let point = case.element.point_ref();
         let fixture = case.apply();
-        let mut highlight = MapHighlight {
-            sticky: Some(point),
-            ..MapHighlight::default()
-        };
+        let mut highlight = MapHighlight::default();
+        highlight.set_sticky_for_test(Some(point));
 
         prop_assert_eq!(fixture.scope().point_visibility(point), PointVisibility::NoSuchElement);
         prop_assert_eq!(highlight.pin_this_frame(fixture.scope()), None);
-        prop_assert_eq!(highlight.sticky, None);
+        prop_assert_eq!(highlight.sticky(), None);
     }
 
     #[test]
@@ -412,6 +410,6 @@ proptest! {
 
         prop_assert_eq!(fixture.scope().point_visibility(point), PointVisibility::MarkerTypeHidden);
         prop_assert!(!highlight.toggle_sticky_if_drawn(fixture.scope(), point));
-        prop_assert_eq!(highlight.sticky, None);
+        prop_assert_eq!(highlight.sticky(), None);
     }
 }

@@ -51,42 +51,36 @@ fn two_recordings_loaded() -> gt_loaded_files::LoadedFiles {
 #[case::a_fix_and_two_markers(
     "multi_hover_stacked_label",
     &["walk.gtd"],
-    HoverCandidates {
-        tpv_or_satellite_report: Some(test_util::point_ref(DataCategory::Tpv, 0)),
-        event_marker: Some(test_util::point_ref(DataCategory::EventMarker, 0)),
-        custom_marker: Some(test_util::point_ref(DataCategory::CustomMarker, 0)),
-        generated_marker: None,
-    }
+    &[
+        test_util::point_ref(DataCategory::Tpv, 0),
+        test_util::point_ref(DataCategory::EventMarker, 0),
+        test_util::point_ref(DataCategory::CustomMarker, 0),
+    ],
 )]
 #[case::a_fix_and_a_regained_fix_marker(
     "multi_hover_tpv_and_generated_marker",
     &["walk.gtd"],
-    HoverCandidates {
-        tpv_or_satellite_report: Some(test_util::point_ref(DataCategory::Tpv, 0)),
-        generated_marker: Some(test_util::point_ref(DataCategory::GeneratedMarker, 0)),
-        ..HoverCandidates::default()
-    }
+    &[
+        test_util::point_ref(DataCategory::Tpv, 0),
+        test_util::point_ref(DataCategory::GeneratedMarker, 0),
+    ],
 )]
 #[case::two_recordings_loaded(
     "multi_hover_stacked_label_two_files",
     &["morning.gtd", "evening.gtd"],
-    HoverCandidates {
-        tpv_or_satellite_report: Some(test_util::point_ref_in(
-            FileIdx::new(1),
-            DataCategory::Tpv,
-            0,
-        )),
-        event_marker: Some(test_util::point_ref(DataCategory::EventMarker, 0)),
-        custom_marker: Some(test_util::point_ref(DataCategory::CustomMarker, 0)),
-        generated_marker: None,
-    }
+    &[
+        test_util::point_ref_in(FileIdx::new(1), DataCategory::Tpv, 0),
+        test_util::point_ref(DataCategory::EventMarker, 0),
+        test_util::point_ref(DataCategory::CustomMarker, 0),
+    ],
 )]
 fn snap_multi_hover_stacked_label(
     #[case] name: &str,
     #[case] filenames: &[&str],
-    #[case] candidates: HoverCandidates,
+    #[case] candidate_refs: &[MapElementRef],
 ) {
     let loaded = recordings_named(filenames);
+    let candidates = HoverCandidates::from_refs_for_test(candidate_refs.iter().copied());
 
     let mut harness = test_util::harness_builder()
         .size(egui::vec2(400.0, 800.0))
@@ -105,15 +99,10 @@ fn snap_multi_hover_stacked_label(
 #[test]
 fn multi_hover_names_the_hovered_fixs_recording() {
     let loaded = two_recordings_loaded();
-    let candidates = HoverCandidates {
-        tpv_or_satellite_report: Some(test_util::point_ref_in(
-            FileIdx::new(1),
-            DataCategory::Tpv,
-            0,
-        )),
-        event_marker: Some(test_util::point_ref(DataCategory::EventMarker, 0)),
-        ..HoverCandidates::default()
-    };
+    let candidates = HoverCandidates::from_refs_for_test([
+        test_util::point_ref_in(FileIdx::new(1), DataCategory::Tpv, 0),
+        test_util::point_ref(DataCategory::EventMarker, 0),
+    ]);
 
     let mut harness = test_util::harness_builder()
         .size(egui::vec2(400.0, 800.0))
@@ -1346,7 +1335,7 @@ fn snap_sticky_point_window() {
     let mut map = MapScene::of(files)
         .tiles(TileAccess::Synthetic)
         .size(egui::vec2(900.0, 700.0))
-        .draw_state(|state| state.highlight.sticky = Some(clicked))
+        .pinned(clicked)
         .render();
     map.snapshot("sticky_point_window");
 }
@@ -1367,7 +1356,7 @@ fn scrolling_the_point_window_leaves_the_title_bar_untouched(#[case] viewport: e
     let mut map = MapScene::of(files)
         .tiles(TileAccess::Synthetic)
         .size(viewport)
-        .draw_state(|state| state.highlight.sticky = Some(clicked))
+        .pinned(clicked)
         .render();
     let harness = &mut map.harness;
 
@@ -1429,7 +1418,7 @@ fn the_point_window_button_returns_a_timed_sky_trails_action() {
     let mut map = MapScene::of(files)
         .tiles(TileAccess::Synthetic)
         .size(egui::vec2(900.0, 700.0))
-        .draw_state(|state| state.highlight.sticky = Some(clicked))
+        .pinned(clicked)
         .render();
     assert!(
         map.returned_action().is_none(),
@@ -1504,7 +1493,7 @@ fn the_sticky_popup_fits_every_viewport(
     let map = MapScene::of(files)
         .tiles(TileAccess::Synthetic)
         .size(viewport)
-        .draw_state(|state| state.highlight.sticky = Some(clicked))
+        .pinned(clicked)
         .render();
 
     map.harness

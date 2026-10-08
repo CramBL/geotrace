@@ -25,7 +25,7 @@ pub(crate) fn track_stroke(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) 
 /// or on its recording, or it is the sticky selection's track.
 pub(crate) fn is_track_highlighted(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) -> bool {
     let track = TrackRef::new(fi, ti);
-    if highlight.sticky.is_some_and(|r| r.track() == track) {
+    if highlight.sticky().is_some_and(|r| r.track() == track) {
         return true;
     }
     match highlight.hover {

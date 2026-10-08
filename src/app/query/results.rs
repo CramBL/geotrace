@@ -1184,9 +1184,7 @@ impl<'a> ResultsTables<'a> {
     ) -> Option<PointClick> {
         let track = match_row.track;
         let point = self.source.map_point(track, source_index);
-        row.set_selected(
-            point.is_some_and(|point| highlight.sticky.is_some_and(|sticky| sticky == point)),
-        );
+        row.set_selected(point.is_some_and(|point| highlight.is_sticky(point)));
         for (index, column) in cells.columns.iter().enumerate() {
             let value = self.source.value(match_row, source_index, column.source);
             let bar = cells.bar(index, value);

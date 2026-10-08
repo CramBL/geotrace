@@ -267,7 +267,7 @@ fn query_point_row_click_pins_its_point() {
         .shared
         .borrow()
         .highlight
-        .sticky
+        .sticky()
         .expect("the row click pins its point");
     assert_eq!(
         sticky.track(),

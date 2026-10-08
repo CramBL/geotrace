@@ -6,7 +6,6 @@ use egui::{Color32, Pos2, Stroke, Ui, Vec2};
 use egui::{Grid, RichText, ScrollArea};
 use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::CHECK as ICON_CHECK;
-use gt_filter::{self as filter, GlobalFilter};
 use gt_fmt::UTC_SECOND_FORMAT;
 use gt_sky::{SkyHighlight, SkyPlot, SkyPlotSize};
 use gt_types::coordinates::{Coordinate, RecordedCoordinate};
@@ -76,7 +75,7 @@ impl ChevronFix {
 }
 
 fn is_arrow_highlighted(highlight: &MapHighlight, point_ref: MapElementRef) -> bool {
-    if highlight.sticky.is_some_and(|r| r == point_ref) {
+    if highlight.is_sticky(point_ref) {
         return true;
     }
     match highlight.hover {
@@ -105,7 +104,7 @@ pub(crate) fn draw_track_icons(
     fade: TrackIconFade,
     transform: &crate::transform::MercTransform,
     highlight: &MapHighlight,
-    filter: &GlobalFilter,
+    fix_is_present: &impl Fn(usize) -> bool,
     icon_meshes: Option<&IconMeshLibrary>,
 ) {
     // One batch for the whole track's icons. `draw_navigation_arrow` barriers
@@ -118,8 +117,8 @@ pub(crate) fn draw_track_icons(
     };
     // Real fixes: indices come from the global R-tree viewport query.
     if let Some(indices) = real_fix_indices {
-        draw_accuracy_circles(ui, placed, indices, style, fade, transform, filter);
-        for fix in visible_real_fixes(placed, indices, style, fade, transform, filter) {
+        draw_accuracy_circles(ui, placed, indices, style, fade, transform, fix_is_present);
+        for fix in visible_real_fixes(placed, indices, style, fade, transform, fix_is_present) {
             let point_style = TpvDrawStyle {
                 icon_alpha: fix.icon_alpha,
                 ..*style
@@ -221,11 +220,11 @@ fn visible_real_fixes<'a>(
     style: &'a TpvDrawStyle,
     fade: TrackIconFade,
     transform: &'a crate::transform::MercTransform,
-    filter: &'a GlobalFilter,
+    fix_is_present: &'a dyn Fn(usize) -> bool,
 ) -> impl Iterator<Item = VisibleRealFix<'a>> + 'a {
     real_fix_indices.iter().filter_map(move |&point_index| {
         let point = placed.get(point_index)?;
-        if !filter::point_passes_time_filter(point.fix.tpv.time().utc(), filter) {
+        if !fix_is_present(point_index) {
             return None;
         }
         // Dead-reckoned fixes and fixes with a coordinate out of range are
@@ -265,11 +264,18 @@ fn draw_accuracy_circles(
     style: &TpvDrawStyle,
     fade: TrackIconFade,
     transform: &crate::transform::MercTransform,
-    filter: &GlobalFilter,
+    fix_is_present: &impl Fn(usize) -> bool,
 ) {
     let min_visible_radius = (style.base_arrow_size * ACCURACY_CIRCLE_MIN_VISIBLE_FACTOR)
         .max(MIN_ACCURACY_CIRCLE_RADIUS_PX);
-    for fix in visible_real_fixes(placed, real_fix_indices, style, fade, transform, filter) {
+    for fix in visible_real_fixes(
+        placed,
+        real_fix_indices,
+        style,
+        fade,
+        transform,
+        fix_is_present,
+    ) {
         let Some(eph_m) = fix.point.fix.tpv.eph_m() else {
             continue;
         };

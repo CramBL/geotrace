@@ -20,7 +20,7 @@ pub(crate) struct GeneratedMarkerRenderer<'a, 'p> {
 
 impl<'a, 'p> GeneratedMarkerRenderer<'a, 'p> {
     fn is_point_highlighted(&self, point_ref: MapElementRef) -> bool {
-        if self.highlight.sticky.is_some_and(|r| r == point_ref) {
+        if self.highlight.is_sticky(point_ref) {
             return true;
         }
         match self.highlight.hover {

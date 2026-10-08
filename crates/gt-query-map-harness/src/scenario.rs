@@ -258,7 +258,7 @@ impl MapScenario {
                 .highlight
                 .hover_match
                 .is_some_and(|hovered| hovered.track == track && hovered.contains(point_index)),
-            selected: self.highlight.sticky == Some(point_ref(track, point_index)),
+            selected: self.highlight.is_sticky(point_ref(track, point_index)),
         }
     }
 

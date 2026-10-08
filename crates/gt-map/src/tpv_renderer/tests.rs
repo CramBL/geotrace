@@ -1180,7 +1180,7 @@ fn a_tracks_arrows_are_one_mesh_whatever_the_accuracy_circle_count() {
                 TrackIconFade::AllVisible,
                 &transform,
                 &MapHighlight::default(),
-                &GlobalFilter::default(),
+                &|_| true,
                 library.as_ref(),
             );
         });
