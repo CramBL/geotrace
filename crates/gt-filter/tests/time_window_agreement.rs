@@ -38,11 +38,7 @@ fn fixes_at(times: &[DateTime<Utc>]) -> Vec<NavPoint> {
 
 /// A filter whose only active condition is the time window.
 fn window(start: Option<DateTime<Utc>>, end: Option<DateTime<Utc>>) -> GlobalFilter {
-    GlobalFilter {
-        time_start: start,
-        time_end: end,
-        ..GlobalFilter::default()
-    }
+    GlobalFilter::default().with_time_bounds(start, end)
 }
 
 /// A track over `fixes`, carrying the metadata time range the track builder

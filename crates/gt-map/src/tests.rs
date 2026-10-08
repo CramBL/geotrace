@@ -331,10 +331,8 @@ fn time_filtered_point_is_not_hoverable() {
     let vis = vis_all_visible();
     // Start the window between the two points: the track still overlaps it,
     // but the early point falls outside.
-    let filter = GlobalFilter {
-        time_start: Some(early + chrono::Duration::seconds(50)),
-        ..GlobalFilter::default()
-    };
+    let filter =
+        GlobalFilter::default().with_time_bounds(Some(early + chrono::Duration::seconds(50)), None);
     assert!(
         !viewport::is_spatial_point_visible(
             &tpv_spatial_point(0, 0, 0),

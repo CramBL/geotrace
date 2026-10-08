@@ -5,7 +5,7 @@ use egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE as ICON_ARROW_COUNTER_CLOCKW
 use egui_phosphor::regular::ARROWS_OUT_SIMPLE as ICON_ARROWS_OUT_SIMPLE;
 use egui_phosphor::regular::BOUNDING_BOX as ICON_BOUNDING_BOX;
 use egui_phosphor::regular::CLOCK as ICON_CLOCK;
-use gt_filter::GlobalFilter;
+use gt_filter::{GlobalFilter, TimeWindow};
 use gt_types::{LoadedFile, MarkerRequirement, TimeRange};
 use gt_ui_theme::EM_DASH;
 use uom::si::f64::Length;
@@ -70,11 +70,12 @@ pub fn render_filter_panel(
     let filtered_range = compute_filtered_time_range(files, filter);
 
     if let Some(full_range) = full_range {
-        let sel_start = filter.time_start.unwrap_or(full_range.start);
-        let sel_end = filter.time_end.unwrap_or(full_range.end);
-        let dur_str = gt_fmt::format_human_terse_duration(sel_end - sel_start);
+        let selected = filter.time_window().intersection(full_range);
+        let selected_duration = selected.map_or(Duration::zero(), |range| range.duration());
+        let dur_str = gt_fmt::format_human_terse_duration(selected_duration);
         ui.label(format!("Time range {EM_DASH} {dur_str}"));
 
+        let (mut time_start, mut time_end) = filter.time_window().bounds().unwrap_or((None, None));
         let active_range_bar_span = state.active_range_bar_span(full_range, filtered_range);
         let full_range_bar = BarSpan(full_range);
         let full_range_bar_minimum =
@@ -94,11 +95,11 @@ pub fn render_filter_panel(
             LoadedTimeRange(full_range),
             full_range_bar_minimum,
             coarse_hover_text,
-            &mut filter.time_start,
-            &mut filter.time_end,
+            &mut time_start,
+            &mut time_end,
         );
 
-        if let Some(zoom_range) = active_range_bar_span {
+        let secondary_changed = if let Some(zoom_range) = active_range_bar_span {
             let zoom_dur = gt_fmt::format_human_terse_duration(zoom_range.duration());
             ui.label(format!("Active range {EM_DASH} {zoom_dur}"));
             let active_range_bar = BarSpan(zoom_range);
@@ -108,11 +109,16 @@ pub fn render_filter_panel(
                 LoadedTimeRange(full_range),
                 active_range_bar.minimum_window_span(FINE_BAR_MINIMUM_WINDOW_SPAN),
                 None,
-                &mut filter.time_start,
-                &mut filter.time_end,
-            );
-        }
+                &mut time_start,
+                &mut time_end,
+            )
+        } else {
+            false
+        };
 
+        if primary_changed || secondary_changed {
+            filter.set_time_window(TimeWindow::from_bounds(time_start, time_end));
+        }
         if primary_changed {
             state.secondary_zoom = None;
         }
@@ -147,35 +153,39 @@ pub fn render_filter_panel(
         .inner;
 
     if dist_changed {
-        filter.min_distance_km = state
-            .distance_input
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .filter(|&v| v > 0.0)
-            .map(Length::new::<kilometer>);
+        filter.set_minimum_distance(
+            state
+                .distance_input
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|&v| v > 0.0)
+                .map(Length::new::<kilometer>),
+        );
     }
     if dur_changed {
-        filter.min_duration = parse_duration_input(&state.duration_input);
+        filter.set_minimum_duration(parse_duration_input(&state.duration_input));
     }
     if spread_changed {
-        filter.min_spread_m = state
-            .spread_input
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .filter(|&v| v > 0.0)
-            .map(Length::new::<meter>);
+        filter.set_minimum_spread(
+            state
+                .spread_input
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|&v| v > 0.0)
+                .map(Length::new::<meter>),
+        );
     }
 
     // Marker requirement - mutually exclusive options rendered as toggleable labels.
-    let req = &mut filter.marker_requirement;
+    let mut req = filter.marker_requirement();
     ui.horizontal(|ui| {
         if ui
-            .selectable_label(*req == MarkerRequirement::AnyMarker, "W/ markers only")
+            .selectable_label(req == MarkerRequirement::AnyMarker, "W/ markers only")
             .clicked()
         {
-            *req = if *req == MarkerRequirement::AnyMarker {
+            req = if req == MarkerRequirement::AnyMarker {
                 MarkerRequirement::None
             } else {
                 MarkerRequirement::AnyMarker
@@ -183,18 +193,19 @@ pub fn render_filter_panel(
         }
         if ui
             .selectable_label(
-                *req == MarkerRequirement::CustomMarker,
+                req == MarkerRequirement::CustomMarker,
                 "W/ custom markers only",
             )
             .clicked()
         {
-            *req = if *req == MarkerRequirement::CustomMarker {
+            req = if req == MarkerRequirement::CustomMarker {
                 MarkerRequirement::None
             } else {
                 MarkerRequirement::CustomMarker
             };
         }
     });
+    filter.set_marker_requirement(req);
 
     if ui
         .small_button(format!("{ICON_ARROW_COUNTER_CLOCKWISE} Reset filters"))

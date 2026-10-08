@@ -87,14 +87,13 @@ fn pointing_at_the_hexagon_on_fix(
 /// A recording the filter rejects puts nothing on the map, and the hexagons of
 /// the log anchored to it are part of that nothing: they sit on its fixes.
 #[rstest::rstest]
-#[case::the_time_window_is_disjoint_from_the_recording(GlobalFilter {
-    time_start: Some(test_util::epoch() + Duration::hours(5)),
-    ..GlobalFilter::default()
-})]
-#[case::the_recording_is_shorter_than_the_minimum_duration(GlobalFilter {
-    min_duration: Some(Duration::hours(5)),
-    ..GlobalFilter::default()
-})]
+#[case::the_time_window_is_disjoint_from_the_recording(GlobalFilter::default().with_time_bounds(
+    Some(test_util::epoch() + Duration::hours(5)),
+    None,
+))]
+#[case::the_recording_is_shorter_than_the_minimum_duration(
+    GlobalFilter::default().with_minimum_duration(Some(Duration::hours(5)))
+)]
 fn no_log_hexagon_is_drawn_for_a_recording_the_filter_rejects(#[case] filter: GlobalFilter) {
     let files = test_util::a_recording_of(FIX_COUNT, STANDING_STEP_DEGREES);
     let log = test_util::a_log_over(&files);
@@ -161,14 +160,13 @@ fn no_log_hexagon_is_hovered_for_an_entry_the_time_window_hides() {
 /// publishes nothing for the log viewer to mark, and a click where the hexagon
 /// was leaves the log viewer as it is.
 #[rstest::rstest]
-#[case::the_time_window_is_disjoint_from_the_recording(GlobalFilter {
-    time_start: Some(test_util::epoch() + Duration::hours(5)),
-    ..GlobalFilter::default()
-})]
-#[case::the_recording_is_shorter_than_the_minimum_duration(GlobalFilter {
-    min_duration: Some(Duration::hours(5)),
-    ..GlobalFilter::default()
-})]
+#[case::the_time_window_is_disjoint_from_the_recording(GlobalFilter::default().with_time_bounds(
+    Some(test_util::epoch() + Duration::hours(5)),
+    None,
+))]
+#[case::the_recording_is_shorter_than_the_minimum_duration(
+    GlobalFilter::default().with_minimum_duration(Some(Duration::hours(5)))
+)]
 fn no_log_hexagon_is_hovered_or_clicked_on_a_recording_the_filter_rejects(
     #[case] filter: GlobalFilter,
 ) {
@@ -212,10 +210,10 @@ fn a_hexagon_stands_for_no_entry_the_time_window_hides() {
 /// The count leaves out what the filter removed: the display toggle states how
 /// many hexagons the map would draw.
 #[rstest::rstest]
-#[case::the_recording_is_shorter_than_the_minimum_duration(GlobalFilter {
-    min_duration: Some(Duration::hours(5)),
-    ..GlobalFilter::default()
-}, 0)]
+#[case::the_recording_is_shorter_than_the_minimum_duration(
+    GlobalFilter::default().with_minimum_duration(Some(Duration::hours(5))),
+    0
+)]
 #[case::the_time_window_keeps_the_first_fifteen_entries(test_util::window_ending_at(14), 15)]
 fn the_log_match_count_states_the_hexagons_the_filter_keeps(
     #[case] filter: GlobalFilter,

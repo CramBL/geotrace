@@ -306,10 +306,7 @@ fn a_time_window_keeps_the_fixes_on_both_sides_of_a_backward_time_step() {
         fixes_at(&[0, 10_000, 1_000, 2_000]),
         vec![],
     ));
-    state.filter = GlobalFilter {
-        time_end: Some(utc(5_000)),
-        ..GlobalFilter::default()
-    };
+    state.filter = GlobalFilter::default().with_time_bounds(None, Some(utc(5_000)));
     let mut session = QuerySession::new();
 
     test_util::run_text(
@@ -332,10 +329,7 @@ fn a_window_matching_on_a_channel_leaves_out_the_fix_the_time_window_rejects() {
         fixes_at(&[0, 10_000, 1_000]),
         vec![channel],
     ));
-    state.filter = GlobalFilter {
-        time_end: Some(utc(5_000)),
-        ..GlobalFilter::default()
-    };
+    state.filter = GlobalFilter::default().with_time_bounds(None, Some(utc(5_000)));
     let mut session = QuerySession::new();
 
     test_util::run_text(
@@ -358,10 +352,7 @@ fn a_channel_aggregate_leaves_out_a_sample_beside_a_fix_the_time_window_rejects(
         fixes_at(&[0, 10_000, 1_000]),
         vec![channel],
     ));
-    state.filter = GlobalFilter {
-        time_end: Some(utc(5_000)),
-        ..GlobalFilter::default()
-    };
+    state.filter = GlobalFilter::default().with_time_bounds(None, Some(utc(5_000)));
     let mut session = QuerySession::new();
 
     test_util::run_text(
@@ -384,10 +375,7 @@ fn a_window_over_a_sliced_track_reads_the_samples_of_its_own_fixes() {
         fixes_at(&[0, 1_000, 2_000, 3_000]),
         vec![channel],
     ));
-    state.filter = GlobalFilter {
-        time_start: Some(utc(1_000)),
-        ..GlobalFilter::default()
-    };
+    state.filter = GlobalFilter::default().with_time_bounds(Some(utc(1_000)), None);
     let mut session = QuerySession::new();
 
     test_util::run_text(
@@ -573,10 +561,7 @@ fn a_duration_window_reads_a_channel_only_where_its_full_span_fits_the_time_filt
         fixes_at(&[0, 1_000, 2_000, 3_000, 4_000]),
         vec![channel],
     ));
-    state.filter = GlobalFilter {
-        time_end: filter_end_millis.map(utc),
-        ..GlobalFilter::default()
-    };
+    state.filter = GlobalFilter::default().with_time_bounds(None, filter_end_millis.map(utc));
     let mut session = QuerySession::new();
 
     test_util::run_text(
@@ -603,10 +588,7 @@ fn a_channel_source_duration_window_matches_no_sample_past_the_filter_end() {
         fixes_at(&[0, 1_000, 2_000, 3_000, 4_000]),
         vec![channel],
     ));
-    state.filter = GlobalFilter {
-        time_end: Some(utc(2_500)),
-        ..GlobalFilter::default()
-    };
+    state.filter = GlobalFilter::default().with_time_bounds(None, Some(utc(2_500)));
     let mut session = QuerySession::new();
 
     test_util::run_text(
@@ -666,10 +648,7 @@ fn a_time_filter_leaving_no_room_for_a_window_is_reported_without_calling_the_tr
         ]),
         vec![],
     ));
-    state.filter = GlobalFilter {
-        time_end: Some(utc(1_000)),
-        ..GlobalFilter::default()
-    };
+    state.filter = GlobalFilter::default().with_time_bounds(None, Some(utc(1_000)));
     let mut session = QuerySession::new();
 
     test_util::run_text(
@@ -698,10 +677,7 @@ fn a_channel_query_matches_only_the_samples_inside_the_time_window() {
         fixes_at(&[0, 2_000, 4_000, 6_000, 8_000]),
         vec![channel],
     ));
-    state.filter = GlobalFilter {
-        time_end: Some(utc(5_000)),
-        ..GlobalFilter::default()
-    };
+    state.filter = GlobalFilter::default().with_time_bounds(None, Some(utc(5_000)));
     let mut session = QuerySession::new();
 
     test_util::run_text(&mut session, &state, "@sensor | where @sensor > 5 | draw");
@@ -731,11 +707,7 @@ fn a_channel_query_keeps_samples_at_each_bound_of_the_time_window() {
         fixes_at(&[0, 1_000, 2_000, 3_000, 4_000]),
         vec![channel],
     ));
-    state.filter = GlobalFilter {
-        time_start: Some(utc(1_000)),
-        time_end: Some(utc(3_000)),
-        ..GlobalFilter::default()
-    };
+    state.filter = GlobalFilter::default().with_time_bounds(Some(utc(1_000)), Some(utc(3_000)));
     let mut session = QuerySession::new();
 
     test_util::run_text(&mut session, &state, "@sensor | where @sensor > 5 | draw");
@@ -755,10 +727,7 @@ fn a_channel_query_matches_nothing_under_a_time_window_holding_no_sample() {
         fixes_at(&[0, 2_000, 4_000, 6_000, 8_000]),
         vec![channel],
     ));
-    state.filter = GlobalFilter {
-        time_end: Some(utc(5_000)),
-        ..GlobalFilter::default()
-    };
+    state.filter = GlobalFilter::default().with_time_bounds(None, Some(utc(5_000)));
     let mut session = QuerySession::new();
 
     test_util::run_text(&mut session, &state, "@sensor | where @sensor > 5 | draw");
@@ -779,10 +748,7 @@ fn a_channel_query_under_a_time_window_keeps_the_samples_around_a_backward_time_
         fixes_at(&[0, 1_000, 2_000, 10_000]),
         vec![channel],
     ));
-    state.filter = GlobalFilter {
-        time_end: Some(utc(5_000)),
-        ..GlobalFilter::default()
-    };
+    state.filter = GlobalFilter::default().with_time_bounds(None, Some(utc(5_000)));
     let mut session = QuerySession::new();
 
     test_util::run_text(&mut session, &state, "@sensor | where @sensor > 5 | draw");

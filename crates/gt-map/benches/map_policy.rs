@@ -152,10 +152,7 @@ fn bench_candidate_resolution(c: &mut Criterion) {
     generated_visibility.set_hidden(test_util::track0(), iter::once(generated_kind));
     let mut event_visibility = EventMarkerVisibility::default();
     event_visibility.set_hidden(test_util::track0(), iter::once(event_parent));
-    let filter = GlobalFilter {
-        time_end: Some(time_end),
-        ..GlobalFilter::default()
-    };
+    let filter = GlobalFilter::default().with_time_bounds(None, Some(time_end));
     let query_matches = hidden_range(measured_index..measured_index + 1);
     let scope = MapScope {
         files: &files,

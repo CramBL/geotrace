@@ -58,11 +58,10 @@ fn with_channel(mut file: LoadedFile, channel_name: &str) -> LoadedFile {
 
 /// A window from `start` to `end`, both in seconds from the first fix.
 fn window(start: i64, end: i64) -> GlobalFilter {
-    GlobalFilter {
-        time_start: Some(test_util::at_second(start)),
-        time_end: Some(test_util::at_second(end)),
-        ..GlobalFilter::default()
-    }
+    GlobalFilter::default().with_time_bounds(
+        Some(test_util::at_second(start)),
+        Some(test_util::at_second(end)),
+    )
 }
 
 /// The sources of a plot the window narrows, with every archive empty.
@@ -157,10 +156,7 @@ fn the_cross_highlight_lands_on_a_fix_inside_the_time_window() {
 fn a_track_below_the_minimum_duration_holds_no_cross_highlight() {
     let files = [recording(0, 60, Constellation::Gps)];
     let visibility = TrackDataVisibility::from_loaded(&files);
-    let filter = GlobalFilter {
-        min_duration: Some(TimeDelta::hours(1)),
-        ..GlobalFilter::default()
-    };
+    let filter = GlobalFilter::default().with_minimum_duration(Some(TimeDelta::hours(1)));
 
     assert_eq!(
         gt_plot::find_closest_tpv(&files, &visibility, &filter, test_util::at_second(30)),
@@ -183,7 +179,10 @@ fn a_small_move_of_the_window_end_redraws_the_lines() {
         .render()
         .expect("the harness renders a frame");
 
-    plot.sources_mut().filter.time_end = Some(test_util::at_second(2960));
+    plot.sources_mut().filter.set_time_bounds(
+        Some(test_util::at_second(0)),
+        Some(test_util::at_second(2960)),
+    );
     plot.harness.inner.run_steps(2);
     let after = plot
         .harness
@@ -221,7 +220,10 @@ fn a_pinned_view_redraws_its_lines_when_the_window_end_moves() {
         .render()
         .expect("the harness renders a frame");
 
-    plot.sources_mut().filter.time_end = Some(test_util::at_second(2960));
+    plot.sources_mut().filter.set_time_bounds(
+        Some(test_util::at_second(0)),
+        Some(test_util::at_second(2960)),
+    );
     plot.harness.inner.run_steps(2);
     let after = plot
         .harness

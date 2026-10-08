@@ -647,11 +647,10 @@ mod tests {
     }
 
     fn window(start_minute: Option<i64>, end_minute: Option<i64>) -> GlobalFilter {
-        GlobalFilter {
-            time_start: start_minute.map(|minute| epoch() + Duration::minutes(minute)),
-            time_end: end_minute.map(|minute| epoch() + Duration::minutes(minute)),
-            ..GlobalFilter::default()
-        }
+        GlobalFilter::default().with_time_bounds(
+            start_minute.map(|minute| epoch() + Duration::minutes(minute)),
+            end_minute.map(|minute| epoch() + Duration::minutes(minute)),
+        )
     }
 
     /// A view over the fixture's first fix, at a scale that puts its five

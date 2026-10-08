@@ -128,8 +128,10 @@ impl MapScenario {
     /// Narrow the global time filter to `start..=end`, in seconds from the
     /// dataset epoch. `None` leaves that end open.
     pub fn set_time_filter_secs(&mut self, start: Option<i64>, end: Option<i64>) -> &mut Self {
-        self.filter.time_start = start.map(|secs| dataset::epoch() + Duration::seconds(secs));
-        self.filter.time_end = end.map(|secs| dataset::epoch() + Duration::seconds(secs));
+        self.filter.set_time_bounds(
+            start.map(|secs| dataset::epoch() + Duration::seconds(secs)),
+            end.map(|secs| dataset::epoch() + Duration::seconds(secs)),
+        );
         self.sync()
     }
 

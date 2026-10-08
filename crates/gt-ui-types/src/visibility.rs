@@ -350,10 +350,7 @@ mod tests {
     #[test]
     fn failing_the_track_filter_is_out_of_scope() {
         let files = test_util::one_track_file();
-        let filter = GlobalFilter {
-            min_duration: Some(TimeDelta::hours(1)),
-            ..GlobalFilter::default()
-        };
+        let filter = GlobalFilter::default().with_minimum_duration(Some(TimeDelta::hours(1)));
         assert!(track_in_scope(&files, &vis_all(), &filter, test_util::track0()).is_none());
     }
 

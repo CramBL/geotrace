@@ -84,14 +84,15 @@ fn shapes_with(
 /// geometry it was snapped to is part of that nothing: it is the same
 /// recording, drawn beside itself.
 #[rstest::rstest]
-#[case::the_time_window_is_disjoint_from_the_recording(GlobalFilter {
-    time_start: Some(test_util::epoch() + Duration::hours(5)),
-    ..GlobalFilter::default()
-})]
-#[case::the_recording_is_shorter_than_the_minimum_duration(GlobalFilter {
-    min_duration: Some(Duration::hours(5)),
-    ..GlobalFilter::default()
-})]
+#[case::the_time_window_is_disjoint_from_the_recording(
+    GlobalFilter::default().with_time_bounds(
+        Some(test_util::epoch() + Duration::hours(5)),
+        None,
+    )
+)]
+#[case::the_recording_is_shorter_than_the_minimum_duration(
+    GlobalFilter::default().with_minimum_duration(Some(Duration::hours(5)))
+)]
 fn a_snapped_track_of_a_filtered_out_recording_is_not_drawn(#[case] filter: GlobalFilter) {
     let files = test_util::a_walking_recording();
 

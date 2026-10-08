@@ -51,10 +51,7 @@ fn revealing_matches_of_a_recording_under_the_minimum_duration_leaves_the_camera
     // fixes is inside the time window: the recording runs for 29 minutes.
     let mut map = MapScene::of(files)
         .draw_state(|state| {
-            state.filter = GlobalFilter {
-                min_duration: Some(Duration::hours(5)),
-                ..GlobalFilter::default()
-            };
+            state.filter = GlobalFilter::default().with_minimum_duration(Some(Duration::hours(5)));
         })
         .overlays(|overlays| {
             overlays.query_matches = Some(test_util::a_run_drawing(test_util::track0(), 20..30))

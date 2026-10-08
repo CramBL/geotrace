@@ -65,9 +65,15 @@ struct FilterTimeWindow {
 
 impl From<&GlobalFilter> for FilterTimeWindow {
     fn from(filter: &GlobalFilter) -> Self {
+        let Some((start, end)) = filter.time_window().bounds() else {
+            return Self {
+                start: Some(f64::INFINITY),
+                end: Some(f64::NEG_INFINITY),
+            };
+        };
         Self {
-            start: filter.time_start.map(|t| t.timestamp() as f64),
-            end: filter.time_end.map(|t| t.timestamp() as f64),
+            start: start.map(|time| time.timestamp() as f64),
+            end: end.map(|time| time.timestamp() as f64),
         }
     }
 }

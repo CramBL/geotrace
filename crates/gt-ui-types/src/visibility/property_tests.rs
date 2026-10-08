@@ -1,5 +1,4 @@
 use chrono::TimeDelta;
-use gt_filter::GlobalFilter;
 use gt_types::{
     CustomMarker, DataCategory, FileIdx, GeneratedMarkerKindTag, Latitude, Longitude, MarkerIcon,
     PointIdx, TrackIdx, TrackRef,
@@ -125,7 +124,9 @@ impl VisibilityScenario {
         fixture.display_mask = display_mask;
 
         if !self.track_filter_passes {
-            fixture.filter.min_duration = Some(TimeDelta::hours(1));
+            fixture
+                .filter
+                .set_minimum_duration(Some(TimeDelta::hours(1)));
         }
         if !self.element_time_passes && !self.element.is_missing() {
             withhold_element_by_time(&mut fixture, point);
@@ -231,18 +232,22 @@ fn withhold_element_by_time(fixture: &mut ScopeFixture, point: DataPointRef) {
     let track_start = track.metadata.time_range.start;
     let track_end = track.metadata.time_range.end;
     let tick = TimeDelta::nanoseconds(1);
-    fixture.filter = if time < track_end {
-        GlobalFilter {
-            time_start: Some(time + tick),
-            ..fixture.filter
-        }
+    if time < track_end {
+        let end = fixture
+            .filter
+            .time_window()
+            .bounds()
+            .and_then(|(_, end)| end);
+        fixture.filter.set_time_bounds(Some(time + tick), end);
     } else {
         debug_assert!(time > track_start);
-        GlobalFilter {
-            time_end: Some(time - tick),
-            ..fixture.filter
-        }
-    };
+        let start = fixture
+            .filter
+            .time_window()
+            .bounds()
+            .and_then(|(start, _)| start);
+        fixture.filter.set_time_bounds(start, Some(time - tick));
+    }
 }
 
 fn element_case() -> impl Strategy<Value = ElementCase> {
