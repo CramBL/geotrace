@@ -2,24 +2,23 @@ use egui::Grid;
 use egui::{Color32, Pos2, Response, Stroke, Ui};
 use egui_phosphor::regular::ARROW_RIGHT as ICON_ARROW_RIGHT;
 use gt_types::{
-    DataCategory, GeneratedMarker, GeneratedMarkerIdx, GeneratedMarkerKind, GeneratedMarkerRef,
-    LoadedTrack, PointIdx, SpatialPoint,
+    DataCategory, GeneratedMarker, GeneratedMarkerKind, LoadedTrack, PointIdx, SpatialPoint,
 };
-use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, MapPresence};
+use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, ResolvedElement};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::icon_mesh::{IconId, IconInstance, IconMeshBatch, IconMeshLibrary};
 use crate::{tpv_renderer, track_renderer, viewport};
 
 #[derive(bon::Builder)]
-pub struct GeneratedMarkerRenderer<'a> {
-    scope: MapPresence<'a>,
+pub(crate) struct GeneratedMarkerRenderer<'a, 'p> {
+    plan: &'a viewport::MapFramePlan<'p>,
     highlight: &'a MapHighlight,
     visible_generated: &'a [SpatialPoint],
     icon_meshes: Option<&'a IconMeshLibrary>,
 }
 
-impl<'a> GeneratedMarkerRenderer<'a> {
+impl<'a, 'p> GeneratedMarkerRenderer<'a, 'p> {
     fn is_point_highlighted(&self, point_ref: MapElementRef) -> bool {
         if self.highlight.sticky.is_some_and(|r| r == point_ref) {
             return true;
@@ -76,7 +75,7 @@ pub(crate) fn show_hover_label(
     }
 }
 
-impl Plugin for GeneratedMarkerRenderer<'_> {
+impl Plugin for GeneratedMarkerRenderer<'_, '_> {
     fn run(
         self: Box<Self>,
         ui: &mut Ui,
@@ -88,21 +87,13 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             crate::transform::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
         for sp in self.visible_generated {
-            if !viewport::is_spatial_point_visible(sp, self.scope) {
-                continue;
-            }
-            let marker_ref = GeneratedMarkerRef::new(
-                sp.track_ref(),
-                GeneratedMarkerIdx::new(sp.point_index.as_usize()),
-            );
-            let Some(marker) = marker_ref
-                .track
-                .resolve(self.scope.files())
-                .and_then(|track| marker_ref.index.get(&track.generated_markers))
-            else {
+            let Some(present) = self.plan.resolve_spatial(sp) else {
                 continue;
             };
-            let point_ref = MapElementRef::GeneratedMarker(marker_ref);
+            let ResolvedElement::GeneratedMarker(marker) = present.element() else {
+                continue;
+            };
+            let point_ref = present.element_ref();
             let screen_pos = transform.to_screen(sp.merc);
             let highlighted = self.is_point_highlighted(point_ref);
             let fade =

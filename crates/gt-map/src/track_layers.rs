@@ -27,7 +27,7 @@ use crate::track_endpoint_renderer::{
 };
 use crate::track_renderer;
 use crate::transform::{self, GeometryCull, MercTransform};
-use crate::viewport::{TrackEntry, TrackPlan};
+use crate::viewport::{MapFramePlan, TrackEntry};
 
 /// Per-point styling key for the unified line passes: the trackline dashes
 /// ghost stretches. The quality line colors by fix quality and crossfade
@@ -98,8 +98,8 @@ impl TrackGeometry<'_> {
                 }
                 let chevron = ChevronFix::for_fix(point.fix)?;
                 let visible = match chevron {
-                    ChevronFix::DeadReckoned => self.entry.ghost_fixes,
-                    ChevronFix::CoordinateOutOfRange => self.entry.fade.is_some(),
+                    ChevronFix::DeadReckoned => self.entry.ghost_fixes(),
+                    ChevronFix::CoordinateOutOfRange => self.entry.fade().is_some(),
                 };
                 if !visible {
                     return None;
@@ -125,7 +125,7 @@ impl TrackGeometry<'_> {
 
     fn paints_quality_line(&self) -> bool {
         matches!(
-            self.entry.fade,
+            self.entry.fade(),
             Some(TrackIconFade::PerFix | TrackIconFade::AllHidden)
         )
     }
@@ -133,16 +133,16 @@ impl TrackGeometry<'_> {
     /// The fade to draw icons with. `None` when no icons draw this frame.
     fn icon_fade(&self) -> Option<TrackIconFade> {
         self.entry
-            .fade
-            .or(self.entry.ghost_fade)
+            .fade()
+            .or(self.entry.ghost_fade())
             .filter(|&fade| fade != TrackIconFade::AllHidden)
     }
 }
 
 #[derive(bon::Builder)]
-pub struct TrackLayers<'a> {
+pub(crate) struct TrackLayers<'a, 'p> {
     files: &'a [LoadedFile],
-    plan: &'a TrackPlan,
+    plan: &'a MapFramePlan<'p>,
     highlight: &'a MapHighlight,
     filter: &'a GlobalFilter,
     /// Indices of the real fixes inside the viewport, grouped per track by
@@ -186,7 +186,7 @@ pub struct TrackLayers<'a> {
     endpoint_flags: &'a mut PendingEndpointFlags,
 }
 
-impl Plugin for TrackLayers<'_> {
+impl Plugin for TrackLayers<'_, '_> {
     fn run(
         mut self: Box<Self>,
         ui: &mut Ui,
@@ -259,7 +259,7 @@ impl Plugin for TrackLayers<'_> {
     }
 }
 
-impl<'a> TrackLayers<'a> {
+impl<'a, 'p> TrackLayers<'a, 'p> {
     /// The single geometry walk for every visible track: LOD selection,
     /// time filter, projection, culling, and the per-point styling key. The
     /// quality color is keyed even when only the trackline draws - it is a
@@ -302,28 +302,28 @@ impl<'a> TrackLayers<'a> {
                 // Blink overlay: a bright pulsing stroke on top of newly
                 // loaded tracks for the first 3 seconds after load.
                 let need_blink = self.blink_alpha > 0.0 && fi.as_usize() >= self.new_file_boundary;
-                let skip_solid = track_renderer::skip_solid_trackline(entry.fade, need_blink);
+                let skip_solid = track_renderer::skip_solid_trackline(entry.fade(), need_blink);
                 let paint_trackline =
-                    (entry.trackline && !skip_solid) || entry.ghost_fixes || need_blink;
+                    (entry.trackline() && !skip_solid) || entry.ghost_fixes() || need_blink;
                 let paint_icons = matches!(
-                    entry.fade.or(entry.ghost_fade),
+                    entry.fade().or(entry.ghost_fade()),
                     Some(TrackIconFade::PerFix | TrackIconFade::AllVisible)
                 );
                 let paint_quality = matches!(
-                    entry.fade,
+                    entry.fade(),
                     Some(TrackIconFade::PerFix | TrackIconFade::AllHidden)
                 );
                 if !paint_trackline
                     && !paint_quality
                     && !paint_icons
-                    && !entry.sat_labels
-                    && !entry.sky_glyphs
+                    && !entry.sat_labels()
+                    && !entry.sky_glyphs()
                 {
                     continue;
                 }
 
                 let track_ref = TrackRef::new(fi, ti);
-                let fade = entry.fade;
+                let fade = entry.fade();
                 let hover_match = self
                     .highlight
                     .hover_match
@@ -479,10 +479,10 @@ impl<'a> TrackLayers<'a> {
             let blink = geo
                 .need_blink
                 .then(|| track_renderer::blink_stroke(self.blink_alpha));
-            let skip_solid = track_renderer::skip_solid_trackline(geo.entry.fade, geo.need_blink);
+            let skip_solid = track_renderer::skip_solid_trackline(geo.entry.fade(), geo.need_blink);
             let visibility = track_renderer::TracklineVisibility {
-                solid: geo.entry.trackline && !skip_solid,
-                ghost: geo.entry.ghost_fixes,
+                solid: geo.entry.trackline() && !skip_solid,
+                ghost: geo.entry.ghost_fixes(),
             };
             paint_trackline_path(ui, &geo.path, stroke, blink, visibility);
         }
@@ -511,13 +511,13 @@ impl<'a> TrackLayers<'a> {
         // leaving `self.sat_label_scratch` free to borrow mutably.
         let filter = self.filter;
         let query_matches = self.query_matches;
-        let ghost_fixes = geometries.iter().any(|geo| geo.entry.ghost_fixes);
+        let ghost_fixes = geometries.iter().any(|geo| geo.entry.ghost_fixes());
         sat_labels::select_sat_labels(
             &mut *self.sat_label_scratch,
             geometries
                 .iter()
                 .enumerate()
-                .filter(|(_, geo)| geo.entry.sat_labels)
+                .filter(|(_, geo)| geo.entry.sat_labels())
                 .map(|(i, geo)| {
                     let track_ref = TrackRef::new(geo.fi, geo.ti);
                     let query_view = TrackMatchView::for_track(query_matches, track_ref);
@@ -572,7 +572,7 @@ impl<'a> TrackLayers<'a> {
             geometries
                 .iter()
                 .enumerate()
-                .filter(|(_, geo)| geo.entry.sky_glyphs)
+                .filter(|(_, geo)| geo.entry.sky_glyphs())
                 .map(|(i, geo)| {
                     let track_ref = TrackRef::new(geo.fi, geo.ti);
                     let query_view = TrackMatchView::for_track(query_matches, track_ref);
@@ -649,7 +649,11 @@ impl<'a> TrackLayers<'a> {
                 } else {
                     tpv
                 };
-                let real_tpv = if geo.entry.fade.is_some() { tpv } else { None };
+                let real_tpv = if geo.entry.fade().is_some() {
+                    tpv
+                } else {
+                    None
+                };
                 if real_tpv.is_some() || !chevrons.is_empty() {
                     tpv_renderer::draw_track_icons(
                         ui,
@@ -922,7 +926,7 @@ mod tests {
     use crate::track_endpoint_renderer::PendingEndpointFlags;
     use crate::track_renderer::TracklineVisibility;
     use crate::transform::{self, GeometryCull, MercTransform};
-    use crate::viewport::{TrackEntry, TrackPlan};
+    use crate::viewport::{MapFramePlan, TrackEntry, TrackLayer};
 
     /// Snapshot: the focus scrim at full progress dims the scene by darkening
     /// it, in both themes. A regression guard for the light-mode wash-out (the
@@ -1130,14 +1134,15 @@ mod tests {
             fi: test_util::track0().fi,
             ti: test_util::track0().index,
             track,
-            entry: TrackEntry {
-                trackline: true,
-                fade: Some(TrackIconFade::PerFix),
-                sat_labels: false,
-                sky_glyphs: false,
-                ghost_fixes: true,
-                ghost_fade: Some(TrackIconFade::PerFix),
-            },
+            entry: TrackEntry::for_test(
+                &[
+                    TrackLayer::Trackline,
+                    TrackLayer::RealFixes,
+                    TrackLayer::GhostFixes,
+                ],
+                Some(TrackIconFade::PerFix),
+                Some(TrackIconFade::PerFix),
+            ),
             paint_trackline: true,
             need_blink: false,
             path: VisiblePath::OffScreen,
@@ -1324,7 +1329,7 @@ mod tests {
         let hits = vec![0, 1, 2, 3];
 
         let mut geometry = geometry_of(&track, &transform, &filter);
-        geometry.entry.ghost_fixes = true;
+        geometry.entry.set_ghost_fixes(true);
         let chevrons = geometry.chevrons_of(&hits, &filter, &query_view);
         assert_eq!(
             chevrons,
@@ -1335,20 +1340,20 @@ mod tests {
             ]
         );
 
-        geometry.entry.ghost_fixes = false;
+        geometry.entry.set_ghost_fixes(false);
         let chevrons = geometry.chevrons_of(&hits, &filter, &query_view);
         assert_eq!(chevrons, vec![(2, ChevronFix::CoordinateOutOfRange)]);
 
         // Soloing ghost fixes: TrackPoints is hidden (fade is None), ghost fixes is visible.
-        geometry.entry.fade = None;
-        geometry.entry.ghost_fixes = true;
+        geometry.entry.set_fade(None);
+        geometry.entry.set_ghost_fixes(true);
         let chevrons = geometry.chevrons_of(&hits, &filter, &query_view);
         assert_eq!(
             chevrons,
             vec![(1, ChevronFix::DeadReckoned), (3, ChevronFix::DeadReckoned),]
         );
 
-        geometry.entry.ghost_fixes = false;
+        geometry.entry.set_ghost_fixes(false);
         let chevrons = geometry.chevrons_of(&hits, &filter, &query_view);
         assert!(chevrons.is_empty());
     }
@@ -1388,7 +1393,7 @@ mod tests {
         let files = [file];
         let vis = crate::tests::vis_all_visible();
         let mask = DisplayMask::default();
-        let plan = TrackPlan::compute(&files, &vis, &filter, mask, 15.0);
+        let plan = MapFramePlan::compute_for_test(&files, &vis, &filter, mask, 15.0);
         let mut sat_label_scratch = LabelSelection::default();
         let mut sky_glyph_scratch = GlyphSelection::default();
         let mut endpoint_flags = PendingEndpointFlags::default();
@@ -1523,7 +1528,7 @@ mod tests {
         let vis = crate::tests::vis_all_visible();
 
         let mask = DisplayMask::default();
-        let plan = TrackPlan::compute(&files, &vis, &filter, mask, 15.0);
+        let plan = MapFramePlan::compute_for_test(&files, &vis, &filter, mask, 15.0);
         let mut sat_label_scratch = LabelSelection::default();
         let mut sky_glyph_scratch = GlyphSelection::default();
         let mut endpoint_flags = PendingEndpointFlags::default();
@@ -1558,7 +1563,8 @@ mod tests {
 
         let mut mask_no_ghost = DisplayMask::default();
         mask_no_ghost.set_visible(DisplayCategory::GhostFixes, false);
-        let plan_no_ghost = TrackPlan::compute(&files, &vis, &filter, mask_no_ghost, 15.0);
+        let plan_no_ghost =
+            MapFramePlan::compute_for_test(&files, &vis, &filter, mask_no_ghost, 15.0);
         let mut sat_label_scratch = LabelSelection::default();
         let mut sky_glyph_scratch = GlyphSelection::default();
         let mut endpoint_flags = PendingEndpointFlags::default();
