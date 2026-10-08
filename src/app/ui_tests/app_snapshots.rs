@@ -2,6 +2,7 @@ use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
 use gt_store::{FlareStore, IonexStore, SolarStore};
 use gt_test_utils::{DEMO_BYTES, GOLD_BYTES, SyntheticGtdSpec, TestHarness};
 use gt_types::{FileIdx, TrackIdx, TrackRef};
+use gt_ui_types::{MapElementRef, MapEligibility};
 use strum::IntoEnumIterator as _;
 
 use crate::app::App;
@@ -165,10 +166,21 @@ fn snapshot_app_point_window_coordinate_out_of_range() {
 
     {
         let mut shared = harness.inner.state().shared.borrow_mut();
-        shared.highlight.sticky = Some(gt_ui_types::MapElementRef::Fix(gt_types::FixRef::new(
+        let shared = &mut *shared;
+        let point_ref = MapElementRef::Fix(gt_types::FixRef::new(
             TrackRef::new(fi, TrackIdx::new(0)),
             out_of_range,
-        )));
+        ));
+        let scope = MapEligibility::new(
+            shared.loaded_files.files(),
+            shared.tree.visibility(),
+            &shared.filter,
+            None,
+            shared.tree.generated_marker_visibility(),
+            shared.tree.event_marker_visibility(),
+        )
+        .with_display_mask(shared.display_mask);
+        assert!(shared.highlight.toggle_sticky_if_drawn(scope, point_ref));
         shared.zoom_to_visible_request = true;
     }
     harness.inner.run_steps(30);

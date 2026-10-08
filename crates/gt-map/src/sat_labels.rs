@@ -7,11 +7,9 @@
 //! highest-priority anchor wins each Mercator cell across all tracks at
 //! once.
 
+use crate::collision_grid;
 use gt_types::sat_label::SatLabelTier;
 use gt_types::{LoadedTrack, MercBounds, NavPoint, TrackRef};
-use gt_ui_types::TrackMatchView;
-
-use crate::collision_grid;
 
 /// Reusable label-decimation scratch, held across frames by the map widget.
 pub(crate) type LabelSelection = collision_grid::DecimationScratch<Candidate>;
@@ -32,21 +30,21 @@ pub(crate) struct Candidate {
 /// Resolve which satellite-label anchors get a label this frame into
 /// `scratch`, returning the per-geometry point-index lists it holds.
 ///
-/// `tracks` yields each visible track with its geometry index, its ref, and
-/// its query ranges. `point_passes` applies the caller's own per-point
-/// conditions (time filter, query hiding). Anchors outside `viewport` are
+/// `tracks` yields each visible track with its geometry index and stable ref.
+/// `point_passes` applies the caller's shared per-point semantic policy.
+/// Anchors outside `viewport` are
 /// skipped. Within each `cell_merc`-sized grid cell the highest-priority
 /// candidate wins ([`Candidate`]'s ordering).
 pub(crate) fn select_sat_labels<'s, 'a>(
     scratch: &'s mut LabelSelection,
-    tracks: impl Iterator<Item = (usize, TrackRef, &'a LoadedTrack, TrackMatchView<'a>)>,
+    tracks: impl Iterator<Item = (usize, TrackRef, &'a LoadedTrack)>,
     geometry_count: usize,
     viewport: MercBounds,
     cell_merc: f64,
-    mut point_passes: impl FnMut(&TrackMatchView<'a>, usize, &NavPoint) -> bool,
+    mut point_passes: impl FnMut(TrackRef, usize, &NavPoint) -> bool,
 ) -> &'s [Vec<usize>] {
     let candidates = scratch.candidates();
-    for (geometry_index, track_ref, track, query_view) in tracks {
+    for (geometry_index, track_ref, track) in tracks {
         // Only a track that has a geometry carries anchors, so a track drawn
         // nowhere contributes no candidate.
         let Some(placed) = track.placed_points() else {
@@ -61,7 +59,7 @@ pub(crate) fn select_sat_labels<'s, 'a>(
             {
                 continue;
             }
-            if !point_passes(&query_view, anchor.point.as_usize(), point.fix) {
+            if !point_passes(track_ref, anchor.point.as_usize(), point.fix) {
                 continue;
             }
             candidates.push((
@@ -114,14 +112,10 @@ mod tests {
         let mut scratch = LabelSelection::default();
         select_sat_labels(
             &mut scratch,
-            tracks.iter().enumerate().map(|(i, t)| {
-                (
-                    i,
-                    TrackRef::new(FileIdx::new(0), TrackIdx::new(i)),
-                    t,
-                    TrackMatchView::default(),
-                )
-            }),
+            tracks
+                .iter()
+                .enumerate()
+                .map(|(i, t)| (i, TrackRef::new(FileIdx::new(0), TrackIdx::new(i)), t)),
             tracks.len(),
             viewport,
             cell_merc,
@@ -227,7 +221,7 @@ mod tests {
         let mut scratch = LabelSelection::default();
         let selected = select_sat_labels(
             &mut scratch,
-            [(0, test_util::track0(), &track, TrackMatchView::default())].into_iter(),
+            [(0, test_util::track0(), &track)].into_iter(),
             1,
             WORLD,
             1e-9,

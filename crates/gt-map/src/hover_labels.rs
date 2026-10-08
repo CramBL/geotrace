@@ -14,8 +14,9 @@ use gt_types::{
     PointIdx,
 };
 use gt_ui_theme::EM_DASH;
-use gt_ui_types::{HoverCandidates, MapElementRef, MapHighlight, QueryMatches};
+use gt_ui_types::{MapElementRef, MapHighlight, QueryMatches};
 
+use crate::hover_candidates::HoverCandidates;
 use crate::jamming_renderer::InterferenceCellLabel;
 use crate::log_match_renderer::LogHexagonLabel;
 use crate::recording_labels::RecordingLabels;
@@ -188,13 +189,14 @@ impl OpenPopups {
 /// Which recorded element's label the stack takes this frame, and `None`
 /// where none of them shows one.
 ///
-/// An individual label states what [`MapHighlight::hover_candidates`] holds,
-/// which is the previous frame's hit test. `current_candidates` are this
+/// An individual label states what `previous_candidates` held on the
+/// previous frame's hit test. `current_candidates` are this
 /// frame's. The two kinds of label are never drawn together: the compound
 /// label replaces the individual ones only once both frames have several
 /// elements under the pointer.
 pub(crate) fn recorded_element_label(
     highlight: &MapHighlight,
+    previous_candidates: HoverCandidates,
     current_candidates: HoverCandidates,
     popups: OpenPopups,
 ) -> Option<RecordedElementLabel> {
@@ -204,7 +206,7 @@ pub(crate) fn recorded_element_label(
     {
         return Some(RecordedElementLabel::Compound(current_candidates));
     }
-    let candidate = highlight.hover_candidates.primary()?;
+    let candidate = previous_candidates.primary()?;
     highlight
         .shows_hover_label(candidate, popups.egui_popup_was_open_last_frame)
         .then_some(RecordedElementLabel::One(candidate))
@@ -509,19 +511,23 @@ const HOVER_BAND_ROUNDING_PX: f32 = 3.0;
 
 #[cfg(test)]
 mod tests {
+    use gt_filter::GlobalFilter;
     use gt_types::DataCategory;
-    use gt_ui_types::{HoverCandidates, MapElementRef, MapHighlight};
+    use gt_ui_types::{
+        DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, MapElementRef,
+        MapEligibility, MapHighlight, TrackDataVisibility,
+    };
     use rstest::rstest;
 
-    use super::{OpenPopups, RecordedElementLabel};
+    use super::{HoverCandidates, OpenPopups, RecordedElementLabel};
     use crate::test_util;
 
     fn candidates(categories: &[DataCategory]) -> HoverCandidates {
-        let mut candidates = HoverCandidates::default();
-        for &category in categories {
-            candidates.keep_nearest(test_util::point_ref(category, 0));
-        }
-        candidates
+        HoverCandidates::from_refs_for_test(
+            categories
+                .iter()
+                .map(|&category| test_util::point_ref(category, 0)),
+        )
     }
 
     /// What a case varies beside the candidates of the two frames.
@@ -594,15 +600,26 @@ mod tests {
         #[case] frame: FrameInputs,
         #[case] expected: Option<RecordedElementLabel>,
     ) {
-        let highlight = MapHighlight {
-            hover_candidates: candidates(previous_categories),
-            sticky: frame.pinned,
-            suppress_hover_labels: frame.settled_multi_hover || frame.popups.disambiguation,
-            ..MapHighlight::default()
-        };
+        let mut highlight = MapHighlight::default();
+        highlight.suppress_hover_labels = frame.settled_multi_hover || frame.popups.disambiguation;
+        if let Some(pinned) = frame.pinned {
+            let files = vec![test_util::a_recording_with_every_marker_kind()];
+            let visibility = TrackDataVisibility::from_loaded(&files);
+            let filter = GlobalFilter::default();
+            let generated = GeneratedMarkerVisibility::default();
+            let event = EventMarkerVisibility::default();
+            let scope = MapEligibility::new(&files, &visibility, &filter, None, &generated, &event)
+                .with_display_mask(DisplayMask::default());
+            assert!(highlight.toggle_sticky_if_drawn(scope, pinned));
+        }
 
         assert_eq!(
-            super::recorded_element_label(&highlight, candidates(current_categories), frame.popups),
+            super::recorded_element_label(
+                &highlight,
+                candidates(previous_categories),
+                candidates(current_categories),
+                frame.popups,
+            ),
             expected
         );
     }

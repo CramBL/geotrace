@@ -93,7 +93,7 @@ fn resolve_icon(variant_path: &str, style_map: &FxHashMap<String, EventMarkerSty
 }
 
 fn is_highlighted(highlight: &MapHighlight, point_ref: MapElementRef) -> bool {
-    if highlight.sticky.is_some_and(|r| r == point_ref) {
+    if highlight.is_sticky(point_ref) {
         return true;
     }
     match highlight.hover {

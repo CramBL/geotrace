@@ -633,9 +633,10 @@ impl App {
             shared: Rc::new(RefCell::new(SharedAppState {
                 loaded_files: LoadedFiles::new(),
                 tree: TreeState::new(),
-                highlight: MapHighlight {
-                    fading_enabled: options.fading_enabled,
-                    ..Default::default()
+                highlight: {
+                    let mut highlight = MapHighlight::default();
+                    highlight.fading_enabled = options.fading_enabled;
+                    highlight
                 },
                 filter: GlobalFilter::default(),
                 display_mask: DisplayMask::default(),

@@ -18,9 +18,9 @@ use gt_types::{DataCategory, FileIdx, GeoBounds, LoadedFile, SpatialPoint, Track
 use gt_ui_types::reference::ReferenceDocument;
 use gt_ui_types::{
     DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, HighlightScope,
-    HoverCandidates, LogMatchGlyph, LogMatchHover, LogMatches, MapElementRef, MapEligibility,
-    MapHighlight, MapPresence, MatchRevealTarget, PinnedPopup, PointWindowFolds, QueryMatches,
-    ResolvedElement, SkyGlyphVariant, SkyTrailsRequest, SnappedTracks, TrackDataVisibility,
+    LogMatchGlyph, LogMatchHover, LogMatches, MapElementRef, MapEligibility, MapHighlight,
+    MapPresence, MatchRevealTarget, PinnedPopup, PointWindowFolds, QueryMatches, ResolvedElement,
+    SkyGlyphVariant, SkyTrailsRequest, SnappedTracks, TrackDataVisibility,
 };
 use rstar::PointDistance as _;
 use walkers::sources::OpenStreetMap;
@@ -28,6 +28,7 @@ use walkers::{HttpTiles, Map, MapMemory};
 
 use crate::event_marker_renderer::EventMarkerRenderer;
 use crate::generated_marker_renderer::GeneratedMarkerRenderer;
+use crate::hover_candidates::HoverCandidates;
 use crate::hover_labels::{HoverLabelEntry, HoverLabelSources, HoverLabelStack, OpenPopups};
 use crate::marker_renderer::MarkerRenderer;
 use crate::match_reveal::MatchRevealState;
@@ -53,6 +54,7 @@ pub mod display_counts;
 mod display_toggle;
 pub mod event_marker_renderer;
 pub(crate) mod generated_marker_renderer;
+mod hover_candidates;
 mod hover_labels;
 pub mod icon_mesh;
 mod jamming_renderer;
@@ -308,9 +310,12 @@ impl<'a> MapDrawContext<'a> {
     /// disambiguation popup owns the cursor area, or when several of them were
     /// under the pointer last frame - the compound label states them all in
     /// their place.
-    fn suppress_overlapping_hover_labels(&mut self, disambig_open: bool) {
-        self.highlight.suppress_hover_labels =
-            disambig_open || self.highlight.hover_candidates.is_ambiguous();
+    fn suppress_overlapping_hover_labels(
+        &mut self,
+        disambig_open: bool,
+        previous_hover: HoverCandidates,
+    ) {
+        self.highlight.suppress_hover_labels = disambig_open || previous_hover.is_ambiguous();
     }
 
     fn recording_labels(&self) -> RecordingLabels<'a> {
@@ -419,6 +424,9 @@ pub struct NavMap {
     /// The element that was under the pointer when the last right-click fired.
     /// Held across frames so the context menu can reference it while it is open.
     right_click_ref: Option<MapElementRef>,
+    /// Recorded elements found under the pointer on the previous frame. The
+    /// hover label transition uses this one-frame history.
+    hover_candidates: HoverCandidates,
     /// Candidates captured at the last click that had multiple overlapping types.
     /// Displayed in a disambiguation popup until the user picks one or clicks elsewhere.
     disambiguation_candidates: HoverCandidates,
@@ -495,6 +503,7 @@ impl NavMap {
             fit_notice: None,
             right_click_ref: None,
             an_egui_popup_was_open_last_frame: false,
+            hover_candidates: HoverCandidates::default(),
             disambiguation_candidates: HoverCandidates::default(),
             disambiguation_pos: egui::pos2(0.0, 0.0),
             display_toggle: display_toggle::DisplayToggleState::default(),
@@ -658,7 +667,7 @@ impl NavMap {
             disambiguation: self.disambiguation_is_open(),
             egui_popup_was_open_last_frame: self.an_egui_popup_was_open_last_frame,
         };
-        ctx.suppress_overlapping_hover_labels(popups.disambiguation);
+        ctx.suppress_overlapping_hover_labels(popups.disambiguation, self.hover_candidates);
 
         let map_center = self
             .map_memory
@@ -685,7 +694,7 @@ impl NavMap {
         // the next frame.
         let scope = ctx.scope();
         let hover = self.detect_hover(ui, &map_response, map_center, &plan);
-        self.show_hover_labels(ui, &ctx, hover, popups);
+        self.show_hover_labels(ui, &ctx, self.hover_candidates, hover, popups);
 
         let reference_document = self.show_overlay_controls(ui, map_rect, &mut ctx);
 
@@ -701,7 +710,7 @@ impl NavMap {
         }
 
         ctx.highlight.hover = hover.primary().map(HighlightScope::Point);
-        ctx.highlight.hover_candidates = hover;
+        self.hover_candidates = hover;
         self.an_egui_popup_was_open_last_frame = ui.ctx().any_popup_open();
 
         action
@@ -1052,7 +1061,7 @@ impl NavMap {
             let Some(present) = plan.resolve_spatial(sp) else {
                 continue;
             };
-            hover.keep_nearest(present.element_ref());
+            hover.keep_nearest(present);
             if hover.every_category_filled() {
                 break;
             }
@@ -1069,10 +1078,13 @@ impl NavMap {
         &self,
         ui: &egui::Ui,
         ctx: &MapDrawContext<'_>,
+        previous_hover: HoverCandidates,
         hover: HoverCandidates,
         popups: OpenPopups,
     ) {
-        if let Some(label) = hover_labels::recorded_element_label(ctx.highlight, hover, popups) {
+        if let Some(label) =
+            hover_labels::recorded_element_label(ctx.highlight, previous_hover, hover, popups)
+        {
             self.hover_label_stack
                 .push(HoverLabelEntry::RecordedElement(label));
         }
@@ -1187,7 +1199,7 @@ impl NavMap {
                 self.sticky_pos = click_pos;
             }
         } else {
-            ctx.highlight.sticky = None;
+            ctx.highlight.clear_sticky();
         }
         false
     }
@@ -1218,7 +1230,7 @@ impl NavMap {
                             ui,
                             candidate,
                             ctx.files,
-                            ctx.highlight.sticky == Some(candidate),
+                            ctx.highlight.is_sticky(candidate),
                         )
                         .clicked()
                         {
@@ -1307,8 +1319,9 @@ impl NavMap {
         ctx: &mut MapDrawContext<'_>,
         scope: MapPresence<'_>,
     ) -> Option<SkyTrailsRequest> {
-        if ctx.highlight.sticky.is_some() && ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
-            ctx.highlight.sticky = None;
+        if ctx.highlight.sticky().is_some() && ui.ctx().input(|i| i.key_pressed(egui::Key::Escape))
+        {
+            ctx.highlight.clear_sticky();
         }
         let PinnedPopup::Drawn(sticky_ref) = ctx.highlight.pin_this_frame(scope)? else {
             return None;

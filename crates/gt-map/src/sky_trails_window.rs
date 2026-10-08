@@ -1297,11 +1297,9 @@ mod tests {
             TrackIdx::new(2),
             gt_types::PointIdx::new(9),
         );
-        let start = MapHighlight {
-            plot_hover_point: Some(plots_point),
-            plot_hover_snapped: true,
-            ..Default::default()
-        };
+        let mut start = MapHighlight::default();
+        start.plot_hover_point = Some(plots_point);
+        start.plot_hover_snapped = true;
         let highlight = run_body_with_highlight(&start);
         assert_eq!(highlight.plot_hover_point, Some(plots_point));
     }

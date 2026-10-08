@@ -82,20 +82,16 @@ impl TrackGeometry<'_> {
     fn chevrons_of(
         &self,
         viewport_fixes: &[usize],
-        filter: &GlobalFilter,
-        query_view: &TrackMatchView<'_>,
+        mut fix_is_present: impl FnMut(usize) -> bool,
     ) -> Vec<(usize, ChevronFix)> {
         let Some(placed) = self.track.placed_points() else {
             return Vec::new();
         };
         let mut chevrons: Vec<(usize, ChevronFix)> = viewport_fixes
             .iter()
-            .filter(|&&pi| self.level_holds_the_fix_at(pi) && !query_view.is_hidden(pi))
+            .filter(|&&pi| self.level_holds_the_fix_at(pi) && fix_is_present(pi))
             .filter_map(|&pi| {
                 let point = placed.get(pi)?;
-                if !gt_filter::point_passes_time_filter(point.fix.tpv.time().utc(), filter) {
-                    return None;
-                }
                 let chevron = ChevronFix::for_fix(point.fix)?;
                 let visible = match chevron {
                     ChevronFix::DeadReckoned => self.entry.ghost_fixes(),
@@ -490,9 +486,9 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
 
     /// Resolve which satellite-label anchors get a label this frame, for
     /// every track whose TPV layer is on. Labels are collision-resolved
-    /// across all tracks at once ([`sat_labels::select_sat_labels`]). The
-    /// per-point conditions mirror the icon pass (time filter, query
-    /// hiding).
+    /// across all tracks at once ([`sat_labels::select_sat_labels`]).
+    /// Per-point semantic eligibility comes from the compiled frame plan.
+    /// Collision decimation and the ghost-label display rule stay renderer-local.
     fn select_sat_labels(
         &mut self,
         geometries: &[TrackGeometry],
@@ -507,29 +503,23 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
             tpv_renderer::label_cell_px(collision_grid::decimation_zoom(zoom)),
             zoom,
         );
-        // Copy the shared borrows out so the closure captures them, not `self`,
-        // leaving `self.sat_label_scratch` free to borrow mutably.
-        let filter = self.filter;
-        let query_matches = self.query_matches;
-        let ghost_fixes = geometries.iter().any(|geo| geo.entry.ghost_fixes());
+        // Capture only the compiled policy so semantic gates cannot drift
+        // from hover or marker resolution.
+        let plan = self.plan;
         sat_labels::select_sat_labels(
             &mut *self.sat_label_scratch,
             geometries
                 .iter()
                 .enumerate()
                 .filter(|(_, geo)| geo.entry.sat_labels())
-                .map(|(i, geo)| {
-                    let track_ref = TrackRef::new(geo.fi, geo.ti);
-                    let query_view = TrackMatchView::for_track(query_matches, track_ref);
-                    (i, track_ref, geo.track, query_view)
-                }),
+                .map(|(i, geo)| (i, TrackRef::new(geo.fi, geo.ti), geo.track)),
             geometries.len(),
             viewport,
             cell_merc,
-            move |query_view, pi, point| {
-                gt_filter::point_passes_time_filter(point.tpv.time().utc(), filter)
-                    && !query_view.is_hidden(pi)
-                    && (!point.is_ghost_fix() || ghost_fixes)
+            move |track_ref, pi, point| {
+                plan.fix_is_semantically_present(track_ref, pi)
+                    && (!point.is_ghost_fix()
+                        || plan.entry(track_ref).is_some_and(TrackEntry::ghost_fixes))
             },
         );
     }
@@ -538,7 +528,8 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
     /// every glyph-enabled track, decimated across all tracks at once
     /// ([`sky_glyph_renderer::select_glyphs`]). Empty below
     /// [`sky_glyph_renderer::MIN_ZOOM`], where per-point rings would be
-    /// noise. Per-point conditions mirror the icon and label passes.
+    /// noise. Per-point semantic eligibility comes from the compiled frame
+    /// plan.
     fn select_sky_glyphs(
         &mut self,
         geometries: &[TrackGeometry],
@@ -547,8 +538,7 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
         zoom: f64,
     ) {
         let viewport = transform.viewport_merc_bounds(max_rect);
-        let filter = self.filter;
-        let query_matches = self.query_matches;
+        let plan = self.plan;
         let variant = self.sky_glyph_variant;
         if zoom < sky_glyph_renderer::MIN_ZOOM {
             // No rings at this zoom. Still refresh the scratch to the right
@@ -556,7 +546,7 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
             // length, without walking any points.
             sky_glyph_renderer::select_glyphs(
                 &mut *self.sky_glyph_scratch,
-                std::iter::empty::<(usize, TrackRef, &LoadedTrack, TrackMatchView<'_>)>(),
+                std::iter::empty::<(usize, TrackRef, &LoadedTrack)>(),
                 geometries.len(),
                 viewport,
                 // No candidates are pushed, so the cell size is never read.
@@ -573,18 +563,11 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
                 .iter()
                 .enumerate()
                 .filter(|(_, geo)| geo.entry.sky_glyphs())
-                .map(|(i, geo)| {
-                    let track_ref = TrackRef::new(geo.fi, geo.ti);
-                    let query_view = TrackMatchView::for_track(query_matches, track_ref);
-                    (i, track_ref, geo.track, query_view)
-                }),
+                .map(|(i, geo)| (i, TrackRef::new(geo.fi, geo.ti), geo.track)),
             geometries.len(),
             viewport,
             cell_merc,
-            move |query_view, pi, point| {
-                gt_filter::point_passes_time_filter(point.tpv.time().utc(), filter)
-                    && !query_view.is_hidden(pi)
-            },
+            move |track_ref, pi, _| plan.fix_is_semantically_present(track_ref, pi),
         );
     }
 
@@ -632,23 +615,9 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
                 let tpv = self
                     .tpv_by_track
                     .and_then(|by_track| by_track.get(&track_ref));
-                // In keep/hide, drop the icons of hidden points too, so the
-                // arrows match the (broken) line.
-                let query_view = TrackMatchView::for_track(self.query_matches, track_ref);
-                let chevrons =
-                    geo.chevrons_of(tpv.map_or(&[], Vec::as_slice), self.filter, &query_view);
-                let filtered_tpv;
-                let tpv = if query_view.hides_any_point() {
-                    filtered_tpv = tpv.map(|v| {
-                        v.iter()
-                            .copied()
-                            .filter(|&pi| !query_view.is_hidden(pi))
-                            .collect()
-                    });
-                    filtered_tpv.as_ref()
-                } else {
-                    tpv
-                };
+                let chevrons = geo.chevrons_of(tpv.map_or(&[], Vec::as_slice), |pi| {
+                    self.plan.fix_is_semantically_present(track_ref, pi)
+                });
                 let real_tpv = if geo.entry.fade().is_some() {
                     tpv
                 } else {
@@ -667,7 +636,7 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
                         fade,
                         transform,
                         self.highlight,
-                        self.filter,
+                        &|pi| self.plan.fix_is_semantically_present(track_ref, pi),
                         self.icon_meshes,
                     );
                 }
@@ -1255,7 +1224,12 @@ mod tests {
                 .filter(|&&pi| !geometry.level_holds_the_fix_at(pi))
                 .count();
             let from_the_viewport = inside_the_map_rect(
-                geometry.chevrons_of(&hits, &filter, &query_view),
+                geometry.chevrons_of(&hits, |pi| {
+                    !query_view.is_hidden(pi)
+                        && track.points.get(pi).is_some_and(|point| {
+                            gt_filter::point_passes_time_filter(point.tpv.time().utc(), &filter)
+                        })
+                }),
                 &track,
                 &transform,
             );
@@ -1325,12 +1299,11 @@ mod tests {
         let transform =
             MercTransform::for_test_view(2_f64.powi(20), lat, lon, egui::pos2(400.0, 300.0));
         let filter = GlobalFilter::default();
-        let query_view = TrackMatchView::for_track(None, test_util::track0());
         let hits = vec![0, 1, 2, 3];
 
         let mut geometry = geometry_of(&track, &transform, &filter);
         geometry.entry.set_ghost_fixes(true);
-        let chevrons = geometry.chevrons_of(&hits, &filter, &query_view);
+        let chevrons = geometry.chevrons_of(&hits, |_| true);
         assert_eq!(
             chevrons,
             vec![
@@ -1341,20 +1314,20 @@ mod tests {
         );
 
         geometry.entry.set_ghost_fixes(false);
-        let chevrons = geometry.chevrons_of(&hits, &filter, &query_view);
+        let chevrons = geometry.chevrons_of(&hits, |_| true);
         assert_eq!(chevrons, vec![(2, ChevronFix::CoordinateOutOfRange)]);
 
         // Soloing ghost fixes: TrackPoints is hidden (fade is None), ghost fixes is visible.
         geometry.entry.set_fade(None);
         geometry.entry.set_ghost_fixes(true);
-        let chevrons = geometry.chevrons_of(&hits, &filter, &query_view);
+        let chevrons = geometry.chevrons_of(&hits, |_| true);
         assert_eq!(
             chevrons,
             vec![(1, ChevronFix::DeadReckoned), (3, ChevronFix::DeadReckoned),]
         );
 
         geometry.entry.set_ghost_fixes(false);
-        let chevrons = geometry.chevrons_of(&hits, &filter, &query_view);
+        let chevrons = geometry.chevrons_of(&hits, |_| true);
         assert!(chevrons.is_empty());
     }
 

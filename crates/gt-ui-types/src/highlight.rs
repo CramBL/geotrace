@@ -105,77 +105,10 @@ pub enum HighlightScope {
     },
 }
 
-/// The nearest visible element per category group under the cursor.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct HoverCandidates {
-    pub tpv_or_satellite_report: Option<MapElementRef>,
-    pub event_marker: Option<MapElementRef>,
-    pub custom_marker: Option<MapElementRef>,
-    pub generated_marker: Option<MapElementRef>,
-}
-
-impl HoverCandidates {
-    /// Keeps `candidate` when its category has no closer one yet: callers feed
-    /// candidates in nearest-first order.
-    pub fn keep_nearest(&mut self, candidate: MapElementRef) {
-        let Some(slot) = self.slot_for(candidate.category()) else {
-            return;
-        };
-        slot.get_or_insert(candidate);
-    }
-
-    fn slot_for(&mut self, category: DataCategory) -> Option<&mut Option<MapElementRef>> {
-        match category {
-            DataCategory::Tpv | DataCategory::SatelliteReport => {
-                Some(&mut self.tpv_or_satellite_report)
-            }
-            DataCategory::EventMarker => Some(&mut self.event_marker),
-            DataCategory::CustomMarker => Some(&mut self.custom_marker),
-            DataCategory::GeneratedMarker => Some(&mut self.generated_marker),
-            DataCategory::Track => None,
-        }
-    }
-
-    /// The candidates present, in the order tooltips and popup rows list them.
-    pub fn iter(&self) -> impl Iterator<Item = MapElementRef> {
-        [
-            self.tpv_or_satellite_report,
-            self.event_marker,
-            self.custom_marker,
-            self.generated_marker,
-        ]
-        .into_iter()
-        .flatten()
-    }
-
-    /// The element a hover or a click acts on: the TPV point when it is among
-    /// them, otherwise the first candidate present.
-    pub fn primary(&self) -> Option<MapElementRef> {
-        self.iter().next()
-    }
-
-    /// Whether several element types sit under the cursor at once, so a click
-    /// cannot resolve which one the user meant.
-    pub fn is_ambiguous(&self) -> bool {
-        self.iter().count() > 1
-    }
-
-    pub fn every_category_filled(&self) -> bool {
-        self.tpv_or_satellite_report.is_some()
-            && self.event_marker.is_some()
-            && self.custom_marker.is_some()
-            && self.generated_marker.is_some()
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct MapHighlight {
     pub hover: Option<HighlightScope>,
-    pub sticky: Option<MapElementRef>,
-    /// Every element within the cursor radius, one per category group, so
-    /// renderers can show tooltips for secondary candidates even when a TPV
-    /// point is the primary hover.
-    pub hover_candidates: HoverCandidates,
+    sticky: Option<MapElementRef>,
     /// Time currently hovered on the track plot. Used to cross-highlight the
     /// closest TPV point on the map. `None` when the plot cursor is inactive.
     pub plot_hover_time: Option<DateTime<Utc>>,
@@ -215,6 +148,26 @@ pub struct MapHighlight {
 }
 
 impl MapHighlight {
+    /// The raw identity currently pinned across frames.
+    pub fn sticky(&self) -> Option<MapElementRef> {
+        self.sticky
+    }
+
+    /// Whether `candidate` is the currently pinned element.
+    pub fn is_sticky(&self, candidate: MapElementRef) -> bool {
+        self.sticky == Some(candidate)
+    }
+
+    /// Dismiss the current pin.
+    pub fn clear_sticky(&mut self) {
+        self.sticky = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_sticky_for_test(&mut self, sticky: Option<MapElementRef>) {
+        self.sticky = sticky;
+    }
+
     /// Pin a map-present element's popup, or unpin it when it is already the
     /// sticky point. Returns whether it ended up pinned: the caller places the
     /// popup only for one that opened.
@@ -344,7 +297,6 @@ impl Default for MapHighlight {
         Self {
             hover: None,
             sticky: None,
-            hover_candidates: HoverCandidates::default(),
             plot_hover_time: None,
             plot_hover_point: None,
             plot_hover_snapped: false,
@@ -589,29 +541,6 @@ mod tests {
             "another point takes the pin over"
         );
         assert_eq!(highlight.sticky, Some(test_util::point(4)));
-    }
-
-    /// The element a hover or a click acts on is the fix whenever one is among
-    /// the candidates.
-    #[test]
-    fn the_primary_candidate_is_the_fix_when_one_is_present() {
-        let tpv = test_util::point(0);
-        let marker = test_util::event_marker();
-
-        let marker_only = HoverCandidates {
-            event_marker: Some(marker),
-            ..HoverCandidates::default()
-        };
-        assert_eq!(marker_only.primary(), Some(marker));
-        assert!(!marker_only.is_ambiguous());
-
-        let both = HoverCandidates {
-            tpv_or_satellite_report: Some(tpv),
-            event_marker: Some(marker),
-            ..HoverCandidates::default()
-        };
-        assert_eq!(both.primary(), Some(tpv));
-        assert!(both.is_ambiguous());
     }
 
     /// Every way an element under the pointer loses its own hover label, and
