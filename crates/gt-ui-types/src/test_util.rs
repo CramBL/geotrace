@@ -1,4 +1,4 @@
-//! A minimal loaded state whose [`MapScope`] the tests of this crate build on.
+//! A minimal loaded state whose [`MapPresence`] the tests of this crate build on.
 //!
 //! Files and tracks come from [`gt_track_builder::build_loaded_file`], so no test
 //! hand-writes a [`LoadedFile`] and a field added to a loaded recording never
@@ -23,7 +23,7 @@ use crate::event_marker_visibility::EventMarkerVisibility;
 use crate::generated_marker_visibility::GeneratedMarkerVisibility;
 use crate::highlight::MapElementRef;
 use crate::query_matches::{QueryMatches, TrackRanges};
-use crate::visibility::{MapScope, TrackDataVisibility};
+use crate::visibility::{MapEligibility, MapPresence, TrackDataVisibility};
 
 /// The fixture's first point, one second per point after it.
 pub fn start() -> DateTime<Utc> {
@@ -94,7 +94,7 @@ pub fn generated_marker() -> MapElementRef {
     ))
 }
 
-/// The owned pieces a [`MapScope`] borrows, letting a test withhold a point in
+/// The owned pieces a [`MapPresence`] borrows, letting a test withhold a point in
 /// each of the ways the map can and evaluate the real visibility rule.
 pub struct ScopeFixture {
     pub files: Vec<LoadedFile>,
@@ -150,16 +150,16 @@ impl ScopeFixture {
         self.generated_marker_visibility.clear_all();
     }
 
-    pub fn scope(&self) -> MapScope<'_> {
-        MapScope {
-            files: &self.files,
-            visibility: &self.visibility,
-            event_marker_visibility: &self.event_marker_visibility,
-            generated_marker_visibility: &self.generated_marker_visibility,
-            filter: &self.filter,
-            display_mask: self.display_mask,
-            query_matches: self.query_matches.as_ref(),
-        }
+    pub fn scope(&self) -> MapPresence<'_> {
+        MapEligibility::new(
+            &self.files,
+            &self.visibility,
+            &self.filter,
+            self.query_matches.as_ref(),
+            &self.generated_marker_visibility,
+            &self.event_marker_visibility,
+        )
+        .with_display_mask(self.display_mask)
     }
 }
 

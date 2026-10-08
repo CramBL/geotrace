@@ -1,0 +1,17 @@
+error[E0451]: fields `files`, `visibility`, `filter`, `query_matches`, `generated_marker_visibility` and `event_marker_visibility` of struct `MapEligibility` are private
+  --> tests/compile_fail/map_eligibility_fields_are_private.rs:9:9
+   |
+ 8 |     let _ = MapEligibility {
+   |             -------------- in this type
+ 9 |         files: value(),
+   |         ^^^^^ private field
+10 |         visibility: value(),
+   |         ^^^^^^^^^^ private field
+11 |         filter: value(),
+   |         ^^^^^^ private field
+12 |         query_matches: None,
+   |         ^^^^^^^^^^^^^ private field
+13 |         generated_marker_visibility: value(),
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^ private field
+14 |         event_marker_visibility: value(),
+   |         ^^^^^^^^^^^^^^^^^^^^^^^ private field

@@ -1,0 +1,15 @@
+error[E0061]: this function takes 6 arguments but 5 arguments were supplied
+ --> tests/compile_fail/map_eligibility_requires_all_sources.rs:8:13
+  |
+8 |     let _ = MapEligibility::new(value(), value(), value(), None, value());
+  |             ^^^^^^^^^^^^^^^^^^^------------------------------------------ argument #6 of type `&EventMarkerVisibility` is missing
+  |
+note: associated function defined here
+ --> src/visibility.rs
+  |
+  |     pub fn new(
+  |            ^^^
+help: provide the argument
+  |
+8 |     let _ = MapEligibility::new(value(), value(), value(), None, value(), /* &EventMarkerVisibility */);
+  |                                                                         ++++++++++++++++++++++++++++++

@@ -9,7 +9,7 @@ use gt_store::{EnvironmentArchive, JamStore};
 use gt_test_utils::{By, DEMO_BYTES, HarnessInteraction as _, TestHarness};
 use gt_types::{DataCategory, FileIdx, FixRef, TrackIdx, TrackRef};
 use gt_ui_theme::MIDDLE_DOT;
-use gt_ui_types::{DisplayCategory, MapElementRef, MapScope, PointVisibility};
+use gt_ui_types::{DisplayCategory, MapElementRef, MapEligibility, PointVisibility};
 use rstest::rstest;
 use uom::si::f64::Length;
 use uom::si::length::kilometer;
@@ -282,15 +282,15 @@ fn highlighted_fix_visibility(harness: &Harness<'_, App>) -> Option<PointVisibil
     let app = harness.state();
     let shared = app.shared.borrow();
     let (fi, ti, pi) = shared.highlight.plot_hover_point?;
-    let scope = MapScope {
-        files: shared.loaded_files.files(),
-        visibility: shared.tree.visibility(),
-        event_marker_visibility: shared.tree.event_marker_visibility(),
-        generated_marker_visibility: shared.tree.generated_marker_visibility(),
-        filter: &shared.filter,
-        display_mask: shared.display_mask,
-        query_matches: app.query_window.matches(),
-    };
+    let scope = MapEligibility::new(
+        shared.loaded_files.files(),
+        shared.tree.visibility(),
+        &shared.filter,
+        app.query_window.matches(),
+        shared.tree.generated_marker_visibility(),
+        shared.tree.event_marker_visibility(),
+    )
+    .with_display_mask(shared.display_mask);
     Some(scope.point_visibility(MapElementRef::Fix(FixRef::new(TrackRef::new(fi, ti), pi))))
 }
 

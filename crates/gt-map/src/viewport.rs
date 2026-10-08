@@ -11,7 +11,7 @@ use gt_types::{
     PlacedPoint, PlacedPoints, PoleWinding, SpatialPoint, TrackIdx, TrackRef, mercator,
 };
 use gt_ui_types::{
-    DisplayCategory, DisplayMask, MapElementRef, MapScope, QueryMatches, TrackDataVisibility,
+    DisplayCategory, DisplayMask, MapElementRef, MapPresence, QueryMatches, TrackDataVisibility,
 };
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -527,8 +527,8 @@ pub(crate) fn compute_viewport_bounds(
 ///
 /// A trackline and a raw satellite report have no hover target of their own -
 /// neither is ever inserted into the spatial index, and neither is clickable.
-/// Every other point follows [`MapScope::draws`].
-pub(crate) fn is_spatial_point_visible(sp: &SpatialPoint, scope: MapScope<'_>) -> bool {
+/// Every other point follows [`MapPresence::draws`].
+pub(crate) fn is_spatial_point_visible(sp: &SpatialPoint, scope: MapPresence<'_>) -> bool {
     MapElementRef::from_spatial_point(sp).is_some_and(|element| scope.draws(element))
 }
 

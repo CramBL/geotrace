@@ -145,9 +145,9 @@ pub fn track_in_scope<'a>(
 
 /// Why the element a [`MapElementRef`] addresses is, or is not, on the map.
 ///
-/// The variants are ordered the way [`MapScope::point_visibility`] evaluates
-/// them, so an element failing several gates reports the first gate the map
-/// itself applies.
+/// This is the compatibility view used by renderers and tests. Internally,
+/// [`MapEligibility`] owns semantic policy and [`MapPresence`] adds only the
+/// display mask.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumCount)]
 pub enum PointVisibility {
     /// Drawn on the map.
@@ -158,8 +158,8 @@ pub enum PointVisibility {
     /// The file or track is off in the tree, or the track fails the track-level
     /// filter.
     TrackNotShown,
-    /// The element's category is off, in the track's tree toggles or in the
-    /// display mask.
+    /// The element's category is off, either in the track's tree toggles or in
+    /// the display mask.
     CategoryHidden,
     /// The marker's type is off in the tree: the kind of a generated marker,
     /// or the variant path of an event marker or a parent path of it.
@@ -176,104 +176,323 @@ impl PointVisibility {
     }
 }
 
-/// Everything that determines whether the map draws one addressed element: the
-/// loaded recordings, the tree with its per-type marker toggles, the global
-/// filter, the display mask, and the last query's effect.
-///
-/// Hover and click hit-testing, the marker renderers, the pinned popup, the
-/// point rows that create a pin, and the headless tests read
-/// [`MapScope::point_visibility`] for whether an element is on the map.
-#[derive(Clone, Copy)]
-pub struct MapScope<'a> {
-    pub files: &'a [LoadedFile],
-    pub visibility: &'a TrackDataVisibility,
-    pub event_marker_visibility: &'a EventMarkerVisibility,
-    pub generated_marker_visibility: &'a GeneratedMarkerVisibility,
-    pub filter: &'a GlobalFilter,
-    pub display_mask: DisplayMask,
-    /// The last query run's effect, absent when no query has run.
-    pub query_matches: Option<&'a QueryMatches>,
+/// Why an existing element is withheld before display masking is considered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EligibilityWithheld {
+    /// The file or track is off in the tree, or the track fails the filter.
+    TrackNotShown,
+    /// The element's category is off in the track's tree toggles.
+    CategoryHidden,
+    /// The marker's generated kind or event path is hidden.
+    MarkerTypeHidden,
+    /// A `keep` or `hide` query removed the fix-backed element.
+    HiddenByQuery,
+    /// The element lies outside the global time window.
+    OutsideTimeFilter,
 }
 
-impl MapScope<'_> {
-    /// Whether the map draws the element `point` addresses.
-    pub fn draws(&self, point: MapElementRef) -> bool {
-        self.point_visibility(point).is_shown()
+/// The result of applying all semantic map policy except the display mask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapEligibilityResult {
+    /// The addressed element exists and passes every semantic gate.
+    Eligible,
+    /// The raw identity does not resolve against the currently loaded files.
+    Missing,
+    /// The element exists, but semantic policy withholds it.
+    Withheld(EligibilityWithheld),
+}
+
+/// Every policy source that determines whether a point-like element is
+/// semantically eligible for the map, before render-side display masking.
+///
+/// All sources are mandatory at construction so callers cannot accidentally
+/// evaluate an element against only a subset of map policy.
+#[derive(Clone, Copy)]
+pub struct MapEligibility<'a> {
+    files: &'a [LoadedFile],
+    visibility: &'a TrackDataVisibility,
+    filter: &'a GlobalFilter,
+    query_matches: Option<&'a QueryMatches>,
+    generated_marker_visibility: &'a GeneratedMarkerVisibility,
+    event_marker_visibility: &'a EventMarkerVisibility,
+}
+
+impl<'a> MapEligibility<'a> {
+    pub fn new(
+        files: &'a [LoadedFile],
+        visibility: &'a TrackDataVisibility,
+        filter: &'a GlobalFilter,
+        query_matches: Option<&'a QueryMatches>,
+        generated_marker_visibility: &'a GeneratedMarkerVisibility,
+        event_marker_visibility: &'a EventMarkerVisibility,
+    ) -> Self {
+        Self {
+            files,
+            visibility,
+            filter,
+            query_matches,
+            generated_marker_visibility,
+            event_marker_visibility,
+        }
     }
 
-    /// Whether the map draws the element, and when it does not, why: the gating
-    /// the renderers apply (enablement, tree toggle, track filter), the display
-    /// category, the marker's type, the points a `keep`/`hide` query removed,
-    /// and the time window.
-    ///
-    /// A satellite report is judged as the fix it belongs to: it has no ink of
-    /// its own, so its detail is on the map exactly while that point is.
-    pub fn point_visibility(&self, point: MapElementRef) -> PointVisibility {
-        let category = match point {
-            MapElementRef::Fix(_) | MapElementRef::SatelliteReport(_) => DataCategory::Tpv,
-            MapElementRef::CustomMarker(_) => DataCategory::CustomMarker,
-            MapElementRef::GeneratedMarker(_) => DataCategory::GeneratedMarker,
-            MapElementRef::EventMarker(_) => DataCategory::EventMarker,
+    /// Add render-side display policy to this complete semantic policy.
+    pub fn with_display_mask(self, display_mask: DisplayMask) -> MapPresence<'a> {
+        MapPresence::new(self, display_mask)
+    }
+
+    /// Classify `element_ref` before display masking.
+    pub fn element_eligibility(self, element_ref: MapElementRef) -> MapEligibilityResult {
+        match self.resolve(element_ref) {
+            ResolvedEligibility::Eligible(_) => MapEligibilityResult::Eligible,
+            ResolvedEligibility::Missing => MapEligibilityResult::Missing,
+            ResolvedEligibility::Withheld(reason) => MapEligibilityResult::Withheld(reason),
+        }
+    }
+
+    fn resolve(self, element_ref: MapElementRef) -> ResolvedEligibility<'a> {
+        // Resolution comes first so a stale identity stays "missing" even when
+        // the same track is also withheld by policy.
+        let Some(element) = element_ref.resolve(self.files) else {
+            return ResolvedEligibility::Missing;
         };
-        // Resolved before the tree and filter gates so an index past the end of
-        // its array reads as addressing nothing, whatever those gates would say.
-        let Some(element) = point.resolve(self.files) else {
-            return PointVisibility::NoSuchElement;
-        };
-        let track = point.track();
-        let Some((_, track_vis)) = track_in_scope(self.files, self.visibility, self.filter, track)
+        let track = element_ref.track();
+        let Some((_, track_visibility)) =
+            track_in_scope(self.files, self.visibility, self.filter, track)
         else {
-            return PointVisibility::TrackNotShown;
+            return ResolvedEligibility::Withheld(EligibilityWithheld::TrackNotShown);
         };
-        let display_category = match element {
-            ResolvedElement::Fix(fix) | ResolvedElement::SatelliteReport { fix, .. }
-                if fix.is_ghost_fix() =>
-            {
-                DisplayCategory::GhostFixes
+
+        // This is the semantic authority for point-like map elements. Keep the
+        // family match exhaustive so a new identity cannot silently inherit an
+        // existing policy.
+        let withheld = match element {
+            ResolvedElement::Fix(fix) | ResolvedElement::SatelliteReport { fix, .. } => {
+                if !track_visibility.category_visible(DataCategory::Tpv) {
+                    Some(EligibilityWithheld::CategoryHidden)
+                } else if self.query_matches.is_some_and(|matches| {
+                    element_ref
+                        .fix()
+                        .is_some_and(|fix_ref| matches.is_hidden(track, fix_ref.point.as_usize()))
+                }) {
+                    Some(EligibilityWithheld::HiddenByQuery)
+                } else if !gt_filter::point_passes_time_filter(fix.tpv.time().utc(), self.filter) {
+                    Some(EligibilityWithheld::OutsideTimeFilter)
+                } else {
+                    None
+                }
             }
-            ResolvedElement::Fix(_)
-            | ResolvedElement::SatelliteReport { .. }
-            | ResolvedElement::CustomMarker(_)
-            | ResolvedElement::GeneratedMarker(_)
-            | ResolvedElement::EventMarker(_) => DisplayCategory::from(category),
+            ResolvedElement::CustomMarker(marker) => {
+                if !track_visibility.category_visible(DataCategory::CustomMarker) {
+                    Some(EligibilityWithheld::CategoryHidden)
+                } else if !gt_filter::point_passes_time_filter(marker.time, self.filter) {
+                    Some(EligibilityWithheld::OutsideTimeFilter)
+                } else {
+                    None
+                }
+            }
+            ResolvedElement::GeneratedMarker(marker) => {
+                if !track_visibility.category_visible(DataCategory::GeneratedMarker) {
+                    Some(EligibilityWithheld::CategoryHidden)
+                } else if !self
+                    .generated_marker_visibility
+                    .is_visible(track, marker.kind.tag())
+                {
+                    Some(EligibilityWithheld::MarkerTypeHidden)
+                } else if !gt_filter::point_passes_time_filter(marker.time, self.filter) {
+                    Some(EligibilityWithheld::OutsideTimeFilter)
+                } else {
+                    None
+                }
+            }
+            ResolvedElement::EventMarker(marker) => {
+                if !track_visibility.category_visible(DataCategory::EventMarker) {
+                    Some(EligibilityWithheld::CategoryHidden)
+                } else if !self
+                    .event_marker_visibility
+                    .is_visible(track, &marker.variant_path)
+                {
+                    Some(EligibilityWithheld::MarkerTypeHidden)
+                } else if !gt_filter::point_passes_time_filter(marker.time, self.filter) {
+                    Some(EligibilityWithheld::OutsideTimeFilter)
+                } else {
+                    None
+                }
+            }
         };
-        if !track_vis.category_visible(category) || !self.display_mask.is_visible(display_category)
-        {
-            return PointVisibility::CategoryHidden;
-        }
-        if !self.marker_type_visible(track, element) {
-            return PointVisibility::MarkerTypeHidden;
-        }
-        // A `keep`/`hide` query removes TPV points from the drawn line and icons.
-        // Markers stay drawn (the hidden ranges index TPV points, not the marker
-        // arrays), so only fix-backed elements consult the mask.
-        if let Some(fix) = point.fix()
-            && self
-                .query_matches
-                .is_some_and(|matches| matches.is_hidden(track, fix.point.as_usize()))
-        {
-            return PointVisibility::HiddenByQuery;
-        }
-        if gt_filter::point_passes_time_filter(element.time(), self.filter) {
-            PointVisibility::Shown
+
+        if let Some(reason) = withheld {
+            ResolvedEligibility::Withheld(reason)
         } else {
-            PointVisibility::OutsideTimeFilter
+            ResolvedEligibility::Eligible(EligibleElementRef {
+                element_ref,
+                element,
+            })
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct EligibleElementRef<'a> {
+    element_ref: MapElementRef,
+    element: ResolvedElement<'a>,
+}
+
+enum ResolvedEligibility<'a> {
+    Eligible(EligibleElementRef<'a>),
+    Missing,
+    Withheld(EligibilityWithheld),
+}
+
+/// Why an existing semantically eligible element is absent from the rendered
+/// map after display policy is applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PresenceWithheld {
+    /// Pre-display semantic policy withheld the element.
+    Eligibility(EligibilityWithheld),
+    /// The element's render category is disabled by the display mask.
+    DisplayMasked,
+}
+
+/// The result of resolving a raw map identity through all map policy.
+#[derive(Clone, Copy)]
+pub enum MapPresenceResult<'a> {
+    /// The element is present and carries the proof required by present-only
+    /// operations.
+    Present(PresentElementRef<'a>),
+    /// The raw identity no longer resolves against the loaded files.
+    Missing,
+    /// The element still exists but is withheld by policy.
+    Withheld(PresenceWithheld),
+}
+
+/// Proof that a raw map identity resolves and is present under the complete
+/// policy for this frame.
+///
+/// The fields are private so external code can obtain this value only by
+/// resolving a [`MapElementRef`] through [`MapPresence`]. Do not persist this
+/// value across frames. Persist the raw identity and resolve it again instead.
+#[derive(Clone, Copy)]
+pub struct PresentElementRef<'a> {
+    element_ref: MapElementRef,
+    element: ResolvedElement<'a>,
+}
+
+impl<'a> PresentElementRef<'a> {
+    pub fn element_ref(self) -> MapElementRef {
+        self.element_ref
+    }
+
+    pub fn element(self) -> ResolvedElement<'a> {
+        self.element
+    }
+}
+
+/// Complete point-like map policy for one frame: semantic eligibility plus the
+/// render-side display mask.
+#[derive(Clone, Copy)]
+pub struct MapPresence<'a> {
+    eligibility: MapEligibility<'a>,
+    display_mask: DisplayMask,
+}
+
+impl<'a> MapPresence<'a> {
+    pub fn new(eligibility: MapEligibility<'a>, display_mask: DisplayMask) -> Self {
+        Self {
+            eligibility,
+            display_mask,
         }
     }
 
-    /// The per-type tree toggle of a generated or an event marker, `true` for a
-    /// fix and a custom marker.
-    fn marker_type_visible(&self, track: TrackRef, element: ResolvedElement<'_>) -> bool {
-        match element {
-            ResolvedElement::EventMarker(marker) => self
-                .event_marker_visibility
-                .is_visible(track, &marker.variant_path),
-            ResolvedElement::GeneratedMarker(marker) => self
-                .generated_marker_visibility
-                .is_visible(track, marker.kind.tag()),
-            ResolvedElement::Fix(_)
-            | ResolvedElement::SatelliteReport { .. }
-            | ResolvedElement::CustomMarker(_) => true,
+    /// The semantic policy beneath this display-presence view.
+    pub fn eligibility(self) -> MapEligibility<'a> {
+        self.eligibility
+    }
+
+    /// The loaded recordings backing this frame policy.
+    pub fn files(self) -> &'a [LoadedFile] {
+        self.eligibility.files
+    }
+
+    /// Return the same semantic authority with a different display mask.
+    pub fn with_display_mask(self, display_mask: DisplayMask) -> Self {
+        Self {
+            display_mask,
+            ..self
+        }
+    }
+
+    /// Rebind the last-query policy while preserving every other policy source.
+    pub fn with_query_matches<'b>(self, query_matches: Option<&'b QueryMatches>) -> MapPresence<'b>
+    where
+        'a: 'b,
+    {
+        MapPresence {
+            eligibility: MapEligibility {
+                files: self.eligibility.files,
+                visibility: self.eligibility.visibility,
+                filter: self.eligibility.filter,
+                query_matches,
+                generated_marker_visibility: self.eligibility.generated_marker_visibility,
+                event_marker_visibility: self.eligibility.event_marker_visibility,
+            },
+            display_mask: self.display_mask,
+        }
+    }
+
+    /// Resolve `element_ref` through semantic policy and the display mask.
+    pub fn resolve(self, element_ref: MapElementRef) -> MapPresenceResult<'a> {
+        match self.eligibility.resolve(element_ref) {
+            ResolvedEligibility::Missing => MapPresenceResult::Missing,
+            ResolvedEligibility::Withheld(reason) => {
+                MapPresenceResult::Withheld(PresenceWithheld::Eligibility(reason))
+            }
+            ResolvedEligibility::Eligible(eligible) => {
+                let display_category = match eligible.element {
+                    ResolvedElement::Fix(fix) | ResolvedElement::SatelliteReport { fix, .. }
+                        if fix.is_ghost_fix() =>
+                    {
+                        DisplayCategory::GhostFixes
+                    }
+                    ResolvedElement::Fix(_) | ResolvedElement::SatelliteReport { .. } => {
+                        DisplayCategory::TrackPoints
+                    }
+                    ResolvedElement::CustomMarker(_) => DisplayCategory::CustomMarkers,
+                    ResolvedElement::GeneratedMarker(_) => DisplayCategory::GeneratedMarkers,
+                    ResolvedElement::EventMarker(_) => DisplayCategory::EventMarkers,
+                };
+                if self.display_mask.is_visible(display_category) {
+                    MapPresenceResult::Present(PresentElementRef {
+                        element_ref: eligible.element_ref,
+                        element: eligible.element,
+                    })
+                } else {
+                    MapPresenceResult::Withheld(PresenceWithheld::DisplayMasked)
+                }
+            }
+        }
+    }
+
+    /// Whether the map draws the element `element_ref` addresses.
+    pub fn draws(self, element_ref: MapElementRef) -> bool {
+        matches!(self.resolve(element_ref), MapPresenceResult::Present(_))
+    }
+
+    /// Compatibility classification for existing map consumers.
+    pub fn point_visibility(self, element_ref: MapElementRef) -> PointVisibility {
+        match self.resolve(element_ref) {
+            MapPresenceResult::Present(_) => PointVisibility::Shown,
+            MapPresenceResult::Missing => PointVisibility::NoSuchElement,
+            MapPresenceResult::Withheld(PresenceWithheld::DisplayMasked) => {
+                PointVisibility::CategoryHidden
+            }
+            MapPresenceResult::Withheld(PresenceWithheld::Eligibility(reason)) => match reason {
+                EligibilityWithheld::TrackNotShown => PointVisibility::TrackNotShown,
+                EligibilityWithheld::CategoryHidden => PointVisibility::CategoryHidden,
+                EligibilityWithheld::MarkerTypeHidden => PointVisibility::MarkerTypeHidden,
+                EligibilityWithheld::HiddenByQuery => PointVisibility::HiddenByQuery,
+                EligibilityWithheld::OutsideTimeFilter => PointVisibility::OutsideTimeFilter,
+            },
         }
     }
 }
@@ -434,6 +653,47 @@ mod tests {
     }
 
     #[test]
+    fn presence_distinguishes_missing_semantic_policy_and_display_masking() {
+        let mut fixture = ScopeFixture::all_drawn();
+        let satellite = MapElementRef::SatelliteReport(gt_types::FixRef::new(
+            test_util::track0(),
+            PointIdx::new(0),
+        ));
+        let presence = fixture.scope();
+
+        assert_eq!(
+            presence.eligibility().element_eligibility(satellite),
+            MapEligibilityResult::Eligible
+        );
+        match presence.resolve(satellite) {
+            MapPresenceResult::Present(present) => assert_eq!(present.element_ref(), satellite),
+            MapPresenceResult::Missing | MapPresenceResult::Withheld(_) => {
+                panic!("satellite report should be present")
+            }
+        }
+
+        fixture
+            .display_mask
+            .set_visible(DisplayCategory::TrackPoints, false);
+        let masked = fixture.scope();
+        assert_eq!(
+            masked.eligibility().element_eligibility(satellite),
+            MapEligibilityResult::Eligible,
+            "display masking must not leak into semantic eligibility"
+        );
+        assert!(matches!(
+            masked.resolve(satellite),
+            MapPresenceResult::Withheld(PresenceWithheld::DisplayMasked)
+        ));
+
+        let stale = MapElementRef::Fix(gt_types::FixRef::new(
+            test_util::track0(),
+            PointIdx::new(test_util::POINT_COUNT + 1),
+        ));
+        assert!(matches!(masked.resolve(stale), MapPresenceResult::Missing));
+    }
+
+    #[test]
     fn stale_typed_marker_refs_resolve_as_missing() {
         let files = test_util::one_track_file();
         let track = test_util::track0();
@@ -587,23 +847,20 @@ mod tests {
         let mut mask = DisplayMask::default();
         let event_marker_visibility = EventMarkerVisibility::default();
         let generated_marker_visibility = GeneratedMarkerVisibility::default();
-        let scope = MapScope {
-            files: &files,
-            visibility: &vis,
-            event_marker_visibility: &event_marker_visibility,
-            generated_marker_visibility: &generated_marker_visibility,
-            filter: &filter,
-            display_mask: mask,
-            query_matches: None,
-        };
+        let eligibility = MapEligibility::new(
+            &files,
+            &vis,
+            &filter,
+            None,
+            &generated_marker_visibility,
+            &event_marker_visibility,
+        );
+        let scope = eligibility.with_display_mask(mask);
         assert_eq!(scope.point_visibility(ghost_ref), PointVisibility::Shown);
         assert_eq!(scope.point_visibility(real_ref), PointVisibility::Shown);
 
         mask.set_visible(DisplayCategory::GhostFixes, false);
-        let scope = MapScope {
-            display_mask: mask,
-            ..scope
-        };
+        let scope = scope.with_display_mask(mask);
         assert_eq!(
             scope.point_visibility(ghost_ref),
             PointVisibility::CategoryHidden
@@ -612,10 +869,7 @@ mod tests {
 
         mask = DisplayMask::default();
         mask.solo(DisplayCategory::GhostFixes);
-        let scope = MapScope {
-            display_mask: mask,
-            ..scope
-        };
+        let scope = scope.with_display_mask(mask);
         assert_eq!(scope.point_visibility(ghost_ref), PointVisibility::Shown);
         assert_eq!(
             scope.point_visibility(real_ref),

@@ -18,9 +18,9 @@ use gt_types::{DataCategory, FileIdx, GeoBounds, LoadedFile, SpatialPoint, Track
 use gt_ui_types::reference::ReferenceDocument;
 use gt_ui_types::{
     DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, HighlightScope,
-    HoverCandidates, LogMatchGlyph, LogMatchHover, LogMatches, MapElementRef, MapHighlight,
-    MapScope, MatchRevealTarget, PinnedPopup, PointWindowFolds, QueryMatches, ResolvedElement,
-    SkyGlyphVariant, SkyTrailsRequest, SnappedTracks, TrackDataVisibility,
+    HoverCandidates, LogMatchGlyph, LogMatchHover, LogMatches, MapElementRef, MapEligibility,
+    MapHighlight, MapPresence, MatchRevealTarget, PinnedPopup, PointWindowFolds, QueryMatches,
+    ResolvedElement, SkyGlyphVariant, SkyTrailsRequest, SnappedTracks, TrackDataVisibility,
 };
 use rstar::PointDistance as _;
 use walkers::sources::OpenStreetMap;
@@ -292,16 +292,16 @@ pub struct MapDrawContext<'a> {
 impl<'a> MapDrawContext<'a> {
     /// What the map draws this frame. The marker renderers, hit-testing, the
     /// pinned popup and the headless tests read it.
-    pub fn scope(&self) -> MapScope<'a> {
-        MapScope {
-            files: self.files,
-            visibility: self.visibility,
-            event_marker_visibility: self.event_marker_visibility,
-            generated_marker_visibility: self.generated_marker_visibility,
-            filter: self.filter,
-            display_mask: *self.display_mask,
-            query_matches: self.query_matches,
-        }
+    pub fn scope(&self) -> MapPresence<'a> {
+        MapEligibility::new(
+            self.files,
+            self.visibility,
+            self.filter,
+            self.query_matches,
+            self.generated_marker_visibility,
+            self.event_marker_visibility,
+        )
+        .with_display_mask(*self.display_mask)
     }
 
     /// Suppress the individual hover labels of the recorded elements when the
@@ -997,7 +997,7 @@ impl NavMap {
         ui: &egui::Ui,
         map_response: &egui::Response,
         map_center: walkers::Position,
-        scope: MapScope<'_>,
+        scope: MapPresence<'_>,
     ) -> HoverCandidates {
         if !map_response.hovered() {
             return HoverCandidates::default();
@@ -1029,7 +1029,7 @@ impl NavMap {
         &self,
         cursor_merc: [f64; 2],
         threshold_merc_sq: f64,
-        scope: MapScope<'_>,
+        scope: MapPresence<'_>,
     ) -> HoverCandidates {
         let mut hover = HoverCandidates::default();
         let within_threshold =
@@ -1164,7 +1164,7 @@ impl NavMap {
         ui: &egui::Ui,
         map_response: &egui::Response,
         ctx: &mut MapDrawContext<'_>,
-        scope: MapScope<'_>,
+        scope: MapPresence<'_>,
         hover: HoverCandidates,
     ) -> bool {
         if !map_response.clicked() {
@@ -1197,7 +1197,7 @@ impl NavMap {
         &mut self,
         ui: &egui::Ui,
         ctx: &mut MapDrawContext<'_>,
-        scope: MapScope<'_>,
+        scope: MapPresence<'_>,
         just_opened: bool,
     ) {
         let candidates = self.disambiguation_candidates;
@@ -1303,7 +1303,7 @@ impl NavMap {
         &self,
         ui: &egui::Ui,
         ctx: &mut MapDrawContext<'_>,
-        scope: MapScope<'_>,
+        scope: MapPresence<'_>,
     ) -> Option<SkyTrailsRequest> {
         if ctx.highlight.sticky.is_some() && ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
             ctx.highlight.sticky = None;

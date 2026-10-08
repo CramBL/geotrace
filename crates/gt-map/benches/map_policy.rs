@@ -21,8 +21,8 @@ use gt_map::{benchmark_support, test_util};
 use gt_track_builder::SpatialIndex;
 use gt_types::{DataCategory, FixRef, LoadedFile, NavPoint, PointIdx, SpatialPoint};
 use gt_ui_types::{
-    DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, MapElementRef, MapScope,
-    QueryMatches, TrackDataVisibility, TrackRanges,
+    DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, MapElementRef, MapEligibility,
+    MapPresence, QueryMatches, TrackDataVisibility, TrackRanges,
 };
 
 const BENCH_ZOOM: f64 = 15.0;
@@ -150,15 +150,15 @@ fn bench_candidate_resolution(c: &mut Criterion) {
     event_visibility.set_hidden(test_util::track0(), iter::once(event_parent));
     let filter = GlobalFilter::default().with_time_bounds(None, Some(time_end));
     let query_matches = hidden_range(measured_index..measured_index + 1);
-    let scope = MapScope {
-        files: &files,
-        visibility: &visibility,
-        event_marker_visibility: &event_visibility,
-        generated_marker_visibility: &generated_visibility,
-        filter: &filter,
-        display_mask: DisplayMask::default(),
-        query_matches: Some(&query_matches),
-    };
+    let scope = MapEligibility::new(
+        &files,
+        &visibility,
+        &filter,
+        Some(&query_matches),
+        &generated_visibility,
+        &event_visibility,
+    )
+    .with_display_mask(DisplayMask::default());
     let workload = [
         point_ref(DataCategory::Tpv, measured_index + 1),
         point_ref(DataCategory::SatelliteReport, measured_index + 1),
@@ -190,7 +190,7 @@ fn data_point_ref(point: &SpatialPoint) -> MapElementRef {
 fn nearest_visible_fix(
     spatial_index: &SpatialIndex,
     cursor: [f64; 2],
-    scope: MapScope<'_>,
+    scope: MapPresence<'_>,
 ) -> Option<MapElementRef> {
     spatial_index
         .fixes
@@ -214,19 +214,16 @@ fn bench_nearest_candidate(c: &mut Criterion) {
     let generated_visibility = GeneratedMarkerVisibility::default();
     let filter = GlobalFilter::default();
     let hidden = hidden_range(0..8);
-    let visible_scope = MapScope {
-        files: &files,
-        visibility: &visibility,
-        event_marker_visibility: &event_visibility,
-        generated_marker_visibility: &generated_visibility,
-        filter: &filter,
-        display_mask: DisplayMask::default(),
-        query_matches: None,
-    };
-    let hidden_scope = MapScope {
-        query_matches: Some(&hidden),
-        ..visible_scope
-    };
+    let visible_scope = MapEligibility::new(
+        &files,
+        &visibility,
+        &filter,
+        None,
+        &generated_visibility,
+        &event_visibility,
+    )
+    .with_display_mask(DisplayMask::default());
+    let hidden_scope = visible_scope.with_query_matches(Some(&hidden));
 
     let mut group = c.benchmark_group("nearest_candidate");
     group.bench_function("visible_first", |b| {

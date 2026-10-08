@@ -3,7 +3,7 @@ use gt_ui_types::{DrawLayerMask, PointVisibility};
 /// One point of one track, as the map currently reads it.
 ///
 /// [`PointClass::visibility`] comes from
-/// [`gt_ui_types::MapScope::point_visibility`].
+/// [`gt_ui_types::MapPresence::point_visibility`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PointClass {
     pub visibility: PointVisibility,

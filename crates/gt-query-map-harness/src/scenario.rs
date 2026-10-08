@@ -7,7 +7,8 @@ use gt_query_run::{QuerySession, RunInputs, RunResults};
 use gt_types::{FileIdx, FixRef, PointIdx, TrackRef};
 use gt_ui_types::{
     DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, MapElementRef,
-    MapHighlight, MapScope, MatchHighlight, PinnedPopup, QueryMatches, TrackDataVisibility,
+    MapEligibility, MapHighlight, MapPresence, MatchHighlight, PinnedPopup, QueryMatches,
+    TrackDataVisibility,
 };
 
 use crate::classify::PointClass;
@@ -233,7 +234,7 @@ impl MapScenario {
 
     /// What the map draws this frame, the same bundle [`gt_map::NavMap`] builds
     /// before it hit-tests or draws the pinned popup.
-    fn scope(&self) -> MapScope<'_> {
+    fn scope(&self) -> MapPresence<'_> {
         map_scope(
             &self.dataset,
             &self.visibility,
@@ -404,7 +405,7 @@ impl MapScenario {
     }
 }
 
-/// The frame's [`MapScope`] from the pieces it is made of, so a caller holding
+/// The frame's [`MapPresence`] from the pieces it is made of, so a caller holding
 /// [`MapScenario::highlight`] mutably can still build it.
 fn map_scope<'a>(
     dataset: &'a Dataset,
@@ -414,16 +415,16 @@ fn map_scope<'a>(
     filter: &'a GlobalFilter,
     display_mask: DisplayMask,
     session: &'a QuerySession,
-) -> MapScope<'a> {
-    MapScope {
-        files: dataset.files().files(),
+) -> MapPresence<'a> {
+    MapEligibility::new(
+        dataset.files().files(),
         visibility,
-        event_marker_visibility,
-        generated_marker_visibility,
         filter,
-        display_mask,
-        query_matches: session.matches(),
-    }
+        session.matches(),
+        generated_marker_visibility,
+        event_marker_visibility,
+    )
+    .with_display_mask(display_mask)
 }
 
 fn point_ref(track: TrackRef, point_index: usize) -> MapElementRef {
