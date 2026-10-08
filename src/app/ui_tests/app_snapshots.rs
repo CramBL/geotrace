@@ -165,12 +165,10 @@ fn snapshot_app_point_window_coordinate_out_of_range() {
 
     {
         let mut shared = harness.inner.state().shared.borrow_mut();
-        shared
-            .highlight
-            .toggle_sticky(gt_ui_types::MapElementRef::Fix(gt_types::FixRef::new(
-                TrackRef::new(fi, TrackIdx::new(0)),
-                out_of_range,
-            )));
+        shared.highlight.sticky = Some(gt_ui_types::MapElementRef::Fix(gt_types::FixRef::new(
+            TrackRef::new(fi, TrackIdx::new(0)),
+            out_of_range,
+        )));
         shared.zoom_to_visible_request = true;
     }
     harness.inner.run_steps(30);

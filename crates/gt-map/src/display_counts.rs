@@ -10,7 +10,7 @@
 //!
 //! The track gate is [`visibility::track_in_scope`]. This module checks the
 //! time filter and the marker type toggles per element, with the same calls
-//! that [`gt_ui_types::MapScope::point_visibility`] makes.
+//! that [`gt_ui_types::MapPresence::point_visibility`] makes.
 
 use std::hash::{Hash, Hasher};
 use std::ops::Range;

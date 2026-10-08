@@ -3,14 +3,14 @@ use gt_types::{
     CustomMarker, CustomMarkerIdx, CustomMarkerRef, DataCategory, MarkerIcon, SpatialPoint,
 };
 use gt_ui_theme::HIGHLIGHT_BLUE;
-use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, MapScope};
+use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, MapPresence};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::icon_mesh::{IconInstance, IconMeshBatch, IconMeshLibrary, PIN_HALF_EXTENTS_PT};
 use crate::{track_renderer, viewport};
 
 pub struct MarkerRenderer<'a> {
-    scope: MapScope<'a>,
+    scope: MapPresence<'a>,
     highlight: &'a MapHighlight,
     visible_custom: &'a [SpatialPoint],
     icon_meshes: Option<&'a IconMeshLibrary>,
@@ -18,7 +18,7 @@ pub struct MarkerRenderer<'a> {
 
 impl<'a> MarkerRenderer<'a> {
     pub fn new(
-        scope: MapScope<'a>,
+        scope: MapPresence<'a>,
         highlight: &'a MapHighlight,
         visible_custom: &'a [SpatialPoint],
         icon_meshes: Option<&'a IconMeshLibrary>,
@@ -68,7 +68,7 @@ impl Plugin for MarkerRenderer<'_> {
             );
             let Some(marker) = marker_ref
                 .track
-                .resolve(self.scope.files)
+                .resolve(self.scope.files())
                 .and_then(|track| marker_ref.index.get(&track.custom_markers))
             else {
                 continue;

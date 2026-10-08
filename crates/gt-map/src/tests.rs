@@ -34,22 +34,22 @@ pub(crate) fn vis_all_visible() -> TrackDataVisibility {
 }
 
 /// Everything visible: no marker type hidden, no display category masked, no
-/// query run. A case that needs one of those overrides the matching field -
-/// `MapScope { query_matches: Some(&matches), ..scope(&files, &vis, &filter) }`.
+/// query run. A case that needs one of those derives a complete policy from
+/// this value with the corresponding `with_*` method.
 fn scope<'a>(
     files: &'a [LoadedFile],
     visibility: &'a TrackDataVisibility,
     filter: &'a GlobalFilter,
-) -> MapScope<'a> {
-    MapScope {
+) -> MapPresence<'a> {
+    MapEligibility::new(
         files,
         visibility,
-        event_marker_visibility: &NO_EVENT_MARKER_PATH_HIDDEN,
-        generated_marker_visibility: &NO_GENERATED_MARKER_KIND_HIDDEN,
         filter,
-        display_mask: DisplayMask::default(),
-        query_matches: None,
-    }
+        None,
+        &NO_GENERATED_MARKER_KIND_HIDDEN,
+        &NO_EVENT_MARKER_PATH_HIDDEN,
+    )
+    .with_display_mask(DisplayMask::default())
 }
 
 /// Regression test: a point in a visible track must be hoverable.
@@ -177,10 +177,7 @@ fn masked_track_points_block_hover() {
     mask.set_visible(DisplayCategory::TrackPoints, false);
     assert!(!viewport::is_spatial_point_visible(
         &sp,
-        MapScope {
-            display_mask: mask,
-            ..scope(&files, &vis, &GlobalFilter::default())
-        }
+        scope(&files, &vis, &GlobalFilter::default()).with_display_mask(mask)
     ));
 }
 
@@ -371,20 +368,14 @@ fn query_hidden_point_is_not_hoverable() {
     assert!(
         !viewport::is_spatial_point_visible(
             &tpv_spatial_point(0, 0, 0),
-            MapScope {
-                query_matches: Some(&matches),
-                ..scope(&files, &vis, &filter)
-            }
+            scope(&files, &vis, &filter).with_query_matches(Some(&matches))
         ),
         "the query-hidden point must not be hoverable"
     );
     assert!(
         viewport::is_spatial_point_visible(
             &tpv_spatial_point(0, 0, 1),
-            MapScope {
-                query_matches: Some(&matches),
-                ..scope(&files, &vis, &filter)
-            }
+            scope(&files, &vis, &filter).with_query_matches(Some(&matches))
         ),
         "the point the query kept must stay hoverable"
     );
@@ -595,10 +586,7 @@ fn hiding_ghost_fixes_prevents_hovering_ghost_points_while_keeping_real_points()
 
     let mut mask = DisplayMask::default();
     mask.set_visible(DisplayCategory::GhostFixes, false);
-    let hidden_ghost_scope = MapScope {
-        display_mask: mask,
-        ..default_scope
-    };
+    let hidden_ghost_scope = default_scope.with_display_mask(mask);
     let hover_ghost_hidden = map.nearest_hover_candidates(
         [ghost_cursor.x, ghost_cursor.y],
         radius_merc_sq,

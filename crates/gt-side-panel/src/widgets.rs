@@ -3,7 +3,7 @@ use egui_phosphor::regular::CHECK_SQUARE as ICON_CHECK_SQUARE;
 use egui_phosphor::regular::MINUS_SQUARE as ICON_MINUS_SQUARE;
 use egui_phosphor::regular::SQUARE as ICON_SQUARE;
 use gt_types::{FileMetadata, FixStats, TimeRange, TrackMetadata};
-use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, MapScope};
+use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, MapPresence};
 
 use crate::tree::CheckState;
 
@@ -123,7 +123,7 @@ pub fn point_item_row(
     point_ref: MapElementRef,
     label: impl Into<WidgetText>,
     lat_lon: Option<(f64, f64)>,
-    scope: MapScope<'_>,
+    scope: MapPresence<'_>,
     highlight: &mut MapHighlight,
     requests: &mut PointClickRequests<'_>,
 ) {
@@ -158,7 +158,7 @@ pub fn apply_point_click(
     response: &egui::Response,
     point_ref: MapElementRef,
     lat_lon: Option<(f64, f64)>,
-    scope: MapScope<'_>,
+    scope: MapPresence<'_>,
     highlight: &mut MapHighlight,
     requests: &mut PointClickRequests<'_>,
 ) {

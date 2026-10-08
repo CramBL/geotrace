@@ -4,7 +4,7 @@ use gt_types::{
     FixRef, GeneratedMarkerIdx, GeneratedMarkerRef, PointIdx, SpatialPoint, TrackIdx, TrackRef,
 };
 
-use crate::visibility::{MapScope, PointVisibility};
+use crate::visibility::{MapPresence, PointVisibility, PresentElementRef};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MapElementRef {
@@ -215,10 +215,11 @@ pub struct MapHighlight {
 }
 
 impl MapHighlight {
-    /// Pin `point_ref`'s popup, or unpin it when it is already the sticky point.
-    /// Returns whether it ended up pinned: the caller places the popup only for
-    /// one that opened.
-    pub fn toggle_sticky(&mut self, point_ref: MapElementRef) -> bool {
+    /// Pin a map-present element's popup, or unpin it when it is already the
+    /// sticky point. Returns whether it ended up pinned: the caller places the
+    /// popup only for one that opened.
+    pub fn toggle_sticky(&mut self, present: PresentElementRef<'_>) -> bool {
+        let point_ref = present.element_ref();
         let pinned = self.sticky != Some(point_ref);
         self.sticky = pinned.then_some(point_ref);
         pinned
@@ -228,10 +229,14 @@ impl MapHighlight {
     /// one it does not, reporting whether the popup ended up pinned.
     pub fn toggle_sticky_if_drawn(
         &mut self,
-        scope: MapScope<'_>,
+        presence: MapPresence<'_>,
         point_ref: MapElementRef,
     ) -> bool {
-        scope.draws(point_ref) && self.toggle_sticky(point_ref)
+        match presence.resolve(point_ref) {
+            crate::visibility::MapPresenceResult::Present(present) => self.toggle_sticky(present),
+            crate::visibility::MapPresenceResult::Missing
+            | crate::visibility::MapPresenceResult::Withheld(_) => false,
+        }
     }
 
     /// Whether the map stacks `candidate`'s own hover label at the pointer.
@@ -279,10 +284,10 @@ impl MapHighlight {
 
     /// What the pinned popup does this frame, dropping a pin whose element is
     /// gone. Called once per frame by the map, and by the headless tests.
-    pub fn pin_this_frame(&mut self, scope: MapScope<'_>) -> Option<PinnedPopup> {
+    pub fn pin_this_frame(&mut self, presence: MapPresence<'_>) -> Option<PinnedPopup> {
         let pinned = self.sticky?;
         let withheld = |reason| Some(PinnedPopup::Withheld { pinned, reason });
-        match scope.point_visibility(pinned) {
+        match presence.point_visibility(pinned) {
             PointVisibility::Shown => Some(PinnedPopup::Drawn(pinned)),
             // The element itself is gone (its file unloaded, or the array it
             // indexed shrank), so the pin is dropped before whatever later
@@ -559,23 +564,31 @@ mod tests {
 
     #[test]
     fn toggling_the_same_point_unpins_it_and_another_takes_over() {
+        let fixture = ScopeFixture::all_drawn();
+        let present = |point| match fixture.scope().resolve(point) {
+            crate::visibility::MapPresenceResult::Present(present) => present,
+            crate::visibility::MapPresenceResult::Missing
+            | crate::visibility::MapPresenceResult::Withheld(_) => {
+                panic!("test point should be map-present")
+            }
+        };
         let mut highlight = MapHighlight::default();
         assert!(
-            highlight.toggle_sticky(test_util::point(3)),
+            highlight.toggle_sticky(present(test_util::point(3))),
             "a first click pins"
         );
         assert_eq!(highlight.sticky, Some(test_util::point(3)));
         assert!(
-            !highlight.toggle_sticky(test_util::point(3)),
+            !highlight.toggle_sticky(present(test_util::point(3))),
             "clicking the pinned point unpins it"
         );
         assert_eq!(highlight.sticky, None);
-        highlight.toggle_sticky(test_util::point(3));
+        highlight.toggle_sticky(present(test_util::point(3)));
         assert!(
-            highlight.toggle_sticky(test_util::point(7)),
+            highlight.toggle_sticky(present(test_util::point(4))),
             "another point takes the pin over"
         );
-        assert_eq!(highlight.sticky, Some(test_util::point(7)));
+        assert_eq!(highlight.sticky, Some(test_util::point(4)));
     }
 
     /// The element a hover or a click acts on is the fix whenever one is among

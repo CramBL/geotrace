@@ -5,7 +5,7 @@ use gt_types::{
 };
 use proptest::prelude::*;
 
-use super::PointVisibility;
+use super::{EligibilityWithheld, MapEligibilityResult, PointVisibility};
 use crate::display_mask::{DisplayCategory, DisplayMask};
 use crate::highlight::{MapElementRef, MapHighlight};
 use crate::query_matches::{QueryMatches, TrackRanges};
@@ -155,31 +155,56 @@ impl VisibilityScenario {
         fixture
     }
 
-    fn oracle(&self) -> PointVisibility {
+    fn eligibility_oracle(&self) -> MapEligibilityResult {
         if self.element.is_missing() {
-            return PointVisibility::NoSuchElement;
+            return MapEligibilityResult::Missing;
         }
         if !self.file_enabled || !self.track_enabled || !self.track_filter_passes {
-            return PointVisibility::TrackNotShown;
+            return MapEligibilityResult::Withheld(EligibilityWithheld::TrackNotShown);
         }
-        if !self.tree_category_visible || !self.display_category_visible {
-            return PointVisibility::CategoryHidden;
+        if !self.tree_category_visible {
+            return MapEligibilityResult::Withheld(EligibilityWithheld::CategoryHidden);
         }
         if matches!(self.element, ElementCase::GeneratedMarker) && !self.generated_kind_visible {
-            return PointVisibility::MarkerTypeHidden;
+            return MapEligibilityResult::Withheld(EligibilityWithheld::MarkerTypeHidden);
         }
         if matches!(self.element, ElementCase::EventMarker)
             && self.event_path_visibility != EventPathVisibility::Visible
         {
-            return PointVisibility::MarkerTypeHidden;
+            return MapEligibilityResult::Withheld(EligibilityWithheld::MarkerTypeHidden);
         }
         if self.element.policy_category() == DataCategory::Tpv && !self.query_keeps_point {
-            return PointVisibility::HiddenByQuery;
+            return MapEligibilityResult::Withheld(EligibilityWithheld::HiddenByQuery);
         }
         if !self.element_time_passes {
-            return PointVisibility::OutsideTimeFilter;
+            return MapEligibilityResult::Withheld(EligibilityWithheld::OutsideTimeFilter);
         }
-        PointVisibility::Shown
+        MapEligibilityResult::Eligible
+    }
+
+    fn oracle(&self) -> PointVisibility {
+        match self.eligibility_oracle() {
+            MapEligibilityResult::Missing => PointVisibility::NoSuchElement,
+            MapEligibilityResult::Withheld(EligibilityWithheld::TrackNotShown) => {
+                PointVisibility::TrackNotShown
+            }
+            MapEligibilityResult::Withheld(EligibilityWithheld::CategoryHidden) => {
+                PointVisibility::CategoryHidden
+            }
+            MapEligibilityResult::Withheld(EligibilityWithheld::MarkerTypeHidden) => {
+                PointVisibility::MarkerTypeHidden
+            }
+            MapEligibilityResult::Withheld(EligibilityWithheld::HiddenByQuery) => {
+                PointVisibility::HiddenByQuery
+            }
+            MapEligibilityResult::Withheld(EligibilityWithheld::OutsideTimeFilter) => {
+                PointVisibility::OutsideTimeFilter
+            }
+            MapEligibilityResult::Eligible if !self.display_category_visible => {
+                PointVisibility::CategoryHidden
+            }
+            MapEligibilityResult::Eligible => PointVisibility::Shown,
+        }
     }
 
     fn additional_hides(&self) -> Vec<Self> {
@@ -296,11 +321,17 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
 
     #[test]
-    fn map_scope_agrees_with_an_independent_visibility_oracle(case in scenario()) {
+    fn map_presence_agrees_with_an_independent_visibility_oracle(case in scenario()) {
         let fixture = case.apply();
+        let point = case.element.point_ref();
+        let presence = fixture.scope();
         prop_assert_eq!(
-            fixture.scope().point_visibility(case.element.point_ref()),
+            presence.point_visibility(point),
             case.oracle(),
+        );
+        prop_assert_eq!(
+            presence.eligibility().element_eligibility(point),
+            case.eligibility_oracle(),
         );
     }
 

@@ -3229,6 +3229,7 @@ dependencies = [
  "serde_json",
  "smallvec",
  "strum",
+ "trybuild",
 ]
 
 [[package]]

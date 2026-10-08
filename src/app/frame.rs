@@ -21,7 +21,7 @@ use gt_types::{FileIdx, FixRef, LoadedFile, TrackIdx, TrackRef};
 use gt_ui_components::{ToolWindow, ToolWindowSizing};
 use gt_ui_types::{
     ArcIdentity, ContextLines, GeomagneticSeries, HighlightScope, JammingSeries, MapElementRef,
-    MapHighlight, MapScope, TecSeries,
+    MapEligibility, MapHighlight, TecSeries,
 };
 use rustc_hash::FxHashMap;
 
@@ -860,15 +860,15 @@ impl App {
             let plot_visible = self.plot_is_visible();
             if plot_visible {
                 if let Some(cursor_time) = s.plot_state.hovered_time {
-                    let scope = MapScope {
-                        files: s.loaded_files.files(),
-                        visibility: s.tree.visibility(),
-                        event_marker_visibility: s.tree.event_marker_visibility(),
-                        generated_marker_visibility: s.tree.generated_marker_visibility(),
-                        filter: &s.filter,
-                        display_mask: s.display_mask,
-                        query_matches: self.query_window.matches(),
-                    };
+                    let scope = MapEligibility::new(
+                        s.loaded_files.files(),
+                        s.tree.visibility(),
+                        &s.filter,
+                        self.query_window.matches(),
+                        s.tree.generated_marker_visibility(),
+                        s.tree.event_marker_visibility(),
+                    )
+                    .with_display_mask(s.display_mask);
                     // `find_closest_tpv` applies the tree and the global
                     // filter. The track's category toggle, the display mask
                     // and a `keep`/`hide` query are the map's own gates.
@@ -947,15 +947,15 @@ impl App {
                     filter,
                     snap_errors: &snap_error_values,
                 },
-                MapScope {
-                    files: loaded_files.files(),
-                    visibility: tree.visibility(),
-                    event_marker_visibility: tree.event_marker_visibility(),
-                    generated_marker_visibility: tree.generated_marker_visibility(),
+                MapEligibility::new(
+                    loaded_files.files(),
+                    tree.visibility(),
                     filter,
-                    display_mask: *display_mask,
-                    query_matches: None,
-                },
+                    None,
+                    tree.generated_marker_visibility(),
+                    tree.event_marker_visibility(),
+                )
+                .with_display_mask(*display_mask),
                 highlight,
                 &mut gt_side_panel::widgets::PointClickRequests {
                     map_center: map_center_request,

@@ -28,7 +28,7 @@ use gt_ui_theme::buttons::{self, SortHeaderButton};
 use gt_ui_theme::labels::{CountLine, LabelWithHover};
 use gt_ui_types::{
     DRAWN_AT_CAPTION, HighlightScope, INTERPOLATED_POSITION_NOTE, MapElementRef, MapHighlight,
-    MapScope, MatchHighlight, MatchRevealTarget, StaleRunNote,
+    MapPresence, MatchHighlight, MatchRevealTarget, StaleRunNote,
 };
 use strum::IntoEnumIterator as _;
 
@@ -518,7 +518,7 @@ impl<'a> ResultsTables<'a> {
         ui: &mut egui::Ui,
         state: &mut ResultsState,
         popped_out: &mut bool,
-        scope: MapScope<'_>,
+        scope: MapPresence<'_>,
         out: &mut ResultsOutputs<'_, '_>,
     ) {
         self.matches.sort(state.sort);
@@ -1072,7 +1072,7 @@ impl<'a> ResultsTables<'a> {
         ui: &mut egui::Ui,
         selected: &MatchRow,
         ranges: &RunColumnRanges,
-        scope: MapScope<'_>,
+        scope: MapPresence<'_>,
         out: &mut ResultsOutputs<'_, '_>,
     ) {
         let Some(query) = self.queries.get(selected.query_index) else {
@@ -1179,7 +1179,7 @@ impl<'a> ResultsTables<'a> {
         cells: &PointColumns<'_>,
         match_row: &MatchRow,
         source_index: usize,
-        scope: MapScope<'_>,
+        scope: MapPresence<'_>,
         highlight: &mut MapHighlight,
     ) -> Option<PointClick> {
         let track = match_row.track;

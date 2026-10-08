@@ -20,7 +20,7 @@ use gt_query::lexer::{self, TokenClass};
 use gt_query::{ChannelSchema, CompletionTrigger, Construct, ConstructKind, Diagnostic, Span};
 use gt_query_run::{CheckRefresh, QuerySession, RunInputs, RunKind, RunOutcome};
 use gt_side_panel::widgets::PointClickRequests;
-use gt_ui_types::{MapHighlight, MapScope, MatchRevealTarget, QueryMatches, StaleRunNote};
+use gt_ui_types::{MapHighlight, MapPresence, MatchRevealTarget, QueryMatches, StaleRunNote};
 use strum::{EnumIter, IntoEnumIterator as _};
 
 use crate::app::background_thread;
@@ -364,7 +364,7 @@ impl QueryWindow {
         &mut self,
         ctx: &egui::Context,
         inputs: RunInputs<'_>,
-        map_scope: MapScope<'_>,
+        map_scope: MapPresence<'_>,
         highlight: &mut MapHighlight,
         requests: &mut PointClickRequests<'_>,
         reveal_matches_request: &mut Option<MatchRevealTarget>,
@@ -1115,7 +1115,7 @@ impl QueryWindow {
         &mut self,
         ui: &mut egui::Ui,
         inputs: RunInputs<'_>,
-        map_scope: MapScope<'_>,
+        map_scope: MapPresence<'_>,
         highlight: &mut MapHighlight,
         requests: &mut PointClickRequests<'_>,
         reveal_matches_request: &mut Option<MatchRevealTarget>,
@@ -1131,10 +1131,7 @@ impl QueryWindow {
         let files = inputs.loaded_files.files();
         // What the map draws right now: a point row can only pin a point that
         // is on it.
-        let scope = MapScope {
-            query_matches: session.matches(),
-            ..map_scope
-        };
+        let scope = map_scope.with_query_matches(session.matches());
         let Some(results) = session.results() else {
             ui.label(RichText::new("No runs yet").weak());
             return;

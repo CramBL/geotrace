@@ -5,7 +5,7 @@ use gt_types::{
     DataCategory, GeneratedMarker, GeneratedMarkerIdx, GeneratedMarkerKind, GeneratedMarkerRef,
     LoadedTrack, PointIdx, SpatialPoint,
 };
-use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, MapScope};
+use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, MapPresence};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::icon_mesh::{IconId, IconInstance, IconMeshBatch, IconMeshLibrary};
@@ -13,7 +13,7 @@ use crate::{tpv_renderer, track_renderer, viewport};
 
 #[derive(bon::Builder)]
 pub struct GeneratedMarkerRenderer<'a> {
-    scope: MapScope<'a>,
+    scope: MapPresence<'a>,
     highlight: &'a MapHighlight,
     visible_generated: &'a [SpatialPoint],
     icon_meshes: Option<&'a IconMeshLibrary>,
@@ -97,7 +97,7 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             );
             let Some(marker) = marker_ref
                 .track
-                .resolve(self.scope.files)
+                .resolve(self.scope.files())
                 .and_then(|track| marker_ref.index.get(&track.generated_markers))
             else {
                 continue;

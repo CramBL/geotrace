@@ -4,7 +4,7 @@ use gt_types::{
     EventMarker, EventMarkerIdx, EventMarkerRef, EventMarkerStyle, MarkerIcon, SpatialPoint,
 };
 use gt_ui_theme::HIGHLIGHT_BLUE;
-use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, MapScope};
+use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, MapPresence};
 use rustc_hash::FxHashMap;
 use walkers::{MapMemory, Plugin, Projector};
 
@@ -12,7 +12,7 @@ use crate::icon_mesh::{IconInstance, IconMeshBatch, IconMeshLibrary};
 use crate::{track_renderer, viewport};
 
 pub struct EventMarkerRenderer<'a> {
-    scope: MapScope<'a>,
+    scope: MapPresence<'a>,
     highlight: &'a MapHighlight,
     visible_event: &'a [SpatialPoint],
     icon_meshes: Option<&'a IconMeshLibrary>,
@@ -20,7 +20,7 @@ pub struct EventMarkerRenderer<'a> {
 
 impl<'a> EventMarkerRenderer<'a> {
     pub fn new(
-        scope: MapScope<'a>,
+        scope: MapPresence<'a>,
         highlight: &'a MapHighlight,
         visible_event: &'a [SpatialPoint],
         icon_meshes: Option<&'a IconMeshLibrary>,
@@ -50,7 +50,7 @@ impl Plugin for EventMarkerRenderer<'_> {
             if !viewport::is_spatial_point_visible(sp, self.scope) {
                 continue;
             }
-            let Some(file) = sp.file_index.get(self.scope.files) else {
+            let Some(file) = sp.file_index.get(self.scope.files()) else {
                 continue;
             };
             let marker_ref = EventMarkerRef::new(

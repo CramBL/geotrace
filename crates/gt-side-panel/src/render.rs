@@ -23,8 +23,8 @@ use gt_ui_components::{FractionalSection, FractionalSectionSizing, MetadataView}
 use gt_ui_theme::ELLIPSIS;
 use gt_ui_theme::buttons::FramelessIconButton;
 use gt_ui_types::{
-    DisplayCategory, DisplayMask, HighlightScope, MapElementRef, MapHighlight, MapScope,
-    QueryMatches, SnapCosting,
+    DisplayCategory, DisplayMask, HighlightScope, MapElementRef, MapEligibility, MapHighlight,
+    MapPresence, QueryMatches, SnapCosting,
 };
 use rustc_hash::FxHashMap;
 
@@ -375,15 +375,15 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) -> Option<
     let frame_visibility = ctx.tree.visibility().clone();
     let frame_event_marker_visibility = ctx.tree.event_marker_visibility().clone();
     let frame_generated_marker_visibility = ctx.tree.generated_marker_visibility().clone();
-    let scope = MapScope {
-        files: ctx.files(),
-        visibility: &frame_visibility,
-        event_marker_visibility: &frame_event_marker_visibility,
-        generated_marker_visibility: &frame_generated_marker_visibility,
-        filter: &filter_snapshot,
-        display_mask: ctx.display_mask,
-        query_matches: ctx.query_matches,
-    };
+    let scope = MapEligibility::new(
+        ctx.files(),
+        &frame_visibility,
+        &filter_snapshot,
+        ctx.query_matches,
+        &frame_generated_marker_visibility,
+        &frame_event_marker_visibility,
+    )
+    .with_display_mask(ctx.display_mask);
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show(ui, |ui| {
@@ -752,7 +752,7 @@ fn render_file_row(
     ui: &mut egui::Ui,
     fi: FileIdx,
     display_name: &str,
-    scope: MapScope<'_>,
+    scope: MapPresence<'_>,
     columns: &TreeTrackColumns,
     ctx: &mut PanelContext<'_>,
 ) {
@@ -1381,7 +1381,7 @@ fn render_track_row(
     ui: &mut egui::Ui,
     fi: FileIdx,
     ti: TrackIdx,
-    scope: MapScope<'_>,
+    scope: MapPresence<'_>,
     columns: &TreeTrackColumns,
     ctx: &mut PanelContext<'_>,
 ) {
@@ -1567,7 +1567,7 @@ fn render_track_categories(
     ui: &mut egui::Ui,
     track_ref: TrackRef,
     track: &LoadedTrack,
-    scope: MapScope<'_>,
+    scope: MapPresence<'_>,
     ctx: &mut PanelContext<'_>,
 ) {
     let Some(track_node) = ctx.tree.track_node(track_ref) else {
@@ -1885,7 +1885,7 @@ fn render_tpv_items(
     ui: &mut egui::Ui,
     track_ref: TrackRef,
     track: &LoadedTrack,
-    scope: MapScope<'_>,
+    scope: MapPresence<'_>,
     highlight: &mut MapHighlight,
     requests: &mut PointClickRequests<'_>,
 ) {
@@ -1901,7 +1901,7 @@ fn render_satellite_report_items(
     ui: &mut egui::Ui,
     track_ref: TrackRef,
     track: &LoadedTrack,
-    scope: MapScope<'_>,
+    scope: MapPresence<'_>,
     highlight: &mut MapHighlight,
     requests: &mut PointClickRequests<'_>,
 ) {
@@ -1934,7 +1934,7 @@ fn render_custom_marker_items(
     ui: &mut egui::Ui,
     track_ref: TrackRef,
     track: &LoadedTrack,
-    scope: MapScope<'_>,
+    scope: MapPresence<'_>,
     highlight: &mut MapHighlight,
     requests: &mut PointClickRequests<'_>,
 ) {
@@ -1954,7 +1954,7 @@ fn render_generated_markers_section(
     ui: &mut egui::Ui,
     track_ref: TrackRef,
     track: &LoadedTrack,
-    scope: MapScope<'_>,
+    scope: MapPresence<'_>,
     ctx: &mut PanelContext<'_>,
 ) {
     let count = track.generated_markers.len();

@@ -1,0 +1,13 @@
+error[E0308]: mismatched types
+  --> tests/compile_fail/raw_ref_cannot_pin.rs:10:29
+   |
+10 |     highlight.toggle_sticky(raw);
+   |               ------------- ^^^ expected `PresentElementRef<'_>`, found `MapElementRef`
+   |               |
+   |               arguments to this method are incorrect
+   |
+note: method defined here
+  --> src/highlight.rs
+   |
+   |     pub fn toggle_sticky(&mut self, present: PresentElementRef<'_>) -> bool {
+   |            ^^^^^^^^^^^^^

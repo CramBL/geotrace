@@ -1,0 +1,9 @@
+error[E0451]: fields `element_ref` and `element` of struct `PresentElementRef` are private
+  --> tests/compile_fail/present_element_ref_fields_are_private.rs:9:9
+   |
+ 8 |     let _ = PresentElementRef {
+   |             ----------------- in this type
+ 9 |         element_ref: value(),
+   |         ^^^^^^^^^^^ private field
+10 |         element: value(),
+   |         ^^^^^^^ private field
