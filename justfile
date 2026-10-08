@@ -104,6 +104,13 @@ test-backends:
 test-snapshots *ARGS:
     cargo nextest run --workspace --features geotrace/self-update -E "test(snapshot)" {{ ARGS }}
 
+# Run only the map-policy performance baselines from issue #917.
+# Criterion timings are deliberately local-only.
+# CI only compiles and lints benches.
+[group("native")]
+bench-map-policy *ARGS:
+    cargo bench -p gt-map --bench map_policy -- {{ ARGS }}
+
 [group("native")]
 examples:
     bash scripts/examples.sh
