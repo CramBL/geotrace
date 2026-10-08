@@ -15,14 +15,15 @@ use gt_filter::GlobalFilter;
 use gt_history_types::DatabaseRef;
 use gt_loaded_files::{LoadedFilesView, RecordingNames};
 use gt_types::{
-    DataCategory, FileIdx, GeneratedMarkerKind, GeoBounds, LoadWarning, LoadedFile, LoadedTrack,
+    CustomMarkerIdx, CustomMarkerRef, DataCategory, FileIdx, FixRef, GeneratedMarkerIdx,
+    GeneratedMarkerKind, GeneratedMarkerRef, GeoBounds, LoadWarning, LoadedFile, LoadedTrack,
     PointIdx, TrackGeometry, TrackIdx, TrackRef,
 };
 use gt_ui_components::{FractionalSection, FractionalSectionSizing, MetadataView};
 use gt_ui_theme::ELLIPSIS;
 use gt_ui_theme::buttons::FramelessIconButton;
 use gt_ui_types::{
-    DataPointRef, DisplayCategory, DisplayMask, HighlightScope, MapHighlight, MapScope,
+    DisplayCategory, DisplayMask, HighlightScope, MapElementRef, MapHighlight, MapScope,
     QueryMatches, SnapCosting,
 };
 use rustc_hash::FxHashMap;
@@ -1889,11 +1890,7 @@ fn render_tpv_items(
     requests: &mut PointClickRequests<'_>,
 ) {
     for (pi, point) in track.points.iter().enumerate() {
-        let point_ref = DataPointRef {
-            track: track_ref,
-            category: DataCategory::Tpv,
-            point_index: PointIdx::new(pi),
-        };
+        let point_ref = MapElementRef::Fix(FixRef::new(track_ref, PointIdx::new(pi)));
         let label = point.tpv.time().utc().format("%H:%M:%S").to_string();
         let lat_lon = drawn_at(track, pi);
         widgets::point_item_row(ui, point_ref, label, lat_lon, scope, highlight, requests);
@@ -1912,11 +1909,7 @@ fn render_satellite_report_items(
         let Some(sats) = &point.satellites else {
             continue;
         };
-        let point_ref = DataPointRef {
-            track: track_ref,
-            category: DataCategory::SatelliteReport,
-            point_index: PointIdx::new(pi),
-        };
+        let point_ref = MapElementRef::SatelliteReport(FixRef::new(track_ref, PointIdx::new(pi)));
         let time_str = sats.best_time().map_or_else(
             || gt_ui_theme::EM_DASH.to_string(),
             |t| t.format("%H:%M:%S").to_string(),
@@ -1946,11 +1939,8 @@ fn render_custom_marker_items(
     requests: &mut PointClickRequests<'_>,
 ) {
     for (pi, marker) in track.custom_markers.iter().enumerate() {
-        let point_ref = DataPointRef {
-            track: track_ref,
-            category: DataCategory::CustomMarker,
-            point_index: PointIdx::new(pi),
-        };
+        let point_ref =
+            MapElementRef::CustomMarker(CustomMarkerRef::new(track_ref, CustomMarkerIdx::new(pi)));
         let label = format!("{}  {}", marker.time.format("%H:%M:%S"), marker.label);
         let lat_lon = Some((marker.lat.as_degrees(), marker.lon.as_degrees()));
         widgets::point_item_row(ui, point_ref, label, lat_lon, scope, highlight, requests);
@@ -2053,11 +2043,10 @@ fn render_generated_markers_section(
                     let Some(marker) = track.generated_markers.get(pi) else {
                         continue;
                     };
-                    let point_ref = DataPointRef {
-                        track: track_ref,
-                        category: DataCategory::GeneratedMarker,
-                        point_index: PointIdx::new(pi),
-                    };
+                    let point_ref = MapElementRef::GeneratedMarker(GeneratedMarkerRef::new(
+                        track_ref,
+                        GeneratedMarkerIdx::new(pi),
+                    ));
                     // A multi-satellite slip shows its satellite count. The
                     // others show only the time.
                     let detail = match &marker.kind {

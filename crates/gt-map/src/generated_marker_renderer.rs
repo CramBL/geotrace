@@ -2,9 +2,10 @@ use egui::Grid;
 use egui::{Color32, Pos2, Response, Stroke, Ui};
 use egui_phosphor::regular::ARROW_RIGHT as ICON_ARROW_RIGHT;
 use gt_types::{
-    DataCategory, GeneratedMarker, GeneratedMarkerKind, LoadedTrack, PointIdx, SpatialPoint,
+    DataCategory, GeneratedMarker, GeneratedMarkerIdx, GeneratedMarkerKind, GeneratedMarkerRef,
+    LoadedTrack, PointIdx, SpatialPoint,
 };
-use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, MapScope};
+use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, MapScope};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::icon_mesh::{IconId, IconInstance, IconMeshBatch, IconMeshLibrary};
@@ -19,15 +20,15 @@ pub struct GeneratedMarkerRenderer<'a> {
 }
 
 impl<'a> GeneratedMarkerRenderer<'a> {
-    fn is_point_highlighted(&self, point_ref: DataPointRef) -> bool {
+    fn is_point_highlighted(&self, point_ref: MapElementRef) -> bool {
         if self.highlight.sticky.is_some_and(|r| r == point_ref) {
             return true;
         }
         match self.highlight.hover {
             Some(HighlightScope::Point(r)) => r == point_ref,
-            Some(HighlightScope::Track(track)) => track == point_ref.track,
+            Some(HighlightScope::Track(track)) => track == point_ref.track(),
             Some(HighlightScope::TrackCategory { track, category }) => {
-                track == point_ref.track && category == DataCategory::GeneratedMarker
+                track == point_ref.track() && category == DataCategory::GeneratedMarker
             }
             _ => false,
         }
@@ -90,18 +91,18 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             if !viewport::is_spatial_point_visible(sp, self.scope) {
                 continue;
             }
-            let Some(marker) = sp
-                .track_ref()
+            let marker_ref = GeneratedMarkerRef::new(
+                sp.track_ref(),
+                GeneratedMarkerIdx::new(sp.point_index.as_usize()),
+            );
+            let Some(marker) = marker_ref
+                .track
                 .resolve(self.scope.files)
-                .and_then(|track| sp.point_index.get(&track.generated_markers))
+                .and_then(|track| marker_ref.index.get(&track.generated_markers))
             else {
                 continue;
             };
-            let point_ref = DataPointRef {
-                track: sp.track_ref(),
-                category: DataCategory::GeneratedMarker,
-                point_index: sp.point_index,
-            };
+            let point_ref = MapElementRef::GeneratedMarker(marker_ref);
             let screen_pos = transform.to_screen(sp.merc);
             let highlighted = self.is_point_highlighted(point_ref);
             let fade =

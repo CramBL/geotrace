@@ -4,9 +4,9 @@ use chrono::Duration;
 use gt_filter::GlobalFilter;
 use gt_map::display_counts::{DisplayCounts, SuppliedCounts};
 use gt_query_run::{QuerySession, RunInputs, RunResults};
-use gt_types::{DataCategory, FileIdx, PointIdx, TrackRef};
+use gt_types::{FileIdx, FixRef, PointIdx, TrackRef};
 use gt_ui_types::{
-    DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
+    DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, MapElementRef,
     MapHighlight, MapScope, MatchHighlight, PinnedPopup, QueryMatches, TrackDataVisibility,
 };
 
@@ -426,10 +426,6 @@ fn map_scope<'a>(
     }
 }
 
-fn point_ref(track: TrackRef, point_index: usize) -> DataPointRef {
-    DataPointRef {
-        track,
-        category: DataCategory::Tpv,
-        point_index: PointIdx::new(point_index),
-    }
+fn point_ref(track: TrackRef, point_index: usize) -> MapElementRef {
+    MapElementRef::Fix(FixRef::new(track, PointIdx::new(point_index)))
 }

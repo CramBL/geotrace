@@ -25,7 +25,7 @@ pub(crate) fn track_stroke(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) 
 /// or on its recording, or it is the sticky selection's track.
 pub(crate) fn is_track_highlighted(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) -> bool {
     let track = TrackRef::new(fi, ti);
-    if highlight.sticky.is_some_and(|r| r.track == track) {
+    if highlight.sticky.is_some_and(|r| r.track() == track) {
         return true;
     }
     match highlight.hover {
@@ -89,7 +89,7 @@ pub(crate) fn is_track_in_focus(highlight: &MapHighlight, fi: FileIdx, ti: Track
         Some(HighlightScope::Track(t)) | Some(HighlightScope::TrackCategory { track: t, .. }) => {
             t == track
         }
-        Some(HighlightScope::Point(r)) => r.track == track,
+        Some(HighlightScope::Point(r)) => r.track() == track,
         None => false,
     };
     from_map_hover || highlight.snapped_plot_hover_track() == Some(track)
@@ -105,7 +105,7 @@ pub(crate) fn focused_track_from_highlight(highlight: &MapHighlight) -> Option<T
         Some(HighlightScope::Track(t)) | Some(HighlightScope::TrackCategory { track: t, .. }) => {
             Some(t)
         }
-        Some(HighlightScope::Point(r)) => Some(r.track),
+        Some(HighlightScope::Point(r)) => Some(r.track()),
         Some(HighlightScope::File { .. }) | None => highlight.snapped_plot_hover_track(),
     }
 }

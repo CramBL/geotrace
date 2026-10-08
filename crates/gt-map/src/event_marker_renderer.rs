@@ -1,8 +1,10 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui, Vec2};
 use gt_fmt::UTC_SECOND_FORMAT;
-use gt_types::{DataCategory, EventMarker, EventMarkerStyle, MarkerIcon, SpatialPoint};
+use gt_types::{
+    EventMarker, EventMarkerIdx, EventMarkerRef, EventMarkerStyle, MarkerIcon, SpatialPoint,
+};
 use gt_ui_theme::HIGHLIGHT_BLUE;
-use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, MapScope};
+use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, MapScope};
 use rustc_hash::FxHashMap;
 use walkers::{MapMemory, Plugin, Projector};
 
@@ -51,18 +53,18 @@ impl Plugin for EventMarkerRenderer<'_> {
             let Some(file) = sp.file_index.get(self.scope.files) else {
                 continue;
             };
+            let marker_ref = EventMarkerRef::new(
+                sp.track_ref(),
+                EventMarkerIdx::new(sp.point_index.as_usize()),
+            );
             let Some(marker) = sp
                 .track_index
                 .get(&file.tracks)
-                .and_then(|track| sp.point_index.get(&track.event_markers))
+                .and_then(|track| marker_ref.index.get(&track.event_markers))
             else {
                 continue;
             };
-            let point_ref = DataPointRef {
-                track: sp.track_ref(),
-                category: DataCategory::EventMarker,
-                point_index: sp.point_index,
-            };
+            let point_ref = MapElementRef::EventMarker(marker_ref);
             let screen_pos = transform.to_screen(sp.merc);
             let style_map = &file.event_marker_styles;
             let color = resolve_color(marker, style_map);
@@ -100,13 +102,13 @@ fn resolve_icon(variant_path: &str, style_map: &FxHashMap<String, EventMarkerSty
         .map_or(MarkerIcon::Pin, |s| s.icon)
 }
 
-fn is_highlighted(highlight: &MapHighlight, point_ref: DataPointRef) -> bool {
+fn is_highlighted(highlight: &MapHighlight, point_ref: MapElementRef) -> bool {
     if highlight.sticky.is_some_and(|r| r == point_ref) {
         return true;
     }
     match highlight.hover {
         Some(HighlightScope::Point(r)) => r == point_ref,
-        Some(HighlightScope::Track(track)) => track == point_ref.track,
+        Some(HighlightScope::Track(track)) => track == point_ref.track(),
         _ => false,
     }
 }

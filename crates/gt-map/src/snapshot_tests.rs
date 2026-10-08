@@ -1445,7 +1445,7 @@ fn the_point_window_button_returns_a_timed_sky_trails_action() {
     assert_eq!(
         map.returned_action(),
         Some(MapAction::ShowSkyTrails(
-            gt_ui_types::SkyTrailsRequest::at_instant(clicked.track, point_time)
+            gt_ui_types::SkyTrailsRequest::at_instant(clicked.track(), point_time)
         ))
     );
 }

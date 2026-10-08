@@ -533,11 +533,21 @@ fn hover_finds_the_nearest_fix_and_the_nearest_event_marker() {
     );
 
     assert_eq!(
-        hover.tpv_or_satellite_report.map(|point| point.point_index),
+        hover
+            .tpv_or_satellite_report
+            .map(|point| point.fix().expect("fix hover").point),
         Some(PointIdx::new(0))
     );
     assert_eq!(
-        hover.event_marker.map(|point| point.point_index),
+        hover.event_marker.and_then(|point| match point {
+            MapElementRef::EventMarker(reference) => {
+                Some(PointIdx::new(reference.index.as_usize()))
+            }
+            MapElementRef::Fix(_)
+            | MapElementRef::SatelliteReport(_)
+            | MapElementRef::CustomMarker(_)
+            | MapElementRef::GeneratedMarker(_) => None,
+        }),
         Some(PointIdx::new(0))
     );
 }
@@ -579,7 +589,7 @@ fn hiding_ghost_fixes_prevents_hovering_ghost_points_while_keeping_real_points()
     assert_eq!(
         hover_ghost
             .tpv_or_satellite_report
-            .map(|point| point.point_index),
+            .map(|point| point.fix().expect("fix hover").point),
         Some(PointIdx::new(1))
     );
 
@@ -604,7 +614,7 @@ fn hiding_ghost_fixes_prevents_hovering_ghost_points_while_keeping_real_points()
     assert_eq!(
         hover_real
             .tpv_or_satellite_report
-            .map(|point| point.point_index),
+            .map(|point| point.fix().expect("fix hover").point),
         Some(PointIdx::new(0))
     );
 }
@@ -626,12 +636,8 @@ fn start_flag_remains_anchored_on_first_fix_when_ghost_fixes_are_hidden() {
     assert_eq!(ends.last, 1);
 }
 
-fn hover_ref(category: DataCategory) -> DataPointRef {
-    DataPointRef {
-        track: test_util::track0(),
-        category,
-        point_index: PointIdx::new(0),
-    }
+fn hover_ref(category: DataCategory) -> MapElementRef {
+    test_util::point_ref(category, 0)
 }
 
 /// The click that opens the disambiguation popup also fires `clicked_elsewhere`
@@ -756,11 +762,7 @@ fn candidate_label_generated_marker_matches_header() {
         load_warnings: vec![],
     };
 
-    let candidate = gt_ui_types::DataPointRef {
-        track: test_util::track0(),
-        category: DataCategory::GeneratedMarker,
-        point_index: PointIdx::new(0),
-    };
+    let candidate = test_util::point_ref(DataCategory::GeneratedMarker, 0);
     let expected = crate::generated_marker_renderer::generated_marker_header(
         &GeneratedMarkerKind::GnssFixRegained {
             fix_lost_duration: dur,

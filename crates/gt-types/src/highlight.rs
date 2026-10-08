@@ -90,6 +90,41 @@ impl fmt::Display for PointIdx {
     }
 }
 
+macro_rules! marker_index {
+    ($name:ident, $element:ty) => {
+        #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+        pub struct $name(usize);
+
+        impl $name {
+            pub fn new(n: usize) -> Self {
+                Self(n)
+            }
+
+            pub fn as_usize(self) -> usize {
+                self.0
+            }
+
+            pub fn get(self, slice: &[$element]) -> Option<&$element> {
+                slice.get(self.0)
+            }
+
+            pub fn get_mut(self, slice: &mut [$element]) -> Option<&mut $element> {
+                slice.get_mut(self.0)
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{}", self.0)
+            }
+        }
+    };
+}
+
+marker_index!(CustomMarkerIdx, crate::markers::CustomMarker);
+marker_index!(GeneratedMarkerIdx, crate::markers::GeneratedMarker);
+marker_index!(EventMarkerIdx, crate::markers::EventMarker);
+
 /// Canonical address of a single track: which file and which track within it.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct TrackRef {
@@ -116,6 +151,26 @@ impl FixRef {
         Self { track, point }
     }
 }
+
+macro_rules! marker_ref {
+    ($name:ident, $index:ident) => {
+        #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+        pub struct $name {
+            pub track: TrackRef,
+            pub index: $index,
+        }
+
+        impl $name {
+            pub fn new(track: TrackRef, index: $index) -> Self {
+                Self { track, index }
+            }
+        }
+    };
+}
+
+marker_ref!(CustomMarkerRef, CustomMarkerIdx);
+marker_ref!(GeneratedMarkerRef, GeneratedMarkerIdx);
+marker_ref!(EventMarkerRef, EventMarkerIdx);
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, strum::EnumIter, strum::EnumCount,

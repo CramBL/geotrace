@@ -3,7 +3,7 @@ use egui_phosphor::regular::CHECK_SQUARE as ICON_CHECK_SQUARE;
 use egui_phosphor::regular::MINUS_SQUARE as ICON_MINUS_SQUARE;
 use egui_phosphor::regular::SQUARE as ICON_SQUARE;
 use gt_types::{FileMetadata, FixStats, TimeRange, TrackMetadata};
-use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, MapScope};
+use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, MapScope};
 
 use crate::tree::CheckState;
 
@@ -120,7 +120,7 @@ pub fn fix_stats_tooltip_row(ui: &mut egui::Ui, stats: FixStats) {
 /// uniformly across all point-list categories (TPV, satellite, markers).
 pub fn point_item_row(
     ui: &mut egui::Ui,
-    point_ref: DataPointRef,
+    point_ref: MapElementRef,
     label: impl Into<WidgetText>,
     lat_lon: Option<(f64, f64)>,
     scope: MapScope<'_>,
@@ -156,7 +156,7 @@ pub struct PointClickRequests<'a> {
 pub fn apply_point_click(
     ui: &egui::Ui,
     response: &egui::Response,
-    point_ref: DataPointRef,
+    point_ref: MapElementRef,
     lat_lon: Option<(f64, f64)>,
     scope: MapScope<'_>,
     highlight: &mut MapHighlight,

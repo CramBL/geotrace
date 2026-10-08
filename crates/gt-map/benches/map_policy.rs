@@ -19,9 +19,9 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use gt_filter::GlobalFilter;
 use gt_map::{benchmark_support, test_util};
 use gt_track_builder::SpatialIndex;
-use gt_types::{DataCategory, LoadedFile, NavPoint, PointIdx, SpatialPoint};
+use gt_types::{DataCategory, FixRef, LoadedFile, NavPoint, PointIdx, SpatialPoint};
 use gt_ui_types::{
-    DataPointRef, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, MapScope,
+    DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, MapElementRef, MapScope,
     QueryMatches, TrackDataVisibility, TrackRanges,
 };
 
@@ -76,12 +76,8 @@ fn bench_frame_policy_scaling(c: &mut Criterion) {
     group.finish();
 }
 
-fn point_ref(category: DataCategory, point_index: usize) -> DataPointRef {
-    DataPointRef {
-        track: test_util::track0(),
-        category,
-        point_index: PointIdx::new(point_index),
-    }
+fn point_ref(category: DataCategory, point_index: usize) -> MapElementRef {
+    test_util::point_ref(category, point_index)
 }
 
 fn hidden_range(range: Range<usize>) -> QueryMatches {
@@ -187,19 +183,15 @@ fn bench_candidate_resolution(c: &mut Criterion) {
     group.finish();
 }
 
-fn data_point_ref(point: &SpatialPoint) -> DataPointRef {
-    DataPointRef {
-        track: point.track_ref(),
-        category: point.category,
-        point_index: point.point_index,
-    }
+fn data_point_ref(point: &SpatialPoint) -> MapElementRef {
+    MapElementRef::Fix(FixRef::new(point.track_ref(), point.point_index))
 }
 
 fn nearest_visible_fix(
     spatial_index: &SpatialIndex,
     cursor: [f64; 2],
     scope: MapScope<'_>,
-) -> Option<DataPointRef> {
+) -> Option<MapElementRef> {
     spatial_index
         .fixes
         .nearest_neighbor_iter(cursor)

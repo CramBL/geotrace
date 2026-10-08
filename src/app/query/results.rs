@@ -23,13 +23,11 @@ use gt_query_run::{
     TimeFilteredPoints, TrackProvider,
 };
 use gt_side_panel::widgets::{self, PointClickRequests};
-use gt_types::{
-    Channel, DataCategory, LoadedFile, PlacedPoints, PointIdx, ResolvedPosition, TrackRef,
-};
+use gt_types::{Channel, FixRef, LoadedFile, PlacedPoints, PointIdx, ResolvedPosition, TrackRef};
 use gt_ui_theme::buttons::{self, SortHeaderButton};
 use gt_ui_theme::labels::{CountLine, LabelWithHover};
 use gt_ui_types::{
-    DRAWN_AT_CAPTION, DataPointRef, HighlightScope, INTERPOLATED_POSITION_NOTE, MapHighlight,
+    DRAWN_AT_CAPTION, HighlightScope, INTERPOLATED_POSITION_NOTE, MapElementRef, MapHighlight,
     MapScope, MatchHighlight, MatchRevealTarget, StaleRunNote,
 };
 use strum::IntoEnumIterator as _;
@@ -263,13 +261,12 @@ impl RowSource<'_> {
 
     /// The point on the map a row addresses, absent for a channel sample: a
     /// sample has no position of its own.
-    fn map_point(&self, track: TrackRef, source_index: usize) -> Option<DataPointRef> {
+    fn map_point(&self, track: TrackRef, source_index: usize) -> Option<MapElementRef> {
         match self {
-            Self::NavPoints { .. } => Some(DataPointRef {
+            Self::NavPoints { .. } => Some(MapElementRef::Fix(FixRef::new(
                 track,
-                category: DataCategory::Tpv,
-                point_index: PointIdx::new(source_index),
-            }),
+                PointIdx::new(source_index),
+            ))),
             Self::ChannelSamples { .. } => None,
         }
     }
@@ -325,7 +322,7 @@ fn track_result_of(results: &ChannelResults, track: TrackRef) -> Option<&Channel
 /// What a click in the points table requests from the app, applied once the
 /// table is laid out and the enclosing panel's `Ui` is available again.
 struct PointClick {
-    point: DataPointRef,
+    point: MapElementRef,
     /// Absent for a point of a track with no geometry: it is drawn nowhere.
     map_center: Option<(f64, f64)>,
     response: egui::Response,
@@ -1201,10 +1198,13 @@ impl<'a> ResultsTables<'a> {
             .response()
             .on_hover_text(self.source.row_hover_text(track, source_index));
         let point = point?;
-        if response.hovered() && scope.draws(point) {
+        if response.hovered()
+            && scope.draws(point)
+            && let Some(fix) = point.fix()
+        {
             // The ring the plot cursor draws, restricted to a point the map
             // draws: the row and the map then agree on which point is meant.
-            highlight.plot_hover_point = Some((track.fi, track.index, point.point_index));
+            highlight.plot_hover_point = Some((track.fi, track.index, fix.point));
         }
         if !response.clicked() && !response.double_clicked() {
             return None;

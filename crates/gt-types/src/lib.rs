@@ -9,7 +9,11 @@ pub use coordinates::{
 pub use extent::{DrawnFix, Extent};
 pub use geo_bounds::{GeoBounds, LatRange, LonRange, PoleWinding};
 pub use geo_types::{Coord, Rect};
-pub use highlight::{DataCategory, DataCategorySet, FileIdx, FixRef, PointIdx, TrackIdx, TrackRef};
+pub use highlight::{
+    CustomMarkerIdx, CustomMarkerRef, DataCategory, DataCategorySet, EventMarkerIdx,
+    EventMarkerRef, FileIdx, FixRef, GeneratedMarkerIdx, GeneratedMarkerRef, PointIdx, TrackIdx,
+    TrackRef,
+};
 pub use markers::{
     CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind,
     GeneratedMarkerKindSet, GeneratedMarkerKindTag, MarkerColor, MarkerIcon,

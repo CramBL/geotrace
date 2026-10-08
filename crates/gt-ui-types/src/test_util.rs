@@ -13,14 +13,15 @@ use chrono::{DateTime, TimeDelta, Utc};
 use gt_filter::GlobalFilter;
 use gt_types::fixtures::FixKind;
 use gt_types::{
-    DataCategory, EventMarker, FileIdx, FileSource, GeneratedMarkerKindTag, Latitude, LoadedFile,
-    Longitude, NavPoint, PointIdx, TrackIdx, TrackRef,
+    EventMarker, EventMarkerIdx, EventMarkerRef, FileIdx, FileSource, FixRef, GeneratedMarkerIdx,
+    GeneratedMarkerKindTag, GeneratedMarkerRef, Latitude, LoadedFile, Longitude, NavPoint,
+    PointIdx, TrackIdx, TrackRef,
 };
 
 use crate::display_mask::DisplayMask;
 use crate::event_marker_visibility::EventMarkerVisibility;
 use crate::generated_marker_visibility::GeneratedMarkerVisibility;
-use crate::highlight::DataPointRef;
+use crate::highlight::MapElementRef;
 use crate::query_matches::{QueryMatches, TrackRanges};
 use crate::visibility::{MapScope, TrackDataVisibility};
 
@@ -78,28 +79,19 @@ pub fn track0() -> TrackRef {
 }
 
 /// One TPV point of that track.
-pub fn point(index: usize) -> DataPointRef {
-    DataPointRef {
-        track: track0(),
-        category: DataCategory::Tpv,
-        point_index: PointIdx::new(index),
-    }
+pub fn point(index: usize) -> MapElementRef {
+    MapElementRef::Fix(FixRef::new(track0(), PointIdx::new(index)))
 }
 
-pub fn event_marker() -> DataPointRef {
-    DataPointRef {
-        track: track0(),
-        category: DataCategory::EventMarker,
-        point_index: PointIdx::new(0),
-    }
+pub fn event_marker() -> MapElementRef {
+    MapElementRef::EventMarker(EventMarkerRef::new(track0(), EventMarkerIdx::new(0)))
 }
 
-pub fn generated_marker() -> DataPointRef {
-    DataPointRef {
-        track: track0(),
-        category: DataCategory::GeneratedMarker,
-        point_index: PointIdx::new(0),
-    }
+pub fn generated_marker() -> MapElementRef {
+    MapElementRef::GeneratedMarker(GeneratedMarkerRef::new(
+        track0(),
+        GeneratedMarkerIdx::new(0),
+    ))
 }
 
 /// The owned pieces a [`MapScope`] borrows, letting a test withhold a point in

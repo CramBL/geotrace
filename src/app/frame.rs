@@ -17,10 +17,10 @@ use gt_side_panel::{
     DetachRequest, DragDetach, PanelContext, SidePanelEvent, SnapCostingTarget, SnapPanelView,
 };
 use gt_store::DatabaseRef;
-use gt_types::{DataCategory, FileIdx, LoadedFile, TrackIdx, TrackRef};
+use gt_types::{FileIdx, FixRef, LoadedFile, TrackIdx, TrackRef};
 use gt_ui_components::{ToolWindow, ToolWindowSizing};
 use gt_ui_types::{
-    ArcIdentity, ContextLines, DataPointRef, GeomagneticSeries, HighlightScope, JammingSeries,
+    ArcIdentity, ContextLines, GeomagneticSeries, HighlightScope, JammingSeries, MapElementRef,
     MapHighlight, MapScope, TecSeries,
 };
 use rustc_hash::FxHashMap;
@@ -879,11 +879,7 @@ impl App {
                         cursor_time,
                     )
                     .filter(|&(fi, ti, pi)| {
-                        scope.draws(DataPointRef {
-                            track: TrackRef::new(fi, ti),
-                            category: DataCategory::Tpv,
-                            point_index: pi,
-                        })
+                        scope.draws(MapElementRef::Fix(FixRef::new(TrackRef::new(fi, ti), pi)))
                     });
                     s.highlight.plot_hover_time = closest.map(|_| cursor_time);
                     s.highlight.plot_hover_point = closest;
@@ -1295,16 +1291,18 @@ fn extract_map_hover_time(
     let HighlightScope::Point(point_ref) = highlight.hover? else {
         return None;
     };
-    if point_ref.category != DataCategory::Tpv {
-        return None;
-    }
-    point_ref
+    let fix_ref = match point_ref {
+        MapElementRef::Fix(fix_ref) => fix_ref,
+        MapElementRef::SatelliteReport(_)
+        | MapElementRef::CustomMarker(_)
+        | MapElementRef::GeneratedMarker(_)
+        | MapElementRef::EventMarker(_) => return None,
+    };
+    fix_ref
         .track
-        .fi
-        .get(files)
-        .and_then(|f| point_ref.track.index.get(&f.tracks))
-        .and_then(|t| point_ref.point_index.get(&t.points))
-        .map(|p| p.tpv.time().utc())
+        .resolve(files)
+        .and_then(|track| fix_ref.point.get(&track.points))
+        .map(|point| point.tpv.time().utc())
 }
 
 /// The time span of the match hovered in the query results table (first to

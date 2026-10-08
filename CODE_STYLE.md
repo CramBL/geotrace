@@ -396,7 +396,7 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 | **track** | A contiguous GPS recording within a file (what the user calls a "track"). | `LoadedTrack`, `TrackIdx`, `TrackRef`, `ti` |
 | **point** | A single data point within a track. | `PointIdx`, `SpatialPoint`, `pi` |
 | **track ref** (`TrackRef`) | Typed (file-index, track-index) pair that uniquely addresses a track. Fields: `fi: FileIdx`, `index: TrackIdx`. | `TrackRef::new(fi, ti)` |
-| **data point ref** (`DataPointRef`) | Typed address of a single rendered point. Fields: `track: TrackRef`, `category`, `point_index`. | sticky/hover highlight |
+| **map element ref** (`MapElementRef`) | Closed typed address of one point-like map element. Fixes and satellite reports carry `FixRef`. Each marker family carries its own typed marker ref and index. Track polylines are represented separately. | sticky/hover highlight |
 | **time range** | First fix to last fix of a recording or track: the wall-clock span it covers. | `TimeRange`, `FileMetadata::time_range` |
 | **recorded time** | The time a recording's tracks cover, the sum of their durations. Shorter than the time range whenever the recording idled between tracks. Not "effective duration" or "active time". | `FileMetadata::total_duration` |
 | **event marker** | A timestamped event associated with a track (e.g. `power/boot`). | `EventMarker`, `event_markers` |
