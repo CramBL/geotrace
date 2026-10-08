@@ -44,6 +44,10 @@ pub use space_weather_indicator::SpaceWeatherIndicator;
 pub use tec_renderer::{TecHeatmapSnapshot, TecLayer};
 pub use viewport::ViewportBounds;
 
+#[cfg(any(test, feature = "test-util"))]
+#[doc(hidden)]
+pub mod benchmark_support;
+
 mod collision_grid;
 pub mod display_counts;
 mod display_toggle;

@@ -307,6 +307,9 @@ impl<'a> AddressedElement<'a> {
 }
 
 #[cfg(test)]
+mod property_tests;
+
+#[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 

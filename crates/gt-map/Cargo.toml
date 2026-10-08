@@ -79,5 +79,9 @@ vec1.workspace = true
 name = "icon_batch"
 harness = false
 
+[[bench]]
+name = "map_policy"
+harness = false
+
 [lints]
 workspace = true
