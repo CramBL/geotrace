@@ -127,7 +127,7 @@ hdf5 = { package = "hdf5-metno", version = "0.14", features = ["static", "zlib"]
 hdf5-pure = "0.46"
 heck = "0.5"
 insta = "1.49.0"
-jiff = "0.2.23"
+jiff = "0.2.38"
 log = "0.4"
 logos = "0.16"
 memchr = "2"
