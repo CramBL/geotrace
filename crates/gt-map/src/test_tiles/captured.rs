@@ -249,7 +249,13 @@ impl CapturedTiles {
                 return None;
             }
         };
-        match Tile::new(&bytes, &Style, tile_id.zoom, &self.egui_ctx) {
+        match Tile::new(
+            &bytes,
+            &Style,
+            tile_id.zoom,
+            self.tile_size_px,
+            &self.egui_ctx,
+        ) {
             Ok(tile) => Some(tile),
             Err(err) => {
                 log::debug!("the captured tile at {path:?} did not decode: {err}");
