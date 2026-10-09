@@ -100,7 +100,7 @@ criterion = "0.8"
 dirs = "7"
 eframe = { version = "0.36", default-features = false, features = ["default_fonts", "links", "wgpu", "wayland"] }
 egui = "0.36"
-egui-phosphor = "0.13.0"
+egui-phosphor = "0.14.0"
 egui-wgpu = "0.36"
 egui_extras = { version = "0.36", features = ["datepicker"] }
 egui_kittest = { version = "0.36", features = ["eframe", "wgpu", "snapshot"] }
@@ -387,7 +387,6 @@ rstest.workspace = true
 tempfile.workspace = true
 
 [patch.crates-io]
-egui-phosphor = { git = "https://github.com/CramBL/egui-phosphor.git" }
 egui-notify = { git = "https://github.com/CramBL/egui-notify.git" }
 
 # The self-updater end-to-end test only builds with the updater compiled in, so
