@@ -118,7 +118,7 @@ geo-types = "0.7.19"
 # H3 cell indices: the interference datasets are published in that addressing
 # scheme. Pure Rust, with no C bindings. The `geo` feature stays off because
 # gt-jam only parses indices and reads their boundaries.
-h3o = "0.10"
+h3o = "0.11"
 # `static` belongs to every consumer: it builds the bundled libhdf5, and
 # gt-history's dev-dependency reaches hdf5-metno even when
 # gt-history-backend-sys is compiled out. A build without `static` falls back
