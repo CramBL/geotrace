@@ -114,7 +114,7 @@ fd-lock = "4"
 # so the client decompresses them itself.
 flate2 = "1"
 geo = "0.33.1"
-geo-types = "0.7.19"
+geo-types = "0.7.20"
 # H3 cell indices: the interference datasets are published in that addressing
 # scheme. Pure Rust, with no C bindings. The `geo` feature stays off because
 # gt-jam only parses indices and reads their boundaries.
