@@ -309,7 +309,7 @@ chrono.workspace = true
 dirs.workspace = true
 eframe.workspace = true
 egui.workspace = true
-egui-notify = "0.22"
+egui-notify = "0.23"
 egui-phosphor.workspace = true
 egui_extras.workspace = true
 egui_tiles.workspace = true
@@ -385,9 +385,6 @@ gt-types = { path = "crates/gt-types", features = ["fixtures"] }
 insta.workspace = true
 rstest.workspace = true
 tempfile.workspace = true
-
-[patch.crates-io]
-egui-notify = { git = "https://github.com/CramBL/egui-notify.git" }
 
 # The self-updater end-to-end test only builds with the updater compiled in, so
 # the `--update` flag it drives exists. See tests/self_update.rs.
