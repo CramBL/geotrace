@@ -106,7 +106,7 @@ egui_extras = { version = "0.36", features = ["datepicker"] }
 egui_kittest = { version = "0.36", features = ["eframe", "wgpu", "snapshot"] }
 egui_plot = "0.37.0"
 egui_tiles = "0.17"
-env_logger = "0.11.10"
+env_logger = "0.11.11"
 # The advisory lock GeoTrace holds on its data directory while it runs. The OS
 # drops the lock when the process ends, however it ends.
 fd-lock = "4"
