@@ -57,6 +57,7 @@ gt-icon-tessellate = { path = "../gt-icon-tessellate" }
 postcard.workspace = true
 
 [dev-dependencies]
+allocation-counter.workspace = true
 criterion.workspace = true
 egui_kittest.workspace = true
 # The crate's own harness, which the integration test binaries draw through.

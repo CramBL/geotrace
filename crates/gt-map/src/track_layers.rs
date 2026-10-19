@@ -8,7 +8,7 @@
 
 use egui::{Color32, Response, Stroke, Ui};
 use gt_filter::GlobalFilter;
-use gt_types::{FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef};
+use gt_types::{FileIdx, LoadedFile, LoadedTrack, PointIdx, TrackIdx, TrackRef};
 use gt_ui_types::{DrawLayerMask, MapHighlight, QueryMatches, SkyGlyphVariant, TrackMatchView};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -19,7 +19,7 @@ use crate::icon_mesh::IconMeshLibrary;
 use crate::match_reveal::HaloStyle;
 use crate::polyline::{self, CULL_MARGIN_PX, VisiblePath};
 use crate::query_match_renderer;
-use crate::sat_labels::{self, LabelSelection};
+use crate::sat_labels::{self, LabelSelection, SatelliteLabelDisplay};
 use crate::sky_glyph_renderer::{self, GlyphSelection};
 use crate::tpv_renderer::{self, ChevronFix, QUALITY_LINE_WIDTH, TpvDrawStyle, TrackIconFade};
 use crate::track_endpoint_renderer::{
@@ -287,6 +287,19 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
                 if entry.draws_nothing() {
                     continue;
                 }
+                let track_ref = TrackRef::new(fi, ti);
+                let hover_match = self
+                    .highlight
+                    .hover_match
+                    .filter(|hm| hm.track == track_ref);
+                let query_highlights_present = entry.query_highlights()
+                    && (hover_match.is_some()
+                        || self.query_matches.is_some_and(|matches| {
+                            matches
+                                .draws
+                                .iter()
+                                .any(|layer| !layer.ranges_for(track_ref).is_empty())
+                        }));
                 // A track with no geometry is nowhere on the map: nothing of
                 // it is drawn, and the culling test has no box to take.
                 let Some(geometry) = track.geometry.measured() else {
@@ -314,17 +327,16 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
                     && !paint_icons
                     && !entry.sat_labels()
                     && !entry.sky_glyphs()
+                    && !query_highlights_present
                 {
                     continue;
                 }
 
-                let track_ref = TrackRef::new(fi, ti);
                 let fade = entry.fade();
-                let hover_match = self
-                    .highlight
-                    .hover_match
-                    .filter(|hm| hm.track == track_ref);
                 let query_view = TrackMatchView::for_track(self.query_matches, track_ref);
+                let Some(prepared) = self.plan.prepared_track(track_ref) else {
+                    continue;
+                };
                 let Some(placed) = track.placed_points() else {
                     continue;
                 };
@@ -350,7 +362,7 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
                         quality: tpv_renderer::quality_line_color(p.fix),
                         bucket,
                         matched: query_view.draw_mask(pi),
-                        hidden: query_view.is_hidden(pi),
+                        hidden: !prepared.fix_is_available(PointIdx::new(pi)),
                         hover_matched: hover_match.is_some_and(|hm| hm.contains(pi)),
                     };
                     (key, screen_pos)
@@ -400,7 +412,7 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
         }
         let halo = HaloStyle::new(style, self.match_reveal);
         for (i, geo) in geometries.iter().enumerate() {
-            if !filter(i) {
+            if !filter(i) || !geo.entry.query_highlights() {
                 continue;
             }
             let track_ref = TrackRef::new(geo.fi, geo.ti);
@@ -449,13 +461,19 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
         match path {
             VisiblePath::OffScreen => {}
             VisiblePath::Dot(key, pos) => {
-                if covered(key) {
+                if !key.hidden && covered(key) {
                     query_match_renderer::draw_match_ring(ui, *pos, halo, color);
                 }
             }
             VisiblePath::Spans(spans) => {
                 for span in spans.iter() {
-                    query_match_renderer::paint_match_halo_span(ui, span, &covered, halo, color);
+                    query_match_renderer::paint_match_halo_span(
+                        ui,
+                        span,
+                        |key| !key.hidden && covered(key),
+                        halo,
+                        color,
+                    );
                 }
             }
         }
@@ -488,7 +506,7 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
     /// every track whose TPV layer is on. Labels are collision-resolved
     /// across all tracks at once ([`sat_labels::select_sat_labels`]).
     /// Per-point semantic eligibility comes from the compiled frame plan.
-    /// Collision decimation and the ghost-label display rule stay renderer-local.
+    /// Collision decimation applies after the shared label display policy.
     fn select_sat_labels(
         &mut self,
         geometries: &[TrackGeometry],
@@ -506,6 +524,7 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
         // Capture only the compiled policy so semantic gates cannot drift
         // from hover or marker resolution.
         let plan = self.plan;
+        let label_display = SatelliteLabelDisplay::new(plan.presence().display_mask());
         sat_labels::select_sat_labels(
             &mut *self.sat_label_scratch,
             geometries
@@ -517,9 +536,7 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
             viewport,
             cell_merc,
             move |track_ref, pi, point| {
-                plan.fix_is_semantically_present(track_ref, pi)
-                    && (!point.is_ghost_fix()
-                        || plan.entry(track_ref).is_some_and(TrackEntry::ghost_fixes))
+                plan.fix_is_semantically_present(track_ref, pi) && label_display.includes(point)
             },
         );
     }
@@ -684,11 +701,21 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
         style: FlagStyle,
         transform: &MercTransform,
     ) -> SmallVec<[StandingFlag; 2]> {
-        let Some(ends) = geo
-            .track
-            .placed_points()
-            .and_then(|placed| DrawnTrackEnds::of(placed, self.filter))
-        else {
+        let Some(prepared) = self.plan.prepared_track(TrackRef::new(geo.fi, geo.ti)) else {
+            return SmallVec::new();
+        };
+        let transient_overlay_drawn = geo.need_blink
+            || (geo.entry.query_highlights()
+                && self
+                    .highlight
+                    .hover_match
+                    .is_some_and(|matched| matched.track == TrackRef::new(geo.fi, geo.ti)));
+        let Some(ends) = DrawnTrackEnds::for_track(
+            prepared,
+            self.plan.presence().display_mask(),
+            self.query_matches,
+            transient_overlay_drawn,
+        ) else {
             return SmallVec::new();
         };
         let ends = match geo.path {
@@ -887,7 +914,8 @@ mod tests {
     use uom::si::f64::Angle;
 
     use super::{LinePointKey, TrackGeometry, TrackLayers};
-    use crate::polyline::{self, CULL_MARGIN_PX, VisiblePath};
+    use crate::match_reveal::HaloStyle;
+    use crate::polyline::{self, CULL_MARGIN_PX, PolylineSpans, VisiblePath};
     use crate::sat_labels::LabelSelection;
     use crate::sky_glyph_renderer::GlyphSelection;
     use crate::test_util;
@@ -960,6 +988,44 @@ mod tests {
         let span = span(hidden);
         let runs: Vec<usize> = super::shown_runs(&span).map(<[_]>::len).collect();
         assert_eq!(runs, expected);
+    }
+
+    #[rstest]
+    #[case::hidden_point_splits_the_band(
+        &[false, false, true, false, false],
+        vec![vec![40.0, 60.0], vec![100.0, 120.0]],
+    )]
+    #[case::hidden_dot(&[true], vec![])]
+    fn halo_geometry_excludes_hidden_points(
+        #[case] hidden: &[bool],
+        #[case] expected_paths: Vec<Vec<f32>>,
+    ) {
+        let mut points = span(hidden);
+        for (_, position) in &mut points {
+            position.x = 40.0 + 20.0 * position.x;
+            position.y = 40.0;
+        }
+        let path = match points.as_slice() {
+            [(key, position)] => VisiblePath::Dot(*key, *position),
+            _ => VisiblePath::Spans(PolylineSpans::from_nested(vec![points])),
+        };
+        let mut harness = test_util::harness_builder().ui(|ui| {
+            let halo = HaloStyle::new(&tpv_renderer::frame_style(15.0), 0.0);
+            TrackLayers::paint_halo_path(ui, &path, halo, Color32::RED, |_| true);
+        });
+        harness.run();
+        let painted_paths: Vec<Vec<f32>> = harness
+            .inner
+            .output()
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Path(path) => Some(path.points.iter().map(|point| point.x).collect()),
+                egui::Shape::Circle(circle) => Some(vec![circle.center.x]),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(painted_paths, expected_paths);
     }
 
     fn default_line_key() -> LinePointKey {

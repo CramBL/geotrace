@@ -1,0 +1,7 @@
+error[E0451]: fields `element_ref` and `element` of struct `EligibleElementRef` are private
+ --> tests/compile_fail/eligible_element_ref_fields_are_private.rs:6:34
+  |
+6 |     let _ = EligibleElementRef { element_ref: value(), element: value() };
+  |                                  ^^^^^^^^^^^           ^^^^^^^ private field
+  |                                  |
+  |                                  private field

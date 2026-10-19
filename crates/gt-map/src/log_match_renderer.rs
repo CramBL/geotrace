@@ -31,9 +31,9 @@ use egui::{Align2, Color32, FontId, Response, RichText, Ui, Vec2};
 use gt_filter::GlobalFilter;
 use gt_fmt::ELLIPSIS;
 use gt_types::LoadedFile;
+use gt_ui_types::log_matches::LogMatchScope;
 use gt_ui_types::{
     LogMatch, LogMatchColor, LogMatchGlyph, LogMatchSource, LogMatches, LogRowPlacement,
-    TrackDataVisibility, visibility,
 };
 use walkers::{MapMemory, Plugin, Projector};
 
@@ -41,17 +41,18 @@ use crate::collision_grid;
 use crate::hover_labels::{HoverLabelEntry, HoverLabelStack};
 use crate::icon_mesh::{IconId, IconInstance, IconMeshBatch, IconMeshLibrary};
 use crate::transform::MercTransform;
+use crate::viewport::MapFramePlan;
 
 /// Draws what the loaded logs' filters selected, above the track line and
 /// below the markers.
 #[derive(bon::Builder)]
-pub(crate) struct LogMatchRenderer<'a> {
+pub(crate) struct LogMatchRenderer<'a, 'p> {
     matches: &'a LogMatches,
+    plan: &'a MapFramePlan<'p>,
 
     /// The loaded files, resolving a match's fix to the track it was recorded
     /// on.
     files: &'a [LoadedFile],
-    visibility: &'a TrackDataVisibility,
     filter: &'a GlobalFilter,
     icon_meshes: Option<&'a IconMeshLibrary>,
     dark_mode: bool,
@@ -80,7 +81,7 @@ struct HoveredHexagon<'a> {
     glyph: LogMatchGlyph,
 }
 
-impl Plugin for LogMatchRenderer<'_> {
+impl Plugin for LogMatchRenderer<'_, '_> {
     fn run(
         self: Box<Self>,
         ui: &mut Ui,
@@ -100,12 +101,17 @@ impl Plugin for LogMatchRenderer<'_> {
         // Reused across layers: one allocation per frame.
         let mut drawn_matches: Vec<&LogMatch> = Vec::new();
         let mut hovered: Option<HoveredHexagon<'_>> = None;
+        let scope = LogMatchScope::from_prepared(self.files, self.filter, |track| {
+            self.plan
+                .prepared_track(track)
+                .map(|prepared| prepared.scope())
+        });
         for layer in self.matches.layers() {
             let fill = gt_ui_theme::log_match_color(layer.color, self.dark_mode);
             let shared = matches!(layer.color, LogMatchColor::LayerSlot { shared: true, .. });
             counted_clusters.clear();
             drawn_matches.clear();
-            drawn_matches.extend(layer.matches_in_scope(self.files, self.visibility, self.filter));
+            drawn_matches.extend(scope.matches(layer));
             for cluster in collision_grid::cluster_positions(
                 drawn_matches.iter().map(|entry| entry.merc),
                 cluster_spacing_merc,
@@ -178,8 +184,7 @@ impl Plugin for LogMatchRenderer<'_> {
         // the log layer's hover language in its reserved colour.
         let hover_ring = gt_ui_theme::LOG_LIVE_FILTER.resolve(self.dark_mode);
         if let Some(placement) = self.hovered_row_placement
-            && visibility::track_in_scope(self.files, self.visibility, self.filter, placement.track)
-                .is_some()
+            && scope.loaded_track_is_in_scope(placement.track)
         {
             draw_hover_ring(
                 ui,

@@ -2,14 +2,20 @@
 //! narrower than the loaded recordings: the view it fits, the chips it
 //! offers, and the fix the map highlight lands on.
 
+use std::cell::Cell;
+use std::iter;
+
 use chrono::{DateTime, TimeDelta, Utc};
 use gt_filter::GlobalFilter;
 use gt_plot::PlotState;
 use gt_plot::test_util::{self, PlotSources};
 use gt_test_utils::Queryable as _;
 use gt_types::satellites::{Constellation, Satellite, Satellites};
-use gt_types::{FileIdx, LoadedFile, NavPoint, PointIdx, TrackIdx};
-use gt_ui_types::TrackDataVisibility;
+use gt_types::{FileIdx, FixRef, LoadedFile, NavPoint, PointIdx, TrackIdx};
+use gt_ui_types::{
+    DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, MapElementRef,
+    MapEligibility, QueryMatches, TrackDataVisibility,
+};
 
 /// A recording of one track, `count` fixes at 1 Hz from `start_offset`
 /// seconds, each carrying a satellite report of `constellation`.
@@ -244,5 +250,86 @@ fn a_pinned_view_redraws_its_lines_when_the_window_end_moves() {
             pixels_per_point
         ),
         "the last 40 s of every line left the window and must leave the plot"
+    );
+}
+
+#[rstest::rstest]
+#[case::query_hidden_nearest(false, false, true, Some(29))]
+#[case::hidden_ghost(true, false, false, Some(29))]
+#[case::hidden_measured(true, true, true, Some(30))]
+#[case::no_present_target(false, true, false, None)]
+fn cross_highlight_searches_map_present_candidates(
+    #[case] ghost_nearest: bool,
+    #[case] hide_measured: bool,
+    #[case] show_ghosts: bool,
+    #[case] expected: Option<usize>,
+) {
+    let mut file = recording(0, 60, Constellation::Gps);
+    if ghost_nearest {
+        file.tracks[0].points[30].satellites = Some(Satellites::new(None, None, Vec::new()));
+    }
+    let files = [file];
+    let visibility = TrackDataVisibility::from_loaded(&files);
+    let filter = GlobalFilter::default();
+    let generated = GeneratedMarkerVisibility::default();
+    let events = EventMarkerVisibility::default();
+    let mut query = QueryMatches::default();
+    if !ghost_nearest && !hide_measured {
+        query
+            .hidden
+            .insert(test_util::track0(), iter::once(30..31).collect());
+    }
+    let mut display = DisplayMask::default();
+    display.set_visible(DisplayCategory::TrackPoints, !hide_measured);
+    display.set_visible(DisplayCategory::GhostFixes, show_ghosts);
+    let scope = MapEligibility::new(
+        &files,
+        &visibility,
+        &filter,
+        Some(&query),
+        &generated,
+        &events,
+    )
+    .with_display_mask(display);
+    let preparations = Cell::new(0);
+    let closest = gt_plot::find_closest_tpv_matching(&files, test_util::at_second(30), |track| {
+        preparations.set(preparations.get() + 1);
+        let prepared = scope.prepare_track(track);
+        Some(move |point| prepared.draws(MapElementRef::Fix(FixRef::new(track, point))))
+    });
+    assert_eq!(closest.map(|(_, _, point)| point.as_usize()), expected);
+    assert_eq!(preparations.get(), 1);
+}
+
+#[test]
+fn cross_highlight_searches_another_track_after_a_query_hidden_track() {
+    let files = [
+        recording(0, 60, Constellation::Gps),
+        recording(0, 60, Constellation::Gps),
+    ];
+    let visibility = TrackDataVisibility::from_loaded(&files);
+    let filter = GlobalFilter::default();
+    let generated = GeneratedMarkerVisibility::default();
+    let events = EventMarkerVisibility::default();
+    let mut query = QueryMatches::default();
+    query
+        .hidden
+        .insert(test_util::track0(), iter::once(0..60).collect());
+    let scope = MapEligibility::new(
+        &files,
+        &visibility,
+        &filter,
+        Some(&query),
+        &generated,
+        &events,
+    )
+    .with_display_mask(DisplayMask::default());
+    let closest = gt_plot::find_closest_tpv_matching(&files, test_util::at_second(30), |track| {
+        let prepared = scope.prepare_track(track);
+        Some(move |point| prepared.draws(MapElementRef::Fix(FixRef::new(track, point))))
+    });
+    assert_eq!(
+        closest,
+        Some((FileIdx::new(1), TrackIdx::new(0), PointIdx::new(30)))
     );
 }

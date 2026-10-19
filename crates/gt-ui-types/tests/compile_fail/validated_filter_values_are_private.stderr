@@ -1,0 +1,47 @@
+error[E0423]: cannot initialize a tuple struct which contains private fields
+ --> tests/compile_fail/validated_filter_values_are_private.rs:6:13
+  |
+6 |     let _ = BoundedTimeWindow(value());
+  |             ^^^^^^^^^^^^^^^^^
+  |
+note: constructor is not visible here due to private fields
+ --> $WORKSPACE/crates/gt-filter/src/lib.rs
+  |
+  | pub struct BoundedTimeWindow(TimeRange);
+  |                              ^^^^^^^^^ private field
+
+error[E0423]: cannot initialize a tuple struct which contains private fields
+ --> tests/compile_fail/validated_filter_values_are_private.rs:7:13
+  |
+7 |     let _ = MinimumDistance(value());
+  |             ^^^^^^^^^^^^^^^
+  |
+note: constructor is not visible here due to private fields
+ --> $WORKSPACE/crates/gt-filter/src/lib.rs
+  |
+  | pub struct MinimumDistance(Length);
+  |                            ^^^^^^ private field
+
+error[E0423]: cannot initialize a tuple struct which contains private fields
+ --> tests/compile_fail/validated_filter_values_are_private.rs:8:13
+  |
+8 |     let _ = MinimumDuration(value());
+  |             ^^^^^^^^^^^^^^^
+  |
+note: constructor is not visible here due to private fields
+ --> $WORKSPACE/crates/gt-filter/src/lib.rs
+  |
+  | pub struct MinimumDuration(Duration);
+  |                            ^^^^^^^^ private field
+
+error[E0423]: cannot initialize a tuple struct which contains private fields
+ --> tests/compile_fail/validated_filter_values_are_private.rs:9:13
+  |
+9 |     let _ = MinimumSpread(value());
+  |             ^^^^^^^^^^^^^
+  |
+note: constructor is not visible here due to private fields
+ --> $WORKSPACE/crates/gt-filter/src/lib.rs
+  |
+  | pub struct MinimumSpread(Length);
+  |                          ^^^^^^ private field

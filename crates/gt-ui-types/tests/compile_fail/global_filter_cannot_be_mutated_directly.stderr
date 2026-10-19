@@ -1,0 +1,23 @@
+error[E0616]: field `time_window` of struct `GlobalFilter` is private
+ --> tests/compile_fail/global_filter_cannot_be_mutated_directly.rs:5:12
+  |
+5 |     filter.time_window = TimeWindow::Empty;
+  |            ^^^^^^^^^^^ private field
+
+error[E0616]: field `minimum_distance` of struct `GlobalFilter` is private
+ --> tests/compile_fail/global_filter_cannot_be_mutated_directly.rs:6:12
+  |
+6 |     filter.minimum_distance = None;
+  |            ^^^^^^^^^^^^^^^^ private field
+
+error[E0616]: field `minimum_duration` of struct `GlobalFilter` is private
+ --> tests/compile_fail/global_filter_cannot_be_mutated_directly.rs:7:12
+  |
+7 |     filter.minimum_duration = None;
+  |            ^^^^^^^^^^^^^^^^ private field
+
+error[E0616]: field `minimum_spread` of struct `GlobalFilter` is private
+ --> tests/compile_fail/global_filter_cannot_be_mutated_directly.rs:8:12
+  |
+8 |     filter.minimum_spread = None;
+  |            ^^^^^^^^^^^^^^ private field

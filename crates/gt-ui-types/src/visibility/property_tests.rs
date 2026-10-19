@@ -333,6 +333,12 @@ proptest! {
             presence.eligibility().element_eligibility(point),
             case.eligibility_oracle(),
         );
+        let compiled = presence.eligibility().prepare();
+        prop_assert_eq!(compiled.with_display_mask(fixture.display_mask).point_visibility(point), case.oracle());
+        let prepared = presence.eligibility().prepare_track(point.track());
+        prop_assert_eq!(prepared.element_eligibility(point), case.eligibility_oracle());
+        prop_assert_eq!(presence.prepare_track(point.track()).draws(point), case.oracle().is_shown());
+
     }
 
     #[test]

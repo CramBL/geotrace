@@ -214,6 +214,7 @@ fn map_frame_plan_respects_the_display_mask() {
     mask.set_visible(DisplayCategory::GhostFixes, false);
     mask.set_visible(DisplayCategory::SatelliteLabels, false);
     mask.set_visible(DisplayCategory::SkyGlyphs, false);
+    mask.set_visible(DisplayCategory::QueryHighlights, false);
     let all_off = viewport::MapFramePlan::compute_for_test(&files, &vis, &filter, mask, 15.0)
         .entry(track)
         .expect("track is in the plan");
@@ -290,6 +291,9 @@ fn fully_masked_map_has_no_bounding_box() {
         DisplayCategory::TrackPoints,
         DisplayCategory::SatelliteLabels,
         DisplayCategory::CustomMarkers,
+        DisplayCategory::GhostFixes,
+        DisplayCategory::SkyGlyphs,
+        DisplayCategory::QueryHighlights,
     ] {
         mask.set_visible(category, false);
     }

@@ -17,12 +17,13 @@ use std::ops::Range;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use gt_filter::GlobalFilter;
+use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_map::{benchmark_support, test_util};
 use gt_track_builder::SpatialIndex;
 use gt_types::{DataCategory, FixRef, LoadedFile, NavPoint, PointIdx, SpatialPoint};
 use gt_ui_types::{
-    DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, MapElementRef, QueryMatches,
-    TrackDataVisibility, TrackRanges,
+    DisplayMask, DrawLayer, EventMarkerVisibility, GeneratedMarkerVisibility, MapElementRef,
+    QueryMatches, TrackDataVisibility, TrackRanges,
 };
 
 const BENCH_ZOOM: f64 = 15.0;
@@ -273,10 +274,118 @@ fn bench_nearest_candidate(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_scan_and_marker_workloads(c: &mut Criterion) {
+    let mut files = vec![test_util::a_recording_with_every_marker_kind()];
+    let template = files[0].tracks[0].clone();
+    files[0].tracks = (0..128)
+        .map(|_| {
+            let mut track = template.clone();
+            track.custom_markers = template
+                .custom_markers
+                .iter()
+                .cycle()
+                .take(1_000)
+                .cloned()
+                .collect();
+            track.generated_markers = template
+                .generated_markers
+                .iter()
+                .cycle()
+                .take(1_000)
+                .cloned()
+                .collect();
+            track.event_markers = template
+                .event_markers
+                .iter()
+                .cycle()
+                .take(1_000)
+                .cloned()
+                .collect();
+            track
+        })
+        .collect();
+    let mut loaded_files = LoadedFiles::new();
+    for file in files {
+        loaded_files.push(file, FileHistory::None);
+    }
+    let files = loaded_files.files();
+    let visibility = TrackDataVisibility::from_loaded(files);
+    let filter = GlobalFilter::default();
+    let generated = GeneratedMarkerVisibility::default();
+    let events = EventMarkerVisibility::default();
+    let inputs = benchmark_support::FramePlanInputs::new(
+        files,
+        &visibility,
+        &filter,
+        None,
+        &generated,
+        &events,
+        DisplayMask::default(),
+    );
+    c.bench_function("marker_heavy_preparation/128_tracks_3000_markers", |b| {
+        b.iter(|| benchmark_support::compile_frame_plan(hint::black_box(inputs), BENCH_ZOOM));
+    });
+    c.bench_function("display_counts/cold_marker_heavy", |b| {
+        b.iter(|| hint::black_box(inputs).count_elements());
+    });
+    let mut cache = benchmark_support::CountsBench::default();
+    cache.get(loaded_files.view(), inputs);
+    c.bench_function("display_counts/cache_hit_marker_heavy", |b| {
+        b.iter(|| cache.get(loaded_files.view(), hint::black_box(inputs)));
+    });
+    c.bench_function("fit_scan/marker_heavy", |b| {
+        b.iter(|| hint::black_box(inputs).fit_bounds());
+    });
+}
+
+fn bench_query_heavy_policy(c: &mut Criterion) {
+    let files = recording_with_tracks(8, 1_000);
+    let visibility = TrackDataVisibility::from_loaded(&files);
+    let filter = GlobalFilter::default();
+    let generated = GeneratedMarkerVisibility::default();
+    let events = EventMarkerVisibility::default();
+    let query = QueryMatches {
+        draws: (0..8)
+            .map(|color| DrawLayer {
+                color,
+                ranges: TrackRanges::from_iter([(
+                    test_util::track0(),
+                    iter::once(0..1_000).collect(),
+                )]),
+            })
+            .collect(),
+        ..hidden_range(100..200)
+    };
+    let inputs = benchmark_support::FramePlanInputs::new(
+        &files,
+        &visibility,
+        &filter,
+        Some(&query),
+        &generated,
+        &events,
+        DisplayMask::default(),
+    );
+    let spatial = SpatialIndex::build(&files);
+    let candidates: Vec<_> = spatial.points().take(32).copied().collect();
+    let plan = benchmark_support::compile_frame_plan(inputs, BENCH_ZOOM);
+    c.bench_function("query_heavy/candidates_8_draw_layers", |b| {
+        b.iter(|| {
+            for point in &candidates {
+                hint::black_box(plan.spatial_point_visible(hint::black_box(point)));
+            }
+        });
+    });
+    c.bench_function("query_heavy/count_scan_8_draw_layers", |b| {
+        b.iter(|| hint::black_box(inputs).count_elements());
+    });
+}
+
 criterion_group!(
     benches,
     bench_frame_policy_scaling,
     bench_candidate_resolution,
-    bench_nearest_candidate
+    bench_nearest_candidate,
+    bench_scan_and_marker_workloads,
+    bench_query_heavy_policy
 );
 criterion_main!(benches);

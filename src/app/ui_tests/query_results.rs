@@ -411,7 +411,7 @@ fn the_plot_cursor_over_fixes_the_map_leaves_out_highlights_nothing(
 /// The query below hides the later half of the span and leaves the earlier half
 /// drawn: the recording's fixes climb north by 0.0002 degrees each.
 #[test]
-fn the_plot_cursor_over_a_hidden_stretch_reaches_for_no_drawn_fix() {
+fn the_plot_cursor_over_a_hidden_stretch_selects_the_nearest_present_fix() {
     let mut harness = ui_tests::app_with_query_window_open();
     ui_tests::run_query(&mut harness, "points | where lat > 51.506 deg | hide");
     harness.state_mut().query_window.open = false;
@@ -420,7 +420,23 @@ fn the_plot_cursor_over_a_hidden_stretch_reaches_for_no_drawn_fix() {
     let late = plot_pane_point(&harness, PLOT_PANE_LATE);
     harness.hover_at_and_settle(late, HIGHLIGHT_SETTLE_FRAMES);
 
-    assert_eq!(highlighted_fix_visibility(&harness), None);
+    assert_eq!(
+        highlighted_fix_visibility(&harness),
+        Some(PointVisibility::Shown)
+    );
+    let shared = harness.state().shared.borrow();
+    let (fi, ti, pi) = shared
+        .highlight
+        .plot_hover_point
+        .expect("the visible runner-up is selected");
+    let track = TrackRef::new(fi, ti);
+    let query = harness
+        .state()
+        .query_window
+        .matches()
+        .expect("the hide query ran");
+    assert!(!query.is_hidden(track, pi.as_usize()));
+    assert!(query.is_hidden(track, pi.as_usize() + 1));
 }
 
 /// The matches table lists a track, times and counts, and the points table

@@ -93,6 +93,7 @@ repository = "https://github.com/CramBL/geotrace"
 readme = "README.md"
 
 [workspace.dependencies]
+allocation-counter = "0.8.1"
 bon = "3"
 bytemuck = { version = "1", features = ["derive"] }
 chrono = { version = "0.4.45", default-features = false, features = ["std", "now", "clock", "oldtime"] }

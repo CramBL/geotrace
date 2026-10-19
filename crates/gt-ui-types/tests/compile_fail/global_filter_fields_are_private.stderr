@@ -1,0 +1,15 @@
+error[E0451]: fields `time_window`, `minimum_distance`, `minimum_duration`, `minimum_spread` and `marker_requirement` of struct `GlobalFilter` are private
+  --> tests/compile_fail/global_filter_fields_are_private.rs:6:9
+   |
+ 5 |     let _ = GlobalFilter {
+   |             ------------ in this type
+ 6 |         time_window: TimeWindow::All,
+   |         ^^^^^^^^^^^ private field
+ 7 |         minimum_distance: None,
+   |         ^^^^^^^^^^^^^^^^ private field
+ 8 |         minimum_duration: None,
+   |         ^^^^^^^^^^^^^^^^ private field
+ 9 |         minimum_spread: None,
+   |         ^^^^^^^^^^^^^^ private field
+10 |         marker_requirement: MarkerRequirement::default(),
+   |         ^^^^^^^^^^^^^^^^^^ private field

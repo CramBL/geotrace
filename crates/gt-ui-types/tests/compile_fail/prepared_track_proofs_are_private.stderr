@@ -1,0 +1,37 @@
+error[E0451]: fields `eligibility`, `tracks` and `offsets` of struct `PreparedMapEligibility` are private
+ --> tests/compile_fail/prepared_track_proofs_are_private.rs:6:38
+  |
+6 |     let _ = PreparedMapEligibility { eligibility: value(), tracks: value(), offsets: value() };
+  |                                      ^^^^^^^^^^^           ^^^^^^           ^^^^^^^ private field
+  |                                      |                     |
+  |                                      |                     private field
+  |                                      private field
+
+error[E0451]: fields `track_ref`, `track` and `visibility` of struct `PreparedTrackScope` are private
+  --> tests/compile_fail/prepared_track_proofs_are_private.rs:8:9
+   |
+ 7 |     let _ = PreparedTrackScope {
+   |             ------------------ in this type
+ 8 |         track_ref: value(),
+   |         ^^^^^^^^^ private field
+ 9 |         track: None,
+   |         ^^^^^ private field
+10 |         visibility: None,
+   |         ^^^^^^^^^^ private field
+
+error[E0451]: fields `eligibility`, `scope` and `hidden_ranges` of struct `PreparedTrackEligibility` are private
+  --> tests/compile_fail/prepared_track_proofs_are_private.rs:12:40
+   |
+12 |     let _ = PreparedTrackEligibility { eligibility: value(), scope: value(), hidden_ranges: value() };
+   |                                        ^^^^^^^^^^^           ^^^^^           ^^^^^^^^^^^^^ private field
+   |                                        |                     |
+   |                                        |                     private field
+   |                                        private field
+
+error[E0451]: fields `eligibility` and `display_mask` of struct `PreparedTrackPresence` are private
+  --> tests/compile_fail/prepared_track_proofs_are_private.rs:13:37
+   |
+13 |     let _ = PreparedTrackPresence { eligibility: value(), display_mask: value() };
+   |                                     ^^^^^^^^^^^           ^^^^^^^^^^^^ private field
+   |                                     |
+   |                                     private field

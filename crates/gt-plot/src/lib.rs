@@ -1,7 +1,7 @@
 pub use plot_widget::{
     ArchiveOverlays, DEFAULT_PLOT_LINE_WIDTH, EDGE_MARKER_INSET, LEGEND_DOCK_OFFSET,
-    PLOT_LINE_WIDTH_RANGE, PlotState, TRACK_PLOT_ID_SALT, find_closest_tpv, legend_is_docked,
-    show_track_plot,
+    PLOT_LINE_WIDTH_RANGE, PlotState, TRACK_PLOT_ID_SALT, find_closest_tpv,
+    find_closest_tpv_matching, legend_is_docked, show_track_plot,
 };
 
 mod plot_widget;

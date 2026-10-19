@@ -28,8 +28,7 @@
 //! pointer.
 
 use egui::{Popup, PopupKind, Pos2, Rect, Response, RichText, Stroke, Ui};
-use gt_filter::GlobalFilter;
-use gt_types::{LoadedFile, PointIdx};
+use gt_types::{DataCategory, PointIdx};
 use gt_ui_types::{SnappedEdgeInfo, SnappedTracks};
 use walkers::{MapMemory, Plugin, Projector};
 
@@ -37,6 +36,7 @@ use crate::hover_labels::OpenPopups;
 use crate::polyline::{self, CULL_MARGIN_PX, VisiblePath};
 use crate::track_renderer::{self, DashPattern};
 use crate::transform::MercTransform;
+use crate::viewport::MapFramePlan;
 
 /// The nearest snapped-line hit under the cursor.
 struct HoverHit {
@@ -47,33 +47,28 @@ struct HoverHit {
     vertex: usize,
 }
 
-pub struct SnappedTrackRenderer<'a> {
+pub(crate) struct SnappedTrackRenderer<'a, 'p> {
     snapped: &'a SnappedTracks,
-    /// The loaded files, resolving a snapped track's vertices and whisker
-    /// anchors to their recorded points.
-    files: &'a [LoadedFile],
-    filter: &'a GlobalFilter,
+    plan: &'a MapFramePlan<'p>,
     /// The edge's label draws only while neither popup is open.
     open_popups: OpenPopups,
 }
 
-impl<'a> SnappedTrackRenderer<'a> {
-    pub fn new(
+impl<'a, 'p> SnappedTrackRenderer<'a, 'p> {
+    pub(crate) fn new(
         snapped: &'a SnappedTracks,
-        files: &'a [LoadedFile],
-        filter: &'a GlobalFilter,
+        plan: &'a MapFramePlan<'p>,
         open_popups: OpenPopups,
     ) -> Self {
         Self {
             snapped,
-            files,
-            filter,
+            plan,
             open_popups,
         }
     }
 }
 
-impl Plugin for SnappedTrackRenderer<'_> {
+impl Plugin for SnappedTrackRenderer<'_, '_> {
     fn run(
         self: Box<Self>,
         ui: &mut Ui,
@@ -99,17 +94,16 @@ impl Plugin for SnappedTrackRenderer<'_> {
         let mut best: Option<HoverHit> = None;
 
         for (track_ref, geometry) in self.snapped.iter() {
-            let Some(track) = track_ref.resolve(self.files) else {
+            let Some(prepared) = self.plan.prepared_track(track_ref) else {
                 continue;
             };
-            if !gt_filter::track_passes_filter(track, self.filter) {
+            if !prepared.is_in_scope() || !prepared.category_visible(DataCategory::Track) {
                 continue;
             }
-            let point_drawn = |point: PointIdx| {
-                point.get(&track.points).is_some_and(|fix| {
-                    gt_filter::point_passes_time_filter(fix.tpv.time().utc(), self.filter)
-                })
+            let Some(track) = prepared.track() else {
+                continue;
             };
+            let point_drawn = |point: PointIdx| prepared.fix_is_available(point);
             let color =
                 gt_ui_theme::track_color(track_ref.fi.as_usize(), track_ref.index.as_usize())
                     .gamma_multiply(SNAPPED_ALPHA);
@@ -155,36 +149,41 @@ impl Plugin for SnappedTrackRenderer<'_> {
                         .map(|(vertex, &merc)| (vertex, transform.to_screen(merc))),
                 );
 
-                if let (Some(cursor), Some(cursor_rect)) = (pointer, cursor_rect) {
-                    hit_test(
-                        &projected,
-                        cursor,
-                        cursor_rect,
-                        track_ref,
-                        segment_index,
-                        &mut best,
-                    );
-                }
-
-                // Segments carry no per-point styling, so the key is unit.
-                match polyline::visible_path(projected.iter().map(|&(_, pos)| ((), pos)), cull_rect)
+                for projected in
+                    projected.chunk_by(|(previous, _), (next, _)| *next == previous + 1)
                 {
-                    VisiblePath::OffScreen => {}
-                    // A segment collapsed below one pixel (extreme zoom-out)
-                    // stays discoverable as a dot, like the recorded track.
-                    VisiblePath::Dot((), pos) => {
-                        ui.painter().circle_filled(pos, stroke.width, stroke.color);
+                    if let (Some(cursor), Some(cursor_rect)) = (pointer, cursor_rect) {
+                        hit_test(
+                            projected,
+                            cursor,
+                            cursor_rect,
+                            track_ref,
+                            segment_index,
+                            &mut best,
+                        );
                     }
-                    VisiblePath::Spans(spans) => {
-                        for span in spans.iter() {
-                            span_points.clear();
-                            span_points.extend(span.iter().map(|&((), pos)| pos));
-                            track_renderer::draw_dashed_line(
-                                ui.painter(),
-                                &span_points,
-                                stroke,
-                                SNAPPED_DASH,
-                            );
+
+                    match polyline::visible_path(
+                        projected.iter().map(|&(_, pos)| ((), pos)),
+                        cull_rect,
+                    ) {
+                        VisiblePath::OffScreen => {}
+                        // A segment collapsed below one pixel (extreme zoom-out)
+                        // stays discoverable as a dot, like the recorded track.
+                        VisiblePath::Dot((), pos) => {
+                            ui.painter().circle_filled(pos, stroke.width, stroke.color);
+                        }
+                        VisiblePath::Spans(spans) => {
+                            for span in spans.iter() {
+                                span_points.clear();
+                                span_points.extend(span.iter().map(|&((), pos)| pos));
+                                track_renderer::draw_dashed_line(
+                                    ui.painter(),
+                                    &span_points,
+                                    stroke,
+                                    SNAPPED_DASH,
+                                );
+                            }
                         }
                     }
                 }

@@ -140,6 +140,10 @@ pub struct LoadedFileEntry<'a> {
 }
 
 impl<'a> LoadedFilesView<'a> {
+    pub fn generation(&self) -> Generation<IndexAlignedFiles> {
+        self.loaded_files.generation()
+    }
+
     pub fn files(&self) -> &'a [LoadedFile] {
         self.loaded_files.files()
     }

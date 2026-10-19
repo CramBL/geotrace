@@ -45,8 +45,8 @@ use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
 
 use crate::{
-    MapAction, MapDrawContext, NavMap, SpaceWeatherIndicator, TecHeatmapSnapshot, TecLayer,
-    TileAccess, ViewportBounds, icon_mesh,
+    MapAction, MapDrawContext, MapFiles, NavMap, SpaceWeatherIndicator, TecHeatmapSnapshot,
+    TecLayer, TileAccess, ViewportBounds, icon_mesh,
 };
 
 /// [`TestHarness::builder`] plus the GPU icon pipeline the application
@@ -482,7 +482,7 @@ impl DrawState {
         visibility: &'a TrackDataVisibility,
     ) -> MapDrawContext<'a> {
         MapDrawContext {
-            files,
+            files: MapFiles::Borrowed(files),
             recording_names: &self.recording_names,
             snapped_tracks: None,
             jamming_dataset: None,

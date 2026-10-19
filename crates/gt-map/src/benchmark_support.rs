@@ -6,14 +6,19 @@
 use std::hint;
 
 use gt_filter::GlobalFilter;
-use gt_types::{LoadedFile, SpatialPoint};
+use gt_loaded_files::LoadedFilesView;
+use gt_types::{GeoBounds, LoadedFile, SpatialPoint};
 use gt_ui_types::{
-    DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, QueryMatches,
+    DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, MapEligibility, QueryMatches,
     TrackDataVisibility,
 };
 
+use crate::MapFiles;
+use crate::display_counts::{DisplayCounts, DisplayCountsCache, SuppliedCounts};
+use crate::viewport::{self, MapFrameInputs, MapFramePlan};
+
 /// Opaque handle to the production compiled frame plan used by benchmarks.
-pub struct FramePlanBench<'a>(super::viewport::MapFramePlan<'a>);
+pub struct FramePlanBench<'a>(MapFramePlan<'a>);
 
 impl FramePlanBench<'_> {
     /// The production candidate-local resolution path used by hover and marker renderers.
@@ -59,8 +64,8 @@ impl<'a> FramePlanInputs<'a> {
 /// Compile the production frame plan and keep its private representation behind
 /// a narrow benchmark-only wrapper.
 pub fn compile_frame_plan<'a>(inputs: FramePlanInputs<'a>, zoom: f64) -> FramePlanBench<'a> {
-    FramePlanBench(hint::black_box(super::viewport::MapFramePlan::compute(
-        super::viewport::MapFrameInputs::new(
+    FramePlanBench(hint::black_box(MapFramePlan::compute(
+        MapFrameInputs::new(
             inputs.files,
             inputs.visibility,
             inputs.filter,
@@ -71,4 +76,53 @@ pub fn compile_frame_plan<'a>(inputs: FramePlanInputs<'a>, zoom: f64) -> FramePl
         ),
         zoom,
     )))
+}
+
+#[derive(Default)]
+pub struct CountsBench(DisplayCountsCache);
+
+impl CountsBench {
+    pub fn get(
+        &mut self,
+        files: LoadedFilesView<'_>,
+        inputs: FramePlanInputs<'_>,
+    ) -> DisplayCounts {
+        self.0.get(
+            MapFiles::Loaded(files),
+            inputs.visibility,
+            inputs.filter,
+            inputs.event_marker_visibility,
+            inputs.generated_marker_visibility,
+            inputs.query_matches,
+            SuppliedCounts::default(),
+        )
+    }
+}
+
+impl FramePlanInputs<'_> {
+    pub fn count_elements(self) -> DisplayCounts {
+        DisplayCounts::compute(
+            self.files,
+            self.visibility,
+            self.filter,
+            self.event_marker_visibility,
+            self.generated_marker_visibility,
+            self.query_matches,
+            SuppliedCounts::default(),
+        )
+    }
+
+    pub fn fit_bounds(self) -> Option<GeoBounds> {
+        viewport::visible_bounds(
+            MapEligibility::new(
+                self.files,
+                self.visibility,
+                self.filter,
+                self.query_matches,
+                self.generated_marker_visibility,
+                self.event_marker_visibility,
+            )
+            .with_display_mask(self.display_mask),
+        )
+    }
 }

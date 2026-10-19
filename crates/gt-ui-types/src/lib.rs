@@ -36,9 +36,10 @@ pub use snapped_tracks::{
 pub use space_weather_warning::{TrackSpaceWeatherWarning, WarningLevelExplanation};
 pub use tec_series::{TecPoint, TecSeries};
 pub use visibility::{
-    EligibilityWithheld, FileVisibility, MapEligibility, MapEligibilityResult, MapPresence,
-    MapPresenceResult, PointVisibility, PresenceWithheld, PresentElementRef, ResolvedElement,
-    TrackDataVisibility, TrackVisibility,
+    EligibilityWithheld, EligibleElementRef, FileVisibility, MapEligibility, MapEligibilityResult,
+    MapPresence, MapPresenceResult, PointVisibility, PreparedMapEligibility,
+    PreparedTrackEligibility, PreparedTrackPresence, PreparedTrackScope, PresenceWithheld,
+    PresentElementRef, ResolvedElement, ResolvedEligibility, TrackDataVisibility, TrackVisibility,
 };
 
 pub mod arc_identity;

@@ -11,7 +11,7 @@ use chrono::Duration;
 use gt_filter::GlobalFilter;
 use gt_map::display_counts::{DisplayCounts, SuppliedCounts};
 use gt_map::test_util::{self, MapScene, RenderedMap, WALKING_STEP_DEGREES};
-use gt_types::LoadedFile;
+use gt_types::{DataCategory, LoadedFile, PointIdx};
 use gt_ui_types::{
     DisplayCategory, EventMarkerVisibility, GeneratedMarkerVisibility, LogMatchGlyph, LogMatches,
     TrackDataVisibility,
@@ -303,3 +303,28 @@ const STANDING_STEP_DEGREES: f64 = 0.000_001;
 
 /// Fixes of the recording the cases draw, one a minute apart.
 const FIX_COUNT: usize = 30;
+
+#[rstest::rstest]
+#[case::entry_inside_fix_outside(1, 29, true)]
+#[case::entry_outside_fix_inside(29, 1, false)]
+fn log_hexagon_uses_entry_time_when_track_lines_are_hidden(
+    #[case] entry: usize,
+    #[case] backing_fix: usize,
+    #[case] present: bool,
+) {
+    let files = test_util::a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES);
+    let log = test_util::a_log_over(&files);
+    let matches = test_util::matches_over(&files, &log, entry..entry + 1);
+    let mut layer = matches.layers()[0].clone();
+    layer.matches[0].fix.point = PointIdx::new(backing_fix);
+    let matches = LogMatches::from_layers(vec![layer]);
+    let mut map = map_framed_on(&files, matches, test_util::window_ending_at(14));
+    map.tree().files[0].tracks[0].set_category_visible(DataCategory::Track, false);
+    map.draw_state().center_request = Some(test_util::fix_position(&files, entry));
+    let target = test_util::viewport_center();
+    map.move_pointer_to(target);
+    map.render_one_more_frame();
+    assert_eq!(map.hovered_log_glyph().is_some(), present);
+    map.click_at(target);
+    assert_eq!(map.clicked_log_glyph().is_some(), present);
+}
