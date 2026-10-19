@@ -345,8 +345,7 @@ class NavFix:
 
     @property
     def gps_time(self) -> datetime | None:
-        """GPS-receiver timestamp (timezone-aware UTC), or ``None`` when unreported.
-        """
+        """GPS-receiver timestamp (timezone-aware UTC), or ``None`` when unreported."""
         ...
 
     @property
@@ -501,8 +500,7 @@ class NavPoint:
 
     @property
     def gps_time(self) -> datetime | None:
-        """GPS-receiver timestamp (timezone-aware UTC), or ``None`` when unreported.
-        """
+        """GPS-receiver timestamp (timezone-aware UTC), or ``None`` when unreported."""
         ...
 
     @property
