@@ -103,14 +103,14 @@ pub unsafe extern "C" fn gtd_nav_file_get_nav_point(
             .fix
             .eph_m
             .map_or(optf64::opt_f64_none(), optf64::opt_f64_some);
-        out.sat_count = point.satellites.as_ref().map_or(0, |r| r.tracked.len());
+        out.sat_count = point.satellites().as_ref().map_or(0, |r| r.tracked.len());
         out.sat_report_gps_time = point
-            .satellites
+            .satellites()
             .as_ref()
             .and_then(SatelliteReport::gps_time)
             .map_or(timestamp::gtd_ts_none(), timestamp::ts_from_datetime);
         out.sat_report_sys_time = point
-            .satellites
+            .satellites()
             .as_ref()
             .and_then(SatelliteReport::sys_time)
             .map_or(timestamp::gtd_ts_none(), timestamp::ts_from_datetime);
@@ -145,7 +145,7 @@ pub unsafe extern "C" fn gtd_nav_file_get_satellite(
             return GtdStatus::GTD_ERR_OUT_OF_RANGE;
         };
 
-        let Some(report) = &point.satellites else {
+        let Some(report) = point.satellites() else {
             error::set_last_error(format!(
                 "nav point {nav_point_index} has no satellite report"
             ));

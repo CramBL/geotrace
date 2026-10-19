@@ -51,7 +51,14 @@ pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
     Ok(RecordingMeta {
         time_range,
         nav_point_count,
-        sat_report_count: count_rows("sat_reports", "nav_point_idx"),
+        sat_report_count: [
+            "sat_reports",
+            "satellite_usage_reports",
+            "satellite_observation_reports",
+        ]
+        .into_iter()
+        .map(|group| count_rows(group, "nav_point_idx"))
+        .fold(0, u64::saturating_add),
         marker_count: count_rows("markers", "time"),
         event_marker_count: count_rows("event_markers", "sys_time_us"),
         gtd_size_bytes: bytes.len() as u64,

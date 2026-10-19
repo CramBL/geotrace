@@ -411,7 +411,12 @@ fn unsorted_insertion() -> Result<(), BuildError> {
     let mut sorted = times.clone();
     sorted.sort();
     assert_eq!(times, sorted);
-    assert!(nav_file.nav_points().iter().all(|p| p.satellites.is_some()));
+    assert!(
+        nav_file
+            .nav_points()
+            .iter()
+            .all(|p| p.satellites().is_some())
+    );
     Ok(())
 }
 
@@ -519,7 +524,12 @@ fn add_dispatches_to_the_matching_typed_method() -> Result<(), BuildError> {
     assert_eq!(via_add, typed);
     // Guard against a vacuous match: every add() arm actually contributed.
     assert_eq!(via_add.nav_points().len(), 2);
-    assert!(via_add.nav_points().iter().any(|p| p.satellites.is_some()));
+    assert!(
+        via_add
+            .nav_points()
+            .iter()
+            .any(|p| p.satellites().is_some())
+    );
     assert_eq!(via_add.markers().len(), 1);
     assert_eq!(via_add.event_markers().len(), 1);
     assert_eq!(via_add.channels().len(), 1);

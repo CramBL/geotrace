@@ -366,6 +366,7 @@ const RECENTLY_FINISHED_KEPT: usize = 8;
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Barrier};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -581,15 +582,19 @@ mod tests {
             .try_begin("Compacting the TEC archive", TEC)
             .expect("the registry is running");
         let held_for = Duration::from_millis(80);
+        let start_hold_delay = Arc::new(Barrier::new(2));
+        let holder_delay_start = Arc::clone(&start_hold_delay);
         let holder = thread::Builder::new()
             .name("pending-write-holder".to_owned())
             .spawn(move || {
+                holder_delay_start.wait();
                 thread::sleep(held_for);
                 drop(guard);
             })
             .expect("spawn the holding thread");
 
         let started_at = Instant::now();
+        start_hold_delay.wait();
         assert!(writes.wait_until_idle_for(held_for * 100));
 
         assert!(

@@ -322,6 +322,56 @@ impl Display for UnplacedRecordCounts {
 /// Errors that can occur when reading or writing a `.gtd` file.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// A required satellite column is absent.
+    #[error("{group}/{dataset}: required satellite column is missing")]
+    MissingSatelliteColumn {
+        /// Report or identity table.
+        group: &'static str,
+        /// Required column.
+        dataset: &'static str,
+    },
+    /// One table of a satellite report/identity pair is absent.
+    #[error("{group}: required satellite group is missing")]
+    MissingSatelliteGroup {
+        /// Required table.
+        group: &'static str,
+    },
+    /// A satellite column has an unsupported numeric representation.
+    #[error("{group}/{dataset}: expected datatype {expected}, found {actual}")]
+    InvalidSatelliteColumnType {
+        /// Report or identity table.
+        group: &'static str,
+        /// Column with the invalid datatype.
+        dataset: &'static str,
+        /// Required numeric representation.
+        expected: String,
+        /// Stored numeric representation.
+        actual: String,
+    },
+    /// A satellite enum, presence or scope code is undefined.
+    #[error("{group}/{dataset}: record {record} has invalid tag {code}")]
+    InvalidSatelliteTag {
+        /// Report or identity table.
+        group: &'static str,
+        /// Column with the invalid code.
+        dataset: &'static str,
+        /// Zero-based report or identity row.
+        record: usize,
+        /// Undefined stored value.
+        code: u32,
+    },
+    /// A report has neither receiver time nor host time.
+    #[error("{group}: report {report} has no timestamp")]
+    SatelliteReportWithoutTimestamp {
+        /// Report table.
+        group: &'static str,
+        /// Zero-based report row.
+        report: usize,
+    },
+    /// Independent and combined satellite tables are both present.
+    #[error("legacy and independent satellite tables are both present")]
+    MixedSatelliteLayouts,
+
     /// A required version 3 navigation column is absent.
     #[error("nav_points/{dataset}: required version 3 column is missing")]
     MissingNavigationColumn {

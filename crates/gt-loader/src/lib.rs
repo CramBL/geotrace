@@ -300,9 +300,6 @@ pub fn reencode_dropping_ranges(
             continue;
         }
         recorder.add_nav_fix(point.fix);
-        if let Some(report) = &point.satellites {
-            recorder.add_satellite_report(report.clone());
-        }
     }
 
     for marker in nav_file.markers() {
@@ -329,7 +326,17 @@ pub fn reencode_dropping_ranges(
         recorder.add_channel(channel.clone());
     }
 
-    let rebuilt = recorder.finish()?;
+    let mut rebuilt = recorder.finish()?;
+    let mut retained: Vec<_> = nav_file
+        .nav_points()
+        .iter()
+        .zip(&dropped)
+        .filter_map(|(point, drop)| (!drop).then_some(point))
+        .collect();
+    retained.sort_by_key(|point| point.fix.time.effective());
+    for (point, original) in rebuilt.nav_points_mut().iter_mut().zip(retained) {
+        point.set_satellite_evidence(original.satellite_evidence().clone());
+    }
     let mut out = Vec::new();
     rebuilt.write(&mut out)?;
     Ok(out)
@@ -340,7 +347,7 @@ fn satellite_warnings_from_nav_file(nav_file: &NavFile) -> Vec<LoadWarning> {
         nav_file
             .nav_points()
             .iter()
-            .filter_map(|p| p.satellites.as_ref()),
+            .filter_map(|p| p.satellites().as_ref()),
     )
     .into_iter()
     .map(|w| LoadWarning {
@@ -606,7 +613,7 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
             .build();
 
         let satellites = sdk_point
-            .satellites
+            .satellites()
             .as_ref()
             .map(|report| convert_satellite_report(report, record, &mut satellite_alterations));
         nav_points.push(NavPoint::new(tpv, satellites));
@@ -929,8 +936,9 @@ const UNRECOGNIZED_COLOR_REPLACEMENT: MarkerColor = MarkerColor::new(128, 128, 1
 mod tests {
     use geotrace_sdk::{
         Angle, Annotation, Constellation as SdkConst, DateTime, Duration, MarkerIcon as SdkIcon,
-        NavFile, NavFileBuilder, NavFix, NavFixTime, Satellite as SdkSat, SatelliteReport, Unit,
-        Utc, Velocity,
+        NavFile, NavFileBuilder, NavFix, NavFixTime, Satellite as SdkSat, SatelliteCoverage,
+        SatelliteEvidence, SatelliteObservationReport, SatelliteReport, SatelliteScope,
+        SatelliteUsageReport, Unit, Utc, Velocity,
     };
     use geotrace_sdk_test_util as test_util;
     use geotrace_sdk_test_util::{
@@ -1601,6 +1609,51 @@ mod tests {
         assert_eq!(accel.name(), "accel");
         assert_eq!(accel.components(), ["x", "y", "z"]);
         assert_eq!(accel.times().len(), 2);
+    }
+
+    #[test]
+    fn reencode_preserves_independent_evidence_with_each_retained_fix() {
+        let mut recorder = NavFileBuilder::new().open();
+        for second in 0..3 {
+            recorder.add_nav_fix(minimal_fix(base() + Duration::seconds(second)));
+        }
+        let mut file = recorder.finish().unwrap();
+        let evidence = SatelliteEvidence::new(
+            vec![
+                SatelliteUsageReport::builder()
+                    .time(NavFixTime::Host(base() + Duration::milliseconds(400)))
+                    .scope(SatelliteScope::Global)
+                    .coverage(SatelliteCoverage::Partial)
+                    .reported_count(8)
+                    .satellites(Vec::new())
+                    .build(),
+            ],
+            vec![
+                SatelliteObservationReport::builder()
+                    .time(NavFixTime::Receiver(base() + Duration::milliseconds(600)))
+                    .scope(SatelliteScope::Global)
+                    .coverage(SatelliteCoverage::Complete)
+                    .satellites(Vec::new())
+                    .build(),
+            ],
+        );
+        file.nav_points_mut()[0].set_satellite_evidence(evidence.clone());
+        file.nav_points_mut().reverse();
+        let bytes = test_util::to_bytes(&file).unwrap();
+        let reencoded =
+            reencode_dropping_ranges(&bytes, std::slice::from_ref(&(1usize..2))).unwrap();
+        let decoded = NavFile::read(reencoded.as_slice()).unwrap();
+        assert_eq!(decoded.nav_points().len(), 2);
+        assert_eq!(
+            decoded.nav_points()[0].fix.time,
+            NavFixTime::Receiver(base())
+        );
+        assert_eq!(decoded.nav_points()[0].satellite_evidence(), &evidence);
+        assert_eq!(decoded.nav_points()[0].satellites(), &None);
+        assert_eq!(
+            decoded.nav_points()[1].satellite_evidence(),
+            &SatelliteEvidence::default()
+        );
     }
 
     #[test]

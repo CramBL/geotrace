@@ -102,7 +102,7 @@ fn assert_repaired_timeline(file: &NavFile, t0: DateTime<Utc>) {
     let second_span_first_fix = file
         .nav_points()
         .get(3)
-        .and_then(|point| point.satellites.as_ref());
+        .and_then(|point| point.satellites().as_ref());
     assert_eq!(
         second_span_first_fix.and_then(SatelliteReport::gps_time),
         Some(t0 + Duration::seconds(11))

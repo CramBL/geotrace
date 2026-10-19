@@ -292,7 +292,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         nav_file
             .nav_points()
             .iter()
-            .filter(|p| p.satellites.is_some())
+            .filter(|p| p.satellites().is_some())
             .count(),
         nav_file.markers().len(),
     );

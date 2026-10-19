@@ -496,6 +496,7 @@ pub struct RecordingMeta {
     /// [`NavPointTimeRange::from_stored_attributes`]).
     pub time_range: Option<NavPointTimeRange>,
     pub nav_point_count: u64,
+    /// Combined reports in legacy files, or usage plus observation samples in version 3.
     pub sat_report_count: u64,
     pub marker_count: u64,
     pub event_marker_count: u64,

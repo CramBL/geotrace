@@ -65,14 +65,14 @@ fn nan_for_absent_satellite_fields() -> Result<(), Box<dyn std::error::Error>> {
     let bytes = test_util::to_bytes(&nav_file)?;
 
     let file = hdf5_pure::File::from_bytes(bytes)?;
-    let ts = file.group("tracked_sats")?;
+    let ts = file.group("satellite_observations")?;
     assert!(ts.dataset("elevation")?.read_f32()?[0].is_nan());
     assert!(ts.dataset("azimuth")?.read_f32()?[0].is_nan());
     assert!(ts.dataset("snr")?.read_f32()?[0].is_nan());
 
     let rt = test_util::round_trip(&nav_file)?;
     let sat = rt.nav_points()[0]
-        .satellites
+        .satellites()
         .as_ref()
         .ok_or("no satellites")?;
     assert_eq!(sat.tracked[0].elevation, None);
@@ -118,7 +118,7 @@ fn constellation_encoding() -> Result<(), Box<dyn std::error::Error>> {
 
         let file = hdf5_pure::File::from_bytes(bytes)?;
         let codes = file
-            .group("tracked_sats")?
+            .group("satellite_observations")?
             .dataset("constellation")?
             .read_u8()?;
         assert_eq!(codes[0], expected_code);
@@ -126,7 +126,7 @@ fn constellation_encoding() -> Result<(), Box<dyn std::error::Error>> {
         let rt = test_util::round_trip(&nav_file)?;
         assert_eq!(
             rt.nav_points()[0]
-                .satellites
+                .satellites()
                 .as_ref()
                 .ok_or("missing")?
                 .tracked[0]
@@ -564,12 +564,12 @@ fn file_with_an_event_marker_at(sys_time: DateTime<Utc>) -> NavFile {
 )]
 #[case::satellite_report_gps_time(
     file_with_a_satellite_report_at(NavFixTime::Receiver(absent_count_instant())),
-    "sat_reports",
+    "satellite_usage_reports",
     "gps_time_us"
 )]
 #[case::satellite_report_sys_time(
     file_with_a_satellite_report_at(NavFixTime::Host(absent_count_instant())),
-    "sat_reports",
+    "satellite_usage_reports",
     "sys_time_us"
 )]
 #[case::event_marker_sys_time(

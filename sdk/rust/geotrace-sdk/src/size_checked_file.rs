@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use hdf5_pure::{AttrValue, Dataset, File, FormatError, Group};
+use hdf5_pure::{AttrValue, Dataset, Datatype, DatatypeByteOrder, File, FormatError, Group};
 
 use crate::error::Error;
 
@@ -98,6 +98,57 @@ impl SizeCheckedGroup {
             .transpose()
     }
 
+    pub(crate) fn typed_column(
+        &self,
+        context: ColumnContext,
+        dataset: &'static str,
+        rows: usize,
+        expected_datatype: &Datatype,
+    ) -> Result<Dataset, Error> {
+        let column = self.optional_dataset(dataset)?.ok_or(match context {
+            ColumnContext::Navigation => Error::MissingNavigationColumn { dataset },
+            ColumnContext::Satellite(group) => Error::MissingSatelliteColumn { group, dataset },
+        })?;
+        let actual = column.shape()?;
+        let expected = vec![rows as u64];
+        if actual != expected {
+            return Err(Error::InvalidDatasetShape {
+                group: context.group_name(),
+                dataset,
+                expected,
+                actual,
+            });
+        }
+        let mut datatype = column.datatype()?;
+        let actual = format!("{datatype:?}");
+        match &mut datatype {
+            Datatype::FixedPoint { byte_order, .. }
+            | Datatype::FloatingPoint { byte_order, .. }
+                if *byte_order == DatatypeByteOrder::BigEndian =>
+            {
+                *byte_order = DatatypeByteOrder::LittleEndian
+            }
+            _ => {}
+        }
+        if &datatype != expected_datatype {
+            let expected = format!("{expected_datatype:?}");
+            return Err(match context {
+                ColumnContext::Navigation => Error::InvalidNavigationColumnType {
+                    dataset,
+                    expected,
+                    actual,
+                },
+                ColumnContext::Satellite(group) => Error::InvalidSatelliteColumnType {
+                    group,
+                    dataset,
+                    expected,
+                    actual,
+                },
+            });
+        }
+        Ok(column)
+    }
+
     fn size_checked(&self, name: &str, dataset: Dataset) -> Result<Dataset, Error> {
         let element_size = u128::from(dataset.element_size()?);
         let declared_bytes = dataset
@@ -120,6 +171,21 @@ impl SizeCheckedGroup {
             name.to_owned()
         } else {
             format!("{}/{name}", self.path)
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ColumnContext {
+    Navigation,
+    Satellite(&'static str),
+}
+
+impl ColumnContext {
+    fn group_name(self) -> &'static str {
+        match self {
+            Self::Navigation => "nav_points",
+            Self::Satellite(group) => group,
         }
     }
 }

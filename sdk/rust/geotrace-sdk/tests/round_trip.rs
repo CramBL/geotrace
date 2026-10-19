@@ -89,7 +89,7 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(p0.fix.heading.map(|h| h.as_degrees()), Some(270.0));
     assert_eq!(p0.fix.speed.map(|v| v.as_meters_per_second()), Some(12.5));
 
-    let rep = p0.satellites.as_ref().ok_or("missing satellite report")?;
+    let rep = p0.satellites().as_ref().ok_or("missing satellite report")?;
     assert_eq!(rep.gps_time(), Some(t0));
     assert_eq!(rep.tracked.len(), 2);
     let s0 = &rep.tracked[0];
@@ -136,7 +136,7 @@ fn minimal() -> Result<(), Box<dyn std::error::Error>> {
     let rt = test_util::round_trip(&recorder.finish()?)?;
     assert_eq!(rt.nav_points().len(), 1);
     assert_eq!(rt.nav_points()[0].fix.speed, None);
-    assert!(rt.nav_points()[0].satellites.is_none());
+    assert!(rt.nav_points()[0].satellites().is_none());
     assert!(rt.markers().is_empty());
     assert!(rt.channels().is_empty());
     Ok(())
@@ -222,7 +222,7 @@ fn no_satellite_data() -> Result<(), Box<dyn std::error::Error>> {
     }
     let rt = test_util::round_trip(&recorder.finish()?)?;
     assert_eq!(rt.nav_points().len(), 3);
-    assert!(rt.nav_points().iter().all(|p| p.satellites.is_none()));
+    assert!(rt.nav_points().iter().all(|p| p.satellites().is_none()));
 
     // Re-round-trip to confirm the absent groups survive another write/read cycle.
     test_util::to_bytes(&test_util::round_trip(&rt)?)?;
@@ -249,7 +249,7 @@ fn no_markers() -> Result<(), Box<dyn std::error::Error>> {
     );
     let rt = test_util::round_trip(&recorder.finish()?)?;
     assert!(rt.markers().is_empty());
-    assert!(rt.nav_points()[0].satellites.is_some());
+    assert!(rt.nav_points()[0].satellites().is_some());
     Ok(())
 }
 
@@ -309,7 +309,7 @@ fn a_large_recording_round_trips() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(point.fix.lat.as_degrees(), lat_deg(i));
         assert_eq!(point.fix.lon.as_degrees(), lon_deg(i));
         assert_eq!(
-            point.satellites.as_ref().map(|report| &report.tracked),
+            point.satellites().as_ref().map(|report| &report.tracked),
             Some(&tracked)
         );
     }

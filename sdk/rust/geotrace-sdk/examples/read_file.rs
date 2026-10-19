@@ -74,7 +74,7 @@ fn print_nav_points(file: &NavFile) {
         if let Some(speed) = fix.speed {
             print!("  {:.1} m/s", speed.as_meters_per_second());
         }
-        if let Some(report) = &point.satellites {
+        if let Some(report) = point.satellites() {
             print!("  sats={}", report.tracked.len());
         }
         println!();

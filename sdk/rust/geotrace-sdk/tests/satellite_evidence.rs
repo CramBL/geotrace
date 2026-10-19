@@ -268,15 +268,18 @@ fn consistent_aggregates_count_distinct_identities() {
 
 #[test]
 fn legacy_nav_point_access_preserves_report_presence() {
-    let mut point = NavPoint {
-        fix: NavFix::builder()
+    let mut point = NavPoint::from_legacy(
+        NavFix::builder()
             .time(NavFixTime::Receiver(test_util::base()))
             .lat(Angle::degrees(51.5))
             .lon(Angle::degrees(-0.1))
             .build(),
-        satellites: None,
-    };
-    assert_eq!(point.satellite_evidence(), SatelliteEvidence::default());
-    point.satellites = Some(legacy_report());
-    assert_eq!(point.satellite_evidence().legacy_report(), point.satellites);
+        None,
+    );
+    assert_eq!(point.satellite_evidence(), &SatelliteEvidence::default());
+    point.set_satellite_evidence(SatelliteEvidence::from(&legacy_report()));
+    assert_eq!(
+        &point.satellite_evidence().legacy_report(),
+        point.satellites()
+    );
 }

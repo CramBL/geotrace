@@ -414,11 +414,11 @@ fn verify_demo_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     assert_eq!(ghost_points, 59, "one ghost nav point per tunnel second");
 
     // Every point of the trip carries a satellite report, gap included.
-    assert!(points.iter().all(|p| p.satellites.is_some()));
+    assert!(points.iter().all(|p| p.satellites().is_some()));
 
     // The tunnel seconds never contain a satellite contributing to a fix.
     for p in points.iter().filter(is_ghost) {
-        let sats = p.satellites.as_ref().unwrap();
+        let sats = p.satellites().as_ref().unwrap();
         assert!(sats.tracked.iter().all(|s| !s.in_fix));
     }
 
@@ -429,7 +429,7 @@ fn verify_demo_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     let first = recovery.first().unwrap();
     let last = recovery.last().unwrap();
     let in_fix = |p: &&geotrace_sdk::NavPoint| {
-        p.satellites
+        p.satellites()
             .as_ref()
             .map_or(0, |s| s.tracked.iter().filter(|t| t.in_fix).count())
     };

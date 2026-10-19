@@ -74,8 +74,12 @@ Partial coverage leaves omitted identities unknown.
 A complete empty observation report establishes zero seen identities within its scope.
 An absent report is unreported evidence.
 
-`SatelliteEvidence` is an in-memory collection of independent usage and observation samples.
-`NavPoint::satellite_evidence()` converts its combined report into that collection.
+`NavPoint::satellite_evidence()` returns its canonical collection of independent usage and observation samples.
+`NavPoint::satellites()` returns a borrowed optional combined report through the conservative projection.
+`NavPoint::new(fix, evidence)` constructs a point with canonical evidence.
+`NavPoint::from_legacy(fix, report)` converts an optional combined report.
+`NavPoint::set_satellite_evidence(evidence)` replaces the samples and updates the legacy projection.
+`NavFile::nav_points_mut()` permits point edits before writing.
 `SatelliteEvidence::from(&report)` creates one complete global report of each kind at the original timestamps.
 The conversion preserves duplicate rows, measurements and each row's Boolean membership.
 Legacy `in_fix=false` becomes known-unused membership.
@@ -86,3 +90,40 @@ Reported aggregates must equal the distinct identity counts.
 Conflicting duplicate memberships require matching row order in both reports.
 The projection preserves the original rows for a converted legacy report.
 The method returns `None` for other evidence combinations.
+
+## Satellite evidence encoding
+
+Version 3 writers store independent samples in `satellite_usage_reports` and `satellite_observation_reports`.
+Each report table has the following one-dimensional columns.
+
+| Column | Numeric type | Encoding |
+|---|---|---|
+| `nav_point_idx` | `u64` | Zero-based navigation point reference, repeated references permitted |
+| `gps_time_us`, `sys_time_us` | `u64` | Original microseconds since Unix epoch, two's-complement signed count, `u64::MAX` absent |
+| `scope` | `u32` | 0 global, otherwise constellation-set bit mask |
+| `coverage` | `u8` | 0 complete, 1 partial |
+| `reported_count` | `u32` | Exact aggregate within the declared scope |
+| `reported_count_present` | `u8` | 0 absent, 1 present |
+
+Scope bits use the constellation wire codes: GPS bit 0, GLONASS bit 1, Galileo bit 2, BeiDou bit 3, NavIC bit 4 and QZSS bit 5.
+The decoder rejects other bits.
+A mask of 63 remains a constellation set.
+At least one original timestamp must be present.
+An absent count has a zero payload when written.
+Readers ignore the payload when presence is zero.
+
+Identity tables are `satellite_usage` and `satellite_observations`.
+Both have `report_idx: u64`, `constellation: u8` and `prn: u32` columns.
+`satellite_usage/report_idx` references `satellite_usage_reports`.
+`satellite_observations/report_idx` references `satellite_observation_reports`.
+Usage rows also have `membership: u8`, encoded as 0 unknown, 1 unused and 2 used.
+Observation rows have `elevation`, `azimuth` and `snr` as `f32`, with NaN for absence.
+Elevation and azimuth are degrees, and SNR is dB-Hz.
+Measured zero and other non-NaN values remain present.
+
+Every report and identity column requires the exact numeric class, width and precision, with either standard byte order.
+Row order and repeated identities remain unchanged.
+A report table and its identity table must both exist, including an empty identity table for empty reports.
+An absent report kind has neither table.
+Readers also accept the combined `sat_reports` and `tracked_sats` layout from versions 1, 2 and earlier version 3 writers.
+Files with both satellite layouts produce an error.

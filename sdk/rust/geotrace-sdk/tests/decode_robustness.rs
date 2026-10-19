@@ -6,7 +6,9 @@
 use std::fs;
 use std::io::Cursor;
 
-use geotrace_sdk::{Angle, DateTime, Error, NavFile, NavFileBuilder, NavFix, NavFixTime, Utc};
+use geotrace_sdk::{
+    Angle, Constellation, DateTime, Error, NavFile, NavFileBuilder, NavFix, NavFixTime, Utc,
+};
 use geotrace_sdk_test_util as test_util;
 
 fn valid_gtd_bytes() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -19,6 +21,7 @@ fn valid_gtd_bytes() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
             .lon(Angle::degrees(-0.1278))
             .build(),
     );
+    recorder.add_satellite_report(test_util::report_with(0, Constellation::Gps, 7));
     Ok(test_util::to_bytes(&recorder.finish()?)?)
 }
 

@@ -29,7 +29,7 @@ fn t_us(offset_us: i64) -> DateTime<Utc> {
 #[expect(clippy::expect_used, reason = "test helper")]
 #[expect(clippy::indexing_slicing, reason = "test helper")]
 fn first_constellation(p: &geotrace_sdk::NavPoint) -> Constellation {
-    p.satellites
+    p.satellites()
         .as_ref()
         .expect("expected a satellite report")
         .tracked[0]
@@ -55,7 +55,7 @@ fn window_boundary_inclusive(
 
     assert_eq!(nav_file.nav_points().len(), 1, "no ghost fix expected");
     assert!(
-        nav_file.nav_points()[0].satellites.is_some(),
+        nav_file.nav_points()[0].satellites().is_some(),
         "report at exactly the boundary must be assigned"
     );
     Ok(())
@@ -74,7 +74,7 @@ fn a_window_past_the_microsecond_count_associates_every_report() -> Result<(), B
 
     assert_eq!(nav_file.nav_points().len(), 1, "no ghost fix expected");
     assert!(
-        nav_file.nav_points()[0].satellites.is_some(),
+        nav_file.nav_points()[0].satellites().is_some(),
         "a report an hour from the only fix must be assigned to it"
     );
     Ok(())
@@ -111,11 +111,11 @@ fn window_boundary_one_microsecond_past_is_excluded(
     // Real fix + 1 dead-reckoned ghost.
     assert_eq!(nav_file.nav_points().len(), 2, "one ghost fix expected");
     assert!(
-        nav_file.nav_points()[0].satellites.is_none(),
+        nav_file.nav_points()[0].satellites().is_none(),
         "real fix must have no satellite data"
     );
     assert!(
-        nav_file.nav_points()[1].satellites.is_some(),
+        nav_file.nav_points()[1].satellites().is_some(),
         "ghost must carry the report"
     );
     Ok(())
@@ -138,11 +138,11 @@ fn report_goes_to_nearer_of_two_candidate_fixes() -> Result<(), BuildError> {
 
     assert_eq!(points.len(), 2, "no ghost fixes expected");
     assert!(
-        points[0].satellites.is_none(),
+        points[0].satellites().is_none(),
         "fix A (too far) must have no satellite data"
     );
     assert!(
-        points[1].satellites.is_some(),
+        points[1].satellites().is_some(),
         "fix B (nearer) must carry the report"
     );
     Ok(())
@@ -166,11 +166,11 @@ fn report_equidistant_goes_to_earlier_fix() -> Result<(), BuildError> {
 
     assert_eq!(points.len(), 2, "no ghost fixes expected");
     assert!(
-        points[0].satellites.is_some(),
+        points[0].satellites().is_some(),
         "earlier fix (A) must win the tie"
     );
     assert!(
-        points[1].satellites.is_none(),
+        points[1].satellites().is_none(),
         "later fix (B) must have no satellite data"
     );
     Ok(())
@@ -235,7 +235,7 @@ fn sys_time_only_report_within_window_is_assigned() -> Result<(), BuildError> {
 
     assert_eq!(nav_file.nav_points().len(), 1, "no ghost expected");
     assert!(
-        nav_file.nav_points()[0].satellites.is_some(),
+        nav_file.nav_points()[0].satellites().is_some(),
         "sys_time-only report within window must be assigned"
     );
     Ok(())
@@ -280,11 +280,11 @@ fn gps_time_is_preferred_over_sys_time_for_comparison() -> Result<(), BuildError
 
     assert_eq!(points.len(), 2, "no ghost fixes expected");
     assert!(
-        points[0].satellites.is_some(),
+        points[0].satellites().is_some(),
         "gps_time was used: report must go to fix A (t=0)"
     );
     assert!(
-        points[1].satellites.is_none(),
+        points[1].satellites().is_none(),
         "fix B must have no satellite data"
     );
     Ok(())
@@ -304,7 +304,7 @@ fn zero_reports_all_fixes_have_no_satellite_data() -> Result<(), BuildError> {
 
     assert_eq!(points.len(), 3, "no ghost fixes expected");
     assert!(
-        points.iter().all(|p| p.satellites.is_none()),
+        points.iter().all(|p| p.satellites().is_none()),
         "all fixes must have satellites = None"
     );
     Ok(())
@@ -359,7 +359,7 @@ fn three_reports_one_fix_only_closest_wins() -> Result<(), BuildError> {
 
     // Fix B (last point) carries no satellite data.
     assert!(
-        points[3].satellites.is_none(),
+        points[3].satellites().is_none(),
         "fix B must have no satellite data"
     );
     Ok(())
@@ -415,7 +415,7 @@ fn multiple_ghosts_after_last_fix_all_have_heading_none() -> Result<(), BuildErr
             "ghost fix {i} must have heading=None (circle rendering)"
         );
         assert!(
-            ghost.satellites.is_some(),
+            ghost.satellites().is_some(),
             "ghost fix {i} must carry a satellite report"
         );
     }
@@ -548,7 +548,7 @@ fn between_fix_ghost_interpolated_at_correct_fraction() -> Result<(), BuildError
 
     // The ghost is the middle point after time-sorting.
     let ghost = &points[1];
-    assert!(ghost.satellites.is_some(), "ghost must carry the report");
+    assert!(ghost.satellites().is_some(), "ghost must carry the report");
     assert!(
         ghost.fix.heading.is_some(),
         "between-fix ghost has a bearing heading"
@@ -648,7 +648,7 @@ fn a_report_before_the_first_fix_and_one_after_the_last_both_become_ghosts()
     );
     assert_eq!(first_constellation(&points[0]), Constellation::Gps);
     assert!(points[1].fix.heading.is_some(), "real fix");
-    assert!(points[1].satellites.is_none(), "real fix has no report");
+    assert!(points[1].satellites().is_none(), "real fix has no report");
     assert!(
         points[2].fix.heading.is_none(),
         "ghost has no heading (circle)"
@@ -679,7 +679,7 @@ fn reports_before_the_first_fix_become_ghosts_on_the_first_fix_in_time_order()
         assert_eq!(ghost.fix.lon, Angle::degrees(12.0));
         assert_eq!(ghost.fix.heading, None);
         assert!(
-            ghost.satellites.is_some(),
+            ghost.satellites().is_some(),
             "ghost {i} is missing its satellite report"
         );
     }
@@ -732,7 +732,7 @@ fn a_ghost_from_a_sys_time_only_report_takes_the_anchor_fixs_clock_delta(
 
     let ghost = points
         .iter()
-        .find(|point| point.satellites.is_some())
+        .find(|point| point.satellites().is_some())
         .expect("the ghost carries the report");
     assert_eq!(ghost.fix.gps_time(), Some(expected_gps_time));
     assert_eq!(ghost.fix.lat, Angle::degrees(55.0));
@@ -801,7 +801,7 @@ fn ghosts_after_a_last_fix_without_a_heading_take_that_fixs_position() -> Result
     assert_eq!(points.len(), 3, "expected 1 real fix and 2 ghost fixes");
 
     for ghost in &points[1..=2] {
-        assert!(ghost.satellites.is_some());
+        assert!(ghost.satellites().is_some());
         assert_eq!(ghost.fix.lat, Angle::degrees(55.0));
         assert_eq!(ghost.fix.lon, Angle::degrees(12.0));
         assert_eq!(ghost.fix.heading, None);
@@ -822,7 +822,7 @@ fn a_ghost_fix_between_two_fixes_across_the_antimeridian_is_placed_on_the_short_
     assert_eq!(points.len(), 3, "expected 2 real fixes and 1 ghost fix");
 
     let ghost = &points[1];
-    assert!(ghost.satellites.is_some());
+    assert!(ghost.satellites().is_some());
     assert!(
         (ghost.fix.lon.as_degrees() - (-180.0)).abs() < 1e-9,
         "lon is {}, expected -180",
@@ -920,7 +920,7 @@ fn no_filter_sys_time_only_with_large_gps_offset_are_associated() -> Result<(), 
     );
     for (i, p) in points.iter().enumerate() {
         assert!(
-            p.satellites.is_some(),
+            p.satellites().is_some(),
             "fix {i} must have an associated satellite report"
         );
     }
@@ -974,7 +974,7 @@ fn no_filter_1hz_all_sat_associated_with_large_gps_offset() -> Result<(), BuildE
         points.len()
     );
     assert!(
-        points.iter().all(|p| p.satellites.is_some()),
+        points.iter().all(|p| p.satellites().is_some()),
         "every fix must have an associated satellite report"
     );
     Ok(())
@@ -1206,11 +1206,11 @@ fn gps_ahead_600ms_sat_at_499ms_delay_still_correct() -> Result<(), BuildError> 
         points.len()
     );
     assert!(
-        points[0].satellites.is_some(),
+        points[0].satellites().is_some(),
         "fix 0 must carry the satellite report"
     );
     assert!(
-        points[1].satellites.is_none(),
+        points[1].satellites().is_none(),
         "fix 1 must have no satellite data"
     );
     Ok(())
@@ -1273,11 +1273,11 @@ fn gps_ahead_600ms_sat_at_exactly_500ms_delay_boundary() -> Result<(), BuildErro
         "SAT at 500 ms delay must still associate; no ghosts"
     );
     assert!(
-        points[0].satellites.is_some(),
+        points[0].satellites().is_some(),
         "fix 0 must carry the report"
     );
     assert!(
-        points[1].satellites.is_none(),
+        points[1].satellites().is_none(),
         "fix 1 must have no satellite data"
     );
     Ok(())
@@ -1443,7 +1443,7 @@ fn a_build_with_nav_fixes_keeps_every_satellite_report() -> Result<(), BuildErro
     let prns_in_nav_point_order: Vec<u32> = nav_file
         .nav_points()
         .iter()
-        .filter_map(|point| point.satellites.as_ref())
+        .filter_map(|point| point.satellites().as_ref())
         .flat_map(|report| report.tracked.iter().map(|satellite| satellite.prn))
         .collect();
     assert_eq!(prns_in_nav_point_order, [1, 2, 3, 4]);

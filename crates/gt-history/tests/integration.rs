@@ -1,5 +1,8 @@
-#[cfg(feature = "backend-sys")]
-use geotrace_sdk::NavFile;
+use geotrace_sdk::{
+    Angle, Constellation, DateTime, Duration, NavFile, NavFileBuilder, NavFix, NavFixTime,
+    SatelliteCoverage, SatelliteEvidence, SatelliteIdentity, SatelliteMembership,
+    SatelliteObservationReport, SatelliteScope, SatelliteUsage, SatelliteUsageReport,
+};
 use gt_history::{
     Database, DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentId,
     LogContentHash, ReadOnlyDatabase, ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingMeta,
@@ -3858,3 +3861,58 @@ const CLOCK_STEP_BACK_TIMES: [i64; 4] = [
     1_700_000_000_000_000,
     1_700_000_060_000_000,
 ];
+
+#[test]
+fn version_3_satellite_evidence_retains_metadata_and_samples_in_history() {
+    let time = NavFixTime::Receiver(DateTime::from_timestamp_micros(5_000_000).unwrap());
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .time(time)
+            .lat(Angle::degrees(55.0))
+            .lon(Angle::degrees(12.0))
+            .build(),
+    );
+    let mut file = recorder.finish().unwrap();
+    let usage = SatelliteUsageReport::builder()
+        .time(time)
+        .scope(SatelliteScope::Global)
+        .coverage(SatelliteCoverage::Complete)
+        .reported_count(8)
+        .satellites(vec![SatelliteUsage::new(
+            SatelliteIdentity::new(Constellation::Gps, 7),
+            SatelliteMembership::Unknown,
+        )])
+        .build();
+    let observations = SatelliteObservationReport::builder()
+        .time(NavFixTime::Host(
+            time.effective() + Duration::milliseconds(400),
+        ))
+        .scope(SatelliteScope::Global)
+        .coverage(SatelliteCoverage::Partial)
+        .reported_count(12)
+        .satellites(Vec::new())
+        .build();
+    file.nav_points_mut()[0].set_satellite_evidence(SatelliteEvidence::new(
+        vec![usage.clone(), usage],
+        vec![observations],
+    ));
+    let mut bytes = Vec::new();
+    file.write(&mut bytes).unwrap();
+    let meta = gt_history::extract_meta(&bytes).unwrap();
+    assert_eq!(meta.sat_report_count, 3);
+    let directory = tempfile::tempdir().unwrap();
+    let mut database = Database::open_or_create(&directory.path().join("history.h5")).unwrap();
+    let reference = database
+        .insert_simple("satellite-evidence", &meta, &bytes)
+        .unwrap();
+    let reconstructed = database.load_bytes(&reference).unwrap();
+    let decoded = NavFile::read(reconstructed.as_slice()).unwrap();
+    assert_eq!(decoded.nav_points(), file.nav_points());
+    assert_eq!(
+        gt_history::extract_meta(&reconstructed)
+            .unwrap()
+            .sat_report_count,
+        3
+    );
+}

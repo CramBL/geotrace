@@ -97,10 +97,10 @@ struct InternalPoint {
 
 impl InternalPoint {
     fn into_nav_point(self) -> NavPoint {
-        NavPoint {
-            fix: self.fix,
-            satellites: self.satellites.map(InternalSatReport::into_sat_report),
-        }
+        NavPoint::from_legacy(
+            self.fix,
+            self.satellites.map(InternalSatReport::into_sat_report),
+        )
     }
 }
 
