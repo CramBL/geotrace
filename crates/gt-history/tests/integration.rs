@@ -18,6 +18,7 @@ use gt_history_types::{
     TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, UI_STATE_GROUP, UI_STATE_VERSION_ATTR,
     UiStateVersionReporter, UiStateVersionTooNew, fixtures,
 };
+use hdf5_pure::{File, FileBuilder, FileSpaceStrategy};
 use rstest::rstest;
 
 /// Single-track convenience wrappers over the per-track API.
@@ -1963,39 +1964,30 @@ fn extract_meta_reads_the_time_range_and_size_from_the_bytes() {
     assert_eq!(meta.gtd_size_bytes, bytes.len() as u64);
 }
 
-// hdf5-pure feature-gap canaries
-//
-// Each test below is marked `#[should_panic]` and currently passes because the
-// tested hdf5-pure feature is absent.  If the feature is added upstream the
-// panic will stop occurring, the `#[should_panic]` wrapper will report a test
-// failure, and the workaround in `copy.rs` / `lib.rs` can be
-// removed.  See `docs/storage-roadmap.md` for the full evidence trail.
-/// hdf5-pure 0.6 writes superblock v2 files, which set `free_space_address` to
-/// `None`.  A functional free-space manager would record a valid (non-max)
-/// address there.  Without it every delete requires a full read-modify-write
-/// cycle (see `copy.rs`).
 #[test]
-#[should_panic(expected = "free-space manager is active")]
-fn free_space_management_not_supported() {
+fn persistent_free_space_survives_file_reopening() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("test.h5");
-
     let timestamps: Vec<i64> = (0..100).collect();
-    let mut fb = hdf5_pure::FileBuilder::new();
-    let mut gb = fb.create_group("nav_points");
-    let ds = gb.create_dataset("time");
-    ds.with_shape(&[100]);
-    ds.with_i64_data(&timestamps);
-    fb.add_group(gb.finish());
-    fb.write(&path).expect("write");
+    let mut builder = FileBuilder::new();
+    builder.with_file_space_strategy(FileSpaceStrategy::FsmAggr, true, 1);
+    let mut group = builder.create_group("nav_points");
+    group.create_dataset("time").with_i64_data(&timestamps);
+    builder.add_group(group.finish());
+    builder.write(&path).expect("write");
 
-    let file = hdf5_pure::File::open(&path).expect("open");
-    let sb = file.superblock();
-
-    const UNDEFINED_ADDRESS: u64 = 0xFFFF_FFFF_FFFF_FFFF;
-    sb.free_space_address
-        .filter(|&a| a != UNDEFINED_ADDRESS)
-        .expect("free-space manager is active");
+    let file = File::open(&path).expect("open");
+    let strategy = file.file_space_info().expect("file space strategy");
+    assert_eq!(strategy.strategy, FileSpaceStrategy::FsmAggr);
+    assert!(strategy.persist);
+    assert!(!file.persisted_free_space().expect("free space").is_empty());
+    assert_eq!(
+        file.dataset("nav_points/time")
+            .expect("dataset")
+            .read_i64()
+            .expect("timestamps"),
+        timestamps,
+    );
 }
 
 #[test_log::test]
