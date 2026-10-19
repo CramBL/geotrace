@@ -3387,11 +3387,43 @@ dependencies = [
 [[package]]
 name = "hdf5-pure"
 version = "0.47.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18a2ed6aa54b01776adf71049f7f776284c22d6febe772155ac040105ffbd126"
+source = "git+https://github.com/CramBL/hdf5-pure?branch=main#4a9794253e2b633278ba6ef3dd9aaf829bb691a3"
+dependencies = [
+ "hdf5-pure-core",
+ "hdf5-pure-filter",
+ "hdf5-pure-format",
+ "hdf5-pure-space",
+]
+
+[[package]]
+name = "hdf5-pure-core"
+version = "0.47.0"
+source = "git+https://github.com/CramBL/hdf5-pure?branch=main#4a9794253e2b633278ba6ef3dd9aaf829bb691a3"
+
+[[package]]
+name = "hdf5-pure-filter"
+version = "0.47.0"
+source = "git+https://github.com/CramBL/hdf5-pure?branch=main#4a9794253e2b633278ba6ef3dd9aaf829bb691a3"
+dependencies = [
+ "flate2",
+ "hdf5-pure-core",
+]
+
+[[package]]
+name = "hdf5-pure-format"
+version = "0.47.0"
+source = "git+https://github.com/CramBL/hdf5-pure?branch=main#4a9794253e2b633278ba6ef3dd9aaf829bb691a3"
 dependencies = [
  "byteorder",
- "flate2",
+ "hdf5-pure-core",
+]
+
+[[package]]
+name = "hdf5-pure-space"
+version = "0.47.0"
+source = "git+https://github.com/CramBL/hdf5-pure?branch=main#4a9794253e2b633278ba6ef3dd9aaf829bb691a3"
+dependencies = [
+ "hdf5-pure-core",
 ]
 
 [[package]]
