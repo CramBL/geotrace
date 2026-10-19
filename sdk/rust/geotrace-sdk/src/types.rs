@@ -12,7 +12,8 @@ use crate::error::{
 use crate::fixed_width_string::{self, AnnotationField, IconNameField, MarkerLabelField};
 use crate::provenance;
 use crate::{
-    Angle, PositionProvenance, SolutionDimension, SolutionMethod, SolutionState, Velocity,
+    Angle, PositionProvenance, SatelliteEvidence, SolutionDimension, SolutionMethod, SolutionState,
+    Velocity,
 };
 
 /// Recorded clock timestamps are independent of navigation state.
@@ -750,6 +751,16 @@ impl SatelliteReport {
 pub struct NavPoint {
     pub fix: NavFix,
     pub satellites: Option<SatelliteReport>,
+}
+
+impl NavPoint {
+    /// Convert the associated legacy report into complete global evidence samples.
+    pub fn satellite_evidence(&self) -> SatelliteEvidence {
+        self.satellites
+            .as_ref()
+            .map(SatelliteEvidence::from)
+            .unwrap_or_default()
+    }
 }
 
 /// A map annotation with its interpolated position on the nav track.
