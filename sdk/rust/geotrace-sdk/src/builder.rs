@@ -14,50 +14,19 @@ use crate::types::{
     Satellite, SatelliteReport, TravelMode,
 };
 use crate::variant_path::EventKind;
-use crate::{Angle, Velocity};
+use crate::{Angle, PositionProvenance};
 
-struct InternalFix {
-    time: NavFixTime,
-    lat: Angle,
-    lon: Angle,
-    heading: Option<Angle>,
-    speed: Option<Velocity>,
-    eph_m: Option<f64>,
-}
-
-impl InternalFix {
-    fn from_nav_fix(f: NavFix) -> Self {
-        Self {
-            time: f.time,
-            lat: f.lat,
-            lon: f.lon,
-            heading: f.heading,
-            speed: f.speed,
-            eph_m: f.eph_m,
-        }
-    }
-
-    /// Build a ghost fix whose position and time are fully computed.
+impl NavFix {
     fn ghost(gps_time: GpsTime, lat: Angle, lon: Angle, heading: Option<Angle>) -> Self {
-        Self {
-            time: NavFixTime::Receiver(gps_time.utc()),
-            lat,
-            lon,
-            heading,
-            speed: None,
-            eph_m: None,
-        }
+        Self::builder()
+            .time(NavFixTime::Receiver(gps_time.utc()))
+            .lat(lat)
+            .lon(lon)
+            .maybe_heading(heading)
+            .position_provenance(Some(PositionProvenance::SdkSynthesized))
+            .build()
     }
 
-    fn gps_time(&self) -> Option<GpsTime> {
-        self.time.gps_time().map(GpsTime::from_utc)
-    }
-
-    fn sys_time(&self) -> Option<SysTime> {
-        self.time.sys_time().map(SysTime::from_utc)
-    }
-
-    /// `gps_time - sys_time` in microseconds, for a fix both clocks stamped.
     fn gps_sys_clock_delta_us(&self) -> Option<i64> {
         match self.time {
             NavFixTime::Both { gps, sys } => Some(gps.timestamp_micros() - sys.timestamp_micros()),
@@ -65,38 +34,19 @@ impl InternalFix {
         }
     }
 
-    /// The fix's timestamp in the GPS time domain. This is the receiver's
-    /// timestamp where the fix has one, else the host clock's.
-    ///
-    /// Fix ordering and satellite report association resolve a fix's timestamp
-    /// through this. Contrast with [`InternalFix::timeline_time`], which is
-    /// system-clock-first.
+    fn host_clock_time(&self) -> Option<SysTime> {
+        self.sys_time().map(SysTime::from_utc)
+    }
+
     fn effective_time(&self) -> GpsTime {
         GpsTime::from_utc(self.time.effective())
     }
 
-    /// The host clock's timestamp where the fix has one, else the receiver's.
-    /// This anchors external events (annotations, markers) on the nav timeline.
-    ///
-    /// Comparing an external event against a fix's system-clock time places it
-    /// most accurately, since an external event holds a host system-clock
-    /// timestamp.
+    /// Annotation and event timestamps use the host clock for placement.
     fn timeline_time(&self) -> DateTime<Utc> {
         self.time
             .sys_time()
             .unwrap_or_else(|| self.time.effective())
-    }
-
-    /// Convert back to the public `NavFix` for the final output `NavPoint`.
-    fn into_nav_fix(self) -> NavFix {
-        NavFix {
-            time: self.time,
-            lat: self.lat,
-            lon: self.lon,
-            heading: self.heading,
-            speed: self.speed,
-            eph_m: self.eph_m,
-        }
     }
 }
 
@@ -141,14 +91,14 @@ impl InternalSatReport {
 
 /// Builder-internal nav point.
 struct InternalPoint {
-    fix: InternalFix,
+    fix: NavFix,
     satellites: Option<InternalSatReport>,
 }
 
 impl InternalPoint {
     fn into_nav_point(self) -> NavPoint {
         NavPoint {
-            fix: self.fix.into_nav_fix(),
+            fix: self.fix,
             satellites: self.satellites.map(InternalSatReport::into_sat_report),
         }
     }
@@ -314,7 +264,7 @@ impl Default for NavFileBuilder {
 /// Obtain via [`NavFileBuilder::open`]. Call [`finish`](Self::finish) when all
 /// data has been added to validate and produce a [`NavFile`].
 pub struct NavRecorder {
-    fixes: Vec<InternalFix>,
+    fixes: Vec<NavFix>,
     satellite_reports: Vec<InternalSatReport>,
     annotations: Vec<Annotation>,
     pending_event_markers: Vec<(String, chrono::DateTime<chrono::Utc>, Option<String>)>,
@@ -391,7 +341,7 @@ impl NavRecorder {
     /// Timestamps are immediately wrapped into typed clock-domain values so all internal
     /// builder processing is clock-domain safe.
     pub fn add_nav_fix(&mut self, fix: impl Into<NavFix>) -> &mut Self {
-        self.fixes.push(InternalFix::from_nav_fix(fix.into()));
+        self.fixes.push(fix.into());
         self
     }
 
@@ -563,7 +513,7 @@ impl NavRecorder {
         }
         validate_satellite_data(&self.satellite_reports);
 
-        self.fixes.sort_by_key(InternalFix::effective_time);
+        self.fixes.sort_by_key(NavFix::effective_time);
         self.satellite_reports.sort_by_key(|r| r.time.effective());
         self.annotations.sort_by_key(|a| a.time);
 
@@ -692,7 +642,7 @@ impl NavRecorder {
 ///
 /// **Before the first real fix** - the first fix's position, `heading = None`.
 fn ghost_nav_points_for(
-    real_fixes: &[InternalFix],
+    real_fixes: &[NavFix],
     orphan_reports: Vec<InternalSatReport>,
 ) -> Result<Vec<InternalPoint>, BuildError> {
     if orphan_reports.is_empty() {
@@ -783,7 +733,7 @@ fn ghost_nav_points_for(
                 };
                 let position = b_position.interpolated_to(a_position, frac);
                 ghost_points.push(InternalPoint {
-                    fix: InternalFix::ghost(
+                    fix: NavFix::ghost(
                         ghost_gps_time(corrected_us)?,
                         position.lat,
                         position.lon,
@@ -800,7 +750,7 @@ fn ghost_nav_points_for(
                 let approx_us = b_gps_us + (span_us * frac) as i64;
                 let position = b_position.interpolated_to(a_position, frac);
                 ghost_points.push(InternalPoint {
-                    fix: InternalFix::ghost(
+                    fix: NavFix::ghost(
                         ghost_gps_time(approx_us)?,
                         position.lat,
                         position.lon,
@@ -826,7 +776,7 @@ fn ghost_gps_time(micros: i64) -> Result<GpsTime, BuildError> {
 /// Ghosts for the reports before the first real fix, all on that fix's position
 /// with `heading = None`.
 fn ghosts_on_first_fix(
-    first: &InternalFix,
+    first: &NavFix,
     reports: Vec<InternalSatReport>,
 ) -> Result<Vec<InternalPoint>, BuildError> {
     let position = TimelinePosition::from_internal_fix(first);
@@ -835,7 +785,7 @@ fn ghosts_on_first_fix(
     for report in reports {
         let ghost_time_us = ghost_gps_us_anchored_to(&report, first);
         ghosts.push(InternalPoint {
-            fix: InternalFix::ghost(
+            fix: NavFix::ghost(
                 ghost_gps_time(ghost_time_us)?,
                 position.lat,
                 position.lon,
@@ -853,7 +803,7 @@ fn ghosts_on_first_fix(
 /// takes the last fix's position when it has no heading. `heading = None`
 /// throughout.
 fn ghosts_after_last_fix(
-    last: &InternalFix,
+    last: &NavFix,
     reports: Vec<InternalSatReport>,
 ) -> Result<Vec<InternalPoint>, BuildError> {
     let mut position = TimelinePosition::from_internal_fix(last);
@@ -867,7 +817,7 @@ fn ghosts_after_last_fix(
 
         let ghost_time_us = ghost_gps_us_anchored_to(&report, last);
         ghosts.push(InternalPoint {
-            fix: InternalFix::ghost(
+            fix: NavFix::ghost(
                 ghost_gps_time(ghost_time_us)?,
                 position.lat,
                 position.lon,
@@ -905,8 +855,8 @@ fn best_guess_gps_us(report: &InternalSatReport, anchors: &[(i64, i64)]) -> i64 
 /// `sys_time` as-is when no delta information is available.
 fn segment_corrected_gps_us(
     report: &InternalSatReport,
-    b: &InternalFix,
-    a: &InternalFix,
+    b: &NavFix,
+    a: &NavFix,
     delta_b: Option<i64>,
     delta_a: Option<i64>,
 ) -> i64 {
@@ -919,12 +869,12 @@ fn segment_corrected_gps_us(
         (Some(db), Some(da)) => {
             // Interpolate delta by the report's `sys_time` position in the segment.
             let sys_b = b
-                .sys_time()
+                .host_clock_time()
                 .map_or(b.effective_time().timestamp_micros() - db, |s| {
                     s.timestamp_micros()
                 });
             let sys_a = a
-                .sys_time()
+                .host_clock_time()
                 .map_or(a.effective_time().timestamp_micros() - da, |s| {
                     s.timestamp_micros()
                 });
@@ -948,7 +898,7 @@ fn segment_corrected_gps_us(
 /// A report with a `gps_time` is exact. A report with only a `sys_time` is
 /// corrected with the anchor fix's clock delta, and taken as it is where the
 /// anchor fix has no delta.
-fn ghost_gps_us_anchored_to(report: &InternalSatReport, anchor_fix: &InternalFix) -> i64 {
+fn ghost_gps_us_anchored_to(report: &InternalSatReport, anchor_fix: &NavFix) -> i64 {
     match report.placement_time() {
         ReportPlacementTime::GpsDomainUs(gps_us) => gps_us,
         ReportPlacementTime::HostClockUs(st_us) => {
@@ -974,7 +924,7 @@ fn ghost_gps_us_anchored_to(report: &InternalSatReport, anchor_fix: &InternalFix
 /// satellite report for `fixes[i]` (if any), and `unassociated` contains
 /// every report that could not be matched.
 fn associate_satellites(
-    fixes: &[InternalFix],
+    fixes: &[NavFix],
     reports: Vec<InternalSatReport>,
     window: Duration,
 ) -> (Vec<Option<InternalSatReport>>, Vec<InternalSatReport>) {
@@ -1003,8 +953,8 @@ fn associate_satellites(
             ReportPlacementTime::HostClockUs(st_us) => Some(st_us),
         };
 
-        let dist_to = |fix: &InternalFix| -> i64 {
-            if let (Some(rsu), Some(fst)) = (rep_sys_us, fix.sys_time()) {
+        let dist_to = |fix: &NavFix| -> i64 {
+            if let (Some(rsu), Some(fst)) = (rep_sys_us, fix.host_clock_time()) {
                 (rsu - fst.timestamp_micros()).abs()
             } else {
                 (rep_us - fix.effective_time().timestamp_micros()).abs()
@@ -1074,7 +1024,7 @@ struct TimelineFix {
 }
 
 impl TimelineFix {
-    fn from_internal_fix(fix: &InternalFix) -> Self {
+    fn from_internal_fix(fix: &NavFix) -> Self {
         Self {
             time: fix.timeline_time(),
             position: TimelinePosition::from_internal_fix(fix),
@@ -1089,7 +1039,7 @@ struct TimelinePosition {
 }
 
 impl TimelinePosition {
-    fn from_internal_fix(fix: &InternalFix) -> Self {
+    fn from_internal_fix(fix: &NavFix) -> Self {
         Self {
             lat: fix.lat,
             lon: fix.lon,
@@ -1177,13 +1127,13 @@ impl TimelinePlacement {
 }
 
 /// The fixes an external event is placed against, sorted by
-/// [`InternalFix::timeline_time`], the key [`FixTimeline::place`] searches.
-/// The nav points stay in [`InternalFix::effective_time`] order, and the two
+/// [`NavFix::timeline_time`], the key [`FixTimeline::place`] searches.
+/// The nav points stay in [`NavFix::effective_time`] order, and the two
 /// orders differ where a fix has both a receiver and a host timestamp.
 struct FixTimeline(Vec<TimelineFix>);
 
 impl FixTimeline {
-    fn from_fixes<'a>(fixes: impl Iterator<Item = &'a InternalFix>) -> Self {
+    fn from_fixes<'a>(fixes: impl Iterator<Item = &'a NavFix>) -> Self {
         let mut timeline: Vec<TimelineFix> = fixes.map(TimelineFix::from_internal_fix).collect();
         timeline.sort_by_key(|fix| fix.time);
         Self(timeline)
@@ -1192,7 +1142,7 @@ impl FixTimeline {
     /// Place an external event's time on the nav timeline.
     ///
     /// A time equal to a fix's time is placed at that fix, and at the first of
-    /// them in [`InternalFix::effective_time`] order where several fixes share
+    /// them in [`NavFix::effective_time`] order where several fixes share
     /// that time.
     fn place(&self, time: DateTime<Utc>) -> TimelinePlacement {
         let pos = self.0.partition_point(|fix| fix.time < time);
@@ -1230,7 +1180,7 @@ impl FixTimeline {
 /// [`FixTimeline`] places it against each fix's `sys_time`, or against the
 /// `gps_time` of a fix that has no `sys_time`.
 fn interpolate_annotations(
-    fixes: &[InternalFix],
+    fixes: &[NavFix],
     annotations: Vec<Annotation>,
     lenient: bool,
 ) -> (Vec<(Annotation, TimelinePosition)>, Vec<Annotation>) {

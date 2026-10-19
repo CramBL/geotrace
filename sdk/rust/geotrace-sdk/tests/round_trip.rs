@@ -7,7 +7,8 @@
 use geotrace_sdk::{Angle, ChannelUnit, Duration, Unit, Velocity};
 use geotrace_sdk::{
     Annotation, AnnotationIcon, Channel, Constellation, MarkerIcon, Meta, MetaStringWithNul,
-    NavFileBuilder, NavFix, NavFixTime, Satellite, SatelliteReport, TravelMode,
+    NavFileBuilder, NavFix, NavFixTime, PositionProvenance, Satellite, SatelliteReport,
+    SolutionDimension, SolutionMethod, SolutionState, TravelMode,
 };
 use geotrace_sdk_test_util as test_util;
 use geotrace_sdk_test_util::{Lat, Lon};
@@ -796,3 +797,68 @@ fn a_fix_keeps_the_clock_that_stamped_it(
 /// A `markers/icon` code outside the set this build has, as a newer build
 /// could write it.
 const UNRECOGNIZED_ICON_CODE: u8 = 200;
+
+#[rstest]
+#[case::unreported(None, None)]
+#[case::explicit_unknown(Some(SolutionState::Unknown), None)]
+#[case::fix_with_zero(Some(SolutionState::Fix), Some(0))]
+#[case::loss_with_positive_count(Some(SolutionState::NoFix), Some(12))]
+#[case::estimate(Some(SolutionState::EstimatedOnly), Some(u32::MAX))]
+fn navigation_metadata_is_independent_of_clock_heading_and_accuracy(
+    #[case] state: Option<SolutionState>,
+    #[case] used_count: Option<u32>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let fix = NavFix::builder()
+        .time(NavFixTime::Host(test_util::base()))
+        .lat(Angle::degrees(51.5))
+        .lon(Angle::degrees(-0.1))
+        .maybe_state(state)
+        .method(SolutionMethod::Hybrid)
+        .dimension(SolutionDimension::ThreeD)
+        .maybe_used_count(used_count)
+        .hdop(0.9)
+        .vdop(1.4)
+        .pdop(1.7)
+        .build();
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add(fix);
+    let decoded = test_util::round_trip(&recorder.finish()?)?;
+    assert_eq!(decoded.nav_points()[0].fix, fix);
+    assert_eq!(fix.heading, None);
+    assert_eq!(fix.eph_m, None);
+    assert_eq!(
+        fix.position_provenance,
+        Some(PositionProvenance::SourceProvided)
+    );
+    Ok(())
+}
+
+#[test]
+fn synthesized_coordinates_with_a_heading_retain_their_provenance()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut recorder = NavFileBuilder::new().open();
+    for (offset, lon) in [(0, 0.0), (4000, 0.01)] {
+        recorder.add_nav_fix(test_util::fix_at(offset, Lat(0.0), Lon(lon)));
+    }
+    recorder.add_satellite_report(test_util::report_with(2000, Constellation::Gps, 1));
+    let decoded = test_util::round_trip(&recorder.finish()?)?;
+    let points = decoded.nav_points();
+    assert_eq!(points.len(), 3);
+    let generated = points[1].fix;
+    assert_eq!(
+        generated.position_provenance,
+        Some(PositionProvenance::SdkSynthesized)
+    );
+    assert!(generated.heading.is_some());
+    assert_eq!(generated.state, None);
+    assert_eq!(generated.used_count, None);
+    assert_eq!(
+        points[0].fix.position_provenance,
+        Some(PositionProvenance::SourceProvided)
+    );
+    assert_eq!(
+        points[2].fix.position_provenance,
+        Some(PositionProvenance::SourceProvided)
+    );
+    Ok(())
+}

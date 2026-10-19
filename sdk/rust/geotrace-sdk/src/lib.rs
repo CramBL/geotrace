@@ -38,6 +38,7 @@ pub use fixed_width_string::{
 pub use geotrace_sdk_units::{
     ChannelUnit, ChannelUnitKind, CustomUnit, PhysicalQuantity, Unit, UnitParseError,
 };
+pub use navigation::{PositionProvenance, SolutionDimension, SolutionMethod, SolutionState};
 pub use provenance::{
     SCRUBBED_SDK_VERSION, SDK_COMMIT_TIME_ATTR, SDK_GIT_COMMIT_ATTR, SDK_VERSION_ATTR,
 };
@@ -62,6 +63,7 @@ mod builder;
 mod error;
 mod fixed_width_string;
 mod format_version;
+mod navigation;
 mod provenance;
 mod read;
 mod size_checked_file;

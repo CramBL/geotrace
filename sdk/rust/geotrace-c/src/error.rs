@@ -85,6 +85,10 @@ pub(crate) fn status_for_error(e: &geotrace_sdk::Error) -> GtdStatus {
         Error::UnsupportedVersion { .. } => GtdStatus::GTD_ERR_VERSION,
         Error::UnknownConstellation { .. }
         | Error::ShapeMismatch { .. }
+        | Error::InvalidNavigationTag { .. }
+        | Error::InvalidNavigationColumnType { .. }
+        | Error::InvalidDatasetShape { .. }
+        | Error::MissingNavigationColumn { .. }
         | Error::UnknownConstellationName { .. }
         | Error::UnknownMarkerIcon { .. }
         | Error::ParseError { .. }

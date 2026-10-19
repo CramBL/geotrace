@@ -6,10 +6,13 @@
 use geotrace_sdk::{Angle, DateTime, Utc};
 use geotrace_sdk::{
     Annotation, AnnotationIcon, ChannelUnit, Constellation, Error, EventMarker, MarkerIcon,
-    NavFile, NavFileBuilder, NavFix, NavFixTime, Satellite, SatelliteReport,
+    NavFile, NavFileBuilder, NavFix, NavFixTime, PositionProvenance, Satellite, SatelliteReport,
+    SolutionDimension, SolutionMethod, SolutionState,
 };
 use geotrace_sdk_test_util as test_util;
-use hdf5_pure::{AttrValue, FileBuilder};
+use hdf5_pure::{
+    AttrValue, Datatype, DatatypeByteOrder, FileBuilder, FixedPointLayout, FloatingPointLayout,
+};
 use rstest::rstest;
 
 #[test]
@@ -271,7 +274,7 @@ fn a_geotrace_version_outside_the_supported_set_fails_the_read(#[case] version: 
 
 #[rstest]
 #[case::the_layout_with_one_time_axis("1")]
-#[case::the_version_the_writer_stamps("2")]
+#[case::the_dual_clock_layout("2")]
 fn a_supported_geotrace_version_reads(#[case] version: &str) {
     let bytes = make_file_with_version(version);
     let nav_file = NavFile::read(bytes.as_slice()).expect("a supported version reads");
@@ -613,5 +616,351 @@ fn a_fix_reads_back_the_time_it_was_written_with(
     let fix = &read_back.nav_points()[0].fix;
     assert_eq!(fix.gps_time(), Some(time));
     assert_eq!(fix.sys_time(), Some(time));
+    Ok(())
+}
+
+#[test]
+fn navigation_columns_preserve_enum_tags_and_optional_counts()
+-> Result<(), Box<dyn std::error::Error>> {
+    let states = [
+        None,
+        Some(SolutionState::Fix),
+        Some(SolutionState::NoFix),
+        Some(SolutionState::EstimatedOnly),
+        Some(SolutionState::Unknown),
+        None,
+        None,
+        None,
+    ];
+    let methods = [
+        None,
+        Some(SolutionMethod::Autonomous),
+        Some(SolutionMethod::Differential),
+        Some(SolutionMethod::RtkFloat),
+        Some(SolutionMethod::RtkFixed),
+        Some(SolutionMethod::DeadReckoning),
+        Some(SolutionMethod::Hybrid),
+        Some(SolutionMethod::Other),
+    ];
+    let mut recorder = NavFileBuilder::new().open();
+    for (index, (state, method)) in states.into_iter().zip(methods).enumerate() {
+        recorder.add_nav_fix(
+            NavFix::builder()
+                .time(NavFixTime::Receiver(test_util::t_s(index as i64)))
+                .lat(Angle::degrees(0.0))
+                .lon(Angle::degrees(0.0))
+                .maybe_state(state)
+                .maybe_method(method)
+                .maybe_dimension(match index {
+                    0 => None,
+                    1 => Some(SolutionDimension::TwoD),
+                    _ => Some(SolutionDimension::ThreeD),
+                })
+                .position_provenance(match index {
+                    0 => None,
+                    1 => Some(PositionProvenance::SdkSynthesized),
+                    _ => Some(PositionProvenance::SourceProvided),
+                })
+                .maybe_used_count(match index {
+                    0 => None,
+                    1 => Some(0),
+                    _ => Some(u32::MAX),
+                })
+                .maybe_hdop((index > 0).then_some(0.9))
+                .vdop(f64::NAN)
+                .pdop(-2.5)
+                .build(),
+        );
+    }
+    let nav_file = recorder.finish()?;
+    let bytes = test_util::to_bytes(&nav_file)?;
+    let file = hdf5_pure::File::from_bytes(bytes.clone())?;
+    assert_eq!(
+        file.root()
+            .attrs()?
+            .get("geotrace_version")
+            .and_then(AttrValue::as_str),
+        Some("3")
+    );
+    let group = file.group("nav_points")?;
+    for (name, expected) in [
+        ("state", vec![0, 1, 2, 3, 4, 0, 0, 0]),
+        ("method", vec![0, 1, 2, 3, 4, 5, 6, 7]),
+        ("dimension", vec![0, 1, 2, 2, 2, 2, 2, 2]),
+        ("position_provenance", vec![0, 2, 1, 1, 1, 1, 1, 1]),
+        ("used_count_present", vec![0, 1, 1, 1, 1, 1, 1, 1]),
+    ] {
+        assert_eq!(group.dataset(name)?.read_u8()?, expected, "{name}");
+    }
+    assert_eq!(
+        group.dataset("used_count")?.read_u32()?,
+        vec![
+            0,
+            0,
+            u32::MAX,
+            u32::MAX,
+            u32::MAX,
+            u32::MAX,
+            u32::MAX,
+            u32::MAX
+        ]
+    );
+    assert!(group.dataset("hdop")?.read_f64()?[0].is_nan());
+    assert!(
+        group
+            .dataset("vdop")?
+            .read_f64()?
+            .iter()
+            .all(|value| value.is_nan())
+    );
+    let decoded = NavFile::read(bytes.as_slice())?;
+    for (index, point) in decoded.nav_points().iter().enumerate() {
+        let mut expected = nav_file.nav_points()[index].fix;
+        expected.vdop = None;
+        assert_eq!(point.fix, expected);
+    }
+    Ok(())
+}
+
+struct NavigationColumnFixture<'a> {
+    version: &'a str,
+    dataset: &'a str,
+    tags: &'a [u8],
+    shape: &'a [u64],
+    replacement: Option<NavigationColumnReplacement>,
+}
+
+struct NavigationColumnReplacement {
+    datatype: Datatype,
+    bytes: Vec<u8>,
+}
+
+impl NavigationColumnFixture<'_> {
+    fn to_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let mut file = FileBuilder::new();
+        file.set_attr("geotrace_version", AttrValue::String(self.version.into()));
+        let mut group = file.create_group("nav_points");
+        group
+            .create_dataset("time")
+            .with_i64_data(&[test_util::base().timestamp_micros()]);
+        for name in ["lat", "lon", "heading", "speed_mps"] {
+            group.create_dataset(name).with_f64_data(&[0.0]);
+        }
+        for name in [
+            "state",
+            "method",
+            "dimension",
+            "position_provenance",
+            "used_count_present",
+            "used_count",
+            "hdop",
+            "vdop",
+            "pdop",
+        ] {
+            let shape = if self.dataset == name {
+                self.shape
+            } else {
+                &[1]
+            };
+            let column = group.create_dataset(name);
+            if self.dataset == name
+                && let Some(replacement) = &self.replacement
+            {
+                column.with_raw_data(replacement.datatype.clone(), replacement.bytes.clone(), 1);
+            } else if name == "used_count_present"
+                && self.dataset == "used_count"
+                && self.replacement.is_some()
+            {
+                column.with_u8_data(&[1]);
+            } else if name == "used_count" {
+                column.with_u32_data(&[0]);
+            } else if ["hdop", "vdop", "pdop"].contains(&name) {
+                column.with_f64_data(&[f64::NAN]);
+            } else {
+                let tags = if self.dataset == name {
+                    self.tags
+                } else {
+                    &[0]
+                };
+                column.with_u8_data(tags);
+            }
+            column.with_shape(shape);
+        }
+        file.add_group(group.finish());
+        Ok(file.finish()?)
+    }
+}
+
+#[rstest]
+#[case::state("state", 5)]
+#[case::method("method", 8)]
+#[case::dimension("dimension", 3)]
+#[case::provenance("position_provenance", 3)]
+#[case::count_presence("used_count_present", 2)]
+fn invalid_navigation_tags_identify_the_field_and_record(
+    #[case] dataset: &str,
+    #[case] code: u8,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = NavigationColumnFixture {
+        version: "3",
+        dataset,
+        tags: &[code],
+        shape: &[1],
+        replacement: None,
+    }
+    .to_bytes()?;
+    let error = NavFile::read(bytes.as_slice()).unwrap_err();
+    assert!(
+        matches!(error, Error::InvalidNavigationTag { dataset: field, record: 0, code: value } if field == dataset && value == code)
+    );
+    Ok(())
+}
+
+#[rstest]
+#[case::state("state")]
+#[case::method("method")]
+#[case::dimension("dimension")]
+#[case::provenance("position_provenance")]
+#[case::count("used_count")]
+#[case::count_presence("used_count_present")]
+#[case::hdop("hdop")]
+#[case::vdop("vdop")]
+#[case::pdop("pdop")]
+fn navigation_columns_require_one_dimension(
+    #[case] dataset: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = NavigationColumnFixture {
+        version: "3",
+        dataset,
+        tags: &[0],
+        shape: &[1, 1],
+        replacement: None,
+    }
+    .to_bytes()?;
+    let error = NavFile::read(bytes.as_slice()).unwrap_err();
+    assert!(
+        matches!(error, Error::InvalidDatasetShape { group: "nav_points", dataset: field, expected, actual } if field == dataset && expected == [1] && actual == [1,1])
+    );
+    Ok(())
+}
+
+#[test]
+fn navigation_columns_require_the_navigation_row_count() -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = NavigationColumnFixture {
+        version: "3",
+        dataset: "state",
+        tags: &[0, 1],
+        shape: &[2],
+        replacement: None,
+    }
+    .to_bytes()?;
+    let error = NavFile::read(bytes.as_slice()).unwrap_err();
+    assert!(
+        matches!(error, Error::InvalidDatasetShape { group: "nav_points", dataset: "state", expected, actual } if expected == [1] && actual == [2])
+    );
+    Ok(())
+}
+
+#[rstest]
+#[case::v1("1")]
+#[case::v2("2")]
+fn legacy_files_have_unreported_navigation_metadata(
+    #[case] version: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = NavigationColumnFixture {
+        version,
+        dataset: "state",
+        tags: &[4],
+        shape: &[1],
+        replacement: None,
+    }
+    .to_bytes()?;
+    let decoded = NavFile::read(bytes.as_slice())?;
+    let fix = decoded.nav_points()[0].fix;
+    assert_eq!(
+        (
+            fix.state,
+            fix.method,
+            fix.dimension,
+            fix.used_count,
+            fix.position_provenance
+        ),
+        (None, None, None, None, None)
+    );
+    assert_eq!((fix.hdop, fix.vdop, fix.pdop), (None, None, None));
+    Ok(())
+}
+
+#[test]
+fn version_three_requires_navigation_columns() -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = make_file_with_version("3");
+    let error = NavFile::read(bytes.as_slice()).unwrap_err();
+    assert!(matches!(
+        error,
+        Error::MissingNavigationColumn { dataset: "state" }
+    ));
+    Ok(())
+}
+
+#[rstest]
+#[case::fractional_state("state", Datatype::FloatingPoint { size: 8, byte_order: DatatypeByteOrder::LittleEndian, layout: FloatingPointLayout::IEEE754_BINARY64 }, 1.5_f64.to_le_bytes().to_vec())]
+#[case::fractional_presence("used_count_present", Datatype::FloatingPoint { size: 8, byte_order: DatatypeByteOrder::LittleEndian, layout: FloatingPointLayout::IEEE754_BINARY64 }, 1.5_f64.to_le_bytes().to_vec())]
+#[case::fractional_count("used_count", Datatype::FloatingPoint { size: 8, byte_order: DatatypeByteOrder::LittleEndian, layout: FloatingPointLayout::IEEE754_BINARY64 }, 1.5_f64.to_le_bytes().to_vec())]
+#[case::signed_tag("state", Datatype::FixedPoint { size: 1, byte_order: DatatypeByteOrder::LittleEndian, layout: FixedPointLayout { signed: true, bit_offset: 0, bit_precision: 8 } }, vec![1])]
+#[case::wide_tag("state", Datatype::FixedPoint { size: 2, byte_order: DatatypeByteOrder::LittleEndian, layout: FixedPointLayout { signed: false, bit_offset: 0, bit_precision: 16 } }, 1_u16.to_le_bytes().to_vec())]
+#[case::tag_precision("state", Datatype::FixedPoint { size: 1, byte_order: DatatypeByteOrder::LittleEndian, layout: FixedPointLayout { signed: false, bit_offset: 0, bit_precision: 7 } }, vec![1])]
+#[case::tag_offset("state", Datatype::FixedPoint { size: 1, byte_order: DatatypeByteOrder::LittleEndian, layout: FixedPointLayout { signed: false, bit_offset: 1, bit_precision: 7 } }, vec![2])]
+#[case::signed_count("used_count", Datatype::FixedPoint { size: 4, byte_order: DatatypeByteOrder::LittleEndian, layout: FixedPointLayout { signed: true, bit_offset: 0, bit_precision: 32 } }, 8_i32.to_le_bytes().to_vec())]
+#[case::narrow_count("used_count", Datatype::FixedPoint { size: 1, byte_order: DatatypeByteOrder::LittleEndian, layout: FixedPointLayout { signed: false, bit_offset: 0, bit_precision: 8 } }, vec![8])]
+#[case::narrow_dop("hdop", Datatype::FloatingPoint { size: 4, byte_order: DatatypeByteOrder::LittleEndian, layout: FloatingPointLayout::IEEE754_BINARY32 }, 0.9_f32.to_le_bytes().to_vec())]
+#[case::dop_precision("hdop", Datatype::FloatingPoint { size: 8, byte_order: DatatypeByteOrder::LittleEndian, layout: FloatingPointLayout { bit_precision: 63, ..FloatingPointLayout::IEEE754_BINARY64 } }, 0.9_f64.to_le_bytes().to_vec())]
+fn malformed_navigation_column_types_fail_before_conversion(
+    #[case] dataset: &str,
+    #[case] datatype: Datatype,
+    #[case] bytes: Vec<u8>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = NavigationColumnFixture {
+        version: "3",
+        dataset,
+        tags: &[0],
+        shape: &[1],
+        replacement: Some(NavigationColumnReplacement { datatype, bytes }),
+    }
+    .to_bytes()?;
+    let error = NavFile::read(bytes.as_slice()).unwrap_err();
+    assert!(
+        matches!(error, Error::InvalidNavigationColumnType { dataset: field, .. } if field == dataset),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[rstest]
+#[case::tag("state", Datatype::FixedPoint { size: 1, byte_order: DatatypeByteOrder::BigEndian, layout: FixedPointLayout { signed: false, bit_offset: 0, bit_precision: 8 } }, vec![4])]
+#[case::count("used_count", Datatype::FixedPoint { size: 4, byte_order: DatatypeByteOrder::BigEndian, layout: FixedPointLayout { signed: false, bit_offset: 0, bit_precision: 32 } }, 8_u32.to_be_bytes().to_vec())]
+#[case::dop("hdop", Datatype::FloatingPoint { size: 8, byte_order: DatatypeByteOrder::BigEndian, layout: FloatingPointLayout::IEEE754_BINARY64 }, 0.9_f64.to_be_bytes().to_vec())]
+fn navigation_columns_accept_standard_big_endian_numeric_types(
+    #[case] dataset: &str,
+    #[case] datatype: Datatype,
+    #[case] bytes: Vec<u8>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = NavigationColumnFixture {
+        version: "3",
+        dataset,
+        tags: &[0],
+        shape: &[1],
+        replacement: Some(NavigationColumnReplacement { datatype, bytes }),
+    }
+    .to_bytes()?;
+    let decoded = NavFile::read(bytes.as_slice())?;
+    let fix = decoded.nav_points()[0].fix;
+    assert_eq!(
+        (fix.state, fix.used_count, fix.hdop),
+        (
+            (dataset == "state").then_some(SolutionState::Unknown),
+            (dataset == "used_count").then_some(8),
+            (dataset == "hdop").then_some(0.9)
+        ),
+    );
     Ok(())
 }

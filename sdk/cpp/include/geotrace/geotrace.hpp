@@ -521,10 +521,10 @@ class [[nodiscard]] FixTime {
     /** The receiver's timestamp, with no host clock recorded. */
     static constexpr FixTime receiver(Timestamp gps) noexcept { return FixTime{ReceiverOnly{gps}}; }
 
-    /** The host clock's timestamp, taken while the receiver had no lock. */
+    /** Host timestamp with an unreported receiver timestamp. */
     static constexpr FixTime host(Timestamp sys) noexcept { return FixTime{HostOnly{sys}}; }
 
-    /** Both timestamps, recorded under lock on a host that also stamped it. */
+    /** Receiver and host timestamps. */
     static constexpr FixTime both(Timestamp gps, Timestamp sys) noexcept {
         return FixTime{BothClocks{gps, sys}};
     }

@@ -7,6 +7,15 @@ the app).
 
 ## [unreleased]
 
+### Added
+
+- Rust `NavFix` supports optional navigation state, method, dimension, used count, dilution of precision and coordinate origin.
+
+### Changed
+
+- New recordings use GTD version 3, and readers accept versions 1, 2 and 3.
+- **Breaking:** External Rust callers construct `NavFix` through `NavFix::builder()`.
+
 ## [0.7.0] - 2026-09-15
 
 ### Added

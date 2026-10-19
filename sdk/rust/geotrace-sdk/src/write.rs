@@ -264,6 +264,99 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Erro
         .with_shuffle()
         .with_deflate(6);
 
+    for (name, values, encoding) in [
+        (
+            "state",
+            points
+                .iter()
+                .map(|p| p.fix.state.map_or(0, |v| v as u8))
+                .collect::<Vec<_>>(),
+            "0=absent,1=Fix,2=NoFix,3=EstimatedOnly,4=Unknown",
+        ),
+        (
+            "method",
+            points
+                .iter()
+                .map(|p| p.fix.method.map_or(0, |v| v as u8))
+                .collect(),
+            "0=absent,1=Autonomous,2=Differential,3=RtkFloat,4=RtkFixed,5=DeadReckoning,6=Hybrid,7=Other",
+        ),
+        (
+            "dimension",
+            points
+                .iter()
+                .map(|p| p.fix.dimension.map_or(0, |v| v as u8))
+                .collect(),
+            "0=absent,1=TwoD,2=ThreeD",
+        ),
+        (
+            "position_provenance",
+            points
+                .iter()
+                .map(|p| p.fix.position_provenance.map_or(0, |v| v as u8))
+                .collect(),
+            "0=absent,1=SourceProvided,2=SdkSynthesized",
+        ),
+        (
+            "used_count_present",
+            points
+                .iter()
+                .map(|p| u8::from(p.fix.used_count.is_some()))
+                .collect(),
+            "0=absent,1=present",
+        ),
+    ] {
+        grp.create_dataset(name)
+            .with_u8_data(&values)
+            .with_shape(&[n as u64])
+            .set_attr("encoding", AttrValue::String(encoding.into()))
+            .with_chunks(&[chunk])
+            .with_shuffle()
+            .with_deflate(6);
+    }
+    let used_counts: Vec<u32> = points
+        .iter()
+        .map(|p| p.fix.used_count.unwrap_or(0))
+        .collect();
+    grp.create_dataset("used_count")
+        .with_u32_data(&used_counts)
+        .with_shape(&[n as u64])
+        .with_chunks(&[chunk])
+        .with_shuffle()
+        .with_deflate(6);
+    for (name, values) in [
+        (
+            "hdop",
+            points
+                .iter()
+                .map(|p| p.fix.hdop.unwrap_or(f64::NAN))
+                .collect::<Vec<_>>(),
+        ),
+        (
+            "vdop",
+            points
+                .iter()
+                .map(|p| p.fix.vdop.unwrap_or(f64::NAN))
+                .collect(),
+        ),
+        (
+            "pdop",
+            points
+                .iter()
+                .map(|p| p.fix.pdop.unwrap_or(f64::NAN))
+                .collect(),
+        ),
+    ] {
+        grp.create_dataset(name)
+            .with_f64_data(&values)
+            .with_shape(&[n as u64])
+            .set_attr("units", AttrValue::String("dimensionless".into()))
+            .set_attr("nan_means", AttrValue::String("absent".into()))
+            .with_chunks(&[chunk])
+            .with_shuffle()
+            .with_deflate(6);
+    }
+
     fb.add_group(grp.finish());
 
     Ok(())
@@ -725,7 +818,7 @@ mod tests {
     }
 
     #[test]
-    fn a_written_file_stamps_format_version_2() {
+    fn a_written_file_stamps_format_version_3() {
         let nav_file = NavFile {
             meta: Meta::default(),
             debug_time_repair: None,
@@ -741,7 +834,7 @@ mod tests {
 
         assert_eq!(
             attrs.get("geotrace_version").and_then(AttrValue::as_str),
-            Some("2")
+            Some("3")
         );
     }
 

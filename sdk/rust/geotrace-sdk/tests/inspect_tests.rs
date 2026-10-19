@@ -11,7 +11,7 @@ use geotrace_sdk::{Angle, Unit, Velocity};
 use geotrace_sdk::{
     Annotation, AnnotationIcon, Channel, Constellation, EventMarker, EventMarkerIconChoice,
     EventMarkerStyle, MarkerIcon, NavFile, NavFileBuilder, NavFix, NavFixTime, NavRecorder,
-    Satellite, SatelliteReport, TravelMode,
+    Satellite, SatelliteReport, SolutionDimension, SolutionMethod, SolutionState, TravelMode,
 };
 use geotrace_sdk_test_util as test_util;
 use geotrace_sdk_test_util::{
@@ -382,3 +382,38 @@ fn inspect_states_a_count_of_zero_for_an_empty_section(
 
 /// Field content no reader decodes as UTF-8.
 const NOT_UTF8: &[u8] = &[0xff];
+
+#[test]
+fn inspection_includes_navigation_facts() -> Result<(), Box<dyn std::error::Error>> {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .time(NavFixTime::Host(test_util::base()))
+            .lat(Angle::degrees(51.5))
+            .lon(Angle::degrees(-0.1))
+            .state(SolutionState::NoFix)
+            .method(SolutionMethod::Differential)
+            .dimension(SolutionDimension::TwoD)
+            .used_count(12)
+            .hdop(0.9)
+            .vdop(1.4)
+            .pdop(1.7)
+            .build(),
+    );
+    let output = inspect_bytes(&test_util::to_bytes(&recorder.finish()?)?)?;
+    for expected in [
+        "version 3",
+        "state                 NoFix=1",
+        "method                Differential=1",
+        "dimension             TwoD=1",
+        "position provenance   SourceProvided=1",
+        "used count presence   1/1 present",
+        "used count            12",
+        "hdop                  0.9",
+        "vdop                  1.4",
+        "pdop                  1.7",
+    ] {
+        assert!(output.contains(expected), "missing {expected:?}: {output}");
+    }
+    Ok(())
+}

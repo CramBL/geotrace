@@ -5,7 +5,8 @@
 
 use geotrace_sdk::{
     Angle, Channel, DateTime, DebugTimeRepair, Duration, EventMarker, MarkerIcon, NavFile,
-    NavFileBuilder, NavFileOpenMode, NavFix, NavFixTime, Satellite, SatelliteReport, Unit, Utc,
+    NavFileBuilder, NavFileOpenMode, NavFix, NavFixTime, PositionProvenance, Satellite,
+    SatelliteReport, SolutionState, Unit, Utc,
 };
 use geotrace_sdk_test_util as test_util;
 use hdf5_pure::{AttrValue, FileBuilder};
@@ -88,6 +89,16 @@ fn assert_repaired_timeline(file: &NavFile, t0: DateTime<Utc>) {
             t0 + Duration::seconds(17)
         ]
     );
+    for point in file.nav_points() {
+        assert_eq!(point.fix.state, Some(SolutionState::Fix));
+        assert_eq!(point.fix.used_count, Some(8));
+        assert_eq!(
+            point.fix.position_provenance,
+            Some(PositionProvenance::SourceProvided)
+        );
+        assert_eq!(point.fix.hdop, Some(0.9));
+        assert_eq!(point.fix.eph_m, None);
+    }
     let second_span_first_fix = file
         .nav_points()
         .get(3)
@@ -158,7 +169,7 @@ fn repeated_time_gtd_bytes(t0: DateTime<Utc>, tag: Option<DebugTimeRepair>) -> V
     let count = times_us.len();
     let shape = [count as u64];
     let mut fb = FileBuilder::new();
-    fb.set_attr("geotrace_version", AttrValue::String("2".to_owned()));
+    fb.set_attr("geotrace_version", AttrValue::String("3".to_owned()));
     if let Some(tag) = tag {
         fb.set_attr(
             "debug_time_repair_backward_jump_threshold_us",
@@ -189,12 +200,31 @@ fn repeated_time_gtd_bytes(t0: DateTime<Utc>, tag: Option<DebugTimeRepair>) -> V
         ("heading", 0.0),
         ("speed_mps", f64::NAN),
         ("eph_m", f64::NAN),
+        ("hdop", 0.9),
+        ("vdop", f64::NAN),
+        ("pdop", 1.7),
     ] {
         nav_points
             .create_dataset(name)
             .with_f64_data(&vec![value; count])
             .with_shape(&shape);
     }
+    for (name, value) in [
+        ("state", 1),
+        ("method", 0),
+        ("dimension", 0),
+        ("position_provenance", 1),
+        ("used_count_present", 1),
+    ] {
+        nav_points
+            .create_dataset(name)
+            .with_u8_data(&vec![value; count])
+            .with_shape(&shape);
+    }
+    nav_points
+        .create_dataset("used_count")
+        .with_u32_data(&vec![8; count])
+        .with_shape(&shape);
     fb.add_group(nav_points.finish());
 
     let nav_point_indices: Vec<u64> = (0..count as u64).collect();

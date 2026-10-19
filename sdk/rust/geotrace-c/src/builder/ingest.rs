@@ -77,14 +77,16 @@ pub unsafe extern "C" fn gtd_builder_add_nav_fix(
             Ok(time) => time,
             Err(status) => return status,
         };
-        builder.recorder_mut().add_nav_fix(geotrace_sdk::NavFix {
-            time,
-            lat: Angle::degrees(lat_deg),
-            lon: Angle::degrees(lon_deg),
-            heading: heading_deg.to_opt().map(Angle::degrees),
-            speed: speed_mps.to_opt().map(Velocity::meter_per_second),
-            eph_m: eph_m.to_opt(),
-        });
+        builder.recorder_mut().add_nav_fix(
+            geotrace_sdk::NavFix::builder()
+                .time(time)
+                .lat(Angle::degrees(lat_deg))
+                .lon(Angle::degrees(lon_deg))
+                .maybe_heading(heading_deg.to_opt().map(Angle::degrees))
+                .maybe_speed(speed_mps.to_opt().map(Velocity::meter_per_second))
+                .maybe_eph_m(eph_m.to_opt())
+                .build(),
+        );
         GtdStatus::GTD_OK
     })
 }

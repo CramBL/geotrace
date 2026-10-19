@@ -322,6 +322,48 @@ impl Display for UnplacedRecordCounts {
 /// Errors that can occur when reading or writing a `.gtd` file.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// A required version 3 navigation column is absent.
+    #[error("nav_points/{dataset}: required version 3 column is missing")]
+    MissingNavigationColumn {
+        /// Missing column within `nav_points`.
+        dataset: &'static str,
+    },
+
+    /// A navigation column has an unsupported stored numeric representation.
+    #[error("nav_points/{dataset}: expected datatype {expected}, found {actual}")]
+    InvalidNavigationColumnType {
+        /// Column within `nav_points`.
+        dataset: &'static str,
+        /// Required numeric representation.
+        expected: String,
+        /// Stored numeric representation.
+        actual: String,
+    },
+
+    /// A navigation enum or presence byte has an undefined value.
+    #[error("nav_points/{dataset}: record {record} has invalid tag {code}")]
+    InvalidNavigationTag {
+        /// Column within `nav_points`.
+        dataset: &'static str,
+        /// Zero-based navigation row.
+        record: usize,
+        /// Undefined stored byte.
+        code: u8,
+    },
+
+    /// A column's stored dimensions differ from its required shape.
+    #[error("{group}/{dataset}: expected shape {expected:?}, found {actual:?}")]
+    InvalidDatasetShape {
+        /// Group containing the column.
+        group: &'static str,
+        /// Column within the group.
+        dataset: &'static str,
+        /// Required dimensions.
+        expected: Vec<u64>,
+        /// Stored dimensions.
+        actual: Vec<u64>,
+    },
+
     #[error(
         "dataset {path:?} declares {declared_bytes} bytes of data, past what a {file_bytes}-byte file can hold"
     )]
