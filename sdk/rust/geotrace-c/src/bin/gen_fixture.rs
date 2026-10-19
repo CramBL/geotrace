@@ -82,14 +82,16 @@ fn minimal() -> NavFile {
 
     let mut recorder = fixture_recorder("minimal fixture");
 
-    recorder.add_nav_fix(NavFix {
-        time: NavFixTime::Receiver(t0),
-        lat: Angle::degrees(51.5074),
-        lon: Angle::degrees(-0.1278),
-        heading: Some(Angle::degrees(90.0)),
-        speed: Some(Velocity::meter_per_second(5.0)),
-        eph_m: Some(3.0),
-    });
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .time(NavFixTime::Receiver(t0))
+            .lat(Angle::degrees(51.5074))
+            .lon(Angle::degrees(-0.1278))
+            .heading(Angle::degrees(90.0))
+            .speed(Velocity::meter_per_second(5.0))
+            .eph_m(3.0)
+            .build(),
+    );
 
     recorder.add_satellite_report(SatelliteReport {
         time: NavFixTime::Receiver(t0),
@@ -113,14 +115,16 @@ fn minimal() -> NavFile {
         ],
     });
 
-    recorder.add_nav_fix(NavFix {
-        time: NavFixTime::Receiver(t1),
-        lat: Angle::degrees(51.5080),
-        lon: Angle::degrees(-0.1265),
-        heading: Some(Angle::degrees(85.0)),
-        speed: Some(Velocity::meter_per_second(5.5)),
-        eph_m: Some(2.5),
-    });
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .time(NavFixTime::Receiver(t1))
+            .lat(Angle::degrees(51.5080))
+            .lon(Angle::degrees(-0.1265))
+            .heading(Angle::degrees(85.0))
+            .speed(Velocity::meter_per_second(5.5))
+            .eph_m(2.5)
+            .build(),
+    );
 
     recorder.finish().expect("gen_fixture: build failed")
 }
@@ -130,41 +134,38 @@ fn out_of_range_values() -> NavFile {
 
     let mut recorder = fixture_recorder("out of range values fixture");
 
-    recorder.add_nav_fix(NavFix {
-        time: NavFixTime::Receiver(t0),
-        lat: Angle::degrees(f64::NAN),
-        lon: Angle::degrees(-0.1278),
-        heading: None,
-        speed: None,
-        eph_m: None,
-    });
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .time(NavFixTime::Receiver(t0))
+            .lat(Angle::degrees(f64::NAN))
+            .lon(Angle::degrees(-0.1278))
+            .build(),
+    );
 
-    recorder.add_nav_fix(NavFix {
-        time: NavFixTime::Receiver(t0 + Duration::seconds(1)),
-        lat: Angle::degrees(91.0),
-        lon: Angle::degrees(-0.1278),
-        heading: None,
-        speed: None,
-        eph_m: None,
-    });
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .time(NavFixTime::Receiver(t0 + Duration::seconds(1)))
+            .lat(Angle::degrees(91.0))
+            .lon(Angle::degrees(-0.1278))
+            .build(),
+    );
 
-    recorder.add_nav_fix(NavFix {
-        time: NavFixTime::Receiver(t0 + Duration::seconds(2)),
-        lat: Angle::degrees(51.5074),
-        lon: Angle::degrees(-181.0),
-        heading: None,
-        speed: None,
-        eph_m: None,
-    });
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .time(NavFixTime::Receiver(t0 + Duration::seconds(2)))
+            .lat(Angle::degrees(51.5074))
+            .lon(Angle::degrees(-181.0))
+            .build(),
+    );
 
-    recorder.add_nav_fix(NavFix {
-        time: NavFixTime::Receiver(t0 + Duration::seconds(3)),
-        lat: Angle::degrees(51.5074),
-        lon: Angle::degrees(-0.1278),
-        heading: Some(Angle::degrees(675.0)),
-        speed: None,
-        eph_m: None,
-    });
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .time(NavFixTime::Receiver(t0 + Duration::seconds(3)))
+            .lat(Angle::degrees(51.5074))
+            .lon(Angle::degrees(-0.1278))
+            .heading(Angle::degrees(675.0))
+            .build(),
+    );
 
     recorder.finish().expect("gen_fixture: build failed")
 }
@@ -216,23 +217,25 @@ fn unrecognized_marker_icon() -> NavFile {
 
     let mut recorder = fixture_recorder("unrecognized marker icon fixture");
 
-    recorder.add_nav_fix(NavFix {
-        time: NavFixTime::Receiver(t0),
-        lat: Angle::degrees(51.5074),
-        lon: Angle::degrees(-0.1278),
-        heading: Some(Angle::degrees(90.0)),
-        speed: Some(Velocity::meter_per_second(5.0)),
-        eph_m: None,
-    });
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .time(NavFixTime::Receiver(t0))
+            .lat(Angle::degrees(51.5074))
+            .lon(Angle::degrees(-0.1278))
+            .heading(Angle::degrees(90.0))
+            .speed(Velocity::meter_per_second(5.0))
+            .build(),
+    );
 
-    recorder.add_nav_fix(NavFix {
-        time: NavFixTime::Receiver(t0 + Duration::seconds(10)),
-        lat: Angle::degrees(51.5080),
-        lon: Angle::degrees(-0.1265),
-        heading: Some(Angle::degrees(85.0)),
-        speed: Some(Velocity::meter_per_second(5.5)),
-        eph_m: None,
-    });
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .time(NavFixTime::Receiver(t0 + Duration::seconds(10)))
+            .lat(Angle::degrees(51.5080))
+            .lon(Angle::degrees(-0.1265))
+            .heading(Angle::degrees(85.0))
+            .speed(Velocity::meter_per_second(5.5))
+            .build(),
+    );
 
     recorder.add_annotation(
         Annotation::builder()

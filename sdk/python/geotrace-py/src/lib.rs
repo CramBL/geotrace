@@ -148,6 +148,10 @@ fn file_err(e: geotrace_sdk::Error) -> PyErr {
         | Error::UnsupportedVersion { .. }
         | Error::UnknownConstellation { .. }
         | Error::ShapeMismatch { .. }
+        | Error::InvalidNavigationTag { .. }
+        | Error::InvalidNavigationColumnType { .. }
+        | Error::InvalidDatasetShape { .. }
+        | Error::MissingNavigationColumn { .. }
         | Error::UnknownConstellationName { .. }
         | Error::UnknownMarkerIcon { .. }
         | Error::ParseError { .. }
@@ -989,8 +993,7 @@ impl PyNavFix {
         self.inner.lon.as_degrees()
     }
 
-    /// GPS-receiver timestamp (timezone-aware UTC), or `None` when the receiver
-    /// had no lock.
+    /// GPS-receiver timestamp (timezone-aware UTC), or `None` when unreported.
     #[getter]
     fn gps_time(&self) -> Option<DateTime<FixedOffset>> {
         self.inner.gps_time().map(to_fixed)
@@ -1003,8 +1006,7 @@ impl PyNavFix {
         self.inner.sys_time().map(to_fixed)
     }
 
-    /// Heading in degrees, expected in [0, 360), or `None` for
-    /// ghost/unknown-direction fixes.
+    /// Heading in degrees, expected in [0, 360), or `None` when unreported.
     #[getter]
     fn heading(&self) -> Option<f64> {
         self.inner.heading.map(|h| h.as_degrees())
@@ -1024,15 +1026,7 @@ impl PyNavFix {
     }
 
     fn __eq__(&self, other: &Self) -> bool {
-        self.inner.gps_time() == other.inner.gps_time()
-            && self.inner.sys_time() == other.inner.sys_time()
-            && self.inner.lat.as_degrees() == other.inner.lat.as_degrees()
-            && self.inner.lon.as_degrees() == other.inner.lon.as_degrees()
-            && self.inner.heading.map(|h| h.as_degrees())
-                == other.inner.heading.map(|h| h.as_degrees())
-            && self.inner.speed.map(|s| s.as_meters_per_second())
-                == other.inner.speed.map(|s| s.as_meters_per_second())
-            && self.inner.eph_m == other.inner.eph_m
+        self.inner == other.inner
     }
 
     fn __repr__(&self) -> String {
@@ -1245,8 +1239,7 @@ impl PyNavPoint {
         self.inner.fix.lon.as_degrees()
     }
 
-    /// GPS-receiver timestamp (timezone-aware UTC), or `None` when the receiver
-    /// had no lock.
+    /// GPS-receiver timestamp (timezone-aware UTC), or `None` when unreported.
     #[getter]
     fn gps_time(&self) -> Option<DateTime<FixedOffset>> {
         self.inner.fix.gps_time().map(to_fixed)
@@ -1704,8 +1697,7 @@ nav_file_sequence! {
                 .collect()
         }
 
-        /// Every point's GPS-receiver timestamp, ``None`` where the receiver
-        /// had no lock.
+        /// Every point's GPS-receiver timestamp, or ``None`` when unreported.
         fn gps_times(&self) -> Vec<Option<DateTime<FixedOffset>>> {
             self.file
                 .nav_points()

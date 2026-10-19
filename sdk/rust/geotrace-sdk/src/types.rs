@@ -11,17 +11,19 @@ use crate::error::{
 };
 use crate::fixed_width_string::{self, AnnotationField, IconNameField, MarkerLabelField};
 use crate::provenance;
-use crate::{Angle, Velocity};
+use crate::{
+    Angle, PositionProvenance, SolutionDimension, SolutionMethod, SolutionState, Velocity,
+};
 
-/// The clock or clocks that stamped a nav fix or a satellite report.
+/// Recorded clock timestamps are independent of navigation state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NavFixTime {
-    /// Both timestamps, recorded under lock on a host that also stamped it.
+    /// Receiver and host timestamps.
     Both {
         gps: DateTime<Utc>,
         sys: DateTime<Utc>,
     },
-    /// The host clock's timestamp, taken while the receiver had no lock.
+    /// Host timestamp with an unreported receiver timestamp.
     Host(DateTime<Utc>),
     /// The receiver's timestamp, with no host clock recorded.
     Receiver(DateTime<Utc>),
@@ -128,22 +130,14 @@ impl NavFixTime {
     }
 }
 
-/// A single GPS/GNSS fix: position, heading, and optional speed at a point in time.
-///
-/// `heading` is `None` for synthetic/ghost fixes where the actual direction is
-/// unknown (e.g., dead-reckoned positions emitted only to carry satellite reports).
-/// The app renders those as circles.
-///
-/// The builder measures the GPS/system-clock delta from a [`NavFixTime::Both`]
-/// fix. With that delta it converts a satellite report's system-clock timestamp
-/// into the GPS time domain, and interpolates ghost fixes through a no-fix
-/// period.
+/// Navigation state, coordinate origin and heading are independent recorded facts.
+/// The builder uses dual-clock fixes to normalize host-only satellite reports.
 ///
 /// The ranges stated on the fields below are data quality expectations, not
 /// parse rules.
 /// [`NavFile::read`] returns a latitude or longitude the file holds unchanged,
 /// NaN included.
-/// A NaN `heading`, `speed` or `eph_m` reads back as `None`: NaN is how the
+/// A NaN optional floating-point value reads back as `None`: NaN is how the
 /// write path stores an absent one.
 /// The builder writes every value it is given: a recorder that captured bad
 /// data must be able to write it.
@@ -159,15 +153,16 @@ impl NavFixTime {
 ///     .lon(Angle::degrees(-0.1))
 ///     .build();
 /// ```
-#[derive(bon::Builder, Debug, Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, bon::Builder)]
+#[non_exhaustive]
 pub struct NavFix {
+    /// Receiver and host timestamps recorded with this position.
     pub time: NavFixTime,
     /// WGS-84 latitude, expected in \[-90°, 90°].
     pub lat: Angle,
     /// WGS-84 longitude, expected in \[-180°, 180°].
     pub lon: Angle,
-    /// Compass heading, expected in \[0°, 360°). `None` = unknown direction
-    /// (ghost fix).
+    /// Compass heading, expected in \[0°, 360°). `None` means unreported direction.
     pub heading: Option<Angle>,
     /// Ground speed, expected to be non-negative.
     pub speed: Option<Velocity>,
@@ -177,6 +172,23 @@ pub struct NavFix {
     /// The app renders a translucent blue circle of this radius around the point when
     /// present. `None` when the receiver did not report an accuracy estimate.
     pub eph_m: Option<f64>,
+    /// `None` means unreported state. Explicit `Unknown` blocks inferred state.
+    pub state: Option<SolutionState>,
+    /// Source-reported method, independent of state. `None` means unreported.
+    pub method: Option<SolutionMethod>,
+    /// Source-reported dimension, independent of state. `None` means unreported.
+    pub dimension: Option<SolutionDimension>,
+    /// Source-reported global count, independent of satellite identity reports.
+    pub used_count: Option<u32>,
+    /// Horizontal dilution of precision, dimensionless. NaN decodes as absent.
+    pub hdop: Option<f64>,
+    /// Vertical dilution of precision, dimensionless. NaN decodes as absent.
+    pub vdop: Option<f64>,
+    /// Position dilution of precision, dimensionless. NaN decodes as absent.
+    pub pdop: Option<f64>,
+    /// Legacy files have unreported coordinate origin. Caller inputs default to source-provided.
+    #[builder(required, default = Some(PositionProvenance::SourceProvided))]
+    pub position_provenance: Option<PositionProvenance>,
 }
 
 /// A satellite visibility report captured at a point in time.

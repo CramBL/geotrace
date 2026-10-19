@@ -19,9 +19,13 @@ use crate::types::{
     SatelliteReport, TravelMode,
 };
 use crate::write;
-use crate::{Angle, Velocity};
+use crate::{
+    Angle, PositionProvenance, SolutionDimension, SolutionMethod, SolutionState, Velocity,
+};
 use geotrace_sdk_units::{ChannelUnit, snr};
-use hdf5_pure::AttrValue;
+use hdf5_pure::{
+    AttrValue, Dataset, Datatype, DatatypeByteOrder, FixedPointLayout, FloatingPointLayout,
+};
 use strum::IntoEnumIterator;
 
 pub(crate) fn parse_hdf5(bytes: Vec<u8>, mode: NavFileOpenMode) -> Result<NavFile, Error> {
@@ -37,15 +41,16 @@ pub(crate) fn parse_hdf5(bytes: Vec<u8>, mode: NavFileOpenMode) -> Result<NavFil
             });
         }
     };
-    let supported = version
+    let Some(version_number) = version
         .parse::<u32>()
-        .is_ok_and(|number| SUPPORTED_FORMAT_VERSIONS.contains(&number));
-    if !supported {
+        .ok()
+        .filter(|number| SUPPORTED_FORMAT_VERSIONS.contains(number))
+    else {
         return Err(Error::UnsupportedVersion { version });
-    }
+    };
 
     let meta = read_meta(&attrs);
-    let nav_points = read_nav_points(&file)?;
+    let nav_points = read_nav_points(&file, version_number)?;
     let nav_points = attach_satellite_data(nav_points, &file)?;
     let markers = read_markers(&file)?;
     let event_markers = read_event_markers(&file)?;
@@ -126,7 +131,7 @@ fn string_array_attr(attrs: &HashMap<String, AttrValue>, key: &str) -> Option<Ve
         .map(<[String]>::to_vec)
 }
 
-fn read_nav_points(file: &SizeCheckedFile) -> Result<Vec<NavPoint>, Error> {
+fn read_nav_points(file: &SizeCheckedFile, version: u32) -> Result<Vec<NavPoint>, Error> {
     let grp = file.group("nav_points")?;
 
     let times = grp.dataset("time")?.read_i64()?;
@@ -135,10 +140,7 @@ fn read_nav_points(file: &SizeCheckedFile) -> Result<Vec<NavPoint>, Error> {
     let headings = grp.dataset("heading")?.read_f64()?;
     let speeds = grp.dataset("speed_mps")?.read_f64()?;
 
-    // A file written before `gps_time_us` existed stores only the `time` axis,
-    // holding the receiver's timestamp for a fix taken under lock and the host
-    // clock's for one taken without. Such a file is read with `time` treated as
-    // the receiver's timestamp.
+    // Version 1 has one time axis, interpreted as receiver time.
     let gps_times: Vec<u64> = match grp.optional_dataset("gps_time_us")? {
         Some(ds) => ds.read_u64()?,
         None => times.iter().map(|&us| us.cast_unsigned()).collect(),
@@ -162,7 +164,7 @@ fn read_nav_points(file: &SizeCheckedFile) -> Result<Vec<NavPoint>, Error> {
     check_len("nav_points", "speed_mps", n, speeds.len())?;
     check_len("nav_points", "eph_m", n, ephs.len())?;
 
-    let nav_points = gps_times
+    let mut nav_points = gps_times
         .iter()
         .zip(lats.iter())
         .zip(lons.iter())
@@ -220,6 +222,14 @@ fn read_nav_points(file: &SizeCheckedFile) -> Result<Vec<NavPoint>, Error> {
                         } else {
                             Some(*eph_val)
                         },
+                        state: None,
+                        method: None,
+                        dimension: None,
+                        used_count: None,
+                        hdop: None,
+                        vdop: None,
+                        pdop: None,
+                        position_provenance: None,
                     },
                     satellites: None,
                 })
@@ -227,7 +237,125 @@ fn read_nav_points(file: &SizeCheckedFile) -> Result<Vec<NavPoint>, Error> {
         )
         .collect::<Result<Vec<NavPoint>, Error>>()?;
 
+    if version == 3 {
+        read_navigation_metadata(&grp, &mut nav_points)?;
+    }
     Ok(nav_points)
+}
+
+fn navigation_column(
+    group: &SizeCheckedGroup,
+    dataset: &'static str,
+    rows: usize,
+    expected_datatype: &Datatype,
+) -> Result<Dataset, Error> {
+    let column = group
+        .optional_dataset(dataset)?
+        .ok_or(Error::MissingNavigationColumn { dataset })?;
+    let actual = column.shape()?;
+    let expected = vec![rows as u64];
+    if actual != expected {
+        return Err(Error::InvalidDatasetShape {
+            group: "nav_points",
+            dataset,
+            expected,
+            actual,
+        });
+    }
+    let mut datatype = column.datatype()?;
+    let actual = format!("{datatype:?}");
+    match &mut datatype {
+        Datatype::FixedPoint { byte_order, .. } | Datatype::FloatingPoint { byte_order, .. }
+            if *byte_order == DatatypeByteOrder::BigEndian =>
+        {
+            *byte_order = DatatypeByteOrder::LittleEndian;
+        }
+        _ => {}
+    }
+    if &datatype != expected_datatype {
+        return Err(Error::InvalidNavigationColumnType {
+            dataset,
+            expected: format!("{expected_datatype:?}"),
+            actual,
+        });
+    }
+    Ok(column)
+}
+
+fn read_navigation_metadata(
+    group: &SizeCheckedGroup,
+    points: &mut [NavPoint],
+) -> Result<(), Error> {
+    let values =
+        navigation_column(group, "state", points.len(), &NAVIGATION_TAG_DATATYPE)?.read_u8()?;
+    for (record, (point, code)) in points.iter_mut().zip(values).enumerate() {
+        point.fix.state = SolutionState::from_optional_wire_code(code, record)?;
+    }
+    let values =
+        navigation_column(group, "method", points.len(), &NAVIGATION_TAG_DATATYPE)?.read_u8()?;
+    for (record, (point, code)) in points.iter_mut().zip(values).enumerate() {
+        point.fix.method = SolutionMethod::from_optional_wire_code(code, record)?;
+    }
+    let values =
+        navigation_column(group, "dimension", points.len(), &NAVIGATION_TAG_DATATYPE)?.read_u8()?;
+    for (record, (point, code)) in points.iter_mut().zip(values).enumerate() {
+        point.fix.dimension = SolutionDimension::from_optional_wire_code(code, record)?;
+    }
+    let values = navigation_column(
+        group,
+        "position_provenance",
+        points.len(),
+        &NAVIGATION_TAG_DATATYPE,
+    )?
+    .read_u8()?;
+    for (record, (point, code)) in points.iter_mut().zip(values).enumerate() {
+        point.fix.position_provenance = PositionProvenance::from_optional_wire_code(code, record)?;
+    }
+    let counts = navigation_column(
+        group,
+        "used_count",
+        points.len(),
+        &NAVIGATION_COUNT_DATATYPE,
+    )?
+    .read_u32()?;
+    let presence = navigation_column(
+        group,
+        "used_count_present",
+        points.len(),
+        &NAVIGATION_TAG_DATATYPE,
+    )?
+    .read_u8()?;
+    for (record, ((point, count), present)) in
+        points.iter_mut().zip(counts).zip(presence).enumerate()
+    {
+        point.fix.used_count = match present {
+            0 => None,
+            1 => Some(count),
+            code => {
+                return Err(Error::InvalidNavigationTag {
+                    dataset: "used_count_present",
+                    record,
+                    code,
+                });
+            }
+        };
+    }
+    let values =
+        navigation_column(group, "hdop", points.len(), &NAVIGATION_DOP_DATATYPE)?.read_f64()?;
+    for (point, value) in points.iter_mut().zip(values) {
+        point.fix.hdop = (!value.is_nan()).then_some(value);
+    }
+    let values =
+        navigation_column(group, "vdop", points.len(), &NAVIGATION_DOP_DATATYPE)?.read_f64()?;
+    for (point, value) in points.iter_mut().zip(values) {
+        point.fix.vdop = (!value.is_nan()).then_some(value);
+    }
+    let values =
+        navigation_column(group, "pdop", points.len(), &NAVIGATION_DOP_DATATYPE)?.read_f64()?;
+    for (point, value) in points.iter_mut().zip(values) {
+        point.fix.pdop = (!value.is_nan()).then_some(value);
+    }
+    Ok(())
 }
 
 fn attach_satellite_data(
@@ -768,6 +896,9 @@ pub(crate) fn inspect_path(path: &Path) -> Result<String, Error> {
     inspect_metadata(&attrs, &mut out);
     writeln!(out).ok();
     let nav_points = inspect_nav_points(&file, &mut out);
+    if nav_points > 0 {
+        inspect_navigation_metadata(&file, version, &mut out);
+    }
     writeln!(out).ok();
     inspect_satellite_reports(&file, nav_points, &mut out);
     writeln!(out).ok();
@@ -877,6 +1008,112 @@ fn inspect_nav_points(file: &SizeCheckedFile, out: &mut String) -> u64 {
     }
 
     n
+}
+
+fn inspect_navigation_metadata(file: &SizeCheckedFile, version: &str, out: &mut String) {
+    use std::fmt::Write as _;
+
+    let points = match version
+        .parse::<u32>()
+        .map_err(|_parse_error| Error::UnsupportedVersion {
+            version: version.into(),
+        })
+        .and_then(|version| read_nav_points(file, version))
+    {
+        Ok(points) => points,
+        Err(error) => {
+            writeln!(out, "  navigation metadata: {error}").ok();
+            return;
+        }
+    };
+    for (label, values) in [
+        (
+            "state",
+            points
+                .iter()
+                .map(|p| p.fix.state.map(|v| format!("{v:?}")))
+                .collect::<Vec<_>>(),
+        ),
+        (
+            "method",
+            points
+                .iter()
+                .map(|p| p.fix.method.map(|v| format!("{v:?}")))
+                .collect(),
+        ),
+        (
+            "dimension",
+            points
+                .iter()
+                .map(|p| p.fix.dimension.map(|v| format!("{v:?}")))
+                .collect(),
+        ),
+        (
+            "position provenance",
+            points
+                .iter()
+                .map(|p| p.fix.position_provenance.map(|v| format!("{v:?}")))
+                .collect(),
+        ),
+    ] {
+        let mut counts = BTreeMap::<String, usize>::new();
+        for value in values {
+            *counts
+                .entry(value.unwrap_or_else(|| "unreported".into()))
+                .or_default() += 1;
+        }
+        let counts = counts
+            .iter()
+            .map(|(value, count)| format!("{value}={count}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(out, "  {label:<22}{counts}").ok();
+    }
+    let count_present = points.iter().filter(|p| p.fix.used_count.is_some()).count();
+    writeln!(
+        out,
+        "  {:<22}{count_present}/{} present",
+        "used count presence",
+        points.len()
+    )
+    .ok();
+    for (label, values) in [
+        (
+            "used count",
+            points
+                .iter()
+                .map(|p| p.fix.used_count.map_or(f64::NAN, f64::from))
+                .collect::<Vec<_>>(),
+        ),
+        (
+            "hdop",
+            points
+                .iter()
+                .map(|p| p.fix.hdop.unwrap_or(f64::NAN))
+                .collect(),
+        ),
+        (
+            "vdop",
+            points
+                .iter()
+                .map(|p| p.fix.vdop.unwrap_or(f64::NAN))
+                .collect(),
+        ),
+        (
+            "pdop",
+            points
+                .iter()
+                .map(|p| p.fix.pdop.unwrap_or(f64::NAN))
+                .collect(),
+        ),
+    ] {
+        writeln!(
+            out,
+            "  {label:<22}{}",
+            MeasuredRange::of(values.into_iter()).line_value("")
+        )
+        .ok();
+    }
 }
 
 fn inspect_satellite_reports(file: &SizeCheckedFile, n_nav_points: u64, out: &mut String) {
@@ -1482,3 +1719,27 @@ const MAX_LISTED_ENTRIES: usize = 20;
 const ABSENT_VALUE: &str = "—";
 
 const TIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%SZ";
+
+const NAVIGATION_TAG_DATATYPE: Datatype = Datatype::FixedPoint {
+    size: 1,
+    byte_order: DatatypeByteOrder::LittleEndian,
+    layout: FixedPointLayout {
+        signed: false,
+        bit_offset: 0,
+        bit_precision: 8,
+    },
+};
+const NAVIGATION_COUNT_DATATYPE: Datatype = Datatype::FixedPoint {
+    size: 4,
+    byte_order: DatatypeByteOrder::LittleEndian,
+    layout: FixedPointLayout {
+        signed: false,
+        bit_offset: 0,
+        bit_precision: 32,
+    },
+};
+const NAVIGATION_DOP_DATATYPE: Datatype = Datatype::FloatingPoint {
+    size: 8,
+    byte_order: DatatypeByteOrder::LittleEndian,
+    layout: FloatingPointLayout::IEEE754_BINARY64,
+};

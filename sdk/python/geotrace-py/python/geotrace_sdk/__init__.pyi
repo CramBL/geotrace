@@ -313,7 +313,7 @@ class NavFix:
     Args:
         lat: Latitude in degrees, expected in [-90, 90].
         lon: Longitude in degrees, expected in [-180, 180].
-        gps_time: GPS-receiver timestamp, or ``None`` when the receiver had no lock.
+        gps_time: GPS-receiver timestamp, or ``None`` when unreported.
         sys_time: System-clock timestamp recorded alongside this fix.
         heading: Compass heading in degrees, expected in [0, 360), or ``None``
             if unknown.
@@ -345,8 +345,7 @@ class NavFix:
 
     @property
     def gps_time(self) -> datetime | None:
-        """GPS-receiver timestamp (timezone-aware UTC), or ``None`` when the
-        receiver had no lock.
+        """GPS-receiver timestamp (timezone-aware UTC), or ``None`` when unreported.
         """
         ...
 
@@ -502,8 +501,7 @@ class NavPoint:
 
     @property
     def gps_time(self) -> datetime | None:
-        """GPS-receiver timestamp (timezone-aware UTC), or ``None`` when the
-        receiver had no lock.
+        """GPS-receiver timestamp (timezone-aware UTC), or ``None`` when unreported.
         """
         ...
 
@@ -713,7 +711,7 @@ class NavPointSequence:
     def gps_times(self) -> list[datetime | None]:
         """Every point's GPS-receiver timestamp.
 
-        ``None`` where the receiver had no lock.
+        ``None`` when unreported.
         """
         ...
 
