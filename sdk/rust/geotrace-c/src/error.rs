@@ -89,6 +89,12 @@ pub(crate) fn status_for_error(e: &geotrace_sdk::Error) -> GtdStatus {
         | Error::InvalidNavigationColumnType { .. }
         | Error::InvalidDatasetShape { .. }
         | Error::MissingNavigationColumn { .. }
+        | Error::MissingSatelliteColumn { .. }
+        | Error::MissingSatelliteGroup { .. }
+        | Error::InvalidSatelliteColumnType { .. }
+        | Error::InvalidSatelliteTag { .. }
+        | Error::SatelliteReportWithoutTimestamp { .. }
+        | Error::MixedSatelliteLayouts
         | Error::UnknownConstellationName { .. }
         | Error::UnknownMarkerIcon { .. }
         | Error::ParseError { .. }

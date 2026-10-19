@@ -3,7 +3,6 @@ use chrono::{DateTime, Duration, Utc};
 use crate::error::Error;
 use crate::types::{
     Annotation, DebugTimeRepair, EventMarkerPoint, Marker, NavFile, NavFixTime, NavPoint,
-    SatelliteReport,
 };
 
 pub(crate) fn repair_repeated_time_spans(
@@ -177,9 +176,14 @@ impl TimeRepairSpan {
 
 fn shift_nav_point(point: &mut NavPoint, shift: Duration) -> Result<(), Error> {
     point.fix.time = shift_fix_time(point.fix.time, shift)?;
-    if let Some(satellites) = &mut point.satellites {
-        shift_satellite_report(satellites, shift)?;
+    let mut evidence = point.satellite_evidence().clone();
+    for report in &mut evidence.usage {
+        report.time = shift_fix_time(report.time, shift)?;
     }
+    for report in &mut evidence.observations {
+        report.time = shift_fix_time(report.time, shift)?;
+    }
+    point.set_satellite_evidence(evidence);
     Ok(())
 }
 
@@ -194,11 +198,6 @@ fn shift_marker(marker: &mut Marker, shift: Duration) -> Result<(), Error> {
 
 fn shift_event_marker(marker: &mut EventMarkerPoint, shift: Duration) -> Result<(), Error> {
     marker.sys_time = shift_time(marker.sys_time, shift)?;
-    Ok(())
-}
-
-fn shift_satellite_report(report: &mut SatelliteReport, shift: Duration) -> Result<(), Error> {
-    report.time = shift_fix_time(report.time, shift)?;
     Ok(())
 }
 

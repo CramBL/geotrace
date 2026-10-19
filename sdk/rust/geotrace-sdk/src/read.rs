@@ -11,7 +11,7 @@ use crate::fixed_width_string::{
 };
 use crate::format_version::SUPPORTED_FORMAT_VERSIONS;
 use crate::provenance;
-use crate::size_checked_file::{SizeCheckedFile, SizeCheckedGroup};
+use crate::size_checked_file::{ColumnContext, SizeCheckedFile, SizeCheckedGroup};
 use crate::types::{
     Annotation, AnnotationIcon, Channel, Constellation, DebugTimeRepair, EventMarkerColor,
     EventMarkerIconChoice, EventMarkerPoint, EventMarkerStyle, Marker, Meta, NavFile,
@@ -20,12 +20,11 @@ use crate::types::{
 };
 use crate::write;
 use crate::{
-    Angle, PositionProvenance, SolutionDimension, SolutionMethod, SolutionState, Velocity,
+    Angle, PositionProvenance, SatelliteEvidence, SolutionDimension, SolutionMethod, SolutionState,
+    Velocity,
 };
 use geotrace_sdk_units::{ChannelUnit, snr};
-use hdf5_pure::{
-    AttrValue, Dataset, Datatype, DatatypeByteOrder, FixedPointLayout, FloatingPointLayout,
-};
+use hdf5_pure::{AttrValue, Datatype, DatatypeByteOrder, FixedPointLayout, FloatingPointLayout};
 use strum::IntoEnumIterator;
 
 pub(crate) fn parse_hdf5(bytes: Vec<u8>, mode: NavFileOpenMode) -> Result<NavFile, Error> {
@@ -50,8 +49,10 @@ pub(crate) fn parse_hdf5(bytes: Vec<u8>, mode: NavFileOpenMode) -> Result<NavFil
     };
 
     let meta = read_meta(&attrs);
-    let nav_points = read_nav_points(&file, version_number)?;
-    let nav_points = attach_satellite_data(nav_points, &file)?;
+    let mut nav_points = read_nav_points(&file, version_number)?;
+    if !(version_number == 3 && crate::satellite_codec::read(&file, &mut nav_points)?) {
+        nav_points = attach_satellite_data(nav_points, &file)?;
+    }
     let markers = read_markers(&file)?;
     let event_markers = read_event_markers(&file)?;
     let event_marker_styles = read_event_marker_styles(&file)?;
@@ -202,8 +203,8 @@ fn read_nav_points(file: &SizeCheckedFile, version: u32) -> Result<Vec<NavPoint>
                 let Some(time) = NavFixTime::from_recorded(recorded) else {
                     return Err(Error::FixWithoutTimestamp { record });
                 };
-                Ok(NavPoint {
-                    fix: NavFix {
+                Ok(NavPoint::from_legacy(
+                    NavFix {
                         time,
                         lat: Angle::degrees(*lat_deg),
                         lon: Angle::degrees(*lon_deg),
@@ -231,8 +232,8 @@ fn read_nav_points(file: &SizeCheckedFile, version: u32) -> Result<Vec<NavPoint>
                         pdop: None,
                         position_provenance: None,
                     },
-                    satellites: None,
-                })
+                    None,
+                ))
             },
         )
         .collect::<Result<Vec<NavPoint>, Error>>()?;
@@ -243,88 +244,70 @@ fn read_nav_points(file: &SizeCheckedFile, version: u32) -> Result<Vec<NavPoint>
     Ok(nav_points)
 }
 
-fn navigation_column(
-    group: &SizeCheckedGroup,
-    dataset: &'static str,
-    rows: usize,
-    expected_datatype: &Datatype,
-) -> Result<Dataset, Error> {
-    let column = group
-        .optional_dataset(dataset)?
-        .ok_or(Error::MissingNavigationColumn { dataset })?;
-    let actual = column.shape()?;
-    let expected = vec![rows as u64];
-    if actual != expected {
-        return Err(Error::InvalidDatasetShape {
-            group: "nav_points",
-            dataset,
-            expected,
-            actual,
-        });
-    }
-    let mut datatype = column.datatype()?;
-    let actual = format!("{datatype:?}");
-    match &mut datatype {
-        Datatype::FixedPoint { byte_order, .. } | Datatype::FloatingPoint { byte_order, .. }
-            if *byte_order == DatatypeByteOrder::BigEndian =>
-        {
-            *byte_order = DatatypeByteOrder::LittleEndian;
-        }
-        _ => {}
-    }
-    if &datatype != expected_datatype {
-        return Err(Error::InvalidNavigationColumnType {
-            dataset,
-            expected: format!("{expected_datatype:?}"),
-            actual,
-        });
-    }
-    Ok(column)
-}
-
 fn read_navigation_metadata(
     group: &SizeCheckedGroup,
     points: &mut [NavPoint],
 ) -> Result<(), Error> {
-    let values =
-        navigation_column(group, "state", points.len(), &NAVIGATION_TAG_DATATYPE)?.read_u8()?;
+    let values = group
+        .typed_column(
+            ColumnContext::Navigation,
+            "state",
+            points.len(),
+            &NAVIGATION_TAG_DATATYPE,
+        )?
+        .read_u8()?;
     for (record, (point, code)) in points.iter_mut().zip(values).enumerate() {
         point.fix.state = SolutionState::from_optional_wire_code(code, record)?;
     }
-    let values =
-        navigation_column(group, "method", points.len(), &NAVIGATION_TAG_DATATYPE)?.read_u8()?;
+    let values = group
+        .typed_column(
+            ColumnContext::Navigation,
+            "method",
+            points.len(),
+            &NAVIGATION_TAG_DATATYPE,
+        )?
+        .read_u8()?;
     for (record, (point, code)) in points.iter_mut().zip(values).enumerate() {
         point.fix.method = SolutionMethod::from_optional_wire_code(code, record)?;
     }
-    let values =
-        navigation_column(group, "dimension", points.len(), &NAVIGATION_TAG_DATATYPE)?.read_u8()?;
+    let values = group
+        .typed_column(
+            ColumnContext::Navigation,
+            "dimension",
+            points.len(),
+            &NAVIGATION_TAG_DATATYPE,
+        )?
+        .read_u8()?;
     for (record, (point, code)) in points.iter_mut().zip(values).enumerate() {
         point.fix.dimension = SolutionDimension::from_optional_wire_code(code, record)?;
     }
-    let values = navigation_column(
-        group,
-        "position_provenance",
-        points.len(),
-        &NAVIGATION_TAG_DATATYPE,
-    )?
-    .read_u8()?;
+    let values = group
+        .typed_column(
+            ColumnContext::Navigation,
+            "position_provenance",
+            points.len(),
+            &NAVIGATION_TAG_DATATYPE,
+        )?
+        .read_u8()?;
     for (record, (point, code)) in points.iter_mut().zip(values).enumerate() {
         point.fix.position_provenance = PositionProvenance::from_optional_wire_code(code, record)?;
     }
-    let counts = navigation_column(
-        group,
-        "used_count",
-        points.len(),
-        &NAVIGATION_COUNT_DATATYPE,
-    )?
-    .read_u32()?;
-    let presence = navigation_column(
-        group,
-        "used_count_present",
-        points.len(),
-        &NAVIGATION_TAG_DATATYPE,
-    )?
-    .read_u8()?;
+    let counts = group
+        .typed_column(
+            ColumnContext::Navigation,
+            "used_count",
+            points.len(),
+            &NAVIGATION_COUNT_DATATYPE,
+        )?
+        .read_u32()?;
+    let presence = group
+        .typed_column(
+            ColumnContext::Navigation,
+            "used_count_present",
+            points.len(),
+            &NAVIGATION_TAG_DATATYPE,
+        )?
+        .read_u8()?;
     for (record, ((point, count), present)) in
         points.iter_mut().zip(counts).zip(presence).enumerate()
     {
@@ -340,18 +323,36 @@ fn read_navigation_metadata(
             }
         };
     }
-    let values =
-        navigation_column(group, "hdop", points.len(), &NAVIGATION_DOP_DATATYPE)?.read_f64()?;
+    let values = group
+        .typed_column(
+            ColumnContext::Navigation,
+            "hdop",
+            points.len(),
+            &NAVIGATION_DOP_DATATYPE,
+        )?
+        .read_f64()?;
     for (point, value) in points.iter_mut().zip(values) {
         point.fix.hdop = (!value.is_nan()).then_some(value);
     }
-    let values =
-        navigation_column(group, "vdop", points.len(), &NAVIGATION_DOP_DATATYPE)?.read_f64()?;
+    let values = group
+        .typed_column(
+            ColumnContext::Navigation,
+            "vdop",
+            points.len(),
+            &NAVIGATION_DOP_DATATYPE,
+        )?
+        .read_f64()?;
     for (point, value) in points.iter_mut().zip(values) {
         point.fix.vdop = (!value.is_nan()).then_some(value);
     }
-    let values =
-        navigation_column(group, "pdop", points.len(), &NAVIGATION_DOP_DATATYPE)?.read_f64()?;
+    let values = group
+        .typed_column(
+            ColumnContext::Navigation,
+            "pdop",
+            points.len(),
+            &NAVIGATION_DOP_DATATYPE,
+        )?
+        .read_f64()?;
     for (point, value) in points.iter_mut().zip(values) {
         point.fix.pdop = (!value.is_nan()).then_some(value);
     }
@@ -363,6 +364,11 @@ fn attach_satellite_data(
     file: &SizeCheckedFile,
 ) -> Result<Vec<NavPoint>, Error> {
     let Some(sat_grp) = file.optional_group("sat_reports")? else {
+        if file.optional_group("tracked_sats")?.is_some() {
+            return Err(Error::MissingSatelliteGroup {
+                group: "sat_reports",
+            });
+        }
         return Ok(nav_points);
     };
 
@@ -457,6 +463,7 @@ fn attach_satellite_data(
         .push(sat);
     }
 
+    let mut evidence_by_point = vec![SatelliteEvidence::default(); nav_points.len()];
     for (report, (&np_idx, (gps_us, sys_us))) in nav_point_idx
         .iter()
         .zip(report_gps_times.iter().zip(report_sys_times.iter()))
@@ -483,8 +490,8 @@ fn attach_satellite_data(
         let Some(time) = NavFixTime::from_recorded(recorded) else {
             return Err(Error::ReportWithoutTimestamp { report });
         };
-        let np = row_addressed_by_index(
-            &mut nav_points,
+        let all_evidence = row_addressed_by_index(
+            &mut evidence_by_point,
             "nav_points",
             FieldLocation {
                 group: "sat_reports",
@@ -493,10 +500,15 @@ fn attach_satellite_data(
             report,
             np_idx,
         )?;
-        np.satellites = Some(SatelliteReport {
+        let evidence = SatelliteEvidence::from(&SatelliteReport {
             time,
             tracked: tracked_by_report.get(report).cloned().unwrap_or_default(),
         });
+        all_evidence.usage.extend(evidence.usage);
+        all_evidence.observations.extend(evidence.observations);
+    }
+    for (point, evidence) in nav_points.iter_mut().zip(evidence_by_point) {
+        point.set_satellite_evidence(evidence);
     }
 
     Ok(nav_points)
@@ -791,7 +803,7 @@ fn read_channels(file: &SizeCheckedFile) -> Result<Vec<Channel>, Error> {
 /// The row of `table` that `index` addresses, or [`Error::IndexPastTable`]
 /// where `index` is past its end. `index_location` is the group and dataset
 /// `index` was read from.
-fn row_addressed_by_index<'a, T>(
+pub(crate) fn row_addressed_by_index<'a, T>(
     table: &'a mut [T],
     table_name: &'static str,
     index_location: FieldLocation,
@@ -826,7 +838,7 @@ fn decode_timestamp(
 }
 
 /// [`ABSENT_TIMESTAMP_MICROS`] decodes to `None`.
-fn decode_optional_timestamp(
+pub(crate) fn decode_optional_timestamp(
     location: FieldLocation,
     record: usize,
     stored: u64,
@@ -900,7 +912,11 @@ pub(crate) fn inspect_path(path: &Path) -> Result<String, Error> {
         inspect_navigation_metadata(&file, version, &mut out);
     }
     writeln!(out).ok();
-    inspect_satellite_reports(&file, nav_points, &mut out);
+    let mut evidence_points =
+        read_nav_points(&file, version.parse().unwrap_or(0)).unwrap_or_default();
+    if !crate::satellite_codec::inspect(&file, &mut evidence_points, &mut out) {
+        inspect_satellite_reports(&file, nav_points, &mut out);
+    }
     writeln!(out).ok();
     inspect_markers(&file, &mut out);
     writeln!(out).ok();
@@ -1714,7 +1730,7 @@ fn icon_histogram(codes: &[u8]) -> String {
 const PREVIEW_ROWS: usize = 3;
 
 /// The most entries a section lists one per line, with `…` where more follow.
-const MAX_LISTED_ENTRIES: usize = 20;
+pub(crate) const MAX_LISTED_ENTRIES: usize = 20;
 
 const ABSENT_VALUE: &str = "—";
 

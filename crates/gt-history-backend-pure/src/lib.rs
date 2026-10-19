@@ -540,13 +540,21 @@ pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
         None
     };
 
-    let sat_report_count = file
-        .group("sat_reports")
-        .ok()
-        .and_then(|g| g.dataset("nav_point_idx").ok())
-        .and_then(|ds| ds.shape().ok())
-        .and_then(|s| s.first().copied())
-        .unwrap_or(0);
+    let sat_report_count = [
+        "sat_reports",
+        "satellite_usage_reports",
+        "satellite_observation_reports",
+    ]
+    .into_iter()
+    .map(|name| {
+        file.group(name)
+            .ok()
+            .and_then(|g| g.dataset("nav_point_idx").ok())
+            .and_then(|ds| ds.shape().ok())
+            .and_then(|s| s.first().copied())
+            .unwrap_or(0)
+    })
+    .fold(0, u64::saturating_add);
 
     let marker_count = file
         .group("markers")

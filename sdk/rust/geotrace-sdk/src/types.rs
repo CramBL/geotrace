@@ -746,20 +746,54 @@ impl SatelliteReport {
     }
 }
 
-/// A nav fix combined with its associated satellite report (if any).
+/// A navigation fix with independent satellite evidence and a cached combined-report projection.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NavPoint {
+    /// Recorded navigation facts and coordinates.
     pub fix: NavFix,
-    pub satellites: Option<SatelliteReport>,
+    satellite_evidence: SatelliteEvidence,
+    legacy_satellites: Option<SatelliteReport>,
 }
 
 impl NavPoint {
-    /// Convert the associated legacy report into complete global evidence samples.
-    pub fn satellite_evidence(&self) -> SatelliteEvidence {
-        self.satellites
+    /// Construct a point and cache its conservative combined-report projection.
+    pub fn new(fix: NavFix, satellite_evidence: SatelliteEvidence) -> Self {
+        let legacy_satellites = satellite_evidence.legacy_report();
+        Self {
+            fix,
+            satellite_evidence,
+            legacy_satellites,
+        }
+    }
+
+    /// Split a combined report into complete global usage and observation samples.
+    /// An absent report produces empty evidence.
+    pub fn from_legacy(fix: NavFix, satellites: Option<SatelliteReport>) -> Self {
+        let satellite_evidence = satellites
             .as_ref()
             .map(SatelliteEvidence::from)
-            .unwrap_or_default()
+            .unwrap_or_default();
+        Self {
+            fix,
+            satellite_evidence,
+            legacy_satellites: satellites,
+        }
+    }
+
+    /// Borrow samples in their recorded order within each report kind.
+    pub fn satellite_evidence(&self) -> &SatelliteEvidence {
+        &self.satellite_evidence
+    }
+
+    /// The combined report is absent when projection would lose recorded distinctions.
+    pub fn satellites(&self) -> &Option<SatelliteReport> {
+        &self.legacy_satellites
+    }
+
+    /// Replace the canonical samples and recompute the cached combined-report projection.
+    pub fn set_satellite_evidence(&mut self, satellite_evidence: SatelliteEvidence) {
+        self.legacy_satellites = satellite_evidence.legacy_report();
+        self.satellite_evidence = satellite_evidence;
     }
 }
 
@@ -1202,6 +1236,12 @@ impl NavFile {
         &self.nav_points
     }
 
+    /// Mutations update navigation points only.
+    /// Data derived by [`crate::NavRecorder::finish`], including marker positions, stays unchanged.
+    pub fn nav_points_mut(&mut self) -> &mut [NavPoint] {
+        &mut self.nav_points
+    }
+
     pub fn markers(&self) -> &[Marker] {
         &self.markers
     }
@@ -1557,14 +1597,14 @@ mod tests {
                 .build()
                 .expect("a title without a nul byte"),
             debug_time_repair: None,
-            nav_points: vec![NavPoint {
-                fix: NavFix::builder()
+            nav_points: vec![NavPoint::from_legacy(
+                NavFix::builder()
                     .time(NavFixTime::Receiver(time))
                     .lat(lat)
                     .lon(lon)
                     .build(),
-                satellites: None,
-            }],
+                None,
+            )],
             markers: vec![Marker {
                 annotation: Annotation::builder()
                     .time(time)

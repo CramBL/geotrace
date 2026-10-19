@@ -71,6 +71,7 @@ mod format_version;
 mod navigation;
 mod provenance;
 mod read;
+mod satellite_codec;
 mod satellite_evidence;
 mod size_checked_file;
 mod time_repair;

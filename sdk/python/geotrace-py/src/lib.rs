@@ -152,6 +152,12 @@ fn file_err(e: geotrace_sdk::Error) -> PyErr {
         | Error::InvalidNavigationColumnType { .. }
         | Error::InvalidDatasetShape { .. }
         | Error::MissingNavigationColumn { .. }
+        | Error::MissingSatelliteColumn { .. }
+        | Error::MissingSatelliteGroup { .. }
+        | Error::InvalidSatelliteColumnType { .. }
+        | Error::InvalidSatelliteTag { .. }
+        | Error::SatelliteReportWithoutTimestamp { .. }
+        | Error::MixedSatelliteLayouts
         | Error::UnknownConstellationName { .. }
         | Error::UnknownMarkerIcon { .. }
         | Error::ParseError { .. }
@@ -1275,7 +1281,7 @@ impl PyNavPoint {
     #[getter]
     fn satellites(&self) -> Option<PySatelliteReport> {
         self.inner
-            .satellites
+            .satellites()
             .clone()
             .map(|s| PySatelliteReport { inner: s })
     }

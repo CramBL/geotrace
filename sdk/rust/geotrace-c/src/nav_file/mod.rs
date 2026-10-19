@@ -64,7 +64,7 @@ impl GtdNavFile {
             satellite_warnings: geotrace_sdk::collect_satellite_warnings(
                 file.nav_points()
                     .iter()
-                    .filter_map(|point| point.satellites.as_ref()),
+                    .filter_map(|point| point.satellites().as_ref()),
             ),
             channel_c_strings: file
                 .channels()

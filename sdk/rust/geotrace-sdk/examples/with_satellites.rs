@@ -96,7 +96,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let loaded = NavFile::open(&path)?;
     println!("Nav points: {}", loaded.nav_points().len());
     for (i, point) in loaded.nav_points().iter().enumerate() {
-        let (tracked, in_fix) = match &point.satellites {
+        let (tracked, in_fix) = match point.satellites() {
             Some(report) => (
                 report.tracked.len(),
                 report.tracked.iter().filter(|s| s.in_fix).count(),
