@@ -232,10 +232,10 @@ def _verify(path: Path) -> None:
     assert meta.travel_mode == TravelMode.BICYCLE
 
     points = file.points
-    assert len(points) == 210, f"expected 210 nav points, got {len(points)}"
+    assert len(points) == 209, f"expected 209 nav points, got {len(points)}"
 
     antimeridian = [p for p in points if p.lon > 179.9 or p.lon < -179.9]
-    assert len(antimeridian) == 11, f"antimeridian points: {len(antimeridian)}"
+    assert len(antimeridian) == 10, f"antimeridian points: {len(antimeridian)}"
 
     stationary = [p for p in points if abs(p.lat - (-10.0)) < 1e-6]
     assert len(stationary) == 20, f"stationary points: {len(stationary)}"

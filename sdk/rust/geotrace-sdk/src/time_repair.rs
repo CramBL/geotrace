@@ -179,9 +179,15 @@ fn shift_nav_point(point: &mut NavPoint, shift: Duration) -> Result<(), Error> {
     let mut evidence = point.satellite_evidence().clone();
     for report in &mut evidence.usage {
         report.time = shift_fix_time(report.time, shift)?;
+        if let Some(placement) = &mut report.placement {
+            placement.normalized_time = shift_time(placement.normalized_time, shift)?;
+        }
     }
     for report in &mut evidence.observations {
         report.time = shift_fix_time(report.time, shift)?;
+        if let Some(placement) = &mut report.placement {
+            placement.normalized_time = shift_time(placement.normalized_time, shift)?;
+        }
     }
     point.set_satellite_evidence(evidence);
     Ok(())

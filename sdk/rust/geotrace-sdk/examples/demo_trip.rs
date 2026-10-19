@@ -27,7 +27,7 @@ use geotrace_sdk::{
     NavFileBuilder, NavFix, NavFixTime, NavRecorder, RecordedFixTimestamps, Satellite,
     SatelliteReport, Unit, Velocity,
 };
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -130,7 +130,7 @@ fn load_satellites_and_fixes(
     recorder: &mut NavRecorder,
     base_dir: &Path,
 ) -> Result<Vec<FixDynamics>, Box<dyn std::error::Error>> {
-    let mut satellite_reports: HashMap<(String, String), Vec<Satellite>> = HashMap::new();
+    let mut satellite_reports: BTreeMap<(String, String), Vec<Satellite>> = BTreeMap::new();
     let sat_file = File::open(base_dir.join("satellites.csv"))?;
     let reader = BufReader::new(sat_file);
     for line in reader.lines().skip(1) {

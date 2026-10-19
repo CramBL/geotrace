@@ -13,8 +13,8 @@ use crate::size_checked_file::{ColumnContext, SizeCheckedFile, SizeCheckedGroup}
 use crate::{
     Constellation, ConstellationSet, NavFile, NavFixTime, NavPoint, RecordedFixTimestamps,
     SatelliteCoverage, SatelliteEvidence, SatelliteIdentity, SatelliteMembership,
-    SatelliteObservation, SatelliteObservationReport, SatelliteScope, SatelliteUsage,
-    SatelliteUsageReport,
+    SatelliteObservation, SatelliteObservationReport, SatelliteReportPlacement, SatelliteScope,
+    SatelliteUsage, SatelliteUsageReport,
 };
 
 #[derive(Clone, Copy)]
@@ -122,6 +122,8 @@ struct ReportColumns {
     coverage: Vec<u8>,
     count: Vec<u32>,
     count_present: Vec<u8>,
+    normalized_time: Vec<u64>,
+    input_order: Vec<u64>,
 }
 
 #[derive(Clone, Copy)]
@@ -130,6 +132,7 @@ struct ReportMetadata<'a> {
     scope: &'a SatelliteScope,
     coverage: SatelliteCoverage,
     count: Option<u32>,
+    placement: Option<SatelliteReportPlacement>,
 }
 
 impl ReportColumns {
@@ -171,6 +174,21 @@ impl ReportColumns {
         });
         self.count.push(metadata.count.unwrap_or(0));
         self.count_present.push(u8::from(metadata.count.is_some()));
+        self.normalized_time.push(builder::opt_datetime_to_u64(
+            metadata
+                .placement
+                .map(|placement| placement.normalized_time),
+            FieldLocation {
+                group: name,
+                dataset: "normalized_time_us",
+            },
+            record,
+        )?);
+        self.input_order.push(
+            metadata
+                .placement
+                .map_or(0, |placement| placement.input_order),
+        );
         Ok(())
     }
 
@@ -180,6 +198,8 @@ impl ReportColumns {
             ("nav_point_idx", &self.nav_point_idx),
             ("gps_time_us", &self.gps),
             ("sys_time_us", &self.sys),
+            ("normalized_time_us", &self.normalized_time),
+            ("input_order", &self.input_order),
         ] {
             group
                 .create_dataset(name)
@@ -283,6 +303,7 @@ pub(crate) fn write(file: &NavFile, output: &mut FileBuilder) -> Result<(), Erro
                     scope: &report.scope,
                     coverage: report.coverage,
                     count: report.reported_count,
+                    placement: report.placement,
                 },
             )?;
             for row in &report.satellites {
@@ -304,6 +325,7 @@ pub(crate) fn write(file: &NavFile, output: &mut FileBuilder) -> Result<(), Erro
                     scope: &report.scope,
                     coverage: report.coverage,
                     count: report.reported_count,
+                    placement: report.placement,
                 },
             )?;
             for row in &report.satellites {
@@ -359,10 +381,51 @@ struct DecodedReport {
     scope: SatelliteScope,
     coverage: SatelliteCoverage,
     count: Option<u32>,
+    placement: Option<SatelliteReportPlacement>,
 }
 
 impl Columns {
+    fn placements(&self) -> Result<Vec<Option<SatelliteReportPlacement>>, Error> {
+        let times = self.group.optional_dataset("normalized_time_us")?;
+        let orders = self.group.optional_dataset("input_order")?;
+        match (times.is_some(), orders.is_some()) {
+            (false, false) => return Ok(vec![None; self.rows]),
+            (true, true) => {}
+            _ => {
+                return Err(Error::MissingSatelliteColumn {
+                    group: self.name,
+                    dataset: if times.is_none() {
+                        "normalized_time_us"
+                    } else {
+                        "input_order"
+                    },
+                });
+            }
+        }
+        let times = self
+            .column("normalized_time_us", NumericType::U64)?
+            .read_u64()?;
+        let orders = self.column("input_order", NumericType::U64)?.read_u64()?;
+        times
+            .into_iter()
+            .zip(orders)
+            .enumerate()
+            .map(|(record, (time, order))| {
+                Ok(read::decode_optional_timestamp(
+                    FieldLocation {
+                        group: self.name,
+                        dataset: "normalized_time_us",
+                    },
+                    record,
+                    time,
+                )?
+                .map(|time| SatelliteReportPlacement::new(time, order)))
+            })
+            .collect()
+    }
+
     fn reports(&self) -> Result<Vec<DecodedReport>, Error> {
+        let placements = self.placements()?;
         let points = self.column("nav_point_idx", NumericType::U64)?.read_u64()?;
         let gps = self.column("gps_time_us", NumericType::U64)?.read_u64()?;
         let sys = self.column("sys_time_us", NumericType::U64)?.read_u64()?;
@@ -447,6 +510,7 @@ impl Columns {
                         scope,
                         coverage,
                         count,
+                        placement: placements.get(record).copied().flatten(),
                     })
                 },
             )
@@ -519,6 +583,7 @@ pub(crate) fn read(file: &SizeCheckedFile, points: &mut [NavPoint]) -> Result<bo
             .iter()
             .map(|report| SatelliteUsageReport {
                 time: report.time,
+                placement: report.placement,
                 scope: report.scope.clone(),
                 coverage: report.coverage,
                 reported_count: report.count,
@@ -575,6 +640,7 @@ pub(crate) fn read(file: &SizeCheckedFile, points: &mut [NavPoint]) -> Result<bo
             .iter()
             .map(|report| SatelliteObservationReport {
                 time: report.time,
+                placement: report.placement,
                 scope: report.scope.clone(),
                 coverage: report.coverage,
                 reported_count: report.count,
@@ -670,6 +736,14 @@ pub(crate) fn inspect(
                 )
                 .ok();
                 report.time.write_inspection_timestamps(output);
+                if let Some(placement) = report.placement {
+                    writeln!(
+                        output,
+                        "    Normalized time: {}, input order: {}",
+                        placement.normalized_time, placement.input_order
+                    )
+                    .ok();
+                }
                 for row in report.satellites.iter().take(read::MAX_LISTED_ENTRIES) {
                     writeln!(output, "    {row:?}").ok();
                 }
@@ -699,6 +773,14 @@ pub(crate) fn inspect(
                 )
                 .ok();
                 report.time.write_inspection_timestamps(output);
+                if let Some(placement) = report.placement {
+                    writeln!(
+                        output,
+                        "    Normalized time: {}, input order: {}",
+                        placement.normalized_time, placement.input_order
+                    )
+                    .ok();
+                }
                 for row in report.satellites.iter().take(read::MAX_LISTED_ENTRIES) {
                     writeln!(output, "    {row:?}").ok();
                 }

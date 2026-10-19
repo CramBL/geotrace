@@ -406,8 +406,8 @@ void verify_counts(const geotrace::NavFile &file) {
     check(file.travel_mode() == "bicycle", "travel mode wrong");
 
     auto nav_points = file.nav_point_count();
-    if (nav_points != 210) {
-        throw std::runtime_error("expected 210 nav points, got " + std::to_string(nav_points));
+    if (nav_points != 209) {
+        throw std::runtime_error("expected 209 nav points, got " + std::to_string(nav_points));
     }
 
     std::size_t anti = 0;
@@ -417,8 +417,8 @@ void verify_counts(const geotrace::NavFile &file) {
             anti++;
         }
     }
-    if (anti != 11) {
-        throw std::runtime_error("expected 11 antimeridian pts, got " + std::to_string(anti));
+    if (anti != 10) {
+        throw std::runtime_error("expected 10 antimeridian pts, got " + std::to_string(anti));
     }
 
     auto event_markers = file.event_marker_count();
@@ -468,7 +468,7 @@ int main(int argc, char **argv) {
         verify_counts(nav);
 
         std::cout << "Written: " << out << "\n";
-        std::cout << "Gold dataset verified. Nav points: 210, Event markers: 7, Channels: 2\n";
+        std::cout << "Gold dataset verified. Nav points: 209, Event markers: 7, Channels: 2\n";
     } catch (const std::exception &e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;

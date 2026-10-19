@@ -1,8 +1,8 @@
 use geotrace_sdk::{
     Angle, Constellation, ConstellationSet, Duration, NavFix, NavFixTime, NavPoint, Satellite,
     SatelliteCoverage, SatelliteEvidence, SatelliteIdentity, SatelliteMembership,
-    SatelliteObservation, SatelliteObservationReport, SatelliteReport, SatelliteScope,
-    SatelliteUsage, SatelliteUsageReport,
+    SatelliteObservation, SatelliteObservationReport, SatelliteReport, SatelliteReportPlacement,
+    SatelliteScope, SatelliteUsage, SatelliteUsageReport,
 };
 use geotrace_sdk_test_util as test_util;
 use rstest::rstest;
@@ -188,6 +188,10 @@ fn absent_complete_empty_and_partial_empty_are_distinct() {
 #[case::observations_scoped(|evidence: &mut SatelliteEvidence| evidence.observations.iter_mut().for_each(|r| {
             r.scope = SatelliteScope::Constellations(ConstellationSet::new(Constellation::Gps, []))
         }))]
+#[case::different_normalized_times(|evidence: &mut SatelliteEvidence| {
+    evidence.usage[0].placement = Some(SatelliteReportPlacement::new(test_util::base(), 0));
+    evidence.observations[0].placement = Some(SatelliteReportPlacement::new(test_util::base() + Duration::milliseconds(400), 1));
+})]
 #[case::different_receiver_times(|evidence: &mut SatelliteEvidence| evidence.usage.iter_mut().for_each(|r| {
             r.time = NavFixTime::Both {
                 gps: test_util::base() + Duration::milliseconds(1),

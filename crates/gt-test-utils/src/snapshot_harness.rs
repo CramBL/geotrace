@@ -102,6 +102,49 @@ impl<'a, State> TestHarness<'a, State> {
         );
     }
 
+    /// Compares `region` in logical points at the same tolerance as
+    /// [`Self::snapshot_with_color_tolerance`].
+    pub fn snapshot_region_with_color_tolerance(
+        &mut self,
+        name: &str,
+        region: egui::Rect,
+    ) -> Result<(), String> {
+        if on_windows_ci() {
+            return Ok(());
+        }
+        let frame = self.inner.render()?;
+        let pixels = region * self.inner.ctx.pixels_per_point();
+        if !pixels.is_finite() || !pixels.is_positive() || pixels.min.x < 0.0 || pixels.min.y < 0.0
+        {
+            return Err("Invalid snapshot region".to_owned());
+        }
+        #[expect(
+            clippy::cast_sign_loss,
+            clippy::cast_possible_truncation,
+            reason = "the region has finite nonnegative edges"
+        )]
+        let [left, top, right, bottom] = [
+            pixels.left().round(),
+            pixels.top().round(),
+            pixels.right().round(),
+            pixels.bottom().round(),
+        ]
+        .map(|edge| edge as u32);
+        if right > frame.width() || bottom > frame.height() {
+            return Err("Snapshot region exceeds the rendered frame".to_owned());
+        }
+        let cropped =
+            image::imageops::crop_imm(&frame, left, top, right - left, bottom - top).to_image();
+        egui_kittest::try_image_snapshot_options(
+            &cropped,
+            snap_name(name),
+            &SnapshotOptions::new()
+                .threshold(CROSS_BACKEND_COLOR_TOLERANCE)
+                .max_failed_pixels(COLOR_TOLERANCE_PIXEL_COUNT_BUDGET),
+        )
+        .map_err(|error| error.to_string())
+    }
+
     /// Compare at [`CROSS_BACKEND_COLOR_TOLERANCE`], admitting
     /// [`MESH_EDGE_PIXEL_COUNT_BUDGET`] pixels past it.
     ///

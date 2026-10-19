@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use geotrace_sdk_units::snr;
 
 use crate::error::{
     self, BuildError, Error, FieldLocation, MetaField, MetaStringWithNul, UnplacedRecordCounts,
@@ -11,10 +12,17 @@ use crate::time_types::{GpsTime, SysTime};
 use crate::types::{
     Annotation, Channel, Constellation, EventMarker, EventMarkerColor, EventMarkerIconChoice,
     EventMarkerPoint, EventMarkerStyle, Marker, Meta, NavFile, NavFix, NavFixTime, NavPoint,
-    Satellite, SatelliteReport, TravelMode,
+    SatelliteReport, TravelMode,
 };
 use crate::variant_path::EventKind;
-use crate::{Angle, PositionProvenance};
+use crate::{
+    Angle, PositionProvenance, SatelliteEvidence, SatelliteObservation, SatelliteObservationReport,
+    SatelliteUsageReport,
+};
+
+use self::satellite_association::InternalSatReport;
+
+mod satellite_association;
 
 impl NavFix {
     fn ghost(gps_time: GpsTime, lat: Angle, lon: Angle, heading: Option<Angle>) -> Self {
@@ -29,7 +37,9 @@ impl NavFix {
 
     fn gps_sys_clock_delta_us(&self) -> Option<i64> {
         match self.time {
-            NavFixTime::Both { gps, sys } => Some(gps.timestamp_micros() - sys.timestamp_micros()),
+            NavFixTime::Both { gps, sys } => {
+                gps.timestamp_micros().checked_sub(sys.timestamp_micros())
+            }
             NavFixTime::Receiver(_) | NavFixTime::Host(_) => None,
         }
     }
@@ -50,57 +60,14 @@ impl NavFix {
     }
 }
 
-struct InternalSatReport {
-    time: NavFixTime,
-    tracked: Vec<Satellite>,
-}
-
-/// A satellite report's timestamp in microseconds, with the clock that stamped
-/// it. The placement functions apply a clock delta to a `HostClockUs` value and
-/// take a `GpsDomainUs` value as it is.
-#[derive(Clone, Copy)]
-enum ReportPlacementTime {
-    GpsDomainUs(i64),
-    HostClockUs(i64),
-}
-
-impl InternalSatReport {
-    fn from_sat_report(r: SatelliteReport) -> Self {
-        Self {
-            time: r.time,
-            tracked: r.tracked,
-        }
-    }
-
-    fn into_sat_report(self) -> SatelliteReport {
-        SatelliteReport {
-            time: self.time,
-            tracked: self.tracked,
-        }
-    }
-
-    fn placement_time(&self) -> ReportPlacementTime {
-        match self.time {
-            NavFixTime::Receiver(gps) | NavFixTime::Both { gps, .. } => {
-                ReportPlacementTime::GpsDomainUs(datetime_to_micros(gps))
-            }
-            NavFixTime::Host(sys) => ReportPlacementTime::HostClockUs(datetime_to_micros(sys)),
-        }
-    }
-}
-
-/// Builder-internal nav point.
 struct InternalPoint {
     fix: NavFix,
-    satellites: Option<InternalSatReport>,
+    evidence: SatelliteEvidence,
 }
 
 impl InternalPoint {
     fn into_nav_point(self) -> NavPoint {
-        NavPoint::from_legacy(
-            self.fix,
-            self.satellites.map(InternalSatReport::into_sat_report),
-        )
+        NavPoint::new(self.fix, self.evidence)
     }
 }
 
@@ -279,7 +246,8 @@ pub struct NavRecorder {
 
 /// A timeline object that [`NavRecorder::add`] dispatches on.
 ///
-/// Implemented for [`NavFix`], [`SatelliteReport`], [`Annotation`],
+/// Implemented for [`NavFix`], [`SatelliteReport`], [`SatelliteUsageReport`],
+/// [`SatelliteObservationReport`], [`Annotation`],
 /// [`EventMarker`], and [`Channel`]. Per-variant styling and typed events are
 /// intentionally not `NavRecord`s: use [`add_event_marker_style`] and
 /// [`add_event`] respectively.
@@ -300,6 +268,18 @@ impl NavRecord for NavFix {
 impl NavRecord for SatelliteReport {
     fn add_to(self, recorder: &mut NavRecorder) {
         recorder.add_satellite_report(self);
+    }
+}
+
+impl NavRecord for SatelliteUsageReport {
+    fn add_to(self, recorder: &mut NavRecorder) {
+        recorder.add_satellite_usage_report(self);
+    }
+}
+
+impl NavRecord for SatelliteObservationReport {
+    fn add_to(self, recorder: &mut NavRecorder) {
+        recorder.add_satellite_observation_report(self);
     }
 }
 
@@ -336,21 +316,36 @@ impl NavRecorder {
         self
     }
 
-    /// Accept a nav fix.
-    ///
-    /// Timestamps are immediately wrapped into typed clock-domain values so all internal
-    /// builder processing is clock-domain safe.
+    /// Append a navigation fix with its source clocks and metadata.
     pub fn add_nav_fix(&mut self, fix: impl Into<NavFix>) -> &mut Self {
         self.fixes.push(fix.into());
         self
     }
 
-    /// Accept a satellite report.
-    ///
-    /// As with nav fixes, timestamps are immediately wrapped into typed values.
+    /// Convert a combined report into complete global usage and observation samples.
     pub fn add_satellite_report(&mut self, report: impl Into<SatelliteReport>) -> &mut Self {
         self.satellite_reports
-            .push(InternalSatReport::from_sat_report(report.into()));
+            .push(InternalSatReport::from_sat_report(&report.into()));
+        self
+    }
+
+    /// Append an independent usage sample for association during [`Self::finish`].
+    pub fn add_satellite_usage_report(
+        &mut self,
+        report: impl Into<SatelliteUsageReport>,
+    ) -> &mut Self {
+        self.satellite_reports
+            .push(InternalSatReport::from_usage(report.into()));
+        self
+    }
+
+    /// Append an independent observation sample for association during [`Self::finish`].
+    pub fn add_satellite_observation_report(
+        &mut self,
+        report: impl Into<SatelliteObservationReport>,
+    ) -> &mut Self {
+        self.satellite_reports
+            .push(InternalSatReport::from_observation(report.into()));
         self
     }
 
@@ -469,44 +464,11 @@ impl NavRecorder {
         self
     }
 
-    /// Validate and process all added data.
-    ///
-    /// Returns [`BuildError::NoNavFixes`] for a recorder with a satellite report, an annotation
-    /// or an event marker and no nav fix, in lenient mode too.
-    /// Returns [`BuildError::InvalidEventMarkerVariantPath`] in strict mode for a recorder with an
-    /// event from [`add_event`](Self::add_event) or
-    /// [`add_event_with_note`](Self::add_event_with_note) whose variant path
-    /// [`EventMarker::builder`] rejects. A lenient recorder drops such an event and logs an error.
-    ///
-    /// Steps performed in order:
-    /// 1. Sort fixes, satellite reports, and annotations by time.
-    /// 2. Associate each satellite report to its nearest nav fix within the
-    ///    configured window.  Reports with `gps_time` are matched directly.
-    ///    Reports with only `sys_time` are first corrected into the GPS time domain
-    ///    using the GPS/sys-clock delta derived from fixes that have both timestamps
-    ///    (`delta = gps_time − sys_time`). The nearest-anchor delta is applied
-    ///    before the window comparison.
-    ///    This handles the `--no-filter` pipeline where SAT records carry only
-    ///    `sys_time` but can be reliably placed once the clock offset is known from
-    ///    the surrounding fixes.
-    ///    When no delta can be computed (no fix has both timestamps), raw `sys_time`
-    ///    is used as a fallback - same behaviour as before.
-    ///    Each fix receives at most one report. On equal distance the earlier report wins.
-    /// 3. Orphan satellite reports get ghost nav fixes:
-    ///    - Between two real fixes: position is interpolated proportionally using
-    ///      the corrected GPS timestamp.  The correction applies the GPS/system-clock
-    ///      delta derived from the `sys_time` fields of the surrounding NavFixes.
-    ///      Falls back to even distribution when no delta information is available.
-    ///    - After the last real fix: dead-reckoned along the last fix's heading,
-    ///      1 m for the first ghost (a fix-lost indicator), then 2 m per
-    ///      subsequent ghost. Every ghost takes the last fix's position when it
-    ///      has no heading. `heading = None` so the app renders circles.
-    ///    - Before the first real fix: the first fix's position, `heading = None`.
-    /// 4. Interpolate each annotation's and event marker's position from the
-    ///    surrounding fixes.
-    /// 5. In strict mode (default), return an error if any annotation or event
-    ///    marker falls outside the nav fix time range.  In lenient mode each is
-    ///    clamped to the nearest endpoint with a warning.
+    /// Associate each report with its nearest fix within the configured window.
+    /// Receiver times use the receiver clock. Host-only reports use a shared host
+    /// clock when available, then the nearest recorded clock delta.
+    /// Multiple reports remain independent. Orphan reports with equal normalized
+    /// times share one synthesized position. Original report clocks are retained.
     pub fn finish(mut self) -> Result<NavFile, BuildError> {
         if let Some(source) = self.first_event_variant_path_rejection {
             return Err(BuildError::InvalidEventMarkerVariantPath { source });
@@ -514,7 +476,6 @@ impl NavRecorder {
         validate_satellite_data(&self.satellite_reports);
 
         self.fixes.sort_by_key(NavFix::effective_time);
-        self.satellite_reports.sort_by_key(|r| r.time.effective());
         self.annotations.sort_by_key(|a| a.time);
 
         let records_need_a_position = !self.satellite_reports.is_empty()
@@ -528,11 +489,14 @@ impl NavRecorder {
             }));
         }
 
-        let (sat_assignments, unassociated) =
-            associate_satellites(&self.fixes, self.satellite_reports, self.satellite_window);
+        let (sat_assignments, unassociated) = satellite_association::associate_satellites(
+            &self.fixes,
+            self.satellite_reports,
+            self.satellite_window,
+        )?;
 
         // Build ghost nav fixes for orphaned satellite reports.
-        let ghost_points = ghost_nav_points_for(&self.fixes, unassociated)?;
+        let ghost_points = satellite_association::ghost_nav_points_for(&self.fixes, unassociated)?;
         if !ghost_points.is_empty() {
             log::debug!(
                 "{} ghost nav fix(es) created for satellite reports outside the {}ms association window",
@@ -556,7 +520,7 @@ impl NavRecorder {
             .fixes
             .into_iter()
             .zip(sat_assignments)
-            .map(|(fix, satellites)| InternalPoint { fix, satellites })
+            .map(|(fix, evidence)| InternalPoint { fix, evidence })
             .collect();
         internal_points.extend(ghost_points);
         internal_points.sort_by_key(|p| p.fix.effective_time());
@@ -619,401 +583,6 @@ impl NavRecorder {
             channels,
         })
     }
-}
-
-/// Create ghost [`InternalPoint`]s to carry [`InternalSatReport`]s that fall outside
-/// the association window of every real fix.
-///
-/// Reports are first partitioned into segments by their best-guess GPS position
-/// relative to the sorted real fixes, then placed as follows:
-///
-/// **Between two real fixes** - position interpolated proportionally using the
-/// corrected GPS timestamp.  The correction adds the GPS/system-clock delta
-/// derived from the `sys_time` fields of the bounding NavFixes. The delta is
-/// linearly interpolated between the two anchors.  Reports that already carry
-/// `gps_time` are used directly.  When no delta can be computed and no report
-/// carries `gps_time`, the builder falls back to even spatial distribution so
-/// the output is still usable.  Heading = spherical bearing, fix A to fix B.
-///
-/// **After the last real fix** - dead-reckoned in the last fix's heading.  The
-/// first ghost is placed 1 m ahead (a fix-lost indicator). Subsequent ghosts
-/// step 2 m each.  Every ghost takes the last fix's position when it has no
-/// heading.  `heading = None` so the app renders circles.
-///
-/// **Before the first real fix** - the first fix's position, `heading = None`.
-fn ghost_nav_points_for(
-    real_fixes: &[NavFix],
-    orphan_reports: Vec<InternalSatReport>,
-) -> Result<Vec<InternalPoint>, BuildError> {
-    if orphan_reports.is_empty() {
-        return Ok(Vec::new());
-    }
-    let (Some(first), Some(last)) = (real_fixes.first(), real_fixes.last()) else {
-        return Err(BuildError::NoNavFixes(UnplacedRecordCounts {
-            satellite_reports: orphan_reports.len(),
-            annotations: 0,
-            event_markers: 0,
-        }));
-    };
-
-    // `delta_us = gps_us - sys_us` at each fix that has both a genuine GPS lock
-    // and a `sys_time`.  Stored as `(gps_us, delta_us)` sorted by `gps_us`.
-    let delta_anchors: Vec<(i64, i64)> = real_fixes
-        .iter()
-        .filter_map(|f| {
-            Some((
-                f.gps_time()?.timestamp_micros(),
-                f.gps_sys_clock_delta_us()?,
-            ))
-        })
-        .collect();
-
-    let n_segs = real_fixes.len().saturating_sub(1);
-    let mut segments: Vec<Vec<InternalSatReport>> = (0..n_segs).map(|_| Vec::new()).collect();
-    let mut before_first: Vec<InternalSatReport> = Vec::new();
-    let mut after_last: Vec<InternalSatReport> = Vec::new();
-
-    for report in orphan_reports {
-        let guess_us = best_guess_gps_us(&report, &delta_anchors);
-        let pos = real_fixes.partition_point(|f| f.effective_time().timestamp_micros() < guess_us);
-
-        if pos == 0 {
-            before_first.push(report);
-        } else if pos >= real_fixes.len() {
-            after_last.push(report);
-        } else if let Some(seg) = segments.get_mut(pos - 1) {
-            seg.push(report);
-        }
-    }
-
-    let mut ghost_points = Vec::new();
-
-    ghost_points.extend(ghosts_on_first_fix(first, before_first)?);
-
-    for (seg_idx, reports) in segments.into_iter().enumerate() {
-        if reports.is_empty() {
-            continue;
-        }
-        let Some(b) = real_fixes.get(seg_idx) else {
-            continue;
-        };
-        let Some(a) = real_fixes.get(seg_idx + 1) else {
-            continue;
-        };
-
-        let b_position = TimelinePosition::from_internal_fix(b);
-        let a_position = TimelinePosition::from_internal_fix(a);
-        let heading = b_position.bearing_to(a_position);
-        let b_gps_us = b.effective_time().timestamp_micros();
-        let a_gps_us = a.effective_time().timestamp_micros();
-        let span_us = (a_gps_us - b_gps_us) as f64;
-
-        let delta_b = b.gps_sys_clock_delta_us();
-        let delta_a = a.gps_sys_clock_delta_us();
-
-        let can_correct = delta_b.is_some()
-            || delta_a.is_some()
-            || reports.iter().any(|r| r.time.gps_time().is_some());
-
-        if can_correct {
-            let mut timed: Vec<(i64, InternalSatReport)> = reports
-                .into_iter()
-                .map(|r| {
-                    let ct = segment_corrected_gps_us(&r, b, a, delta_b, delta_a);
-                    (ct, r)
-                })
-                .collect();
-            timed.sort_by_key(|(ct, _)| *ct);
-
-            for (corrected_us, report) in timed {
-                let frac = if span_us < 1.0 {
-                    0.5
-                } else {
-                    ((corrected_us - b_gps_us) as f64 / span_us).clamp(0.0, 1.0)
-                };
-                let position = b_position.interpolated_to(a_position, frac);
-                ghost_points.push(InternalPoint {
-                    fix: NavFix::ghost(
-                        ghost_gps_time(corrected_us)?,
-                        position.lat,
-                        position.lon,
-                        Some(heading),
-                    ),
-                    satellites: Some(report),
-                });
-            }
-        } else {
-            // No time correction possible: distribute evenly.
-            let n = reports.len();
-            for (i, report) in reports.into_iter().enumerate() {
-                let frac = (i + 1) as f64 / (n + 1) as f64;
-                let approx_us = b_gps_us + (span_us * frac) as i64;
-                let position = b_position.interpolated_to(a_position, frac);
-                ghost_points.push(InternalPoint {
-                    fix: NavFix::ghost(
-                        ghost_gps_time(approx_us)?,
-                        position.lat,
-                        position.lon,
-                        Some(heading),
-                    ),
-                    satellites: Some(report),
-                });
-            }
-        }
-    }
-
-    ghost_points.extend(ghosts_after_last_fix(last, after_last)?);
-
-    Ok(ghost_points)
-}
-
-fn ghost_gps_time(micros: i64) -> Result<GpsTime, BuildError> {
-    DateTime::from_timestamp_micros(micros)
-        .map(GpsTime::from_utc)
-        .ok_or(BuildError::GhostFixTimeOutOfRange { micros })
-}
-
-/// Ghosts for the reports before the first real fix, all on that fix's position
-/// with `heading = None`.
-fn ghosts_on_first_fix(
-    first: &NavFix,
-    reports: Vec<InternalSatReport>,
-) -> Result<Vec<InternalPoint>, BuildError> {
-    let position = TimelinePosition::from_internal_fix(first);
-    let mut ghosts = Vec::with_capacity(reports.len());
-
-    for report in reports {
-        let ghost_time_us = ghost_gps_us_anchored_to(&report, first);
-        ghosts.push(InternalPoint {
-            fix: NavFix::ghost(
-                ghost_gps_time(ghost_time_us)?,
-                position.lat,
-                position.lon,
-                None, // None renders as a circle
-            ),
-            satellites: Some(report),
-        });
-    }
-
-    Ok(ghosts)
-}
-
-/// Ghosts for the reports after the last real fix, dead-reckoned along that
-/// fix's heading, 1 m for the first and 2 m for each further one. Every ghost
-/// takes the last fix's position when it has no heading. `heading = None`
-/// throughout.
-fn ghosts_after_last_fix(
-    last: &NavFix,
-    reports: Vec<InternalSatReport>,
-) -> Result<Vec<InternalPoint>, BuildError> {
-    let mut position = TimelinePosition::from_internal_fix(last);
-    let mut ghosts = Vec::with_capacity(reports.len());
-
-    for (i, report) in reports.into_iter().enumerate() {
-        if let Some(heading) = last.heading {
-            let distance_m = if i == 0 { 1.0 } else { 2.0 };
-            position = position.advanced_along_great_circle(heading, distance_m);
-        }
-
-        let ghost_time_us = ghost_gps_us_anchored_to(&report, last);
-        ghosts.push(InternalPoint {
-            fix: NavFix::ghost(
-                ghost_gps_time(ghost_time_us)?,
-                position.lat,
-                position.lon,
-                None, // None renders as a circle
-            ),
-            satellites: Some(report),
-        });
-    }
-
-    Ok(ghosts)
-}
-
-/// Best-guess GPS timestamp (microseconds) for an orphan report.
-///
-/// Used for segment partitioning only.  Reports with `gps_time` are exact.
-/// Reports with only `sys_time` are corrected using the nearest delta anchor.
-fn best_guess_gps_us(report: &InternalSatReport, anchors: &[(i64, i64)]) -> i64 {
-    let st_us = match report.placement_time() {
-        ReportPlacementTime::GpsDomainUs(gps_us) => return gps_us,
-        ReportPlacementTime::HostClockUs(st_us) => st_us,
-    };
-    // Find the anchor whose `sys_time` (`gps_us - delta_us`) is closest to `st_us`.
-    let delta = anchors
-        .iter()
-        .min_by_key(|&&(gps_us, delta_us)| (gps_us - delta_us - st_us).unsigned_abs())
-        .map_or(0, |&(_, d)| d);
-    st_us + delta
-}
-
-/// Corrected GPS timestamp for an orphan report within a specific segment.
-///
-/// Delta is linearly interpolated between the two bounding fix anchors using
-/// the report's `sys_time` position within the segment's `sys_time` range.
-/// Returns the GPS time if present, the corrected `sys_time` if correctable, or
-/// `sys_time` as-is when no delta information is available.
-fn segment_corrected_gps_us(
-    report: &InternalSatReport,
-    b: &NavFix,
-    a: &NavFix,
-    delta_b: Option<i64>,
-    delta_a: Option<i64>,
-) -> i64 {
-    let st_us = match report.placement_time() {
-        ReportPlacementTime::GpsDomainUs(gps_us) => return gps_us,
-        ReportPlacementTime::HostClockUs(st_us) => st_us,
-    };
-
-    match (delta_b, delta_a) {
-        (Some(db), Some(da)) => {
-            // Interpolate delta by the report's `sys_time` position in the segment.
-            let sys_b = b
-                .host_clock_time()
-                .map_or(b.effective_time().timestamp_micros() - db, |s| {
-                    s.timestamp_micros()
-                });
-            let sys_a = a
-                .host_clock_time()
-                .map_or(a.effective_time().timestamp_micros() - da, |s| {
-                    s.timestamp_micros()
-                });
-            let span = (sys_a - sys_b) as f64;
-            let delta = if span < 1.0 {
-                (db + da) / 2
-            } else {
-                let frac = ((st_us - sys_b) as f64 / span).clamp(0.0, 1.0);
-                db + ((da - db) as f64 * frac) as i64
-            };
-            st_us + delta
-        }
-        (Some(db), None) => st_us + db,
-        (None, Some(da)) => st_us + da,
-        (None, None) => st_us, // no correction: the caller uses the even-distribution fallback
-    }
-}
-
-/// GPS timestamp for a ghost placed on `anchor_fix`, the first or the last real fix.
-///
-/// A report with a `gps_time` is exact. A report with only a `sys_time` is
-/// corrected with the anchor fix's clock delta, and taken as it is where the
-/// anchor fix has no delta.
-fn ghost_gps_us_anchored_to(report: &InternalSatReport, anchor_fix: &NavFix) -> i64 {
-    match report.placement_time() {
-        ReportPlacementTime::GpsDomainUs(gps_us) => gps_us,
-        ReportPlacementTime::HostClockUs(st_us) => {
-            st_us + anchor_fix.gps_sys_clock_delta_us().unwrap_or(0)
-        }
-    }
-}
-
-/// Assign each satellite report to its nearest nav fix within `window`.
-///
-/// **Comparison timestamp** - binary search uses a GPS-domain estimate so the
-/// two nearest candidate fixes can be found (fixes are sorted by GPS time).
-/// The *distance* to each candidate is then computed in the most accurate
-/// clock domain available:
-///
-/// - Report has `gps_time` → GPS-domain comparison against the fix's effective time.
-/// - Report has only `sys_time` **and** the fix has `sys_time` → same-domain
-///   comparison `|rep.sys − fix.sys|` (single clock, no delta approximation).
-/// - Report has only `sys_time`, fix has no `sys_time` → GPS-domain comparison
-///   using the delta-corrected estimate from the nearest anchor.
-///
-/// Returns `(assignments, unassociated)` where `assignments[i]` is the
-/// satellite report for `fixes[i]` (if any), and `unassociated` contains
-/// every report that could not be matched.
-fn associate_satellites(
-    fixes: &[NavFix],
-    reports: Vec<InternalSatReport>,
-    window: Duration,
-) -> (Vec<Option<InternalSatReport>>, Vec<InternalSatReport>) {
-    let window_us = i64::try_from(window.as_micros()).unwrap_or(i64::MAX);
-
-    // Compute GPS/sys-clock delta anchors from fixes that carry both timestamps.
-    let delta_anchors: Vec<(i64, i64)> = fixes
-        .iter()
-        .filter_map(|f| {
-            Some((
-                f.gps_time()?.timestamp_micros(),
-                f.gps_sys_clock_delta_us()?,
-            ))
-        })
-        .collect();
-
-    let mut fix_claims: Vec<Option<(i64, usize)>> = vec![None; fixes.len()];
-
-    for (rep_idx, report) in reports.iter().enumerate() {
-        let rep_us = best_guess_gps_us(report, &delta_anchors);
-
-        // When the report has no GPS time, record its `sys_time` for same-domain
-        // distance comparison against fixes that also have a `sys_time`.
-        let rep_sys_us: Option<i64> = match report.placement_time() {
-            ReportPlacementTime::GpsDomainUs(_) => None,
-            ReportPlacementTime::HostClockUs(st_us) => Some(st_us),
-        };
-
-        let dist_to = |fix: &NavFix| -> i64 {
-            if let (Some(rsu), Some(fst)) = (rep_sys_us, fix.host_clock_time()) {
-                (rsu - fst.timestamp_micros()).abs()
-            } else {
-                (rep_us - fix.effective_time().timestamp_micros()).abs()
-            }
-        };
-
-        let pos = fixes.partition_point(|f| f.effective_time().timestamp_micros() < rep_us);
-
-        let mut best: Option<(i64, usize)> = None;
-
-        if pos > 0
-            && let Some(fix) = fixes.get(pos - 1)
-        {
-            let dist = dist_to(fix);
-            if dist <= window_us {
-                best = Some((dist, pos - 1));
-            }
-        }
-
-        if let Some(fix) = fixes.get(pos) {
-            let dist = dist_to(fix);
-            if dist <= window_us {
-                match best {
-                    None => best = Some((dist, pos)),
-                    Some((d, _)) if dist < d => best = Some((dist, pos)),
-                    _ => {}
-                }
-            }
-        }
-
-        if let Some((dist, fix_idx)) = best {
-            match fix_claims.get_mut(fix_idx) {
-                Some(slot @ None) => *slot = Some((dist, rep_idx)),
-                Some(Some((existing_dist, existing_rep)))
-                    if dist < *existing_dist
-                        || (dist == *existing_dist && rep_idx < *existing_rep) =>
-                {
-                    *existing_dist = dist;
-                    *existing_rep = rep_idx;
-                }
-                _ => {}
-            }
-        }
-    }
-
-    let mut reports_opt: Vec<Option<InternalSatReport>> = reports.into_iter().map(Some).collect();
-
-    let mut assignments: Vec<Option<InternalSatReport>> = (0..fixes.len()).map(|_| None).collect();
-    for (fix_idx, claim) in fix_claims.into_iter().enumerate() {
-        if let Some((_, rep_idx)) = claim
-            && let Some(slot) = assignments.get_mut(fix_idx)
-            && let Some(rep) = reports_opt.get_mut(rep_idx).and_then(|r| r.take())
-        {
-            *slot = Some(rep);
-        }
-    }
-
-    let unassociated = reports_opt.into_iter().flatten().collect();
-    (assignments, unassociated)
 }
 
 /// A fix reduced to what placing an external event on the nav timeline needs.
@@ -1437,7 +1006,14 @@ impl SatelliteIssues {
 pub fn collect_satellite_warnings<'a>(
     reports: impl IntoIterator<Item = &'a SatelliteReport>,
 ) -> Vec<SatelliteWarning> {
-    collect_satellite_issues_inner(reports.into_iter().map(|r| r.tracked.as_slice())).to_records()
+    collect_satellite_issues_inner(reports.into_iter().map(|report| {
+        report
+            .tracked
+            .iter()
+            .map(SatelliteObservation::from)
+            .collect::<Vec<_>>()
+    }))
+    .to_records()
 }
 
 /// Inner implementation shared by the public API and the internal builder path.
@@ -1445,23 +1021,24 @@ pub fn collect_satellite_warnings<'a>(
     clippy::cognitive_complexity,
     reason = "one branch per validation rule; splitting would obscure rather than clarify"
 )]
-fn collect_satellite_issues_inner<'a>(
-    reports: impl Iterator<Item = &'a [Satellite]>,
+fn collect_satellite_issues_inner(
+    reports: impl Iterator<Item = impl AsRef<[SatelliteObservation]>>,
 ) -> SatelliteIssues {
     let mut issues = SatelliteIssues::default();
 
-    for tracked in reports {
+    for report in reports {
+        let tracked = report.as_ref();
         let mut has_duplicate = false;
 
         for (i, sat) in tracked.iter().enumerate() {
-            let prn = sat.prn;
+            let prn = sat.identity.prn;
 
             // Scanning the rows before this one allocates nothing, and costs about as
             // much as hashing them: a report has at most a few dozen rows.
             if tracked
                 .iter()
                 .take(i)
-                .any(|earlier| earlier.constellation == sat.constellation && earlier.prn == prn)
+                .any(|earlier| earlier.identity == sat.identity)
             {
                 has_duplicate = true;
             }
@@ -1472,7 +1049,7 @@ fn collect_satellite_issues_inner<'a>(
                 continue;
             }
 
-            match sat.constellation {
+            match sat.identity.constellation {
                 Constellation::Gps => match prn {
                     1..=32 => {}
                     33..=64 => issues.gps_sbas_range += 1,
@@ -1522,7 +1099,7 @@ fn collect_satellite_issues_inner<'a>(
             if let Some(snr) = sat.snr {
                 if snr < 0.0 {
                     issues.snr_negative += 1;
-                } else if sat.snr_is_no_data_sentinel() {
+                } else if sat.snr.is_some_and(snr::is_no_data_sentinel) {
                     issues.snr_sentinel_99 += 1;
                 } else if snr > 60.0 {
                     issues.snr_above_60 += 1;
@@ -1539,7 +1116,7 @@ fn collect_satellite_issues_inner<'a>(
 }
 
 fn collect_satellite_issues(reports: &[InternalSatReport]) -> SatelliteIssues {
-    collect_satellite_issues_inner(reports.iter().map(|r| r.tracked.as_slice()))
+    collect_satellite_issues_inner(reports.iter().map(InternalSatReport::diagnostic_rows))
 }
 
 fn validate_satellite_data(reports: &[InternalSatReport]) {
@@ -1588,6 +1165,8 @@ pub(crate) const ABSENT_TIMESTAMP_MICROS: u64 = u64::MAX;
 mod tests {
     use rstest::rstest;
 
+    use crate::Satellite;
+
     use super::*;
 
     /// `to_records` drives off a table with one row per `SatelliteIssues` field.
@@ -1621,10 +1200,10 @@ mod tests {
     }
 
     fn report(tracked: Vec<Satellite>) -> InternalSatReport {
-        InternalSatReport {
+        InternalSatReport::from_sat_report(&SatelliteReport {
             time: NavFixTime::Receiver(DateTime::from_timestamp(1_748_000_000, 0).expect("valid")),
             tracked,
-        }
+        })
     }
 
     fn sat(constellation: Constellation, prn: u32) -> Satellite {
@@ -1775,7 +1354,7 @@ mod tests {
             report(vec![sat(Constellation::Gps, 2)]),
         ];
 
-        let result = ghost_nav_points_for(&[], orphan_reports);
+        let result = satellite_association::ghost_nav_points_for(&[], orphan_reports);
 
         assert!(matches!(
             result,

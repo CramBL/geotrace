@@ -310,81 +310,28 @@ fn zero_reports_all_fixes_have_no_satellite_data() -> Result<(), BuildError> {
     Ok(())
 }
 
-/// Three reports all within the window of the same fix.
-/// The closest must win. The other two must become ghost fixes.
 #[test]
-fn three_reports_one_fix_only_closest_wins() -> Result<(), BuildError> {
-    // Fix A at t=0, Fix B at t=5 000 ms (far enough that none of the reports reach it).
-    // R1 at t=100 ms → 100 ms from A (winner).
-    // R2 at t=200 ms → 200 ms from A (first loser).
-    // R3 at t=300 ms → 300 ms from A (second loser).
+fn multiple_legacy_reports_remain_at_the_same_fix() -> Result<(), BuildError> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(test_util::fix_at(0, Lat(55.0), Lon(12.0)));
     recorder.add_nav_fix(test_util::fix_at(5000, Lat(55.1), Lon(12.1)));
-
-    // R1 - winner
-    recorder.add_satellite_report(test_util::report_with(100, Constellation::Gps, 1));
-    // R2 - loser
-    recorder.add_satellite_report(test_util::report_with(200, Constellation::Glonass, 2));
-    // R3 - loser
-    recorder.add_satellite_report(test_util::report_with(300, Constellation::Galileo, 3));
-
-    let nav_file = recorder.finish()?;
-    let points = nav_file.nav_points();
-
-    // 2 real fixes + 2 ghost fixes for the two losers = 4 total.
+    for time in [300, 100, 200] {
+        recorder.add_satellite_report(test_util::report_with(time, Constellation::Gps, 1));
+    }
+    let file = recorder.finish()?;
+    assert_eq!(file.nav_points().len(), 2);
+    let evidence = file.nav_points()[0].satellite_evidence();
+    assert_eq!(evidence.usage.len(), 3);
     assert_eq!(
-        points.len(),
-        4,
-        "expected 2 real + 2 ghost fixes, got {}",
-        points.len()
+        evidence
+            .observations
+            .iter()
+            .map(|report| report.time)
+            .collect::<Vec<_>>(),
+        [300, 100, 200].map(|time| NavFixTime::Receiver(test_util::t_ms(time)))
     );
-
-    // Fix A (first point by time) carries R1 (GPS).
-    assert_eq!(first_constellation(&points[0]), Constellation::Gps);
-
-    // Both losers became ghost fixes between A and B.
-    // Verify by checking that GPS is only at index 0 and the remaining two
-    // ghosts carry Glonass and Galileo in time order.
-    let ghost_constellations: Vec<Constellation> =
-        points[1..=2].iter().map(first_constellation).collect();
-    assert!(
-        ghost_constellations.contains(&Constellation::Glonass),
-        "R2 (Glonass) must be a ghost"
-    );
-    assert!(
-        ghost_constellations.contains(&Constellation::Galileo),
-        "R3 (Galileo) must be a ghost"
-    );
-
-    // Fix B (last point) carries no satellite data.
-    assert!(
-        points[3].satellites().is_none(),
-        "fix B must have no satellite data"
-    );
-    Ok(())
-}
-
-/// When two reports are equidistant from the same fix, the one that arrived
-/// earlier (lower insertion order) wins - even when added to the builder after
-/// the later one.
-#[test]
-fn equidistant_reports_earlier_one_wins() -> Result<(), BuildError> {
-    // Fix at t=500 ms.  Both reports are 250 ms away.
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(test_util::fix_at(500, Lat(55.0), Lon(12.0)));
-    // Add the LATER report first to confirm it doesn't win just by insertion order.
-    recorder.add_satellite_report(test_util::report_with(750, Constellation::Glonass, 99)); // later
-    recorder.add_satellite_report(test_util::report_with(250, Constellation::Gps, 1)); // earlier
-
-    let nav_file = recorder.finish()?;
-
-    // Earlier report wins. One ghost for the loser.
-    assert_eq!(nav_file.nav_points().len(), 2);
-    assert_eq!(
-        first_constellation(&nav_file.nav_points()[0]),
-        Constellation::Gps
-    );
+    assert_eq!(file.nav_points()[0].satellites(), &None);
+    assert!(file.nav_points()[1].satellite_evidence().usage.is_empty());
     Ok(())
 }
 

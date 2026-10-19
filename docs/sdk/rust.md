@@ -85,11 +85,32 @@ The conversion preserves duplicate rows, measurements and each row's Boolean mem
 Legacy `in_fix=false` becomes known-unused membership.
 
 `SatelliteEvidence::legacy_report()` returns a combined report for one complete global pair with identical recorded timestamps.
+Normalized times must also match when placement metadata is present.
 Every observed identity requires known membership, and every used identity must be observed.
 Reported aggregates must equal the distinct identity counts.
 Conflicting duplicate memberships require matching row order in both reports.
 The projection preserves the original rows for a converted legacy report.
 The method returns `None` for other evidence combinations.
+
+## Independent report ingestion
+
+`NavRecorder::add()` accepts navigation fixes, usage reports and observation reports.
+The typed methods are `add_satellite_usage_report()` and `add_satellite_observation_report()`.
+The legacy `add_satellite_report()` converts each combined report into complete global usage and observation samples.
+
+Each report associates independently with the nearest submitted fix inside the inclusive association window, which defaults to 500ms.
+An equal-distance report associates with the earlier fix.
+Several reports can associate with one fix.
+Their source timestamps and input order remain available after writing and reading.
+Host-only reports compare host timestamps when the candidate fix has a host timestamp.
+A receiver-only candidate uses a clock delta from the nearest dual-clock fix, or the raw host time when no delta exists.
+
+`report.placement` records the normalized report time and its zero-based input order across report kinds.
+A report at 10.4s associated with a fix at 10s retains its 10.4s normalized time.
+Unmatched reports with equal normalized times share one synthesized position.
+Their source timestamps remain unchanged.
+Interpolation and endpoint placement use the existing coordinate rules.
+An observation-only synthesized position has absent navigation state.
 
 ## Satellite evidence encoding
 
@@ -104,6 +125,13 @@ Each report table has the following one-dimensional columns.
 | `coverage` | `u8` | 0 complete, 1 partial |
 | `reported_count` | `u32` | Exact aggregate within the declared scope |
 | `reported_count_present` | `u8` | 0 absent, 1 present |
+| `normalized_time_us` | `u64` | Common navigation clock, signed microseconds, `u64::MAX` absent |
+| `input_order` | `u64` | Zero-based recorder insertion order across report kinds |
+
+The placement columns form an optional pair for earlier version 3 files.
+Both absent columns decode as absent placement metadata.
+When normalized time is absent, readers ignore the input-order payload.
+A converted legacy pair has the same input order in both report tables.
 
 Scope bits use the constellation wire codes: GPS bit 0, GLONASS bit 1, Galileo bit 2, BeiDou bit 3, NavIC bit 4 and QZSS bit 5.
 The decoder rejects other bits.

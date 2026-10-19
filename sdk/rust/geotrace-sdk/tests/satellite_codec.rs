@@ -205,6 +205,7 @@ enum ColumnChange {
     Bytes(Vec<u8>),
     Datatype(Datatype),
     AddLegacyGroup,
+    WithoutPlacements,
 }
 
 struct ModifiedColumn<'a> {
@@ -230,6 +231,11 @@ impl ModifiedColumn<'_> {
             let mut group = output.create_group(&group_name);
             for name in input_group.datasets()? {
                 let input = input_group.dataset(&name)?;
+                if matches!(self.change, ColumnChange::WithoutPlacements)
+                    && matches!(name.as_str(), "normalized_time_us" | "input_order")
+                {
+                    continue;
+                }
                 let changed = group_name == self.group && name == self.dataset;
                 if changed && matches!(self.change, ColumnChange::Missing) {
                     continue;
@@ -239,7 +245,9 @@ impl ModifiedColumn<'_> {
                 let mut data = input.read_raw()?;
                 if changed {
                     match &self.change {
-                        ColumnChange::Missing | ColumnChange::AddLegacyGroup => {}
+                        ColumnChange::Missing
+                        | ColumnChange::AddLegacyGroup
+                        | ColumnChange::WithoutPlacements => {}
                         ColumnChange::Shape(value) => {
                             shape = value.clone();
                             data.resize(
@@ -278,6 +286,8 @@ impl ModifiedColumn<'_> {
 #[case("satellite_usage_reports", "coverage")]
 #[case("satellite_usage_reports", "reported_count")]
 #[case("satellite_usage_reports", "reported_count_present")]
+#[case("satellite_usage_reports", "normalized_time_us")]
+#[case("satellite_usage_reports", "input_order")]
 #[case("satellite_observation_reports", "nav_point_idx")]
 #[case("satellite_observation_reports", "gps_time_us")]
 #[case("satellite_observation_reports", "sys_time_us")]
@@ -285,6 +295,8 @@ impl ModifiedColumn<'_> {
 #[case("satellite_observation_reports", "coverage")]
 #[case("satellite_observation_reports", "reported_count")]
 #[case("satellite_observation_reports", "reported_count_present")]
+#[case("satellite_observation_reports", "normalized_time_us")]
+#[case("satellite_observation_reports", "input_order")]
 #[case("satellite_usage", "report_idx")]
 #[case("satellite_usage", "constellation")]
 #[case("satellite_usage", "prn")]
@@ -428,6 +440,8 @@ fn numeric_columns_require_exact_wire_types(
 
 #[rstest]
 #[case("satellite_usage_reports", "gps_time_us")]
+#[case("satellite_usage_reports", "normalized_time_us")]
+#[case("satellite_observation_reports", "input_order")]
 #[case("satellite_observation_reports", "scope")]
 #[case("satellite_usage", "prn")]
 #[case("satellite_observations", "snr")]
@@ -495,11 +509,12 @@ fn repeated_legacy_rows_preserve_individual_membership_and_measurements()
         .build();
     let mut recorder = test_util::recorder_with_one_fix();
     recorder.add_satellite_report(legacy.clone());
-    let decoded = test_util::round_trip(&recorder.finish()?)?;
-    assert_eq!(decoded.nav_points()[0].satellites(), &Some(legacy.clone()));
+    let original = recorder.finish()?;
+    let decoded = test_util::round_trip(&original)?;
+    assert_eq!(decoded.nav_points()[0].satellites(), &Some(legacy));
     assert_eq!(
         decoded.nav_points()[0].satellite_evidence(),
-        &SatelliteEvidence::from(&legacy)
+        original.nav_points()[0].satellite_evidence()
     );
     Ok(())
 }
@@ -690,5 +705,22 @@ fn combined_report_files_decode_to_canonical_evidence(
         );
     }
     assert_eq!(test_util::round_trip(&decoded)?.nav_points()[0], *point);
+    Ok(())
+}
+
+#[test]
+fn canonical_v3_reports_without_placement_columns_preserve_their_source_data()
+-> Result<(), Box<dyn std::error::Error>> {
+    let bytes = ModifiedColumn {
+        group: "",
+        dataset: "",
+        change: ColumnChange::WithoutPlacements,
+    }
+    .bytes()?;
+    let file = NavFile::read(bytes.as_slice())?;
+    assert_eq!(
+        file.nav_points()[0].satellite_evidence(),
+        &independent_evidence()
+    );
     Ok(())
 }
