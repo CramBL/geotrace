@@ -56,3 +56,33 @@ Heading and timestamp origins are independent of navigation state and coordinate
 `SolutionMethod` and `SolutionDimension` describe source facts without changing state.
 `SolutionState::EstimatedOnly` means an estimate without measured GNSS contribution.
 A hybrid solution with GNSS contribution uses `SolutionState::Fix`.
+
+## Satellite evidence values
+
+`SatelliteUsageReport` records used, unused or unknown membership for each constellation/PRN identity.
+`SatelliteObservationReport` records identities with optional elevation, azimuth and SNR.
+Both builders require a timestamp, scope and coverage.
+Each report has an optional `reported_count` that is exact for its declared scope, including zero.
+The aggregate and identity rows remain independent when they conflict.
+
+`SatelliteScope::Global` declares global scope explicitly.
+`SatelliteScope::Constellations` requires a nonempty `ConstellationSet`.
+A set of all supported constellations remains distinct from global scope.
+Complete usage coverage makes omitted identities known-unused within that scope.
+An explicit unknown row remains unknown.
+Partial coverage leaves omitted identities unknown.
+A complete empty observation report establishes zero seen identities within its scope.
+An absent report is unreported evidence.
+
+`SatelliteEvidence` is an in-memory collection of independent usage and observation samples.
+`NavPoint::satellite_evidence()` converts its combined report into that collection.
+`SatelliteEvidence::from(&report)` creates one complete global report of each kind at the original timestamps.
+The conversion preserves duplicate rows, measurements and each row's Boolean membership.
+Legacy `in_fix=false` becomes known-unused membership.
+
+`SatelliteEvidence::legacy_report()` returns a combined report for one complete global pair with identical recorded timestamps.
+Every observed identity requires known membership, and every used identity must be observed.
+Reported aggregates must equal the distinct identity counts.
+Conflicting duplicate memberships require matching row order in both reports.
+The projection preserves the original rows for a converted legacy report.
+The method returns `None` for other evidence combinations.

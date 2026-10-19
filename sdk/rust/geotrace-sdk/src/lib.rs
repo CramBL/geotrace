@@ -42,6 +42,11 @@ pub use navigation::{PositionProvenance, SolutionDimension, SolutionMethod, Solu
 pub use provenance::{
     SCRUBBED_SDK_VERSION, SDK_COMMIT_TIME_ATTR, SDK_GIT_COMMIT_ATTR, SDK_VERSION_ATTR,
 };
+pub use satellite_evidence::{
+    ConstellationSet, SatelliteCoverage, SatelliteEvidence, SatelliteIdentity, SatelliteMembership,
+    SatelliteObservation, SatelliteObservationReport, SatelliteScope, SatelliteUsage,
+    SatelliteUsageReport,
+};
 pub use types::{
     Annotation, AnnotationIcon, Channel, Constellation, DebugTimeRepair, EventMarker,
     EventMarkerColor, EventMarkerIconChoice, EventMarkerPoint, EventMarkerStyle, Marker,
@@ -66,6 +71,7 @@ mod format_version;
 mod navigation;
 mod provenance;
 mod read;
+mod satellite_evidence;
 mod size_checked_file;
 mod time_repair;
 mod time_types;
