@@ -1,10 +1,13 @@
+use std::ops::Range;
+
 use chrono::{DateTime, Utc};
 use gt_filter::GlobalFilter;
 use gt_types::satellites::Satellites;
 use gt_types::{
     CustomMarker, DataCategory, DataCategorySet, EventMarker, FileIdx, GeneratedMarker, LoadedFile,
-    LoadedTrack, NavPoint, TrackIdx, TrackRef,
+    LoadedTrack, NavPoint, PointIdx, TrackIdx, TrackRef,
 };
+use smallvec::SmallVec;
 use strum::EnumCount;
 
 use crate::display_mask::{DisplayCategory, DisplayMask};
@@ -131,16 +134,8 @@ pub fn track_in_scope<'a>(
     filter: &GlobalFilter,
     track_ref: TrackRef,
 ) -> Option<(&'a LoadedTrack, TrackVisibility)> {
-    let file_vis = track_ref.fi.get(&visibility.files)?;
-    if !file_vis.enabled {
-        return None;
-    }
-    let track_vis = *track_ref.index.get(&file_vis.tracks)?;
-    if !track_vis.enabled {
-        return None;
-    }
-    let track = track_ref.resolve(files)?;
-    gt_filter::track_passes_filter(track, filter).then_some((track, track_vis))
+    let prepared = PreparedTrackScope::new(files, visibility, filter, track_ref);
+    Some((prepared.track?, prepared.visibility?))
 }
 
 /// Why the element a [`MapElementRef`] addresses is, or is not, on the map.
@@ -242,6 +237,7 @@ impl<'a> MapEligibility<'a> {
     }
 
     /// Classify `element_ref` before display masking.
+    #[inline]
     pub fn element_eligibility(self, element_ref: MapElementRef) -> MapEligibilityResult {
         match self.resolve(element_ref) {
             ResolvedEligibility::Eligible(_) => MapEligibilityResult::Eligible,
@@ -250,19 +246,317 @@ impl<'a> MapEligibility<'a> {
         }
     }
 
+    pub fn prepare(self) -> PreparedMapEligibility<'a> {
+        self.prepare_with_track_observer(|_| {})
+    }
+
+    pub fn prepare_with_track_observer(
+        self,
+        mut observe_track_filter: impl FnMut(&LoadedTrack),
+    ) -> PreparedMapEligibility<'a> {
+        let mut tracks = SmallVec::new();
+        let mut offsets = SmallVec::new();
+        for (fi, file) in self.files.iter().enumerate() {
+            offsets.push(tracks.len());
+            for ti in 0..file.tracks.len() {
+                let scope = PreparedTrackScope::with_track_observer(
+                    self.files,
+                    self.visibility,
+                    self.filter,
+                    TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti)),
+                    &mut observe_track_filter,
+                );
+                tracks.push(scope.visibility);
+            }
+        }
+        offsets.push(tracks.len());
+        PreparedMapEligibility {
+            eligibility: self,
+            tracks,
+            offsets,
+        }
+    }
+
+    pub fn query_matches(self) -> Option<&'a QueryMatches> {
+        self.query_matches
+    }
+
+    pub fn prepare_track(self, track_ref: TrackRef) -> PreparedTrackEligibility<'a> {
+        PreparedTrackEligibility::new(
+            self,
+            PreparedTrackScope::new(self.files, self.visibility, self.filter, track_ref),
+        )
+    }
+
     fn resolve(self, element_ref: MapElementRef) -> ResolvedEligibility<'a> {
-        // Resolution comes first so a stale identity stays "missing" even when
-        // the same track is also withheld by policy.
-        let Some(element) = element_ref.resolve(self.files) else {
+        self.prepare_track(element_ref.track()).resolve(element_ref)
+    }
+}
+
+pub struct PreparedMapEligibility<'a> {
+    eligibility: MapEligibility<'a>,
+    tracks: SmallVec<[Option<TrackVisibility>; 128]>,
+    offsets: SmallVec<[usize; 9]>,
+}
+
+impl<'a> PreparedMapEligibility<'a> {
+    #[inline]
+    pub fn flat_track_index(&self, track: TrackRef) -> Option<usize> {
+        self.track_slice().flat_track_index(track)
+    }
+
+    #[inline]
+    pub fn track(&self, track: TrackRef) -> Option<PreparedTrackEligibility<'a>> {
+        self.track_slice().track(track, self.eligibility)
+    }
+
+    pub fn with_display_mask(&self, display_mask: DisplayMask) -> MapPresence<'_> {
+        MapPresence {
+            eligibility: self.eligibility,
+            display_mask,
+            prepared: Some(self.track_slice()),
+        }
+    }
+
+    pub fn uses_inline_storage(&self) -> bool {
+        !self.tracks.spilled() && !self.offsets.spilled()
+    }
+
+    fn track_slice(&self) -> PreparedTrackSlice<'_> {
+        PreparedTrackSlice {
+            tracks: &self.tracks,
+            offsets: &self.offsets,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct PreparedTrackScope<'a> {
+    track_ref: TrackRef,
+    track: Option<&'a LoadedTrack>,
+    visibility: Option<TrackVisibility>,
+}
+
+impl<'a> PreparedTrackScope<'a> {
+    pub fn track_ref(self) -> TrackRef {
+        self.track_ref
+    }
+    pub fn new(
+        files: &'a [LoadedFile],
+        visibility: &TrackDataVisibility,
+        filter: &GlobalFilter,
+        track_ref: TrackRef,
+    ) -> Self {
+        Self::with_track_observer(files, visibility, filter, track_ref, &mut |_| {})
+    }
+
+    fn with_track_observer(
+        files: &'a [LoadedFile],
+        visibility: &TrackDataVisibility,
+        filter: &GlobalFilter,
+        track_ref: TrackRef,
+        observe_track_filter: &mut impl FnMut(&LoadedTrack),
+    ) -> Self {
+        let track = track_ref.resolve(files);
+        let track_visibility = track_ref
+            .fi
+            .get(&visibility.files)
+            .filter(|file| file.enabled)
+            .and_then(|file| track_ref.index.get(&file.tracks))
+            .copied()
+            .filter(|visibility| visibility.enabled)
+            .filter(|_| {
+                track.is_some_and(|track| {
+                    observe_track_filter(track);
+                    gt_filter::track_passes_filter(track, filter)
+                })
+            });
+        Self {
+            track_ref,
+            track,
+            visibility: track_visibility,
+        }
+    }
+
+    pub fn track(self) -> Option<&'a LoadedTrack> {
+        self.track
+    }
+    pub fn is_in_scope(self) -> bool {
+        self.visibility.is_some()
+    }
+    pub fn category_visible(self, category: DataCategory) -> bool {
+        self.visibility
+            .is_some_and(|visibility| visibility.category_visible(category))
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct PreparedTrackEligibility<'a> {
+    eligibility: MapEligibility<'a>,
+    scope: PreparedTrackScope<'a>,
+    hidden_ranges: &'a [Range<usize>],
+}
+
+impl<'a> PreparedTrackEligibility<'a> {
+    fn new(eligibility: MapEligibility<'a>, scope: PreparedTrackScope<'a>) -> Self {
+        Self {
+            eligibility,
+            scope,
+            hidden_ranges: eligibility
+                .query_matches
+                .map_or(&[], |matches| matches.hidden_ranges(scope.track_ref)),
+        }
+    }
+
+    pub fn scope(self) -> PreparedTrackScope<'a> {
+        self.scope
+    }
+    pub fn track_ref(self) -> TrackRef {
+        self.scope.track_ref
+    }
+    pub fn track(self) -> Option<&'a LoadedTrack> {
+        self.scope.track()
+    }
+    pub fn is_in_scope(self) -> bool {
+        self.scope.is_in_scope()
+    }
+    pub fn category_visible(self, category: DataCategory) -> bool {
+        self.scope.category_visible(category)
+    }
+
+    pub fn available_fix_indices(self) -> impl DoubleEndedIterator<Item = PointIdx> + 'a {
+        self.track()
+            .filter(move |_| self.is_in_scope())
+            .into_iter()
+            .flat_map(move |track| {
+                gt_filter::time_filtered_range(&track.points, self.eligibility.filter)
+                    .map(PointIdx::new)
+                    .filter(move |&point| self.fix_is_available(point))
+            })
+    }
+
+    #[inline]
+    pub fn fix_is_available(self, point: PointIdx) -> bool {
+        self.is_in_scope()
+            && self
+                .track()
+                .and_then(|track| point.get(&track.points))
+                .is_some_and(|fix| self.fix_withheld(point, fix).is_none())
+    }
+
+    #[inline]
+    fn fix_withheld(self, point: PointIdx, fix: &NavPoint) -> Option<EligibilityWithheld> {
+        if QueryMatches::range_at(self.hidden_ranges, point.as_usize()).is_some() {
+            Some(EligibilityWithheld::HiddenByQuery)
+        } else if !self.eligibility.filter.contains_time(fix.tpv.time().utc()) {
+            Some(EligibilityWithheld::OutsideTimeFilter)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub fn element_eligibility(self, element_ref: MapElementRef) -> MapEligibilityResult {
+        match self.resolve(element_ref) {
+            ResolvedEligibility::Eligible(_) => MapEligibilityResult::Eligible,
+            ResolvedEligibility::Missing => MapEligibilityResult::Missing,
+            ResolvedEligibility::Withheld(reason) => MapEligibilityResult::Withheld(reason),
+        }
+    }
+
+    #[inline]
+    pub fn resolve_presence(
+        self,
+        element_ref: MapElementRef,
+        display_mask: DisplayMask,
+    ) -> MapPresenceResult<'a> {
+        self.resolve(element_ref).with_display_mask(display_mask)
+    }
+
+    pub fn eligible_custom_markers(self) -> impl Iterator<Item = &'a CustomMarker> {
+        self.track()
+            .filter(|_| self.is_in_scope())
+            .into_iter()
+            .flat_map(|track| track.custom_markers.iter())
+            .filter(move |marker| self.custom_marker_withheld(marker).is_none())
+    }
+
+    #[inline]
+    fn custom_marker_withheld(self, marker: &CustomMarker) -> Option<EligibilityWithheld> {
+        if !self.category_visible(DataCategory::CustomMarker) {
+            Some(EligibilityWithheld::CategoryHidden)
+        } else if !self.eligibility.filter.contains_time(marker.time) {
+            Some(EligibilityWithheld::OutsideTimeFilter)
+        } else {
+            None
+        }
+    }
+
+    pub fn eligible_generated_markers(self) -> impl Iterator<Item = &'a GeneratedMarker> {
+        self.track()
+            .filter(|_| self.is_in_scope())
+            .into_iter()
+            .flat_map(|track| track.generated_markers.iter())
+            .filter(move |marker| self.generated_marker_withheld(marker).is_none())
+    }
+
+    #[inline]
+    fn generated_marker_withheld(self, marker: &GeneratedMarker) -> Option<EligibilityWithheld> {
+        if !self.category_visible(DataCategory::GeneratedMarker) {
+            Some(EligibilityWithheld::CategoryHidden)
+        } else if !self
+            .eligibility
+            .generated_marker_visibility
+            .is_visible(self.track_ref(), marker.kind.tag())
+        {
+            Some(EligibilityWithheld::MarkerTypeHidden)
+        } else if !self.eligibility.filter.contains_time(marker.time) {
+            Some(EligibilityWithheld::OutsideTimeFilter)
+        } else {
+            None
+        }
+    }
+
+    pub fn eligible_event_markers(self) -> impl Iterator<Item = &'a EventMarker> {
+        self.track()
+            .filter(|_| self.is_in_scope())
+            .into_iter()
+            .flat_map(|track| track.event_markers.iter())
+            .filter(move |marker| self.event_marker_withheld(marker).is_none())
+    }
+
+    #[inline]
+    fn event_marker_withheld(self, marker: &EventMarker) -> Option<EligibilityWithheld> {
+        if !self.category_visible(DataCategory::EventMarker) {
+            Some(EligibilityWithheld::CategoryHidden)
+        } else if !self
+            .eligibility
+            .event_marker_visibility
+            .is_visible(self.track_ref(), &marker.variant_path)
+        {
+            Some(EligibilityWithheld::MarkerTypeHidden)
+        } else if !self.eligibility.filter.contains_time(marker.time) {
+            Some(EligibilityWithheld::OutsideTimeFilter)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub fn resolve(self, element_ref: MapElementRef) -> ResolvedEligibility<'a> {
+        if element_ref.track() != self.track_ref() {
+            return ResolvedEligibility::Missing;
+        }
+        let Some(element) = self
+            .scope
+            .track
+            .and_then(|track| element_ref.resolve_in_track(track))
+        else {
             return ResolvedEligibility::Missing;
         };
-        let track = element_ref.track();
-        let Some((_, track_visibility)) =
-            track_in_scope(self.files, self.visibility, self.filter, track)
-        else {
+        let Some(track_visibility) = self.scope.visibility else {
             return ResolvedEligibility::Withheld(EligibilityWithheld::TrackNotShown);
         };
-
         // This is the semantic authority for point-like map elements. Keep the
         // family match exhaustive so a new identity cannot silently inherit an
         // existing policy.
@@ -270,55 +564,15 @@ impl<'a> MapEligibility<'a> {
             ResolvedElement::Fix(fix) | ResolvedElement::SatelliteReport { fix, .. } => {
                 if !track_visibility.category_visible(DataCategory::Tpv) {
                     Some(EligibilityWithheld::CategoryHidden)
-                } else if self.query_matches.is_some_and(|matches| {
+                } else {
                     element_ref
                         .fix()
-                        .is_some_and(|fix_ref| matches.is_hidden(track, fix_ref.point.as_usize()))
-                }) {
-                    Some(EligibilityWithheld::HiddenByQuery)
-                } else if !gt_filter::point_passes_time_filter(fix.tpv.time().utc(), self.filter) {
-                    Some(EligibilityWithheld::OutsideTimeFilter)
-                } else {
-                    None
+                        .and_then(|reference| self.fix_withheld(reference.point, fix))
                 }
             }
-            ResolvedElement::CustomMarker(marker) => {
-                if !track_visibility.category_visible(DataCategory::CustomMarker) {
-                    Some(EligibilityWithheld::CategoryHidden)
-                } else if !gt_filter::point_passes_time_filter(marker.time, self.filter) {
-                    Some(EligibilityWithheld::OutsideTimeFilter)
-                } else {
-                    None
-                }
-            }
-            ResolvedElement::GeneratedMarker(marker) => {
-                if !track_visibility.category_visible(DataCategory::GeneratedMarker) {
-                    Some(EligibilityWithheld::CategoryHidden)
-                } else if !self
-                    .generated_marker_visibility
-                    .is_visible(track, marker.kind.tag())
-                {
-                    Some(EligibilityWithheld::MarkerTypeHidden)
-                } else if !gt_filter::point_passes_time_filter(marker.time, self.filter) {
-                    Some(EligibilityWithheld::OutsideTimeFilter)
-                } else {
-                    None
-                }
-            }
-            ResolvedElement::EventMarker(marker) => {
-                if !track_visibility.category_visible(DataCategory::EventMarker) {
-                    Some(EligibilityWithheld::CategoryHidden)
-                } else if !self
-                    .event_marker_visibility
-                    .is_visible(track, &marker.variant_path)
-                {
-                    Some(EligibilityWithheld::MarkerTypeHidden)
-                } else if !gt_filter::point_passes_time_filter(marker.time, self.filter) {
-                    Some(EligibilityWithheld::OutsideTimeFilter)
-                } else {
-                    None
-                }
-            }
+            ResolvedElement::CustomMarker(marker) => self.custom_marker_withheld(marker),
+            ResolvedElement::GeneratedMarker(marker) => self.generated_marker_withheld(marker),
+            ResolvedElement::EventMarker(marker) => self.event_marker_withheld(marker),
         };
 
         if let Some(reason) = withheld {
@@ -333,15 +587,66 @@ impl<'a> MapEligibility<'a> {
 }
 
 #[derive(Clone, Copy)]
-struct EligibleElementRef<'a> {
+pub struct EligibleElementRef<'a> {
     element_ref: MapElementRef,
     element: ResolvedElement<'a>,
 }
 
-enum ResolvedEligibility<'a> {
+pub enum ResolvedEligibility<'a> {
     Eligible(EligibleElementRef<'a>),
     Missing,
     Withheld(EligibilityWithheld),
+}
+
+impl<'a> EligibleElementRef<'a> {
+    pub fn element_ref(self) -> MapElementRef {
+        self.element_ref
+    }
+    pub fn element(self) -> ResolvedElement<'a> {
+        self.element
+    }
+}
+
+impl<'a> ResolvedEligibility<'a> {
+    #[inline]
+    pub fn with_display_mask(self, display_mask: DisplayMask) -> MapPresenceResult<'a> {
+        match self {
+            Self::Missing => MapPresenceResult::Missing,
+            Self::Withheld(reason) => {
+                MapPresenceResult::Withheld(PresenceWithheld::Eligibility(reason))
+            }
+            Self::Eligible(eligible) => {
+                if display_mask.is_visible(eligible.element.display_category()) {
+                    MapPresenceResult::Present(PresentElementRef {
+                        element_ref: eligible.element_ref,
+                        element: eligible.element,
+                    })
+                } else {
+                    MapPresenceResult::Withheld(PresenceWithheld::DisplayMasked)
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct PreparedTrackPresence<'a> {
+    eligibility: PreparedTrackEligibility<'a>,
+    display_mask: DisplayMask,
+}
+
+impl<'a> PreparedTrackPresence<'a> {
+    pub fn is_in_scope(self) -> bool {
+        self.eligibility.is_in_scope()
+    }
+    #[inline]
+    pub fn resolve(self, element_ref: MapElementRef) -> MapPresenceResult<'a> {
+        self.eligibility
+            .resolve_presence(element_ref, self.display_mask)
+    }
+    pub fn draws(self, element_ref: MapElementRef) -> bool {
+        matches!(self.resolve(element_ref), MapPresenceResult::Present(_))
+    }
 }
 
 /// Why an existing semantically eligible element is absent from the rendered
@@ -388,12 +693,45 @@ impl<'a> PresentElementRef<'a> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct PreparedTrackSlice<'a> {
+    tracks: &'a [Option<TrackVisibility>],
+    offsets: &'a [usize],
+}
+
+impl PreparedTrackSlice<'_> {
+    #[inline]
+    fn flat_track_index(self, track: TrackRef) -> Option<usize> {
+        let fi = track.fi.as_usize();
+        let (&start, &end) = (self.offsets.get(fi)?, self.offsets.get(fi + 1)?);
+        let index = start.checked_add(track.index.as_usize())?;
+        (index < end).then_some(index)
+    }
+
+    #[inline]
+    fn track<'a>(
+        self,
+        track: TrackRef,
+        eligibility: MapEligibility<'a>,
+    ) -> Option<PreparedTrackEligibility<'a>> {
+        Some(PreparedTrackEligibility::new(
+            eligibility,
+            PreparedTrackScope {
+                track_ref: track,
+                track: track.resolve(eligibility.files),
+                visibility: *self.tracks.get(self.flat_track_index(track)?)?,
+            },
+        ))
+    }
+}
+
 /// Complete point-like map policy for one frame: semantic eligibility plus the
 /// render-side display mask.
 #[derive(Clone, Copy)]
 pub struct MapPresence<'a> {
     eligibility: MapEligibility<'a>,
     display_mask: DisplayMask,
+    prepared: Option<PreparedTrackSlice<'a>>,
 }
 
 impl<'a> MapPresence<'a> {
@@ -401,6 +739,7 @@ impl<'a> MapPresence<'a> {
         Self {
             eligibility,
             display_mask,
+            prepared: None,
         }
     }
 
@@ -437,40 +776,28 @@ impl<'a> MapPresence<'a> {
                 event_marker_visibility: self.eligibility.event_marker_visibility,
             },
             display_mask: self.display_mask,
+            prepared: self.prepared,
         }
     }
 
     /// Resolve `element_ref` through semantic policy and the display mask.
+    #[inline]
     pub fn resolve(self, element_ref: MapElementRef) -> MapPresenceResult<'a> {
-        match self.eligibility.resolve(element_ref) {
-            ResolvedEligibility::Missing => MapPresenceResult::Missing,
-            ResolvedEligibility::Withheld(reason) => {
-                MapPresenceResult::Withheld(PresenceWithheld::Eligibility(reason))
-            }
-            ResolvedEligibility::Eligible(eligible) => {
-                let display_category = match eligible.element {
-                    ResolvedElement::Fix(fix) | ResolvedElement::SatelliteReport { fix, .. }
-                        if fix.is_ghost_fix() =>
-                    {
-                        DisplayCategory::GhostFixes
-                    }
-                    ResolvedElement::Fix(_) | ResolvedElement::SatelliteReport { .. } => {
-                        DisplayCategory::TrackPoints
-                    }
-                    ResolvedElement::CustomMarker(_) => DisplayCategory::CustomMarkers,
-                    ResolvedElement::GeneratedMarker(_) => DisplayCategory::GeneratedMarkers,
-                    ResolvedElement::EventMarker(_) => DisplayCategory::EventMarkers,
-                };
-                if self.display_mask.is_visible(display_category) {
-                    MapPresenceResult::Present(PresentElementRef {
-                        element_ref: eligible.element_ref,
-                        element: eligible.element,
-                    })
-                } else {
-                    MapPresenceResult::Withheld(PresenceWithheld::DisplayMasked)
-                }
-            }
+        self.prepare_track(element_ref.track()).resolve(element_ref)
+    }
+
+    pub fn prepare_track(self, track_ref: TrackRef) -> PreparedTrackPresence<'a> {
+        PreparedTrackPresence {
+            eligibility: self
+                .prepared
+                .and_then(|prepared| prepared.track(track_ref, self.eligibility))
+                .unwrap_or_else(|| self.eligibility.prepare_track(track_ref)),
+            display_mask: self.display_mask,
         }
+    }
+
+    pub fn display_mask(self) -> DisplayMask {
+        self.display_mask
     }
 
     /// Whether the map draws the element `element_ref` addresses.
@@ -513,47 +840,49 @@ pub enum ResolvedElement<'a> {
 impl MapElementRef {
     /// Resolve this typed identity against the currently loaded recordings.
     pub fn resolve<'a>(self, files: &'a [LoadedFile]) -> Option<ResolvedElement<'a>> {
+        self.resolve_in_track(self.track().resolve(files)?)
+    }
+
+    #[inline]
+    fn resolve_in_track(self, track: &LoadedTrack) -> Option<ResolvedElement<'_>> {
         match self {
-            Self::Fix(reference) => reference
-                .track
-                .resolve(files)?
-                .points
-                .get(reference.point.as_usize())
-                .map(ResolvedElement::Fix),
+            Self::Fix(reference) => reference.point.get(&track.points).map(ResolvedElement::Fix),
             Self::SatelliteReport(reference) => {
-                let fix = reference
-                    .track
-                    .resolve(files)?
-                    .points
-                    .get(reference.point.as_usize())?;
+                let fix = reference.point.get(&track.points)?;
                 Some(ResolvedElement::SatelliteReport {
                     fix,
                     report: fix.satellites.as_ref()?,
                 })
             }
             Self::CustomMarker(reference) => reference
-                .track
-                .resolve(files)?
-                .custom_markers
-                .get(reference.index.as_usize())
+                .index
+                .get(&track.custom_markers)
                 .map(ResolvedElement::CustomMarker),
             Self::GeneratedMarker(reference) => reference
-                .track
-                .resolve(files)?
-                .generated_markers
-                .get(reference.index.as_usize())
+                .index
+                .get(&track.generated_markers)
                 .map(ResolvedElement::GeneratedMarker),
             Self::EventMarker(reference) => reference
-                .track
-                .resolve(files)?
-                .event_markers
-                .get(reference.index.as_usize())
+                .index
+                .get(&track.event_markers)
                 .map(ResolvedElement::EventMarker),
         }
     }
 }
 
 impl ResolvedElement<'_> {
+    pub fn display_category(self) -> DisplayCategory {
+        match self {
+            Self::Fix(fix) | Self::SatelliteReport { fix, .. } if fix.is_ghost_fix() => {
+                DisplayCategory::GhostFixes
+            }
+            Self::Fix(_) | Self::SatelliteReport { .. } => DisplayCategory::TrackPoints,
+            Self::CustomMarker(_) => DisplayCategory::CustomMarkers,
+            Self::GeneratedMarker(_) => DisplayCategory::GeneratedMarkers,
+            Self::EventMarker(_) => DisplayCategory::EventMarkers,
+        }
+    }
+
     /// The timestamp that the time filter compares against its window.
     pub fn time(self) -> DateTime<Utc> {
         match self {
@@ -577,7 +906,7 @@ mod tests {
     use gt_types::{
         CustomMarkerIdx, CustomMarkerRef, EventMarkerIdx, EventMarkerRef, FileSource,
         GeneratedMarkerIdx, GeneratedMarkerKindTag, GeneratedMarkerRef, GpsTime, Latitude,
-        Longitude, PointIdx, TimePositionVelocity,
+        Longitude, TimePositionVelocity,
     };
 
     use super::*;

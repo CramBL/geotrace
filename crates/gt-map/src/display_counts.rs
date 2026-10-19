@@ -1,27 +1,18 @@
-//! Per-category counts of the elements currently in scope on the map.
-//!
-//! "In scope" means post-tree (file/track enablement and the per-category
-//! tree toggles, including the per-kind marker refinements), post-filter
-//! (track filter and time window), post-query (`keep`/`hide` point
-//! removal), and pre-display-mask. The counts therefore report how much ink
-//! a category would draw if displayed - which is what the display toggle
-//! popup shows next to each row, and why a viewport-dependent number would
-//! be wrong here.
-//!
-//! The track gate is [`visibility::track_in_scope`]. This module checks the
-//! time filter and the marker type toggles per element, with the same calls
-//! that [`gt_ui_types::MapPresence::point_visibility`] makes.
-
-use std::hash::{Hash, Hasher};
-use std::ops::Range;
+//! Availability counts before display masking.
+//! Count scans run only when requested by the display popup.
 
 use gt_filter::GlobalFilter;
-use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef};
-use gt_ui_types::{
-    DisplayCategory, EventMarkerVisibility, GeneratedMarkerVisibility, LogMatches, QueryMatches,
-    SnappedTracks, TrackDataVisibility, visibility,
+use gt_loaded_files::IndexAlignedFiles;
+use gt_types::{
+    DataCategory, FileIdx, FixRef, Generation, LoadedFile, PointIdx, TrackIdx, TrackRef,
 };
-use rustc_hash::FxHasher;
+use gt_ui_types::log_matches::LogMatchScope;
+use gt_ui_types::{
+    DisplayCategory, EventMarkerVisibility, GeneratedMarkerVisibility, LogMatches, MapElementRef,
+    MapEligibility, MapEligibilityResult, QueryMatches, SnappedTracks, TrackDataVisibility,
+};
+
+use crate::MapFiles;
 
 /// Counts the app supplies, not derived from the loaded recordings.
 #[derive(Debug, Clone, Copy, Default)]
@@ -115,41 +106,55 @@ impl DisplayCounts {
         query_matches: Option<&QueryMatches>,
         supplied: SuppliedCounts<'_>,
     ) -> Self {
+        let eligibility = MapEligibility::new(
+            files,
+            visibility,
+            filter,
+            query_matches,
+            generated_marker_visibility,
+            event_marker_visibility,
+        )
+        .prepare();
         let mut counts = Self {
             jamming_hexes: supplied.jamming_cells,
             tec_heatmap: supplied.tec_nodes,
             log_matches: supplied.log_matches.map_or(0, |matches| {
-                matches.count_in_scope(files, visibility, filter)
-            }),
-            // The count is per track, like "Tracks": how many snapped tracks
-            // are eligible to draw.
-            snapped_tracks: supplied.snapped_tracks.map_or(0, |snapped| {
-                snapped
+                let scope = LogMatchScope::from_prepared(files, filter, |track| {
+                    eligibility.track(track).map(|prepared| prepared.scope())
+                });
+                matches
+                    .layers()
                     .iter()
-                    .filter(|(track_ref, _)| {
-                        track_ref
-                            .resolve(files)
-                            .is_some_and(|track| gt_filter::track_passes_filter(track, filter))
-                    })
-                    .count()
+                    .map(|layer| scope.matches(layer).count())
+                    .sum()
             }),
             ..Self::default()
         };
         for (fi, file) in files.iter().enumerate() {
             for ti in 0..file.tracks.len() {
                 let track_ref = TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti));
-                let Some((track, track_vis)) =
-                    visibility::track_in_scope(files, visibility, filter, track_ref)
-                else {
+                let Some(prepared) = eligibility.track(track_ref) else {
                     continue;
                 };
-                const NO_RANGES: &[Range<usize>] = &[];
-                let hidden_ranges = query_matches.map_or(NO_RANGES, |m| m.hidden_ranges(track_ref));
+                if !prepared.is_in_scope() {
+                    continue;
+                }
+                let Some(track) = prepared.track() else {
+                    continue;
+                };
+                let track_vis = prepared;
+                if prepared.category_visible(DataCategory::Track)
+                    && supplied
+                        .snapped_tracks
+                        .is_some_and(|snapped| snapped.get(track_ref).is_some())
+                {
+                    counts.snapped_tracks += 1;
+                }
                 let point_in_scope = |pi: usize| {
-                    track.points.get(pi).is_some_and(|p| {
-                        gt_filter::point_passes_time_filter(p.tpv.time().utc(), filter)
-                            && QueryMatches::range_at(hidden_ranges, pi).is_none()
-                    })
+                    prepared.element_eligibility(MapElementRef::Fix(FixRef::new(
+                        track_ref,
+                        PointIdx::new(pi),
+                    ))) == MapEligibilityResult::Eligible
                 };
 
                 if track_vis.category_visible(DataCategory::Track) {
@@ -177,9 +182,7 @@ impl DisplayCounts {
                         .filter(|(pi, p)| p.satellites.is_some() && point_in_scope(*pi))
                         .count();
                 }
-                if track_vis.category_visible(DataCategory::Track)
-                    || track_vis.category_visible(DataCategory::Tpv)
-                {
+                if track_vis.category_visible(DataCategory::Tpv) {
                     counts.ghost_fixes += track
                         .points
                         .iter()
@@ -187,33 +190,9 @@ impl DisplayCounts {
                         .filter(|(pi, p)| p.is_ghost_fix() && point_in_scope(*pi))
                         .count();
                 }
-                if track_vis.category_visible(DataCategory::CustomMarker) {
-                    counts.custom_markers += track
-                        .custom_markers
-                        .iter()
-                        .filter(|m| gt_filter::point_passes_time_filter(m.time, filter))
-                        .count();
-                }
-                if track_vis.category_visible(DataCategory::GeneratedMarker) {
-                    counts.generated_markers += track
-                        .generated_markers
-                        .iter()
-                        .filter(|m| {
-                            gt_filter::point_passes_time_filter(m.time, filter)
-                                && generated_marker_visibility.is_visible(track_ref, m.kind.tag())
-                        })
-                        .count();
-                }
-                if track_vis.category_visible(DataCategory::EventMarker) {
-                    counts.event_markers += track
-                        .event_markers
-                        .iter()
-                        .filter(|m| {
-                            gt_filter::point_passes_time_filter(m.time, filter)
-                                && event_marker_visibility.is_visible(track_ref, &m.variant_path)
-                        })
-                        .count();
-                }
+                counts.custom_markers += prepared.eligible_custom_markers().count();
+                counts.generated_markers += prepared.eligible_generated_markers().count();
+                counts.event_markers += prepared.eligible_event_markers().count();
                 // A match counts while any of its points is in scope - the
                 // halo renderer paints over the filtered point path, so a
                 // range fully outside the time window stays invisible.
@@ -221,7 +200,12 @@ impl DisplayCounts {
                     m.draws
                         .iter()
                         .flat_map(|layer| layer.ranges_for(track_ref))
-                        .filter(|&range| range.clone().any(&point_in_scope))
+                        .filter(|&range| {
+                            track_vis.category_visible(DataCategory::Track)
+                                && range
+                                    .clone()
+                                    .any(|pi| prepared.fix_is_available(PointIdx::new(pi)))
+                        })
                         .count()
                 });
             }
@@ -230,18 +214,9 @@ impl DisplayCounts {
     }
 }
 
-/// The inputs [`DisplayCounts::compute`] reads, captured so a cache can detect
-/// when a recompute is needed. Compared by value: equal keys guarantee equal
-/// counts.
-///
-/// `files` is fingerprinted structurally from the per-track array lengths plus
-/// the file and track counts. Point and marker data is immutable once loaded,
-/// so those change exactly when a load, unload, or reload changes what could be
-/// counted. `snapped_tracks` collapses to the tracks it holds, the only thing
-/// `compute` reads from it.
 #[derive(Clone, PartialEq)]
 struct DisplayCountsKey {
-    files_sig: u64,
+    files_generation: Generation<IndexAlignedFiles>,
     snapped_track_refs: Vec<TrackRef>,
     jamming_cells: usize,
     tec_nodes: usize,
@@ -251,50 +226,6 @@ struct DisplayCountsKey {
     event_marker_visibility: EventMarkerVisibility,
     generated_marker_visibility: GeneratedMarkerVisibility,
     query_matches: Option<QueryMatches>,
-}
-
-/// A structural fingerprint of the loaded data: the file/track shape and each
-/// track's per-array element counts. O(tracks), not O(points), so it is cheap
-/// to compute every frame the popup is open.
-///
-/// [`LoadedFile`] and [`LoadedTrack`] are destructured exhaustively (no `..`):
-/// a new field on either is a compile error here, forcing a decision about
-/// whether it changes what [`DisplayCounts::compute`] counts - so the cache
-/// key can never silently miss a new source of countable data. Fields the
-/// counts do not depend on are bound to `_` deliberately.
-fn files_signature(files: &[LoadedFile]) -> u64 {
-    let mut hasher = FxHasher::default();
-    files.len().hash(&mut hasher);
-    for LoadedFile {
-        tracks,
-        metadata: _,
-        event_marker_styles: _,
-        orphaned_event_markers: _,
-        source: _,
-        load_warnings: _,
-    } in files
-    {
-        tracks.len().hash(&mut hasher);
-        for LoadedTrack {
-            points,
-            sat_label_anchors,
-            custom_markers,
-            generated_markers,
-            event_markers,
-            metadata: _,
-            geometry: _,
-            lod: _,
-            channels: _,
-        } in tracks
-        {
-            points.len().hash(&mut hasher);
-            custom_markers.len().hash(&mut hasher);
-            generated_markers.len().hash(&mut hasher);
-            event_markers.len().hash(&mut hasher);
-            sat_label_anchors.len().hash(&mut hasher);
-        }
-    }
-    hasher.finish()
 }
 
 /// Memoizes [`DisplayCounts::compute`] across frames. The display-toggle popup
@@ -317,7 +248,7 @@ impl DisplayCountsCache {
     #[expect(clippy::too_many_arguments, reason = "mirrors DisplayCounts::compute")]
     pub(crate) fn get(
         &mut self,
-        files: &[LoadedFile],
+        files: MapFiles<'_>,
         visibility: &TrackDataVisibility,
         filter: &GlobalFilter,
         event_marker_visibility: &EventMarkerVisibility,
@@ -325,14 +256,17 @@ impl DisplayCountsCache {
         query_matches: Option<&QueryMatches>,
         supplied: SuppliedCounts<'_>,
     ) -> DisplayCounts {
-        let files_sig = files_signature(files);
-        let snapped_track_refs: Vec<TrackRef> = supplied
-            .snapped_tracks
-            .map(|snapped| snapped.iter().map(|(track_ref, _)| track_ref).collect())
-            .unwrap_or_default();
+        let files_generation = match files {
+            MapFiles::Loaded(files) => Some(files.generation()),
+            MapFiles::Borrowed(_) => None,
+        };
         if let Some((key, counts)) = &self.cached
-            && key.files_sig == files_sig
-            && key.snapped_track_refs == snapped_track_refs
+            && Some(key.files_generation) == files_generation
+            && supplied
+                .snapped_tracks
+                .into_iter()
+                .flat_map(|snapped| snapped.iter().map(|(track_ref, _)| track_ref))
+                .eq(key.snapped_track_refs.iter().copied())
             && key.jamming_cells == supplied.jamming_cells
             && key.tec_nodes == supplied.tec_nodes
             && key.log_matches.as_ref() == supplied.log_matches
@@ -349,7 +283,7 @@ impl DisplayCountsCache {
             self.computes += 1;
         }
         let counts = DisplayCounts::compute(
-            files,
+            files.files(),
             visibility,
             filter,
             event_marker_visibility,
@@ -357,21 +291,27 @@ impl DisplayCountsCache {
             query_matches,
             supplied,
         );
-        self.cached = Some((
-            DisplayCountsKey {
-                jamming_cells: supplied.jamming_cells,
-                tec_nodes: supplied.tec_nodes,
-                log_matches: supplied.log_matches.cloned(),
-                files_sig,
-                snapped_track_refs,
-                filter: *filter,
-                visibility: visibility.clone(),
-                event_marker_visibility: event_marker_visibility.clone(),
-                generated_marker_visibility: generated_marker_visibility.clone(),
-                query_matches: query_matches.cloned(),
-            },
-            counts,
-        ));
+        self.cached = files_generation.map(|files_generation| {
+            (
+                DisplayCountsKey {
+                    jamming_cells: supplied.jamming_cells,
+                    tec_nodes: supplied.tec_nodes,
+                    log_matches: supplied.log_matches.cloned(),
+                    files_generation,
+                    snapped_track_refs: supplied
+                        .snapped_tracks
+                        .into_iter()
+                        .flat_map(|snapped| snapped.iter().map(|(track_ref, _)| track_ref))
+                        .collect(),
+                    filter: *filter,
+                    visibility: visibility.clone(),
+                    event_marker_visibility: event_marker_visibility.clone(),
+                    generated_marker_visibility: generated_marker_visibility.clone(),
+                    query_matches: query_matches.cloned(),
+                },
+                counts,
+            )
+        });
         counts
     }
 }
@@ -382,6 +322,7 @@ mod tests {
     use std::sync::Arc;
 
     use chrono::{DateTime, Duration, Utc};
+    use gt_loaded_files::{FileHistory, LoadedFiles};
     use gt_types::sat_label::{SatLabelAnchor, SatLabelTier};
     use gt_types::time_types::GpsTime;
     use gt_types::{
@@ -589,6 +530,8 @@ mod tests {
         let counts = compute(&files, &vis, &GlobalFilter::default(), None);
         assert_eq!(counts.get(DisplayCategory::Tracks), 1);
         assert_eq!(counts.get(DisplayCategory::TrackPoints), 0);
+        assert_eq!(counts.get(DisplayCategory::GhostFixes), 0);
+        assert_eq!(counts.get(DisplayCategory::SkyGlyphs), 0);
         assert_eq!(counts.get(DisplayCategory::SatelliteLabels), 0);
         assert_eq!(counts.get(DisplayCategory::CustomMarkers), 0);
         assert_eq!(counts.get(DisplayCategory::GeneratedMarkers), 1);
@@ -624,6 +567,30 @@ mod tests {
     }
 
     #[test]
+    fn query_counts_follow_line_policy_while_fix_icons_are_hidden() {
+        let files = vec![fixture()];
+        let mut visibility = vis_all();
+        visibility.files[0].tracks[0].set_category_visible(DataCategory::Tpv, false);
+        let matches = crate::test_util::a_run_drawing(test_util::track0(), 0..2);
+        let counts = compute(
+            &files,
+            &visibility,
+            &GlobalFilter::default(),
+            Some(&matches),
+        );
+        assert_eq!(counts.get(DisplayCategory::TrackPoints), 0);
+        assert_eq!(counts.get(DisplayCategory::QueryHighlights), 1);
+        visibility.files[0].tracks[0].set_category_visible(DataCategory::Track, false);
+        let counts = compute(
+            &files,
+            &visibility,
+            &GlobalFilter::default(),
+            Some(&matches),
+        );
+        assert_eq!(counts.get(DisplayCategory::QueryHighlights), 0);
+    }
+
+    #[test]
     fn draws_outside_the_time_window_are_not_counted() {
         // A query ran before the filter was narrowed: its match on points
         // 0-1 is invisible now, so it must not be counted either.
@@ -648,9 +615,8 @@ mod tests {
     #[test]
     fn cache_agrees_with_compute_across_every_input_change() {
         let track_ref = test_util::track0();
-        let files = vec![fixture()];
-        // A second file state with an extra custom marker: same track shape
-        // otherwise, so only the structural files signature distinguishes it.
+        let mut files = LoadedFiles::new();
+        files.push(fixture(), FileHistory::None);
         let files_more = {
             let mut f = vec![fixture()];
             let lat = Latitude::new(55.0);
@@ -662,7 +628,9 @@ mod tests {
                 lat,
                 lon,
             ));
-            f
+            let mut loaded = LoadedFiles::new();
+            loaded.push(f.remove(0), FileHistory::None);
+            loaded
         };
 
         let vis_hidden = {
@@ -694,7 +662,7 @@ mod tests {
 
         let mut cache = DisplayCountsCache::default();
         type Args<'a> = (
-            &'a [LoadedFile],
+            &'a LoadedFiles,
             &'a TrackDataVisibility,
             &'a GlobalFilter,
             &'a EventMarkerVisibility,
@@ -718,8 +686,8 @@ mod tests {
             (&files, &vis0, &filter0, &emv0, &gmv0, None, None),
         ];
         for &(f, v, fi, em, gm, q, s) in steps {
-            let got = cache.get(f, v, fi, em, gm, q, supplied(s));
-            let want = DisplayCounts::compute(f, v, fi, em, gm, q, supplied(s));
+            let got = cache.get(MapFiles::Loaded(f.view()), v, fi, em, gm, q, supplied(s));
+            let want = DisplayCounts::compute(f.files(), v, fi, em, gm, q, supplied(s));
             assert_eq!(got, want);
         }
     }
@@ -728,7 +696,8 @@ mod tests {
     /// changed input runs it again.
     #[test]
     fn cache_skips_the_walk_when_inputs_are_unchanged() {
-        let files = vec![fixture()];
+        let mut files = LoadedFiles::new();
+        files.push(fixture(), FileHistory::None);
         let vis = vis_all();
         let (emv, gmv) = (
             EventMarkerVisibility::default(),
@@ -737,7 +706,7 @@ mod tests {
         let mut cache = DisplayCountsCache::default();
         let get = |cache: &mut DisplayCountsCache, filter: &GlobalFilter| {
             cache.get(
-                &files,
+                MapFiles::Loaded(files.view()),
                 &vis,
                 filter,
                 &emv,
@@ -755,5 +724,58 @@ mod tests {
         let narrowed = GlobalFilter::default().with_time_bounds(Some(t(2)), None);
         get(&mut cache, &narrowed);
         assert_eq!(cache.computes, 2, "a changed input must recompute");
+    }
+
+    #[test]
+    fn cache_recomputes_after_same_shaped_file_replacement() {
+        let mut files = LoadedFiles::new();
+        files.push(fixture(), FileHistory::None);
+        let visibility = vis_all();
+        let filter = GlobalFilter::default().with_time_bounds(Some(t(1)), Some(t(1)));
+        let events = EventMarkerVisibility::default();
+        let generated = GeneratedMarkerVisibility::default();
+        let mut cache = DisplayCountsCache::default();
+        let before = cache.get(
+            MapFiles::Loaded(files.view()),
+            &visibility,
+            &filter,
+            &events,
+            &generated,
+            None,
+            SuppliedCounts::default(),
+        );
+        assert_eq!(before.get(DisplayCategory::CustomMarkers), 0);
+        let mut replacement = fixture();
+        replacement.tracks[0].custom_markers[0].time = t(1);
+        files.replace_file(0, replacement, FileHistory::None);
+        let after = cache.get(
+            MapFiles::Loaded(files.view()),
+            &visibility,
+            &filter,
+            &events,
+            &generated,
+            None,
+            SuppliedCounts::default(),
+        );
+        assert_eq!(after.get(DisplayCategory::CustomMarkers), 1);
+        assert_eq!(cache.computes, 2);
+    }
+
+    #[test]
+    fn borrowed_files_are_counted_without_caching() {
+        let files = [fixture()];
+        let mut cache = DisplayCountsCache::default();
+        for _ in 0..2 {
+            cache.get(
+                MapFiles::Borrowed(&files),
+                &vis_all(),
+                &GlobalFilter::default(),
+                &EventMarkerVisibility::default(),
+                &GeneratedMarkerVisibility::default(),
+                None,
+                SuppliedCounts::default(),
+            );
+        }
+        assert_eq!(cache.computes, 2);
     }
 }

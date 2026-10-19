@@ -10,9 +10,9 @@ use std::sync::Arc;
 
 use gt_filter::GlobalFilter;
 use gt_logfile::ParsedLog;
-use gt_types::{FixRef, LoadedFile, MercPoint};
+use gt_types::{FileIdx, FixRef, LoadedFile, MercPoint, TrackIdx, TrackRef};
 
-use crate::visibility::{self, TrackDataVisibility};
+use crate::visibility::{PreparedTrackScope, TrackDataVisibility};
 
 /// Session-unique identity of a loaded log, handed out by `LoadedLogs`.
 ///
@@ -115,17 +115,82 @@ impl LogMatchLayer {
         visibility: &'a TrackDataVisibility,
         filter: &'a GlobalFilter,
     ) -> impl Iterator<Item = &'a LogMatch> {
-        self.matches.iter().filter(move |log_match| {
-            self.log
-                .parsed
-                .entries()
-                .get(log_match.entry_index)
-                .is_none_or(|entry| gt_filter::point_passes_time_filter(entry.timestamp, filter))
-                && log_match.fix.track.resolve(files).is_none_or(|_| {
-                    visibility::track_in_scope(files, visibility, filter, log_match.fix.track)
-                        .is_some()
-                })
+        let scope = LogMatchScope::new(files, visibility, filter);
+        self.matches
+            .iter()
+            .filter(move |log_match| scope.includes(self, log_match))
+    }
+}
+
+pub struct LogMatchScope<'a> {
+    tracks: Vec<Vec<Option<PreparedTrackScope<'a>>>>,
+    filter: &'a GlobalFilter,
+}
+
+impl<'a> LogMatchScope<'a> {
+    pub fn new(
+        files: &'a [LoadedFile],
+        visibility: &TrackDataVisibility,
+        filter: &'a GlobalFilter,
+    ) -> Self {
+        Self::from_prepared(files, filter, |track| {
+            Some(PreparedTrackScope::new(files, visibility, filter, track))
         })
+    }
+
+    pub fn from_prepared(
+        files: &'a [LoadedFile],
+        filter: &'a GlobalFilter,
+        mut prepare_track: impl FnMut(TrackRef) -> Option<PreparedTrackScope<'a>>,
+    ) -> Self {
+        Self {
+            tracks: files
+                .iter()
+                .enumerate()
+                .map(|(fi, file)| {
+                    file.tracks
+                        .iter()
+                        .enumerate()
+                        .map(|(ti, _)| {
+                            let track = TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti));
+                            prepare_track(track).filter(|scope| scope.track_ref() == track)
+                        })
+                        .collect()
+                })
+                .collect(),
+            filter,
+        }
+    }
+
+    pub fn loaded_track_is_in_scope(&self, track: TrackRef) -> bool {
+        track
+            .fi
+            .get(&self.tracks)
+            .and_then(|tracks| track.index.get(tracks))
+            .is_some_and(|scope| scope.is_some_and(|scope| scope.is_in_scope()))
+    }
+
+    fn includes(&self, layer: &LogMatchLayer, log_match: &LogMatch) -> bool {
+        layer
+            .log
+            .parsed
+            .entries()
+            .get(log_match.entry_index)
+            .is_none_or(|entry| gt_filter::point_passes_time_filter(entry.timestamp, self.filter))
+            && log_match
+                .fix
+                .track
+                .fi
+                .get(&self.tracks)
+                .and_then(|tracks| log_match.fix.track.index.get(tracks))
+                .is_none_or(|scope| scope.is_some_and(|scope| scope.is_in_scope()))
+    }
+
+    pub fn matches<'s>(&'s self, layer: &'s LogMatchLayer) -> impl Iterator<Item = &'s LogMatch> {
+        layer
+            .matches
+            .iter()
+            .filter(|log_match| self.includes(layer, log_match))
     }
 }
 
@@ -164,9 +229,10 @@ impl LogMatches {
         visibility: &TrackDataVisibility,
         filter: &GlobalFilter,
     ) -> usize {
+        let scope = LogMatchScope::new(files, visibility, filter);
         self.layers
             .iter()
-            .map(|layer| layer.matches_in_scope(files, visibility, filter).count())
+            .map(|layer| scope.matches(layer).count())
             .sum()
     }
 }
@@ -174,7 +240,7 @@ impl LogMatches {
 #[cfg(test)]
 mod tests {
     use chrono::TimeDelta;
-    use gt_types::{FileIdx, PointIdx, TrackIdx, TrackRef};
+    use gt_types::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
 
     use super::*;
     use crate::test_util;
@@ -294,5 +360,53 @@ mod tests {
 
         visibility.files[0].tracks[0].enabled = false;
         assert_eq!(matches.count_in_scope(&files, &visibility, &filter), 0);
+    }
+    #[rstest::rstest]
+    #[case::entry_inside_fix_outside(3, 0, 1)]
+    #[case::entry_outside_fix_inside(0, 3, 0)]
+    #[case::missing_entry(usize::MAX, 0, 1)]
+    fn log_scope_filters_entry_time_independently_of_fix_time(
+        #[case] entry_index: usize,
+        #[case] point_index: usize,
+        #[case] expected: usize,
+    ) {
+        let files = test_util::one_track_file();
+        let visibility = TrackDataVisibility::from_loaded(&files);
+        let filter = GlobalFilter::default()
+            .with_time_bounds(Some(test_util::start() + TimeDelta::seconds(2)), None);
+        let mut layer = a_layer_over_every_line();
+        layer.matches.truncate(1);
+        layer.matches[0].entry_index = entry_index;
+        layer.matches[0].fix.point = PointIdx::new(point_index);
+        assert_eq!(
+            layer.matches_in_scope(&files, &visibility, &filter).count(),
+            expected
+        );
+    }
+
+    #[test]
+    fn log_scope_reuses_prepared_tracks_across_layers_with_hidden_lines() {
+        let files = test_util::one_track_file();
+        let mut visibility = TrackDataVisibility::from_loaded(&files);
+        visibility.files[0].tracks[0].set_category_visible(DataCategory::Track, false);
+        let filter = GlobalFilter::default();
+        let mut preparations = 0;
+        let scope = LogMatchScope::from_prepared(&files, &filter, |track| {
+            preparations += 1;
+            Some(PreparedTrackScope::new(&files, &visibility, &filter, track))
+        });
+        let matches =
+            LogMatches::from_layers(vec![a_layer_over_every_line(), a_layer_over_every_line()]);
+        assert_eq!(preparations, 1);
+        assert_eq!(
+            matches
+                .layers()
+                .iter()
+                .map(|layer| scope.matches(layer).count())
+                .sum::<usize>(),
+            2 * test_util::POINT_COUNT
+        );
+        assert!(scope.loaded_track_is_in_scope(test_util::track0()));
+        assert!(!scope.loaded_track_is_in_scope(TrackRef::new(FileIdx::new(7), TrackIdx::new(0))));
     }
 }

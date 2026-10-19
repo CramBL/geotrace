@@ -2,14 +2,18 @@
 //! recording the filter rejects, the snapped vertices and error whiskers its
 //! time window hides, and the fixes a fit frames.
 
+use std::iter;
 use std::sync::Arc;
 
 use chrono::Duration;
 use gt_filter::GlobalFilter;
 use gt_map::test_util::{self, CENTER_LON, MapScene, WALKING_STEP_DEGREES};
 use gt_types::mercator::MercPoint;
-use gt_types::{LoadedFile, PointIdx};
-use gt_ui_types::{SnappedSegment, SnappedTrackGeometry, SnappedTracks, WhiskerAnchor};
+use gt_types::{DataCategory, LoadedFile, PointIdx};
+use gt_ui_types::{
+    DisplayCategory, QueryMatches, SnappedSegment, SnappedTrackGeometry, SnappedTracks,
+    WhiskerAnchor,
+};
 
 /// Snapped road geometry for track 0: one polyline beside the recorded fixes
 /// in `fixes`, one vertex per fix.
@@ -174,3 +178,129 @@ const STANDING_STEP_DEGREES: f64 = 0.000_001;
 /// Ten metres north in normalized Mercator at this latitude, offsetting the
 /// snapped geometry so it is its own ink beside the recorded track.
 const SNAPPED_OFFSET_MERC_Y: f64 = -1.5e-6;
+
+#[rstest::rstest]
+#[case::vertices(snapped_polyline_over)]
+#[case::whiskers(whiskers_over)]
+fn snapped_geometry_uses_query_visibility(
+    #[case] geometry: fn(&[LoadedFile], std::ops::Range<usize>) -> SnappedTracks,
+) {
+    let files = test_util::a_recording_of(30, STANDING_STEP_DEGREES);
+    let render = |snapped| {
+        let mut query = QueryMatches::default();
+        query
+            .hidden
+            .insert(test_util::track0(), iter::once(15..30).collect());
+        MapScene::of(files.clone())
+            .overlays(|overlays| {
+                overlays.snapped_tracks = Some(snapped);
+                overlays.query_matches = Some(query);
+            })
+            .render_one_frame()
+            .shapes_painted()
+    };
+    assert_eq!(
+        render(geometry(&files, 0..30)),
+        render(geometry(&files, 0..15))
+    );
+}
+
+#[rstest::rstest]
+#[case::track_line(false, true)]
+#[case::snapped_display(true, false)]
+fn snapped_geometry_follows_its_tree_and_display_policy(
+    #[case] show_line: bool,
+    #[case] show_snapped: bool,
+) {
+    let files = test_util::a_walking_recording();
+    let render = |snapped| {
+        let mut map = MapScene::of(files.clone())
+            .draw_state(|state| {
+                state
+                    .display_mask
+                    .set_visible(DisplayCategory::SnappedTracks, show_snapped)
+            })
+            .overlays(|overlays| overlays.snapped_tracks = snapped)
+            .render();
+        map.tree().files[0].tracks[0].set_category_visible(DataCategory::Track, show_line);
+        map.render_one_more_frame();
+        map.shapes_painted()
+    };
+    assert_eq!(
+        render(Some(snapped_polyline_over(&files, 0..30))),
+        render(None)
+    );
+}
+
+#[test]
+fn unattributed_snapped_segments_remain_complete_inside_a_partial_time_window() {
+    let files = test_util::a_walking_recording();
+    let mut geometry = snapped_polyline_over(&files, 0..30)
+        .get(test_util::track0())
+        .unwrap()
+        .as_ref()
+        .clone();
+    geometry.segments[0].recorded_points.clear();
+    let mut attributed_geometry = geometry.clone();
+    attributed_geometry.segments[0].recorded_points =
+        vec![PointIdx::new(0); attributed_geometry.segments[0].points.len()];
+    let mut snapped = SnappedTracks::default();
+    snapped.insert(test_util::track0(), Arc::new(geometry));
+    let mut attributed = SnappedTracks::default();
+    attributed.insert(test_util::track0(), Arc::new(attributed_geometry));
+    let filter = test_util::window_ending_at(14);
+    assert_eq!(
+        shapes_with(&files, filter, Some(snapped)),
+        shapes_with(&files, filter, Some(attributed))
+    );
+}
+
+#[test]
+fn query_hidden_snapped_vertices_create_a_gap_in_painting_and_hover() {
+    let files = test_util::a_walking_recording();
+    let center = test_util::drawn_positions(&files)[0];
+    let mut geometry = test_util::a_snapped_edge_at(center);
+    let segment = &mut geometry.segments[0];
+    let start = segment.points[0];
+    let end = segment.points[1];
+    segment.points = vec![
+        start,
+        MercPoint {
+            x: center.x - (center.x - start.x) * 0.5,
+            y: center.y,
+        },
+        MercPoint {
+            x: center.x + (end.x - center.x) * 0.5,
+            y: center.y,
+        },
+        end,
+    ];
+    segment.recorded_points = (0..4).map(PointIdx::new).collect();
+    segment.edge_spans[0].end = 4;
+    let mut snapped = SnappedTracks::default();
+    snapped.insert(test_util::track0(), Arc::new(geometry));
+    let mut map = MapScene::of(files.clone())
+        .overlays(|overlays| overlays.snapped_tracks = Some(snapped))
+        .hiding_the_fix_icons()
+        .centred_on(test_util::fix_position(&files, 0))
+        .render();
+    map.move_pointer_to(test_util::viewport_center());
+    map.render_one_more_frame();
+    assert!(
+        map.hover_label_texts()
+            .iter()
+            .any(|text| text.contains("H.C. Andersens Boulevard"))
+    );
+    let mut query = QueryMatches::default();
+    query
+        .hidden
+        .insert(test_util::track0(), iter::once(1..3).collect());
+    map.overlays().query_matches = Some(query);
+    map.render_one_more_frame();
+    map.render_one_more_frame();
+    assert!(
+        map.hover_label_texts()
+            .iter()
+            .all(|text| !text.contains("H.C. Andersens Boulevard"))
+    );
+}

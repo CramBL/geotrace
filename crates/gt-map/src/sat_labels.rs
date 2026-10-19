@@ -7,9 +7,24 @@
 //! highest-priority anchor wins each Mercator cell across all tracks at
 //! once.
 
-use crate::collision_grid;
 use gt_types::sat_label::SatLabelTier;
 use gt_types::{LoadedTrack, MercBounds, NavPoint, TrackRef};
+use gt_ui_types::{DisplayCategory, DisplayMask};
+
+use crate::collision_grid;
+
+pub(crate) struct SatelliteLabelDisplay(DisplayMask);
+
+impl SatelliteLabelDisplay {
+    pub(crate) fn new(mask: DisplayMask) -> Self {
+        Self(mask)
+    }
+
+    pub(crate) fn includes(&self, point: &NavPoint) -> bool {
+        self.0.is_visible(DisplayCategory::SatelliteLabels)
+            && (!point.is_ghost_fix() || self.0.is_visible(DisplayCategory::GhostFixes))
+    }
+}
 
 /// Reusable label-decimation scratch, held across frames by the map widget.
 pub(crate) type LabelSelection = collision_grid::DecimationScratch<Candidate>;

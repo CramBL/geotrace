@@ -1,7 +1,5 @@
 use gt_types::DataCategory;
-use gt_ui_types::MapElementRef;
-
-use crate::viewport::PlannedElement;
+use gt_ui_types::{MapElementRef, PresentElementRef};
 
 /// The nearest element present on the map per category group under the cursor.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -16,7 +14,7 @@ impl HoverCandidates {
     /// Keeps `candidate` when its category has no closer one yet. Callers feed
     /// candidates in nearest-first order, after [`crate::viewport::MapFramePlan`] proved
     /// that the element is present.
-    pub(crate) fn keep_nearest(&mut self, candidate: PlannedElement<'_>) {
+    pub(crate) fn keep_nearest(&mut self, candidate: PresentElementRef<'_>) {
         self.keep_nearest_ref(candidate.element_ref());
     }
 

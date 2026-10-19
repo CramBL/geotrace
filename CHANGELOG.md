@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Map & Tracks:** Fixed fit clipping start and finish flags when only ghost fixes, labels or sky glyphs were displayed.
+- **Map & Tracks:** Fixed fit and query reveal including data hidden by tree, query or marker type settings.
+- **Map & Tracks:** Fixed plot hover clearing the map highlight when a hidden fix preceded a visible candidate.
+- **Map & Tracks:** Fixed stale display counts after replacing a recording with the same number of points and markers.
+- **Map & Tracks:** Fixed query highlights disappearing when every other track layer was hidden.
+- **Map & Tracks:** Fixed map highlights appearing over fixes hidden by a query.
+- **Map & Tracks:** Fixed start and finish flags remaining on query-hidden fixes.
+
 ## 0.19.0 - 2026-10-04
 
 ### Added

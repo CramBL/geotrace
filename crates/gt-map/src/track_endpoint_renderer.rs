@@ -1,7 +1,5 @@
-//! The flags at the ends of a track: a green flag at the first fix the map
-//! draws for it and a chequered flag at the last, or one flag split between
-//! green and chequered where the track ends within [`ENDS_MEET_RADIUS_M`] of
-//! where it started.
+//! Endpoint flags appear at eligible track ends even when individual fix icons are hidden.
+//! Ends within [`ENDS_MEET_RADIUS_M`] share one split flag.
 //!
 //! The flags of two or more tracks within one cloth width of each other draw
 //! as one cluster flag with a count. The highlighted track's flags stay out
@@ -15,9 +13,14 @@ use std::iter;
 use std::num::NonZeroUsize;
 
 use egui::{Align2, Color32, FontId, Pos2, Ui, Vec2};
+#[cfg(test)]
 use gt_filter::GlobalFilter;
-use gt_types::{Latitude, Longitude, MercBounds, MercPoint, PlacedPoints, TrackRef};
+use gt_types::{
+    DataCategory, Latitude, Longitude, MercBounds, MercPoint, PlacedPoints, PointIdx, TrackRef,
+};
+use gt_ui_types::{DisplayCategory, DisplayMask, PreparedTrackEligibility, QueryMatches};
 use smallvec::SmallVec;
+use strum::IntoEnumIterator as _;
 
 use crate::collision_grid;
 use crate::icon_mesh::{
@@ -27,8 +30,6 @@ use crate::icon_mesh::{
 use crate::text_badge::{BadgePlateHeight, TextBadge};
 use crate::transform::MercTransform;
 
-/// The first and the last fix the map draws for one track: a placed fix whose
-/// time the global filter's window holds.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DrawnTrackEnds<'a> {
     placed: PlacedPoints<'a>,
@@ -38,35 +39,92 @@ pub(crate) struct DrawnTrackEnds<'a> {
 }
 
 impl<'a> DrawnTrackEnds<'a> {
-    /// `Some` where the window holds the time of at least one fix. The start flag
-    /// sits on the first fix with satellites in fix, or falls back to the first
-    /// point of the window when the track has no measured fix. `first` equals
-    /// `last` where it holds exactly one, and that fix then gets the start flag
-    /// alone.
-    ///
-    /// The ends come from [`gt_filter::time_filtered_range`], which reads the
-    /// fixes outside the window and stops at each end of it. A window that
-    /// keeps the whole track costs two reads, and the ends are the fixes the
-    /// per-fix time filter keeps even where the track's timestamps step
-    /// backwards.
+    #[cfg(test)]
     pub(crate) fn of(placed: PlacedPoints<'a>, filter: &GlobalFilter) -> Option<Self> {
-        let range = gt_filter::time_filtered_range(placed.fixes(), filter);
-        let last = range.end.checked_sub(1)?;
-        let fixes = placed.fixes();
-        let first_with_fix = (range.start..=last)
-            .filter(|&i| {
-                fixes.get(i).is_some_and(|p| {
-                    gt_filter::point_passes_time_filter(p.tpv.time().utc(), filter)
-                })
+        Self::of_indices(
+            placed,
+            gt_filter::time_filtered_range(placed.fixes(), filter)
+                .map(PointIdx::new)
+                .filter(|point| {
+                    placed
+                        .get(point.as_usize())
+                        .is_some_and(|point| filter.contains_time(point.fix.tpv.time().utc()))
+                }),
+        )
+    }
+
+    fn of_indices(
+        placed: PlacedPoints<'a>,
+        mut indices: impl DoubleEndedIterator<Item = PointIdx>,
+    ) -> Option<Self> {
+        let first_available = indices.next()?;
+        let last = indices.next_back().unwrap_or(first_available);
+        let first = iter::once(first_available)
+            .chain(indices)
+            .chain(iter::once(last))
+            .find(|index| {
+                placed
+                    .get(index.as_usize())
+                    .is_some_and(|point| point.fix.fix_count() > 0)
             })
-            .find(|&i| fixes.get(i).is_some_and(|p| p.fix_count() > 0));
-        let first = first_with_fix.unwrap_or(range.start);
+            .unwrap_or(first_available);
         Some(Self {
             placed,
-            first,
-            last,
+            first: first.as_usize(),
+            last: last.as_usize(),
             drawn_as_one_dot: false,
         })
+    }
+
+    pub(crate) fn for_track(
+        prepared: PreparedTrackEligibility<'a>,
+        mask: DisplayMask,
+        query_matches: Option<&QueryMatches>,
+        transient_overlay_drawn: bool,
+    ) -> Option<Self> {
+        let track_layer_enabled = DisplayCategory::iter().any(|category| {
+            mask.is_visible(category)
+                && match category {
+                    DisplayCategory::Tracks => prepared.category_visible(DataCategory::Track),
+                    DisplayCategory::TrackPoints
+                    | DisplayCategory::GhostFixes
+                    | DisplayCategory::SatelliteLabels
+                    | DisplayCategory::SkyGlyphs => prepared.category_visible(DataCategory::Tpv),
+                    DisplayCategory::QueryHighlights => {
+                        prepared.category_visible(DataCategory::Track)
+                            && query_matches.is_some_and(|matches| {
+                                matches
+                                    .draws
+                                    .iter()
+                                    .any(|layer| !layer.ranges_for(prepared.track_ref()).is_empty())
+                            })
+                    }
+                    DisplayCategory::CustomMarkers
+                    | DisplayCategory::GeneratedMarkers
+                    | DisplayCategory::EventMarkers
+                    | DisplayCategory::SnappedTracks
+                    | DisplayCategory::JammingHexes
+                    | DisplayCategory::TecHeatmap
+                    | DisplayCategory::LogMatches => false,
+                }
+        });
+        if !track_layer_enabled && !transient_overlay_drawn {
+            return None;
+        }
+        Self::of_indices(
+            prepared.track()?.placed_points()?,
+            prepared.available_fix_indices(),
+        )
+    }
+
+    pub(crate) fn anchor_positions(self) -> impl Iterator<Item = (Latitude, Longitude)> + 'a {
+        [self.first, self.last]
+            .into_iter()
+            .filter_map(move |index| {
+                self.placed
+                    .get(index)
+                    .map(|point| point.resolved_position())
+            })
     }
 
     /// The same ends for a track whose whole line draws as one dot, which gets
@@ -163,6 +221,11 @@ impl PendingEndpointFlags {
     ) {
         self.flags
             .extend(flags.into_iter().map(|flag| TrackEndFlag { track, flag }));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn anchor_positions(&self) -> impl Iterator<Item = MercPoint> + '_ {
+        self.flags.iter().map(|endpoint| endpoint.flag.merc)
     }
 
     /// Paints one flag per place: a cluster flag with a count where two or

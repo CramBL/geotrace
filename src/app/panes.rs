@@ -2,7 +2,7 @@ use egui::WidgetText;
 use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_tiles::{SimplificationOptions, TileId, UiResponse};
 use gt_loaded_files::RecordingNames;
-use gt_map::{MapAction, MapDrawContext, NavMap};
+use gt_map::{MapAction, MapDrawContext, MapFiles, NavMap};
 use gt_types::LoadedFile;
 use gt_ui_types::{HighlightScope, TrackDataVisibility};
 
@@ -77,7 +77,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                 if let Some(action) = self.map.draw(
                     ui,
                     MapDrawContext {
-                        files: &s.loaded_files,
+                        files: MapFiles::Loaded(s.loaded_files.view()),
                         recording_names: self.recording_names,
                         snapped_tracks: Some(self.snapped_tracks),
                         jamming_dataset: self.jamming_dataset,

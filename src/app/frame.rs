@@ -869,25 +869,27 @@ impl App {
                         s.tree.event_marker_visibility(),
                     )
                     .with_display_mask(s.display_mask);
-                    // `find_closest_tpv` applies the tree and the global
-                    // filter. The track's category toggle, the display mask
-                    // and a `keep`/`hide` query are the map's own gates.
-                    let closest = gt_plot::find_closest_tpv(
+                    let closest = gt_plot::find_closest_tpv_matching(
                         &s.loaded_files,
-                        s.tree.visibility(),
-                        &s.filter,
                         cursor_time,
-                    )
-                    .filter(|&(fi, ti, pi)| {
-                        scope.draws(MapElementRef::Fix(FixRef::new(TrackRef::new(fi, ti), pi)))
-                    });
+                        |track_ref| {
+                            let prepared = scope.prepare_track(track_ref);
+                            if !prepared.is_in_scope() {
+                                return None;
+                            }
+                            Some(move |point| {
+                                prepared.draws(MapElementRef::Fix(FixRef::new(track_ref, point)))
+                            })
+                        },
+                    );
                     s.highlight.plot_hover_time = closest.map(|_| cursor_time);
                     s.highlight.plot_hover_point = closest;
                     // `plot_cursor_snapped` is computed inside `show_track_plot`
                     // using a 2-D screen-space check (both time and metric value)
                     // so the overlay only triggers when egui_plot would also
                     // show a hover label.
-                    s.highlight.plot_hover_snapped = s.plot_state.plot_cursor_snapped;
+                    s.highlight.plot_hover_snapped =
+                        closest.is_some() && s.plot_state.plot_cursor_snapped;
                 } else {
                     s.highlight.plot_hover_time = None;
                     s.highlight.plot_hover_point = None;

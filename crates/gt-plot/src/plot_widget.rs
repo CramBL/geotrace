@@ -1036,48 +1036,54 @@ pub fn find_closest_tpv(
     filter: &GlobalFilter,
     target: DateTime<Utc>,
 ) -> Option<(FileIdx, TrackIdx, PointIdx)> {
+    find_closest_tpv_matching(files, target, |track_ref| {
+        gt_ui_types::visibility::track_in_scope(files, visibility, filter, track_ref)?;
+        let track = track_ref.resolve(files)?;
+        Some(move |point: PointIdx| {
+            point.get(&track.points).is_some_and(|point| {
+                gt_filter::point_passes_time_filter(point.tpv.time().utc(), filter)
+            })
+        })
+    })
+}
+
+pub fn find_closest_tpv_matching<P>(
+    files: &[LoadedFile],
+    target: DateTime<Utc>,
+    mut prepare_track: impl FnMut(TrackRef) -> Option<P>,
+) -> Option<(FileIdx, TrackIdx, PointIdx)>
+where
+    P: FnMut(PointIdx) -> bool,
+{
     let target_secs = target.timestamp() as f64;
     let mut best: Option<(FileIdx, TrackIdx, PointIdx, f64)> = None;
-
     for (fi, file) in files.iter().enumerate() {
         let fi = FileIdx::new(fi);
-        let Some(file_vis) = fi.get(&visibility.files) else {
-            continue;
-        };
-        if !file_vis.enabled {
-            continue;
-        }
         for (ti, track) in file.tracks.iter().enumerate() {
             let ti = TrackIdx::new(ti);
-            let Some(track_vis) = ti.get(&file_vis.tracks) else {
+            let Some(mut accepts_point) = prepare_track(TrackRef::new(fi, ti)) else {
                 continue;
             };
-            if !track_vis.enabled {
-                continue;
-            }
-            if !gt_filter::track_passes_filter(track, filter) {
-                continue;
-            }
-            // Only points inside the filter's time window are drawn on the map,
-            // so the cross-highlight must pick the nearest *visible* point - never
-            // one filtered out of view.
             let nearest = track
                 .points
                 .iter()
                 .enumerate()
-                .filter(|(_, p)| gt_filter::point_passes_time_filter(p.tpv.time().utc(), filter))
-                .map(|(i, p)| (i, (p.tpv.time().as_secs_f64() - target_secs).abs()))
+                .filter(|(index, _)| accepts_point(PointIdx::new(*index)))
+                .map(|(index, point)| {
+                    (
+                        PointIdx::new(index),
+                        (point.tpv.time().as_secs_f64() - target_secs).abs(),
+                    )
+                })
                 .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            let Some((pi, dist)) = nearest else {
-                continue;
-            };
-            if best.is_none_or(|(_, _, _, d)| dist < d) {
-                best = Some((fi, ti, PointIdx::new(pi), dist));
+            if let Some((point, distance)) = nearest
+                && best.is_none_or(|(_, _, _, previous)| distance < previous)
+            {
+                best = Some((fi, ti, point, distance));
             }
         }
     }
-
-    best.map(|(fi, ti, pi, _)| (fi, ti, pi))
+    best.map(|(fi, ti, point, _)| (fi, ti, point))
 }
 
 /// Grid base-color intensity, as a multiplier on the theme text color.

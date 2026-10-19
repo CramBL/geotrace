@@ -12,7 +12,7 @@ use gt_filter::GlobalFilter;
 use gt_fmt::UTC_SECOND_FORMAT;
 use gt_jam::dataset::JamDataset;
 use gt_jam::day_selection::{DaySelection, EmptyReason};
-use gt_loaded_files::RecordingNames;
+use gt_loaded_files::{LoadedFilesView, RecordingNames};
 use gt_track_builder::SpatialIndex;
 use gt_types::{DataCategory, FileIdx, GeoBounds, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::reference::ReferenceDocument;
@@ -250,9 +250,25 @@ impl TileAccess {
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum MapFiles<'a> {
+    Loaded(LoadedFilesView<'a>),
+    /// Borrowed fixtures are counted without caching.
+    Borrowed(&'a [LoadedFile]),
+}
+
+impl<'a> MapFiles<'a> {
+    pub fn files(self) -> &'a [LoadedFile] {
+        match self {
+            Self::Loaded(files) => files.files(),
+            Self::Borrowed(files) => files,
+        }
+    }
+}
+
 /// Context provided to the map for a single frame.
 pub struct MapDrawContext<'a> {
-    pub files: &'a [LoadedFile],
+    pub files: MapFiles<'a>,
     /// Per-file display names, resolved from the user's recording-name
     /// template, so the map's labels name a recording the way the side panel
     /// and the plot do.
@@ -296,7 +312,7 @@ impl<'a> MapDrawContext<'a> {
     /// pinned popup and the headless tests read it.
     pub fn scope(&self) -> MapPresence<'a> {
         MapEligibility::new(
-            self.files,
+            self.files.files(),
             self.visibility,
             self.filter,
             self.query_matches,
@@ -319,17 +335,12 @@ impl<'a> MapDrawContext<'a> {
     }
 
     fn recording_labels(&self) -> RecordingLabels<'a> {
-        RecordingLabels::new(self.files, self.recording_names)
+        RecordingLabels::new(self.files.files(), self.recording_names)
     }
 
     /// The bounding box around every element currently drawn, for framing.
     fn visible_bounding_box(&self) -> Option<GeoBounds> {
-        viewport::compute_visible_bounding_box(
-            self.files,
-            self.visibility,
-            self.filter,
-            *self.display_mask,
-        )
+        viewport::visible_bounds(self.scope())
     }
 
     /// The bounding box a reveal request frames: every match the run drew, or
@@ -338,10 +349,10 @@ impl<'a> MapDrawContext<'a> {
     fn reveal_bounding_box(&self, target: &MatchRevealTarget) -> Option<GeoBounds> {
         match target {
             MatchRevealTarget::WholeRun => {
-                viewport::matched_bounding_box(self.files, self.query_matches?, self.filter)
+                viewport::query_bounds(self.scope(), self.query_matches?)
             }
             MatchRevealTarget::OneMatch { track, points } => {
-                viewport::match_bounding_box(self.files, *track, points, self.filter)
+                viewport::query_match_bounds(self.scope(), *track, points)
             }
         }
     }
@@ -349,7 +360,7 @@ impl<'a> MapDrawContext<'a> {
     /// What the hover label stack reads a recorded element's label out of.
     fn hover_label_sources(&self) -> HoverLabelSources<'a> {
         HoverLabelSources {
-            files: self.files,
+            files: self.files.files(),
             recording_labels: self.recording_labels(),
             query_matches: self.query_matches,
         }
@@ -692,7 +703,7 @@ impl NavMap {
 
         // The mask is copied, so the display toggle below changes it only for
         // the next frame.
-        let scope = ctx.scope();
+        let scope = plan.presence();
         let hover = self.detect_hover(ui, &map_response, map_center, &plan);
         self.show_hover_labels(ui, &ctx, self.hover_candidates, hover, popups);
 
@@ -755,12 +766,12 @@ impl NavMap {
     /// A new file is visible by default, so it is always framed. Existing
     /// files honor their current visibility.
     fn adopt_new_files(&mut self, ui: &egui::Ui, ctx: &MapDrawContext<'_>, now: f64) {
-        if ctx.files.len() <= self.last_file_count {
+        if ctx.files.files().len() <= self.last_file_count {
             return;
         }
         self.new_file_boundary = self.last_file_count;
         let had_tracks = self.last_file_count > 0;
-        self.last_file_count = ctx.files.len();
+        self.last_file_count = ctx.files.files().len();
         // Only blink when adding to existing content.
         if had_tracks {
             self.blink.trigger(now);
@@ -768,7 +779,7 @@ impl NavMap {
         if let Some(bbox) = ctx.visible_bounding_box() {
             self.fit_to_bounds(ui.max_rect(), bbox);
         }
-        self.spatial_index = SpatialIndex::build(ctx.files);
+        self.spatial_index = SpatialIndex::build(ctx.files.files());
     }
 
     /// Advance the blink pulse, the hover-focus fade, and the query-match
@@ -835,7 +846,7 @@ impl NavMap {
         let transform = MercTransform::new(&projector, &self.map_memory, map_rect.center());
         let plan = viewport::MapFramePlan::compute(
             viewport::MapFrameInputs::new(
-                ctx.files,
+                ctx.files.files(),
                 ctx.visibility,
                 ctx.filter,
                 ctx.query_matches,
@@ -923,7 +934,7 @@ impl NavMap {
         }
         map = map.with_plugin(
             TrackLayers::builder()
-                .files(ctx.files)
+                .files(ctx.files.files())
                 .plan(plan)
                 .highlight(ctx.highlight)
                 .filter(ctx.filter)
@@ -948,9 +959,7 @@ impl NavMap {
             && let Some(snapped) = ctx.snapped_tracks
             && !snapped.is_empty()
         {
-            map = map.with_plugin(SnappedTrackRenderer::new(
-                snapped, ctx.files, ctx.filter, popups,
-            ));
+            map = map.with_plugin(SnappedTrackRenderer::new(snapped, plan, popups));
         }
         // Between the track line and the markers: a hexagon must not cover a
         // pin, and must be legible over the line it sits on. This renderer
@@ -962,8 +971,8 @@ impl NavMap {
             map = map.with_plugin(
                 log_match_renderer::LogMatchRenderer::builder()
                     .matches(ctx.log_matches)
-                    .files(ctx.files)
-                    .visibility(ctx.visibility)
+                    .plan(plan)
+                    .files(ctx.files.files())
                     .filter(ctx.filter)
                     .maybe_icon_meshes(self.icon_meshes.as_ref())
                     .dark_mode(ui.visuals().dark_mode)
@@ -1229,7 +1238,7 @@ impl NavMap {
                         if hover_labels::draw_disambig_row(
                             ui,
                             candidate,
-                            ctx.files,
+                            ctx.files.files(),
                             ctx.highlight.is_sticky(candidate),
                         )
                         .clicked()
@@ -1274,7 +1283,7 @@ impl NavMap {
                 return;
             };
             let track = point_ref.track();
-            let Some(file) = track.fi.get(ctx.files) else {
+            let Some(file) = track.fi.get(ctx.files.files()) else {
                 ui.close();
                 return;
             };
@@ -1328,7 +1337,7 @@ impl NavMap {
         };
         show_sticky_popup(
             ui.ctx(),
-            ctx.files,
+            ctx.files.files(),
             ctx.recording_labels(),
             sticky_ref,
             self.sticky_pos,

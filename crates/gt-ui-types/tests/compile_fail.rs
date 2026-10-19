@@ -23,4 +23,9 @@ fn map_policy_proofs_cannot_be_forged_or_partially_constructed() {
     fixtures.compile_fail("tests/compile_fail/map_eligibility_requires_all_sources.rs");
     fixtures.compile_fail("tests/compile_fail/present_element_ref_fields_are_private.rs");
     fixtures.compile_fail("tests/compile_fail/raw_ref_cannot_pin.rs");
+    fixtures.compile_fail("tests/compile_fail/global_filter_fields_are_private.rs");
+    fixtures.compile_fail("tests/compile_fail/global_filter_cannot_be_mutated_directly.rs");
+    fixtures.compile_fail("tests/compile_fail/validated_filter_values_are_private.rs");
+    fixtures.compile_fail("tests/compile_fail/prepared_track_proofs_are_private.rs");
+    fixtures.compile_fail("tests/compile_fail/eligible_element_ref_fields_are_private.rs");
 }

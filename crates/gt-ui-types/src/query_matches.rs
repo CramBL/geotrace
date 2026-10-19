@@ -152,7 +152,7 @@ impl QueryMatches {
 
     /// Whether the point is hidden (removed from the map).
     pub fn is_hidden(&self, track: TrackRef, point_index: usize) -> bool {
-        self.track_view(track).is_hidden(point_index)
+        Self::range_at(self.hidden_ranges(track), point_index).is_some()
     }
 
     /// Which `draw` layers cover the point. Few layers, so the caller stores

@@ -405,6 +405,9 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 | **visibility** | Whether a file/track/marker is shown on the map. Controlled via `Visibility` / `GlobalFilter`. | `track_visible`, `show_only_track` |
 | **highlight** | Transient hover or sticky selection state. | `MapHighlight`, `HighlightScope` |
 | **polyline span** | A maximal stretch of consecutive on-screen track points painted as one unbroken polyline. Viewport culling splits a track into spans, and key changes (e.g. fix-quality color) split spans into sub-spans. Renderer-internal to `gt-map`. | `PolylineSpans`, `VisiblePath::Spans`, `split_key_spans` |
+| **eligibility** | Semantic acceptance under file, track, tree, global filter, query and marker refinement policy, before display masking. | `MapEligibility`, `PreparedTrackEligibility` |
+| **map presence** | Eligibility with the display category enabled for a point-like element. | `MapPresence`, `PresentElementRef` |
+| **render manifestation** | The line, icon, label or glyph drawn for eligible data after layer selection, level of detail and culling. | `MapFramePlan`, `TrackLayers` |
 | **query** | A short declarative pipeline the user writes and runs over loaded data. Defined by the `gt-query` crate (lex → parse → check → run) and driven from the query window. | `gt-query`, `QueryWindow`, `CheckedQuery` |
 | **query session** | The run lifecycle of the editor's queries over the loaded data: the text, its per-query check results, the run in flight, and the last run's results. Lives in `gt-query-run`, above the language and below the UI. | `QuerySession`, `PreparedRun`, `RunResults` |
 | **stage** | One step of a query pipeline, separated by `\|`: the source (`points`), `with`, `window`, `where`, `draw`, `table`. | parser stage methods in `gt-query` |
@@ -497,3 +500,17 @@ Instead, use:
 
 A numeric base fits the domain of the value: hexadecimal for a `.gtd` signature, a record type or a flag bit, decimal for a size or a count.
 Group the digits of a large constant: `100_000_000`, and never `100000000`.
+
+### Map policy integration
+
+Add an ordinary map filter to the semantic authority in `gt-ui-types/src/visibility.rs`.
+Prepare each track decision once and reuse it while resolving elements.
+A line or label can contribute while fix icons are hidden, so keep render manifestation separate from point-like map presence.
+Extend the independent visibility property oracle and the compiled-versus-direct spatial candidate tests for each new policy dimension.
+Add compile-fail fixtures for new controlled construction or proof APIs.
+Counts use eligibility before display masking and scan only while requested.
+Fit scans use each displayed manifestation's contribution policy.
+
+Compile-fail tests enforce policy construction and checked interaction boundaries.
+Behavior tests verify that fit frames the anchors selected by rendering.
+Endpoint rendering and fit contribution selection use the shared endpoint policy, including anchors whose fix icons are hidden.

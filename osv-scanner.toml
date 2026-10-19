@@ -7,3 +7,18 @@ ignoreUntil = "2026-10-31T00:00:00Z"
 id = "RUSTSEC-2026-0186"
 reason = "Pending update for memmap2 (v0.5.10, v0.9.10)"
 ignoreUntil = "2026-10-31T00:00:00Z"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0370"
+reason = "Unmaintained after merger into zbus 6. Removal requires an AccessKit and AT-SPI release with zbus 6. See https://rustsec.org/advisories/RUSTSEC-2026-0370.html"
+ignoreUntil = "2026-10-31T00:00:00Z"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0371"
+reason = "Unmaintained after merger into zbus 6. Removal requires an AccessKit and AT-SPI release with zbus 6. See https://rustsec.org/advisories/RUSTSEC-2026-0371.html"
+ignoreUntil = "2026-10-31T00:00:00Z"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0372"
+reason = "Unmaintained after merger into zbus 6. Removal requires an AccessKit and AT-SPI release with zbus 6. See https://rustsec.org/advisories/RUSTSEC-2026-0372.html"
+ignoreUntil = "2026-10-31T00:00:00Z"
