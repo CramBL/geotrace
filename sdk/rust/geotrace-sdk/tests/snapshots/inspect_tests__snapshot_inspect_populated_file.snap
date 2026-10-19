@@ -32,6 +32,7 @@ Satellite usage reports: 1
   point 0, report 0: Global Complete, count None, 3 rows
     receiver time: 2025-05-23 11:33:20 UTC
     host time: unreported
+    Normalized time: 2025-05-23 11:33:20 UTC, input order: 0
     SatelliteUsage { identity: SatelliteIdentity { constellation: Gps, prn: 1 }, membership: Used }
     SatelliteUsage { identity: SatelliteIdentity { constellation: Galileo, prn: 11 }, membership: Used }
     SatelliteUsage { identity: SatelliteIdentity { constellation: Galileo, prn: 24 }, membership: Unused }
@@ -39,6 +40,7 @@ Satellite observation reports: 1
   point 0, report 0: Global Complete, count None, 3 rows
     receiver time: 2025-05-23 11:33:20 UTC
     host time: unreported
+    Normalized time: 2025-05-23 11:33:20 UTC, input order: 0
     SatelliteObservation { identity: SatelliteIdentity { constellation: Gps, prn: 1 }, elevation: Some(72.0), azimuth: Some(120.0), snr: Some(35.0) }
     SatelliteObservation { identity: SatelliteIdentity { constellation: Galileo, prn: 11 }, elevation: Some(18.0), azimuth: Some(310.0), snr: Some(30.0) }
     SatelliteObservation { identity: SatelliteIdentity { constellation: Galileo, prn: 24 }, elevation: Some(5.0), azimuth: Some(45.0), snr: Some(99.0) }

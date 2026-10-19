@@ -61,8 +61,9 @@ Tracks 8 to 11 start at the coordinates named in their own sections.
 ### Track 8: Antimeridian Crossing
 - **Purpose**: Verify coordinate wrapping and interpolation.
 - **Description**: Moves from Longitude 179.95° to -179.96° across the 180° meridian.
-- **Verification**: A marker, an event marker and an orphan satellite report share the time 15:00:05.5, half way between the fixes at 180.0° and -179.99°.
-  The SDK places all three at -179.995°, on the short arc between those two fixes.
+- **Verification**: A marker, an event marker and a satellite report share the time 15:00:05.5, half way between the fixes at 180.0° and -179.99°.
+  The satellite report attaches to the 180.0° fix alongside its 15:00:05 report and retains its 15:00:05.5 timestamp.
+  The SDK places the marker and event marker at -179.995°, on the short arc between those two fixes.
 
 ### Track 9: Stationary (Zero Speed)
 - **Purpose**: Stress test for zero-delta movement.
@@ -100,3 +101,16 @@ Tracks 8 to 11 start at the coordinates named in their own sections.
 The dataset includes explicit style overrides for certain event variants:
 - `style/custom-icon`: Overridden with the `Lightning` icon.
 - `style/custom-color`: Overridden with `#FF00FF` (Magenta).
+
+## Independent navigation evidence reference
+
+The Rust `gold_dataset` example also generates `navigation_evidence.gtd`.
+The file records a bent route with fixes without headings, used-count summaries and HDOP.
+Its source states include absent state, explicit Fix and explicit Unknown.
+Usage and observation samples have independent clocks, scope, coverage and counts.
+One usage list includes explicit unknown membership.
+A host-only observation at 10.4s normalizes to receiver time 0.4s.
+An empty GPS-scoped complete observation reports zero.
+Usage and observation orphans at normalized time 4.5s share one synthesized position with absent state.
+The example checks decoded equality after writing.
+The four-language `gold.gtd` comparison uses the shared CSV inputs.

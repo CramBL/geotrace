@@ -11,11 +11,14 @@
 
 use chrono::Datelike as _;
 use geotrace_sdk::{
-    Angle, Annotation, AnnotationIcon, Channel, ChannelUnit, Constellation, EventMarker,
-    EventMarkerStyle, MarkerIcon, Meta, NavFileBuilder, NavFix, NavFixTime, NavRecorder,
-    RecordedFixTimestamps, Satellite, SatelliteReport, TravelMode, Velocity,
+    Angle, Annotation, AnnotationIcon, Channel, ChannelUnit, Constellation, ConstellationSet,
+    EventMarker, EventMarkerStyle, MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix, NavFixTime,
+    NavRecorder, PositionProvenance, RecordedFixTimestamps, Satellite, SatelliteCoverage,
+    SatelliteIdentity, SatelliteMembership, SatelliteObservation, SatelliteObservationReport,
+    SatelliteReport, SatelliteScope, SatelliteUsage, SatelliteUsageReport, SolutionState,
+    TravelMode, Velocity,
 };
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -57,6 +60,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Verifying round-trip integrity...");
     verify_gold_file(base_dir.join("gold.gtd"))?;
     println!("Verified!");
+    let evidence = navigation_evidence_fixture()?;
+    let evidence_path = base_dir.join("navigation_evidence.gtd");
+    evidence.write_to_file(&evidence_path)?;
+    assert_eq!(NavFile::open(&evidence_path)?, evidence);
 
     Ok(())
 }
@@ -113,7 +120,7 @@ fn load_satellites_and_fixes(
     recorder: &mut NavRecorder,
     base_dir: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut satellite_reports: HashMap<(String, String), Vec<Satellite>> = HashMap::new();
+    let mut satellite_reports: BTreeMap<(String, String), Vec<Satellite>> = BTreeMap::new();
     let sat_file = File::open(base_dir.join("satellites.csv"))?;
     let reader = BufReader::new(sat_file);
     for line in reader.lines().skip(1) {
@@ -260,7 +267,7 @@ fn load_events(
 }
 
 fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
-    let file = geotrace_sdk::NavFile::open(path)?;
+    let file = NavFile::open(path)?;
 
     let meta = file.meta();
     assert!(meta.title().unwrap().contains("Gold Dataset 🏆"));
@@ -270,22 +277,21 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     assert_eq!(meta.travel_mode(), Some(&TravelMode::Bicycle));
 
     let points = file.nav_points();
-    assert_eq!(points.len(), 210);
+    assert_eq!(points.len(), 209);
 
-    // Track 8 Antimeridian: 10 fixes plus the ghost fix of the orphan satellite
-    // report at 15:00:05.5. Check the first and the last point.
     let track_8_points: Vec<_> = points
         .iter()
         .filter(|p| p.fix.lon.as_degrees() > 179.9 || p.fix.lon.as_degrees() < -179.9)
         .collect();
-    assert_eq!(track_8_points.len(), 11);
+    assert_eq!(track_8_points.len(), 10);
     assert!((track_8_points[0].fix.lon.as_degrees() - 179.95).abs() < 1e-6);
-    assert!((track_8_points[10].fix.lon.as_degrees() - (-179.96)).abs() < 1e-6);
-    // The SDK places the orphan satellite report's ghost fix on the short arc
-    // between the two fixes around it: the report at 15:00:05.5 has no fix of
-    // its own.
-    assert!((track_8_points[6].fix.lon.as_degrees() - (-179.995)).abs() < 1e-6);
-    assert_eq!(track_8_points[6].fix.time.sys_time(), None);
+    assert!((track_8_points[9].fix.lon.as_degrees() - (-179.96)).abs() < 1e-6);
+    let reports = &track_8_points[5].satellite_evidence().observations;
+    assert_eq!(reports.len(), 2);
+    assert_eq!(
+        (reports[1].time.effective() - reports[0].time.effective()).num_milliseconds(),
+        500
+    );
 
     // Track 9 Stationary
     let track_9_points: Vec<_> = points
@@ -464,4 +470,124 @@ fn parse_time(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     geotrace_sdk::Timestamp::try_from_iso8601(s)
         .ok()
         .map(Into::into)
+}
+
+fn navigation_evidence_fixture() -> Result<NavFile, Box<dyn std::error::Error>> {
+    let base = parse_time("2025-01-01T00:00:00Z").expect("fixture time");
+    let mut recorder = NavFileBuilder::new().with_scrubbed_provenance().open();
+    for (second, latitude, state, count) in [
+        (0, 55.0, Some(SolutionState::Fix), Some(8)),
+        (1, 55.5, None, None),
+        (2, 55.1, Some(SolutionState::Unknown), Some(0)),
+    ] {
+        let gps = base + chrono::Duration::seconds(second);
+        recorder.add(
+            NavFix::builder()
+                .time(NavFixTime::Both {
+                    gps,
+                    sys: gps + chrono::Duration::seconds(10),
+                })
+                .lat(Angle::degrees(latitude))
+                .lon(Angle::degrees(12.0 + second as f64 * 0.1))
+                .maybe_state(state)
+                .maybe_used_count(count)
+                .hdop(0.9)
+                .build(),
+        );
+    }
+    recorder.add(
+        SatelliteUsageReport::builder()
+            .time(NavFixTime::Receiver(
+                base + chrono::Duration::milliseconds(400),
+            ))
+            .scope(SatelliteScope::Global)
+            .coverage(SatelliteCoverage::Partial)
+            .reported_count(8)
+            .satellites(vec![
+                SatelliteUsage::new(
+                    SatelliteIdentity::new(Constellation::Gps, 1),
+                    SatelliteMembership::Used,
+                ),
+                SatelliteUsage::new(
+                    SatelliteIdentity::new(Constellation::Gps, 2),
+                    SatelliteMembership::Unknown,
+                ),
+            ])
+            .build(),
+    );
+    recorder.add(
+        SatelliteObservationReport::builder()
+            .time(NavFixTime::Host(
+                base + chrono::Duration::milliseconds(10_400),
+            ))
+            .scope(SatelliteScope::Global)
+            .coverage(SatelliteCoverage::Partial)
+            .satellites(vec![
+                SatelliteObservation::builder()
+                    .identity(SatelliteIdentity::new(Constellation::Gps, 1))
+                    .snr(0.0)
+                    .azimuth(90.0)
+                    .build(),
+            ])
+            .build(),
+    );
+    recorder.add(
+        SatelliteObservationReport::builder()
+            .time(NavFixTime::Receiver(
+                base + chrono::Duration::milliseconds(2400),
+            ))
+            .scope(SatelliteScope::Constellations(ConstellationSet::new(
+                Constellation::Gps,
+                [],
+            )))
+            .coverage(SatelliteCoverage::Complete)
+            .reported_count(0)
+            .satellites(Vec::new())
+            .build(),
+    );
+    recorder.add(
+        SatelliteUsageReport::builder()
+            .time(NavFixTime::Receiver(
+                base + chrono::Duration::milliseconds(4500),
+            ))
+            .scope(SatelliteScope::Global)
+            .coverage(SatelliteCoverage::Complete)
+            .reported_count(0)
+            .satellites(Vec::new())
+            .build(),
+    );
+    recorder.add(
+        SatelliteObservationReport::builder()
+            .time(NavFixTime::Host(
+                base + chrono::Duration::milliseconds(14_500),
+            ))
+            .scope(SatelliteScope::Global)
+            .coverage(SatelliteCoverage::Partial)
+            .satellites(Vec::new())
+            .build(),
+    );
+    let file = recorder.finish()?;
+    assert_eq!(file.nav_points().len(), 4);
+    let source = &file.nav_points()[0];
+    assert_eq!(source.fix.state, Some(SolutionState::Fix));
+    assert_eq!(source.fix.used_count, Some(8));
+    assert_eq!(source.fix.heading, None);
+    assert_eq!(source.fix.hdop, Some(0.9));
+    assert_eq!(source.fix.eph_m, None);
+    assert_eq!(
+        source.satellite_evidence().observations[0]
+            .placement
+            .expect("placement")
+            .normalized_time,
+        base + chrono::Duration::milliseconds(400)
+    );
+    let carrier = &file.nav_points()[3];
+    assert_eq!(
+        carrier.fix.position_provenance,
+        Some(PositionProvenance::SdkSynthesized)
+    );
+    assert_eq!(carrier.fix.state, None);
+    assert_eq!(carrier.satellite_evidence().usage.len(), 1);
+    assert_eq!(carrier.satellite_evidence().observations.len(), 1);
+    Ok(file)
 }

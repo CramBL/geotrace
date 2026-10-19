@@ -9,10 +9,12 @@ the app).
 
 ### Added
 
+- Rust recorders accept independent satellite usage and observation samples with preserved timestamps.
 - Rust `NavFix` supports optional navigation state, method, dimension, used count, dilution of precision and coordinate origin.
 
 ### Changed
 
+- Multiple satellite reports can associate with one fix, and orphan reports with equal normalized times share one synthesized position.
 - New recordings use GTD version 3, and readers accept versions 1, 2 and 3.
 - **Breaking:** External Rust callers construct `NavFix` through `NavFix::builder()`.
 

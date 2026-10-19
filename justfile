@@ -114,7 +114,7 @@ bench-map-policy *ARGS:
 [group("native")]
 examples:
     bash scripts/examples.sh
-    git diff --exit-code --stat -- tests/fixtures/demo_trip/demo_trip.gtd tests/fixtures/gold_dataset/gold.gtd \
+    git diff --exit-code --stat -- tests/fixtures/demo_trip/demo_trip.gtd tests/fixtures/gold_dataset/gold.gtd tests/fixtures/gold_dataset/navigation_evidence.gtd \
         || { echo "error: an example rewrote a committed fixture, commit the new bytes" >&2; exit 1; }
 
 

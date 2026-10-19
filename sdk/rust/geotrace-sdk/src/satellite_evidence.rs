@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use chrono::{DateTime, Utc};
 use strum::IntoEnumIterator as _;
 
 use crate::{Constellation, NavFixTime, Satellite, SatelliteReport};
@@ -126,6 +127,37 @@ pub struct SatelliteObservation {
     pub snr: Option<f32>,
 }
 
+impl From<&Satellite> for SatelliteObservation {
+    fn from(satellite: &Satellite) -> Self {
+        Self {
+            identity: SatelliteIdentity::new(satellite.constellation, satellite.prn),
+            elevation: satellite.elevation,
+            azimuth: satellite.azimuth,
+            snr: satellite.snr,
+        }
+    }
+}
+
+/// Recorder association metadata on the common navigation clock.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct SatelliteReportPlacement {
+    /// Report time after clock normalization and orphan placement.
+    pub normalized_time: DateTime<Utc>,
+    /// Zero-based report insertion order across both report kinds.
+    pub input_order: u64,
+}
+
+impl SatelliteReportPlacement {
+    /// Record normalized time and insertion order without changing the source clocks.
+    pub const fn new(normalized_time: DateTime<Utc>, input_order: u64) -> Self {
+        Self {
+            normalized_time,
+            input_order,
+        }
+    }
+}
+
 /// Complete coverage makes omitted identities known-unused within `scope`.
 /// An explicit unknown membership remains unknown under complete coverage.
 #[derive(Clone, Debug, PartialEq, bon::Builder)]
@@ -133,6 +165,8 @@ pub struct SatelliteObservation {
 pub struct SatelliteUsageReport {
     /// Original receiver and host timestamps.
     pub time: NavFixTime,
+    /// Absent for evidence without recorder association metadata.
+    pub placement: Option<SatelliteReportPlacement>,
     /// Explicit global or constellation-set scope.
     pub scope: SatelliteScope,
     /// Completeness of the identity list within the scope.
@@ -149,6 +183,8 @@ pub struct SatelliteUsageReport {
 pub struct SatelliteObservationReport {
     /// Original receiver and host timestamps.
     pub time: NavFixTime,
+    /// Absent for evidence without recorder association metadata.
+    pub placement: Option<SatelliteReportPlacement>,
     /// Explicit global or constellation-set scope.
     pub scope: SatelliteScope,
     /// Completeness of the identity list within the scope.
@@ -189,6 +225,10 @@ impl SatelliteEvidence {
             return None;
         };
         if usage.time != observations.time
+            || usage.placement.map(|placement| placement.normalized_time)
+                != observations
+                    .placement
+                    .map(|placement| placement.normalized_time)
             || usage.scope != SatelliteScope::Global
             || observations.scope != SatelliteScope::Global
             || usage.coverage != SatelliteCoverage::Complete
@@ -278,6 +318,7 @@ impl From<&SatelliteReport> for SatelliteEvidence {
         Self {
             usage: vec![SatelliteUsageReport {
                 time: report.time,
+                placement: None,
                 scope: SatelliteScope::Global,
                 coverage: SatelliteCoverage::Complete,
                 reported_count: None,
@@ -299,21 +340,14 @@ impl From<&SatelliteReport> for SatelliteEvidence {
             }],
             observations: vec![SatelliteObservationReport {
                 time: report.time,
+                placement: None,
                 scope: SatelliteScope::Global,
                 coverage: SatelliteCoverage::Complete,
                 reported_count: None,
                 satellites: report
                     .tracked
                     .iter()
-                    .map(|satellite| SatelliteObservation {
-                        identity: SatelliteIdentity {
-                            constellation: satellite.constellation,
-                            prn: satellite.prn,
-                        },
-                        elevation: satellite.elevation,
-                        azimuth: satellite.azimuth,
-                        snr: satellite.snr,
-                    })
+                    .map(SatelliteObservation::from)
                     .collect(),
             }],
         }

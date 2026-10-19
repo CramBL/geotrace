@@ -1,7 +1,8 @@
 use geotrace_sdk::{
     Angle, Constellation, DateTime, Duration, NavFile, NavFileBuilder, NavFix, NavFixTime,
     SatelliteCoverage, SatelliteEvidence, SatelliteIdentity, SatelliteMembership,
-    SatelliteObservationReport, SatelliteScope, SatelliteUsage, SatelliteUsageReport,
+    SatelliteObservationReport, SatelliteReportPlacement, SatelliteScope, SatelliteUsage,
+    SatelliteUsageReport,
 };
 use gt_history::{
     Database, DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentId,
@@ -3868,6 +3869,7 @@ fn version_3_satellite_evidence_retains_metadata_and_samples_in_history() {
     let mut file = recorder.finish().unwrap();
     let usage = SatelliteUsageReport::builder()
         .time(time)
+        .placement(SatelliteReportPlacement::new(time.effective(), 0))
         .scope(SatelliteScope::Global)
         .coverage(SatelliteCoverage::Complete)
         .reported_count(8)
@@ -3880,13 +3882,19 @@ fn version_3_satellite_evidence_retains_metadata_and_samples_in_history() {
         .time(NavFixTime::Host(
             time.effective() + Duration::milliseconds(400),
         ))
+        .placement(SatelliteReportPlacement::new(
+            time.effective() + Duration::milliseconds(400),
+            2,
+        ))
         .scope(SatelliteScope::Global)
         .coverage(SatelliteCoverage::Partial)
         .reported_count(12)
         .satellites(Vec::new())
         .build();
+    let mut repeated_usage = usage.clone();
+    repeated_usage.placement = Some(SatelliteReportPlacement::new(time.effective(), 1));
     file.nav_points_mut()[0].set_satellite_evidence(SatelliteEvidence::new(
-        vec![usage.clone(), usage],
+        vec![usage, repeated_usage],
         vec![observations],
     ));
     let mut bytes = Vec::new();

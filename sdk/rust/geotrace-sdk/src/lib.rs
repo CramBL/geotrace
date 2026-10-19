@@ -44,8 +44,8 @@ pub use provenance::{
 };
 pub use satellite_evidence::{
     ConstellationSet, SatelliteCoverage, SatelliteEvidence, SatelliteIdentity, SatelliteMembership,
-    SatelliteObservation, SatelliteObservationReport, SatelliteScope, SatelliteUsage,
-    SatelliteUsageReport,
+    SatelliteObservation, SatelliteObservationReport, SatelliteReportPlacement, SatelliteScope,
+    SatelliteUsage, SatelliteUsageReport,
 };
 pub use types::{
     Annotation, AnnotationIcon, Channel, Constellation, DebugTimeRepair, EventMarker,

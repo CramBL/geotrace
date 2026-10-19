@@ -542,8 +542,8 @@ static void verify_metadata(const GtdNavFile *file) {
 
 static void verify_nav_points(const GtdNavFile *file) {
     size_t nav_points = gtd_nav_file_nav_point_count(file);
-    if (nav_points != 210) {
-        FAILF("expected 210 nav points, got %zu", nav_points);
+    if (nav_points != 209) {
+        FAILF("expected 209 nav points, got %zu", nav_points);
     }
 
     size_t antimeridian = 0;
@@ -554,8 +554,8 @@ static void verify_nav_points(const GtdNavFile *file) {
             antimeridian++;
         }
     }
-    if (antimeridian != 11) {
-        FAILF("expected 11 antimeridian points, got %zu", antimeridian);
+    if (antimeridian != 10) {
+        FAILF("expected 10 antimeridian points, got %zu", antimeridian);
     }
 }
 
@@ -622,6 +622,6 @@ int main(int argc, char **argv) {
     gtd_nav_file_destroy(nav);
 
     printf("Written: %s\n", out_path);
-    printf("Gold dataset verified. Nav points: 210, Event markers: 7, Channels: 2\n");
+    printf("Gold dataset verified. Nav points: 209, Event markers: 7, Channels: 2\n");
     return 0;
 }

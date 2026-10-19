@@ -2,6 +2,7 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Duration as StdDuration;
 
+use egui::accesskit::Role;
 use egui_kittest::{Harness, kittest::Queryable as _};
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
 use gt_log_view::{FilterGroupOperator, LoadedLog};
@@ -518,7 +519,14 @@ fn snapshot_log_association_dialog() {
         .click();
     harness.inner.run_steps(5);
 
-    harness.snapshot_with_color_tolerance("log_association_dialog");
+    let dialog = harness
+        .inner
+        .get_by_role_and_label(Role::Window, log_viewer::association_dialog::TITLE)
+        .rect();
+    assert!(dialog.center().distance(egui::pos2(640.0, 400.0)) < 0.5);
+    harness
+        .snapshot_region_with_color_tolerance("log_association_dialog", dialog.expand(8.0))
+        .expect("association dialog snapshot");
 }
 
 /// A recording from a day the log does not cover, which the dialog lists as a
