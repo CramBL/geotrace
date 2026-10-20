@@ -3,6 +3,7 @@
 
 use gt_egui_mipmap::{LevelSelection, MipMap, SelectionRange};
 use gt_types::MetricKind;
+use rustc_hash::FxHashMap;
 
 use super::FilterTimeWindow;
 use crate::series::TrackSeries;
@@ -110,82 +111,53 @@ type ComponentRunLevels = Vec<LevelSelection>;
 /// per channel component (dynamic, hence no `Copy`).
 #[derive(Debug, Clone, Default)]
 pub(super) struct TrackLevelCache {
-    total_seen: LevelSelection,
-    total_fix: LevelSelection,
-    gps_seen: LevelSelection,
-    gps_fix: LevelSelection,
-    glonass_seen: LevelSelection,
-    glonass_fix: LevelSelection,
-    galileo_seen: LevelSelection,
-    galileo_fix: LevelSelection,
-    beidou_seen: LevelSelection,
-    beidou_fix: LevelSelection,
-    navic_seen: LevelSelection,
-    navic_fix: LevelSelection,
-    qzss_seen: LevelSelection,
-    qzss_fix: LevelSelection,
+    pub(super) metrics: FxHashMap<MetricKind, Vec<LevelSelection>>,
     velocity_kmh: LevelSelection,
     eph_m: LevelSelection,
     heading_deg: LevelSelection,
     clock_delta_ms: LevelSelection,
-    util_all: LevelSelection,
-    util_gps: LevelSelection,
-    util_glonass: LevelSelection,
-    util_galileo: LevelSelection,
-    util_beidou: LevelSelection,
-    util_navic: LevelSelection,
-    util_qzss: LevelSelection,
-    slip_all: LevelSelection,
-    slip_gps: LevelSelection,
-    slip_glonass: LevelSelection,
-    slip_galileo: LevelSelection,
-    slip_beidou: LevelSelection,
-    slip_navic: LevelSelection,
-    slip_qzss: LevelSelection,
     /// One entry per channel of the track, then one per component of that
     /// channel.
     pub(super) channels: Vec<Vec<ComponentRunLevels>>,
 }
 
 impl TrackLevelCache {
-    /// `None` for metrics with no mipmap: snap error, interference, the
-    /// geomagnetic indices and TEC draw from their own per-track series, not
-    /// from `TrackSeries`.
+    /// Selection for a metric with one continuous series.
     pub(super) fn level_for(&self, kind: MetricKind) -> Option<LevelSelection> {
         Some(match kind {
-            MetricKind::SatsSeen => self.total_seen,
-            MetricKind::SatsFix => self.total_fix,
-            MetricKind::GpsSeen => self.gps_seen,
-            MetricKind::GpsFix => self.gps_fix,
-            MetricKind::GlonassSeen => self.glonass_seen,
-            MetricKind::GlonassFix => self.glonass_fix,
-            MetricKind::GalileoSeen => self.galileo_seen,
-            MetricKind::GalileoFix => self.galileo_fix,
-            MetricKind::BeidouSeen => self.beidou_seen,
-            MetricKind::BeidouFix => self.beidou_fix,
-            MetricKind::NavicSeen => self.navic_seen,
-            MetricKind::NavicFix => self.navic_fix,
-            MetricKind::QzssSeen => self.qzss_seen,
-            MetricKind::QzssFix => self.qzss_fix,
             MetricKind::Velocity => self.velocity_kmh,
             MetricKind::Eph => self.eph_m,
             MetricKind::HeadingDeg => self.heading_deg,
             MetricKind::ClockDeltaMs => self.clock_delta_ms,
-            MetricKind::UtilAll => self.util_all,
-            MetricKind::UtilGps => self.util_gps,
-            MetricKind::UtilGlonass => self.util_glonass,
-            MetricKind::UtilGalileo => self.util_galileo,
-            MetricKind::UtilBeidou => self.util_beidou,
-            MetricKind::UtilNavic => self.util_navic,
-            MetricKind::UtilQzss => self.util_qzss,
-            MetricKind::SlipAll => self.slip_all,
-            MetricKind::SlipGps => self.slip_gps,
-            MetricKind::SlipGlonass => self.slip_glonass,
-            MetricKind::SlipGalileo => self.slip_galileo,
-            MetricKind::SlipBeidou => self.slip_beidou,
-            MetricKind::SlipNavic => self.slip_navic,
-            MetricKind::SlipQzss => self.slip_qzss,
-            MetricKind::SnapError
+            MetricKind::SatsSeen
+            | MetricKind::SatsFix
+            | MetricKind::GpsSeen
+            | MetricKind::GpsFix
+            | MetricKind::GlonassSeen
+            | MetricKind::GlonassFix
+            | MetricKind::GalileoSeen
+            | MetricKind::GalileoFix
+            | MetricKind::BeidouSeen
+            | MetricKind::BeidouFix
+            | MetricKind::NavicSeen
+            | MetricKind::NavicFix
+            | MetricKind::QzssSeen
+            | MetricKind::QzssFix
+            | MetricKind::UtilAll
+            | MetricKind::UtilGps
+            | MetricKind::UtilGlonass
+            | MetricKind::UtilGalileo
+            | MetricKind::UtilBeidou
+            | MetricKind::UtilNavic
+            | MetricKind::UtilQzss
+            | MetricKind::SlipAll
+            | MetricKind::SlipGps
+            | MetricKind::SlipGlonass
+            | MetricKind::SlipGalileo
+            | MetricKind::SlipBeidou
+            | MetricKind::SlipNavic
+            | MetricKind::SlipQzss
+            | MetricKind::SnapError
             | MetricKind::Jamming
             | MetricKind::Hp30
             | MetricKind::Kp
@@ -201,39 +173,39 @@ impl crate::series::TrackSeries {
     /// [`TrackLevelCache::level_for`].
     pub(super) fn mipmap_for(&self, kind: MetricKind) -> Option<&gt_egui_mipmap::MipMap> {
         Some(match kind {
-            MetricKind::SatsSeen => &self.total_seen,
-            MetricKind::SatsFix => &self.total_fix,
-            MetricKind::GpsSeen => &self.gps_seen,
-            MetricKind::GpsFix => &self.gps_fix,
-            MetricKind::GlonassSeen => &self.glonass_seen,
-            MetricKind::GlonassFix => &self.glonass_fix,
-            MetricKind::GalileoSeen => &self.galileo_seen,
-            MetricKind::GalileoFix => &self.galileo_fix,
-            MetricKind::BeidouSeen => &self.beidou_seen,
-            MetricKind::BeidouFix => &self.beidou_fix,
-            MetricKind::NavicSeen => &self.navic_seen,
-            MetricKind::NavicFix => &self.navic_fix,
-            MetricKind::QzssSeen => &self.qzss_seen,
-            MetricKind::QzssFix => &self.qzss_fix,
             MetricKind::Velocity => &self.velocity_kmh,
             MetricKind::Eph => &self.eph_m,
             MetricKind::HeadingDeg => &self.heading_deg,
             MetricKind::ClockDeltaMs => &self.clock_delta_ms,
-            MetricKind::UtilAll => &self.util_all,
-            MetricKind::UtilGps => &self.util_gps,
-            MetricKind::UtilGlonass => &self.util_glonass,
-            MetricKind::UtilGalileo => &self.util_galileo,
-            MetricKind::UtilBeidou => &self.util_beidou,
-            MetricKind::UtilNavic => &self.util_navic,
-            MetricKind::UtilQzss => &self.util_qzss,
-            MetricKind::SlipAll => &self.slip_all,
-            MetricKind::SlipGps => &self.slip_gps,
-            MetricKind::SlipGlonass => &self.slip_glonass,
-            MetricKind::SlipGalileo => &self.slip_galileo,
-            MetricKind::SlipBeidou => &self.slip_beidou,
-            MetricKind::SlipNavic => &self.slip_navic,
-            MetricKind::SlipQzss => &self.slip_qzss,
-            MetricKind::SnapError
+            MetricKind::SatsSeen
+            | MetricKind::SatsFix
+            | MetricKind::GpsSeen
+            | MetricKind::GpsFix
+            | MetricKind::GlonassSeen
+            | MetricKind::GlonassFix
+            | MetricKind::GalileoSeen
+            | MetricKind::GalileoFix
+            | MetricKind::BeidouSeen
+            | MetricKind::BeidouFix
+            | MetricKind::NavicSeen
+            | MetricKind::NavicFix
+            | MetricKind::QzssSeen
+            | MetricKind::QzssFix
+            | MetricKind::UtilAll
+            | MetricKind::UtilGps
+            | MetricKind::UtilGlonass
+            | MetricKind::UtilGalileo
+            | MetricKind::UtilBeidou
+            | MetricKind::UtilNavic
+            | MetricKind::UtilQzss
+            | MetricKind::SlipAll
+            | MetricKind::SlipGps
+            | MetricKind::SlipGlonass
+            | MetricKind::SlipGalileo
+            | MetricKind::SlipBeidou
+            | MetricKind::SlipNavic
+            | MetricKind::SlipQzss
+            | MetricKind::SnapError
             | MetricKind::Jamming
             | MetricKind::Hp30
             | MetricKind::Kp
@@ -259,38 +231,15 @@ pub(super) fn compute_level_cache(series: &TrackSeries, viewport: LineViewport) 
     let range = viewport.selection_range();
     let sel = |mm: &MipMap| mm.select_indices(range, target);
     TrackLevelCache {
-        total_seen: sel(&series.total_seen),
-        total_fix: sel(&series.total_fix),
-        gps_seen: sel(&series.gps_seen),
-        gps_fix: sel(&series.gps_fix),
-        glonass_seen: sel(&series.glonass_seen),
-        glonass_fix: sel(&series.glonass_fix),
-        galileo_seen: sel(&series.galileo_seen),
-        galileo_fix: sel(&series.galileo_fix),
-        beidou_seen: sel(&series.beidou_seen),
-        beidou_fix: sel(&series.beidou_fix),
-        navic_seen: sel(&series.navic_seen),
-        navic_fix: sel(&series.navic_fix),
-        qzss_seen: sel(&series.qzss_seen),
-        qzss_fix: sel(&series.qzss_fix),
+        metrics: series
+            .metrics
+            .iter()
+            .map(|(kind, metric)| (*kind, viewport.select_run_levels(&metric.runs)))
+            .collect(),
         velocity_kmh: sel(&series.velocity_kmh),
         eph_m: sel(&series.eph_m),
         heading_deg: sel(&series.heading_deg),
         clock_delta_ms: sel(&series.clock_delta_ms),
-        util_all: sel(&series.util_all),
-        util_gps: sel(&series.util_gps),
-        util_glonass: sel(&series.util_glonass),
-        util_galileo: sel(&series.util_galileo),
-        util_beidou: sel(&series.util_beidou),
-        util_navic: sel(&series.util_navic),
-        util_qzss: sel(&series.util_qzss),
-        slip_all: sel(&series.slip_all),
-        slip_gps: sel(&series.slip_gps),
-        slip_glonass: sel(&series.slip_glonass),
-        slip_galileo: sel(&series.slip_galileo),
-        slip_beidou: sel(&series.slip_beidou),
-        slip_navic: sel(&series.slip_navic),
-        slip_qzss: sel(&series.slip_qzss),
         channels: series
             .channels
             .iter()
@@ -446,6 +395,74 @@ mod tests {
 
         // Zero visible count must not divide by zero.
         assert_eq!(budget_cap(width, 0), single);
+    }
+
+    #[test]
+    fn count_runs_remain_separate_under_coarse_selection_and_window_clipping() {
+        let mut points = gt_test_utils::fixtures::nav_points_from(at_second(0), 1_100, 1);
+        for (index, point) in points.iter_mut().enumerate() {
+            point.navigation.used_count = (!(500..600).contains(&index)).then_some(8);
+        }
+        let placed =
+            crate::series::build_all_series(&[recording(points)], AnalysisConfig::default());
+        let series = &placed.first().expect("one track").series;
+        let base = FIRST_FIX_SECS as f64;
+        let viewport = LineViewport {
+            x_min: base,
+            x_max: base + 1_099.0,
+            time_window: FilterTimeWindow {
+                start: None,
+                end: None,
+            },
+            width: 1.0,
+            cap: 2,
+        };
+        let cache = compute_level_cache(series, viewport);
+        let selections = cache
+            .metrics
+            .get(&MetricKind::SatsFix)
+            .expect("count selections");
+        let runs = &series
+            .metrics
+            .get(&MetricKind::SatsFix)
+            .expect("count series")
+            .runs;
+        assert_eq!(selections.len(), 2);
+        assert!(
+            selections
+                .iter()
+                .all(|selection| !selection.is_full_detail())
+        );
+        for (index, (run, selection)) in runs.iter().zip(selections).enumerate() {
+            let selected = run.slice_at(*selection);
+            assert!(!selected.is_empty());
+            assert!(selected.iter().all(|sample| {
+                if index == 0 {
+                    sample.x < base + 500.0
+                } else {
+                    sample.x >= base + 600.0
+                }
+            }));
+        }
+        let in_gap = LineViewport {
+            x_min: base + 500.0,
+            x_max: base + 599.0,
+            time_window: FilterTimeWindow {
+                start: Some(base + 500.0),
+                end: Some(base + 599.0),
+            },
+            ..viewport
+        };
+        let cache = compute_level_cache(series, in_gap);
+        for (run, selection) in runs.iter().zip(
+            cache
+                .metrics
+                .get(&MetricKind::SatsFix)
+                .expect("count selections"),
+        ) {
+            assert!(run.slice_at(*selection).is_empty());
+            assert!(!in_gap.shows(run));
+        }
     }
 
     /// Plot width in points. Wide enough that a window of a few seconds still

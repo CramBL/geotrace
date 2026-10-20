@@ -113,6 +113,12 @@ impl SatelliteReportMetadata {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReportSatelliteCount {
+    pub count: u32,
+    pub is_aggregate: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SatelliteUsage {
     pub identity: SatelliteIdentity,
     pub membership: SatelliteMembership,
@@ -125,6 +131,21 @@ pub struct SatelliteUsageReport {
 }
 
 impl SatelliteUsageReport {
+    pub fn resolved_used_count(&self, scope: SatelliteQueryScope) -> Option<ReportSatelliteCount> {
+        if self.metadata.scope.matches_aggregate(scope)
+            && let Some(count) = self.metadata.reported_count
+        {
+            return Some(ReportSatelliteCount {
+                count,
+                is_aggregate: true,
+            });
+        }
+        Some(ReportSatelliteCount {
+            count: self.list_used_count(scope)?,
+            is_aggregate: false,
+        })
+    }
+
     pub fn membership(&self, identity: SatelliteIdentity) -> SatelliteMembership {
         if !self
             .metadata
@@ -207,6 +228,21 @@ pub struct SatelliteObservationReport {
 }
 
 impl SatelliteObservationReport {
+    pub fn resolved_seen_count(&self, scope: SatelliteQueryScope) -> Option<ReportSatelliteCount> {
+        if self.metadata.scope.matches_aggregate(scope)
+            && let Some(count) = self.metadata.reported_count
+        {
+            return Some(ReportSatelliteCount {
+                count,
+                is_aggregate: true,
+            });
+        }
+        Some(ReportSatelliteCount {
+            count: self.list_seen_count(scope)?,
+            is_aggregate: false,
+        })
+    }
+
     pub fn list_seen_count(&self, scope: SatelliteQueryScope) -> Option<u32> {
         if !self.metadata.complete_for(scope) {
             return None;

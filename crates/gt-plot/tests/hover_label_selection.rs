@@ -3,11 +3,14 @@
 
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use gt_plot::PlotState;
 use gt_plot::test_util::{self, DrawnPlot, PlotPosition, PlotSources};
 use gt_solar::GeomagneticIndex;
-use gt_types::{Channel, LoadedFile, MetricKind};
+use gt_types::{
+    Channel, GpsTime, LoadedFile, MetricKind, SatelliteCoverage, SatelliteReportMetadata,
+    SatelliteScope, SatelliteUsageReport, SysTime,
+};
 use gt_ui_types::{GeomagneticPoint, IndexContextSample, TecContextSample, TecPoint};
 use rstest::rstest;
 use strum::IntoEnumIterator as _;
@@ -418,3 +421,33 @@ const THE_FLARE_HOVER_LABEL: &str = "X2.2 solar flare\n\
     11:32–12:23 UTC\n\
     Lists every flare on the Sun. Only one on the receiver's sunlit side raises the \
     ionization above it.";
+
+#[test]
+fn an_isolated_count_sample_shows_its_report_clock_and_fractional_time() {
+    let mut points = test_util::fixes(2, 10);
+    let point = points.last_mut().expect("last fix");
+    let report_time = GpsTime::from_utc(test_util::at_second(10) + TimeDelta::milliseconds(400));
+    point.satellite_evidence.usage.push(SatelliteUsageReport {
+        metadata: SatelliteReportMetadata {
+            gps_time: None,
+            sys_time: Some(SysTime::from_utc(test_util::at_second(11))),
+            normalized_time: report_time,
+            input_order: 2,
+            scope: SatelliteScope::Global,
+            coverage: SatelliteCoverage::Partial,
+            reported_count: Some(8),
+        },
+        satellites: Vec::new(),
+    });
+    let mut plot = PlotScene::of(test_util::recording(points, Vec::new()))
+        .showing(&[MetricKind::SatsFix])
+        .draw();
+    plot.hover(plot.screen_position(PlotPosition {
+        offset_secs: 10.4,
+        y: 8.0,
+    }));
+    assert_eq!(
+        plot.hover_label(),
+        "Sats fix 8\n2024-01-15 12:00:10.400 UTC\nPoint 2\nHost time 2024-01-15 12:00:11 UTC"
+    );
+}

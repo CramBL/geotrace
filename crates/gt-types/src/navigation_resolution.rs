@@ -91,54 +91,54 @@ impl NavPoint {
                 evidence: NavigationEvidenceSource::NavigationCount,
             });
         }
-        if let Some((index, report)) =
-            self.satellite_evidence
-                .select_usage_report(self.tpv.time(), |report| {
-                    report.metadata.scope.matches_aggregate(scope)
-                        && report.metadata.reported_count.is_some()
-                })
-        {
-            return Some(ResolvedSatelliteCount {
-                count: report.metadata.reported_count?,
-                evidence: NavigationEvidenceSource::UsageAggregate(index),
-            });
+        for aggregate in [true, false] {
+            if let Some((index, report)) =
+                self.satellite_evidence
+                    .select_usage_report(self.tpv.time(), |report| {
+                        report
+                            .resolved_used_count(scope)
+                            .is_some_and(|count| count.is_aggregate == aggregate)
+                    })
+            {
+                let count = report.resolved_used_count(scope)?;
+                return Some(ResolvedSatelliteCount {
+                    count: count.count,
+                    evidence: if aggregate {
+                        NavigationEvidenceSource::UsageAggregate(index)
+                    } else {
+                        NavigationEvidenceSource::UsageList(index)
+                    },
+                });
+            }
         }
-        let (index, report) = self
-            .satellite_evidence
-            .select_usage_report(self.tpv.time(), |report| {
-                report.list_used_count(scope).is_some()
-            })?;
-        Some(ResolvedSatelliteCount {
-            count: report.list_used_count(scope)?,
-            evidence: NavigationEvidenceSource::UsageList(index),
-        })
+        None
     }
 
     pub fn resolved_seen_count(
         &self,
         scope: SatelliteQueryScope,
     ) -> Option<ResolvedSatelliteCount> {
-        if let Some((index, report)) =
-            self.satellite_evidence
-                .select_observation_report(self.tpv.time(), |report| {
-                    report.metadata.scope.matches_aggregate(scope)
-                        && report.metadata.reported_count.is_some()
-                })
-        {
-            return Some(ResolvedSatelliteCount {
-                count: report.metadata.reported_count?,
-                evidence: NavigationEvidenceSource::ObservationAggregate(index),
-            });
+        for aggregate in [true, false] {
+            if let Some((index, report)) =
+                self.satellite_evidence
+                    .select_observation_report(self.tpv.time(), |report| {
+                        report
+                            .resolved_seen_count(scope)
+                            .is_some_and(|count| count.is_aggregate == aggregate)
+                    })
+            {
+                let count = report.resolved_seen_count(scope)?;
+                return Some(ResolvedSatelliteCount {
+                    count: count.count,
+                    evidence: if aggregate {
+                        NavigationEvidenceSource::ObservationAggregate(index)
+                    } else {
+                        NavigationEvidenceSource::ObservationList(index)
+                    },
+                });
+            }
         }
-        let (index, report) = self
-            .satellite_evidence
-            .select_observation_report(self.tpv.time(), |report| {
-                report.list_seen_count(scope).is_some()
-            })?;
-        Some(ResolvedSatelliteCount {
-            count: report.list_seen_count(scope)?,
-            evidence: NavigationEvidenceSource::ObservationList(index),
-        })
+        None
     }
 }
 

@@ -869,25 +869,29 @@ impl App {
                         s.tree.event_marker_visibility(),
                     )
                     .with_display_mask(s.display_mask);
-                    let closest = gt_plot::find_closest_tpv_matching(
-                        &s.loaded_files,
-                        cursor_time,
-                        |track_ref| {
-                            let prepared = scope.prepare_track(track_ref);
-                            if !prepared.is_in_scope() {
-                                return None;
-                            }
-                            Some(move |point| {
-                                prepared.draws(MapElementRef::Fix(FixRef::new(track_ref, point)))
-                            })
-                        },
-                    );
+                    let closest = match s.plot_state.hovered_metric_fix {
+                        Some(fix) => scope.draws(MapElementRef::Fix(fix)).then_some((
+                            fix.track.fi,
+                            fix.track.index,
+                            fix.point,
+                        )),
+                        None => gt_plot::find_closest_tpv_matching(
+                            &s.loaded_files,
+                            cursor_time,
+                            |track_ref| {
+                                let prepared = scope.prepare_track(track_ref);
+                                if !prepared.is_in_scope() {
+                                    return None;
+                                }
+                                Some(move |point| {
+                                    prepared
+                                        .draws(MapElementRef::Fix(FixRef::new(track_ref, point)))
+                                })
+                            },
+                        ),
+                    };
                     s.highlight.plot_hover_time = closest.map(|_| cursor_time);
                     s.highlight.plot_hover_point = closest;
-                    // `plot_cursor_snapped` is computed inside `show_track_plot`
-                    // using a 2-D screen-space check (both time and metric value)
-                    // so the overlay only triggers when egui_plot would also
-                    // show a hover label.
                     s.highlight.plot_hover_snapped =
                         closest.is_some() && s.plot_state.plot_cursor_snapped;
                 } else {
@@ -897,6 +901,8 @@ impl App {
                 }
             } else {
                 s.plot_state.hovered_time = None;
+                s.plot_state.hovered_metric_fix = None;
+                s.plot_state.plot_cursor_snapped = false;
                 s.highlight.plot_hover_time = None;
                 s.highlight.plot_hover_point = None;
                 s.highlight.plot_hover_snapped = false;

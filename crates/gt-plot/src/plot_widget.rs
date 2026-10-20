@@ -21,7 +21,7 @@ use gt_filter::GlobalFilter;
 use gt_flare::MarkedFlare;
 use gt_loaded_files::RecordingNames;
 use gt_types::satellites::ConstellationSet;
-use gt_types::{FileIdx, LoadedFile, MetricKind, PointIdx, TrackIdx, TrackRef};
+use gt_types::{FileIdx, FixRef, GpsTime, LoadedFile, MetricKind, PointIdx, TrackIdx, TrackRef};
 use gt_ui_types::{
     ContextLines, GeomagneticSeries, HighlightScope, JammingSeries, SnapErrorSeries, TecSeries,
     TrackDataVisibility,
@@ -72,8 +72,8 @@ impl From<&GlobalFilter> for FilterTimeWindow {
             };
         };
         Self {
-            start: start.map(|time| time.timestamp() as f64),
-            end: end.map(|time| time.timestamp() as f64),
+            start: start.map(|time| GpsTime::from_utc(time).as_secs_f64_with_subseconds()),
+            end: end.map(|time| GpsTime::from_utc(time).as_secs_f64_with_subseconds()),
         }
     }
 }
@@ -305,6 +305,8 @@ pub struct PlotState {
     /// activates only when the cursor is genuinely near a plotted value, not
     /// just anywhere inside the plot area.
     pub plot_cursor_snapped: bool,
+    /// Associated fix of the selected count or diagnostic sample.
+    pub hovered_metric_fix: Option<FixRef>,
 }
 
 impl Default for PlotState {
@@ -336,6 +338,7 @@ impl Default for PlotState {
             last_visible_x_range: None,
             channel_component_colors: FxHashMap::default(),
             plot_cursor_snapped: false,
+            hovered_metric_fix: None,
         }
     }
 }
@@ -455,7 +458,7 @@ pub fn show_track_plot(
     let visible: Vec<bool> = state
         .series_cache
         .iter()
-        .map(|s| track_is_visible(visibility, filter, files, s.fi, s.series.ti))
+        .map(|s| track_is_visible(visibility, filter, files, s.fi, &s.series))
         .collect();
     let visible_count = visible.iter().filter(|&&v| v).count();
 
@@ -468,6 +471,8 @@ pub fn show_track_plot(
             );
         });
         state.hovered_time = None;
+        state.hovered_metric_fix = None;
+        state.plot_cursor_snapped = false;
         return;
     }
 
@@ -821,10 +826,17 @@ pub fn show_track_plot(
             let Some(cache) = resolved.get(si) else {
                 continue;
             };
+            let Some(track) = files
+                .get(series.fi)
+                .and_then(|file| file.tracks.get(series.series.ti))
+            else {
+                continue;
+            };
             let track_label = series_labels.get(si).and_then(Option::as_deref);
             lines::add_series_lines(
                 plot_ui,
                 series,
+                track,
                 track_label,
                 cache,
                 metric_vis,
@@ -921,12 +933,15 @@ pub fn show_track_plot(
         state.applied_map_x_range = applied;
     }
     state.last_visible_x_range = new_visible_x_range;
-    // `hovered_plot_item` is set by egui_plot when the cursor is within its own
-    // interact radius of a plotted item, the exact condition that causes
-    // egui_plot to show a hover label.  Use it directly so the map overlay
-    // activates at precisely the same moment, with no custom approximation.
-    state.plot_cursor_snapped =
-        plot_response.response.hovered() && plot_response.hovered_plot_item.is_some();
+    let selected_metric = hovered_label
+        .selected()
+        .and_then(|hover| hover.metric_selection());
+    state.plot_cursor_snapped = plot_response.response.hovered()
+        && (plot_response.hovered_plot_item.is_some() || selected_metric.is_some());
+    state.hovered_metric_fix = selected_metric
+        .as_ref()
+        .filter(|_| plot_response.response.hovered())
+        .map(|selection| selection.fix);
 
     lines::show_nearest_hover_label(ui, &plot_response.response, hovered_label);
 
@@ -940,7 +955,9 @@ pub fn show_track_plot(
 
     // Clear the hovered time when the cursor leaves the plot area.
     state.hovered_time = if plot_response.response.hovered() {
-        new_hovered_time
+        selected_metric
+            .map(|selection| selection.time)
+            .or(new_hovered_time)
     } else {
         None
     };
@@ -1002,7 +1019,7 @@ fn track_is_visible(
     global_filter: &GlobalFilter,
     files: &[LoadedFile],
     fi: usize,
-    ti: usize,
+    series: &crate::series::TrackSeries,
 ) -> bool {
     let Some(file_vis) = visibility.files.get(fi) else {
         return false;
@@ -1010,7 +1027,7 @@ fn track_is_visible(
     if !file_vis.enabled {
         return false;
     }
-    let Some(track_vis) = file_vis.tracks.get(ti) else {
+    let Some(track_vis) = file_vis.tracks.get(series.ti) else {
         return false;
     };
     if !track_vis.enabled {
@@ -1019,10 +1036,15 @@ fn track_is_visible(
     let Some(file) = files.get(fi) else {
         return false;
     };
-    let Some(track) = file.tracks.get(ti) else {
+    let Some(track) = file.tracks.get(series.ti) else {
         return false;
     };
-    gt_filter::track_passes_filter(track, global_filter)
+    gt_filter::track_passes_filter(track, &global_filter.with_time_bounds(None, None))
+        && series.x_range.is_some_and(|(lo, hi)| {
+            !FilterTimeWindow::from(global_filter)
+                .intersection(lo..=hi)
+                .is_empty()
+        })
 }
 
 /// Given a set of visible tracks and a plot-hovered time (in seconds since

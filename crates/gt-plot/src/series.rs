@@ -1,11 +1,19 @@
-use crate::AnalysisConfig;
 use chrono::{DateTime, TimeDelta, Utc};
 use gt_analysis::clock_offset::ClockOffsetPlacement;
 use gt_analysis::satellite_utilization::UtilAnomaly;
+use gt_analysis::{SlipAnalysisConfig, SlipThresholds};
 use gt_egui_mipmap::{MipMap, WrapPeriod};
-use gt_types::LoadedFile;
 use gt_types::satellites::{Constellation, ConstellationSet};
+use gt_types::{
+    LoadedFile, MetricKind, NavPoint, NavigationEvidenceSource, PositionProvenance,
+    SatelliteQueryScope, SatelliteScope,
+};
+use rustc_hash::FxHashMap;
+use strum::IntoEnumIterator as _;
 use uom::si::angle::degree;
+
+use crate::AnalysisConfig;
+use crate::metric_series::{MetricSampleSource, MetricSeries, TimedMetricSample};
 
 /// A track's mipmap series together with the index of the file it belongs to,
 /// which the plot learns only once that file joins the loaded-files list.
@@ -33,23 +41,10 @@ impl PlacedTrackSeries {
 pub(crate) struct TrackSeries {
     /// Track index within its file.
     pub ti: usize,
+    pub metrics: FxHashMap<MetricKind, MetricSeries>,
     /// `(x_min, x_max)` in Unix seconds, or `None` when the track has no
     /// points.
     pub x_range: Option<(f64, f64)>,
-    pub total_seen: MipMap,
-    pub total_fix: MipMap,
-    pub gps_seen: MipMap,
-    pub gps_fix: MipMap,
-    pub glonass_seen: MipMap,
-    pub glonass_fix: MipMap,
-    pub galileo_seen: MipMap,
-    pub galileo_fix: MipMap,
-    pub beidou_seen: MipMap,
-    pub beidou_fix: MipMap,
-    pub navic_seen: MipMap,
-    pub navic_fix: MipMap,
-    pub qzss_seen: MipMap,
-    pub qzss_fix: MipMap,
     /// Constellations that appear at least once in this track's satellite
     /// reports.  The plot uses the union across tracks to select which
     /// per-constellation chips and lines to show, so a constellation with no
@@ -72,34 +67,8 @@ pub(crate) struct TrackSeries {
     /// sample of a track whose baseline the shared y-axis cannot show.
     /// Threshold-dependent: recomputed by [`TrackSeries::apply_analysis`].
     pub clock_offset_placement: ClockOffsetPlacement,
-    /// Satellite utilization rate (percent), all constellations combined, and
-    /// broken down per constellation.  Mask-dependent: recomputed by
-    /// [`TrackSeries::apply_analysis`] when the elevation mask changes.
-    pub util_all: MipMap,
-    pub util_gps: MipMap,
-    pub util_glonass: MipMap,
-    pub util_galileo: MipMap,
-    pub util_beidou: MipMap,
-    pub util_navic: MipMap,
-    pub util_qzss: MipMap,
-    /// Epochs where the receiver used a satellite below the elevation mask, so
-    /// that satellite is excluded from the utilization rate.  Surfaced as plot
-    /// markers.  Also mask-dependent.
+    /// Observation epochs with known usage below the elevation mask.
     pub util_anomalies: Vec<UtilAnomaly>,
-    /// Loss-of-lock (slip) rate per minute, all constellations combined and per
-    /// constellation.  Depends on the elevation mask, the SNR-drop threshold,
-    /// and the averaging window, so it is recomputed by
-    /// [`TrackSeries::apply_analysis`] whenever any of those change.
-    pub slip_all: MipMap,
-    pub slip_gps: MipMap,
-    pub slip_glonass: MipMap,
-    pub slip_galileo: MipMap,
-    pub slip_beidou: MipMap,
-    pub slip_navic: MipMap,
-    pub slip_qzss: MipMap,
-    /// The track's ad-hoc sensor channels, one entry per channel in the
-    /// track's own order. Dynamic (channels are per-file names), unlike the
-    /// fixed metric fields above.
     pub channels: Vec<ChannelSeries>,
 }
 
@@ -218,32 +187,11 @@ impl TrackSeries {
         track: &gt_types::LoadedTrack,
         analysis: AnalysisConfig,
     ) {
-        let u = gt_analysis::satellite_utilization::compute_util(
-            &track.points,
-            analysis.elevation_mask_deg,
-        );
-        self.util_all = MipMap::build(u.all);
-        self.util_gps = MipMap::build(u.gps);
-        self.util_glonass = MipMap::build(u.glonass);
-        self.util_galileo = MipMap::build(u.galileo);
-        self.util_beidou = MipMap::build(u.beidou);
-        self.util_navic = MipMap::build(u.navic);
-        self.util_qzss = MipMap::build(u.qzss);
-        self.util_anomalies = u.anomalies;
-
-        let s = gt_analysis::loss_of_lock::slip_rate_series(
-            &track.points,
-            analysis.elevation_mask_deg,
-            analysis.snr_drop_db,
-            analysis.slip_window_min,
-        );
-        self.slip_all = MipMap::build(s.all);
-        self.slip_gps = MipMap::build(s.gps);
-        self.slip_glonass = MipMap::build(s.glonass);
-        self.slip_galileo = MipMap::build(s.galileo);
-        self.slip_beidou = MipMap::build(s.beidou);
-        self.slip_navic = MipMap::build(s.navic);
-        self.slip_qzss = MipMap::build(s.qzss);
+        let diagnostics = build_diagnostic_series(&track.points, analysis);
+        self.util_anomalies = diagnostics.anomalies;
+        self.metrics
+            .retain(|kind, _| CountMetric::from_kind(*kind).is_some());
+        self.metrics.extend(diagnostics.metrics);
 
         let (clock_delta_pts, placement) =
             clock_delta_series(track, analysis.clock_excursion_threshold_s);
@@ -313,71 +261,56 @@ fn build_track_series(
     track: &gt_types::LoadedTrack,
     analysis: AnalysisConfig,
 ) -> TrackSeries {
-    let mut total_seen_pts: Vec<[f64; 2]> = Vec::with_capacity(track.points.len());
-    let mut total_fix_pts: Vec<[f64; 2]> = Vec::with_capacity(track.points.len());
-    let mut gps_seen_pts: Vec<[f64; 2]> = Vec::new();
-    let mut gps_fix_pts: Vec<[f64; 2]> = Vec::new();
-    let mut glonass_seen_pts: Vec<[f64; 2]> = Vec::new();
-    let mut glonass_fix_pts: Vec<[f64; 2]> = Vec::new();
-    let mut galileo_seen_pts: Vec<[f64; 2]> = Vec::new();
-    let mut galileo_fix_pts: Vec<[f64; 2]> = Vec::new();
-    let mut beidou_seen_pts: Vec<[f64; 2]> = Vec::new();
-    let mut beidou_fix_pts: Vec<[f64; 2]> = Vec::new();
-    let mut navic_seen_pts: Vec<[f64; 2]> = Vec::new();
-    let mut navic_fix_pts: Vec<[f64; 2]> = Vec::new();
-    let mut qzss_seen_pts: Vec<[f64; 2]> = Vec::new();
-    let mut qzss_fix_pts: Vec<[f64; 2]> = Vec::new();
     let mut present = ConstellationSet::empty();
+    for point in &track.points {
+        for constellation in point
+            .satellite_evidence
+            .usage
+            .iter()
+            .flat_map(|report| &report.satellites)
+            .map(|satellite| satellite.identity.constellation)
+            .chain(
+                point
+                    .satellite_evidence
+                    .observations
+                    .iter()
+                    .flat_map(|report| &report.satellites)
+                    .map(|satellite| satellite.identity.constellation),
+            )
+        {
+            present.insert(constellation);
+        }
+        for scope in point
+            .satellite_evidence
+            .usage
+            .iter()
+            .map(|report| report.metadata.scope)
+            .chain(
+                point
+                    .satellite_evidence
+                    .observations
+                    .iter()
+                    .map(|report| report.metadata.scope),
+            )
+        {
+            if let SatelliteScope::Constellations(set) = scope {
+                for constellation in
+                    Constellation::iter().filter(|constellation| set.contains(*constellation))
+                {
+                    present.insert(constellation);
+                }
+            }
+        }
+    }
+    let mut metrics = build_count_series(&track.points);
+    let diagnostics = build_diagnostic_series(&track.points, analysis);
+    metrics.extend(diagnostics.metrics);
     let mut velocity_kmh_pts: Vec<[f64; 2]> = Vec::with_capacity(track.points.len());
     let mut eph_m_pts: Vec<[f64; 2]> = Vec::new();
     let mut heading_deg_pts: Vec<[f64; 2]> = Vec::new();
 
     for point in &track.points {
-        let t = point.tpv.time().as_secs_f64();
-
-        if let Some(sats) = &point.satellites {
-            total_seen_pts.push([t, sats.satellite_count() as f64]);
-            total_fix_pts.push([t, sats.fix_count() as f64]);
-
-            let seen_and_fix = |c| {
-                sats.by_constellation(c)
-                    .fold((0usize, 0usize), |(seen, fix), sat| {
-                        (seen + 1, fix + sat.in_fix() as usize)
-                    })
-            };
-            let (gps_seen, gps_fix) = seen_and_fix(Constellation::Gps);
-            let (gln_seen, gln_fix) = seen_and_fix(Constellation::Glonass);
-            let (gal_seen, gal_fix) = seen_and_fix(Constellation::Galileo);
-            let (bei_seen, bei_fix) = seen_and_fix(Constellation::Beidou);
-            let (nav_seen, nav_fix) = seen_and_fix(Constellation::Navic);
-            let (qzs_seen, qzs_fix) = seen_and_fix(Constellation::Qzss);
-
-            gps_seen_pts.push([t, gps_seen as f64]);
-            gps_fix_pts.push([t, gps_fix as f64]);
-            glonass_seen_pts.push([t, gln_seen as f64]);
-            glonass_fix_pts.push([t, gln_fix as f64]);
-            galileo_seen_pts.push([t, gal_seen as f64]);
-            galileo_fix_pts.push([t, gal_fix as f64]);
-            beidou_seen_pts.push([t, bei_seen as f64]);
-            beidou_fix_pts.push([t, bei_fix as f64]);
-            navic_seen_pts.push([t, nav_seen as f64]);
-            navic_fix_pts.push([t, nav_fix as f64]);
-            qzss_seen_pts.push([t, qzs_seen as f64]);
-            qzss_fix_pts.push([t, qzs_fix as f64]);
-
-            for (count, c) in [
-                (gps_seen, Constellation::Gps),
-                (gln_seen, Constellation::Glonass),
-                (gal_seen, Constellation::Galileo),
-                (bei_seen, Constellation::Beidou),
-                (nav_seen, Constellation::Navic),
-                (qzs_seen, Constellation::Qzss),
-            ] {
-                if count > 0 {
-                    present.insert(c);
-                }
-            }
-        }
+        let t = point.tpv.time().as_secs_f64_with_subseconds();
 
         if let Some(v) = point.tpv.velocity_kmh() {
             velocity_kmh_pts.push([t, v]);
@@ -397,65 +330,374 @@ fn build_track_series(
 
     let x_range = track
         .points
-        .first()
-        .zip(track.points.last())
-        .map(|(first, last)| {
-            (
-                first.tpv.time().as_secs_f64(),
-                last.tpv.time().as_secs_f64(),
-            )
+        .iter()
+        .flat_map(|point| {
+            std::iter::once(point.tpv.time())
+                .chain(
+                    point
+                        .satellite_evidence
+                        .usage
+                        .iter()
+                        .map(|report| report.metadata.normalized_time),
+                )
+                .chain(
+                    point
+                        .satellite_evidence
+                        .observations
+                        .iter()
+                        .map(|report| report.metadata.normalized_time),
+                )
+        })
+        .map(|time| time.as_secs_f64_with_subseconds())
+        .fold(None, |range, time| {
+            Some(range.map_or((time, time), |(lo, hi): (f64, f64)| {
+                (lo.min(time), hi.max(time))
+            }))
         });
-
-    let util = gt_analysis::satellite_utilization::compute_util(
-        &track.points,
-        analysis.elevation_mask_deg,
-    );
-    let slip = gt_analysis::loss_of_lock::slip_rate_series(
-        &track.points,
-        analysis.elevation_mask_deg,
-        analysis.snr_drop_db,
-        analysis.slip_window_min,
-    );
 
     TrackSeries {
         ti,
+        metrics,
         x_range,
-        total_seen: MipMap::build(total_seen_pts),
-        total_fix: MipMap::build(total_fix_pts),
-        gps_seen: MipMap::build(gps_seen_pts),
-        gps_fix: MipMap::build(gps_fix_pts),
-        glonass_seen: MipMap::build(glonass_seen_pts),
-        glonass_fix: MipMap::build(glonass_fix_pts),
-        galileo_seen: MipMap::build(galileo_seen_pts),
-        galileo_fix: MipMap::build(galileo_fix_pts),
-        beidou_seen: MipMap::build(beidou_seen_pts),
-        beidou_fix: MipMap::build(beidou_fix_pts),
-        navic_seen: MipMap::build(navic_seen_pts),
-        navic_fix: MipMap::build(navic_fix_pts),
-        qzss_seen: MipMap::build(qzss_seen_pts),
-        qzss_fix: MipMap::build(qzss_fix_pts),
         present,
         velocity_kmh: MipMap::build(velocity_kmh_pts),
         eph_m: MipMap::build(eph_m_pts),
         heading_deg: MipMap::build_wrapping(heading_deg_pts, WrapPeriod::full_turn_degrees()),
         clock_delta_ms: MipMap::build(clock_delta_ms_pts),
         clock_offset_placement,
-        util_all: MipMap::build(util.all),
-        util_gps: MipMap::build(util.gps),
-        util_glonass: MipMap::build(util.glonass),
-        util_galileo: MipMap::build(util.galileo),
-        util_beidou: MipMap::build(util.beidou),
-        util_navic: MipMap::build(util.navic),
-        util_qzss: MipMap::build(util.qzss),
-        util_anomalies: util.anomalies,
-        slip_all: MipMap::build(slip.all),
-        slip_gps: MipMap::build(slip.gps),
-        slip_glonass: MipMap::build(slip.glonass),
-        slip_beidou: MipMap::build(slip.beidou),
-        slip_galileo: MipMap::build(slip.galileo),
-        slip_navic: MipMap::build(slip.navic),
-        slip_qzss: MipMap::build(slip.qzss),
+        util_anomalies: diagnostics.anomalies,
         channels: track.channels.iter().map(build_channel_series).collect(),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum CountQuantity {
+    Used,
+    Seen,
+}
+
+#[derive(Clone, Copy)]
+struct CountMetric {
+    scope: SatelliteQueryScope,
+    quantity: CountQuantity,
+}
+
+impl CountMetric {
+    fn from_kind(kind: MetricKind) -> Option<Self> {
+        let (scope, quantity) = match kind {
+            MetricKind::SatsFix => (SatelliteQueryScope::Global, CountQuantity::Used),
+            MetricKind::SatsSeen => (SatelliteQueryScope::Global, CountQuantity::Seen),
+            MetricKind::GpsFix => (
+                SatelliteQueryScope::Constellation(Constellation::Gps),
+                CountQuantity::Used,
+            ),
+            MetricKind::GpsSeen => (
+                SatelliteQueryScope::Constellation(Constellation::Gps),
+                CountQuantity::Seen,
+            ),
+            MetricKind::GlonassFix => (
+                SatelliteQueryScope::Constellation(Constellation::Glonass),
+                CountQuantity::Used,
+            ),
+            MetricKind::GlonassSeen => (
+                SatelliteQueryScope::Constellation(Constellation::Glonass),
+                CountQuantity::Seen,
+            ),
+            MetricKind::GalileoFix => (
+                SatelliteQueryScope::Constellation(Constellation::Galileo),
+                CountQuantity::Used,
+            ),
+            MetricKind::GalileoSeen => (
+                SatelliteQueryScope::Constellation(Constellation::Galileo),
+                CountQuantity::Seen,
+            ),
+            MetricKind::BeidouFix => (
+                SatelliteQueryScope::Constellation(Constellation::Beidou),
+                CountQuantity::Used,
+            ),
+            MetricKind::BeidouSeen => (
+                SatelliteQueryScope::Constellation(Constellation::Beidou),
+                CountQuantity::Seen,
+            ),
+            MetricKind::NavicFix => (
+                SatelliteQueryScope::Constellation(Constellation::Navic),
+                CountQuantity::Used,
+            ),
+            MetricKind::NavicSeen => (
+                SatelliteQueryScope::Constellation(Constellation::Navic),
+                CountQuantity::Seen,
+            ),
+            MetricKind::QzssFix => (
+                SatelliteQueryScope::Constellation(Constellation::Qzss),
+                CountQuantity::Used,
+            ),
+            MetricKind::QzssSeen => (
+                SatelliteQueryScope::Constellation(Constellation::Qzss),
+                CountQuantity::Seen,
+            ),
+            _ => return None,
+        };
+        Some(Self { scope, quantity })
+    }
+
+    fn point_samples(self, point_index: usize, point: &NavPoint) -> Vec<TimedMetricSample> {
+        let mut samples = Vec::new();
+        let resolved = match self.quantity {
+            CountQuantity::Used => point.resolved_used_count(self.scope),
+            CountQuantity::Seen => point.resolved_seen_count(self.scope),
+        };
+        let navigation_count =
+            resolved.filter(|count| count.evidence == NavigationEvidenceSource::NavigationCount);
+        if let Some(count) = navigation_count {
+            samples.push(TimedMetricSample {
+                time: point.tpv.time(),
+                fix_time: point.tpv.time(),
+                report: None,
+                value: Some(f64::from(count.count)),
+                source: MetricSampleSource {
+                    point_index,
+                    evidence: count.evidence,
+                },
+            });
+        } else if resolved.is_none()
+            && point.navigation.position_provenance != Some(PositionProvenance::SdkSynthesized)
+        {
+            samples.push(TimedMetricSample {
+                time: point.tpv.time(),
+                fix_time: point.tpv.time(),
+                report: None,
+                value: None,
+                source: MetricSampleSource {
+                    point_index,
+                    evidence: NavigationEvidenceSource::NavigationCount,
+                },
+            });
+        }
+        match self.quantity {
+            CountQuantity::Used => {
+                for (index, report) in point.satellite_evidence.usage.iter().enumerate() {
+                    if !report.metadata.scope.covers(self.scope)
+                        && self.scope != SatelliteQueryScope::Global
+                    {
+                        continue;
+                    }
+                    let count = report.resolved_used_count(self.scope);
+                    samples.push(TimedMetricSample {
+                        time: report.metadata.normalized_time,
+                        fix_time: point.tpv.time(),
+                        report: Some(report.metadata),
+                        value: count.map(|count| f64::from(count.count)),
+                        source: MetricSampleSource {
+                            point_index,
+                            evidence: if count.is_some_and(|count| count.is_aggregate) {
+                                NavigationEvidenceSource::UsageAggregate(index)
+                            } else {
+                                NavigationEvidenceSource::UsageList(index)
+                            },
+                        },
+                    });
+                }
+            }
+            CountQuantity::Seen => {
+                for (index, report) in point.satellite_evidence.observations.iter().enumerate() {
+                    if !report.metadata.scope.covers(self.scope)
+                        && self.scope != SatelliteQueryScope::Global
+                    {
+                        continue;
+                    }
+                    let count = report.resolved_seen_count(self.scope);
+                    samples.push(TimedMetricSample {
+                        time: report.metadata.normalized_time,
+                        fix_time: point.tpv.time(),
+                        report: Some(report.metadata),
+                        value: count.map(|count| f64::from(count.count)),
+                        source: MetricSampleSource {
+                            point_index,
+                            evidence: if count.is_some_and(|count| count.is_aggregate) {
+                                NavigationEvidenceSource::ObservationAggregate(index)
+                            } else {
+                                NavigationEvidenceSource::ObservationList(index)
+                            },
+                        },
+                    });
+                }
+            }
+        }
+        samples
+    }
+}
+
+fn build_count_series(points: &[NavPoint]) -> FxHashMap<MetricKind, MetricSeries> {
+    MetricKind::iter()
+        .filter_map(|kind| {
+            let metric = CountMetric::from_kind(kind)?;
+            let samples = points
+                .iter()
+                .enumerate()
+                .map(|(index, point)| metric.point_samples(index, point));
+            Some((kind, build_metric_runs(points, samples)))
+        })
+        .collect()
+}
+
+fn build_metric_runs(
+    points: &[NavPoint],
+    samples: impl ExactSizeIterator<Item = Vec<TimedMetricSample>>,
+) -> MetricSeries {
+    debug_assert_eq!(points.len(), samples.len());
+    let mut runs = Vec::new();
+    let mut run = Vec::new();
+    let mut previous_fix_time = None;
+    let mut previous_report_time = None;
+    for (point, mut samples) in points.iter().zip(samples) {
+        if previous_fix_time.is_some_and(|time| point.tpv.time() < time) {
+            runs.push(std::mem::take(&mut run));
+            previous_report_time = None;
+        }
+        previous_fix_time = Some(point.tpv.time());
+        samples.sort_by_key(|sample| sample.report.map(|report| report.input_order));
+        for sample in samples {
+            if sample.report.is_some() {
+                if previous_report_time.is_some_and(|time| sample.time < time) {
+                    runs.push(std::mem::take(&mut run));
+                }
+                previous_report_time = Some(sample.time);
+            }
+            run.push(sample);
+        }
+    }
+    runs.push(run);
+    MetricSeries::from_timed_runs(runs)
+}
+
+struct DiagnosticSeries {
+    metrics: FxHashMap<MetricKind, MetricSeries>,
+    anomalies: Vec<UtilAnomaly>,
+}
+
+fn build_diagnostic_series(points: &[NavPoint], analysis: AnalysisConfig) -> DiagnosticSeries {
+    let utilization =
+        gt_analysis::satellite_utilization::utilization_epochs(points, analysis.elevation_mask_deg);
+    let slips = gt_analysis::loss_of_lock::slip_epochs(
+        points,
+        SlipAnalysisConfig {
+            thresholds: SlipThresholds {
+                elevation_mask_deg: analysis.elevation_mask_deg,
+                snr_drop_db: analysis.snr_drop_db,
+            },
+            rate_window_min: Some(analysis.slip_window_min),
+        },
+    );
+    let definitions = [
+        (MetricKind::UtilAll, SatelliteQueryScope::Global, false),
+        (
+            MetricKind::UtilGps,
+            SatelliteQueryScope::Constellation(Constellation::Gps),
+            false,
+        ),
+        (
+            MetricKind::UtilGlonass,
+            SatelliteQueryScope::Constellation(Constellation::Glonass),
+            false,
+        ),
+        (
+            MetricKind::UtilGalileo,
+            SatelliteQueryScope::Constellation(Constellation::Galileo),
+            false,
+        ),
+        (
+            MetricKind::UtilBeidou,
+            SatelliteQueryScope::Constellation(Constellation::Beidou),
+            false,
+        ),
+        (
+            MetricKind::UtilNavic,
+            SatelliteQueryScope::Constellation(Constellation::Navic),
+            false,
+        ),
+        (
+            MetricKind::UtilQzss,
+            SatelliteQueryScope::Constellation(Constellation::Qzss),
+            false,
+        ),
+        (MetricKind::SlipAll, SatelliteQueryScope::Global, true),
+        (
+            MetricKind::SlipGps,
+            SatelliteQueryScope::Constellation(Constellation::Gps),
+            true,
+        ),
+        (
+            MetricKind::SlipGlonass,
+            SatelliteQueryScope::Constellation(Constellation::Glonass),
+            true,
+        ),
+        (
+            MetricKind::SlipGalileo,
+            SatelliteQueryScope::Constellation(Constellation::Galileo),
+            true,
+        ),
+        (
+            MetricKind::SlipBeidou,
+            SatelliteQueryScope::Constellation(Constellation::Beidou),
+            true,
+        ),
+        (
+            MetricKind::SlipNavic,
+            SatelliteQueryScope::Constellation(Constellation::Navic),
+            true,
+        ),
+        (
+            MetricKind::SlipQzss,
+            SatelliteQueryScope::Constellation(Constellation::Qzss),
+            true,
+        ),
+    ];
+    let metrics = definitions
+        .into_iter()
+        .map(|(kind, scope, slip)| {
+            let mut per_point = vec![Vec::new(); points.len()];
+            let epochs: Vec<_> = if slip {
+                slips
+                    .iter()
+                    .map(|epoch| (epoch.source, &epoch.rates))
+                    .collect()
+            } else {
+                utilization
+                    .iter()
+                    .map(|epoch| (epoch.source, &epoch.rates))
+                    .collect()
+            };
+            for (source, rates) in epochs {
+                if !source.metadata.scope.covers(scope) && scope != SatelliteQueryScope::Global {
+                    continue;
+                }
+                let Some(point) = points.get(source.point_index) else {
+                    continue;
+                };
+                if let Some(samples) = per_point.get_mut(source.point_index) {
+                    samples.push(TimedMetricSample {
+                        time: source.metadata.normalized_time,
+                        fix_time: point.tpv.time(),
+                        report: Some(source.metadata),
+                        value: rates.get(scope),
+                        source: MetricSampleSource {
+                            point_index: source.point_index,
+                            evidence: NavigationEvidenceSource::ObservationList(
+                                source.observation_index,
+                            ),
+                        },
+                    });
+                }
+            }
+            (kind, build_metric_runs(points, per_point.into_iter()))
+        })
+        .collect();
+    DiagnosticSeries {
+        metrics,
+        anomalies: utilization
+            .into_iter()
+            .filter_map(|epoch| epoch.into_anomaly())
+            .collect(),
     }
 }
 
@@ -947,3 +1189,6 @@ mod tests {
     /// eight-fix track.
     const COARSE_TARGET_FOR_AN_EIGHT_FIX_TRACK: usize = 4;
 }
+
+#[cfg(test)]
+mod count_tests;

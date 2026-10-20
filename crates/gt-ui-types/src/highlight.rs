@@ -109,20 +109,13 @@ pub enum HighlightScope {
 pub struct MapHighlight {
     pub hover: Option<HighlightScope>,
     sticky: Option<MapElementRef>,
-    /// Time currently hovered on the track plot. Used to cross-highlight the
-    /// closest TPV point on the map. `None` when the plot cursor is inactive.
+    /// Time of the selected plot sample, or the cursor time between samples.
+    /// `None` when the plot cursor is inactive.
     pub plot_hover_time: Option<DateTime<Utc>>,
-    /// Pre-computed `(FileIdx, TrackIdx, PointIdx)` of the TPV point closest to
-    /// `plot_hover_time`, set by the app layer alongside that field.
-    /// `TpvRenderer` reads this directly.
-    /// `None` when `plot_hover_time` is `None`.
+    /// Associated fix of the selected metric sample, or the closest eligible fix to the cursor time.
+    /// `None` when the cursor has no eligible fix.
     pub plot_hover_point: Option<(FileIdx, TrackIdx, PointIdx)>,
-    /// `true` when the plot cursor is within the snap-distance threshold of
-    /// `plot_hover_point` (approximately 25 px in time on-screen).
-    ///
-    /// Only when this is `true` does the map overlay activate for plot hover.
-    /// Prevents the map from dimming the moment the cursor crosses the plot
-    /// boundary, before it is actually near any data.
+    /// True when the plot selects a value and the map draws its target fix.
     pub plot_hover_snapped: bool,
     /// The sky-trails scrubber's current instant, cross-highlighted on the
     /// track plot as a vertical time line. `None` when the sky-trails window is

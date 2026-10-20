@@ -3,12 +3,16 @@
 
 use std::ops::Range;
 
-use chrono::DateTime;
+use chrono::{DateTime, Utc};
 use egui::{Color32, Tooltip};
 use egui_plot::{Line, LineStyle, MarkerShape, PlotPoint, PlotPoints, Points};
 use gt_analysis::satellite_utilization::UtilAnomaly;
-use gt_types::MetricKind;
+use gt_egui_mipmap::LevelSelection;
 use gt_types::satellites::ConstellationSet;
+use gt_types::{
+    FixRef, LoadedTrack, MetricKind, NavigationEvidenceSource, PointIdx, SatelliteReportMetadata,
+    TrackRef,
+};
 use gt_ui_types::HighlightScope;
 use rustc_hash::FxHashMap;
 use strum::IntoEnumIterator;
@@ -26,6 +30,7 @@ use super::levels::{LineViewport, TrackLevelCache};
 use super::snap_error::{self, SnapErrorHover, SnapErrorPlotCache, SnapErrorStyle};
 use super::style;
 use super::tec::TecHover;
+use crate::metric_series::{MetricSampleSource, MetricSeries};
 use crate::series::{PlacedTrackSeries, TrackSeries};
 
 /// The sub-slice of `items` - sorted ascending by `key` - whose key lies in
@@ -104,6 +109,7 @@ pub(super) fn nearest_fix_under_pointer<'a, T>(
 pub(super) fn add_series_lines<'a>(
     plot_ui: &mut egui_plot::PlotUi<'a>,
     placed: &'a PlacedTrackSeries,
+    track: &LoadedTrack,
     // The recording's plot label, `None` while a single track is visible and
     // nothing needs naming.
     track_label: Option<&str>,
@@ -165,6 +171,26 @@ pub(super) fn add_series_lines<'a>(
             style::metric_line_color(kind, placed.fi, dark_mode),
             is_hovered,
         );
+        if let Some(metric) = placed.series.metrics.get(&kind) {
+            if let Some(selections) = cache.metrics.get(&kind) {
+                metric.add_run_lines(
+                    plot_ui,
+                    selections,
+                    &MetricLineContext {
+                        track,
+                        track_ref: placed.track_ref(),
+                        track_label,
+                        kind,
+                        name: format!("{prefix}{}", kind.label()),
+                        stroke,
+                        viewport,
+                        pointer,
+                    },
+                    nearest,
+                );
+            }
+            continue;
+        }
         // Snap error has no mipmap. It draws from the external per-run series
         // right after this loop.
         let (Some(mipmap), Some(level)) = (placed.series.mipmap_for(kind), cache.level_for(kind))
@@ -256,6 +282,7 @@ pub(super) fn add_series_lines<'a>(
 /// One custom hover label, for the plot items whose message egui_plot's own
 /// label cannot carry.
 pub(super) enum PlotHoverLabel {
+    Metric(MetricHover),
     Anomaly(AnomalyHover),
     BackwardTimeStep(BackwardTimeStepHover),
     ClockOffset(ClockOffsetHover),
@@ -266,9 +293,26 @@ pub(super) enum PlotHoverLabel {
     Tec(TecHover),
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct MetricHoverSelection {
+    pub(super) fix: FixRef,
+    pub(super) time: DateTime<Utc>,
+}
+
 impl PlotHoverLabel {
+    pub(super) fn metric_selection(&self) -> Option<MetricHoverSelection> {
+        match self {
+            Self::Metric(hover) => Some(MetricHoverSelection {
+                fix: hover.fix,
+                time: hover.time?,
+            }),
+            _ => None,
+        }
+    }
+
     fn show(&self, ui: &mut egui::Ui) {
         match self {
+            Self::Metric(hover) => hover.show(ui),
             Self::Anomaly(hover) => hover.show(ui),
             Self::SnapError(hover) => hover.show(ui),
             Self::Jamming(hover) => hover.show(ui),
@@ -304,6 +348,10 @@ impl<T> NearestCandidate<T> {
         {
             self.closest = Some((distance_px, candidate()));
         }
+    }
+
+    pub(super) fn selected(&self) -> Option<&T> {
+        self.closest.as_ref().map(|(_, candidate)| candidate)
     }
 
     pub(super) fn has_candidate(&self) -> bool {
@@ -391,6 +439,170 @@ pub(super) fn add_line<'a>(
             .width(stroke.width)
             .highlight(stroke.highlighted),
     );
+}
+
+struct MetricLineContext<'a> {
+    track: &'a LoadedTrack,
+    track_ref: TrackRef,
+    track_label: Option<&'a str>,
+    kind: MetricKind,
+    name: String,
+    stroke: LineStroke,
+    viewport: LineViewport,
+    pointer: Option<egui::Pos2>,
+}
+
+impl MetricSeries {
+    fn add_run_lines<'a>(
+        &'a self,
+        plot_ui: &mut egui_plot::PlotUi<'a>,
+        selections: &[LevelSelection],
+        context: &MetricLineContext<'_>,
+        nearest: &mut NearestHoverLabel,
+    ) {
+        for (run_index, (run, selection)) in self.runs.iter().zip(selections).enumerate() {
+            if !context.viewport.shows(run) {
+                continue;
+            }
+            let points = run.slice_at(*selection);
+            add_metric_run(plot_ui, points, context.name.clone(), context.stroke);
+            let Some(pointer) = context.pointer else {
+                continue;
+            };
+            let visible = visible_by_x(
+                points,
+                |sample| sample.x,
+                context.viewport.x_min,
+                context.viewport.x_max,
+            );
+            if let Some((distance, point)) = nearest_fix_under_pointer(
+                plot_ui,
+                visible,
+                |point| *point,
+                pointer,
+                HOVER_RADIUS_PX,
+            ) && let Some(source) = self.sample_source(run_index, point.x)
+            {
+                nearest.offer(distance, || {
+                    PlotHoverLabel::Metric(MetricHover::new(
+                        context.track_label,
+                        context.kind,
+                        *point,
+                        source,
+                        context.track,
+                        context.track_ref,
+                    ))
+                });
+            }
+        }
+    }
+}
+
+fn add_metric_run<'a>(
+    plot_ui: &mut egui_plot::PlotUi<'a>,
+    points: &'a [PlotPoint],
+    name: String,
+    stroke: LineStroke,
+) {
+    if points.len() == 1 {
+        plot_ui.points(
+            Points::new(name, PlotPoints::Borrowed(points))
+                .color(stroke.color)
+                .radius(ISOLATED_SAMPLE_RADIUS_PX)
+                .highlight(stroke.highlighted)
+                .allow_hover(false),
+        );
+    } else {
+        plot_ui.line(
+            Line::new(name, PlotPoints::Borrowed(points))
+                .color(stroke.color)
+                .style(stroke.style)
+                .width(stroke.width)
+                .highlight(stroke.highlighted)
+                .allow_hover(false),
+        );
+    }
+}
+
+pub(super) struct MetricHover {
+    fix: FixRef,
+    track: Option<String>,
+    kind: MetricKind,
+    point: PlotPoint,
+    source: MetricSampleSource,
+    report: Option<SatelliteReportMetadata>,
+    time: Option<DateTime<Utc>>,
+}
+
+impl MetricHover {
+    fn new(
+        track_label: Option<&str>,
+        kind: MetricKind,
+        point: PlotPoint,
+        source: MetricSampleSource,
+        track: &LoadedTrack,
+        track_ref: TrackRef,
+    ) -> Self {
+        let report = track
+            .points
+            .get(source.point_index)
+            .and_then(|point| match source.evidence {
+                NavigationEvidenceSource::UsageAggregate(index)
+                | NavigationEvidenceSource::UsageList(index) => point
+                    .satellite_evidence
+                    .usage
+                    .get(index)
+                    .map(|report| report.metadata),
+                NavigationEvidenceSource::ObservationAggregate(index)
+                | NavigationEvidenceSource::ObservationList(index) => point
+                    .satellite_evidence
+                    .observations
+                    .get(index)
+                    .map(|report| report.metadata),
+                _ => None,
+            });
+        Self {
+            fix: FixRef::new(track_ref, PointIdx::new(source.point_index)),
+            time: report
+                .map(|report| report.normalized_time.utc())
+                .or_else(|| {
+                    track
+                        .points
+                        .get(source.point_index)
+                        .map(|point| point.tpv.time().utc())
+                }),
+            track: track_label.map(ToOwned::to_owned),
+            kind,
+            point,
+            source,
+            report,
+        }
+    }
+
+    fn show(&self, ui: &mut egui::Ui) {
+        ui.strong(format!("{} {}", self.kind.label(), self.point.y));
+        if let Some(track) = &self.track {
+            ui.label(track);
+        }
+        if let Some(time) = self.time {
+            ui.label(time.format("%Y-%m-%d %H:%M:%S%.f UTC").to_string());
+        }
+        ui.label(format!("Point {}", self.source.point_index + 1));
+        if let Some(report) = self.report {
+            if let Some(time) = report.gps_time {
+                ui.label(format!(
+                    "Receiver time {}",
+                    time.utc().format("%Y-%m-%d %H:%M:%S%.f UTC")
+                ));
+            }
+            if let Some(time) = report.sys_time {
+                ui.label(format!(
+                    "Host time {}",
+                    time.utc().format("%Y-%m-%d %H:%M:%S%.f UTC")
+                ));
+            }
+        }
+    }
 }
 
 /// Pre-formatted tooltip contents for one masked-satellite anomaly marker.
@@ -502,6 +714,8 @@ pub(super) const HOVER_RADIUS_PX: f32 = 12.0;
 pub(super) const ANOMALY_MARKER_RADIUS: f32 = 4.0;
 /// Gap between the pointer and the custom hover label.
 const HOVER_LABEL_TOOLTIP_GAP: f32 = 12.0;
+
+const ISOLATED_SAMPLE_RADIUS_PX: f32 = 3.0;
 
 #[cfg(test)]
 mod tests {

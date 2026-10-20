@@ -32,10 +32,10 @@ pub use placed_point::{AddressedFix, PlacedPoint, PlacedPoints};
 pub use query::DisplayMode;
 pub use sat_label::{SatLabelAnchor, SatLabelTier};
 pub use satellite_evidence::{
-    ResolvedSatelliteMembership, SatelliteCoverage, SatelliteEvidence, SatelliteIdentity,
-    SatelliteMembership, SatelliteObservation, SatelliteObservationReport, SatelliteQueryScope,
-    SatelliteReportMetadata, SatelliteScope, SatelliteUsage, SatelliteUsageReport,
-    UtilizationEvidence,
+    ReportSatelliteCount, ResolvedSatelliteMembership, SatelliteCoverage, SatelliteEvidence,
+    SatelliteIdentity, SatelliteMembership, SatelliteObservation, SatelliteObservationReport,
+    SatelliteQueryScope, SatelliteReportMetadata, SatelliteScope, SatelliteUsage,
+    SatelliteUsageReport, UtilizationEvidence,
 };
 pub use sky_evidence::{NearbySkyEvidence, SkyCounts, SkyEvidence, SkyGeometry, SkySatellite};
 pub use solar_position::SunlitSide;
