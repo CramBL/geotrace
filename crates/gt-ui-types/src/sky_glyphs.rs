@@ -1,5 +1,7 @@
 //! The persisted choice between the two sky-glyph variants.
 
+use gt_types::SkyGeometry;
+
 /// Which sky-glyph variant the map overlay draws.
 ///
 /// Serialized into the map settings. The wire names are pinned by
@@ -31,6 +33,13 @@ pub enum SkyGlyphVariant {
 }
 
 impl SkyGlyphVariant {
+    pub fn required_geometry(self) -> SkyGeometry {
+        match self {
+            Self::Ring => SkyGeometry::Azimuth,
+            Self::Disc => SkyGeometry::Position,
+        }
+    }
+
     /// The variant's sentence-case UI label.
     pub fn label(self) -> &'static str {
         match self {

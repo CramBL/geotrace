@@ -10,7 +10,7 @@ use gt_loaded_files::LoadedFilesView;
 use gt_types::{GeoBounds, LoadedFile, SpatialPoint};
 use gt_ui_types::{
     DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, MapEligibility, QueryMatches,
-    TrackDataVisibility,
+    SkyGlyphVariant, TrackDataVisibility,
 };
 
 use crate::MapFiles;
@@ -123,6 +123,7 @@ impl FramePlanInputs<'_> {
                 self.event_marker_visibility,
             )
             .with_display_mask(self.display_mask),
+            SkyGlyphVariant::default(),
         )
     }
 }

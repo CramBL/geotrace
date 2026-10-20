@@ -324,6 +324,12 @@ impl SatelliteEvidence {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResolvedSatelliteMembership {
+    pub membership: SatelliteMembership,
+    pub usage_report_index: Option<usize>,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct UtilizationEvidence<'a> {
     pub observation_index: usize,
@@ -406,13 +412,32 @@ impl NavPoint {
         })
     }
 
-    pub fn reported_membership(&self, identity: SatelliteIdentity) -> SatelliteMembership {
-        self.satellite_evidence
+    pub fn resolved_satellite_membership(
+        &self,
+        identity: SatelliteIdentity,
+    ) -> ResolvedSatelliteMembership {
+        let selected = self
+            .satellite_evidence
             .select_usage_report(self.tpv.time(), |report| {
-                report.membership(identity) != SatelliteMembership::Unknown
-            })
-            .map_or(SatelliteMembership::Unknown, |(_, report)| {
+                report
+                    .metadata
+                    .scope
+                    .covers(SatelliteQueryScope::Constellation(identity.constellation))
+                    && (report.metadata.coverage == SatelliteCoverage::Complete
+                        || report
+                            .satellites
+                            .iter()
+                            .any(|satellite| satellite.identity == identity))
+            });
+        ResolvedSatelliteMembership {
+            membership: selected.map_or(SatelliteMembership::Unknown, |(_, report)| {
                 report.membership(identity)
-            })
+            }),
+            usage_report_index: selected.map(|(index, _)| index),
+        }
+    }
+
+    pub fn reported_membership(&self, identity: SatelliteIdentity) -> SatelliteMembership {
+        self.resolved_satellite_membership(identity).membership
     }
 }

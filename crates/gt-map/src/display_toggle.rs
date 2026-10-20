@@ -334,17 +334,25 @@ fn day_stepper_ui(ui: &mut Ui, enabled: bool, selection: &mut DaySelection) {
     }
 }
 
-/// The Ring | Disc picker on the sky-glyphs row. Grayed while the category
-/// is hidden (never removed, per DESIGN.md).
-fn variant_picker_ui(ui: &mut Ui, visible: bool, variant: &mut SkyGlyphVariant) {
+fn variant_picker_ui(
+    ui: &mut Ui,
+    visible: bool,
+    variant: &mut SkyGlyphVariant,
+    counts: DisplayCounts,
+) {
+    let selected_supported = counts.sky_glyphs(*variant) > 0;
     for candidate in SkyGlyphVariant::iter() {
         let response = ui
             .add_enabled(
-                visible,
+                (visible || !selected_supported) && counts.sky_glyphs(candidate) > 0,
                 Button::selectable(*variant == candidate, candidate.label()),
             )
             .on_hover_text(variant_hover_text(candidate))
-            .on_disabled_hover_text("Show sky glyphs to choose a variant");
+            .on_disabled_hover_text(if counts.sky_glyphs(candidate) == 0 {
+                "Required satellite geometry is unavailable"
+            } else {
+                "Show sky glyphs to choose a variant"
+            });
         if response.clicked() {
             *variant = candidate;
         }
@@ -477,7 +485,11 @@ pub(crate) fn popup_contents(
     counts: DisplayCounts,
 ) {
     for category in DisplayCategory::iter() {
-        let count = counts.get(category);
+        let count = if category == DisplayCategory::SkyGlyphs {
+            counts.sky_glyphs(*sky_glyph_variant)
+        } else {
+            counts.get(category)
+        };
         let visible = mask.is_visible(category);
         ui.horizontal(|ui| {
             let glyph = if visible { ICON_EYE } else { ICON_EYE_SLASH };
@@ -504,7 +516,7 @@ pub(crate) fn popup_contents(
                 }
             }
             if category == DisplayCategory::SkyGlyphs {
-                variant_picker_ui(ui, visible && in_scope, sky_glyph_variant);
+                variant_picker_ui(ui, visible, sky_glyph_variant, counts);
             }
             let empty_badge = match category {
                 DisplayCategory::JammingHexes => layers
@@ -620,7 +632,17 @@ const DISABLED_ALPHA: f32 = 0.4;
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use gt_filter::GlobalFilter;
+    use gt_test_utils::Queryable as _;
+    use gt_types::fixtures::{self, MetricOffset};
+    use gt_types::satellites::{Constellation, Satellite, Satellites};
+    use gt_ui_types::{EventMarkerVisibility, GeneratedMarkerVisibility, TrackDataVisibility};
+
     use super::*;
+    use crate::display_counts::SuppliedCounts;
     use crate::test_util;
 
     /// The counts a loaded recording and a downloaded day produce. The
@@ -642,6 +664,53 @@ mod tests {
             DisplayCategory::TecHeatmap => tec_nodes,
             DisplayCategory::LogMatches => 42,
         })
+    }
+
+    #[test]
+    fn an_available_variant_can_replace_an_unavailable_hidden_variant() {
+        let point = fixtures::nav_point_at_meters(
+            MetricOffset {
+                east_m: 0.0,
+                north_m: 0.0,
+            },
+            Some(Satellites::new(
+                None,
+                None,
+                vec![Satellite::new(
+                    Constellation::Gps,
+                    1,
+                    None,
+                    Some(45.0),
+                    None,
+                    false,
+                )],
+            )),
+        );
+        let files = vec![gt_test_utils::loaded_file_with_tracks(vec![
+            gt_test_utils::loaded_track_with_points(vec![point]),
+        ])];
+        let counts = DisplayCounts::compute(
+            &files,
+            &TrackDataVisibility::from_loaded(&files),
+            &GlobalFilter::default(),
+            &EventMarkerVisibility::default(),
+            &GeneratedMarkerVisibility::default(),
+            None,
+            SuppliedCounts::default(),
+        );
+        assert_eq!(counts.sky_glyphs(SkyGlyphVariant::Ring), 1);
+        assert_eq!(counts.sky_glyphs(SkyGlyphVariant::Disc), 0);
+        let selected = Rc::new(Cell::new(SkyGlyphVariant::Disc));
+        let state = Rc::clone(&selected);
+        let mut harness = test_util::harness_builder().ui(move |ui| {
+            let mut variant = state.get();
+            variant_picker_ui(ui, false, &mut variant, counts);
+            state.set(variant);
+        });
+        harness.run();
+        harness.inner.get_by_label("Ring").click();
+        harness.inner.run_steps(2);
+        assert_eq!(selected.get(), SkyGlyphVariant::Ring);
     }
 
     #[test]

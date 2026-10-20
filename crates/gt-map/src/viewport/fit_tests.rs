@@ -2,14 +2,15 @@ use chrono::TimeDelta;
 use gt_filter::{GlobalFilter, TimeWindow};
 use gt_types::fixtures::{self, FixKind};
 use gt_types::sat_label::{SatLabelAnchor, SatLabelTier};
+use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::{
     DataCategory, EventMarker, FileIdx, GeneratedMarker, GeneratedMarkerKind,
-    GeneratedMarkerKindTag, GeoBounds, Latitude, LoadedFile, Longitude, PointIdx, TrackIdx,
-    TrackRef, mercator,
+    GeneratedMarkerKindTag, GeoBounds, Latitude, LoadedFile, Longitude, PointIdx,
+    SatelliteEvidence, TrackIdx, TrackRef, mercator,
 };
 use gt_ui_types::{
     DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, MapEligibility,
-    MapPresence, QueryMatches, TrackDataVisibility, TrackRanges,
+    MapPresence, QueryMatches, SkyGlyphVariant, TrackDataVisibility, TrackRanges,
 };
 
 use crate::test_util::{self, MapScene};
@@ -66,6 +67,61 @@ impl Policy {
     }
 }
 
+#[test]
+fn fit_uses_the_selected_sky_glyph_geometry() {
+    let latitude = Latitude::new(55.0);
+    let points = [12.0, 90.0, 14.0]
+        .into_iter()
+        .enumerate()
+        .map(|(index, longitude)| {
+            let mut point = fixtures::nav_point(
+                test_util::epoch() + TimeDelta::seconds(index as i64),
+                latitude,
+                Longitude::new(longitude),
+                FixKind::GhostWithoutHeading,
+            );
+            if index == 1 {
+                let report = Satellites::new(
+                    None,
+                    None,
+                    vec![Satellite::new(
+                        Constellation::Gps,
+                        1,
+                        None,
+                        Some(45.0),
+                        None,
+                        false,
+                    )],
+                );
+                point.satellite_evidence = SatelliteEvidence::from_legacy(&report, &point.tpv);
+                point.satellite_evidence.usage.clear();
+            }
+            point
+        })
+        .collect();
+    let mut policy = Policy::fixture();
+    policy.files = vec![gt_test_utils::loaded_file_with_tracks(vec![
+        gt_test_utils::loaded_track_with_points(points),
+    ])];
+    policy.visibility = TrackDataVisibility::from_loaded(&policy.files);
+    policy.display.solo(DisplayCategory::SkyGlyphs);
+    let expected = |longitudes: &[f64]| {
+        GeoBounds::from_positions(
+            longitudes
+                .iter()
+                .map(|longitude| (latitude, Longitude::new(*longitude))),
+        )
+    };
+    assert_eq!(
+        super::visible_bounds(policy.scope(), SkyGlyphVariant::Ring),
+        expected(&[12.0, 90.0])
+    );
+    assert_eq!(
+        super::visible_bounds(policy.scope(), SkyGlyphVariant::Disc),
+        expected(&[12.0, 14.0])
+    );
+}
+
 #[rstest::rstest]
 #[case::generated(DisplayCategory::GeneratedMarkers, false)]
 #[case::event(DisplayCategory::EventMarkers, false)]
@@ -86,7 +142,7 @@ fn fit_frames_marker_only_scenes_and_applies_refinements(
             .events
             .set_hidden(test_util::track0(), std::iter::once("power".to_owned()));
     }
-    let bounds = super::visible_bounds(policy.scope());
+    let bounds = super::visible_bounds(policy.scope(), SkyGlyphVariant::default());
     let expected_lon = if category == DisplayCategory::GeneratedMarkers {
         90.0
     } else {
@@ -108,9 +164,9 @@ fn fit_respects_each_manifestations_tree_gate(
 ) {
     let mut policy = Policy::fixture();
     policy.display.solo(display);
-    assert!(super::visible_bounds(policy.scope()).is_some());
+    assert!(super::visible_bounds(policy.scope(), SkyGlyphVariant::default()).is_some());
     policy.visibility.files[0].tracks[0].set_category_visible(category, false);
-    assert!(super::visible_bounds(policy.scope()).is_none());
+    assert!(super::visible_bounds(policy.scope(), SkyGlyphVariant::default()).is_none());
 }
 
 #[test]
@@ -131,7 +187,7 @@ fn fit_and_reveal_exclude_query_hidden_and_time_filtered_distant_fixes() {
         .resolved_position_at(0)
         .expect("fixture geometry");
     for bounds in [
-        super::visible_bounds(policy.scope()),
+        super::visible_bounds(policy.scope(), SkyGlyphVariant::default()),
         super::query_bounds(policy.scope(), &policy.matches),
         super::query_match_bounds(policy.scope(), track, &(0..3)),
     ] {
@@ -142,7 +198,7 @@ fn fit_and_reveal_exclude_query_hidden_and_time_filtered_distant_fixes() {
         .set_visible(DisplayCategory::QueryHighlights, false);
     assert!(super::query_bounds(policy.scope(), &policy.matches).is_none());
     policy.filter.set_time_window(TimeWindow::Empty);
-    assert!(super::visible_bounds(policy.scope()).is_none());
+    assert!(super::visible_bounds(policy.scope(), SkyGlyphVariant::default()).is_none());
 }
 
 #[test]
@@ -202,11 +258,17 @@ fn fit_excludes_ghost_label_anchors_when_ghost_fixes_are_hidden() {
     policy.files = vec![gt_test_utils::loaded_file_with_tracks(vec![track])];
     policy.visibility = TrackDataVisibility::from_loaded(&policy.files);
     policy.display.solo(DisplayCategory::SatelliteLabels);
-    assert_eq!(super::visible_bounds(policy.scope()), measured_bounds);
+    assert_eq!(
+        super::visible_bounds(policy.scope(), SkyGlyphVariant::default()),
+        measured_bounds
+    );
     policy
         .display
         .set_visible(DisplayCategory::GhostFixes, true);
-    assert_eq!(super::visible_bounds(policy.scope()), all_bounds);
+    assert_eq!(
+        super::visible_bounds(policy.scope(), SkyGlyphVariant::default()),
+        all_bounds
+    );
 }
 
 #[rstest::rstest]

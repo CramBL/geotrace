@@ -9,11 +9,11 @@ use egui_phosphor::regular::CHECK as ICON_CHECK;
 use gt_fmt::UTC_SECOND_FORMAT;
 use gt_sky::{SkyHighlight, SkyPlot, SkyPlotSize};
 use gt_types::coordinates::{Coordinate, RecordedCoordinate};
-use gt_types::satellites::{Constellation, NO_DATA_SNR_EXPLANATION, Satellite};
+use gt_types::satellites::{Constellation, NO_DATA_SNR_EXPLANATION};
 use gt_types::{
-    DataCategory, FileIdx, FixRef, LoadedFile, LoadedTrack, NavPoint, NearestSatelliteReport,
-    PlacedPoint, PlacedPoints, PointIdx, ResolvedPosition, SKY_REPORT_MAX_AGE_SECS, TrackIdx,
-    TrackRef,
+    DataCategory, FileIdx, FixRef, LoadedFile, LoadedTrack, NavPoint, NearbySkyEvidence,
+    PlacedPoint, PlacedPoints, PointIdx, ResolvedPosition, SKY_REPORT_MAX_AGE_SECS,
+    SatelliteMembership, SatelliteQueryScope, SkyGeometry, SkySatellite, TrackIdx, TrackRef,
 };
 use gt_ui_theme::labels::LabelWithHover;
 use gt_ui_theme::{DEGREE_SIGN, DELTA, EM_DASH};
@@ -302,7 +302,7 @@ pub(crate) enum SkySection<'a> {
     /// this point.
     NoReportNearby,
     /// The point's own satellite report, or one borrowed from a nearby point.
-    Report(NearestSatelliteReport<'a>),
+    Report(NearbySkyEvidence<'a>),
     /// The track carries no satellite reports at all, so the badge has no
     /// sky column.
     TrackWithoutReports,
@@ -313,7 +313,10 @@ impl<'a> SkySection<'a> {
         if track.metadata.satellite_report_count == 0 {
             return Self::TrackWithoutReports;
         }
-        match track.nearest_satellite_report(point_index) {
+        match track
+            .nearest_sky_evidence(point_index, SkyGeometry::Position)
+            .or_else(|| track.nearest_sky_evidence(point_index, SkyGeometry::Identities))
+        {
             Some(report) => Self::Report(report),
             None => Self::NoReportNearby,
         }
@@ -341,12 +344,39 @@ fn sky_section_ui(
             );
         }
         SkySection::Report(report) => {
-            let plot = SkyPlot::new(report.satellites, size).with_highlight(highlight);
+            let plot = SkyPlot::from_evidence(report.evidence, size).with_highlight(highlight);
             let plot = match size {
                 SkyPlotSize::Full => plot.interactive(),
                 SkyPlotSize::Compact => plot,
             };
-            plot.ui(ui);
+            let response = plot.ui(ui);
+            response.on_hover_ui(|ui| {
+                let observation = report
+                    .evidence
+                    .observation
+                    .into_iter()
+                    .map(|(_, observation)| ("Observation", observation.metadata));
+                let usage = report
+                    .evidence
+                    .usage_reports()
+                    .into_iter()
+                    .map(|(_, usage)| ("Usage", usage.metadata));
+                for (label, metadata) in observation.chain(usage) {
+                    ui.label(format!(
+                        "{label} at {}",
+                        metadata.normalized_time.utc().format(UTC_SECOND_FORMAT)
+                    ));
+                    if let Some(receiver) = metadata.gps_time {
+                        ui.label(format!(
+                            "Receiver {}",
+                            receiver.utc().format(UTC_SECOND_FORMAT)
+                        ));
+                    }
+                    if let Some(host) = metadata.sys_time {
+                        ui.label(format!("Host {}", host.utc().format(UTC_SECOND_FORMAT)));
+                    }
+                }
+            });
             if !report.age.is_zero() {
                 ui.label(RichText::new(report_age_label(report.age)).weak().small());
             }
@@ -423,13 +453,8 @@ pub(crate) fn draw_plot_hover_overlay(
         );
         // The detailed disc at the scrubbed point, independent of the sky
         // glyphs overlay's own variant or visibility.
-        if let Some(satellites) = &point.fix.satellites {
-            crate::sky_glyph_renderer::draw_hover_disc(
-                ui,
-                pos,
-                satellites,
-                glyph_size_scale(style),
-            );
+        if point.fix.supports_sky_geometry(SkyGeometry::Position) {
+            crate::sky_glyph_renderer::draw_hover_disc(ui, pos, point.fix, glyph_size_scale(style));
         }
     }
 }
@@ -636,14 +661,15 @@ pub(crate) fn show_sticky_tpv_content(
     // closure and `sticky_satellites` each take them in turn, without
     // overlapping mutable borrows.
     // Returns whether the header's "open sky trails" button was pressed.
-    let summary =
-        |ui: &mut Ui, folds: &mut PointWindowFolds, highlight: &mut Option<SkyHighlight>| {
-            let mut open_trails = false;
-            if !matches!(sky, SkySection::TrackWithoutReports) {
-                // Sized to the plot it titles: a right-aligned button in an
-                // unbounded row would stretch the whole column to the window's
-                // width and squeeze the satellite tables out.
-                let header = ui.allocate_ui_with_layout(
+    let summary = |ui: &mut Ui,
+                   folds: &mut PointWindowFolds,
+                   highlight: &mut Option<SkyHighlight>| {
+        let mut open_trails = false;
+        if !matches!(sky, SkySection::TrackWithoutReports) {
+            // Sized to the plot it titles: a right-aligned button in an
+            // unbounded row would stretch the whole column to the window's
+            // width and squeeze the satellite tables out.
+            let header = ui.allocate_ui_with_layout(
                     egui::vec2(SkyPlotSize::Full.diameter(), ui.spacing().interact_size.y),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
@@ -651,35 +677,39 @@ pub(crate) fn show_sticky_tpv_content(
                         fold_arrow(ui, folds.plot_folded, tint);
                         ui.label(RichText::new("Sky").strong());
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.small_button(ICON_ARROW_SQUARE_OUT)
-                                .on_hover_text("Open sky trails at this moment")
+                            ui.add_enabled(
+                                matches!(sky, SkySection::Report(report) if report.evidence.observation.is_some_and(|(_, observation)| observation.has_sky_position())),
+                                egui::Button::new(ICON_ARROW_SQUARE_OUT).small(),
+                            )
+                            .on_hover_text("Open sky trails at this moment")
+                            .on_disabled_hover_text("Satellite azimuth and elevation are required")
                         })
                         .inner
                     },
                 );
-                let button = header.inner;
-                open_trails = button.clicked();
-                // The fold covers the header up to the button, not through it:
-                // an interaction registered after the button would sit on top
-                // of it and swallow its clicks.
-                let mut fold_rect = header.response.rect;
-                fold_rect.max.x = button.rect.left() - ui.spacing().item_spacing.x;
-                // Explicit id: `.interact` on the container response reuses an
-                // auto-generated id, which collides with identically laid out
-                // siblings.
-                let fold = ui.interact(fold_rect, ui.id().with("sky_fold"), egui::Sense::click());
-                crate::hover_labels::hover_affordance(ui, fold.rect);
-                if fold.clicked() {
-                    folds.plot_folded = !folds.plot_folded;
-                }
-                if !folds.plot_folded {
-                    sky_section_ui(ui, sky, SkyPlotSize::Full, prev_highlight);
-                }
-                ui.add_space(6.0);
+            let button = header.inner;
+            open_trails = button.clicked();
+            // The fold covers the header up to the button, not through it:
+            // an interaction registered after the button would sit on top
+            // of it and swallow its clicks.
+            let mut fold_rect = header.response.rect;
+            fold_rect.max.x = button.rect.left() - ui.spacing().item_spacing.x;
+            // Explicit id: `.interact` on the container response reuses an
+            // auto-generated id, which collides with identically laid out
+            // siblings.
+            let fold = ui.interact(fold_rect, ui.id().with("sky_fold"), egui::Sense::click());
+            crate::hover_labels::hover_affordance(ui, fold.rect);
+            if fold.clicked() {
+                folds.plot_folded = !folds.plot_folded;
             }
-            sticky_metrics(ui, p, highlight, recording_name, placement);
-            open_trails
-        };
+            if !folds.plot_folded {
+                sky_section_ui(ui, sky, SkyPlotSize::Full, prev_highlight);
+            }
+            ui.add_space(6.0);
+        }
+        sticky_metrics(ui, p, highlight, recording_name, placement);
+        open_trails
+    };
     let mut open_trails = false;
     if side_by_side {
         // The body itself has no scroll: each column scrolls inside it.
@@ -832,7 +862,9 @@ struct ConstellationGroup<'a> {
     grid_id: usize,
     constellation: Constellation,
     prn_prefix: &'a str,
-    satellites: Vec<Satellite>,
+    satellites: Vec<SkySatellite>,
+    used: Option<u32>,
+    seen: Option<u32>,
 }
 
 impl ConstellationGroup<'_> {
@@ -856,9 +888,10 @@ fn sticky_satellites(
     folds: &mut PointWindowFolds,
     highlight: &mut Option<SkyHighlight>,
 ) {
-    let Some(sats) = &p.satellites else {
+    let Some(evidence) = p.sky_evidence(SkyGeometry::Identities) else {
         return;
     };
+    let rows = evidence.satellites();
     ui.add_space(6.0);
 
     // Collect non-empty constellations up-front. `Satellite` is `Copy` so
@@ -868,16 +901,26 @@ fn sticky_satellites(
     let groups: SmallVec<[ConstellationGroup<'_>; Constellation::COUNT]> = Constellation::iter()
         .enumerate()
         .filter_map(|(grid_id, constellation)| {
-            let mut satellites: Vec<_> = sats.by_constellation(constellation).copied().collect();
+            let mut satellites: Vec<_> = rows
+                .iter()
+                .filter(|satellite| satellite.constellation() == constellation)
+                .copied()
+                .collect();
             if satellites.is_empty() {
                 return None;
             }
-            satellites.sort_by_key(Satellite::prn);
+            satellites.sort_by_key(SkySatellite::prn);
             Some(ConstellationGroup {
                 grid_id,
                 constellation,
                 prn_prefix: constellation.prn_prefix(),
                 satellites,
+                used: p
+                    .resolved_used_count(SatelliteQueryScope::Constellation(constellation))
+                    .map(|count| count.count),
+                seen: p
+                    .resolved_seen_count(SatelliteQueryScope::Constellation(constellation))
+                    .map(|count| count.count),
             })
         })
         .collect();
@@ -953,7 +996,7 @@ fn constellation_panel(
     let folded = folds.is_folded(constellation);
     ui.vertical(|ui| {
         let dark_mode = ui.visuals().dark_mode;
-        let const_fix = satellites.iter().filter(|s| s.in_fix()).count() as u32;
+        let const_fix = group.used;
         // Header: the fold arrow in the constellation's plot colour, the name,
         // and the fix/seen count.
         //
@@ -969,9 +1012,21 @@ fn constellation_panel(
                 gt_ui_theme::constellation_color(constellation, dark_mode),
             );
             ui.label(RichText::new(constellation.display_name()).strong());
-            let fix_resp =
-                ui.colored_label(fix_count_color(const_fix, dark_mode), const_fix.to_string());
-            ui.label(RichText::new(format!("/{}", satellites.len())).weak());
+            let fix_resp = ui.colored_label(
+                const_fix.map_or(ui.visuals().weak_text_color(), |count| {
+                    fix_count_color(count, dark_mode)
+                }),
+                const_fix.map_or_else(|| EM_DASH.to_owned(), |count| count.to_string()),
+            );
+            ui.label(
+                RichText::new(format!(
+                    "/{}",
+                    group
+                        .seen
+                        .map_or_else(|| EM_DASH.to_owned(), |count| count.to_string())
+                ))
+                .weak(),
+            );
             ui.rect_contains_pointer(fix_resp.rect)
         });
         let over_fix_count = header.inner;
@@ -1034,6 +1089,9 @@ fn constellation_panel(
                     };
                     let fix_resp = if in_fix {
                         ui.label(RichText::new(ICON_CHECK).color(in_fix_color))
+                    } else if sat.membership == SatelliteMembership::Unknown {
+                        ui.label(RichText::new("?").color(muted_color))
+                            .on_hover_text("Usage unreported")
                     } else {
                         ui.label("")
                     };

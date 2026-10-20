@@ -32,10 +32,12 @@ pub use placed_point::{AddressedFix, PlacedPoint, PlacedPoints};
 pub use query::DisplayMode;
 pub use sat_label::{SatLabelAnchor, SatLabelTier};
 pub use satellite_evidence::{
-    SatelliteCoverage, SatelliteEvidence, SatelliteIdentity, SatelliteMembership,
-    SatelliteObservation, SatelliteObservationReport, SatelliteQueryScope, SatelliteReportMetadata,
-    SatelliteScope, SatelliteUsage, SatelliteUsageReport, UtilizationEvidence,
+    ResolvedSatelliteMembership, SatelliteCoverage, SatelliteEvidence, SatelliteIdentity,
+    SatelliteMembership, SatelliteObservation, SatelliteObservationReport, SatelliteQueryScope,
+    SatelliteReportMetadata, SatelliteScope, SatelliteUsage, SatelliteUsageReport,
+    UtilizationEvidence,
 };
+pub use sky_evidence::{NearbySkyEvidence, SkyCounts, SkyEvidence, SkyGeometry, SkySatellite};
 pub use solar_position::SunlitSide;
 pub use time_types::{FixTimestamp, GpsTime, GpsTimeRange, SysTime};
 pub use tpv::TimePositionVelocity;
@@ -68,6 +70,7 @@ pub mod query;
 pub mod sat_label;
 mod satellite_evidence;
 pub mod satellites;
+mod sky_evidence;
 pub mod solar_position;
 mod test_util;
 pub mod time_types;

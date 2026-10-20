@@ -568,6 +568,7 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
                 viewport,
                 // No candidates are pushed, so the cell size is never read.
                 1.0,
+                variant,
                 |_, _, _| false,
             );
             return;
@@ -584,6 +585,7 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
             geometries.len(),
             viewport,
             cell_merc,
+            variant,
             move |track_ref, pi, _| plan.fix_is_semantically_present(track_ref, pi),
         );
     }

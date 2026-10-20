@@ -14,7 +14,7 @@ use gt_ui_types::{
     DisplayCategory, DisplayMask, EligibleElementRef, EventMarkerVisibility,
     GeneratedMarkerVisibility, MapElementRef, MapEligibility, MapPresence, MapPresenceResult,
     PreparedMapEligibility, PreparedTrackEligibility, PresentElementRef, QueryMatches,
-    ResolvedElement, ResolvedEligibility, TrackDataVisibility, TrackMatchView,
+    ResolvedElement, ResolvedEligibility, SkyGlyphVariant, TrackDataVisibility, TrackMatchView,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -595,7 +595,10 @@ impl<'a> MapFramePlan<'a> {
 
 // Global environment overlays have no recording extent. Snapped geometry
 // annotates recorded geometry and uses its extent.
-pub(crate) fn visible_bounds(scope: MapPresence<'_>) -> Option<GeoBounds> {
+pub(crate) fn visible_bounds(
+    scope: MapPresence<'_>,
+    sky_variant: SkyGlyphVariant,
+) -> Option<GeoBounds> {
     let mask = scope.display_mask();
     let label_display = SatelliteLabelDisplay::new(mask);
     let mut result: Option<GeoBounds> = None;
@@ -637,7 +640,9 @@ pub(crate) fn visible_bounds(scope: MapPresence<'_>) -> Option<GeoBounds> {
                                 || (label_anchors.contains(&point_index)
                                     && label_display.includes(point.fix))
                                 || (mask.is_visible(DisplayCategory::SkyGlyphs)
-                                    && point.fix.satellites.is_some()));
+                                    && point
+                                        .fix
+                                        .supports_sky_geometry(sky_variant.required_geometry())));
                         prepared.fix_is_available(point_index)
                             && (line_drawn || query_drawn || point_ink_drawn)
                     })
@@ -752,6 +757,7 @@ pub(crate) fn compute_visible_bounding_box(
             &EventMarkerVisibility::default(),
         )
         .with_display_mask(mask),
+        SkyGlyphVariant::default(),
     )
 }
 

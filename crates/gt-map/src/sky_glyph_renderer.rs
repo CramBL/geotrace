@@ -15,13 +15,42 @@ use std::cmp::Reverse;
 
 use egui::{Pos2, Shape, Stroke, Vec2};
 
+#[cfg(test)]
 use gt_types::satellites::Satellites;
-use gt_types::{LoadedTrack, MercBounds, PlacedPoints, TrackRef};
+use gt_types::{
+    LoadedTrack, MercBounds, NavPoint, PlacedPoints, SatelliteMembership, SatelliteQueryScope,
+    SkyGeometry, SkySatellite, SolutionState, TrackRef,
+};
 use gt_ui_types::SkyGlyphVariant;
 use smallvec::SmallVec;
 
 use crate::collision_grid;
 use crate::transform::MercTransform;
+
+struct GlyphView {
+    satellites: Vec<SkySatellite>,
+    loss: bool,
+}
+
+impl GlyphView {
+    fn from_point(point: &NavPoint, geometry: SkyGeometry) -> Option<Self> {
+        Some(Self {
+            satellites: point.sky_evidence(geometry)?.satellites(),
+            loss: point.resolved_navigation_state().state == SolutionState::NoFix,
+        })
+    }
+
+    #[cfg(test)]
+    fn from_legacy(satellites: &Satellites) -> Self {
+        Self {
+            satellites: satellites
+                .satellites()
+                .map(SkySatellite::from_legacy)
+                .collect(),
+            loss: satellites.fix_count() == 0,
+        }
+    }
+}
 
 pub(crate) fn min_spacing_px(variant: SkyGlyphVariant) -> f32 {
     match variant {
@@ -59,6 +88,7 @@ pub(crate) fn select_glyphs<'s, 'a>(
     geometry_count: usize,
     viewport: MercBounds,
     cell_merc: f64,
+    variant: SkyGlyphVariant,
     mut point_passes: impl FnMut(TrackRef, usize, &gt_types::NavPoint) -> bool,
 ) -> &'s [Vec<usize>] {
     let candidates = scratch.candidates();
@@ -68,9 +98,9 @@ pub(crate) fn select_glyphs<'s, 'a>(
             continue;
         };
         for (point_index, point) in placed.iter().enumerate() {
-            let Some(satellites) = &point.fix.satellites else {
+            if !point.fix.supports_sky_geometry(variant.required_geometry()) {
                 continue;
-            };
+            }
             let (x, y) = (point.merc().x, point.merc().y);
             if x < viewport.x_min || x > viewport.x_max || y < viewport.y_min || y > viewport.y_max
             {
@@ -82,7 +112,12 @@ pub(crate) fn select_glyphs<'s, 'a>(
             candidates.push((
                 (x, y),
                 Candidate {
-                    fix_rank: Reverse(satellites.fix_count()),
+                    fix_rank: Reverse(
+                        point
+                            .fix
+                            .resolved_used_count(SatelliteQueryScope::Global)
+                            .map_or(0, |count| count.count),
+                    ),
                     track: track_ref,
                     point_index,
                     geometry_index,
@@ -100,17 +135,15 @@ pub(crate) fn select_glyphs<'s, 'a>(
 /// along the track. Always the detailed disc, regardless of the overlay's
 /// own variant or whether the overlay is shown at all - it is a focus
 /// indicator for the one point the plot cursor is on.
-pub(crate) fn draw_hover_disc(
-    ui: &egui::Ui,
-    fix_pos: Pos2,
-    satellites: &Satellites,
-    size_scale: f32,
-) {
+pub(crate) fn draw_hover_disc(ui: &egui::Ui, fix_pos: Pos2, point: &NavPoint, size_scale: f32) {
+    let Some(view) = GlyphView::from_point(point, SkyGeometry::Position) else {
+        return;
+    };
     draw_disc(
         ui,
         fix_pos,
         fix_pos + disc_offset_for_samples(None, None, fix_pos, size_scale),
-        satellites,
+        &view,
         ui.visuals().weak_text_color(),
         ui.visuals().dark_mode,
         size_scale,
@@ -139,20 +172,13 @@ pub(crate) fn draw_glyphs(
         let Some(point) = placed.get(pi) else {
             continue;
         };
-        let Some(satellites) = &point.fix.satellites else {
+        let Some(view) = GlyphView::from_point(point.fix, variant.required_geometry()) else {
             continue;
         };
         let fix_pos = transform.to_screen(point.merc());
         match variant {
             SkyGlyphVariant::Ring => {
-                draw_ring(
-                    ui,
-                    fix_pos,
-                    satellites,
-                    baseline_color,
-                    dark_mode,
-                    size_scale,
-                );
+                draw_ring(ui, fix_pos, &view, baseline_color, dark_mode, size_scale);
             }
             SkyGlyphVariant::Disc => {
                 let center = fix_pos + disc_offset(placed, pi, transform, fix_pos, size_scale);
@@ -160,7 +186,7 @@ pub(crate) fn draw_glyphs(
                     ui,
                     fix_pos,
                     center,
-                    satellites,
+                    &view,
                     baseline_color,
                     dark_mode,
                     size_scale,
@@ -177,7 +203,7 @@ pub(crate) fn draw_glyphs(
 fn draw_ring(
     ui: &egui::Ui,
     center: Pos2,
-    satellites: &Satellites,
+    view: &GlyphView,
     baseline_color: egui::Color32,
     dark_mode: bool,
     size_scale: f32,
@@ -186,7 +212,7 @@ fn draw_ring(
     let baseline = baseline_color.gamma_multiply(BASELINE_ALPHA);
     let radius = RING_RADIUS_PX * size_scale;
     let bead_radius = BEAD_RADIUS_PX * size_scale;
-    let fix_loss = satellites.fix_count() == 0;
+    let fix_loss = view.loss;
 
     if fix_loss {
         let points = fix_loss_circle_points(center, radius);
@@ -196,7 +222,7 @@ fn draw_ring(
             FIX_LOSS_DASH_PX * size_scale,
             FIX_LOSS_GAP_PX * size_scale,
         ));
-        for satellite in satellites.satellites() {
+        for satellite in &view.satellites {
             if let Some(azimuth) = satellite.azimuth() {
                 let color = gt_ui_theme::constellation_color(satellite.constellation(), dark_mode);
                 painter.circle_stroke(
@@ -208,10 +234,23 @@ fn draw_ring(
         }
     } else {
         painter.circle_stroke(center, radius, Stroke::new(BASELINE_STROKE_PX, baseline));
-        for satellite in satellites.satellites_with_fix() {
+        for satellite in view
+            .satellites
+            .iter()
+            .filter(|satellite| satellite.membership != SatelliteMembership::Unused)
+        {
             if let Some(azimuth) = satellite.azimuth() {
                 let color = gt_ui_theme::constellation_color(satellite.constellation(), dark_mode);
-                painter.circle_filled(bead_pos(center, azimuth, radius), bead_radius, color);
+                let radius_scale = if satellite.membership == SatelliteMembership::Unknown {
+                    UNKNOWN_MEMBERSHIP_GLYPH_SCALE
+                } else {
+                    1.0
+                };
+                painter.circle_filled(
+                    bead_pos(center, azimuth, radius),
+                    bead_radius * radius_scale,
+                    color,
+                );
             }
         }
     }
@@ -342,7 +381,7 @@ fn draw_disc(
     ui: &egui::Ui,
     fix_pos: Pos2,
     center: Pos2,
-    satellites: &Satellites,
+    view: &GlyphView,
     rim_color: egui::Color32,
     dark_mode: bool,
     size_scale: f32,
@@ -364,7 +403,7 @@ fn draw_disc(
         ui.visuals().panel_fill.gamma_multiply(DISC_BACKING_ALPHA),
     );
 
-    if satellites.fix_count() == 0 {
+    if view.loss {
         let points = fix_loss_circle_points(center, radius);
         painter.add(Shape::dashed_line(
             &points,
@@ -376,15 +415,26 @@ fn draw_disc(
     }
 
     painter.circle_stroke(center, radius, Stroke::new(BASELINE_STROKE_PX, rim));
-    for satellite in satellites.satellites_with_fix() {
+    for satellite in view
+        .satellites
+        .iter()
+        .filter(|satellite| satellite.membership != SatelliteMembership::Unused)
+    {
         let (Some(azimuth), Some(elevation)) = (satellite.azimuth(), satellite.elevation()) else {
             continue;
         };
         let color = gt_ui_theme::constellation_color(satellite.constellation(), dark_mode);
         let offset = gt_sky::unit_disc_position(azimuth, elevation) * radius;
-        painter.circle_filled(center + offset, dot_radius, color);
+        let radius_scale = if satellite.membership == SatelliteMembership::Unknown {
+            UNKNOWN_MEMBERSHIP_GLYPH_SCALE
+        } else {
+            1.0
+        };
+        painter.circle_filled(center + offset, dot_radius * radius_scale, color);
     }
 }
+
+const UNKNOWN_MEMBERSHIP_GLYPH_SCALE: f32 = 0.5;
 
 /// Minimum on-screen spacing between sky rings. The decimation cell size,
 /// so denser reports thin to at most one ring per this many pixels.
@@ -461,6 +511,7 @@ mod tests {
     use crate::test_util;
     use gt_types::fixtures::MetricOffset;
     use gt_types::satellites::{Constellation, Satellite, Satellites};
+    use gt_types::{SatelliteMembership, SolutionState};
     use gt_ui_types::SkyGlyphVariant;
 
     use super::{DISC_OFFSET_PX, DISC_RADIUS_PX, GlyphSelection, RING_RADIUS_PX};
@@ -506,6 +557,7 @@ mod tests {
             1,
             WORLD,
             cell_merc,
+            SkyGlyphVariant::Ring,
             |_, _, _| true,
         )
         .to_vec()
@@ -525,6 +577,68 @@ mod tests {
         // A cell far smaller than the spacing, so decimation keeps every
         // eligible point - only index 1 carries a report.
         assert_eq!(select(&track, 1e-9), vec![vec![1]]);
+    }
+
+    #[rstest::rstest]
+    #[case::azimuth_only(false, SkyGlyphVariant::Ring, true)]
+    #[case::missing_elevation(false, SkyGlyphVariant::Disc, false)]
+    #[case::position(true, SkyGlyphVariant::Disc, true)]
+    fn canonical_observations_determine_glyph_eligibility(
+        #[case] elevation: bool,
+        #[case] variant: SkyGlyphVariant,
+        #[case] expected: bool,
+    ) {
+        let mut track = track(&[(
+            0.0,
+            0.0,
+            Some(report(vec![sat(Constellation::Gps, 45.0, true)])),
+        )]);
+        let point = &mut track.points[0];
+        point.satellites = None;
+        point.satellite_evidence.usage.clear();
+        if !elevation {
+            point.satellite_evidence.observations[0].satellites[0]
+                .measurements
+                .elevation = None;
+        }
+        let mut scratch = GlyphSelection::default();
+        let selected = super::select_glyphs(
+            &mut scratch,
+            [(0, test_util::track0(), &track)].into_iter(),
+            1,
+            WORLD,
+            1e-9,
+            variant,
+            |_, _, _| true,
+        );
+        assert_eq!(!selected[0].is_empty(), expected);
+        let view = super::GlyphView::from_point(&track.points[0], variant.required_geometry());
+        assert_eq!(view.is_some(), expected);
+        if let Some(view) = view {
+            assert!(!view.loss);
+            assert_eq!(view.satellites[0].membership, SatelliteMembership::Unknown);
+        }
+    }
+
+    #[rstest::rstest]
+    #[case::fix_with_zero(SolutionState::Fix, 0, false)]
+    #[case::no_fix_with_positive_count(SolutionState::NoFix, 12, true)]
+    #[case::unknown_with_zero(SolutionState::Unknown, 0, false)]
+    fn glyph_loss_decoration_uses_explicit_navigation_state(
+        #[case] state: SolutionState,
+        #[case] count: u32,
+        #[case] loss: bool,
+    ) {
+        let mut track = track(&[(
+            0.0,
+            0.0,
+            Some(report(vec![sat(Constellation::Gps, 45.0, true)])),
+        )]);
+        track.points[0].navigation.state = Some(state);
+        track.points[0].navigation.used_count = Some(count);
+        let view = super::GlyphView::from_point(&track.points[0], super::SkyGeometry::Position)
+            .expect("geometry");
+        assert_eq!(view.loss, loss);
     }
 
     #[test]
@@ -612,6 +726,7 @@ mod tests {
             1,
             nothing,
             1e-9,
+            SkyGlyphVariant::Ring,
             |_, _, _| true,
         );
         assert_eq!(selected.to_vec(), vec![Vec::<usize>::new()]);
@@ -645,12 +760,26 @@ mod tests {
                 let dark = ui.visuals().dark_mode;
                 let y = 60.0;
                 let gap = RING_RADIUS_PX * 4.0;
-                super::draw_ring(ui, egui::pos2(gap, y), &spread(true), baseline, dark, 1.0);
-                super::draw_ring(ui, egui::pos2(gap * 2.0, y), &gapped, baseline, dark, 1.0);
+                super::draw_ring(
+                    ui,
+                    egui::pos2(gap, y),
+                    &super::GlyphView::from_legacy(&spread(true)),
+                    baseline,
+                    dark,
+                    1.0,
+                );
+                super::draw_ring(
+                    ui,
+                    egui::pos2(gap * 2.0, y),
+                    &super::GlyphView::from_legacy(&gapped),
+                    baseline,
+                    dark,
+                    1.0,
+                );
                 super::draw_ring(
                     ui,
                     egui::pos2(gap * 3.0, y),
-                    &spread(false),
+                    &super::GlyphView::from_legacy(&spread(false)),
                     baseline,
                     dark,
                     1.0,
@@ -695,7 +824,15 @@ mod tests {
                 let y = 110.0;
                 let gap = DISC_RADIUS_PX * 3.0;
                 let disc = |ui: &egui::Ui, fix: egui::Pos2, sats: &Satellites| {
-                    super::draw_disc(ui, fix, fix + DISC_OFFSET_PX, sats, rim, dark, 1.0);
+                    super::draw_disc(
+                        ui,
+                        fix,
+                        fix + DISC_OFFSET_PX,
+                        &super::GlyphView::from_legacy(sats),
+                        rim,
+                        dark,
+                        1.0,
+                    );
                 };
                 disc(ui, egui::pos2(gap, y), &spread);
                 disc(ui, egui::pos2(gap * 2.0, y), &southern);

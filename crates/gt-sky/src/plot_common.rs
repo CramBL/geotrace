@@ -3,10 +3,10 @@
 
 use egui::{Align, Layout, Pos2, RichText, Sense, Stroke, Vec2};
 
-use gt_types::GpsTime;
-use gt_types::satellites::{
-    Constellation, NO_DATA_SNR_EXPLANATION, Prn, Satellite, SignalQuality, Snr,
-};
+use gt_types::satellites::{Constellation, NO_DATA_SNR_EXPLANATION, Prn, SignalQuality, Snr};
+use gt_types::{GpsTime, SatelliteMembership, SkySatellite};
+
+use crate::style;
 
 /// The `"G05 GPS"` designator: RINEX prefix, zero-padded PRN, constellation
 /// name. Single source for both plots' hover labels.
@@ -27,12 +27,12 @@ pub(crate) fn satellite_designator(constellation: Constellation, prn: Prn) -> St
 /// `at` states the report the values came from. The trails plot passes it: its
 /// scrubber sits between reports for most of its travel, so the values can be up
 /// to one report interval old. The per-report plot leaves it unset.
-pub(crate) fn satellite_tooltip(ui: &mut egui::Ui, satellite: &Satellite, at: Option<GpsTime>) {
+pub(crate) fn satellite_tooltip(ui: &mut egui::Ui, satellite: &SkySatellite, at: Option<GpsTime>) {
     ui.horizontal(|ui| {
         let label = satellite_designator(satellite.constellation(), satellite.prn());
         ui.label(RichText::new(label).strong());
         ui.add_space(TOOLTIP_HEADER_GAP_PX);
-        fix_chip(ui, satellite.in_fix());
+        fix_chip(ui, satellite.membership);
     });
     let degree = |value: Option<f32>| {
         value.map_or_else(
@@ -88,13 +88,8 @@ fn tooltip_row(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.end_row();
 }
 
-/// The fix-state chip: a filled-dot / hollow-ring glyph beside a one-word
-/// state.
-///
-/// The fill matches the plot's marker: filled in the fix, hollow when only
-/// tracked. The colour is a status cue (green for in the fix, weak grey for
-/// tracked), not the constellation colour.
-fn fix_chip(ui: &mut egui::Ui, in_fix: bool) {
+fn fix_chip(ui: &mut egui::Ui, membership: SatelliteMembership) {
+    let in_fix = membership == SatelliteMembership::Used;
     let color = if in_fix {
         gt_ui_theme::SUCCESS_GREEN
     } else {
@@ -104,11 +99,21 @@ fn fix_chip(ui: &mut egui::Ui, in_fix: bool) {
     let radius = CHIP_GLYPH_PX / 2.0;
     if in_fix {
         ui.painter().circle_filled(rect.center(), radius, color);
+    } else if membership == SatelliteMembership::Unknown {
+        ui.painter().circle_filled(
+            rect.center(),
+            radius * style::UNKNOWN_MEMBERSHIP_MARKER_SCALE,
+            color,
+        );
     } else {
         ui.painter()
             .circle_stroke(rect.center(), radius, Stroke::new(CHIP_RING_PX, color));
     }
-    let state = if in_fix { "In fix" } else { "Tracked" };
+    let state = match membership {
+        SatelliteMembership::Used => "In fix",
+        SatelliteMembership::Unused => "Tracked",
+        SatelliteMembership::Unknown => "Usage unknown",
+    };
     ui.label(RichText::new(state).color(color));
 }
 

@@ -7,32 +7,30 @@
 use std::collections::BTreeMap;
 
 use gt_types::satellites::{Constellation, Prn, SlipCause, Snr};
-use gt_types::{GeneratedMarkerKind, GpsTime, GpsTimeRange, LoadedTrack, PointIdx};
+use gt_types::{
+    GeneratedMarkerKind, GpsTime, GpsTimeRange, LoadedTrack, PointIdx, SatelliteMembership,
+    SatelliteQueryScope, SatelliteReportMetadata,
+};
 use smallvec::SmallVec;
-use strum::EnumCount as _;
+use strum::{EnumCount as _, IntoEnumIterator as _};
 
-use crate::projection;
-
-/// Which report epoch a [`TrailSample`] came from: an index into
-/// [`SkyTrails::epochs`].
-///
-/// Consecutive indices mean consecutive reports, so a break in them is exactly
-/// a gap in the satellite's tracking.
+/// The report index and preceding report index for this constellation.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct EpochIdx(usize);
+pub struct EpochIdx {
+    index: usize,
+    previous: Option<usize>,
+}
 
 impl EpochIdx {
-    /// Only meaningful against the [`SkyTrails::epochs`] it was built from:
-    /// [`extract_trails`] hands each sample the index of the report it came
-    /// from, and nothing else constructs one.
     pub fn new(n: usize) -> Self {
-        Self(n)
+        Self {
+            index: n,
+            previous: n.checked_sub(1),
+        }
     }
 
-    /// Whether `self` is the epoch immediately after `earlier`, i.e. the two
-    /// samples are from back-to-back reports with nothing skipped between.
     pub fn follows(self, earlier: Self) -> bool {
-        self.0 == earlier.0 + 1
+        self.previous == Some(earlier.index)
     }
 }
 
@@ -48,7 +46,14 @@ pub struct TrailSample {
     pub azimuth: f32,
     pub elevation: f32,
     pub snr: Option<Snr>,
-    pub in_fix: bool,
+    pub membership: SatelliteMembership,
+    pub usage_report_index: Option<usize>,
+}
+
+impl TrailSample {
+    pub fn in_fix(&self) -> bool {
+        self.membership == SatelliteMembership::Used
+    }
 }
 
 /// One satellite's path across the sky over a track: the polyline through
@@ -58,23 +63,24 @@ pub struct TrailSample {
 pub struct SkyTrail {
     pub constellation: Constellation,
     pub prn: Prn,
-    /// Ascending by time.
+    /// Recorded report order.
     pub samples: Vec<TrailSample>,
 }
 
 impl SkyTrail {
     /// The sample at exactly `time`, if the satellite reported at that epoch.
-    /// A binary search over the ascending-by-time samples.
     pub(crate) fn sample_exactly_at(&self, time: GpsTime) -> Option<&TrailSample> {
-        let idx = self.samples.partition_point(|s| s.time < time);
-        self.samples.get(idx).filter(|s| s.time == time)
+        self.samples.iter().find(|sample| sample.time == time)
     }
 
-    /// Whether the satellite was in the fix at any point over the track. False
-    /// means it was only ever tracked, never used - the trails window can hide
-    /// these to focus on the satellites that actually contributed.
     pub fn ever_in_fix(&self) -> bool {
-        self.samples.iter().any(|s| s.in_fix)
+        self.samples.iter().any(TrailSample::in_fix)
+    }
+
+    pub fn has_used_or_unknown_membership(&self) -> bool {
+        self.samples
+            .iter()
+            .any(|sample| sample.membership != SatelliteMembership::Unused)
     }
 }
 
@@ -89,7 +95,7 @@ pub struct EpochCount {
     /// not-in-fix filter, so the window can show what hiding them cost.
     pub seen_unfiltered: usize,
     /// Of the shown ones, those in the fix.
-    pub fix: usize,
+    pub fix: Option<usize>,
 }
 
 /// One report epoch on the track's timeline - the scrubber walks these.
@@ -97,6 +103,8 @@ pub struct EpochCount {
 pub struct TrailEpoch {
     pub time: GpsTime,
     pub point_index: PointIdx,
+    pub observation_index: usize,
+    pub metadata: SatelliteReportMetadata,
 }
 
 /// A cycle slip placed on the sky (lost lock, or a sharp SNR drop). Positioned
@@ -121,9 +129,9 @@ pub struct SkyTrails {
     /// Sorted by constellation then PRN, so the legend and draw order are
     /// stable.
     pub trails: Vec<SkyTrail>,
-    /// Report epochs, ascending by time.
+    /// Observation reports in recorded order.
     pub epochs: Vec<TrailEpoch>,
-    /// First and last epoch times, or `None` when the track has no reports.
+    /// Earliest and latest observation times.
     pub time_range: Option<GpsTimeRange>,
     /// Cycle slips detected over the track, placed on the sky. Empty when the
     /// track has no slip markers.
@@ -154,7 +162,7 @@ impl SkyTrails {
     /// interpolated.
     ///
     /// When `show_not_in_fix` is false, satellites that were never in the fix
-    /// over the track ([`SkyTrail::ever_in_fix`]) are left out entirely, so the
+    /// over the track and whose membership is known are excluded, so the
     /// counts match the trails the window is drawing.
     pub fn counts_at(
         &self,
@@ -170,10 +178,14 @@ impl SkyTrails {
                         .filter(|trail| trail.sample_exactly_at(time).is_some())
                 };
                 let (seen, fix) = present()
-                    .filter(|trail| show_not_in_fix || trail.ever_in_fix())
+                    .filter(|trail| show_not_in_fix || trail.has_used_or_unknown_membership())
                     .filter_map(|trail| trail.sample_exactly_at(time))
-                    .fold((0, 0), |(seen, fix), s| {
-                        (seen + 1, fix + usize::from(s.in_fix))
+                    .fold((0, Some(0)), |(seen, fix), sample| {
+                        (
+                            seen + 1,
+                            fix.filter(|_| sample.membership != SatelliteMembership::Unknown)
+                                .map(|count| count + usize::from(sample.in_fix())),
+                        )
                     });
                 EpochCount {
                     constellation,
@@ -188,47 +200,79 @@ impl SkyTrails {
 
 /// Extract every satellite's sky trail from a track.
 ///
-/// Walks the report-bearing points in recording order, recording an epoch
-/// per report and a sample per satellite that has a sky position at that
-/// epoch. The ascending-by-time ordering of the trails and epochs relies on
-/// `track.points` being in recording order, the same assumption
-/// [`gt_types::LoadedTrack::nearest_satellite_report`] makes.
 pub fn extract_trails(track: &LoadedTrack) -> SkyTrails {
     let mut by_satellite: BTreeMap<(Constellation, Prn), Vec<TrailSample>> = BTreeMap::new();
     let mut epochs: Vec<TrailEpoch> = Vec::new();
 
+    let mut previous_by_constellation = BTreeMap::new();
+    let mut previous_time = None;
+    let mut previous_fix_time = None;
     for (index, point) in track.points.iter().enumerate() {
-        let Some(satellites) = &point.satellites else {
-            continue;
-        };
-        let point_index = PointIdx::new(index);
-        let time = point.tpv.time();
-        let epoch = EpochIdx::new(epochs.len());
-        epochs.push(TrailEpoch { time, point_index });
-
-        for satellite in satellites.satellites() {
-            let Some((azimuth, elevation)) = projection::sky_position(satellite) else {
-                continue;
-            };
-            by_satellite
-                .entry((satellite.constellation(), satellite.prn()))
-                .or_default()
-                .push(TrailSample {
-                    time,
-                    epoch,
-                    point_index,
-                    azimuth,
-                    elevation,
-                    snr: satellite.snr(),
-                    in_fix: satellite.in_fix(),
-                });
+        if previous_fix_time.is_some_and(|time| point.tpv.time() < time) {
+            previous_by_constellation.clear();
+            previous_time = None;
+        }
+        previous_fix_time = Some(point.tpv.time());
+        for (observation_index, observation) in
+            point.satellite_evidence.observations.iter().enumerate()
+        {
+            let time = observation.metadata.normalized_time;
+            if previous_time.is_some_and(|previous| time < previous) {
+                previous_by_constellation.clear();
+            }
+            previous_time = Some(time);
+            let point_index = PointIdx::new(index);
+            let epoch_index = epochs.len();
+            epochs.push(TrailEpoch {
+                time,
+                point_index,
+                observation_index,
+                metadata: observation.metadata,
+            });
+            for satellite in &observation.satellites {
+                let (Some(azimuth), Some(elevation)) = (
+                    satellite.measurements.azimuth,
+                    satellite.measurements.elevation,
+                ) else {
+                    continue;
+                };
+                let resolved = point.resolved_satellite_membership(satellite.identity);
+                let constellation = satellite.identity.constellation;
+                let epoch = EpochIdx {
+                    index: epoch_index,
+                    previous: previous_by_constellation.get(&constellation).copied(),
+                };
+                by_satellite
+                    .entry((constellation, satellite.identity.prn))
+                    .or_default()
+                    .push(TrailSample {
+                        time,
+                        epoch,
+                        point_index,
+                        azimuth,
+                        elevation,
+                        snr: satellite.measurements.snr,
+                        membership: resolved.membership,
+                        usage_report_index: resolved.usage_report_index,
+                    });
+            }
+            for constellation in Constellation::iter().filter(|constellation| {
+                observation
+                    .metadata
+                    .scope
+                    .covers(SatelliteQueryScope::Constellation(*constellation))
+            }) {
+                previous_by_constellation.insert(constellation, epoch_index);
+            }
         }
     }
 
     let time_range = epochs
-        .first()
-        .zip(epochs.last())
-        .map(|(first, last)| GpsTimeRange::new(first.time, last.time));
+        .iter()
+        .map(|epoch| epoch.time)
+        .min()
+        .zip(epochs.iter().map(|epoch| epoch.time).max())
+        .map(|(first, last)| GpsTimeRange::new(first, last));
     let trails = by_satellite
         .into_iter()
         .map(|((constellation, prn), samples)| SkyTrail {
@@ -315,12 +359,12 @@ mod tests {
             .iter()
             .find(|c| c.constellation == Constellation::Gps)
             .expect("gps present");
-        assert_eq!((gps.seen, gps.fix), (2, 1));
+        assert_eq!((gps.seen, gps.fix), (2, Some(1)));
         let galileo = counts
             .iter()
             .find(|c| c.constellation == Constellation::Galileo)
             .expect("galileo present");
-        assert_eq!((galileo.seen, galileo.fix), (1, 1));
+        assert_eq!((galileo.seen, galileo.fix), (1, Some(1)));
 
         // Nothing hidden, so the unfiltered total matches what is shown.
         assert_eq!(gps.seen_unfiltered, 2);
@@ -333,7 +377,7 @@ mod tests {
             .iter()
             .find(|c| c.constellation == Constellation::Gps)
             .expect("gps present");
-        assert_eq!((gps.seen, gps.fix), (1, 1));
+        assert_eq!((gps.seen, gps.fix), (1, Some(1)));
         assert_eq!(gps.seen_unfiltered, 2);
     }
 
@@ -406,7 +450,7 @@ mod tests {
         ]));
         let between = test_util::at(1);
         let counts = trails.counts_at(between, true);
-        assert!(counts.iter().all(|c| c.seen == 0 && c.fix == 0));
+        assert!(counts.iter().all(|c| c.seen == 0 && c.fix == Some(0)));
     }
 
     #[test]
@@ -548,7 +592,7 @@ mod tests {
         assert_eq!(sample.azimuth, 45.0);
         assert_eq!(sample.elevation, 60.0);
         assert_eq!(sample.snr.map(gt_types::satellites::Snr::value), Some(40.0));
-        assert!(sample.in_fix);
+        assert!(sample.in_fix());
     }
 
     #[test]
