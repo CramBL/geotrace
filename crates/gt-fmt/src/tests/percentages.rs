@@ -3,11 +3,11 @@ use gt_types::FixStats;
 use rstest::rstest;
 
 #[rstest]
-#[case::rounded_down(4_800, 900, 0, 0, Some(84), "84% availability")]
-#[case::rounded_up(85, 15, 0, 0, Some(85), "85% availability")]
-#[case::empty(0, 0, 0, 0, None, "— availability")]
-#[case::unknown(0, 0, 0, 60, None, "— availability")]
-#[case::estimated_is_known_absence(20, 20, 10, 10, Some(40), "40% availability")]
+#[case::rounded_down(4_800, 900, 0, 0, Some(84), "84%")]
+#[case::rounded_up(85, 15, 0, 0, Some(85), "85%")]
+#[case::empty(0, 0, 0, 0, None, "—")]
+#[case::unknown(0, 0, 0, 60, None, "—")]
+#[case::estimated_is_known_absence(20, 20, 10, 10, Some(40), "40%")]
 fn navigation_availability_uses_known_duration(
     #[case] fix: i64,
     #[case] no_fix: i64,
@@ -27,7 +27,7 @@ fn navigation_availability_uses_known_duration(
         crate::NavigationSummary(stats).availability_percentage(),
         percent
     );
-    assert_eq!(crate::NavigationSummary(stats).availability_label(), text);
+    assert_eq!(crate::NavigationSummary(stats).availability_value(), text);
 }
 
 #[rstest]
@@ -47,7 +47,7 @@ fn a_fraction_reads_as_a_whole_percent_rounded_half_up_and_clamped(
 }
 
 #[test]
-fn navigation_summary_reports_coverage_duration_buckets_and_absence() {
+fn navigation_summary_formats_duration_weighted_percentages() {
     let stats = FixStats {
         time_with_fix: TimeDelta::seconds(20),
         time_without_fix: TimeDelta::seconds(20),
@@ -56,22 +56,17 @@ fn navigation_summary_reports_coverage_duration_buckets_and_absence() {
         fix_loss_count: 1,
         max_continuous_no_fix: TimeDelta::seconds(20),
     };
-    assert_eq!(
-        crate::NavigationSummary(stats).details(),
-        "83% known-state coverage  ·  20s no fix  ·  10s estimated only  ·  10s unknown  ·  1 loss  ·  longest absence 20s"
-    );
+    let summary = crate::NavigationSummary(stats);
+    assert_eq!(summary.coverage_value(), "83%");
+    assert!((summary.0.known_state_coverage() - 50.0 / 60.0).abs() < f64::EPSILON);
     let mut aggregate = stats;
     aggregate += FixStats {
-        time_with_fix: TimeDelta::seconds(50),
+        time_with_fix: TimeDelta::seconds(100),
         ..FixStats::default()
     };
     assert_eq!(
-        crate::NavigationSummary(aggregate).availability_label(),
-        "70% availability"
+        crate::NavigationSummary(aggregate).availability_value(),
+        "80%"
     );
-    assert!(
-        crate::NavigationSummary(aggregate)
-            .details()
-            .starts_with("91% known-state coverage")
-    );
+    assert_eq!(crate::NavigationSummary(aggregate).coverage_value(), "94%");
 }

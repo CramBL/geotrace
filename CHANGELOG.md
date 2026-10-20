@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **Map & Tracks:** Fixed wrapping navigation statistics in recording and track tooltips.
 - **Plots:** Fixed missing metric labels between count, DOP and diagnostic samples and expanded clock details in their hover cards.
 - **Map & Tracks:** Fixed sky-trail counts disagreeing with displayed satellites between independent constellation reports.
 - **Map & Tracks:** Fixed empty sky charts for identity-only reports and incorrect satellite membership marks during navigation loss.

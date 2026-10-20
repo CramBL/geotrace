@@ -1268,16 +1268,13 @@ fn clicking_a_tree_track_row_past_its_columns_expands_the_track() {
 }
 
 #[rstest]
-#[case::explicit_fix(
-    Some(SolutionState::Fix),
-    "100% availability",
-    "100% known-state coverage"
-)]
-#[case::unknown(None, "— availability", "0% known-state coverage  ·  9s unknown")]
+#[case::explicit_fix(Some(SolutionState::Fix), "Availability 100%", "Coverage 100%")]
+#[case::unknown(None, "Availability —", "Coverage 0%")]
 fn a_track_row_shows_navigation_statistics_without_satellite_reports(
     #[case] state: Option<SolutionState>,
     #[case] availability: &str,
     #[case] details: &str,
+    #[values(true, false)] dark_mode: bool,
 ) {
     let mut points = gt_test_utils::fixtures::stationary_nav_data(10);
     for point in &mut points {
@@ -1289,6 +1286,11 @@ fn a_track_row_shows_navigation_statistics_without_satellite_reports(
     let mut state = make_state_from_files(files);
     state.tree.toggle_expand_file(FileIdx::new(0));
     let mut harness = make_harness(state);
+    harness.inner.ctx.set_visuals(if dark_mode {
+        egui::Visuals::dark()
+    } else {
+        egui::Visuals::light()
+    });
     harness.run();
 
     let row = tree_row(&harness, "#1").rect().center();
@@ -1297,10 +1299,65 @@ fn a_track_row_shows_navigation_statistics_without_satellite_reports(
         .hover_at_and_settle(row, TOOLTIP_SETTLE_FRAMES);
 
     assert!(
-        harness.inner.query_by_label(availability).is_some(),
+        harness
+            .inner
+            .query(By::new().label_contains(availability))
+            .is_some(),
         "the hover text shows navigation availability"
     );
-    assert!(harness.inner.query_by_label(details).is_some());
+    assert!(
+        harness
+            .inner
+            .query(By::new().label_contains(details))
+            .is_some()
+    );
+    let theme = if dark_mode { "dark" } else { "light" };
+    let evidence = if availability == "Availability 100%" {
+        "fix"
+    } else {
+        "unknown"
+    };
+    harness.snapshot_with_color_tolerance(&format!("track_navigation_tooltip_{evidence}_{theme}"));
+}
+
+#[test]
+fn a_recording_tooltip_uses_summed_navigation_durations() {
+    let mut points = gt_test_utils::fixtures::nav_data_with_gap(FixCountsAroundAGap {
+        before: 11,
+        after: 31,
+    });
+    for (index, point) in points.iter_mut().enumerate() {
+        point.navigation.state = Some(if index < 11 {
+            SolutionState::Fix
+        } else {
+            SolutionState::NoFix
+        });
+    }
+    let file = gt_test_utils::build_file("weighted.gtd", &points, FileParts::default());
+    assert_eq!(file.tracks.len(), 2);
+    let stats = file.metadata.fix_stats.unwrap();
+    assert_eq!(stats.time_with_fix, Duration::seconds(10));
+    assert_eq!(stats.time_without_fix, Duration::seconds(30));
+    let mut files = LoadedFiles::new();
+    files.push(file, FileHistory::None);
+    let mut harness = make_harness(make_state_from_files(files));
+    harness.run();
+    let row = tree_row(&harness, "weighted.gtd").rect().center();
+    harness
+        .inner
+        .hover_at_and_settle(row, TOOLTIP_SETTLE_FRAMES);
+    assert!(
+        harness
+            .inner
+            .query(By::new().label_contains("Availability 25%"))
+            .is_some()
+    );
+    assert!(
+        harness
+            .inner
+            .query(By::new().label_contains("Coverage 100%"))
+            .is_some()
+    );
 }
 
 #[test]
@@ -1382,24 +1439,142 @@ fn the_recording_row_hover_states_an_em_dash_for_a_recording_with_no_fixes() {
     );
 }
 
-#[test]
-fn snapshot_fix_stats_tooltip_content() {
+#[rstest]
+#[case::dark(false, true)]
+#[case::light(false, false)]
+#[case::narrow_dark(true, true)]
+#[case::narrow_light(true, false)]
+fn snapshot_fix_stats_tooltip_content(#[case] narrow: bool, #[case] dark_mode: bool) {
     let stats = FixStats {
-        time_with_fix: chrono::Duration::seconds(20),
-        time_without_fix: chrono::Duration::seconds(20),
-        time_estimated_only: chrono::Duration::seconds(10),
-        time_unknown: chrono::Duration::seconds(10),
+        time_with_fix: Duration::seconds(20),
+        time_without_fix: Duration::seconds(20),
+        time_estimated_only: Duration::seconds(10),
+        time_unknown: Duration::seconds(10),
         fix_loss_count: 1,
-        max_continuous_no_fix: chrono::Duration::seconds(20),
+        max_continuous_no_fix: Duration::seconds(20),
     };
+    let size = egui::vec2(if narrow { 220.0 } else { 330.0 }, 290.0);
     let mut h = TestHarness::builder()
-        .size(egui::vec2(600.0, 75.0))
+        .size(size)
+        .theme(dark_mode)
         .ui(move |ui| {
-            ui.add_space(4.0);
             gt_side_panel::widgets::fix_stats_tooltip_row(ui, stats);
         });
     h.run();
-    h.snapshot("fix_stats_tooltip_content");
+    for label in [
+        "Availability 40%",
+        "Coverage 83%",
+        "Losses 1",
+        "Longest 20s",
+        "Fix / known",
+        "Known / total",
+    ] {
+        let node = h.inner.get(By::new().label_contains(label));
+        assert!(
+            egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(node.rect()),
+            "{label}"
+        );
+    }
+    let value_height = h
+        .inner
+        .get(By::new().label_contains("Availability 40%"))
+        .rect()
+        .height();
+    for label in ["Availability", "Coverage", "Fix / known", "Known / total"] {
+        assert!(h.inner.get_by_label(label).rect().height() <= value_height + 1.0);
+    }
+    let bar = h
+        .inner
+        .get_by_label(
+            "Navigation duration composition by state. Segments group intervals by state.",
+        )
+        .rect();
+    let mut previous_right = bar.left();
+    for (label, fraction) in [
+        ("Fix duration 20s (33%)", 2.0 / 6.0),
+        ("No fix duration 20s (33%)", 2.0 / 6.0),
+        ("Estimated only duration 10s (17%)", 1.0 / 6.0),
+        ("Unknown duration 10s (17%)", 1.0 / 6.0),
+    ] {
+        let segment = h.inner.get_by_label(label).rect();
+        assert!((segment.width() / bar.width() - fraction).abs() < 0.000_01);
+        assert!((segment.left() - previous_right).abs() < 0.001);
+        assert_eq!(segment.y_range(), bar.y_range());
+        previous_right = segment.right();
+    }
+    assert!((previous_right - bar.right()).abs() < 0.001);
+    let theme = if dark_mode { "dark" } else { "light" };
+    let width = if narrow { "narrow" } else { "normal" };
+    h.snapshot_with_color_tolerance(&format!("fix_stats_tooltip_content_{width}_{theme}"));
+}
+
+#[rstest]
+#[case::fix(SolutionState::Fix, "100%", "100%", "Fix duration 1m (100%)")]
+#[case::unknown(SolutionState::Unknown, "—", "0%", "Unknown duration 1m (100%)")]
+#[case::estimated(
+    SolutionState::EstimatedOnly,
+    "0%",
+    "100%",
+    "Estimated only duration 1m (100%)"
+)]
+#[case::empty(SolutionState::NoFix, "—", "—", "No positive navigation intervals")]
+fn navigation_statistics_show_single_state_and_empty_intervals(
+    #[case] state: SolutionState,
+    #[case] availability: &str,
+    #[case] coverage: &str,
+    #[case] expected: &str,
+) {
+    let duration = Duration::seconds(60);
+    let stats = FixStats {
+        time_with_fix: if state == SolutionState::Fix {
+            duration
+        } else {
+            Duration::zero()
+        },
+        time_unknown: if state == SolutionState::Unknown {
+            duration
+        } else {
+            Duration::zero()
+        },
+        time_estimated_only: if state == SolutionState::EstimatedOnly {
+            duration
+        } else {
+            Duration::zero()
+        },
+        ..FixStats::default()
+    };
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(250.0, 260.0))
+        .ui(move |ui| {
+            gt_side_panel::widgets::fix_stats_tooltip_row(ui, stats);
+        });
+    h.run();
+    assert!(
+        h.inner
+            .query(By::new().label_contains(&format!("Availability {availability}")))
+            .is_some()
+    );
+    assert!(
+        h.inner
+            .query(By::new().label_contains(&format!("Coverage {coverage}")))
+            .is_some()
+    );
+    let bar = h
+        .inner
+        .get_by_label(
+            "Navigation duration composition by state. Segments group intervals by state.",
+        )
+        .rect();
+    let node = h.inner.get_by_label(expected);
+    if stats.total_duration() > Duration::zero() {
+        assert_eq!(node.rect(), bar);
+    } else {
+        assert!(
+            h.inner
+                .query(By::new().label_contains("duration 0s"))
+                .is_none()
+        );
+    }
 }
 
 #[test]
