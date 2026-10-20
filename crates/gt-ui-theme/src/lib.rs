@@ -24,9 +24,15 @@ pub use gt_fmt::RIGHTWARDS_ARROW;
 
 mod carets;
 mod navigation_summary;
+mod satellite_membership;
 
 pub use carets::expand_arrow;
 pub use navigation_summary::{NavigationStatus, SatelliteCountBadge, SatelliteCountResponses};
+
+pub use satellite_membership::{
+    MAP_UNKNOWN_MEMBERSHIP_MIN_RADIUS_PX, SKY_UNKNOWN_MEMBERSHIP_MIN_RADIUS_PX,
+    SatelliteMembershipMark,
+};
 
 pub mod buttons;
 pub mod fonts;

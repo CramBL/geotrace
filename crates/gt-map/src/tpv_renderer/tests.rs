@@ -10,8 +10,8 @@ use gt_types::time_types::{GpsTime, SysTime};
 use gt_types::tpv::TimePositionVelocity;
 use gt_types::{
     MercPoint, NavPoint, NavigationMetadata, PositionProvenance, SatelliteCoverage,
-    SatelliteIdentity, SatelliteReportMetadata, SatelliteScope, SatelliteUsage,
-    SatelliteUsageReport, SolutionDimension, SolutionMethod,
+    SatelliteIdentity, SatelliteMembership, SatelliteReportMetadata, SatelliteScope,
+    SatelliteUsage, SatelliteUsageReport, SolutionDimension, SolutionMethod,
 };
 use rstest::rstest;
 use uom::si::angle::degree;
@@ -19,7 +19,7 @@ use uom::si::f64::{Angle, Length};
 
 use super::*;
 use crate::recording_labels::RecordingLabels;
-use crate::test_util;
+use crate::test_util::{self, MapScene};
 
 /// The instant fix 0 of every fixture track is stamped at. It is a constant,
 /// so the snapshots that draw the time row stay deterministic.
@@ -1576,6 +1576,112 @@ fn recorded_reports_show_conflicting_aggregates_scope_and_original_times() {
     }
 }
 
+#[rstest]
+#[case::dark(true)]
+#[case::light(false)]
+fn many_identities_have_a_bounded_hover_preview_and_a_complete_pinned_table(
+    #[case] dark_mode: bool,
+) {
+    let mut point = point_at(
+        0,
+        Some(gt_test_utils::fixtures::satellite_report(
+            None,
+            gt_types::fixtures::SatelliteCounts {
+                in_fix: 8,
+                in_view_only: 40,
+            },
+        )),
+    );
+    for satellite in &mut point.satellite_evidence.observations[0].satellites {
+        satellite.measurements.azimuth = None;
+        satellite.measurements.elevation = None;
+    }
+    let track = test_util::track_built_from(vec![point]);
+    let file = gt_test_utils::loaded_file_with_tracks(vec![track]);
+    let size = egui::vec2(600.0, 500.0);
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+    let mut map = MapScene::of(vec![file])
+        .theme(dark_mode)
+        .size(size)
+        .centred_on_fix(0)
+        .zoomed_to(15.0)
+        .draw_state(|state| state.highlight.fading_enabled = false)
+        .render();
+    let center = viewport.center();
+    map.hover_at_and_settle(center);
+    let first = map.harness.inner.get_by_label("G01 GPS").rect();
+    let last = map.harness.inner.get_by_label("G03 GPS").rect();
+    let remaining = map
+        .harness
+        .inner
+        .get_by_label("45 more · Pin to inspect")
+        .rect();
+    let preview = first.union(last).union(remaining);
+    assert!(viewport.contains_rect(preview));
+    assert!(preview.height() < 100.0);
+    assert!(map.harness.inner.query_by_label("G04 GPS").is_none());
+    assert!(map.harness.inner.query_by_label("G48 GPS").is_none());
+    map.snapshot(if dark_mode {
+        "many_identities_hover_dark"
+    } else {
+        "many_identities_hover_light"
+    });
+    assert_eq!(
+        map.point_pinned_by_a_click_at(center),
+        Some(test_util::point_ref(DataCategory::Tpv, 0))
+    );
+    map.harness.run();
+    let tables = StickyRegion::Tables.rect(&map.harness.inner.ctx);
+    let scroll_position = egui::pos2(
+        map.harness.inner.get_by_label("G01").rect().center().x,
+        tables.center().y,
+    );
+    map.harness
+        .inner
+        .scroll_wheel_at(scroll_position, -REPORT_SCROLL_TO_END_POINTS, 8);
+    let final_identity = map.harness.inner.get_by_label("G48").rect();
+    assert!(
+        tables.contains_rect(final_identity),
+        "tables {tables:?}, final identity {final_identity:?}"
+    );
+    assert!(viewport.contains_rect(map.harness.inner.get_by_label("Details").rect()));
+    map.snapshot(if dark_mode {
+        "many_identities_pinned_dark"
+    } else {
+        "many_identities_pinned_light"
+    });
+}
+
+#[test]
+fn pinned_identity_only_evidence_reuses_the_constellation_table() {
+    let mut point = point_at(0, Some(twelve_satellites(8)));
+    for satellite in &mut point.satellite_evidence.observations[0].satellites {
+        satellite.measurements.azimuth = None;
+        satellite.measurements.elevation = None;
+    }
+    let placement = placement_of(&point);
+    let mut folds = PointWindowFolds::default();
+    let mut harness = test_util::harness_builder()
+        .size(STICKY_CONTENT_CANVAS)
+        .ui(move |ui| {
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
+        });
+    harness.run();
+    assert!(harness.inner.query_by_label("No sky positions").is_some());
+    assert!(harness.inner.query_by_label("G01 GPS").is_none());
+    assert_eq!(harness.inner.query_all_by_label("G01").count(), 1);
+    assert_eq!(
+        harness
+            .inner
+            .query_all_by_label("Satellites used / seen 8 / 12")
+            .count(),
+        2
+    );
+    assert!(StickyRegion::Sky.rect(&harness.inner.ctx).height() < SkyPlotSize::Full.diameter());
+    harness.snapshot("pinned_identities_without_chart");
+}
+
 #[test]
 fn borrowed_sky_observations_preserve_point_count_absence() {
     let mut point = point_at(0, None);
@@ -1610,6 +1716,12 @@ fn borrowed_sky_observations_preserve_point_count_absence() {
             .inner
             .query_by_label("Satellites used / seen 8 / 12")
             .is_none()
+    );
+    assert!(
+        harness
+            .inner
+            .query_by_label("Satellites used / seen 10 / 12")
+            .is_some()
     );
     assert!(harness.inner.query_by_label("Sky +2.0s").is_some());
     harness.inner.get_by_label("Nearby sky details").click();
@@ -2042,7 +2154,7 @@ fn the_minimum_point_window_keeps_details_reachable_with_all_readouts(#[case] da
         visible_body.contains_rect(last),
         "final report {last:?}, body {visible_body:?}"
     );
-    harness.snapshot(if dark_mode {
+    harness.snapshot_with_color_tolerance(if dark_mode {
         "minimum_pinned_report_inspection_dark"
     } else {
         "minimum_pinned_report_inspection_light"

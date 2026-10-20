@@ -5,7 +5,8 @@
 use egui::{Color32, Pos2, Sense, Stroke, Vec2};
 
 use gt_types::satellites::{Constellation, ConstellationSet, SatSample};
-use gt_types::{GpsTime, SatelliteIdentity, SatelliteMembership, SkySatellite};
+use gt_types::{GpsTime, SatelliteIdentity, SkySatellite};
+use gt_ui_theme::SatelliteMembershipMark;
 
 use crate::style;
 use crate::trails::{SkyTrail, SkyTrails, SlipMark, TrailSample};
@@ -548,31 +549,20 @@ fn close_run(run: &mut Vec<TrailVertex>, runs: &mut Vec<Vec<TrailVertex>>) {
     }
 }
 
-/// Paint the scrub marker for one satellite. Filled when it is in the fix at
-/// the scrubbed instant, hollow (an outline ring) when only tracked, so the
-/// live fix state reads at a glance.
 fn paint_marker(ui: &egui::Ui, pos: Pos2, color: Color32, panel: Color32, report: &TrailSample) {
-    let painter = ui.painter();
-    let radius = style::TRAIL_MARKER_RADIUS_PX;
-    if report.membership == SatelliteMembership::Unknown {
-        painter.circle_filled(pos, radius * style::UNKNOWN_MEMBERSHIP_MARKER_SCALE, color);
-    } else if !report.in_fix() {
-        // Tracked but not in the fix: a hollow ring, its centre punched out to
-        // the panel colour so it reads over the trail beneath.
-        painter.circle_filled(pos, radius, panel);
-        painter.circle_stroke(
-            pos,
-            radius,
-            Stroke::new(style::TRAIL_MARKER_HOLLOW_EDGE_PX, color),
-        );
-    } else {
-        painter.circle(
-            pos,
-            radius,
-            color,
-            Stroke::new(style::TRAIL_MARKER_EDGE_PX, panel),
-        );
+    SatelliteMembershipMark {
+        membership: report.membership,
+        radius: style::TRAIL_MARKER_RADIUS_PX,
+        minimum_unknown_radius: gt_ui_theme::SKY_UNKNOWN_MEMBERSHIP_MIN_RADIUS_PX,
+        color,
+        edge: if report.in_fix() {
+            Stroke::new(style::TRAIL_MARKER_EDGE_PX, panel)
+        } else {
+            Stroke::new(style::TRAIL_MARKER_HOLLOW_EDGE_PX, color)
+        },
+        hollow_fill: panel,
     }
+    .paint(ui.painter(), pos);
 }
 
 /// Paint a slip mark as an "×" centered on `pos`, distinct from the round
@@ -941,13 +931,13 @@ mod tests {
         let marker = plot.position_of(Azimuth(90.0), Elevation(45.0));
 
         assert!(
-            plot.harness.inner.query_by_label("In fix").is_none(),
+            plot.harness.inner.query_by_label("Used").is_none(),
             "the tooltip must not be showing before the marker is hovered"
         );
         plot.harness.inner.hover_at(marker);
         plot.harness.inner.run_steps(2);
         assert!(
-            plot.harness.inner.query_by_label("In fix").is_some(),
+            plot.harness.inner.query_by_label("Used").is_some(),
             "hovering the marker between reports must still show its tooltip"
         );
     }
@@ -1461,6 +1451,58 @@ mod tests {
             "in fix only must drop the markers of not-in-fix satellites \
              ({markers_on} with the filter vs {markers_off} without)"
         );
+    }
+
+    #[rstest]
+    #[case::dark(true, "trail_membership_marks_dark")]
+    #[case::light(false, "trail_membership_marks_light")]
+    fn trail_membership_marks_preserve_unknown_without_signal(
+        #[case] dark_mode: bool,
+        #[case] snapshot: &str,
+    ) {
+        let mut harness = TestHarness::builder()
+            .theme(dark_mode)
+            .size(egui::vec2(160.0, 70.0))
+            .ui(move |ui| {
+                let color = gt_ui_theme::constellation_color(Constellation::Gps, dark_mode);
+                for (index, membership) in [
+                    SatelliteMembership::Used,
+                    SatelliteMembership::Unused,
+                    SatelliteMembership::Unknown,
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let mut sample = trail_sample(0, Azimuth(45.0), Elevation(35.0));
+                    sample.membership = membership;
+                    super::paint_marker(
+                        ui,
+                        egui::pos2(30.0 + index as f32 * 50.0, 35.0),
+                        color,
+                        ui.visuals().panel_fill,
+                        &sample,
+                    );
+                }
+            });
+        harness.run();
+        let shapes = &harness.inner.output().shapes;
+        assert_eq!(
+            shapes
+                .iter()
+                .filter(|shape| matches!(shape.shape, egui::Shape::Circle(_)))
+                .count(),
+            2
+        );
+        let diamonds: Vec<_> = shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Path(path) if path.closed && path.points.len() == 4 => Some(path),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(diamonds.len(), 1);
+        assert!(diamonds[0].visual_bounding_rect().width() >= 4.0);
+        harness.snapshot(snapshot);
     }
 
     #[test]

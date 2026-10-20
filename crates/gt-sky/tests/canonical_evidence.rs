@@ -1,6 +1,8 @@
 use chrono::{DateTime, Duration, Utc};
 use rstest::rstest;
 
+use gt_test_utils::Queryable as _;
+
 use gt_types::satellites::{Constellation, ConstellationSet, Prn, SatSample};
 use gt_types::{
     GpsTime, Latitude, Longitude, NavPoint, NavigationEvidenceSource, PointIdx, SatelliteCoverage,
@@ -524,5 +526,99 @@ fn partial_sky_evidence_shows_membership(
             .ui(ui);
         });
     harness.run();
+    let expected_counts = if observations {
+        "Satellites used / seen 8 / 12"
+    } else {
+        "Satellites used / seen 8 / —"
+    };
+    assert!(harness.inner.query_by_label(expected_counts).is_some());
+    assert_eq!(
+        harness.inner.query_all_by_label("No sky positions").count(),
+        1
+    );
+    let grid_rims = harness
+        .inner
+        .output()
+        .shapes
+        .iter()
+        .filter(
+            |shape| matches!(&shape.shape, egui::Shape::Circle(circle) if circle.radius > 100.0),
+        )
+        .count();
+    assert_eq!(grid_rims > 0, observations);
+    if !observations {
+        for label in [
+            "G01 GPS",
+            "G02 GPS",
+            "G03 GPS",
+            "Used",
+            "Unused",
+            "Usage unknown",
+        ] {
+            let rect = harness.inner.get_by_label(label).rect();
+            assert!(
+                rect.bottom() < 150.0,
+                "identity-only section exceeds its compact allocation"
+            );
+        }
+    }
+    let diamonds: Vec<_> = harness
+        .inner
+        .output()
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Path(path) if path.closed && path.points.len() == 4 => Some(path),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(diamonds.len(), if observations { 2 } else { 1 });
+    assert!(
+        diamonds
+            .iter()
+            .all(|diamond| diamond.visual_bounding_rect().width() >= 4.0)
+    );
     harness.snapshot(snapshot);
+}
+
+#[rstest]
+#[case::dark(true)]
+#[case::light(false)]
+fn compact_observations_without_usage_have_visible_unknown_diamonds(#[case] dark_mode: bool) {
+    let mut point = point(0);
+    point.satellite_evidence.observations.push(observation(0));
+    let mut harness = gt_test_utils::TestHarness::builder()
+        .theme(dark_mode)
+        .size(egui::vec2(170.0, 180.0))
+        .ui(move |ui| {
+            gt_sky::SkyPlot::from_evidence(
+                point.sky_evidence(SkyGeometry::Position).expect("position"),
+                gt_sky::SkyPlotSize::Compact,
+            )
+            .ui(ui);
+        });
+    harness.run();
+    assert!(
+        harness
+            .inner
+            .query_by_label("Satellites used / seen — / 1")
+            .is_some()
+    );
+    let diamonds: Vec<_> = harness
+        .inner
+        .output()
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Path(path) if path.closed && path.points.len() == 4 => Some(path),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(diamonds.len(), 1);
+    assert!((diamonds[0].visual_bounding_rect().width() - 4.0).abs() < f32::EPSILON);
+    harness.snapshot(if dark_mode {
+        "compact_unknown_observations_dark"
+    } else {
+        "compact_unknown_observations_light"
+    });
 }

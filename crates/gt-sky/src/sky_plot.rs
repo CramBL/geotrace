@@ -1,9 +1,10 @@
-use egui::{Pos2, Sense, Stroke, Vec2};
+use egui::{Color32, Label, Pos2, RichText, Sense, Stroke, Vec2};
 
 use gt_types::satellites::{
     Constellation, ConstellationSet, Prn, Satellite, Satellites, SignalQuality, Snr,
 };
 use gt_types::{SatelliteMembership, SkyCounts, SkyEvidence, SkySatellite};
+use gt_ui_theme::{SatelliteCountBadge, SatelliteMembershipMark};
 
 use crate::projection;
 use crate::style;
@@ -105,15 +106,6 @@ impl SkyPlotSize {
     }
 }
 
-/// The polar satellite view for one satellite report: north up, azimuth
-/// clockwise, horizon at the rim, zenith at the center.
-///
-/// Satellites in the fix render as filled dots, tracked-only satellites as
-/// hollow outlines, both in their constellation's themed color with the dot
-/// radius encoding the signal-quality tier. Satellites without azimuth or
-/// elevation cannot be placed and are surfaced beneath the plot instead, as
-/// a count line at the compact size and as one row per satellite at the full
-/// size.
 pub struct SkyPlot {
     satellites: Vec<SkySatellite>,
     counts: SkyCounts,
@@ -121,6 +113,8 @@ pub struct SkyPlot {
     elevation_mask_deg: Option<f32>,
     interactive: bool,
     highlight: Option<SkyHighlight>,
+    show_counts: bool,
+    show_identity_rows: bool,
 }
 
 impl SkyPlot {
@@ -138,6 +132,8 @@ impl SkyPlot {
             elevation_mask_deg: None,
             interactive: false,
             highlight: None,
+            show_counts: true,
+            show_identity_rows: true,
         }
     }
 
@@ -149,6 +145,8 @@ impl SkyPlot {
             elevation_mask_deg: None,
             interactive: false,
             highlight: None,
+            show_counts: true,
+            show_identity_rows: true,
         }
     }
 
@@ -177,37 +175,114 @@ impl SkyPlot {
         }
     }
 
+    pub fn counts_in_host(self) -> Self {
+        Self {
+            show_counts: false,
+            ..self
+        }
+    }
+
+    pub fn identities_in_host(self) -> Self {
+        Self {
+            show_identity_rows: false,
+            ..self
+        }
+    }
+
     pub fn ui(&self, ui: &mut egui::Ui) -> egui::Response {
         ui.vertical(|ui| {
-            status_line_ui(ui, self.counts, self.size);
-
-            let diameter = self.size.diameter();
-            let (rect, response) = ui.allocate_exact_size(Vec2::splat(diameter), Sense::hover());
-            if ui.is_rect_visible(rect) {
-                let center = rect.center();
-                let radius = diameter / 2.0 - self.size.rim_margin();
-                crate::grid::draw_grid(ui, center, radius, self.size == SkyPlotSize::Full);
-                if let Some(mask_deg) = self.elevation_mask_deg {
-                    // The point plot has no ring hover yet, so never highlighted.
-                    crate::grid::draw_mask_ring(ui, center, radius, mask_deg, false);
-                }
-                let marks = paint_marks(
-                    ui,
-                    center,
-                    radius,
-                    &self.satellites,
-                    self.size,
-                    self.highlight,
-                );
-                if self.interactive {
-                    mark_tooltip(ui, &response, &marks);
+            if self.show_counts {
+                SatelliteCountBadge(self.counts).ui(ui);
+            }
+            let has_positions = self
+                .satellites
+                .iter()
+                .any(|satellite| satellite.sky_position().is_some());
+            if has_positions {
+                let diameter = self.size.diameter();
+                let (rect, response) =
+                    ui.allocate_exact_size(Vec2::splat(diameter), Sense::hover());
+                if ui.is_rect_visible(rect) {
+                    let center = rect.center();
+                    let radius = diameter / 2.0 - self.size.rim_margin();
+                    crate::grid::draw_grid(ui, center, radius, self.size == SkyPlotSize::Full);
+                    if let Some(mask_deg) = self.elevation_mask_deg {
+                        crate::grid::draw_mask_ring(ui, center, radius, mask_deg, false);
+                    }
+                    let marks = paint_marks(
+                        ui,
+                        center,
+                        radius,
+                        &self.satellites,
+                        self.size,
+                        self.highlight,
+                    );
+                    if self.interactive {
+                        mark_tooltip(ui, &response, &marks);
+                    }
                 }
             }
-
-            unplaceable_ui(ui, &self.satellites, self.size);
-            response
+            let unplaceable: Vec<_> = self
+                .satellites
+                .iter()
+                .filter(|satellite| satellite.sky_position().is_none())
+                .collect();
+            if !unplaceable.is_empty() {
+                ui.label(RichText::new("No sky positions").weak().small());
+                if self.show_identity_rows {
+                    let preview_limit = match self.size {
+                        SkyPlotSize::Compact => COMPACT_IDENTITY_PREVIEW_LIMIT,
+                        SkyPlotSize::Full => unplaceable.len(),
+                    };
+                    for satellite in unplaceable.iter().take(preview_limit) {
+                        ui.horizontal(|ui| {
+                            let dimmed = self
+                                .highlight
+                                .is_some_and(|highlight| !highlight.matches_sky(satellite));
+                            let color = gt_ui_theme::constellation_color(
+                                satellite.constellation(),
+                                ui.visuals().dark_mode,
+                            );
+                            let color = if dimmed {
+                                color.gamma_multiply(style::DIMMED_MARK_ALPHA)
+                            } else {
+                                color
+                            };
+                            SatelliteMembershipMark {
+                                membership: satellite.membership,
+                                radius: IDENTITY_MARK_RADIUS_PX,
+                                minimum_unknown_radius:
+                                    gt_ui_theme::SKY_UNKNOWN_MEMBERSHIP_MIN_RADIUS_PX,
+                                color,
+                                edge: Stroke::new(style::HOLLOW_MARK_STROKE_WIDTH_PX, color),
+                                hollow_fill: Color32::TRANSPARENT,
+                            }
+                            .ui(ui);
+                            let label = crate::plot_common::satellite_designator(
+                                satellite.constellation(),
+                                satellite.prn(),
+                            );
+                            ui.add(
+                                Label::new(RichText::new(label).color(color).small())
+                                    .selectable(true),
+                            );
+                        });
+                    }
+                    if unplaceable.len() > preview_limit {
+                        ui.label(
+                            RichText::new(format!(
+                                "{} more {} Pin to inspect",
+                                unplaceable.len() - preview_limit,
+                                gt_ui_theme::MIDDLE_DOT,
+                            ))
+                            .weak()
+                            .small(),
+                        );
+                    }
+                }
+            }
         })
-        .inner
+        .response
     }
 }
 
@@ -237,77 +312,8 @@ fn nearest_mark(marks: &[(SkySatellite, Pos2)], pointer: Pos2) -> Option<&SkySat
     crate::plot_common::nearest_within(candidates, pointer, style::MARK_HOVER_RADIUS_PX)
 }
 
-/// "9 of 14 in fix" above the plot.
-fn status_line_ui(ui: &mut egui::Ui, counts: SkyCounts, size: SkyPlotSize) {
-    let text = match (counts.used, counts.seen) {
-        (Some(used), Some(seen)) => format!("{used} of {seen} in fix"),
-        (Some(used), None) => format!("{used} used"),
-        (None, Some(seen)) => format!("{seen} seen, usage unreported"),
-        (None, None) => "Counts unreported".to_owned(),
-    };
-    match size {
-        SkyPlotSize::Compact => ui.label(egui::RichText::new(text).small()),
-        SkyPlotSize::Full => ui.label(text),
-    };
-}
-
-/// Satellites without azimuth or elevation, under the plot: the compact size
-/// shows a count line, the full size one row per satellite. Nothing when all
-/// satellites are placeable.
-fn unplaceable_ui(ui: &mut egui::Ui, satellites: &[SkySatellite], size: SkyPlotSize) {
-    let unplaceable: Vec<&SkySatellite> = satellites
-        .iter()
-        .filter(|satellite| {
-            satellite
-                .sky_position()
-                .map(|(azimuth, elevation)| projection::unit_disc_position(azimuth, elevation))
-                .is_none()
-        })
-        .collect();
-    match (size, unplaceable.as_slice()) {
-        (_, []) => {}
-        (SkyPlotSize::Compact, [_]) => {
-            ui.label(
-                egui::RichText::new("1 satellite without sky position")
-                    .weak()
-                    .small(),
-            );
-        }
-        (SkyPlotSize::Compact, many) => {
-            ui.label(
-                egui::RichText::new(format!("{} satellites without sky position", many.len()))
-                    .weak()
-                    .small(),
-            );
-        }
-        (SkyPlotSize::Full, many) => {
-            let dark_mode = ui.visuals().dark_mode;
-            for satellite in many {
-                ui.horizontal(|ui| {
-                    let label = crate::plot_common::satellite_designator(
-                        satellite.constellation(),
-                        satellite.prn(),
-                    );
-                    ui.label(
-                        egui::RichText::new(label)
-                            .color(gt_ui_theme::constellation_color(
-                                satellite.constellation(),
-                                dark_mode,
-                            ))
-                            .small(),
-                    );
-                    ui.label(egui::RichText::new("no sky position").weak().small());
-                    let membership = match satellite.membership {
-                        SatelliteMembership::Used => "In fix",
-                        SatelliteMembership::Unused => "Not used",
-                        SatelliteMembership::Unknown => "Usage unknown",
-                    };
-                    ui.label(egui::RichText::new(membership).weak().small());
-                });
-            }
-        }
-    }
-}
+const IDENTITY_MARK_RADIUS_PX: f32 = 3.0;
+const COMPACT_IDENTITY_PREVIEW_LIMIT: usize = 3;
 
 /// Paints the satellite marks and returns them with their screen positions,
 /// in paint order, for hit-testing.
@@ -347,29 +353,30 @@ fn paint_marks(
         };
         // A satellite whose receiver reported the no-data SNR value stands
         // out: it takes that class's colour, not its constellation's.
-        let color = dim(if satellite.snr().is_some_and(Snr::is_no_data_sentinel) {
-            gt_ui_theme::snr_color(SignalQuality::NoDataSentinel, dark_mode)
-        } else {
-            gt_ui_theme::constellation_color(satellite.constellation(), dark_mode)
-        });
+        let color = dim(
+            if satellite.membership != SatelliteMembership::Unknown
+                && satellite.snr().is_some_and(Snr::is_no_data_sentinel)
+            {
+                gt_ui_theme::snr_color(SignalQuality::NoDataSentinel, dark_mode)
+            } else {
+                gt_ui_theme::constellation_color(satellite.constellation(), dark_mode)
+            },
+        );
         let mark_radius =
             style::mark_radius(satellite.snr().map(|snr| snr.quality())) * size.mark_scale();
-        if satellite.in_fix() {
-            let edge = Stroke::new(edge.width, dim(edge.color));
-            painter.circle(*position, mark_radius, color, edge);
-        } else if satellite.membership == SatelliteMembership::Unknown {
-            painter.circle_filled(
-                *position,
-                mark_radius * style::UNKNOWN_MEMBERSHIP_MARKER_SCALE,
-                color,
-            );
-        } else {
-            painter.circle_stroke(
-                *position,
-                mark_radius,
-                Stroke::new(style::HOLLOW_MARK_STROKE_WIDTH_PX, color),
-            );
+        SatelliteMembershipMark {
+            membership: satellite.membership,
+            radius: mark_radius,
+            minimum_unknown_radius: gt_ui_theme::SKY_UNKNOWN_MEMBERSHIP_MIN_RADIUS_PX,
+            color,
+            edge: if satellite.in_fix() {
+                Stroke::new(edge.width, dim(edge.color))
+            } else {
+                Stroke::new(style::HOLLOW_MARK_STROKE_WIDTH_PX, color)
+            },
+            hollow_fill: Color32::TRANSPARENT,
         }
+        .paint(painter, *position);
     }
     marks
 }

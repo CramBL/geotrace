@@ -6,7 +6,6 @@ use egui::epaint::{PathShape, PathStroke};
 use egui::{Color32, Pos2, Stroke, Ui, Vec2};
 use egui::{Grid, RichText, ScrollArea};
 use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
-use egui_phosphor::regular::CHECK as ICON_CHECK;
 use gt_fmt::{UTC_SECOND_FORMAT, UTC_SUBSECOND_FORMAT};
 use gt_sky::{SkyHighlight, SkyPlot, SkyPlotSize};
 use gt_types::coordinates::{Coordinate, RecordedCoordinate};
@@ -14,11 +13,11 @@ use gt_types::satellites::{Constellation, NO_DATA_SNR_EXPLANATION};
 use gt_types::{
     DataCategory, FileIdx, FixQuality, FixRef, LoadedFile, LoadedTrack, MapFixKind, NavPoint,
     NearbySkyEvidence, PlacedPoint, PlacedPoints, PointIdx, ResolvedPosition,
-    SKY_REPORT_MAX_AGE_SECS, SatelliteMembership, SatelliteQueryScope, SatelliteScope, SkyCounts,
-    SkyGeometry, SkySatellite, SolutionState, TrackIdx, TrackRef,
+    SKY_REPORT_MAX_AGE_SECS, SatelliteQueryScope, SatelliteScope, SkyCounts, SkyGeometry,
+    SkySatellite, SolutionState, TrackIdx, TrackRef,
 };
 use gt_ui_theme::labels::LabelWithHover;
-use gt_ui_theme::{DEGREE_SIGN, EM_DASH, SatelliteCountBadge};
+use gt_ui_theme::{DEGREE_SIGN, EM_DASH, SatelliteCountBadge, SatelliteMembershipMark};
 use gt_ui_types::{
     DRAWN_AT_CAPTION, HighlightScope, INTERPOLATED_POSITION_NOTE, MapElementRef, MapHighlight,
     PointWindowFolds,
@@ -316,6 +315,12 @@ impl<'a> SkySection<'a> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct SkyHost<'a> {
+    point: &'a NavPoint,
+    identities_in_table: bool,
+}
+
 /// The sky plot with its report-age line, or the no-report placeholder. The
 /// full size is interactive (per-mark tooltips). The compact size lives
 /// inside the hover badge, which is itself a tooltip.
@@ -324,6 +329,7 @@ fn sky_section_ui(
     sky: &SkySection<'_>,
     size: SkyPlotSize,
     highlight: Option<SkyHighlight>,
+    host: SkyHost<'_>,
 ) {
     match sky {
         SkySection::TrackWithoutReports => {}
@@ -338,12 +344,32 @@ fn sky_section_ui(
         }
         SkySection::Report(report) => {
             let plot = SkyPlot::from_evidence(report.evidence, size).with_highlight(highlight);
+            let same_point = ptr::eq(report.evidence.point, host.point);
+            let plot = if same_point {
+                plot.counts_in_host()
+            } else {
+                plot
+            };
+            let same_identity_table = same_point
+                && host.identities_in_table
+                && host
+                    .point
+                    .sky_evidence(SkyGeometry::Identities)
+                    .is_some_and(|evidence| {
+                        evidence.observation.map(|(index, _)| index)
+                            == report.evidence.observation.map(|(index, _)| index)
+                    });
+            let plot = if same_identity_table {
+                plot.identities_in_host()
+            } else {
+                plot
+            };
             let plot = match size {
                 SkyPlotSize::Full => plot.interactive(),
                 SkyPlotSize::Compact => plot,
             };
             plot.ui(ui);
-            if !report.age.is_zero() {
+            if !same_point {
                 ui.label(RichText::new(report_age_label(report.age)).weak().small())
                     .on_hover_text(report_age_description(report.age));
             }
@@ -444,7 +470,18 @@ pub(crate) fn show_hover_table(
         ui.vertical(|ui| hover_grid_ui(ui, point, recording_name));
         if !matches!(sky, SkySection::TrackWithoutReports) {
             ui.add_space(12.0);
-            ui.vertical(|ui| sky_section_ui(ui, sky, SkyPlotSize::Compact, None));
+            ui.vertical(|ui| {
+                sky_section_ui(
+                    ui,
+                    sky,
+                    SkyPlotSize::Compact,
+                    None,
+                    SkyHost {
+                        point: point.fix,
+                        identities_in_table: false,
+                    },
+                )
+            });
         }
     });
 }
@@ -656,7 +693,16 @@ pub(crate) fn show_sticky_tpv_content(
             }
             if !folds.plot_folded {
                 let _plot = ui.scope(|ui| {
-                    sky_section_ui(ui, sky, SkyPlotSize::Full, prev_highlight);
+                    sky_section_ui(
+                        ui,
+                        sky,
+                        SkyPlotSize::Full,
+                        prev_highlight,
+                        SkyHost {
+                            point: p,
+                            identities_in_table: true,
+                        },
+                    );
                 });
                 #[cfg(test)]
                 sticky_layout_rect(ui, StickyRegion::Sky, _plot.response.rect);
@@ -1112,7 +1158,7 @@ fn constellation_panel(
             .show(ui, |ui| {
                 ui.label(RichText::new("PRN").weak().small());
                 ui.label(RichText::new("SNR").weak().small());
-                ui.label(RichText::new("Fix").weak().small());
+                ui.label(RichText::new("Used").weak().small());
                 ui.end_row();
 
                 // A satellite contributing to the fix is shown in the
@@ -1140,14 +1186,20 @@ fn constellation_panel(
                         }
                         None => ui.label(RichText::new(EM_DASH).color(muted_color)),
                     };
-                    let fix_resp = if in_fix {
-                        ui.label(RichText::new(ICON_CHECK).color(in_fix_color))
-                    } else if sat.membership == SatelliteMembership::Unknown {
-                        ui.label(RichText::new("?").color(muted_color))
-                            .on_hover_text("Usage unreported")
-                    } else {
-                        ui.label("")
-                    };
+                    let color = gt_ui_theme::constellation_color(constellation, dark_mode);
+                    let fix_resp = SatelliteMembershipMark {
+                        membership: sat.membership,
+                        radius: MEMBERSHIP_MARK_RADIUS_PX,
+                        minimum_unknown_radius: gt_ui_theme::SKY_UNKNOWN_MEMBERSHIP_MIN_RADIUS_PX,
+                        color,
+                        edge: if in_fix {
+                            Stroke::NONE
+                        } else {
+                            Stroke::new(MEMBERSHIP_MARK_STROKE_PX, color)
+                        },
+                        hollow_fill: egui::Color32::TRANSPARENT,
+                    }
+                    .ui(ui);
                     // Hovering anywhere across the row (the
                     // union spans the cells and the gaps
                     // between them) highlights just that
@@ -1849,6 +1901,9 @@ const SAT_LABEL_CORNER_RADIUS_PT: f32 = 2.0;
 /// Fill behind a satellite-count label, dark enough for white digits over the
 /// track line and over the tiles.
 const SAT_LABEL_PLATE_FILL: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 160);
+
+const MEMBERSHIP_MARK_RADIUS_PX: f32 = 3.0;
+const MEMBERSHIP_MARK_STROKE_PX: f32 = 1.5;
 
 #[cfg(test)]
 mod tests;

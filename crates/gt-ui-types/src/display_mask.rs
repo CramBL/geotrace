@@ -40,7 +40,7 @@ pub enum DisplayCategory {
     QueryHighlights,
     /// The snapped-track polylines (the snap-to-road reference geometry).
     SnappedTracks,
-    /// The per-point sky glyphs (directions of the satellites in the fix).
+    /// Satellite geometry glyphs at navigation points.
     SkyGlyphs,
     /// The aircraft-interference cells drawn beneath the track ink.
     JammingHexes,

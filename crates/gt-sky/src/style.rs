@@ -42,8 +42,6 @@ pub const COMPACT_RIM_MARGIN_PX: f32 = 10.0;
 /// Marks in the compact plot shrink by this factor.
 pub const COMPACT_MARK_SCALE: f32 = 0.75;
 
-pub const UNKNOWN_MEMBERSHIP_MARKER_SCALE: f32 = 0.45;
-
 /// Stroke width of the rim, grid rings, and cardinal spokes.
 pub const GRID_STROKE_WIDTH_PX: f32 = 1.0;
 

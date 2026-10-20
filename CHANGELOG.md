@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **Map & Tracks:** Fixed empty sky charts for identity-only reports and incorrect satellite membership marks during navigation loss.
 - **Map & Tracks:** Fixed missing constellation swatches and expanded evidence rows in point summaries.
 - **Map & Tracks:** Fixed fit clipping start and finish flags when only ghost fixes, labels or sky glyphs were displayed.
 - **Map & Tracks:** Fixed fit and query reveal including data hidden by tree, query or marker type settings.

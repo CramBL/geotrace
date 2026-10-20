@@ -6,7 +6,7 @@ use egui::{Align, Layout, Pos2, RichText, Sense, Stroke, Vec2};
 use gt_types::satellites::{Constellation, NO_DATA_SNR_EXPLANATION, Prn, SignalQuality, Snr};
 use gt_types::{GpsTime, SatelliteMembership, SkySatellite};
 
-use crate::style;
+use gt_ui_theme::SatelliteMembershipMark;
 
 /// The `"G05 GPS"` designator: RINEX prefix, zero-padded PRN, constellation
 /// name. Single source for both plots' hover labels.
@@ -32,7 +32,7 @@ pub(crate) fn satellite_tooltip(ui: &mut egui::Ui, satellite: &SkySatellite, at:
         let label = satellite_designator(satellite.constellation(), satellite.prn());
         ui.label(RichText::new(label).strong());
         ui.add_space(TOOLTIP_HEADER_GAP_PX);
-        fix_chip(ui, satellite.membership);
+        fix_chip(ui, satellite);
     });
     let degree = |value: Option<f32>| {
         value.map_or_else(
@@ -88,33 +88,26 @@ fn tooltip_row(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.end_row();
 }
 
-fn fix_chip(ui: &mut egui::Ui, membership: SatelliteMembership) {
+fn fix_chip(ui: &mut egui::Ui, satellite: &SkySatellite) {
+    let membership = satellite.membership;
     let in_fix = membership == SatelliteMembership::Used;
-    let color = if in_fix {
-        gt_ui_theme::SUCCESS_GREEN
-    } else {
-        ui.visuals().weak_text_color()
-    };
+    let color = gt_ui_theme::constellation_color(satellite.constellation(), ui.visuals().dark_mode);
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(CHIP_GLYPH_PX), Sense::hover());
     let radius = CHIP_GLYPH_PX / 2.0;
-    if in_fix {
-        ui.painter().circle_filled(rect.center(), radius, color);
-    } else if membership == SatelliteMembership::Unknown {
-        ui.painter().circle_filled(
-            rect.center(),
-            radius * style::UNKNOWN_MEMBERSHIP_MARKER_SCALE,
-            color,
-        );
-    } else {
-        ui.painter()
-            .circle_stroke(rect.center(), radius, Stroke::new(CHIP_RING_PX, color));
-    }
-    let state = match membership {
-        SatelliteMembership::Used => "In fix",
-        SatelliteMembership::Unused => "Tracked",
-        SatelliteMembership::Unknown => "Usage unknown",
+    let mark = SatelliteMembershipMark {
+        membership,
+        radius,
+        minimum_unknown_radius: gt_ui_theme::SKY_UNKNOWN_MEMBERSHIP_MIN_RADIUS_PX,
+        color,
+        edge: if in_fix {
+            Stroke::NONE
+        } else {
+            Stroke::new(CHIP_RING_PX, color)
+        },
+        hollow_fill: egui::Color32::TRANSPARENT,
     };
-    ui.label(RichText::new(state).color(color));
+    mark.paint(ui.painter(), rect.center());
+    ui.label(RichText::new(mark.label()).color(color));
 }
 
 /// The candidate nearest to `pointer` within `radius`, where `candidates` yields
