@@ -1,5 +1,5 @@
 use chrono::SecondsFormat;
-use hdf5_pure::{AttrValue, FileBuilder};
+use hdf5_pure::{AttrValue, DeflateLevel, FileBuilder};
 
 use crate::builder;
 use crate::error::{Error, FieldLocation, MARKER_LABEL_LOCATION};
@@ -118,7 +118,7 @@ fn write_channels(nav_file: &NavFile, fb: &mut FileBuilder) {
             )
             .with_chunks(&[chunk])
             .with_shuffle()
-            .with_deflate(6);
+            .with_deflate(DeflateLevel::Six);
         // A scalar channel is a 1-D `[n]` dataset. A vector channel is a 2-D
         // `[n, k]` dataset, so the components stay clock-locked in one column each.
         let value = grp.create_dataset("value").with_f64_data(&channel.values);
@@ -132,7 +132,7 @@ fn write_channels(nav_file: &NavFile, fb: &mut FileBuilder) {
         } else {
             value.with_shape(&[n]).with_chunks(&[chunk]);
         }
-        value.with_shuffle().with_deflate(6);
+        value.with_shuffle().with_deflate(DeflateLevel::Six);
         root.add_group(grp.finish());
     }
     fb.add_group(root.finish());
@@ -202,7 +202,7 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Erro
         )
         .with_chunks(&[chunk])
         .with_shuffle()
-        .with_deflate(6);
+        .with_deflate(DeflateLevel::Six);
     grp.create_dataset("gps_time_us")
         .with_u64_data(&gps_times)
         .with_shape(&[n as u64])
@@ -213,7 +213,7 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Erro
         .set_attr("absent_sentinel", AttrValue::String("u64::MAX".into()))
         .with_chunks(&[chunk])
         .with_shuffle()
-        .with_deflate(6);
+        .with_deflate(DeflateLevel::Six);
     grp.create_dataset("sys_time_us")
         .with_u64_data(&sys_times)
         .with_shape(&[n as u64])
@@ -224,21 +224,21 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Erro
         .set_attr("absent_sentinel", AttrValue::String("u64::MAX".into()))
         .with_chunks(&[chunk])
         .with_shuffle()
-        .with_deflate(6);
+        .with_deflate(DeflateLevel::Six);
     grp.create_dataset("lat")
         .with_f64_data(&lats)
         .with_shape(&[n as u64])
         .set_attr("units", AttrValue::String("degrees".into()))
         .with_chunks(&[chunk])
         .with_shuffle()
-        .with_deflate(6);
+        .with_deflate(DeflateLevel::Six);
     grp.create_dataset("lon")
         .with_f64_data(&lons)
         .with_shape(&[n as u64])
         .set_attr("units", AttrValue::String("degrees".into()))
         .with_chunks(&[chunk])
         .with_shuffle()
-        .with_deflate(6);
+        .with_deflate(DeflateLevel::Six);
     grp.create_dataset("heading")
         .with_f64_data(&headings)
         .with_shape(&[n as u64])
@@ -246,7 +246,7 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Erro
         .set_attr("nan_means", AttrValue::String("absent".into()))
         .with_chunks(&[chunk])
         .with_shuffle()
-        .with_deflate(6);
+        .with_deflate(DeflateLevel::Six);
     grp.create_dataset("speed_mps")
         .with_f64_data(&speeds)
         .with_shape(&[n as u64])
@@ -254,7 +254,7 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Erro
         .set_attr("nan_means", AttrValue::String("absent".into()))
         .with_chunks(&[chunk])
         .with_shuffle()
-        .with_deflate(6);
+        .with_deflate(DeflateLevel::Six);
     grp.create_dataset("eph_m")
         .with_f64_data(&ephs)
         .with_shape(&[n as u64])
@@ -262,7 +262,7 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Erro
         .set_attr("nan_means", AttrValue::String("absent".into()))
         .with_chunks(&[chunk])
         .with_shuffle()
-        .with_deflate(6);
+        .with_deflate(DeflateLevel::Six);
 
     for (name, values, encoding) in [
         (
@@ -312,7 +312,7 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Erro
             .set_attr("encoding", AttrValue::String(encoding.into()))
             .with_chunks(&[chunk])
             .with_shuffle()
-            .with_deflate(6);
+            .with_deflate(DeflateLevel::Six);
     }
     let used_counts: Vec<u32> = points
         .iter()
@@ -323,7 +323,7 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Erro
         .with_shape(&[n as u64])
         .with_chunks(&[chunk])
         .with_shuffle()
-        .with_deflate(6);
+        .with_deflate(DeflateLevel::Six);
     for (name, values) in [
         (
             "hdop",
@@ -354,7 +354,7 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Erro
             .set_attr("nan_means", AttrValue::String("absent".into()))
             .with_chunks(&[chunk])
             .with_shuffle()
-            .with_deflate(6);
+            .with_deflate(DeflateLevel::Six);
     }
 
     fb.add_group(grp.finish());
@@ -399,21 +399,21 @@ fn write_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> 
         )
         .with_chunks(&[k_chunk])
         .with_shuffle()
-        .with_deflate(6);
+        .with_deflate(DeflateLevel::Six);
     grp.create_dataset("lat")
         .with_f64_data(&lats)
         .with_shape(&[k as u64])
         .set_attr("units", AttrValue::String("degrees".into()))
         .with_chunks(&[k_chunk])
         .with_shuffle()
-        .with_deflate(6);
+        .with_deflate(DeflateLevel::Six);
     grp.create_dataset("lon")
         .with_f64_data(&lons)
         .with_shape(&[k as u64])
         .set_attr("units", AttrValue::String("degrees".into()))
         .with_chunks(&[k_chunk])
         .with_shuffle()
-        .with_deflate(6);
+        .with_deflate(DeflateLevel::Six);
     grp.create_dataset("icon")
         .with_u8_data(&icons)
         .with_shape(&[k as u64])
@@ -422,7 +422,7 @@ fn write_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> 
             AttrValue::String(MarkerIcon::encoding_attribute()),
         )
         .with_chunks(&[k_chunk])
-        .with_deflate(6);
+        .with_deflate(DeflateLevel::Six);
     // Label rows are 256 B each. Chunk by 32 rows to stay at ~8 KiB per chunk.
     let label_row_chunk = (CHUNK_SIZE / 256).max(1);
     grp.create_dataset("label")
@@ -434,7 +434,7 @@ fn write_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> 
         )
         // Chunk by rows. Shuffle is a no-op for u8 (1-byte elements) so omit it.
         .with_chunks(&[label_row_chunk, 256])
-        .with_deflate(6);
+        .with_deflate(DeflateLevel::Six);
     fb.add_group(grp.finish());
 
     Ok(())
@@ -505,21 +505,21 @@ fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), E
             .set_attr("absent_sentinel", AttrValue::String("u64::MAX".into()))
             .with_chunks(&[n_chunk])
             .with_shuffle()
-            .with_deflate(6);
+            .with_deflate(DeflateLevel::Six);
         grp.create_dataset("lat")
             .with_f64_data(&lats)
             .with_shape(&[n as u64])
             .set_attr("units", AttrValue::String("degrees".into()))
             .with_chunks(&[n_chunk])
             .with_shuffle()
-            .with_deflate(6);
+            .with_deflate(DeflateLevel::Six);
         grp.create_dataset("lon")
             .with_f64_data(&lons)
             .with_shape(&[n as u64])
             .set_attr("units", AttrValue::String("degrees".into()))
             .with_chunks(&[n_chunk])
             .with_shuffle()
-            .with_deflate(6);
+            .with_deflate(DeflateLevel::Six);
         // `variant_path`: 256 B rows → chunk at CHUNK_SIZE/256 rows
         grp.create_dataset("variant_path")
             .with_u8_data(&vp_flat)
@@ -529,7 +529,7 @@ fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), E
                 AttrValue::String("UTF-8 null-padded to 256 bytes, max 255 content bytes".into()),
             )
             .with_chunks(&[vp_row_chunk, 256])
-            .with_deflate(6);
+            .with_deflate(DeflateLevel::Six);
         // annotation: 512 B rows → chunk at CHUNK_SIZE/512 rows
         grp.create_dataset("annotation")
             .with_u8_data(&ann_flat)
@@ -539,7 +539,7 @@ fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), E
                 AttrValue::String("UTF-8 null-padded to 512 bytes, empty = no annotation".into()),
             )
             .with_chunks(&[ann_row_chunk, 512])
-            .with_deflate(6);
+            .with_deflate(DeflateLevel::Six);
         fb.add_group(grp.finish());
     }
 
@@ -588,7 +588,7 @@ fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), E
             .with_u8_data(&vp_flat)
             .with_shape(&[m as u64, 256])
             .with_chunks(&[m_chunk, 256])
-            .with_deflate(6);
+            .with_deflate(DeflateLevel::Six);
         grp.create_dataset("icon_name")
             .with_u8_data(&icon_flat)
             .with_shape(&[m as u64, 32])
@@ -597,7 +597,7 @@ fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), E
                 AttrValue::String("lowercase MarkerIcon variant name, null-padded".into()),
             )
             .with_chunks(&[icon_chunk, 32])
-            .with_deflate(6);
+            .with_deflate(DeflateLevel::Six);
         grp.create_dataset("color_hex")
             .with_u8_data(&color_flat)
             .with_shape(&[m as u64, 8])
@@ -606,7 +606,7 @@ fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), E
                 AttrValue::String("#RRGGBB null-padded to 8 bytes".into()),
             )
             .with_chunks(&[color_chunk, 8])
-            .with_deflate(6);
+            .with_deflate(DeflateLevel::Six);
         fb.add_group(grp.finish());
     }
 

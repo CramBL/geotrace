@@ -126,7 +126,7 @@ h3o = "0.11"
 # to pkg-config and fails wherever no system libhdf5 is installed.
 hdf5 = { package = "hdf5-metno", version = "0.15", features = ["static", "zlib"] }
 # Use the next release after the current main improvements are published.
-hdf5-pure = { git = "https://github.com/CramBL/hdf5-pure", branch = "main" }
+hdf5-pure = { git = "https://github.com/CramBL/hdf5-pure", rev = "357d0ab07964919b3ea6400c570ffdb7a22a6098" }
 heck = "0.5"
 insta = "1.49.0"
 jiff = "0.2.38"

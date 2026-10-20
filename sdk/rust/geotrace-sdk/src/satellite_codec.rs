@@ -1,7 +1,7 @@
 use std::fmt::Write as _;
 
 use hdf5_pure::{
-    AttrValue, Dataset, Datatype, DatatypeByteOrder, FileBuilder, FixedPointLayout,
+    AttrValue, Dataset, Datatype, DatatypeByteOrder, DeflateLevel, FileBuilder, FixedPointLayout,
     FloatingPointLayout, GroupBuilder,
 };
 use strum::IntoEnumIterator as _;
@@ -817,5 +817,5 @@ const OBSERVATION_REPORTS: &str = "satellite_observation_reports";
 const USAGE_ROWS: &str = "satellite_usage";
 const OBSERVATION_ROWS: &str = "satellite_observations";
 
-const DEFLATE_LEVEL: u32 = 6;
+const DEFLATE_LEVEL: DeflateLevel = DeflateLevel::Six;
 const INSPECTION_TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.f UTC";
