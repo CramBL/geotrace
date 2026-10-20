@@ -5,14 +5,11 @@ use std::ops::Range;
 
 use chrono::{DateTime, Utc};
 use egui::{Color32, Tooltip};
-use egui_plot::{Line, LineStyle, MarkerShape, PlotPoint, PlotPoints, Points};
+use egui_plot::{Line, LineStyle, MarkerShape, PlotItem as _, PlotPoint, PlotPoints, Points};
 use gt_analysis::satellite_utilization::UtilAnomaly;
 use gt_egui_mipmap::LevelSelection;
 use gt_types::satellites::ConstellationSet;
-use gt_types::{
-    FixRef, LoadedTrack, MetricKind, NavigationEvidenceSource, PointIdx, SatelliteReportMetadata,
-    TrackRef,
-};
+use gt_types::{FixRef, LoadedTrack, MetricKind, NavigationEvidenceSource, PointIdx, TrackRef};
 use gt_ui_types::HighlightScope;
 use rustc_hash::FxHashMap;
 use strum::IntoEnumIterator;
@@ -211,6 +208,7 @@ pub(super) fn add_series_lines<'a>(
                 stroke,
             );
         } else {
+            add_native_line_candidate(plot_ui, points, pointer, nearest);
             add_line(plot_ui, points, name, stroke);
         }
     }
@@ -275,7 +273,9 @@ pub(super) fn add_series_lines<'a>(
             // No line joins the samples across a backward step in the
             // channel's timestamps: one line is drawn per run.
             for (run, selection) in component.runs.iter().zip(run_selections) {
-                add_line(plot_ui, run.slice_at(*selection), name.clone(), stroke);
+                let points = run.slice_at(*selection);
+                add_native_line_candidate(plot_ui, points, pointer, nearest);
+                add_line(plot_ui, points, name.clone(), stroke);
             }
         }
     }
@@ -352,14 +352,6 @@ impl<T> NearestCandidate<T> {
         }
     }
 
-    pub(super) fn selected(&self) -> Option<&T> {
-        self.closest.as_ref().map(|(_, candidate)| candidate)
-    }
-
-    pub(super) fn has_candidate(&self) -> bool {
-        self.closest.is_some()
-    }
-
     pub(super) fn take(self) -> Option<T> {
         self.closest.map(|(_, candidate)| candidate)
     }
@@ -367,7 +359,69 @@ impl<T> NearestCandidate<T> {
 
 /// One shared slot for the custom hover labels of every series and every
 /// recording: they all anchor at the pointer, so only the closest one draws.
-pub(super) type NearestHoverLabel = NearestCandidate<PlotHoverLabel>;
+#[derive(Default)]
+pub(super) struct NearestHoverLabel {
+    labels: NearestCandidate<PlotHoverLabel>,
+    native_line_distance: Option<f32>,
+}
+
+impl NearestHoverLabel {
+    pub(super) fn offer(&mut self, distance_px: f32, candidate: impl FnOnce() -> PlotHoverLabel) {
+        self.labels.offer(distance_px, candidate);
+    }
+
+    pub(super) fn selected(&self) -> Option<&PlotHoverLabel> {
+        let (distance, label) = self.labels.closest.as_ref()?;
+        if matches!(label, PlotHoverLabel::Metric(_))
+            && self
+                .native_line_distance
+                .is_some_and(|native| native < *distance)
+        {
+            return None;
+        }
+        Some(label)
+    }
+
+    pub(super) fn has_candidate(&self) -> bool {
+        self.selected().is_some()
+    }
+
+    fn take(self) -> Option<PlotHoverLabel> {
+        self.selected()?;
+        self.labels.take()
+    }
+}
+
+fn add_native_line_candidate(
+    plot_ui: &egui_plot::PlotUi<'_>,
+    points: &[PlotPoint],
+    pointer: Option<egui::Pos2>,
+    nearest: &mut NearestHoverLabel,
+) {
+    if points.len() < 2 {
+        return;
+    }
+    let Some(pointer) = pointer else {
+        return;
+    };
+    let line = Line::new("", PlotPoints::Borrowed(points));
+    if let Some(closest) = line.find_closest(pointer, plot_ui.transform())
+        && closest.dist_sq
+            <= plot_ui
+                .ctx()
+                .global_style()
+                .interaction
+                .interact_radius
+                .powi(2)
+    {
+        let distance = closest.dist_sq.sqrt();
+        nearest.native_line_distance = Some(
+            nearest
+                .native_line_distance
+                .map_or(distance, |previous| previous.min(distance)),
+        );
+    }
+}
 
 /// Surface the closest custom hover label as a tooltip anchored at the pointer.
 /// This is the only label at the cursor: egui_plot's cursor label is suppressed
@@ -471,21 +525,13 @@ impl MetricSeries {
             let Some(pointer) = context.pointer else {
                 continue;
             };
-            let visible = visible_by_x(
-                points,
-                |sample| sample.x,
-                context.viewport.x_min,
-                context.viewport.x_max,
-            );
-            if let Some((distance, point)) = nearest_fix_under_pointer(
-                plot_ui,
-                visible,
-                |point| *point,
-                pointer,
-                HOVER_RADIUS_PX,
-            ) && let Some(source) = self.sample_source(run_index, point.x)
+            let line = Line::new(&context.name, PlotPoints::Borrowed(points));
+            if let Some(closest) = line.find_closest(pointer, plot_ui.transform())
+                && closest.dist_sq <= HOVER_RADIUS_PX.powi(2)
+                && let Some(point) = points.get(closest.index)
+                && let Some(source) = self.sample_source(run_index, point.x)
             {
-                nearest.offer(distance, || {
+                nearest.offer(closest.dist_sq.sqrt(), || {
                     PlotHoverLabel::Metric(MetricHover::new(
                         context.track_label,
                         context.kind,
@@ -531,8 +577,6 @@ pub(super) struct MetricHover {
     track: Option<String>,
     kind: MetricKind,
     point: PlotPoint,
-    source: MetricSampleSource,
-    report: Option<SatelliteReportMetadata>,
     time: Option<DateTime<Utc>>,
 }
 
@@ -580,34 +624,35 @@ impl MetricHover {
             track: track_label.map(ToOwned::to_owned),
             kind,
             point,
-            source,
-            report,
         }
     }
 
     fn show(&self, ui: &mut egui::Ui) {
-        ui.strong(format!("{} {}", self.kind.label(), self.point.y));
+        ui.strong(self.kind.label());
         if let Some(track) = &self.track {
             ui.label(track);
         }
         if let Some(time) = self.time {
-            ui.label(time.format("%Y-%m-%d %H:%M:%S%.f UTC").to_string());
+            ui.label(time.format("%H:%M:%S%.f").to_string());
         }
-        ui.label(format!("Point {}", self.source.point_index + 1));
-        if let Some(report) = self.report {
-            if let Some(time) = report.gps_time {
-                ui.label(format!(
-                    "Receiver time {}",
-                    time.utc().format("%Y-%m-%d %H:%M:%S%.f UTC")
-                ));
-            }
-            if let Some(time) = report.sys_time {
-                ui.label(format!(
-                    "Host time {}",
-                    time.utc().format("%Y-%m-%d %H:%M:%S%.f UTC")
-                ));
-            }
-        }
+        let value = match self.kind {
+            MetricKind::SatsFix
+            | MetricKind::SatsSeen
+            | MetricKind::GpsFix
+            | MetricKind::GpsSeen
+            | MetricKind::GlonassFix
+            | MetricKind::GlonassSeen
+            | MetricKind::GalileoFix
+            | MetricKind::GalileoSeen
+            | MetricKind::BeidouFix
+            | MetricKind::BeidouSeen
+            | MetricKind::NavicFix
+            | MetricKind::NavicSeen
+            | MetricKind::QzssFix
+            | MetricKind::QzssSeen => format!("{:.0}", self.point.y),
+            _ => format!("{:.2}", self.point.y),
+        };
+        ui.label(value);
     }
 }
 

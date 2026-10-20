@@ -4,11 +4,13 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
+use gt_filter::GlobalFilter;
 use gt_plot::PlotState;
 use gt_plot::test_util::{self, DrawnPlot, PlotPosition, PlotSources};
 use gt_solar::GeomagneticIndex;
+use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::{
-    Channel, FixRef, GpsTime, LoadedFile, MetricKind, PointIdx, SatelliteCoverage,
+    Channel, FixRef, GpsTime, LoadedFile, MetricKind, NavPoint, PointIdx, SatelliteCoverage,
     SatelliteReportMetadata, SatelliteScope, SatelliteUsageReport, SysTime,
 };
 use gt_ui_types::{GeomagneticPoint, IndexContextSample, TecContextSample, TecPoint};
@@ -101,6 +103,10 @@ impl PlotScene {
     }
 
     fn draw(self) -> DrawnPlot {
+        self.draw_in_theme(egui::Theme::Dark)
+    }
+
+    fn draw_in_theme(self, theme: egui::Theme) -> DrawnPlot {
         let Self {
             file,
             shown_metrics,
@@ -109,10 +115,11 @@ impl PlotScene {
         } = self;
         let mut plot = PlotState::default();
         plot.show_channels = show_channels;
+        plot.show_advanced_metrics = shown_metrics.contains(&MetricKind::UtilAll);
         for kind in MetricKind::iter() {
             plot.metric_vis.set(kind, shown_metrics.contains(&kind));
         }
-        test_util::drawn_plot(vec![file], sources, plot)
+        test_util::drawn_plot_in_theme(vec![file], sources, plot, theme)
     }
 }
 
@@ -423,7 +430,7 @@ const THE_FLARE_HOVER_LABEL: &str = "X2.2 solar flare\n\
     ionization above it.";
 
 #[test]
-fn an_isolated_count_sample_shows_its_report_clock_and_fractional_time() {
+fn an_isolated_count_sample_shows_its_fractional_time_and_source() {
     let mut points = test_util::fixes(2, 10);
     let point = points.last_mut().expect("last fix");
     let report_time = GpsTime::from_utc(test_util::at_second(10) + TimeDelta::milliseconds(400));
@@ -446,10 +453,7 @@ fn an_isolated_count_sample_shows_its_report_clock_and_fractional_time() {
         offset_secs: 10.4,
         y: 8.0,
     }));
-    assert_eq!(
-        plot.hover_label(),
-        "Sats fix 8\n2024-01-15 12:00:10.400 UTC\nPoint 2\nHost time 2024-01-15 12:00:11 UTC"
-    );
+    assert_eq!(plot.hover_label(), "Sats fix\n12:00:10.400\n8");
 }
 
 #[test]
@@ -464,12 +468,261 @@ fn a_reported_dop_sample_has_its_original_value_time_and_point_reference() {
         y: 0.9,
     });
     plot.hover(target);
-    assert_eq!(
-        plot.hover_label(),
-        "HDOP 0.9\n2024-01-15 12:00:01 UTC\nPoint 2"
-    );
+    assert_eq!(plot.hover_label(), "HDOP\n12:00:01\n0.90");
     assert_eq!(
         plot.state().hovered_metric_fix,
         Some(FixRef::new(test_util::track0(), PointIdx::new(1)))
+    );
+}
+
+#[derive(Clone, Copy)]
+enum MetricFixture {
+    Count,
+    Dop,
+    Utilization,
+}
+
+impl MetricFixture {
+    fn kind(self) -> MetricKind {
+        match self {
+            Self::Count => MetricKind::SatsFix,
+            Self::Dop => MetricKind::Hdop,
+            Self::Utilization => MetricKind::UtilAll,
+        }
+    }
+
+    fn recording(self) -> LoadedFile {
+        let points = test_util::fixes(2, 10)
+            .into_iter()
+            .enumerate()
+            .map(|(index, mut point)| {
+                match self {
+                    Self::Count => point.navigation.used_count = Some(8 + 2 * index as u32),
+                    Self::Dop => point.navigation.hdop = Some(0.9 + 0.4 * index as f64),
+                    Self::Utilization => {
+                        point = NavPoint::new(
+                            point.tpv,
+                            Some(Satellites::new(
+                                Some(point.tpv.time()),
+                                Some(SysTime::from_utc(point.tpv.time().utc())),
+                                (1..=7)
+                                    .map(|prn| {
+                                        Satellite::new(
+                                            Constellation::Gps,
+                                            prn,
+                                            Some(45.0),
+                                            Some(120.0),
+                                            Some(38.0),
+                                            prn <= 3 + index as u32,
+                                        )
+                                    })
+                                    .collect(),
+                            )),
+                        );
+                    }
+                }
+                point
+            })
+            .collect();
+        test_util::recording(points, Vec::new())
+    }
+}
+
+#[rstest]
+#[case::count(MetricFixture::Count, [8.0, 10.0], "Sats fix\n12:00:00\n8", "count")]
+#[case::dop(MetricFixture::Dop, [0.9, 1.3], "HDOP\n12:00:00\n0.90", "dop")]
+#[case::utilization(MetricFixture::Utilization, [300.0 / 7.0, 400.0 / 7.0], "Util all (%)\n12:00:00\n42.86", "utilization")]
+fn snapshot_connected_metric_hover_selects_a_recorded_endpoint(
+    #[case] fixture: MetricFixture,
+    #[case] values: [f64; 2],
+    #[case] expected_label: &str,
+    #[case] snapshot_suffix: &str,
+    #[values(egui::Theme::Dark, egui::Theme::Light)] theme: egui::Theme,
+) {
+    let kind = fixture.kind();
+    let mut plot = PlotScene::of(fixture.recording())
+        .showing(&[kind])
+        .draw_in_theme(theme);
+    plot.hover(plot.screen_position(PlotPosition {
+        offset_secs: 10.0 / 3.0,
+        y: values[0] + (values[1] - values[0]) / 3.0,
+    }));
+    assert_eq!(plot.hover_label(), expected_label);
+    assert_eq!(
+        plot.state().hovered_metric_fix,
+        Some(FixRef::new(test_util::track0(), PointIdx::new(0)))
+    );
+    assert_eq!(plot.state().hovered_time, Some(test_util::at_second(0)));
+    let stored = &plot.harness.state().files[0].tracks[0].points[0];
+    if kind == MetricKind::UtilAll {
+        let report = &stored.satellite_evidence.observations[0].metadata;
+        assert_eq!(report.gps_time.unwrap().utc(), test_util::at_second(0));
+        assert_eq!(report.sys_time.unwrap().utc(), test_util::at_second(0));
+    }
+    let theme_name = match theme {
+        egui::Theme::Dark => "dark",
+        egui::Theme::Light => "light",
+    };
+    plot.snapshot(&format!(
+        "compact_metric_hover_{snapshot_suffix}_{theme_name}"
+    ));
+}
+
+#[test]
+fn metric_gaps_have_no_segment_hover_target() {
+    let mut points = test_util::fixes(3, 5);
+    points[0].navigation.used_count = Some(8);
+    points[2].navigation.used_count = Some(10);
+    let mut plot = PlotScene::of(test_util::recording(points, Vec::new()))
+        .showing(&[MetricKind::SatsFix])
+        .draw();
+    plot.hover(plot.screen_position(PlotPosition {
+        offset_secs: 5.0,
+        y: 9.0,
+    }));
+    assert!(!plot.hover_label().contains("Sats fix"));
+    assert_eq!(plot.state().hovered_metric_fix, None);
+    assert!(!plot.state().plot_cursor_snapped);
+}
+
+#[test]
+fn overlapping_metric_segments_select_the_nearest_metric_and_annotation() {
+    let mut file = MetricFixture::Dop.recording();
+    for point in &mut file.tracks[0].points {
+        point.navigation.vdop = point.navigation.hdop.map(|value| value + 0.01);
+    }
+    let mut plot = PlotScene::of(file)
+        .showing(&[MetricKind::Hdop, MetricKind::Vdop])
+        .with_a_flare_peaking_at(5)
+        .draw();
+    for (kind, offset) in [("HDOP", 0.0), ("VDOP", 0.01)] {
+        plot.hover(plot.screen_position(PlotPosition {
+            offset_secs: 3.0,
+            y: 1.02 + offset,
+        }));
+        assert_eq!(
+            plot.hover_label(),
+            format!("{kind}\n12:00:00\n{:.2}", 0.9 + offset)
+        );
+        assert_eq!(
+            plot.state().hovered_metric_fix,
+            Some(FixRef::new(test_util::track0(), PointIdx::new(0)))
+        );
+    }
+    let on_flare = plot.screen_position(PlotPosition {
+        offset_secs: 5.0,
+        y: 1.1,
+    });
+    plot.hover(egui::pos2(
+        on_flare.x,
+        plot.transform().frame().top() + 10.0,
+    ));
+    assert!(plot.hover_label().contains("X2.2 solar flare"));
+    assert_eq!(plot.state().hovered_metric_fix, None);
+}
+
+#[rstest]
+#[case::visible_boundary(false)]
+#[case::active_window(true)]
+fn metric_segment_hover_respects_the_viewport_and_active_time_window(#[case] active_window: bool) {
+    let mut scene = PlotScene::of(MetricFixture::Count.recording()).showing(&[MetricKind::SatsFix]);
+    scene.sources = PlotSources::default().pinned_to_map_view(2..=10);
+    if active_window {
+        scene.sources.filter = GlobalFilter::default().with_time_bounds(
+            Some(test_util::at_second(2)),
+            Some(test_util::at_second(10)),
+        );
+    }
+    let mut plot = scene.draw();
+    plot.hover(plot.screen_position(PlotPosition {
+        offset_secs: 3.0,
+        y: 8.6,
+    }));
+    if active_window {
+        assert!(!plot.hover_label().contains("Sats fix"));
+        assert_eq!(plot.state().hovered_metric_fix, None);
+    } else {
+        assert_eq!(plot.hover_label(), "Sats fix\n12:00:00\n8");
+        assert_eq!(
+            plot.state().hovered_metric_fix,
+            Some(FixRef::new(test_util::track0(), PointIdx::new(0)))
+        );
+        plot.sources_mut().map_sync_x_range = Some((
+            test_util::at_second(2).timestamp() as f64,
+            test_util::at_second(8).timestamp() as f64,
+        ));
+        plot.run();
+        plot.hover(plot.screen_position(PlotPosition {
+            offset_secs: 3.0,
+            y: 8.6,
+        }));
+        assert_eq!(plot.hover_label(), "Sats fix\n12:00:00\n8");
+    }
+}
+
+#[test]
+fn a_decimated_metric_hover_selects_the_displayed_sample_and_report_source() {
+    let mut points = test_util::fixes(DOWNSAMPLED_FIX_COUNT, 1);
+    for (index, point) in points.iter_mut().enumerate() {
+        let time = GpsTime::from_utc(point.tpv.time().utc() + TimeDelta::milliseconds(400));
+        point.satellite_evidence.usage.push(SatelliteUsageReport {
+            metadata: SatelliteReportMetadata {
+                gps_time: None,
+                sys_time: Some(SysTime::from_utc(
+                    point.tpv.time().utc() + TimeDelta::seconds(1),
+                )),
+                normalized_time: time,
+                input_order: index as u64,
+                scope: SatelliteScope::Global,
+                coverage: SatelliteCoverage::Partial,
+                reported_count: Some(8),
+            },
+            satellites: Vec::new(),
+        });
+    }
+    let mut plot = PlotScene::of(test_util::recording(points, Vec::new()))
+        .showing(&[MetricKind::SatsFix])
+        .draw();
+    plot.hover(plot.screen_position(PlotPosition {
+        offset_secs: 40.5,
+        y: 8.0,
+    }));
+    assert_eq!(plot.hover_label(), "Sats fix\n12:00:47.400\n8");
+    assert_eq!(
+        plot.state().hovered_metric_fix,
+        Some(FixRef::new(test_util::track0(), PointIdx::new(47)))
+    );
+    assert_eq!(
+        plot.state().hovered_time,
+        Some(test_util::at_second(47) + TimeDelta::milliseconds(400))
+    );
+}
+
+#[test]
+fn a_nearer_channel_segment_suppresses_the_metric_hover() {
+    let mut file = MetricFixture::Dop.recording();
+    file.tracks[0].channels = vec![scalar_channel(
+        CHANNEL_NAME,
+        vec![test_util::at_second(0), test_util::at_second(10)],
+        vec![0.91, 1.31],
+    )];
+    let mut plot = PlotScene::of(file)
+        .showing(&[MetricKind::Hdop])
+        .with_the_channels_revealed()
+        .draw();
+    plot.hover(plot.screen_position(PlotPosition {
+        offset_secs: 3.0,
+        y: 1.03,
+    }));
+    assert_eq!(plot.hover_label(), "Incline\n12:00:00\n0.91");
+    assert_eq!(plot.state().hovered_metric_fix, None);
+    plot.hover(plot.screen_position(PlotPosition {
+        offset_secs: 3.0,
+        y: 1.02,
+    }));
+    assert_eq!(plot.hover_label(), "HDOP\n12:00:00\n0.90");
+    assert_eq!(
+        plot.state().hovered_metric_fix,
+        Some(FixRef::new(test_util::track0(), PointIdx::new(0)))
     );
 }
