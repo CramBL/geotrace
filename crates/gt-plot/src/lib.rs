@@ -4,6 +4,7 @@ pub use plot_widget::{
     find_closest_tpv_matching, legend_is_docked, show_track_plot,
 };
 
+mod metric_series;
 mod plot_widget;
 mod series;
 #[cfg(any(test, feature = "test-util"))]

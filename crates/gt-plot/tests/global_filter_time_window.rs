@@ -11,11 +11,15 @@ use gt_plot::PlotState;
 use gt_plot::test_util::{self, PlotSources};
 use gt_test_utils::Queryable as _;
 use gt_types::satellites::{Constellation, Satellite, Satellites};
-use gt_types::{FileIdx, FixRef, LoadedFile, NavPoint, PointIdx, TrackIdx};
+use gt_types::{
+    FileIdx, FixRef, GpsTime, LoadedFile, MetricKind, NavPoint, PointIdx, SatelliteCoverage,
+    SatelliteReportMetadata, SatelliteScope, SatelliteUsageReport, TrackIdx,
+};
 use gt_ui_types::{
     DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, MapElementRef,
     MapEligibility, QueryMatches, TrackDataVisibility,
 };
+use strum::IntoEnumIterator as _;
 
 /// A recording of one track, `count` fixes at 1 Hz from `start_offset`
 /// seconds, each carrying a satellite report of `constellation`.
@@ -332,4 +336,97 @@ fn cross_highlight_searches_another_track_after_a_query_hidden_track() {
         closest,
         Some((FileIdx::new(1), TrackIdx::new(0), PointIdx::new(30)))
     );
+}
+
+#[test]
+fn a_time_window_with_only_an_offset_report_displays_and_hovers_its_sample() {
+    let mut points = test_util::fixes(2, 10);
+    let time = GpsTime::from_utc(test_util::at_second(10) + TimeDelta::milliseconds(400));
+    points
+        .last_mut()
+        .expect("last fix")
+        .satellite_evidence
+        .usage
+        .push(SatelliteUsageReport {
+            metadata: SatelliteReportMetadata {
+                gps_time: Some(time),
+                sys_time: None,
+                normalized_time: time,
+                input_order: 0,
+                scope: SatelliteScope::Global,
+                coverage: SatelliteCoverage::Partial,
+                reported_count: Some(8),
+            },
+            satellites: Vec::new(),
+        });
+    let filter = GlobalFilter::default().with_time_bounds(
+        Some(test_util::at_second(10) + TimeDelta::milliseconds(100)),
+        Some(test_util::at_second(10) + TimeDelta::milliseconds(500)),
+    );
+    let mut state = PlotState::default();
+    for kind in MetricKind::iter() {
+        state.metric_vis.set(kind, kind == MetricKind::SatsFix);
+    }
+    let mut plot = test_util::drawn_plot(
+        vec![test_util::recording(points, Vec::new())],
+        under(filter),
+        state,
+    );
+    let circles = plot.painted_circle_centers();
+    assert!(
+        circles.iter().any(
+            |point| (point.x - time.as_secs_f64_with_subseconds()).abs() < 0.001
+                && (point.y - 8.0).abs() < 0.001
+        )
+    );
+    plot.hover(plot.screen_position(test_util::PlotPosition {
+        offset_secs: 10.4,
+        y: 8.0,
+    }));
+    assert!(plot.hover_label().contains("12:00:10.400 UTC"));
+    plot.sources_mut().filter = GlobalFilter::default().with_time_bounds(
+        Some(test_util::at_second(10) + TimeDelta::milliseconds(100)),
+        Some(test_util::at_second(10) + TimeDelta::milliseconds(300)),
+    );
+    plot.run();
+    plot.hover(plot.screen_position(test_util::PlotPosition {
+        offset_secs: 10.299,
+        y: 8.0,
+    }));
+    assert!(!plot.hover_label().contains("Sats fix"));
+}
+
+#[test]
+fn sparse_count_samples_draw_isolated_dots_without_a_connecting_line() {
+    let mut points = test_util::fixes(6, 1);
+    for index in [0, 5] {
+        let point = points.get_mut(index).expect("source point");
+        point.navigation.used_count = Some(8);
+    }
+    let mut state = PlotState::default();
+    for kind in MetricKind::iter() {
+        state.metric_vis.set(kind, kind == MetricKind::SatsFix);
+    }
+    let plot = test_util::drawn_plot(
+        vec![test_util::recording(points, Vec::new())],
+        PlotSources::default(),
+        state,
+    );
+    let circles: Vec<_> = plot
+        .painted_circle_centers()
+        .into_iter()
+        .filter(|point| (point.y - 8.0).abs() < 0.01)
+        .collect();
+    assert_eq!(circles.len(), 2);
+    let base = test_util::at_second(0).timestamp() as f64;
+    assert!((circles.first().expect("first dot").x - base).abs() < 0.001);
+    assert!((circles.last().expect("last dot").x - (base + 5.0)).abs() < 0.001);
+    assert!(plot.painted_polylines().iter().all(|line| {
+        !line
+            .iter()
+            .any(|point| (point.y - 8.0).abs() < 0.01 && (point.x - base).abs() < 0.01)
+            || !line
+                .iter()
+                .any(|point| (point.y - 8.0).abs() < 0.01 && (point.x - (base + 5.0)).abs() < 0.01)
+    }));
 }

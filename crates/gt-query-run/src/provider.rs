@@ -8,7 +8,7 @@ use gt_filter::GlobalFilter;
 use gt_query::{ChannelSamples, ChannelTimeline, MetricProvider, Params, QueryMetric, Unit};
 use gt_types::satellites::Constellation;
 use gt_types::time_types::SysTime;
-use gt_types::{Channel, NavPoint};
+use gt_types::{Channel, NavPoint, SatelliteQueryScope};
 use gt_ui_types::{GeomagneticPoint, TecPoint};
 use uom::si::angle::degree;
 use uom::si::velocity::meter_per_second;
@@ -221,19 +221,6 @@ impl<'a> TrackProvider<'a> {
         Some(per_min * Unit::PER_MIN.to_base())
     }
 
-    fn counts(&self, index: usize, constellation: Constellation) -> SatCounts {
-        self.points
-            .get(index)
-            .and_then(|p| p.satellites.as_ref())
-            .map_or(SatCounts::default(), |sats| {
-                sats.by_constellation(constellation)
-                    .fold(SatCounts::default(), |acc, sat| SatCounts {
-                        seen: acc.seen + 1,
-                        fix: acc.fix + usize::from(sat.in_fix()),
-                    })
-            })
-    }
-
     /// Locate channel `name` and the three things both channel readers need: its
     /// column count, the factor converting its stored unit to base units, and
     /// how it is searched by time. An unknown or absent unit leaves values a
@@ -409,13 +396,6 @@ struct SampleAtTime {
     position: usize,
 }
 
-/// Seen/in-fix satellite counts of one constellation at one point.
-#[derive(Debug, Clone, Copy, Default)]
-struct SatCounts {
-    seen: usize,
-    fix: usize,
-}
-
 impl MetricProvider for TrackProvider<'_> {
     fn len(&self) -> usize {
         self.points.len()
@@ -423,7 +403,6 @@ impl MetricProvider for TrackProvider<'_> {
 
     fn value(&self, metric: QueryMetric, index: usize) -> Option<f64> {
         let point = self.points.get(index)?;
-        let sats = point.satellites.as_ref();
         match metric {
             QueryMetric::Time => Some(point.tpv.time().as_secs_f64_with_subseconds()),
             QueryMetric::SysTime => point
@@ -445,42 +424,48 @@ impl MetricProvider for TrackProvider<'_> {
                 .tpv
                 .gps_system_clock_offset()
                 .map(TimeDelta::as_seconds_f64),
-            QueryMetric::SatsSeen => sats.map(|s| f64::from(s.satellite_count())),
-            QueryMetric::SatsFix => sats.map(|s| f64::from(s.fix_count())),
-            QueryMetric::GpsSeen => {
-                sats.map(|_| self.counts(index, Constellation::Gps).seen as f64)
-            }
-            QueryMetric::GpsFix => sats.map(|_| self.counts(index, Constellation::Gps).fix as f64),
-            QueryMetric::GlonassSeen => {
-                sats.map(|_| self.counts(index, Constellation::Glonass).seen as f64)
-            }
-            QueryMetric::GlonassFix => {
-                sats.map(|_| self.counts(index, Constellation::Glonass).fix as f64)
-            }
-            QueryMetric::GalileoSeen => {
-                sats.map(|_| self.counts(index, Constellation::Galileo).seen as f64)
-            }
-            QueryMetric::GalileoFix => {
-                sats.map(|_| self.counts(index, Constellation::Galileo).fix as f64)
-            }
-            QueryMetric::BeidouSeen => {
-                sats.map(|_| self.counts(index, Constellation::Beidou).seen as f64)
-            }
-            QueryMetric::BeidouFix => {
-                sats.map(|_| self.counts(index, Constellation::Beidou).fix as f64)
-            }
-            QueryMetric::NavicSeen => {
-                sats.map(|_| self.counts(index, Constellation::Navic).seen as f64)
-            }
-            QueryMetric::NavicFix => {
-                sats.map(|_| self.counts(index, Constellation::Navic).fix as f64)
-            }
-            QueryMetric::QzssSeen => {
-                sats.map(|_| self.counts(index, Constellation::Qzss).seen as f64)
-            }
-            QueryMetric::QzssFix => {
-                sats.map(|_| self.counts(index, Constellation::Qzss).fix as f64)
-            }
+            QueryMetric::SatsSeen => point
+                .resolved_seen_count(SatelliteQueryScope::Global)
+                .map(|count| f64::from(count.count)),
+            QueryMetric::SatsFix => point
+                .resolved_used_count(SatelliteQueryScope::Global)
+                .map(|count| f64::from(count.count)),
+            QueryMetric::GpsSeen => point
+                .resolved_seen_count(SatelliteQueryScope::Constellation(Constellation::Gps))
+                .map(|count| f64::from(count.count)),
+            QueryMetric::GpsFix => point
+                .resolved_used_count(SatelliteQueryScope::Constellation(Constellation::Gps))
+                .map(|count| f64::from(count.count)),
+            QueryMetric::GlonassSeen => point
+                .resolved_seen_count(SatelliteQueryScope::Constellation(Constellation::Glonass))
+                .map(|count| f64::from(count.count)),
+            QueryMetric::GlonassFix => point
+                .resolved_used_count(SatelliteQueryScope::Constellation(Constellation::Glonass))
+                .map(|count| f64::from(count.count)),
+            QueryMetric::GalileoSeen => point
+                .resolved_seen_count(SatelliteQueryScope::Constellation(Constellation::Galileo))
+                .map(|count| f64::from(count.count)),
+            QueryMetric::GalileoFix => point
+                .resolved_used_count(SatelliteQueryScope::Constellation(Constellation::Galileo))
+                .map(|count| f64::from(count.count)),
+            QueryMetric::BeidouSeen => point
+                .resolved_seen_count(SatelliteQueryScope::Constellation(Constellation::Beidou))
+                .map(|count| f64::from(count.count)),
+            QueryMetric::BeidouFix => point
+                .resolved_used_count(SatelliteQueryScope::Constellation(Constellation::Beidou))
+                .map(|count| f64::from(count.count)),
+            QueryMetric::NavicSeen => point
+                .resolved_seen_count(SatelliteQueryScope::Constellation(Constellation::Navic))
+                .map(|count| f64::from(count.count)),
+            QueryMetric::NavicFix => point
+                .resolved_used_count(SatelliteQueryScope::Constellation(Constellation::Navic))
+                .map(|count| f64::from(count.count)),
+            QueryMetric::QzssSeen => point
+                .resolved_seen_count(SatelliteQueryScope::Constellation(Constellation::Qzss))
+                .map(|count| f64::from(count.count)),
+            QueryMetric::QzssFix => point
+                .resolved_used_count(SatelliteQueryScope::Constellation(Constellation::Qzss))
+                .map(|count| f64::from(count.count)),
             QueryMetric::UtilAll => self.util_value(index, |u| &u.all),
             QueryMetric::UtilGps => self.util_value(index, |u| &u.gps),
             QueryMetric::UtilGlonass => self.util_value(index, |u| &u.glonass),
@@ -730,9 +715,9 @@ mod tests {
             (QueryMetric::Velocity, 0, Some(10.0)), // 36 km/h in m/s
             (QueryMetric::Heading, 0, Some(90.0)),
             (QueryMetric::Eph, 0, Some(2.5)),
-            (QueryMetric::SatsSeen, 0, Some(3.0)),
+            (QueryMetric::SatsSeen, 0, Some(2.0)),
             (QueryMetric::SatsFix, 0, Some(2.0)),
-            (QueryMetric::GpsSeen, 0, Some(2.0)),
+            (QueryMetric::GpsSeen, 0, Some(1.0)),
             (QueryMetric::GpsFix, 0, Some(1.0)),
             (QueryMetric::GalileoFix, 0, Some(1.0)),
             (QueryMetric::BeidouSeen, 0, Some(0.0)),

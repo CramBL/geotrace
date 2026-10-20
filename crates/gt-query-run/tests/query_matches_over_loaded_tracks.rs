@@ -12,11 +12,15 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
-use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime};
+use geotrace_sdk::{
+    Angle, NavFileBuilder, NavFix, NavFixTime, SatelliteCoverage, SatelliteObservationReport,
+    SatelliteScope, SatelliteUsageReport, SolutionState,
+};
 use geotrace_sdk_units::ChannelUnit;
 use gt_filter::GlobalFilter;
+use gt_query::{MetricProvider as _, QueryMetric};
 use gt_query_run::test_util::{self, LoadedState};
-use gt_query_run::{ChannelTrackResult, QuerySession, RunResults};
+use gt_query_run::{ChannelTrackResult, QuerySession, RunResults, TrackProvider};
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::time_types::GpsTime;
 use gt_types::tpv::TimePositionVelocity;
@@ -843,3 +847,94 @@ const EXCURSION_HOURS: i64 = 1;
 /// How far the host clock runs past the receiver's own outside
 /// [`EXCURSION_FIXES`], in milliseconds.
 const BASELINE_HOST_AHEAD_MS: i64 = 200;
+
+#[rstest]
+#[case::navigation_summary(Some(8), 8.0)]
+#[case::associated_report(None, 9.0)]
+fn timed_satellite_evidence_uses_point_resolution_through_filtered_queries(
+    #[case] navigation_count: Option<u32>,
+    #[case] expected_used: f64,
+) {
+    let mut recorder = NavFileBuilder::new().open();
+    for second in 0..3 {
+        let mut fix = NavFix::builder()
+            .time(NavFixTime::Receiver(utc(second * 1_000)))
+            .lat(Angle::degrees(55.0 + second as f64 / 1_000.0))
+            .lon(Angle::degrees(12.0))
+            .state(SolutionState::Fix)
+            .build();
+        if second == 1 {
+            fix.used_count = navigation_count;
+        }
+        recorder.add_nav_fix(fix);
+    }
+    recorder.add_satellite_usage_report(
+        SatelliteUsageReport::builder()
+            .time(NavFixTime::Receiver(utc(1_400)))
+            .scope(SatelliteScope::Global)
+            .coverage(SatelliteCoverage::Partial)
+            .reported_count(9)
+            .satellites(Vec::new())
+            .build(),
+    );
+    recorder.add_satellite_observation_report(
+        SatelliteObservationReport::builder()
+            .time(NavFixTime::Receiver(utc(1_200)))
+            .scope(SatelliteScope::Global)
+            .coverage(SatelliteCoverage::Partial)
+            .reported_count(12)
+            .satellites(Vec::new())
+            .build(),
+    );
+    let mut bytes = Vec::new();
+    recorder
+        .finish()
+        .expect("valid recording")
+        .write(&mut bytes)
+        .expect("write to memory");
+    let file = gt_loader::load_bytes(&bytes, "evidence.gtd".to_owned()).expect("load recording");
+    let track = file.tracks.first().expect("one track");
+    let provider = TrackProvider::new(&track.points, &track.channels, None);
+    assert_eq!(provider.value(QueryMetric::SatsFix, 1), Some(expected_used));
+    assert_eq!(provider.value(QueryMetric::SatsSeen, 1), Some(12.0));
+    assert_eq!(provider.value(QueryMetric::GpsFix, 1), None);
+    assert_eq!(provider.value(QueryMetric::SatsFix, 0), None);
+    let point = track.points.get(1).expect("associated fix");
+    assert_eq!(point.tpv.time().utc(), utc(1_000));
+    assert_eq!(
+        point
+            .satellite_evidence
+            .usage
+            .first()
+            .expect("usage")
+            .metadata
+            .normalized_time
+            .utc(),
+        utc(1_400)
+    );
+    assert_eq!(
+        point
+            .satellite_evidence
+            .observations
+            .first()
+            .expect("observations")
+            .metadata
+            .normalized_time
+            .utc(),
+        utc(1_200)
+    );
+    assert_eq!(
+        point.resolved_navigation_state().state,
+        gt_types::SolutionState::Fix
+    );
+
+    let mut state = LoadedState::of(file);
+    state.filter = GlobalFilter::default().with_time_bounds(Some(utc(1_000)), Some(utc(1_000)));
+    let mut session = QuerySession::new();
+    test_util::run_text(
+        &mut session,
+        &state,
+        &format!("points | where sats_fix == {expected_used} | draw"),
+    );
+    assert_eq!(drawn_ranges(&session), vec![1..2]);
+}

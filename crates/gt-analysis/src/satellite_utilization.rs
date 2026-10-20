@@ -105,6 +105,23 @@ pub struct UtilizationEpoch {
     pub masked: Vec<MaskedSat>,
 }
 
+impl UtilizationEpoch {
+    pub fn into_anomaly(self) -> Option<UtilAnomaly> {
+        if self.masked.is_empty() {
+            return None;
+        }
+        Some(UtilAnomaly {
+            t: self
+                .source
+                .metadata
+                .normalized_time
+                .as_secs_f64_with_subseconds(),
+            value: self.rates.all.unwrap_or(ANOMALY_FALLBACK_RATE),
+            masked: self.masked,
+        })
+    }
+}
+
 pub fn utilization_epochs(points: &[NavPoint], mask_deg: f32) -> Vec<UtilizationEpoch> {
     points
         .iter()
@@ -216,7 +233,7 @@ pub fn compute_util(points: &[NavPoint], mask_deg: f32) -> UtilPoints {
             .metadata
             .normalized_time
             .as_secs_f64_with_subseconds();
-        let rates = epoch.rates;
+        let rates = &epoch.rates;
         for (series, rate) in [
             (&mut out.all, rates.all),
             (
@@ -248,12 +265,8 @@ pub fn compute_util(points: &[NavPoint], mask_deg: f32) -> UtilPoints {
                 series.push([t, rate]);
             }
         }
-        if !epoch.masked.is_empty() {
-            out.anomalies.push(UtilAnomaly {
-                t,
-                value: rates.all.unwrap_or(ANOMALY_FALLBACK_RATE),
-                masked: epoch.masked,
-            });
+        if let Some(anomaly) = epoch.into_anomaly() {
+            out.anomalies.push(anomaly);
         }
     }
 
