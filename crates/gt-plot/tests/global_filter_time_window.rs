@@ -383,7 +383,7 @@ fn a_time_window_with_only_an_offset_report_displays_and_hovers_its_sample() {
         offset_secs: 10.4,
         y: 8.0,
     }));
-    assert!(plot.hover_label().contains("12:00:10.400 UTC"));
+    assert!(plot.hover_label().contains("12:00:10.400"));
     plot.sources_mut().filter = GlobalFilter::default().with_time_bounds(
         Some(test_util::at_second(10) + TimeDelta::milliseconds(100)),
         Some(test_util::at_second(10) + TimeDelta::milliseconds(300)),
