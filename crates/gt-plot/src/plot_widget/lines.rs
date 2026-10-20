@@ -19,8 +19,8 @@ use strum::IntoEnumIterator;
 
 use super::backward_time_step::BackwardTimeStepHover;
 use super::chips::{
-    self, ChannelVisibility, HoveredChip, LoadedChannel, MetricKindUi, MetricVisibility,
-    SectionGates,
+    self, ChannelVisibility, HoveredChip, LoadedChannel, MetricAvailability, MetricKindUi,
+    MetricVisibility, SectionGates,
 };
 use super::clock_offset::{self, ClockOffsetHover};
 use super::flares::SolarFlareHover;
@@ -115,6 +115,7 @@ pub(super) fn add_series_lines<'a>(
     track_label: Option<&str>,
     cache: &TrackLevelCache,
     metric_vis: &MetricVisibility,
+    available: MetricAvailability,
     channel_vis: &ChannelVisibility,
     component_colors: &FxHashMap<String, Vec<Option<Color32>>>,
     present: ConstellationSet,
@@ -163,7 +164,7 @@ pub(super) fn add_series_lines<'a>(
         if !chips::metric_is_shown(kind, present, sections.show_advanced) {
             continue;
         }
-        if !metric_vis.field(kind) {
+        if !metric_vis.field(kind) || !available.has_data(kind) {
             continue;
         }
         let is_hovered = hovered_chip == Some(&HoveredChip::Metric(kind));
@@ -215,6 +216,7 @@ pub(super) fn add_series_lines<'a>(
     }
 
     if metric_vis.field(MetricKind::SnapError)
+        && available.has_data(MetricKind::SnapError)
         && let Some(cache) = snap_error
     {
         snap_error::add_snap_error_series(
@@ -547,14 +549,18 @@ impl MetricHover {
             .points
             .get(source.point_index)
             .and_then(|point| match source.evidence {
-                NavigationEvidenceSource::UsageAggregate(index)
-                | NavigationEvidenceSource::UsageList(index) => point
+                Some(
+                    NavigationEvidenceSource::UsageAggregate(index)
+                    | NavigationEvidenceSource::UsageList(index),
+                ) => point
                     .satellite_evidence
                     .usage
                     .get(index)
                     .map(|report| report.metadata),
-                NavigationEvidenceSource::ObservationAggregate(index)
-                | NavigationEvidenceSource::ObservationList(index) => point
+                Some(
+                    NavigationEvidenceSource::ObservationAggregate(index)
+                    | NavigationEvidenceSource::ObservationList(index),
+                ) => point
                     .satellite_evidence
                     .observations
                     .get(index)

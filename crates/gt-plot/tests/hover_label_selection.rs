@@ -8,8 +8,8 @@ use gt_plot::PlotState;
 use gt_plot::test_util::{self, DrawnPlot, PlotPosition, PlotSources};
 use gt_solar::GeomagneticIndex;
 use gt_types::{
-    Channel, GpsTime, LoadedFile, MetricKind, SatelliteCoverage, SatelliteReportMetadata,
-    SatelliteScope, SatelliteUsageReport, SysTime,
+    Channel, FixRef, GpsTime, LoadedFile, MetricKind, PointIdx, SatelliteCoverage,
+    SatelliteReportMetadata, SatelliteScope, SatelliteUsageReport, SysTime,
 };
 use gt_ui_types::{GeomagneticPoint, IndexContextSample, TecContextSample, TecPoint};
 use rstest::rstest;
@@ -449,5 +449,27 @@ fn an_isolated_count_sample_shows_its_report_clock_and_fractional_time() {
     assert_eq!(
         plot.hover_label(),
         "Sats fix 8\n2024-01-15 12:00:10.400 UTC\nPoint 2\nHost time 2024-01-15 12:00:11 UTC"
+    );
+}
+
+#[test]
+fn a_reported_dop_sample_has_its_original_value_time_and_point_reference() {
+    let mut points = test_util::fixes(3, 1);
+    points[1].navigation.hdop = Some(0.9);
+    let mut plot = PlotScene::of(test_util::recording(points, Vec::new()))
+        .showing(&[MetricKind::Hdop])
+        .draw();
+    let target = plot.screen_position(PlotPosition {
+        offset_secs: 1.0,
+        y: 0.9,
+    });
+    plot.hover(target);
+    assert_eq!(
+        plot.hover_label(),
+        "HDOP 0.9\n2024-01-15 12:00:01 UTC\nPoint 2"
+    );
+    assert_eq!(
+        plot.state().hovered_metric_fix,
+        Some(FixRef::new(test_util::track0(), PointIdx::new(1)))
     );
 }

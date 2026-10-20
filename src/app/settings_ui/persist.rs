@@ -333,6 +333,7 @@ const SETTINGS_FLUSH_LABEL: &str = "Saving settings";
 mod tests {
     use egui_kittest::Harness;
     use gt_test_utils::HarnessInteraction as _;
+    use gt_types::MetricKind;
     use gt_ui_types::{DisplayCategory, DisplayMask};
 
     use crate::app::test_util::harness;
@@ -382,6 +383,26 @@ mod tests {
                 "https://mirror.example",
             ]
         );
+    }
+
+    #[test]
+    fn dop_defaults_and_saved_selections_survive_settings_roundtrip() {
+        let mut harness = Harness::builder()
+            .with_wait_for_pending_images(false)
+            .build_eframe(harness::transient_app);
+        harness.step();
+        let mut settings = Settings::default();
+        settings.plot.metric.insert(MetricKind::Vdop, false);
+        settings.plot.metric.insert(MetricKind::Pdop, true);
+        harness.state_mut().apply_startup_settings(&settings);
+        let flushed = harness.state().collect_settings_for_flush();
+        let encoded = toml::to_string(&flushed).expect("settings serialize");
+        let reloaded: Settings = toml::from_str(&encoded).expect("settings parse");
+        harness.state_mut().apply_startup_settings(&reloaded);
+        let shared = harness.state().shared.borrow();
+        assert!(shared.plot_state.metric_vis.field(MetricKind::Hdop));
+        assert!(!shared.plot_state.metric_vis.field(MetricKind::Vdop));
+        assert!(shared.plot_state.metric_vis.field(MetricKind::Pdop));
     }
 
     /// Channel plot toggles survive the settings flush/load roundtrip: the

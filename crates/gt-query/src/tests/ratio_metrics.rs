@@ -38,3 +38,17 @@ fn a_ratio_metric_needs_a_percent_literal(#[case] src: &str, #[case] accepted: b
         "for {src}"
     );
 }
+
+#[rstest]
+#[case("points | where hdop < 1", true)]
+#[case("points | where vdop > 0.9", true)]
+#[case("points | where pdop < hdop", true)]
+#[case("points | where hdop < 1 m", false)]
+#[case("points | where hdop < 90 %", false)]
+fn dop_comparisons_require_dimensionless_index_values(
+    #[case] source: &str,
+    #[case] accepted: bool,
+) {
+    let result = parse(source).and_then(|query| test_util::chk(&query).map(|_| ()));
+    assert_eq!(result.is_ok(), accepted, "{source}: {result:?}");
+}

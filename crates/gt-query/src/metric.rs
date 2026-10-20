@@ -37,6 +37,9 @@ pub enum QueryMetric {
     Heading,
     Accel,
     Eph,
+    Hdop,
+    Vdop,
+    Pdop,
     ClockDelta,
     SatsSeen,
     SatsFix,
@@ -162,7 +165,12 @@ impl QueryMetric {
             | QueryMetric::SlipBeidou
             | QueryMetric::SlipNavic
             | QueryMetric::SlipQzss => Quantity::Rate,
-            QueryMetric::Hp30 | QueryMetric::Kp | QueryMetric::Tec => Quantity::Index,
+            QueryMetric::Hp30
+            | QueryMetric::Kp
+            | QueryMetric::Tec
+            | QueryMetric::Hdop
+            | QueryMetric::Vdop
+            | QueryMetric::Pdop => Quantity::Index,
         }
     }
 
@@ -178,6 +186,9 @@ impl QueryMetric {
             QueryMetric::Velocity => Some(MetricKind::Velocity),
             QueryMetric::Heading => Some(MetricKind::HeadingDeg),
             QueryMetric::Eph => Some(MetricKind::Eph),
+            QueryMetric::Hdop => Some(MetricKind::Hdop),
+            QueryMetric::Vdop => Some(MetricKind::Vdop),
+            QueryMetric::Pdop => Some(MetricKind::Pdop),
             QueryMetric::ClockDelta => Some(MetricKind::ClockDeltaMs),
             QueryMetric::SatsSeen => Some(MetricKind::SatsSeen),
             QueryMetric::SatsFix => Some(MetricKind::SatsFix),

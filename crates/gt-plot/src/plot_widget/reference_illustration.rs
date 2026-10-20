@@ -93,6 +93,7 @@ fn generate_tec_reference_plot() {
     let mut metric_vis = MetricVisibility::default();
     metric_vis.set(MetricKind::Tec, true);
     let available = MetricAvailability {
+        samples: Default::default(),
         snap_error: false,
         jamming: false,
         hp30: false,

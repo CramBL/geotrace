@@ -351,6 +351,21 @@ fn metric_docs(metric: QueryMetric) -> (&'static str, &'static str, &'static [&'
              report it.",
             &["eph > 20 m"],
         ),
+        QueryMetric::Hdop => (
+            "horizontal dilution of precision",
+            "Reported dimensionless horizontal dilution of precision.",
+            &["hdop < 1"],
+        ),
+        QueryMetric::Vdop => (
+            "vertical dilution of precision",
+            "Reported dimensionless vertical dilution of precision.",
+            &["vdop < 2"],
+        ),
+        QueryMetric::Pdop => (
+            "position dilution of precision",
+            "Reported dimensionless position dilution of precision.",
+            &["pdop < 3"],
+        ),
         QueryMetric::ClockDelta => (
             "GPS/system clock offset",
             "The difference between the GPS and host system clocks at the \

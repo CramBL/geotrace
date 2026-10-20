@@ -98,6 +98,9 @@ impl MetricKindUi for MetricKind {
             | Self::SatsFix
             | Self::Velocity
             | Self::Eph
+            | Self::Hdop
+            | Self::Vdop
+            | Self::Pdop
             | Self::HeadingDeg
             | Self::ClockDeltaMs
             | Self::UtilAll
@@ -148,6 +151,9 @@ impl MetricKindUi for MetricKind {
             Self::QzssFix => "QZSS fix",
             Self::Velocity => "Velocity (km/h)",
             Self::Eph => "EPH (m)",
+            Self::Hdop => "HDOP",
+            Self::Vdop => "VDOP",
+            Self::Pdop => "PDOP",
             Self::HeadingDeg => "Heading (°)",
             Self::ClockDeltaMs => "Clock Δt (ms)",
             Self::UtilAll => "Util all (%)",
@@ -178,6 +184,15 @@ impl MetricKindUi for MetricKind {
             Self::Tec => Some(ChipHover::Structured(&gt_ionex::text::PLOT_HOVER)),
             Self::Hp30 => Some(ChipHover::Structured(GeomagneticIndex::Hp30.plot_hover())),
             Self::Kp => Some(ChipHover::Structured(GeomagneticIndex::Kp.plot_hover())),
+            Self::Hdop => Some(ChipHover::Paragraph(
+                "Reported horizontal dilution of precision (dimensionless)",
+            )),
+            Self::Vdop => Some(ChipHover::Paragraph(
+                "Reported vertical dilution of precision (dimensionless)",
+            )),
+            Self::Pdop => Some(ChipHover::Paragraph(
+                "Reported position dilution of precision (dimensionless)",
+            )),
             Self::Eph => Some(ChipHover::Paragraph(
                 "Estimated Horizontal Position error - the GPS receiver's own estimate of how \
                  far the reported position may be from the true position, in metres. \
@@ -265,7 +280,7 @@ impl MetricKindUi for MetricKind {
 gt_types::enum_bitset! {
     /// One bit per [`MetricKind`], wrapped by [`MetricVisibility`] which adds
     /// the all-visible default and the shown-metric gating helpers.
-    struct MetricKindSet(u64) for MetricKind;
+    pub(super) struct MetricKindSet(u64) for MetricKind;
 }
 
 /// Global per-metric visibility flags.
@@ -294,21 +309,27 @@ impl MetricVisibility {
         self.0.set(kind, enabled);
     }
 
-    /// Returns `true` when every *currently shown* metric is enabled.  Advanced
-    /// metrics are ignored while the advanced section is collapsed (`show_advanced
-    /// == false`), and per-constellation metrics whose constellation is absent
-    /// from the loaded data are ignored too (their chips are hidden), so the
-    /// show/hide-all button neither reflects nor toggles them.
-    fn all_enabled(self, present: ConstellationSet, show_advanced: bool) -> bool {
+    fn all_enabled(
+        self,
+        present: ConstellationSet,
+        show_advanced: bool,
+        available: MetricAvailability,
+    ) -> bool {
         MetricKind::iter()
-            .filter(|&k| metric_is_shown(k, present, show_advanced))
+            .filter(|&k| metric_is_shown(k, present, show_advanced) && available.has_data(k))
             .all(|k| self.field(k))
     }
 
-    /// Set every *currently shown* metric to `enabled`, leaving hidden metrics
-    /// (collapsed advanced section, or an absent constellation) untouched.
-    fn set_all(&mut self, enabled: bool, present: ConstellationSet, show_advanced: bool) {
-        for k in MetricKind::iter().filter(|&k| metric_is_shown(k, present, show_advanced)) {
+    fn set_all(
+        &mut self,
+        enabled: bool,
+        present: ConstellationSet,
+        show_advanced: bool,
+        available: MetricAvailability,
+    ) {
+        for k in MetricKind::iter()
+            .filter(|&k| metric_is_shown(k, present, show_advanced) && available.has_data(k))
+        {
             self.set(k, enabled);
         }
     }
@@ -417,6 +438,7 @@ pub(super) fn loaded_channels<'a>(
 /// chips stay visible and disabled without them, per DESIGN.md.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct MetricAvailability {
+    pub(super) samples: MetricKindSet,
     pub(super) snap_error: bool,
     pub(super) jamming: bool,
     pub(super) hp30: bool,
@@ -448,7 +470,19 @@ impl MetricAvailability {
             MetricKind::Tec if !self.tec => {
                 Some("No TEC values are archived for these tracks' days")
             }
-            _ => None,
+            MetricKind::SnapError
+            | MetricKind::Jamming
+            | MetricKind::Hp30
+            | MetricKind::Kp
+            | MetricKind::Tec => None,
+            _ if self.samples.contains(kind) => None,
+            MetricKind::Hdop | MetricKind::Vdop | MetricKind::Pdop => {
+                Some("No reported DOP samples in the active time window")
+            }
+            kind if kind.is_advanced() => Some(
+                "Insufficient satellite membership, geometry or signal measurements in the active time window",
+            ),
+            _ => Some("No eligible samples in the active time window"),
         }
     }
 }
@@ -696,6 +730,7 @@ fn channel_chip_group(
 /// reads this struct and the click writes it.
 struct ShownSeriesVisibility<'a> {
     metrics: &'a mut MetricVisibility,
+    available: MetricAvailability,
     present: ConstellationSet,
     show_advanced: bool,
     /// Empty while the Channels section is collapsed.
@@ -708,7 +743,8 @@ struct ShownSeriesVisibility<'a> {
 
 impl ShownSeriesVisibility<'_> {
     fn all_visible(&self) -> bool {
-        self.metrics.all_enabled(self.present, self.show_advanced)
+        self.metrics
+            .all_enabled(self.present, self.show_advanced, self.available)
             && self
                 .channels
                 .iter()
@@ -718,7 +754,7 @@ impl ShownSeriesVisibility<'_> {
 
     fn set_all_visible(&mut self, visible: bool) {
         self.metrics
-            .set_all(visible, self.present, self.show_advanced);
+            .set_all(visible, self.present, self.show_advanced, self.available);
         for channel in self.channels {
             self.channel_visibility.set(&channel.name, visible);
         }
@@ -789,6 +825,7 @@ pub(super) fn metric_filter_row(
 
         let mut shown_series = ShownSeriesVisibility {
             metrics: &mut *vis,
+            available: state.available,
             present,
             show_advanced: *show_advanced,
             channels: if *show_channels { channels } else { &[] },
@@ -881,7 +918,7 @@ pub(super) fn metric_filter_row(
     // Apply "Show only this" - disable the shown metrics and channels, then
     // re-enable the chosen one.
     if show_only.is_some() || show_only_channel.is_some() {
-        vis.set_all(false, present, *show_advanced);
+        vis.set_all(false, present, *show_advanced, state.available);
         if *show_channels {
             for channel in channels {
                 channel_vis.set(&channel.name, false);
@@ -1107,6 +1144,9 @@ const BASIC_GROUPS: [&[MetricKind]; 2] = [
         MetricKind::SatsFix,
         MetricKind::Velocity,
         MetricKind::Eph,
+        MetricKind::Hdop,
+        MetricKind::Vdop,
+        MetricKind::Pdop,
         MetricKind::SnapError,
         MetricKind::HeadingDeg,
         MetricKind::ClockDeltaMs,
@@ -1200,6 +1240,7 @@ mod tests {
     fn chip_state_with_an_off_scale_baseline() -> MetricChipState<'static> {
         MetricChipState {
             available: MetricAvailability {
+                samples: MetricKind::iter().collect(),
                 snap_error: true,
                 jamming: true,
                 hp30: true,
