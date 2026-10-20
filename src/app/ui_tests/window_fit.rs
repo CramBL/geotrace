@@ -107,7 +107,7 @@ impl OversizedAppWindow {
                         track_split_gap_us: 60_000_000,
                         track_split_rule: gt_store::StoredTrackSplitRule::StepInEitherDirection,
                         fix_placement_rule:
-                            gt_store::StoredFixPlacementRule::MissingHeadingAndNothingInFix,
+                            gt_store::StoredFixPlacementRule::SynthesizedOrHeadinglessNoFix,
                         detect_clock_discontinuities: false,
                         clock_discontinuity_sigmas: 4.0,
                     },

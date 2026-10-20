@@ -13,6 +13,7 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, Utc};
 use gt_track_builder::{FileMeta, FixPlacementRule, SegmentationConfig};
+use gt_types::PositionProvenance;
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::fixtures::{self, FixKind};
 use gt_types::highlight::DataCategory;
@@ -57,6 +58,12 @@ fn fix_without_a_satellite_report(millis: i64, lon: Longitude) -> NavPoint {
         lon,
         FixKind::GhostWithoutHeading,
     )
+}
+
+fn synthesized_fix(millis: i64, lon: Longitude) -> NavPoint {
+    let mut point = fix_without_a_satellite_report(millis, lon);
+    point.navigation.position_provenance = Some(PositionProvenance::SdkSynthesized);
+    point
 }
 
 /// A fix a receiver reports while it stands still: a full solution behind it,
@@ -517,7 +524,7 @@ fn drawn_ghost_lon_degrees(points: &[NavPoint]) -> Option<f64> {
 fn ghost_fix_between_sub_second_fixes_is_placed_halfway() {
     let points = vec![
         measured_fix(0, Longitude::new(0.0)),
-        fix_without_a_satellite_report(500, Longitude::new(9.0)),
+        synthesized_fix(500, Longitude::new(9.0)),
         measured_fix(1_000, Longitude::new(1.0)),
     ];
 
@@ -535,7 +542,7 @@ fn ghost_fix_between_sub_second_fixes_is_placed_halfway() {
 fn ghost_fix_between_fixes_at_one_instant_keeps_its_recorded_position() {
     let points = vec![
         measured_fix(1_000, Longitude::new(0.0)),
-        fix_without_a_satellite_report(1_000, Longitude::new(9.0)),
+        synthesized_fix(1_000, Longitude::new(9.0)),
         measured_fix(1_000, Longitude::new(1.0)),
     ];
 
@@ -553,7 +560,7 @@ fn ghost_fix_between_fixes_at_one_instant_keeps_its_recorded_position() {
 fn ghost_fix_between_fixes_across_the_antimeridian_stays_between_them() {
     let points = vec![
         measured_fix(0, Longitude::new(179.9)),
-        fix_without_a_satellite_report(10_000, Longitude::new(179.95)),
+        synthesized_fix(10_000, Longitude::new(179.95)),
         measured_fix(20_000, Longitude::new(-179.9)),
     ];
 
@@ -572,7 +579,7 @@ fn ghost_fix_between_fixes_across_the_antimeridian_stays_between_them() {
 fn a_ghost_fix_is_indexed_at_the_position_it_is_drawn_at() {
     let points = vec![
         measured_fix(0, Longitude::new(0.0)),
-        fix_without_a_satellite_report(500, Longitude::new(9.0)),
+        synthesized_fix(500, Longitude::new(9.0)),
         measured_fix(1_000, Longitude::new(1.0)),
     ];
     let files = vec![build(&points, vec![])];

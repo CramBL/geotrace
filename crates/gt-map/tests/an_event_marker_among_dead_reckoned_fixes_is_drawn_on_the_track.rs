@@ -13,7 +13,10 @@ use chrono::{DateTime, Duration, Utc};
 use gt_map::test_util::{self, MapScene};
 use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::fixtures::FixKind;
-use gt_types::{EventMarker, FileSource, Latitude, LoadedFile, Longitude, NavPoint, mercator};
+use gt_types::{
+    EventMarker, FileSource, Latitude, LoadedFile, Longitude, NavPoint, PositionProvenance,
+    mercator,
+};
 
 fn time_of(index: usize) -> DateTime<Utc> {
     test_util::epoch() + Duration::seconds(index as i64 * SECONDS_BETWEEN_FIXES)
@@ -38,15 +41,15 @@ fn measured_fix(index: usize) -> NavPoint {
     )
 }
 
-/// A fix the receiver dead-reckoned: no heading, no satellite report, and
-/// coordinates north of the line it measured.
 fn dead_reckoned_fix(index: usize) -> NavPoint {
-    gt_types::fixtures::nav_point(
+    let mut point = gt_types::fixtures::nav_point(
         time_of(index),
         dead_reckoned_latitude(),
         longitude_of(index),
         FixKind::GhostWithoutHeading,
-    )
+    );
+    point.navigation.position_provenance = Some(PositionProvenance::SdkSynthesized);
+    point
 }
 
 fn dead_reckoned_fix_with_heading(index: usize) -> NavPoint {

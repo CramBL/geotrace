@@ -28,6 +28,9 @@ gt-history-types = { path = "../gt-history-types" }
 [dev-dependencies]
 geotrace-sdk = { path = "../../sdk/rust/geotrace-sdk" }
 gt-history-types = { path = "../gt-history-types", features = ["fixtures"] }
+gt-loader = { path = "../gt-loader" }
+gt-test-utils = { path = "../gt-test-utils" }
+gt-track-builder = { path = "../gt-track-builder" }
 hdf5.workspace = true
 hdf5-pure.workspace = true
 insta.workspace = true

@@ -1,15 +1,14 @@
 use std::collections::BTreeMap;
 
 use gt_types::sat_label::{SatLabelAnchor, SatLabelTier};
-use gt_types::{FixQuality, PlacedPoints, PointIdx};
+use gt_types::{
+    FixQuality, PlacedPoints, PointIdx, PositionProvenance, SatelliteQueryScope, SolutionState,
+};
 
-/// A satellite-report point of the track, with the fields the anchor
-/// selection passes reason about. Snapshotting the count and quality up
-/// front keeps the windowed passes free of repeated `Option` boilerplate.
 struct SatPoint {
     index: usize,
     fix_count: u32,
-    quality: FixQuality,
+    quality: (SolutionState, FixQuality),
 }
 
 /// Select the satellite-label anchor candidates for a track's points.
@@ -17,8 +16,8 @@ struct SatPoint {
 /// Anchors mark the points whose satellite state is worth labeling, in
 /// descending diagnostic priority (see [`SatLabelTier`]): fix-quality
 /// transitions, local minima of the fix count, track endpoints and
-/// ghost-stretch recoveries, and periodic fill along the track. Only points
-/// carrying a satellite report qualify. Each point gets at most one anchor,
+/// navigation recoveries, and periodic fill along the track. Points with a
+/// known global used count qualify. Each point gets at most one anchor,
 /// keeping the highest-priority tier. The result is ascending by point index.
 ///
 /// A label is drawn beside the fix it belongs to, so only a track that has a
@@ -29,11 +28,14 @@ pub fn build_sat_label_anchors(points: PlacedPoints<'_>) -> Vec<SatLabelAnchor> 
         .fixes()
         .iter()
         .enumerate()
-        .filter(|(_, p)| p.satellites.is_some())
-        .map(|(index, p)| SatPoint {
-            index,
-            fix_count: p.fix_count(),
-            quality: p.fix_quality(),
+        .filter_map(|(index, p)| {
+            let count = p.resolved_used_count(SatelliteQueryScope::Global)?.count;
+            let state = p.resolved_navigation_state().state;
+            Some(SatPoint {
+                index,
+                fix_count: count,
+                quality: (state, p.resolved_fix_quality()),
+            })
         })
         .collect();
     let (Some(first), Some(last)) = (sat_points.first(), sat_points.last()) else {
@@ -44,8 +46,6 @@ pub fn build_sat_label_anchors(points: PlacedPoints<'_>) -> Vec<SatLabelAnchor> 
     add_anchor(&mut anchors, first.index, SatLabelTier::Endpoint);
     add_anchor(&mut anchors, last.index, SatLabelTier::Endpoint);
 
-    // Quality transitions between consecutive satellite-report points,
-    // anchored where the new tier takes effect.
     for w in sat_points.windows(2) {
         let [prev, cur] = w else { continue };
         if cur.quality != prev.quality {
@@ -54,7 +54,7 @@ pub fn build_sat_label_anchors(points: PlacedPoints<'_>) -> Vec<SatLabelAnchor> 
     }
 
     add_fix_count_minima(&mut anchors, &sat_points);
-    add_ghost_recoveries(&mut anchors, points);
+    add_navigation_recoveries(&mut anchors, points);
     add_fill(&mut anchors, points);
 
     anchors
@@ -75,8 +75,8 @@ fn add_anchor(anchors: &mut BTreeMap<usize, SatLabelTier>, index: usize, tier: S
         .or_insert(tier);
 }
 
-/// Anchor the local minima of the fix count over the satellite-report
-/// points: runs of equal counts whose neighboring runs are both higher,
+/// Anchor the local minima over points with a known global used count:
+/// runs of equal counts whose neighboring runs are both higher,
 /// anchored at the run's first point. Runs touching either end of the
 /// track are not minima - the endpoint anchors cover them.
 fn add_fix_count_minima(anchors: &mut BTreeMap<usize, SatLabelTier>, sat_points: &[SatPoint]) {
@@ -97,20 +97,33 @@ fn add_fix_count_minima(anchors: &mut BTreeMap<usize, SatLabelTier>, sat_points:
     }
 }
 
-/// Anchor the first real fix carrying a satellite report after each ghost
-/// stretch. Quality transitions already cover recoveries from zero-fix
-/// ghosts. This additionally catches heading-loss ghosts, where the fix
-/// count (and therefore the quality tier) never changed.
-fn add_ghost_recoveries(anchors: &mut BTreeMap<usize, SatLabelTier>, points: PlacedPoints<'_>) {
+fn add_navigation_recoveries(
+    anchors: &mut BTreeMap<usize, SatLabelTier>,
+    points: PlacedPoints<'_>,
+) {
     for (i, w) in points.fixes().windows(2).enumerate() {
         let [prev, cur] = w else { continue };
-        if prev.is_ghost_fix() && !cur.is_ghost_fix() && cur.satellites.is_some() {
+        let previous_is_synthesized_or_without_fix = prev.navigation.position_provenance
+            == Some(PositionProvenance::SdkSynthesized)
+            || matches!(
+                prev.resolved_navigation_state().state,
+                SolutionState::NoFix | SolutionState::EstimatedOnly
+            );
+        let current_is_recorded_fix = cur.navigation.position_provenance
+            != Some(PositionProvenance::SdkSynthesized)
+            && cur.resolved_navigation_state().state == SolutionState::Fix;
+        if previous_is_synthesized_or_without_fix
+            && current_is_recorded_fix
+            && cur
+                .resolved_used_count(SatelliteQueryScope::Global)
+                .is_some()
+        {
             add_anchor(anchors, i + 1, SatLabelTier::Endpoint);
         }
     }
 }
 
-/// Anchor a satellite-report point whenever the along-track distance since
+/// Anchor a point with a known global used count when the along-track distance since
 /// the last anchored point reaches [`FILL_SPACING_M`]. Existing anchors of
 /// any tier reset the accumulator, so fill only covers the gaps between
 /// higher-priority anchors.
@@ -123,9 +136,11 @@ fn add_fill(anchors: &mut BTreeMap<usize, SatLabelTier>, points: PlacedPoints<'_
         if anchors.contains_key(&cur_index) {
             since_anchor_m = 0.0;
         } else if since_anchor_m >= FILL_SPACING_M
-            && points
-                .get(cur_index)
-                .is_some_and(|p| p.fix.satellites.is_some())
+            && points.get(cur_index).is_some_and(|p| {
+                p.fix
+                    .resolved_used_count(SatelliteQueryScope::Global)
+                    .is_some()
+            })
         {
             add_anchor(anchors, cur_index, SatLabelTier::Fill);
             since_anchor_m = 0.0;
@@ -242,12 +257,16 @@ mod tests {
     }
 
     #[test]
-    fn ghost_recovery_is_anchored() {
-        // Heading loss in the middle: fix count never changes, so no quality
-        // transition fires - the recovery anchor must come from the ghost pass.
+    fn synthesized_position_recovery_is_anchored() {
         let points: Vec<NavPoint> = (0i32..)
             .zip([true, true, false, false, true, true])
-            .map(|(i, heading)| point(f64::from(i) * 10.0, Some(12), heading))
+            .map(|(i, heading)| {
+                let mut point = point(f64::from(i) * 10.0, Some(12), heading);
+                if !heading {
+                    point.navigation.position_provenance = Some(PositionProvenance::SdkSynthesized);
+                }
+                point
+            })
             .collect();
         let anchors = anchors_of(&points);
         assert_eq!(tier_at(&anchors, 4), Some(SatLabelTier::Endpoint));
@@ -276,6 +295,53 @@ mod tests {
         let points = track(&[Some(12), Some(12), Some(4)]);
         let anchors = anchors_of(&points);
         assert_eq!(tier_at(&anchors, 2), Some(SatLabelTier::QualityTransition));
+    }
+
+    #[test]
+    fn navigation_summaries_supply_label_counts_without_observations() {
+        let points: Vec<_> = [Some(8), None, Some(5), Some(8), Some(0)]
+            .into_iter()
+            .enumerate()
+            .map(|(i, count)| {
+                let mut point = point(i as f64 * 10.0, None, false);
+                point.navigation.used_count = count;
+                point.navigation.state = Some(SolutionState::Fix);
+                point
+            })
+            .collect();
+        let anchors = anchors_of(&points);
+        assert_eq!(tier_at(&anchors, 0), Some(SatLabelTier::Endpoint));
+        assert_eq!(tier_at(&anchors, 1), None);
+        assert_eq!(tier_at(&anchors, 2), Some(SatLabelTier::FixCountMinimum));
+        assert_eq!(tier_at(&anchors, 4), Some(SatLabelTier::QualityTransition));
+    }
+
+    #[test]
+    fn headingless_recorded_positions_do_not_create_recovery_labels() {
+        let points: Vec<_> = [true, false, true, true]
+            .into_iter()
+            .enumerate()
+            .map(|(i, heading)| point(i as f64 * 10.0, Some(8), heading))
+            .collect();
+        assert_eq!(tier_at(&anchors_of(&points), 2), None);
+    }
+
+    #[rstest]
+    #[case::fix(SolutionState::Fix, Some(SatLabelTier::Endpoint))]
+    #[case::estimated_only(SolutionState::EstimatedOnly, None)]
+    #[case::unknown(SolutionState::Unknown, None)]
+    fn recovery_labels_require_a_recorded_fix(
+        #[case] state: SolutionState,
+        #[case] expected: Option<SatLabelTier>,
+    ) {
+        let mut points = track(&[None; 4]);
+        for point in &mut points {
+            point.navigation.state = Some(state);
+            point.navigation.used_count = Some(8);
+        }
+        points[1].navigation.state = Some(SolutionState::NoFix);
+        points[1].navigation.used_count = None;
+        assert_eq!(tier_at(&anchors_of(&points), 2), expected);
     }
 
     proptest::proptest! {

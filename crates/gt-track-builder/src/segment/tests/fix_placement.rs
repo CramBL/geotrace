@@ -4,6 +4,7 @@ use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::fixtures::{self, FixKind};
 use gt_types::nav_point::NavPoint;
 use gt_types::track::{FileSource, TrackGeometry};
+use gt_types::{PositionProvenance, SolutionState};
 use rstest::rstest;
 
 use crate::segment::{self, FileMeta, FixPlacementRule, SegmentationConfig};
@@ -21,12 +22,14 @@ fn measured_fix(second: i64, lat: Latitude, lon: Longitude) -> NavPoint {
 
 /// An epoch the receiver dead-reckoned: no heading, and no satellite report.
 fn dead_reckoned_fix(second: i64, lat: Latitude, lon: Longitude) -> NavPoint {
-    fixtures::nav_point(
+    let mut point = fixtures::nav_point(
         test_util::time_at_second(second),
         lat,
         lon,
         FixKind::GhostWithoutHeading,
-    )
+    );
+    point.navigation.position_provenance = Some(PositionProvenance::SdkSynthesized);
+    point
 }
 
 /// Where the builder draws each fix of `points`, taken as a track of their
@@ -217,3 +220,185 @@ const EQUATORIAL_LATITUDE_DEGREES: f64 = 0.0;
 /// Far from the fixes around it, so a position kept as recorded stands out
 /// against a placed one.
 const RECORDED_LONGITUDE_OF_A_FIX_WITHOUT_A_POSITION: f64 = 88.0;
+
+#[rstest]
+#[case::legacy_unknown(None, None, None, FixKind::GhostWithoutHeading, false)]
+#[case::source_fix(
+    Some(SolutionState::Fix),
+    Some(PositionProvenance::SourceProvided),
+    Some(8),
+    FixKind::GhostWithoutHeading,
+    false
+)]
+#[case::synthesized_with_heading(
+    None,
+    Some(PositionProvenance::SdkSynthesized),
+    Some(8),
+    FixKind::Measured,
+    true
+)]
+#[case::headingless_no_fix(
+    Some(SolutionState::NoFix),
+    Some(PositionProvenance::SourceProvided),
+    Some(12),
+    FixKind::GhostWithoutHeading,
+    true
+)]
+#[case::explicit_fix_with_zero(
+    Some(SolutionState::Fix),
+    None,
+    Some(0),
+    FixKind::GhostWithoutHeading,
+    false
+)]
+#[case::explicit_unknown_with_zero(
+    Some(SolutionState::Unknown),
+    None,
+    Some(0),
+    FixKind::GhostWithoutHeading,
+    false
+)]
+#[case::no_fix_with_heading(Some(SolutionState::NoFix), None, Some(12), FixKind::Measured, false)]
+#[case::estimated_only(
+    Some(SolutionState::EstimatedOnly),
+    None,
+    None,
+    FixKind::GhostWithoutHeading,
+    false
+)]
+#[case::invalid_coordinates(
+    Some(SolutionState::Fix),
+    Some(PositionProvenance::SourceProvided),
+    Some(8),
+    FixKind::WithoutAPosition,
+    true
+)]
+fn navigation_placement_preserves_recorded_facts(
+    #[case] state: Option<SolutionState>,
+    #[case] provenance: Option<PositionProvenance>,
+    #[case] used_count: Option<u32>,
+    #[case] kind: FixKind,
+    #[case] interpolated: bool,
+) {
+    let mut middle = fixtures::nav_point(
+        test_util::time_at_second(5),
+        Latitude::new(10.0),
+        Longitude::new(10.0),
+        kind,
+    );
+    middle.navigation.state = state;
+    middle.navigation.position_provenance = provenance;
+    middle.navigation.used_count = used_count;
+    let recorded = (middle.tpv.lat(), middle.tpv.lon());
+    let points = [
+        measured_fix(0, Latitude::new(0.0), Longitude::new(0.0)),
+        middle,
+        measured_fix(10, Latitude::new(0.0), Longitude::new(1.0)),
+    ];
+    let geometry = segment::measure_track_geometry(&points, FixPlacementRule::default());
+    let resolved = geometry.measured().unwrap().resolved_positions[1];
+    assert_eq!(
+        matches!(resolved, gt_types::ResolvedPosition::Interpolated(_)),
+        interpolated
+    );
+    let (lat, lon) = resolved.coordinates();
+    if interpolated {
+        assert!(lat.as_degrees().abs() < PLACEMENT_TOLERANCE_DEGREES);
+        assert!((lon.as_degrees() - 0.5).abs() < PLACEMENT_TOLERANCE_DEGREES);
+    } else {
+        assert_eq!((lat, lon), (Latitude::new(10.0), Longitude::new(10.0)));
+    }
+    assert_eq!(points[1].tpv.lon(), recorded.1);
+    if kind != FixKind::WithoutAPosition {
+        assert_eq!(points[1].tpv.lat(), recorded.0);
+    } else {
+        assert!(points[1].tpv.lat().as_written().is_nan());
+    }
+    assert_eq!(points[1].navigation.state, state);
+    assert_eq!(points[1].navigation.used_count, used_count);
+    assert_eq!(
+        geometry,
+        segment::measure_track_geometry(&points, FixPlacementRule::default())
+    );
+}
+
+#[rstest]
+#[case::unknown_recorded_anchor(None, None, true)]
+#[case::explicit_unknown_anchor(Some(SolutionState::Unknown), None, true)]
+#[case::no_fix_with_heading_is_not_an_anchor(Some(SolutionState::NoFix), None, false)]
+#[case::synthesized_fix_is_not_an_anchor(
+    Some(SolutionState::Fix),
+    Some(PositionProvenance::SdkSynthesized),
+    false
+)]
+fn navigation_placement_selects_anchors_from_recorded_facts(
+    #[case] state: Option<SolutionState>,
+    #[case] provenance: Option<PositionProvenance>,
+    #[case] middle_is_anchor: bool,
+) {
+    let mut possible_anchor = measured_fix_without_a_satellite_report(10, 10.0);
+    possible_anchor.navigation.state = state;
+    possible_anchor.navigation.position_provenance = provenance;
+    let mut target = dead_reckoned_fix(15, Latitude::new(10.0), Longitude::new(88.0));
+    target.navigation.state = Some(SolutionState::NoFix);
+    let points = [
+        measured_fix_without_a_satellite_report(0, 0.0),
+        possible_anchor,
+        target,
+        measured_fix_without_a_satellite_report(20, 20.0),
+    ];
+    let geometry = segment::measure_track_geometry(&points, FixPlacementRule::default());
+    let (latitude, longitude) = geometry.measured().unwrap().resolved_positions[2].coordinates();
+    assert!(latitude.as_degrees().abs() < PLACEMENT_TOLERANCE_DEGREES);
+    assert!((longitude.as_degrees() - 15.0).abs() < PLACEMENT_TOLERANCE_DEGREES);
+    let intermediate = geometry.measured().unwrap().resolved_positions[1];
+    assert_eq!(
+        matches!(intermediate, gt_types::ResolvedPosition::Measured(_)),
+        provenance.is_none()
+    );
+    let mut changed = points;
+    changed[1] = measured_fix_without_a_satellite_report(10, 4.0);
+    changed[1].navigation.state = state;
+    changed[1].navigation.position_provenance = provenance;
+    let changed_geometry = segment::measure_track_geometry(&changed, FixPlacementRule::default());
+    let changed_lon = changed_geometry.measured().unwrap().resolved_positions[2]
+        .coordinates()
+        .1
+        .as_degrees();
+    let expected = if middle_is_anchor { 12.0 } else { 15.0 };
+    assert!((changed_lon - expected).abs() < PLACEMENT_TOLERANCE_DEGREES);
+}
+
+#[rstest]
+#[case::missing_heading(FixPlacementRule::MissingHeading, true)]
+#[case::missing_heading_and_no_satellites(FixPlacementRule::MissingHeadingAndNothingInFix, true)]
+#[case::navigation_evidence(FixPlacementRule::SynthesizedOrHeadinglessNoFix, false)]
+fn legacy_rules_reproduce_headingless_reportless_placement(
+    #[case] rule: FixPlacementRule,
+    #[case] interpolated: bool,
+) {
+    let points = [
+        measured_fix(0, Latitude::new(0.0), Longitude::new(0.0)),
+        fixtures::nav_point(
+            test_util::time_at_second(5),
+            Latitude::new(10.0),
+            Longitude::new(10.0),
+            FixKind::GhostWithoutHeading,
+        ),
+        measured_fix(10, Latitude::new(0.0), Longitude::new(1.0)),
+    ];
+    let geometry = segment::measure_track_geometry(&points, rule);
+    let position = geometry.measured().unwrap().resolved_positions[1];
+    assert_eq!(
+        matches!(position, gt_types::ResolvedPosition::Interpolated(_)),
+        interpolated
+    );
+    let expected = if interpolated {
+        (0.0, 0.5)
+    } else {
+        (10.0, 10.0)
+    };
+    let (lat, lon) = position.coordinates();
+    assert!((lat.as_degrees() - expected.0).abs() < PLACEMENT_TOLERANCE_DEGREES);
+    assert!((lon.as_degrees() - expected.1).abs() < PLACEMENT_TOLERANCE_DEGREES);
+}

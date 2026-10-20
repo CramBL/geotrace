@@ -254,6 +254,7 @@ pub enum StoredFixPlacementRule {
     /// fixes with a satellite in fix around it, and at the nearer of them for
     /// a fix stamped outside their time span.
     MissingHeadingAndNothingInFix,
+    SynthesizedOrHeadinglessNoFix,
     /// A rule number this build has no variant for.
     Unrecognized(i64),
 }
@@ -261,6 +262,7 @@ pub enum StoredFixPlacementRule {
 impl StoredFixPlacementRule {
     const MISSING_HEADING_VALUE: i64 = 0;
     const MISSING_HEADING_AND_NOTHING_IN_FIX_VALUE: i64 = 1;
+    const SYNTHESIZED_OR_HEADINGLESS_NO_FIX_VALUE: i64 = 2;
 
     /// The rule an [`ATTR_SEG_PLACEMENT_RULE`] value names. An absent attribute
     /// is [`Self::MissingHeading`]. Every build that wrote a recording without
@@ -271,6 +273,9 @@ impl StoredFixPlacementRule {
             Some(Self::MISSING_HEADING_AND_NOTHING_IN_FIX_VALUE) => {
                 Self::MissingHeadingAndNothingInFix
             }
+            Some(Self::SYNTHESIZED_OR_HEADINGLESS_NO_FIX_VALUE) => {
+                Self::SynthesizedOrHeadinglessNoFix
+            }
             Some(other) => Self::Unrecognized(other),
         }
     }
@@ -279,6 +284,7 @@ impl StoredFixPlacementRule {
         match self {
             Self::MissingHeading => Self::MISSING_HEADING_VALUE,
             Self::MissingHeadingAndNothingInFix => Self::MISSING_HEADING_AND_NOTHING_IN_FIX_VALUE,
+            Self::SynthesizedOrHeadinglessNoFix => Self::SYNTHESIZED_OR_HEADINGLESS_NO_FIX_VALUE,
             Self::Unrecognized(value) => value,
         }
     }

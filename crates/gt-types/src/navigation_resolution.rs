@@ -1,6 +1,6 @@
-use crate::NavPoint;
 use crate::navigation::SolutionState;
 use crate::satellite_evidence::{SatelliteQueryScope, SatelliteScope, SatelliteUsageReport};
+use crate::{FixQuality, NavPoint};
 
 /// Report indices refer to the point's canonical usage or observation collection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,6 +64,18 @@ impl NavPoint {
         ResolvedNavigationState {
             state: SolutionState::Unknown,
             evidence: None,
+        }
+    }
+
+    pub fn resolved_fix_quality(&self) -> FixQuality {
+        match self.resolved_navigation_state().state {
+            SolutionState::NoFix => FixQuality::Lost,
+            SolutionState::Fix => match self.resolved_used_count(SatelliteQueryScope::Global) {
+                Some(count) if count.count >= FixQuality::STRONG_USED_COUNT => FixQuality::Strong,
+                Some(count) if count.count > 0 => FixQuality::Marginal,
+                _ => FixQuality::Unknown,
+            },
+            SolutionState::EstimatedOnly | SolutionState::Unknown => FixQuality::Unknown,
         }
     }
 
