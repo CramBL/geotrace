@@ -23,8 +23,10 @@ pub use gt_fmt::MINUS_SIGN;
 pub use gt_fmt::RIGHTWARDS_ARROW;
 
 mod carets;
+mod navigation_summary;
 
 pub use carets::expand_arrow;
+pub use navigation_summary::{NavigationStatus, SatelliteCountBadge, SatelliteCountResponses};
 
 pub mod buttons;
 pub mod fonts;
@@ -770,6 +772,15 @@ pub const FIX_QUALITY_YELLOW: ThemedColor = ThemedColor::new(
 pub const FIX_QUALITY_RED: ThemedColor =
     ThemedColor::new(Color32::from_rgb(220, 60, 0), Color32::from_rgb(188, 40, 8));
 
+pub const NAVIGATION_ESTIMATED: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(165, 105, 210),
+    Color32::from_rgb(125, 65, 170),
+);
+pub const NAVIGATION_UNKNOWN: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(145, 155, 170),
+    Color32::from_rgb(90, 100, 115),
+);
+
 /// The standalone semantic foreground [`ThemedColor`]s, paired with a name for
 /// diagnostics. The crate's contrast test iterates this to assert each variant
 /// keeps enough contrast against its own theme's panel background, so a new
@@ -785,6 +796,8 @@ pub const THEMED_FOREGROUNDS: &[(&str, ThemedColor)] = &[
     ("FIX_QUALITY_GREEN", FIX_QUALITY_GREEN),
     ("FIX_QUALITY_YELLOW", FIX_QUALITY_YELLOW),
     ("FIX_QUALITY_RED", FIX_QUALITY_RED),
+    ("NAVIGATION_ESTIMATED", NAVIGATION_ESTIMATED),
+    ("NAVIGATION_UNKNOWN", NAVIGATION_UNKNOWN),
     ("LOG_LIVE_FILTER", LOG_LIVE_FILTER),
 ];
 

@@ -1,24 +1,25 @@
-use egui_kittest::kittest::Queryable as _;
-use gt_test_utils::{By, HarnessInteraction as _};
-use rstest::rstest;
-
-use super::*;
-use crate::test_util;
 use egui::Color32;
-use gt_types::MercPoint;
+use egui_kittest::kittest::{NodeT as _, Queryable as _};
+use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
+use gt_test_utils::{By, HarnessInteraction as _};
 use gt_types::coordinates::{Latitude, Longitude, RecordedLatitude};
 use gt_types::satellites::{
-    Constellation, ConstellationSet, NO_DATA_SENTINEL_DB_HZ, Prn, Satellite, Satellites,
+    Constellation, ConstellationSet, NO_DATA_SENTINEL_DB_HZ, Prn, Satellite, Satellites, Snr,
 };
 use gt_types::time_types::{GpsTime, SysTime};
 use gt_types::tpv::TimePositionVelocity;
 use gt_types::{
-    NavPoint, NavigationMetadata, PositionProvenance, SatelliteCoverage, SatelliteIdentity,
-    SatelliteReportMetadata, SatelliteScope, SatelliteUsage, SatelliteUsageReport,
-    SolutionDimension, SolutionMethod,
+    MercPoint, NavPoint, NavigationMetadata, PositionProvenance, SatelliteCoverage,
+    SatelliteIdentity, SatelliteReportMetadata, SatelliteScope, SatelliteUsage,
+    SatelliteUsageReport, SolutionDimension, SolutionMethod,
 };
+use rstest::rstest;
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Length};
+
+use super::*;
+use crate::recording_labels::RecordingLabels;
+use crate::test_util;
 
 /// The instant fix 0 of every fixture track is stamped at. It is a constant,
 /// so the snapshots that draw the time row stay deterministic.
@@ -750,8 +751,8 @@ fn hover_badge_recording_row(
 }
 
 #[rstest]
-#[case::earlier(2100, "Report 2.1s earlier")]
-#[case::later(-2100, "Report 2.1s later")]
+#[case::earlier(2100, "Sky -2.1s")]
+#[case::later(-2100, "Sky +2.1s")]
 fn report_age_label_names_the_side(#[case] ms: i64, #[case] expected: &str) {
     assert_eq!(
         report_age_label(chrono::Duration::milliseconds(ms)),
@@ -1316,30 +1317,48 @@ fn navigation_presentation_depends_on_state_and_provenance(
 }
 
 #[rstest]
-#[case::summary(Some(SolutionState::Fix), Some(8), "Fix", "Reported state", "8 used")]
+#[case::summary(
+    Some(SolutionState::Fix),
+    Some(8),
+    "Fix",
+    "Reported state",
+    "Satellites used / seen 8 / —"
+)]
 #[case::contradiction(
     Some(SolutionState::NoFix),
     Some(12),
     "No fix",
     "Reported state",
-    "12 used"
+    "Satellites used / seen 12 / —"
 )]
-#[case::fix_zero(Some(SolutionState::Fix), Some(0), "Fix", "Reported state", "0 used")]
+#[case::fix_zero(
+    Some(SolutionState::Fix),
+    Some(0),
+    "Fix",
+    "Reported state",
+    "Satellites used / seen 0 / —"
+)]
 #[case::explicit_unknown(
     Some(SolutionState::Unknown),
     Some(0),
     "Unknown",
     "Reported state",
-    "0 used"
+    "Satellites used / seen 0 / —"
 )]
-#[case::legacy(None, None, "Unknown", "No state observation", "—")]
-#[case::count_fallback(None, Some(8), "Fix", "Navigation used count", "8 used")]
+#[case::legacy(None, None, "Unknown", "Unreported", "Satellites used / seen — / —")]
+#[case::count_fallback(
+    None,
+    Some(8),
+    "Fix",
+    "Navigation used count",
+    "Satellites used / seen 8 / —"
+)]
 #[case::estimate(
     Some(SolutionState::EstimatedOnly),
     None,
     "Estimated only",
     "Reported state",
-    "—"
+    "Satellites used / seen — / —"
 )]
 fn point_details_preserve_state_and_count_independently(
     #[case] state: Option<SolutionState>,
@@ -1366,20 +1385,31 @@ fn point_details_preserve_state_and_count_independently(
             );
         });
     harness.run();
+    assert!(harness.inner.query_by_label("State evidence").is_none());
+    assert!(harness.inner.query_by_label("Position source").is_none());
+    harness.inner.get_by_label("Details").click();
+    harness.inner.run_steps(3);
     for label in [state_label, evidence_label, count_label] {
         assert!(
             harness.inner.query_all_by_label(label).next().is_some(),
             "missing {label}"
         );
     }
-    let row_y = harness.inner.get_by_label("Satellites").rect().center().y;
+    let row_y = harness
+        .inner
+        .query_all_by_label("Satellites")
+        .next()
+        .expect("summary label")
+        .rect()
+        .center()
+        .y;
     assert!(
         harness
             .inner
             .query_all_by_label(count_label)
             .any(|node| node.rect().y_range().contains(row_y))
     );
-    assert!(harness.inner.query_by_label("Position source").is_none());
+    assert!(harness.inner.query_by_label("Position source").is_some());
 }
 
 #[rstest]
@@ -1435,12 +1465,11 @@ fn navigation_details_show_recorded_metadata(
     harness.run();
     for label in [
         "Fix",
-        "8 used",
+        "Satellites used / seen 8 / —",
         "Other",
         "3D",
-        "HDOP",
-        "0.9",
-        &provenance.to_string(),
+        "DOP",
+        "H 0.90",
     ] {
         assert!(
             harness.inner.query_all_by_label(label).next().is_some(),
@@ -1448,8 +1477,17 @@ fn navigation_details_show_recorded_metadata(
         );
     }
     assert!(harness.inner.query_by_label("Accuracy").is_none());
-    assert!(harness.inner.query_by_label("VDOP").is_none());
+    assert!(harness.inner.query_by_label("Position source").is_none());
     harness.snapshot(name);
+    harness.inner.get_by_label("Details").click();
+    harness.inner.run_steps(3);
+    assert!(
+        harness
+            .inner
+            .query_by_label(&provenance.to_string())
+            .is_some()
+    );
+    harness.snapshot(&format!("{name}_expanded"));
 }
 
 #[test]
@@ -1510,24 +1548,26 @@ fn recorded_reports_show_conflicting_aggregates_scope_and_original_times() {
             );
         });
     harness.run();
-    assert!(harness.inner.query_by_label("8 used").is_some());
-    harness
-        .inner
-        .get_by_label("Recorded satellite reports")
-        .click();
+    assert!(
+        harness
+            .inner
+            .query_by_label("Satellites used / seen 8 / —")
+            .is_some()
+    );
+    harness.inner.get_by_label("Details").click();
     harness.inner.run_steps(3);
     for label in [
-        "Usage report 1",
-        "GPS · Partial",
-        "Global · Complete",
+        "Usage 1 · 11:33:20.400 · GPS",
+        "Usage 2 · 11:33:20.400 · Global",
+        "Partial",
+        "Complete",
         "Unknown",
         "Unused",
         "Used",
-        "Reported count 9",
-        "Reported count 0",
-        "Track time 2025-05-23 11:33:20.400 UTC",
-        "Receiver time 2025-05-23 11:33:20.400 UTC",
-        "Host time 2025-05-23 11:33:21.400 UTC",
+        "9",
+        "0",
+        "2025-05-23 11:33:20.400 UTC",
+        "2025-05-23 11:33:21.400 UTC",
     ] {
         assert!(
             harness.inner.query_all_by_label(label).next().is_some(),
@@ -1559,9 +1599,28 @@ fn borrowed_sky_observations_preserve_point_count_absence() {
             );
         });
     harness.run();
-    assert!(harness.inner.query_by_label("8 used").is_some());
-    assert!(harness.inner.query_by_label("8/12 used/seen").is_none());
+    assert!(
+        harness
+            .inner
+            .query_by_label("Satellites used / seen 8 / —")
+            .is_some()
+    );
+    assert!(
+        harness
+            .inner
+            .query_by_label("Satellites used / seen 8 / 12")
+            .is_none()
+    );
+    assert!(harness.inner.query_by_label("Sky +2.0s").is_some());
+    harness.inner.get_by_label("Nearby sky details").click();
+    harness.inner.run_steps(3);
     assert!(harness.inner.query_by_label("Report 2.0s later").is_some());
+    assert!(
+        harness
+            .inner
+            .query_by_label("Sky observation 1 · 2025-05-23 11:33:22 UTC")
+            .is_some()
+    );
 }
 
 #[rstest]
@@ -1570,22 +1629,35 @@ fn borrowed_sky_observations_preserve_point_count_absence() {
     SatelliteScope::Global,
     true,
     Some(8),
-    "8/12 used/seen"
+    "Satellites used / seen 8 / 12"
+)]
+#[case::observations_only(
+    SatelliteCoverage::Complete,
+    SatelliteScope::Global,
+    true,
+    None,
+    "Satellites used / seen — / 12"
 )]
 #[case::complete_empty(
     SatelliteCoverage::Complete,
     SatelliteScope::Global,
     false,
     None,
-    "0 seen"
+    "Satellites used / seen — / 0"
 )]
-#[case::partial_empty(SatelliteCoverage::Partial, SatelliteScope::Global, false, None, "—")]
+#[case::partial_empty(
+    SatelliteCoverage::Partial,
+    SatelliteScope::Global,
+    false,
+    None,
+    "Satellites used / seen — / —"
+)]
 #[case::scoped(
     SatelliteCoverage::Complete,
     SatelliteScope::Constellations(ConstellationSet::single(Constellation::Gps)),
     true,
     None,
-    "—"
+    "Satellites used / seen — / —"
 )]
 fn observation_details_preserve_global_count_availability(
     #[case] coverage: SatelliteCoverage,
@@ -1624,13 +1696,7 @@ fn observation_details_preserve_global_count_availability(
             .contains(harness.inner.get_by_label("Satellites").rect().center().y)),
         "missing {expected}"
     );
-    assert!(
-        harness
-            .inner
-            .query_by_label("No state observation")
-            .is_some()
-            || used_count.is_some()
-    );
+    assert!(harness.inner.query_by_label("State evidence").is_none());
 }
 
 #[test]
@@ -1645,12 +1711,673 @@ fn legacy_empty_report_details_show_known_zero_usage_and_observations() {
                 show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
     harness.run();
-    assert!(harness.inner.query_by_label("0/0 used/seen").is_some());
-    assert!(harness.inner.query_by_label("No fix").is_some());
     assert!(
         harness
             .inner
-            .query_by_label("Usage report 1 membership")
+            .query_by_label("Satellites used / seen 0 / 0")
             .is_some()
     );
+    assert!(harness.inner.query_by_label("No fix").is_some());
+    harness.inner.get_by_label("Details").click();
+    harness.inner.run_steps(3);
+    assert!(
+        harness
+            .inner
+            .query_all_by_label("Usage 1 membership")
+            .next()
+            .is_some()
+    );
+}
+
+#[rstest]
+#[case::used("Satellites", "8", Some(SkyHighlight::in_fix()))]
+#[case::seen("Satellites", "12", None)]
+#[case::constellation_used(
+    "GPS",
+    "8",
+    Some(SkyHighlight::constellation_in_fix(Constellation::Gps))
+)]
+#[case::constellation_seen("GPS", "12", Some(SkyHighlight::constellation(Constellation::Gps)))]
+fn satellite_summary_numbers_have_independent_highlight_regions(
+    #[case] caption: &str,
+    #[case] number: &str,
+    #[case] expected: Option<SkyHighlight>,
+) {
+    let point = point_at(0, Some(twelve_satellites(8)));
+    let id_cell = std::rc::Rc::new(std::cell::Cell::new(None));
+    let cell = id_cell.clone();
+    let mut folds = PointWindowFolds {
+        plot_folded: true,
+        ..PointWindowFolds::default()
+    };
+    let placement = placement_of(&point);
+    let mut harness = test_util::harness_builder()
+        .size(egui::vec2(380.0, 500.0))
+        .ui(move |ui| {
+            cell.set(Some(sky_table_highlight_id(ui)));
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
+        });
+    harness.run();
+    let summary_y = harness.inner.get_by_label(caption).rect().center().y;
+    let number_rect = harness
+        .inner
+        .query_all_by_label(number)
+        .map(|node| node.rect())
+        .find(|rect| rect.y_range().contains(summary_y))
+        .expect("summary number");
+    assert!(number_rect.bottom() < 500.0);
+    harness.inner.hover_at(number_rect.center());
+    harness.inner.run_steps(2);
+    let highlight = harness
+        .inner
+        .ctx
+        .data(|data| data.get_temp::<Option<SkyHighlight>>(id_cell.get().expect("highlight id")))
+        .flatten();
+    assert_eq!(highlight, expected);
+}
+
+#[rstest]
+#[case::dark(true)]
+#[case::light(false)]
+fn narrow_pinned_summary_precedes_sky_and_keeps_details_visible(#[case] dark_mode: bool) {
+    let point = point_at(0, Some(sats_dense_multi_constellation()));
+    let mut folds = PointWindowFolds::default();
+    let placement = placement_of(&point);
+    let mut harness = test_util::harness_builder()
+        .size(egui::vec2(300.0, 320.0))
+        .theme(dark_mode)
+        .ui(move |ui| {
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
+        });
+    harness.run();
+    let details = harness.inner.get_by_label("Details").rect();
+    let counts = harness
+        .inner
+        .get_by_label("Satellites used / seen 29 / 40")
+        .rect();
+    let sky = harness.inner.get_by_label("Sky").rect();
+    assert!(counts.bottom() < details.top());
+    assert!(details.bottom() < sky.top());
+    assert!(details.right() < 300.0 && details.bottom() < 320.0);
+    assert!(harness.inner.query_by_label("Position source").is_none());
+    harness.snapshot(if dark_mode {
+        "narrow_pinned_summary_dark"
+    } else {
+        "narrow_pinned_summary_light"
+    });
+}
+
+#[rstest]
+#[case::summary("sparse_summary_hover_dark", true, Some(8))]
+#[case::legacy("sparse_legacy_hover_light", false, None)]
+fn sparse_hover_uses_compact_summary(
+    #[case] name: &str,
+    #[case] dark_mode: bool,
+    #[case] used_count: Option<u32>,
+) {
+    let mut point = point_at(0, None);
+    point.tpv = TimePositionVelocity::builder()
+        .time(point.tpv.time())
+        .lat(point.tpv.lat())
+        .lon(point.tpv.lon())
+        .build();
+    point.navigation.used_count = used_count;
+    point.navigation.state = used_count.map(|_| SolutionState::Fix);
+    point.navigation.hdop = used_count.map(|_| 0.9);
+    let track = gt_test_utils::loaded_track_with_points(vec![point]);
+    let mut harness = test_util::harness_builder()
+        .size(egui::vec2(320.0, 260.0))
+        .theme(dark_mode)
+        .ui(move |ui| {
+            let placed = track
+                .placed_points()
+                .expect("geometry")
+                .get(0)
+                .expect("point");
+            show_hover_table(ui, placed, &SkySection::TrackWithoutReports, None);
+        });
+    harness.run();
+    assert!(harness.inner.query_by_label("State evidence").is_none());
+    assert!(harness.inner.query_by_label("Position source").is_none());
+    assert!(harness.inner.query_by_label("Details").is_none());
+    harness.snapshot(name);
+}
+
+#[rstest]
+#[case::narrow(400.0)]
+#[case::wide(600.0)]
+fn a_report_from_an_equal_time_point_remains_inspectable(#[case] width: f32) {
+    let mut source = point_at(0, Some(twelve_satellites(10)));
+    let observation = source
+        .satellite_evidence
+        .observations
+        .first_mut()
+        .expect("observation");
+    observation.metadata.scope =
+        SatelliteScope::Constellations(ConstellationSet::single(Constellation::Gps));
+    observation.metadata.reported_count = Some(12);
+    observation.metadata.gps_time = Some(GpsTime::from_utc(fixture_epoch()));
+    observation.metadata.sys_time = Some(SysTime::from_utc(
+        fixture_epoch() + chrono::Duration::seconds(1),
+    ));
+    let mut point = point_at(0, None);
+    point.navigation.state = Some(SolutionState::Fix);
+    point.navigation.used_count = Some(8);
+    let track = gt_test_utils::loaded_track_with_points(vec![source, point]);
+    let mut folds = PointWindowFolds::default();
+    let mut harness = test_util::harness_builder()
+        .size(egui::vec2(width, 650.0))
+        .ui(move |ui| {
+            let index = PointIdx::new(1);
+            let point = index.get(&track.points).expect("selected point");
+            let sky = SkySection::resolve(&track, index);
+            assert!(matches!(sky, SkySection::Report(report) if report.age.is_zero() && report.point_index == PointIdx::new(0)));
+            let _opened = show_sticky_tpv_content(ui, point, &sky, &mut folds, None, FixPlacement::resolve(&track, index));
+        });
+    harness.run();
+    assert!(
+        harness
+            .inner
+            .query_by_label("Satellites used / seen 8 / —")
+            .is_some()
+    );
+    let sky = StickyRegion::Sky.rect(&harness.inner.ctx);
+    harness.inner.get_by_label("Nearby sky details").click();
+    harness.inner.run_steps(3);
+    if width >= MIN_SIDE_BY_SIDE_WIDTH_PX {
+        assert_eq!(StickyRegion::Sky.rect(&harness.inner.ctx), sky);
+        assert!(StickyRegion::Summary.rect(&harness.inner.ctx).left() > sky.right());
+    }
+    for label in [
+        "Report at the same time",
+        "Observation 1 · 11:33:20.000 · GPS",
+        "2025-05-23 11:33:20 UTC",
+        "2025-05-23 11:33:21 UTC",
+        "Reported count",
+        "12",
+    ] {
+        assert!(
+            harness.inner.query_all_by_label(label).next().is_some(),
+            "missing {label}"
+        );
+    }
+    assert!(
+        harness
+            .inner
+            .query_by_label("Satellites used / seen 8 / —")
+            .is_some()
+    );
+    assert!(
+        harness
+            .inner
+            .query_by_label("Satellites used / seen 8 / 12")
+            .is_none()
+    );
+}
+
+#[rstest]
+#[case::dark(true)]
+#[case::light(false)]
+fn the_minimum_point_window_keeps_details_reachable_with_all_readouts(#[case] dark_mode: bool) {
+    let mut point = point_at(10, Some(twelve_satellites(10)));
+    point.tpv = TimePositionVelocity::builder()
+        .time(point.tpv.time())
+        .lat(Latitude::new(51.6))
+        .lon(Longitude::new(0.2))
+        .heading(Angle::new::<degree>(90.0))
+        .eph_m(5.0)
+        .build();
+    point.navigation = NavigationMetadata {
+        state: Some(SolutionState::Fix),
+        used_count: Some(8),
+        hdop: Some(0.9),
+        vdop: Some(1.2),
+        pdop: Some(1.5),
+        position_provenance: Some(PositionProvenance::SdkSynthesized),
+        ..NavigationMetadata::default()
+    };
+    let mut last = point
+        .satellite_evidence
+        .observations
+        .first()
+        .expect("observation")
+        .clone();
+    last.metadata.input_order = 9999;
+    last.metadata.scope =
+        SatelliteScope::Constellations(ConstellationSet::single(Constellation::Gps));
+    last.metadata.coverage = SatelliteCoverage::Partial;
+    last.metadata.reported_count = Some(123);
+    last.satellites.clear();
+    point.satellite_evidence.observations.push(last);
+    let track =
+        gt_test_utils::loaded_track_with_points(vec![point_at(0, None), point, point_at(20, None)]);
+    assert!(matches!(
+        FixPlacement::resolve(&track, PointIdx::new(1)),
+        FixPlacement::Placed(ResolvedPosition::Interpolated(_))
+    ));
+    let mut file = gt_test_utils::loaded_file_with_tracks(vec![track]);
+    file.metadata.filename = "morning.gtd".to_owned();
+    let mut second = gt_test_utils::loaded_file_with_tracks(Vec::new());
+    second.metadata.filename = "evening.gtd".to_owned();
+    let mut files = LoadedFiles::new();
+    files.push(file, FileHistory::None);
+    files.push(second, FileHistory::None);
+    let names = RecordingNames::resolve(files.view(), "{filename}");
+    let clicked = test_util::point_ref(DataCategory::Tpv, 1);
+    let window_id = egui::Id::new(("sticky_popup", clicked));
+    let mut folds = PointWindowFolds::default();
+    let mut harness = test_util::harness_builder()
+        .size(egui::vec2(
+            crate::POINT_WINDOW_MIN_WIDTH_PX,
+            crate::POINT_WINDOW_MIN_HEIGHT_PX,
+        ))
+        .theme(dark_mode)
+        .ui(move |ui| {
+            let _request = crate::show_sticky_popup(
+                ui.ctx(),
+                files.files(),
+                RecordingLabels::new(files.files(), &names),
+                clicked,
+                egui::Pos2::ZERO,
+                &mut folds,
+            );
+        });
+    harness.run();
+    let window = harness
+        .inner
+        .ctx
+        .memory(|memory| memory.area_rect(window_id))
+        .expect("window");
+    assert!(
+        window.height() <= crate::POINT_WINDOW_MIN_HEIGHT_PX + 1.0,
+        "window {window:?}"
+    );
+    let footer = harness.inner.get_by_label("Click to deselect").rect();
+    let visible_body =
+        egui::Rect::from_min_max(window.min, egui::pos2(window.right(), footer.top())).intersect(
+            egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(
+                    crate::POINT_WINDOW_MIN_WIDTH_PX,
+                    crate::POINT_WINDOW_MIN_HEIGHT_PX,
+                ),
+            ),
+        );
+    let details = harness.inner.get_by_label("Details").rect();
+    assert!(
+        visible_body.contains_rect(details),
+        "Details {details:?}, body {visible_body:?}"
+    );
+    assert!(
+        visible_body.contains_rect(
+            harness
+                .inner
+                .get_by_label("Satellites used / seen 8 / 12")
+                .rect()
+        )
+    );
+    assert!(harness.inner.query_by_label("Recording").is_some());
+    assert!(harness.inner.query_by_label(DRAWN_AT_CAPTION).is_some());
+    assert!(harness.inner.query_by_label("Accuracy").is_some());
+    assert!(harness.inner.query_by_label("DOP").is_some());
+    harness.inner.get_by_label("Details").click();
+    harness.inner.run_steps(3);
+    assert!(harness.inner.query_by_label("State evidence").is_some());
+    let details = harness.inner.get_by_label("Details").rect();
+    harness.inner.scroll_wheel_at(
+        egui::pos2(
+            details.center().x,
+            details.bottom() + REPORT_SCROLL_TARGET_OFFSET_PX,
+        ),
+        -REPORT_SCROLL_TO_END_POINTS,
+        8,
+    );
+    let details_after_scroll = harness.inner.get_by_label("Details").rect();
+    assert_eq!(details_after_scroll, details);
+    assert!(visible_body.contains_rect(details_after_scroll));
+    let last = harness.inner.get_by_label("9999").rect();
+    assert!(
+        visible_body.contains_rect(last),
+        "final report {last:?}, body {visible_body:?}"
+    );
+    harness.snapshot(if dark_mode {
+        "minimum_pinned_report_inspection_dark"
+    } else {
+        "minimum_pinned_report_inspection_light"
+    });
+    harness.inner.get_by_label("Details").click();
+    harness.run();
+    assert!(harness.inner.query_by_label("State evidence").is_none());
+    assert!(visible_body.contains_rect(harness.inner.get_by_label("Details").rect()));
+}
+
+const REPORT_SCROLL_TARGET_OFFSET_PX: f32 = 25.0;
+const REPORT_SCROLL_TO_END_POINTS: f32 = 10_000.0;
+
+impl StickyRegion {
+    fn rect(self, ctx: &egui::Context) -> egui::Rect {
+        ctx.data(|data| data.get_temp(egui::Id::new(("sticky_region", self))))
+            .expect("rendered region")
+    }
+}
+
+#[rstest]
+#[case::wide_dark(egui::vec2(600.0, 500.0), true, true)]
+#[case::wide_light(egui::vec2(600.0, 500.0), false, true)]
+#[case::dense(egui::vec2(620.0, 560.0), true, true)]
+#[case::narrow(egui::vec2(330.0, 560.0), true, false)]
+#[case::short_narrow(egui::vec2(300.0, 320.0), false, false)]
+#[case::below_breakpoint(egui::vec2(MIN_SIDE_BY_SIDE_WIDTH_PX + 15.0, 560.0), true, false)]
+#[case::above_breakpoint(egui::vec2(MIN_SIDE_BY_SIDE_WIDTH_PX + 17.0, 560.0), true, true)]
+fn pinned_regions_follow_the_available_width(
+    #[case] size: egui::Vec2,
+    #[case] dark_mode: bool,
+    #[case] wide: bool,
+) {
+    let mut point = point_at(0, Some(sats_dense_multi_constellation()));
+    point.navigation.hdop = Some(0.9);
+    point.navigation.vdop = Some(1.2);
+    point.navigation.pdop = Some(1.5);
+    point.navigation.method = Some(SolutionMethod::DeadReckoning);
+    point.navigation.dimension = Some(SolutionDimension::ThreeD);
+    let placement = placement_of(&point);
+    let mut folds = PointWindowFolds::default();
+    let mut harness = test_util::harness_builder()
+        .size(size)
+        .theme(dark_mode)
+        .ui(move |ui| {
+            let _opened = show_sticky_tpv_content(
+                ui,
+                &point,
+                &sky_for(&point),
+                &mut folds,
+                Some("A recording with a long descriptive filename and repeated coordinates.gtd"),
+                placement,
+            );
+        });
+    harness.run();
+    let ctx = &harness.inner.ctx;
+    let body = StickyRegion::Body.rect(ctx);
+    let summary = StickyRegion::Summary.rect(ctx);
+    let sky_header = StickyRegion::SkyHeader.rect(ctx);
+    let sky = StickyRegion::Sky.rect(ctx);
+    let metrics = StickyRegion::Metrics.rect(ctx);
+    assert!(
+        body.contains_rect(summary),
+        "summary {summary:?}, body {body:?}"
+    );
+    assert!(body.x_range().contains(sky.left()));
+    assert!(body.x_range().contains(sky.right()));
+    assert!(
+        metrics.top() >= sky.bottom(),
+        "metrics {metrics:?}, sky {sky:?}"
+    );
+    assert!(
+        metrics.right()
+            <= if wide {
+                sky.right() + 1.0
+            } else {
+                body.right() + 1.0
+            },
+        "metrics {metrics:?}, sky {sky:?}"
+    );
+    if wide {
+        assert!((sky_header.top() - body.top()).abs() < f32::EPSILON);
+        assert!((summary.top() - body.top()).abs() < f32::EPSILON);
+        assert!(summary.left() >= sky_header.right() + STICKY_COLUMN_GAP_PX - 1.0);
+        assert!(StickyRegion::Tables.rect(ctx).width() >= MIN_SATELLITE_COLUMN_WIDTH_PX - 12.0);
+        let gps = harness.inner.get_by_label("GPS").rect();
+        let glonass = harness.inner.get_by_label("GLONASS").rect();
+        if size.x >= 600.0 {
+            let beidou = harness.inner.get_by_label("BeiDou").rect();
+            assert!(
+                beidou.left() > gps.right(),
+                "two columns: {gps:?}, {beidou:?}"
+            );
+        } else {
+            assert!((gps.left() - glonass.left()).abs() < f32::EPSILON);
+        }
+    } else {
+        assert!((summary.top() - body.top()).abs() < f32::EPSILON);
+        assert!(sky_header.top() >= summary.bottom());
+        assert!((summary.left() - sky_header.left()).abs() < f32::EPSILON);
+    }
+}
+
+#[test]
+fn opening_right_inspection_preserves_the_sky_and_scrolls_reports_and_tables() {
+    let mut point = point_at(0, Some(sats_dense_multi_constellation()));
+    let mut final_report = point
+        .satellite_evidence
+        .observations
+        .first()
+        .expect("report")
+        .clone();
+    final_report.metadata.input_order = 9999;
+    final_report.satellites.clear();
+    point.satellite_evidence.observations.push(final_report);
+    let placement = placement_of(&point);
+    let mut folds = PointWindowFolds::default();
+    let mut harness = test_util::harness_builder()
+        .size(egui::vec2(620.0, 560.0))
+        .ui(move |ui| {
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
+        });
+    harness.run();
+    let sky = StickyRegion::Sky.rect(&harness.inner.ctx);
+    let details = harness.inner.get_by_label("Details").rect();
+    harness.inner.get_by_label("Details").click();
+    harness.run();
+    assert_eq!(StickyRegion::Sky.rect(&harness.inner.ctx), sky);
+    assert_eq!(harness.inner.get_by_label("Details").rect(), details);
+    let inspection = StickyRegion::Inspection.rect(&harness.inner.ctx);
+    let tables = StickyRegion::Tables.rect(&harness.inner.ctx);
+    assert!(inspection.left() > sky.right());
+    assert!(tables.top() > inspection.bottom());
+    harness
+        .inner
+        .scroll_wheel_at(inspection.center(), -REPORT_SCROLL_TO_END_POINTS, 8);
+    assert!(inspection.contains_rect(harness.inner.get_by_label("9999").rect()));
+    harness
+        .inner
+        .scroll_wheel_at(tables.center(), -REPORT_SCROLL_TO_END_POINTS, 8);
+    assert!(
+        harness
+            .inner
+            .query_all_by_label("C15")
+            .any(|node| tables.contains_rect(node.rect()))
+    );
+    harness.snapshot("sticky_wide_evidence_scrolled");
+    assert_eq!(StickyRegion::Sky.rect(&harness.inner.ctx), sky);
+    harness.inner.get_by_label("Details").click();
+    harness.run();
+    assert!(harness.inner.query_by_label("State evidence").is_none());
+}
+
+#[test]
+fn resizing_preserves_inspection_and_constellation_folds() {
+    let point = point_at(0, Some(sats_multi_constellation()));
+    let placement = placement_of(&point);
+    let mut folds = PointWindowFolds::default();
+    folds.toggle(Constellation::Gps);
+    let mut harness = test_util::harness_builder()
+        .size(egui::vec2(600.0, 500.0))
+        .ui(move |ui| {
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
+        });
+    harness.run();
+    harness.inner.get_by_label("Details").click();
+    harness.run();
+    for size in [egui::vec2(300.0, 320.0), egui::vec2(620.0, 560.0)] {
+        harness.inner.set_size(size);
+        harness.run();
+        assert!(harness.inner.query_by_label("State evidence").is_some());
+        let summary = StickyRegion::Summary.rect(&harness.inner.ctx);
+        assert!(
+            StickyRegion::Body
+                .rect(&harness.inner.ctx)
+                .contains_rect(summary)
+        );
+        harness.inner.get_by_label("Details").click();
+        harness.run();
+        assert!(harness.inner.query_by_label("G01").is_none());
+        harness.inner.get_by_label("Details").click();
+        harness.run();
+    }
+}
+
+#[rstest]
+#[case::track_without_reports(SkySection::TrackWithoutReports)]
+#[case::no_report_nearby(SkySection::NoReportNearby)]
+fn summary_only_inspection_uses_the_full_content_width(#[case] sky: SkySection<'static>) {
+    let mut point = point_at(0, None);
+    point.navigation.state = Some(SolutionState::Fix);
+    point.navigation.used_count = Some(8);
+    let placement = placement_of(&point);
+    let mut folds = PointWindowFolds::default();
+    let mut harness = test_util::harness_builder()
+        .size(egui::vec2(600.0, 500.0))
+        .ui(move |ui| {
+            let _opened = show_sticky_tpv_content(ui, &point, &sky, &mut folds, None, placement);
+        });
+    harness.run();
+    harness.inner.get_by_label("Details").click();
+    harness.run();
+    let body = StickyRegion::Body.rect(&harness.inner.ctx);
+    let inspection = StickyRegion::Inspection.rect(&harness.inner.ctx);
+    assert!((inspection.left() - body.left()).abs() < f32::EPSILON);
+    assert!(inspection.width() > SkyPlotSize::Full.diameter());
+    assert!(harness.inner.query_by_label("Lat").is_some());
+    assert!(
+        (StickyRegion::Summary.rect(&harness.inner.ctx).left() - body.left()).abs() < f32::EPSILON
+    );
+}
+
+#[rstest]
+#[case::wide_to_narrow(600.0, 330.0)]
+#[case::narrow_to_wide(330.0, 600.0)]
+fn point_and_nearby_reports_have_independent_controls_after_resizing(
+    #[case] initial_width: f32,
+    #[case] resized_width: f32,
+) {
+    let mut point = point_at(0, Some(sats_with_sky()));
+    point.satellite_evidence.usage.clear();
+    point.navigation.state = Some(SolutionState::Fix);
+    point.navigation.used_count = Some(8);
+    let mut nearby = point.clone();
+    for (report_point, host_second, snr) in [(&mut point, 1, 17.25), (&mut nearby, 2, 47.75)] {
+        let report = report_point
+            .satellite_evidence
+            .observations
+            .first_mut()
+            .expect("observation");
+        report.metadata.sys_time = Some(SysTime::from_utc(
+            fixture_epoch() + chrono::Duration::seconds(host_second),
+        ));
+        report.satellites.truncate(1);
+        report
+            .satellites
+            .first_mut()
+            .expect("satellite")
+            .measurements
+            .snr = Some(Snr::new(snr));
+    }
+    let report = point
+        .satellite_evidence
+        .observations
+        .first_mut()
+        .expect("observation");
+    let measurements = &mut report
+        .satellites
+        .first_mut()
+        .expect("satellite")
+        .measurements;
+    measurements.azimuth = None;
+    measurements.elevation = None;
+    let track = gt_test_utils::loaded_track_with_points(vec![point, nearby]);
+    let mut folds = PointWindowFolds::default();
+    let mut harness = test_util::harness_builder().size(egui::vec2(initial_width, 560.0)).ui(move |ui| {
+        let index = PointIdx::new(0);
+        let point = index.get(&track.points).expect("point");
+        let sky = SkySection::resolve(&track, index);
+        assert!(matches!(sky, SkySection::Report(report) if report.point_index == PointIdx::new(1) && report.age.is_zero()));
+        let _opened = show_sticky_tpv_content(ui, point, &sky, &mut folds, None, FixPlacement::resolve(&track, index));
+    });
+    harness.run();
+    harness.inner.get_by_label("Details").click();
+    harness.run();
+    harness.inner.get_by_label("Nearby sky details").click();
+    harness.run();
+    let header = "Observation 1 · 11:33:20.000 · Global";
+    let ids: Vec<_> = harness
+        .inner
+        .query_all_by_label(header)
+        .map(|node| node.accesskit_node().id())
+        .collect();
+    assert_eq!(ids.len(), 2);
+    assert_ne!(ids.first(), ids.last());
+    let source_values = [
+        ["2025-05-23 11:33:21 UTC", "17.25"],
+        ["2025-05-23 11:33:22 UTC", "47.75"],
+    ];
+    for width in [initial_width, resized_width] {
+        harness.inner.set_size(egui::vec2(width, 560.0));
+        harness.run();
+        assert_eq!(
+            harness
+                .inner
+                .query_all_by_label(header)
+                .map(|node| node.accesskit_node().id())
+                .collect::<Vec<_>>(),
+            ids
+        );
+        for (index, own_values) in source_values.iter().enumerate() {
+            for values in source_values {
+                for value in values {
+                    assert!(
+                        harness.inner.query_by_label(value).is_some(),
+                        "missing {value}"
+                    );
+                }
+            }
+            harness
+                .inner
+                .query_all_by_label(header)
+                .nth(index)
+                .expect("report header")
+                .scroll_to_me();
+            harness.run();
+            harness
+                .inner
+                .query_all_by_label(header)
+                .nth(index)
+                .expect("report header")
+                .click();
+            harness.run();
+            for value in own_values {
+                assert!(
+                    harness.inner.query_by_label(value).is_none(),
+                    "collapsed report contains {value}"
+                );
+            }
+            let other_values = source_values.get(1 - index).expect("other source");
+            for value in other_values {
+                assert!(
+                    harness.inner.query_by_label(value).is_some(),
+                    "other report lost {value}"
+                );
+            }
+            harness
+                .inner
+                .query_all_by_label(header)
+                .nth(index)
+                .expect("report header")
+                .click();
+            harness.run();
+        }
+    }
 }
