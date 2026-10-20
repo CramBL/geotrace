@@ -31,7 +31,7 @@ use egui_plot::{PlotPoint, PlotPoints, PlotTransform, Points};
 use gt_analysis::clock_offset::{ClockOffsetExcursion, ClockOffsetPlacement, ExcursionSample};
 use gt_types::MetricKind;
 
-use super::chips::MetricVisibility;
+use super::chips::{MetricAvailability, MetricVisibility};
 use super::lines::{
     self, ANOMALY_HOVER_RADIUS_PX, ANOMALY_MARKER_RADIUS, LineStroke, NearestHoverLabel,
     PlotHoverLabel,
@@ -307,6 +307,7 @@ pub(super) fn add_clock_offset_line<'a>(
 pub(super) struct ClockOffsetViewport<'v> {
     pub(super) x_min: f64,
     pub(super) x_max: f64,
+    pub(super) available: MetricAvailability,
     pub(super) metric_vis: &'v MetricVisibility,
     pub(super) dark_mode: bool,
 }
@@ -325,7 +326,9 @@ pub(super) fn add_off_scale_clock_offsets(
     pointer: Option<egui::Pos2>,
     nearest: &mut NearestHoverLabel,
 ) {
-    if !viewport.metric_vis.field(MetricKind::ClockDeltaMs) {
+    if !viewport.metric_vis.field(MetricKind::ClockDeltaMs)
+        || !viewport.available.has_data(MetricKind::ClockDeltaMs)
+    {
         return;
     }
     let bounds = plot_ui.plot_bounds();

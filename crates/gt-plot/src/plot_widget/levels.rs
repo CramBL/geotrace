@@ -1,6 +1,9 @@
 //! Mipmap level selection: the per-frame sample budget and the cached
 //! per-track level choices every metric line draws from.
 
+use std::ops::RangeInclusive;
+
+use gt_analysis::clock_offset::{ClockOffsetPlacement, ExcursionSample};
 use gt_egui_mipmap::{LevelSelection, MipMap, SelectionRange};
 use gt_types::MetricKind;
 use rustc_hash::FxHashMap;
@@ -129,7 +132,10 @@ impl TrackLevelCache {
             MetricKind::Eph => self.eph_m,
             MetricKind::HeadingDeg => self.heading_deg,
             MetricKind::ClockDeltaMs => self.clock_delta_ms,
-            MetricKind::SatsSeen
+            MetricKind::Hdop
+            | MetricKind::Vdop
+            | MetricKind::Pdop
+            | MetricKind::SatsSeen
             | MetricKind::SatsFix
             | MetricKind::GpsSeen
             | MetricKind::GpsFix
@@ -168,7 +174,43 @@ impl TrackLevelCache {
     }
 }
 
-impl crate::series::TrackSeries {
+impl TrackSeries {
+    pub(super) fn has_samples_in(&self, kind: MetricKind, window: RangeInclusive<f64>) -> bool {
+        if self
+            .metrics
+            .get(&kind)
+            .into_iter()
+            .flat_map(|metric| &metric.runs)
+            .chain(self.mipmap_for(kind))
+            .any(|run| {
+                let samples = run.finest_level();
+                let start = samples.partition_point(|sample| sample.x < *window.start());
+                samples
+                    .get(start)
+                    .is_some_and(|sample| window.contains(&sample.x))
+            })
+        {
+            return true;
+        }
+        if kind == MetricKind::ClockDeltaMs {
+            let samples_in_window = |samples: &[ExcursionSample]| {
+                samples.iter().any(|sample| window.contains(&sample.t))
+            };
+            let off_scale = match &self.clock_offset_placement {
+                ClockOffsetPlacement::BaselineOffScale(baseline) => {
+                    samples_in_window(&baseline.samples)
+                }
+                ClockOffsetPlacement::BaselineOnScale(excursions) => excursions
+                    .iter()
+                    .any(|excursion| samples_in_window(&excursion.samples)),
+            };
+            if off_scale {
+                return true;
+            }
+        }
+        false
+    }
+
     /// `None` for metrics with no mipmap, matching
     /// [`TrackLevelCache::level_for`].
     pub(super) fn mipmap_for(&self, kind: MetricKind) -> Option<&gt_egui_mipmap::MipMap> {
@@ -177,7 +219,10 @@ impl crate::series::TrackSeries {
             MetricKind::Eph => &self.eph_m,
             MetricKind::HeadingDeg => &self.heading_deg,
             MetricKind::ClockDeltaMs => &self.clock_delta_ms,
-            MetricKind::SatsSeen
+            MetricKind::Hdop
+            | MetricKind::Vdop
+            | MetricKind::Pdop
+            | MetricKind::SatsSeen
             | MetricKind::SatsFix
             | MetricKind::GpsSeen
             | MetricKind::GpsFix

@@ -479,7 +479,10 @@ pub const fn metric_themed_color(kind: gt_types::MetricKind) -> ThemedColor {
         M::QzssSeen => ((240, 110, 90), (196, 90, 73)),  // coral
         M::QzssFix => ((190, 60, 45), (151, 47, 35)),    // brick red
         M::Velocity => ((255, 220, 0), (142, 123, 0)),   // bright yellow
-        M::Eph => ((220, 20, 220), (215, 19, 215)),      // magenta
+        M::Hdop => ((104, 176, 240), (30, 90, 150)),
+        M::Vdop => ((175, 145, 230), (105, 65, 165)),
+        M::Pdop => ((225, 155, 105), (145, 85, 40)),
+        M::Eph => ((220, 20, 220), (215, 19, 215)), // magenta
         M::HeadingDeg => ((255, 100, 50), (209, 81, 40)), // red-orange
         M::ClockDeltaMs => ((200, 200, 200), (123, 123, 123)), // light gray
         // Each utilization rate line uses its constellation's hue, lightened in

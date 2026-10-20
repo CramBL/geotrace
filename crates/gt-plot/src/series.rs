@@ -190,7 +190,7 @@ impl TrackSeries {
         let diagnostics = build_diagnostic_series(&track.points, analysis);
         self.util_anomalies = diagnostics.anomalies;
         self.metrics
-            .retain(|kind, _| CountMetric::from_kind(*kind).is_some());
+            .retain(|kind, _| !diagnostics.metrics.contains_key(kind));
         self.metrics.extend(diagnostics.metrics);
 
         let (clock_delta_pts, placement) =
@@ -305,6 +305,32 @@ fn build_track_series(
     let mut metrics = build_count_series(&track.points);
     let diagnostics = build_diagnostic_series(&track.points, analysis);
     metrics.extend(diagnostics.metrics);
+    for kind in [MetricKind::Hdop, MetricKind::Vdop, MetricKind::Pdop] {
+        let samples = track.points.iter().enumerate().map(|(point_index, point)| {
+            let time = point.tpv.time();
+            let value = match kind {
+                MetricKind::Hdop => point.navigation.hdop,
+                MetricKind::Vdop => point.navigation.vdop,
+                _ => point.navigation.pdop,
+            };
+            if value.is_none()
+                && point.navigation.position_provenance == Some(PositionProvenance::SdkSynthesized)
+            {
+                return Vec::new();
+            }
+            vec![TimedMetricSample {
+                time,
+                value,
+                source: MetricSampleSource {
+                    point_index,
+                    evidence: None,
+                },
+                fix_time: time,
+                report: None,
+            }]
+        });
+        metrics.insert(kind, build_metric_runs(&track.points, samples));
+    }
     let mut velocity_kmh_pts: Vec<[f64; 2]> = Vec::with_capacity(track.points.len());
     let mut eph_m_pts: Vec<[f64; 2]> = Vec::new();
     let mut heading_deg_pts: Vec<[f64; 2]> = Vec::new();
@@ -456,7 +482,7 @@ impl CountMetric {
                 value: Some(f64::from(count.count)),
                 source: MetricSampleSource {
                     point_index,
-                    evidence: count.evidence,
+                    evidence: Some(count.evidence),
                 },
             });
         } else if resolved.is_none()
@@ -469,7 +495,7 @@ impl CountMetric {
                 value: None,
                 source: MetricSampleSource {
                     point_index,
-                    evidence: NavigationEvidenceSource::NavigationCount,
+                    evidence: Some(NavigationEvidenceSource::NavigationCount),
                 },
             });
         }
@@ -489,11 +515,11 @@ impl CountMetric {
                         value: count.map(|count| f64::from(count.count)),
                         source: MetricSampleSource {
                             point_index,
-                            evidence: if count.is_some_and(|count| count.is_aggregate) {
+                            evidence: Some(if count.is_some_and(|count| count.is_aggregate) {
                                 NavigationEvidenceSource::UsageAggregate(index)
                             } else {
                                 NavigationEvidenceSource::UsageList(index)
-                            },
+                            }),
                         },
                     });
                 }
@@ -513,11 +539,11 @@ impl CountMetric {
                         value: count.map(|count| f64::from(count.count)),
                         source: MetricSampleSource {
                             point_index,
-                            evidence: if count.is_some_and(|count| count.is_aggregate) {
+                            evidence: Some(if count.is_some_and(|count| count.is_aggregate) {
                                 NavigationEvidenceSource::ObservationAggregate(index)
                             } else {
                                 NavigationEvidenceSource::ObservationList(index)
-                            },
+                            }),
                         },
                     });
                 }
@@ -682,9 +708,9 @@ fn build_diagnostic_series(points: &[NavPoint], analysis: AnalysisConfig) -> Dia
                         value: rates.get(scope),
                         source: MetricSampleSource {
                             point_index: source.point_index,
-                            evidence: NavigationEvidenceSource::ObservationList(
+                            evidence: Some(NavigationEvidenceSource::ObservationList(
                                 source.observation_index,
-                            ),
+                            )),
                         },
                     });
                 }

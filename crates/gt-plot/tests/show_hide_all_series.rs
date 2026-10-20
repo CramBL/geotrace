@@ -8,6 +8,7 @@ use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
 use gt_flare::MarkedFlare;
 use gt_plot::PlotState;
 use gt_plot::test_util::{self, DrawnPlot, PlotSources};
+use gt_test_utils::Queryable as _;
 use gt_types::{LoadedFile, MetricKind};
 use rstest::rstest;
 
@@ -94,7 +95,7 @@ fn hiding_all_hides_the_metrics_the_channel_and_the_flare_markers() {
 #[case::hidden_flare_markers(HiddenSeries::FlareMarkers, ICON_EYE)]
 fn the_icon_states_what_a_click_changes(#[case] hidden: HiddenSeries, #[case] expected_icon: &str) {
     let mut plot = PlotScene::with_channels_and_a_flare().draw();
-    plot.click_show_hide_all();
+    plot.show_all();
 
     match hidden {
         HiddenSeries::Nothing => {}
@@ -186,3 +187,20 @@ const UNLOADED_CHANNEL_NAME: &str = "Brake pressure";
 /// Where the archived flare peaks, in seconds from the first fix: inside the
 /// recording, so the flare chip enables.
 const FLARE_PEAK_SECS: i64 = 30;
+
+#[test]
+fn show_only_preserves_unavailable_metric_selections() {
+    let mut plot = PlotScene::with_channels_and_a_flare().draw();
+    plot.state_mut().metric_vis.set(MetricKind::Vdop, false);
+    plot.run();
+    plot.harness
+        .inner
+        .get_by_label("Velocity (km/h)")
+        .click_secondary();
+    plot.run();
+    plot.harness.inner.get_by_label("Show only this").click();
+    plot.run();
+    assert!(plot.state().metric_vis.field(MetricKind::Velocity));
+    assert!(plot.state().metric_vis.field(MetricKind::Hdop));
+    assert!(!plot.state().metric_vis.field(MetricKind::Vdop));
+}

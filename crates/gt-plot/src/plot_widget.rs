@@ -1,18 +1,10 @@
 //! The track plot widget: [`PlotState`], the frame loop
 //! ([`show_track_plot`]), and the submodules it orchestrates.
 
-use backward_time_step::BackwardTimeStepViewport;
-use chips::{FlareChipState, HoveredChip, MetricAvailability, MetricChipState, SectionGates};
-use clock_offset::ClockOffsetViewport;
-use context::{ContextLineGates, ContextPlotCaches};
-use flares::{FlareSpanMarking, FlareViewport};
-use levels::{LineViewport, TrackLevelCache};
-use lines::{LineStroke, NearestHoverLabel};
-use snap_error::SnapErrorPlotCache;
-use time_axis::{BandUnit, TimeAxisBandRow, TimeAxisFrame, TimeAxisLabeling};
+use std::cell::Cell;
+use std::collections::BTreeSet;
+use std::ops::RangeInclusive;
 
-use crate::AnalysisConfig;
-use crate::series::{self, PlacedTrackSeries};
 use chrono::{DateTime, Utc};
 use egui::{Align2, Color32, RichText, Stroke, TextStyle};
 use egui_plot::{AxisHints, LineStyle, PlotTransform, Span, VLine};
@@ -28,9 +20,20 @@ use gt_ui_types::{
 };
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
-use std::cell::Cell;
-use std::collections::BTreeSet;
-use std::ops::RangeInclusive;
+use strum::IntoEnumIterator as _;
+
+use crate::AnalysisConfig;
+use crate::series::{self, PlacedTrackSeries};
+
+use self::backward_time_step::BackwardTimeStepViewport;
+use self::chips::{FlareChipState, HoveredChip, MetricAvailability, MetricChipState, SectionGates};
+use self::clock_offset::ClockOffsetViewport;
+use self::context::{ContextLineGates, ContextPlotCaches};
+use self::flares::{FlareSpanMarking, FlareViewport};
+use self::levels::{LineViewport, TrackLevelCache};
+use self::lines::{LineStroke, NearestHoverLabel};
+use self::snap_error::SnapErrorPlotCache;
+use self::time_axis::{BandUnit, TimeAxisBandRow, TimeAxisFrame, TimeAxisLabeling};
 
 pub use chips::{ChannelVisibility, MetricVisibility};
 pub use legend::{LEGEND_DOCK_OFFSET, legend_is_docked};
@@ -526,9 +529,17 @@ pub fn show_track_plot(
         tec,
     );
 
+    let time_window = FilterTimeWindow::from(filter);
+    let samples = MetricKind::iter()
+        .filter(|&kind| {
+            visible_series(&state.series_cache, &visible)
+                .any(|placed| placed.series.has_samples_in(kind, time_window.hard_bound()))
+        })
+        .collect();
     let off_scale_clock_baseline = off_scale_clock_baseline(&state.series_cache, &visible);
     let chip_state = MetricChipState {
         available: MetricAvailability {
+            samples,
             snap_error: snap_error_available,
             jamming: jamming_available,
             hp30: geomagnetic_available.hp30,
@@ -562,8 +573,6 @@ pub fn show_track_plot(
 
     let available_width = ui.available_width();
     let sample_cap = levels::budget_cap(available_width, visible_count);
-
-    let time_window = FilterTimeWindow::from(filter);
 
     // Read by the tick formatter, and by the band row after `Plot::show` returns, both of
     // which run after the x-axis spacer. See [`TimeAxisFrame`].
@@ -840,6 +849,7 @@ pub fn show_track_plot(
                 track_label,
                 cache,
                 metric_vis,
+                chip_state.available,
                 channel_vis,
                 channel_component_colors,
                 present,
@@ -865,6 +875,7 @@ pub fn show_track_plot(
                     x_min: eff_x_min,
                     x_max: eff_x_max,
                     metric_vis,
+                    available: chip_state.available,
                     dark_mode,
                 },
                 series_pointer,

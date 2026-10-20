@@ -323,7 +323,7 @@ fn decimated_samples_retain_original_report_references() {
     assert!(selected.len() < 2_000);
     for sample in selected {
         let source = metric.sample_source(0, sample.x).expect("original source");
-        let NavigationEvidenceSource::UsageAggregate(index) = source.evidence else {
+        let Some(NavigationEvidenceSource::UsageAggregate(index)) = source.evidence else {
             panic!("report aggregate");
         };
         let report = metadata(index as i64 * 100);
@@ -378,4 +378,63 @@ fn diagnostic_runs_preserve_unavailable_epochs_and_report_times() {
             .all(|sample| (sample[1] - 100.0).abs() < 1e-9)
     );
     assert!(slips.iter().flatten().all(|sample| sample[1] == 0.0));
+}
+
+#[rstest]
+#[case::horizontal(MetricKind::Hdop)]
+#[case::vertical(MetricKind::Vdop)]
+#[case::position(MetricKind::Pdop)]
+fn dop_runs_preserve_missing_samples_backward_steps_and_analysis_refresh(#[case] kind: MetricKind) {
+    let mut points = points_at(&[0, 1, 2, 3, 1, 2]);
+    for (point, value) in
+        points
+            .iter_mut()
+            .zip([Some(0.9), None, Some(0.0), Some(1.2), Some(1.5), Some(2.0)])
+    {
+        match kind {
+            MetricKind::Hdop => point.navigation.hdop = value,
+            MetricKind::Vdop => point.navigation.vdop = value,
+            _ => point.navigation.pdop = value,
+        }
+    }
+    let track = gt_test_utils::loaded_track_with_points(points);
+    let mut series = super::build_track_series(0, &track, AnalysisConfig::default());
+    let expected = vec![
+        vec![[0.0, 0.9]],
+        vec![[2.0, 0.0], [3.0, 1.2]],
+        vec![[1.0, 1.5], [2.0, 2.0]],
+    ];
+    for target in [2, usize::MAX] {
+        assert_eq!(drawn_runs(&series, kind, target), expected);
+        assert!(series.eph_m.finest_level().is_empty());
+    }
+    series.apply_analysis(&track, AnalysisConfig::default());
+    assert_eq!(drawn_runs(&series, kind, 2), expected);
+}
+
+#[test]
+fn observation_carriers_preserve_dop_continuity_and_reported_carrier_dop() {
+    let mut points = points_at(&[0, 2]);
+    points[0].navigation.hdop = Some(0.9);
+    points[1].navigation.hdop = Some(1.1);
+    let original = drawn_runs(&series(points.clone()), MetricKind::Hdop, 2);
+    let mut carrier = points_at(&[1]).remove(0);
+    carrier.navigation.position_provenance = Some(PositionProvenance::SdkSynthesized);
+    carrier
+        .satellite_evidence
+        .observations
+        .push(SatelliteObservationReport {
+            metadata: metadata(1_000),
+            satellites: Vec::new(),
+        });
+    points.insert(1, carrier);
+    assert_eq!(
+        drawn_runs(&series(points.clone()), MetricKind::Hdop, 2),
+        original
+    );
+    points[1].navigation.hdop = Some(1.0);
+    assert_eq!(
+        drawn_runs(&series(points), MetricKind::Hdop, usize::MAX),
+        vec![vec![[0.0, 0.9], [1.0, 1.0], [2.0, 1.1]]]
+    );
 }

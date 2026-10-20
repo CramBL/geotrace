@@ -5,7 +5,7 @@ use gt_types::{NavigationEvidenceSource, SatelliteReportMetadata};
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct MetricSampleSource {
     pub point_index: usize,
-    pub evidence: NavigationEvidenceSource,
+    pub evidence: Option<NavigationEvidenceSource>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -27,11 +27,13 @@ enum MetricSamplePriority {
 impl TimedMetricSample {
     fn priority(&self) -> MetricSamplePriority {
         match self.source.evidence {
-            NavigationEvidenceSource::NavigationCount => MetricSamplePriority::NavigationSummary,
-            NavigationEvidenceSource::UsageAggregate(_)
-            | NavigationEvidenceSource::ObservationAggregate(_) => {
-                MetricSamplePriority::ReportedAggregate
+            None | Some(NavigationEvidenceSource::NavigationCount) => {
+                MetricSamplePriority::NavigationSummary
             }
+            Some(
+                NavigationEvidenceSource::UsageAggregate(_)
+                | NavigationEvidenceSource::ObservationAggregate(_),
+            ) => MetricSamplePriority::ReportedAggregate,
             _ => MetricSamplePriority::IdentityList,
         }
     }

@@ -420,6 +420,9 @@ impl MetricProvider for TrackProvider<'_> {
             // requested from providers.
             QueryMetric::Accel => None,
             QueryMetric::Eph => point.tpv.eph_m().map(f64::from),
+            QueryMetric::Hdop => point.navigation.hdop,
+            QueryMetric::Vdop => point.navigation.vdop,
+            QueryMetric::Pdop => point.navigation.pdop,
             QueryMetric::ClockDelta => point
                 .tpv
                 .gps_system_clock_offset()
@@ -656,6 +659,23 @@ mod tests {
             RecordedLatitude::from_degrees(55.5),
             RecordedLongitude::from_degrees(12.25),
         )
+    }
+
+    #[test]
+    fn dop_queries_preserve_recorded_values_and_missing_fields() {
+        let mut points = test_util::test_points();
+        points[0].navigation.hdop = Some(0.9);
+        points[0].navigation.vdop = Some(0.0);
+        points[0].navigation.pdop = Some(1.25);
+        let provider = TrackProvider::new(&points, &[], None);
+        for (metric, expected) in [
+            (QueryMetric::Hdop, 0.9),
+            (QueryMetric::Vdop, 0.0),
+            (QueryMetric::Pdop, 1.25),
+        ] {
+            assert_eq!(provider.value(metric, 0), Some(expected));
+            assert_eq!(provider.value(metric, 1), None);
+        }
     }
 
     #[test]

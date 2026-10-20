@@ -23,7 +23,7 @@ use egui_plot::{PlotPoint, PlotTransform};
 use gt_filter::GlobalFilter;
 use gt_flare::{MarkedFlare, SolarFlare};
 use gt_loaded_files::RecordingNames;
-use gt_test_utils::{By, HarnessInteraction as _, Queryable as _, TestHarness};
+use gt_test_utils::{By, HarnessInteraction as _, NodeT as _, Queryable as _, TestHarness};
 use gt_types::{Channel, FileIdx, LoadedFile, NavPoint, TrackIdx, TrackRef};
 use gt_ui_types::{
     ContextLines, GeomagneticSeries, JammingSeries, SnapErrorSeries, TecSeries, TrackDataVisibility,
@@ -119,6 +119,8 @@ pub struct PlotPosition {
 pub struct DrawnPlotState {
     pub plot: PlotState,
     pub sources: PlotSources,
+    pub files: Vec<LoadedFile>,
+    pub visibility: TrackDataVisibility,
 }
 
 /// A harness that has drawn the plot, and the id the plot stored the frame's
@@ -158,9 +160,9 @@ pub fn drawn_plot_in_theme(
                 ));
                 plot_widget::show_track_plot(
                     ui,
-                    &files,
+                    &state.files,
                     &names,
-                    &visibility,
+                    &state.visibility,
                     &state.sources.filter,
                     None,
                     None,
@@ -177,13 +179,26 @@ pub fn drawn_plot_in_theme(
                     &mut state.plot,
                 );
             },
-            DrawnPlotState { plot, sources },
+            DrawnPlotState {
+                plot,
+                sources,
+                files,
+                visibility,
+            },
         );
     harness.run();
     DrawnPlot { harness, plot_id }
 }
 
 impl DrawnPlot {
+    pub fn metric_chip_disabled(&self, label: &str) -> bool {
+        self.harness
+            .inner
+            .get_by_label(label)
+            .accesskit_node()
+            .is_disabled()
+    }
+
     pub fn state(&self) -> &PlotState {
         &self.harness.state().plot
     }
@@ -228,10 +243,14 @@ impl DrawnPlot {
         self.run();
     }
 
-    /// The state a click reaches from the default: every series in scope
-    /// visible, then every one of them hidden.
+    pub fn show_all(&mut self) {
+        if self.show_hide_all_icon() == ICON_EYE {
+            self.click_show_hide_all();
+        }
+    }
+
     pub fn show_all_then_hide_all(&mut self) {
-        self.click_show_hide_all();
+        self.show_all();
         self.click_show_hide_all();
     }
 
