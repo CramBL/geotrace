@@ -1267,11 +1267,21 @@ fn clicking_a_tree_track_row_past_its_columns_expands_the_track() {
     assert!(harness.state().tree.files[0].tracks[0].expanded);
 }
 
-#[test]
-fn a_track_row_with_explicit_fix_state_shows_statistics_without_satellite_reports() {
+#[rstest]
+#[case::explicit_fix(
+    Some(SolutionState::Fix),
+    "100% availability",
+    "100% known-state coverage"
+)]
+#[case::unknown(None, "— availability", "0% known-state coverage  ·  9s unknown")]
+fn a_track_row_shows_navigation_statistics_without_satellite_reports(
+    #[case] state: Option<SolutionState>,
+    #[case] availability: &str,
+    #[case] details: &str,
+) {
     let mut points = gt_test_utils::fixtures::stationary_nav_data(10);
     for point in &mut points {
-        point.navigation.state = Some(SolutionState::Fix);
+        point.navigation.state = state;
     }
     let file = gt_test_utils::build_file("no_sats.gtd", &points, FileParts::default());
     let mut files = LoadedFiles::new();
@@ -1287,9 +1297,10 @@ fn a_track_row_with_explicit_fix_state_shows_statistics_without_satellite_report
         .hover_at_and_settle(row, TOOLTIP_SETTLE_FRAMES);
 
     assert!(
-        harness.inner.query_by_label("100% fix").is_some(),
-        "the hover text shows availability from explicit navigation states"
+        harness.inner.query_by_label(availability).is_some(),
+        "the hover text shows navigation availability"
     );
+    assert!(harness.inner.query_by_label(details).is_some());
 }
 
 #[test]
@@ -1374,15 +1385,15 @@ fn the_recording_row_hover_states_an_em_dash_for_a_recording_with_no_fixes() {
 #[test]
 fn snapshot_fix_stats_tooltip_content() {
     let stats = FixStats {
-        time_with_fix: chrono::Duration::seconds(4800), // 1h20m
-        time_without_fix: chrono::Duration::seconds(900), // 15m
-        time_estimated_only: chrono::Duration::zero(),
-        time_unknown: chrono::Duration::zero(),
-        fix_loss_count: 3,
-        max_continuous_no_fix: chrono::Duration::seconds(480), // 8m
+        time_with_fix: chrono::Duration::seconds(20),
+        time_without_fix: chrono::Duration::seconds(20),
+        time_estimated_only: chrono::Duration::seconds(10),
+        time_unknown: chrono::Duration::seconds(10),
+        fix_loss_count: 1,
+        max_continuous_no_fix: chrono::Duration::seconds(20),
     };
     let mut h = TestHarness::builder()
-        .size(egui::vec2(480.0, 30.0))
+        .size(egui::vec2(600.0, 75.0))
         .ui(move |ui| {
             ui.add_space(4.0);
             gt_side_panel::widgets::fix_stats_tooltip_row(ui, stats);

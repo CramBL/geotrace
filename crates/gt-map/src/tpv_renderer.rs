@@ -6,15 +6,15 @@ use egui::{Color32, Pos2, Stroke, Ui, Vec2};
 use egui::{Grid, RichText, ScrollArea};
 use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::CHECK as ICON_CHECK;
-use gt_fmt::UTC_SECOND_FORMAT;
+use gt_fmt::{UTC_SECOND_FORMAT, UTC_SUBSECOND_FORMAT};
 use gt_sky::{SkyHighlight, SkyPlot, SkyPlotSize};
 use gt_types::coordinates::{Coordinate, RecordedCoordinate};
 use gt_types::satellites::{Constellation, NO_DATA_SNR_EXPLANATION};
 use gt_types::{
     DataCategory, FileIdx, FixQuality, FixRef, LoadedFile, LoadedTrack, MapFixKind, NavPoint,
     NearbySkyEvidence, PlacedPoint, PlacedPoints, PointIdx, ResolvedPosition,
-    SKY_REPORT_MAX_AGE_SECS, SatelliteMembership, SatelliteQueryScope, SkyGeometry, SkySatellite,
-    SolutionState, TrackIdx, TrackRef,
+    SKY_REPORT_MAX_AGE_SECS, SatelliteMembership, SatelliteQueryScope, SatelliteScope, SkyGeometry,
+    SkySatellite, SolutionState, TrackIdx, TrackRef,
 };
 use gt_ui_theme::labels::LabelWithHover;
 use gt_ui_theme::{DEGREE_SIGN, DELTA, EM_DASH};
@@ -28,9 +28,12 @@ use uom::si::angle::{degree, radian};
 use uom::si::f64::Angle;
 use uom::si::length::meter;
 
+use self::navigation_details::NavigationDetails;
 use crate::icon_mesh::{IconId, IconInstance, IconMeshBatch, IconMeshLibrary};
 use crate::text_badge::{BadgePlateHeight, TextBadge};
 use crate::transform::MapScale;
+
+mod navigation_details;
 
 /// What the icon pass culls a fix against: `map_rect` grown by
 /// [`ICON_VIEW_MARGIN_PX`], so an icon whose shape crosses the edge draws.
@@ -353,16 +356,16 @@ fn sky_section_ui(
                 for (label, metadata) in observation.chain(usage) {
                     ui.label(format!(
                         "{label} at {}",
-                        metadata.normalized_time.utc().format(UTC_SECOND_FORMAT)
+                        metadata.normalized_time.utc().format(UTC_SUBSECOND_FORMAT)
                     ));
                     if let Some(receiver) = metadata.gps_time {
                         ui.label(format!(
                             "Receiver {}",
-                            receiver.utc().format(UTC_SECOND_FORMAT)
+                            receiver.utc().format(UTC_SUBSECOND_FORMAT)
                         ));
                     }
                     if let Some(host) = metadata.sys_time {
-                        ui.label(format!("Host {}", host.utc().format(UTC_SECOND_FORMAT)));
+                        ui.label(format!("Host {}", host.utc().format(UTC_SUBSECOND_FORMAT)));
                     }
                 }
             });
@@ -582,6 +585,7 @@ fn hover_grid_ui(ui: &mut Ui, point: PlacedPoint<'_>, recording_name: Option<&st
                 ui.end_row();
             }
 
+            NavigationDetails(fix).rows_ui(ui);
             show_satellite_rows(ui, fix);
 
             // Time delta between the GPS fix and the satellite report.
@@ -697,6 +701,7 @@ pub(crate) fn show_sticky_tpv_content(
             ui.add_space(6.0);
         }
         sticky_metrics(ui, p, highlight, recording_name, placement);
+        NavigationDetails(p).reports_ui(ui);
         open_trails
     };
     let mut open_trails = false;
@@ -776,32 +781,13 @@ fn sticky_metrics(
             ui.end_row();
         }
 
-        if let Some(sats) = &p.satellites {
-            let fix = sats.fix_count();
-            let seen = sats.satellite_count();
-            ui.label("Satellites");
-            let dark_mode = ui.visuals().dark_mode;
-            ui.horizontal(|ui| {
-                let fix_resp = ui.colored_label(fix_count_color(fix, dark_mode), fix.to_string());
-                if crate::hover_labels::hover_affordance(ui, fix_resp.rect) {
-                    *highlight = Some(SkyHighlight::in_fix());
-                }
-                ui.label("/");
-                ui.colored_label(seen_count_color(seen, dark_mode), seen.to_string());
-            });
-            ui.end_row();
-
-            // Time delta between the GPS fix and the satellite report.
-            // A nonzero delta means the satellite data is from a slightly
-            // different moment than the fix - worth showing for diagnostics.
-            if let Some(sat_gps_time) = sats.gps_time() {
-                let sat_delta_ms = (p.tpv.time() - sat_gps_time).num_milliseconds();
-                if sat_delta_ms != 0 {
-                    ui.label(format!("Sat {DELTA}t"));
-                    ui.label(gt_fmt::format_signed_delta(sat_delta_ms));
-                    ui.end_row();
-                }
-            }
+        NavigationDetails(p).rows_ui(ui);
+        let counts =
+            NavigationDetails(p).count_row_ui(ui, SatelliteQueryScope::Global, "Satellites");
+        if p.resolved_used_count(SatelliteQueryScope::Global).is_some()
+            && crate::hover_labels::hover_affordance(ui, counts.rect)
+        {
+            *highlight = Some(SkyHighlight::in_fix());
         }
 
         // GPS/system-clock delta: how far the GPS clock leads the host clock.
@@ -1117,62 +1103,18 @@ pub(crate) fn constellation_swatch(ui: &mut Ui, constellation: Constellation) {
 }
 
 fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
-    // A missing report does not mean there was no GPS fix, just that no
-    // satellite data was captured or associated for this point.
-    let Some(sats) = &p.satellites else {
-        return;
-    };
-
-    let fix = sats.fix_count();
-    let seen = sats.satellite_count();
-    let dark_mode = ui.visuals().dark_mode;
-
-    // Total summary row - bold to signal it is the aggregate.
-    ui.label(RichText::new("Satellites").strong());
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(fix.to_string())
-                .color(fix_count_color(fix, dark_mode))
-                .strong(),
-        );
-        ui.label(RichText::new("/").strong());
-        ui.label(
-            RichText::new(seen.to_string())
-                .color(seen_count_color(seen, dark_mode))
-                .strong(),
-        );
-    });
-    ui.end_row();
-
-    for constellation in [
-        Constellation::Gps,
-        Constellation::Galileo,
-        Constellation::Glonass,
-        Constellation::Beidou,
-        Constellation::Navic,
-        Constellation::Qzss,
-    ] {
-        let const_total = sats.by_constellation(constellation).count() as u32;
-        if const_total == 0 {
-            continue;
+    NavigationDetails(p).count_row_ui(ui, SatelliteQueryScope::Global, "Satellites");
+    for constellation in Constellation::iter() {
+        let scope = SatelliteQueryScope::Constellation(constellation);
+        if p.satellite_evidence.usage.iter().any(|report| {
+            report.satellites.iter().any(|row| row.identity.constellation == constellation)
+                || matches!(report.metadata.scope, SatelliteScope::Constellations(set) if set.contains(constellation))
+        }) || p.satellite_evidence.observations.iter().any(|report| {
+            report.satellites.iter().any(|row| row.identity.constellation == constellation)
+                || matches!(report.metadata.scope, SatelliteScope::Constellations(set) if set.contains(constellation))
+        }) {
+            NavigationDetails(p).count_row_ui(ui, scope, constellation.display_name());
         }
-        let const_fix = sats
-            .satellites_with_fix()
-            .filter(|s| s.constellation() == constellation)
-            .count() as u32;
-        ui.horizontal(|ui| {
-            constellation_swatch(ui, constellation);
-            ui.label(constellation.display_name());
-        });
-        ui.horizontal(|ui| {
-            ui.colored_label(fix_count_color(const_fix, dark_mode), const_fix.to_string());
-            ui.label("/");
-            ui.colored_label(
-                seen_count_color(const_total, dark_mode),
-                const_total.to_string(),
-            );
-        });
-        ui.end_row();
     }
 }
 
