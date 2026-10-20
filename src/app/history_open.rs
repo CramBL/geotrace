@@ -731,6 +731,9 @@ impl App {
             }
         };
         let fmt_placement_rule = |rule: StoredFixPlacementRule| match rule {
+            StoredFixPlacementRule::SynthesizedOrHeadinglessNoFix => {
+                "synthesized or headingless with no fix".to_owned()
+            }
             StoredFixPlacementRule::MissingHeading => "no heading".to_owned(),
             StoredFixPlacementRule::MissingHeadingAndNothingInFix => {
                 "no heading, nothing in fix".to_owned()
@@ -775,7 +778,7 @@ impl App {
                         ui.label(fmt_split_rule(stored.track_split_rule));
                         ui.label(fmt_split_rule(current.track_split_rule));
                         ui.end_row();
-                        ui.label("Dead-reckoned fix");
+                        ui.label("Position placement");
                         ui.label(fmt_placement_rule(stored.fix_placement_rule));
                         ui.label(fmt_placement_rule(current.fix_placement_rule));
                         ui.end_row();

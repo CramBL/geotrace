@@ -342,9 +342,8 @@ pub struct SegmentLengthRange {
 /// Each level holds the indices (into `LoadedTrack::points`) that survive a
 /// Mercator-space radial-distance filter: a point is kept when it is at
 /// least the level's tolerance away from the previously kept point, or when
-/// its [`NavPoint::render_class`] differs (so ghost stretches and
-/// fix-quality transitions can never be erased by downsampling). The first
-/// and last point always survive.
+/// its render class, resolved navigation state or coordinate origin differs.
+/// The first and last point always survive.
 ///
 /// Renderers call [`TrackLod::select`] with the current map scale to get
 /// the coarsest level whose tolerance is still sub-pixel, bounding per-frame

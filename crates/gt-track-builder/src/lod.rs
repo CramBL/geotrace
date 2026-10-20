@@ -1,13 +1,21 @@
 use gt_types::extent::{DrawnFix, Extent};
 use gt_types::placed_point::{PlacedPoint, PlacedPoints};
 use gt_types::track::{LOD_BASE_TOLERANCE_MERC, LodChunk, LodLevel, TrackLod};
+use gt_types::{FixQuality, MercPoint, PositionProvenance, SolutionState};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct LodTransitionKey {
+    render_class: (bool, FixQuality),
+    state: SolutionState,
+    provenance: Option<PositionProvenance>,
+}
 
 /// Build the multi-resolution render LOD for a track's points.
 ///
 /// Levels apply a Mercator-space radial-distance filter with doubling
 /// tolerances: a point survives when it is at least the tolerance away from
-/// the previously kept point or its [`gt_types::NavPoint::render_class`] (ghost flag,
-/// fix quality) differs, so no styled transition is ever decimated away.
+/// the previously kept point or its render class, resolved navigation state
+/// or recorded coordinate origin differs.
 /// The first and last point always survive. Each level is built from the
 /// previous one, so the total build cost is a geometric series in the point
 /// count, capped by the shrink ratio a stored level must reach.
@@ -138,7 +146,7 @@ fn decimate(
 ) -> Vec<u32> {
     let tol_sq = tolerance * tolerance;
     let mut kept: Vec<u32> = Vec::new();
-    let mut last_kept: Option<(gt_types::MercPoint, (bool, gt_types::FixQuality))> = None;
+    let mut last_kept: Option<(MercPoint, LodTransitionKey)> = None;
     let mut last_candidate: Option<u32> = None;
 
     for pi in candidates {
@@ -149,7 +157,11 @@ fn decimate(
             continue;
         };
         last_candidate = Some(idx);
-        let class = point.fix.render_class();
+        let class = LodTransitionKey {
+            render_class: point.fix.render_class(),
+            state: point.fix.resolved_navigation_state().state,
+            provenance: point.fix.navigation.position_provenance,
+        };
         let keep = match last_kept {
             None => true,
             Some((merc, last_class)) => {
@@ -386,6 +398,62 @@ mod tests {
             .iter()
             .any(|&i| points[i as usize].fix_quality() == FixQuality::Marginal);
         assert!(marginal_kept, "marginal stretch was decimated away");
+    }
+
+    #[test]
+    fn navigation_state_and_provenance_transitions_survive_every_level() {
+        let mut points: Vec<_> = (0..512)
+            .map(|i| {
+                let east_m = f64::from(i)
+                    + if (150..250).contains(&i) {
+                        5_000.0
+                    } else {
+                        0.0
+                    };
+                point_at_meters(east_m, 12, fix_time(i))
+            })
+            .collect();
+        for (i, point) in points.iter_mut().enumerate() {
+            point.navigation.state = Some(match i {
+                100..200 => SolutionState::NoFix,
+                200..300 => SolutionState::EstimatedOnly,
+                300..400 => SolutionState::Unknown,
+                _ => SolutionState::Fix,
+            });
+            point.navigation.position_provenance = match i {
+                50..150 => Some(PositionProvenance::SourceProvided),
+                150..250 => Some(PositionProvenance::SdkSynthesized),
+                _ => None,
+            };
+        }
+        let geometry = crate::segment::measure_track_geometry(
+            &points,
+            crate::segment::FixPlacementRule::default(),
+        );
+        let placed =
+            PlacedPoints::new(&points, &geometry.measured().unwrap().resolved_positions).unwrap();
+        assert_ne!(
+            points[150].tpv.position().unwrap(),
+            placed.get(150).unwrap().resolved_position()
+        );
+        let lod = build_track_lod(placed);
+        let levels: Vec<_> = (0..).map_while(|index| lod.level(index)).collect();
+        assert!(levels.len() > 1);
+        for (level_index, level) in levels.into_iter().enumerate() {
+            for required in [0, 50, 100, 150, 200, 250, 300, 400, 511] {
+                assert!(
+                    level.indices().contains(&required),
+                    "level {level_index}, index {required}"
+                );
+            }
+            for &index in level.indices() {
+                let index = index as usize;
+                assert_eq!(
+                    placed.get(index).unwrap().resolved_position(),
+                    geometry.measured().unwrap().resolved_positions[index].coordinates()
+                );
+            }
+        }
     }
 
     #[test]

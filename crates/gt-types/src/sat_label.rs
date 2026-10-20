@@ -5,12 +5,13 @@ use crate::highlight::PointIdx;
 /// makes a smaller tier win when label placement resolves collisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, strum::EnumCount)]
 pub enum SatLabelTier {
-    /// The point's [`crate::FixQuality`] differs from the previous point
-    /// with a satellite report - a degradation or a recovery.
+    /// Resolved state or used-count quality differs from the previous point
+    /// with a known global used count.
     QualityTransition,
     /// Local minimum of the fix count - the worst point of a dip.
     FixCountMinimum,
-    /// Track start or end, or the first real fix after a ghost stretch.
+    /// First or last point with a known global used count, or a recorded Fix
+    /// with a known global used count immediately after synthesis or known loss.
     Endpoint,
     /// Periodic coverage along the track so labels appear at high zoom
     /// even on stretches with stable satellite reception.
@@ -25,8 +26,7 @@ pub enum SatLabelTier {
 /// which keeps the highest-priority anchor per screen region.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SatLabelAnchor {
-    /// Index into the owning track's points. Always a point that carries
-    /// a satellite report - there is nothing to label otherwise.
+    /// Index into the track's points with a known global used count.
     pub point: PointIdx,
     pub tier: SatLabelTier,
 }

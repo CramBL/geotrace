@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, Utc};
 use gt_track_builder::{FileMeta, SegmentationConfig};
+use gt_types::PositionProvenance;
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::fixtures::{self, FixKind};
 use gt_types::markers::{GeneratedMarker, GeneratedMarkerKind};
@@ -26,16 +27,16 @@ fn measured_fix(secs: i64, lon_degrees: f64, system_clock_ahead: Duration) -> Na
     )
 }
 
-/// An epoch the receiver dead-reckoned and wrote at the null island: no heading
-/// and no satellite report, so the builder redraws it between its neighbours.
 fn dead_reckoned_fix_at_the_null_island(secs: i64, system_clock_ahead: Duration) -> NavPoint {
-    fixtures::nav_point_with_host_clock(
+    let mut point = fixtures::nav_point_with_host_clock(
         utc_time(secs),
         system_clock_ahead,
         Latitude::new(0.0),
         Longitude::new(0.0),
         FixKind::GhostWithoutHeading,
-    )
+    );
+    point.navigation.position_provenance = Some(PositionProvenance::SdkSynthesized);
+    point
 }
 
 fn generated_markers(points: &[NavPoint]) -> Vec<GeneratedMarker> {

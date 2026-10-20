@@ -58,7 +58,7 @@ pub fn segmentation() -> StoredSegmentation {
     StoredSegmentation {
         track_split_gap_us: 300_000_000,
         track_split_rule: StoredTrackSplitRule::StepInEitherDirection,
-        fix_placement_rule: StoredFixPlacementRule::MissingHeadingAndNothingInFix,
+        fix_placement_rule: StoredFixPlacementRule::SynthesizedOrHeadinglessNoFix,
         detect_clock_discontinuities: true,
         clock_discontinuity_sigmas: 5.0,
     }

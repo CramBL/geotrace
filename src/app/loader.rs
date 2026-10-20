@@ -805,6 +805,9 @@ pub(crate) fn stored_segmentation_from_config(
             TrackSplitRule::StepInEitherDirection => StoredTrackSplitRule::StepInEitherDirection,
         },
         fix_placement_rule: match config.fix_placement_rule {
+            FixPlacementRule::SynthesizedOrHeadinglessNoFix => {
+                StoredFixPlacementRule::SynthesizedOrHeadinglessNoFix
+            }
             FixPlacementRule::MissingHeading => StoredFixPlacementRule::MissingHeading,
             FixPlacementRule::MissingHeadingAndNothingInFix => {
                 StoredFixPlacementRule::MissingHeadingAndNothingInFix
@@ -844,6 +847,9 @@ pub(crate) fn stored_fix_placement_rule(
     settings: &gt_store::StoredSegmentation,
 ) -> Option<FixPlacementRule> {
     match settings.fix_placement_rule {
+        StoredFixPlacementRule::SynthesizedOrHeadinglessNoFix => {
+            Some(FixPlacementRule::SynthesizedOrHeadinglessNoFix)
+        }
         StoredFixPlacementRule::MissingHeading => Some(FixPlacementRule::MissingHeading),
         StoredFixPlacementRule::MissingHeadingAndNothingInFix => {
             Some(FixPlacementRule::MissingHeadingAndNothingInFix)
@@ -1382,6 +1388,10 @@ mod tests {
     #[case::the_current_rule(
         StoredFixPlacementRule::MissingHeadingAndNothingInFix,
         Some(FixPlacementRule::MissingHeadingAndNothingInFix)
+    )]
+    #[case::navigation_evidence(
+        StoredFixPlacementRule::SynthesizedOrHeadinglessNoFix,
+        Some(FixPlacementRule::SynthesizedOrHeadinglessNoFix)
     )]
     #[case::a_rule_this_build_does_not_implement(StoredFixPlacementRule::Unrecognized(7), None)]
     fn stored_fix_placement_rule_takes_the_rule_the_recording_was_placed_by(

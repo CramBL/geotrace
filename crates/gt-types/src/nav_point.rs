@@ -5,22 +5,20 @@ use crate::satellite_evidence::SatelliteEvidence;
 use crate::satellites::Satellites;
 use crate::tpv::TimePositionVelocity;
 
-/// Fix-quality tier of a nav point, derived from its satellite report.
-///
-/// This is the canonical classification shared by the map renderers (icon
-/// and quality-line colors) and the track LOD builder (decimation must keep
-/// every point where the tier changes, so a quality transition can never be
-/// erased by downsampling).
+/// Quality classification for legacy reports and resolved navigation evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FixQuality {
-    /// Satellite report present but zero satellites in fix.
+    /// Resolved NoFix state or a legacy report with zero used satellites.
     Lost,
     /// 1-9 satellites in fix.
     Marginal,
     /// 10 or more satellites in fix.
     Strong,
-    /// No satellite report attached - quality unknown, assume fine.
     Unknown,
+}
+
+impl FixQuality {
+    pub(crate) const STRONG_USED_COUNT: u32 = 10;
 }
 
 /// Coordinates with their Web Mercator projection, held together so the two
@@ -124,7 +122,7 @@ impl NavPoint {
         match &self.satellites {
             None => FixQuality::Unknown,
             Some(sats) => match sats.fix_count() {
-                n if n >= 10 => FixQuality::Strong,
+                n if n >= FixQuality::STRONG_USED_COUNT => FixQuality::Strong,
                 n if n > 0 => FixQuality::Marginal,
                 _ => FixQuality::Lost,
             },

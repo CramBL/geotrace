@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, Utc};
 use gt_track_builder::{FileMeta, SegmentationConfig, test_util};
+use gt_types::PositionProvenance;
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::fixtures::{self, FixKind};
 use gt_types::nav_point::NavPoint;
@@ -26,15 +27,15 @@ fn measured_fix(secs: i64, lon_degrees: f64) -> NavPoint {
     )
 }
 
-/// An epoch the receiver dead-reckoned and wrote at the null island: no heading
-/// and no satellite report, so the builder redraws it between its neighbours.
 fn ghost_fix_at_the_null_island(secs: i64) -> NavPoint {
-    fixtures::nav_point(
+    let mut point = fixtures::nav_point(
         utc_time(secs),
         Latitude::new(0.0),
         Longitude::new(0.0),
         FixKind::GhostWithoutHeading,
-    )
+    );
+    point.navigation.position_provenance = Some(PositionProvenance::SdkSynthesized);
+    point
 }
 
 /// Geometry of a track of two measured fixes 0.002° of longitude apart, with a

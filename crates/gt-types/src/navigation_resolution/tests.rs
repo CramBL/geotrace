@@ -8,8 +8,8 @@ use crate::satellite_evidence::{
     SatelliteObservation, SatelliteObservationReport, SatelliteQueryScope, SatelliteReportMetadata,
     SatelliteScope, SatelliteUsage, SatelliteUsageReport,
 };
-use crate::satellites::{Constellation, ConstellationSet, Prn, SatSample, Satellites};
-use crate::{GpsTime, Latitude, Longitude, NavPoint, SysTime, TimePositionVelocity};
+use crate::satellites::{Constellation, ConstellationSet, Prn, SatSample, Satellite, Satellites};
+use crate::{FixQuality, GpsTime, Latitude, Longitude, NavPoint, SysTime, TimePositionVelocity};
 
 #[derive(Clone)]
 struct UsageInput {
@@ -694,4 +694,49 @@ fn legacy_constructor_normalizes_host_report_time_without_replacing_it_with_fix_
             .map(|report| report.metadata.normalized_time.utc()),
         Some(DateTime::UNIX_EPOCH + Duration::milliseconds(400))
     );
+}
+
+#[rstest]
+#[case::missing_count(SolutionState::Fix, None, FixQuality::Unknown)]
+#[case::zero_count(SolutionState::Fix, Some(0), FixQuality::Unknown)]
+#[case::marginal(SolutionState::Fix, Some(9), FixQuality::Marginal)]
+#[case::strong(SolutionState::Fix, Some(10), FixQuality::Strong)]
+#[case::no_fix_positive_count(SolutionState::NoFix, Some(12), FixQuality::Lost)]
+#[case::unknown_positive_count(SolutionState::Unknown, Some(12), FixQuality::Unknown)]
+#[case::estimated_positive_count(SolutionState::EstimatedOnly, Some(12), FixQuality::Unknown)]
+fn resolved_quality_uses_explicit_state_and_optional_used_count(
+    #[case] state: SolutionState,
+    #[case] used_count: Option<u32>,
+    #[case] expected: FixQuality,
+) {
+    let mut point = point();
+    point.navigation.state = Some(state);
+    point.navigation.used_count = used_count;
+    assert_eq!(point.resolved_fix_quality(), expected);
+    assert_eq!(point.fix_quality(), FixQuality::Unknown);
+}
+
+#[rstest]
+#[case::unreported(None, FixQuality::Unknown)]
+#[case::empty(Some(0), FixQuality::Lost)]
+#[case::marginal(Some(9), FixQuality::Marginal)]
+#[case::strong(Some(10), FixQuality::Strong)]
+fn legacy_reports_retain_their_quality_under_both_accessors(
+    #[case] used_count: Option<u32>,
+    #[case] expected: FixQuality,
+) {
+    let point = NavPoint::new(
+        point().tpv,
+        used_count.map(|count| {
+            Satellites::new(
+                Some(GpsTime::from_utc(DateTime::UNIX_EPOCH)),
+                None,
+                (1..=count)
+                    .map(|prn| Satellite::new(Constellation::Gps, prn, None, None, None, true))
+                    .collect(),
+            )
+        }),
+    );
+    assert_eq!(point.fix_quality(), expected);
+    assert_eq!(point.resolved_fix_quality(), expected);
 }

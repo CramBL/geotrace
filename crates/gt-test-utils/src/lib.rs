@@ -38,6 +38,7 @@ pub mod interaction;
 pub mod ionex_fixtures;
 pub mod log_fixtures;
 pub mod map_tile_captures;
+pub mod navigation_evidence_fixtures;
 pub mod pending_writes;
 pub mod recording_fixtures;
 #[cfg(feature = "snapshot")]

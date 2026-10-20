@@ -2,7 +2,6 @@ use chrono::{DateTime, Duration, Utc};
 use gt_analysis::clock_offset::{self, ClockOffsetExcursion};
 use gt_analysis::robust;
 use gt_geo_math::GreatCircleArc;
-use gt_types::SolutionState;
 use gt_types::channel::Channel;
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::geo_bounds::{GeoBounds, PoleWinding};
@@ -18,6 +17,7 @@ use gt_types::track::{
     FileMetadata, FileSource, FixStats, LoadedFile, LoadedTrack, MeasuredTrackGeometry, MercBounds,
     SegmentLengthRange, TimeRange, TrackAggregates, TrackGeometry, TrackMetadata, TravelMode,
 };
+use gt_types::{PositionProvenance, SolutionState};
 use rustc_hash::FxHashMap;
 use std::fmt;
 use std::ops::Range;
@@ -85,16 +85,22 @@ pub enum FixPlacementRule {
     /// A fix with no heading and no satellite in fix is dead-reckoned. One
     /// stamped outside its anchors' time span is placed at the anchor it is
     /// stamped nearer to.
-    #[default]
     MissingHeadingAndNothingInFix,
+    #[default]
+    SynthesizedOrHeadinglessNoFix,
 }
 
 impl FixPlacementRule {
-    fn classifies_as_dead_reckoned(self, point: &NavPoint) -> bool {
+    fn requires_placement(self, point: &NavPoint) -> bool {
         match self {
             Self::MissingHeading => point.tpv.heading().is_none(),
             Self::MissingHeadingAndNothingInFix => {
                 point.tpv.heading().is_none() && point.fix_count() == 0
+            }
+            Self::SynthesizedOrHeadinglessNoFix => {
+                point.navigation.position_provenance == Some(PositionProvenance::SdkSynthesized)
+                    || (point.tpv.heading().is_none()
+                        && point.resolved_navigation_state().state == SolutionState::NoFix)
             }
         }
     }
@@ -106,7 +112,9 @@ impl FixPlacementRule {
     fn share_along_the_arc(self, elapsed_share: f64) -> f64 {
         match self {
             Self::MissingHeading => elapsed_share,
-            Self::MissingHeadingAndNothingInFix => elapsed_share.clamp(0.0, 1.0),
+            Self::MissingHeadingAndNothingInFix | Self::SynthesizedOrHeadinglessNoFix => {
+                elapsed_share.clamp(0.0, 1.0)
+            }
         }
     }
 }
@@ -567,10 +575,10 @@ fn place_track_fixes(points: &[NavPoint], placements: &mut FixPlacements, rule: 
     place_fixes(
         points,
         placements,
-        UnmeasuredFix::CoordinateOutOfRange,
+        PlacementPass::CoordinateOutOfRange,
         rule,
     );
-    place_fixes(points, placements, UnmeasuredFix::Ghost, rule);
+    place_fixes(points, placements, PlacementPass::Navigation, rule);
 }
 
 fn track_geometry(placements: FixPlacements) -> TrackGeometry {
@@ -708,7 +716,7 @@ pub fn build_loaded_file(
     place_fixes(
         points,
         &mut placements,
-        UnmeasuredFix::CoordinateOutOfRange,
+        PlacementPass::CoordinateOutOfRange,
         config.fix_placement_rule,
     );
 
@@ -927,32 +935,28 @@ impl TimedArc {
     }
 }
 
-/// A fix the receiver did not measure at the coordinates it holds, and what
-/// anchors the position the builder places it at.
 #[derive(Clone, Copy)]
-enum UnmeasuredFix {
-    /// A fix with a recorded latitude or longitude outside its range, anchored
-    /// by every fix that has a recorded position: it holds none of its own to
-    /// fall back on.
+enum PlacementPass {
     CoordinateOutOfRange,
-    /// A fix the receiver dead-reckoned, which [`FixPlacementRule`] names,
-    /// anchored by the fixes with a satellite in fix.
-    Ghost,
+    Navigation,
 }
 
-impl UnmeasuredFix {
+impl PlacementPass {
     fn is_target(self, point: &NavPoint, rule: FixPlacementRule) -> bool {
         match self {
-            Self::Ghost => {
-                point.tpv.position().is_some() && rule.classifies_as_dead_reckoned(point)
-            }
+            Self::Navigation => point.tpv.position().is_some() && rule.requires_placement(point),
             Self::CoordinateOutOfRange => point.tpv.position().is_none(),
         }
     }
 
-    fn is_anchor(self, point: &NavPoint) -> bool {
+    fn is_anchor(self, point: &NavPoint, rule: FixPlacementRule) -> bool {
         match self {
-            Self::Ghost => point.tpv.position().is_some() && point.fix_count() > 0,
+            Self::Navigation if rule == FixPlacementRule::SynthesizedOrHeadinglessNoFix => {
+                point.tpv.position().is_some()
+                    && !rule.requires_placement(point)
+                    && point.resolved_navigation_state().state != SolutionState::NoFix
+            }
+            Self::Navigation => point.tpv.position().is_some() && point.fix_count() > 0,
             Self::CoordinateOutOfRange => point.tpv.position().is_some(),
         }
     }
@@ -1001,7 +1005,7 @@ impl UnmeasuredFix {
         };
 
         let (latitude, longitude) = match self {
-            Self::Ghost => interpolated,
+            Self::Navigation => interpolated,
             // Any anchor places a fix out of range better than none does: it
             // has no recorded position to be left at.
             Self::CoordinateOutOfRange => interpolated
@@ -1021,10 +1025,10 @@ impl UnmeasuredFix {
 fn place_fixes(
     points: &[NavPoint],
     placements: &mut FixPlacements,
-    kind: UnmeasuredFix,
+    kind: PlacementPass,
     rule: FixPlacementRule,
 ) {
-    let anchors = nearest_anchors(points, |point| kind.is_anchor(point));
+    let anchors = nearest_anchors(points, |point| kind.is_anchor(point, rule));
 
     let placed: Vec<(usize, ResolvedPosition)> = points
         .iter()

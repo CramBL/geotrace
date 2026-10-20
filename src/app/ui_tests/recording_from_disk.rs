@@ -2,8 +2,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
+use geotrace_sdk::NavFile;
+use gt_store::{
+    HistoryDatabase as _, ReadOnlyHistoryDatabase as _, Recordings, StoredFixPlacementRule,
+    TrackRange, TrackState,
+};
 use gt_test_utils::{HarnessInteraction as _, TestHarness};
-use gt_types::{FileIdx, TrackIdx, TrackRef};
+use gt_track_builder::SegmentationConfig;
+use gt_types::{FileIdx, Latitude, Longitude, TrackIdx, TrackRef};
 use rstest::rstest;
 
 use crate::app::App;
@@ -510,9 +516,14 @@ fn resegment_prompt_for(
     gt_store::StoredFixPlacementRule::Unrecognized(7),
     true
 )]
-#[case::the_current_rules(
+#[case::the_previous_default_placement_rule(
     gt_store::StoredTrackSplitRule::StepInEitherDirection,
     gt_store::StoredFixPlacementRule::MissingHeadingAndNothingInFix,
+    true
+)]
+#[case::the_current_rules(
+    gt_store::StoredTrackSplitRule::StepInEitherDirection,
+    gt_store::StoredFixPlacementRule::SynthesizedOrHeadinglessNoFix,
     false
 )]
 fn opening_a_recording_stored_by_another_rule_raises_the_resegment_prompt(
@@ -602,4 +613,100 @@ fn the_resegment_prompt_offers_the_stored_tracks_only_for_rules_it_implements(
     let button = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Use stored tracks");
 
     assert_eq!(button.accesskit_node().is_disabled(), expected_disabled);
+}
+
+#[rstest]
+#[case::original(StoredFixPlacementRule::MissingHeading, 0.5)]
+#[case::previous_default(StoredFixPlacementRule::MissingHeadingAndNothingInFix, 0.5)]
+#[case::navigation_evidence(StoredFixPlacementRule::SynthesizedOrHeadinglessNoFix, 10.0)]
+fn history_reopening_reproduces_geometry_and_navigation_evidence(
+    #[case] rule: StoredFixPlacementRule,
+    #[case] expected_middle_longitude: f64,
+) {
+    let file =
+        gt_test_utils::navigation_evidence_fixtures::headingless_navigation_recording().unwrap();
+    let mut bytes = Vec::new();
+    file.write(&mut bytes).unwrap();
+    let current = SegmentationConfig::default();
+    let settings = gt_store::StoredSegmentation {
+        fix_placement_rule: rule,
+        ..crate::app::loader::stored_segmentation_from_config(&current)
+    };
+    let config = crate::app::loader::config_from_stored_segmentation(&settings, current);
+    let direct = gt_loader::load_bytes_with_progress(
+        &bytes,
+        "navigation.gtd".to_owned(),
+        |_, _| {},
+        &config,
+    )
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let mut database = Recordings::open_or_create(&directory.path().join("history.h5")).unwrap();
+    let meta = gt_store::extract_meta(&bytes).unwrap();
+    let reference = database
+        .insert(
+            "navigation",
+            &meta,
+            &[TrackRange {
+                start: 0,
+                end: 3,
+                state: TrackState::Live,
+            }],
+            settings,
+            &bytes,
+        )
+        .unwrap();
+    let stored = database.load(&reference).unwrap();
+    let stored_settings = stored.segmentation.unwrap();
+    let restored_config =
+        crate::app::loader::config_from_stored_segmentation(&stored_settings, current);
+    assert_eq!(
+        restored_config.fix_placement_rule,
+        config.fix_placement_rule
+    );
+    let reopened = gt_loader::load_bytes_with_progress(
+        &stored.bytes,
+        "navigation.gtd".to_owned(),
+        |_, _| {},
+        &restored_config,
+    )
+    .unwrap();
+    assert_eq!(
+        NavFile::read(stored.bytes.as_slice()).unwrap().nav_points(),
+        file.nav_points()
+    );
+    let direct_track = &direct.tracks[0];
+    let reopened_track = &reopened.tracks[0];
+    assert_eq!(direct_track.geometry, reopened_track.geometry);
+    assert_eq!(
+        direct_track.metadata.fix_stats,
+        reopened_track.metadata.fix_stats
+    );
+    for (before, after) in direct_track.points.iter().zip(&reopened_track.points) {
+        assert_eq!(before.navigation, after.navigation);
+        assert_eq!(
+            before.satellite_evidence.usage,
+            after.satellite_evidence.usage
+        );
+        assert_eq!(
+            before.satellite_evidence.observations,
+            after.satellite_evidence.observations
+        );
+        assert_eq!(before.tpv.position(), after.tpv.position());
+    }
+    assert_eq!(
+        reopened_track.points[1].tpv.position(),
+        Some((Latitude::new(10.0), Longitude::new(10.0)))
+    );
+    assert!(
+        (reopened_track
+            .resolved_position_at(1)
+            .unwrap()
+            .1
+            .as_degrees()
+            - expected_middle_longitude)
+            .abs()
+            < 1e-9
+    );
+    assert_eq!(reopened_track.points[1].satellite_evidence.usage.len(), 2);
 }

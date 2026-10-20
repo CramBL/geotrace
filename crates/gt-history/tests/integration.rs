@@ -1,8 +1,8 @@
 use geotrace_sdk::{
     Angle, Constellation, DateTime, Duration, NavFile, NavFileBuilder, NavFix, NavFixTime,
-    SatelliteCoverage, SatelliteEvidence, SatelliteIdentity, SatelliteMembership,
-    SatelliteObservationReport, SatelliteReportPlacement, SatelliteScope, SatelliteUsage,
-    SatelliteUsageReport,
+    PositionProvenance, SatelliteCoverage, SatelliteEvidence, SatelliteIdentity,
+    SatelliteMembership, SatelliteObservationReport, SatelliteReportPlacement, SatelliteScope,
+    SatelliteUsage, SatelliteUsageReport, SolutionDimension, SolutionState,
 };
 use gt_history::{
     Database, DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentId,
@@ -2991,6 +2991,10 @@ fn opening_a_database_with_an_interrupted_replacement_puts_the_recording_back() 
     StoredTrackSplitRule::StepInEitherDirection,
     StoredFixPlacementRule::MissingHeadingAndNothingInFix
 )]
+#[case::navigation_evidence(
+    StoredTrackSplitRule::StepInEitherDirection,
+    StoredFixPlacementRule::SynthesizedOrHeadinglessNoFix
+)]
 fn a_stored_recording_reads_back_the_rules_it_was_written_with(
     #[case] track_split_rule: StoredTrackSplitRule,
     #[case] fix_placement_rule: StoredFixPlacementRule,
@@ -3855,8 +3859,10 @@ const CLOCK_STEP_BACK_TIMES: [i64; 4] = [
     1_700_000_060_000_000,
 ];
 
-#[test]
-fn version_3_satellite_evidence_retains_metadata_and_samples_in_history() {
+#[rstest]
+#[case::insert(false)]
+#[case::replacement(true)]
+fn version_3_satellite_evidence_retains_metadata_and_samples_in_history(#[case] replacement: bool) {
     let time = NavFixTime::Receiver(DateTime::from_timestamp_micros(5_000_000).unwrap());
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
@@ -3864,6 +3870,11 @@ fn version_3_satellite_evidence_retains_metadata_and_samples_in_history() {
             .time(time)
             .lat(Angle::degrees(55.0))
             .lon(Angle::degrees(12.0))
+            .state(SolutionState::Fix)
+            .dimension(SolutionDimension::ThreeD)
+            .used_count(8)
+            .hdop(0.9)
+            .position_provenance(Some(PositionProvenance::SdkSynthesized))
             .build(),
     );
     let mut file = recorder.finish().unwrap();
@@ -3892,7 +3903,11 @@ fn version_3_satellite_evidence_retains_metadata_and_samples_in_history() {
         .satellites(Vec::new())
         .build();
     let mut repeated_usage = usage.clone();
-    repeated_usage.placement = Some(SatelliteReportPlacement::new(time.effective(), 1));
+    repeated_usage.time = NavFixTime::Receiver(time.effective() + Duration::milliseconds(200));
+    repeated_usage.placement = Some(SatelliteReportPlacement::new(
+        time.effective() + Duration::milliseconds(250),
+        1,
+    ));
     file.nav_points_mut()[0].set_satellite_evidence(SatelliteEvidence::new(
         vec![usage, repeated_usage],
         vec![observations],
@@ -3903,10 +3918,33 @@ fn version_3_satellite_evidence_retains_metadata_and_samples_in_history() {
     assert_eq!(meta.sat_report_count, 3);
     let directory = tempfile::tempdir().unwrap();
     let mut database = Database::open_or_create(&directory.path().join("history.h5")).unwrap();
-    let reference = database
-        .insert_simple("satellite-evidence", &meta, &bytes)
-        .unwrap();
-    let reconstructed = database.load_bytes(&reference).unwrap();
+    let settings = StoredSegmentation {
+        fix_placement_rule: StoredFixPlacementRule::SynthesizedOrHeadinglessNoFix,
+        ..fixtures::default_segmentation()
+    };
+    let tracks = [TrackRange {
+        start: 0,
+        end: 1,
+        state: TrackState::Live,
+    }];
+    let reference = if replacement {
+        let original = make_gtd_bytes(1_000, 4);
+        let original_meta = gt_history::extract_meta(&original).unwrap();
+        let reference = database
+            .insert_simple("satellite-evidence", &original_meta, &original)
+            .unwrap();
+        database
+            .replace_recording_in_place(&reference, &meta, &tracks, settings, &bytes)
+            .unwrap();
+        reference
+    } else {
+        database
+            .insert("satellite-evidence", &meta, &tracks, settings, &bytes)
+            .unwrap()
+    };
+    let stored = database.load_full(&reference).unwrap();
+    assert_eq!(stored.segmentation, Some(settings));
+    let reconstructed = stored.bytes;
     let decoded = NavFile::read(reconstructed.as_slice()).unwrap();
     assert_eq!(decoded.nav_points(), file.nav_points());
     assert_eq!(
@@ -3915,4 +3953,45 @@ fn version_3_satellite_evidence_retains_metadata_and_samples_in_history() {
             .sat_report_count,
         3
     );
+}
+
+#[test]
+fn navigation_placement_matches_direct_loading_after_history_reconstruction() {
+    let original =
+        gt_test_utils::navigation_evidence_fixtures::headingless_navigation_recording().unwrap();
+    let mut bytes = Vec::new();
+    original.write(&mut bytes).unwrap();
+    let config = gt_track_builder::SegmentationConfig::default();
+    let direct = gt_loader::load_bytes_with_progress(
+        &bytes,
+        "navigation.gtd".to_owned(),
+        |_, _| {},
+        &config,
+    )
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let mut database = Database::open_or_create(&directory.path().join("history.h5")).unwrap();
+    let meta = gt_history::extract_meta(&bytes).unwrap();
+    let reference = database.insert_simple("navigation", &meta, &bytes).unwrap();
+    let restored = database.load_full(&reference).unwrap();
+    assert_eq!(
+        restored.segmentation.unwrap().fix_placement_rule,
+        StoredFixPlacementRule::SynthesizedOrHeadinglessNoFix
+    );
+    assert_eq!(
+        NavFile::read(restored.bytes.as_slice())
+            .unwrap()
+            .nav_points(),
+        original.nav_points()
+    );
+    let reopened = gt_loader::load_bytes_with_progress(
+        &restored.bytes,
+        "navigation.gtd".to_owned(),
+        |_, _| {},
+        &config,
+    )
+    .unwrap();
+    assert_eq!(reopened.tracks[0].geometry, direct.tracks[0].geometry);
+    let middle = reopened.tracks[0].resolved_position_at(1).unwrap();
+    assert_eq!((middle.0.as_degrees(), middle.1.as_degrees()), (10.0, 10.0));
 }
