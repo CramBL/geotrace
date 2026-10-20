@@ -21,7 +21,7 @@ pub use markers::{
 };
 pub use mercator::MercPoint;
 pub use metrics::MetricKind;
-pub use nav_point::{FixQuality, NavPoint, ProjectedPosition, ResolvedPosition};
+pub use nav_point::{FixQuality, MapFixKind, NavPoint, ProjectedPosition, ResolvedPosition};
 pub use navigation::{
     NavigationMetadata, PositionProvenance, SolutionDimension, SolutionMethod, SolutionState,
 };

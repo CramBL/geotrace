@@ -88,7 +88,7 @@ fn row_hover_text(category: DisplayCategory, visible: bool) -> String {
     let verb = if visible { "Hide" } else { "Show" };
     let description = match category {
         DisplayCategory::GhostFixes => {
-            " Ghost fixes are dead-reckoned points with no heading or no satellites in fix."
+            " Ghost fixes are points with navigation loss, estimated-only state or SDK-synthesized coordinates."
         }
         DisplayCategory::SkyGlyphs => {
             " Sky glyphs show the directions of the satellites used in each fix."

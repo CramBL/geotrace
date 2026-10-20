@@ -953,10 +953,11 @@ const FIT_FILL: f64 = 0.8;
 #[cfg(test)]
 mod tests {
     use chrono::{Duration, TimeZone, Utc};
-    use gt_types::NavPoint;
+    use gt_types::fixtures::FixKind;
     use gt_types::markers::{
         CustomMarker, EventMarker, GeneratedMarker, GeneratedMarkerKind, MarkerIcon,
     };
+    use gt_types::{NavPoint, PositionProvenance, SolutionState};
     use gt_ui_types::{DrawLayer, MapEligibilityResult, TrackRanges};
     use proptest::prelude::*;
     use rstest::rstest;
@@ -1194,6 +1195,7 @@ mod tests {
         #[test]
         fn compiled_spatial_presence_matches_uncompiled_map_presence(
             policy_bits in any::<u16>(),
+            navigation_case in 0_u8..6,
         ) {
             let flag = |bit| policy_bits & (1_u16 << bit) != 0_u16;
             let file_enabled = flag(0);
@@ -1213,7 +1215,26 @@ mod tests {
             let limit_time = flag(14);
             let track_filter_rejects = flag(15);
 
-            let files = vec![test_util::a_recording_with_every_marker_kind()];
+            let mut files = vec![test_util::a_recording_with_every_marker_kind()];
+            let point = &mut files[0].tracks[0].points[0];
+            match navigation_case {
+                0 => {},
+                1 => {
+                    *point = gt_types::fixtures::nav_point(test_util::epoch(),
+                        Latitude::new(55.0), Longitude::new(12.0),
+                        FixKind::GhostWithoutHeading);
+                }
+                2 => {
+                    point.navigation.state = Some(SolutionState::Fix);
+                    point.navigation.used_count = Some(0);
+                }
+                3 => {
+                    point.navigation.state = Some(SolutionState::NoFix);
+                    point.navigation.used_count = Some(12);
+                }
+                4 => point.navigation.state = Some(SolutionState::EstimatedOnly),
+                _ => point.navigation.position_provenance = Some(PositionProvenance::SdkSynthesized),
+            }
             let track_ref = test_util::track0();
             let track = &files[0].tracks[0];
             let mut visibility = TrackDataVisibility::from_loaded(&files);

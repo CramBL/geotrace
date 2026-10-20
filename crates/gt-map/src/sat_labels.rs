@@ -22,7 +22,7 @@ impl SatelliteLabelDisplay {
 
     pub(crate) fn includes(&self, point: &NavPoint) -> bool {
         self.0.is_visible(DisplayCategory::SatelliteLabels)
-            && (!point.is_ghost_fix() || self.0.is_visible(DisplayCategory::GhostFixes))
+            && (!point.is_navigation_estimate() || self.0.is_visible(DisplayCategory::GhostFixes))
     }
 }
 

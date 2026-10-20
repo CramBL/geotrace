@@ -1,7 +1,9 @@
 use chrono::TimeDelta;
+use gt_types::fixtures::FixKind;
 use gt_types::{
     CustomMarker, CustomMarkerIdx, CustomMarkerRef, DataCategory, FileIdx, FixRef,
-    GeneratedMarkerKindTag, Latitude, Longitude, MarkerIcon, PointIdx, TrackIdx, TrackRef,
+    GeneratedMarkerKindTag, Latitude, Longitude, MarkerIcon, PointIdx, PositionProvenance,
+    SolutionState, TrackIdx, TrackRef,
 };
 use proptest::prelude::*;
 
@@ -15,6 +17,12 @@ use crate::test_util::{self, ScopeFixture};
 enum ElementCase {
     MeasuredFix,
     GhostFix,
+    HeadinglessUnknown,
+    SummaryFix,
+    ContradictoryLoss,
+    ExplicitUnknownZero,
+    SynthesizedWithHeading,
+    EstimatedOnly,
     SatelliteReport,
     CustomMarker,
     GeneratedMarker,
@@ -26,7 +34,13 @@ enum ElementCase {
 impl ElementCase {
     fn point_ref(self) -> MapElementRef {
         match self {
-            Self::MeasuredFix => test_util::point(0),
+            Self::MeasuredFix
+            | Self::HeadinglessUnknown
+            | Self::SummaryFix
+            | Self::ContradictoryLoss
+            | Self::ExplicitUnknownZero
+            | Self::SynthesizedWithHeading
+            | Self::EstimatedOnly => test_util::point(0),
             Self::GhostFix => test_util::point(test_util::POINT_COUNT - 1),
             Self::SatelliteReport => {
                 MapElementRef::SatelliteReport(FixRef::new(test_util::track0(), PointIdx::new(0)))
@@ -57,7 +71,10 @@ impl ElementCase {
 
     fn display_category(self) -> DisplayCategory {
         match self {
-            Self::GhostFix => DisplayCategory::GhostFixes,
+            Self::GhostFix
+            | Self::ContradictoryLoss
+            | Self::SynthesizedWithHeading
+            | Self::EstimatedOnly => DisplayCategory::GhostFixes,
             _ => DisplayCategory::from(self.policy_category()),
         }
     }
@@ -101,6 +118,34 @@ impl VisibilityScenario {
         fixture.files[0].tracks[0]
             .custom_markers
             .push(custom_marker);
+        let fix = &mut fixture.files[0].tracks[0].points[0];
+        match self.element {
+            ElementCase::HeadinglessUnknown | ElementCase::SummaryFix => {
+                *fix = gt_types::fixtures::nav_point(
+                    test_util::start(),
+                    Latitude::new(55.0),
+                    Longitude::new(12.0),
+                    FixKind::GhostWithoutHeading,
+                );
+                if matches!(self.element, ElementCase::SummaryFix) {
+                    fix.navigation.state = Some(SolutionState::Fix);
+                    fix.navigation.used_count = Some(8);
+                }
+            }
+            ElementCase::ContradictoryLoss => {
+                fix.navigation.state = Some(SolutionState::NoFix);
+                fix.navigation.used_count = Some(12);
+            }
+            ElementCase::ExplicitUnknownZero => {
+                fix.navigation.state = Some(SolutionState::Unknown);
+                fix.navigation.used_count = Some(0);
+            }
+            ElementCase::SynthesizedWithHeading => {
+                fix.navigation.position_provenance = Some(PositionProvenance::SdkSynthesized);
+            }
+            ElementCase::EstimatedOnly => fix.navigation.state = Some(SolutionState::EstimatedOnly),
+            _ => {}
+        }
         let point = self.element.point_ref();
         let category = self.element.policy_category();
 
@@ -260,6 +305,12 @@ fn element_case() -> impl Strategy<Value = ElementCase> {
     prop_oneof![
         Just(ElementCase::MeasuredFix),
         Just(ElementCase::GhostFix),
+        Just(ElementCase::HeadinglessUnknown),
+        Just(ElementCase::SummaryFix),
+        Just(ElementCase::ContradictoryLoss),
+        Just(ElementCase::ExplicitUnknownZero),
+        Just(ElementCase::SynthesizedWithHeading),
+        Just(ElementCase::EstimatedOnly),
         Just(ElementCase::SatelliteReport),
         Just(ElementCase::CustomMarker),
         Just(ElementCase::GeneratedMarker),

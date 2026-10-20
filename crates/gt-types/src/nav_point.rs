@@ -1,6 +1,7 @@
 use crate::coordinates::{Latitude, Longitude};
 use crate::mercator::{self, MercPoint};
 use crate::navigation::NavigationMetadata;
+use crate::navigation::{PositionProvenance, SolutionState};
 use crate::satellite_evidence::SatelliteEvidence;
 use crate::satellites::Satellites;
 use crate::tpv::TimePositionVelocity;
@@ -19,6 +20,15 @@ pub enum FixQuality {
 
 impl FixQuality {
     pub(crate) const STRONG_USED_COUNT: u32 = 10;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapFixKind {
+    Recorded,
+    NavigationLoss,
+    Estimated,
+    Synthesized,
+    CoordinateOutOfRange,
 }
 
 /// Coordinates with their Web Mercator projection, held together so the two
@@ -118,6 +128,7 @@ impl NavPoint {
         self.satellites.as_ref().map_or(0, |s| s.satellite_count())
     }
 
+    /// Quality from the legacy combined report.
     pub fn fix_quality(&self) -> FixQuality {
         match &self.satellites {
             None => FixQuality::Unknown,
@@ -129,24 +140,29 @@ impl NavPoint {
         }
     }
 
-    /// Returns `true` when the point should be rendered as a ghost (hollow
-    /// chevron, dashed track edge).
-    ///
-    /// Two cases qualify:
-    /// - No heading from the GPS receiver (position only, direction
-    ///   entirely unknown).
-    /// - Satellite fix count dropped to zero: the GPS may still output
-    ///   position and heading estimates, but those are internal
-    ///   dead-reckoning guesses, not real fixes.
-    pub fn is_ghost_fix(&self) -> bool {
-        self.tpv.heading().is_none() || self.fix_quality() == FixQuality::Lost
+    pub fn map_fix_kind(&self) -> MapFixKind {
+        if self.tpv.position().is_none() {
+            MapFixKind::CoordinateOutOfRange
+        } else if self.navigation.position_provenance == Some(PositionProvenance::SdkSynthesized) {
+            MapFixKind::Synthesized
+        } else {
+            match self.resolved_navigation_state().state {
+                SolutionState::NoFix => MapFixKind::NavigationLoss,
+                SolutionState::EstimatedOnly => MapFixKind::Estimated,
+                SolutionState::Fix | SolutionState::Unknown => MapFixKind::Recorded,
+            }
+        }
     }
 
-    /// Everything about this point that affects how the map styles it:
-    /// the trackline's ghost flag and the fix-quality tier. The LOD builder
-    /// always keeps points where this changes.
-    pub fn render_class(&self) -> (bool, FixQuality) {
-        (self.is_ghost_fix(), self.fix_quality())
+    pub fn is_navigation_estimate(&self) -> bool {
+        matches!(
+            self.map_fix_kind(),
+            MapFixKind::NavigationLoss | MapFixKind::Estimated | MapFixKind::Synthesized
+        )
+    }
+
+    pub fn render_class(&self) -> (MapFixKind, FixQuality) {
+        (self.map_fix_kind(), self.resolved_fix_quality())
     }
 }
 

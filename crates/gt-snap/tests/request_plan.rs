@@ -1,6 +1,7 @@
 //! Validate downsampling, chunking, and `gps_accuracy` derivation.
 
 use gt_test_utils::fixtures::{FixKind, NavPointSpec};
+use gt_types::{PositionProvenance, SolutionState};
 use rstest::rstest;
 
 use gt_snap::request_plan::{
@@ -167,8 +168,6 @@ fn ghost_runs_split_the_plan_into_stretches(
     );
 }
 
-/// A zero-satellite fix is a dead-reckoning guess just like a heading-less
-/// one, so it breaks the stretch the same way.
 #[test]
 fn a_fix_without_satellites_in_fix_also_breaks_the_stretch() {
     let points = test_util::points_with_spec(6, 1000, |i| {
@@ -196,7 +195,7 @@ fn the_fix_after_a_gap_is_sent_within_the_downsample_interval() {
     let points = test_util::points_with_spec(30, 100, |i| {
         if i == 15 {
             NavPointSpec {
-                fix: FixKind::GhostWithoutHeading,
+                fix: FixKind::GhostWithoutSatellitesInFix,
                 ..Default::default()
             }
         } else {
@@ -251,7 +250,7 @@ fn gps_accuracy_ignores_ghost_fixes() {
     let plan = test_util::plan_of(&test_util::points_with_spec(20, 1000, |i| {
         if (5..15).contains(&i) {
             NavPointSpec {
-                fix: FixKind::GhostWithoutHeading,
+                fix: FixKind::GhostWithoutSatellitesInFix,
                 eph_m: Some(900.0),
             }
         } else {
@@ -332,5 +331,26 @@ fn default_params_send_no_trace_options() {
             search_radius: None,
             turn_penalty_factor: None,
         })
+    );
+}
+
+#[test]
+fn headingless_recorded_positions_are_sent_and_estimates_split_requests() {
+    let mut points = test_util::points_with_spec(7, 1000, |index| NavPointSpec {
+        fix: if index == 6 {
+            FixKind::WithoutAPosition
+        } else {
+            FixKind::GhostWithoutHeading
+        },
+        ..NavPointSpec::default()
+    });
+    points[1].navigation.state = Some(SolutionState::Fix);
+    points[1].navigation.used_count = Some(0);
+    points[2].navigation.state = Some(SolutionState::EstimatedOnly);
+    points[3].navigation.position_provenance = Some(PositionProvenance::SdkSynthesized);
+    points[4].navigation.state = Some(SolutionState::NoFix);
+    assert_eq!(
+        owned_indices_per_chunk(&test_util::plan_of(&points)),
+        vec![vec![0, 1], vec![5]]
     );
 }

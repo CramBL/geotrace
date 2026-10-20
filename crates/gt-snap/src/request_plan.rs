@@ -14,7 +14,7 @@
 use std::ops::{Range, RangeInclusive};
 use std::time::Duration;
 
-use gt_types::{PlacedPoint, PlacedPoints, PointIdx};
+use gt_types::{MapFixKind, PlacedPoint, PlacedPoints, PointIdx};
 
 use crate::wire::{Costing, ShapePoint, TraceAttributesRequest, TraceOptions};
 
@@ -189,16 +189,10 @@ pub fn plan(points: PlacedPoints<'_>) -> RequestPlan {
     }
 }
 
-/// Select the points to send, split into stretches at the ghost fixes.
-///
-/// Ghost fixes are never sent: they are dead-reckoning guesses, not measured
-/// positions. Each one ends the stretch. Two points sent either side of a
-/// dropped run arrive as neighbors and the matcher routes a road through the
-/// gap between them.
 fn downsample(points: &[PlacedPoint<'_>]) -> Vec<SendableStretch> {
     let mut stretches = Vec::new();
     let mut start = 0;
-    for run in points.split(|point| point.fix.is_ghost_fix()) {
+    for run in points.split(|point| point.fix.map_fix_kind() != MapFixKind::Recorded) {
         let sent = downsample_run(run, start);
         if !sent.is_empty() {
             stretches.push(SendableStretch { sent });

@@ -115,12 +115,12 @@ fn bench_candidate_resolution(c: &mut Criterion) {
     let measured_index = track
         .points
         .iter()
-        .position(|point| !point.is_ghost_fix())
+        .position(|point| !point.is_navigation_estimate())
         .expect("the marker fixture has a measured fix");
     let ghost_index = track
         .points
         .iter()
-        .position(NavPoint::is_ghost_fix)
+        .position(NavPoint::is_navigation_estimate)
         .expect("the marker fixture has a ghost fix");
     let outside_time_index = 20;
     let time_end = track

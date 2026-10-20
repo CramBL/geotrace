@@ -94,7 +94,9 @@ impl TrackGeometry<'_> {
                 let point = placed.get(pi)?;
                 let chevron = ChevronFix::for_fix(point.fix)?;
                 let visible = match chevron {
-                    ChevronFix::DeadReckoned => self.entry.ghost_fixes(),
+                    ChevronFix::NavigationLoss
+                    | ChevronFix::Estimated
+                    | ChevronFix::Synthesized { .. } => self.entry.ghost_fixes(),
                     ChevronFix::CoordinateOutOfRange => self.entry.fade().is_some(),
                 };
                 if !visible {
@@ -358,8 +360,8 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
                         ),
                     };
                     let key = LinePointKey {
-                        ghost: p.fix.is_ghost_fix(),
-                        quality: tpv_renderer::quality_line_color(p.fix),
+                        ghost: p.fix.is_navigation_estimate(),
+                        quality: tpv_renderer::tpv_point_color(p.fix),
                         bucket,
                         matched: query_view.draw_mask(pi),
                         hidden: !prepared.fix_is_available(PointIdx::new(pi)),
@@ -748,7 +750,6 @@ fn paint_trackline_path(
     blink: Option<Stroke>,
     visibility: track_renderer::TracklineVisibility,
 ) {
-    let ghost_stroke = Stroke::new(stroke.width, tpv_renderer::FIX_LOST_RED);
     match path {
         VisiblePath::OffScreen => {}
         VisiblePath::Dot(key, pos) => {
@@ -763,39 +764,29 @@ fn paint_trackline_path(
             if !dot_visible {
                 return;
             }
-            let color = if key.ghost {
-                tpv_renderer::FIX_LOST_RED
-            } else {
-                stroke.color
-            };
+            let color = if key.ghost { key.quality } else { stroke.color };
             ui.painter().circle_filled(*pos, stroke.width, color);
             if let Some(blink) = blink {
                 ui.painter().circle_filled(*pos, blink.width, blink.color);
             }
         }
         VisiblePath::Spans(spans) => {
-            let strokes = track_renderer::TracklineStrokes {
-                solid: stroke,
-                ghost: ghost_stroke,
-            };
-            let blink_strokes =
-                blink.map(|b| track_renderer::TracklineStrokes { solid: b, ghost: b });
             for span in spans.iter() {
                 for run in shown_runs(span) {
                     track_renderer::draw_track_with_ghost(
                         ui.painter(),
                         run,
-                        strokes,
+                        stroke,
                         visibility,
-                        |key| key.ghost,
+                        |key| key.ghost.then_some(key.quality),
                     );
-                    if let Some(blink_strokes) = blink_strokes {
+                    if let Some(blink) = blink {
                         track_renderer::draw_track_with_ghost(
                             ui.painter(),
                             run,
-                            blink_strokes,
+                            blink,
                             visibility,
-                            |key| key.ghost,
+                            |key| key.ghost.then_some(blink.color),
                         );
                     }
                 }
@@ -905,7 +896,8 @@ mod tests {
     use gt_filter::GlobalFilter;
     use gt_types::fixtures::FixKind;
     use gt_types::{
-        GpsTime, Latitude, LoadedTrack, Longitude, NavPoint, RecordedLatitude, TimePositionVelocity,
+        GpsTime, Latitude, LoadedTrack, Longitude, NavPoint, PositionProvenance, RecordedLatitude,
+        SolutionState, TimePositionVelocity,
     };
     use gt_ui_types::{
         DisplayCategory, DisplayMask, DrawLayerMask, MapHighlight, QueryMatches, SkyGlyphVariant,
@@ -1101,9 +1093,6 @@ mod tests {
             .collect()
     }
 
-    /// A track of [`FIX_COUNT`] fixes one second apart, with the LOD levels
-    /// and chunks the track builder computes for it. The fixes of
-    /// [`DEAD_RECKONED`] have no heading, which is what the map draws hollow.
     fn a_track_with_a_dead_reckoned_stretch() -> LoadedTrack {
         let points: Vec<NavPoint> = positions()
             .into_iter()
@@ -1116,11 +1105,13 @@ mod tests {
                     ))
                     .lat(lat)
                     .lon(lon)
-                    .maybe_heading(
-                        (!DEAD_RECKONED.contains(&index)).then(|| Angle::new::<degree>(90.0)),
-                    )
+                    .heading(Angle::new::<degree>(90.0))
                     .build();
-                NavPoint::new(tpv, None)
+                let mut point = NavPoint::new(tpv, None);
+                if DEAD_RECKONED.contains(&index) {
+                    point.navigation.position_provenance = Some(PositionProvenance::SdkSynthesized);
+                }
+                point
             })
             .collect();
         let mut track = gt_test_utils::loaded_track_with_points(points);
@@ -1335,7 +1326,7 @@ mod tests {
                 .build(),
             None,
         );
-        let ghost_fix = NavPoint::new(
+        let mut ghost_fix = NavPoint::new(
             TimePositionVelocity::builder()
                 .time(GpsTime::from_utc(FIRST_FIX_TIME + TimeDelta::seconds(1)))
                 .lat(lat)
@@ -1343,6 +1334,7 @@ mod tests {
                 .build(),
             None,
         );
+        ghost_fix.navigation.state = Some(SolutionState::NoFix);
         let out_of_range_fix = NavPoint::new(
             TimePositionVelocity::builder()
                 .time(GpsTime::from_utc(FIRST_FIX_TIME + TimeDelta::seconds(2)))
@@ -1375,9 +1367,9 @@ mod tests {
         assert_eq!(
             chevrons,
             vec![
-                (1, ChevronFix::DeadReckoned),
+                (1, ChevronFix::NavigationLoss),
                 (2, ChevronFix::CoordinateOutOfRange),
-                (3, ChevronFix::DeadReckoned),
+                (3, ChevronFix::NavigationLoss),
             ]
         );
 
@@ -1391,7 +1383,10 @@ mod tests {
         let chevrons = geometry.chevrons_of(&hits, |_| true);
         assert_eq!(
             chevrons,
-            vec![(1, ChevronFix::DeadReckoned), (3, ChevronFix::DeadReckoned),]
+            vec![
+                (1, ChevronFix::NavigationLoss),
+                (3, ChevronFix::NavigationLoss),
+            ]
         );
 
         geometry.entry.set_ghost_fixes(false);
@@ -1399,25 +1394,42 @@ mod tests {
         assert!(chevrons.is_empty());
     }
 
-    #[test]
-    fn dead_reckoned_stretches_with_headings_are_classified_ghost_and_drawn_red() {
+    #[rstest]
+    #[case::loss(SolutionState::NoFix, None, Color32::from_rgb(219, 68, 55))]
+    #[case::estimated(SolutionState::EstimatedOnly, None, Color32::from_rgb(165, 105, 210))]
+    #[case::synthesized(
+        SolutionState::Fix,
+        Some(PositionProvenance::SdkSynthesized),
+        Color32::from_rgb(66, 133, 244)
+    )]
+    fn navigation_estimates_with_headings_use_state_colors_and_ghost_layer_visibility(
+        #[case] state: SolutionState,
+        #[case] provenance: Option<PositionProvenance>,
+        #[case] expected_color: Color32,
+    ) {
         let lat = Latitude::new(LATITUDE_DEGREES);
         let mut lon = FIRST_LONGITUDE_DEGREES;
         let step_degrees = 0.005;
         let kinds = [
+            FixKind::Measured,
             FixKind::GhostWithoutSatellitesInFix,
             FixKind::GhostWithoutSatellitesInFix,
             FixKind::Measured,
             FixKind::Measured,
             FixKind::GhostWithoutSatellitesInFix,
-            FixKind::GhostWithoutSatellitesInFix,
+            FixKind::Measured,
         ];
         let points: Vec<NavPoint> = kinds
             .iter()
             .enumerate()
             .map(|(i, &kind)| {
                 let time = FIRST_FIX_TIME + TimeDelta::seconds(i as i64);
-                let p = gt_types::fixtures::nav_point(time, lat, Longitude::new(lon), kind);
+                let mut p = gt_types::fixtures::nav_point(time, lat, Longitude::new(lon), kind);
+                if kind == FixKind::GhostWithoutSatellitesInFix {
+                    p.navigation.state = Some(state);
+                    p.navigation.used_count = Some(12);
+                    p.navigation.position_provenance = provenance;
+                }
                 lon += step_degrees;
                 p
             })
@@ -1463,10 +1475,12 @@ mod tests {
         let VisiblePath::Spans(spans) = &geo.path else {
             panic!("expected spans path");
         };
-        let ghost_flags: Vec<bool> = spans.iter().flatten().map(|&(key, _)| key.ghost).collect();
-        assert_eq!(ghost_flags, vec![true, true, false, false, true, true]);
+        let mut ghost_flags: Vec<bool> =
+            spans.iter().flatten().map(|&(key, _)| key.ghost).collect();
+        ghost_flags.dedup();
+        assert_eq!(ghost_flags, vec![false, true, false, true, false]);
 
-        let stroke = Stroke::new(3.0, Color32::BLUE);
+        let stroke = Stroke::new(3.0, Color32::GREEN);
         let paint_shapes = |visibility| {
             let mut harness = test_util::harness_builder().ui(|ui| {
                 super::paint_trackline_path(ui, &geo.path, stroke, None, visibility);
@@ -1487,29 +1501,29 @@ mod tests {
             ghost: false,
         });
         assert_eq!(hidden_ghost_shapes.len(), 1);
-        let has_red = |shapes: &[egui::Shape]| {
+        let has_estimate_color = |shapes: &[egui::Shape]| {
             shapes.iter().any(|shape| match shape {
-                egui::Shape::LineSegment { stroke: s, .. } => s.color == tpv_renderer::FIX_LOST_RED,
+                egui::Shape::LineSegment { stroke: s, .. } => s.color == expected_color,
                 egui::Shape::Path(path) => {
-                    path.stroke.color == egui::epaint::ColorMode::Solid(tpv_renderer::FIX_LOST_RED)
+                    path.stroke.color == egui::epaint::ColorMode::Solid(expected_color)
                 }
                 _ => false,
             })
         };
-        assert!(!has_red(&hidden_ghost_shapes));
+        assert!(!has_estimate_color(&hidden_ghost_shapes));
 
         let visible_shapes = paint_shapes(TracklineVisibility {
             solid: true,
             ghost: true,
         });
-        assert!(has_red(&visible_shapes));
+        assert!(has_estimate_color(&visible_shapes));
 
         let solo_ghost_shapes = paint_shapes(TracklineVisibility {
             solid: false,
             ghost: true,
         });
         assert!(!solo_ghost_shapes.is_empty());
-        assert!(has_red(&solo_ghost_shapes));
+        assert!(has_estimate_color(&solo_ghost_shapes));
         let has_track_color = |shapes: &[egui::Shape]| {
             shapes.iter().any(|shape| match shape {
                 egui::Shape::LineSegment { stroke: s, .. } => s.color == stroke.color,

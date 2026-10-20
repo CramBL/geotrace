@@ -24,9 +24,9 @@ use strum::{EnumCount, IntoEnumIterator};
 pub enum DisplayCategory {
     /// The tracklines.
     Tracks,
-    /// The per-fix icons (arrows) and the quality line.
+    /// The ordinary point icons and the quality line.
     TrackPoints,
-    /// Dead-reckoned fixes and the dashed trackline stretches through them.
+    /// Navigation loss, estimated-only and synthesized points, with dashed tracklines.
     GhostFixes,
     /// The satellite-count labels.
     SatelliteLabels,

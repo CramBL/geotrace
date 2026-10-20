@@ -16,7 +16,8 @@ use egui::{Align2, Color32, FontId, Pos2, Ui, Vec2};
 #[cfg(test)]
 use gt_filter::GlobalFilter;
 use gt_types::{
-    DataCategory, Latitude, Longitude, MercBounds, MercPoint, PlacedPoints, PointIdx, TrackRef,
+    DataCategory, Latitude, Longitude, MapFixKind, MercBounds, MercPoint, PlacedPoints, PointIdx,
+    TrackRef,
 };
 use gt_ui_types::{DisplayCategory, DisplayMask, PreparedTrackEligibility, QueryMatches};
 use smallvec::SmallVec;
@@ -65,7 +66,7 @@ impl<'a> DrawnTrackEnds<'a> {
             .find(|index| {
                 placed
                     .get(index.as_usize())
-                    .is_some_and(|point| point.fix.fix_count() > 0)
+                    .is_some_and(|point| point.fix.map_fix_kind() == MapFixKind::Recorded)
             })
             .unwrap_or(first_available);
         Some(Self {
@@ -901,7 +902,7 @@ mod tests {
     #[test]
     fn a_track_whose_first_n_points_are_ghosts_places_the_start_flag_on_the_first_fix() {
         let kinds = [
-            FixKind::GhostWithoutHeading,
+            FixKind::GhostWithoutSatellitesInFix,
             FixKind::GhostWithoutSatellitesInFix,
             FixKind::Measured,
             FixKind::Measured,
@@ -933,9 +934,9 @@ mod tests {
     #[test]
     fn a_track_that_is_all_ghosts_falls_back_to_the_first_point() {
         let kinds = [
-            FixKind::GhostWithoutHeading,
             FixKind::GhostWithoutSatellitesInFix,
-            FixKind::GhostWithoutHeading,
+            FixKind::GhostWithoutSatellitesInFix,
+            FixKind::GhostWithoutSatellitesInFix,
         ];
         let track = a_track_with_fix_kinds(&kinds);
         let placed = track.placed_points().unwrap_or_default();
@@ -973,8 +974,8 @@ mod tests {
     #[test]
     fn a_track_with_ghosts_before_a_single_fix_places_the_start_flag_alone_on_that_fix() {
         let kinds = [
-            FixKind::GhostWithoutHeading,
-            FixKind::GhostWithoutHeading,
+            FixKind::GhostWithoutSatellitesInFix,
+            FixKind::GhostWithoutSatellitesInFix,
             FixKind::Measured,
         ];
         let track = a_track_with_fix_kinds(&kinds);

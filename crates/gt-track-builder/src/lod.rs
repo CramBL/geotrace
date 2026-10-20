@@ -1,12 +1,13 @@
 use gt_types::extent::{DrawnFix, Extent};
 use gt_types::placed_point::{PlacedPoint, PlacedPoints};
 use gt_types::track::{LOD_BASE_TOLERANCE_MERC, LodChunk, LodLevel, TrackLod};
-use gt_types::{FixQuality, MercPoint, PositionProvenance, SolutionState};
+use gt_types::{FixQuality, MapFixKind, MercPoint, PositionProvenance, SolutionState};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct LodTransitionKey {
-    render_class: (bool, FixQuality),
+    render_class: (MapFixKind, FixQuality),
     state: SolutionState,
+    heading_known: bool,
     provenance: Option<PositionProvenance>,
 }
 
@@ -160,6 +161,7 @@ fn decimate(
         let class = LodTransitionKey {
             render_class: point.fix.render_class(),
             state: point.fix.resolved_navigation_state().state,
+            heading_known: point.fix.tpv.heading().is_some(),
             provenance: point.fix.navigation.position_provenance,
         };
         let keep = match last_kept {
@@ -210,7 +212,9 @@ mod tests {
     use gt_types::coordinates::{Latitude, Longitude};
     use gt_types::fixtures::{self, MetricOffset};
     use gt_types::nav_point::NavPoint;
-    use gt_types::{FixQuality, MercBounds, TrackLod};
+    use gt_types::{
+        FixQuality, MapFixKind, MercBounds, NavigationMetadata, TimePositionVelocity, TrackLod,
+    };
     use vec1::Vec1;
 
     /// Every fixture fix records a position, so it is drawn where it was
@@ -401,7 +405,7 @@ mod tests {
     }
 
     #[test]
-    fn navigation_state_and_provenance_transitions_survive_every_level() {
+    fn navigation_state_provenance_and_heading_transitions_survive_every_level() {
         let mut points: Vec<_> = (0..512)
             .map(|i| {
                 let east_m = f64::from(i)
@@ -425,6 +429,29 @@ mod tests {
                 150..250 => Some(PositionProvenance::SdkSynthesized),
                 _ => None,
             };
+            point.tpv = TimePositionVelocity::builder()
+                .time(point.tpv.time())
+                .lat(point.tpv.lat())
+                .lon(point.tpv.lon())
+                .maybe_heading(point.tpv.heading().filter(|_| !(450..475).contains(&i)))
+                .build();
+        }
+        for index in [449, 450, 474, 475] {
+            assert_eq!(
+                points[index].render_class(),
+                (MapFixKind::Recorded, FixQuality::Strong)
+            );
+            assert_eq!(
+                points[index].navigation,
+                NavigationMetadata {
+                    state: Some(SolutionState::Fix),
+                    ..NavigationMetadata::default()
+                }
+            );
+            assert_eq!(
+                points[index].tpv.heading().is_some(),
+                !(450..475).contains(&index)
+            );
         }
         let geometry = crate::segment::measure_track_geometry(
             &points,
@@ -440,7 +467,7 @@ mod tests {
         let levels: Vec<_> = (0..).map_while(|index| lod.level(index)).collect();
         assert!(levels.len() > 1);
         for (level_index, level) in levels.into_iter().enumerate() {
-            for required in [0, 50, 100, 150, 200, 250, 300, 400, 511] {
+            for required in [0, 50, 100, 150, 200, 250, 300, 400, 450, 475, 511] {
                 assert!(
                     level.indices().contains(&required),
                     "level {level_index}, index {required}"

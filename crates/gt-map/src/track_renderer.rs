@@ -130,24 +130,14 @@ pub(crate) struct TracklineVisibility {
     pub(crate) ghost: bool,
 }
 
-/// Strokes for the solid and ghost portions of a trackline.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct TracklineStrokes {
-    pub(crate) solid: Stroke,
-    pub(crate) ghost: Stroke,
-}
-
-/// Draw a track polyline with separate strokes and visibility for solid and ghost-fix edges.
-///
-/// An edge is ghost when either endpoint is a ghost fix: the dashed region
-/// extends one segment on each side of each ghost point, marking the
-/// transition into dead reckoning.
+/// Dashed edges use the left endpoint's color, with the right endpoint as fallback.
+/// Both edge styles use `solid_stroke.width`.
 pub(crate) fn draw_track_with_ghost<K: Copy>(
     painter: &egui::Painter,
     pts: &[(K, egui::Pos2)],
-    strokes: TracklineStrokes,
+    solid_stroke: Stroke,
     visibility: TracklineVisibility,
-    is_ghost: impl Fn(K) -> bool,
+    ghost_color: impl Fn(K) -> Option<Color32>,
 ) {
     if pts.len() < 2 {
         return;
@@ -159,34 +149,52 @@ pub(crate) fn draw_track_with_ghost<K: Copy>(
         {
             painter.add(egui::Shape::line(
                 run_points.iter().map(|&(_, pos)| pos).collect(),
-                strokes.solid,
+                solid_stroke,
             ));
         }
     };
 
     let mut solid_run: Option<RangeInclusive<usize>> = None;
     let mut ghost_span: Vec<egui::Pos2> = Vec::new();
+    let mut ghost_span_color = None;
 
     for (edge, w) in pts.windows(2).enumerate() {
         let [(key_a, pos_a), (key_b, pos_b)] = w else {
             continue;
         };
         let (pos_a, pos_b) = (*pos_a, *pos_b);
-        let edge_is_ghost = is_ghost(*key_a) || is_ghost(*key_b);
+        let edge_color = ghost_color(*key_a).or_else(|| ghost_color(*key_b));
 
-        if edge_is_ghost {
+        if let Some(color) = edge_color {
             if let Some(run) = solid_run.take() {
                 paint_solid_run(run);
             }
             if visibility.ghost {
+                if ghost_span_color != Some(color) {
+                    if let Some(previous_color) = ghost_span_color {
+                        draw_dashed_line(
+                            painter,
+                            &ghost_span,
+                            Stroke::new(solid_stroke.width, previous_color),
+                            GHOST_FIX_DASH,
+                        );
+                    }
+                    ghost_span.clear();
+                    ghost_span_color = Some(color);
+                }
                 if ghost_span.is_empty() {
                     ghost_span.push(pos_a);
                 }
                 ghost_span.push(pos_b);
             }
         } else {
-            if visibility.ghost && ghost_span.len() >= 2 {
-                draw_dashed_line(painter, &ghost_span, strokes.ghost, GHOST_FIX_DASH);
+            if let Some(color) = ghost_span_color.take() {
+                draw_dashed_line(
+                    painter,
+                    &ghost_span,
+                    Stroke::new(solid_stroke.width, color),
+                    GHOST_FIX_DASH,
+                );
             }
             ghost_span.clear();
             let run_start = solid_run.as_ref().map_or(edge, |run| *run.start());
@@ -197,8 +205,13 @@ pub(crate) fn draw_track_with_ghost<K: Copy>(
     if let Some(run) = solid_run {
         paint_solid_run(run);
     }
-    if visibility.ghost && ghost_span.len() >= 2 {
-        draw_dashed_line(painter, &ghost_span, strokes.ghost, GHOST_FIX_DASH);
+    if let Some(color) = ghost_span_color {
+        draw_dashed_line(
+            painter,
+            &ghost_span,
+            Stroke::new(solid_stroke.width, color),
+            GHOST_FIX_DASH,
+        );
     }
 }
 
@@ -347,6 +360,44 @@ mod tests {
     }
 
     #[test]
+    fn dashed_track_colors_change_at_navigation_state_boundaries() {
+        let colors = [Color32::RED, Color32::MAGENTA, Color32::BLUE];
+        let points: Vec<_> = (0..=colors.len())
+            .map(|index| {
+                (
+                    colors.get(index).copied(),
+                    Pos2::new(index as f32 * 30.0, 20.0),
+                )
+            })
+            .collect();
+        let mut harness = crate::test_util::harness_builder().ui(|ui| {
+            super::draw_track_with_ghost(
+                ui.painter(),
+                &points,
+                Stroke::new(2.0, Color32::WHITE),
+                super::TracklineVisibility {
+                    solid: false,
+                    ghost: true,
+                },
+                |color| color,
+            );
+        });
+        harness.run();
+        let mut drawn_colors: Vec<_> = harness
+            .inner
+            .output()
+            .shapes
+            .iter()
+            .filter_map(|shape| match shape.shape {
+                egui::Shape::LineSegment { stroke, .. } => Some(stroke.color),
+                _ => None,
+            })
+            .collect();
+        drawn_colors.dedup();
+        assert_eq!(drawn_colors, colors);
+    }
+
+    #[test]
     fn draw_track_with_ghost_respects_solid_and_ghost_visibility() {
         let pts = vec![
             (false, Pos2::new(0.0, 0.0)),
@@ -357,17 +408,17 @@ mod tests {
             (false, Pos2::new(50.0, 0.0)),
         ];
         let solid_stroke = Stroke::new(2.0, Color32::WHITE);
-        let ghost_stroke = Stroke::new(2.0, crate::tpv_renderer::FIX_LOST_RED);
-        let strokes = super::TracklineStrokes {
-            solid: solid_stroke,
-            ghost: ghost_stroke,
-        };
+        let ghost_color = crate::tpv_renderer::FIX_LOST_RED;
 
         let paint_shapes = |visibility| {
             let mut harness = crate::test_util::harness_builder().ui(|ui| {
-                super::draw_track_with_ghost(ui.painter(), &pts, strokes, visibility, |is_ghost| {
-                    is_ghost
-                });
+                super::draw_track_with_ghost(
+                    ui.painter(),
+                    &pts,
+                    solid_stroke,
+                    visibility,
+                    |is_ghost| is_ghost.then_some(ghost_color),
+                );
             });
             harness.run();
             harness
@@ -396,7 +447,7 @@ mod tests {
         });
         assert_eq!(solid_only.len(), 2);
         assert!(has_stroke_color(&solid_only, solid_stroke.color));
-        assert!(!has_stroke_color(&solid_only, ghost_stroke.color));
+        assert!(!has_stroke_color(&solid_only, ghost_color));
 
         let both = paint_shapes(super::TracklineVisibility {
             solid: true,
@@ -404,14 +455,14 @@ mod tests {
         });
         assert_eq!(both.len(), 5);
         assert!(has_stroke_color(&both, solid_stroke.color));
-        assert!(has_stroke_color(&both, ghost_stroke.color));
+        assert!(has_stroke_color(&both, ghost_color));
 
         let ghost_only = paint_shapes(super::TracklineVisibility {
             solid: false,
             ghost: true,
         });
         assert_eq!(ghost_only.len(), 3);
-        assert!(has_stroke_color(&ghost_only, ghost_stroke.color));
+        assert!(has_stroke_color(&ghost_only, ghost_color));
         assert!(!has_stroke_color(&ghost_only, solid_stroke.color));
 
         let neither = paint_shapes(super::TracklineVisibility {

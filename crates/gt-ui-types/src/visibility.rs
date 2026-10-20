@@ -873,7 +873,7 @@ impl MapElementRef {
 impl ResolvedElement<'_> {
     pub fn display_category(self) -> DisplayCategory {
         match self {
-            Self::Fix(fix) | Self::SatelliteReport { fix, .. } if fix.is_ghost_fix() => {
+            Self::Fix(fix) | Self::SatelliteReport { fix, .. } if fix.is_navigation_estimate() => {
                 DisplayCategory::GhostFixes
             }
             Self::Fix(_) | Self::SatelliteReport { .. } => DisplayCategory::TrackPoints,
@@ -906,7 +906,7 @@ mod tests {
     use gt_types::{
         CustomMarkerIdx, CustomMarkerRef, EventMarkerIdx, EventMarkerRef, FileSource,
         GeneratedMarkerIdx, GeneratedMarkerKindTag, GeneratedMarkerRef, GpsTime, Latitude,
-        Longitude, TimePositionVelocity,
+        Longitude, SolutionState, TimePositionVelocity,
     };
 
     use super::*;
@@ -1138,7 +1138,7 @@ mod tests {
 
     #[test]
     fn ghost_fixes_track_ghost_fixes_display_category() {
-        let ghost_point = NavPoint::new(
+        let mut ghost_point = NavPoint::new(
             TimePositionVelocity::builder()
                 .time(GpsTime::from_utc(test_util::start()))
                 .lat(Latitude::new(55.0))
@@ -1146,6 +1146,7 @@ mod tests {
                 .build(),
             None,
         );
+        ghost_point.navigation.state = Some(SolutionState::NoFix);
         let real_point = gt_types::fixtures::nav_point(
             test_util::start() + TimeDelta::seconds(1),
             Latitude::new(55.0),
