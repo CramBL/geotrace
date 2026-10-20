@@ -32,7 +32,7 @@ use gt_test_utils::{
 };
 use gt_types::{
     CustomMarker, FileIdx, FixStats, LoadWarning, MarkerIcon, MarkerRequirement, NavPoint,
-    PointIdx, TrackIdx, TrackRef,
+    PointIdx, SolutionState, TrackIdx, TrackRef,
 };
 use gt_ui_components::MetadataView;
 use gt_ui_types::{DisplayCategory, DisplayMask, HighlightScope, MapHighlight, SnapCosting};
@@ -1267,11 +1267,12 @@ fn clicking_a_tree_track_row_past_its_columns_expands_the_track() {
     assert!(harness.state().tree.files[0].tracks[0].expanded);
 }
 
-/// A track of fixes without a satellite report has no fix statistics, so its
-/// row's hover text states that in place of them.
 #[test]
-fn a_track_row_without_satellite_reports_hovers_with_no_satellite_data() {
-    let points = gt_test_utils::fixtures::stationary_nav_data(10);
+fn a_track_row_with_explicit_fix_state_shows_statistics_without_satellite_reports() {
+    let mut points = gt_test_utils::fixtures::stationary_nav_data(10);
+    for point in &mut points {
+        point.navigation.state = Some(SolutionState::Fix);
+    }
     let file = gt_test_utils::build_file("no_sats.gtd", &points, FileParts::default());
     let mut files = LoadedFiles::new();
     files.push(file, FileHistory::None);
@@ -1286,8 +1287,8 @@ fn a_track_row_without_satellite_reports_hovers_with_no_satellite_data() {
         .hover_at_and_settle(row, TOOLTIP_SETTLE_FRAMES);
 
     assert!(
-        harness.inner.query_by_label("No satellite data").is_some(),
-        "the hover text must state that the track holds no satellite report"
+        harness.inner.query_by_label("100% fix").is_some(),
+        "the hover text shows availability from explicit navigation states"
     );
 }
 
@@ -1375,6 +1376,8 @@ fn snapshot_fix_stats_tooltip_content() {
     let stats = FixStats {
         time_with_fix: chrono::Duration::seconds(4800), // 1h20m
         time_without_fix: chrono::Duration::seconds(900), // 15m
+        time_estimated_only: chrono::Duration::zero(),
+        time_unknown: chrono::Duration::zero(),
         fix_loss_count: 3,
         max_continuous_no_fix: chrono::Duration::seconds(480), // 8m
     };

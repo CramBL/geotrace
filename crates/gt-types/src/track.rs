@@ -13,7 +13,7 @@ use crate::satellites::Satellites;
 use crate::time_types::GpsTime;
 use chrono::{DateTime, Days, Duration, NaiveDate, Utc};
 use rustc_hash::FxHashMap;
-use std::ops::Range;
+use std::ops::{AddAssign, Range};
 use std::path::PathBuf;
 use std::sync::Arc;
 use uom::si::f64::Length;
@@ -268,42 +268,62 @@ pub enum MarkerRequirement {
     None,
 }
 
-/// Aggregate GNSS fix-quality statistics computed from satellite reports.
-///
-/// Covers only intervals between consecutive satellite-report points. Periods
-/// without satellite data do not contribute to any field.
-/// `None` on a track or file means no satellite reports were present.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Interval estimates from navigation-state observations within chronological runs.
+/// Leading and trailing intervals without state observations are unknown.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct FixStats {
-    /// Total elapsed time while `fix_count > 0` in satellite reports.
     pub time_with_fix: Duration,
-    /// Total elapsed time while `fix_count == 0` in satellite reports.
     pub time_without_fix: Duration,
-    /// Number of transitions from fix to no-fix.
+    pub time_estimated_only: Duration,
+    pub time_unknown: Duration,
     pub fix_loss_count: u32,
-    /// Longest contiguous stretch with `fix_count == 0`.
+    /// Longest continuous interval with [`crate::SolutionState::NoFix`] or
+    /// [`crate::SolutionState::EstimatedOnly`] observations.
     pub max_continuous_no_fix: Duration,
 }
 
 impl FixStats {
-    /// `None` when no track of `tracks` has satellite reports.
+    pub fn known_duration(self) -> Duration {
+        self.time_with_fix + self.time_without_fix + self.time_estimated_only
+    }
+
+    pub fn total_duration(self) -> Duration {
+        self.known_duration() + self.time_unknown
+    }
+
+    /// Fraction of known-state time with a GNSS fix.
+    pub fn availability(self) -> Option<f64> {
+        let known = self.known_duration().as_seconds_f64();
+        (known > 0.0).then(|| self.time_with_fix.as_seconds_f64() / known)
+    }
+
+    /// Fraction of estimated time with a known navigation state. Zero for zero duration.
+    pub fn known_state_coverage(self) -> f64 {
+        let total = self.total_duration().as_seconds_f64();
+        if total > 0.0 {
+            self.known_duration().as_seconds_f64() / total
+        } else {
+            0.0
+        }
+    }
+
     fn summed_over_tracks(tracks: &[LoadedTrack]) -> Option<Self> {
         let mut summed: Option<Self> = None;
         for stats in tracks.iter().filter_map(|track| track.metadata.fix_stats) {
-            let summed = summed.get_or_insert(Self {
-                time_with_fix: Duration::zero(),
-                time_without_fix: Duration::zero(),
-                fix_loss_count: 0,
-                max_continuous_no_fix: Duration::zero(),
-            });
-            summed.time_with_fix += stats.time_with_fix;
-            summed.time_without_fix += stats.time_without_fix;
-            summed.fix_loss_count = summed.fix_loss_count.saturating_add(stats.fix_loss_count);
-            summed.max_continuous_no_fix = summed
-                .max_continuous_no_fix
-                .max(stats.max_continuous_no_fix);
+            *summed.get_or_insert_default() += stats;
         }
         summed
+    }
+}
+
+impl AddAssign for FixStats {
+    fn add_assign(&mut self, other: Self) {
+        self.time_with_fix += other.time_with_fix;
+        self.time_without_fix += other.time_without_fix;
+        self.time_estimated_only += other.time_estimated_only;
+        self.time_unknown += other.time_unknown;
+        self.fix_loss_count = self.fix_loss_count.saturating_add(other.fix_loss_count);
+        self.max_continuous_no_fix = self.max_continuous_no_fix.max(other.max_continuous_no_fix);
     }
 }
 
@@ -510,7 +530,7 @@ pub struct TrackMetadata {
     pub custom_marker_count: usize,
     pub generated_marker_count: usize,
     pub event_marker_count: usize,
-    /// `None` when the track has no satellite reports.
+    /// Absent when every chronological run has zero duration.
     pub fix_stats: Option<FixStats>,
 }
 
@@ -751,7 +771,7 @@ pub struct FileMetadata {
     /// the recording, whatever order the tracks are stored in. `None` when the
     /// recording has no track.
     pub time_range: Option<TimeRange>,
-    /// Aggregated fix stats across all tracks. `None` when no track has satellite reports.
+    /// Aggregated navigation intervals. Absent when every track has zero estimated duration.
     pub fix_stats: Option<FixStats>,
     /// Optional file title from the recording's SDK metadata.
     pub title: Option<String>,
