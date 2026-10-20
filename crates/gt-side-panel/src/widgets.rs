@@ -7,6 +7,8 @@ use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, MapPresence};
 
 use crate::tree::CheckState;
 
+mod navigation_statistics;
+
 /// The span a recording covers, an em dash for a recording with no track.
 fn time_range_text(time_range: Option<TimeRange>) -> String {
     time_range.map_or_else(
@@ -23,12 +25,7 @@ pub fn recording_tooltip_rows(ui: &mut egui::Ui, metadata: &FileMetadata) {
         "Recorded time {}",
         gt_fmt::format_human_terse_duration(metadata.total_duration)
     ));
-    match metadata.fix_stats {
-        Some(stats) => fix_stats_tooltip_row(ui, stats),
-        None => {
-            ui.label("No navigation interval estimate");
-        }
-    }
+    fix_stats_tooltip_row(ui, metadata.fix_stats.unwrap_or_default());
 }
 
 /// The hover text of a track row, in the tree and in the Visible section.
@@ -40,12 +37,7 @@ pub fn track_tooltip_rows(ui: &mut egui::Ui, metadata: &TrackMetadata) {
         ))
         .strong(),
     );
-    match metadata.fix_stats {
-        Some(stats) => fix_stats_tooltip_row(ui, stats),
-        None => {
-            ui.label("No navigation interval estimate");
-        }
-    }
+    fix_stats_tooltip_row(ui, metadata.fix_stats.unwrap_or_default());
 }
 
 pub fn text_width(ui: &egui::Ui, text: &str, font: &egui::FontId) -> f32 {
@@ -103,17 +95,7 @@ pub fn paint_map_hover_bg(ui: &egui::Ui, rect: egui::Rect, color: egui::Color32)
 }
 
 pub fn fix_stats_tooltip_row(ui: &mut egui::Ui, stats: FixStats) {
-    let summary = gt_fmt::NavigationSummary(stats);
-    let color = summary.availability_percentage().map_or_else(
-        || ui.visuals().weak_text_color(),
-        |percent| gt_ui_theme::fix_quality_color(percent, ui.visuals().dark_mode),
-    );
-    ui.colored_label(color, summary.availability_label())
-        .on_hover_text(
-            "Interval estimate of time with a fix divided by time with a known navigation state",
-        );
-    ui.label(summary.details())
-        .on_hover_text("Known-state coverage is the portion of recorded time with a fix, no fix or an estimate without GNSS contribution");
+    navigation_statistics::NavigationStatistics(stats).ui(ui);
 }
 
 /// A selectable, sticky, double-click-to-focus row for a single data point.

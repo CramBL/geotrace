@@ -7,7 +7,7 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use gt_types::track::FixStats;
-use gt_types::{LoadedTrack, SkyCounts};
+use gt_types::{LoadedTrack, SkyCounts, SolutionState};
 use uom::si::{
     f64,
     length::{kilometer, meter},
@@ -28,41 +28,27 @@ impl NavigationSummary {
         })
     }
 
-    pub fn availability_label(self) -> String {
-        self.availability_percentage().map_or_else(
-            || format!("{EM_DASH} availability"),
-            |percent| format!("{percent}% availability"),
-        )
+    pub fn availability_value(self) -> String {
+        self.0
+            .availability()
+            .map_or_else(|| EM_DASH.to_owned(), format_fraction_percent)
     }
 
-    pub fn details(self) -> String {
-        let mut parts = vec![format!(
-            "{} known-state coverage",
+    pub fn coverage_value(self) -> String {
+        if self.0.total_duration() > chrono::Duration::zero() {
             format_fraction_percent(self.0.known_state_coverage())
-        )];
-        for (duration, label) in [
-            (self.0.time_without_fix, "no fix"),
-            (self.0.time_estimated_only, "estimated only"),
-            (self.0.time_unknown, "unknown"),
-        ] {
-            if duration > chrono::Duration::zero() {
-                parts.push(format!("{} {label}", format_human_terse_duration(duration)));
-            }
+        } else {
+            EM_DASH.to_owned()
         }
-        if self.0.fix_loss_count > 0 {
-            parts.push(format!(
-                "{} {}",
-                self.0.fix_loss_count,
-                pluralize(self.0.fix_loss_count as usize, "loss", "losses")
-            ));
-        }
-        if self.0.max_continuous_no_fix > chrono::Duration::zero() {
-            parts.push(format!(
-                "longest absence {}",
-                format_human_terse_duration(self.0.max_continuous_no_fix)
-            ));
-        }
-        parts.join(TOOLTIP_JOINER)
+    }
+
+    pub fn duration_buckets(self) -> [(SolutionState, chrono::Duration); 4] {
+        [
+            (SolutionState::Fix, self.0.time_with_fix),
+            (SolutionState::NoFix, self.0.time_without_fix),
+            (SolutionState::EstimatedOnly, self.0.time_estimated_only),
+            (SolutionState::Unknown, self.0.time_unknown),
+        ]
     }
 }
 
@@ -449,9 +435,6 @@ pub const UTC_MINUTE_FORMAT: &str = "%Y-%m-%d %H:%M";
 pub const UTC_SECOND_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
 pub const UTC_SUBSECOND_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.f";
-
-/// Two spaces, U+00B7 MIDDLE DOT, two spaces, joins fields inside tooltip strings.
-const TOOLTIP_JOINER: &str = "  ·  ";
 
 const MICROS_PER_MILLISECOND: u64 = 1_000;
 
