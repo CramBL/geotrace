@@ -14,3 +14,5 @@ pub mod segment;
 pub mod spatial;
 #[cfg(any(test, feature = "test-util"))]
 pub mod test_util;
+
+mod navigation_timeline;

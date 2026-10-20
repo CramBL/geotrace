@@ -169,6 +169,8 @@ pub fn segmented_recording(track_count: usize) -> LoadedFile {
                 fix_stats: Some(FixStats {
                     time_with_fix: Duration::zero(),
                     time_without_fix: Duration::zero(),
+                    time_estimated_only: Duration::zero(),
+                    time_unknown: Duration::zero(),
                     fix_loss_count: number,
                     max_continuous_no_fix: Duration::zero(),
                 }),

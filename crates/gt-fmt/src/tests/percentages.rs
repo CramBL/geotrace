@@ -15,6 +15,8 @@ fn a_fix_percentage_rounds_to_the_nearest_whole_percent(
     let stats = FixStats {
         time_with_fix: TimeDelta::seconds(seconds_with_fix),
         time_without_fix: TimeDelta::seconds(seconds_without_fix),
+        time_estimated_only: TimeDelta::zero(),
+        time_unknown: TimeDelta::zero(),
         fix_loss_count: 0,
         max_continuous_no_fix: TimeDelta::zero(),
     };
@@ -27,6 +29,8 @@ fn a_fix_percentage_reading_ends_in_the_word_fix() {
     let stats = FixStats {
         time_with_fix: TimeDelta::seconds(85),
         time_without_fix: TimeDelta::seconds(15),
+        time_estimated_only: TimeDelta::zero(),
+        time_unknown: TimeDelta::zero(),
         fix_loss_count: 0,
         max_continuous_no_fix: TimeDelta::seconds(15),
     };
@@ -55,6 +59,8 @@ fn a_fix_held_the_whole_time_adds_no_tooltip_details() {
     let stats = FixStats {
         time_with_fix: TimeDelta::seconds(4_800),
         time_without_fix: TimeDelta::zero(),
+        time_estimated_only: TimeDelta::zero(),
+        time_unknown: TimeDelta::zero(),
         fix_loss_count: 0,
         max_continuous_no_fix: TimeDelta::zero(),
     };
@@ -67,6 +73,8 @@ fn the_tooltip_details_state_the_time_without_fix_the_losses_and_the_longest_gap
     let stats = FixStats {
         time_with_fix: TimeDelta::seconds(4_800),
         time_without_fix: TimeDelta::seconds(900),
+        time_estimated_only: TimeDelta::zero(),
+        time_unknown: TimeDelta::zero(),
         fix_loss_count: 3,
         max_continuous_no_fix: TimeDelta::seconds(480),
     };

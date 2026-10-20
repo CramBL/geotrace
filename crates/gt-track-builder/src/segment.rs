@@ -2,6 +2,7 @@ use chrono::{DateTime, Duration, Utc};
 use gt_analysis::clock_offset::{self, ClockOffsetExcursion};
 use gt_analysis::robust;
 use gt_geo_math::GreatCircleArc;
+use gt_types::SolutionState;
 use gt_types::channel::Channel;
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::geo_bounds::{GeoBounds, PoleWinding};
@@ -22,6 +23,8 @@ use std::fmt;
 use std::ops::Range;
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
+
+use crate::navigation_timeline;
 
 /// The rule segmentation splits tracks by.
 ///
@@ -189,19 +192,15 @@ pub fn segment_tracks(points: &[NavPoint], config: &TrackLayoutConfig) -> Vec<Ra
     ranges
 }
 
-/// State machine for tracking GPS fix transitions within a track.
 enum GpsFixState {
-    /// The most recent satellite report had `fix_count > 0`.
     HasFix {
         last_time: GpsTime,
         last_position: (Latitude, Longitude),
     },
-    /// The most recent satellite report had `fix_count == 0`.
     LostFix {
         /// When the fix was last seen, for the regained-duration.
         lost_at: GpsTime,
     },
-    /// No satellite report seen yet.
     Waiting,
 }
 
@@ -216,16 +215,16 @@ impl GpsFixTracker {
         }
     }
 
-    /// Advance the state machine by one satellite report.
-    ///
-    /// Returns `Some(marker)` when a transition emits a generated marker
-    /// (`GnssFixLost` or `GnssFixRegained`), or `None` for silent transitions.
-    fn update(&mut self, point: PlacedPoint<'_>, fix_count: u32) -> Option<GeneratedMarker> {
+    fn update(&mut self, point: PlacedPoint<'_>, state: SolutionState) -> Option<GeneratedMarker> {
+        if state == SolutionState::Unknown {
+            self.state = GpsFixState::Waiting;
+            return None;
+        }
         let result;
         self.state = match self.state {
             GpsFixState::Waiting => {
                 result = None;
-                if fix_count > 0 {
+                if state == SolutionState::Fix {
                     GpsFixState::HasFix {
                         last_time: point.fix.tpv.time(),
                         last_position: point.resolved_position(),
@@ -238,7 +237,7 @@ impl GpsFixTracker {
                 last_time,
                 last_position: (last_lat, last_lon),
             } => {
-                if fix_count == 0 {
+                if state != SolutionState::Fix {
                     result = Some(GeneratedMarker::new(
                         last_time.utc(),
                         GeneratedMarkerKind::GnssFixLost,
@@ -255,7 +254,7 @@ impl GpsFixTracker {
                 }
             }
             GpsFixState::LostFix { lost_at } => {
-                if fix_count > 0 {
+                if state == SolutionState::Fix {
                     let duration = point.fix.tpv.time().signed_duration_since(lost_at);
                     let (lat, lon) = point.resolved_position();
                     result = Some(GeneratedMarker::new(
@@ -286,16 +285,16 @@ fn detect_generated_markers(
     points: PlacedPoints<'_>,
     config: &GeneratedMarkerConfig,
 ) -> Vec<GeneratedMarker> {
-    let mut tracker = GpsFixTracker::new();
     let mut markers = Vec::new();
-    for point in points.iter() {
-        // The state machine always advances so the regained-duration stays
-        // correct, but a marker is only kept when its kind is enabled.
-        if let Some(sats) = &point.fix.satellites
-            && let Some(marker) = tracker.update(point, sats.fix_count())
-            && fix_marker_enabled(&marker.kind, config)
-        {
-            markers.push(marker);
+    for run in navigation_timeline::runs(points.fixes()) {
+        let mut tracker = GpsFixTracker::new();
+        for observation in run.observations {
+            if let Some(point) = points.get(observation.point_index)
+                && let Some(marker) = tracker.update(point, observation.state)
+                && fix_marker_enabled(&marker.kind, config)
+            {
+                markers.push(marker);
+            }
         }
     }
     // Excursions are classified whatever the marker toggle is set to: the
@@ -484,61 +483,13 @@ fn excursion_markers(
         .collect()
 }
 
-/// Computes GNSS fix-quality statistics from a slice of nav points.
-///
-/// Returns `None` when there are fewer than two points with satellite reports
-/// (not enough consecutive pairs to measure any interval).
+/// Returns interval estimates when at least one chronological run has positive duration.
 pub fn compute_fix_stats(points: &[NavPoint]) -> Option<FixStats> {
-    let sat_points: Vec<&NavPoint> = points.iter().filter(|p| p.satellites.is_some()).collect();
-
-    if sat_points.len() < 2 {
-        return None;
+    let mut stats = FixStats::default();
+    for run in navigation_timeline::runs(points) {
+        stats += run.statistics();
     }
-
-    let mut time_with_fix = Duration::zero();
-    let mut time_without_fix = Duration::zero();
-    let mut fix_loss_count: u32 = 0;
-    let mut max_continuous_no_fix = Duration::zero();
-    let mut current_no_fix_streak = Duration::zero();
-
-    for pair in sat_points.windows(2) {
-        if let [a, b] = pair {
-            let interval = b.tpv.time() - a.tpv.time();
-            let a_has_fix = a.fix_count() > 0;
-            let b_has_fix = b.fix_count() > 0;
-
-            if a_has_fix {
-                time_with_fix += interval;
-                if current_no_fix_streak > Duration::zero() {
-                    if current_no_fix_streak > max_continuous_no_fix {
-                        max_continuous_no_fix = current_no_fix_streak;
-                    }
-                    current_no_fix_streak = Duration::zero();
-                }
-            } else {
-                time_without_fix += interval;
-                current_no_fix_streak += interval;
-            }
-
-            // Count the fix→no-fix transition here. The no-fix duration itself
-            // is accumulated in the next iteration when this `b` becomes the
-            // new `a` (and `a_has_fix` will be false).
-            if a_has_fix && !b_has_fix {
-                fix_loss_count = fix_loss_count.saturating_add(1);
-            }
-        }
-    }
-
-    if current_no_fix_streak > max_continuous_no_fix {
-        max_continuous_no_fix = current_no_fix_streak;
-    }
-
-    Some(FixStats {
-        time_with_fix,
-        time_without_fix,
-        fix_loss_count,
-        max_continuous_no_fix,
-    })
+    (stats.total_duration() > Duration::zero()).then_some(stats)
 }
 
 /// The span from the earliest to the latest fix time. A fix stamped before its
