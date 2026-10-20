@@ -5,6 +5,9 @@
 
 use gt_types::nav_point::NavPoint;
 use gt_types::satellites::{Constellation, Prn, Satellites};
+use gt_types::{SatelliteMembership, SatelliteQueryScope, UtilizationEvidence};
+
+use crate::{DiagnosticRates, ObservationEpoch};
 
 /// The masked "in view" baseline - denominator of the utilization rate.
 ///
@@ -71,9 +74,7 @@ pub struct UtilAnomaly {
     /// Epoch, in Unix seconds (the marker's x-position).
     pub t: f64,
     /// All-constellations utilization-rate percentage at this epoch, used as the
-    /// marker's y-position so it sits on the all-constellations line.  Falls back
-    /// to the 0 % line when the masked baseline is empty (no in-view satellite
-    /// above the mask), which would otherwise leave the rate undefined.
+    /// marker's y-position. An unavailable rate uses the 0% line.
     pub value: f64,
     /// The used sub-mask satellites, sorted by ascending elevation.
     pub masked: Vec<MaskedSat>,
@@ -96,48 +97,74 @@ pub struct UtilPoints {
     pub anomalies: Vec<UtilAnomaly>,
 }
 
-/// Utilization rate as a percentage, or `None` when the masked baseline is empty
-/// (division undefined - the epoch contributes no line point).
-fn rate_percent(num: usize, den: usize) -> Option<f64> {
-    (den > 0).then(|| (num as f64 / den as f64) * 100.0)
+#[derive(Clone, Debug, PartialEq)]
+pub struct UtilizationEpoch {
+    pub source: ObservationEpoch,
+    pub rates: DiagnosticRates,
+    pub usage_indices: Vec<(SatelliteQueryScope, usize)>,
+    pub masked: Vec<MaskedSat>,
 }
 
-/// Utilization rates (percent) of one satellite report: combined plus one
-/// per constellation, `None` where the masked baseline is empty. Shared by
-/// the time-series and per-point forms so their values cannot drift.
-struct EpochRates {
-    all: Option<f64>,
-    gps: Option<f64>,
-    glonass: Option<f64>,
-    galileo: Option<f64>,
-    beidou: Option<f64>,
-    navic: Option<f64>,
-    qzss: Option<f64>,
-}
-
-fn epoch_rates(sats: &Satellites, mask_deg: f32) -> EpochRates {
-    let rate_for = |c: Option<Constellation>| {
-        rate_percent(
-            in_fix_above_mask(sats, c, mask_deg),
-            in_view_above_mask(sats, c, mask_deg),
-        )
-    };
-    EpochRates {
-        all: rate_for(None),
-        gps: rate_for(Some(Constellation::Gps)),
-        glonass: rate_for(Some(Constellation::Glonass)),
-        galileo: rate_for(Some(Constellation::Galileo)),
-        beidou: rate_for(Some(Constellation::Beidou)),
-        navic: rate_for(Some(Constellation::Navic)),
-        qzss: rate_for(Some(Constellation::Qzss)),
-    }
+pub fn utilization_epochs(points: &[NavPoint], mask_deg: f32) -> Vec<UtilizationEpoch> {
+    points
+        .iter()
+        .enumerate()
+        .flat_map(|(point_index, point)| {
+            point
+                .satellite_evidence
+                .observations
+                .iter()
+                .enumerate()
+                .map(move |(observation_index, observation)| {
+                    let mut usage_indices = Vec::new();
+                    let rates = DiagnosticRates::for_scopes(|scope| {
+                        let evidence =
+                            point.utilization_evidence_at(observation_index, scope, mask_deg)?;
+                        let rate = UtilizationCalculation {
+                            evidence,
+                            scope,
+                            elevation_mask_deg: mask_deg,
+                        }
+                        .percent()?;
+                        usage_indices.push((scope, evidence.usage_index));
+                        Some(rate)
+                    });
+                    let mut masked: Vec<_> = observation
+                        .satellites
+                        .iter()
+                        .filter_map(|satellite| {
+                            let elevation = satellite
+                                .measurements
+                                .elevation
+                                .filter(|elevation| *elevation < mask_deg)?;
+                            (point.reported_membership(satellite.identity)
+                                == SatelliteMembership::Used)
+                                .then_some(MaskedSat {
+                                    constellation: satellite.identity.constellation,
+                                    prn: satellite.identity.prn,
+                                    elevation,
+                                })
+                        })
+                        .collect();
+                    masked.sort_by(|left, right| left.elevation.total_cmp(&right.elevation));
+                    UtilizationEpoch {
+                        source: ObservationEpoch {
+                            point_index,
+                            observation_index,
+                            metadata: observation.metadata,
+                        },
+                        rates,
+                        usage_indices,
+                        masked,
+                    }
+                })
+        })
+        .collect()
 }
 
 /// Per-point utilization rates (percent), aligned with `points` by index.
 ///
-/// Entry i is `None` when point i has no satellite report or the masked
-/// baseline is empty. The index alignment is what the query evaluator needs.
-/// The plot uses the time-keyed [`compute_util`] instead.
+/// Missing evidence and an empty above-mask baseline produce `None`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct UtilPerPoint {
     pub all: Vec<Option<f64>>,
@@ -149,23 +176,31 @@ pub struct UtilPerPoint {
     pub qzss: Vec<Option<f64>>,
 }
 
-/// Compute per-point utilization rates for one track's `points` at elevation
-/// mask `mask_deg`. Same values as [`compute_util`], keyed by point index.
+/// Select eligible attached evidence for each point and requested scope.
 pub fn util_per_point(points: &[NavPoint], mask_deg: f32) -> UtilPerPoint {
     let mut out = UtilPerPoint::default();
     for point in points {
-        let rates = point
-            .satellites
-            .as_ref()
-            .map(|sats| epoch_rates(sats, mask_deg));
-        let rate = |f: fn(&EpochRates) -> Option<f64>| rates.as_ref().and_then(f);
-        out.all.push(rate(|r| r.all));
-        out.gps.push(rate(|r| r.gps));
-        out.glonass.push(rate(|r| r.glonass));
-        out.galileo.push(rate(|r| r.galileo));
-        out.beidou.push(rate(|r| r.beidou));
-        out.navic.push(rate(|r| r.navic));
-        out.qzss.push(rate(|r| r.qzss));
+        let rates = DiagnosticRates::for_scopes(|scope| {
+            UtilizationCalculation {
+                evidence: point.utilization_evidence(scope, mask_deg)?,
+                scope,
+                elevation_mask_deg: mask_deg,
+            }
+            .percent()
+        });
+        out.all.push(rates.all);
+        out.gps
+            .push(rates.get(SatelliteQueryScope::Constellation(Constellation::Gps)));
+        out.glonass
+            .push(rates.get(SatelliteQueryScope::Constellation(Constellation::Glonass)));
+        out.galileo
+            .push(rates.get(SatelliteQueryScope::Constellation(Constellation::Galileo)));
+        out.beidou
+            .push(rates.get(SatelliteQueryScope::Constellation(Constellation::Beidou)));
+        out.navic
+            .push(rates.get(SatelliteQueryScope::Constellation(Constellation::Navic)));
+        out.qzss
+            .push(rates.get(SatelliteQueryScope::Constellation(Constellation::Qzss)));
     }
     out
 }
@@ -175,35 +210,49 @@ pub fn util_per_point(points: &[NavPoint], mask_deg: f32) -> UtilPerPoint {
 pub fn compute_util(points: &[NavPoint], mask_deg: f32) -> UtilPoints {
     let mut out = UtilPoints::default();
 
-    for point in points {
-        let Some(sats) = &point.satellites else {
-            continue;
-        };
-        let t = point.tpv.time().as_secs_f64_with_subseconds();
-
-        let rates = epoch_rates(sats, mask_deg);
-        let all_rate = rates.all;
+    for epoch in utilization_epochs(points, mask_deg) {
+        let t = epoch
+            .source
+            .metadata
+            .normalized_time
+            .as_secs_f64_with_subseconds();
+        let rates = epoch.rates;
         for (series, rate) in [
             (&mut out.all, rates.all),
-            (&mut out.gps, rates.gps),
-            (&mut out.glonass, rates.glonass),
-            (&mut out.galileo, rates.galileo),
-            (&mut out.beidou, rates.beidou),
-            (&mut out.navic, rates.navic),
-            (&mut out.qzss, rates.qzss),
+            (
+                &mut out.gps,
+                rates.get(SatelliteQueryScope::Constellation(Constellation::Gps)),
+            ),
+            (
+                &mut out.glonass,
+                rates.get(SatelliteQueryScope::Constellation(Constellation::Glonass)),
+            ),
+            (
+                &mut out.galileo,
+                rates.get(SatelliteQueryScope::Constellation(Constellation::Galileo)),
+            ),
+            (
+                &mut out.beidou,
+                rates.get(SatelliteQueryScope::Constellation(Constellation::Beidou)),
+            ),
+            (
+                &mut out.navic,
+                rates.get(SatelliteQueryScope::Constellation(Constellation::Navic)),
+            ),
+            (
+                &mut out.qzss,
+                rates.get(SatelliteQueryScope::Constellation(Constellation::Qzss)),
+            ),
         ] {
-            if let Some(r) = rate {
-                series.push([t, r]);
+            if let Some(rate) = rate {
+                series.push([t, rate]);
             }
         }
-
-        let mut masked: Vec<MaskedSat> = masked_out_in_fix(sats, mask_deg).collect();
-        if !masked.is_empty() {
-            masked.sort_by(|a, b| a.elevation.total_cmp(&b.elevation));
+        if !epoch.masked.is_empty() {
             out.anomalies.push(UtilAnomaly {
                 t,
-                value: all_rate.unwrap_or(ANOMALY_FALLBACK_RATE),
-                masked,
+                value: rates.all.unwrap_or(ANOMALY_FALLBACK_RATE),
+                masked: epoch.masked,
             });
         }
     }
@@ -211,9 +260,42 @@ pub fn compute_util(points: &[NavPoint], mask_deg: f32) -> UtilPoints {
     out
 }
 
-/// Y-position for an anomaly marker when the masked baseline is empty (no
-/// in-view satellite above the mask), where the rate is undefined.  The marker
-/// lands at the 0 % line - no above-mask satellite was usable, let alone used.
+struct UtilizationCalculation<'a> {
+    evidence: UtilizationEvidence<'a>,
+    scope: SatelliteQueryScope,
+    elevation_mask_deg: f32,
+}
+
+impl UtilizationCalculation<'_> {
+    fn percent(&self) -> Option<f64> {
+        if !self.evidence.observation.metadata.complete_for(self.scope) {
+            return None;
+        }
+        let mut used = 0_u32;
+        let mut observed = 0_u32;
+        for satellite in self
+            .evidence
+            .observation
+            .satellites
+            .iter()
+            .filter(|satellite| self.scope.includes(satellite.identity))
+        {
+            if satellite.measurements.elevation? >= self.elevation_mask_deg {
+                observed += 1;
+                match self.evidence.usage.membership(satellite.identity) {
+                    SatelliteMembership::Unknown => return None,
+                    SatelliteMembership::Unused => (),
+                    SatelliteMembership::Used => used += 1,
+                }
+            }
+        }
+        (observed > 0).then(|| f64::from(used) / f64::from(observed) * PERCENT_PER_UNIT)
+    }
+}
+
+const PERCENT_PER_UNIT: f64 = 100.0;
+
+/// Anomaly position when the utilization rate is unavailable.
 const ANOMALY_FALLBACK_RATE: f64 = 0.0;
 
 #[cfg(test)]
@@ -295,7 +377,7 @@ mod tests {
         let with_sats = |used: bool| {
             test_util::report(vec![
                 sat(Constellation::Gps, Some(40.0), used),
-                sat(Constellation::Gps, Some(30.0), true),
+                fixtures::satellite(Constellation::Gps, 2, Some(30.0), None, true),
             ])
         };
         let points = vec![

@@ -3,6 +3,7 @@ use std::cmp::Ordering;
 use rustc_hash::{FxHashMap, FxHashSet};
 use strum::IntoEnumIterator as _;
 
+use crate::NavPoint;
 use crate::satellites::{Constellation, ConstellationSet, Prn, SatSample, Satellites, Snr};
 use crate::time_types::{GpsTime, SysTime};
 use crate::tpv::TimePositionVelocity;
@@ -41,9 +42,13 @@ pub enum SatelliteQueryScope {
 
 impl SatelliteQueryScope {
     pub fn includes(self, identity: SatelliteIdentity) -> bool {
+        self.includes_constellation(identity.constellation)
+    }
+
+    pub fn includes_constellation(self, constellation: Constellation) -> bool {
         match self {
             Self::Global => true,
-            Self::Constellation(constellation) => identity.constellation == constellation,
+            Self::Constellation(requested) => constellation == requested,
         }
     }
 }
@@ -315,6 +320,99 @@ impl SatelliteEvidence {
             .filter(|(_, report)| eligible(report))
             .min_by(|(_, left), (_, right)| {
                 left.metadata.compare_for_fix(&right.metadata, fix_time)
+            })
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct UtilizationEvidence<'a> {
+    pub observation_index: usize,
+    pub observation: &'a SatelliteObservationReport,
+    pub usage_index: usize,
+    pub usage: &'a SatelliteUsageReport,
+}
+
+impl NavPoint {
+    pub fn utilization_evidence(
+        &self,
+        scope: SatelliteQueryScope,
+        mask_deg: f32,
+    ) -> Option<UtilizationEvidence<'_>> {
+        let (index, _) = self
+            .satellite_evidence
+            .observations
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| {
+                self.utilization_evidence_at(*index, scope, mask_deg)
+                    .is_some()
+            })
+            .min_by(|(_, left), (_, right)| {
+                left.metadata
+                    .compare_for_fix(&right.metadata, self.tpv.time())
+            })?;
+        self.utilization_evidence_at(index, scope, mask_deg)
+    }
+
+    pub fn utilization_evidence_at(
+        &self,
+        observation_index: usize,
+        scope: SatelliteQueryScope,
+        mask_deg: f32,
+    ) -> Option<UtilizationEvidence<'_>> {
+        let observation = self
+            .satellite_evidence
+            .observations
+            .get(observation_index)?;
+        if !observation.metadata.complete_for(scope) {
+            return None;
+        }
+        let satellites = || {
+            observation
+                .satellites
+                .iter()
+                .filter(|satellite| scope.includes(satellite.identity))
+        };
+        if satellites().any(|satellite| satellite.measurements.elevation.is_none()) {
+            return None;
+        }
+        if !satellites().any(|satellite| {
+            satellite
+                .measurements
+                .elevation
+                .is_some_and(|elevation| elevation >= mask_deg)
+        }) {
+            return None;
+        }
+        let (usage_index, usage) =
+            self.satellite_evidence
+                .select_usage_report(self.tpv.time(), |usage| {
+                    satellites()
+                        .filter(|satellite| {
+                            satellite
+                                .measurements
+                                .elevation
+                                .is_some_and(|elevation| elevation >= mask_deg)
+                        })
+                        .all(|satellite| {
+                            usage.membership(satellite.identity) != SatelliteMembership::Unknown
+                        })
+                })?;
+        Some(UtilizationEvidence {
+            observation_index,
+            observation,
+            usage_index,
+            usage,
+        })
+    }
+
+    pub fn reported_membership(&self, identity: SatelliteIdentity) -> SatelliteMembership {
+        self.satellite_evidence
+            .select_usage_report(self.tpv.time(), |report| {
+                report.membership(identity) != SatelliteMembership::Unknown
+            })
+            .map_or(SatelliteMembership::Unknown, |(_, report)| {
+                report.membership(identity)
             })
     }
 }

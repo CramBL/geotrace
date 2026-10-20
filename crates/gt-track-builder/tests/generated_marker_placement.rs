@@ -5,12 +5,12 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, Utc};
 use gt_track_builder::{FileMeta, SegmentationConfig};
-use gt_types::PositionProvenance;
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::fixtures::{self, FixKind};
 use gt_types::markers::{GeneratedMarker, GeneratedMarkerKind};
 use gt_types::nav_point::NavPoint;
 use gt_types::track::FileSource;
+use gt_types::{GpsTime, PositionProvenance};
 
 fn utc_time(secs: i64) -> DateTime<Utc> {
     DateTime::<Utc>::UNIX_EPOCH + Duration::seconds(secs)
@@ -109,3 +109,57 @@ const LATITUDE_DEGREES: f64 = 55.0;
 /// arcs a few 1e-9° poleward at its midpoint, so the drawn epoch does not sit
 /// at exactly 55°.
 const DEGREES_TOLERANCE: f64 = 1e-7;
+
+#[test]
+fn slip_marker_uses_report_time_and_associated_resolved_position() {
+    let mut points = vec![
+        measured_fix(1000, 12.0, Duration::zero()),
+        measured_fix(1001, 12.001, Duration::zero()),
+    ];
+    for observation in &mut points
+        .first_mut()
+        .expect("fixture value")
+        .satellite_evidence
+        .observations
+    {
+        for satellite in &mut observation.satellites {
+            satellite.measurements.elevation = Some(40.0);
+        }
+    }
+    let time = utc_time(1001) + Duration::milliseconds(400);
+    let report = points
+        .get_mut(1)
+        .expect("fixture value")
+        .satellite_evidence
+        .observations
+        .first_mut()
+        .expect("fixture value");
+    report.metadata.normalized_time = GpsTime::from_utc(time);
+    report.satellites.clear();
+    let markers = generated_markers(&points);
+    let marker = markers
+        .iter()
+        .find(|marker| matches!(marker.kind, GeneratedMarkerKind::Slip(_)))
+        .expect("fixture value");
+    assert_eq!(marker.time, time);
+    assert_eq!(
+        marker.lat,
+        points
+            .get(1)
+            .expect("fixture value")
+            .tpv
+            .lat()
+            .valid()
+            .expect("fixture value")
+    );
+    assert_eq!(
+        marker.lon,
+        points
+            .get(1)
+            .expect("fixture value")
+            .tpv
+            .lon()
+            .valid()
+            .expect("fixture value")
+    );
+}
