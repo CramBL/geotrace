@@ -11,6 +11,7 @@ doctest = false
 
 [dependencies]
 gt-types = { path = "../gt-types" }
+strum.workspace = true
 vec1.workspace = true
 
 [dev-dependencies]

@@ -11,8 +11,13 @@
 //! - [`clock_offset`] - departures from a track's GPS−system clock offset
 //!   baseline, and a baseline past the plot's own scale.
 
+pub use satellite_diagnostics::{
+    DiagnosticRates, ObservationEpoch, SlipAnalysisConfig, SlipEpoch, SlipThresholds,
+};
+
 pub mod clock_offset;
 pub mod loss_of_lock;
 pub mod robust;
+mod satellite_diagnostics;
 pub mod satellite_utilization;
 mod test_util;

@@ -34,7 +34,7 @@ pub use sat_label::{SatLabelAnchor, SatLabelTier};
 pub use satellite_evidence::{
     SatelliteCoverage, SatelliteEvidence, SatelliteIdentity, SatelliteMembership,
     SatelliteObservation, SatelliteObservationReport, SatelliteQueryScope, SatelliteReportMetadata,
-    SatelliteScope, SatelliteUsage, SatelliteUsageReport,
+    SatelliteScope, SatelliteUsage, SatelliteUsageReport, UtilizationEvidence,
 };
 pub use solar_position::SunlitSide;
 pub use time_types::{FixTimestamp, GpsTime, GpsTimeRange, SysTime};

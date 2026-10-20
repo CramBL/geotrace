@@ -1,6 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 use gt_analysis::clock_offset::{self, ClockOffsetExcursion};
 use gt_analysis::robust;
+use gt_analysis::{SlipAnalysisConfig, SlipThresholds};
 use gt_geo_math::GreatCircleArc;
 use gt_types::channel::Channel;
 use gt_types::coordinates::{Latitude, Longitude};
@@ -345,18 +346,24 @@ fn detect_slip_markers(
     points: PlacedPoints<'_>,
     config: &GeneratedMarkerConfig,
 ) -> Vec<GeneratedMarker> {
-    gt_analysis::loss_of_lock::detect_slip_events(
+    gt_analysis::loss_of_lock::slip_epochs(
         points.fixes(),
-        config.slip_elevation_mask_deg,
-        config.slip_snr_drop_db,
+        SlipAnalysisConfig {
+            thresholds: SlipThresholds {
+                elevation_mask_deg: config.slip_elevation_mask_deg,
+                snr_drop_db: config.slip_snr_drop_db,
+            },
+            rate_window_min: None,
+        },
     )
     .into_iter()
-    .filter_map(|(i, slips)| {
-        let point = points.get(i)?;
+    .filter(|epoch| !epoch.slips.is_empty())
+    .filter_map(|epoch| {
+        let point = points.get(epoch.source.point_index)?;
         let (lat, lon) = point.resolved_position();
         Some(GeneratedMarker::new(
-            point.fix.tpv.time().utc(),
-            GeneratedMarkerKind::Slip(SlipEvent { slips }),
+            epoch.source.metadata.normalized_time.utc(),
+            GeneratedMarkerKind::Slip(SlipEvent { slips: epoch.slips }),
             lat,
             lon,
         ))
