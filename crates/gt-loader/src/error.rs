@@ -1,5 +1,12 @@
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError {
+    #[error("record {record}, {kind} sample {sample}: normalized report time is out of range")]
+    ReportTimeOutOfRange {
+        record: usize,
+        kind: &'static str,
+        sample: usize,
+    },
+
     #[error("GeoTrace SDK build error: {0}")]
     Build(#[from] geotrace_sdk::BuildError),
 

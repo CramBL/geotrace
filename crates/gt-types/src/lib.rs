@@ -22,9 +22,20 @@ pub use markers::{
 pub use mercator::MercPoint;
 pub use metrics::MetricKind;
 pub use nav_point::{FixQuality, NavPoint, ProjectedPosition, ResolvedPosition};
+pub use navigation::{
+    NavigationMetadata, PositionProvenance, SolutionDimension, SolutionMethod, SolutionState,
+};
+pub use navigation_resolution::{
+    NavigationEvidenceSource, ResolvedNavigationState, ResolvedSatelliteCount,
+};
 pub use placed_point::{AddressedFix, PlacedPoint, PlacedPoints};
 pub use query::DisplayMode;
 pub use sat_label::{SatLabelAnchor, SatLabelTier};
+pub use satellite_evidence::{
+    SatelliteCoverage, SatelliteEvidence, SatelliteIdentity, SatelliteMembership,
+    SatelliteObservation, SatelliteObservationReport, SatelliteQueryScope, SatelliteReportMetadata,
+    SatelliteScope, SatelliteUsage, SatelliteUsageReport,
+};
 pub use solar_position::SunlitSide;
 pub use time_types::{FixTimestamp, GpsTime, GpsTimeRange, SysTime};
 pub use tpv::TimePositionVelocity;
@@ -50,9 +61,12 @@ pub mod markers;
 pub mod mercator;
 pub mod metrics;
 pub mod nav_point;
+mod navigation;
+mod navigation_resolution;
 pub mod placed_point;
 pub mod query;
 pub mod sat_label;
+mod satellite_evidence;
 pub mod satellites;
 pub mod solar_position;
 mod test_util;

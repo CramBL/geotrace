@@ -25,6 +25,7 @@ use gt_types::{
 pub use error::LoadError;
 
 mod error;
+mod navigation;
 
 /// Derive a stable grouping identity from GTD file metadata.
 ///
@@ -155,7 +156,7 @@ fn build_loaded_gtd(
     config: &gt_track_builder::SegmentationConfig,
 ) -> Result<LoadedGtd, LoadError> {
     progress(0.65, STAGE_CONVERTING);
-    let contents = from_nav_file(nav_file);
+    let contents = from_nav_file(nav_file)?;
     progress(0.90, STAGE_SEGMENTING);
     let identity = derive_identity(
         nav_file.meta().identity(),
@@ -579,11 +580,12 @@ struct NavFileContents {
     load_warnings: Vec<LoadWarning>,
 }
 
-fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
+fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
     let mut nav_points = Vec::with_capacity(nav_file.nav_points().len());
     let mut latitudes_out_of_range: Vec<CoordinateOutOfRange> = Vec::new();
     let mut longitudes_out_of_range: Vec<CoordinateOutOfRange> = Vec::new();
     let mut satellite_alterations = SatelliteAlterations::default();
+    let mut evidence_alterations = navigation::EvidenceAlterations::default();
 
     for (record, sdk_point) in nav_file.nav_points().iter().enumerate() {
         let lat = RecordedLatitude::from_degrees(sdk_point.fix.lat.as_degrees());
@@ -616,7 +618,16 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
             .satellites()
             .as_ref()
             .map(|report| convert_satellite_report(report, record, &mut satellite_alterations));
-        nav_points.push(NavPoint::new(tpv, satellites));
+        nav_points.push(NavPoint {
+            tpv,
+            satellites,
+            navigation: navigation::convert_navigation(&sdk_point.fix),
+            satellite_evidence: navigation::convert_evidence(
+                sdk_point,
+                record,
+                &mut evidence_alterations,
+            )?,
+        });
     }
 
     let mut markers = Vec::new();
@@ -664,6 +675,7 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
         ),
         MERGED_SATELLITE_ROWS
             .load_warning(&satellite_alterations.satellites_merged_from_several_rows),
+        evidence_alterations.warning(),
         REPLACED_CUSTOM_MARKER_ICONS.load_warning(&unrecognized_marker_icons),
         REPLACED_EVENT_MARKER_ICONS.load_warning(&style_alterations.unrecognized_icons),
         REPLACED_EVENT_MARKER_COLORS.load_warning(&style_alterations.unrecognized_colors),
@@ -674,14 +686,14 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
     .chain(satellite_warnings_from_nav_file(nav_file))
     .collect();
 
-    NavFileContents {
+    Ok(NavFileContents {
         nav_points,
         markers,
         event_markers,
         event_marker_styles,
         channels,
         load_warnings,
-    }
+    })
 }
 
 fn convert_channel(sdk: &geotrace_sdk::Channel) -> Channel {
@@ -969,7 +981,7 @@ mod tests {
     }
 
     fn build(nav_file: &NavFile) -> (Vec<NavPoint>, Vec<CustomMarker>) {
-        let contents = from_nav_file(nav_file);
+        let contents = from_nav_file(nav_file).expect("the recording converts");
         (contents.nav_points, contents.markers)
     }
 

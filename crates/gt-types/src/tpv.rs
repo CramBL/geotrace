@@ -11,8 +11,7 @@ pub fn to_linestring(tpvs: &[TimePositionVelocity]) -> geo_types::LineString<f64
 
 /// A GPS fix: time, position, optional heading and speed.
 ///
-/// `heading` is `None` for ghost/synthetic fixes that carry satellite reports
-/// but have no known direction. The renderer draws those as circles.
+/// `heading` is `None` when direction is unreported.
 ///
 /// `sys_time` is the host system-clock timestamp at the moment of the fix, when
 /// available. Use [`TimePositionVelocity::gps_system_clock_offset`] to compute
@@ -31,7 +30,7 @@ pub struct TimePositionVelocity {
     #[builder(into)]
     pub(crate) lon: RecordedLongitude,
     pub(crate) velocity: Option<Velocity>,
-    /// Compass heading in \[0°, 360°). `None` = direction unknown (ghost fix).
+    /// Compass heading in \[0°, 360°). `None` means unreported direction.
     pub(crate) heading: Option<Angle>,
     /// Host system-clock timestamp at the time of the fix.
     /// `None` when the host did not record a system timestamp.
@@ -40,11 +39,8 @@ pub struct TimePositionVelocity {
 }
 
 impl TimePositionVelocity {
-    /// Where the fix sits on the recording's time axis: the receiver's own
-    /// timestamp when it had a lock, the host timestamp the fix was stamped
-    /// with when it did not.
-    ///
-    /// Read [`Self::gps_time`] to tell those apart.
+    /// Receiver time when recorded, otherwise host time.
+    /// Clock origin is independent of navigation state.
     pub fn time(&self) -> GpsTime {
         match self.time {
             FixTimestamp::FromGpsReceiver(gps) => gps,
@@ -52,7 +48,7 @@ impl TimePositionVelocity {
         }
     }
 
-    /// The receiver's own timestamp for this fix, `None` when it had no lock.
+    /// The receiver timestamp, `None` when unreported.
     pub fn gps_time(&self) -> Option<GpsTime> {
         match self.time {
             FixTimestamp::FromGpsReceiver(gps) => Some(gps),
