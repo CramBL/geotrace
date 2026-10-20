@@ -1,5 +1,6 @@
 use std::iter;
 use std::ops::RangeInclusive;
+use std::ptr;
 
 use egui::epaint::{PathShape, PathStroke};
 use egui::{Color32, Pos2, Stroke, Ui, Vec2};
@@ -13,11 +14,11 @@ use gt_types::satellites::{Constellation, NO_DATA_SNR_EXPLANATION};
 use gt_types::{
     DataCategory, FileIdx, FixQuality, FixRef, LoadedFile, LoadedTrack, MapFixKind, NavPoint,
     NearbySkyEvidence, PlacedPoint, PlacedPoints, PointIdx, ResolvedPosition,
-    SKY_REPORT_MAX_AGE_SECS, SatelliteMembership, SatelliteQueryScope, SatelliteScope, SkyGeometry,
-    SkySatellite, SolutionState, TrackIdx, TrackRef,
+    SKY_REPORT_MAX_AGE_SECS, SatelliteMembership, SatelliteQueryScope, SatelliteScope, SkyCounts,
+    SkyGeometry, SkySatellite, SolutionState, TrackIdx, TrackRef,
 };
 use gt_ui_theme::labels::LabelWithHover;
-use gt_ui_theme::{DEGREE_SIGN, DELTA, EM_DASH};
+use gt_ui_theme::{DEGREE_SIGN, EM_DASH, SatelliteCountBadge};
 use gt_ui_types::{
     DRAWN_AT_CAPTION, HighlightScope, INTERPOLATED_POSITION_NOTE, MapElementRef, MapHighlight,
     PointWindowFolds,
@@ -341,44 +342,24 @@ fn sky_section_ui(
                 SkyPlotSize::Full => plot.interactive(),
                 SkyPlotSize::Compact => plot,
             };
-            let response = plot.ui(ui);
-            response.on_hover_ui(|ui| {
-                let observation = report
-                    .evidence
-                    .observation
-                    .into_iter()
-                    .map(|(_, observation)| ("Observation", observation.metadata));
-                let usage = report
-                    .evidence
-                    .usage_reports()
-                    .into_iter()
-                    .map(|(_, usage)| ("Usage", usage.metadata));
-                for (label, metadata) in observation.chain(usage) {
-                    ui.label(format!(
-                        "{label} at {}",
-                        metadata.normalized_time.utc().format(UTC_SUBSECOND_FORMAT)
-                    ));
-                    if let Some(receiver) = metadata.gps_time {
-                        ui.label(format!(
-                            "Receiver {}",
-                            receiver.utc().format(UTC_SUBSECOND_FORMAT)
-                        ));
-                    }
-                    if let Some(host) = metadata.sys_time {
-                        ui.label(format!("Host {}", host.utc().format(UTC_SUBSECOND_FORMAT)));
-                    }
-                }
-            });
+            plot.ui(ui);
             if !report.age.is_zero() {
-                ui.label(RichText::new(report_age_label(report.age)).weak().small());
+                ui.label(RichText::new(report_age_label(report.age)).weak().small())
+                    .on_hover_text(report_age_description(report.age));
             }
         }
     }
 }
 
-/// "Report 2.1s earlier" / "Report 2.1s later" for a borrowed report.
 fn report_age_label(age: chrono::Duration) -> String {
-    let seconds = age.num_milliseconds().abs() as f64 / 1000.0;
+    format!("Sky {:+.1}s", -age.as_seconds_f64())
+}
+
+fn report_age_description(age: chrono::Duration) -> String {
+    if age.is_zero() {
+        return "Report at the same time".to_owned();
+    }
+    let seconds = age.abs().as_seconds_f64();
     let side = if age > chrono::Duration::zero() {
         "earlier"
     } else {
@@ -460,7 +441,7 @@ pub(crate) fn show_hover_table(
     recording_name: Option<&str>,
 ) {
     ui.horizontal_top(|ui| {
-        hover_grid_ui(ui, point, recording_name);
+        ui.vertical(|ui| hover_grid_ui(ui, point, recording_name));
         if !matches!(sky, SkySection::TrackWithoutReports) {
             ui.add_space(12.0);
             ui.vertical(|ui| sky_section_ui(ui, sky, SkyPlotSize::Compact, None));
@@ -559,7 +540,10 @@ fn hover_grid_ui(ui: &mut Ui, point: PlacedPoint<'_>, recording_name: Option<&st
         .show(ui, |ui| {
             recording_row_ui(ui, recording_name);
 
-            ui.label("Time");
+            ui.horizontal(|ui| {
+                ui.label("Time");
+                NavigationDetails(fix).summary_ui(ui);
+            });
             ui.label(fix.tpv.time().utc().format(UTC_SECOND_FORMAT).to_string());
             ui.end_row();
 
@@ -585,40 +569,8 @@ fn hover_grid_ui(ui: &mut Ui, point: PlacedPoint<'_>, recording_name: Option<&st
                 ui.end_row();
             }
 
-            NavigationDetails(fix).rows_ui(ui);
+            NavigationDetails(fix).dop_row_ui(ui);
             show_satellite_rows(ui, fix);
-
-            // Time delta between the GPS fix and the satellite report.
-            // Only shown when the satellite report was GPS-timestamped - if it
-            // only has `sys_time`, this delta equals the GPS/sys-clock delta below
-            // and showing it would be redundant.
-            if let Some(sats) = &fix.satellites
-                && let Some(sat_gps_time) = sats.gps_time()
-            {
-                let sat_delta_ms = (fix.tpv.time() - sat_gps_time).num_milliseconds();
-                if sat_delta_ms != 0 {
-                    ui.label(format!("Sat {DELTA}t"));
-                    ui.label(gt_fmt::format_signed_delta(sat_delta_ms));
-                    ui.end_row();
-                }
-            }
-
-            if let Some(offset) = fix.tpv.gps_system_clock_offset() {
-                let clock_delta_ms = offset.num_milliseconds();
-                ui.label(format!("Clock {DELTA}t"));
-                ui.label(format!(
-                    "{} ({})",
-                    gt_fmt::format_signed_delta(clock_delta_ms),
-                    if clock_delta_ms > 0 {
-                        "GPS ahead"
-                    } else if clock_delta_ms < 0 {
-                        "system ahead"
-                    } else {
-                        "in sync"
-                    }
-                ));
-                ui.end_row();
-            }
         });
 }
 
@@ -646,17 +598,22 @@ pub(crate) fn show_sticky_tpv_content(
         ui.ctx().data(|d| d.get_temp(highlight_id)).flatten();
     let mut highlight: Option<SkyHighlight> = None;
 
-    // Side by side when the plot and a satellite column both fit. Stacked
-    // when they do not, since squeezing the tables in beside a 256 px plot
-    // leaves them too narrow to read.
-    let side_by_side = ui.available_width() >= MIN_SIDE_BY_SIDE_WIDTH_PX;
-    // `folds` and `highlight` are parameters, not closure captures: this
-    // closure and `sticky_satellites` each take them in turn, without
-    // overlapping mutable borrows.
-    // Returns whether the header's "open sky trails" button was pressed.
-    let summary = |ui: &mut Ui,
-                   folds: &mut PointWindowFolds,
-                   highlight: &mut Option<SkyHighlight>| {
+    let side_by_side =
+        matches!(sky, SkySection::Report(_)) && ui.available_width() >= MIN_SIDE_BY_SIDE_WIDTH_PX;
+    let inspection_id = ui.id().with("point_inspection");
+    #[cfg(test)]
+    ui.ctx().data_mut(|data| {
+        for region in [
+            StickyRegion::SkyHeader,
+            StickyRegion::Sky,
+            StickyRegion::Inspection,
+        ] {
+            data.remove::<egui::Rect>(egui::Id::new(("sticky_region", region)));
+        }
+    });
+    #[cfg(test)]
+    sticky_layout_rect(ui, StickyRegion::Body, ui.available_rect_before_wrap());
+    let sky_and_metrics = |ui: &mut Ui, folds: &mut PointWindowFolds| {
         let mut open_trails = false;
         if !matches!(sky, SkySection::TrackWithoutReports) {
             // Sized to the plot it titles: a right-aligned button in an
@@ -680,6 +637,8 @@ pub(crate) fn show_sticky_tpv_content(
                         .inner
                     },
                 );
+            #[cfg(test)]
+            sticky_layout_rect(ui, StickyRegion::SkyHeader, header.response.rect);
             let button = header.inner;
             open_trails = button.clicked();
             // The fold covers the header up to the button, not through it:
@@ -696,38 +655,68 @@ pub(crate) fn show_sticky_tpv_content(
                 folds.plot_folded = !folds.plot_folded;
             }
             if !folds.plot_folded {
-                sky_section_ui(ui, sky, SkyPlotSize::Full, prev_highlight);
+                let _plot = ui.scope(|ui| {
+                    sky_section_ui(ui, sky, SkyPlotSize::Full, prev_highlight);
+                });
+                #[cfg(test)]
+                sticky_layout_rect(ui, StickyRegion::Sky, _plot.response.rect);
             }
             ui.add_space(6.0);
         }
-        sticky_metrics(ui, p, highlight, recording_name, placement);
-        NavigationDetails(p).reports_ui(ui);
+        let _metrics = ui.scope(|ui| sticky_metrics(ui, p, recording_name, placement));
+        #[cfg(test)]
+        sticky_layout_rect(ui, StickyRegion::Metrics, _metrics.response.rect);
         open_trails
     };
     let mut open_trails = false;
     if side_by_side {
-        // The body itself has no scroll: each column scrolls inside it.
-        ui.horizontal_top(|ui| {
-            ui.vertical(|ui| {
-                ScrollArea::vertical()
-                    .id_salt("sticky_summary_scroll")
-                    .show(ui, |ui| open_trails = summary(ui, folds, &mut highlight));
-            });
-            ui.add_space(STICKY_COLUMN_GAP_PX);
-            ui.vertical(|ui| {
-                ScrollArea::vertical()
-                    .id_salt("sticky_sats_scroll")
-                    .show(ui, |ui| sticky_satellites(ui, p, folds, &mut highlight));
+        let width = ui.available_width();
+        let height = ui.available_height();
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.x = STICKY_COLUMN_GAP_PX;
+            ui.horizontal_top(|ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(SkyPlotSize::Full.diameter(), height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_width(SkyPlotSize::Full.diameter());
+                        ScrollArea::both()
+                            .id_salt(inspection_id.with("sky_metrics_scroll"))
+                            .show(ui, |ui| open_trails = sky_and_metrics(ui, folds));
+                    },
+                );
+                ui.allocate_ui_with_layout(
+                    egui::vec2(
+                        width - SkyPlotSize::Full.diameter() - STICKY_COLUMN_GAP_PX,
+                        height,
+                    ),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_width(width - SkyPlotSize::Full.diameter() - STICKY_COLUMN_GAP_PX);
+                        sticky_inspection_ui(ui, p, sky, inspection_id, &mut highlight);
+                        let _tables = ScrollArea::both()
+                            .id_salt(inspection_id.with("satellites_scroll"))
+                            .show(ui, |ui| sticky_satellites(ui, p, folds, &mut highlight));
+                        #[cfg(test)]
+                        sticky_layout_rect(ui, StickyRegion::Tables, _tables.inner_rect);
+                    },
+                );
             });
         });
     } else {
-        // Stacked, the plot sits above the tables and the two scroll as one.
-        ScrollArea::both()
-            .id_salt("sticky_stacked_scroll")
+        sticky_inspection_ui(ui, p, sky, inspection_id, &mut highlight);
+        let _stacked = ScrollArea::both()
+            .id_salt(inspection_id.with("stacked_scroll"))
             .show(ui, |ui| {
-                open_trails = summary(ui, folds, &mut highlight);
+                open_trails = sky_and_metrics(ui, folds);
                 ui.add_space(6.0);
-                sticky_satellites(ui, p, folds, &mut highlight);
+                let _tables = ui.scope(|ui| sticky_satellites(ui, p, folds, &mut highlight));
+                #[cfg(test)]
+                sticky_layout_rect(
+                    ui,
+                    StickyRegion::Tables,
+                    _tables.response.rect.intersect(ui.clip_rect()),
+                );
             });
     }
 
@@ -739,65 +728,164 @@ pub(crate) fn show_sticky_tpv_content(
     open_trails
 }
 
-/// The fix metrics beneath the plot: its position, speed, heading, accuracy,
-/// the satellite fix/seen counts, and the clock deltas. Hovering the fix count
-/// highlights the in-fix satellites on the plot.
+fn sticky_inspection_ui(
+    ui: &mut Ui,
+    p: &NavPoint,
+    sky: &SkySection<'_>,
+    inspection_id: egui::Id,
+    highlight: &mut Option<SkyHighlight>,
+) {
+    let borrowed = match sky {
+        SkySection::Report(report) if !ptr::eq(report.evidence.point, p) => Some(report),
+        _ => None,
+    };
+    let details_id = inspection_id.with("details_open");
+    let nearby_id = inspection_id.with("nearby_open");
+    let mut details_open = ui
+        .ctx()
+        .data_mut(|data| data.get_persisted::<bool>(details_id))
+        .unwrap_or(false);
+    let mut nearby_open = ui
+        .ctx()
+        .data_mut(|data| data.get_persisted::<bool>(nearby_id))
+        .unwrap_or(false);
+    let _header = ui.vertical(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Satellites").strong());
+            NavigationDetails(p).status_ui(ui);
+            let counts = NavigationDetails(p).counts_ui(ui, SatelliteQueryScope::Global);
+            if p.resolved_used_count(SatelliteQueryScope::Global).is_some()
+                && crate::hover_labels::hover_affordance(ui, counts.used.rect)
+            {
+                *highlight = Some(SkyHighlight::in_fix());
+            }
+        });
+        if p.navigation.method.is_some() || p.navigation.dimension.is_some() {
+            ui.horizontal_wrapped(|ui| NavigationDetails(p).solution_fields_ui(ui));
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.toggle_value(&mut details_open, "Details")
+                .on_hover_text("Inspect navigation evidence and recorded reports");
+            if borrowed.is_some() {
+                ui.toggle_value(&mut nearby_open, "Nearby sky details")
+                    .on_hover_text("Inspect the source of nearby sky context");
+            }
+        });
+    });
+    #[cfg(test)]
+    sticky_layout_rect(ui, StickyRegion::Summary, _header.response.rect);
+    ui.ctx().data_mut(|data| {
+        data.insert_persisted(details_id, details_open);
+        data.insert_persisted(nearby_id, nearby_open);
+    });
+    if details_open || (nearby_open && borrowed.is_some()) {
+        let height = (ui.available_height() * DETAILS_HEIGHT_FRACTION)
+            .max(DETAILS_MIN_HEIGHT_PX)
+            .min(ui.available_height());
+        ui.scope_builder(egui::UiBuilder::new().id(inspection_id), |ui| {
+            let _inspection = ScrollArea::both()
+                .id_salt("evidence_scroll")
+                .max_height(height)
+                .show(ui, |ui| {
+                    if details_open {
+                        ui.push_id("point_evidence", |ui| NavigationDetails(p).inspector_ui(ui));
+                    }
+                    if nearby_open && let Some(report) = borrowed {
+                        ui.push_id("nearby_evidence", |ui| {
+                            ui.label(report_age_description(report.age));
+                            if let Some((index, observation)) = report.evidence.observation {
+                                ui.label(format!(
+                                    "Sky observation {} · {} UTC",
+                                    index + 1,
+                                    observation
+                                        .metadata
+                                        .normalized_time
+                                        .utc()
+                                        .format(UTC_SUBSECOND_FORMAT)
+                                ));
+                            }
+                            for (index, usage) in report.evidence.usage_reports() {
+                                ui.label(format!(
+                                    "Sky usage {} · {} UTC",
+                                    index + 1,
+                                    usage
+                                        .metadata
+                                        .normalized_time
+                                        .utc()
+                                        .format(UTC_SUBSECOND_FORMAT)
+                                ));
+                            }
+                            NavigationDetails(report.evidence.point).reports_ui(ui);
+                        });
+                    }
+                });
+            #[cfg(test)]
+            sticky_layout_rect(ui, StickyRegion::Inspection, _inspection.inner_rect);
+        });
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum StickyRegion {
+    Body,
+    Summary,
+    SkyHeader,
+    Sky,
+    Metrics,
+    Inspection,
+    Tables,
+}
+
+#[cfg(test)]
+fn sticky_layout_rect(ui: &Ui, region: StickyRegion, rect: egui::Rect) {
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(egui::Id::new(("sticky_region", region)), rect));
+}
+
 fn sticky_metrics(
     ui: &mut Ui,
     p: &NavPoint,
-    highlight: &mut Option<SkyHighlight>,
     recording_name: Option<&str>,
     placement: FixPlacement,
 ) {
-    Grid::new("sticky_tpv_basic").num_columns(2).show(ui, |ui| {
-        recording_row_ui(ui, recording_name);
-        position_rows_ui(ui, p, placement);
+    Grid::new("sticky_tpv_basic")
+        .num_columns(2)
+        .max_col_width((ui.available_width() - METRIC_LABEL_WIDTH_PX).max(METRIC_LABEL_WIDTH_PX))
+        .show(ui, |ui| {
+            recording_row_ui(ui, recording_name);
+            position_rows_ui(ui, p, placement);
 
-        ui.label("Speed");
-        match p.tpv.velocity_kmh() {
-            Some(v) => {
-                ui.label(format!("{:.1} km/h", v));
-            }
-            None => {
-                ui.label(EM_DASH);
-            }
-        };
-        ui.end_row();
-
-        ui.label("Heading");
-        match p.tpv.heading() {
-            Some(h) => {
-                ui.label(format!("{:.1}{DEGREE_SIGN}", h.get::<degree>()));
-            }
-            None => {
-                ui.label(EM_DASH);
-            }
-        };
-        ui.end_row();
-
-        if let Some(eph) = p.tpv.eph_m() {
-            ui.label("Accuracy");
-            ui.label(format!("±{eph:.1}m"));
+            ui.label("Speed");
+            match p.tpv.velocity_kmh() {
+                Some(v) => {
+                    ui.label(format!("{:.1} km/h", v));
+                }
+                None => {
+                    ui.label(EM_DASH);
+                }
+            };
             ui.end_row();
-        }
 
-        NavigationDetails(p).rows_ui(ui);
-        let counts =
-            NavigationDetails(p).count_row_ui(ui, SatelliteQueryScope::Global, "Satellites");
-        if p.resolved_used_count(SatelliteQueryScope::Global).is_some()
-            && crate::hover_labels::hover_affordance(ui, counts.rect)
-        {
-            *highlight = Some(SkyHighlight::in_fix());
-        }
-
-        // GPS/system-clock delta: how far the GPS clock leads the host clock.
-        if let Some(offset) = p.tpv.gps_system_clock_offset() {
-            let clock_delta_ms = offset.num_milliseconds();
-            ui.label(format!("Clock {DELTA}t"));
-            ui.label(gt_fmt::format_signed_delta(clock_delta_ms));
+            ui.label("Heading");
+            match p.tpv.heading() {
+                Some(h) => {
+                    ui.label(format!("{:.1}{DEGREE_SIGN}", h.get::<degree>()));
+                }
+                None => {
+                    ui.label(EM_DASH);
+                }
+            };
             ui.end_row();
-        }
-    });
+
+            if let Some(eph) = p.tpv.eph_m() {
+                ui.label("Accuracy");
+                ui.label(format!("±{eph:.1}m"));
+                ui.end_row();
+            }
+
+            NavigationDetails(p).dop_row_ui(ui);
+        });
 }
 
 /// A fold arrow, tinted with the colour of whatever it folds, so one element
@@ -987,22 +1075,12 @@ fn constellation_panel(
                 gt_ui_theme::constellation_color(constellation, dark_mode),
             );
             ui.label(RichText::new(constellation.display_name()).strong());
-            let fix_resp = ui.colored_label(
-                const_fix.map_or(ui.visuals().weak_text_color(), |count| {
-                    fix_count_color(count, dark_mode)
-                }),
-                const_fix.map_or_else(|| EM_DASH.to_owned(), |count| count.to_string()),
-            );
-            ui.label(
-                RichText::new(format!(
-                    "/{}",
-                    group
-                        .seen
-                        .map_or_else(|| EM_DASH.to_owned(), |count| count.to_string())
-                ))
-                .weak(),
-            );
-            ui.rect_contains_pointer(fix_resp.rect)
+            let counts = SatelliteCountBadge(SkyCounts {
+                used: const_fix,
+                seen: group.seen,
+            })
+            .ui(ui);
+            ui.rect_contains_pointer(counts.used.rect)
         });
         let over_fix_count = header.inner;
         // Interact with an explicit id: sibling panels lay out identically,
@@ -1103,7 +1181,13 @@ pub(crate) fn constellation_swatch(ui: &mut Ui, constellation: Constellation) {
 }
 
 fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
-    NavigationDetails(p).count_row_ui(ui, SatelliteQueryScope::Global, "Satellites");
+    if p.resolved_used_count(SatelliteQueryScope::Global).is_some()
+        || p.resolved_seen_count(SatelliteQueryScope::Global).is_some()
+    {
+        ui.label(RichText::new("Satellites").strong());
+        NavigationDetails(p).counts_ui(ui, SatelliteQueryScope::Global);
+        ui.end_row();
+    }
     for constellation in Constellation::iter() {
         let scope = SatelliteQueryScope::Constellation(constellation);
         if p.satellite_evidence.usage.iter().any(|report| {
@@ -1113,7 +1197,12 @@ fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
             report.satellites.iter().any(|row| row.identity.constellation == constellation)
                 || matches!(report.metadata.scope, SatelliteScope::Constellations(set) if set.contains(constellation))
         }) {
-            NavigationDetails(p).count_row_ui(ui, scope, constellation.display_name());
+            ui.horizontal(|ui| {
+                constellation_swatch(ui, constellation);
+                ui.label(constellation.display_name());
+            });
+            NavigationDetails(p).counts_ui(ui, scope);
+            ui.end_row();
         }
     }
 }
@@ -1679,6 +1768,10 @@ const FOLD_ARROW_SIZE_PX: f32 = 9.0;
 
 /// Box the fold triangle is allocated in, leaving a little air around it.
 const FOLD_ARROW_BOX_PX: f32 = 12.0;
+
+const METRIC_LABEL_WIDTH_PX: f32 = 76.0;
+const DETAILS_HEIGHT_FRACTION: f32 = 0.5;
+const DETAILS_MIN_HEIGHT_PX: f32 = 60.0;
 
 /// Gap between the sticky popup's plot column and its satellite column, and
 /// between the two satellite columns.

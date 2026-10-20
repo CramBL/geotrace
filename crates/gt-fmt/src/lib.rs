@@ -83,24 +83,15 @@ pub struct SatelliteCounts(pub SkyCounts);
 
 impl fmt::Display for SatelliteCounts {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0 {
-            SkyCounts {
-                used: Some(used),
-                seen: Some(seen),
-            } => write!(f, "{used}/{seen} used/seen"),
-            SkyCounts {
-                used: Some(used),
-                seen: None,
-            } => write!(f, "{used} used"),
-            SkyCounts {
-                used: None,
-                seen: Some(seen),
-            } => write!(f, "{seen} seen"),
-            SkyCounts {
-                used: None,
-                seen: None,
-            } => f.write_str(EM_DASH),
-        }
+        let used = self
+            .0
+            .used
+            .map_or_else(|| EM_DASH.to_owned(), |value| value.to_string());
+        let seen = self
+            .0
+            .seen
+            .map_or_else(|| EM_DASH.to_owned(), |value| value.to_string());
+        write!(f, "{used} / {seen}")
     }
 }
 

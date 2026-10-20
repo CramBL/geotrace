@@ -26,14 +26,11 @@ fn bare_map_north_of_the_track() -> egui::Pos2 {
 /// reaches at [`viewport_center`].
 fn the_centre_fix_label() -> String {
     format!(
-        "Time\n2023-11-14 22:28:20\n\
+        "Time\nUnknown\n2023-11-14 22:28:20\n\
          Lat\n55.676000° N\n\
          Lon\n12.580000° E\n\
          Speed\n{EM_DASH}\n\
-         Heading\n{EM_DASH}\n\
-         State\nUnknown\n\
-         State evidence\nNo state observation\n\
-         Satellites\n{EM_DASH}"
+         Heading\n{EM_DASH}"
     )
 }
 
@@ -135,14 +132,11 @@ fn snapshot_a_fix_stacks_its_table_over_the_label_of_the_interference_cell_under
 fn snapshot_the_compound_label_stacks_over_the_label_of_the_interference_cell_under_it() {
     let the_compound_label = format!(
         "{ICON_CROSSHAIR}  GNSS fix  22:28:20\n\
-         Time\n2023-11-14 22:28:20\n\
+         Time\nUnknown\n2023-11-14 22:28:20\n\
          Lat\n55.676000° N\n\
          Lon\n12.580000° E\n\
          Speed\n{EM_DASH}\n\
          Heading\n{EM_DASH}\n\
-         State\nUnknown\n\
-         State evidence\nNo state observation\n\
-         Satellites\n{EM_DASH}\n\
          {ICON_FLAG}  power/boot"
     );
     let files =
@@ -392,14 +386,11 @@ fn the_snapped_edge_label_hides_while_the_context_menu_is_open() {
 fn snapshot_the_compound_label_opens_the_frame_after_the_pointer_reaches_two_elements() {
     let the_compound_label = format!(
         "{ICON_CROSSHAIR}  GNSS fix  22:28:20\n\
-         Time\n2023-11-14 22:28:20\n\
+         Time\nUnknown\n2023-11-14 22:28:20\n\
          Lat\n55.676000° N\n\
          Lon\n12.580000° E\n\
          Speed\n{EM_DASH}\n\
          Heading\n{EM_DASH}\n\
-         State\nUnknown\n\
-         State evidence\nNo state observation\n\
-         Satellites\n{EM_DASH}\n\
          {ICON_FLAG}  power/boot"
     );
     let files =
@@ -431,14 +422,11 @@ fn snapshot_the_compound_label_opens_the_frame_after_the_pointer_reaches_two_ele
 #[test]
 fn snapshot_the_fix_table_opens_the_frame_after_the_pointer_reaches_a_fix_on_a_snapped_edge() {
     let the_fix_label = format!(
-        "Time\n2023-11-14 22:16:20\n\
+        "Time\nUnknown\n2023-11-14 22:16:20\n\
          Lat\n55.676000° N\n\
          Lon\n12.568000° E\n\
          Speed\n{EM_DASH}\n\
-         Heading\n{EM_DASH}\n\
-         State\nUnknown\n\
-         State evidence\nNo state observation\n\
-         Satellites\n{EM_DASH}"
+         Heading\n{EM_DASH}"
     );
     let files = test_util::a_recording_of(SPARSE_FIX_COUNT, WALKING_STEP_DEGREES);
     let last_fix = SPARSE_FIX_COUNT - 1;

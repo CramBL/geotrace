@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **Map & Tracks:** Fixed missing constellation swatches and expanded evidence rows in point summaries.
 - **Map & Tracks:** Fixed fit clipping start and finish flags when only ghost fixes, labels or sky glyphs were displayed.
 - **Map & Tracks:** Fixed fit and query reveal including data hidden by tree, query or marker type settings.
 - **Map & Tracks:** Fixed plot hover clearing the map highlight when a hidden fix preceded a visible candidate.
