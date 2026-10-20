@@ -9,7 +9,7 @@ use gt_types::{GpsTime, SatelliteIdentity, SkySatellite};
 use gt_ui_theme::SatelliteMembershipMark;
 
 use crate::style;
-use crate::trails::{SkyTrail, SkyTrails, SlipMark, TrailSample};
+use crate::trails::{SkyTrail, SkyTrails, SlipMark, TrailMembershipFilter, TrailSample};
 use crate::{grid, heatmap, plot_common, projection};
 
 /// The per-frame plot geometry shared by the trail and marker painting.
@@ -224,18 +224,15 @@ impl<'a> SkyTrailsPlot<'a> {
                 );
             }
 
-            // The report in effect at the scrubbed instant places the marker.
-            let Some((azimuth, elevation, report)) =
-                self.scrub.and_then(|scrub| marker_at(trail, scrub))
+            let Some(marker) = self
+                .scrub
+                .and_then(|scrub| trail.marker_at(scrub))
+                .filter(|marker| self.membership_filter().allows(trail, *marker))
             else {
                 continue;
             };
-            // "In fix only" drops the current-instant marker for a satellite
-            // merely tracked right now, leaving its whole-track trail in place.
-            if self.in_fix_now && !report.in_fix() {
-                continue;
-            }
-            let pos = frame.project(azimuth, elevation);
+            let report = marker.sample;
+            let pos = frame.project(marker.azimuth, marker.elevation);
             paint_marker(ui, pos, base.gamma_multiply(focus_factor), panel, report);
             // Every drawn marker is a hover target.
             markers.push((
@@ -295,15 +292,23 @@ impl<'a> SkyTrailsPlot<'a> {
             .iter()
             .filter(|trail| self.shown.contains(trail.constellation))
             .filter_map(|trail| {
-                let (azimuth, elevation, report) = marker_at(trail, scrub)?;
+                let marker = trail.marker_at(scrub)?;
+                let report = marker.sample;
                 report.in_fix().then(|| {
                     (
-                        frame.project(azimuth, elevation),
+                        frame.project(marker.azimuth, marker.elevation),
                         heatmap::snr_weight(report.snr),
                     )
                 })
             })
             .collect()
+    }
+
+    fn membership_filter(&self) -> TrailMembershipFilter {
+        TrailMembershipFilter {
+            show_not_in_fix: self.show_not_in_fix,
+            in_fix_only: self.in_fix_now,
+        }
     }
 
     /// The alpha for a constellation given the current focus: full when it is
@@ -672,35 +677,6 @@ fn slip_label(slip: &SlipMark) -> String {
     )
 }
 
-/// The satellite's `(azimuth, elevation)` at `time`, plus the report in effect
-/// there: the last one received at or before `time`, which is what the stats
-/// column counts.
-///
-/// The position is interpolated between reports, but the report is always a real
-/// one: scrubbing to 12:00:00.4 reads the 12:00:00 report. `None` when `time` is
-/// outside the trail or inside one of its gaps.
-fn marker_at(trail: &SkyTrail, time: GpsTime) -> Option<(f32, f32, &TrailSample)> {
-    if let Some(sample) = trail.samples.iter().find(|sample| sample.time == time) {
-        return Some((sample.azimuth, sample.elevation, sample));
-    }
-    let pair = trail.samples.windows(2).find(
-        |pair| matches!(pair, [a, b] if a.time < time && time < b.time && b.epoch.follows(a.epoch)),
-    )?;
-    let [a, b] = pair else {
-        return None;
-    };
-    let span = b.time.signed_duration_since(a.time).num_milliseconds();
-    if span <= 0 {
-        return Some((a.azimuth, a.elevation, a));
-    }
-    let f = time.signed_duration_since(a.time).num_milliseconds() as f32 / span as f32;
-    Some((
-        a.azimuth + (b.azimuth - a.azimuth) * f,
-        a.elevation + (b.elevation - a.elevation) * f,
-        a,
-    ))
-}
-
 /// Minimum distance a sample must project from the last kept one to become its
 /// own vertex. Closer samples are collapsed into the run.
 const MIN_SEGMENT_PX: f32 = 1.0;
@@ -722,7 +698,7 @@ mod tests {
 
     use super::{SkyTrail, SkyTrailsPlot, SlipMark};
     use crate::test_util::{self, Azimuth, Elevation};
-    use crate::trails::{EpochIdx, SkyTrails, TrailEpoch, TrailSample};
+    use crate::trails::{EpochIdx, SkyTrails, TrailEpoch, TrailMembershipFilter, TrailSample};
 
     /// A frame big enough that the test's coordinates are unambiguous.
     fn frame_of_180_px() -> super::Frame {
@@ -1102,7 +1078,9 @@ mod tests {
         #[case] time: GpsTime,
         #[case] expected: Option<(f32, f32)>,
     ) {
-        let position = super::marker_at(&gapped_trail(), time).map(|(az, el, _)| (az, el));
+        let position = gapped_trail()
+            .marker_at(time)
+            .map(|marker| (marker.azimuth, marker.elevation));
         assert_eq!(position, expected);
     }
 
@@ -1118,14 +1096,15 @@ mod tests {
     /// Between reports the marker interpolates its position but still reports
     /// the report in effect, the last one received.
     #[test]
-    fn marker_at_carries_the_report_in_effect_between_reports() {
+    fn marker_at_selects_the_earlier_report_between_reports() {
         let trail = unbroken_trail();
         // Exactly on a report: that report.
-        let (_, _, report) = super::marker_at(&trail, test_util::at(0)).expect("hit");
+        let report = trail.marker_at(test_util::at(0)).expect("hit").sample;
         assert_eq!(report.time, test_util::at(0));
         // Between reports: interpolated position, earlier report still in
         // effect.
-        let (az, el, report) = super::marker_at(&trail, test_util::at(1)).expect("interpolated");
+        let marker = trail.marker_at(test_util::at(1)).expect("interpolated");
+        let (az, el, report) = (marker.azimuth, marker.elevation, marker.sample);
         assert_eq!((az, el), (50.0, 50.0));
         assert_eq!(
             report.time,
@@ -1262,7 +1241,7 @@ mod tests {
             .iter()
             .find(|t| t.constellation == Constellation::Gps && t.prn.value() == 5)
             .expect("gps-5 trail");
-        let sample = gps5.sample_exactly_at(scrub).expect("sample at the epoch");
+        let sample = gps5.marker_at(scrub).expect("sample at the epoch").sample;
         let (azimuth, elevation) = (Azimuth(sample.azimuth), Elevation(sample.elevation));
 
         let mut plot = TrailsPlotScene {
@@ -1551,9 +1530,29 @@ mod tests {
         let trail = &trails.trails[0];
         let runs = super::trail_runs(trail, frame_of_180_px(), false);
         assert_eq!(runs.iter().map(Vec::len).collect::<Vec<_>>(), vec![2, 2]);
-        assert_eq!(trails.counts_at(test_util::at(0), false)[0].fix, None);
-        assert_eq!(trails.counts_at(test_util::at(0), false)[0].seen, 1);
-        assert!(super::marker_at(trail, test_util::at(2)).is_none());
+        assert_eq!(
+            trails.display_counts_at(
+                test_util::at(0),
+                TrailMembershipFilter {
+                    show_not_in_fix: false,
+                    in_fix_only: false
+                }
+            )[0]
+            .used,
+            None
+        );
+        assert_eq!(
+            trails.display_counts_at(
+                test_util::at(0),
+                TrailMembershipFilter {
+                    show_not_in_fix: false,
+                    in_fix_only: false
+                }
+            )[0]
+            .shown,
+            1
+        );
+        assert!(trail.marker_at(test_util::at(2)).is_none());
     }
 
     #[test]

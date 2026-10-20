@@ -6,7 +6,7 @@ use egui::{Align, Layout, RichText, Window};
 use egui_phosphor::regular::PAUSE as ICON_PAUSE;
 use egui_phosphor::regular::PLAY as ICON_PLAY;
 
-use gt_sky::{EpochCount, SkyTrails, SkyTrailsPlot, TrailEpoch};
+use gt_sky::{SkyTrails, SkyTrailsPlot, TrailDisplayCount, TrailEpoch, TrailMembershipFilter};
 use gt_types::satellites::{Constellation, ConstellationSet};
 use gt_types::{GpsTime, LoadedFile, TrackRef};
 use gt_ui_types::{MapHighlight, SkyTrailsRequest};
@@ -291,9 +291,11 @@ impl WindowBody<'_> {
         {
             apply_scrub_highlight(highlight, track_ref, epoch);
         }
-        // Stats and counts reflect the report in effect at this instant.
-        let stats_time = floor_epoch(trails, scrub_time).map_or(first, |e| e.time);
-        let counts = trails.counts_at(stats_time, *show_not_in_fix);
+        let membership_filter = TrailMembershipFilter {
+            show_not_in_fix: *show_not_in_fix,
+            in_fix_only: *in_fix_now,
+        };
+        let counts = trails.display_counts_at(scrub_time, membership_filter);
 
         // Size the plot to the space left after the stats column and the
         // transport, so resizing the window grows the plot.
@@ -338,9 +340,9 @@ impl WindowBody<'_> {
                 .shown(*shown)
                 .focus(focus)
                 .scrub(Some(scrub_time))
-                .show_not_in_fix(*show_not_in_fix)
+                .show_not_in_fix(membership_filter.show_not_in_fix)
                 .show_trails(*show_trails)
-                .in_fix_now(*in_fix_now)
+                .in_fix_now(membership_filter.in_fix_only)
                 .show_heatmap(*show_heatmap)
                 .trail_opacity(gt_sky::trail_opacity_multiplier(*trail_opacity_percent))
                 .with_elevation_mask_deg(elevation_mask_deg)
@@ -452,13 +454,9 @@ fn plot_diameter(avail: egui::Vec2, reserved: f32) -> f32 {
         .max(MIN_PLOT_DIAMETER_PX)
 }
 
-/// The stats/filter column: one row per constellation showing its live fix and
-/// seen counts at the scrubbed instant, a total row, and doubling as the
-/// show/hide toggle (checkbox) and hover-to-focus target. Returns the
-/// constellation whose row is hovered, to focus on the plot.
 fn constellation_stats(
     ui: &mut egui::Ui,
-    counts: &[EpochCount],
+    counts: &[TrailDisplayCount],
     shown: &mut ConstellationSet,
 ) -> Option<Constellation> {
     stats_header(ui);
@@ -468,66 +466,54 @@ fn constellation_stats(
             focus = Some(count.constellation);
         }
     }
-    stats_total_row(ui, counts);
+    stats_total_row(ui, counts, *shown);
     focus
 }
 
-/// The stats column header: a label plus the right-aligned Fix / Seen columns.
 fn stats_header(ui: &mut egui::Ui) {
     let heading = |ui: &mut egui::Ui, width: f32, text: &str| {
         let font = egui::TextStyle::Small.resolve(ui.style());
         stats_cell(ui, width, text, font, ui.visuals().weak_text_color());
     };
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Satellites").weak().small());
-        // Right to left, matching the rows: seen (with its empty parenthetical
-        // slot) then fix, so each heading lands over its own column.
+        ui.label(RichText::new("Satellites").weak().small())
+            .on_hover_text("Satellites drawn in this sky view");
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.add_space(STATS_PAREN_COL_PX);
-            heading(ui, STATS_COUNT_COL_PX, "Seen");
-            heading(ui, STATS_COUNT_COL_PX, "Fix");
+            heading(ui, STATS_COUNT_COL_PX, "Shown");
+            heading(ui, STATS_COUNT_COL_PX, "Used");
         });
     });
 }
 
-/// One constellation row: its swatch and name, a checkbox toggle, and the live
-/// fix/seen counts, colored the same way as the sticky point popup. Returns
-/// whether the row is hovered (to focus the plot).
-fn stats_row(ui: &mut egui::Ui, shown: &mut ConstellationSet, count: &EpochCount) -> bool {
-    let on = shown.contains(count.constellation);
+fn stats_row(ui: &mut egui::Ui, shown: &mut ConstellationSet, count: &TrailDisplayCount) -> bool {
+    let mut on = shown.contains(count.constellation);
     let row = ui
         .horizontal(|ui| {
             let mut checked = on;
             if ui.checkbox(&mut checked, "").changed() {
                 shown.set(count.constellation, checked);
+                on = checked;
             }
             tpv_renderer::constellation_swatch(ui, count.constellation);
             ui.label(dimmed_if_off(count.constellation.display_name().into(), on));
             // Right to left, so the columns anchor to the row's right edge and
             // line up regardless of the constellation name's width.
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                seen_columns(ui, count, on);
-                count_cell(ui, count.fix, tpv_renderer::fix_count_color, on);
+                shown_columns(ui, count, on);
+                count_cell(ui, count.used, tpv_renderer::fix_count_color, on);
             });
         })
         .response;
     crate::hover_labels::hover_affordance(ui, row.rect)
 }
 
-/// The seen count and, on a row the not-in-fix filter cuts, the unfiltered
-/// total in parentheses beside it.
-///
-/// Without the total the count silently drops when the filter engages. The
-/// parenthetical gets its own fixed column, reserved on every row (empty on the
-/// rows that hide nothing), so the seen numbers stay in one line and the plot
-/// beside the column keeps its place. Added right to left, so the parenthetical
-/// sits to the right of the number.
-fn seen_columns(ui: &mut egui::Ui, count: &EpochCount, on: bool) {
+fn shown_columns(ui: &mut egui::Ui, count: &TrailDisplayCount, on: bool) {
     let hidden = count
-        .seen_unfiltered
-        .checked_sub(count.seen)
-        .filter(|h| *h > 0);
-    let text = hidden.map(|_| format!("({})", count.seen_unfiltered));
+        .before_membership_filters
+        .checked_sub(count.shown)
+        .filter(|hidden| on && *hidden > 0);
+    let text = hidden.map(|_| format!("({})", count.before_membership_filters));
     let font = count_font(ui);
     let cell = stats_cell(
         ui,
@@ -537,41 +523,39 @@ fn seen_columns(ui: &mut egui::Ui, count: &EpochCount, on: bool) {
         ui.visuals().weak_text_color(),
     );
     if let Some(hidden) = hidden {
-        let plural = if hidden == 1 { "" } else { "s" };
         cell.on_hover_text(format!(
-            "{} of {} seen. {hidden} satellite{plural} hidden: never in the fix over this track",
-            count.seen, count.seen_unfiltered
+            "{} of {} shown, {hidden} hidden by display filters",
+            count.shown, count.before_membership_filters
         ));
     }
-    count_cell(ui, Some(count.seen), tpv_renderer::seen_count_color, on);
+    count_cell(ui, Some(count.shown), tpv_renderer::seen_count_color, on);
 }
 
-/// The total row: summed fix and seen across every constellation. The bold
-/// "Total" label and the separator above set it off. Its counts stay the same
-/// weight and tier colour as the per-constellation rows, so the numbers read as
-/// one column.
-fn stats_total_row(ui: &mut egui::Ui, counts: &[EpochCount]) {
-    let (seen, seen_unfiltered, fix) = counts.iter().fold((0, 0, Some(0)), |(s, u, f), c| {
-        (
-            s + c.seen,
-            u + c.seen_unfiltered,
-            f.zip(c.fix).map(|(total, count)| total + count),
-        )
-    });
-    let total = EpochCount {
+fn stats_total_row(ui: &mut egui::Ui, counts: &[TrailDisplayCount], shown: ConstellationSet) {
+    let (shown_count, before_membership_filters, used) = counts
+        .iter()
+        .filter(|count| shown.contains(count.constellation))
+        .fold((0, 0, Some(0)), |(s, u, f), c| {
+            (
+                s + c.shown,
+                u + c.before_membership_filters,
+                f.zip(c.used).map(|(total, count)| total + count),
+            )
+        });
+    let total = TrailDisplayCount {
         constellation: counts
             .first()
             .map_or(Constellation::Gps, |c| c.constellation),
-        seen,
-        seen_unfiltered,
-        fix,
+        shown: shown_count,
+        before_membership_filters,
+        used,
     };
     ui.separator();
     ui.horizontal(|ui| {
         ui.label(RichText::new("Total").strong());
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            seen_columns(ui, &total, true);
-            count_cell(ui, fix, tpv_renderer::fix_count_color, true);
+            shown_columns(ui, &total, true);
+            count_cell(ui, used, tpv_renderer::fix_count_color, true);
         });
     });
 }
@@ -590,13 +574,14 @@ fn count_cell(
         .map_or(ui.visuals().weak_text_color(), |count| {
             color(count as u32, ui.visuals().dark_mode)
         });
+    let count = count.filter(|_| on);
     let text = count.map_or_else(
         || gt_ui_theme::EM_DASH.to_owned(),
         |count| count.to_string(),
     );
     let cell = stats_cell(ui, STATS_COUNT_COL_PX, &text, count_font(ui), tint);
-    if count.is_none() {
-        cell.on_hover_text("Satellite usage unreported");
+    if count.is_none() && on {
+        cell.on_hover_text("Satellite usage unknown");
     }
 }
 
@@ -632,6 +617,7 @@ fn stats_cell(
             color,
         );
     }
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
     response
 }
 
@@ -953,9 +939,6 @@ fn apply_scrub_highlight(highlight: &mut MapHighlight, track_ref: TrackRef, epoc
     highlight.plot_hover_snapped = true;
 }
 
-/// Width of the left stats/filter column's label area: the checkbox, the
-/// colour swatch and the constellation name. The count columns are added to
-/// this, so a wider seen column widens the whole column.
 const STATS_LABEL_WIDTH_PX: f32 = 100.0;
 
 /// Gap between the stats column and the plot.
@@ -971,24 +954,13 @@ const MIN_PLOT_DIAMETER_PX: f32 = 240.0;
 /// inexact seed costs one frame of settling.
 const TRANSPORT_RESERVE_PX: f32 = 78.0;
 
-/// Fixed width of a count column (fix, seen), sized for the column heading and
-/// a couple of digits. Every count is right-aligned in one of these, so the
-/// digits line up down the column and across rows whatever their width.
 const STATS_COUNT_COL_PX: f32 = 38.0;
 
-/// Fixed width of the parenthesised unfiltered-total column, which holds a
-/// total only on a row the not-in-fix filter cuts. Reserved on every row of
-/// every frame, so neither the seen numbers nor the plot beside them move when
-/// a row starts or stops hiding satellites.
 const STATS_PAREN_COL_PX: f32 = 34.0;
 
-/// The stats column's total width: the label area, the two count columns and
-/// the parenthesised total beside the seen count.
 const STATS_COL_WIDTH_PX: f32 =
     STATS_LABEL_WIDTH_PX + STATS_COUNT_COL_PX * 2.0 + STATS_PAREN_COL_PX;
 
-/// Right-hand padding inside a count cell, so a digit does not sit flush
-/// against the next column.
 const STATS_CELL_PAD_PX: f32 = 2.0;
 
 /// Default and minimum window size, chosen so the plot opens comfortably
@@ -1040,16 +1012,17 @@ const TERM_UNDERLINE_ALPHA: f32 = 0.5;
 mod tests {
     use crate::test_util;
     use chrono::{DateTime, Duration, Utc};
-    use gt_test_utils::{HarnessInteraction as _, TestHarness};
+    use gt_test_utils::{HarnessInteraction as _, Queryable as _, TestHarness};
 
     use gt_types::fixtures::SatelliteDrift;
     use gt_types::satellites::Constellation;
-    use gt_types::{FileIdx, TrackIdx};
+    use gt_types::{FileIdx, SatelliteMembership, SatelliteScope, TrackIdx};
 
     use super::{
         ConstellationSet, DEFAULT_WINDOW_SIZE, MAX_PLAYBACK_FRAME_SECS, MIN_PLOT_DIAMETER_PX,
         MIN_WINDOW_HEIGHT_PX, MIN_WINDOW_WIDTH_PX, MapHighlight, SEEK_TAP_SECS, STATS_COL_WIDTH_PX,
-        SkyTrails, SkyTrailsRequest, SkyTrailsWindow, TrackRef, Window, WindowBody,
+        SkyTrails, SkyTrailsRequest, SkyTrailsWindow, TrackRef, TrailDisplayCount,
+        TrailMembershipFilter, Window, WindowBody,
     };
 
     /// What a case drives the window body with. Every field the body reads and
@@ -1329,9 +1302,6 @@ mod tests {
         body_snapshot("sky_trails_window_body", demo_trails());
     }
 
-    /// Snapshot: with the not-in-fix filter on, the seen column carries the
-    /// unfiltered total in parentheses, so the count visibly drops *from*
-    /// something.
     #[test]
     fn sky_trails_window_body_filtered() {
         body_snapshot_with(
@@ -1341,20 +1311,11 @@ mod tests {
         );
     }
 
-    /// Snapshot: counts that mix single and double digits across rows - the
-    /// case that exposed the misalignment. Every fix number must sit under the
-    /// Fix heading and every seen number under Seen, whatever their width. A
-    /// two-digit seen must not shove its row's fix number out of the column.
     #[test]
     fn sky_trails_window_body_dense() {
         body_snapshot("sky_trails_window_body_dense", dense_trails());
     }
 
-    /// Snapshot: the dense counts with the not-in-fix filter on. The parenthetical
-    /// hangs off the rows that hide satellites (GPS, BeiDou) and not the one
-    /// that hides none (Galileo, all in fix), while every seen number stays in
-    /// its column - the "even worse" case when some rows carry a total and some
-    /// do not.
     #[test]
     fn sky_trails_window_body_dense_filtered() {
         body_snapshot_with(
@@ -1364,10 +1325,6 @@ mod tests {
         );
     }
 
-    /// A track whose constellations carry enough satellites to reach two-digit
-    /// seen counts beside single-digit ones: 6/12 GPS, 5/11 BeiDou, 8/8
-    /// Galileo. Half of GPS and BeiDou are out of the fix so fix and seen
-    /// differ.
     fn dense_trails() -> SkyTrails {
         let specs = [
             (Constellation::Gps, 12u32, 6u32),
@@ -1376,8 +1333,8 @@ mod tests {
         ];
         let drifts: Vec<SatelliteDrift> = specs
             .into_iter()
-            .flat_map(|(constellation, seen, in_fix)| {
-                (0..seen).map(move |index| {
+            .flat_map(|(constellation, shown, in_fix)| {
+                (0..shown).map(move |index| {
                     let step = f32::from(u16::try_from(index).unwrap_or(u16::MAX));
                     SatelliteDrift {
                         constellation,
@@ -1819,9 +1776,6 @@ mod tests {
         );
     }
 
-    /// The stats column stays inside its reserved width whether or not the
-    /// not-in-fix filter cuts a row's seen count, so the parenthesised total
-    /// appearing never pushes the plot beside the column.
     #[test]
     fn the_stats_column_keeps_its_width_whatever_the_filter_hides() {
         let showing_every_satellite = laid_out_stats_column_width(true);
@@ -1833,9 +1787,6 @@ mod tests {
         );
     }
 
-    /// The width the stats column occupies at `show_not_in_fix`, laid out in
-    /// the fixed-width container the body gives it. Wider than
-    /// [`STATS_COL_WIDTH_PX`] when the rows overflow it.
     fn laid_out_stats_column_width(show_not_in_fix: bool) -> f32 {
         let trails = demo_trails_with_tracked_only();
         let mut harness = test_util::harness_builder()
@@ -1845,7 +1796,13 @@ mod tests {
                     let Some(epoch) = trails.epochs.first() else {
                         return;
                     };
-                    let counts = trails.counts_at(epoch.time, show_not_in_fix);
+                    let counts = trails.display_counts_at(
+                        epoch.time,
+                        TrailMembershipFilter {
+                            show_not_in_fix,
+                            in_fix_only: false,
+                        },
+                    );
                     let column = ui.allocate_ui_with_layout(
                         egui::vec2(STATS_COL_WIDTH_PX, MIN_PLOT_DIAMETER_PX),
                         egui::Layout::top_down(egui::Align::Min),
@@ -1904,6 +1861,176 @@ mod tests {
         harness
             .inner
             .assert_window_fits_the_viewport(gt_test_utils::AuditedWindow::titled("Sky trails"));
+    }
+
+    #[rstest::rstest]
+    fn displayed_count_table_uses_enabled_constellations(
+        #[values(true, false)] dark_mode: bool,
+        #[values(Some(0), None)] glonass_used: Option<usize>,
+    ) {
+        let counts = [
+            TrailDisplayCount {
+                constellation: Constellation::Gps,
+                shown: 1,
+                used: Some(1),
+                before_membership_filters: 2,
+            },
+            TrailDisplayCount {
+                constellation: Constellation::Glonass,
+                shown: 1,
+                used: glonass_used,
+                before_membership_filters: 1,
+            },
+        ];
+        let mut harness = test_util::harness_builder()
+            .size(egui::vec2(250.0, 160.0))
+            .theme(dark_mode)
+            .ui_state(
+                move |ui, shown: &mut ConstellationSet| {
+                    ui.set_width(STATS_COL_WIDTH_PX);
+                    super::constellation_stats(ui, &counts, shown);
+                },
+                ConstellationSet::all(),
+            );
+        harness.run();
+        assert!(harness.inner.query_by_label("Used").is_some());
+        assert!(harness.inner.query_by_label("Shown").is_some());
+        assert_eq!(harness.inner.query_all_by_label("2").count(), 1);
+        assert_eq!(
+            harness
+                .inner
+                .query_all_by_label(gt_ui_theme::EM_DASH)
+                .count(),
+            if glonass_used.is_none() { 2 } else { 0 }
+        );
+        let theme = if dark_mode { "dark" } else { "light" };
+        let membership = if glonass_used.is_some() {
+            "known"
+        } else {
+            "unknown"
+        };
+        harness.snapshot_with_color_tolerance(&format!(
+            "sky_trails_display_counts_{membership}_{theme}"
+        ));
+        harness.state_mut().set(Constellation::Gps, false);
+        harness.run();
+        assert_eq!(harness.inner.query_all_by_label("2").count(), 0);
+        assert_eq!(harness.inner.query_all_by_label("(2)").count(), 0);
+        assert_eq!(harness.inner.query_all_by_label("1").count(), 2);
+        assert_eq!(
+            harness
+                .inner
+                .query_all_by_label(gt_ui_theme::EM_DASH)
+                .count(),
+            if glonass_used.is_none() { 4 } else { 2 }
+        );
+    }
+
+    #[rstest::rstest]
+    fn window_counts_match_interleaved_markers_at_the_scrub_time(
+        #[values(true, false)] dark_mode: bool,
+        #[values(SatelliteMembership::Unused, SatelliteMembership::Unknown)]
+        membership: SatelliteMembership,
+    ) {
+        let drifts = [
+            SatelliteDrift {
+                constellation: Constellation::Gps,
+                prn: 1,
+                azimuth_deg: (40.0, 60.0),
+                elevation_deg: (35.0, 45.0),
+                in_fix: true,
+                absent_at: &[],
+            },
+            SatelliteDrift {
+                constellation: Constellation::Glonass,
+                prn: 3,
+                azimuth_deg: (170.0, 190.0),
+                elevation_deg: (25.0, 35.0),
+                in_fix: false,
+                absent_at: &[],
+            },
+        ];
+        let mut points = gt_test_utils::fixtures::nav_points_with_drifting_satellites(
+            trails_start(),
+            4,
+            &drifts,
+        );
+        for (index, point) in points.iter_mut().enumerate() {
+            let constellation = if index % 2 == 0 {
+                Constellation::Gps
+            } else {
+                Constellation::Glonass
+            };
+            let scope = SatelliteScope::Constellations(ConstellationSet::single(constellation));
+            for usage in &mut point.satellite_evidence.usage {
+                usage.metadata.scope = scope;
+                usage
+                    .satellites
+                    .retain(|satellite| satellite.identity.constellation == constellation);
+                if constellation == Constellation::Glonass {
+                    usage.satellites[0].membership = membership;
+                }
+            }
+            for observations in &mut point.satellite_evidence.observations {
+                observations.metadata.scope = scope;
+                observations
+                    .satellites
+                    .retain(|satellite| satellite.identity.constellation == constellation);
+            }
+        }
+        let trails = gt_sky::extract_trails(&gt_test_utils::loaded_track_with_points(points));
+        let mut harness = test_util::harness_builder()
+            .size(egui::vec2(560.0, 440.0))
+            .theme(dark_mode)
+            .ui_state(
+                move |ui, inputs: &mut BodyInputs| {
+                    body(&trails, inputs).ui(ui);
+                },
+                BodyInputs {
+                    scrub_secs: 1.5,
+                    ..BodyInputs::default()
+                },
+            );
+        harness.run();
+        assert_eq!(harness.inner.query_all_by_label("2").count(), 1);
+        assert_eq!(
+            harness
+                .inner
+                .query_all_by_label(gt_ui_theme::EM_DASH)
+                .count(),
+            if membership == SatelliteMembership::Unknown {
+                2
+            } else {
+                0
+            }
+        );
+        let theme = if dark_mode { "dark" } else { "light" };
+        let usage = if membership == SatelliteMembership::Unknown {
+            "unknown"
+        } else {
+            "known"
+        };
+        harness.snapshot_with_color_tolerance(&format!("sky_trails_interleaved_{usage}_{theme}"));
+        harness.state_mut().show_trails = false;
+        harness.state_mut().show_heatmap = true;
+        harness.state_mut().trail_opacity_percent = 0.0;
+        harness.run();
+        assert_eq!(harness.inner.query_all_by_label("2").count(), 1);
+        assert_eq!(
+            harness
+                .inner
+                .query_all_by_label(gt_ui_theme::EM_DASH)
+                .count(),
+            if membership == SatelliteMembership::Unknown {
+                2
+            } else {
+                0
+            }
+        );
+        harness.state_mut().scrub_secs = 2.5;
+        harness.run();
+        assert_eq!(harness.inner.query_all_by_label("2").count(), 0);
+        assert_eq!(harness.inner.query_all_by_label("1").count(), 2);
     }
 
     /// The elevation mask every case draws the body at. The application takes

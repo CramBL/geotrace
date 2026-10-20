@@ -68,9 +68,29 @@ pub struct SkyTrail {
 }
 
 impl SkyTrail {
-    /// The sample at exactly `time`, if the satellite reported at that epoch.
-    pub(crate) fn sample_exactly_at(&self, time: GpsTime) -> Option<&TrailSample> {
-        self.samples.iter().find(|sample| sample.time == time)
+    pub fn marker_at(&self, time: GpsTime) -> Option<TrailMarker<'_>> {
+        if let Some(sample) = self.samples.iter().find(|sample| sample.time == time) {
+            return Some(TrailMarker {
+                sample,
+                azimuth: sample.azimuth,
+                elevation: sample.elevation,
+            });
+        }
+        let [earlier, later] = self.samples.windows(2).find(
+            |pair| matches!(pair, [a, b] if a.time < time && time < b.time && b.epoch.follows(a.epoch)),
+        )? else {
+            return None;
+        };
+        let fraction = time.signed_duration_since(earlier.time).as_seconds_f64()
+            / later
+                .time
+                .signed_duration_since(earlier.time)
+                .as_seconds_f64();
+        Some(TrailMarker {
+            sample: earlier,
+            azimuth: earlier.azimuth + (later.azimuth - earlier.azimuth) * fraction as f32,
+            elevation: earlier.elevation + (later.elevation - earlier.elevation) * fraction as f32,
+        })
     }
 
     pub fn ever_in_fix(&self) -> bool {
@@ -84,18 +104,34 @@ impl SkyTrail {
     }
 }
 
-/// Per-constellation satellite counts at one epoch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EpochCount {
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TrailMarker<'a> {
+    /// Membership and time refer to this recorded sample, including during interpolation.
+    pub sample: &'a TrailSample,
+    pub azimuth: f32,
+    pub elevation: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TrailMembershipFilter {
+    pub show_not_in_fix: bool,
+    pub in_fix_only: bool,
+}
+
+impl TrailMembershipFilter {
+    pub fn allows(self, trail: &SkyTrail, marker: TrailMarker<'_>) -> bool {
+        (self.show_not_in_fix || trail.has_used_or_unknown_membership())
+            && (!self.in_fix_only || marker.sample.in_fix())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrailDisplayCount {
     pub constellation: Constellation,
-    /// Satellites of this constellation with a sky position at the epoch,
-    /// counting only the ones currently shown.
-    pub seen: usize,
-    /// Satellites with a sky position at the epoch regardless of the
-    /// not-in-fix filter, so the window can show what hiding them cost.
-    pub seen_unfiltered: usize,
-    /// Of the shown ones, those in the fix.
-    pub fix: Option<usize>,
+    pub shown: usize,
+    pub before_membership_filters: usize,
+    /// Unavailable when any displayed satellite has unknown membership.
+    pub used: Option<usize>,
 }
 
 /// One report epoch on the track's timeline - the scrubber walks these.
@@ -154,45 +190,37 @@ impl SkyTrails {
         })
     }
 
-    /// Seen and in-fix counts per constellation at `time`, over the
-    /// constellations present in the track. A constellation with no satellite
-    /// up at that epoch still gets a row, at zero, so the window's stats rows
-    /// stay stable as the scrubber moves. `time` is a report epoch time (from
-    /// [`SkyTrails::epochs`]). Satellites are matched exactly, not
-    /// interpolated.
-    ///
-    /// When `show_not_in_fix` is false, satellites that were never in the fix
-    /// over the track and whose membership is known are excluded, so the
-    /// counts match the trails the window is drawing.
-    pub fn counts_at(
+    pub fn display_counts_at(
         &self,
         time: GpsTime,
-        show_not_in_fix: bool,
-    ) -> SmallVec<[EpochCount; Constellation::COUNT]> {
+        filter: TrailMembershipFilter,
+    ) -> SmallVec<[TrailDisplayCount; Constellation::COUNT]> {
         self.constellations()
             .map(|constellation| {
-                let present = || {
-                    self.trails
-                        .iter()
-                        .filter(|trail| trail.constellation == constellation)
-                        .filter(|trail| trail.sample_exactly_at(time).is_some())
-                };
-                let (seen, fix) = present()
-                    .filter(|trail| show_not_in_fix || trail.has_used_or_unknown_membership())
-                    .filter_map(|trail| trail.sample_exactly_at(time))
-                    .fold((0, Some(0)), |(seen, fix), sample| {
-                        (
-                            seen + 1,
-                            fix.filter(|_| sample.membership != SatelliteMembership::Unknown)
-                                .map(|count| count + usize::from(sample.in_fix())),
-                        )
-                    });
-                EpochCount {
+                let mut count = TrailDisplayCount {
                     constellation,
-                    seen,
-                    seen_unfiltered: present().count(),
-                    fix,
+                    shown: 0,
+                    before_membership_filters: 0,
+                    used: Some(0),
+                };
+                for trail in self
+                    .trails
+                    .iter()
+                    .filter(|trail| trail.constellation == constellation)
+                {
+                    let Some(marker) = trail.marker_at(time) else {
+                        continue;
+                    };
+                    count.before_membership_filters += 1;
+                    if filter.allows(trail, marker) {
+                        count.shown += 1;
+                        count.used = count
+                            .used
+                            .filter(|_| marker.sample.membership != SatelliteMembership::Unknown)
+                            .map(|used| used + usize::from(marker.sample.in_fix()));
+                    }
                 }
+                count
             })
             .collect()
     }
@@ -318,13 +346,11 @@ fn extract_slips(track: &LoadedTrack) -> Vec<SlipMark> {
 mod tests {
     use gt_types::satellites::Constellation;
 
-    use super::PointIdx;
+    use super::{PointIdx, TrailMembershipFilter};
     use crate::test_util::{self, Azimuth, Elevation};
 
     #[test]
-    fn counts_at_splits_seen_and_fix_per_constellation() {
-        // One epoch: two GPS satellites up but only one in the fix, one Galileo
-        // in the fix.
+    fn display_counts_separate_used_and_shown_per_constellation() {
         let trails = super::extract_trails(&gt_test_utils::loaded_track_with_points(vec![
             test_util::nav_point_reporting(
                 0,
@@ -354,31 +380,39 @@ mod tests {
             ),
         ]));
 
-        let counts = trails.counts_at(trails.epochs[0].time, true);
+        let counts = trails.display_counts_at(
+            trails.epochs[0].time,
+            TrailMembershipFilter {
+                show_not_in_fix: true,
+                in_fix_only: false,
+            },
+        );
         let gps = counts
             .iter()
             .find(|c| c.constellation == Constellation::Gps)
             .expect("gps present");
-        assert_eq!((gps.seen, gps.fix), (2, Some(1)));
+        assert_eq!((gps.shown, gps.used), (2, Some(1)));
         let galileo = counts
             .iter()
             .find(|c| c.constellation == Constellation::Galileo)
             .expect("galileo present");
-        assert_eq!((galileo.seen, galileo.fix), (1, Some(1)));
+        assert_eq!((galileo.shown, galileo.used), (1, Some(1)));
 
-        // Nothing hidden, so the unfiltered total matches what is shown.
-        assert_eq!(gps.seen_unfiltered, 2);
+        assert_eq!(gps.before_membership_filters, 2);
 
-        // Excluding never-in-fix satellites drops the tracked-only GPS-12, so
-        // GPS counts one seen (and still one in fix). The unfiltered total
-        // still reports both, so the window can say what was hidden.
-        let in_fix_only = trails.counts_at(trails.epochs[0].time, false);
+        let in_fix_only = trails.display_counts_at(
+            trails.epochs[0].time,
+            TrailMembershipFilter {
+                show_not_in_fix: false,
+                in_fix_only: false,
+            },
+        );
         let gps = in_fix_only
             .iter()
             .find(|c| c.constellation == Constellation::Gps)
             .expect("gps present");
-        assert_eq!((gps.seen, gps.fix), (1, Some(1)));
-        assert_eq!(gps.seen_unfiltered, 2);
+        assert_eq!((gps.shown, gps.used), (1, Some(1)));
+        assert_eq!(gps.before_membership_filters, 2);
     }
 
     #[test]
@@ -423,9 +457,7 @@ mod tests {
     }
 
     #[test]
-    fn counts_at_between_epochs_finds_nobody() {
-        // `counts_at` matches an epoch exactly (no interpolation), so a time
-        // between reports yields zero everywhere.
+    fn display_counts_include_interpolated_markers() {
         let trails = super::extract_trails(&gt_test_utils::loaded_track_with_points(vec![
             test_util::nav_point_reporting(
                 0,
@@ -449,8 +481,14 @@ mod tests {
             ),
         ]));
         let between = test_util::at(1);
-        let counts = trails.counts_at(between, true);
-        assert!(counts.iter().all(|c| c.seen == 0 && c.fix == Some(0)));
+        let counts = trails.display_counts_at(
+            between,
+            TrailMembershipFilter {
+                show_not_in_fix: true,
+                in_fix_only: false,
+            },
+        );
+        assert!(counts.iter().all(|c| c.shown == 1 && c.used == Some(1)));
     }
 
     #[test]

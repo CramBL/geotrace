@@ -11,7 +11,8 @@ pub use style::{
     trail_opacity_multiplier,
 };
 pub use trails::{
-    EpochCount, EpochIdx, SkyTrail, SkyTrails, SlipMark, TrailEpoch, TrailSample, extract_trails,
+    EpochIdx, SkyTrail, SkyTrails, SlipMark, TrailDisplayCount, TrailEpoch, TrailMarker,
+    TrailMembershipFilter, TrailSample, extract_trails,
 };
 pub use trails_plot::SkyTrailsPlot;
 

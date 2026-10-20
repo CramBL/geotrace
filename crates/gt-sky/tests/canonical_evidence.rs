@@ -1,6 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 use rstest::rstest;
 
+use gt_sky::{SkyTrails, TrailMembershipFilter};
 use gt_test_utils::Queryable as _;
 
 use gt_types::satellites::{Constellation, ConstellationSet, Prn, SatSample};
@@ -267,9 +268,15 @@ fn complementary_scopes_preserve_rows_trail_membership_and_borrowed_context() {
     );
     assert_eq!(
         trails
-            .counts_at(time(0), false)
+            .display_counts_at(
+                time(0),
+                TrailMembershipFilter {
+                    show_not_in_fix: false,
+                    in_fix_only: false
+                }
+            )
             .iter()
-            .map(|count| (count.seen, count.fix))
+            .map(|count| (count.shown, count.used))
             .collect::<Vec<_>>(),
         vec![(1, Some(1)), (1, Some(1))]
     );
@@ -621,4 +628,254 @@ fn compact_observations_without_usage_have_visible_unknown_diamonds(#[case] dark
     } else {
         "compact_unknown_observations_light"
     });
+}
+
+struct IndependentPolling {
+    glonass_membership: SatelliteMembership,
+}
+
+impl IndependentPolling {
+    fn points(&self) -> Vec<NavPoint> {
+        (0..4)
+            .map(|second| {
+                let constellation = if second % 2 == 0 {
+                    Constellation::Gps
+                } else {
+                    Constellation::Glonass
+                };
+                let membership = if constellation == Constellation::Gps {
+                    SatelliteMembership::Used
+                } else {
+                    self.glonass_membership
+                };
+                let mut point = point(second * 1_000);
+                let mut report = observation(second * 1_000);
+                report.metadata.scope =
+                    SatelliteScope::Constellations(ConstellationSet::single(constellation));
+                let satellite_identity = SatelliteIdentity {
+                    constellation,
+                    prn: Prn::new(if constellation == Constellation::Gps {
+                        1
+                    } else {
+                        3
+                    }),
+                };
+                for satellite in &mut report.satellites {
+                    satellite.identity = satellite_identity;
+                    satellite.measurements.azimuth = Some(40.0 + second as f32 * 10.0);
+                }
+                point.satellite_evidence.usage.push(SatelliteUsageReport {
+                    metadata: report.metadata,
+                    satellites: vec![SatelliteUsage {
+                        identity: satellite_identity,
+                        membership,
+                    }],
+                });
+                point.satellite_evidence.observations.push(report);
+                point
+            })
+            .collect()
+    }
+
+    fn trails(&self) -> SkyTrails {
+        gt_sky::extract_trails(&gt_test_utils::loaded_track_with_points(self.points()))
+    }
+}
+
+#[rstest]
+#[case::exact_other_scope(1_000, SatelliteMembership::Unused, true, false, vec![(Constellation::Gps, 1, Some(1)), (Constellation::Glonass, 1, Some(0))])]
+#[case::between_scopes(1_500, SatelliteMembership::Unused, true, false, vec![(Constellation::Gps, 1, Some(1)), (Constellation::Glonass, 1, Some(0))])]
+#[case::gps_finished(2_500, SatelliteMembership::Unused, true, false, vec![(Constellation::Gps, 0, Some(0)), (Constellation::Glonass, 1, Some(0))])]
+#[case::unknown(1_500, SatelliteMembership::Unknown, true, false, vec![(Constellation::Gps, 1, Some(1)), (Constellation::Glonass, 1, None)])]
+#[case::hide_known_unused(1_500, SatelliteMembership::Unused, false, false, vec![(Constellation::Gps, 1, Some(1)), (Constellation::Glonass, 0, Some(0))])]
+#[case::keep_unknown(1_500, SatelliteMembership::Unknown, false, false, vec![(Constellation::Gps, 1, Some(1)), (Constellation::Glonass, 1, None)])]
+#[case::only_used(1_500, SatelliteMembership::Unknown, false, true, vec![(Constellation::Gps, 1, Some(1)), (Constellation::Glonass, 0, Some(0))])]
+fn displayed_markers_and_counts_share_polling_times_and_membership_filters(
+    #[case] milliseconds: i64,
+    #[case] membership: SatelliteMembership,
+    #[case] show_not_in_fix: bool,
+    #[case] in_fix_only: bool,
+    #[case] expected: Vec<(Constellation, usize, Option<usize>)>,
+) {
+    let trails = IndependentPolling {
+        glonass_membership: membership,
+    }
+    .trails();
+    let filter = TrailMembershipFilter {
+        show_not_in_fix,
+        in_fix_only,
+    };
+    let counts = trails.display_counts_at(time(milliseconds), filter);
+    assert_eq!(
+        counts
+            .iter()
+            .map(|count| (count.constellation, count.shown, count.used))
+            .collect::<Vec<_>>(),
+        expected
+    );
+    let markers = trails
+        .trails
+        .iter()
+        .filter_map(|trail| {
+            trail
+                .marker_at(time(milliseconds))
+                .filter(|marker| filter.allows(trail, *marker))
+                .map(|marker| {
+                    (
+                        trail.constellation,
+                        trail.prn.value(),
+                        marker.sample.membership,
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
+    let expected_markers = expected
+        .iter()
+        .filter(|(_, shown, _)| *shown > 0)
+        .map(|(constellation, _, _)| {
+            if *constellation == Constellation::Gps {
+                (*constellation, 1, SatelliteMembership::Used)
+            } else {
+                (*constellation, 3, membership)
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(markers, expected_markers);
+    for count in counts {
+        let unfiltered =
+            usize::from(count.constellation != Constellation::Gps || milliseconds <= 2_000);
+        assert_eq!(count.before_membership_filters, unfiltered);
+    }
+}
+
+#[rstest]
+#[case::missing_geometry(false)]
+#[case::omitted_identity(true)]
+fn relevant_reports_break_display_interpolation(#[case] omitted: bool) {
+    let mut points = IndependentPolling {
+        glonass_membership: SatelliteMembership::Unused,
+    }
+    .points();
+    let mut missing = points[0].clone();
+    missing.tpv = point(1_000).tpv;
+    let report = &mut missing.satellite_evidence.observations[0];
+    report.metadata = SatelliteReportMetadata {
+        scope: report.metadata.scope,
+        ..metadata(1_000)
+    };
+    if omitted {
+        report.satellites.clear();
+    } else {
+        report.satellites[0].measurements.elevation = None;
+    }
+    points.insert(2, missing);
+    let trails = gt_sky::extract_trails(&gt_test_utils::loaded_track_with_points(points));
+    let gps = trails
+        .trails
+        .iter()
+        .find(|trail| trail.constellation == Constellation::Gps)
+        .expect("GPS trail");
+    assert!(gps.marker_at(time(1_500)).is_none());
+    let counts = trails.display_counts_at(
+        time(1_500),
+        TrailMembershipFilter {
+            show_not_in_fix: true,
+            in_fix_only: false,
+        },
+    );
+    assert_eq!((counts[0].shown, counts[0].used), (0, Some(0)));
+}
+
+#[test]
+fn displayed_geometry_count_is_independent_of_reported_seen_count() {
+    let mut point = point(0);
+    let mut report = observation(0);
+    report.metadata.reported_count = Some(12);
+    let mut second = report.satellites[0];
+    second.identity = identity(2);
+    report.satellites.push(second);
+    point.satellite_evidence.observations.push(report);
+    assert_eq!(
+        point
+            .resolved_seen_count(SatelliteQueryScope::Global)
+            .expect("aggregate")
+            .count,
+        12
+    );
+    let trails = gt_sky::extract_trails(&gt_test_utils::loaded_track_with_points(vec![point]));
+    let count = trails.display_counts_at(
+        time(0),
+        TrailMembershipFilter {
+            show_not_in_fix: true,
+            in_fix_only: false,
+        },
+    )[0];
+    assert_eq!((count.shown, count.used), (2, None));
+}
+
+#[rstest]
+#[case::first_exact(0, 0, SatelliteMembership::Used, 40.0)]
+#[case::first_bracketing_pair(1_000, 0, SatelliteMembership::Used, 50.0)]
+#[case::later_exact(2_000, 2_000, SatelliteMembership::Unused, 60.0)]
+fn repeated_times_select_the_first_recorded_sample_or_pair(
+    #[case] scrub_ms: i64,
+    #[case] source_ms: i64,
+    #[case] membership: SatelliteMembership,
+    #[case] azimuth: f32,
+) {
+    let mut points = IndependentPolling {
+        glonass_membership: SatelliteMembership::Unused,
+    }
+    .points();
+    points.retain(|point| {
+        point.satellite_evidence.observations[0].satellites[0]
+            .identity
+            .constellation
+            == Constellation::Gps
+    });
+    points[1].satellite_evidence.usage[0].satellites[0].membership = SatelliteMembership::Unused;
+    let mut repeated = points.clone();
+    repeated[0].satellite_evidence.usage[0].satellites[0].membership = SatelliteMembership::Unknown;
+    points.extend(repeated);
+    let trails = gt_sky::extract_trails(&gt_test_utils::loaded_track_with_points(points));
+    let marker = trails.trails[0]
+        .marker_at(time(scrub_ms))
+        .expect("selected marker");
+    assert_eq!(
+        (marker.sample.time, marker.sample.membership, marker.azimuth),
+        (time(source_ms), membership, azimuth)
+    );
+    let count = trails.display_counts_at(
+        time(scrub_ms),
+        TrailMembershipFilter {
+            show_not_in_fix: true,
+            in_fix_only: true,
+        },
+    )[0];
+    assert_eq!(
+        count.shown,
+        usize::from(membership == SatelliteMembership::Used)
+    );
+}
+
+#[test]
+fn backward_time_boundary_breaks_interpolation_between_forward_samples() {
+    let mut points = IndependentPolling {
+        glonass_membership: SatelliteMembership::Unused,
+    }
+    .points();
+    points.swap(2, 3);
+    let trails = gt_sky::extract_trails(&gt_test_utils::loaded_track_with_points(points));
+    assert!(trails.trails[0].marker_at(time(1_500)).is_none());
+    let count = trails.display_counts_at(
+        time(1_500),
+        TrailMembershipFilter {
+            show_not_in_fix: true,
+            in_fix_only: false,
+        },
+    )[0];
+    assert_eq!(
+        (count.shown, count.used, count.before_membership_filters),
+        (0, Some(0), 0)
+    );
 }
