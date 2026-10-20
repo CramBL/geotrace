@@ -4,12 +4,14 @@
 use gt_filter::GlobalFilter;
 use gt_loaded_files::IndexAlignedFiles;
 use gt_types::{
-    DataCategory, FileIdx, FixRef, Generation, LoadedFile, PointIdx, TrackIdx, TrackRef,
+    DataCategory, FileIdx, FixRef, Generation, LoadedFile, PointIdx, SkyGeometry, TrackIdx,
+    TrackRef,
 };
 use gt_ui_types::log_matches::LogMatchScope;
 use gt_ui_types::{
     DisplayCategory, EventMarkerVisibility, GeneratedMarkerVisibility, LogMatches, MapElementRef,
-    MapEligibility, MapEligibilityResult, QueryMatches, SnappedTracks, TrackDataVisibility,
+    MapEligibility, MapEligibilityResult, QueryMatches, SkyGlyphVariant, SnappedTracks,
+    TrackDataVisibility,
 };
 
 use crate::MapFiles;
@@ -48,6 +50,7 @@ pub struct DisplayCounts {
     query_highlights: usize,
     snapped_tracks: usize,
     sky_glyphs: usize,
+    sky_discs: usize,
     /// Interference cells available for the shown day, from the archive.
     jamming_hexes: usize,
     /// TEC grid nodes available for the shown instant, from the archive.
@@ -58,6 +61,13 @@ pub struct DisplayCounts {
 }
 
 impl DisplayCounts {
+    pub fn sky_glyphs(self, variant: SkyGlyphVariant) -> usize {
+        match variant {
+            SkyGlyphVariant::Ring => self.sky_glyphs,
+            SkyGlyphVariant::Disc => self.sky_discs,
+        }
+    }
+
     pub fn get(self, category: DisplayCategory) -> usize {
         match category {
             DisplayCategory::Tracks => self.tracks,
@@ -91,6 +101,7 @@ impl DisplayCounts {
             query_highlights: get(DisplayCategory::QueryHighlights),
             snapped_tracks: get(DisplayCategory::SnappedTracks),
             sky_glyphs: get(DisplayCategory::SkyGlyphs),
+            sky_discs: get(DisplayCategory::SkyGlyphs),
             log_matches: get(DisplayCategory::LogMatches),
             jamming_hexes: get(DisplayCategory::JammingHexes),
             tec_heatmap: get(DisplayCategory::TecHeatmap),
@@ -175,11 +186,22 @@ impl DisplayCounts {
                     // Sky glyphs anchor on report-bearing points. Like the
                     // labels they are per-point track ink, so they share the
                     // `DataCategory::Tpv` tree gate.
+                    counts.sky_discs += track
+                        .points
+                        .iter()
+                        .enumerate()
+                        .filter(|(pi, point)| {
+                            point.supports_sky_geometry(SkyGeometry::Position)
+                                && point_in_scope(*pi)
+                        })
+                        .count();
                     counts.sky_glyphs += track
                         .points
                         .iter()
                         .enumerate()
-                        .filter(|(pi, p)| p.satellites.is_some() && point_in_scope(*pi))
+                        .filter(|(pi, p)| {
+                            p.supports_sky_geometry(SkyGeometry::Azimuth) && point_in_scope(*pi)
+                        })
                         .count();
                 }
                 if track_vis.category_visible(DataCategory::Tpv) {
@@ -354,7 +376,7 @@ mod tests {
                     .lat(lat)
                     .lon(lon)
                     .build();
-                // Point 1 has a satellite report, so it anchors a sky glyph.
+                // Point 1 has an empty satellite report.
                 let satellites =
                     (i == 1).then(|| gt_types::satellites::Satellites::new(None, None, Vec::new()));
                 NavPoint::new(tpv, satellites)
@@ -457,7 +479,7 @@ mod tests {
             (DisplayCategory::EventMarkers, 1),
             (DisplayCategory::QueryHighlights, 0),
             (DisplayCategory::SnappedTracks, 0),
-            (DisplayCategory::SkyGlyphs, 1),
+            (DisplayCategory::SkyGlyphs, 0),
             // Supplied by the app, so a recording fixture contributes none.
             (DisplayCategory::JammingHexes, 0),
             (DisplayCategory::TecHeatmap, 0),

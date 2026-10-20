@@ -164,15 +164,16 @@ fn placement_of(point: &NavPoint) -> FixPlacement {
 /// The sticky content's sky section for a fixture point: its own report
 /// when it has one.
 fn sky_for(point: &NavPoint) -> SkySection<'_> {
-    point
-        .satellites
-        .as_ref()
-        .map_or(SkySection::TrackWithoutReports, |satellites| {
-            SkySection::Report(gt_types::NearestSatelliteReport {
-                satellites,
+    point.sky_evidence(SkyGeometry::Identities).map_or(
+        SkySection::TrackWithoutReports,
+        |evidence| {
+            SkySection::Report(NearbySkyEvidence {
+                evidence,
+                point_index: PointIdx::new(0),
                 age: chrono::Duration::zero(),
             })
-        })
+        },
+    )
 }
 
 /// The two satellite columns are cut where they come out closest in height,
@@ -240,15 +241,17 @@ fn folded_panels_weigh_only_their_header() {
         grid_id: 0,
         constellation: Constellation::Gps,
         prn_prefix: "G",
+        used: Some(11),
+        seen: Some(11),
         satellites: vec![
-            Satellite::new(
+            SkySatellite::from_legacy(&Satellite::new(
                 Constellation::Gps,
                 1,
                 Some(45.0),
                 Some(40.0),
                 Some(40.0),
                 true
-            );
+            ));
             11
         ],
     };

@@ -49,3 +49,12 @@ fn compute_track_metadata_single_point_has_zero_duration() {
         .distance_km;
     assert_eq!(distance_km, Length::new::<kilometer>(0.0));
 }
+
+#[test]
+fn canonical_observations_count_as_satellite_reports() {
+    let mut point = test_util::fix_with_a_satellite_in_fix(0);
+    point.satellites = None;
+    let points = vec1::vec1![point];
+    let metadata = segment::compute_track_metadata(1, &points, &[], &[]);
+    assert_eq!(metadata.satellite_report_count, 1);
+}

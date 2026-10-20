@@ -4,8 +4,8 @@
 
 use egui::{Color32, Pos2, Sense, Stroke, Vec2};
 
-use gt_types::GpsTime;
-use gt_types::satellites::{Constellation, ConstellationSet, Satellite};
+use gt_types::satellites::{Constellation, ConstellationSet, SatSample};
+use gt_types::{GpsTime, SatelliteIdentity, SatelliteMembership, SkySatellite};
 
 use crate::style;
 use crate::trails::{SkyTrail, SkyTrails, SlipMark, TrailSample};
@@ -37,8 +37,7 @@ pub struct SkyTrailsPlot<'a> {
     /// The scrubbed time: a marker is dropped on each shown trail at this
     /// instant. `None` draws the trails without markers.
     scrub: Option<GpsTime>,
-    /// When false, satellites never in the fix over the track are hidden, so
-    /// only the ones that contributed a fix are drawn.
+    /// Disabling this option excludes only trails with known-unused membership.
     show_not_in_fix: bool,
     /// When false, the whole-track trail polylines (and slip marks) are hidden,
     /// leaving just the current-instant markers - the immediate snapshot.
@@ -107,8 +106,7 @@ impl<'a> SkyTrailsPlot<'a> {
         Self { scrub, ..self }
     }
 
-    /// Whether to draw satellites never in the fix over the track. Defaults to
-    /// true. Passing false leaves only the ones that contributed a fix.
+    /// Unknown membership remains visible when known-unused trails are excluded.
     pub fn show_not_in_fix(self, show_not_in_fix: bool) -> Self {
         Self {
             show_not_in_fix,
@@ -203,7 +201,7 @@ impl<'a> SkyTrailsPlot<'a> {
             // enabled. This is a whole-track judgement, so it hides the trail.
             // The current-instant "in fix only" filter below hides only the
             // marker, leaving the path in place.
-            if !self.show_not_in_fix && !trail.ever_in_fix() {
+            if !self.show_not_in_fix && !trail.has_used_or_unknown_membership() {
                 continue;
             }
             let base = gt_ui_theme::constellation_color(trail.constellation, dark_mode);
@@ -233,7 +231,7 @@ impl<'a> SkyTrailsPlot<'a> {
             };
             // "In fix only" drops the current-instant marker for a satellite
             // merely tracked right now, leaving its whole-track trail in place.
-            if self.in_fix_now && !report.in_fix {
+            if self.in_fix_now && !report.in_fix() {
                 continue;
             }
             let pos = frame.project(azimuth, elevation);
@@ -241,7 +239,7 @@ impl<'a> SkyTrailsPlot<'a> {
             // Every drawn marker is a hover target.
             markers.push((
                 MarkerHover {
-                    satellite: satellite_from_sample(trail, report),
+                    satellite: trail.satellite_from_sample(report),
                     at: report.time,
                 },
                 pos,
@@ -297,7 +295,7 @@ impl<'a> SkyTrailsPlot<'a> {
             .filter(|trail| self.shown.contains(trail.constellation))
             .filter_map(|trail| {
                 let (azimuth, elevation, report) = marker_at(trail, scrub)?;
-                report.in_fix.then(|| {
+                report.in_fix().then(|| {
                     (
                         frame.project(azimuth, elevation),
                         heatmap::snr_weight(report.snr),
@@ -316,21 +314,18 @@ impl<'a> SkyTrailsPlot<'a> {
         }
     }
 
-    /// Whether a slip mark is drawn (and thus hoverable). Slips follow their
-    /// trail's visibility: the trails must be shown, the constellation must be
-    /// shown, and the satellite must have contributed a fix whenever a filter has
-    /// trimmed the never-in-fix trails away. The scrubbed instant neither fades
-    /// nor hides it.
     fn slip_visible(&self, slip: &SlipMark) -> bool {
-        let trails_trimmed_to_in_fix = !self.show_not_in_fix || self.in_fix_now;
+        let filtered = !self.show_not_in_fix || self.in_fix_now;
         self.show_trails
             && self.shown.contains(slip.constellation)
-            && (!trails_trimmed_to_in_fix || self.slip_satellite_ever_in_fix(slip))
-    }
-
-    /// Whether the satellite behind `slip` was ever in the fix over the track.
-    fn slip_satellite_ever_in_fix(&self, slip: &SlipMark) -> bool {
-        self.slip_trail(slip).is_some_and(SkyTrail::ever_in_fix)
+            && (!filtered
+                || self.slip_trail(slip).is_some_and(|trail| {
+                    if self.in_fix_now {
+                        trail.ever_in_fix()
+                    } else {
+                        trail.has_used_or_unknown_membership()
+                    }
+                }))
     }
 
     /// The trail of the satellite a slip belongs to, if it is among the trails.
@@ -502,7 +497,7 @@ fn trail_runs(trail: &SkyTrail, frame: Frame, in_fix_only: bool) -> Vec<Vec<Trai
     let mut samples = trail
         .samples
         .iter()
-        .filter(|sample| !in_fix_only || sample.in_fix);
+        .filter(|sample| !in_fix_only || sample.in_fix());
     let Some(first) = samples.next() else {
         return runs;
     };
@@ -515,7 +510,7 @@ fn trail_runs(trail: &SkyTrail, frame: Frame, in_fix_only: bool) -> Vec<Vec<Trai
     let mut pending = false;
     for sample in samples {
         let sample_vertex = vertex(sample);
-        if !sample.epoch.follows(prev.epoch) {
+        if !sample.epoch.follows(prev.epoch) || sample.time < prev.time {
             // An absence (or a trimmed not-in-fix stretch) sits between these
             // two samples. Close the run at `prev`, then restart at `sample`.
             if pending {
@@ -559,7 +554,9 @@ fn close_run(run: &mut Vec<TrailVertex>, runs: &mut Vec<Vec<TrailVertex>>) {
 fn paint_marker(ui: &egui::Ui, pos: Pos2, color: Color32, panel: Color32, report: &TrailSample) {
     let painter = ui.painter();
     let radius = style::TRAIL_MARKER_RADIUS_PX;
-    if !report.in_fix {
+    if report.membership == SatelliteMembership::Unknown {
+        painter.circle_filled(pos, radius * style::UNKNOWN_MEMBERSHIP_MARKER_SCALE, color);
+    } else if !report.in_fix() {
         // Tracked but not in the fix: a hollow ring, its centre punched out to
         // the panel colour so it reads over the trail beneath.
         painter.circle_filled(pos, radius, panel);
@@ -588,17 +585,22 @@ fn paint_slip_mark(ui: &egui::Ui, pos: Pos2, color: Color32) {
     painter.line_segment([pos + Vec2::new(-r, r), pos + Vec2::new(r, -r)], stroke);
 }
 
-/// The satellite behind a scrub marker, for its hover tooltip - a report's
-/// sample carries everything the tooltip needs.
-fn satellite_from_sample(trail: &SkyTrail, sample: &TrailSample) -> Satellite {
-    Satellite::new(
-        trail.constellation,
-        trail.prn.value(),
-        Some(sample.elevation),
-        Some(sample.azimuth),
-        sample.snr.map(|snr| snr.value()),
-        sample.in_fix,
-    )
+impl SkyTrail {
+    fn satellite_from_sample(&self, sample: &TrailSample) -> SkySatellite {
+        SkySatellite {
+            identity: SatelliteIdentity {
+                constellation: self.constellation,
+                prn: self.prn,
+            },
+            measurements: SatSample {
+                elevation: Some(sample.elevation),
+                azimuth: Some(sample.azimuth),
+                snr: sample.snr,
+            },
+            membership: sample.membership,
+            usage_report_index: sample.usage_report_index,
+        }
+    }
 }
 
 /// A scrub marker's hover payload: the satellite as of the report in effect,
@@ -606,7 +608,7 @@ fn satellite_from_sample(trail: &SkyTrail, sample: &TrailSample) -> Satellite {
 /// between reports for most of its travel, so the tooltip states the report the
 /// values actually came from.
 struct MarkerHover {
-    satellite: Satellite,
+    satellite: SkySatellite,
     at: GpsTime,
 }
 
@@ -688,25 +690,15 @@ fn slip_label(slip: &SlipMark) -> String {
 /// one: scrubbing to 12:00:00.4 reads the 12:00:00 report. `None` when `time` is
 /// outside the trail or inside one of its gaps.
 fn marker_at(trail: &SkyTrail, time: GpsTime) -> Option<(f32, f32, &TrailSample)> {
-    let samples = &trail.samples;
-    let idx = samples.partition_point(|s| s.time < time);
-    // Exact hit on a sample.
-    if let Some(s) = samples.get(idx)
-        && s.time == time
-    {
-        return Some((s.azimuth, s.elevation, s));
+    if let Some(sample) = trail.samples.iter().find(|sample| sample.time == time) {
+        return Some((sample.azimuth, sample.elevation, sample));
     }
-    // Otherwise interpolate between the bracketing samples, unless the pair
-    // spans a gap or `time` is outside the trail.
-    let (Some(a), Some(b)) = (
-        idx.checked_sub(1).and_then(|i| samples.get(i)),
-        samples.get(idx),
-    ) else {
+    let pair = trail.samples.windows(2).find(
+        |pair| matches!(pair, [a, b] if a.time < time && time < b.time && b.epoch.follows(a.epoch)),
+    )?;
+    let [a, b] = pair else {
         return None;
     };
-    if !b.epoch.follows(a.epoch) {
-        return None;
-    }
     let span = b.time.signed_duration_since(a.time).num_milliseconds();
     if span <= 0 {
         return Some((a.azimuth, a.elevation, a));
@@ -733,7 +725,10 @@ mod tests {
     use gt_test_utils::{HarnessInteraction as _, Queryable as _, TestHarness};
     use gt_types::fixtures::SatelliteDrift;
     use gt_types::satellites::{Constellation, ConstellationSet, Prn, SlipCause, Snr};
-    use gt_types::{GpsTime, GpsTimeRange, PointIdx};
+    use gt_types::{
+        GpsTime, GpsTimeRange, PointIdx, SatelliteCoverage, SatelliteMembership,
+        SatelliteReportMetadata, SatelliteScope,
+    };
 
     use super::{SkyTrail, SkyTrailsPlot, SlipMark};
     use crate::test_util::{self, Azimuth, Elevation};
@@ -1018,6 +1013,16 @@ mod tests {
     // The point index is irrelevant to the time-only helpers under test.
     fn epoch(secs: i64) -> TrailEpoch {
         TrailEpoch {
+            observation_index: 0,
+            metadata: SatelliteReportMetadata {
+                gps_time: Some(test_util::at(secs)),
+                sys_time: None,
+                normalized_time: test_util::at(secs),
+                input_order: 0,
+                scope: SatelliteScope::Global,
+                coverage: SatelliteCoverage::Complete,
+                reported_count: None,
+            },
             time: test_util::at(secs),
             point_index: PointIdx::new(0),
         }
@@ -1049,10 +1054,15 @@ mod tests {
             time: test_util::at(secs),
             epoch,
             point_index: PointIdx::new(0),
+            usage_report_index: None,
             azimuth,
             elevation,
             snr: None,
-            in_fix,
+            membership: if in_fix {
+                SatelliteMembership::Used
+            } else {
+                SatelliteMembership::Unused
+            },
         }
     }
 
@@ -1453,10 +1463,57 @@ mod tests {
         );
     }
 
-    /// With `in_fix_only`, a trail is drawn only through the samples where the
-    /// satellite was in the fix: a not-in-fix sample breaks the run exactly as a
-    /// tracking gap would, so no line bridges a tracked-but-unused stretch, and
-    /// a satellite never in the fix draws nothing at all.
+    #[test]
+    fn unknown_membership_preserves_slips_when_unused_trails_are_hidden() {
+        let mut trails = demo_trails();
+        let trail = &mut trails.trails[0];
+        for sample in &mut trail.samples {
+            sample.membership = SatelliteMembership::Unknown;
+        }
+        let slip = SlipMark {
+            constellation: trail.constellation,
+            prn: trail.prn,
+            azimuth: 45.0,
+            elevation: 35.0,
+            cause: SlipCause::LostLock,
+        };
+        let plot = SkyTrailsPlot::new(&trails, PLOT_DIAMETER_PX).show_not_in_fix(false);
+        assert!(plot.slip_visible(&slip));
+        assert!(!plot.in_fix_now(true).slip_visible(&slip));
+    }
+
+    #[test]
+    fn canonical_missing_geometry_splits_rendered_paths() {
+        let mut points: Vec<_> = (0..5)
+            .map(|second| {
+                test_util::nav_point_reporting(
+                    second,
+                    Some(vec![test_util::sat(
+                        Constellation::Gps,
+                        1,
+                        Some(Azimuth(45.0 + second as f32 * 10.0)),
+                        Some(Elevation(35.0)),
+                        true,
+                    )]),
+                )
+            })
+            .collect();
+        for point in &mut points {
+            point.satellites = None;
+            point.satellite_evidence.usage.clear();
+        }
+        points[2].satellite_evidence.observations[0].satellites[0]
+            .measurements
+            .elevation = None;
+        let trails = crate::extract_trails(&gt_test_utils::loaded_track_with_points(points));
+        let trail = &trails.trails[0];
+        let runs = super::trail_runs(trail, frame_of_180_px(), false);
+        assert_eq!(runs.iter().map(Vec::len).collect::<Vec<_>>(), vec![2, 2]);
+        assert_eq!(trails.counts_at(test_util::at(0), false)[0].fix, None);
+        assert_eq!(trails.counts_at(test_util::at(0), false)[0].seen, 1);
+        assert!(super::marker_at(trail, test_util::at(2)).is_none());
+    }
+
     #[test]
     fn in_fix_only_trims_the_trail_to_its_in_fix_stretches() {
         let frame = frame_of_180_px();

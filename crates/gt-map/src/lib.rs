@@ -340,7 +340,7 @@ impl<'a> MapDrawContext<'a> {
 
     /// The bounding box around every element currently drawn, for framing.
     fn visible_bounding_box(&self) -> Option<GeoBounds> {
-        viewport::visible_bounds(self.scope())
+        viewport::visible_bounds(self.scope(), *self.sky_glyph_variant)
     }
 
     /// The bounding box a reveal request frames: every match the run drew, or

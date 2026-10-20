@@ -18,7 +18,7 @@ use gt_types::track::{
     FileMetadata, FileSource, FixStats, LoadedFile, LoadedTrack, MeasuredTrackGeometry, MercBounds,
     SegmentLengthRange, TimeRange, TrackAggregates, TrackGeometry, TrackMetadata, TravelMode,
 };
-use gt_types::{PositionProvenance, SolutionState};
+use gt_types::{PositionProvenance, SkyGeometry, SolutionState};
 use rustc_hash::FxHashMap;
 use std::fmt;
 use std::ops::Range;
@@ -539,7 +539,10 @@ pub fn compute_track_metadata(
             .iter()
             .filter(|point| point.tpv.position().is_none())
             .count(),
-        satellite_report_count: points.iter().filter(|p| p.satellites.is_some()).count(),
+        satellite_report_count: points
+            .iter()
+            .filter(|point| point.supports_sky_geometry(SkyGeometry::Identities))
+            .count(),
         custom_marker_count: custom_markers.len(),
         generated_marker_count: generated_markers.len(),
         event_marker_count: 0, // filled in by `build_loaded_file` after event marker assignment

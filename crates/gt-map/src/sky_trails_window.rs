@@ -168,7 +168,7 @@ impl SkyTrailsWindow {
         // Resolve a requested instant now that the track's span is known.
         if let Some(at) = self.pending_scrub_to.take()
             && let (Some(first), Some(total_secs)) = (
-                trails.epochs.first().map(|e| e.time),
+                trails.time_range.map(|range| range.start),
                 track_total_secs(trails),
             )
         {
@@ -249,7 +249,7 @@ impl WindowBody<'_> {
             highlight,
         } = self;
         let (Some(first), Some(total_secs)) = (
-            trails.epochs.first().map(|e| e.time),
+            trails.time_range.map(|range| range.start),
             track_total_secs(trails),
         ) else {
             ui.label("This track has no satellite reports");
@@ -543,7 +543,7 @@ fn seen_columns(ui: &mut egui::Ui, count: &EpochCount, on: bool) {
             count.seen, count.seen_unfiltered
         ));
     }
-    count_cell(ui, count.seen, tpv_renderer::seen_count_color, on);
+    count_cell(ui, Some(count.seen), tpv_renderer::seen_count_color, on);
 }
 
 /// The total row: summed fix and seen across every constellation. The bold
@@ -551,8 +551,12 @@ fn seen_columns(ui: &mut egui::Ui, count: &EpochCount, on: bool) {
 /// weight and tier colour as the per-constellation rows, so the numbers read as
 /// one column.
 fn stats_total_row(ui: &mut egui::Ui, counts: &[EpochCount]) {
-    let (seen, seen_unfiltered, fix) = counts.iter().fold((0, 0, 0), |(s, u, f), c| {
-        (s + c.seen, u + c.seen_unfiltered, f + c.fix)
+    let (seen, seen_unfiltered, fix) = counts.iter().fold((0, 0, Some(0)), |(s, u, f), c| {
+        (
+            s + c.seen,
+            u + c.seen_unfiltered,
+            f.zip(c.fix).map(|(total, count)| total + count),
+        )
     });
     let total = EpochCount {
         constellation: counts
@@ -575,14 +579,25 @@ fn stats_total_row(ui: &mut egui::Ui, counts: &[EpochCount]) {
 /// A count, right-aligned in a fixed-width column and coloured by `color`
 /// (the same colouring the sticky point popup uses), or greyed when the row
 /// is off.
-fn count_cell(ui: &mut egui::Ui, count: usize, color: fn(u32, bool) -> egui::Color32, on: bool) {
-    let tint = if on {
-        color(count as u32, ui.visuals().dark_mode)
-    } else {
-        ui.visuals().weak_text_color()
-    };
-    let font = count_font(ui);
-    stats_cell(ui, STATS_COUNT_COL_PX, &count.to_string(), font, tint);
+fn count_cell(
+    ui: &mut egui::Ui,
+    count: Option<usize>,
+    color: fn(u32, bool) -> egui::Color32,
+    on: bool,
+) {
+    let tint = count
+        .filter(|_| on)
+        .map_or(ui.visuals().weak_text_color(), |count| {
+            color(count as u32, ui.visuals().dark_mode)
+        });
+    let text = count.map_or_else(
+        || gt_ui_theme::EM_DASH.to_owned(),
+        |count| count.to_string(),
+    );
+    let cell = stats_cell(ui, STATS_COUNT_COL_PX, &text, count_font(ui), tint);
+    if count.is_none() {
+        cell.on_hover_text("Satellite usage unreported");
+    }
 }
 
 /// The count font: the monospace family at the body text size, matching the
@@ -652,8 +667,11 @@ fn offset_time(first: GpsTime, secs: f64) -> GpsTime {
 /// The last report epoch at or before `time` - the report in effect at the
 /// scrubbed instant, driving the stats and the map highlight.
 fn floor_epoch(trails: &SkyTrails, time: GpsTime) -> Option<&TrailEpoch> {
-    let after = trails.epochs.partition_point(|e| e.time <= time);
-    trails.epochs.get(after.saturating_sub(1))
+    trails
+        .epochs
+        .iter()
+        .filter(|epoch| epoch.time <= time)
+        .max_by_key(|epoch| epoch.time)
 }
 
 /// Where on the scrubber `at` falls, given the track's `first` epoch and span.

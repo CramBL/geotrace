@@ -3,6 +3,7 @@ use egui::{Pos2, Sense, Stroke, Vec2};
 use gt_types::satellites::{
     Constellation, ConstellationSet, Prn, Satellite, Satellites, SignalQuality, Snr,
 };
+use gt_types::{SatelliteMembership, SkyCounts, SkyEvidence, SkySatellite};
 
 use crate::projection;
 use crate::style;
@@ -68,8 +69,11 @@ impl SkyHighlight {
         }
     }
 
-    /// Whether `satellite` belongs to the highlighted subset.
     pub fn matches(self, satellite: &Satellite) -> bool {
+        self.matches_sky(&SkySatellite::from_legacy(satellite))
+    }
+
+    pub fn matches_sky(self, satellite: &SkySatellite) -> bool {
         self.constellations.contains(satellite.constellation())
             && self.prn.is_none_or(|prn| prn == satellite.prn())
             && (!self.in_fix_only || satellite.in_fix())
@@ -110,18 +114,37 @@ impl SkyPlotSize {
 /// elevation cannot be placed and are surfaced beneath the plot instead, as
 /// a count line at the compact size and as one row per satellite at the full
 /// size.
-pub struct SkyPlot<'a> {
-    satellites: &'a Satellites,
+pub struct SkyPlot {
+    satellites: Vec<SkySatellite>,
+    counts: SkyCounts,
     size: SkyPlotSize,
     elevation_mask_deg: Option<f32>,
     interactive: bool,
     highlight: Option<SkyHighlight>,
 }
 
-impl<'a> SkyPlot<'a> {
-    pub fn new(satellites: &'a Satellites, size: SkyPlotSize) -> Self {
+impl SkyPlot {
+    pub fn new(satellites: &Satellites, size: SkyPlotSize) -> Self {
         Self {
-            satellites,
+            satellites: satellites
+                .satellites()
+                .map(SkySatellite::from_legacy)
+                .collect(),
+            counts: SkyCounts {
+                used: Some(satellites.fix_count()),
+                seen: Some(satellites.satellite_count()),
+            },
+            size,
+            elevation_mask_deg: None,
+            interactive: false,
+            highlight: None,
+        }
+    }
+
+    pub fn from_evidence(evidence: SkyEvidence<'_>, size: SkyPlotSize) -> Self {
+        Self {
+            satellites: evidence.satellites(),
+            counts: evidence.counts(),
             size,
             elevation_mask_deg: None,
             interactive: false,
@@ -155,34 +178,33 @@ impl<'a> SkyPlot<'a> {
     }
 
     pub fn ui(&self, ui: &mut egui::Ui) -> egui::Response {
-        let Self {
-            satellites,
-            size,
-            elevation_mask_deg,
-            interactive,
-            highlight,
-        } = *self;
-
         ui.vertical(|ui| {
-            status_line_ui(ui, satellites, size);
+            status_line_ui(ui, self.counts, self.size);
 
-            let diameter = size.diameter();
+            let diameter = self.size.diameter();
             let (rect, response) = ui.allocate_exact_size(Vec2::splat(diameter), Sense::hover());
             if ui.is_rect_visible(rect) {
                 let center = rect.center();
-                let radius = diameter / 2.0 - size.rim_margin();
-                crate::grid::draw_grid(ui, center, radius, size == SkyPlotSize::Full);
-                if let Some(mask_deg) = elevation_mask_deg {
+                let radius = diameter / 2.0 - self.size.rim_margin();
+                crate::grid::draw_grid(ui, center, radius, self.size == SkyPlotSize::Full);
+                if let Some(mask_deg) = self.elevation_mask_deg {
                     // The point plot has no ring hover yet, so never highlighted.
                     crate::grid::draw_mask_ring(ui, center, radius, mask_deg, false);
                 }
-                let marks = paint_marks(ui, center, radius, satellites, size, highlight);
-                if interactive {
+                let marks = paint_marks(
+                    ui,
+                    center,
+                    radius,
+                    &self.satellites,
+                    self.size,
+                    self.highlight,
+                );
+                if self.interactive {
                     mark_tooltip(ui, &response, &marks);
                 }
             }
 
-            unplaceable_ui(ui, satellites, size);
+            unplaceable_ui(ui, &self.satellites, self.size);
             response
         })
         .inner
@@ -191,7 +213,7 @@ impl<'a> SkyPlot<'a> {
 
 /// The instant tooltip for the mark nearest the pointer, within
 /// [`style::MARK_HOVER_RADIUS_PX`].
-fn mark_tooltip(ui: &egui::Ui, response: &egui::Response, marks: &[(Satellite, Pos2)]) {
+fn mark_tooltip(ui: &egui::Ui, response: &egui::Response, marks: &[(SkySatellite, Pos2)]) {
     let Some(pointer) = response.hover_pos() else {
         return;
     };
@@ -210,18 +232,19 @@ fn mark_tooltip(ui: &egui::Ui, response: &egui::Response, marks: &[(Satellite, P
 }
 
 /// The mark nearest to `pointer`, within [`style::MARK_HOVER_RADIUS_PX`].
-fn nearest_mark(marks: &[(Satellite, Pos2)], pointer: Pos2) -> Option<&Satellite> {
+fn nearest_mark(marks: &[(SkySatellite, Pos2)], pointer: Pos2) -> Option<&SkySatellite> {
     let candidates = marks.iter().map(|(satellite, pos)| (satellite, *pos));
     crate::plot_common::nearest_within(candidates, pointer, style::MARK_HOVER_RADIUS_PX)
 }
 
 /// "9 of 14 in fix" above the plot.
-fn status_line_ui(ui: &mut egui::Ui, satellites: &Satellites, size: SkyPlotSize) {
-    let text = format!(
-        "{} of {} in fix",
-        satellites.fix_count(),
-        satellites.satellite_count()
-    );
+fn status_line_ui(ui: &mut egui::Ui, counts: SkyCounts, size: SkyPlotSize) {
+    let text = match (counts.used, counts.seen) {
+        (Some(used), Some(seen)) => format!("{used} of {seen} in fix"),
+        (Some(used), None) => format!("{used} used"),
+        (None, Some(seen)) => format!("{seen} seen, usage unreported"),
+        (None, None) => "Counts unreported".to_owned(),
+    };
     match size {
         SkyPlotSize::Compact => ui.label(egui::RichText::new(text).small()),
         SkyPlotSize::Full => ui.label(text),
@@ -231,10 +254,15 @@ fn status_line_ui(ui: &mut egui::Ui, satellites: &Satellites, size: SkyPlotSize)
 /// Satellites without azimuth or elevation, under the plot: the compact size
 /// shows a count line, the full size one row per satellite. Nothing when all
 /// satellites are placeable.
-fn unplaceable_ui(ui: &mut egui::Ui, satellites: &Satellites, size: SkyPlotSize) {
-    let unplaceable: Vec<&Satellite> = satellites
-        .satellites()
-        .filter(|satellite| projection::mark_position(satellite).is_none())
+fn unplaceable_ui(ui: &mut egui::Ui, satellites: &[SkySatellite], size: SkyPlotSize) {
+    let unplaceable: Vec<&SkySatellite> = satellites
+        .iter()
+        .filter(|satellite| {
+            satellite
+                .sky_position()
+                .map(|(azimuth, elevation)| projection::unit_disc_position(azimuth, elevation))
+                .is_none()
+        })
         .collect();
     match (size, unplaceable.as_slice()) {
         (_, []) => {}
@@ -269,6 +297,12 @@ fn unplaceable_ui(ui: &mut egui::Ui, satellites: &Satellites, size: SkyPlotSize)
                             .small(),
                     );
                     ui.label(egui::RichText::new("no sky position").weak().small());
+                    let membership = match satellite.membership {
+                        SatelliteMembership::Used => "In fix",
+                        SatelliteMembership::Unused => "Not used",
+                        SatelliteMembership::Unknown => "Usage unknown",
+                    };
+                    ui.label(egui::RichText::new(membership).weak().small());
                 });
             }
         }
@@ -281,27 +315,29 @@ fn paint_marks(
     ui: &egui::Ui,
     center: Pos2,
     radius: f32,
-    satellites: &Satellites,
+    satellites: &[SkySatellite],
     size: SkyPlotSize,
     highlight: Option<SkyHighlight>,
-) -> Vec<(Satellite, Pos2)> {
+) -> Vec<(SkySatellite, Pos2)> {
     let painter = ui.painter();
     let dark_mode = ui.visuals().dark_mode;
     // The panel fill as the mark outline keeps overlapping dots separable.
     let edge = Stroke::new(style::MARK_EDGE_STROKE_WIDTH_PX, ui.visuals().panel_fill);
 
-    let mark = |satellite: &Satellite| {
-        let position = projection::mark_position(satellite)?;
+    let mark = |satellite: &SkySatellite| {
+        let position = satellite
+            .sky_position()
+            .map(|(azimuth, elevation)| projection::unit_disc_position(azimuth, elevation))?;
         Some((*satellite, center + position * radius))
     };
     // Hollow (tracked-only) marks first so fix satellites paint on top.
     let (fix, tracked): (Vec<_>, Vec<_>) = satellites
-        .satellites()
+        .iter()
         .filter_map(mark)
         .partition(|(satellite, _)| satellite.in_fix());
-    let marks: Vec<(Satellite, Pos2)> = tracked.into_iter().chain(fix).collect();
+    let marks: Vec<(SkySatellite, Pos2)> = tracked.into_iter().chain(fix).collect();
     for (satellite, position) in &marks {
-        let dimmed = highlight.is_some_and(|h| !h.matches(satellite));
+        let dimmed = highlight.is_some_and(|h| !h.matches_sky(satellite));
         let dim = |color: egui::Color32| {
             if dimmed {
                 color.gamma_multiply(style::DIMMED_MARK_ALPHA)
@@ -321,6 +357,12 @@ fn paint_marks(
         if satellite.in_fix() {
             let edge = Stroke::new(edge.width, dim(edge.color));
             painter.circle(*position, mark_radius, color, edge);
+        } else if satellite.membership == SatelliteMembership::Unknown {
+            painter.circle_filled(
+                *position,
+                mark_radius * style::UNKNOWN_MEMBERSHIP_MARKER_SCALE,
+                color,
+            );
         } else {
             painter.circle_stroke(
                 *position,
@@ -337,6 +379,7 @@ mod tests {
     use rstest::rstest;
 
     use gt_test_utils::TestHarness;
+    use gt_types::SkySatellite;
     use gt_types::satellites::{Constellation, NO_DATA_SENTINEL_DB_HZ, Satellite, Satellites};
 
     use super::{SkyHighlight, SkyPlot, SkyPlotSize};
@@ -548,11 +591,19 @@ mod tests {
             .size(egui::vec2(260.0, 320.0))
             .theme(true)
             .ui(move |ui| {
-                crate::plot_common::satellite_tooltip(ui, &full, None);
+                crate::plot_common::satellite_tooltip(ui, &SkySatellite::from_legacy(&full), None);
                 ui.separator();
-                crate::plot_common::satellite_tooltip(ui, &snr_less, None);
+                crate::plot_common::satellite_tooltip(
+                    ui,
+                    &SkySatellite::from_legacy(&snr_less),
+                    None,
+                );
                 ui.separator();
-                crate::plot_common::satellite_tooltip(ui, &no_data, None);
+                crate::plot_common::satellite_tooltip(
+                    ui,
+                    &SkySatellite::from_legacy(&no_data),
+                    None,
+                );
             });
         harness.run();
         harness.snapshot("sky_mark_tooltip");
@@ -576,6 +627,10 @@ mod tests {
                 egui::pos2(112.0, 100.0),
             ),
         ];
+        let marks: Vec<_> = marks
+            .into_iter()
+            .map(|(satellite, position)| (SkySatellite::from_legacy(&satellite), position))
+            .collect();
         let nearest = super::nearest_mark(&marks, pointer).map(|s| s.prn().value());
         assert_eq!(nearest, expected_prn);
     }
