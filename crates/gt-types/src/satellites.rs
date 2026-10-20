@@ -163,14 +163,12 @@ crate::enum_bitset! {
     pub struct ConstellationSet(u8) for Constellation;
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Satellite {
     constellation: Constellation,
     prn: Prn,
     in_fix: bool,
-    elevation: Option<f32>,
-    azimuth: Option<f32>,
-    snr: Option<Snr>,
+    measurements: SatSample,
 }
 
 impl Satellite {
@@ -186,10 +184,17 @@ impl Satellite {
             constellation,
             prn: Prn::new(prn),
             in_fix,
-            elevation,
-            azimuth,
-            snr: snr.map(Snr::new),
+            measurements: SatSample {
+                elevation,
+                azimuth,
+                snr: snr.map(Snr::new),
+            },
         }
+    }
+
+    pub fn absorb_repeated_row(&mut self, row: Satellite) {
+        self.in_fix |= row.in_fix;
+        self.measurements.absorb_repeated_row(row.measurements);
     }
 
     pub fn constellation(&self) -> Constellation {
@@ -202,42 +207,17 @@ impl Satellite {
         self.in_fix
     }
     pub fn elevation(&self) -> Option<f32> {
-        self.elevation
+        self.measurements.elevation
     }
     pub fn azimuth(&self) -> Option<f32> {
-        self.azimuth
+        self.measurements.azimuth
     }
     pub fn snr(&self) -> Option<Snr> {
-        self.snr
+        self.measurements.snr
     }
 
-    /// The SNR the receiver measured for this satellite. `None` for a
-    /// satellite with a missing SNR, and for one with the no-data value.
     pub fn measured_snr(&self) -> Option<Snr> {
-        self.snr.filter(|snr| !snr.is_no_data_sentinel())
-    }
-
-    /// Merges another row of the same report for this satellite into this one.
-    ///
-    /// This satellite is in the fix when any of its rows was, and takes the
-    /// highest SNR measured on its rows: the strongest signal measured for the
-    /// satellite. It takes the no-data value only where no row measured an SNR.
-    /// Taking the highest keeps the result independent of row order, which
-    /// `gt_analysis::loss_of_lock` reads when it compares a satellite's SNR
-    /// between epochs. Elevation and azimuth are properties of the satellite's
-    /// geometry, not of the signal: this satellite keeps the first value any of
-    /// its rows holds for each of them.
-    pub fn absorb_repeated_row(&mut self, row: Satellite) {
-        self.in_fix |= row.in_fix;
-        self.elevation = self.elevation.or(row.elevation);
-        self.azimuth = self.azimuth.or(row.azimuth);
-        self.snr = match (self.measured_snr(), row.measured_snr()) {
-            (Some(highest_so_far), Some(row_snr)) => {
-                Some(Snr::new(highest_so_far.value().max(row_snr.value())))
-            }
-            (Some(measured), None) | (None, Some(measured)) => Some(measured),
-            (None, None) => self.snr.or(row.snr),
-        };
+        self.measurements.measured_snr()
     }
 }
 
@@ -267,7 +247,7 @@ impl SlipCause {
 
 /// A satellite's tracked geometry and signal at one epoch - the before/after
 /// payload of a [`Slip`].
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SatSample {
     pub elevation: Option<f32>,
     pub azimuth: Option<f32>,
@@ -275,13 +255,24 @@ pub struct SatSample {
 }
 
 impl SatSample {
-    /// Snapshot the tracked geometry and signal of `sat`.
     pub fn of(sat: &Satellite) -> Self {
-        Self {
-            elevation: sat.elevation,
-            azimuth: sat.azimuth,
-            snr: sat.snr,
-        }
+        sat.measurements
+    }
+
+    pub fn absorb_repeated_row(&mut self, row: Self) {
+        self.elevation = self.elevation.or(row.elevation);
+        self.azimuth = self.azimuth.or(row.azimuth);
+        self.snr = match (self.measured_snr(), row.measured_snr()) {
+            (Some(highest), Some(measured)) => {
+                Some(Snr::new(highest.value().max(measured.value())))
+            }
+            (Some(measured), None) | (None, Some(measured)) => Some(measured),
+            (None, None) => self.snr.or(row.snr),
+        };
+    }
+
+    pub fn measured_snr(&self) -> Option<Snr> {
+        self.snr.filter(|snr| !snr.is_no_data_sentinel())
     }
 }
 
@@ -400,7 +391,7 @@ impl Satellites {
     pub fn max_snr(&self) -> Option<Snr> {
         self.satellites
             .iter()
-            .filter_map(|s| s.snr)
+            .filter_map(Satellite::snr)
             .max_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal))
     }
 
@@ -409,7 +400,7 @@ impl Satellites {
     /// Returns `None` if no satellites in the constellation have SNR data.
     pub fn max_snr_by_constellation(&self, constellation: Constellation) -> Option<Snr> {
         self.by_constellation(constellation)
-            .filter_map(|s| s.snr)
+            .filter_map(Satellite::snr)
             .max_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal))
     }
 
@@ -537,6 +528,7 @@ mod tests {
     #[rstest]
     #[case::the_no_data_value(NO_DATA_SENTINEL_DB_HZ, None)]
     #[case::a_measurement(40.0, Some(40.0))]
+    #[case::zero_is_measured(0.0, Some(0.0))]
     fn measured_snr_drops_the_no_data_value(#[case] snr_db: f32, #[case] expected_db: Option<f32>) {
         let satellite = Satellite::new(Constellation::Gps, 7, None, None, Some(snr_db), false);
 
@@ -580,6 +572,7 @@ mod tests {
         Some(NO_DATA_SENTINEL_DB_HZ),
         Some(NO_DATA_SENTINEL_DB_HZ)
     )]
+    #[case::zero_and_the_no_data_value(Some(0.0), Some(NO_DATA_SENTINEL_DB_HZ), Some(0.0))]
     #[case::the_no_data_value_and_no_snr(
         Some(NO_DATA_SENTINEL_DB_HZ),
         None,

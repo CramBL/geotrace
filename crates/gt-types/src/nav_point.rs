@@ -1,5 +1,7 @@
 use crate::coordinates::{Latitude, Longitude};
 use crate::mercator::{self, MercPoint};
+use crate::navigation::NavigationMetadata;
+use crate::satellite_evidence::SatelliteEvidence;
 use crate::satellites::Satellites;
 use crate::tpv::TimePositionVelocity;
 
@@ -86,26 +88,28 @@ impl ResolvedPosition {
     }
 }
 
-/// One nav fix as the receiver wrote it, with its satellite report.
-///
-/// `tpv` holds the coordinates recorded for this epoch, out of range values
-/// included, which is not always where the fix belongs on the map: a receiver
-/// without a heading to report often writes coordinates it did not measure,
-/// down to (0, 0), and one that reports a latitude of 91° wrote no position at
-/// all.
-///
-/// Where a fix is drawn is the track's geometry, not the fix's own: read
-/// [`crate::track::LoadedTrack::placed_points`] for anything geometric - a
-/// distance, a bounding box, a bearing, a label placement.
+/// Recorded coordinates and navigation facts, with independent satellite samples.
+/// Geometry uses [`crate::track::LoadedTrack::placed_points`].
 #[derive(Debug, Clone)]
 pub struct NavPoint {
     pub tpv: TimePositionVelocity,
     pub satellites: Option<Satellites>,
+    pub navigation: NavigationMetadata,
+    pub satellite_evidence: SatelliteEvidence,
 }
 
 impl NavPoint {
     pub fn new(tpv: TimePositionVelocity, satellites: Option<Satellites>) -> Self {
-        Self { tpv, satellites }
+        let satellite_evidence = satellites
+            .as_ref()
+            .map(|report| SatelliteEvidence::from_legacy(report, &tpv))
+            .unwrap_or_default();
+        Self {
+            tpv,
+            satellites,
+            navigation: NavigationMetadata::default(),
+            satellite_evidence,
+        }
     }
 
     pub fn fix_count(&self) -> u32 {
