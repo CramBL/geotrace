@@ -19,7 +19,7 @@ use gt_history_types::{
     TRACK_END_DATASET, TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, TrackRange,
     TrackState, UI_STATE_GROUP, UI_STATE_VERSION_ATTR, UiStateVersionReporter, log_attachment,
 };
-use hdf5_pure::{AttrValue, DType, FileBuilder, Group, GroupBuilder};
+use hdf5_pure::{AttrValue, DType, DeflateLevel, FileBuilder, Group, GroupBuilder};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -186,7 +186,7 @@ fn write_dataset_into(gb: &mut GroupBuilder, ds: &DatasetNode) {
     }
     db.with_chunks(&chunk);
     db.with_shuffle();
-    db.with_deflate(6);
+    db.with_deflate(DeflateLevel::Six);
 }
 
 /// Write a [`GroupNode`] and everything below it into an open group builder.

@@ -6,7 +6,7 @@
     reason = "test functions mix ? propagation with assert! - both are correct in test code"
 )]
 
-use hdf5_pure::{File, FileBuilder};
+use hdf5_pure::{DeflateLevel, File, FileBuilder};
 
 /// hdf5-pure 0.5.0 and earlier failed to read a dataset with a paged Fixed
 /// Array chunk index. The library writes that index for a dataset of more than
@@ -22,7 +22,7 @@ fn a_dataset_of_more_than_1024_chunks_reads_back() -> Result<(), Box<dyn std::er
         .with_f64_data(&data)
         .with_shape(&[CHUNK_COUNT as u64])
         .with_chunks(&[1])
-        .with_deflate(6);
+        .with_deflate(DeflateLevel::Six);
     fb.add_group(grp.finish());
 
     let file = File::from_bytes(fb.finish()?)?;

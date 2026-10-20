@@ -19,7 +19,7 @@ use gt_history_types::{
     TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, UI_STATE_GROUP, UI_STATE_VERSION_ATTR,
     UiStateVersionReporter, UiStateVersionTooNew, fixtures,
 };
-use hdf5_pure::{File, FileBuilder, FileSpaceStrategy};
+use hdf5_pure::{DeflateLevel, File, FileBuilder, FileSpaceStrategy};
 use rstest::rstest;
 
 /// Single-track convenience wrappers over the per-track API.
@@ -227,21 +227,21 @@ fn make_chunked_gtd_bytes(start_us: i64, n: u64) -> Vec<u8> {
         ds.with_shape(&shape);
         ds.with_i64_data(&timestamps);
         ds.with_chunks(&chunk);
-        ds.with_deflate(6);
+        ds.with_deflate(DeflateLevel::Six);
     }
     {
         let ds = nav.create_dataset("lat");
         ds.with_shape(&shape);
         ds.with_f64_data(&lat);
         ds.with_chunks(&chunk);
-        ds.with_deflate(6);
+        ds.with_deflate(DeflateLevel::Six);
     }
     {
         let ds = nav.create_dataset("lon");
         ds.with_shape(&shape);
         ds.with_f64_data(&lon);
         ds.with_chunks(&chunk);
-        ds.with_deflate(6);
+        ds.with_deflate(DeflateLevel::Six);
     }
     fb.add_group(nav.finish());
     fb.finish().expect("serialize chunked gtd")

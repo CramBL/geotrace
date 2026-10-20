@@ -234,7 +234,7 @@ dependencies = [
 [[package]]
 name = "hdf5-pure"
 version = "0.47.0"
-source = "git+https://github.com/CramBL/hdf5-pure?branch=main#4a9794253e2b633278ba6ef3dd9aaf829bb691a3"
+source = "git+https://github.com/CramBL/hdf5-pure?rev=357d0ab07964919b3ea6400c570ffdb7a22a6098#357d0ab07964919b3ea6400c570ffdb7a22a6098"
 dependencies = [
  "hdf5-pure-core",
  "hdf5-pure-filter",
@@ -245,12 +245,12 @@ dependencies = [
 [[package]]
 name = "hdf5-pure-core"
 version = "0.47.0"
-source = "git+https://github.com/CramBL/hdf5-pure?branch=main#4a9794253e2b633278ba6ef3dd9aaf829bb691a3"
+source = "git+https://github.com/CramBL/hdf5-pure?rev=357d0ab07964919b3ea6400c570ffdb7a22a6098#357d0ab07964919b3ea6400c570ffdb7a22a6098"
 
 [[package]]
 name = "hdf5-pure-filter"
 version = "0.47.0"
-source = "git+https://github.com/CramBL/hdf5-pure?branch=main#4a9794253e2b633278ba6ef3dd9aaf829bb691a3"
+source = "git+https://github.com/CramBL/hdf5-pure?rev=357d0ab07964919b3ea6400c570ffdb7a22a6098#357d0ab07964919b3ea6400c570ffdb7a22a6098"
 dependencies = [
  "flate2",
  "hdf5-pure-core",
@@ -259,7 +259,7 @@ dependencies = [
 [[package]]
 name = "hdf5-pure-format"
 version = "0.47.0"
-source = "git+https://github.com/CramBL/hdf5-pure?branch=main#4a9794253e2b633278ba6ef3dd9aaf829bb691a3"
+source = "git+https://github.com/CramBL/hdf5-pure?rev=357d0ab07964919b3ea6400c570ffdb7a22a6098#357d0ab07964919b3ea6400c570ffdb7a22a6098"
 dependencies = [
  "byteorder",
  "hdf5-pure-core",
@@ -268,7 +268,7 @@ dependencies = [
 [[package]]
 name = "hdf5-pure-space"
 version = "0.47.0"
-source = "git+https://github.com/CramBL/hdf5-pure?branch=main#4a9794253e2b633278ba6ef3dd9aaf829bb691a3"
+source = "git+https://github.com/CramBL/hdf5-pure?rev=357d0ab07964919b3ea6400c570ffdb7a22a6098#357d0ab07964919b3ea6400c570ffdb7a22a6098"
 dependencies = [
  "hdf5-pure-core",
 ]
