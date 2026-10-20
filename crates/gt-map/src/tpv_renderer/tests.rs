@@ -7,10 +7,16 @@ use crate::test_util;
 use egui::Color32;
 use gt_types::MercPoint;
 use gt_types::coordinates::{Latitude, Longitude, RecordedLatitude};
-use gt_types::satellites::{Constellation, NO_DATA_SENTINEL_DB_HZ, Satellite, Satellites};
-use gt_types::time_types::GpsTime;
+use gt_types::satellites::{
+    Constellation, ConstellationSet, NO_DATA_SENTINEL_DB_HZ, Prn, Satellite, Satellites,
+};
+use gt_types::time_types::{GpsTime, SysTime};
 use gt_types::tpv::TimePositionVelocity;
-use gt_types::{NavPoint, NavigationMetadata, PositionProvenance};
+use gt_types::{
+    NavPoint, NavigationMetadata, PositionProvenance, SatelliteCoverage, SatelliteIdentity,
+    SatelliteReportMetadata, SatelliteScope, SatelliteUsage, SatelliteUsageReport,
+    SolutionDimension, SolutionMethod,
+};
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Length};
 
@@ -1307,4 +1313,344 @@ fn navigation_presentation_depends_on_state_and_provenance(
         assert_eq!(point.navigation.state, state);
         assert_eq!(point.navigation.used_count, used_count);
     }
+}
+
+#[rstest]
+#[case::summary(Some(SolutionState::Fix), Some(8), "Fix", "Reported state", "8 used")]
+#[case::contradiction(
+    Some(SolutionState::NoFix),
+    Some(12),
+    "No fix",
+    "Reported state",
+    "12 used"
+)]
+#[case::fix_zero(Some(SolutionState::Fix), Some(0), "Fix", "Reported state", "0 used")]
+#[case::explicit_unknown(
+    Some(SolutionState::Unknown),
+    Some(0),
+    "Unknown",
+    "Reported state",
+    "0 used"
+)]
+#[case::legacy(None, None, "Unknown", "No state observation", "—")]
+#[case::count_fallback(None, Some(8), "Fix", "Navigation used count", "8 used")]
+#[case::estimate(
+    Some(SolutionState::EstimatedOnly),
+    None,
+    "Estimated only",
+    "Reported state",
+    "—"
+)]
+fn point_details_preserve_state_and_count_independently(
+    #[case] state: Option<SolutionState>,
+    #[case] used_count: Option<u32>,
+    #[case] state_label: &str,
+    #[case] evidence_label: &str,
+    #[case] count_label: &str,
+) {
+    let mut point = point_at(0, None);
+    point.navigation.state = state;
+    point.navigation.used_count = used_count;
+    let mut folds = PointWindowFolds::default();
+    let placement = placement_of(&point);
+    let mut harness = test_util::harness_builder()
+        .size(egui::vec2(380.0, 500.0))
+        .ui(move |ui| {
+            let _opened = show_sticky_tpv_content(
+                ui,
+                &point,
+                &SkySection::TrackWithoutReports,
+                &mut folds,
+                None,
+                placement,
+            );
+        });
+    harness.run();
+    for label in [state_label, evidence_label, count_label] {
+        assert!(
+            harness.inner.query_all_by_label(label).next().is_some(),
+            "missing {label}"
+        );
+    }
+    let row_y = harness.inner.get_by_label("Satellites").rect().center().y;
+    assert!(
+        harness
+            .inner
+            .query_all_by_label(count_label)
+            .any(|node| node.rect().y_range().contains(row_y))
+    );
+    assert!(harness.inner.query_by_label("Position source").is_none());
+}
+
+#[rstest]
+#[case::source(
+    "navigation_details_source_dark",
+    true,
+    PositionProvenance::SourceProvided
+)]
+#[case::synthesized(
+    "navigation_details_synthesized_light",
+    false,
+    PositionProvenance::SdkSynthesized
+)]
+fn navigation_details_show_recorded_metadata(
+    #[case] name: &str,
+    #[case] dark_mode: bool,
+    #[case] provenance: PositionProvenance,
+) {
+    let mut point = point_at(0, None);
+    point.tpv = TimePositionVelocity::builder()
+        .time(point.tpv.time())
+        .lat(point.tpv.lat())
+        .lon(point.tpv.lon())
+        .maybe_heading(
+            (provenance == PositionProvenance::SdkSynthesized)
+                .then_some(Angle::new::<degree>(90.0)),
+        )
+        .build();
+    point.navigation = NavigationMetadata {
+        state: Some(SolutionState::Fix),
+        method: Some(SolutionMethod::Other),
+        dimension: Some(SolutionDimension::ThreeD),
+        used_count: Some(8),
+        hdop: Some(0.9),
+        position_provenance: Some(provenance),
+        ..NavigationMetadata::default()
+    };
+    let placement = placement_of(&point);
+    let mut folds = PointWindowFolds::default();
+    let mut harness = test_util::harness_builder()
+        .size(egui::vec2(380.0, 360.0))
+        .theme(dark_mode)
+        .ui(move |ui| {
+            let _opened = show_sticky_tpv_content(
+                ui,
+                &point,
+                &SkySection::TrackWithoutReports,
+                &mut folds,
+                None,
+                placement,
+            );
+        });
+    harness.run();
+    for label in [
+        "Fix",
+        "8 used",
+        "Other",
+        "3D",
+        "HDOP",
+        "0.9",
+        &provenance.to_string(),
+    ] {
+        assert!(
+            harness.inner.query_all_by_label(label).next().is_some(),
+            "missing {label}"
+        );
+    }
+    assert!(harness.inner.query_by_label("Accuracy").is_none());
+    assert!(harness.inner.query_by_label("VDOP").is_none());
+    harness.snapshot(name);
+}
+
+#[test]
+fn recorded_reports_show_conflicting_aggregates_scope_and_original_times() {
+    let mut point = point_at(0, None);
+    point.navigation.used_count = Some(8);
+    let track_time =
+        GpsTime::from_utc(point.tpv.time().utc() + chrono::Duration::milliseconds(400));
+    let metadata = SatelliteReportMetadata {
+        gps_time: Some(track_time),
+        sys_time: Some(SysTime::from_utc(
+            fixture_epoch() + chrono::Duration::milliseconds(1400),
+        )),
+        normalized_time: track_time,
+        input_order: 1,
+        scope: SatelliteScope::Constellations(ConstellationSet::single(Constellation::Gps)),
+        coverage: SatelliteCoverage::Partial,
+        reported_count: Some(9),
+    };
+    point.satellite_evidence.usage.push(SatelliteUsageReport {
+        metadata,
+        satellites: [
+            (1, SatelliteMembership::Unknown),
+            (2, SatelliteMembership::Unused),
+            (3, SatelliteMembership::Used),
+        ]
+        .into_iter()
+        .map(|(prn, membership)| SatelliteUsage {
+            identity: SatelliteIdentity {
+                constellation: Constellation::Gps,
+                prn: Prn::new(prn),
+            },
+            membership,
+        })
+        .collect(),
+    });
+    point.satellite_evidence.usage.push(SatelliteUsageReport {
+        metadata: SatelliteReportMetadata {
+            scope: SatelliteScope::Global,
+            coverage: SatelliteCoverage::Complete,
+            reported_count: Some(0),
+            ..metadata
+        },
+        satellites: Vec::new(),
+    });
+    let placement = placement_of(&point);
+    let mut folds = PointWindowFolds::default();
+    let mut harness = test_util::harness_builder()
+        .size(egui::vec2(430.0, 550.0))
+        .ui(move |ui| {
+            let _opened = show_sticky_tpv_content(
+                ui,
+                &point,
+                &SkySection::TrackWithoutReports,
+                &mut folds,
+                None,
+                placement,
+            );
+        });
+    harness.run();
+    assert!(harness.inner.query_by_label("8 used").is_some());
+    harness
+        .inner
+        .get_by_label("Recorded satellite reports")
+        .click();
+    harness.inner.run_steps(3);
+    for label in [
+        "Usage report 1",
+        "GPS · Partial",
+        "Global · Complete",
+        "Unknown",
+        "Unused",
+        "Used",
+        "Reported count 9",
+        "Reported count 0",
+        "Track time 2025-05-23 11:33:20.400 UTC",
+        "Receiver time 2025-05-23 11:33:20.400 UTC",
+        "Host time 2025-05-23 11:33:21.400 UTC",
+    ] {
+        assert!(
+            harness.inner.query_all_by_label(label).next().is_some(),
+            "missing {label}"
+        );
+    }
+}
+
+#[test]
+fn borrowed_sky_observations_preserve_point_count_absence() {
+    let mut point = point_at(0, None);
+    point.navigation.state = Some(SolutionState::Fix);
+    point.navigation.used_count = Some(8);
+    let borrowed = point_at(2, Some(twelve_satellites(10)));
+    let track = gt_test_utils::loaded_track_with_points(vec![point, borrowed]);
+    let mut folds = PointWindowFolds::default();
+    let mut harness = test_util::harness_builder()
+        .size(egui::vec2(380.0, 850.0))
+        .ui(move |ui| {
+            let point_index = PointIdx::new(0);
+            let point = point_index.get(&track.points).expect("source point");
+            let _opened = show_sticky_tpv_content(
+                ui,
+                point,
+                &SkySection::resolve(&track, point_index),
+                &mut folds,
+                None,
+                FixPlacement::resolve(&track, point_index),
+            );
+        });
+    harness.run();
+    assert!(harness.inner.query_by_label("8 used").is_some());
+    assert!(harness.inner.query_by_label("8/12 used/seen").is_none());
+    assert!(harness.inner.query_by_label("Report 2.0s later").is_some());
+}
+
+#[rstest]
+#[case::observations_with_summary(
+    SatelliteCoverage::Complete,
+    SatelliteScope::Global,
+    true,
+    Some(8),
+    "8/12 used/seen"
+)]
+#[case::complete_empty(
+    SatelliteCoverage::Complete,
+    SatelliteScope::Global,
+    false,
+    None,
+    "0 seen"
+)]
+#[case::partial_empty(SatelliteCoverage::Partial, SatelliteScope::Global, false, None, "—")]
+#[case::scoped(
+    SatelliteCoverage::Complete,
+    SatelliteScope::Constellations(ConstellationSet::single(Constellation::Gps)),
+    true,
+    None,
+    "—"
+)]
+fn observation_details_preserve_global_count_availability(
+    #[case] coverage: SatelliteCoverage,
+    #[case] scope: SatelliteScope,
+    #[case] identity_rows: bool,
+    #[case] used_count: Option<u32>,
+    #[case] expected: &str,
+) {
+    let mut point = point_at(0, Some(twelve_satellites(8)));
+    point.navigation.used_count = used_count;
+    point.satellite_evidence.usage.clear();
+    point.satellites = None;
+    let report = point
+        .satellite_evidence
+        .observations
+        .first_mut()
+        .expect("observation");
+    report.metadata.coverage = coverage;
+    report.metadata.scope = scope;
+    if !identity_rows {
+        report.satellites.clear();
+    }
+    let placement = placement_of(&point);
+    let mut folds = PointWindowFolds::default();
+    let mut harness = test_util::harness_builder()
+        .size(egui::vec2(420.0, 800.0))
+        .ui(move |ui| {
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
+        });
+    harness.run();
+    assert!(
+        harness.inner.query_all_by_label(expected).any(|node| node
+            .rect()
+            .y_range()
+            .contains(harness.inner.get_by_label("Satellites").rect().center().y)),
+        "missing {expected}"
+    );
+    assert!(
+        harness
+            .inner
+            .query_by_label("No state observation")
+            .is_some()
+            || used_count.is_some()
+    );
+}
+
+#[test]
+fn legacy_empty_report_details_show_known_zero_usage_and_observations() {
+    let point = point_at(0, Some(Satellites::new(None, None, Vec::new())));
+    let placement = placement_of(&point);
+    let mut folds = PointWindowFolds::default();
+    let mut harness = test_util::harness_builder()
+        .size(egui::vec2(380.0, 500.0))
+        .ui(move |ui| {
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
+        });
+    harness.run();
+    assert!(harness.inner.query_by_label("0/0 used/seen").is_some());
+    assert!(harness.inner.query_by_label("No fix").is_some());
+    assert!(
+        harness
+            .inner
+            .query_by_label("Usage report 1 membership")
+            .is_some()
+    );
 }

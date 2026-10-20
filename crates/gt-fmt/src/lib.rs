@@ -6,8 +6,8 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
-use gt_types::LoadedTrack;
 use gt_types::track::FixStats;
+use gt_types::{LoadedTrack, SkyCounts};
 use uom::si::{
     f64,
     length::{kilometer, meter},
@@ -17,27 +17,58 @@ pub use name_template::{NameFields, Token, render_name_template};
 
 pub mod name_template;
 
-/// Returns the percentage of time spent with a satellite fix, rounded to the
-/// nearest integer in `[0, 100]`.
-///
-/// Returns `0` when `time_with_fix + time_without_fix` is zero or negative.
-pub fn fix_percentage(stats: FixStats) -> u32 {
-    let total_ms = (stats.time_with_fix + stats.time_without_fix).num_milliseconds();
-    if total_ms <= 0 {
-        return 0;
-    }
-    let fix_ms = stats.time_with_fix.num_milliseconds().max(0);
-    u32::try_from((fix_ms * 100 + total_ms / 2) / total_ms).unwrap_or(100)
-}
+#[derive(Clone, Copy, Debug)]
+pub struct NavigationSummary(pub FixStats);
 
-/// Formats just the fix-percentage portion of the tooltip, e.g. `"85% fix"`.
-pub fn format_fix_percentage(stats: FixStats) -> String {
-    format!("{}% fix", fix_percentage(stats))
+impl NavigationSummary {
+    pub fn availability_percentage(self) -> Option<u32> {
+        self.0.availability().map(|fraction| {
+            let rounded = (fraction * 100.0 + 0.5).floor().clamp(0.0, 100.0) as i64;
+            u32::try_from(rounded).unwrap_or_default()
+        })
+    }
+
+    pub fn availability_label(self) -> String {
+        self.availability_percentage().map_or_else(
+            || format!("{EM_DASH} availability"),
+            |percent| format!("{percent}% availability"),
+        )
+    }
+
+    pub fn details(self) -> String {
+        let mut parts = vec![format!(
+            "{} known-state coverage",
+            format_fraction_percent(self.0.known_state_coverage())
+        )];
+        for (duration, label) in [
+            (self.0.time_without_fix, "no fix"),
+            (self.0.time_estimated_only, "estimated only"),
+            (self.0.time_unknown, "unknown"),
+        ] {
+            if duration > chrono::Duration::zero() {
+                parts.push(format!("{} {label}", format_human_terse_duration(duration)));
+            }
+        }
+        if self.0.fix_loss_count > 0 {
+            parts.push(format!(
+                "{} {}",
+                self.0.fix_loss_count,
+                pluralize(self.0.fix_loss_count as usize, "loss", "losses")
+            ));
+        }
+        if self.0.max_continuous_no_fix > chrono::Duration::zero() {
+            parts.push(format!(
+                "longest absence {}",
+                format_human_terse_duration(self.0.max_continuous_no_fix)
+            ));
+        }
+        parts.join(TOOLTIP_JOINER)
+    }
 }
 
 /// Formats a `0..=1` fraction as a whole percentage, e.g. `0.87` -> `"87%"`.
 ///
-/// Rounds half-up like [`fix_percentage`] and clamps to `[0, 100]`, so an
+/// Rounds half-up and clamps to `[0, 100]`, so an
 /// out-of-range or non-finite input degrades to a bound.
 pub fn format_fraction_percent(fraction: f64) -> String {
     // `clamp` propagates NaN, so map non-finite inputs to the lower bound
@@ -47,34 +78,29 @@ pub fn format_fraction_percent(fraction: f64) -> String {
     format!("{percent}%")
 }
 
-/// Formats the remaining tooltip details (time without fix, loss count, max
-/// continuous gap), each prefixed by `TOOLTIP_JOINER`.
-///
-/// Returns an empty string when there is nothing to add beyond the
-/// percentage, e.g. for `"100% fix"` with no losses.
-pub fn format_fix_tooltip_details(stats: FixStats) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    if stats.time_without_fix > chrono::Duration::zero() {
-        parts.push(format!(
-            "{} w/o fix",
-            format_human_terse_duration(stats.time_without_fix)
-        ));
-    }
-    if stats.fix_loss_count == 1 {
-        parts.push("1 loss".to_owned());
-    } else if stats.fix_loss_count > 1 {
-        parts.push(format!("{} losses", stats.fix_loss_count));
-    }
-    if stats.max_continuous_no_fix > chrono::Duration::zero() {
-        parts.push(format!(
-            "max gap {}",
-            format_human_terse_duration(stats.max_continuous_no_fix)
-        ));
-    }
-    if parts.is_empty() {
-        String::new()
-    } else {
-        format!("{TOOLTIP_JOINER}{}", parts.join(TOOLTIP_JOINER))
+#[derive(Clone, Copy, Debug)]
+pub struct SatelliteCounts(pub SkyCounts);
+
+impl fmt::Display for SatelliteCounts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            SkyCounts {
+                used: Some(used),
+                seen: Some(seen),
+            } => write!(f, "{used}/{seen} used/seen"),
+            SkyCounts {
+                used: Some(used),
+                seen: None,
+            } => write!(f, "{used} used"),
+            SkyCounts {
+                used: None,
+                seen: Some(seen),
+            } => write!(f, "{seen} seen"),
+            SkyCounts {
+                used: None,
+                seen: None,
+            } => f.write_str(EM_DASH),
+        }
     }
 }
 
@@ -430,6 +456,8 @@ pub const UTC_MINUTE_FORMAT: &str = "%Y-%m-%d %H:%M";
 /// A UTC instant to the second, the precision a fix or a plot sample has.
 /// The surface showing it writes `UTC` after it.
 pub const UTC_SECOND_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+
+pub const UTC_SUBSECOND_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.f";
 
 /// Two spaces, U+00B7 MIDDLE DOT, two spaces, joins fields inside tooltip strings.
 const TOOLTIP_JOINER: &str = "  ·  ";

@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use strum::IntoEnumIterator as _;
+use strum::{Display, IntoEnumIterator as _};
 
 use crate::NavPoint;
 use crate::satellites::{Constellation, ConstellationSet, Prn, SatSample, Satellites, Snr};
@@ -15,14 +15,14 @@ pub struct SatelliteIdentity {
 }
 
 /// Declaration order defines repeated-row membership precedence.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Display, Eq, Ord, PartialEq, PartialOrd)]
 pub enum SatelliteMembership {
     Unknown,
     Unused,
     Used,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Display, Eq, PartialEq)]
 pub enum SatelliteCoverage {
     Complete,
     Partial,

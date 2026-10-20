@@ -23,8 +23,11 @@ pub fn recording_tooltip_rows(ui: &mut egui::Ui, metadata: &FileMetadata) {
         "Recorded time {}",
         gt_fmt::format_human_terse_duration(metadata.total_duration)
     ));
-    if let Some(stats) = metadata.fix_stats {
-        fix_stats_tooltip_row(ui, stats);
+    match metadata.fix_stats {
+        Some(stats) => fix_stats_tooltip_row(ui, stats),
+        None => {
+            ui.label("No navigation interval estimate");
+        }
     }
 }
 
@@ -40,7 +43,7 @@ pub fn track_tooltip_rows(ui: &mut egui::Ui, metadata: &TrackMetadata) {
     match metadata.fix_stats {
         Some(stats) => fix_stats_tooltip_row(ui, stats),
         None => {
-            ui.label("No satellite data");
+            ui.label("No navigation interval estimate");
         }
     }
 }
@@ -99,19 +102,18 @@ pub fn paint_map_hover_bg(ui: &egui::Ui, rect: egui::Rect, color: egui::Color32)
     painter.rect_filled(rect.expand2(egui::vec2(2.0, 1.0)), 3.0, color);
 }
 
-/// Renders the colour-coded fix-percentage label followed by the remaining
-/// tooltip details (time without fix, loss count, max gap).
-///
-/// Disables egui's automatic item spacing so the details' own `  ·  ` joiner
-/// (or empty string at 100% fix) renders without an extra gap.
 pub fn fix_stats_tooltip_row(ui: &mut egui::Ui, stats: FixStats) {
-    let pct_color =
-        gt_ui_theme::fix_quality_color(gt_fmt::fix_percentage(stats), ui.visuals().dark_mode);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        ui.colored_label(pct_color, gt_fmt::format_fix_percentage(stats));
-        ui.label(gt_fmt::format_fix_tooltip_details(stats));
-    });
+    let summary = gt_fmt::NavigationSummary(stats);
+    let color = summary.availability_percentage().map_or_else(
+        || ui.visuals().weak_text_color(),
+        |percent| gt_ui_theme::fix_quality_color(percent, ui.visuals().dark_mode),
+    );
+    ui.colored_label(color, summary.availability_label())
+        .on_hover_text(
+            "Interval estimate of time with a fix divided by time with a known navigation state",
+        );
+    ui.label(summary.details())
+        .on_hover_text("Known-state coverage is the portion of recorded time with a fix, no fix or an estimate without GNSS contribution");
 }
 
 /// A selectable, sticky, double-click-to-focus row for a single data point.
