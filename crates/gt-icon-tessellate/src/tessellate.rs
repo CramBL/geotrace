@@ -510,6 +510,7 @@ mod tests {
             #[case::hexagon("hexagon")]
             #[case::lightning("lightning")]
             #[case::nav_arrow("nav_arrow")]
+            #[case::nav_dot("nav_dot")]
             #[case::pin("pin")]
             #[case::refresh("refresh")]
             #[case::round_trip_flag("round_trip_flag")]
@@ -732,7 +733,7 @@ mod tests {
 
     /// Every icon asset, sorted. Kept in sync with `assets/icons/` by
     /// [`icon_names_match_assets_dir`]. The rstest cases of `a_case_per_icon!` must mirror it.
-    const ICON_NAMES: [&str; 21] = [
+    const ICON_NAMES: [&str; 22] = [
         "check",
         "circle_marker",
         "connection_lost",
@@ -745,6 +746,7 @@ mod tests {
         "hexagon",
         "lightning",
         "nav_arrow",
+        "nav_dot",
         "pin",
         "refresh",
         "round_trip_flag",

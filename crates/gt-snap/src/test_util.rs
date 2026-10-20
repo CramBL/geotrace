@@ -51,13 +51,12 @@ pub fn points(count: usize) -> Vec<NavPoint> {
     points_with(count, 1000, |_| None)
 }
 
-/// `count` 1 Hz points where the indices in `ghosts` are heading-less ghost
-/// fixes and the rest are real.
+/// `count` 1 Hz points with known navigation loss at the indices in `ghosts`.
 pub fn points_with_ghosts_at(count: usize, ghosts: &[usize]) -> Vec<NavPoint> {
     points_with_spec(count, 1000, |i| {
         if ghosts.contains(&i) {
             NavPointSpec {
-                fix: FixKind::GhostWithoutHeading,
+                fix: FixKind::GhostWithoutSatellitesInFix,
                 ..Default::default()
             }
         } else {

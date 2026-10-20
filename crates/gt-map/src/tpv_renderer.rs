@@ -11,9 +11,10 @@ use gt_sky::{SkyHighlight, SkyPlot, SkyPlotSize};
 use gt_types::coordinates::{Coordinate, RecordedCoordinate};
 use gt_types::satellites::{Constellation, NO_DATA_SNR_EXPLANATION};
 use gt_types::{
-    DataCategory, FileIdx, FixRef, LoadedFile, LoadedTrack, NavPoint, NearbySkyEvidence,
-    PlacedPoint, PlacedPoints, PointIdx, ResolvedPosition, SKY_REPORT_MAX_AGE_SECS,
-    SatelliteMembership, SatelliteQueryScope, SkyGeometry, SkySatellite, TrackIdx, TrackRef,
+    DataCategory, FileIdx, FixQuality, FixRef, LoadedFile, LoadedTrack, MapFixKind, NavPoint,
+    NearbySkyEvidence, PlacedPoint, PlacedPoints, PointIdx, ResolvedPosition,
+    SKY_REPORT_MAX_AGE_SECS, SatelliteMembership, SatelliteQueryScope, SkyGeometry, SkySatellite,
+    SolutionState, TrackIdx, TrackRef,
 };
 use gt_ui_theme::labels::LabelWithHover;
 use gt_ui_theme::{DEGREE_SIGN, DELTA, EM_DASH};
@@ -38,37 +39,32 @@ pub(crate) fn icon_cull_rect(map_rect: egui::Rect) -> egui::Rect {
     map_rect.expand(ICON_VIEW_MARGIN_PX)
 }
 
-/// Why the map draws a fix as a hollow chevron where the track builder
-/// placed it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ChevronFix {
-    /// No position recorded for this fix: the receiver wrote a latitude or a
-    /// longitude outside its range.
     CoordinateOutOfRange,
-    /// The receiver dead-reckoned the fix: it reported no heading, or nothing
-    /// in fix. See [`NavPoint::is_ghost_fix`].
-    DeadReckoned,
+    NavigationLoss,
+    Estimated,
+    Synthesized { color: Color32 },
 }
 
 impl ChevronFix {
-    /// `None` for a fix the receiver measured and gave a heading, which the
-    /// map draws as a navigation arrow.
-    ///
-    /// A coordinate out of range outranks dead reckoning: it is the finding
-    /// the chevron's colour reports.
     pub(crate) fn for_fix(fix: &NavPoint) -> Option<Self> {
-        if fix.tpv.position().is_none() {
-            Some(Self::CoordinateOutOfRange)
-        } else if fix.is_ghost_fix() {
-            Some(Self::DeadReckoned)
-        } else {
-            None
+        match fix.map_fix_kind() {
+            MapFixKind::Recorded => None,
+            MapFixKind::CoordinateOutOfRange => Some(Self::CoordinateOutOfRange),
+            MapFixKind::NavigationLoss => Some(Self::NavigationLoss),
+            MapFixKind::Estimated => Some(Self::Estimated),
+            MapFixKind::Synthesized => Some(Self::Synthesized {
+                color: tpv_point_color(fix),
+            }),
         }
     }
 
     fn tint(self, dark_mode: bool) -> Color32 {
         match self {
-            Self::DeadReckoned => FIX_LOST_RED,
+            Self::NavigationLoss => FIX_LOST_RED,
+            Self::Estimated => FIX_ESTIMATED_PURPLE,
+            Self::Synthesized { color } => color,
             Self::CoordinateOutOfRange => gt_ui_theme::warning_amber(dark_mode),
         }
     }
@@ -141,11 +137,6 @@ pub(crate) fn draw_track_icons(
         }
     }
 
-    // Chevrons: dead-reckoned fixes, and fixes the receiver wrote a coordinate
-    // out of range for. Dead reckoning covers devices that continue outputting
-    // positions and headings during fix loss - the heading field is present but
-    // unreliable as a "real" direction indicator, so we still show a hollow
-    // chevron.
     // The caller builds `chevron_points` from the same viewport query as
     // `real_fix_indices`, applying the time window and the query's hiding
     // there.
@@ -204,12 +195,10 @@ pub(crate) fn draw_track_icons(
     batch.paint(ui.painter());
 }
 
-/// A real fix that the icon pass draws: inside the viewport, inside the time
-/// filter, with a heading, and with an icon alpha above zero.
 struct VisibleRealFix<'a> {
     point_index: usize,
     point: PlacedPoint<'a>,
-    heading: Angle,
+    heading: Option<Angle>,
     screen_pos: Pos2,
     icon_alpha: f32,
 }
@@ -232,7 +221,7 @@ fn visible_real_fixes<'a>(
         if ChevronFix::for_fix(point.fix).is_some() {
             return None;
         }
-        let heading = point.fix.tpv.heading()?;
+        let heading = point.fix.tpv.heading();
         let screen_pos = transform.to_screen(point.merc());
         let icon_alpha = fix_icon_alpha(
             fade,
@@ -1370,17 +1359,6 @@ pub(crate) fn bucket_alpha(bucket: u8) -> f32 {
     f32::from(bucket) / f32::from(QUALITY_LINE_ALPHA_STEPS)
 }
 
-/// Color of the continuous quality line at a given point. Same palette as
-/// the icons: ghost fixes match the red chevron, real fixes use the
-/// satellite-count tiers of [`tpv_point_color`].
-pub(crate) fn quality_line_color(point: &NavPoint) -> Color32 {
-    if point.is_ghost_fix() {
-        FIX_LOST_RED
-    } else {
-        tpv_point_color(point)
-    }
-}
-
 /// The index range of every sub-span of a key-styled polyline span: one
 /// range per maximal run of points with the same projected key. The caller
 /// builds each shape from `span[range]` in one exact-size allocation.
@@ -1423,7 +1401,10 @@ fn draw_tpv_point(
     batch: &mut IconMeshBatch<'_>,
 ) {
     match point_kind {
-        PointKind::Real { color, heading } => {
+        PointKind::Real {
+            color,
+            heading: Some(heading),
+        } => {
             draw_navigation_arrow(
                 ui,
                 batch,
@@ -1434,6 +1415,35 @@ fn draw_tpv_point(
                 style.outline_alpha * style.icon_alpha,
                 style.base_arrow_size,
             );
+        }
+        PointKind::Real {
+            color,
+            heading: None,
+        } => {
+            let color = color.gamma_multiply(style.icon_alpha);
+            let size = style.base_arrow_size * ORDINARY_DOT_SIZE_FACTOR;
+            if highlighted {
+                batch.barrier(ui.painter());
+                ui.painter().circle(
+                    screen_pos,
+                    size + DOT_HIGHLIGHT_GROWTH_PX,
+                    color,
+                    Stroke::new(DOT_HIGHLIGHT_STROKE_PX, gt_ui_theme::HIGHLIGHT_BLUE),
+                );
+            } else {
+                let rim_alpha = style.outline_alpha * style.icon_alpha;
+                batch.push(IconInstance {
+                    icon: IconId::NavDot,
+                    center: screen_pos,
+                    half_extents: Vec2::splat(size),
+                    direction: None,
+                    tints: [
+                        color,
+                        Color32::WHITE.gamma_multiply(rim_alpha * rim_alpha),
+                        Color32::WHITE,
+                    ],
+                });
+            }
         }
         PointKind::Chevron { direction, fix } => {
             let tint = if highlighted {
@@ -1472,11 +1482,14 @@ pub(crate) fn draw_sat_labels(
         return;
     };
     for point in label_indices.iter().filter_map(|&pi| placed.get(pi)) {
-        let Some(sats) = &point.fix.satellites else {
+        let Some(used) = point.fix.resolved_used_count(SatelliteQueryScope::Global) else {
             continue;
         };
         let screen_pos = transform.to_screen(point.merc());
-        let label = format!("{}/{}", sats.fix_count(), sats.satellite_count());
+        let label = match point.fix.resolved_seen_count(SatelliteQueryScope::Global) {
+            Some(seen) => format!("{}/{}", used.count, seen.count),
+            None => format!("{} used", used.count),
+        };
         let text_pos = screen_pos + egui::vec2(style.base_arrow_size + 3.0, -style.base_arrow_size);
         TextBadge {
             text: label,
@@ -1491,31 +1504,27 @@ pub(crate) fn draw_sat_labels(
     }
 }
 
-/// Map a real (non-ghost) GPS point to its arrow colour from its canonical
-/// [`gt_types::FixQuality`] tier: blue for strong or unknown quality, yellow
-/// for marginal, red for lost.
-///
-/// A fix drawn as a hollow chevron ([`ChevronFix`]) is tinted by
-/// [`ChevronFix::tint`] and never reaches this function.
-fn tpv_point_color(point: &NavPoint) -> Color32 {
-    match point.fix_quality() {
-        gt_types::FixQuality::Unknown | gt_types::FixQuality::Strong => FIX_STRONG_BLUE,
-        gt_types::FixQuality::Marginal => FIX_MARGINAL_YELLOW,
-        gt_types::FixQuality::Lost => FIX_LOST_RED,
+pub(crate) fn tpv_point_color(point: &NavPoint) -> Color32 {
+    if point.resolved_navigation_state().state == SolutionState::EstimatedOnly {
+        return FIX_ESTIMATED_PURPLE;
+    }
+    match point.resolved_fix_quality() {
+        FixQuality::Unknown => FIX_UNKNOWN_GRAY,
+        FixQuality::Strong => FIX_STRONG_BLUE,
+        FixQuality::Marginal => FIX_MARGINAL_YELLOW,
+        FixQuality::Lost => FIX_LOST_RED,
     }
 }
 
-/// Classifies a GPS point for a single render pass, carrying everything the
-/// draw step needs so `render_track` only matches `heading()` once.
 enum PointKind {
-    /// A fix drawn where the track builder placed it, see [`ChevronFix`].
-    ///
-    /// `direction` is a normalised screen-space vector pointing in the inferred
-    /// travel direction. When the GPS reported a heading it is converted directly,
-    /// otherwise it is derived from the surrounding fixes' Mercator positions.
-    Chevron { direction: Vec2, fix: ChevronFix },
-    /// Real GPS fix - heading known, precomputed Mercator coordinates used.
-    Real { color: Color32, heading: Angle },
+    Chevron {
+        direction: Vec2,
+        fix: ChevronFix,
+    },
+    Real {
+        color: Color32,
+        heading: Option<Angle>,
+    },
 }
 
 /// Compute the travel direction for a chevron from its neighbouring Mercator positions.
@@ -1774,8 +1783,12 @@ const ACCURACY_CIRCLE_FILL: Color32 = Color32::from_rgba_unmultiplied_const(30, 
 const ACCURACY_CIRCLE_STROKE: Color32 = Color32::from_rgba_unmultiplied_const(30, 120, 255, 60);
 const ACCURACY_CIRCLE_STROKE_WIDTH_PX: f32 = 1.0;
 
-/// Fix-quality palette shared by the per-fix icons and the continuous
-/// quality line.
+const ORDINARY_DOT_SIZE_FACTOR: f32 = 0.6;
+const DOT_HIGHLIGHT_GROWTH_PX: f32 = 3.0;
+const DOT_HIGHLIGHT_STROKE_PX: f32 = 2.0;
+const FIX_UNKNOWN_GRAY: Color32 = Color32::from_rgb(145, 155, 170);
+const FIX_ESTIMATED_PURPLE: Color32 = Color32::from_rgb(165, 105, 210);
+
 const FIX_STRONG_BLUE: Color32 = Color32::from_rgb(66, 133, 244);
 const FIX_MARGINAL_YELLOW: Color32 = Color32::from_rgb(244, 180, 0);
 pub(crate) const FIX_LOST_RED: Color32 = Color32::from_rgb(219, 68, 55);

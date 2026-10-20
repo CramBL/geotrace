@@ -77,8 +77,6 @@ fn fix_without_a_heading(millis: i64, lon: Longitude) -> NavPoint {
     )
 }
 
-/// A fix the receiver reports with a course but nothing in fix, which
-/// [`NavPoint::is_ghost_fix`] calls a ghost and the map draws hollow.
 fn fix_with_a_heading_and_nothing_in_fix(millis: i64, lon: Longitude) -> NavPoint {
     fixtures::nav_point(
         utc_time(millis),
@@ -355,9 +353,6 @@ fn a_ghost_fix_stamped_before_its_anchors_is_placed_between_them() {
     );
 }
 
-/// The builder leaves this fix at the coordinates it was recorded with. A
-/// receiver that loses its solution keeps reporting a course from its own dead
-/// reckoning, and [`NavPoint::is_ghost_fix`] draws the fix hollow.
 #[test]
 fn a_fix_with_a_heading_and_nothing_in_fix_keeps_its_recorded_position() {
     let points = vec![

@@ -175,8 +175,13 @@ impl DisplayCounts {
                     counts.tracks += 1;
                 }
                 if track_vis.category_visible(DataCategory::Tpv) {
-                    counts.track_points += (0..track.points.len())
-                        .filter(|&pi| point_in_scope(pi))
+                    counts.track_points += track
+                        .points
+                        .iter()
+                        .enumerate()
+                        .filter(|(pi, point)| {
+                            !point.is_navigation_estimate() && point_in_scope(*pi)
+                        })
                         .count();
                     counts.satellite_labels += track
                         .sat_label_anchors
@@ -209,7 +214,7 @@ impl DisplayCounts {
                         .points
                         .iter()
                         .enumerate()
-                        .filter(|(pi, p)| p.is_ghost_fix() && point_in_scope(*pi))
+                        .filter(|(pi, p)| p.is_navigation_estimate() && point_in_scope(*pi))
                         .count();
                 }
                 counts.custom_markers += prepared.eligible_custom_markers().count();
@@ -350,7 +355,7 @@ mod tests {
     use gt_types::{
         CustomMarker, EventMarker, FileSource, GeneratedMarker, GeneratedMarkerKind,
         GeneratedMarkerKindTag, Latitude, LoadedFile, LoadedTrack, Longitude, MarkerIcon, NavPoint,
-        PointIdx, TimeRange, TrackLod, TrackMetadata, mercator,
+        PointIdx, PositionProvenance, SolutionState, TimeRange, TrackLod, TrackMetadata, mercator,
     };
     use gt_ui_types::{DrawLayer, FileVisibility, TrackRanges, TrackVisibility};
     use rustc_hash::FxHashMap;
@@ -471,8 +476,8 @@ mod tests {
         let counts = compute(&files, &vis_all(), &GlobalFilter::default(), None);
         let expected = [
             (DisplayCategory::Tracks, 1),
-            (DisplayCategory::TrackPoints, 4),
-            (DisplayCategory::GhostFixes, 4),
+            (DisplayCategory::TrackPoints, 3),
+            (DisplayCategory::GhostFixes, 1),
             (DisplayCategory::SatelliteLabels, 2),
             (DisplayCategory::CustomMarkers, 2),
             (DisplayCategory::GeneratedMarkers, 1),
@@ -489,6 +494,21 @@ mod tests {
         for (category, n) in expected {
             assert_eq!(counts.get(category), n, "{category}");
         }
+    }
+
+    #[test]
+    fn ordinary_and_estimated_counts_follow_resolved_navigation_state() {
+        let mut files = vec![fixture()];
+        let points = &mut files[0].tracks[0].points;
+        points[0].navigation.state = Some(SolutionState::Fix);
+        points[0].navigation.used_count = Some(0);
+        points[1].navigation.state = Some(SolutionState::Unknown);
+        points[1].navigation.used_count = Some(0);
+        points[2].navigation.state = Some(SolutionState::EstimatedOnly);
+        points[3].navigation.position_provenance = Some(PositionProvenance::SdkSynthesized);
+        let counts = compute(&files, &vis_all(), &GlobalFilter::default(), None);
+        assert_eq!(counts.get(DisplayCategory::TrackPoints), 2);
+        assert_eq!(counts.get(DisplayCategory::GhostFixes), 2);
     }
 
     /// Snapped geometry arrives pre-scoped by tree visibility and the
@@ -534,9 +554,8 @@ mod tests {
         let files = vec![fixture()];
         let filter = GlobalFilter::default().with_time_bounds(Some(t(1)), Some(t(2)));
         let counts = compute(&files, &vis_all(), &filter, None);
-        // Points t1 and t2 pass, both anchors (t0, t3) fall outside. The t2
-        // custom marker and the t1 generated marker stay.
-        assert_eq!(counts.get(DisplayCategory::TrackPoints), 2);
+        assert_eq!(counts.get(DisplayCategory::TrackPoints), 1);
+        assert_eq!(counts.get(DisplayCategory::GhostFixes), 1);
         assert_eq!(counts.get(DisplayCategory::SatelliteLabels), 0);
         assert_eq!(counts.get(DisplayCategory::CustomMarkers), 1);
         assert_eq!(counts.get(DisplayCategory::GeneratedMarkers), 1);

@@ -6,11 +6,11 @@ use super::*;
 use crate::test_util;
 use egui::Color32;
 use gt_types::MercPoint;
-use gt_types::NavPoint;
 use gt_types::coordinates::{Latitude, Longitude, RecordedLatitude};
 use gt_types::satellites::{Constellation, NO_DATA_SENTINEL_DB_HZ, Satellite, Satellites};
 use gt_types::time_types::GpsTime;
 use gt_types::tpv::TimePositionVelocity;
+use gt_types::{NavPoint, NavigationMetadata, PositionProvenance};
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Length};
 
@@ -753,8 +753,6 @@ fn report_age_label_names_the_side(#[case] ms: i64, #[case] expected: &str) {
     );
 }
 
-/// A fix at [`fixture_epoch`] with neither a heading nor a satellite report,
-/// which is what the map draws hollow.
 fn a_fix_without_a_heading() -> NavPoint {
     gt_test_utils::fixtures::nav_point(
         fixture_epoch(),
@@ -764,11 +762,8 @@ fn a_fix_without_a_heading() -> NavPoint {
     )
 }
 
-/// The icon colour states the fix quality: blue while the receiver held a
-/// strong solution or wrote no report at all, yellow while it had a report but
-/// too few satellites in the fix, red once it had none.
 #[rstest]
-#[case::without_a_report(None, Color32::from_rgb(66, 133, 244))]
+#[case::without_a_report(None, FIX_UNKNOWN_GRAY)]
 #[case::ten_in_fix(Some(twelve_satellites(10)), Color32::from_rgb(66, 133, 244))]
 #[case::one_in_fix(Some(twelve_satellites(1)), Color32::from_rgb(244, 180, 0))]
 #[case::nothing_in_fix(Some(twelve_satellites(0)), Color32::from_rgb(219, 68, 55))]
@@ -779,15 +774,12 @@ fn tpv_point_color_states_the_fix_quality(
     assert_eq!(tpv_point_color(&point_at(0, satellites)), expected);
 }
 
-/// A fix the receiver did not measure is drawn as a chevron: one shape for a
-/// fix it dead reckoned, and one for a fix whose recorded coordinates lie
-/// outside their range. Every other fix is drawn as an arrow.
 #[rstest]
 #[case::measured(point_at(0, None), None)]
-#[case::without_a_heading(a_fix_without_a_heading(), Some(ChevronFix::DeadReckoned))]
+#[case::without_a_heading(a_fix_without_a_heading(), None)]
 #[case::with_nothing_in_fix(
     point_at(0, Some(twelve_satellites(0))),
-    Some(ChevronFix::DeadReckoned)
+    Some(ChevronFix::NavigationLoss)
 )]
 #[case::latitude_out_of_range(
     fix_with_a_latitude_out_of_range(Some(90.0)),
@@ -798,9 +790,13 @@ fn tpv_point_color_states_the_fix_quality(
     Some(ChevronFix::CoordinateOutOfRange)
 )]
 fn a_fix_the_receiver_did_not_measure_is_drawn_as_a_chevron(
-    #[case] fix: NavPoint,
+    #[case] mut fix: NavPoint,
     #[case] expected: Option<ChevronFix>,
 ) {
+    if fix.tpv.position().is_none() {
+        fix.navigation.state = Some(SolutionState::EstimatedOnly);
+        fix.navigation.position_provenance = Some(PositionProvenance::SdkSynthesized);
+    }
     assert_eq!(ChevronFix::for_fix(&fix), expected);
 }
 
@@ -1062,21 +1058,6 @@ fn line_alpha_buckets_quantize_the_crossfade() {
 }
 
 #[test]
-fn quality_line_color_marks_ghost_fixes_red() {
-    // No heading and no satellite report: `tpv_point_color` alone would say
-    // blue, but the point is a ghost fix and must show as red.
-    assert_eq!(quality_line_color(&a_fix_without_a_heading()), FIX_LOST_RED);
-}
-
-#[test]
-fn quality_line_color_follows_fix_quality_for_real_fixes() {
-    let marginal = point_at(0, Some(twelve_satellites(4)));
-    assert_eq!(quality_line_color(&marginal), FIX_MARGINAL_YELLOW);
-    let strong = point_at(0, Some(twelve_satellites(12)));
-    assert_eq!(quality_line_color(&strong), FIX_STRONG_BLUE);
-}
-
-#[test]
 fn sub_span_ranges_of_one_projected_key_is_one_range() {
     // The points form one run: the alpha bucket changes along the span, but
     // the projection depends on the color alone.
@@ -1142,16 +1123,33 @@ fn sub_span_ranges_of_a_span_without_an_edge_is_empty() {
     );
 }
 
-/// The batch flushes at every painter primitive between its icons. The flush
-/// takes the form of a mesh because the harness installs no GPU icon pipeline.
-#[test]
-fn a_tracks_arrows_are_one_mesh_whatever_the_accuracy_circle_count() {
+#[rstest]
+#[case::arrows_with_accuracy(true, Some(10.0), 8)]
+#[case::dots_with_accuracy(false, Some(10.0), 8)]
+#[case::dots_with_only_hdop(false, None, 0)]
+fn ordinary_icons_share_one_batch_after_accuracy_circles(
+    #[case] with_heading: bool,
+    #[case] eph_m: Option<f32>,
+    #[case] expected_circles: usize,
+) {
     const FIX_COUNT: usize = 8;
     const SPACING_M: f64 = 20.0;
-    const ACCURACY_M: f32 = 10.0;
 
     let points = (0..FIX_COUNT)
-        .map(|i| nav_point_at_meters(i as f64 * SPACING_M, Some(ACCURACY_M)))
+        .map(|i| {
+            let tpv = TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(fixture_epoch()))
+                .lat(Latitude::new(0.0))
+                .lon(Longitude::new(
+                    i as f64 * SPACING_M * 360.0 / EARTH_CIRCUMFERENCE_M,
+                ))
+                .maybe_heading(with_heading.then_some(Angle::new::<degree>(90.0)))
+                .maybe_eph_m(eph_m)
+                .build();
+            let mut point = NavPoint::new(tpv, None);
+            point.navigation.hdop = Some(0.9);
+            point
+        })
         .collect();
     let track = gt_test_utils::loaded_track_with_points(points);
     let indices: Vec<usize> = (0..FIX_COUNT).collect();
@@ -1198,7 +1196,7 @@ fn a_tracks_arrows_are_one_mesh_whatever_the_accuracy_circle_count() {
         .iter()
         .filter(|s| matches!(s.shape, egui::Shape::Mesh(_)))
         .count();
-    assert_eq!((circles, meshes), (FIX_COUNT, 1));
+    assert_eq!((circles, meshes), (expected_circles, 1));
 }
 
 /// Canvas the sticky-content snapshots render into: as wide as the real point
@@ -1225,3 +1223,88 @@ const SMALL_ICON_PX: f32 = 3.0;
 /// With `for_test(EARTH_CIRCUMFERENCE_M)` the map scale is 1 px/m at the
 /// equator, so test geometry can be written directly in metres.
 const EARTH_CIRCUMFERENCE_M: f64 = 40_030_173.0;
+
+#[rstest]
+#[case::summary_fix(
+    Some(SolutionState::Fix),
+    Some(8),
+    None,
+    MapFixKind::Recorded,
+    FIX_MARGINAL_YELLOW
+)]
+#[case::fix_with_zero(
+    Some(SolutionState::Fix),
+    Some(0),
+    None,
+    MapFixKind::Recorded,
+    FIX_UNKNOWN_GRAY
+)]
+#[case::fix_without_count(
+    Some(SolutionState::Fix),
+    None,
+    None,
+    MapFixKind::Recorded,
+    FIX_UNKNOWN_GRAY
+)]
+#[case::unknown_with_zero(
+    Some(SolutionState::Unknown),
+    Some(0),
+    None,
+    MapFixKind::Recorded,
+    FIX_UNKNOWN_GRAY
+)]
+#[case::no_state(None, None, None, MapFixKind::Recorded, FIX_UNKNOWN_GRAY)]
+#[case::loss_with_positive_count(
+    Some(SolutionState::NoFix),
+    Some(12),
+    None,
+    MapFixKind::NavigationLoss,
+    FIX_LOST_RED
+)]
+#[case::estimated(
+    Some(SolutionState::EstimatedOnly),
+    Some(12),
+    None,
+    MapFixKind::Estimated,
+    FIX_ESTIMATED_PURPLE
+)]
+#[case::synthesized_fix(
+    Some(SolutionState::Fix),
+    Some(12),
+    Some(PositionProvenance::SdkSynthesized),
+    MapFixKind::Synthesized,
+    FIX_STRONG_BLUE
+)]
+#[case::synthesized_unknown(
+    None,
+    None,
+    Some(PositionProvenance::SdkSynthesized),
+    MapFixKind::Synthesized,
+    FIX_UNKNOWN_GRAY
+)]
+fn navigation_presentation_depends_on_state_and_provenance(
+    #[case] state: Option<SolutionState>,
+    #[case] used_count: Option<u32>,
+    #[case] position_provenance: Option<PositionProvenance>,
+    #[case] expected_kind: MapFixKind,
+    #[case] expected_color: Color32,
+) {
+    for mut point in [point_at(0, None), a_fix_without_a_heading()] {
+        point.navigation = NavigationMetadata {
+            state,
+            used_count,
+            position_provenance,
+            ..NavigationMetadata::default()
+        };
+        assert_eq!(point.map_fix_kind(), expected_kind);
+        assert_eq!(tpv_point_color(&point), expected_color);
+        let chevron = ChevronFix::for_fix(&point);
+        assert_eq!(chevron.is_some(), expected_kind != MapFixKind::Recorded);
+        if let Some(chevron) = chevron {
+            assert_eq!(chevron.tint(false), expected_color);
+            assert_eq!(chevron.tint(true), expected_color);
+        }
+        assert_eq!(point.navigation.state, state);
+        assert_eq!(point.navigation.used_count, used_count);
+    }
+}

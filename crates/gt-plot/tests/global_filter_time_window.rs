@@ -13,7 +13,7 @@ use gt_test_utils::Queryable as _;
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::{
     FileIdx, FixRef, GpsTime, LoadedFile, MetricKind, NavPoint, PointIdx, SatelliteCoverage,
-    SatelliteReportMetadata, SatelliteScope, SatelliteUsageReport, TrackIdx,
+    SatelliteReportMetadata, SatelliteScope, SatelliteUsageReport, SolutionState, TrackIdx,
 };
 use gt_ui_types::{
     DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, MapElementRef,
@@ -270,7 +270,7 @@ fn cross_highlight_searches_map_present_candidates(
 ) {
     let mut file = recording(0, 60, Constellation::Gps);
     if ghost_nearest {
-        file.tracks[0].points[30].satellites = Some(Satellites::new(None, None, Vec::new()));
+        file.tracks[0].points[30].navigation.state = Some(SolutionState::NoFix);
     }
     let files = [file];
     let visibility = TrackDataVisibility::from_loaded(&files);

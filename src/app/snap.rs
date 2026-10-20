@@ -924,7 +924,7 @@ mod tests {
             10,
             1000,
             |_| NavPointSpec {
-                fix: FixKind::GhostWithoutHeading,
+                fix: FixKind::GhostWithoutSatellitesInFix,
                 ..Default::default()
             },
         );

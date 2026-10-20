@@ -6,8 +6,8 @@ use crate::test_util::{self, DrawState, MapScene};
 use crate::viewport;
 use gt_types::{
     DataCategory, EventMarker, FileIdx, FileMetadata, GeoBounds, Latitude, LoadedFile, LoadedTrack,
-    Longitude, MercBounds, MercPoint, PointIdx, SpatialPoint, TimeRange, TotalDistance, TrackIdx,
-    TrackMetadata,
+    Longitude, MercBounds, MercPoint, PointIdx, SolutionState, SpatialPoint, TimeRange,
+    TotalDistance, TrackIdx, TrackMetadata,
 };
 use gt_ui_types::{DisplayCategory, DrawLayer, FileVisibility, TrackRanges, TrackVisibility};
 use rustc_hash::FxHashMap;
@@ -609,7 +609,8 @@ fn hiding_ghost_fixes_prevents_hovering_ghost_points_while_keeping_real_points()
         Longitude::new(12.0),
         gt_types::fixtures::FixKind::Measured,
     );
-    let ghost_fix = nav_at(t0 + chrono::Duration::seconds(1), 55.0, 12.05);
+    let mut ghost_fix = nav_at(t0 + chrono::Duration::seconds(1), 55.0, 12.05);
+    ghost_fix.navigation.state = Some(SolutionState::NoFix);
     let real_fix_1 = gt_test_utils::fixtures::nav_point(
         t0 + chrono::Duration::seconds(2),
         Latitude::new(55.0),
@@ -673,7 +674,8 @@ fn hiding_ghost_fixes_prevents_hovering_ghost_points_while_keeping_real_points()
 
 #[test]
 fn start_flag_remains_anchored_on_first_fix_when_ghost_fixes_are_hidden() {
-    let ghost_fix = nav_at(chrono::Utc::now(), 55.0, 12.0);
+    let mut ghost_fix = nav_at(chrono::Utc::now(), 55.0, 12.0);
+    ghost_fix.navigation.state = Some(SolutionState::NoFix);
     let real_fix = gt_test_utils::fixtures::nav_point(
         chrono::Utc::now() + chrono::Duration::seconds(1),
         Latitude::new(55.0),
