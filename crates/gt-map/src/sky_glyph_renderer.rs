@@ -1,15 +1,4 @@
-//! The map's sky glyphs: a subtle per-point summary of which directions the
-//! satellites in the fix came from, so satellite geometry is legible along a
-//! track at a glance without hovering every point.
-//!
-//! Two variants share this module. The minimal **sky ring** is a faint
-//! annulus centered on the fix with one bead per fix satellite at its
-//! azimuth. Both the map and the ring are north-up, so a gap in the beads
-//! points at the obstruction beside the track. The detailed **sky
-//! disc** is a miniature sky plot, offset from the fix with a short leader,
-//! placing a dot per fix satellite by azimuth and elevation. Report-bearing
-//! points are decimated through the shared [`crate::collision_grid`] so
-//! glyphs stay readable and viewport-stable.
+//! Satellite geometry glyphs with independent navigation rims and membership marks.
 
 use std::cmp::Reverse;
 
@@ -21,6 +10,7 @@ use gt_types::{
     LoadedTrack, MercBounds, NavPoint, PlacedPoints, SatelliteMembership, SatelliteQueryScope,
     SkyGeometry, SkySatellite, SolutionState, TrackRef,
 };
+use gt_ui_theme::SatelliteMembershipMark;
 use gt_ui_types::SkyGlyphVariant;
 use smallvec::SmallVec;
 
@@ -196,10 +186,6 @@ pub(crate) fn draw_glyphs(
     }
 }
 
-/// Draw one sky ring: a faint baseline annulus with one bead per satellite at
-/// its azimuth. A report with satellites in the fix draws a solid baseline and
-/// filled beads for them. A report with none (a fix loss) draws a dashed
-/// baseline and hollow beads for the tracked satellites.
 fn draw_ring(
     ui: &egui::Ui,
     center: Pos2,
@@ -222,36 +208,33 @@ fn draw_ring(
             FIX_LOSS_DASH_PX * size_scale,
             FIX_LOSS_GAP_PX * size_scale,
         ));
-        for satellite in &view.satellites {
-            if let Some(azimuth) = satellite.azimuth() {
-                let color = gt_ui_theme::constellation_color(satellite.constellation(), dark_mode);
-                painter.circle_stroke(
-                    bead_pos(center, azimuth, radius),
-                    bead_radius - 0.5,
-                    Stroke::new(HOLLOW_BEAD_STROKE_PX, color),
-                );
-            }
-        }
     } else {
         painter.circle_stroke(center, radius, Stroke::new(BASELINE_STROKE_PX, baseline));
-        for satellite in view
-            .satellites
-            .iter()
-            .filter(|satellite| satellite.membership != SatelliteMembership::Unused)
-        {
-            if let Some(azimuth) = satellite.azimuth() {
-                let color = gt_ui_theme::constellation_color(satellite.constellation(), dark_mode);
-                let radius_scale = if satellite.membership == SatelliteMembership::Unknown {
-                    UNKNOWN_MEMBERSHIP_GLYPH_SCALE
+    }
+    for satellite in view
+        .satellites
+        .iter()
+        .filter(|satellite| view.loss || satellite.membership != SatelliteMembership::Unused)
+    {
+        if let Some(azimuth) = satellite.azimuth() {
+            let color = gt_ui_theme::constellation_color(satellite.constellation(), dark_mode);
+            SatelliteMembershipMark {
+                membership: satellite.membership,
+                radius: if satellite.membership == SatelliteMembership::Unused {
+                    bead_radius - HOLLOW_BEAD_RADIUS_INSET_PX
                 } else {
-                    1.0
-                };
-                painter.circle_filled(
-                    bead_pos(center, azimuth, radius),
-                    bead_radius * radius_scale,
-                    color,
-                );
+                    bead_radius
+                },
+                minimum_unknown_radius: gt_ui_theme::MAP_UNKNOWN_MEMBERSHIP_MIN_RADIUS_PX,
+                color,
+                edge: if satellite.membership == SatelliteMembership::Unused {
+                    Stroke::new(HOLLOW_BEAD_STROKE_PX, color)
+                } else {
+                    Stroke::NONE
+                },
+                hollow_fill: egui::Color32::TRANSPARENT,
             }
+            .paint(painter, bead_pos(center, azimuth, radius));
         }
     }
 }
@@ -373,10 +356,6 @@ fn outward_normal(tangent: Vec2, fix_pos: Pos2, prev: Option<Pos2>, next: Option
     }
 }
 
-/// Draw one sky disc: a miniature sky plot offset from the fix with a short
-/// leader, with a dot per fix satellite placed by azimuth and elevation
-/// (via the same projection as the full sky plot). A fix loss draws a dashed
-/// rim and, having no fix satellites, no dots - "sky seen but unused".
 fn draw_disc(
     ui: &egui::Ui,
     fix_pos: Pos2,
@@ -411,10 +390,9 @@ fn draw_disc(
             FIX_LOSS_DASH_PX * size_scale,
             FIX_LOSS_GAP_PX * size_scale,
         ));
-        return;
+    } else {
+        painter.circle_stroke(center, radius, Stroke::new(BASELINE_STROKE_PX, rim));
     }
-
-    painter.circle_stroke(center, radius, Stroke::new(BASELINE_STROKE_PX, rim));
     for satellite in view
         .satellites
         .iter()
@@ -425,16 +403,19 @@ fn draw_disc(
         };
         let color = gt_ui_theme::constellation_color(satellite.constellation(), dark_mode);
         let offset = gt_sky::unit_disc_position(azimuth, elevation) * radius;
-        let radius_scale = if satellite.membership == SatelliteMembership::Unknown {
-            UNKNOWN_MEMBERSHIP_GLYPH_SCALE
-        } else {
-            1.0
-        };
-        painter.circle_filled(center + offset, dot_radius * radius_scale, color);
+        SatelliteMembershipMark {
+            membership: satellite.membership,
+            radius: dot_radius,
+            minimum_unknown_radius: gt_ui_theme::MAP_UNKNOWN_MEMBERSHIP_MIN_RADIUS_PX,
+            color,
+            edge: Stroke::NONE,
+            hollow_fill: egui::Color32::TRANSPARENT,
+        }
+        .paint(painter, center + offset);
     }
 }
 
-const UNKNOWN_MEMBERSHIP_GLYPH_SCALE: f32 = 0.5;
+const HOLLOW_BEAD_RADIUS_INSET_PX: f32 = 0.5;
 
 /// Minimum on-screen spacing between sky rings. The decimation cell size,
 /// so denser reports thin to at most one ring per this many pixels.
@@ -639,6 +620,103 @@ mod tests {
         let view = super::GlyphView::from_point(&track.points[0], super::SkyGeometry::Position)
             .expect("geometry");
         assert_eq!(view.loss, loss);
+    }
+
+    #[rstest::rstest]
+    #[case::dark_full(true, 1.0, "sky_loss_membership_dark")]
+    #[case::light_full(false, 1.0, "sky_loss_membership_light")]
+    #[case::dark_compact(true, 0.25, "sky_loss_membership_compact_dark")]
+    #[case::light_compact(false, 0.25, "sky_loss_membership_compact_light")]
+    fn navigation_loss_preserves_rendered_membership(
+        #[case] dark_mode: bool,
+        #[case] size_scale: f32,
+        #[case] snapshot: &str,
+    ) {
+        let mut track = track(&[(0.0, 0.0, None)]);
+        let mut satellites = vec![sat(Constellation::Gps, 45.0, true)];
+        for (prn, azimuth) in [(2, 150.0), (3, 270.0)] {
+            satellites.push(Satellite::new(
+                Constellation::Gps,
+                prn,
+                Some(45.0),
+                Some(azimuth),
+                None,
+                false,
+            ));
+        }
+        track.points[0] = gt_test_utils::fixtures::nav_point_at_meters(
+            MetricOffset {
+                east_m: 0.0,
+                north_m: 0.0,
+            },
+            Some(report(satellites)),
+        );
+        track.points[0].navigation.state = Some(SolutionState::NoFix);
+        track.points[0].navigation.used_count = Some(12);
+        track.points[0].satellite_evidence.usage[0].satellites[2].membership =
+            SatelliteMembership::Unknown;
+        let view = super::GlyphView::from_point(&track.points[0], super::SkyGeometry::Position)
+            .expect("geometry");
+        let mut harness = test_util::harness_builder()
+            .theme(dark_mode)
+            .size(egui::vec2(240.0, 150.0))
+            .ui(move |ui| {
+                let rim = ui.visuals().weak_text_color();
+                super::draw_ring(
+                    ui,
+                    egui::pos2(60.0, 65.0),
+                    &view,
+                    rim,
+                    dark_mode,
+                    size_scale,
+                );
+                super::draw_disc(
+                    ui,
+                    egui::pos2(160.0, 120.0),
+                    egui::pos2(160.0, 65.0),
+                    &view,
+                    rim,
+                    dark_mode,
+                    size_scale,
+                );
+            });
+        harness.run();
+        let color = gt_ui_theme::constellation_color(Constellation::Gps, dark_mode);
+        let shapes = &harness.inner.output().shapes;
+        let filled = shapes
+            .iter()
+            .filter(
+                |shape| matches!(&shape.shape, egui::Shape::Circle(circle) if circle.fill == color),
+            )
+            .count();
+        let hollow = shapes.iter().filter(|shape| matches!(&shape.shape, egui::Shape::Circle(circle) if circle.stroke.color == color && circle.fill == egui::Color32::TRANSPARENT)).count();
+        let diamonds: Vec<_> = shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Path(path)
+                    if path.closed && path.points.len() == 4 && path.fill == color =>
+                {
+                    Some(path)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!((filled, hollow, diamonds.len()), (2, 1, 2));
+        assert!(
+            diamonds
+                .iter()
+                .all(|diamond| diamond.visual_bounding_rect().width() >= 3.0)
+        );
+        assert_eq!(
+            shapes
+                .iter()
+                .filter(
+                    |shape| matches!(&shape.shape, egui::Shape::Vec(dashes) if dashes.len() > 10)
+                )
+                .count(),
+            2
+        );
+        harness.snapshot(snapshot);
     }
 
     #[test]

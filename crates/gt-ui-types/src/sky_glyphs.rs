@@ -23,8 +23,7 @@ use gt_types::SkyGeometry;
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum SkyGlyphVariant {
-    /// The minimal variant: an annulus with one bead per fix satellite at
-    /// its azimuth.
+    /// Satellite azimuths on an annulus.
     #[default]
     Ring,
     /// The detailed variant: a miniature sky plot with dots placed by
