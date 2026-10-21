@@ -9,6 +9,7 @@ the app).
 
 ### Added
 
+- C producers and readers support navigation metadata and independent scoped satellite usage and observation reports.
 - Rust recorders accept independent satellite usage and observation samples with preserved timestamps.
 - Rust `NavFix` supports optional navigation state, method, dimension, used count, dilution of precision and coordinate origin.
 

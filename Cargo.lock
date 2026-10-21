@@ -2232,10 +2232,12 @@ version = "0.7.0"
 dependencies = [
  "chrono",
  "geotrace-sdk",
+ "geotrace-sdk-test-util",
  "geotrace-sdk-units",
  "hdf5-pure",
  "log",
  "parking_lot",
+ "rstest",
  "strum",
 ]
 

@@ -28,7 +28,7 @@ endfunction()
 # process exits with after that, and LeakSanitizer reports a leak at that exit.
 set(LEAK_REPORT_REGULAR_EXPRESSION "ERROR: LeakSanitizer")
 
-foreach(test test_builder test_channels test_log_callback test_markers test_metadata
+foreach(test test_navigation_evidence test_builder test_channels test_log_callback test_markers test_metadata
              test_null_guards test_parse_number test_status_codes test_thread_local
              test_timestamp test_snr test_unit_conversions test_value_ranges test_wire_names)
     add_executable(${test} ${test}.c)
