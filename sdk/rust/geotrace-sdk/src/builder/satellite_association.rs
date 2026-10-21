@@ -268,8 +268,10 @@ pub(super) fn ghost_nav_points_for(
         let batch_count = batches.len();
         let before = segment.checked_sub(1).and_then(|index| fixes.get(index));
         let after = fixes.get(segment);
-        let can_correct = before.and_then(NavFix::gps_sys_clock_delta_us).is_some()
+        let can_resolve_report_times = before.and_then(NavFix::gps_sys_clock_delta_us).is_some()
             || after.and_then(NavFix::gps_sys_clock_delta_us).is_some()
+            || (before.is_some_and(|fix| matches!(fix.time, NavFixTime::Host(_)))
+                && after.is_some_and(|fix| matches!(fix.time, NavFixTime::Host(_))))
             || batches
                 .values()
                 .flatten()
@@ -281,7 +283,7 @@ pub(super) fn ghost_nav_points_for(
                     let start_us = before.effective_time().timestamp_micros();
                     let span_us = i128::from(after.effective_time().timestamp_micros())
                         - i128::from(start_us);
-                    let fraction = if can_correct {
+                    let fraction = if can_resolve_report_times {
                         if span_us < 1 {
                             0.5
                         } else {

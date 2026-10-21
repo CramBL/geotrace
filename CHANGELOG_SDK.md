@@ -18,6 +18,10 @@ the app).
 - New recordings use GTD version 3, and readers accept versions 1, 2 and 3.
 - **Breaking:** External Rust callers construct `NavFix` through `NavFix::builder()`.
 
+### Fixed
+
+- Fixed satellite polls at incorrect times and positions between fixes when both use only the host clock.
+
 ## [0.7.0] - 2026-09-15
 
 ### Added
