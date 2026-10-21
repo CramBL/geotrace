@@ -49,6 +49,12 @@ after_includes = """
 #define GEOTRACE_C_VERSION_MINOR 7
 #define GEOTRACE_C_VERSION_PATCH 0
 
+/** An absent optional unsigned count. */
+#define GTD_NONE_U32 ((GtdOptU32){.value = 0, .present = 0})
+
+/** An optional unsigned count with value @p v. */
+#define GTD_SOME_U32(v) ((GtdOptU32){.value = (v), .present = 1})
+
 /** An absent optional double. */
 #define GTD_NONE_F64 ((GtdOptF64){.value = 0.0, .present = 0})
 
@@ -65,7 +71,7 @@ after_includes = """
 # No exported function takes a `GtdChannelUnitMode`: `gtd_channel_unit_parse`
 # and `gtd_builder_add_channel_with_unit_mode` take its value as a `uint32_t`,
 # so nothing else pulls the type into the header.
-include = ["GtdChannelUnitMode"]
+include = ["GtdChannelUnitMode", "GtdSolutionState", "GtdSolutionMethod", "GtdSolutionDimension", "GtdPositionProvenance", "GtdSatelliteMembership", "GtdSatelliteCoverage", "GtdSatelliteScopeKind"]
 
 [parse]
 parse_deps = false

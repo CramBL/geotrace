@@ -14,6 +14,7 @@ pub use channel::GtdChannelInfo;
 pub use event_marker::GtdEventMarkerInfo;
 pub use marker::GtdMarkerInfo;
 pub use nav_point::GtdNavPointInfo;
+pub use navigation::GtdNavPointInfoV2;
 pub use satellite_warning::GtdSatelliteWarningInfo;
 pub use style::GtdEventMarkerStyleInfo;
 
@@ -22,6 +23,7 @@ mod event_marker;
 mod marker;
 mod metadata;
 mod nav_point;
+mod navigation;
 mod read;
 mod satellite_warning;
 mod style;

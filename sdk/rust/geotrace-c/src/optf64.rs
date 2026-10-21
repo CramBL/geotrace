@@ -32,3 +32,12 @@ pub(crate) fn opt_f64_some(v: f64) -> GtdOptF64 {
         present: 1,
     }
 }
+
+impl From<Option<f64>> for GtdOptF64 {
+    fn from(value: Option<f64>) -> Self {
+        Self {
+            value: value.unwrap_or_default(),
+            present: u8::from(value.is_some()),
+        }
+    }
+}

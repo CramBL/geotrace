@@ -32,11 +32,19 @@ pub use icon::GtdMarkerIcon;
 pub use log_callback::{GtdLogCallback, GtdLogLevel};
 pub use nav_file::{
     GtdChannelInfo, GtdEventMarkerInfo, GtdEventMarkerStyleInfo, GtdMarkerInfo, GtdNavFile,
-    GtdNavPointInfo, GtdSatelliteWarningInfo,
+    GtdNavPointInfo, GtdNavPointInfoV2, GtdSatelliteWarningInfo,
+};
+pub use navigation::{
+    GtdNavFixV2, GtdOptU32, GtdPositionProvenance, GtdSolutionDimension, GtdSolutionMethod,
+    GtdSolutionState,
 };
 pub use optf32::GtdOptF32;
 pub use optf64::GtdOptF64;
 pub use satellite::GtdSatellite;
+pub use satellite_evidence::{
+    GtdSatelliteCoverage, GtdSatelliteMembership, GtdSatelliteObservation, GtdSatelliteReportInfo,
+    GtdSatelliteReportInput, GtdSatelliteScope, GtdSatelliteScopeKind, GtdSatelliteUsage,
+};
 pub use satinfo::GtdSatInfo;
 pub use timestamp::GtdTimestamp;
 pub use travel_mode::GtdTravelMode;
@@ -52,11 +60,13 @@ pub(crate) mod error;
 mod icon;
 mod log_callback;
 mod nav_file;
+mod navigation;
 mod optf32;
 mod optf64;
 #[cfg(feature = "sanitizer_canary")]
 mod sanitizer_canary;
 mod satellite;
+mod satellite_evidence;
 mod satinfo;
 mod snr;
 mod timestamp;

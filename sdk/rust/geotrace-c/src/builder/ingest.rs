@@ -3,35 +3,14 @@
 use std::ffi::c_char;
 
 use geotrace_sdk::{
-    Angle, Annotation, Channel, ChannelUnit, EventMarker, EventMarkerStyle, NavFixTime,
-    RecordedFixTimestamps, SatelliteReport, Velocity,
+    Angle, Annotation, Channel, ChannelUnit, EventMarker, EventMarkerStyle, SatelliteReport,
+    Velocity,
 };
 
 use super::GtdFileBuilder;
 use crate::error::{self, GtdStatus};
+use crate::navigation::TimestampArguments;
 use crate::{GtdChannel, GtdChannelUnitMode, GtdMarkerIcon, GtdOptF64, GtdSatellite, GtdTimestamp};
-
-/// The two timestamp arguments of one `gtd_builder_add_*` call. Each clock has
-/// its own field, so a call site cannot transpose the two.
-struct TimestampArguments {
-    gps_time: GtdTimestamp,
-    sys_time: GtdTimestamp,
-}
-
-impl TimestampArguments {
-    fn into_nav_fix_time(self, what_needs_a_timestamp: &str) -> Result<NavFixTime, GtdStatus> {
-        let recorded = RecordedFixTimestamps {
-            gps: self.gps_time.to_optional_datetime("gps_time")?,
-            sys: self.sys_time.to_optional_datetime("sys_time")?,
-        };
-        NavFixTime::from_recorded(recorded).ok_or_else(|| {
-            error::set_last_error(format!(
-                "gps_time and sys_time are both gtd_ts_none(): {what_needs_a_timestamp} needs one"
-            ));
-            GtdStatus::GTD_ERR_INVALID_ARGUMENT
-        })
-    }
-}
 
 /// Add a GPS navigation fix.
 ///

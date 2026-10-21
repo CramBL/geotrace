@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 
 set(GEOTRACE_C_EXAMPLES
     write_basic
+    navigation_polling
     read_file
     with_satellites
     event_markers
@@ -33,7 +34,7 @@ endforeach()
 # Register self-contained examples as `ctest` smoke tests so CI runs them.
 # `gold_dataset` needs the CSV fixtures and writes into the source tree, so it is
 # exercised separately by the `test-gold-c` recipe and excluded here.
-foreach(example write_basic read_file with_satellites event_markers channels from_csv
+foreach(example navigation_polling write_basic read_file with_satellites event_markers channels from_csv
                 from_multiple_sources)
     add_test(NAME example_${example} COMMAND ${example})
     set_tests_properties(example_${example} PROPERTIES

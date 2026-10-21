@@ -19,7 +19,6 @@ dist = false
 [lib]
 crate-type = ["cdylib", "staticlib"]
 doctest = false
-test = false
 
 [[bin]]
 name = "gen_fixture"
@@ -38,6 +37,10 @@ parking_lot.workspace = true
 strum.workspace = true
 # Only the `gen_fixture` bin uses this, to craft the files no writer can produce.
 hdf5-pure.workspace = true
+
+[dev-dependencies]
+geotrace-sdk-test-util = { path = "../geotrace-sdk-test-util" }
+rstest.workspace = true
 
 [lints]
 workspace = true

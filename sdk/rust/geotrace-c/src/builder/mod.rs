@@ -10,6 +10,7 @@ mod finish;
 mod ingest;
 mod lifecycle;
 mod metadata;
+mod navigation;
 
 /// Opaque handle for a file-under-construction.
 ///
