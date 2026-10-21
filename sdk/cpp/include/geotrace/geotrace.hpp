@@ -37,12 +37,14 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -118,7 +120,9 @@ template <typename T> class span {
     [[nodiscard]] constexpr size_type size() const noexcept { return size_; }
     [[nodiscard]] constexpr bool empty() const noexcept { return size_ == 0; }
     [[nodiscard]] constexpr iterator begin() const noexcept { return data_; }
-    [[nodiscard]] constexpr iterator end() const noexcept { return data_ + size_; }
+    [[nodiscard]] constexpr iterator end() const noexcept {
+        return size_ == 0 ? data_ : std::next(data_, static_cast<std::ptrdiff_t>(size_));
+    }
     [[nodiscard]] constexpr T &operator[](size_type index) const noexcept {
         // The subscript is the polyfill's own bounds contract, as std::span's is.
         return data_[index]; // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
@@ -642,6 +646,46 @@ class [[nodiscard]] Velocity {
 
 enum class Constellation : std::uint8_t { Gps, Glonass, Galileo, Beidou, Navic, Qzss };
 
+/** Absence is std::nullopt. Explicit Unknown prevents state fallback. */
+enum class SolutionState : std::uint8_t {
+    Fix = GTD_SOLUTION_STATE_FIX,
+    NoFix = GTD_SOLUTION_STATE_NO_FIX,
+    EstimatedOnly = GTD_SOLUTION_STATE_ESTIMATED_ONLY,
+    Unknown = GTD_SOLUTION_STATE_UNKNOWN
+};
+
+enum class SolutionMethod : std::uint8_t {
+    Autonomous = GTD_SOLUTION_METHOD_AUTONOMOUS,
+    Differential = GTD_SOLUTION_METHOD_DIFFERENTIAL,
+    RtkFloat = GTD_SOLUTION_METHOD_RTK_FLOAT,
+    RtkFixed = GTD_SOLUTION_METHOD_RTK_FIXED,
+    DeadReckoning = GTD_SOLUTION_METHOD_DEAD_RECKONING,
+    Hybrid = GTD_SOLUTION_METHOD_HYBRID,
+    Other = GTD_SOLUTION_METHOD_OTHER
+};
+
+enum class SolutionDimension : std::uint8_t {
+    TwoD = GTD_SOLUTION_DIMENSION_TWO_D,
+    ThreeD = GTD_SOLUTION_DIMENSION_THREE_D
+};
+
+enum class PositionProvenance : std::uint8_t {
+    SourceProvided = GTD_POSITION_PROVENANCE_SOURCE_PROVIDED,
+    SdkSynthesized = GTD_POSITION_PROVENANCE_SDK_SYNTHESIZED
+};
+
+enum class SatelliteMembership : std::uint8_t {
+    Unknown = GTD_SATELLITE_MEMBERSHIP_UNKNOWN,
+    Unused = GTD_SATELLITE_MEMBERSHIP_UNUSED,
+    Used = GTD_SATELLITE_MEMBERSHIP_USED
+};
+
+/** Completeness applies to identity rows within the declared scope. */
+enum class SatelliteCoverage : std::uint8_t {
+    Complete = GTD_SATELLITE_COVERAGE_COMPLETE,
+    Partial = GTD_SATELLITE_COVERAGE_PARTIAL
+};
+
 enum class MarkerIcon : std::uint8_t {
     Pin,
     Cross,
@@ -685,6 +729,94 @@ nul_byte_status(GtdStatus status, const std::string &string_name, std::string_vi
         return std::nullopt;
     }
     return Status{status, string_name + " has a nul byte at offset " + std::to_string(offset)};
+}
+
+[[nodiscard]] constexpr std::optional<std::uint32_t> to_c(SolutionState value) noexcept {
+    switch (value) {
+    case SolutionState::Fix:
+        return GTD_SOLUTION_STATE_FIX;
+    case SolutionState::NoFix:
+        return GTD_SOLUTION_STATE_NO_FIX;
+    case SolutionState::EstimatedOnly:
+        return GTD_SOLUTION_STATE_ESTIMATED_ONLY;
+    case SolutionState::Unknown:
+        return GTD_SOLUTION_STATE_UNKNOWN;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] constexpr std::optional<std::uint32_t> to_c(SolutionMethod value) noexcept {
+    switch (value) {
+    case SolutionMethod::Autonomous:
+        return GTD_SOLUTION_METHOD_AUTONOMOUS;
+    case SolutionMethod::Differential:
+        return GTD_SOLUTION_METHOD_DIFFERENTIAL;
+    case SolutionMethod::RtkFloat:
+        return GTD_SOLUTION_METHOD_RTK_FLOAT;
+    case SolutionMethod::RtkFixed:
+        return GTD_SOLUTION_METHOD_RTK_FIXED;
+    case SolutionMethod::DeadReckoning:
+        return GTD_SOLUTION_METHOD_DEAD_RECKONING;
+    case SolutionMethod::Hybrid:
+        return GTD_SOLUTION_METHOD_HYBRID;
+    case SolutionMethod::Other:
+        return GTD_SOLUTION_METHOD_OTHER;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] constexpr std::optional<std::uint32_t> to_c(SolutionDimension value) noexcept {
+    switch (value) {
+    case SolutionDimension::TwoD:
+        return GTD_SOLUTION_DIMENSION_TWO_D;
+    case SolutionDimension::ThreeD:
+        return GTD_SOLUTION_DIMENSION_THREE_D;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] constexpr std::optional<std::uint32_t> to_c(PositionProvenance value) noexcept {
+    switch (value) {
+    case PositionProvenance::SourceProvided:
+        return GTD_POSITION_PROVENANCE_SOURCE_PROVIDED;
+    case PositionProvenance::SdkSynthesized:
+        return GTD_POSITION_PROVENANCE_SDK_SYNTHESIZED;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] constexpr std::optional<std::uint32_t> to_c(SatelliteMembership value) noexcept {
+    switch (value) {
+    case SatelliteMembership::Unknown:
+        return GTD_SATELLITE_MEMBERSHIP_UNKNOWN;
+    case SatelliteMembership::Unused:
+        return GTD_SATELLITE_MEMBERSHIP_UNUSED;
+    case SatelliteMembership::Used:
+        return GTD_SATELLITE_MEMBERSHIP_USED;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] constexpr std::optional<std::uint32_t> to_c(SatelliteCoverage value) noexcept {
+    switch (value) {
+    case SatelliteCoverage::Complete:
+        return GTD_SATELLITE_COVERAGE_COMPLETE;
+    case SatelliteCoverage::Partial:
+        return GTD_SATELLITE_COVERAGE_PARTIAL;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] constexpr GtdOptU32 to_c(std::optional<std::uint32_t> value) noexcept {
+    return GtdOptU32{value.value_or(0), static_cast<std::uint8_t>(value.has_value())};
+}
+
+[[nodiscard]] constexpr std::optional<std::uint32_t> from_c(GtdOptU32 value) noexcept {
+    return value.present != 0 ? std::optional<std::uint32_t>{value.value} : std::nullopt;
+}
+
+[[nodiscard]] constexpr std::optional<double> from_c(GtdOptF64 value) noexcept {
+    return value.present != 0 ? std::optional<double>{value.value} : std::nullopt;
 }
 
 [[nodiscard]] constexpr std::optional<std::uint32_t> to_c(Constellation constellation) noexcept {
@@ -984,6 +1116,17 @@ struct NavFix {
     std::optional<Angle> heading = std::nullopt;
     std::optional<Velocity> speed = std::nullopt;
     std::optional<double> eph_m = std::nullopt;
+    /** Absent state differs from explicit Unknown. Method and dimension are descriptive. */
+    std::optional<SolutionState> state = std::nullopt;
+    std::optional<SolutionMethod> method = std::nullopt;
+    std::optional<SolutionDimension> dimension = std::nullopt;
+    std::optional<PositionProvenance> position_provenance = PositionProvenance::SourceProvided;
+    /** Global source aggregate, independent of report rows. */
+    std::optional<std::uint32_t> used_count = std::nullopt;
+    /** Dimensionless. Present NaN DOP decodes as absent after serialization. */
+    std::optional<double> hdop = std::nullopt;
+    std::optional<double> vdop = std::nullopt;
+    std::optional<double> pdop = std::nullopt;
 };
 
 /**
@@ -1015,6 +1158,191 @@ struct Satellite {
 struct SatelliteReport {
     FixTime time;
     std::vector<Satellite> tracked;
+};
+
+/** Global scope remains distinct from an explicit set of every constellation. */
+class SatelliteScope {
+  public:
+    [[nodiscard]] static SatelliteScope global() noexcept { return SatelliteScope{0}; }
+
+    /** Rejects an empty set or an undeclared constellation. Duplicates are removed. */
+    [[nodiscard]] static Result<SatelliteScope>
+    try_constellations(span<const Constellation> values) {
+        if (values.empty()) {
+            return Status{GTD_ERR_INVALID_ARGUMENT, "scope.constellations must be nonempty"};
+        }
+        std::uint32_t mask = 0;
+        for (const auto value : values) {
+            const auto code = detail::to_c(value);
+            if (!code) {
+                return Status{GTD_ERR_INVALID_ARGUMENT,
+                              "scope.constellations: " +
+                                  detail::undeclared_enum_message(
+                                      "Constellation", static_cast<std::uint32_t>(value))};
+            }
+            mask |= std::uint32_t{1} << *code;
+        }
+        return SatelliteScope{mask};
+    }
+
+    [[nodiscard]] static SatelliteScope constellations(span<const Constellation> values) {
+        return try_constellations(values).value_or_throw();
+    }
+
+    [[nodiscard]] bool is_global() const noexcept { return mask_ == 0; }
+
+    /** Explicit members in constellation declaration order. Global returns an empty vector. */
+    [[nodiscard]] std::vector<Constellation> constellations() const {
+        std::vector<Constellation> values;
+        for (const auto value :
+             {Constellation::Gps, Constellation::Glonass, Constellation::Galileo,
+              Constellation::Beidou, Constellation::Navic, Constellation::Qzss}) {
+            const auto code = detail::to_c(value);
+            if (code && (mask_ & (std::uint32_t{1} << *code)) != 0) {
+                values.push_back(value);
+            }
+        }
+        return values;
+    }
+
+    bool operator==(const SatelliteScope &other) const noexcept { return mask_ == other.mask_; }
+    bool operator!=(const SatelliteScope &other) const noexcept { return !(*this == other); }
+
+  private:
+    friend class FileBuilder;
+    friend class NavFile;
+    explicit SatelliteScope(std::uint32_t mask) noexcept : mask_(mask) {}
+    std::uint32_t mask_;
+};
+
+struct SatelliteReportIndex {
+    std::size_t nav_point = 0;
+    std::size_t report = 0;
+};
+
+struct SatelliteRowIndex {
+    std::size_t nav_point = 0;
+    std::size_t report = 0;
+    std::size_t row = 0;
+};
+
+struct SatelliteIdentity {
+    Constellation constellation = Constellation::Gps;
+    std::uint32_t prn = 0;
+    bool operator==(const SatelliteIdentity &other) const noexcept {
+        return std::tie(constellation, prn) == std::tie(other.constellation, other.prn);
+    }
+    bool operator!=(const SatelliteIdentity &other) const noexcept { return !(*this == other); }
+};
+
+struct SatelliteUsage {
+    SatelliteIdentity identity;
+    SatelliteMembership membership = SatelliteMembership::Unknown;
+    bool operator==(const SatelliteUsage &other) const noexcept {
+        return std::tie(identity, membership) == std::tie(other.identity, other.membership);
+    }
+    bool operator!=(const SatelliteUsage &other) const noexcept { return !(*this == other); }
+};
+
+struct SatelliteObservation {
+    SatelliteIdentity identity;
+    std::optional<float> elevation_deg = std::nullopt;
+    std::optional<float> azimuth_deg = std::nullopt;
+    std::optional<float> snr_dbhz = std::nullopt;
+    bool operator==(const SatelliteObservation &other) const noexcept {
+        return std::tie(identity, elevation_deg, azimuth_deg, snr_dbhz) ==
+               std::tie(other.identity, other.elevation_deg, other.azimuth_deg, other.snr_dbhz);
+    }
+    bool operator!=(const SatelliteObservation &other) const noexcept { return !(*this == other); }
+};
+
+/** Recorder-generated placement is absent on input and present on associated readback. */
+struct SatelliteReportPlacement {
+    Timestamp normalized_time;
+    std::uint64_t input_order = 0;
+
+    SatelliteReportPlacement(Timestamp time, std::uint64_t order) noexcept
+        : normalized_time(time), input_order(order) {}
+
+    bool operator==(const SatelliteReportPlacement &other) const noexcept {
+        return std::tie(normalized_time, input_order) ==
+               std::tie(other.normalized_time, other.input_order);
+    }
+    bool operator!=(const SatelliteReportPlacement &other) const noexcept {
+        return !(*this == other);
+    }
+};
+
+/** Scope and coverage are required. Aggregate presence is independent of the ordered rows.
+ * Original clocks are preserved. Ingestion copies rows and computes placement.
+ */
+struct SatelliteUsageReport {
+    FixTime time;
+    SatelliteScope scope;
+    SatelliteCoverage coverage;
+    std::optional<std::uint32_t> reported_count = std::nullopt;
+    std::vector<SatelliteUsage> satellites;
+    std::optional<SatelliteReportPlacement> placement = std::nullopt;
+
+    SatelliteUsageReport(FixTime source_time, SatelliteScope declared_scope,
+                         SatelliteCoverage list_coverage,
+                         std::optional<std::uint32_t> aggregate = std::nullopt,
+                         std::vector<SatelliteUsage> rows = {})
+        : time(source_time), scope(declared_scope), coverage(list_coverage),
+          reported_count(aggregate), satellites(std::move(rows)) {}
+
+    bool operator==(const SatelliteUsageReport &other) const noexcept {
+        return time.gps_time() == other.time.gps_time() &&
+               time.sys_time() == other.time.sys_time() &&
+               std::tie(scope, coverage, reported_count, satellites, placement) ==
+                   std::tie(other.scope, other.coverage, other.reported_count, other.satellites,
+                            other.placement);
+    }
+    bool operator!=(const SatelliteUsageReport &other) const noexcept { return !(*this == other); }
+};
+
+/** Scope and coverage are required. Aggregate presence is independent of the ordered rows.
+ * Original clocks are preserved. Ingestion copies rows and computes placement.
+ */
+/**
+ * @code
+ * NavFix fix{FixTime::host(Timestamp::from_seconds(1700000000))};
+ * fix.state = SolutionState::Fix;
+ * fix.used_count = 8;
+ * fix.hdop = 0.9;
+ * FileBuilder builder;
+ * builder.add(fix);
+ * builder.add(SatelliteObservationReport{
+ *     FixTime::host(Timestamp::from_seconds(1700000002)),
+ *     SatelliteScope::global(), SatelliteCoverage::Partial, 12});
+ * @endcode
+ * See examples/navigation_polling.cpp for a runnable producer.
+ */
+struct SatelliteObservationReport {
+    FixTime time;
+    SatelliteScope scope;
+    SatelliteCoverage coverage;
+    std::optional<std::uint32_t> reported_count = std::nullopt;
+    std::vector<SatelliteObservation> satellites;
+    std::optional<SatelliteReportPlacement> placement = std::nullopt;
+
+    SatelliteObservationReport(FixTime source_time, SatelliteScope declared_scope,
+                               SatelliteCoverage list_coverage,
+                               std::optional<std::uint32_t> aggregate = std::nullopt,
+                               std::vector<SatelliteObservation> rows = {})
+        : time(source_time), scope(declared_scope), coverage(list_coverage),
+          reported_count(aggregate), satellites(std::move(rows)) {}
+
+    bool operator==(const SatelliteObservationReport &other) const noexcept {
+        return time.gps_time() == other.time.gps_time() &&
+               time.sys_time() == other.time.sys_time() &&
+               std::tie(scope, coverage, reported_count, satellites, placement) ==
+                   std::tie(other.scope, other.coverage, other.reported_count, other.satellites,
+                            other.placement);
+    }
+    bool operator!=(const SatelliteObservationReport &other) const noexcept {
+        return !(*this == other);
+    }
 };
 
 /** A legacy map-pin annotation. */
@@ -1198,6 +1526,19 @@ struct NavPointView {
     // host timestamp (`satellite_report_sys_time`).
     std::optional<Timestamp> satellite_report_gps_time;
     std::optional<Timestamp> satellite_report_sys_time;
+    /** Absent state differs from explicit Unknown. Method and dimension are descriptive. */
+    std::optional<SolutionState> state = std::nullopt;
+    std::optional<SolutionMethod> method = std::nullopt;
+    std::optional<SolutionDimension> dimension = std::nullopt;
+    std::optional<PositionProvenance> position_provenance = std::nullopt;
+    /** Global source aggregate, independent of report rows. */
+    std::optional<std::uint32_t> used_count = std::nullopt;
+    /** Dimensionless. Present NaN DOP decodes as absent after serialization. */
+    std::optional<double> hdop = std::nullopt;
+    std::optional<double> vdop = std::nullopt;
+    std::optional<double> pdop = std::nullopt;
+    std::size_t usage_report_count = 0;
+    std::size_t observation_report_count = 0;
 };
 
 /** Satellite data for one tracked satellite, returned by `NavFile::satellite()`. */
@@ -1621,10 +1962,113 @@ class FileBuilder {
             fix.heading ? std::optional<double>{fix.heading->as_degrees()} : std::nullopt;
         const std::optional<double> speed_mps =
             fix.speed ? std::optional<double>{fix.speed->as_mps()} : std::nullopt;
-        record(::gtd_builder_add_nav_fix(impl_.get(), detail::to_c(fix.time.gps_time()),
-                                         detail::to_c(fix.time.sys_time()), fix.lat.as_degrees(),
-                                         fix.lon.as_degrees(), detail::to_c(heading_deg),
-                                         detail::to_c(speed_mps), detail::to_c(fix.eph_m)));
+        GtdNavFixV2 input = ::gtd_nav_fix_v2_init();
+        input.gps_time = detail::to_c(fix.time.gps_time());
+        input.sys_time = detail::to_c(fix.time.sys_time());
+        input.lat_deg = fix.lat.as_degrees();
+        input.lon_deg = fix.lon.as_degrees();
+        input.heading_deg = detail::to_c(heading_deg);
+        input.speed_mps = detail::to_c(speed_mps);
+        input.eph_m = detail::to_c(fix.eph_m);
+        if (fix.state) {
+            const auto code = checked_code("SolutionState", *fix.state, "nav_fix.state: ");
+            if (!code) {
+                return *this;
+            }
+            input.state = *code;
+        } else {
+            input.state = GTD_SOLUTION_STATE_UNREPORTED;
+        }
+        if (fix.method) {
+            const auto code = checked_code("SolutionMethod", *fix.method, "nav_fix.method: ");
+            if (!code) {
+                return *this;
+            }
+            input.method = *code;
+        } else {
+            input.method = GTD_SOLUTION_METHOD_UNREPORTED;
+        }
+        if (fix.dimension) {
+            const auto code =
+                checked_code("SolutionDimension", *fix.dimension, "nav_fix.dimension: ");
+            if (!code) {
+                return *this;
+            }
+            input.dimension = *code;
+        } else {
+            input.dimension = GTD_SOLUTION_DIMENSION_UNREPORTED;
+        }
+        if (fix.position_provenance) {
+            const auto code = checked_code("PositionProvenance", *fix.position_provenance,
+                                           "nav_fix.position_provenance: ");
+            if (!code) {
+                return *this;
+            }
+            input.position_provenance = *code;
+        } else {
+            input.position_provenance = GTD_POSITION_PROVENANCE_UNREPORTED;
+        }
+        input.used_count = detail::to_c(fix.used_count);
+        input.hdop = detail::to_c(fix.hdop);
+        input.vdop = detail::to_c(fix.vdop);
+        input.pdop = detail::to_c(fix.pdop);
+        record(::gtd_builder_add_nav_fix_v2(impl_.get(), &input));
+        return *this;
+    }
+
+    /** Copies all source rows before recording. Placement is computed by the recorder. */
+    FileBuilder &add_satellite_usage_report(const SatelliteUsageReport &report) {
+        const auto metadata =
+            report_input(report.time, report.scope, report.coverage, report.reported_count);
+        if (!metadata) {
+            return *this;
+        }
+        std::vector<GtdSatelliteUsage> rows;
+        rows.reserve(report.satellites.size());
+        std::size_t index = 0;
+        for (const auto &row : report.satellites) {
+            const std::string context = "usage report row " + std::to_string(index) + ": ";
+            const auto constellation =
+                checked_code("Constellation", row.identity.constellation, context);
+            if (!constellation) {
+                return *this;
+            }
+            const auto membership = checked_code("SatelliteMembership", row.membership, context);
+            if (!membership) {
+                return *this;
+            }
+            rows.push_back(GtdSatelliteUsage{*constellation, row.identity.prn, *membership});
+            ++index;
+        }
+        record(::gtd_builder_add_satellite_usage_report(impl_.get(), &*metadata, rows.data(),
+                                                        rows.size()));
+        return *this;
+    }
+
+    /** Copies all source rows before recording. Placement is computed by the recorder. */
+    FileBuilder &add_satellite_observation_report(const SatelliteObservationReport &report) {
+        const auto metadata =
+            report_input(report.time, report.scope, report.coverage, report.reported_count);
+        if (!metadata) {
+            return *this;
+        }
+        std::vector<GtdSatelliteObservation> rows;
+        rows.reserve(report.satellites.size());
+        std::size_t index = 0;
+        for (const auto &row : report.satellites) {
+            const std::string context = "observation report row " + std::to_string(index) + ": ";
+            const auto constellation =
+                checked_code("Constellation", row.identity.constellation, context);
+            if (!constellation) {
+                return *this;
+            }
+            rows.push_back(GtdSatelliteObservation{
+                *constellation, row.identity.prn, detail::to_c(row.elevation_deg),
+                detail::to_c(row.azimuth_deg), detail::to_c(row.snr_dbhz)});
+            ++index;
+        }
+        record(::gtd_builder_add_satellite_observation_report(impl_.get(), &*metadata, rows.data(),
+                                                              rows.size()));
         return *this;
     }
 
@@ -1822,6 +2266,12 @@ class FileBuilder {
      */
     ///@{
     FileBuilder &add(const NavFix &fix) { return add_nav_fix(fix); }
+    FileBuilder &add(const SatelliteUsageReport &report) {
+        return add_satellite_usage_report(report);
+    }
+    FileBuilder &add(const SatelliteObservationReport &report) {
+        return add_satellite_observation_report(report);
+    }
     FileBuilder &add(const SatelliteReport &report) { return add_satellite_report(report); }
     FileBuilder &add(const Annotation &ann) { return add_annotation(ann); }
     FileBuilder &add(const EventMarker &marker) { return add_event_marker(marker); }
@@ -1853,6 +2303,22 @@ class FileBuilder {
     [[nodiscard]] constexpr const Status &status() const noexcept { return status_; }
 
   private:
+    [[nodiscard]] std::optional<GtdSatelliteReportInput>
+    report_input(const FixTime &time, const SatelliteScope &scope, SatelliteCoverage coverage,
+                 std::optional<std::uint32_t> count) {
+        const auto code = checked_code("SatelliteCoverage", coverage, "report.coverage: ");
+        if (!code) {
+            return std::nullopt;
+        }
+        return GtdSatelliteReportInput{
+            detail::to_c(time.gps_time()), detail::to_c(time.sys_time()),
+            GtdSatelliteScope{static_cast<std::uint32_t>(
+                                  scope.is_global() ? GTD_SATELLITE_SCOPE_KIND_GLOBAL
+                                                    : GTD_SATELLITE_SCOPE_KIND_CONSTELLATIONS),
+                              scope.mask_},
+            *code, detail::to_c(count)};
+    }
+
     // Records `GTD_ERR_INVALID_ARGUMENT` and returns `std::nullopt` for a
     // @p value no enumerator declares, with @p context prefixed to the message.
     // `add_satellite_report` passes the field path of the failing satellite.
@@ -2112,6 +2578,30 @@ class [[nodiscard]] NavFile {
         point.satellite_count = info.sat_count;
         point.satellite_report_gps_time = timestamp_from_c(info.sat_report_gps_time);
         point.satellite_report_sys_time = timestamp_from_c(info.sat_report_sys_time);
+        GtdNavPointInfoV2 canonical{};
+        const auto canonical_status = ::gtd_nav_file_get_nav_point_v2(impl_.get(), idx, &canonical);
+        if (canonical_status != GTD_OK) {
+            return Status::from(canonical_status);
+        }
+        if (canonical.fix.state != GTD_SOLUTION_STATE_UNREPORTED) {
+            point.state = static_cast<SolutionState>(canonical.fix.state);
+        }
+        if (canonical.fix.method != GTD_SOLUTION_METHOD_UNREPORTED) {
+            point.method = static_cast<SolutionMethod>(canonical.fix.method);
+        }
+        if (canonical.fix.dimension != GTD_SOLUTION_DIMENSION_UNREPORTED) {
+            point.dimension = static_cast<SolutionDimension>(canonical.fix.dimension);
+        }
+        if (canonical.fix.position_provenance != GTD_POSITION_PROVENANCE_UNREPORTED) {
+            point.position_provenance =
+                static_cast<PositionProvenance>(canonical.fix.position_provenance);
+        }
+        point.used_count = detail::from_c(canonical.fix.used_count);
+        point.hdop = detail::from_c(canonical.fix.hdop);
+        point.vdop = detail::from_c(canonical.fix.vdop);
+        point.pdop = detail::from_c(canonical.fix.pdop);
+        point.usage_report_count = canonical.usage_report_count;
+        point.observation_report_count = canonical.observation_report_count;
         return point;
     }
 
@@ -2147,6 +2637,154 @@ class [[nodiscard]] NavFile {
      */
     [[nodiscard]] SatelliteView satellite(std::size_t nav_idx, std::size_t sat_idx) const {
         return try_satellite(nav_idx, sat_idx).value_or_throw();
+    }
+
+    /** Copies one ordered source row. Invalid indices return the C boundary status. */
+    Result<SatelliteUsage> try_satellite_usage(SatelliteRowIndex index) const {
+        GtdSatelliteUsage row{};
+        const auto status = ::gtd_nav_file_get_satellite_usage(impl_.get(), index.nav_point,
+                                                               index.report, index.row, &row);
+        if (status != GTD_OK) {
+            return Status::from(status);
+        }
+        return SatelliteUsage{
+            {detail::from_c(static_cast<GtdConstellation>(row.constellation)), row.prn},
+            static_cast<SatelliteMembership>(row.membership)};
+    }
+
+    [[nodiscard]] SatelliteUsage satellite_usage(SatelliteRowIndex index) const {
+        return try_satellite_usage(index).value_or_throw();
+    }
+
+    /** Returns an owning report, valid after this file is destroyed. */
+    Result<SatelliteUsageReport> try_satellite_usage_report(SatelliteReportIndex index) const {
+        GtdSatelliteReportInfo info{};
+        const auto status = ::gtd_nav_file_get_satellite_usage_report(impl_.get(), index.nav_point,
+                                                                      index.report, &info);
+        if (status != GTD_OK) {
+            return Status::from(status);
+        }
+        const auto metadata = report_metadata_from_c(info);
+        if (metadata.is_err()) {
+            return metadata.error();
+        }
+        const auto &source = metadata.value();
+        SatelliteUsageReport report{source.time, source.scope, source.coverage,
+                                    source.reported_count};
+        report.placement = source.placement;
+        report.satellites.reserve(info.row_count);
+        for (std::size_t row_index = 0; row_index < info.row_count; ++row_index) {
+            auto row = try_satellite_usage({index.nav_point, index.report, row_index});
+            if (row.is_err()) {
+                return row.error();
+            }
+            report.satellites.push_back(row.value());
+        }
+        return report;
+    }
+
+    [[nodiscard]] SatelliteUsageReport satellite_usage_report(SatelliteReportIndex index) const {
+        return try_satellite_usage_report(index).value_or_throw();
+    }
+
+    /** Copies every report in recorded order within this report kind. */
+    Result<std::vector<SatelliteUsageReport>>
+    try_satellite_usage_reports(std::size_t nav_idx) const {
+        const auto point = try_nav_point(nav_idx);
+        if (point.is_err()) {
+            return point.error();
+        }
+        std::vector<SatelliteUsageReport> reports;
+        reports.reserve(point.value().usage_report_count);
+        for (std::size_t index = 0; index < point.value().usage_report_count; ++index) {
+            auto report = try_satellite_usage_report({nav_idx, index});
+            if (report.is_err()) {
+                return report.error();
+            }
+            reports.push_back(std::move(report.value()));
+        }
+        return reports;
+    }
+
+    [[nodiscard]] std::vector<SatelliteUsageReport>
+    satellite_usage_reports(std::size_t nav_idx) const {
+        return try_satellite_usage_reports(nav_idx).value_or_throw();
+    }
+
+    /** Copies one ordered source row. Invalid indices return the C boundary status. */
+    Result<SatelliteObservation> try_satellite_observation(SatelliteRowIndex index) const {
+        GtdSatelliteObservation row{};
+        const auto status = ::gtd_nav_file_get_satellite_observation(impl_.get(), index.nav_point,
+                                                                     index.report, index.row, &row);
+        if (status != GTD_OK) {
+            return Status::from(status);
+        }
+        return SatelliteObservation{
+            {detail::from_c(static_cast<GtdConstellation>(row.constellation)), row.prn},
+            detail::from_c(row.elevation_deg),
+            detail::from_c(row.azimuth_deg),
+            detail::from_c(row.snr_dbhz)};
+    }
+
+    [[nodiscard]] SatelliteObservation satellite_observation(SatelliteRowIndex index) const {
+        return try_satellite_observation(index).value_or_throw();
+    }
+
+    /** Returns an owning report, valid after this file is destroyed. */
+    Result<SatelliteObservationReport>
+    try_satellite_observation_report(SatelliteReportIndex index) const {
+        GtdSatelliteReportInfo info{};
+        const auto status = ::gtd_nav_file_get_satellite_observation_report(
+            impl_.get(), index.nav_point, index.report, &info);
+        if (status != GTD_OK) {
+            return Status::from(status);
+        }
+        const auto metadata = report_metadata_from_c(info);
+        if (metadata.is_err()) {
+            return metadata.error();
+        }
+        const auto &source = metadata.value();
+        SatelliteObservationReport report{source.time, source.scope, source.coverage,
+                                          source.reported_count};
+        report.placement = source.placement;
+        report.satellites.reserve(info.row_count);
+        for (std::size_t row_index = 0; row_index < info.row_count; ++row_index) {
+            auto row = try_satellite_observation({index.nav_point, index.report, row_index});
+            if (row.is_err()) {
+                return row.error();
+            }
+            report.satellites.push_back(row.value());
+        }
+        return report;
+    }
+
+    [[nodiscard]] SatelliteObservationReport
+    satellite_observation_report(SatelliteReportIndex index) const {
+        return try_satellite_observation_report(index).value_or_throw();
+    }
+
+    /** Copies every report in recorded order within this report kind. */
+    Result<std::vector<SatelliteObservationReport>>
+    try_satellite_observation_reports(std::size_t nav_idx) const {
+        const auto point = try_nav_point(nav_idx);
+        if (point.is_err()) {
+            return point.error();
+        }
+        std::vector<SatelliteObservationReport> reports;
+        reports.reserve(point.value().observation_report_count);
+        for (std::size_t index = 0; index < point.value().observation_report_count; ++index) {
+            auto report = try_satellite_observation_report({nav_idx, index});
+            if (report.is_err()) {
+                return report.error();
+            }
+            reports.push_back(std::move(report.value()));
+        }
+        return reports;
+    }
+
+    [[nodiscard]] std::vector<SatelliteObservationReport>
+    satellite_observation_reports(std::size_t nav_idx) const {
+        return try_satellite_observation_reports(nav_idx).value_or_throw();
     }
 
     /** Number of event markers in the file. */
@@ -2356,6 +2994,32 @@ class [[nodiscard]] NavFile {
   private:
     friend class FileBuilder;
     explicit NavFile(GtdNavFile *impl) noexcept : impl_(impl) {}
+
+    struct ReportMetadata {
+        FixTime time;
+        SatelliteScope scope;
+        SatelliteCoverage coverage;
+        std::optional<std::uint32_t> reported_count;
+        std::optional<SatelliteReportPlacement> placement;
+    };
+
+    [[nodiscard]] static Result<ReportMetadata>
+    report_metadata_from_c(const GtdSatelliteReportInfo &info) {
+        const auto gps = timestamp_from_c(info.source.gps_time);
+        const auto sys = timestamp_from_c(info.source.sys_time);
+        const auto time = FixTime::from_recorded(RecordedFixTimestamps{gps, sys});
+        if (!time) {
+            return Status{GTD_ERR_PARSE, "report has no recorded clock"};
+        }
+        ReportMetadata metadata{*time, SatelliteScope{info.source.scope.constellation_mask},
+                                static_cast<SatelliteCoverage>(info.source.coverage),
+                                detail::from_c(info.source.reported_count), std::nullopt};
+        if (info.placement_present != 0) {
+            metadata.placement =
+                SatelliteReportPlacement{instant_from_c(info.normalized_time), info.input_order};
+        }
+        return metadata;
+    }
 
     [[nodiscard]] std::optional<std::string_view> metadata_value_from_c(
         const char *(*getter_with_length)(const GtdNavFile *, std::size_t *)) const noexcept {

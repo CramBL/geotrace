@@ -10,6 +10,7 @@ set(GEOTRACE_CPP_EXAMPLES
     from_csv
     from_multiple_sources
     gold_dataset
+    navigation_polling
 )
 
 foreach(example ${GEOTRACE_CPP_EXAMPLES})
@@ -41,9 +42,21 @@ endforeach()
 # `gold_dataset` needs the CSV fixtures and writes into the source tree, so it is
 # exercised separately by the `test-gold-cpp` recipe and excluded here.
 foreach(example write_basic read_file with_satellites event_markers channels typed_events from_csv
-                from_multiple_sources)
+                from_multiple_sources navigation_polling)
     add_test(NAME example_${example} COMMAND ${example})
     set_tests_properties(example_${example} PROPERTIES
         ENVIRONMENT "${GEOTRACE_SANITIZE_TEST_ENVIRONMENT}"
     )
 endforeach()
+
+add_executable(navigation_polling_no_exceptions navigation_polling.cpp)
+target_link_libraries(navigation_polling_no_exceptions PRIVATE GeoTrace::Cpp geotrace_sanitizers)
+if(MSVC)
+    target_compile_options(navigation_polling_no_exceptions PRIVATE /EHs-c-)
+else()
+    target_compile_options(navigation_polling_no_exceptions PRIVATE -fno-exceptions)
+endif()
+add_test(NAME example_navigation_polling_no_exceptions COMMAND navigation_polling_no_exceptions)
+set_tests_properties(example_navigation_polling_no_exceptions PROPERTIES
+    ENVIRONMENT "${GEOTRACE_SANITIZE_TEST_ENVIRONMENT}"
+)

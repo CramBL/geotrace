@@ -24,7 +24,13 @@ set(GEOTRACE_CPP_METADATA_WITH_A_NUL_BYTE_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../c/tests/fixtures/metadata_with_a_nul_byte.gtd")
 
 function(add_cpp_test name)
-    add_executable(${name} ${name}.cpp ${ARGN})
+    cmake_parse_arguments(CPP_TEST "" "SOURCE" "" ${ARGN})
+    if(CPP_TEST_SOURCE)
+        set(test_source "${CPP_TEST_SOURCE}")
+    else()
+        set(test_source "${name}.cpp")
+    endif()
+    add_executable(${name} ${test_source} ${CPP_TEST_UNPARSED_ARGUMENTS})
     target_link_libraries(${name} PRIVATE GeoTrace::Cpp doctest::doctest geotrace_sanitizers)
 
     if(MSVC)
@@ -116,3 +122,7 @@ add_cpp_test(test_unit_conversions)
 add_cpp_test(test_parse_number)
 
 add_cpp_test(test_odr_two_translation_units test_odr_second_translation_unit.cpp)
+
+add_cpp_test(test_navigation_evidence)
+add_cpp_test(test_navigation_evidence_no_exceptions SOURCE test_navigation_evidence.cpp)
+target_compile_definitions(test_navigation_evidence_no_exceptions PRIVATE GEOTRACE_CPP_NO_EXCEPTIONS)
