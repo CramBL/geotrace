@@ -693,3 +693,98 @@ fn usage_merges_are_reported_when_projected_rows_have_different_counts(
         expected_legacy_warnings
     );
 }
+
+#[test]
+fn host_only_orphan_time_and_coordinates_survive_loading_and_placement() {
+    let mut recorder = NavFileBuilder::new().open();
+    for second in [0, 10] {
+        recorder.add(
+            NavFix::builder()
+                .time(NavFixTime::Host(
+                    DateTime::UNIX_EPOCH + Duration::seconds(second),
+                ))
+                .lat(Angle::degrees(0.0))
+                .lon(Angle::degrees(second as f64))
+                .build(),
+        );
+    }
+    let poll_time = DateTime::UNIX_EPOCH + Duration::seconds(2);
+    recorder.add(
+        SdkUsageReport::builder()
+            .time(NavFixTime::Host(poll_time))
+            .scope(SdkScope::Global)
+            .coverage(SdkCoverage::Partial)
+            .reported_count(8)
+            .satellites(Vec::new())
+            .build(),
+    );
+    recorder.add(
+        SdkObservationReport::builder()
+            .time(NavFixTime::Host(poll_time))
+            .scope(SdkScope::Global)
+            .coverage(SdkCoverage::Partial)
+            .reported_count(12)
+            .satellites(Vec::new())
+            .build(),
+    );
+    let recording = recorder.finish().expect("source fixes define the timeline");
+    let mut bytes = Vec::new();
+    recording.write(&mut bytes).expect("recording encodes");
+    let loaded =
+        gt_loader::load_bytes(&bytes, "host_poll.gtd".to_owned()).expect("recording loads");
+    let track = loaded.tracks.first().expect("one track");
+    assert_eq!((loaded.tracks.len(), track.points.len()), (1, 3));
+    let placed = track
+        .placed_points()
+        .expect("source positions define geometry");
+    for (point, second) in placed.iter().zip([0, 2, 10]) {
+        assert_eq!(
+            point.fix.tpv.time().utc(),
+            DateTime::UNIX_EPOCH + Duration::seconds(second)
+        );
+        assert!((point.fix.tpv.lat().as_written()).abs() < 1e-12);
+        assert!((point.fix.tpv.lon().as_written() - second as f64).abs() < 1e-12);
+        let (latitude, longitude) = point.resolved_position();
+        assert!(latitude.as_degrees().abs() < 1e-12);
+        assert!((longitude.as_degrees() - second as f64).abs() < 1e-12);
+        assert_eq!(
+            point.fix.navigation.position_provenance,
+            Some(if second == 2 {
+                PositionProvenance::SdkSynthesized
+            } else {
+                PositionProvenance::SourceProvided
+            })
+        );
+    }
+    let carrier = &track.points[1];
+    let usage = &carrier.satellite_evidence.usage;
+    let observations = &carrier.satellite_evidence.observations;
+    assert_eq!((usage.len(), observations.len()), (1, 1));
+    for (metadata, input_order) in [(&usage[0].metadata, 0), (&observations[0].metadata, 1)] {
+        assert_eq!(
+            (
+                metadata.gps_time,
+                metadata.sys_time,
+                metadata.normalized_time,
+                metadata.input_order
+            ),
+            (
+                None,
+                Some(SysTime::from_utc(poll_time)),
+                GpsTime::from_utc(poll_time),
+                input_order
+            ),
+        );
+    }
+    assert_eq!(
+        (
+            carrier
+                .resolved_used_count(SatelliteQueryScope::Global)
+                .map(|count| count.count),
+            carrier
+                .resolved_seen_count(SatelliteQueryScope::Global)
+                .map(|count| count.count),
+        ),
+        (Some(8), Some(12)),
+    );
+}

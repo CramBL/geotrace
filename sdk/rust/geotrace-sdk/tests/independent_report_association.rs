@@ -53,14 +53,20 @@ fn observations(time: NavFixTime) -> SatelliteObservationReport {
 fn independent_reports_use_the_configured_window(
     #[case] offset_ms: i64,
     #[case] point_count: usize,
+    #[values(false, true)] host_clock: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let source = fix(NavFixTime::Receiver(test_util::t_ms(0)));
+    let time = |offset_ms| {
+        if host_clock {
+            NavFixTime::Host(test_util::t_ms(offset_ms))
+        } else {
+            NavFixTime::Receiver(test_util::t_ms(offset_ms))
+        }
+    };
+    let source = fix(time(0));
     let mut recorder = NavFileBuilder::new().open();
     recorder.add(source);
-    recorder.add_satellite_usage_report(usage(NavFixTime::Receiver(test_util::t_ms(offset_ms))));
-    recorder.add_satellite_observation_report(observations(NavFixTime::Receiver(test_util::t_ms(
-        offset_ms,
-    ))));
+    recorder.add_satellite_usage_report(usage(time(offset_ms)));
+    recorder.add_satellite_observation_report(observations(time(offset_ms)));
     let file = recorder.finish()?;
     assert_eq!(file.nav_points().len(), point_count);
     assert_eq!(file.nav_points()[0].fix, source);
@@ -132,6 +138,108 @@ fn sparse_polling_preserves_source_fixes_and_report_times() -> Result<(), Box<dy
         }
     }
     assert_eq!(test_util::round_trip(&file)?, file);
+    Ok(())
+}
+
+struct HostPolls {
+    usage_ms: &'static [i64],
+    observation_ms: &'static [i64],
+}
+
+#[rstest]
+#[case::usage_only(HostPolls { usage_ms: &[2000], observation_ms: &[] })]
+#[case::observation_only(HostPolls { usage_ms: &[], observation_ms: &[2000] })]
+#[case::equal_time_kinds(HostPolls { usage_ms: &[2000], observation_ms: &[2000] })]
+#[case::distinct_times(HostPolls { usage_ms: &[9000], observation_ms: &[1000] })]
+fn host_only_orphans_preserve_times_and_interpolation_fractions(
+    #[case] polls: HostPolls,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let sources = [0, 10_000].map(|time_ms| {
+        NavFix::builder()
+            .time(NavFixTime::Host(test_util::t_ms(time_ms)))
+            .lat(Angle::degrees(0.0))
+            .lon(Angle::degrees(time_ms as f64 / 1000.0))
+            .build()
+    });
+    let mut recorder = NavFileBuilder::new().open();
+    for source in sources {
+        recorder.add(source);
+    }
+    for &time_ms in polls.usage_ms {
+        recorder.add(usage(NavFixTime::Host(test_util::t_ms(time_ms))));
+    }
+    for &time_ms in polls.observation_ms {
+        recorder.add(observations(NavFixTime::Host(test_util::t_ms(time_ms))));
+    }
+    let recorded = recorder.finish()?;
+    let decoded = test_util::round_trip(&recorded)?;
+    assert_eq!(decoded, recorded);
+    let points = decoded.nav_points();
+    assert_eq!(points.first().expect("first source").fix, sources[0]);
+    assert_eq!(points.last().expect("last source").fix, sources[1]);
+    let mut carrier_times: Vec<_> = polls
+        .usage_ms
+        .iter()
+        .chain(polls.observation_ms)
+        .copied()
+        .collect();
+    carrier_times.sort_unstable();
+    carrier_times.dedup();
+    assert_eq!(points.len(), carrier_times.len() + sources.len());
+    for (carrier, time_ms) in points[1..points.len() - 1].iter().zip(carrier_times) {
+        let expected_time = test_util::t_ms(time_ms);
+        assert_eq!(carrier.fix.time, NavFixTime::Receiver(expected_time));
+        assert_eq!(carrier.fix.lat, Angle::degrees(0.0));
+        assert!((carrier.fix.lon.as_degrees() - time_ms as f64 / 1000.0).abs() < 1e-12);
+        assert_eq!(
+            carrier.fix.position_provenance,
+            Some(PositionProvenance::SdkSynthesized)
+        );
+        let evidence = carrier.satellite_evidence();
+        assert_eq!(
+            evidence.usage.len(),
+            usize::from(polls.usage_ms.contains(&time_ms))
+        );
+        assert_eq!(
+            evidence.observations.len(),
+            usize::from(polls.observation_ms.contains(&time_ms))
+        );
+        for (report_time, placement) in evidence
+            .usage
+            .iter()
+            .map(|report| (report.time, report.placement))
+            .chain(
+                evidence
+                    .observations
+                    .iter()
+                    .map(|report| (report.time, report.placement)),
+            )
+        {
+            assert_eq!(report_time, NavFixTime::Host(expected_time));
+            assert_eq!(placement.expect("placement").normalized_time, expected_time);
+        }
+        for report in &evidence.usage {
+            assert_eq!(
+                report.placement.expect("placement").input_order,
+                polls
+                    .usage_ms
+                    .iter()
+                    .position(|&time| time == time_ms)
+                    .expect("usage input") as u64
+            );
+        }
+        for report in &evidence.observations {
+            assert_eq!(
+                report.placement.expect("placement").input_order,
+                (polls.usage_ms.len()
+                    + polls
+                        .observation_ms
+                        .iter()
+                        .position(|&time| time == time_ms)
+                        .expect("observation input")) as u64
+            );
+        }
+    }
     Ok(())
 }
 
