@@ -157,7 +157,7 @@ impl NavFixTime {
 #[derive(Clone, Copy, Debug, PartialEq, bon::Builder)]
 #[non_exhaustive]
 pub struct NavFix {
-    /// Receiver and host timestamps recorded with this position.
+    /// Receiver and host timestamps recorded with this epoch.
     pub time: NavFixTime,
     /// WGS-84 latitude, expected in \[-90°, 90°].
     pub lat: Angle,
@@ -722,6 +722,18 @@ impl Meta {
 }
 
 impl NavFix {
+    /// Both coordinates encode as NaN.
+    /// Coordinate origin and optional measurements are absent.
+    pub fn status_only(time: NavFixTime, state: SolutionState) -> Self {
+        Self::builder()
+            .time(time)
+            .lat(Angle::degrees(f64::NAN))
+            .lon(Angle::degrees(f64::NAN))
+            .state(state)
+            .position_provenance(None)
+            .build()
+    }
+
     pub fn gps_time(&self) -> Option<DateTime<Utc>> {
         self.time.gps_time()
     }

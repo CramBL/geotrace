@@ -57,6 +57,15 @@ Heading and timestamp origins are independent of navigation state and coordinate
 `SolutionState::EstimatedOnly` means an estimate without measured GNSS contribution.
 A hybrid solution with GNSS contribution uses `SolutionState::Fix`.
 
+## Status without a position
+
+`NavFix::status_only(time, state)` records an explicit navigation state with absent coordinates and coordinate origin.
+Optional measurements remain unreported until assigned.
+The GTD v3 writer preserves both coordinates as NaN.
+The viewer treats two NaN coordinates with an explicit state as an unreported position.
+It may derive a display location from positioned epochs while preserving the absent source position.
+A recording containing only epochs without recorded coordinates has a timeline and statistics without map geometry.
+
 ## Satellite evidence values
 
 `SatelliteUsageReport` records used, unused or unknown membership for each constellation/PRN identity.

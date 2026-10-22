@@ -9,10 +9,11 @@ use gt_types::satellites::{
 use gt_types::time_types::{GpsTime, SysTime};
 use gt_types::tpv::TimePositionVelocity;
 use gt_types::{
-    MercPoint, NavPoint, NavigationMetadata, PositionProvenance, SatelliteCoverage,
-    SatelliteIdentity, SatelliteMembership, SatelliteReportMetadata, SatelliteScope,
-    SatelliteUsage, SatelliteUsageReport, SolutionDimension, SolutionMethod,
+    MercPoint, NavPoint, NavigationMetadata, PositionProvenance, RecordedLongitude,
+    SatelliteCoverage, SatelliteIdentity, SatelliteMembership, SatelliteReportMetadata,
+    SatelliteScope, SatelliteUsage, SatelliteUsageReport, SolutionDimension, SolutionMethod,
 };
+use gt_ui_types::DisplayCategory;
 use rstest::rstest;
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Length};
@@ -2492,4 +2493,157 @@ fn point_and_nearby_reports_have_independent_controls_after_resizing(
             harness.run();
         }
     }
+}
+
+fn positionless_status_recording(state: SolutionState) -> LoadedFile {
+    let mut status = point_at(2, None);
+    status.tpv = TimePositionVelocity::builder()
+        .time(status.tpv.time())
+        .lat(RecordedLatitude::from_degrees(f64::NAN))
+        .lon(RecordedLongitude::from_degrees(f64::NAN))
+        .build();
+    status.navigation.state = Some(state);
+    let mut before = point_at(0, None);
+    before.navigation.state = Some(SolutionState::Fix);
+    let mut after = point_at(5, None);
+    after.tpv = TimePositionVelocity::builder()
+        .time(after.tpv.time())
+        .lat(Latitude::new(FIXTURE_LAT))
+        .lon(Longitude::new(FIXTURE_LON + 0.002))
+        .build();
+    after.navigation.state = Some(SolutionState::Fix);
+    gt_test_utils::build_file(
+        "status.gtd",
+        &[before, status, after],
+        gt_test_utils::FileParts::default(),
+    )
+}
+
+#[rstest]
+#[case::fix(SolutionState::Fix, MapFixKind::UnreportedPosition, FIX_STRONG_BLUE)]
+#[case::loss(SolutionState::NoFix, MapFixKind::NavigationLoss, FIX_LOST_RED)]
+#[case::estimated(
+    SolutionState::EstimatedOnly,
+    MapFixKind::Estimated,
+    FIX_ESTIMATED_PURPLE
+)]
+#[case::unknown(
+    SolutionState::Unknown,
+    MapFixKind::UnreportedPosition,
+    FIX_UNKNOWN_GRAY
+)]
+fn a_positionless_epoch_uses_an_inferred_state_glyph(
+    #[case] state: SolutionState,
+    #[case] expected_kind: MapFixKind,
+    #[case] expected_color: Color32,
+) {
+    let file = positionless_status_recording(state);
+    let track = file.tracks.first().unwrap();
+    let status = track.points.get(1).expect("status or recovery epoch");
+    assert_eq!(status.map_fix_kind(), expected_kind);
+    assert!(status.is_navigation_estimate());
+    let glyph = ChevronFix::for_fix(status).expect("inferred status glyph");
+    assert_eq!(glyph.tint(false), expected_color);
+    assert_eq!(glyph.tint(true), expected_color);
+    assert!(matches!(
+        FixPlacement::resolve(track, PointIdx::new(1)),
+        FixPlacement::Placed(ResolvedPosition::Interpolated(_))
+    ));
+
+    let reference = test_util::point_ref(DataCategory::Tpv, 1);
+    let mut map = MapScene::of(vec![file])
+        .centred_on_fix(1)
+        .zoomed_to(18.0)
+        .render();
+    assert_eq!(
+        map.primary_hover_candidate_at(test_util::viewport_center()),
+        Some(reference)
+    );
+    map.draw_state()
+        .display_mask
+        .set_visible(DisplayCategory::GhostFixes, false);
+    assert_eq!(
+        map.primary_hover_candidate_at(test_util::viewport_center()),
+        None
+    );
+    assert!(!map.pin(reference));
+    map.draw_state()
+        .display_mask
+        .set_visible(DisplayCategory::GhostFixes, true);
+    assert_eq!(
+        map.primary_hover_candidate_at(test_util::viewport_center()),
+        Some(reference)
+    );
+    assert!(map.pin(reference));
+}
+
+#[rstest]
+#[case::dark(true)]
+#[case::light(false)]
+fn snapshot_the_pinned_positionless_epoch_shows_absent_and_derived_positions(
+    #[case] dark_mode: bool,
+) {
+    let file = positionless_status_recording(SolutionState::NoFix);
+    let reference = test_util::point_ref(DataCategory::Tpv, 1);
+    let mut map = MapScene::of(vec![file])
+        .theme(dark_mode)
+        .pinned(reference)
+        .render();
+    assert!(map.harness.inner.query_by_label("Position").is_some());
+    assert!(map.harness.inner.query_by_label("No fix").is_some());
+    assert!(map.harness.inner.query_by_label("Drawn at").is_some());
+    assert!(
+        map.harness
+            .inner
+            .query_by_label("Derived from recorded positions")
+            .is_some()
+    );
+    assert!(map.harness.inner.query_by_label("Lat").is_none());
+    assert!(map.harness.inner.query_by_label("Lon").is_none());
+    assert!(map.harness.inner.query_by_label("Sky").is_none());
+    assert!(map.harness.inner.query_by_label("Details").is_some());
+    map.snapshot(&format!(
+        "positionless_status_window_{}",
+        if dark_mode { "dark" } else { "light" }
+    ));
+}
+
+#[test]
+fn a_status_only_loss_hover_distinguishes_the_last_fix_from_the_observed_loss() {
+    let file = positionless_status_recording(SolutionState::NoFix);
+    let track = file.tracks.first().unwrap();
+    let loss = track.generated_markers.first().unwrap();
+    let recovery = track
+        .generated_markers
+        .get(1)
+        .expect("status or recovery epoch");
+    assert_eq!(
+        crate::generated_marker_renderer::generated_marker_header(&recovery.kind),
+        "GNSS fix regained (5s since last Fix)"
+    );
+    let mut harness = test_util::harness_builder()
+        .size(egui::vec2(420.0, 340.0))
+        .ui(|ui| {
+            crate::generated_marker_renderer::show_hover_label(ui, track, loss, None);
+        });
+    harness.run();
+    assert!(
+        harness
+            .inner
+            .query_by_label("Last Fix epoch before observed loss")
+            .is_some()
+    );
+    assert!(
+        harness
+            .inner
+            .query_by_label(&fixture_epoch().format(UTC_SECOND_FORMAT).to_string())
+            .is_some()
+    );
+    let loss_observed = fixture_epoch() + chrono::Duration::seconds(2);
+    assert!(
+        harness
+            .inner
+            .query_by_label(&loss_observed.format(UTC_SECOND_FORMAT).to_string())
+            .is_none()
+    );
 }

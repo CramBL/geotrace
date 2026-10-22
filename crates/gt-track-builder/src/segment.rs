@@ -537,7 +537,7 @@ pub fn compute_track_metadata(
         tpv_count: points.len(),
         invalid_position_count: points
             .iter()
-            .filter(|point| point.tpv.position().is_none())
+            .filter(|point| point.tpv.position().is_none() && !point.has_unreported_position())
             .count(),
         satellite_report_count: points
             .iter()
@@ -588,6 +588,7 @@ fn place_track_fixes(points: &[NavPoint], placements: &mut FixPlacements, rule: 
         PlacementPass::CoordinateOutOfRange,
         rule,
     );
+    place_fixes(points, placements, PlacementPass::UnreportedPosition, rule);
     place_fixes(points, placements, PlacementPass::Navigation, rule);
 }
 
@@ -949,13 +950,17 @@ impl TimedArc {
 enum PlacementPass {
     CoordinateOutOfRange,
     Navigation,
+    UnreportedPosition,
 }
 
 impl PlacementPass {
     fn is_target(self, point: &NavPoint, rule: FixPlacementRule) -> bool {
         match self {
             Self::Navigation => point.tpv.position().is_some() && rule.requires_placement(point),
-            Self::CoordinateOutOfRange => point.tpv.position().is_none(),
+            Self::CoordinateOutOfRange => {
+                point.tpv.position().is_none() && !point.has_unreported_position()
+            }
+            Self::UnreportedPosition => point.has_unreported_position(),
         }
     }
 
@@ -967,7 +972,7 @@ impl PlacementPass {
                     && point.resolved_navigation_state().state != SolutionState::NoFix
             }
             Self::Navigation => point.tpv.position().is_some() && point.fix_count() > 0,
-            Self::CoordinateOutOfRange => point.tpv.position().is_some(),
+            Self::CoordinateOutOfRange | Self::UnreportedPosition => point.tpv.position().is_some(),
         }
     }
 
@@ -1018,7 +1023,7 @@ impl PlacementPass {
             Self::Navigation => interpolated,
             // Any anchor places a fix out of range better than none does: it
             // has no recorded position to be left at.
-            Self::CoordinateOutOfRange => interpolated
+            Self::CoordinateOutOfRange | Self::UnreportedPosition => interpolated
                 .or_else(|| before.or(after).map(|(_, position)| position.coordinates())),
         }?;
         Some(ResolvedPosition::interpolated(latitude, longitude))
@@ -1038,6 +1043,9 @@ fn place_fixes(
     kind: PlacementPass,
     rule: FixPlacementRule,
 ) {
+    if !points.iter().any(|point| kind.is_target(point, rule)) {
+        return;
+    }
     let anchors = nearest_anchors(points, |point| kind.is_anchor(point, rule));
 
     let placed: Vec<(usize, ResolvedPosition)> = points

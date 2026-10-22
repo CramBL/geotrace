@@ -409,11 +409,14 @@ impl MetricProvider for TrackProvider<'_> {
                 .tpv
                 .sys_time()
                 .map(SysTime::as_secs_f64_with_subseconds),
+            QueryMetric::Lat | QueryMetric::Lon if point.has_unreported_position() => None,
             QueryMetric::Lat => Some(point.tpv.lat().as_written()),
             QueryMetric::Lon => Some(point.tpv.lon().as_written()),
-            QueryMetric::InvalidCoordinates => {
-                Some(f64::from(point.tpv.invalid_coordinate_count()))
-            }
+            QueryMetric::InvalidCoordinates => Some(if point.has_unreported_position() {
+                0.0
+            } else {
+                f64::from(point.tpv.invalid_coordinate_count())
+            }),
             QueryMetric::Velocity => point.tpv.velocity().map(|v| v.get::<meter_per_second>()),
             QueryMetric::Heading => point.tpv.heading().map(|h| h.get::<degree>()),
             // Derived by the evaluator (`gt_query::derived_accel`), never
@@ -637,7 +640,7 @@ mod tests {
     use gt_types::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
     use gt_types::time_types::GpsTime;
     use gt_types::tpv::TimePositionVelocity;
-    use gt_types::{FileIdx, TrackIdx, TrackRef};
+    use gt_types::{FileIdx, SolutionState, TrackIdx, TrackRef};
     use rstest::rstest;
 
     use super::*;
@@ -778,24 +781,34 @@ mod tests {
     }
 
     #[rstest]
-    #[case::both_axes_in_range(55.5, 12.25, 0.0)]
-    #[case::a_latitude_of_nan(f64::NAN, 12.25, 1.0)]
-    #[case::both_axes_out_of_range(91.0, -181.0, 2.0)]
+    #[case::both_axes_in_range(55.5, 12.25, None, 0.0)]
+    #[case::a_latitude_of_nan(f64::NAN, 12.25, None, 1.0)]
+    #[case::both_axes_out_of_range(91.0, -181.0, None, 2.0)]
+    #[case::unreported(f64::NAN, f64::NAN, Some(SolutionState::NoFix), 0.0)]
+    #[case::unclassified(f64::NAN, f64::NAN, None, 2.0)]
     fn invalid_coordinates_counts_the_axes_outside_their_range(
         #[case] lat_degrees: f64,
         #[case] lon_degrees: f64,
+        #[case] state: Option<SolutionState>,
         #[case] expected: f64,
     ) {
-        let points = test_util::points_at_recorded_coordinates(&[(
+        let mut points = test_util::points_at_recorded_coordinates(&[(
             RecordedLatitude::from_degrees(lat_degrees),
             RecordedLongitude::from_degrees(lon_degrees),
         )]);
+        let point = points.first_mut().unwrap();
+        point.navigation.state = state;
+        let position_unreported = point.has_unreported_position();
         let provider = TrackProvider::new(&points, &[], None);
 
         assert_eq!(
             provider.value(QueryMetric::InvalidCoordinates, 0),
             Some(expected)
         );
+        if position_unreported {
+            assert_eq!(provider.value(QueryMetric::Lat, 0), None);
+            assert_eq!(provider.value(QueryMetric::Lon, 0), None);
+        }
     }
 
     /// The query the metric exists for: the fixes with an out-of-range

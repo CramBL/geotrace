@@ -953,11 +953,15 @@ const FIT_FILL: f64 = 0.8;
 #[cfg(test)]
 mod tests {
     use chrono::{Duration, TimeZone, Utc};
+    use gt_track_builder::{FixPlacementRule, segment};
     use gt_types::fixtures::FixKind;
     use gt_types::markers::{
         CustomMarker, EventMarker, GeneratedMarker, GeneratedMarkerKind, MarkerIcon,
     };
-    use gt_types::{NavPoint, PositionProvenance, SolutionState};
+    use gt_types::{
+        NavPoint, PositionProvenance, RecordedLatitude, RecordedLongitude, SolutionState,
+        TimePositionVelocity,
+    };
     use gt_ui_types::{DrawLayer, MapEligibilityResult, TrackRanges};
     use proptest::prelude::*;
     use rstest::rstest;
@@ -1189,13 +1193,37 @@ mod tests {
         assert_eq!(allocations.count_total, 0);
     }
 
+    #[derive(Clone, Copy, Debug)]
+    enum NavigationCase {
+        CoordinateOutOfRange,
+        EstimatedOnly,
+        FixWithZeroCount,
+        HeadinglessUnknown,
+        Legacy,
+        LossWithPositiveCount,
+        Positionless(SolutionState),
+        Synthesized,
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]
 
         #[test]
         fn compiled_spatial_presence_matches_uncompiled_map_presence(
             policy_bits in any::<u16>(),
-            navigation_case in 0_u8..6,
+            navigation_case in prop_oneof![
+                Just(NavigationCase::Legacy),
+                Just(NavigationCase::HeadinglessUnknown),
+                Just(NavigationCase::FixWithZeroCount),
+                Just(NavigationCase::LossWithPositiveCount),
+                Just(NavigationCase::EstimatedOnly),
+                Just(NavigationCase::Synthesized),
+                Just(NavigationCase::Positionless(SolutionState::Fix)),
+                Just(NavigationCase::Positionless(SolutionState::Unknown)),
+                Just(NavigationCase::Positionless(SolutionState::NoFix)),
+                Just(NavigationCase::Positionless(SolutionState::EstimatedOnly)),
+                Just(NavigationCase::CoordinateOutOfRange),
+            ],
         ) {
             let flag = |bit| policy_bits & (1_u16 << bit) != 0_u16;
             let file_enabled = flag(0);
@@ -1209,31 +1237,55 @@ mod tests {
             let custom_displayed = flag(8);
             let generated_displayed = flag(9);
             let event_displayed = flag(10);
-            let query_hides_first_fix = flag(11);
+            let query_hides_selected_fix = flag(11);
             let generated_kind_hidden = flag(12);
             let event_path_hidden = flag(13);
             let limit_time = flag(14);
             let track_filter_rejects = flag(15);
 
             let mut files = vec![test_util::a_recording_with_every_marker_kind()];
-            let point = &mut files[0].tracks[0].points[0];
+            let selected_point_index = usize::from(matches!(navigation_case,
+                NavigationCase::Positionless(_) | NavigationCase::CoordinateOutOfRange));
+            let point = &mut files[0].tracks[0].points[selected_point_index];
             match navigation_case {
-                0 => {},
-                1 => {
+                NavigationCase::Legacy => {},
+                NavigationCase::HeadinglessUnknown => {
                     *point = gt_types::fixtures::nav_point(test_util::epoch(),
                         Latitude::new(55.0), Longitude::new(12.0),
                         FixKind::GhostWithoutHeading);
                 }
-                2 => {
+                NavigationCase::FixWithZeroCount => {
                     point.navigation.state = Some(SolutionState::Fix);
                     point.navigation.used_count = Some(0);
                 }
-                3 => {
+                NavigationCase::LossWithPositiveCount => {
                     point.navigation.state = Some(SolutionState::NoFix);
                     point.navigation.used_count = Some(12);
                 }
-                4 => point.navigation.state = Some(SolutionState::EstimatedOnly),
-                _ => point.navigation.position_provenance = Some(PositionProvenance::SdkSynthesized),
+                NavigationCase::EstimatedOnly => point.navigation.state = Some(SolutionState::EstimatedOnly),
+                NavigationCase::Synthesized => point.navigation.position_provenance = Some(PositionProvenance::SdkSynthesized),
+                NavigationCase::Positionless(_) | NavigationCase::CoordinateOutOfRange => {
+                    let (latitude, longitude) = if matches!(navigation_case, NavigationCase::CoordinateOutOfRange) {
+                        (91.0, 181.0)
+                    } else {
+                        (f64::NAN, f64::NAN)
+                    };
+                    *point = NavPoint::new(
+                        TimePositionVelocity::builder()
+                            .time(point.tpv.time())
+                            .lat(RecordedLatitude::from_degrees(latitude))
+                            .lon(RecordedLongitude::from_degrees(longitude))
+                            .build(),
+                        None,
+                    );
+                    point.navigation.state = Some(match navigation_case {
+                        NavigationCase::Positionless(state) => state,
+                        _ => SolutionState::NoFix,
+                    });
+                    let track = &mut files[0].tracks[0];
+                    track.geometry = segment::measure_track_geometry(
+                        &track.points, FixPlacementRule::default());
+                }
             }
             let track_ref = test_util::track0();
             let track = &files[0].tracks[0];
@@ -1270,10 +1322,10 @@ mod tests {
                 event_marker_visibility.set_hidden(track_ref, std::iter::once(event_root));
             }
 
-            let query_matches = query_hides_first_fix.then(|| QueryMatches {
+            let query_matches = query_hides_selected_fix.then(|| QueryMatches {
                 hidden: TrackRanges::from_iter([(
                     track_ref,
-                    std::iter::once(0..1).collect(),
+                    std::iter::once(selected_point_index..selected_point_index + 1).collect(),
                 )]),
                 ..QueryMatches::default()
             });

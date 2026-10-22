@@ -1,7 +1,6 @@
 use crate::coordinates::{Latitude, Longitude};
 use crate::mercator::{self, MercPoint};
-use crate::navigation::NavigationMetadata;
-use crate::navigation::{PositionProvenance, SolutionState};
+use crate::navigation::{NavigationMetadata, PositionProvenance, SolutionState};
 use crate::satellite_evidence::SatelliteEvidence;
 use crate::satellites::Satellites;
 use crate::tpv::TimePositionVelocity;
@@ -24,11 +23,12 @@ impl FixQuality {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapFixKind {
-    Recorded,
-    NavigationLoss,
-    Estimated,
-    Synthesized,
     CoordinateOutOfRange,
+    Estimated,
+    NavigationLoss,
+    Recorded,
+    Synthesized,
+    UnreportedPosition,
 }
 
 /// Coordinates with their Web Mercator projection, held together so the two
@@ -140,8 +140,15 @@ impl NavPoint {
         }
     }
 
+    /// Two NaN coordinates represent an unreported position when an explicit state is present.
+    pub fn has_unreported_position(&self) -> bool {
+        self.tpv.lat().as_written().is_nan()
+            && self.tpv.lon().as_written().is_nan()
+            && self.navigation.state.is_some()
+    }
+
     pub fn map_fix_kind(&self) -> MapFixKind {
-        if self.tpv.position().is_none() {
+        if self.tpv.position().is_none() && !self.has_unreported_position() {
             MapFixKind::CoordinateOutOfRange
         } else if self.navigation.position_provenance == Some(PositionProvenance::SdkSynthesized) {
             MapFixKind::Synthesized
@@ -149,6 +156,9 @@ impl NavPoint {
             match self.resolved_navigation_state().state {
                 SolutionState::NoFix => MapFixKind::NavigationLoss,
                 SolutionState::EstimatedOnly => MapFixKind::Estimated,
+                SolutionState::Fix | SolutionState::Unknown if self.has_unreported_position() => {
+                    MapFixKind::UnreportedPosition
+                }
                 SolutionState::Fix | SolutionState::Unknown => MapFixKind::Recorded,
             }
         }
@@ -157,7 +167,10 @@ impl NavPoint {
     pub fn is_navigation_estimate(&self) -> bool {
         matches!(
             self.map_fix_kind(),
-            MapFixKind::NavigationLoss | MapFixKind::Estimated | MapFixKind::Synthesized
+            MapFixKind::NavigationLoss
+                | MapFixKind::Estimated
+                | MapFixKind::Synthesized
+                | MapFixKind::UnreportedPosition
         )
     }
 
@@ -168,14 +181,16 @@ impl NavPoint {
 
 #[cfg(test)]
 mod tests {
+    use chrono::{DateTime, Utc};
+    use rstest::rstest;
+    use uom::si::angle::degree;
+    use uom::si::f64::Angle;
+
     use super::*;
-    use crate::coordinates::{Latitude, Longitude};
+    use crate::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
     use crate::satellites::{Constellation, Satellite, Satellites};
     use crate::time_types::GpsTime;
     use crate::tpv::TimePositionVelocity;
-    use chrono::Utc;
-    use uom::si::angle::degree;
-    use uom::si::f64::Angle;
 
     #[test]
     fn test_nav_point_fix_counts() {
@@ -202,5 +217,31 @@ mod tests {
         np.satellites = Some(sats);
         assert_eq!(np.fix_count(), 1);
         assert_eq!(np.total_satellites(), 2);
+    }
+
+    #[rstest]
+    #[case::fix(Some(SolutionState::Fix), f64::NAN, f64::NAN, true)]
+    #[case::loss(Some(SolutionState::NoFix), f64::NAN, f64::NAN, true)]
+    #[case::estimated(Some(SolutionState::EstimatedOnly), f64::NAN, f64::NAN, true)]
+    #[case::unknown(Some(SolutionState::Unknown), f64::NAN, f64::NAN, true)]
+    #[case::unclassified(None, f64::NAN, f64::NAN, false)]
+    #[case::missing_latitude(Some(SolutionState::NoFix), f64::NAN, 12.0, false)]
+    #[case::missing_longitude(Some(SolutionState::NoFix), 55.0, f64::NAN, false)]
+    #[case::out_of_range(Some(SolutionState::NoFix), 91.0, 181.0, false)]
+    #[case::positioned(Some(SolutionState::NoFix), 55.0, 12.0, false)]
+    fn an_unreported_position_requires_two_nan_coordinates_and_an_explicit_state(
+        #[case] state: Option<SolutionState>,
+        #[case] latitude: f64,
+        #[case] longitude: f64,
+        #[case] expected: bool,
+    ) {
+        let tpv = TimePositionVelocity::builder()
+            .time(GpsTime::from_utc(DateTime::UNIX_EPOCH))
+            .lat(RecordedLatitude::from_degrees(latitude))
+            .lon(RecordedLongitude::from_degrees(longitude))
+            .build();
+        let mut point = NavPoint::new(tpv, None);
+        point.navigation.state = state;
+        assert_eq!(point.has_unreported_position(), expected);
     }
 }

@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Recordings:** Navigation status and interval statistics remain available for epochs without recorded coordinates.
 - **Recordings:** GTD v3 navigation metadata, independent satellite reports and DOP metrics.
 
 ### Changed

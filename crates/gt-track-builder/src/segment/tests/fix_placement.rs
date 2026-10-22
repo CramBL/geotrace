@@ -4,7 +4,10 @@ use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::fixtures::{self, FixKind};
 use gt_types::nav_point::NavPoint;
 use gt_types::track::{FileSource, TrackGeometry};
-use gt_types::{PositionProvenance, SolutionState};
+use gt_types::{
+    GpsTime, PositionProvenance, RecordedLatitude, RecordedLongitude, ResolvedPosition,
+    SolutionState, TimePositionVelocity,
+};
 use rstest::rstest;
 
 use crate::segment::{self, FileMeta, FixPlacementRule, SegmentationConfig};
@@ -298,7 +301,7 @@ fn navigation_placement_preserves_recorded_facts(
     let geometry = segment::measure_track_geometry(&points, FixPlacementRule::default());
     let resolved = geometry.measured().unwrap().resolved_positions[1];
     assert_eq!(
-        matches!(resolved, gt_types::ResolvedPosition::Interpolated(_)),
+        matches!(resolved, ResolvedPosition::Interpolated(_)),
         interpolated
     );
     let (lat, lon) = resolved.coordinates();
@@ -390,7 +393,7 @@ fn legacy_rules_reproduce_headingless_reportless_placement(
     let geometry = segment::measure_track_geometry(&points, rule);
     let position = geometry.measured().unwrap().resolved_positions[1];
     assert_eq!(
-        matches!(position, gt_types::ResolvedPosition::Interpolated(_)),
+        matches!(position, ResolvedPosition::Interpolated(_)),
         interpolated
     );
     let expected = if interpolated {
@@ -401,4 +404,52 @@ fn legacy_rules_reproduce_headingless_reportless_placement(
     let (lat, lon) = position.coordinates();
     assert!((lat.as_degrees() - expected.0).abs() < PLACEMENT_TOLERANCE_DEGREES);
     assert!((lon.as_degrees() - expected.1).abs() < PLACEMENT_TOLERANCE_DEGREES);
+}
+
+#[rstest]
+#[case::between_anchors(Some(0), Some(5), 2.0)]
+#[case::preceding_anchor(Some(0), None, 0.0)]
+#[case::following_anchor(None, Some(5), 5.0)]
+#[case::equal_time_anchors(Some(2), Some(2), 2.0)]
+fn a_positionless_status_uses_derived_geometry_from_available_anchors(
+    #[case] before_second: Option<i64>,
+    #[case] after_second: Option<i64>,
+    #[case] expected_longitude: f64,
+) {
+    let mut status = NavPoint::new(
+        TimePositionVelocity::builder()
+            .time(GpsTime::from_utc(test_util::time_at_second(2)))
+            .lat(RecordedLatitude::from_degrees(f64::NAN))
+            .lon(RecordedLongitude::from_degrees(f64::NAN))
+            .build(),
+        None,
+    );
+    status.navigation.state = Some(SolutionState::NoFix);
+    let anchor = |second| measured_fix(second, Latitude::new(0.0), Longitude::new(second as f64));
+    let points: Vec<_> = before_second
+        .into_iter()
+        .map(anchor)
+        .chain(std::iter::once(status))
+        .chain(after_second.into_iter().map(anchor))
+        .collect();
+    for rule in [
+        FixPlacementRule::MissingHeading,
+        FixPlacementRule::MissingHeadingAndNothingInFix,
+        FixPlacementRule::SynthesizedOrHeadinglessNoFix,
+    ] {
+        let geometry = segment::measure_track_geometry(&points, rule);
+        let measured = geometry.measured().unwrap();
+        let status_index = usize::from(before_second.is_some());
+        let resolved = measured
+            .resolved_positions
+            .get(status_index)
+            .expect("status epoch");
+        assert!(matches!(resolved, ResolvedPosition::Interpolated(_)));
+        let (latitude, longitude) = resolved.coordinates();
+        assert!(latitude.as_degrees().abs() < 1e-9);
+        assert!((longitude.as_degrees() - expected_longitude).abs() < 1e-9);
+        let point = points.get(status_index).expect("status epoch");
+        assert!(point.has_unreported_position());
+        assert_eq!(point.navigation.position_provenance, None);
+    }
 }
