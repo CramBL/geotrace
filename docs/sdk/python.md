@@ -30,6 +30,7 @@ requires a Rust toolchain.
 In [`sdk/python/geotrace-py/examples/`](../../sdk/python/geotrace-py/examples/).
 Run with `python <name>.py`.
 
+- [`navigation_only`](../../sdk/python/geotrace-py/examples/navigation_only.py): record positions, a status without position, and navigation summaries.
 - [`write_basic`](../../sdk/python/geotrace-py/examples/write_basic.py): minimal write workflow: add fixes, finish, write to disk.
 - [`read_file`](../../sdk/python/geotrace-py/examples/read_file.py): read a `.gtd` file and print a content summary.
 - [`with_satellites`](../../sdk/python/geotrace-py/examples/with_satellites.py): pair each fix with a satellite visibility report.
@@ -42,6 +43,28 @@ Run with `python <name>.py`.
 - [`from_csv`](../../sdk/python/geotrace-py/examples/from_csv.py): convert CSV rows into a `.gtd` file.
 - [`from_multiple_sources`](../../sdk/python/geotrace-py/examples/from_multiple_sources.py): merge fixes and events from separate sources, interpolating event positions.
 - [`gold_dataset`](../../sdk/python/geotrace-py/examples/gold_dataset.py): build the cross-SDK reference file from shared fixtures and verify the round-trip.
+
+## Basic navigation recording
+
+Start with [`navigation_only`](../../sdk/python/geotrace-py/examples/navigation_only.py) for a complete runnable producer using pre-parsed navigation facts.
+It writes a positioned Fix with eight used satellites and HDOP 0.9, a status-only NoFix two seconds later, and a positioned Fix at five seconds.
+No satellite identities, report builders, scopes or coverage flags are required.
+Set explicit Fix or NoFix from the source's validity indication.
+Omitted state is unreported: coordinates alone do not establish a GNSS fix.
+When explicit state is unavailable, a genuinely global used count establishes Fix when positive and NoFix when zero.
+An omitted count remains absent.
+Use `heading` for direction of travel when course over ground is appropriate.
+Course over ground is distinct from physical compass or antenna heading at rest.
+Ground speed uses metres per second: convert km/h or knots before assigning the basic numeric speed field.
+HDOP is dimensionless, while `eph_m` is independently reported horizontal accuracy in metres.
+
+```python
+writer.add(NavFix(None, None, gps_time=time, state=SolutionState.NO_FIX))
+```
+
+Both coordinates must be `None` for a status without position, with an explicit state and a timezone-aware timestamp.
+Optional counts and DOP remain ordinary keywords on the same `NavFix`.
+Coordinate properties return NaN on read-back, and coordinate origin is unreported.
 
 ## Navigation and independent polling
 

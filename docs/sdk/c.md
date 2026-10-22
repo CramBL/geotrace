@@ -105,6 +105,7 @@ The `target` and `message` pointers are valid only for the duration of the call.
 In [`sdk/c/examples/`](../../sdk/c/examples/). Configure the C SDK with
 `-DGEOTRACE_C_BUILD_EXAMPLES=ON` to build them.
 
+- [`navigation_only`](../../sdk/c/examples/navigation_only.c): record positions, a status without position, and navigation summaries.
 - [`write_basic`](../../sdk/c/examples/write_basic.c): minimal write workflow: add fixes, finish, write to disk.
 - [`read_file`](../../sdk/c/examples/read_file.c): open a `.gtd` file and print a content summary.
 - [`with_satellites`](../../sdk/c/examples/with_satellites.c): pair each fix with a per-satellite signal report.
@@ -113,6 +114,29 @@ In [`sdk/c/examples/`](../../sdk/c/examples/). Configure the C SDK with
 - [`from_csv`](../../sdk/c/examples/from_csv.c): convert CSV rows into a `.gtd` file.
 - [`from_multiple_sources`](../../sdk/c/examples/from_multiple_sources.c): merge fixes and events from separate sources, interpolating event positions.
 - [`gold_dataset`](../../sdk/c/examples/gold_dataset.c): build the cross-SDK reference file from shared fixtures, write it, and check the metadata and the counts of the built file handle.
+
+## Basic navigation recording
+
+Start with [`navigation_only`](../../sdk/c/examples/navigation_only.c) for a complete runnable producer using pre-parsed navigation facts.
+It writes a positioned Fix with eight used satellites and HDOP 0.9, a status-only NoFix two seconds later, and a positioned Fix at five seconds.
+No satellite identities, report builders, scopes or coverage flags are required.
+Set explicit Fix or NoFix from the source's validity indication.
+Omitted state is unreported: coordinates alone do not establish a GNSS fix.
+When explicit state is unavailable, a genuinely global used count establishes Fix when positive and NoFix when zero.
+An omitted count remains absent.
+Use `heading` for direction of travel when course over ground is appropriate.
+Course over ground is distinct from physical compass or antenna heading at rest.
+Ground speed uses metres per second: convert km/h or knots before assigning the basic numeric speed field.
+HDOP is dimensionless, while `eph_m` is independently reported horizontal accuracy in metres.
+
+```c
+GtdNavFixV2 status = gtd_nav_fix_v2_status_only_init(GTD_SOLUTION_STATE_NO_FIX);
+status.gps_time = time;
+gtd_builder_add_nav_fix_v2(builder, &status);
+```
+
+Set optional counts and DOP on the same `GtdNavFixV2` when reported.
+Both clocks are initially absent: ingestion validates the supplied clock and raw state tag.
 
 ## Navigation and independent polling
 

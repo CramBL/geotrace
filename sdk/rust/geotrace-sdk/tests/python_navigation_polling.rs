@@ -1,12 +1,12 @@
 use std::error::Error;
 use std::path::Path;
 
-use chrono::{TimeZone as _, Utc};
+use chrono::{Duration, TimeZone as _, Utc};
 use geotrace_sdk::{
     Angle, Constellation, ConstellationSet, NavFile, NavFix, NavFixTime, PositionProvenance,
     SatelliteCoverage, SatelliteIdentity, SatelliteMembership, SatelliteObservation,
     SatelliteObservationReport, SatelliteReportPlacement, SatelliteScope, SatelliteUsage,
-    SatelliteUsageReport, SolutionDimension, SolutionMethod, SolutionState,
+    SatelliteUsageReport, SolutionState, Velocity,
 };
 
 #[test]
@@ -22,34 +22,45 @@ fn python_navigation_only_example_preserves_reported_facts() -> Result<(), Box<d
         return Ok(());
     }
     let start = Utc
-        .timestamp_opt(1_700_000_000, 0)
+        .timestamp_opt(1_792_670_400, 0)
         .single()
         .ok_or("timestamp")?;
     let file = NavFile::open(directory.join("navigation_only.gtd"))?;
     let expected = NavFix::builder()
-        .time(NavFixTime::Host(start))
-        .lat(Angle::degrees(0.0))
-        .lon(Angle::degrees(0.0))
+        .time(NavFixTime::Receiver(start))
+        .lat(Angle::degrees(55.67))
+        .lon(Angle::degrees(12.56))
         .state(SolutionState::Fix)
-        .method(SolutionMethod::RtkFixed)
-        .dimension(SolutionDimension::ThreeD)
         .used_count(8u32)
         .hdop(0.9)
-        .vdop(1.1)
-        .pdop(1.3)
+        .heading(Angle::degrees(75.0))
+        .speed(Velocity::meter_per_second(4.2))
         .build();
     let points = file.nav_points();
-    assert_eq!(points.len(), 2);
+    assert_eq!(points.len(), 3);
     assert_eq!(points[0].fix, expected);
+    let status = points[1].fix;
+    assert!(status.lat.as_degrees().is_nan());
+    assert!(status.lon.as_degrees().is_nan());
+    assert_eq!(
+        status.time,
+        NavFixTime::Receiver(start + Duration::seconds(2))
+    );
+    assert_eq!(status.state, Some(SolutionState::NoFix));
+    assert_eq!(status.position_provenance, None);
+    assert_eq!(status.used_count, None);
+    assert_eq!(status.heading, None);
+    assert_eq!(status.speed, None);
+    assert_eq!(status.eph_m, None);
+    assert_eq!((status.hdop, status.vdop, status.pdop), (None, None, None));
     let expected = NavFix::builder()
-        .time(NavFixTime::Host(start))
-        .lat(Angle::degrees(0.0))
-        .lon(Angle::degrees(0.0))
-        .state(SolutionState::Unknown)
-        .used_count(0u32)
-        .position_provenance(None)
+        .time(NavFixTime::Receiver(start + Duration::seconds(5)))
+        .lat(Angle::degrees(55.671))
+        .lon(Angle::degrees(12.562))
+        .state(SolutionState::Fix)
+        .used_count(9u32)
         .build();
-    assert_eq!(points[1].fix, expected);
+    assert_eq!(points[2].fix, expected);
     assert!(
         points
             .iter()

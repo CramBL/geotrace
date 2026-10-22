@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 
 set(GEOTRACE_CPP_EXAMPLES
     write_basic
+    navigation_only
     read_file
     with_satellites
     event_markers
@@ -41,7 +42,7 @@ endforeach()
 # Register self-contained examples as `ctest` smoke tests so CI runs them.
 # `gold_dataset` needs the CSV fixtures and writes into the source tree, so it is
 # exercised separately by the `test-gold-cpp` recipe and excluded here.
-foreach(example write_basic read_file with_satellites event_markers channels typed_events from_csv
+foreach(example navigation_only write_basic read_file with_satellites event_markers channels typed_events from_csv
                 from_multiple_sources navigation_polling)
     add_test(NAME example_${example} COMMAND ${example})
     set_tests_properties(example_${example} PROPERTIES
@@ -49,14 +50,22 @@ foreach(example write_basic read_file with_satellites event_markers channels typ
     )
 endforeach()
 
-add_executable(navigation_polling_no_exceptions navigation_polling.cpp)
-target_link_libraries(navigation_polling_no_exceptions PRIVATE GeoTrace::Cpp geotrace_sanitizers)
-if(MSVC)
-    target_compile_options(navigation_polling_no_exceptions PRIVATE /EHs-c-)
-else()
-    target_compile_options(navigation_polling_no_exceptions PRIVATE -fno-exceptions)
-endif()
-add_test(NAME example_navigation_polling_no_exceptions COMMAND navigation_polling_no_exceptions)
-set_tests_properties(example_navigation_polling_no_exceptions PROPERTIES
-    ENVIRONMENT "${GEOTRACE_SANITIZE_TEST_ENVIRONMENT}"
-)
+foreach(example navigation_polling navigation_only)
+    set(no_exceptions_target "${example}_no_exceptions")
+    add_executable(${no_exceptions_target} ${example}.cpp)
+    target_link_libraries(${no_exceptions_target} PRIVATE GeoTrace::Cpp geotrace_sanitizers)
+    if(MSVC)
+        target_compile_options(${no_exceptions_target} PRIVATE /EHs-c-)
+    else()
+        target_compile_options(${no_exceptions_target} PRIVATE -fno-exceptions)
+    endif()
+    add_test(NAME example_${no_exceptions_target} COMMAND ${no_exceptions_target})
+    foreach(target ${example} ${no_exceptions_target})
+        set(working_directory "${CMAKE_CURRENT_BINARY_DIR}/${target}-output")
+        file(MAKE_DIRECTORY "${working_directory}")
+        set_tests_properties(example_${target} PROPERTIES
+            WORKING_DIRECTORY "${working_directory}"
+            ENVIRONMENT "${GEOTRACE_SANITIZE_TEST_ENVIRONMENT}"
+        )
+    endforeach()
+endforeach()
