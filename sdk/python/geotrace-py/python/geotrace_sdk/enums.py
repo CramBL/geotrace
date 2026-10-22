@@ -5,7 +5,67 @@ from __future__ import annotations
 
 from enum import Enum
 
-__all__ = ["Constellation", "MarkerIcon", "TravelMode"]
+__all__ = [
+    "SolutionState",
+    "SolutionMethod",
+    "SolutionDimension",
+    "PositionProvenance",
+    "SatelliteMembership",
+    "SatelliteCoverage",
+    "Constellation",
+    "MarkerIcon",
+    "TravelMode",
+]
+
+
+class SolutionState(Enum):
+    """Source-reported solution state."""
+
+    ESTIMATED_ONLY = "EstimatedOnly"
+    FIX = "Fix"
+    NO_FIX = "NoFix"
+    UNKNOWN = "Unknown"
+
+
+class SolutionMethod(Enum):
+    """Source-reported solution method."""
+
+    AUTONOMOUS = "Autonomous"
+    DEAD_RECKONING = "DeadReckoning"
+    DIFFERENTIAL = "Differential"
+    HYBRID = "Hybrid"
+    OTHER = "Other"
+    RTK_FIXED = "RtkFixed"
+    RTK_FLOAT = "RtkFloat"
+
+
+class SolutionDimension(Enum):
+    """Source-reported solution dimension."""
+
+    THREE_D = "ThreeD"
+    TWO_D = "TwoD"
+
+
+class PositionProvenance(Enum):
+    """Coordinate origin, independent of navigation state."""
+
+    SDK_SYNTHESIZED = "SdkSynthesized"
+    SOURCE_PROVIDED = "SourceProvided"
+
+
+class SatelliteMembership(Enum):
+    """Source-reported satellite membership."""
+
+    UNKNOWN = "Unknown"
+    UNUSED = "Unused"
+    USED = "Used"
+
+
+class SatelliteCoverage(Enum):
+    """Source-reported satellite coverage."""
+
+    COMPLETE = "Complete"
+    PARTIAL = "Partial"
 
 
 class Constellation(Enum):

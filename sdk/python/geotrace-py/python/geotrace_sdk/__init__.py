@@ -51,7 +51,13 @@ from geotrace_sdk._geotrace_sdk import (
     NavPoint,
     NavPointSequence,
     Satellite,
+    SatelliteIdentity,
+    SatelliteObservation,
+    SatelliteObservationReport,
     SatelliteReport,
+    SatelliteScope,
+    SatelliteUsage,
+    SatelliteUsageReport,
     Unit,
     constellation_from_name,
     kmh_from_mps,
@@ -64,7 +70,17 @@ from geotrace_sdk._geotrace_sdk import (
 from geotrace_sdk._geotrace_sdk import (
     _rust_sdk_enum_members as _rust_sdk_enum_members,
 )
-from geotrace_sdk.enums import Constellation, MarkerIcon, TravelMode
+from geotrace_sdk.enums import (
+    Constellation,
+    MarkerIcon,
+    PositionProvenance,
+    SatelliteCoverage,
+    SatelliteMembership,
+    SolutionDimension,
+    SolutionMethod,
+    SolutionState,
+    TravelMode,
+)
 from geotrace_sdk.event_kind import event_kind
 
 try:
@@ -95,6 +111,18 @@ __all__ = [
     "NavPointSequence",
     "Satellite",
     "SatelliteReport",
+    "SatelliteIdentity",
+    "SatelliteScope",
+    "SatelliteUsage",
+    "SatelliteObservation",
+    "SatelliteUsageReport",
+    "SatelliteObservationReport",
+    "SolutionState",
+    "SolutionMethod",
+    "SolutionDimension",
+    "PositionProvenance",
+    "SatelliteMembership",
+    "SatelliteCoverage",
     "TravelMode",
     "Unit",
     "constellation_from_name",

@@ -10,6 +10,12 @@ from typing import Any, final, overload
 from ._unit_catalog import UnitCatalog
 from .enums import Constellation as Constellation
 from .enums import MarkerIcon as MarkerIcon
+from .enums import PositionProvenance as PositionProvenance
+from .enums import SatelliteCoverage as SatelliteCoverage
+from .enums import SatelliteMembership as SatelliteMembership
+from .enums import SolutionDimension as SolutionDimension
+from .enums import SolutionMethod as SolutionMethod
+from .enums import SolutionState as SolutionState
 from .enums import TravelMode as TravelMode
 
 StrPath = str | bytes | PathLike[str]
@@ -307,8 +313,12 @@ class NavFix:
     The ranges below are data quality expectations, not parse rules.
     The SDK writes every value it is given, NaN included: a recorder that
     captured bad data must be able to write it.
-    An absent ``heading``, ``speed_mps`` or ``eph_m`` is written as NaN: a NaN
-    given for one of the three reads back as ``None``.
+    Optional floating-point fields, including dimensionless DOP, use NaN
+    for absence on disk.
+    A reported NaN in those fields reads back as ``None``.
+    Omitted ``position_provenance`` defaults to source-provided.
+    Explicit ``None`` means unreported.
+    State, method, dimension and the source used count remain independent facts.
 
     Args:
         lat: Latitude in degrees, expected in [-90, 90].
@@ -332,7 +342,20 @@ class NavFix:
         heading: float | None = None,
         speed_mps: float | None = None,
         eph_m: float | None = None,
-    ) -> None: ...
+        state: SolutionState | None = None,
+        method: SolutionMethod | None = None,
+        dimension: SolutionDimension | None = None,
+        used_count: int | None = None,
+        hdop: float | None = None,
+        vdop: float | None = None,
+        pdop: float | None = None,
+        position_provenance: PositionProvenance
+        | None = PositionProvenance.SOURCE_PROVIDED,
+    ) -> None:
+        """Optional metadata records source facts independently of heading and
+        recorded clocks.
+        """
+        ...
     @property
     def lat(self) -> float:
         """Latitude in degrees, expected in [-90, 90]."""
@@ -372,6 +395,48 @@ class NavFix:
         """
         ...
 
+    @property
+    def state(self) -> SolutionState | None:
+        """Reported state, or ``None`` when unreported. Explicit
+        ``SolutionState.UNKNOWN`` blocks fallback.
+        """
+        ...
+    @property
+    def method(self) -> SolutionMethod | None:
+        """Reported solution method, independent of state, or ``None`` when
+        unreported.
+        """
+        ...
+    @property
+    def dimension(self) -> SolutionDimension | None:
+        """Reported solution dimension, independent of state, or ``None`` when
+        unreported.
+        """
+        ...
+    @property
+    def used_count(self) -> int | None:
+        """Reported global used count, independent of identity rows, or ``None``
+        when unreported.
+        """
+        ...
+    @property
+    def hdop(self) -> float | None:
+        """Dimensionless horizontal dilution of precision, or ``None`` when
+        unreported.
+        """
+        ...
+    @property
+    def vdop(self) -> float | None:
+        """Dimensionless vertical dilution of precision, or ``None`` when unreported."""
+        ...
+    @property
+    def pdop(self) -> float | None:
+        """Dimensionless position dilution of precision, or ``None`` when unreported."""
+        ...
+    @property
+    def position_provenance(self) -> PositionProvenance | None:
+        """Coordinate origin, or ``None`` when unreported."""
+        ...
     def __eq__(self, other: object) -> bool: ...
 
 @final
@@ -479,12 +544,12 @@ class Meta:
 
 @final
 class NavPoint:
-    """A nav fix combined with its associated satellite report, as read from a file.
+    """A navigation fix with all associated independent satellite reports.
 
     The value ranges of :class:`NavFix` apply here too, as expectations.
     The SDK returns ``lat`` and ``lon`` unchanged, NaN included.
-    A NaN ``heading``, ``speed_mps`` or ``eph_m`` is returned as ``None``: NaN is
-    how the write path stores an absent one.
+    Optional floating-point measurements, including DOP, return ``None``
+    for an on-disk NaN.
     Checking a value against its range is the caller's job.
     """
 
@@ -528,9 +593,62 @@ class NavPoint:
         ...
 
     @property
-    def satellites(self) -> SatelliteReport | None:
-        """Associated satellite report, or ``None`` if none was recorded."""
+    def state(self) -> SolutionState | None:
+        """Reported state, or ``None`` when unreported. Explicit
+        ``SolutionState.UNKNOWN`` blocks fallback.
+        """
         ...
+    @property
+    def method(self) -> SolutionMethod | None:
+        """Reported solution method, independent of state, or ``None`` when
+        unreported.
+        """
+        ...
+    @property
+    def dimension(self) -> SolutionDimension | None:
+        """Reported solution dimension, independent of state, or ``None`` when
+        unreported.
+        """
+        ...
+    @property
+    def used_count(self) -> int | None:
+        """Reported global used count, independent of identity rows, or ``None``
+        when unreported.
+        """
+        ...
+    @property
+    def hdop(self) -> float | None:
+        """Dimensionless horizontal dilution of precision, or ``None`` when
+        unreported.
+        """
+        ...
+    @property
+    def vdop(self) -> float | None:
+        """Dimensionless vertical dilution of precision, or ``None`` when unreported."""
+        ...
+    @property
+    def pdop(self) -> float | None:
+        """Dimensionless position dilution of precision, or ``None`` when unreported."""
+        ...
+    @property
+    def position_provenance(self) -> PositionProvenance | None:
+        """Coordinate origin, or ``None`` when unreported."""
+        ...
+    @property
+    def satellites(self) -> SatelliteReport | None:
+        """Lossless combined projection, or ``None`` for unrepresentable evidence."""
+        ...
+    @property
+    def usage_reports(self) -> list[SatelliteUsageReport]:
+        """Owned usage samples in input order, including every associated report."""
+        ...
+    @property
+    def observation_reports(self) -> list[SatelliteObservationReport]:
+        """Owned observation samples in input order, including every associated
+        report.
+        """
+        ...
+    def __eq__(self, other: object) -> bool: ...
 
 @final
 class Marker:
@@ -938,7 +1056,14 @@ class NavFileBuilder:
         ...
 
     def add(
-        self, item: NavFix | SatelliteReport | Annotation | EventMarker | Channel
+        self,
+        item: NavFix
+        | SatelliteReport
+        | SatelliteUsageReport
+        | SatelliteObservationReport
+        | Annotation
+        | EventMarker
+        | Channel,
     ) -> NavFileBuilder:
         """Add a nav fix, satellite report, annotation, event marker, or channel.
 
@@ -1037,3 +1162,235 @@ class _EventKindDecorator:
         ...
 
 event_kind: _EventKindDecorator
+
+@final
+class SatelliteIdentity:
+    """Constellation and PRN identify one satellite within a report. PRN
+    values are unsigned 32-bit integers.
+    """
+
+    def __init__(self, constellation: Constellation, prn: int) -> None:
+        """PRN values are unsigned 32-bit integers."""
+        ...
+    @property
+    def constellation(self) -> Constellation:
+        """GNSS constellation of the satellite."""
+        ...
+    @property
+    def prn(self) -> int:
+        """Unsigned 32-bit identifier within the constellation."""
+        ...
+    def __eq__(self, other: object) -> bool: ...
+
+@final
+class SatelliteScope:
+    """Global scope remains distinct from an explicit set of all
+    constellations.
+    """
+
+    @staticmethod
+    def global_() -> SatelliteScope:
+        """Declare global scope independently of the identity list."""
+        ...
+    @staticmethod
+    def constellations(values: list[Constellation]) -> SatelliteScope:
+        """An empty list raises ``ValueError``. Duplicate entries are removed in
+        Rust declaration order.
+        """
+        ...
+    @property
+    def is_global(self) -> bool:
+        """True only for explicitly declared global scope."""
+        ...
+    @property
+    def constellation_set(self) -> list[Constellation]:
+        """Declared constellations in Rust declaration order, or an empty list
+        for global scope.
+        """
+        ...
+    def __eq__(self, other: object) -> bool: ...
+
+@final
+class SatelliteUsage:
+    """One identity's source-reported used, unused or unknown membership."""
+
+    def __init__(
+        self, identity: SatelliteIdentity, membership: SatelliteMembership
+    ) -> None:
+        """Membership is required independently of observation measurements."""
+        ...
+    @property
+    def identity(self) -> SatelliteIdentity:
+        """Constellation and PRN for this membership row."""
+        ...
+    @property
+    def membership(self) -> SatelliteMembership:
+        """``USED`` and ``UNUSED`` are known memberships. ``UNKNOWN`` remains
+        uncertain under complete coverage.
+        """
+        ...
+    def __eq__(self, other: object) -> bool: ...
+
+@final
+class SatelliteObservation:
+    """Each geometry and signal measurement is optional. A measured zero
+    remains present. Measurements use 32-bit floats.
+    """
+
+    def __init__(
+        self,
+        identity: SatelliteIdentity,
+        *,
+        elevation: float | None = None,
+        azimuth: float | None = None,
+        snr: float | None = None,
+    ) -> None:
+        """Geometry uses degrees and signal uses dB-Hz. Measurements are stored
+        as 32-bit floats.
+        """
+        ...
+    @property
+    def identity(self) -> SatelliteIdentity:
+        """Constellation and PRN for this observation row."""
+        ...
+    @property
+    def elevation(self) -> float | None:
+        """Degrees above the horizon, or ``None`` when unreported."""
+        ...
+    @property
+    def azimuth(self) -> float | None:
+        """Degrees clockwise from true north, or ``None`` when unreported."""
+        ...
+    @property
+    def snr(self) -> float | None:
+        """Signal in dB-Hz, or ``None`` when unreported. A measured zero remains
+        present.
+        """
+        ...
+    def __eq__(self, other: object) -> bool: ...
+
+@final
+class SatelliteUsageReport:
+    """Independent satellite report with original source clocks and ordered
+    rows. Equality includes source rows, metadata and optional recorder
+    placement. At least one timezone-aware source timestamp is required.
+    """
+
+    def __init__(
+        self,
+        satellites: list[SatelliteUsage],
+        *,
+        scope: SatelliteScope,
+        coverage: SatelliteCoverage,
+        reported_count: int | None = None,
+        gps_time: datetime | None = None,
+        sys_time: datetime | None = None,
+    ) -> None:
+        """Copy ordered rows with independent source clocks. At least one
+        timezone-aware timestamp is required.
+        """
+        ...
+    @property
+    def satellites(self) -> list[SatelliteUsage]:
+        """Copies of the source rows in input order, including repeated identities."""
+        ...
+    @property
+    def scope(self) -> SatelliteScope:
+        """Scope of both identity coverage and the reported aggregate."""
+        ...
+    @property
+    def coverage(self) -> SatelliteCoverage:
+        """``COMPLETE`` makes omitted identities unused within scope. Explicit
+        ``UNKNOWN`` rows remain unknown.
+        """
+        ...
+    @property
+    def reported_count(self) -> int | None:
+        """Exact source count for scope, independent of list coverage or
+        conflicting rows. ``None`` means unreported.
+        """
+        ...
+    @property
+    def gps_time(self) -> datetime | None:
+        """Original receiver timestamp in UTC, or ``None`` when unreported."""
+        ...
+    @property
+    def sys_time(self) -> datetime | None:
+        """Original host timestamp in UTC, or ``None`` when unreported."""
+        ...
+    @property
+    def normalized_time(self) -> datetime | None:
+        """Placement timestamp on the common navigation clock, or ``None`` when
+        placement is unreported.
+        """
+        ...
+    @property
+    def input_order(self) -> int | None:
+        """Zero-based insertion order across usage and observation reports, or
+        ``None`` when placement is unreported.
+        """
+        ...
+    def __eq__(self, other: object) -> bool: ...
+
+@final
+class SatelliteObservationReport:
+    """Independent satellite report with original source clocks and ordered
+    rows. Equality includes source rows, metadata and optional recorder
+    placement. At least one timezone-aware source timestamp is required.
+    """
+
+    def __init__(
+        self,
+        satellites: list[SatelliteObservation],
+        *,
+        scope: SatelliteScope,
+        coverage: SatelliteCoverage,
+        reported_count: int | None = None,
+        gps_time: datetime | None = None,
+        sys_time: datetime | None = None,
+    ) -> None:
+        """Copy ordered rows with independent source clocks. At least one
+        timezone-aware timestamp is required.
+        """
+        ...
+    @property
+    def satellites(self) -> list[SatelliteObservation]:
+        """Copies of the source rows in input order, including repeated identities."""
+        ...
+    @property
+    def scope(self) -> SatelliteScope:
+        """Scope of both identity coverage and the reported aggregate."""
+        ...
+    @property
+    def coverage(self) -> SatelliteCoverage:
+        """``COMPLETE`` declares every observed identity in scope. ``PARTIAL``
+        leaves omitted identities unreported.
+        """
+        ...
+    @property
+    def reported_count(self) -> int | None:
+        """Exact source count for scope, independent of list coverage or
+        conflicting rows. ``None`` means unreported.
+        """
+        ...
+    @property
+    def gps_time(self) -> datetime | None:
+        """Original receiver timestamp in UTC, or ``None`` when unreported."""
+        ...
+    @property
+    def sys_time(self) -> datetime | None:
+        """Original host timestamp in UTC, or ``None`` when unreported."""
+        ...
+    @property
+    def normalized_time(self) -> datetime | None:
+        """Placement timestamp on the common navigation clock, or ``None`` when
+        placement is unreported.
+        """
+        ...
+    @property
+    def input_order(self) -> int | None:
+        """Zero-based insertion order across usage and observation reports, or
+        ``None`` when placement is unreported.
+        """
+        ...
+    def __eq__(self, other: object) -> bool: ...

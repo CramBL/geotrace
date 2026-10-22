@@ -30,8 +30,14 @@ use pyo3::types::{PyBytes, PyList, PySlice, PyType};
 use pyo3_log::{Caching, Logger};
 use strum::IntoEnumIterator as _;
 
+use crate::navigation::{
+    PyPositionProvenance, PySatelliteIdentity, PySatelliteObservation,
+    PySatelliteObservationReport, PySatelliteScope, PySatelliteUsage, PySatelliteUsageReport,
+    PySolutionDimension, PySolutionMethod, PySolutionState,
+};
 use crate::python_enum::PythonEnumMirror;
 
+mod navigation;
 mod python_enum;
 
 /// Declares a sequence view over one of a [`NavFile`]'s collections together
@@ -504,8 +510,9 @@ impl From<TravelModeArg> for TravelMode {
 /// The name and the ``.value`` of every ``geotrace_sdk.enums`` member the Rust SDK
 /// defines, keyed by class name, in the Rust SDK's variant order.
 #[pyfunction(name = "_rust_sdk_enum_members")]
-fn rust_sdk_enum_members() -> BTreeMap<&'static str, Vec<(&'static str, PythonEnumValue)>> {
-    BTreeMap::from([
+fn rust_sdk_enum_members() -> PyResult<BTreeMap<&'static str, Vec<(&'static str, PythonEnumValue)>>>
+{
+    let mut members = BTreeMap::from([
         (
             PyConstellation::CLASS_NAME,
             Constellation::iter()
@@ -541,7 +548,9 @@ fn rust_sdk_enum_members() -> BTreeMap<&'static str, Vec<(&'static str, PythonEn
                 })
                 .collect(),
         ),
-    ])
+    ]);
+    members.extend(navigation::enum_members()?);
+    Ok(members)
 }
 
 #[derive(IntoPyObject)]
@@ -954,18 +963,25 @@ fn parse_python_channel_unit(value: &Bound<'_, PyAny>) -> PyResult<ChannelUnit> 
 /// These are data quality expectations, not parse rules.
 /// The SDK writes every value it is given, NaN included: a recorder that
 /// captured bad data must be able to write it.
-/// An absent `heading`, `speed_mps` or `eph_m` is written as NaN: a NaN given
-/// for one of the three reads back as `None`.
-#[pyclass(skip_from_py_object, name = "NavFix")]
-#[derive(Debug, Clone, Copy)]
+/// Optional floating-point fields, including dimensionless DOP, use NaN for absence on disk.
+/// A reported NaN in those fields reads back as `None`.
+/// Omitted `position_provenance` defaults to source-provided. Explicit `None` means unreported.
+/// State, method, dimension and the source used count remain independent facts.
+#[pyclass(frozen, skip_from_py_object, name = "NavFix")]
+#[derive(Clone, Copy, Debug)]
 pub struct PyNavFix {
     inner: NavFix,
 }
 
 #[pymethods]
 impl PyNavFix {
+    /// Optional metadata records source facts independently of heading and recorded clocks.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Python exposes optional metadata as keyword arguments"
+    )]
     #[new]
-    #[pyo3(signature = (lat, lon, *, gps_time=None, sys_time=None, heading=None, speed_mps=None, eph_m=None))]
+    #[pyo3(signature = (lat, lon, *, gps_time=None, sys_time=None, heading=None, speed_mps=None, eph_m=None, state=None, method=None, dimension=None, used_count=None, hdop=None, vdop=None, pdop=None, position_provenance=Some(PyPositionProvenance::SourceProvided)))]
     fn new(
         lat: f64,
         lon: f64,
@@ -974,6 +990,14 @@ impl PyNavFix {
         heading: Option<f64>,
         speed_mps: Option<f64>,
         eph_m: Option<f64>,
+        state: Option<PySolutionState>,
+        method: Option<PySolutionMethod>,
+        dimension: Option<PySolutionDimension>,
+        used_count: Option<u32>,
+        hdop: Option<f64>,
+        vdop: Option<f64>,
+        pdop: Option<f64>,
+        position_provenance: Option<PyPositionProvenance>,
     ) -> PyResult<Self> {
         let time = nav_fix_time_or_value_error(TimestampArguments { gps_time, sys_time })?;
         let inner = NavFix::builder()
@@ -983,6 +1007,14 @@ impl PyNavFix {
             .maybe_heading(heading.map(Angle::degrees))
             .maybe_speed(speed_mps.map(Velocity::meter_per_second))
             .maybe_eph_m(eph_m)
+            .maybe_state(state.map(Into::into))
+            .maybe_method(method.map(Into::into))
+            .maybe_dimension(dimension.map(Into::into))
+            .maybe_used_count(used_count)
+            .maybe_hdop(hdop)
+            .maybe_vdop(vdop)
+            .maybe_pdop(pdop)
+            .position_provenance(position_provenance.map(Into::into))
             .build();
         Ok(Self { inner })
     }
@@ -1029,6 +1061,58 @@ impl PyNavFix {
     #[getter]
     fn eph_m(&self) -> Option<f64> {
         self.inner.eph_m
+    }
+
+    /// Reported state, or `None` when unreported.
+    /// Explicit `SolutionState.UNKNOWN` blocks fallback.
+    #[getter]
+    fn state(&self) -> PyResult<Option<PySolutionState>> {
+        self.inner.state.map(TryInto::try_into).transpose()
+    }
+
+    /// Reported solution method, independent of state, or `None` when unreported.
+    #[getter]
+    fn method(&self) -> PyResult<Option<PySolutionMethod>> {
+        self.inner.method.map(TryInto::try_into).transpose()
+    }
+
+    /// Reported solution dimension, independent of state, or `None` when unreported.
+    #[getter]
+    fn dimension(&self) -> PyResult<Option<PySolutionDimension>> {
+        self.inner.dimension.map(TryInto::try_into).transpose()
+    }
+
+    /// Reported global used count, independent of identity rows, or `None` when unreported.
+    #[getter]
+    fn used_count(&self) -> Option<u32> {
+        self.inner.used_count
+    }
+
+    /// Dimensionless horizontal dilution of precision, or `None` when unreported.
+    #[getter]
+    fn hdop(&self) -> Option<f64> {
+        self.inner.hdop
+    }
+
+    /// Dimensionless vertical dilution of precision, or `None` when unreported.
+    #[getter]
+    fn vdop(&self) -> Option<f64> {
+        self.inner.vdop
+    }
+
+    /// Dimensionless position dilution of precision, or `None` when unreported.
+    #[getter]
+    fn pdop(&self) -> Option<f64> {
+        self.inner.pdop
+    }
+
+    /// Coordinate origin, or `None` when unreported.
+    #[getter]
+    fn position_provenance(&self) -> PyResult<Option<PyPositionProvenance>> {
+        self.inner
+            .position_provenance
+            .map(TryInto::try_into)
+            .transpose()
     }
 
     fn __eq__(&self, other: &Self) -> bool {
@@ -1210,15 +1294,14 @@ impl PyMeta {
     }
 }
 
-/// A nav fix combined with its associated satellite report, as read from a file.
+/// A navigation fix with all associated independent satellite reports.
 ///
 /// The value ranges of `NavFix` apply here too, as expectations.
 /// The SDK returns `lat` and `lon` unchanged, NaN included.
-/// A NaN `heading`, `speed_mps` or `eph_m` is returned as `None`: NaN is how the
-/// write path stores an absent one.
+/// Optional floating-point measurements, including DOP, return `None` for an on-disk NaN.
 /// Checking a value against its range is the caller's job.
-#[pyclass(skip_from_py_object, name = "NavPoint")]
-#[derive(Debug, Clone)]
+#[pyclass(frozen, skip_from_py_object, name = "NavPoint")]
+#[derive(Clone, Debug)]
 pub struct PyNavPoint {
     inner: NavPoint,
 }
@@ -1277,13 +1360,94 @@ impl PyNavPoint {
         self.inner.fix.eph_m
     }
 
-    /// Associated satellite report, or `None` if none was recorded at this fix.
+    /// Reported state, or `None` when unreported.
+    /// Explicit `SolutionState.UNKNOWN` blocks fallback.
+    #[getter]
+    fn state(&self) -> PyResult<Option<PySolutionState>> {
+        self.inner.fix.state.map(TryInto::try_into).transpose()
+    }
+
+    /// Reported solution method, independent of state, or `None` when unreported.
+    #[getter]
+    fn method(&self) -> PyResult<Option<PySolutionMethod>> {
+        self.inner.fix.method.map(TryInto::try_into).transpose()
+    }
+
+    /// Reported solution dimension, independent of state, or `None` when unreported.
+    #[getter]
+    fn dimension(&self) -> PyResult<Option<PySolutionDimension>> {
+        self.inner.fix.dimension.map(TryInto::try_into).transpose()
+    }
+
+    /// Reported global used count, independent of identity rows, or `None` when unreported.
+    #[getter]
+    fn used_count(&self) -> Option<u32> {
+        self.inner.fix.used_count
+    }
+
+    /// Dimensionless horizontal dilution of precision, or `None` when unreported.
+    #[getter]
+    fn hdop(&self) -> Option<f64> {
+        self.inner.fix.hdop
+    }
+
+    /// Dimensionless vertical dilution of precision, or `None` when unreported.
+    #[getter]
+    fn vdop(&self) -> Option<f64> {
+        self.inner.fix.vdop
+    }
+
+    /// Dimensionless position dilution of precision, or `None` when unreported.
+    #[getter]
+    fn pdop(&self) -> Option<f64> {
+        self.inner.fix.pdop
+    }
+
+    /// Coordinate origin, or `None` when unreported.
+    #[getter]
+    fn position_provenance(&self) -> PyResult<Option<PyPositionProvenance>> {
+        self.inner
+            .fix
+            .position_provenance
+            .map(TryInto::try_into)
+            .transpose()
+    }
+
+    /// Owned usage samples in input order, including every associated report.
+    #[getter]
+    fn usage_reports(&self) -> Vec<PySatelliteUsageReport> {
+        self.inner
+            .satellite_evidence()
+            .usage
+            .iter()
+            .cloned()
+            .map(|inner| PySatelliteUsageReport { inner })
+            .collect()
+    }
+
+    /// Owned observation samples in input order, including every associated report.
+    #[getter]
+    fn observation_reports(&self) -> Vec<PySatelliteObservationReport> {
+        self.inner
+            .satellite_evidence()
+            .observations
+            .iter()
+            .cloned()
+            .map(|inner| PySatelliteObservationReport { inner })
+            .collect()
+    }
+
+    /// Lossless combined projection, or `None` for independent evidence without that projection.
     #[getter]
     fn satellites(&self) -> Option<PySatelliteReport> {
         self.inner
             .satellites()
             .clone()
             .map(|s| PySatelliteReport { inner: s })
+    }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner == other.inner
     }
 
     fn __repr__(&self) -> String {
@@ -1924,6 +2088,8 @@ impl PyNavFile {
 #[derive(FromPyObject)]
 enum AddItem<'py> {
     Fix(Bound<'py, PyNavFix>),
+    Usage(Bound<'py, PySatelliteUsageReport>),
+    Observation(Bound<'py, PySatelliteObservationReport>),
     Report(Bound<'py, PySatelliteReport>),
     Annotation(Bound<'py, PyAnnotation>),
     EventMarker(Bound<'py, PyEventMarker>),
@@ -2074,6 +2240,12 @@ impl PyNavFileBuilder {
             let mut b = slf.borrow_mut();
             let recorder = b.ensure_recorder()?;
             match item {
+                AddItem::Usage(report) => {
+                    recorder.add_satellite_usage_report(report.borrow().inner.clone());
+                }
+                AddItem::Observation(report) => {
+                    recorder.add_satellite_observation_report(report.borrow().inner.clone());
+                }
                 AddItem::Fix(f) => {
                     recorder.add_nav_fix(f.borrow().inner);
                 }
@@ -2156,6 +2328,13 @@ fn _geotrace_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyChannelUnit>()?;
     m.add_class::<PyChannel>()?;
     m.add_class::<PyNavFix>()?;
+    m.add_class::<PySatelliteIdentity>()?;
+    m.add_class::<PySatelliteScope>()?;
+    m.add_class::<PySatelliteUsage>()?;
+    m.add_class::<PySatelliteObservation>()?;
+    m.add_class::<PySatelliteUsageReport>()?;
+    m.add_class::<PySatelliteObservationReport>()?;
+
     m.add_class::<PyAnnotation>()?;
     m.add_class::<PyMeta>()?;
     m.add_class::<PyNavPoint>()?;

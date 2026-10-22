@@ -1,0 +1,378 @@
+"""Canonical navigation facts and independently timed satellite evidence."""
+
+from __future__ import annotations
+
+import gc
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+import pytest
+from geotrace_sdk import (
+    Constellation,
+    NavFile,
+    NavFileBuilder,
+    NavFix,
+    PositionProvenance,
+    Satellite,
+    SatelliteCoverage,
+    SatelliteIdentity,
+    SatelliteMembership,
+    SatelliteObservation,
+    SatelliteObservationReport,
+    SatelliteReport,
+    SatelliteScope,
+    SatelliteUsage,
+    SatelliteUsageReport,
+    SolutionDimension,
+    SolutionMethod,
+    SolutionState,
+)
+
+T0 = datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC)
+G01 = SatelliteIdentity(Constellation.GPS, 1)
+GLOBAL = SatelliteScope.global_()
+
+
+@pytest.mark.parametrize(
+    ("field", "values"),
+    [
+        ("state", [None, *SolutionState]),
+        ("method", [None, *SolutionMethod]),
+        ("dimension", [None, *SolutionDimension]),
+        ("position_provenance", [None, *PositionProvenance]),
+        ("used_count", [None, 0, 2**32 - 1]),
+        ("hdop", [None, 0.9]),
+        ("vdop", [None, 1.1]),
+        ("pdop", [None, 1.3]),
+    ],
+)
+def test_navigation_metadata_readback_and_equality(
+    field: str, values: list[Any], tmp_path: Path
+) -> None:
+    fixes = [NavFix(0, 0, sys_time=T0, **{field: value}) for value in values]
+    builder = NavFileBuilder()
+    for fix in fixes:
+        builder.add(fix)
+    path = tmp_path / "metadata.gtd"
+    builder.finish().write_to_file(path)
+    points = NavFile.open(path).points
+    assert len(points) == len(values)
+    assert [getattr(point, field) for point in points] == values
+    for index, fix in enumerate(fixes):
+        assert getattr(fix, field) == values[index]
+        for other_index, other in enumerate(fixes):
+            assert (fix == other) == (index == other_index)
+
+
+def test_default_provenance_and_conflicting_navigation_facts() -> None:
+    builder = NavFileBuilder()
+    for state, count in [(SolutionState.NO_FIX, 12), (SolutionState.FIX, 0)]:
+        fix = NavFix(0, 0, sys_time=T0, state=state, used_count=count, hdop=0.9)
+        assert fix.position_provenance is PositionProvenance.SOURCE_PROVIDED
+        assert fix.heading is None
+        builder.add(fix)
+    points = builder.finish().points
+    assert [(p.state, p.used_count, p.hdop, p.eph_m) for p in points] == [
+        (SolutionState.NO_FIX, 12, 0.9, None),
+        (SolutionState.FIX, 0, 0.9, None),
+    ]
+
+
+@pytest.mark.parametrize(
+    "field", ["state", "method", "dimension", "position_provenance"]
+)
+@pytest.mark.parametrize("value", [1, Constellation.GPS])
+def test_navigation_enum_class_validation(field: str, value: Any) -> None:
+    with pytest.raises(TypeError, match="member"):
+        NavFix(0, 0, sys_time=T0, **{field: value})
+
+
+@pytest.mark.parametrize("count", [-1, 2**32])
+def test_unsigned_count_bounds(count: int) -> None:
+    with pytest.raises(OverflowError):
+        NavFix(0, 0, sys_time=T0, used_count=count)
+    with pytest.raises(OverflowError):
+        SatelliteUsageReport(
+            [],
+            scope=GLOBAL,
+            coverage=SatelliteCoverage.PARTIAL,
+            sys_time=T0,
+            reported_count=count,
+        )
+
+
+def test_scope_canonicalization_and_immutable_values() -> None:
+    scope = SatelliteScope.constellations(
+        [Constellation.GPS, Constellation.GLONASS, Constellation.GPS]
+    )
+    assert scope == SatelliteScope.constellations(
+        [Constellation.GLONASS, Constellation.GPS]
+    )
+    assert scope.constellation_set == [Constellation.GPS, Constellation.GLONASS]
+    assert not scope.is_global
+    assert GLOBAL.is_global
+    assert SatelliteScope.constellations(list(Constellation)) != GLOBAL
+    with pytest.raises(ValueError, match="at least one"):
+        SatelliteScope.constellations([])
+    with pytest.raises(TypeError, match="Constellation"):
+        SatelliteScope.constellations([1])  # type: ignore[list-item]
+    with pytest.raises(AttributeError):
+        G01.prn = 2  # type: ignore[misc]
+    assert SatelliteIdentity(Constellation.GPS, 2) != G01
+
+
+@pytest.mark.parametrize("value", [0, SolutionState.UNKNOWN])
+def test_report_enum_class_validation(value: Any) -> None:
+    with pytest.raises(TypeError, match="SatelliteMembership"):
+        SatelliteUsage(G01, value)
+    with pytest.raises(TypeError, match="SatelliteCoverage"):
+        SatelliteObservationReport([], scope=GLOBAL, coverage=value, sys_time=T0)
+
+
+@pytest.mark.parametrize(
+    "report_type", [SatelliteUsageReport, SatelliteObservationReport]
+)
+def test_report_requires_recorded_clock_and_explicit_coverage(
+    report_type: type[SatelliteUsageReport] | type[SatelliteObservationReport],
+) -> None:
+    with pytest.raises(ValueError, match="provide gps_time or sys_time"):
+        report_type([], scope=GLOBAL, coverage=SatelliteCoverage.COMPLETE)
+    with pytest.raises(TypeError):
+        report_type([], sys_time=T0)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        report_type(
+            [],
+            scope=GLOBAL,
+            coverage=SatelliteCoverage.COMPLETE,
+            sys_time=T0.replace(tzinfo=None),
+        )
+
+
+def test_independent_reports_preserve_rows_counts_times_and_owned_lifetimes(
+    tmp_path: Path,
+) -> None:
+    rows = [SatelliteUsage(G01, member) for member in SatelliteMembership]
+    scope = SatelliteScope.constellations([Constellation.GPS])
+    usage = SatelliteUsageReport(
+        rows,
+        scope=scope,
+        coverage=SatelliteCoverage.COMPLETE,
+        reported_count=8,
+        gps_time=T0,
+        sys_time=T0 + timedelta(hours=1),
+    )
+    observations = SatelliteObservationReport(
+        [SatelliteObservation(G01, snr=0), SatelliteObservation(G01)],
+        scope=GLOBAL,
+        coverage=SatelliteCoverage.PARTIAL,
+        reported_count=12,
+        gps_time=T0 + timedelta(milliseconds=400),
+    )
+    rows.clear()
+    builder = NavFileBuilder().add(NavFix(0, 0, gps_time=T0))
+    assert builder.add(usage) is builder
+    builder.add(observations).add(usage)
+    path = tmp_path / "reports.gtd"
+    builder.finish().write_to_file(path)
+    nav_file = NavFile.open(path)
+    sequence = nav_file.points
+    point = sequence[0]
+    stored = point.usage_reports
+    del nav_file
+    gc.collect()
+    assert sequence[0].usage_reports == stored
+    assert point.satellites is None
+    assert len(stored) == 2
+    assert stored[0] != usage
+    assert stored[0] != stored[1]
+    assert [r.input_order for r in stored] == [0, 2]
+    for report in stored:
+        assert report.satellites == [
+            SatelliteUsage(G01, m) for m in SatelliteMembership
+        ]
+        assert report.reported_count == 8
+        assert report.coverage is SatelliteCoverage.COMPLETE
+        assert report.scope == scope
+        assert report.gps_time == T0
+        assert report.sys_time == T0 + timedelta(hours=1)
+        assert report.normalized_time == T0
+    obs = point.observation_reports[0]
+    del point, sequence
+    gc.collect()
+    assert obs.input_order == 1
+    assert obs.normalized_time == T0 + timedelta(milliseconds=400)
+    assert obs.satellites[0].snr == 0
+    assert obs.satellites[1].snr is None
+    assert obs.reported_count == 12
+    assert obs.gps_time == obs.normalized_time
+    assert obs.sys_time is None
+    assert obs.scope.is_global
+    detached_rows = obs.satellites
+    detached_rows.clear()
+    assert len(obs.satellites) == 2
+
+
+@pytest.mark.parametrize(
+    "report_type", [SatelliteUsageReport, SatelliteObservationReport]
+)
+def test_report_equality_includes_scope_coverage_aggregate_and_clocks(
+    report_type: Any,
+) -> None:
+    arguments: dict[str, Any] = {
+        "scope": GLOBAL,
+        "coverage": SatelliteCoverage.COMPLETE,
+        "sys_time": T0,
+    }
+    original = report_type([], **arguments)
+    assert original == report_type([], **arguments)
+    variants: list[dict[str, Any]] = [
+        {"scope": SatelliteScope.constellations([Constellation.GPS])},
+        {"coverage": SatelliteCoverage.PARTIAL},
+        {"reported_count": 0},
+        {"gps_time": T0},
+        {"sys_time": T0 + timedelta(seconds=1)},
+    ]
+    for changes in variants:
+        assert original != report_type([], **(arguments | changes))
+    assert original.input_order is None
+    assert original.normalized_time is None
+
+
+@pytest.mark.parametrize("failed_finish", [False, True])
+def test_new_reports_after_finish_use_consumed_builder_error(
+    failed_finish: bool,
+) -> None:
+    builder = NavFileBuilder()
+    if failed_finish:
+        builder.add(
+            SatelliteUsageReport(
+                [], scope=GLOBAL, coverage=SatelliteCoverage.COMPLETE, sys_time=T0
+            )
+        )
+        with pytest.raises(ValueError):
+            builder.finish()
+    else:
+        builder.add(NavFix(0, 0, sys_time=T0)).finish()
+    for report_type in [SatelliteUsageReport, SatelliteObservationReport]:
+        report = report_type(
+            [], scope=GLOBAL, coverage=SatelliteCoverage.COMPLETE, sys_time=T0
+        )
+        with pytest.raises(RuntimeError, match="consumed"):
+            builder.add(report)
+
+
+def test_host_only_polling_batches_equal_times_and_preserves_longitude() -> None:
+    builder = NavFileBuilder()
+    builder.add(NavFix(0, 0, sys_time=T0))
+    builder.add(NavFix(0, 10, sys_time=T0 + timedelta(seconds=10)))
+    time = T0 + timedelta(seconds=2)
+    usage = SatelliteUsageReport(
+        [SatelliteUsage(G01, SatelliteMembership.UNKNOWN)],
+        scope=GLOBAL,
+        coverage=SatelliteCoverage.PARTIAL,
+        sys_time=time,
+    )
+    observation = SatelliteObservationReport(
+        [SatelliteObservation(G01)],
+        scope=GLOBAL,
+        coverage=SatelliteCoverage.PARTIAL,
+        sys_time=time,
+    )
+    points = builder.add(usage).add(observation).finish().points
+    assert len(points) == 3
+    carrier = points[1]
+    assert carrier.lon == pytest.approx(2)
+    assert carrier.position_provenance is PositionProvenance.SDK_SYNTHESIZED
+    assert carrier.state is None
+    report_orders: list[
+        tuple[SatelliteUsageReport | SatelliteObservationReport, int]
+    ] = [
+        (carrier.usage_reports[0], 0),
+        (carrier.observation_reports[0], 1),
+    ]
+    for report, order in report_orders:
+        assert report.sys_time == report.normalized_time == time
+        assert report.gps_time is None
+        assert report.input_order == order
+
+
+@pytest.mark.parametrize(
+    "report_type", [SatelliteUsageReport, SatelliteObservationReport]
+)
+def test_empty_reports_preserve_coverage_and_optional_aggregate(
+    report_type: Any, tmp_path: Path
+) -> None:
+    reports = [
+        report_type(
+            [], scope=GLOBAL, coverage=coverage, reported_count=count, sys_time=T0
+        )
+        for coverage in SatelliteCoverage
+        for count in [None, 0, 2**32 - 1]
+    ]
+    builder = NavFileBuilder().add(NavFix(0, 0, sys_time=T0))
+    for report in reports:
+        builder.add(report)
+    path = tmp_path / "empty_reports.gtd"
+    builder.finish().write_to_file(path)
+    point = NavFile.open(path).points[0]
+    stored = (
+        point.usage_reports
+        if report_type is SatelliteUsageReport
+        else point.observation_reports
+    )
+    assert [(r.coverage, r.reported_count, r.satellites) for r in stored] == [
+        (r.coverage, r.reported_count, r.satellites) for r in reports
+    ]
+    assert point.satellites is None
+
+
+def test_legacy_false_membership_preserves_known_unused() -> None:
+    point = (
+        NavFileBuilder()
+        .add(NavFix(0, 0, sys_time=T0))
+        .add(SatelliteReport([Satellite(Constellation.GPS, 1)], sys_time=T0))
+        .finish()
+        .points[0]
+    )
+    assert point.usage_reports[0].satellites[0].membership is SatelliteMembership.UNUSED
+    assert point.satellites is not None
+    assert point.satellites.tracked[0].in_fix is False
+    assert (
+        SatelliteUsage(G01, SatelliteMembership.UNKNOWN)
+        != point.usage_reports[0].satellites[0]
+    )
+
+
+def test_dimensionless_nan_uses_the_optional_numeric_disk_convention(
+    tmp_path: Path,
+) -> None:
+    fix = NavFix(
+        0, 0, sys_time=T0, hdop=float("nan"), vdop=float("nan"), pdop=float("nan")
+    )
+    path = tmp_path / "nan.gtd"
+    NavFileBuilder().add(fix).finish().write_to_file(path)
+    point = NavFile.open(path).points[0]
+    assert (point.hdop, point.vdop, point.pdop, point.eph_m) == (None, None, None, None)
+
+
+def test_canonical_values_and_loaded_points_are_immutable() -> None:
+    fix = NavFix(0, 0, sys_time=T0)
+    observation = SatelliteObservation(G01)
+    usage = SatelliteUsage(G01, SatelliteMembership.USED)
+    report = SatelliteUsageReport(
+        [usage], scope=GLOBAL, coverage=SatelliteCoverage.PARTIAL, sys_time=T0
+    )
+    point = NavFileBuilder().add(fix).add(report).finish().points[0]
+    values: list[tuple[Any, str]] = [
+        (fix, "state"),
+        (point, "state"),
+        (G01, "prn"),
+        (GLOBAL, "is_global"),
+        (observation, "snr"),
+        (usage, "membership"),
+        (report, "coverage"),
+    ]
+    for value, field in values:
+        with pytest.raises(AttributeError):
+            setattr(value, field, None)
