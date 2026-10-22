@@ -1,7 +1,7 @@
 use crate::error::Error;
 
 /// Coordinate origin, independent of navigation state.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, strum::FromRepr)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, strum::EnumIter, strum::FromRepr)]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum PositionProvenance {
@@ -27,7 +27,7 @@ impl PositionProvenance {
 }
 
 /// Source-reported solution dimension, independent of navigation state.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, strum::FromRepr)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, strum::EnumIter, strum::FromRepr)]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum SolutionDimension {
@@ -53,7 +53,7 @@ impl SolutionDimension {
 }
 
 /// Source-reported solution method. An absent field means unreported.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, strum::FromRepr)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, strum::EnumIter, strum::FromRepr)]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum SolutionMethod {
@@ -89,7 +89,7 @@ impl SolutionMethod {
 }
 
 /// Source-reported navigation state. An absent field has no state observation.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, strum::FromRepr)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, strum::EnumIter, strum::FromRepr)]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum SolutionState {

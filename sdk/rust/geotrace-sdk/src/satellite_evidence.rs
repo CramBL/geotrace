@@ -23,7 +23,7 @@ impl SatelliteIdentity {
 }
 
 /// Membership in the navigation solution, independent of observation measurements.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, strum::EnumIter)]
 #[non_exhaustive]
 pub enum SatelliteMembership {
     /// The source did not establish membership.
@@ -35,7 +35,7 @@ pub enum SatelliteMembership {
 }
 
 /// Completeness applies to the identity list within the report's declared scope.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, strum::EnumIter)]
 #[non_exhaustive]
 pub enum SatelliteCoverage {
     /// The list covers every identity within the declared scope.

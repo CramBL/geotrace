@@ -9,6 +9,7 @@ the app).
 
 ### Added
 
+- Python producers and readers support optional navigation metadata and independent satellite reports.
 - C++ producers and readers support optional navigation metadata and owning independent satellite reports.
 - C producers and readers support navigation metadata and independent scoped satellite usage and observation reports.
 - Rust recorders accept independent satellite usage and observation samples with preserved timestamps.

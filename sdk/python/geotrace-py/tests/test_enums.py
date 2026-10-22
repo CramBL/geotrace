@@ -12,7 +12,13 @@ from geotrace_sdk import (
     Constellation,
     MarkerIcon,
     Meta,
+    PositionProvenance,
     Satellite,
+    SatelliteCoverage,
+    SatelliteMembership,
+    SolutionDimension,
+    SolutionMethod,
+    SolutionState,
     TravelMode,
     _rust_sdk_enum_members,
     constellation_from_name,
@@ -58,7 +64,20 @@ def test_every_travel_mode_crosses_the_boundary(member: TravelMode) -> None:
     assert Meta(travel_mode=member).travel_mode is member
 
 
-@pytest.mark.parametrize("enum_class", [Constellation, MarkerIcon, TravelMode])
+@pytest.mark.parametrize(
+    "enum_class",
+    [
+        Constellation,
+        MarkerIcon,
+        TravelMode,
+        SolutionState,
+        SolutionMethod,
+        SolutionDimension,
+        PositionProvenance,
+        SatelliteMembership,
+        SatelliteCoverage,
+    ],
+)
 def test_a_class_lists_the_rust_sdk_variants_by_name_and_value(
     enum_class: type[Enum],
 ) -> None:
