@@ -590,13 +590,6 @@ fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
     for (record, sdk_point) in nav_file.nav_points().iter().enumerate() {
         let lat = RecordedLatitude::from_degrees(sdk_point.fix.lat.as_degrees());
         let lon = RecordedLongitude::from_degrees(sdk_point.fix.lon.as_degrees());
-        if let RecordedLatitude::Invalid(degrees) = lat {
-            latitudes_out_of_range.push(CoordinateOutOfRange { record, degrees });
-        }
-        if let RecordedLongitude::Invalid(degrees) = lon {
-            longitudes_out_of_range.push(CoordinateOutOfRange { record, degrees });
-        }
-
         let time = match sdk_point.fix.time {
             NavFixTime::Receiver(gps) | NavFixTime::Both { gps, .. } => {
                 FixTimestamp::FromGpsReceiver(GpsTime::from_utc(gps))
@@ -618,7 +611,7 @@ fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
             .satellites()
             .as_ref()
             .map(|report| convert_satellite_report(report, record, &mut satellite_alterations));
-        nav_points.push(NavPoint {
+        let point = NavPoint {
             tpv,
             satellites,
             navigation: navigation::convert_navigation(&sdk_point.fix),
@@ -627,7 +620,16 @@ fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
                 record,
                 &mut evidence_alterations,
             )?,
-        });
+        };
+        if !point.has_unreported_position() {
+            if let RecordedLatitude::Invalid(degrees) = lat {
+                latitudes_out_of_range.push(CoordinateOutOfRange { record, degrees });
+            }
+            if let RecordedLongitude::Invalid(degrees) = lon {
+                longitudes_out_of_range.push(CoordinateOutOfRange { record, degrees });
+            }
+        }
+        nav_points.push(point);
     }
 
     let mut markers = Vec::new();

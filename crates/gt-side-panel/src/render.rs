@@ -1356,6 +1356,9 @@ enum CoordinateWarning {
 
 impl CoordinateWarning {
     fn for_track(track: &LoadedTrack) -> Option<Self> {
+        if track.metadata.invalid_position_count == 0 {
+            return None;
+        }
         match track.geometry {
             TrackGeometry::NoValidPosition => Some(Self::NoValidPosition),
             TrackGeometry::Measured(_) => match track.metadata.invalid_position_count {
@@ -2356,17 +2359,19 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_track_without_a_geometry_reports_no_valid_position() {
+    #[rstest]
+    #[case::malformed(3, Some(CoordinateWarning::NoValidPosition))]
+    #[case::unreported(0, None)]
+    fn a_track_without_geometry_warns_only_for_malformed_positions(
+        #[case] invalid_position_count: usize,
+        #[case] expected: Option<CoordinateWarning>,
+    ) {
         let mut track = gt_test_utils::loaded_track_with_points(
             gt_test_utils::fixtures::nav_points_without_a_valid_position(3),
         );
-        track.metadata.invalid_position_count = 3;
+        track.metadata.invalid_position_count = invalid_position_count;
 
         assert_eq!(track.geometry, TrackGeometry::NoValidPosition);
-        assert_eq!(
-            CoordinateWarning::for_track(&track),
-            Some(CoordinateWarning::NoValidPosition)
-        );
+        assert_eq!(CoordinateWarning::for_track(&track), expected);
     }
 }

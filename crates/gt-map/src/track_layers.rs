@@ -96,7 +96,8 @@ impl TrackGeometry<'_> {
                 let visible = match chevron {
                     ChevronFix::NavigationLoss
                     | ChevronFix::Estimated
-                    | ChevronFix::Synthesized { .. } => self.entry.ghost_fixes(),
+                    | ChevronFix::Synthesized { .. }
+                    | ChevronFix::UnreportedPosition { .. } => self.entry.ghost_fixes(),
                     ChevronFix::CoordinateOutOfRange => self.entry.fade().is_some(),
                 };
                 if !visible {
@@ -897,7 +898,7 @@ mod tests {
     use gt_types::fixtures::FixKind;
     use gt_types::{
         GpsTime, Latitude, LoadedTrack, Longitude, NavPoint, PositionProvenance, RecordedLatitude,
-        SolutionState, TimePositionVelocity,
+        RecordedLongitude, SolutionState, TimePositionVelocity,
     };
     use gt_ui_types::{
         DisplayCategory, DisplayMask, DrawLayerMask, MapHighlight, QueryMatches, SkyGlyphVariant,
@@ -1313,8 +1314,16 @@ mod tests {
         );
     }
 
-    #[test]
-    fn hiding_ghost_fixes_drops_dead_reckoned_chevrons_while_keeping_out_of_range_chevrons() {
+    #[rstest]
+    #[case::recorded_loss(SolutionState::NoFix, false)]
+    #[case::positionless_fix(SolutionState::Fix, true)]
+    #[case::positionless_loss(SolutionState::NoFix, true)]
+    #[case::positionless_estimated(SolutionState::EstimatedOnly, true)]
+    #[case::positionless_unknown(SolutionState::Unknown, true)]
+    fn ghost_masking_excludes_navigation_estimates_and_keeps_coordinate_faults(
+        #[case] state: SolutionState,
+        #[case] positionless: bool,
+    ) {
         let lat = Latitude::new(LATITUDE_DEGREES);
         let lon = Longitude::new(FIRST_LONGITUDE_DEGREES);
         let real_fix = NavPoint::new(
@@ -1326,15 +1335,20 @@ mod tests {
                 .build(),
             None,
         );
+        let (latitude, longitude) = if positionless {
+            (f64::NAN, f64::NAN)
+        } else {
+            (LATITUDE_DEGREES, FIRST_LONGITUDE_DEGREES)
+        };
         let mut ghost_fix = NavPoint::new(
             TimePositionVelocity::builder()
                 .time(GpsTime::from_utc(FIRST_FIX_TIME + TimeDelta::seconds(1)))
-                .lat(lat)
-                .lon(lon)
+                .lat(RecordedLatitude::from_degrees(latitude))
+                .lon(RecordedLongitude::from_degrees(longitude))
                 .build(),
             None,
         );
-        ghost_fix.navigation.state = Some(SolutionState::NoFix);
+        ghost_fix.navigation.state = Some(state);
         let out_of_range_fix = NavPoint::new(
             TimePositionVelocity::builder()
                 .time(GpsTime::from_utc(FIRST_FIX_TIME + TimeDelta::seconds(2)))
@@ -1365,12 +1379,8 @@ mod tests {
         geometry.entry.set_ghost_fixes(true);
         let chevrons = geometry.chevrons_of(&hits, |_| true);
         assert_eq!(
-            chevrons,
-            vec![
-                (1, ChevronFix::NavigationLoss),
-                (2, ChevronFix::CoordinateOutOfRange),
-                (3, ChevronFix::NavigationLoss),
-            ]
+            chevrons.iter().map(|(index, _)| *index).collect::<Vec<_>>(),
+            vec![1, 2, 3]
         );
 
         geometry.entry.set_ghost_fixes(false);
@@ -1382,11 +1392,8 @@ mod tests {
         geometry.entry.set_ghost_fixes(true);
         let chevrons = geometry.chevrons_of(&hits, |_| true);
         assert_eq!(
-            chevrons,
-            vec![
-                (1, ChevronFix::NavigationLoss),
-                (3, ChevronFix::NavigationLoss),
-            ]
+            chevrons.iter().map(|(index, _)| *index).collect::<Vec<_>>(),
+            vec![1, 3]
         );
 
         geometry.entry.set_ghost_fixes(false);

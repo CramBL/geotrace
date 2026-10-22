@@ -43,6 +43,9 @@ pub(crate) fn show_hover_label(
     recording_name: Option<&str>,
 ) {
     ui.strong(generated_marker_header(&marker.kind));
+    if marker.kind == GeneratedMarkerKind::GnssFixLost {
+        ui.label("Last Fix epoch before observed loss");
+    }
     match &marker.kind {
         // A slip groups the satellites that lost lock at this epoch, so show
         // what changed for each (geometry and signal, before/after).
@@ -110,14 +113,10 @@ impl Plugin for GeneratedMarkerRenderer<'_, '_> {
     }
 }
 
-/// Centralises the `GNSS fix regained after <duration>` formatting so both
-/// the marker's own hover label (`show_hover_label`) and the multi-hover
-/// compound label
-/// (`draw_candidate_section`) always produce identical text.
 pub(crate) fn generated_marker_header(kind: &GeneratedMarkerKind) -> String {
     match kind {
         GeneratedMarkerKind::GnssFixRegained { fix_lost_duration } => format!(
-            "{kind} after {}",
+            "{kind} ({} since last Fix)",
             format_fix_duration(fix_lost_duration.num_milliseconds())
         ),
         GeneratedMarkerKind::ClockDiscontinuity { step } => {

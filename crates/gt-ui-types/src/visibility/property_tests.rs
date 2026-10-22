@@ -1,9 +1,11 @@
 use chrono::TimeDelta;
+use gt_track_builder::{FixPlacementRule, segment};
 use gt_types::fixtures::FixKind;
 use gt_types::{
     CustomMarker, CustomMarkerIdx, CustomMarkerRef, DataCategory, FileIdx, FixRef,
-    GeneratedMarkerKindTag, Latitude, Longitude, MarkerIcon, PointIdx, PositionProvenance,
-    SolutionState, TrackIdx, TrackRef,
+    GeneratedMarkerKindTag, Latitude, Longitude, MarkerIcon, NavPoint, PointIdx,
+    PositionProvenance, RecordedLatitude, RecordedLongitude, SolutionState, TimePositionVelocity,
+    TrackIdx, TrackRef,
 };
 use proptest::prelude::*;
 
@@ -13,22 +15,27 @@ use crate::highlight::{MapElementRef, MapHighlight};
 use crate::query_matches::{QueryMatches, TrackRanges};
 use crate::test_util::{self, ScopeFixture};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum ElementCase {
-    MeasuredFix,
+    ContradictoryLoss,
+    CustomMarker,
+    EstimatedOnly,
+    EventMarker,
+    ExplicitUnknownZero,
+    GeneratedMarker,
     GhostFix,
     HeadinglessUnknown,
-    SummaryFix,
-    ContradictoryLoss,
-    ExplicitUnknownZero,
-    SynthesizedWithHeading,
-    EstimatedOnly,
+    MalformedNoFix,
+    MeasuredFix,
+    PositionlessEstimated,
+    PositionlessFix,
+    PositionlessNoFix,
+    PositionlessUnknown,
     SatelliteReport,
-    CustomMarker,
-    GeneratedMarker,
-    EventMarker,
     StalePoint,
     StaleTrack,
+    SummaryFix,
+    SynthesizedWithHeading,
 }
 
 impl ElementCase {
@@ -41,6 +48,11 @@ impl ElementCase {
             | Self::ExplicitUnknownZero
             | Self::SynthesizedWithHeading
             | Self::EstimatedOnly => test_util::point(0),
+            Self::PositionlessEstimated
+            | Self::PositionlessFix
+            | Self::PositionlessNoFix
+            | Self::PositionlessUnknown
+            | Self::MalformedNoFix => test_util::point(1),
             Self::GhostFix => test_util::point(test_util::POINT_COUNT - 1),
             Self::SatelliteReport => {
                 MapElementRef::SatelliteReport(FixRef::new(test_util::track0(), PointIdx::new(0)))
@@ -74,7 +86,11 @@ impl ElementCase {
             Self::GhostFix
             | Self::ContradictoryLoss
             | Self::SynthesizedWithHeading
-            | Self::EstimatedOnly => DisplayCategory::GhostFixes,
+            | Self::EstimatedOnly
+            | Self::PositionlessEstimated
+            | Self::PositionlessFix
+            | Self::PositionlessNoFix
+            | Self::PositionlessUnknown => DisplayCategory::GhostFixes,
             _ => DisplayCategory::from(self.policy_category()),
         }
     }
@@ -118,7 +134,16 @@ impl VisibilityScenario {
         fixture.files[0].tracks[0]
             .custom_markers
             .push(custom_marker);
-        let fix = &mut fixture.files[0].tracks[0].points[0];
+        let position_case = matches!(
+            self.element,
+            ElementCase::PositionlessEstimated
+                | ElementCase::PositionlessFix
+                | ElementCase::PositionlessNoFix
+                | ElementCase::PositionlessUnknown
+                | ElementCase::MalformedNoFix
+        );
+        let index = usize::from(position_case);
+        let fix = &mut fixture.files[0].tracks[0].points[index];
         match self.element {
             ElementCase::HeadinglessUnknown | ElementCase::SummaryFix => {
                 *fix = gt_types::fixtures::nav_point(
@@ -144,6 +169,34 @@ impl VisibilityScenario {
                 fix.navigation.position_provenance = Some(PositionProvenance::SdkSynthesized);
             }
             ElementCase::EstimatedOnly => fix.navigation.state = Some(SolutionState::EstimatedOnly),
+            ElementCase::PositionlessEstimated
+            | ElementCase::PositionlessFix
+            | ElementCase::PositionlessNoFix
+            | ElementCase::PositionlessUnknown
+            | ElementCase::MalformedNoFix => {
+                let (latitude, longitude) = if matches!(self.element, ElementCase::MalformedNoFix) {
+                    (91.0, 181.0)
+                } else {
+                    (f64::NAN, f64::NAN)
+                };
+                *fix = NavPoint::new(
+                    TimePositionVelocity::builder()
+                        .time(fix.tpv.time())
+                        .lat(RecordedLatitude::from_degrees(latitude))
+                        .lon(RecordedLongitude::from_degrees(longitude))
+                        .build(),
+                    None,
+                );
+                fix.navigation.state = Some(match self.element {
+                    ElementCase::PositionlessFix => SolutionState::Fix,
+                    ElementCase::PositionlessUnknown => SolutionState::Unknown,
+                    ElementCase::PositionlessEstimated => SolutionState::EstimatedOnly,
+                    _ => SolutionState::NoFix,
+                });
+                let track = &mut fixture.files[0].tracks[0];
+                track.geometry =
+                    segment::measure_track_geometry(&track.points, FixPlacementRule::default());
+            }
             _ => {}
         }
         let point = self.element.point_ref();
@@ -311,6 +364,11 @@ fn element_case() -> impl Strategy<Value = ElementCase> {
         Just(ElementCase::ExplicitUnknownZero),
         Just(ElementCase::SynthesizedWithHeading),
         Just(ElementCase::EstimatedOnly),
+        Just(ElementCase::PositionlessEstimated),
+        Just(ElementCase::PositionlessFix),
+        Just(ElementCase::PositionlessNoFix),
+        Just(ElementCase::PositionlessUnknown),
+        Just(ElementCase::MalformedNoFix),
         Just(ElementCase::SatelliteReport),
         Just(ElementCase::CustomMarker),
         Just(ElementCase::GeneratedMarker),

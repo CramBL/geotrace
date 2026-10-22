@@ -64,7 +64,7 @@ pub enum GeneratedMarkerKind {
     },
     GnssFixLost,
     GnssFixRegained {
-        /// How long the fix was lost before being regained.
+        /// Elapsed time from the preceding Fix epoch to recovery.
         fix_lost_duration: Duration,
     },
     /// The receiver lost lock on one or more satellites that should still have

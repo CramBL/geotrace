@@ -45,15 +45,22 @@ pub(crate) fn icon_cull_rect(map_rect: egui::Rect) -> egui::Rect {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ChevronFix {
     CoordinateOutOfRange,
-    NavigationLoss,
     Estimated,
+    NavigationLoss,
     Synthesized { color: Color32 },
+    UnreportedPosition { color: Color32 },
 }
 
 impl ChevronFix {
     pub(crate) fn for_fix(fix: &NavPoint) -> Option<Self> {
         match fix.map_fix_kind() {
             MapFixKind::Recorded => None,
+            MapFixKind::UnreportedPosition => Some(Self::UnreportedPosition {
+                color: match fix.resolved_navigation_state().state {
+                    SolutionState::Fix => FIX_STRONG_BLUE,
+                    _ => FIX_UNKNOWN_GRAY,
+                },
+            }),
             MapFixKind::CoordinateOutOfRange => Some(Self::CoordinateOutOfRange),
             MapFixKind::NavigationLoss => Some(Self::NavigationLoss),
             MapFixKind::Estimated => Some(Self::Estimated),
@@ -67,7 +74,7 @@ impl ChevronFix {
         match self {
             Self::NavigationLoss => FIX_LOST_RED,
             Self::Estimated => FIX_ESTIMATED_PURPLE,
-            Self::Synthesized { color } => color,
+            Self::Synthesized { color } | Self::UnreportedPosition { color } => color,
             Self::CoordinateOutOfRange => gt_ui_theme::warning_amber(dark_mode),
         }
     }
@@ -537,7 +544,7 @@ fn recorded_coordinate_row_ui<C: Coordinate>(
 
 /// The row naming where the map draws a fix, shown only for one the track
 /// builder placed between the fixes around it.
-fn drawn_at_row_ui(ui: &mut Ui, resolved: ResolvedPosition) {
+fn drawn_at_row_ui(ui: &mut Ui, fix: &NavPoint, resolved: ResolvedPosition) {
     let ResolvedPosition::Interpolated(projected) = resolved else {
         return;
     };
@@ -549,7 +556,12 @@ fn drawn_at_row_ui(ui: &mut Ui, resolved: ResolvedPosition) {
             latitude.to_degrees_with_hemisphere(),
             longitude.to_degrees_with_hemisphere()
         ));
-        ui.label(RichText::new(INTERPOLATED_POSITION_NOTE).weak().small());
+        let note = if fix.has_unreported_position() {
+            "Derived from recorded positions"
+        } else {
+            INTERPOLATED_POSITION_NOTE
+        };
+        ui.label(RichText::new(note).weak().small());
     });
     ui.end_row();
 }
@@ -557,10 +569,16 @@ fn drawn_at_row_ui(ui: &mut Ui, resolved: ResolvedPosition) {
 /// The position rows of a fix, in the grid the caller has open: the two
 /// coordinates the receiver recorded, then where the map draws the fix.
 fn position_rows_ui(ui: &mut Ui, fix: &NavPoint, placement: FixPlacement) {
-    recorded_coordinate_row_ui(ui, "Lat", fix.tpv.lat());
-    recorded_coordinate_row_ui(ui, "Lon", fix.tpv.lon());
+    if fix.has_unreported_position() {
+        ui.label("Position");
+        ui.label(EM_DASH);
+        ui.end_row();
+    } else {
+        recorded_coordinate_row_ui(ui, "Lat", fix.tpv.lat());
+        recorded_coordinate_row_ui(ui, "Lon", fix.tpv.lon());
+    }
     match placement {
-        FixPlacement::Placed(resolved) => drawn_at_row_ui(ui, resolved),
+        FixPlacement::Placed(resolved) => drawn_at_row_ui(ui, fix, resolved),
         FixPlacement::TrackWithoutGeometry => {
             ui.label("Not drawn");
             ui.label("No valid coordinate in this track");
