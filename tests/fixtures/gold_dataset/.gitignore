@@ -1,3 +1,9 @@
 gold_c.gtd
 gold_cpp.gtd
 gold_py.gtd
+navigation_evidence_c.gtd
+navigation_evidence_cpp.gtd
+navigation_evidence_py.gtd
+host_clock_c.gtd
+host_clock_cpp.gtd
+host_clock_py.gtd

@@ -77,3 +77,54 @@ In [`sdk/cpp/examples/`](../../sdk/cpp/examples/). Configure the C++ SDK with
 - [`from_csv`](../../sdk/cpp/examples/from_csv.cpp): convert CSV rows into a `.gtd` file.
 - [`from_multiple_sources`](../../sdk/cpp/examples/from_multiple_sources.cpp): merge fixes and events from separate sources, interpolating event positions.
 - [`gold_dataset`](../../sdk/cpp/examples/gold_dataset.cpp): build the cross-SDK reference file from shared fixtures and verify the round-trip.
+
+## Navigation and independent polling
+
+These examples use the unreleased SDK APIs.
+A position without heading can report Fix, eight used satellites and HDOP 0.9 without an observation list.
+Add usage identities when membership is available, then independent observations when geometry or signal measurements are available.
+The same API accepts facts from text protocols, binary protocols and asynchronous polling.
+Counts and DOP remain independent of identity lists and horizontal accuracy.
+The following example records host-clock positions and a later poll at its own timestamp.
+
+```cpp
+#include <geotrace/geotrace.hpp>
+
+int main() {
+    using namespace geotrace;
+    FileBuilder builder;
+    for (const auto second : {0, 10}) {
+        NavFix fix{FixTime::host(Timestamp::from_seconds(1700000000 + second)),
+                   Angle::degrees(0), Angle::degrees(second)};
+        fix.state = SolutionState::Fix;
+        fix.used_count = 8;
+        fix.hdop = 0.9;
+        builder.add(fix);
+    }
+    builder.add(SatelliteObservationReport{
+        FixTime::host(Timestamp::from_seconds(1700000002)),
+        SatelliteScope::global(), SatelliteCoverage::Partial, 12,
+        {{{Constellation::Gps, 1}, std::nullopt, std::nullopt, 40.0F}}});
+    builder.finish().write_to_file("navigation_polling.gtd");
+}
+```
+
+Explicit state, including Unknown, takes precedence over counts and membership.
+An absent state permits fallback from eligible used aggregates or known membership.
+A known-used identity can establish Fix in a partial report.
+Only global evidence can establish NoFix from zero usage.
+An omitted aggregate remains unreported.
+A present aggregate, including zero, is exact for its declared scope.
+Complete coverage describes the identity list within that scope.
+A partial list retains omitted identities as unknown.
+Each report preserves its original clocks and normalized placement time.
+The poll at second 2 becomes a synthesized carrier at longitude 2° between these host-clock positions.
+
+Legacy combined-report accessors return a report only when the independent evidence can be represented without losing membership, scope or timestamps.
+Observation-only and partial independent reports remain available through the new report collections.
+See the [Rust model and format reference](rust.md#satellite-evidence-values) for the complete coverage and projection rules.
+
+New writers use GTD v3.
+The compatible application reader is currently in the Unreleased app.
+App 0.19.0 and earlier require GTD v1/v2 files.
+Publish the compatible app reader before the synchronized SDK releases, and record its release version in the [release handoff](../../RELEASES.md#gtd-v3-release-order).

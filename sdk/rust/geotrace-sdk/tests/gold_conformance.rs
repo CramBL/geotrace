@@ -1,37 +1,31 @@
-//! Cross-SDK conformance. Given the shared gold-dataset fixtures, every SDK
-//! (Rust, C, C++, Python) must produce a `.gtd` file that decodes to the same
-//! `NavFile`. The byte layout may differ (HDF5 serializes logically-identical
-//! content with different addressing). The decoded content must not.
-//!
-//! Only `gold.gtd` (the Rust output) is committed. `gold_c.gtd`, `gold_cpp.gtd`,
-//! and `gold_py.gtd` are generated artifacts (gitignored), written by each
-//! SDK's `gold_dataset` example. `just test-gold-all` regenerates all four and
-//! then runs this test (`test-gold-compare`), so the comparison is enforced
-//! there. It removes the three generated files once they match, and keeps them
-//! for inspection when they do not. When the per-language files are absent (a
-//! plain `cargo test` checkout) the missing ones are skipped.
-//!
-//! The comparison leaves out the SDK build stamp: `gold.gtd` is committed, so
-//! the Rust example writes it with a scrubbed one, while each generated file
-//! holds the stamp of the build that wrote it.
+use std::env;
 
 use geotrace_sdk::NavFile;
 use geotrace_sdk_test_util as test_util;
+use rstest::rstest;
 
-#[test]
-fn all_sdks_decode_to_the_same_nav_file() {
+#[rstest]
+#[case::legacy("gold")]
+#[case::navigation("navigation_evidence")]
+#[case::host_clock("host_clock")]
+fn all_sdks_decode_to_the_same_nav_file(#[case] family: &str) {
     let dir = test_util::fixture_path("gold_dataset");
-    let canonical = NavFile::open(dir.join("gold.gtd")).unwrap();
-    for name in ["gold_c.gtd", "gold_cpp.gtd", "gold_py.gtd"] {
-        let path = dir.join(name);
+    let canonical = NavFile::open(dir.join(format!("{family}.gtd"))).unwrap();
+    for language in ["c", "cpp", "py"] {
+        let name = format!("{family}_{language}.gtd");
+        let path = dir.join(&name);
         if !path.exists() {
+            assert!(
+                env::var_os("GEOTRACE_REQUIRE_GOLD_OUTPUTS").is_none(),
+                "missing required output: {name}"
+            );
             eprintln!("skipping {name}: not generated (run `just test-gold-all`)");
             continue;
         }
         let other = NavFile::open(&path).unwrap();
         assert!(
             canonical.equals_ignoring_build_provenance(&other),
-            "{name} decodes to a different NavFile than gold.gtd: cross-SDK drift. \
+            "{name} decodes to a different NavFile than {family}.gtd: cross-SDK drift. \
              Regenerate the gold fixtures with `just test-gold-all`."
         );
     }

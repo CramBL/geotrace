@@ -12,20 +12,33 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from geotrace_sdk import (
     Annotation,
     Channel,
+    Constellation,
     EventMarker,
     EventMarkerStyle,
     MarkerIcon,
     Meta,
     NavFileBuilder,
     NavFix,
+    PositionProvenance,
     Satellite,
+    SatelliteCoverage,
+    SatelliteIdentity,
+    SatelliteMembership,
+    SatelliteObservation,
+    SatelliteObservationReport,
     SatelliteReport,
+    SatelliteScope,
+    SatelliteUsage,
+    SatelliteUsageReport,
+    SolutionDimension,
+    SolutionMethod,
+    SolutionState,
     TravelMode,
     constellation_from_name,
     marker_icon_from_name,
@@ -260,6 +273,127 @@ def _verify(path: Path) -> None:
     assert channels["heading_raw"].period_deg == 360.0
 
 
+def _write_navigation_evidence(base: Path) -> None:
+    start = datetime(2025, 1, 1, tzinfo=UTC)
+    builder = NavFileBuilder()
+    for second, latitude, state, count, provenance in [
+        (0, 55.0, SolutionState.FIX, 8, PositionProvenance.SOURCE_PROVIDED),
+        (1, 55.5, None, None, None),
+        (2, 55.1, SolutionState.UNKNOWN, 0, PositionProvenance.SOURCE_PROVIDED),
+        (3, 55.2, SolutionState.NO_FIX, 12, PositionProvenance.SDK_SYNTHESIZED),
+    ]:
+        gps = start + timedelta(seconds=second)
+        builder.add(
+            NavFix(
+                latitude,
+                12.0 + second * 0.1,
+                gps_time=gps,
+                sys_time=gps + timedelta(seconds=10),
+                state=state,
+                used_count=count,
+                hdop=0.9,
+                vdop=1.2,
+                pdop=1.5,
+                method=SolutionMethod.RTK_FIXED,
+                dimension=SolutionDimension.THREE_D,
+                position_provenance=provenance,
+            )
+        )
+    first = SatelliteIdentity(Constellation.GPS, 1)
+    builder.add(
+        SatelliteUsageReport(
+            [
+                SatelliteUsage(first, SatelliteMembership.UNUSED),
+                SatelliteUsage(first, SatelliteMembership.USED),
+                SatelliteUsage(
+                    SatelliteIdentity(Constellation.GPS, 2), SatelliteMembership.UNKNOWN
+                ),
+            ],
+            gps_time=start + timedelta(seconds=0.4),
+            scope=SatelliteScope.global_(),
+            coverage=SatelliteCoverage.PARTIAL,
+            reported_count=8,
+        )
+    )
+    builder.add(
+        SatelliteObservationReport(
+            [SatelliteObservation(first, azimuth=90, snr=0)],
+            sys_time=start + timedelta(seconds=10.4),
+            scope=SatelliteScope.global_(),
+            coverage=SatelliteCoverage.PARTIAL,
+        )
+    )
+    builder.add(
+        SatelliteObservationReport(
+            [],
+            gps_time=start + timedelta(seconds=2.4),
+            scope=SatelliteScope.constellations([Constellation.GPS]),
+            coverage=SatelliteCoverage.COMPLETE,
+            reported_count=0,
+        )
+    )
+    builder.add(
+        SatelliteUsageReport(
+            [],
+            gps_time=start + timedelta(seconds=4.5),
+            scope=SatelliteScope.global_(),
+            coverage=SatelliteCoverage.COMPLETE,
+            reported_count=0,
+        )
+    )
+    builder.add(
+        SatelliteObservationReport(
+            [],
+            sys_time=start + timedelta(seconds=14.5),
+            scope=SatelliteScope.global_(),
+            coverage=SatelliteCoverage.PARTIAL,
+        )
+    )
+    builder.add(
+        SatelliteUsageReport(
+            [],
+            gps_time=start + timedelta(seconds=3),
+            scope=SatelliteScope.constellations(list(Constellation)),
+            coverage=SatelliteCoverage.PARTIAL,
+            reported_count=2**32 - 1,
+        )
+    )
+    builder.finish().write_to_file(base / "navigation_evidence_py.gtd")
+
+    polling = NavFileBuilder()
+    for second in [0, 10]:
+        polling.add(
+            NavFix(
+                0,
+                second,
+                sys_time=start + timedelta(seconds=second),
+                state=SolutionState.FIX,
+                used_count=8,
+                hdop=0.9,
+            )
+        )
+    time = start + timedelta(seconds=2)
+    polling.add(
+        SatelliteUsageReport(
+            [],
+            sys_time=time,
+            scope=SatelliteScope.global_(),
+            coverage=SatelliteCoverage.PARTIAL,
+            reported_count=8,
+        )
+    )
+    polling.add(
+        SatelliteObservationReport(
+            [],
+            sys_time=time,
+            scope=SatelliteScope.global_(),
+            coverage=SatelliteCoverage.PARTIAL,
+            reported_count=12,
+        )
+    )
+    polling.finish().write_to_file(base / "host_clock_py.gtd")
+
+
 def main() -> None:
     base = _find_repo_root() / "tests" / "fixtures" / "gold_dataset"
 
@@ -283,6 +417,7 @@ def main() -> None:
 
     print("Verifying round-trip integrity...")
     _verify(out)
+    _write_navigation_evidence(base)
     print("Verified!")
 
 

@@ -113,3 +113,78 @@ In [`sdk/c/examples/`](../../sdk/c/examples/). Configure the C SDK with
 - [`from_csv`](../../sdk/c/examples/from_csv.c): convert CSV rows into a `.gtd` file.
 - [`from_multiple_sources`](../../sdk/c/examples/from_multiple_sources.c): merge fixes and events from separate sources, interpolating event positions.
 - [`gold_dataset`](../../sdk/c/examples/gold_dataset.c): build the cross-SDK reference file from shared fixtures, write it, and check the metadata and the counts of the built file handle.
+
+## Navigation and independent polling
+
+These examples use the unreleased SDK APIs.
+A position without heading can report Fix, eight used satellites and HDOP 0.9 without an observation list.
+Add usage identities when membership is available, then independent observations when geometry or signal measurements are available.
+The same API accepts facts from text protocols, binary protocols and asynchronous polling.
+Counts and DOP remain independent of identity lists and horizontal accuracy.
+The following example records host-clock positions and a later poll at its own timestamp.
+
+```c
+#include <geotrace.h>
+#include <stdio.h>
+
+int main(void) {
+    GtdFileBuilder *builder = gtd_builder_create();
+    GtdNavFile *file = NULL;
+    GtdNavFixV2 fix = gtd_nav_fix_v2_init();
+    fix.state = GTD_SOLUTION_STATE_FIX;
+    fix.used_count = GTD_SOME_U32(8);
+    fix.hdop = GTD_SOME_F64(0.9);
+    if (gtd_ts_from_seconds(1700000000, &fix.sys_time) != GTD_OK ||
+        gtd_builder_add_nav_fix_v2(builder, &fix) != GTD_OK) {
+        goto fail;
+    }
+    fix.lon_deg = 10;
+    if (gtd_ts_from_seconds(1700000010, &fix.sys_time) != GTD_OK ||
+        gtd_builder_add_nav_fix_v2(builder, &fix) != GTD_OK) {
+        goto fail;
+    }
+    GtdSatelliteReportInput poll = {0};
+    poll.gps_time = gtd_ts_none();
+    poll.scope.kind = GTD_SATELLITE_SCOPE_KIND_GLOBAL;
+    poll.coverage = GTD_SATELLITE_COVERAGE_PARTIAL;
+    poll.reported_count = GTD_SOME_U32(12);
+    GtdSatelliteObservation row = {GTD_CONSTELLATION_GPS, 1, GTD_NONE_F32, GTD_NONE_F32,
+                                   GTD_SOME_F32(40)};
+    if (gtd_ts_from_seconds(1700000002, &poll.sys_time) != GTD_OK ||
+        gtd_builder_add_satellite_observation_report(builder, &poll, &row, 1) != GTD_OK) {
+        goto fail;
+    }
+    GtdStatus status = gtd_builder_finish(builder, &file);
+    builder = NULL;
+    if (status != GTD_OK || gtd_nav_file_write_to_path(file, "navigation_polling.gtd") != GTD_OK) {
+        goto fail;
+    }
+    gtd_nav_file_destroy(file);
+    return 0;
+fail:
+    fprintf(stderr, "%s\n", gtd_last_error());
+    gtd_builder_destroy(builder);
+    gtd_nav_file_destroy(file);
+    return 1;
+}
+```
+
+Explicit state, including Unknown, takes precedence over counts and membership.
+An absent state permits fallback from eligible used aggregates or known membership.
+A known-used identity can establish Fix in a partial report.
+Only global evidence can establish NoFix from zero usage.
+An omitted aggregate remains unreported.
+A present aggregate, including zero, is exact for its declared scope.
+Complete coverage describes the identity list within that scope.
+A partial list retains omitted identities as unknown.
+Each report preserves its original clocks and normalized placement time.
+The poll at second 2 becomes a synthesized carrier at longitude 2° between these host-clock positions.
+
+Legacy combined-report accessors return a report only when the independent evidence can be represented without losing membership, scope or timestamps.
+Observation-only and partial independent reports remain available through the new report collections.
+See the [Rust model and format reference](rust.md#satellite-evidence-values) for the complete coverage and projection rules.
+
+New writers use GTD v3.
+The compatible application reader is currently in the Unreleased app.
+App 0.19.0 and earlier require GTD v1/v2 files.
+Publish the compatible app reader before the synchronized SDK releases, and record its release version in the [release handoff](../../RELEASES.md#gtd-v3-release-order).

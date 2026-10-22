@@ -1,3 +1,6 @@
+use std::path::Path;
+use std::{env, fs};
+
 use geotrace_sdk::{
     Angle, Constellation, DateTime, Duration, NavFile, NavFileBuilder, NavFix, NavFixTime,
     PositionProvenance, SatelliteCoverage, SatelliteEvidence, SatelliteIdentity,
@@ -19,7 +22,10 @@ use gt_history_types::{
     TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, UI_STATE_GROUP, UI_STATE_VERSION_ATTR,
     UiStateVersionReporter, UiStateVersionTooNew, fixtures,
 };
-use hdf5_pure::{DeflateLevel, File, FileBuilder, FileSpaceStrategy};
+use gt_test_utils::navigation_evidence_fixtures::{self, NavigationDetail};
+use gt_track_builder::{FixPlacementRule, SegmentationConfig};
+use gt_types::SatelliteQueryScope;
+use hdf5_pure::{AttrValue, DeflateLevel, File, FileBuilder, FileSpaceStrategy};
 use rstest::rstest;
 
 /// Single-track convenience wrappers over the per-track API.
@@ -3994,4 +4000,318 @@ fn navigation_placement_matches_direct_loading_after_history_reconstruction() {
     assert_eq!(reopened.tracks[0].geometry, direct.tracks[0].geometry);
     let middle = reopened.tracks[0].resolved_position_at(1).unwrap();
     assert_eq!((middle.0.as_degrees(), middle.1.as_degrees()), (10.0, 10.0));
+}
+
+#[rstest]
+#[case::summaries(NavigationDetail::Summaries)]
+#[case::usage(NavigationDetail::UsageIdentities)]
+#[case::full(NavigationDetail::FullObservations)]
+fn progressive_navigation_facts_and_estimates_survive_history_reopening(
+    #[case] detail: NavigationDetail,
+) {
+    let summary =
+        navigation_evidence_fixtures::progressive_navigation_recording(NavigationDetail::Summaries)
+            .unwrap();
+    let mut summary_bytes = Vec::new();
+    summary.write(&mut summary_bytes).unwrap();
+    let baseline = gt_loader::load_bytes(&summary_bytes, "summaries.gtd".to_owned()).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let mut database = Database::open_or_create(&directory.path().join("history.h5")).unwrap();
+    let original = navigation_evidence_fixtures::progressive_navigation_recording(detail).unwrap();
+    let mut bytes = Vec::new();
+    original.write(&mut bytes).unwrap();
+    let direct = gt_loader::load_bytes(&bytes, "progressive.gtd".to_owned()).unwrap();
+    let meta = gt_history::extract_meta(&bytes).unwrap();
+    let reference = database
+        .insert_simple(&format!("progressive-{detail:?}"), &meta, &bytes)
+        .unwrap();
+    let restored = database.load_full(&reference).unwrap();
+    assert_eq!(
+        NavFile::read(restored.bytes.as_slice())
+            .unwrap()
+            .nav_points(),
+        original.nav_points()
+    );
+    let reopened = gt_loader::load_bytes(&restored.bytes, "progressive.gtd".to_owned()).unwrap();
+    let track = &reopened.tracks[0];
+    assert_eq!(track.geometry, direct.tracks[0].geometry);
+    assert_eq!(
+        track.metadata.fix_stats,
+        direct.tracks[0].metadata.fix_stats
+    );
+    let stats = track.metadata.fix_stats.unwrap();
+    assert_eq!(stats.time_with_fix, Duration::seconds(20));
+    assert_eq!(stats.time_without_fix, Duration::seconds(20));
+    assert_eq!(stats.time_estimated_only, Duration::seconds(10));
+    assert_eq!(stats.time_unknown, Duration::seconds(10));
+    assert_eq!(stats.fix_loss_count, 1);
+    assert_eq!(stats.max_continuous_no_fix, Duration::seconds(20));
+    let navigation_events: Vec<_> = track
+        .generated_markers
+        .iter()
+        .map(|marker| (marker.time, marker.kind.clone()))
+        .collect();
+    let expected = &baseline.tracks[0];
+    assert_eq!(track.geometry, expected.geometry);
+    assert_eq!(track.metadata.fix_stats, expected.metadata.fix_stats);
+    assert_eq!(
+        navigation_events,
+        expected
+            .generated_markers
+            .iter()
+            .map(|marker| (marker.time, marker.kind.clone()))
+            .collect::<Vec<_>>()
+    );
+    for (source, (before, after)) in original
+        .nav_points()
+        .iter()
+        .zip(direct.tracks[0].points.iter().zip(&track.points))
+    {
+        assert_eq!(before.navigation, after.navigation);
+        assert_eq!(
+            before.satellite_evidence.usage,
+            after.satellite_evidence.usage
+        );
+        assert_eq!(
+            before.satellite_evidence.observations,
+            after.satellite_evidence.observations
+        );
+        assert_eq!(before.tpv.position(), after.tpv.position());
+        assert_eq!(after.navigation.hdop, Some(0.9));
+        assert_eq!(
+            after
+                .resolved_used_count(SatelliteQueryScope::Global)
+                .unwrap()
+                .count,
+            source.fix.used_count.unwrap()
+        );
+        assert_eq!(after.navigation.state, before.navigation.state);
+        assert_eq!(
+            after
+                .utilization_evidence(SatelliteQueryScope::Global, 10.0)
+                .is_some(),
+            detail == NavigationDetail::FullObservations
+        );
+    }
+}
+
+#[rstest]
+#[case::navigation("navigation_evidence")]
+#[case::host_polling("host_clock")]
+fn conformance_recording_retains_facts_and_derived_track_after_history(
+    #[case] family: &str,
+    #[values("", "_c", "_cpp", "_py")] language_suffix: &str,
+) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/gold_dataset")
+        .join(format!("{family}{language_suffix}.gtd"));
+    if !path.exists() && !language_suffix.is_empty() {
+        assert!(
+            env::var_os("GEOTRACE_REQUIRE_GOLD_OUTPUTS").is_none(),
+            "missing producer output: {}",
+            path.display()
+        );
+        eprintln!("skipping {}: run the gold producers first", path.display());
+        return;
+    }
+    let bytes = fs::read(path).unwrap();
+    let original = NavFile::read(bytes.as_slice()).unwrap();
+    let direct = gt_loader::load_bytes(&bytes, "feature.gtd".to_owned()).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let mut database = Database::open_or_create(&directory.path().join("history.h5")).unwrap();
+    let meta = gt_history::extract_meta(&bytes).unwrap();
+    let reference = database.insert_simple(family, &meta, &bytes).unwrap();
+    let restored = database.load_full(&reference).unwrap();
+    assert_eq!(
+        NavFile::read(restored.bytes.as_slice())
+            .unwrap()
+            .nav_points(),
+        original.nav_points()
+    );
+    let reopened = gt_loader::load_bytes(&restored.bytes, "feature.gtd".to_owned()).unwrap();
+    assert_eq!(direct.tracks.len(), reopened.tracks.len());
+    for (before, after) in direct.tracks.iter().zip(&reopened.tracks) {
+        assert_eq!(before.geometry, after.geometry);
+        assert_eq!(before.metadata.fix_stats, after.metadata.fix_stats);
+        assert_eq!(
+            before
+                .generated_markers
+                .iter()
+                .map(|marker| (marker.time, &marker.kind, marker.lat, marker.lon))
+                .collect::<Vec<_>>(),
+            after
+                .generated_markers
+                .iter()
+                .map(|marker| (marker.time, &marker.kind, marker.lat, marker.lon))
+                .collect::<Vec<_>>()
+        );
+        for (before, after) in before.points.iter().zip(&after.points) {
+            assert_eq!(before.navigation, after.navigation);
+            assert_eq!(
+                before.satellite_evidence.usage,
+                after.satellite_evidence.usage
+            );
+            assert_eq!(
+                before.satellite_evidence.observations,
+                after.satellite_evidence.observations
+            );
+            assert_eq!(before.tpv.position(), after.tpv.position());
+        }
+    }
+    if family == "host_clock" {
+        let carrier = &reopened.tracks[0].points[1];
+        let source_time = DateTime::from_timestamp(1_735_689_602, 0).unwrap();
+        let usage = &carrier.satellite_evidence.usage[0];
+        assert_eq!(usage.metadata.normalized_time.utc(), source_time);
+        assert_eq!(usage.metadata.sys_time.unwrap().utc(), source_time);
+        assert!(
+            (reopened.tracks[0]
+                .resolved_position_at(1)
+                .unwrap()
+                .1
+                .as_degrees()
+                - 2.0)
+                .abs()
+                < 1e-10
+        );
+    }
+}
+
+#[rstest]
+#[case::original(
+    FixPlacementRule::MissingHeading,
+    StoredFixPlacementRule::MissingHeading,
+    0.5
+)]
+#[case::previous(
+    FixPlacementRule::MissingHeadingAndNothingInFix,
+    StoredFixPlacementRule::MissingHeadingAndNothingInFix,
+    0.5
+)]
+#[case::current(
+    FixPlacementRule::SynthesizedOrHeadinglessNoFix,
+    StoredFixPlacementRule::SynthesizedOrHeadinglessNoFix,
+    10.0
+)]
+fn legacy_headingless_positions_reopen_with_the_selected_placement_rule(
+    #[values("1", "2")] version: &str,
+    #[case] rule: FixPlacementRule,
+    #[case] stored_rule: StoredFixPlacementRule,
+    #[case] middle_longitude: f64,
+) {
+    let mut builder = FileBuilder::new();
+    builder.set_attr("geotrace_version", AttrValue::String(version.to_owned()));
+    let mut points = builder.create_group("nav_points");
+    points
+        .create_dataset("time")
+        .with_i64_data(&[0, 5_000_000, 10_000_000])
+        .with_shape(&[3]);
+    for (column, values) in [
+        ("lat", [0.0, 10.0, 0.0]),
+        ("lon", [0.0, 10.0, 1.0]),
+        ("heading", [90.0, f64::NAN, 90.0]),
+        ("speed_mps", [1.0, 1.0, 1.0]),
+    ] {
+        points
+            .create_dataset(column)
+            .with_f64_data(&values)
+            .with_shape(&[3]);
+    }
+    builder.add_group(points.finish());
+    let mut reports = builder.create_group("sat_reports");
+    reports
+        .create_dataset("nav_point_idx")
+        .with_u64_data(&[0, 2])
+        .with_shape(&[2]);
+    reports
+        .create_dataset("time")
+        .with_i64_data(&[0, 10_000_000])
+        .with_shape(&[2]);
+    builder.add_group(reports.finish());
+    let mut satellites = builder.create_group("tracked_sats");
+    satellites
+        .create_dataset("sat_report_idx")
+        .with_u64_data(&[0, 1])
+        .with_shape(&[2]);
+    satellites
+        .create_dataset("constellation")
+        .with_u8_data(&[0, 0])
+        .with_shape(&[2]);
+    satellites
+        .create_dataset("prn")
+        .with_u32_data(&[1, 1])
+        .with_shape(&[2]);
+    satellites
+        .create_dataset("in_fix")
+        .with_u8_data(&[1, 1])
+        .with_shape(&[2]);
+    for name in ["elevation", "azimuth", "snr"] {
+        satellites
+            .create_dataset(name)
+            .with_f32_data(&[f32::NAN; 2])
+            .with_shape(&[2]);
+    }
+    builder.add_group(satellites.finish());
+    let bytes = builder.finish().unwrap();
+    let config = SegmentationConfig {
+        fix_placement_rule: rule,
+        ..SegmentationConfig::default()
+    };
+    let direct =
+        gt_loader::load_bytes_with_progress(&bytes, "legacy.gtd".to_owned(), |_, _| {}, &config)
+            .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let mut database = Database::open_or_create(&directory.path().join("history.h5")).unwrap();
+    let meta = gt_history::extract_meta(&bytes).unwrap();
+    let reference = database
+        .insert(
+            "legacy",
+            &meta,
+            &[TrackRange {
+                start: 0,
+                end: 3,
+                state: TrackState::Live,
+            }],
+            StoredSegmentation {
+                fix_placement_rule: stored_rule,
+                ..fixtures::default_segmentation()
+            },
+            &bytes,
+        )
+        .unwrap();
+    let restored = database.load_full(&reference).unwrap();
+    assert_eq!(
+        restored.segmentation.unwrap().fix_placement_rule,
+        stored_rule
+    );
+    let reopened = gt_loader::load_bytes_with_progress(
+        &restored.bytes,
+        "legacy.gtd".to_owned(),
+        |_, _| {},
+        &config,
+    )
+    .unwrap();
+    assert_eq!(direct.tracks[0].geometry, reopened.tracks[0].geometry);
+    assert_eq!(
+        NavFile::read(restored.bytes.as_slice())
+            .unwrap()
+            .nav_points(),
+        NavFile::read(bytes.as_slice()).unwrap().nav_points()
+    );
+    assert!(
+        reopened.tracks[0]
+            .points
+            .iter()
+            .all(|point| point.navigation.position_provenance.is_none())
+    );
+    assert!(
+        (reopened.tracks[0]
+            .resolved_position_at(1)
+            .unwrap()
+            .1
+            .as_degrees()
+            - middle_longitude)
+            .abs()
+            < 1e-10
+    );
 }

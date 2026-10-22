@@ -114,3 +114,18 @@ It runs automatically on every release, including prereleases, but the two track
 - The **GUI** release is created by cargo-dist with `GITHUB_TOKEN`, so the smoke workflow instead runs when the cargo-dist `Release` workflow completes, via a `workflow_run` trigger filtered to `app/**` tags. (A dist post-announce job cannot be used: it would be skipped on prereleases, because it inherits the skip from the Homebrew publish job that dist gates to stable releases.)
 
 Re-run it for any tag from the Actions tab - `Run workflow` dispatches `release-smoke.yml` with a `tag` input.
+
+## GTD v3 release order
+
+The Unreleased app reads GTD v1, v2 and v3.
+App 0.19.0 and earlier read v1/v2.
+The unreleased SDK writers produce v3, including recordings created through legacy producer calls.
+
+1. Publish an app release containing the v3 reader.
+2. Record that published tag as the minimum reader version in all four SDK guides.
+3. Publish the Rust, C, C++ and Python SDKs together under their shared SDK version.
+
+The reader release tag determines the minimum compatible app version.
+The current manifest version remains 0.19.0 until the app release bump.
+The independent-report accessors expose every canonical sample.
+Legacy combined-report accessors return only losslessly representable evidence.

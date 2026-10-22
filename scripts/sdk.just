@@ -85,13 +85,19 @@ fmt-c: (_sdk "bash" "scripts/fmt-c.sh")
 [group("container-sdk")]
 fmt-cpp: (_sdk "bash" "scripts/fmt-cpp.sh")
 
-# Regenerate all four gold files, compare them, then delete the generated three.
+# Compare every language output in all three conformance families.
 [group("container-sdk")]
-test-gold-all: test-gold-rs test-gold-c test-gold-cpp test-gold-py test-gold-compare
+test-gold-all: test-gold-rs test-gold-c test-gold-cpp test-gold-py test-gold-compare-required
     # A failed comparison stops before this, leaving the files to inspect.
     rm -f tests/fixtures/gold_dataset/gold_c.gtd \
         tests/fixtures/gold_dataset/gold_cpp.gtd \
-        tests/fixtures/gold_dataset/gold_py.gtd
+        tests/fixtures/gold_dataset/gold_py.gtd \
+        tests/fixtures/gold_dataset/navigation_evidence_c.gtd \
+        tests/fixtures/gold_dataset/navigation_evidence_cpp.gtd \
+        tests/fixtures/gold_dataset/navigation_evidence_py.gtd \
+        tests/fixtures/gold_dataset/host_clock_c.gtd \
+        tests/fixtures/gold_dataset/host_clock_cpp.gtd \
+        tests/fixtures/gold_dataset/host_clock_py.gtd
 
 [group("container-sdk")]
 test-gold-rs: (_sdk "cargo run --example gold_dataset -p geotrace-sdk")
@@ -105,6 +111,9 @@ test-gold-cpp: (_sdk "bash" "scripts/gold-cpp.sh")
 [group("container-sdk")]
 test-gold-py: (_sdk "bash" "scripts/gold-py.sh")
 
-# Assert the four freshly generated gold files decode to the same NavFile.
+# Compare each available generated file with its Rust reference.
 [group("container-sdk")]
 test-gold-compare: (_sdk "cargo test -p geotrace-sdk --test gold_conformance")
+
+[private]
+test-gold-compare-required: (_sdk "env GEOTRACE_REQUIRE_GOLD_OUTPUTS=1 cargo test -p geotrace-sdk --test gold_conformance")

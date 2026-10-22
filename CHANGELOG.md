@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- **Recordings:** GTD v3 navigation metadata, independent satellite reports and DOP metrics.
+
+### Changed
+
+- **Map & Tracks:** Recorded positions remain useful without headings or satellite reports, with independent navigation state, coordinate origin and evidence inspection.
+
 ### Fixed
 
 - **Map & Tracks:** Fixed wrapping navigation statistics in recording and track tooltips.
