@@ -2982,3 +2982,46 @@ const WIDER_TRACK_DURATION: chrono::TimeDelta = chrono::TimeDelta::seconds(37_19
 
 /// A stand-in for the read-only wording, which the app owns.
 const READ_ONLY_HOVER: &str = "This session is read-only";
+
+#[rstest]
+fn snapshot_navigation_only_statistics(#[values(true, false)] dark_mode: bool) {
+    let recording =
+        gt_test_utils::navigation_evidence_fixtures::sparse_navigation_recording().unwrap();
+    let mut bytes = Vec::new();
+    recording.write(&mut bytes).unwrap();
+    let file = gt_loader::load_bytes(&bytes, "navigation_only.gtd".to_owned()).unwrap();
+    let mut files = LoadedFiles::new();
+    files.push(file, FileHistory::None);
+    let mut state = make_state_from_files(files);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    let mut harness = make_harness(state);
+    harness.inner.ctx.set_visuals(if dark_mode {
+        egui::Visuals::dark()
+    } else {
+        egui::Visuals::light()
+    });
+    harness.run();
+    let row = tree_row(&harness, "#1").rect().center();
+    harness
+        .inner
+        .hover_at_and_settle(row, TOOLTIP_SETTLE_FRAMES);
+    for value in [
+        "Availability 70%",
+        "Coverage 91%",
+        "No fix duration 3s",
+        "Longest 3s",
+        "Losses 2",
+    ] {
+        assert!(
+            harness
+                .inner
+                .query(By::new().label_contains(value))
+                .is_some(),
+            "{value}"
+        );
+    }
+    harness.snapshot_with_color_tolerance(&format!(
+        "navigation_only_statistics_{}",
+        if dark_mode { "dark" } else { "light" }
+    ));
+}

@@ -38,6 +38,7 @@ uom.workspace = true
 [dev-dependencies]
 geotrace-sdk-units = { path = "../../sdk/rust/geotrace-sdk-units" }
 gt-filter = { path = "../gt-filter" }
+gt-loader = { path = "../gt-loader" }
 # The crate's own recordings and harness, which the integration test binaries
 # draw the filter panel with.
 gt-side-panel = { path = ".", features = ["test-util"] }

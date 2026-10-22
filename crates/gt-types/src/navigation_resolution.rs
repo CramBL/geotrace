@@ -67,6 +67,7 @@ impl NavPoint {
         }
     }
 
+    /// Satellite-count tier within the resolved navigation state.
     pub fn resolved_fix_quality(&self) -> FixQuality {
         match self.resolved_navigation_state().state {
             SolutionState::NoFix => FixQuality::Lost,

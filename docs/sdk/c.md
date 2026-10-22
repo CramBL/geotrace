@@ -105,7 +105,7 @@ The `target` and `message` pointers are valid only for the duration of the call.
 In [`sdk/c/examples/`](../../sdk/c/examples/). Configure the C SDK with
 `-DGEOTRACE_C_BUILD_EXAMPLES=ON` to build them.
 
-- [`navigation_only`](../../sdk/c/examples/navigation_only.c): record positions, a status without position, and navigation summaries.
+- [`navigation_only`](../../sdk/c/examples/navigation_only.c): record available navigation facts and fix loss without satellite reports.
 - [`write_basic`](../../sdk/c/examples/write_basic.c): minimal write workflow: add fixes, finish, write to disk.
 - [`read_file`](../../sdk/c/examples/read_file.c): open a `.gtd` file and print a content summary.
 - [`with_satellites`](../../sdk/c/examples/with_satellites.c): pair each fix with a per-satellite signal report.
@@ -128,6 +128,10 @@ Use `heading` for direction of travel when course over ground is appropriate.
 Course over ground is distinct from physical compass or antenna heading at rest.
 Ground speed uses metres per second: convert km/h or knots before assigning the basic numeric speed field.
 HDOP is dimensionless, while `eph_m` is independently reported horizontal accuracy in metres.
+GeoTrace displays the used count independently of an unavailable seen count.
+The navigation symbol shows resolved state, and reported methods such as RTK fixed remain visible in the point summary.
+Count colours describe satellite counts independently of positional accuracy.
+The viewer labels a display location for a status-only epoch as derived when position anchors are available.
 
 ```c
 GtdNavFixV2 status = gtd_nav_fix_v2_status_only_init(GTD_SOLUTION_STATE_NO_FIX);

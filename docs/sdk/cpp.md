@@ -68,7 +68,7 @@ cmake --install build/cpp
 In [`sdk/cpp/examples/`](../../sdk/cpp/examples/). Configure the C++ SDK with
 `-DGEOTRACE_CPP_BUILD_EXAMPLES=ON` to build them.
 
-- [`navigation_only`](../../sdk/cpp/examples/navigation_only.cpp): record positions, a status without position, and navigation summaries.
+- [`navigation_only`](../../sdk/cpp/examples/navigation_only.cpp): record available navigation facts and fix loss without satellite reports.
 - [`write_basic`](../../sdk/cpp/examples/write_basic.cpp): minimal write workflow: add fixes, finish, write to disk.
 - [`read_file`](../../sdk/cpp/examples/read_file.cpp): open a `.gtd` file and print a content summary.
 - [`with_satellites`](../../sdk/cpp/examples/with_satellites.cpp): pair each fix with a per-satellite signal report.
@@ -92,6 +92,10 @@ Use `heading` for direction of travel when course over ground is appropriate.
 Course over ground is distinct from physical compass or antenna heading at rest.
 Ground speed uses metres per second: convert km/h or knots before assigning the basic numeric speed field.
 HDOP is dimensionless, while `eph_m` is independently reported horizontal accuracy in metres.
+GeoTrace displays the used count independently of an unavailable seen count.
+The navigation symbol shows resolved state, and reported methods such as RTK fixed remain visible in the point summary.
+Count colours describe satellite counts independently of positional accuracy.
+The viewer labels a display location for a status-only epoch as derived when position anchors are available.
 
 ```cpp
 builder.add(NavFix::status_only(time, SolutionState::NoFix));

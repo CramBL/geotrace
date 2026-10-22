@@ -30,7 +30,7 @@ requires a Rust toolchain.
 In [`sdk/python/geotrace-py/examples/`](../../sdk/python/geotrace-py/examples/).
 Run with `python <name>.py`.
 
-- [`navigation_only`](../../sdk/python/geotrace-py/examples/navigation_only.py): record positions, a status without position, and navigation summaries.
+- [`navigation_only`](../../sdk/python/geotrace-py/examples/navigation_only.py): record available navigation facts and fix loss without satellite reports.
 - [`write_basic`](../../sdk/python/geotrace-py/examples/write_basic.py): minimal write workflow: add fixes, finish, write to disk.
 - [`read_file`](../../sdk/python/geotrace-py/examples/read_file.py): read a `.gtd` file and print a content summary.
 - [`with_satellites`](../../sdk/python/geotrace-py/examples/with_satellites.py): pair each fix with a satellite visibility report.
@@ -57,6 +57,10 @@ Use `heading` for direction of travel when course over ground is appropriate.
 Course over ground is distinct from physical compass or antenna heading at rest.
 Ground speed uses metres per second: convert km/h or knots before assigning the basic numeric speed field.
 HDOP is dimensionless, while `eph_m` is independently reported horizontal accuracy in metres.
+GeoTrace displays the used count independently of an unavailable seen count.
+The navigation symbol shows resolved state, and reported methods such as RTK fixed remain visible in the point summary.
+Count colours describe satellite counts independently of positional accuracy.
+The viewer labels a display location for a status-only epoch as derived when position anchors are available.
 
 ```python
 writer.add(NavFix(None, None, gps_time=time, state=SolutionState.NO_FIX))

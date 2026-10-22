@@ -969,8 +969,37 @@ fn snapshot_app_environment_chip_hover() {
     // Tooltips appear after egui's hover delay.
     harness.run_steps(60);
 
+    let chip = harness.get_by_label(gt_flare::text::LAYER_LABEL).rect();
+    let details = &*gt_flare::text::PLOT_HOVER;
+    let definition = harness.get_by_label(&details.definition).rect();
+    let tooltip = harness
+        .ctx
+        .memory(|memory| {
+            memory
+                .areas()
+                .visible_layer_ids()
+                .into_iter()
+                .filter(|layer| layer.order == egui::Order::Tooltip)
+                .filter_map(|layer| memory.area_rect(layer.id))
+                .find(|area| area.contains_rect(definition))
+        })
+        .expect("flare chip tooltip");
+    for rect in [
+        definition,
+        harness
+            .get_by_label(&details.source_cadence_and_scale)
+            .rect(),
+        harness.get_by_label(&details.reference_line()).rect(),
+    ] {
+        assert!(tooltip.contains_rect(rect));
+    }
+    assert!(tooltip.top() >= chip.bottom());
+    let region = chip.union(tooltip).expand(8.0);
+    assert!(harness.ctx.content_rect().contains_rect(region));
     let mut harness = gt_test_utils::TestHarness::from_harness(harness);
-    harness.snapshot_with_color_tolerance("app_environment_chip_hover");
+    harness
+        .snapshot_region_with_color_tolerance("app_environment_chip_hover", region)
+        .expect("environment chip tooltip snapshot");
 }
 
 /// With nothing archived the flare chip renders disabled - visible, not

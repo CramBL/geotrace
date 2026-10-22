@@ -125,6 +125,7 @@ The unreleased SDK writers produce v3, including recordings created through lega
 2. Record that published tag as the minimum reader version in all four SDK guides.
 3. Publish the Rust, C, C++ and Python SDKs together under their shared SDK version.
 
+The reader release must include navigation epochs without coordinates and the navigation-only viewing tests.
 The reader release tag determines the minimum compatible app version.
 The current manifest version remains 0.19.0 until the app release bump.
 The independent-report accessors expose every canonical sample.

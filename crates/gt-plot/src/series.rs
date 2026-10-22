@@ -1214,6 +1214,54 @@ mod tests {
     /// Target sample count that selects the first downsampled level of an
     /// eight-fix track.
     const COARSE_TARGET_FOR_AN_EIGHT_FIX_TRACK: usize = 4;
+
+    #[test]
+    fn navigation_only_series_preserve_source_measurements_and_missing_diagnostics() {
+        let recording =
+            gt_test_utils::navigation_evidence_fixtures::sparse_navigation_recording().unwrap();
+        let mut bytes = Vec::new();
+        recording.write(&mut bytes).unwrap();
+        let file = gt_loader::load_bytes(&bytes, "navigation_only.gtd".to_owned()).unwrap();
+        let track = file.tracks.first().unwrap();
+        let series = build_track_series(0, track, AnalysisConfig::default());
+        let time = track
+            .points
+            .get(1)
+            .expect("motion epoch")
+            .tpv
+            .time()
+            .as_secs_f64();
+        assert_eq!(
+            drawn_points(&series.velocity_kmh, usize::MAX),
+            vec![(time, 15.12)]
+        );
+        assert_eq!(
+            drawn_points(&series.heading_deg, usize::MAX),
+            vec![(time, 75.0), (time + 10.0, 75.0)]
+        );
+        let hdop = series.metrics.get(&MetricKind::Hdop).expect("HDOP series");
+        assert_eq!(
+            drawn_points(hdop.runs.first().unwrap(), usize::MAX),
+            vec![(time, 0.9)]
+        );
+        assert!(series.eph_m.finest_level().is_empty());
+        for kind in [MetricKind::SatsSeen, MetricKind::UtilAll] {
+            assert!(
+                series
+                    .metrics
+                    .get(&kind)
+                    .expect("diagnostic series")
+                    .runs
+                    .is_empty()
+            );
+        }
+        assert!(series.present.is_empty());
+        assert!(track.points.iter().all(|point| {
+            point
+                .utilization_evidence(SatelliteQueryScope::Global, 10.0)
+                .is_none()
+        }));
+    }
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@ use geotrace_sdk::{
     Angle, BuildError, Constellation, DateTime, Duration, NavFile, NavFileBuilder, NavFix,
     NavFixTime, Satellite, SatelliteCoverage, SatelliteIdentity, SatelliteMembership,
     SatelliteObservation, SatelliteObservationReport, SatelliteReport, SatelliteScope,
-    SatelliteUsage, SatelliteUsageReport, SolutionState,
+    SatelliteUsage, SatelliteUsageReport, SolutionMethod, SolutionState, Velocity,
 };
 
 pub fn headingless_navigation_recording() -> Result<NavFile, BuildError> {
@@ -140,6 +140,49 @@ pub fn progressive_navigation_recording(detail: NavigationDetail) -> Result<NavF
                     .build(),
             );
         }
+    }
+    recorder.finish()
+}
+
+pub fn sparse_navigation_recording() -> Result<NavFile, BuildError> {
+    let mut recorder = NavFileBuilder::new().with_scrubbed_provenance().open();
+    for (second, state, used_count) in [
+        (0, Some(SolutionState::Fix), None),
+        (1, Some(SolutionState::Fix), Some(8)),
+        (2, Some(SolutionState::NoFix), None),
+        (5, Some(SolutionState::Fix), Some(9)),
+        (7, Some(SolutionState::Fix), Some(0)),
+        (8, Some(SolutionState::Unknown), Some(12)),
+        (9, None, Some(8)),
+        (10, None, None),
+        (11, Some(SolutionState::NoFix), Some(12)),
+    ] {
+        let time = NavFixTime::Receiver(
+            DateTime::from_timestamp(1_792_670_400, 0).unwrap_or_default()
+                + Duration::seconds(second),
+        );
+        let fix = if second == 2 {
+            NavFix::status_only(time, SolutionState::NoFix)
+        } else {
+            let mut fix = NavFix::builder()
+                .time(time)
+                .lat(Angle::degrees(55.67 + second as f64 * 0.0001))
+                .lon(Angle::degrees(12.56 + second as f64 * 0.0002))
+                .maybe_state(state)
+                .maybe_used_count(used_count)
+                .build();
+            if second == 11 {
+                fix.heading = Some(Angle::degrees(75.0));
+            }
+            if second == 1 {
+                fix.heading = Some(Angle::degrees(75.0));
+                fix.speed = Some(Velocity::meter_per_second(4.2));
+                fix.hdop = Some(0.9);
+                fix.method = Some(SolutionMethod::RtkFixed);
+            }
+            fix
+        };
+        recorder.add(fix);
     }
     recorder.finish()
 }

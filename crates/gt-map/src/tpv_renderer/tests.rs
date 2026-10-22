@@ -773,9 +773,9 @@ fn a_fix_without_a_heading() -> NavPoint {
 #[rstest]
 #[case::without_a_report(None, FIX_UNKNOWN_GRAY)]
 #[case::ten_in_fix(Some(twelve_satellites(10)), Color32::from_rgb(66, 133, 244))]
-#[case::one_in_fix(Some(twelve_satellites(1)), Color32::from_rgb(244, 180, 0))]
+#[case::one_in_fix(Some(twelve_satellites(1)), FIX_BLUE)]
 #[case::nothing_in_fix(Some(twelve_satellites(0)), Color32::from_rgb(219, 68, 55))]
-fn tpv_point_color_states_the_fix_quality(
+fn tpv_point_color_states_the_resolved_navigation_state(
     #[case] satellites: Option<Satellites>,
     #[case] expected: Color32,
 ) {
@@ -1238,22 +1238,16 @@ const EARTH_CIRCUMFERENCE_M: f64 = 40_030_173.0;
     Some(8),
     None,
     MapFixKind::Recorded,
-    FIX_MARGINAL_YELLOW
+    FIX_BLUE
 )]
 #[case::fix_with_zero(
     Some(SolutionState::Fix),
     Some(0),
     None,
     MapFixKind::Recorded,
-    FIX_UNKNOWN_GRAY
+    FIX_BLUE
 )]
-#[case::fix_without_count(
-    Some(SolutionState::Fix),
-    None,
-    None,
-    MapFixKind::Recorded,
-    FIX_UNKNOWN_GRAY
-)]
+#[case::fix_without_count(Some(SolutionState::Fix), None, None, MapFixKind::Recorded, FIX_BLUE)]
 #[case::unknown_with_zero(
     Some(SolutionState::Unknown),
     Some(0),
@@ -1281,7 +1275,7 @@ const EARTH_CIRCUMFERENCE_M: f64 = 40_030_173.0;
     Some(12),
     Some(PositionProvenance::SdkSynthesized),
     MapFixKind::Synthesized,
-    FIX_STRONG_BLUE
+    FIX_BLUE
 )]
 #[case::synthesized_unknown(
     None,
@@ -2520,7 +2514,7 @@ fn positionless_status_recording(state: SolutionState) -> LoadedFile {
 }
 
 #[rstest]
-#[case::fix(SolutionState::Fix, MapFixKind::UnreportedPosition, FIX_STRONG_BLUE)]
+#[case::fix(SolutionState::Fix, MapFixKind::UnreportedPosition, FIX_BLUE)]
 #[case::loss(SolutionState::NoFix, MapFixKind::NavigationLoss, FIX_LOST_RED)]
 #[case::estimated(
     SolutionState::EstimatedOnly,
@@ -2646,4 +2640,155 @@ fn a_status_only_loss_hover_distinguishes_the_last_fix_from_the_observed_loss() 
             .query_by_label(&loss_observed.format(UTC_SECOND_FORMAT).to_string())
             .is_none()
     );
+}
+
+fn loaded_navigation_only_recording() -> LoadedFile {
+    let recording =
+        gt_test_utils::navigation_evidence_fixtures::sparse_navigation_recording().unwrap();
+    let mut bytes = Vec::new();
+    recording.write(&mut bytes).unwrap();
+    gt_loader::load_bytes(&bytes, "navigation_only.gtd".to_owned()).unwrap()
+}
+
+#[rstest]
+#[case::headingless(0, MapFixKind::Recorded, FIX_BLUE)]
+#[case::rtk(1, MapFixKind::Recorded, FIX_BLUE)]
+#[case::status_only(2, MapFixKind::NavigationLoss, FIX_LOST_RED)]
+#[case::fix_with_zero(4, MapFixKind::Recorded, FIX_BLUE)]
+#[case::explicit_unknown(5, MapFixKind::Recorded, FIX_UNKNOWN_GRAY)]
+#[case::inferred_fix(6, MapFixKind::Recorded, FIX_BLUE)]
+#[case::unreported_state(7, MapFixKind::Recorded, FIX_UNKNOWN_GRAY)]
+#[case::loss_with_count(8, MapFixKind::NavigationLoss, FIX_LOST_RED)]
+fn navigation_only_epochs_use_state_colours_and_remain_selectable(
+    #[case] index: usize,
+    #[case] kind: MapFixKind,
+    #[case] color: Color32,
+) {
+    let file = loaded_navigation_only_recording();
+    let point = file
+        .tracks
+        .first()
+        .unwrap()
+        .points
+        .get(index)
+        .expect("navigation epoch");
+    assert_eq!(point.map_fix_kind(), kind);
+    assert_eq!(tpv_point_color(point), color);
+    assert!(point.tpv.eph_m().is_none());
+    let reference = test_util::point_ref(DataCategory::Tpv, index);
+    let mut map = MapScene::of(vec![file])
+        .centred_on_fix(index)
+        .zoomed_to(20.0)
+        .render();
+    assert_eq!(
+        map.primary_hover_candidate_at(test_util::viewport_center()),
+        Some(reference)
+    );
+    assert!(map.pin(reference));
+}
+
+#[rstest]
+fn snapshot_navigation_only_glyphs(#[values(true, false)] dark_mode: bool) {
+    let mut map = MapScene::of(vec![loaded_navigation_only_recording()])
+        .centred_on_fix(3)
+        .zoomed_to(18.0)
+        .theme(dark_mode)
+        .render();
+    map.snapshot(&format!(
+        "navigation_only_glyphs_{}",
+        if dark_mode { "dark" } else { "light" }
+    ));
+}
+
+#[rstest]
+#[case::headingless(0, "Fix", None)]
+#[case::rtk(1, "Fix", Some("Satellites used / seen 8 / —"))]
+#[case::status_only(2, "No fix", None)]
+#[case::zero(4, "Fix", Some("Satellites used / seen 0 / —"))]
+#[case::unknown(5, "Unknown", Some("Satellites used / seen 12 / —"))]
+fn snapshot_navigation_only_point_details(
+    #[case] index: usize,
+    #[case] state: &str,
+    #[case] counts: Option<&str>,
+    #[values(true, false)] dark_mode: bool,
+) {
+    let file = loaded_navigation_only_recording();
+    let track = file.tracks.first().unwrap();
+    let point = track
+        .placed_points()
+        .unwrap()
+        .get(index)
+        .expect("navigation epoch");
+    let sky = SkySection::resolve(track, PointIdx::new(index));
+    assert!(matches!(sky, SkySection::TrackWithoutReports));
+    let mut hover = test_util::harness_builder()
+        .size(egui::vec2(340.0, 260.0))
+        .theme(dark_mode)
+        .ui(|ui| {
+            show_hover_table(ui, point, &sky, None);
+        });
+    hover.run();
+    assert!(hover.inner.query_by_label(state).is_some());
+    assert!(hover.inner.query_by_label("Sky").is_none());
+    assert!(hover.inner.query_by_label("Accuracy").is_none());
+    if let Some(counts) = counts {
+        assert!(hover.inner.query_by_label(counts).is_some());
+    }
+    if index == 1 {
+        assert!(hover.inner.query_by_label("RTK fixed").is_some());
+        assert!(hover.inner.query_by_label("H 0.90").is_some());
+    }
+    if index == 2 {
+        assert!(hover.inner.query_by_label("Position").is_some());
+        assert!(hover.inner.query_by_label("NaN").is_none());
+    }
+    let theme = if dark_mode { "dark" } else { "light" };
+    hover.snapshot(&format!("navigation_only_hover_{index}_{theme}"));
+    let mut snapshots = hover.inner.take_snapshot_results();
+    drop(hover);
+    let reference = test_util::point_ref(DataCategory::Tpv, index);
+    let mut pinned = MapScene::of(vec![file])
+        .theme(dark_mode)
+        .pinned(reference)
+        .render();
+    assert!(pinned.harness.inner.query_by_label(state).is_some());
+    assert!(pinned.harness.inner.query_by_label("Details").is_some());
+    assert!(pinned.harness.inner.query_by_label("Sky").is_none());
+    assert!(pinned.harness.inner.query_by_label("Accuracy").is_none());
+    if index == 2 {
+        assert!(
+            pinned
+                .harness
+                .inner
+                .query_by_label("Derived from recorded positions")
+                .is_some()
+        );
+    }
+    pinned.snapshot(&format!("navigation_only_window_{index}_{theme}"));
+    snapshots.extend(pinned.harness.inner.take_snapshot_results());
+}
+
+#[rstest]
+fn snapshot_navigation_only_narrow_window(#[values(true, false)] dark_mode: bool) {
+    let mut map = MapScene::of(vec![loaded_navigation_only_recording()])
+        .size(egui::vec2(330.0, 340.0))
+        .theme(dark_mode)
+        .pinned(test_util::point_ref(DataCategory::Tpv, 1))
+        .render();
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(330.0, 340.0));
+    for label in [
+        "Details",
+        "Fix",
+        "RTK fixed",
+        "Satellites used / seen 8 / —",
+        "H 0.90",
+    ] {
+        let rect = map.harness.inner.get_by_label(label).rect();
+        assert!(viewport.contains_rect(rect), "{label}: {rect:?}");
+    }
+    assert!(map.harness.inner.query_by_label("Sky").is_none());
+    map.snapshot(&format!(
+        "navigation_only_narrow_window_{}",
+        if dark_mode { "dark" } else { "light" }
+    ));
 }

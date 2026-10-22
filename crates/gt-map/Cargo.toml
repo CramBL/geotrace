@@ -60,6 +60,7 @@ postcard.workspace = true
 allocation-counter.workspace = true
 criterion.workspace = true
 egui_kittest.workspace = true
+gt-loader = { path = "../gt-loader" }
 # The crate's own harness, which the integration test binaries draw through.
 gt-map = { path = ".", features = ["test-util"] }
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
