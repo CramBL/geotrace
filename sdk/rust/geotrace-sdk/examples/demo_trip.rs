@@ -24,8 +24,8 @@
 
 use geotrace_sdk::{
     Angle, Annotation, Channel, Constellation, EventMarker, EventMarkerStyle, MarkerIcon, Meta,
-    NavFileBuilder, NavFix, NavFixTime, NavRecorder, RecordedFixTimestamps, Satellite,
-    SatelliteReport, Unit, Velocity,
+    NavFileBuilder, NavFix, NavFixTime, NavPoint, NavRecorder, PositionProvenance,
+    RecordedFixTimestamps, Satellite, SatelliteReport, Unit, Velocity,
 };
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -403,32 +403,42 @@ fn verify_demo_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     assert_eq!(file.event_markers().len(), 4);
     assert_eq!(file.event_marker_styles().len(), 4);
 
-    // 92 real fixes plus 59 ghost points (one per missing tunnel second).
-    // Ghost points are the fixes the builder synthesizes for orphaned
-    // satellite reports: interpolated position and heading, but no
-    // measured accuracy - the missing eph is what distinguishes them.
     let points = file.nav_points();
     assert_eq!(points.len(), 151);
-    let is_ghost = |p: &&geotrace_sdk::NavPoint| p.fix.eph_m.is_none();
-    let ghost_points = points.iter().filter(is_ghost).count();
-    assert_eq!(ghost_points, 59, "one ghost nav point per tunnel second");
+    let is_synthesized = |point: &&NavPoint| {
+        point.fix.position_provenance == Some(PositionProvenance::SdkSynthesized)
+    };
+    assert_eq!(points.iter().filter(is_synthesized).count(), 59);
+    assert_eq!(
+        points
+            .iter()
+            .filter(|point| {
+                point.fix.position_provenance == Some(PositionProvenance::SourceProvided)
+            })
+            .count(),
+        92
+    );
 
     // Every point of the trip carries a satellite report, gap included.
     assert!(points.iter().all(|p| p.satellites().is_some()));
 
     // The tunnel seconds never contain a satellite contributing to a fix.
-    for p in points.iter().filter(is_ghost) {
+    for p in points.iter().filter(is_synthesized) {
         let sats = p.satellites().as_ref().unwrap();
         assert!(sats.tracked.iter().all(|s| !s.in_fix));
     }
 
     // Recovery: the first restored fix has the minimal 4-satellite
     // geometry and a large eph that converges by the end of the trip.
-    let recovery: Vec<_> = points.iter().filter(|p| !is_ghost(p)).skip(80).collect();
+    let recovery: Vec<_> = points
+        .iter()
+        .filter(|p| !is_synthesized(p))
+        .skip(80)
+        .collect();
     assert_eq!(recovery.len(), 12);
     let first = recovery.first().unwrap();
     let last = recovery.last().unwrap();
-    let in_fix = |p: &&geotrace_sdk::NavPoint| {
+    let in_fix = |p: &&NavPoint| {
         p.satellites()
             .as_ref()
             .map_or(0, |s| s.tracked.iter().filter(|t| t.in_fix).count())

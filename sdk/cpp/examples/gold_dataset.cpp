@@ -444,6 +444,93 @@ void verify_counts(const geotrace::NavFile &file) {
     }
 }
 
+void write_navigation_evidence(const fs::path &base) {
+    using geotrace::Angle;
+    using geotrace::Constellation;
+    using geotrace::FileBuilder;
+    using geotrace::FixTime;
+    using geotrace::NavFix;
+    using geotrace::PositionProvenance;
+    using geotrace::SatelliteCoverage;
+    using geotrace::SatelliteMembership;
+    using geotrace::SatelliteObservationReport;
+    using geotrace::SatelliteScope;
+    using geotrace::SatelliteUsageReport;
+    using geotrace::SolutionDimension;
+    using geotrace::SolutionMethod;
+    using geotrace::SolutionState;
+    using geotrace::Timestamp;
+    FileBuilder builder;
+    const std::array<double, 4> latitudes{55.0, 55.5, 55.1, 55.2};
+    const std::array<std::optional<SolutionState>, 4> states{
+        SolutionState::Fix, std::nullopt, SolutionState::Unknown, SolutionState::NoFix};
+    const std::array<std::optional<std::uint32_t>, 4> counts{8, std::nullopt, 0, 12};
+    const std::array<std::optional<PositionProvenance>, 4> origins{
+        PositionProvenance::SourceProvided, std::nullopt, PositionProvenance::SourceProvided,
+        PositionProvenance::SdkSynthesized};
+    for (std::size_t i = 0; i < latitudes.size(); ++i) {
+        NavFix fix{
+            FixTime::both(Timestamp::from_seconds(1735689600 + static_cast<std::int64_t>(i)),
+                          Timestamp::from_seconds(1735689610 + static_cast<std::int64_t>(i))),
+            Angle::degrees(latitudes.at(i)), Angle::degrees(12.0 + (static_cast<double>(i) * 0.1))};
+        fix.state = states.at(i);
+        fix.used_count = counts.at(i);
+        fix.hdop = 0.9;
+        fix.vdop = 1.2;
+        fix.pdop = 1.5;
+        fix.method = SolutionMethod::RtkFixed;
+        fix.dimension = SolutionDimension::ThreeD;
+        fix.position_provenance = origins.at(i);
+        builder.add(fix);
+    }
+    const auto receiver = [](const char *time) {
+        return FixTime::receiver(Timestamp::from_iso8601(time));
+    };
+    const auto host = [](const char *time) { return FixTime::host(Timestamp::from_iso8601(time)); };
+    builder.add(SatelliteUsageReport{receiver("2025-01-01T00:00:00.4Z"),
+                                     SatelliteScope::global(),
+                                     SatelliteCoverage::Partial,
+                                     8,
+                                     {{{Constellation::Gps, 1}, SatelliteMembership::Unused},
+                                      {{Constellation::Gps, 1}, SatelliteMembership::Used},
+                                      {{Constellation::Gps, 2}, SatelliteMembership::Unknown}}});
+    builder.add(SatelliteObservationReport{host("2025-01-01T00:00:10.4Z"),
+                                           SatelliteScope::global(),
+                                           SatelliteCoverage::Partial,
+                                           std::nullopt,
+                                           {{{Constellation::Gps, 1}, std::nullopt, 90.0F, 0.0F}}});
+    const std::array<Constellation, 1> gps{Constellation::Gps};
+    builder.add(SatelliteObservationReport{receiver("2025-01-01T00:00:02.4Z"),
+                                           SatelliteScope::constellations(gps),
+                                           SatelliteCoverage::Complete, 0});
+    builder.add(SatelliteUsageReport{receiver("2025-01-01T00:00:04.5Z"), SatelliteScope::global(),
+                                     SatelliteCoverage::Complete, 0});
+    builder.add(SatelliteObservationReport{host("2025-01-01T00:00:14.5Z"), SatelliteScope::global(),
+                                           SatelliteCoverage::Partial});
+    const std::array<Constellation, 6> all{Constellation::Gps,     Constellation::Glonass,
+                                           Constellation::Galileo, Constellation::Beidou,
+                                           Constellation::Navic,   Constellation::Qzss};
+    builder.add(SatelliteUsageReport{receiver("2025-01-01T00:00:03Z"),
+                                     SatelliteScope::constellations(all),
+                                     SatelliteCoverage::Partial, UINT32_MAX});
+    builder.finish().write_to_file(base / "navigation_evidence_cpp.gtd");
+
+    FileBuilder polling;
+    for (const std::int64_t second : {0, 10}) {
+        NavFix fix{FixTime::host(Timestamp::from_seconds(1735689600 + second)), Angle::degrees(0),
+                   Angle::degrees(static_cast<double>(second))};
+        fix.state = SolutionState::Fix;
+        fix.used_count = 8;
+        fix.hdop = 0.9;
+        polling.add(fix);
+    }
+    polling.add(SatelliteUsageReport{host("2025-01-01T00:00:02Z"), SatelliteScope::global(),
+                                     SatelliteCoverage::Partial, 8});
+    polling.add(SatelliteObservationReport{host("2025-01-01T00:00:02Z"), SatelliteScope::global(),
+                                           SatelliteCoverage::Partial, 12});
+    polling.finish().write_to_file(base / "host_clock_cpp.gtd");
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -466,6 +553,7 @@ int main(int argc, char **argv) {
         nav.write_to_file(out);
 
         verify_counts(nav);
+        write_navigation_evidence(base);
 
         std::cout << "Written: " << out << "\n";
         std::cout << "Gold dataset verified. Nav points: 209, Event markers: 7, Channels: 2\n";

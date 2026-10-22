@@ -9,6 +9,7 @@ the app).
 
 ### Added
 
+- Navigation and independent polling examples in Rust, C, C++ and Python.
 - Python producers and readers support optional navigation metadata and independent satellite reports.
 - C++ producers and readers support optional navigation metadata and owning independent satellite reports.
 - C producers and readers support navigation metadata and independent scoped satellite usage and observation reports.

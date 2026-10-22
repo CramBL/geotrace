@@ -2624,6 +2624,7 @@ dependencies = [
  "gt-loader",
  "gt-test-utils",
  "gt-track-builder",
+ "gt-types",
  "hdf5-metno",
  "hdf5-pure",
  "insta",

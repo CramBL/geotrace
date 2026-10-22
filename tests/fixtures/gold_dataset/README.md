@@ -102,15 +102,71 @@ The dataset includes explicit style overrides for certain event variants:
 - `style/custom-icon`: Overridden with the `Lightning` icon.
 - `style/custom-color`: Overridden with `#FF00FF` (Magenta).
 
-## Independent navigation evidence reference
+## Navigation conformance families
 
-The Rust `gold_dataset` example also generates `navigation_evidence.gtd`.
-The file records a bent route with fixes without headings, used-count summaries and HDOP.
-Its source states include absent state, explicit Fix and explicit Unknown.
-Usage and observation samples have independent clocks, scope, coverage and counts.
-One usage list includes explicit unknown membership.
-A host-only observation at 10.4s normalizes to receiver time 0.4s.
-An empty GPS-scoped complete observation reports zero.
-Usage and observation orphans at normalized time 4.5s share one synthesized position with absent state.
-The example checks decoded equality after writing.
-The four-language `gold.gtd` comparison uses the shared CSV inputs.
+All four `gold_dataset` examples generate the following additional families from the explicit inputs below.
+The small navigation cases use fixed values in each example.
+The CSV generator continues to reproduce the original eight-track dataset.
+`just test-gold-all` requires every output in all three families and compares decoded values, excluding SDK build provenance.
+A missing language output fails that workflow.
+A successful comparison deletes the nine generated language outputs.
+A failed comparison retains them for inspection.
+
+| Family | Committed Rust reference | Generated suffixes |
+|---|---|---|
+| Original CSV inputs | `gold.gtd` | `_c`, `_cpp`, `_py` |
+| Navigation metadata and independent reports | `navigation_evidence.gtd` | `_c`, `_cpp`, `_py` |
+| Common-host-clock orphan placement | `host_clock.gtd` | `_c`, `_cpp`, `_py` |
+
+To execute the generated producer files through both history backends before cleanup:
+
+```sh
+just test-gold-rs test-gold-c test-gold-cpp test-gold-py
+GEOTRACE_REQUIRE_GOLD_OUTPUTS=1 just test-backends
+just test-gold-all
+```
+
+The strict flag requires every producer file in the history cases.
+Ordinary checkout runs compare the committed references and skip missing generated inputs.
+
+### Navigation evidence
+
+The time origin is 2025-01-01 00:00:00 UTC.
+Source fixes have receiver seconds 0, 1, 2 and 3, and host time ten seconds later.
+Every fix has no heading or horizontal accuracy, method RTK fixed, dimension 3D, and HDOP/VDOP/PDOP of 0.9/1.2/1.5.
+Longitude is `12 + 0.1 × receiver seconds`.
+
+| Receiver seconds | Latitude | State | Used count | Coordinate origin |
+|---|---|---|---|---|
+| 0 | 55.0 | Fix | 8 | SourceProvided |
+| 1 | 55.5 | absent | absent | absent |
+| 2 | 55.1 | Unknown | 0 | SourceProvided |
+| 3 | 55.2 | NoFix | 12 | SdkSynthesized |
+
+Report insertion order is the table order.
+Complete and partial empty samples retain their rows.
+The source aggregate and repeated identity rows remain independent.
+
+| Order | Kind | Source clock and seconds | Scope | Coverage | Aggregate | Ordered identity rows |
+|---|---|---|---|---|---|---|
+| 0 | Usage | receiver 0.4 | Global | Partial | 8 | G01 Unused, G01 Used, G02 Unknown |
+| 1 | Observation | host 10.4 | Global | Partial | absent | G01: azimuth 90°, elevation absent, SNR 0 |
+| 2 | Observation | receiver 2.4 | GPS | Complete | 0 | empty |
+| 3 | Usage | receiver 4.5 | Global | Complete | 0 | empty |
+| 4 | Observation | host 14.5 | Global | Partial | absent | empty |
+| 5 | Usage | receiver 3 | explicit set of all six constellations | Partial | 4294967295 | empty |
+
+The host observation at 10.4s normalizes to receiver time 0.4s.
+The two reports at normalized time 4.5s share one synthesized carrier with absent state.
+The resulting recording has five navigation points.
+The declared all-constellation scope remains distinct from Global.
+
+### Host-clock polling
+
+Both fixes have only host timestamps, at seconds 0 and 10 from the same origin.
+Their latitude is 0° and longitude equals host seconds.
+Both report Fix, used count 8 and HDOP 0.9, with source-provided coordinates and no heading.
+At host second 2, a partial global usage sample reports 8, followed by a partial global observation sample reporting 12.
+Both lists are empty.
+The single synthesized carrier has normalized time 2s and longitude 2°.
+Both original host timestamps remain 2s, and report input orders remain 0 and 1.

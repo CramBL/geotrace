@@ -155,3 +155,57 @@ A report table and its identity table must both exist, including an empty identi
 An absent report kind has neither table.
 Readers also accept the combined `sat_reports` and `tracked_sats` layout from versions 1, 2 and earlier version 3 writers.
 Files with both satellite layouts produce an error.
+
+## Navigation and independent polling
+
+These examples use the unreleased SDK APIs.
+A position without heading can report Fix, eight used satellites and HDOP 0.9 without an observation list.
+Add usage identities when membership is available, then independent observations when geometry or signal measurements are available.
+The same API accepts facts from text protocols, binary protocols and asynchronous polling.
+Counts and DOP remain independent of identity lists and horizontal accuracy.
+The following example records host-clock positions and a later poll at its own timestamp.
+
+```rust
+use geotrace_sdk::{Angle, DateTime, Duration, NavFileBuilder, NavFix, NavFixTime,
+    SatelliteCoverage, SatelliteObservation, SatelliteIdentity, Constellation,
+    SatelliteObservationReport, SatelliteScope, SolutionState};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let start = DateTime::from_timestamp(1_700_000_000, 0).ok_or("timestamp")?;
+    let mut recorder = NavFileBuilder::new().open();
+    for second in [0, 10] {
+        recorder.add(NavFix::builder()
+            .time(NavFixTime::Host(start + Duration::seconds(second)))
+            .lat(Angle::degrees(0.0)).lon(Angle::degrees(second as f64))
+            .state(SolutionState::Fix).used_count(8).hdop(0.9).build());
+    }
+    recorder.add(SatelliteObservationReport::builder()
+        .time(NavFixTime::Host(start + Duration::seconds(2)))
+        .scope(SatelliteScope::Global).coverage(SatelliteCoverage::Partial)
+        .reported_count(12).satellites(vec![SatelliteObservation::builder()
+            .identity(SatelliteIdentity::new(Constellation::Gps, 1)).snr(40.0).build()])
+        .build());
+    recorder.finish()?.write_to_file("navigation_polling.gtd")?;
+    Ok(())
+}
+```
+
+Explicit state, including Unknown, takes precedence over counts and membership.
+An absent state permits fallback from eligible used aggregates or known membership.
+A known-used identity can establish Fix in a partial report.
+Only global evidence can establish NoFix from zero usage.
+An omitted aggregate remains unreported.
+A present aggregate, including zero, is exact for its declared scope.
+Complete coverage describes the identity list within that scope.
+A partial list retains omitted identities as unknown.
+Each report preserves its original clocks and normalized placement time.
+The poll at second 2 becomes a synthesized carrier at longitude 2° between these host-clock positions.
+
+Legacy combined-report accessors return a report only when the independent evidence can be represented without losing membership, scope or timestamps.
+Observation-only and partial independent reports remain available through the new report collections.
+See the [Rust model and format reference](rust.md#satellite-evidence-values) for the complete coverage and projection rules.
+
+New writers use GTD v3.
+The compatible application reader is currently in the Unreleased app.
+App 0.19.0 and earlier require GTD v1/v2 files.
+Publish the compatible app reader before the synchronized SDK releases, and record its release version in the [release handoff](../../RELEASES.md#gtd-v3-release-order).

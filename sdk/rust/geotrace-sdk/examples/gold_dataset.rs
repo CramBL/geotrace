@@ -15,8 +15,8 @@ use geotrace_sdk::{
     EventMarker, EventMarkerStyle, MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix, NavFixTime,
     NavRecorder, PositionProvenance, RecordedFixTimestamps, Satellite, SatelliteCoverage,
     SatelliteIdentity, SatelliteMembership, SatelliteObservation, SatelliteObservationReport,
-    SatelliteReport, SatelliteScope, SatelliteUsage, SatelliteUsageReport, SolutionState,
-    TravelMode, Velocity,
+    SatelliteReport, SatelliteScope, SatelliteUsage, SatelliteUsageReport, SolutionDimension,
+    SolutionMethod, SolutionState, TravelMode, Velocity,
 };
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -64,6 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let evidence_path = base_dir.join("navigation_evidence.gtd");
     evidence.write_to_file(&evidence_path)?;
     assert_eq!(NavFile::open(&evidence_path)?, evidence);
+    host_clock_fixture()?.write_to_file(base_dir.join("host_clock.gtd"))?;
 
     Ok(())
 }
@@ -479,6 +480,7 @@ fn navigation_evidence_fixture() -> Result<NavFile, Box<dyn std::error::Error>> 
         (0, 55.0, Some(SolutionState::Fix), Some(8)),
         (1, 55.5, None, None),
         (2, 55.1, Some(SolutionState::Unknown), Some(0)),
+        (3, 55.2, Some(SolutionState::NoFix), Some(12)),
     ] {
         let gps = base + chrono::Duration::seconds(second);
         recorder.add(
@@ -492,6 +494,15 @@ fn navigation_evidence_fixture() -> Result<NavFile, Box<dyn std::error::Error>> 
                 .maybe_state(state)
                 .maybe_used_count(count)
                 .hdop(0.9)
+                .vdop(1.2)
+                .pdop(1.5)
+                .method(SolutionMethod::RtkFixed)
+                .dimension(SolutionDimension::ThreeD)
+                .position_provenance(match second {
+                    1 => None,
+                    3 => Some(PositionProvenance::SdkSynthesized),
+                    _ => Some(PositionProvenance::SourceProvided),
+                })
                 .build(),
         );
     }
@@ -504,6 +515,10 @@ fn navigation_evidence_fixture() -> Result<NavFile, Box<dyn std::error::Error>> 
             .coverage(SatelliteCoverage::Partial)
             .reported_count(8)
             .satellites(vec![
+                SatelliteUsage::new(
+                    SatelliteIdentity::new(Constellation::Gps, 1),
+                    SatelliteMembership::Unused,
+                ),
                 SatelliteUsage::new(
                     SatelliteIdentity::new(Constellation::Gps, 1),
                     SatelliteMembership::Used,
@@ -566,8 +581,26 @@ fn navigation_evidence_fixture() -> Result<NavFile, Box<dyn std::error::Error>> 
             .satellites(Vec::new())
             .build(),
     );
+    recorder.add(
+        SatelliteUsageReport::builder()
+            .time(NavFixTime::Receiver(base + chrono::Duration::seconds(3)))
+            .scope(SatelliteScope::Constellations(ConstellationSet::new(
+                Constellation::Gps,
+                [
+                    Constellation::Glonass,
+                    Constellation::Galileo,
+                    Constellation::Beidou,
+                    Constellation::Navic,
+                    Constellation::Qzss,
+                ],
+            )))
+            .coverage(SatelliteCoverage::Partial)
+            .reported_count(u32::MAX)
+            .satellites(Vec::new())
+            .build(),
+    );
     let file = recorder.finish()?;
-    assert_eq!(file.nav_points().len(), 4);
+    assert_eq!(file.nav_points().len(), 5);
     let source = &file.nav_points()[0];
     assert_eq!(source.fix.state, Some(SolutionState::Fix));
     assert_eq!(source.fix.used_count, Some(8));
@@ -581,7 +614,7 @@ fn navigation_evidence_fixture() -> Result<NavFile, Box<dyn std::error::Error>> 
             .normalized_time,
         base + chrono::Duration::milliseconds(400)
     );
-    let carrier = &file.nav_points()[3];
+    let carrier = &file.nav_points()[4];
     assert_eq!(
         carrier.fix.position_provenance,
         Some(PositionProvenance::SdkSynthesized)
@@ -589,5 +622,54 @@ fn navigation_evidence_fixture() -> Result<NavFile, Box<dyn std::error::Error>> 
     assert_eq!(carrier.fix.state, None);
     assert_eq!(carrier.satellite_evidence().usage.len(), 1);
     assert_eq!(carrier.satellite_evidence().observations.len(), 1);
+    Ok(file)
+}
+
+fn host_clock_fixture() -> Result<NavFile, Box<dyn std::error::Error>> {
+    let base = parse_time("2025-01-01T00:00:00Z").expect("fixture time");
+    let mut recorder = NavFileBuilder::new().with_scrubbed_provenance().open();
+    for second in [0, 10] {
+        recorder.add(
+            NavFix::builder()
+                .time(NavFixTime::Host(base + chrono::Duration::seconds(second)))
+                .lat(Angle::degrees(0.0))
+                .lon(Angle::degrees(second as f64))
+                .state(SolutionState::Fix)
+                .used_count(8)
+                .hdop(0.9)
+                .build(),
+        );
+    }
+    let time = NavFixTime::Host(base + chrono::Duration::seconds(2));
+    recorder.add(
+        SatelliteUsageReport::builder()
+            .time(time)
+            .scope(SatelliteScope::Global)
+            .coverage(SatelliteCoverage::Partial)
+            .reported_count(8)
+            .satellites(Vec::new())
+            .build(),
+    );
+    recorder.add(
+        SatelliteObservationReport::builder()
+            .time(time)
+            .scope(SatelliteScope::Global)
+            .coverage(SatelliteCoverage::Partial)
+            .reported_count(12)
+            .satellites(Vec::new())
+            .build(),
+    );
+    let file = recorder.finish()?;
+    let carrier = &file.nav_points()[1];
+    assert_eq!(carrier.fix.time.effective(), time.effective());
+    assert_eq!(carrier.satellite_evidence().observations[0].time, time);
+    assert!((carrier.fix.lon.as_degrees() - 2.0).abs() < 1e-10);
+    assert_eq!(
+        carrier.satellite_evidence().usage[0]
+            .placement
+            .unwrap()
+            .normalized_time,
+        time.effective()
+    );
     Ok(file)
 }

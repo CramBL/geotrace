@@ -589,6 +589,118 @@ static void verify_counts(const GtdNavFile *file) {
     verify_channels(file);
 }
 
+static void write_navigation_evidence(const char *base) {
+    GtdFileBuilder *builder = gtd_builder_create();
+    const double latitudes[] = {55.0, 55.5, 55.1, 55.2};
+    const uint32_t states[] = {GTD_SOLUTION_STATE_FIX, GTD_SOLUTION_STATE_UNREPORTED,
+                               GTD_SOLUTION_STATE_UNKNOWN, GTD_SOLUTION_STATE_NO_FIX};
+    const GtdOptU32 counts[] = {GTD_SOME_U32(8), GTD_NONE_U32, GTD_SOME_U32(0), GTD_SOME_U32(12)};
+    const uint32_t origins[] = {
+        GTD_POSITION_PROVENANCE_SOURCE_PROVIDED, GTD_POSITION_PROVENANCE_UNREPORTED,
+        GTD_POSITION_PROVENANCE_SOURCE_PROVIDED, GTD_POSITION_PROVENANCE_SDK_SYNTHESIZED};
+    for (size_t i = 0; i < 4; ++i) {
+        GtdNavFixV2 fix = gtd_nav_fix_v2_init();
+        check_sdk_status(gtd_ts_from_seconds(INT64_C(1735689600) + (int64_t)i, &fix.gps_time),
+                         "fix gps");
+        check_sdk_status(gtd_ts_from_seconds(INT64_C(1735689610) + (int64_t)i, &fix.sys_time),
+                         "fix host");
+        fix.lat_deg = latitudes[i];
+        fix.lon_deg = 12.0 + ((double)i * 0.1);
+        fix.state = states[i];
+        fix.used_count = counts[i];
+        fix.hdop = GTD_SOME_F64(0.9);
+        fix.vdop = GTD_SOME_F64(1.2);
+        fix.pdop = GTD_SOME_F64(1.5);
+        fix.method = GTD_SOLUTION_METHOD_RTK_FIXED;
+        fix.dimension = GTD_SOLUTION_DIMENSION_THREE_D;
+        fix.position_provenance = origins[i];
+        check_sdk_status(gtd_builder_add_nav_fix_v2(builder, &fix), "add fix v2");
+    }
+    GtdSatelliteReportInput report = {0};
+    report.gps_time = parse_timestamp_or_absent("2025-01-01T00:00:00.4Z");
+    report.sys_time = gtd_ts_none();
+    report.scope.kind = GTD_SATELLITE_SCOPE_KIND_GLOBAL;
+    report.coverage = GTD_SATELLITE_COVERAGE_PARTIAL;
+    report.reported_count = GTD_SOME_U32(8);
+    const GtdSatelliteUsage usage[] = {
+        {GTD_CONSTELLATION_GPS, 1, GTD_SATELLITE_MEMBERSHIP_UNUSED},
+        {GTD_CONSTELLATION_GPS, 1, GTD_SATELLITE_MEMBERSHIP_USED},
+        {GTD_CONSTELLATION_GPS, 2, GTD_SATELLITE_MEMBERSHIP_UNKNOWN}};
+    check_sdk_status(gtd_builder_add_satellite_usage_report(builder, &report, usage, 3), "usage");
+    report.gps_time = gtd_ts_none();
+    report.sys_time = parse_timestamp_or_absent("2025-01-01T00:00:10.4Z");
+    report.reported_count = GTD_NONE_U32;
+    const GtdSatelliteObservation observation = {GTD_CONSTELLATION_GPS, 1, GTD_NONE_F32,
+                                                 GTD_SOME_F32(90), GTD_SOME_F32(0)};
+    check_sdk_status(
+        gtd_builder_add_satellite_observation_report(builder, &report, &observation, 1),
+        "observation");
+    report.gps_time = parse_timestamp_or_absent("2025-01-01T00:00:02.4Z");
+    report.sys_time = gtd_ts_none();
+    report.scope.kind = GTD_SATELLITE_SCOPE_KIND_CONSTELLATIONS;
+    report.scope.constellation_mask = UINT32_C(1) << GTD_CONSTELLATION_GPS;
+    report.coverage = GTD_SATELLITE_COVERAGE_COMPLETE;
+    report.reported_count = GTD_SOME_U32(0);
+    check_sdk_status(gtd_builder_add_satellite_observation_report(builder, &report, NULL, 0),
+                     "scoped empty");
+    report.gps_time = parse_timestamp_or_absent("2025-01-01T00:00:04.5Z");
+    report.scope.kind = GTD_SATELLITE_SCOPE_KIND_GLOBAL;
+    report.scope.constellation_mask = 0;
+    check_sdk_status(gtd_builder_add_satellite_usage_report(builder, &report, NULL, 0),
+                     "empty usage");
+    report.gps_time = gtd_ts_none();
+    report.sys_time = parse_timestamp_or_absent("2025-01-01T00:00:14.5Z");
+    report.coverage = GTD_SATELLITE_COVERAGE_PARTIAL;
+    report.reported_count = GTD_NONE_U32;
+    check_sdk_status(gtd_builder_add_satellite_observation_report(builder, &report, NULL, 0),
+                     "partial empty");
+    report.gps_time = parse_timestamp_or_absent("2025-01-01T00:00:03Z");
+    report.sys_time = gtd_ts_none();
+    report.scope.kind = GTD_SATELLITE_SCOPE_KIND_CONSTELLATIONS;
+    const uint32_t all_constellation_mask =
+        (UINT32_C(1) << GTD_CONSTELLATION_GPS) | (UINT32_C(1) << GTD_CONSTELLATION_GLONASS) |
+        (UINT32_C(1) << GTD_CONSTELLATION_GALILEO) | (UINT32_C(1) << GTD_CONSTELLATION_BEIDOU) |
+        (UINT32_C(1) << GTD_CONSTELLATION_NAVIC) | (UINT32_C(1) << GTD_CONSTELLATION_QZSS);
+    report.scope.constellation_mask = all_constellation_mask;
+    report.reported_count = GTD_SOME_U32(UINT32_MAX);
+    check_sdk_status(gtd_builder_add_satellite_usage_report(builder, &report, NULL, 0),
+                     "explicit all");
+    GtdNavFile *file = NULL;
+    check_sdk_status(gtd_builder_finish(builder, &file), "finish evidence");
+    char path[512];
+    int written = snprintf(path, sizeof path, "%s/navigation_evidence_c.gtd", base);
+    check(written >= 0 && (size_t)written < sizeof path, "evidence path length");
+    check_sdk_status(gtd_nav_file_write_to_path(file, path), "write evidence");
+    gtd_nav_file_destroy(file);
+
+    builder = gtd_builder_create();
+    for (int64_t second = 0; second <= 10; second += 10) {
+        GtdNavFixV2 fix = gtd_nav_fix_v2_init();
+        check_sdk_status(gtd_ts_from_seconds(INT64_C(1735689600) + second, &fix.sys_time),
+                         "host fix");
+        fix.lon_deg = (double)second;
+        fix.state = GTD_SOLUTION_STATE_FIX;
+        fix.used_count = GTD_SOME_U32(8);
+        fix.hdop = GTD_SOME_F64(0.9);
+        check_sdk_status(gtd_builder_add_nav_fix_v2(builder, &fix), "add host fix");
+    }
+    report.gps_time = gtd_ts_none();
+    report.sys_time = parse_timestamp_or_absent("2025-01-01T00:00:02Z");
+    report.scope.kind = GTD_SATELLITE_SCOPE_KIND_GLOBAL;
+    report.scope.constellation_mask = 0;
+    report.reported_count = GTD_SOME_U32(8);
+    check_sdk_status(gtd_builder_add_satellite_usage_report(builder, &report, NULL, 0),
+                     "host usage");
+    report.reported_count = GTD_SOME_U32(12);
+    check_sdk_status(gtd_builder_add_satellite_observation_report(builder, &report, NULL, 0),
+                     "host observations");
+    check_sdk_status(gtd_builder_finish(builder, &file), "finish host");
+    written = snprintf(path, sizeof path, "%s/host_clock_c.gtd", base);
+    check(written >= 0 && (size_t)written < sizeof path, "host path length");
+    check_sdk_status(gtd_nav_file_write_to_path(file, path), "write host");
+    gtd_nav_file_destroy(file);
+}
+
 int main(int argc, char **argv) {
     const char *base = (argc >= 2) ? argv[1] : "tests/fixtures/gold_dataset";
 
@@ -619,6 +731,7 @@ int main(int argc, char **argv) {
     check_sdk_status(gtd_nav_file_write_to_path(nav, out_path), "write");
 
     verify_counts(nav);
+    write_navigation_evidence(base);
     gtd_nav_file_destroy(nav);
 
     printf("Written: %s\n", out_path);
