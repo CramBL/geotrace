@@ -68,6 +68,7 @@ cmake --install build/cpp
 In [`sdk/cpp/examples/`](../../sdk/cpp/examples/). Configure the C++ SDK with
 `-DGEOTRACE_CPP_BUILD_EXAMPLES=ON` to build them.
 
+- [`navigation_only`](../../sdk/cpp/examples/navigation_only.cpp): record positions, a status without position, and navigation summaries.
 - [`write_basic`](../../sdk/cpp/examples/write_basic.cpp): minimal write workflow: add fixes, finish, write to disk.
 - [`read_file`](../../sdk/cpp/examples/read_file.cpp): open a `.gtd` file and print a content summary.
 - [`with_satellites`](../../sdk/cpp/examples/with_satellites.cpp): pair each fix with a per-satellite signal report.
@@ -77,6 +78,27 @@ In [`sdk/cpp/examples/`](../../sdk/cpp/examples/). Configure the C++ SDK with
 - [`from_csv`](../../sdk/cpp/examples/from_csv.cpp): convert CSV rows into a `.gtd` file.
 - [`from_multiple_sources`](../../sdk/cpp/examples/from_multiple_sources.cpp): merge fixes and events from separate sources, interpolating event positions.
 - [`gold_dataset`](../../sdk/cpp/examples/gold_dataset.cpp): build the cross-SDK reference file from shared fixtures and verify the round-trip.
+
+## Basic navigation recording
+
+Start with [`navigation_only`](../../sdk/cpp/examples/navigation_only.cpp) for a complete runnable producer using pre-parsed navigation facts.
+It writes a positioned Fix with eight used satellites and HDOP 0.9, a status-only NoFix two seconds later, and a positioned Fix at five seconds.
+No satellite identities, report builders, scopes or coverage flags are required.
+Set explicit Fix or NoFix from the source's validity indication.
+Omitted state is unreported: coordinates alone do not establish a GNSS fix.
+When explicit state is unavailable, a genuinely global used count establishes Fix when positive and NoFix when zero.
+An omitted count remains absent.
+Use `heading` for direction of travel when course over ground is appropriate.
+Course over ground is distinct from physical compass or antenna heading at rest.
+Ground speed uses metres per second: convert km/h or knots before assigning the basic numeric speed field.
+HDOP is dimensionless, while `eph_m` is independently reported horizontal accuracy in metres.
+
+```cpp
+builder.add(NavFix::status_only(time, SolutionState::NoFix));
+```
+
+Set optional counts and DOP on the returned `NavFix` when reported.
+The ordinary builder error policy also applies to status-only inputs.
 
 ## Navigation and independent polling
 

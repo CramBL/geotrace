@@ -362,3 +362,64 @@ Test(navigation_evidence, common_host_clock_orphan_retains_time_and_position) {
     cr_assert(gtd_ts_is_none(legacy.sat_report_sys_time));
     gtd_nav_file_destroy(file);
 }
+
+Test(navigation_evidence, status_only_initializer_preserves_absence_through_serialization) {
+    GtdFileBuilder *builder = gtd_builder_create();
+    GtdNavFixV2 fix = gtd_nav_fix_v2_status_only_init(UINT32_MAX);
+    cr_assert_eq(gtd_builder_add_nav_fix_v2(builder, &fix), GTD_ERR_INVALID_ARGUMENT);
+    cr_assert_eq(gtd_ts_from_seconds(1792670400, &fix.gps_time), GTD_OK);
+    cr_assert_eq(gtd_builder_add_nav_fix_v2(builder, &fix), GTD_ERR_INVALID_ARGUMENT);
+    cr_assert_not_null(strstr(gtd_last_error(), "state"));
+    fix = gtd_nav_fix_v2_init();
+    fix.lat_deg = 55.67;
+    fix.lon_deg = 12.56;
+    fix.state = GTD_SOLUTION_STATE_FIX;
+    fix.used_count = GTD_SOME_U32(8);
+    fix.hdop = GTD_SOME_F64(0.9);
+    cr_assert_eq(gtd_ts_from_seconds(1792670400, &fix.gps_time), GTD_OK);
+    cr_assert_eq(gtd_builder_add_nav_fix_v2(builder, &fix), GTD_OK);
+    fix = gtd_nav_fix_v2_status_only_init(GTD_SOLUTION_STATE_NO_FIX);
+    cr_assert(isnan(fix.lat_deg));
+    cr_assert(isnan(fix.lon_deg));
+    cr_assert_eq(fix.position_provenance, GTD_POSITION_PROVENANCE_UNREPORTED);
+    cr_assert_eq(gtd_ts_from_seconds(1792670402, &fix.gps_time), GTD_OK);
+    cr_assert_eq(gtd_builder_add_nav_fix_v2(builder, &fix), GTD_OK);
+    fix = gtd_nav_fix_v2_init();
+    fix.lat_deg = 55.671;
+    fix.lon_deg = 12.562;
+    fix.state = GTD_SOLUTION_STATE_FIX;
+    fix.used_count = GTD_SOME_U32(9);
+    cr_assert_eq(gtd_ts_from_seconds(1792670405, &fix.gps_time), GTD_OK);
+    cr_assert_eq(gtd_builder_add_nav_fix_v2(builder, &fix), GTD_OK);
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_OK);
+    file = reload_through_bytes(file);
+    cr_assert_eq(gtd_nav_file_nav_point_count(file), 3);
+    for (size_t index = 0; index < 3; ++index) {
+        GtdNavPointInfoV2 point;
+        cr_assert_eq(gtd_nav_file_get_nav_point_v2(file, index, &point), GTD_OK);
+        cr_assert_eq(point.usage_report_count, 0);
+        cr_assert_eq(point.observation_report_count, 0);
+        cr_assert_eq(point.fix.eph_m.present, 0);
+        if (index == 1) {
+            cr_assert(isnan(point.fix.lat_deg));
+            cr_assert(isnan(point.fix.lon_deg));
+            cr_assert_eq(point.fix.state, GTD_SOLUTION_STATE_NO_FIX);
+            cr_assert_eq(point.fix.position_provenance, GTD_POSITION_PROVENANCE_UNREPORTED);
+            cr_assert_eq(point.fix.gps_time.unix_micros, INT64_C(1792670402000000));
+            cr_assert(gtd_ts_is_none(point.fix.sys_time));
+            cr_assert_eq(point.fix.used_count.present, 0);
+            cr_assert_eq(point.fix.heading_deg.present, 0);
+            cr_assert_eq(point.fix.speed_mps.present, 0);
+            cr_assert_eq(point.fix.hdop.present, 0);
+        } else {
+            cr_assert_eq(point.fix.state, GTD_SOLUTION_STATE_FIX);
+            cr_assert_eq(point.fix.used_count.value, index == 0 ? 8 : 9);
+            cr_assert_eq(point.fix.hdop.present, index == 0);
+            if (index == 0) {
+                assert_near(point.fix.hdop.value, 0.9, 1e-10);
+            }
+        }
+    }
+    gtd_nav_file_destroy(file);
+}

@@ -2035,6 +2035,12 @@ void gtd_nav_file_destroy(GtdNavFile *file);
 GtdNavFixV2 gtd_nav_fix_v2_init(void);
 
 /**
+ * Initialize an explicit status with absent coordinates and coordinate origin.
+ * Set at least one timestamp before ingestion, which validates the raw state tag.
+ */
+GtdNavFixV2 gtd_nav_fix_v2_status_only_init(uint32_t state);
+
+/**
  * Whether @p snr_dbhz is the SNR some receiver firmware sends when it has no measurement:
  * 99 dB-Hz, within the tolerance of the Rust SDK's `snr::is_no_data_sentinel`.
  *

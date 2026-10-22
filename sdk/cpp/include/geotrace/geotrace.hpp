@@ -1127,6 +1127,15 @@ struct NavFix {
     std::optional<double> hdop = std::nullopt;
     std::optional<double> vdop = std::nullopt;
     std::optional<double> pdop = std::nullopt;
+
+    /** Coordinate origin and optional measurements are absent. */
+    [[nodiscard]] static NavFix status_only(FixTime time, SolutionState state) {
+        const auto input = ::gtd_nav_fix_v2_status_only_init(static_cast<std::uint32_t>(state));
+        NavFix fix{time, Angle::degrees(input.lat_deg), Angle::degrees(input.lon_deg)};
+        fix.state = state;
+        fix.position_provenance = std::nullopt;
+        return fix;
+    }
 };
 
 /**

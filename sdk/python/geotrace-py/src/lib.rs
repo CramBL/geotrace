@@ -967,6 +967,7 @@ fn parse_python_channel_unit(value: &Bound<'_, PyAny>) -> PyResult<ChannelUnit> 
 /// A reported NaN in those fields reads back as `None`.
 /// Omitted `position_provenance` defaults to source-provided. Explicit `None` means unreported.
 /// State, method, dimension and the source used count remain independent facts.
+/// Both coordinates may be `None` with an explicit state. Coordinate origin is then unreported.
 #[pyclass(frozen, skip_from_py_object, name = "NavFix")]
 #[derive(Clone, Copy, Debug)]
 pub struct PyNavFix {
@@ -983,8 +984,8 @@ impl PyNavFix {
     #[new]
     #[pyo3(signature = (lat, lon, *, gps_time=None, sys_time=None, heading=None, speed_mps=None, eph_m=None, state=None, method=None, dimension=None, used_count=None, hdop=None, vdop=None, pdop=None, position_provenance=Some(PyPositionProvenance::SourceProvided)))]
     fn new(
-        lat: f64,
-        lon: f64,
+        lat: Option<f64>,
+        lon: Option<f64>,
         gps_time: Option<DateTime<FixedOffset>>,
         sys_time: Option<DateTime<FixedOffset>>,
         heading: Option<f64>,
@@ -1000,22 +1001,35 @@ impl PyNavFix {
         position_provenance: Option<PyPositionProvenance>,
     ) -> PyResult<Self> {
         let time = nav_fix_time_or_value_error(TimestampArguments { gps_time, sys_time })?;
-        let inner = NavFix::builder()
-            .time(time)
-            .lat(Angle::degrees(lat))
-            .lon(Angle::degrees(lon))
-            .maybe_heading(heading.map(Angle::degrees))
-            .maybe_speed(speed_mps.map(Velocity::meter_per_second))
-            .maybe_eph_m(eph_m)
-            .maybe_state(state.map(Into::into))
-            .maybe_method(method.map(Into::into))
-            .maybe_dimension(dimension.map(Into::into))
-            .maybe_used_count(used_count)
-            .maybe_hdop(hdop)
-            .maybe_vdop(vdop)
-            .maybe_pdop(pdop)
-            .position_provenance(position_provenance.map(Into::into))
-            .build();
+        let mut inner = match (lat, lon) {
+            (Some(lat), Some(lon)) => NavFix::builder()
+                .time(time)
+                .lat(Angle::degrees(lat))
+                .lon(Angle::degrees(lon))
+                .position_provenance(position_provenance.map(Into::into))
+                .build(),
+            (None, None) => NavFix::status_only(
+                time,
+                state
+                    .ok_or_else(|| PyValueError::new_err("absent coordinates require state"))?
+                    .into(),
+            ),
+            _ => {
+                return Err(PyValueError::new_err(
+                    "lat and lon must both be present or both None",
+                ));
+            }
+        };
+        inner.heading = heading.map(Angle::degrees);
+        inner.speed = speed_mps.map(Velocity::meter_per_second);
+        inner.eph_m = eph_m;
+        inner.state = state.map(Into::into);
+        inner.method = method.map(Into::into);
+        inner.dimension = dimension.map(Into::into);
+        inner.used_count = used_count;
+        inner.hdop = hdop;
+        inner.vdop = vdop;
+        inner.pdop = pdop;
         Ok(Self { inner })
     }
 

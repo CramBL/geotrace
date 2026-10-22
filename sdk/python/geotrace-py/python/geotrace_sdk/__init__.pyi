@@ -319,6 +319,8 @@ class NavFix:
     Omitted ``position_provenance`` defaults to source-provided.
     Explicit ``None`` means unreported.
     State, method, dimension and the source used count remain independent facts.
+    Both coordinates may be ``None`` with an explicit state.
+    Coordinate origin is then unreported.
 
     Args:
         lat: Latitude in degrees, expected in [-90, 90].
@@ -334,8 +336,8 @@ class NavFix:
 
     def __init__(
         self,
-        lat: float,
-        lon: float,
+        lat: float | None,
+        lon: float | None,
         *,
         gps_time: datetime | None = None,
         sys_time: datetime | None = None,

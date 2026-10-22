@@ -273,3 +273,16 @@ pub extern "C" fn gtd_nav_fix_v2_init() -> GtdNavFixV2 {
     fix.sys_time = timestamp::gtd_ts_none();
     fix
 }
+
+/// Initialize an explicit status with absent coordinates and coordinate origin.
+/// Set at least one timestamp before ingestion, which validates the raw state tag.
+#[unsafe(no_mangle)]
+pub extern "C" fn gtd_nav_fix_v2_status_only_init(state: u32) -> GtdNavFixV2 {
+    let mut fix = GtdNavFixV2::from(NavFix::status_only(
+        NavFixTime::Host(DateTime::UNIX_EPOCH),
+        SolutionState::Unknown,
+    ));
+    fix.sys_time = timestamp::gtd_ts_none();
+    fix.state = state;
+    fix
+}

@@ -5,6 +5,7 @@
 #include "test_undeclared_enums.hpp"
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -342,4 +343,56 @@ TEST_CASE("a late observation identity error records its row index") {
     CHECK(builder.status().code == GTD_ERR_INVALID_ARGUMENT);
     CHECK(builder.status().description.find("observation report row 1") != std::string::npos);
     CHECK(builder.try_finish().error().description == builder.status().description);
+}
+
+TEST_CASE("status-only navigation preserves source absence through serialization") {
+    FileBuilder builder;
+    auto first = source(0);
+    first.state = SolutionState::Fix;
+    first.used_count = 8;
+    first.hdop = 0.9;
+    builder.add(first);
+    builder.add(NavFix::status_only(source(2).time, SolutionState::NoFix));
+    auto recovered = source(5);
+    recovered.state = SolutionState::Fix;
+    recovered.used_count = 9;
+    builder.add(recovered);
+    const auto built = builder.try_finish();
+    REQUIRE(built.is_ok());
+    const auto decoded = NavFile::try_from_bytes(built.value().to_bytes());
+    REQUIRE(decoded.is_ok());
+    for (std::size_t index = 0; index < 3; ++index) {
+        const auto point = decoded.value().nav_point(index);
+        CHECK(point.eph_m == std::nullopt);
+        CHECK(decoded.value().satellite_usage_reports(index).empty());
+        CHECK(decoded.value().satellite_observation_reports(index).empty());
+        if (index == 1) {
+            CHECK(std::isnan(point.lat.as_degrees()));
+            CHECK(std::isnan(point.lon.as_degrees()));
+            CHECK(point.state == SolutionState::NoFix);
+            CHECK(point.position_provenance == std::nullopt);
+            CHECK(point.used_count == std::nullopt);
+            CHECK(point.heading == std::nullopt);
+            CHECK(point.speed == std::nullopt);
+            CHECK(point.hdop == std::nullopt);
+            CHECK(point.sys_time == std::optional<Timestamp>{Timestamp::from_seconds(1700000002)});
+            CHECK(point.gps_time == std::nullopt);
+        } else {
+            CHECK(point.state == SolutionState::Fix);
+            CHECK(point.used_count == (index == 0 ? 8 : 9));
+        }
+    }
+    CHECK(decoded.value().nav_point(0).hdop == doctest::Approx(0.9));
+}
+
+TEST_CASE("status-only factories preserve invalid state tags for builder validation") {
+    FileBuilder builder;
+    const auto fix = NavFix::status_only(source(0).time, undeclared_enum_value<SolutionState>());
+#if GEOTRACE_CPP_EXCEPTIONS
+    CHECK_THROWS_AS(builder.add(fix), std::invalid_argument);
+#else
+    builder.add(fix);
+#endif
+    CHECK(builder.status().code == GTD_ERR_INVALID_ARGUMENT);
+    CHECK(builder.status().description.find("state") != std::string::npos);
 }

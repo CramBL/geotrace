@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import math
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -376,3 +377,114 @@ def test_canonical_values_and_loaded_points_are_immutable() -> None:
     for value, field in values:
         with pytest.raises(AttributeError):
             setattr(value, field, None)
+
+
+@pytest.mark.parametrize("clock", ["gps_time", "sys_time"])
+def test_navigation_only_recording_preserves_positionless_status(
+    clock: str, tmp_path: Path
+) -> None:
+    builder = NavFileBuilder()
+    builder.add(
+        NavFix(
+            55.67,
+            12.56,
+            gps_time=T0 if clock == "gps_time" else None,
+            sys_time=T0 if clock == "sys_time" else None,
+            state=SolutionState.FIX,
+            used_count=8,
+            hdop=0.9,
+        )
+    )
+    time = T0 + timedelta(seconds=2)
+    builder.add(
+        NavFix(
+            None,
+            None,
+            gps_time=time if clock == "gps_time" else None,
+            sys_time=time if clock == "sys_time" else None,
+            state=SolutionState.NO_FIX,
+        )
+    )
+    builder.add(
+        NavFix(
+            55.671,
+            12.562,
+            gps_time=T0 + timedelta(seconds=5) if clock == "gps_time" else None,
+            sys_time=T0 + timedelta(seconds=5) if clock == "sys_time" else None,
+            state=SolutionState.FIX,
+            used_count=9,
+        )
+    )
+    path = tmp_path / "navigation_only.gtd"
+    builder.finish().write_to_file(path)
+    points = NavFile.open(path).points
+    assert len(points) == 3
+    assert points[0].used_count == 8
+    assert points[0].hdop == pytest.approx(0.9)
+    assert points[0].eph_m is None
+    middle = points[1]
+    assert math.isnan(middle.lat) and math.isnan(middle.lon)
+    assert middle.state is SolutionState.NO_FIX
+    assert middle.position_provenance is None
+    assert getattr(middle, clock) == time
+    assert getattr(middle, "sys_time" if clock == "gps_time" else "gps_time") is None
+    assert (
+        middle.used_count,
+        middle.heading,
+        middle.speed_mps,
+        middle.eph_m,
+        middle.hdop,
+    ) == (None, None, None, None, None)
+    for point in points:
+        assert point.satellites is None
+        assert point.usage_reports == []
+        assert point.observation_reports == []
+    with pytest.raises(RuntimeError, match="consumed"):
+        builder.add(
+            NavFix(
+                None,
+                None,
+                gps_time=time if clock == "gps_time" else None,
+                sys_time=time if clock == "sys_time" else None,
+                state=SolutionState.NO_FIX,
+            )
+        )
+
+
+@pytest.mark.parametrize("state", list(SolutionState))
+def test_positionless_states_allow_optional_navigation_measurements(
+    state: SolutionState,
+) -> None:
+    fix = NavFix(
+        None,
+        None,
+        sys_time=T0,
+        state=state,
+        used_count=0,
+        hdop=0.9,
+        position_provenance=PositionProvenance.SOURCE_PROVIDED,
+    )
+    assert fix.position_provenance is None
+    point = NavFileBuilder().add(fix).finish().points[0]
+    assert point.state is state
+    assert (point.used_count, point.hdop, point.eph_m) == (0, 0.9, None)
+
+
+@pytest.mark.parametrize("coordinates", [(None, 0), (0, None)])
+def test_navigation_rejects_one_missing_coordinate(
+    coordinates: tuple[float | None, float | None],
+) -> None:
+    with pytest.raises(ValueError, match="lat and lon"):
+        NavFix(*coordinates, sys_time=T0, state=SolutionState.NO_FIX)
+
+
+def test_positionless_navigation_requires_explicit_state_and_aware_timestamp() -> None:
+    with pytest.raises(ValueError, match="require state"):
+        NavFix(None, None, sys_time=T0)
+    with pytest.raises(ValueError, match="provide gps_time or sys_time"):
+        NavFix(None, None, state=SolutionState.NO_FIX)
+    with pytest.raises(TypeError):
+        NavFix(None, None, sys_time=T0.replace(tzinfo=None), state=SolutionState.NO_FIX)
+    for state in [1, Constellation.GPS]:
+        with pytest.raises(TypeError, match="SolutionState"):
+            NavFix(None, None, sys_time=T0, state=state)  # type: ignore[arg-type]
