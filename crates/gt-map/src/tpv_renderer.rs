@@ -11,7 +11,7 @@ use gt_sky::{SkyHighlight, SkyPlot, SkyPlotSize};
 use gt_types::coordinates::{Coordinate, RecordedCoordinate};
 use gt_types::satellites::{Constellation, NO_DATA_SNR_EXPLANATION};
 use gt_types::{
-    DataCategory, FileIdx, FixQuality, FixRef, LoadedFile, LoadedTrack, MapFixKind, NavPoint,
+    DataCategory, FileIdx, FixRef, LoadedFile, LoadedTrack, MapFixKind, NavPoint,
     NearbySkyEvidence, PlacedPoint, PlacedPoints, PointIdx, ResolvedPosition,
     SKY_REPORT_MAX_AGE_SECS, SatelliteQueryScope, SatelliteScope, SkyCounts, SkyGeometry,
     SkySatellite, SolutionState, TrackIdx, TrackRef,
@@ -56,10 +56,7 @@ impl ChevronFix {
         match fix.map_fix_kind() {
             MapFixKind::Recorded => None,
             MapFixKind::UnreportedPosition => Some(Self::UnreportedPosition {
-                color: match fix.resolved_navigation_state().state {
-                    SolutionState::Fix => FIX_STRONG_BLUE,
-                    _ => FIX_UNKNOWN_GRAY,
-                },
+                color: tpv_point_color(fix),
             }),
             MapFixKind::CoordinateOutOfRange => Some(Self::CoordinateOutOfRange),
             MapFixKind::NavigationLoss => Some(Self::NavigationLoss),
@@ -1464,8 +1461,7 @@ pub(crate) fn bucket_alpha(bucket: u8) -> f32 {
 /// range per maximal run of points with the same projected key. The caller
 /// builds each shape from `span[range]` in one exact-size allocation.
 ///
-/// A stretch of marginal fixes shows as one yellow segment up to the first
-/// good fix: each edge takes the key of its starting point. Two adjacent
+/// Each edge takes the navigation state of its starting point. Two adjacent
 /// shapes share their boundary point and the line stays continuous: a run's
 /// last index is the next run's first index.
 pub(crate) fn sub_span_ranges<K: Copy, P: PartialEq>(
@@ -1606,14 +1602,11 @@ pub(crate) fn draw_sat_labels(
 }
 
 pub(crate) fn tpv_point_color(point: &NavPoint) -> Color32 {
-    if point.resolved_navigation_state().state == SolutionState::EstimatedOnly {
-        return FIX_ESTIMATED_PURPLE;
-    }
-    match point.resolved_fix_quality() {
-        FixQuality::Unknown => FIX_UNKNOWN_GRAY,
-        FixQuality::Strong => FIX_STRONG_BLUE,
-        FixQuality::Marginal => FIX_MARGINAL_YELLOW,
-        FixQuality::Lost => FIX_LOST_RED,
+    match point.resolved_navigation_state().state {
+        SolutionState::Fix => FIX_BLUE,
+        SolutionState::NoFix => FIX_LOST_RED,
+        SolutionState::EstimatedOnly => FIX_ESTIMATED_PURPLE,
+        SolutionState::Unknown => FIX_UNKNOWN_GRAY,
     }
 }
 
@@ -1672,7 +1665,7 @@ fn draw_chevron(
 /// Draw the car-GPS style navigation arrow for a real fix.
 ///
 /// The hot path pushes one two-tint-slot mesh instance into the track's
-/// icon batch (fill tinted with the fix-quality color, rim white with the
+/// icon batch (fill tinted with the navigation-state color, rim white with the
 /// fade alpha).
 /// Highlighted arrows (at most the hovered and the sticky point per frame)
 /// keep the painter implementation: their thicker blue outline has a
@@ -1871,9 +1864,9 @@ const PANEL_HEADER_ROWS: usize = 2;
 /// Rows a folded constellation panel costs - just its own header.
 const FOLDED_PANEL_ROWS: usize = 1;
 
-/// Stroke width of the continuous fix-quality line that replaces the fix
+/// Stroke width of the continuous navigation-state line that replaces the fix
 /// icons when they fade out - slightly thicker than the 3 px trackline
-/// underneath so the quality colors stay readable on top of it.
+/// underneath so the state colors stay readable on top of it.
 pub(crate) const QUALITY_LINE_WIDTH: f32 = 5.0;
 
 /// Accuracy circles with a smaller pixel radius than this are skipped - they
@@ -1894,8 +1887,7 @@ const DOT_HIGHLIGHT_STROKE_PX: f32 = 2.0;
 const FIX_UNKNOWN_GRAY: Color32 = Color32::from_rgb(145, 155, 170);
 const FIX_ESTIMATED_PURPLE: Color32 = Color32::from_rgb(165, 105, 210);
 
-const FIX_STRONG_BLUE: Color32 = Color32::from_rgb(66, 133, 244);
-const FIX_MARGINAL_YELLOW: Color32 = Color32::from_rgb(244, 180, 0);
+const FIX_BLUE: Color32 = Color32::from_rgb(66, 133, 244);
 pub(crate) const FIX_LOST_RED: Color32 = Color32::from_rgb(219, 68, 55);
 
 /// Zoom range over which the fix icons scale from dot size up to their

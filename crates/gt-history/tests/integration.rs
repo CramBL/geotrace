@@ -24,7 +24,7 @@ use gt_history_types::{
 };
 use gt_test_utils::navigation_evidence_fixtures::{self, NavigationDetail};
 use gt_track_builder::{FixPlacementRule, SegmentationConfig};
-use gt_types::SatelliteQueryScope;
+use gt_types::{LoadedTrack, SatelliteQueryScope};
 use hdf5_pure::{AttrValue, DeflateLevel, File, FileBuilder, FileSpaceStrategy};
 use rstest::rstest;
 
@@ -4314,4 +4314,68 @@ fn legacy_headingless_positions_reopen_with_the_selected_placement_rule(
             .abs()
             < 1e-10
     );
+}
+
+#[test]
+fn navigation_only_source_facts_and_inferred_positions_survive_history() {
+    let source = navigation_evidence_fixtures::sparse_navigation_recording().unwrap();
+    let mut bytes = Vec::new();
+    source.write(&mut bytes).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let mut database = Database::open_or_create(&directory.path().join("history.h5")).unwrap();
+    let metadata = gt_history::extract_meta(&bytes).unwrap();
+    let reference = database
+        .insert_simple("navigation-only", &metadata, &bytes)
+        .unwrap();
+    let restored = database.load_full(&reference).unwrap();
+    let decoded = NavFile::read(restored.bytes.as_slice()).unwrap();
+    let source_fields = |file: &NavFile| {
+        file.nav_points()
+            .iter()
+            .map(|point| {
+                let coordinates = (
+                    point.fix.lat.as_degrees().to_bits(),
+                    point.fix.lon.as_degrees().to_bits(),
+                );
+                let mut remaining_fields = point.clone();
+                remaining_fields.fix.lat = Angle::degrees(0.0);
+                remaining_fields.fix.lon = Angle::degrees(0.0);
+                (coordinates, remaining_fields)
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(source_fields(&source), source_fields(&decoded));
+    let direct = gt_loader::load_bytes(&bytes, "navigation_only.gtd".to_owned()).unwrap();
+    let reopened =
+        gt_loader::load_bytes(&restored.bytes, "navigation_only.gtd".to_owned()).unwrap();
+    let direct_track = direct.tracks.first().unwrap();
+    let track = reopened.tracks.first().unwrap();
+    assert_eq!(track.geometry, direct_track.geometry);
+    assert_eq!(track.metadata.fix_stats, direct_track.metadata.fix_stats);
+    assert_eq!(track.metadata.invalid_position_count, 0);
+    let events = |track: &LoadedTrack| {
+        track
+            .generated_markers
+            .iter()
+            .map(|marker| (marker.time, marker.kind.clone(), marker.lat, marker.lon))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(events(track), events(direct_track));
+    for (before, after) in direct_track.points.iter().zip(&track.points) {
+        assert_eq!(before.tpv.position(), after.tpv.position());
+        assert_eq!(before.navigation, after.navigation);
+        assert_eq!(
+            before.resolved_navigation_state(),
+            after.resolved_navigation_state()
+        );
+        assert_eq!(
+            before.resolved_used_count(SatelliteQueryScope::Global),
+            after.resolved_used_count(SatelliteQueryScope::Global)
+        );
+        assert!(
+            after
+                .resolved_seen_count(SatelliteQueryScope::Global)
+                .is_none()
+        );
+    }
 }

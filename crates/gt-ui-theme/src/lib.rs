@@ -322,21 +322,12 @@ pub fn fix_quality_color(pct: u32, dark_mode: bool) -> Color32 {
     }
 }
 
-/// Confidence tier for a satellite count shown in the point badge: more
-/// satellites contributing reads as higher confidence, on a green → red scale.
-///
-/// The tier is a semantic step, decoupled from both the count thresholds (see
-/// [`fix_count_tier`] / [`seen_count_tier`]) and the concrete hues (see
-/// [`SatCountTier::themed_color`]).
+/// Colour tiers for reported satellite counts, independent of positional accuracy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumIter, strum::EnumCount)]
 pub enum SatCountTier {
-    /// Too few to be reliable: no fix or a lone satellite.
     Critical,
-    /// Enough to fix, but with little margin.
     Fair,
-    /// Plenty of satellites: a healthy fix.
     Good,
-    /// Marginal: a fix is degraded or fragile.
     Poor,
 }
 
@@ -368,7 +359,7 @@ impl SatCountTier {
     }
 }
 
-/// The confidence tier for a "fix used" satellite count.
+/// The colour tier for a used satellite count.
 pub const fn fix_count_tier(count: u32) -> SatCountTier {
     if count == 0 {
         SatCountTier::Critical
@@ -381,7 +372,7 @@ pub const fn fix_count_tier(count: u32) -> SatCountTier {
     }
 }
 
-/// The confidence tier for a "total seen" satellite count.
+/// The colour tier for a seen satellite count.
 pub const fn seen_count_tier(count: u32) -> SatCountTier {
     if count < 5 {
         SatCountTier::Poor

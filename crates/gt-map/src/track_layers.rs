@@ -1,4 +1,4 @@
-//! The unified per-track map layers: trackline, fix-quality line, and
+//! The unified per-track map layers: trackline, navigation-state line, and
 //! per-fix icons.
 //!
 //! Layer order is explicit here: every trackline first (under everything),
@@ -30,7 +30,7 @@ use crate::transform::{self, GeometryCull, MercTransform};
 use crate::viewport::{MapFramePlan, TrackEntry};
 
 /// Per-point styling key for the unified line passes: the trackline dashes
-/// ghost stretches. The quality line colors by fix quality and crossfade
+/// ghost stretches. The quality line colors by navigation state and crossfade
 /// bucket. One key drives both layers, so each track's points are
 /// LOD-selected, projected, and culled exactly once per frame.
 ///
@@ -594,7 +594,7 @@ impl<'a, 'p> TrackLayers<'a, 'p> {
     }
 
     /// Paint the TPV layer per track: the sky rings underneath, the
-    /// fix-quality line, the fix icons on top, then the selected satellite
+    /// navigation-state line, the fix icons on top, then the selected satellite
     /// labels, for the entries that pass the `filter(index)` predicate. The
     /// flags at the ends of those tracks close the pass, clustered across all
     /// of them.
@@ -832,8 +832,8 @@ fn focus_scrim_alpha(dark_mode: bool, progress: f32) -> u8 {
     alpha
 }
 
-/// Paint a track's fix-quality line from its prepared geometry: each edge
-/// colored by the fix quality at its starting point and faded by the
+/// Paint a track's navigation-state line from its prepared geometry: each edge
+/// colored by the navigation state at its starting point and faded by the
 /// crossfade bucket, with fully transparent stretches skipped.
 fn paint_quality_path(ui: &Ui, path: &VisiblePath<LinePointKey>) {
     let painter = ui.painter();

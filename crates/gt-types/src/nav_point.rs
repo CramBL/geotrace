@@ -5,7 +5,8 @@ use crate::satellite_evidence::SatelliteEvidence;
 use crate::satellites::Satellites;
 use crate::tpv::TimePositionVelocity;
 
-/// Quality classification for legacy reports and resolved navigation evidence.
+/// Satellite-count tiers for legacy reports and resolved navigation evidence.
+/// These tiers describe satellite counts independently of positional accuracy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FixQuality {
     /// Resolved NoFix state or a legacy report with zero used satellites.

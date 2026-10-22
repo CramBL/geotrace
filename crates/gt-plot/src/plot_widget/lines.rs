@@ -209,7 +209,7 @@ pub(super) fn add_series_lines<'a>(
             );
         } else {
             add_native_line_candidate(plot_ui, points, pointer, nearest);
-            add_line(plot_ui, points, name, stroke);
+            add_metric_run(plot_ui, points, name, stroke, MetricHoverPolicy::Native);
         }
     }
 
@@ -272,8 +272,13 @@ pub(super) fn add_series_lines<'a>(
             let name = format!("{prefix}{}{unit_suffix}", component.label);
             // No line joins the samples across a backward step in the
             // channel's timestamps: one line is drawn per run.
-            for (run, selection) in component.runs.iter().zip(run_selections) {
-                let points = run.slice_at(*selection);
+            for points in component
+                .runs
+                .iter()
+                .zip(run_selections)
+                .map(|(run, selection)| run.slice_at(*selection))
+                .filter(|points| points.len() >= 2)
+            {
                 add_native_line_candidate(plot_ui, points, pointer, nearest);
                 add_line(plot_ui, points, name.clone(), stroke);
             }
@@ -398,7 +403,7 @@ fn add_native_line_candidate(
     pointer: Option<egui::Pos2>,
     nearest: &mut NearestHoverLabel,
 ) {
-    if points.len() < 2 {
+    if points.is_empty() {
         return;
     }
     let Some(pointer) = pointer else {
@@ -470,6 +475,12 @@ pub(super) struct LineStroke {
     pub(super) highlighted: bool,
 }
 
+#[derive(Clone, Copy)]
+enum MetricHoverPolicy {
+    Native,
+    SourceAware,
+}
+
 /// Submit one metric line to the plot, borrowing the point slice directly via
 /// [`PlotPoints::Borrowed`] - no allocation.
 ///
@@ -488,13 +499,7 @@ pub(super) fn add_line<'a>(
     if data.len() < 2 {
         return;
     }
-    plot_ui.line(
-        Line::new(name, PlotPoints::Borrowed(data))
-            .color(stroke.color)
-            .style(stroke.style)
-            .width(stroke.width)
-            .highlight(stroke.highlighted),
-    );
+    add_metric_run(plot_ui, data, name, stroke, MetricHoverPolicy::Native);
 }
 
 struct MetricLineContext<'a> {
@@ -521,7 +526,13 @@ impl MetricSeries {
                 continue;
             }
             let points = run.slice_at(*selection);
-            add_metric_run(plot_ui, points, context.name.clone(), context.stroke);
+            add_metric_run(
+                plot_ui,
+                points,
+                context.name.clone(),
+                context.stroke,
+                MetricHoverPolicy::SourceAware,
+            );
             let Some(pointer) = context.pointer else {
                 continue;
             };
@@ -551,14 +562,19 @@ fn add_metric_run<'a>(
     points: &'a [PlotPoint],
     name: String,
     stroke: LineStroke,
+    hover: MetricHoverPolicy,
 ) {
+    let allow_hover = matches!(hover, MetricHoverPolicy::Native);
+    if points.is_empty() && allow_hover {
+        return;
+    }
     if points.len() == 1 {
         plot_ui.points(
             Points::new(name, PlotPoints::Borrowed(points))
                 .color(stroke.color)
                 .radius(ISOLATED_SAMPLE_RADIUS_PX)
                 .highlight(stroke.highlighted)
-                .allow_hover(false),
+                .allow_hover(allow_hover),
         );
     } else {
         plot_ui.line(
@@ -567,7 +583,7 @@ fn add_metric_run<'a>(
                 .style(stroke.style)
                 .width(stroke.width)
                 .highlight(stroke.highlighted)
-                .allow_hover(false),
+                .allow_hover(allow_hover),
         );
     }
 }

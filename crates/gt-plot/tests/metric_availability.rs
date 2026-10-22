@@ -1,4 +1,5 @@
 use chrono::TimeDelta;
+use egui_plot::PlotPoint;
 use gt_filter::GlobalFilter;
 use gt_plot::test_util::{self, PlotSources};
 use gt_plot::{AnalysisConfig, PlotState};
@@ -208,4 +209,76 @@ fn snapshot_sparse_navigation_metrics(#[case] theme: egui::Theme, #[case] snapsh
         theme,
     );
     plot.snapshot(snapshot);
+}
+
+#[rstest]
+fn navigation_only_samples_enable_measurements_and_disable_satellite_diagnostics(
+    #[values(egui::Theme::Dark, egui::Theme::Light)] theme: egui::Theme,
+) {
+    let recording =
+        gt_test_utils::navigation_evidence_fixtures::sparse_navigation_recording().unwrap();
+    let mut bytes = Vec::new();
+    recording.write(&mut bytes).unwrap();
+    let file = gt_loader::load_bytes(&bytes, "navigation_only.gtd".to_owned()).unwrap();
+    let mut state = PlotState::default();
+    state.show_advanced_metrics = true;
+    let mut plot = test_util::drawn_plot_in_theme(vec![file], PlotSources::default(), state, theme);
+    for label in ["Sats fix", "HDOP", "Velocity (km/h)", "Heading (°)"] {
+        assert!(!plot.metric_chip_disabled(label), "{label}");
+    }
+    for label in ["Sats seen", "VDOP", "PDOP", "Util all (%)", "EPH (m)"] {
+        assert!(plot.metric_chip_disabled(label), "{label}");
+    }
+    plot.snapshot(&format!(
+        "navigation_only_metrics_{}",
+        if theme == egui::Theme::Dark {
+            "dark"
+        } else {
+            "light"
+        }
+    ));
+}
+
+#[test]
+fn a_single_navigation_only_speed_sample_is_visible_and_selectable() {
+    let recording =
+        gt_test_utils::navigation_evidence_fixtures::sparse_navigation_recording().unwrap();
+    let mut bytes = Vec::new();
+    recording.write(&mut bytes).unwrap();
+    let file = gt_loader::load_bytes(&bytes, "navigation_only.gtd".to_owned()).unwrap();
+    let sample_time = file
+        .tracks
+        .first()
+        .unwrap()
+        .points
+        .get(1)
+        .expect("speed epoch")
+        .tpv
+        .time();
+    let time = sample_time.as_secs_f64();
+    let mut plot = test_util::drawn_plot(vec![file], PlotSources::default(), PlotState::default());
+    assert!(
+        plot.painted_circle_centers()
+            .iter()
+            .any(|point| (point.x - time).abs() < 0.01 && (point.y - 15.12).abs() < 0.01)
+    );
+    let sample = plot
+        .transform()
+        .position_from_point(&PlotPoint::new(time, 15.12));
+    plot.hover(sample);
+    assert_eq!(plot.hover_label(), "Velocity (km/h)\n12:00:01\n15.12");
+    let start = sample_time.utc() + TimeDelta::seconds(4);
+    plot.sources_mut().filter = GlobalFilter::default().with_time_bounds(Some(start), None);
+    plot.run();
+    assert!(plot.metric_chip_disabled("Velocity (km/h)"));
+    assert!(
+        plot.painted_circle_centers()
+            .iter()
+            .all(|point| (point.y - 15.12).abs() > 0.01)
+    );
+    let excluded = plot
+        .transform()
+        .position_from_point(&PlotPoint::new(time, 15.12));
+    plot.hover(excluded);
+    assert!(!plot.hover_label().contains("Velocity"));
 }
