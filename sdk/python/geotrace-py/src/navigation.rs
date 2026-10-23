@@ -12,8 +12,9 @@ use pyo3::sync::PyOnceLock;
 use pyo3::types::PyType;
 use strum::IntoEnumIterator as _;
 
+use crate::TimestampArguments;
+use crate::enums::{PyConstellation, PythonEnumValue};
 use crate::python_enum::PythonEnumMirror;
-use crate::{PyConstellation, PythonEnumValue, TimestampArguments};
 
 macro_rules! navigation_enum {
     ($python:ident, $rust:ident, $name:literal, $($variant:ident),+ $(,)?) => {
