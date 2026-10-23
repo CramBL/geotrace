@@ -240,9 +240,6 @@ mod tests {
             &sources,
             inv_two_sigma_sq,
         );
-        #[expect(clippy::float_cmp, reason = "the clip is an exact 0.0 return")]
-        {
-            assert_eq!(outside, 0.0);
-        }
+        assert_eq!(outside, 0.0);
     }
 }

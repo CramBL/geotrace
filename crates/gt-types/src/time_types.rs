@@ -239,11 +239,8 @@ mod tests {
     #[case::sub_second(1_700_000_000_250, 1_700_000_000.25)]
     #[case::before_the_epoch(-1500, -1.5)]
     fn as_secs_f64_with_subseconds(#[case] millis: i64, #[case] expected_secs: f64) {
-        #[expect(clippy::float_cmp, reason = "every case is exact in binary")]
-        {
-            assert_eq!(gps(millis).as_secs_f64_with_subseconds(), expected_secs);
-            assert_eq!(sys(millis).as_secs_f64_with_subseconds(), expected_secs);
-        }
+        assert_eq!(gps(millis).as_secs_f64_with_subseconds(), expected_secs);
+        assert_eq!(sys(millis).as_secs_f64_with_subseconds(), expected_secs);
     }
 
     #[test]

@@ -117,7 +117,7 @@ mod tests {
     /// [`egui::Context::request_discard`]. The second pass draws the badge as
     /// the first one did.
     #[test]
-    #[expect(clippy::float_cmp, reason = "the second pass changes nothing")]
+    #[expect(clippy::float_cmp_const, reason = "the second pass changes nothing")]
     fn a_second_layout_pass_of_one_frame_leaves_the_pulse_where_it_is() {
         let mut badge = RestoredLogsBadge::default();
         badge.note_log_loaded_with_a_recording();

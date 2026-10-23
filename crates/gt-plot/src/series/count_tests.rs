@@ -202,7 +202,6 @@ fn orphan_reports_split_only_relevant_count_runs(
 }
 
 #[test]
-#[expect(clippy::float_cmp, reason = "Reported integer counts are unchanged")]
 fn reports_preserve_fractional_times_and_independent_samples() {
     let mut points = points_at(&[10]);
     let point = points.first_mut().expect("source point");
@@ -292,10 +291,6 @@ fn backward_steps_preserve_distinct_runs(
 }
 
 #[test]
-#[expect(
-    clippy::float_cmp,
-    reason = "Selected samples retain their original values and timestamps"
-)]
 fn decimated_samples_retain_original_report_references() {
     let mut points = points_at(&[0]);
     for index in 0_u32..2_000 {

@@ -4,6 +4,7 @@ error[E0423]: cannot initialize a tuple struct which contains private fields
 6 |     let _ = BoundedTimeWindow(value());
   |             ^^^^^^^^^^^^^^^^^
   |
+  = note: a struct named `BoundedTimeWindow` exists in another namespace
 note: constructor is not visible here due to private fields
  --> $WORKSPACE/crates/gt-filter/src/lib.rs
   |
@@ -16,6 +17,7 @@ error[E0423]: cannot initialize a tuple struct which contains private fields
 7 |     let _ = MinimumDistance(value());
   |             ^^^^^^^^^^^^^^^
   |
+  = note: a struct named `MinimumDistance` exists in another namespace
 note: constructor is not visible here due to private fields
  --> $WORKSPACE/crates/gt-filter/src/lib.rs
   |
@@ -28,6 +30,7 @@ error[E0423]: cannot initialize a tuple struct which contains private fields
 8 |     let _ = MinimumDuration(value());
   |             ^^^^^^^^^^^^^^^
   |
+  = note: a struct named `MinimumDuration` exists in another namespace
 note: constructor is not visible here due to private fields
  --> $WORKSPACE/crates/gt-filter/src/lib.rs
   |
@@ -40,6 +43,7 @@ error[E0423]: cannot initialize a tuple struct which contains private fields
 9 |     let _ = MinimumSpread(value());
   |             ^^^^^^^^^^^^^
   |
+  = note: a struct named `MinimumSpread` exists in another namespace
 note: constructor is not visible here due to private fields
  --> $WORKSPACE/crates/gt-filter/src/lib.rs
   |

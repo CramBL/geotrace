@@ -45,7 +45,7 @@ jobs:
       - name: Install tools
         uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
         with:
-          tool: just,typos,cargo-sort,cargo-shear,cargo-msrv,zizmor
+          tool: just,typos,cargo-sort@2.1.3,cargo-shear,cargo-msrv,zizmor
 
       - name: Check dependency sort order
         run: just sort-check

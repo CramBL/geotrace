@@ -123,7 +123,7 @@ jobs:
         with:
           toolchain: ${{ matrix.toolchain || 'stable' }}
 
-      # rust-toolchain.toml pins 1.98.1 and takes precedence over the toolchain
+      # rust-toolchain.toml pins 1.99.1 and takes precedence over the toolchain
       # the action installs. RUSTUP_TOOLCHAIN takes precedence over the file.
       # This step comes first: the cache step keys on the selected compiler, and
       # `rustup target add` adds the target to the selected toolchain.
