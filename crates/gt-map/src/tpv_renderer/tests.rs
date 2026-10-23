@@ -1,6 +1,9 @@
 use egui::Color32;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
+use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
+use gt_fmt::UTC_SECOND_FORMAT;
 use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
+use gt_sky::{SkyHighlight, SkyPlotSize};
 use gt_test_utils::{By, HarnessInteraction as _};
 use gt_types::coordinates::{Latitude, Longitude, RecordedLatitude};
 use gt_types::satellites::{
@@ -9,15 +12,19 @@ use gt_types::satellites::{
 use gt_types::time_types::{GpsTime, SysTime};
 use gt_types::tpv::TimePositionVelocity;
 use gt_types::{
-    MercPoint, NavPoint, NavigationMetadata, PositionProvenance, RecordedLongitude,
-    SatelliteCoverage, SatelliteIdentity, SatelliteMembership, SatelliteReportMetadata,
-    SatelliteScope, SatelliteUsage, SatelliteUsageReport, SolutionDimension, SolutionMethod,
+    MercPoint, NavPoint, NavigationMetadata, NearbySkyEvidence, PositionProvenance,
+    RecordedLongitude, ResolvedPosition, SatelliteCoverage, SatelliteIdentity, SatelliteMembership,
+    SatelliteReportMetadata, SatelliteScope, SatelliteUsage, SatelliteUsageReport,
+    SolutionDimension, SolutionMethod,
 };
-use gt_ui_types::DisplayCategory;
+use gt_ui_types::{DRAWN_AT_CAPTION, DisplayCategory, PointWindowFolds};
 use rstest::rstest;
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Length};
 
+use super::pinned_point::{self, MIN_SIDE_BY_SIDE_WIDTH_PX, StickyRegion};
+use super::satellite_tables::{MIN_SATELLITE_COLUMN_WIDTH_PX, STICKY_COLUMN_GAP_PX};
+use super::sky_context;
 use super::*;
 use crate::recording_labels::RecordingLabels;
 use crate::test_util::{self, MapScene};
@@ -184,30 +191,6 @@ fn sky_for(point: &NavPoint) -> SkySection<'_> {
     )
 }
 
-/// The two satellite columns are cut where they come out closest in height,
-/// without reordering the constellations.
-#[rstest]
-// A 40-satellite, 4-constellation fix: GPS 11, GLONASS 8, Galileo 6,
-// BeiDou 15 (plus 2 header rows each). Cutting after GLONASS gives
-// 13+10=23 against 8+17=25 - the closest of the three possible cuts.
-#[case::four_constellations(&[13, 10, 8, 17], 2)]
-// Two constellations always split one and one.
-#[case::two(&[13, 10], 1)]
-// A single dominant constellation still keeps at least one on each side.
-#[case::lopsided(&[30, 3, 3], 1)]
-// Equal weights cut down the middle.
-#[case::even(&[10, 10, 10, 10], 2)]
-// Fewer than two panels cannot be split, so everything stays in the first
-// column.
-#[case::one_panel(&[7], 1)]
-#[case::no_panel(&[], 0)]
-fn balanced_split_cuts_where_the_columns_even_out(
-    #[case] weights: &[usize],
-    #[case] expected: usize,
-) {
-    assert_eq!(super::balanced_split(weights), expected);
-}
-
 /// Snapshot: a 40-satellite, 4-constellation fix. The two columns are cut
 /// where they even out, so the uneven constellations pack tight, and the plot
 /// stays beside them.
@@ -239,36 +222,6 @@ fn dense_multi_constellation_reflows_to_one_column_when_narrow() {
                 show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
     harness.snapshot_with_color_tolerance("sticky_dense_one_column");
-}
-
-/// A folded panel costs only its header when the columns are balanced, so
-/// folding re-packs the columns.
-#[test]
-fn folded_panels_weigh_only_their_header() {
-    let group = ConstellationGroup {
-        grid_id: 0,
-        constellation: Constellation::Gps,
-        prn_prefix: "G",
-        used: Some(11),
-        seen: Some(11),
-        satellites: vec![
-            SkySatellite::from_legacy(&Satellite::new(
-                Constellation::Gps,
-                1,
-                Some(45.0),
-                Some(40.0),
-                Some(40.0),
-                true
-            ));
-            11
-        ],
-    };
-    let unfolded = gt_ui_types::PointWindowFolds::default();
-    assert_eq!(group.weight(unfolded), 11 + super::PANEL_HEADER_ROWS);
-
-    let mut folded = unfolded;
-    folded.toggle(Constellation::Gps);
-    assert_eq!(group.weight(folded), super::FOLDED_PANEL_ROWS);
 }
 
 /// Snapshot: a folded plot and two folded constellations. Each folded
@@ -425,7 +378,7 @@ fn the_gap_between_satellite_rows_keeps_the_highlight() {
         .size(egui::vec2(600.0, 440.0))
         .theme(true)
         .ui(move |ui| {
-            cell.set(Some(sky_table_highlight_id(ui)));
+            cell.set(Some(pinned_point::sky_table_highlight_id(ui)));
             let _opened =
                 show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
@@ -477,7 +430,7 @@ fn satellite_badge(#[case] name: &str, #[case] dark_mode: bool) {
 /// Hovering an element of the satellite tables stores the matching sky
 /// highlight, which the plot reads back the next frame. Drives the real
 /// hover path end to end: the label lookup, the response hit-test, and
-/// the `ctx.data` round trip keyed by [`sky_table_highlight_id`].
+/// the `ctx.data` round trip keyed by [`pinned_point::sky_table_highlight_id`].
 #[rstest]
 #[case::prn_row(
     "G01",
@@ -494,7 +447,7 @@ fn hovering_a_table_sets_the_sky_highlight(#[case] label: &str, #[case] expected
         .size(egui::vec2(320.0, 920.0))
         .theme(true)
         .ui(move |ui| {
-            cell.set(Some(sky_table_highlight_id(ui)));
+            cell.set(Some(pinned_point::sky_table_highlight_id(ui)));
             let _opened =
                 show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
@@ -756,7 +709,7 @@ fn hover_badge_recording_row(
 #[case::later(-2100, "Sky +2.1s")]
 fn report_age_label_names_the_side(#[case] ms: i64, #[case] expected: &str) {
     assert_eq!(
-        report_age_label(chrono::Duration::milliseconds(ms)),
+        sky_context::report_age_label(chrono::Duration::milliseconds(ms)),
         expected
     );
 }
@@ -1861,7 +1814,7 @@ fn satellite_summary_numbers_have_independent_highlight_regions(
     let mut harness = test_util::harness_builder()
         .size(egui::vec2(380.0, 500.0))
         .ui(move |ui| {
-            cell.set(Some(sky_table_highlight_id(ui)));
+            cell.set(Some(pinned_point::sky_table_highlight_id(ui)));
             let _opened =
                 show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });

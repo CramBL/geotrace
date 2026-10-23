@@ -3,65 +3,16 @@ use gt_fmt::UTC_SUBSECOND_FORMAT;
 use gt_types::satellites::Constellation;
 use gt_types::{
     NavPoint, NavigationEvidenceSource, SatelliteQueryScope, SatelliteReportMetadata,
-    SatelliteScope, SkyCounts,
+    SatelliteScope,
 };
-use gt_ui_theme::{NavigationStatus, SatelliteCountBadge, SatelliteCountResponses};
 use strum::IntoEnumIterator as _;
+
+use super::point_summary::PointSummary;
+use super::satellite_tables;
 
 pub(super) struct NavigationDetails<'a>(pub &'a NavPoint);
 
 impl NavigationDetails<'_> {
-    pub(super) fn summary_ui(&self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            self.status_ui(ui);
-            self.solution_fields_ui(ui);
-        });
-    }
-
-    pub(super) fn status_ui(&self, ui: &mut Ui) {
-        NavigationStatus {
-            state: self.0.resolved_navigation_state().state,
-            provenance: self.0.navigation.position_provenance,
-        }
-        .ui(ui);
-    }
-
-    pub(super) fn solution_fields_ui(&self, ui: &mut Ui) {
-        if let Some(method) = self.0.navigation.method {
-            ui.label(method.to_string());
-        }
-        if let Some(dimension) = self.0.navigation.dimension {
-            ui.label(dimension.to_string());
-        }
-    }
-
-    pub(super) fn dop_row_ui(&self, ui: &mut Ui) {
-        if [
-            self.0.navigation.hdop,
-            self.0.navigation.vdop,
-            self.0.navigation.pdop,
-        ]
-        .iter()
-        .all(Option::is_none)
-        {
-            return;
-        }
-        ui.label("DOP");
-        ui.horizontal(|ui| {
-            for (label, value) in [
-                ("H", self.0.navigation.hdop),
-                ("V", self.0.navigation.vdop),
-                ("P", self.0.navigation.pdop),
-            ] {
-                if let Some(value) = value {
-                    ui.label(format!("{label} {value:.2}"))
-                        .on_hover_text("Reported dimensionless dilution of precision");
-                }
-            }
-        });
-        ui.end_row();
-    }
-
     pub(super) fn inspector_ui(&self, ui: &mut Ui) {
         Grid::new("navigation_evidence").show(ui, |ui| {
             ui.label("State");
@@ -95,7 +46,7 @@ impl NavigationDetails<'_> {
                 ui.end_row();
             }
             ui.label("Satellites");
-            self.counts_ui(ui, SatelliteQueryScope::Global);
+            PointSummary(self.0).counts_ui(ui, SatelliteQueryScope::Global);
             ui.end_row();
             for constellation in Constellation::iter() {
                 let scope = SatelliteQueryScope::Constellation(constellation);
@@ -173,18 +124,6 @@ impl NavigationDetails<'_> {
         }
     }
 
-    pub(super) fn counts_ui(
-        &self,
-        ui: &mut Ui,
-        scope: SatelliteQueryScope,
-    ) -> SatelliteCountResponses {
-        SatelliteCountBadge(SkyCounts {
-            used: self.0.resolved_used_count(scope).map(|value| value.count),
-            seen: self.0.resolved_seen_count(scope).map(|value| value.count),
-        })
-        .ui(ui)
-    }
-
     pub(super) fn reports_ui(&self, ui: &mut Ui) {
         for (index, report) in self.0.satellite_evidence.usage.iter().enumerate() {
             ui.push_id(("usage", index), |ui| {
@@ -204,7 +143,10 @@ impl NavigationDetails<'_> {
                         ui.end_row();
                         for satellite in &report.satellites {
                             ui.horizontal(|ui| {
-                                super::constellation_swatch(ui, satellite.identity.constellation);
+                                satellite_tables::constellation_swatch(
+                                    ui,
+                                    satellite.identity.constellation,
+                                );
                                 ui.add(
                                     Label::new(format!(
                                         "{}{:02}",
@@ -240,7 +182,10 @@ impl NavigationDetails<'_> {
                         ui.end_row();
                         for satellite in &report.satellites {
                             ui.horizontal(|ui| {
-                                super::constellation_swatch(ui, satellite.identity.constellation);
+                                satellite_tables::constellation_swatch(
+                                    ui,
+                                    satellite.identity.constellation,
+                                );
                                 ui.add(
                                     Label::new(format!(
                                         "{}{:02}",
