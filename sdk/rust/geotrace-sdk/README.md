@@ -45,6 +45,36 @@ let vendor_measurement = Channel::builder()
 Custom units are preserved for display but treated as dimensionless because GeoTrace has no safe conversion rule for them.
 Unknown labels in existing files are matched against recognized aliases first and otherwise preserved as custom units.
 
+## NMEA ingestion
+
+Enable the optional `nmea` feature to convert NMEA input with `NmeaIngestor`.
+Configure sentence periods and optional UTC timestamp prefixes, then inspect the diagnostic summary alongside the recording.
+For incremental input, use `push_line()` or `push_line_at()` and submit the remaining records from `finish()`.
+
+```rust
+use std::io::Cursor;
+use std::time::Duration;
+
+use geotrace_sdk::{NavFileBuilder, NmeaIngestor, SentenceType};
+
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let source = Cursor::new(concat!(
+    "2026-10-23 120000.000 ",
+    "$GPRMC,120000.000,A,5500.000,N,01200.000,E,1.0,90.0,231026,,,A*52\n",
+));
+let result = NmeaIngestor::builder()
+    .timestamp_prefix_utc("%Y-%m-%d %H%M%S%.f")
+    .sentence_period(SentenceType::RMC, Duration::from_secs(1))
+    .build()?
+    .ingest_reader(source, NavFileBuilder::new())?;
+let mut gtd = Vec::new();
+result.recording.write(&mut gtd)?;
+assert_eq!(result.recording.nav_points().len(), 1);
+assert!(result.diagnostics.samples().is_empty());
+# Ok(())
+# }
+```
+
 ## Examples
 
 Runnable examples are in

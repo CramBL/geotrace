@@ -28,6 +28,9 @@ dist = false
 
 [lib]
 
+[features]
+nmea = ["dep:nmea"]
+
 [dependencies]
 bon.workspace = true
 chrono.workspace = true
@@ -35,6 +38,7 @@ geotrace-sdk-macros = { path = "../geotrace-sdk-macros", version = "0.7.0" }
 geotrace-sdk-units = { path = "../geotrace-sdk-units", version = "0.7.0" }
 hdf5-pure.workspace = true
 log.workspace = true
+nmea = { git = "https://github.com/AeroRust/nmea", rev = "2fa4e561f53eeac98154302f3b9696b5fe365409", optional = true }
 strum.workspace = true
 thiserror.workspace = true
 uom.workspace = true
