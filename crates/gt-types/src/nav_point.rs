@@ -141,11 +141,12 @@ impl NavPoint {
         }
     }
 
-    /// Two NaN coordinates represent an unreported position when an explicit state is present.
+    /// An unreported position requires two NaN coordinates, explicit state and unreported origin.
     pub fn has_unreported_position(&self) -> bool {
         self.tpv.lat().as_written().is_nan()
             && self.tpv.lon().as_written().is_nan()
             && self.navigation.state.is_some()
+            && self.navigation.position_provenance.is_none()
     }
 
     pub fn map_fix_kind(&self) -> MapFixKind {
@@ -221,17 +222,45 @@ mod tests {
     }
 
     #[rstest]
-    #[case::fix(Some(SolutionState::Fix), f64::NAN, f64::NAN, true)]
-    #[case::loss(Some(SolutionState::NoFix), f64::NAN, f64::NAN, true)]
-    #[case::estimated(Some(SolutionState::EstimatedOnly), f64::NAN, f64::NAN, true)]
-    #[case::unknown(Some(SolutionState::Unknown), f64::NAN, f64::NAN, true)]
-    #[case::unclassified(None, f64::NAN, f64::NAN, false)]
-    #[case::missing_latitude(Some(SolutionState::NoFix), f64::NAN, 12.0, false)]
-    #[case::missing_longitude(Some(SolutionState::NoFix), 55.0, f64::NAN, false)]
-    #[case::out_of_range(Some(SolutionState::NoFix), 91.0, 181.0, false)]
-    #[case::positioned(Some(SolutionState::NoFix), 55.0, 12.0, false)]
-    fn an_unreported_position_requires_two_nan_coordinates_and_an_explicit_state(
+    #[case::fix(Some(SolutionState::Fix), None, f64::NAN, f64::NAN, true)]
+    #[case::loss(Some(SolutionState::NoFix), None, f64::NAN, f64::NAN, true)]
+    #[case::estimated(Some(SolutionState::EstimatedOnly), None, f64::NAN, f64::NAN, true)]
+    #[case::unknown(Some(SolutionState::Unknown), None, f64::NAN, f64::NAN, true)]
+    #[case::source_provided(
+        Some(SolutionState::Fix),
+        Some(PositionProvenance::SourceProvided),
+        f64::NAN,
+        f64::NAN,
+        false
+    )]
+    #[case::synthesized(
+        Some(SolutionState::NoFix),
+        Some(PositionProvenance::SdkSynthesized),
+        f64::NAN,
+        f64::NAN,
+        false
+    )]
+    #[case::unclassified(None, None, f64::NAN, f64::NAN, false)]
+    #[case::missing_latitude(Some(SolutionState::NoFix), None, f64::NAN, 12.0, false)]
+    #[case::missing_longitude(Some(SolutionState::Fix), None, 55.0, f64::NAN, false)]
+    #[case::infinite(
+        Some(SolutionState::NoFix),
+        None,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        false
+    )]
+    #[case::out_of_range(
+        Some(SolutionState::Fix),
+        Some(PositionProvenance::SourceProvided),
+        91.0,
+        181.0,
+        false
+    )]
+    #[case::positioned(Some(SolutionState::Fix), None, 55.0, 12.0, false)]
+    fn an_unreported_position_requires_nan_coordinates_explicit_state_and_unreported_origin(
         #[case] state: Option<SolutionState>,
+        #[case] origin: Option<PositionProvenance>,
         #[case] latitude: f64,
         #[case] longitude: f64,
         #[case] expected: bool,
@@ -243,6 +272,7 @@ mod tests {
             .build();
         let mut point = NavPoint::new(tpv, None);
         point.navigation.state = state;
+        point.navigation.position_provenance = origin;
         assert_eq!(point.has_unreported_position(), expected);
     }
 }

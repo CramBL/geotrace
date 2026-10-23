@@ -321,6 +321,9 @@ class NavFix:
     State, method, dimension and the source used count remain independent facts.
     Both coordinates may be ``None`` with an explicit state.
     Coordinate origin is then unreported.
+    Equality treats two NaN coordinates as absent only with explicit state
+    and unreported origin.
+    Other NaN values retain ordinary inequality.
 
     Args:
         lat: Latitude in degrees, expected in [-90, 90].
@@ -553,6 +556,11 @@ class NavPoint:
     Optional floating-point measurements, including DOP, return ``None``
     for an on-disk NaN.
     Checking a value against its range is the caller's job.
+    Equality compares all fix and satellite facts, treating intentional
+    missing positions as absent.
+    Two NaN coordinates require explicit state and unreported origin
+    for this comparison.
+    Other NaN values retain ordinary inequality.
     """
 
     @property

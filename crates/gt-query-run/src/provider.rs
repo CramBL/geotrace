@@ -640,7 +640,7 @@ mod tests {
     use gt_types::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
     use gt_types::time_types::GpsTime;
     use gt_types::tpv::TimePositionVelocity;
-    use gt_types::{FileIdx, SolutionState, TrackIdx, TrackRef};
+    use gt_types::{FileIdx, PositionProvenance, SolutionState, TrackIdx, TrackRef};
     use rstest::rstest;
 
     use super::*;
@@ -781,15 +781,47 @@ mod tests {
     }
 
     #[rstest]
-    #[case::both_axes_in_range(55.5, 12.25, None, 0.0)]
-    #[case::a_latitude_of_nan(f64::NAN, 12.25, None, 1.0)]
-    #[case::both_axes_out_of_range(91.0, -181.0, None, 2.0)]
-    #[case::unreported(f64::NAN, f64::NAN, Some(SolutionState::NoFix), 0.0)]
-    #[case::unclassified(f64::NAN, f64::NAN, None, 2.0)]
+    #[case::fix(f64::NAN, f64::NAN, Some(SolutionState::Fix), None, 0.0)]
+    #[case::loss(f64::NAN, f64::NAN, Some(SolutionState::NoFix), None, 0.0)]
+    #[case::unknown(f64::NAN, f64::NAN, Some(SolutionState::Unknown), None, 0.0)]
+    #[case::estimated(f64::NAN, f64::NAN, Some(SolutionState::EstimatedOnly), None, 0.0)]
+    #[case::source_provided(
+        f64::NAN,
+        f64::NAN,
+        Some(SolutionState::Fix),
+        Some(PositionProvenance::SourceProvided),
+        2.0
+    )]
+    #[case::synthesized(
+        f64::NAN,
+        f64::NAN,
+        Some(SolutionState::NoFix),
+        Some(PositionProvenance::SdkSynthesized),
+        2.0
+    )]
+    #[case::unclassified(f64::NAN, f64::NAN, None, None, 2.0)]
+    #[case::missing_latitude(f64::NAN, 12.0, Some(SolutionState::NoFix), None, 1.0)]
+    #[case::missing_longitude(55.0, f64::NAN, Some(SolutionState::Fix), None, 1.0)]
+    #[case::infinite(
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        Some(SolutionState::NoFix),
+        None,
+        2.0
+    )]
+    #[case::out_of_range(
+        91.0,
+        181.0,
+        Some(SolutionState::Fix),
+        Some(PositionProvenance::SourceProvided),
+        2.0
+    )]
+    #[case::positioned(55.0, 12.0, Some(SolutionState::Fix), None, 0.0)]
     fn invalid_coordinates_counts_the_axes_outside_their_range(
         #[case] lat_degrees: f64,
         #[case] lon_degrees: f64,
         #[case] state: Option<SolutionState>,
+        #[case] origin: Option<PositionProvenance>,
         #[case] expected: f64,
     ) {
         let mut points = test_util::points_at_recorded_coordinates(&[(
@@ -798,6 +830,8 @@ mod tests {
         )]);
         let point = points.first_mut().unwrap();
         point.navigation.state = state;
+        point.navigation.position_provenance = origin;
+        point.navigation.used_count = Some(8);
         let position_unreported = point.has_unreported_position();
         let provider = TrackProvider::new(&points, &[], None);
 
@@ -805,9 +839,16 @@ mod tests {
             provider.value(QueryMetric::InvalidCoordinates, 0),
             Some(expected)
         );
-        if position_unreported {
-            assert_eq!(provider.value(QueryMetric::Lat, 0), None);
-            assert_eq!(provider.value(QueryMetric::Lon, 0), None);
+        for (metric, raw) in [
+            (QueryMetric::Lat, lat_degrees),
+            (QueryMetric::Lon, lon_degrees),
+        ] {
+            let value = provider.value(metric, 0);
+            if position_unreported {
+                assert_eq!(value, None);
+            } else {
+                assert_eq!(value.unwrap().to_bits(), raw.to_bits());
+            }
         }
     }
 

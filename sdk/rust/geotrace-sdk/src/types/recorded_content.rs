@@ -2,8 +2,8 @@ use crate::{Angle, Meta, NavFile, NavFix, NavPoint};
 
 impl NavFile {
     /// Compares recorded facts, excluding SDK build stamps and NaN encodings of absent positions.
-    /// Both coordinates must be NaN with an explicit state for a position to be absent.
-    /// Other floating-point fields retain their ordinary equality semantics.
+    /// An absent position requires two NaN coordinates, explicit state and unreported origin.
+    /// Derived `PartialEq` and other floating-point fields retain ordinary IEEE equality.
     pub fn equals_ignoring_build_provenance(&self, other: &Self) -> bool {
         let Self {
             meta,
@@ -65,7 +65,9 @@ impl NavFix {
     fn equals_recorded_content(&self, other: &Self) -> bool {
         let mut recorded = *self;
         let mut compared = *other;
-        if self.state.is_some()
+        if self.position_provenance.is_none()
+            && other.position_provenance.is_none()
+            && self.state.is_some()
             && other.state.is_some()
             && self.lat.as_degrees().is_nan()
             && self.lon.as_degrees().is_nan()

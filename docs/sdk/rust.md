@@ -87,9 +87,13 @@ A hybrid solution with GNSS contribution uses `SolutionState::Fix`.
 `NavFix::status_only(time, state)` records an explicit navigation state with absent coordinates and coordinate origin.
 Optional measurements remain unreported until assigned.
 The GTD v3 writer preserves both coordinates as NaN.
-The viewer treats two NaN coordinates with an explicit state as an unreported position.
-It may derive a display location from positioned epochs while preserving the absent source position.
+The viewer treats two NaN coordinates as an unreported position only with an explicit state and unreported coordinate origin.
+Two NaNs with `SourceProvided` or `SdkSynthesized` origin remain malformed coordinates.
+The viewer may derive a display location from positioned epochs while preserving the absent source position.
 A recording containing only epochs without recorded coordinates has a timeline and statistics without map geometry.
+
+`NavFix` and `NavPoint` retain raw Rust `PartialEq`, including IEEE NaN inequality.
+`NavFile::equals_ignoring_build_provenance` compares recorded content without build stamps and ignores coordinate NaN encoding differences only for intentional missing positions.
 
 ## Satellite evidence values
 
