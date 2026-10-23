@@ -30,8 +30,9 @@ use self::chips::{FlareChipState, HoveredChip, MetricAvailability, MetricChipSta
 use self::clock_offset::ClockOffsetViewport;
 use self::context::{ContextLineGates, ContextPlotCaches};
 use self::flares::{FlareSpanMarking, FlareViewport};
+use self::hover::NearestHoverLabel;
 use self::levels::{LineViewport, TrackLevelCache};
-use self::lines::{LineStroke, NearestHoverLabel};
+use self::metric_paint::LineStroke;
 use self::snap_error::SnapErrorPlotCache;
 use self::time_axis::{BandUnit, TimeAxisBandRow, TimeAxisFrame, TimeAxisLabeling};
 
@@ -45,10 +46,13 @@ mod clock_offset;
 mod context;
 mod flares;
 mod geomagnetic;
+mod hover;
 mod jamming;
 mod legend;
 mod levels;
 mod lines;
+mod metric_hover;
+mod metric_paint;
 mod overlay;
 #[cfg(test)]
 mod reference_illustration;
@@ -56,6 +60,7 @@ mod snap_error;
 mod style;
 mod tec;
 mod time_axis;
+mod utilization;
 
 /// The global filter's time window in Unix seconds. Everything the plot draws,
 /// fits and reports is clamped to it. The default is the window of
@@ -171,7 +176,7 @@ fn recording_name(names: &RecordingNames, fi: usize) -> &str {
 /// The plot's cursor label: the hovered line's name, the time, and the value.
 ///
 /// Suppressed entirely while a custom hover label draws
-/// (see [`lines::show_nearest_hover_label`]): both sit at the cursor.
+/// (see [`hover::show_nearest_hover_label`]): both sit at the cursor.
 fn cursor_label(
     custom_hover_label_shown: &Cell<bool>,
     pos: &egui_plot::HoverPosition<'_>,
@@ -896,7 +901,7 @@ pub fn show_track_plot(
                 &mut hovered_label,
             );
             if show_anomalies {
-                lines::add_util_anomalies(
+                utilization::add_util_anomalies(
                     plot_ui,
                     &series.series,
                     track_label,
@@ -954,7 +959,7 @@ pub fn show_track_plot(
         .filter(|_| plot_response.response.hovered())
         .map(|selection| selection.fix);
 
-    lines::show_nearest_hover_label(ui, &plot_response.response, hovered_label);
+    hover::show_nearest_hover_label(ui, &plot_response.response, hovered_label);
 
     state.legend_hover_file = legend::show_file_legend_overlay(
         ui,

@@ -17,8 +17,9 @@ use gt_ui_types::{ContextLines, TecContextSample};
 use super::FilterTimeWindow;
 use super::chips::{MetricAvailability, MetricVisibility};
 use super::context::{self, ContextLineGates, ContextPlotCaches};
+use super::hover::NearestHoverLabel;
 use super::levels::LineViewport;
-use super::lines::{self, LineStroke, NearestHoverLabel};
+use super::metric_paint::{self, LineStroke};
 use super::style;
 
 fn midnight(day: NaiveDate) -> DateTime<Utc> {
@@ -119,7 +120,7 @@ fn generate_tec_reference_plot() {
                                 [x_min, 0.0],
                                 [x_max, y_max],
                             ));
-                            lines::add_line(
+                            metric_paint::add_line(
                                 plot_ui,
                                 &median,
                                 MEDIAN_LINE_LABEL.to_owned(),

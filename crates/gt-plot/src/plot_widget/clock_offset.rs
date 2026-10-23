@@ -32,10 +32,8 @@ use gt_analysis::clock_offset::{ClockOffsetExcursion, ClockOffsetPlacement, Excu
 use gt_types::MetricKind;
 
 use super::chips::{MetricAvailability, MetricVisibility};
-use super::lines::{
-    self, ANOMALY_HOVER_RADIUS_PX, ANOMALY_MARKER_RADIUS, LineStroke, NearestHoverLabel,
-    PlotHoverLabel,
-};
+use super::hover::{self, ANOMALY_HOVER_RADIUS_PX, NearestHoverLabel, PlotHoverLabel};
+use super::metric_paint::{self, ANOMALY_MARKER_RADIUS, LineStroke};
 use super::overlay::{EDGE_MARKER_INSET, OverlayItem, OverlayPainter};
 use crate::series::TrackSeries;
 
@@ -295,7 +293,7 @@ pub(super) fn add_clock_offset_line<'a>(
                     .radius(stroke.width * LONE_SAMPLE_RADIUS_MULTIPLE)
                     .highlight(stroke.highlighted),
             ),
-            _ => lines::add_line(plot_ui, stretch, name.to_owned(), stroke),
+            _ => metric_paint::add_line(plot_ui, stretch, name.to_owned(), stroke),
         }
     }
 }
@@ -362,11 +360,10 @@ pub(super) fn add_off_scale_clock_offsets(
     for (cause, samples) in sample_runs {
         let run = RunPlacement {
             samples,
-            visible: lines::visible_x_range(
+            visible: hover::visible_x_range(
                 samples,
                 |s: &ExcursionSample| s.t,
-                viewport.x_min,
-                viewport.x_max,
+                viewport.x_min..=viewport.x_max,
             ),
             line,
             y,
@@ -401,7 +398,7 @@ pub(super) fn add_off_scale_clock_offsets(
     let Some(pointer) = pointer else {
         return;
     };
-    if let Some((distance, marker)) = lines::nearest_fix_under_pointer(
+    if let Some((distance, marker)) = hover::nearest_fix_under_pointer(
         plot_ui,
         &placed,
         |marker| marker.at,
