@@ -3,10 +3,10 @@ use geotrace_sdk::{Angle, NavFix, Velocity};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use crate::TimestampArguments;
 use crate::navigation::{
     PyPositionProvenance, PySolutionDimension, PySolutionMethod, PySolutionState,
 };
+use crate::timestamps::{self, TimestampArguments};
 
 /// A single GPS/GNSS fix: position, optional heading, and optional speed.
 ///
@@ -54,7 +54,8 @@ impl PyNavFix {
         pdop: Option<f64>,
         position_provenance: Option<PyPositionProvenance>,
     ) -> PyResult<Self> {
-        let time = crate::nav_fix_time_or_value_error(TimestampArguments { gps_time, sys_time })?;
+        let time =
+            timestamps::nav_fix_time_or_value_error(TimestampArguments { gps_time, sys_time })?;
         let mut inner = match (lat, lon) {
             (Some(lat), Some(lon)) => NavFix::builder()
                 .time(time)
@@ -102,14 +103,14 @@ impl PyNavFix {
     /// GPS-receiver timestamp (timezone-aware UTC), or `None` when unreported.
     #[getter]
     fn gps_time(&self) -> Option<DateTime<FixedOffset>> {
-        self.inner.gps_time().map(crate::to_fixed)
+        self.inner.gps_time().map(|time| time.fixed_offset())
     }
 
     /// System-clock timestamp (timezone-aware UTC), or `None` when the recorder
     /// did not supply one.
     #[getter]
     fn sys_time(&self) -> Option<DateTime<FixedOffset>> {
-        self.inner.sys_time().map(crate::to_fixed)
+        self.inner.sys_time().map(|time| time.fixed_offset())
     }
 
     /// Heading in degrees, expected in [0, 360), or `None` when unreported.
