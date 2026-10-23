@@ -1,3 +1,5 @@
+mod recorded_content;
+
 use std::{fs::File, io, path::Path};
 
 use chrono::{DateTime, Duration, Utc};
@@ -660,24 +662,6 @@ impl Meta {
         self.sdk_git_commit = None;
         self.sdk_commit_time = None;
     }
-
-    fn equals_ignoring_build_provenance(&self, other: &Self) -> bool {
-        let Self {
-            title,
-            device,
-            notes,
-            identity,
-            travel_mode,
-            sdk_version: _,
-            sdk_git_commit: _,
-            sdk_commit_time: _,
-        } = self;
-        *title == other.title
-            && *device == other.device
-            && *notes == other.notes
-            && *identity == other.identity
-            && *travel_mode == other.travel_mode
-    }
 }
 
 #[bon::bon]
@@ -1284,31 +1268,6 @@ impl NavFile {
     /// Clear the debug time repair tag.
     pub fn clear_debug_time_repair_tag(&mut self) {
         self.debug_time_repair = None;
-    }
-
-    /// Compares two files' recorded content, ignoring their SDK build stamp.
-    ///
-    /// [`Meta::sdk_version`], [`Meta::sdk_git_commit`] and
-    /// [`Meta::sdk_commit_time`] name the SDK build that wrote a file, so `==`
-    /// reports two files of the same recording as unequal when different builds
-    /// wrote them.
-    pub fn equals_ignoring_build_provenance(&self, other: &Self) -> bool {
-        let Self {
-            meta,
-            debug_time_repair,
-            nav_points,
-            markers,
-            event_markers,
-            event_marker_styles,
-            channels,
-        } = self;
-        meta.equals_ignoring_build_provenance(&other.meta)
-            && *debug_time_repair == other.debug_time_repair
-            && *nav_points == other.nav_points
-            && *markers == other.markers
-            && *event_markers == other.event_markers
-            && *event_marker_styles == other.event_marker_styles
-            && *channels == other.channels
     }
 
     /// Serialise the file to `writer`.

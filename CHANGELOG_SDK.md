@@ -25,6 +25,7 @@ the app).
 
 ### Fixed
 
+- Fixed recorded-content comparisons rejecting equivalent navigation states without coordinates.
 - Fixed satellite polls at incorrect times and positions between fixes when both use only the host clock.
 
 ## [0.7.0] - 2026-09-15

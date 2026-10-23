@@ -22,7 +22,9 @@ fn status_only_navigation_round_trips_without_position_or_optional_measurements(
     for time in times {
         recorder.add(NavFix::status_only(time, state));
     }
-    let file = test_util::round_trip(&recorder.finish().unwrap()).unwrap();
+    let source = recorder.finish().unwrap();
+    let file = test_util::round_trip(&source).unwrap();
+    assert!(source.equals_ignoring_build_provenance(&file));
     assert_eq!(file.nav_points().len(), times.len());
     for (point, time) in file.nav_points().iter().zip(times) {
         let fix = point.fix;
