@@ -4,25 +4,19 @@
 
 ### Added
 
-- **Recordings:** Navigation status and interval statistics remain available for epochs without recorded coordinates.
-- **Recordings:** GTD v3 navigation metadata, independent satellite reports and DOP metrics.
+- **Recordings:** GTD version 3 recordings load with navigation state, coordinate origin and independent satellite reports available for inspection.
+- **Recordings:** Navigation status and interval statistics include epochs without recorded coordinates.
+- **Plots:** Dilution of precision metrics are available for recordings with DOP samples.
 
 ### Changed
 
-- **Map & Tracks:** Recorded positions remain useful without headings or satellite reports, with independent navigation state, coordinate origin and evidence inspection.
+- **Map & Tracks:** Recorded positions are styled by navigation state, including fixes without headings or satellite reports.
+- **Map & Tracks:** Valid navigation fixes are shown in blue regardless of the used-satellite count.
 
 ### Fixed
 
-- **Recordings:** Fixed missing coordinate warnings for source-provided or synthesized navigation records with explicit state and two NaN coordinates.
-- **Map & Tracks:** Fixed valid navigation fixes appearing degraded when the reported used-satellite count was below ten.
-- **Map & Tracks:** Fixed wrapping navigation statistics in recording and track tooltips.
-- **Plots:** Fixed missing metric labels between count, DOP and diagnostic samples and expanded clock details in their hover cards.
-- **Map & Tracks:** Fixed sky-trail counts disagreeing with displayed satellites between independent constellation reports.
-- **Map & Tracks:** Fixed empty sky charts for identity-only reports and incorrect satellite membership marks during navigation loss.
-- **Map & Tracks:** Fixed missing constellation swatches and expanded evidence rows in point summaries.
 - **Map & Tracks:** Fixed fit clipping start and finish flags when only ghost fixes, labels or sky glyphs were displayed.
 - **Map & Tracks:** Fixed fit and query reveal including data hidden by tree, query or marker type settings.
-- **Map & Tracks:** Fixed plot hover clearing the map highlight when a hidden fix preceded a visible candidate.
 - **Map & Tracks:** Fixed stale display counts after replacing a recording with the same number of points and markers.
 - **Map & Tracks:** Fixed query highlights disappearing when every other track layer was hidden.
 - **Map & Tracks:** Fixed map highlights appearing over fixes hidden by a query.
