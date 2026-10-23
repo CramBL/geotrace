@@ -1,5 +1,8 @@
 use chrono::{DateTime, Duration};
-use geotrace_sdk::{Angle, NavFile, NavFileBuilder, NavFix, NavFixTime, SolutionState as SdkState};
+use geotrace_sdk::{
+    Angle, NavFile, NavFileBuilder, NavFix, NavFixTime, PositionProvenance,
+    SolutionState as SdkState,
+};
 use gt_types::{GeneratedMarkerKind, MapFixKind, ResolvedPosition, SolutionState, TrackGeometry};
 use rstest::rstest;
 
@@ -164,42 +167,134 @@ fn a_status_only_recording_retains_state_statistics_without_map_geometry(
 }
 
 #[rstest]
-#[case::unreported_pair(f64::NAN, f64::NAN, Some(SdkState::NoFix), false)]
-#[case::unreported_unknown(f64::NAN, f64::NAN, Some(SdkState::Unknown), false)]
-#[case::unclassified_pair(f64::NAN, f64::NAN, None, true)]
-#[case::one_nan(f64::NAN, 12.0, Some(SdkState::NoFix), true)]
-#[case::out_of_range(91.0, 181.0, Some(SdkState::NoFix), true)]
-#[case::infinity(f64::INFINITY, f64::INFINITY, Some(SdkState::NoFix), true)]
+#[case::loss(
+    f64::NAN,
+    f64::NAN,
+    Some(SdkState::NoFix),
+    None,
+    0,
+    MapFixKind::NavigationLoss
+)]
+#[case::fix(
+    f64::NAN,
+    f64::NAN,
+    Some(SdkState::Fix),
+    None,
+    0,
+    MapFixKind::UnreportedPosition
+)]
+#[case::unknown(
+    f64::NAN,
+    f64::NAN,
+    Some(SdkState::Unknown),
+    None,
+    0,
+    MapFixKind::UnreportedPosition
+)]
+#[case::estimated(
+    f64::NAN,
+    f64::NAN,
+    Some(SdkState::EstimatedOnly),
+    None,
+    0,
+    MapFixKind::Estimated
+)]
+#[case::source_provided(
+    f64::NAN,
+    f64::NAN,
+    Some(SdkState::Fix),
+    Some(PositionProvenance::SourceProvided),
+    2,
+    MapFixKind::CoordinateOutOfRange
+)]
+#[case::synthesized(
+    f64::NAN,
+    f64::NAN,
+    Some(SdkState::NoFix),
+    Some(PositionProvenance::SdkSynthesized),
+    2,
+    MapFixKind::CoordinateOutOfRange
+)]
+#[case::unclassified(f64::NAN, f64::NAN, None, None, 2, MapFixKind::CoordinateOutOfRange)]
+#[case::missing_latitude(
+    f64::NAN,
+    12.0,
+    Some(SdkState::NoFix),
+    None,
+    1,
+    MapFixKind::CoordinateOutOfRange
+)]
+#[case::missing_longitude(
+    55.0,
+    f64::NAN,
+    Some(SdkState::Fix),
+    None,
+    1,
+    MapFixKind::CoordinateOutOfRange
+)]
+#[case::infinity(
+    f64::INFINITY,
+    f64::NEG_INFINITY,
+    Some(SdkState::NoFix),
+    None,
+    2,
+    MapFixKind::CoordinateOutOfRange
+)]
+#[case::out_of_range(
+    91.0,
+    181.0,
+    Some(SdkState::Fix),
+    Some(PositionProvenance::SourceProvided),
+    2,
+    MapFixKind::CoordinateOutOfRange
+)]
+#[case::positioned(55.0, 12.0, Some(SdkState::Fix), None, 0, MapFixKind::Recorded)]
 fn raw_coordinates_only_suppress_warnings_for_the_positionless_convention(
     #[case] latitude: f64,
     #[case] longitude: f64,
     #[case] state: Option<SdkState>,
-    #[case] malformed: bool,
+    #[case] origin: Option<PositionProvenance>,
+    #[case] invalid_axes: u8,
+    #[case] kind: MapFixKind,
 ) {
+    let source = NavFix::builder()
+        .time(NavFixTime::Receiver(DateTime::UNIX_EPOCH))
+        .lat(Angle::degrees(latitude))
+        .lon(Angle::degrees(longitude))
+        .maybe_state(state)
+        .position_provenance(origin)
+        .used_count(8)
+        .build();
     let mut recorder = NavFileBuilder::new().open();
-    recorder.add(
-        NavFix::builder()
-            .time(NavFixTime::Receiver(DateTime::UNIX_EPOCH))
-            .lat(Angle::degrees(latitude))
-            .lon(Angle::degrees(longitude))
-            .maybe_state(state)
-            .build(),
-    );
+    recorder.add(source);
     let mut bytes = Vec::new();
     recorder.finish().unwrap().write(&mut bytes).unwrap();
+    let decoded = NavFile::read(bytes.as_slice()).unwrap();
+    let decoded = &decoded.nav_points().first().unwrap().fix;
+    assert_eq!(decoded.lat.as_degrees().to_bits(), latitude.to_bits());
+    assert_eq!(decoded.lon.as_degrees().to_bits(), longitude.to_bits());
+    assert_eq!(decoded.state, state);
+    assert_eq!(decoded.position_provenance, origin);
     let file = gt_loader::load_bytes(&bytes, "raw.gtd".to_owned()).unwrap();
     let track = file.tracks.first().unwrap();
     let point = track.points.first().unwrap();
-    assert_eq!(point.has_unreported_position(), !malformed);
+    let unreported = kind != MapFixKind::Recorded && invalid_axes == 0;
+    assert_eq!(point.has_unreported_position(), unreported);
     assert_eq!(
         track.metadata.invalid_position_count,
-        usize::from(malformed)
+        usize::from(invalid_axes > 0)
     );
-    assert_eq!(file.load_warnings.is_empty(), !malformed);
-    assert_eq!(
-        point.map_fix_kind() == MapFixKind::CoordinateOutOfRange,
-        malformed
-    );
+    assert_eq!(file.load_warnings.is_empty(), invalid_axes == 0);
+    assert_eq!(point.map_fix_kind(), kind);
     assert_eq!(point.tpv.lat().as_written().to_bits(), latitude.to_bits());
     assert_eq!(point.tpv.lon().as_written().to_bits(), longitude.to_bits());
+    let expected_state = state.map(|state| match state {
+        SdkState::Fix => SolutionState::Fix,
+        SdkState::NoFix => SolutionState::NoFix,
+        SdkState::EstimatedOnly => SolutionState::EstimatedOnly,
+        SdkState::Unknown => SolutionState::Unknown,
+        _ => panic!("unexpected fixture state"),
+    });
+    assert_eq!(point.navigation.state, expected_state);
+    assert_eq!(point.navigation.used_count, Some(8));
 }

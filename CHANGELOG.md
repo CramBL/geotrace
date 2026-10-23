@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- **Recordings:** Fixed missing coordinate warnings for source-provided or synthesized navigation records with explicit state and two NaN coordinates.
 - **Map & Tracks:** Fixed valid navigation fixes appearing degraded when the reported used-satellite count was below ten.
 - **Map & Tracks:** Fixed wrapping navigation statistics in recording and track tooltips.
 - **Plots:** Fixed missing metric labels between count, DOP and diagnostic samples and expanded clock details in their hover cards.

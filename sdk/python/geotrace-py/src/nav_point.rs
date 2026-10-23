@@ -2,6 +2,7 @@ use chrono::{DateTime, FixedOffset};
 use geotrace_sdk::NavPoint;
 use pyo3::prelude::*;
 
+use crate::nav_fix::PyNavFix;
 use crate::navigation::{
     PyPositionProvenance, PySatelliteObservationReport, PySatelliteUsageReport,
     PySolutionDimension, PySolutionMethod, PySolutionState,
@@ -14,6 +15,9 @@ use crate::satellite::PySatelliteReport;
 /// The SDK returns `lat` and `lon` unchanged, NaN included.
 /// Optional floating-point measurements, including DOP, return `None` for an on-disk NaN.
 /// Checking a value against its range is the caller's job.
+/// Equality compares all fix and satellite facts, treating intentional missing positions as absent.
+/// Two NaN coordinates require explicit state and unreported origin for this comparison.
+/// Other NaN values retain ordinary inequality.
 #[pyclass(frozen, skip_from_py_object, name = "NavPoint")]
 #[derive(Clone, Debug)]
 pub struct PyNavPoint {
@@ -153,7 +157,12 @@ impl PyNavPoint {
     }
 
     fn __eq__(&self, other: &Self) -> bool {
-        self.inner == other.inner
+        PyNavFix {
+            inner: self.inner.fix,
+        }
+        .equals_recorded_fix(other.inner.fix)
+            && self.inner.satellite_evidence() == other.inner.satellite_evidence()
+            && self.inner.satellites() == other.inner.satellites()
     }
 
     fn __repr__(&self) -> String {

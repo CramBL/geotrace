@@ -64,6 +64,8 @@ fn status_only_recordings_compare_after_readback_without_changing_ieee_equality(
     assert!(source.equals_ignoring_build_provenance(&decoded));
     assert!(decoded.equals_ignoring_build_provenance(&source));
     assert_ne!(source, decoded);
+    assert_ne!(source.nav_points()[0].fix, decoded.nav_points()[0].fix);
+    assert_ne!(source.nav_points()[0], decoded.nav_points()[0]);
     assert!(source.nav_points()[0].fix.lat.as_degrees().is_nan());
     assert!(decoded.nav_points()[0].fix.lon.as_degrees().is_nan());
 }
@@ -75,7 +77,21 @@ fn absent_coordinate_payloads_compare_without_changing_raw_values() {
     let mut other = source.clone();
     other.nav_points_mut()[0].fix.lat = Angle::degrees(f64::from_bits(OTHER_NAN_BITS));
     other.nav_points_mut()[0].fix.lon = Angle::degrees(-f64::NAN);
+    let mut source_before = Vec::new();
+    source.write(&mut source_before).unwrap();
+    let mut before = Vec::new();
+    other.write(&mut before).unwrap();
     assert!(source.equals_ignoring_build_provenance(&other));
+    assert!(other.equals_ignoring_build_provenance(&source));
+    let mut after = Vec::new();
+    other.write(&mut after).unwrap();
+    assert_eq!(before, after);
+    let mut source_after = Vec::new();
+    source.write(&mut source_after).unwrap();
+    assert_eq!(source_before, source_after);
+    let decoded = test_util::round_trip(&other).unwrap();
+    assert!(source.equals_ignoring_build_provenance(&decoded));
+    assert!(decoded.equals_ignoring_build_provenance(&source));
     assert_eq!(
         other.nav_points()[0].fix.lat.as_degrees().to_bits(),
         OTHER_NAN_BITS
@@ -83,19 +99,47 @@ fn absent_coordinate_payloads_compare_without_changing_raw_values() {
 }
 
 #[rstest]
-#[case::one_nan(Some(SolutionState::NoFix), f64::NAN, 12.0)]
-#[case::unreported_state(None, f64::NAN, f64::NAN)]
+#[case::one_nan(Some(SolutionState::NoFix), None, f64::NAN, 12.0)]
+#[case::source_provided(
+    Some(SolutionState::NoFix),
+    Some(PositionProvenance::SourceProvided),
+    f64::NAN,
+    f64::NAN
+)]
+#[case::synthesized(
+    Some(SolutionState::NoFix),
+    Some(PositionProvenance::SdkSynthesized),
+    f64::NAN,
+    f64::NAN
+)]
+#[case::unreported_state(None, None, f64::NAN, f64::NAN)]
 fn unclassified_nan_coordinates_retain_ieee_comparison(
     #[case] state: Option<SolutionState>,
+    #[case] origin: Option<PositionProvenance>,
     #[case] lat: f64,
     #[case] lon: f64,
 ) {
     let mut file = recording();
     let fix = &mut file.nav_points_mut()[0].fix;
     fix.state = state;
+    fix.position_provenance = origin;
     fix.lat = Angle::degrees(lat);
     fix.lon = Angle::degrees(lon);
     assert!(!file.equals_ignoring_build_provenance(&file.clone()));
+    let source = recording();
+    assert!(!file.equals_ignoring_build_provenance(&source));
+    assert!(!source.equals_ignoring_build_provenance(&file));
+}
+
+#[test]
+fn infinite_coordinates_retain_ordinary_comparison() {
+    let mut source = recording();
+    source.nav_points_mut()[0].fix.lat = Angle::degrees(f64::INFINITY);
+    source.nav_points_mut()[0].fix.lon = Angle::degrees(f64::NEG_INFINITY);
+    assert!(source.equals_ignoring_build_provenance(&source.clone()));
+    let mut other = source.clone();
+    other.nav_points_mut()[0].fix.lon = Angle::degrees(f64::INFINITY);
+    assert!(!source.equals_ignoring_build_provenance(&other));
 }
 
 #[rstest]

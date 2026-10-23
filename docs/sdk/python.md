@@ -70,6 +70,11 @@ Both coordinates must be `None` for a status without position, with an explicit 
 Optional counts and DOP remain ordinary keywords on the same `NavFix`.
 Coordinate properties return NaN on read-back, and coordinate origin is unreported.
 
+`NavFix` and `NavPoint` equality compares intentional missing positions semantically when both coordinates are NaN, state is explicit and coordinate origin is unreported.
+All other recorded facts, including associated satellite evidence on `NavPoint`, remain part of equality.
+Malformed NaNs retain ordinary inequality, including two NaNs with the default source-provided origin.
+Comparison preserves the recorded coordinates.
+
 ## Navigation and independent polling
 
 These examples use the unreleased SDK APIs.

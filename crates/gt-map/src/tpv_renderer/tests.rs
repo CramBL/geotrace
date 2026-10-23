@@ -2525,6 +2525,43 @@ fn a_positionless_epoch_uses_an_inferred_state_glyph(
 }
 
 #[rstest]
+#[case::source_provided(SolutionState::Fix, PositionProvenance::SourceProvided, "Fix")]
+#[case::synthesized(SolutionState::NoFix, PositionProvenance::SdkSynthesized, "No fix")]
+fn reported_coordinate_origin_keeps_nan_pairs_in_the_coordinate_warning_presentation(
+    #[case] state: SolutionState,
+    #[case] origin: PositionProvenance,
+    #[case] state_label: &str,
+) {
+    let source = positionless_status_recording(state);
+    let mut points = source.tracks.first().unwrap().points.clone();
+    points
+        .get_mut(1)
+        .expect("status epoch")
+        .navigation
+        .position_provenance = Some(origin);
+    let file = gt_test_utils::build_file(
+        "malformed.gtd",
+        &points,
+        gt_test_utils::FileParts::default(),
+    );
+    let track = file.tracks.first().unwrap();
+    let point = track.points.get(1).expect("status epoch");
+    assert_eq!(track.metadata.invalid_position_count, 1);
+    assert_eq!(point.map_fix_kind(), MapFixKind::CoordinateOutOfRange);
+    assert_eq!(point.resolved_navigation_state().state, state);
+    let glyph = ChevronFix::for_fix(point).unwrap();
+    assert!(matches!(glyph, ChevronFix::CoordinateOutOfRange));
+    assert_eq!(glyph.tint(true), gt_ui_theme::warning_amber(true));
+    assert_eq!(glyph.tint(false), gt_ui_theme::warning_amber(false));
+    let reference = test_util::point_ref(DataCategory::Tpv, 1);
+    let map = MapScene::of(vec![file]).pinned(reference).render();
+    assert!(map.harness.inner.query_by_label("Lat").is_some());
+    assert!(map.harness.inner.query_by_label("Lon").is_some());
+    assert!(map.harness.inner.query_by_label("Position").is_none());
+    assert!(map.harness.inner.query_by_label(state_label).is_some());
+}
+
+#[rstest]
 #[case::dark(true)]
 #[case::light(false)]
 fn snapshot_the_pinned_positionless_epoch_shows_absent_and_derived_positions(

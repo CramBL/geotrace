@@ -117,6 +117,10 @@ In [`sdk/c/examples/`](../../sdk/c/examples/). Configure the C SDK with
 
 ## Basic navigation recording
 
+`V2` identifies the expanded C binary ABI navigation structure and entry points, independently of the GTD format version.
+New SDK writers emit GTD v3.
+The older C entry point remains available for compatibility.
+
 Start with [`navigation_only`](../../sdk/c/examples/navigation_only.c) for a complete runnable producer using pre-parsed navigation facts.
 It writes a positioned Fix with eight used satellites and HDOP 0.9, a status-only NoFix two seconds later, and a positioned Fix at five seconds.
 No satellite identities, report builders, scopes or coverage flags are required.

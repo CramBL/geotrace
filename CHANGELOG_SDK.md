@@ -25,6 +25,8 @@ the app).
 
 ### Fixed
 
+- Fixed Python comparisons rejecting equivalent navigation values with intentionally absent coordinates.
+- Fixed recorded-content comparisons accepting malformed NaN coordinates with reported coordinate origin.
 - Fixed recorded-content comparisons rejecting equivalent navigation states without coordinates.
 - Fixed satellite polls at incorrect times and positions between fixes when both use only the host clock.
 

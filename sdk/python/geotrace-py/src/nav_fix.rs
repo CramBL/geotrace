@@ -22,6 +22,8 @@ use crate::timestamps::{self, TimestampArguments};
 /// Omitted `position_provenance` defaults to source-provided. Explicit `None` means unreported.
 /// State, method, dimension and the source used count remain independent facts.
 /// Both coordinates may be `None` with an explicit state. Coordinate origin is then unreported.
+/// Equality treats two NaN coordinates as absent only with explicit state and unreported origin.
+/// Other NaN values retain ordinary inequality.
 #[pyclass(frozen, skip_from_py_object, name = "NavFix")]
 #[derive(Clone, Copy, Debug)]
 pub struct PyNavFix {
@@ -185,7 +187,7 @@ impl PyNavFix {
     }
 
     fn __eq__(&self, other: &Self) -> bool {
-        self.inner == other.inner
+        self.equals_recorded_fix(other.inner)
     }
 
     fn __repr__(&self) -> String {
@@ -194,5 +196,26 @@ impl PyNavFix {
             self.inner.lat.as_degrees(),
             self.inner.lon.as_degrees(),
         )
+    }
+}
+
+impl PyNavFix {
+    pub(crate) fn equals_recorded_fix(&self, mut other: NavFix) -> bool {
+        let mut recorded = self.inner;
+        if recorded.position_provenance.is_none()
+            && other.position_provenance.is_none()
+            && recorded.state.is_some()
+            && other.state.is_some()
+            && recorded.lat.as_degrees().is_nan()
+            && recorded.lon.as_degrees().is_nan()
+            && other.lat.as_degrees().is_nan()
+            && other.lon.as_degrees().is_nan()
+        {
+            recorded.lat = Angle::degrees(0.0);
+            recorded.lon = Angle::degrees(0.0);
+            other.lat = Angle::degrees(0.0);
+            other.lon = Angle::degrees(0.0);
+        }
+        recorded == other
     }
 }

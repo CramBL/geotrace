@@ -488,3 +488,150 @@ def test_positionless_navigation_requires_explicit_state_and_aware_timestamp() -
     for state in [1, Constellation.GPS]:
         with pytest.raises(TypeError, match="SolutionState"):
             NavFix(None, None, sys_time=T0, state=state)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("state", list(SolutionState))
+def test_status_only_fix_equality_preserves_recorded_values(
+    state: SolutionState,
+) -> None:
+    fix = NavFix(None, None, sys_time=T0, state=state)
+    other = NavFix(None, None, sys_time=T0, state=state)
+    before = repr(fix)
+    assert fix == other and other == fix
+    assert repr(fix) == before
+    assert math.isnan(fix.lat) and math.isnan(fix.lon)
+    assert fix.position_provenance is None
+    assert fix.state is state and fix.sys_time == T0
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"sys_time": T0 + timedelta(seconds=1)},
+        {"state": SolutionState.UNKNOWN},
+        {"used_count": 0},
+        {"used_count": 8},
+        {"method": SolutionMethod.RTK_FIXED},
+        {"dimension": SolutionDimension.THREE_D},
+        {"hdop": 0.9},
+        {"vdop": 0.0},
+        {"pdop": 1.2},
+    ],
+)
+def test_status_only_fix_equality_compares_other_navigation_facts(
+    changes: dict[str, Any],
+) -> None:
+    arguments: dict[str, Any] = {"sys_time": T0, "state": SolutionState.NO_FIX}
+    source = NavFix(None, None, **arguments)
+    other = NavFix(None, None, **(arguments | changes))
+    assert source != other and other != source
+
+
+@pytest.mark.parametrize(
+    ("coordinates", "state", "origin", "equal"),
+    [
+        ((math.nan, math.nan), SolutionState.NO_FIX, None, True),
+        (
+            (math.nan, math.nan),
+            SolutionState.NO_FIX,
+            PositionProvenance.SOURCE_PROVIDED,
+            False,
+        ),
+        (
+            (math.nan, math.nan),
+            SolutionState.NO_FIX,
+            PositionProvenance.SDK_SYNTHESIZED,
+            False,
+        ),
+        ((math.nan, math.nan), None, None, False),
+        ((math.nan, 12.0), SolutionState.NO_FIX, None, False),
+        ((55.0, math.nan), SolutionState.NO_FIX, None, False),
+    ],
+)
+def test_raw_nan_fix_equality_requires_the_complete_absence_convention(
+    coordinates: tuple[float, float],
+    state: SolutionState | None,
+    origin: PositionProvenance | None,
+    equal: bool,
+) -> None:
+    arguments: dict[str, Any] = {
+        "sys_time": T0,
+        "state": state,
+        "position_provenance": origin,
+    }
+    first = NavFix(*coordinates, **arguments)
+    second = NavFix(*coordinates, **arguments)
+    assert (first == second) is equal
+    assert (second == first) is equal
+    status = NavFix(None, None, sys_time=T0, state=SolutionState.NO_FIX)
+    assert (status == first) is equal
+    assert (first == status) is equal
+
+
+@pytest.mark.parametrize(
+    "changed", [None, "count", "state", "usage", "observation", "legacy"]
+)
+def test_status_only_loaded_point_equality_includes_all_satellite_evidence(
+    changed: str | None, tmp_path: Path
+) -> None:
+    def recording(change: str | None) -> NavFile:
+        fix = NavFix(
+            None,
+            None,
+            sys_time=T0,
+            state=SolutionState.UNKNOWN if change == "state" else SolutionState.NO_FIX,
+            used_count=0 if change == "count" else None,
+        )
+        builder = NavFileBuilder().add(fix)
+        builder.add(
+            SatelliteUsageReport(
+                [SatelliteUsage(G01, SatelliteMembership.USED)],
+                scope=GLOBAL,
+                coverage=SatelliteCoverage.PARTIAL,
+                reported_count=8 if change == "usage" else None,
+                sys_time=T0,
+            )
+        )
+        builder.add(
+            SatelliteObservationReport(
+                [SatelliteObservation(G01, snr=0 if change == "observation" else None)],
+                scope=GLOBAL,
+                coverage=SatelliteCoverage.PARTIAL,
+                sys_time=T0,
+            )
+        )
+        if change == "legacy":
+            builder.add(SatelliteReport([], sys_time=T0))
+        return builder.finish()
+
+    source = recording(None)
+    other = recording(changed)
+    first, second = source.points[0], other.points[0]
+    assert (first == second) is (changed is None)
+    assert (second == first) is (changed is None)
+    path = tmp_path / "status_equality.gtd"
+    other.write_to_file(path)
+    reopened = NavFile.open(path).points[0]
+    assert reopened == second
+    assert (first == reopened) is (changed is None)
+    assert math.isnan(first.lat) and math.isnan(reopened.lon)
+    assert repr(first) == "NavPoint(lat=NaN, lon=NaN)"
+
+
+def test_source_provided_nan_values_keep_ieee_inequality_after_readback(
+    tmp_path: Path,
+) -> None:
+    first = NavFix(math.nan, math.nan, sys_time=T0, state=SolutionState.NO_FIX)
+    second = NavFix(math.nan, math.nan, sys_time=T0, state=SolutionState.NO_FIX)
+    assert first.position_provenance is PositionProvenance.SOURCE_PROVIDED
+    assert first != second
+    source = NavFileBuilder().add(first).finish()
+    other = NavFileBuilder().add(second).finish()
+    assert source.points[0] != other.points[0]
+    path = tmp_path / "malformed.gtd"
+    source.write_to_file(path)
+    point = NavFile.open(path).points[0]
+    assert point != source.points[0]
+    assert math.isnan(point.lat) and math.isnan(point.lon)
+    assert point.position_provenance is PositionProvenance.SOURCE_PROVIDED
+    assert point.state is SolutionState.NO_FIX
