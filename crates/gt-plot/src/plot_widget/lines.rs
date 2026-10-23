@@ -1,95 +1,25 @@
-//! The metric and channel line pass: one line per enabled metric and
-//! channel component, plus the anomaly markers and the custom hover labels.
-
-use std::ops::Range;
-
-use chrono::{DateTime, Utc};
-use egui::{Color32, Tooltip};
-use egui_plot::{Line, LineStyle, MarkerShape, PlotItem as _, PlotPoint, PlotPoints, Points};
-use gt_analysis::satellite_utilization::UtilAnomaly;
+use egui::Color32;
 use gt_egui_mipmap::LevelSelection;
 use gt_types::satellites::ConstellationSet;
-use gt_types::{FixRef, LoadedTrack, MetricKind, NavigationEvidenceSource, PointIdx, TrackRef};
+use gt_types::{LoadedTrack, MetricKind};
 use gt_ui_types::HighlightScope;
 use rustc_hash::FxHashMap;
-use strum::IntoEnumIterator;
+use strum::IntoEnumIterator as _;
 
-use super::backward_time_step::BackwardTimeStepHover;
 use super::chips::{
     self, ChannelVisibility, HoveredChip, LoadedChannel, MetricAvailability, MetricKindUi,
     MetricVisibility, SectionGates,
 };
-use super::clock_offset::{self, ClockOffsetHover};
-use super::flares::SolarFlareHover;
-use super::geomagnetic::GeomagneticHover;
-use super::jamming::JammingHover;
+use super::clock_offset;
+use super::hover::{NearestHoverLabel, PlotHoverLabel};
 use super::levels::{LineViewport, TrackLevelCache};
-use super::snap_error::{self, SnapErrorHover, SnapErrorPlotCache, SnapErrorStyle};
+use super::metric_hover::{MetricHover, MetricHoverContext};
+use super::metric_paint::{self, LineStroke, MetricHoverPolicy};
+use super::snap_error::{self, SnapErrorPlotCache, SnapErrorStyle};
 use super::style;
-use super::tec::TecHover;
-use crate::metric_series::{MetricSampleSource, MetricSeries};
-use crate::series::{PlacedTrackSeries, TrackSeries};
+use crate::metric_series::MetricSeries;
+use crate::series::PlacedTrackSeries;
 
-/// The sub-slice of `items` - sorted ascending by `key` - whose key lies in
-/// the visible `[x_min, x_max]` range. Marker overlays clip to this so they
-/// draw and hover-test only what is on screen, not the whole track's markers
-/// every frame.
-pub(super) fn visible_by_x<T>(
-    items: &[T],
-    key: impl Fn(&T) -> f64,
-    x_min: f64,
-    x_max: f64,
-) -> &[T] {
-    items
-        .get(visible_x_range(items, key, x_min, x_max))
-        .unwrap_or_default()
-}
-
-/// [`visible_by_x`] as the index range it takes, for a caller that also reads
-/// the items on either side of it.
-pub(super) fn visible_x_range<T>(
-    items: &[T],
-    key: impl Fn(&T) -> f64,
-    x_min: f64,
-    x_max: f64,
-) -> Range<usize> {
-    let start = items.partition_point(|it| key(it) < x_min);
-    let end = items.partition_point(|it| key(it) <= x_max);
-    start..end
-}
-
-/// The item of `items` the pointer is closest to within `radius_px`, and that
-/// distance for [`NearestCandidate::offer`]. `distance_px` measures one item
-/// against the pointer, which lets a hover target be measured along one axis
-/// where the shape spans the other one.
-pub(super) fn nearest_under_pointer<T>(
-    items: &[T],
-    distance_px: impl Fn(&T) -> f32,
-    radius_px: f32,
-) -> Option<(f32, &T)> {
-    items
-        .iter()
-        .map(|item| (distance_px(item), item))
-        .filter(|&(distance, _)| distance <= radius_px)
-        .min_by(|(left, _), (right, _)| left.total_cmp(right))
-}
-
-/// The item of `fixes` closest to `pointer` within `radius_px`, and its pixel
-/// distance for [`NearestCandidate::offer`]. `at` places one item in plot
-/// space.
-pub(super) fn nearest_fix_under_pointer<'a, T>(
-    plot_ui: &egui_plot::PlotUi<'_>,
-    fixes: &'a [T],
-    at: impl Fn(&T) -> PlotPoint,
-    pointer: egui::Pos2,
-    radius_px: f32,
-) -> Option<(f32, &'a T)> {
-    nearest_under_pointer(
-        fixes,
-        |fix| plot_ui.screen_from_plot(at(fix)).distance(pointer),
-        radius_px,
-    )
-}
 /// Add all metric lines for one track to the plot using pre-computed level selections.
 ///
 /// When `hovered_chip` is `Some(kind)`, that metric is highlighted (double stroke
@@ -175,10 +105,12 @@ pub(super) fn add_series_lines<'a>(
                     plot_ui,
                     selections,
                     &MetricLineContext {
-                        track,
-                        track_ref: placed.track_ref(),
-                        track_label,
-                        kind,
+                        hover: MetricHoverContext {
+                            track,
+                            track_ref: placed.track_ref(),
+                            track_label,
+                            kind,
+                        },
                         name: format!("{prefix}{}", kind.label()),
                         stroke,
                         viewport,
@@ -208,8 +140,8 @@ pub(super) fn add_series_lines<'a>(
                 stroke,
             );
         } else {
-            add_native_line_candidate(plot_ui, points, pointer, nearest);
-            add_metric_run(plot_ui, points, name, stroke, MetricHoverPolicy::Native);
+            nearest.offer_native_line(plot_ui, points, pointer);
+            metric_paint::add_metric_run(plot_ui, points, name, stroke, MetricHoverPolicy::Native);
         }
     }
 
@@ -279,177 +211,11 @@ pub(super) fn add_series_lines<'a>(
                 .map(|(run, selection)| run.slice_at(*selection))
                 .filter(|points| points.len() >= 2)
             {
-                add_native_line_candidate(plot_ui, points, pointer, nearest);
-                add_line(plot_ui, points, name.clone(), stroke);
+                nearest.offer_native_line(plot_ui, points, pointer);
+                metric_paint::add_line(plot_ui, points, name.clone(), stroke);
             }
         }
     }
-}
-
-/// One custom hover label, for the plot items whose message egui_plot's own
-/// label cannot carry.
-pub(super) enum PlotHoverLabel {
-    Metric(MetricHover),
-    Anomaly(AnomalyHover),
-    BackwardTimeStep(BackwardTimeStepHover),
-    ClockOffset(ClockOffsetHover),
-    Geomagnetic(GeomagneticHover),
-    Jamming(JammingHover),
-    SnapError(SnapErrorHover),
-    SolarFlare(SolarFlareHover),
-    Tec(TecHover),
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct MetricHoverSelection {
-    pub(super) fix: FixRef,
-    pub(super) time: DateTime<Utc>,
-}
-
-impl PlotHoverLabel {
-    pub(super) fn metric_selection(&self) -> Option<MetricHoverSelection> {
-        match self {
-            Self::Metric(hover) => Some(MetricHoverSelection {
-                fix: hover.fix,
-                time: hover.time?,
-            }),
-            _ => None,
-        }
-    }
-
-    fn show(&self, ui: &mut egui::Ui) {
-        match self {
-            Self::Metric(hover) => hover.show(ui),
-            Self::Anomaly(hover) => hover.show(ui),
-            Self::SnapError(hover) => hover.show(ui),
-            Self::Jamming(hover) => hover.show(ui),
-            Self::Geomagnetic(hover) => hover.show(ui),
-            Self::Tec(hover) => hover.show(ui),
-            Self::ClockOffset(hover) => hover.show(ui),
-            Self::BackwardTimeStep(hover) => hover.show(ui),
-            Self::SolarFlare(hover) => hover.show(ui),
-        }
-    }
-}
-
-/// Keeps the closest of the candidates offered to it, by pixel distance from
-/// the pointer.
-pub(super) struct NearestCandidate<T> {
-    closest: Option<(f32, T)>,
-}
-
-impl<T> Default for NearestCandidate<T> {
-    fn default() -> Self {
-        Self { closest: None }
-    }
-}
-
-impl<T> NearestCandidate<T> {
-    /// `candidate` is built only when `distance_px` is closer than the held
-    /// candidate.
-    pub(super) fn offer(&mut self, distance_px: f32, candidate: impl FnOnce() -> T) {
-        if self
-            .closest
-            .as_ref()
-            .is_none_or(|(closest, _)| distance_px < *closest)
-        {
-            self.closest = Some((distance_px, candidate()));
-        }
-    }
-
-    pub(super) fn take(self) -> Option<T> {
-        self.closest.map(|(_, candidate)| candidate)
-    }
-}
-
-/// One shared slot for the custom hover labels of every series and every
-/// recording: they all anchor at the pointer, so only the closest one draws.
-#[derive(Default)]
-pub(super) struct NearestHoverLabel {
-    labels: NearestCandidate<PlotHoverLabel>,
-    native_line_distance: Option<f32>,
-}
-
-impl NearestHoverLabel {
-    pub(super) fn offer(&mut self, distance_px: f32, candidate: impl FnOnce() -> PlotHoverLabel) {
-        self.labels.offer(distance_px, candidate);
-    }
-
-    pub(super) fn selected(&self) -> Option<&PlotHoverLabel> {
-        let (distance, label) = self.labels.closest.as_ref()?;
-        if matches!(label, PlotHoverLabel::Metric(_))
-            && self
-                .native_line_distance
-                .is_some_and(|native| native < *distance)
-        {
-            return None;
-        }
-        Some(label)
-    }
-
-    pub(super) fn has_candidate(&self) -> bool {
-        self.selected().is_some()
-    }
-
-    fn take(self) -> Option<PlotHoverLabel> {
-        self.selected()?;
-        self.labels.take()
-    }
-}
-
-fn add_native_line_candidate(
-    plot_ui: &egui_plot::PlotUi<'_>,
-    points: &[PlotPoint],
-    pointer: Option<egui::Pos2>,
-    nearest: &mut NearestHoverLabel,
-) {
-    if points.is_empty() {
-        return;
-    }
-    let Some(pointer) = pointer else {
-        return;
-    };
-    let line = Line::new("", PlotPoints::Borrowed(points));
-    if let Some(closest) = line.find_closest(pointer, plot_ui.transform())
-        && closest.dist_sq
-            <= plot_ui
-                .ctx()
-                .global_style()
-                .interaction
-                .interact_radius
-                .powi(2)
-    {
-        let distance = closest.dist_sq.sqrt();
-        nearest.native_line_distance = Some(
-            nearest
-                .native_line_distance
-                .map_or(distance, |previous| previous.min(distance)),
-        );
-    }
-}
-
-/// Surface the closest custom hover label as a tooltip anchored at the pointer.
-/// This is the only label at the cursor: egui_plot's cursor label is suppressed
-/// for the frame a candidate is offered.
-pub(super) fn show_nearest_hover_label(
-    ui: &egui::Ui,
-    response: &egui::Response,
-    nearest: NearestHoverLabel,
-) {
-    if !response.hovered() {
-        return;
-    }
-    let Some(label) = nearest.take() else {
-        return;
-    };
-    Tooltip::always_open(
-        ui.ctx().clone(),
-        response.layer_id,
-        egui::Id::new("plot_hover_label"),
-        egui::PopupAnchor::Pointer,
-    )
-    .gap(HOVER_LABEL_TOOLTIP_GAP)
-    .show(|ui| label.show(ui));
 }
 
 impl PlacedTrackSeries {
@@ -465,48 +231,8 @@ impl PlacedTrackSeries {
     }
 }
 
-/// How one line is stroked: its color after the hover treatment, the file's
-/// dash pattern, the user's line width, and whether it draws highlighted.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct LineStroke {
-    pub(super) color: Color32,
-    pub(super) style: LineStyle,
-    pub(super) width: f32,
-    pub(super) highlighted: bool,
-}
-
-#[derive(Clone, Copy)]
-enum MetricHoverPolicy {
-    Native,
-    SourceAware,
-}
-
-/// Submit one metric line to the plot, borrowing the point slice directly via
-/// [`PlotPoints::Borrowed`] - no allocation.
-///
-/// Skips slices with fewer than two points: a single-point line has no
-/// visible geometry and would clutter the legend.
-///
-/// The shared lifetime `'a` ensures the borrowed slice lives at least as long
-/// as the `PlotUi` that will consume it (required because `PlotUi<'a>` is
-/// invariant over `'a`).
-pub(super) fn add_line<'a>(
-    plot_ui: &mut egui_plot::PlotUi<'a>,
-    data: &'a [egui_plot::PlotPoint],
-    name: String,
-    stroke: LineStroke,
-) {
-    if data.len() < 2 {
-        return;
-    }
-    add_metric_run(plot_ui, data, name, stroke, MetricHoverPolicy::Native);
-}
-
 struct MetricLineContext<'a> {
-    track: &'a LoadedTrack,
-    track_ref: TrackRef,
-    track_label: Option<&'a str>,
-    kind: MetricKind,
+    hover: MetricHoverContext<'a>,
     name: String,
     stroke: LineStroke,
     viewport: LineViewport,
@@ -526,7 +252,7 @@ impl MetricSeries {
                 continue;
             }
             let points = run.slice_at(*selection);
-            add_metric_run(
+            metric_paint::add_metric_run(
                 plot_ui,
                 points,
                 context.name.clone(),
@@ -536,309 +262,11 @@ impl MetricSeries {
             let Some(pointer) = context.pointer else {
                 continue;
             };
-            let line = Line::new(&context.name, PlotPoints::Borrowed(points));
-            if let Some(closest) = line.find_closest(pointer, plot_ui.transform())
-                && closest.dist_sq <= HOVER_RADIUS_PX.powi(2)
-                && let Some(point) = points.get(closest.index)
-                && let Some(source) = self.sample_source(run_index, point.x)
-            {
-                nearest.offer(closest.dist_sq.sqrt(), || {
-                    PlotHoverLabel::Metric(MetricHover::new(
-                        context.track_label,
-                        context.kind,
-                        *point,
-                        source,
-                        context.track,
-                        context.track_ref,
-                    ))
+            if let Some(candidate) = self.nearest_sample(plot_ui, run_index, points, pointer) {
+                nearest.offer(candidate.distance_px, || {
+                    PlotHoverLabel::Metric(MetricHover::from_sample(&context.hover, &candidate))
                 });
             }
         }
-    }
-}
-
-fn add_metric_run<'a>(
-    plot_ui: &mut egui_plot::PlotUi<'a>,
-    points: &'a [PlotPoint],
-    name: String,
-    stroke: LineStroke,
-    hover: MetricHoverPolicy,
-) {
-    let allow_hover = matches!(hover, MetricHoverPolicy::Native);
-    if points.is_empty() && allow_hover {
-        return;
-    }
-    if points.len() == 1 {
-        plot_ui.points(
-            Points::new(name, PlotPoints::Borrowed(points))
-                .color(stroke.color)
-                .radius(ISOLATED_SAMPLE_RADIUS_PX)
-                .highlight(stroke.highlighted)
-                .allow_hover(allow_hover),
-        );
-    } else {
-        plot_ui.line(
-            Line::new(name, PlotPoints::Borrowed(points))
-                .color(stroke.color)
-                .style(stroke.style)
-                .width(stroke.width)
-                .highlight(stroke.highlighted)
-                .allow_hover(allow_hover),
-        );
-    }
-}
-
-pub(super) struct MetricHover {
-    fix: FixRef,
-    track: Option<String>,
-    kind: MetricKind,
-    point: PlotPoint,
-    time: Option<DateTime<Utc>>,
-}
-
-impl MetricHover {
-    fn new(
-        track_label: Option<&str>,
-        kind: MetricKind,
-        point: PlotPoint,
-        source: MetricSampleSource,
-        track: &LoadedTrack,
-        track_ref: TrackRef,
-    ) -> Self {
-        let report = track
-            .points
-            .get(source.point_index)
-            .and_then(|point| match source.evidence {
-                Some(
-                    NavigationEvidenceSource::UsageAggregate(index)
-                    | NavigationEvidenceSource::UsageList(index),
-                ) => point
-                    .satellite_evidence
-                    .usage
-                    .get(index)
-                    .map(|report| report.metadata),
-                Some(
-                    NavigationEvidenceSource::ObservationAggregate(index)
-                    | NavigationEvidenceSource::ObservationList(index),
-                ) => point
-                    .satellite_evidence
-                    .observations
-                    .get(index)
-                    .map(|report| report.metadata),
-                _ => None,
-            });
-        Self {
-            fix: FixRef::new(track_ref, PointIdx::new(source.point_index)),
-            time: report
-                .map(|report| report.normalized_time.utc())
-                .or_else(|| {
-                    track
-                        .points
-                        .get(source.point_index)
-                        .map(|point| point.tpv.time().utc())
-                }),
-            track: track_label.map(ToOwned::to_owned),
-            kind,
-            point,
-        }
-    }
-
-    fn show(&self, ui: &mut egui::Ui) {
-        ui.strong(self.kind.label());
-        if let Some(track) = &self.track {
-            ui.label(track);
-        }
-        if let Some(time) = self.time {
-            ui.label(time.format("%H:%M:%S%.f").to_string());
-        }
-        let value = match self.kind {
-            MetricKind::SatsFix
-            | MetricKind::SatsSeen
-            | MetricKind::GpsFix
-            | MetricKind::GpsSeen
-            | MetricKind::GlonassFix
-            | MetricKind::GlonassSeen
-            | MetricKind::GalileoFix
-            | MetricKind::GalileoSeen
-            | MetricKind::BeidouFix
-            | MetricKind::BeidouSeen
-            | MetricKind::NavicFix
-            | MetricKind::NavicSeen
-            | MetricKind::QzssFix
-            | MetricKind::QzssSeen => format!("{:.0}", self.point.y),
-            _ => format!("{:.2}", self.point.y),
-        };
-        ui.label(value);
-    }
-}
-
-/// Pre-formatted tooltip contents for one masked-satellite anomaly marker.
-pub(super) struct AnomalyHover {
-    /// Track label, shown only when more than one track is visible.
-    track: Option<String>,
-    time: String,
-    /// One line per masked-out satellite, e.g. `GPS 07 - 12.3°`.
-    sats: Vec<String>,
-}
-
-impl AnomalyHover {
-    fn new(track_label: Option<&str>, anomaly: &UtilAnomaly) -> Self {
-        let time = DateTime::from_timestamp(anomaly.t as i64, 0)
-            .map(|dt| dt.format("%H:%M:%S").to_string())
-            .unwrap_or_default();
-        let sats = anomaly
-            .masked
-            .iter()
-            .map(|m| {
-                format!(
-                    "{} {:02} - {:.1}°",
-                    m.constellation.display_name(),
-                    m.prn,
-                    m.elevation
-                )
-            })
-            .collect();
-        Self {
-            track: track_label.map(ToOwned::to_owned),
-            time,
-            sats,
-        }
-    }
-
-    fn show(&self, ui: &mut egui::Ui) {
-        ui.strong("Used satellites below the elevation mask");
-        if let Some(track) = &self.track {
-            ui.label(track);
-        }
-        ui.label(format!("at {}", self.time));
-        ui.separator();
-        for line in &self.sats {
-            ui.label(line);
-        }
-    }
-}
-
-/// Draw the masked-satellite anomaly markers for one track and, when the pointer
-/// is within [`ANOMALY_HOVER_RADIUS_PX`] of a marker, record the nearest one in
-/// `nearest` so the caller can show its tooltip.
-///
-/// Each marker sits on the all-constellations utilization line at the epoch
-/// where the receiver used a satellite below the elevation mask.
-pub(super) fn add_util_anomalies<'a>(
-    plot_ui: &mut egui_plot::PlotUi<'a>,
-    series: &'a TrackSeries,
-    track_label: Option<&str>,
-    x_range: std::ops::RangeInclusive<f64>,
-    pointer: Option<egui::Pos2>,
-    nearest: &mut NearestHoverLabel,
-    dark_mode: bool,
-) {
-    let visible = visible_by_x(
-        &series.util_anomalies,
-        |a| a.t,
-        *x_range.start(),
-        *x_range.end(),
-    );
-    if visible.is_empty() {
-        return;
-    }
-
-    let points: Vec<PlotPoint> = visible
-        .iter()
-        .map(|a| PlotPoint::new(a.t, a.value))
-        .collect();
-    plot_ui.points(
-        Points::new("Masked-out used satellites", PlotPoints::Owned(points))
-            .shape(MarkerShape::Cross)
-            .color(gt_ui_theme::error_indicator(dark_mode))
-            .radius(ANOMALY_MARKER_RADIUS)
-            // Hover is handled with a custom tooltip, so suppress egui_plot's own.
-            .allow_hover(false),
-    );
-
-    let Some(pointer) = pointer else {
-        return;
-    };
-    if let Some((distance, anomaly)) = nearest_fix_under_pointer(
-        plot_ui,
-        visible,
-        |anomaly| PlotPoint::new(anomaly.t, anomaly.value),
-        pointer,
-        ANOMALY_HOVER_RADIUS_PX,
-    ) {
-        nearest.offer(distance, || {
-            PlotHoverLabel::Anomaly(AnomalyHover::new(track_label, anomaly))
-        });
-    }
-}
-
-/// Pixel radius within which the pointer is considered to be hovering a
-/// masked-satellite anomaly marker.
-pub(super) const ANOMALY_HOVER_RADIUS_PX: f32 = 7.0;
-/// Pixel radius within which a fix of a per-fix line is a hover target.
-pub(super) const HOVER_RADIUS_PX: f32 = 12.0;
-/// On-plot radius of the anomaly cross marker.
-pub(super) const ANOMALY_MARKER_RADIUS: f32 = 4.0;
-/// Gap between the pointer and the custom hover label.
-const HOVER_LABEL_TOOLTIP_GAP: f32 = 12.0;
-
-const ISOLATED_SAMPLE_RADIUS_PX: f32 = 3.0;
-
-#[cfg(test)]
-mod tests {
-    use super::NearestCandidate;
-
-    /// Every series of every recording offers into one slot, so the closest
-    /// candidate is the only one left to draw - the label anchors at the
-    /// pointer, where a second one would land on top of it.
-    #[test]
-    fn only_the_closest_candidate_survives() {
-        let mut nearest = NearestCandidate::default();
-        nearest.offer(9.0, || "first recording's interference fix");
-        nearest.offer(3.0, || "second recording's interference fix");
-        nearest.offer(7.0, || "unsnapped point");
-        assert_eq!(nearest.take(), Some("second recording's interference fix"));
-    }
-
-    #[test]
-    fn nothing_offered_leaves_no_label() {
-        assert_eq!(NearestCandidate::<&str>::default().take(), None);
-    }
-
-    #[test]
-    fn a_losing_candidate_is_never_built() {
-        let builds = std::cell::Cell::new(0_u32);
-        let mut nearest = NearestCandidate::default();
-        nearest.offer(3.0, || {
-            builds.set(builds.get() + 1);
-            "closest"
-        });
-        nearest.offer(8.0, || {
-            builds.set(builds.get() + 1);
-            "further away"
-        });
-        assert_eq!(builds.get(), 1);
-        assert_eq!(nearest.take(), Some("closest"));
-    }
-
-    /// The viewport clip keeps exactly the markers whose x lies in the closed
-    /// `[x_min, x_max]` range, and yields an empty slice when the range sits
-    /// entirely outside the data (never a panic).
-    #[rstest::rstest]
-    #[case::interior_inclusive(1.0, 3.0, vec![1.0, 2.0, 3.0])]
-    #[case::fractional_window(0.5, 2.5, vec![1.0, 2.0])]
-    #[case::whole_range(-10.0, 10.0, vec![0.0, 1.0, 2.0, 3.0, 4.0])]
-    #[case::entirely_right(5.0, 9.0, vec![])]
-    #[case::entirely_left(-9.0, -5.0, vec![])]
-    fn visible_by_x_clips_to_the_closed_range(
-        #[case] x_min: f64,
-        #[case] x_max: f64,
-        #[case] expected: Vec<f64>,
-    ) {
-        let xs = [0.0_f64, 1.0, 2.0, 3.0, 4.0];
-        assert_eq!(
-            super::visible_by_x(&xs, |&x| x, x_min, x_max),
-            expected.as_slice()
-        );
     }
 }

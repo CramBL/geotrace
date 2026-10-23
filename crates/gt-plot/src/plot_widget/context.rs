@@ -18,9 +18,10 @@ use gt_ui_types::{
 
 use super::chips::{MetricAvailability, MetricKindUi, MetricVisibility};
 use super::geomagnetic::GeomagneticHover;
+use super::hover::{HOVER_RADIUS_PX, NearestHoverLabel, PlotHoverLabel};
 use super::jamming::JammingHover;
 use super::levels::LineViewport;
-use super::lines::{self, HOVER_RADIUS_PX, LineStroke, NearestHoverLabel, PlotHoverLabel};
+use super::metric_paint::{self, LineStroke};
 use super::tec::TecHover;
 
 /// A context line's sample: where it starts, and what the line is worth
@@ -339,7 +340,7 @@ fn add_context_line<'a, S: ContextSample>(
         .iter()
         .zip(draw.viewport.select_run_levels(&cache.runs))
     {
-        lines::add_line(
+        metric_paint::add_line(
             plot_ui,
             run.slice_at(selection),
             draw.kind.label().to_owned(),

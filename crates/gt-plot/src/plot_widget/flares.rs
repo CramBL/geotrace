@@ -12,7 +12,7 @@ use egui_plot::{PlotPoint, PlotTransform, Span};
 use gt_flare::text;
 use gt_flare::{MarkedFlare, SolarFlare};
 
-use super::lines::{self, NearestHoverLabel, PlotHoverLabel};
+use super::hover::{self, NearestHoverLabel, PlotHoverLabel};
 use super::overlay::{OverlayItem, OverlayPainter};
 
 /// The flare markers of one span.
@@ -167,7 +167,7 @@ fn nearest_hovered_peak<'f>(
     visible: &[&'f MarkedFlare],
     pointer: egui::Pos2,
 ) -> Option<(f32, &'f MarkedFlare)> {
-    lines::nearest_under_pointer(
+    hover::nearest_under_pointer(
         visible,
         |marked| {
             let x = plot_ui

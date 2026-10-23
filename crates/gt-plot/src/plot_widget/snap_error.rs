@@ -9,11 +9,9 @@ use gt_ui_types::{ArcIdentity, SnapErrorKind, SnapErrorPoint, SnapErrorSeries};
 use rustc_hash::FxHashMap;
 
 use super::chips::MetricKindUi;
+use super::hover::{self, ANOMALY_HOVER_RADIUS_PX, NearestHoverLabel, PlotHoverLabel};
 use super::levels::LineViewport;
-use super::lines::{
-    self, ANOMALY_HOVER_RADIUS_PX, ANOMALY_MARKER_RADIUS, LineStroke, NearestHoverLabel,
-    PlotHoverLabel,
-};
+use super::metric_paint::{self, ANOMALY_MARKER_RADIUS, LineStroke};
 use crate::series::PlacedTrackSeries;
 
 /// Whether any visible track has an entry in the snap error series.
@@ -192,7 +190,7 @@ pub(super) fn add_snap_error_series<'a>(
     let selections = viewport.select_run_levels(&cache.runs);
     let full_detail = every_shown_run_is_at_full_detail(&cache.runs, &selections, viewport);
     for (run, selection) in cache.runs.iter().zip(selections) {
-        lines::add_line(
+        metric_paint::add_line(
             plot_ui,
             run.slice_at(selection),
             format!("{prefix}{}", MetricKind::SnapError.label()),
@@ -201,7 +199,7 @@ pub(super) fn add_snap_error_series<'a>(
     }
 
     if full_detail && !cache.snapped.is_empty() {
-        let visible = lines::visible_by_x(&cache.snapped, |p| p.x, viewport.x_min, viewport.x_max);
+        let visible = hover::visible_by_x(&cache.snapped, |p| p.x, viewport.x_min..=viewport.x_max);
         if !visible.is_empty() {
             plot_ui.points(
                 Points::new(
@@ -217,7 +215,7 @@ pub(super) fn add_snap_error_series<'a>(
     }
 
     let visible_unsnapped =
-        lines::visible_by_x(&cache.unsnapped, |p| p.x, viewport.x_min, viewport.x_max);
+        hover::visible_by_x(&cache.unsnapped, |p| p.x, viewport.x_min..=viewport.x_max);
     if !visible_unsnapped.is_empty() {
         plot_ui.points(
             Points::new("Unsnapped points", PlotPoints::Borrowed(visible_unsnapped))
@@ -231,7 +229,7 @@ pub(super) fn add_snap_error_series<'a>(
     let Some(pointer) = pointer else {
         return;
     };
-    if let Some((distance, point)) = lines::nearest_fix_under_pointer(
+    if let Some((distance, point)) = hover::nearest_fix_under_pointer(
         plot_ui,
         visible_unsnapped,
         |point| *point,

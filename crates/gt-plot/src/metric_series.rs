@@ -1,11 +1,37 @@
 use gt_egui_mipmap::MipMap;
 use gt_types::time_types::GpsTime;
-use gt_types::{NavigationEvidenceSource, SatelliteReportMetadata};
+use gt_types::{LoadedTrack, NavigationEvidenceSource, SatelliteReportMetadata};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct MetricSampleSource {
     pub point_index: usize,
     pub evidence: Option<NavigationEvidenceSource>,
+}
+
+impl MetricSampleSource {
+    pub(crate) fn normalized_time(self, track: &LoadedTrack) -> Option<GpsTime> {
+        let point = track.points.get(self.point_index)?;
+        let report = match self.evidence {
+            Some(
+                NavigationEvidenceSource::UsageAggregate(index)
+                | NavigationEvidenceSource::UsageList(index),
+            ) => point
+                .satellite_evidence
+                .usage
+                .get(index)
+                .map(|report| report.metadata),
+            Some(
+                NavigationEvidenceSource::ObservationAggregate(index)
+                | NavigationEvidenceSource::ObservationList(index),
+            ) => point
+                .satellite_evidence
+                .observations
+                .get(index)
+                .map(|report| report.metadata),
+            _ => None,
+        };
+        Some(report.map_or(point.tpv.time(), |report| report.normalized_time))
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
