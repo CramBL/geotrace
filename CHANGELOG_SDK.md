@@ -11,23 +11,17 @@ the app).
 
 - Rust, C, C++ and Python producers can record timed navigation states without coordinates.
 - Navigation and independent polling examples in Rust, C, C++ and Python.
-- Python producers and readers support optional navigation metadata and independent satellite reports.
-- C++ producers and readers support optional navigation metadata and owning independent satellite reports.
-- C producers and readers support navigation metadata and independent scoped satellite usage and observation reports.
-- Rust recorders accept independent satellite usage and observation samples with preserved timestamps.
-- Rust `NavFix` supports optional navigation state, method, dimension, used count, dilution of precision and coordinate origin.
+- Rust, C, C++ and Python support optional navigation state, method, dimension, used-satellite count, dilution of precision and coordinate origin.
+- Rust, C, C++ and Python producers and readers support independent satellite usage and observation reports with preserved timestamps.
 
 ### Changed
 
-- Multiple satellite reports can associate with one fix, and orphan reports with equal normalized times share one synthesized position.
+- Multiple satellite reports can associate with one fix.
 - New recordings use GTD version 3, and readers accept versions 1, 2 and 3.
 - **Breaking:** External Rust callers construct `NavFix` through `NavFix::builder()`.
 
 ### Fixed
 
-- Fixed Python comparisons rejecting equivalent navigation values with intentionally absent coordinates.
-- Fixed recorded-content comparisons accepting malformed NaN coordinates with reported coordinate origin.
-- Fixed recorded-content comparisons rejecting equivalent navigation states without coordinates.
 - Fixed satellite polls at incorrect times and positions between fixes when both use only the host clock.
 
 ## [0.7.0] - 2026-09-15
