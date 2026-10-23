@@ -4329,22 +4329,7 @@ fn navigation_only_source_facts_and_inferred_positions_survive_history() {
         .unwrap();
     let restored = database.load_full(&reference).unwrap();
     let decoded = NavFile::read(restored.bytes.as_slice()).unwrap();
-    let source_fields = |file: &NavFile| {
-        file.nav_points()
-            .iter()
-            .map(|point| {
-                let coordinates = (
-                    point.fix.lat.as_degrees().to_bits(),
-                    point.fix.lon.as_degrees().to_bits(),
-                );
-                let mut remaining_fields = point.clone();
-                remaining_fields.fix.lat = Angle::degrees(0.0);
-                remaining_fields.fix.lon = Angle::degrees(0.0);
-                (coordinates, remaining_fields)
-            })
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(source_fields(&source), source_fields(&decoded));
+    assert!(source.equals_ignoring_build_provenance(&decoded));
     let direct = gt_loader::load_bytes(&bytes, "navigation_only.gtd".to_owned()).unwrap();
     let reopened =
         gt_loader::load_bytes(&restored.bytes, "navigation_only.gtd".to_owned()).unwrap();
