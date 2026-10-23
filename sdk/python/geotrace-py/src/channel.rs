@@ -185,7 +185,7 @@ impl PyChannel {
         self.inner
             .times()
             .iter()
-            .map(|t| crate::to_fixed(*t))
+            .map(|t| t.fixed_offset())
             .collect()
     }
 

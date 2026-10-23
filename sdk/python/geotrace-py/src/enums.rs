@@ -6,6 +6,7 @@ use pyo3::sync::PyOnceLock;
 use pyo3::types::PyType;
 use strum::IntoEnumIterator as _;
 
+use crate::errors;
 use crate::navigation;
 use crate::python_enum::PythonEnumMirror;
 
@@ -87,7 +88,7 @@ impl From<PyConstellation> for Constellation {
 pub(crate) fn constellation_from_name(name: &str) -> PyResult<PyConstellation> {
     Constellation::try_from_lower_case(name)
         .map(PyConstellation::from)
-        .map_err(crate::file_err)
+        .map_err(errors::file_error)
 }
 
 /// Visual icon for a map annotation marker, mirroring
@@ -187,7 +188,7 @@ impl From<PyMarkerIcon> for MarkerIcon {
 pub(crate) fn marker_icon_from_name(name: &str) -> PyResult<PyMarkerIcon> {
     MarkerIcon::try_from_lower_case(name)
         .map(PyMarkerIcon::from)
-        .map_err(crate::file_err)
+        .map_err(errors::file_error)
 }
 
 /// Platform a recording was made on, declared by the recorder, mirroring

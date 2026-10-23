@@ -7,6 +7,7 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
 use crate::enums::PyMarkerIcon;
+use crate::errors;
 
 /// A user-defined map annotation with an optional label and an icon.
 ///
@@ -33,14 +34,14 @@ impl PyAnnotation {
             .maybe_label(label)
             .icon(MarkerIcon::from(icon))
             .build()
-            .map_err(crate::file_err)?;
+            .map_err(errors::file_error)?;
         Ok(Self { inner })
     }
 
     /// Timestamp (timezone-aware UTC).
     #[getter]
     fn time(&self) -> DateTime<FixedOffset> {
-        crate::to_fixed(self.inner.time())
+        self.inner.time().fixed_offset()
     }
 
     /// Display label, or `None`.
@@ -134,7 +135,7 @@ impl PyMarker {
     /// Annotation timestamp (timezone-aware UTC).
     #[getter]
     fn time(&self) -> DateTime<FixedOffset> {
-        crate::to_fixed(self.inner.annotation.time())
+        self.inner.annotation.time().fixed_offset()
     }
 
     fn __repr__(&self) -> String {
@@ -239,10 +240,11 @@ impl PyEventMarker {
 
     #[getter]
     fn sys_time(&self) -> DateTime<FixedOffset> {
-        crate::to_fixed(match &self.marker {
+        (match &self.marker {
             SkippableEventMarker::Record(marker) => marker.sys_time(),
             SkippableEventMarker::Skip { sys_time, .. } => *sys_time,
         })
+        .fixed_offset()
     }
 
     #[getter]
@@ -359,7 +361,7 @@ impl PyEventMarkerPoint {
 
     #[getter]
     fn sys_time(&self) -> DateTime<FixedOffset> {
-        crate::to_fixed(self.inner.sys_time)
+        self.inner.sys_time.fixed_offset()
     }
 
     /// Interpolated latitude in degrees.

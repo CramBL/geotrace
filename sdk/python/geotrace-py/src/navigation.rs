@@ -12,9 +12,9 @@ use pyo3::sync::PyOnceLock;
 use pyo3::types::PyType;
 use strum::IntoEnumIterator as _;
 
-use crate::TimestampArguments;
 use crate::enums::{PyConstellation, PythonEnumValue};
 use crate::python_enum::PythonEnumMirror;
+use crate::timestamps::{self, TimestampArguments};
 
 macro_rules! navigation_enum {
     ($python:ident, $rust:ident, $name:literal, $($variant:ident),+ $(,)?) => {
@@ -347,7 +347,7 @@ macro_rules! evidence_report {
                 gps_time: Option<DateTime<FixedOffset>>,
                 sys_time: Option<DateTime<FixedOffset>>,
             ) -> PyResult<Self> {
-                let time = crate::nav_fix_time_or_value_error(TimestampArguments { gps_time, sys_time })?;
+                let time = timestamps::nav_fix_time_or_value_error(TimestampArguments { gps_time, sys_time })?;
                 Ok(Self {
                     inner: $rust::builder()
                         .time(time)
@@ -387,20 +387,20 @@ macro_rules! evidence_report {
             /// Original receiver timestamp in UTC, or `None` when unreported.
             #[getter]
             fn gps_time(&self) -> Option<DateTime<FixedOffset>> {
-                self.inner.time.gps_time().map(crate::to_fixed)
+                self.inner.time.gps_time().map(|time| time.fixed_offset())
             }
 
             /// Original host timestamp in UTC, or `None` when unreported.
             #[getter]
             fn sys_time(&self) -> Option<DateTime<FixedOffset>> {
-                self.inner.time.sys_time().map(crate::to_fixed)
+                self.inner.time.sys_time().map(|time| time.fixed_offset())
             }
 
             /// Placement timestamp on the common navigation clock,
             /// or `None` when placement is unreported.
             #[getter]
             fn normalized_time(&self) -> Option<DateTime<FixedOffset>> {
-                self.inner.placement.map(|placement| crate::to_fixed(placement.normalized_time))
+                self.inner.placement.map(|placement| placement.normalized_time.fixed_offset())
             }
 
             /// Zero-based insertion order across usage and observation reports,

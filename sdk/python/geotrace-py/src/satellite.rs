@@ -3,8 +3,8 @@ use geotrace_sdk::{Constellation, Satellite, SatelliteReport};
 use geotrace_sdk_units::snr;
 use pyo3::prelude::*;
 
-use crate::TimestampArguments;
 use crate::enums::PyConstellation;
+use crate::timestamps::{self, TimestampArguments};
 
 /// One tracked satellite with optional signal metrics.
 ///
@@ -122,7 +122,8 @@ impl PySatelliteReport {
         gps_time: Option<DateTime<FixedOffset>>,
         sys_time: Option<DateTime<FixedOffset>>,
     ) -> PyResult<Self> {
-        let time = crate::nav_fix_time_or_value_error(TimestampArguments { gps_time, sys_time })?;
+        let time =
+            timestamps::nav_fix_time_or_value_error(TimestampArguments { gps_time, sys_time })?;
         let inner = SatelliteReport::builder()
             .time(time)
             .tracked(tracked.into_iter().map(|s| s.inner).collect())
@@ -144,7 +145,7 @@ impl PySatelliteReport {
     /// constructed without one, or read from a file that stores none.
     #[getter]
     fn gps_time(&self) -> Option<DateTime<FixedOffset>> {
-        self.inner.gps_time().map(crate::to_fixed)
+        self.inner.gps_time().map(|time| time.fixed_offset())
     }
 
     /// System-clock timestamp at capture time (timezone-aware UTC), or `None`
@@ -152,7 +153,7 @@ impl PySatelliteReport {
     /// none.
     #[getter]
     fn sys_time(&self) -> Option<DateTime<FixedOffset>> {
-        self.inner.sys_time().map(crate::to_fixed)
+        self.inner.sys_time().map(|time| time.fixed_offset())
     }
 
     fn __eq__(&self, other: &Self) -> bool {
