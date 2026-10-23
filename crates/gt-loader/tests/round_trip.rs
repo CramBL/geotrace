@@ -38,7 +38,6 @@ fn sdk_icon(icon: gt_types::MarkerIcon) -> SdkIcon {
 }
 
 #[test]
-#[expect(clippy::float_cmp, reason = "exact coordinate round-trip")]
 fn round_trip_from_gt_types_test_data() {
     let nav_data = gt_test_utils::nav_test_data();
     let marker_data = gt_test_utils::marker_test_data();

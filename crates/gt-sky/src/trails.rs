@@ -492,10 +492,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::float_cmp,
-        reason = "az/el pass through unchanged, so the values are bit-exact"
-    )]
     fn slips_are_placed_at_their_from_position() {
         use gt_types::satellites::{SatSample, Slip, SlipCause, SlipEvent, Snr};
         use gt_types::{GeneratedMarker, GeneratedMarkerKind, Latitude, Longitude, mercator};
@@ -610,10 +606,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::float_cmp,
-        reason = "az/el/snr pass through unchanged, so the values are bit-exact"
-    )]
     fn a_sample_carries_the_satellites_values() {
         let track = gt_test_utils::loaded_track_with_points(vec![test_util::nav_point_reporting(
             0,

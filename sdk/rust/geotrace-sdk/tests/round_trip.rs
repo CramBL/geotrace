@@ -15,7 +15,6 @@ use geotrace_sdk_test_util::{Lat, Lon};
 use rstest::rstest;
 
 #[test]
-#[expect(clippy::float_cmp, reason = "round-trip exact bit preservation")]
 fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = test_util::base();
     let t1 = t0 + Duration::seconds(1);
@@ -263,7 +262,6 @@ fn empty_builder() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-#[expect(clippy::float_cmp, reason = "round-trip exact bit preservation")]
 fn a_large_recording_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     const FIX_COUNT: u32 = 50_000;
     let t0 = test_util::base();

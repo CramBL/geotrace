@@ -144,7 +144,7 @@ impl Plugin for SnappedTrackRenderer<'_, '_> {
                                 .recorded_points
                                 .get(vertex)
                                 .copied()
-                                .is_none_or(&point_drawn)
+                                .is_none_or(point_drawn)
                         })
                         .map(|(vertex, &merc)| (vertex, transform.to_screen(merc))),
                 );

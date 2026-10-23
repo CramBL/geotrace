@@ -912,10 +912,6 @@ mod tests {
     /// Raising the threshold past the departure puts the sample back on the
     /// line: the split is the user's call, not a fixed rule.
     #[test]
-    #[expect(
-        clippy::float_cmp,
-        reason = "the offset passes through untransformed, so equality is exact"
-    )]
     fn the_threshold_determines_what_leaves_the_line() {
         let track = track_with_a_clock_spike(8, 4);
         let analysis = AnalysisConfig {
@@ -932,10 +928,6 @@ mod tests {
     /// `apply_analysis` re-derives the split, so changing the threshold in
     /// Settings lands without a reload.
     #[test]
-    #[expect(
-        clippy::float_cmp,
-        reason = "the offset passes through untransformed, so equality is exact"
-    )]
     fn apply_analysis_re_derives_the_excursion_split() {
         let track = track_with_a_clock_spike(8, 4);
         let mut series = build_track_series(0, &track, AnalysisConfig::default());

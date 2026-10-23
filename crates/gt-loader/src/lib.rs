@@ -1461,7 +1461,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::float_cmp, reason = "direct f64 round-trip comparisons")]
     fn a_nav_fix_converts_field_by_field() {
         let t0 = base();
         let mut recorder = NavFileBuilder::new().open();

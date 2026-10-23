@@ -14,10 +14,6 @@ use geotrace_sdk::{Angle, DateTime, NavFile, NavFileBuilder, NavFix, NavFixTime,
 use geotrace_sdk_test_util as test_util;
 
 #[test]
-#[expect(
-    clippy::float_cmp,
-    reason = "the fixture values must come back exactly"
-)]
 fn out_of_range_coordinates_read_verbatim() -> Result<(), Box<dyn std::error::Error>> {
     let nav_file = NavFile::open(
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -34,7 +30,6 @@ fn out_of_range_coordinates_read_verbatim() -> Result<(), Box<dyn std::error::Er
 }
 
 #[test]
-#[expect(clippy::float_cmp, reason = "the written value must come back exactly")]
 fn out_of_range_latitude_writes_and_reads_back() -> Result<(), Box<dyn std::error::Error>> {
     let time = "2024-06-01T08:00:00Z".parse::<DateTime<Utc>>()?;
     let mut recorder = NavFileBuilder::new().open();

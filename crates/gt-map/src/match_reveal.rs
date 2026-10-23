@@ -155,7 +155,6 @@ mod tests {
     use crate::test_util;
 
     #[test]
-    #[expect(clippy::float_cmp, reason = "the easing endpoints are exact")]
     fn easing_rises_monotonically_from_zero_to_one() {
         assert_eq!(ease_out_cubic(0.0), 0.0);
         assert_eq!(ease_out_cubic(1.0), 1.0);
@@ -170,7 +169,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::float_cmp, reason = "the reveal endpoints are exact")]
     fn the_reveal_settles_after_its_duration() {
         let mut state = MatchRevealState::default();
         state.restart(100.0);
@@ -287,7 +285,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::float_cmp, reason = "a restarted reveal is exactly 1.0")]
     fn a_re_fire_reveals_the_run_that_already_revealed() {
         let mut state = MatchRevealState::default();
         let matches = test_util::a_run_drawing(test_util::track0(), 0..3);
