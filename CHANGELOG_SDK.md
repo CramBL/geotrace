@@ -9,6 +9,7 @@ the app).
 
 ### Added
 
+- Rust consumers can ingest NMEA recordings with configurable sentence periods and host timestamps.
 - Rust, C, C++ and Python producers can record timed navigation states without coordinates.
 - Navigation and independent polling examples in Rust, C, C++ and Python.
 - Rust, C, C++ and Python support optional navigation state, method, dimension, used-satellite count, dilution of precision and coordinate origin.

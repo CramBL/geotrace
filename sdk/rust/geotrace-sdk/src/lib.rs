@@ -39,6 +39,13 @@ pub use geotrace_sdk_units::{
     ChannelUnit, ChannelUnitKind, CustomUnit, PhysicalQuantity, Unit, UnitParseError,
 };
 pub use navigation::{PositionProvenance, SolutionDimension, SolutionMethod, SolutionState};
+#[cfg(feature = "nmea")]
+pub use nmea::{
+    HostTimestampMode, NmeaAssociationPolicy, NmeaCompletion, NmeaConfig, NmeaConfigError,
+    NmeaDiagnostic, NmeaDiagnosticCount, NmeaDiagnosticKind, NmeaDiagnostics, NmeaError,
+    NmeaGsvCyclePolicy, NmeaIngestor, NmeaIngestorBuilder, NmeaRecord, NmeaRecording,
+    NmeaStatistics, SentencePeriod, SentenceType,
+};
 pub use provenance::{
     SCRUBBED_SDK_VERSION, SDK_COMMIT_TIME_ATTR, SDK_GIT_COMMIT_ATTR, SDK_VERSION_ATTR,
 };
@@ -69,6 +76,8 @@ mod error;
 mod fixed_width_string;
 mod format_version;
 mod navigation;
+#[cfg(feature = "nmea")]
+mod nmea;
 mod provenance;
 mod read;
 mod satellite_codec;
