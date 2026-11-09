@@ -36,8 +36,14 @@ impl AssociationCandidates {
         Self(candidates)
     }
 
-    pub(crate) fn none() -> Self {
-        Self(Vec::new())
+    /// Every loaded recording, in recording order, for a log without a time range.
+    pub(crate) fn without_overlap(recordings: &LoadedFilesView<'_>) -> Self {
+        let mut candidates: Vec<AssociationCandidate> = recordings
+            .entries()
+            .map(|entry| AssociationCandidate::without_overlap(entry.id()))
+            .collect();
+        candidates.sort_by_key(|candidate| candidate.recording);
+        Self(candidates)
     }
 
     pub fn rank_with_recording_order(mut self, recordings: &[LoadedFileId]) -> Self {
@@ -91,6 +97,14 @@ pub struct AssociationCandidate {
 }
 
 impl AssociationCandidate {
+    fn without_overlap(recording: LoadedFileId) -> Self {
+        Self {
+            recording,
+            overlap: Duration::zero(),
+            fraction_of_log: 0.0,
+        }
+    }
+
     fn of_track_coverage(
         recording: LoadedFileId,
         track_ranges: impl Iterator<Item = TimeRange>,
@@ -102,11 +116,7 @@ impl AssociationCandidate {
         shared_ranges.sort_unstable();
         let mut shared_ranges = shared_ranges.into_iter();
         let Some(mut covered_range) = shared_ranges.next() else {
-            return Self {
-                recording,
-                overlap: Duration::zero(),
-                fraction_of_log: 0.0,
-            };
+            return Self::without_overlap(recording);
         };
 
         let mut overlap = Duration::zero();
@@ -199,6 +209,27 @@ mod tests {
             Some(false),
             "a recording missing the log is listed, but is no candidate"
         );
+    }
+
+    #[test]
+    fn a_log_with_unresolved_years_lists_every_recording_without_overlap() {
+        let files = test_util::loaded(vec![
+            test_util::recording_from(Duration::seconds(5), 10),
+            test_util::recording_from(Duration::zero(), 10),
+        ]);
+
+        let candidates =
+            test_util::log_with_unresolved_years().rank_association_candidates(&files.view());
+
+        assert_eq!(
+            candidates.ranked(),
+            [0, 1].map(|index| AssociationCandidate {
+                recording: test_util::id_of(&files, index),
+                overlap: Duration::zero(),
+                fraction_of_log: 0.0,
+            })
+        );
+        assert_eq!(candidates.unambiguous_target(), None);
     }
 
     #[test]

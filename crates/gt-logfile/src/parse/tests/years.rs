@@ -5,10 +5,10 @@ use proptest::prelude::*;
 use rstest::rstest;
 
 use crate::format::LogFormat;
+use crate::parse;
 use crate::parse::tests::fixtures::{self, REBOOT};
-use crate::parse::{self, LogParseError};
 use crate::test_util::{self, EXPORTED_SUMMARY};
-use crate::{OrderAnomaly, YearConflict};
+use crate::{LogChronology, OrderAnomaly, UnresolvedYear, YearConflict};
 
 #[rstest]
 #[case::seconds(
@@ -27,23 +27,16 @@ fn a_year_transition_across_a_reboot_precedes_interpolation(
         .expect("parse the year transition");
     let before = test_util::utc(2025, 12, 31, 23, 59, 59) + Duration::microseconds(micros);
     let after = test_util::utc(2026, 1, 1, 0, 0, 1) + Duration::microseconds(micros);
-    assert_eq!(fixtures::timestamps(&parsed), [before, before, after]);
-    assert_eq!(parsed.order_anomalies(), []);
+    let resolved = fixtures::resolved(&parsed);
+    assert_eq!(resolved.timestamps(), [before, before, after]);
+    assert_eq!(resolved.order_anomalies(), []);
     assert_eq!(parsed.boot_sessions().len(), 2);
     assert_eq!(
-        parsed
-            .boot_sessions()
-            .first()
-            .and_then(|boot| boot.anchored)
-            .map(|bounds| bounds.last),
+        resolved.session_bounds(0).map(|bounds| bounds.last),
         Some(before)
     );
     assert_eq!(
-        parsed
-            .boot_sessions()
-            .last()
-            .and_then(|boot| boot.anchored)
-            .map(|bounds| bounds.first),
+        resolved.session_bounds(1).map(|bounds| bounds.first),
         Some(after)
     );
 }
@@ -101,7 +94,7 @@ fn a_real_summary_constrains_a_log_longer_than_twelve_months_across_chunks() {
             test_util::utc(2026, 6, 26, 7, 59, 50)
         ]
     );
-    assert_eq!(chunked.order_anomalies(), []);
+    assert_eq!(fixtures::resolved(&chunked).order_anomalies(), []);
 }
 
 #[test]
@@ -145,7 +138,7 @@ fn exporter_bounds_resolve_sparse_year_transitions_across_chunks(
 }
 
 #[rstest]
-#[case::minimum(DateTime::<Utc>::MIN_UTC, Err(LogParseError::UnresolvedYear {
+#[case::minimum(DateTime::<Utc>::MIN_UTC, Err(UnresolvedYear {
     line_number: 1,
     written_timestamp: "Dec 31 23:59:59".to_owned(),
     conflict: YearConflict::FollowYearReference {
@@ -153,16 +146,13 @@ fn exporter_bounds_resolve_sparse_year_transitions_across_chunks(
         year_reference: DateTime::<Utc>::MIN_UTC,
     },
 }))]
-#[case::maximum(DateTime::<Utc>::MAX_UTC, Ok(Some(test_util::utc(DateTime::<Utc>::MAX_UTC.year(), 12, 31, 23, 59, 59))))]
-fn reference_limits_return_valid_timestamps_or_a_year_resolution_error(
+#[case::maximum(DateTime::<Utc>::MAX_UTC, Ok(vec![test_util::utc(DateTime::<Utc>::MAX_UTC.year(), 12, 31, 23, 59, 59)]))]
+fn reference_limits_return_valid_timestamps_or_leave_the_years_unresolved(
     #[case] reference: DateTime<Utc>,
-    #[case] expected: Result<Option<DateTime<Utc>>, LogParseError>,
+    #[case] expected: Result<Vec<DateTime<Utc>>, UnresolvedYear>,
 ) {
-    let parsed = parse::parse_log("Dec 31 23:59:59 only".into(), reference);
-    assert_eq!(
-        parsed.map(|parsed| parsed.first_anchored_timestamp()),
-        expected
-    );
+    let parsed = parse::parse_log("Dec 31 23:59:59 only".into(), reference).expect("parses");
+    assert_eq!(fixtures::resolved_timestamps(&parsed), expected);
 }
 
 #[rstest]
@@ -176,13 +166,13 @@ fn clock_regressions_and_leap_days_resolve_to_valid_years(
     #[case] text: &str,
     #[case] years: [i32; 2],
 ) {
-    let parsed = fixtures::parsed_log(text);
+    let timestamps = fixtures::timestamps(&fixtures::parsed_log(text));
     assert_eq!(
-        parsed.entries().first().map(|entry| entry.timestamp.year()),
+        timestamps.first().map(|timestamp| timestamp.year()),
         Some(years[0])
     );
     assert_eq!(
-        parsed.entries().last().map(|entry| entry.timestamp.year()),
+        timestamps.last().map(|timestamp| timestamp.year()),
         Some(years[1])
     );
 }
@@ -191,7 +181,7 @@ fn clock_regressions_and_leap_days_resolve_to_valid_years(
 #[case::outside_bounds(
     "May 20 18:00:00 entry\n",
     "Logs begin at: Thu 01-Jan-2026 00:00:00 UTC\nLogs end at: Sun 01-Feb-2026 00:00:00 UTC\n",
-    Err(LogParseError::UnresolvedYear {
+    Err(UnresolvedYear {
         line_number: 1,
         written_timestamp: "May 20 18:00:00".to_owned(),
         conflict: YearConflict::FollowLogsEndAt {
@@ -204,7 +194,7 @@ fn clock_regressions_and_leap_days_resolve_to_valid_years(
 #[case::reversed_bounds(
     "Jan  1 00:00:00 entry\n",
     "Logs begin at: Sun 01-Feb-2026 00:00:00 UTC\nLogs end at: Thu 01-Jan-2026 00:00:00 UTC\n",
-    Err(LogParseError::UnresolvedYear {
+    Err(UnresolvedYear {
         line_number: 1,
         written_timestamp: "Jan  1 00:00:00".to_owned(),
         conflict: YearConflict::PrecedeLogsBeginAt {
@@ -241,19 +231,13 @@ fn clock_regressions_and_leap_days_resolve_to_valid_years(
 fn exporter_bounds_constrain_year_candidates(
     #[case] entries: &str,
     #[case] bounds: &str,
-    #[case] timestamps: Result<Vec<DateTime<Utc>>, LogParseError>,
+    #[case] timestamps: Result<Vec<DateTime<Utc>>, UnresolvedYear>,
     #[case] anomalies: Vec<OrderAnomaly>,
 ) {
     let text = format!("{entries}----------- Journal summary -----------\n{bounds}");
-    let parsed = parse::parse_log(text.as_str().into(), fixtures::now());
-    match timestamps {
-        Ok(timestamps) => {
-            let parsed = parsed.expect("parse within bounds");
-            assert_eq!(fixtures::timestamps(&parsed), timestamps);
-            assert_eq!(parsed.order_anomalies(), anomalies);
-        }
-        Err(error) => assert_eq!(parsed, Err(error)),
-    }
+    let parsed = parse::parse_log(text.as_str().into(), fixtures::now()).expect("parses");
+    assert_eq!(fixtures::resolved_timestamps(&parsed), timestamps);
+    assert_eq!(parsed.chronology().order_anomalies(), anomalies);
 }
 
 proptest! {
@@ -277,7 +261,7 @@ proptest! {
         writeln!(text, "----------- Journal summary -----------\nLogs begin at: {}\nLogs end at: {}", begin.format(crate::summary::EXPORTER_TIME_FORMAT), end.format(crate::summary::EXPORTER_TIME_FORMAT)).expect("write the summary");
         let parsed = parse::parse_log_in_chunks_of(text.as_str().into(), fixtures::now(), fixtures::chunk_bytes(chunk_bytes)).expect("parse monthly entries");
         prop_assert_eq!(fixtures::timestamps(&parsed), timestamps);
-        prop_assert_eq!(parsed.order_anomalies(), []);
+        prop_assert_eq!(fixtures::resolved(&parsed).order_anomalies(), []);
     }
 }
 
@@ -297,7 +281,7 @@ fn adjacent_leap_day_lines_resolve_one_second_apart(
     let before = test_util::utc(expected_year, 2, 29, 23, 59, 59) + Duration::microseconds(123_456);
     let after = before + Duration::seconds(1);
     assert_eq!(fixtures::timestamps(&parsed), [before, before, after]);
-    assert_eq!(parsed.order_anomalies(), []);
+    assert_eq!(fixtures::resolved(&parsed).order_anomalies(), []);
     assert_eq!(parsed.boot_sessions().len(), 2);
     assert_eq!(
         parse::parse_log(text.into(), parsed.year_reference()),
@@ -335,23 +319,21 @@ fn leap_day_resolution_revises_years_on_both_sides_of_a_rollover(
     #[case] text: &str,
     #[case] years: [i32; 3],
 ) {
-    let parsed = fixtures::parsed_log(text);
     assert_eq!(
-        parsed
-            .entries()
+        fixtures::timestamps(&fixtures::parsed_log(text))
             .iter()
-            .map(|entry| entry.timestamp.year())
+            .map(|timestamp| timestamp.year())
             .collect::<Vec<_>>(),
         years
     );
 }
 
 #[test]
-fn leap_day_outside_exporter_bounds_returns_a_year_resolution_error() {
+fn a_leap_day_outside_exporter_bounds_leaves_the_years_unresolved() {
     let text = "Feb 29 23:59:59 first\nMar  1 00:00:00 second\n----------- Journal summary -----------\nLogs begin at: Wed 01-Jan-2025 00:00:00 UTC\nLogs end at: Thu 31-Dec-2026 23:59:59 UTC\n";
     assert_eq!(
-        parse::parse_log(text.into(), fixtures::now()),
-        Err(LogParseError::UnresolvedYear {
+        fixtures::resolved_timestamps(&fixtures::parsed_log(text)),
+        Err(UnresolvedYear {
             line_number: 1,
             written_timestamp: "Feb 29 23:59:59".to_owned(),
             conflict: YearConflict::LackDate { year: 2025 },
@@ -365,11 +347,11 @@ fn a_backward_clock_step_before_logs_begin_at_keeps_the_year_of_its_neighbours()
     let backward_step = parsed
         .entries()
         .iter()
-        .find(|entry| entry.line_number == 14)
-        .map(|entry| entry.timestamp);
+        .position(|entry| entry.line_number == 14)
+        .and_then(|entry_index| fixtures::resolved(&parsed).timestamp(entry_index));
     assert_eq!(backward_step, Some(test_util::utc(2026, 5, 20, 11, 0, 0)));
     assert_eq!(
-        parsed.order_anomalies(),
+        fixtures::resolved(&parsed).order_anomalies(),
         [OrderAnomaly {
             line_number: 14,
             timestamp_step: test_util::utc(2026, 5, 20, 11, 0, 0)
@@ -457,13 +439,13 @@ fn clock_resets_after_several_reboots_resolve_between_the_summary_block_bounds()
             .collect::<Vec<_>>(),
         [0, 3, 6]
     );
-    assert_eq!(parsed.order_anomalies(), []);
+    assert_eq!(fixtures::resolved(&parsed).order_anomalies(), []);
 }
 
 #[rstest]
 #[case::whole_log(0, 14)]
 #[case::first_ten_lines_removed(10, 4)]
-fn the_year_resolution_error_names_a_last_entry_before_logs_begin_at(
+fn a_last_entry_before_logs_begin_at_leaves_the_years_unresolved_at_its_line(
     #[case] removed_line_count: usize,
     #[case] line_number: u32,
 ) {
@@ -473,8 +455,8 @@ fn the_year_resolution_error_names_a_last_entry_before_logs_begin_at(
         .filter(|line| !line.contains("clock restored"))
         .collect();
     assert_eq!(
-        parse::parse_log(text.as_str().into(), fixtures::now()),
-        Err(LogParseError::UnresolvedYear {
+        fixtures::resolved_timestamps(&fixtures::parsed_log(&text)),
+        Err(UnresolvedYear {
             line_number,
             written_timestamp: "May 20 11:00:00".to_owned(),
             conflict: YearConflict::PrecedeLogsBeginAt {
@@ -557,20 +539,33 @@ fn a_new_year_inside_one_boot_session_rolls_over(#[case] message_before_midnight
 }
 
 #[test]
-fn the_year_resolution_error_states_the_line_of_the_attempt_that_resolved_the_most_entries() {
+fn unresolved_years_report_the_line_of_the_attempt_that_resolved_the_most_entries() {
     let text = "\
 Feb 29 12:00:00 host service: first leap day
 Dec 31 23:59:59 host service: before calendar wrap
 Jan 01 00:00:00 host service: after calendar wrap
 Feb 29 12:00:00 host service: later leap day
 ";
+    let parsed = parse::parse_log(text.into(), test_util::utc(2026, 11, 9, 0, 0, 0))
+        .expect("an unresolved chronology parses");
     assert_eq!(
-        parse::parse_log(text.into(), test_util::utc(2026, 11, 9, 0, 0, 0)),
-        Err(LogParseError::UnresolvedYear {
+        fixtures::resolved_timestamps(&parsed),
+        Err(UnresolvedYear {
             line_number: 1,
             written_timestamp: "Feb 29 12:00:00".to_owned(),
             conflict: YearConflict::LackDate { year: 2023 },
         })
+    );
+    let LogChronology::Unresolved(unresolved) = parsed.chronology() else {
+        panic!("the years of the fixture are unresolved");
+    };
+    assert_eq!(
+        (0..parsed.entries().len())
+            .map(|entry_index| unresolved
+                .written_timestamp(entry_index)
+                .map(|written| (written.month(), written.day())))
+            .collect::<Vec<_>>(),
+        [Some((2, 29)), Some((12, 31)), Some((1, 1)), Some((2, 29))]
     );
 }
 
@@ -584,8 +579,9 @@ proptest! {
         let reference = test_util::utc(reference_year, 10, 1, 0, 0, 0);
         let text = format!("Feb 29 23:59:59.{fraction:06} first\nMar  1 00:00:00.{fraction:06} second\n");
         let parsed = parse::parse_log_in_chunks_of(text.as_str().into(), reference, fixtures::chunk_bytes(chunk_bytes)).expect("resolve leap-day pair");
-        let first = parsed.entries().first().expect("first entry").timestamp;
-        let last = parsed.entries().last().expect("last entry").timestamp;
+        let timestamps = fixtures::timestamps(&parsed);
+        let first = *timestamps.first().expect("first entry");
+        let last = *timestamps.last().expect("last entry");
         prop_assert_eq!(last - first, Duration::seconds(1));
         prop_assert_eq!(first.timestamp_subsec_micros(), fraction);
         prop_assert!(last <= reference);

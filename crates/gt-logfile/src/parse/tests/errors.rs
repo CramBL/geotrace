@@ -3,7 +3,7 @@ use rstest::rstest;
 use crate::parse::tests::fixtures;
 use crate::parse::{self, ERROR_LINE_EXCERPT_CHARS, LogParseError};
 use crate::test_util;
-use crate::{BoundComparison, YearConflict};
+use crate::{BoundComparison, UnresolvedYear, YearConflict};
 
 #[test]
 fn a_log_without_any_recognised_timestamp_names_its_first_line() {
@@ -72,16 +72,16 @@ fn a_log_without_any_line_is_empty(#[case] text: &str) {
     "Cannot resolve the year of log line 14 (\"May 20 11:00:00\"): 2026-05-20 11:00:00 UTC is \
      before the summary block's \"Logs begin at\" 2026-05-20 12:00:00 UTC"
 )]
-fn a_year_resolution_error_states_the_line_its_timestamp_and_the_conflict(
+fn an_unresolved_year_states_the_line_its_timestamp_and_the_conflict(
     #[case] conflict: YearConflict,
     #[case] expected: &str,
 ) {
-    let error = LogParseError::UnresolvedYear {
+    let unresolved_year = UnresolvedYear {
         line_number: 14,
         written_timestamp: "May 20 11:00:00".to_owned(),
         conflict,
     };
-    assert_eq!(error.to_string(), expected);
+    assert_eq!(unresolved_year.to_string(), expected);
 }
 
 #[rstest]
@@ -134,13 +134,16 @@ fn a_year_conflict_states_its_reason_and_the_bound_its_candidate_conflicts_with(
 }
 
 #[test]
-fn the_headline_of_a_year_resolution_error_ends_at_its_line_number() {
-    let error = LogParseError::UnresolvedYear {
+fn the_headline_of_an_unresolved_year_ends_at_its_line_number() {
+    let unresolved_year = UnresolvedYear {
         line_number: 14,
         written_timestamp: "May 20 11:00:00".to_owned(),
         conflict: YearConflict::LackDate { year: 2023 },
     };
-    assert_eq!(error.headline(), "Cannot resolve the year of log line 14");
+    assert_eq!(
+        unresolved_year.headline(),
+        "Cannot resolve the year of log line 14"
+    );
 }
 
 #[test]
@@ -156,8 +159,8 @@ fn a_very_long_unresolved_timestamp_is_quoted_up_to_an_excerpt() {
         .take(ERROR_LINE_EXCERPT_CHARS.get())
         .collect();
     assert_eq!(
-        parse::parse_log(text.as_str().into(), fixtures::now()),
-        Err(LogParseError::UnresolvedYear {
+        fixtures::resolved_timestamps(&fixtures::parsed_log(&text)),
+        Err(UnresolvedYear {
             line_number: 1,
             written_timestamp: format!("{excerpt}{}", gt_fmt::ELLIPSIS),
             conflict: YearConflict::PrecedeLogsBeginAt {

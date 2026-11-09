@@ -90,8 +90,12 @@ pub struct ClockTicks {
 }
 
 impl ClockTicks {
+    /// Returns [`TimestampTick::Weak`] for every row and no day divider for a log whose years
+    /// are unresolved.
     pub fn of(log: &ParsedLog, visible: &VisibleEntries) -> Self {
-        let entries = log.entries();
+        let Some(resolved) = log.chronology().resolved() else {
+            return Self::default();
+        };
         let mut sessions = log.boot_sessions().iter();
         let mut session = sessions.next();
         let mut row_ticks = Vec::with_capacity(visible.len());
@@ -103,11 +107,11 @@ impl ClockTicks {
                 session = sessions.next();
                 opens_a_session = true;
             }
-            let Some(entry) = entries.get(entry_index) else {
+            let Some(timestamp) = resolved.timestamp(entry_index) else {
                 row_ticks.push(TimestampTick::default());
                 continue;
             };
-            let fields = ClockFields::of(entry.timestamp);
+            let fields = ClockFields::of(timestamp);
             let tick = match (previous, opens_a_session) {
                 (Some(previous), false) => fields.tick_after(previous),
                 _ => TimestampTick::Strong,
@@ -129,7 +133,10 @@ impl ClockTicks {
         entry_index: usize,
         previous_entry: Option<usize>,
     ) -> TimestampTick {
-        let Some(entry) = log.entries().get(entry_index) else {
+        let Some(resolved) = log.chronology().resolved() else {
+            return TimestampTick::Weak;
+        };
+        let Some(timestamp) = resolved.timestamp(entry_index) else {
             return TimestampTick::Weak;
         };
         let Some(previous_entry) = previous_entry else {
@@ -145,10 +152,10 @@ impl ClockTicks {
         {
             return TimestampTick::Strong;
         }
-        log.entries()
-            .get(previous_entry)
+        resolved
+            .timestamp(previous_entry)
             .map_or(TimestampTick::Strong, |previous| {
-                ClockFields::of(entry.timestamp).tick_after(ClockFields::of(previous.timestamp))
+                ClockFields::of(timestamp).tick_after(ClockFields::of(previous))
             })
     }
 
@@ -439,6 +446,24 @@ mod tests {
             ticks.tick(9),
             TimestampTick::Weak,
             "a row past the visible set still ticks weak"
+        );
+    }
+
+    #[test]
+    fn a_log_with_unresolved_years_ticks_every_row_weak_and_opens_no_day() {
+        let log = test_util::parsed_log_of_text(gt_test_utils::UNRESOLVED_YEARS_LOG);
+        let ticks = ticks_of(gt_test_utils::UNRESOLVED_YEARS_LOG);
+
+        assert_eq!(
+            (0..log.entries().len())
+                .map(|row| ticks.tick(row))
+                .collect::<Vec<_>>(),
+            [TimestampTick::Weak; 3]
+        );
+        assert_eq!(day_divider_rows(&ticks), Vec::<usize>::new());
+        assert_eq!(
+            ClockTicks::tick_after_entry(&log, 1, Some(0)),
+            TimestampTick::Weak
         );
     }
 

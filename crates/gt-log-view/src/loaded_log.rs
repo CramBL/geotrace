@@ -9,7 +9,9 @@ use chrono::Duration;
 use gt_fmt::MIDDLE_DOT;
 use gt_history_types::{LogContentHash, StoredLogFilterStack};
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
-use gt_logfile::{EntryPlacement, ParsedLog, RecordingAssociationIndex};
+use gt_logfile::{
+    EntryPlacement, LogChronology, ParsedLog, RecordingAssociationIndex, YearlessTimestamp,
+};
 use gt_types::{TimeRange, mercator};
 use gt_ui_types::{
     LoadedLogId, LogMatch, LogMatchColor, LogMatchLayer, LogMatchSource, LogMatches,
@@ -31,7 +33,7 @@ impl LogDocument {
     fn new(parsed: ParsedLog) -> Self {
         Self {
             content_hash: LogContentHash::of_log_bytes(parsed.text().as_bytes()),
-            entry_time_range: parsed.time_range(),
+            entry_time_range: parsed.chronology().time_range(),
             parsed: Arc::new(parsed),
         }
     }
@@ -159,10 +161,11 @@ impl LoadedLog {
 
     /// The one-line parse summary the viewer shows beside the log's name:
     /// detected format, entry count with the interpolated portion, boot count,
-    /// how many entries took no position, and what a lossy decode cost.
+    /// how many entries took no position, whether the years are unresolved, and
+    /// what a lossy decode cost.
     pub fn parse_summary_line(&self) -> String {
         let entries = self.document.parsed.entries().len();
-        let interpolated = self.document.parsed.interpolated_entry_count();
+        let chronology = self.document.parsed.chronology();
         let boots = self.document.parsed.boot_sessions().len();
         let unassociated = self.unassociated_entry_count();
         let replaced_bytes = self.document.parsed.replaced_byte_count();
@@ -173,7 +176,10 @@ impl LoadedLog {
             gt_fmt::format_count(entries),
             gt_fmt::pluralize(entries, "entry", "entries"),
         );
-        if interpolated > 0 {
+        if let Some(interpolated) = chronology
+            .interpolated_entry_count()
+            .filter(|count| *count > 0)
+        {
             write!(
                 summary,
                 " ({} interpolated)",
@@ -189,6 +195,9 @@ impl LoadedLog {
             gt_fmt::format_count(unassociated),
         )
         .ok();
+        if let LogChronology::Unresolved(_) = chronology {
+            write!(summary, " {MIDDLE_DOT} years unresolved").ok();
+        }
         if replaced_bytes > 0 {
             write!(
                 summary,
@@ -201,7 +210,7 @@ impl LoadedLog {
         summary
     }
 
-    /// First to last entry timestamp, `None` for a log with no entries.
+    /// First to last entry timestamp, `None` for a log whose years are unresolved.
     pub fn entry_time_range(&self) -> Option<TimeRange> {
         self.document.entry_time_range
     }
@@ -333,8 +342,13 @@ impl LoadedLog {
             return;
         };
         self.association.recording = Some(recording.id());
-        let entry_placements = RecordingAssociationIndex::from_recording(recording)
-            .associate_entries(self.document.parsed.entries(), self.association.window);
+        let entry_placements = match self.document.parsed.chronology() {
+            LogChronology::Resolved(resolved) => {
+                RecordingAssociationIndex::from_recording(recording)
+                    .associate_timestamps(resolved.timestamps(), self.association.window)
+            }
+            LogChronology::Unresolved(_) => Vec::new(),
+        };
         self.association.associated_entry_count = entry_placements
             .iter()
             .filter(|placement| placement.is_some())
@@ -342,14 +356,15 @@ impl LoadedLog {
         self.association.entry_placements = entry_placements;
     }
 
-    /// The loaded recordings this log could associate against, best first.
+    /// The loaded recordings this log could associate against, best first. A log
+    /// whose years are unresolved overlaps none of them.
     pub fn rank_association_candidates(
         &self,
         recordings: &LoadedFilesView<'_>,
     ) -> AssociationCandidates {
         match self.document.entry_time_range {
             Some(log_range) => AssociationCandidates::rank(log_range, recordings),
-            None => AssociationCandidates::none(),
+            None => AssociationCandidates::without_overlap(recordings),
         }
     }
 
@@ -869,7 +884,13 @@ impl LoadedLogs {
 }
 
 fn name_from_first_anchored_entry(parsed: &ParsedLog) -> String {
-    match parsed.first_anchored_timestamp() {
+    let first_anchored_time = match parsed.chronology() {
+        LogChronology::Resolved(resolved) => Some(resolved.first_anchored_timestamp().time()),
+        LogChronology::Unresolved(unresolved) => unresolved
+            .first_written_timestamp()
+            .map(YearlessTimestamp::time),
+    };
+    match first_anchored_time {
         Some(time) => format!(
             "{UNNAMED_LOG_NAME_PREFIX} {}",
             time.format(UNNAMED_LOG_NAME_TIME_FORMAT)

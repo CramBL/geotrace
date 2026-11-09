@@ -7,7 +7,8 @@
 //! lines, in the order the file wrote them.
 
 pub use associate::{EntryPlacement, RecordingAssociationIndex};
-pub use format::{LogFormat, detect_format, infer_year};
+pub use chronology::{LogChronology, ResolvedChronology, UnresolvedChronology};
+pub use format::{LogFormat, YearlessTimestamp, detect_format, infer_year};
 pub use parse::{
     LogEntry, LogParseError, ParsedLog, TextSlice, TimestampKind, parse_log, parse_log_in_chunks_of,
 };
@@ -20,9 +21,10 @@ pub use session::{AnchoredBounds, BootSession, OrderAnomaly};
 pub use structure::{StructuralLine, StructuralLineKind};
 pub use summary::{EntryCountMismatch, ServiceCount, ServiceIssueCounts, SummaryBlock};
 pub use text::LogText;
-pub use years::{BoundComparison, YearConflict};
+pub use years::{BoundComparison, UnresolvedYear, YearConflict};
 
 mod associate;
+mod chronology;
 mod format;
 mod parse;
 mod pool;

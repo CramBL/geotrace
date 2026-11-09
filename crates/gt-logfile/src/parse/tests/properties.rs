@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use chrono::{DateTime, Utc};
 use proptest::prelude::*;
 use proptest::proptest;
 
@@ -10,6 +11,7 @@ use crate::recognise::{RecognisedLevel, RecognisedService};
 use crate::structure::StructuralLineKind;
 use crate::summary::EntryCountMismatch;
 use crate::test_util::strategies;
+use crate::{AnchoredBounds, LogChronology};
 
 /// The text a slice addresses, `None` where it addresses text outside the
 /// log or splits a character in it.
@@ -56,11 +58,7 @@ proptest! {
         }
 
         let outcome = parse::parse_log(text.as_str().into(), fixtures::now());
-        prop_assert_eq!(
-            outcome.is_ok()
-                || matches!(outcome, Err(parse::LogParseError::UnresolvedYear { .. })),
-            anchored
-        );
+        prop_assert_eq!(outcome.is_ok(), anchored);
     }
 
     /// Whatever text a user drops on the app, every span the parse hands
@@ -114,10 +112,12 @@ proptest! {
                 + parsed.unindexable_line_count(),
             non_empty_lines
         );
-        prop_assert_eq!(
-            parsed.anchored_entry_count() + parsed.interpolated_entry_count(),
-            parsed.entries().len()
-        );
+        if let Some(resolved) = parsed.chronology().resolved() {
+            prop_assert_eq!(
+                parsed.anchored_entry_count() + resolved.interpolated_entry_count(),
+                parsed.entries().len()
+            );
+        }
 
         let mut next_entry = 0;
         for session in parsed.boot_sessions() {
@@ -184,34 +184,74 @@ proptest! {
         let Ok(parsed) = parse::parse_log(text.as_str().into(), fixtures::now()) else {
             return Ok(());
         };
+        let Some(resolved) = parsed.chronology().resolved() else {
+            return Ok(());
+        };
 
+        let entries = parsed.entries();
+        let timestamp_of = |index: usize| resolved.timestamp(index);
         for session in parsed.boot_sessions() {
-            let entries = parsed.session_entries(session);
-            for (index, entry) in entries.iter().enumerate() {
-                if entry.is_anchored() {
+            for index in session.entry_range.clone() {
+                if entries.get(index).is_none_or(LogEntry::is_anchored) {
                     continue;
                 }
-                let before = entries
-                    .get(..index)
-                    .unwrap_or_default()
-                    .iter()
-                    .rfind(|entry| entry.is_anchored());
-                let after = entries
-                    .get(index.saturating_add(1)..)
-                    .unwrap_or_default()
-                    .iter()
-                    .find(|entry| entry.is_anchored());
+                let before = (session.entry_range.start..index)
+                    .rfind(|&before| entries.get(before).is_some_and(LogEntry::is_anchored));
+                let after = (index.saturating_add(1)..session.entry_range.end)
+                    .find(|&after| entries.get(after).is_some_and(LogEntry::is_anchored));
                 match (before, after) {
                     (Some(before), Some(after)) => {
-                        let earliest = before.timestamp.min(after.timestamp);
-                        let latest = before.timestamp.max(after.timestamp);
-                        prop_assert!((earliest..=latest).contains(&entry.timestamp));
+                        let earliest = timestamp_of(before).min(timestamp_of(after));
+                        let latest = timestamp_of(before).max(timestamp_of(after));
+                        prop_assert!((earliest..=latest).contains(&timestamp_of(index)));
                     }
                     (Some(anchor), None) | (None, Some(anchor)) => {
-                        prop_assert_eq!(entry.timestamp, anchor.timestamp);
+                        prop_assert_eq!(timestamp_of(index), timestamp_of(anchor));
                     }
                     (None, None) => {}
                 }
+            }
+        }
+    }
+
+    /// A resolved chronology has one timestamp per entry and the anchored bounds of each boot
+    /// session. An unresolved one has a written timestamp for every anchored entry and none for
+    /// the other entries. The bounds of a generated summary block leave most of its syslog logs
+    /// unresolved.
+    #[test]
+    fn the_chronology_indexes_every_entry_and_boot_session(
+        text in prop_oneof![strategies::any_log_text(), strategies::any_summarised_log()],
+    ) {
+        let Ok(parsed) = parse::parse_log(text.as_str().into(), fixtures::now()) else {
+            return Ok(());
+        };
+
+        let entries = parsed.entries();
+        match parsed.chronology() {
+            LogChronology::Resolved(resolved) => {
+                prop_assert_eq!(resolved.timestamps().len(), entries.len());
+                for (session_index, session) in parsed.boot_sessions().iter().enumerate() {
+                    let anchored: Vec<DateTime<Utc>> = session
+                        .entry_range
+                        .clone()
+                        .filter(|&index| entries.get(index).is_some_and(LogEntry::is_anchored))
+                        .filter_map(|index| resolved.timestamp(index))
+                        .collect();
+                    let expected = anchored.first().map(|&first| AnchoredBounds {
+                        first,
+                        last: anchored.last().copied().unwrap_or(first),
+                    });
+                    prop_assert_eq!(resolved.session_bounds(session_index), expected);
+                }
+            }
+            LogChronology::Unresolved(unresolved) => {
+                for (index, entry) in entries.iter().enumerate() {
+                    prop_assert_eq!(
+                        unresolved.written_timestamp(index).is_some(),
+                        entry.is_anchored()
+                    );
+                }
+                prop_assert!(unresolved.first_written_timestamp().is_some());
             }
         }
     }
@@ -226,8 +266,11 @@ proptest! {
         let Ok(parsed) = parse::parse_log(text.as_str().into(), fixtures::now()) else {
             return Ok(());
         };
+        let Some(resolved) = parsed.chronology().resolved() else {
+            return Ok(());
+        };
 
-        for anomaly in parsed.order_anomalies() {
+        for anomaly in resolved.order_anomalies() {
             let index = parsed
                 .entries()
                 .iter()

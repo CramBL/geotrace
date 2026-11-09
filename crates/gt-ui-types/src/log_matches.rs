@@ -174,9 +174,10 @@ impl<'a> LogMatchScope<'a> {
         layer
             .log
             .parsed
-            .entries()
-            .get(log_match.entry_index)
-            .is_none_or(|entry| gt_filter::point_passes_time_filter(entry.timestamp, self.filter))
+            .chronology()
+            .resolved()
+            .and_then(|resolved| resolved.timestamp(log_match.entry_index))
+            .is_none_or(|timestamp| gt_filter::point_passes_time_filter(timestamp, self.filter))
             && log_match
                 .fix
                 .track

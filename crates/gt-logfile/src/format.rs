@@ -20,6 +20,13 @@ impl LogFormat {
             Self::Iso8601T => "ISO 8601 T",
         }
     }
+
+    pub fn writes_years(self) -> bool {
+        match self {
+            Self::Iso8601Space | Self::Iso8601T => true,
+            Self::SyslogShort | Self::SyslogShortMicro => false,
+        }
+    }
 }
 
 pub fn detect_format(line: &str) -> Option<LogFormat> {
@@ -172,8 +179,9 @@ pub(crate) enum RawTimestamp {
     Yearless(YearlessTimestamp),
 }
 
+/// A timestamp as a format without years writes it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct YearlessTimestamp {
+pub struct YearlessTimestamp {
     month: u32,
     day: u32,
     time: NaiveTime,
@@ -198,6 +206,18 @@ impl YearlessTimestamp {
             time,
             leap_year_ordinal_day: validation_date.ordinal(),
         })
+    }
+
+    pub fn month(self) -> u32 {
+        self.month
+    }
+
+    pub fn day(self) -> u32 {
+        self.day
+    }
+
+    pub fn time(self) -> NaiveTime {
+        self.time
     }
 
     pub(crate) fn in_year(self, year: i32) -> Option<DateTime<Utc>> {

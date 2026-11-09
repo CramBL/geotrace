@@ -3,7 +3,7 @@ use std::num::NonZeroUsize;
 use chrono::{DateTime, Utc};
 
 use crate::parse::{self, ParsedLog, TimestampKind};
-use crate::test_util;
+use crate::{LogChronology, ResolvedChronology, UnresolvedYear, test_util};
 
 pub fn now() -> DateTime<Utc> {
     test_util::utc(2026, 5, 23, 0, 0, 0)
@@ -21,12 +21,23 @@ pub fn messages(parsed: &ParsedLog) -> Vec<&str> {
         .collect()
 }
 
-pub fn timestamps(parsed: &ParsedLog) -> Vec<DateTime<Utc>> {
+pub fn resolved(parsed: &ParsedLog) -> &ResolvedChronology {
     parsed
-        .entries()
-        .iter()
-        .map(|entry| entry.timestamp)
-        .collect()
+        .chronology()
+        .resolved()
+        .expect("the years of the fixture resolve")
+}
+
+/// The resolved timestamps, or why the years of the log cannot be resolved.
+pub fn resolved_timestamps(parsed: &ParsedLog) -> Result<Vec<DateTime<Utc>>, UnresolvedYear> {
+    match parsed.chronology() {
+        LogChronology::Resolved(resolved) => Ok(resolved.timestamps().to_vec()),
+        LogChronology::Unresolved(unresolved) => Err(unresolved.unresolved_year().clone()),
+    }
+}
+
+pub fn timestamps(parsed: &ParsedLog) -> Vec<DateTime<Utc>> {
+    resolved(parsed).timestamps().to_vec()
 }
 
 pub fn timestamp_kinds(parsed: &ParsedLog) -> Vec<TimestampKind> {

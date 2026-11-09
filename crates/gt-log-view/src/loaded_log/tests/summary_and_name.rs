@@ -51,3 +51,19 @@ fn a_log_that_arrived_without_a_filename_is_named_after_its_first_entry() {
     );
     assert_eq!(log.name(), "pasted 14:02:11");
 }
+
+#[test]
+fn the_summary_of_a_log_with_unresolved_years_states_it() {
+    assert_eq!(
+        test_util::log_with_unresolved_years().parse_summary_line(),
+        "syslog · 3 entries · 1 boot · 3 unassociated · years unresolved"
+    );
+}
+
+#[test]
+fn a_log_with_unresolved_years_is_named_after_the_time_its_first_entry_writes() {
+    assert_eq!(
+        test_util::log_with_unresolved_years().name(),
+        "pasted 12:00:00"
+    );
+}

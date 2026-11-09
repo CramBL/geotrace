@@ -6,6 +6,7 @@ use gt_history_types::{
     StoredLogFilterStack,
 };
 use gt_loaded_files::{FileHistory, LoadedFiles};
+use gt_logfile::ParsedLog;
 use gt_types::FileIdx;
 
 use crate::anchor::RecordingKey;
@@ -530,8 +531,15 @@ fn documents_are_shared_only_for_equal_resolved_parses(
     };
     let saved_parse = gt_logfile::parse_log(text.into(), saved_reference).expect("saved parse");
     let loose_parse = gt_logfile::parse_log(text.into(), loose_reference).expect("loose parse");
-    let saved_timestamp = saved_parse.entries().first().expect("entry").timestamp;
-    let loose_timestamp = loose_parse.entries().first().expect("entry").timestamp;
+    let first_timestamp = |parsed: &ParsedLog| {
+        parsed
+            .chronology()
+            .resolved()
+            .and_then(|resolved| resolved.timestamp(0))
+            .expect("the fixture entry resolves")
+    };
+    let saved_timestamp = first_timestamp(&saved_parse);
+    let loose_timestamp = first_timestamp(&loose_parse);
     assert_eq!(saved_timestamp.year(), 2026);
     assert_eq!(
         loose_timestamp.year(),
@@ -572,12 +580,6 @@ fn documents_are_shared_only_for_equal_resolved_parses(
     );
     assert_eq!(saved.parsed().year_reference(), saved_reference);
     assert_eq!(loose.parsed().year_reference(), loose_reference);
-    assert_eq!(
-        saved.parsed().entries().first().expect("entry").timestamp,
-        saved_timestamp
-    );
-    assert_eq!(
-        loose.parsed().entries().first().expect("entry").timestamp,
-        loose_timestamp
-    );
+    assert_eq!(first_timestamp(saved.parsed()), saved_timestamp);
+    assert_eq!(first_timestamp(loose.parsed()), loose_timestamp);
 }

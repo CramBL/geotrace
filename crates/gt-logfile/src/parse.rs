@@ -4,19 +4,18 @@
 use std::{num::NonZeroUsize, sync::Arc};
 
 use chrono::{DateTime, Utc};
-use gt_types::TimeRange;
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 
 use crate::{
+    chronology::LogChronology,
     format::{self, LogFormat, RawTimestamp},
     pool,
     recognise::{self, HostnameColumn, RecognisedMessage, RecognisedService},
-    session::{self, BootSession, OrderAnomaly},
+    session::{self, BootSession},
     structure::{StructuralExtent, StructuralLine, StructuralLineKind},
     summary::{self, EntryCountMismatch, SummaryBlock},
     text::LogText,
-    years::{self, YearConflict},
 };
 
 /// A byte range of a [`ParsedLog`]'s text, read with [`TextSlice::in_text`].
@@ -63,15 +62,16 @@ pub enum TimestampKind {
     /// Parsed from the line itself.
     Anchored,
 
-    /// Derived from the anchored entries around it, the line carrying none.
+    /// The line has no timestamp. A [`crate::ResolvedChronology`] derives one from the anchored
+    /// entries around it.
     Interpolated,
 }
 
-/// One line of a log kept as an entry: its timestamp and the byte range of its
-/// message inside the text of the [`ParsedLog`] it was indexed from.
+/// One line of a log kept as an entry: where its timestamp came from and the byte range of its
+/// message inside the text of the [`ParsedLog`] it was indexed from. Its absolute timestamp is
+/// in [`ParsedLog::chronology`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LogEntry {
-    pub timestamp: DateTime<Utc>,
     pub timestamp_kind: TimestampKind,
 
     /// 1-based, counting every physical line of the log.
@@ -105,7 +105,7 @@ pub struct ParsedLog {
     hostname_column: HostnameColumn,
     boot_sessions: Vec<BootSession>,
     structural_lines: Vec<StructuralLine>,
-    order_anomalies: Vec<OrderAnomaly>,
+    chronology: LogChronology,
     summary_block: Option<SummaryBlock>,
     format: LogFormat,
     anchored_entry_count: usize,
@@ -160,9 +160,8 @@ impl ParsedLog {
         &self.structural_lines
     }
 
-    /// Backwards timestamp steps no logged clock adjustment explains, in file order.
-    pub fn order_anomalies(&self) -> &[OrderAnomaly] {
-        &self.order_anomalies
+    pub fn chronology(&self) -> &LogChronology {
+        &self.chronology
     }
 
     pub fn summary_block(&self) -> Option<&SummaryBlock> {
@@ -188,10 +187,6 @@ impl ParsedLog {
         self.anchored_entry_count
     }
 
-    pub fn interpolated_entry_count(&self) -> usize {
-        self.entries.len().saturating_sub(self.anchored_entry_count)
-    }
-
     /// Lines dropped because the index cannot address them: a line whose text
     /// exceeds [`u32::MAX`] bytes. Normally zero.
     pub fn unindexable_line_count(&self) -> usize {
@@ -210,25 +205,6 @@ impl ParsedLog {
     pub fn message(&self, entry: &LogEntry) -> &str {
         entry.message.in_text(&self.text)
     }
-
-    /// The earliest to the latest entry timestamp, interpolated ones included.
-    /// `None` for a log without entries.
-    ///
-    /// A reboot steps the device clock, so the last entry in file order is not
-    /// always the latest one.
-    pub fn time_range(&self) -> Option<TimeRange> {
-        let mut timestamps = self.entries.iter().map(|entry| entry.timestamp);
-        let first = timestamps.next()?;
-        Some(TimeRange::spanning(first, timestamps))
-    }
-
-    /// The timestamp of the first entry that carried one of its own.
-    pub fn first_anchored_timestamp(&self) -> Option<DateTime<Utc>> {
-        self.entries
-            .iter()
-            .find(|entry| entry.is_anchored())
-            .map(|entry| entry.timestamp)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -241,28 +217,11 @@ pub enum LogParseError {
          (first line: {first_line:?})"
     )]
     NoRecognisedFormat { first_line: String },
-    #[error("{} ({written_timestamp:?}): {conflict}", self.headline())]
-    UnresolvedYear {
-        line_number: u32,
-        written_timestamp: String,
-        conflict: YearConflict,
-    },
-}
-
-impl LogParseError {
-    /// The message without the written timestamp and the [`YearConflict`] of an unresolved year.
-    pub fn headline(&self) -> String {
-        match self {
-            Self::Empty | Self::NoRecognisedFormat { .. } => self.to_string(),
-            Self::UnresolvedYear { line_number, .. } => {
-                format!("Cannot resolve the year of log line {line_number}")
-            }
-        }
-    }
 }
 
 /// Saved logs must reuse `year_reference` when exporter bounds are absent.
 /// Syslog years resolve after boot segmentation and before interpolation.
+/// A log whose years cannot be resolved parses to [`LogChronology::Unresolved`].
 pub fn parse_log(text: LogText, year_reference: DateTime<Utc>) -> Result<ParsedLog, LogParseError> {
     parse_log_in_chunks_of(text, year_reference, CHUNK_TARGET_BYTES)
 }
@@ -283,30 +242,30 @@ pub fn parse_log_in_chunks_of(
     };
     let mut index = index_lines_in_file_order(&text, layout, chunk_target_bytes);
     let summary_block = index.take_trailing_summary_block(&text);
-    if !index.entries.iter().any(|entry| entry.timestamp.is_some()) {
-        return Err(index.no_anchored_entry_error(&text));
-    }
     let boot_session_ranges =
         session::segment_into_boot_session_ranges(&text, &index.entries, &index.structural_lines);
-    let mut entries = years::resolve_entries(
+    let Some(chronology) = LogChronology::resolve(
         &text,
         &index.entries,
         &boot_session_ranges,
         summary_block.as_ref(),
         year_reference,
-    )?;
-    let anchored_entry_count = entries.iter().filter(|entry| entry.is_anchored()).count();
-    let Some(first_anchor) = entries
-        .iter()
-        .find(|entry| entry.is_anchored())
-        .map(|entry| entry.timestamp)
-    else {
+    ) else {
         return Err(index.no_anchored_entry_error(&text));
     };
-
-    let boot_sessions = session::number_boot_sessions(&entries, boot_session_ranges);
-    let order_anomalies =
-        check_order_and_interpolate(&text, &mut entries, &boot_sessions, first_anchor);
+    let entries: Vec<LogEntry> = index
+        .entries
+        .iter()
+        .map(|entry| LogEntry {
+            timestamp_kind: match entry.timestamp {
+                Some(_) => TimestampKind::Anchored,
+                None => TimestampKind::Interpolated,
+            },
+            line_number: entry.line_number,
+            message: entry.message,
+        })
+        .collect();
+    let anchored_entry_count = entries.iter().filter(|entry| entry.is_anchored()).count();
 
     Ok(ParsedLog {
         text,
@@ -314,9 +273,9 @@ pub fn parse_log_in_chunks_of(
         recognised_messages: index.recognised_messages,
         services: index.services,
         hostname_column,
-        boot_sessions,
+        boot_sessions: session::number_boot_sessions(&boot_session_ranges),
         structural_lines: index.structural_lines,
-        order_anomalies,
+        chronology,
         summary_block,
         format,
         anchored_entry_count,
@@ -331,32 +290,6 @@ pub(crate) struct PendingLogEntry {
     pub timestamp: Option<RawTimestamp>,
     pub line_number: u32,
     pub message: TextSlice,
-}
-
-/// Both per-session passes in one walk: the order check that records anomalies,
-/// and the interpolation that timestamps the lines carrying none.
-///
-/// A session no line of which anchored takes the last anchor before it,
-/// starting at `first_anchor`: interpolation never crosses a session boundary.
-fn check_order_and_interpolate(
-    text: &str,
-    entries: &mut [LogEntry],
-    boot_sessions: &[BootSession],
-    first_anchor: DateTime<Utc>,
-) -> Vec<OrderAnomaly> {
-    let mut order_anomalies = Vec::new();
-    let mut anchor_before_session = first_anchor;
-    for boot_session in boot_sessions {
-        let Some(session_entries) = entries.get_mut(boot_session.entry_range.clone()) else {
-            continue;
-        };
-        session::scan_for_order_anomalies(text, session_entries, &mut order_anomalies);
-        session::interpolate_timestamps(session_entries, anchor_before_session);
-        if let Some(anchored) = boot_session.anchored {
-            anchor_before_session = anchored.last;
-        }
-    }
-    order_anomalies
 }
 
 /// What the head of the log decided about every line of it: how a line writes

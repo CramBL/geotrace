@@ -1,11 +1,10 @@
-use std::fmt::{self, Write as _};
+use std::fmt;
 use std::io;
 
-use chrono::{DateTime, Utc};
-use egui::{Button, Grid, Label, RichText, Window};
+use egui::{Button, Label, Window};
 use egui_phosphor::regular::COPY as ICON_COPY;
 use gt_loader::LoadError;
-use gt_logfile::{BoundComparison, LogParseError};
+use gt_logfile::LogParseError;
 
 use crate::app::modals::{self, DialogActionRow, DialogBody};
 
@@ -51,11 +50,7 @@ impl LoadFailure {
     }
 
     fn copy_text(&self) -> String {
-        let mut text = format!("{}\n{}", self.title(), self.cause.headline());
-        for DetailRow { caption, value } in self.cause.detail_rows() {
-            write!(text, "\n{caption}: {value}").ok();
-        }
-        text
+        format!("{}\n{}", self.title(), self.cause)
     }
 }
 
@@ -66,45 +61,6 @@ pub(super) enum LoadFailureCause {
     ReadLogFile(io::Error),
 }
 
-impl LoadFailureCause {
-    fn headline(&self) -> String {
-        match self {
-            Self::ParseLog(error) => error.headline(),
-            Self::LoadRecording(_) | Self::ReadLogFile(_) => self.to_string(),
-        }
-    }
-
-    fn detail_rows(&self) -> Vec<DetailRow> {
-        let Self::ParseLog(LogParseError::UnresolvedYear {
-            written_timestamp,
-            conflict,
-            ..
-        }) = self
-        else {
-            return Vec::new();
-        };
-        let mut rows = vec![
-            DetailRow::new(WRITTEN_AS_CAPTION, written_timestamp.clone()),
-            DetailRow::new(REASON_CAPTION, conflict.reason()),
-        ];
-        if let Some(BoundComparison {
-            candidate,
-            bound_name,
-            bound,
-        }) = conflict.bound_comparison()
-        {
-            let utc = |instant: DateTime<Utc>| {
-                format!("{} UTC", instant.format(gt_fmt::UTC_SUBSECOND_FORMAT))
-            };
-            rows.extend([
-                DetailRow::new(CANDIDATE_TIME_CAPTION, utc(candidate)),
-                DetailRow::new(bound_name, utc(bound)),
-            ]);
-        }
-        rows
-    }
-}
-
 impl fmt::Display for LoadFailureCause {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -112,17 +68,6 @@ impl fmt::Display for LoadFailureCause {
             Self::ParseLog(error) => write!(f, "{error:#}"),
             Self::ReadLogFile(error) => write!(f, "Failed to read the file: {error:#}"),
         }
-    }
-}
-
-struct DetailRow {
-    caption: &'static str,
-    value: String,
-}
-
-impl DetailRow {
-    fn new(caption: &'static str, value: String) -> Self {
-        Self { caption, value }
     }
 }
 
@@ -189,21 +134,11 @@ impl RetainedLoadFailure {
                 modals::dialog_body_above_the_action_row(
                     ui,
                     DialogBody::new(|ui| {
-                        ui.add(Label::new(failure.cause.headline()).selectable(true).wrap());
-                        let detail_rows = failure.cause.detail_rows();
-                        if detail_rows.is_empty() {
-                            return;
-                        }
-                        Grid::new(self.window_id().with(DETAIL_ROWS_GRID_ID_SALT))
-                            .num_columns(2)
-                            .spacing(DETAIL_ROWS_GRID_SPACING)
-                            .show(ui, |ui| {
-                                for DetailRow { caption, value } in detail_rows {
-                                    ui.label(RichText::new(caption).weak());
-                                    ui.add(Label::new(value).selectable(true).wrap());
-                                    ui.end_row();
-                                }
-                            });
+                        ui.add(
+                            Label::new(failure.cause.to_string())
+                                .selectable(true)
+                                .wrap(),
+                        );
                     }),
                     DialogActionRow::buttons(|ui| {
                         if ui.button(DISMISS_BUTTON_LABEL).clicked() {
@@ -249,16 +184,6 @@ const COPY_DETAILS_BUTTON_LABEL: &str = "Copy details";
 
 const LOAD_FAILURE_WINDOW_ID_SALT: &str = "load_failure_window";
 
-const DETAIL_ROWS_GRID_ID_SALT: &str = "detail_rows";
-
-const DETAIL_ROWS_GRID_SPACING: egui::Vec2 = egui::vec2(8.0, 4.0);
-
-const WRITTEN_AS_CAPTION: &str = "Written as";
-
-const REASON_CAPTION: &str = "Reason";
-
-const CANDIDATE_TIME_CAPTION: &str = "Candidate time";
-
 const LOAD_FAILURE_WINDOW_MIN_WIDTH: f32 = 420.0;
 
 #[cfg(test)]
@@ -267,38 +192,16 @@ mod tests {
 
     use egui::accesskit::Role;
     use egui_kittest::kittest::{NodeT as _, Queryable as _};
-    use gt_logfile::YearConflict;
     use gt_test_utils::window_fit::{CRAMPED_VIEWPORT, NARROW_VIEWPORT, SHORT_VIEWPORT};
     use gt_test_utils::{
         AuditedWindow, ControlLabel, HarnessInteraction as _, TestHarness, WindowFitAssertions as _,
     };
-    use gt_types::fixtures;
     use rstest::rstest;
 
     use super::*;
 
     const PARSE_ERROR: &str =
         "Not a recognised log: no line has a timestamp in a known format (first line: \"boot\")";
-
-    const LAST_ENTRY_BEFORE_LOGS_BEGIN_AT: &str = "\
-# export header
-# host: example
-
-May 20 12:00:00 host service: ordinary entry
-May 20 12:00:01 host service: ordinary entry
-May 20 12:00:02 host service: ordinary entry
-May 20 12:00:03 host service: ordinary entry
-May 20 12:00:04 host service: ordinary entry
-May 20 12:00:05 host service: ordinary entry
-May 20 12:00:06 host service: ordinary entry
-May 20 12:00:07 host service: ordinary entry
-May 20 12:00:08 host service: ordinary entry
-May 20 12:00:09 host service: ordinary entry
-May 20 11:00:00 host service: clock moved backwards
------------ Journal summary -----------
-Logs begin at: Wed 20-May-2026 12:00:00 UTC
-Logs end at: Wed 20-May-2026 12:00:10 UTC
-";
 
     fn unrecognised_log(first_line: &str) -> LoadFailureCause {
         LoadFailureCause::ParseLog(LogParseError::NoRecognisedFormat {
@@ -308,18 +211,6 @@ Logs end at: Wed 20-May-2026 12:00:10 UTC
 
     fn failure_of(source: LoadSource) -> LoadFailure {
         LoadFailure::new(source, unrecognised_log("boot"))
-    }
-
-    fn unresolved_year_failure() -> LoadFailure {
-        let error = gt_logfile::parse_log(
-            LAST_ENTRY_BEFORE_LOGS_BEGIN_AT.into(),
-            fixtures::utc_instant(2026, 11, 9, 0, 0),
-        )
-        .expect_err("the last entry before Logs begin at fails year resolution");
-        LoadFailure::new(
-            LoadSource::Filename("journal.log".to_owned()),
-            LoadFailureCause::ParseLog(error),
-        )
     }
 
     fn harness_showing(failures: Vec<LoadFailure>) -> TestHarness<'static, LoadFailures> {
@@ -380,82 +271,6 @@ Logs end at: Wed 20-May-2026 12:00:10 UTC
         assert_eq!(
             harness.inner.copied_text().as_deref(),
             Some(format!("Failed to load drive.gtd\n{error_text}").as_str())
-        );
-    }
-
-    #[test]
-    fn the_window_shows_the_line_timestamp_reason_and_bound_of_a_year_failure() {
-        let harness = harness_showing(vec![unresolved_year_failure()]);
-
-        let window = harness
-            .inner
-            .get_by_role_and_label(Role::Window, "Failed to load journal.log");
-        for label in [
-            "Cannot resolve the year of log line 14",
-            WRITTEN_AS_CAPTION,
-            "May 20 11:00:00",
-            REASON_CAPTION,
-            "Before the summary block's \"Logs begin at\"",
-            CANDIDATE_TIME_CAPTION,
-            "2026-05-20 11:00:00 UTC",
-            "Logs begin at",
-            "2026-05-20 12:00:00 UTC",
-        ] {
-            assert!(window.query_by_label(label).is_some(), "{label:?}");
-        }
-    }
-
-    #[test]
-    fn copying_a_year_failure_writes_each_detail_on_its_own_line() {
-        let mut harness = harness_showing(vec![unresolved_year_failure()]);
-
-        click_copy_details(&mut harness);
-
-        assert_eq!(
-            harness.inner.copied_text().as_deref(),
-            Some(
-                "Failed to load journal.log\n\
-                 Cannot resolve the year of log line 14\n\
-                 Written as: May 20 11:00:00\n\
-                 Reason: Before the summary block's \"Logs begin at\"\n\
-                 Candidate time: 2026-05-20 11:00:00 UTC\n\
-                 Logs begin at: 2026-05-20 12:00:00 UTC"
-            )
-        );
-    }
-
-    #[rstest]
-    #[case::without_fields(unrecognised_log("boot"), &[])]
-    #[case::lack_date(
-        LoadFailureCause::ParseLog(LogParseError::UnresolvedYear {
-            line_number: 1,
-            written_timestamp: "Feb 29 12:00:00".to_owned(),
-            conflict: YearConflict::LackDate { year: 2025 },
-        }),
-        &[WRITTEN_AS_CAPTION, REASON_CAPTION]
-    )]
-    #[case::follow_logs_end_at(
-        LoadFailureCause::ParseLog(LogParseError::UnresolvedYear {
-            line_number: 1,
-            written_timestamp: "May 20 13:00:00".to_owned(),
-            conflict: YearConflict::FollowLogsEndAt {
-                candidate: fixtures::utc_instant(2026, 5, 20, 13, 0),
-                logs_end_at: fixtures::utc_instant(2026, 5, 20, 12, 0),
-            },
-        }),
-        &[WRITTEN_AS_CAPTION, REASON_CAPTION, CANDIDATE_TIME_CAPTION, "Logs end at"]
-    )]
-    fn the_detail_rows_list_the_fields_of_an_unresolved_year(
-        #[case] cause: LoadFailureCause,
-        #[case] captions: &[&str],
-    ) {
-        assert_eq!(
-            cause
-                .detail_rows()
-                .iter()
-                .map(|row| row.caption)
-                .collect::<Vec<_>>(),
-            captions
         );
     }
 
@@ -554,26 +369,13 @@ Logs end at: Wed 20-May-2026 12:00:10 UTC
         );
     }
 
-    fn unresolved_year_of_oversized_timestamp() -> LoadFailureCause {
-        LoadFailureCause::ParseLog(LogParseError::UnresolvedYear {
-            line_number: u32::MAX,
-            written_timestamp: gt_test_utils::oversized_text('d'),
-            conflict: YearConflict::LackDate { year: 2025 },
-        })
-    }
-
     #[rstest]
     fn the_window_keeps_its_actions_reachable_with_oversized_text(
         #[values(CRAMPED_VIEWPORT, NARROW_VIEWPORT, SHORT_VIEWPORT)] viewport: egui::Vec2,
-        #[values(
-            unrecognised_log(&gt_test_utils::oversized_text('d')),
-            unresolved_year_of_oversized_timestamp()
-        )]
-        cause: LoadFailureCause,
     ) {
         let failure = LoadFailure::new(
             LoadSource::Filename(gt_test_utils::oversized_text('f')),
-            cause,
+            unrecognised_log(&gt_test_utils::oversized_text('d')),
         );
         let title = failure.title();
         let mut harness = harness_showing_at(vec![failure], viewport);
@@ -606,12 +408,5 @@ Logs end at: Wed 20-May-2026 12:00:10 UTC
             egui::vec2(480.0, 160.0),
         );
         harness.snapshot_with_color_tolerance("load_failure_window");
-    }
-
-    #[test]
-    fn snapshot_unresolved_year_failure_window() {
-        let mut harness =
-            harness_showing_at(vec![unresolved_year_failure()], egui::vec2(480.0, 260.0));
-        harness.snapshot_with_color_tolerance("unresolved_year_failure_window");
     }
 }

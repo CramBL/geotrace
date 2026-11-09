@@ -8,7 +8,9 @@
 
 use chrono::{DateTime, TimeZone as _, Utc};
 
-use gt_logfile::{HostnameColumn, LogLevelKind, LogParseError, ParsedLog, RecognisedService};
+use gt_logfile::{
+    HostnameColumn, LogLevelKind, LogParseError, ParsedLog, RecognisedService, ResolvedChronology,
+};
 
 /// After the last line of every fixture, so the year-less timestamps resolve
 /// to the year the fixtures were written in.
@@ -341,12 +343,17 @@ fn the_pi_journal_parses_across_the_clock_jump_inside_its_boot() {
 
     assert_eq!(parsed.entries().len(), 68);
     assert_eq!(parsed.anchored_entry_count(), 68);
+    let timestamps = parsed
+        .chronology()
+        .resolved()
+        .map(ResolvedChronology::timestamps)
+        .expect("the years of the pi journal resolve");
     assert_eq!(
-        parsed.entries().first().map(|entry| entry.timestamp),
+        timestamps.first().copied(),
         Utc.with_ymd_and_hms(2026, 3, 13, 15, 35, 10).single()
     );
     assert_eq!(
-        parsed.entries().last().map(|entry| entry.timestamp),
+        timestamps.last().copied(),
         Utc.with_ymd_and_hms(2026, 9, 3, 20, 37, 11).single()
     );
 }

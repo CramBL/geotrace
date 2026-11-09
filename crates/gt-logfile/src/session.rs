@@ -8,7 +8,7 @@ use chrono::{DateTime, Duration, Utc};
 
 use crate::{
     format::{self, RawTimestamp},
-    parse::{LogEntry, PendingLogEntry, TextSlice},
+    parse::{PendingLogEntry, TextSlice},
     structure::{self, StructuralLine, StructuralLineKind},
 };
 
@@ -24,9 +24,6 @@ pub struct BootSession {
     /// Index in [`crate::ParsedLog::entries`] of the first entry after the clock jump that follows
     /// the session's reboot separator, or `entry_range.start` for a session without one.
     pub first_synchronised_entry: usize,
-
-    /// Unset for a session no line of which carried a timestamp.
-    pub anchored: Option<AnchoredBounds>,
 }
 
 impl BootSession {
@@ -36,15 +33,6 @@ impl BootSession {
 
     pub fn unsynchronised_entries(&self) -> Range<usize> {
         self.entry_range.start..self.first_synchronised_entry
-    }
-
-    /// How long the device ran, from the session's first anchored entry to its
-    /// last. Unset for a session no line of which anchored, and for one whose
-    /// clock was adjusted back past the moment the session started.
-    pub fn uptime(&self) -> Option<Duration> {
-        self.anchored
-            .map(AnchoredBounds::uptime)
-            .filter(|uptime| *uptime >= Duration::zero())
     }
 }
 
@@ -56,11 +44,9 @@ pub struct AnchoredBounds {
 }
 
 impl AnchoredBounds {
-    fn from_entries(entries: &[LogEntry]) -> Option<Self> {
-        let mut anchored = entries
-            .iter()
-            .filter(|entry| entry.is_anchored())
-            .map(|entry| entry.timestamp);
+    /// `None` for a session no line of which carried a timestamp.
+    pub(crate) fn of_session(anchors: &[Option<DateTime<Utc>>]) -> Option<Self> {
+        let mut anchored = anchors.iter().flatten().copied();
         let first = anchored.next()?;
         Some(Self {
             first,
@@ -136,20 +122,13 @@ pub(crate) fn segment_into_boot_session_ranges(
     sessions
 }
 
-/// Numbers `ranges` and reads the anchored bounds of each from its resolved entries.
-pub(crate) fn number_boot_sessions(
-    entries: &[LogEntry],
-    ranges: Vec<BootSessionRange>,
-) -> Vec<BootSession> {
+pub(crate) fn number_boot_sessions(ranges: &[BootSessionRange]) -> Vec<BootSession> {
     ranges
-        .into_iter()
+        .iter()
         .zip(1..)
         .map(|(range, boot_number)| BootSession {
             boot_number,
-            anchored: AnchoredBounds::from_entries(
-                entries.get(range.entry_range.clone()).unwrap_or_default(),
-            ),
-            entry_range: range.entry_range,
+            entry_range: range.entry_range.clone(),
             first_synchronised_entry: range.first_synchronised_entry,
         })
         .collect()
@@ -157,18 +136,20 @@ pub(crate) fn number_boot_sessions(
 
 /// Records every backwards step between the anchored entries of one session
 /// that no entry within [`CLOCK_ADJUSTMENT_NEIGHBOUR_ENTRIES`] of it explains.
+/// `anchors` has one element per entry of `entries`, `None` for a line without a timestamp.
 pub(crate) fn scan_for_order_anomalies(
     text: &str,
-    entries: &[LogEntry],
+    entries: &[PendingLogEntry],
+    anchors: &[Option<DateTime<Utc>>],
     anomalies: &mut Vec<OrderAnomaly>,
 ) {
     let mut previous: Option<DateTime<Utc>> = None;
-    for (index, entry) in entries.iter().enumerate() {
-        if !entry.is_anchored() {
+    for (index, (entry, anchor)) in entries.iter().zip(anchors).enumerate() {
+        let Some(timestamp) = *anchor else {
             continue;
-        }
+        };
         if let Some(previous) = previous
-            && entry.timestamp < previous
+            && timestamp < previous
             && !any_reports_a_clock_adjustment(
                 text,
                 clock_adjustment_neighbours(entries, index)
@@ -178,10 +159,10 @@ pub(crate) fn scan_for_order_anomalies(
         {
             anomalies.push(OrderAnomaly {
                 line_number: entry.line_number,
-                timestamp_step: entry.timestamp - previous,
+                timestamp_step: timestamp - previous,
             });
         }
-        previous = Some(entry.timestamp);
+        previous = Some(timestamp);
     }
 }
 
@@ -245,70 +226,57 @@ enum RunTimestamps {
     Copied(DateTime<Utc>),
 }
 
-/// Timestamps every entry of one session that carried none, from the anchored
-/// entries around it. `no_anchor_fallback` timestamps a session whose lines all
-/// arrived without one.
-pub(crate) fn interpolate_timestamps(entries: &mut [LogEntry], no_anchor_fallback: DateTime<Utc>) {
-    let mut run_start: Option<usize> = None;
-    let mut previous_anchor: Option<DateTime<Utc>> = None;
-
-    for index in 0..entries.len() {
-        let Some(anchor) = entries
-            .get(index)
-            .filter(|entry| entry.is_anchored())
-            .map(|entry| entry.timestamp)
-        else {
-            run_start.get_or_insert(index);
-            continue;
-        };
-        if let Some(start) = run_start.take()
-            && let Some(run) = entries.get_mut(start..index)
-        {
-            match previous_anchor {
-                Some(previous) => assign_run(
-                    run,
-                    RunTimestamps::Between {
-                        previous,
-                        next: anchor,
-                    },
-                ),
-                None => assign_run(run, RunTimestamps::Copied(anchor)),
+impl RunTimestamps {
+    fn timestamps_of_run(self, run_length: usize) -> impl Iterator<Item = DateTime<Utc>> {
+        let steps = i128::try_from(run_length)
+            .unwrap_or(i128::MAX)
+            .saturating_add(1);
+        (1..=run_length).map(move |position| match self {
+            Self::Copied(anchor) => anchor,
+            Self::Between { previous, next } => {
+                let span_micros = i128::from((next - previous).num_microseconds().unwrap_or(0));
+                let step = i128::try_from(position).unwrap_or(i128::MAX);
+                let micros = i64::try_from(span_micros.saturating_mul(step) / steps).unwrap_or(0);
+                duration_of_micros(micros)
+                    .and_then(|elapsed| previous.checked_add_signed(elapsed))
+                    .unwrap_or(previous)
             }
-        }
-        previous_anchor = Some(anchor);
-    }
-
-    if let Some(start) = run_start
-        && let Some(run) = entries.get_mut(start..)
-    {
-        let anchor = previous_anchor.unwrap_or(no_anchor_fallback);
-        assign_run(run, RunTimestamps::Copied(anchor));
+        })
     }
 }
 
-fn assign_run(run: &mut [LogEntry], timestamps: RunTimestamps) {
-    match timestamps {
-        RunTimestamps::Copied(anchor) => {
-            for entry in run {
-                entry.timestamp = anchor;
-            }
-        }
-        RunTimestamps::Between { previous, next } => {
-            let steps = i128::try_from(run.len())
-                .unwrap_or(i128::MAX)
-                .saturating_add(1);
-            let span_micros = i128::from((next - previous).num_microseconds().unwrap_or(0));
-            for (offset, entry) in run.iter_mut().enumerate() {
-                let step = i128::try_from(offset)
-                    .unwrap_or(i128::MAX)
-                    .saturating_add(1);
-                let micros = i64::try_from(span_micros.saturating_mul(step) / steps).unwrap_or(0);
-                entry.timestamp = duration_of_micros(micros)
-                    .and_then(|elapsed| previous.checked_add_signed(elapsed))
-                    .unwrap_or(previous);
-            }
-        }
+/// One timestamp per entry of one session: the anchor of an anchored entry, and for every other
+/// entry one derived from the anchors around it. `no_anchor_fallback` timestamps a session
+/// whose lines all arrived without one.
+pub(crate) fn interpolate_timestamps(
+    anchors: &[Option<DateTime<Utc>>],
+    no_anchor_fallback: DateTime<Utc>,
+) -> Vec<DateTime<Utc>> {
+    let mut timestamps = Vec::with_capacity(anchors.len());
+    let mut previous_anchor: Option<DateTime<Utc>> = None;
+    let mut run_length = 0;
+    for anchor in anchors {
+        let Some(anchor) = *anchor else {
+            run_length += 1;
+            continue;
+        };
+        let run = match previous_anchor {
+            Some(previous) => RunTimestamps::Between {
+                previous,
+                next: anchor,
+            },
+            None => RunTimestamps::Copied(anchor),
+        };
+        timestamps.extend(run.timestamps_of_run(run_length));
+        timestamps.push(anchor);
+        run_length = 0;
+        previous_anchor = Some(anchor);
     }
+    timestamps.extend(
+        RunTimestamps::Copied(previous_anchor.unwrap_or(no_anchor_fallback))
+            .timestamps_of_run(run_length),
+    );
+    timestamps
 }
 
 /// A signed microsecond count as a [`Duration`]. [`Duration::microseconds`]

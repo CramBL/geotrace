@@ -3,7 +3,10 @@
 use std::num::NonZeroUsize;
 
 use chrono::{DateTime, Datelike as _, Duration, NaiveDate, Utc};
-use gt_logfile::{LogFormat, LogText, ParsedLog, RecognisedLevel, RecognisedService, TextSlice};
+use gt_logfile::{
+    AnchoredBounds, LogChronology, LogEntry, LogText, ParsedLog, RecognisedLevel,
+    RecognisedService, TextSlice,
+};
 use libfuzzer_sys::fuzz_target;
 
 // Feed arbitrary bytes to the log parser. It must return `Ok`/`Err` and index
@@ -21,8 +24,13 @@ fuzz_target!(|data: &[u8]| {
             format!("Feb 29 23:59:59.{fraction:06} first\nMar  1 00:00:00.{fraction:06} second\n");
         let parsed =
             gt_logfile::parse_log(pair.as_str().into(), reference).expect("valid leap-day pair");
-        let first = parsed.entries().first().expect("first line").timestamp;
-        let last = parsed.entries().last().expect("last line").timestamp;
+        let timestamps = parsed
+            .chronology()
+            .resolved()
+            .expect("the years of a leap-day pair resolve")
+            .timestamps();
+        let first = *timestamps.first().expect("first line");
+        let last = *timestamps.last().expect("last line");
         assert_eq!(last - first, Duration::seconds(1));
         assert_eq!(first.timestamp_subsec_micros(), fraction);
         assert!(last <= reference);
@@ -32,10 +40,17 @@ fuzz_target!(|data: &[u8]| {
     let text = LogText::decode_lossy(data);
     for reference in [DateTime::<Utc>::MIN_UTC, DateTime::<Utc>::MAX_UTC] {
         if let Ok(parsed) = gt_logfile::parse_log(text.clone(), reference) {
-            for entry in parsed.entries().iter().filter(|entry| entry.is_anchored()) {
-                if let Some(inferred) =
-                    gt_logfile::infer_year(entry.timestamp.naive_utc(), reference)
-                {
+            let Some(resolved) = parsed.chronology().resolved() else {
+                continue;
+            };
+            let mut anchored_timestamps = parsed
+                .entries()
+                .iter()
+                .zip(resolved.timestamps())
+                .filter(|(entry, _)| entry.is_anchored())
+                .map(|(_, timestamp)| *timestamp);
+            for timestamp in anchored_timestamps.clone() {
+                if let Some(inferred) = gt_logfile::infer_year(timestamp.naive_utc(), reference) {
                     let latest = reference
                         .checked_add_signed(Duration::hours(1))
                         .unwrap_or(reference);
@@ -45,21 +60,14 @@ fuzz_target!(|data: &[u8]| {
             let without_bounds = parsed.summary_block().is_none_or(|summary| {
                 summary.logs_begin_at.is_none() && summary.logs_end_at.is_none()
             });
-            if without_bounds
-                && matches!(
-                    parsed.format(),
-                    LogFormat::SyslogShort | LogFormat::SyslogShortMicro
-                )
-            {
-                let last = parsed
-                    .entries()
-                    .iter()
-                    .rfind(|entry| entry.is_anchored())
+            if without_bounds && !parsed.format().writes_years() {
+                let last = anchored_timestamps
+                    .next_back()
                     .expect("a parsed log has an anchor");
                 let latest = reference
                     .checked_add_signed(Duration::hours(1))
                     .unwrap_or(reference);
-                assert!(last.timestamp <= latest);
+                assert!(last <= latest);
             }
         }
     }
@@ -67,24 +75,30 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     check_the_parse_indexes_what_it_read(&parsed);
+    if let LogChronology::Unresolved(_) = parsed.chronology() {
+        assert!(
+            !parsed.format().writes_years(),
+            "a format that writes years left them unresolved"
+        );
+    }
     assert_eq!(
         gt_logfile::parse_log(text.clone(), parsed.year_reference()),
         Ok(parsed.clone()),
         "reusing the saved year reference changes the parse"
     );
-    if let Some(summary) = parsed.summary_block().filter(|_| {
-        matches!(
-            parsed.format(),
-            LogFormat::SyslogShort | LogFormat::SyslogShortMicro
-        )
-    }) {
+    let syslog_summary = parsed
+        .summary_block()
+        .filter(|_| !parsed.format().writes_years());
+    if let (Some(summary), Some(resolved)) = (syslog_summary, parsed.chronology().resolved()) {
         // Every anchored syslog entry has a timestamp without a year.
         // The summary block bounds the first and last of them, never the ones between.
         let mut anchored = parsed
             .entries()
             .iter()
+            .zip(resolved.timestamps())
             .enumerate()
-            .filter(|(_, entry)| entry.is_anchored());
+            .filter(|(_, (entry, _))| entry.is_anchored())
+            .map(|(index, (_, timestamp))| (index, *timestamp));
         let (first_index, first) = anchored.next().expect("a parsed log has an anchor");
         let last = anchored.next_back().map_or(first, |(_, last)| last);
         let first_entry_has_a_synchronised_clock = !parsed
@@ -94,11 +108,11 @@ fuzz_target!(|data: &[u8]| {
         let logs_begin_at = summary
             .logs_begin_at
             .filter(|_| first_entry_has_a_synchronised_clock);
-        for entry in [first, last] {
-            assert!(logs_begin_at.is_none_or(|begin| entry.timestamp >= begin));
+        for timestamp in [first, last] {
+            assert!(logs_begin_at.is_none_or(|begin| timestamp >= begin));
             assert!(summary
                 .logs_end_at
-                .is_none_or(|end| entry.timestamp.timestamp() <= end.timestamp()));
+                .is_none_or(|end| timestamp.timestamp() <= end.timestamp()));
         }
     }
 
@@ -168,6 +182,49 @@ fn check_the_parse_indexes_what_it_read(parsed: &ParsedLog) {
         parsed.entries().len(),
         "the boot sessions leave entries out"
     );
+
+    match parsed.chronology() {
+        LogChronology::Resolved(resolved) => {
+            assert_eq!(
+                resolved.timestamps().len(),
+                parsed.entries().len(),
+                "the resolved chronology has another timestamp count than entry count"
+            );
+            for (session_index, session) in parsed.boot_sessions().iter().enumerate() {
+                let mut anchored = session
+                    .entry_range
+                    .clone()
+                    .filter(|&index| {
+                        parsed
+                            .entries()
+                            .get(index)
+                            .is_some_and(LogEntry::is_anchored)
+                    })
+                    .filter_map(|index| resolved.timestamp(index));
+                let first = anchored.next();
+                let expected = first.map(|first| AnchoredBounds {
+                    first,
+                    last: anchored.next_back().unwrap_or(first),
+                });
+                assert_eq!(
+                    resolved.session_bounds(session_index),
+                    expected,
+                    "boot {} has other bounds than its anchored entries",
+                    session.boot_number
+                );
+            }
+        }
+        LogChronology::Unresolved(unresolved) => {
+            for (index, entry) in parsed.entries().iter().enumerate() {
+                assert_eq!(
+                    unresolved.written_timestamp(index).is_some(),
+                    entry.is_anchored(),
+                    "the written timestamp of line {} disagrees with whether the line is anchored",
+                    entry.line_number
+                );
+            }
+        }
+    }
 
     for (entry, recognised) in parsed.entries().iter().zip(parsed.recognised_messages()) {
         let message = parsed.message(entry);

@@ -16,7 +16,7 @@ fn only_the_detected_format_is_parsed() {
         fixtures::messages(&parsed),
         ["iso", "May 29 18:48:24 syslog"]
     );
-    assert_eq!(parsed.interpolated_entry_count(), 1);
+    assert_eq!(fixtures::resolved(&parsed).interpolated_entry_count(), 1);
 }
 
 /// A banner longer than the detector's sample hides the format that follows.
@@ -27,7 +27,7 @@ fn the_format_is_detected_within_the_head_of_the_log() {
     let parsed = fixtures::parsed_log(&within_head);
     assert_eq!(parsed.anchored_entry_count(), 1);
     assert_eq!(
-        parsed.interpolated_entry_count(),
+        fixtures::resolved(&parsed).interpolated_entry_count(),
         FORMAT_DETECTION_LINE_LIMIT - 1
     );
 
@@ -57,8 +57,8 @@ fn every_format_yields_its_timestamp_and_message(
     let parsed = fixtures::parsed_log(line);
     let entry = parsed.entries().first().copied().expect("one entry");
     assert_eq!(
-        entry.timestamp,
-        expected_second + Duration::microseconds(expected_micros)
+        fixtures::timestamps(&parsed),
+        [expected_second + Duration::microseconds(expected_micros)]
     );
     assert_eq!(parsed.message(&entry), "msg");
 }
@@ -71,7 +71,7 @@ fn a_year_less_format_resolves_against_now() {
     )
     .expect("parses");
     assert_eq!(
-        parsed.entries().first().map(|entry| entry.timestamp),
-        Some(test_util::utc(2025, 12, 31, 23, 59, 59))
+        fixtures::timestamps(&parsed),
+        [test_util::utc(2025, 12, 31, 23, 59, 59)]
     );
 }

@@ -3,7 +3,7 @@ use gt_types::TimeRange;
 use rstest::rstest;
 
 use crate::parse::tests::fixtures::{self, REBOOT};
-use crate::session::{BootSession, OrderAnomaly};
+use crate::session::OrderAnomaly;
 use crate::test_util;
 
 /// The clock steps back over the reboot, so the log's span ends at an
@@ -14,7 +14,7 @@ fn the_time_range_spans_the_earliest_and_latest_entry_across_a_reboot() {
         "2026-05-23 10:00:00 first\n2026-05-23 12:00:00 last\n{REBOOT}2026-05-23 11:00:00 after the reboot\n"
     ));
     assert_eq!(
-        parsed.time_range(),
+        fixtures::resolved(&parsed).time_range(),
         Some(TimeRange::new(
             test_util::utc(2026, 5, 23, 10, 0, 0),
             test_util::utc(2026, 5, 23, 12, 0, 0)
@@ -63,10 +63,9 @@ fn a_boot_session_spans_its_own_anchors() {
         "2026-01-01 00:00:00 a\n2026-01-01 02:30:00 b\n{REBOOT}2026-01-01 00:05:00 c\n\
          2026-01-01 00:04:00 systemd-timedated: Time has been changed\n"
     ));
-    let uptimes: Vec<Option<Duration>> = parsed
-        .boot_sessions()
-        .iter()
-        .map(BootSession::uptime)
+    let resolved = fixtures::resolved(&parsed);
+    let uptimes: Vec<Option<Duration>> = (0..parsed.boot_sessions().len())
+        .map(|session_index| resolved.session_uptime(session_index))
         .collect();
     assert_eq!(uptimes, [Some(Duration::minutes(150)), None]);
 }
@@ -96,7 +95,9 @@ fn a_backwards_step_is_an_anomaly_only_when_nothing_nearby_reports_a_clock_chang
     #[case] expected_anomalies: usize,
 ) {
     assert_eq!(
-        fixtures::parsed_log(text).order_anomalies().len(),
+        fixtures::resolved(&fixtures::parsed_log(text))
+            .order_anomalies()
+            .len(),
         expected_anomalies
     );
 }
@@ -105,7 +106,7 @@ fn a_backwards_step_is_an_anomaly_only_when_nothing_nearby_reports_a_clock_chang
 fn an_order_anomaly_names_the_line_it_steps_back_on_and_how_far() {
     let parsed = fixtures::parsed_log("2026-01-01 03:12:00 a\nfiller\n2026-01-01 00:00:00 b\n");
     assert_eq!(
-        parsed.order_anomalies(),
+        fixtures::resolved(&parsed).order_anomalies(),
         [OrderAnomaly {
             line_number: 3,
             timestamp_step: -Duration::minutes(192),
