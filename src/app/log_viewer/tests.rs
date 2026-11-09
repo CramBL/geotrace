@@ -1194,7 +1194,9 @@ fn dragging_across_a_line_copies_its_text_and_leaves_the_map_where_it_was() {
 
     // The assertion is on the words the copy states: egui spaces one copied
     // galley from the next by how far apart they sat.
-    let copied = copied_text(&harness);
+    let copied = harness
+        .copied_text()
+        .expect("the drag selected text to copy");
     let words: Vec<&str> = copied.split_whitespace().collect();
     assert_eq!(words, ["2026-05-29", "18:48:25", "navsyncd:", "starting"]);
     assert_eq!(
@@ -1218,21 +1220,13 @@ fn dragging_across_a_parse_figure_copies_its_value() {
     harness.input_mut().events.push(egui::Event::Copy);
     harness.step();
 
-    assert_eq!(copied_text(&harness).trim(), FIXTURE_LOG_FORMAT);
-}
-
-/// The text the viewer last put on the clipboard.
-fn copied_text(harness: &Harness<ViewerState>) -> String {
-    harness
-        .output()
-        .platform_output
-        .commands
-        .iter()
-        .find_map(|command| match command {
-            egui::OutputCommand::CopyText(text) => Some(text.clone()),
-            egui::OutputCommand::OpenUrl(_) | egui::OutputCommand::CopyImage(_) => None,
-        })
-        .expect("the drag selected text to copy")
+    assert_eq!(
+        harness
+            .copied_text()
+            .expect("the drag selected text to copy")
+            .trim(),
+        FIXTURE_LOG_FORMAT
+    );
 }
 
 #[test]

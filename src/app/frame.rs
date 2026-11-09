@@ -7,8 +7,6 @@ use egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE as ICON_CLOCK_COUNTER_CLOCKW
 use egui_phosphor::regular::GEAR as ICON_GEAR;
 use egui_phosphor::regular::TERMINAL_WINDOW as ICON_TERMINAL_WINDOW;
 use egui_phosphor::regular::TRASH as ICON_TRASH;
-use egui_phosphor::regular::WARNING as ICON_WARNING;
-use egui_phosphor::regular::X as ICON_X;
 use gt_ionex::quiet_time::QuietTimeDeviationPeak;
 use gt_loaded_files::RecordingNames;
 use gt_map::MapLayer;
@@ -120,7 +118,8 @@ impl eframe::App for App {
         self.show_snap_prompts(ui);
         self.show_loading_progress_overlay(ui);
         show_drop_hint_overlay(ui.ctx());
-        self.show_load_error_bar(ui);
+        self.show_debug_build_and_read_only_markers(ui);
+        self.load_failures.show_windows(ui.ctx());
         self.apply_pending_unload_and_removal(ui);
 
         modals::show_orphaned_event_markers_popup(ui, &mut self.orphaned_event_markers);
@@ -1191,24 +1190,11 @@ impl App {
         }
     }
 
-    fn show_load_error_bar(&mut self, ui: &mut egui::Ui) {
-        let mut dismiss = false;
+    fn show_debug_build_and_read_only_markers(&self, ui: &mut egui::Ui) {
         ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
             egui::warn_if_debug_build(ui);
             self.show_read_only_marker(ui);
-            if let Some(error) = &self.load_error {
-                ui.horizontal(|ui| {
-                    ui.colored_label(
-                        gt_ui_theme::error_indicator(ui.visuals().dark_mode),
-                        format!("{ICON_WARNING} {error}"),
-                    );
-                    dismiss = ui.small_button(ICON_X).clicked();
-                });
-            }
         });
-        if dismiss {
-            self.load_error = None;
-        }
     }
 
     fn apply_pending_unload_and_removal(&mut self, ui: &egui::Ui) {

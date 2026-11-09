@@ -21,6 +21,7 @@ use gt_snap::wire::Costing;
 use gt_track_builder::SegmentationConfig;
 use gt_types::{AssociationConfig, LoadWarning, TrackRef};
 use gt_ui_types::{DisplayMask, LoadedLogId, MapHighlight, SkyGlyphVariant};
+use load_failures::LoadFailures;
 use loader::{
     AttachedLogRestore, CompletedLoad, FinishedJob, LoadCompletion, LoadJobs,
     LoadedRecordingResult, LooseLogResult, SavedLogResult,
@@ -68,6 +69,7 @@ mod history_db;
 mod history_open;
 mod instance_wait;
 mod jamming;
+mod load_failures;
 mod loader;
 mod log_association;
 mod log_viewer;
@@ -266,7 +268,7 @@ fn sparse_component_colors(
 pub struct App {
     map: NavMap,
     shared: Rc<RefCell<SharedAppState>>,
-    load_error: Option<String>,
+    load_failures: LoadFailures,
     /// The logs loaded in this session. Logs are not recordings: they appear in
     /// neither the file tree nor the plot.
     logs: LoadedLogs,
@@ -660,7 +662,7 @@ impl App {
                     .to_owned(),
                 recording_names: recording_names_cache::RecordingNamesCache::default(),
             })),
-            load_error: None,
+            load_failures: LoadFailures::default(),
             logs: LoadedLogs::default(),
             log_attachments: SessionLogAttachments::default(),
             orphaned_event_markers: None,
@@ -1029,7 +1031,6 @@ impl App {
                 if !orphans.is_empty() {
                     self.orphaned_event_markers = Some(orphans);
                 }
-                self.load_error = None;
                 self.loader.finishing_jobs.push(FinishedJob {
                     filename: completed.filename,
                     elapsed_secs: completed.elapsed_secs,
@@ -1050,7 +1051,6 @@ impl App {
                 result: Ok(LooseLogResult { filename, parsed }),
             } => {
                 self.integrate_parsed_log(filename, parsed, ParsedLogOrigin::Loose(&arrival));
-                self.load_error = None;
                 self.loader.finishing_jobs.push(FinishedJob {
                     filename: completed.filename,
                     elapsed_secs: completed.elapsed_secs,
@@ -1066,18 +1066,29 @@ impl App {
                     }),
             } => {
                 self.integrate_parsed_log(filename, parsed, ParsedLogOrigin::Saved(restored));
-                self.load_error = None;
                 self.loader.finishing_jobs.push(FinishedJob {
                     filename: completed.filename,
                     elapsed_secs: completed.elapsed_secs,
                     completed_at: now,
                 });
             }
-            LoadCompletion::Recording { result: Err(e), .. }
-            | LoadCompletion::LooseLog { result: Err(e), .. }
-            | LoadCompletion::SavedLog { result: Err(e) } => {
-                log::error!("Background load failed: {e}");
-                self.load_error = Some(e);
+            LoadCompletion::Recording {
+                result: Err(failure),
+                ..
+            }
+            | LoadCompletion::LooseLog {
+                result: Err(failure),
+                ..
+            }
+            | LoadCompletion::SavedLog {
+                result: Err(failure),
+            } => {
+                log::error!(
+                    "Failed to load {:?}: {}",
+                    failure.source.to_string(),
+                    failure.details
+                );
+                self.load_failures.push(failure);
             }
         }
     }

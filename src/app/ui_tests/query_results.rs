@@ -1226,7 +1226,7 @@ fn copying_a_query_result_writes_a_tab_separated_table() {
         .click();
     harness.run_steps(1);
 
-    let copied = copied_text(&harness);
+    let copied = harness.copied_text().expect("the app copied text");
     let matches = harness
         .state()
         .query_window
@@ -1262,26 +1262,12 @@ fn copying_after_sorting_writes_the_matches_in_the_listed_order() {
         .click();
     harness.run_steps(1);
 
-    let copied = copied_text(&harness);
+    let copied = harness.copied_text().expect("the app copied text");
     let first_row = copied.lines().nth(1).expect("the copy lists rows");
     assert!(
         first_row.starts_with("2\t"),
         "the smaller match is copied first: {first_row}"
     );
-}
-
-/// The text the app last put on the clipboard.
-fn copied_text(harness: &Harness<'_, App>) -> String {
-    harness
-        .output()
-        .platform_output
-        .commands
-        .iter()
-        .find_map(|command| match command {
-            egui::OutputCommand::CopyText(text) => Some(text.clone()),
-            egui::OutputCommand::OpenUrl(_) | egui::OutputCommand::CopyImage(_) => None,
-        })
-        .expect("nothing was copied")
 }
 
 /// The accel fixture with the query window open over it.
@@ -1450,7 +1436,7 @@ fn copying_a_channel_result_writes_a_tab_separated_sample_table() {
         .click();
     harness.run_steps(1);
 
-    let copied = copied_text(&harness);
+    let copied = harness.copied_text().expect("the app copied text");
     let mut lines = copied.lines();
     assert_eq!(
         lines.next(),

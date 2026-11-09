@@ -21,7 +21,13 @@ fn physical_line_numbers_align_before_timestamps_and_select_for_copying() {
     harness.press_drag_release(largest.left_center(), egui::vec2(largest.width(), 0.0), 4);
     harness.input_mut().events.push(egui::Event::Copy);
     harness.step();
-    assert_eq!(copied_text(&harness).trim(), "12");
+    assert_eq!(
+        harness
+            .copied_text()
+            .expect("the drag selected text to copy")
+            .trim(),
+        "12"
+    );
 }
 
 #[rstest]

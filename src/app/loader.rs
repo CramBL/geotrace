@@ -18,6 +18,7 @@ use gt_track_builder::{
 use gt_types::{LoadedFile, TrackAggregates};
 
 use super::association_batches::{LogArrival, RecordingOperationOrigin};
+use super::load_failures::{LoadFailure, LoadSource};
 use crate::app::background_thread;
 
 /// State for a single in-flight background load job, shown in the progress UI.
@@ -71,15 +72,26 @@ pub(super) struct SavedLogResult {
 pub(super) enum LoadCompletion {
     LooseLog {
         arrival: LogArrival,
-        result: Result<LooseLogResult, String>,
+        result: Result<LooseLogResult, LoadFailure>,
     },
     Recording {
         origin: RecordingOperationOrigin,
-        result: Result<LoadedRecordingResult, String>,
+        result: Result<LoadedRecordingResult, LoadFailure>,
     },
     SavedLog {
-        result: Result<SavedLogResult, String>,
+        result: Result<SavedLogResult, LoadFailure>,
     },
+}
+
+impl LoadCompletion {
+    #[cfg(test)]
+    fn failure(self) -> Option<LoadFailure> {
+        match self {
+            Self::LooseLog { result, .. } => result.err(),
+            Self::Recording { result, .. } => result.err(),
+            Self::SavedLog { result } => result.err(),
+        }
+    }
 }
 
 /// A log read back out of history: the attachment it is stored as, the filter
@@ -279,7 +291,7 @@ impl LoadJobs {
         &mut self,
         filename: &str,
         origin: RecordingOperationOrigin,
-    ) -> impl FnOnce(Result<LoadedRecordingResult, String>) + use<> {
+    ) -> impl FnOnce(Result<LoadedRecordingResult, LoadFailure>) + use<> {
         let (id, tx) = self.controlled_job_for_test(filename);
         move |result| {
             tx.send(LoadMessage::Completed {
@@ -295,7 +307,7 @@ impl LoadJobs {
         &mut self,
         filename: &str,
         arrival: LogArrival,
-    ) -> impl FnOnce(Result<LooseLogResult, String>) + use<> {
+    ) -> impl FnOnce(Result<LooseLogResult, LoadFailure>) + use<> {
         let (id, tx) = self.controlled_job_for_test(filename);
         move |result| {
             tx.send(LoadMessage::Completed {
@@ -310,7 +322,7 @@ impl LoadJobs {
     pub(super) fn controlled_saved_log_load_for_test(
         &mut self,
         filename: &str,
-    ) -> impl FnOnce(Result<SavedLogResult, String>) + use<> {
+    ) -> impl FnOnce(Result<SavedLogResult, LoadFailure>) + use<> {
         let (id, tx) = self.controlled_job_for_test(filename);
         move |result| {
             tx.send(LoadMessage::Completed {
@@ -411,7 +423,7 @@ impl LoadJobs {
                         ctx.request_repaint();
                     })
                 })
-                .map_err(|e| e.to_string());
+                .map_err(|e| LoadFailure::new(LoadSource::Filename(log_name), e));
             tx.send(LoadMessage::Completed {
                 id,
                 completion: LoadCompletion::Recording {
@@ -500,7 +512,7 @@ impl LoadJobs {
                         ctx.request_repaint();
                     })
                 })
-                .map_err(|e| e.to_string());
+                .map_err(|e| LoadFailure::new(LoadSource::Filename(log_name), e));
             tx.send(LoadMessage::Completed {
                 id,
                 completion: LoadCompletion::Recording {
@@ -540,7 +552,10 @@ impl LoadJobs {
                         id,
                         completion: LoadCompletion::LooseLog {
                             arrival,
-                            result: Err(format!("Failed to read {filename}: {e}")),
+                            result: Err(LoadFailure::new(
+                                LoadSource::Filename(filename),
+                                format_args!("Failed to read the file: {e}"),
+                            )),
                         },
                     })
                     .ok();
@@ -549,7 +564,7 @@ impl LoadJobs {
                 }
             };
             let text = LogText::decode_lossy(&bytes);
-            let result = parse_loaded_log(Some(filename), text, Utc::now(), report);
+            let result = parse_loaded_log(LoadSource::Filename(filename), text, Utc::now(), report);
             tx.send(LoadMessage::Completed {
                 id,
                 completion: LoadCompletion::LooseLog { arrival, result },
@@ -567,14 +582,15 @@ impl LoadJobs {
         filename: Option<String>,
         arrival: LogArrival,
     ) {
-        self.spawn_log_load(filename, arrival, move || LogText::decode_lossy(&bytes));
+        let source = filename.map_or(LoadSource::UnnamedDrop, LoadSource::Filename);
+        self.spawn_log_load(source, arrival, move || LogText::decode_lossy(&bytes));
     }
 
     /// Loads pasted log text. Pasted text has no name of its own, so the log
     /// takes its name from its first entry.
     pub fn spawn_pasted_log_text(&mut self, text: String, arrival: LogArrival) {
         log::info!("Loading {} bytes of pasted log text", text.len());
-        self.spawn_log_load(None, arrival, move || LogText::from(text));
+        self.spawn_log_load(LoadSource::PastedText, arrival, move || LogText::from(text));
     }
 
     /// Parses a log stored with a recording, so it loads with the attachment
@@ -612,7 +628,8 @@ impl LoadJobs {
         log::info!("Loading the log {name:?} stored with a recording in history");
         background_thread::spawn_or_panic(format!("load-log-{name}"), move || {
             let report = progress_reporter(id, tx.clone(), ctx.clone());
-            let result = parse_loaded_log(Some(name), text, restored.year_reference, report).map(
+            let source = LoadSource::Filename(name);
+            let result = parse_loaded_log(source, text, restored.year_reference, report).map(
                 |LooseLogResult { filename, parsed }| SavedLogResult {
                     filename,
                     parsed,
@@ -702,13 +719,13 @@ impl LoadJobs {
 
     fn spawn_log_load(
         &mut self,
-        filename: Option<String>,
+        source: LoadSource,
         arrival: LogArrival,
         decode: impl FnOnce() -> LogText + Send + 'static,
     ) {
         let id = self.alloc_id();
         let started_at = self.frame_time();
-        let job_name = filename.clone().unwrap_or_else(|| "log text".to_owned());
+        let job_name = source.to_string();
         self.loading_jobs.push(LoadingJob {
             id,
             filename: job_name.clone(),
@@ -722,7 +739,7 @@ impl LoadJobs {
             let report = progress_reporter(id, tx.clone(), ctx.clone());
             report(0.20, STAGE_READING);
             let text = decode();
-            let result = parse_loaded_log(filename, text, Utc::now(), report);
+            let result = parse_loaded_log(source, text, Utc::now(), report);
             tx.send(LoadMessage::Completed {
                 id,
                 completion: LoadCompletion::LooseLog { arrival, result },
@@ -774,22 +791,26 @@ fn progress_reporter(
 }
 
 fn parse_loaded_log(
-    filename: Option<String>,
+    source: LoadSource,
     text: LogText,
     year_reference: DateTime<Utc>,
     report: impl Fn(f32, &'static str),
-) -> Result<LooseLogResult, String> {
+) -> Result<LooseLogResult, LoadFailure> {
     report(0.55, STAGE_PARSING);
-    let parsed = gt_logfile::parse_log(text, year_reference).map_err(|err| err.to_string())?;
+    let parsed = gt_logfile::parse_log(text, year_reference)
+        .map_err(|err| LoadFailure::new(source.clone(), err))?;
     let unindexable_line_count = parsed.unindexable_line_count();
     if unindexable_line_count > 0 {
         let noun = gt_fmt::pluralize(unindexable_line_count, "line", "lines");
-        let name = filename.as_deref().unwrap_or("log text");
+        let name = source.to_string();
         log::warn!(
             "Dropped {unindexable_line_count} {noun} of {name:?} that the log index cannot address"
         );
     }
-    Ok(LooseLogResult { filename, parsed })
+    Ok(LooseLogResult {
+        filename: source.into_filename(),
+        parsed,
+    })
 }
 
 /// Convert the live segmentation settings into the form persisted alongside a
@@ -1262,6 +1283,7 @@ const PLOTTING_FRACTION: f32 = 0.95;
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
     use std::time::{Duration, Instant};
 
     use chrono::DateTime;
@@ -1604,15 +1626,116 @@ mod tests {
 
         let completed = drain_until_complete(&mut jobs);
         assert_eq!(
-            match completed.completion {
-                LoadCompletion::LooseLog { result, .. } => result.err(),
-                _ => panic!("expected loose log completion"),
-            },
+            completed
+                .completion
+                .failure()
+                .map(|failure| failure.details),
             Some(
                 "Not a recognised log: no line has a timestamp in a known format \
                  (first line: \"kernel: no timestamp here\")"
                     .to_owned()
             )
+        );
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum FailingLoad {
+        AttachedLog,
+        GtdBytes,
+        GtdPath,
+        LogBytesWithoutAName,
+        LogPathWithoutATimestamp,
+        MissingLogPath,
+        PastedText,
+    }
+
+    impl FailingLoad {
+        fn spawn(self, jobs: &mut LoadJobs, dir: &Path, arrival: LogArrival) {
+            let junk = "no recording and no timestamp";
+            match self {
+                Self::AttachedLog => jobs.spawn_attached_log(
+                    AttachedLog {
+                        name: "broken.log".to_owned(),
+                        text: junk.to_owned(),
+                        filters: Default::default(),
+                        year_reference: Utc::now(),
+                    },
+                    LogAttachmentRef {
+                        recording: gt_store::DatabaseRef {
+                            identity: "device".to_owned(),
+                            group_name: "recording".to_owned(),
+                        },
+                        id: gt_store::LogAttachmentId::new_random(),
+                    },
+                    AttachedLogRequester::RecordingLoad,
+                ),
+                Self::GtdBytes => jobs.spawn_gtd_bytes(
+                    Arc::from(junk.as_bytes()),
+                    "broken.gtd".to_owned(),
+                    SegmentationConfig::default(),
+                    GtdLoadMode::Regular,
+                    None,
+                    RecordingOperationOrigin::Independent,
+                ),
+                Self::GtdPath => {
+                    let path = dir.join("broken.gtd");
+                    fs::write(&path, junk).expect("write the junk recording");
+                    jobs.spawn_gtd_path(
+                        path,
+                        SegmentationConfig::default(),
+                        GtdLoadMode::Regular,
+                        None,
+                        RecordingOperationOrigin::Independent,
+                    );
+                }
+                Self::LogBytesWithoutAName => {
+                    jobs.spawn_log_bytes(Arc::from(junk.as_bytes()), None, arrival);
+                }
+                Self::LogPathWithoutATimestamp => {
+                    let path = dir.join("broken.log");
+                    fs::write(&path, junk).expect("write the junk log");
+                    jobs.spawn_log_path(path, arrival);
+                }
+                Self::MissingLogPath => jobs.spawn_log_path(dir.join("broken.log"), arrival),
+                Self::PastedText => jobs.spawn_pasted_log_text(junk.to_owned(), arrival),
+            }
+        }
+
+        fn source(self) -> LoadSource {
+            match self {
+                Self::GtdBytes | Self::GtdPath => LoadSource::Filename("broken.gtd".to_owned()),
+                Self::AttachedLog | Self::LogPathWithoutATimestamp | Self::MissingLogPath => {
+                    LoadSource::Filename("broken.log".to_owned())
+                }
+                Self::LogBytesWithoutAName => LoadSource::UnnamedDrop,
+                Self::PastedText => LoadSource::PastedText,
+            }
+        }
+    }
+
+    #[rstest]
+    fn a_failed_load_has_the_source_it_read(
+        #[values(
+            FailingLoad::AttachedLog,
+            FailingLoad::GtdBytes,
+            FailingLoad::GtdPath,
+            FailingLoad::LogBytesWithoutAName,
+            FailingLoad::LogPathWithoutATimestamp,
+            FailingLoad::MissingLogPath,
+            FailingLoad::PastedText
+        )]
+        load: FailingLoad,
+    ) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
+        let mut batches = AssociationBatches::default();
+        let batch = batches.begin_submission(std::iter::empty());
+        load.spawn(&mut jobs, dir.path(), batch.log());
+
+        let completed = drain_until_complete(&mut jobs);
+        assert_eq!(
+            completed.completion.failure().map(|failure| failure.source),
+            Some(load.source())
         );
     }
 

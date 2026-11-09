@@ -14,6 +14,7 @@ use rstest::rstest;
 
 use crate::app::association_batches::RecordingOperationOrigin;
 use crate::app::history_db::{self, OpenedRecording};
+use crate::app::load_failures::{LoadFailure, LoadSource};
 use crate::app::loader::{
     LoadedRecordingPlacement, LoadedRecordingResult, LooseLogResult, SavedLogResult,
 };
@@ -62,6 +63,29 @@ fn recording_outcome(name: &str) -> LoadedRecordingResult {
         history: FileHistory::None,
         applied_current_marker_settings: false,
         placement: LoadedRecordingPlacement::AddAnEntry,
+    }
+}
+
+fn load_failure(name: &str) -> LoadFailure {
+    LoadFailure::new(LoadSource::Filename(name.to_owned()), "Truncated recording")
+}
+
+fn saved_log_outcome(name: &str) -> SavedLogResult {
+    SavedLogResult {
+        filename: Some(name.to_owned()),
+        parsed: parsed_log(name),
+        restored: loader::AttachedLogRestore {
+            attachment: LogAttachmentRef {
+                recording: DatabaseRef {
+                    identity: "saved".to_owned(),
+                    group_name: "recording".to_owned(),
+                },
+                id: LogAttachmentId::new_random(),
+            },
+            filters: StoredLogFilterStack::default(),
+            requested_by: loader::AttachedLogRequester::RecordingLoad,
+            year_reference: ui_tests::base_time(),
+        },
     }
 }
 
@@ -339,9 +363,51 @@ fn a_failed_recording_load_releases_pending_log_association(#[values(true, false
     log(Ok(log_outcome("log.txt")));
     harness.step();
     assert!(harness.state().association_dialog.is_none());
-    failed(Err("Truncated recording".to_owned()));
+    failed(Err(load_failure("failed.gtd")));
     harness.run_steps(2);
     assert_initial_association(&mut harness, ask, 1);
+}
+
+#[test]
+fn load_failures_stay_after_later_loads_succeed_in_the_same_frame() {
+    let mut harness = harness(false);
+    let batch = harness
+        .state_mut()
+        .association_batches
+        .begin_submission(std::iter::empty());
+    let loader = &mut harness.state_mut().loader;
+    let failed_recording = loader.controlled_recording_load_for_test(
+        "broken.gtd",
+        RecordingOperationOrigin::Arrival(batch.recording()),
+    );
+    let failed_log = loader.controlled_loose_log_load_for_test("broken.log", batch.log());
+    let recording = loader
+        .controlled_recording_load_for_test("recording.gtd", RecordingOperationOrigin::Independent);
+    let log = loader.controlled_loose_log_load_for_test("log.txt", batch.log());
+    let saved = loader.controlled_saved_log_load_for_test("saved.log");
+    drop(batch);
+    failed_recording(Err(load_failure("broken.gtd")));
+    failed_log(Err(load_failure("broken.log")));
+    recording(Ok(recording_outcome("recording.gtd")));
+    log(Ok(log_outcome("log.txt")));
+    saved(Ok(saved_log_outcome("saved.log")));
+    harness.step();
+
+    assert_eq!(
+        harness
+            .state()
+            .load_failures
+            .iter()
+            .map(|failure| &failure.source)
+            .collect::<Vec<_>>(),
+        [
+            &LoadSource::Filename("broken.gtd".to_owned()),
+            &LoadSource::Filename("broken.log".to_owned())
+        ]
+    );
+    assert_eq!(harness.state().logs.len(), 2);
+    harness.get_by_role_and_label(Role::Window, "Failed to load broken.gtd");
+    harness.get_by_role_and_label(Role::Window, "Failed to load broken.log");
 }
 
 #[rstest]
@@ -1487,7 +1553,7 @@ fn a_duplicate_loose_arrival_completes_without_registering_the_existing_context(
             .position_source_state(),
         source
     );
-    recording(Err("Failed recording".to_owned()));
+    recording(Err(load_failure("failed.gtd")));
     harness.run_steps(2);
     assert!(harness.state().association_batches.is_empty_for_test());
     assert_eq!(
