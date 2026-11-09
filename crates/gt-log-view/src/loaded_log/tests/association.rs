@@ -44,6 +44,22 @@ fn widening_the_window_associates_the_entries_the_narrower_one_missed() {
     assert_eq!(log.unassociated_entry_count(), 0);
 }
 
+#[test]
+fn a_log_with_unresolved_years_anchored_to_a_recording_associates_no_entry() {
+    let files = test_util::loaded(vec![test_util::recording_at(55.0, 10)]);
+    let mut log = test_util::log_with_unresolved_years();
+    log.set_association_window(Duration::days(366), &files.view());
+
+    test_util::anchor_to(&mut log, &files, 0);
+
+    assert_eq!(
+        log.associated_recording(),
+        Some(test_util::id_of(&files, 0))
+    );
+    assert_eq!(log.associated_entry_count(), 0);
+    assert_eq!(log.entry_placement(0), None);
+}
+
 /// Unloading the anchored recording strands the log, and never hands it to
 /// the other loaded recording.
 #[test]

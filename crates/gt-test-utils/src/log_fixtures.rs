@@ -26,6 +26,17 @@ pub enum SyntheticLogTimestamps {
     SyslogShort,
 }
 
+/// Syslog-short text whose last entry precedes the summary block's "Logs begin at", which leaves
+/// its years unresolved whatever the reference date. Its second line has no timestamp.
+pub const UNRESOLVED_YEARS_LOG: &str = "\
+May 20 12:00:00 host navsyncd: gnss fix acquired
+  at 0x0000c3f4 in gnss_task+0x54
+May 20 11:00:00 host navsyncd: clock moved backwards
+----------- Journal summary -----------
+Logs begin at: Wed 20-May-2026 12:00:00 UTC
+Logs end at: Wed 20-May-2026 12:00:10 UTC
+";
+
 /// The moment [`synthetic_journald_log`] logs its first line at, for a test
 /// building a recording that runs alongside the generated log.
 pub fn synthetic_log_start() -> DateTime<Utc> {

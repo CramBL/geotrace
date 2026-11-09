@@ -1565,12 +1565,16 @@ mod tests {
         assert_eq!(parsed.entries().len(), 1);
     }
 
-    #[test]
-    fn a_saved_log_restores_its_original_timestamp_reference() {
+    #[rstest]
+    #[case::resolved_years("Dec 31 23:59:59 before\nJan  1 00:00:01 after\n", true)]
+    #[case::unresolved_years(gt_test_utils::UNRESOLVED_YEARS_LOG, false)]
+    fn a_saved_log_restores_its_original_timestamp_reference(
+        #[case] text: &str,
+        #[case] years_resolve: bool,
+    ) {
         let reference = DateTime::parse_from_rfc3339("2026-10-01T00:00:00Z")
             .expect("reference date")
             .to_utc();
-        let text = "Dec 31 23:59:59 before\nJan  1 00:00:01 after\n";
         let original =
             gt_logfile::parse_log(text.into(), reference).expect("parse the original log");
         let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
@@ -1598,6 +1602,7 @@ mod tests {
         else {
             panic!("expected a log outcome");
         };
+        assert_eq!(parsed.chronology().resolved().is_some(), years_resolve);
         assert_eq!(parsed, original);
     }
 

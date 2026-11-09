@@ -221,7 +221,7 @@ const WORDS_PER_CHUNK: NonZeroUsize = match NonZeroUsize::new(1024) {
 mod tests {
     use std::sync::atomic::AtomicUsize;
 
-    use gt_logfile::LogLevelKind;
+    use gt_logfile::{LogLevelKind, ResolvedChronology};
     use proptest::{prelude::*, proptest};
 
     use super::*;
@@ -363,7 +363,12 @@ mod tests {
         let log = test_util::parsed_log_of_text(
             "2026-01-01 14:02:11 navsyncd: starting\n  at 0x0000c3f4 in gnss_task+0x54\n",
         );
-        assert_eq!(log.interpolated_entry_count(), 1);
+        assert_eq!(
+            log.chronology()
+                .resolved()
+                .map(ResolvedChronology::interpolated_entry_count),
+            Some(1)
+        );
         assert_eq!(
             scanned(&log, "gnss_task", WORDS_PER_CHUNK)
                 .matched_entry_indices()

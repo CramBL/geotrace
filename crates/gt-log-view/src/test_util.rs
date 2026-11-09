@@ -58,6 +58,15 @@ pub(crate) fn log_of(count: usize) -> LoadedLog {
     )
 }
 
+/// The pasted [`gt_test_utils::UNRESOLVED_YEARS_LOG`].
+pub(crate) fn log_with_unresolved_years() -> LoadedLog {
+    LoadedLog::new(
+        None,
+        parsed_log_of_text(gt_test_utils::UNRESOLVED_YEARS_LOG),
+        association_window(),
+    )
+}
+
 /// A log of `count` entries written by `service`, which
 /// [`LoadedLogs::push`](crate::LoadedLogs::push) tells apart from [`log_of`].
 pub(crate) fn log_of_service(service: &str, count: usize) -> LoadedLog {

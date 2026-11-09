@@ -5,10 +5,38 @@ use chrono::{DateTime, Datelike as _, Utc};
 
 use crate::{
     format::{self, RawTimestamp, YearlessTimestamp},
-    parse::{self, LogEntry, LogParseError, PendingLogEntry, TextSlice, TimestampKind},
+    parse::{self, PendingLogEntry, TextSlice},
     session::BootSessionRange,
     summary::SummaryBlock,
 };
+
+/// The entry at which year resolution stopped: its 1-based physical line, its timestamp as the
+/// line writes it, and why the resolver rejects the year it tried last for it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnresolvedYear {
+    pub line_number: u32,
+    pub written_timestamp: String,
+    pub conflict: YearConflict,
+}
+
+impl UnresolvedYear {
+    /// The message without the written timestamp and the [`YearConflict`].
+    pub fn headline(&self) -> String {
+        format!("Cannot resolve the year of log line {}", self.line_number)
+    }
+}
+
+impl fmt::Display for UnresolvedYear {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} ({:?}): {}",
+            self.headline(),
+            self.written_timestamp,
+            self.conflict
+        )
+    }
+}
 
 /// Why the resolver rejects the candidate year for an entry whose timestamp omits the year.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -116,13 +144,15 @@ fn with_lowercase_first_char(phrase: &str) -> String {
     }
 }
 
-pub(crate) fn resolve_entries(
+/// One timestamp per entry of `entries`, `None` for an entry whose line has none. The error is
+/// the [`UnresolvedYear`] of the entry at which year resolution stopped.
+pub(crate) fn resolve_entry_anchors(
     text: &str,
     entries: &[PendingLogEntry],
     boot_session_ranges: &[BootSessionRange],
     summary: Option<&SummaryBlock>,
     year_reference: DateTime<Utc>,
-) -> Result<Vec<LogEntry>, LogParseError> {
+) -> Result<Vec<Option<DateTime<Utc>>>, UnresolvedYear> {
     let unsynchronised_ranges: Vec<Range<usize>> = boot_session_ranges
         .iter()
         .map(BootSessionRange::unsynchronised_entries)
@@ -146,40 +176,22 @@ pub(crate) fn resolve_entries(
             _ => None,
         })
         .collect();
-    let resolved = resolve_anchors(&yearless, summary, year_reference)
-        .map_err(|failure| failure.into_parse_error(text))?;
-    let first_anchor = entries.iter().find_map(|entry| match entry.timestamp {
-        Some(RawTimestamp::Absolute(timestamp)) => Some(timestamp),
-        Some(RawTimestamp::Yearless(_)) => resolved.first().copied(),
-        None => None,
-    });
-    let Some(first_anchor) = first_anchor else {
-        return Ok(Vec::new());
-    };
-    let mut anchored = resolved.into_iter();
+    let mut resolved = resolve_anchors(&yearless, summary, year_reference)
+        .map_err(|failure| failure.into_unresolved_year(text))?
+        .into_iter();
     Ok(entries
         .iter()
-        .map(|entry| {
-            let (timestamp, timestamp_kind) = match entry.timestamp {
-                Some(RawTimestamp::Absolute(timestamp)) => (timestamp, TimestampKind::Anchored),
-                Some(RawTimestamp::Yearless(_)) => {
-                    let resolved = anchored.next();
-                    debug_assert!(
-                        resolved.is_some(),
-                        "resolve_anchors returns one timestamp per yearless entry"
-                    );
-                    resolved.map_or((first_anchor, TimestampKind::Interpolated), |timestamp| {
-                        (timestamp, TimestampKind::Anchored)
-                    })
-                }
-                None => (first_anchor, TimestampKind::Interpolated),
-            };
-            LogEntry {
-                timestamp,
-                timestamp_kind,
-                line_number: entry.line_number,
-                message: entry.message,
+        .map(|entry| match entry.timestamp {
+            Some(RawTimestamp::Absolute(timestamp)) => Some(timestamp),
+            Some(RawTimestamp::Yearless(_)) => {
+                let timestamp = resolved.next();
+                debug_assert!(
+                    timestamp.is_some(),
+                    "resolve_anchors returns one timestamp per yearless entry"
+                );
+                timestamp
             }
+            None => None,
         })
         .collect())
 }
@@ -271,8 +283,8 @@ struct YearResolutionFailure {
 }
 
 impl YearResolutionFailure {
-    fn into_parse_error(self, text: &str) -> LogParseError {
-        LogParseError::UnresolvedYear {
+    fn into_unresolved_year(self, text: &str) -> UnresolvedYear {
+        UnresolvedYear {
             line_number: self.anchor.line_number,
             written_timestamp: self.anchor.written_timestamp(text),
             conflict: self.conflict,

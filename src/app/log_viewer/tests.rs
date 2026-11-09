@@ -30,6 +30,7 @@ use gt_test_utils::{
 };
 use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::{FileSource, Latitude, Longitude};
+use gt_ui_theme::EM_DASH;
 use gt_ui_types::{LoadedLogId, LogMatchColor, LogMatchGlyph, LogMatchHover, LogMatches};
 
 use super::{
@@ -1126,6 +1127,44 @@ fn the_summary_panel_of_a_log_without_an_exporter_block_shows_the_derived_figure
     );
 }
 
+#[test]
+fn the_table_of_a_log_with_unresolved_years_shows_its_timestamps_as_written() {
+    let harness = harness_of(
+        Vec::new(),
+        &[("journal.log", gt_test_utils::UNRESOLVED_YEARS_LOG)],
+    );
+
+    harness.get_by_label("    --05-20 12:00:00");
+    harness.get_by_label("    --05-20 11:00:00");
+    let blank_timestamp = " ".repeat(" 2026-05-20 12:00:00".len());
+    harness.get_by_label(blank_timestamp.as_str());
+    assert!(
+        harness.query_by_label_contains("2026-05-20").is_none(),
+        "no row or day divider shows a year"
+    );
+}
+
+#[test]
+fn the_summary_panel_of_a_log_with_unresolved_years_draws_em_dashes_for_its_times() {
+    let mut harness = harness_of(
+        Vec::new(),
+        &[("journal.log", gt_test_utils::UNRESOLVED_YEARS_LOG)],
+    );
+
+    unfold_the_summary_panel(&mut harness);
+
+    let em_dashes_on_the_row_of = |caption: &str| {
+        let row = harness.get_by_label(caption).rect();
+        harness
+            .query_all_by_label(EM_DASH)
+            .filter(|dash| row.y_range().contains(dash.rect().center().y))
+            .count()
+    };
+    for (caption, em_dashes) in [("Time span", 1), ("Interpolated entries", 1), ("Boot 1", 2)] {
+        assert_eq!(em_dashes_on_the_row_of(caption), em_dashes, "{caption}");
+    }
+}
+
 /// Clicks the parse summary, which unfolds the panel beneath it.
 fn unfold_the_summary_panel(harness: &mut Harness<ViewerState>) {
     let summary = harness
@@ -1586,8 +1625,10 @@ fn dragging_the_association_window_commits_one_pass_with_the_final_placements() 
     assert_eq!(state.viewer.association_window_commits, 1);
     assert_eq!(log.association_window(), previous);
     let recording = state.recordings.view().entries().next().unwrap();
-    let expected = RecordingAssociationIndex::from_recording(recording)
-        .associate_entries(log.parsed().entries(), previous);
+    let expected = RecordingAssociationIndex::from_recording(recording).associate_timestamps(
+        log.parsed().chronology().resolved().unwrap().timestamps(),
+        previous,
+    );
     assert!(expected.get(1).is_some_and(Option::is_some));
     for (index, placement) in expected.into_iter().enumerate() {
         assert_eq!(log.entry_placement(index), placement);

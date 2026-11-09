@@ -32,7 +32,7 @@ fn a_chunked_parse_of_a_journald_sized_log_matches_the_one_chunk_parse() {
     let parsed = chunked.expect("the fixture parses");
     assert!(parsed.entries().len() > 1_000, "the fixture has entries");
     assert!(
-        parsed.interpolated_entry_count() > 0,
+        fixtures::resolved(&parsed).interpolated_entry_count() > 0,
         "the fixture has lines without a timestamp"
     );
     assert!(
@@ -42,7 +42,7 @@ fn a_chunked_parse_of_a_journald_sized_log_matches_the_one_chunk_parse() {
     assert!(parsed.summary_block().is_some(), "the fixture is exported");
     assert_eq!(parsed.exporter_entry_count_mismatch(), None);
     assert_eq!(
-        parsed.order_anomalies(),
+        fixtures::resolved(&parsed).order_anomalies(),
         [],
         "every backwards step in the fixture is a logged clock change"
     );

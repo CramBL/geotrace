@@ -229,16 +229,29 @@ pub(crate) struct LogHexagonLabel {
 impl LogHexagonLabel {
     fn of(source: &LogMatchSource, entry_indices: &[usize]) -> Self {
         let parsed = &source.parsed;
+        let lines_left_out = entry_indices.len().saturating_sub(HOVER_LINE_CAP);
+        let Some(resolved) = parsed.chronology().resolved() else {
+            return Self {
+                log_name: source.display_name.clone(),
+                lines: Vec::new(),
+                lines_left_out,
+            };
+        };
         Self {
             log_name: source.display_name.clone(),
             lines: entry_indices
                 .iter()
                 .take(HOVER_LINE_CAP)
-                .filter_map(|&entry_index| parsed.entries().get(entry_index))
-                .map(|entry| {
+                .filter_map(|&entry_index| {
+                    Some((
+                        parsed.entries().get(entry_index)?,
+                        resolved.timestamp(entry_index)?,
+                    ))
+                })
+                .map(|(entry, timestamp)| {
                     format!(
                         "{}  {}",
-                        entry.timestamp.format(HOVER_TIME_FORMAT),
+                        timestamp.format(HOVER_TIME_FORMAT),
                         gt_fmt::truncate_with_ellipsis(
                             parsed.message(entry),
                             HOVER_MESSAGE_MAX_CHARS
@@ -246,7 +259,7 @@ impl LogHexagonLabel {
                     )
                 })
                 .collect(),
-            lines_left_out: entry_indices.len().saturating_sub(HOVER_LINE_CAP),
+            lines_left_out,
         }
     }
 

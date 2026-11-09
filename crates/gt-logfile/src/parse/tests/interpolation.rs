@@ -9,14 +9,14 @@ use crate::test_util;
 fn the_first_anchored_timestamp_skips_the_interpolated_entries_before_it() {
     let parsed = fixtures::parsed_log("2026-05-23 10:00:00 first\nStack trace follows:\n");
     assert_eq!(
-        parsed.first_anchored_timestamp(),
-        Some(test_util::utc(2026, 5, 23, 10, 0, 0))
+        fixtures::resolved(&parsed).first_anchored_timestamp(),
+        test_util::utc(2026, 5, 23, 10, 0, 0)
     );
 
     let leading_run = fixtures::parsed_log("Stack trace follows:\n2026-05-23 10:00:00 first\n");
     assert_eq!(
-        leading_run.first_anchored_timestamp(),
-        Some(test_util::utc(2026, 5, 23, 10, 0, 0)),
+        fixtures::resolved(&leading_run).first_anchored_timestamp(),
+        test_util::utc(2026, 5, 23, 10, 0, 0),
         "the interpolated entry before the anchor carries its timestamp, but does not anchor it"
     );
 }
@@ -98,11 +98,10 @@ fn a_session_no_line_of_which_anchored_takes_the_anchor_before_it() {
             test_util::utc(2026, 1, 1, 0, 10, 0),
         ]
     );
+    let resolved = fixtures::resolved(&parsed);
     assert_eq!(
-        parsed
-            .boot_sessions()
-            .iter()
-            .map(|session| session.anchored.is_some())
+        (0..parsed.boot_sessions().len())
+            .map(|session_index| resolved.session_bounds(session_index).is_some())
             .collect::<Vec<_>>(),
         [true, false, true]
     );

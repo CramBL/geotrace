@@ -7,7 +7,7 @@ use gt_loaded_files::LoadedFileEntry;
 use gt_types::{AddressedFix, FixRef, Latitude, Longitude};
 use rayon::prelude::*;
 
-use crate::{parse::LogEntry, pool};
+use crate::pool;
 
 /// Where an entry sits on the recording it was associated against.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -86,17 +86,18 @@ impl<'a> RecordingAssociationIndex<'a> {
         }
     }
 
-    pub fn associate_entries(
+    /// One placement per timestamp of [`crate::ResolvedChronology::timestamps`].
+    pub fn associate_timestamps(
         &self,
-        entries: &[LogEntry],
+        timestamps: &[DateTime<Utc>],
         window: Duration,
     ) -> Vec<Option<EntryPlacement>> {
-        let position_of = |entry: &LogEntry| self.position_at(entry.timestamp, window);
+        let position_of = |timestamp: &DateTime<Utc>| self.position_at(*timestamp, window);
         match pool::log_worker_pool() {
-            Some(pool) if entries.len() >= PARALLEL_ASSOCIATION_MIN_ENTRIES => {
-                pool.install(|| entries.par_iter().map(position_of).collect())
+            Some(pool) if timestamps.len() >= PARALLEL_ASSOCIATION_MIN_ENTRIES => {
+                pool.install(|| timestamps.par_iter().map(position_of).collect())
             }
-            Some(_) | None => entries.iter().map(position_of).collect(),
+            Some(_) | None => timestamps.iter().map(position_of).collect(),
         }
     }
 }
@@ -115,7 +116,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::{TextSlice, TimestampKind, test_util};
+    use crate::test_util;
 
     /// `count` fixes a second apart from `start()`, as a track of their own.
     fn track_of(count: usize) -> LoadedTrack {
@@ -131,16 +132,6 @@ mod tests {
         Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0)
             .single()
             .expect("valid")
-    }
-
-    /// One entry logged at `time`, which is all the association reads of it.
-    fn entry_at(time: DateTime<Utc>) -> LogEntry {
-        LogEntry {
-            timestamp: time,
-            timestamp_kind: TimestampKind::Anchored,
-            line_number: 1,
-            message: TextSlice { offset: 0, len: 0 },
-        }
     }
 
     #[test]
@@ -201,10 +192,7 @@ mod tests {
         });
 
         assert_eq!(
-            index.associate_entries(
-                &[entry_at(start() + Duration::seconds(offset_secs))],
-                window,
-            ),
+            index.associate_timestamps(&[start() + Duration::seconds(offset_secs)], window,),
             vec![expected],
         );
     }
@@ -310,17 +298,17 @@ mod tests {
         let files = test_util::loaded_recording(vec![track_of(1 + entry_count / 1000)]);
         let index =
             RecordingAssociationIndex::from_recording(files.view().get(0).expect("loaded fixture"));
-        let entries: Vec<LogEntry> = (0..entry_count)
-            .map(|index| entry_at(start() + Duration::milliseconds(index as i64)))
+        let timestamps: Vec<DateTime<Utc>> = (0..entry_count)
+            .map(|index| start() + Duration::milliseconds(index as i64))
             .collect();
 
-        let associated = index.associate_entries(&entries, window());
+        let associated = index.associate_timestamps(&timestamps, window());
 
         assert_eq!(
             associated,
-            entries
+            timestamps
                 .iter()
-                .map(|entry| index.position_at(entry.timestamp, window()))
+                .map(|timestamp| index.position_at(*timestamp, window()))
                 .collect::<Vec<_>>()
         );
         assert!(
@@ -416,16 +404,15 @@ mod tests {
             let fixes = recording.addressed_fixes();
             let index = RecordingAssociationIndex::from_recording(recording);
             let window = Duration::seconds(window_secs);
-            let entries: Vec<LogEntry> = entry_offsets_secs
+            let timestamps: Vec<DateTime<Utc>> = entry_offsets_secs
                 .iter()
-                .map(|offset| entry_at(start() + Duration::seconds(*offset)))
+                .map(|offset| start() + Duration::seconds(*offset))
                 .collect();
 
-            let placements = index.associate_entries(&entries, window);
+            let placements = index.associate_timestamps(&timestamps, window);
 
-            prop_assert_eq!(placements.len(), entries.len());
-            for (entry, placement) in entries.iter().zip(&placements) {
-                let logged_at = entry.timestamp;
+            prop_assert_eq!(placements.len(), timestamps.len());
+            for (&logged_at, placement) in timestamps.iter().zip(&placements) {
                 let nearest = fixes.iter().enumerate().min_by_key(|(_, fix)| {
                     (fix.placed.fix.tpv.time().utc() - logged_at).abs()
                 });

@@ -5,7 +5,7 @@
 use chrono::Duration;
 use egui::{Button, Frame, Grid, Label, RichText, ScrollArea};
 use gt_log_view::LoadedLog;
-use gt_logfile::{BootSession, ParsedLog};
+use gt_logfile::ParsedLog;
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::LoadedLogId;
 
@@ -34,13 +34,14 @@ impl LogViewerWindow {
         });
     }
 
-    /// One row per boot session, with a bar proportional to its uptime.
+    /// One row per boot session, with a bar proportional to its uptime. The
+    /// panel draws an em dash for each start and uptime of a log whose years
+    /// are unresolved.
     fn boot_sessions_ui(&mut self, ui: &mut egui::Ui, log: &LoadedLog, log_id: LoadedLogId) {
         let parsed = log.parsed();
-        let longest_uptime = parsed
-            .boot_sessions()
-            .iter()
-            .filter_map(BootSession::uptime)
+        let chronology = parsed.chronology();
+        let longest_uptime = (0..parsed.boot_sessions().len())
+            .filter_map(|session_index| chronology.session_uptime(session_index))
             .max();
 
         ui.add_space(4.0);
@@ -61,9 +62,9 @@ impl LogViewerWindow {
                             DiagnosticTarget::BootSession(session_index),
                         );
                     }
-                    let uptime = session.uptime();
+                    let uptime = chronology.session_uptime(session_index);
                     ui.add(
-                        Label::new(session.anchored.map_or_else(
+                        Label::new(chronology.session_bounds(session_index).map_or_else(
                             || EM_DASH.to_owned(),
                             |anchored| anchored.first.format(TIMESTAMP_FORMAT).to_string(),
                         ))
@@ -99,7 +100,8 @@ impl LogViewerWindow {
     /// only when the parse found any: a clean log says nothing here.
     fn order_anomalies_ui(&mut self, ui: &mut egui::Ui, log: &LoadedLog, log_id: LoadedLogId) {
         let parsed = log.parsed();
-        if parsed.order_anomalies().is_empty() {
+        let order_anomalies = parsed.chronology().order_anomalies();
+        if order_anomalies.is_empty() {
             return;
         }
         let amber = gt_ui_theme::warning_amber(ui.visuals().dark_mode);
@@ -109,7 +111,7 @@ impl LogViewerWindow {
             .num_columns(2)
             .spacing(GRID_SPACING)
             .show(ui, |ui| {
-                for anomaly in parsed.order_anomalies() {
+                for anomaly in order_anomalies {
                     let entry_index = parsed
                         .entries()
                         .partition_point(|entry| entry.line_number < anomaly.line_number);
@@ -144,8 +146,10 @@ impl LogViewerWindow {
 }
 
 /// The figures the parse derived: the format it read the log in, the span its
-/// entries cover, and how each line was kept.
+/// entries cover, and how each line was kept. The panel draws an em dash for
+/// the span and the interpolated entries of a log whose years are unresolved.
 fn parse_figures_ui(ui: &mut egui::Ui, parsed: &ParsedLog) {
+    let chronology = parsed.chronology();
     Grid::new("log_viewer_parse_figures")
         .num_columns(2)
         .spacing(GRID_SPACING)
@@ -156,7 +160,7 @@ fn parse_figures_ui(ui: &mut egui::Ui, parsed: &ParsedLog) {
 
             ui.label("Time span");
             ui.add(
-                Label::new(parsed.time_range().map_or_else(
+                Label::new(chronology.time_range().map_or_else(
                     || EM_DASH.to_owned(),
                     |range| gt_fmt::format_time_range(range.start, range.end),
                 ))
@@ -172,8 +176,12 @@ fn parse_figures_ui(ui: &mut egui::Ui, parsed: &ParsedLog) {
 
             ui.label("Interpolated entries");
             ui.add(
-                Label::new(gt_fmt::format_count(parsed.interpolated_entry_count()))
-                    .selectable(true),
+                Label::new(
+                    chronology
+                        .interpolated_entry_count()
+                        .map_or_else(|| EM_DASH.to_owned(), gt_fmt::format_count),
+                )
+                .selectable(true),
             );
             ui.end_row();
 

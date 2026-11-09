@@ -1,7 +1,7 @@
 use std::ops::Range;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
-use chrono::Duration;
+use chrono::{DateTime, Duration, NaiveTime, Utc};
 use egui::{
     Color32, InteractOptions, Label, RichText, ScrollArea, Separator, Shape, TextFormat,
     text::LayoutJob,
@@ -11,8 +11,8 @@ use gt_log_view::{
     ClockTicks, EntryMatches, FilterStack, LoadedLog, TimestampTick, VisibleEntries,
 };
 use gt_logfile::{
-    BootSession, LogEntry, LogLevelKind, ParsedLog, RecognisedMessage, StructuralLineKind,
-    TimestampKind,
+    BootSession, LogChronology, LogEntry, LogLevelKind, ParsedLog, RecognisedMessage,
+    StructuralLineKind, TimestampKind, YearlessTimestamp,
 };
 use gt_types::{Latitude, Longitude, mercator};
 use gt_ui_theme::ALMOST_EQUAL_TO;
@@ -253,22 +253,29 @@ impl DisplayedClockTicks {
                     }
                     _ => Some(divider.visible_row),
                 });
-        let revealed_day_rows = entries
-            .reveal
-            .iter()
-            .flat_map(|reveal| [reveal.visible_row, reveal.visible_row + 1])
-            .filter(move |&row| {
-                let previous = row
-                    .checked_sub(1)
-                    .and_then(|row| entries.entry_index(row))
-                    .and_then(|entry| parsed.entries().get(entry));
-                let current = entries
-                    .entry_index(row)
-                    .and_then(|entry| parsed.entries().get(entry));
-                previous.zip(current).is_some_and(|(previous, current)| {
-                    previous.timestamp.date_naive() != current.timestamp.date_naive()
-                })
-            });
+        let revealed_day_rows =
+            parsed
+                .chronology()
+                .resolved()
+                .into_iter()
+                .flat_map(move |resolved| {
+                    entries
+                        .reveal
+                        .iter()
+                        .flat_map(|reveal| [reveal.visible_row, reveal.visible_row + 1])
+                        .filter(move |&row| {
+                            let previous = row
+                                .checked_sub(1)
+                                .and_then(|row| entries.entry_index(row))
+                                .and_then(|entry| resolved.timestamp(entry));
+                            let current = entries
+                                .entry_index(row)
+                                .and_then(|entry| resolved.timestamp(entry));
+                            previous.zip(current).is_some_and(|(previous, current)| {
+                                previous.date_naive() != current.date_naive()
+                            })
+                        })
+                });
         day_rows.chain(revealed_day_rows)
     }
 
@@ -720,6 +727,7 @@ impl LogViewerWindow {
         let ticks = &rows.ticks;
         let line_numbers = LineNumberColumn::new(ui, rows.largest_line_number);
         let anomaly_steps: FxHashMap<usize, Duration> = parsed
+            .chronology()
             .order_anomalies()
             .iter()
             .map(|anomaly| {
@@ -812,13 +820,21 @@ impl LogViewerWindow {
                                         )
                                         .on_hover_text(source);
                                     }
-                                    boot_divider_row_ui(ui, session);
+                                    boot_divider_row_ui(
+                                        ui,
+                                        session,
+                                        parsed.chronology().session_uptime(session_index),
+                                    );
                                 });
                             }
                         }
                         Some(LineTableRow::DayDivider { entry_index }) => {
-                            if let Some(entry) = parsed.entries().get(entry_index) {
-                                let date = entry.timestamp.format(DATE_FORMAT).to_string();
+                            if let Some(timestamp) = parsed
+                                .chronology()
+                                .resolved()
+                                .and_then(|resolved| resolved.timestamp(entry_index))
+                            {
+                                let date = timestamp.format(DATE_FORMAT).to_string();
                                 divider_row_ui(ui, RichText::new(date).monospace());
                             }
                         }
@@ -849,6 +865,7 @@ impl LogViewerWindow {
                             let placement = log.entry_placement(entry_index);
                             let interaction = EntryRow {
                                 entry,
+                                timestamp: RowTimestamp::of(parsed, entry_index, entry),
                                 line_numbers,
                                 message,
                                 highlighted: HighlightedMessage {
@@ -994,9 +1011,72 @@ impl LineNumberColumn {
     }
 }
 
+#[derive(Clone, Copy)]
+enum RowTimestamp {
+    Absolute {
+        timestamp: DateTime<Utc>,
+        kind: TimestampKind,
+    },
+
+    /// The timestamp the line writes, in a log whose years are unresolved.
+    Written(YearlessTimestamp),
+}
+
+impl RowTimestamp {
+    /// `None` for a line without a timestamp in a log whose years are unresolved.
+    fn of(parsed: &ParsedLog, entry_index: usize, entry: &LogEntry) -> Option<Self> {
+        match parsed.chronology() {
+            LogChronology::Resolved(resolved) => {
+                resolved
+                    .timestamp(entry_index)
+                    .map(|timestamp| Self::Absolute {
+                        timestamp,
+                        kind: entry.timestamp_kind,
+                    })
+            }
+            LogChronology::Unresolved(unresolved) => {
+                unresolved.written_timestamp(entry_index).map(Self::Written)
+            }
+        }
+    }
+
+    fn is_interpolated(self) -> bool {
+        matches!(
+            self,
+            Self::Absolute {
+                kind: TimestampKind::Interpolated,
+                ..
+            }
+        )
+    }
+
+    fn prefix(self) -> &'static str {
+        match self.is_interpolated() {
+            true => ALMOST_EQUAL_TO,
+            false => ANCHORED_TIMESTAMP_PREFIX,
+        }
+    }
+
+    /// The date as [`DATE_FORMAT`] writes it, or as `--MM-DD` for a timestamp without a year.
+    fn date_text(self) -> String {
+        match self {
+            Self::Absolute { timestamp, .. } => timestamp.format(DATE_FORMAT).to_string(),
+            Self::Written(written) => format!("--{:02}-{:02}", written.month(), written.day()),
+        }
+    }
+
+    fn time(self) -> NaiveTime {
+        match self {
+            Self::Absolute { timestamp, .. } => timestamp.time(),
+            Self::Written(written) => written.time(),
+        }
+    }
+}
+
 /// One entry of the log, as the table draws it.
 struct EntryRow<'a> {
     entry: &'a LogEntry,
+    timestamp: Option<RowTimestamp>,
     line_numbers: LineNumberColumn,
     message: &'a str,
     highlighted: HighlightedMessage,
@@ -1126,7 +1206,7 @@ impl EntryRow<'_> {
     /// Renders the row, returning what the cursor did to it.
     fn ui(&self, ui: &mut egui::Ui, unit: AssociationWindowUnit) -> Option<RowInteraction> {
         let associated = self.position.is_some();
-        let interpolated = self.entry.timestamp_kind == TimestampKind::Interpolated;
+        let interpolated = self.timestamp.is_some_and(RowTimestamp::is_interpolated);
         let tick = match associated {
             true => self.tick,
             false => self.tick.min(TimestampTick::Plain),
@@ -1194,7 +1274,9 @@ impl EntryRow<'_> {
 
     /// The timestamp column in three runs: the date, the hour and minute, and
     /// the seconds. The date and the seconds are always drawn in the quiet
-    /// colour, and only the hour and minute take the timestamp tick.
+    /// colour, and only the hour and minute take the timestamp tick. The date
+    /// of a timestamp without a year is `--MM-DD`, and a line without a
+    /// timestamp has blank runs.
     fn timestamp_job(&self, ui: &egui::Ui, tick: TimestampTick) -> LayoutJob {
         let font_id = egui::TextStyle::Monospace.resolve(ui.style());
         let quiet = ui.visuals().weak_text_color();
@@ -1203,24 +1285,27 @@ impl EntryRow<'_> {
             TimestampTick::Plain => ui.visuals().text_color(),
             TimestampTick::Strong => ui.visuals().strong_text_color(),
         };
-        let prefix = match self.entry.timestamp_kind {
-            TimestampKind::Anchored => ANCHORED_TIMESTAMP_PREFIX,
-            TimestampKind::Interpolated => ALMOST_EQUAL_TO,
-        };
-        let timestamp = self.entry.timestamp;
+        let widths = &*TIMESTAMP_RUN_WIDTHS;
+        let prefix = self
+            .timestamp
+            .map_or(ANCHORED_TIMESTAMP_PREFIX, RowTimestamp::prefix);
+        let date = self
+            .timestamp
+            .map_or_else(String::new, RowTimestamp::date_text);
+        let time = self.timestamp.map(RowTimestamp::time);
         let mut job = LayoutJob::default();
         job.append(
-            &format!("{prefix}{} ", timestamp.format(DATE_FORMAT)),
+            &format!("{prefix}{date:>width$} ", width = widths.date),
             0.0,
             TextFormat::simple(font_id.clone(), quiet),
         );
         job.append(
-            &timestamp.format(HOUR_MINUTE_FORMAT).to_string(),
+            &time_run(time, HOUR_MINUTE_FORMAT, widths.hour_minute),
             0.0,
             TextFormat::simple(font_id.clone(), moved),
         );
         job.append(
-            &timestamp.format(SECONDS_FORMAT).to_string(),
+            &time_run(time, SECONDS_FORMAT, widths.seconds),
             0.0,
             TextFormat::simple(font_id, quiet),
         );
@@ -1354,11 +1439,15 @@ fn divider_row_ui(ui: &mut egui::Ui, label: RichText) {
     });
 }
 
+/// `time` as `format` writes it, padded with spaces to `width`, and all spaces without a time.
+fn time_run(time: Option<NaiveTime>, format: &str, width: usize) -> String {
+    let text = time.map_or_else(String::new, |time| time.format(format).to_string());
+    format!("{text:width$}")
+}
+
 /// The divider opening one boot session, stating the run it starts.
-fn boot_divider_row_ui(ui: &mut egui::Ui, session: &BootSession) {
-    let uptime = session
-        .uptime()
-        .map_or_else(|| EM_DASH.to_owned(), gt_fmt::format_human_terse_duration);
+fn boot_divider_row_ui(ui: &mut egui::Ui, session: &BootSession, uptime: Option<Duration>) {
+    let uptime = uptime.map_or_else(|| EM_DASH.to_owned(), gt_fmt::format_human_terse_duration);
     let entries = session.entry_count();
     let label = format!(
         "Boot {} {MIDDLE_DOT} up {uptime} {MIDDLE_DOT} {} {}",
@@ -1381,6 +1470,29 @@ const HOUR_MINUTE_FORMAT: &str = "%H:%M";
 /// The run of the timestamp column after the hour and the minute, always drawn
 /// in the quiet colour.
 const SECONDS_FORMAT: &str = ":%S";
+
+/// The characters each run of the timestamp column takes: as many as its format writes for the
+/// Unix epoch, which is as many as it writes for any instant with a four-digit year.
+struct TimestampRunWidths {
+    date: usize,
+    hour_minute: usize,
+    seconds: usize,
+}
+
+static TIMESTAMP_RUN_WIDTHS: LazyLock<TimestampRunWidths> = LazyLock::new(|| {
+    let width_of = |format: &str| {
+        DateTime::UNIX_EPOCH
+            .format(format)
+            .to_string()
+            .chars()
+            .count()
+    };
+    TimestampRunWidths {
+        date: width_of(DATE_FORMAT),
+        hour_minute: width_of(HOUR_MINUTE_FORMAT),
+        seconds: width_of(SECONDS_FORMAT),
+    }
+});
 
 pub(super) const INTERPOLATED_TIMESTAMP_HOVER: &str =
     "Timestamp interpolated between neighbouring entries";

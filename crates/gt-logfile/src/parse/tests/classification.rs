@@ -14,7 +14,7 @@ fn a_line_is_anchored_structural_or_interpolated() {
         [TimestampKind::Anchored, TimestampKind::Interpolated]
     );
     assert_eq!(parsed.anchored_entry_count(), 1);
-    assert_eq!(parsed.interpolated_entry_count(), 1);
+    assert_eq!(fixtures::resolved(&parsed).interpolated_entry_count(), 1);
     assert_eq!(
         parsed
             .structural_lines()
