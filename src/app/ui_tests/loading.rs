@@ -1,11 +1,12 @@
 use egui_kittest::{Harness, kittest::Queryable as _};
+use gt_logfile::LogParseError;
 use gt_test_utils::{HarnessInteraction as _, TestHarness};
 use gt_types::LoadWarning;
 use rstest::rstest;
 
 use crate::app::App;
 use crate::app::frame::{LOADING_OVERLAY_MOST_LISTED_JOBS, LOADING_OVERLAY_WINDOW_ID};
-use crate::app::load_failures::{LoadFailure, LoadSource};
+use crate::app::load_failures::{LoadFailure, LoadFailureCause, LoadSource};
 use crate::app::test_util;
 use crate::app::test_util::harness::TestDroppedFile;
 use crate::app::ui_tests;
@@ -61,11 +62,12 @@ fn drag_drop_binary_junk_reports_it_is_not_a_recognised_log() {
         LoadSource::Filename("mystery.bin".to_owned())
     );
     assert!(
-        failure
-            .details
-            .starts_with("Not a recognised log: no line has a timestamp in a known format"),
+        matches!(
+            failure.cause,
+            LoadFailureCause::ParseLog(LogParseError::NoRecognisedFormat { .. })
+        ),
         "got {:?}",
-        failure.details
+        failure.cause
     );
     assert_eq!(harness.state().shared.borrow().loaded_files.len(), 0);
     assert_eq!(harness.state().logs.len(), 0);

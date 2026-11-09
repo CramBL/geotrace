@@ -31,40 +31,85 @@ pub enum YearConflict {
     },
 }
 
-impl fmt::Display for YearConflict {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let utc = |timestamp: DateTime<Utc>| timestamp.format(gt_fmt::UTC_SUBSECOND_FORMAT);
-        match *self {
+impl YearConflict {
+    /// Sentence case, without the instants of [`YearConflict::bound_comparison`].
+    /// `Display` writes it with a lowercase first character.
+    pub fn reason(self) -> String {
+        match self {
+            Self::FollowLogsEndAt { .. } => format!("After the summary block's \"{LOGS_END_AT}\""),
+            Self::FollowYearReference { .. } => format!(
+                "More than {} after the {}",
+                gt_fmt::format_human_terse_duration(format::YEAR_REFERENCE_FUTURE_TOLERANCE),
+                with_lowercase_first_char(REFERENCE_DATE)
+            ),
+            Self::LackDate { year } => format!("The date does not exist in {year}"),
+            Self::PrecedeLogsBeginAt { .. } => {
+                format!("Before the summary block's \"{LOGS_BEGIN_AT}\"")
+            }
+        }
+    }
+
+    /// Returns `None` for [`YearConflict::LackDate`], which has no candidate instant.
+    pub fn bound_comparison(self) -> Option<BoundComparison> {
+        match self {
             Self::FollowLogsEndAt {
                 candidate,
                 logs_end_at,
-            } => write!(
-                f,
-                "{} UTC is after the summary block's \"Logs end at\" {} UTC",
-                utc(candidate),
-                utc(logs_end_at)
-            ),
+            } => Some(BoundComparison {
+                candidate,
+                bound_name: LOGS_END_AT,
+                bound: logs_end_at,
+            }),
             Self::FollowYearReference {
                 candidate,
                 year_reference,
-            } => write!(
-                f,
-                "{} UTC is more than {} after the reference date {} UTC",
-                utc(candidate),
-                gt_fmt::format_human_terse_duration(format::YEAR_REFERENCE_FUTURE_TOLERANCE),
-                utc(year_reference)
-            ),
-            Self::LackDate { year } => write!(f, "the date does not exist in {year}"),
+            } => Some(BoundComparison {
+                candidate,
+                bound_name: REFERENCE_DATE,
+                bound: year_reference,
+            }),
+            Self::LackDate { .. } => None,
             Self::PrecedeLogsBeginAt {
                 candidate,
                 logs_begin_at,
-            } => write!(
-                f,
-                "{} UTC is before the summary block's \"Logs begin at\" {} UTC",
-                utc(candidate),
-                utc(logs_begin_at)
-            ),
+            } => Some(BoundComparison {
+                candidate,
+                bound_name: LOGS_BEGIN_AT,
+                bound: logs_begin_at,
+            }),
         }
+    }
+}
+
+impl fmt::Display for YearConflict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let lowercase_reason = with_lowercase_first_char(&self.reason());
+        match self.bound_comparison() {
+            Some(BoundComparison {
+                candidate, bound, ..
+            }) => write!(
+                f,
+                "{} UTC is {lowercase_reason} {} UTC",
+                candidate.format(gt_fmt::UTC_SUBSECOND_FORMAT),
+                bound.format(gt_fmt::UTC_SUBSECOND_FORMAT)
+            ),
+            None => f.write_str(&lowercase_reason),
+        }
+    }
+}
+
+/// The candidate instant of a [`YearConflict`] and the instant it conflicts with.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BoundComparison {
+    pub candidate: DateTime<Utc>,
+    pub bound_name: &'static str,
+    pub bound: DateTime<Utc>,
+}
+
+fn with_lowercase_first_char(phrase: &str) -> String {
+    match phrase.split_at_checked(1) {
+        Some((first, rest)) => format!("{}{rest}", first.to_ascii_lowercase()),
+        None => phrase.to_owned(),
     }
 }
 
@@ -402,3 +447,9 @@ impl FileDirection {
 // Backward calendar steps over 183 days indicate year transitions.
 // Smaller clock corrections retain their year for the order-anomaly scan.
 const YEAR_ROLLOVER_THRESHOLD: Duration = Duration::days(183);
+
+const LOGS_BEGIN_AT: &str = "Logs begin at";
+
+const LOGS_END_AT: &str = "Logs end at";
+
+const REFERENCE_DATE: &str = "Reference date";

@@ -241,14 +241,24 @@ pub enum LogParseError {
          (first line: {first_line:?})"
     )]
     NoRecognisedFormat { first_line: String },
-    #[error(
-        "Cannot resolve the year of log line {line_number} ({written_timestamp:?}): {conflict}"
-    )]
+    #[error("{} ({written_timestamp:?}): {conflict}", self.headline())]
     UnresolvedYear {
         line_number: u32,
         written_timestamp: String,
         conflict: YearConflict,
     },
+}
+
+impl LogParseError {
+    /// The message without the written timestamp and the [`YearConflict`] of an unresolved year.
+    pub fn headline(&self) -> String {
+        match self {
+            Self::Empty | Self::NoRecognisedFormat { .. } => self.to_string(),
+            Self::UnresolvedYear { line_number, .. } => {
+                format!("Cannot resolve the year of log line {line_number}")
+            }
+        }
+    }
 }
 
 /// Saved logs must reuse `year_reference` when exporter bounds are absent.

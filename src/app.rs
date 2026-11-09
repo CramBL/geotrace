@@ -1086,7 +1086,7 @@ impl App {
                 log::error!(
                     "Failed to load {:?}: {}",
                     failure.source.to_string(),
-                    failure.details
+                    failure.cause
                 );
                 self.load_failures.push(failure);
             }
