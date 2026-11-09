@@ -7,7 +7,8 @@ use std::ops::Range;
 use chrono::{DateTime, Duration, Utc};
 
 use crate::{
-    parse::LogEntry,
+    format::{self, RawTimestamp},
+    parse::{LogEntry, PendingLogEntry, TextSlice},
     structure::{self, StructuralLine, StructuralLineKind},
 };
 
@@ -20,6 +21,10 @@ pub struct BootSession {
     /// Indexes [`crate::ParsedLog::entries`].
     pub entry_range: Range<usize>,
 
+    /// Index in [`crate::ParsedLog::entries`] of the first entry after the clock jump that follows
+    /// the session's reboot separator, or `entry_range.start` for a session without one.
+    pub first_synchronised_entry: usize,
+
     /// Unset for a session no line of which carried a timestamp.
     pub anchored: Option<AnchoredBounds>,
 }
@@ -27,6 +32,10 @@ pub struct BootSession {
 impl BootSession {
     pub fn entry_count(&self) -> usize {
         self.entry_range.len()
+    }
+
+    pub fn unsynchronised_entries(&self) -> Range<usize> {
+        self.entry_range.start..self.first_synchronised_entry
     }
 
     /// How long the device ran, from the session's first anchored entry to its
@@ -74,35 +83,76 @@ pub struct OrderAnomaly {
     pub timestamp_step: Duration,
 }
 
+/// The entries of one boot session, cut before their years resolve.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BootSessionRange {
+    pub entry_range: Range<usize>,
+
+    /// Index of the first entry with a synchronised clock. The entries from `entry_range.start`
+    /// up to it follow a reboot separator and precede a clock jump.
+    pub first_synchronised_entry: usize,
+}
+
+impl BootSessionRange {
+    pub fn unsynchronised_entries(&self) -> Range<usize> {
+        self.entry_range.start..self.first_synchronised_entry
+    }
+}
+
 /// Cuts `entries` at every reboot separator. Each session holds at least one
 /// entry: a separator with no entry before the next one is skipped, so a log
 /// opening on a separator reports as many boots as the device was rebooted.
-pub(crate) fn segment_into_boot_sessions(
-    entries: &[LogEntry],
+pub(crate) fn segment_into_boot_session_ranges(
+    text: &str,
+    entries: &[PendingLogEntry],
     structural_lines: &[StructuralLine],
-) -> Vec<BootSession> {
+) -> Vec<BootSessionRange> {
     let cuts = structural_lines
         .iter()
         .filter(|line| line.kind == StructuralLineKind::RebootSeparator)
         .map(|line| entries.partition_point(|entry| entry.line_number < line.line_number))
         .chain(std::iter::once(entries.len()));
 
-    let mut sessions: Vec<BootSession> = Vec::new();
-    let mut boot_number: u32 = 0;
+    let mut sessions = Vec::new();
     let mut start = 0;
+    let mut opened_by_reboot_separator = false;
     for end in cuts {
         let end = end.max(start);
         if end > start {
-            boot_number = boot_number.saturating_add(1);
-            sessions.push(BootSession {
-                boot_number,
+            let session_entries = entries.get(start..end).unwrap_or_default();
+            let first_synchronised_entry = if opened_by_reboot_separator {
+                start + first_entry_after_a_clock_jump(text, session_entries).unwrap_or(0)
+            } else {
+                start
+            };
+            sessions.push(BootSessionRange {
                 entry_range: start..end,
-                anchored: AnchoredBounds::from_entries(entries.get(start..end).unwrap_or_default()),
+                first_synchronised_entry,
             });
         }
         start = end;
+        opened_by_reboot_separator = true;
     }
     sessions
+}
+
+/// Numbers `ranges` and reads the anchored bounds of each from its resolved entries.
+pub(crate) fn number_boot_sessions(
+    entries: &[LogEntry],
+    ranges: Vec<BootSessionRange>,
+) -> Vec<BootSession> {
+    ranges
+        .into_iter()
+        .zip(1..)
+        .map(|(range, boot_number)| BootSession {
+            boot_number,
+            anchored: AnchoredBounds::from_entries(
+                entries.get(range.entry_range.clone()).unwrap_or_default(),
+            ),
+            entry_range: range.entry_range,
+            first_synchronised_entry: range.first_synchronised_entry,
+        })
+        .collect()
 }
 
 /// Records every backwards step between the anchored entries of one session
@@ -119,7 +169,12 @@ pub(crate) fn scan_for_order_anomalies(
         }
         if let Some(previous) = previous
             && entry.timestamp < previous
-            && !has_clock_adjustment_nearby(text, entries, index)
+            && !any_reports_a_clock_adjustment(
+                text,
+                clock_adjustment_neighbours(entries, index)
+                    .iter()
+                    .map(|entry| entry.message),
+            )
         {
             anomalies.push(OrderAnomaly {
                 line_number: entry.line_number,
@@ -130,17 +185,51 @@ pub(crate) fn scan_for_order_anomalies(
     }
 }
 
-fn has_clock_adjustment_nearby(text: &str, entries: &[LogEntry], index: usize) -> bool {
+/// Offset in `session_entries` of the first entry after a clock jump: a forward calendar step
+/// past [`format::YEAR_ROLLOVER_THRESHOLD`] within [`CLOCK_ADJUSTMENT_NEIGHBOUR_ENTRIES`] of a
+/// clock adjustment. A backward calendar step can be a New Year, and stays in the year transition
+/// chain.
+fn first_entry_after_a_clock_jump(
+    text: &str,
+    session_entries: &[PendingLogEntry],
+) -> Option<usize> {
+    let mut previous = None;
+    for (offset, entry) in session_entries.iter().enumerate() {
+        let Some(RawTimestamp::Yearless(timestamp)) = entry.timestamp else {
+            continue;
+        };
+        if let Some(previous) = previous
+            && timestamp.calendar_step_from(previous) > format::YEAR_ROLLOVER_THRESHOLD
+            && any_reports_a_clock_adjustment(
+                text,
+                clock_adjustment_neighbours(session_entries, offset)
+                    .iter()
+                    .map(|entry| entry.message),
+            )
+        {
+            return Some(offset);
+        }
+        previous = Some(timestamp);
+    }
+    None
+}
+
+fn clock_adjustment_neighbours<Entry>(entries: &[Entry], index: usize) -> &[Entry] {
     let first = index.saturating_sub(CLOCK_ADJUSTMENT_NEIGHBOUR_ENTRIES);
     let past_last = index
         .saturating_add(CLOCK_ADJUSTMENT_NEIGHBOUR_ENTRIES)
         .saturating_add(1)
         .min(entries.len());
-    entries
-        .get(first..past_last)
-        .unwrap_or_default()
-        .iter()
-        .any(|entry| structure::reports_a_clock_adjustment(entry.message.in_text(text)))
+    entries.get(first..past_last).unwrap_or_default()
+}
+
+fn any_reports_a_clock_adjustment(
+    text: &str,
+    messages: impl IntoIterator<Item = TextSlice>,
+) -> bool {
+    messages
+        .into_iter()
+        .any(|message| structure::reports_a_clock_adjustment(message.in_text(text)))
 }
 
 /// The anchors a run of untimestamped lines takes its timestamps from.

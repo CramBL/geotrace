@@ -208,6 +208,12 @@ impl YearlessTimestamp {
         )
     }
 
+    pub(crate) fn latest_at_or_before(self, ceiling: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        (0..=LEAP_YEAR_SEARCH_YEARS)
+            .filter_map(|offset| self.in_year(ceiling.year().checked_sub(offset)?))
+            .find(|candidate| *candidate <= ceiling)
+    }
+
     pub(crate) fn calendar_step_from(self, previous: Self) -> Duration {
         self.calendar_offset() - previous.calendar_offset()
     }
@@ -227,6 +233,10 @@ const MONTH_ABBREVS: [&str; 12] = [
 const YEARLESS_DATE_VALIDATION_LEAP_YEAR: i32 = 2000;
 
 pub(crate) const YEAR_REFERENCE_FUTURE_TOLERANCE: Duration = Duration::hours(1);
+
+// Backward calendar steps over 183 days indicate year transitions.
+// Smaller clock corrections retain their year for the order-anomaly scan.
+pub(crate) const YEAR_ROLLOVER_THRESHOLD: Duration = Duration::days(183);
 
 // A leap day can be eight years from the next leap day across a century boundary.
 pub(crate) const LEAP_YEAR_SEARCH_YEARS: i32 = 8;
@@ -290,6 +300,31 @@ mod tests {
             infer_year(naive, now).map(|timestamp| timestamp.year()),
             Some(expected_year)
         );
+    }
+
+    #[rstest]
+    #[case::in_the_ceiling_year(
+        "Mar  1 12:00:00 entry",
+        test_util::utc(2026, 3, 1, 12, 0, 0),
+        test_util::utc(2026, 3, 1, 12, 0, 0)
+    )]
+    #[case::after_the_ceiling(
+        "Mar  1 12:00:01 entry",
+        test_util::utc(2026, 3, 1, 12, 0, 0),
+        test_util::utc(2025, 3, 1, 12, 0, 1)
+    )]
+    #[case::leap_day_across_a_century_exception(
+        "Feb 29 00:00:00 entry",
+        test_util::utc(2104, 2, 28, 0, 0, 0),
+        test_util::utc(2096, 2, 29, 0, 0, 0)
+    )]
+    fn a_yearless_timestamp_takes_the_latest_year_at_or_before_a_ceiling(
+        #[case] line: &str,
+        #[case] ceiling: DateTime<Utc>,
+        #[case] expected: DateTime<Utc>,
+    ) {
+        let (timestamp, _) = parse_syslog(line, false).expect("valid syslog line");
+        assert_eq!(timestamp.latest_at_or_before(ceiling), Some(expected));
     }
 
     #[rstest]
