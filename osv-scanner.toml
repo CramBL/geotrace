@@ -1,24 +1,19 @@
 [[IgnoredVulns]]
-id = "RUSTSEC-2025-0141"
-reason = "No fix available; transitive dependency via walkers → http-cache-reqwest → http-cache → bincode"
-ignoreUntil = "2026-10-31T00:00:00Z"
-
-[[IgnoredVulns]]
 id = "RUSTSEC-2026-0186"
-reason = "Pending update for memmap2 (v0.5.10, v0.9.10)"
-ignoreUntil = "2026-10-31T00:00:00Z"
+reason = "Transitive dependency via walkers → http-cache-reqwest → http-cache (manager-cacache) → cacache 13.1.0. cacache 13.1.0 is the latest release and requires memmap2 0.5."
+ignoreUntil = "2027-04-09T00:00:00Z"
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0370"
-reason = "Unmaintained after merger into zbus 6. Removal requires an AccessKit and AT-SPI release with zbus 6. See https://rustsec.org/advisories/RUSTSEC-2026-0370.html"
-ignoreUntil = "2026-10-31T00:00:00Z"
+reason = "Unmaintained after merger into zbus 6. Transitive dependency via eframe → accesskit_unix. accesskit_unix 0.24.1 is the latest release and requires zbus 5. See https://rustsec.org/advisories/RUSTSEC-2026-0370.html"
+ignoreUntil = "2027-04-09T00:00:00Z"
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0371"
-reason = "Unmaintained after merger into zbus 6. Removal requires an AccessKit and AT-SPI release with zbus 6. See https://rustsec.org/advisories/RUSTSEC-2026-0371.html"
-ignoreUntil = "2026-10-31T00:00:00Z"
+reason = "Unmaintained after merger into zbus 6. Transitive dependency via eframe → accesskit_unix. accesskit_unix 0.24.1 is the latest release and requires zbus 5. See https://rustsec.org/advisories/RUSTSEC-2026-0371.html"
+ignoreUntil = "2027-04-09T00:00:00Z"
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0372"
-reason = "Unmaintained after merger into zbus 6. Removal requires an AccessKit and AT-SPI release with zbus 6. See https://rustsec.org/advisories/RUSTSEC-2026-0372.html"
-ignoreUntil = "2026-10-31T00:00:00Z"
+reason = "Unmaintained after merger into zbus 6. Transitive dependency via eframe → accesskit_unix. accesskit_unix 0.24.1 is the latest release and requires zbus 5. See https://rustsec.org/advisories/RUSTSEC-2026-0372.html"
+ignoreUntil = "2027-04-09T00:00:00Z"
