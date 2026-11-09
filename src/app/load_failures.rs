@@ -280,7 +280,7 @@ mod tests {
     const PARSE_ERROR: &str =
         "Not a recognised log: no line has a timestamp in a known format (first line: \"boot\")";
 
-    const BACKWARD_CLOCK_STEP_BEFORE_LOGS_BEGIN_AT: &str = "\
+    const LAST_ENTRY_BEFORE_LOGS_BEGIN_AT: &str = "\
 # export header
 # host: example
 
@@ -295,7 +295,6 @@ May 20 12:00:07 host service: ordinary entry
 May 20 12:00:08 host service: ordinary entry
 May 20 12:00:09 host service: ordinary entry
 May 20 11:00:00 host service: clock moved backwards
-May 20 12:00:10 host service: clock restored
 ----------- Journal summary -----------
 Logs begin at: Wed 20-May-2026 12:00:00 UTC
 Logs end at: Wed 20-May-2026 12:00:10 UTC
@@ -313,10 +312,10 @@ Logs end at: Wed 20-May-2026 12:00:10 UTC
 
     fn unresolved_year_failure() -> LoadFailure {
         let error = gt_logfile::parse_log(
-            BACKWARD_CLOCK_STEP_BEFORE_LOGS_BEGIN_AT.into(),
+            LAST_ENTRY_BEFORE_LOGS_BEGIN_AT.into(),
             fixtures::utc_instant(2026, 11, 9, 0, 0),
         )
-        .expect_err("the backward clock step fails year resolution");
+        .expect_err("the last entry before Logs begin at fails year resolution");
         LoadFailure::new(
             LoadSource::Filename("journal.log".to_owned()),
             LoadFailureCause::ParseLog(error),

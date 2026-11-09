@@ -78,10 +78,24 @@ fuzz_target!(|data: &[u8]| {
             LogFormat::SyslogShort | LogFormat::SyslogShortMicro
         )
     }) {
-        for entry in parsed.entries() {
-            assert!(summary
-                .logs_begin_at
-                .is_none_or(|begin| entry.timestamp >= begin));
+        // Every anchored syslog entry has a timestamp without a year.
+        // The summary block bounds the first and last of them, never the ones between.
+        let mut anchored = parsed
+            .entries()
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.is_anchored());
+        let (first_index, first) = anchored.next().expect("a parsed log has an anchor");
+        let last = anchored.next_back().map_or(first, |(_, last)| last);
+        let first_entry_has_a_synchronised_clock = !parsed
+            .boot_sessions()
+            .iter()
+            .any(|session| session.unsynchronised_entries().contains(&first_index));
+        let logs_begin_at = summary
+            .logs_begin_at
+            .filter(|_| first_entry_has_a_synchronised_clock);
+        for entry in [first, last] {
+            assert!(logs_begin_at.is_none_or(|begin| entry.timestamp >= begin));
             assert!(summary
                 .logs_end_at
                 .is_none_or(|end| entry.timestamp.timestamp() <= end.timestamp()));

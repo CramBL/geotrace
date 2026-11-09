@@ -262,7 +262,7 @@ impl LogParseError {
 }
 
 /// Saved logs must reuse `year_reference` when exporter bounds are absent.
-/// Syslog years resolve in file order before boot segmentation and interpolation.
+/// Syslog years resolve after boot segmentation and before interpolation.
 pub fn parse_log(text: LogText, year_reference: DateTime<Utc>) -> Result<ParsedLog, LogParseError> {
     parse_log_in_chunks_of(text, year_reference, CHUNK_TARGET_BYTES)
 }
@@ -286,9 +286,12 @@ pub fn parse_log_in_chunks_of(
     if !index.entries.iter().any(|entry| entry.timestamp.is_some()) {
         return Err(index.no_anchored_entry_error(&text));
     }
+    let boot_session_ranges =
+        session::segment_into_boot_session_ranges(&text, &index.entries, &index.structural_lines);
     let mut entries = years::resolve_entries(
         &text,
         &index.entries,
+        &boot_session_ranges,
         summary_block.as_ref(),
         year_reference,
     )?;
@@ -301,7 +304,7 @@ pub fn parse_log_in_chunks_of(
         return Err(index.no_anchored_entry_error(&text));
     };
 
-    let boot_sessions = session::segment_into_boot_sessions(&entries, &index.structural_lines);
+    let boot_sessions = session::number_boot_sessions(&entries, boot_session_ranges);
     let order_anomalies =
         check_order_and_interpolate(&text, &mut entries, &boot_sessions, first_anchor);
 

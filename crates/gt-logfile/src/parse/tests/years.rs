@@ -5,7 +5,7 @@ use proptest::prelude::*;
 use rstest::rstest;
 
 use crate::format::LogFormat;
-use crate::parse::tests::fixtures;
+use crate::parse::tests::fixtures::{self, REBOOT};
 use crate::parse::{self, LogParseError};
 use crate::test_util::{self, EXPORTED_SUMMARY};
 use crate::{OrderAnomaly, YearConflict};
@@ -19,7 +19,7 @@ use crate::{OrderAnomaly, YearConflict};
     "Dec 31 23:59:59.500000 before\nfiller\n--- Device reboot ---\nJan  1 00:00:01.500000 after\n",
     500_000
 )]
-fn a_year_transition_precedes_boot_segmentation_and_interpolation(
+fn a_year_transition_across_a_reboot_precedes_interpolation(
     #[case] text: &str,
     #[case] micros: i64,
 ) {
@@ -220,6 +220,12 @@ fn clock_regressions_and_leap_days_resolve_to_valid_years(
     Ok(vec![test_util::utc(2026, 12, 31, 23, 59, 59), test_util::utc(2026, 1, 1, 0, 0, 0)]),
     vec![OrderAnomaly { line_number: 2, timestamp_step: test_util::utc(2026, 1, 1, 0, 0, 0) - test_util::utc(2026, 12, 31, 23, 59, 59) }]
 )]
+#[case::middle_entry_after_logs_end_at(
+    "May 29 18:48:25 first\nSep 03 21:11:30 middle\nMay 29 18:50:11 last\n",
+    "Logs begin at: Fri 29-May-2026 18:48:25 UTC\nLogs end at: Fri 29-May-2026 18:50:11 UTC\n",
+    Ok(vec![test_util::utc(2026, 5, 29, 18, 48, 25), test_util::utc(2026, 9, 3, 21, 11, 30), test_util::utc(2026, 5, 29, 18, 50, 11)]),
+    vec![OrderAnomaly { line_number: 3, timestamp_step: test_util::utc(2026, 5, 29, 18, 50, 11) - test_util::utc(2026, 9, 3, 21, 11, 30) }]
+)]
 #[case::fractional_end(
     "Jan  1 00:00:00.500000 entry\n",
     "Logs begin at: Thu 01-Jan-2026 00:00:00 UTC\nLogs end at: Thu 01-Jan-2026 00:00:00 UTC\n",
@@ -353,16 +359,118 @@ fn leap_day_outside_exporter_bounds_returns_a_year_resolution_error() {
     );
 }
 
+#[test]
+fn a_backward_clock_step_before_logs_begin_at_keeps_the_year_of_its_neighbours() {
+    let parsed = fixtures::parsed_log(BACKWARD_CLOCK_STEP_BEFORE_LOGS_BEGIN_AT);
+    let backward_step = parsed
+        .entries()
+        .iter()
+        .find(|entry| entry.line_number == 14)
+        .map(|entry| entry.timestamp);
+    assert_eq!(backward_step, Some(test_util::utc(2026, 5, 20, 11, 0, 0)));
+    assert_eq!(
+        parsed.order_anomalies(),
+        [OrderAnomaly {
+            line_number: 14,
+            timestamp_step: test_util::utc(2026, 5, 20, 11, 0, 0)
+                - test_util::utc(2026, 5, 20, 12, 0, 9),
+        }]
+    );
+}
+
+#[rstest]
+#[case::beside_a_clock_adjustment(
+    "Nov 09 10:00:00 host svc: before reboot\n--- Device reboot ---\n\
+     Jan 01 00:00:05 host svc: after reset\n\
+     Jan 01 00:00:40 host systemd-timesyncd[1]: Initial clock synchronization to Mon 2026-11-09 12:00:00 UTC.\n\
+     Nov 09 12:00:00 host svc: time synced\n",
+    vec![
+        test_util::utc(2026, 11, 9, 10, 0, 0),
+        test_util::utc(2026, 1, 1, 0, 0, 5),
+        test_util::utc(2026, 1, 1, 0, 0, 40),
+        test_util::utc(2026, 11, 9, 12, 0, 0),
+    ]
+)]
+#[case::without_a_clock_adjustment(
+    "Nov 09 10:00:00 host svc: before reboot\n--- Device reboot ---\n\
+     Jan 01 00:00:05 host svc: after reset\n\
+     Nov 09 12:00:00 host svc: time synced\n",
+    vec![
+        test_util::utc(2025, 11, 9, 10, 0, 0),
+        test_util::utc(2026, 1, 1, 0, 0, 5),
+        test_util::utc(2026, 11, 9, 12, 0, 0),
+    ]
+)]
+#[case::without_a_reboot_separator(
+    "Nov 09 10:00:00 host svc: before reset\n\
+     Jan 01 00:00:05 host svc: after reset\n\
+     Jan 01 00:00:40 host systemd-timesyncd[1]: Initial clock synchronization to Mon 2026-11-09 12:00:00 UTC.\n\
+     Nov 09 12:00:00 host svc: time synced\n",
+    vec![
+        test_util::utc(2025, 11, 9, 10, 0, 0),
+        test_util::utc(2026, 1, 1, 0, 0, 5),
+        test_util::utc(2026, 1, 1, 0, 0, 40),
+        test_util::utc(2026, 11, 9, 12, 0, 0),
+    ]
+)]
+fn a_clock_reset_after_a_reboot_leaves_its_year_chain_only_beside_a_clock_adjustment(
+    #[case] text: &str,
+    #[case] expected: Vec<DateTime<Utc>>,
+) {
+    let parsed = parse::parse_log(text.into(), test_util::utc(2026, 11, 10, 0, 0, 0))
+        .expect("parse the clock reset");
+    assert_eq!(fixtures::timestamps(&parsed), expected);
+}
+
+#[test]
+fn clock_resets_after_several_reboots_resolve_between_the_summary_block_bounds() {
+    let text = format!(
+        "Nov 09 08:00:00 host svc: first\n{REBOOT}\
+         Jan 01 00:00:05 host svc: after reset\n\
+         Jan 01 00:00:40 host systemd-timesyncd[1]: Initial clock synchronization to Mon 2026-11-09 09:00:00 UTC.\n\
+         Nov 09 09:00:00 host svc: synced\n{REBOOT}\
+         Jan 01 00:00:05 host svc: after reset\n\
+         Jan 01 00:00:41 host systemd-timesyncd[1]: Initial clock synchronization to Mon 2026-11-09 10:00:00 UTC.\n\
+         Nov 09 10:00:00 host svc: synced\n\
+         ----------- Journal summary -----------\n\
+         Logs begin at: Mon 09-Nov-2026 08:00:00 UTC\n\
+         Logs end at: Mon 09-Nov-2026 10:00:00 UTC\n"
+    );
+    let parsed = fixtures::parsed_log(&text);
+    assert_eq!(
+        fixtures::timestamps(&parsed),
+        [
+            test_util::utc(2026, 11, 9, 8, 0, 0),
+            test_util::utc(2026, 1, 1, 0, 0, 5),
+            test_util::utc(2026, 1, 1, 0, 0, 40),
+            test_util::utc(2026, 11, 9, 9, 0, 0),
+            test_util::utc(2026, 1, 1, 0, 0, 5),
+            test_util::utc(2026, 1, 1, 0, 0, 41),
+            test_util::utc(2026, 11, 9, 10, 0, 0),
+        ]
+    );
+    assert_eq!(
+        parsed
+            .boot_sessions()
+            .iter()
+            .map(|session| session.first_synchronised_entry)
+            .collect::<Vec<_>>(),
+        [0, 3, 6]
+    );
+    assert_eq!(parsed.order_anomalies(), []);
+}
+
 #[rstest]
 #[case::whole_log(0, 14)]
 #[case::first_ten_lines_removed(10, 4)]
-fn the_year_resolution_error_names_the_backward_clock_step_before_logs_begin_at(
+fn the_year_resolution_error_names_a_last_entry_before_logs_begin_at(
     #[case] removed_line_count: usize,
     #[case] line_number: u32,
 ) {
     let text: String = BACKWARD_CLOCK_STEP_BEFORE_LOGS_BEGIN_AT
         .split_inclusive('\n')
         .skip(removed_line_count)
+        .filter(|line| !line.contains("clock restored"))
         .collect();
     assert_eq!(
         parse::parse_log(text.as_str().into(), fixtures::now()),
@@ -374,6 +482,77 @@ fn the_year_resolution_error_names_the_backward_clock_step_before_logs_begin_at(
                 logs_begin_at: test_util::utc(2026, 5, 20, 12, 0, 0),
             },
         })
+    );
+}
+
+#[test]
+fn logs_begin_at_with_the_reset_clock_of_the_first_entry_does_not_bound_the_synchronised_entries() {
+    let text = format!(
+        "{REBOOT}Jan 01 00:00:05 host svc: after reset\n\
+         Jan 01 00:00:40 host systemd-timesyncd[1]: Initial clock synchronization to Mon 2026-11-09 12:00:00 UTC.\n\
+         Nov 09 12:00:00 host svc: time synced\n\
+         ----------- Journal summary -----------\n\
+         Logs begin at: Thu 01-Jan-1970 00:00:05 UTC\n\
+         Logs end at: Mon 09-Nov-2026 12:00:00 UTC\n"
+    );
+    assert_eq!(
+        fixtures::timestamps(&fixtures::parsed_log(&text)),
+        [
+            test_util::utc(2026, 1, 1, 0, 0, 5),
+            test_util::utc(2026, 1, 1, 0, 0, 40),
+            test_util::utc(2026, 11, 9, 12, 0, 0),
+        ]
+    );
+}
+
+#[test]
+fn a_boot_session_across_two_new_years_rolls_over_twice_with_a_clock_adjustment_beside_the_second()
+{
+    let text = format!(
+        "{REBOOT}Mar 01 00:00:00 host svc: start\n\
+         Aug 01 00:00:00 host svc: summer\n\
+         Dec 31 23:59:59 host svc: before the first midnight\n\
+         Jan  1 00:00:01 host svc: after the first midnight\n\
+         Jun 01 00:00:00 host svc: summer\n\
+         Oct 01 00:00:00 host svc: autumn\n\
+         Dec 31 23:59:58 host svc: before the second midnight\n\
+         Dec 31 23:59:59 host chronyd[610]: System clock wrong by 0.2 seconds, adjustment started\n\
+         Jan  1 00:00:01 host svc: after the second midnight\n"
+    );
+    assert_eq!(
+        fixtures::timestamps(&fixtures::parsed_log(&text)),
+        [
+            test_util::utc(2024, 3, 1, 0, 0, 0),
+            test_util::utc(2024, 8, 1, 0, 0, 0),
+            test_util::utc(2024, 12, 31, 23, 59, 59),
+            test_util::utc(2025, 1, 1, 0, 0, 1),
+            test_util::utc(2025, 6, 1, 0, 0, 0),
+            test_util::utc(2025, 10, 1, 0, 0, 0),
+            test_util::utc(2025, 12, 31, 23, 59, 58),
+            test_util::utc(2025, 12, 31, 23, 59, 59),
+            test_util::utc(2026, 1, 1, 0, 0, 1),
+        ]
+    );
+}
+
+#[rstest]
+#[case::ordinary_entries("host svc: midnight")]
+#[case::beside_a_clock_adjustment(
+    "host chronyd[610]: System clock wrong by 0.2 seconds, adjustment started"
+)]
+fn a_new_year_inside_one_boot_session_rolls_over(#[case] message_before_midnight: &str) {
+    let text = format!(
+        "{REBOOT}Dec 31 23:59:30 host svc: before midnight\n\
+         Dec 31 23:59:59 {message_before_midnight}\n\
+         Jan  1 00:00:01 host svc: after midnight\n"
+    );
+    assert_eq!(
+        fixtures::timestamps(&fixtures::parsed_log(&text)),
+        [
+            test_util::utc(2025, 12, 31, 23, 59, 30),
+            test_util::utc(2025, 12, 31, 23, 59, 59),
+            test_util::utc(2026, 1, 1, 0, 0, 1),
+        ]
     );
 }
 
