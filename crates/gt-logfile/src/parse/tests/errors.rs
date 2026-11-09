@@ -1,9 +1,9 @@
 use rstest::rstest;
 
-use crate::YearConflict;
 use crate::parse::tests::fixtures;
 use crate::parse::{self, ERROR_LINE_EXCERPT_CHARS, LogParseError};
 use crate::test_util;
+use crate::{BoundComparison, YearConflict};
 
 #[test]
 fn a_log_without_any_recognised_timestamp_names_its_first_line() {
@@ -82,6 +82,65 @@ fn a_year_resolution_error_states_the_line_its_timestamp_and_the_conflict(
         conflict,
     };
     assert_eq!(error.to_string(), expected);
+}
+
+#[rstest]
+#[case::follow_logs_end_at(
+    YearConflict::FollowLogsEndAt {
+        candidate: test_util::utc(2027, 5, 20, 11, 0, 0),
+        logs_end_at: test_util::utc(2026, 5, 20, 12, 0, 10),
+    },
+    "After the summary block's \"Logs end at\"",
+    Some(BoundComparison {
+        candidate: test_util::utc(2027, 5, 20, 11, 0, 0),
+        bound_name: "Logs end at",
+        bound: test_util::utc(2026, 5, 20, 12, 0, 10),
+    })
+)]
+#[case::follow_year_reference(
+    YearConflict::FollowYearReference {
+        candidate: test_util::utc(2026, 5, 20, 11, 0, 0),
+        year_reference: test_util::utc(2026, 5, 20, 9, 30, 0),
+    },
+    "More than 1h after the reference date",
+    Some(BoundComparison {
+        candidate: test_util::utc(2026, 5, 20, 11, 0, 0),
+        bound_name: "Reference date",
+        bound: test_util::utc(2026, 5, 20, 9, 30, 0),
+    })
+)]
+#[case::lack_date(YearConflict::LackDate { year: 2023 }, "The date does not exist in 2023", None)]
+#[case::precede_logs_begin_at(
+    YearConflict::PrecedeLogsBeginAt {
+        candidate: test_util::utc(2026, 5, 20, 11, 0, 0),
+        logs_begin_at: test_util::utc(2026, 5, 20, 12, 0, 0),
+    },
+    "Before the summary block's \"Logs begin at\"",
+    Some(BoundComparison {
+        candidate: test_util::utc(2026, 5, 20, 11, 0, 0),
+        bound_name: "Logs begin at",
+        bound: test_util::utc(2026, 5, 20, 12, 0, 0),
+    })
+)]
+fn a_year_conflict_states_its_reason_and_the_bound_its_candidate_conflicts_with(
+    #[case] conflict: YearConflict,
+    #[case] reason: &str,
+    #[case] bound_comparison: Option<BoundComparison>,
+) {
+    assert_eq!(
+        (conflict.reason().as_str(), conflict.bound_comparison()),
+        (reason, bound_comparison)
+    );
+}
+
+#[test]
+fn the_headline_of_a_year_resolution_error_ends_at_its_line_number() {
+    let error = LogParseError::UnresolvedYear {
+        line_number: 14,
+        written_timestamp: "May 20 11:00:00".to_owned(),
+        conflict: YearConflict::LackDate { year: 2023 },
+    };
+    assert_eq!(error.headline(), "Cannot resolve the year of log line 14");
 }
 
 #[test]

@@ -1,9 +1,12 @@
+use std::io;
+
 use chrono::Duration;
 use egui::accesskit::Role;
 use egui_kittest::{Harness, kittest::Queryable as _};
 use gt_loaded_files::FileHistory;
+use gt_loader::LoadError;
 use gt_log_view::{LoadedLog, LogAttachmentRef, PositionSourceState, RecordingKey};
-use gt_logfile::ParsedLog;
+use gt_logfile::{LogParseError, ParsedLog};
 use gt_plot::AnalysisConfig;
 use gt_store::{
     DatabaseRef, LogAttachmentId, RecordingUiState, Store, StoredLogFilter,
@@ -14,7 +17,7 @@ use rstest::rstest;
 
 use crate::app::association_batches::RecordingOperationOrigin;
 use crate::app::history_db::{self, OpenedRecording};
-use crate::app::load_failures::{LoadFailure, LoadSource};
+use crate::app::load_failures::{LoadFailure, LoadFailureCause, LoadSource};
 use crate::app::loader::{
     LoadedRecordingPlacement, LoadedRecordingResult, LooseLogResult, SavedLogResult,
 };
@@ -66,8 +69,13 @@ fn recording_outcome(name: &str) -> LoadedRecordingResult {
     }
 }
 
-fn load_failure(name: &str) -> LoadFailure {
-    LoadFailure::new(LoadSource::Filename(name.to_owned()), "Truncated recording")
+fn recording_load_failure(name: &str) -> LoadFailure {
+    LoadFailure::new(
+        LoadSource::Filename(name.to_owned()),
+        LoadFailureCause::LoadRecording(Box::new(LoadError::Io(
+            io::ErrorKind::UnexpectedEof.into(),
+        ))),
+    )
 }
 
 fn saved_log_outcome(name: &str) -> SavedLogResult {
@@ -363,7 +371,7 @@ fn a_failed_recording_load_releases_pending_log_association(#[values(true, false
     log(Ok(log_outcome("log.txt")));
     harness.step();
     assert!(harness.state().association_dialog.is_none());
-    failed(Err(load_failure("failed.gtd")));
+    failed(Err(recording_load_failure("failed.gtd")));
     harness.run_steps(2);
     assert_initial_association(&mut harness, ask, 1);
 }
@@ -386,8 +394,11 @@ fn load_failures_stay_after_later_loads_succeed_in_the_same_frame() {
     let log = loader.controlled_loose_log_load_for_test("log.txt", batch.log());
     let saved = loader.controlled_saved_log_load_for_test("saved.log");
     drop(batch);
-    failed_recording(Err(load_failure("broken.gtd")));
-    failed_log(Err(load_failure("broken.log")));
+    failed_recording(Err(recording_load_failure("broken.gtd")));
+    failed_log(Err(LoadFailure::new(
+        LoadSource::Filename("broken.log".to_owned()),
+        LoadFailureCause::ParseLog(LogParseError::Empty),
+    )));
     recording(Ok(recording_outcome("recording.gtd")));
     log(Ok(log_outcome("log.txt")));
     saved(Ok(saved_log_outcome("saved.log")));
@@ -1553,7 +1564,7 @@ fn a_duplicate_loose_arrival_completes_without_registering_the_existing_context(
             .position_source_state(),
         source
     );
-    recording(Err(load_failure("failed.gtd")));
+    recording(Err(recording_load_failure("failed.gtd")));
     harness.run_steps(2);
     assert!(harness.state().association_batches.is_empty_for_test());
     assert_eq!(

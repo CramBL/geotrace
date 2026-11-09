@@ -18,7 +18,7 @@ use gt_track_builder::{
 use gt_types::{LoadedFile, TrackAggregates};
 
 use super::association_batches::{LogArrival, RecordingOperationOrigin};
-use super::load_failures::{LoadFailure, LoadSource};
+use super::load_failures::{LoadFailure, LoadFailureCause, LoadSource};
 use crate::app::background_thread;
 
 /// State for a single in-flight background load job, shown in the progress UI.
@@ -423,7 +423,12 @@ impl LoadJobs {
                         ctx.request_repaint();
                     })
                 })
-                .map_err(|e| LoadFailure::new(LoadSource::Filename(log_name), e));
+                .map_err(|e| {
+                    LoadFailure::new(
+                        LoadSource::Filename(log_name),
+                        LoadFailureCause::LoadRecording(Box::new(e)),
+                    )
+                });
             tx.send(LoadMessage::Completed {
                 id,
                 completion: LoadCompletion::Recording {
@@ -512,7 +517,12 @@ impl LoadJobs {
                         ctx.request_repaint();
                     })
                 })
-                .map_err(|e| LoadFailure::new(LoadSource::Filename(log_name), e));
+                .map_err(|e| {
+                    LoadFailure::new(
+                        LoadSource::Filename(log_name),
+                        LoadFailureCause::LoadRecording(Box::new(e)),
+                    )
+                });
             tx.send(LoadMessage::Completed {
                 id,
                 completion: LoadCompletion::Recording {
@@ -554,7 +564,7 @@ impl LoadJobs {
                             arrival,
                             result: Err(LoadFailure::new(
                                 LoadSource::Filename(filename),
-                                format_args!("Failed to read the file: {e}"),
+                                LoadFailureCause::ReadLogFile(e),
                             )),
                         },
                     })
@@ -798,7 +808,7 @@ fn parse_loaded_log(
 ) -> Result<LooseLogResult, LoadFailure> {
     report(0.55, STAGE_PARSING);
     let parsed = gt_logfile::parse_log(text, year_reference)
-        .map_err(|err| LoadFailure::new(source.clone(), err))?;
+        .map_err(|err| LoadFailure::new(source.clone(), LoadFailureCause::ParseLog(err)))?;
     let unindexable_line_count = parsed.unindexable_line_count();
     if unindexable_line_count > 0 {
         let noun = gt_fmt::pluralize(unindexable_line_count, "line", "lines");
@@ -1287,6 +1297,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use chrono::DateTime;
+    use gt_logfile::LogParseError;
     use gt_store::{HistoryDatabase, ReadOnlyHistoryDatabase, Recordings};
     use gt_test_utils::SyntheticGtdSpec;
     use rstest::rstest;
@@ -1625,16 +1636,18 @@ mod tests {
         jobs.spawn_pasted_log_text("kernel: no timestamp here\n".to_owned(), batch.log());
 
         let completed = drain_until_complete(&mut jobs);
+        let Some(LoadFailure {
+            cause: LoadFailureCause::ParseLog(error),
+            ..
+        }) = completed.completion.failure()
+        else {
+            panic!("expected a log parse failure");
+        };
         assert_eq!(
-            completed
-                .completion
-                .failure()
-                .map(|failure| failure.details),
-            Some(
-                "Not a recognised log: no line has a timestamp in a known format \
-                 (first line: \"kernel: no timestamp here\")"
-                    .to_owned()
-            )
+            error,
+            LogParseError::NoRecognisedFormat {
+                first_line: "kernel: no timestamp here".to_owned()
+            }
         );
     }
 
