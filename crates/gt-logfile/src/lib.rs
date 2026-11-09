@@ -20,6 +20,7 @@ pub use session::{AnchoredBounds, BootSession, OrderAnomaly};
 pub use structure::{StructuralLine, StructuralLineKind};
 pub use summary::{EntryCountMismatch, ServiceCount, ServiceIssueCounts, SummaryBlock};
 pub use text::LogText;
+pub use years::YearConflict;
 
 mod associate;
 mod format;

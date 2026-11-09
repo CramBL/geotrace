@@ -23,6 +23,7 @@
 - **Map & Tracks:** Fixed map highlights appearing over fixes hidden by a query.
 - **Map & Tracks:** Fixed start and finish flags remaining on query-hidden fixes.
 - **Interface:** Fixed a load error disappearing when another file finished loading after it.
+- **Log Viewer:** Fixed the year error for a log without years in its timestamps stating a line other than the conflicting one.
 
 ## 0.19.0 - 2026-10-04
 
