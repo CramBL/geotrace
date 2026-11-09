@@ -1810,14 +1810,7 @@ fn a_drag_down_the_metadata_rows_copies_every_value_it_covered() {
 
     let copied = h
         .inner
-        .output()
-        .platform_output
-        .commands
-        .iter()
-        .find_map(|command| match command {
-            egui::OutputCommand::CopyText(text) => Some(text.clone()),
-            egui::OutputCommand::OpenUrl(_) | egui::OutputCommand::CopyImage(_) => None,
-        })
+        .copied_text()
         .expect("the drag selected text to copy");
 
     let copied_values: Vec<&str> = copied.lines().filter(|line| !line.is_empty()).collect();

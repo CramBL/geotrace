@@ -5,6 +5,7 @@ use rstest::rstest;
 
 use crate::app::App;
 use crate::app::frame::{LOADING_OVERLAY_MOST_LISTED_JOBS, LOADING_OVERLAY_WINDOW_ID};
+use crate::app::load_failures::{LoadFailure, LoadSource};
 use crate::app::test_util;
 use crate::app::test_util::harness::TestDroppedFile;
 use crate::app::ui_tests;
@@ -51,10 +52,20 @@ fn drag_drop_binary_junk_reports_it_is_not_a_recognised_log() {
         TestDroppedFile::bytes(b"\xff\xfe\x00binary_junk".as_slice(), "mystery.bin"),
     );
 
-    let error = harness.state().load_error.clone().unwrap_or_default();
+    let failures: Vec<&LoadFailure> = harness.state().load_failures.iter().collect();
+    let [failure] = failures.as_slice() else {
+        panic!("expected one load failure, got {failures:?}");
+    };
+    assert_eq!(
+        failure.source,
+        LoadSource::Filename("mystery.bin".to_owned())
+    );
     assert!(
-        error.starts_with("Not a recognised log: no line has a timestamp in a known format"),
-        "got {error:?}"
+        failure
+            .details
+            .starts_with("Not a recognised log: no line has a timestamp in a known format"),
+        "got {:?}",
+        failure.details
     );
     assert_eq!(harness.state().shared.borrow().loaded_files.len(), 0);
     assert_eq!(harness.state().logs.len(), 0);

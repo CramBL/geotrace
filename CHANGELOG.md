@@ -12,6 +12,7 @@
 
 - **Map & Tracks:** Recorded positions are styled by navigation state, including fixes without headings or satellite reports.
 - **Map & Tracks:** Valid navigation fixes are shown in blue regardless of the used-satellite count.
+- **Interface:** Load errors are shown in a window for each failed load, with a button to copy the error.
 
 ### Fixed
 
@@ -21,6 +22,7 @@
 - **Map & Tracks:** Fixed query highlights disappearing when every other track layer was hidden.
 - **Map & Tracks:** Fixed map highlights appearing over fixes hidden by a query.
 - **Map & Tracks:** Fixed start and finish flags remaining on query-hidden fixes.
+- **Interface:** Fixed a load error disappearing when another file finished loading after it.
 
 ## 0.19.0 - 2026-10-04
 

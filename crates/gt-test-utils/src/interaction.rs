@@ -104,6 +104,10 @@ pub trait HarnessInteraction {
     /// Runs `settle_frames` frames, then measures the window titled `title`. A
     /// resizable window sizes itself against its content over several frames.
     fn settled_window_size(&mut self, title: &str, settle_frames: usize) -> Option<egui::Vec2>;
+
+    /// The text the last frame copied to the clipboard, `None` when the frame
+    /// copied none.
+    fn copied_text(&self) -> Option<String>;
 }
 
 impl<State> HarnessInteraction for Harness<'_, State> {
@@ -248,6 +252,17 @@ impl<State> HarnessInteraction for Harness<'_, State> {
             self.run();
         }
         self.window_rect(title).map(|rect| rect.size())
+    }
+
+    fn copied_text(&self) -> Option<String> {
+        self.output()
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                egui::OutputCommand::OpenUrl(_) | egui::OutputCommand::CopyImage(_) => None,
+            })
     }
 }
 
