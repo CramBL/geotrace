@@ -4,11 +4,11 @@ use chrono::{DateTime, Datelike as _, Duration, TimeZone as _, Utc};
 use proptest::prelude::*;
 use rstest::rstest;
 
-use crate::OrderAnomaly;
 use crate::format::LogFormat;
 use crate::parse::tests::fixtures;
 use crate::parse::{self, LogParseError};
 use crate::test_util::{self, EXPORTED_SUMMARY};
+use crate::{OrderAnomaly, YearConflict};
 
 #[rstest]
 #[case::seconds(
@@ -145,7 +145,14 @@ fn exporter_bounds_resolve_sparse_year_transitions_across_chunks(
 }
 
 #[rstest]
-#[case::minimum(DateTime::<Utc>::MIN_UTC, Err(LogParseError::UnresolvedYear { line_number: 1 }))]
+#[case::minimum(DateTime::<Utc>::MIN_UTC, Err(LogParseError::UnresolvedYear {
+    line_number: 1,
+    written_timestamp: "Dec 31 23:59:59".to_owned(),
+    conflict: YearConflict::FollowYearReference {
+        candidate: test_util::utc(DateTime::<Utc>::MIN_UTC.year(), 12, 31, 23, 59, 59),
+        year_reference: DateTime::<Utc>::MIN_UTC,
+    },
+}))]
 #[case::maximum(DateTime::<Utc>::MAX_UTC, Ok(Some(test_util::utc(DateTime::<Utc>::MAX_UTC.year(), 12, 31, 23, 59, 59))))]
 fn reference_limits_return_valid_timestamps_or_a_year_resolution_error(
     #[case] reference: DateTime<Utc>,
@@ -184,51 +191,62 @@ fn clock_regressions_and_leap_days_resolve_to_valid_years(
 #[case::outside_bounds(
     "May 20 18:00:00 entry\n",
     "Logs begin at: Thu 01-Jan-2026 00:00:00 UTC\nLogs end at: Sun 01-Feb-2026 00:00:00 UTC\n",
-    None,
+    Err(LogParseError::UnresolvedYear {
+        line_number: 1,
+        written_timestamp: "May 20 18:00:00".to_owned(),
+        conflict: YearConflict::FollowLogsEndAt {
+            candidate: test_util::utc(2026, 5, 20, 18, 0, 0),
+            logs_end_at: test_util::utc(2026, 2, 1, 0, 0, 0),
+        },
+    }),
     vec![]
 )]
 #[case::reversed_bounds(
     "Jan  1 00:00:00 entry\n",
     "Logs begin at: Sun 01-Feb-2026 00:00:00 UTC\nLogs end at: Thu 01-Jan-2026 00:00:00 UTC\n",
-    None,
+    Err(LogParseError::UnresolvedYear {
+        line_number: 1,
+        written_timestamp: "Jan  1 00:00:00".to_owned(),
+        conflict: YearConflict::PrecedeLogsBeginAt {
+            candidate: test_util::utc(2026, 1, 1, 0, 0, 0),
+            logs_begin_at: test_util::utc(2026, 2, 1, 0, 0, 0),
+        },
+    }),
     vec![]
 )]
 #[case::clock_regression_within_bounds(
     "Dec 31 23:59:59 first\nJan  1 00:00:00 second\n",
     "Logs begin at: Thu 01-Jan-2026 00:00:00 UTC\nLogs end at: Thu 31-Dec-2026 23:59:59 UTC\n",
-    Some(vec![test_util::utc(2026, 12, 31, 23, 59, 59), test_util::utc(2026, 1, 1, 0, 0, 0)]),
+    Ok(vec![test_util::utc(2026, 12, 31, 23, 59, 59), test_util::utc(2026, 1, 1, 0, 0, 0)]),
     vec![OrderAnomaly { line_number: 2, timestamp_step: test_util::utc(2026, 1, 1, 0, 0, 0) - test_util::utc(2026, 12, 31, 23, 59, 59) }]
 )]
 #[case::fractional_end(
     "Jan  1 00:00:00.500000 entry\n",
     "Logs begin at: Thu 01-Jan-2026 00:00:00 UTC\nLogs end at: Thu 01-Jan-2026 00:00:00 UTC\n",
-    Some(vec![test_util::utc(2026, 1, 1, 0, 0, 0) + Duration::microseconds(500_000)]),
+    Ok(vec![test_util::utc(2026, 1, 1, 0, 0, 0) + Duration::microseconds(500_000)]),
     vec![]
 )]
 #[case::leap_day_clock_regression_within_bounds(
     "Dec 31 23:59:59 first\nFeb 29 00:00:00 second\n",
     "Logs begin at: Mon 01-Jan-2024 00:00:00 UTC\nLogs end at: Tue 31-Dec-2024 23:59:59 UTC\n",
-    Some(vec![test_util::utc(2024, 12, 31, 23, 59, 59), test_util::utc(2024, 2, 29, 0, 0, 0)]),
+    Ok(vec![test_util::utc(2024, 12, 31, 23, 59, 59), test_util::utc(2024, 2, 29, 0, 0, 0)]),
     vec![OrderAnomaly { line_number: 2, timestamp_step: test_util::utc(2024, 2, 29, 0, 0, 0) - test_util::utc(2024, 12, 31, 23, 59, 59) }]
 )]
 fn exporter_bounds_constrain_year_candidates(
     #[case] entries: &str,
     #[case] bounds: &str,
-    #[case] timestamps: Option<Vec<DateTime<Utc>>>,
+    #[case] timestamps: Result<Vec<DateTime<Utc>>, LogParseError>,
     #[case] anomalies: Vec<OrderAnomaly>,
 ) {
     let text = format!("{entries}----------- Journal summary -----------\n{bounds}");
     let parsed = parse::parse_log(text.as_str().into(), fixtures::now());
     match timestamps {
-        Some(timestamps) => {
+        Ok(timestamps) => {
             let parsed = parsed.expect("parse within bounds");
             assert_eq!(fixtures::timestamps(&parsed), timestamps);
             assert_eq!(parsed.order_anomalies(), anomalies);
         }
-        None => assert_eq!(
-            parsed,
-            Err(LogParseError::UnresolvedYear { line_number: 1 })
-        ),
+        Err(error) => assert_eq!(parsed, Err(error)),
     }
 }
 
@@ -327,7 +345,53 @@ fn leap_day_outside_exporter_bounds_returns_a_year_resolution_error() {
     let text = "Feb 29 23:59:59 first\nMar  1 00:00:00 second\n----------- Journal summary -----------\nLogs begin at: Wed 01-Jan-2025 00:00:00 UTC\nLogs end at: Thu 31-Dec-2026 23:59:59 UTC\n";
     assert_eq!(
         parse::parse_log(text.into(), fixtures::now()),
-        Err(LogParseError::UnresolvedYear { line_number: 1 })
+        Err(LogParseError::UnresolvedYear {
+            line_number: 1,
+            written_timestamp: "Feb 29 23:59:59".to_owned(),
+            conflict: YearConflict::LackDate { year: 2025 },
+        })
+    );
+}
+
+#[rstest]
+#[case::whole_log(0, 14)]
+#[case::first_ten_lines_removed(10, 4)]
+fn the_year_resolution_error_names_the_backward_clock_step_before_logs_begin_at(
+    #[case] removed_line_count: usize,
+    #[case] line_number: u32,
+) {
+    let text: String = BACKWARD_CLOCK_STEP_BEFORE_LOGS_BEGIN_AT
+        .split_inclusive('\n')
+        .skip(removed_line_count)
+        .collect();
+    assert_eq!(
+        parse::parse_log(text.as_str().into(), fixtures::now()),
+        Err(LogParseError::UnresolvedYear {
+            line_number,
+            written_timestamp: "May 20 11:00:00".to_owned(),
+            conflict: YearConflict::PrecedeLogsBeginAt {
+                candidate: test_util::utc(2026, 5, 20, 11, 0, 0),
+                logs_begin_at: test_util::utc(2026, 5, 20, 12, 0, 0),
+            },
+        })
+    );
+}
+
+#[test]
+fn the_year_resolution_error_states_the_line_of_the_attempt_that_resolved_the_most_entries() {
+    let text = "\
+Feb 29 12:00:00 host service: first leap day
+Dec 31 23:59:59 host service: before calendar wrap
+Jan 01 00:00:00 host service: after calendar wrap
+Feb 29 12:00:00 host service: later leap day
+";
+    assert_eq!(
+        parse::parse_log(text.into(), test_util::utc(2026, 11, 9, 0, 0, 0)),
+        Err(LogParseError::UnresolvedYear {
+            line_number: 1,
+            written_timestamp: "Feb 29 12:00:00".to_owned(),
+            conflict: YearConflict::LackDate { year: 2023 },
+        })
     );
 }
 
@@ -350,3 +414,24 @@ proptest! {
         prop_assert_eq!(parse::parse_log(text.as_str().into(), parsed.year_reference()), Ok(parsed));
     }
 }
+
+const BACKWARD_CLOCK_STEP_BEFORE_LOGS_BEGIN_AT: &str = "\
+# export header
+# host: example
+
+May 20 12:00:00 host service: ordinary entry
+May 20 12:00:01 host service: ordinary entry
+May 20 12:00:02 host service: ordinary entry
+May 20 12:00:03 host service: ordinary entry
+May 20 12:00:04 host service: ordinary entry
+May 20 12:00:05 host service: ordinary entry
+May 20 12:00:06 host service: ordinary entry
+May 20 12:00:07 host service: ordinary entry
+May 20 12:00:08 host service: ordinary entry
+May 20 12:00:09 host service: ordinary entry
+May 20 11:00:00 host service: clock moved backwards
+May 20 12:00:10 host service: clock restored
+----------- Journal summary -----------
+Logs begin at: Wed 20-May-2026 12:00:00 UTC
+Logs end at: Wed 20-May-2026 12:00:10 UTC
+";

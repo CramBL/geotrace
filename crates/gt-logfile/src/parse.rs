@@ -16,7 +16,7 @@ use crate::{
     structure::{StructuralExtent, StructuralLine, StructuralLineKind},
     summary::{self, EntryCountMismatch, SummaryBlock},
     text::LogText,
-    years,
+    years::{self, YearConflict},
 };
 
 /// A byte range of a [`ParsedLog`]'s text, read with [`TextSlice::in_text`].
@@ -36,7 +36,7 @@ impl TextSlice {
     }
 
     pub fn in_text(self, text: &str) -> &str {
-        let start = usize::try_from(self.offset).unwrap_or(usize::MAX);
+        let start = self.start();
         let end = start.saturating_add(self.len as usize);
         let slice = text.get(start..end);
         debug_assert!(
@@ -44,6 +44,16 @@ impl TextSlice {
             "{self:?} addresses text outside the log it was indexed from"
         );
         slice.unwrap_or_default()
+    }
+
+    pub(crate) fn trimmed_line_text_before_in(self, text: &str) -> &str {
+        let before = text.get(..self.start()).unwrap_or_default();
+        let line_start = before.rfind('\n').map_or(0, |newline| newline + 1);
+        before.get(line_start..).unwrap_or_default().trim()
+    }
+
+    fn start(self) -> usize {
+        usize::try_from(self.offset).unwrap_or(usize::MAX)
     }
 }
 
@@ -232,9 +242,13 @@ pub enum LogParseError {
     )]
     NoRecognisedFormat { first_line: String },
     #[error(
-        "Cannot resolve the year of log line {line_number} from its chronology, reference date and exporter bounds"
+        "Cannot resolve the year of log line {line_number} ({written_timestamp:?}): {conflict}"
     )]
-    UnresolvedYear { line_number: u32 },
+    UnresolvedYear {
+        line_number: u32,
+        written_timestamp: String,
+        conflict: YearConflict,
+    },
 }
 
 /// Saved logs must reuse `year_reference` when exporter bounds are absent.
@@ -262,8 +276,12 @@ pub fn parse_log_in_chunks_of(
     if !index.entries.iter().any(|entry| entry.timestamp.is_some()) {
         return Err(index.no_anchored_entry_error(&text));
     }
-    let mut entries =
-        years::resolve_entries(&index.entries, summary_block.as_ref(), year_reference)?;
+    let mut entries = years::resolve_entries(
+        &text,
+        &index.entries,
+        summary_block.as_ref(),
+        year_reference,
+    )?;
     let anchored_entry_count = entries.iter().filter(|entry| entry.is_anchored()).count();
     let Some(first_anchor) = entries
         .iter()
@@ -780,8 +798,8 @@ const FORMAT_DETECTION_LINE_LIMIT: usize = 10;
 /// timestamp format.
 const HOSTNAME_DETECTION_LINE_LIMIT: usize = 200;
 
-/// Characters of the offending line quoted in [`LogParseError::NoRecognisedFormat`].
-const ERROR_LINE_EXCERPT_CHARS: NonZeroUsize = match NonZeroUsize::new(120) {
+/// Characters of the offending line quoted in a [`LogParseError`].
+pub(crate) const ERROR_LINE_EXCERPT_CHARS: NonZeroUsize = match NonZeroUsize::new(120) {
     Some(chars) => chars,
     None => NonZeroUsize::MIN,
 };
