@@ -191,9 +191,7 @@ fn check_the_parse_indexes_what_it_read(parsed: &ParsedLog) {
                 "the resolved chronology has another timestamp count than entry count"
             );
             for (session_index, session) in parsed.boot_sessions().iter().enumerate() {
-                let mut anchored = session
-                    .entry_range
-                    .clone()
+                let mut anchored = (session.first_synchronised_entry..session.entry_range.end)
                     .filter(|&index| {
                         parsed
                             .entries()
@@ -209,7 +207,7 @@ fn check_the_parse_indexes_what_it_read(parsed: &ParsedLog) {
                 assert_eq!(
                     resolved.session_bounds(session_index),
                     expected,
-                    "boot {} has other bounds than its anchored entries",
+                    "boot {} has other bounds than its anchored entries with a synchronised clock",
                     session.boot_number
                 );
             }

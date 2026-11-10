@@ -258,6 +258,51 @@ fn a_log_loaded_without_a_recording_stays_untargeted_and_raises_no_dialog() {
 }
 
 #[test]
+fn a_log_with_unresolved_years_opens_the_viewer_on_the_line_and_the_conflict() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(test_util::harness::transient_app);
+    ui_tests::drop_log_and_wait_for_load(
+        &mut harness,
+        gt_test_utils::UNRESOLVED_YEARS_LOG,
+        "journal.log",
+    );
+    harness.run_steps(3);
+
+    for label in [
+        "Cannot resolve the year of log line 3",
+        "Written as",
+        "May 20 11:00:00",
+        "Reason",
+        "Before the summary block's \"Logs begin at\"",
+        "Candidate time",
+        "2026-05-20 11:00:00 UTC",
+        "Logs begin at",
+        "2026-05-20 12:00:00 UTC",
+        log_viewer::unresolved_years::LINES_TAKE_NO_POSITION_NOTE,
+    ] {
+        harness.get_by_label(label);
+    }
+}
+
+#[test]
+fn snapshot_app_log_viewer_with_unresolved_years() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(test_util::harness::build_app);
+    harness.inner.step();
+
+    ui_tests::drop_log_and_wait_for_load(
+        &mut harness.inner,
+        gt_test_utils::UNRESOLVED_YEARS_LOG,
+        "journal.log",
+    );
+    harness.inner.run_steps(5);
+
+    harness.snapshot_with_color_tolerance("app_log_viewer_unresolved_years");
+}
+
+#[test]
 fn the_menu_bar_icon_closes_and_reopens_the_viewer() {
     let mut harness = app_with_a_log_loaded();
 

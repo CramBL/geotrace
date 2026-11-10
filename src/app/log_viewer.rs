@@ -7,6 +7,7 @@ use egui_phosphor::regular::{
 };
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
 use gt_log_view::{LoadedLog, LoadedLogs, LogAttachmentRef, RecordingKey, SessionLogAttachments};
+use gt_logfile::LogChronology;
 use gt_pending_writes::WriteAccess;
 use gt_store::DatabaseRef;
 use gt_types::FileIdx;
@@ -28,6 +29,7 @@ mod line_table;
 pub(super) mod log_list;
 pub(super) mod restored_logs_badge;
 mod summary_panel;
+pub(super) mod unresolved_years;
 
 /// The floating log viewer: which log it shows, how much of that log's parse
 /// summary is unfolded, and the unit its association window is entered in.
@@ -344,6 +346,13 @@ impl LogViewerWindow {
                                 self.display_options_ui(ui);
                                 self.parse_summary_row_ui(ui, log);
                             });
+                            if let LogChronology::Unresolved(unresolved) = log.parsed().chronology()
+                            {
+                                unresolved_years::unresolved_years_ui(
+                                    ui,
+                                    unresolved.unresolved_year(),
+                                );
+                            }
                         }
                         if self.summary_expanded
                             && let Some(log) = logs.get_by_id(shown)
@@ -489,6 +498,7 @@ impl LogViewerWindow {
         let mut window_response = None;
 
         let attached = log.attachment().is_some();
+        let years_resolved = log.parsed().chronology().is_resolved();
         // The anchored recording while it is not loaded, which is always one of
         // the history database's: a log anchored to a recording missing
         // from the database unloads with that recording.
@@ -502,7 +512,7 @@ impl LogViewerWindow {
         ui.horizontal_wrapped(|ui| {
             ui.label("Positions from");
             let ranked = candidates.ranked();
-            ui.add_enabled_ui(!ranked.is_empty(), |ui| {
+            ui.add_enabled_ui(years_resolved && !ranked.is_empty(), |ui| {
                 ComboBox::from_id_salt("log_viewer_association_target")
                     .selected_text(
                         target
@@ -555,9 +565,11 @@ impl LogViewerWindow {
                         }
                     })
                     .response
-                    .on_disabled_hover_text(
-                        "Load a recording to use as this log's position source",
-                    );
+                    .on_disabled_hover_text(if years_resolved {
+                        "Load a recording to use as this log's position source"
+                    } else {
+                        UNRESOLVED_YEARS_HOVER
+                    });
             });
 
             if let Some(db_ref) = unresolved_anchor {
@@ -578,19 +590,27 @@ impl LogViewerWindow {
             ui.label("Association window");
             window_response = Some(
                 ui.push_id(selected, |ui| {
-                    ui.add(DragValue::new(&mut value).range(0.0..=entered_unit.largest_value()))
-                        .on_hover_text(ASSOCIATION_WINDOW_HOVER)
+                    ui.add_enabled(
+                        years_resolved,
+                        DragValue::new(&mut value).range(0.0..=entered_unit.largest_value()),
+                    )
+                    .on_hover_text(ASSOCIATION_WINDOW_HOVER)
+                    .on_disabled_hover_text(UNRESOLVED_YEARS_HOVER)
                 })
                 .inner,
             );
-            ComboBox::from_id_salt("log_viewer_association_window_unit")
-                .selected_text(unit.label())
-                .width(UNIT_DROPDOWN_WIDTH_PX)
-                .show_ui(ui, |ui| {
-                    for choice in AssociationWindowUnit::iter() {
-                        ui.selectable_value(&mut unit, choice, choice.label());
-                    }
-                });
+            ui.add_enabled_ui(years_resolved, |ui| {
+                ComboBox::from_id_salt("log_viewer_association_window_unit")
+                    .selected_text(unit.label())
+                    .width(UNIT_DROPDOWN_WIDTH_PX)
+                    .show_ui(ui, |ui| {
+                        for choice in AssociationWindowUnit::iter() {
+                            ui.selectable_value(&mut unit, choice, choice.label());
+                        }
+                    })
+                    .response
+                    .on_disabled_hover_text(UNRESOLVED_YEARS_HOVER);
+            });
 
             ui.separator();
             let writes_recordings = write_access.allows_writing();
@@ -713,6 +733,9 @@ const ASSOCIATION_WINDOW_HOVER: &str =
     "Maximum time between a log entry and a fix from the position source";
 
 const NO_RECORDING_HOVER: &str = "Take this log's positions from no recording";
+
+pub(super) const UNRESOLVED_YEARS_HOVER: &str =
+    "No line takes a position while the years of this log are unresolved";
 
 const NO_RECORDING_ATTACHED_HOVER: &str =
     "Remove the saved log before changing its position source";

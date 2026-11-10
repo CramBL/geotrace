@@ -746,6 +746,7 @@ impl LogViewerWindow {
             levels: self.color_levels,
         };
         let association_window = log.association_window();
+        let years_resolved = parsed.chronology().is_resolved();
         let dark_mode = ui.visuals().dark_mode;
         let gutter = LayerGutter::of(filters, dark_mode);
         let highlight = gt_ui_theme::LOG_LIVE_FILTER.resolve(dark_mode);
@@ -877,6 +878,7 @@ impl LogViewerWindow {
                                 recognised: recognised_messages.get(entry_index).copied(),
                                 color_switches,
                                 association_window,
+                                years_resolved,
                                 gutter: &gutter,
                                 entry_index,
                                 tick: ticks.tick(visible_row),
@@ -1091,6 +1093,7 @@ struct EntryRow<'a> {
     color_switches: MessageColorSwitches,
 
     association_window: Duration,
+    years_resolved: bool,
     gutter: &'a LayerGutter<'a>,
     entry_index: usize,
 
@@ -1265,10 +1268,11 @@ impl EntryRow<'_> {
                 .hover_dwell
                 .associated_row_hover(ctx, self.entry_index)
                 .map(str::to_owned),
-            (None, None) => Some(format!(
+            (None, None) if self.years_resolved => Some(format!(
                 "No GPS fix within {} of this line",
                 unit.describe(self.association_window)
             )),
+            (None, None) => Some(UNRESOLVED_YEARS_ROW_HOVER.to_owned()),
         }
     }
 
@@ -1498,6 +1502,9 @@ pub(super) const INTERPOLATED_TIMESTAMP_HOVER: &str =
     "Timestamp interpolated between neighbouring entries";
 
 pub(super) const ASSOCIATED_ROW_HOVER: &str = "Centre the map on this line";
+
+pub(super) const UNRESOLVED_YEARS_ROW_HOVER: &str =
+    "This line takes no position while the years of this log are unresolved";
 
 pub(super) const ASSOCIATED_ROW_HOVER_DWELL_SECS: u32 = 4;
 

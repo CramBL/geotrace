@@ -10,6 +10,7 @@ use gt_loaded_files::FileHistory;
 use gt_log_view::{
     FilterEffect, FilterGroupOperator, FilterPattern, LoadedLog, LogAttachmentRef, RecordingKey,
 };
+use gt_logfile::LogChronology;
 use gt_store::{
     DatabaseRef, HistoryDatabase as _, LogAttachmentEntry, LogAttachments as _, LogToAttach,
     ReadOnlyHistoryDatabase as _, Recordings, RecordingsHandle, StoredLogFilter,
@@ -218,6 +219,90 @@ fn several_overlapping_recordings_leave_the_dialog_without_a_preselection() {
             .map(gt_log_view::LoadedLog::associated_entry_count),
         Some(0)
     );
+}
+
+#[test]
+fn a_log_with_unresolved_years_raises_no_dialog_and_takes_no_position() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(test_util::harness::transient_app);
+    test_util::harness::drop_file_and_wait_for_load(
+        &mut harness,
+        ui_tests::recording_alongside_the_log("walk.gtd", 55.0),
+    );
+
+    drop_the_log_with_unresolved_years(&mut harness);
+
+    assert!(!dialog_is_open(&harness));
+    assert_eq!(shown_log_target(&harness), None);
+    assert_eq!(
+        harness
+            .state()
+            .first_log()
+            .map(LoadedLog::associated_entry_count),
+        Some(0)
+    );
+}
+
+#[test]
+fn a_log_with_unresolved_years_saved_with_a_recording_reopens_unresolved() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut harness = app_over_a_history_database(&db_path);
+    test_util::harness::drop_file_and_wait_for_load(
+        &mut harness,
+        ui_tests::recording_alongside_the_log("walk.gtd", 55.0),
+    );
+    let db_ref = stored_recording(&harness);
+    drop_the_log_with_unresolved_years(&mut harness);
+    harness
+        .state_mut()
+        .log_viewer_requests
+        .open_association_dialog = harness.state().logs.first_id();
+    harness.state_mut().apply_log_viewer_requests();
+    harness.run_steps(3);
+    harness
+        .get(By::new().role(Role::Button).label("walk.gtd"))
+        .click();
+    harness.run_steps(2);
+    attach_the_log(&mut harness, &db_path, &db_ref);
+    assert_eq!(
+        harness.state().first_log().map(|log| (
+            log.associated_recording().is_some(),
+            log.associated_entry_count()
+        )),
+        Some((true, 0)),
+        "the anchored log takes no position"
+    );
+    let stored = stored_attachments(&db_path, &db_ref)
+        .first()
+        .map(|entry| entry.id)
+        .expect("the attachment was stored");
+
+    unload_the_log(&mut harness);
+    open_the_stored_log(&harness, &db_ref, stored);
+
+    assert!(harness.step_until(|harness| harness.state().logs.len() == 1));
+    let log = harness
+        .state()
+        .first_log()
+        .expect("the stored log is loaded");
+    assert!(matches!(
+        log.parsed().chronology(),
+        LogChronology::Unresolved(_)
+    ));
+    assert_eq!(log.associated_entry_count(), 0);
+    harness.run_steps(3);
+    harness.get_by_label("Cannot resolve the year of log line 3");
+}
+
+fn drop_the_log_with_unresolved_years(harness: &mut Harness<App>) {
+    ui_tests::drop_log_and_wait_for_load(
+        harness,
+        gt_test_utils::UNRESOLVED_YEARS_LOG,
+        "journal.log",
+    );
+    harness.run_steps(3);
 }
 
 /// Cancelling loads the log as text: no target, and the viewer's footer

@@ -2,6 +2,7 @@ use chrono::Duration;
 use gt_types::TimeRange;
 use rstest::rstest;
 
+use crate::parse;
 use crate::parse::tests::fixtures::{self, REBOOT};
 use crate::session::OrderAnomaly;
 use crate::test_util;
@@ -68,6 +69,25 @@ fn a_boot_session_spans_its_own_anchors() {
         .map(|session_index| resolved.session_uptime(session_index))
         .collect();
     assert_eq!(uptimes, [Some(Duration::minutes(150)), None]);
+}
+
+#[test]
+fn the_uptime_of_a_boot_session_starts_at_its_first_entry_after_a_clock_jump() {
+    let text = format!(
+        "Nov 09 10:00:00 host svc: before reboot\n{REBOOT}\
+         Jan 01 00:00:05 host svc: after reset\n\
+         Jan 01 00:00:40 host systemd-timesyncd[1]: Initial clock synchronization to Mon 2026-11-09 12:00:00 UTC.\n\
+         Nov 09 12:00:00 host svc: time synced\n\
+         Nov 09 12:30:00 host svc: later\n"
+    );
+    let parsed = parse::parse_log(text.as_str().into(), test_util::utc(2026, 11, 10, 0, 0, 0))
+        .expect("parse the clock reset");
+    let resolved = fixtures::resolved(&parsed);
+    assert_eq!(resolved.session_uptime(1), Some(Duration::minutes(30)));
+    assert_eq!(
+        resolved.session_bounds(1).map(|bounds| bounds.first),
+        Some(test_util::utc(2026, 11, 9, 12, 0, 0))
+    );
 }
 
 #[rstest]

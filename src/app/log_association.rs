@@ -40,7 +40,9 @@ impl App {
                 .rank_association_candidates(&recordings)
                 .rank_with_recording_order(&candidates);
             let unambiguous = ranked.unambiguous_target();
+            let years_resolved = log.parsed().chronology().is_resolved();
             if self.initial_position_source_policy == InitialPositionSourcePolicy::Ask
+                && years_resolved
                 && !ranked.ranked().is_empty()
             {
                 if self.association_dialog.is_some() {

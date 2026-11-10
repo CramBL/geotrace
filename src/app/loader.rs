@@ -1602,7 +1602,7 @@ mod tests {
         else {
             panic!("expected a log outcome");
         };
-        assert_eq!(parsed.chronology().resolved().is_some(), years_resolve);
+        assert_eq!(parsed.chronology().is_resolved(), years_resolve);
         assert_eq!(parsed, original);
     }
 

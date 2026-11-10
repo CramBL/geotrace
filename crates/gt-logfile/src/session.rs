@@ -36,7 +36,9 @@ impl BootSession {
     }
 }
 
-/// The first and the last anchored timestamp of a boot session, in file order.
+/// The first and the last anchored timestamp of a boot session, in file order, from its first
+/// entry with a synchronised clock. Entries before the clock jump are excluded: their timestamps
+/// come from the reset clock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AnchoredBounds {
     pub first: DateTime<Utc>,
@@ -44,8 +46,8 @@ pub struct AnchoredBounds {
 }
 
 impl AnchoredBounds {
-    /// `None` for a session no line of which carried a timestamp.
-    pub(crate) fn of_session(anchors: &[Option<DateTime<Utc>>]) -> Option<Self> {
+    /// `None` for anchors without a timestamp.
+    pub(crate) fn of_anchors(anchors: &[Option<DateTime<Utc>>]) -> Option<Self> {
         let mut anchored = anchors.iter().flatten().copied();
         let first = anchored.next()?;
         Some(Self {

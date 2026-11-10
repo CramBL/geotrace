@@ -266,6 +266,10 @@ pub fn format_signed_delta(delta_ms: i64) -> String {
     }
 }
 
+pub fn format_utc_subsecond(instant: DateTime<Utc>) -> String {
+    format!("{} UTC", instant.format(UTC_SUBSECOND_FORMAT))
+}
+
 /// Formats a time span for a tooltip header: the start date and time, then the
 /// end time - including the end date as well when the span crosses midnight
 /// into a different day. Times are UTC, matching the rest of the UI.
