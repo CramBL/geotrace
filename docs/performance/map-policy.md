@@ -39,8 +39,8 @@ The benchmark asserts the candidate count for each workload.
 | 64 | 75.410µs | 80.524µs | 43.449µs | -46.0% |
 
 The historical sparse comparison has overlapping time intervals: 2.341–2.394µs historically and 2.304–2.373µs for the completed policy.
-Its mean ratio is -1.3%.
-The historical moderate and dense mean ratios are -37.1% and -42.4%, with disjoint time intervals.
+Its relative change in mean time is -1.3%.
+The historical moderate and dense relative changes in mean time are -37.1% and -42.4%, with disjoint time intervals.
 
 Against the immediate pre-optimization revision, combined means decreased by 15.9%, 38.2% and 44.1%.
 The mixed candidate batch decreased from 60.58ns to 52.93ns.
