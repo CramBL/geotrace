@@ -375,12 +375,53 @@ fn bench_query_heavy_policy(c: &mut Criterion) {
     });
 }
 
+fn bench_preparation_and_candidates(c: &mut Criterion) {
+    let files = recording_with_tracks(128, 100);
+    let visibility = TrackDataVisibility::from_loaded(&files);
+    let filter = GlobalFilter::default();
+    let generated = GeneratedMarkerVisibility::default();
+    let events = EventMarkerVisibility::default();
+    let spatial = SpatialIndex::build(&files);
+    let inputs = benchmark_support::FramePlanInputs::new(
+        &files,
+        &visibility,
+        &filter,
+        None,
+        &generated,
+        &events,
+        DisplayMask::default(),
+    );
+    let mut group = c.benchmark_group("preparation_and_candidates");
+    for candidates_per_track in [1, 8, 64] {
+        let candidates: Vec<_> = spatial
+            .points()
+            .filter(|point| {
+                point.category == DataCategory::Tpv
+                    && point.point_index.as_usize() < candidates_per_track
+            })
+            .collect();
+        assert_eq!(candidates.len(), 128 * candidates_per_track);
+        group.throughput(Throughput::Elements(candidates.len() as u64));
+        group.bench_function(BenchmarkId::from_parameter(candidates_per_track), |b| {
+            b.iter(|| {
+                let plan =
+                    benchmark_support::compile_frame_plan(hint::black_box(inputs), BENCH_ZOOM);
+                for point in &candidates {
+                    hint::black_box(plan.spatial_point_visible(hint::black_box(point)));
+                }
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_frame_policy_scaling,
     bench_candidate_resolution,
     bench_nearest_candidate,
     bench_scan_and_marker_workloads,
-    bench_query_heavy_policy
+    bench_query_heavy_policy,
+    bench_preparation_and_candidates
 );
 criterion_main!(benches);

@@ -1,0 +1,102 @@
+diff --git a/crates/gt-map/benches/map_policy.rs b/crates/gt-map/benches/map_policy.rs
+index f12c916e..e3adab98 100644
+--- a/crates/gt-map/benches/map_policy.rs
++++ b/crates/gt-map/benches/map_policy.rs
+@@ -188,6 +188,36 @@ fn bench_candidate_resolution(c: &mut Criterion) {
+         });
+     });
+     group.finish();
++
++    let spatial_index = SpatialIndex::build(&files);
++    let candidate = |category, index| {
++        *spatial_index
++            .points()
++            .find(|point| point.category == category && point.point_index.as_usize() == index)
++            .expect("benchmark candidate is indexed")
++    };
++    let spatial_workload = [
++        candidate(DataCategory::Tpv, measured_index + 1),
++        candidate(DataCategory::Tpv, measured_index),
++        candidate(DataCategory::Tpv, ghost_index),
++        candidate(DataCategory::Tpv, outside_time_index),
++        candidate(DataCategory::CustomMarker, 0),
++        candidate(DataCategory::GeneratedMarker, 0),
++        candidate(DataCategory::EventMarker, 0),
++    ];
++    let mut group = c.benchmark_group("historical_spatial_candidates");
++    group.throughput(Throughput::Elements(spatial_workload.len() as u64));
++    group.bench_function("mixed", |b| {
++        b.iter(|| {
++            for point in spatial_workload {
++                hint::black_box(benchmark_support::spatial_point_visible(
++                    hint::black_box(&point),
++                    scope,
++                ));
++            }
++        });
++    });
++    group.finish();
+ }
+ 
+ fn data_point_ref(point: &SpatialPoint) -> DataPointRef {
+@@ -261,10 +291,59 @@ fn bench_nearest_candidate(c: &mut Criterion) {
+     group.finish();
+ }
+ 
++fn bench_preparation_and_candidates(c: &mut Criterion) {
++    let files = recording_with_tracks(128, 100);
++    let visibility = TrackDataVisibility::from_loaded(&files);
++    let filter = GlobalFilter::default();
++    let generated = GeneratedMarkerVisibility::default();
++    let events = EventMarkerVisibility::default();
++    let spatial = SpatialIndex::build(&files);
++    let scope = MapScope {
++        files: &files,
++        visibility: &visibility,
++        event_marker_visibility: &events,
++        generated_marker_visibility: &generated,
++        filter: &filter,
++        display_mask: DisplayMask::default(),
++        query_matches: None,
++    };
++    let mut group = c.benchmark_group("preparation_and_candidates");
++    for candidates_per_track in [1, 8, 64] {
++        let candidates: Vec<_> = spatial
++            .points()
++            .filter(|point| {
++                point.category == DataCategory::Tpv
++                    && point.point_index.as_usize() < candidates_per_track
++            })
++            .collect();
++        assert_eq!(candidates.len(), 128 * candidates_per_track);
++        group.throughput(Throughput::Elements(candidates.len() as u64));
++        group.bench_function(BenchmarkId::from_parameter(candidates_per_track), |b| {
++            b.iter(|| {
++                benchmark_support::compile_track_plan(
++                    hint::black_box(&files),
++                    hint::black_box(&visibility),
++                    hint::black_box(&filter),
++                    DisplayMask::default(),
++                    BENCH_ZOOM,
++                );
++                for point in &candidates {
++                    hint::black_box(benchmark_support::spatial_point_visible(
++                        hint::black_box(point),
++                        scope,
++                    ));
++                }
++            });
++        });
++    }
++    group.finish();
++}
++
+ criterion_group!(
+     benches,
+     bench_frame_policy_scaling,
+     bench_candidate_resolution,
+-    bench_nearest_candidate
++    bench_nearest_candidate,
++    bench_preparation_and_candidates
+ );
+ criterion_main!(benches);
