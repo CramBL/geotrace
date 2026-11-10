@@ -7,7 +7,7 @@ use egui_phosphor::regular::{
 };
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
 use gt_log_view::{LoadedLog, LoadedLogs, LogAttachmentRef, RecordingKey, SessionLogAttachments};
-use gt_logfile::LogChronology;
+use gt_logfile::{LogChronology, YearResolution};
 use gt_pending_writes::WriteAccess;
 use gt_store::DatabaseRef;
 use gt_types::FileIdx;
@@ -19,6 +19,7 @@ use strum::IntoEnumIterator as _;
 use association_window::{AssociationWindowEdit, AssociationWindowUnit};
 use line_table::{DiagnosticReveal, LineTableCache, LineTableRequests, RowHoverDwell};
 use restored_logs_badge::RestoredLogsBadge;
+use unresolved_years::LastEntryYearDraft;
 
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 
@@ -46,6 +47,7 @@ pub(super) struct LogViewerWindow {
     association_window_edit: Option<AssociationWindowEdit>,
     #[cfg(test)]
     association_window_commits: usize,
+    last_entry_year_draft: Option<LastEntryYearDraft>,
 
     /// Whether the line table draws each service name, and the hostname beside
     /// it, in its own colour. Belongs to the window, and starts on for every
@@ -134,6 +136,15 @@ pub(super) struct LogViewerRequests {
     /// Open this recording from history. The footer sets it while the shown
     /// log's anchored recording is not loaded.
     pub open_recording: Option<DatabaseRef>,
+
+    pub resolve_years: Option<YearsToResolve>,
+}
+
+/// The year resolution the user applied to a log whose years are unresolved.
+#[derive(Debug, Eq, PartialEq)]
+pub(super) struct YearsToResolve {
+    pub log: LoadedLogId,
+    pub year_resolution: YearResolution,
 }
 
 /// One of a loaded recording's attachments, as the viewer's list requested it.
@@ -156,6 +167,7 @@ impl LogViewerWindow {
             association_window_edit: None,
             #[cfg(test)]
             association_window_commits: 0,
+            last_entry_year_draft: None,
             color_services: true,
             color_levels: true,
             show_structural_lines: false,
@@ -347,11 +359,17 @@ impl LogViewerWindow {
                                 self.parse_summary_row_ui(ui, log);
                             });
                             if let LogChronology::Unresolved(unresolved) = log.parsed().chronology()
-                            {
-                                unresolved_years::unresolved_years_ui(
+                                && let Some(year_resolution) = self.unresolved_years_ui(
                                     ui,
+                                    shown,
+                                    log.parsed(),
                                     unresolved.unresolved_year(),
-                                );
+                                )
+                            {
+                                requests.resolve_years = Some(YearsToResolve {
+                                    log: shown,
+                                    year_resolution,
+                                });
                             }
                         }
                         if self.summary_expanded

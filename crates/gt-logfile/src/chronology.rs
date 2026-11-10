@@ -8,7 +8,7 @@ use crate::{
     parse::PendingLogEntry,
     session::{self, AnchoredBounds, BootSessionRange, OrderAnomaly},
     summary::SummaryBlock,
-    years::{self, UnresolvedYear},
+    years::{self, UnresolvedYear, YearResolution},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -18,8 +18,8 @@ pub enum LogChronology {
 }
 
 impl LogChronology {
-    /// Resolves the years of `entries` from the reboot separators, the summary block bounds and
-    /// `year_reference`, and interpolates the timestamps of the lines without one.
+    /// Resolves the years of `entries` under `year_resolution`, and interpolates the timestamps of
+    /// the lines without one.
     /// Returns `None` for entries none of which has a timestamp.
     pub(crate) fn resolve(
         text: &str,
@@ -27,6 +27,7 @@ impl LogChronology {
         boot_session_ranges: &[BootSessionRange],
         summary: Option<&SummaryBlock>,
         year_reference: DateTime<Utc>,
+        year_resolution: YearResolution,
     ) -> Option<Self> {
         Some(
             match years::resolve_entry_anchors(
@@ -35,6 +36,7 @@ impl LogChronology {
                 boot_session_ranges,
                 summary,
                 year_reference,
+                year_resolution,
             ) {
                 Ok(anchors) => Self::Resolved(ResolvedChronology::from_anchors(
                     text,

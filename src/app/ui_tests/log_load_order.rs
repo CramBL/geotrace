@@ -6,7 +6,7 @@ use egui_kittest::{Harness, kittest::Queryable as _};
 use gt_loaded_files::FileHistory;
 use gt_loader::LoadError;
 use gt_log_view::{LoadedLog, LogAttachmentRef, PositionSourceState, RecordingKey};
-use gt_logfile::{LogParseError, ParsedLog};
+use gt_logfile::{LogParseError, ParsedLog, YearResolution};
 use gt_plot::AnalysisConfig;
 use gt_store::{
     DatabaseRef, LogAttachmentId, RecordingUiState, Store, StoredLogFilter,
@@ -93,6 +93,7 @@ fn saved_log_outcome(name: &str) -> SavedLogResult {
             filters: StoredLogFilterStack::default(),
             requested_by: loader::AttachedLogRequester::RecordingLoad,
             year_reference: ui_tests::base_time(),
+            year_resolution: YearResolution::Infer,
         },
     }
 }
@@ -761,6 +762,7 @@ fn restored_attachments_preserve_their_recording_during_other_loads() {
             filters: Default::default(),
             requested_by: loader::AttachedLogRequester::RecordingLoad,
             year_reference: ui_tests::base_time(),
+            year_resolution: YearResolution::Infer,
         },
     }));
     harness.step();
@@ -983,6 +985,7 @@ fn loose_and_saved_contexts_are_independent_of_completion_order(#[values(true, f
                 filters: saved_filters.clone(),
                 requested_by: loader::AttachedLogRequester::RecordingLoad,
                 year_reference: ui_tests::base_time(),
+                year_resolution: YearResolution::Infer,
             },
         };
         if loose_first {
@@ -1477,6 +1480,7 @@ fn a_saved_attachment_load_preserves_an_explicit_loose_arrivals_readiness(
             filters: Default::default(),
             requested_by: loader::AttachedLogRequester::RecordingLoad,
             year_reference: ui_tests::base_time(),
+            year_resolution: YearResolution::Infer,
         },
     };
     log(Ok(log_outcome("loose.log")));

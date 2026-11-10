@@ -233,6 +233,14 @@ impl FilterStack {
         self.log = parsed;
     }
 
+    /// Replaces the parsed log with `parsed`, which has the same entries and a different chronology.
+    pub(crate) fn replace_log_chronology(&mut self, parsed: Arc<ParsedLog>) {
+        debug_assert_eq!(self.log.entries(), parsed.entries());
+        self.log = parsed;
+        self.visible_revision = self.visible_revision.wrapping_add(1);
+        self.clock_ticks = Arc::new(ClockTicks::of(&self.log, &self.visible));
+    }
+
     /// The unfiltered stack of a freshly loaded log.
     pub fn new(log: Arc<ParsedLog>) -> Self {
         let entry_count = log.entries().len();

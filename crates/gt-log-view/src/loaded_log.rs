@@ -10,7 +10,8 @@ use gt_fmt::MIDDLE_DOT;
 use gt_history_types::{LogContentHash, StoredLogFilterStack};
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
 use gt_logfile::{
-    EntryPlacement, LogChronology, ParsedLog, RecordingAssociationIndex, YearlessTimestamp,
+    EntryPlacement, LogChronology, ParsedLog, RecordingAssociationIndex, YearResolution,
+    YearlessTimestamp,
 };
 use gt_types::{TimeRange, mercator};
 use gt_ui_types::{
@@ -327,6 +328,27 @@ impl LoadedLog {
         self.reassociate(recordings);
     }
 
+    /// Resolves the years of a log whose years are unresolved again under `year_resolution`, and
+    /// associates it again. Returns `false` for a log whose years resolved, which keeps them.
+    pub fn resolve_years_as(
+        &mut self,
+        year_resolution: YearResolution,
+        recordings: &LoadedFilesView<'_>,
+    ) -> bool {
+        let Some(parsed) = self.document.parsed.resolve_years_as(year_resolution) else {
+            return false;
+        };
+        self.document = Arc::new(LogDocument {
+            content_hash: self.document.content_hash,
+            entry_time_range: parsed.chronology().time_range(),
+            parsed: Arc::new(parsed),
+        });
+        self.filters
+            .replace_log_chronology(Arc::clone(&self.document.parsed));
+        self.reassociate(recordings);
+        true
+    }
+
     /// Associates every entry against the recording the anchor resolves to,
     /// after the loaded recordings changed.
     ///
@@ -458,6 +480,14 @@ impl LoadedLogEditor<'_> {
 
     pub fn set_association_window(&mut self, window: Duration, recordings: &LoadedFilesView<'_>) {
         self.log.set_association_window(window, recordings);
+    }
+
+    pub fn resolve_years_as(
+        &mut self,
+        year_resolution: YearResolution,
+        recordings: &LoadedFilesView<'_>,
+    ) -> bool {
+        self.log.resolve_years_as(year_resolution, recordings)
     }
 }
 

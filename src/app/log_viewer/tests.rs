@@ -15,7 +15,7 @@ use gt_log_view::{
     FilterEffect, FilterGroupId, FilterGroupOperator, FilterScope, LayerColorSlot, LiveFilterDraft,
     LoadedLog, LoadedLogs, LogAttachmentRef, SessionLogAttachments,
 };
-use gt_logfile::{LogLevelKind, RecordingAssociationIndex};
+use gt_logfile::{LogLevelKind, RecordingAssociationIndex, YearResolution};
 use gt_pending_writes::WriteAccess;
 use rstest::rstest;
 use strum::IntoEnumIterator as _;
@@ -35,7 +35,7 @@ use gt_ui_types::{LoadedLogId, LogMatchColor, LogMatchGlyph, LogMatchHover, LogM
 
 use super::{
     AssociationWindowUnit, LOG_VIEWER_TITLE, LogViewerContext, LogViewerRequests, LogViewerWindow,
-    filters, line_table, log_list,
+    YearsToResolve, filters, line_table, log_list, unresolved_years,
 };
 
 fn log_start() -> DateTime<Utc> {
@@ -1154,7 +1154,9 @@ fn the_time_controls_of_a_log_with_unresolved_years_are_disabled_with_their_reas
     );
     let controls = [
         By::new().role(Role::ComboBox).value(EM_DASH),
-        By::new().role(Role::SpinButton),
+        By::new().role(Role::SpinButton).predicate(|node| {
+            node.author_id() != Some(super::unresolved_years::LAST_ENTRY_YEAR_ID)
+        }),
         By::new()
             .role(Role::ComboBox)
             .value(AssociationWindowUnit::Seconds.label()),
@@ -1190,6 +1192,52 @@ fn hovering_a_line_of_a_log_with_unresolved_years_states_that_it_takes_no_positi
     hover_line(&mut harness, "    --05-20 12:00:00");
 
     harness.get_by_label(line_table::UNRESOLVED_YEARS_ROW_HOVER);
+}
+
+#[rstest]
+#[case::apply_year(
+    unresolved_years::APPLY_YEAR_LABEL,
+    YearResolution::PlaceLastEntryInYear(2026)
+)]
+#[case::ignore_summary_bounds(
+    unresolved_years::IGNORE_SUMMARY_BOUNDS_LABEL,
+    YearResolution::IgnoreSummaryBounds
+)]
+fn a_year_resolution_control_requests_its_year_resolution_for_the_shown_log(
+    #[case] control_label: &str,
+    #[case] year_resolution: YearResolution,
+) {
+    let mut harness = harness_of(
+        Vec::new(),
+        &[("journal.log", gt_test_utils::UNRESOLVED_YEARS_LOG)],
+    );
+    let shown = harness.state().first_loaded_log();
+
+    harness.get_by_label(control_label).click();
+    harness.run_steps(2);
+
+    assert_eq!(
+        harness.state().requests.resolve_years,
+        Some(YearsToResolve {
+            log: shown,
+            year_resolution,
+        })
+    );
+}
+
+#[test]
+fn ignoring_the_summary_bounds_is_disabled_for_a_log_without_them() {
+    let mut harness = harness_of(
+        Vec::new(),
+        &[("journal.log", gt_test_utils::UNRESOLVED_LEAP_DAYS_LOG)],
+    );
+    let button = harness.get_by_label(unresolved_years::IGNORE_SUMMARY_BOUNDS_LABEL);
+    assert!(button.accesskit_node().is_disabled());
+    let center = button.rect().center();
+
+    harness.hover_at_and_settle(center, TOOLTIP_DELAY_FRAMES);
+
+    harness.get_by_label(unresolved_years::NO_SUMMARY_BOUNDS_HOVER);
 }
 
 #[test]

@@ -16,7 +16,8 @@ use std::{
 use chrono::{DateTime, Utc};
 use gt_history::{
     DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentEntry, LogAttachmentId,
-    LogContentHash, ReadOnlyHistoryDatabase, StoredLogFilterStack, log_attachment,
+    LogContentHash, ReadOnlyHistoryDatabase, StoredLogFilterStack, StoredYearResolution,
+    log_attachment,
 };
 use thiserror::Error;
 
@@ -34,6 +35,8 @@ pub struct LogToAttach<'a> {
 
     /// `None` selects the recording's end time on restore.
     pub year_reference: Option<DateTime<Utc>>,
+
+    pub year_resolution: StoredYearResolution,
 }
 
 /// A log read back from an attachment.
@@ -43,6 +46,7 @@ pub struct AttachedLog {
     pub text: String,
     pub filters: StoredLogFilterStack,
     pub year_reference: DateTime<Utc>,
+    pub year_resolution: StoredYearResolution,
 }
 
 #[derive(Debug, Error)]
@@ -137,6 +141,7 @@ pub trait ReadOnlyLogAttachments: ReadOnlyHistoryDatabase {
                 .map_err(|source| LogAttachmentError::NotUtf8 { id, source })?,
             filters: attachment.filters,
             year_reference,
+            year_resolution: attachment.year_resolution,
         })
     }
 }
@@ -174,6 +179,7 @@ pub trait LogAttachments: HistoryDatabase {
             log.filters.clone(),
         );
         attachment.year_reference = log.year_reference;
+        attachment.year_resolution = log.year_resolution;
         if let Err(err) = self.write_log_attachment_attribute(db_ref, id, &attachment) {
             log_attachment::delete_files(&directory, &[id]);
             return Err(err.into());
@@ -224,6 +230,24 @@ pub trait LogAttachments: HistoryDatabase {
 
         let mut updated = stored;
         updated.filters = filters;
+        self.write_log_attachment_attribute(db_ref, id, &updated)?;
+        Ok(())
+    }
+
+    /// Store the year resolution the user chose for an attachment whose years did not resolve.
+    fn set_attached_log_year_resolution(
+        &mut self,
+        db_ref: &DatabaseRef,
+        id: LogAttachmentId,
+        year_resolution: StoredYearResolution,
+    ) -> Result<(), LogAttachmentError> {
+        let mut updated = self
+            .log_attachments(db_ref)?
+            .into_iter()
+            .find(|entry| entry.id == id)
+            .ok_or(LogAttachmentError::UnknownAttachment { id })?
+            .attachment;
+        updated.year_resolution = year_resolution;
         self.write_log_attachment_attribute(db_ref, id, &updated)?;
         Ok(())
     }

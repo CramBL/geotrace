@@ -10,6 +10,23 @@ use crate::{
     summary::SummaryBlock,
 };
 
+/// How the resolver chooses the years of entries whose timestamps omit them.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum YearResolution {
+    /// Resolves as [`YearResolution::Infer`] without the summary block's "Logs begin at" and
+    /// "Logs end at".
+    IgnoreSummaryBounds,
+
+    /// Resolves from the reboot separators, the clock adjustments, the summary block's bounds and
+    /// the year reference.
+    #[default]
+    Infer,
+
+    /// Places the last anchored entry in the year and resolves the earlier entries backward from it.
+    /// Ignores the summary block's bounds.
+    PlaceLastEntryInYear(i32),
+}
+
 /// The entry at which year resolution stopped: its 1-based physical line, its timestamp as the
 /// line writes it, and why the resolver rejects the year it tried last for it.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -152,6 +169,7 @@ pub(crate) fn resolve_entry_anchors(
     boot_session_ranges: &[BootSessionRange],
     summary: Option<&SummaryBlock>,
     year_reference: DateTime<Utc>,
+    year_resolution: YearResolution,
 ) -> Result<Vec<Option<DateTime<Utc>>>, UnresolvedYear> {
     let unsynchronised_ranges: Vec<Range<usize>> = boot_session_ranges
         .iter()
@@ -176,7 +194,7 @@ pub(crate) fn resolve_entry_anchors(
             _ => None,
         })
         .collect();
-    let mut resolved = resolve_anchors(&yearless, summary, year_reference)
+    let mut resolved = resolve_anchors(&yearless, summary, year_reference, year_resolution)
         .map_err(|failure| failure.into_unresolved_year(text))?
         .into_iter();
     Ok(entries
@@ -203,12 +221,14 @@ fn resolve_anchors(
     anchors: &[YearlessAnchor],
     summary: Option<&SummaryBlock>,
     year_reference: DateTime<Utc>,
+    year_resolution: YearResolution,
 ) -> Result<Vec<DateTime<Utc>>, YearResolutionFailure> {
     let synchronised: Vec<YearlessAnchor> = anchors
         .iter()
         .copied()
         .filter(|anchor| anchor.synchronised)
         .collect();
+    let summary = summary.filter(|_| year_resolution == YearResolution::Infer);
     // The resolver drops "Logs begin at" for a first entry without a synchronised clock: the bound
     // is the time of its reset clock.
     let bounds = ExporterBounds {
@@ -217,10 +237,16 @@ fn resolve_anchors(
             .filter(|_| anchors.first().is_some_and(|anchor| anchor.synchronised)),
         end: summary.and_then(|summary| summary.logs_end_at),
     };
-    let mut synchronised_resolved = bounds
-        .resolve_sequence(&synchronised, year_reference)?
-        .into_iter()
-        .rev();
+    let mut synchronised_resolved = match year_resolution {
+        YearResolution::PlaceLastEntryInYear(year) => {
+            resolve_backward_from_last_entry_year(&synchronised, year)?
+        }
+        YearResolution::IgnoreSummaryBounds | YearResolution::Infer => {
+            bounds.resolve_sequence(&synchronised, year_reference)?
+        }
+    }
+    .into_iter()
+    .rev();
     let mut resolved = Vec::with_capacity(anchors.len());
     let mut next_synchronised = None;
     for anchor in anchors.iter().rev() {
@@ -236,6 +262,49 @@ fn resolve_anchors(
             let ceiling = next_synchronised.unwrap_or(year_reference);
             resolved.push(anchor.place_at_or_before(ceiling, resolved.len())?);
         }
+    }
+    resolved.reverse();
+    Ok(resolved)
+}
+
+/// Places the last of `anchors` in `year`, and each anchor before it in the year of the anchor
+/// after it, or in the year before at a calendar rollover. A date missing from that year takes the
+/// latest earlier year with the date.
+fn resolve_backward_from_last_entry_year(
+    anchors: &[YearlessAnchor],
+    year: i32,
+) -> Result<Vec<DateTime<Utc>>, YearResolutionFailure> {
+    let Some((last, earlier)) = anchors.split_last() else {
+        return Ok(Vec::new());
+    };
+    let mut following = last.timestamp.in_year(year).ok_or(YearResolutionFailure {
+        anchor: *last,
+        conflict: YearConflict::LackDate { year },
+        resolved_entry_count: 0,
+    })?;
+    let mut adjacent = *last;
+    let mut resolved = Vec::with_capacity(anchors.len());
+    resolved.push(following);
+    for anchor in earlier.iter().rev().copied() {
+        let calendar_step = anchor.timestamp.in_year(following.year()).map_or_else(
+            || anchor.timestamp.calendar_step_from(adjacent.timestamp),
+            |candidate| candidate - following,
+        );
+        let anchor_year = if calendar_step > format::YEAR_ROLLOVER_THRESHOLD {
+            following.year().saturating_sub(1)
+        } else {
+            following.year()
+        };
+        following = anchor
+            .timestamp
+            .latest_in_year_or_before(anchor_year)
+            .ok_or(YearResolutionFailure {
+                anchor,
+                conflict: YearConflict::LackDate { year: anchor_year },
+                resolved_entry_count: resolved.len(),
+            })?;
+        resolved.push(following);
+        adjacent = anchor;
     }
     resolved.reverse();
     Ok(resolved)

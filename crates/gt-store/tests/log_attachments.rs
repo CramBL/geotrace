@@ -9,7 +9,7 @@ use gt_store::{
     DatabaseRef, HistoryDatabase as _, LogAttachmentError, LogAttachmentId, LogAttachments as _,
     LogToAttach, ReadOnlyHistoryDatabase as _, ReadOnlyLogAttachments as _, RecordingMeta,
     Recordings, Store, StoredLogFilterEffects, StoredLogFilterGroup, StoredLogFilterOperator,
-    StoredLogFilterStack, StoredLogFilterStackParts, TrackRange, TrackState,
+    StoredLogFilterStack, StoredLogFilterStackParts, StoredYearResolution, TrackRange, TrackState,
 };
 
 /// A store with one recording in its history, ready to attach logs to.
@@ -62,6 +62,7 @@ impl RecordedStore {
                     text,
                     filters: fixtures::log_filters(),
                     year_reference: None,
+                    year_resolution: StoredYearResolution::Infer,
                 },
             )
             .expect("attach")
@@ -115,7 +116,7 @@ fn an_attached_log_comes_back_with_its_name_text_and_filters() {
 }
 
 #[test_log::test]
-fn a_saved_year_reference_survives_filter_updates_and_reopening() {
+fn a_saved_year_reference_and_year_resolution_survive_filter_updates_and_reopening() {
     let mut recorded = RecordedStore::new();
     let year_reference = DateTime::parse_from_rfc3339("2026-10-01T00:00:00Z")
         .expect("reference date")
@@ -129,9 +130,18 @@ fn a_saved_year_reference_survives_filter_updates_and_reopening() {
                 text: "Dec 31 23:59:59 before\nJan  1 00:00:01 after\n",
                 filters: fixtures::log_filters(),
                 year_reference: Some(year_reference),
+                year_resolution: StoredYearResolution::IgnoreSummaryBounds,
             },
         )
         .expect("attach with a reference");
+    recorded
+        .recordings
+        .set_attached_log_year_resolution(
+            &recorded.recording,
+            attached.id,
+            StoredYearResolution::PlaceLastEntryInYear { year: 2024 },
+        )
+        .expect("update the year resolution");
     recorded
         .recordings
         .set_attached_log_filters(&recorded.recording, attached.id, Default::default())
@@ -145,6 +155,10 @@ fn a_saved_year_reference_survives_filter_updates_and_reopening() {
         .load_attached_log(&recorded.recording, attached.id)
         .expect("restore the log");
     assert_eq!(restored.year_reference, year_reference);
+    assert_eq!(
+        restored.year_resolution,
+        StoredYearResolution::PlaceLastEntryInYear { year: 2024 }
+    );
     assert_eq!(restored.filters, Default::default());
 }
 
@@ -162,6 +176,7 @@ fn attaching_returns_the_attachment_the_recording_now_lists() {
                 text: LOG_TEXT,
                 filters: fixtures::log_filters(),
                 year_reference: None,
+                year_resolution: StoredYearResolution::Infer,
             },
         )
         .expect("attach");
@@ -372,6 +387,7 @@ fn attaching_to_a_deleted_recording_fails_and_stores_no_log() {
             text: LOG_TEXT,
             filters: fixtures::log_filters(),
             year_reference: None,
+            year_resolution: StoredYearResolution::Infer,
         },
     );
 

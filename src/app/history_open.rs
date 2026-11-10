@@ -4,11 +4,13 @@ use std::time::Instant;
 
 use egui::{Button, Grid, Label, RichText};
 use gt_pending_writes::{PendingWriteGuard, WriteKind};
-use gt_store::{DbError, StoredFixPlacementRule, StoredTrackSplitRule, TrackState};
+use gt_store::{DatabaseRef, DbError, StoredFixPlacementRule, StoredTrackSplitRule, TrackState};
 use gt_ui_components::HeldBodyLines;
 
 use super::anchored_dialog::AnchoredDialogKind;
 use super::association_batches::RecordingOperationOrigin;
+use super::history_db::OpenedRecording;
+use super::loader::LoadedRecordingPlacement;
 use super::{App, ResegmentPrompt, auto_prune, history, history_db, loader, modals, storage};
 
 fn load_mode_for_stored_recording(stored: &gt_store::StoredRecording) -> loader::GtdLoadMode {
@@ -440,6 +442,25 @@ impl App {
         true
     }
 
+    fn open_the_recording_read_from_history(
+        &mut self,
+        origin: RecordingOperationOrigin,
+        db_ref: DatabaseRef,
+        placement: LoadedRecordingPlacement,
+        result: Result<OpenedRecording, DbError>,
+    ) {
+        match result {
+            Ok(opened) => {
+                self.apply_the_ui_state_stored_with_a_recording(&db_ref, opened.ui_state);
+                self.begin_history_open(db_ref, placement, opened.stored, origin);
+            }
+            Err(e) => {
+                log::error!("Failed to load recording from history: {e}");
+                self.toasts.error(format!("Could not open recording: {e}"));
+            }
+        }
+    }
+
     /// Apply a result delivered by the history worker thread.
     pub(super) fn handle_history_response(&mut self, resp: history_db::Response) {
         use history_db::Response;
@@ -454,16 +475,7 @@ impl App {
                 db_ref,
                 placement,
                 result,
-            } => match result {
-                Ok(opened) => {
-                    self.apply_the_ui_state_stored_with_a_recording(&db_ref, opened.ui_state);
-                    self.begin_history_open(db_ref, placement, opened.stored, origin);
-                }
-                Err(e) => {
-                    log::error!("Failed to load recording from history: {e}");
-                    self.toasts.error(format!("Could not open recording: {e}"));
-                }
-            },
+            } => self.open_the_recording_read_from_history(origin, db_ref, placement, result),
             Response::Mutated { op, result } => self.apply_mutation_outcome(&op, &result),
             Response::PrunePreview(Ok(refs)) => self.history_window.set_prune_preview(refs),
             Response::PrunePreview(Err(e)) => log::error!("Prune preview failed: {e}"),
@@ -518,6 +530,11 @@ impl App {
             Response::AttachedLogFiltersStored(result) => {
                 if let Err(e) = result {
                     log::warn!("Storing an attached log's filters failed: {e}");
+                }
+            }
+            Response::AttachedLogYearResolutionStored(result) => {
+                if let Err(e) = result {
+                    log::warn!("Storing the years of an attached log failed: {e}");
                 }
             }
             Response::AttachedLogLoaded {

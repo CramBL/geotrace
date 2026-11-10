@@ -37,6 +37,15 @@ Logs begin at: Wed 20-May-2026 12:00:00 UTC
 Logs end at: Wed 20-May-2026 12:00:10 UTC
 ";
 
+/// Syslog-short text with a February 29 on each side of a calendar wrap, which leaves its years
+/// unresolved whatever the reference date.
+pub const UNRESOLVED_LEAP_DAYS_LOG: &str = "\
+Feb 29 12:00:00 host service: first leap day
+Dec 31 23:59:59 host service: before calendar wrap
+Jan 01 00:00:00 host service: after calendar wrap
+Feb 29 12:00:00 host service: later leap day
+";
+
 /// The moment [`synthetic_journald_log`] logs its first line at, for a test
 /// building a recording that runs alongside the generated log.
 pub fn synthetic_log_start() -> DateTime<Utc> {

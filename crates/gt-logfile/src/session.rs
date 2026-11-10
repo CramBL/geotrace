@@ -34,6 +34,13 @@ impl BootSession {
     pub fn unsynchronised_entries(&self) -> Range<usize> {
         self.entry_range.start..self.first_synchronised_entry
     }
+
+    pub(crate) fn range(&self) -> BootSessionRange {
+        BootSessionRange {
+            entry_range: self.entry_range.clone(),
+            first_synchronised_entry: self.first_synchronised_entry,
+        }
+    }
 }
 
 /// The first and the last anchored timestamp of a boot session, in file order, from its first

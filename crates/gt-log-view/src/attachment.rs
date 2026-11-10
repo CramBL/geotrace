@@ -1,7 +1,10 @@
 //! What ties a loaded log to the log stored with a recording in history, and
 //! the attachments this session lists for the loaded recordings.
 
-use gt_history_types::{DatabaseRef, LogAttachmentEntry, LogAttachmentId, StoredLogFilterStack};
+use gt_history_types::{
+    DatabaseRef, LogAttachmentEntry, LogAttachmentId, StoredLogFilterStack, StoredYearResolution,
+};
+use gt_logfile::YearResolution;
 
 /// Identifies the attachment a log was stored as: the recording carrying it,
 /// and the attachment's own id on that recording.
@@ -9,6 +12,26 @@ use gt_history_types::{DatabaseRef, LogAttachmentEntry, LogAttachmentId, StoredL
 pub struct LogAttachmentRef {
     pub recording: DatabaseRef,
     pub id: LogAttachmentId,
+}
+
+pub fn stored_year_resolution(year_resolution: YearResolution) -> StoredYearResolution {
+    match year_resolution {
+        YearResolution::IgnoreSummaryBounds => StoredYearResolution::IgnoreSummaryBounds,
+        YearResolution::Infer => StoredYearResolution::Infer,
+        YearResolution::PlaceLastEntryInYear(year) => {
+            StoredYearResolution::PlaceLastEntryInYear { year }
+        }
+    }
+}
+
+pub fn year_resolution_of_stored(stored: StoredYearResolution) -> YearResolution {
+    match stored {
+        StoredYearResolution::IgnoreSummaryBounds => YearResolution::IgnoreSummaryBounds,
+        StoredYearResolution::Infer => YearResolution::Infer,
+        StoredYearResolution::PlaceLastEntryInYear { year } => {
+            YearResolution::PlaceLastEntryInYear(year)
+        }
+    }
 }
 
 /// A log's attachment, with the filter stack the database holds for it.

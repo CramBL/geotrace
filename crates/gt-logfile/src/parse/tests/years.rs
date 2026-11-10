@@ -8,7 +8,7 @@ use crate::format::LogFormat;
 use crate::parse;
 use crate::parse::tests::fixtures::{self, REBOOT};
 use crate::test_util::{self, EXPORTED_SUMMARY};
-use crate::{LogChronology, OrderAnomaly, UnresolvedYear, YearConflict};
+use crate::{LogChronology, OrderAnomaly, UnresolvedYear, YearConflict, YearResolution};
 
 #[rstest]
 #[case::seconds(
@@ -540,14 +540,11 @@ fn a_new_year_inside_one_boot_session_rolls_over(#[case] message_before_midnight
 
 #[test]
 fn unresolved_years_report_the_line_of_the_attempt_that_resolved_the_most_entries() {
-    let text = "\
-Feb 29 12:00:00 host service: first leap day
-Dec 31 23:59:59 host service: before calendar wrap
-Jan 01 00:00:00 host service: after calendar wrap
-Feb 29 12:00:00 host service: later leap day
-";
-    let parsed = parse::parse_log(text.into(), test_util::utc(2026, 11, 9, 0, 0, 0))
-        .expect("an unresolved chronology parses");
+    let parsed = parse::parse_log(
+        gt_test_utils::UNRESOLVED_LEAP_DAYS_LOG.into(),
+        test_util::utc(2026, 11, 9, 0, 0, 0),
+    )
+    .expect("an unresolved chronology parses");
     assert_eq!(
         fixtures::resolved_timestamps(&parsed),
         Err(UnresolvedYear {
@@ -567,6 +564,58 @@ Feb 29 12:00:00 host service: later leap day
             .collect::<Vec<_>>(),
         [Some((2, 29)), Some((12, 31)), Some((1, 1)), Some((2, 29))]
     );
+}
+
+#[rstest]
+#[case::a_chosen_year_places_the_leap_days_in_leap_years(
+    gt_test_utils::UNRESOLVED_LEAP_DAYS_LOG.to_owned(),
+    YearResolution::PlaceLastEntryInYear(2024),
+    Ok(vec![
+        test_util::utc(2020, 2, 29, 12, 0, 0),
+        test_util::utc(2023, 12, 31, 23, 59, 59),
+        test_util::utc(2024, 1, 1, 0, 0, 0),
+        test_util::utc(2024, 2, 29, 12, 0, 0),
+    ])
+)]
+#[case::a_chosen_year_without_the_date_of_the_last_entry(
+    gt_test_utils::UNRESOLVED_LEAP_DAYS_LOG.to_owned(),
+    YearResolution::PlaceLastEntryInYear(2025),
+    Err(UnresolvedYear {
+        line_number: 4,
+        written_timestamp: "Feb 29 12:00:00".to_owned(),
+        conflict: YearConflict::LackDate { year: 2025 },
+    })
+)]
+#[case::ignoring_the_summary_bounds_keeps_a_backward_clock_step_in_its_year(
+    BACKWARD_CLOCK_STEP_BEFORE_LOGS_BEGIN_AT
+        .split_inclusive('\n')
+        .filter(|line| !line.contains("clock restored"))
+        .collect::<String>(),
+    YearResolution::IgnoreSummaryBounds,
+    Ok([0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        .map(|second| test_util::utc(2026, 5, 20, 12, 0, second))
+        .into_iter()
+        .chain([test_util::utc(2026, 5, 20, 11, 0, 0)])
+        .collect())
+)]
+fn a_year_resolution_resolves_the_same_on_parse_and_on_an_unresolved_log(
+    #[case] text: String,
+    #[case] year_resolution: YearResolution,
+    #[case] expected: Result<Vec<DateTime<Utc>>, UnresolvedYear>,
+) {
+    let year_reference = test_util::utc(2026, 11, 9, 0, 0, 0);
+    let inferred = parse::parse_log(text.as_str().into(), year_reference).expect("parses");
+    let parsed = parse::parse_log_with_year_resolution(
+        text.as_str().into(),
+        year_reference,
+        year_resolution,
+    )
+    .expect("parses");
+
+    assert!(!inferred.chronology().is_resolved());
+    assert_eq!(fixtures::resolved_timestamps(&parsed), expected);
+    assert_eq!(parsed.year_resolution(), year_resolution);
+    assert_eq!(inferred.resolve_years_as(year_resolution), Some(parsed));
 }
 
 proptest! {
