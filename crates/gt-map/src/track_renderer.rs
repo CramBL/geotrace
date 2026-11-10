@@ -55,7 +55,7 @@ pub(crate) fn track_fade_alpha(
     if !highlight.fading_enabled || !highlight.hover_is_active() {
         return 1.0;
     }
-    if is_track_in_focus(highlight, fi, ti) {
+    if highlight.focuses_track(TrackRef::new(fi, ti)) {
         return 1.0;
     }
     HOVER_FADE_ALPHA
@@ -73,40 +73,6 @@ pub(crate) fn apply_fade_alpha(color: Color32, fade: f32) -> Color32 {
     )]
     let a = ((color.a() as f32) * fade.clamp(0.0, 1.0)) as u8;
     Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), a)
-}
-
-pub(crate) fn is_track_in_focus(
-    highlight: &ResolvedMapHighlight<'_>,
-    fi: FileIdx,
-    ti: TrackIdx,
-) -> bool {
-    let track = TrackRef::new(fi, ti);
-    let from_map_hover = match highlight.hover {
-        Some(HighlightScope::File { file_index }) => file_index == fi,
-        Some(HighlightScope::Track(t)) | Some(HighlightScope::TrackCategory { track: t, .. }) => {
-            t == track
-        }
-        Some(HighlightScope::Point(r)) => r.track() == track,
-        None => false,
-    };
-    from_map_hover || highlight.snapped_plot_hover_track() == Some(track)
-}
-
-/// Returns the single [`TrackRef`] currently in focus, or `None` when no
-/// specific track has focus (hover inactive, or a file-level scope).
-///
-/// Used by [`crate::NavMap`] to detect when the focused track changes and to
-/// drive the hysteresis/animation logic in `HoverFadeState`.
-pub(crate) fn focused_track_from_highlight(
-    highlight: &ResolvedMapHighlight<'_>,
-) -> Option<TrackRef> {
-    match highlight.hover {
-        Some(HighlightScope::Track(t)) | Some(HighlightScope::TrackCategory { track: t, .. }) => {
-            Some(t)
-        }
-        Some(HighlightScope::Point(r)) => Some(r.track()),
-        Some(HighlightScope::File { .. }) | None => highlight.snapped_plot_hover_track(),
-    }
 }
 
 /// The bright pulsing overlay stroke for newly loaded tracks.

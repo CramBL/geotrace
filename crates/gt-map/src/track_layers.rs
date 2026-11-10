@@ -219,7 +219,7 @@ impl Plugin for TrackLayers<'_, '_> {
                 // also covers satellite-count labels so they vanish for free.
                 let focused: Vec<bool> = geometries
                     .iter()
-                    .map(|geo| track_renderer::is_track_in_focus(self.highlight, geo.fi, geo.ti))
+                    .map(|geo| self.highlight.focuses_track(TrackRef::new(geo.fi, geo.ti)))
                     .collect();
 
                 self.paint_match_halos(ui, &geometries, &style, |i| {
