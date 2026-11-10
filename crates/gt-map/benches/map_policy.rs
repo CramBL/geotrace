@@ -20,7 +20,7 @@ use gt_filter::GlobalFilter;
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_map::{benchmark_support, test_util};
 use gt_track_builder::SpatialIndex;
-use gt_types::{DataCategory, FixRef, LoadedFile, NavPoint, PointIdx, SpatialPoint};
+use gt_types::{DataCategory, FixRef, LoadedFile, NavPoint, PointIdx, SolutionState, SpatialPoint};
 use gt_ui_types::{
     DisplayMask, DrawLayer, EventMarkerVisibility, GeneratedMarkerVisibility, MapElementRef,
     QueryMatches, TrackDataVisibility, TrackRanges,
@@ -101,12 +101,7 @@ fn bench_candidate_resolution(c: &mut Criterion) {
         .points
         .get_mut(2)
         .expect("the marker fixture has at least three fixes");
-    let ghost_time = ghost_point.tpv.time();
-    ghost_point.satellites = Some(gt_types::satellites::Satellites::new(
-        Some(ghost_time),
-        None,
-        Vec::new(),
-    ));
+    ghost_point.navigation.state = Some(SolutionState::NoFix);
 
     let track = files
         .first()
