@@ -19,7 +19,7 @@ use gt_logfile::{LogLevelKind, ParsedLog};
 use gt_ui_types::LoadedLogId;
 use strum::IntoEnumIterator as _;
 
-use super::LogViewerWindow;
+use super::{LogViewerWindow, UNRESOLVED_YEARS_HOVER};
 
 /// The edit the filter row or the chip row produced while rendering. It reaches
 /// the engine once rendering has finished: every chip of a frame is drawn from
@@ -445,8 +445,12 @@ impl LogViewerWindow {
                 }
             }
             let add = ui
-                .small_button(ADD_CONDITION_LABEL)
-                .on_hover_text("Add a map highlight");
+                .add_enabled(
+                    log.chronology().is_resolved(),
+                    Button::new(ADD_CONDITION_LABEL).small(),
+                )
+                .on_hover_text("Add a map highlight")
+                .on_disabled_hover_text(UNRESOLVED_YEARS_HOVER);
             add.ctx.accesskit_node_builder(add.id, |node| {
                 node.set_author_id(MAP_HIGHLIGHT_ADD_ID);
                 node.set_description("Add a map highlight");

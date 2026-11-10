@@ -214,10 +214,10 @@ proptest! {
         }
     }
 
-    /// A resolved chronology has one timestamp per entry and the anchored bounds of each boot
-    /// session. An unresolved one has a written timestamp for every anchored entry and none for
-    /// the other entries. The bounds of a generated summary block leave most of its syslog logs
-    /// unresolved.
+    /// A resolved chronology has one timestamp per entry, and for each boot session the anchored
+    /// bounds from its first entry with a synchronised clock. An unresolved one has a written
+    /// timestamp for every anchored entry and none for the other entries. The bounds of a
+    /// generated summary block leave most of its syslog logs unresolved.
     #[test]
     fn the_chronology_indexes_every_entry_and_boot_session(
         text in prop_oneof![strategies::any_log_text(), strategies::any_summarised_log()],
@@ -231,9 +231,8 @@ proptest! {
             LogChronology::Resolved(resolved) => {
                 prop_assert_eq!(resolved.timestamps().len(), entries.len());
                 for (session_index, session) in parsed.boot_sessions().iter().enumerate() {
-                    let anchored: Vec<DateTime<Utc>> = session
-                        .entry_range
-                        .clone()
+                    let anchored: Vec<DateTime<Utc>> = (session.first_synchronised_entry
+                        ..session.entry_range.end)
                         .filter(|&index| entries.get(index).is_some_and(LogEntry::is_anchored))
                         .filter_map(|index| resolved.timestamp(index))
                         .collect();

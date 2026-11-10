@@ -283,4 +283,4 @@ const UPTIME_BAR_HEIGHT_PX: f32 = 6.0;
 
 /// Column and row spacing shared by the panel's grids, so their rows sit
 /// tighter than the window's default.
-const GRID_SPACING: egui::Vec2 = egui::vec2(8.0, 2.0);
+pub(super) const GRID_SPACING: egui::Vec2 = egui::vec2(8.0, 2.0);

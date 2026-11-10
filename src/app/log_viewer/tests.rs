@@ -1138,10 +1138,58 @@ fn the_table_of_a_log_with_unresolved_years_shows_its_timestamps_as_written() {
     harness.get_by_label("    --05-20 11:00:00");
     let blank_timestamp = " ".repeat(" 2026-05-20 12:00:00".len());
     harness.get_by_label(blank_timestamp.as_str());
-    assert!(
-        harness.query_by_label_contains("2026-05-20").is_none(),
-        "no row or day divider shows a year"
+    for dated_label in ["2026-05-20", " 2026-05-20 12:00:00", " 2026-05-20 11:00:00"] {
+        assert!(
+            harness.query_by_label(dated_label).is_none(),
+            "no row or day divider reads {dated_label:?}"
+        );
+    }
+}
+
+#[test]
+fn the_time_controls_of_a_log_with_unresolved_years_are_disabled_with_their_reason() {
+    let mut harness = harness_of(
+        vec![recording("walk.gtd", 55.0)],
+        &[("journal.log", gt_test_utils::UNRESOLVED_YEARS_LOG)],
     );
+    let controls = [
+        By::new().role(Role::ComboBox).value(EM_DASH),
+        By::new().role(Role::SpinButton),
+        By::new()
+            .role(Role::ComboBox)
+            .value(AssociationWindowUnit::Seconds.label()),
+        By::new().predicate(|node| node.author_id() == Some(filters::MAP_HIGHLIGHT_ADD_ID)),
+    ];
+
+    for control in controls {
+        let node = harness.get(control);
+        assert!(
+            node.accesskit_node().is_disabled(),
+            "{:?}",
+            node.accesskit_node().role()
+        );
+        let center = node.rect().center();
+        harness.hover_at_and_settle(center, TOOLTIP_DELAY_FRAMES);
+        assert!(
+            harness
+                .query_all_by_label(super::UNRESOLVED_YEARS_HOVER)
+                .next()
+                .is_some(),
+            "the hover text states the unresolved years"
+        );
+    }
+}
+
+#[test]
+fn hovering_a_line_of_a_log_with_unresolved_years_states_that_it_takes_no_position() {
+    let mut harness = harness_of(
+        vec![recording("walk.gtd", 55.0)],
+        &[("journal.log", gt_test_utils::UNRESOLVED_YEARS_LOG)],
+    );
+
+    hover_line(&mut harness, "    --05-20 12:00:00");
+
+    harness.get_by_label(line_table::UNRESOLVED_YEARS_ROW_HOVER);
 }
 
 #[test]

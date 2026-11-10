@@ -56,6 +56,10 @@ impl LogChronology {
         )
     }
 
+    pub fn is_resolved(&self) -> bool {
+        matches!(self, Self::Resolved(_))
+    }
+
     pub fn resolved(&self) -> Option<&ResolvedChronology> {
         match self {
             Self::Resolved(resolved) => Some(resolved),
@@ -96,16 +100,16 @@ impl LogChronology {
 }
 
 /// One absolute timestamp per entry of [`crate::ParsedLog::entries`], the first anchored
-/// timestamp, the interpolated entry count, the anchored bounds of each boot session, and the
-/// order anomalies.
+/// timestamp, the interpolated entry count, the anchored bounds of each boot session from its
+/// first entry with a synchronised clock, and the order anomalies.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedChronology {
     timestamps: Vec<DateTime<Utc>>,
     first_anchored_timestamp: DateTime<Utc>,
     interpolated_entry_count: usize,
 
-    /// One per boot session of [`crate::ParsedLog::boot_sessions`], `None` for a session no line
-    /// of which has a timestamp.
+    /// One per boot session of [`crate::ParsedLog::boot_sessions`], `None` for a session with no
+    /// anchored entry from its first entry with a synchronised clock.
     session_bounds: Vec<Option<AnchoredBounds>>,
 
     order_anomalies: Vec<OrderAnomaly>,
@@ -140,7 +144,11 @@ impl ResolvedChronology {
                 session_anchors,
                 anchor_before_session,
             ));
-            let bounds = AnchoredBounds::of_session(session_anchors);
+            let bounds = AnchoredBounds::of_anchors(
+                anchors
+                    .get(range.first_synchronised_entry..range.entry_range.end)
+                    .unwrap_or_default(),
+            );
             if let Some(bounds) = bounds {
                 anchor_before_session = bounds.last;
             }
@@ -187,14 +195,15 @@ impl ResolvedChronology {
         self.interpolated_entry_count
     }
 
-    /// `None` for a session no line of which has a timestamp.
+    /// `None` for a session with no anchored entry from its first entry with a synchronised clock.
     pub fn session_bounds(&self, session_index: usize) -> Option<AnchoredBounds> {
         self.session_bounds.get(session_index).copied().flatten()
     }
 
     /// How long the device ran in the session at `session_index`, from its first anchored entry
-    /// to its last. `None` for a session no line of which anchored, and for one whose clock was
-    /// adjusted back past the moment the session started.
+    /// with a synchronised clock to its last. `None` for a session with no anchored entry from its
+    /// first entry with a synchronised clock, and for one whose clock was adjusted back past the
+    /// moment the session started.
     pub fn session_uptime(&self, session_index: usize) -> Option<Duration> {
         self.session_bounds(session_index)
             .map(AnchoredBounds::uptime)

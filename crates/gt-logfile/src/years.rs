@@ -120,9 +120,9 @@ impl fmt::Display for YearConflict {
                 candidate, bound, ..
             }) => write!(
                 f,
-                "{} UTC is {lowercase_reason} {} UTC",
-                candidate.format(gt_fmt::UTC_SUBSECOND_FORMAT),
-                bound.format(gt_fmt::UTC_SUBSECOND_FORMAT)
+                "{} is {lowercase_reason} {}",
+                gt_fmt::format_utc_subsecond(candidate),
+                gt_fmt::format_utc_subsecond(bound)
             ),
             None => f.write_str(&lowercase_reason),
         }

@@ -13,7 +13,7 @@
 - **Map & Tracks:** Recorded positions are styled by navigation state, including fixes without headings or satellite reports.
 - **Map & Tracks:** Valid navigation fixes are shown in blue regardless of the used-satellite count.
 - **Interface:** Load errors are shown in a window for each failed load, with a button to copy the details.
-- **Log Viewer:** Logs whose years cannot be worked out now open, with their text and the timestamps as written.
+- **Log Viewer:** Logs whose years cannot be worked out now open with their text and the timestamps as written, and the viewer states why.
 
 ### Fixed
 
@@ -25,6 +25,7 @@
 - **Map & Tracks:** Fixed start and finish flags remaining on query-hidden fixes.
 - **Interface:** Fixed a load error disappearing when another file finished loading after it.
 - **Log Viewer:** Fixed logs from a device that loses its clock on reboot getting the wrong year or failing to load.
+- **Log Viewer:** Fixed a boot session's uptime showing months for a log from a device that resets its clock on reboot.
 
 ## 0.19.0 - 2026-10-04
 
