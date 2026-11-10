@@ -616,7 +616,22 @@ impl<'a> ResolvedEligibility<'a> {
                 MapPresenceResult::Withheld(PresenceWithheld::Eligibility(reason))
             }
             Self::Eligible(eligible) => {
-                if display_mask.is_visible(eligible.element.display_category()) {
+                let displayed = match eligible.element {
+                    ResolvedElement::Fix(_) | ResolvedElement::SatelliteReport { .. }
+                        if display_mask.is_visible(DisplayCategory::TrackPoints)
+                            == display_mask.is_visible(DisplayCategory::GhostFixes) =>
+                    {
+                        display_mask.is_visible(DisplayCategory::TrackPoints)
+                    }
+                    ResolvedElement::Fix(_)
+                    | ResolvedElement::SatelliteReport { .. }
+                    | ResolvedElement::CustomMarker(_)
+                    | ResolvedElement::GeneratedMarker(_)
+                    | ResolvedElement::EventMarker(_) => {
+                        display_mask.is_visible(eligible.element.display_category())
+                    }
+                };
+                if displayed {
                     MapPresenceResult::Present(PresentElementRef {
                         element_ref: eligible.element_ref,
                         element: eligible.element,
@@ -1201,6 +1216,17 @@ mod tests {
         mask.solo(DisplayCategory::GhostFixes);
         let scope = scope.with_display_mask(mask);
         assert_eq!(scope.point_visibility(ghost_ref), PointVisibility::Shown);
+        assert_eq!(
+            scope.point_visibility(real_ref),
+            PointVisibility::CategoryHidden
+        );
+
+        mask.hide_all();
+        let scope = scope.with_display_mask(mask);
+        assert_eq!(
+            scope.point_visibility(ghost_ref),
+            PointVisibility::CategoryHidden
+        );
         assert_eq!(
             scope.point_visibility(real_ref),
             PointVisibility::CategoryHidden
