@@ -8,7 +8,7 @@ use egui_phosphor::regular::PLAY as ICON_PLAY;
 
 use gt_sky::{SkyTrails, SkyTrailsPlot, TrailDisplayCount, TrailEpoch, TrailMembershipFilter};
 use gt_types::satellites::{Constellation, ConstellationSet};
-use gt_types::{GpsTime, LoadedFile, TrackRef};
+use gt_types::{FixRef, GpsTime, LoadedFile, TrackRef};
 use gt_ui_types::{MapHighlight, SkyTrailsRequest};
 
 use crate::tpv_renderer;
@@ -935,7 +935,7 @@ fn speed_selector(ui: &mut egui::Ui, speed: &mut f32) {
 /// so the map and the trails move together (the same channel the time-series
 /// plot writes when its cursor moves).
 fn apply_scrub_highlight(highlight: &mut MapHighlight, track_ref: TrackRef, epoch: &TrailEpoch) {
-    highlight.plot_hover_point = Some((track_ref.fi, track_ref.index, epoch.point_index));
+    highlight.plot_hover_point = Some(FixRef::new(track_ref, epoch.point_index));
     highlight.plot_hover_snapped = true;
 }
 
@@ -1016,7 +1016,7 @@ mod tests {
 
     use gt_types::fixtures::SatelliteDrift;
     use gt_types::satellites::Constellation;
-    use gt_types::{FileIdx, SatelliteMembership, SatelliteScope, TrackIdx};
+    use gt_types::{FileIdx, FixRef, SatelliteMembership, SatelliteScope, TrackIdx};
 
     use super::{
         ConstellationSet, DEFAULT_WINDOW_SIZE, MAX_PLAYBACK_FRAME_SECS, MIN_PLOT_DIAMETER_PX,
@@ -1275,7 +1275,7 @@ mod tests {
         let expected = demo_trails().epochs[4].point_index;
         assert_eq!(
             highlight.plot_hover_point,
-            Some((FileIdx::new(0), TrackIdx::new(0), expected))
+            Some(FixRef::new(test_util::track0(), expected))
         );
     }
 
@@ -1283,9 +1283,8 @@ mod tests {
     fn scrub_highlight_defers_to_an_active_plot_hover() {
         // The time-series plot already claimed the channel this frame (the app
         // writes it before the window runs). The window must not clobber it.
-        let plots_point = (
-            FileIdx::new(1),
-            TrackIdx::new(2),
+        let plots_point = FixRef::new(
+            TrackRef::new(FileIdx::new(1), TrackIdx::new(2)),
             gt_types::PointIdx::new(9),
         );
         let mut start = MapHighlight::default();
@@ -1827,7 +1826,7 @@ mod tests {
         super::apply_scrub_highlight(&mut highlight, test_util::track0(), &epoch);
         assert_eq!(
             highlight.plot_hover_point,
-            Some((FileIdx::new(0), TrackIdx::new(0), epoch.point_index))
+            Some(FixRef::new(test_util::track0(), epoch.point_index))
         );
         assert!(highlight.plot_hover_snapped);
     }

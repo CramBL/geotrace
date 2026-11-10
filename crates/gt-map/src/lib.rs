@@ -20,7 +20,7 @@ use gt_ui_types::{
     DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, HighlightScope,
     LogMatchGlyph, LogMatchHover, LogMatches, MapElementRef, MapEligibility, MapHighlight,
     MapPresence, MatchRevealTarget, PinnedPopup, PointWindowFolds, QueryMatches, ResolvedElement,
-    SkyGlyphVariant, SkyTrailsRequest, SnappedTracks, TrackDataVisibility,
+    ResolvedMapHighlight, SkyGlyphVariant, SkyTrailsRequest, SnappedTracks, TrackDataVisibility,
 };
 use rstar::PointDistance as _;
 use walkers::sources::OpenStreetMap;
@@ -670,7 +670,6 @@ impl NavMap {
         let now = ui.ctx().input(|i| i.time);
         self.apply_camera_requests(ui, &ctx);
         self.adopt_new_files(ui, &ctx, now);
-        let animation = self.tick_animations(ui, &ctx, now);
 
         // Read before the click below can open or close either of them: the
         // hover labels state the popups the frame was drawn under.
@@ -685,7 +684,9 @@ impl NavMap {
             .detached()
             .unwrap_or_else(default_map_center);
         let plan = self.collect_viewport_points(ui.max_rect(), map_center, &ctx);
-        let map_response = self.show_map(ui, &ctx, &plan, animation, popups);
+        let highlight = ctx.highlight.resolve(plan.presence());
+        let animation = self.tick_animations(ui, &ctx, &highlight, now);
+        let map_response = self.show_map(ui, &ctx, &plan, &highlight, animation, popups);
         ctx.log_hover.glyph = self.hovered_log_glyph.take();
         *ctx.clicked_log_glyph = self.clicked_log_glyph.take();
 
@@ -791,6 +792,7 @@ impl NavMap {
         &mut self,
         ui: &egui::Ui,
         ctx: &MapDrawContext<'_>,
+        highlight: &ResolvedMapHighlight<'_>,
         now: f64,
     ) -> FrameAnimation {
         let blink_alpha = self.blink.tick(now);
@@ -800,8 +802,8 @@ impl NavMap {
         let hover_fade = if ctx.highlight.fading_enabled {
             let progress = self.hover_fade.tick(
                 now,
-                track_renderer::hover_is_active(ctx.highlight),
-                track_renderer::focused_track_from_highlight(ctx.highlight),
+                highlight.hover_is_active(),
+                track_renderer::focused_track_from_highlight(highlight),
             );
             if self.hover_fade.is_animating() {
                 request_animation_frame(ui);
@@ -897,6 +899,7 @@ impl NavMap {
         ui: &mut egui::Ui,
         ctx: &MapDrawContext<'_>,
         plan: &viewport::MapFramePlan<'_>,
+        highlight: &ResolvedMapHighlight<'_>,
         animation: FrameAnimation,
         popups: OpenPopups,
     ) -> egui::Response {
@@ -936,7 +939,7 @@ impl NavMap {
             TrackLayers::builder()
                 .files(ctx.files.files())
                 .plan(plan)
-                .highlight(ctx.highlight)
+                .highlight(highlight)
                 .filter(ctx.filter)
                 .tpv_by_track(self.visible_points.tpv_by_track())
                 .new_file_boundary(self.new_file_boundary)
@@ -986,7 +989,7 @@ impl NavMap {
         if let Some(custom) = self.visible_points.custom() {
             map = map.with_plugin(MarkerRenderer::new(
                 plan,
-                ctx.highlight,
+                highlight,
                 custom,
                 self.icon_meshes.as_ref(),
             ));
@@ -995,7 +998,7 @@ impl NavMap {
             map = map.with_plugin(
                 GeneratedMarkerRenderer::builder()
                     .plan(plan)
-                    .highlight(ctx.highlight)
+                    .highlight(highlight)
                     .visible_generated(generated)
                     .maybe_icon_meshes(self.icon_meshes.as_ref())
                     .build(),
@@ -1004,7 +1007,7 @@ impl NavMap {
         if let Some(event) = self.visible_points.event() {
             map = map.with_plugin(EventMarkerRenderer::new(
                 plan,
-                ctx.highlight,
+                highlight,
                 event,
                 self.icon_meshes.as_ref(),
             ));

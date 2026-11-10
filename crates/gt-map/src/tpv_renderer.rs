@@ -7,7 +7,7 @@ use gt_types::{
     DataCategory, FileIdx, FixRef, LoadedFile, LoadedTrack, MapFixKind, NavPoint, PlacedPoint,
     PlacedPoints, PointIdx, SatelliteQueryScope, SkyGeometry, SolutionState, TrackIdx, TrackRef,
 };
-use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight};
+use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, PresentElementRef};
 use uom::si::angle::radian;
 use uom::si::f64::Angle;
 use uom::si::length::meter;
@@ -305,23 +305,18 @@ pub(crate) fn label_cell_px(zoom: f64) -> f32 {
     60.0 + (1.0 - zoom_size_factor(zoom)) * 120.0
 }
 
-/// Cross-highlight: when the track plot cursor is active, draw a ring around
-/// the pre-computed closest point, plus a sky disc for its report so
-/// scrubbing the plot walks the sky along the track. The app layer computes
-/// the point via `find_closest_tpv` and stores it in
-/// `MapHighlight::plot_hover_point` - no O(n) scan needed here.
 pub(crate) fn draw_plot_hover_overlay(
     ui: &Ui,
     files: &[LoadedFile],
-    highlight: &MapHighlight,
+    present: PresentElementRef<'_>,
     style: &TpvDrawStyle,
     transform: &crate::transform::MercTransform,
 ) {
-    if let Some((fi, ti, pi)) = highlight.plot_hover_point
-        && let Some(point) = fi
-            .get(files)
-            .and_then(|f| ti.get(&f.tracks))
-            .and_then(|t| t.placed_points()?.get(pi.as_usize()))
+    if let Some(fix) = present.element_ref().fix()
+        && let Some(point) = fix
+            .track
+            .resolve(files)
+            .and_then(|track| track.placed_points()?.get(fix.point.as_usize()))
     {
         let pos = transform.to_screen(point.merc());
         let painter = ui.painter();

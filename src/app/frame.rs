@@ -869,11 +869,7 @@ impl App {
                     )
                     .with_display_mask(s.display_mask);
                     let closest = match s.plot_state.hovered_metric_fix {
-                        Some(fix) => scope.draws(MapElementRef::Fix(fix)).then_some((
-                            fix.track.fi,
-                            fix.track.index,
-                            fix.point,
-                        )),
+                        Some(fix) => scope.draws(MapElementRef::Fix(fix)).then_some(fix),
                         None => gt_plot::find_closest_tpv_matching(
                             &s.loaded_files,
                             cursor_time,
@@ -887,7 +883,8 @@ impl App {
                                         .draws(MapElementRef::Fix(FixRef::new(track_ref, point)))
                                 })
                             },
-                        ),
+                        )
+                        .map(|(fi, ti, pi)| FixRef::new(TrackRef::new(fi, ti), pi)),
                     };
                     s.highlight.plot_hover_time = closest.map(|_| cursor_time);
                     s.highlight.plot_hover_point = closest;

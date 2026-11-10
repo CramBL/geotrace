@@ -962,7 +962,7 @@ mod tests {
         NavPoint, PositionProvenance, RecordedLatitude, RecordedLongitude, SolutionState,
         TimePositionVelocity,
     };
-    use gt_ui_types::{DrawLayer, MapEligibilityResult, TrackRanges};
+    use gt_ui_types::{DrawLayer, MapEligibilityResult, MapHighlight, TrackRanges};
     use proptest::prelude::*;
     use rstest::rstest;
 
@@ -1119,6 +1119,178 @@ mod tests {
         assert_eq!(calls, expected);
     }
 
+    #[derive(Clone, Copy, Debug)]
+    enum CrossHighlightChange {
+        None,
+        FileHidden,
+        TrackHidden,
+        CategoryHidden,
+        TrackFiltered,
+        TimeFiltered,
+        QueryHidden,
+        DisplayMasked,
+        FileUnloaded,
+        TrackRemoved,
+        FixRemoved,
+    }
+
+    #[rstest]
+    #[case::present(CrossHighlightChange::None)]
+    #[case::file_hidden(CrossHighlightChange::FileHidden)]
+    #[case::track_hidden(CrossHighlightChange::TrackHidden)]
+    #[case::category_hidden(CrossHighlightChange::CategoryHidden)]
+    #[case::track_filtered(CrossHighlightChange::TrackFiltered)]
+    #[case::time_filtered(CrossHighlightChange::TimeFiltered)]
+    #[case::query_hidden(CrossHighlightChange::QueryHidden)]
+    #[case::display_masked(CrossHighlightChange::DisplayMasked)]
+    #[case::file_unloaded(CrossHighlightChange::FileUnloaded)]
+    #[case::track_removed(CrossHighlightChange::TrackRemoved)]
+    #[case::fix_removed(CrossHighlightChange::FixRemoved)]
+    fn retained_cross_highlights_use_current_presence_for_painting_and_focus(
+        #[case] change: CrossHighlightChange,
+        #[values(false, true)] estimated: bool,
+    ) {
+        let mut files = test_util::a_recording_of(3, 0.001);
+        if estimated {
+            files[0].tracks[0].points[0].navigation.state = Some(SolutionState::EstimatedOnly);
+        }
+        let mut visibility = TrackDataVisibility::from_loaded(&files);
+        let mut filter = GlobalFilter::default();
+        let generated = GeneratedMarkerVisibility::default();
+        let events = EventMarkerVisibility::default();
+        let mut mask = DisplayMask::default();
+        let mut query = QueryMatches::default();
+        let target = FixRef::new(test_util::track0(), PointIdx::new(0));
+        let mut highlight = MapHighlight::default();
+        highlight.plot_hover_point = Some(target);
+        highlight.plot_hover_snapped = true;
+        let plan = MapFramePlan::compute(
+            MapFrameInputs::new(
+                &files,
+                &visibility,
+                &filter,
+                Some(&query),
+                &generated,
+                &events,
+                mask,
+            ),
+            ZOOM,
+        );
+        assert!(highlight.resolve(plan.presence()).plot_hover().is_some());
+        drop(plan);
+
+        match change {
+            CrossHighlightChange::None => {}
+            CrossHighlightChange::FileHidden => visibility.files[0].enabled = false,
+            CrossHighlightChange::TrackHidden => visibility.files[0].tracks[0].enabled = false,
+            CrossHighlightChange::CategoryHidden => {
+                visibility.files[0].tracks[0].set_category_visible(DataCategory::Tpv, false)
+            }
+            CrossHighlightChange::TrackFiltered => {
+                filter.set_minimum_duration(Some(chrono::Duration::hours(1)))
+            }
+            CrossHighlightChange::TimeFiltered => filter.set_time_bounds(
+                Some(test_util::epoch() + chrono::Duration::minutes(1)),
+                None,
+            ),
+            CrossHighlightChange::QueryHidden => {
+                query.hidden =
+                    TrackRanges::from_iter([(target.track, std::iter::once(0..1).collect())])
+            }
+            CrossHighlightChange::DisplayMasked => mask.set_visible(
+                if estimated {
+                    DisplayCategory::GhostFixes
+                } else {
+                    DisplayCategory::TrackPoints
+                },
+                false,
+            ),
+            CrossHighlightChange::FileUnloaded => files.clear(),
+            CrossHighlightChange::TrackRemoved => files[0].tracks.clear(),
+            CrossHighlightChange::FixRemoved => files[0].tracks[0].points.clear(),
+        }
+        let plan = MapFramePlan::compute(
+            MapFrameInputs::new(
+                &files,
+                &visibility,
+                &filter,
+                Some(&query),
+                &generated,
+                &events,
+                mask,
+            ),
+            ZOOM,
+        );
+        let resolved = highlight.resolve(plan.presence());
+        let expected = matches!(change, CrossHighlightChange::None);
+        assert_eq!(resolved.plot_hover().is_some(), expected);
+        assert_eq!(resolved.hover_is_active(), expected);
+        assert_eq!(
+            crate::track_renderer::focused_track_from_highlight(&resolved),
+            expected.then_some(target.track)
+        );
+        assert_eq!(
+            crate::track_renderer::is_track_in_focus(
+                &resolved,
+                target.track.fi,
+                target.track.index
+            ),
+            expected
+        );
+        assert_eq!(resolved.hovers_a_point_of_track(target.track), expected);
+        assert_eq!(resolved.hovers_anything_in_file(target.track.fi), expected);
+        let transform = MercTransform::for_test_view(
+            2_f64.powi(20),
+            Latitude::new(TRACK_START.0),
+            Longitude::new(TRACK_START.1),
+            VIEWPORT.center(),
+        );
+        let mut harness = test_util::harness_builder().ui(|ui| {
+            if let Some(present) = resolved.plot_hover() {
+                tpv_renderer::draw_plot_hover_overlay(
+                    ui,
+                    &files,
+                    present,
+                    &tpv_renderer::frame_style(ZOOM),
+                    &transform,
+                );
+            }
+        });
+        harness.run();
+        let circles = harness
+            .inner
+            .output()
+            .shapes
+            .iter()
+            .filter(|shape| matches!(shape.shape, egui::Shape::Circle(_)))
+            .count();
+        assert_eq!(circles, if expected { 2 } else { 0 });
+        assert_eq!(highlight.plot_hover_point, Some(target));
+    }
+
+    #[test]
+    fn an_unsnapped_present_cross_highlight_preserves_track_focus() {
+        let files = test_util::a_recording_of(1, 0.001);
+        let visibility = TrackDataVisibility::from_loaded(&files);
+        let filter = GlobalFilter::default();
+        let plan = MapFramePlan::compute_for_test(
+            &files,
+            &visibility,
+            &filter,
+            DisplayMask::default(),
+            ZOOM,
+        );
+        let mut highlight = MapHighlight::default();
+        highlight.plot_hover_point = Some(FixRef::new(test_util::track0(), PointIdx::new(0)));
+        let resolved = highlight.resolve(plan.presence());
+        assert!(resolved.plot_hover().is_some());
+        assert!(!resolved.hover_is_active());
+        assert_eq!(
+            crate::track_renderer::focused_track_from_highlight(&resolved),
+            None
+        );
+    }
+
     #[test]
     fn typical_frame_plan_stays_inside_the_inline_buffers() {
         let mut files = test_util::a_recording_of(1, 0.001);
@@ -1177,9 +1349,13 @@ mod tests {
         let candidates: Vec<_> = spatial.points().collect();
         let prepared = plan.prepared_track(test_util::track0()).unwrap();
         let presence = plan.presence();
+        let mut highlight = MapHighlight::default();
+        highlight.plot_hover_point = Some(FixRef::new(test_util::track0(), PointIdx::new(0)));
+        highlight.plot_hover_snapped = true;
         let mut resolved = 0;
         let allocations = allocation_counter::measure(|| {
             resolved += prepared.available_fix_indices().count();
+            resolved += usize::from(highlight.resolve(plan.presence()).plot_hover().is_some());
             for point in &candidates {
                 resolved += usize::from(plan.resolve_spatial(point).is_some());
                 resolved += usize::from(prepared.fix_is_available(point.point_index));

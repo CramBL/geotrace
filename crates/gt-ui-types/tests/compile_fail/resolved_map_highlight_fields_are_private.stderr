@@ -1,0 +1,9 @@
+error[E0451]: fields `highlight` and `plot_hover` of struct `ResolvedMapHighlight` are private
+ --> tests/compile_fail/resolved_map_highlight_fields_are_private.rs:5:9
+  |
+4 |     let _ = ResolvedMapHighlight {
+  |             -------------------- in this type
+5 |         highlight: &MapHighlight::default(),
+  |         ^^^^^^^^^ private field
+6 |         plot_hover: None,
+  |         ^^^^^^^^^^ private field

@@ -10,7 +10,7 @@ use egui_phosphor::regular::CLOUD_LIGHTNING as ICON_CLOUD_LIGHTNING;
 use super::*;
 use crate::test_util::{self, MapScene};
 use gt_types::mercator::MercPoint;
-use gt_types::{DataCategory, DisplayMode, FileIdx, PointIdx, TrackIdx};
+use gt_types::{DataCategory, DisplayMode, FileIdx, FixRef, PointIdx};
 use gt_ui_types::{DisplayCategory, DisplayMask};
 use rustc_hash::FxHashMap;
 
@@ -796,7 +796,7 @@ fn log_layer(
     source: &gt_ui_types::LogMatchSource,
     positions: Vec<MercPoint>,
 ) -> gt_ui_types::LogMatchLayer {
-    let fix = gt_types::FixRef::new(test_util::track0(), gt_types::PointIdx::new(0));
+    let fix = FixRef::new(test_util::track0(), gt_types::PointIdx::new(0));
     gt_ui_types::LogMatchLayer {
         color,
         log: source.clone(),
@@ -1308,7 +1308,7 @@ fn snap_sky_glyphs_only(#[case] name: &str, #[case] variant: gt_ui_types::SkyGly
 fn snap_plot_hover_sky_disc() {
     let files = vec![test_util::a_recording_with_every_marker_kind()];
     // A mid-track point that carries a satellite report in the fixture.
-    let hovered = (FileIdx::new(0), TrackIdx::new(0), PointIdx::new(50));
+    let hovered = FixRef::new(test_util::track0(), PointIdx::new(50));
 
     let mut map = MapScene::of(files)
         .tiles(TileAccess::Synthetic)

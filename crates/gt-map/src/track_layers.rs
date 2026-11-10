@@ -9,7 +9,9 @@
 use egui::{Color32, Response, Stroke, Ui};
 use gt_filter::GlobalFilter;
 use gt_types::{FileIdx, LoadedFile, LoadedTrack, PointIdx, TrackIdx, TrackRef};
-use gt_ui_types::{DrawLayerMask, MapHighlight, QueryMatches, SkyGlyphVariant, TrackMatchView};
+use gt_ui_types::{
+    DrawLayerMask, QueryMatches, ResolvedMapHighlight, SkyGlyphVariant, TrackMatchView,
+};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use walkers::{MapMemory, Plugin, Projector};
@@ -142,7 +144,7 @@ impl TrackGeometry<'_> {
 pub(crate) struct TrackLayers<'a, 'p> {
     files: &'a [LoadedFile],
     plan: &'a MapFramePlan<'p>,
-    highlight: &'a MapHighlight,
+    highlight: &'a ResolvedMapHighlight<'a>,
     filter: &'a GlobalFilter,
     /// Indices of the real fixes inside the viewport, grouped per track by
     /// the collection pass. Borrowed from the reused [`crate::viewport::VisiblePoints`]
@@ -204,8 +206,7 @@ impl Plugin for TrackLayers<'_, '_> {
         self.select_sat_labels(&geometries, max_rect, &transform, map_memory.zoom());
         self.select_sky_glyphs(&geometries, max_rect, &transform, map_memory.zoom());
 
-        let hover_active =
-            self.highlight.fading_enabled && track_renderer::hover_is_active(self.highlight);
+        let hover_active = self.highlight.fading_enabled && self.highlight.hover_is_active();
         let fade = self.hover_fade_alpha;
 
         if fade > FADE_VISIBLE_THRESHOLD || hover_active {
@@ -254,7 +255,9 @@ impl Plugin for TrackLayers<'_, '_> {
             self.paint_tpv_layers(ui, &geometries, &style, &transform, max_rect, |_| true);
         }
 
-        tpv_renderer::draw_plot_hover_overlay(ui, self.files, self.highlight, &style, &transform);
+        if let Some(present) = self.highlight.plot_hover() {
+            tpv_renderer::draw_plot_hover_overlay(ui, self.files, present, &style, &transform);
+        }
     }
 }
 
@@ -1458,10 +1461,11 @@ mod tests {
         let mut sky_glyph_scratch = GlyphSelection::default();
         let mut endpoint_flags = PendingEndpointFlags::default();
         let highlight = MapHighlight::default();
+        let resolved_highlight = highlight.resolve(plan.presence());
         let layers = TrackLayers::builder()
             .files(&files)
             .plan(&plan)
-            .highlight(&highlight)
+            .highlight(&resolved_highlight)
             .filter(&filter)
             .tpv_by_track(None)
             .new_file_boundary(0)
@@ -1595,10 +1599,11 @@ mod tests {
         let mut sky_glyph_scratch = GlyphSelection::default();
         let mut endpoint_flags = PendingEndpointFlags::default();
         let highlight = MapHighlight::default();
+        let resolved_highlight = highlight.resolve(plan.presence());
         let mut layers = TrackLayers::builder()
             .files(&files)
             .plan(&plan)
-            .highlight(&highlight)
+            .highlight(&resolved_highlight)
             .filter(&filter)
             .tpv_by_track(None)
             .new_file_boundary(0)
@@ -1630,10 +1635,11 @@ mod tests {
         let mut sat_label_scratch = LabelSelection::default();
         let mut sky_glyph_scratch = GlyphSelection::default();
         let mut endpoint_flags = PendingEndpointFlags::default();
+        let resolved_highlight = highlight.resolve(plan_no_ghost.presence());
         let mut layers_no_ghost = TrackLayers::builder()
             .files(&files)
             .plan(&plan_no_ghost)
-            .highlight(&highlight)
+            .highlight(&resolved_highlight)
             .filter(&filter)
             .tpv_by_track(None)
             .new_file_boundary(0)

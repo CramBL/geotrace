@@ -4,7 +4,7 @@ use egui_phosphor::regular::ARROW_RIGHT as ICON_ARROW_RIGHT;
 use gt_types::{
     DataCategory, GeneratedMarker, GeneratedMarkerKind, LoadedTrack, PointIdx, SpatialPoint,
 };
-use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, ResolvedElement};
+use gt_ui_types::{HighlightScope, MapElementRef, ResolvedElement, ResolvedMapHighlight};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::icon_mesh::{IconId, IconInstance, IconMeshBatch, IconMeshLibrary};
@@ -13,7 +13,7 @@ use crate::{tpv_renderer, track_renderer, viewport};
 #[derive(bon::Builder)]
 pub(crate) struct GeneratedMarkerRenderer<'a, 'p> {
     plan: &'a viewport::MapFramePlan<'p>,
-    highlight: &'a MapHighlight,
+    highlight: &'a ResolvedMapHighlight<'a>,
     visible_generated: &'a [SpatialPoint],
     icon_meshes: Option<&'a IconMeshLibrary>,
 }

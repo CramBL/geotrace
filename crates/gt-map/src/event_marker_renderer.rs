@@ -2,7 +2,7 @@ use egui::{Color32, Pos2, Response, Stroke, Ui, Vec2};
 use gt_fmt::UTC_SECOND_FORMAT;
 use gt_types::{EventMarker, EventMarkerStyle, MarkerIcon, SpatialPoint};
 use gt_ui_theme::HIGHLIGHT_BLUE;
-use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, ResolvedElement};
+use gt_ui_types::{HighlightScope, MapElementRef, ResolvedElement, ResolvedMapHighlight};
 use rustc_hash::FxHashMap;
 use walkers::{MapMemory, Plugin, Projector};
 
@@ -11,7 +11,7 @@ use crate::{track_renderer, viewport};
 
 pub(crate) struct EventMarkerRenderer<'a, 'p> {
     plan: &'a viewport::MapFramePlan<'p>,
-    highlight: &'a MapHighlight,
+    highlight: &'a ResolvedMapHighlight<'a>,
     visible_event: &'a [SpatialPoint],
     icon_meshes: Option<&'a IconMeshLibrary>,
 }
@@ -19,7 +19,7 @@ pub(crate) struct EventMarkerRenderer<'a, 'p> {
 impl<'a, 'p> EventMarkerRenderer<'a, 'p> {
     pub(crate) fn new(
         plan: &'a viewport::MapFramePlan<'p>,
-        highlight: &'a MapHighlight,
+        highlight: &'a ResolvedMapHighlight<'a>,
         visible_event: &'a [SpatialPoint],
         icon_meshes: Option<&'a IconMeshLibrary>,
     ) -> Self {
@@ -92,7 +92,7 @@ fn resolve_icon(variant_path: &str, style_map: &FxHashMap<String, EventMarkerSty
         .map_or(MarkerIcon::Pin, |s| s.icon)
 }
 
-fn is_highlighted(highlight: &MapHighlight, point_ref: MapElementRef) -> bool {
+fn is_highlighted(highlight: &ResolvedMapHighlight, point_ref: MapElementRef) -> bool {
     if highlight.is_sticky(point_ref) {
         return true;
     }

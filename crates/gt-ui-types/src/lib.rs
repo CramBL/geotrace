@@ -10,6 +10,7 @@ pub use generated_marker_visibility::GeneratedMarkerVisibility;
 pub use geomagnetic_series::{GeomagneticPoint, GeomagneticSeries};
 pub use highlight::{
     HighlightScope, MapElementRef, MapHighlight, MatchHighlight, PinWithheld, PinnedPopup,
+    ResolvedMapHighlight,
 };
 pub use jamming_series::{JammingPoint, JammingSeries};
 pub use log_hover::{LogMatchHover, LogRowPlacement};
