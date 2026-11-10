@@ -1202,7 +1202,7 @@ impl<'a> ResultsTables<'a> {
         {
             // The ring the plot cursor draws, restricted to a point the map
             // draws: the row and the map then agree on which point is meant.
-            highlight.plot_hover_point = Some((track.fi, track.index, fix.point));
+            highlight.plot_hover_point = Some(fix);
         }
         if !response.clicked() && !response.double_clicked() {
             return None;

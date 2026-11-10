@@ -22,7 +22,7 @@
 - **Map & Tracks:** Fixed fit and query reveal including data hidden by tree, query or marker type settings.
 - **Map & Tracks:** Fixed stale display counts after replacing a recording with the same number of points and markers.
 - **Map & Tracks:** Fixed query highlights disappearing when every other track layer was hidden.
-- **Map & Tracks:** Fixed map highlights appearing over fixes hidden by a query.
+- **Map & Tracks:** Fixed map cross-highlights appearing over hidden or filtered fixes.
 - **Map & Tracks:** Fixed start and finish flags remaining on query-hidden fixes.
 - **Interface:** Fixed a load error disappearing when another file finished loading after it.
 - **Log Viewer:** Fixed logs from a device that loses its clock on reboot getting the wrong year or failing to load.

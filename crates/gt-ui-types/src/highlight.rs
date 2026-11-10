@@ -1,10 +1,12 @@
+use std::ops::Deref;
+
 use chrono::{DateTime, Utc};
 use gt_types::{
     CustomMarkerIdx, CustomMarkerRef, DataCategory, EventMarkerIdx, EventMarkerRef, FileIdx,
-    FixRef, GeneratedMarkerIdx, GeneratedMarkerRef, PointIdx, SpatialPoint, TrackIdx, TrackRef,
+    FixRef, GeneratedMarkerIdx, GeneratedMarkerRef, SpatialPoint, TrackRef,
 };
 
-use crate::visibility::{MapPresence, PointVisibility, PresentElementRef};
+use crate::visibility::{MapPresence, MapPresenceResult, PointVisibility, PresentElementRef};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MapElementRef {
@@ -112,10 +114,9 @@ pub struct MapHighlight {
     /// Time of the selected plot sample, or the cursor time between samples.
     /// `None` when the plot cursor is inactive.
     pub plot_hover_time: Option<DateTime<Utc>>,
-    /// Associated fix of the selected metric sample, or the closest eligible fix to the cursor time.
-    /// `None` when the cursor has no eligible fix.
-    pub plot_hover_point: Option<(FileIdx, TrackIdx, PointIdx)>,
-    /// True when the plot selects a value and the map draws its target fix.
+    /// Resolve this persistent identity through the consuming frame's presence.
+    pub plot_hover_point: Option<FixRef>,
+    /// Unsnapped targets draw the ring without changing track focus.
     pub plot_hover_snapped: bool,
     /// The sky-trails scrubber's current instant, cross-highlighted on the
     /// track plot as a vertical time line. `None` when the sky-trails window is
@@ -141,6 +142,19 @@ pub struct MapHighlight {
 }
 
 impl MapHighlight {
+    pub fn resolve<'a>(&'a self, presence: MapPresence<'a>) -> ResolvedMapHighlight<'a> {
+        let plot_hover =
+            self.plot_hover_point
+                .and_then(|fix| match presence.resolve(MapElementRef::Fix(fix)) {
+                    MapPresenceResult::Present(present) => Some(present),
+                    MapPresenceResult::Missing | MapPresenceResult::Withheld(_) => None,
+                });
+        ResolvedMapHighlight {
+            highlight: self,
+            plot_hover,
+        }
+    }
+
     /// The raw identity currently pinned across frames.
     pub fn sticky(&self) -> Option<MapElementRef> {
         self.sticky
@@ -192,40 +206,12 @@ impl MapHighlight {
         self.sticky != Some(candidate) && !any_popup_open && !self.suppress_hover_labels
     }
 
-    /// The track the plot cursor points at, and `None` until the cursor has
-    /// snapped to a data point (see [`Self::plot_hover_snapped`]).
-    pub fn snapped_plot_hover_track(&self) -> Option<TrackRef> {
-        let (fi, ti, _) = self.plot_hover_snapped.then_some(self.plot_hover_point)??;
-        Some(TrackRef::new(fi, ti))
-    }
-
     /// Whether the hover is on `track` as a whole, and not on one of its
     /// points or categories.
     pub fn hovers_the_whole_track(&self, track: TrackRef) -> bool {
         self.hover.is_some_and(
             |scope| matches!(scope, HighlightScope::Track(hovered) if hovered == track),
         )
-    }
-
-    /// Whether the hover or the plot cursor is on a point of `track`.
-    pub fn hovers_a_point_of_track(&self, track: TrackRef) -> bool {
-        self.hover.is_some_and(
-            |scope| matches!(scope, HighlightScope::Point(point) if point.track() == track),
-        ) || self.snapped_plot_hover_track() == Some(track)
-    }
-
-    /// Whether the hover or the plot cursor is on anything belonging to
-    /// `file`.
-    pub fn hovers_anything_in_file(&self, file: FileIdx) -> bool {
-        self.hover.is_some_and(|scope| match scope {
-            HighlightScope::Point(point) => point.track().fi == file,
-            HighlightScope::Track(track) | HighlightScope::TrackCategory { track, .. } => {
-                track.fi == file
-            }
-            HighlightScope::File { file_index } => file_index == file,
-        }) || self
-            .snapped_plot_hover_track()
-            .is_some_and(|track| track.fi == file)
     }
 
     /// What the pinned popup does this frame, dropping a pin whose element is
@@ -248,6 +234,57 @@ impl MapHighlight {
             PointVisibility::HiddenByQuery => withheld(PinWithheld::HiddenByQuery),
             PointVisibility::OutsideTimeFilter => withheld(PinWithheld::OutsideTimeFilter),
         }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct ResolvedMapHighlight<'a> {
+    highlight: &'a MapHighlight,
+    plot_hover: Option<PresentElementRef<'a>>,
+}
+
+impl Deref for ResolvedMapHighlight<'_> {
+    type Target = MapHighlight;
+
+    fn deref(&self) -> &Self::Target {
+        self.highlight
+    }
+}
+
+impl<'a> ResolvedMapHighlight<'a> {
+    pub fn plot_hover(&self) -> Option<PresentElementRef<'a>> {
+        self.plot_hover
+    }
+
+    pub fn snapped_plot_hover_track(&self) -> Option<TrackRef> {
+        self.highlight
+            .plot_hover_snapped
+            .then_some(self.plot_hover)??
+            .element_ref()
+            .fix()
+            .map(|fix| fix.track)
+    }
+
+    pub fn hover_is_active(&self) -> bool {
+        self.hover.is_some() || self.snapped_plot_hover_track().is_some()
+    }
+
+    pub fn hovers_a_point_of_track(&self, track: TrackRef) -> bool {
+        self.hover.is_some_and(
+            |scope| matches!(scope, HighlightScope::Point(point) if point.track() == track),
+        ) || self.snapped_plot_hover_track() == Some(track)
+    }
+
+    pub fn hovers_anything_in_file(&self, file: FileIdx) -> bool {
+        self.hover.is_some_and(|scope| match scope {
+            HighlightScope::Point(point) => point.track().fi == file,
+            HighlightScope::Track(track) | HighlightScope::TrackCategory { track, .. } => {
+                track.fi == file
+            }
+            HighlightScope::File { file_index } => file_index == file,
+        }) || self
+            .snapped_plot_hover_track()
+            .is_some_and(|track| track.fi == file)
     }
 }
 
@@ -304,7 +341,7 @@ impl Default for MapHighlight {
 #[cfg(test)]
 mod tests {
     use chrono::TimeDelta;
-    use gt_types::GeneratedMarkerKindTag;
+    use gt_types::{GeneratedMarkerKindTag, PointIdx, TrackIdx};
 
     use super::*;
     use crate::display_mask::DisplayCategory;
@@ -434,15 +471,18 @@ mod tests {
     ) {
         let highlight = MapHighlight {
             hover,
-            plot_hover_point: plot_cursor_on_the_file.then_some((
-                FileIdx::new(0),
-                TrackIdx::new(0),
-                PointIdx::new(1),
-            )),
+            plot_hover_point: plot_cursor_on_the_file
+                .then_some(FixRef::new(test_util::track0(), PointIdx::new(1))),
             plot_hover_snapped: plot_cursor_on_the_file,
             ..MapHighlight::default()
         };
-        assert_eq!(highlight.hovers_anything_in_file(FileIdx::new(0)), expected);
+        let fixture = ScopeFixture::all_drawn();
+        assert_eq!(
+            highlight
+                .resolve(fixture.scope())
+                .hovers_anything_in_file(FileIdx::new(0)),
+            expected
+        );
     }
 
     /// A pin whose element is gone is dropped, so a later load cannot rebind it

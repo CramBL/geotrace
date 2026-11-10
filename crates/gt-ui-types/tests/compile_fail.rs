@@ -19,6 +19,9 @@ fn map_eligibility_has_no_default_escape_hatch() {
 fn map_policy_proofs_cannot_be_forged_or_partially_constructed() {
     let fixtures = trybuild::TestCases::new();
 
+    fixtures.compile_fail("tests/compile_fail/resolved_map_highlight_fields_are_private.rs");
+    fixtures.compile_fail("tests/compile_fail/raw_highlight_cannot_focus.rs");
+    fixtures.compile_fail("tests/compile_fail/resolved_highlight_cannot_survive_policy_change.rs");
     fixtures.compile_fail("tests/compile_fail/map_eligibility_fields_are_private.rs");
     fixtures.compile_fail("tests/compile_fail/map_eligibility_requires_all_sources.rs");
     fixtures.compile_fail("tests/compile_fail/present_element_ref_fields_are_private.rs");

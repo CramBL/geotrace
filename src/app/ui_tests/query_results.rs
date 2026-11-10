@@ -281,7 +281,7 @@ fn query_point_row_click_pins_its_point() {
 fn highlighted_fix_visibility(harness: &Harness<'_, App>) -> Option<PointVisibility> {
     let app = harness.state();
     let shared = app.shared.borrow();
-    let (fi, ti, pi) = shared.highlight.plot_hover_point?;
+    let fix = shared.highlight.plot_hover_point?;
     let scope = MapEligibility::new(
         shared.loaded_files.files(),
         shared.tree.visibility(),
@@ -291,7 +291,7 @@ fn highlighted_fix_visibility(harness: &Harness<'_, App>) -> Option<PointVisibil
         shared.tree.event_marker_visibility(),
     )
     .with_display_mask(shared.display_mask);
-    Some(scope.point_visibility(MapElementRef::Fix(FixRef::new(TrackRef::new(fi, ti), pi))))
+    Some(scope.point_visibility(MapElementRef::Fix(fix)))
 }
 
 /// A point `fraction_across` of the way from the plot pane's left edge to its
@@ -425,11 +425,10 @@ fn the_plot_cursor_over_a_hidden_stretch_selects_the_nearest_present_fix() {
         Some(PointVisibility::Shown)
     );
     let shared = harness.state().shared.borrow();
-    let (fi, ti, pi) = shared
+    let FixRef { track, point: pi } = shared
         .highlight
         .plot_hover_point
         .expect("the visible runner-up is selected");
-    let track = TrackRef::new(fi, ti);
     let query = harness
         .state()
         .query_window

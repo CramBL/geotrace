@@ -31,7 +31,7 @@ use gt_test_utils::{
     By, FileParts, HarnessInteraction as _, Node, NodeT as _, Queryable as _, TestHarness,
 };
 use gt_types::{
-    CustomMarker, FileIdx, FixStats, LoadWarning, MarkerIcon, MarkerRequirement, NavPoint,
+    CustomMarker, FileIdx, FixRef, FixStats, LoadWarning, MarkerIcon, MarkerRequirement, NavPoint,
     PointIdx, SolutionState, TrackIdx, TrackRef,
 };
 use gt_ui_components::MetadataView;
@@ -2003,7 +2003,10 @@ fn rows_repainted_by_plot_hover(PlotHoverSnapped(snapped): PlotHoverSnapped) -> 
     let before = harness.inner.render().expect("the harness renders a frame");
 
     let highlight = &mut harness.state_mut().highlight;
-    highlight.plot_hover_point = Some((FileIdx::new(0), TrackIdx::new(0), PointIdx::new(0)));
+    highlight.plot_hover_point = Some(FixRef::new(
+        TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+        PointIdx::new(0),
+    ));
     highlight.plot_hover_snapped = snapped;
     harness.inner.run_steps(2);
 

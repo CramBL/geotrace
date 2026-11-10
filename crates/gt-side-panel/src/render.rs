@@ -387,7 +387,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) -> Option<
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show(ui, |ui| {
-            render_visible_tracks_section(ui, ctx, detached);
+            render_visible_tracks_section(ui, ctx, detached, scope);
             // A scroll area defaults to at least 64 points tall, which would
             // push the tree past the height the section leaves it.
             ScrollArea::vertical()
@@ -469,7 +469,12 @@ struct VisibleTrackRow {
     cells: TrackColumnCells,
 }
 
-fn render_visible_tracks_section(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>, detached: bool) {
+fn render_visible_tracks_section(
+    ui: &mut egui::Ui,
+    ctx: &mut PanelContext<'_>,
+    detached: bool,
+    scope: MapPresence<'_>,
+) {
     let groups = ctx.tree.visible_tracks_by_file();
     let rows: Vec<Vec<VisibleTrackRow>> = groups
         .iter()
@@ -518,7 +523,7 @@ fn render_visible_tracks_section(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>, 
                 let names = ctx.recording_names;
                 for (group, rows) in groups.iter().zip(&rows) {
                     let display_name = names.get(group.file).unwrap_or_default();
-                    render_visible_file_caption(ui, group.file, display_name, ctx);
+                    render_visible_file_caption(ui, group.file, display_name, scope, ctx);
                     ui.indent(group.file, |ui| {
                         for row in rows {
                             render_visible_track_row(
@@ -526,6 +531,7 @@ fn render_visible_tracks_section(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>, 
                                 row.track_ref,
                                 &row.cells,
                                 column_widths,
+                                scope,
                                 ctx,
                             );
                         }
@@ -611,12 +617,13 @@ fn render_visible_file_caption(
     ui: &mut egui::Ui,
     fi: FileIdx,
     display_name: &str,
+    scope: MapPresence<'_>,
     ctx: &mut PanelContext<'_>,
 ) {
     let Some(file) = ctx.file(fi) else {
         return;
     };
-    let map_hovered = ctx.highlight.hovers_anything_in_file(fi);
+    let map_hovered = ctx.highlight.resolve(scope).hovers_anything_in_file(fi);
 
     let response = ui
         .add(Label::new(RichText::new(display_name).small().weak().italics()).truncate())
@@ -639,6 +646,7 @@ fn render_visible_track_row(
     track_ref: TrackRef,
     cells: &TrackColumnCells,
     column_widths: TrackColumnWidths,
+    scope: MapPresence<'_>,
     ctx: &mut PanelContext<'_>,
 ) {
     let Some(track) = ctx.track(track_ref) else {
@@ -647,7 +655,10 @@ fn render_visible_track_row(
     let key = NodeKey::Track(track_ref);
     let passes = gt_filter::track_passes_filter(track, ctx.filter);
     let panel_hovered = ctx.highlight.hovers_the_whole_track(track_ref);
-    let map_hovered = ctx.highlight.hovers_a_point_of_track(track_ref);
+    let map_hovered = ctx
+        .highlight
+        .resolve(scope)
+        .hovers_a_point_of_track(track_ref);
     let is_selected = ctx.tree.selection.contains(&key);
     let cell_color = TrackRowCellColor {
         panel_hovered,
@@ -768,7 +779,7 @@ fn render_file_row(
 
     // The plot writes its hover after this panel renders: a plot hover marks the
     // row one frame later.
-    let file_map_hovered = ctx.highlight.hovers_anything_in_file(fi);
+    let file_map_hovered = ctx.highlight.resolve(scope).hovers_anything_in_file(fi);
 
     let map_hover_bg = gt_ui_theme::map_hover_color(ui.visuals().dark_mode);
 
@@ -1400,7 +1411,10 @@ fn render_track_row(
     let panel_hovered = ctx.highlight.hovers_the_whole_track(track_ref);
     // The plot writes its hover after this panel renders: a plot hover marks
     // the row one frame later.
-    let map_hovered = ctx.highlight.hovers_a_point_of_track(track_ref);
+    let map_hovered = ctx
+        .highlight
+        .resolve(scope)
+        .hovers_a_point_of_track(track_ref);
     let key = NodeKey::Track(track_ref);
 
     let was_all_hidden = ctx.tree.all_hidden();

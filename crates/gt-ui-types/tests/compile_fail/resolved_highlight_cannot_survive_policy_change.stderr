@@ -1,0 +1,31 @@
+error[E0502]: cannot borrow `filter` as mutable because it is also borrowed as immutable
+  --> tests/compile_fail/resolved_highlight_cannot_survive_policy_change.rs:17:5
+   |
+14 |         MapEligibility::new(&[], &visibility, &filter, None, &generated, &events)
+   |                                               ------- immutable borrow occurs here
+...
+17 |     filter.set_time_bounds(None, None);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable borrow occurs here
+18 |     highlight.plot_hover_point = None;
+19 |     let _ = resolved.snapped_plot_hover_track();
+   |             -------- immutable borrow later used here
+
+error[E0506]: cannot assign to `highlight.plot_hover_point` because it is borrowed
+  --> tests/compile_fail/resolved_highlight_cannot_survive_policy_change.rs:18:5
+   |
+13 |     let resolved = highlight.resolve(
+   |                    --------- `highlight.plot_hover_point` is borrowed here
+...
+18 |     highlight.plot_hover_point = None;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `highlight.plot_hover_point` is assigned to here but it was already borrowed
+19 |     let _ = resolved.snapped_plot_hover_track();
+   |             -------- borrow later used here
+
+warning: value assigned to `highlight` is never read
+  --> tests/compile_fail/resolved_highlight_cannot_survive_policy_change.rs:18:5
+   |
+18 |     highlight.plot_hover_point = None;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: maybe it is overwritten before being read?
+   = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default

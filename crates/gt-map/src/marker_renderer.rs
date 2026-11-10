@@ -1,7 +1,7 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui, Vec2};
 use gt_types::{CustomMarker, DataCategory, MarkerIcon, SpatialPoint};
 use gt_ui_theme::HIGHLIGHT_BLUE;
-use gt_ui_types::{HighlightScope, MapElementRef, MapHighlight, ResolvedElement};
+use gt_ui_types::{HighlightScope, MapElementRef, ResolvedElement, ResolvedMapHighlight};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::icon_mesh::{IconInstance, IconMeshBatch, IconMeshLibrary, PIN_HALF_EXTENTS_PT};
@@ -9,7 +9,7 @@ use crate::{track_renderer, viewport};
 
 pub(crate) struct MarkerRenderer<'a, 'p> {
     plan: &'a viewport::MapFramePlan<'p>,
-    highlight: &'a MapHighlight,
+    highlight: &'a ResolvedMapHighlight<'a>,
     visible_custom: &'a [SpatialPoint],
     icon_meshes: Option<&'a IconMeshLibrary>,
 }
@@ -17,7 +17,7 @@ pub(crate) struct MarkerRenderer<'a, 'p> {
 impl<'a, 'p> MarkerRenderer<'a, 'p> {
     pub(crate) fn new(
         plan: &'a viewport::MapFramePlan<'p>,
-        highlight: &'a MapHighlight,
+        highlight: &'a ResolvedMapHighlight<'a>,
         visible_custom: &'a [SpatialPoint],
         icon_meshes: Option<&'a IconMeshLibrary>,
     ) -> Self {

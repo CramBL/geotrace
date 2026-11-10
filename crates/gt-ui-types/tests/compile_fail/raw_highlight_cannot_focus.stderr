@@ -1,0 +1,5 @@
+error[E0599]: no method named `snapped_plot_hover_track` found for struct `MapHighlight` in the current scope
+ --> tests/compile_fail/raw_highlight_cannot_focus.rs:4:37
+  |
+4 |     let _ = MapHighlight::default().snapped_plot_hover_track();
+  |                                     ^^^^^^^^^^^^^^^^^^^^^^^^ method not found in `MapHighlight`

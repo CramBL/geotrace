@@ -3,7 +3,7 @@ use std::ops::RangeInclusive;
 use egui::{Color32, Stroke};
 use gt_types::{DataCategory, FileIdx, TrackIdx, TrackRef};
 use gt_ui_theme::HIGHLIGHT_BLUE;
-use gt_ui_types::{HighlightScope, MapHighlight};
+use gt_ui_types::{HighlightScope, MapHighlight, ResolvedMapHighlight};
 
 /// Stroke for a track's plain line: thicker highlight blue when the track
 /// is hovered or sticky-selected, its palette color at full opacity otherwise.
@@ -47,8 +47,12 @@ pub(crate) fn is_track_highlighted(highlight: &MapHighlight, fi: FileIdx, ti: Tr
 /// Two hover sources are considered:
 /// - `highlight.hover`: a map pointer hover (any [`HighlightScope`]).
 /// - `highlight.plot_hover_point`: the plot cursor snapping to a TPV point.
-pub(crate) fn track_fade_alpha(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) -> f32 {
-    if !highlight.fading_enabled || !hover_is_active(highlight) {
+pub(crate) fn track_fade_alpha(
+    highlight: &ResolvedMapHighlight<'_>,
+    fi: FileIdx,
+    ti: TrackIdx,
+) -> f32 {
+    if !highlight.fading_enabled || !highlight.hover_is_active() {
         return 1.0;
     }
     if is_track_in_focus(highlight, fi, ti) {
@@ -71,18 +75,11 @@ pub(crate) fn apply_fade_alpha(color: Color32, fade: f32) -> Color32 {
     Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), a)
 }
 
-/// Returns `true` when any hover source is currently active, meaning non-focused
-/// tracks should be dimmed.
-///
-/// For map hover (`highlight.hover`) any active scope qualifies.
-/// For plot hover only [`MapHighlight::plot_hover_snapped`] qualifies. The
-/// cursor must be within snap-distance of an actual data point so that moving
-/// the cursor into the plot area does not immediately trigger the overlay.
-pub(crate) fn hover_is_active(highlight: &MapHighlight) -> bool {
-    highlight.hover.is_some() || highlight.plot_hover_snapped
-}
-
-pub(crate) fn is_track_in_focus(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) -> bool {
+pub(crate) fn is_track_in_focus(
+    highlight: &ResolvedMapHighlight<'_>,
+    fi: FileIdx,
+    ti: TrackIdx,
+) -> bool {
     let track = TrackRef::new(fi, ti);
     let from_map_hover = match highlight.hover {
         Some(HighlightScope::File { file_index }) => file_index == fi,
@@ -100,7 +97,9 @@ pub(crate) fn is_track_in_focus(highlight: &MapHighlight, fi: FileIdx, ti: Track
 ///
 /// Used by [`crate::NavMap`] to detect when the focused track changes and to
 /// drive the hysteresis/animation logic in `HoverFadeState`.
-pub(crate) fn focused_track_from_highlight(highlight: &MapHighlight) -> Option<TrackRef> {
+pub(crate) fn focused_track_from_highlight(
+    highlight: &ResolvedMapHighlight<'_>,
+) -> Option<TrackRef> {
     match highlight.hover {
         Some(HighlightScope::Track(t)) | Some(HighlightScope::TrackCategory { track: t, .. }) => {
             Some(t)

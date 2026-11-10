@@ -268,10 +268,7 @@ fn count_sample_hover_highlights_its_associated_fix_through_map_policy(
             .expect("selected count source");
         assert!(shared.plot_state.plot_cursor_snapped);
         assert!(shared.highlight.plot_hover_snapped);
-        assert_eq!(
-            shared.highlight.plot_hover_point,
-            Some((fix.track.fi, fix.track.index, fix.point))
-        );
+        assert_eq!(shared.highlight.plot_hover_point, Some(fix));
         let point = fix
             .track
             .resolve(&shared.loaded_files)
