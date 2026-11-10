@@ -1187,12 +1187,11 @@ mod tests {
                 visibility.files[0].tracks[0].set_category_visible(DataCategory::Tpv, false)
             }
             CrossHighlightChange::TrackFiltered => {
-                filter.set_minimum_duration(Some(chrono::Duration::hours(1)))
+                filter.set_minimum_duration(Some(Duration::hours(1)))
             }
-            CrossHighlightChange::TimeFiltered => filter.set_time_bounds(
-                Some(test_util::epoch() + chrono::Duration::minutes(1)),
-                None,
-            ),
+            CrossHighlightChange::TimeFiltered => {
+                filter.set_time_bounds(Some(test_util::epoch() + Duration::minutes(1)), None)
+            }
             CrossHighlightChange::QueryHidden => {
                 query.hidden =
                     TrackRanges::from_iter([(target.track, std::iter::once(0..1).collect())])
@@ -1225,18 +1224,8 @@ mod tests {
         let expected = matches!(change, CrossHighlightChange::None);
         assert_eq!(resolved.plot_hover().is_some(), expected);
         assert_eq!(resolved.hover_is_active(), expected);
-        assert_eq!(
-            crate::track_renderer::focused_track_from_highlight(&resolved),
-            expected.then_some(target.track)
-        );
-        assert_eq!(
-            crate::track_renderer::is_track_in_focus(
-                &resolved,
-                target.track.fi,
-                target.track.index
-            ),
-            expected
-        );
+        assert_eq!(resolved.focused_track(), expected.then_some(target.track));
+        assert_eq!(resolved.focuses_track(target.track), expected);
         assert_eq!(resolved.hovers_a_point_of_track(target.track), expected);
         assert_eq!(resolved.hovers_anything_in_file(target.track.fi), expected);
         let transform = MercTransform::for_test_view(
@@ -1285,10 +1274,7 @@ mod tests {
         let resolved = highlight.resolve(plan.presence());
         assert!(resolved.plot_hover().is_some());
         assert!(!resolved.hover_is_active());
-        assert_eq!(
-            crate::track_renderer::focused_track_from_highlight(&resolved),
-            None
-        );
+        assert_eq!(resolved.focused_track(), None);
     }
 
     #[test]

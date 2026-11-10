@@ -800,11 +800,9 @@ impl NavMap {
             request_animation_frame(ui);
         }
         let hover_fade = if ctx.highlight.fading_enabled {
-            let progress = self.hover_fade.tick(
-                now,
-                highlight.hover_is_active(),
-                track_renderer::focused_track_from_highlight(highlight),
-            );
+            let progress =
+                self.hover_fade
+                    .tick(now, highlight.hover_is_active(), highlight.focused_track());
             if self.hover_fade.is_animating() {
                 request_animation_frame(ui);
             }

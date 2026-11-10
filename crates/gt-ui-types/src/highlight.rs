@@ -116,7 +116,7 @@ pub struct MapHighlight {
     pub plot_hover_time: Option<DateTime<Utc>>,
     /// Resolve this persistent identity through the consuming frame's presence.
     pub plot_hover_point: Option<FixRef>,
-    /// Unsnapped targets draw the ring without changing track focus.
+    /// The map draws the ring for a present unsnapped target without changing track focus.
     pub plot_hover_snapped: bool,
     /// The sky-trails scrubber's current instant, cross-highlighted on the
     /// track plot as a vertical time line. `None` when the sky-trails window is
@@ -267,6 +267,26 @@ impl<'a> ResolvedMapHighlight<'a> {
 
     pub fn hover_is_active(&self) -> bool {
         self.hover.is_some() || self.snapped_plot_hover_track().is_some()
+    }
+
+    pub fn focuses_track(&self, track: TrackRef) -> bool {
+        let from_map_hover = match self.hover {
+            Some(HighlightScope::File { file_index }) => file_index == track.fi,
+            Some(HighlightScope::Track(hovered))
+            | Some(HighlightScope::TrackCategory { track: hovered, .. }) => hovered == track,
+            Some(HighlightScope::Point(point)) => point.track() == track,
+            None => false,
+        };
+        from_map_hover || self.snapped_plot_hover_track() == Some(track)
+    }
+
+    pub fn focused_track(&self) -> Option<TrackRef> {
+        match self.hover {
+            Some(HighlightScope::Track(track))
+            | Some(HighlightScope::TrackCategory { track, .. }) => Some(track),
+            Some(HighlightScope::Point(point)) => Some(point.track()),
+            Some(HighlightScope::File { .. }) | None => self.snapped_plot_hover_track(),
+        }
     }
 
     pub fn hovers_a_point_of_track(&self, track: TrackRef) -> bool {
