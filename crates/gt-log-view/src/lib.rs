@@ -12,7 +12,9 @@
 
 pub use anchor::RecordingKey;
 pub use association::{AssociationCandidate, AssociationCandidates};
-pub use attachment::{LogAttachmentRef, SessionLogAttachments};
+pub use attachment::{
+    LogAttachmentRef, SessionLogAttachments, stored_year_resolution, year_resolution_of_stored,
+};
 pub use filter::{
     ClockTicks, DayDivider, EntryMatches, FilterChip, FilterChipId, FilterEffect, FilterGroup,
     FilterGroupId, FilterGroupOperator, FilterPattern, FilterScope, FilterStack,

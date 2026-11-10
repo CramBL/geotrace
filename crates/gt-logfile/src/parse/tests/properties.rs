@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike as _, Utc};
 use proptest::prelude::*;
 use proptest::proptest;
 
@@ -11,7 +11,7 @@ use crate::recognise::{RecognisedLevel, RecognisedService};
 use crate::structure::StructuralLineKind;
 use crate::summary::EntryCountMismatch;
 use crate::test_util::strategies;
-use crate::{AnchoredBounds, LogChronology};
+use crate::{AnchoredBounds, LogChronology, YearResolution};
 
 /// The text a slice addresses, `None` where it addresses text outside the
 /// log or splits a character in it.
@@ -252,6 +252,38 @@ proptest! {
                 }
                 prop_assert!(unresolved.first_written_timestamp().is_some());
             }
+        }
+    }
+
+    #[test]
+    fn a_chosen_year_resolves_as_a_parse_under_it_and_places_the_last_entry_in_it(
+        text in prop_oneof![strategies::any_log_text(), strategies::any_summarised_log()],
+        year in any::<i32>(),
+    ) {
+        let year_resolution = YearResolution::PlaceLastEntryInYear(year);
+        let Ok(inferred) = parse::parse_log(text.as_str().into(), fixtures::now()) else {
+            return Ok(());
+        };
+        let chosen = parse::parse_log_with_year_resolution(
+            text.as_str().into(),
+            fixtures::now(),
+            year_resolution,
+        )
+        .expect("the text parsed under the inferred years");
+
+        if let Some(resolved_again) = inferred.resolve_years_as(year_resolution) {
+            prop_assert_eq!(&resolved_again, &chosen);
+        }
+        let last_anchored_entry = chosen.entries().iter().rposition(LogEntry::is_anchored);
+        if let (LogChronology::Resolved(resolved), Some(entry_index), false) = (
+            chosen.chronology(),
+            last_anchored_entry,
+            chosen.format().writes_years(),
+        ) {
+            prop_assert_eq!(
+                resolved.timestamp(entry_index).map(|timestamp| timestamp.year()),
+                Some(year)
+            );
         }
     }
 

@@ -16,8 +16,8 @@ use crate::settings::InitialPositionSourcePolicy;
 use super::App;
 use super::history_db::{ExistingLogAttachment, RestoredLogAttachment, StoredLogAttachment};
 use super::loader;
-use super::log_viewer::AttachmentToLoad;
 use super::log_viewer::association_dialog::{LogAssociationChoice, LogAssociationDialog};
+use super::log_viewer::{AttachmentToLoad, YearsToResolve};
 
 impl App {
     pub(super) fn resolve_initial_log_associations(&mut self) {
@@ -113,6 +113,61 @@ impl App {
         if let Some(db_ref) = requests.open_recording {
             self.history.open(db_ref);
         }
+        if let Some(years) = requests.resolve_years {
+            self.resolve_log_years(years);
+        }
+    }
+
+    /// Resolves the years of a log again under the year resolution the user applied, stores it
+    /// with the log's attachment, and chooses a position source for a log without one whose years
+    /// now resolve.
+    fn resolve_log_years(
+        &mut self,
+        YearsToResolve {
+            log: log_id,
+            year_resolution,
+        }: YearsToResolve,
+    ) {
+        let shared = self.shared.borrow();
+        let recordings = shared.loaded_files.view();
+        let Some(mut log) = self.logs.get_mut_by_id(log_id) else {
+            return;
+        };
+        if !log.resolve_years_as(year_resolution, &recordings) {
+            return;
+        }
+        let attachment = log.attachment().cloned();
+        let needs_a_position_source =
+            log.parsed().chronology().is_resolved() && log.anchor_key().is_none();
+        drop(shared);
+        if let Some(attachment) = attachment {
+            self.history.set_attached_log_year_resolution(
+                attachment,
+                gt_log_view::stored_year_resolution(year_resolution),
+            );
+        }
+        if needs_a_position_source {
+            self.choose_position_source_of_loaded_log(log_id);
+        }
+    }
+
+    /// Opens the association dialog on the log, or anchors it to the one recording it
+    /// unambiguously overlaps, as [`App::resolve_initial_log_associations`] does for a loaded log.
+    fn choose_position_source_of_loaded_log(&mut self, log_id: LoadedLogId) {
+        let shared = self.shared.borrow();
+        let recordings = shared.loaded_files.view();
+        let Some(mut log) = self.logs.get_mut_by_id(log_id) else {
+            return;
+        };
+        let candidates = log.rank_association_candidates(&recordings);
+        if self.initial_position_source_policy == InitialPositionSourcePolicy::Ask
+            && !candidates.ranked().is_empty()
+        {
+            drop(shared);
+            self.open_log_association_dialog(log_id);
+            return;
+        }
+        log.anchor_to_loaded_recording(candidates.unambiguous_target(), &recordings);
     }
 
     /// Writes back every attachment whose stored filter stack is behind the

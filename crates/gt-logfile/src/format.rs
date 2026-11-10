@@ -228,6 +228,10 @@ impl YearlessTimestamp {
         )
     }
 
+    pub(crate) fn latest_in_year_or_before(self, year: i32) -> Option<DateTime<Utc>> {
+        (0..=LEAP_YEAR_SEARCH_YEARS).find_map(|offset| self.in_year(year.checked_sub(offset)?))
+    }
+
     pub(crate) fn latest_at_or_before(self, ceiling: DateTime<Utc>) -> Option<DateTime<Utc>> {
         (0..=LEAP_YEAR_SEARCH_YEARS)
             .filter_map(|offset| self.in_year(ceiling.year().checked_sub(offset)?))

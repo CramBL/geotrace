@@ -8,7 +8,7 @@ use chrono::{DateTime, Duration, Utc};
 use egui::Context;
 use gt_loaded_files::FileHistory;
 use gt_log_view::LogAttachmentRef;
-use gt_logfile::{LogText, ParsedLog};
+use gt_logfile::{LogText, ParsedLog, YearResolution};
 use gt_pending_writes::{PendingWrites, WriteKind};
 use gt_plot::{AnalysisConfig, PreparedSeries};
 use gt_store::{AttachedLog, StoredFixPlacementRule, StoredLogFilterStack, StoredTrackSplitRule};
@@ -101,6 +101,7 @@ pub(super) struct AttachedLogRestore {
     pub filters: StoredLogFilterStack,
     pub requested_by: AttachedLogRequester,
     pub year_reference: DateTime<Utc>,
+    pub year_resolution: YearResolution,
 }
 
 /// What requested an attachment to be read back. The app opens the viewer on
@@ -574,7 +575,13 @@ impl LoadJobs {
                 }
             };
             let text = LogText::decode_lossy(&bytes);
-            let result = parse_loaded_log(LoadSource::Filename(filename), text, Utc::now(), report);
+            let result = parse_loaded_log(
+                LoadSource::Filename(filename),
+                text,
+                Utc::now(),
+                YearResolution::Infer,
+                report,
+            );
             tx.send(LoadMessage::Completed {
                 id,
                 completion: LoadCompletion::LooseLog { arrival, result },
@@ -618,6 +625,7 @@ impl LoadJobs {
             text,
             filters,
             year_reference,
+            year_resolution,
         } = log;
         self.loading_jobs.push(LoadingJob {
             id,
@@ -634,18 +642,24 @@ impl LoadJobs {
             filters,
             requested_by,
             year_reference,
+            year_resolution: gt_log_view::year_resolution_of_stored(year_resolution),
         };
         log::info!("Loading the log {name:?} stored with a recording in history");
         background_thread::spawn_or_panic(format!("load-log-{name}"), move || {
             let report = progress_reporter(id, tx.clone(), ctx.clone());
             let source = LoadSource::Filename(name);
-            let result = parse_loaded_log(source, text, restored.year_reference, report).map(
-                |LooseLogResult { filename, parsed }| SavedLogResult {
-                    filename,
-                    parsed,
-                    restored,
-                },
-            );
+            let result = parse_loaded_log(
+                source,
+                text,
+                restored.year_reference,
+                restored.year_resolution,
+                report,
+            )
+            .map(|LooseLogResult { filename, parsed }| SavedLogResult {
+                filename,
+                parsed,
+                restored,
+            });
             tx.send(LoadMessage::Completed {
                 id,
                 completion: LoadCompletion::SavedLog { result },
@@ -749,7 +763,7 @@ impl LoadJobs {
             let report = progress_reporter(id, tx.clone(), ctx.clone());
             report(0.20, STAGE_READING);
             let text = decode();
-            let result = parse_loaded_log(source, text, Utc::now(), report);
+            let result = parse_loaded_log(source, text, Utc::now(), YearResolution::Infer, report);
             tx.send(LoadMessage::Completed {
                 id,
                 completion: LoadCompletion::LooseLog { arrival, result },
@@ -804,10 +818,11 @@ fn parse_loaded_log(
     source: LoadSource,
     text: LogText,
     year_reference: DateTime<Utc>,
+    year_resolution: YearResolution,
     report: impl Fn(f32, &'static str),
 ) -> Result<LooseLogResult, LoadFailure> {
     report(0.55, STAGE_PARSING);
-    let parsed = gt_logfile::parse_log(text, year_reference)
+    let parsed = gt_logfile::parse_log_with_year_resolution(text, year_reference, year_resolution)
         .map_err(|err| LoadFailure::new(source.clone(), LoadFailureCause::ParseLog(err)))?;
     let unindexable_line_count = parsed.unindexable_line_count();
     if unindexable_line_count > 0 {
@@ -1298,7 +1313,7 @@ mod tests {
 
     use chrono::DateTime;
     use gt_logfile::LogParseError;
-    use gt_store::{HistoryDatabase, ReadOnlyHistoryDatabase, Recordings};
+    use gt_store::{HistoryDatabase, ReadOnlyHistoryDatabase, Recordings, StoredYearResolution};
     use gt_test_utils::SyntheticGtdSpec;
     use rstest::rstest;
 
@@ -1566,17 +1581,28 @@ mod tests {
     }
 
     #[rstest]
-    #[case::resolved_years("Dec 31 23:59:59 before\nJan  1 00:00:01 after\n", true)]
-    #[case::unresolved_years(gt_test_utils::UNRESOLVED_YEARS_LOG, false)]
-    fn a_saved_log_restores_its_original_timestamp_reference(
+    #[case::resolved_years(
+        "Dec 31 23:59:59 before\nJan  1 00:00:01 after\n",
+        YearResolution::Infer,
+        true
+    )]
+    #[case::unresolved_years(gt_test_utils::UNRESOLVED_YEARS_LOG, YearResolution::Infer, false)]
+    #[case::years_from_a_chosen_year(
+        gt_test_utils::UNRESOLVED_YEARS_LOG,
+        YearResolution::PlaceLastEntryInYear(2026),
+        true
+    )]
+    fn a_saved_log_restores_its_original_timestamp_reference_and_year_resolution(
         #[case] text: &str,
+        #[case] year_resolution: YearResolution,
         #[case] years_resolve: bool,
     ) {
         let reference = DateTime::parse_from_rfc3339("2026-10-01T00:00:00Z")
             .expect("reference date")
             .to_utc();
         let original =
-            gt_logfile::parse_log(text.into(), reference).expect("parse the original log");
+            gt_logfile::parse_log_with_year_resolution(text.into(), reference, year_resolution)
+                .expect("parse the original log");
         let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
         jobs.spawn_attached_log(
             AttachedLog {
@@ -1584,6 +1610,7 @@ mod tests {
                 text: text.to_owned(),
                 filters: Default::default(),
                 year_reference: original.year_reference(),
+                year_resolution: gt_log_view::stored_year_resolution(original.year_resolution()),
             },
             LogAttachmentRef {
                 recording: gt_store::DatabaseRef {
@@ -1677,6 +1704,7 @@ mod tests {
                         text: junk.to_owned(),
                         filters: Default::default(),
                         year_reference: Utc::now(),
+                        year_resolution: StoredYearResolution::Infer,
                     },
                     LogAttachmentRef {
                         recording: gt_store::DatabaseRef {

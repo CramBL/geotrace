@@ -7,6 +7,7 @@
 - **Recordings:** GTD version 3 recordings load with navigation state, coordinate origin and independent satellite reports available for inspection.
 - **Recordings:** Navigation status and interval statistics include epochs without recorded coordinates.
 - **Plots:** Dilution of precision metrics are available for recordings with DOP samples.
+- **Log Viewer:** Logs whose years cannot be worked out can be given a year, or read without their summary block's begin and end times.
 
 ### Changed
 

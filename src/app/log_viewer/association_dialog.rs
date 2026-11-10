@@ -159,9 +159,14 @@ impl LogAssociationDialog {
         dialog.show(
             ctx,
             DialogBody::new(|ui| {
+                let years_note = if log.parsed().chronology().is_resolved() {
+                    ""
+                } else {
+                    " once its years are resolved"
+                };
                 ui.add(
                     Label::new(format!(
-                        "Which recording should {} take its positions from?",
+                        "Which recording should {} take its positions from{years_note}?",
                         log.name()
                     ))
                     .wrap(),

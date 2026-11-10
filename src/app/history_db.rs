@@ -30,7 +30,7 @@ use gt_store::{
     LogAttachmentId, LogAttachments as _, LogContentHash, LogToAttach, PruneMode,
     ReadOnlyHistoryDatabase, ReadOnlyLogAttachments as _, ReadOnlyRecordings, RecordingEntry,
     RecordingUiState, Recordings, RecordingsHandle, StoredLogFilterStack, StoredRecording,
-    TrackRange, TrackState, UiStateVersionReporter,
+    StoredYearResolution, TrackRange, TrackState, UiStateVersionReporter,
 };
 use gt_track_builder::SegmentationConfig;
 use gt_ui_types::LoadedLogId;
@@ -150,6 +150,7 @@ enum WriteRequest {
         text: Arc<str>,
         filters: StoredLogFilterStack,
         year_reference: DateTime<Utc>,
+        year_resolution: StoredYearResolution,
     },
     AutoPrune {
         max_bytes: u64,
@@ -184,6 +185,10 @@ enum WriteRequest {
     SetAttachedLogFilters {
         attachment: LogAttachmentRef,
         filters: StoredLogFilterStack,
+    },
+    SetAttachedLogYearResolution {
+        attachment: LogAttachmentRef,
+        year_resolution: StoredYearResolution,
     },
     SetTracksShelved {
         db_ref: DatabaseRef,
@@ -221,6 +226,9 @@ impl WriteRequest {
             }
             Self::AttachLog { .. } => "Storing a log with a recording",
             Self::SetAttachedLogFilters { .. } => "Saving filters for a log in recording history",
+            Self::SetAttachedLogYearResolution { .. } => {
+                "Saving the years of a log in recording history"
+            }
             Self::DetachLog { .. } => "Removing a log from recording history",
         }
     }
@@ -265,6 +273,9 @@ pub enum Response {
         name: String,
         log: Result<AttachedLog, LogAttachmentError>,
     },
+    /// Outcome of a year resolution write. A failure costs only the stored copy: the loaded log
+    /// keeps the years the user chose.
+    AttachedLogYearResolutionStored(Result<(), LogAttachmentError>),
     /// The logs a recording carries, one entry per attachment it holds.
     AttachedLogsLoaded {
         db_ref: DatabaseRef,
@@ -526,6 +537,7 @@ impl HistoryWorker {
             text: Arc::clone(parsed.text()),
             filters,
             year_reference: parsed.year_reference(),
+            year_resolution: gt_log_view::stored_year_resolution(parsed.year_resolution()),
         });
     }
 
@@ -545,6 +557,17 @@ impl HistoryWorker {
         self.send_write(WriteRequest::SetAttachedLogFilters {
             attachment,
             filters,
+        });
+    }
+
+    pub fn set_attached_log_year_resolution(
+        &self,
+        attachment: LogAttachmentRef,
+        year_resolution: StoredYearResolution,
+    ) {
+        self.send_write(WriteRequest::SetAttachedLogYearResolution {
+            attachment,
+            year_resolution,
         });
     }
 
@@ -827,6 +850,7 @@ fn handle_write_request(
             text,
             filters,
             year_reference,
+            year_resolution,
         } => {
             let result = db
                 .attach_log(
@@ -836,6 +860,7 @@ fn handle_write_request(
                         text: &text,
                         filters,
                         year_reference: Some(year_reference),
+                        year_resolution,
                     },
                 )
                 .map(|entry| StoredLogAttachment {
@@ -851,6 +876,14 @@ fn handle_write_request(
             &attachment.recording,
             attachment.id,
             filters,
+        )),
+        WriteRequest::SetAttachedLogYearResolution {
+            attachment,
+            year_resolution,
+        } => Response::AttachedLogYearResolutionStored(db.set_attached_log_year_resolution(
+            &attachment.recording,
+            attachment.id,
+            year_resolution,
         )),
         WriteRequest::DetachLog {
             attachment,
@@ -1789,6 +1822,7 @@ mod tests {
             text: "boot".into(),
             filters: Default::default(),
             year_reference: DateTime::UNIX_EPOCH,
+            year_resolution: StoredYearResolution::Infer,
         },
         "Storing a log with a recording"
     )]
@@ -1798,6 +1832,13 @@ mod tests {
             filters: Default::default(),
         },
         "Saving filters for a log in recording history"
+    )]
+    #[case(
+        WriteRequest::SetAttachedLogYearResolution {
+            attachment: attachment_ref(),
+            year_resolution: StoredYearResolution::IgnoreSummaryBounds,
+        },
+        "Saving the years of a log in recording history"
     )]
     #[case(
         WriteRequest::DetachLog {

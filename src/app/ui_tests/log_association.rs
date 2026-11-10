@@ -1,7 +1,7 @@
 //! The dialog every loaded log raises while a recording is open, and what
 //! confirming it does.
 
-use chrono::Duration;
+use chrono::{DateTime, Duration};
 use egui::accesskit::{Role, Toggled};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
@@ -10,12 +10,12 @@ use gt_loaded_files::FileHistory;
 use gt_log_view::{
     FilterEffect, FilterGroupOperator, FilterPattern, LoadedLog, LogAttachmentRef, RecordingKey,
 };
-use gt_logfile::LogChronology;
+use gt_logfile::{LogChronology, YearResolution};
 use gt_store::{
     DatabaseRef, HistoryDatabase as _, LogAttachmentEntry, LogAttachments as _, LogToAttach,
     ReadOnlyHistoryDatabase as _, Recordings, RecordingsHandle, StoredLogFilter,
     StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterOperator,
-    StoredLogFilterStack, TrackRange, TrackState,
+    StoredLogFilterStack, StoredYearResolution, TrackRange, TrackState,
 };
 use gt_test_utils::{
     By, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec, SyntheticLogTimestamps,
@@ -294,6 +294,155 @@ fn a_log_with_unresolved_years_saved_with_a_recording_reopens_unresolved() {
     assert_eq!(log.associated_entry_count(), 0);
     harness.run_steps(3);
     harness.get_by_label("Cannot resolve the year of log line 3");
+}
+
+#[test]
+fn applying_a_year_to_a_log_with_unresolved_years_raises_the_dialog_and_saves_the_year() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut harness = app_over_a_history_database(&db_path);
+    test_util::harness::drop_file_and_wait_for_load(
+        &mut harness,
+        recording_alongside_the_unresolved_years_log(),
+    );
+    let db_ref = stored_recording(&harness);
+    drop_the_log_with_unresolved_years(&mut harness);
+    assert!(!dialog_is_open(&harness));
+
+    apply_the_year_of_the_last_line(&mut harness, 2026);
+
+    assert!(
+        harness
+            .state()
+            .first_log()
+            .is_some_and(|log| log.parsed().chronology().is_resolved())
+    );
+    assert!(
+        dialog_is_open(&harness),
+        "a log whose years resolve raises the dialog"
+    );
+    attach_the_log(&mut harness, &db_path, &db_ref);
+    assert!(
+        harness
+            .state()
+            .first_log()
+            .is_some_and(|log| log.associated_entry_count() > 0)
+    );
+    assert!(
+        !harness
+            .get(By::new().role(Role::SpinButton))
+            .accesskit_node()
+            .is_disabled(),
+        "the association window is enabled"
+    );
+    assert_eq!(
+        stored_attachments(&db_path, &db_ref)
+            .first()
+            .map(|entry| entry.attachment.year_resolution),
+        Some(StoredYearResolution::PlaceLastEntryInYear { year: 2026 })
+    );
+}
+
+#[test]
+fn a_year_applied_to_a_saved_log_with_unresolved_years_resolves_it_when_it_reopens() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut harness = app_over_a_history_database(&db_path);
+    test_util::harness::drop_file_and_wait_for_load(
+        &mut harness,
+        recording_alongside_the_unresolved_years_log(),
+    );
+    let db_ref = stored_recording(&harness);
+    drop_the_log_with_unresolved_years(&mut harness);
+    harness
+        .state_mut()
+        .log_viewer_requests
+        .open_association_dialog = harness.state().logs.first_id();
+    harness.state_mut().apply_log_viewer_requests();
+    harness.run_steps(3);
+    harness
+        .get(By::new().role(Role::Button).label("walk.gtd"))
+        .click();
+    harness.run_steps(2);
+    attach_the_log(&mut harness, &db_path, &db_ref);
+    apply_the_year_of_the_last_line(&mut harness, 2026);
+    assert!(
+        harness.step_until(|_| stored_attachments(&db_path, &db_ref)
+            .first()
+            .is_some_and(|entry| entry.attachment.year_resolution
+                == StoredYearResolution::PlaceLastEntryInYear { year: 2026 })),
+        "the worker stored the year with the attachment"
+    );
+    let stored = stored_attachments(&db_path, &db_ref)
+        .first()
+        .map(|entry| entry.id)
+        .expect("the attachment was stored");
+
+    unload_the_log(&mut harness);
+    open_the_stored_log(&harness, &db_ref, stored);
+
+    assert!(harness.step_until(|harness| harness.state().logs.len() == 1));
+    let log = harness
+        .state()
+        .first_log()
+        .expect("the stored log is loaded");
+    assert_eq!(
+        log.parsed().year_resolution(),
+        YearResolution::PlaceLastEntryInYear(2026)
+    );
+    assert!(log.parsed().chronology().is_resolved());
+    assert!(log.associated_entry_count() > 0);
+}
+
+/// A fix every second from 10:59:00 to 12:00:39 on May 20, 2026, the day
+/// [`gt_test_utils::UNRESOLVED_YEARS_LOG`] writes.
+fn recording_alongside_the_unresolved_years_log() -> TestDroppedFile {
+    let start = DateTime::parse_from_rfc3339("2026-05-20T10:59:00Z")
+        .expect("start time")
+        .to_utc();
+    TestDroppedFile::bytes(
+        gt_test_utils::synthetic_gtd_bytes(SyntheticGtdSpec {
+            start,
+            point_count: 3700,
+            step_secs: 1,
+            start_lat_deg: 55.0,
+            start_lon_deg: 12.0,
+            lat_step_deg: 0.000_05,
+            lon_step_deg: 0.000_08,
+            heading_deg: 20.0,
+            speed_kmh: 28.0,
+            eph_m: 1.8,
+            sats_seen: 14,
+            sats_in_fix: 11,
+        }),
+        "walk.gtd",
+    )
+}
+
+/// Enters `year` for the last timestamped line of the shown log and applies it.
+fn apply_the_year_of_the_last_line(harness: &mut Harness<App>, year: i32) {
+    harness
+        .get(By::new().predicate(|node| {
+            node.author_id() == Some(log_viewer::unresolved_years::LAST_ENTRY_YEAR_ID)
+        }))
+        .click();
+    harness.run_steps(2);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text(year.to_string()));
+    harness.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run_steps(2);
+    harness
+        .get_by_label(log_viewer::unresolved_years::APPLY_YEAR_LABEL)
+        .click();
+    harness.run_steps(3);
 }
 
 fn drop_the_log_with_unresolved_years(harness: &mut Harness<App>) {
@@ -1032,6 +1181,7 @@ fn seed_a_recording_and_the_log_stored_with_it(
                     },
                 }]),
                 year_reference: None,
+                year_resolution: StoredYearResolution::Infer,
             },
         )
         .expect("the fixture log is stored with the recording");
@@ -1193,6 +1343,7 @@ fn restore_the_stored_attachment(
         filters: entry.attachment.filters.clone(),
         requested_by: crate::app::loader::AttachedLogRequester::RecordingLoad,
         year_reference: gt_test_utils::synthetic_log_start(),
+        year_resolution: YearResolution::Infer,
     };
     harness
         .state_mut()
@@ -1721,6 +1872,7 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
                 text: &fixture_log_text(FIXTURE_LOG_SEED),
                 filters: filters.clone(),
                 year_reference: None,
+                year_resolution: StoredYearResolution::Infer,
             },
         )
         .expect("second attachment is stored")

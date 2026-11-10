@@ -12,10 +12,11 @@ use crate::{
     format::{self, LogFormat, RawTimestamp},
     pool,
     recognise::{self, HostnameColumn, RecognisedMessage, RecognisedService},
-    session::{self, BootSession},
+    session::{self, BootSession, BootSessionRange},
     structure::{StructuralExtent, StructuralLine, StructuralLineKind},
     summary::{self, EntryCountMismatch, SummaryBlock},
     text::LogText,
+    years::YearResolution,
 };
 
 /// A byte range of a [`ParsedLog`]'s text, read with [`TextSlice::in_text`].
@@ -112,9 +113,44 @@ pub struct ParsedLog {
     unindexable_line_count: usize,
     replaced_byte_count: usize,
     year_reference: DateTime<Utc>,
+    year_resolution: YearResolution,
 }
 
 impl ParsedLog {
+    /// The log with its years resolved again under `year_resolution`, from the written timestamps
+    /// of its unresolved chronology. `None` for a log whose years resolved.
+    pub fn resolve_years_as(&self, year_resolution: YearResolution) -> Option<Self> {
+        let LogChronology::Unresolved(unresolved) = &self.chronology else {
+            return None;
+        };
+        let entries: Vec<PendingLogEntry> = self
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(entry_index, entry)| PendingLogEntry {
+                timestamp: unresolved
+                    .written_timestamp(entry_index)
+                    .map(RawTimestamp::Yearless),
+                line_number: entry.line_number,
+                message: entry.message,
+            })
+            .collect();
+        let boot_session_ranges: Vec<BootSessionRange> =
+            self.boot_sessions.iter().map(BootSession::range).collect();
+        let chronology = LogChronology::resolve(
+            &self.text,
+            &entries,
+            &boot_session_ranges,
+            self.summary_block.as_ref(),
+            self.year_reference,
+            year_resolution,
+        )?;
+        let mut resolved = self.clone();
+        resolved.chronology = chronology;
+        resolved.year_resolution = year_resolution;
+        Some(resolved)
+    }
+
     pub fn text(&self) -> &Arc<str> {
         &self.text
     }
@@ -202,6 +238,10 @@ impl ParsedLog {
         self.year_reference
     }
 
+    pub fn year_resolution(&self) -> YearResolution {
+        self.year_resolution
+    }
+
     pub fn message(&self, entry: &LogEntry) -> &str {
         entry.message.in_text(&self.text)
     }
@@ -223,7 +263,16 @@ pub enum LogParseError {
 /// Syslog years resolve after boot segmentation and before interpolation.
 /// A log whose years cannot be resolved parses to [`LogChronology::Unresolved`].
 pub fn parse_log(text: LogText, year_reference: DateTime<Utc>) -> Result<ParsedLog, LogParseError> {
-    parse_log_in_chunks_of(text, year_reference, CHUNK_TARGET_BYTES)
+    parse_log_with_year_resolution(text, year_reference, YearResolution::Infer)
+}
+
+/// Reads `text` as [`parse_log`] does, with the years resolved under `year_resolution`.
+pub fn parse_log_with_year_resolution(
+    text: LogText,
+    year_reference: DateTime<Utc>,
+    year_resolution: YearResolution,
+) -> Result<ParsedLog, LogParseError> {
+    parse_in_chunks(text, year_reference, year_resolution, CHUNK_TARGET_BYTES)
 }
 
 /// Reads `text` as [`parse_log`] does, over chunks of `chunk_target_bytes`, so
@@ -231,6 +280,20 @@ pub fn parse_log(text: LogText, year_reference: DateTime<Utc>) -> Result<ParsedL
 pub fn parse_log_in_chunks_of(
     text: LogText,
     year_reference: DateTime<Utc>,
+    chunk_target_bytes: NonZeroUsize,
+) -> Result<ParsedLog, LogParseError> {
+    parse_in_chunks(
+        text,
+        year_reference,
+        YearResolution::Infer,
+        chunk_target_bytes,
+    )
+}
+
+fn parse_in_chunks(
+    text: LogText,
+    year_reference: DateTime<Utc>,
+    year_resolution: YearResolution,
     chunk_target_bytes: NonZeroUsize,
 ) -> Result<ParsedLog, LogParseError> {
     let (text, replaced_byte_count) = text.into_parts();
@@ -250,6 +313,7 @@ pub fn parse_log_in_chunks_of(
         &boot_session_ranges,
         summary_block.as_ref(),
         year_reference,
+        year_resolution,
     ) else {
         return Err(index.no_anchored_entry_error(&text));
     };
@@ -282,6 +346,7 @@ pub fn parse_log_in_chunks_of(
         unindexable_line_count: index.unindexable_line_count,
         replaced_byte_count,
         year_reference,
+        year_resolution,
     })
 }
 

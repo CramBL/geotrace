@@ -23,6 +23,7 @@ use gt_test_utils::{
 use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::{FileSource, Latitude, Longitude};
 use gt_ui_types::LoadedLogId;
+use rstest::rstest;
 
 use super::{
     ATTACH_LABEL, AUTOMATIC_POSITION_SOURCE_LABEL, CANCEL_LABEL, CONFIRM_LABEL,
@@ -106,17 +107,20 @@ pub(in crate::app) fn harness_over_sized(
 ) -> Harness<'static, DialogState> {
     let mut harness = Harness::builder()
         .with_size(viewport)
-        .build_ui_state(dialog_ui, dialog_state(recordings));
+        .build_ui_state(dialog_ui, dialog_state(LOG, recordings));
     harness.run_steps(3);
     harness
 }
 
-fn dialog_state(recordings: Vec<(gt_types::LoadedFile, FileHistory)>) -> DialogState {
+fn dialog_state(
+    log_text: &str,
+    recordings: Vec<(gt_types::LoadedFile, FileHistory)>,
+) -> DialogState {
     let mut loaded_recordings = LoadedFiles::new();
     for (file, history) in recordings {
         loaded_recordings.push(file, history);
     }
-    let parsed = gt_logfile::parse_log(LOG.into(), log_start())
+    let parsed = gt_logfile::parse_log(log_text.into(), log_start())
         .unwrap_or_else(|error| panic!("the fixture log parses: {error}"));
     DialogState {
         dialog: LogAssociationDialog::new(SHOWN_LOG, None),
@@ -139,7 +143,7 @@ fn rendering_harness_over(
 ) -> TestHarness<'static, DialogState> {
     let mut harness = TestHarness::builder()
         .size(viewport)
-        .ui_state(dialog_ui, dialog_state(recordings));
+        .ui_state(dialog_ui, dialog_state(LOG, recordings));
     harness.inner.run_steps(3);
     harness
 }
@@ -203,6 +207,24 @@ fn select(harness: &mut Harness<DialogState>, name: &str) {
 fn confirm(harness: &mut Harness<DialogState>) {
     harness.get_by_label(CONFIRM_LABEL).click();
     harness.run_steps(2);
+}
+
+#[rstest]
+#[case::resolved_years(LOG, "Which recording should navsyncd.log take its positions from?")]
+#[case::unresolved_years(
+    gt_test_utils::UNRESOLVED_YEARS_LOG,
+    "Which recording should navsyncd.log take its positions from once its years are resolved?"
+)]
+fn the_question_states_when_the_log_takes_its_positions(
+    #[case] log_text: &str,
+    #[case] question: &str,
+) {
+    let mut harness = Harness::builder()
+        .with_size(DIALOG_SIZE)
+        .build_ui_state(dialog_ui, dialog_state(log_text, Vec::new()));
+    harness.run_steps(3);
+
+    harness.get_by_label(question);
 }
 
 /// The ranking the dialog lists in, each row stating how much of the log the

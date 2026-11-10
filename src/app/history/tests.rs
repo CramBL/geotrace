@@ -10,7 +10,7 @@ use egui_phosphor::regular::TRASH as ICON_TRASH;
 use gt_pending_writes::{PendingWrites, WriteAccess};
 use gt_store::{
     ChannelSummary, DatabaseRef, HistoryDatabase as _, NavPointTimeRange, RecordingEntry,
-    RecordingsHandle, TrackRange, TrackState,
+    RecordingsHandle, StoredYearResolution, TrackRange, TrackState,
 };
 use gt_test_utils::window_fit::{
     CRAMPED_VIEWPORT, NARROW_VIEWPORT, OVERSIZED_ROW_COUNT, SHORT_VIEWPORT,
@@ -124,6 +124,7 @@ fn history_harness_with_recording(identity: &str, stored_logs: &[&str]) -> Histo
                 text: &stored_log_text(name),
                 filters: Default::default(),
                 year_reference: None,
+                year_resolution: StoredYearResolution::Infer,
             },
         )
         .expect("attach a log to the recording");
@@ -928,6 +929,7 @@ fn history_harness_with_a_shelf_over_more_recordings() -> HistoryHarness {
                     text: &stored_log_text(&name),
                     filters: Default::default(),
                     year_reference: None,
+                    year_resolution: StoredYearResolution::Infer,
                 },
             )
             .expect("attach a log to the recording");

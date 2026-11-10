@@ -5,10 +5,10 @@ pub use gt_history_types::{
     RecordingMeta, RecordingUiState, StoredFixPlacementRule, StoredLogFilter,
     StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterGroup,
     StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts, StoredLogLevel,
-    StoredRecording, StoredSegmentation, StoredTrackSplitRule, TrackRange, TrackState,
-    UiStateVersionReporter, UiStateVersionTooNew, format_count_suffix, identity_from_group_name,
-    identity_group_name, listed_track_rows, log_attachment, logs_directory_for_database,
-    make_group_name,
+    StoredRecording, StoredSegmentation, StoredTrackSplitRule, StoredYearResolution, TrackRange,
+    TrackState, UiStateVersionReporter, UiStateVersionTooNew, format_count_suffix,
+    identity_from_group_name, identity_group_name, listed_track_rows, log_attachment,
+    logs_directory_for_database, make_group_name,
 };
 
 #[cfg(feature = "backend-pure")]

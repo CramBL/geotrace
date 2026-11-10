@@ -453,6 +453,10 @@ pub struct LogAttachment {
     /// The original reference for timestamps without a year. Absent in older attachments.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub year_reference: Option<DateTime<Utc>>,
+
+    /// Absent in older attachments, which restore as [`StoredYearResolution::Infer`].
+    #[serde(default, skip_serializing_if = "StoredYearResolution::is_infer")]
+    pub year_resolution: StoredYearResolution,
 }
 
 impl LogAttachment {
@@ -463,6 +467,7 @@ impl LogAttachment {
             content_hash,
             filters,
             year_reference: None,
+            year_resolution: StoredYearResolution::Infer,
         }
     }
 
@@ -493,6 +498,24 @@ impl LogAttachment {
                 None
             }
         }
+    }
+}
+
+/// The variants of `gt_logfile::YearResolution`, as stored with a log attachment.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum StoredYearResolution {
+    IgnoreSummaryBounds,
+    #[default]
+    Infer,
+    PlaceLastEntryInYear {
+        year: i32,
+    },
+}
+
+impl StoredYearResolution {
+    fn is_infer(&self) -> bool {
+        *self == Self::Infer
     }
 }
 
@@ -601,6 +624,28 @@ mod tests {
             LogAttachment::from_attribute_json(&json),
             Some(attachment())
         );
+    }
+
+    #[rstest]
+    #[case::ignore_summary_bounds(
+        StoredYearResolution::IgnoreSummaryBounds,
+        r#""year_resolution":{"kind":"ignore_summary_bounds"}"#
+    )]
+    #[case::place_last_entry_in_year(
+        StoredYearResolution::PlaceLastEntryInYear { year: 2024 },
+        r#""year_resolution":{"kind":"place_last_entry_in_year","year":2024}"#
+    )]
+    fn an_attachment_stores_the_year_resolution_the_user_chose(
+        #[case] year_resolution: StoredYearResolution,
+        #[case] stored_field: &str,
+    ) {
+        let mut chosen = attachment();
+        chosen.year_resolution = year_resolution;
+
+        let json = chosen.to_attribute_json().expect("encode");
+
+        assert!(json.contains(stored_field), "{json}");
+        assert_eq!(LogAttachment::from_attribute_json(&json), Some(chosen));
     }
 
     #[test]
@@ -845,6 +890,11 @@ mod tests {
             membership_offset in any::<usize>(),
             selected_index in any::<usize>(),
             reference_seconds in proptest::option::of(0i64..4_102_444_800),
+            year_resolution in prop_oneof![
+                Just(StoredYearResolution::IgnoreSummaryBounds),
+                Just(StoredYearResolution::Infer),
+                any::<i32>().prop_map(|year| StoredYearResolution::PlaceLastEntryInYear { year }),
+            ],
         ) {
             let mut attachment = LogAttachment::new(name, LogContentHash::of_log_bytes(&log), StoredLogFilterStack::single_all_group(filters));
             let groups: Vec<_> = operators.iter().enumerate().map(|(index, any_operator)| StoredLogFilterGroup {
@@ -858,6 +908,7 @@ mod tests {
             }
             attachment.filters = StoredLogFilterStack::try_from_parts(StoredLogFilterStackParts { groups, selected_group_id, chips }).expect("valid memberships");
             attachment.year_reference = reference_seconds.and_then(|seconds| DateTime::from_timestamp(seconds, 0));
+            attachment.year_resolution = year_resolution;
             let json = attachment.to_attribute_json().expect("encode");
             prop_assert_eq!(LogAttachment::from_attribute_json(&json), Some(attachment));
         }
