@@ -215,6 +215,8 @@ impl App {
         if !log.resolve_years_as(year_resolution, &recordings) {
             return;
         }
+        self.log_viewer
+            .preserve_source_position_after_chronology_change(&log, log_id);
         let needs_a_position_source = log.parsed().chronology().is_resolved()
             && log.anchor_key().is_none()
             && log

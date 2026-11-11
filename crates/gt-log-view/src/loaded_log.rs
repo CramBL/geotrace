@@ -434,14 +434,12 @@ impl LoadedLog {
         self.reassociate(recordings);
     }
 
-    /// Resolves the years of a log whose years are unresolved again under `year_resolution`, and
-    /// associates it again. Returns `false` for a log whose years resolved, which keeps them.
     pub fn resolve_years_as(
         &mut self,
         year_resolution: YearResolution,
         recordings: &LoadedFilesView<'_>,
     ) -> bool {
-        if self.document.parsed.chronology().is_resolved() {
+        if self.parsed().year_resolution() == year_resolution {
             return false;
         }
         let Some(parsed) = self.document.parsed.resolve_years_as(year_resolution) else {
@@ -455,6 +453,10 @@ impl LoadedLog {
         self.filters
             .replace_log_chronology(Arc::clone(&self.document.parsed));
         self.reassociate(recordings);
+        let desired = self.settings_snapshot();
+        if let LogContext::SavedAttachment(state) = &mut self.context {
+            state.set_desired(desired);
+        }
         true
     }
 

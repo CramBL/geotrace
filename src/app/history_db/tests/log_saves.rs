@@ -61,8 +61,13 @@ fn queued_saves_reuse_one_stored_attachment() {
     assert_eq!(attachments.first().unwrap().id, saved.id);
 }
 
-#[test]
-fn duplicate_save_acknowledges_actual_metadata_before_persisting_current_complete_settings() {
+#[rstest]
+#[case::corrected(YearResolution::PlaceLastEntryInYear(2028), StoredYearResolution::PlaceLastEntryInYear { year: 2028 })]
+#[case::reset(YearResolution::Infer, StoredYearResolution::Infer)]
+fn duplicate_save_acknowledges_actual_metadata_before_persisting_current_complete_settings(
+    #[case] latest_policy: YearResolution,
+    #[case] stored_policy: StoredYearResolution,
+) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("history.h5");
     recordings::seed_two_track_recording(&path);
@@ -103,6 +108,13 @@ fn duplicate_save_acknowledges_actual_metadata_before_persisting_current_complet
             )
     );
     let request = fixture.prepare();
+    assert!(
+        fixture
+            .logs
+            .get_mut_by_id(fixture.id)
+            .unwrap()
+            .resolve_years_as(latest_policy, &fixture.files.view())
+    );
     let (stack, _) = fixture.logs.filter_stack_mut_by_id(fixture.id).unwrap();
     stack.set_live_filter_text("clock");
     stack.add_live_filter_as_chip().unwrap();
@@ -113,10 +125,7 @@ fn duplicate_save_acknowledges_actual_metadata_before_persisting_current_complet
         .settings_snapshot();
     assert_eq!(
         (desired.year_reference, desired.year_resolution),
-        (
-            Some(gt_test_utils::synthetic_log_start()),
-            StoredYearResolution::PlaceLastEntryInYear { year: 2026 }
-        ),
+        (Some(gt_test_utils::synthetic_log_start()), stored_policy),
     );
     assert!(worker.save_log(request).is_none());
     let Response::LogSaved(completion) = recordings::next_response(&worker) else {
@@ -150,6 +159,16 @@ fn duplicate_save_acknowledges_actual_metadata_before_persisting_current_complet
     let db = Recordings::open_or_create(&path).unwrap();
     let restored = db.load_attached_log(&recording, existing.id).unwrap();
     assert_eq!(restored.settings, desired);
+    let reopened = gt_logfile::parse_log_with_year_resolution(
+        restored.text.as_str().into(),
+        restored.settings.year_reference.unwrap(),
+        gt_log_view::year_resolution_of_stored(restored.settings.year_resolution),
+    )
+    .unwrap();
+    assert_eq!(
+        reopened,
+        *fixture.logs.get_by_id(fixture.id).unwrap().parsed()
+    );
     assert_eq!(db.log_attachments(&recording).unwrap().len(), 1);
 }
 

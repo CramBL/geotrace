@@ -135,8 +135,12 @@ fn pending_save_rejects_other_attachment_and_position_source_operations() {
     );
 }
 
-#[test]
-fn initial_save_preserves_new_settings_until_their_settings_acknowledgement() {
+#[rstest::rstest]
+#[case::corrected(YearResolution::PlaceLastEntryInYear(2027))]
+#[case::reset(YearResolution::Infer)]
+fn initial_save_preserves_new_settings_until_their_settings_acknowledgement(
+    #[case] latest_policy: YearResolution,
+) {
     let attachment = fixtures::attachment_ref();
     let mut files = LoadedFiles::new();
     files.push(
@@ -162,6 +166,11 @@ fn initial_save_preserves_new_settings_until_their_settings_acknowledgement() {
         logs.get_mut_by_id(id)
             .unwrap()
             .resolve_years_as(YearResolution::PlaceLastEntryInYear(2026), &files.view())
+    );
+    assert!(
+        logs.get_mut_by_id(id)
+            .unwrap()
+            .resolve_years_as(latest_policy, &files.view())
     );
     fixtures::add_layer_chip(&mut logs, id, "navsyncd");
     let desired = logs.get_by_id(id).unwrap().settings_snapshot();
@@ -200,7 +209,7 @@ fn initial_save_preserves_new_settings_until_their_settings_acknowledgement() {
     );
     let mut restored = LoadedLogs::default();
     let mut log = test_util::log_with_unresolved_years();
-    assert!(log.resolve_years_as(YearResolution::PlaceLastEntryInYear(2026), &files.view()));
+    log.resolve_years_as(latest_policy, &files.view());
     let restored_id = restored
         .restore_attachment(log, attachment, desired.clone(), &files.view())
         .id();

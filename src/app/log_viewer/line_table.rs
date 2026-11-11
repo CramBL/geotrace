@@ -658,6 +658,37 @@ impl LineTableRows {
 }
 
 impl LogViewerWindow {
+    pub(in crate::app) fn preserve_source_position_after_chronology_change(
+        &mut self,
+        log: &LoadedLog,
+        log_id: LoadedLogId,
+    ) {
+        if self.selected_log() != Some(log_id) {
+            return;
+        }
+        let pending_target = self.scroll_to_row.and_then(|row| {
+            let cache = self.line_table_cache.as_ref()?;
+            if cache.key.log != log_id {
+                return None;
+            }
+            let row = cache.rows.at(row)?;
+            Some(TableReadingAnchor {
+                log: log_id,
+                source_line: row.source_line(log.parsed())?,
+                row: row.into(),
+                offset_within_row_px: 0.0,
+            })
+        });
+        self.scroll_to_source_line = pending_target
+            .or(self
+                .scroll_to_source_line
+                .filter(|anchor| anchor.log == log_id))
+            .or(self
+                .table_reading_anchor
+                .filter(|anchor| anchor.log == log_id));
+        self.scroll_to_row = None;
+    }
+
     pub(super) fn clear_invalid_diagnostic_reveal(&mut self, log: &LoadedLog, log_id: LoadedLogId) {
         if self.diagnostic_reveal.is_some_and(|reveal| {
             reveal.log != log_id
