@@ -173,9 +173,6 @@ fn rendering_harness_of(
     harness
 }
 
-/// The viewer on the log stating a service and a level, over a recording that
-/// gives its line a position: the service takes its own colour only on an
-/// associated line.
 fn colouring_harness() -> TestHarness<'static, ViewerState> {
     rendering_harness_of(
         vec![recording("walk.gtd", 55.0)],
@@ -4201,6 +4198,7 @@ const PAGE_STEPS_TO_THE_END: usize = 60;
 
 mod integration;
 mod map_navigation;
+mod message_readability;
 mod reset_clock;
 mod source_navigation;
 mod table_filter_controls;

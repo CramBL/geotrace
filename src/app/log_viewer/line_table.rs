@@ -1293,9 +1293,6 @@ struct MessageColors {
 
     dark_mode: bool,
 
-    /// Whether the service takes its own colour, which it does with the
-    /// services tickbox ticked and only on a line that has a position:
-    /// association is the stronger signal.
     color_the_service: bool,
 
     color_the_hostname: bool,
@@ -1304,20 +1301,12 @@ struct MessageColors {
 }
 
 impl MessageColors {
-    fn of(
-        ui: &egui::Ui,
-        associated: bool,
-        timestamp: Option<RowTimestamp>,
-        switches: MessageColorSwitches,
-    ) -> Self {
+    fn of(ui: &egui::Ui, switches: MessageColorSwitches) -> Self {
         Self {
-            base: match associated || timestamp.is_some_and(RowTimestamp::is_device_clock) {
-                true => ui.visuals().text_color(),
-                false => ui.visuals().weak_text_color(),
-            },
+            base: ui.visuals().text_color(),
             weak: ui.visuals().weak_text_color(),
             dark_mode: ui.visuals().dark_mode,
-            color_the_service: switches.services && associated,
+            color_the_service: switches.services,
             color_the_hostname: switches.services,
             color_the_level: switches.levels,
         }
@@ -1508,12 +1497,7 @@ impl EntryRow<'_> {
     /// past the screen.
     fn message_job(&self, ui: &egui::Ui) -> LayoutJob {
         let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-        let colors = MessageColors::of(
-            ui,
-            self.position.is_some(),
-            self.timestamp,
-            self.color_switches,
-        );
+        let colors = MessageColors::of(ui, self.color_switches);
         let runs = self
             .recognised
             .map(|recognised| colors.runs(recognised))
@@ -1892,65 +1876,6 @@ mod tests {
         assert_eq!(marked.fill_of(entry_index), expected);
     }
 
-    /// What the parse read out of the one entry of `text`.
-    fn recognised_message_of(text: &str) -> RecognisedMessage {
-        let parsed =
-            gt_logfile::parse_log(text.into(), gutter_log_start()).expect("the log parses");
-        parsed
-            .recognised_messages()
-            .first()
-            .copied()
-            .expect("the log has one entry")
-    }
-
-    /// The text each run covers, with the colour it draws in.
-    fn coloured<'a>(message: &'a str, runs: &[MessageRun]) -> Vec<(&'a str, Color32)> {
-        runs.iter()
-            .filter_map(|run| Some((message.get(run.range.clone())?, run.color)))
-            .collect()
-    }
-
-    /// Association is the stronger signal: a line the window found no fix for
-    /// keeps its service in the weak colour of the rest of its message, and
-    /// only its level stays coloured.
-    #[test]
-    fn a_line_without_a_position_colours_its_level_and_not_its_service() {
-        let recognised = recognised_message_of(ERROR_LINE);
-        let associated = MessageColors {
-            base: Color32::from_gray(200),
-            weak: Color32::from_gray(100),
-            dark_mode: DARK_MODE,
-            color_the_service: true,
-            color_the_hostname: true,
-            color_the_level: true,
-        };
-        let unassociated = MessageColors {
-            color_the_service: false,
-            ..associated
-        };
-
-        assert_eq!(
-            coloured(ERROR_MESSAGE, &associated.runs(recognised)),
-            [
-                (
-                    "hal-modem:",
-                    gt_ui_theme::log_service_slot_color(0).resolve(DARK_MODE)
-                ),
-                (
-                    "[ERROR modem::manager::modem]",
-                    gt_ui_theme::error_indicator(DARK_MODE)
-                ),
-            ]
-        );
-        assert_eq!(
-            coloured(ERROR_MESSAGE, &unassociated.runs(recognised)),
-            [(
-                "[ERROR modem::manager::modem]",
-                gt_ui_theme::error_indicator(DARK_MODE)
-            )]
-        );
-    }
-
     /// Two logged phenomena compared side by side: each enabled layer chip
     /// claims a column of the gutter, in its own palette colour.
     #[test]
@@ -2033,14 +1958,4 @@ mod tests {
 2026-01-01 14:02:12 hal-powerd: battery low
 2026-01-01 14:02:13 navsyncd: gnss fix lost
 ";
-
-    /// A line stating a service and an error level, as the two colouring cases
-    /// read it.
-    const ERROR_LINE: &str =
-        "2026-01-01 14:02:11 hal-modem: [ERROR modem::manager::modem] timed out";
-
-    const ERROR_MESSAGE: &str = "hal-modem: [ERROR modem::manager::modem] timed out";
-
-    /// The theme the runs resolve in.
-    const DARK_MODE: bool = true;
 }
