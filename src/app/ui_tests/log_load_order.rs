@@ -92,6 +92,7 @@ fn saved_log_outcome(name: &str) -> SavedLogResult {
                 id: LogAttachmentId::new_random(),
             },
             settings: StoredLogSettings {
+                association_window: None,
                 filters: StoredLogFilterStack::default(),
                 year_reference: Some(ui_tests::base_time()),
                 year_resolution: StoredYearResolution::Infer,
@@ -764,6 +765,7 @@ fn restored_attachments_preserve_their_recording_during_other_loads() {
         restored: loader::AttachedLogRestore {
             attachment: attachment.clone(),
             settings: StoredLogSettings {
+                association_window: None,
                 filters: Default::default(),
                 year_reference: Some(ui_tests::base_time()),
                 year_resolution: StoredYearResolution::Infer,
@@ -990,6 +992,7 @@ fn loose_and_saved_contexts_are_independent_of_completion_order(#[values(true, f
             restored: loader::AttachedLogRestore {
                 attachment: attachment.clone(),
                 settings: StoredLogSettings {
+                    association_window: None,
                     filters: saved_filters.clone(),
                     year_reference: Some(ui_tests::base_time()),
                     year_resolution: StoredYearResolution::Infer,
@@ -1488,6 +1491,7 @@ fn a_saved_attachment_load_preserves_an_explicit_loose_arrivals_readiness(
                 id: LogAttachmentId::new_random(),
             },
             settings: StoredLogSettings {
+                association_window: None,
                 filters: Default::default(),
                 year_reference: Some(ui_tests::base_time()),
                 year_resolution: StoredYearResolution::Infer,

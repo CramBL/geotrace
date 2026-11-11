@@ -961,6 +961,7 @@ fn attachment_ref() -> gt_log_view::LogAttachmentRef {
 
 fn attachment_settings() -> StoredLogSettings {
     StoredLogSettings {
+        association_window: None,
         filters: Default::default(),
         year_reference: Some(log_start()),
         year_resolution: StoredYearResolution::Infer,

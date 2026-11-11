@@ -1,6 +1,7 @@
 pub use load_warning::{AlterationWording, LoadWarning};
 pub use satellites::{Prn, SignalQuality, Snr};
 
+pub use association_window::{AssociationWindow, InvalidAssociationWindow};
 pub use channel::{BackwardTimeStep, Channel};
 pub use coordinates::{
     Coordinate, CoordinateAxis, Latitude, Longitude, OutOfRange, RawDegrees, RecordedCoordinate,
@@ -50,6 +51,7 @@ pub use track::{
 };
 pub use versioned::{Generation, Versionable, Versioned};
 
+mod association_window;
 mod bitset;
 pub mod channel;
 pub mod coordinates;

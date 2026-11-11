@@ -8,7 +8,7 @@ use gt_history_types::{
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_logfile::ParsedLog;
 use gt_pending_writes::WriteAccess;
-use gt_types::FileIdx;
+use gt_types::{AssociationWindow, FileIdx};
 
 use crate::anchor::RecordingKey;
 use crate::attachment::LogAttachmentRef;
@@ -177,6 +177,47 @@ fn restored_legacy_references_remain_missing_until_settings_change() {
         .pop()
         .unwrap();
     assert_eq!(write.settings().year_reference, Some(test_util::start()));
+}
+
+#[rstest::rstest]
+#[case::restored(true)]
+#[case::newly_saved(false)]
+fn saved_windows_survive_filter_settings_writes(#[case] restore: bool) {
+    let recordings = test_util::loaded(Vec::new());
+    let mut log = test_util::log_of(10);
+    let persisted = StoredLogSettings {
+        association_window: Some(
+            AssociationWindow::try_from(Duration::nanoseconds(123_456_789)).unwrap(),
+        ),
+        ..fixtures::settings()
+    };
+    if restore {
+        log.restore_attachment(
+            fixtures::attachment_ref(),
+            persisted.clone(),
+            &recordings.view(),
+        );
+    } else {
+        log.record_attachment(
+            fixtures::attachment_ref(),
+            persisted.clone(),
+            &recordings.view(),
+        );
+    }
+    assert!(log.prepare_settings_write(WriteAccess::Owner).is_none());
+    let mut logs = LoadedLogs::default();
+    let id = logs.push(log).id();
+    fixtures::add_layer_chip(&mut logs, id, "entry 1");
+    let write = logs
+        .prepare_settings_writes(WriteAccess::Owner)
+        .pop()
+        .unwrap();
+    assert_eq!(
+        write.settings().association_window,
+        persisted.association_window
+    );
+    assert_eq!(write.settings().year_reference, persisted.year_reference);
+    assert_eq!(write.settings().year_resolution, persisted.year_resolution);
 }
 
 #[rstest::rstest]

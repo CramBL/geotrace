@@ -1526,6 +1526,7 @@ fn seed_a_recording_and_the_log_stored_with_it(
                 name: FIXTURE_LOG_NAME,
                 text: &fixture_log_text(FIXTURE_LOG_SEED),
                 settings: StoredLogSettings {
+                    association_window: None,
                     filters: StoredLogFilterStack::single_all_group(vec![StoredLogFilter {
                         group_id: 0,
                         condition: StoredLogFilterCondition::Message {
@@ -1743,7 +1744,8 @@ fn unreadable_attachment_metadata_has_retained_source_feedback_and_readable_sibl
         attachment: metadata,
     })];
     for json in [
-        r#"{"format_version":7,"name":"future.log"}"#,
+        r#"{"format_version":7,"name":"invalid-window.log","content_hash":"0","filters":[],"association_window_ns":null}"#,
+        r#"{"format_version":8,"name":"future.log"}"#,
         r#"{"format_version":6,"name":"unknown.log","content_hash":"0","filters":[],"year_resolution":{"kind":"future_policy"}}"#,
         r#"{"format_version":6,"name":"malformed.log","content_hash":"0","filters":[],"year_resolution":null}"#,
         "{",
@@ -2374,6 +2376,7 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
                 name: FIXTURE_LOG_NAME,
                 text: &fixture_log_text(FIXTURE_LOG_SEED),
                 settings: StoredLogSettings {
+                    association_window: None,
                     filters: filters.clone(),
                     year_reference: None,
                     year_resolution: StoredYearResolution::Infer,

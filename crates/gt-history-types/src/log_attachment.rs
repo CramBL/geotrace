@@ -16,6 +16,7 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
+use gt_types::AssociationWindow;
 use serde::ser::SerializeStruct as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
@@ -451,6 +452,8 @@ pub struct LogAttachment {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StoredLogSettings {
+    /// `None` requires the configured default when the attachment is loaded.
+    pub association_window: Option<AssociationWindow>,
     pub filters: StoredLogFilterStack,
 
     /// The loader uses the recording's end time for `None`.
@@ -477,6 +480,7 @@ impl LogAttachment {
             name,
             content_hash,
             settings: StoredLogSettings {
+                association_window: None,
                 filters,
                 year_reference: None,
                 year_resolution: StoredYearResolution::Infer,
@@ -501,13 +505,17 @@ impl Serialize for LogAttachment {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut fields = serializer.serialize_struct(
             "LogAttachment",
-            4 + usize::from(self.settings.year_reference.is_some())
+            4 + usize::from(self.settings.association_window.is_some())
+                + usize::from(self.settings.year_reference.is_some())
                 + usize::from(self.settings.year_resolution != StoredYearResolution::Infer),
         )?;
         fields.serialize_field("format_version", &LOG_ATTACHMENT_FORMAT_VERSION)?;
         fields.serialize_field("name", &self.name)?;
         fields.serialize_field("content_hash", &self.content_hash)?;
         fields.serialize_field("filters", &self.settings.filters)?;
+        if let Some(window) = self.settings.association_window {
+            fields.serialize_field("association_window_ns", &window)?;
+        }
         if let Some(reference) = self.settings.year_reference {
             fields.serialize_field("year_reference", &reference)?;
         }
@@ -528,6 +536,10 @@ pub struct LogAttachmentDecodeError {
 
 #[derive(Debug, Error)]
 pub enum LogAttachmentDecodeErrorReason {
+    #[error("saved association window requires log attachment format version 7, found {version}")]
+    AssociationWindowBeforeVersionSeven { version: u32 },
+    #[error("malformed saved association window: {0}")]
+    MalformedAssociationWindow(#[source] serde_json::Error),
     #[error("malformed log attachment metadata: {0}")]
     MalformedMetadata(#[source] serde_json::Error),
     #[error("malformed saved chronology policy: {0}")]
@@ -689,6 +701,8 @@ impl LogAttachmentEnvelope {
             filters: StoredLogFilterStack,
             year_reference: Option<DateTime<Utc>>,
             #[serde(default)]
+            association_window_ns: AssociationWindowJson,
+            #[serde(default)]
             year_resolution: YearResolutionJson,
         }
         let settings: Settings = serde_json::from_str(json)
@@ -697,11 +711,44 @@ impl LogAttachmentEnvelope {
             name: settings.name,
             content_hash: settings.content_hash,
             settings: StoredLogSettings {
+                association_window: settings.association_window_ns.decode(self.format_version)?,
                 filters: settings.filters,
                 year_reference: settings.year_reference,
                 year_resolution: settings.year_resolution.decode()?,
             },
         })
+    }
+}
+
+#[derive(Default)]
+enum AssociationWindowJson {
+    #[default]
+    Missing,
+    Present(Box<RawValue>),
+}
+
+impl AssociationWindowJson {
+    fn decode(
+        self,
+        version: u32,
+    ) -> Result<Option<AssociationWindow>, LogAttachmentDecodeErrorReason> {
+        let Self::Present(json) = self else {
+            return Ok(None);
+        };
+        if version < ASSOCIATION_WINDOW_FORMAT_VERSION {
+            return Err(
+                LogAttachmentDecodeErrorReason::AssociationWindowBeforeVersionSeven { version },
+            );
+        }
+        serde_json::from_str(json.get())
+            .map(Some)
+            .map_err(LogAttachmentDecodeErrorReason::MalformedAssociationWindow)
+    }
+}
+
+impl<'de> Deserialize<'de> for AssociationWindowJson {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Box::<RawValue>::deserialize(deserializer).map(Self::Present)
     }
 }
 
@@ -751,16 +798,20 @@ pub const LOGS_DIRECTORY: &str = "logs";
 const LOG_ATTACHMENT_FILE_SUFFIX: &str = ".zst";
 
 /// Version of the attribute JSON layout, bumped only on a change older builds
-/// cannot read. An attachment written in a newer version is ignored.
-const LOG_ATTACHMENT_FORMAT_VERSION: u32 = 6;
+/// cannot read. The decoder rejects attachments with a newer version.
+const LOG_ATTACHMENT_FORMAT_VERSION: u32 = 7;
+const ASSOCIATION_WINDOW_FORMAT_VERSION: u32 = 7;
 
 #[cfg(test)]
 mod tests {
+    use chrono::Duration;
     use proptest::prelude::*;
     use rstest::rstest;
     use serde_json::Value;
 
     use super::*;
+
+    mod association_window;
 
     fn attachment() -> LogAttachment {
         LogAttachment::new(
@@ -798,7 +849,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"format_version":6,"name":"navsyncd.log","content_hash":"b3e7a3594637c2fbf4655e82bcf507d6","filters":{"groups":[{"id":0,"operator":"all"}],"selected_group_id":0,"chips":[{"condition":{"scope":"message","text":"gnss","regex":false},"group_id":0,"effects":{"kind":"map","enabled":true,"color_slot":2}},{"condition":{"scope":"message","text":"hal-powerd|navsyncd","regex":true},"group_id":0,"effects":{"kind":"table","enabled":false}}]}}"#
+            r#"{"format_version":7,"name":"navsyncd.log","content_hash":"b3e7a3594637c2fbf4655e82bcf507d6","filters":{"groups":[{"id":0,"operator":"all"}],"selected_group_id":0,"chips":[{"condition":{"scope":"message","text":"gnss","regex":false},"group_id":0,"effects":{"kind":"map","enabled":true,"color_slot":2}},{"condition":{"scope":"message","text":"hal-powerd|navsyncd","regex":true},"group_id":0,"effects":{"kind":"table","enabled":false}}]}}"#
         );
         assert_eq!(
             LogAttachment::from_attribute_json(&json).expect("decode"),
@@ -835,9 +886,9 @@ mod tests {
     #[case::infer(StoredYearResolution::Infer)]
     #[case::ignore_summary_bounds(StoredYearResolution::IgnoreSummaryBounds)]
     #[case::place_last_entry_in_year(StoredYearResolution::PlaceLastEntryInYear { year: 2024 })]
-    fn new_writes_exceed_the_pre_policy_readers_version_gate(#[case] policy: StoredYearResolution) {
+    fn new_writes_exceed_the_version_six_reader_gate(#[case] policy: StoredYearResolution) {
         #[derive(Deserialize)]
-        struct PrePolicyAttachment {
+        struct VersionSixAttachment {
             format_version: u32,
             name: String,
             content_hash: LogContentHash,
@@ -846,9 +897,10 @@ mod tests {
         }
         let mut current = attachment();
         current.settings.year_resolution = policy;
+        current.settings.association_window = Some(AssociationWindow::ZERO);
         let json = current.to_attribute_json().expect("encode");
-        let old: PrePolicyAttachment = serde_json::from_str(&json).expect("old schema");
-        assert!(old.format_version > 5);
+        let old: VersionSixAttachment = serde_json::from_str(&json).expect("old schema");
+        assert!(!(1..=6).contains(&old.format_version));
         assert_eq!(old.name, current.name);
         assert_eq!(old.content_hash, current.content_hash);
         assert_eq!(old.filters, current.settings.filters);
@@ -893,7 +945,7 @@ mod tests {
         assert_eq!(restored, expected);
         let rewritten = restored.to_attribute_json().expect("upgrade");
         let wire: Value = serde_json::from_str(&rewritten).expect("JSON");
-        assert_eq!(wire.get("format_version"), Some(&serde_json::json!(6)));
+        assert_eq!(wire.get("format_version"), Some(&serde_json::json!(7)));
         assert_eq!(
             LogAttachment::from_attribute_json(&rewritten).expect("restore"),
             expected
@@ -902,7 +954,7 @@ mod tests {
 
     #[rstest]
     #[case(0)]
-    #[case(7)]
+    #[case(8)]
     #[case(u32::MAX)]
     fn unsupported_versions_are_reported_before_decoding_settings(#[case] version: u32) {
         let json = format!(
@@ -979,7 +1031,7 @@ mod tests {
             .to_attribute_json()
             .expect("encode the migrated attachment");
         let json: Value = serde_json::from_str(&rewritten).expect("encoded JSON");
-        assert_eq!(json.get("format_version"), Some(&serde_json::json!(6)));
+        assert_eq!(json.get("format_version"), Some(&serde_json::json!(7)));
         assert_eq!(
             LogAttachment::from_attribute_json(&rewritten).expect("decode"),
             expected
@@ -1009,7 +1061,7 @@ mod tests {
             restored
                 .to_attribute_json()
                 .unwrap()
-                .contains("\"format_version\":6")
+                .contains("\"format_version\":7")
         );
     }
 
@@ -1201,6 +1253,7 @@ mod tests {
             membership_offset in any::<usize>(),
             selected_index in any::<usize>(),
             reference_seconds in proptest::option::of(0i64..4_102_444_800),
+            window_nanoseconds in proptest::option::of(0i64..=31_536_000_000_000_000),
             year_resolution in prop_oneof![
                 Just(StoredYearResolution::IgnoreSummaryBounds),
                 Just(StoredYearResolution::Infer),
@@ -1220,6 +1273,7 @@ mod tests {
             attachment.settings.filters = StoredLogFilterStack::try_from_parts(StoredLogFilterStackParts { groups, selected_group_id, chips }).expect("valid memberships");
             attachment.settings.year_reference = reference_seconds.and_then(|seconds| DateTime::from_timestamp(seconds, 0));
             attachment.settings.year_resolution = year_resolution;
+            attachment.settings.association_window = window_nanoseconds.map(|nanoseconds| AssociationWindow::try_from(Duration::nanoseconds(nanoseconds)).expect("valid window"));
             let json = attachment.to_attribute_json().expect("encode");
             prop_assert_eq!(LogAttachment::from_attribute_json(&json).expect("decode"), attachment);
         }

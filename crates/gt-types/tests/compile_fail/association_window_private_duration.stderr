@@ -1,0 +1,12 @@
+error[E0423]: cannot initialize a tuple struct which contains private fields
+ --> tests/compile_fail/association_window_private_duration.rs:5:19
+  |
+5 |     let _window = AssociationWindow(Duration::nanoseconds(-1));
+  |                   ^^^^^^^^^^^^^^^^^
+  |
+  = note: a struct named `AssociationWindow` exists in another namespace
+note: constructor is not visible here due to private fields
+ --> src/association_window.rs
+  |
+  | pub struct AssociationWindow(Duration);
+  |                              ^^^^^^^^ private field
