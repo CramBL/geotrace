@@ -777,7 +777,7 @@ impl LoadedLogs {
         };
         let attachment = LogAttachmentRef {
             recording: operation.recording,
-            id: receipt.attachment_id,
+            id: receipt.entry.id,
         };
         if let Some(existing) = self.id_of_attachment(&attachment) {
             let stored = self
@@ -793,7 +793,7 @@ impl LoadedLogs {
             .find(|stored| stored.id == operation.log)?;
         stored
             .log
-            .record_attachment(attachment, receipt.stored_settings, recordings);
+            .record_attachment(attachment, receipt.entry.attachment.settings, recordings);
         self.map_matches_stale = true;
         Some(InitialLogSaveOutcome::Saved(operation.log))
     }

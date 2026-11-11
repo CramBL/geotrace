@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gt_history_types::{DatabaseRef, LogAttachmentId, StoredLogSettings};
+use gt_history_types::{DatabaseRef, LogAttachmentEntry, StoredLogSettings};
 use gt_loaded_files::LoadedFileId;
 use gt_ui_types::LoadedLogId;
 use thiserror::Error;
@@ -50,7 +50,7 @@ pub enum LogOperationError {
     TargetUnloaded,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct LogSaveRequest {
     pub(crate) operation: LogSaveOperation,
     name: String,
@@ -108,8 +108,7 @@ impl LogSaveRequest {
 
 #[derive(Clone, Debug)]
 pub struct LogSaveReceipt {
-    pub attachment_id: LogAttachmentId,
-    pub stored_settings: StoredLogSettings,
+    pub entry: LogAttachmentEntry,
 }
 
 #[derive(Clone, Debug)]

@@ -518,6 +518,9 @@ impl App {
                 Ok(None) => {}
                 Err(e) => log::warn!("Loading stored snap runs failed: {e}"),
             },
+            Response::LogSaved(completion) => {
+                self.apply_initial_log_save_outcome(completion);
+            }
             Response::LogAttached { log, name, result } => {
                 self.apply_log_attach_outcome(log, &name, result);
             }
