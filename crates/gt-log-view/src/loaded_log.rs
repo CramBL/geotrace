@@ -441,6 +441,9 @@ impl LoadedLog {
         year_resolution: YearResolution,
         recordings: &LoadedFilesView<'_>,
     ) -> bool {
+        if self.document.parsed.chronology().is_resolved() {
+            return false;
+        }
         let Some(parsed) = self.document.parsed.resolve_years_as(year_resolution) else {
             return false;
         };

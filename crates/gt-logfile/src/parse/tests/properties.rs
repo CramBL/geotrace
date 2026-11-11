@@ -270,6 +270,7 @@ proptest! {
     fn a_chosen_year_resolves_as_a_parse_under_it_and_places_the_last_entry_in_it(
         text in prop_oneof![strategies::any_log_text(), strategies::any_summarised_log()],
         year in any::<i32>(),
+        previous_year in any::<i32>(),
     ) {
         let year_resolution = YearResolution::PlaceLastEntryInYear(year);
         let Ok(inferred) = parse::parse_log(text.as_str().into(), fixtures::now()) else {
@@ -282,9 +283,13 @@ proptest! {
         )
         .expect("the text parsed under the inferred years");
 
-        if let Some(resolved_again) = inferred.resolve_years_as(year_resolution) {
-            prop_assert_eq!(&resolved_again, &chosen);
-        }
+        let previous = inferred
+            .resolve_years_as(YearResolution::PlaceLastEntryInYear(previous_year))
+            .expect("the source has anchored entries");
+        let resolved_again = previous.resolve_years_as(year_resolution)
+            .expect("the source retains its anchored entries");
+        prop_assert_eq!(&resolved_again, &chosen);
+        prop_assert_eq!(resolved_again.resolve_years_as(YearResolution::Infer), Some(inferred));
         let last_anchored_entry = chosen.entries().iter().rposition(LogEntry::is_anchored);
         if let (LogChronology::Resolved(resolved), Some(entry_index), false) = (
             chosen.chronology(),
