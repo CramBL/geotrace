@@ -47,7 +47,16 @@ fn structural_source_rows_show_exact_text_and_boot_context_in_source_order() {
     let mut harness = harness_of(Vec::new(), &[("source.log", SOURCE_LOG)]);
     assert!(!harness.state().viewer.show_structural_lines);
     assert!(harness.query_by_label("--- Device reboot ---").is_none());
-    set_display_option(&mut harness, "Show structural lines", true);
+    harness.get_by_label("View").click();
+    harness.run_steps(2);
+    let option = harness.get_by_label("Show structural source lines");
+    assert_eq!(option.accesskit_node().toggled(), Some(Toggled::False));
+    let center = option.rect().center();
+    harness.hover_at_and_settle(center, TOOLTIP_DELAY_FRAMES);
+    harness.get_by_label("Show recognized source lines between log entries");
+    harness.get_by_label("View").click();
+    harness.run_steps(2);
+    super::set_display_option(&mut harness, "Show structural source lines", true);
     assert!(harness.state().viewer.show_structural_lines);
     let separator = harness.get_by_label("--- Device reboot ---").rect();
     let second_boot = harness.get_by_label("Boot 2 · up 10s · 2 entries").rect();
@@ -70,6 +79,11 @@ fn structural_source_rows_show_exact_text_and_boot_context_in_source_order() {
         1
     );
     harness.get_by_label("Boot 1 · up 0s · 1 entry");
+    super::set_display_option(&mut harness, "Show structural source lines", false);
+    assert!(harness.query_by_label("--- Device reboot ---").is_none());
+    assert!(harness.query_by_label("trailing source text").is_none());
+    harness.get_by_label("navsyncd: first");
+    harness.get_by_label("navsyncd: last");
 }
 
 #[rstest]
@@ -83,7 +97,7 @@ fn structural_source_rows_remain_visible_when_entry_conditions_hide_every_entry(
         vec![recording("walk.gtd", 55.0)],
         &[("source.log", SOURCE_LOG)],
     );
-    set_display_option(&mut harness, "Show structural lines", true);
+    super::set_display_option(&mut harness, "Show structural source lines", true);
     let shown = harness.state().first_loaded_log();
     let (stack, _) = harness
         .state_mut()
@@ -145,6 +159,14 @@ fn hidden_diagnostics_reveal_exact_entries_without_changing_filters_or_map_match
         harness.state_mut().map_matches().match_count(),
         map.match_count()
     );
+    for show_source in [true, false] {
+        super::set_display_option(&mut harness, "Show structural source lines", show_source);
+        harness.get_by_label(target);
+        assert_eq!(harness.state().viewer.selected_log(), Some(reveal.log));
+        assert_eq!(harness.state().viewer.diagnostic_reveal, Some(reveal));
+        assert_eq!(super::match_count(&harness), "1 of 6");
+        assert_eq!(harness.state_mut().map_matches().layers(), map.layers());
+    }
 }
 
 #[test]
@@ -545,7 +567,7 @@ fn switching_or_reloading_logs_clears_diagnostic_reveals() {
 #[test]
 fn structural_source_table_snapshot() {
     let mut harness = rendering_harness_of(Vec::new(), &[("source.log", SOURCE_LOG)]);
-    set_display_option(&mut harness.inner, "Show structural lines", true);
+    super::set_display_option(&mut harness.inner, "Show structural source lines", true);
     harness.snapshot("log_viewer_source_lines");
 }
 
@@ -578,7 +600,7 @@ fn diagnostic_navigation_scrolls_to_the_hidden_target_in_a_long_table(
         .collect();
     let mut harness = harness_of(Vec::new(), &[("long.log", &text)]);
     if structural {
-        set_display_option(&mut harness, "Show structural lines", true);
+        super::set_display_option(&mut harness, "Show structural source lines", true);
     }
     type_into_live_filter(&mut harness, "keep");
     unfold_the_summary_panel(&mut harness);
