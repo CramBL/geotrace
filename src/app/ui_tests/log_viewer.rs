@@ -269,6 +269,11 @@ fn a_log_with_unresolved_years_opens_the_viewer_on_the_line_and_the_conflict() {
     );
     harness.run_steps(3);
 
+    harness.get_by_label("Dates unresolved").click();
+    harness.run_steps(3);
+    harness.get_by_label("Date diagnostics and help").click();
+    harness.run_steps(3);
+
     for label in [
         "Cannot resolve the year of log line 3",
         "Written as",

@@ -3,7 +3,7 @@
 //! order anomalies the parse found.
 
 use chrono::Duration;
-use egui::{Button, Frame, Grid, Label, RichText, ScrollArea};
+use egui::{Button, Grid, Label, RichText};
 use gt_log_view::LoadedLog;
 use gt_logfile::ParsedLog;
 use gt_ui_theme::EM_DASH;
@@ -20,18 +20,10 @@ impl LogViewerWindow {
         log_id: LoadedLogId,
     ) {
         let parsed = log.parsed();
-        Frame::group(ui.style()).show(ui, |ui| {
-            ScrollArea::vertical()
-                .id_salt(("log_viewer_summary_panel", log_id))
-                .max_height(MAX_PANEL_HEIGHT_PX)
-                .show(ui, |ui| {
-                    ui.set_min_width(ui.available_width());
-                    parse_figures_ui(ui, parsed);
-                    self.boot_sessions_ui(ui, log, log_id);
-                    service_summary_ui(ui, parsed);
-                    self.order_anomalies_ui(ui, log, log_id);
-                });
-        });
+        parse_figures_ui(ui, parsed);
+        self.boot_sessions_ui(ui, log, log_id);
+        service_summary_ui(ui, parsed);
+        self.order_anomalies_ui(ui, log, log_id);
     }
 
     /// One row per boot session, with a bar proportional to its uptime. The
@@ -272,10 +264,6 @@ impl UptimeBar {
             .rect_filled(bar, 1.0, ui.visuals().selection.bg_fill);
     }
 }
-
-/// Height the panel scrolls past: a log of many boots must still leave the
-/// table its share of the window.
-const MAX_PANEL_HEIGHT_PX: f32 = 260.0;
 
 /// Width of the column the per-boot uptime bars are drawn across.
 const UPTIME_BAR_WIDTH_PX: f32 = 90.0;

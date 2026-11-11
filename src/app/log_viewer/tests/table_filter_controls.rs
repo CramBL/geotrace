@@ -149,14 +149,14 @@ fn invalid_table_input_is_distinct_from_finished_empty_results() {
     assert!(harness.query_by_label(filters::NO_MATCHES_LABEL).is_none());
 }
 
-struct SourceReadingPosition {
+pub(super) struct SourceReadingPosition {
     entry_index: usize,
     offset_px: f32,
-    viewport: egui::Rect,
+    pub(super) viewport: egui::Rect,
 }
 
 impl SourceReadingPosition {
-    fn of(harness: &Harness<ViewerState>) -> Self {
+    pub(super) fn of(harness: &Harness<ViewerState>) -> Self {
         harness
             .output()
             .shapes
@@ -328,3 +328,30 @@ fn table_filter_recovery_snapshot(#[case] paused: bool) {
 }
 
 const READING_WHEEL_STEP_PX: f32 = 7.0;
+
+#[test]
+fn changing_inspector_sections_preserves_the_source_reading_position() {
+    let text = long_log(LONG_LOG_ENTRIES);
+    let mut harness = harness_of(Vec::new(), &[("long.log", &text)]);
+    let table = SourceReadingPosition::of(&harness).viewport.center();
+    harness.scroll_wheel_at(table, -READING_WHEEL_STEP_PX, WHEEL_SETTLE_FRAMES);
+    let position = SourceReadingPosition::of(&harness);
+    unfold_the_summary_panel(&mut harness);
+    position.assert_retained(&harness);
+    let divider = harness.get_by_label("Resize log details").rect().center();
+    harness.press_drag_release(divider, egui::vec2(0.0, 35.0), 8);
+    harness.run_steps(3);
+    position.assert_retained(&harness);
+    open_date_inspector(&mut harness);
+    position.assert_retained(&harness);
+    harness.get_by_label("Reference date");
+    let reference = harness
+        .state()
+        .shown_log()
+        .unwrap()
+        .parsed()
+        .year_reference();
+    harness.get_by_label(gt_fmt::format_utc_subsecond(reference).as_str());
+    open_date_inspector(&mut harness);
+    position.assert_retained(&harness);
+}

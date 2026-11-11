@@ -34,8 +34,9 @@ use gt_ui_theme::EM_DASH;
 use gt_ui_types::{LoadedLogId, LogMatchColor, LogMatchGlyph, LogMatchHover, LogMatches};
 
 use super::{
-    AssociationWindowUnit, LOG_VIEWER_TITLE, LogViewerContext, LogViewerRequests, LogViewerState,
-    LogViewerWindow, YearsToResolve, filters, line_table, log_list, unresolved_years,
+    AssociationWindowUnit, InspectorSection, LOG_VIEWER_TITLE, LogViewerContext, LogViewerRequests,
+    LogViewerState, LogViewerWindow, YearsToResolve, filters, line_table, log_list,
+    unresolved_years,
 };
 
 impl LogViewerWindow {
@@ -1267,6 +1268,7 @@ fn a_year_resolution_control_requests_its_year_resolution_for_the_shown_log(
     );
     let shown = harness.state().first_loaded_log();
 
+    open_date_inspector(&mut harness);
     harness.get_by_label(control_label).click();
     harness.run_steps(2);
 
@@ -1285,6 +1287,7 @@ fn ignoring_the_summary_bounds_is_disabled_for_a_log_without_them() {
         Vec::new(),
         &[("journal.log", gt_test_utils::UNRESOLVED_LEAP_DAYS_LOG)],
     );
+    open_date_inspector(&mut harness);
     let button = harness.get_by_label(unresolved_years::IGNORE_SUMMARY_BOUNDS_LABEL);
     assert!(button.accesskit_node().is_disabled());
     let center = button.rect().center();
@@ -1313,6 +1316,20 @@ fn the_summary_panel_of_a_log_with_unresolved_years_draws_em_dashes_for_its_time
     for (caption, em_dashes) in [("Time span", 1), ("Interpolated entries", 1), ("Boot 1", 2)] {
         assert_eq!(em_dashes_on_the_row_of(caption), em_dashes, "{caption}");
     }
+}
+
+fn click_inspector_control(harness: &mut Harness<ViewerState>, label: &str) {
+    harness.get_by_label(label).scroll_to_me();
+    harness.run_steps(WHEEL_SETTLE_FRAMES);
+    harness.get_by_label(label).click();
+    harness.run_steps(3);
+}
+
+fn open_date_inspector(harness: &mut Harness<ViewerState>) {
+    harness
+        .get(By::new().predicate(|node| node.author_id() == Some(super::inspector::DATE_STATUS_ID)))
+        .click();
+    harness.run_steps(3);
 }
 
 /// Clicks the parse summary, which unfolds the panel beneath it.
@@ -3512,7 +3529,7 @@ fn summary_disclosure_shows_expansion_state_and_details_action() {
         node.click();
         harness.run_steps(2);
     }
-    assert!(!harness.state().viewer.active_state().summary_expanded);
+    assert_eq!(harness.state().viewer.active_state().inspector, None);
 }
 
 #[test]
@@ -3882,7 +3899,7 @@ fn switching_logs_restores_each_scroll_region_and_reloading_starts_at_the_top(
         ViewerScrollRegion::Summary => {
             let ids: Vec<_> = state.logs.iter_with_ids().map(|(id, _)| id).collect();
             for id in ids {
-                state.viewer.log_state_mut(id).summary_expanded = true;
+                state.viewer.log_state_mut(id).inspector = Some(InspectorSection::ShowSummary);
             }
         }
         ViewerScrollRegion::Table => {}
@@ -4073,7 +4090,7 @@ fn log_viewer_window_fits_every_viewport(
     state
         .viewer
         .report_warning(gt_test_utils::oversized_text('w'));
-    state.viewer.active_state_mut().summary_expanded = true;
+    state.viewer.active_state_mut().inspector = Some(InspectorSection::ShowSummary);
     let id = state.logs.first_id().expect("fixture log");
     let (stack, _) = state.logs.filter_stack_mut_by_id(id).unwrap();
     for group in 0..5 {
@@ -4100,11 +4117,17 @@ fn log_viewer_window_fits_every_viewport(
         AuditedWindow::titled(LOG_VIEWER_TITLE),
         ControlLabel("Positions from"),
     );
+    harness
+        .get_by_label(filters::NEW_GROUP_LABEL)
+        .scroll_to_me();
+    harness.run_steps(WHEEL_SETTLE_FRAMES);
     harness.assert_control_is_reachable(
         AuditedWindow::titled(LOG_VIEWER_TITLE),
         ControlLabel(filters::NEW_GROUP_LABEL),
     );
     open_live_editor(&mut harness);
+    harness.get_by_label("Cancel").scroll_to_me();
+    harness.run_steps(WHEEL_SETTLE_FRAMES);
     harness.assert_control_is_reachable(
         AuditedWindow::titled(LOG_VIEWER_TITLE),
         ControlLabel("Cancel"),
@@ -4268,6 +4291,7 @@ const POINTER_OFF_EVERY_WINDOW: egui::Pos2 = egui::Pos2::new(-10.0, -10.0);
 const PAGE_STEPS_TO_THE_END: usize = 60;
 
 mod exporter_totals;
+mod inspector_layout;
 mod integration;
 mod map_navigation;
 mod message_readability;

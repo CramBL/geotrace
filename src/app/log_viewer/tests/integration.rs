@@ -89,7 +89,7 @@ fn grouped_structured_filters_preserve_highlights_and_diagnostic_navigation_afte
     let expected = cached.clone();
     let generation = harness.state().logs.map_matches_generation();
     unfold_the_summary_panel(&mut harness);
-    harness.get_by_label("Line 6").click();
+    click_inspector_control(&mut harness, "Line 6");
     harness.run_steps(3);
     harness.get_by_label(ORDER_ANOMALY_ENTRY_TIMESTAMP);
     assert_eq!(
