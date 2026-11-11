@@ -2,15 +2,19 @@
 //! recording history, and what a load checks it against.
 
 use std::path::{Path, PathBuf};
+use std::slice;
 
 use chrono::DateTime;
-use gt_history_types::{StoredLogFilterCondition, fixtures};
+use gt_history_types::{self as history_types, StoredLogFilterCondition, fixtures};
 use gt_store::{
     DatabaseRef, HistoryDatabase as _, LogAttachmentError, LogAttachmentId, LogAttachments as _,
     LogToAttach, ReadOnlyHistoryDatabase as _, ReadOnlyLogAttachments as _, RecordingMeta,
     Recordings, Store, StoredLogFilterEffects, StoredLogFilterGroup, StoredLogFilterOperator,
     StoredLogFilterStack, StoredLogFilterStackParts, StoredYearResolution, TrackRange, TrackState,
 };
+use hdf5_pure::AttrValue;
+use rstest::rstest;
+use serde_json::Value;
 
 /// A store with one recording in its history, ready to attach logs to.
 struct RecordedStore {
@@ -160,6 +164,107 @@ fn a_saved_year_reference_and_year_resolution_survive_filter_updates_and_reopeni
         StoredYearResolution::PlaceLastEntryInYear { year: 2024 }
     );
     assert_eq!(restored.filters, Default::default());
+}
+
+#[rstest]
+#[case::filters(None)]
+#[case::year_resolution(Some(StoredYearResolution::IgnoreSummaryBounds))]
+fn version_five_settings_upgrade_during_store_updates(
+    #[case] updated_policy: Option<StoredYearResolution>,
+) {
+    let RecordedStore {
+        _directory,
+        store,
+        mut recordings,
+        recording,
+    } = RecordedStore::new();
+    let reference = DateTime::parse_from_rfc3339("2026-10-01T00:00:00.123456789Z")
+        .expect("reference date")
+        .to_utc();
+    let entry = recordings
+        .attach_log(
+            &recording,
+            &LogToAttach {
+                name: "legacy.log",
+                text: LOG_TEXT,
+                filters: fixtures::log_filters(),
+                year_reference: Some(reference),
+                year_resolution: StoredYearResolution::PlaceLastEntryInYear { year: 2024 },
+            },
+        )
+        .expect("attach");
+    let log_path = entry.id.file_path(&store.logs_path());
+    let compressed = std::fs::read(&log_path).expect("compressed log");
+    let mut legacy = serde_json::to_value(&entry.attachment).expect("settings");
+    legacy["format_version"] = serde_json::json!(5);
+    drop(recordings);
+    let group_path = format!(
+        "by_identity/{}/{}",
+        history_types::identity_group_name(&recording.identity),
+        recording.group_name
+    );
+    {
+        let file = hdf5_pure::File::open_rw(store.recordings_path()).expect("edit legacy metadata");
+        file.root()
+            .group(&group_path)
+            .expect("recording group")
+            .set_attr(&entry.id.attr_key(), AttrValue::String(legacy.to_string()))
+            .expect("write version five");
+        file.commit().expect("commit legacy metadata");
+    }
+    let mut recordings = store.open_recordings().expect("open legacy database");
+    assert_eq!(
+        recordings
+            .log_attachments(&recording)
+            .expect("legacy listing"),
+        slice::from_ref(&entry)
+    );
+    let mut expected = entry.attachment;
+    if let Some(policy) = updated_policy {
+        recordings
+            .set_attached_log_year_resolution(&recording, entry.id, policy)
+            .expect("update policy");
+        expected.year_resolution = policy;
+    } else {
+        recordings
+            .set_attached_log_filters(&recording, entry.id, StoredLogFilterStack::default())
+            .expect("update filters");
+        expected.filters = StoredLogFilterStack::default();
+    }
+    drop(recordings);
+    let reopened = store
+        .open_recordings_read_only()
+        .expect("reopen")
+        .expect("database");
+    let listed = reopened
+        .log_attachments(&recording)
+        .expect("list upgraded metadata");
+    assert_eq!(
+        listed.first().map(|entry| &entry.attachment),
+        Some(&expected)
+    );
+    let restored = reopened
+        .load_attached_log(&recording, entry.id)
+        .expect("load upgraded log");
+    assert_eq!(restored.year_reference, reference);
+    assert_eq!(restored.text, LOG_TEXT);
+    assert_eq!(
+        std::fs::read(&log_path).expect("compressed log"),
+        compressed
+    );
+    let file = hdf5_pure::File::open(store.recordings_path()).expect("read persisted version");
+    let attrs = file
+        .root()
+        .group(&group_path)
+        .expect("recording group")
+        .attrs()
+        .expect("attributes");
+    let json = attrs
+        .get(&entry.id.attr_key())
+        .and_then(AttrValue::as_str)
+        .expect("attachment JSON");
+    let wire: Value = serde_json::from_str(json).expect("JSON");
+    assert_eq!(wire.get("format_version"), Some(&serde_json::json!(6)));
 }
 
 /// The attach returns the entry the recording now lists.

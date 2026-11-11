@@ -1020,8 +1020,9 @@ pub(crate) fn log_attachments_in_attrs(
             log::warn!("Ignoring the log attachment attribute {key:?}, which is not a string");
             continue;
         };
-        if let Some(attachment) = LogAttachment::from_attribute_json(json) {
-            entries.push(LogAttachmentEntry { id, attachment });
+        match LogAttachment::from_attribute_json(json) {
+            Ok(attachment) => entries.push(LogAttachmentEntry { id, attachment }),
+            Err(err) => log::warn!("Ignoring the log attachment {id}: {err:#}"),
         }
     }
     LogAttachmentEntry::sort_by_name_then_id(&mut entries);
