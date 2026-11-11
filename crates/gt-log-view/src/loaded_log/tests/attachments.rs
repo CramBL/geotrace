@@ -3,19 +3,21 @@ use std::sync::Arc;
 use chrono::{Datelike as _, Duration};
 use gt_history_types::{
     LogAttachmentId, StoredLogFilter, StoredLogFilterCondition, StoredLogFilterEffects,
-    StoredLogFilterStack,
+    StoredLogFilterStack, StoredLogSettings,
 };
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_logfile::ParsedLog;
+use gt_pending_writes::WriteAccess;
 use gt_types::FileIdx;
 
 use crate::anchor::RecordingKey;
 use crate::attachment::LogAttachmentRef;
 use crate::loaded_log::tests::fixtures;
 use crate::loaded_log::{
-    LoadedLog, LoadedLogs, LogContextOrigin, LogPushOutcome, LogSaveOutcome, PositionSourceState,
+    LoadedLog, LoadedLogs, LogContext, LogContextOrigin, LogPushOutcome, LogSaveOutcome,
+    PositionSourceState,
 };
-use crate::{FilterEffect, FilterGroupOperator, test_util};
+use crate::{AttachmentSettingsStatus, FilterEffect, FilterGroupOperator, test_util};
 
 #[rstest::rstest]
 #[case(true, FileHistory::None)]
@@ -41,7 +43,7 @@ fn an_attached_log_keeps_its_recording_after_another_source_is_selected(
     let mut log = test_util::log_of(10);
     log.anchor_to_loaded_recording(Some(other), &files.view());
 
-    log.record_attachment(attachment.clone(), Default::default(), &files.view());
+    log.record_attachment(attachment.clone(), fixtures::settings(), &files.view());
 
     let key = RecordingKey::Stored(attachment.recording.clone());
     let placement = log.entry_placement(0);
@@ -82,7 +84,7 @@ fn an_attached_log_accepts_a_reloaded_instance_of_its_recording() {
     );
     let previous = test_util::id_of(&files, 0);
     let mut log = test_util::log_of(10);
-    log.restore_attachment(attachment.clone(), Default::default(), &files.view());
+    log.restore_attachment(attachment.clone(), fixtures::settings(), &files.view());
     files.remove_file(0);
     log.reassociate(&files.view());
     assert_eq!(log.associated_recording(), None);
@@ -104,55 +106,125 @@ fn an_attached_log_accepts_a_reloaded_instance_of_its_recording() {
     assert_eq!(log.associated_entry_count(), 10);
 }
 
-/// An attachment is written again only for the edits the database has not
-/// seen, and the log stays loaded once the attachment is gone.
 #[test]
-fn an_attached_log_reports_the_filter_stack_edits_the_database_has_not_seen() {
+fn filter_edits_during_a_pending_write_remain_dirty_after_its_acknowledgement() {
     let attachment = fixtures::attachment_ref();
     let recordings = test_util::loaded(Vec::new());
     let mut logs = LoadedLogs::default();
     let mut log = test_util::log_of(10);
-    log.record_attachment(attachment.clone(), Default::default(), &recordings.view());
+    log.restore_attachment(attachment.clone(), fixtures::settings(), &recordings.view());
     let id = logs.push(log).id();
-
-    assert!(
-        logs.take_filter_stack_edits_to_store().is_empty(),
-        "the database holds the stack the log was attached with"
-    );
-
     fixtures::add_layer_chip(&mut logs, id, "entry 1");
-
-    let edits = logs.take_filter_stack_edits_to_store();
+    let first = logs
+        .prepare_settings_writes(WriteAccess::Owner)
+        .pop()
+        .unwrap();
+    assert_eq!(first.attachment(), &attachment);
     assert_eq!(
-        edits
-            .iter()
-            .map(|(attachment, filters)| (attachment.id, filters.chips()))
-            .collect::<Vec<_>>(),
-        [(
-            attachment.id,
-            [StoredLogFilter {
-                group_id: 0,
-                condition: StoredLogFilterCondition::Message {
-                    text: "entry 1".to_owned(),
-                    regex: false
-                },
-                effects: StoredLogFilterEffects::Map {
-                    enabled: true,
-                    color_slot: 0
-                },
-            }]
-            .as_slice()
-        )],
-        "the added chip is what the attachment has yet to be written"
+        first.settings(),
+        &logs.get_by_id(id).unwrap().settings_snapshot()
     );
-    assert!(
-        logs.take_filter_stack_edits_to_store().is_empty(),
-        "an edit that was written is not written again"
+    fixtures::add_layer_chip(&mut logs, id, "entry 2");
+    assert!(logs.prepare_settings_writes(WriteAccess::Owner).is_empty());
+    assert!(logs.acknowledge_settings(first.clone().complete(Ok(()))));
+    assert_eq!(
+        logs.get_by_id(id)
+            .unwrap()
+            .settings_save_status(WriteAccess::Owner),
+        AttachmentSettingsStatus::Dirty
     );
-
+    let latest = logs
+        .prepare_settings_writes(WriteAccess::Owner)
+        .pop()
+        .unwrap();
+    assert_eq!(
+        latest.settings(),
+        &logs.get_by_id(id).unwrap().settings_snapshot()
+    );
+    assert!(!logs.acknowledge_settings(first.complete(Ok(()))));
+    assert!(logs.acknowledge_settings(latest.complete(Ok(()))));
+    assert_eq!(
+        logs.get_by_id(id)
+            .unwrap()
+            .settings_save_status(WriteAccess::Owner),
+        AttachmentSettingsStatus::Saved
+    );
     logs.forget_attachment(&attachment);
     assert_eq!(logs.len(), 1);
     assert_eq!(logs.get_by_id(id).and_then(LoadedLog::attachment), None);
+    assert!(logs.prepare_settings_writes(WriteAccess::Owner).is_empty());
+}
+
+#[test]
+fn restored_legacy_references_remain_missing_until_settings_change() {
+    let files = test_util::loaded(Vec::new());
+    let mut log = test_util::log_of(10);
+    let persisted = StoredLogSettings {
+        year_reference: None,
+        ..fixtures::settings()
+    };
+    log.restore_attachment(fixtures::attachment_ref(), persisted.clone(), &files.view());
+    assert!(log.prepare_settings_write(WriteAccess::Owner).is_none());
+    let LogContext::SavedAttachment(state) = &log.context else {
+        panic!("saved context");
+    };
+    assert_eq!(state.acknowledged(), &persisted);
+    let mut logs = LoadedLogs::default();
+    let id = logs.push(log).id();
+    fixtures::add_layer_chip(&mut logs, id, "entry 1");
+    let write = logs
+        .prepare_settings_writes(WriteAccess::Owner)
+        .pop()
+        .unwrap();
+    assert_eq!(write.settings().year_reference, Some(test_util::start()));
+}
+
+#[rstest::rstest]
+#[case::detach(false)]
+#[case::unload(true)]
+fn settings_completions_are_ignored_after_attachment_context_replacement(#[case] unload: bool) {
+    let files = test_util::loaded(Vec::new());
+    let attachment = fixtures::attachment_ref();
+    let mut logs = LoadedLogs::default();
+    let id = logs
+        .restore_attachment(
+            test_util::log_of(10),
+            attachment.clone(),
+            fixtures::settings(),
+            &files.view(),
+        )
+        .id();
+    fixtures::add_layer_chip(&mut logs, id, "entry 1");
+    let stale = logs
+        .prepare_settings_writes(WriteAccess::Owner)
+        .pop()
+        .unwrap();
+    if unload {
+        logs.remove_by_id(id);
+    } else {
+        logs.forget_attachment(&attachment);
+    }
+    let replacement = logs
+        .restore_attachment(
+            test_util::log_of(10),
+            attachment,
+            fixtures::settings(),
+            &files.view(),
+        )
+        .id();
+    fixtures::add_layer_chip(&mut logs, replacement, "entry 2");
+    let current = logs
+        .prepare_settings_writes(WriteAccess::Owner)
+        .pop()
+        .unwrap();
+    assert!(!logs.acknowledge_settings(stale.complete(Ok(()))));
+    assert_eq!(
+        logs.get_by_id(replacement)
+            .unwrap()
+            .settings_save_status(WriteAccess::Owner),
+        AttachmentSettingsStatus::Saving
+    );
+    assert!(logs.acknowledge_settings(current.complete(Ok(()))));
 }
 
 #[test]
@@ -160,23 +232,46 @@ fn independent_effect_edits_are_persisted_and_restored_once() {
     let attachment = fixtures::attachment_ref();
     let recordings = test_util::loaded(Vec::new());
     let mut log = test_util::log_of(10);
-    log.record_attachment(attachment.clone(), Default::default(), &recordings.view());
+    log.record_attachment(attachment.clone(), fixtures::settings(), &recordings.view());
     let mut logs = LoadedLogs::default();
     let id = logs.push(log).id();
     fixtures::add_layer_chip(&mut logs, id, "entry 1");
-    logs.take_filter_stack_edits_to_store();
+    let initial = logs
+        .prepare_settings_writes(WriteAccess::Owner)
+        .pop()
+        .unwrap();
+    assert!(logs.acknowledge_settings(initial.complete(Ok(()))));
     let (stack, slots) = logs.filter_stack_mut_by_id(id).unwrap();
     let chip = stack.chips().first().unwrap().id();
     stack.add_chip_effect(chip, FilterEffect::Table, slots);
     stack.set_chip_effect_enabled(chip, FilterEffect::Map, false);
     let expected = stack.to_stored_stack();
-    let edits = logs.take_filter_stack_edits_to_store();
-    assert_eq!(edits, [(attachment.clone(), expected.clone())]);
-    assert!(logs.take_filter_stack_edits_to_store().is_empty());
+    let edits = logs.prepare_settings_writes(WriteAccess::Owner);
+    assert_eq!(
+        edits
+            .first()
+            .map(|write| (write.attachment(), &write.settings().filters)),
+        Some((&attachment, &expected))
+    );
+    for write in edits {
+        assert!(logs.acknowledge_settings(write.complete(Ok(()))));
+    }
+    assert!(logs.prepare_settings_writes(WriteAccess::Owner).is_empty());
     let mut restored = test_util::log_of(10);
-    restored.restore_attachment(attachment, expected.clone(), &recordings.view());
+    restored.restore_attachment(
+        attachment,
+        StoredLogSettings {
+            filters: expected.clone(),
+            ..fixtures::settings()
+        },
+        &recordings.view(),
+    );
     assert_eq!(restored.filters().to_stored_stack(), expected);
-    assert!(restored.take_filter_stack_edits_to_store().is_none());
+    assert!(
+        restored
+            .prepare_settings_write(WriteAccess::Owner)
+            .is_none()
+    );
 }
 
 #[test]
@@ -185,11 +280,7 @@ fn group_only_edits_are_stored_once_and_restored_with_an_empty_stack() {
     let recordings = test_util::loaded(Vec::new());
     let mut logs = LoadedLogs::default();
     let mut log = test_util::log_of(10);
-    log.restore_attachment(
-        attachment.clone(),
-        StoredLogFilterStack::default(),
-        &recordings.view(),
-    );
+    log.restore_attachment(attachment.clone(), fixtures::settings(), &recordings.view());
     let id = logs.push(log).id();
     let stack = logs.filter_stack_mut_by_id(id).unwrap().0;
     let selected = stack.create_group();
@@ -198,18 +289,25 @@ fn group_only_edits_are_stored_once_and_restored_with_an_empty_stack() {
     stack.create_group();
     stack.select_group(selected);
     let expected = stack.to_stored_stack();
-    let edits = logs.take_filter_stack_edits_to_store();
+    let edits = logs.prepare_settings_writes(WriteAccess::Owner);
     assert_eq!(edits.len(), 1);
-    let (reference, stored) = edits.into_iter().next().unwrap();
+    let write = edits.into_iter().next().unwrap();
+    let reference = write.attachment().clone();
+    let stored = write.settings().clone();
     assert_eq!(reference, attachment);
-    assert_eq!(stored, expected);
-    assert_eq!(stored.groups().len(), 3);
-    assert!(stored.chips().is_empty());
-    assert!(logs.take_filter_stack_edits_to_store().is_empty());
+    assert_eq!(stored.filters, expected);
+    assert_eq!(stored.filters.groups().len(), 3);
+    assert!(stored.filters.chips().is_empty());
+    assert!(logs.acknowledge_settings(write.complete(Ok(()))));
+    assert!(logs.prepare_settings_writes(WriteAccess::Owner).is_empty());
     let mut restored = test_util::log_of(10);
     restored.restore_attachment(reference, stored, &recordings.view());
     assert_eq!(restored.filters().to_stored_stack(), expected);
-    assert!(restored.take_filter_stack_edits_to_store().is_none());
+    assert!(
+        restored
+            .prepare_settings_write(WriteAccess::Owner)
+            .is_none()
+    );
 }
 
 /// A log restored from an attachment comes back with its chips, drawing in
@@ -241,7 +339,14 @@ fn a_restored_attachment_puts_back_the_stack_it_was_stored_with() {
     let recordings = test_util::loaded(Vec::new());
     let mut logs = LoadedLogs::default();
     let mut log = test_util::log_of(10);
-    log.restore_attachment(attachment.clone(), stored.clone(), &recordings.view());
+    log.restore_attachment(
+        attachment.clone(),
+        StoredLogSettings {
+            filters: stored.clone(),
+            ..fixtures::settings()
+        },
+        &recordings.view(),
+    );
     let id = logs.push(log).id();
     fixtures::wait_for_scans(&mut logs);
 
@@ -253,7 +358,7 @@ fn a_restored_attachment_puts_back_the_stack_it_was_stored_with() {
         "the restored stack is the stored one, colours and all"
     );
     assert!(
-        logs.take_filter_stack_edits_to_store().is_empty(),
+        logs.prepare_settings_writes(WriteAccess::Owner).is_empty(),
         "a stack that came back as it was stored needs no write-back"
     );
 }
@@ -301,7 +406,14 @@ fn identical_saved_logs_keep_distinct_attachment_contexts(#[case] same_recording
             },
         }]);
         let mut log = test_util::log_of(10);
-        log.restore_attachment(attachment.clone(), stored.clone(), &files.view());
+        log.restore_attachment(
+            attachment.clone(),
+            StoredLogSettings {
+                filters: stored.clone(),
+                ..fixtures::settings()
+            },
+            &files.view(),
+        );
         let outcome = logs.push(log);
         assert!(matches!(outcome, LogPushOutcome::NewlyLoaded(_)));
         let id = outcome.id();
@@ -315,7 +427,7 @@ fn identical_saved_logs_keep_distinct_attachment_contexts(#[case] same_recording
         assert_eq!(log.filters().to_stored_stack(), stored);
         assert!(logs.any_loaded_log_holds(attachment));
         let mut duplicate = test_util::log_of(10);
-        duplicate.restore_attachment(attachment.clone(), Default::default(), &files.view());
+        duplicate.restore_attachment(attachment.clone(), fixtures::settings(), &files.view());
         assert_eq!(logs.push(duplicate), LogPushOutcome::AlreadyLoaded(id));
     }
     let first_id = *ids.first().expect("first log is loaded");
@@ -329,7 +441,7 @@ fn identical_saved_logs_keep_distinct_attachment_contexts(#[case] same_recording
         LogPushOutcome::AlreadyLoaded(loose.id())
     );
     fixtures::wait_for_scans(&mut logs);
-    assert!(logs.take_filter_stack_edits_to_store().is_empty());
+    assert!(logs.prepare_settings_writes(WriteAccess::Owner).is_empty());
     let layers = test_util::map_matches(&mut logs, &files).layers();
     assert_eq!(
         layers.iter().map(|layer| layer.log.id).collect::<Vec<_>>(),
@@ -363,7 +475,7 @@ fn identical_saved_logs_keep_distinct_attachment_contexts(#[case] same_recording
     logs.forget_attachment(&first);
     assert_eq!(logs.id_of_attachment(&first), None);
     assert_eq!(logs.id_of_attachment(&second), Some(second_id));
-    logs.save_attachment(first_id, first.clone(), Default::default(), &files.view());
+    logs.save_attachment(first_id, first.clone(), fixtures::settings(), &files.view());
     assert_eq!(logs.id_of_attachment(&first), Some(first_id));
     logs.remove_by_id(first_id);
     assert_eq!(
@@ -388,7 +500,12 @@ fn saving_an_attachment_reuses_its_existing_context_and_preserves_both_filter_st
     let first = logs.push(test_util::log_of(10)).id();
     fixtures::add_layer_chip(&mut logs, first, "entry 1");
     assert_eq!(
-        logs.save_attachment(first, attachment.clone(), Default::default(), &files.view()),
+        logs.save_attachment(
+            first,
+            attachment.clone(),
+            fixtures::settings(),
+            &files.view()
+        ),
         LogSaveOutcome::Saved(first)
     );
     let loose = logs.push(test_util::log_of(10)).id();
@@ -404,7 +521,12 @@ fn saving_an_attachment_reuses_its_existing_context_and_preserves_both_filter_st
         .filters()
         .to_stored_stack();
     assert_eq!(
-        logs.save_attachment(loose, attachment.clone(), Default::default(), &files.view()),
+        logs.save_attachment(
+            loose,
+            attachment.clone(),
+            fixtures::settings(),
+            &files.view()
+        ),
         LogSaveOutcome::AlreadyLoaded(first)
     );
     assert_eq!(logs.get_by_id(loose).expect("loose log").attachment(), None);
@@ -426,7 +548,7 @@ fn saving_an_attachment_reuses_its_existing_context_and_preserves_both_filter_st
         logs.restore_attachment(
             test_util::log_of(10),
             attachment.clone(),
-            Default::default(),
+            fixtures::settings(),
             &files.view()
         ),
         LogPushOutcome::AlreadyLoaded(first)
@@ -436,7 +558,7 @@ fn saving_an_attachment_reuses_its_existing_context_and_preserves_both_filter_st
         ..attachment.clone()
     };
     assert_eq!(
-        logs.save_attachment(first, other.clone(), Default::default(), &files.view()),
+        logs.save_attachment(first, other.clone(), fixtures::settings(), &files.view()),
         LogSaveOutcome::AlreadySaved
     );
     assert_eq!(logs.id_of_attachment(&other), None);
@@ -455,7 +577,7 @@ fn removing_an_attachment_retains_its_context_independently_of_loose_and_restore
         .restore_attachment(
             test_util::log_of(10),
             attachment.clone(),
-            Default::default(),
+            fixtures::settings(),
             &files.view(),
         )
         .id();
@@ -487,7 +609,7 @@ fn removing_an_attachment_retains_its_context_independently_of_loose_and_restore
         .restore_attachment(
             test_util::log_of(10),
             attachment.clone(),
-            Default::default(),
+            fixtures::settings(),
             &files.view(),
         )
         .id();
@@ -561,12 +683,12 @@ fn documents_are_shared_only_for_equal_resolved_parses(
     let (saved, loose) = if loose_first {
         let loose = logs.push(loose_log).id();
         let saved = logs
-            .restore_attachment(saved_log, attachment, Default::default(), &files.view())
+            .restore_attachment(saved_log, attachment, fixtures::settings(), &files.view())
             .id();
         (saved, loose)
     } else {
         let saved = logs
-            .restore_attachment(saved_log, attachment, Default::default(), &files.view())
+            .restore_attachment(saved_log, attachment, fixtures::settings(), &files.view())
             .id();
         let loose = logs.push(loose_log).id();
         (saved, loose)

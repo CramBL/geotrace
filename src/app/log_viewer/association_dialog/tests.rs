@@ -13,7 +13,9 @@ use gt_pending_writes::WriteAccess;
 use crate::app::history_db::ExistingLogAttachment;
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use crate::settings::InitialPositionSourcePolicy;
-use gt_store::{DatabaseRef, LogAttachmentId, RecordingMeta};
+use gt_store::{
+    DatabaseRef, LogAttachmentId, RecordingMeta, StoredLogSettings, StoredYearResolution,
+};
 use gt_test_utils::window_fit::{
     CRAMPED_VIEWPORT, NARROW_VIEWPORT, OVERSIZED_ROW_COUNT, SHORT_VIEWPORT,
 };
@@ -195,6 +197,11 @@ pub(in crate::app) fn deliver_the_stored_attachment(
         Some(ExistingLogAttachment {
             id: LogAttachmentId::new_random(),
             name: name.to_owned(),
+            settings: StoredLogSettings {
+                filters: Default::default(),
+                year_reference: None,
+                year_resolution: StoredYearResolution::Infer,
+            },
         }),
     );
 }
@@ -422,6 +429,11 @@ fn a_recording_that_already_holds_this_log_offers_that_attachment_for_reuse() {
         Some(ExistingLogAttachment {
             id: existing,
             name: "navsyncd.log".to_owned(),
+            settings: StoredLogSettings {
+                filters: Default::default(),
+                year_reference: None,
+                year_resolution: StoredYearResolution::Infer,
+            },
         }),
     );
     harness.run_steps(2);

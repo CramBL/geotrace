@@ -17,6 +17,7 @@ use gt_log_view::{
 };
 use gt_logfile::{LogLevelKind, RecordingAssociationIndex, YearResolution};
 use gt_pending_writes::WriteAccess;
+use gt_store::{StoredLogSettings, StoredYearResolution};
 use rstest::rstest;
 use strum::IntoEnumIterator as _;
 
@@ -958,6 +959,14 @@ fn attachment_ref() -> gt_log_view::LogAttachmentRef {
     }
 }
 
+fn attachment_settings() -> StoredLogSettings {
+    StoredLogSettings {
+        filters: Default::default(),
+        year_reference: Some(log_start()),
+        year_resolution: StoredYearResolution::Infer,
+    }
+}
+
 /// Stores the shown log with the recording [`attachment_ref`] identifies, as
 /// the app notes it once the database has written it.
 fn attach_the_shown_log(harness: &mut Harness<ViewerState>) {
@@ -966,7 +975,7 @@ fn attach_the_shown_log(harness: &mut Harness<ViewerState>) {
     let recordings = state.recordings.view();
     state
         .logs
-        .save_attachment(shown, attachment_ref(), Default::default(), &recordings);
+        .save_attachment(shown, attachment_ref(), attachment_settings(), &recordings);
     harness.run_steps(2);
 }
 
@@ -2083,7 +2092,7 @@ fn load_the_stored_log(state: &mut ViewerState, attachment: &gt_store::LogAttach
                 recording: stored_recording_ref(),
                 id: attachment.id,
             },
-            Default::default(),
+            attachment_settings(),
             &state.recordings.view(),
         )
         .id();

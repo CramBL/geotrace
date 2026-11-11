@@ -34,7 +34,10 @@ fn grouped_structured_filters_preserve_highlights_and_diagnostic_navigation_afte
     state.logs.save_attachment(
         id,
         reference.clone(),
-        stored.clone(),
+        StoredLogSettings {
+            filters: stored.clone(),
+            ..attachment_settings()
+        },
         &state.recordings.view(),
     );
     let saved = state
@@ -55,7 +58,10 @@ fn grouped_structured_filters_preserve_highlights_and_diagnostic_navigation_afte
                 Duration::seconds(ASSOCIATION_WINDOW_SECS),
             ),
             reference,
-            restored,
+            StoredLogSettings {
+                filters: restored,
+                ..attachment_settings()
+            },
             &state.recordings.view(),
         )
         .id();

@@ -1,5 +1,6 @@
 use gt_history_types::{
     StoredLogFilter, StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterStack,
+    StoredLogSettings,
 };
 
 use crate::loaded_log::tests::fixtures;
@@ -105,7 +106,7 @@ fn a_duplicate_attachment_takes_no_colour_slot_from_the_loaded_log() {
     let attachment = fixtures::attachment_ref();
     let recordings = test_util::loaded(Vec::new());
     let mut log = test_util::log_of(10);
-    log.record_attachment(attachment.clone(), Default::default(), &recordings.view());
+    log.record_attachment(attachment.clone(), fixtures::settings(), &recordings.view());
     let id = logs.push(log).id();
     fixtures::add_layer_chip(&mut logs, id, "entry 1");
 
@@ -121,7 +122,14 @@ fn a_duplicate_attachment_takes_no_colour_slot_from_the_loaded_log() {
         },
     }]);
     let mut copy = test_util::log_of(10);
-    copy.restore_attachment(attachment.clone(), stored, &recordings.view());
+    copy.restore_attachment(
+        attachment.clone(),
+        StoredLogSettings {
+            filters: stored,
+            ..fixtures::settings()
+        },
+        &recordings.view(),
+    );
     logs.push(copy);
 
     assert_eq!(fixtures::first_chip_slot(&logs, id), Some(0));

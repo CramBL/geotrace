@@ -136,7 +136,7 @@ fn an_attached_log_keeps_its_anchor() {
     test_util::anchor_to(&mut log, &files, 0);
     log.record_attachment(
         fixtures::attachment_ref(),
-        Default::default(),
+        fixtures::settings(),
         &files.view(),
     );
     let anchored = log.anchor_key();

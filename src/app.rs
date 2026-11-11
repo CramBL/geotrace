@@ -1147,7 +1147,7 @@ impl App {
             ParsedLogOrigin::Saved(restore) => self.logs.restore_attachment(
                 log,
                 restore.attachment,
-                restore.settings.filters,
+                restore.settings,
                 &shared.loaded_files.view(),
             ),
             ParsedLogOrigin::Loose(arrival) => {
