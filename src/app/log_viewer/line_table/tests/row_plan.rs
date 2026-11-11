@@ -1,4 +1,6 @@
+use gt_loaded_files::LoadedFiles;
 use gt_log_view::VisibleEntries;
+use gt_logfile::YearResolution;
 use rstest::rstest;
 
 use super::*;
@@ -35,6 +37,65 @@ const SOURCE: &str = "2026-01-01 23:59:59 keep first\n\
 2026-01-03 00:00:01 hidden last\n\
 ----------- Journal summary -----------\n\
 trailing summary\n";
+
+#[rstest]
+#[case::reading_anchor(TableRowIdentity::Entry(3), false)]
+#[case::pending_entry(TableRowIdentity::Entry(3), true)]
+#[case::pending_day_divider(TableRowIdentity::DayDivider(3), true)]
+fn chronology_changes_restore_source_positions_after_day_dividers_change(
+    #[case] target: TableRowIdentity,
+    #[case] pending_navigation: bool,
+) {
+    let files = LoadedFiles::new();
+    let mut logs = LoadedLogs::default();
+    let id = logs
+        .push(source_log(gt_test_utils::UNRESOLVED_LEAP_DAYS_LOG))
+        .id();
+    logs.get_mut_by_id(id)
+        .unwrap()
+        .resolve_years_as(YearResolution::PlaceLastEntryInYear(2024), &files.view());
+    let mut viewer = LogViewerWindow::new();
+    viewer.open_on_log(id);
+    let log = logs.get_by_id(id).unwrap();
+    let before = viewer.table_rows(log, id);
+    let row = before.row_of_identity(target).unwrap();
+    let anchor = TableReadingAnchor {
+        log: id,
+        source_line: 4,
+        row: target,
+        offset_within_row_px: 3.0,
+    };
+    viewer.table_reading_anchor = Some(anchor);
+    if pending_navigation {
+        viewer.scroll_to_row = Some(row);
+        viewer.table_reading_anchor = Some(TableReadingAnchor {
+            row: TableRowIdentity::Entry(0),
+            source_line: 1,
+            ..anchor
+        });
+    }
+    assert!(
+        logs.get_mut_by_id(id)
+            .unwrap()
+            .resolve_years_as(YearResolution::Infer, &files.view())
+    );
+    let log = logs.get_by_id(id).unwrap();
+    viewer.preserve_source_position_after_chronology_change(log, id);
+    assert_eq!(viewer.scroll_to_row, None);
+    let restored = viewer.scroll_to_source_line.unwrap();
+    assert_eq!(restored.source_line, 4);
+    assert_eq!(
+        restored.offset_within_row_px,
+        if pending_navigation { 0.0 } else { 3.0 }
+    );
+    let after = viewer.table_rows(log, id);
+    assert!(!Arc::ptr_eq(&before, &after));
+    assert!(after.len() < before.len());
+    assert_eq!(
+        after.row_at_reading_anchor(log.parsed(), restored),
+        after.row_of_exact_entry(3).unwrap()
+    );
+}
 
 #[rstest]
 #[case::all("", None,
