@@ -13,7 +13,7 @@ use gt_log_view::{
     LoadedLog, LoadedLogs, LogAttachmentRef, PositionSourceSelection, RecordingKey,
     SessionLogAttachments,
 };
-use gt_logfile::{LogChronology, YearResolution};
+use gt_logfile::YearResolution;
 use gt_pending_writes::WriteAccess;
 use gt_store::DatabaseRef;
 use gt_types::FileIdx;
@@ -24,6 +24,7 @@ use strum::IntoEnumIterator as _;
 
 use association_dialog::LogAssociationRequest;
 use association_window::{AssociationWindowEdit, AssociationWindowUnit};
+use inspector::InspectorSection;
 use line_table::{
     DiagnosticReveal, LineTableCache, LineTableRequests, RowHoverDwell, TableReadingAnchor,
 };
@@ -36,6 +37,7 @@ use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 pub(super) mod association_dialog;
 mod association_window;
 pub(super) mod filters;
+pub(super) mod inspector;
 mod line_table;
 pub(super) mod log_list;
 pub(super) mod restored_logs_badge;
@@ -60,7 +62,8 @@ pub(super) struct LogViewerWindow {
 
 #[derive(Default)]
 struct LogViewerState {
-    summary_expanded: bool,
+    inspector: Option<InspectorSection>,
+    inspector_height: Option<f32>,
     association_window_unit: AssociationWindowUnit,
     association_window_edit: Option<AssociationWindowEdit>,
     last_entry_year_draft: Option<LastEntryYearDraft>,
@@ -322,57 +325,16 @@ impl LogViewerWindow {
                 {
                     unload = self.apply_navigation_action(action, requests);
                 }
-                let reserved_for_the_table =
-                    line_table::row_height(ui) * TABLE_ROWS_THE_HEADER_LEAVES as f32;
-                let header_log = self.selected;
-                egui::ScrollArea::both()
-                    .id_salt(("log_viewer_header", header_log))
-                    .max_height((ui.available_height() - reserved_for_the_table).max(0.0))
-                    .show(ui, |ui| {
-                        self.notices_ui(ui);
-                        if logs.is_empty() {
-                            ui.label(RichText::new(LOG_LOAD_HINT).weak());
-                        }
-                        let Some(shown) = header_log else {
-                            return;
-                        };
-                        if let Some(log) = logs.get_by_id(shown)
-                            && let LogChronology::Unresolved(unresolved) = log.parsed().chronology()
-                            && let Some(year_resolution) = self.unresolved_years_ui(
-                                ui,
-                                shown,
-                                log.parsed(),
-                                unresolved.unresolved_year(),
-                            )
-                        {
-                            requests.resolve_years = Some(YearsToResolve {
-                                log: shown,
-                                year_resolution,
-                            });
-                        }
-                        if self.log_state_mut(shown).summary_expanded
-                            && let Some(log) = logs.get_by_id(shown)
-                        {
-                            self.summary_panel_ui(ui, log, shown);
-                        }
-                        self.filters_ui(ui, logs, shown);
-                    });
-                let Some(shown) = self.selected else {
-                    return;
-                };
-                ui.separator();
-                if let Some(log) = logs.get_by_id(shown) {
-                    self.line_table_ui(
-                        ui,
-                        log,
-                        shown,
-                        pointer_over_the_window,
-                        &mut LineTableRequests {
-                            map_center: map_center_request,
-                            hover: log_hover,
-                        },
-                    );
-                }
+                self.reading_regions_ui(
+                    ui,
+                    logs,
+                    requests,
+                    pointer_over_the_window,
+                    &mut LineTableRequests {
+                        map_center: map_center_request,
+                        hover: log_hover,
+                    },
+                );
             });
 
         if !dialog_open
@@ -475,7 +437,7 @@ impl LogViewerWindow {
     ) -> Option<LogNavigationAction> {
         let mut action = None;
         let mut visibility = None;
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             action = log_list::picker_ui(ui, groups, tabs, self.selected, &mut self.picker_query);
             let Some(shown) = self.selected else {
                 return;
@@ -496,13 +458,10 @@ impl LogViewerWindow {
             if toggle.clicked() {
                 visibility = Some((shown, !visible));
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                settings_status::selected_log_ui(ui, log, shown, write_access, requests);
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    self.display_options_ui(ui);
-                    self.parse_summary_row_ui(ui, log, shown);
-                });
-            });
+            self.display_options_ui(ui);
+            self.date_status_ui(ui, log, shown);
+            self.parse_summary_row_ui(ui, log, shown);
+            settings_status::selected_log_ui(ui, log, shown, write_access, requests);
         });
         if let Some((id, visible)) = visibility
             && let Some(mut log) = logs.get_mut_by_id(id)
@@ -514,13 +473,13 @@ impl LogViewerWindow {
 
     /// The parse summary of the shown log, which unfolds the summary panel.
     fn parse_summary_row_ui(&mut self, ui: &mut egui::Ui, log: &LoadedLog, shown: LoadedLogId) {
-        let state = self.log_state_mut(shown);
-        let caret = if state.summary_expanded {
+        let expanded = self.log_state_mut(shown).inspector == Some(InspectorSection::ShowSummary);
+        let caret = if expanded {
             ICON_CARET_DOWN
         } else {
             ICON_CARET_RIGHT
         };
-        let hover = if state.summary_expanded {
+        let hover = if expanded {
             "Hide log details"
         } else {
             "Show log details"
@@ -530,11 +489,11 @@ impl LogViewerWindow {
             .on_hover_text(hover);
         response.ctx.accesskit_node_builder(response.id, |node| {
             node.set_author_id(SUMMARY_DISCLOSURE_ID);
-            node.set_expanded(state.summary_expanded);
+            node.set_expanded(expanded);
             node.set_description(hover);
         });
         if response.clicked() {
-            state.summary_expanded = !state.summary_expanded;
+            self.toggle_inspector(shown, InspectorSection::ShowSummary);
         }
     }
 
@@ -826,10 +785,6 @@ pub(super) const LOG_VIEWER_TITLE: &str = "Log viewer";
 
 /// Wide enough for the footer's association controls to sit on one row.
 const DEFAULT_WINDOW_WIDTH_PX: f32 = 800.0;
-
-/// Rows of the line table the sections above it leave room for before they
-/// start scrolling among themselves.
-const TABLE_ROWS_THE_HEADER_LEAVES: usize = 3;
 
 pub(in crate::app) const SUMMARY_DISCLOSURE_ID: &str = "log-summary-disclosure";
 

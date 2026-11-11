@@ -1,6 +1,4 @@
-//! The block the viewer shows above the summary panel of a log whose years are unresolved: the
-//! line at which year resolution stopped, its written timestamp, the conflict, and the year
-//! resolutions the user can apply.
+//! Year recovery controls and diagnostics in the active log's chronology inspector.
 
 use std::ops::RangeInclusive;
 
@@ -43,9 +41,12 @@ impl LogViewerWindow {
         parsed: &ParsedLog,
         unresolved_year: &UnresolvedYear,
     ) -> Option<YearResolution> {
-        unresolved_year_ui(ui, unresolved_year);
         let last_entry_year = self.last_entry_year_ui(ui, log_id, parsed);
         let ignore_summary_bounds = ignore_summary_bounds_ui(ui, parsed);
+        ui.collapsing("Date diagnostics and help", |ui| {
+            unresolved_year_ui(ui, unresolved_year);
+            ui.add(Label::new(RichText::new(EARLIER_LINES_NOTE).weak()).wrap());
+        });
         last_entry_year.or(ignore_summary_bounds)
     }
 
@@ -55,12 +56,11 @@ impl LogViewerWindow {
         log_id: LoadedLogId,
         parsed: &ParsedLog,
     ) -> Option<YearResolution> {
-        let last_anchored_line = parsed
+        let last_anchored = parsed
             .entries()
             .iter()
             .rev()
-            .find(|entry| entry.is_anchored())
-            .map(|entry| entry.line_number)?;
+            .find(|entry| entry.is_anchored())?;
         let mut draft = self
             .log_state_mut(log_id)
             .last_entry_year_draft
@@ -69,7 +69,7 @@ impl LogViewerWindow {
             .unwrap_or_else(|| LastEntryYearDraft::of(log_id, parsed));
         let applied = ui
             .horizontal_wrapped(|ui| {
-                ui.label(format!("Year of line {last_anchored_line}"));
+                ui.label(format!("Year of line {}", last_anchored.line_number));
                 let year_field = ui.add(DragValue::new(&mut draft.year).range(CHOSEN_YEAR_RANGE));
                 year_field
                     .ctx
@@ -82,7 +82,17 @@ impl LogViewerWindow {
                     .then_some(YearResolution::PlaceLastEntryInYear(draft.year))
             })
             .inner;
-        ui.add(Label::new(RichText::new(EARLIER_LINES_NOTE).weak()).wrap());
+        let message_end = usize::try_from(last_anchored.message.offset)
+            .ok()?
+            .checked_add(last_anchored.message.len as usize)?;
+        let source_excerpt = parsed
+            .text()
+            .get(..message_end)?
+            .rsplit('\n')
+            .next()
+            .unwrap_or_default();
+        ui.add(Label::new(source_excerpt).selectable(true).truncate())
+            .on_hover_text(source_excerpt);
         self.log_state_mut(log_id).last_entry_year_draft = Some(draft);
         applied
     }

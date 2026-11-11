@@ -144,8 +144,7 @@ fn hidden_diagnostics_reveal_exact_entries_without_changing_filters_or_map_match
     let map = harness.state_mut().map_matches().clone();
     let node = harness.get_by_label(button);
     assert!(!node.accesskit_node().is_disabled());
-    node.click();
-    harness.run_steps(2);
+    click_inspector_control(&mut harness, button);
     harness.get_by_label(target);
     let state = harness.state();
     let reveal = state.viewer.active_state().diagnostic_reveal.unwrap();
@@ -177,7 +176,7 @@ fn another_diagnostic_replaces_the_reveal_and_a_visible_target_clears_it() {
     let mut harness = harness_with(Vec::new());
     type_into_live_filter(&mut harness, "0x0000");
     unfold_the_summary_panel(&mut harness);
-    harness.get_by_label("Line 6").click();
+    click_inspector_control(&mut harness, "Line 6");
     harness.run_steps(2);
     assert_eq!(
         harness
@@ -189,7 +188,7 @@ fn another_diagnostic_replaces_the_reveal_and_a_visible_target_clears_it() {
             .entry_index,
         4
     );
-    harness.get_by_label("Boot 2").click();
+    click_inspector_control(&mut harness, "Boot 2");
     harness.run_steps(2);
     assert_eq!(
         harness
@@ -206,7 +205,7 @@ fn another_diagnostic_replaces_the_reveal_and_a_visible_target_clears_it() {
             .query_by_label(ORDER_ANOMALY_ENTRY_TIMESTAMP)
             .is_none()
     );
-    harness.get_by_label("Boot 1").click();
+    click_inspector_control(&mut harness, "Boot 1");
     harness.run_steps(2);
     assert_eq!(
         harness.state().viewer.active_state().diagnostic_reveal,
@@ -544,7 +543,7 @@ fn switching_logs_preserves_reveals_and_reloading_clears_them() {
     );
     type_into_live_filter(&mut harness, "0x0000");
     unfold_the_summary_panel(&mut harness);
-    harness.get_by_label("Line 6").click();
+    click_inspector_control(&mut harness, "Line 6");
     harness.run_steps(2);
     assert!(
         harness
@@ -570,7 +569,7 @@ fn switching_logs_preserves_reveals_and_reloading_clears_them() {
             .diagnostic_reveal
             .is_some()
     );
-    harness.get_by_label("Line 6").click();
+    click_inspector_control(&mut harness, "Line 6");
     harness.run_steps(2);
     let old = harness.state().viewer.selected.unwrap();
     let state = harness.state_mut();
@@ -633,8 +632,7 @@ fn diagnostic_navigation_scrolls_to_the_hidden_target_in_a_long_table(
     type_into_live_filter(&mut harness, "keep");
     unfold_the_summary_panel(&mut harness);
     let button = if boot { "Boot 2" } else { "Line 121" };
-    harness.get_by_label(button).click();
-    harness.run_steps(2);
+    click_inspector_control(&mut harness, button);
     let target = if boot {
         "Boot 2 · up 19s · 20 entries"
     } else {
@@ -662,7 +660,7 @@ fn diagnostic_navigation_scrolls_to_the_hidden_target_in_a_long_table(
 fn source_backed_boot_dividers_fit_a_narrow_viewer_and_keep_navigation_on_one_row() {
     let mut state = viewer_state(Vec::new(), &[("source.log", SOURCE_LOG)]);
     state.viewer.show_structural_lines = true;
-    state.viewer.active_state_mut().summary_expanded = true;
+    state.viewer.active_state_mut().inspector = Some(InspectorSection::ShowSummary);
     let id = state.first_loaded_log();
     let (stack, _) = state.logs.filter_stack_mut_by_id(id).unwrap();
     stack.set_live_filter_text("first");
@@ -673,7 +671,7 @@ fn source_backed_boot_dividers_fit_a_narrow_viewer_and_keep_navigation_on_one_ro
     gt_ui_theme::install_app_style(&harness.ctx);
     harness.run_steps(8);
     harness.assert_window_fits_the_viewport(AuditedWindow::titled(LOG_VIEWER_TITLE));
-    harness.get_by_label("Boot 2").click();
+    click_inspector_control(&mut harness, "Boot 2");
     harness.run_steps(2);
     harness.assert_window_fits_the_viewport(AuditedWindow::titled(LOG_VIEWER_TITLE));
     let divider = harness.get_by_label("Boot 2 · up 10s · 2 entries").rect();

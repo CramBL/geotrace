@@ -89,7 +89,7 @@ fn device_clock_source_rows_remain_copyable_and_reachable_without_a_map_target()
     harness.run_steps(2);
     super::type_into_live_filter(&mut harness, "first");
     super::unfold_the_summary_panel(&mut harness);
-    harness.get_by_label("Boot 2").click();
+    click_inspector_control(&mut harness, "Boot 2");
     harness.run_steps(2);
     let reveal = harness
         .state()

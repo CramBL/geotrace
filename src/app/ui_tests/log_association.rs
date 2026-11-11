@@ -360,7 +360,7 @@ fn a_log_with_unresolved_years_saved_with_a_recording_reopens_unresolved() {
     );
     assert_eq!(log.associated_entry_count(), 0);
     harness.run_steps(3);
-    harness.get_by_label("Cannot resolve the year of log line 3");
+    harness.get_by_label("Dates unresolved");
 }
 
 #[test]
@@ -492,6 +492,13 @@ fn recording_alongside_the_unresolved_years_log() -> TestDroppedFile {
 
 /// Enters `year` for the last timestamped line of the shown log and applies it.
 fn apply_the_year_of_the_last_line(harness: &mut Harness<App>, year: i32) {
+    harness
+        .get(
+            By::new()
+                .predicate(|node| node.author_id() == Some(log_viewer::inspector::DATE_STATUS_ID)),
+        )
+        .click();
+    harness.run_steps(3);
     harness
         .get(By::new().predicate(|node| {
             node.author_id() == Some(log_viewer::unresolved_years::LAST_ENTRY_YEAR_ID)
