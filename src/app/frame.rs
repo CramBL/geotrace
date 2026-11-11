@@ -327,6 +327,12 @@ impl App {
                     }
 
                     self.log_viewer.toolbar_button_ui(ui);
+                    log_viewer::settings_status::toolbar_ui(
+                        ui,
+                        &self.logs,
+                        self.attachment_settings_write_access(),
+                        &mut self.log_viewer_requests,
+                    );
 
                     // While a query is filtering the map but its window is
                     // closed, the button turns amber with a "!" so the active
@@ -728,6 +734,7 @@ impl App {
     }
 
     fn show_central_area(&mut self, ui: &mut egui::Ui, recording_names: &RecordingNames) {
+        let settings_write_access = self.attachment_settings_write_access();
         // Assembled after the panel so a visibility toggle takes effect in
         // the same frame's map render.
         let snapped_tracks = self.snapped_tracks_view();
@@ -984,7 +991,7 @@ impl App {
                     log_hover,
                     clicked_glyph: clicked_log_glyph,
                     requests: &mut self.log_viewer_requests,
-                    write_access: self.pending_writes.write_access(),
+                    write_access: settings_write_access,
                     history_available: self.history.available(),
                     dialog_open: self.association_dialog.is_some(),
                 },
