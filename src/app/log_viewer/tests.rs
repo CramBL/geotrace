@@ -30,7 +30,7 @@ use gt_test_utils::{
     WindowFitAssertions as _, snapshot_harness,
 };
 use gt_track_builder::{FileMeta, SegmentationConfig};
-use gt_types::{FileSource, Latitude, Longitude};
+use gt_types::{AssociationWindow, FileSource, Latitude, Longitude};
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::{LoadedLogId, LogMatchColor, LogMatchGlyph, LogMatchHover, LogMatches};
 
@@ -936,7 +936,7 @@ fn viewer_state(recordings: Vec<gt_types::LoadedFile>, logs: &[(&str, &str)]) ->
         let mut log = LoadedLog::new(
             Some((*name).to_owned()),
             parsed,
-            Duration::seconds(ASSOCIATION_WINDOW_SECS),
+            AssociationWindow::try_from_seconds(ASSOCIATION_WINDOW_SECS as u64).unwrap(),
         );
         let recordings = loaded_recordings.view();
         let unambiguous = log
@@ -994,6 +994,7 @@ fn attachment_ref() -> gt_log_view::LogAttachmentRef {
 
 fn attachment_settings() -> StoredLogSettings {
     StoredLogSettings {
+        association_window: None,
         filters: Default::default(),
         year_reference: Some(log_start()),
         year_resolution: StoredYearResolution::Infer,
@@ -1006,9 +1007,10 @@ fn attach_the_shown_log(harness: &mut Harness<ViewerState>) {
     let shown = harness.state().first_loaded_log();
     let state = harness.state_mut();
     let recordings = state.recordings.view();
+    let settings = state.logs.get_by_id(shown).unwrap().settings_snapshot();
     state
         .logs
-        .save_attachment(shown, attachment_ref(), attachment_settings(), &recordings);
+        .save_attachment(shown, attachment_ref(), settings, &recordings);
     harness.run_steps(2);
 }
 
@@ -1660,6 +1662,58 @@ fn the_lines_of_a_clicked_hexagon_stay_marked_in_the_table() {
     );
 }
 
+#[rstest]
+#[case::zero(Duration::zero())]
+#[case::subsecond(Duration::milliseconds(1_500))]
+#[case::maximum_minus_one_nanosecond(Duration::days(365) - Duration::nanoseconds(1))]
+fn changing_display_units_preserves_the_exact_saved_window(#[case] duration: Duration) {
+    let window = AssociationWindow::try_from(duration).unwrap();
+    let attachment = stored_attachment();
+    let mut state = viewer_state_over_a_stored_recording(attachment.clone());
+    load_the_stored_log(&mut state, &attachment);
+    let id = state.first_loaded_log();
+    state
+        .logs
+        .get_mut_by_id(id)
+        .unwrap()
+        .set_association_window(window, &state.recordings.view());
+    let write = state
+        .logs
+        .prepare_settings_writes(WriteAccess::Owner)
+        .pop()
+        .unwrap();
+    assert!(state.logs.acknowledge_settings(write.complete(Ok(()))));
+    let mut harness = harness_from(state);
+    for unit in [
+        AssociationWindowUnit::Minutes,
+        AssociationWindowUnit::Days,
+        AssociationWindowUnit::Nanoseconds,
+    ] {
+        let current = harness.state().viewer.association_window_unit;
+        harness.get(By::new().value(current.label())).click();
+        harness.run_steps(4);
+        harness.get_by_label(unit.label()).click();
+        harness.run_steps(4);
+        assert_eq!(
+            harness
+                .state()
+                .logs
+                .get_by_id(id)
+                .unwrap()
+                .association_window(),
+            window
+        );
+        assert_eq!(harness.state().viewer.association_window_commits, 0);
+        assert!(
+            harness
+                .state_mut()
+                .logs
+                .prepare_settings_writes(WriteAccess::Owner)
+                .is_empty()
+        );
+    }
+}
+
 /// The value field and the unit dropdown together name the window a log
 /// associates under.
 #[test]
@@ -1670,7 +1724,7 @@ fn the_footer_reads_the_association_window_in_the_unit_its_dropdown_shows() {
             .state()
             .shown_log()
             .map(LoadedLog::association_window),
-        Some(Duration::seconds(ASSOCIATION_WINDOW_SECS))
+        Some(AssociationWindow::try_from_seconds(ASSOCIATION_WINDOW_SECS as u64).unwrap())
     );
 
     harness
@@ -1708,7 +1762,7 @@ fn the_footer_reads_the_association_window_in_the_unit_its_dropdown_shows() {
             .state()
             .shown_log()
             .map(LoadedLog::association_window),
-        Some(Duration::minutes(2)),
+        Some(AssociationWindow::try_from_seconds(120).unwrap()),
         "the value is read as minutes, the unit the dropdown was switched to"
     );
 }
@@ -1733,7 +1787,7 @@ fn dragging_the_association_window_commits_one_pass_with_the_final_placements() 
     harness.step();
     harness.drag_at(from);
     harness.step();
-    let mut previous = Duration::seconds(ASSOCIATION_WINDOW_SECS);
+    let mut previous = AssociationWindow::try_from_seconds(ASSOCIATION_WINDOW_SECS as u64).unwrap();
     for offset in [20.0, 40.0, 100.0] {
         harness.hover_at(from + egui::vec2(offset, 0.0));
         harness.step();
@@ -1744,13 +1798,13 @@ fn dragging_the_association_window_commits_one_pass_with_the_final_placements() 
             .as_ref()
             .unwrap()
             .window;
-        assert!(draft > previous);
+        assert!(Duration::from(draft) > Duration::from(previous));
         previous = draft;
         assert_eq!(state.viewer.association_window_commits, 0);
         let log = state.shown_log().unwrap();
         assert_eq!(
             log.association_window(),
-            Duration::seconds(ASSOCIATION_WINDOW_SECS)
+            AssociationWindow::try_from_seconds(ASSOCIATION_WINDOW_SECS as u64).unwrap()
         );
         assert_eq!(log.entry_placement(1), None);
         harness.state_mut().map_matches();
@@ -1799,13 +1853,13 @@ fn keyboard_association_window_edits_commit_on_completion(
     assert_eq!(harness.state().viewer.association_window_commits, 0);
     assert_eq!(
         harness.state().shown_log().unwrap().association_window(),
-        Duration::seconds(ASSOCIATION_WINDOW_SECS)
+        AssociationWindow::try_from_seconds(ASSOCIATION_WINDOW_SECS as u64).unwrap()
     );
     harness.key_press(completion);
     harness.run_steps(3);
     assert_eq!(
         harness.state().shown_log().unwrap().association_window(),
-        Duration::seconds(expected_seconds)
+        AssociationWindow::try_from(Duration::seconds(expected_seconds)).unwrap()
     );
     assert_eq!(
         harness.state().viewer.association_window_commits,
@@ -1880,7 +1934,7 @@ fn association_window_drafts_apply_to_the_edited_log(
     assert!(state.viewer.association_window_edit.is_none());
     assert_eq!(
         state.logs.get_by_id(other).unwrap().association_window(),
-        Duration::seconds(ASSOCIATION_WINDOW_SECS)
+        AssociationWindow::try_from_seconds(ASSOCIATION_WINDOW_SECS as u64).unwrap()
     );
     if let Some(log) = state.logs.get_by_id(edited) {
         assert_eq!(log.association_window(), draft);
@@ -2007,51 +2061,138 @@ fn unloading_the_shown_log_leaves_the_viewer_on_its_empty_state() {
     harness.get_by_label(super::LOG_LOAD_HINT);
 }
 
-/// The viewer follows the log it was showing, wherever that log sits among the
-/// loaded ones.
 #[test]
-fn unloading_another_log_leaves_the_viewer_on_the_one_it_shows() {
+fn closing_an_inactive_log_preserves_the_active_reading_context_with_equal_filenames() {
+    const REVEALED_ENTRY: usize = 60;
+    let text = long_log(LONG_LOG_ENTRIES).replace("entry 60\n", "context\n");
     let mut harness = harness_of(
         Vec::new(),
         &[
-            ("navsyncd.log", LOG_WITH_EVERY_ROW_KIND),
+            ("navsyncd.log", THIRD_LOG),
             ("hal-powerd.log", SECOND_LOG),
+            ("navsyncd.log", &text),
         ],
     );
-    let shown = harness.state().viewer.selected_log();
+    let shown = harness.state().viewer.selected_log().unwrap();
     let other = harness.state().first_loaded_log();
+    type_into_live_filter(&mut harness, "entry");
+    {
+        let state = harness.state_mut();
+        let log = state.logs.get_by_id(shown).unwrap();
+        state.viewer.navigate_to_diagnostic(
+            log,
+            shown,
+            line_table::DiagnosticTarget::Entry(REVEALED_ENTRY),
+        );
+    }
+    harness.run_steps(3);
+    let reveal = harness.state().viewer.diagnostic_reveal;
+    let filters = harness
+        .state()
+        .shown_log()
+        .unwrap()
+        .filters()
+        .to_stored_stack();
+    let first_visible = (0..LONG_LOG_ENTRIES)
+        .find(|&index| {
+            harness
+                .query_by_label(&long_log_entry_timestamp(index))
+                .is_some()
+        })
+        .unwrap();
+    assert!(first_visible > 0);
 
-    harness.state_mut().logs.remove_by_id(other);
+    harness
+        .nth_matching(By::new().label(super::ICON_X), 0)
+        .click();
     harness.run_steps(3);
 
-    assert_eq!(harness.state().viewer.selected_log(), shown);
+    assert!(harness.state().logs.get_by_id(other).is_none());
+    assert_eq!(harness.state().viewer.selected_log(), Some(shown));
+    assert_eq!(harness.state().viewer.diagnostic_reveal, reveal);
+    assert_eq!(harness.state().viewer.filter_editor_log, Some(shown));
+    assert_eq!(live_filter_text(&harness), "entry");
     assert_eq!(
-        harness.state().shown_log().map(LoadedLog::name),
-        Some("hal-powerd.log")
+        harness
+            .state()
+            .shown_log()
+            .unwrap()
+            .filters()
+            .to_stored_stack(),
+        filters
+    );
+    assert_eq!(
+        (0..LONG_LOG_ENTRIES).find(|&index| harness
+            .query_by_label(&long_log_entry_timestamp(index))
+            .is_some()),
+        Some(first_visible)
     );
 }
 
 #[test]
-fn unloading_the_shown_log_leaves_the_viewer_on_the_log_that_loaded_first() {
+fn closing_the_active_log_selects_its_next_or_preceding_log_in_display_order() {
     let mut harness = harness_of(
-        Vec::new(),
+        vec![recording("walk.gtd", 55.0), recording("drive.gtd", 56.0)],
         &[
-            ("navsyncd.log", LOG_WITH_EVERY_ROW_KIND),
-            ("hal-powerd.log", SECOND_LOG),
+            ("first.log", LOG_WITH_EVERY_ROW_KIND),
+            ("second.log", SECOND_LOG),
+            ("third.log", THIRD_LOG),
         ],
     );
+    anchor_log_to_recording(&mut harness, "third.log", 0);
+    anchor_log_to_recording(&mut harness, "first.log", 1);
+    let ids: Vec<_> = harness
+        .state()
+        .logs
+        .iter_with_ids()
+        .map(|(id, _)| id)
+        .collect();
+    harness.get_by_label("first.log").click();
+    harness.run_steps(3);
 
-    // The second row is the log that loaded last, which the viewer opened on.
     harness
         .nth_matching(By::new().label(super::ICON_X), 1)
         .click();
     harness.run_steps(3);
+    assert_eq!(harness.state().viewer.selected_log(), ids.get(1).copied());
 
+    harness
+        .nth_matching(By::new().label(super::ICON_X), 1)
+        .click();
+    harness.run_steps(3);
     assert_eq!(harness.state().logs.len(), 1);
+    assert_eq!(harness.state().viewer.selected_log(), ids.get(2).copied());
     assert_eq!(
         harness.state().shown_log().map(LoadedLog::name),
-        Some("navsyncd.log")
+        Some("third.log")
     );
+}
+
+#[test]
+fn closing_a_saved_log_preserves_its_available_attachment() {
+    let attachment = stored_attachment();
+    let mut state = viewer_state_over_a_stored_recording(attachment.clone());
+    load_the_stored_log(&mut state, &attachment);
+    let mut harness = harness_from(state);
+
+    harness.get_by_label(super::ICON_X).click();
+    harness.run_steps(3);
+
+    assert!(harness.state().logs.is_empty());
+    assert_eq!(harness.state().viewer.selected_log(), None);
+    let saved = harness
+        .state()
+        .attachments
+        .of_recording(&stored_recording_ref());
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved.first().map(|entry| entry.id), Some(attachment.id));
+    assert!(harness.state().requests.detach.is_none());
+    harness.get_by_label(super::LOG_LOAD_HINT);
+    harness
+        .get_by_label(log_list::LOAD_ATTACHMENT_LABEL)
+        .click();
+    harness.run_steps(2);
+    assert!(harness.state().requests.load_attachment.is_some());
 }
 
 /// The recording in the history database the fixture attachments belong to.
@@ -2115,7 +2256,7 @@ fn load_the_stored_log(state: &mut ViewerState, attachment: &gt_store::LogAttach
     let log = LoadedLog::new(
         Some("navsyncd.log".to_owned()),
         parsed,
-        Duration::seconds(ASSOCIATION_WINDOW_SECS),
+        AssociationWindow::try_from_seconds(ASSOCIATION_WINDOW_SECS as u64).unwrap(),
     );
     let id = state
         .logs

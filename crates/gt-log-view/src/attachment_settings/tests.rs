@@ -20,6 +20,7 @@ fn attachment() -> LogAttachmentRef {
 
 fn settings(marker: i8) -> StoredLogSettings {
     StoredLogSettings {
+        association_window: None,
         filters: StoredLogFilterStack::single_all_group(vec![StoredLogFilter {
             group_id: 0,
             condition: StoredLogFilterCondition::Message {

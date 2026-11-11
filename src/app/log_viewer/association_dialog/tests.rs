@@ -23,7 +23,7 @@ use gt_test_utils::{
     AuditedWindow, By, ControlLabel, HarnessInteraction as _, TestHarness, WindowFitAssertions as _,
 };
 use gt_track_builder::{FileMeta, SegmentationConfig};
-use gt_types::{FileSource, Latitude, Longitude};
+use gt_types::{AssociationWindow, FileSource, Latitude, Longitude};
 use gt_ui_types::LoadedLogId;
 use rstest::rstest;
 
@@ -150,7 +150,7 @@ fn dialog_state(
         log: LoadedLog::new(
             Some("navsyncd.log".to_owned()),
             parsed,
-            Duration::seconds(60),
+            AssociationWindow::try_from_seconds(60).unwrap(),
         ),
         recordings: loaded_recordings,
         choice: None,
@@ -207,6 +207,7 @@ pub(in crate::app) fn deliver_the_stored_attachment(
             id: LogAttachmentId::new_random(),
             name: name.to_owned(),
             settings: StoredLogSettings {
+                association_window: None,
                 filters: Default::default(),
                 year_reference: None,
                 year_resolution: StoredYearResolution::Infer,
@@ -473,6 +474,7 @@ fn a_recording_that_already_holds_this_log_offers_that_attachment_for_reuse() {
             id: existing,
             name: "navsyncd.log".to_owned(),
             settings: StoredLogSettings {
+                association_window: None,
                 filters: Default::default(),
                 year_reference: None,
                 year_resolution: StoredYearResolution::Infer,

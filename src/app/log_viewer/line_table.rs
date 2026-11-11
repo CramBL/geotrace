@@ -15,7 +15,7 @@ use gt_logfile::{
     BootSession, ClockEligibility, EligibleLogTime, LogChronology, LogEntry, LogLevelKind,
     ParsedLog, RecognisedMessage, StructuralLineKind, TimestampKind, YearlessTimestamp,
 };
-use gt_types::{Latitude, Longitude, mercator};
+use gt_types::{AssociationWindow, Latitude, Longitude, mercator};
 use gt_ui_theme::ALMOST_EQUAL_TO;
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::{LoadedLogId, LogMatchGlyph, LogMatchHover, LogRowPlacement};
@@ -1120,7 +1120,7 @@ struct EntryRow<'a> {
 
     color_switches: MessageColorSwitches,
 
-    association_window: Duration,
+    association_window: AssociationWindow,
     years_resolved: bool,
     gutter: &'a LayerGutter<'a>,
     entry_index: usize,
@@ -1624,7 +1624,11 @@ mod tests {
     fn source_log(text: &str) -> LoadedLog {
         let parsed =
             gt_logfile::parse_log(text.into(), gutter_log_start()).expect("the log parses");
-        LoadedLog::new(None, parsed, Duration::seconds(60))
+        LoadedLog::new(
+            None,
+            parsed,
+            AssociationWindow::try_from_seconds(60).unwrap(),
+        )
     }
 
     #[test]

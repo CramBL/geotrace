@@ -1597,6 +1597,7 @@ mod tests {
             .to_utc();
         let reference = stored_reference.unwrap_or(reference);
         let settings = StoredLogSettings {
+            association_window: None,
             filters: Default::default(),
             year_reference: stored_reference,
             year_resolution: gt_log_view::stored_year_resolution(year_resolution),
@@ -1707,6 +1708,7 @@ mod tests {
                         name: "broken.log".to_owned(),
                         text: junk.to_owned(),
                         settings: StoredLogSettings {
+                            association_window: None,
                             filters: Default::default(),
                             year_reference: None,
                             year_resolution: StoredYearResolution::Infer,

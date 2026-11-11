@@ -6,6 +6,7 @@
 fn the_compile_fail_fixtures_produce_their_expected_errors() {
     let fixtures = trybuild::TestCases::new();
 
+    fixtures.compile_fail("tests/compile_fail/association_window_private_duration.rs");
     fixtures.compile_fail("tests/compile_fail/generation_type_mismatch.rs");
     fixtures.compile_fail("tests/compile_fail/inner_type_is_not_versionable.rs");
 }

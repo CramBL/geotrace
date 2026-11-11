@@ -298,6 +298,8 @@ impl LogViewerWindow {
         }
         self.restored_logs.clear();
 
+        let groups =
+            log_list::group_logs_by_recording(logs, recordings, recording_names, attachments);
         let mut open = self.open;
         let mut unload = None;
         let window = Window::new(LOG_VIEWER_TITLE)
@@ -341,8 +343,7 @@ impl LogViewerWindow {
                     .max_height((ui.available_height() - reserved_for_the_table).max(0.0))
                     .show(ui, |ui| {
                         self.notices_ui(ui);
-                        let actions =
-                            self.log_list_ui(ui, logs, recordings, recording_names, attachments);
+                        let actions = log_list::log_list_ui(ui, &groups, logs, &mut self.selected);
                         unload = actions.unload;
                         if let Some(chosen) = actions.load_attachment {
                             requests.load_attachment = Some(chosen);
@@ -422,11 +423,15 @@ impl LogViewerWindow {
         self.open = open;
 
         if let Some(id) = unload {
-            if let Some(log) = logs.remove_by_id(id) {
-                log::info!("Unloaded log {:?}", log.name());
-            }
-            // The next frame resolves the selection against what is left.
-            self.selected = None;
+            let navigation_order: Vec<_> = groups
+                .iter()
+                .flat_map(|group| &group.rows)
+                .filter_map(|row| match row {
+                    log_list::LogRow::Loaded(log) => Some(log.id),
+                    log_list::LogRow::Available(_) => None,
+                })
+                .collect();
+            self.close_log(logs, id, &navigation_order);
         }
         if !self.open
             || window.is_none_or(|response| response.inner.is_none())
@@ -467,18 +472,34 @@ impl LogViewerWindow {
         }
     }
 
-    /// The loaded logs and the available attachments, grouped by recording.
-    fn log_list_ui(
+    fn close_log(
         &mut self,
-        ui: &mut egui::Ui,
         logs: &mut LoadedLogs,
-        recordings: LoadedFilesView<'_>,
-        recording_names: &RecordingNames,
-        attachments: &SessionLogAttachments,
-    ) -> log_list::LogListActions {
-        let groups =
-            log_list::group_logs_by_recording(logs, recordings, recording_names, attachments);
-        log_list::log_list_ui(ui, &groups, logs, &mut self.selected)
+        closing: LoadedLogId,
+        navigation_order: &[LoadedLogId],
+    ) {
+        let Some(log) = logs.remove_by_id(closing) else {
+            return;
+        };
+        log::info!("Unloaded log {:?}", log.name());
+        if self.selected == Some(closing) {
+            self.selected = navigation_order
+                .iter()
+                .position(|id| *id == closing)
+                .and_then(|index| {
+                    navigation_order.get(index + 1).or_else(|| {
+                        index
+                            .checked_sub(1)
+                            .and_then(|previous| navigation_order.get(previous))
+                    })
+                })
+                .copied();
+            self.diagnostic_reveal = None;
+            self.scroll_to_row = None;
+            self.clicked_glyph = None;
+            self.filter_editor_log = None;
+            self.filter_editor_focus = false;
+        }
     }
 
     /// The parse summary of the shown log, which unfolds the summary panel.
@@ -526,12 +547,18 @@ impl LogViewerWindow {
         };
         let target = log.associated_recording();
         let candidates = log.rank_association_candidates(&recordings);
+        let window_hover = if log.association_window_is_defaulted() {
+            "The app used its default window when loading this attachment. The app stores the current window with the next successful settings save."
+        } else {
+            ASSOCIATION_WINDOW_HOVER
+        };
         let entered_unit = self.association_window_unit;
         let window = self
             .association_window_edit
             .as_ref()
             .map_or(log.association_window(), |edit| edit.window);
-        let mut value = entered_unit.measure(window);
+        let initial_value = entered_unit.measure(window);
+        let mut value = initial_value;
         let mut unit = entered_unit;
         let mut chosen_target = None;
         let mut window_response = None;
@@ -632,14 +659,14 @@ impl LogViewerWindow {
             }
 
             ui.separator();
-            ui.label("Association window");
+            ui.label("Association window").on_hover_text(window_hover);
             window_response = Some(
                 ui.push_id(selected, |ui| {
                     ui.add_enabled(
                         years_resolved,
                         DragValue::new(&mut value).range(0.0..=entered_unit.largest_value()),
                     )
-                    .on_hover_text(ASSOCIATION_WINDOW_HOVER)
+                    .on_hover_text(window_hover)
                     .on_disabled_hover_text(UNRESOLVED_YEARS_HOVER)
                 })
                 .inner,
@@ -693,12 +720,15 @@ impl LogViewerWindow {
             if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Escape)) {
                 self.association_window_edit = None;
             } else if response.changed()
+                && value.to_bits() != initial_value.to_bits()
                 && let Some(log) = selected
             {
-                self.association_window_edit = Some(AssociationWindowEdit {
-                    log,
-                    window: entered_unit.window_of(value),
-                });
+                match entered_unit.window_of(value) {
+                    Ok(window) => {
+                        self.association_window_edit = Some(AssociationWindowEdit { log, window })
+                    }
+                    Err(error) => self.report_warning(error.to_string()),
+                }
             }
             if !response.dragged() && !response.has_focus() {
                 self.commit_association_window(logs, recordings);

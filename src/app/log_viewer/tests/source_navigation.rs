@@ -534,7 +534,7 @@ fn switching_or_reloading_logs_clears_diagnostic_reveals() {
         .push(LoadedLog::new(
             Some("second.log".to_owned()),
             parsed,
-            Duration::seconds(60),
+            AssociationWindow::try_from_seconds(60).unwrap(),
         ))
         .id();
     assert_ne!(replacement, old);

@@ -7,7 +7,7 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::slice;
 
-use chrono::DateTime;
+use chrono::{DateTime, Duration};
 use gt_history_types::{
     self as history_types, LogAttachmentReadError, StoredLogFilterCondition, fixtures,
 };
@@ -18,6 +18,7 @@ use gt_store::{
     StoredLogFilterGroup, StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts,
     StoredLogSettings, StoredYearResolution, TrackRange, TrackState,
 };
+use gt_types::AssociationWindow;
 use hdf5_pure::AttrValue;
 use rstest::rstest;
 use serde_json::Value;
@@ -71,6 +72,7 @@ impl RecordedStore {
                     name,
                     text,
                     settings: StoredLogSettings {
+                        association_window: None,
                         filters: fixtures::log_filters(),
                         year_reference: None,
                         year_resolution: StoredYearResolution::Infer,
@@ -120,6 +122,7 @@ impl MixedAttachmentMetadata {
                     name: "readable.log",
                     text: LOG_TEXT,
                     settings: StoredLogSettings {
+                        association_window: None,
                         filters: fixtures::log_filters(),
                         year_reference: None,
                         year_resolution: StoredYearResolution::Infer,
@@ -131,17 +134,24 @@ impl MixedAttachmentMetadata {
         let base = base.as_object().expect("metadata object").clone();
         let mut future = base.clone();
         future.insert("name".to_owned(), serde_json::json!("future.log"));
-        future.insert("format_version".to_owned(), serde_json::json!(7));
+        future.insert("format_version".to_owned(), serde_json::json!(8));
         let mut unknown = base.clone();
         unknown.insert("name".to_owned(), serde_json::json!("unknown.log"));
         unknown.insert(
             "year_resolution".to_owned(),
             serde_json::json!({"kind": "future_policy"}),
         );
+        let mut invalid_window = base.clone();
+        invalid_window.insert("name".to_owned(), serde_json::json!("invalid-window.log"));
+        invalid_window.insert("association_window_ns".to_owned(), Value::Null);
         let mut malformed = base;
         malformed.insert("name".to_owned(), serde_json::json!("malformed.log"));
         malformed.insert("year_resolution".to_owned(), Value::Null);
         let failures: Vec<_> = [
+            (
+                AttrValue::String(Value::Object(invalid_window).to_string()),
+                Some("invalid-window.log"),
+            ),
             (
                 AttrValue::String(Value::Object(future).to_string()),
                 Some("future.log"),
@@ -208,11 +218,31 @@ fn gtd_bytes() -> Vec<u8> {
     builder.finish().expect("serialize the gtd file")
 }
 
-#[test_log::test]
-fn read_only_loading_preserves_raw_settings_and_resolves_a_missing_reference() {
+#[rstest]
+#[case::legacy(None)]
+#[case::explicit(Some(AssociationWindow::ZERO))]
+fn read_only_loading_preserves_raw_settings_and_resolves_a_missing_reference(
+    #[case] association_window: Option<AssociationWindow>,
+) {
     let mut recorded = RecordedStore::new();
 
-    let id = recorded.attach("navsyncd.log", LOG_TEXT);
+    let settings = StoredLogSettings {
+        association_window,
+        filters: fixtures::log_filters(),
+        year_reference: None,
+        year_resolution: StoredYearResolution::Infer,
+    };
+    let entry = recorded
+        .recordings
+        .attach_log(
+            &recorded.recording,
+            &LogToAttach {
+                name: "navsyncd.log",
+                text: LOG_TEXT,
+                settings: settings.clone(),
+            },
+        )
+        .expect("attach");
 
     let database_before = fs::read(recorded.store.recordings_path()).expect("database before load");
     let read_only = recorded
@@ -221,18 +251,11 @@ fn read_only_loading_preserves_raw_settings_and_resolves_a_missing_reference() {
         .expect("open read-only database")
         .expect("database");
     let attached = read_only
-        .load_attached_log(&recorded.recording, id)
+        .load_attached_log(&recorded.recording, entry.id)
         .expect("load");
     assert_eq!(attached.name, "navsyncd.log");
     assert_eq!(attached.text, LOG_TEXT);
-    assert_eq!(
-        attached.settings,
-        StoredLogSettings {
-            filters: fixtures::log_filters(),
-            year_reference: None,
-            year_resolution: StoredYearResolution::Infer,
-        }
-    );
+    assert_eq!(attached.settings, settings);
     assert_eq!(
         attached.parse_year_reference.timestamp_micros(),
         1_000_000_019
@@ -257,6 +280,10 @@ fn a_saved_year_reference_and_year_resolution_survive_filter_updates_and_reopeni
                 name: "syslog.log",
                 text: "Dec 31 23:59:59 before\nJan  1 00:00:01 after\n",
                 settings: StoredLogSettings {
+                    association_window: Some(
+                        AssociationWindow::try_from(Duration::nanoseconds(987_654_321))
+                            .expect("window"),
+                    ),
                     filters: fixtures::log_filters(),
                     year_reference: Some(year_reference),
                     year_resolution: StoredYearResolution::IgnoreSummaryBounds,
@@ -290,6 +317,10 @@ fn a_saved_year_reference_and_year_resolution_survive_filter_updates_and_reopeni
         StoredYearResolution::PlaceLastEntryInYear { year: 2024 }
     );
     assert_eq!(restored.settings.filters, Default::default());
+    assert_eq!(
+        restored.settings.association_window.map(Duration::from),
+        Some(Duration::nanoseconds(987_654_321))
+    );
 }
 
 #[test]
@@ -297,6 +328,7 @@ fn complete_settings_can_restore_the_recording_end_reference() {
     let mut recorded = RecordedStore::new();
     let id = recorded.attach("syslog.log", LOG_TEXT);
     let mut settings = StoredLogSettings {
+        association_window: None,
         filters: StoredLogFilterStack::default(),
         year_reference: Some(DateTime::UNIX_EPOCH),
         year_resolution: StoredYearResolution::IgnoreSummaryBounds,
@@ -358,6 +390,7 @@ fn a_settings_write_failure_preserves_the_complete_metadata_and_log() {
         &recorded.recording,
         id,
         StoredLogSettings {
+            association_window: None,
             filters: StoredLogFilterStack::default(),
             year_reference: Some(DateTime::UNIX_EPOCH),
             year_resolution: StoredYearResolution::IgnoreSummaryBounds,
@@ -390,16 +423,21 @@ fn a_settings_write_failure_preserves_the_complete_metadata_and_log() {
 }
 
 enum SettingsUpdate {
+    AssociationWindow,
+    Complete,
     Filters,
     YearResolution,
-    Complete,
 }
 
 #[rstest]
 #[case::filters(SettingsUpdate::Filters)]
 #[case::year_resolution(SettingsUpdate::YearResolution)]
 #[case::complete(SettingsUpdate::Complete)]
-fn version_five_settings_upgrade_during_store_updates(#[case] update: SettingsUpdate) {
+#[case::association_window(SettingsUpdate::AssociationWindow)]
+fn legacy_settings_upgrade_during_store_updates(
+    #[case] update: SettingsUpdate,
+    #[values(5, 6)] version: u32,
+) {
     let RecordedStore {
         _directory,
         store,
@@ -416,6 +454,7 @@ fn version_five_settings_upgrade_during_store_updates(#[case] update: SettingsUp
                 name: "legacy.log",
                 text: LOG_TEXT,
                 settings: StoredLogSettings {
+                    association_window: None,
                     filters: fixtures::log_filters(),
                     year_reference: Some(reference),
                     year_resolution: StoredYearResolution::PlaceLastEntryInYear { year: 2024 },
@@ -426,7 +465,7 @@ fn version_five_settings_upgrade_during_store_updates(#[case] update: SettingsUp
     let log_path = entry.id.file_path(&store.logs_path());
     let compressed = std::fs::read(&log_path).expect("compressed log");
     let legacy = serde_json::json!({
-        "format_version": 5,
+        "format_version": version,
         "name": "legacy.log",
         "content_hash": entry.attachment.content_hash,
         "filters": fixtures::log_filters(),
@@ -445,7 +484,7 @@ fn version_five_settings_upgrade_during_store_updates(#[case] update: SettingsUp
             .group(&group_path)
             .expect("recording group")
             .set_attr(&entry.id.attr_key(), AttrValue::String(legacy.to_string()))
-            .expect("write version five");
+            .expect("write legacy version");
         file.commit().expect("commit legacy metadata");
     }
     let mut recordings = store.open_recordings().expect("open legacy database");
@@ -462,6 +501,14 @@ fn version_five_settings_upgrade_during_store_updates(#[case] update: SettingsUp
     );
     let mut expected = entry.attachment;
     match update {
+        SettingsUpdate::AssociationWindow => {
+            expected.settings.association_window = Some(
+                AssociationWindow::try_from(Duration::nanoseconds(123_456_789)).expect("window"),
+            );
+            recordings
+                .set_attached_log_settings(&recording, entry.id, expected.settings.clone())
+                .expect("update window");
+        }
         SettingsUpdate::Filters => {
             expected.settings.filters = StoredLogFilterStack::default();
             recordings
@@ -480,6 +527,10 @@ fn version_five_settings_upgrade_during_store_updates(#[case] update: SettingsUp
         }
         SettingsUpdate::Complete => {
             expected.settings = StoredLogSettings {
+                association_window: Some(
+                    AssociationWindow::try_from(Duration::nanoseconds(123_456_789))
+                        .expect("window"),
+                ),
                 filters: StoredLogFilterStack::default(),
                 year_reference: DateTime::from_timestamp(1, 987_654_321),
                 year_resolution: StoredYearResolution::IgnoreSummaryBounds,
@@ -512,11 +563,7 @@ fn version_five_settings_upgrade_during_store_updates(#[case] update: SettingsUp
         restored.parse_year_reference,
         expected.settings.year_reference.expect("reference")
     );
-    assert_eq!(restored.settings.filters, expected.settings.filters);
-    assert_eq!(
-        restored.settings.year_resolution,
-        expected.settings.year_resolution
-    );
+    assert_eq!(restored.settings, expected.settings);
     assert_eq!(restored.text, LOG_TEXT);
     assert_eq!(
         std::fs::read(&log_path).expect("compressed log"),
@@ -534,7 +581,7 @@ fn version_five_settings_upgrade_during_store_updates(#[case] update: SettingsUp
         .and_then(AttrValue::as_str)
         .expect("attachment JSON");
     let wire: Value = serde_json::from_str(json).expect("JSON");
-    assert_eq!(wire.get("format_version"), Some(&serde_json::json!(6)));
+    assert_eq!(wire.get("format_version"), Some(&serde_json::json!(7)));
 }
 
 #[test]
@@ -653,6 +700,7 @@ fn unreadable_metadata_rejects_updates_and_survives_other_attachment_updates() {
             &recording,
             readable.id,
             StoredLogSettings {
+                association_window: Some(AssociationWindow::ZERO),
                 filters: StoredLogFilterStack::default(),
                 year_reference: Some(DateTime::UNIX_EPOCH),
                 year_resolution: StoredYearResolution::IgnoreSummaryBounds,
@@ -704,6 +752,7 @@ fn attaching_returns_the_attachment_the_recording_now_lists() {
                 name: "navsyncd.log",
                 text: LOG_TEXT,
                 settings: StoredLogSettings {
+                    association_window: None,
                     filters: fixtures::log_filters(),
                     year_reference: None,
                     year_resolution: StoredYearResolution::Infer,
@@ -901,6 +950,7 @@ fn updating_settings_for_an_unknown_attachment_returns_unknown_attachment() {
             &recorded.recording,
             LogAttachmentId::new_random(),
             StoredLogSettings {
+                association_window: None,
                 filters: fixtures::log_filters(),
                 year_reference: None,
                 year_resolution: StoredYearResolution::Infer,
@@ -926,6 +976,7 @@ fn attaching_to_a_deleted_recording_fails_and_stores_no_log() {
             name: "navsyncd.log",
             text: LOG_TEXT,
             settings: StoredLogSettings {
+                association_window: None,
                 filters: fixtures::log_filters(),
                 year_reference: None,
                 year_resolution: StoredYearResolution::Infer,

@@ -5,7 +5,6 @@ use std::mem;
 use std::ops::Deref;
 use std::sync::Arc;
 
-use chrono::Duration;
 use gt_fmt::MIDDLE_DOT;
 use gt_history_types::{DatabaseRef, LogContentHash, StoredLogSettings};
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
@@ -14,7 +13,7 @@ use gt_logfile::{
     YearlessTimestamp,
 };
 use gt_pending_writes::WriteAccess;
-use gt_types::{TimeRange, mercator};
+use gt_types::{AssociationWindow, TimeRange, mercator};
 use gt_ui_types::{
     LoadedLogId, LogMatch, LogMatchColor, LogMatchLayer, LogMatchSource, LogMatches,
 };
@@ -84,7 +83,7 @@ pub struct LoadedLog {
 /// What the log's anchor produced, under the window it was associated with.
 #[derive(Debug)]
 struct Association {
-    window: Duration,
+    window: AssociationWindow,
 
     /// One slot per entry of the log, in entry order. Empty while the anchor
     /// resolves to no loaded recording.
@@ -100,7 +99,11 @@ impl LoadedLog {
     /// `filename` is `None` for log text that arrived without a name of its
     /// own (pasted text, or a drop carrying bytes only): such a log takes its
     /// name from the time of its first anchored entry, e.g. "pasted 14:02:11".
-    pub fn new(filename: Option<String>, parsed: ParsedLog, association_window: Duration) -> Self {
+    pub fn new(
+        filename: Option<String>,
+        parsed: ParsedLog,
+        association_window: AssociationWindow,
+    ) -> Self {
         let name = filename.unwrap_or_else(|| name_from_first_anchored_entry(&parsed));
         let document = Arc::new(LogDocument::new(parsed));
         Self {
@@ -175,11 +178,20 @@ impl LoadedLog {
     }
 
     pub fn settings_snapshot(&self) -> StoredLogSettings {
-        StoredLogSettings {
-            filters: self.filters.to_stored_stack(),
-            year_reference: Some(self.parsed().year_reference()),
-            year_resolution: attachment::stored_year_resolution(self.parsed().year_resolution()),
+        let mut desired = self.resolved_settings();
+        if let LogContext::SavedAttachment(state) = &self.context {
+            if state.desired().association_window.is_none() {
+                desired.association_window = None;
+            }
+            if state.desired().year_reference.is_none() {
+                desired.year_reference = None;
+            }
+            if &desired != state.desired() {
+                desired.association_window = Some(self.association.window);
+                desired.year_reference = Some(self.parsed().year_reference());
+            }
         }
+        desired
     }
 
     pub fn save_error(&self) -> Option<&str> {
@@ -204,8 +216,7 @@ impl LoadedLog {
             return AttachmentSettingsStatus::SessionOnly;
         };
         let status = state.status(access);
-        if status == AttachmentSettingsStatus::Saved
-            && self.desired_attachment_settings() != *state.desired()
+        if status == AttachmentSettingsStatus::Saved && self.settings_snapshot() != *state.desired()
         {
             AttachmentSettingsStatus::Dirty
         } else {
@@ -325,8 +336,12 @@ impl LoadedLog {
         self.association.recording
     }
 
-    pub fn association_window(&self) -> Duration {
+    pub fn association_window(&self) -> AssociationWindow {
         self.association.window
+    }
+
+    pub fn association_window_is_defaulted(&self) -> bool {
+        matches!(&self.context, LogContext::SavedAttachment(state) if state.acknowledged().association_window.is_none())
     }
 
     /// Where the entry at `entry_index` of [`ParsedLog::entries`] sits on the
@@ -401,8 +416,21 @@ impl LoadedLog {
 
     /// Sets how far an entry may be from a fix to take its position, and
     /// associates the log again under the new window.
-    pub fn set_association_window(&mut self, window: Duration, recordings: &LoadedFilesView<'_>) {
+    pub fn set_association_window(
+        &mut self,
+        window: AssociationWindow,
+        recordings: &LoadedFilesView<'_>,
+    ) {
+        if self.association.window == window {
+            return;
+        }
         self.association.window = window;
+        let mut desired = self.settings_snapshot();
+        desired.association_window = Some(window);
+        desired.year_reference = Some(self.parsed().year_reference());
+        if let LogContext::SavedAttachment(state) = &mut self.context {
+            state.set_desired(desired);
+        }
         self.reassociate(recordings);
     }
 
@@ -475,6 +503,9 @@ impl LoadedLog {
         recordings: &LoadedFilesView<'_>,
     ) {
         self.initial_save = InitialLogSaveState::Idle;
+        self.association.window = stored_settings
+            .association_window
+            .unwrap_or(self.association.window);
         self.filters = FilterStack::from_stored_stack(
             Arc::clone(&self.document.parsed),
             &stored_settings.filters,
@@ -503,7 +534,7 @@ impl LoadedLog {
         if !matches!(self.context, LogContext::SavedAttachment(_)) {
             return None;
         }
-        let desired = self.desired_attachment_settings();
+        let desired = self.settings_snapshot();
         let LogContext::SavedAttachment(state) = &mut self.context else {
             return None;
         };
@@ -519,17 +550,13 @@ impl LoadedLog {
         }
     }
 
-    fn desired_attachment_settings(&self) -> StoredLogSettings {
-        let mut desired = self.settings_snapshot();
-        if let LogContext::SavedAttachment(state) = &self.context
-            && state.desired().year_reference.is_none()
-        {
-            desired.year_reference = None;
-            if &desired != state.desired() {
-                desired.year_reference = Some(self.parsed().year_reference());
-            }
+    fn resolved_settings(&self) -> StoredLogSettings {
+        StoredLogSettings {
+            association_window: Some(self.association.window),
+            filters: self.filters.to_stored_stack(),
+            year_reference: Some(self.parsed().year_reference()),
+            year_resolution: attachment::stored_year_resolution(self.parsed().year_resolution()),
         }
-        desired
     }
 
     /// Where on the map the entries `matches` selected are, in file order,
@@ -588,7 +615,11 @@ impl LoadedLogEditor<'_> {
         self.log.set_visible(visible);
     }
 
-    pub fn set_association_window(&mut self, window: Duration, recordings: &LoadedFilesView<'_>) {
+    pub fn set_association_window(
+        &mut self,
+        window: AssociationWindow,
+        recordings: &LoadedFilesView<'_>,
+    ) {
         self.log.set_association_window(window, recordings);
     }
 
@@ -798,9 +829,9 @@ impl LoadedLogs {
             id: receipt.entry.id,
         };
         if let Some(existing) = self.id_of_attachment(&attachment) {
-            let desired = self.get_by_id(operation.log)?.settings_snapshot();
+            let desired = self.get_by_id(operation.log)?.resolved_settings();
             let existing_log = self.get_by_id(existing)?;
-            if existing_log.settings_snapshot() != desired {
+            if existing_log.resolved_settings() != desired {
                 let error = format!(
                     "The saved log \"{}\" is open with different settings. Unload that log, then retry.",
                     existing_log.name(),

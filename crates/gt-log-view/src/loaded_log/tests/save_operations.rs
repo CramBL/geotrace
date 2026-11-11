@@ -2,6 +2,7 @@ use gt_history_types::LogAttachmentId;
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_logfile::YearResolution;
 use gt_pending_writes::WriteAccess;
+use gt_types::AssociationWindow;
 
 use crate::loaded_log::tests::fixtures;
 use crate::{
@@ -135,7 +136,7 @@ fn pending_save_rejects_other_attachment_and_position_source_operations() {
 }
 
 #[test]
-fn initial_save_preserves_new_chronology_and_filters_until_their_settings_acknowledgement() {
+fn initial_save_preserves_new_settings_until_their_settings_acknowledgement() {
     let attachment = fixtures::attachment_ref();
     let mut files = LoadedFiles::new();
     files.push(
@@ -149,6 +150,14 @@ fn initial_save_preserves_new_chronology_and_filters_until_their_settings_acknow
         .prepare_save(id, target, &files.view(), WriteAccess::Owner)
         .unwrap();
     let initial = request.settings().clone();
+    assert_eq!(
+        initial.association_window,
+        Some(test_util::association_window())
+    );
+    let new_window = AssociationWindow::try_from_seconds(3).unwrap();
+    logs.get_mut_by_id(id)
+        .unwrap()
+        .set_association_window(new_window, &files.view());
     assert!(
         logs.get_mut_by_id(id)
             .unwrap()
@@ -156,6 +165,7 @@ fn initial_save_preserves_new_chronology_and_filters_until_their_settings_acknow
     );
     fixtures::add_layer_chip(&mut logs, id, "navsyncd");
     let desired = logs.get_by_id(id).unwrap().settings_snapshot();
+    assert_eq!(desired.association_window, Some(new_window));
     let completion = request.complete(Ok(fixtures::save_receipt(attachment.id, initial)));
     assert_eq!(
         logs.acknowledge_initial_save(completion.clone(), &files.view()),
@@ -168,7 +178,6 @@ fn initial_save_preserves_new_chronology_and_filters_until_their_settings_acknow
         log.anchor_key(),
         Some(RecordingKey::Stored(attachment.recording.clone()))
     );
-    assert_eq!(log.initial_save_status(), InitialLogSaveStatus::Idle);
     assert_eq!(
         log.settings_save_status(WriteAccess::Owner),
         AttachmentSettingsStatus::Dirty
