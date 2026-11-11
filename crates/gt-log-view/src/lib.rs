@@ -30,10 +30,16 @@ pub use loaded_log::{
     PositionSourceState,
 };
 
+pub use log_save::{
+    InitialLogSaveOutcome, InitialLogSaveStatus, LogCapabilities, LogOperationError,
+    LogSaveCompletion, LogSaveReceipt, LogSaveRequest, PositionSourceSelection,
+};
+
 mod anchor;
 mod association;
 mod attachment;
 mod attachment_settings;
 mod filter;
 mod loaded_log;
+mod log_save;
 mod test_util;

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use chrono::Duration;
 use gt_fmt::MIDDLE_DOT;
-use gt_history_types::{LogContentHash, StoredLogSettings};
+use gt_history_types::{DatabaseRef, LogContentHash, StoredLogSettings};
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
 use gt_logfile::{
     EntryPlacement, LogChronology, ParsedLog, RecordingAssociationIndex, YearResolution,
@@ -27,6 +27,10 @@ use crate::attachment_settings::{
     AttachmentSettingsWrite,
 };
 use crate::filter::{EntryMatches, FilterEffect, FilterStack, LayerColorSlots};
+use crate::log_save::{
+    InitialLogSaveOutcome, InitialLogSaveState, InitialLogSaveStatus, LogCapabilities,
+    LogOperationError, LogSaveCompletion, LogSaveRequest, PositionSourceSelection,
+};
 
 #[derive(Debug)]
 struct LogDocument {
@@ -71,6 +75,7 @@ pub struct LoadedLog {
     name: String,
     document: Arc<LogDocument>,
     context: LogContext,
+    initial_save: InitialLogSaveState,
     association: Association,
     filters: FilterStack,
     visible: bool,
@@ -105,6 +110,7 @@ impl LoadedLog {
             context: LogContext::LooseImport {
                 source: PositionSourceState::PendingInitialSelection,
             },
+            initial_save: InitialLogSaveState::Idle,
             association: Association {
                 window: association_window,
                 entry_placements: Vec::new(),
@@ -128,6 +134,15 @@ impl LoadedLog {
             .is_some_and(AttachmentSettingsState::retry)
     }
 
+    pub fn capabilities(&self, access: WriteAccess) -> LogCapabilities {
+        let select_position_source = self.attachment().is_none()
+            && !matches!(self.initial_save, InitialLogSaveState::Saving(_));
+        LogCapabilities {
+            select_position_source,
+            save_with_recording: select_position_source && access.allows_writing(),
+        }
+    }
+
     pub fn context_origin(&self) -> LogContextOrigin {
         match self.context {
             LogContext::LooseImport { .. } => LogContextOrigin::LooseImport,
@@ -140,6 +155,22 @@ impl LoadedLog {
         match &self.context {
             LogContext::SavedAttachment(state) => Some(state.attachment()),
             LogContext::LooseImport { .. } | LogContext::DetachedAttachment { .. } => None,
+        }
+    }
+
+    pub fn initial_save_status(&self) -> InitialLogSaveStatus<'_> {
+        match &self.initial_save {
+            InitialLogSaveState::Failed { error, .. } => InitialLogSaveStatus::Failed(error),
+            InitialLogSaveState::Idle => InitialLogSaveStatus::Idle,
+            InitialLogSaveState::Saving(_) => InitialLogSaveStatus::Saving,
+        }
+    }
+
+    pub fn initial_save_recording(&self) -> Option<&DatabaseRef> {
+        match &self.initial_save {
+            InitialLogSaveState::Failed { operation, .. }
+            | InitialLogSaveState::Saving(operation) => Some(&operation.recording),
+            InitialLogSaveState::Idle => None,
         }
     }
 
@@ -312,6 +343,9 @@ impl LoadedLog {
     }
 
     pub fn anchor_to(&mut self, recording_key: RecordingKey, recordings: &LoadedFilesView<'_>) {
+        if matches!(self.initial_save, InitialLogSaveState::Saving(_)) {
+            return;
+        }
         match &mut self.context {
             LogContext::LooseImport { source } => {
                 *source = PositionSourceState::Recording(recording_key);
@@ -339,6 +373,9 @@ impl LoadedLog {
     }
 
     pub fn remove_anchor(&mut self) {
+        if matches!(self.initial_save, InitialLogSaveState::Saving(_)) {
+            return;
+        }
         match &mut self.context {
             LogContext::LooseImport { source } => {
                 *source = PositionSourceState::None;
@@ -427,6 +464,7 @@ impl LoadedLog {
         stored_settings: StoredLogSettings,
         recordings: &LoadedFilesView<'_>,
     ) {
+        self.initial_save = InitialLogSaveState::Idle;
         self.filters = FilterStack::from_stored_stack(
             Arc::clone(&self.document.parsed),
             &stored_settings.filters,
@@ -444,6 +482,7 @@ impl LoadedLog {
         stored_settings: StoredLogSettings,
         recordings: &LoadedFilesView<'_>,
     ) {
+        self.initial_save = InitialLogSaveState::Idle;
         let mut state = AttachmentSettingsState::new(attachment, stored_settings);
         state.set_desired(self.settings_snapshot());
         self.context = LogContext::SavedAttachment(Box::new(state));
@@ -624,6 +663,141 @@ pub struct LoadedLogs {
 }
 
 impl LoadedLogs {
+    pub fn select_position_source(
+        &mut self,
+        id: LoadedLogId,
+        selection: PositionSourceSelection,
+        recordings: &LoadedFilesView<'_>,
+    ) -> Result<(), LogOperationError> {
+        let log = self
+            .logs
+            .iter_mut()
+            .find(|stored| stored.id == id)
+            .map(|stored| &mut stored.log)
+            .ok_or(LogOperationError::LogUnloaded)?;
+        if log.attachment().is_some() {
+            return Err(LogOperationError::AlreadySaved);
+        }
+        if matches!(log.initial_save, InitialLogSaveState::Saving(_)) {
+            return Err(LogOperationError::SavePending);
+        }
+        match selection {
+            PositionSourceSelection::NoSource => log.remove_anchor(),
+            PositionSourceSelection::Recording(target) => {
+                let entry = recordings
+                    .entry_for_id(target)
+                    .ok_or(LogOperationError::TargetUnloaded)?;
+                log.anchor_to(RecordingKey::of_loaded_recording(entry), recordings);
+            }
+        }
+        self.map_matches_stale = true;
+        Ok(())
+    }
+
+    pub fn prepare_save(
+        &mut self,
+        id: LoadedLogId,
+        target: LoadedFileId,
+        recordings: &LoadedFilesView<'_>,
+        access: WriteAccess,
+    ) -> Result<LogSaveRequest, LogOperationError> {
+        let log = self
+            .logs
+            .iter_mut()
+            .find(|stored| stored.id == id)
+            .map(|stored| &mut stored.log)
+            .ok_or(LogOperationError::LogUnloaded)?;
+        if log.attachment().is_some() {
+            return Err(LogOperationError::AlreadySaved);
+        }
+        if matches!(log.initial_save, InitialLogSaveState::Saving(_)) {
+            return Err(LogOperationError::SavePending);
+        }
+        if !access.allows_writing() {
+            return Err(LogOperationError::ReadOnly);
+        }
+        let recording = recordings
+            .entry_for_id(target)
+            .ok_or(LogOperationError::TargetUnloaded)?
+            .history()
+            .db_ref()
+            .ok_or(LogOperationError::TargetNotStored)?
+            .clone();
+        let request = LogSaveRequest::new(
+            id,
+            recording,
+            log.name.clone(),
+            Arc::clone(log.parsed().text()),
+            log.settings_snapshot(),
+        );
+        log.initial_save = InitialLogSaveState::Saving(request.operation.clone());
+        Ok(request)
+    }
+
+    pub fn retry_initial_save(
+        &mut self,
+        id: LoadedLogId,
+        recordings: &LoadedFilesView<'_>,
+        access: WriteAccess,
+    ) -> Result<LogSaveRequest, LogOperationError> {
+        let log = self.get_by_id(id).ok_or(LogOperationError::LogUnloaded)?;
+        let InitialLogSaveState::Failed { operation, .. } = &log.initial_save else {
+            return Err(LogOperationError::NoFailedSave);
+        };
+        let target = RecordingKey::Stored(operation.recording.clone())
+            .loaded_recording(recordings)
+            .ok_or(LogOperationError::TargetUnloaded)?
+            .id();
+        self.prepare_save(id, target, recordings, access)
+    }
+
+    pub fn acknowledge_initial_save(
+        &mut self,
+        completion: LogSaveCompletion,
+        recordings: &LoadedFilesView<'_>,
+    ) -> Option<InitialLogSaveOutcome> {
+        let log = self.get_by_id(completion.log())?;
+        let InitialLogSaveState::Saving(operation) = &log.initial_save else {
+            return None;
+        };
+        if operation != &completion.operation {
+            return None;
+        }
+        let LogSaveCompletion { operation, result } = completion;
+        let receipt = match result {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                let stored = self
+                    .logs
+                    .iter_mut()
+                    .find(|stored| stored.id == operation.log)?;
+                stored.log.initial_save = InitialLogSaveState::Failed { operation, error };
+                return Some(InitialLogSaveOutcome::Failed);
+            }
+        };
+        let attachment = LogAttachmentRef {
+            recording: operation.recording,
+            id: receipt.attachment_id,
+        };
+        if let Some(existing) = self.id_of_attachment(&attachment) {
+            let stored = self
+                .logs
+                .iter_mut()
+                .find(|stored| stored.id == operation.log)?;
+            stored.log.initial_save = InitialLogSaveState::Idle;
+            return Some(InitialLogSaveOutcome::AlreadyLoaded(existing));
+        }
+        let stored = self
+            .logs
+            .iter_mut()
+            .find(|stored| stored.id == operation.log)?;
+        stored
+            .log
+            .record_attachment(attachment, receipt.stored_settings, recordings);
+        self.map_matches_stale = true;
+        Some(InitialLogSaveOutcome::Saved(operation.log))
+    }
+
     pub fn prepare_settings_writes(&mut self, access: WriteAccess) -> Vec<AttachmentSettingsWrite> {
         self.logs
             .iter_mut()
@@ -780,7 +954,9 @@ impl LoadedLogs {
         let Some(stored) = self.logs.iter_mut().find(|stored| stored.id == id) else {
             return LogSaveOutcome::LogUnloaded;
         };
-        if stored.log.attachment().is_some() {
+        if stored.log.attachment().is_some()
+            || matches!(stored.log.initial_save, InitialLogSaveState::Saving(_))
+        {
             return LogSaveOutcome::AlreadySaved;
         }
         stored
@@ -843,7 +1019,8 @@ impl LoadedLogs {
     /// held.
     pub fn remove_by_id(&mut self, id: LoadedLogId) -> Option<LoadedLog> {
         let index = self.logs.iter().position(|stored| stored.id == id)?;
-        let removed = self.logs.remove(index);
+        let mut removed = self.logs.remove(index);
+        removed.log.initial_save = InitialLogSaveState::Idle;
         removed
             .log
             .filters
