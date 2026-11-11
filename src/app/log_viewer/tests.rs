@@ -1921,14 +1921,12 @@ fn the_footer_takes_no_recording_off_an_attached_log() {
     let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
     attach_the_shown_log(&mut harness);
 
-    harness.get(By::new().value(gt_ui_theme::EM_DASH)).click();
-    harness.run_steps(2);
-    let no_recording = harness.bottommost_matching(By::new().label(gt_ui_theme::EM_DASH));
+    let no_recording = harness.get(By::new().value(gt_ui_theme::EM_DASH));
     let position = no_recording.rect().center();
 
     assert!(no_recording.accesskit_node().is_disabled());
     harness.hover_at_and_settle(position, TOOLTIP_DELAY_FRAMES);
-    harness.get_by_label_contains(super::NO_RECORDING_ATTACHED_HOVER);
+    harness.get_by_label_contains(super::association_dialog::OPERATION_UNAVAILABLE_HOVER);
     assert!(
         harness
             .state()

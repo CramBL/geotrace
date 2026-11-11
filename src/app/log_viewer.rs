@@ -6,7 +6,10 @@ use egui_phosphor::regular::{
     CARET_DOWN as ICON_CARET_DOWN, CARET_RIGHT as ICON_CARET_RIGHT, X as ICON_X,
 };
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
-use gt_log_view::{LoadedLog, LoadedLogs, LogAttachmentRef, RecordingKey, SessionLogAttachments};
+use gt_log_view::{
+    LoadedLog, LoadedLogs, LogAttachmentRef, PositionSourceSelection, RecordingKey,
+    SessionLogAttachments,
+};
 use gt_logfile::{LogChronology, YearResolution};
 use gt_pending_writes::WriteAccess;
 use gt_store::DatabaseRef;
@@ -139,7 +142,7 @@ pub(super) struct LogViewerRequests {
     pub open_recording: Option<DatabaseRef>,
 
     pub resolve_years: Option<YearsToResolve>,
-    pub retry_settings_save: Option<LoadedLogId>,
+    pub retry_save: Option<LoadedLogId>,
 }
 
 /// The year resolution the user applied to a log whose years are unresolved.
@@ -234,12 +237,6 @@ impl LogViewerWindow {
             .first()
             .and_then(|&entry_index| rows.row_of_exact_entry(entry_index));
         self.clicked_glyph = Some(clicked);
-    }
-
-    /// Which of the loaded logs the window is showing, as of the last render.
-    #[cfg(test)]
-    pub(super) fn selected_log(&self) -> Option<LoadedLogId> {
-        self.selected
     }
 
     /// Points the selection at the log this frame draws, which is the selected
@@ -441,6 +438,10 @@ impl LogViewerWindow {
         }
     }
 
+    pub(super) fn selected_log(&self) -> Option<LoadedLogId> {
+        self.selected
+    }
+
     /// The warnings this session's attachments produced, each dismissed on its
     /// own.
     fn notices_ui(&mut self, ui: &mut egui::Ui) {
@@ -535,6 +536,7 @@ impl LogViewerWindow {
         let mut window_response = None;
 
         let attached = log.attachment().is_some();
+        let capabilities = log.capabilities(write_access);
         let years_resolved = log.parsed().chronology().is_resolved();
         // The anchored recording while it is not loaded, which is always one of
         // the history database's: a log anchored to a recording missing
@@ -549,7 +551,9 @@ impl LogViewerWindow {
         ui.horizontal_wrapped(|ui| {
             ui.label("Positions from");
             let ranked = candidates.ranked();
-            ui.add_enabled_ui(years_resolved && !ranked.is_empty(), |ui| {
+            let can_select_source =
+                years_resolved && !ranked.is_empty() && capabilities.select_position_source;
+            ui.add_enabled_ui(can_select_source, |ui| {
                 ComboBox::from_id_salt("log_viewer_association_target")
                     .selected_text(
                         target
@@ -602,7 +606,9 @@ impl LogViewerWindow {
                         }
                     })
                     .response
-                    .on_disabled_hover_text(if years_resolved {
+                    .on_disabled_hover_text(if !capabilities.select_position_source {
+                        association_dialog::OPERATION_UNAVAILABLE_HOVER
+                    } else if years_resolved {
                         "Load a recording to use as this log's position source"
                     } else {
                         UNRESOLVED_YEARS_HOVER
@@ -652,7 +658,7 @@ impl LogViewerWindow {
             ui.separator();
             let writes_recordings = write_access.allows_writing();
             let attach = ui.add_enabled(
-                !recordings.is_empty() && writes_recordings,
+                !recordings.is_empty() && capabilities.save_with_recording,
                 Button::new(ATTACH_LABEL),
             );
             if attach.clicked() {
@@ -660,10 +666,12 @@ impl LogViewerWindow {
             }
             attach
                 .on_hover_text(ATTACH_HOVER)
-                .on_disabled_hover_text(if writes_recordings {
-                    ATTACH_NO_RECORDING_HOVER
-                } else {
+                .on_disabled_hover_text(if !writes_recordings {
                     READ_ONLY_RECORDING_HISTORY_HOVER
+                } else if !capabilities.select_position_source {
+                    association_dialog::OPERATION_UNAVAILABLE_HOVER
+                } else {
+                    ATTACH_NO_RECORDING_HOVER
                 });
             let detach = ui.add_enabled(attached && writes_recordings, Button::new(DETACH_LABEL));
             if detach.clicked() {
@@ -695,9 +703,17 @@ impl LogViewerWindow {
             }
         }
         if let Some(chosen_target) = chosen_target
-            && let Some(mut log) = selected.and_then(|id| logs.get_mut_by_id(id))
+            && let Some(id) = selected
+            && let Err(error) = logs.select_position_source(
+                id,
+                chosen_target.map_or(
+                    PositionSourceSelection::NoSource,
+                    PositionSourceSelection::Recording,
+                ),
+                &recordings,
+            )
         {
-            log.anchor_to_loaded_recording(chosen_target, &recordings);
+            self.report_warning(error.to_string());
         }
     }
 

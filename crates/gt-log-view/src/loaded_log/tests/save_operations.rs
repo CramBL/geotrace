@@ -91,6 +91,7 @@ fn pending_save_rejects_other_attachment_and_position_source_operations() {
     let request = logs
         .prepare_save(id, target, &files.view(), WriteAccess::Owner)
         .unwrap();
+    assert!(logs.pending_initial_position_sources().is_empty());
     assert_eq!(request.log(), id);
     assert_eq!(request.recording(), &attachment.recording);
     assert_eq!(
@@ -368,7 +369,7 @@ fn unloaded_destinations_are_rejected_without_losing_failed_save_settings() {
     );
     assert_eq!(
         logs.get_by_id(id).unwrap().initial_save_status(),
-        InitialLogSaveStatus::Failed("Disk full")
+        InitialLogSaveStatus::Failed("The selected recording has been unloaded")
     );
     logs.remove_by_id(id);
     assert_eq!(
@@ -424,7 +425,7 @@ fn reuse_of_a_loaded_attachment_preserves_both_contexts_and_its_pending_revision
             ))),
             &files.view()
         ),
-        Some(InitialLogSaveOutcome::AlreadyLoaded(saved))
+        Some(InitialLogSaveOutcome::Failed)
     );
     assert_eq!(logs.get_by_id(loose).unwrap().settings_snapshot(), desired);
     assert_eq!(logs.get_by_id(loose).unwrap().attachment(), None);
@@ -439,4 +440,63 @@ fn reuse_of_a_loaded_attachment_preserves_both_contexts_and_its_pending_revision
         AttachmentSettingsStatus::Saving
     );
     assert!(logs.acknowledge_settings(pending.complete(Ok(()))));
+}
+
+#[test]
+fn equal_settings_reuse_clears_initial_saving_and_preserves_the_owned_pending_revision() {
+    let attachment = fixtures::attachment_ref();
+    let mut files = LoadedFiles::new();
+    files.push(
+        test_util::recording_at(55.0, 10),
+        test_util::stored_in_history(&attachment.recording),
+    );
+    let target = test_util::id_of(&files, 0);
+    let mut logs = LoadedLogs::default();
+    let saved = logs
+        .restore_attachment(
+            test_util::log_of(10),
+            attachment.clone(),
+            fixtures::settings(),
+            &files.view(),
+        )
+        .id();
+    fixtures::add_layer_chip(&mut logs, saved, "entry 1");
+    let pending = logs
+        .prepare_settings_writes(WriteAccess::Owner)
+        .pop()
+        .unwrap();
+    let (stack, slots) = logs.filter_stack_mut_by_id(saved).unwrap();
+    let chip = stack.chips().first().unwrap().id();
+    stack.remove_chip(chip, slots);
+    let loose = logs.push(test_util::log_of(10)).id();
+    let request = logs
+        .prepare_save(loose, target, &files.view(), WriteAccess::Owner)
+        .unwrap();
+    assert_eq!(
+        logs.acknowledge_initial_save(
+            request.complete(Ok(fixtures::save_receipt(
+                attachment.id,
+                fixtures::settings()
+            ))),
+            &files.view()
+        ),
+        Some(InitialLogSaveOutcome::AlreadyLoaded(saved))
+    );
+    assert_eq!(
+        logs.get_by_id(loose).unwrap().initial_save_status(),
+        InitialLogSaveStatus::Idle
+    );
+    assert_eq!(
+        logs.get_by_id(saved)
+            .unwrap()
+            .settings_save_status(WriteAccess::Owner),
+        AttachmentSettingsStatus::Saving
+    );
+    assert!(logs.acknowledge_settings(pending.complete(Ok(()))));
+    let latest = logs
+        .prepare_settings_writes(WriteAccess::Owner)
+        .pop()
+        .unwrap();
+    assert!(latest.settings().filters.chips().is_empty());
+    assert!(logs.acknowledge_settings(latest.complete(Ok(()))));
 }

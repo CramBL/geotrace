@@ -7,7 +7,7 @@ use chrono::{DateTime, Duration, TimeZone as _, Utc};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use gt_loaded_files::{FileHistory, LoadedFileId, LoadedFiles, RecordingNames};
-use gt_log_view::LoadedLog;
+use gt_log_view::{LoadedLog, LoadedLogs, LogAttachmentRef, PositionSourceSelection};
 use gt_pending_writes::WriteAccess;
 
 use crate::app::history_db::ExistingLogAttachment;
@@ -287,10 +287,9 @@ fn confirming_reports_the_chosen_recording_as_the_target() {
 
     assert_eq!(
         harness.state().choice,
-        Some(LogAssociationChoice::Confirmed {
-            target: recording_id(&harness, 0),
-            attach: false,
-        })
+        Some(LogAssociationChoice::SourceSelected(
+            PositionSourceSelection::Recording(recording_id(&harness, 0).unwrap())
+        ))
     );
 }
 
@@ -349,10 +348,9 @@ fn attaching_is_offered_only_for_a_recording_the_history_database_holds() {
 
     assert_eq!(
         harness.state().choice,
-        Some(LogAssociationChoice::Confirmed {
-            target: recording_id(&harness, 1),
-            attach: true,
-        })
+        Some(LogAssociationChoice::SaveRequested(
+            recording_id(&harness, 1).unwrap()
+        ))
     );
 }
 
@@ -401,11 +399,44 @@ fn switching_to_a_recording_outside_history_clears_the_attach_tickbox() {
 
     assert_eq!(
         harness.state().choice,
-        Some(LogAssociationChoice::Confirmed {
-            target: recording_id(&harness, 0),
-            attach: false,
-        })
+        Some(LogAssociationChoice::SourceSelected(
+            PositionSourceSelection::Recording(recording_id(&harness, 0).unwrap())
+        ))
     );
+}
+
+#[test]
+fn saved_log_save_checkbox_has_the_capability_restriction_hover() {
+    let mut state = dialog_state(
+        LOG,
+        vec![(
+            recording("stored.gtd", Duration::zero(), 10),
+            stored_in_history("nav-devkit-mk2"),
+        )],
+    );
+    let settings = state.log.settings_snapshot();
+    let mut logs = LoadedLogs::default();
+    let id = logs
+        .restore_attachment(
+            state.log,
+            LogAttachmentRef {
+                recording: stored_db_ref(),
+                id: LogAttachmentId::new_random(),
+            },
+            settings,
+            &state.recordings.view(),
+        )
+        .id();
+    state.log = logs.remove_by_id(id).unwrap();
+    let mut harness = Harness::builder()
+        .with_size(DIALOG_SIZE)
+        .build_ui_state(dialog_ui, state);
+    harness.run_steps(3);
+    let checkbox = harness.get_by_label(ATTACH_LABEL);
+    assert!(checkbox.accesskit_node().is_disabled());
+    let position = checkbox.rect().center();
+    harness.hover_at_and_settle(position, 3);
+    harness.get_by_label_contains(super::OPERATION_UNAVAILABLE_HOVER);
 }
 
 /// Attaching a log the recording already holds offers the stored attachment
@@ -477,10 +508,9 @@ fn confirming_as_the_stored_attachment_line_appears_reports_the_decision() {
 
     assert_eq!(
         harness.state().choice,
-        Some(LogAssociationChoice::Confirmed {
-            target: recording_id(&harness, 0),
-            attach: false,
-        })
+        Some(LogAssociationChoice::SourceSelected(
+            PositionSourceSelection::Recording(recording_id(&harness, 0).unwrap())
+        ))
     );
 }
 
