@@ -17,6 +17,7 @@ fixtures = []
 
 [dependencies]
 chrono = { workspace = true, features = ["serde"] }
+gt-types = { path = "../gt-types" }
 log.workspace = true
 parking_lot.workspace = true
 serde.workspace = true

@@ -1855,6 +1855,7 @@ mod tests {
         let mut state = AttachmentSettingsState::new(
             attachment_ref(),
             StoredLogSettings {
+                association_window: None,
                 filters: Default::default(),
                 year_reference: None,
                 year_resolution: StoredYearResolution::Infer,

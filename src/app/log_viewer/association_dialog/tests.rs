@@ -207,6 +207,7 @@ pub(in crate::app) fn deliver_the_stored_attachment(
             id: LogAttachmentId::new_random(),
             name: name.to_owned(),
             settings: StoredLogSettings {
+                association_window: None,
                 filters: Default::default(),
                 year_reference: None,
                 year_resolution: StoredYearResolution::Infer,
@@ -473,6 +474,7 @@ fn a_recording_that_already_holds_this_log_offers_that_attachment_for_reuse() {
             id: existing,
             name: "navsyncd.log".to_owned(),
             settings: StoredLogSettings {
+                association_window: None,
                 filters: Default::default(),
                 year_reference: None,
                 year_resolution: StoredYearResolution::Infer,

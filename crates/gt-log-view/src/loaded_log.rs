@@ -14,7 +14,7 @@ use gt_logfile::{
     YearlessTimestamp,
 };
 use gt_pending_writes::WriteAccess;
-use gt_types::{TimeRange, mercator};
+use gt_types::{AssociationWindow, TimeRange, mercator};
 use gt_ui_types::{
     LoadedLogId, LogMatch, LogMatchColor, LogMatchLayer, LogMatchSource, LogMatches,
 };
@@ -77,6 +77,7 @@ pub struct LoadedLog {
     context: LogContext,
     initial_save: InitialLogSaveState,
     association: Association,
+    stored_association_window: Option<AssociationWindow>,
     filters: FilterStack,
     visible: bool,
 }
@@ -117,6 +118,7 @@ impl LoadedLog {
                 associated_entry_count: 0,
                 recording: None,
             },
+            stored_association_window: None,
             visible: true,
         }
     }
@@ -176,6 +178,7 @@ impl LoadedLog {
 
     pub fn settings_snapshot(&self) -> StoredLogSettings {
         StoredLogSettings {
+            association_window: self.stored_association_window,
             filters: self.filters.to_stored_stack(),
             year_reference: Some(self.parsed().year_reference()),
             year_resolution: attachment::stored_year_resolution(self.parsed().year_resolution()),
@@ -475,6 +478,7 @@ impl LoadedLog {
         recordings: &LoadedFilesView<'_>,
     ) {
         self.initial_save = InitialLogSaveState::Idle;
+        self.stored_association_window = stored_settings.association_window;
         self.filters = FilterStack::from_stored_stack(
             Arc::clone(&self.document.parsed),
             &stored_settings.filters,
@@ -493,6 +497,7 @@ impl LoadedLog {
         recordings: &LoadedFilesView<'_>,
     ) {
         self.initial_save = InitialLogSaveState::Idle;
+        self.stored_association_window = stored_settings.association_window;
         let mut state = AttachmentSettingsState::new(attachment, stored_settings);
         state.set_desired(self.settings_snapshot());
         self.context = LogContext::SavedAttachment(Box::new(state));

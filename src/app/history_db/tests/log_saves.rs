@@ -81,6 +81,7 @@ fn duplicate_save_acknowledges_actual_metadata_before_persisting_current_complet
                 name: "existing.log",
                 text: gt_test_utils::UNRESOLVED_YEARS_LOG,
                 settings: StoredLogSettings {
+                    association_window: None,
                     filters: Default::default(),
                     year_reference: Some(DateTime::UNIX_EPOCH),
                     year_resolution: StoredYearResolution::Infer,
