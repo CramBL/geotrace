@@ -5,13 +5,16 @@ use std::f32::consts::TAU;
 
 use egui::RichText;
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
+use gt_log_view::LoadedLogs;
+use gt_ui_types::LoadedLogId;
+use rustc_hash::FxHashSet;
 
 /// The toolbar's standing announcement of the logs that came back with a
 /// recording: how many the viewer has yet to be opened on, and what is left of
 /// the pulse.
 #[derive(Default)]
 pub(in crate::app) struct RestoredLogsBadge {
-    count: usize,
+    unseen: FxHashSet<LoadedLogId>,
 
     pulse_seconds_left: f32,
 
@@ -21,26 +24,49 @@ pub(in crate::app) struct RestoredLogsBadge {
 }
 
 impl RestoredLogsBadge {
-    /// Counts one log the app loaded with a recording, and starts a pulse
-    /// where none is running.
-    pub(in crate::app) fn note_log_loaded_with_a_recording(&mut self) {
-        self.count += 1;
+    pub(in crate::app) fn note_log_loaded_with_a_recording(&mut self, id: LoadedLogId) {
+        self.unseen.insert(id);
         if self.pulse_seconds_left <= 0.0 {
             self.pulse_seconds_left = PULSE_SECONDS;
             self.advanced_at = None;
         }
     }
 
-    /// Takes the badge off the button, which is what opening the viewer does.
-    pub(in crate::app) fn clear(&mut self) {
-        self.count = 0;
-        self.pulse_seconds_left = 0.0;
-        self.advanced_at = None;
+    pub(in crate::app) fn acknowledge(&mut self, id: LoadedLogId) {
+        self.unseen.remove(&id);
+        if self.unseen.is_empty() {
+            self.pulse_seconds_left = 0.0;
+            self.advanced_at = None;
+        }
     }
 
-    #[cfg(test)]
+    pub(super) fn retain_loaded(&mut self, logs: &LoadedLogs) {
+        self.unseen.retain(|id| logs.get_by_id(*id).is_some());
+        if self.unseen.is_empty() {
+            self.pulse_seconds_left = 0.0;
+            self.advanced_at = None;
+        }
+    }
+
+    /// The label the toolbar's log button draws this frame, which is the icon
+    /// with the amber count once logs came back with a recording. Advances the
+    /// pulse by the time since the last frame.
+    pub(in crate::app) fn toolbar_label(&mut self, ui: &egui::Ui) -> RichText {
+        if self.unseen.is_empty() {
+            return RichText::new(ICON_ARTICLE);
+        }
+        let opacity = self.advance_pulse(ui);
+        let amber = gt_ui_theme::warning_amber(ui.visuals().dark_mode);
+        RichText::new(format!("{ICON_ARTICLE} {}", self.count()))
+            .color(amber.gamma_multiply(opacity))
+    }
+
     pub(in crate::app) fn count(&self) -> usize {
-        self.count
+        self.unseen.len()
+    }
+
+    pub(super) fn is_new(&self, id: LoadedLogId) -> bool {
+        self.unseen.contains(&id)
     }
 
     #[cfg(test)]
@@ -48,26 +74,14 @@ impl RestoredLogsBadge {
         self.pulse_seconds_left > 0.0
     }
 
-    /// The label the toolbar's log button draws this frame, which is the icon
-    /// with the amber count once logs came back with a recording. Advances the
-    /// pulse by the time since the last frame.
-    pub(in crate::app) fn toolbar_label(&mut self, ui: &egui::Ui) -> RichText {
-        if self.count == 0 {
-            return RichText::new(ICON_ARTICLE);
-        }
-        let opacity = self.advance_pulse(ui);
-        let amber = gt_ui_theme::warning_amber(ui.visuals().dark_mode);
-        RichText::new(format!("{ICON_ARTICLE} {}", self.count)).color(amber.gamma_multiply(opacity))
-    }
-
     pub(in crate::app) fn toolbar_hover_text(&self) -> String {
-        if self.count == 0 {
+        if self.unseen.is_empty() {
             return BUTTON_HOVER.to_owned();
         }
         format!(
-            "{BUTTON_HOVER}. {} {} loaded with recordings since the viewer was last open.",
-            self.count,
-            gt_fmt::pluralize(self.count, "log", "logs")
+            "{BUTTON_HOVER}. {} {} restored and unopened.",
+            self.count(),
+            gt_fmt::pluralize(self.count(), "log", "logs")
         )
     }
 
@@ -120,7 +134,7 @@ mod tests {
     #[expect(clippy::float_cmp_const, reason = "the second pass changes nothing")]
     fn a_second_layout_pass_of_one_frame_leaves_the_pulse_where_it_is() {
         let mut badge = RestoredLogsBadge::default();
-        badge.note_log_loaded_with_a_recording();
+        badge.note_log_loaded_with_a_recording(LoadedLogId::new(0));
         badge.advance_pulse_to(10.0);
 
         let first_pass = badge.advance_pulse_to(10.5);

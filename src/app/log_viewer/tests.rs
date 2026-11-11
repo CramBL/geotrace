@@ -8,7 +8,6 @@ use chrono::{DateTime, Duration, TimeZone as _, Utc};
 use egui::accesskit::{Role, Toggled};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
-use egui_phosphor::regular::EYE as ICON_EYE;
 use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
 use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
 use gt_log_view::{
@@ -2099,9 +2098,8 @@ fn the_attachment_controls_are_grayed_in_a_read_only_session() {
 #[test]
 fn unloading_the_shown_log_leaves_the_viewer_on_its_empty_state() {
     let mut harness = harness_with(Vec::new());
-
-    harness.get_by_label(super::ICON_X).click();
-    harness.run_steps(3);
+    let shown = harness.state().viewer.selected_log().unwrap();
+    close_log_tab(&mut harness, shown);
 
     assert_eq!(harness.state().logs.len(), 0);
     harness.get_by_label(super::LOG_LOAD_HINT);
@@ -2148,10 +2146,7 @@ fn closing_an_inactive_log_preserves_the_active_reading_context_with_equal_filen
         .unwrap();
     assert!(first_visible > 0);
 
-    harness
-        .nth_matching(By::new().label(super::ICON_X), 0)
-        .click();
-    harness.run_steps(3);
+    close_log_tab(&mut harness, other);
 
     assert!(harness.state().logs.get_by_id(other).is_none());
     assert_eq!(harness.state().viewer.selected_log(), Some(shown));
@@ -2199,16 +2194,10 @@ fn closing_the_active_log_selects_its_next_or_preceding_log_in_display_order() {
     harness.get_by_label("first.log").click();
     harness.run_steps(3);
 
-    harness
-        .nth_matching(By::new().label(super::ICON_X), 1)
-        .click();
-    harness.run_steps(3);
+    close_log_tab(&mut harness, ids[0]);
     assert_eq!(harness.state().viewer.selected_log(), ids.get(1).copied());
 
-    harness
-        .nth_matching(By::new().label(super::ICON_X), 1)
-        .click();
-    harness.run_steps(3);
+    close_log_tab(&mut harness, ids[1]);
     assert_eq!(harness.state().logs.len(), 1);
     assert_eq!(harness.state().viewer.selected_log(), ids.get(2).copied());
     assert_eq!(
@@ -2224,8 +2213,8 @@ fn closing_a_saved_log_preserves_its_available_attachment() {
     load_the_stored_log(&mut state, &attachment);
     let mut harness = harness_from(state);
 
-    harness.get_by_label(super::ICON_X).click();
-    harness.run_steps(3);
+    let shown = harness.state().viewer.selected_log().unwrap();
+    close_log_tab(&mut harness, shown);
 
     assert!(harness.state().logs.is_empty());
     assert_eq!(harness.state().viewer.selected_log(), None);
@@ -2237,6 +2226,10 @@ fn closing_a_saved_log_preserves_its_available_attachment() {
     assert_eq!(saved.first().map(|entry| entry.id), Some(attachment.id));
     assert!(harness.state().requests.detach.is_none());
     harness.get_by_label(super::LOG_LOAD_HINT);
+    harness
+        .get_by_label_contains(log_list::OPEN_LOG_LABEL)
+        .click();
+    harness.run_steps(2);
     harness
         .get_by_label(log_list::LOAD_ATTACHMENT_LABEL)
         .click();
@@ -2363,6 +2356,14 @@ fn listed_rows(state: &ViewerState) -> Vec<(String, Vec<String>)> {
     .collect()
 }
 
+fn close_log_tab(harness: &mut Harness<ViewerState>, id: LoadedLogId) {
+    let identity = format!("{}{id}", log_list::CLOSE_TAB_ID_PREFIX);
+    harness
+        .get(By::new().predicate(move |node| node.author_id() == Some(identity.as_str())))
+        .click_accesskit();
+    harness.run_steps(3);
+}
+
 /// Two recordings with a log each, and a third log that takes its positions
 /// from neither.
 #[test]
@@ -2390,6 +2391,10 @@ fn the_list_groups_every_log_under_the_recording_it_is_anchored_to() {
             ),
         ]
     );
+    harness
+        .get_by_label_contains(log_list::OPEN_LOG_LABEL)
+        .click();
+    harness.run_steps(2);
     harness.get_by_label("walk.gtd");
     harness.get_by_label("drive.gtd");
     harness.get_by_label(log_list::NOT_ANCHORED_HEADING);
@@ -2404,9 +2409,8 @@ fn a_session_holding_one_log_lists_it_without_a_heading() {
     assert!(harness.query_by_label("walk.gtd").is_none());
 }
 
-/// Each row draws the toggle of its own log, whichever log the viewer shows.
 #[test]
-fn the_map_toggle_of_a_row_leaves_the_selection_where_it_is() {
+fn the_active_map_toggle_and_tab_selection_are_independent() {
     let mut harness = harness_of(
         Vec::new(),
         &[
@@ -2418,19 +2422,22 @@ fn the_map_toggle_of_a_row_leaves_the_selection_where_it_is() {
     let first = harness.state().first_loaded_log();
     assert_ne!(shown, Some(first), "the viewer shows the log loaded last");
 
-    harness.nth_matching(By::new().label(ICON_EYE), 0).click();
+    harness.get_by_label("Show matches on map").click();
     harness.run_steps(2);
 
     assert_eq!(
         harness
             .state()
             .logs
-            .get_by_id(first)
+            .get_by_id(shown.unwrap())
             .map(LoadedLog::is_visible),
         Some(false),
-        "the toggle of the first row switched off the log of that row"
+        "the toggle changes the active log"
     );
     assert_eq!(harness.state().viewer.selected_log(), shown);
+    harness.get_by_label("navsyncd.log").click();
+    harness.run_steps(2);
+    assert!(harness.state().logs.get_by_id(first).unwrap().is_visible());
 }
 
 /// What the unload button says it leaves behind: an attached log stays stored
@@ -2454,7 +2461,7 @@ fn the_unload_hover_says_whether_the_log_stays_attached(
         }
         ShownLogStorage::StoredNowhere => harness_with(vec![recording("walk.gtd", 55.0)]),
     };
-    let unload = harness.get_by_label(super::ICON_X).rect().center();
+    let unload = harness.get_by_label("Close navsyncd.log").rect().center();
 
     harness.hover_at_and_settle(unload, TOOLTIP_DELAY_FRAMES);
 
@@ -2479,6 +2486,10 @@ fn an_attachment_that_is_not_loaded_is_listed_with_a_load_button() {
         [("walk.gtd".to_owned(), vec!["navsyncd.log".to_owned()])]
     );
 
+    harness
+        .get_by_label_contains(log_list::OPEN_LOG_LABEL)
+        .click();
+    harness.run_steps(2);
     harness
         .get_by_label(log_list::LOAD_ATTACHMENT_LABEL)
         .click();
@@ -3930,48 +3941,36 @@ fn switching_logs_restores_each_scroll_region_and_reloading_starts_at_the_top(
 }
 
 #[test]
-fn clicking_a_log_selector_preserves_the_previous_logs_larger_header_offset() {
-    const OVERFLOWING_CHIP_COUNT: usize = 80;
-
+fn clicking_fixed_tabs_preserves_each_logs_header_offset() {
+    const OVERFLOWING_NOTICE_COUNT: usize = 40;
     let first = long_log(LONG_LOG_ENTRIES);
     let second = first.replace("entry", "other");
     let mut state = viewer_state(
         Vec::new(),
-        &[
-            ("first.log", first.as_str()),
-            ("second.log", second.as_str()),
-        ],
+        &[("first.log", &first), ("second.log", &second)],
     );
-    let first_id = state.first_loaded_log();
-    let (stack, _slots) = state
-        .logs
-        .filter_stack_mut_by_id(first_id)
-        .expect("the first log is loaded");
-    for index in 0..OVERFLOWING_CHIP_COUNT {
-        stack.set_live_filter_text(&format!("entry {index}"));
-        let chip = stack
-            .add_live_filter_as_chip()
-            .expect("the filter is valid");
-        stack.set_chip_effect_enabled(chip, FilterEffect::Table, false);
-    }
-    state.viewer.open_on_log(first_id);
+    state.viewer.notices = (0..OVERFLOWING_NOTICE_COUNT)
+        .map(|index| format!("Notice {index}"))
+        .collect();
+    state.viewer.open_on_log(state.first_loaded_log());
     let mut harness = harness_from(state);
-    let initial_y = harness.get_by_label("second.log").rect().top();
-    let header = harness.get_by_label("second.log").rect().center();
+    let tab_y = harness.get_by_label("second.log").rect().top();
+    let initial_y = harness.get_by_label("Notice 4").rect().top();
+    let header = harness.get_by_label("Notice 4").rect().center();
     harness.scroll_wheel_at(header, -WHEEL_SCROLL_PX, WHEEL_SETTLE_FRAMES);
-    let saved_y = harness.get_by_label("second.log").rect().top();
+    let saved_y = harness.get_by_label("Notice 4").rect().top();
     assert!((initial_y - saved_y - WHEEL_SCROLL_PX).abs() < SCROLL_READING_TOLERANCE_PX);
-
     select_log(&mut harness, "second.log");
     assert!(
-        (harness.get_by_label("second.log").rect().top() - initial_y).abs()
+        (harness.get_by_label("Notice 4").rect().top() - initial_y).abs()
             < SCROLL_READING_TOLERANCE_PX
     );
     select_log(&mut harness, "first.log");
     assert!(
-        (harness.get_by_label("second.log").rect().top() - saved_y).abs()
+        (harness.get_by_label("Notice 4").rect().top() - saved_y).abs()
             < SCROLL_READING_TOLERANCE_PX
     );
+    assert_eq!(harness.get_by_label("second.log").rect().top(), tab_y);
 }
 
 #[test]
@@ -4276,3 +4275,4 @@ mod per_log_state;
 mod reset_clock;
 mod source_navigation;
 mod table_filter_controls;
+mod tabs;

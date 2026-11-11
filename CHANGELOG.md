@@ -12,6 +12,7 @@
 
 ### Changed
 
+- **Log Viewer:** Loaded logs use a single row of tabs, a searchable picker and separate new indicators for restored logs.
 - **Log Viewer:** The View menu includes structural source line visibility and service and level color preferences.
 - **Log Viewer:** The details panel labels exporter-reported service totals and explains that table filters do not change them.
 - **Map & Tracks:** Recorded positions are styled by navigation state, including fixes without headings or satellite reports.

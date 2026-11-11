@@ -837,7 +837,6 @@ fn an_attached_log_comes_back_with_its_filters_when_the_recording_opens_again() 
     // log back.
     unload_the_log(&mut harness);
     assert_eq!(harness.state().logs.len(), 0);
-
     // Opening the recording again restores the log it carries.
     test_util::harness::drop_a_stored_recording_and_load_it_from_disk(
         &mut harness,
@@ -905,6 +904,10 @@ fn an_unloaded_attachment_is_listed_under_its_recording_and_loads_back() {
     assert_eq!(harness.state().logs.len(), 0);
 
     harness
+        .get_by_label_contains(log_viewer::log_list::OPEN_LOG_LABEL)
+        .click();
+    harness.run_steps(2);
+    harness
         .get_by_label(log_viewer::log_list::LOAD_ATTACHMENT_LABEL)
         .click();
     test_util::harness::step_until_a_log_is_loaded(&mut harness);
@@ -956,6 +959,10 @@ fn the_unloaded_attachments_of_a_removed_recording_leave_the_list() {
     let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
     attach_the_log(&mut harness, &db_path, &db_ref);
     unload_the_log(&mut harness);
+    harness
+        .get_by_label_contains(log_viewer::log_list::OPEN_LOG_LABEL)
+        .click();
+    harness.run_steps(2);
     assert!(
         harness
             .query_by_label(log_viewer::log_list::LOAD_ATTACHMENT_LABEL)
@@ -1101,7 +1108,7 @@ fn a_restored_attachment_keeps_a_separate_context_from_a_loose_log_with_the_same
 /// The toolbar's log button counts a log that comes back with a recording,
 /// and the viewer stays closed on the log it was showing.
 #[test]
-fn the_toolbar_counts_a_log_restored_with_a_recording_until_the_viewer_opens() {
+fn the_toolbar_counts_a_restored_log_until_its_tab_is_activated() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
     let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
@@ -1137,7 +1144,7 @@ fn the_toolbar_counts_a_log_restored_with_a_recording_until_the_viewer_opens() {
     assert_eq!(
         harness.state().log_viewer.restored_logs.count(),
         1,
-        "the count stands until the viewer is opened"
+        "the count remains until the log is activated"
     );
 
     harness
@@ -1146,6 +1153,16 @@ fn the_toolbar_counts_a_log_restored_with_a_recording_until_the_viewer_opens() {
     harness.run_steps(3);
 
     assert!(harness.state().log_viewer.open);
+    assert_eq!(harness.state().log_viewer.restored_logs.count(), 1);
+    let restored = harness
+        .state()
+        .logs
+        .iter_with_ids()
+        .find(|(_, log)| log.attachment().is_some())
+        .map(|(id, _)| id)
+        .unwrap();
+    harness.state_mut().log_viewer.open_on_log(restored);
+    harness.run_steps(2);
     assert_eq!(harness.state().log_viewer.restored_logs.count(), 0);
     harness.get_by_label(ICON_ARTICLE);
 }
@@ -1833,9 +1850,11 @@ fn restore_the_stored_attachment(
 /// Unloads the shown log through the viewer's own button, which the
 /// selector row draws before any filter chip's.
 fn unload_the_log(harness: &mut Harness<App>) {
+    let shown = harness.state().log_viewer.selected_log().unwrap();
+    let identity = format!("{}{shown}", log_viewer::log_list::CLOSE_TAB_ID_PREFIX);
     harness
-        .nth_matching(By::new().label(egui_phosphor::regular::X), 0)
-        .click();
+        .get(By::new().predicate(move |node| node.author_id() == Some(identity.as_str())))
+        .click_accesskit();
     harness.run_steps(3);
 }
 
