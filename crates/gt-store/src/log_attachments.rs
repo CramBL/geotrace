@@ -38,9 +38,8 @@ pub struct LogToAttach<'a> {
 pub struct AttachedLog {
     pub name: String,
     pub text: String,
-    pub filters: StoredLogFilterStack,
-    pub year_reference: DateTime<Utc>,
-    pub year_resolution: StoredYearResolution,
+    pub settings: StoredLogSettings,
+    pub parse_year_reference: DateTime<Utc>,
 }
 
 #[derive(Debug, Error)]
@@ -115,7 +114,7 @@ pub trait ReadOnlyLogAttachments: ReadOnlyHistoryDatabase {
             });
         }
 
-        let year_reference = match attachment.settings.year_reference {
+        let parse_year_reference = match attachment.settings.year_reference {
             Some(reference) => reference,
             None => {
                 let recording = self
@@ -131,9 +130,8 @@ pub trait ReadOnlyLogAttachments: ReadOnlyHistoryDatabase {
             name: attachment.name,
             text: String::from_utf8(bytes)
                 .map_err(|source| LogAttachmentError::NotUtf8 { id, source })?,
-            filters: attachment.settings.filters,
-            year_reference,
-            year_resolution: attachment.settings.year_resolution,
+            settings: attachment.settings,
+            parse_year_reference,
         })
     }
 }

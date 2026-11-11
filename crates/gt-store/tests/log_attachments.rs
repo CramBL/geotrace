@@ -1,7 +1,6 @@
 //! The store's half of a log attachment: the compressed log beside the
 //! recording history, and what a load checks it against.
 
-#[cfg(unix)]
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
@@ -210,19 +209,38 @@ fn gtd_bytes() -> Vec<u8> {
 }
 
 #[test_log::test]
-fn an_attached_log_comes_back_with_its_name_text_and_filters() {
+fn read_only_loading_preserves_raw_settings_and_resolves_a_missing_reference() {
     let mut recorded = RecordedStore::new();
 
     let id = recorded.attach("navsyncd.log", LOG_TEXT);
 
-    let attached = recorded
-        .recordings
+    let database_before = fs::read(recorded.store.recordings_path()).expect("database before load");
+    let read_only = recorded
+        .store
+        .open_recordings_read_only()
+        .expect("open read-only database")
+        .expect("database");
+    let attached = read_only
         .load_attached_log(&recorded.recording, id)
         .expect("load");
     assert_eq!(attached.name, "navsyncd.log");
     assert_eq!(attached.text, LOG_TEXT);
-    assert_eq!(attached.filters, fixtures::log_filters());
-    assert_eq!(attached.year_reference.timestamp_micros(), 1_000_000_019);
+    assert_eq!(
+        attached.settings,
+        StoredLogSettings {
+            filters: fixtures::log_filters(),
+            year_reference: None,
+            year_resolution: StoredYearResolution::Infer,
+        }
+    );
+    assert_eq!(
+        attached.parse_year_reference.timestamp_micros(),
+        1_000_000_019
+    );
+    assert_eq!(
+        fs::read(recorded.store.recordings_path()).expect("database after load"),
+        database_before
+    );
 }
 
 #[test_log::test]
@@ -266,12 +284,12 @@ fn a_saved_year_reference_and_year_resolution_survive_filter_updates_and_reopeni
     let restored = reopened
         .load_attached_log(&recorded.recording, attached.id)
         .expect("restore the log");
-    assert_eq!(restored.year_reference, year_reference);
+    assert_eq!(restored.parse_year_reference, year_reference);
     assert_eq!(
-        restored.year_resolution,
+        restored.settings.year_resolution,
         StoredYearResolution::PlaceLastEntryInYear { year: 2024 }
     );
-    assert_eq!(restored.filters, Default::default());
+    assert_eq!(restored.settings.filters, Default::default());
 }
 
 #[test]
@@ -311,7 +329,7 @@ fn complete_settings_can_restore_the_recording_end_reference() {
         reopened
             .load_attached_log(&recorded.recording, id)
             .expect("load")
-            .year_reference
+            .parse_year_reference
             .timestamp_micros(),
         1_000_000_019
     );
@@ -360,9 +378,15 @@ fn a_settings_write_failure_preserves_the_complete_metadata_and_log() {
     let restored = reopened
         .load_attached_log(&recorded.recording, id)
         .expect("load after failure");
-    assert_eq!(restored.filters, fixtures::log_filters());
-    assert_eq!(restored.year_resolution, StoredYearResolution::Infer);
-    assert_eq!(restored.year_reference.timestamp_micros(), 1_000_000_019);
+    assert_eq!(restored.settings.filters, fixtures::log_filters());
+    assert_eq!(
+        restored.settings.year_resolution,
+        StoredYearResolution::Infer
+    );
+    assert_eq!(
+        restored.parse_year_reference.timestamp_micros(),
+        1_000_000_019
+    );
 }
 
 enum SettingsUpdate {
@@ -485,11 +509,14 @@ fn version_five_settings_upgrade_during_store_updates(#[case] update: SettingsUp
         .load_attached_log(&recording, entry.id)
         .expect("load upgraded log");
     assert_eq!(
-        restored.year_reference,
+        restored.parse_year_reference,
         expected.settings.year_reference.expect("reference")
     );
-    assert_eq!(restored.filters, expected.settings.filters);
-    assert_eq!(restored.year_resolution, expected.settings.year_resolution);
+    assert_eq!(restored.settings.filters, expected.settings.filters);
+    assert_eq!(
+        restored.settings.year_resolution,
+        expected.settings.year_resolution
+    );
     assert_eq!(restored.text, LOG_TEXT);
     assert_eq!(
         std::fs::read(&log_path).expect("compressed log"),
@@ -855,7 +882,7 @@ fn changing_the_filters_of_an_attachment_leaves_its_log_alone() {
     let attached = reopened
         .load_attached_log(&recorded.recording, id)
         .expect("load");
-    assert_eq!(attached.filters, filters);
+    assert_eq!(attached.settings.filters, filters);
     assert_eq!(attached.name, "navsyncd.log");
     assert_eq!(attached.text, LOG_TEXT);
     assert_eq!(
