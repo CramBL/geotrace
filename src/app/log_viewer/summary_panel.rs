@@ -200,7 +200,8 @@ fn service_summary_ui(ui: &mut egui::Ui, parsed: &ParsedLog) {
         return;
     };
     ui.add_space(4.0);
-    ui.strong("Service summary");
+    ui.strong("Exporter-reported service totals");
+    ui.label("Reported by the exporter. Table filters do not change these totals.");
     if let Some(device_type) = &summary.device_type {
         ui.horizontal(|ui| {
             ui.label("Device type");
