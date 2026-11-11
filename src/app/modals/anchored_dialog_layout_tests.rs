@@ -7,7 +7,8 @@ use gt_test_utils::window_fit::NARROW_VIEWPORT;
 use gt_test_utils::{By, HarnessInteraction as _, Queryable as _};
 
 use crate::app::log_viewer::association_dialog::{
-    self, CONFIRM_LABEL, LogAssociationChoice, TITLE as ASSOCIATION_TITLE, tests::DialogState,
+    self, LogAssociationChoice, SAVE_CONFIRM_LABEL as CONFIRM_LABEL,
+    SAVE_TITLE as ASSOCIATION_TITLE, tests::DialogState,
 };
 
 use super::{
@@ -236,7 +237,7 @@ fn the_shelve_confirmation_keeps_its_window_and_tickbox_in_place_while_the_delet
 /// The association dialog over two stored recordings: the second only
 /// overlaps part of the log and is listed below the first.
 fn association_dialog() -> Harness<'static, DialogState> {
-    association_dialog::tests::harness_over_sized(
+    let mut harness = association_dialog::tests::harness_over_sized(
         vec![
             (
                 association_dialog::tests::recording("alongside.gtd", Duration::zero(), FIX_COUNT),
@@ -248,15 +249,14 @@ fn association_dialog() -> Harness<'static, DialogState> {
             ),
         ],
         tests::DIALOG_VIEWPORT,
-    )
+    );
+    harness.state_mut().open_save_dialog();
+    harness.run_steps(3);
+    harness
 }
 
-/// Selecting a recording sends the duplicate-attachment query. The dialog
-/// draws a line above the checkbox that stores the log when the result
-/// arrives. A press aimed at a recording row must not tick that box:
-/// attaching writes the log into the history database.
 #[test]
-fn pressing_a_recording_row_while_the_stored_attachment_line_arrives_attaches_nothing() {
+fn pressing_a_recording_row_while_the_preview_arrives_selects_the_recording() {
     let mut harness = association_dialog();
     harness.get(By::new().label("late.gtd")).click();
     harness.run_steps(3);
@@ -267,13 +267,14 @@ fn pressing_a_recording_row_while_the_stored_attachment_line_arrives_attaches_no
     association_dialog::tests::deliver_the_stored_attachment(&mut harness, STORED_ATTACHMENT_NAME);
     harness.run_steps(2);
     harness.press_where_the_pointer_rests(aimed_at);
+    assert!(harness.state().choice.is_none());
     harness.get(By::new().label(CONFIRM_LABEL)).click();
     harness.run_steps(2);
 
     assert!(
         matches!(
             harness.state().choice,
-            Some(LogAssociationChoice::SourceSelected(_))
+            Some(LogAssociationChoice::SaveRequested(_))
         ),
         "the press on a recording row reported {:?}",
         harness.state().choice,
