@@ -4009,4 +4009,5 @@ const PAGE_STEPS_TO_THE_END: usize = 60;
 
 mod integration;
 mod map_navigation;
+mod reset_clock;
 mod source_navigation;

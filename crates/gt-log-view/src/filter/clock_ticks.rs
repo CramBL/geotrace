@@ -5,7 +5,7 @@
 //! looks its tick up, and never walks the log for it.
 
 use chrono::{DateTime, Utc};
-use gt_logfile::{BootSession, ParsedLog};
+use gt_logfile::{BootSession, EligibleLogTime, ParsedLog};
 
 use crate::filter::stack::VisibleEntries;
 
@@ -101,13 +101,16 @@ impl ClockTicks {
         let mut row_ticks = Vec::with_capacity(visible.len());
         let mut day_dividers = Vec::new();
         let mut previous: Option<ClockFields> = None;
+        let mut opens_a_session = true;
         for (visible_row, entry_index) in visible.entry_indices().enumerate() {
-            let mut opens_a_session = previous.is_none();
             while session.is_some_and(|open: &BootSession| open.entry_range.end <= entry_index) {
                 session = sessions.next();
                 opens_a_session = true;
             }
-            let Some(timestamp) = resolved.timestamp(entry_index) else {
+            let Some(timestamp) = resolved
+                .eligible_time(entry_index)
+                .map(EligibleLogTime::timestamp)
+            else {
                 row_ticks.push(TimestampTick::default());
                 continue;
             };
@@ -121,6 +124,7 @@ impl ClockTicks {
             }
             row_ticks.push(tick);
             previous = Some(fields);
+            opens_a_session = false;
         }
         Self {
             row_ticks,
@@ -136,7 +140,10 @@ impl ClockTicks {
         let Some(resolved) = log.chronology().resolved() else {
             return TimestampTick::Weak;
         };
-        let Some(timestamp) = resolved.timestamp(entry_index) else {
+        let Some(timestamp) = resolved
+            .eligible_time(entry_index)
+            .map(EligibleLogTime::timestamp)
+        else {
             return TimestampTick::Weak;
         };
         let Some(previous_entry) = previous_entry else {
@@ -153,7 +160,8 @@ impl ClockTicks {
             return TimestampTick::Strong;
         }
         resolved
-            .timestamp(previous_entry)
+            .eligible_time(previous_entry)
+            .map(EligibleLogTime::timestamp)
             .map_or(TimestampTick::Strong, |previous| {
                 ClockFields::of(timestamp).tick_after(ClockFields::of(previous))
             })
@@ -483,6 +491,34 @@ mod tests {
             ],
             "the fixture writes one entry a second"
         );
+    }
+
+    #[rstest]
+    #[case::all("", vec![TimestampTick::Strong, TimestampTick::Weak, TimestampTick::Weak, TimestampTick::Strong, TimestampTick::Weak, TimestampTick::Weak, TimestampTick::Strong])]
+    #[case::reset_only("reset", vec![TimestampTick::Weak, TimestampTick::Weak])]
+    #[case::synchronized_only("synced", vec![TimestampTick::Strong, TimestampTick::Strong])]
+    fn device_clock_rows_have_weak_timestamp_ticks_and_no_day_dividers(
+        #[case] pattern: &str,
+        #[case] expected: Vec<TimestampTick>,
+    ) {
+        let text = gt_test_utils::MULTI_REBOOT_CLOCK_RESET_LOG.replace(
+            "Nov 09 08:00:00 host svc: first",
+            "Nov 09 09:00:00 host svc: first",
+        );
+        let log = Arc::new(test_util::parsed_log_of_text(&text));
+        let mut stack = FilterStack::new(Arc::clone(&log));
+        stack.set_live_filter_text(pattern);
+        stack.wait_for_queries();
+        assert_eq!(self::ticks_by_row(stack.clock_ticks()), expected);
+        assert!(stack.clock_ticks().day_dividers().is_empty());
+        let mut previous = None;
+        for (row, entry) in stack.visible_entries().entry_indices().enumerate() {
+            assert_eq!(
+                ClockTicks::tick_after_entry(&log, entry, previous),
+                expected[row]
+            );
+            previous = Some(entry);
+        }
     }
 
     /// A minute boundary, an hour boundary and a day boundary, each reached
