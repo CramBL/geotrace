@@ -20,6 +20,7 @@
 
 ### Fixed
 
+- **Log Viewer:** Fixed dimmed messages and missing service colors for entries without an associated position.
 - **Log Viewer:** Fixed table conditions changing meaning when removing their group.
 - **Log Viewer:** Fixed closing an inactive log changing the active log.
 - **Log Viewer:** Fixed Save with recording… changing a log's position source without saving it.
