@@ -317,21 +317,20 @@ fn the_menu_bar_icon_closes_and_reopens_the_viewer() {
 
 #[test]
 fn clicking_the_parse_summary_unfolds_the_boots_and_the_service_table() {
-    let mut harness = app_with_a_log_loaded();
+    let mut harness = self::app_with_a_log_loaded();
     assert!(
         harness.query_by_label("Boots").is_none(),
         "the summary panel starts folded away"
     );
 
-    let summary = parse_summary_of_the_shown_log(&harness);
+    let summary = self::parse_summary_of_the_shown_log(&harness);
     harness
         .get(By::new().label_contains(summary.as_str()))
         .click();
     harness.run_steps(3);
 
     harness.get_by_label("Boots");
-    harness.get_by_label("Service summary");
-    // What the fixture's exporter summary block states about the device.
+    harness.get_by_label("Exporter-reported service totals");
     harness.get_by_label("nav-devkit-mk2");
     harness.get_by_label("hal-powerd");
 }

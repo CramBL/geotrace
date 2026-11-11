@@ -1152,18 +1152,18 @@ fn the_summary_panel_lists_the_line_an_unexplained_backwards_step_lands_on() {
     harness.get_by_label("steps back 4m");
 }
 
-/// A log no exporter wrote a summary block for has no service table to show:
-/// the panel is the figures the parse derived.
 #[test]
 fn the_summary_panel_of_a_log_without_an_exporter_block_shows_the_derived_figures_alone() {
-    let mut harness = harness_with(Vec::new());
+    let mut harness = self::harness_with(Vec::new());
 
-    unfold_the_summary_panel(&mut harness);
+    self::unfold_the_summary_panel(&mut harness);
 
     harness.get_by_label("Format");
     harness.get_by_label("Boots");
     assert!(
-        harness.query_by_label("Service summary").is_none(),
+        harness
+            .query_by_label("Exporter-reported service totals")
+            .is_none(),
         "nothing in this log states a service table"
     );
 }
@@ -4196,6 +4196,7 @@ const POINTER_OFF_EVERY_WINDOW: egui::Pos2 = egui::Pos2::new(-10.0, -10.0);
 /// [`LONG_LOG_ENTRIES`] rows at any table height.
 const PAGE_STEPS_TO_THE_END: usize = 60;
 
+mod exporter_totals;
 mod integration;
 mod map_navigation;
 mod message_readability;
