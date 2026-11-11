@@ -13,7 +13,8 @@ use egui::{
 use egui_phosphor::regular::{EYE as ICON_EYE, EYE_SLASH as ICON_EYE_SLASH};
 use gt_log_view::{
     FilterChip, FilterChipId, FilterEffect, FilterGroup, FilterGroupId, FilterGroupOperator,
-    FilterScope, FilterStack, LayerColorSlots, LiveFilterDraft, LoadedLogs,
+    FilterScope, FilterStack, LayerColorSlots, LiveFilterDraft, LoadedLogs, TableFilterApplication,
+    TableFilterStatus,
 };
 use gt_logfile::{LogLevelKind, ParsedLog};
 use gt_ui_types::LoadedLogId;
@@ -32,6 +33,7 @@ enum FilterEdit {
     AddLiveFilterAsChip,
     CancelLiveFilter,
     ClearLiveFilter,
+    ClearTableFilters,
     CreateGroup,
     MoveChipToGroup {
         chip: FilterChipId,
@@ -56,6 +58,7 @@ enum FilterEdit {
     },
     SetLevel(LogLevelKind),
     SetScope(FilterScope),
+    SetTableApplication(TableFilterApplication),
     WriteLiveFilter(String),
 }
 
@@ -114,10 +117,27 @@ impl LogViewerWindow {
                 return;
             }
         }
+        if matches!(
+            edit,
+            FilterEdit::SetTableApplication(_) | FilterEdit::ClearTableFilters
+        ) {
+            self.scroll_to_source_line = self
+                .table_reading_anchor
+                .filter(|anchor| anchor.log == shown);
+        }
         let Some((stack, slots)) = logs.filter_stack_mut_by_id(shown) else {
             return;
         };
         match edit {
+            FilterEdit::ClearTableFilters => {
+                stack.clear_table_filters();
+                if stack.live_filter_effect() == FilterEffect::Table {
+                    self.filter_editor_log = None;
+                }
+            }
+            FilterEdit::SetTableApplication(application) => {
+                stack.set_table_application(application)
+            }
             FilterEdit::SetScope(scope) => stack.set_live_filter_scope(scope),
             FilterEdit::SetLevel(level) => stack.set_live_filter_level(level),
             FilterEdit::WriteLiveFilter(text) => stack.set_live_filter_text(&text),
@@ -344,6 +364,10 @@ impl LogViewerWindow {
         // Repaint without waiting for input: the scan finishes on a worker
         // thread.
         ui.ctx().request_repaint();
+        if filters.table_filter_status() != TableFilterStatus::Pending {
+            self.query_pending_since = None;
+            return None;
+        }
         let now = ui.input(|input| input.time);
         let since = *self.query_pending_since.get_or_insert(now);
         (now - since >= PENDING_NOTE_DELAY_SECS).then_some(PENDING_NOTE)
@@ -414,37 +438,9 @@ impl LogViewerWindow {
                 }
             });
         }
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .add_enabled(
-                    filters.live_filter_text().is_empty(),
-                    Button::new(NEW_GROUP_LABEL).small(),
-                )
-                .on_hover_text("Create another table filter group")
-                .on_disabled_hover_text(
-                    "Add or cancel the current condition before creating a group",
-                )
-                .clicked()
-            {
-                edit = Some(FilterEdit::CreateGroup);
-            }
-            let count = ui
-                .label(
-                    RichText::new(format!(
-                        "{} of {}",
-                        gt_fmt::format_count(filters.visible_entries().len()),
-                        gt_fmt::format_count(filters.entry_count())
-                    ))
-                    .weak(),
-                )
-                .on_hover_text(MATCH_COUNT_HOVER);
-            count
-                .ctx
-                .accesskit_node_builder(count.id, |node| node.set_author_id(MATCH_COUNT_ID));
-            if let Some(note) = pending_note {
-                ui.label(RichText::new(note).weak());
-            }
-        });
+        if let Some(table_edit) = table_filter_controls_ui(ui, filters, pending_note) {
+            edit = Some(table_edit);
+        }
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("Map highlights").strong());
             for chip in filters
@@ -479,6 +475,81 @@ impl LogViewerWindow {
         }
         edit
     }
+}
+
+fn table_filter_controls_ui(
+    ui: &mut egui::Ui,
+    filters: &FilterStack,
+    pending_note: Option<&str>,
+) -> Option<FilterEdit> {
+    let mut edit = None;
+    match filters.table_filter_status() {
+        TableFilterStatus::NoMatches => {
+            ui.label(NO_MATCHES_LABEL);
+        }
+        TableFilterStatus::EmptyLog => {
+            ui.label("This log has no parsed entries");
+        }
+        TableFilterStatus::Invalid => {
+            ui.label("Fix the invalid table condition");
+        }
+        TableFilterStatus::Matches | TableFilterStatus::Paused | TableFilterStatus::Pending => {}
+    }
+    ui.horizontal_wrapped(|ui| {
+        let (label, application) = match filters.table_application() {
+            TableFilterApplication::Active => {
+                (PAUSE_TABLE_FILTERS_LABEL, TableFilterApplication::Paused)
+            }
+            TableFilterApplication::Paused => {
+                (RESUME_TABLE_FILTERS_LABEL, TableFilterApplication::Active)
+            }
+        };
+        if ui
+            .small_button(label)
+            .on_hover_text("Keep conditions and map highlights while changing table filtering")
+            .clicked()
+        {
+            edit = Some(FilterEdit::SetTableApplication(application));
+        }
+        if ui
+            .small_button(CLEAR_TABLE_FILTERS_LABEL)
+            .on_hover_text("Remove all table conditions and the table draft. Keep map highlights.")
+            .clicked()
+        {
+            edit = Some(FilterEdit::ClearTableFilters);
+        }
+        if filters.table_application() == TableFilterApplication::Paused {
+            ui.label(TABLE_FILTERS_PAUSED_LABEL);
+        }
+        if ui
+            .add_enabled(
+                filters.live_filter_text().is_empty(),
+                Button::new(NEW_GROUP_LABEL).small(),
+            )
+            .on_hover_text("Create another table filter group")
+            .on_disabled_hover_text("Add or cancel the current condition before creating a group")
+            .clicked()
+        {
+            edit = Some(FilterEdit::CreateGroup);
+        }
+        let count = ui
+            .label(
+                RichText::new(format!(
+                    "{} of {}",
+                    gt_fmt::format_count(filters.visible_entries().len()),
+                    gt_fmt::format_count(filters.entry_count())
+                ))
+                .weak(),
+            )
+            .on_hover_text(MATCH_COUNT_HOVER);
+        count
+            .ctx
+            .accesskit_node_builder(count.id, |node| node.set_author_id(MATCH_COUNT_ID));
+        if let Some(note) = pending_note {
+            ui.label(RichText::new(note).weak());
+        }
+    });
+    edit
 }
 
 fn identify_editor(response: &egui::Response, filters: &FilterStack) {
@@ -865,7 +936,13 @@ pub(super) const ADD_FILTER_EMPTY_HOVER: &str = "Write a live filter to add it a
 pub(super) const ADD_FILTER_INVALID_HOVER: &str =
     "The live filter is added once its regular expression compiles";
 
-const CLEAR_LABEL: &str = "Clear";
+const CLEAR_LABEL: &str = "Clear condition";
+
+pub(super) const PAUSE_TABLE_FILTERS_LABEL: &str = "Pause table filters";
+pub(super) const RESUME_TABLE_FILTERS_LABEL: &str = "Resume table filters";
+pub(super) const CLEAR_TABLE_FILTERS_LABEL: &str = "Clear table filters";
+pub(super) const TABLE_FILTERS_PAUSED_LABEL: &str = "Table filters paused";
+pub(super) const NO_MATCHES_LABEL: &str = "No entries match these table filters";
 
 const CLEAR_HOVER: &str = "Empty the live filter";
 

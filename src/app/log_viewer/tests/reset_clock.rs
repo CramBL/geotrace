@@ -85,7 +85,7 @@ fn device_clock_source_rows_remain_copyable_and_reachable_without_a_map_target()
 
     super::type_into_live_filter(&mut harness, "reset");
     assert_eq!(super::match_count(&harness), "2 of 9");
-    harness.get_by_label("Clear").click();
+    harness.get_by_label("Clear condition").click();
     harness.run_steps(2);
     super::type_into_live_filter(&mut harness, "first");
     super::unfold_the_summary_panel(&mut harness);

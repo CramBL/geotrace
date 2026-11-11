@@ -21,7 +21,9 @@ use strum::IntoEnumIterator as _;
 
 use association_dialog::LogAssociationRequest;
 use association_window::{AssociationWindowEdit, AssociationWindowUnit};
-use line_table::{DiagnosticReveal, LineTableCache, LineTableRequests, RowHoverDwell};
+use line_table::{
+    DiagnosticReveal, LineTableCache, LineTableRequests, RowHoverDwell, TableReadingAnchor,
+};
 use restored_logs_badge::RestoredLogsBadge;
 use unresolved_years::LastEntryYearDraft;
 
@@ -65,6 +67,8 @@ pub(super) struct LogViewerWindow {
     show_structural_lines: bool,
     diagnostic_reveal: Option<DiagnosticReveal>,
     line_table_cache: Option<LineTableCache>,
+    table_reading_anchor: Option<TableReadingAnchor>,
+    scroll_to_source_line: Option<TableReadingAnchor>,
 
     /// When the shown log's filters started scanning, for the note the viewer
     /// shows once a scan runs long enough to notice.
@@ -179,6 +183,8 @@ impl LogViewerWindow {
             show_structural_lines: false,
             diagnostic_reveal: None,
             line_table_cache: None,
+            table_reading_anchor: None,
+            scroll_to_source_line: None,
             query_pending_since: None,
             filter_editor_log: None,
             filter_editor_focus: false,
