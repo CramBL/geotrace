@@ -1887,7 +1887,9 @@ fn the_footer_requests_the_association_dialog_for_the_shown_log() {
 
     assert_eq!(
         harness.state().requests.open_association_dialog,
-        Some(shown)
+        Some(super::association_dialog::LogAssociationRequest::Save(
+            shown
+        ))
     );
 }
 

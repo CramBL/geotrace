@@ -19,6 +19,7 @@ use gt_ui_types::{LoadedLogId, LogMatchGlyph, LogMatchHover};
 use rustc_hash::FxHashMap;
 use strum::IntoEnumIterator as _;
 
+use association_dialog::LogAssociationRequest;
 use association_window::{AssociationWindowEdit, AssociationWindowUnit};
 use line_table::{DiagnosticReveal, LineTableCache, LineTableRequests, RowHoverDwell};
 use restored_logs_badge::RestoredLogsBadge;
@@ -128,7 +129,7 @@ pub(super) struct LogViewerContext<'a> {
 #[derive(Debug, Default)]
 pub(super) struct LogViewerRequests {
     /// Open the association dialog on this log.
-    pub open_association_dialog: Option<LoadedLogId>,
+    pub open_association_dialog: Option<LogAssociationRequest>,
 
     /// Remove this log's attachment from the history database.
     pub detach: Option<LoadedLogId>,
@@ -606,6 +607,7 @@ impl LogViewerWindow {
                         }
                     })
                     .response
+                    .on_hover_text("Choose the position source for this session")
                     .on_disabled_hover_text(if !capabilities.select_position_source {
                         association_dialog::OPERATION_UNAVAILABLE_HOVER
                     } else if years_resolved {
@@ -662,7 +664,7 @@ impl LogViewerWindow {
                 Button::new(ATTACH_LABEL),
             );
             if attach.clicked() {
-                requests.open_association_dialog = selected;
+                requests.open_association_dialog = selected.map(LogAssociationRequest::Save);
             }
             attach
                 .on_hover_text(ATTACH_HOVER)

@@ -28,8 +28,8 @@ use gt_ui_types::LoadedLogId;
 use rstest::rstest;
 
 use super::{
-    ATTACH_LABEL, AUTOMATIC_POSITION_SOURCE_LABEL, CANCEL_LABEL, CONFIRM_LABEL,
-    LogAssociationChoice, LogAssociationDialog, TITLE,
+    AUTOMATIC_POSITION_SOURCE_LABEL, CANCEL_LABEL, CONFIRM_LABEL, LogAssociationChoice,
+    LogAssociationDialog, LogAssociationRequest, SAVE_CONFIRM_LABEL, SAVE_TITLE, TITLE,
 };
 
 fn log_start() -> DateTime<Utc> {
@@ -43,9 +43,17 @@ pub(in crate::app) struct DialogState {
     log: LoadedLog,
     recordings: LoadedFiles,
     pub(in crate::app) choice: Option<LogAssociationChoice>,
-    /// What the session may write, which is what grays the attach tickbox.
     write_access: WriteAccess,
     initial_position_source_policy: InitialPositionSourcePolicy,
+}
+
+impl DialogState {
+    pub(in crate::app) fn open_save_dialog(&mut self) {
+        self.dialog = LogAssociationDialog::for_request(
+            LogAssociationRequest::Save(self.dialog.log()),
+            self.dialog.selected,
+        );
+    }
 }
 
 /// A recording of `seconds` fixes starting `offset` after the log does.
@@ -95,12 +103,22 @@ pub(in crate::app) fn stored_in_history(identity: &str) -> FileHistory {
     )
 }
 
-/// The dialog open on the fixture log over `recordings`, with nothing
-/// preselected.
 fn harness_over(
     recordings: Vec<(gt_types::LoadedFile, FileHistory)>,
 ) -> Harness<'static, DialogState> {
     harness_over_sized(recordings, DIALOG_SIZE)
+}
+
+fn harness_for_saving(
+    recordings: Vec<(gt_types::LoadedFile, FileHistory)>,
+) -> Harness<'static, DialogState> {
+    let mut state = dialog_state(LOG, recordings);
+    state.dialog = LogAssociationDialog::for_request(LogAssociationRequest::Save(SHOWN_LOG), None);
+    let mut harness = Harness::builder()
+        .with_size(DIALOG_SIZE)
+        .build_ui_state(dialog_ui, state);
+    harness.run_steps(3);
+    harness
 }
 
 pub(in crate::app) fn harness_over_sized(
@@ -125,7 +143,10 @@ fn dialog_state(
     let parsed = gt_logfile::parse_log(log_text.into(), log_start())
         .unwrap_or_else(|error| panic!("the fixture log parses: {error}"));
     DialogState {
-        dialog: LogAssociationDialog::new(SHOWN_LOG, None),
+        dialog: LogAssociationDialog::for_request(
+            LogAssociationRequest::SelectSource(SHOWN_LOG),
+            None,
+        ),
         log: LoadedLog::new(
             Some("navsyncd.log".to_owned()),
             parsed,
@@ -136,18 +157,6 @@ fn dialog_state(
         write_access: WriteAccess::Owner,
         initial_position_source_policy: InitialPositionSourcePolicy::Ask,
     }
-}
-
-/// The dialog in a harness that renders, which the snapshot reads.
-fn rendering_harness_over(
-    recordings: Vec<(gt_types::LoadedFile, FileHistory)>,
-    viewport: egui::Vec2,
-) -> TestHarness<'static, DialogState> {
-    let mut harness = TestHarness::builder()
-        .size(viewport)
-        .ui_state(dialog_ui, dialog_state(LOG, recordings));
-    harness.inner.run_steps(3);
-    harness
 }
 
 fn dialog_ui(ui: &mut egui::Ui, state: &mut DialogState) {
@@ -216,22 +225,64 @@ fn confirm(harness: &mut Harness<DialogState>) {
     harness.run_steps(2);
 }
 
-#[rstest]
-#[case::resolved_years(LOG, "Which recording should navsyncd.log take its positions from?")]
-#[case::unresolved_years(
-    gt_test_utils::UNRESOLVED_YEARS_LOG,
-    "Which recording should navsyncd.log take its positions from once its years are resolved?"
-)]
-fn the_question_states_when_the_log_takes_its_positions(
-    #[case] log_text: &str,
-    #[case] question: &str,
-) {
-    let mut harness = Harness::builder()
-        .with_size(DIALOG_SIZE)
-        .build_ui_state(dialog_ui, dialog_state(log_text, Vec::new()));
-    harness.run_steps(3);
+#[test]
+fn source_selection_explicitly_applies_to_the_session() {
+    let mut harness = harness_over(Vec::new());
+    harness.get_by_label("Position source for this session");
+    harness.get_by_label(super::NO_SOURCE_LABEL);
+    confirm(&mut harness);
+    assert_eq!(
+        harness.state().choice,
+        Some(LogAssociationChoice::SourceSelected(
+            PositionSourceSelection::NoSource
+        ))
+    );
+}
 
-    harness.get_by_label(question);
+#[rstest]
+#[case::dark(true, "unresolved_save_dialog_dark")]
+#[case::light(false, "unresolved_save_dialog_light")]
+fn unresolved_save_destinations_have_focusable_unavailable_overlap(
+    #[case] dark_mode: bool,
+    #[case] snapshot_name: &str,
+) {
+    let mut state = dialog_state(
+        gt_test_utils::UNRESOLVED_YEARS_LOG,
+        vec![(
+            recording("stored.gtd", Duration::zero(), 10),
+            stored_in_history("nav-devkit-mk2"),
+        )],
+    );
+    state.open_save_dialog();
+    let mut harness = TestHarness::builder()
+        .size(DIALOG_SIZE)
+        .theme(dark_mode)
+        .ui_state(dialog_ui, state);
+    harness.inner.run_steps(3);
+    assert!(
+        harness
+            .inner
+            .query_by_label(super::NO_OVERLAP_LABEL)
+            .is_none()
+    );
+    let status = harness
+        .inner
+        .get_by_label_contains(super::UNAVAILABLE_OVERLAP_LABEL);
+    assert_eq!(
+        status.accesskit_node().description().as_deref(),
+        Some(super::UNRESOLVED_OVERLAP_HOVER)
+    );
+    status.focus();
+    harness.inner.run_steps(2);
+    harness.inner.get_by_label(super::UNRESOLVED_OVERLAP_HOVER);
+    select(&mut harness.inner, "stored.gtd");
+    let save = harness.inner.get_by_label(SAVE_CONFIRM_LABEL);
+    assert!(!save.accesskit_node().is_disabled());
+    assert_eq!(
+        save.accesskit_node().description().as_deref(),
+        Some("Save navsyncd.log with stored.gtd")
+    );
+    harness.snapshot(snapshot_name);
 }
 
 /// The ranking the dialog lists in, each row stating how much of the log the
@@ -311,11 +362,9 @@ fn cancelling_reports_that_nothing_was_decided() {
     );
 }
 
-/// Only a recording the history database holds can take an attachment: the
-/// tickbox stays drawn, grayed with hover text saying so.
 #[test]
-fn attaching_is_offered_only_for_a_recording_the_history_database_holds() {
-    let mut harness = harness_over(vec![
+fn saving_requires_a_stored_destination() {
+    let mut harness = harness_for_saving(vec![
         (
             recording("dropped.gtd", Duration::zero(), 10),
             FileHistory::None,
@@ -327,25 +376,25 @@ fn attaching_is_offered_only_for_a_recording_the_history_database_holds() {
     ]);
     assert!(
         harness
-            .get_by_label(ATTACH_LABEL)
-            .accesskit_node()
-            .is_disabled(),
-        "nothing to attach to yet: no recording is selected"
-    );
-
-    select(&mut harness, "dropped.gtd");
-    assert!(
-        harness
-            .get_by_label(ATTACH_LABEL)
+            .get_by_label(SAVE_CONFIRM_LABEL)
             .accesskit_node()
             .is_disabled()
     );
-
+    assert!(
+        harness
+            .get_by_label("dropped.gtd")
+            .accesskit_node()
+            .is_disabled()
+    );
+    assert!(harness.query_by_label(super::NO_SOURCE_LABEL).is_none());
+    assert!(
+        harness
+            .query_by_label(AUTOMATIC_POSITION_SOURCE_LABEL)
+            .is_none()
+    );
     select(&mut harness, "stored.gtd");
-    harness.get_by_label(ATTACH_LABEL).click();
+    harness.get_by_label(SAVE_CONFIRM_LABEL).click();
     harness.run_steps(2);
-    confirm(&mut harness);
-
     assert_eq!(
         harness.state().choice,
         Some(LogAssociationChoice::SaveRequested(
@@ -354,59 +403,23 @@ fn attaching_is_offered_only_for_a_recording_the_history_database_holds() {
     );
 }
 
-/// A read-only session attaches nothing either: the tickbox for a recording
-/// the history database holds is grayed, saying what the session leaves
-/// alone.
 #[test]
-fn attaching_is_not_offered_in_a_read_only_session() {
-    let mut harness = harness_over(vec![(
+fn saving_is_disabled_in_a_read_only_session() {
+    let mut harness = harness_for_saving(vec![(
         recording("stored.gtd", Duration::zero(), 10),
         stored_in_history("nav-devkit-mk2"),
     )]);
     harness.state_mut().write_access = WriteAccess::ReadOnly;
-    select(&mut harness, "stored.gtd");
-
-    let attach = harness.get_by_label(ATTACH_LABEL);
-    assert!(attach.accesskit_node().is_disabled());
-    let attach_center = attach.rect().center();
-
-    harness.hover_at_and_settle(attach_center, 3);
-
+    harness.run_steps(2);
+    let save = harness.get_by_label(SAVE_CONFIRM_LABEL);
+    assert!(save.accesskit_node().is_disabled());
+    let position = save.rect().center();
+    harness.hover_at_and_settle(position, 3);
     harness.get_by_label_contains(READ_ONLY_RECORDING_HISTORY_HOVER);
 }
 
-/// Selecting a recording outside history clears the attach tickbox, so
-/// confirming never reports `attach` for a recording that cannot hold an
-/// attachment.
 #[test]
-fn switching_to_a_recording_outside_history_clears_the_attach_tickbox() {
-    let mut harness = harness_over(vec![
-        (
-            recording("dropped.gtd", Duration::zero(), 10),
-            FileHistory::None,
-        ),
-        (
-            recording("stored.gtd", Duration::zero(), 10),
-            stored_in_history("nav-devkit-mk2"),
-        ),
-    ]);
-    select(&mut harness, "stored.gtd");
-    harness.get_by_label(ATTACH_LABEL).click();
-    harness.run_steps(2);
-
-    select(&mut harness, "dropped.gtd");
-    confirm(&mut harness);
-
-    assert_eq!(
-        harness.state().choice,
-        Some(LogAssociationChoice::SourceSelected(
-            PositionSourceSelection::Recording(recording_id(&harness, 0).unwrap())
-        ))
-    );
-}
-
-#[test]
-fn saved_log_save_checkbox_has_the_capability_restriction_hover() {
+fn saved_log_save_action_has_the_capability_restriction_hover() {
     let mut state = dialog_state(
         LOG,
         vec![(
@@ -414,6 +427,7 @@ fn saved_log_save_checkbox_has_the_capability_restriction_hover() {
             stored_in_history("nav-devkit-mk2"),
         )],
     );
+    state.dialog = LogAssociationDialog::for_request(LogAssociationRequest::Save(SHOWN_LOG), None);
     let settings = state.log.settings_snapshot();
     let mut logs = LoadedLogs::default();
     let id = logs
@@ -432,18 +446,16 @@ fn saved_log_save_checkbox_has_the_capability_restriction_hover() {
         .with_size(DIALOG_SIZE)
         .build_ui_state(dialog_ui, state);
     harness.run_steps(3);
-    let checkbox = harness.get_by_label(ATTACH_LABEL);
-    assert!(checkbox.accesskit_node().is_disabled());
-    let position = checkbox.rect().center();
+    let save = harness.get_by_label(SAVE_CONFIRM_LABEL);
+    assert!(save.accesskit_node().is_disabled());
+    let position = save.rect().center();
     harness.hover_at_and_settle(position, 3);
     harness.get_by_label_contains(super::OPERATION_UNAVAILABLE_HOVER);
 }
 
-/// Attaching a log the recording already holds offers the stored attachment
-/// for reuse: the dialog states that, and hands the attachment to the app.
 #[test]
 fn a_recording_that_already_holds_this_log_offers_that_attachment_for_reuse() {
-    let mut harness = harness_over(vec![(
+    let mut harness = harness_for_saving(vec![(
         recording("stored.gtd", Duration::zero(), 10),
         stored_in_history("nav-devkit-mk2"),
     )]);
@@ -469,7 +481,7 @@ fn a_recording_that_already_holds_this_log_offers_that_attachment_for_reuse() {
     );
     harness.run_steps(2);
 
-    harness.get_by_label_contains("Saving uses that log again");
+    harness.get_by_label_contains("Saving reuses this attachment");
     assert_eq!(
         harness
             .state()
@@ -494,7 +506,7 @@ fn a_recording_that_already_holds_this_log_offers_that_attachment_for_reuse() {
 /// and the confirm button stays where it was.
 #[test]
 fn confirming_as_the_stored_attachment_line_appears_reports_the_decision() {
-    let mut harness = harness_over(vec![(
+    let mut harness = harness_for_saving(vec![(
         recording("stored.gtd", Duration::zero(), 10),
         stored_in_history("nav-devkit-mk2"),
     )]);
@@ -502,14 +514,17 @@ fn confirming_as_the_stored_attachment_line_appears_reports_the_decision() {
     deliver_the_stored_attachment(&mut harness, "navsyncd.log");
     harness.step();
 
-    let confirm = harness.get(By::new().label(CONFIRM_LABEL)).rect().center();
+    let confirm = harness
+        .get(By::new().label(SAVE_CONFIRM_LABEL))
+        .rect()
+        .center();
     harness.click_at(confirm);
     harness.run_steps(2);
 
     assert_eq!(
         harness.state().choice,
-        Some(LogAssociationChoice::SourceSelected(
-            PositionSourceSelection::Recording(recording_id(&harness, 0).unwrap())
+        Some(LogAssociationChoice::SaveRequested(
+            recording_id(&harness, 0).unwrap()
         ))
     );
 }
@@ -518,7 +533,7 @@ fn confirming_as_the_stored_attachment_line_appears_reports_the_decision() {
 /// frame.
 #[test]
 fn the_duplicate_query_is_sent_once_per_chosen_recording() {
-    let mut harness = harness_over(vec![(
+    let mut harness = harness_for_saving(vec![(
         recording("stored.gtd", Duration::zero(), 10),
         stored_in_history("nav-devkit-mk2"),
     )]);
@@ -547,17 +562,45 @@ fn another_db_ref() -> DatabaseRef {
     }
 }
 
-/// The dialog on a recording whose duplicate-attachment query has not returned
-/// yet: the room the result takes is part of the window from the frame it
-/// opens.
 #[rstest::rstest]
-#[case::default_width(DIALOG_SIZE, "association_dialog_answer_pending")]
-#[case::narrow_width(egui::vec2(440.0, 420.0), "association_dialog_answer_pending_narrow")]
-fn snapshot_the_association_dialog_while_the_stored_attachment_result_is_pending(
+#[case::save_dark(
+    DIALOG_SIZE,
+    true,
+    LogAssociationRequest::Save(SHOWN_LOG),
+    "association_dialog_answer_pending"
+)]
+#[case::save_light(
+    DIALOG_SIZE,
+    false,
+    LogAssociationRequest::Save(SHOWN_LOG),
+    "save_log_dialog_light"
+)]
+#[case::source_dark(
+    DIALOG_SIZE,
+    true,
+    LogAssociationRequest::SelectSource(SHOWN_LOG),
+    "position_source_dialog_dark"
+)]
+#[case::source_light(
+    DIALOG_SIZE,
+    false,
+    LogAssociationRequest::SelectSource(SHOWN_LOG),
+    "position_source_dialog_light"
+)]
+#[case::narrow_width(
+    egui::vec2(440.0, 420.0),
+    true,
+    LogAssociationRequest::Save(SHOWN_LOG),
+    "association_dialog_answer_pending_narrow"
+)]
+fn snapshot_log_save_and_position_source_dialogs(
     #[case] viewport: egui::Vec2,
+    #[case] dark_mode: bool,
+    #[case] request: LogAssociationRequest,
     #[case] snapshot_name: &str,
 ) {
-    let mut harness = rendering_harness_over(
+    let state = dialog_state(
+        LOG,
         vec![
             (
                 recording("alongside.gtd", Duration::zero(), 10),
@@ -568,8 +611,14 @@ fn snapshot_the_association_dialog_while_the_stored_attachment_result_is_pending
                 stored_in_history("nav-devkit-mk4"),
             ),
         ],
-        viewport,
     );
+    let mut harness = TestHarness::builder()
+        .size(viewport)
+        .theme(dark_mode)
+        .ui_state(dialog_ui, state);
+    let saving = matches!(request, LogAssociationRequest::Save(_));
+    harness.inner.state_mut().dialog = LogAssociationDialog::for_request(request, None);
+    harness.inner.run_steps(3);
     harness.inner.get_by_label("late.gtd").click();
     harness.inner.run_steps(2);
     let state = harness.inner.state_mut();
@@ -577,28 +626,27 @@ fn snapshot_the_association_dialog_while_the_stored_attachment_result_is_pending
     state.dialog.duplicate_query_to_send(recordings);
     harness.inner.run_steps(2);
 
+    let (title, confirm_label) = if saving {
+        (SAVE_TITLE, SAVE_CONFIRM_LABEL)
+    } else {
+        (TITLE, CONFIRM_LABEL)
+    };
     let window = harness
         .inner
         .ctx
-        .memory(|memory| memory.area_rect(egui::Id::new(Some(TITLE))))
+        .memory(|memory| memory.area_rect(egui::Id::new(Some(title))))
         .expect("association dialog");
     assert!(window.width() <= 460.0);
-    let confirm = harness.inner.get_by_label(CONFIRM_LABEL).rect();
+    let confirm = harness.inner.get_by_label(confirm_label).rect();
     let cancel = harness.inner.get_by_label(CANCEL_LABEL).rect();
-    let preference = harness
-        .inner
-        .get_by_label(AUTOMATIC_POSITION_SOURCE_LABEL)
-        .rect();
     assert!((confirm.center().y - cancel.center().y).abs() < 1.0);
     assert!(cancel.max.x < confirm.min.x);
-    assert!(preference.max.x < cancel.min.x);
-    assert!(preference.height() > confirm.height());
-    for control in [preference, cancel, confirm] {
+    for control in [cancel, confirm] {
         assert!(window.contains_rect(control));
     }
     harness
         .inner
-        .assert_window_fits_the_viewport(AuditedWindow::titled(TITLE));
+        .assert_window_fits_the_viewport(AuditedWindow::titled(title));
     harness.snapshot(snapshot_name);
 }
 

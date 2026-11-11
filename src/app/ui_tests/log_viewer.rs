@@ -522,10 +522,6 @@ fn snapshot_app_log_viewer_filters() {
     harness.snapshot_with_color_tolerance("app_log_viewer_filters");
 }
 
-/// The association dialog over a freshly loaded log: the loaded recordings
-/// ranked by how much of the log each ran alongside, the one that missed it
-/// grayed, and the attach tickbox live for a recording the history database
-/// holds.
 #[test]
 fn snapshot_log_association_dialog() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -558,15 +554,14 @@ fn snapshot_log_association_dialog() {
     );
     harness.inner.run_steps(5);
 
-    harness
-        .inner
-        .get_by_label(log_viewer::association_dialog::ATTACH_LABEL)
-        .click();
+    harness.inner.get_by_label("Cancel").click();
+    harness.inner.run_steps(2);
+    harness.inner.get_by_label(log_viewer::ATTACH_LABEL).click();
     harness.inner.run_steps(5);
 
     let dialog = harness
         .inner
-        .get_by_role_and_label(Role::Window, log_viewer::association_dialog::TITLE)
+        .get_by_role_and_label(Role::Window, log_viewer::association_dialog::SAVE_TITLE)
         .rect();
     assert!(dialog.center().distance(egui::pos2(640.0, 400.0)) < 0.5);
     harness

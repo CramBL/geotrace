@@ -11,7 +11,7 @@ use egui_phosphor::regular::{ARTICLE as ICON_ARTICLE, WARNING as ICON_WARNING};
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_log_view::{
     AttachmentSettingsStatus, FilterEffect, FilterGroupOperator, FilterPattern, LoadedLog,
-    LogAttachmentRef, LogSaveReceipt, RecordingKey,
+    LogAttachmentRef, LogSaveReceipt, PositionSourceState, RecordingKey,
 };
 use gt_logfile::{LogChronology, YearResolution};
 use gt_pending_writes::WriteAccess;
@@ -32,6 +32,7 @@ use gt_types::{FileIdx, Latitude, Longitude};
 use crate::app::App;
 use crate::app::history_db::{HistoryWorker, RestoredLogAttachment};
 use crate::app::loader::{self, AttachedLogRequester, AttachedLogRestore};
+use crate::app::log_viewer::association_dialog::LogAssociationRequest;
 use crate::app::log_viewer::{self, association_dialog, filters};
 use crate::app::modals::{DELETE_PERMANENTLY_BUTTON_LABEL, SHELVE_BUTTON_LABEL};
 use crate::app::settings_ui;
@@ -78,9 +79,15 @@ fn dialog_is_open(harness: &Harness<App>) -> bool {
 }
 
 fn confirm(harness: &mut Harness<App>) {
-    harness
-        .get(By::new().label(association_dialog::CONFIRM_LABEL))
-        .click();
+    let label = if harness
+        .query_by_label(association_dialog::SAVE_CONFIRM_LABEL)
+        .is_some()
+    {
+        association_dialog::SAVE_CONFIRM_LABEL
+    } else {
+        association_dialog::CONFIRM_LABEL
+    };
+    harness.get_by_label(label).click();
     harness.run_steps(3);
 }
 
@@ -130,17 +137,27 @@ fn harness_over_a_recording_and_its_log(
     (harness, db_ref)
 }
 
-/// Ticks the dialog's attach box and confirms it, leaving the log stored
-/// with the recording it was associated against.
+fn open_save_dialog(harness: &mut Harness<App>) {
+    if harness
+        .query_by_label(association_dialog::SAVE_CONFIRM_LABEL)
+        .is_some()
+    {
+        return;
+    }
+    if dialog_is_open(harness) {
+        cancel(harness);
+    }
+    harness.get_by_label(log_viewer::ATTACH_LABEL).click();
+    harness.run_steps(3);
+    harness.get_by_label(association_dialog::SAVE_TITLE);
+}
+
 fn attach_the_log(
     harness: &mut Harness<App>,
     db_path: &std::path::Path,
     db_ref: &gt_store::DatabaseRef,
 ) {
-    harness
-        .get_by_label(association_dialog::ATTACH_LABEL)
-        .click();
-    harness.run_steps(2);
+    open_save_dialog(harness);
     confirm(harness);
     assert!(
         harness.step_until(|_| !stored_attachments(db_path, db_ref).is_empty()),
@@ -175,14 +192,9 @@ fn stored_recording(harness: &Harness<App>) -> gt_store::DatabaseRef {
 /// the log's positions from it.
 #[test]
 fn confirming_the_dialog_associates_the_log_with_the_preselected_recording() {
-    let mut harness = Harness::builder()
-        .with_wait_for_pending_images(false)
-        .build_eframe(test_util::harness::transient_app);
-    test_util::harness::drop_file_and_wait_for_load(
-        &mut harness,
-        ui_tests::recording_alongside_the_log("walk.gtd", 55.0),
-    );
-    drop_the_log(&mut harness);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("geotrace.h5");
+    let (mut harness, recording) = harness_over_a_recording_and_its_log(&path);
 
     assert!(dialog_is_open(&harness), "a loaded log raises the dialog");
     harness.get_by_label(association_dialog::TITLE);
@@ -202,6 +214,40 @@ fn confirming_the_dialog_associates_the_log_with_the_preselected_recording() {
             .is_some_and(|log| log.associated_entry_count() > 0),
         "the preselected recording is what the log associates against"
     );
+    assert!(stored_attachments(&path, &recording).is_empty());
+}
+
+#[test]
+fn cancelling_save_preserves_pending_initial_source_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("geotrace.h5");
+    let (mut harness, recording) = harness_over_a_recording_and_its_log(&path);
+    let id = harness.state().logs.first_id().unwrap();
+    let before = harness
+        .state()
+        .logs
+        .get_by_id(id)
+        .unwrap()
+        .position_source_state();
+    assert_eq!(before, PositionSourceState::PendingInitialSelection);
+    harness
+        .state_mut()
+        .log_viewer_requests
+        .open_association_dialog = Some(LogAssociationRequest::Save(id));
+    harness.state_mut().apply_log_viewer_requests();
+    harness.run_steps(3);
+    harness.get_by_label(association_dialog::SAVE_TITLE);
+    cancel(&mut harness);
+    assert_eq!(
+        harness
+            .state()
+            .logs
+            .get_by_id(id)
+            .unwrap()
+            .position_source_state(),
+        before
+    );
+    assert!(stored_attachments(&path, &recording).is_empty());
 }
 
 /// Several overlapping recordings leave the choice to the user: confirming
@@ -271,7 +317,11 @@ fn a_log_with_unresolved_years_saved_with_a_recording_reopens_unresolved() {
     harness
         .state_mut()
         .log_viewer_requests
-        .open_association_dialog = harness.state().logs.first_id();
+        .open_association_dialog = harness
+        .state()
+        .logs
+        .first_id()
+        .map(LogAssociationRequest::Save);
     harness.state_mut().apply_log_viewer_requests();
     harness.run_steps(3);
     harness
@@ -304,6 +354,10 @@ fn a_log_with_unresolved_years_saved_with_a_recording_reopens_unresolved() {
         log.parsed().chronology(),
         LogChronology::Unresolved(_)
     ));
+    assert_eq!(
+        log.parsed().text().as_ref(),
+        gt_test_utils::UNRESOLVED_YEARS_LOG
+    );
     assert_eq!(log.associated_entry_count(), 0);
     harness.run_steps(3);
     harness.get_by_label("Cannot resolve the year of log line 3");
@@ -370,7 +424,11 @@ fn a_year_applied_to_a_saved_log_with_unresolved_years_resolves_it_when_it_reope
     harness
         .state_mut()
         .log_viewer_requests
-        .open_association_dialog = harness.state().logs.first_id();
+        .open_association_dialog = harness
+        .state()
+        .logs
+        .first_id()
+        .map(LogAssociationRequest::Save);
     harness.state_mut().apply_log_viewer_requests();
     harness.run_steps(3);
     harness
@@ -717,7 +775,7 @@ fn enabling_automatic_position_source_in_settings_and_disabling_in_the_dialog(
     harness
         .state_mut()
         .log_viewer_requests
-        .open_association_dialog = Some(log_id);
+        .open_association_dialog = Some(LogAssociationRequest::SelectSource(log_id));
     harness.state_mut().apply_log_viewer_requests();
     harness.run_steps(3);
     let checkbox = harness.get_by_label(association_dialog::AUTOMATIC_POSITION_SOURCE_LABEL);
@@ -1126,16 +1184,15 @@ fn saving_a_duplicate_log_preserves_attachment_identity_and_updates_complete_set
         .set_attached_log_settings(&db_ref, stored, persisted)
         .unwrap();
     drop_the_log(&mut harness);
+    open_save_dialog(&mut harness);
     let desired = harness.state().first_log().unwrap().settings_snapshot();
     assert!(
         harness.step_until(|harness| harness
-            .query_by_label_contains("Saving uses that log again")
+            .query_by_label_contains("Saving reuses this attachment")
             .is_some()),
         "the dialog states what the recording already holds"
     );
-    harness
-        .get(By::new().label(association_dialog::ATTACH_LABEL))
-        .click();
+    open_save_dialog(&mut harness);
     harness.state_mut().toasts.dismiss_all_toasts();
     confirm(&mut harness);
 
@@ -1966,9 +2023,7 @@ fn attaching_to_a_recording_deleted_mid_session_reports_the_failure() {
         .expect("the recording is deletable");
     drop(db);
 
-    harness
-        .get_by_label(association_dialog::ATTACH_LABEL)
-        .click();
+    open_save_dialog(&mut harness);
     harness.run_steps(2);
     confirm(&mut harness);
 
@@ -2474,7 +2529,8 @@ fn a_saved_log_loads_separately_from_incompatible_loose_content(
             .expect("loose log")
             .anchor_to(key.clone(), &shared.borrow().loaded_files.view());
     }
-    open_the_stored_log(&harness, &recording, attachment_id);
+    harness.state().history.open(recording.clone());
+    test_util::harness::step_until_a_recording_is_loaded(&mut harness);
     assert!(harness.step_until(|harness| harness.state().logs.len() == 2));
     let loose = harness.state().logs.get_by_id(loose_id).expect("loose log");
     assert_eq!(loose.anchor_key().as_ref(), anchor.as_ref());
@@ -2489,7 +2545,12 @@ fn a_saved_log_loads_separately_from_incompatible_loose_content(
         .id_of_attachment(&attachment)
         .expect("saved log is loaded");
     assert_ne!(loose_id, saved_id);
-    assert_eq!(harness.state().log_viewer.selected_log(), Some(saved_id));
+    assert_eq!(harness.state().log_viewer.selected_log(), Some(loose_id));
+    open_the_stored_log(&harness, &attachment.recording, attachment_id);
+    assert!(
+        harness
+            .step_until(|harness| { harness.state().log_viewer.selected_log() == Some(saved_id) })
+    );
     let entry = stored_attachments(&db_path, &attachment.recording)
         .into_iter()
         .next()
@@ -2497,22 +2558,18 @@ fn a_saved_log_loads_separately_from_incompatible_loose_content(
     let saved_filters = entry.attachment.settings.filters.clone();
     harness.state_mut().log_viewer.open_on_log(loose_id);
 
-    harness.state().history.open(attachment.recording.clone());
-    test_util::harness::step_until_a_recording_is_loaded(&mut harness);
     harness
         .state_mut()
         .log_viewer_requests
-        .open_association_dialog = Some(loose_id);
+        .open_association_dialog = Some(LogAssociationRequest::Save(loose_id));
     harness.state_mut().apply_log_viewer_requests();
     harness.run_steps(3);
     assert!(harness.step_until(|harness| {
         harness
-            .query_by_label_contains("Saving uses that log again")
+            .query_by_label_contains("Saving reuses this attachment")
             .is_some()
     }));
-    harness
-        .get_by_label(association_dialog::ATTACH_LABEL)
-        .click();
+    open_save_dialog(&mut harness);
     confirm(&mut harness);
 
     assert!(harness.step_until(|harness| {

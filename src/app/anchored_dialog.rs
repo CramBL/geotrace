@@ -20,6 +20,7 @@ pub(super) enum AnchoredDialogKind {
     MapboxToken,
     RecordingsAlreadyInHistory,
     RecoverArchive,
+    SaveLog,
     ShelveItems,
     SnapToRoadAgain,
     SnapToRoadAutomatically,
@@ -48,7 +49,7 @@ impl AnchoredDialogKind {
             Self::ArchiveHeldByTheOtherInstance => 460.0,
             // Room for a recording name beside how much of the log it ran
             // alongside.
-            Self::AssociateLog => 460.0,
+            Self::AssociateLog | Self::SaveLog => 460.0,
             // Room for a recording identity and its group name on one line.
             Self::AutoPrune => 480.0,
             // Room for an archive's name beside the days it loses, and for a

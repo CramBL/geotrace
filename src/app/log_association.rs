@@ -21,7 +21,9 @@ use super::App;
 use super::history_db::{ExistingLogAttachment, RestoredLogAttachment};
 use super::load_failures::{LoadFailure, LoadFailureCause, LoadSource};
 use super::loader;
-use super::log_viewer::association_dialog::{LogAssociationChoice, LogAssociationDialog};
+use super::log_viewer::association_dialog::{
+    LogAssociationChoice, LogAssociationDialog, LogAssociationRequest,
+};
 use super::log_viewer::{AttachmentToLoad, YearsToResolve};
 
 impl App {
@@ -119,8 +121,8 @@ impl App {
     /// Applies the requests the log viewer's footer made while it drew.
     pub(super) fn apply_log_viewer_requests(&mut self) {
         let requests = mem::take(&mut self.log_viewer_requests);
-        if let Some(log_id) = requests.open_association_dialog {
-            self.open_log_association_dialog(log_id);
+        if let Some(request) = requests.open_association_dialog {
+            self.open_log_association_dialog(request);
         }
         if let Some(log_id) = requests.detach {
             self.detach_log(log_id);
@@ -243,7 +245,7 @@ impl App {
             && !candidates.ranked().is_empty()
         {
             drop(shared);
-            self.open_log_association_dialog(log_id);
+            self.open_log_association_dialog(LogAssociationRequest::SelectSource(log_id));
             return;
         }
         if let Err(error) = self.logs.select_position_source(
@@ -383,7 +385,8 @@ impl App {
 
     /// Opens the dialog on a log already loaded, on the recording it is
     /// associated with, or the only one overlapping it.
-    fn open_log_association_dialog(&mut self, log_id: LoadedLogId) {
+    fn open_log_association_dialog(&mut self, request: LogAssociationRequest) {
+        let log_id = request.log();
         let shared = self.shared.borrow();
         let selected = self.logs.get_by_id(log_id).and_then(|log| {
             log.associated_recording().or_else(|| {
@@ -392,7 +395,7 @@ impl App {
             })
         });
         drop(shared);
-        self.association_dialog = Some(LogAssociationDialog::new(log_id, selected));
+        self.association_dialog = Some(LogAssociationDialog::for_request(request, selected));
     }
 
     fn apply_log_association_choice(
@@ -407,6 +410,9 @@ impl App {
             }
             LogAssociationChoice::SourceSelected(selection) => selection,
             LogAssociationChoice::Cancelled => {
+                if !dialog.is_initial_selection() {
+                    return;
+                }
                 if self.logs.get_by_id(dialog.log()).is_none_or(|log| {
                     log.position_source_state() != PositionSourceState::PendingInitialSelection
                 }) {
