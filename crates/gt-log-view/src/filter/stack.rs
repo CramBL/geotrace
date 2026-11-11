@@ -318,29 +318,43 @@ impl FilterStack {
     }
 
     pub fn remove_group(&mut self, id: FilterGroupId) {
-        let Some(survivor) = self
-            .groups
-            .iter()
-            .find(|group| group.id != id)
-            .map(FilterGroup::id)
-        else {
-            return;
-        };
         let Some(index) = self.groups.iter().position(|group| group.id == id) else {
             return;
         };
         if self.group_has_table_conditions_or_draft(id) {
             self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
         }
-        for chip in &mut self.chips {
-            if chip.group == id {
-                chip.group = survivor;
+        let survivor = self
+            .groups
+            .iter()
+            .find(|group| group.id != id)
+            .map_or(id, FilterGroup::id);
+        self.chips.retain_mut(|chip| {
+            if chip.group != id {
+                return true;
             }
-        }
+            let Some(effects) = chip.effects.without(FilterEffect::Table) else {
+                return false;
+            };
+            chip.effects = effects;
+            chip.group = survivor;
+            true
+        });
         if self.selected_group == id {
+            if self.live_effect == FilterEffect::Table {
+                self.draft = self.draft.cleared();
+                self.live = LogFilter::unwritten(self.entry_count());
+                self.live.pattern = self.draft.pattern().unwrap_or_default();
+            }
             self.selected_group = survivor;
         }
-        self.groups.remove(index);
+        if self.groups.len() == 1 {
+            if let Some(group) = self.groups.first_mut() {
+                group.operator = FilterGroupOperator::All;
+            }
+        } else {
+            self.groups.remove(index);
+        }
         self.recompose_visible_entries();
     }
 
@@ -1246,10 +1260,20 @@ mod tests {
         assert_eq!(visible(&stack), [0, 2]);
     }
 
+    struct GroupRemovalCase {
+        remove_first: bool,
+        map_enabled: bool,
+    }
+
     #[rstest]
-    #[case::remove_first(true)]
-    #[case::remove_later(false)]
-    fn removing_groups_reassigns_active_and_remembered_memberships(#[case] remove_first: bool) {
+    #[case::first_group(GroupRemovalCase { remove_first: true, map_enabled: true })]
+    #[case::later_group(GroupRemovalCase { remove_first: false, map_enabled: false })]
+    fn removing_a_group_discards_table_effects_and_preserves_map_effects(
+        #[case] GroupRemovalCase {
+            remove_first,
+            map_enabled,
+        }: GroupRemovalCase,
+    ) {
         let (mut stack, mut slots) = unfiltered_stack();
         let first_group = stack.selected_group();
         let second_group = stack.create_group();
@@ -1259,43 +1283,133 @@ mod tests {
             (second_group, first_group)
         };
         stack.select_group(removed);
-        let active = add_refine_chip(&mut stack, "gnss");
-        let highlighted = add_layer_chip(&mut stack, &mut slots, "fix");
-        stack.set_chip_effect_enabled(active, FilterEffect::Table, false);
-        stack.set_live_filter_text("lost");
+        stack.set_group_operator(removed, FilterGroupOperator::Any);
+        let table_only = add_refine_chip(&mut stack, "acquired");
+        let both = add_refine_chip(&mut stack, "lost");
+        stack.add_chip_effect(both, FilterEffect::Map, &mut slots);
+        stack.set_chip_effect_enabled(both, FilterEffect::Map, map_enabled);
+        let map_only = add_layer_chip(&mut stack, &mut slots, "fix");
+        stack.set_chip_effect_enabled(map_only, FilterEffect::Map, !map_enabled);
+        stack.select_group(survivor);
+        let surviving_table = add_refine_chip(&mut stack, "gnss");
+        let disabled_table = add_refine_chip(&mut stack, "battery");
+        stack.set_chip_effect_enabled(disabled_table, FilterEffect::Table, false);
         stack.wait_for_queries();
-        let live_identity = stack.live.query.scan_identity();
-        let chip_identity = stack
-            .chip(highlighted)
-            .unwrap()
-            .filter
-            .query
-            .scan_identity();
+        assert_eq!(visible(&stack), [0, 2]);
+        let stored_survivors: Vec<_> = stack
+            .to_stored_stack()
+            .chips()
+            .iter()
+            .filter(|chip| chip.group_id == survivor.0)
+            .cloned()
+            .collect();
+        let both_slot = stack.chip(both).unwrap().layer_slot().unwrap();
+        let map_slot = stack.chip(map_only).unwrap().layer_slot().unwrap();
+        let both_query = stack.chip(both).unwrap().filter.query.scan_identity();
+        let map_query = stack.chip(map_only).unwrap().filter.query.scan_identity();
+        let revision = stack.table_semantic_revision();
+        stack.select_group(removed);
         stack.remove_group(removed);
+        assert_eq!(stack.table_semantic_revision(), revision + 1);
+        assert_eq!(visible(&stack), [0, 2]);
         assert_eq!(stack.groups().len(), 1);
         assert_eq!(stack.selected_group(), survivor);
-        assert_eq!(stack.chip(active).unwrap().group(), survivor);
-        assert_eq!(stack.chip(highlighted).unwrap().group(), survivor);
-        assert_eq!(stack.live.query.scan_identity(), live_identity);
         assert_eq!(
-            stack
-                .chip(highlighted)
-                .unwrap()
-                .filter
-                .query
-                .scan_identity(),
-            chip_identity
+            stack.groups().first().unwrap().operator(),
+            FilterGroupOperator::All
         );
-        assert_eq!(visible(&stack), [2]);
-        stack.add_chip_effect(highlighted, FilterEffect::Table, &mut slots);
-        stack.remove_chip_effect(highlighted, FilterEffect::Map, &mut slots);
-        assert_eq!(stack.chip(highlighted).unwrap().group(), survivor);
-        stack.remove_group(survivor);
-        assert_eq!(stack.groups().len(), 1);
-        assert_eq!(visible(&stack), [2]);
-        stack.clear_live_filter();
-        stack.set_chip_effect_enabled(highlighted, FilterEffect::Table, false);
+        assert!(stack.chip(table_only).is_none());
+        for (id, enabled, slot, query) in [
+            (both, map_enabled, both_slot, both_query),
+            (map_only, !map_enabled, map_slot, map_query),
+        ] {
+            let chip = stack.chip(id).unwrap();
+            assert_eq!(chip.group(), survivor);
+            assert!(!chip.has_effect(FilterEffect::Table));
+            assert_eq!(chip.is_enabled(FilterEffect::Map), enabled);
+            assert_eq!(chip.layer_slot(), Some(slot));
+            assert_eq!(chip.filter.query.scan_identity(), query);
+            assert_eq!(slots.holders_of(slot), 1);
+        }
+        let stored = stack.to_stored_stack();
+        assert_eq!(
+            stored
+                .chips()
+                .iter()
+                .filter(|chip| matches!(chip.effects, StoredLogFilterEffects::Table { .. }))
+                .cloned()
+                .collect::<Vec<_>>(),
+            stored_survivors
+        );
+        assert_eq!(stack.chip(surviving_table).unwrap().group(), survivor);
+        assert!(
+            !stack
+                .chip(disabled_table)
+                .unwrap()
+                .is_enabled(FilterEffect::Table)
+        );
+        let mut restored = FilterStack::from_stored_stack(Arc::clone(&stack.log), &stored);
+        restored.wait_for_queries();
+        assert_eq!(restored.to_stored_stack(), stored);
+        assert_eq!(visible(&restored), [0, 2]);
+    }
+
+    #[rstest]
+    #[case::removed_table_draft(FilterEffect::Table, true)]
+    #[case::other_table_draft(FilterEffect::Table, false)]
+    #[case::map_draft(FilterEffect::Map, true)]
+    fn removing_a_group_discards_only_its_table_draft(
+        #[case] effect: FilterEffect,
+        #[case] select_removed: bool,
+    ) {
+        let (mut stack, _) = unfiltered_stack();
+        let removed = stack.selected_group();
+        let survivor = stack.create_group();
+        if !select_removed {
+            stack.select_group(survivor);
+        }
+        stack.set_live_filter_effect(effect);
+        stack.set_live_filter_regex(true);
+        stack.set_live_filter_text("[");
+        let draft = stack.live_filter_draft().clone();
+        let query = stack.live.query.scan_identity();
+        stack.remove_group(removed);
+        assert_eq!(stack.selected_group(), survivor);
+        assert_eq!(stack.live_filter_effect(), effect);
+        if effect == FilterEffect::Table && select_removed {
+            assert_eq!(stack.live_filter_draft(), &draft.cleared());
+            assert!(stack.live_filter_error().is_none());
+            assert!(!stack.is_query_pending());
+        } else {
+            assert_eq!(stack.live_filter_draft(), &draft);
+            assert_eq!(stack.live.query.scan_identity(), query);
+            assert!(stack.live_filter_error().is_some());
+        }
         assert_eq!(visible(&stack), [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn removing_the_last_group_restores_an_empty_default_group() {
+        let (mut stack, mut slots) = unfiltered_stack();
+        let group = stack.selected_group();
+        stack.set_group_operator(group, FilterGroupOperator::Any);
+        let chip = add_refine_chip(&mut stack, "gnss");
+        stack.set_chip_effect_enabled(chip, FilterEffect::Table, false);
+        let map = add_layer_chip(&mut stack, &mut slots, "fix");
+        stack.set_live_filter_text("battery");
+        stack.remove_group(group);
+        assert_eq!(stack.groups().len(), 1);
+        assert_eq!(
+            stack.groups().first().unwrap().operator(),
+            FilterGroupOperator::All
+        );
+        assert_eq!(stack.selected_group(), stack.groups().first().unwrap().id());
+        assert!(stack.chip(chip).is_none());
+        assert_eq!(stack.chips().len(), 1);
+        assert_eq!(stack.chip(map).unwrap().group(), stack.selected_group());
+        assert_eq!(stack.live_filter_text(), "");
+        assert_eq!(visible(&stack), [0, 1, 2, 3]);
+        assert_eq!(stack.to_stored_stack().groups().len(), 1);
     }
 
     #[test]

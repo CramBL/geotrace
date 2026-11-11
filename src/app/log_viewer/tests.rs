@@ -332,11 +332,7 @@ fn opening_and_cancelling_the_editor_clears_the_preview_and_preserves_saved_cond
     assert!(harness.query_by_label("Group 1").is_none());
     assert!(harness.query_by_label("Match").is_none());
     assert!(harness.query_by_label(filters::ADD_FILTER_LABEL).is_none());
-    assert!(
-        harness
-            .query(group_control(group, filters::GroupControl::Overflow))
-            .is_none()
-    );
+    harness.get(group_control(group, filters::GroupControl::Overflow));
     open_live_editor(&mut harness);
     harness.get_by_label("Cancel").click();
     run_until_the_scans_land(&mut harness);
@@ -518,7 +514,7 @@ fn an_any_group_and_an_all_group_display_their_shared_entries() {
 }
 
 #[test]
-fn group_controls_select_live_destination_move_conditions_and_reassign_removed_memberships() {
+fn group_controls_select_live_destination_and_move_conditions() {
     let mut harness = harness_with(Vec::new());
     add_filter(&mut harness, "gnss");
     let first_group = harness
@@ -586,8 +582,32 @@ fn group_controls_select_live_destination_move_conditions_and_reassign_removed_m
     let stack = harness.state().shown_log().unwrap().filters();
     assert_eq!(stack.chip(second_chip).unwrap().group(), first_group);
     assert!(!stack.is_query_pending());
+}
+
+#[test]
+fn removing_a_group_through_its_menu_preserves_map_conditions_and_clears_its_draft() {
+    let mut harness = harness_with(Vec::new());
+    add_filter(&mut harness, "gnss");
+    add_filter(&mut harness, "lost");
+    let stack = harness.state().shown_log().unwrap().filters();
+    let first_group = stack.selected_group();
+    let first_chip = stack.chips().first().unwrap().id();
+    let second_chip = stack.chips().get(1).unwrap().id();
+    harness.get_by_label(filters::NEW_GROUP_LABEL).click();
+    harness.run_steps(2);
+    let second_group = harness
+        .state()
+        .shown_log()
+        .unwrap()
+        .filters()
+        .selected_group();
+    harness
+        .get(group_control(first_group, filters::GroupControl::Add))
+        .click();
+    harness.run_steps(2);
     choose_first_group_operator(&mut harness, FilterGroupOperator::Any);
     set_other_chip_effect_only(&mut harness, 1);
+    type_into_live_filter(&mut harness, "fix");
     harness
         .get(group_control(first_group, filters::GroupControl::Overflow))
         .click();
@@ -599,9 +619,17 @@ fn group_controls_select_live_destination_move_conditions_and_reassign_removed_m
     let stack = harness.state().shown_log().unwrap().filters();
     assert_eq!(stack.groups().len(), 1);
     assert_eq!(stack.selected_group(), second_group);
-    assert_eq!(stack.chip(first_chip).unwrap().group(), second_group);
+    assert!(stack.chip(first_chip).is_none());
     assert_eq!(stack.chip(second_chip).unwrap().group(), second_group);
-    set_other_chip_effect_only(&mut harness, 1);
+    assert!(
+        !stack
+            .chip(second_chip)
+            .unwrap()
+            .has_effect(FilterEffect::Table)
+    );
+    assert!(harness.state().viewer.filter_editor_log.is_none());
+    assert_eq!(match_count(&harness), "6 of 6");
+    set_other_chip_effect_only(&mut harness, 0);
     let stack = harness.state().shown_log().unwrap().filters();
     assert!(
         stack
@@ -615,11 +643,16 @@ fn group_controls_select_live_destination_move_conditions_and_reassign_removed_m
             .query_by_label(filters::REMOVE_GROUP_LABEL)
             .is_none()
     );
-    assert!(
-        harness
-            .query(group_control(second_group, filters::GroupControl::Overflow))
-            .is_none()
-    );
+    harness
+        .get(group_control(second_group, filters::GroupControl::Overflow))
+        .click();
+    harness.run_steps(2);
+    harness.get_by_label(filters::REMOVE_GROUP_LABEL).click();
+    harness.run_steps(2);
+    let stack = harness.state().shown_log().unwrap().filters();
+    assert_eq!(stack.groups().len(), 1);
+    assert!(stack.chips().is_empty());
+    assert_eq!(match_count(&harness), "6 of 6");
 }
 
 #[rstest]

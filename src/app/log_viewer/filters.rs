@@ -130,7 +130,15 @@ impl LogViewerWindow {
                 self.filter_editor_focus = true;
             }
             FilterEdit::MoveChipToGroup { chip, group } => stack.move_chip_to_group(chip, group),
-            FilterEdit::RemoveGroup(group) => stack.remove_group(group),
+            FilterEdit::RemoveGroup(group) => {
+                if stack.selected_group() == group
+                    && stack.live_filter_effect() == FilterEffect::Table
+                {
+                    self.filter_editor_log = None;
+                    self.filter_editor_focus = false;
+                }
+                stack.remove_group(group);
+            }
             FilterEdit::SelectMapHighlights => stack.set_live_filter_effect(FilterEffect::Map),
             FilterEdit::SelectGroup(group) => {
                 stack.set_live_filter_effect(FilterEffect::Table);
@@ -372,30 +380,34 @@ impl LogViewerWindow {
                     for chip in filters.chips().iter().filter(|chip| {
                         chip.has_effect(FilterEffect::Table) && chip.group() == group.id()
                     }) {
-                        if let Some(chip_edit) = chip_ui(ui, chip, FilterEffect::Table, slots, filters) {
+                        if let Some(chip_edit) =
+                            chip_ui(ui, chip, FilterEffect::Table, slots, filters)
+                        {
                             edit = Some(chip_edit);
                         }
                     }
-                    let add = ui.small_button(ADD_CONDITION_LABEL)
+                    let add = ui
+                        .small_button(ADD_CONDITION_LABEL)
                         .on_hover_text("Add condition to this group");
                     GroupControl::Add.identify(&add, group.id());
                     if add.clicked() {
                         edit = Some(FilterEdit::SelectGroup(group.id()));
                     }
-                    if filters.groups().len() > 1 {
-                        let overflow = ui.menu_button(OVERFLOW_LABEL, |ui| {
-                            let remove = ui.button(REMOVE_GROUP_LABEL)
-                                .on_hover_text("Remove this group and assign its filters to the first remaining group");
-                            GroupControl::Remove.identify(&remove, group.id());
-                            if remove.clicked() {
-                                edit = Some(FilterEdit::RemoveGroup(group.id()));
-                                ui.close();
-                            }
-                        });
-                        GroupControl::Overflow.identify(&overflow.response, group.id());
-                    }
+                    let overflow = ui.menu_button(OVERFLOW_LABEL, |ui| {
+                        let remove = ui.button(REMOVE_GROUP_LABEL).on_hover_text(
+                            "Remove this group's table conditions and draft. Keep map highlights.",
+                        );
+                        GroupControl::Remove.identify(&remove, group.id());
+                        if remove.clicked() {
+                            edit = Some(FilterEdit::RemoveGroup(group.id()));
+                            ui.close();
+                        }
+                    });
+                    GroupControl::Overflow.identify(&overflow.response, group.id());
                 });
-                if editor_open && filters.live_filter_effect() == FilterEffect::Table && filters.selected_group() == group.id()
+                if editor_open
+                    && filters.live_filter_effect() == FilterEffect::Table
+                    && filters.selected_group() == group.id()
                     && let Some(live_edit) = self.filter_row_ui(ui, filters, log)
                 {
                     edit = Some(live_edit);
@@ -920,7 +932,7 @@ const REFINE_CHIP_HOVER: &str = "Filter table";
 
 pub(in crate::app) const ADD_CONDITION_LABEL: &str = "+";
 pub(in crate::app) const NEW_GROUP_LABEL: &str = "+ group";
-pub(in crate::app) const REMOVE_GROUP_LABEL: &str = "Remove group";
+pub(in crate::app) const REMOVE_GROUP_LABEL: &str = "Remove group and table conditions";
 pub(in crate::app) const MOVE_FILTER_LABEL: &str = "Move to group…";
 
 #[derive(Clone, Copy, Debug)]
