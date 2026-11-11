@@ -39,6 +39,7 @@ zstd.workspace = true
 gt-history-types = { path = "../gt-history-types", features = ["fixtures"] }
 hdf5-pure.workspace = true
 rstest.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
 test-log.workspace = true
 

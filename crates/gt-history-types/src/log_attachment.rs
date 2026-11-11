@@ -14,7 +14,11 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::ser::SerializeStruct as _;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
+use serde_json::value::RawValue;
+use strum::VariantNames as _;
 use thiserror::Error;
 use uuid::Uuid;
 use xxhash_rust::xxh3;
@@ -436,33 +440,31 @@ impl<'de> Deserialize<'de> for StoredLogFilterStack {
     }
 }
 
-/// What a recording's attribute says about one attachment.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LogAttachment {
-    format_version: u32,
-
-    /// Name the log was loaded under, shown wherever the attachment is listed.
     pub name: String,
-
-    /// Hash of the log the attachment's file holds.
     pub content_hash: LogContentHash,
-
-    /// The filter stack the log was attached with, restored with it.
     pub filters: StoredLogFilterStack,
-
-    /// The original reference for timestamps without a year. Absent in older attachments.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub year_reference: Option<DateTime<Utc>>,
-
-    /// Absent in older attachments, which restore as [`StoredYearResolution::Infer`].
-    #[serde(default, skip_serializing_if = "StoredYearResolution::is_infer")]
     pub year_resolution: StoredYearResolution,
 }
 
 impl LogAttachment {
+    pub fn from_attribute_json(json: &str) -> Result<Self, LogAttachmentDecodeError> {
+        let envelope = serde_json::from_str::<LogAttachmentEnvelope>(json).map_err(|source| {
+            LogAttachmentDecodeError {
+                name: None,
+                reason: LogAttachmentDecodeErrorReason::MalformedMetadata(source),
+            }
+        })?;
+        let name = envelope.name.as_str().map(str::to_owned);
+        envelope
+            .decode(json)
+            .map_err(|reason| LogAttachmentDecodeError { name, reason })
+    }
+
     pub fn new(name: String, content_hash: LogContentHash, filters: StoredLogFilterStack) -> Self {
         Self {
-            format_version: LOG_ATTACHMENT_FORMAT_VERSION,
             name,
             content_hash,
             filters,
@@ -471,39 +473,64 @@ impl LogAttachment {
         }
     }
 
-    /// The attribute value stored on the recording group.
     pub fn to_attribute_json(&self) -> Result<String, DbError> {
         serde_json::to_string(self)
             .map_err(|err| DbError::Backend(format!("could not encode a log attachment: {err}")))
     }
+}
 
-    /// Decode an attribute value. One this build cannot read warns and
-    /// decodes to `None`, leaving the recording and its other attachments
-    /// readable.
-    pub fn from_attribute_json(json: &str) -> Option<Self> {
-        match serde_json::from_str::<Self>(json) {
-            Ok(mut attachment) if attachment.format_version <= LOG_ATTACHMENT_FORMAT_VERSION => {
-                attachment.format_version = LOG_ATTACHMENT_FORMAT_VERSION;
-                Some(attachment)
-            }
-            Ok(attachment) => {
-                log::warn!(
-                    "Ignoring a log attachment written in format version {} (this build reads up to {LOG_ATTACHMENT_FORMAT_VERSION})",
-                    attachment.format_version
-                );
-                None
-            }
-            Err(err) => {
-                log::warn!("Ignoring an undecodable log attachment: {err}");
-                None
-            }
-        }
+impl<'de> Deserialize<'de> for LogAttachment {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let json = Box::<RawValue>::deserialize(deserializer)?;
+        Self::from_attribute_json(json.get()).map_err(serde::de::Error::custom)
     }
 }
 
+impl Serialize for LogAttachment {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut fields = serializer.serialize_struct(
+            "LogAttachment",
+            4 + usize::from(self.year_reference.is_some())
+                + usize::from(self.year_resolution != StoredYearResolution::Infer),
+        )?;
+        fields.serialize_field("format_version", &LOG_ATTACHMENT_FORMAT_VERSION)?;
+        fields.serialize_field("name", &self.name)?;
+        fields.serialize_field("content_hash", &self.content_hash)?;
+        fields.serialize_field("filters", &self.filters)?;
+        if let Some(reference) = self.year_reference {
+            fields.serialize_field("year_reference", &reference)?;
+        }
+        if self.year_resolution != StoredYearResolution::Infer {
+            fields.serialize_field("year_resolution", &self.year_resolution)?;
+        }
+        fields.end()
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("{reason}")]
+pub struct LogAttachmentDecodeError {
+    pub name: Option<String>,
+    #[source]
+    pub reason: LogAttachmentDecodeErrorReason,
+}
+
+#[derive(Debug, Error)]
+pub enum LogAttachmentDecodeErrorReason {
+    #[error("malformed log attachment metadata: {0}")]
+    MalformedMetadata(#[source] serde_json::Error),
+    #[error("malformed saved chronology policy: {0}")]
+    MalformedYearResolution(#[source] serde_json::Error),
+    #[error("unsupported log attachment format version {version}")]
+    UnsupportedVersion { version: u32 },
+    #[error("unsupported saved chronology policy {kind:?}")]
+    UnsupportedYearResolution { kind: String },
+}
+
 /// The variants of `gt_logfile::YearResolution`, as stored with a log attachment.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, strum::VariantNames)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[strum(serialize_all = "snake_case")]
 pub enum StoredYearResolution {
     IgnoreSummaryBounds,
     #[default]
@@ -513,9 +540,21 @@ pub enum StoredYearResolution {
     },
 }
 
-impl StoredYearResolution {
-    fn is_infer(&self) -> bool {
-        *self == Self::Infer
+impl<'de> Deserialize<'de> for StoredYearResolution {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Serde ignores extra fields on internally tagged unit variants.
+        #[derive(Deserialize)]
+        #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+        enum Fields {
+            IgnoreSummaryBounds {},
+            Infer {},
+            PlaceLastEntryInYear { year: i32 },
+        }
+        Ok(match Fields::deserialize(deserializer)? {
+            Fields::IgnoreSummaryBounds {} => Self::IgnoreSummaryBounds,
+            Fields::Infer {} => Self::Infer,
+            Fields::PlaceLastEntryInYear { year } => Self::PlaceLastEntryInYear { year },
+        })
     }
 }
 
@@ -559,6 +598,75 @@ pub fn delete_files(logs_directory: &Path, ids: &[LogAttachmentId]) {
     }
 }
 
+#[derive(Deserialize)]
+struct LogAttachmentEnvelope {
+    format_version: u32,
+    #[serde(default)]
+    name: Value,
+}
+
+impl LogAttachmentEnvelope {
+    fn decode(self, json: &str) -> Result<LogAttachment, LogAttachmentDecodeErrorReason> {
+        if !(1..=LOG_ATTACHMENT_FORMAT_VERSION).contains(&self.format_version) {
+            return Err(LogAttachmentDecodeErrorReason::UnsupportedVersion {
+                version: self.format_version,
+            });
+        }
+        #[derive(Deserialize)]
+        struct Settings {
+            name: String,
+            content_hash: LogContentHash,
+            filters: StoredLogFilterStack,
+            year_reference: Option<DateTime<Utc>>,
+            #[serde(default)]
+            year_resolution: YearResolutionJson,
+        }
+        let settings: Settings = serde_json::from_str(json)
+            .map_err(LogAttachmentDecodeErrorReason::MalformedMetadata)?;
+        Ok(LogAttachment {
+            name: settings.name,
+            content_hash: settings.content_hash,
+            filters: settings.filters,
+            year_reference: settings.year_reference,
+            year_resolution: settings.year_resolution.decode()?,
+        })
+    }
+}
+
+#[derive(Default)]
+enum YearResolutionJson {
+    #[default]
+    Missing,
+    Present(Box<RawValue>),
+}
+
+impl YearResolutionJson {
+    fn decode(self) -> Result<StoredYearResolution, LogAttachmentDecodeErrorReason> {
+        let Self::Present(json) = self else {
+            return Ok(StoredYearResolution::Infer);
+        };
+        #[derive(Deserialize)]
+        struct PolicyKind {
+            kind: String,
+        }
+        let policy: PolicyKind = serde_json::from_str(json.get())
+            .map_err(LogAttachmentDecodeErrorReason::MalformedYearResolution)?;
+        if !StoredYearResolution::VARIANTS.contains(&policy.kind.as_str()) {
+            return Err(LogAttachmentDecodeErrorReason::UnsupportedYearResolution {
+                kind: policy.kind,
+            });
+        }
+        serde_json::from_str(json.get())
+            .map_err(LogAttachmentDecodeErrorReason::MalformedYearResolution)
+    }
+}
+
+impl<'de> Deserialize<'de> for YearResolutionJson {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Box::<RawValue>::deserialize(deserializer).map(Self::Present)
+    }
+}
+
 /// Start of the attribute key one attachment is stored under, followed by the
 /// attachment's UUID. Registered in
 /// [`is_db_recording_attr`](crate::is_db_recording_attr) as database
@@ -572,7 +680,7 @@ const LOG_ATTACHMENT_FILE_SUFFIX: &str = ".zst";
 
 /// Version of the attribute JSON layout, bumped only on a change older builds
 /// cannot read. An attachment written in a newer version is ignored.
-const LOG_ATTACHMENT_FORMAT_VERSION: u32 = 5;
+const LOG_ATTACHMENT_FORMAT_VERSION: u32 = 6;
 
 #[cfg(test)]
 mod tests {
@@ -618,11 +726,11 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"format_version":5,"name":"navsyncd.log","content_hash":"b3e7a3594637c2fbf4655e82bcf507d6","filters":{"groups":[{"id":0,"operator":"all"}],"selected_group_id":0,"chips":[{"condition":{"scope":"message","text":"gnss","regex":false},"group_id":0,"effects":{"kind":"map","enabled":true,"color_slot":2}},{"condition":{"scope":"message","text":"hal-powerd|navsyncd","regex":true},"group_id":0,"effects":{"kind":"table","enabled":false}}]}}"#
+            r#"{"format_version":6,"name":"navsyncd.log","content_hash":"b3e7a3594637c2fbf4655e82bcf507d6","filters":{"groups":[{"id":0,"operator":"all"}],"selected_group_id":0,"chips":[{"condition":{"scope":"message","text":"gnss","regex":false},"group_id":0,"effects":{"kind":"map","enabled":true,"color_slot":2}},{"condition":{"scope":"message","text":"hal-powerd|navsyncd","regex":true},"group_id":0,"effects":{"kind":"table","enabled":false}}]}}"#
         );
         assert_eq!(
-            LogAttachment::from_attribute_json(&json),
-            Some(attachment())
+            LogAttachment::from_attribute_json(&json).expect("decode"),
+            attachment()
         );
     }
 
@@ -645,7 +753,144 @@ mod tests {
         let json = chosen.to_attribute_json().expect("encode");
 
         assert!(json.contains(stored_field), "{json}");
-        assert_eq!(LogAttachment::from_attribute_json(&json), Some(chosen));
+        assert_eq!(
+            LogAttachment::from_attribute_json(&json).expect("decode"),
+            chosen
+        );
+    }
+
+    #[rstest]
+    #[case::infer(StoredYearResolution::Infer)]
+    #[case::ignore_summary_bounds(StoredYearResolution::IgnoreSummaryBounds)]
+    #[case::place_last_entry_in_year(StoredYearResolution::PlaceLastEntryInYear { year: 2024 })]
+    fn new_writes_exceed_the_pre_policy_readers_version_gate(#[case] policy: StoredYearResolution) {
+        #[derive(Deserialize)]
+        struct PrePolicyAttachment {
+            format_version: u32,
+            name: String,
+            content_hash: LogContentHash,
+            filters: StoredLogFilterStack,
+            year_reference: Option<DateTime<Utc>>,
+        }
+        let mut current = attachment();
+        current.year_resolution = policy;
+        let json = current.to_attribute_json().expect("encode");
+        let old: PrePolicyAttachment = serde_json::from_str(&json).expect("old schema");
+        assert!(old.format_version > 5);
+        assert_eq!(old.name, current.name);
+        assert_eq!(old.content_hash, current.content_hash);
+        assert_eq!(old.filters, current.filters);
+        assert_eq!(old.year_reference, current.year_reference);
+    }
+
+    #[rstest]
+    #[case(1)]
+    #[case(2)]
+    #[case(3)]
+    #[case(4)]
+    #[case(5)]
+    fn legacy_attachments_without_a_policy_restore_infer(#[case] version: u32) {
+        let json = format!(
+            r#"{{"format_version":{version},"name":"legacy.log","content_hash":"0","filters":[]}}"#
+        );
+        let restored = LogAttachment::from_attribute_json(&json).expect("legacy attachment");
+        assert_eq!(restored.year_resolution, StoredYearResolution::Infer);
+        assert_eq!(restored.year_reference, None);
+    }
+
+    #[rstest]
+    #[case::ignore_summary_bounds(StoredYearResolution::IgnoreSummaryBounds)]
+    #[case::place_last_entry_in_year(StoredYearResolution::PlaceLastEntryInYear { year: 2024 })]
+    fn version_five_manual_policies_upgrade_without_changing_settings(
+        #[case] policy: StoredYearResolution,
+    ) {
+        let mut expected = attachment();
+        expected.year_resolution = policy;
+        expected.year_reference = DateTime::from_timestamp(1_767_312_000, 123_456_789);
+        let mut legacy = serde_json::to_value(&expected).expect("settings");
+        legacy["format_version"] = serde_json::json!(5);
+        assert_eq!(
+            serde_json::from_value::<LogAttachment>(legacy.clone()).expect("Serde version five"),
+            expected
+        );
+        let restored =
+            LogAttachment::from_attribute_json(&legacy.to_string()).expect("version five");
+        assert_eq!(restored, expected);
+        let rewritten = restored.to_attribute_json().expect("upgrade");
+        let wire: Value = serde_json::from_str(&rewritten).expect("JSON");
+        assert_eq!(wire.get("format_version"), Some(&serde_json::json!(6)));
+        assert_eq!(
+            LogAttachment::from_attribute_json(&rewritten).expect("restore"),
+            expected
+        );
+    }
+
+    #[rstest]
+    #[case(0)]
+    #[case(7)]
+    #[case(u32::MAX)]
+    fn unsupported_versions_are_reported_before_decoding_settings(#[case] version: u32) {
+        let json = format!(
+            r#"{{"format_version":{version},"name":"future.log","year_resolution":{{"kind":"future_policy"}}}}"#
+        );
+        let error = LogAttachment::from_attribute_json(&json).expect_err("unsupported version");
+        assert_eq!(error.name.as_deref(), Some("future.log"));
+        assert!(
+            matches!(error.reason, LogAttachmentDecodeErrorReason::UnsupportedVersion { version: found } if found == version)
+        );
+        serde_json::from_str::<LogAttachment>(&json).expect_err("Serde version gate");
+    }
+
+    #[rstest]
+    #[case::null("null")]
+    #[case::missing_kind("{}")]
+    #[case::invalid_kind(r#"{"kind":2}"#)]
+    #[case::missing_year(r#"{"kind":"place_last_entry_in_year"}"#)]
+    #[case::invalid_year(r#"{"kind":"place_last_entry_in_year","year":"2024"}"#)]
+    #[case::extra_field(r#"{"kind":"infer","year":2024}"#)]
+    #[case::extra_ignore_field(r#"{"kind":"ignore_summary_bounds","year":2024}"#)]
+    #[case::year_overflow(r#"{"kind":"place_last_entry_in_year","year":2147483648}"#)]
+    #[case::array("[]")]
+    #[case::duplicate_kind(r#"{"kind":"future_policy","kind":"infer"}"#)]
+    #[case::duplicate_year(r#"{"kind":"place_last_entry_in_year","year":2024,"year":2025}"#)]
+    fn malformed_policies_return_a_policy_error(#[case] policy: &str) {
+        let json = format!(
+            r#"{{"format_version":5,"name":"broken.log","content_hash":"0","filters":[],"year_resolution":{policy}}}"#
+        );
+        let error = LogAttachment::from_attribute_json(&json).expect_err("malformed policy");
+        assert_eq!(error.name.as_deref(), Some("broken.log"));
+        assert!(matches!(
+            error.reason,
+            LogAttachmentDecodeErrorReason::MalformedYearResolution(_)
+        ));
+        serde_json::from_str::<LogAttachment>(&json).expect_err("Serde policy check");
+    }
+
+    #[test]
+    fn unknown_policies_return_an_unsupported_policy_error() {
+        let json = r#"{"format_version":5,"name":"future.log","content_hash":"0","filters":[],"year_resolution":{"kind":"future_policy","anchor":2026}}"#;
+        let error = LogAttachment::from_attribute_json(json).expect_err("unsupported policy");
+        assert_eq!(error.name.as_deref(), Some("future.log"));
+        assert!(
+            matches!(error.reason, LogAttachmentDecodeErrorReason::UnsupportedYearResolution { kind } if kind == "future_policy")
+        );
+        serde_json::from_str::<LogAttachment>(json).expect_err("Serde policy check");
+    }
+
+    #[rstest]
+    #[case::invalid_json("{", None)]
+    #[case::invalid_version(r#"{"format_version":"six"}"#, None)]
+    #[case::missing_hash(
+        r#"{"format_version":6,"name":"broken.log","filters":[]}"#,
+        Some("broken.log")
+    )]
+    fn malformed_metadata_returns_a_metadata_error(#[case] json: &str, #[case] name: Option<&str>) {
+        let error = LogAttachment::from_attribute_json(json).expect_err("malformed metadata");
+        assert_eq!(error.name.as_deref(), name);
+        assert!(matches!(
+            error.reason,
+            LogAttachmentDecodeErrorReason::MalformedMetadata(_)
+        ));
     }
 
     #[test]
@@ -659,10 +904,10 @@ mod tests {
             .to_attribute_json()
             .expect("encode the migrated attachment");
         let json: Value = serde_json::from_str(&rewritten).expect("encoded JSON");
-        assert_eq!(json.get("format_version"), Some(&serde_json::json!(5)));
+        assert_eq!(json.get("format_version"), Some(&serde_json::json!(6)));
         assert_eq!(
-            LogAttachment::from_attribute_json(&rewritten),
-            Some(expected)
+            LogAttachment::from_attribute_json(&rewritten).expect("decode"),
+            expected
         );
     }
 
@@ -689,7 +934,7 @@ mod tests {
             restored
                 .to_attribute_json()
                 .unwrap()
-                .contains("\"format_version\":5")
+                .contains("\"format_version\":6")
         );
     }
 
@@ -722,7 +967,7 @@ mod tests {
         let json = format!(
             r#"{{"format_version":3,"name":"bad.log","content_hash":"0","filters":{filters}}}"#
         );
-        assert_eq!(LogAttachment::from_attribute_json(&json), None);
+        LogAttachment::from_attribute_json(&json).expect_err("invalid grouped filters");
     }
 
     #[rstest]
@@ -762,15 +1007,6 @@ mod tests {
             }),
             Err(expected)
         );
-    }
-
-    /// Neither a newer layout nor a corrupt value may fail the recording the
-    /// attribute sits on.
-    #[test]
-    fn an_attachment_this_build_cannot_read_decodes_to_nothing() {
-        let newer = r#"{"format_version":6,"name":"navsyncd.log","content_hash":"0","filters":[]}"#;
-        assert_eq!(LogAttachment::from_attribute_json(newer), None);
-        assert_eq!(LogAttachment::from_attribute_json("{"), None);
     }
 
     /// Changing the hash algorithm invalidates every stored attachment: the
@@ -910,14 +1146,31 @@ mod tests {
             attachment.year_reference = reference_seconds.and_then(|seconds| DateTime::from_timestamp(seconds, 0));
             attachment.year_resolution = year_resolution;
             let json = attachment.to_attribute_json().expect("encode");
-            prop_assert_eq!(LogAttachment::from_attribute_json(&json), Some(attachment));
+            prop_assert_eq!(LogAttachment::from_attribute_json(&json).expect("decode"), attachment);
         }
 
-        /// The attribute is read back from a file the app does not control,
-        /// so any text at all has to decode to an attachment or to nothing.
         #[test]
-        fn any_attribute_value_decodes_or_is_ignored(json in ".*") {
-            LogAttachment::from_attribute_json(&json);
+        fn any_attribute_value_decodes_or_returns_an_error(json in ".*") {
+            let _decoded = LogAttachment::from_attribute_json(&json);
+        }
+
+        #[test]
+        fn arbitrary_policy_fields_cannot_default_to_infer(
+            kind in prop_oneof![Just("infer".to_owned()), Just("ignore_summary_bounds".to_owned()), Just("place_last_entry_in_year".to_owned()), ".*"],
+            year in prop_oneof![any::<i64>(), any::<i32>().prop_map(i64::from)],
+            version in 1u32..=6,
+        ) {
+            let mut wire = serde_json::to_value(attachment()).expect("settings");
+            let policy = serde_json::json!({"kind": kind, "year": year});
+            wire["format_version"] = serde_json::json!(version);
+            wire["year_resolution"] = policy;
+            match LogAttachment::from_attribute_json(&wire.to_string()) {
+                Ok(restored) => {
+                    prop_assert_eq!(restored.year_resolution, StoredYearResolution::PlaceLastEntryInYear { year: i32::try_from(year).expect("supported year") });
+                    prop_assert_eq!(kind, "place_last_entry_in_year");
+                }
+                Err(error) => prop_assert!(matches!(error.reason, LogAttachmentDecodeErrorReason::MalformedYearResolution(_) | LogAttachmentDecodeErrorReason::UnsupportedYearResolution { .. }), "invalid policy"),
+            }
         }
 
         /// The same for a stored content hash on its own, which is parsed

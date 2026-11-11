@@ -1485,11 +1485,10 @@ fn log_attachments_in_attrs(rec_grp: &Group, attr_names: Vec<String>) -> Vec<Log
             continue;
         };
         match read_group_string_attr(rec_grp, &key) {
-            Ok(json) => {
-                if let Some(attachment) = LogAttachment::from_attribute_json(&json) {
-                    entries.push(LogAttachmentEntry { id, attachment });
-                }
-            }
+            Ok(json) => match LogAttachment::from_attribute_json(&json) {
+                Ok(attachment) => entries.push(LogAttachmentEntry { id, attachment }),
+                Err(err) => log::warn!("Ignoring the log attachment {id}: {err:#}"),
+            },
             Err(err) => log::warn!("Ignoring the log attachment attribute {key:?}: {err}"),
         }
     }

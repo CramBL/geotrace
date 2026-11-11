@@ -6,9 +6,10 @@ use thiserror::Error;
 
 pub use log_attachment::{
     InvalidStoredLogFilterStack, LOG_ATTACHMENT_ATTR_PREFIX, LOGS_DIRECTORY, LogAttachment,
-    LogAttachmentEntry, LogAttachmentId, LogContentHash, StoredLogFilter, StoredLogFilterCondition,
-    StoredLogFilterEffects, StoredLogFilterGroup, StoredLogFilterOperator, StoredLogFilterStack,
-    StoredLogFilterStackParts, StoredLogLevel, StoredYearResolution, logs_directory_for_database,
+    LogAttachmentDecodeError, LogAttachmentDecodeErrorReason, LogAttachmentEntry, LogAttachmentId,
+    LogContentHash, StoredLogFilter, StoredLogFilterCondition, StoredLogFilterEffects,
+    StoredLogFilterGroup, StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts,
+    StoredLogLevel, StoredYearResolution, logs_directory_for_database,
 };
 pub use ui_state::{
     CURRENT_UI_STATE_VERSION, HIDDEN_TRACKS_DATASET, RecordingUiState, StoredUiStateVersion,
