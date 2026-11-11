@@ -18,6 +18,7 @@
 
 ### Fixed
 
+- **Log Viewer:** Fixed closing an inactive log changing the active log.
 - **Log Viewer:** Fixed Save with recording… changing a log's position source without saving it.
 - **Log Viewer:** Fixed missing error feedback and retry actions when saving log filters failed.
 - **Map & Tracks:** Fixed fit clipping start and finish flags when only ghost fixes, labels or sky glyphs were displayed.

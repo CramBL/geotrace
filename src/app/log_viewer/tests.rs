@@ -1974,51 +1974,138 @@ fn unloading_the_shown_log_leaves_the_viewer_on_its_empty_state() {
     harness.get_by_label(super::LOG_LOAD_HINT);
 }
 
-/// The viewer follows the log it was showing, wherever that log sits among the
-/// loaded ones.
 #[test]
-fn unloading_another_log_leaves_the_viewer_on_the_one_it_shows() {
+fn closing_an_inactive_log_preserves_the_active_reading_context_with_equal_filenames() {
+    const REVEALED_ENTRY: usize = 60;
+    let text = long_log(LONG_LOG_ENTRIES).replace("entry 60\n", "context\n");
     let mut harness = harness_of(
         Vec::new(),
         &[
-            ("navsyncd.log", LOG_WITH_EVERY_ROW_KIND),
+            ("navsyncd.log", THIRD_LOG),
             ("hal-powerd.log", SECOND_LOG),
+            ("navsyncd.log", &text),
         ],
     );
-    let shown = harness.state().viewer.selected_log();
+    let shown = harness.state().viewer.selected_log().unwrap();
     let other = harness.state().first_loaded_log();
+    type_into_live_filter(&mut harness, "entry");
+    {
+        let state = harness.state_mut();
+        let log = state.logs.get_by_id(shown).unwrap();
+        state.viewer.navigate_to_diagnostic(
+            log,
+            shown,
+            line_table::DiagnosticTarget::Entry(REVEALED_ENTRY),
+        );
+    }
+    harness.run_steps(3);
+    let reveal = harness.state().viewer.diagnostic_reveal;
+    let filters = harness
+        .state()
+        .shown_log()
+        .unwrap()
+        .filters()
+        .to_stored_stack();
+    let first_visible = (0..LONG_LOG_ENTRIES)
+        .find(|&index| {
+            harness
+                .query_by_label(&long_log_entry_timestamp(index))
+                .is_some()
+        })
+        .unwrap();
+    assert!(first_visible > 0);
 
-    harness.state_mut().logs.remove_by_id(other);
+    harness
+        .nth_matching(By::new().label(super::ICON_X), 0)
+        .click();
     harness.run_steps(3);
 
-    assert_eq!(harness.state().viewer.selected_log(), shown);
+    assert!(harness.state().logs.get_by_id(other).is_none());
+    assert_eq!(harness.state().viewer.selected_log(), Some(shown));
+    assert_eq!(harness.state().viewer.diagnostic_reveal, reveal);
+    assert_eq!(harness.state().viewer.filter_editor_log, Some(shown));
+    assert_eq!(live_filter_text(&harness), "entry");
     assert_eq!(
-        harness.state().shown_log().map(LoadedLog::name),
-        Some("hal-powerd.log")
+        harness
+            .state()
+            .shown_log()
+            .unwrap()
+            .filters()
+            .to_stored_stack(),
+        filters
+    );
+    assert_eq!(
+        (0..LONG_LOG_ENTRIES).find(|&index| harness
+            .query_by_label(&long_log_entry_timestamp(index))
+            .is_some()),
+        Some(first_visible)
     );
 }
 
 #[test]
-fn unloading_the_shown_log_leaves_the_viewer_on_the_log_that_loaded_first() {
+fn closing_the_active_log_selects_its_next_or_preceding_log_in_display_order() {
     let mut harness = harness_of(
-        Vec::new(),
+        vec![recording("walk.gtd", 55.0), recording("drive.gtd", 56.0)],
         &[
-            ("navsyncd.log", LOG_WITH_EVERY_ROW_KIND),
-            ("hal-powerd.log", SECOND_LOG),
+            ("first.log", LOG_WITH_EVERY_ROW_KIND),
+            ("second.log", SECOND_LOG),
+            ("third.log", THIRD_LOG),
         ],
     );
+    anchor_log_to_recording(&mut harness, "third.log", 0);
+    anchor_log_to_recording(&mut harness, "first.log", 1);
+    let ids: Vec<_> = harness
+        .state()
+        .logs
+        .iter_with_ids()
+        .map(|(id, _)| id)
+        .collect();
+    harness.get_by_label("first.log").click();
+    harness.run_steps(3);
 
-    // The second row is the log that loaded last, which the viewer opened on.
     harness
         .nth_matching(By::new().label(super::ICON_X), 1)
         .click();
     harness.run_steps(3);
+    assert_eq!(harness.state().viewer.selected_log(), ids.get(1).copied());
 
+    harness
+        .nth_matching(By::new().label(super::ICON_X), 1)
+        .click();
+    harness.run_steps(3);
     assert_eq!(harness.state().logs.len(), 1);
+    assert_eq!(harness.state().viewer.selected_log(), ids.get(2).copied());
     assert_eq!(
         harness.state().shown_log().map(LoadedLog::name),
-        Some("navsyncd.log")
+        Some("third.log")
     );
+}
+
+#[test]
+fn closing_a_saved_log_preserves_its_available_attachment() {
+    let attachment = stored_attachment();
+    let mut state = viewer_state_over_a_stored_recording(attachment.clone());
+    load_the_stored_log(&mut state, &attachment);
+    let mut harness = harness_from(state);
+
+    harness.get_by_label(super::ICON_X).click();
+    harness.run_steps(3);
+
+    assert!(harness.state().logs.is_empty());
+    assert_eq!(harness.state().viewer.selected_log(), None);
+    let saved = harness
+        .state()
+        .attachments
+        .of_recording(&stored_recording_ref());
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved.first().map(|entry| entry.id), Some(attachment.id));
+    assert!(harness.state().requests.detach.is_none());
+    harness.get_by_label(super::LOG_LOAD_HINT);
+    harness
+        .get_by_label(log_list::LOAD_ATTACHMENT_LABEL)
+        .click();
+    harness.run_steps(2);
+    assert!(harness.state().requests.load_attachment.is_some());
 }
 
 /// The recording in the history database the fixture attachments belong to.

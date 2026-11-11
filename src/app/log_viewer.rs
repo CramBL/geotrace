@@ -298,6 +298,8 @@ impl LogViewerWindow {
         }
         self.restored_logs.clear();
 
+        let groups =
+            log_list::group_logs_by_recording(logs, recordings, recording_names, attachments);
         let mut open = self.open;
         let mut unload = None;
         let window = Window::new(LOG_VIEWER_TITLE)
@@ -341,8 +343,7 @@ impl LogViewerWindow {
                     .max_height((ui.available_height() - reserved_for_the_table).max(0.0))
                     .show(ui, |ui| {
                         self.notices_ui(ui);
-                        let actions =
-                            self.log_list_ui(ui, logs, recordings, recording_names, attachments);
+                        let actions = log_list::log_list_ui(ui, &groups, logs, &mut self.selected);
                         unload = actions.unload;
                         if let Some(chosen) = actions.load_attachment {
                             requests.load_attachment = Some(chosen);
@@ -422,11 +423,15 @@ impl LogViewerWindow {
         self.open = open;
 
         if let Some(id) = unload {
-            if let Some(log) = logs.remove_by_id(id) {
-                log::info!("Unloaded log {:?}", log.name());
-            }
-            // The next frame resolves the selection against what is left.
-            self.selected = None;
+            let navigation_order: Vec<_> = groups
+                .iter()
+                .flat_map(|group| &group.rows)
+                .filter_map(|row| match row {
+                    log_list::LogRow::Loaded(log) => Some(log.id),
+                    log_list::LogRow::Available(_) => None,
+                })
+                .collect();
+            self.close_log(logs, id, &navigation_order);
         }
         if !self.open
             || window.is_none_or(|response| response.inner.is_none())
@@ -467,18 +472,34 @@ impl LogViewerWindow {
         }
     }
 
-    /// The loaded logs and the available attachments, grouped by recording.
-    fn log_list_ui(
+    fn close_log(
         &mut self,
-        ui: &mut egui::Ui,
         logs: &mut LoadedLogs,
-        recordings: LoadedFilesView<'_>,
-        recording_names: &RecordingNames,
-        attachments: &SessionLogAttachments,
-    ) -> log_list::LogListActions {
-        let groups =
-            log_list::group_logs_by_recording(logs, recordings, recording_names, attachments);
-        log_list::log_list_ui(ui, &groups, logs, &mut self.selected)
+        closing: LoadedLogId,
+        navigation_order: &[LoadedLogId],
+    ) {
+        let Some(log) = logs.remove_by_id(closing) else {
+            return;
+        };
+        log::info!("Unloaded log {:?}", log.name());
+        if self.selected == Some(closing) {
+            self.selected = navigation_order
+                .iter()
+                .position(|id| *id == closing)
+                .and_then(|index| {
+                    navigation_order.get(index + 1).or_else(|| {
+                        index
+                            .checked_sub(1)
+                            .and_then(|previous| navigation_order.get(previous))
+                    })
+                })
+                .copied();
+            self.diagnostic_reveal = None;
+            self.scroll_to_row = None;
+            self.clicked_glyph = None;
+            self.filter_editor_log = None;
+            self.filter_editor_focus = false;
+        }
     }
 
     /// The parse summary of the shown log, which unfolds the summary panel.
