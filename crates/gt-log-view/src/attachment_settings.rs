@@ -140,6 +140,15 @@ impl AttachmentSettingsState {
         &self.acknowledged
     }
 
+    pub fn save_error(&self) -> Option<&str> {
+        match &self.write_state {
+            SettingsWriteState::Failed(error) => Some(error),
+            SettingsWriteState::Idle
+            | SettingsWriteState::RetryRequested
+            | SettingsWriteState::Saving(_) => None,
+        }
+    }
+
     pub fn status(&self, access: WriteAccess) -> AttachmentSettingsStatus<'_> {
         if !access.allows_writing() {
             return AttachmentSettingsStatus::SessionOnly;

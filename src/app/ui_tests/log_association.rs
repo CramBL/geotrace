@@ -7,7 +7,7 @@ use chrono::{DateTime, Duration};
 use egui::accesskit::{Role, Toggled};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
-use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
+use egui_phosphor::regular::{ARTICLE as ICON_ARTICLE, WARNING as ICON_WARNING};
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_log_view::{
     AttachmentSettingsStatus, FilterEffect, FilterGroupOperator, FilterPattern, LoadedLog,
@@ -1164,8 +1164,10 @@ fn saving_a_duplicate_log_preserves_attachment_identity_and_updates_complete_set
     assert_eq!(harness.state().toasts.len(), 1, "the reuse raises a toast");
 }
 
-#[test]
-fn settings_edits_during_creation_are_saved_after_retrying_a_failed_update() {
+#[rstest::rstest]
+#[case::retry(false)]
+#[case::read_only(true)]
+fn settings_save_failure_remains_visible_until_retry_acknowledgement(#[case] read_only: bool) {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("history.h5");
     let (recording, _) = seed_a_recording_and_the_log_stored_with_it(&path);
@@ -1244,15 +1246,60 @@ fn settings_edits_during_creation_are_saved_after_retrying_a_failed_update() {
     harness
         .state_mut()
         .apply_attached_log_settings_outcome(pending.complete(Err("Disk full".to_owned())));
+    let other = LoadedLog::new(
+        Some("other.log".to_owned()),
+        gt_logfile::parse_log(
+            "2026-01-01T00:00:00Z other".into(),
+            gt_test_utils::synthetic_log_start(),
+        )
+        .unwrap(),
+        Duration::seconds(60),
+    );
+    let other_id = harness.state_mut().logs.push(other).id();
+    harness.state_mut().log_viewer.open_on_log(other_id);
+    harness.run_steps(2);
+    assert_eq!(harness.state().log_viewer.selected_log(), Some(other_id));
     harness.state_mut().log_viewer.open = false;
+    if read_only {
+        harness
+            .state()
+            .pending_writes
+            .become_read_only_for_the_rest_of_the_run();
+    }
     harness.run_steps(3);
+    harness
+        .get_by_label(&format!("Log saves {ICON_WARNING} 1"))
+        .click();
+    harness.run_steps(2);
+    assert!(harness.query_by_label("pending.log").is_some());
+    assert!(!harness.state().log_viewer.open);
+    assert_eq!(harness.state().log_viewer.selected_log(), Some(other_id));
+    let access = harness.state().attachment_settings_write_access();
     assert_eq!(
         harness
             .state()
-            .first_log()
+            .logs
+            .get_by_id(id)
             .unwrap()
-            .settings_save_status(WriteAccess::Owner),
-        AttachmentSettingsStatus::Failed("Disk full")
+            .settings_save_error(),
+        Some("Disk full")
+    );
+    assert_eq!(
+        harness
+            .state()
+            .logs
+            .get_by_id(id)
+            .unwrap()
+            .settings_save_status(access),
+        if read_only {
+            AttachmentSettingsStatus::SessionOnly
+        } else {
+            AttachmentSettingsStatus::Failed("Disk full")
+        }
+    );
+    assert_eq!(
+        harness.get_by_label("Retry").accesskit_node().is_disabled(),
+        read_only
     );
     assert_eq!(
         stored_attachments(&path, &recording)
@@ -1263,8 +1310,41 @@ fn settings_edits_during_creation_are_saved_after_retrying_a_failed_update() {
             .settings,
         initial
     );
-    let desired = harness.state().first_log().unwrap().settings_snapshot();
-    assert!(harness.state_mut().logs.retry_settings_save(id));
+    let desired = harness
+        .state()
+        .logs
+        .get_by_id(id)
+        .unwrap()
+        .settings_snapshot();
+    if read_only {
+        assert_eq!(
+            harness
+                .state()
+                .logs
+                .get_by_id(id)
+                .unwrap()
+                .settings_save_error(),
+            Some("Disk full")
+        );
+        return;
+    }
+    assert!(
+        harness
+            .ctx
+            .content_rect()
+            .contains_rect(harness.get_by_label("Retry").rect())
+    );
+    harness.get_by_label("Retry").click();
+    harness.run_steps(2);
+    assert_ne!(
+        harness
+            .state()
+            .logs
+            .get_by_id(id)
+            .unwrap()
+            .settings_save_status(WriteAccess::Owner),
+        AttachmentSettingsStatus::Failed("Disk full")
+    );
     assert!(harness.step_until(|harness| {
         harness
             .state()
@@ -1278,6 +1358,9 @@ fn settings_edits_during_creation_are_saved_after_retrying_a_failed_update() {
         .load_attached_log(&recording, attachment_id)
         .unwrap();
     assert_eq!(reopened.settings, desired);
+    assert!(!harness.state().log_viewer.open);
+    assert_eq!(harness.state().log_viewer.selected_log(), Some(other_id));
+    assert!(harness.query_by_label("Retry").is_none());
     let parsed = gt_logfile::parse_log_with_year_resolution(
         reopened.text.into(),
         reopened.parse_year_reference,

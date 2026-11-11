@@ -29,6 +29,7 @@ pub(super) mod filters;
 mod line_table;
 pub(super) mod log_list;
 pub(super) mod restored_logs_badge;
+pub(super) mod settings_status;
 mod summary_panel;
 pub(super) mod unresolved_years;
 
@@ -138,6 +139,7 @@ pub(super) struct LogViewerRequests {
     pub open_recording: Option<DatabaseRef>,
 
     pub resolve_years: Option<YearsToResolve>,
+    pub retry_settings_save: Option<LoadedLogId>,
 }
 
 /// The year resolution the user applied to a log whose years are unresolved.
@@ -355,8 +357,25 @@ impl LogViewerWindow {
                         };
                         if let Some(log) = logs.get_by_id(shown) {
                             ui.horizontal(|ui| {
-                                self.display_options_ui(ui);
-                                self.parse_summary_row_ui(ui, log);
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        settings_status::selected_log_ui(
+                                            ui,
+                                            log,
+                                            shown,
+                                            write_access,
+                                            requests,
+                                        );
+                                        ui.with_layout(
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                self.display_options_ui(ui);
+                                                self.parse_summary_row_ui(ui, log);
+                                            },
+                                        );
+                                    },
+                                );
                             });
                             if let LogChronology::Unresolved(unresolved) = log.parsed().chronology()
                                 && let Some(year_resolution) = self.unresolved_years_ui(

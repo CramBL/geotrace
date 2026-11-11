@@ -117,6 +117,11 @@ impl App {
         if let Some(db_ref) = requests.open_recording {
             self.history.open(db_ref);
         }
+        if self.attachment_settings_write_access().allows_writing()
+            && let Some(id) = requests.retry_settings_save
+        {
+            self.logs.retry_settings_save(id);
+        }
         if let Some(years) = requests.resolve_years {
             self.resolve_log_years(years);
         }

@@ -151,6 +151,13 @@ impl LoadedLog {
         }
     }
 
+    pub fn settings_save_error(&self) -> Option<&str> {
+        match &self.context {
+            LogContext::SavedAttachment(state) => state.save_error(),
+            LogContext::LooseImport { .. } | LogContext::DetachedAttachment { .. } => None,
+        }
+    }
+
     pub fn settings_save_status(&self, access: WriteAccess) -> AttachmentSettingsStatus<'_> {
         let LogContext::SavedAttachment(state) = &self.context else {
             return AttachmentSettingsStatus::SessionOnly;
