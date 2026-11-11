@@ -6,6 +6,9 @@ license.workspace = true
 authors.workspace = true
 description.workspace = true
 
+[package.metadata.cargo-shear]
+ignored-paths = ["tests/compile_fail/*.rs"]
+
 [lib]
 doctest = false
 
@@ -18,6 +21,7 @@ gt-fmt = { path = "../gt-fmt" }
 gt-history-types = { path = "../gt-history-types" }
 gt-loaded-files = { path = "../gt-loaded-files" }
 gt-logfile = { path = "../gt-logfile" }
+gt-pending-writes = { path = "../gt-pending-writes" }
 gt-types = { path = "../gt-types" }
 gt-ui-types = { path = "../gt-ui-types" }
 log.workspace = true
@@ -27,6 +31,7 @@ rayon.workspace = true
 regex.workspace = true
 strum.workspace = true
 thiserror.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
@@ -34,6 +39,7 @@ gt-test-utils = { path = "../gt-test-utils" }
 proptest.workspace = true
 rstest.workspace = true
 serde_json.workspace = true
+trybuild.workspace = true
 
 [[bench]]
 name = "filter_log"

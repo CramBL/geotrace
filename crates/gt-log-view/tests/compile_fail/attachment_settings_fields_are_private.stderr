@@ -1,0 +1,31 @@
+error[E0451]: fields `attachment`, `revision` and `settings` of struct `AttachmentSettingsWrite` are private
+  --> tests/compile_fail/attachment_settings_fields_are_private.rs:14:9
+   |
+13 |     let write = AttachmentSettingsWrite {
+   |                 ----------------------- in this type
+14 |         attachment,
+   |         ^^^^^^^^^^ private field
+15 |         revision,
+   |         ^^^^^^^^ private field
+16 |         settings,
+   |         ^^^^^^^^ private field
+
+error[E0451]: fields `write` and `result` of struct `AttachmentSettingsCompletion` are private
+  --> tests/compile_fail/attachment_settings_fields_are_private.rs:19:9
+   |
+18 |     let _completion = AttachmentSettingsCompletion {
+   |                       ---------------------------- in this type
+19 |         write,
+   |         ^^^^^ private field
+20 |         result: Ok(()),
+   |         ^^^^^^ private field
+
+error[E0451]: fields `context` and `revision` of struct `AttachmentSettingsRevision` are private
+  --> tests/compile_fail/attachment_settings_fields_are_private.rs:23:9
+   |
+22 |     let _revision = AttachmentSettingsRevision {
+   |                     -------------------------- in this type
+23 |         context: Uuid::nil(),
+   |         ^^^^^^^ private field
+24 |         revision: Uuid::nil(),
+   |         ^^^^^^^^ private field
