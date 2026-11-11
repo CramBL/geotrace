@@ -1,4 +1,4 @@
-use gt_history_types::{DatabaseRef, LogAttachmentId};
+use gt_history_types::{DatabaseRef, LogAttachmentId, StoredLogSettings, StoredYearResolution};
 
 use crate::LayerColorSlot;
 use crate::attachment::LogAttachmentRef;
@@ -11,6 +11,14 @@ pub fn attachment_ref() -> LogAttachmentRef {
             group_name: "2026-01-01T14-02-11".to_owned(),
         },
         id: LogAttachmentId::new_random(),
+    }
+}
+
+pub fn settings() -> StoredLogSettings {
+    StoredLogSettings {
+        filters: Default::default(),
+        year_reference: Some(crate::test_util::start()),
+        year_resolution: StoredYearResolution::Infer,
     }
 }
 

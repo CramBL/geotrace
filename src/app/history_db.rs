@@ -8,11 +8,6 @@
 //! threads, which open the database by path. The global database lock keeps the
 //! two paths safe.
 //!
-//! A [`WriteRequest`] runs on [`RecordingsHandle::writer`] and under a
-//! [`PendingWrites`] guard, so the process waits for it on the way out. A
-//! read-only session has no writer, and a rejected write comes back as
-//! [`Response::WriteRejected`] holding the [`WriteRejection`].
-
 use std::collections::HashSet;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -21,16 +16,15 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 
 use egui::Context;
-use gt_log_view::LogAttachmentRef;
+use gt_log_view::{AttachmentSettingsCompletion, AttachmentSettingsWrite, LogAttachmentRef};
 use gt_logfile::ParsedLog;
-use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteKind, WriteRejection};
+use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteAccess, WriteKind, WriteRejection};
 use gt_store::{
     AttachedLog, DatabaseRef, DbError, HistoryDatabase, LogAttachmentEntry, LogAttachmentError,
     LogAttachmentId, LogAttachmentListingEntry, LogAttachments as _, LogContentHash, LogToAttach,
     PruneMode, ReadOnlyHistoryDatabase, ReadOnlyLogAttachments as _, ReadOnlyRecordings,
     RecordingEntry, RecordingUiState, Recordings, RecordingsHandle, StoredLogFilterStack,
-    StoredLogSettings, StoredRecording, StoredYearResolution, TrackRange, TrackState,
-    UiStateVersionReporter,
+    StoredLogSettings, StoredRecording, TrackRange, TrackState, UiStateVersionReporter,
 };
 use gt_track_builder::SegmentationConfig;
 use gt_ui_types::LoadedLogId;
@@ -179,20 +173,12 @@ enum WriteRequest {
         old: String,
         new: String,
     },
-    /// Rewrite one attachment's stored filter stack.
-    SetAttachedLogFilters {
-        attachment: LogAttachmentRef,
-        filters: StoredLogFilterStack,
-    },
-    SetAttachedLogYearResolution {
-        attachment: LogAttachmentRef,
-        year_resolution: StoredYearResolution,
-    },
     SetTracksShelved {
         db_ref: DatabaseRef,
         rows: Vec<usize>,
         shelved: bool,
     },
+    StoreAttachedLogSettings(AttachmentSettingsWrite),
     /// Store the UI state of a recording, which holds its hidden tracks.
     StoreRecordingUiState {
         db_ref: DatabaseRef,
@@ -206,6 +192,18 @@ enum WriteRequest {
 }
 
 impl WriteRequest {
+    fn reject(self, rejection: WriteRejection) -> Response {
+        match self {
+            Self::StoreAttachedLogSettings(write) => {
+                Response::AttachedLogSettingsStored(write.complete(Err(rejection.to_string())))
+            }
+            request => Response::WriteRejected {
+                label: request.database_write_label(),
+                rejection,
+            },
+        }
+    }
+
     /// The label the write registry lists this request under.
     fn database_write_label(&self) -> &'static str {
         match self {
@@ -223,10 +221,7 @@ impl WriteRequest {
                 "Storing the display settings of a recording in recording history"
             }
             Self::AttachLog { .. } => "Storing a log with a recording",
-            Self::SetAttachedLogFilters { .. } => "Saving filters for a log in recording history",
-            Self::SetAttachedLogYearResolution { .. } => {
-                "Saving the years of a log in recording history"
-            }
+            Self::StoreAttachedLogSettings(_) => "Saving log settings in recording history",
             Self::DetachLog { .. } => "Removing a log from recording history",
         }
     }
@@ -248,6 +243,7 @@ pub struct StoredLogAttachment {
 pub struct ExistingLogAttachment {
     pub id: LogAttachmentId,
     pub name: String,
+    pub settings: StoredLogSettings,
 }
 
 /// A recording as the worker read it back: its stored form, and the UI state
@@ -259,18 +255,13 @@ pub struct OpenedRecording {
 
 /// A result delivered back to the UI thread, drained via [`HistoryWorker::poll`].
 pub enum Response {
-    /// Outcome of a filter-stack write. A failure costs only the stored copy:
-    /// the loaded log keeps the stack the user is looking at.
-    AttachedLogFiltersStored(Result<(), LogAttachmentError>),
     /// The one log the viewer requested out of a recording.
     AttachedLogLoaded {
         attachment: LogAttachmentRef,
         name: String,
         log: Result<AttachedLog, LogAttachmentError>,
     },
-    /// Outcome of a year resolution write. A failure costs only the stored copy: the loaded log
-    /// keeps the years the user chose.
-    AttachedLogYearResolutionStored(Result<(), LogAttachmentError>),
+    AttachedLogSettingsStored(AttachmentSettingsCompletion),
     /// The logs a recording carries, one entry per attachment it holds.
     AttachedLogsLoaded {
         db_ref: DatabaseRef,
@@ -350,6 +341,7 @@ pub struct HistoryWorker {
     handle: Option<JoinHandle<()>>,
     path: Option<PathBuf>,
     ui_state_versions: Arc<UiStateVersionReporter>,
+    writable_registry: Option<PendingWrites>,
 }
 
 impl HistoryWorker {
@@ -364,11 +356,14 @@ impl HistoryWorker {
             handle: None,
             path: None,
             ui_state_versions: Arc::default(),
+            writable_registry: None,
         }
     }
 
     /// Spawn the worker thread, moving `db` onto it.
     pub fn spawn(db: RecordingsHandle, ctx: Context, pending_writes: PendingWrites) -> Self {
+        let writable_registry =
+            matches!(&db, RecordingsHandle::Owner(_)).then(|| pending_writes.clone());
         let path = Some(db.read().path().to_owned());
         let (req_tx, req_rx) = mpsc::channel::<Request>();
         let (resp_tx, resp_rx) = mpsc::channel::<Response>();
@@ -383,6 +378,7 @@ impl HistoryWorker {
             handle: Some(handle),
             path,
             ui_state_versions,
+            writable_registry,
         }
     }
 
@@ -416,6 +412,45 @@ impl HistoryWorker {
     #[cfg(test)]
     pub fn hide_path(&mut self) {
         self.path = None;
+    }
+
+    pub fn store_attached_log_settings(
+        &self,
+        write: AttachmentSettingsWrite,
+    ) -> Option<AttachmentSettingsCompletion> {
+        let Some(sender) = &self.req_tx else {
+            return Some(write.complete(Err("Recording history is unavailable".to_owned())));
+        };
+        if !self.attachment_settings_write_access().allows_writing() {
+            let rejection = self
+                .writable_registry
+                .as_ref()
+                .and_then(PendingWrites::rejection)
+                .unwrap_or(WriteRejection::ReadOnlySession);
+            return Some(write.complete(Err(rejection.to_string())));
+        }
+        if sender
+            .send(Request::Write(WriteRequest::StoreAttachedLogSettings(
+                write.clone(),
+            )))
+            .is_err()
+        {
+            return Some(write.complete(Err("The recording history worker stopped".to_owned())));
+        }
+        None
+    }
+
+    pub fn attachment_settings_write_access(&self) -> WriteAccess {
+        if self.req_tx.is_some()
+            && self
+                .writable_registry
+                .as_ref()
+                .is_some_and(|registry| registry.rejection().is_none())
+        {
+            WriteAccess::Owner
+        } else {
+            WriteAccess::ReadOnly
+        }
     }
 
     fn send(&self, req: Request) {
@@ -546,28 +581,6 @@ impl HistoryWorker {
         self.send_read(ReadRequest::LoadAttachedLog { attachment, name });
     }
 
-    pub fn set_attached_log_filters(
-        &self,
-        attachment: LogAttachmentRef,
-        filters: StoredLogFilterStack,
-    ) {
-        self.send_write(WriteRequest::SetAttachedLogFilters {
-            attachment,
-            filters,
-        });
-    }
-
-    pub fn set_attached_log_year_resolution(
-        &self,
-        attachment: LogAttachmentRef,
-        year_resolution: StoredYearResolution,
-    ) {
-        self.send_write(WriteRequest::SetAttachedLogYearResolution {
-            attachment,
-            year_resolution,
-        });
-    }
-
     pub fn detach_log(&self, attachment: LogAttachmentRef, log: LoadedLogId, name: String) {
         self.send_write(WriteRequest::DetachLog {
             attachment,
@@ -669,12 +682,6 @@ fn worker_loop(
     }
 }
 
-/// Run a write request on the writable database, under a
-/// [`PendingWriteGuard`].
-///
-/// A read-only session has no [`RecordingsHandle::writer`]: its writes come
-/// back as [`WriteRejection::ReadOnlySession`], which is what the write
-/// registry rejects them with in such a session.
 fn run_write_request(
     db: &mut RecordingsHandle,
     req: WriteRequest,
@@ -683,14 +690,11 @@ fn run_write_request(
 ) -> Response {
     let label = req.database_write_label();
     let Some(db) = db.writer() else {
-        return Response::WriteRejected {
-            label,
-            rejection: WriteRejection::ReadOnlySession,
-        };
+        return req.reject(WriteRejection::ReadOnlySession);
     };
     match pending_writes.try_begin(label, WriteKind::RecordingDatabase) {
         Ok(_write) => handle_write_request(db, req, ui_state_versions),
-        Err(rejection) => Response::WriteRejected { label, rejection },
+        Err(rejection) => req.reject(rejection),
     }
 }
 
@@ -763,6 +767,7 @@ fn handle_read_request(
                     entry.map(|entry| ExistingLogAttachment {
                         id: entry.id,
                         name: entry.attachment.name,
+                        settings: entry.attachment.settings,
                     })
                 });
             Response::DuplicateAttachmentFound {
@@ -862,22 +867,16 @@ fn handle_write_request(
                 });
             Response::LogAttached { log, name, result }
         }
-        WriteRequest::SetAttachedLogFilters {
-            attachment,
-            filters,
-        } => Response::AttachedLogFiltersStored(db.set_attached_log_filters(
-            &attachment.recording,
-            attachment.id,
-            filters,
-        )),
-        WriteRequest::SetAttachedLogYearResolution {
-            attachment,
-            year_resolution,
-        } => Response::AttachedLogYearResolutionStored(db.set_attached_log_year_resolution(
-            &attachment.recording,
-            attachment.id,
-            year_resolution,
-        )),
+        WriteRequest::StoreAttachedLogSettings(write) => {
+            let result = db
+                .set_attached_log_settings(
+                    &write.attachment().recording,
+                    write.attachment().id,
+                    write.settings().clone(),
+                )
+                .map_err(|error| error.to_string());
+            Response::AttachedLogSettingsStored(write.complete(result))
+        }
         WriteRequest::DetachLog {
             attachment,
             log,
@@ -1054,9 +1053,12 @@ fn purge_tracks_with_stored(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc::TryRecvError;
+
     use chrono::DateTime;
+    use gt_log_view::{AttachmentSettingsState, AttachmentSettingsStatus};
     use gt_pending_writes::WriteAccess;
-    use gt_store::TrackRange;
+    use gt_store::{StoredYearResolution, TrackRange};
     use gt_test_utils::pending_writes;
     use rstest::rstest;
 
@@ -1736,6 +1738,106 @@ mod tests {
         worker.shutdown();
     }
 
+    #[rstest]
+    #[case::read_only_handle(SettingsWriteFailure::ReadOnlyHandle)]
+    #[case::registry_downgrade(SettingsWriteFailure::RegistryDowngrade)]
+    #[case::missing_recording(SettingsWriteFailure::MissingRecording)]
+    fn settings_completions_match_the_submitted_revision_after_worker_failure(
+        #[case] failure: SettingsWriteFailure,
+    ) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        recordings::seed_two_track_recording(&path);
+        let mut db = if matches!(failure, SettingsWriteFailure::ReadOnlyHandle) {
+            RecordingsHandle::ReadOnly(
+                ReadOnlyRecordings::open_existing_read_only(&path).expect("read-only database"),
+            )
+        } else {
+            RecordingsHandle::Owner(Recordings::open_or_create(&path).expect("database"))
+        };
+        let before = std::fs::read(&path).expect("database");
+        let registry = PendingWrites::default();
+        let mut state = settings_state();
+        let write = state.prepare_write(WriteAccess::Owner).expect("write");
+        if matches!(failure, SettingsWriteFailure::RegistryDowngrade) {
+            registry.become_read_only_for_the_rest_of_the_run();
+        }
+        let Response::AttachedLogSettingsStored(completion) = run_write_request(
+            &mut db,
+            WriteRequest::StoreAttachedLogSettings(write),
+            &registry,
+            &UiStateVersionReporter::default(),
+        ) else {
+            panic!("settings completion");
+        };
+        assert!(state.acknowledge(completion));
+        assert!(matches!(
+            state.status(WriteAccess::Owner),
+            AttachmentSettingsStatus::Failed(_)
+        ));
+        assert!(std::fs::read(&path).expect("database after failure") == before);
+        assert!(registry.is_idle());
+    }
+
+    #[rstest]
+    #[case::unavailable(
+        SettingsSubmissionFailure::Unavailable,
+        "Recording history is unavailable"
+    )]
+    #[case::disconnected(
+        SettingsSubmissionFailure::Disconnected,
+        "The recording history worker stopped"
+    )]
+    #[case::read_only(SettingsSubmissionFailure::ReadOnly, "this session is read-only")]
+    fn settings_completions_match_the_submitted_revision_after_submission_failure(
+        #[case] failure: SettingsSubmissionFailure,
+        #[case] error: &str,
+    ) {
+        let mut state = settings_state();
+        let write = state.prepare_write(WriteAccess::Owner).expect("write");
+        let mut worker = HistoryWorker::disabled();
+        let mut readable_receiver = None;
+        if !matches!(failure, SettingsSubmissionFailure::Unavailable) {
+            let (sender, receiver) = mpsc::channel();
+            worker.req_tx = Some(sender);
+            worker.writable_registry = Some(PendingWrites::default());
+            if matches!(failure, SettingsSubmissionFailure::Disconnected) {
+                drop(receiver);
+            } else {
+                readable_receiver = Some(receiver);
+                worker
+                    .writable_registry
+                    .as_ref()
+                    .unwrap()
+                    .become_read_only_for_the_rest_of_the_run();
+            }
+        }
+        let completion = worker
+            .store_attached_log_settings(write)
+            .expect("failed submission");
+        assert!(state.acknowledge(completion));
+        assert_eq!(
+            state.status(WriteAccess::Owner),
+            AttachmentSettingsStatus::Failed(error)
+        );
+        assert!(worker.poll().is_empty());
+        if let Some(receiver) = readable_receiver {
+            assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+        }
+    }
+
+    enum SettingsSubmissionFailure {
+        Disconnected,
+        ReadOnly,
+        Unavailable,
+    }
+
+    enum SettingsWriteFailure {
+        MissingRecording,
+        ReadOnlyHandle,
+        RegistryDowngrade,
+    }
+
     fn db_ref() -> DatabaseRef {
         DatabaseRef {
             identity: "dev".to_owned(),
@@ -1748,6 +1850,21 @@ mod tests {
             recording: db_ref(),
             id: LogAttachmentId::new_random(),
         }
+    }
+
+    fn settings_state() -> AttachmentSettingsState {
+        let mut state = AttachmentSettingsState::new(
+            attachment_ref(),
+            StoredLogSettings {
+                filters: Default::default(),
+                year_reference: None,
+                year_resolution: StoredYearResolution::Infer,
+            },
+        );
+        let mut desired = state.desired().clone();
+        desired.year_reference = Some(DateTime::UNIX_EPOCH);
+        state.set_desired(desired);
+        state
     }
 
     #[rstest]
@@ -1823,18 +1940,8 @@ mod tests {
         "Storing a log with a recording"
     )]
     #[case(
-        WriteRequest::SetAttachedLogFilters {
-            attachment: attachment_ref(),
-            filters: Default::default(),
-        },
-        "Saving filters for a log in recording history"
-    )]
-    #[case(
-        WriteRequest::SetAttachedLogYearResolution {
-            attachment: attachment_ref(),
-            year_resolution: StoredYearResolution::IgnoreSummaryBounds,
-        },
-        "Saving the years of a log in recording history"
+        WriteRequest::StoreAttachedLogSettings(settings_state().prepare_write(WriteAccess::Owner).expect("settings write")),
+        "Saving log settings in recording history"
     )]
     #[case(
         WriteRequest::DetachLog {

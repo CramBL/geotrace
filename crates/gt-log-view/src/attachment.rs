@@ -3,7 +3,7 @@
 
 use gt_history_types::{
     DatabaseRef, LogAttachmentEntry, LogAttachmentId, LogAttachmentListingEntry,
-    StoredLogFilterStack, StoredYearResolution,
+    StoredYearResolution,
 };
 use gt_logfile::YearResolution;
 
@@ -33,16 +33,6 @@ pub fn year_resolution_of_stored(stored: StoredYearResolution) -> YearResolution
             YearResolution::PlaceLastEntryInYear(year)
         }
     }
-}
-
-/// A log's attachment, with the filter stack the database holds for it.
-#[derive(Debug)]
-pub(crate) struct LogAttachmentState {
-    pub(crate) reference: LogAttachmentRef,
-
-    /// The chips as they were last written. A stack that no longer serializes
-    /// to this is one the next write-back stores.
-    pub(crate) stored_filters: StoredLogFilterStack,
 }
 
 /// Every attachment of the loaded recordings, as the history database last

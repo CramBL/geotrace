@@ -6,8 +6,11 @@ use std::mem;
 use std::sync::Arc;
 
 use gt_loaded_files::{LoadedFileId, RecordingNames};
-use gt_log_view::{LogAttachmentRef, LogSaveOutcome, PositionSourceState};
-use gt_store::{AttachedLog, DatabaseRef, DbError, LogAttachmentError, StoredLogFilterStack};
+use gt_log_view::{
+    AttachmentSettingsCompletion, LogAttachmentRef, LogSaveOutcome, PositionSourceState,
+};
+use gt_pending_writes::WriteAccess;
+use gt_store::{AttachedLog, DatabaseRef, DbError, LogAttachmentError, StoredLogSettings};
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::LoadedLogId;
 
@@ -119,9 +122,35 @@ impl App {
         }
     }
 
-    /// Resolves the years of a log again under the year resolution the user applied, stores it
-    /// with the log's attachment, and chooses a position source for a log without one whose years
-    /// now resolve.
+    pub(super) fn store_attached_log_settings_edits(&mut self) {
+        let access = self.attachment_settings_write_access();
+        for write in self.logs.prepare_settings_writes(access) {
+            if let Some(completion) = self.history.store_attached_log_settings(write) {
+                self.apply_attached_log_settings_outcome(completion);
+            }
+        }
+    }
+
+    pub(super) fn apply_attached_log_settings_outcome(
+        &mut self,
+        completion: AttachmentSettingsCompletion,
+    ) {
+        let error = completion.error().map(str::to_owned);
+        if self.logs.acknowledge_settings(completion)
+            && let Some(error) = error
+        {
+            log::warn!("Storing an attached log's settings failed: {error}");
+        }
+    }
+
+    pub(super) fn attachment_settings_write_access(&self) -> WriteAccess {
+        if self.pending_writes.rejection().is_some() {
+            WriteAccess::ReadOnly
+        } else {
+            self.history.attachment_settings_write_access()
+        }
+    }
+
     fn resolve_log_years(
         &mut self,
         YearsToResolve {
@@ -137,16 +166,9 @@ impl App {
         if !log.resolve_years_as(year_resolution, &recordings) {
             return;
         }
-        let attachment = log.attachment().cloned();
         let needs_a_position_source =
             log.parsed().chronology().is_resolved() && log.anchor_key().is_none();
         drop(shared);
-        if let Some(attachment) = attachment {
-            self.history.set_attached_log_year_resolution(
-                attachment,
-                gt_log_view::stored_year_resolution(year_resolution),
-            );
-        }
         if needs_a_position_source {
             self.choose_position_source_of_loaded_log(log_id);
         }
@@ -169,15 +191,6 @@ impl App {
             return;
         }
         log.anchor_to_loaded_recording(candidates.unambiguous_target(), &recordings);
-    }
-
-    /// Writes back every attachment whose stored filter stack is behind the
-    /// chips of the log it holds. A chip edit is stored as it is made: the
-    /// stored stack is what a restored log comes back with.
-    pub(super) fn store_attached_log_filter_edits(&mut self) {
-        for (attachment, filters) in self.logs.take_filter_stack_edits_to_store() {
-            self.history.set_attached_log_filters(attachment, filters);
-        }
     }
 
     /// Lists the attachments a recording opened from history holds, loads each
@@ -272,13 +285,13 @@ impl App {
                     recording: recording.clone(),
                     id: entry.id,
                 };
-                let filters = entry.attachment.settings.filters.clone();
+                let settings = entry.attachment.settings.clone();
                 self.log_attachments.record_attachment(recording, entry);
                 let shared = self.shared.borrow();
                 let outcome = self.logs.save_attachment(
                     log_id,
                     attachment,
-                    filters,
+                    settings,
                     &shared.loaded_files.view(),
                 );
                 drop(shared);
@@ -413,7 +426,7 @@ impl App {
                     recording: db_ref,
                     id: existing.id,
                 };
-                self.adopt_the_attachment_the_recording_holds(log_id, attachment, filters);
+                self.adopt_existing_log_attachment(log_id, attachment, existing.settings.clone());
                 self.toasts.info(format!(
                     "Using \"{}\" already saved with this recording",
                     existing.name
@@ -425,24 +438,20 @@ impl App {
         }
     }
 
-    fn adopt_the_attachment_the_recording_holds(
+    fn adopt_existing_log_attachment(
         &mut self,
         log_id: LoadedLogId,
         attachment: LogAttachmentRef,
-        filters: StoredLogFilterStack,
+        persisted: StoredLogSettings,
     ) {
         let shared = self.shared.borrow();
-        let outcome = self.logs.save_attachment(
-            log_id,
-            attachment.clone(),
-            filters.clone(),
-            &shared.loaded_files.view(),
-        );
+        let outcome =
+            self.logs
+                .save_attachment(log_id, attachment, persisted, &shared.loaded_files.view());
         drop(shared);
         match outcome {
-            LogSaveOutcome::Saved(_) => self.history.set_attached_log_filters(attachment, filters),
             LogSaveOutcome::AlreadyLoaded(id) => self.log_viewer.open_on_log(id),
-            LogSaveOutcome::LogUnloaded => {}
+            LogSaveOutcome::LogUnloaded | LogSaveOutcome::Saved(_) => {}
             LogSaveOutcome::AlreadySaved => {
                 log::warn!("The log is already saved with another recording")
             }

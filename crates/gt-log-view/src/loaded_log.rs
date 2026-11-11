@@ -7,12 +7,13 @@ use std::sync::Arc;
 
 use chrono::Duration;
 use gt_fmt::MIDDLE_DOT;
-use gt_history_types::{LogContentHash, StoredLogFilterStack};
+use gt_history_types::{LogContentHash, StoredLogSettings};
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
 use gt_logfile::{
     EntryPlacement, LogChronology, ParsedLog, RecordingAssociationIndex, YearResolution,
     YearlessTimestamp,
 };
+use gt_pending_writes::WriteAccess;
 use gt_types::{TimeRange, mercator};
 use gt_ui_types::{
     LoadedLogId, LogMatch, LogMatchColor, LogMatchLayer, LogMatchSource, LogMatches,
@@ -20,7 +21,11 @@ use gt_ui_types::{
 
 use crate::anchor::RecordingKey;
 use crate::association::AssociationCandidates;
-use crate::attachment::{LogAttachmentRef, LogAttachmentState};
+use crate::attachment::{self, LogAttachmentRef};
+use crate::attachment_settings::{
+    AttachmentSettingsCompletion, AttachmentSettingsState, AttachmentSettingsStatus,
+    AttachmentSettingsWrite,
+};
 use crate::filter::{EntryMatches, FilterEffect, FilterStack, LayerColorSlots};
 
 #[derive(Debug)]
@@ -58,7 +63,7 @@ pub enum PositionSourceState {
 enum LogContext {
     DetachedAttachment { source: Option<RecordingKey> },
     LooseImport { source: PositionSourceState },
-    SavedAttachment(LogAttachmentState),
+    SavedAttachment(Box<AttachmentSettingsState>),
 }
 
 #[derive(Debug)]
@@ -110,6 +115,19 @@ impl LoadedLog {
         }
     }
 
+    pub fn prepare_settings_write(
+        &mut self,
+        access: WriteAccess,
+    ) -> Option<AttachmentSettingsWrite> {
+        self.synchronize_attachment_settings()?
+            .prepare_write(access)
+    }
+
+    pub fn retry_settings_save(&mut self) -> bool {
+        self.synchronize_attachment_settings()
+            .is_some_and(AttachmentSettingsState::retry)
+    }
+
     pub fn context_origin(&self) -> LogContextOrigin {
         match self.context {
             LogContext::LooseImport { .. } => LogContextOrigin::LooseImport,
@@ -120,25 +138,31 @@ impl LoadedLog {
 
     pub fn attachment(&self) -> Option<&LogAttachmentRef> {
         match &self.context {
-            LogContext::SavedAttachment(state) => Some(&state.reference),
+            LogContext::SavedAttachment(state) => Some(state.attachment()),
             LogContext::LooseImport { .. } | LogContext::DetachedAttachment { .. } => None,
         }
     }
 
-    /// The filter-stack edits this log's attachment has yet to be written,
-    /// and `None` while the database holds the stack the user is looking at.
-    pub fn take_filter_stack_edits_to_store(
-        &mut self,
-    ) -> Option<(LogAttachmentRef, StoredLogFilterStack)> {
-        let LogContext::SavedAttachment(state) = &mut self.context else {
-            return None;
-        };
-        let filters = self.filters.to_stored_stack();
-        if filters == state.stored_filters {
-            return None;
+    pub fn settings_snapshot(&self) -> StoredLogSettings {
+        StoredLogSettings {
+            filters: self.filters.to_stored_stack(),
+            year_reference: Some(self.parsed().year_reference()),
+            year_resolution: attachment::stored_year_resolution(self.parsed().year_resolution()),
         }
-        state.stored_filters.clone_from(&filters);
-        Some((state.reference.clone(), filters))
+    }
+
+    pub fn settings_save_status(&self, access: WriteAccess) -> AttachmentSettingsStatus<'_> {
+        let LogContext::SavedAttachment(state) = &self.context else {
+            return AttachmentSettingsStatus::SessionOnly;
+        };
+        let status = state.status(access);
+        if status == AttachmentSettingsStatus::Saved
+            && self.desired_attachment_settings() != *state.desired()
+        {
+            AttachmentSettingsStatus::Dirty
+        } else {
+            status
+        }
     }
 
     pub fn name(&self) -> &str {
@@ -231,7 +255,7 @@ impl LoadedLog {
                 .clone()
                 .map_or(PositionSourceState::None, PositionSourceState::Recording),
             LogContext::SavedAttachment(state) => PositionSourceState::Recording(
-                RecordingKey::Stored(state.reference.recording.clone()),
+                RecordingKey::Stored(state.attachment().recording.clone()),
             ),
         }
     }
@@ -393,33 +417,63 @@ impl LoadedLog {
     fn restore_attachment(
         &mut self,
         attachment: LogAttachmentRef,
-        stored_filters: StoredLogFilterStack,
+        stored_settings: StoredLogSettings,
         recordings: &LoadedFilesView<'_>,
     ) {
-        self.filters =
-            FilterStack::from_stored_stack(Arc::clone(&self.document.parsed), &stored_filters);
-        self.record_attachment(attachment, stored_filters, recordings);
+        self.filters = FilterStack::from_stored_stack(
+            Arc::clone(&self.document.parsed),
+            &stored_settings.filters,
+        );
+        self.context = LogContext::SavedAttachment(Box::new(AttachmentSettingsState::new(
+            attachment,
+            stored_settings,
+        )));
+        self.reassociate(recordings);
     }
 
     fn record_attachment(
         &mut self,
         attachment: LogAttachmentRef,
-        stored_filters: StoredLogFilterStack,
+        stored_settings: StoredLogSettings,
         recordings: &LoadedFilesView<'_>,
     ) {
-        self.context = LogContext::SavedAttachment(LogAttachmentState {
-            reference: attachment,
-            stored_filters,
-        });
+        let mut state = AttachmentSettingsState::new(attachment, stored_settings);
+        state.set_desired(self.settings_snapshot());
+        self.context = LogContext::SavedAttachment(Box::new(state));
         self.reassociate(recordings);
+    }
+
+    fn synchronize_attachment_settings(&mut self) -> Option<&mut AttachmentSettingsState> {
+        if !matches!(self.context, LogContext::SavedAttachment(_)) {
+            return None;
+        }
+        let desired = self.desired_attachment_settings();
+        let LogContext::SavedAttachment(state) = &mut self.context else {
+            return None;
+        };
+        state.set_desired(desired);
+        Some(state)
     }
 
     fn forget_attachment(&mut self) {
         if let LogContext::SavedAttachment(state) = &self.context {
             self.context = LogContext::DetachedAttachment {
-                source: Some(RecordingKey::Stored(state.reference.recording.clone())),
+                source: Some(RecordingKey::Stored(state.attachment().recording.clone())),
             };
         }
+    }
+
+    fn desired_attachment_settings(&self) -> StoredLogSettings {
+        let mut desired = self.settings_snapshot();
+        if let LogContext::SavedAttachment(state) = &self.context
+            && state.desired().year_reference.is_none()
+        {
+            desired.year_reference = None;
+            if &desired != state.desired() {
+                desired.year_reference = Some(self.parsed().year_reference());
+            }
+        }
+        desired
     }
 
     /// Where on the map the entries `matches` selected are, in file order,
@@ -563,6 +617,34 @@ pub struct LoadedLogs {
 }
 
 impl LoadedLogs {
+    pub fn prepare_settings_writes(&mut self, access: WriteAccess) -> Vec<AttachmentSettingsWrite> {
+        self.logs
+            .iter_mut()
+            .filter_map(|stored| stored.log.prepare_settings_write(access))
+            .collect()
+    }
+
+    pub fn acknowledge_settings(&mut self, completion: AttachmentSettingsCompletion) -> bool {
+        let Some(stored) = self
+            .logs
+            .iter_mut()
+            .find(|stored| stored.log.attachment() == Some(completion.attachment()))
+        else {
+            return false;
+        };
+        stored
+            .log
+            .synchronize_attachment_settings()
+            .is_some_and(|state| state.acknowledge(completion))
+    }
+
+    pub fn retry_settings_save(&mut self, id: LoadedLogId) -> bool {
+        self.logs
+            .iter_mut()
+            .find(|stored| stored.id == id)
+            .is_some_and(|stored| stored.log.retry_settings_save())
+    }
+
     pub fn len(&self) -> usize {
         self.logs.len()
     }
@@ -618,7 +700,7 @@ impl LoadedLogs {
 
     pub fn push(&mut self, mut log: LoadedLog) -> LogPushOutcome {
         let duplicate = match &log.context {
-            LogContext::SavedAttachment(state) => self.id_of_attachment(&state.reference),
+            LogContext::SavedAttachment(state) => self.id_of_attachment(state.attachment()),
             LogContext::LooseImport { .. } => self.id_of_loose_import(log.content_hash()),
             LogContext::DetachedAttachment { .. } => None,
         };
@@ -668,13 +750,13 @@ impl LoadedLogs {
         &mut self,
         mut log: LoadedLog,
         attachment: LogAttachmentRef,
-        stored_filters: StoredLogFilterStack,
+        stored_settings: StoredLogSettings,
         recordings: &LoadedFilesView<'_>,
     ) -> LogPushOutcome {
         if let Some(id) = self.id_of_attachment(&attachment) {
             return LogPushOutcome::AlreadyLoaded(id);
         }
-        log.restore_attachment(attachment, stored_filters, recordings);
+        log.restore_attachment(attachment, stored_settings, recordings);
         self.push(log)
     }
 
@@ -682,7 +764,7 @@ impl LoadedLogs {
         &mut self,
         id: LoadedLogId,
         attachment: LogAttachmentRef,
-        stored_filters: StoredLogFilterStack,
+        stored_settings: StoredLogSettings,
         recordings: &LoadedFilesView<'_>,
     ) -> LogSaveOutcome {
         if let Some(existing) = self.id_of_attachment(&attachment) {
@@ -696,7 +778,7 @@ impl LoadedLogs {
         }
         stored
             .log
-            .record_attachment(attachment, stored_filters, recordings);
+            .record_attachment(attachment, stored_settings, recordings);
         self.map_matches_stale = true;
         LogSaveOutcome::Saved(id)
     }
@@ -890,17 +972,6 @@ impl LoadedLogs {
                     None => name.to_owned(),
                 })
             })
-            .collect()
-    }
-
-    /// The filter-stack edits the attached logs have yet to be written, one
-    /// entry per log whose stack the database no longer holds.
-    pub fn take_filter_stack_edits_to_store(
-        &mut self,
-    ) -> Vec<(LogAttachmentRef, StoredLogFilterStack)> {
-        self.logs
-            .iter_mut()
-            .filter_map(|stored| stored.log.take_filter_stack_edits_to_store())
             .collect()
     }
 

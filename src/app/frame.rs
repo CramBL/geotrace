@@ -100,7 +100,7 @@ impl eframe::App for App {
         self.show_track_data_panel(ui, &recording_names);
         self.show_central_area(ui, &recording_names);
         self.apply_log_viewer_requests();
-        self.store_attached_log_filter_edits();
+        self.store_attached_log_settings_edits();
         self.store_the_hidden_tracks_the_user_changed();
 
         let apply_resegment = self.show_settings_window(ui);

@@ -1,22 +1,27 @@
 //! The dialog every loaded log raises while a recording is open, and what
 //! confirming it does.
 
+use std::fs;
+
 use chrono::{DateTime, Duration};
 use egui::accesskit::{Role, Toggled};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
-use gt_loaded_files::FileHistory;
+use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_log_view::{
-    FilterEffect, FilterGroupOperator, FilterPattern, LoadedLog, LogAttachmentRef, RecordingKey,
+    AttachmentSettingsStatus, FilterEffect, FilterGroupOperator, FilterPattern, LoadedLog,
+    LogAttachmentRef, RecordingKey,
 };
 use gt_logfile::{LogChronology, YearResolution};
+use gt_pending_writes::WriteAccess;
 use gt_store::{
     AttachedLog, DatabaseRef, HistoryDatabase as _, LogAttachment, LogAttachmentEntry,
     LogAttachmentError, LogAttachmentId, LogAttachmentListingEntry, LogAttachments as _,
-    LogContentHash, LogToAttach, ReadOnlyHistoryDatabase as _, Recordings, RecordingsHandle,
-    StoredLogFilter, StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterOperator,
-    StoredLogFilterStack, StoredLogSettings, StoredYearResolution, TrackRange, TrackState,
+    LogContentHash, LogToAttach, ReadOnlyHistoryDatabase as _, ReadOnlyLogAttachments as _,
+    ReadOnlyRecordings, Recordings, RecordingsHandle, StoredLogFilter, StoredLogFilterCondition,
+    StoredLogFilterEffects, StoredLogFilterOperator, StoredLogFilterStack, StoredLogSettings,
+    StoredYearResolution, TrackRange, TrackState,
 };
 use gt_test_utils::{
     By, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec, SyntheticLogTimestamps,
@@ -1087,11 +1092,8 @@ fn the_toolbar_counts_a_log_restored_with_a_recording_until_the_viewer_opens() {
     harness.get_by_label(ICON_ARTICLE);
 }
 
-/// Attaching a log the recording already holds reuses the stored
-/// attachment: the loaded log takes it, and the app writes its filter
-/// stack there.
 #[test]
-fn attaching_a_log_the_recording_already_holds_reuses_the_stored_attachment() {
+fn saving_a_duplicate_log_preserves_attachment_identity_and_updates_complete_settings() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
     let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
@@ -1111,7 +1113,20 @@ fn attaching_a_log_the_recording_already_holds_reuses_the_stored_attachment() {
     // The same text loaded again, filtered by none of the chips the stored
     // attachment holds.
     unload_the_log(&mut harness);
+    let mut persisted = stored_attachments(&db_path, &db_ref)
+        .into_iter()
+        .next()
+        .unwrap()
+        .attachment
+        .settings;
+    persisted.year_reference = Some(DateTime::UNIX_EPOCH);
+    persisted.year_resolution = StoredYearResolution::IgnoreSummaryBounds;
+    Recordings::open_or_create(&db_path)
+        .unwrap()
+        .set_attached_log_settings(&db_ref, stored, persisted)
+        .unwrap();
     drop_the_log(&mut harness);
+    let desired = harness.state().first_log().unwrap().settings_snapshot();
     assert!(
         harness.step_until(|harness| harness
             .query_by_label_contains("Saving uses that log again")
@@ -1127,7 +1142,7 @@ fn attaching_a_log_the_recording_already_holds_reuses_the_stored_attachment() {
     assert!(
         harness.step_until(|_| stored_attachments(&db_path, &db_ref)
             .first()
-            .is_some_and(|entry| entry.attachment.settings.filters.chips().is_empty())),
+            .is_some_and(|entry| entry.attachment.settings == desired)),
         "the stack of the loaded log reached the attachment it took"
     );
     assert_eq!(
@@ -1147,6 +1162,179 @@ fn attaching_a_log_the_recording_already_holds_reuses_the_stored_attachment() {
         Some(stored)
     );
     assert_eq!(harness.state().toasts.len(), 1, "the reuse raises a toast");
+}
+
+#[test]
+fn settings_edits_during_creation_are_saved_after_retrying_a_failed_update() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("history.h5");
+    let (recording, _) = seed_a_recording_and_the_log_stored_with_it(&path);
+    let mut harness = app_over_a_history_database(&path);
+    let parsed = gt_logfile::parse_log(
+        gt_test_utils::UNRESOLVED_YEARS_LOG.into(),
+        gt_test_utils::synthetic_log_start(),
+    )
+    .unwrap();
+    let log = LoadedLog::new(
+        Some("pending.log".to_owned()),
+        parsed,
+        Duration::seconds(60),
+    );
+    let initial = log.settings_snapshot();
+    let id = harness.state_mut().logs.push(log).id();
+    let entry = Recordings::open_or_create(&path)
+        .unwrap()
+        .attach_log(
+            &recording,
+            &LogToAttach {
+                name: "pending.log",
+                text: gt_test_utils::UNRESOLVED_YEARS_LOG,
+                settings: initial.clone(),
+            },
+        )
+        .unwrap();
+    let attachment_id = entry.id;
+    let files = LoadedFiles::new();
+    assert!(
+        harness
+            .state_mut()
+            .logs
+            .get_mut_by_id(id)
+            .unwrap()
+            .resolve_years_as(YearResolution::PlaceLastEntryInYear(2026), &files.view())
+    );
+    let stack = harness
+        .state_mut()
+        .logs
+        .filter_stack_mut_by_id(id)
+        .unwrap()
+        .0;
+    stack.set_live_filter_text("clock");
+    stack.add_live_filter_as_chip().unwrap();
+    harness.state_mut().apply_log_attach_outcome(
+        id,
+        "pending.log",
+        Ok(StoredLogAttachment {
+            recording: recording.clone(),
+            entry,
+        }),
+    );
+    assert_eq!(
+        harness
+            .state()
+            .first_log()
+            .unwrap()
+            .settings_save_status(WriteAccess::Owner),
+        AttachmentSettingsStatus::Dirty
+    );
+    let pending = harness
+        .state_mut()
+        .logs
+        .prepare_settings_writes(WriteAccess::Owner)
+        .pop()
+        .unwrap();
+    let stack = harness
+        .state_mut()
+        .logs
+        .filter_stack_mut_by_id(id)
+        .unwrap()
+        .0;
+    stack.set_live_filter_text("navsyncd");
+    stack.add_live_filter_as_chip().unwrap();
+    harness
+        .state_mut()
+        .apply_attached_log_settings_outcome(pending.complete(Err("Disk full".to_owned())));
+    harness.state_mut().log_viewer.open = false;
+    harness.run_steps(3);
+    assert_eq!(
+        harness
+            .state()
+            .first_log()
+            .unwrap()
+            .settings_save_status(WriteAccess::Owner),
+        AttachmentSettingsStatus::Failed("Disk full")
+    );
+    assert_eq!(
+        stored_attachments(&path, &recording)
+            .into_iter()
+            .find(|entry| entry.id == attachment_id)
+            .unwrap()
+            .attachment
+            .settings,
+        initial
+    );
+    let desired = harness.state().first_log().unwrap().settings_snapshot();
+    assert!(harness.state_mut().logs.retry_settings_save(id));
+    assert!(harness.step_until(|harness| {
+        harness
+            .state()
+            .first_log()
+            .unwrap()
+            .settings_save_status(WriteAccess::Owner)
+            == AttachmentSettingsStatus::Saved
+    }));
+    let reopened = ReadOnlyRecordings::open_existing_read_only(&path)
+        .unwrap()
+        .load_attached_log(&recording, attachment_id)
+        .unwrap();
+    assert_eq!(reopened.settings, desired);
+    let parsed = gt_logfile::parse_log_with_year_resolution(
+        reopened.text.into(),
+        reopened.parse_year_reference,
+        gt_log_view::year_resolution_of_stored(reopened.settings.year_resolution),
+    )
+    .unwrap();
+    assert_eq!(&parsed, harness.state().first_log().unwrap().parsed());
+}
+
+#[rstest::rstest]
+#[case::writable(false)]
+#[case::ownership_downgrade(true)]
+fn legacy_reference_fallback_is_persisted_only_after_a_writable_edit(#[case] read_only: bool) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("history.h5");
+    let (recording, attachment) = seed_a_recording_and_the_log_stored_with_it(&path);
+    let mut harness = app_over_a_history_database(&path);
+    let before = fs::read(&path).unwrap();
+    open_the_stored_log(&harness, &recording, attachment);
+    test_util::harness::step_until_a_log_is_loaded(&mut harness);
+    harness.run_steps(3);
+    assert!(fs::read(&path).unwrap() == before);
+    if read_only {
+        harness
+            .state()
+            .pending_writes
+            .become_read_only_for_the_rest_of_the_run();
+    }
+    let id = harness.state().logs.first_id().unwrap();
+    let stack = harness
+        .state_mut()
+        .logs
+        .filter_stack_mut_by_id(id)
+        .unwrap()
+        .0;
+    stack.set_live_filter_text("kernel");
+    stack.add_live_filter_as_chip().unwrap();
+    harness.state_mut().log_viewer.open = false;
+    harness.run_steps(3);
+    if read_only {
+        assert_eq!(
+            harness
+                .state()
+                .first_log()
+                .unwrap()
+                .settings_save_status(harness.state().attachment_settings_write_access()),
+            AttachmentSettingsStatus::SessionOnly
+        );
+        assert!(fs::read(&path).unwrap() == before);
+    } else {
+        let desired = harness.state().first_log().unwrap().settings_snapshot();
+        assert!(harness.step_until(|_| {
+            stored_attachments(&path, &recording)
+                .first()
+                .is_some_and(|entry| entry.attachment.settings == desired)
+        }));
+    }
 }
 
 /// A database holding the fixture recording and the fixture log stored
@@ -1342,17 +1530,24 @@ fn restore_the_stored_attachment(
 ) {
     let stored = stored_attachments(db_path, db_ref);
     let entry = stored.first().expect("the attachment was stored");
-    let text = fixture_log_text(FIXTURE_LOG_SEED);
-    let parsed = gt_logfile::parse_log(text.as_str().into(), gt_test_utils::synthetic_log_start())
-        .expect("the fixture log parses");
+    let loaded = ReadOnlyRecordings::open_existing_read_only(db_path)
+        .unwrap()
+        .load_attached_log(db_ref, entry.id)
+        .unwrap();
+    let parsed = gt_logfile::parse_log_with_year_resolution(
+        loaded.text.into(),
+        loaded.parse_year_reference,
+        gt_log_view::year_resolution_of_stored(loaded.settings.year_resolution),
+    )
+    .expect("the fixture log parses");
     let restore = AttachedLogRestore {
         attachment: LogAttachmentRef {
             recording: db_ref.clone(),
             id: entry.id,
         },
-        settings: entry.attachment.settings.clone(),
+        settings: loaded.settings,
         requested_by: crate::app::loader::AttachedLogRequester::RecordingLoad,
-        parse_year_reference: gt_test_utils::synthetic_log_start(),
+        parse_year_reference: loaded.parse_year_reference,
     };
     harness
         .state_mut()

@@ -525,17 +525,8 @@ impl App {
                 db_ref,
                 attachments,
             } => self.restore_attached_logs(&db_ref, attachments),
-            // A failed write costs only the stored copy: the loaded log keeps
-            // the stack the user is looking at.
-            Response::AttachedLogFiltersStored(result) => {
-                if let Err(e) = result {
-                    log::warn!("Storing an attached log's filters failed: {e}");
-                }
-            }
-            Response::AttachedLogYearResolutionStored(result) => {
-                if let Err(e) = result {
-                    log::warn!("Storing the years of an attached log failed: {e}");
-                }
+            Response::AttachedLogSettingsStored(completion) => {
+                self.apply_attached_log_settings_outcome(completion);
             }
             Response::AttachedLogLoaded {
                 attachment,
