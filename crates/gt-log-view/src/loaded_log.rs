@@ -367,7 +367,7 @@ impl LoadedLog {
         let entry_placements = match self.document.parsed.chronology() {
             LogChronology::Resolved(resolved) => {
                 RecordingAssociationIndex::from_recording(recording)
-                    .associate_timestamps(resolved.timestamps(), self.association.window)
+                    .associate_chronology(resolved, self.association.window)
             }
             LogChronology::Unresolved(_) => Vec::new(),
         };

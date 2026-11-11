@@ -11,7 +11,7 @@ use crate::recognise::{RecognisedLevel, RecognisedService};
 use crate::structure::StructuralLineKind;
 use crate::summary::EntryCountMismatch;
 use crate::test_util::strategies;
-use crate::{AnchoredBounds, LogChronology, YearResolution};
+use crate::{AnchoredBounds, EligibleLogTime, LogChronology, YearResolution};
 
 /// The text a slice addresses, `None` where it addresses text outside the
 /// log or splits a character in it.
@@ -230,6 +230,17 @@ proptest! {
         match parsed.chronology() {
             LogChronology::Resolved(resolved) => {
                 prop_assert_eq!(resolved.timestamps().len(), entries.len());
+                prop_assert_eq!(resolved.clock_eligibility(entries.len()), None);
+                prop_assert_eq!(resolved.eligible_time(entries.len()), None);
+                for (entry_index, timestamp) in resolved.timestamps().iter().enumerate() {
+                    let before_synchronization = parsed.boot_sessions().iter().any(|session| {
+                        session.unsynchronised_entries().contains(&entry_index)
+                    });
+                    prop_assert_eq!(
+                        resolved.eligible_time(entry_index).map(EligibleLogTime::timestamp),
+                        (!before_synchronization).then_some(*timestamp),
+                    );
+                }
                 for (session_index, session) in parsed.boot_sessions().iter().enumerate() {
                     let anchored: Vec<DateTime<Utc>> = (session.first_synchronised_entry
                         ..session.entry_range.end)

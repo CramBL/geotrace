@@ -7,7 +7,9 @@
 //! lines, in the order the file wrote them.
 
 pub use associate::{EntryPlacement, RecordingAssociationIndex};
-pub use chronology::{LogChronology, ResolvedChronology, UnresolvedChronology};
+pub use chronology::{
+    ClockEligibility, EligibleLogTime, LogChronology, ResolvedChronology, UnresolvedChronology,
+};
 pub use format::{LogFormat, YearlessTimestamp, detect_format, infer_year};
 pub use parse::{
     LogEntry, LogParseError, ParsedLog, TextSlice, TimestampKind, parse_log,

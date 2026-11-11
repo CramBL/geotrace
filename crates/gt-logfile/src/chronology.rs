@@ -11,6 +11,22 @@ use crate::{
     years::{self, UnresolvedYear, YearResolution},
 };
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClockEligibility {
+    AllowAbsoluteTime,
+    BeforeSynchronization,
+}
+
+/// Constructed by [`ResolvedChronology::eligible_time`] outside recognized reset-clock spans.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EligibleLogTime(DateTime<Utc>);
+
+impl EligibleLogTime {
+    pub fn timestamp(self) -> DateTime<Utc> {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum LogChronology {
     Resolved(ResolvedChronology),
@@ -101,12 +117,10 @@ impl LogChronology {
     }
 }
 
-/// One absolute timestamp per entry of [`crate::ParsedLog::entries`], the first anchored
-/// timestamp, the interpolated entry count, the anchored bounds of each boot session from its
-/// first entry with a synchronised clock, and the order anomalies.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedChronology {
     timestamps: Vec<DateTime<Utc>>,
+    clock_eligibility: Vec<ClockEligibility>,
     first_anchored_timestamp: DateTime<Utc>,
     interpolated_entry_count: usize,
 
@@ -130,6 +144,7 @@ impl ResolvedChronology {
     ) -> Option<Self> {
         let first_anchored_timestamp = anchors.iter().flatten().next().copied()?;
         let mut timestamps = Vec::with_capacity(anchors.len());
+        let mut clock_eligibility = Vec::with_capacity(anchors.len());
         let mut session_bounds = Vec::with_capacity(boot_session_ranges.len());
         let mut order_anomalies = Vec::new();
         let mut anchor_before_session = first_anchored_timestamp;
@@ -146,6 +161,13 @@ impl ResolvedChronology {
                 session_anchors,
                 anchor_before_session,
             ));
+            clock_eligibility.extend(range.entry_range.clone().map(|entry_index| {
+                if entry_index < range.first_synchronised_entry {
+                    ClockEligibility::BeforeSynchronization
+                } else {
+                    ClockEligibility::AllowAbsoluteTime
+                }
+            }));
             let bounds = AnchoredBounds::of_anchors(
                 anchors
                     .get(range.first_synchronised_entry..range.entry_range.end)
@@ -163,6 +185,7 @@ impl ResolvedChronology {
         );
         Some(Self {
             timestamps,
+            clock_eligibility,
             first_anchored_timestamp,
             interpolated_entry_count: anchors.iter().filter(|anchor| anchor.is_none()).count(),
             session_bounds,
@@ -170,6 +193,8 @@ impl ResolvedChronology {
         })
     }
 
+    /// Calendar-resolved timestamps, including recognized reset-clock readings.
+    /// Use [`Self::eligible_time`] for absolute-time operations.
     pub fn timestamps(&self) -> &[DateTime<Utc>] {
         &self.timestamps
     }
@@ -178,12 +203,22 @@ impl ResolvedChronology {
         self.timestamps.get(entry_index).copied()
     }
 
-    /// The earliest to the latest entry timestamp, interpolated ones included.
-    ///
-    /// A reboot steps the device clock, so the last entry in file order is not
-    /// always the latest one.
+    pub fn clock_eligibility(&self, entry_index: usize) -> Option<ClockEligibility> {
+        self.clock_eligibility.get(entry_index).copied()
+    }
+
+    pub fn eligible_time(&self, entry_index: usize) -> Option<EligibleLogTime> {
+        match self.clock_eligibility(entry_index)? {
+            ClockEligibility::AllowAbsoluteTime => self.timestamp(entry_index).map(EligibleLogTime),
+            ClockEligibility::BeforeSynchronization => None,
+        }
+    }
+
+    /// The earliest to the latest eligible timestamp, including eligible interpolated timestamps.
     pub fn time_range(&self) -> Option<TimeRange> {
-        let mut timestamps = self.timestamps.iter().copied();
+        let mut timestamps = (0..self.timestamps.len())
+            .filter_map(|entry_index| self.eligible_time(entry_index))
+            .map(EligibleLogTime::timestamp);
         let first = timestamps.next()?;
         Some(TimeRange::spanning(first, timestamps))
     }
@@ -240,5 +275,46 @@ impl UnresolvedChronology {
 
     pub fn first_written_timestamp(&self) -> Option<YearlessTimestamp> {
         self.written_timestamps.iter().flatten().next().copied()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{TextSlice, test_util};
+
+    #[test]
+    fn a_session_without_a_synchronized_anchor_has_no_eligible_time_or_coverage() {
+        let first = test_util::utc(2026, 1, 1, 0, 0, 5);
+        let last = first + Duration::seconds(35);
+        let anchors = [Some(first), None, Some(last)];
+        let entries: Vec<PendingLogEntry> = anchors
+            .iter()
+            .enumerate()
+            .map(|(index, anchor)| PendingLogEntry {
+                timestamp: anchor.map(RawTimestamp::Absolute),
+                line_number: index as u32 + 1,
+                message: TextSlice { offset: 0, len: 0 },
+            })
+            .collect();
+        let session = BootSessionRange {
+            entry_range: 0..entries.len(),
+            first_synchronised_entry: entries.len(),
+        };
+        let resolved = ResolvedChronology::from_anchors("", &entries, &[session], &anchors)
+            .expect("reset timestamps resolve");
+
+        assert_eq!(resolved.timestamps().len(), entries.len());
+        assert_eq!(resolved.timestamp(0), Some(first));
+        assert_eq!(resolved.timestamp(2), Some(last));
+        for index in 0..entries.len() {
+            assert_eq!(
+                resolved.clock_eligibility(index),
+                Some(ClockEligibility::BeforeSynchronization)
+            );
+            assert_eq!(resolved.eligible_time(index), None);
+        }
+        assert_eq!(resolved.time_range(), None);
+        assert_eq!(resolved.session_bounds(0), None);
     }
 }

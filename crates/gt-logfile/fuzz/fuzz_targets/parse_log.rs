@@ -4,8 +4,8 @@ use std::num::NonZeroUsize;
 
 use chrono::{DateTime, Datelike as _, Duration, NaiveDate, Utc};
 use gt_logfile::{
-    AnchoredBounds, LogChronology, LogEntry, LogText, ParsedLog, RecognisedLevel,
-    RecognisedService, TextSlice,
+    AnchoredBounds, ClockEligibility, EligibleLogTime, LogChronology, LogEntry, LogText, ParsedLog,
+    RecognisedLevel, RecognisedService, TextSlice,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -191,6 +191,26 @@ fn check_the_parse_indexes_what_it_read(parsed: &ParsedLog) {
                 "the resolved chronology has another timestamp count than entry count"
             );
             for (session_index, session) in parsed.boot_sessions().iter().enumerate() {
+                for entry_index in session.entry_range.clone() {
+                    let before_synchronization =
+                        session.unsynchronised_entries().contains(&entry_index);
+                    assert_eq!(
+                        resolved.clock_eligibility(entry_index),
+                        Some(if before_synchronization {
+                            ClockEligibility::BeforeSynchronization
+                        } else {
+                            ClockEligibility::AllowAbsoluteTime
+                        })
+                    );
+                    assert_eq!(
+                        resolved
+                            .eligible_time(entry_index)
+                            .map(EligibleLogTime::timestamp),
+                        resolved
+                            .timestamp(entry_index)
+                            .filter(|_| !before_synchronization),
+                    );
+                }
                 let mut anchored = (session.first_synchronised_entry..session.entry_range.end)
                     .filter(|&index| {
                         parsed

@@ -1,13 +1,13 @@
 //! Interpolation requires adjacent fixes from the same track. At a track boundary,
 //! association uses the nearest fix position within the time window.
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::Duration;
 use gt_geo_math::GreatCircleArc;
 use gt_loaded_files::LoadedFileEntry;
 use gt_types::{AddressedFix, FixRef, Latitude, Longitude};
 use rayon::prelude::*;
 
-use crate::pool;
+use crate::{EligibleLogTime, ResolvedChronology, pool};
 
 /// Where an entry sits on the recording it was associated against.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -30,7 +30,8 @@ impl<'a> RecordingAssociationIndex<'a> {
         Self { fixes }
     }
 
-    pub fn position_at(&self, time: DateTime<Utc>, window: Duration) -> Option<EntryPlacement> {
+    pub fn position_at(&self, time: EligibleLogTime, window: Duration) -> Option<EntryPlacement> {
+        let time = time.timestamp();
         let fixes = &self.fixes;
         let fix_time = |fix: &AddressedFix<'_>| fix.placed.fix.tpv.time().utc();
         let index = fixes.partition_point(|fix| fix_time(fix) <= time);
@@ -86,18 +87,22 @@ impl<'a> RecordingAssociationIndex<'a> {
         }
     }
 
-    /// One placement per timestamp of [`crate::ResolvedChronology::timestamps`].
-    pub fn associate_timestamps(
+    pub fn associate_chronology(
         &self,
-        timestamps: &[DateTime<Utc>],
+        chronology: &ResolvedChronology,
         window: Duration,
     ) -> Vec<Option<EntryPlacement>> {
-        let position_of = |timestamp: &DateTime<Utc>| self.position_at(*timestamp, window);
+        let position_of = |entry_index| {
+            chronology
+                .eligible_time(entry_index)
+                .and_then(|time| self.position_at(time, window))
+        };
+        let entry_indices = 0..chronology.timestamps().len();
         match pool::log_worker_pool() {
-            Some(pool) if timestamps.len() >= PARALLEL_ASSOCIATION_MIN_ENTRIES => {
-                pool.install(|| timestamps.par_iter().map(position_of).collect())
+            Some(pool) if entry_indices.len() >= PARALLEL_ASSOCIATION_MIN_ENTRIES => {
+                pool.install(|| entry_indices.into_par_iter().map(position_of).collect())
             }
-            Some(_) | None => timestamps.iter().map(position_of).collect(),
+            Some(_) | None => entry_indices.map(position_of).collect(),
         }
     }
 }
@@ -108,7 +113,7 @@ const PARALLEL_ASSOCIATION_MIN_ENTRIES: usize = 16 * 1024;
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone as _;
+    use chrono::{DateTime, TimeZone as _, Utc};
     use gt_loaded_files::FileHistory;
     use gt_test_utils::fixtures;
     use gt_types::{FileIdx, LoadedTrack, PointIdx, TrackIdx, TrackRef};
@@ -141,7 +146,7 @@ mod tests {
             RecordingAssociationIndex::from_recording(files.view().get(0).expect("loaded fixture"));
         let time = start() + Duration::milliseconds(500);
         let (lat, lon) = index
-            .position_at(time, window())
+            .position_at(test_util::eligible_time(time), window())
             .expect("associates")
             .position;
         assert!((lat.as_degrees() - 55.0005).abs() < POSITION_TOLERANCE_DEGREES);
@@ -192,7 +197,10 @@ mod tests {
         });
 
         assert_eq!(
-            index.associate_timestamps(&[start() + Duration::seconds(offset_secs)], window,),
+            index.associate_chronology(
+                &test_util::chronology_from_timestamps([start() + Duration::seconds(offset_secs)]),
+                window
+            ),
             vec![expected],
         );
     }
@@ -220,7 +228,7 @@ mod tests {
             RecordingAssociationIndex::from_recording(files.view().get(0).expect("loaded fixture"));
         let time = start() + Duration::milliseconds(500);
         let (lat, lon) = index
-            .position_at(time, window())
+            .position_at(test_util::eligible_time(time), window())
             .expect("associates")
             .position;
         let lon = lon.as_degrees();
@@ -245,7 +253,7 @@ mod tests {
         let index =
             RecordingAssociationIndex::from_recording(files.view().get(0).expect("loaded fixture"));
         let (lat, lon) = index
-            .position_at(start(), window())
+            .position_at(test_util::eligible_time(start()), window())
             .expect("associates")
             .position;
         assert!((lat.as_degrees() - expected_lat.as_degrees()).abs() < POSITION_TOLERANCE_DEGREES);
@@ -268,7 +276,7 @@ mod tests {
         let index =
             RecordingAssociationIndex::from_recording(files.view().get(0).expect("loaded fixture"));
         let placement = index
-            .position_at(start() + offset, window())
+            .position_at(test_util::eligible_time(start() + offset), window())
             .expect("associates");
         assert_eq!(placement.fix.point, PointIdx::new(expected_point));
     }
@@ -287,7 +295,12 @@ mod tests {
         let index =
             RecordingAssociationIndex::from_recording(files.view().get(0).expect("loaded fixture"));
         let time = start() + Duration::seconds(offset_secs);
-        assert_eq!(index.position_at(time, window()).is_some(), associates);
+        assert_eq!(
+            index
+                .position_at(test_util::eligible_time(time), window())
+                .is_some(),
+            associates
+        );
     }
 
     /// The pool splits a log this long across workers: what it returns must be
@@ -302,13 +315,16 @@ mod tests {
             .map(|index| start() + Duration::milliseconds(index as i64))
             .collect();
 
-        let associated = index.associate_timestamps(&timestamps, window());
+        let associated = index.associate_chronology(
+            &test_util::chronology_from_timestamps(timestamps.iter().copied()),
+            window(),
+        );
 
         assert_eq!(
             associated,
             timestamps
                 .iter()
-                .map(|timestamp| index.position_at(*timestamp, window()))
+                .map(|timestamp| index.position_at(test_util::eligible_time(*timestamp), window()))
                 .collect::<Vec<_>>()
         );
         assert!(
@@ -322,7 +338,11 @@ mod tests {
         let files = test_util::loaded_recording(Vec::new());
         let index =
             RecordingAssociationIndex::from_recording(files.view().get(0).expect("loaded fixture"));
-        assert!(index.position_at(start(), window()).is_none());
+        assert!(
+            index
+                .position_at(test_util::eligible_time(start()), window())
+                .is_none()
+        );
     }
 
     #[test]
@@ -366,7 +386,10 @@ mod tests {
             )),
         );
         assert_eq!(
-            index.position_at(start() + Duration::seconds(10), Duration::zero()),
+            index.position_at(
+                test_util::eligible_time(start() + Duration::seconds(10)),
+                Duration::zero()
+            ),
             Some(EntryPlacement {
                 position: (Latitude::new(-34.0), Longitude::new(152.0)),
                 fix: FixRef::new(
@@ -396,7 +419,7 @@ mod tests {
         #[test]
         fn an_entry_takes_the_nearest_fix_within_the_window_or_no_position(
             fix_count in 1usize..8,
-            entry_offsets_secs in prop::collection::vec(-120i64..120, 0..12),
+            entry_offsets_secs in prop::collection::vec(-120i64..120, 1..12),
             window_secs in 0i64..30,
         ) {
             let files = test_util::loaded_recording(vec![track_of(fix_count)]);
@@ -409,7 +432,7 @@ mod tests {
                 .map(|offset| start() + Duration::seconds(*offset))
                 .collect();
 
-            let placements = index.associate_timestamps(&timestamps, window);
+            let placements = index.associate_chronology(&test_util::chronology_from_timestamps(timestamps.iter().copied()), window);
 
             prop_assert_eq!(placements.len(), timestamps.len());
             for (&logged_at, placement) in timestamps.iter().zip(&placements) {

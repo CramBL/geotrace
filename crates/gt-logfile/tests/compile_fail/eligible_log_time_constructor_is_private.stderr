@@ -1,0 +1,12 @@
+error[E0423]: cannot initialize a tuple struct which contains private fields
+ --> tests/compile_fail/eligible_log_time_constructor_is_private.rs:5:13
+  |
+5 |     let _ = EligibleLogTime(reset_time);
+  |             ^^^^^^^^^^^^^^^
+  |
+  = note: a struct named `EligibleLogTime` exists in another namespace
+note: constructor is not visible here due to private fields
+ --> src/chronology.rs
+  |
+  | pub struct EligibleLogTime(DateTime<Utc>);
+  |                            ^^^^^^^^^^^^^ private field

@@ -8,7 +8,9 @@ use crate::format::LogFormat;
 use crate::parse;
 use crate::parse::tests::fixtures::{self, REBOOT};
 use crate::test_util::{self, EXPORTED_SUMMARY};
-use crate::{LogChronology, OrderAnomaly, UnresolvedYear, YearConflict, YearResolution};
+use crate::{
+    EligibleLogTime, LogChronology, OrderAnomaly, UnresolvedYear, YearConflict, YearResolution,
+};
 
 #[rstest]
 #[case::seconds(
@@ -29,6 +31,15 @@ fn a_year_transition_across_a_reboot_precedes_interpolation(
     let after = test_util::utc(2026, 1, 1, 0, 0, 1) + Duration::microseconds(micros);
     let resolved = fixtures::resolved(&parsed);
     assert_eq!(resolved.timestamps(), [before, before, after]);
+    assert_eq!(parsed.year_resolution(), YearResolution::Infer);
+    assert_eq!(
+        (0..parsed.entries().len())
+            .map(|index| resolved
+                .eligible_time(index)
+                .map(EligibleLogTime::timestamp))
+            .collect::<Vec<_>>(),
+        [Some(before), Some(before), Some(after)]
+    );
     assert_eq!(resolved.order_anomalies(), []);
     assert_eq!(parsed.boot_sessions().len(), 2);
     assert_eq!(
@@ -406,19 +417,7 @@ fn a_clock_reset_after_a_reboot_leaves_its_year_chain_only_beside_a_clock_adjust
 
 #[test]
 fn clock_resets_after_several_reboots_resolve_between_the_summary_block_bounds() {
-    let text = format!(
-        "Nov 09 08:00:00 host svc: first\n{REBOOT}\
-         Jan 01 00:00:05 host svc: after reset\n\
-         Jan 01 00:00:40 host systemd-timesyncd[1]: Initial clock synchronization to Mon 2026-11-09 09:00:00 UTC.\n\
-         Nov 09 09:00:00 host svc: synced\n{REBOOT}\
-         Jan 01 00:00:05 host svc: after reset\n\
-         Jan 01 00:00:41 host systemd-timesyncd[1]: Initial clock synchronization to Mon 2026-11-09 10:00:00 UTC.\n\
-         Nov 09 10:00:00 host svc: synced\n\
-         ----------- Journal summary -----------\n\
-         Logs begin at: Mon 09-Nov-2026 08:00:00 UTC\n\
-         Logs end at: Mon 09-Nov-2026 10:00:00 UTC\n"
-    );
-    let parsed = fixtures::parsed_log(&text);
+    let parsed = fixtures::parsed_log(gt_test_utils::MULTI_REBOOT_CLOCK_RESET_LOG);
     assert_eq!(
         fixtures::timestamps(&parsed),
         [

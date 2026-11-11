@@ -46,6 +46,21 @@ Jan 01 00:00:00 host service: after calendar wrap
 Feb 29 12:00:00 host service: later leap day
 ";
 
+pub const MULTI_REBOOT_CLOCK_RESET_LOG: &str = "\
+Nov 09 08:00:00 host svc: first
+--- Device reboot ---
+Jan 01 00:00:05 host svc: after reset
+Jan 01 00:00:40 host systemd-timesyncd[1]: Initial clock synchronization to Mon 2026-11-09 09:00:00 UTC.
+Nov 09 09:00:00 host svc: synced
+--- Device reboot ---
+Jan 01 00:00:05 host svc: after reset
+Jan 01 00:00:41 host systemd-timesyncd[1]: Initial clock synchronization to Mon 2026-11-09 10:00:00 UTC.
+Nov 09 10:00:00 host svc: synced
+----------- Journal summary -----------
+Logs begin at: Mon 09-Nov-2026 08:00:00 UTC
+Logs end at: Mon 09-Nov-2026 10:00:00 UTC
+";
+
 /// The moment [`synthetic_journald_log`] logs its first line at, for a test
 /// building a recording that runs alongside the generated log.
 pub fn synthetic_log_start() -> DateTime<Utc> {
