@@ -7,10 +7,12 @@
 //! exist, and it goes when the recording does.
 
 use std::{
+    borrow::Cow,
     collections::HashSet,
     fmt, fs, io,
     num::ParseIntError,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use chrono::{DateTime, Utc};
@@ -23,7 +25,7 @@ use thiserror::Error;
 use uuid::Uuid;
 use xxhash_rust::xxh3;
 
-use crate::DbError;
+use crate::{DatabaseRef, DbError};
 
 /// Where the database at `db_path` keeps its attached logs.
 pub fn logs_directory_for_database(db_path: &Path) -> PathBuf {
@@ -565,17 +567,76 @@ pub struct LogAttachmentEntry {
     pub attachment: LogAttachment,
 }
 
-impl LogAttachmentEntry {
-    /// Puts a recording's attachments in the order every list of them shows:
-    /// by name, and by id for two attachments stored under one name.
+#[derive(Clone, Debug)]
+pub struct LogAttachmentListingEntry {
+    pub id: LogAttachmentId,
+    pub attachment: Result<LogAttachment, Arc<LogAttachmentReadError>>,
+}
+
+impl LogAttachmentListingEntry {
+    pub fn from_attribute_json(id: LogAttachmentId, json: &str) -> Self {
+        Self {
+            id,
+            attachment: LogAttachment::from_attribute_json(json)
+                .map_err(|source| Arc::new(LogAttachmentReadError::Decode(source))),
+        }
+    }
+
     pub fn sort_by_name_then_id(entries: &mut [Self]) {
         entries.sort_by(|left, right| {
-            left.attachment
-                .name
-                .cmp(&right.attachment.name)
+            left.display_name()
+                .cmp(&right.display_name())
                 .then(left.id.cmp(&right.id))
         });
     }
+
+    pub fn into_attachment(self, recording: &DatabaseRef) -> Result<LogAttachmentEntry, DbError> {
+        match self.attachment {
+            Ok(attachment) => Ok(LogAttachmentEntry {
+                id: self.id,
+                attachment,
+            }),
+            Err(source) => Err(DbError::UnreadableLogAttachment {
+                recording: recording.clone(),
+                id: self.id,
+                source,
+            }),
+        }
+    }
+
+    pub fn display_name(&self) -> Cow<'_, str> {
+        let name = match &self.attachment {
+            Ok(attachment) => Some(attachment.name.as_str()),
+            Err(source) => match source.as_ref() {
+                LogAttachmentReadError::Decode(error) => error.name.as_deref(),
+                LogAttachmentReadError::NonTextAttribute
+                | LogAttachmentReadError::ReadAttribute(_) => None,
+            },
+        };
+        name.map_or_else(
+            || Cow::Owned(format!("Attachment {}", self.id)),
+            Cow::Borrowed,
+        )
+    }
+}
+
+impl From<LogAttachmentEntry> for LogAttachmentListingEntry {
+    fn from(entry: LogAttachmentEntry) -> Self {
+        Self {
+            id: entry.id,
+            attachment: Ok(entry.attachment),
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum LogAttachmentReadError {
+    #[error(transparent)]
+    Decode(#[from] LogAttachmentDecodeError),
+    #[error("attachment metadata is not text")]
+    NonTextAttribute,
+    #[error("could not read attachment metadata: {0}")]
+    ReadAttribute(String),
 }
 
 /// Delete the stored logs of `ids`, carrying on past any that fail.

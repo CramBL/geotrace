@@ -96,9 +96,7 @@ pub trait ReadOnlyLogAttachments: ReadOnlyHistoryDatabase {
         id: LogAttachmentId,
     ) -> Result<AttachedLog, LogAttachmentError> {
         let attachment = self
-            .log_attachments(db_ref)?
-            .into_iter()
-            .find(|entry| entry.id == id)
+            .log_attachment(db_ref, id)?
             .ok_or(LogAttachmentError::UnknownAttachment { id })?
             .attachment;
 
@@ -222,9 +220,7 @@ pub trait LogAttachments: HistoryDatabase {
         filters: StoredLogFilterStack,
     ) -> Result<(), LogAttachmentError> {
         let stored = self
-            .log_attachments(db_ref)?
-            .into_iter()
-            .find(|entry| entry.id == id)
+            .log_attachment(db_ref, id)?
             .ok_or(LogAttachmentError::UnknownAttachment { id })?
             .attachment;
 
@@ -242,9 +238,7 @@ pub trait LogAttachments: HistoryDatabase {
         year_resolution: StoredYearResolution,
     ) -> Result<(), LogAttachmentError> {
         let mut updated = self
-            .log_attachments(db_ref)?
-            .into_iter()
-            .find(|entry| entry.id == id)
+            .log_attachment(db_ref, id)?
             .ok_or(LogAttachmentError::UnknownAttachment { id })?
             .attachment;
         updated.year_resolution = year_resolution;

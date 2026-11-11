@@ -2,10 +2,10 @@ use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US, CURRENT_SCHEMA_VERSION,
     DatabaseRef, DbError, GTD_META_DEVICE_ATTR, GTD_META_NOTES_ATTR, GTD_META_TITLE_ATTR,
-    GTD_META_TRAVEL_MODE_ATTR, HistoryDatabase, LogAttachment, LogAttachmentEntry, LogAttachmentId,
-    NavPointTimeRange, ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingEntry, RecordingMeta,
-    RecordingUiState, SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation, TrackRange,
-    TrackState, UiStateVersionReporter,
+    GTD_META_TRAVEL_MODE_ATTR, HistoryDatabase, LogAttachment, LogAttachmentId,
+    LogAttachmentListingEntry, NavPointTimeRange, ReadOnlyHistoryDatabase, RecordingDebugTag,
+    RecordingEntry, RecordingMeta, RecordingUiState, SCHEMA_VERSION_ATTR, StoredRecording,
+    StoredSegmentation, TrackRange, TrackState, UiStateVersionReporter,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 use parking_lot::Mutex;
@@ -99,7 +99,10 @@ impl ReadOnlyHistoryDatabase for ReadOnlyPureDb {
         copy::recording_ui_state(&self.path, db_ref, reporter).map_err(Into::into)
     }
 
-    fn log_attachments(&self, db_ref: &DatabaseRef) -> Result<Vec<LogAttachmentEntry>, DbError> {
+    fn log_attachments(
+        &self,
+        db_ref: &DatabaseRef,
+    ) -> Result<Vec<LogAttachmentListingEntry>, DbError> {
         let _guard = DB_LOCK.lock();
         copy::log_attachments(&self.path, &db_ref.identity, &db_ref.group_name).map_err(Into::into)
     }
@@ -146,7 +149,14 @@ impl ReadOnlyHistoryDatabase for ReadOnlyPureDb {
                         notes: string_attr(&attrs, GTD_META_NOTES_ATTR),
                         travel_mode: string_attr(&attrs, GTD_META_TRAVEL_MODE_ATTR),
                         channels: copy::read_channel_summaries(&rec_grp),
-                        log_attachments: copy::log_attachments_in_attrs(&attrs),
+                        log_attachments: copy::log_attachments_in_attrs(
+                            &attrs,
+                            &rec_grp
+                                .attr_datatypes()
+                                .map_err(classify_hdf5_error)?
+                                .into_keys()
+                                .collect::<Vec<_>>(),
+                        ),
                     });
                 }
             }
@@ -227,7 +237,10 @@ impl ReadOnlyHistoryDatabase for PureDb {
         self.read_only.recording_ui_state(db_ref, reporter)
     }
 
-    fn log_attachments(&self, db_ref: &DatabaseRef) -> Result<Vec<LogAttachmentEntry>, DbError> {
+    fn log_attachments(
+        &self,
+        db_ref: &DatabaseRef,
+    ) -> Result<Vec<LogAttachmentListingEntry>, DbError> {
         self.read_only.log_attachments(db_ref)
     }
 

@@ -4,12 +4,18 @@ use std::io;
 use egui::{Button, Label, Window};
 use egui_phosphor::regular::COPY as ICON_COPY;
 use gt_loader::LoadError;
+use gt_log_view::LogAttachmentRef;
 use gt_logfile::LogParseError;
+use gt_store::LogAttachmentError;
 
 use crate::app::modals::{self, DialogActionRow, DialogBody};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum LoadSource {
+    Attachment {
+        attachment: LogAttachmentRef,
+        name: String,
+    },
     Filename(String),
     PastedText,
     UnnamedDrop,
@@ -18,7 +24,7 @@ pub(super) enum LoadSource {
 impl LoadSource {
     pub(super) fn into_filename(self) -> Option<String> {
         match self {
-            Self::Filename(filename) => Some(filename),
+            Self::Attachment { name, .. } | Self::Filename(name) => Some(name),
             Self::PastedText | Self::UnnamedDrop => None,
         }
     }
@@ -27,6 +33,11 @@ impl LoadSource {
 impl fmt::Display for LoadSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Attachment { attachment, name } => write!(
+                f,
+                "{name} in recording {} (attachment {})",
+                attachment.recording, attachment.id
+            ),
             Self::Filename(filename) => f.write_str(filename),
             Self::PastedText => f.write_str("pasted log text"),
             Self::UnnamedDrop => f.write_str("unnamed dropped log"),
@@ -58,6 +69,7 @@ impl LoadFailure {
 pub(super) enum LoadFailureCause {
     LoadRecording(Box<LoadError>),
     ParseLog(LogParseError),
+    ReadLogAttachment(Box<LogAttachmentError>),
     ReadLogFile(io::Error),
 }
 
@@ -66,6 +78,7 @@ impl fmt::Display for LoadFailureCause {
         match self {
             Self::LoadRecording(error) => write!(f, "{error:#}"),
             Self::ParseLog(error) => write!(f, "{error:#}"),
+            Self::ReadLogAttachment(error) => write!(f, "{error:#}"),
             Self::ReadLogFile(error) => write!(f, "Failed to read the file: {error:#}"),
         }
     }

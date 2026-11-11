@@ -5,12 +5,15 @@ use std::path::{Path, PathBuf};
 use std::slice;
 
 use chrono::DateTime;
-use gt_history_types::{self as history_types, StoredLogFilterCondition, fixtures};
+use gt_history_types::{
+    self as history_types, LogAttachmentReadError, StoredLogFilterCondition, fixtures,
+};
 use gt_store::{
-    DatabaseRef, HistoryDatabase as _, LogAttachmentError, LogAttachmentId, LogAttachments as _,
-    LogToAttach, ReadOnlyHistoryDatabase as _, ReadOnlyLogAttachments as _, RecordingMeta,
-    Recordings, Store, StoredLogFilterEffects, StoredLogFilterGroup, StoredLogFilterOperator,
-    StoredLogFilterStack, StoredLogFilterStackParts, StoredYearResolution, TrackRange, TrackState,
+    DatabaseRef, DbError, HistoryDatabase as _, LogAttachmentEntry, LogAttachmentError,
+    LogAttachmentId, LogAttachments as _, LogToAttach, ReadOnlyHistoryDatabase as _,
+    ReadOnlyLogAttachments as _, RecordingMeta, Recordings, Store, StoredLogFilterEffects,
+    StoredLogFilterGroup, StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts,
+    StoredYearResolution, TrackRange, TrackState,
 };
 use hdf5_pure::AttrValue;
 use rstest::rstest;
@@ -82,6 +85,101 @@ impl RecordedStore {
         match std::fs::read_dir(self.store.logs_path()) {
             Ok(entries) => entries.count(),
             Err(_) => 0,
+        }
+    }
+}
+
+struct MixedAttachmentMetadata {
+    recorded: RecordedStore,
+    readable: LogAttachmentEntry,
+    failures: Vec<(LogAttachmentId, AttrValue, Option<&'static str>)>,
+    group_path: String,
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "test setup requires successful I/O and metadata encoding"
+)]
+impl MixedAttachmentMetadata {
+    fn new() -> Self {
+        let RecordedStore {
+            _directory,
+            store,
+            mut recordings,
+            recording,
+        } = RecordedStore::new();
+        let readable = recordings
+            .attach_log(
+                &recording,
+                &LogToAttach {
+                    name: "readable.log",
+                    text: LOG_TEXT,
+                    filters: fixtures::log_filters(),
+                    year_reference: None,
+                    year_resolution: StoredYearResolution::Infer,
+                },
+            )
+            .expect("attach readable log");
+        let base = serde_json::to_value(&readable.attachment).expect("metadata");
+        let base = base.as_object().expect("metadata object").clone();
+        let mut future = base.clone();
+        future.insert("name".to_owned(), serde_json::json!("future.log"));
+        future.insert("format_version".to_owned(), serde_json::json!(7));
+        let mut unknown = base.clone();
+        unknown.insert("name".to_owned(), serde_json::json!("unknown.log"));
+        unknown.insert(
+            "year_resolution".to_owned(),
+            serde_json::json!({"kind": "future_policy"}),
+        );
+        let mut malformed = base;
+        malformed.insert("name".to_owned(), serde_json::json!("malformed.log"));
+        malformed.insert("year_resolution".to_owned(), Value::Null);
+        let failures: Vec<_> = [
+            (
+                AttrValue::String(Value::Object(future).to_string()),
+                Some("future.log"),
+            ),
+            (
+                AttrValue::String(Value::Object(unknown).to_string()),
+                Some("unknown.log"),
+            ),
+            (
+                AttrValue::String(Value::Object(malformed).to_string()),
+                Some("malformed.log"),
+            ),
+            (AttrValue::String("{".to_owned()), None),
+            (AttrValue::U64(42), None),
+        ]
+        .into_iter()
+        .map(|(value, name)| (LogAttachmentId::new_random(), value, name))
+        .collect();
+        drop(recordings);
+        let group_path = format!(
+            "by_identity/{}/{}",
+            history_types::identity_group_name(&recording.identity),
+            recording.group_name
+        );
+        {
+            let file = hdf5_pure::File::open_rw(store.recordings_path()).expect("edit metadata");
+            let group = file.root().group(&group_path).expect("recording group");
+            for (id, value, _) in &failures {
+                group
+                    .set_attr(&id.attr_key(), value.clone())
+                    .expect("write unreadable metadata");
+            }
+            file.commit().expect("commit metadata");
+        }
+        let recordings = store.open_recordings().expect("open mixed metadata");
+        Self {
+            recorded: RecordedStore {
+                _directory,
+                store,
+                recordings,
+                recording,
+            },
+            readable,
+            failures,
+            group_path,
         }
     }
 }
@@ -216,7 +314,12 @@ fn version_five_settings_upgrade_during_store_updates(
     assert_eq!(
         recordings
             .log_attachments(&recording)
-            .expect("legacy listing"),
+            .expect("legacy listing")
+            .into_iter()
+            .map(|listed| listed
+                .into_attachment(&recording)
+                .expect("readable metadata"))
+            .collect::<Vec<_>>(),
         slice::from_ref(&entry)
     );
     let mut expected = entry.attachment;
@@ -240,7 +343,9 @@ fn version_five_settings_upgrade_during_store_updates(
         .log_attachments(&recording)
         .expect("list upgraded metadata");
     assert_eq!(
-        listed.first().map(|entry| &entry.attachment),
+        listed
+            .first()
+            .map(|entry| entry.attachment.as_ref().expect("metadata")),
         Some(&expected)
     );
     let restored = reopened
@@ -267,6 +372,147 @@ fn version_five_settings_upgrade_during_store_updates(
     assert_eq!(wire.get("format_version"), Some(&serde_json::json!(6)));
 }
 
+#[test]
+fn unreadable_metadata_is_listed_with_sources_and_readable_siblings() {
+    let MixedAttachmentMetadata {
+        recorded:
+            RecordedStore {
+                _directory,
+                recordings,
+                recording,
+                ..
+            },
+        readable,
+        failures,
+        ..
+    } = MixedAttachmentMetadata::new();
+    let listed = recordings
+        .log_attachments(&recording)
+        .expect("list attachments");
+    assert_eq!(listed.len(), failures.len() + 1);
+    assert_eq!(
+        recordings
+            .list_recordings()
+            .expect("list recordings")
+            .first()
+            .expect("recording")
+            .log_attachments
+            .len(),
+        listed.len()
+    );
+    recordings.load(&recording).expect("readable recording");
+    assert_eq!(
+        recordings
+            .load_attached_log(&recording, readable.id)
+            .expect("readable sibling")
+            .text,
+        LOG_TEXT
+    );
+    for (id, value, name) in &failures {
+        let entry = listed
+            .iter()
+            .find(|entry| entry.id == *id)
+            .expect("failed entry is listed");
+        let source = entry.attachment.as_ref().expect_err("unreadable metadata");
+        match (value, source.as_ref()) {
+            (AttrValue::String(_), LogAttachmentReadError::Decode(error)) => {
+                assert_eq!(error.name.as_deref(), *name)
+            }
+            (
+                AttrValue::U64(_),
+                LogAttachmentReadError::NonTextAttribute | LogAttachmentReadError::ReadAttribute(_),
+            ) => {}
+            _ => panic!("unexpected metadata error: {source:#}"),
+        }
+        if let Some(name) = name {
+            assert_eq!(entry.display_name(), *name);
+        } else {
+            assert!(entry.display_name().contains(&id.to_string()));
+        }
+    }
+}
+
+#[test]
+fn unreadable_metadata_rejects_updates_and_survives_other_attachment_updates() {
+    let MixedAttachmentMetadata {
+        recorded:
+            RecordedStore {
+                _directory,
+                store,
+                mut recordings,
+                recording,
+            },
+        readable,
+        failures,
+        group_path,
+    } = MixedAttachmentMetadata::new();
+    assert_eq!(
+        recordings
+            .log_attachment_with_content(&recording, readable.attachment.content_hash)
+            .expect("readable match")
+            .expect("matching log")
+            .id,
+        readable.id
+    );
+    assert!(matches!(
+        recordings.log_attachment_with_content(
+            &recording,
+            history_types::LogContentHash::of_log_bytes(b"another log")
+        ),
+        Err(DbError::UnreadableLogAttachment { .. })
+    ));
+    for (id, _, _) in &failures {
+        let results = [
+            recordings.load_attached_log(&recording, *id).map(|_| ()),
+            recordings.set_attached_log_filters(&recording, *id, StoredLogFilterStack::default()),
+            recordings.set_attached_log_year_resolution(
+                &recording,
+                *id,
+                StoredYearResolution::Infer,
+            ),
+        ];
+        for result in results {
+            let error = result.expect_err("metadata must remain unreadable");
+            assert!(
+                matches!(&error, LogAttachmentError::Database(DbError::UnreadableLogAttachment { recording: found, id: found_id, .. }) if found == &recording && *found_id == *id)
+            );
+        }
+    }
+    recordings
+        .set_attached_log_filters(&recording, readable.id, StoredLogFilterStack::default())
+        .expect("update readable sibling");
+    drop(recordings);
+    {
+        let file = hdf5_pure::File::open(store.recordings_path()).expect("read persisted metadata");
+        let attrs = file
+            .root()
+            .group(&group_path)
+            .expect("recording group")
+            .attrs()
+            .expect("attributes");
+        for (id, value, _) in &failures {
+            assert_eq!(attrs.get(&id.attr_key()), Some(value));
+        }
+    }
+    let mut reopened = store.open_recordings().expect("reopen metadata");
+    let removed = failures.first().expect("failed attachment").0;
+    reopened
+        .detach_log(&recording, removed)
+        .expect("detach unreadable metadata");
+    let kept = reopened
+        .log_attachments(&recording)
+        .expect("list remaining attachments");
+    assert_eq!(kept.len(), failures.len());
+    assert!(kept.iter().all(|entry| entry.id != removed));
+    assert_eq!(
+        reopened
+            .load_attached_log(&recording, readable.id)
+            .expect("readable sibling after removal")
+            .text,
+        LOG_TEXT
+    );
+}
+
 /// The attach returns the entry the recording now lists.
 #[test_log::test]
 fn attaching_returns_the_attachment_the_recording_now_lists() {
@@ -290,7 +536,12 @@ fn attaching_returns_the_attachment_the_recording_now_lists() {
         recorded
             .recordings
             .log_attachments(&recorded.recording)
-            .expect("list"),
+            .expect("list")
+            .into_iter()
+            .map(|listed| listed
+                .into_attachment(&recorded.recording)
+                .expect("metadata"))
+            .collect::<Vec<_>>(),
         vec![attached]
     );
 }
@@ -512,7 +763,7 @@ fn the_same_log_attached_twice_is_found_by_its_content_hash() {
         .log_attachments(&recorded.recording)
         .expect("list")
         .first()
-        .map(|entry| entry.attachment.content_hash)
+        .map(|entry| entry.attachment.as_ref().expect("metadata").content_hash)
         .expect("the attachment that was just written");
     let duplicate = recorded
         .recordings
