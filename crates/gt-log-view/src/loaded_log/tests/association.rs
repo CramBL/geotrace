@@ -1,7 +1,8 @@
 use chrono::Duration;
+use gt_history_types::StoredLogSettings;
 use gt_loaded_files::LoadedFiles;
-use gt_logfile::ClockEligibility;
-use gt_types::TimeRange;
+use gt_logfile::{ClockEligibility, YearResolution};
+use gt_types::{AssociationWindow, TimeRange};
 
 use crate::anchor::RecordingKey;
 use crate::loaded_log::tests::fixtures;
@@ -36,12 +37,18 @@ fn widening_the_window_associates_the_entries_the_narrower_one_missed() {
     let files = test_util::loaded(vec![test_util::recording_at(55.0, 3)]);
     let mut log = test_util::log_of(10);
 
-    log.set_association_window(Duration::seconds(1), &files.view());
+    log.set_association_window(
+        AssociationWindow::try_from_seconds(1).unwrap(),
+        &files.view(),
+    );
     test_util::anchor_to(&mut log, &files, 0);
     assert_eq!(log.associated_entry_count(), 4);
     assert_eq!(log.unassociated_entry_count(), 6);
 
-    log.set_association_window(Duration::seconds(60), &files.view());
+    log.set_association_window(
+        AssociationWindow::try_from_seconds(60).unwrap(),
+        &files.view(),
+    );
     assert_eq!(log.associated_entry_count(), 10);
     assert_eq!(log.unassociated_entry_count(), 0);
 }
@@ -50,7 +57,7 @@ fn widening_the_window_associates_the_entries_the_narrower_one_missed() {
 fn a_log_with_unresolved_years_anchored_to_a_recording_associates_no_entry() {
     let files = test_util::loaded(vec![test_util::recording_at(55.0, 10)]);
     let mut log = test_util::log_with_unresolved_years();
-    log.set_association_window(Duration::days(366), &files.view());
+    log.set_association_window(AssociationWindow::MAX, &files.view());
 
     test_util::anchor_to(&mut log, &files, 0);
 
@@ -60,6 +67,49 @@ fn a_log_with_unresolved_years_anchored_to_a_recording_associates_no_entry() {
     );
     assert_eq!(log.associated_entry_count(), 0);
     assert_eq!(log.entry_placement(0), None);
+}
+
+#[test]
+fn unresolved_attachments_retain_their_window_through_year_resolution_and_window_edits() {
+    let attachment = fixtures::attachment_ref();
+    let resolved = gt_logfile::parse_log_with_year_resolution(
+        gt_test_utils::UNRESOLVED_YEARS_LOG.into(),
+        test_util::start(),
+        YearResolution::PlaceLastEntryInYear(2026),
+    )
+    .unwrap();
+    let time = resolved
+        .chronology()
+        .resolved()
+        .unwrap()
+        .timestamp(0)
+        .unwrap();
+    let mut files = LoadedFiles::new();
+    files.push(
+        test_util::recording_of(gt_test_utils::fixtures::nav_points_from(
+            time + Duration::milliseconds(250),
+            1,
+            1,
+        )),
+        test_util::stored_in_history(&attachment.recording),
+    );
+    let window = AssociationWindow::try_from(Duration::milliseconds(250)).unwrap();
+    let settings = StoredLogSettings {
+        association_window: Some(window),
+        ..fixtures::settings()
+    };
+    let mut log = test_util::log_with_unresolved_years();
+    log.restore_attachment(attachment, settings, &files.view());
+    assert_eq!(log.association_window(), window);
+    assert_eq!(log.entry_placement(0), None);
+    assert!(log.resolve_years_as(YearResolution::PlaceLastEntryInYear(2026), &files.view()));
+    assert_eq!(log.association_window(), window);
+    assert!(log.entry_placement(0).is_some());
+    let mut expected = log.settings_snapshot();
+    expected.association_window = Some(AssociationWindow::ZERO);
+    log.set_association_window(AssociationWindow::ZERO, &files.view());
+    assert_eq!(log.entry_placement(0), None);
+    assert_eq!(log.settings_snapshot(), expected);
 }
 
 /// Unloading the anchored recording strands the log, and never hands it to

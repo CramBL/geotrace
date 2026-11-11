@@ -1,4 +1,3 @@
-use chrono::Duration;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use gt_loaded_files::{FileHistory, LoadedFiles};
@@ -6,6 +5,7 @@ use gt_log_view::{AttachmentSettingsStatus, LoadedLog, LoadedLogs, LogAttachment
 use gt_pending_writes::WriteAccess;
 use gt_store::{DatabaseRef, LogAttachmentId};
 use gt_test_utils::{By, TestHarness};
+use gt_types::AssociationWindow;
 use gt_ui_types::LoadedLogId;
 use rstest::rstest;
 
@@ -38,7 +38,11 @@ impl StatusHarness {
                 gt_test_utils::synthetic_log_start(),
             )
             .unwrap();
-            let log = LoadedLog::new(Some(name.to_owned()), parsed, Duration::seconds(60));
+            let log = LoadedLog::new(
+                Some(name.to_owned()),
+                parsed,
+                AssociationWindow::try_from_seconds(60).unwrap(),
+            );
             let settings = log.settings_snapshot();
             let id = logs.push(log).id();
             if name != "session.log" {
@@ -177,7 +181,11 @@ fn retry_distinguishes_equal_log_names_in_different_recording_groups() {
         gt_test_utils::synthetic_log_start(),
     )
     .unwrap();
-    let log = LoadedLog::new(Some("failed.log".to_owned()), parsed, Duration::seconds(60));
+    let log = LoadedLog::new(
+        Some("failed.log".to_owned()),
+        parsed,
+        AssociationWindow::try_from_seconds(60).unwrap(),
+    );
     let settings = log.settings_snapshot();
     let recordings = LoadedFiles::new();
     let other = state

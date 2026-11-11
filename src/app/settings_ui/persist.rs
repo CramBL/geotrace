@@ -1,10 +1,11 @@
 //! Loading the persisted settings into the app and writing them back out.
 
+use chrono::Duration;
 use gt_pending_writes::{WriteKind, WriteRejection};
 use gt_track_builder::{
     FixPlacementRule, GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig, TrackSplitRule,
 };
-use gt_types::AssociationConfig;
+use gt_types::{AssociationConfig, AssociationWindow};
 use strum::IntoEnumIterator;
 
 use crate::app::{App, loader};
@@ -53,9 +54,16 @@ impl App {
                 loader::DEBUG_TIME_REPAIR_MIN_THRESHOLD_SECONDS,
                 loader::DEBUG_TIME_REPAIR_MAX_THRESHOLD_SECONDS,
             );
-        self.assoc_config = AssociationConfig {
-            log_association_window_s: s.processing.log_association_window_s,
-        };
+        self.assoc_config =
+            match AssociationWindow::try_from_seconds(s.processing.log_association_window_s) {
+                Ok(window) => AssociationConfig {
+                    log_association_window: window,
+                },
+                Err(error) => {
+                    log::warn!("Invalid log association window in settings: {error}");
+                    AssociationConfig::default()
+                }
+            };
         self.initial_position_source_policy = s.processing.initial_position_source_policy;
         self.ctx
             .set_theme(super::theme_pref_from_setting(s.ui.theme));
@@ -197,7 +205,9 @@ impl App {
                     .map_or(300, |d| d.as_secs()),
                 debug_time_repair_backward_jump_threshold_seconds: self
                     .debug_time_repair_threshold_seconds,
-                log_association_window_s: self.assoc_config.log_association_window_s,
+                log_association_window_s: Duration::from(self.assoc_config.log_association_window)
+                    .num_seconds()
+                    .unsigned_abs(),
                 initial_position_source_policy: self.initial_position_source_policy,
                 detect_gnss_fix_lost: self
                     .processing_config

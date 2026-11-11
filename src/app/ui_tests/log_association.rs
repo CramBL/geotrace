@@ -27,7 +27,7 @@ use gt_test_utils::{
     By, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec, SyntheticLogTimestamps,
 };
 use gt_track_builder::SegmentationConfig;
-use gt_types::{FileIdx, Latitude, Longitude};
+use gt_types::{AssociationWindow, FileIdx, Latitude, Longitude};
 
 use crate::app::App;
 use crate::app::history_db::{HistoryWorker, RestoredLogAttachment};
@@ -1244,7 +1244,7 @@ fn settings_save_failure_remains_visible_until_retry_acknowledgement(#[case] rea
     let log = LoadedLog::new(
         Some("pending.log".to_owned()),
         parsed,
-        Duration::seconds(60),
+        AssociationWindow::try_from_seconds(60).unwrap(),
     );
     let initial = log.settings_snapshot();
     let id = harness.state_mut().logs.push(log).id();
@@ -1316,12 +1316,30 @@ fn settings_save_failure_remains_visible_until_retry_acknowledgement(#[case] rea
             .settings_save_status(WriteAccess::Owner),
         AttachmentSettingsStatus::Dirty
     );
+    harness
+        .state_mut()
+        .logs
+        .get_mut_by_id(id)
+        .unwrap()
+        .set_association_window(
+            AssociationWindow::try_from_seconds(5).unwrap(),
+            &files.view(),
+        );
     let pending = harness
         .state_mut()
         .logs
         .prepare_settings_writes(WriteAccess::Owner)
         .pop()
         .unwrap();
+    harness
+        .state_mut()
+        .logs
+        .get_mut_by_id(id)
+        .unwrap()
+        .set_association_window(
+            AssociationWindow::try_from(Duration::nanoseconds(1_500_000_001)).unwrap(),
+            &files.view(),
+        );
     let stack = harness
         .state_mut()
         .logs
@@ -1340,7 +1358,7 @@ fn settings_save_failure_remains_visible_until_retry_acknowledgement(#[case] rea
             gt_test_utils::synthetic_log_start(),
         )
         .unwrap(),
-        Duration::seconds(60),
+        AssociationWindow::try_from_seconds(60).unwrap(),
     );
     let other_id = harness.state_mut().logs.push(other).id();
     harness.state_mut().log_viewer.open_on_log(other_id);
@@ -1398,6 +1416,10 @@ fn settings_save_failure_remains_visible_until_retry_acknowledgement(#[case] rea
         .get_by_id(id)
         .unwrap()
         .settings_snapshot();
+    assert_eq!(
+        desired.association_window.map(Duration::from),
+        Some(Duration::nanoseconds(1_500_000_001))
+    );
     if read_only {
         assert_eq!(
             harness.state().logs.get_by_id(id).unwrap().save_error(),
@@ -1448,18 +1470,98 @@ fn settings_save_failure_remains_visible_until_retry_acknowledgement(#[case] rea
 }
 
 #[rstest::rstest]
+#[case::zero(Duration::zero(), false)]
+#[case::subsecond(Duration::milliseconds(250), true)]
+fn saved_window_edits_survive_reopening_with_a_different_global_default(
+    #[case] duration: Duration,
+    #[case] initially_associated: bool,
+) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("history.h5");
+    let (mut harness, recording) = harness_over_a_recording_and_its_log(&path);
+    let loose = harness.state().logs.first_id().unwrap();
+    harness.state_mut().logs.remove_by_id(loose);
+    let text = format!(
+        "{} fractional entry\n",
+        (gt_test_utils::synthetic_log_start() + Duration::milliseconds(250)).to_rfc3339()
+    );
+    let window = AssociationWindow::try_from(duration).unwrap();
+    let settings = StoredLogSettings {
+        association_window: Some(window),
+        filters: StoredLogFilterStack::default(),
+        year_reference: Some(gt_test_utils::synthetic_log_start()),
+        year_resolution: StoredYearResolution::Infer,
+    };
+    let entry = Recordings::open_or_create(&path)
+        .unwrap()
+        .attach_log(
+            &recording,
+            &LogToAttach {
+                name: "fractional.log",
+                text: &text,
+                settings,
+            },
+        )
+        .unwrap();
+    open_the_stored_log(&harness, &recording, entry.id);
+    test_util::harness::step_until_a_log_is_loaded(&mut harness);
+    let log = harness.state().first_log().unwrap();
+    assert_eq!(log.association_window(), window);
+    assert_eq!(log.entry_placement(0).is_some(), initially_associated);
+    assert!(!log.association_window_is_defaulted());
+    let edited = AssociationWindow::try_from(Duration::nanoseconds(500_000_001)).unwrap();
+    let id = harness.state().logs.first_id().unwrap();
+    let shared = harness.state().shared.clone();
+    harness
+        .state_mut()
+        .logs
+        .get_mut_by_id(id)
+        .unwrap()
+        .set_association_window(edited, &shared.borrow().loaded_files.view());
+    let placement = harness.state().first_log().unwrap().entry_placement(0);
+    assert!(placement.is_some());
+    assert!(harness.step_until(|_| {
+        stored_attachments(&path, &recording)
+            .first()
+            .is_some_and(|entry| entry.attachment.settings.association_window == Some(edited))
+    }));
+    assert!(harness.step_until(|harness| {
+        harness
+            .state()
+            .first_log()
+            .unwrap()
+            .settings_save_status(WriteAccess::Owner)
+            == AttachmentSettingsStatus::Saved
+    }));
+    harness.state_mut().logs.remove_by_id(id);
+    harness.state_mut().assoc_config.log_association_window = AssociationWindow::ZERO;
+    open_the_stored_log(&harness, &recording, entry.id);
+    test_util::harness::step_until_a_log_is_loaded(&mut harness);
+    let reopened = harness.state().first_log().unwrap();
+    assert_eq!(reopened.association_window(), edited);
+    assert_eq!(reopened.entry_placement(0), placement);
+}
+
+#[rstest::rstest]
 #[case::writable(false)]
 #[case::ownership_downgrade(true)]
-fn legacy_reference_fallback_is_persisted_only_after_a_writable_edit(#[case] read_only: bool) {
+fn legacy_defaults_are_persisted_only_after_a_writable_edit(#[case] read_only: bool) {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("history.h5");
     let (recording, attachment) = seed_a_recording_and_the_log_stored_with_it(&path);
     let mut harness = app_over_a_history_database(&path);
+    let resolved = AssociationWindow::try_from_seconds(17).unwrap();
+    harness.state_mut().assoc_config.log_association_window = resolved;
     let before = fs::read(&path).unwrap();
     open_the_stored_log(&harness, &recording, attachment);
     test_util::harness::step_until_a_log_is_loaded(&mut harness);
     harness.run_steps(3);
     assert!(fs::read(&path).unwrap() == before);
+    let log = harness.state().first_log().unwrap();
+    assert_eq!(log.association_window(), resolved);
+    assert!(log.association_window_is_defaulted());
+    assert_eq!(log.settings_snapshot().association_window, None);
+    harness.state_mut().assoc_config.log_association_window = AssociationWindow::ZERO;
     if read_only {
         harness
             .state()
@@ -1489,12 +1591,24 @@ fn legacy_reference_fallback_is_persisted_only_after_a_writable_edit(#[case] rea
         assert!(fs::read(&path).unwrap() == before);
     } else {
         let desired = harness.state().first_log().unwrap().settings_snapshot();
+        assert_eq!(desired.association_window, Some(resolved));
         assert!(harness.step_until(|_| {
             stored_attachments(&path, &recording)
                 .first()
                 .is_some_and(|entry| entry.attachment.settings == desired)
         }));
+        assert!(harness.step_until(|harness| {
+            !harness
+                .state()
+                .first_log()
+                .unwrap()
+                .association_window_is_defaulted()
+        }));
     }
+    assert_eq!(
+        harness.state().first_log().unwrap().association_window(),
+        resolved
+    );
 }
 
 /// A database holding the fixture recording and the fixture log stored

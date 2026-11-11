@@ -20,6 +20,7 @@
 
 - **Log Viewer:** Fixed Save with recording… changing a log's position source without saving it.
 - **Log Viewer:** Fixed missing error feedback and retry actions when saving log filters failed.
+- **Log Viewer:** Fixed saved logs reopening with the global association window after a per-log window edit.
 - **Map & Tracks:** Fixed fit clipping start and finish flags when only ghost fixes, labels or sky glyphs were displayed.
 - **Map & Tracks:** Fixed fit and query reveal including data hidden by tree, query or marker type settings.
 - **Map & Tracks:** Fixed stale display counts after replacing a recording with the same number of points and markers.

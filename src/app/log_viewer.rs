@@ -526,12 +526,18 @@ impl LogViewerWindow {
         };
         let target = log.associated_recording();
         let candidates = log.rank_association_candidates(&recordings);
+        let window_hover = if log.association_window_is_defaulted() {
+            "The app used its default window when loading this attachment. The app stores the current window with the next successful settings save."
+        } else {
+            ASSOCIATION_WINDOW_HOVER
+        };
         let entered_unit = self.association_window_unit;
         let window = self
             .association_window_edit
             .as_ref()
             .map_or(log.association_window(), |edit| edit.window);
-        let mut value = entered_unit.measure(window);
+        let initial_value = entered_unit.measure(window);
+        let mut value = initial_value;
         let mut unit = entered_unit;
         let mut chosen_target = None;
         let mut window_response = None;
@@ -632,14 +638,14 @@ impl LogViewerWindow {
             }
 
             ui.separator();
-            ui.label("Association window");
+            ui.label("Association window").on_hover_text(window_hover);
             window_response = Some(
                 ui.push_id(selected, |ui| {
                     ui.add_enabled(
                         years_resolved,
                         DragValue::new(&mut value).range(0.0..=entered_unit.largest_value()),
                     )
-                    .on_hover_text(ASSOCIATION_WINDOW_HOVER)
+                    .on_hover_text(window_hover)
                     .on_disabled_hover_text(UNRESOLVED_YEARS_HOVER)
                 })
                 .inner,
@@ -693,12 +699,15 @@ impl LogViewerWindow {
             if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Escape)) {
                 self.association_window_edit = None;
             } else if response.changed()
+                && value.to_bits() != initial_value.to_bits()
                 && let Some(log) = selected
             {
-                self.association_window_edit = Some(AssociationWindowEdit {
-                    log,
-                    window: entered_unit.window_of(value),
-                });
+                match entered_unit.window_of(value) {
+                    Ok(window) => {
+                        self.association_window_edit = Some(AssociationWindowEdit { log, window })
+                    }
+                    Err(error) => self.report_warning(error.to_string()),
+                }
             }
             if !response.dragged() && !response.has_focus() {
                 self.commit_association_window(logs, recordings);

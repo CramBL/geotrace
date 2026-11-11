@@ -160,6 +160,7 @@ fn restored_legacy_references_remain_missing_until_settings_change() {
     let files = test_util::loaded(Vec::new());
     let mut log = test_util::log_of(10);
     let persisted = StoredLogSettings {
+        association_window: None,
         year_reference: None,
         ..fixtures::settings()
     };
@@ -198,6 +199,7 @@ fn saved_windows_survive_filter_settings_writes(#[case] restore: bool) {
             &recordings.view(),
         );
     } else {
+        log.set_association_window(persisted.association_window.unwrap(), &recordings.view());
         log.record_attachment(
             fixtures::attachment_ref(),
             persisted.clone(),

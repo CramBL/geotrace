@@ -1,5 +1,6 @@
 //! Settings applied when a recording is loaded or explicitly re-applied.
 
+use chrono::Duration;
 use egui::{DragValue, Grid};
 use egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE as ICON_ARROW_COUNTER_CLOCKWISE;
 use egui_phosphor::regular::ARROWS_IN_LINE_HORIZONTAL as ICON_ARROWS_IN_LINE_HORIZONTAL;
@@ -12,6 +13,7 @@ use egui_phosphor::regular::MAP_PIN as ICON_MAP_PIN;
 use egui_phosphor::regular::SCISSORS as ICON_SCISSORS;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use egui_phosphor::regular::X_CIRCLE as ICON_X_CIRCLE;
+use gt_types::{AssociationConfig, AssociationWindow};
 
 use crate::app::App;
 use crate::app::loader;
@@ -87,11 +89,14 @@ impl App {
                      60s, a log line at 10:00:30 can associate with a fix from \
                      10:00:00 - but not one from 09:59:00.",
                 );
-                let mut window_s = self.assoc_config.log_association_window_s.clamp(1, 3600);
+                let mut window_s = Duration::from(self.assoc_config.log_association_window).num_seconds().unsigned_abs();
                 ui.horizontal(|ui| {
-                    compound_duration_input(ui, &mut window_s, 1, 3600, false, false);
+                    compound_duration_input(ui, &mut window_s, 0, Duration::from(AssociationWindow::MAX).num_seconds().unsigned_abs(), false, false);
                 });
-                self.assoc_config.log_association_window_s = window_s;
+                match AssociationWindow::try_from_seconds(window_s) {
+                    Ok(window) => self.assoc_config.log_association_window = window,
+                    Err(error) => log::warn!("Invalid log association window: {error}"),
+                }
                 ui.end_row();
 
                 let mut automatically_choose_position_source = self.initial_position_source_policy.automatically_chooses_position_source();
@@ -126,7 +131,8 @@ impl App {
                     chrono::Duration::seconds(defaults.track_split_gap_seconds as i64);
                 self.debug_time_repair_threshold_seconds =
                     defaults.debug_time_repair_backward_jump_threshold_seconds;
-                self.assoc_config.log_association_window_s = defaults.log_association_window_s;
+                self.assoc_config.log_association_window =
+                    AssociationConfig::default().log_association_window;
                 self.initial_position_source_policy = defaults.initial_position_source_policy;
                 self.processing_config
                     .generated_markers

@@ -6,14 +6,14 @@ use gt_history_types::{DatabaseRef, RecordingMeta};
 use gt_loaded_files::{FileHistory, LoadedFileId, LoadedFiles, RecordingNames};
 use gt_logfile::ParsedLog;
 use gt_test_utils::fixtures;
-use gt_types::{Latitude, LoadedFile, Longitude, NavPoint};
+use gt_types::{AssociationConfig, AssociationWindow, Latitude, LoadedFile, Longitude, NavPoint};
 use gt_ui_types::LogMatches;
 
 use crate::{LoadedLog, LoadedLogs, RecordingKey};
 
 /// The window the tests associate with, matching the app's default.
-pub(crate) fn association_window() -> Duration {
-    Duration::seconds(60)
+pub(crate) fn association_window() -> AssociationWindow {
+    AssociationConfig::default().log_association_window
 }
 
 /// The moment the fixture log's first entry is written at, and the fixture

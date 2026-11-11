@@ -18,6 +18,19 @@ fn construction_enforces_inclusive_bounds(
     assert_eq!(AssociationWindow::try_from(duration), expected);
 }
 
+#[rstest]
+#[case::zero(0, Ok(AssociationWindow::ZERO))]
+#[case::maximum(31_536_000, Ok(AssociationWindow::MAX))]
+#[case::above_maximum(31_536_001, Err(InvalidAssociationWindow))]
+#[case::signed_overflow(u64::MAX, Err(InvalidAssociationWindow))]
+#[case::duration_overflow(i64::MAX as u64, Err(InvalidAssociationWindow))]
+fn seconds_input_enforces_bounds_without_overflow(
+    #[case] seconds: u64,
+    #[case] expected: Result<AssociationWindow, InvalidAssociationWindow>,
+) {
+    assert_eq!(AssociationWindow::try_from_seconds(seconds), expected);
+}
+
 proptest! {
     #[test]
     fn construction_preserves_every_valid_nanosecond(nanoseconds in 0i64..=31_536_000_000_000_000) {

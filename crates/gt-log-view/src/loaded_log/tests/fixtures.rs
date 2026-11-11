@@ -32,7 +32,7 @@ pub fn attachment_ref() -> LogAttachmentRef {
 
 pub fn settings() -> StoredLogSettings {
     StoredLogSettings {
-        association_window: None,
+        association_window: Some(crate::test_util::association_window()),
         filters: Default::default(),
         year_reference: Some(crate::test_util::start()),
         year_resolution: StoredYearResolution::Infer,
