@@ -272,7 +272,7 @@ impl App {
                     recording: recording.clone(),
                     id: entry.id,
                 };
-                let filters = entry.attachment.filters.clone();
+                let filters = entry.attachment.settings.filters.clone();
                 self.log_attachments.record_attachment(recording, entry);
                 let shared = self.shared.borrow();
                 let outcome = self.logs.save_attachment(

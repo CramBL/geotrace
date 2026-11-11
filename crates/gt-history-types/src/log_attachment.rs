@@ -446,7 +446,14 @@ impl<'de> Deserialize<'de> for StoredLogFilterStack {
 pub struct LogAttachment {
     pub name: String,
     pub content_hash: LogContentHash,
+    pub settings: StoredLogSettings,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StoredLogSettings {
     pub filters: StoredLogFilterStack,
+
+    /// The loader uses the recording's end time for `None`.
     pub year_reference: Option<DateTime<Utc>>,
     pub year_resolution: StoredYearResolution,
 }
@@ -469,9 +476,11 @@ impl LogAttachment {
         Self {
             name,
             content_hash,
-            filters,
-            year_reference: None,
-            year_resolution: StoredYearResolution::Infer,
+            settings: StoredLogSettings {
+                filters,
+                year_reference: None,
+                year_resolution: StoredYearResolution::Infer,
+            },
         }
     }
 
@@ -492,18 +501,18 @@ impl Serialize for LogAttachment {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut fields = serializer.serialize_struct(
             "LogAttachment",
-            4 + usize::from(self.year_reference.is_some())
-                + usize::from(self.year_resolution != StoredYearResolution::Infer),
+            4 + usize::from(self.settings.year_reference.is_some())
+                + usize::from(self.settings.year_resolution != StoredYearResolution::Infer),
         )?;
         fields.serialize_field("format_version", &LOG_ATTACHMENT_FORMAT_VERSION)?;
         fields.serialize_field("name", &self.name)?;
         fields.serialize_field("content_hash", &self.content_hash)?;
-        fields.serialize_field("filters", &self.filters)?;
-        if let Some(reference) = self.year_reference {
+        fields.serialize_field("filters", &self.settings.filters)?;
+        if let Some(reference) = self.settings.year_reference {
             fields.serialize_field("year_reference", &reference)?;
         }
-        if self.year_resolution != StoredYearResolution::Infer {
-            fields.serialize_field("year_resolution", &self.year_resolution)?;
+        if self.settings.year_resolution != StoredYearResolution::Infer {
+            fields.serialize_field("year_resolution", &self.settings.year_resolution)?;
         }
         fields.end()
     }
@@ -687,9 +696,11 @@ impl LogAttachmentEnvelope {
         Ok(LogAttachment {
             name: settings.name,
             content_hash: settings.content_hash,
-            filters: settings.filters,
-            year_reference: settings.year_reference,
-            year_resolution: settings.year_resolution.decode()?,
+            settings: StoredLogSettings {
+                filters: settings.filters,
+                year_reference: settings.year_reference,
+                year_resolution: settings.year_resolution.decode()?,
+            },
         })
     }
 }
@@ -809,7 +820,7 @@ mod tests {
         #[case] stored_field: &str,
     ) {
         let mut chosen = attachment();
-        chosen.year_resolution = year_resolution;
+        chosen.settings.year_resolution = year_resolution;
 
         let json = chosen.to_attribute_json().expect("encode");
 
@@ -834,14 +845,14 @@ mod tests {
             year_reference: Option<DateTime<Utc>>,
         }
         let mut current = attachment();
-        current.year_resolution = policy;
+        current.settings.year_resolution = policy;
         let json = current.to_attribute_json().expect("encode");
         let old: PrePolicyAttachment = serde_json::from_str(&json).expect("old schema");
         assert!(old.format_version > 5);
         assert_eq!(old.name, current.name);
         assert_eq!(old.content_hash, current.content_hash);
-        assert_eq!(old.filters, current.filters);
-        assert_eq!(old.year_reference, current.year_reference);
+        assert_eq!(old.filters, current.settings.filters);
+        assert_eq!(old.year_reference, current.settings.year_reference);
     }
 
     #[rstest]
@@ -855,8 +866,11 @@ mod tests {
             r#"{{"format_version":{version},"name":"legacy.log","content_hash":"0","filters":[]}}"#
         );
         let restored = LogAttachment::from_attribute_json(&json).expect("legacy attachment");
-        assert_eq!(restored.year_resolution, StoredYearResolution::Infer);
-        assert_eq!(restored.year_reference, None);
+        assert_eq!(
+            restored.settings.year_resolution,
+            StoredYearResolution::Infer
+        );
+        assert_eq!(restored.settings.year_reference, None);
     }
 
     #[rstest]
@@ -866,8 +880,8 @@ mod tests {
         #[case] policy: StoredYearResolution,
     ) {
         let mut expected = attachment();
-        expected.year_resolution = policy;
-        expected.year_reference = DateTime::from_timestamp(1_767_312_000, 123_456_789);
+        expected.settings.year_resolution = policy;
+        expected.settings.year_reference = DateTime::from_timestamp(1_767_312_000, 123_456_789);
         let mut legacy = serde_json::to_value(&expected).expect("settings");
         legacy["format_version"] = serde_json::json!(5);
         assert_eq!(
@@ -958,7 +972,7 @@ mod tests {
     fn legacy_flat_filters_restore_as_all_and_upgrade_on_write() {
         let legacy = r#"{"format_version":1,"name":"navsyncd.log","content_hash":"b3e7a3594637c2fbf4655e82bcf507d6","filters":[{"text":"gnss","regex":false,"enabled":true,"mode":"layer","color_slot":2},{"text":"hal-powerd|navsyncd","regex":true,"enabled":false,"mode":"refine"}],"year_reference":"2026-01-02T00:00:00Z"}"#;
         let mut expected = attachment();
-        expected.year_reference = DateTime::from_timestamp(1_767_312_000, 0);
+        expected.settings.year_reference = DateTime::from_timestamp(1_767_312_000, 0);
         let restored = LogAttachment::from_attribute_json(legacy).expect("legacy attachment");
         assert_eq!(restored, expected);
         let rewritten = restored
@@ -981,14 +995,14 @@ mod tests {
         );
         let restored = LogAttachment::from_attribute_json(&json).unwrap();
         assert_eq!(
-            restored.filters.chips().first().unwrap().condition,
+            restored.settings.filters.chips().first().unwrap().condition,
             StoredLogFilterCondition::Message {
                 text: "gnss".into(),
                 regex: false
             }
         );
         assert_eq!(
-            restored.filters.groups().first().unwrap().operator,
+            restored.settings.filters.groups().first().unwrap().operator,
             StoredLogFilterOperator::Any
         );
         assert!(
@@ -1013,7 +1027,7 @@ mod tests {
     fn an_empty_legacy_stack_restores_as_all() {
         let legacy = r#"{"format_version":1,"name":"empty.log","content_hash":"0","filters":[]}"#;
         let restored = LogAttachment::from_attribute_json(legacy).expect("legacy attachment");
-        assert_eq!(restored.filters, StoredLogFilterStack::default());
+        assert_eq!(restored.settings.filters, StoredLogFilterStack::default());
     }
 
     #[rstest]
@@ -1199,13 +1213,13 @@ mod tests {
                 operator: if *any_operator { StoredLogFilterOperator::Any } else { StoredLogFilterOperator::All },
             }).collect();
             let selected_group_id = groups.get(selected_index % operators.len()).expect("selected group").id;
-            let mut chips = attachment.filters.chips().to_vec();
+            let mut chips = attachment.settings.filters.chips().to_vec();
             for (index, chip) in chips.iter_mut().enumerate() {
                 chip.group_id = groups.get(index.wrapping_add(membership_offset) % operators.len()).expect("chip group").id;
             }
-            attachment.filters = StoredLogFilterStack::try_from_parts(StoredLogFilterStackParts { groups, selected_group_id, chips }).expect("valid memberships");
-            attachment.year_reference = reference_seconds.and_then(|seconds| DateTime::from_timestamp(seconds, 0));
-            attachment.year_resolution = year_resolution;
+            attachment.settings.filters = StoredLogFilterStack::try_from_parts(StoredLogFilterStackParts { groups, selected_group_id, chips }).expect("valid memberships");
+            attachment.settings.year_reference = reference_seconds.and_then(|seconds| DateTime::from_timestamp(seconds, 0));
+            attachment.settings.year_resolution = year_resolution;
             let json = attachment.to_attribute_json().expect("encode");
             prop_assert_eq!(LogAttachment::from_attribute_json(&json).expect("decode"), attachment);
         }
@@ -1227,7 +1241,7 @@ mod tests {
             wire["year_resolution"] = policy;
             match LogAttachment::from_attribute_json(&wire.to_string()) {
                 Ok(restored) => {
-                    prop_assert_eq!(restored.year_resolution, StoredYearResolution::PlaceLastEntryInYear { year: i32::try_from(year).expect("supported year") });
+                    prop_assert_eq!(restored.settings.year_resolution, StoredYearResolution::PlaceLastEntryInYear { year: i32::try_from(year).expect("supported year") });
                     prop_assert_eq!(kind, "place_last_entry_in_year");
                 }
                 Err(error) => prop_assert!(matches!(error.reason, LogAttachmentDecodeErrorReason::MalformedYearResolution(_) | LogAttachmentDecodeErrorReason::UnsupportedYearResolution { .. }), "invalid policy"),

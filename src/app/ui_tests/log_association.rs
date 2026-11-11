@@ -16,7 +16,7 @@ use gt_store::{
     LogAttachmentError, LogAttachmentId, LogAttachmentListingEntry, LogAttachments as _,
     LogContentHash, LogToAttach, ReadOnlyHistoryDatabase as _, Recordings, RecordingsHandle,
     StoredLogFilter, StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterOperator,
-    StoredLogFilterStack, StoredYearResolution, TrackRange, TrackState,
+    StoredLogFilterStack, StoredLogSettings, StoredYearResolution, TrackRange, TrackState,
 };
 use gt_test_utils::{
     By, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec, SyntheticLogTimestamps,
@@ -346,7 +346,7 @@ fn applying_a_year_to_a_log_with_unresolved_years_raises_the_dialog_and_saves_th
     assert_eq!(
         stored_attachments(&db_path, &db_ref)
             .first()
-            .map(|entry| entry.attachment.year_resolution),
+            .map(|entry| entry.attachment.settings.year_resolution),
         Some(StoredYearResolution::PlaceLastEntryInYear { year: 2026 })
     );
 }
@@ -377,7 +377,7 @@ fn a_year_applied_to_a_saved_log_with_unresolved_years_resolves_it_when_it_reope
     assert!(
         harness.step_until(|_| stored_attachments(&db_path, &db_ref)
             .first()
-            .is_some_and(|entry| entry.attachment.year_resolution
+            .is_some_and(|entry| entry.attachment.settings.year_resolution
                 == StoredYearResolution::PlaceLastEntryInYear { year: 2026 })),
         "the worker stored the year with the attachment"
     );
@@ -765,7 +765,7 @@ fn an_attached_log_comes_back_with_its_filters_when_the_recording_opens_again() 
         harness.step_until(|_| {
             !stored_attachments(&db_path, &db_ref)
                 .first()
-                .is_none_or(|entry| entry.attachment.filters.chips().is_empty())
+                .is_none_or(|entry| entry.attachment.settings.filters.chips().is_empty())
         }),
         "the chip reached the stored attachment"
     );
@@ -824,7 +824,7 @@ fn an_unloaded_attachment_is_listed_under_its_recording_and_loads_back() {
     assert!(
         harness.step_until(|_| stored_attachments(&db_path, &db_ref)
             .first()
-            .is_some_and(|entry| entry.attachment.filters.chips().len() == 1)),
+            .is_some_and(|entry| entry.attachment.settings.filters.chips().len() == 1)),
         "the chip reached the stored attachment"
     );
     let stored = stored_attachments(&db_path, &db_ref)
@@ -1100,7 +1100,7 @@ fn attaching_a_log_the_recording_already_holds_reuses_the_stored_attachment() {
     assert!(
         harness.step_until(|_| stored_attachments(&db_path, &db_ref)
             .first()
-            .is_some_and(|entry| entry.attachment.filters.chips().len() == 1)),
+            .is_some_and(|entry| entry.attachment.settings.filters.chips().len() == 1)),
         "the chip reached the stored attachment"
     );
     let stored = stored_attachments(&db_path, &db_ref)
@@ -1127,7 +1127,7 @@ fn attaching_a_log_the_recording_already_holds_reuses_the_stored_attachment() {
     assert!(
         harness.step_until(|_| stored_attachments(&db_path, &db_ref)
             .first()
-            .is_some_and(|entry| entry.attachment.filters.chips().is_empty())),
+            .is_some_and(|entry| entry.attachment.settings.filters.chips().is_empty())),
         "the stack of the loaded log reached the attachment it took"
     );
     assert_eq!(
@@ -1177,19 +1177,21 @@ fn seed_a_recording_and_the_log_stored_with_it(
             &LogToAttach {
                 name: FIXTURE_LOG_NAME,
                 text: &fixture_log_text(FIXTURE_LOG_SEED),
-                filters: StoredLogFilterStack::single_all_group(vec![StoredLogFilter {
-                    group_id: 0,
-                    condition: StoredLogFilterCondition::Message {
-                        text: "kernel".to_owned(),
-                        regex: false,
-                    },
-                    effects: StoredLogFilterEffects::Map {
-                        enabled: true,
-                        color_slot: 0,
-                    },
-                }]),
-                year_reference: None,
-                year_resolution: StoredYearResolution::Infer,
+                settings: StoredLogSettings {
+                    filters: StoredLogFilterStack::single_all_group(vec![StoredLogFilter {
+                        group_id: 0,
+                        condition: StoredLogFilterCondition::Message {
+                            text: "kernel".to_owned(),
+                            regex: false,
+                        },
+                        effects: StoredLogFilterEffects::Map {
+                            enabled: true,
+                            color_slot: 0,
+                        },
+                    }]),
+                    year_reference: None,
+                    year_resolution: StoredYearResolution::Infer,
+                },
             },
         )
         .expect("the fixture log is stored with the recording");
@@ -1348,7 +1350,7 @@ fn restore_the_stored_attachment(
             recording: db_ref.clone(),
             id: entry.id,
         },
-        filters: entry.attachment.filters.clone(),
+        filters: entry.attachment.settings.filters.clone(),
         requested_by: crate::app::loader::AttachedLogRequester::RecordingLoad,
         year_reference: gt_test_utils::synthetic_log_start(),
         year_resolution: YearResolution::Infer,
@@ -1380,7 +1382,7 @@ fn unreadable_attachment_metadata_has_retained_source_feedback_and_readable_sibl
         LogContentHash::of_log_bytes(text.as_bytes()),
         StoredLogFilterStack::default(),
     );
-    metadata.year_reference = Some(gt_test_utils::synthetic_log_start());
+    metadata.settings.year_reference = Some(gt_test_utils::synthetic_log_start());
     let readable = LogAttachmentId::new_random();
     let mut entries = vec![LogAttachmentListingEntry::from(LogAttachmentEntry {
         id: readable,
@@ -1407,9 +1409,9 @@ fn unreadable_attachment_metadata_has_retained_source_feedback_and_readable_sibl
                 .map(|entry| AttachedLog {
                     name: entry.attachment.name,
                     text: text.clone(),
-                    filters: entry.attachment.filters,
-                    year_reference: entry.attachment.year_reference.expect("reference"),
-                    year_resolution: entry.attachment.year_resolution,
+                    filters: entry.attachment.settings.filters,
+                    year_reference: entry.attachment.settings.year_reference.expect("reference"),
+                    year_resolution: entry.attachment.settings.year_resolution,
                 })
                 .map_err(LogAttachmentError::from);
             RestoredLogAttachment { entry, log }
@@ -1687,6 +1689,7 @@ fn operator_only_edits_restore_from_the_attachment(#[case] add_conditions: bool)
             .is_some_and(|entry| {
                 entry
                     .attachment
+                    .settings
                     .filters
                     .groups()
                     .first()
@@ -1712,7 +1715,7 @@ fn operator_only_edits_restore_from_the_attachment(#[case] add_conditions: bool)
         .into_iter()
         .next()
         .expect("saved attachment");
-    assert_eq!(saved.attachment.filters, expected);
+    assert_eq!(saved.attachment.settings.filters, expected);
     unload_the_log(&mut harness);
     open_the_stored_log(&harness, &db_ref, saved.id);
     test_util::harness::step_until_a_log_is_loaded(&mut harness);
@@ -1737,6 +1740,7 @@ fn operator_only_edits_restore_from_the_attachment(#[case] add_conditions: bool)
             .is_some_and(|entry| {
                 entry
                     .attachment
+                    .settings
                     .filters
                     .groups()
                     .first()
@@ -1755,10 +1759,13 @@ fn operator_only_edits_restore_from_the_attachment(#[case] add_conditions: bool)
         saved.attachment.content_hash
     );
     assert_eq!(
-        rewritten.attachment.year_reference,
-        saved.attachment.year_reference
+        rewritten.attachment.settings.year_reference,
+        saved.attachment.settings.year_reference
     );
-    assert_eq!(rewritten.attachment.filters.chips(), expected.chips());
+    assert_eq!(
+        rewritten.attachment.settings.filters.chips(),
+        expected.chips()
+    );
 }
 
 #[rstest::rstest]
@@ -1814,7 +1821,7 @@ fn grouped_filter_edits_restore_with_highlight_memberships_and_empty_groups(
     assert!(harness.step_until(|_| {
         stored_attachments(&db_path, &db_ref)
             .first()
-            .is_some_and(|entry| entry.attachment.filters == expected)
+            .is_some_and(|entry| entry.attachment.settings.filters == expected)
     }));
     let saved = stored_attachments(&db_path, &db_ref)
         .into_iter()
@@ -1849,7 +1856,7 @@ fn grouped_filter_edits_restore_with_highlight_memberships_and_empty_groups(
     assert!(harness.step_until(|_| {
         stored_attachments(&db_path, &db_ref)
             .first()
-            .is_some_and(|entry| entry.attachment.filters == updated)
+            .is_some_and(|entry| entry.attachment.settings.filters == updated)
     }));
     let rewritten = stored_attachments(&db_path, &db_ref)
         .into_iter()
@@ -1861,8 +1868,8 @@ fn grouped_filter_edits_restore_with_highlight_memberships_and_empty_groups(
         saved.attachment.content_hash
     );
     assert_eq!(
-        rewritten.attachment.year_reference,
-        saved.attachment.year_reference
+        rewritten.attachment.settings.year_reference,
+        saved.attachment.settings.year_reference
     );
 }
 
@@ -1883,14 +1890,14 @@ fn the_stored_stack_holds_every_chips_mode_and_colour() {
     assert!(
         harness.step_until(|_| stored_attachments(&db_path, &db_ref)
             .first()
-            .is_some_and(|entry| entry.attachment.filters.chips().len() == 2)),
+            .is_some_and(|entry| entry.attachment.settings.filters.chips().len() == 2)),
         "both chips reached the stored attachment"
     );
 
     let stored = stored_attachments(&db_path, &db_ref);
     let filters = stored
         .first()
-        .map(|entry| entry.attachment.filters.clone())
+        .map(|entry| entry.attachment.settings.filters.clone())
         .unwrap_or_default();
     assert_eq!(
         filters
@@ -1973,9 +1980,11 @@ fn identical_attachments_in_two_recordings_load_with_independent_sources_and_fil
             &LogToAttach {
                 name: FIXTURE_LOG_NAME,
                 text: &fixture_log_text(FIXTURE_LOG_SEED),
-                filters: filters.clone(),
-                year_reference: None,
-                year_resolution: StoredYearResolution::Infer,
+                settings: StoredLogSettings {
+                    filters: filters.clone(),
+                    year_reference: None,
+                    year_resolution: StoredYearResolution::Infer,
+                },
             },
         )
         .expect("second attachment is stored")
@@ -2147,7 +2156,7 @@ fn a_saved_log_loads_separately_from_incompatible_loose_content(
         .into_iter()
         .next()
         .expect("saved attachment");
-    let saved_filters = entry.attachment.filters.clone();
+    let saved_filters = entry.attachment.settings.filters.clone();
     let stored = StoredLogAttachment {
         recording: attachment.recording.clone(),
         entry,
@@ -2225,6 +2234,7 @@ fn a_saved_log_loads_separately_from_incompatible_loose_content(
             .first()
             .expect("saved attachment")
             .attachment
+            .settings
             .filters,
         saved_filters
     );

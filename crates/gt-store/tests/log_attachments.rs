@@ -1,6 +1,10 @@
 //! The store's half of a log attachment: the compressed log beside the
 //! recording history, and what a load checks it against.
 
+#[cfg(unix)]
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::slice;
 
@@ -13,7 +17,7 @@ use gt_store::{
     LogAttachmentId, LogAttachments as _, LogToAttach, ReadOnlyHistoryDatabase as _,
     ReadOnlyLogAttachments as _, RecordingMeta, Recordings, Store, StoredLogFilterEffects,
     StoredLogFilterGroup, StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts,
-    StoredYearResolution, TrackRange, TrackState,
+    StoredLogSettings, StoredYearResolution, TrackRange, TrackState,
 };
 use hdf5_pure::AttrValue;
 use rstest::rstest;
@@ -67,9 +71,11 @@ impl RecordedStore {
                 &LogToAttach {
                     name,
                     text,
-                    filters: fixtures::log_filters(),
-                    year_reference: None,
-                    year_resolution: StoredYearResolution::Infer,
+                    settings: StoredLogSettings {
+                        filters: fixtures::log_filters(),
+                        year_reference: None,
+                        year_resolution: StoredYearResolution::Infer,
+                    },
                 },
             )
             .expect("attach")
@@ -114,9 +120,11 @@ impl MixedAttachmentMetadata {
                 &LogToAttach {
                     name: "readable.log",
                     text: LOG_TEXT,
-                    filters: fixtures::log_filters(),
-                    year_reference: None,
-                    year_resolution: StoredYearResolution::Infer,
+                    settings: StoredLogSettings {
+                        filters: fixtures::log_filters(),
+                        year_reference: None,
+                        year_resolution: StoredYearResolution::Infer,
+                    },
                 },
             )
             .expect("attach readable log");
@@ -230,9 +238,11 @@ fn a_saved_year_reference_and_year_resolution_survive_filter_updates_and_reopeni
             &LogToAttach {
                 name: "syslog.log",
                 text: "Dec 31 23:59:59 before\nJan  1 00:00:01 after\n",
-                filters: fixtures::log_filters(),
-                year_reference: Some(year_reference),
-                year_resolution: StoredYearResolution::IgnoreSummaryBounds,
+                settings: StoredLogSettings {
+                    filters: fixtures::log_filters(),
+                    year_reference: Some(year_reference),
+                    year_resolution: StoredYearResolution::IgnoreSummaryBounds,
+                },
             },
         )
         .expect("attach with a reference");
@@ -264,12 +274,108 @@ fn a_saved_year_reference_and_year_resolution_survive_filter_updates_and_reopeni
     assert_eq!(restored.filters, Default::default());
 }
 
+#[test]
+fn complete_settings_can_restore_the_recording_end_reference() {
+    let mut recorded = RecordedStore::new();
+    let id = recorded.attach("syslog.log", LOG_TEXT);
+    let mut settings = StoredLogSettings {
+        filters: StoredLogFilterStack::default(),
+        year_reference: Some(DateTime::UNIX_EPOCH),
+        year_resolution: StoredYearResolution::IgnoreSummaryBounds,
+    };
+    recorded
+        .recordings
+        .set_attached_log_settings(&recorded.recording, id, settings.clone())
+        .expect("set explicit reference");
+    settings.year_reference = None;
+    recorded
+        .recordings
+        .set_attached_log_settings(&recorded.recording, id, settings.clone())
+        .expect("restore recording reference");
+
+    let reopened = recorded
+        .store
+        .open_recordings_read_only()
+        .expect("reopen")
+        .expect("database");
+    assert_eq!(
+        reopened
+            .log_attachment(&recorded.recording, id)
+            .expect("metadata")
+            .expect("attachment")
+            .attachment
+            .settings,
+        settings
+    );
+    assert_eq!(
+        reopened
+            .load_attached_log(&recorded.recording, id)
+            .expect("load")
+            .year_reference
+            .timestamp_micros(),
+        1_000_000_019
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_settings_write_failure_preserves_the_complete_metadata_and_log() {
+    let mut recorded = RecordedStore::new();
+    let id = recorded.attach("syslog.log", LOG_TEXT);
+    let db_path = recorded.store.recordings_path();
+    let before = fs::read(&db_path).expect("database bytes");
+    let compressed = fs::read(recorded.log_path(id)).expect("compressed log");
+    let permissions = fs::metadata(&db_path)
+        .expect("database metadata")
+        .permissions();
+    fs::set_permissions(&db_path, fs::Permissions::from_mode(0o444))
+        .expect("make database read-only");
+    if fs::OpenOptions::new().write(true).open(&db_path).is_ok() {
+        fs::set_permissions(&db_path, permissions).expect("restore database permissions");
+        eprintln!("Skipped: the process can write to a file with mode 0o444");
+        return;
+    }
+
+    let result = recorded.recordings.set_attached_log_settings(
+        &recorded.recording,
+        id,
+        StoredLogSettings {
+            filters: StoredLogFilterStack::default(),
+            year_reference: Some(DateTime::UNIX_EPOCH),
+            year_resolution: StoredYearResolution::IgnoreSummaryBounds,
+        },
+    );
+    fs::set_permissions(&db_path, permissions).expect("restore database permissions");
+    assert!(matches!(result, Err(LogAttachmentError::Database(_))));
+    assert_eq!(fs::read(&db_path).expect("database after failure"), before);
+    assert_eq!(
+        fs::read(recorded.log_path(id)).expect("compressed log"),
+        compressed
+    );
+    let reopened = recorded
+        .store
+        .open_recordings_read_only()
+        .expect("reopen")
+        .expect("database");
+    let restored = reopened
+        .load_attached_log(&recorded.recording, id)
+        .expect("load after failure");
+    assert_eq!(restored.filters, fixtures::log_filters());
+    assert_eq!(restored.year_resolution, StoredYearResolution::Infer);
+    assert_eq!(restored.year_reference.timestamp_micros(), 1_000_000_019);
+}
+
+enum SettingsUpdate {
+    Filters,
+    YearResolution,
+    Complete,
+}
+
 #[rstest]
-#[case::filters(None)]
-#[case::year_resolution(Some(StoredYearResolution::IgnoreSummaryBounds))]
-fn version_five_settings_upgrade_during_store_updates(
-    #[case] updated_policy: Option<StoredYearResolution>,
-) {
+#[case::filters(SettingsUpdate::Filters)]
+#[case::year_resolution(SettingsUpdate::YearResolution)]
+#[case::complete(SettingsUpdate::Complete)]
+fn version_five_settings_upgrade_during_store_updates(#[case] update: SettingsUpdate) {
     let RecordedStore {
         _directory,
         store,
@@ -285,16 +391,24 @@ fn version_five_settings_upgrade_during_store_updates(
             &LogToAttach {
                 name: "legacy.log",
                 text: LOG_TEXT,
-                filters: fixtures::log_filters(),
-                year_reference: Some(reference),
-                year_resolution: StoredYearResolution::PlaceLastEntryInYear { year: 2024 },
+                settings: StoredLogSettings {
+                    filters: fixtures::log_filters(),
+                    year_reference: Some(reference),
+                    year_resolution: StoredYearResolution::PlaceLastEntryInYear { year: 2024 },
+                },
             },
         )
         .expect("attach");
     let log_path = entry.id.file_path(&store.logs_path());
     let compressed = std::fs::read(&log_path).expect("compressed log");
-    let mut legacy = serde_json::to_value(&entry.attachment).expect("settings");
-    legacy["format_version"] = serde_json::json!(5);
+    let legacy = serde_json::json!({
+        "format_version": 5,
+        "name": "legacy.log",
+        "content_hash": entry.attachment.content_hash,
+        "filters": fixtures::log_filters(),
+        "year_reference": "2026-10-01T00:00:00.123456789Z",
+        "year_resolution": { "kind": "place_last_entry_in_year", "year": 2024 },
+    });
     drop(recordings);
     let group_path = format!(
         "by_identity/{}/{}",
@@ -323,16 +437,33 @@ fn version_five_settings_upgrade_during_store_updates(
         slice::from_ref(&entry)
     );
     let mut expected = entry.attachment;
-    if let Some(policy) = updated_policy {
-        recordings
-            .set_attached_log_year_resolution(&recording, entry.id, policy)
-            .expect("update policy");
-        expected.year_resolution = policy;
-    } else {
-        recordings
-            .set_attached_log_filters(&recording, entry.id, StoredLogFilterStack::default())
-            .expect("update filters");
-        expected.filters = StoredLogFilterStack::default();
+    match update {
+        SettingsUpdate::Filters => {
+            expected.settings.filters = StoredLogFilterStack::default();
+            recordings
+                .set_attached_log_filters(&recording, entry.id, expected.settings.filters.clone())
+                .expect("update filters");
+        }
+        SettingsUpdate::YearResolution => {
+            expected.settings.year_resolution = StoredYearResolution::IgnoreSummaryBounds;
+            recordings
+                .set_attached_log_year_resolution(
+                    &recording,
+                    entry.id,
+                    expected.settings.year_resolution,
+                )
+                .expect("update policy");
+        }
+        SettingsUpdate::Complete => {
+            expected.settings = StoredLogSettings {
+                filters: StoredLogFilterStack::default(),
+                year_reference: DateTime::from_timestamp(1, 987_654_321),
+                year_resolution: StoredYearResolution::IgnoreSummaryBounds,
+            };
+            recordings
+                .set_attached_log_settings(&recording, entry.id, expected.settings.clone())
+                .expect("update complete settings");
+        }
     }
     drop(recordings);
     let reopened = store
@@ -342,6 +473,8 @@ fn version_five_settings_upgrade_during_store_updates(
     let listed = reopened
         .log_attachments(&recording)
         .expect("list upgraded metadata");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed.first().map(|listed| listed.id), Some(entry.id));
     assert_eq!(
         listed
             .first()
@@ -351,7 +484,12 @@ fn version_five_settings_upgrade_during_store_updates(
     let restored = reopened
         .load_attached_log(&recording, entry.id)
         .expect("load upgraded log");
-    assert_eq!(restored.year_reference, reference);
+    assert_eq!(
+        restored.year_reference,
+        expected.settings.year_reference.expect("reference")
+    );
+    assert_eq!(restored.filters, expected.settings.filters);
+    assert_eq!(restored.year_resolution, expected.settings.year_resolution);
     assert_eq!(restored.text, LOG_TEXT);
     assert_eq!(
         std::fs::read(&log_path).expect("compressed log"),
@@ -470,6 +608,11 @@ fn unreadable_metadata_rejects_updates_and_survives_other_attachment_updates() {
                 *id,
                 StoredYearResolution::Infer,
             ),
+            recordings.set_attached_log_settings(
+                &recording,
+                *id,
+                readable.attachment.settings.clone(),
+            ),
         ];
         for result in results {
             let error = result.expect_err("metadata must remain unreadable");
@@ -479,7 +622,15 @@ fn unreadable_metadata_rejects_updates_and_survives_other_attachment_updates() {
         }
     }
     recordings
-        .set_attached_log_filters(&recording, readable.id, StoredLogFilterStack::default())
+        .set_attached_log_settings(
+            &recording,
+            readable.id,
+            StoredLogSettings {
+                filters: StoredLogFilterStack::default(),
+                year_reference: Some(DateTime::UNIX_EPOCH),
+                year_resolution: StoredYearResolution::IgnoreSummaryBounds,
+            },
+        )
         .expect("update readable sibling");
     drop(recordings);
     {
@@ -525,9 +676,11 @@ fn attaching_returns_the_attachment_the_recording_now_lists() {
             &LogToAttach {
                 name: "navsyncd.log",
                 text: LOG_TEXT,
-                filters: fixtures::log_filters(),
-                year_reference: None,
-                year_resolution: StoredYearResolution::Infer,
+                settings: StoredLogSettings {
+                    filters: fixtures::log_filters(),
+                    year_reference: None,
+                    year_resolution: StoredYearResolution::Infer,
+                },
             },
         )
         .expect("attach");
@@ -713,14 +866,18 @@ fn changing_the_filters_of_an_attachment_leaves_its_log_alone() {
 }
 
 #[test_log::test]
-fn changing_the_filters_of_an_attachment_a_recording_never_had_fails() {
+fn updating_settings_for_an_unknown_attachment_returns_unknown_attachment() {
     let mut recorded = RecordedStore::new();
 
     assert!(matches!(
-        recorded.recordings.set_attached_log_filters(
+        recorded.recordings.set_attached_log_settings(
             &recorded.recording,
             LogAttachmentId::new_random(),
-            fixtures::log_filters(),
+            StoredLogSettings {
+                filters: fixtures::log_filters(),
+                year_reference: None,
+                year_resolution: StoredYearResolution::Infer,
+            },
         ),
         Err(LogAttachmentError::UnknownAttachment { .. })
     ));
@@ -741,9 +898,11 @@ fn attaching_to_a_deleted_recording_fails_and_stores_no_log() {
         &LogToAttach {
             name: "navsyncd.log",
             text: LOG_TEXT,
-            filters: fixtures::log_filters(),
-            year_reference: None,
-            year_resolution: StoredYearResolution::Infer,
+            settings: StoredLogSettings {
+                filters: fixtures::log_filters(),
+                year_reference: None,
+                year_resolution: StoredYearResolution::Infer,
+            },
         },
     );
 

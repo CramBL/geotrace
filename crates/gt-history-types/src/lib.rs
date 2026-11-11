@@ -11,7 +11,7 @@ pub use log_attachment::{
     LogAttachmentListingEntry, LogAttachmentReadError, LogContentHash, StoredLogFilter,
     StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterGroup,
     StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts, StoredLogLevel,
-    StoredYearResolution, logs_directory_for_database,
+    StoredLogSettings, StoredYearResolution, logs_directory_for_database,
 };
 pub use ui_state::{
     CURRENT_UI_STATE_VERSION, HIDDEN_TRACKS_DATASET, RecordingUiState, StoredUiStateVersion,

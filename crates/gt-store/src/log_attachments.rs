@@ -16,8 +16,8 @@ use std::{
 use chrono::{DateTime, Utc};
 use gt_history::{
     DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentEntry, LogAttachmentId,
-    LogContentHash, ReadOnlyHistoryDatabase, StoredLogFilterStack, StoredYearResolution,
-    log_attachment,
+    LogContentHash, ReadOnlyHistoryDatabase, StoredLogFilterStack, StoredLogSettings,
+    StoredYearResolution, log_attachment,
 };
 use thiserror::Error;
 
@@ -30,13 +30,7 @@ pub struct LogToAttach<'a> {
     /// The parse buffer: everything that was loaded, in one piece.
     pub text: &'a str,
 
-    /// The filter stack to restore the log with.
-    pub filters: StoredLogFilterStack,
-
-    /// `None` selects the recording's end time on restore.
-    pub year_reference: Option<DateTime<Utc>>,
-
-    pub year_resolution: StoredYearResolution,
+    pub settings: StoredLogSettings,
 }
 
 /// A log read back from an attachment.
@@ -121,7 +115,7 @@ pub trait ReadOnlyLogAttachments: ReadOnlyHistoryDatabase {
             });
         }
 
-        let year_reference = match attachment.year_reference {
+        let year_reference = match attachment.settings.year_reference {
             Some(reference) => reference,
             None => {
                 let recording = self
@@ -137,9 +131,9 @@ pub trait ReadOnlyLogAttachments: ReadOnlyHistoryDatabase {
             name: attachment.name,
             text: String::from_utf8(bytes)
                 .map_err(|source| LogAttachmentError::NotUtf8 { id, source })?,
-            filters: attachment.filters,
+            filters: attachment.settings.filters,
             year_reference,
-            year_resolution: attachment.year_resolution,
+            year_resolution: attachment.settings.year_resolution,
         })
     }
 }
@@ -171,13 +165,11 @@ pub trait LogAttachments: HistoryDatabase {
             }
         })?;
 
-        let mut attachment = LogAttachment::new(
-            log.name.to_owned(),
-            LogContentHash::of_log_bytes(log.text.as_bytes()),
-            log.filters.clone(),
-        );
-        attachment.year_reference = log.year_reference;
-        attachment.year_resolution = log.year_resolution;
+        let attachment = LogAttachment {
+            name: log.name.to_owned(),
+            content_hash: LogContentHash::of_log_bytes(log.text.as_bytes()),
+            settings: log.settings.clone(),
+        };
         if let Err(err) = self.write_log_attachment_attribute(db_ref, id, &attachment) {
             log_attachment::delete_files(&directory, &[id]);
             return Err(err.into());
@@ -209,41 +201,49 @@ pub trait LogAttachments: HistoryDatabase {
         Ok(())
     }
 
-    /// Store the filter stack of an attachment the user kept exploring.
-    ///
-    /// The stored log is untouched: the attribute this rewrites is what
-    /// content-addresses it.
+    fn set_attached_log_settings(
+        &mut self,
+        db_ref: &DatabaseRef,
+        id: LogAttachmentId,
+        settings: StoredLogSettings,
+    ) -> Result<(), LogAttachmentError> {
+        let mut updated = self
+            .log_attachment(db_ref, id)?
+            .ok_or(LogAttachmentError::UnknownAttachment { id })?
+            .attachment;
+        updated.settings = settings;
+        self.write_log_attachment_attribute(db_ref, id, &updated)?;
+        Ok(())
+    }
+
     fn set_attached_log_filters(
         &mut self,
         db_ref: &DatabaseRef,
         id: LogAttachmentId,
         filters: StoredLogFilterStack,
     ) -> Result<(), LogAttachmentError> {
-        let stored = self
+        let mut settings = self
             .log_attachment(db_ref, id)?
             .ok_or(LogAttachmentError::UnknownAttachment { id })?
-            .attachment;
-
-        let mut updated = stored;
-        updated.filters = filters;
-        self.write_log_attachment_attribute(db_ref, id, &updated)?;
-        Ok(())
+            .attachment
+            .settings;
+        settings.filters = filters;
+        self.set_attached_log_settings(db_ref, id, settings)
     }
 
-    /// Store the year resolution the user chose for an attachment whose years did not resolve.
     fn set_attached_log_year_resolution(
         &mut self,
         db_ref: &DatabaseRef,
         id: LogAttachmentId,
         year_resolution: StoredYearResolution,
     ) -> Result<(), LogAttachmentError> {
-        let mut updated = self
+        let mut settings = self
             .log_attachment(db_ref, id)?
             .ok_or(LogAttachmentError::UnknownAttachment { id })?
-            .attachment;
-        updated.year_resolution = year_resolution;
-        self.write_log_attachment_attribute(db_ref, id, &updated)?;
-        Ok(())
+            .attachment
+            .settings;
+        settings.year_resolution = year_resolution;
+        self.set_attached_log_settings(db_ref, id, settings)
     }
 }
 
