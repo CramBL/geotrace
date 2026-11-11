@@ -25,6 +25,7 @@ use gt_history_types::{
 use gt_test_utils::navigation_evidence_fixtures::{self, NavigationDetail};
 use gt_track_builder::{FixPlacementRule, SegmentationConfig};
 use gt_types::{LoadedTrack, SatelliteQueryScope};
+use hdf5::File as NativeFile;
 use hdf5_pure::{AttrValue, DeflateLevel, File, FileBuilder, FileSpaceStrategy};
 use rstest::rstest;
 
@@ -2738,6 +2739,136 @@ fn replacing_a_debug_recording_with_regular_meta_clears_the_debug_tag() {
     assert_eq!(entry.meta.debug_tag, None);
 }
 
+#[test]
+fn undecodable_attribute_values_remain_listed_and_can_be_removed() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("history.h5");
+    let removed = LogAttachmentId::new_random();
+    let kept = LogAttachmentId::new_random();
+    let recording = DatabaseRef {
+        identity: "dev".to_owned(),
+        group_name: "2024-01-01T00:00:00Z".to_owned(),
+    };
+    write_pure_db_with_a_recording(&path, CURRENT_SCHEMA_VERSION, 4, |_| {});
+    {
+        let file = NativeFile::open_rw(&path).expect("write unsupported attribute type");
+        let group = file
+            .group(&format!(
+                "by_identity/{}/{}",
+                gt_history::identity_group_name(&recording.identity),
+                recording.group_name
+            ))
+            .expect("recording group");
+        group
+            .create_group("extension")
+            .expect("user group")
+            .create_group("nested")
+            .expect("nested user group")
+            .new_attr::<[u64; 2]>()
+            .create(LogAttachmentId::new_random().attr_key().as_str())
+            .expect("user attribute")
+            .write_scalar(&[7u64, 8])
+            .expect("user value");
+        for id in [removed, kept] {
+            group
+                .new_attr::<[u64; 2]>()
+                .create(id.attr_key().as_str())
+                .expect("array attribute")
+                .write_scalar(&[42u64, 42])
+                .expect("array value");
+        }
+    }
+    let mut db = Database::open_or_create(&path).expect("open recording with unreadable metadata");
+    let listed = db
+        .log_attachments(&recording)
+        .expect("list unreadable metadata");
+    assert_eq!(listed.len(), 2);
+    assert!(listed.iter().all(|entry| entry.attachment.is_err()));
+    assert_eq!(
+        db.list_recordings()
+            .expect("list recordings")
+            .first()
+            .expect("recording")
+            .log_attachments
+            .len(),
+        2
+    );
+    db.load(&recording).expect("recording remains readable");
+    #[cfg(feature = "backend-pure")]
+    {
+        let original = std::fs::read(&path).expect("original database");
+        let bytes = make_gtd_bytes(1_000, 2);
+        let meta = gt_history::extract_meta(&bytes).expect("replacement metadata");
+        let tracks = [TrackRange {
+            start: 0,
+            end: 2,
+            state: TrackState::Live,
+        }];
+        db.replace_recording_in_place(
+            &recording,
+            &meta,
+            &tracks,
+            fixtures::default_segmentation(),
+            &bytes,
+        )
+        .expect_err("replacement must preserve unreadable metadata");
+        assert_eq!(
+            std::fs::read(&path).expect("database after replacement"),
+            original
+        );
+    }
+    let stored_file = attached_log_path(&path, kept);
+    std::fs::create_dir_all(stored_file.parent().expect("logs directory"))
+        .expect("create logs directory");
+    std::fs::write(&stored_file, b"stored log").expect("write attached log");
+    let update = db.write_log_attachment_attribute(
+        &recording,
+        LogAttachmentId::new_random(),
+        &log_attachment("new.log"),
+    );
+    #[cfg(feature = "backend-pure")]
+    update.expect_err("rewrite must preserve undecodable metadata");
+    #[cfg(feature = "backend-sys")]
+    update.expect("native attribute update preserves opaque siblings");
+    db.delete_log_attachment_attribute(&recording, removed)
+        .expect("remove undecodable metadata");
+    let listed = db
+        .log_attachments(&recording)
+        .expect("list remaining metadata");
+    assert!(listed.iter().all(|entry| entry.id != removed));
+    assert!(
+        listed
+            .iter()
+            .any(|entry| entry.id == kept && entry.attachment.is_err())
+    );
+    {
+        let file = NativeFile::open(&path).expect("read preserved attribute");
+        let group = file
+            .group(&format!(
+                "by_identity/{}/{}",
+                gt_history::identity_group_name(&recording.identity),
+                recording.group_name
+            ))
+            .expect("recording group");
+        assert_eq!(
+            group
+                .attr(&kept.attr_key())
+                .expect("kept attribute")
+                .read_scalar::<[u64; 2]>()
+                .expect("kept value"),
+            [42, 42]
+        );
+    }
+    db.delete_batch(std::slice::from_ref(&recording))
+        .expect("delete recording with unreadable metadata");
+    assert!(!stored_file.exists());
+    assert!(
+        db.list_recordings()
+            .expect("remaining recordings")
+            .is_empty()
+    );
+}
+
 /// The logs a user stored with a recording belong to the recording, not to the
 /// points it was re-encoded from.
 #[test_log::test]
@@ -2769,8 +2900,14 @@ fn replacing_a_recording_in_place_keeps_the_logs_attached_to_it() {
         panic!("expected one attachment, got {}", attachments.len());
     };
     assert_eq!(entry.id, id);
-    assert_eq!(entry.attachment.name, "field-notes.log");
-    assert_eq!(entry.attachment.filters, fixtures::log_filters());
+    assert_eq!(
+        entry.attachment.as_ref().expect("metadata").name,
+        "field-notes.log"
+    );
+    assert_eq!(
+        entry.attachment.as_ref().expect("metadata").filters,
+        fixtures::log_filters()
+    );
     assert_eq!(stored_log_count(&db_path), 1, "the log itself is kept too");
 }
 
@@ -3620,7 +3757,9 @@ fn an_attachment_attribute_comes_back_with_its_name_hash_and_filters() {
     let listed = db.log_attachments(&db_ref).expect("list");
     assert_eq!(listed.len(), 1);
     assert_eq!(
-        listed.first().map(|entry| (entry.id, &entry.attachment)),
+        listed
+            .first()
+            .map(|entry| (entry.id, entry.attachment.as_ref().expect("metadata"))),
         Some((id, &log_attachment("navsyncd.log")))
     );
 }
@@ -3642,7 +3781,7 @@ fn attachments_are_listed_per_recording() {
         .log_attachments(&attached_to)
         .expect("list")
         .into_iter()
-        .map(|entry| entry.attachment.name)
+        .map(|entry| entry.attachment.expect("metadata").name)
         .collect();
     names.sort();
     assert_eq!(names, ["hal-powerd.log", "navsyncd.log"]);
@@ -3671,7 +3810,7 @@ fn writing_an_attachment_attribute_twice_replaces_it() {
         db.log_attachments(&db_ref)
             .expect("list")
             .into_iter()
-            .map(|entry| entry.attachment)
+            .map(|entry| entry.attachment.expect("metadata"))
             .collect::<Vec<_>>(),
         [refiltered]
     );

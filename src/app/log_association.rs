@@ -15,6 +15,7 @@ use crate::settings::InitialPositionSourcePolicy;
 
 use super::App;
 use super::history_db::{ExistingLogAttachment, RestoredLogAttachment, StoredLogAttachment};
+use super::load_failures::{LoadFailure, LoadFailureCause, LoadSource};
 use super::loader;
 use super::log_viewer::association_dialog::{LogAssociationChoice, LogAssociationDialog};
 use super::log_viewer::{AttachmentToLoad, YearsToResolve};
@@ -206,7 +207,7 @@ impl App {
                     recording: recording.clone(),
                     id: entry.id,
                 },
-                &entry.attachment.name,
+                &entry.display_name(),
                 log,
                 loader::AttachedLogRequester::RecordingLoad,
             );
@@ -240,6 +241,15 @@ impl App {
             Ok(attached) => self
                 .loader
                 .spawn_attached_log(attached, attachment, requested_by),
+            Err(error @ LogAttachmentError::Database(DbError::UnreadableLogAttachment { .. })) => {
+                self.load_failures.push(LoadFailure::new(
+                    LoadSource::Attachment {
+                        attachment,
+                        name: name.to_owned(),
+                    },
+                    LoadFailureCause::ReadLogAttachment(Box::new(error)),
+                ));
+            }
             Err(LogAttachmentError::MissingLog { .. }) => self.log_viewer.report_warning(format!(
                 "{name} {EM_DASH} log missing from recording history"
             )),

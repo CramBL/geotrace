@@ -12,9 +12,10 @@ use gt_log_view::{
 };
 use gt_logfile::{LogChronology, YearResolution};
 use gt_store::{
-    DatabaseRef, HistoryDatabase as _, LogAttachmentEntry, LogAttachments as _, LogToAttach,
-    ReadOnlyHistoryDatabase as _, Recordings, RecordingsHandle, StoredLogFilter,
-    StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterOperator,
+    AttachedLog, DatabaseRef, HistoryDatabase as _, LogAttachment, LogAttachmentEntry,
+    LogAttachmentError, LogAttachmentId, LogAttachmentListingEntry, LogAttachments as _,
+    LogContentHash, LogToAttach, ReadOnlyHistoryDatabase as _, Recordings, RecordingsHandle,
+    StoredLogFilter, StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterOperator,
     StoredLogFilterStack, StoredYearResolution, TrackRange, TrackState,
 };
 use gt_test_utils::{
@@ -24,7 +25,7 @@ use gt_track_builder::SegmentationConfig;
 use gt_types::{FileIdx, Latitude, Longitude};
 
 use crate::app::App;
-use crate::app::history_db::{HistoryWorker, StoredLogAttachment};
+use crate::app::history_db::{HistoryWorker, RestoredLogAttachment, StoredLogAttachment};
 use crate::app::loader::{self, AttachedLogRequester, AttachedLogRestore};
 use crate::app::log_viewer::{self, association_dialog, filters};
 use crate::app::modals::{DELETE_PERMANENTLY_BUTTON_LABEL, SHELVE_BUTTON_LABEL};
@@ -99,6 +100,13 @@ fn stored_attachments(
         .ok()
         .and_then(|db| db.log_attachments(db_ref).ok())
         .unwrap_or_default()
+        .into_iter()
+        .map(|entry| {
+            entry
+                .into_attachment(db_ref)
+                .expect("readable test attachment")
+        })
+        .collect()
 }
 
 /// An app over a database of its own, holding the fixture recording and
@@ -1358,6 +1366,101 @@ fn unload_the_log(harness: &mut Harness<App>) {
         .nth_matching(By::new().label(egui_phosphor::regular::X), 0)
         .click();
     harness.run_steps(3);
+}
+
+#[test]
+fn unreadable_attachment_metadata_has_retained_source_feedback_and_readable_siblings_load() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let (mut harness, recording) = harness_over_a_recording_and_its_log(&db_path);
+    unload_the_log(&mut harness);
+    let text = fixture_log_text(FIXTURE_LOG_SEED);
+    let mut metadata = LogAttachment::new(
+        "readable.log".to_owned(),
+        LogContentHash::of_log_bytes(text.as_bytes()),
+        StoredLogFilterStack::default(),
+    );
+    metadata.year_reference = Some(gt_test_utils::synthetic_log_start());
+    let readable = LogAttachmentId::new_random();
+    let mut entries = vec![LogAttachmentListingEntry::from(LogAttachmentEntry {
+        id: readable,
+        attachment: metadata,
+    })];
+    for json in [
+        r#"{"format_version":7,"name":"future.log"}"#,
+        r#"{"format_version":6,"name":"unknown.log","content_hash":"0","filters":[],"year_resolution":{"kind":"future_policy"}}"#,
+        r#"{"format_version":6,"name":"malformed.log","content_hash":"0","filters":[],"year_resolution":null}"#,
+        "{",
+    ] {
+        entries.push(LogAttachmentListingEntry::from_attribute_json(
+            LogAttachmentId::new_random(),
+            json,
+        ));
+    }
+    let restored = entries
+        .iter()
+        .cloned()
+        .map(|entry| {
+            let log = entry
+                .clone()
+                .into_attachment(&recording)
+                .map(|entry| AttachedLog {
+                    name: entry.attachment.name,
+                    text: text.clone(),
+                    filters: entry.attachment.filters,
+                    year_reference: entry.attachment.year_reference.expect("reference"),
+                    year_resolution: entry.attachment.year_resolution,
+                })
+                .map_err(LogAttachmentError::from);
+            RestoredLogAttachment { entry, log }
+        })
+        .collect();
+    harness
+        .state_mut()
+        .restore_attached_logs(&recording, Ok(restored));
+    assert!(harness.step_until(|harness| harness.state().logs.len() == 1));
+    harness.run_steps(3);
+    assert_eq!(
+        harness
+            .state()
+            .first_log()
+            .and_then(LoadedLog::attachment)
+            .expect("readable attachment")
+            .id,
+        readable
+    );
+    assert!(
+        harness
+            .state()
+            .first_log()
+            .expect("readable log")
+            .parsed()
+            .chronology()
+            .is_resolved()
+    );
+    assert_eq!(
+        harness
+            .state()
+            .log_attachments
+            .of_recording(&recording)
+            .len(),
+        entries.len()
+    );
+    let failures: Vec<_> = harness.state().load_failures.iter().collect();
+    assert_eq!(failures.len(), entries.len() - 1);
+    for (entry, failure) in entries.iter().skip(1).zip(failures) {
+        let source = failure.source.to_string();
+        assert!(source.contains(&recording.to_string()));
+        assert!(source.contains(&entry.id.to_string()));
+        assert!(source.contains(entry.display_name().as_ref()));
+        let title = format!("Failed to load {source}");
+        let window = harness.get_by_role_and_label(Role::Window, title.as_str());
+        assert!(
+            window
+                .query_by_label(failure.cause.to_string().as_str())
+                .is_some()
+        );
+    }
 }
 
 /// The stored log is gone from the store, and the recording still opens.

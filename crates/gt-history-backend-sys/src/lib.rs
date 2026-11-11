@@ -1,8 +1,8 @@
 use gt_history_types::{
-    CURRENT_SCHEMA_VERSION, DatabaseRef, DbError, HistoryDatabase, LogAttachment,
-    LogAttachmentEntry, LogAttachmentId, NavPointTimeRange, ReadOnlyHistoryDatabase,
-    RecordingEntry, RecordingMeta, RecordingUiState, SCHEMA_VERSION_ATTR, StoredRecording,
-    StoredSegmentation, TrackRange, UiStateVersionReporter, log_attachment,
+    CURRENT_SCHEMA_VERSION, DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentId,
+    LogAttachmentListingEntry, NavPointTimeRange, ReadOnlyHistoryDatabase, RecordingEntry,
+    RecordingMeta, RecordingUiState, SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation,
+    TrackRange, UiStateVersionReporter, log_attachment,
 };
 
 use parking_lot::Mutex;
@@ -158,7 +158,10 @@ impl ReadOnlyHistoryDatabase for ReadOnlySysDb {
         crate::copy::recording_ui_state(&self.path, db_ref, reporter).map_err(Into::into)
     }
 
-    fn log_attachments(&self, db_ref: &DatabaseRef) -> Result<Vec<LogAttachmentEntry>, DbError> {
+    fn log_attachments(
+        &self,
+        db_ref: &DatabaseRef,
+    ) -> Result<Vec<LogAttachmentListingEntry>, DbError> {
         let _guard = DB_LOCK.lock();
         crate::copy::log_attachments(&self.path, &db_ref.identity, &db_ref.group_name)
             .map_err(Into::into)
@@ -251,7 +254,10 @@ impl ReadOnlyHistoryDatabase for SysDb {
         self.read_only.recording_ui_state(db_ref, reporter)
     }
 
-    fn log_attachments(&self, db_ref: &DatabaseRef) -> Result<Vec<LogAttachmentEntry>, DbError> {
+    fn log_attachments(
+        &self,
+        db_ref: &DatabaseRef,
+    ) -> Result<Vec<LogAttachmentListingEntry>, DbError> {
         self.read_only.log_attachments(db_ref)
     }
 

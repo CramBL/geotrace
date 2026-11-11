@@ -1,15 +1,17 @@
 use std::fmt;
 use std::ops::RangeInclusive;
 use std::path::Path;
+use std::sync::Arc;
 
 use thiserror::Error;
 
 pub use log_attachment::{
     InvalidStoredLogFilterStack, LOG_ATTACHMENT_ATTR_PREFIX, LOGS_DIRECTORY, LogAttachment,
     LogAttachmentDecodeError, LogAttachmentDecodeErrorReason, LogAttachmentEntry, LogAttachmentId,
-    LogContentHash, StoredLogFilter, StoredLogFilterCondition, StoredLogFilterEffects,
-    StoredLogFilterGroup, StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts,
-    StoredLogLevel, StoredYearResolution, logs_directory_for_database,
+    LogAttachmentListingEntry, LogAttachmentReadError, LogContentHash, StoredLogFilter,
+    StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterGroup,
+    StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts, StoredLogLevel,
+    StoredYearResolution, logs_directory_for_database,
 };
 pub use ui_state::{
     CURRENT_UI_STATE_VERSION, HIDDEN_TRACKS_DATASET, RecordingUiState, StoredUiStateVersion,
@@ -610,11 +612,7 @@ pub struct RecordingEntry {
     /// The recording's ad-hoc sensor channels, sorted by name. Empty for a
     /// recording that carries none.
     pub channels: Vec<ChannelSummary>,
-    /// The logs stored with the recording, in the order
-    /// [`LogAttachmentEntry::sort_by_name_then_id`] puts them. Empty for a
-    /// recording that holds none, and for one whose attributes the listing
-    /// could not read.
-    pub log_attachments: Vec<LogAttachmentEntry>,
+    pub log_attachments: Vec<LogAttachmentListingEntry>,
 }
 
 /// A recording read back from history: the reconstructed GTD bytes plus the
@@ -667,6 +665,13 @@ pub enum DbError {
     TrackIndexOutOfRange {
         index: usize,
         stored_track_count: usize,
+    },
+    #[error("could not read attachment {id} in recording {recording}: {source}")]
+    UnreadableLogAttachment {
+        recording: DatabaseRef,
+        id: LogAttachmentId,
+        #[source]
+        source: Arc<LogAttachmentReadError>,
     },
     /// The database is marked as open for write - typically a stale flag left by
     /// an unclean shutdown. Recoverable via [`HistoryDatabase::clear_write_lock`]
@@ -756,23 +761,44 @@ pub trait ReadOnlyHistoryDatabase {
     ) -> Result<RecordingUiState, DbError>;
 
     /// Every log attached to a recording, in the order
-    /// [`LogAttachmentEntry::sort_by_name_then_id`] puts them.
-    ///
-    /// An attribute this build cannot decode is skipped with a warning. The
-    /// recording's other attachments are still listed.
-    fn log_attachments(&self, db_ref: &DatabaseRef) -> Result<Vec<LogAttachmentEntry>, DbError>;
+    /// [`LogAttachmentListingEntry::sort_by_name_then_id`] puts them.
+    fn log_attachments(
+        &self,
+        db_ref: &DatabaseRef,
+    ) -> Result<Vec<LogAttachmentListingEntry>, DbError>;
 
-    /// The recording's attachment holding this exact log, for warning about a
-    /// duplicate before attaching one.
+    fn log_attachment(
+        &self,
+        db_ref: &DatabaseRef,
+        id: LogAttachmentId,
+    ) -> Result<Option<LogAttachmentEntry>, DbError> {
+        self.log_attachments(db_ref)?
+            .into_iter()
+            .find(|entry| entry.id == id)
+            .map(|entry| entry.into_attachment(db_ref))
+            .transpose()
+    }
+
+    /// Unreadable metadata returns an error when no readable attachment matches the content hash.
     fn log_attachment_with_content(
         &self,
         db_ref: &DatabaseRef,
         content_hash: LogContentHash,
     ) -> Result<Option<LogAttachmentEntry>, DbError> {
-        Ok(self
-            .log_attachments(db_ref)?
-            .into_iter()
-            .find(|entry| entry.attachment.content_hash == content_hash))
+        let mut unreadable = None;
+        for entry in self.log_attachments(db_ref)? {
+            match entry.into_attachment(db_ref) {
+                Ok(entry) if entry.attachment.content_hash == content_hash => {
+                    return Ok(Some(entry));
+                }
+                Err(error) if unreadable.is_none() => unreadable = Some(error),
+                _ => {}
+            }
+        }
+        match unreadable {
+            Some(error) => Err(error),
+            None => Ok(None),
+        }
     }
 
     fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError>;

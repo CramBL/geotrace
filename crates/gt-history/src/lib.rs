@@ -1,9 +1,9 @@
 pub use gt_history_types::{
     ChannelSummary, DatabaseRef, DbError, HistoryDatabase, InvalidStoredLogFilterStack,
-    LOGS_DIRECTORY, LogAttachment, LogAttachmentEntry, LogAttachmentId, LogContentHash,
-    NavPointTimeRange, PruneMode, ReadOnlyHistoryDatabase, RecordingDebugTag, RecordingEntry,
-    RecordingMeta, RecordingUiState, StoredFixPlacementRule, StoredLogFilter,
-    StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterGroup,
+    LOGS_DIRECTORY, LogAttachment, LogAttachmentEntry, LogAttachmentId, LogAttachmentListingEntry,
+    LogAttachmentReadError, LogContentHash, NavPointTimeRange, PruneMode, ReadOnlyHistoryDatabase,
+    RecordingDebugTag, RecordingEntry, RecordingMeta, RecordingUiState, StoredFixPlacementRule,
+    StoredLogFilter, StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterGroup,
     StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts, StoredLogLevel,
     StoredRecording, StoredSegmentation, StoredTrackSplitRule, StoredYearResolution, TrackRange,
     TrackState, UiStateVersionReporter, UiStateVersionTooNew, format_count_suffix,

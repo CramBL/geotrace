@@ -1,3 +1,6 @@
+use std::path::Path;
+use std::sync::Arc;
+
 use gt_history_types::{
     ATTR_DEBUG_TAG, ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY,
     ATTR_MARKER_COUNT, ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS,
@@ -6,15 +9,14 @@ use gt_history_types::{
     GTD_CHANNEL_COMPONENTS_ATTR, GTD_CHANNEL_DESCRIPTION_ATTR, GTD_CHANNEL_TIME_DATASET,
     GTD_CHANNEL_UNIT_ATTR, GTD_CHANNELS_GROUP, GTD_META_DEVICE_ATTR, GTD_META_NOTES_ATTR,
     GTD_META_TITLE_ATTR, GTD_META_TRAVEL_MODE_ATTR, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
-    HIDDEN_TRACKS_DATASET, LogAttachment, LogAttachmentEntry, LogAttachmentId, NavPointTimeRange,
-    RecordingDebugTag, RecordingEntry, RecordingMeta, RecordingUiState, SNAP_BLOB_DATASET,
-    SNAP_GROUP, StoredFixPlacementRule, StoredRecording, StoredSegmentation, StoredTrackSplitRule,
-    StoredUiStateVersion, TRACK_END_DATASET, TRACK_START_DATASET, TRACK_STATE_DATASET,
-    TRACKS_GROUP, TrackRange, TrackState, UI_STATE_GROUP, UI_STATE_VERSION_ATTR,
-    UiStateVersionReporter,
+    HIDDEN_TRACKS_DATASET, LogAttachmentId, LogAttachmentListingEntry, LogAttachmentReadError,
+    NavPointTimeRange, RecordingDebugTag, RecordingEntry, RecordingMeta, RecordingUiState,
+    SNAP_BLOB_DATASET, SNAP_GROUP, StoredFixPlacementRule, StoredRecording, StoredSegmentation,
+    StoredTrackSplitRule, StoredUiStateVersion, TRACK_END_DATASET, TRACK_START_DATASET,
+    TRACK_STATE_DATASET, TRACKS_GROUP, TrackRange, TrackState, UI_STATE_GROUP,
+    UI_STATE_VERSION_ATTR, UiStateVersionReporter,
 };
 use hdf5::Group;
-use std::path::Path;
 use thiserror::Error;
 
 /// The fixed-capacity ladder the string-attribute readers share: pick the
@@ -1462,12 +1464,12 @@ pub(crate) fn stored_track_table_of_recording(
 }
 
 /// Every log attached to a recording, in the order
-/// [`LogAttachmentEntry::sort_by_name_then_id`] puts them.
+/// [`LogAttachmentListingEntry::sort_by_name_then_id`] puts them.
 pub(crate) fn log_attachments(
     db_path: &std::path::Path,
     identity: &str,
     group_name: &str,
-) -> Result<Vec<LogAttachmentEntry>, InternalError> {
+) -> Result<Vec<LogAttachmentListingEntry>, InternalError> {
     let file = hdf5::File::open(db_path)?;
     let by_id = file.group("by_identity")?;
     let id_grp = open_identity_group(&by_id, identity)?;
@@ -1478,21 +1480,27 @@ pub(crate) fn log_attachments(
 
 /// The attachments the attributes `attr_names` of a recording hold, for a
 /// caller that has read those names already.
-fn log_attachments_in_attrs(rec_grp: &Group, attr_names: Vec<String>) -> Vec<LogAttachmentEntry> {
+fn log_attachments_in_attrs(
+    rec_grp: &Group,
+    attr_names: Vec<String>,
+) -> Vec<LogAttachmentListingEntry> {
     let mut entries = Vec::new();
     for key in attr_names {
         let Some(id) = LogAttachmentId::from_attr_key(&key) else {
             continue;
         };
-        match read_group_string_attr(rec_grp, &key) {
-            Ok(json) => match LogAttachment::from_attribute_json(&json) {
-                Ok(attachment) => entries.push(LogAttachmentEntry { id, attachment }),
-                Err(err) => log::warn!("Ignoring the log attachment {id}: {err:#}"),
+        let entry = match read_group_string_attr(rec_grp, &key) {
+            Ok(json) => LogAttachmentListingEntry::from_attribute_json(id, &json),
+            Err(err) => LogAttachmentListingEntry {
+                id,
+                attachment: Err(Arc::new(LogAttachmentReadError::ReadAttribute(
+                    err.to_string(),
+                ))),
             },
-            Err(err) => log::warn!("Ignoring the log attachment attribute {key:?}: {err}"),
-        }
+        };
+        entries.push(entry);
     }
-    LogAttachmentEntry::sort_by_name_then_id(&mut entries);
+    LogAttachmentListingEntry::sort_by_name_then_id(&mut entries);
     entries
 }
 

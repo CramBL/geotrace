@@ -5,6 +5,8 @@
 //! `FileBuilder` in one pass.
 
 use std::collections::HashMap;
+use std::mem;
+use std::sync::Arc;
 
 use gt_history_types::{
     ATTR_DEBUG_TAG, ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY,
@@ -13,11 +15,12 @@ use gt_history_types::{
     ATTR_START_US, CURRENT_SCHEMA_VERSION, CURRENT_UI_STATE_VERSION, ChannelSummary, DatabaseRef,
     DbError, GTD_CHANNEL_COMPONENTS_ATTR, GTD_CHANNEL_DESCRIPTION_ATTR, GTD_CHANNEL_TIME_DATASET,
     GTD_CHANNEL_UNIT_ATTR, GTD_CHANNELS_GROUP, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
-    HIDDEN_TRACKS_DATASET, LogAttachment, LogAttachmentEntry, LogAttachmentId, RecordingMeta,
-    RecordingUiState, SCHEMA_VERSION_ATTR, SNAP_BLOB_DATASET, SNAP_GROUP, StoredFixPlacementRule,
-    StoredRecording, StoredSegmentation, StoredTrackSplitRule, StoredUiStateVersion,
-    TRACK_END_DATASET, TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, TrackRange,
-    TrackState, UI_STATE_GROUP, UI_STATE_VERSION_ATTR, UiStateVersionReporter, log_attachment,
+    HIDDEN_TRACKS_DATASET, LogAttachmentId, LogAttachmentListingEntry, LogAttachmentReadError,
+    RecordingMeta, RecordingUiState, SCHEMA_VERSION_ATTR, SNAP_BLOB_DATASET, SNAP_GROUP,
+    StoredFixPlacementRule, StoredRecording, StoredSegmentation, StoredTrackSplitRule,
+    StoredUiStateVersion, TRACK_END_DATASET, TRACK_START_DATASET, TRACK_STATE_DATASET,
+    TRACKS_GROUP, TrackRange, TrackState, UI_STATE_GROUP, UI_STATE_VERSION_ATTR,
+    UiStateVersionReporter, log_attachment,
 };
 use hdf5_pure::{AttrValue, DType, DeflateLevel, FileBuilder, Group, GroupBuilder};
 use thiserror::Error;
@@ -69,6 +72,7 @@ struct DatasetNode {
 
 struct GroupNode {
     name: String,
+    unreadable_log_attachments: Vec<LogAttachmentId>,
     attrs: Vec<(String, AttrValue)>,
     datasets: Vec<DatasetNode>,
     groups: Vec<GroupNode>,
@@ -107,6 +111,7 @@ fn ensure_identity_node<'a>(
         }
         None => {
             identity_nodes.push(GroupNode {
+                unreadable_log_attachments: Vec::new(),
                 name: storage_name,
                 attrs: vec![(
                     ATTR_IDENTITY.to_owned(),
@@ -189,15 +194,13 @@ fn write_dataset_into(gb: &mut GroupBuilder, ds: &DatasetNode) {
     db.with_deflate(DeflateLevel::Six);
 }
 
-/// Write a [`GroupNode`] and everything below it into an open group builder.
-///
-/// The recursion matters: GTD nests to arbitrary depth (a recording's ad-hoc
-/// sensor channels live at `channels/{name}/{time,value}`, two levels below the
-/// recording group), and this backend rewrites the whole database on every
-/// insert, delete, and rename. A writer that stopped at a fixed depth would
-/// silently drop the deeper groups on the next rewrite - which is what
-/// `gt_history`'s `channels_survive_a_database_rewrite` test guards against.
-fn write_group_into(parent: &mut GroupBuilder, node: &GroupNode) {
+fn write_group_into(parent: &mut GroupBuilder, node: &GroupNode) -> Result<(), InternalError> {
+    if let Some(id) = node.unreadable_log_attachments.first() {
+        return Err(InternalError::Conflict(format!(
+            "Cannot rewrite group {:?}: remove attachment {id} with an unreadable attribute value first",
+            node.name
+        )));
+    }
     let mut gb = parent.create_group(&node.name);
     for (k, v) in &node.attrs {
         gb.set_attr(k, v.clone());
@@ -206,15 +209,17 @@ fn write_group_into(parent: &mut GroupBuilder, node: &GroupNode) {
         write_dataset_into(&mut gb, ds);
     }
     for child in &node.groups {
-        write_group_into(&mut gb, child);
+        write_group_into(&mut gb, child)?;
     }
     parent.add_group(gb.finish());
+    Ok(())
 }
 
 /// Recursively read an HDF5 group (its attributes, datasets, and subgroups) into an
 /// owned `GroupNode`.
 fn snapshot_group(src: &Group, name: &str) -> Result<GroupNode, InternalError> {
     let mut node = GroupNode {
+        unreadable_log_attachments: Vec::new(),
         name: name.to_owned(),
         attrs: src.attrs()?.into_iter().collect(),
         datasets: Vec::new(),
@@ -262,6 +267,7 @@ fn snapshot_by_identity(file: &hdf5_pure::File) -> Result<Vec<GroupNode>, Intern
     for id_name in by_id.groups()? {
         let id_grp = by_id.group(&id_name)?;
         let mut id_node = GroupNode {
+            unreadable_log_attachments: Vec::new(),
             name: id_name.clone(),
             attrs: id_grp.attrs()?.into_iter().collect(),
             datasets: Vec::new(),
@@ -269,7 +275,15 @@ fn snapshot_by_identity(file: &hdf5_pure::File) -> Result<Vec<GroupNode>, Intern
         };
         for rec_name in id_grp.groups()? {
             let rec_grp = id_grp.group(&rec_name)?;
-            id_node.groups.push(snapshot_group(&rec_grp, &rec_name)?);
+            let mut recording = snapshot_group(&rec_grp, &rec_name)?;
+            recording.unreadable_log_attachments = rec_grp
+                .attr_datatypes()?
+                .into_keys()
+                .filter(|key| !recording.attrs.iter().any(|(existing, _)| existing == key))
+                .filter_map(|key| LogAttachmentId::from_attr_key(&key))
+                .collect();
+            recording.unreadable_log_attachments.sort();
+            id_node.groups.push(recording);
         }
         identity_nodes.push(id_node);
     }
@@ -282,6 +296,7 @@ fn track_table_node(tracks: &[TrackRange]) -> GroupNode {
     let n = tracks.len() as u64;
     let (starts, ends, states) = gt_history_types::track_columns(tracks);
     GroupNode {
+        unreadable_log_attachments: Vec::new(),
         name: TRACKS_GROUP.to_owned(),
         attrs: Vec::new(),
         datasets: vec![
@@ -311,6 +326,7 @@ fn track_table_node(tracks: &[TrackRange]) -> GroupNode {
 /// The `__geotrace_snap__` subgroup node holding one opaque byte dataset.
 fn snap_blob_node(blob: &[u8]) -> GroupNode {
     GroupNode {
+        unreadable_log_attachments: Vec::new(),
         name: SNAP_GROUP.to_owned(),
         attrs: Vec::new(),
         datasets: vec![DatasetNode {
@@ -336,6 +352,7 @@ fn ui_state_node(ui_state: &RecordingUiState, kept_datasets: Vec<DatasetNode>) -
     }];
     datasets.extend(kept_datasets);
     GroupNode {
+        unreadable_log_attachments: Vec::new(),
         name: UI_STATE_GROUP.to_owned(),
         attrs: vec![(
             UI_STATE_VERSION_ATTR.to_owned(),
@@ -356,6 +373,7 @@ fn build_new_recording(
 ) -> Result<GroupNode, InternalError> {
     let gtd_root = gtd_file.root();
     let mut rec = GroupNode {
+        unreadable_log_attachments: Vec::new(),
         name: rec_name.to_owned(),
         attrs: vec![
             (
@@ -450,7 +468,7 @@ fn write_db(identity_nodes: &[GroupNode], db_path: &std::path::Path) -> Result<(
             id_gb.set_attr(k, v.clone());
         }
         for rec_node in &id_node.groups {
-            write_group_into(&mut id_gb, rec_node);
+            write_group_into(&mut id_gb, rec_node)?;
         }
         by_id_gb.add_group(id_gb.finish());
     }
@@ -582,6 +600,7 @@ pub(crate) fn replace_recording(
             .filter(|(key, _)| LogAttachmentId::from_attr_key(key).is_some())
             .cloned(),
     );
+    replacement.unreadable_log_attachments = mem::take(&mut stored.unreadable_log_attachments);
     *stored = replacement;
 
     write_db(&identity_nodes, db_path)?;
@@ -611,6 +630,7 @@ pub(crate) fn delete_batch(
                         .iter()
                         .filter_map(|(key, _)| LogAttachmentId::from_attr_key(key)),
                 );
+                attachments.extend_from_slice(&rec.unreadable_log_attachments);
             }
             id_node.groups.retain(|r| r.name != db_ref.group_name);
         }
@@ -992,40 +1012,53 @@ pub(crate) fn stored_track_table_of_recording(
 }
 
 /// Every log attached to a recording, in the order
-/// [`LogAttachmentEntry::sort_by_name_then_id`] puts them.
+/// [`LogAttachmentListingEntry::sort_by_name_then_id`] puts them.
 pub(crate) fn log_attachments(
     db_path: &std::path::Path,
     identity: &str,
     group_name: &str,
-) -> Result<Vec<LogAttachmentEntry>, InternalError> {
+) -> Result<Vec<LogAttachmentListingEntry>, InternalError> {
     let file = hdf5_pure::File::open(db_path)?;
     let root = file.root();
     let by_id = root.group("by_identity")?;
     let id_grp = find_identity_group(&by_id, identity)?;
     let rec_grp = id_grp.group(group_name)?;
-    Ok(log_attachments_in_attrs(&rec_grp.attrs()?))
+    Ok(log_attachments_in_attrs(
+        &rec_grp.attrs()?,
+        &rec_grp.attr_datatypes()?.into_keys().collect::<Vec<_>>(),
+    ))
 }
 
 /// The attachments a recording's attributes hold, for a caller that has read
 /// those attributes already.
 pub(crate) fn log_attachments_in_attrs(
     attrs: &HashMap<String, AttrValue>,
-) -> Vec<LogAttachmentEntry> {
+    attribute_names: &[String],
+) -> Vec<LogAttachmentListingEntry> {
     let mut entries = Vec::new();
-    for (key, value) in attrs {
+    for key in attribute_names {
         let Some(id) = LogAttachmentId::from_attr_key(key) else {
             continue;
         };
-        let Some(json) = value.as_str() else {
-            log::warn!("Ignoring the log attachment attribute {key:?}, which is not a string");
-            continue;
+        let entry = match attrs.get(key).and_then(AttrValue::as_str) {
+            Some(json) => LogAttachmentListingEntry::from_attribute_json(id, json),
+            None => {
+                let error = if attrs.contains_key(key) {
+                    LogAttachmentReadError::NonTextAttribute
+                } else {
+                    LogAttachmentReadError::ReadAttribute(
+                        "stored attribute value could not be decoded".to_owned(),
+                    )
+                };
+                LogAttachmentListingEntry {
+                    id,
+                    attachment: Err(Arc::new(error)),
+                }
+            }
         };
-        match LogAttachment::from_attribute_json(json) {
-            Ok(attachment) => entries.push(LogAttachmentEntry { id, attachment }),
-            Err(err) => log::warn!("Ignoring the log attachment {id}: {err:#}"),
-        }
+        entries.push(entry);
     }
-    LogAttachmentEntry::sort_by_name_then_id(&mut entries);
+    LogAttachmentListingEntry::sort_by_name_then_id(&mut entries);
     entries
 }
 
@@ -1064,19 +1097,25 @@ pub(crate) fn delete_log_attachment_attribute(
     group_name: &str,
     id: LogAttachmentId,
 ) -> Result<(), InternalError> {
-    let existing_db = hdf5_pure::File::open(db_path)?;
-    let mut identity_nodes = snapshot_by_identity(&existing_db)?;
-    drop(existing_db);
-
-    let key = id.attr_key();
-    match find_recording_node_mut(&mut identity_nodes, identity, group_name) {
-        Some(rec) => rec.attrs.retain(|(existing, _)| *existing != key),
-        None => log::warn!(
-            "Removing log attachment {id} from {identity}/{group_name}, which is not in the database"
-        ),
+    let file = hdf5_pure::File::open_rw(db_path)?;
+    let by_id = file.root().group("by_identity")?;
+    let identities = by_id.groups()?;
+    if !identities.contains(&gt_history_types::identity_group_name(identity))
+        && !identities.iter().any(|name| name == identity)
+    {
+        return Ok(());
     }
-
-    write_db(&identity_nodes, db_path)
+    let id_group = find_identity_group(&by_id, identity)?;
+    if !id_group.groups()?.iter().any(|name| name == group_name) {
+        return Ok(());
+    }
+    let group = id_group.group(group_name)?;
+    let key = id.attr_key();
+    if group.attr_datatypes()?.contains_key(&key) {
+        group.remove_attr(&key)?;
+        file.commit()?;
+    }
+    Ok(())
 }
 
 /// Every row of a recording's stored track table, tombstones and all.
@@ -1229,7 +1268,7 @@ pub(crate) fn load_recording(
             write_dataset_into(&mut gb, ds);
         }
         for sg in &node.groups {
-            write_group_into(&mut gb, sg);
+            write_group_into(&mut gb, sg)?;
         }
         fb.add_group(gb.finish());
     }

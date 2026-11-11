@@ -1311,6 +1311,7 @@ fn with_stored_logs(mut entry: RecordingEntry, count: usize) -> RecordingEntry {
                 Default::default(),
             ),
         })
+        .map(Into::into)
         .collect();
     entry
 }

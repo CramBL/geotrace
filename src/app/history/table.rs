@@ -758,8 +758,8 @@ fn attached_logs_cell(ui: &mut egui::Ui, entry: &RecordingEntry, worker: &Histor
     ui.menu_button(label, |ui| {
         for listed in &entry.log_attachments {
             ui.horizontal(|ui| {
-                let name = listed.attachment.name.as_str();
-                ui.add(Label::new(name).truncate());
+                let name = listed.display_name();
+                ui.add(Label::new(name.as_ref()).truncate());
                 if ui
                     .button(OPEN_LOG_LABEL)
                     .on_hover_text(OPEN_LOG_HOVER)
@@ -770,7 +770,7 @@ fn attached_logs_cell(ui: &mut egui::Ui, entry: &RecordingEntry, worker: &Histor
                             recording: entry.db_ref.clone(),
                             id: listed.id,
                         },
-                        name.to_owned(),
+                        name.into_owned(),
                     );
                     ui.close();
                 }

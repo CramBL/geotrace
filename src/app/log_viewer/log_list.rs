@@ -119,7 +119,7 @@ pub(super) fn group_logs_by_recording(
                 (!logs.any_loaded_log_holds(&attachment)).then(|| {
                     LogRow::Available(AvailableAttachmentRow {
                         attachment,
-                        name: entry.attachment.name.clone(),
+                        name: entry.display_name().into_owned(),
                         recording: recording.clone(),
                     })
                 })

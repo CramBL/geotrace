@@ -27,10 +27,10 @@ use gt_logfile::ParsedLog;
 use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteKind, WriteRejection};
 use gt_store::{
     AttachedLog, DatabaseRef, DbError, HistoryDatabase, LogAttachmentEntry, LogAttachmentError,
-    LogAttachmentId, LogAttachments as _, LogContentHash, LogToAttach, PruneMode,
-    ReadOnlyHistoryDatabase, ReadOnlyLogAttachments as _, ReadOnlyRecordings, RecordingEntry,
-    RecordingUiState, Recordings, RecordingsHandle, StoredLogFilterStack, StoredRecording,
-    StoredYearResolution, TrackRange, TrackState, UiStateVersionReporter,
+    LogAttachmentId, LogAttachmentListingEntry, LogAttachments as _, LogContentHash, LogToAttach,
+    PruneMode, ReadOnlyHistoryDatabase, ReadOnlyLogAttachments as _, ReadOnlyRecordings,
+    RecordingEntry, RecordingUiState, Recordings, RecordingsHandle, StoredLogFilterStack,
+    StoredRecording, StoredYearResolution, TrackRange, TrackState, UiStateVersionReporter,
 };
 use gt_track_builder::SegmentationConfig;
 use gt_ui_types::LoadedLogId;
@@ -234,11 +234,8 @@ impl WriteRequest {
     }
 }
 
-/// One of a recording's attachments, as the worker read it back. The entry
-/// comes from the attribute, so a log that could not be read is still listed
-/// and named.
 pub struct RestoredLogAttachment {
-    pub entry: LogAttachmentEntry,
+    pub entry: LogAttachmentListingEntry,
     pub log: Result<AttachedLog, LogAttachmentError>,
 }
 

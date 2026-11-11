@@ -2,7 +2,8 @@
 //! the attachments this session lists for the loaded recordings.
 
 use gt_history_types::{
-    DatabaseRef, LogAttachmentEntry, LogAttachmentId, StoredLogFilterStack, StoredYearResolution,
+    DatabaseRef, LogAttachmentEntry, LogAttachmentId, LogAttachmentListingEntry,
+    StoredLogFilterStack, StoredYearResolution,
 };
 use gt_logfile::YearResolution;
 
@@ -57,19 +58,23 @@ pub struct SessionLogAttachments {
 #[derive(Debug)]
 struct RecordingAttachments {
     recording: DatabaseRef,
-    entries: Vec<LogAttachmentEntry>,
+    entries: Vec<LogAttachmentListingEntry>,
 }
 
 impl RecordingAttachments {
     fn sort_by_name_then_id(&mut self) {
-        LogAttachmentEntry::sort_by_name_then_id(&mut self.entries);
+        LogAttachmentListingEntry::sort_by_name_then_id(&mut self.entries);
     }
 }
 
 impl SessionLogAttachments {
     /// Files `entries` under `recording`, replacing what this session listed
     /// for it before.
-    pub fn set_attachments_of(&mut self, recording: DatabaseRef, entries: Vec<LogAttachmentEntry>) {
+    pub fn set_attachments_of(
+        &mut self,
+        recording: DatabaseRef,
+        entries: Vec<LogAttachmentListingEntry>,
+    ) {
         match self.attachments_of_mut(&recording) {
             Some(listed) => {
                 listed.entries = entries;
@@ -86,6 +91,7 @@ impl SessionLogAttachments {
     /// Files one more attachment under `recording`, replacing the entry listed
     /// under the same id.
     pub fn record_attachment(&mut self, recording: DatabaseRef, entry: LogAttachmentEntry) {
+        let entry = LogAttachmentListingEntry::from(entry);
         match self.attachments_of_mut(&recording) {
             Some(listed) => {
                 listed.entries.retain(|listed| listed.id != entry.id);
@@ -114,7 +120,7 @@ impl SessionLogAttachments {
     }
 
     /// The attachments of `recording`, by name and then by id.
-    pub fn of_recording(&self, recording: &DatabaseRef) -> &[LogAttachmentEntry] {
+    pub fn of_recording(&self, recording: &DatabaseRef) -> &[LogAttachmentListingEntry] {
         self.by_recording
             .iter()
             .find(|listed| &listed.recording == recording)
@@ -151,7 +157,7 @@ mod tests {
         attachments
             .of_recording(recording)
             .iter()
-            .map(|entry| entry.attachment.name.clone())
+            .map(|entry| entry.display_name().into_owned())
             .collect()
     }
 
@@ -164,7 +170,7 @@ mod tests {
 
         attachments.set_attachments_of(
             recording.clone(),
-            vec![entry("navsyncd.log"), entry("hal-powerd.log")],
+            vec![entry("navsyncd.log").into(), entry("hal-powerd.log").into()],
         );
         attachments.record_attachment(recording.clone(), entry("kernel.log"));
 
@@ -184,9 +190,9 @@ mod tests {
         let detached = entry("hal-powerd.log");
         attachments.set_attachments_of(
             removed_from.clone(),
-            vec![detached.clone(), entry("navsyncd.log")],
+            vec![detached.clone().into(), entry("navsyncd.log").into()],
         );
-        attachments.set_attachments_of(forgotten.clone(), vec![entry("kernel.log")]);
+        attachments.set_attachments_of(forgotten.clone(), vec![entry("kernel.log").into()]);
 
         attachments.remove_attachment(&LogAttachmentRef {
             recording: removed_from.clone(),

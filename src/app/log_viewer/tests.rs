@@ -2060,7 +2060,7 @@ fn viewer_state_over_a_stored_recording(attachment: gt_store::LogAttachmentEntry
         .push(recording("walk.gtd", 55.0), stored_in_history());
     state
         .attachments
-        .set_attachments_of(stored_recording_ref(), vec![attachment]);
+        .set_attachments_of(stored_recording_ref(), vec![attachment.into()]);
     state.viewer.open = true;
     state
 }
