@@ -688,7 +688,10 @@ fn focus_the_live_log_filter(harness: &mut Harness<'_, App>) {
         open_log_filter_group_editor(harness, group);
     }
     harness.ctx.memory_mut(|memory| {
-        memory.request_focus(egui::Id::new(filters::LIVE_FILTER_FIELD_ID));
+        memory.request_focus(egui::Id::new((
+            filters::LIVE_FILTER_FIELD_ID,
+            harness.state().log_viewer.selected_log().unwrap(),
+        )));
     });
     harness.run_steps(2);
 }

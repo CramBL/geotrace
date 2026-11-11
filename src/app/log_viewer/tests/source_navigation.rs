@@ -148,7 +148,7 @@ fn hidden_diagnostics_reveal_exact_entries_without_changing_filters_or_map_match
     harness.run_steps(2);
     harness.get_by_label(target);
     let state = harness.state();
-    let reveal = state.viewer.diagnostic_reveal.unwrap();
+    let reveal = state.viewer.active_state().diagnostic_reveal.unwrap();
     assert_eq!(reveal.entry_index, expected_entry);
     let stack = state.shown_log().unwrap().filters();
     assert_eq!(*stack.visible_entries(), visible);
@@ -163,7 +163,10 @@ fn hidden_diagnostics_reveal_exact_entries_without_changing_filters_or_map_match
         super::set_display_option(&mut harness, "Show structural source lines", show_source);
         harness.get_by_label(target);
         assert_eq!(harness.state().viewer.selected_log(), Some(reveal.log));
-        assert_eq!(harness.state().viewer.diagnostic_reveal, Some(reveal));
+        assert_eq!(
+            harness.state().viewer.active_state().diagnostic_reveal,
+            Some(reveal)
+        );
         assert_eq!(super::match_count(&harness), "1 of 6");
         assert_eq!(harness.state_mut().map_matches().layers(), map.layers());
     }
@@ -180,6 +183,7 @@ fn another_diagnostic_replaces_the_reveal_and_a_visible_target_clears_it() {
         harness
             .state()
             .viewer
+            .active_state()
             .diagnostic_reveal
             .unwrap()
             .entry_index,
@@ -191,6 +195,7 @@ fn another_diagnostic_replaces_the_reveal_and_a_visible_target_clears_it() {
         harness
             .state()
             .viewer
+            .active_state()
             .diagnostic_reveal
             .unwrap()
             .entry_index,
@@ -203,7 +208,10 @@ fn another_diagnostic_replaces_the_reveal_and_a_visible_target_clears_it() {
     );
     harness.get_by_label("Boot 1").click();
     harness.run_steps(2);
-    assert_eq!(harness.state().viewer.diagnostic_reveal, None);
+    assert_eq!(
+        harness.state().viewer.active_state().diagnostic_reveal,
+        None
+    );
 }
 
 #[test]
@@ -218,7 +226,7 @@ fn idle_frames_and_scan_landing_preserve_reveals_and_cached_rows() {
     state
         .viewer
         .navigate_to_diagnostic(log, shown, DiagnosticTarget::Entry(4));
-    let reveal = state.viewer.diagnostic_reveal;
+    let reveal = state.viewer.active_state().diagnostic_reveal;
     let rows = state.viewer.table_rows(log, shown);
     for _ in 0..3 {
         assert!(Arc::ptr_eq(&rows, &state.viewer.table_rows(log, shown)));
@@ -231,7 +239,7 @@ fn idle_frames_and_scan_landing_preserve_reveals_and_cached_rows() {
     let log = state.logs.get_by_id(shown).unwrap();
     let landed = state.viewer.table_rows(log, shown);
     assert!(!Arc::ptr_eq(&rows, &landed));
-    assert_eq!(state.viewer.diagnostic_reveal, reveal);
+    assert_eq!(state.viewer.active_state().diagnostic_reveal, reveal);
     assert!(landed.row_of_exact_entry(4).is_some());
     assert!(Arc::ptr_eq(&landed, &state.viewer.table_rows(log, shown)));
 }
@@ -287,7 +295,7 @@ fn filter_semantic_edits_clear_reveals_before_scan_landing(#[case] edit: Semanti
     state
         .viewer
         .navigate_to_diagnostic(log, shown, DiagnosticTarget::Entry(4));
-    assert!(state.viewer.diagnostic_reveal.is_some());
+    assert!(state.viewer.active_state().diagnostic_reveal.is_some());
     let (stack, slots) = state.logs.filter_stack_mut_by_id(shown).unwrap();
     match edit {
         SemanticEdit::Text => stack.set_live_filter_text("starting"),
@@ -306,8 +314,8 @@ fn filter_semantic_edits_clear_reveals_before_scan_landing(#[case] edit: Semanti
     let pending = stack.is_query_pending();
     let log = state.logs.get_by_id(shown).unwrap();
     state.viewer.table_rows(log, shown);
-    assert_eq!(state.viewer.diagnostic_reveal, None);
-    assert_eq!(state.viewer.scroll_to_row, None);
+    assert_eq!(state.viewer.active_state().diagnostic_reveal, None);
+    assert_eq!(state.viewer.active_state().scroll_to_row, None);
     assert_eq!(log.filters().is_query_pending(), pending);
 }
 
@@ -321,7 +329,7 @@ fn adding_a_live_table_condition_preserves_diagnostic_reveal_and_cached_rows() {
     state
         .viewer
         .navigate_to_diagnostic(log, shown, DiagnosticTarget::Entry(4));
-    let reveal = state.viewer.diagnostic_reveal;
+    let reveal = state.viewer.active_state().diagnostic_reveal;
     assert!(reveal.is_some());
     let rows = state.viewer.table_rows(log, shown);
     let revision = log.filters().table_semantic_revision();
@@ -339,7 +347,7 @@ fn adding_a_live_table_condition_preserves_diagnostic_reveal_and_cached_rows() {
         matches
     );
     assert!(!stack.is_query_pending());
-    assert_eq!(state.viewer.diagnostic_reveal, reveal);
+    assert_eq!(state.viewer.active_state().diagnostic_reveal, reveal);
     assert!(Arc::ptr_eq(&rows, &state.viewer.table_rows(log, shown)));
 }
 
@@ -381,7 +389,7 @@ fn condition_edits_invalidate_diagnostic_reveals_only_with_enabled_table_partici
     state
         .viewer
         .navigate_to_diagnostic(log, shown, DiagnosticTarget::Entry(4));
-    let reveal = state.viewer.diagnostic_reveal;
+    let reveal = state.viewer.active_state().diagnostic_reveal;
     assert!(reveal.is_some());
     let rows = state.viewer.table_rows(log, shown);
     let (stack, slots) = state.logs.filter_stack_mut_by_id(shown).unwrap();
@@ -403,7 +411,7 @@ fn condition_edits_invalidate_diagnostic_reveals_only_with_enabled_table_partici
     let log = state.logs.get_by_id(shown).unwrap();
     let current_rows = state.viewer.table_rows(log, shown);
     assert_eq!(
-        state.viewer.diagnostic_reveal,
+        state.viewer.active_state().diagnostic_reveal,
         if enabled { None } else { reveal }
     );
     assert_eq!(Arc::ptr_eq(&rows, &current_rows), !enabled);
@@ -461,7 +469,7 @@ fn map_only_edits_preserve_diagnostic_reveals_and_cached_rows(#[case] edit: MapO
     state
         .viewer
         .navigate_to_diagnostic(log, shown, DiagnosticTarget::Entry(4));
-    let reveal = state.viewer.diagnostic_reveal;
+    let reveal = state.viewer.active_state().diagnostic_reveal;
     assert!(reveal.is_some());
     let rows = state.viewer.table_rows(log, shown);
     let (stack, slots) = state.logs.filter_stack_mut_by_id(shown).unwrap();
@@ -490,7 +498,7 @@ fn map_only_edits_preserve_diagnostic_reveals_and_cached_rows(#[case] edit: MapO
     stack.wait_for_queries();
     let log = state.logs.get_by_id(shown).unwrap();
     assert!(Arc::ptr_eq(&rows, &state.viewer.table_rows(log, shown)));
-    assert_eq!(state.viewer.diagnostic_reveal, reveal);
+    assert_eq!(state.viewer.active_state().diagnostic_reveal, reveal);
     assert!(rows.row_of_exact_entry(4).is_some());
 }
 
@@ -513,7 +521,7 @@ fn changing_an_active_draft_table_effect_clears_diagnostic_reveals(
     state
         .viewer
         .navigate_to_diagnostic(log, shown, DiagnosticTarget::Entry(4));
-    assert!(state.viewer.diagnostic_reveal.is_some());
+    assert!(state.viewer.active_state().diagnostic_reveal.is_some());
     state
         .logs
         .filter_stack_mut_by_id(shown)
@@ -522,11 +530,11 @@ fn changing_an_active_draft_table_effect_clears_diagnostic_reveals(
         .set_live_filter_effect(after);
     let log = state.logs.get_by_id(shown).unwrap();
     state.viewer.table_rows(log, shown);
-    assert_eq!(state.viewer.diagnostic_reveal, None);
+    assert_eq!(state.viewer.active_state().diagnostic_reveal, None);
 }
 
 #[test]
-fn switching_or_reloading_logs_clears_diagnostic_reveals() {
+fn switching_logs_preserves_reveals_and_reloading_clears_them() {
     let mut harness = harness_of(
         Vec::new(),
         &[
@@ -538,13 +546,30 @@ fn switching_or_reloading_logs_clears_diagnostic_reveals() {
     unfold_the_summary_panel(&mut harness);
     harness.get_by_label("Line 6").click();
     harness.run_steps(2);
-    assert!(harness.state().viewer.diagnostic_reveal.is_some());
+    assert!(
+        harness
+            .state()
+            .viewer
+            .active_state()
+            .diagnostic_reveal
+            .is_some()
+    );
     harness.get_by_label("first.log").click();
     harness.run_steps(2);
-    assert_eq!(harness.state().viewer.diagnostic_reveal, None);
+    assert_eq!(
+        harness.state().viewer.active_state().diagnostic_reveal,
+        None
+    );
     harness.get_by_label("second.log").click();
     harness.run_steps(2);
-    assert_eq!(harness.state().viewer.diagnostic_reveal, None);
+    assert!(
+        harness
+            .state()
+            .viewer
+            .active_state()
+            .diagnostic_reveal
+            .is_some()
+    );
     harness.get_by_label("Line 6").click();
     harness.run_steps(2);
     let old = harness.state().viewer.selected.unwrap();
@@ -561,7 +586,10 @@ fn switching_or_reloading_logs_clears_diagnostic_reveals() {
         .id();
     assert_ne!(replacement, old);
     harness.run_steps(2);
-    assert_eq!(harness.state().viewer.diagnostic_reveal, None);
+    assert_eq!(
+        harness.state().viewer.active_state().diagnostic_reveal,
+        None
+    );
 }
 
 #[test]
@@ -618,6 +646,7 @@ fn diagnostic_navigation_scrolls_to_the_hidden_target_in_a_long_table(
         harness
             .state()
             .viewer
+            .active_state()
             .diagnostic_reveal
             .unwrap()
             .entry_index,
@@ -633,7 +662,7 @@ fn diagnostic_navigation_scrolls_to_the_hidden_target_in_a_long_table(
 fn source_backed_boot_dividers_fit_a_narrow_viewer_and_keep_navigation_on_one_row() {
     let mut state = viewer_state(Vec::new(), &[("source.log", SOURCE_LOG)]);
     state.viewer.show_structural_lines = true;
-    state.viewer.summary_expanded = true;
+    state.viewer.active_state_mut().summary_expanded = true;
     let id = state.first_loaded_log();
     let (stack, _) = state.logs.filter_stack_mut_by_id(id).unwrap();
     stack.set_live_filter_text("first");
@@ -665,6 +694,7 @@ fn source_backed_boot_dividers_fit_a_narrow_viewer_and_keep_navigation_on_one_ro
         harness
             .state()
             .viewer
+            .active_state()
             .diagnostic_reveal
             .unwrap()
             .entry_index,
@@ -695,11 +725,11 @@ fn invalid_diagnostic_targets_preserve_active_navigation(#[case] target: Diagnos
     state
         .viewer
         .navigate_to_diagnostic(log, id, DiagnosticTarget::BootSession(1));
-    let reveal = state.viewer.diagnostic_reveal;
-    let scroll = state.viewer.scroll_to_row;
+    let reveal = state.viewer.active_state().diagnostic_reveal;
+    let scroll = state.viewer.active_state().scroll_to_row;
     let rows = state.viewer.table_rows(log, id);
     state.viewer.navigate_to_diagnostic(log, id, target);
-    assert_eq!(state.viewer.diagnostic_reveal, reveal);
-    assert_eq!(state.viewer.scroll_to_row, scroll);
+    assert_eq!(state.viewer.active_state().diagnostic_reveal, reveal);
+    assert_eq!(state.viewer.active_state().scroll_to_row, scroll);
     assert!(Arc::ptr_eq(&rows, &state.viewer.table_rows(log, id)));
 }

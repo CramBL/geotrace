@@ -75,7 +75,7 @@ impl LogViewerWindow {
         };
         let filters = log.filters();
         if !filters.live_filter_text().is_empty() {
-            self.filter_editor_log = Some(shown);
+            self.log_state_mut(shown).filter_editor_open = true;
         }
         let filter_width = ui.available_width().min(ui.clip_rect().width());
         let edit = ui
@@ -92,8 +92,8 @@ impl LogViewerWindow {
             edit,
             FilterEdit::SelectGroup(_) | FilterEdit::SelectMapHighlights
         ) {
-            self.filter_editor_log = Some(shown);
-            self.filter_editor_focus = true;
+            self.log_state_mut(shown).filter_editor_open = true;
+            self.log_state_mut(shown).filter_editor_focus = true;
         }
         if let FilterEdit::SelectGroup(group) = edit
             && filters.selected_group() == group
@@ -112,7 +112,7 @@ impl LogViewerWindow {
             });
         }
         if matches!(edit, FilterEdit::CancelLiveFilter) {
-            self.filter_editor_log = None;
+            self.log_state_mut(shown).filter_editor_open = false;
             if filters.live_filter_text().is_empty() {
                 return;
             }
@@ -121,7 +121,8 @@ impl LogViewerWindow {
             edit,
             FilterEdit::SetTableApplication(_) | FilterEdit::ClearTableFilters
         ) {
-            self.scroll_to_source_line = self
+            self.log_state_mut(shown).scroll_to_source_line = self
+                .log_state_mut(shown)
                 .table_reading_anchor
                 .filter(|anchor| anchor.log == shown);
         }
@@ -132,7 +133,7 @@ impl LogViewerWindow {
             FilterEdit::ClearTableFilters => {
                 stack.clear_table_filters();
                 if stack.live_filter_effect() == FilterEffect::Table {
-                    self.filter_editor_log = None;
+                    self.log_state_mut(shown).filter_editor_open = false;
                 }
             }
             FilterEdit::SetTableApplication(application) => {
@@ -146,16 +147,16 @@ impl LogViewerWindow {
                 let group = stack.create_group();
                 stack.select_group(group);
                 stack.set_live_filter_effect(FilterEffect::Table);
-                self.filter_editor_log = Some(shown);
-                self.filter_editor_focus = true;
+                self.log_state_mut(shown).filter_editor_open = true;
+                self.log_state_mut(shown).filter_editor_focus = true;
             }
             FilterEdit::MoveChipToGroup { chip, group } => stack.move_chip_to_group(chip, group),
             FilterEdit::RemoveGroup(group) => {
                 if stack.selected_group() == group
                     && stack.live_filter_effect() == FilterEffect::Table
                 {
-                    self.filter_editor_log = None;
-                    self.filter_editor_focus = false;
+                    self.log_state_mut(shown).filter_editor_open = false;
+                    self.log_state_mut(shown).filter_editor_focus = false;
                 }
                 stack.remove_group(group);
             }
@@ -177,7 +178,7 @@ impl LogViewerWindow {
                         stack.add_live_filter_as_map_highlight(slots);
                     }
                 }
-                self.filter_editor_log = None;
+                self.log_state_mut(shown).filter_editor_open = false;
             }
             FilterEdit::SetChipEffectEnabled {
                 chip,
@@ -216,13 +217,14 @@ impl LogViewerWindow {
         ui: &mut egui::Ui,
         filters: &FilterStack,
         log: &ParsedLog,
+        shown: LoadedLogId,
     ) -> Option<FilterEdit> {
         let mut text = filters.live_filter_text().to_owned();
         let regex = filters.live_filter_is_regex();
         let draft = filters.live_filter_draft();
         let scope = draft.scope();
         let addable = filters.can_add_live_filter_as_chip();
-        let focus_editor = mem::take(&mut self.filter_editor_focus);
+        let focus_editor = mem::take(&mut self.log_state_mut(shown).filter_editor_focus);
 
         let mut edit = None;
         // Wraps onto further rows on a narrow window.
@@ -275,7 +277,7 @@ impl LogViewerWindow {
                 let field = ui
                     .add(
                         TextEdit::singleline(&mut text)
-                            .id(egui::Id::new(LIVE_FILTER_FIELD_ID))
+                            .id(egui::Id::new((LIVE_FILTER_FIELD_ID, shown)))
                             .hint_text(FilterScopeUi(scope).hint())
                             .desired_width(FIELD_WIDTH_PX),
                     )
@@ -359,20 +361,28 @@ impl LogViewerWindow {
 
     /// What to say about a scan still running, once it has run long enough for
     /// the note to mean something.
-    fn pending_note(&mut self, ui: &egui::Ui, filters: &FilterStack) -> Option<&'static str> {
+    fn pending_note(
+        &mut self,
+        ui: &egui::Ui,
+        filters: &FilterStack,
+        shown: LoadedLogId,
+    ) -> Option<&'static str> {
         if !filters.is_query_pending() {
-            self.query_pending_since = None;
+            self.log_state_mut(shown).query_pending_since = None;
             return None;
         }
         // Repaint without waiting for input: the scan finishes on a worker
         // thread.
         ui.ctx().request_repaint();
         if filters.table_filter_status() != TableFilterStatus::Pending {
-            self.query_pending_since = None;
+            self.log_state_mut(shown).query_pending_since = None;
             return None;
         }
         let now = ui.input(|input| input.time);
-        let since = *self.query_pending_since.get_or_insert(now);
+        let since = *self
+            .log_state_mut(shown)
+            .query_pending_since
+            .get_or_insert(now);
         (now - since >= PENDING_NOTE_DELAY_SECS).then_some(PENDING_NOTE)
     }
 }
@@ -388,8 +398,8 @@ impl LogViewerWindow {
     ) -> Option<FilterEdit> {
         let mut edit = None;
         let editor_open =
-            self.filter_editor_log == Some(shown) || !filters.live_filter_text().is_empty();
-        let pending_note = self.pending_note(ui, filters);
+            self.log_state_mut(shown).filter_editor_open || !filters.live_filter_text().is_empty();
+        let pending_note = self.pending_note(ui, filters, shown);
         for (index, group) in filters.groups().iter().enumerate() {
             ui.push_id(group.id(), |ui| {
                 ui.ctx().accesskit_node_builder(ui.unique_id(), |node| {
@@ -435,7 +445,7 @@ impl LogViewerWindow {
                 if editor_open
                     && filters.live_filter_effect() == FilterEffect::Table
                     && filters.selected_group() == group.id()
-                    && let Some(live_edit) = self.filter_row_ui(ui, filters, log)
+                    && let Some(live_edit) = self.filter_row_ui(ui, filters, log, shown)
                 {
                     edit = Some(live_edit);
                 }
@@ -472,7 +482,7 @@ impl LogViewerWindow {
         });
         if editor_open
             && filters.live_filter_effect() == FilterEffect::Map
-            && let Some(live_edit) = self.filter_row_ui(ui, filters, log)
+            && let Some(live_edit) = self.filter_row_ui(ui, filters, log, shown)
         {
             edit = Some(live_edit);
         }

@@ -13,11 +13,12 @@ pub(super) struct AssociationWindowEdit {
 /// The unit an association window is written in. A log from a device whose
 /// clock drifted against its recording needs a window in minutes or hours. One
 /// checked against the fix rate needs milliseconds.
-#[derive(Clone, Copy, Debug, EnumIter, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, EnumIter, Eq, PartialEq)]
 pub(super) enum AssociationWindowUnit {
     Nanoseconds,
     Microseconds,
     Milliseconds,
+    #[default]
     Seconds,
     Minutes,
     Hours,

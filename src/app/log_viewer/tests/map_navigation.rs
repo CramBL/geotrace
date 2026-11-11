@@ -24,7 +24,7 @@ fn hidden_first_glyph_entries_preserve_table_scroll(
         harness.run_steps(3);
         harness.get_by_label("navsyncd: hidden entry 120");
     }
-    harness.state_mut().viewer.scroll_to_row = Some(10);
+    harness.state_mut().viewer.active_state_mut().scroll_to_row = Some(10);
     harness.run_steps(3);
     let before = scroll.offset_px(&harness);
     let visible = harness
@@ -42,12 +42,16 @@ fn hidden_first_glyph_entries_preserve_table_scroll(
     harness.run_steps(3);
 
     assert!((scroll.offset_px(&harness) - before).abs() < SCROLL_READING_TOLERANCE_PX);
-    assert_eq!(harness.state().viewer.diagnostic_reveal, None);
-    assert_eq!(harness.state().viewer.scroll_to_row, None);
+    assert_eq!(
+        harness.state().viewer.active_state().diagnostic_reveal,
+        None
+    );
+    assert_eq!(harness.state().viewer.active_state().scroll_to_row, None);
     assert_eq!(
         harness
             .state()
             .viewer
+            .active_state()
             .clicked_glyph
             .as_ref()
             .unwrap()
@@ -125,5 +129,8 @@ fn visible_first_glyph_entries_scroll_to_exact_source_rows(
     assert!(
         (target_y - (first_y - first_row as f32 * row_height)).abs() < SCROLL_READING_TOLERANCE_PX
     );
-    assert_eq!(harness.state().viewer.diagnostic_reveal, None);
+    assert_eq!(
+        harness.state().viewer.active_state().diagnostic_reveal,
+        None
+    );
 }

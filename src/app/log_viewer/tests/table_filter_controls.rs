@@ -37,7 +37,14 @@ fn empty_results_offer_pause_and_clear_with_structural_and_revealed_rows() {
     harness.run_steps(2);
     assert_eq!(match_count(&harness), "3 of 3");
     assert!(live_filter_text(&harness).is_empty());
-    assert!(harness.state().viewer.diagnostic_reveal.is_none());
+    assert!(
+        harness
+            .state()
+            .viewer
+            .active_state()
+            .diagnostic_reveal
+            .is_none()
+    );
 }
 
 #[test]
@@ -197,7 +204,7 @@ fn changing_table_application_preserves_the_source_reading_position(
     let text = long_log(LONG_LOG_ENTRIES);
     let mut harness = harness_of(Vec::new(), &[("long.log", &text)]);
     type_into_live_filter(&mut harness, "entry 1");
-    harness.state_mut().viewer.scroll_to_row = Some(if near_end {
+    harness.state_mut().viewer.active_state_mut().scroll_to_row = Some(if near_end {
         table_row_count(&harness)
     } else {
         5
@@ -238,7 +245,7 @@ fn pausing_an_unchanged_table_preserves_the_entry_below_a_divider(#[case] entry_
     let row = line_table::LineTableRows::of(harness.state().shown_log().unwrap())
         .row_of_exact_entry(entry_index)
         .unwrap();
-    harness.state_mut().viewer.scroll_to_row = Some(row);
+    harness.state_mut().viewer.active_state_mut().scroll_to_row = Some(row);
     harness.run_steps(2);
     let position = SourceReadingPosition::of(&harness);
     assert_eq!(position.entry_index, entry_index);
@@ -284,7 +291,7 @@ fn pause_and_resume_preserve_a_midnight_reboot_entry_after_a_hidden_first_entry(
     assert!(!harness.state().viewer.show_structural_lines);
     let rows = line_table::LineTableRows::of(harness.state().shown_log().unwrap());
     assert_eq!(rows.len(), 128);
-    harness.state_mut().viewer.scroll_to_row = rows.row_of_exact_entry(2);
+    harness.state_mut().viewer.active_state_mut().scroll_to_row = rows.row_of_exact_entry(2);
     harness.run_steps(2);
     let position = SourceReadingPosition::of(&harness);
     assert_eq!(position.entry_index, 2);
