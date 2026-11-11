@@ -195,8 +195,11 @@ impl LogViewerWindow {
 
     pub(super) fn display_options_ui(&mut self, ui: &mut egui::Ui) {
         ui.menu_button(DISPLAY_OPTIONS_LABEL, |ui| {
-            ui.checkbox(&mut self.show_structural_lines, "Show structural lines")
-                .on_hover_text("Show recognized source lines between log entries");
+            ui.checkbox(
+                &mut self.show_structural_lines,
+                "Show structural source lines",
+            )
+            .on_hover_text("Show recognized source lines between log entries");
             ui.checkbox(&mut self.color_services, COLOR_SERVICES_LABEL)
                 .on_hover_text(COLOR_SERVICES_HOVER);
             ui.checkbox(&mut self.color_levels, COLOR_LEVELS_LABEL)
@@ -950,7 +953,7 @@ const CLEAR_EMPTY_HOVER: &str = "The live filter is empty already";
 
 const MATCH_COUNT_HOVER: &str = "Lines the filters show, of the log's entries";
 
-pub(super) const DISPLAY_OPTIONS_LABEL: &str = "Aa";
+pub(super) const DISPLAY_OPTIONS_LABEL: &str = "View";
 
 pub(super) const COLOR_SERVICES_LABEL: &str = "Colour services";
 

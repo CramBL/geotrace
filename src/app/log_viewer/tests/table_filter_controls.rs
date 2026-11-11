@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn empty_results_offer_pause_and_clear_with_structural_and_revealed_rows() {
     let mut harness = harness_of(Vec::new(), &[("source.log", SOURCE_LOG)]);
-    set_display_option(&mut harness, "Show structural lines", true);
+    super::set_display_option(&mut harness, "Show structural source lines", true);
     type_into_live_filter(&mut harness, "no matching entry");
     harness.get_by_label(filters::NO_MATCHES_LABEL);
     harness.get_by_label("--- Device reboot ---");

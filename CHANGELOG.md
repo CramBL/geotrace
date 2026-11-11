@@ -12,6 +12,7 @@
 
 ### Changed
 
+- **Log Viewer:** The View menu includes structural source line visibility and service and level color preferences.
 - **Map & Tracks:** Recorded positions are styled by navigation state, including fixes without headings or satellite reports.
 - **Map & Tracks:** Valid navigation fixes are shown in blue regardless of the used-satellite count.
 - **Interface:** Load errors are shown in a window for each failed load, with a button to copy the details.
