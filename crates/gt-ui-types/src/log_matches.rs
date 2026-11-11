@@ -176,8 +176,8 @@ impl<'a> LogMatchScope<'a> {
             .parsed
             .chronology()
             .resolved()
-            .and_then(|resolved| resolved.timestamp(log_match.entry_index))
-            .is_none_or(|timestamp| gt_filter::point_passes_time_filter(timestamp, self.filter))
+            .and_then(|resolved| resolved.eligible_time(log_match.entry_index))
+            .is_some_and(|time| gt_filter::point_passes_time_filter(time.timestamp(), self.filter))
             && log_match
                 .fix
                 .track
@@ -365,7 +365,7 @@ mod tests {
     #[rstest::rstest]
     #[case::entry_inside_fix_outside(3, 0, 1)]
     #[case::entry_outside_fix_inside(0, 3, 0)]
-    #[case::missing_entry(usize::MAX, 0, 1)]
+    #[case::missing_entry(usize::MAX, 0, 0)]
     fn log_scope_filters_entry_time_independently_of_fix_time(
         #[case] entry_index: usize,
         #[case] point_index: usize,
@@ -382,6 +382,39 @@ mod tests {
         assert_eq!(
             layer.matches_in_scope(&files, &visibility, &filter).count(),
             expected
+        );
+    }
+
+    #[test]
+    fn log_scope_excludes_device_clock_entries_from_absolute_time_filters() {
+        let mut layer = self::a_layer_over_every_line();
+        layer.log.parsed = Arc::new(
+            gt_logfile::parse_log(
+                "--- Device reboot ---\n\
+             Jan 01 00:00:05 host svc: reset\n\
+             Jan 01 00:00:40 host systemd-timesyncd[1]: Initial clock synchronization\n\
+             Nov 09 09:00:00 host svc: synced\n"
+                    .into(),
+                test_util::start(),
+            )
+            .expect("clock reset fixture parses"),
+        );
+        layer.matches = (0..3)
+            .map(|entry_index| LogMatch {
+                merc: MercPoint { x: 0.5, y: 0.5 },
+                entry_index,
+                fix: FixRef::new(test_util::track0(), PointIdx::new(0)),
+            })
+            .collect();
+        let files = test_util::one_track_file();
+        let visibility = TrackDataVisibility::from_loaded(&files);
+        let filter = GlobalFilter::default();
+        assert_eq!(
+            layer
+                .matches_in_scope(&files, &visibility, &filter)
+                .map(|matched| matched.entry_index)
+                .collect::<Vec<_>>(),
+            [2]
         );
     }
 

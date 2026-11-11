@@ -245,7 +245,7 @@ impl LogHexagonLabel {
                 .filter_map(|&entry_index| {
                     Some((
                         parsed.entries().get(entry_index)?,
-                        resolved.timestamp(entry_index)?,
+                        resolved.eligible_time(entry_index)?.timestamp(),
                     ))
                 })
                 .map(|(entry, timestamp)| {

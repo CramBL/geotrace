@@ -3,16 +3,17 @@ use std::sync::{Arc, LazyLock};
 
 use chrono::{DateTime, Duration, NaiveTime, Utc};
 use egui::{
-    Color32, InteractOptions, Label, RichText, ScrollArea, Separator, Shape, TextFormat,
+    Color32, FontId, InteractOptions, Label, RichText, ScrollArea, Separator, Shape, TextFormat,
     text::LayoutJob,
 };
+use egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE as ICON_DEVICE_CLOCK;
 use gt_fmt::MIDDLE_DOT;
 use gt_log_view::{
     ClockTicks, EntryMatches, FilterStack, LoadedLog, TimestampTick, VisibleEntries,
 };
 use gt_logfile::{
-    BootSession, LogChronology, LogEntry, LogLevelKind, ParsedLog, RecognisedMessage,
-    StructuralLineKind, TimestampKind, YearlessTimestamp,
+    BootSession, ClockEligibility, EligibleLogTime, LogChronology, LogEntry, LogLevelKind,
+    ParsedLog, RecognisedMessage, StructuralLineKind, TimestampKind, YearlessTimestamp,
 };
 use gt_types::{Latitude, Longitude, mercator};
 use gt_ui_theme::ALMOST_EQUAL_TO;
@@ -242,39 +243,51 @@ impl DisplayedClockTicks {
         parsed: &'a ParsedLog,
         entries: &'a DisplayedEntries,
     ) -> impl Iterator<Item = usize> + 'a {
-        let day_rows =
-            self.filtered
-                .day_dividers()
-                .iter()
-                .filter_map(move |divider| match &entries.reveal {
-                    Some(reveal) if divider.visible_row == reveal.visible_row => None,
-                    Some(reveal) if divider.visible_row > reveal.visible_row => {
-                        Some(divider.visible_row + 1)
-                    }
-                    _ => Some(divider.visible_row),
-                });
+        let boundary_rows = match (&entries.reveal, parsed.chronology().resolved()) {
+            (Some(reveal), Some(resolved)) => [
+                Some(reveal.visible_row),
+                (reveal.visible_row + 1..entries.len()).find(|&row| {
+                    entries
+                        .entry_index(row)
+                        .and_then(|entry| resolved.eligible_time(entry))
+                        .is_some()
+                }),
+            ],
+            _ => [None, None],
+        };
+        let day_rows = self
+            .filtered
+            .day_dividers()
+            .iter()
+            .map(move |divider| match &entries.reveal {
+                Some(reveal) if divider.visible_row >= reveal.visible_row => {
+                    divider.visible_row + 1
+                }
+                _ => divider.visible_row,
+            })
+            .filter(move |row| !boundary_rows.contains(&Some(*row)));
         let revealed_day_rows =
             parsed
                 .chronology()
                 .resolved()
                 .into_iter()
                 .flat_map(move |resolved| {
-                    entries
-                        .reveal
-                        .iter()
-                        .flat_map(|reveal| [reveal.visible_row, reveal.visible_row + 1])
-                        .filter(move |&row| {
-                            let previous = row
-                                .checked_sub(1)
-                                .and_then(|row| entries.entry_index(row))
-                                .and_then(|entry| resolved.timestamp(entry));
-                            let current = entries
-                                .entry_index(row)
-                                .and_then(|entry| resolved.timestamp(entry));
-                            previous.zip(current).is_some_and(|(previous, current)| {
-                                previous.date_naive() != current.date_naive()
+                    boundary_rows.into_iter().flatten().filter(move |&row| {
+                        let Some(current) = entries
+                            .entry_index(row)
+                            .and_then(|entry| resolved.eligible_time(entry))
+                        else {
+                            return false;
+                        };
+                        (0..row)
+                            .rev()
+                            .filter_map(|row| entries.entry_index(row))
+                            .find_map(|entry| resolved.eligible_time(entry))
+                            .is_some_and(|previous| {
+                                previous.timestamp().date_naive()
+                                    != current.timestamp().date_naive()
                             })
-                        })
+                    })
                 });
         day_rows.chain(revealed_day_rows)
     }
@@ -833,7 +846,8 @@ impl LogViewerWindow {
                             if let Some(timestamp) = parsed
                                 .chronology()
                                 .resolved()
-                                .and_then(|resolved| resolved.timestamp(entry_index))
+                                .and_then(|resolved| resolved.eligible_time(entry_index))
+                                .map(EligibleLogTime::timestamp)
                             {
                                 let date = timestamp.format(DATE_FORMAT).to_string();
                                 divider_row_ui(ui, RichText::new(date).monospace());
@@ -1015,9 +1029,10 @@ impl LineNumberColumn {
 
 #[derive(Clone, Copy)]
 enum RowTimestamp {
-    Absolute {
+    Resolved {
         timestamp: DateTime<Utc>,
         kind: TimestampKind,
+        clock_eligibility: ClockEligibility,
     },
 
     /// The timestamp the line writes, in a log whose years are unresolved.
@@ -1028,14 +1043,14 @@ impl RowTimestamp {
     /// `None` for a line without a timestamp in a log whose years are unresolved.
     fn of(parsed: &ParsedLog, entry_index: usize, entry: &LogEntry) -> Option<Self> {
         match parsed.chronology() {
-            LogChronology::Resolved(resolved) => {
-                resolved
-                    .timestamp(entry_index)
-                    .map(|timestamp| Self::Absolute {
-                        timestamp,
-                        kind: entry.timestamp_kind,
-                    })
-            }
+            LogChronology::Resolved(resolved) => resolved
+                .timestamp(entry_index)
+                .zip(resolved.clock_eligibility(entry_index))
+                .map(|(timestamp, clock_eligibility)| Self::Resolved {
+                    timestamp,
+                    kind: entry.timestamp_kind,
+                    clock_eligibility,
+                }),
             LogChronology::Unresolved(unresolved) => {
                 unresolved.written_timestamp(entry_index).map(Self::Written)
             }
@@ -1045,14 +1060,27 @@ impl RowTimestamp {
     fn is_interpolated(self) -> bool {
         matches!(
             self,
-            Self::Absolute {
+            Self::Resolved {
                 kind: TimestampKind::Interpolated,
                 ..
             }
         )
     }
 
+    fn is_device_clock(self) -> bool {
+        matches!(
+            self,
+            Self::Resolved {
+                clock_eligibility: ClockEligibility::BeforeSynchronization,
+                ..
+            }
+        )
+    }
+
     fn prefix(self) -> &'static str {
+        if self.is_device_clock() {
+            return ICON_DEVICE_CLOCK;
+        }
         match self.is_interpolated() {
             true => ALMOST_EQUAL_TO,
             false => ANCHORED_TIMESTAMP_PREFIX,
@@ -1062,14 +1090,14 @@ impl RowTimestamp {
     /// The date as [`DATE_FORMAT`] writes it, or as `--MM-DD` for a timestamp without a year.
     fn date_text(self) -> String {
         match self {
-            Self::Absolute { timestamp, .. } => timestamp.format(DATE_FORMAT).to_string(),
+            Self::Resolved { timestamp, .. } => timestamp.format(DATE_FORMAT).to_string(),
             Self::Written(written) => format!("--{:02}-{:02}", written.month(), written.day()),
         }
     }
 
     fn time(self) -> NaiveTime {
         match self {
-            Self::Absolute { timestamp, .. } => timestamp.time(),
+            Self::Resolved { timestamp, .. } => timestamp.time(),
             Self::Written(written) => written.time(),
         }
     }
@@ -1155,9 +1183,14 @@ struct MessageColors {
 }
 
 impl MessageColors {
-    fn of(ui: &egui::Ui, associated: bool, switches: MessageColorSwitches) -> Self {
+    fn of(
+        ui: &egui::Ui,
+        associated: bool,
+        timestamp: Option<RowTimestamp>,
+        switches: MessageColorSwitches,
+    ) -> Self {
         Self {
-            base: match associated {
+            base: match associated || timestamp.is_some_and(RowTimestamp::is_device_clock) {
                 true => ui.visuals().text_color(),
                 false => ui.visuals().weak_text_color(),
             },
@@ -1221,7 +1254,7 @@ impl EntryRow<'_> {
                 self.gutter_ui(ui);
                 self.line_numbers.ui(ui, self.entry.line_number);
                 let timestamp = ui.add(Label::new(self.timestamp_job(ui, tick)).selectable(true));
-                if interpolated {
+                if interpolated && !self.timestamp.is_some_and(RowTimestamp::is_device_clock) {
                     timestamp.on_hover_text(INTERPOLATED_TIMESTAMP_HOVER);
                 }
                 let message = self.message_job(ui);
@@ -1258,6 +1291,14 @@ impl EntryRow<'_> {
     }
 
     fn hover_text(&self, ctx: &egui::Context, unit: AssociationWindowUnit) -> Option<String> {
+        if self.timestamp.is_some_and(RowTimestamp::is_device_clock) {
+            return Some(
+                match self.timestamp.is_some_and(RowTimestamp::is_interpolated) {
+                    true => format!("{DEVICE_CLOCK_ROW_HOVER}. {INTERPOLATED_TIMESTAMP_HOVER}."),
+                    false => DEVICE_CLOCK_ROW_HOVER.to_owned(),
+                },
+            );
+        }
         match (self.order_anomaly_step, self.position) {
             (Some(step), _) => Some(format!(
                 "Timestamp steps back {} here with no recorded clock change {EM_DASH} the log \
@@ -1298,11 +1339,34 @@ impl EntryRow<'_> {
             .map_or_else(String::new, RowTimestamp::date_text);
         let time = self.timestamp.map(RowTimestamp::time);
         let mut job = LayoutJob::default();
-        job.append(
-            &format!("{prefix}{date:>width$} ", width = widths.date),
-            0.0,
-            TextFormat::simple(font_id.clone(), quiet),
-        );
+        if self.timestamp.is_some_and(RowTimestamp::is_device_clock) {
+            let (icon_font, leading_space) = ui.fonts_mut(|fonts| {
+                let cell_width = fonts.glyph_width(&font_id, ' ');
+                let mut icon_font = FontId::proportional(font_id.size);
+                let icon_width = fonts
+                    .layout_no_wrap(prefix.to_owned(), icon_font.clone(), quiet)
+                    .size()
+                    .x;
+                icon_font.size *= cell_width / icon_width;
+                let scaled_width = fonts
+                    .layout_no_wrap(prefix.to_owned(), icon_font.clone(), quiet)
+                    .size()
+                    .x;
+                (icon_font, cell_width - scaled_width)
+            });
+            job.append(prefix, 0.0, TextFormat::simple(icon_font, quiet));
+            job.append(
+                &format!("{date:>width$} ", width = widths.date),
+                leading_space,
+                TextFormat::simple(font_id.clone(), quiet),
+            );
+        } else {
+            job.append(
+                &format!("{prefix}{date:>width$} ", width = widths.date),
+                0.0,
+                TextFormat::simple(font_id.clone(), quiet),
+            );
+        }
         job.append(
             &time_run(time, HOUR_MINUTE_FORMAT, widths.hour_minute),
             0.0,
@@ -1323,7 +1387,12 @@ impl EntryRow<'_> {
     /// past the screen.
     fn message_job(&self, ui: &egui::Ui) -> LayoutJob {
         let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-        let colors = MessageColors::of(ui, self.position.is_some(), self.color_switches);
+        let colors = MessageColors::of(
+            ui,
+            self.position.is_some(),
+            self.timestamp,
+            self.color_switches,
+        );
         let runs = self
             .recognised
             .map(|recognised| colors.runs(recognised))
@@ -1474,6 +1543,9 @@ const HOUR_MINUTE_FORMAT: &str = "%H:%M";
 /// The run of the timestamp column after the hour and the minute, always drawn
 /// in the quiet colour.
 const SECONDS_FORMAT: &str = ":%S";
+
+pub(super) const DEVICE_CLOCK_ROW_HOVER: &str =
+    "Absolute time and map position unavailable before clock synchronization";
 
 /// The characters each run of the timestamp column takes: as many as its format writes for the
 /// Unix epoch, which is as many as it writes for any instant with a four-digit year.

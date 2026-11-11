@@ -273,3 +273,83 @@ fn reveal_overlays_recompute_adjacent_clock_boundaries(
         assert_eq!(rows.ticks.tick(row), reference.tick(row));
     }
 }
+
+#[rstest]
+#[case::written_reset(1)]
+#[case::synchronization_message_with_device_time(2)]
+fn revealing_device_clock_entries_preserves_the_next_utc_day_divider(#[case] revealed: usize) {
+    let mut logs = LoadedLogs::default();
+    let id = logs
+        .push(super::source_log(
+            "Nov 09 23:59:59 host svc: keep before\n\
+         --- Device reboot ---\n\
+         Jan 01 00:00:05 host svc: reset\n\
+         Jan 01 00:00:40 host systemd-timesyncd[1]: Initial clock synchronization\n\
+         Nov 10 00:00:01 host svc: keep after\n",
+        ))
+        .id();
+    let (stack, _) = logs.filter_stack_mut_by_id(id).unwrap();
+    stack.set_live_filter_text("keep");
+    stack.wait_for_queries();
+    let log = logs.get_by_id(id).unwrap();
+    let rows = LineTableRows::with_overlay(log, false, Some(revealed));
+    assert_eq!(
+        (0..rows.len())
+            .map(|row| RowIdentity::from(rows.at(row).unwrap()))
+            .collect::<Vec<_>>(),
+        [
+            Boot(0, None),
+            Entry(0),
+            Boot(1, None),
+            Entry(revealed),
+            Day(3),
+            Entry(3)
+        ]
+    );
+    assert_eq!(rows.ticks.tick(1), TimestampTick::Weak);
+    assert_eq!(rows.ticks.tick(2), TimestampTick::Strong);
+}
+
+#[test]
+fn revealing_an_eligible_entry_before_visible_device_clock_rows_replaces_the_later_day_divider() {
+    let mut logs = LoadedLogs::default();
+    let id = logs
+        .push(super::source_log(
+            "Nov 11 10:00:00 host svc: keep before\n\
+         Nov 10 10:00:00 host svc: hidden earlier day\n\
+         --- Device reboot ---\n\
+         Jan 01 00:00:05 host svc: keep reset\n\
+         Jan 01 00:00:40 host systemd-timesyncd[1]: keep Initial clock synchronization\n\
+         Nov 10 10:00:00 host svc: keep after\n",
+        ))
+        .id();
+    let (stack, _) = logs.filter_stack_mut_by_id(id).unwrap();
+    stack.set_live_filter_text("keep");
+    stack.wait_for_queries();
+    let log = logs.get_by_id(id).unwrap();
+    assert_eq!(
+        log.parsed()
+            .chronology()
+            .order_anomalies()
+            .first()
+            .unwrap()
+            .line_number,
+        2
+    );
+    let rows = LineTableRows::with_overlay(log, false, Some(1));
+    assert_eq!(
+        (0..rows.len())
+            .map(|row| RowIdentity::from(rows.at(row).unwrap()))
+            .collect::<Vec<_>>(),
+        [
+            Boot(0, None),
+            Entry(0),
+            Day(1),
+            Entry(1),
+            Boot(1, None),
+            Entry(2),
+            Entry(3),
+            Entry(4)
+        ]
+    );
+}
