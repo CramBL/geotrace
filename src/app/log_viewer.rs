@@ -1,9 +1,12 @@
 //! The log viewer window: the loaded logs, the parse summary each of them
 //! expands into, and the virtualized table of the selected log's lines.
 
-use egui::{Button, ComboBox, DragValue, RichText, Window};
+use std::mem;
+
+use egui::{Button, ComboBox, DragValue, RichText, WidgetInfo, WidgetType, Window};
 use egui_phosphor::regular::{
-    CARET_DOWN as ICON_CARET_DOWN, CARET_RIGHT as ICON_CARET_RIGHT, X as ICON_X,
+    CARET_DOWN as ICON_CARET_DOWN, CARET_RIGHT as ICON_CARET_RIGHT, EYE as ICON_EYE,
+    EYE_SLASH as ICON_EYE_SLASH, X as ICON_X,
 };
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
 use gt_log_view::{
@@ -24,6 +27,7 @@ use association_window::{AssociationWindowEdit, AssociationWindowUnit};
 use line_table::{
     DiagnosticReveal, LineTableCache, LineTableRequests, RowHoverDwell, TableReadingAnchor,
 };
+use log_list::{LogGroup, LogNavigationAction, LogTab};
 use restored_logs_badge::RestoredLogsBadge;
 use unresolved_years::LastEntryYearDraft;
 
@@ -50,6 +54,8 @@ pub(super) struct LogViewerWindow {
     association_window_commits: usize,
     notices: Vec<String>,
     pub(super) restored_logs: RestoredLogsBadge,
+    picker_query: String,
+    reveal_selected_tab: bool,
 }
 
 #[derive(Default)]
@@ -155,6 +161,8 @@ impl LogViewerWindow {
             association_window_commits: 0,
             notices: Vec::new(),
             restored_logs: RestoredLogsBadge::default(),
+            picker_query: String::new(),
+            reveal_selected_tab: true,
         }
     }
 
@@ -169,6 +177,12 @@ impl LogViewerWindow {
             .clicked()
         {
             self.open = !self.open;
+            if self.open
+                && let Some(id) = self.selected
+            {
+                self.restored_logs.acknowledge(id);
+                self.reveal_selected_tab = true;
+            }
         }
     }
 
@@ -182,6 +196,8 @@ impl LogViewerWindow {
 
     pub(super) fn open_on_log(&mut self, id: LoadedLogId) {
         self.selected = Some(id);
+        self.restored_logs.acknowledge(id);
+        self.reveal_selected_tab = true;
         self.open = true;
     }
 
@@ -209,12 +225,15 @@ impl LogViewerWindow {
     }
 
     fn resolve_selected_log(&mut self, logs: &LoadedLogs) {
+        self.restored_logs.retain_loaded(logs);
         self.log_states
             .retain(|id, _| logs.get_by_id(*id).is_some());
+        let previous = self.selected;
         self.selected = self
             .selected
             .filter(|id| logs.get_by_id(*id).is_some())
             .or_else(|| logs.first_id());
+        self.reveal_selected_tab |= previous != self.selected;
     }
 
     pub(super) fn show(
@@ -254,10 +273,9 @@ impl LogViewerWindow {
             self.commit_association_window(logs, recordings);
             return;
         }
-        self.restored_logs.clear();
-
         let groups =
             log_list::group_logs_by_recording(logs, recordings, recording_names, attachments);
+        let tabs = log_list::tabs_in_session_order(logs, &groups);
         let mut open = self.open;
         let mut unload = None;
         let window = Window::new(LOG_VIEWER_TITLE)
@@ -289,10 +307,21 @@ impl LogViewerWindow {
                             },
                         );
                     });
-                // Notices, the list, the parse summary and the filter rows
-                // scroll among themselves once they need more room than the
-                // window can spare, leaving the table
-                // `TABLE_ROWS_THE_HEADER_LEAVES` rows to draw in.
+                let reveal_selected = mem::take(&mut self.reveal_selected_tab);
+                if let Some(action) = log_list::tabs_ui(
+                    ui,
+                    &tabs,
+                    self.selected,
+                    &self.restored_logs,
+                    reveal_selected,
+                ) {
+                    unload = self.apply_navigation_action(action, requests);
+                }
+                if let Some(action) =
+                    self.toolbar_ui(ui, logs, &groups, &tabs, requests, write_access)
+                {
+                    unload = self.apply_navigation_action(action, requests);
+                }
                 let reserved_for_the_table =
                     line_table::row_height(ui) * TABLE_ROWS_THE_HEADER_LEAVES as f32;
                 let header_log = self.selected;
@@ -301,52 +330,25 @@ impl LogViewerWindow {
                     .max_height((ui.available_height() - reserved_for_the_table).max(0.0))
                     .show(ui, |ui| {
                         self.notices_ui(ui);
-                        let actions = log_list::log_list_ui(ui, &groups, logs, &mut self.selected);
-                        unload = actions.unload;
-                        if let Some(chosen) = actions.load_attachment {
-                            requests.load_attachment = Some(chosen);
-                        }
                         if logs.is_empty() {
                             ui.label(RichText::new(LOG_LOAD_HINT).weak());
                         }
                         let Some(shown) = header_log else {
                             return;
                         };
-                        if let Some(log) = logs.get_by_id(shown) {
-                            ui.horizontal(|ui| {
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        settings_status::selected_log_ui(
-                                            ui,
-                                            log,
-                                            shown,
-                                            write_access,
-                                            requests,
-                                        );
-                                        ui.with_layout(
-                                            egui::Layout::left_to_right(egui::Align::Center),
-                                            |ui| {
-                                                self.display_options_ui(ui);
-                                                self.parse_summary_row_ui(ui, log, shown);
-                                            },
-                                        );
-                                    },
-                                );
+                        if let Some(log) = logs.get_by_id(shown)
+                            && let LogChronology::Unresolved(unresolved) = log.parsed().chronology()
+                            && let Some(year_resolution) = self.unresolved_years_ui(
+                                ui,
+                                shown,
+                                log.parsed(),
+                                unresolved.unresolved_year(),
+                            )
+                        {
+                            requests.resolve_years = Some(YearsToResolve {
+                                log: shown,
+                                year_resolution,
                             });
-                            if let LogChronology::Unresolved(unresolved) = log.parsed().chronology()
-                                && let Some(year_resolution) = self.unresolved_years_ui(
-                                    ui,
-                                    shown,
-                                    log.parsed(),
-                                    unresolved.unresolved_year(),
-                                )
-                            {
-                                requests.resolve_years = Some(YearsToResolve {
-                                    log: shown,
-                                    year_resolution,
-                                });
-                            }
                         }
                         if self.log_state_mut(shown).summary_expanded
                             && let Some(log) = logs.get_by_id(shown)
@@ -381,14 +383,7 @@ impl LogViewerWindow {
         self.open = open;
 
         if let Some(id) = unload {
-            let navigation_order: Vec<_> = groups
-                .iter()
-                .flat_map(|group| &group.rows)
-                .filter_map(|row| match row {
-                    log_list::LogRow::Loaded(log) => Some(log.id),
-                    log_list::LogRow::Available(_) => None,
-                })
-                .collect();
+            let navigation_order: Vec<_> = tabs.iter().map(|tab| tab.id).collect();
             self.close_log(logs, id, &navigation_order);
         }
         if !self.open || window.is_none_or(|response| response.inner.is_none()) {
@@ -435,7 +430,8 @@ impl LogViewerWindow {
         };
         log::info!("Unloaded log {:?}", log.name());
         self.log_states.remove(&closing);
-        if self.selected == Some(closing) {
+        let was_active = self.selected == Some(closing);
+        if was_active {
             self.selected = navigation_order
                 .iter()
                 .position(|id| *id == closing)
@@ -449,6 +445,71 @@ impl LogViewerWindow {
                 .copied();
         }
         self.resolve_selected_log(logs);
+        if was_active && let Some(id) = self.selected {
+            self.restored_logs.acknowledge(id);
+            self.reveal_selected_tab = true;
+        }
+    }
+
+    fn apply_navigation_action(
+        &mut self,
+        action: LogNavigationAction,
+        requests: &mut LogViewerRequests,
+    ) -> Option<LoadedLogId> {
+        match action {
+            LogNavigationAction::Activate(id) => self.open_on_log(id),
+            LogNavigationAction::Close(id) => return Some(id),
+            LogNavigationAction::Open(attachment) => requests.load_attachment = Some(attachment),
+        }
+        None
+    }
+
+    fn toolbar_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        logs: &mut LoadedLogs,
+        groups: &[LogGroup],
+        tabs: &[LogTab],
+        requests: &mut LogViewerRequests,
+        write_access: WriteAccess,
+    ) -> Option<LogNavigationAction> {
+        let mut action = None;
+        let mut visibility = None;
+        ui.horizontal(|ui| {
+            action = log_list::picker_ui(ui, groups, tabs, self.selected, &mut self.picker_query);
+            let Some(shown) = self.selected else {
+                return;
+            };
+            let Some(log) = logs.get_by_id(shown) else {
+                return;
+            };
+            let visible = log.is_visible();
+            let toggle = ui
+                .selectable_label(visible, if visible { ICON_EYE } else { ICON_EYE_SLASH })
+                .on_hover_text("Show this log's matches on the map");
+            toggle.widget_info(|| {
+                WidgetInfo::selected(WidgetType::Checkbox, true, visible, "Show matches on map")
+            });
+            toggle.ctx.accesskit_node_builder(toggle.id, |node| {
+                node.set_description("Show this log's matches on the map")
+            });
+            if toggle.clicked() {
+                visibility = Some((shown, !visible));
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                settings_status::selected_log_ui(ui, log, shown, write_access, requests);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    self.display_options_ui(ui);
+                    self.parse_summary_row_ui(ui, log, shown);
+                });
+            });
+        });
+        if let Some((id, visible)) = visibility
+            && let Some(mut log) = logs.get_mut_by_id(id)
+        {
+            log.set_visible(visible);
+        }
+        action
     }
 
     /// The parse summary of the shown log, which unfolds the summary panel.

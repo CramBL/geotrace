@@ -6,6 +6,7 @@
 //! against, a log being a layer over time: an entry with no fix inside the
 //! association window has no position and draws nothing.
 
+use std::fmt;
 use std::sync::Arc;
 
 use gt_filter::GlobalFilter;
@@ -29,6 +30,12 @@ impl LoadedLogId {
 
     pub const fn next(self) -> Self {
         Self(self.0.saturating_add(1))
+    }
+}
+
+impl fmt::Display for LoadedLogId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
     }
 }
 

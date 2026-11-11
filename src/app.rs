@@ -1173,7 +1173,7 @@ impl App {
                     Some(loader::AttachedLogRequester::RecordingLoad) => self
                         .log_viewer
                         .restored_logs
-                        .note_log_loaded_with_a_recording(),
+                        .note_log_loaded_with_a_recording(id),
                     Some(loader::AttachedLogRequester::UserOpenedTheAttachment) | None => {
                         self.log_viewer.open_on_log(id);
                     }
