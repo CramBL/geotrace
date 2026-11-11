@@ -2822,6 +2822,7 @@ dependencies = [
  "gt-history-types",
  "gt-loaded-files",
  "gt-logfile",
+ "gt-pending-writes",
  "gt-test-utils",
  "gt-types",
  "gt-ui-types",
@@ -2835,6 +2836,8 @@ dependencies = [
  "serde_json",
  "strum",
  "thiserror 2.0.20",
+ "trybuild",
+ "uuid",
 ]
 
 [[package]]

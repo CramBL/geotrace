@@ -15,6 +15,10 @@ pub use association::{AssociationCandidate, AssociationCandidates};
 pub use attachment::{
     LogAttachmentRef, SessionLogAttachments, stored_year_resolution, year_resolution_of_stored,
 };
+pub use attachment_settings::{
+    AttachmentSettingsCompletion, AttachmentSettingsRevision, AttachmentSettingsState,
+    AttachmentSettingsStatus, AttachmentSettingsWrite,
+};
 pub use filter::{
     ClockTicks, DayDivider, EntryMatches, FilterChip, FilterChipId, FilterEffect, FilterGroup,
     FilterGroupId, FilterGroupOperator, FilterPattern, FilterScope, FilterStack,
@@ -29,6 +33,7 @@ pub use loaded_log::{
 mod anchor;
 mod association;
 mod attachment;
+mod attachment_settings;
 mod filter;
 mod loaded_log;
 mod test_util;
