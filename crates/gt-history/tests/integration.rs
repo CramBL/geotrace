@@ -2905,7 +2905,12 @@ fn replacing_a_recording_in_place_keeps_the_logs_attached_to_it() {
         "field-notes.log"
     );
     assert_eq!(
-        entry.attachment.as_ref().expect("metadata").filters,
+        entry
+            .attachment
+            .as_ref()
+            .expect("metadata")
+            .settings
+            .filters,
         fixtures::log_filters()
     );
     assert_eq!(stored_log_count(&db_path), 1, "the log itself is kept too");

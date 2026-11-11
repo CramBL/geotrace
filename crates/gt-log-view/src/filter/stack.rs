@@ -1054,7 +1054,7 @@ mod tests {
         let attachment = LogAttachment::from_attribute_json(&json).unwrap();
         let mut restored = FilterStack::from_stored_stack(
             Arc::new(test_util::parsed_log_of_text(LOG)),
-            &attachment.filters,
+            &attachment.settings.filters,
         );
         restored.wait_for_queries();
         assert_eq!(visible(&restored), expected);
@@ -1355,7 +1355,7 @@ mod tests {
         let json = serde_json::json!({"format_version": version, "name": "legacy.log", "content_hash": "0", "filters": filters}).to_string();
         let attachment = LogAttachment::from_attribute_json(&json).expect("legacy attachment");
         let log = Arc::new(test_util::parsed_log_of_text(COMPOSITION_LOG));
-        let mut restored = FilterStack::from_stored_stack(log, &attachment.filters);
+        let mut restored = FilterStack::from_stored_stack(log, &attachment.settings.filters);
         restored.wait_for_queries();
         assert_eq!(restored.groups().len(), 1);
         assert_eq!(visible(&restored), expected);
@@ -1398,7 +1398,7 @@ mod tests {
         let attachment = LogAttachment::from_attribute_json(&json).unwrap();
         let (source, mut slots) = unfiltered_stack();
         let mut restored =
-            FilterStack::from_stored_stack(Arc::clone(&source.log), &attachment.filters);
+            FilterStack::from_stored_stack(Arc::clone(&source.log), &attachment.settings.filters);
         restored.take_layer_color_slots(&mut slots);
         restored.wait_for_queries();
         assert_eq!(visible(&restored), [0, 2]);

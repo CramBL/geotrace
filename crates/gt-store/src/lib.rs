@@ -32,9 +32,10 @@ pub use gt_history::{
     RecordingDebugTag, RecordingEntry, RecordingMeta, RecordingUiState, StoredFixPlacementRule,
     StoredLogFilter, StoredLogFilterCondition, StoredLogFilterEffects, StoredLogFilterGroup,
     StoredLogFilterOperator, StoredLogFilterStack, StoredLogFilterStackParts, StoredLogLevel,
-    StoredRecording, StoredSegmentation, StoredTrackSplitRule, StoredYearResolution, TrackRange,
-    TrackState, UiStateVersionReporter, UiStateVersionTooNew, extract_meta, format_count_suffix,
-    identity_from_group_name, identity_group_name, listed_track_rows, make_group_name,
+    StoredLogSettings, StoredRecording, StoredSegmentation, StoredTrackSplitRule,
+    StoredYearResolution, TrackRange, TrackState, UiStateVersionReporter, UiStateVersionTooNew,
+    extract_meta, format_count_suffix, identity_from_group_name, identity_group_name,
+    listed_track_rows, make_group_name,
 };
 pub use gt_ionex_store::{ArchivedMapDay, IonexStore, IonexStoreError, ReadOnlyIonexStore};
 pub use gt_jam_store::{JamStore, JamStoreError, ReadOnlyJamStore, StoredDay};

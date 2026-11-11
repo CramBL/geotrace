@@ -30,7 +30,8 @@ use gt_store::{
     LogAttachmentId, LogAttachmentListingEntry, LogAttachments as _, LogContentHash, LogToAttach,
     PruneMode, ReadOnlyHistoryDatabase, ReadOnlyLogAttachments as _, ReadOnlyRecordings,
     RecordingEntry, RecordingUiState, Recordings, RecordingsHandle, StoredLogFilterStack,
-    StoredRecording, StoredYearResolution, TrackRange, TrackState, UiStateVersionReporter,
+    StoredLogSettings, StoredRecording, StoredYearResolution, TrackRange, TrackState,
+    UiStateVersionReporter,
 };
 use gt_track_builder::SegmentationConfig;
 use gt_ui_types::LoadedLogId;
@@ -855,9 +856,11 @@ fn handle_write_request(
                     &LogToAttach {
                         name: &name,
                         text: &text,
-                        filters,
-                        year_reference: Some(year_reference),
-                        year_resolution,
+                        settings: StoredLogSettings {
+                            filters,
+                            year_reference: Some(year_reference),
+                            year_resolution,
+                        },
                     },
                 )
                 .map(|entry| StoredLogAttachment {
