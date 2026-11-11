@@ -1350,10 +1350,9 @@ fn restore_the_stored_attachment(
             recording: db_ref.clone(),
             id: entry.id,
         },
-        filters: entry.attachment.settings.filters.clone(),
+        settings: entry.attachment.settings.clone(),
         requested_by: crate::app::loader::AttachedLogRequester::RecordingLoad,
-        year_reference: gt_test_utils::synthetic_log_start(),
-        year_resolution: YearResolution::Infer,
+        parse_year_reference: gt_test_utils::synthetic_log_start(),
     };
     harness
         .state_mut()
@@ -1409,9 +1408,12 @@ fn unreadable_attachment_metadata_has_retained_source_feedback_and_readable_sibl
                 .map(|entry| AttachedLog {
                     name: entry.attachment.name,
                     text: text.clone(),
-                    filters: entry.attachment.settings.filters,
-                    year_reference: entry.attachment.settings.year_reference.expect("reference"),
-                    year_resolution: entry.attachment.settings.year_resolution,
+                    parse_year_reference: entry
+                        .attachment
+                        .settings
+                        .year_reference
+                        .expect("reference"),
+                    settings: entry.attachment.settings,
                 })
                 .map_err(LogAttachmentError::from);
             RestoredLogAttachment { entry, log }

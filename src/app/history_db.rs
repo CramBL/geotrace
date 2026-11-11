@@ -20,7 +20,6 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 
-use chrono::{DateTime, Utc};
 use egui::Context;
 use gt_log_view::LogAttachmentRef;
 use gt_logfile::ParsedLog;
@@ -149,9 +148,7 @@ enum WriteRequest {
         log: LoadedLogId,
         name: String,
         text: Arc<str>,
-        filters: StoredLogFilterStack,
-        year_reference: DateTime<Utc>,
-        year_resolution: StoredYearResolution,
+        settings: StoredLogSettings,
     },
     AutoPrune {
         max_bytes: u64,
@@ -533,9 +530,11 @@ impl HistoryWorker {
             log,
             name,
             text: Arc::clone(parsed.text()),
-            filters,
-            year_reference: parsed.year_reference(),
-            year_resolution: gt_log_view::stored_year_resolution(parsed.year_resolution()),
+            settings: StoredLogSettings {
+                filters,
+                year_reference: Some(parsed.year_reference()),
+                year_resolution: gt_log_view::stored_year_resolution(parsed.year_resolution()),
+            },
         });
     }
 
@@ -846,9 +845,7 @@ fn handle_write_request(
             log,
             name,
             text,
-            filters,
-            year_reference,
-            year_resolution,
+            settings,
         } => {
             let result = db
                 .attach_log(
@@ -856,11 +853,7 @@ fn handle_write_request(
                     &LogToAttach {
                         name: &name,
                         text: &text,
-                        settings: StoredLogSettings {
-                            filters,
-                            year_reference: Some(year_reference),
-                            year_resolution,
-                        },
+                        settings,
                     },
                 )
                 .map(|entry| StoredLogAttachment {
@@ -1061,6 +1054,7 @@ fn purge_tracks_with_stored(
 
 #[cfg(test)]
 mod tests {
+    use chrono::DateTime;
     use gt_pending_writes::WriteAccess;
     use gt_store::TrackRange;
     use gt_test_utils::pending_writes;
@@ -1820,9 +1814,11 @@ mod tests {
             log: LoadedLogId::new(1),
             name: "navsyncd.log".to_owned(),
             text: "boot".into(),
-            filters: Default::default(),
-            year_reference: DateTime::UNIX_EPOCH,
-            year_resolution: StoredYearResolution::Infer,
+            settings: StoredLogSettings {
+                filters: Default::default(),
+                year_reference: Some(DateTime::UNIX_EPOCH),
+                year_resolution: StoredYearResolution::Infer,
+            },
         },
         "Storing a log with a recording"
     )]

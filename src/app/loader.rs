@@ -11,7 +11,7 @@ use gt_log_view::LogAttachmentRef;
 use gt_logfile::{LogText, ParsedLog, YearResolution};
 use gt_pending_writes::{PendingWrites, WriteKind};
 use gt_plot::{AnalysisConfig, PreparedSeries};
-use gt_store::{AttachedLog, StoredFixPlacementRule, StoredLogFilterStack, StoredTrackSplitRule};
+use gt_store::{AttachedLog, StoredFixPlacementRule, StoredLogSettings, StoredTrackSplitRule};
 use gt_track_builder::{
     FixPlacementRule, GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig, TrackSplitRule,
 };
@@ -94,14 +94,11 @@ impl LoadCompletion {
     }
 }
 
-/// A log read back out of history: the attachment it is stored as, the filter
-/// stack stored with it, and what requested it.
 pub(super) struct AttachedLogRestore {
     pub attachment: LogAttachmentRef,
-    pub filters: StoredLogFilterStack,
+    pub settings: StoredLogSettings,
     pub requested_by: AttachedLogRequester,
-    pub year_reference: DateTime<Utc>,
-    pub year_resolution: YearResolution,
+    pub parse_year_reference: DateTime<Utc>,
 }
 
 /// What requested an attachment to be read back. The app opens the viewer on
@@ -614,19 +611,17 @@ impl LoadJobs {
     /// and the filter stack it was stored with.
     pub fn spawn_attached_log(
         &mut self,
-        log: AttachedLog,
+        AttachedLog {
+            name,
+            text,
+            settings,
+            parse_year_reference,
+        }: AttachedLog,
         attachment: LogAttachmentRef,
         requested_by: AttachedLogRequester,
     ) {
         let id = self.alloc_id();
         let started_at = self.frame_time();
-        let AttachedLog {
-            name,
-            text,
-            filters,
-            year_reference,
-            year_resolution,
-        } = log;
         self.loading_jobs.push(LoadingJob {
             id,
             filename: name.clone(),
@@ -639,10 +634,9 @@ impl LoadJobs {
         let text = LogText::from(text);
         let restored = AttachedLogRestore {
             attachment,
-            filters,
+            settings,
             requested_by,
-            year_reference,
-            year_resolution: gt_log_view::year_resolution_of_stored(year_resolution),
+            parse_year_reference,
         };
         log::info!("Loading the log {name:?} stored with a recording in history");
         background_thread::spawn_or_panic(format!("load-log-{name}"), move || {
@@ -651,8 +645,8 @@ impl LoadJobs {
             let result = parse_loaded_log(
                 source,
                 text,
-                restored.year_reference,
-                restored.year_resolution,
+                restored.parse_year_reference,
+                gt_log_view::year_resolution_of_stored(restored.settings.year_resolution),
                 report,
             )
             .map(|LooseLogResult { filename, parsed }| SavedLogResult {
@@ -1596,10 +1590,17 @@ mod tests {
         #[case] text: &str,
         #[case] year_resolution: YearResolution,
         #[case] years_resolve: bool,
+        #[values(None, Some(DateTime::UNIX_EPOCH))] stored_reference: Option<DateTime<Utc>>,
     ) {
         let reference = DateTime::parse_from_rfc3339("2026-10-01T00:00:00Z")
             .expect("reference date")
             .to_utc();
+        let reference = stored_reference.unwrap_or(reference);
+        let settings = StoredLogSettings {
+            filters: Default::default(),
+            year_reference: stored_reference,
+            year_resolution: gt_log_view::stored_year_resolution(year_resolution),
+        };
         let original =
             gt_logfile::parse_log_with_year_resolution(text.into(), reference, year_resolution)
                 .expect("parse the original log");
@@ -1608,9 +1609,8 @@ mod tests {
             AttachedLog {
                 name: "syslog.log".to_owned(),
                 text: text.to_owned(),
-                filters: Default::default(),
-                year_reference: original.year_reference(),
-                year_resolution: gt_log_view::stored_year_resolution(original.year_resolution()),
+                settings: settings.clone(),
+                parse_year_reference: original.year_reference(),
             },
             LogAttachmentRef {
                 recording: gt_store::DatabaseRef {
@@ -1623,7 +1623,9 @@ mod tests {
         );
         let completed = drain_until_complete(&mut jobs);
         let LoadCompletion::SavedLog {
-            result: Ok(SavedLogResult { parsed, .. }),
+            result: Ok(SavedLogResult {
+                parsed, restored, ..
+            }),
             ..
         } = completed.completion
         else {
@@ -1631,6 +1633,8 @@ mod tests {
         };
         assert_eq!(parsed.chronology().is_resolved(), years_resolve);
         assert_eq!(parsed, original);
+        assert_eq!(restored.settings, settings);
+        assert_eq!(restored.parse_year_reference, reference);
     }
 
     /// A log opened from a path is named after the file it was read from.
@@ -1702,9 +1706,12 @@ mod tests {
                     AttachedLog {
                         name: "broken.log".to_owned(),
                         text: junk.to_owned(),
-                        filters: Default::default(),
-                        year_reference: Utc::now(),
-                        year_resolution: StoredYearResolution::Infer,
+                        settings: StoredLogSettings {
+                            filters: Default::default(),
+                            year_reference: None,
+                            year_resolution: StoredYearResolution::Infer,
+                        },
+                        parse_year_reference: Utc::now(),
                     },
                     LogAttachmentRef {
                         recording: gt_store::DatabaseRef {
