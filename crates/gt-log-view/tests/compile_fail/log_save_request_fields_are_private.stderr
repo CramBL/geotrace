@@ -1,0 +1,22 @@
+error[E0624]: associated function `new` is private
+  --> tests/compile_fail/log_save_request_fields_are_private.rs:14:35
+   |
+14 |       let request = LogSaveRequest::new(log, recording, name, text, settings);
+   |                                     ^^^ private associated function
+   |
+  ::: src/log_save.rs
+   |
+   | /     pub(crate) fn new(
+   | |         log: LoadedLogId,
+   | |         recording: DatabaseRef,
+   | |         name: String,
+   | |         text: Arc<str>,
+   | |         settings: StoredLogSettings,
+   | |     ) -> Self {
+   | |_____________- private associated function defined here
+
+error[E0616]: field `operation` of struct `LogSaveRequest` is private
+  --> tests/compile_fail/log_save_request_fields_are_private.rs:16:28
+   |
+16 |         operation: request.operation,
+   |                            ^^^^^^^^^ private field
