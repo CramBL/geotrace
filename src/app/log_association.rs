@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use gt_loaded_files::{LoadedFileId, RecordingNames};
 use gt_log_view::{
-    AttachmentSettingsCompletion, LogAttachmentRef, LogSaveOutcome, PositionSourceState,
+    AttachmentSettingsCompletion, InitialLogSaveOutcome, LogAttachmentRef, LogSaveCompletion,
+    LogSaveOutcome, PositionSourceState,
 };
 use gt_pending_writes::WriteAccess;
 use gt_store::{AttachedLog, DatabaseRef, DbError, LogAttachmentError, StoredLogSettings};
@@ -145,6 +146,26 @@ impl App {
             && let Some(error) = error
         {
             log::warn!("Storing an attached log's settings failed: {error}");
+        }
+    }
+
+    pub(super) fn apply_initial_log_save_outcome(&mut self, completion: LogSaveCompletion) {
+        let recording = completion.recording().clone();
+        let entry = completion
+            .result()
+            .ok()
+            .map(|receipt| receipt.entry.clone());
+        let error = completion.result().err().map(str::to_owned);
+        let outcome = self
+            .logs
+            .acknowledge_initial_save(completion, &self.shared.borrow().loaded_files.view());
+        if let Some(entry) = entry {
+            self.log_attachments.record_attachment(recording, entry);
+        }
+        if outcome == Some(InitialLogSaveOutcome::Failed)
+            && let Some(error) = error
+        {
+            log::warn!("Storing a log with a recording failed: {error}");
         }
     }
 

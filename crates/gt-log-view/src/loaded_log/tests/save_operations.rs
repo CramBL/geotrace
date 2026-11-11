@@ -6,8 +6,8 @@ use gt_pending_writes::WriteAccess;
 use crate::loaded_log::tests::fixtures;
 use crate::{
     AttachmentSettingsStatus, InitialLogSaveOutcome, InitialLogSaveStatus, LoadedLogs,
-    LogCapabilities, LogOperationError, LogSaveOutcome, LogSaveReceipt, PositionSourceSelection,
-    RecordingKey, test_util,
+    LogCapabilities, LogOperationError, LogSaveOutcome, PositionSourceSelection, RecordingKey,
+    test_util,
 };
 
 #[rstest::rstest]
@@ -155,10 +155,7 @@ fn initial_save_preserves_new_chronology_and_filters_until_their_settings_acknow
     );
     fixtures::add_layer_chip(&mut logs, id, "navsyncd");
     let desired = logs.get_by_id(id).unwrap().settings_snapshot();
-    let completion = request.complete(Ok(LogSaveReceipt {
-        attachment_id: attachment.id,
-        stored_settings: initial,
-    }));
+    let completion = request.complete(Ok(fixtures::save_receipt(attachment.id, initial)));
     assert_eq!(
         logs.acknowledge_initial_save(completion.clone(), &files.view()),
         Some(InitialLogSaveOutcome::Saved(id))
@@ -253,10 +250,7 @@ fn failed_save_retries_the_original_destination_with_current_settings() {
         logs.get_by_id(id).unwrap().initial_save_status(),
         InitialLogSaveStatus::Saving
     );
-    let completion = retry.complete(Ok(LogSaveReceipt {
-        attachment_id: first.id,
-        stored_settings: desired,
-    }));
+    let completion = retry.complete(Ok(fixtures::save_receipt(first.id, desired)));
     assert_eq!(
         logs.acknowledge_initial_save(completion, &files.view()),
         Some(InitialLogSaveOutcome::Saved(id))
@@ -279,10 +273,7 @@ fn initial_save_completions_cannot_bind_an_unloaded_or_reinserted_context() {
         .prepare_save(id, target, &files.view(), WriteAccess::Owner)
         .unwrap();
     let settings = request.settings().clone();
-    let completion = request.complete(Ok(LogSaveReceipt {
-        attachment_id: attachment.id,
-        stored_settings: settings,
-    }));
+    let completion = request.complete(Ok(fixtures::save_receipt(attachment.id, settings)));
     let removed = logs.remove_by_id(id).unwrap();
     assert_eq!(
         logs.acknowledge_initial_save(completion.clone(), &files.view()),
@@ -325,10 +316,7 @@ fn detached_attachment_can_save_to_another_recording() {
     let request = logs
         .prepare_save(id, target, &files.view(), WriteAccess::Owner)
         .unwrap();
-    let receipt = LogSaveReceipt {
-        attachment_id: LogAttachmentId::new_random(),
-        stored_settings: request.settings().clone(),
-    };
+    let receipt = fixtures::save_receipt(LogAttachmentId::new_random(), request.settings().clone());
     assert_eq!(
         logs.acknowledge_initial_save(request.complete(Ok(receipt)), &files.view()),
         Some(InitialLogSaveOutcome::Saved(id))
@@ -430,10 +418,10 @@ fn reuse_of_a_loaded_attachment_preserves_both_contexts_and_its_pending_revision
         .unwrap();
     assert_eq!(
         logs.acknowledge_initial_save(
-            request.complete(Ok(LogSaveReceipt {
-                attachment_id: attachment.id,
-                stored_settings: fixtures::settings(),
-            })),
+            request.complete(Ok(fixtures::save_receipt(
+                attachment.id,
+                fixtures::settings()
+            ))),
             &files.view()
         ),
         Some(InitialLogSaveOutcome::AlreadyLoaded(saved))

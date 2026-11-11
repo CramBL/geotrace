@@ -1,8 +1,24 @@
-use gt_history_types::{DatabaseRef, LogAttachmentId, StoredLogSettings, StoredYearResolution};
+use gt_history_types::{
+    DatabaseRef, LogAttachment, LogAttachmentEntry, LogAttachmentId, LogContentHash,
+    StoredLogSettings, StoredYearResolution,
+};
 
-use crate::LayerColorSlot;
 use crate::attachment::LogAttachmentRef;
 use crate::loaded_log::{LoadedLogId, LoadedLogs};
+use crate::{LayerColorSlot, LogSaveReceipt};
+
+pub fn save_receipt(id: LogAttachmentId, settings: StoredLogSettings) -> LogSaveReceipt {
+    LogSaveReceipt {
+        entry: LogAttachmentEntry {
+            id,
+            attachment: LogAttachment {
+                name: "fixture.log".to_owned(),
+                content_hash: LogContentHash::of_log_bytes(b"fixture"),
+                settings,
+            },
+        },
+    }
+}
 
 pub fn attachment_ref() -> LogAttachmentRef {
     LogAttachmentRef {

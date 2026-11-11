@@ -16,7 +16,10 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 
 use egui::Context;
-use gt_log_view::{AttachmentSettingsCompletion, AttachmentSettingsWrite, LogAttachmentRef};
+use gt_log_view::{
+    AttachmentSettingsCompletion, AttachmentSettingsWrite, LogAttachmentRef, LogSaveCompletion,
+    LogSaveReceipt, LogSaveRequest,
+};
 use gt_logfile::ParsedLog;
 use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteAccess, WriteKind, WriteRejection};
 use gt_store::{
@@ -173,6 +176,7 @@ enum WriteRequest {
         old: String,
         new: String,
     },
+    SaveLog(LogSaveRequest),
     SetTracksShelved {
         db_ref: DatabaseRef,
         rows: Vec<usize>,
@@ -194,6 +198,7 @@ enum WriteRequest {
 impl WriteRequest {
     fn reject(self, rejection: WriteRejection) -> Response {
         match self {
+            Self::SaveLog(save) => Response::LogSaved(save.complete(Err(rejection.to_string()))),
             Self::StoreAttachedLogSettings(write) => {
                 Response::AttachedLogSettingsStored(write.complete(Err(rejection.to_string())))
             }
@@ -220,7 +225,7 @@ impl WriteRequest {
             Self::StoreRecordingUiState { .. } => {
                 "Storing the display settings of a recording in recording history"
             }
-            Self::AttachLog { .. } => "Storing a log with a recording",
+            Self::AttachLog { .. } | Self::SaveLog(_) => "Storing a log with a recording",
             Self::StoreAttachedLogSettings(_) => "Saving log settings in recording history",
             Self::DetachLog { .. } => "Removing a log from recording history",
         }
@@ -288,6 +293,7 @@ pub enum Response {
         name: String,
         result: Result<(), LogAttachmentError>,
     },
+    LogSaved(LogSaveCompletion),
     Mutated {
         op: DbOp,
         result: Result<(), DbError>,
@@ -414,30 +420,19 @@ impl HistoryWorker {
         self.path = None;
     }
 
+    pub fn save_log(&self, save: LogSaveRequest) -> Option<LogSaveCompletion> {
+        self.submit_acknowledged_log_write(WriteRequest::SaveLog(save.clone()))
+            .err()
+            .map(|error| save.complete(Err(error)))
+    }
+
     pub fn store_attached_log_settings(
         &self,
         write: AttachmentSettingsWrite,
     ) -> Option<AttachmentSettingsCompletion> {
-        let Some(sender) = &self.req_tx else {
-            return Some(write.complete(Err("Recording history is unavailable".to_owned())));
-        };
-        if !self.attachment_settings_write_access().allows_writing() {
-            let rejection = self
-                .writable_registry
-                .as_ref()
-                .and_then(PendingWrites::rejection)
-                .unwrap_or(WriteRejection::ReadOnlySession);
-            return Some(write.complete(Err(rejection.to_string())));
-        }
-        if sender
-            .send(Request::Write(WriteRequest::StoreAttachedLogSettings(
-                write.clone(),
-            )))
-            .is_err()
-        {
-            return Some(write.complete(Err("The recording history worker stopped".to_owned())));
-        }
-        None
+        self.submit_acknowledged_log_write(WriteRequest::StoreAttachedLogSettings(write.clone()))
+            .err()
+            .map(|error| write.complete(Err(error)))
     }
 
     pub fn attachment_settings_write_access(&self) -> WriteAccess {
@@ -651,6 +646,24 @@ impl HistoryWorker {
             handle.join().ok();
         }
     }
+
+    fn submit_acknowledged_log_write(&self, request: WriteRequest) -> Result<(), String> {
+        let sender = self
+            .req_tx
+            .as_ref()
+            .ok_or_else(|| "Recording history is unavailable".to_owned())?;
+        if !self.attachment_settings_write_access().allows_writing() {
+            let rejection = self
+                .writable_registry
+                .as_ref()
+                .and_then(PendingWrites::rejection)
+                .unwrap_or(WriteRejection::ReadOnlySession);
+            return Err(rejection.to_string());
+        }
+        sender
+            .send(Request::Write(request))
+            .map_err(|_send_error| "The recording history worker stopped".to_owned())
+    }
 }
 
 impl Drop for HistoryWorker {
@@ -852,20 +865,34 @@ fn handle_write_request(
             text,
             settings,
         } => {
-            let result = db
-                .attach_log(
-                    &db_ref,
-                    &LogToAttach {
-                        name: &name,
-                        text: &text,
-                        settings,
-                    },
-                )
-                .map(|entry| StoredLogAttachment {
-                    recording: db_ref,
-                    entry,
-                });
+            let result = RecordingLogSave {
+                recording: &db_ref,
+                log: LogToAttach {
+                    name: &name,
+                    text: &text,
+                    settings,
+                },
+            }
+            .store_or_reuse(db)
+            .map(|entry| StoredLogAttachment {
+                recording: db_ref,
+                entry,
+            });
             Response::LogAttached { log, name, result }
+        }
+        WriteRequest::SaveLog(save) => {
+            let result = RecordingLogSave {
+                recording: save.recording(),
+                log: LogToAttach {
+                    name: save.name(),
+                    text: save.text(),
+                    settings: save.settings().clone(),
+                },
+            }
+            .store_or_reuse(db)
+            .map(|entry| LogSaveReceipt { entry })
+            .map_err(|error| error.to_string());
+            Response::LogSaved(save.complete(result))
         }
         WriteRequest::StoreAttachedLogSettings(write) => {
             let result = db
@@ -889,6 +916,23 @@ fn handle_write_request(
                 name,
                 result,
             }
+        }
+    }
+}
+
+struct RecordingLogSave<'a> {
+    recording: &'a DatabaseRef,
+    log: LogToAttach<'a>,
+}
+
+impl RecordingLogSave<'_> {
+    fn store_or_reuse(self, db: &mut Recordings) -> Result<LogAttachmentEntry, LogAttachmentError> {
+        match db.log_attachment_with_content(
+            self.recording,
+            LogContentHash::of_log_bytes(self.log.text.as_bytes()),
+        )? {
+            Some(entry) => Ok(entry),
+            None => db.attach_log(self.recording, &self.log),
         }
     }
 }
@@ -1065,6 +1109,8 @@ mod tests {
     use crate::app::test_util::recordings;
 
     use super::*;
+
+    mod log_saves;
 
     #[test]
     fn worker_round_trips_every_operation() {
