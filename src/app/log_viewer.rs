@@ -39,60 +39,35 @@ pub(super) mod settings_status;
 mod summary_panel;
 pub(super) mod unresolved_years;
 
-/// The floating log viewer: which log it shows, how much of that log's parse
-/// summary is unfolded, and the unit its association window is entered in.
 pub(super) struct LogViewerWindow {
     pub open: bool,
-
-    /// The log the window shows. Resolved against the loaded logs before every
-    /// render: `None`, or an id no longer loaded, falls back to the log that
-    /// loaded first.
     selected: Option<LoadedLogId>,
+    log_states: FxHashMap<LoadedLogId, LogViewerState>,
+    color_services: bool,
+    color_levels: bool,
+    show_structural_lines: bool,
+    #[cfg(test)]
+    association_window_commits: usize,
+    notices: Vec<String>,
+    pub(super) restored_logs: RestoredLogsBadge,
+}
 
+#[derive(Default)]
+struct LogViewerState {
     summary_expanded: bool,
     association_window_unit: AssociationWindowUnit,
     association_window_edit: Option<AssociationWindowEdit>,
-    #[cfg(test)]
-    association_window_commits: usize,
     last_entry_year_draft: Option<LastEntryYearDraft>,
-
-    /// Whether the line table draws each service name, and the hostname beside
-    /// it, in its own colour. Belongs to the window, and starts on for every
-    /// session.
-    color_services: bool,
-
-    /// Whether the line table draws each level in the colour of its severity.
-    /// Belongs to the window, and starts on for every session.
-    color_levels: bool,
-    show_structural_lines: bool,
     diagnostic_reveal: Option<DiagnosticReveal>,
     line_table_cache: Option<LineTableCache>,
     table_reading_anchor: Option<TableReadingAnchor>,
     scroll_to_source_line: Option<TableReadingAnchor>,
-
-    /// When the shown log's filters started scanning, for the note the viewer
-    /// shows once a scan runs long enough to notice.
     query_pending_since: Option<f64>,
-    filter_editor_log: Option<LoadedLogId>,
+    filter_editor_open: bool,
     filter_editor_focus: bool,
-
-    /// The table row the summary panel requested a scroll to, consumed by the
-    /// table on the frame after the request.
     scroll_to_row: Option<usize>,
-
-    /// The hexagon the map was last clicked on. The table marks the rows of
-    /// its lines while it shows that hexagon's log.
     clicked_glyph: Option<LogMatchGlyph>,
-
-    /// The table line the pointer rests on, and since when.
     row_hover_dwell: RowHoverDwell,
-
-    /// What went wrong with this session's attachments, shown until dismissed.
-    notices: Vec<String>,
-
-    /// The logs that came back with a recording since this window was last
-    /// open, announced on the toolbar's log button.
-    pub(super) restored_logs: RestoredLogsBadge,
 }
 
 /// The app state the viewer reads and writes while it renders.
@@ -172,25 +147,12 @@ impl LogViewerWindow {
         Self {
             open: false,
             selected: None,
-            summary_expanded: false,
-            association_window_unit: AssociationWindowUnit::Seconds,
-            association_window_edit: None,
-            #[cfg(test)]
-            association_window_commits: 0,
-            last_entry_year_draft: None,
+            log_states: FxHashMap::default(),
             color_services: true,
             color_levels: true,
             show_structural_lines: false,
-            diagnostic_reveal: None,
-            line_table_cache: None,
-            table_reading_anchor: None,
-            scroll_to_source_line: None,
-            query_pending_since: None,
-            filter_editor_log: None,
-            filter_editor_focus: false,
-            scroll_to_row: None,
-            clicked_glyph: None,
-            row_hover_dwell: RowHoverDwell::default(),
+            #[cfg(test)]
+            association_window_commits: 0,
             notices: Vec::new(),
             restored_logs: RestoredLogsBadge::default(),
         }
@@ -218,12 +180,7 @@ impl LogViewerWindow {
         self.open = true;
     }
 
-    /// Shows the log `id` names, opening the window on it.
     pub(super) fn open_on_log(&mut self, id: LoadedLogId) {
-        if self.selected != Some(id) {
-            self.diagnostic_reveal = None;
-            self.scroll_to_row = None;
-        }
         self.selected = Some(id);
         self.open = true;
     }
@@ -233,22 +190,27 @@ impl LogViewerWindow {
     ///
     /// A hexagon of a log that is no longer loaded leaves the window as it is.
     fn open_on_clicked_glyph(&mut self, clicked: LogMatchGlyph, logs: &LoadedLogs) {
-        let Some(log) = logs.get_by_id(clicked.log) else {
+        let id = clicked.log;
+        let Some(log) = logs.get_by_id(id) else {
             return;
         };
         self.open_on_log(clicked.log);
-        self.diagnostic_reveal = None;
+        self.log_state_mut(clicked.log).diagnostic_reveal = None;
         let rows = self.table_rows(log, clicked.log);
-        self.scroll_to_row = clicked
+        self.log_state_mut(clicked.log).scroll_to_row = clicked
             .entry_indices
             .first()
             .and_then(|&entry_index| rows.row_of_exact_entry(entry_index));
-        self.clicked_glyph = Some(clicked);
+        self.log_state_mut(id).clicked_glyph = Some(clicked);
     }
 
-    /// Points the selection at the log this frame draws, which is the selected
-    /// one while it stays loaded and the log that loaded first otherwise.
+    fn log_state_mut(&mut self, id: LoadedLogId) -> &mut LogViewerState {
+        self.log_states.entry(id).or_default()
+    }
+
     fn resolve_selected_log(&mut self, logs: &LoadedLogs) {
+        self.log_states
+            .retain(|id, _| logs.get_by_id(*id).is_some());
         self.selected = self
             .selected
             .filter(|id| logs.get_by_id(*id).is_some())
@@ -287,19 +249,9 @@ impl LogViewerWindow {
             .and_then(|id| logs.get_by_id(id).map(|log| (id, log)))
         {
             self.clear_invalid_diagnostic_reveal(log, id);
-        } else {
-            self.diagnostic_reveal = None;
-            self.line_table_cache = None;
-        }
-        if !self.open
-            || self
-                .association_window_edit
-                .as_ref()
-                .is_some_and(|edit| Some(edit.log) != self.selected)
-        {
-            self.commit_association_window(logs, recordings);
         }
         if !self.open {
+            self.commit_association_window(logs, recordings);
             return;
         }
         self.restored_logs.clear();
@@ -376,7 +328,7 @@ impl LogViewerWindow {
                                             egui::Layout::left_to_right(egui::Align::Center),
                                             |ui| {
                                                 self.display_options_ui(ui);
-                                                self.parse_summary_row_ui(ui, log);
+                                                self.parse_summary_row_ui(ui, log, shown);
                                             },
                                         );
                                     },
@@ -396,7 +348,7 @@ impl LogViewerWindow {
                                 });
                             }
                         }
-                        if self.summary_expanded
+                        if self.log_state_mut(shown).summary_expanded
                             && let Some(log) = logs.get_by_id(shown)
                         {
                             self.summary_panel_ui(ui, log, shown);
@@ -439,13 +391,7 @@ impl LogViewerWindow {
                 .collect();
             self.close_log(logs, id, &navigation_order);
         }
-        if !self.open
-            || window.is_none_or(|response| response.inner.is_none())
-            || self
-                .association_window_edit
-                .as_ref()
-                .is_some_and(|edit| Some(edit.log) != self.selected)
-        {
+        if !self.open || window.is_none_or(|response| response.inner.is_none()) {
             self.commit_association_window(logs, recordings);
         }
     }
@@ -488,6 +434,7 @@ impl LogViewerWindow {
             return;
         };
         log::info!("Unloaded log {:?}", log.name());
+        self.log_states.remove(&closing);
         if self.selected == Some(closing) {
             self.selected = navigation_order
                 .iter()
@@ -500,22 +447,19 @@ impl LogViewerWindow {
                     })
                 })
                 .copied();
-            self.diagnostic_reveal = None;
-            self.scroll_to_row = None;
-            self.clicked_glyph = None;
-            self.filter_editor_log = None;
-            self.filter_editor_focus = false;
         }
+        self.resolve_selected_log(logs);
     }
 
     /// The parse summary of the shown log, which unfolds the summary panel.
-    fn parse_summary_row_ui(&mut self, ui: &mut egui::Ui, log: &LoadedLog) {
-        let caret = if self.summary_expanded {
+    fn parse_summary_row_ui(&mut self, ui: &mut egui::Ui, log: &LoadedLog, shown: LoadedLogId) {
+        let state = self.log_state_mut(shown);
+        let caret = if state.summary_expanded {
             ICON_CARET_DOWN
         } else {
             ICON_CARET_RIGHT
         };
-        let hover = if self.summary_expanded {
+        let hover = if state.summary_expanded {
             "Hide log details"
         } else {
             "Show log details"
@@ -525,11 +469,11 @@ impl LogViewerWindow {
             .on_hover_text(hover);
         response.ctx.accesskit_node_builder(response.id, |node| {
             node.set_author_id(SUMMARY_DISCLOSURE_ID);
-            node.set_expanded(self.summary_expanded);
+            node.set_expanded(state.summary_expanded);
             node.set_description(hover);
         });
         if response.clicked() {
-            self.summary_expanded = !self.summary_expanded;
+            state.summary_expanded = !state.summary_expanded;
         }
     }
 
@@ -548,7 +492,10 @@ impl LogViewerWindow {
         }: FooterAccess,
     ) {
         let selected = self.selected;
-        let Some(log) = selected.and_then(|id| logs.get_by_id(id)) else {
+        let Some(shown) = selected else {
+            return;
+        };
+        let Some(log) = logs.get_by_id(shown) else {
             return;
         };
         let target = log.associated_recording();
@@ -558,8 +505,9 @@ impl LogViewerWindow {
         } else {
             ASSOCIATION_WINDOW_HOVER
         };
-        let entered_unit = self.association_window_unit;
+        let entered_unit = self.log_state_mut(shown).association_window_unit;
         let window = self
+            .log_state_mut(shown)
             .association_window_edit
             .as_ref()
             .map_or(log.association_window(), |edit| edit.window);
@@ -721,22 +669,23 @@ impl LogViewerWindow {
                 });
         });
 
-        self.association_window_unit = unit;
+        self.log_state_mut(shown).association_window_unit = unit;
         if let Some(response) = window_response {
             if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Escape)) {
-                self.association_window_edit = None;
+                self.log_state_mut(shown).association_window_edit = None;
             } else if response.changed()
                 && value.to_bits() != initial_value.to_bits()
                 && let Some(log) = selected
             {
                 match entered_unit.window_of(value) {
                     Ok(window) => {
-                        self.association_window_edit = Some(AssociationWindowEdit { log, window })
+                        self.log_state_mut(shown).association_window_edit =
+                            Some(AssociationWindowEdit { log, window })
                     }
                     Err(error) => self.report_warning(error.to_string()),
                 }
             }
-            if !response.dragged() && !response.has_focus() {
+            if response.drag_stopped() || response.lost_focus() {
                 self.commit_association_window(logs, recordings);
             }
         }
@@ -760,7 +709,10 @@ impl LogViewerWindow {
         logs: &mut LoadedLogs,
         recordings: LoadedFilesView<'_>,
     ) {
-        if let Some(edit) = self.association_window_edit.take()
+        let Some(shown) = self.selected else {
+            return;
+        };
+        if let Some(edit) = self.log_state_mut(shown).association_window_edit.take()
             && let Some(mut log) = logs.get_mut_by_id(edit.log)
             && edit.window != log.association_window()
         {

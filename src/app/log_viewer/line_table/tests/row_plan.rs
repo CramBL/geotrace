@@ -65,10 +65,10 @@ fn chronology_changes_restore_source_positions_after_day_dividers_change(
         row: target,
         offset_within_row_px: 3.0,
     };
-    viewer.table_reading_anchor = Some(anchor);
+    viewer.active_state_mut().table_reading_anchor = Some(anchor);
     if pending_navigation {
-        viewer.scroll_to_row = Some(row);
-        viewer.table_reading_anchor = Some(TableReadingAnchor {
+        viewer.active_state_mut().scroll_to_row = Some(row);
+        viewer.active_state_mut().table_reading_anchor = Some(TableReadingAnchor {
             row: TableRowIdentity::Entry(0),
             source_line: 1,
             ..anchor
@@ -81,8 +81,8 @@ fn chronology_changes_restore_source_positions_after_day_dividers_change(
     );
     let log = logs.get_by_id(id).unwrap();
     viewer.preserve_source_position_after_chronology_change(log, id);
-    assert_eq!(viewer.scroll_to_row, None);
-    let restored = viewer.scroll_to_source_line.unwrap();
+    assert_eq!(viewer.active_state().scroll_to_row, None);
+    let restored = viewer.active_state().scroll_to_source_line.unwrap();
     assert_eq!(restored.source_line, 4);
     assert_eq!(
         restored.offset_within_row_px,

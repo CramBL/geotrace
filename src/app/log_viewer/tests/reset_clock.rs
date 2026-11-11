@@ -91,7 +91,12 @@ fn device_clock_source_rows_remain_copyable_and_reachable_without_a_map_target()
     super::unfold_the_summary_panel(&mut harness);
     harness.get_by_label("Boot 2").click();
     harness.run_steps(2);
-    let reveal = harness.state().viewer.diagnostic_reveal.unwrap();
+    let reveal = harness
+        .state()
+        .viewer
+        .active_state()
+        .diagnostic_reveal
+        .unwrap();
     assert_eq!(reveal.entry_index, 1);
     assert_eq!(
         harness.state().shown_log().unwrap().parsed().entries()[reveal.entry_index].line_number,

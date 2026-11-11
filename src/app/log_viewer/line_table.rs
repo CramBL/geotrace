@@ -666,8 +666,8 @@ impl LogViewerWindow {
         if self.selected_log() != Some(log_id) {
             return;
         }
-        let pending_target = self.scroll_to_row.and_then(|row| {
-            let cache = self.line_table_cache.as_ref()?;
+        let pending_target = self.log_state_mut(log_id).scroll_to_row.and_then(|row| {
+            let cache = self.log_state_mut(log_id).line_table_cache.as_ref()?;
             if cache.key.log != log_id {
                 return None;
             }
@@ -679,23 +679,29 @@ impl LogViewerWindow {
                 offset_within_row_px: 0.0,
             })
         });
-        self.scroll_to_source_line = pending_target
+        self.log_state_mut(log_id).scroll_to_source_line = pending_target
             .or(self
+                .log_state_mut(log_id)
                 .scroll_to_source_line
                 .filter(|anchor| anchor.log == log_id))
             .or(self
+                .log_state_mut(log_id)
                 .table_reading_anchor
                 .filter(|anchor| anchor.log == log_id));
-        self.scroll_to_row = None;
+        self.log_state_mut(log_id).scroll_to_row = None;
     }
 
     pub(super) fn clear_invalid_diagnostic_reveal(&mut self, log: &LoadedLog, log_id: LoadedLogId) {
-        if self.diagnostic_reveal.is_some_and(|reveal| {
-            reveal.log != log_id
-                || reveal.table_semantic_revision != log.filters().table_semantic_revision()
-        }) {
-            self.diagnostic_reveal = None;
-            self.scroll_to_row = None;
+        if self
+            .log_state_mut(log_id)
+            .diagnostic_reveal
+            .is_some_and(|reveal| {
+                reveal.log != log_id
+                    || reveal.table_semantic_revision != log.filters().table_semantic_revision()
+            })
+        {
+            self.log_state_mut(log_id).diagnostic_reveal = None;
+            self.log_state_mut(log_id).scroll_to_row = None;
         }
     }
 
@@ -709,14 +715,17 @@ impl LogViewerWindow {
             log: log_id,
             visible_revision: log.filters().visible_revision(),
             show_structural_lines: self.show_structural_lines,
-            revealed_entry: self.diagnostic_reveal.map(|reveal| reveal.entry_index),
+            revealed_entry: self
+                .log_state_mut(log_id)
+                .diagnostic_reveal
+                .map(|reveal| reveal.entry_index),
         };
-        match &mut self.line_table_cache {
+        match &mut self.log_state_mut(log_id).line_table_cache {
             Some(cache) if cache.key == key => Arc::clone(&cache.rows),
             slot => {
                 let rows = Arc::new(LineTableRows::with_overlay(
                     log,
-                    self.show_structural_lines,
+                    key.show_structural_lines,
                     key.revealed_entry,
                 ));
                 *slot = Some(LineTableCache {
@@ -754,16 +763,16 @@ impl LogViewerWindow {
         if log.parsed().entries().get(entry_index).is_none() {
             return;
         }
-        self.diagnostic_reveal = None;
+        self.log_state_mut(log_id).diagnostic_reveal = None;
         if hidden {
-            self.diagnostic_reveal = Some(DiagnosticReveal {
+            self.log_state_mut(log_id).diagnostic_reveal = Some(DiagnosticReveal {
                 log: log_id,
                 table_semantic_revision: log.filters().table_semantic_revision(),
                 entry_index,
             });
         }
         let rows = self.table_rows(log, log_id);
-        self.scroll_to_row = match target {
+        self.log_state_mut(log_id).scroll_to_row = match target {
             DiagnosticTarget::BootSession(session) => rows.row_of_boot_divider(session),
             DiagnosticTarget::Entry(entry_index) => rows.row_of_exact_entry(entry_index),
         };
@@ -868,11 +877,16 @@ impl LogViewerWindow {
         let parsed = log.parsed();
         let filters = log.filters();
         let rows = self.table_rows(log, log_id);
-        let source_anchor = self
+        let color_switches = MessageColorSwitches {
+            services: self.color_services,
+            levels: self.color_levels,
+        };
+        let state = self.log_state_mut(log_id);
+        let source_anchor = state
             .scroll_to_source_line
             .filter(|anchor| anchor.log == log_id);
         if source_anchor.is_some() && !filters.is_table_query_pending() {
-            self.scroll_to_source_line = None;
+            state.scroll_to_source_line = None;
         }
         let ticks = &rows.ticks;
         let line_numbers = LineNumberColumn::new(ui, rows.largest_line_number);
@@ -889,12 +903,8 @@ impl LogViewerWindow {
                 )
             })
             .collect();
-        let unit = self.association_window_unit;
+        let unit = state.association_window_unit;
         let recognised_messages = parsed.recognised_messages();
-        let color_switches = MessageColorSwitches {
-            services: self.color_services,
-            levels: self.color_levels,
-        };
         let association_window = log.association_window();
         let years_resolved = parsed.chronology().is_resolved();
         let dark_mode = ui.visuals().dark_mode;
@@ -904,9 +914,9 @@ impl LogViewerWindow {
             .hover
             .glyph
             .as_ref()
-            .or(self.clicked_glyph.as_ref());
+            .or(state.clicked_glyph.as_ref());
         let cross_highlighted = CrossHighlightedRows::of(marking_hexagon, log_id, dark_mode);
-        let hover_dwell = self.row_hover_dwell;
+        let hover_dwell = state.row_hover_dwell;
         let mut hovered_row_placement = None;
         let mut hovered_entry_index = None;
 
@@ -927,10 +937,10 @@ impl LogViewerWindow {
                 .min_scrolled_height(0.0);
             if let Some(anchor) = source_anchor {
                 let row = rows.row_at_reading_anchor(parsed, anchor);
-                self.scroll_to_row = None;
+                state.scroll_to_row = None;
                 scroll_area = scroll_area
                     .vertical_scroll_offset(row as f32 * row_height + anchor.offset_within_row_px);
-            } else if let Some(row) = self.scroll_to_row.take() {
+            } else if let Some(row) = state.scroll_to_row.take() {
                 scroll_area = scroll_area.vertical_scroll_offset(row as f32 * row_height);
             }
             let output = scroll_area.show_rows(ui, row_height, rows.len(), |ui, shown| {
@@ -1065,7 +1075,7 @@ impl LogViewerWindow {
             });
             #[expect(clippy::cast_sign_loss, reason = "Scroll offsets are nonnegative")]
             let first_visible_row = (output.state.offset.y / row_height).floor() as usize;
-            self.table_reading_anchor = rows.at(first_visible_row).and_then(|row| {
+            state.table_reading_anchor = rows.at(first_visible_row).and_then(|row| {
                 Some(TableReadingAnchor {
                     log: log_id,
                     source_line: row.source_line(parsed)?,
@@ -1074,7 +1084,8 @@ impl LogViewerWindow {
                 })
             });
         });
-        self.row_hover_dwell
+        state
+            .row_hover_dwell
             .moved_to(hovered_entry_index, ui.input(|input| input.time));
         requests.hover.row_placement = hovered_row_placement;
     }

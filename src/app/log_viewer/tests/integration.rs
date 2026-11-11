@@ -96,6 +96,7 @@ fn grouped_structured_filters_preserve_highlights_and_diagnostic_navigation_afte
         harness
             .state()
             .viewer
+            .active_state()
             .diagnostic_reveal
             .unwrap()
             .entry_index,

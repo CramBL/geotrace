@@ -35,9 +35,23 @@ use gt_ui_theme::EM_DASH;
 use gt_ui_types::{LoadedLogId, LogMatchColor, LogMatchGlyph, LogMatchHover, LogMatches};
 
 use super::{
-    AssociationWindowUnit, LOG_VIEWER_TITLE, LogViewerContext, LogViewerRequests, LogViewerWindow,
-    YearsToResolve, filters, line_table, log_list, unresolved_years,
+    AssociationWindowUnit, LOG_VIEWER_TITLE, LogViewerContext, LogViewerRequests, LogViewerState,
+    LogViewerWindow, YearsToResolve, filters, line_table, log_list, unresolved_years,
 };
+
+impl LogViewerWindow {
+    pub(super) fn active_state_mut(&mut self) -> &mut LogViewerState {
+        let selected = self.selected.expect("a fixture log is selected");
+        self.log_state_mut(selected)
+    }
+
+    pub(super) fn active_state(&self) -> &LogViewerState {
+        let selected = self.selected.expect("a fixture log is selected");
+        self.log_states
+            .get(&selected)
+            .expect("the fixture log has viewer state")
+    }
+}
 
 fn log_start() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 5, 29, 18, 48, 25)
@@ -624,7 +638,7 @@ fn removing_a_group_through_its_menu_preserves_map_conditions_and_clears_its_dra
             .unwrap()
             .has_effect(FilterEffect::Table)
     );
-    assert!(harness.state().viewer.filter_editor_log.is_none());
+    assert!(!harness.state().viewer.active_state().filter_editor_open);
     assert_eq!(match_count(&harness), "6 of 6");
     set_other_chip_effect_only(&mut harness, 0);
     let stack = harness.state().shown_log().unwrap().filters();
@@ -1686,7 +1700,11 @@ fn changing_display_units_preserves_the_exact_saved_window(#[case] duration: Dur
         AssociationWindowUnit::Days,
         AssociationWindowUnit::Nanoseconds,
     ] {
-        let current = harness.state().viewer.association_window_unit;
+        let current = harness
+            .state()
+            .viewer
+            .active_state()
+            .association_window_unit;
         harness.get(By::new().value(current.label())).click();
         harness.run_steps(4);
         harness.get_by_label(unit.label()).click();
@@ -1791,6 +1809,7 @@ fn dragging_the_association_window_commits_one_pass_with_the_final_placements() 
         let state = harness.state();
         let draft = state
             .viewer
+            .active_state()
             .association_window_edit
             .as_ref()
             .unwrap()
@@ -1873,12 +1892,13 @@ enum AssociationWindowEditTransition {
 }
 
 #[rstest]
-#[case::selection(AssociationWindowEditTransition::SelectOtherLog)]
-#[case::unload(AssociationWindowEditTransition::UnloadLog)]
-#[case::close(AssociationWindowEditTransition::CloseViewer)]
-#[case::source(AssociationWindowEditTransition::ChangePositionSource)]
+#[case::selection(AssociationWindowEditTransition::SelectOtherLog, false)]
+#[case::unload(AssociationWindowEditTransition::UnloadLog, false)]
+#[case::close(AssociationWindowEditTransition::CloseViewer, true)]
+#[case::source(AssociationWindowEditTransition::ChangePositionSource, true)]
 fn association_window_drafts_apply_to_the_edited_log(
     #[case] transition: AssociationWindowEditTransition,
+    #[case] committed: bool,
 ) {
     let mut harness = harness_of(
         vec![recording("walk.gtd", 55.0), recording("other.gtd", 56.0)],
@@ -1902,6 +1922,7 @@ fn association_window_drafts_apply_to_the_edited_log(
     let draft = harness
         .state()
         .viewer
+        .active_state()
         .association_window_edit
         .as_ref()
         .unwrap()
@@ -1928,14 +1949,28 @@ fn association_window_drafts_apply_to_the_edited_log(
     harness.drop_at(from + egui::vec2(30.0, 0.0));
     harness.run_steps(3);
     let state = harness.state();
-    assert!(state.viewer.association_window_edit.is_none());
+    assert!(
+        state
+            .viewer
+            .active_state()
+            .association_window_edit
+            .is_none()
+    );
     assert_eq!(
         state.logs.get_by_id(other).unwrap().association_window(),
         AssociationWindow::try_from_seconds(ASSOCIATION_WINDOW_SECS as u64).unwrap()
     );
     if let Some(log) = state.logs.get_by_id(edited) {
-        assert_eq!(log.association_window(), draft);
-        assert_eq!(state.viewer.association_window_commits, 1);
+        let expected = if committed {
+            draft
+        } else {
+            AssociationWindow::try_from_seconds(ASSOCIATION_WINDOW_SECS as u64).unwrap()
+        };
+        assert_eq!(log.association_window(), expected);
+        assert_eq!(
+            state.viewer.association_window_commits,
+            usize::from(committed)
+        );
         if matches!(
             transition,
             AssociationWindowEditTransition::ChangePositionSource
@@ -1956,6 +1991,20 @@ fn association_window_drafts_apply_to_the_edited_log(
         }
     } else {
         assert_eq!(state.viewer.association_window_commits, 0);
+    }
+    if matches!(transition, AssociationWindowEditTransition::SelectOtherLog) {
+        harness.state_mut().viewer.open_on_log(edited);
+        harness.run_steps(2);
+        assert_eq!(
+            harness
+                .state()
+                .viewer
+                .active_state()
+                .association_window_edit
+                .as_ref()
+                .map(|edit| edit.window),
+            Some(draft)
+        );
     }
 }
 
@@ -2083,7 +2132,7 @@ fn closing_an_inactive_log_preserves_the_active_reading_context_with_equal_filen
         );
     }
     harness.run_steps(3);
-    let reveal = harness.state().viewer.diagnostic_reveal;
+    let reveal = harness.state().viewer.active_state().diagnostic_reveal;
     let filters = harness
         .state()
         .shown_log()
@@ -2106,8 +2155,11 @@ fn closing_an_inactive_log_preserves_the_active_reading_context_with_equal_filen
 
     assert!(harness.state().logs.get_by_id(other).is_none());
     assert_eq!(harness.state().viewer.selected_log(), Some(shown));
-    assert_eq!(harness.state().viewer.diagnostic_reveal, reveal);
-    assert_eq!(harness.state().viewer.filter_editor_log, Some(shown));
+    assert_eq!(
+        harness.state().viewer.active_state().diagnostic_reveal,
+        reveal
+    );
+    assert!(harness.state().viewer.active_state().filter_editor_open);
     assert_eq!(live_filter_text(&harness), "entry");
     assert_eq!(
         harness
@@ -2513,7 +2565,10 @@ fn run_until_the_scans_land(harness: &mut Harness<ViewerState>) {
 fn type_into_live_filter(harness: &mut Harness<ViewerState>, text: &str) {
     open_live_editor(harness);
     harness.ctx.memory_mut(|memory| {
-        memory.request_focus(egui::Id::new(filters::LIVE_FILTER_FIELD_ID));
+        memory.request_focus(egui::Id::new((
+            filters::LIVE_FILTER_FIELD_ID,
+            harness.state().viewer.selected_log().unwrap(),
+        )));
     });
     harness.run_steps(2);
     harness
@@ -2659,7 +2714,10 @@ fn type_into_map_draft(harness: &mut Harness<ViewerState>, text: &str) {
         harness.run_steps(2);
     }
     harness.ctx.memory_mut(|memory| {
-        memory.request_focus(egui::Id::new(filters::LIVE_FILTER_FIELD_ID));
+        memory.request_focus(egui::Id::new((
+            filters::LIVE_FILTER_FIELD_ID,
+            harness.state().viewer.selected_log().unwrap(),
+        )));
     });
     harness.run_steps(2);
     harness
@@ -3225,7 +3283,10 @@ fn map_condition_entry_previews_and_commits_without_filtering_table(
         harness.get_by_label(scope.to_string().as_str()).click();
         run_until_the_scans_land(&mut harness);
         harness.ctx.memory_mut(|memory| {
-            memory.request_focus(egui::Id::new(filters::LIVE_FILTER_FIELD_ID))
+            memory.request_focus(egui::Id::new((
+                filters::LIVE_FILTER_FIELD_ID,
+                harness.state().viewer.selected_log().unwrap(),
+            )))
         });
         harness.run_steps(2);
     }
@@ -3440,7 +3501,7 @@ fn summary_disclosure_shows_expansion_state_and_details_action() {
         node.click();
         harness.run_steps(2);
     }
-    assert!(!harness.state().viewer.summary_expanded);
+    assert!(!harness.state().viewer.active_state().summary_expanded);
 }
 
 #[test]
@@ -3807,7 +3868,12 @@ fn switching_logs_restores_each_scroll_region_and_reloading_starts_at_the_top(
                 .map(|index| format!("Notice {index}"))
                 .collect();
         }
-        ViewerScrollRegion::Summary => state.viewer.summary_expanded = true,
+        ViewerScrollRegion::Summary => {
+            let ids: Vec<_> = state.logs.iter_with_ids().map(|(id, _)| id).collect();
+            for id in ids {
+                state.viewer.log_state_mut(id).summary_expanded = true;
+            }
+        }
         ViewerScrollRegion::Table => {}
     }
     let first_id = state.first_loaded_log();
@@ -3854,6 +3920,9 @@ fn switching_logs_restores_each_scroll_region_and_reloading_starts_at_the_top(
     assert_ne!(reloaded_id, second_id);
     harness.state_mut().viewer.open_on_log(reloaded_id);
     harness.run_steps(3);
+    if matches!(region, ViewerScrollRegion::Summary) {
+        unfold_the_summary_panel(&mut harness);
+    }
     assert!(
         (harness.get_by_label(&anchor).rect().top() - initial_y).abs()
             < SCROLL_READING_TOLERANCE_PX
@@ -3919,7 +3988,7 @@ fn map_navigation_overrides_the_target_logs_restored_table_offset() {
     let first_id = harness.state().first_loaded_log();
     select_log(&mut harness, "first.log");
     let scroll = TableScroll::of(&harness);
-    harness.state_mut().viewer.scroll_to_row = Some(10);
+    harness.state_mut().viewer.active_state_mut().scroll_to_row = Some(10);
     harness.run_steps(3);
     let previous_offset = scroll.offset_px(&harness);
     select_log(&mut harness, "second.log");
@@ -3954,7 +4023,10 @@ fn a_scrolling_key_leaves_the_table_where_it_is_while_the_live_filter_has_focus(
     open_live_editor(&mut harness);
     let scroll = TableScroll::of(&harness);
     harness.ctx.memory_mut(|memory| {
-        memory.request_focus(egui::Id::new(filters::LIVE_FILTER_FIELD_ID));
+        memory.request_focus(egui::Id::new((
+            filters::LIVE_FILTER_FIELD_ID,
+            harness.state().viewer.selected_log().unwrap(),
+        )));
     });
     harness.run_steps(2);
 
@@ -4002,7 +4074,7 @@ fn log_viewer_window_fits_every_viewport(
     state
         .viewer
         .report_warning(gt_test_utils::oversized_text('w'));
-    state.viewer.summary_expanded = true;
+    state.viewer.active_state_mut().summary_expanded = true;
     let id = state.logs.first_id().expect("fixture log");
     let (stack, _) = state.logs.filter_stack_mut_by_id(id).unwrap();
     for group in 0..5 {
@@ -4200,6 +4272,7 @@ mod exporter_totals;
 mod integration;
 mod map_navigation;
 mod message_readability;
+mod per_log_state;
 mod reset_clock;
 mod source_navigation;
 mod table_filter_controls;

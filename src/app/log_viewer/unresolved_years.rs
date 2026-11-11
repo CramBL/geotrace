@@ -62,6 +62,7 @@ impl LogViewerWindow {
             .find(|entry| entry.is_anchored())
             .map(|entry| entry.line_number)?;
         let mut draft = self
+            .log_state_mut(log_id)
             .last_entry_year_draft
             .take()
             .filter(|draft| draft.log == log_id)
@@ -82,7 +83,7 @@ impl LogViewerWindow {
             })
             .inner;
         ui.add(Label::new(RichText::new(EARLIER_LINES_NOTE).weak()).wrap());
-        self.last_entry_year_draft = Some(draft);
+        self.log_state_mut(log_id).last_entry_year_draft = Some(draft);
         applied
     }
 }
