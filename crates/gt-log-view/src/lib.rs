@@ -23,7 +23,7 @@ pub use filter::{
     ClockTicks, DayDivider, EntryMatches, FilterChip, FilterChipId, FilterEffect, FilterGroup,
     FilterGroupId, FilterGroupOperator, FilterPattern, FilterScope, FilterStack,
     InvalidFilterPattern, LAYER_COLOR_SLOT_COUNT, LayerColorSlot, LayerColorSlots, LiveFilterDraft,
-    TimestampTick, VisibleEntries,
+    TableFilterApplication, TableFilterStatus, TimestampTick, VisibleEntries,
 };
 pub use loaded_log::{
     LoadedLog, LoadedLogEditor, LoadedLogs, LogContextOrigin, LogPushOutcome, LogSaveOutcome,

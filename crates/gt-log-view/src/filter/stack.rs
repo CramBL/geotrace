@@ -156,6 +156,22 @@ impl From<StoredLogFilterEffects> for FilterEffects {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TableFilterApplication {
+    Active,
+    Paused,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TableFilterStatus {
+    EmptyLog,
+    Invalid,
+    Matches,
+    NoMatches,
+    Paused,
+    Pending,
+}
+
 /// The entries the table shows, in file order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VisibleEntries {
@@ -219,6 +235,7 @@ pub struct FilterStack {
     next_chip_id: u64,
     groups: Vec<FilterGroup>,
     selected_group: FilterGroupId,
+    table_application: TableFilterApplication,
     visible: Arc<VisibleEntries>,
     clock_ticks: Arc<ClockTicks>,
     table_semantic_revision: u64,
@@ -258,6 +275,7 @@ impl FilterStack {
                 operator: FilterGroupOperator::All,
             }],
             selected_group: FilterGroupId(0),
+            table_application: TableFilterApplication::Active,
             visible: Arc::new(visible),
             clock_ticks: Arc::new(clock_ticks),
             table_semantic_revision: 0,
@@ -318,44 +336,55 @@ impl FilterStack {
     }
 
     pub fn remove_group(&mut self, id: FilterGroupId) {
-        let Some(index) = self.groups.iter().position(|group| group.id == id) else {
-            return;
-        };
-        if self.group_has_table_conditions_or_draft(id) {
-            self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
-        }
-        let survivor = self
-            .groups
-            .iter()
-            .find(|group| group.id != id)
-            .map_or(id, FilterGroup::id);
-        self.chips.retain_mut(|chip| {
-            if chip.group != id {
-                return true;
-            }
-            let Some(effects) = chip.effects.without(FilterEffect::Table) else {
-                return false;
-            };
-            chip.effects = effects;
-            chip.group = survivor;
-            true
-        });
-        if self.selected_group == id {
-            if self.live_effect == FilterEffect::Table {
-                self.draft = self.draft.cleared();
-                self.live = LogFilter::unwritten(self.entry_count());
-                self.live.pattern = self.draft.pattern().unwrap_or_default();
-            }
-            self.selected_group = survivor;
-        }
-        if self.groups.len() == 1 {
-            if let Some(group) = self.groups.first_mut() {
-                group.operator = FilterGroupOperator::All;
-            }
-        } else {
-            self.groups.remove(index);
+        self.remove_table_group(id);
+        self.recompose_visible_entries();
+    }
+
+    pub fn clear_table_filters(&mut self) {
+        let groups: Vec<_> = self.groups.iter().map(FilterGroup::id).collect();
+        for group in groups {
+            self.remove_table_group(group);
         }
         self.recompose_visible_entries();
+    }
+
+    pub fn set_table_application(&mut self, application: TableFilterApplication) {
+        if self.table_application != application {
+            self.table_application = application;
+            self.recompose_visible_entries();
+        }
+    }
+
+    pub fn table_application(&self) -> TableFilterApplication {
+        self.table_application
+    }
+
+    pub fn table_filter_status(&self) -> TableFilterStatus {
+        if self.entry_count() == 0 {
+            return TableFilterStatus::EmptyLog;
+        }
+        if self.table_application == TableFilterApplication::Paused {
+            return TableFilterStatus::Paused;
+        }
+        if self
+            .table_conditions()
+            .any(|filter| filter.compiled.is_err())
+        {
+            TableFilterStatus::Invalid
+        } else if self.is_table_query_pending() {
+            TableFilterStatus::Pending
+        } else if self.visible.is_empty() {
+            TableFilterStatus::NoMatches
+        } else {
+            TableFilterStatus::Matches
+        }
+    }
+
+    pub fn is_table_query_pending(&self) -> bool {
+        self.table_application == TableFilterApplication::Active
+            && self
+                .table_conditions()
+                .any(|filter| filter.query.is_pending())
     }
 
     pub fn move_chip_to_group(&mut self, chip_id: FilterChipId, group: FilterGroupId) {
@@ -769,6 +798,46 @@ impl FilterStack {
         }
     }
 
+    fn remove_table_group(&mut self, id: FilterGroupId) {
+        let Some(index) = self.groups.iter().position(|group| group.id == id) else {
+            return;
+        };
+        if self.group_has_table_conditions_or_draft(id) {
+            self.table_semantic_revision = self.table_semantic_revision.wrapping_add(1);
+        }
+        let survivor = self
+            .groups
+            .iter()
+            .find(|group| group.id != id)
+            .map_or(id, FilterGroup::id);
+        self.chips.retain_mut(|chip| {
+            if chip.group != id {
+                return true;
+            }
+            let Some(effects) = chip.effects.without(FilterEffect::Table) else {
+                return false;
+            };
+            chip.effects = effects;
+            chip.group = survivor;
+            true
+        });
+        if self.selected_group == id {
+            if self.live_effect == FilterEffect::Table {
+                self.draft = self.draft.cleared();
+                self.live = LogFilter::unwritten(self.entry_count());
+                self.live.pattern = self.draft.pattern().unwrap_or_default();
+            }
+            self.selected_group = survivor;
+        }
+        if self.groups.len() == 1 {
+            if let Some(group) = self.groups.first_mut() {
+                group.operator = FilterGroupOperator::All;
+            }
+        } else {
+            self.groups.remove(index);
+        }
+    }
+
     fn push_stored_chip(&mut self, stored: &StoredLogFilter) {
         let id = FilterChipId(self.next_chip_id);
         self.next_chip_id = self.next_chip_id.saturating_add(1);
@@ -802,6 +871,17 @@ impl FilterStack {
         self.live_effect == FilterEffect::Table && self.live.participates_in_composition()
     }
 
+    fn table_conditions(&self) -> impl Iterator<Item = &LogFilter> {
+        iter::once(&self.live)
+            .filter(|_| self.live_effect == FilterEffect::Table)
+            .chain(
+                self.chips
+                    .iter()
+                    .filter(|chip| chip.is_enabled(FilterEffect::Table))
+                    .map(|chip| &chip.filter),
+            )
+    }
+
     fn group_has_table_conditions_or_draft(&self, id: FilterGroupId) -> bool {
         self.chips
             .iter()
@@ -819,6 +899,7 @@ impl FilterStack {
         let composed_groups: Vec<EntryMatches> = self
             .groups
             .iter()
+            .filter(|_| self.table_application == TableFilterApplication::Active)
             .filter_map(|group| {
                 let conditions: Vec<&EntryMatches> = iter::once(&self.live)
                     .filter(|live| {
@@ -1258,6 +1339,113 @@ mod tests {
         assert_eq!(stack.is_query_pending(), pending);
         stack.wait_for_queries();
         assert_eq!(visible(&stack), [0, 2]);
+    }
+
+    #[test]
+    fn pausing_preserves_predicates_and_scan_generations_through_edits_and_restore() {
+        let (mut stack, mut slots) = unfiltered_stack();
+        let group = stack.selected_group();
+        stack.set_group_operator(group, FilterGroupOperator::Any);
+        let first = add_refine_chip(&mut stack, "acquired");
+        let disabled = add_refine_chip(&mut stack, "battery");
+        stack.set_chip_effect_enabled(disabled, FilterEffect::Table, false);
+        stack.add_chip_effect(first, FilterEffect::Map, &mut slots);
+        stack.set_live_filter_text("lost");
+        let stored = stack.to_stored_stack();
+        let draft = stack.live_filter_draft().clone();
+        let scan = stack.live.query.scan_identity();
+        let chip_scan = stack.chip(first).unwrap().filter.query.scan_identity();
+        stack.set_table_application(TableFilterApplication::Paused);
+        stack.wait_for_queries();
+        assert_eq!(visible(&stack), [0, 1, 2, 3]);
+        assert_eq!(stack.to_stored_stack(), stored);
+        assert_eq!(stack.live_filter_draft(), &draft);
+        assert_eq!(stack.live.query.scan_identity(), scan);
+        assert_eq!(
+            stack.chip(first).unwrap().filter.query.scan_identity(),
+            chip_scan
+        );
+        stack.set_table_application(TableFilterApplication::Active);
+        assert_eq!(visible(&stack), [0, 2]);
+        stack.set_table_application(TableFilterApplication::Paused);
+        stack.set_group_operator(group, FilterGroupOperator::All);
+        stack.set_live_filter_text("gnss");
+        stack.wait_for_queries();
+        assert_eq!(visible(&stack), [0, 1, 2, 3]);
+        let mut reopened =
+            FilterStack::from_stored_stack(Arc::clone(&stack.log), &stack.to_stored_stack());
+        reopened.wait_for_queries();
+        assert_eq!(reopened.table_application(), TableFilterApplication::Active);
+        assert_eq!(visible(&reopened), [0]);
+        stack.set_table_application(TableFilterApplication::Active);
+        assert_eq!(visible(&stack), [0]);
+    }
+
+    #[test]
+    fn clearing_all_table_groups_preserves_map_drafts_and_persisted_map_effects() {
+        let (mut stack, mut slots) = unfiltered_stack();
+        let first = add_refine_chip(&mut stack, "gnss");
+        stack.add_chip_effect(first, FilterEffect::Map, &mut slots);
+        stack.set_chip_effect_enabled(first, FilterEffect::Map, false);
+        let second = stack.create_group();
+        stack.select_group(second);
+        add_refine_chip(&mut stack, "lost");
+        stack.set_live_filter_effect(FilterEffect::Map);
+        let map = add_layer_chip(&mut stack, &mut slots, "battery");
+        stack.set_live_filter_text("critical");
+        stack.set_table_application(TableFilterApplication::Paused);
+        stack.wait_for_queries();
+        let draft = stack.live_filter_draft().clone();
+        let scan = stack.live.query.scan_identity();
+        let map_slots: Vec<_> = stack
+            .chips()
+            .iter()
+            .filter_map(|chip| Some((chip.id(), chip.layer_slot()?)))
+            .collect();
+        stack.clear_table_filters();
+        assert_eq!(stack.table_application(), TableFilterApplication::Paused);
+        assert_eq!(visible(&stack), [0, 1, 2, 3]);
+        assert_eq!(stack.groups().len(), 1);
+        assert_eq!(
+            stack.groups().first().unwrap().operator(),
+            FilterGroupOperator::All
+        );
+        assert_eq!(chip_ids(&stack), [first, map]);
+        assert_eq!(stack.live_filter_draft(), &draft);
+        assert_eq!(stack.live.query.scan_identity(), scan);
+        for (id, slot) in map_slots {
+            let chip = stack.chip(id).unwrap();
+            assert!(!chip.has_effect(FilterEffect::Table));
+            assert_eq!(chip.layer_slot(), Some(slot));
+            assert_eq!(slots.holders_of(slot), 1);
+        }
+        assert!(!stack.chip(first).unwrap().is_enabled(FilterEffect::Map));
+        let stored = stack.to_stored_stack();
+        let mut reopened = FilterStack::from_stored_stack(Arc::clone(&stack.log), &stored);
+        reopened.wait_for_queries();
+        assert_eq!(reopened.to_stored_stack(), stored);
+        assert_eq!(visible(&reopened), [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn table_result_status_separates_pending_invalid_and_map_only_scans() {
+        let (mut stack, _) = unfiltered_stack();
+        assert_eq!(stack.table_filter_status(), TableFilterStatus::Matches);
+        add_refine_chip(&mut stack, "missing");
+        assert_eq!(stack.table_filter_status(), TableFilterStatus::Pending);
+        stack.wait_for_queries();
+        assert_eq!(stack.table_filter_status(), TableFilterStatus::NoMatches);
+        stack.set_live_filter_regex(true);
+        stack.set_live_filter_text("[");
+        assert_eq!(stack.table_filter_status(), TableFilterStatus::Invalid);
+        stack.set_live_filter_effect(FilterEffect::Map);
+        assert_eq!(stack.table_filter_status(), TableFilterStatus::NoMatches);
+        stack.set_live_filter_text("gnss");
+        assert!(stack.is_query_pending());
+        assert!(!stack.is_table_query_pending());
+        assert_eq!(stack.table_filter_status(), TableFilterStatus::NoMatches);
+        stack.set_table_application(TableFilterApplication::Paused);
+        assert_eq!(stack.table_filter_status(), TableFilterStatus::Paused);
     }
 
     struct GroupRemovalCase {

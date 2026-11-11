@@ -403,7 +403,7 @@ fn returning_to_a_log_with_a_live_condition_displays_its_editor() {
     harness.get_by_label(filters::ADD_FILTER_LABEL);
     assert_eq!(match_count(&harness), "2 of 6");
     assert_eq!(live_filter_text(&harness), "fix");
-    harness.get_by_label("Clear").click();
+    harness.get_by_label("Clear condition").click();
     run_until_the_scans_land(&mut harness);
     assert_eq!(match_count(&harness), "6 of 6");
     harness.get_by_label(filters::ADD_FILTER_LABEL);
@@ -2963,7 +2963,7 @@ fn choosing_and_clearing_a_level_preserves_an_inactive_level_editor() {
     harness.get_by_label("Error").click();
     run_until_the_scans_land(&mut harness);
     assert_eq!(match_count(&harness), "1 of 2");
-    harness.get_by_label("Clear").click();
+    harness.get_by_label("Clear condition").click();
     run_until_the_scans_land(&mut harness);
     assert_eq!(match_count(&harness), "2 of 2");
     harness.get_by_label("Choose level…");
@@ -3149,7 +3149,7 @@ fn adding_a_filter_preserves_the_visible_entries_and_empties_the_field() {
     assert_eq!(live_filter_text(&harness), "");
     harness.get_by_label("fix");
     assert!(harness.query_by_label(filters::ADD_FILTER_LABEL).is_none());
-    assert!(harness.query_by_label("Clear").is_none());
+    assert!(harness.query_by_label("Clear condition").is_none());
 }
 
 #[test]
@@ -4059,6 +4059,15 @@ const BOOLEAN_FILTER_LOG: &str = "\
 2026-01-01 00:00:03 receiver: gamma
 ";
 
+const SOURCE_LOG: &str = "\
+2026-05-29 18:48:25 navsyncd: first
+--- Device reboot ---
+2026-05-29 18:48:30 navsyncd: second
+2026-05-29 18:48:40 navsyncd: last
+----------- Journal summary -----------
+trailing source text
+";
+
 /// One log holding every row kind the table draws: an entry timestamped from
 /// its neighbours, a reboot separator, and a backwards timestamp step no clock
 /// adjustment explains.
@@ -4194,3 +4203,4 @@ mod integration;
 mod map_navigation;
 mod reset_clock;
 mod source_navigation;
+mod table_filter_controls;

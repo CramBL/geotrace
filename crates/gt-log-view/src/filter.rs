@@ -5,7 +5,8 @@ pub use matches::EntryMatches;
 pub use pattern::{FilterPattern, FilterScope, InvalidFilterPattern};
 pub use slots::{LAYER_COLOR_SLOT_COUNT, LayerColorSlot, LayerColorSlots};
 pub use stack::{
-    FilterChip, FilterChipId, FilterEffect, FilterGroup, FilterGroupId, FilterStack, VisibleEntries,
+    FilterChip, FilterChipId, FilterEffect, FilterGroup, FilterGroupId, FilterStack,
+    TableFilterApplication, TableFilterStatus, VisibleEntries,
 };
 
 mod clock_ticks;

@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Log Viewer:** Table filters can be paused, resumed, or cleared while preserving map highlights, with recovery controls for empty results.
 - **Recordings:** GTD version 3 recordings load with navigation state, coordinate origin and independent satellite reports available for inspection.
 - **Recordings:** Navigation status and interval statistics include epochs without recorded coordinates.
 - **Plots:** Dilution of precision metrics are available for recordings with DOP samples.

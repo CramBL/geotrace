@@ -41,6 +41,61 @@ pub(super) enum LineTableRow {
     },
 }
 
+impl LineTableRow {
+    fn source_line(self, parsed: &ParsedLog) -> Option<u32> {
+        match self {
+            Self::Entry { entry_index, .. } | Self::DayDivider { entry_index } => parsed
+                .entries()
+                .get(entry_index)
+                .map(|entry| entry.line_number),
+            Self::Structural { structural_index } => parsed
+                .structural_lines()
+                .get(structural_index)
+                .map(|line| line.line_number),
+            Self::BootDivider {
+                session_index,
+                structural_index,
+            } => structural_index
+                .and_then(|index| parsed.structural_lines().get(index))
+                .map(|line| line.line_number)
+                .or_else(|| {
+                    let session = parsed.boot_sessions().get(session_index)?;
+                    parsed
+                        .entries()
+                        .get(session.entry_range.start)
+                        .map(|entry| entry.line_number)
+                }),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TableRowIdentity {
+    BootSession(usize),
+    DayDivider(usize),
+    Entry(usize),
+    Structural(usize),
+}
+
+impl From<LineTableRow> for TableRowIdentity {
+    fn from(row: LineTableRow) -> Self {
+        match row {
+            LineTableRow::BootDivider { session_index, .. } => Self::BootSession(session_index),
+            LineTableRow::DayDivider { entry_index } => Self::DayDivider(entry_index),
+            LineTableRow::Entry { entry_index, .. } => Self::Entry(entry_index),
+            LineTableRow::Structural { structural_index } => Self::Structural(structural_index),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct TableReadingAnchor {
+    pub(super) log: LoadedLogId,
+    pub(super) source_line: u32,
+    row: TableRowIdentity,
+    offset_within_row_px: f32,
+}
+
 #[derive(Clone, Copy, Debug)]
 enum InsertedRowKind {
     BootDivider {
@@ -184,10 +239,17 @@ impl PendingInsertion {
                 InsertedRow {
                     visible_row: insertion.visible_row,
                     table_row,
+                    source_line: insertion.source_line,
                     row: insertion.row,
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
+        debug_assert!(
+            insertions
+                .iter()
+                .zip(insertions.iter().skip(1))
+                .all(|(previous, next)| previous.source_line <= next.source_line)
+        );
         boot_rows.sort_unstable_by_key(|(session, _)| *session);
         (insertions, boot_rows)
     }
@@ -197,6 +259,7 @@ impl PendingInsertion {
 struct InsertedRow {
     visible_row: usize,
     table_row: usize,
+    source_line: u32,
     row: InsertedRowKind,
 }
 
@@ -549,6 +612,43 @@ impl LineTableRows {
         (visible_row < self.entries.len()).then(|| self.table_row_of_visible_entry(visible_row))
     }
 
+    fn row_of_identity(&self, target: TableRowIdentity) -> Option<usize> {
+        match target {
+            TableRowIdentity::Entry(entry) => self.row_of_exact_entry(entry),
+            TableRowIdentity::BootSession(session) => self.row_of_boot_divider(session),
+            TableRowIdentity::DayDivider(_) | TableRowIdentity::Structural(_) => {
+                self.insertions.iter().find_map(|insertion| {
+                    (TableRowIdentity::from(LineTableRow::from(insertion.row)) == target)
+                        .then_some(insertion.table_row)
+                })
+            }
+        }
+    }
+
+    fn row_at_source_line(&self, parsed: &ParsedLog, line: u32) -> usize {
+        let entry = parsed
+            .entries()
+            .partition_point(|entry| entry.line_number < line);
+        let entry_row = self.row_of_entry_at_or_after(entry);
+        let insertion = self
+            .insertions
+            .partition_point(|insertion| insertion.source_line < line);
+        let inserted_row = self
+            .insertions
+            .get(insertion)
+            .map(|insertion| insertion.table_row);
+        entry_row
+            .into_iter()
+            .chain(inserted_row)
+            .min()
+            .unwrap_or_else(|| self.len().saturating_sub(1))
+    }
+
+    fn row_at_reading_anchor(&self, parsed: &ParsedLog, anchor: TableReadingAnchor) -> usize {
+        self.row_of_identity(anchor.row)
+            .unwrap_or_else(|| self.row_at_source_line(parsed, anchor.source_line))
+    }
+
     fn table_row_of_visible_entry(&self, visible_row: usize) -> usize {
         visible_row
             + self
@@ -737,6 +837,12 @@ impl LogViewerWindow {
         let parsed = log.parsed();
         let filters = log.filters();
         let rows = self.table_rows(log, log_id);
+        let source_anchor = self
+            .scroll_to_source_line
+            .filter(|anchor| anchor.log == log_id);
+        if source_anchor.is_some() && !filters.is_table_query_pending() {
+            self.scroll_to_source_line = None;
+        }
         let ticks = &rows.ticks;
         let line_numbers = LineNumberColumn::new(ui, rows.largest_line_number);
         let anomaly_steps: FxHashMap<usize, Duration> = parsed
@@ -788,10 +894,15 @@ impl LogViewerWindow {
                 // pushes the footer off the bottom. The table takes exactly the
                 // room the window has left.
                 .min_scrolled_height(0.0);
-            if let Some(row) = self.scroll_to_row.take() {
+            if let Some(anchor) = source_anchor {
+                let row = rows.row_at_reading_anchor(parsed, anchor);
+                self.scroll_to_row = None;
+                scroll_area = scroll_area
+                    .vertical_scroll_offset(row as f32 * row_height + anchor.offset_within_row_px);
+            } else if let Some(row) = self.scroll_to_row.take() {
                 scroll_area = scroll_area.vertical_scroll_offset(row as f32 * row_height);
             }
-            scroll_area.show_rows(ui, row_height, rows.len(), |ui, shown| {
+            let output = scroll_area.show_rows(ui, row_height, rows.len(), |ui, shown| {
                 if pointer_over_the_window && ui.memory(|memory| memory.focused()).is_none() {
                     KeyboardScrollSteps {
                         row_height_px: row_height,
@@ -920,6 +1031,16 @@ impl LogViewerWindow {
                         None => {}
                     }
                 }
+            });
+            #[expect(clippy::cast_sign_loss, reason = "Scroll offsets are nonnegative")]
+            let first_visible_row = (output.state.offset.y / row_height).floor() as usize;
+            self.table_reading_anchor = rows.at(first_visible_row).and_then(|row| {
+                Some(TableReadingAnchor {
+                    log: log_id,
+                    source_line: row.source_line(parsed)?,
+                    row: TableRowIdentity::from(row),
+                    offset_within_row_px: output.state.offset.y % row_height,
+                })
             });
         });
         self.row_hover_dwell

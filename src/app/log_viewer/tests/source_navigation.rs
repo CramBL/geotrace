@@ -542,15 +542,6 @@ fn switching_or_reloading_logs_clears_diagnostic_reveals() {
     assert_eq!(harness.state().viewer.diagnostic_reveal, None);
 }
 
-const SOURCE_LOG: &str = "\
-2026-05-29 18:48:25 navsyncd: first
---- Device reboot ---
-2026-05-29 18:48:30 navsyncd: second
-2026-05-29 18:48:40 navsyncd: last
------------ Journal summary -----------
-trailing source text
-";
-
 #[test]
 fn structural_source_table_snapshot() {
     let mut harness = rendering_harness_of(Vec::new(), &[("source.log", SOURCE_LOG)]);
