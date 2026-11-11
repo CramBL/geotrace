@@ -1,7 +1,7 @@
 use egui::containers::menu::{MenuButton, MenuConfig};
 use egui::{Align, Button, Label, Layout, PopupCloseBehavior, RichText, ScrollArea};
 use egui_phosphor::regular::{CHECK as ICON_CHECK, COPY as ICON_COPY, WARNING as ICON_WARNING};
-use gt_log_view::{AttachmentSettingsStatus, LoadedLog, LoadedLogs};
+use gt_log_view::{AttachmentSettingsStatus, InitialLogSaveStatus, LoadedLog, LoadedLogs};
 use gt_pending_writes::WriteAccess;
 use gt_ui_types::LoadedLogId;
 
@@ -15,10 +15,7 @@ pub(in crate::app) fn toolbar_ui(
     access: WriteAccess,
     requests: &mut LogViewerRequests,
 ) {
-    let failures = logs
-        .iter()
-        .filter(|log| log.settings_save_error().is_some())
-        .count();
+    let failures = logs.iter().filter(|log| log.save_error().is_some()).count();
     let saving = logs
         .iter()
         .filter(|log| log.settings_save_status(access) == AttachmentSettingsStatus::Saving)
@@ -49,16 +46,20 @@ pub(in crate::app) fn toolbar_ui(
                                         ui.label(log.name());
                                         ui.label(StatusPresentation::of(log, access).text(ui));
                                     });
-                                    if let Some(attachment) = log.attachment() {
+                                    if let Some(recording) = log
+                                        .attachment()
+                                        .map(|attachment| &attachment.recording)
+                                        .or_else(|| log.initial_save_recording())
+                                    {
                                         ui.add(
                                             Label::new(
                                                 RichText::new(format!(
                                                     "{}/{}",
                                                     gt_loaded_files::display_identity(
-                                                        &attachment.recording.identity
+                                                        &recording.identity
                                                     )
                                                     .0,
-                                                    attachment.recording.group_name,
+                                                    recording.group_name,
                                                 ))
                                                 .small(),
                                             )
@@ -115,12 +116,16 @@ struct StatusPresentation {
 
 impl StatusPresentation {
     fn of(log: &LoadedLog, access: WriteAccess) -> Self {
-        let (label, attention, icon) = match log.settings_save_status(access) {
-            AttachmentSettingsStatus::Dirty => ("Settings unsaved", false, ""),
-            AttachmentSettingsStatus::Failed(_) => ("Settings save failed", true, ICON_WARNING),
-            AttachmentSettingsStatus::Saved => ("Settings saved", false, ICON_CHECK),
-            AttachmentSettingsStatus::Saving => ("Saving settings…", false, ""),
-            AttachmentSettingsStatus::SessionOnly => ("Session-only settings", false, ""),
+        let (label, attention, icon) = match log.initial_save_status() {
+            InitialLogSaveStatus::Failed(_) => ("Log save failed", true, ICON_WARNING),
+            InitialLogSaveStatus::Saving => ("Saving log…", false, ""),
+            InitialLogSaveStatus::Idle => match log.settings_save_status(access) {
+                AttachmentSettingsStatus::Dirty => ("Settings unsaved", false, ""),
+                AttachmentSettingsStatus::Failed(_) => ("Settings save failed", true, ICON_WARNING),
+                AttachmentSettingsStatus::Saved => ("Settings saved", false, ICON_CHECK),
+                AttachmentSettingsStatus::Saving => ("Saving settings…", false, ""),
+                AttachmentSettingsStatus::SessionOnly => ("Session-only settings", false, ""),
+            },
         };
         Self {
             label,
@@ -151,26 +156,36 @@ fn details_ui(
     requests: &mut LogViewerRequests,
 ) {
     ui.set_max_width(DETAILS_MAX_WIDTH_PX);
-    let explanation = match log.settings_save_status(access) {
-        AttachmentSettingsStatus::Dirty => "Settings changes are waiting to save",
-        AttachmentSettingsStatus::Failed(_) => "Settings changes remain in this session",
-        AttachmentSettingsStatus::Saved => "Current settings are saved with this log",
-        AttachmentSettingsStatus::Saving => "Saving settings with this log in recording history",
-        AttachmentSettingsStatus::SessionOnly if log.attachment().is_some() => {
-            "Changes apply in this session while recording history is read-only"
-        }
-        AttachmentSettingsStatus::SessionOnly => {
-            "Save this log with a recording to persist its settings"
-        }
+    let explanation = match log.initial_save_status() {
+        InitialLogSaveStatus::Failed(_) => "This log and its latest changes remain in this session",
+        InitialLogSaveStatus::Saving => "Saving this log with the recording",
+        InitialLogSaveStatus::Idle => match log.settings_save_status(access) {
+            AttachmentSettingsStatus::Dirty => "Settings changes are waiting to save",
+            AttachmentSettingsStatus::Failed(_) => "Settings changes remain in this session",
+            AttachmentSettingsStatus::Saved => "Current settings are saved with this log",
+            AttachmentSettingsStatus::Saving => {
+                "Saving settings with this log in recording history"
+            }
+            AttachmentSettingsStatus::SessionOnly if log.attachment().is_some() => {
+                "Changes apply in this session while recording history is read-only"
+            }
+            AttachmentSettingsStatus::SessionOnly => {
+                "Save this log with a recording to persist its settings"
+            }
+        },
     };
     ui.label(explanation);
-    if let Some(error) = log.settings_save_error() {
-        let retry_action = match log.attachment() {
-            Some(attachment) => format!(
+    if let Some(error) = log.save_error() {
+        let retry_action = match log
+            .attachment()
+            .map(|attachment| &attachment.recording)
+            .or_else(|| log.initial_save_recording())
+        {
+            Some(recording) => format!(
                 "Save the latest settings for {} ({}/{})",
                 log.name(),
-                gt_loaded_files::display_identity(&attachment.recording.identity).0,
-                attachment.recording.group_name,
+                gt_loaded_files::display_identity(&recording.identity).0,
+                recording.group_name,
             ),
             None => format!("Save the latest settings for {}", log.name()),
         };
@@ -186,7 +201,7 @@ fn details_ui(
             });
         });
         if retry.clicked() {
-            requests.retry_settings_save = Some(id);
+            requests.retry_save = Some(id);
         }
         ui.collapsing("Error details", |ui| {
             ui.add(Label::new(error).selectable(true).wrap());

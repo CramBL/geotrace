@@ -521,9 +521,6 @@ impl App {
             Response::LogSaved(completion) => {
                 self.apply_initial_log_save_outcome(completion);
             }
-            Response::LogAttached { log, name, result } => {
-                self.apply_log_attach_outcome(log, &name, result);
-            }
             Response::AttachedLogsLoaded {
                 db_ref,
                 attachments,

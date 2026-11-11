@@ -8,17 +8,17 @@ use std::sync::Arc;
 use gt_loaded_files::{LoadedFileId, RecordingNames};
 use gt_log_view::{
     AttachmentSettingsCompletion, InitialLogSaveOutcome, LogAttachmentRef, LogSaveCompletion,
-    LogSaveOutcome, PositionSourceState,
+    LogSaveRequest, PositionSourceSelection, PositionSourceState,
 };
 use gt_pending_writes::WriteAccess;
-use gt_store::{AttachedLog, DatabaseRef, DbError, LogAttachmentError, StoredLogSettings};
+use gt_store::{AttachedLog, DatabaseRef, DbError, LogAttachmentError};
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::LoadedLogId;
 
 use crate::settings::InitialPositionSourcePolicy;
 
 use super::App;
-use super::history_db::{ExistingLogAttachment, RestoredLogAttachment, StoredLogAttachment};
+use super::history_db::{ExistingLogAttachment, RestoredLogAttachment};
 use super::load_failures::{LoadFailure, LoadFailureCause, LoadSource};
 use super::loader;
 use super::log_viewer::association_dialog::{LogAssociationChoice, LogAssociationDialog};
@@ -41,6 +41,12 @@ impl App {
             let Some(log) = self.logs.get_by_id(id) else {
                 continue;
             };
+            if !log
+                .capabilities(WriteAccess::ReadOnly)
+                .select_position_source
+            {
+                continue;
+            }
             let ranked = log
                 .rank_association_candidates(&recordings)
                 .rank_with_recording_order(&candidates);
@@ -60,8 +66,15 @@ impl App {
                 ));
                 break;
             }
-            if let Some(mut log) = self.logs.get_mut_by_id(id) {
-                log.anchor_to_loaded_recording(unambiguous, &recordings);
+            if let Err(error) = self.logs.select_position_source(
+                id,
+                unambiguous.map_or(
+                    PositionSourceSelection::NoSource,
+                    PositionSourceSelection::Recording,
+                ),
+                &recordings,
+            ) {
+                log::warn!("Selecting a log position source failed: {error}");
             }
         }
     }
@@ -85,7 +98,7 @@ impl App {
             log,
             recordings,
             &names,
-            self.pending_writes.write_access(),
+            self.attachment_settings_write_access(),
             &mut self.initial_position_source_policy,
         );
         let duplicate_query = dialog
@@ -118,10 +131,8 @@ impl App {
         if let Some(db_ref) = requests.open_recording {
             self.history.open(db_ref);
         }
-        if self.attachment_settings_write_access().allows_writing()
-            && let Some(id) = requests.retry_settings_save
-        {
-            self.logs.retry_settings_save(id);
+        if let Some(id) = requests.retry_save {
+            self.retry_log_save(id);
         }
         if let Some(years) = requests.resolve_years {
             self.resolve_log_years(years);
@@ -155,17 +166,27 @@ impl App {
             .result()
             .ok()
             .map(|receipt| receipt.entry.clone());
-        let error = completion.result().err().map(str::to_owned);
+        let id = completion.log();
         let outcome = self
             .logs
             .acknowledge_initial_save(completion, &self.shared.borrow().loaded_files.view());
         if let Some(entry) = entry {
             self.log_attachments.record_attachment(recording, entry);
         }
-        if outcome == Some(InitialLogSaveOutcome::Failed)
-            && let Some(error) = error
-        {
-            log::warn!("Storing a log with a recording failed: {error}");
+        match outcome {
+            Some(InitialLogSaveOutcome::AlreadyLoaded(existing)) => {
+                if self.log_viewer.open && self.log_viewer.selected_log() == Some(id) {
+                    self.log_viewer.open_on_log(existing);
+                }
+            }
+            Some(InitialLogSaveOutcome::Failed) => {
+                if let Some(log) = self.logs.get_by_id(id)
+                    && let Some(error) = log.save_error()
+                {
+                    log::warn!("Saving log {:?} failed: {error}", log.name());
+                }
+            }
+            Some(InitialLogSaveOutcome::Saved(_)) | None => {}
         }
     }
 
@@ -192,8 +213,11 @@ impl App {
         if !log.resolve_years_as(year_resolution, &recordings) {
             return;
         }
-        let needs_a_position_source =
-            log.parsed().chronology().is_resolved() && log.anchor_key().is_none();
+        let needs_a_position_source = log.parsed().chronology().is_resolved()
+            && log.anchor_key().is_none()
+            && log
+                .capabilities(WriteAccess::ReadOnly)
+                .select_position_source;
         drop(shared);
         if needs_a_position_source {
             self.choose_position_source_of_loaded_log(log_id);
@@ -205,9 +229,15 @@ impl App {
     fn choose_position_source_of_loaded_log(&mut self, log_id: LoadedLogId) {
         let shared = self.shared.borrow();
         let recordings = shared.loaded_files.view();
-        let Some(mut log) = self.logs.get_mut_by_id(log_id) else {
+        let Some(log) = self.logs.get_by_id(log_id) else {
             return;
         };
+        if !log
+            .capabilities(WriteAccess::ReadOnly)
+            .select_position_source
+        {
+            return;
+        }
         let candidates = log.rank_association_candidates(&recordings);
         if self.initial_position_source_policy == InitialPositionSourcePolicy::Ask
             && !candidates.ranked().is_empty()
@@ -216,7 +246,16 @@ impl App {
             self.open_log_association_dialog(log_id);
             return;
         }
-        log.anchor_to_loaded_recording(candidates.unambiguous_target(), &recordings);
+        if let Err(error) = self.logs.select_position_source(
+            log_id,
+            candidates.unambiguous_target().map_or(
+                PositionSourceSelection::NoSource,
+                PositionSourceSelection::Recording,
+            ),
+            &recordings,
+        ) {
+            log::warn!("Selecting a log position source failed: {error}");
+        }
     }
 
     /// Lists the attachments a recording opened from history holds, loads each
@@ -298,46 +337,6 @@ impl App {
         }
     }
 
-    /// Notes the attachment a log was stored as, or reports why it was not.
-    pub(super) fn apply_log_attach_outcome(
-        &mut self,
-        log_id: LoadedLogId,
-        name: &str,
-        result: Result<StoredLogAttachment, LogAttachmentError>,
-    ) {
-        match result {
-            Ok(StoredLogAttachment { recording, entry }) => {
-                let attachment = LogAttachmentRef {
-                    recording: recording.clone(),
-                    id: entry.id,
-                };
-                let settings = entry.attachment.settings.clone();
-                self.log_attachments.record_attachment(recording, entry);
-                let shared = self.shared.borrow();
-                let outcome = self.logs.save_attachment(
-                    log_id,
-                    attachment,
-                    settings,
-                    &shared.loaded_files.view(),
-                );
-                drop(shared);
-                match outcome {
-                    LogSaveOutcome::AlreadyLoaded(id) => self.log_viewer.open_on_log(id),
-                    LogSaveOutcome::LogUnloaded => {
-                        log::info!("The log {name:?} was unloaded before it finished saving")
-                    }
-                    LogSaveOutcome::AlreadySaved => {
-                        log::warn!("The log {name:?} is already saved with another recording")
-                    }
-                    LogSaveOutcome::Saved(_) => {}
-                }
-            }
-            Err(err) => self.log_viewer.report_warning(format!(
-                "Could not save {name} with the recording {EM_DASH} {err}"
-            )),
-        }
-    }
-
     /// Takes the attachment off a log the database no longer holds one for.
     /// The log stays loaded either way.
     pub(super) fn apply_log_detach_outcome(
@@ -401,86 +400,70 @@ impl App {
         dialog: &LogAssociationDialog,
         choice: LogAssociationChoice,
     ) {
-        let LogAssociationChoice::Confirmed { target, attach } = choice else {
-            if let Some(mut log) = self.logs.get_mut_by_id(dialog.log())
-                && log.position_source_state() == PositionSourceState::PendingInitialSelection
-            {
-                log.anchor_to_loaded_recording(None, &self.shared.borrow().loaded_files.view());
+        let selection = match choice {
+            LogAssociationChoice::SaveRequested(target) => {
+                self.save_log_with_recording(dialog.log(), target);
+                return;
             }
-            return;
+            LogAssociationChoice::SourceSelected(selection) => selection,
+            LogAssociationChoice::Cancelled => {
+                if self.logs.get_by_id(dialog.log()).is_none_or(|log| {
+                    log.position_source_state() != PositionSourceState::PendingInitialSelection
+                }) {
+                    return;
+                }
+                PositionSourceSelection::NoSource
+            }
         };
-        let log_id = dialog.log();
-        let shared = self.shared.borrow();
-        let recordings = shared.loaded_files.view();
-        if let Some(mut log) = self.logs.get_mut_by_id(log_id) {
-            log.anchor_to_loaded_recording(target, &recordings);
-        }
-        drop(shared);
-        if attach {
-            self.attach_log_to_recording(dialog, target);
+        let result = self.logs.select_position_source(
+            dialog.log(),
+            selection,
+            &self.shared.borrow().loaded_files.view(),
+        );
+        if let Err(error) = result {
+            self.log_viewer.report_warning(error.to_string());
         }
     }
 
-    /// Stores the dialog's log with the recording `target` identifies, or
-    /// reuses the attachment that recording already holds it as.
-    fn attach_log_to_recording(
-        &mut self,
-        dialog: &LogAssociationDialog,
-        target: Option<LoadedFileId>,
-    ) {
-        let log_id = dialog.log();
-        let Some(log) = self.logs.get_by_id(log_id) else {
-            return;
-        };
-        let name = log.name().to_owned();
-        let filters = log.filters().to_stored_stack();
-        let shared = self.shared.borrow();
-        let db_ref = target
-            .and_then(|id| shared.loaded_files.view().entry_for_id(id))
-            .and_then(|entry| entry.history().db_ref())
-            .cloned();
-        drop(shared);
-        let Some(db_ref) = db_ref else {
-            log::warn!(
-                "Not attaching the log {name:?}: the recording it was associated with is not in the history database"
-            );
-            return;
-        };
-        match dialog.duplicate_attachment_of(&db_ref) {
-            Some(existing) => {
-                let attachment = LogAttachmentRef {
-                    recording: db_ref,
-                    id: existing.id,
-                };
-                self.adopt_existing_log_attachment(log_id, attachment, existing.settings.clone());
-                self.toasts.info(format!(
-                    "Using \"{}\" already saved with this recording",
-                    existing.name
-                ));
-            }
-            None => self
-                .history
-                .attach_log(db_ref, log_id, name, log.parsed(), filters),
+    fn save_log_with_recording(&mut self, log: LoadedLogId, target: LoadedFileId) {
+        let access = self.attachment_settings_write_access();
+        let request = self.logs.prepare_save(
+            log,
+            target,
+            &self.shared.borrow().loaded_files.view(),
+            access,
+        );
+        match request {
+            Ok(request) => self.submit_initial_log_save(request),
+            Err(error) => self.log_viewer.report_warning(error.to_string()),
         }
     }
 
-    fn adopt_existing_log_attachment(
-        &mut self,
-        log_id: LoadedLogId,
-        attachment: LogAttachmentRef,
-        persisted: StoredLogSettings,
-    ) {
-        let shared = self.shared.borrow();
-        let outcome =
+    fn retry_log_save(&mut self, id: LoadedLogId) {
+        let access = self.attachment_settings_write_access();
+        if !access.allows_writing() {
+            return;
+        }
+        if self
+            .logs
+            .get_by_id(id)
+            .is_some_and(|log| log.attachment().is_some())
+        {
+            self.logs.retry_settings_save(id);
+            return;
+        }
+        let request =
             self.logs
-                .save_attachment(log_id, attachment, persisted, &shared.loaded_files.view());
-        drop(shared);
-        match outcome {
-            LogSaveOutcome::AlreadyLoaded(id) => self.log_viewer.open_on_log(id),
-            LogSaveOutcome::LogUnloaded | LogSaveOutcome::Saved(_) => {}
-            LogSaveOutcome::AlreadySaved => {
-                log::warn!("The log is already saved with another recording")
-            }
+                .retry_initial_save(id, &self.shared.borrow().loaded_files.view(), access);
+        match request {
+            Ok(request) => self.submit_initial_log_save(request),
+            Err(error) => log::warn!("Retrying a log save failed: {error}"),
+        }
+    }
+
+    fn submit_initial_log_save(&mut self, request: LogSaveRequest) {
+        if let Some(completion) = self.history.save_log(request) {
+            self.apply_initial_log_save_outcome(completion);
         }
     }
 

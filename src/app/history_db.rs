@@ -20,14 +20,13 @@ use gt_log_view::{
     AttachmentSettingsCompletion, AttachmentSettingsWrite, LogAttachmentRef, LogSaveCompletion,
     LogSaveReceipt, LogSaveRequest,
 };
-use gt_logfile::ParsedLog;
 use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteAccess, WriteKind, WriteRejection};
 use gt_store::{
     AttachedLog, DatabaseRef, DbError, HistoryDatabase, LogAttachmentEntry, LogAttachmentError,
     LogAttachmentId, LogAttachmentListingEntry, LogAttachments as _, LogContentHash, LogToAttach,
     PruneMode, ReadOnlyHistoryDatabase, ReadOnlyLogAttachments as _, ReadOnlyRecordings,
-    RecordingEntry, RecordingUiState, Recordings, RecordingsHandle, StoredLogFilterStack,
-    StoredLogSettings, StoredRecording, TrackRange, TrackState, UiStateVersionReporter,
+    RecordingEntry, RecordingUiState, Recordings, RecordingsHandle, StoredLogSettings,
+    StoredRecording, TrackRange, TrackState, UiStateVersionReporter,
 };
 use gt_track_builder::SegmentationConfig;
 use gt_ui_types::LoadedLogId;
@@ -139,14 +138,6 @@ enum ReadRequest {
 /// A request that changes the database, which only [`RecordingsHandle::writer`]
 /// can run.
 enum WriteRequest {
-    /// Store a log with a recording, log bytes and all.
-    AttachLog {
-        db_ref: DatabaseRef,
-        log: LoadedLogId,
-        name: String,
-        text: Arc<str>,
-        settings: StoredLogSettings,
-    },
     AutoPrune {
         max_bytes: u64,
         confirm: bool,
@@ -225,7 +216,7 @@ impl WriteRequest {
             Self::StoreRecordingUiState { .. } => {
                 "Storing the display settings of a recording in recording history"
             }
-            Self::AttachLog { .. } | Self::SaveLog(_) => "Storing a log with a recording",
+            Self::SaveLog(_) => "Storing a log with a recording",
             Self::StoreAttachedLogSettings(_) => "Saving log settings in recording history",
             Self::DetachLog { .. } => "Removing a log from recording history",
         }
@@ -235,13 +226,6 @@ impl WriteRequest {
 pub struct RestoredLogAttachment {
     pub entry: LogAttachmentListingEntry,
     pub log: Result<AttachedLog, LogAttachmentError>,
-}
-
-/// A log the worker stored with a recording, and the attachment it wrote for
-/// it.
-pub struct StoredLogAttachment {
-    pub recording: DatabaseRef,
-    pub entry: LogAttachmentEntry,
 }
 
 /// The attachment a recording already holds a log as, found by content hash.
@@ -280,12 +264,6 @@ pub enum Response {
         existing: Result<Option<ExistingLogAttachment>, DbError>,
     },
     Listed(Result<Vec<RecordingEntry>, DbError>),
-    /// Outcome of storing a log with a recording.
-    LogAttached {
-        log: LoadedLogId,
-        name: String,
-        result: Result<StoredLogAttachment, LogAttachmentError>,
-    },
     /// Outcome of removing an attachment.
     LogDetached {
         attachment: LogAttachmentRef,
@@ -545,27 +523,6 @@ impl HistoryWorker {
 
     pub fn store_recording_ui_state(&self, db_ref: DatabaseRef, ui_state: RecordingUiState) {
         self.send_write(WriteRequest::StoreRecordingUiState { db_ref, ui_state });
-    }
-
-    pub fn attach_log(
-        &self,
-        db_ref: DatabaseRef,
-        log: LoadedLogId,
-        name: String,
-        parsed: &ParsedLog,
-        filters: StoredLogFilterStack,
-    ) {
-        self.send_write(WriteRequest::AttachLog {
-            db_ref,
-            log,
-            name,
-            text: Arc::clone(parsed.text()),
-            settings: StoredLogSettings {
-                filters,
-                year_reference: Some(parsed.year_reference()),
-                year_resolution: gt_log_view::stored_year_resolution(parsed.year_resolution()),
-            },
-        });
     }
 
     pub fn load_attached_logs(&self, db_ref: DatabaseRef) {
@@ -858,28 +815,6 @@ fn handle_write_request(
                 ui_state_versions,
             ))
         }
-        WriteRequest::AttachLog {
-            db_ref,
-            log,
-            name,
-            text,
-            settings,
-        } => {
-            let result = RecordingLogSave {
-                recording: &db_ref,
-                log: LogToAttach {
-                    name: &name,
-                    text: &text,
-                    settings,
-                },
-            }
-            .store_or_reuse(db)
-            .map(|entry| StoredLogAttachment {
-                recording: db_ref,
-                entry,
-            });
-            Response::LogAttached { log, name, result }
-        }
         WriteRequest::SaveLog(save) => {
             let result = RecordingLogSave {
                 recording: save.recording(),
@@ -1099,8 +1034,9 @@ fn purge_tracks_with_stored(
 mod tests {
     use std::sync::mpsc::TryRecvError;
 
-    use chrono::DateTime;
-    use gt_log_view::{AttachmentSettingsState, AttachmentSettingsStatus};
+    use chrono::{DateTime, Duration};
+    use gt_loaded_files::{FileHistory, LoadedFiles};
+    use gt_log_view::{AttachmentSettingsState, AttachmentSettingsStatus, LoadedLog, LoadedLogs};
     use gt_pending_writes::WriteAccess;
     use gt_store::{StoredYearResolution, TrackRange};
     use gt_test_utils::pending_writes;
@@ -1596,18 +1532,35 @@ mod tests {
         let worker = recordings::worker_on(&path);
 
         let db_ref = recordings::only_recording(&worker).db_ref;
-        worker.attach_log(
-            db_ref.clone(),
-            LoadedLogId::new(1),
-            "field-notes.log".to_owned(),
-            &gt_logfile::parse_log("2026-01-01 00:00:00 one line".into(), DateTime::UNIX_EPOCH)
-                .expect("parse the log"),
-            Default::default(),
+        let mut files = LoadedFiles::new();
+        files.push(
+            gt_test_utils::loaded_file_with_tracks(Vec::new()),
+            FileHistory::recording(
+                db_ref.identity.clone(),
+                Default::default(),
+                Some(db_ref.clone()),
+            ),
         );
-        let Response::LogAttached { result, .. } = recordings::next_response(&worker) else {
-            panic!("expected a LogAttached response");
+        let target = files.view().entries().next().unwrap().id();
+        let parsed =
+            gt_logfile::parse_log("2026-01-01 00:00:00 one line".into(), DateTime::UNIX_EPOCH)
+                .unwrap();
+        let mut logs = LoadedLogs::default();
+        let id = logs
+            .push(LoadedLog::new(
+                Some("field-notes.log".to_owned()),
+                parsed,
+                Duration::seconds(60),
+            ))
+            .id();
+        let request = logs
+            .prepare_save(id, target, &files.view(), WriteAccess::Owner)
+            .unwrap();
+        assert!(worker.save_log(request).is_none());
+        let Response::LogSaved(completion) = recordings::next_response(&worker) else {
+            panic!("log save completion");
         };
-        result.expect("the log is attached");
+        completion.result().unwrap();
 
         worker.delete_tracks(db_ref, vec![0]);
         let Response::Mutated { result, .. } = recordings::next_response(&worker) else {
@@ -1970,20 +1923,6 @@ mod tests {
             blob: Vec::new(),
         },
         "Storing snap runs in recording history"
-    )]
-    #[case(
-        WriteRequest::AttachLog {
-            db_ref: db_ref(),
-            log: LoadedLogId::new(1),
-            name: "navsyncd.log".to_owned(),
-            text: "boot".into(),
-            settings: StoredLogSettings {
-                filters: Default::default(),
-                year_reference: Some(DateTime::UNIX_EPOCH),
-                year_resolution: StoredYearResolution::Infer,
-            },
-        },
-        "Storing a log with a recording"
     )]
     #[case(
         WriteRequest::StoreAttachedLogSettings(settings_state().prepare_write(WriteAccess::Owner).expect("settings write")),

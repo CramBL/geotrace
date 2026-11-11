@@ -1,10 +1,10 @@
 //! The dialog choosing the recording a log associates against, and whether the
 //! log is stored with that recording in history.
 
-use egui::{Checkbox, Grid, Label, RichText, WidgetInfo, WidgetType};
+use egui::{Button, Checkbox, Grid, Label, RichText, WidgetInfo, WidgetType};
 use gt_fmt::MIDDLE_DOT;
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
-use gt_log_view::{AssociationCandidate, LoadedLog};
+use gt_log_view::{AssociationCandidate, LoadedLog, LogCapabilities, PositionSourceSelection};
 use gt_pending_writes::WriteAccess;
 use gt_store::DatabaseRef;
 use gt_ui_components::{FrozenRegions, HeldBodyLines};
@@ -19,18 +19,11 @@ use crate::settings::InitialPositionSourcePolicy;
 
 use super::NO_OVERLAP_HOVER;
 
-/// What the user decided in the association dialog.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::app) enum LogAssociationChoice {
-    /// Leave the log associated as it is, and store nothing.
     Cancelled,
-
-    /// Take the log's positions from `target`, and store it with that
-    /// recording when `attach`.
-    Confirmed {
-        target: Option<LoadedFileId>,
-        attach: bool,
-    },
+    SaveRequested(LoadedFileId),
+    SourceSelected(PositionSourceSelection),
 }
 
 /// The association dialog of one log: shown when a log finishes loading, and
@@ -109,18 +102,6 @@ impl LogAssociationDialog {
         }
     }
 
-    /// The attachment `recording` already holds this log as, `None` while the
-    /// query for that recording is pending or returned none.
-    pub(in crate::app) fn duplicate_attachment_of(
-        &self,
-        recording: &DatabaseRef,
-    ) -> Option<&ExistingLogAttachment> {
-        if self.duplicate_query_sent_for.as_ref() != Some(recording) {
-            return None;
-        }
-        self.duplicate.as_ref()
-    }
-
     /// Draws the dialog, returning `None` while the user has not decided.
     pub(in crate::app) fn show(
         &mut self,
@@ -141,7 +122,11 @@ impl LogAssociationDialog {
             Some(scope) => candidates.rank_with_recording_order(scope),
             None => candidates,
         };
-        let attachable = write_access.allows_writing()
+        let capabilities = log.capabilities(write_access);
+        if !capabilities.select_position_source {
+            self.selected = log.associated_recording();
+        }
+        let attachable = capabilities.save_with_recording
             && self
                 .selected
                 .and_then(|id| recordings.entry_for_id(id))
@@ -184,18 +169,34 @@ impl LogAssociationDialog {
                                 for candidate in candidates.ranked() {
                                     let name =
                                         names.get(&candidate.recording).copied().unwrap_or(EM_DASH);
-                                    self.candidate_row_ui(ui, candidate, name);
+                                    self.candidate_row_ui(
+                                        ui,
+                                        candidate,
+                                        name,
+                                        capabilities.select_position_source,
+                                    );
                                 }
                             });
                     },
                 );
                 ui.add_space(8.0);
-                self.attach_ui(ui, regions, attachable, write_access);
+                self.attach_ui(
+                    ui,
+                    regions,
+                    attachable,
+                    write_access,
+                    recordings,
+                    capabilities,
+                );
             }),
             DialogActionRow::buttons(|ui| {
                 confirmed = ui
-                    .button(CONFIRM_LABEL)
+                    .add_enabled(
+                        capabilities.select_position_source,
+                        Button::new(CONFIRM_LABEL),
+                    )
                     .on_hover_text(CONFIRM_HOVER)
+                    .on_disabled_hover_text(OPERATION_UNAVAILABLE_HOVER)
                     .clicked();
                 if ui.button(CANCEL_LABEL).clicked() {
                     choice = Some(LogAssociationChoice::Cancelled);
@@ -222,10 +223,14 @@ impl LogAssociationDialog {
             automatically_choose_position_source,
         );
         if confirmed {
-            choice = Some(LogAssociationChoice::Confirmed {
-                target: self.selected,
-                attach: self.attach,
-            });
+            choice = if self.attach {
+                self.selected.map(LogAssociationChoice::SaveRequested)
+            } else {
+                Some(LogAssociationChoice::SourceSelected(self.selected.map_or(
+                    PositionSourceSelection::NoSource,
+                    PositionSourceSelection::Recording,
+                )))
+            };
         }
         if !open {
             choice = Some(LogAssociationChoice::Cancelled);
@@ -240,6 +245,7 @@ impl LogAssociationDialog {
         ui: &mut egui::Ui,
         candidate: &AssociationCandidate,
         name: &str,
+        can_select: bool,
     ) {
         let overlapping = candidate.overlaps_the_log();
         let (label, overlap, hover) = if overlapping {
@@ -263,8 +269,9 @@ impl LogAssociationDialog {
         };
         let selected = self.selected == Some(candidate.recording);
         if ui
-            .selectable_label(selected, label)
+            .add_enabled(can_select, Button::selectable(selected, label))
             .on_hover_text(&hover)
+            .on_disabled_hover_text(OPERATION_UNAVAILABLE_HOVER)
             .clicked()
         {
             self.selected = Some(candidate.recording);
@@ -282,13 +289,20 @@ impl LogAssociationDialog {
         regions: FrozenRegions,
         attachable: bool,
         write_access: WriteAccess,
+        recordings: LoadedFilesView<'_>,
+        capabilities: LogCapabilities,
     ) {
+        let existing = self
+            .selected
+            .and_then(|id| recordings.entry_for_id(id))
+            .and_then(|entry| entry.history().db_ref())
+            .and_then(|recording| self.duplicate_attachment_of(recording));
         regions.freeze_at_open_ui(
             ui,
             STORED_ATTACHMENT_REGION,
             HeldBodyLines::at_least(STORED_ATTACHMENT_LINES),
             |ui| {
-                if let Some(existing) = &self.duplicate {
+                if let Some(existing) = existing {
                     ui.add(
                         Label::new(format!(
                             "This log is already saved with the recording as \"{}\". Saving uses \
@@ -305,13 +319,25 @@ impl LogAssociationDialog {
             attach.on_hover_text(ATTACH_HOVER);
         } else if !write_access.allows_writing() {
             attach.on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER);
+        } else if !capabilities.save_with_recording {
+            attach.on_disabled_hover_text(OPERATION_UNAVAILABLE_HOVER);
         } else if self.selected.is_some() {
             attach.on_disabled_hover_text(ATTACH_UNSTORED_HOVER);
         } else {
             attach.on_disabled_hover_text(ATTACH_NO_TARGET_HOVER);
         }
     }
+
+    fn duplicate_attachment_of(&self, recording: &DatabaseRef) -> Option<&ExistingLogAttachment> {
+        if self.duplicate_query_sent_for.as_ref() != Some(recording) {
+            return None;
+        }
+        self.duplicate.as_ref()
+    }
 }
+
+pub(in crate::app) const OPERATION_UNAVAILABLE_HOVER: &str =
+    "Remove the saved log from history or wait for the pending save to finish";
 
 pub(in crate::app) const TITLE: &str = "Choose position source";
 

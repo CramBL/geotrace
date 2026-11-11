@@ -11,7 +11,7 @@ use egui_phosphor::regular::{ARTICLE as ICON_ARTICLE, WARNING as ICON_WARNING};
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_log_view::{
     AttachmentSettingsStatus, FilterEffect, FilterGroupOperator, FilterPattern, LoadedLog,
-    LogAttachmentRef, RecordingKey,
+    LogAttachmentRef, LogSaveReceipt, RecordingKey,
 };
 use gt_logfile::{LogChronology, YearResolution};
 use gt_pending_writes::WriteAccess;
@@ -30,7 +30,7 @@ use gt_track_builder::SegmentationConfig;
 use gt_types::{FileIdx, Latitude, Longitude};
 
 use crate::app::App;
-use crate::app::history_db::{HistoryWorker, RestoredLogAttachment, StoredLogAttachment};
+use crate::app::history_db::{HistoryWorker, RestoredLogAttachment};
 use crate::app::loader::{self, AttachedLogRequester, AttachedLogRestore};
 use crate::app::log_viewer::{self, association_dialog, filters};
 use crate::app::modals::{DELETE_PERMANENTLY_BUTTON_LABEL, SHELVE_BUTTON_LABEL};
@@ -1161,7 +1161,14 @@ fn saving_a_duplicate_log_preserves_attachment_identity_and_updates_complete_set
             .map(|attachment| attachment.id),
         Some(stored)
     );
-    assert_eq!(harness.state().toasts.len(), 1, "the reuse raises a toast");
+    assert!(harness.step_until(|harness| {
+        harness
+            .state()
+            .first_log()
+            .unwrap()
+            .settings_save_status(WriteAccess::Owner)
+            == AttachmentSettingsStatus::Saved
+    }));
 }
 
 #[rstest::rstest]
@@ -1196,6 +1203,34 @@ fn settings_save_failure_remains_visible_until_retry_acknowledgement(#[case] rea
         )
         .unwrap();
     let attachment_id = entry.id;
+    let shared = harness.state().shared.clone();
+    shared.borrow_mut().loaded_files.push(
+        gt_test_utils::loaded_file_with_tracks(Vec::new()),
+        FileHistory::recording(
+            recording.identity.clone(),
+            Default::default(),
+            Some(recording.clone()),
+        ),
+    );
+    let target = shared
+        .borrow()
+        .loaded_files
+        .view()
+        .entries()
+        .next()
+        .unwrap()
+        .id();
+    let request = harness
+        .state_mut()
+        .logs
+        .prepare_save(
+            id,
+            target,
+            &shared.borrow().loaded_files.view(),
+            WriteAccess::Owner,
+        )
+        .unwrap();
+
     let files = LoadedFiles::new();
     assert!(
         harness
@@ -1213,14 +1248,9 @@ fn settings_save_failure_remains_visible_until_retry_acknowledgement(#[case] rea
         .0;
     stack.set_live_filter_text("clock");
     stack.add_live_filter_as_chip().unwrap();
-    harness.state_mut().apply_log_attach_outcome(
-        id,
-        "pending.log",
-        Ok(StoredLogAttachment {
-            recording: recording.clone(),
-            entry,
-        }),
-    );
+    harness
+        .state_mut()
+        .apply_initial_log_save_outcome(request.complete(Ok(LogSaveReceipt { entry })));
     assert_eq!(
         harness
             .state()
@@ -1276,12 +1306,7 @@ fn settings_save_failure_remains_visible_until_retry_acknowledgement(#[case] rea
     assert_eq!(harness.state().log_viewer.selected_log(), Some(other_id));
     let access = harness.state().attachment_settings_write_access();
     assert_eq!(
-        harness
-            .state()
-            .logs
-            .get_by_id(id)
-            .unwrap()
-            .settings_save_error(),
+        harness.state().logs.get_by_id(id).unwrap().save_error(),
         Some("Disk full")
     );
     assert_eq!(
@@ -1318,12 +1343,7 @@ fn settings_save_failure_remains_visible_until_retry_acknowledgement(#[case] rea
         .settings_snapshot();
     if read_only {
         assert_eq!(
-            harness
-                .state()
-                .logs
-                .get_by_id(id)
-                .unwrap()
-                .settings_save_error(),
+            harness.state().logs.get_by_id(id).unwrap().save_error(),
             Some("Disk full")
         );
         return;
@@ -1830,13 +1850,38 @@ fn the_footer_changes_a_saved_logs_recording_only_after_attachment_removal(
         .cloned();
     let target = shown_log_target(&harness);
     let points = gt_test_utils::fixtures::nav_points_walking_from(
-        gt_test_utils::synthetic_log_start() + Duration::seconds(1),
+        gt_test_utils::synthetic_log_start() + Duration::days(1),
         600,
         1,
         Latitude::new(60.0),
         Longitude::new(12.0),
     );
-    ui_tests::push_points_as(&mut harness, "walk_b.gtd", &points, None, FileHistory::None);
+    let bytes = test_util::recordings::bytes_starting_at(
+        (gt_test_utils::synthetic_log_start() + Duration::days(1)).timestamp(),
+        600,
+    );
+    let meta = gt_store::extract_meta(&bytes).unwrap();
+    let other_recording = test_util::recordings::store_recording(
+        &db_path,
+        &bytes,
+        &[TrackRange {
+            start: 0,
+            end: meta.nav_point_count,
+            state: TrackState::Live,
+        }],
+    );
+    ui_tests::push_points_as(
+        &mut harness,
+        "walk_b.gtd",
+        &points,
+        None,
+        FileHistory::recording(
+            other_recording.identity.clone(),
+            meta,
+            Some(other_recording.clone()),
+        ),
+    );
+
     harness.run_steps(3);
 
     let current_source = if attached_recording_loaded {
@@ -1844,20 +1889,19 @@ fn the_footer_changes_a_saved_logs_recording_only_after_attachment_removal(
     } else {
         gt_ui_theme::EM_DASH
     };
-    harness
-        .get(By::new().role(Role::ComboBox).value(current_source))
-        .click();
-    harness.run_steps(2);
-    let other = harness.bottommost_matching(By::new().label("walk_b.gtd"));
-    assert!(other.accesskit_node().is_disabled());
-    let position = other.rect().center();
+    let source = harness.get(By::new().role(Role::ComboBox).value(current_source));
+    assert!(source.accesskit_node().is_disabled());
+    let position = source.rect().center();
     harness.hover_at_and_settle(position, 3);
-    harness.get_by_label_contains("Remove the saved log before changing its position source");
-    harness
-        .bottommost_matching(By::new().label("walk_b.gtd"))
-        .click();
-    harness.run_steps(2);
+    harness.get_by_label_contains(association_dialog::OPERATION_UNAVAILABLE_HOVER);
 
+    assert!(
+        harness
+            .get_by_label(log_viewer::ATTACH_LABEL)
+            .accesskit_node()
+            .is_disabled()
+    );
+    assert!(stored_attachments(&db_path, &other_recording).is_empty());
     let log = harness.state().first_log().expect("the log stays loaded");
     assert_eq!(
         log.anchor_key().as_ref(),
@@ -1929,18 +1973,32 @@ fn attaching_to_a_recording_deleted_mid_session_reports_the_failure() {
     confirm(&mut harness);
 
     assert!(
-        harness.step_until(|harness| harness
-            .query_by_label_contains("Could not save navsyncd.log with the recording")
-            .is_some()),
-        "the viewer reports what the database rejected"
+        harness.step_until(|harness| harness.state().first_log().unwrap().save_error().is_some())
     );
+    harness.state_mut().log_viewer.open = false;
+    harness.run_steps(2);
+    harness
+        .get_by_label(&format!("Log saves {ICON_WARNING} 1"))
+        .click();
+    harness.run_steps(2);
+    harness.get_by_label(&format!("{ICON_WARNING} Log save failed"));
+    harness.get_by_label("Error details").click();
+    harness.run_steps(2);
+    let error = harness
+        .state()
+        .first_log()
+        .unwrap()
+        .save_error()
+        .unwrap()
+        .to_owned();
+    harness.get_by_label(&error);
     assert_eq!(harness.state().logs.len(), 1);
     assert!(
         harness
             .state()
             .first_log()
             .is_some_and(|log| log.attachment().is_none()),
-        "nothing about the loaded log changed"
+        "the log remains unsaved"
     );
 }
 
@@ -2437,37 +2495,6 @@ fn a_saved_log_loads_separately_from_incompatible_loose_content(
         .next()
         .expect("saved attachment");
     let saved_filters = entry.attachment.settings.filters.clone();
-    let stored = StoredLogAttachment {
-        recording: attachment.recording.clone(),
-        entry,
-    };
-    harness.state_mut().log_viewer.open_on_log(loose_id);
-
-    harness
-        .state_mut()
-        .apply_log_attach_outcome(loose_id, "loose.log", Ok(stored));
-
-    assert_eq!(harness.state().logs.len(), 2);
-    assert_eq!(harness.state().log_viewer.selected_log(), Some(saved_id));
-    assert_eq!(
-        harness
-            .state()
-            .logs
-            .get_by_id(loose_id)
-            .expect("loose log")
-            .attachment(),
-        None
-    );
-    assert_eq!(
-        harness
-            .state()
-            .logs
-            .get_by_id(saved_id)
-            .expect("saved log")
-            .filters()
-            .to_stored_stack(),
-        saved_filters
-    );
     harness.state_mut().log_viewer.open_on_log(loose_id);
 
     harness.state().history.open(attachment.recording.clone());
@@ -2488,8 +2515,17 @@ fn a_saved_log_loads_separately_from_incompatible_loose_content(
         .click();
     confirm(&mut harness);
 
+    assert!(harness.step_until(|harness| {
+        harness
+            .state()
+            .logs
+            .get_by_id(loose_id)
+            .unwrap()
+            .save_error()
+            .is_some()
+    }));
     assert_eq!(harness.state().logs.len(), 2);
-    assert_eq!(harness.state().log_viewer.selected_log(), Some(saved_id));
+    assert_eq!(harness.state().log_viewer.selected_log(), Some(loose_id));
     assert_eq!(
         harness
             .state()
@@ -2517,6 +2553,50 @@ fn a_saved_log_loads_separately_from_incompatible_loose_content(
             .settings
             .filters,
         saved_filters
+    );
+
+    assert!(
+        harness
+            .state()
+            .logs
+            .get_by_id(loose_id)
+            .unwrap()
+            .save_error()
+            .unwrap()
+            .contains("Unload that log")
+    );
+    let desired = harness
+        .state()
+        .logs
+        .get_by_id(loose_id)
+        .unwrap()
+        .settings_snapshot();
+    harness.state_mut().logs.remove_by_id(saved_id);
+    harness.state_mut().log_viewer_requests.retry_save = Some(loose_id);
+    harness.state_mut().apply_log_viewer_requests();
+    assert!(harness.step_until(|harness| {
+        harness
+            .state()
+            .logs
+            .get_by_id(loose_id)
+            .unwrap()
+            .attachment()
+            .is_some()
+            && harness
+                .state()
+                .logs
+                .get_by_id(loose_id)
+                .unwrap()
+                .settings_save_status(WriteAccess::Owner)
+                == AttachmentSettingsStatus::Saved
+    }));
+    assert_eq!(
+        stored_attachments(&db_path, &attachment.recording)
+            .first()
+            .unwrap()
+            .attachment
+            .settings,
+        desired
     );
 }
 

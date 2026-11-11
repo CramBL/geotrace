@@ -11,9 +11,10 @@ use gt_log_view::{
 use gt_logfile::YearResolution;
 use gt_pending_writes::{PendingWrites, WriteAccess};
 use gt_store::{
-    self as store, DatabaseRef, HistoryDatabase as _, LogAttachmentId,
-    ReadOnlyHistoryDatabase as _, ReadOnlyLogAttachments as _, ReadOnlyRecordings, RecordingMeta,
-    Recordings, RecordingsHandle, StoredYearResolution, UiStateVersionReporter,
+    self as store, DatabaseRef, HistoryDatabase as _, LogAttachmentId, LogAttachments as _,
+    LogToAttach, ReadOnlyHistoryDatabase as _, ReadOnlyLogAttachments as _, ReadOnlyRecordings,
+    RecordingMeta, Recordings, RecordingsHandle, StoredLogSettings, StoredYearResolution,
+    UiStateVersionReporter,
 };
 use gt_ui_types::LoadedLogId;
 use hdf5_pure::{AttrValue, File};
@@ -25,7 +26,7 @@ use crate::app::test_util::recordings;
 use super::{SettingsSubmissionFailure, SettingsWriteFailure};
 
 #[test]
-fn queued_saves_and_legacy_attachment_requests_reuse_one_stored_attachment() {
+fn queued_saves_reuse_one_stored_attachment() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("history.h5");
     recordings::seed_two_track_recording(&path);
@@ -52,17 +53,6 @@ fn queued_saves_and_legacy_attachment_requests_reuse_one_stored_attachment() {
         Some(InitialLogSaveOutcome::Saved(fixture.id))
     );
     assert_eq!(fixture.acknowledge(repeated), None);
-    worker.attach_log(
-        recording.clone(),
-        LoadedLogId::new(99),
-        "other-name.log".to_owned(),
-        fixture.logs.get_by_id(fixture.id).unwrap().parsed(),
-        Default::default(),
-    );
-    let Response::LogAttached { result, .. } = recordings::next_response(&worker) else {
-        panic!("legacy attachment completion");
-    };
-    assert_eq!(result.unwrap().entry, saved);
     worker.shutdown();
     let db = Recordings::open_or_create(&path).unwrap();
     let attachments = db.log_attachments(&recording).unwrap();
@@ -75,25 +65,31 @@ fn duplicate_save_acknowledges_actual_metadata_before_persisting_current_complet
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("history.h5");
     recordings::seed_two_track_recording(&path);
-    let worker = recordings::worker_on(&path);
-    let recording = recordings::only_recording(&worker).db_ref;
+    let mut db = Recordings::open_or_create(&path).unwrap();
+    let recording = db
+        .list_recordings()
+        .unwrap()
+        .first()
+        .unwrap()
+        .db_ref
+        .clone();
     let mut fixture = SaveFixture::new(recording.clone());
-    let original = gt_logfile::parse_log(
-        gt_test_utils::UNRESOLVED_YEARS_LOG.into(),
-        DateTime::UNIX_EPOCH,
-    )
-    .unwrap();
-    worker.attach_log(
-        recording.clone(),
-        fixture.id,
-        "existing.log".to_owned(),
-        &original,
-        Default::default(),
-    );
-    let Response::LogAttached { result, .. } = recordings::next_response(&worker) else {
-        panic!("existing attachment");
-    };
-    let existing = result.unwrap().entry;
+    let existing = db
+        .attach_log(
+            &recording,
+            &LogToAttach {
+                name: "existing.log",
+                text: gt_test_utils::UNRESOLVED_YEARS_LOG,
+                settings: StoredLogSettings {
+                    filters: Default::default(),
+                    year_reference: Some(DateTime::UNIX_EPOCH),
+                    year_resolution: StoredYearResolution::Infer,
+                },
+            },
+        )
+        .unwrap();
+    drop(db);
+    let worker = recordings::worker_on(&path);
     assert!(
         fixture
             .logs

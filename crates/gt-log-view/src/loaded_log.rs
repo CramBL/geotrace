@@ -182,7 +182,10 @@ impl LoadedLog {
         }
     }
 
-    pub fn settings_save_error(&self) -> Option<&str> {
+    pub fn save_error(&self) -> Option<&str> {
+        if let InitialLogSaveState::Failed { error, .. } = &self.initial_save {
+            return Some(error);
+        }
         match &self.context {
             LogContext::SavedAttachment(state) => state.save_error(),
             LogContext::LooseImport { .. } | LogContext::DetachedAttachment { .. } => None,
@@ -190,6 +193,13 @@ impl LoadedLog {
     }
 
     pub fn settings_save_status(&self, access: WriteAccess) -> AttachmentSettingsStatus<'_> {
+        match &self.initial_save {
+            InitialLogSaveState::Failed { error, .. } => {
+                return AttachmentSettingsStatus::Failed(error);
+            }
+            InitialLogSaveState::Saving(_) => return AttachmentSettingsStatus::Saving,
+            InitialLogSaveState::Idle => {}
+        }
         let LogContext::SavedAttachment(state) = &self.context else {
             return AttachmentSettingsStatus::SessionOnly;
         };
@@ -740,13 +750,21 @@ impl LoadedLogs {
         recordings: &LoadedFilesView<'_>,
         access: WriteAccess,
     ) -> Result<LogSaveRequest, LogOperationError> {
-        let log = self.get_by_id(id).ok_or(LogOperationError::LogUnloaded)?;
-        let InitialLogSaveState::Failed { operation, .. } = &log.initial_save else {
+        let log = self
+            .logs
+            .iter_mut()
+            .find(|stored| stored.id == id)
+            .map(|stored| &mut stored.log)
+            .ok_or(LogOperationError::LogUnloaded)?;
+        let InitialLogSaveState::Failed { operation, error } = &mut log.initial_save else {
             return Err(LogOperationError::NoFailedSave);
         };
         let target = RecordingKey::Stored(operation.recording.clone())
             .loaded_recording(recordings)
-            .ok_or(LogOperationError::TargetUnloaded)?
+            .ok_or_else(|| {
+                *error = LogOperationError::TargetUnloaded.to_string();
+                LogOperationError::TargetUnloaded
+            })?
             .id();
         self.prepare_save(id, target, recordings, access)
     }
@@ -776,10 +794,29 @@ impl LoadedLogs {
             }
         };
         let attachment = LogAttachmentRef {
-            recording: operation.recording,
+            recording: operation.recording.clone(),
             id: receipt.entry.id,
         };
         if let Some(existing) = self.id_of_attachment(&attachment) {
+            let desired = self.get_by_id(operation.log)?.settings_snapshot();
+            let existing_log = self.get_by_id(existing)?;
+            if existing_log.settings_snapshot() != desired {
+                let error = format!(
+                    "The saved log \"{}\" is open with different settings. Unload that log, then retry.",
+                    existing_log.name(),
+                );
+                let stored = self
+                    .logs
+                    .iter_mut()
+                    .find(|stored| stored.id == operation.log)?;
+                stored.log.initial_save = InitialLogSaveState::Failed { operation, error };
+                return Some(InitialLogSaveOutcome::Failed);
+            }
+            if let Some(stored) = self.logs.iter_mut().find(|stored| stored.id == existing)
+                && let LogContext::SavedAttachment(state) = &mut stored.log.context
+            {
+                state.set_desired(desired);
+            }
             let stored = self
                 .logs
                 .iter_mut()
@@ -848,12 +885,13 @@ impl LoadedLogs {
             .logs
             .iter()
             .filter(|stored| {
-                matches!(
-                    stored.log.context,
-                    LogContext::LooseImport {
-                        source: PositionSourceState::PendingInitialSelection
-                    }
-                )
+                matches!(stored.log.initial_save, InitialLogSaveState::Idle)
+                    && matches!(
+                        stored.log.context,
+                        LogContext::LooseImport {
+                            source: PositionSourceState::PendingInitialSelection
+                        }
+                    )
             })
             .collect();
         pending.sort_by(|left, right| {
@@ -941,6 +979,7 @@ impl LoadedLogs {
         self.push(log)
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn save_attachment(
         &mut self,
         id: LoadedLogId,

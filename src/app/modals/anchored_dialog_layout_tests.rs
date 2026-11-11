@@ -273,7 +273,7 @@ fn pressing_a_recording_row_while_the_stored_attachment_line_arrives_attaches_no
     assert!(
         matches!(
             harness.state().choice,
-            Some(LogAssociationChoice::Confirmed { attach: false, .. })
+            Some(LogAssociationChoice::SourceSelected(_))
         ),
         "the press on a recording row reported {:?}",
         harness.state().choice,

@@ -1,7 +1,7 @@
 use chrono::Duration;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
-use gt_loaded_files::LoadedFiles;
+use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_log_view::{AttachmentSettingsStatus, LoadedLog, LoadedLogs, LogAttachmentRef};
 use gt_pending_writes::WriteAccess;
 use gt_store::{DatabaseRef, LogAttachmentId};
@@ -129,7 +129,7 @@ fn snapshot_log_settings_save_inspector(#[case] dark_mode: bool) {
     harness.inner.get_by_label("Retry").click();
     harness.inner.step();
     assert_eq!(
-        harness.state().requests.retry_settings_save,
+        harness.state().requests.retry_save,
         Some(harness.state().failed_log)
     );
 }
@@ -157,7 +157,7 @@ fn a_read_only_inspector_retains_errors_and_disables_retry() {
     harness.get_by_label("Error details").click();
     harness.run_steps(2);
     assert!(harness.query_by_label("Disk full: history.h5").is_some());
-    assert!(harness.state().requests.retry_settings_save.is_none());
+    assert!(harness.state().requests.retry_save.is_none());
 }
 
 #[test]
@@ -226,7 +226,7 @@ fn retry_distinguishes_equal_log_names_in_different_recording_groups() {
     harness.get(retry).click();
     harness.step();
     let state = harness.state_mut();
-    assert_eq!(state.requests.retry_settings_save, Some(state.failed_log));
+    assert_eq!(state.requests.retry_save, Some(state.failed_log));
     assert!(state.logs.retry_settings_save(state.failed_log));
     let mut writes = state.logs.prepare_settings_writes(WriteAccess::Owner);
     assert_eq!(writes.len(), 1);
@@ -248,4 +248,70 @@ fn retry_distinguishes_equal_log_names_in_different_recording_groups() {
             .settings_save_status(WriteAccess::Owner),
         AttachmentSettingsStatus::Failed("Permission denied")
     );
+}
+
+#[test]
+fn initial_save_status_and_retry_remain_available_in_the_global_inspector() {
+    let mut state = StatusHarness::new();
+    let id = state
+        .logs
+        .iter_with_ids()
+        .find(|(_, log)| log.attachment().is_none())
+        .unwrap()
+        .0;
+    let others: Vec<_> = state
+        .logs
+        .iter_with_ids()
+        .filter(|(other, _)| *other != id)
+        .map(|(id, _)| id)
+        .collect();
+    for other in others {
+        state.logs.remove_by_id(other);
+    }
+    let mut files = LoadedFiles::new();
+    files.push(
+        gt_test_utils::loaded_file_with_tracks(Vec::new()),
+        FileHistory::recording(
+            "receiver".to_owned(),
+            Default::default(),
+            Some(DatabaseRef {
+                identity: "receiver".to_owned(),
+                group_name: "initial-recording".to_owned(),
+            }),
+        ),
+    );
+    let target = files.view().entries().next().unwrap().id();
+    let request = state
+        .logs
+        .prepare_save(id, target, &files.view(), WriteAccess::Owner)
+        .unwrap();
+    let mut harness = Harness::builder().build_ui_state(
+        |ui, state: &mut StatusHarness| {
+            super::toolbar_ui(ui, &state.logs, state.access, &mut state.requests);
+        },
+        state,
+    );
+    harness.get_by_label("Log saves … 1").click();
+    harness.run_steps(2);
+    harness.get_by_label("Saving log…");
+    harness.get_by_label("receiver/initial-recording");
+    assert!(harness.query_by_label("Session-only settings").is_none());
+    harness.get_by_label("Log saves … 1").click();
+    harness
+        .state_mut()
+        .logs
+        .acknowledge_initial_save(request.complete(Err("Disk full".to_owned())), &files.view());
+    harness.state_mut().access = WriteAccess::ReadOnly;
+    harness.run_steps(2);
+    harness
+        .get_by_label(&format!("Log saves {ICON_WARNING} 1"))
+        .click();
+    harness.run_steps(2);
+    harness.get_by_label(&format!("{ICON_WARNING} Log save failed"));
+    assert!(harness.get_by_label("Retry").accesskit_node().is_disabled());
+    harness.state_mut().access = WriteAccess::Owner;
+    harness.run_steps(2);
+    harness.get_by_label("Retry").click();
+    harness.step();
+    assert_eq!(harness.state().requests.retry_save, Some(id));
 }
