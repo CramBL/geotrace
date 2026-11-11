@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use association_batches::{AssociationBatches, LogArrival, RecordingOperationOrigin};
+use chrono::Duration;
 use egui_tiles::{Container, Linear, LinearDir, Tile, TileId, Tiles, Tree};
 use gt_fetch::TransportSource;
 use gt_filter::GlobalFilter;
@@ -844,7 +845,9 @@ impl App {
                 .map_or(300, |d| d.as_secs()),
             debug_time_repair_backward_jump_threshold_seconds: self
                 .debug_time_repair_threshold_seconds,
-            log_association_window_s: self.assoc_config.log_association_window_s,
+            log_association_window_s: Duration::from(self.assoc_config.log_association_window)
+                .num_seconds()
+                .unsigned_abs(),
             initial_position_source_policy: self.initial_position_source_policy,
             detect_gnss_fix_lost: self
                 .processing_config
@@ -1132,9 +1135,7 @@ impl App {
         parsed: ParsedLog,
         origin: ParsedLogOrigin<'_>,
     ) {
-        let window = chrono::Duration::seconds(
-            i64::try_from(self.assoc_config.log_association_window_s).unwrap_or(i64::MAX),
-        );
+        let window = self.assoc_config.log_association_window;
         let log = LoadedLog::new(filename, parsed, window);
         let requested_by = match &origin {
             ParsedLogOrigin::Loose(_) => None,

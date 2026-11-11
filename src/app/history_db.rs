@@ -1034,12 +1034,13 @@ fn purge_tracks_with_stored(
 mod tests {
     use std::sync::mpsc::TryRecvError;
 
-    use chrono::{DateTime, Duration};
+    use chrono::DateTime;
     use gt_loaded_files::{FileHistory, LoadedFiles};
     use gt_log_view::{AttachmentSettingsState, AttachmentSettingsStatus, LoadedLog, LoadedLogs};
     use gt_pending_writes::WriteAccess;
     use gt_store::{StoredYearResolution, TrackRange};
     use gt_test_utils::pending_writes;
+    use gt_types::AssociationWindow;
     use rstest::rstest;
 
     use crate::app::test_util::recordings;
@@ -1550,7 +1551,7 @@ mod tests {
             .push(LoadedLog::new(
                 Some("field-notes.log".to_owned()),
                 parsed,
-                Duration::seconds(60),
+                AssociationWindow::try_from_seconds(60).unwrap(),
             ))
             .id();
         let request = logs

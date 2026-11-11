@@ -1,7 +1,7 @@
 pub use load_warning::{AlterationWording, LoadWarning};
 pub use satellites::{Prn, SignalQuality, Snr};
 
-pub use association_window::{AssociationWindow, InvalidAssociationWindow};
+pub use association_window::{AssociationConfig, AssociationWindow, InvalidAssociationWindow};
 pub use channel::{BackwardTimeStep, Channel};
 pub use coordinates::{
     Coordinate, CoordinateAxis, Latitude, Longitude, OutOfRange, RawDegrees, RecordedCoordinate,
@@ -44,10 +44,10 @@ pub use time_types::{FixTimestamp, GpsTime, GpsTimeRange, SysTime};
 pub use tpv::TimePositionVelocity;
 pub use tpv::TimePositionVelocityBuilder;
 pub use track::{
-    AssociationConfig, FileMetadata, FileSource, FixStats, LOD_BASE_TOLERANCE_MERC, LoadedFile,
-    LoadedTrack, LodChunk, LodLevel, MarkerRequirement, MeasuredTrackGeometry, MercBounds,
-    NearestSatelliteReport, SKY_REPORT_MAX_AGE_SECS, SegmentLengthRange, SpatialPoint, TimeRange,
-    TotalDistance, TrackAggregates, TrackGeometry, TrackLod, TrackMetadata, TravelMode,
+    FileMetadata, FileSource, FixStats, LOD_BASE_TOLERANCE_MERC, LoadedFile, LoadedTrack, LodChunk,
+    LodLevel, MarkerRequirement, MeasuredTrackGeometry, MercBounds, NearestSatelliteReport,
+    SKY_REPORT_MAX_AGE_SECS, SegmentLengthRange, SpatialPoint, TimeRange, TotalDistance,
+    TrackAggregates, TrackGeometry, TrackLod, TrackMetadata, TravelMode,
 };
 pub use versioned::{Generation, Versionable, Versioned};
 

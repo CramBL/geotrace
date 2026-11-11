@@ -2,11 +2,11 @@ use std::fs;
 use std::sync::mpsc::{self, TryRecvError};
 use std::time::Duration;
 
-use chrono::{DateTime, Duration as ChronoDuration};
+use chrono::DateTime;
 use gt_loaded_files::{FileHistory, LoadedFileId, LoadedFiles};
 use gt_log_view::{
     AttachmentSettingsStatus, InitialLogSaveOutcome, InitialLogSaveStatus, LoadedLog, LoadedLogs,
-    LogSaveCompletion, LogSaveRequest,
+    LogAttachmentRef, LogSaveCompletion, LogSaveRequest,
 };
 use gt_logfile::YearResolution;
 use gt_pending_writes::{PendingWrites, WriteAccess};
@@ -16,6 +16,7 @@ use gt_store::{
     RecordingMeta, Recordings, RecordingsHandle, StoredLogSettings, StoredYearResolution,
     UiStateVersionReporter,
 };
+use gt_types::AssociationWindow;
 use gt_ui_types::LoadedLogId;
 use hdf5_pure::{AttrValue, File};
 use rstest::rstest;
@@ -150,6 +151,151 @@ fn duplicate_save_acknowledges_actual_metadata_before_persisting_current_complet
     let restored = db.load_attached_log(&recording, existing.id).unwrap();
     assert_eq!(restored.settings, desired);
     assert_eq!(db.log_attachments(&recording).unwrap().len(), 1);
+}
+
+#[rstest]
+#[case::same_window(AssociationWindow::try_from_seconds(17).unwrap(), true)]
+#[case::different_window(AssociationWindow::ZERO, false)]
+fn legacy_reuse_compares_resolved_settings_and_persists_explicit_defaults(
+    #[case] loose_window: AssociationWindow,
+    #[case] reusable: bool,
+) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("history.h5");
+    recordings::seed_two_track_recording(&path);
+    let mut db = Recordings::open_or_create(&path).unwrap();
+    let recording = db
+        .list_recordings()
+        .unwrap()
+        .first()
+        .unwrap()
+        .db_ref
+        .clone();
+    let legacy = StoredLogSettings {
+        association_window: None,
+        filters: Default::default(),
+        year_reference: None,
+        year_resolution: StoredYearResolution::Infer,
+    };
+    let entry = db
+        .attach_log(
+            &recording,
+            &LogToAttach {
+                name: "legacy.log",
+                text: gt_test_utils::UNRESOLVED_YEARS_LOG,
+                settings: legacy.clone(),
+            },
+        )
+        .unwrap();
+    let attached = db.load_attached_log(&recording, entry.id).unwrap();
+    drop(db);
+    let parsed = gt_logfile::parse_log_with_year_resolution(
+        attached.text.into(),
+        attached.parse_year_reference,
+        YearResolution::Infer,
+    )
+    .unwrap();
+    let default_window = AssociationWindow::try_from_seconds(17).unwrap();
+    let mut fixture = SaveFixture::new(recording.clone());
+    fixture.logs.remove_by_id(fixture.id);
+    let saved = fixture
+        .logs
+        .restore_attachment(
+            LoadedLog::new(
+                Some("legacy.log".to_owned()),
+                parsed.clone(),
+                default_window,
+            ),
+            LogAttachmentRef {
+                recording: recording.clone(),
+                id: entry.id,
+            },
+            legacy.clone(),
+            &fixture.files.view(),
+        )
+        .id();
+    assert!(
+        fixture
+            .logs
+            .prepare_settings_writes(WriteAccess::Owner)
+            .is_empty()
+    );
+    fixture.id = fixture
+        .logs
+        .push(LoadedLog::new(
+            Some("loose.log".to_owned()),
+            parsed,
+            loose_window,
+        ))
+        .id();
+    let worker = recordings::worker_on(&path);
+    assert!(worker.save_log(fixture.prepare()).is_none());
+    let Response::LogSaved(completion) = recordings::next_response(&worker) else {
+        panic!("reuse completion");
+    };
+    assert_eq!(
+        fixture.acknowledge(completion),
+        Some(if reusable {
+            InitialLogSaveOutcome::AlreadyLoaded(saved)
+        } else {
+            InitialLogSaveOutcome::Failed
+        })
+    );
+    assert!(
+        fixture
+            .logs
+            .get_by_id(saved)
+            .unwrap()
+            .association_window_is_defaulted()
+    );
+    let mut writes = fixture.logs.prepare_settings_writes(WriteAccess::Owner);
+    let expected = if reusable {
+        let expected = StoredLogSettings {
+            association_window: Some(default_window),
+            year_reference: Some(attached.parse_year_reference),
+            ..legacy
+        };
+        let write = writes.pop().unwrap();
+        assert_eq!(write.settings(), &expected);
+        assert!(worker.store_attached_log_settings(write).is_none());
+        let Response::AttachedLogSettingsStored(completion) = recordings::next_response(&worker)
+        else {
+            panic!("settings completion");
+        };
+        assert!(fixture.logs.acknowledge_settings(completion));
+        assert!(
+            !fixture
+                .logs
+                .get_by_id(saved)
+                .unwrap()
+                .association_window_is_defaulted()
+        );
+        expected
+    } else {
+        assert!(writes.is_empty());
+        assert!(
+            fixture
+                .logs
+                .get_by_id(fixture.id)
+                .unwrap()
+                .save_error()
+                .is_some()
+        );
+        legacy
+    };
+    worker.shutdown();
+    let db = ReadOnlyRecordings::open_existing_read_only(&path).unwrap();
+    let restored = db.load_attached_log(&recording, entry.id).unwrap();
+    assert_eq!(restored.settings, expected);
+    assert_eq!(restored.text, gt_test_utils::UNRESOLVED_YEARS_LOG);
+    assert_eq!(
+        db.log_attachments(&recording)
+            .unwrap()
+            .iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>(),
+        [entry.id]
+    );
 }
 
 #[rstest]
@@ -341,7 +487,7 @@ impl SaveFixture {
             .push(LoadedLog::new(
                 Some("pending.log".to_owned()),
                 parsed,
-                ChronoDuration::seconds(60),
+                AssociationWindow::try_from_seconds(60).unwrap(),
             ))
             .id();
         Self {

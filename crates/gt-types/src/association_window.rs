@@ -2,10 +2,30 @@ use chrono::Duration;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default)]
+pub struct AssociationConfig {
+    pub log_association_window: AssociationWindow,
+}
+
+impl Default for AssociationConfig {
+    fn default() -> Self {
+        Self {
+            log_association_window: AssociationWindow(Duration::seconds(60)),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AssociationWindow(Duration);
 
 impl AssociationWindow {
+    pub fn try_from_seconds(seconds: u64) -> Result<Self, InvalidAssociationWindow> {
+        let seconds = i64::try_from(seconds).map_err(|_error| InvalidAssociationWindow)?;
+        let duration = Duration::try_seconds(seconds).ok_or(InvalidAssociationWindow)?;
+        Self::try_from(duration)
+    }
+
     pub const MAX: Self = Self(Duration::days(365));
     pub const ZERO: Self = Self(Duration::zero());
 }

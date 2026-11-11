@@ -11,7 +11,7 @@ fn grouped_structured_filters_preserve_highlights_and_diagnostic_navigation_afte
         .push(LoadedLog::new(
             Some("navsyncd.log".to_owned()),
             parsed.clone(),
-            Duration::seconds(ASSOCIATION_WINDOW_SECS),
+            AssociationWindow::try_from_seconds(ASSOCIATION_WINDOW_SECS as u64).unwrap(),
         ))
         .id();
     let (stack, slots) = state.logs.filter_stack_mut_by_id(id).unwrap();
@@ -55,7 +55,7 @@ fn grouped_structured_filters_preserve_highlights_and_diagnostic_navigation_afte
             LoadedLog::new(
                 Some("navsyncd.log".to_owned()),
                 parsed,
-                Duration::seconds(ASSOCIATION_WINDOW_SECS),
+                AssociationWindow::try_from_seconds(ASSOCIATION_WINDOW_SECS as u64).unwrap(),
             ),
             reference,
             StoredLogSettings {

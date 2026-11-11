@@ -23,7 +23,7 @@ use gt_test_utils::{
     AuditedWindow, By, ControlLabel, HarnessInteraction as _, TestHarness, WindowFitAssertions as _,
 };
 use gt_track_builder::{FileMeta, SegmentationConfig};
-use gt_types::{FileSource, Latitude, Longitude};
+use gt_types::{AssociationWindow, FileSource, Latitude, Longitude};
 use gt_ui_types::LoadedLogId;
 use rstest::rstest;
 
@@ -150,7 +150,7 @@ fn dialog_state(
         log: LoadedLog::new(
             Some("navsyncd.log".to_owned()),
             parsed,
-            Duration::seconds(60),
+            AssociationWindow::try_from_seconds(60).unwrap(),
         ),
         recordings: loaded_recordings,
         choice: None,

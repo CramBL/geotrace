@@ -4,7 +4,7 @@
 use chrono::Duration;
 use gt_geo_math::GreatCircleArc;
 use gt_loaded_files::LoadedFileEntry;
-use gt_types::{AddressedFix, FixRef, Latitude, Longitude};
+use gt_types::{AddressedFix, AssociationWindow, FixRef, Latitude, Longitude};
 use rayon::prelude::*;
 
 use crate::{EligibleLogTime, ResolvedChronology, pool};
@@ -30,7 +30,11 @@ impl<'a> RecordingAssociationIndex<'a> {
         Self { fixes }
     }
 
-    pub fn position_at(&self, time: EligibleLogTime, window: Duration) -> Option<EntryPlacement> {
+    pub fn position_at(
+        &self,
+        time: EligibleLogTime,
+        window: AssociationWindow,
+    ) -> Option<EntryPlacement> {
         let time = time.timestamp();
         let fixes = &self.fixes;
         let fix_time = |fix: &AddressedFix<'_>| fix.placed.fix.tpv.time().utc();
@@ -42,7 +46,7 @@ impl<'a> RecordingAssociationIndex<'a> {
             (Some(before), Some(after)) => {
                 let gap_before = (time - fix_time(before)).abs();
                 let gap_after = (fix_time(after) - time).abs();
-                if gap_before.min(gap_after) > window {
+                if gap_before.min(gap_after) > Duration::from(window) {
                     return None;
                 }
                 let nearer = if gap_before <= gap_after {
@@ -75,7 +79,7 @@ impl<'a> RecordingAssociationIndex<'a> {
                 })
             }
             (Some(nearest), None) | (None, Some(nearest)) => {
-                if (time - fix_time(nearest)).abs() > window {
+                if (time - fix_time(nearest)).abs() > Duration::from(window) {
                     return None;
                 }
                 Some(EntryPlacement {
@@ -90,7 +94,7 @@ impl<'a> RecordingAssociationIndex<'a> {
     pub fn associate_chronology(
         &self,
         chronology: &ResolvedChronology,
-        window: Duration,
+        window: AssociationWindow,
     ) -> Vec<Option<EntryPlacement>> {
         let position_of = |entry_index| {
             chronology
@@ -113,7 +117,7 @@ const PARALLEL_ASSOCIATION_MIN_ENTRIES: usize = 16 * 1024;
 
 #[cfg(test)]
 mod tests {
-    use chrono::{DateTime, TimeZone as _, Utc};
+    use chrono::{DateTime, Duration, TimeZone as _, Utc};
     use gt_loaded_files::FileHistory;
     use gt_test_utils::fixtures;
     use gt_types::{FileIdx, LoadedTrack, PointIdx, TrackIdx, TrackRef};
@@ -129,8 +133,8 @@ mod tests {
     }
 
     /// The window every test runs with, matching the app's default.
-    fn window() -> Duration {
-        Duration::seconds(60)
+    fn window() -> AssociationWindow {
+        AssociationWindow::try_from_seconds(60).expect("window")
     }
 
     fn start() -> DateTime<Utc> {
@@ -199,7 +203,7 @@ mod tests {
         assert_eq!(
             index.associate_chronology(
                 &test_util::chronology_from_timestamps([start() + Duration::seconds(offset_secs)]),
-                window
+                AssociationWindow::try_from(window).expect("window")
             ),
             vec![expected],
         );
@@ -388,7 +392,7 @@ mod tests {
         assert_eq!(
             index.position_at(
                 test_util::eligible_time(start() + Duration::seconds(10)),
-                Duration::zero()
+                AssociationWindow::ZERO
             ),
             Some(EntryPlacement {
                 position: (Latitude::new(-34.0), Longitude::new(152.0)),
@@ -432,7 +436,7 @@ mod tests {
                 .map(|offset| start() + Duration::seconds(*offset))
                 .collect();
 
-            let placements = index.associate_chronology(&test_util::chronology_from_timestamps(timestamps.iter().copied()), window);
+            let placements = index.associate_chronology(&test_util::chronology_from_timestamps(timestamps.iter().copied()), AssociationWindow::try_from(window).expect("window"));
 
             prop_assert_eq!(placements.len(), timestamps.len());
             for (&logged_at, placement) in timestamps.iter().zip(&placements) {

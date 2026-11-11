@@ -833,26 +833,6 @@ impl TrackAggregates {
     }
 }
 
-/// Configuration for associating log entries with recorded positions.
-///
-/// Stored in `Settings` and persisted to the config file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(default)]
-pub struct AssociationConfig {
-    /// Association window a freshly loaded log starts with: the time an entry
-    /// may be away from the nearest fix of the recording it is anchored to and
-    /// still take a position from it. Adjustable per log afterwards.
-    pub log_association_window_s: u64,
-}
-
-impl Default for AssociationConfig {
-    fn default() -> Self {
-        Self {
-            log_association_window_s: 60,
-        }
-    }
-}
-
 /// Where a recording's content came from. Stored on [`LoadedFile`] so it can be
 /// re-processed under new settings.
 #[derive(Debug, Clone)]
