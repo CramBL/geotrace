@@ -141,7 +141,7 @@ pub(crate) fn recording_with_track_offsets(tracks: &[(Duration, usize)]) -> Load
     )
 }
 
-fn recording_of(points: Vec<NavPoint>) -> LoadedFile {
+pub(crate) fn recording_of(points: Vec<NavPoint>) -> LoadedFile {
     recording_of_tracks(vec![points])
 }
 

@@ -1,5 +1,7 @@
 use chrono::Duration;
 use gt_loaded_files::LoadedFiles;
+use gt_logfile::ClockEligibility;
+use gt_types::TimeRange;
 
 use crate::anchor::RecordingKey;
 use crate::loaded_log::tests::fixtures;
@@ -175,4 +177,96 @@ fn unloading_a_recording_unloads_the_logs_anchored_to_it() {
         logs.iter_with_ids().map(|(id, _)| id).collect::<Vec<_>>(),
         [elsewhere]
     );
+}
+
+#[rstest::rstest]
+#[case::written_timestamps(0)]
+#[case::with_interpolated_timestamps(1)]
+#[case::parallel_association(8192)]
+fn recognized_reset_clock_entries_have_no_absolute_placement_or_january_coverage(
+    #[case] leading_interpolated_count: usize,
+) {
+    let text = if leading_interpolated_count > 0 {
+        gt_test_utils::MULTI_REBOOT_CLOCK_RESET_LOG
+            .replace(
+                "--- Device reboot ---\n",
+                &format!(
+                    "--- Device reboot ---\n{}",
+                    "leading reset entry\n".repeat(leading_interpolated_count)
+                ),
+            )
+            .replace(
+                "host svc: after reset\n",
+                "host svc: after reset\nbetween reset entries\n",
+            )
+            .replace(" UTC.\n", " UTC.\nbefore synchronized entry\n")
+            .replace(
+                "host svc: synced\n",
+                "host svc: synced\nafter synchronized entry\n",
+            )
+    } else {
+        gt_test_utils::MULTI_REBOOT_CLOCK_RESET_LOG.to_owned()
+    };
+    let january = test_util::parsed_log_of_text("2026-01-01 00:00:05 january\n")
+        .chronology()
+        .resolved()
+        .expect("absolute timestamp")
+        .timestamp(0)
+        .expect("one entry");
+    let parsed = test_util::parsed_log_of_text(&text);
+    let resolved = parsed
+        .chronology()
+        .resolved()
+        .expect("summary resolves years");
+    let november = resolved.timestamp(0).expect("first entry");
+    let files = test_util::loaded(vec![
+        test_util::recording_of(gt_test_utils::fixtures::nav_points_from(january, 60, 1)),
+        test_util::recording_of(gt_test_utils::fixtures::nav_points_from(november, 3, 3600)),
+    ]);
+    let mut log = LoadedLog::new(None, parsed.clone(), test_util::association_window());
+
+    let ranked = log.rank_association_candidates(&files.view());
+    assert_eq!(
+        ranked.unambiguous_target(),
+        Some(test_util::id_of(&files, 1))
+    );
+    assert_eq!(
+        ranked
+            .ranked()
+            .last()
+            .map(|candidate| candidate.fraction_of_log),
+        Some(0.0)
+    );
+    assert_eq!(
+        log.entry_time_range(),
+        Some(TimeRange::new(november, november + Duration::hours(2)))
+    );
+
+    test_util::anchor_to(&mut log, &files, 0);
+    assert_eq!(log.associated_entry_count(), 0);
+    assert!((0..parsed.entries().len()).all(|entry| log.entry_placement(entry).is_none()));
+
+    test_util::anchor_to(&mut log, &files, 1);
+    for session in parsed.boot_sessions() {
+        for entry_index in session.entry_range.clone() {
+            let eligible = entry_index >= session.first_synchronised_entry;
+            assert_eq!(log.entry_placement(entry_index).is_some(), eligible);
+            assert_eq!(resolved.eligible_time(entry_index).is_some(), eligible);
+            assert_eq!(
+                resolved.clock_eligibility(entry_index),
+                Some(if eligible {
+                    ClockEligibility::AllowAbsoluteTime
+                } else {
+                    ClockEligibility::BeforeSynchronization
+                })
+            );
+        }
+    }
+    assert_eq!(log.parsed(), &parsed);
+
+    let mut logs = LoadedLogs::default();
+    let id = logs.push(log).id();
+    fixtures::add_layer_chip(&mut logs, id, "reset");
+    fixtures::wait_for_scans(&mut logs);
+    assert!(test_util::map_matches(&mut logs, &files).is_empty());
 }

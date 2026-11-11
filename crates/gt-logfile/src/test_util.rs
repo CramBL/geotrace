@@ -5,6 +5,8 @@ use chrono::{DateTime, TimeZone as _, Utc};
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_types::LoadedTrack;
 
+use crate::{EligibleLogTime, LogChronology, ResolvedChronology, parse};
+
 pub mod strategies;
 
 /// The UTC instant of a wall-clock reading, in the field order
@@ -22,6 +24,27 @@ pub(crate) fn loaded_recording(tracks: Vec<LoadedTrack>) -> LoadedFiles {
         FileHistory::None,
     );
     files
+}
+
+pub(crate) fn chronology_from_timestamps(
+    timestamps: impl IntoIterator<Item = DateTime<Utc>>,
+) -> ResolvedChronology {
+    let text: String = timestamps
+        .into_iter()
+        .map(|timestamp| format!("{} entry\n", timestamp.format("%Y-%m-%dT%H:%M:%S%.9fZ")))
+        .collect();
+    let parsed = parse::parse_log(text.as_str().into(), self::utc(2026, 1, 1, 0, 0, 0))
+        .expect("timestamp fixture parses");
+    match parsed.chronology() {
+        LogChronology::Resolved(resolved) => resolved.clone(),
+        LogChronology::Unresolved(_) => panic!("fixture uses absolute timestamps"),
+    }
+}
+
+pub(crate) fn eligible_time(timestamp: DateTime<Utc>) -> EligibleLogTime {
+    self::chronology_from_timestamps([timestamp])
+        .eligible_time(0)
+        .expect("ordinary absolute timestamp is eligible")
 }
 
 /// A real journald summary with two rows per service table.

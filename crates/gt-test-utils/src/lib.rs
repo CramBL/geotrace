@@ -8,8 +8,9 @@ pub use gt_types::fixtures;
 #[cfg(feature = "snapshot")]
 pub use interaction::HarnessInteraction;
 pub use log_fixtures::{
-    SyntheticLogSpec, SyntheticLogTimestamps, UNRESOLVED_LEAP_DAYS_LOG, UNRESOLVED_YEARS_LOG,
-    after_the_synthetic_log, synthetic_journald_log, synthetic_log_start, syslog_journald_log,
+    MULTI_REBOOT_CLOCK_RESET_LOG, SyntheticLogSpec, SyntheticLogTimestamps,
+    UNRESOLVED_LEAP_DAYS_LOG, UNRESOLVED_YEARS_LOG, after_the_synthetic_log,
+    synthetic_journald_log, synthetic_log_start, syslog_journald_log,
 };
 pub use map_tile_captures::{assert_map_tile_capture_is_complete, map_tile_capture_dir};
 pub use recording_fixtures::{
