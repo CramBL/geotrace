@@ -106,6 +106,7 @@ pub struct ParsedLog {
     hostname_column: HostnameColumn,
     boot_sessions: Vec<BootSession>,
     structural_lines: Vec<StructuralLine>,
+    written_timestamps: Arc<[Option<RawTimestamp>]>,
     chronology: LogChronology,
     summary_block: Option<SummaryBlock>,
     format: LogFormat,
@@ -117,20 +118,15 @@ pub struct ParsedLog {
 }
 
 impl ParsedLog {
-    /// The log with its years resolved again under `year_resolution`, from the written timestamps
-    /// of its unresolved chronology. `None` for a log whose years resolved.
+    /// Recomputes from the original written timestamps, including after a successful resolution.
+    /// [`YearResolution::Infer`] restores automatic inference with the original reference date.
     pub fn resolve_years_as(&self, year_resolution: YearResolution) -> Option<Self> {
-        let LogChronology::Unresolved(unresolved) = &self.chronology else {
-            return None;
-        };
         let entries: Vec<PendingLogEntry> = self
             .entries
             .iter()
-            .enumerate()
-            .map(|(entry_index, entry)| PendingLogEntry {
-                timestamp: unresolved
-                    .written_timestamp(entry_index)
-                    .map(RawTimestamp::Yearless),
+            .zip(self.written_timestamps.iter().copied())
+            .map(|(entry, timestamp)| PendingLogEntry {
+                timestamp,
                 line_number: entry.line_number,
                 message: entry.message,
             })
@@ -339,6 +335,7 @@ fn parse_in_chunks(
         hostname_column,
         boot_sessions: session::number_boot_sessions(&boot_session_ranges),
         structural_lines: index.structural_lines,
+        written_timestamps: index.entries.iter().map(|entry| entry.timestamp).collect(),
         chronology,
         summary_block,
         format,
