@@ -1,6 +1,8 @@
 use chrono::SecondsFormat;
 use hdf5_pure::{AttrValue, DeflateLevel, FileBuilder};
 
+use crate::BootTime;
+use crate::boot_time::ABSENT_BOOT_TIME_MICROS;
 use crate::builder;
 use crate::error::{Error, FieldLocation, MARKER_LABEL_LOCATION};
 use crate::fixed_width_string::{
@@ -192,6 +194,26 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Erro
     let mut grp = fb.create_group("nav_points");
 
     let chunk = CHUNK_SIZE;
+
+    if points.iter().any(|point| point.fix.boot_time.is_some()) {
+        let boot_times: Vec<u64> = points
+            .iter()
+            .map(|point| {
+                point
+                    .fix
+                    .boot_time
+                    .map_or(ABSENT_BOOT_TIME_MICROS, BootTime::as_micros)
+            })
+            .collect();
+        grp.create_dataset("boot_time_us")
+            .with_u64_data(&boot_times)
+            .with_shape(&[n as u64])
+            .set_attr("units", AttrValue::String("microseconds since boot".into()))
+            .set_attr("absent_sentinel", AttrValue::String("u64::MAX".into()))
+            .with_chunks(&[chunk])
+            .with_shuffle()
+            .with_deflate(DeflateLevel::Six);
+    }
 
     grp.create_dataset("time")
         .with_i64_data(&times)

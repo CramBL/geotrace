@@ -20,8 +20,8 @@ use crate::types::{
 };
 use crate::write;
 use crate::{
-    Angle, PositionProvenance, SatelliteEvidence, SolutionDimension, SolutionMethod, SolutionState,
-    Velocity,
+    Angle, BootTime, PositionProvenance, SatelliteEvidence, SolutionDimension, SolutionMethod,
+    SolutionState, Velocity,
 };
 use geotrace_sdk_units::{ChannelUnit, snr};
 use hdf5_pure::{AttrValue, Datatype, DatatypeByteOrder, FixedPointLayout, FloatingPointLayout};
@@ -206,6 +206,7 @@ fn read_nav_points(file: &SizeCheckedFile, version: u32) -> Result<Vec<NavPoint>
                 Ok(NavPoint::from_legacy(
                     NavFix {
                         time,
+                        boot_time: None,
                         lat: Angle::degrees(*lat_deg),
                         lon: Angle::degrees(*lon_deg),
                         heading: if heading_deg.is_nan() {
@@ -238,6 +239,19 @@ fn read_nav_points(file: &SizeCheckedFile, version: u32) -> Result<Vec<NavPoint>
         )
         .collect::<Result<Vec<NavPoint>, Error>>()?;
 
+    if grp.optional_dataset("boot_time_us")?.is_some() {
+        let values = grp
+            .typed_column(
+                ColumnContext::Navigation,
+                "boot_time_us",
+                nav_points.len(),
+                &BOOT_TIME_DATATYPE,
+            )?
+            .read_u64()?;
+        for (point, value) in nav_points.iter_mut().zip(values) {
+            point.fix.boot_time = BootTime::from_micros(value).ok();
+        }
+    }
     if version == 3 {
         read_navigation_metadata(&grp, &mut nav_points)?;
     }
@@ -1735,6 +1749,16 @@ pub(crate) const MAX_LISTED_ENTRIES: usize = 20;
 const ABSENT_VALUE: &str = "—";
 
 const TIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%SZ";
+
+const BOOT_TIME_DATATYPE: Datatype = Datatype::FixedPoint {
+    size: 8,
+    byte_order: DatatypeByteOrder::LittleEndian,
+    layout: FixedPointLayout {
+        signed: false,
+        bit_offset: 0,
+        bit_precision: 64,
+    },
+};
 
 const NAVIGATION_TAG_DATATYPE: Datatype = Datatype::FixedPoint {
     size: 1,
