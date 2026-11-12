@@ -1,16 +1,14 @@
 use egui::accesskit::Role;
-use egui::{EventFilter, FocusDirection, Popup, Sense, StrokeKind, WidgetInfo, WidgetType};
+use egui::{EventFilter, FocusDirection, Sense, StrokeKind, WidgetInfo, WidgetType};
+use gt_log_view::LoadedLogs;
 use gt_ui_types::LoadedLogId;
+
+use super::LogViewerWindow;
+use super::log_list::LogTab;
 
 pub(super) struct TableFocusScope(egui::Id);
 
 impl TableFocusScope {
-    pub(super) fn keyboard_available(ui: &egui::Ui) -> bool {
-        !Popup::is_any_open(ui.ctx())
-            && ui.ctx().top_layer_id() == Some(ui.layer_id())
-            && ui.memory(|memory| memory.top_modal_layer().is_none())
-    }
-
     pub(super) fn for_log(log: LoadedLogId) -> Self {
         Self(egui::Id::new((TABLE_FOCUS_ID, log)))
     }
@@ -82,6 +80,79 @@ impl KeyboardScrollSteps {
         })
         .sum();
         ui.scroll_with_delta(egui::vec2(0.0, -distance_px));
+    }
+}
+
+impl LogViewerWindow {
+    pub(in crate::app) fn return_table_focus(&mut self, log: LoadedLogId, logs: &LoadedLogs) {
+        if self.open && self.selected == Some(log) && logs.get_by_id(log).is_some() {
+            self.log_state_mut(log).table_focus_requested = true;
+        }
+    }
+
+    pub(super) fn keyboard_shortcuts_ui(&mut self, ui: &egui::Ui, tabs: &[LogTab]) {
+        if !self.keyboard_scope.owns_keyboard(ui.ctx(), ui.layer_id())
+            || !self.keyboard_access.available(ui.ctx())
+        {
+            return;
+        }
+        for step in LogTabStep::consume(ui.ctx()) {
+            if let Some(id) = step.target(tabs, self.selected) {
+                self.open_on_log(id);
+                self.log_state_mut(id).table_focus_requested = true;
+            }
+        }
+        if ui.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::F))
+            && let Some(id) = self.selected
+        {
+            self.set_find_open(id, true);
+        }
+    }
+}
+
+enum LogTabStep {
+    ActivateNext,
+    ActivatePrevious,
+}
+
+impl LogTabStep {
+    fn consume(ctx: &egui::Context) -> Vec<Self> {
+        ctx.input_mut(|input| {
+            let mut steps = Vec::new();
+            input.events.retain(|event| {
+                if let egui::Event::Key {
+                    key: egui::Key::Tab,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } = event
+                    && modifiers.ctrl
+                    && !modifiers.alt
+                    && !modifiers.mac_cmd
+                {
+                    steps.push(if modifiers.shift {
+                        Self::ActivatePrevious
+                    } else {
+                        Self::ActivateNext
+                    });
+                    false
+                } else {
+                    true
+                }
+            });
+            steps
+        })
+    }
+
+    fn target(self, tabs: &[LogTab], selected: Option<LoadedLogId>) -> Option<LoadedLogId> {
+        let index = tabs.iter().position(|tab| Some(tab.id) == selected)?;
+        let next = match self {
+            Self::ActivatePrevious => index
+                .checked_sub(1)
+                .unwrap_or_else(|| tabs.len().saturating_sub(1)),
+            Self::ActivateNext => (index + 1) % tabs.len(),
+        };
+        tabs.get(next).map(|tab| tab.id)
     }
 }
 

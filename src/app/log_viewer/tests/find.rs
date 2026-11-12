@@ -279,21 +279,19 @@ fn find_scope_tracks_filter_scan_landings_and_query_replacement() {
 }
 
 #[test]
-fn find_shortcuts_preserve_editor_ownership_and_escape_closes_only_find() {
+fn find_shortcuts_open_from_viewer_controls_and_escape_closes_only_find() {
     let mut harness = harness_of(Vec::new(), &[("source.log", FIND_SOURCE)]);
     type_into_live_filter(&mut harness, "alpha");
     harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::F);
     harness.run_steps(3);
-    assert!(harness.state().viewer.active_state().find.is_none());
+    assert!(harness.state().active_find().open);
+    harness.get_by_label(find::CLOSE_LABEL).click();
+    harness.run_steps(3);
     harness.ctx.memory_mut(|memory| {
         let focused = memory.focused().unwrap();
         memory.surrender_focus(focused);
     });
-    let pointer = harness.get_by_label("svc: alpha alpha").rect().center();
-    harness
-        .input_mut()
-        .events
-        .push(egui::Event::PointerMoved(pointer));
+    table_focus::focus_table(&mut harness);
     harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::F);
     harness.run_steps(3);
     assert!(harness.state().active_find().open);

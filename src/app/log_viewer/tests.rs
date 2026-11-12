@@ -4293,6 +4293,7 @@ mod find;
 mod inspector_layout;
 mod integration;
 mod jump;
+mod keyboard_routing;
 mod map_navigation;
 mod message_readability;
 mod per_log_state;

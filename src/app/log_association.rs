@@ -117,7 +117,10 @@ impl App {
         }
         match choice {
             None => self.association_dialog = Some(dialog),
-            Some(choice) => self.apply_log_association_choice(&dialog, choice),
+            Some(choice) => {
+                self.apply_log_association_choice(&dialog, choice);
+                self.log_viewer.return_table_focus(dialog.log(), &self.logs);
+            }
         }
     }
 

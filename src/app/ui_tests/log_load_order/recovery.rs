@@ -480,7 +480,7 @@ fn load_problems_consume_escape_after_explicit_activation(#[values(false, true)]
         harness.state().load_failures.iter().count(),
         if activate { 1 } else { 2 }
     );
-    assert_eq!(harness.state().log_viewer.open, activate);
+    assert!(harness.state().log_viewer.open);
     if !activate {
         return;
     }

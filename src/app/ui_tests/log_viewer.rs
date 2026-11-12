@@ -1,9 +1,11 @@
+use std::io;
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Duration as StdDuration;
 
 use egui::accesskit::Role;
-use egui_kittest::{Harness, kittest::Queryable as _};
+use egui_kittest::Harness;
+use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
 use gt_log_view::{FilterGroupOperator, LoadedLog};
 use gt_store::RecordingsHandle;
@@ -14,6 +16,7 @@ use gt_test_utils::{
 use gt_types::FileIdx;
 
 use crate::app::App;
+use crate::app::load_failures::{LoadFailure, LoadFailureCause, LoadSource};
 use crate::app::log_viewer::{self, filters};
 use crate::app::test_util;
 use crate::app::test_util::harness::TestDroppedFile;
@@ -757,6 +760,98 @@ fn choosing_a_target_in_the_footer_associates_the_log_against_it() {
             .is_some_and(|log| log.associated_entry_count() > 0),
         "picking a target associates the log against it right away"
     );
+}
+
+#[test]
+fn load_problem_input_and_dismissal_preserve_reading_and_return_table_focus() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(test_util::harness::transient_app);
+    let text: String = (0..200)
+        .map(|index| format!("2026-05-29 18:48:25 service: source entry {index}\n"))
+        .collect();
+    ui_tests::drop_log_and_wait_for_load(&mut harness, &text, "source.log");
+    let selected = harness.state().log_viewer.selected_log().unwrap();
+    {
+        let app = harness.state_mut();
+        app.log_viewer.return_table_focus(selected, &app.logs);
+    }
+    harness.run_steps(3);
+    harness.key_press(egui::Key::End);
+    harness.run_steps(3);
+    let cause =
+        gt_logfile::parse_log("seed".into(), gt_test_utils::synthetic_log_start()).unwrap_err();
+    harness.state_mut().load_failures.push(
+        LoadFailure::new(
+            LoadSource::Filename("problem-a.log".into()),
+            LoadFailureCause::ParseLog(cause),
+        )
+        .with_decoded_text("seed".into()),
+    );
+    harness.state_mut().load_failures.push(LoadFailure::new(
+        LoadSource::Filename("problem-b.log".into()),
+        LoadFailureCause::ReadLogFile(io::ErrorKind::PermissionDenied.into()),
+    ));
+    harness.run_steps(3);
+    assert!(
+        harness
+            .get_by_label("Log table")
+            .accesskit_node()
+            .is_focused()
+    );
+    let before_scroll = harness
+        .get_by_label("service: source entry 199")
+        .rect()
+        .top();
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::PointerMoved(egui::pos2(-10.0, -10.0)));
+    harness.key_press(egui::Key::ArrowUp);
+    harness.run_steps(3);
+    let reading_y = harness
+        .get_by_label("service: source entry 199")
+        .rect()
+        .top();
+    assert!(reading_y > before_scroll);
+    harness.get_by_label("problem-a.log").click();
+    harness.run_steps(2);
+    harness.get_by_label("Enter text…").click();
+    harness.run_steps(3);
+    harness.key_press(egui::Key::Escape);
+    harness.run_steps(3);
+    assert_eq!(harness.state().load_failures.iter().count(), 2);
+    assert!(harness.query_by_role(Role::MultilineTextInput).is_none());
+    for remaining in [1, 0] {
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(3);
+        assert_eq!(harness.state().load_failures.iter().count(), remaining);
+        assert!(harness.state().log_viewer.open);
+        assert_eq!(harness.state().log_viewer.selected_log(), Some(selected));
+        assert_eq!(
+            harness
+                .get_by_label("service: source entry 199")
+                .rect()
+                .top(),
+            reading_y
+        );
+    }
+    assert!(
+        harness
+            .get_by_label("Log table")
+            .accesskit_node()
+            .is_focused()
+    );
+    harness.state_mut().log_viewer.open = false;
+    harness.state_mut().load_failures.push(LoadFailure::new(
+        LoadSource::PastedText,
+        LoadFailureCause::ReadLogFile(io::ErrorKind::PermissionDenied.into()),
+    ));
+    harness.run_steps(3);
+    harness.get_by_label("Dismiss").click();
+    harness.run_steps(3);
+    assert!(harness.state().load_failures.is_empty());
+    assert!(!harness.state().log_viewer.open);
 }
 
 /// A log line whose timestamp the pasted-log name is taken from.

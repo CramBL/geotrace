@@ -2,8 +2,7 @@ use std::mem;
 
 use egui::text::{ByteIndex, LayoutJob};
 use egui::{
-    Button, ComboBox, Label, Popup, Stroke, StrokeKind, TextEdit, TextFormat, WidgetInfo,
-    WidgetType,
+    Button, ComboBox, Label, Stroke, StrokeKind, TextEdit, TextFormat, WidgetInfo, WidgetType,
 };
 use egui_phosphor::regular::{
     ARROW_DOWN as ICON_NEXT, ARROW_UP as ICON_PREVIOUS, MAGNIFYING_GLASS as ICON_FIND,
@@ -16,8 +15,8 @@ use gt_logfile::ParsedLog;
 use gt_ui_types::LoadedLogId;
 
 use super::LogViewerWindow;
-use super::keyboard_navigation::TableFocusScope;
 use super::line_table::SourceRequest;
+use crate::app::keyboard_scope::KeyboardAccess;
 
 pub(super) struct LogFind {
     pub(super) open: bool,
@@ -42,8 +41,13 @@ impl LogFind {
         self.open.then(|| self.search.current()).flatten()
     }
 
-    fn controls_ui(&mut self, ui: &mut egui::Ui, id: LoadedLogId) -> Option<FindAction> {
-        let mut action = self.keyboard_action(ui, id);
+    fn controls_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: LoadedLogId,
+        access: KeyboardAccess,
+    ) -> Option<FindAction> {
+        let mut action = self.keyboard_action(ui, id, access);
         ui.horizontal_wrapped(|ui| {
             self.query_field_ui(ui, id);
             ui.label("Literal, ignore case");
@@ -102,19 +106,15 @@ impl LogFind {
         });
     }
 
-    fn keyboard_action(&self, ui: &egui::Ui, id: LoadedLogId) -> Option<FindAction> {
-        if ui.ctx().top_layer_id() != Some(ui.layer_id()) || Popup::is_any_open(ui.ctx()) {
-            return None;
-        }
+    fn keyboard_action(
+        &self,
+        ui: &egui::Ui,
+        id: LoadedLogId,
+        access: KeyboardAccess,
+    ) -> Option<FindAction> {
         let field = egui::Id::new((FIND_FIELD_ID, id));
-        let focused = ui.memory(|memory| memory.focused());
-        if focused != Some(field) {
-            return (focused.is_none()
-                && ui.memory(|memory| memory.had_focus_last_frame(field))
-                && ui.input_mut(|input| {
-                    input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
-                }))
-            .then_some(FindAction::Close);
+        if !access.field_owns_keyboard(ui, field) {
+            return None;
         }
         ui.input_mut(|input| {
             if input.consume_key(egui::Modifiers::SHIFT, egui::Key::Enter) {
@@ -192,25 +192,8 @@ impl LogViewerWindow {
         }
     }
 
-    pub(super) fn find_shortcut_ui(&mut self, ui: &egui::Ui, dialog_open: bool) {
-        let Some(id) = self.selected else {
-            return;
-        };
-        let focused = ui.memory(|memory| memory.focused());
-        let owns_keyboard = focused == Some(egui::Id::new((FIND_FIELD_ID, id)))
-            || TableFocusScope::for_log(id).has_focus(ui)
-            || (focused.is_none() && ui.rect_contains_pointer(ui.max_rect()));
-        if !dialog_open
-            && !Popup::is_any_open(ui.ctx())
-            && owns_keyboard
-            && ui.ctx().top_layer_id() == Some(ui.layer_id())
-            && ui.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::F))
-        {
-            self.set_find_open(id, true);
-        }
-    }
-
     pub(super) fn find_bar_ui(&mut self, ui: &mut egui::Ui, logs: &LoadedLogs, id: LoadedLogId) {
+        let access = self.keyboard_access;
         let Some(find) = self
             .log_state_mut(id)
             .find
@@ -221,7 +204,7 @@ impl LogViewerWindow {
         };
         let previous = find.search.current().cloned();
         find.search.update(logs, &find.text, find.scope);
-        let action = find.controls_ui(ui, id);
+        let action = find.controls_ui(ui, id, access);
         let changed = find.search.update(logs, &find.text, find.scope);
         match action {
             Some(FindAction::SelectNext) => {

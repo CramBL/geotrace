@@ -1,10 +1,12 @@
 use std::mem;
 
 use egui::style::ScrollAnimation;
-use egui::{Button, Popup, TextEdit, WidgetInfo, WidgetType};
+use egui::{Button, TextEdit, WidgetInfo, WidgetType};
 use gt_log_view::{InvalidLogJump, LoadedLog, LoadedLogs, LogJumpRequest};
 use gt_ui_types::LoadedLogId;
 use strum::{AsRefStr, EnumIter, IntoEnumIterator as _};
+
+use crate::app::keyboard_scope::KeyboardAccess;
 
 use super::line_table::SourceRequest;
 use super::{InspectorSection, LogViewerWindow};
@@ -28,10 +30,11 @@ impl LogJumpEditor {
         ui: &mut egui::Ui,
         id: LoadedLogId,
         available: bool,
+        access: KeyboardAccess,
     ) -> Option<JumpAction> {
         let mode = self.mode?;
         let field_id = egui::Id::new((JUMP_FIELD_ID, id, mode));
-        let mut action = self.keyboard_action(ui, field_id, available);
+        let mut action = self.keyboard_action(ui, field_id, available, access);
         let reveal_editor = self.focus_requested;
         let row = ui.horizontal_wrapped(|ui| {
             self.input_ui(ui, field_id, mode, available);
@@ -109,18 +112,10 @@ impl LogJumpEditor {
         ui: &egui::Ui,
         field_id: egui::Id,
         available: bool,
+        access: KeyboardAccess,
     ) -> Option<JumpAction> {
-        if ui.ctx().top_layer_id() != Some(ui.layer_id()) || Popup::is_any_open(ui.ctx()) {
+        if !access.field_owns_keyboard(ui, field_id) {
             return None;
-        }
-        let focused = ui.memory(|memory| memory.focused());
-        if focused != Some(field_id) {
-            return (focused.is_none()
-                && ui.memory(|memory| memory.had_focus_last_frame(field_id))
-                && ui.input_mut(|input| {
-                    input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
-                }))
-            .then_some(JumpAction::Close);
         }
         ui.input_mut(|input| {
             if input.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
@@ -180,7 +175,12 @@ impl LogViewerWindow {
         };
         let available = self.log_state_mut(id).jump.mode != Some(JumpMode::GoToTime)
             || log.parsed().chronology().is_resolved();
-        match self.log_state_mut(id).jump.editor_ui(ui, id, available) {
+        let access = self.keyboard_access;
+        match self
+            .log_state_mut(id)
+            .jump
+            .editor_ui(ui, id, available, access)
+        {
             Some(JumpAction::Close) => {
                 let state = self.log_state_mut(id);
                 if let Some(mode) = state.jump.mode {

@@ -911,7 +911,6 @@ impl LogViewerWindow {
         ui: &mut egui::Ui,
         log: &LoadedLog,
         log_id: LoadedLogId,
-        dialog_open: bool,
         requests: &mut LineTableRequests<'_>,
     ) {
         let parsed = log.parsed();
@@ -922,6 +921,7 @@ impl LogViewerWindow {
             levels: self.color_levels,
         };
         let show_structural_lines = self.show_structural_lines;
+        let keyboard_access = self.keyboard_access;
         let state = self.log_state_mut(log_id);
         let find_hit = state.find.as_ref().and_then(|find| find.current()).cloned();
         let find_highlight = find_hit
@@ -984,7 +984,7 @@ impl LogViewerWindow {
             let row_height = row_height(ui);
             let focus = TableFocusScope::for_log(log_id);
             let target = focus.register_ui(ui);
-            let keyboard_available = TableFocusScope::keyboard_available(ui) && !dialog_open;
+            let keyboard_available = keyboard_access.available(ui.ctx());
             if keyboard_available {
                 if mem::take(&mut state.table_focus_requested)
                     || (ui.rect_contains_pointer(target.rect)

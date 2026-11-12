@@ -70,6 +70,7 @@ mod history_db;
 mod history_open;
 mod instance_wait;
 mod jamming;
+mod keyboard_scope;
 mod load_failures;
 mod load_recovery;
 mod loader;
