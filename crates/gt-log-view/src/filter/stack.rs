@@ -781,6 +781,10 @@ impl FilterStack {
         &self.visible
     }
 
+    pub(crate) fn shared_parsed_log(&self) -> Arc<ParsedLog> {
+        Arc::clone(&self.log)
+    }
+
     pub fn shared_visible_entries(&self) -> Arc<VisibleEntries> {
         Arc::clone(&self.visible)
     }
