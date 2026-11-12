@@ -20,6 +20,7 @@ use gt_ui_theme::{ALMOST_EQUAL_TO, EM_DASH};
 use gt_ui_types::{LoadedLogId, LogMatchGlyph, LogMatchHover, LogRowPlacement};
 use rustc_hash::FxHashMap;
 
+use super::find::FindHighlight;
 use super::{AssociationWindowUnit, DATE_FORMAT, LogViewerWindow};
 
 use navigation::SourceOverlay;
@@ -920,6 +921,10 @@ impl LogViewerWindow {
         };
         let show_structural_lines = self.show_structural_lines;
         let state = self.log_state_mut(log_id);
+        let find_hit = state.find.as_ref().and_then(|find| find.current()).cloned();
+        let find_highlight = find_hit
+            .as_ref()
+            .and_then(|hit| FindHighlight::of(hit, parsed));
         let reveal = state.source_reveal;
         let filtered_return = state.filtered_return.filter(|origin| origin.log == log_id);
         let source_anchor = filtered_return.map_or_else(
@@ -1042,13 +1047,26 @@ impl LogViewerWindow {
                                                 ui.available_width()
                                                     * BOOT_DIVIDER_SOURCE_WIDTH_FRACTION,
                                             );
-                                        ui.add_sized(
-                                            egui::vec2(source_width, row_height),
-                                            Label::new(RichText::new(source).monospace())
-                                                .truncate()
-                                                .selectable(true),
-                                        )
-                                        .on_hover_text(source);
+                                        let current_find = find_highlight
+                                            .as_ref()
+                                            .filter(|hit| hit.line_number() == line.line_number);
+                                        let mut source_job = LayoutJob::simple_singleline(
+                                            source.to_owned(),
+                                            egui::TextStyle::Monospace.resolve(ui.style()),
+                                            ui.visuals().text_color(),
+                                        );
+                                        if let Some(hit) = current_find {
+                                            hit.highlight_job(ui, &mut source_job);
+                                        }
+                                        let source_response = ui
+                                            .add_sized(
+                                                egui::vec2(source_width, row_height),
+                                                Label::new(source_job).truncate().selectable(true),
+                                            )
+                                            .on_hover_text(source);
+                                        if let Some(hit) = current_find {
+                                            hit.decorate_row(ui, source_response.rect);
+                                        }
                                     }
                                     boot_divider_row_ui(
                                         ui,
@@ -1076,6 +1094,9 @@ impl LogViewerWindow {
                                     line_number,
                                     line_numbers,
                                     gutter_width_px: gutter.width_px(),
+                                    find_highlight: find_highlight
+                                        .as_ref()
+                                        .filter(|hit| hit.line_number() == line_number),
                                     revealed_reason: revealed_reason.as_deref(),
                                 }
                                 .ui(ui);
@@ -1088,6 +1109,9 @@ impl LogViewerWindow {
                                     line_number: line.line_number,
                                     line_numbers,
                                     gutter_width_px: gutter.width_px(),
+                                    find_highlight: find_highlight
+                                        .as_ref()
+                                        .filter(|hit| hit.line_number() == line.line_number),
                                     revealed_reason: revealed_reason.as_deref(),
                                 }
                                 .ui(ui);
@@ -1107,6 +1131,9 @@ impl LogViewerWindow {
                                 timestamp: RowTimestamp::of(parsed, entry_index, entry),
                                 line_numbers,
                                 message,
+                                find_highlight: find_highlight
+                                    .as_ref()
+                                    .filter(|hit| hit.line_number() == entry.line_number),
                                 highlighted: HighlightedMessage {
                                     spans: filters.condition_match_spans(entry_index),
                                     color: highlight,
@@ -1351,6 +1378,7 @@ struct StructuralSourceRow<'a> {
     line_number: u32,
     line_numbers: LineNumberColumn,
     gutter_width_px: f32,
+    find_highlight: Option<&'a FindHighlight<'a>>,
     revealed_reason: Option<&'a str>,
 }
 
@@ -1361,15 +1389,28 @@ impl StructuralSourceRow<'_> {
                 ui.allocate_space(egui::vec2(self.gutter_width_px, 0.0));
                 self.line_numbers.ui(ui, self.line_number);
                 let source = ui.add(
-                    Label::new(RichText::new(self.source).monospace())
-                        .truncate()
-                        .selectable(true),
+                    Label::new({
+                        let mut job = LayoutJob::simple_singleline(
+                            self.source.to_owned(),
+                            egui::TextStyle::Monospace.resolve(ui.style()),
+                            ui.visuals().text_color(),
+                        );
+                        if let Some(hit) = self.find_highlight {
+                            hit.highlight_job(ui, &mut job);
+                        }
+                        job
+                    })
+                    .truncate()
+                    .selectable(true),
                 );
                 if let Some(reason) = self.revealed_reason {
                     source.on_hover_text(reason);
                 }
             })
             .response;
+        if let Some(hit) = self.find_highlight {
+            hit.decorate_row(ui, row.rect);
+        }
         if self.revealed_reason.is_some() {
             ui.painter().rect_stroke(
                 row.rect,
@@ -1412,6 +1453,7 @@ struct EntryRow<'a> {
     cross_highlight_fill: Option<Color32>,
 
     hover_dwell: RowHoverDwell,
+    find_highlight: Option<&'a FindHighlight<'a>>,
     revealed_reason: Option<&'a str>,
 }
 
@@ -1528,7 +1570,10 @@ impl EntryRow<'_> {
                 if interpolated && !self.timestamp.is_some_and(RowTimestamp::is_device_clock) {
                     timestamp.on_hover_text(INTERPOLATED_TIMESTAMP_HOVER);
                 }
-                let message = self.message_job(ui);
+                let mut message = self.message_job(ui);
+                if let Some(hit) = self.find_highlight {
+                    hit.highlight_job(ui, &mut message);
+                }
                 ui.add(Label::new(message).truncate().selectable(true));
             })
             .response;
@@ -1537,6 +1582,9 @@ impl EntryRow<'_> {
                 .set(background, Shape::rect_filled(row.rect, 0, fill));
         }
 
+        if let Some(hit) = self.find_highlight {
+            hit.decorate_row(ui, row.rect);
+        }
         if self.revealed_reason.is_some() {
             ui.painter().rect_stroke(
                 row.rect,

@@ -3,7 +3,7 @@
 
 use std::mem;
 
-use egui::{Button, ComboBox, DragValue, RichText, WidgetInfo, WidgetType, Window};
+use egui::{Button, ComboBox, DragValue, Popup, RichText, WidgetInfo, WidgetType, Window};
 use egui_phosphor::regular::{
     CARET_DOWN as ICON_CARET_DOWN, CARET_RIGHT as ICON_CARET_RIGHT, EYE as ICON_EYE,
     EYE_SLASH as ICON_EYE_SLASH, X as ICON_X,
@@ -25,6 +25,7 @@ use strum::IntoEnumIterator as _;
 use association_dialog::LogAssociationRequest;
 use association_window::{AssociationWindowEdit, AssociationWindowUnit};
 use filters::ConditionEdit;
+use find::LogFind;
 use inspector::InspectorSection;
 use line_table::{
     FilteredSourceReturn, LineTableCache, LineTableRequests, RowHoverDwell, SourceReveal,
@@ -40,6 +41,7 @@ use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 pub(super) mod association_dialog;
 mod association_window;
 pub(super) mod filters;
+mod find;
 pub(super) mod inspector;
 mod line_table;
 pub(super) mod log_list;
@@ -80,6 +82,7 @@ struct LogViewerState {
     scroll_to_source_line: Option<TableReadingAnchor>,
     query_pending_since: Option<f64>,
     condition_edit: Option<ConditionEdit>,
+    find: Option<LogFind>,
     filter_editor_open: bool,
     filter_editor_focus: bool,
     scroll_to_row: Option<usize>,
@@ -293,6 +296,7 @@ impl LogViewerWindow {
         let groups =
             log_list::group_logs_by_recording(logs, recordings, recording_names, attachments);
         let tabs = log_list::tabs_in_session_order(logs, &groups);
+        let popup_was_open = Popup::is_any_open(ctx);
         let mut open = self.open;
         let mut unload = None;
         let window = Window::new(LOG_VIEWER_TITLE)
@@ -307,6 +311,7 @@ impl LogViewerWindow {
                 // content rect, since `ui.min_rect()` is still empty this
                 // early in the layout.
                 let pointer_over_the_window = ui.rect_contains_pointer(ui.max_rect());
+                self.find_shortcut_ui(ui, dialog_open);
                 // The footer claims its height first: the sections above it
                 // divide what is left.
                 egui::Panel::bottom("log_viewer_footer")
@@ -352,6 +357,7 @@ impl LogViewerWindow {
             });
 
         if !dialog_open
+            && !popup_was_open
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             open = false;
@@ -476,6 +482,7 @@ impl LogViewerWindow {
             self.display_options_ui(ui);
             self.date_status_ui(ui, log, shown);
             settings_status::selected_log_ui(ui, log, shown, write_access, requests);
+            self.find_button_ui(ui);
             self.parse_summary_row_ui(ui, log, shown);
         });
         if let Some((id, visible)) = visibility

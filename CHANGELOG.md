@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Log Viewer:** Find searches original source text with next and previous navigation and separate queries for each log.
 - **Log Viewer:** Conditions support editing with Apply and Cancel, explicit matching modes and highlights for the selected condition.
 - **Log Viewer:** Table filters can be paused, resumed, or cleared while preserving map highlights, with recovery controls for empty results.
 - **Recordings:** GTD version 3 recordings load with navigation state, coordinate origin and independent satellite reports available for inspection.
