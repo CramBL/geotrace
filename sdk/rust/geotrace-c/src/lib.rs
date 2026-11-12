@@ -32,11 +32,11 @@ pub use icon::GtdMarkerIcon;
 pub use log_callback::{GtdLogCallback, GtdLogLevel};
 pub use nav_file::{
     GtdChannelInfo, GtdEventMarkerInfo, GtdEventMarkerStyleInfo, GtdMarkerInfo, GtdNavFile,
-    GtdNavPointInfo, GtdNavPointInfoV2, GtdSatelliteWarningInfo,
+    GtdNavPointInfo, GtdNavPointInfoV2, GtdNavPointInfoV3, GtdSatelliteWarningInfo,
 };
 pub use navigation::{
-    GtdNavFixV2, GtdOptU32, GtdPositionProvenance, GtdSolutionDimension, GtdSolutionMethod,
-    GtdSolutionState,
+    GtdNavFixV2, GtdNavFixV3, GtdOptU32, GtdOptU64, GtdPositionProvenance, GtdSolutionDimension,
+    GtdSolutionMethod, GtdSolutionState,
 };
 pub use optf32::GtdOptF32;
 pub use optf64::GtdOptF64;

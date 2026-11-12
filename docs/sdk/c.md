@@ -146,6 +146,36 @@ gtd_builder_add_nav_fix_v2(builder, &status);
 Set optional counts and DOP on the same `GtdNavFixV2` when reported.
 Both clocks are initially absent: ingestion validates the supplied clock and raw state tag.
 
+## Boot-clock readings
+
+Use `GtdNavFixV3` and `gtd_builder_add_nav_fix_v3()` to record optional boot-clock microseconds.
+The `fix` field uses the unchanged `GtdNavFixV2` layout.
+Read the values with `gtd_nav_file_get_nav_point_v3()` into `GtdNavPointInfoV3`.
+Existing input APIs produce absent boot time.
+
+```c
+GtdNavFixV3 fix = gtd_nav_fix_v3_init();
+gtd_ts_from_seconds(1700000000, &fix.fix.sys_time);
+fix.fix.lat_deg = 55.67;
+fix.fix.lon_deg = 12.56;
+fix.boot_time_us = GTD_SOME_U64(UINT64_C(12000000));
+gtd_builder_add_nav_fix_v3(builder, &fix);
+```
+
+This example assumes the producer obtained the boot reading from Linux `CLOCK_BOOTTIME`, which includes suspend, alongside the system reading.
+`CLOCK_MONOTONIC` excludes suspend.
+Choose and document the clock at the producer.
+Zero, repeated and decreasing readings are valid.
+`GTD_NONE_U64` means absent, while a present `UINT64_MAX` is rejected.
+A receiver-only fix can store boot time, but a system/boot comparison requires a system reading.
+
+For the first complete system/boot pair `(S0, B0)` in stored order, the delta is `(S - S0) - (B - B0)` in microseconds.
+Positive values mean system time has advanced farther than boot time.
+Divide the signed integer result by 1,000 for milliseconds.
+The delta can include suspend behavior, clock adjustments and resets.
+The optional column extends GTD v3.
+Older SDKs that decode and rewrite a recording may drop it.
+
 ## Navigation and independent polling
 
 These examples use the unreleased SDK APIs.

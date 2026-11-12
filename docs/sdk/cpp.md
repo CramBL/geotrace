@@ -104,6 +104,33 @@ builder.add(NavFix::status_only(time, SolutionState::NoFix));
 Set optional counts and DOP on the returned `NavFix` when reported.
 The ordinary builder error policy also applies to status-only inputs.
 
+## Boot-clock readings
+
+Set `NavFix::boot_time` to a checked `BootTime` in integer microseconds.
+`NavPointView::boot_time` returns the optional reading after decoding.
+
+```cpp
+NavFix fix{FixTime::host(Timestamp::from_seconds(1700000000)),
+           Angle::degrees(55.67), Angle::degrees(12.56)};
+fix.boot_time = BootTime::from_micros(12000000);
+builder.add(fix);
+```
+
+This example assumes the producer obtained the boot reading from Linux `CLOCK_BOOTTIME`, which includes suspend, alongside the system reading.
+`CLOCK_MONOTONIC` excludes suspend.
+Choose and document the clock at the producer.
+`std::nullopt` means absent, zero is valid and `UINT64_MAX` is rejected.
+`BootTime::try_from_micros()` returns a `Result` for callers with exceptions disabled.
+`BootTime::as_micros()` returns the exact integer value.
+A receiver-only fix can store boot time, but a system/boot comparison requires a system reading.
+
+For the first complete system/boot pair `(S0, B0)` in stored order, the delta is `(S - S0) - (B - B0)` in microseconds.
+Positive values mean system time has advanced farther than boot time.
+Divide the signed integer result by 1,000 for milliseconds.
+The delta can include suspend behavior, clock adjustments and resets.
+The optional column extends GTD v3.
+Older SDKs that decode and rewrite a recording may drop it.
+
 ## Navigation and independent polling
 
 These examples use the unreleased SDK APIs.

@@ -18,6 +18,7 @@
 #include <utility>
 
 using geotrace::Angle;
+using geotrace::BootTime;
 using geotrace::Constellation;
 using geotrace::FileBuilder;
 using geotrace::FixTime;
@@ -395,4 +396,37 @@ TEST_CASE("status-only factories preserve invalid state tags for builder validat
 #endif
     CHECK(builder.status().code == GTD_ERR_INVALID_ARGUMENT);
     CHECK(builder.status().description.find("state") != std::string::npos);
+}
+
+TEST_CASE("boot readings preserve exact microseconds and optional absence") {
+    const auto maximum = std::numeric_limits<std::uint64_t>::max() - 1;
+    const std::array<std::optional<BootTime>, 5> readings{
+        std::nullopt, BootTime::from_micros(0), BootTime::from_micros(maximum),
+        BootTime::from_micros(0), BootTime::from_micros(1)};
+    FileBuilder builder;
+    for (std::size_t index = 0; index < readings.size(); ++index) {
+        auto fix = source(static_cast<std::int64_t>(index));
+        fix.boot_time = readings.at(index);
+        if (index == 2) {
+            fix.time = FixTime::receiver(*fix.time.sys_time());
+        }
+        builder.add(fix);
+    }
+    const auto built = builder.try_finish();
+    REQUIRE(built.is_ok());
+    const auto file = NavFile::try_from_bytes(built.value().to_bytes());
+    REQUIRE(file.is_ok());
+    for (std::size_t index = 0; index < readings.size(); ++index) {
+        CHECK(file.value().try_nav_point(index).value().boot_time == readings.at(index));
+    }
+    CHECK(file.value().nav_point(2).boot_time->as_micros() == maximum);
+    CHECK_FALSE(file.value().nav_point(2).sys_time);
+    CHECK(BootTime::from_micros(1) != BootTime::from_micros(0));
+    CHECK(BootTime::try_from_micros(std::numeric_limits<std::uint64_t>::max()).error().code ==
+          GTD_ERR_INVALID_ARGUMENT);
+#if GEOTRACE_CPP_EXCEPTIONS
+    CHECK_THROWS_AS(
+        static_cast<void>(BootTime::from_micros(std::numeric_limits<std::uint64_t>::max())),
+        std::invalid_argument);
+#endif
 }

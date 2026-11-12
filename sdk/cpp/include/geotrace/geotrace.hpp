@@ -1096,6 +1096,36 @@ travel_mode_from_code(std::uint8_t code) noexcept {
 
 /** @} */
 
+/** Elapsed microseconds from the producer's boot-clock origin. */
+class [[nodiscard]] BootTime {
+  public:
+    /** Zero is valid. `UINT64_MAX` is reserved for absence. */
+    static Result<BootTime> try_from_micros(std::uint64_t micros) {
+        if (micros == std::numeric_limits<std::uint64_t>::max()) {
+            return Status{GTD_ERR_INVALID_ARGUMENT, "boot time UINT64_MAX is reserved for absence"};
+        }
+        return BootTime{micros};
+    }
+
+    /** @throws std::invalid_argument for `UINT64_MAX`. */
+    static BootTime from_micros(std::uint64_t micros) {
+        return try_from_micros(micros).value_or_throw();
+    }
+
+    /** Exact elapsed microseconds without conversion to floating point. */
+    [[nodiscard]] constexpr std::uint64_t as_micros() const noexcept { return micros_; }
+
+    /** Whether the elapsed microsecond readings are equal. */
+    constexpr bool operator==(BootTime other) const noexcept { return micros_ == other.micros_; }
+    /** Whether the elapsed microsecond readings differ. */
+    constexpr bool operator!=(BootTime other) const noexcept { return !(*this == other); }
+
+  private:
+    explicit constexpr BootTime(std::uint64_t micros) noexcept : micros_(micros) {}
+
+    std::uint64_t micros_;
+};
+
 /**
  * A single GPS navigation fix.
  *
@@ -1127,6 +1157,9 @@ struct NavFix {
     std::optional<double> hdop = std::nullopt;
     std::optional<double> vdop = std::nullopt;
     std::optional<double> pdop = std::nullopt;
+
+    /** Optional producer boot-clock reading, independent of receiver time. */
+    std::optional<BootTime> boot_time = std::nullopt;
 
     /** Coordinate origin and optional measurements are absent. */
     [[nodiscard]] static NavFix status_only(FixTime time, SolutionState state) {
@@ -1546,6 +1579,8 @@ struct NavPointView {
     std::optional<double> hdop = std::nullopt;
     std::optional<double> vdop = std::nullopt;
     std::optional<double> pdop = std::nullopt;
+    /** Optional producer boot-clock reading, independent of receiver time. */
+    std::optional<BootTime> boot_time = std::nullopt;
     std::size_t usage_report_count = 0;
     std::size_t observation_report_count = 0;
 };
@@ -1971,7 +2006,11 @@ class FileBuilder {
             fix.heading ? std::optional<double>{fix.heading->as_degrees()} : std::nullopt;
         const std::optional<double> speed_mps =
             fix.speed ? std::optional<double>{fix.speed->as_mps()} : std::nullopt;
-        GtdNavFixV2 input = ::gtd_nav_fix_v2_init();
+        GtdNavFixV3 versioned = ::gtd_nav_fix_v3_init();
+        auto &input = versioned.fix;
+        if (fix.boot_time) {
+            versioned.boot_time_us = GtdOptU64{fix.boot_time->as_micros(), 1};
+        }
         input.gps_time = detail::to_c(fix.time.gps_time());
         input.sys_time = detail::to_c(fix.time.sys_time());
         input.lat_deg = fix.lat.as_degrees();
@@ -2021,7 +2060,7 @@ class FileBuilder {
         input.hdop = detail::to_c(fix.hdop);
         input.vdop = detail::to_c(fix.vdop);
         input.pdop = detail::to_c(fix.pdop);
-        record(::gtd_builder_add_nav_fix_v2(impl_.get(), &input));
+        record(::gtd_builder_add_nav_fix_v3(impl_.get(), &versioned));
         return *this;
     }
 
@@ -2587,10 +2626,18 @@ class [[nodiscard]] NavFile {
         point.satellite_count = info.sat_count;
         point.satellite_report_gps_time = timestamp_from_c(info.sat_report_gps_time);
         point.satellite_report_sys_time = timestamp_from_c(info.sat_report_sys_time);
-        GtdNavPointInfoV2 canonical{};
-        const auto canonical_status = ::gtd_nav_file_get_nav_point_v2(impl_.get(), idx, &canonical);
+        GtdNavPointInfoV3 versioned{};
+        const auto canonical_status = ::gtd_nav_file_get_nav_point_v3(impl_.get(), idx, &versioned);
         if (canonical_status != GTD_OK) {
             return Status::from(canonical_status);
+        }
+        const auto &canonical = versioned.fix;
+        if (canonical.boot_time_us.present != 0) {
+            auto boot_time = BootTime::try_from_micros(canonical.boot_time_us.value);
+            if (boot_time.is_err()) {
+                return boot_time.error();
+            }
+            point.boot_time = boot_time.value();
         }
         if (canonical.fix.state != GTD_SOLUTION_STATE_UNREPORTED) {
             point.state = static_cast<SolutionState>(canonical.fix.state);
@@ -2609,8 +2656,8 @@ class [[nodiscard]] NavFile {
         point.hdop = detail::from_c(canonical.fix.hdop);
         point.vdop = detail::from_c(canonical.fix.vdop);
         point.pdop = detail::from_c(canonical.fix.pdop);
-        point.usage_report_count = canonical.usage_report_count;
-        point.observation_report_count = canonical.observation_report_count;
+        point.usage_report_count = versioned.usage_report_count;
+        point.observation_report_count = versioned.observation_report_count;
         return point;
     }
 

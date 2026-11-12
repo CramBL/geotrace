@@ -3,8 +3,8 @@ use std::fmt::Display;
 use chrono::DateTime;
 
 use geotrace_sdk::{
-    Angle, NavFix, NavFixTime, PositionProvenance, RecordedFixTimestamps, SolutionDimension,
-    SolutionMethod, SolutionState, Velocity,
+    Angle, BootTime, NavFix, NavFixTime, PositionProvenance, RecordedFixTimestamps,
+    SolutionDimension, SolutionMethod, SolutionState, Velocity,
 };
 
 use crate::error::{self, GtdStatus};
@@ -285,4 +285,80 @@ pub extern "C" fn gtd_nav_fix_v2_status_only_init(state: u32) -> GtdNavFixV2 {
     fix.sys_time = timestamp::gtd_ts_none();
     fix.state = state;
     fix
+}
+
+/// `present == 0` means absent. Units depend on the field containing this value.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GtdOptU64 {
+    /// Unsigned integer when present, including zero.
+    pub value: u64,
+    /// Zero for absent, nonzero for present.
+    pub present: u8,
+}
+
+/// The navigation facts use the unchanged v2 layout.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GtdNavFixV3 {
+    /// Navigation facts in the unchanged v2 layout.
+    pub fix: GtdNavFixV2,
+    /// Microseconds from the producer's boot-clock origin. Zero is valid.
+    /// A present `u64::MAX` is invalid. Clock selection is determined by the producer.
+    pub boot_time_us: GtdOptU64,
+}
+
+impl GtdNavFixV3 {
+    pub(crate) fn to_sdk(self) -> Result<NavFix, GtdStatus> {
+        let mut fix = self.fix.to_sdk()?;
+        fix.boot_time = if self.boot_time_us.present == 0 {
+            None
+        } else {
+            Some(
+                BootTime::from_micros(self.boot_time_us.value).map_err(|error| {
+                    error::set_last_error(format!("boot_time_us: {error}"));
+                    GtdStatus::GTD_ERR_INVALID_ARGUMENT
+                })?,
+            )
+        };
+        Ok(fix)
+    }
+}
+
+impl From<NavFix> for GtdNavFixV3 {
+    fn from(fix: NavFix) -> Self {
+        Self {
+            fix: fix.into(),
+            boot_time_us: GtdOptU64 {
+                value: fix.boot_time.map_or(0, BootTime::as_micros),
+                present: u8::from(fix.boot_time.is_some()),
+            },
+        }
+    }
+}
+
+/// Initialize absent boot time and navigation metadata with source-provided coordinates.
+/// Set at least one timestamp and the coordinates before ingestion.
+#[unsafe(no_mangle)]
+pub extern "C" fn gtd_nav_fix_v3_init() -> GtdNavFixV3 {
+    GtdNavFixV3 {
+        fix: gtd_nav_fix_v2_init(),
+        boot_time_us: GtdOptU64 {
+            value: 0,
+            present: 0,
+        },
+    }
+}
+
+/// Initialize an explicit status with absent coordinates, coordinate origin and boot time.
+/// Set at least one timestamp before ingestion.
+#[unsafe(no_mangle)]
+pub extern "C" fn gtd_nav_fix_v3_status_only_init(state: u32) -> GtdNavFixV3 {
+    GtdNavFixV3 {
+        fix: gtd_nav_fix_v2_status_only_init(state),
+        boot_time_us: GtdOptU64 {
+            value: 0,
+            present: 0,
+        },
+    }
 }
