@@ -93,6 +93,7 @@ impl LogEntry {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedLog {
     text: Arc<str>,
+    source_line_starts: Arc<[usize]>,
     entries: Vec<LogEntry>,
 
     /// One per entry of `entries`, in the same order.
@@ -149,6 +150,26 @@ impl ParsedLog {
 
     pub fn text(&self) -> &Arc<str> {
         &self.text
+    }
+
+    pub fn source_line_count(&self) -> usize {
+        self.source_line_starts.len()
+    }
+
+    pub fn source_line(&self, line_number: u32) -> Option<&str> {
+        let index = usize::try_from(line_number.checked_sub(1)?).ok()?;
+        let start = *self.source_line_starts.get(index)?;
+        let end = self
+            .source_line_starts
+            .get(index + 1)
+            .copied()
+            .unwrap_or(self.text.len());
+        let source = self.text.get(start..end)?;
+        Some(
+            source
+                .strip_suffix('\n')
+                .map_or(source, |line| line.strip_suffix('\r').unwrap_or(line)),
+        )
     }
 
     /// Every kept line, anchored and interpolated alike, in file order.
@@ -327,8 +348,17 @@ fn parse_in_chunks(
         .collect();
     let anchored_entry_count = entries.iter().filter(|entry| entry.is_anchored()).count();
 
+    let source_line_starts = text
+        .split_inclusive('\n')
+        .scan(0, |offset, line| {
+            let start = *offset;
+            *offset += line.len();
+            Some(start)
+        })
+        .collect();
     Ok(ParsedLog {
         text,
+        source_line_starts,
         entries,
         recognised_messages: index.recognised_messages,
         services: index.services,

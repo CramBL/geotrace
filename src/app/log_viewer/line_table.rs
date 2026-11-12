@@ -22,6 +22,8 @@ use rustc_hash::FxHashMap;
 
 use super::{AssociationWindowUnit, DATE_FORMAT, LogViewerWindow};
 
+use navigation::SourceOverlay;
+
 pub(super) use navigation::{FilteredSourceReturn, SourceRequest, SourceReveal, SourceRow};
 
 mod navigation;
@@ -39,6 +41,9 @@ pub(super) enum LineTableRow {
         entry_index: usize,
         visible_row: usize,
     },
+    RenderRawSource {
+        line_number: u32,
+    },
     Structural {
         structural_index: usize,
     },
@@ -47,6 +52,7 @@ pub(super) enum LineTableRow {
 impl LineTableRow {
     fn source_line(self, parsed: &ParsedLog) -> Option<u32> {
         match self {
+            Self::RenderRawSource { line_number } => Some(line_number),
             Self::Entry { entry_index, .. } | Self::DayDivider { entry_index } => parsed
                 .entries()
                 .get(entry_index)
@@ -77,6 +83,7 @@ enum TableRowIdentity {
     BootSession(usize),
     DayDivider(usize),
     Entry(usize),
+    RenderRawSource(u32),
     Structural(usize),
 }
 
@@ -86,6 +93,7 @@ impl From<LineTableRow> for TableRowIdentity {
             LineTableRow::BootDivider { session_index, .. } => Self::BootSession(session_index),
             LineTableRow::DayDivider { entry_index } => Self::DayDivider(entry_index),
             LineTableRow::Entry { entry_index, .. } => Self::Entry(entry_index),
+            LineTableRow::RenderRawSource { line_number } => Self::RenderRawSource(line_number),
             LineTableRow::Structural { structural_index } => Self::Structural(structural_index),
         }
     }
@@ -108,6 +116,9 @@ enum InsertedRowKind {
     DayDivider {
         entry_index: usize,
     },
+    RenderRawSource {
+        line_number: u32,
+    },
     Structural {
         structural_index: usize,
     },
@@ -124,6 +135,9 @@ impl From<InsertedRowKind> for LineTableRow {
                 structural_index,
             },
             InsertedRowKind::DayDivider { entry_index } => Self::DayDivider { entry_index },
+            InsertedRowKind::RenderRawSource { line_number } => {
+                Self::RenderRawSource { line_number }
+            }
             InsertedRowKind::Structural { structural_index } => {
                 Self::Structural { structural_index }
             }
@@ -140,47 +154,58 @@ struct RevealedEntry {
 #[derive(Debug)]
 struct DisplayedEntries {
     filtered: Arc<VisibleEntries>,
-    reveal: Option<RevealedEntry>,
+    reveals: Vec<RevealedEntry>,
 }
 
 impl DisplayedEntries {
-    fn new(log: &LoadedLog, revealed_entry: Option<usize>) -> Self {
+    fn new(log: &LoadedLog, overlay: Option<SourceOverlay>) -> Self {
         let filtered = log.filters().shared_visible_entries();
-        let reveal = revealed_entry
-            .filter(|index| *index < log.parsed().entries().len())
-            .and_then(|entry_index| {
+        let parsed = log.parsed();
+        let mut reveals = Vec::new();
+        if let Some(overlay) = overlay {
+            let first = parsed
+                .entries()
+                .partition_point(|entry| entry.line_number < overlay.first_line);
+            for (entry_index, entry) in parsed.entries().iter().enumerate().skip(first) {
+                if entry.line_number > overlay.last_line {
+                    break;
+                }
                 let visible_row = filtered.row_at_or_after(entry_index);
-                (filtered.entry_index(visible_row) != Some(entry_index)).then_some(RevealedEntry {
-                    entry_index,
-                    visible_row,
-                })
-            });
-        Self { filtered, reveal }
+                if filtered.entry_index(visible_row) != Some(entry_index) {
+                    reveals.push(RevealedEntry {
+                        entry_index,
+                        visible_row: visible_row + reveals.len(),
+                    });
+                }
+            }
+        }
+        Self { filtered, reveals }
     }
 
     fn len(&self) -> usize {
-        self.filtered.len() + usize::from(self.reveal.is_some())
+        self.filtered.len() + self.reveals.len()
     }
 
     fn entry_index(&self, visible_row: usize) -> Option<usize> {
-        if let Some(reveal) = &self.reveal {
-            if visible_row == reveal.visible_row {
-                return Some(reveal.entry_index);
-            }
-            if visible_row > reveal.visible_row {
-                return self.filtered.entry_index(visible_row - 1);
-            }
+        let before = self
+            .reveals
+            .partition_point(|reveal| reveal.visible_row < visible_row);
+        if let Some(reveal) = self
+            .reveals
+            .get(before)
+            .filter(|reveal| reveal.visible_row == visible_row)
+        {
+            Some(reveal.entry_index)
+        } else {
+            self.filtered.entry_index(visible_row - before)
         }
-        self.filtered.entry_index(visible_row)
     }
 
     fn row_at_or_after(&self, entry_index: usize) -> usize {
         self.filtered.row_at_or_after(entry_index)
-            + usize::from(
-                self.reveal
-                    .as_ref()
-                    .is_some_and(|reveal| reveal.entry_index < entry_index),
-            )
+            + self
+                .reveals
+                .partition_point(|reveal| reveal.entry_index < entry_index)
     }
 
     fn largest_line_number(&self, parsed: &ParsedLog, show_structural_lines: bool) -> u32 {
@@ -263,31 +288,39 @@ struct RevealedTicks {
 #[derive(Debug)]
 struct DisplayedClockTicks {
     filtered: Arc<ClockTicks>,
-    reveal: Option<RevealedTicks>,
+    reveals: Vec<RevealedTicks>,
 }
 
 impl DisplayedClockTicks {
     fn new(log: &LoadedLog, entries: &DisplayedEntries) -> Self {
-        let reveal = entries.reveal.as_ref().map(|reveal| RevealedTicks {
-            visible_row: reveal.visible_row,
-            revealed: ClockTicks::tick_after_entry(
-                log.parsed(),
-                reveal.entry_index,
-                reveal
-                    .visible_row
-                    .checked_sub(1)
-                    .and_then(|row| entries.entry_index(row)),
-            ),
-            following: entries.entry_index(reveal.visible_row + 1).map_or(
-                TimestampTick::Weak,
-                |following| {
-                    ClockTicks::tick_after_entry(log.parsed(), following, Some(reveal.entry_index))
-                },
-            ),
-        });
+        let reveals = entries
+            .reveals
+            .iter()
+            .map(|reveal| RevealedTicks {
+                visible_row: reveal.visible_row,
+                revealed: ClockTicks::tick_after_entry(
+                    log.parsed(),
+                    reveal.entry_index,
+                    reveal
+                        .visible_row
+                        .checked_sub(1)
+                        .and_then(|row| entries.entry_index(row)),
+                ),
+                following: entries.entry_index(reveal.visible_row + 1).map_or(
+                    TimestampTick::Weak,
+                    |following| {
+                        ClockTicks::tick_after_entry(
+                            log.parsed(),
+                            following,
+                            Some(reveal.entry_index),
+                        )
+                    },
+                ),
+            })
+            .collect();
         Self {
             filtered: log.filters().shared_clock_ticks(),
-            reveal,
+            reveals,
         }
     }
 
@@ -296,53 +329,51 @@ impl DisplayedClockTicks {
         parsed: &'a ParsedLog,
         entries: &'a DisplayedEntries,
     ) -> impl Iterator<Item = usize> + 'a {
-        let boundary_rows = match (&entries.reveal, parsed.chronology().resolved()) {
-            (Some(reveal), Some(resolved)) => [
-                Some(reveal.visible_row),
-                (reveal.visible_row + 1..entries.len()).find(|&row| {
-                    entries
-                        .entry_index(row)
-                        .and_then(|entry| resolved.eligible_time(entry))
-                        .is_some()
-                }),
-            ],
-            _ => [None, None],
-        };
+        let mut boundary_rows = Vec::new();
+        if let (Some(first), Some(last), Some(resolved)) = (
+            entries.reveals.first(),
+            entries.reveals.last(),
+            parsed.chronology().resolved(),
+        ) {
+            boundary_rows.extend(first.visible_row..=last.visible_row);
+            boundary_rows.extend((last.visible_row + 1..entries.len()).find(|&row| {
+                entries
+                    .entry_index(row)
+                    .and_then(|entry| resolved.eligible_time(entry))
+                    .is_some()
+            }));
+        }
         let day_rows = self
             .filtered
             .day_dividers()
             .iter()
-            .map(move |divider| match &entries.reveal {
-                Some(reveal) if divider.visible_row >= reveal.visible_row => {
-                    divider.visible_row + 1
-                }
-                _ => divider.visible_row,
+            .filter_map(move |divider| entries.filtered.entry_index(divider.visible_row))
+            .map(move |entry| entries.row_at_or_after(entry))
+            .filter(|row| !boundary_rows.contains(row))
+            .collect::<Vec<_>>();
+        let revealed_day_rows = parsed
+            .chronology()
+            .resolved()
+            .map(move |resolved| {
+                boundary_rows.into_iter().filter(move |&row| {
+                    let Some(current) = entries
+                        .entry_index(row)
+                        .and_then(|entry| resolved.eligible_time(entry))
+                    else {
+                        return false;
+                    };
+                    (0..row)
+                        .rev()
+                        .filter_map(|row| entries.entry_index(row))
+                        .find_map(|entry| resolved.eligible_time(entry))
+                        .is_some_and(|previous| {
+                            previous.timestamp().date_naive() != current.timestamp().date_naive()
+                        })
+                })
             })
-            .filter(move |row| !boundary_rows.contains(&Some(*row)));
-        let revealed_day_rows =
-            parsed
-                .chronology()
-                .resolved()
-                .into_iter()
-                .flat_map(move |resolved| {
-                    boundary_rows.into_iter().flatten().filter(move |&row| {
-                        let Some(current) = entries
-                            .entry_index(row)
-                            .and_then(|entry| resolved.eligible_time(entry))
-                        else {
-                            return false;
-                        };
-                        (0..row)
-                            .rev()
-                            .filter_map(|row| entries.entry_index(row))
-                            .find_map(|entry| resolved.eligible_time(entry))
-                            .is_some_and(|previous| {
-                                previous.timestamp().date_naive()
-                                    != current.timestamp().date_naive()
-                            })
-                    })
-                });
-        day_rows.chain(revealed_day_rows)
+            .into_iter()
+            .flatten();
+        day_rows.into_iter().chain(revealed_day_rows)
     }
 
     fn append_day_divider_insertions(
@@ -379,18 +410,21 @@ impl DisplayedClockTicks {
     }
 
     fn tick(&self, visible_row: usize) -> TimestampTick {
-        if let Some(reveal) = &self.reveal {
+        let before = self
+            .reveals
+            .partition_point(|reveal| reveal.visible_row <= visible_row);
+        if let Some(reveal) = before
+            .checked_sub(1)
+            .and_then(|index| self.reveals.get(index))
+        {
             if visible_row == reveal.visible_row {
                 return reveal.revealed;
             }
             if visible_row == reveal.visible_row + 1 {
                 return reveal.following;
             }
-            if visible_row > reveal.visible_row {
-                return self.filtered.tick(visible_row - 1);
-            }
         }
-        self.filtered.tick(visible_row)
+        self.filtered.tick(visible_row - before)
     }
 }
 
@@ -401,6 +435,7 @@ pub(super) struct LineTableRows {
     boot_rows: Vec<(usize, usize)>,
     ticks: DisplayedClockTicks,
     largest_line_number: u32,
+    additional_source_count: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -408,7 +443,7 @@ struct RowCacheKey {
     log: LoadedLogId,
     visible_revision: u64,
     show_structural_lines: bool,
-    revealed_source: Option<SourceRow>,
+    revealed_source: Option<SourceOverlay>,
 }
 
 pub(super) struct LineTableCache {
@@ -526,6 +561,37 @@ impl SourceBootDividers {
 }
 
 impl LineTableRows {
+    fn append_revealed_source_insertions(
+        parsed: &ParsedLog,
+        visible: &DisplayedEntries,
+        overlay: SourceOverlay,
+        show_structural_lines: bool,
+        pending: &mut Vec<PendingInsertion>,
+    ) -> usize {
+        let mut added = 0;
+        for line_number in overlay.first_line..=overlay.last_line {
+            let row = match SourceRow::at_line(parsed, line_number) {
+                Some(SourceRow::RenderRawLine(_)) => {
+                    InsertedRowKind::RenderRawSource { line_number }
+                }
+                Some(SourceRow::ShowStructuralLine(structural_index)) if !show_structural_lines => {
+                    InsertedRowKind::Structural { structural_index }
+                }
+                _ => continue,
+            };
+            added += 1;
+            let entry = parsed
+                .entries()
+                .partition_point(|entry| entry.line_number < line_number);
+            pending.push(PendingInsertion {
+                visible_row: visible.row_at_or_after(entry),
+                source_line: line_number,
+                row,
+            });
+        }
+        added
+    }
+
     #[cfg(test)]
     pub(super) fn of(log: &LoadedLog) -> Self {
         Self::with_overlay(log, false, None)
@@ -533,16 +599,25 @@ impl LineTableRows {
 
     #[cfg(test)]
     fn with_overlay(log: &LoadedLog, show_structural_lines: bool, entry: Option<usize>) -> Self {
-        Self::with_source_overlay(log, show_structural_lines, entry.map(SourceRow::ShowEntry))
+        Self::with_source_overlay(
+            log,
+            show_structural_lines,
+            entry
+                .and_then(|entry| log.parsed().entries().get(entry))
+                .map(|entry| SourceOverlay {
+                    first_line: entry.line_number,
+                    last_line: entry.line_number,
+                }),
+        )
     }
 
     fn with_source_overlay(
         log: &LoadedLog,
         show_structural_lines: bool,
-        revealed_source: Option<SourceRow>,
+        revealed_source: Option<SourceOverlay>,
     ) -> Self {
         let parsed = log.parsed();
-        let visible = DisplayedEntries::new(log, revealed_source.and_then(SourceRow::entry_index));
+        let visible = DisplayedEntries::new(log, revealed_source);
         let ticks = DisplayedClockTicks::new(log, &visible);
         let source_boot_dividers = SourceBootDividers::of(parsed, show_structural_lines);
         let mut pending = Vec::new();
@@ -551,26 +626,19 @@ impl LineTableRows {
         if show_structural_lines {
             source_boot_dividers.append_structural_insertions(parsed, &visible, &mut pending);
         }
-        if !show_structural_lines
-            && let Some(SourceRow::ShowStructuralLine(structural_index)) = revealed_source
-            && let Some(line) = parsed.structural_lines().get(structural_index)
-        {
-            let entry = parsed
-                .entries()
-                .partition_point(|entry| entry.line_number < line.line_number);
-            pending.push(PendingInsertion {
-                visible_row: visible.row_at_or_after(entry),
-                source_line: line.line_number,
-                row: InsertedRowKind::Structural { structural_index },
+        let additional_source_count = visible.reveals.len()
+            + revealed_source.map_or(0, |overlay| {
+                Self::append_revealed_source_insertions(
+                    parsed,
+                    &visible,
+                    overlay,
+                    show_structural_lines,
+                    &mut pending,
+                )
             });
-        }
         let largest_line_number = visible
             .largest_line_number(parsed, show_structural_lines)
-            .max(
-                revealed_source
-                    .and_then(|source| source.line_number(parsed))
-                    .unwrap_or(0),
-            );
+            .max(revealed_source.map_or(0, |overlay| overlay.last_line));
         let (insertions, boot_rows) = PendingInsertion::index_in_source_order(pending);
         Self {
             entries: visible,
@@ -578,7 +646,12 @@ impl LineTableRows {
             boot_rows,
             ticks,
             largest_line_number,
+            additional_source_count,
         }
+    }
+
+    pub(super) fn additional_source_count(&self) -> usize {
+        self.additional_source_count
     }
 
     pub(super) fn len(&self) -> usize {
@@ -638,10 +711,12 @@ impl LineTableRows {
                 )
                 .then_some(insertion.table_row)
             }),
-            TableRowIdentity::DayDivider(_) => self.insertions.iter().find_map(|insertion| {
-                (TableRowIdentity::from(LineTableRow::from(insertion.row)) == target)
-                    .then_some(insertion.table_row)
-            }),
+            TableRowIdentity::DayDivider(_) | TableRowIdentity::RenderRawSource(_) => {
+                self.insertions.iter().find_map(|insertion| {
+                    (TableRowIdentity::from(LineTableRow::from(insertion.row)) == target)
+                        .then_some(insertion.table_row)
+                })
+            }
         }
     }
 
@@ -721,7 +796,7 @@ impl LogViewerWindow {
             revealed_source: self
                 .log_state_mut(log_id)
                 .source_reveal
-                .map(|reveal| reveal.source()),
+                .map(|reveal| reveal.overlay(log.parsed())),
         };
         match &mut self.log_state_mut(log_id).line_table_cache {
             Some(cache) if cache.key == key => Arc::clone(&cache.rows),
@@ -858,6 +933,9 @@ impl LogViewerWindow {
         if !filters.is_table_query_pending() {
             state.scroll_to_source_line = None;
             state.filtered_return = None;
+            if let Some(reveal) = &mut state.source_reveal {
+                reveal.finish_centering();
+            }
         }
         let ticks = &rows.ticks;
         let line_numbers = LineNumberColumn::new(ui, rows.largest_line_number);
@@ -888,6 +966,7 @@ impl LogViewerWindow {
             .or(state.clicked_glyph.as_ref());
         let cross_highlighted = CrossHighlightedRows::of(marking_hexagon, log_id, dark_mode);
         let hover_dwell = state.row_hover_dwell;
+        let mut context_line = None;
         let mut hovered_row_placement = None;
         let mut hovered_entry_index = None;
 
@@ -909,8 +988,15 @@ impl LogViewerWindow {
             if let Some(anchor) = source_anchor {
                 let row = rows.row_at_reading_anchor(parsed, anchor);
                 state.scroll_to_row = None;
-                scroll_area = scroll_area
-                    .vertical_scroll_offset(row as f32 * row_height + anchor.offset_within_row_px);
+                let offset = if reveal.is_some_and(SourceReveal::center_pending) {
+                    (row as f32 * row_height
+                        - (ui.available_height() - row_height).max(0.0)
+                            * CONTEXT_TARGET_VERTICAL_FRACTION)
+                        .max(0.0)
+                } else {
+                    row as f32 * row_height + anchor.offset_within_row_px
+                };
+                scroll_area = scroll_area.vertical_scroll_offset(offset);
             } else if filtered_return.is_some() {
                 state.scroll_to_row = None;
                 scroll_area = scroll_area.vertical_scroll_offset(0.0);
@@ -983,6 +1069,18 @@ impl LogViewerWindow {
                                 divider_row_ui(ui, RichText::new(date).monospace());
                             }
                         }
+                        Some(LineTableRow::RenderRawSource { line_number }) => {
+                            if let Some(source) = parsed.source_line(line_number) {
+                                StructuralSourceRow {
+                                    source,
+                                    line_number,
+                                    line_numbers,
+                                    gutter_width_px: gutter.width_px(),
+                                    revealed_reason: revealed_reason.as_deref(),
+                                }
+                                .ui(ui);
+                            }
+                        }
                         Some(LineTableRow::Structural { structural_index }) => {
                             if let Some(line) = parsed.structural_lines().get(structural_index) {
                                 StructuralSourceRow {
@@ -1027,9 +1125,13 @@ impl LogViewerWindow {
                                 revealed_reason: revealed_reason.as_deref(),
                             }
                             .ui(ui, unit);
-                            let Some(RowInteraction { clicked }) = interaction else {
+                            let Some(interaction) = interaction else {
                                 continue;
                             };
+                            if interaction == RowInteraction::ShowSurroundingLines {
+                                context_line = Some(entry.line_number);
+                                continue;
+                            }
                             hovered_entry_index = Some(entry_index);
                             let Some(placement) = placement else {
                                 continue;
@@ -1039,7 +1141,7 @@ impl LogViewerWindow {
                                 merc: mercator::normalize(latitude, longitude),
                                 track: placement.fix.track,
                             });
-                            if clicked {
+                            if interaction == RowInteraction::CentreMap {
                                 *requests.map_center =
                                     Some((latitude.as_degrees(), longitude.as_degrees()));
                             }
@@ -1063,6 +1165,9 @@ impl LogViewerWindow {
             .row_hover_dwell
             .moved_to(hovered_entry_index, ui.input(|input| input.time));
         requests.hover.row_placement = hovered_row_placement;
+        if let Some(line) = context_line {
+            self.navigate_to_source(log, log_id, SourceRequest::ShowSurroundingLines(line));
+        }
     }
 }
 
@@ -1310,10 +1415,11 @@ struct EntryRow<'a> {
     revealed_reason: Option<&'a str>,
 }
 
-/// What the cursor did to the row under it, built only for the row the pointer
-/// is on.
-struct RowInteraction {
-    clicked: bool,
+#[derive(PartialEq)]
+enum RowInteraction {
+    CentreMap,
+    HoverOverRow,
+    ShowSurroundingLines,
 }
 
 /// Where the live filter matched the message, and the colour reserved for it.
@@ -1449,12 +1555,23 @@ impl EntryRow<'_> {
         let row = ui.interact_opt(
             row.rect,
             row.id,
-            match associated {
-                true => egui::Sense::click(),
-                false => egui::Sense::hover(),
-            },
+            egui::Sense::click(),
             InteractOptions { move_to_top: true },
         );
+        let mut context_requested = false;
+        row.context_menu(|ui| {
+            if ui
+                .button("Show surrounding lines")
+                .on_hover_text("Temporarily show nearby physical source lines")
+                .clicked()
+            {
+                context_requested = true;
+                ui.close();
+            }
+        });
+        if context_requested {
+            return Some(RowInteraction::ShowSurroundingLines);
+        }
         if !row.hovered() {
             return None;
         }
@@ -1462,8 +1579,10 @@ impl EntryRow<'_> {
             Some(hover) => row.on_hover_text(hover),
             None => row,
         };
-        Some(RowInteraction {
-            clicked: row.clicked(),
+        Some(if row.clicked() {
+            RowInteraction::CentreMap
+        } else {
+            RowInteraction::HoverOverRow
         })
     }
 
@@ -1719,6 +1838,7 @@ const HOUR_MINUTE_FORMAT: &str = "%H:%M";
 /// in the quiet colour.
 const SECONDS_FORMAT: &str = ":%S";
 
+const CONTEXT_TARGET_VERTICAL_FRACTION: f32 = 0.5;
 const REVEAL_OUTLINE_WIDTH_PX: f32 = 1.0;
 
 pub(super) const DEVICE_CLOCK_ROW_HOVER: &str =

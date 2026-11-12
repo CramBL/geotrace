@@ -1,4 +1,8 @@
+use std::sync::Arc;
+
 use rstest::rstest;
+
+use crate::YearResolution;
 
 use crate::parse::HOSTNAME_DETECTION_LINE_LIMIT;
 use crate::parse::tests::fixtures;
@@ -78,4 +82,30 @@ fn every_service_of_a_log_takes_a_slot_of_its_own() {
             .collect::<Vec<_>>(),
         [0, 1, 2, 3, 4, 5, 6]
     );
+}
+
+#[rstest]
+#[case::newline("\n", "")]
+#[case::crlf("\r\n", "")]
+#[case::unterminated("", "\r")]
+fn physical_line_lookup_preserves_whitespace_and_shared_offsets(
+    #[case] terminator: &str,
+    #[case] suffix: &str,
+) {
+    let text = format!(" \t\n2026-01-01 00:00:00 kernel: α\r\n  τέλος  {suffix}{terminator}");
+    let parsed = fixtures::parsed_log(&text);
+    assert_eq!(parsed.source_line_count(), 3);
+    assert_eq!(parsed.source_line(0), None);
+    assert_eq!(parsed.source_line(1), Some(" \t"));
+    assert_eq!(parsed.source_line(2), Some("2026-01-01 00:00:00 kernel: α"));
+    assert_eq!(
+        parsed.source_line(3),
+        Some(format!("  τέλος  {suffix}").as_str())
+    );
+    assert_eq!(parsed.source_line(4), None);
+    let resolved = parsed.resolve_years_as(YearResolution::Infer).unwrap();
+    assert!(Arc::ptr_eq(
+        &parsed.source_line_starts,
+        &resolved.source_line_starts
+    ));
 }
