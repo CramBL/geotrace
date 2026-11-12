@@ -18,6 +18,7 @@ impl LogViewerWindow {
     pub(super) fn toggle_inspector(&mut self, id: LoadedLogId, section: InspectorSection) {
         let state = self.log_state_mut(id);
         state.inspector = (state.inspector != Some(section)).then_some(section);
+        state.table_focus_requested = state.inspector.is_none();
         if state.scroll_to_row.is_none() && state.scroll_to_source_line.is_none() {
             state.scroll_to_source_line = state.table_reading_anchor;
         }
@@ -58,7 +59,7 @@ impl LogViewerWindow {
         ui: &mut egui::Ui,
         logs: &mut LoadedLogs,
         requests: &mut LogViewerRequests,
-        pointer_over_the_window: bool,
+        dialog_open: bool,
         table_requests: &mut LineTableRequests<'_>,
     ) {
         let content_height = ui.available_height();
@@ -113,7 +114,7 @@ impl LogViewerWindow {
                     requests,
                 );
             }
-            self.line_table_ui(ui, log, id, pointer_over_the_window, table_requests);
+            self.line_table_ui(ui, log, id, dialog_open, table_requests);
         });
     }
 

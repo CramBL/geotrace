@@ -1419,6 +1419,7 @@ fn dragging_across_a_line_copies_its_text_and_leaves_the_map_where_it_was() {
         .expect("the drag selected text to copy");
     let words: Vec<&str> = copied.split_whitespace().collect();
     assert_eq!(words, ["2026-05-29", "18:48:25", "navsyncd:", "starting"]);
+    table_focus::assert_table_focused(&harness);
     assert_eq!(
         harness.state().map_center,
         None,
@@ -3694,16 +3695,10 @@ fn the_live_filter_belongs_to_the_log_it_was_written_for() {
     assert_eq!(live_filter_text(&harness), "battery low");
 }
 
-/// The viewer over a log longer than the table shows at once, with the pointer
-/// resting on the window: the scrolling keys fire nowhere else.
 fn keyboard_scroll_harness() -> Harness<'static, ViewerState> {
     let log = long_log(LONG_LOG_ENTRIES);
     let mut harness = harness_of(Vec::new(), &[("navsyncd.log", log.as_str())]);
-    let window = harness
-        .window_rect(LOG_VIEWER_TITLE)
-        .expect("the viewer window is shown");
-    harness.hover_at(window.center());
-    harness.run_steps(2);
+    table_focus::focus_table(&mut harness);
     harness
 }
 
@@ -4057,7 +4052,7 @@ fn a_scrolling_key_leaves_the_table_where_it_is_while_the_live_filter_has_focus(
 }
 
 #[test]
-fn a_scrolling_key_leaves_the_table_where_it_is_while_the_pointer_rests_outside_the_window() {
+fn a_focused_table_scrolls_while_the_pointer_rests_outside_the_window() {
     let mut harness = keyboard_scroll_harness();
     let scroll = TableScroll::of(&harness);
     harness.hover_at(POINTER_OFF_EVERY_WINDOW);
@@ -4066,8 +4061,7 @@ fn a_scrolling_key_leaves_the_table_where_it_is_while_the_pointer_rests_outside_
     press_scroll_key(&mut harness, egui::Key::ArrowDown);
 
     assert!(
-        scroll.offset_px(&harness).abs() < SCROLL_READING_TOLERANCE_PX,
-        "the table scrolls only under the pointer"
+        (scroll.offset_px(&harness) - scroll.row_height_px).abs() < SCROLL_READING_TOLERANCE_PX
     );
 }
 
@@ -4306,4 +4300,5 @@ mod reset_clock;
 mod revealed_targets;
 mod source_navigation;
 mod table_filter_controls;
+mod table_focus;
 mod tabs;
