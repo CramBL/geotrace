@@ -27,6 +27,7 @@ use association_window::{AssociationWindowEdit, AssociationWindowUnit};
 use filters::ConditionEdit;
 use find::LogFind;
 use inspector::InspectorSection;
+use jump::LogJumpEditor;
 use line_table::{
     FilteredSourceReturn, LineTableCache, LineTableRequests, RowHoverDwell, SourceReveal,
     TableReadingAnchor,
@@ -43,6 +44,7 @@ mod association_window;
 pub(super) mod filters;
 mod find;
 pub(super) mod inspector;
+mod jump;
 mod line_table;
 pub(super) mod log_list;
 pub(super) mod restored_logs_badge;
@@ -83,6 +85,7 @@ struct LogViewerState {
     query_pending_since: Option<f64>,
     condition_edit: Option<ConditionEdit>,
     find: Option<LogFind>,
+    jump: LogJumpEditor,
     filter_editor_open: bool,
     filter_editor_focus: bool,
     scroll_to_row: Option<usize>,
@@ -483,6 +486,7 @@ impl LogViewerWindow {
             self.date_status_ui(ui, log, shown);
             settings_status::selected_log_ui(ui, log, shown, write_access, requests);
             self.find_button_ui(ui);
+            self.jump_menu_ui(ui, log, shown);
             self.parse_summary_row_ui(ui, log, shown);
         });
         if let Some((id, visible)) = visibility

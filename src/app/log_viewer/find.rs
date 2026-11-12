@@ -261,9 +261,14 @@ impl LogViewerWindow {
 
     pub(super) fn set_find_open(&mut self, id: LoadedLogId, open: bool) {
         let state = self.log_state_mut(id);
-        let find = state.find.get_or_insert_with(|| LogFind::new(id));
-        find.open = open;
-        find.focus_requested = open;
+        if open {
+            state.jump.close();
+        }
+        if open || state.find.is_some() {
+            let find = state.find.get_or_insert_with(|| LogFind::new(id));
+            find.open = open;
+            find.focus_requested = open;
+        }
         state.scroll_to_source_line = state.scroll_to_source_line.or(state.table_reading_anchor);
     }
 
