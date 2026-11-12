@@ -643,16 +643,13 @@ fn escape_cancels_the_dialog_and_leaves_the_viewer_open() {
     );
 }
 
-/// A stored log that is not the log the attribute names it as: the same
-/// warning path as one that went missing.
 #[test]
-fn an_attachment_whose_stored_log_changed_is_reported_in_the_viewer() {
+fn a_changed_attachment_log_has_a_disclosed_hash_diagnostic() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
     let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
     attach_the_log(&mut harness, &db_path, &db_ref);
 
-    // The attribute now holds the content hash of a different log.
     let stored = stored_attachments(&db_path, &db_ref);
     let entry = stored.first().expect("the attachment was stored");
     let mut db = ui_tests::open_temporary_history_database(&db_path);
@@ -673,11 +670,18 @@ fn an_attachment_whose_stored_log_changed_is_reported_in_the_viewer() {
         ui_tests::recording_alongside_the_log("walk.gtd", 55.0),
     );
 
+    assert!(harness.step_until(|harness| harness.state().load_failures.iter().count() == 1));
+    harness.get_by_role_and_label(Role::Window, "Load problems");
+    harness.get_by_label_contains("Unsupported attachment");
+    harness.get_by_label("Details").click_accesskit();
+    harness.run_steps(2);
     assert!(
-        harness.step_until(|harness| harness
-            .query_by_label_contains("is not the log it was stored as")
-            .is_some()),
-        "the viewer says the stored log is not the one that was attached"
+        harness
+            .query(By::new().role(Role::Label).predicate(|node| {
+                node.value()
+                    .is_some_and(|value| value.contains("is not the log it was stored as"))
+            }))
+            .is_some()
     );
     assert_eq!(
         harness.state().logs.len(),
@@ -2003,18 +2007,28 @@ fn unreadable_attachment_metadata_has_retained_source_feedback_and_readable_sibl
             .len(),
         entries.len()
     );
-    let failures: Vec<_> = harness.state().load_failures.iter().collect();
+    let failures: Vec<_> = harness
+        .state()
+        .load_failures
+        .iter()
+        .map(|failure| (failure.source.to_string(), failure.cause.to_string()))
+        .collect();
     assert_eq!(failures.len(), entries.len() - 1);
-    for (entry, failure) in entries.iter().skip(1).zip(failures) {
-        let source = failure.source.to_string();
+    harness.get_by_role_and_label(Role::Window, "Load problems");
+    for (entry, (source, diagnostic)) in entries.iter().skip(1).zip(failures) {
         assert!(source.contains(&recording.to_string()));
         assert!(source.contains(&entry.id.to_string()));
         assert!(source.contains(entry.display_name().as_ref()));
-        let title = format!("Failed to load {source}");
-        let window = harness.get_by_role_and_label(Role::Window, title.as_str());
+        harness.get_by_label(source.as_str()).scroll_to_me();
+        harness.run_steps(2);
+        harness.get_by_label(source.as_str()).click();
+        harness.run_steps(2);
         assert!(
-            window
-                .query_by_label(failure.cause.to_string().as_str())
+            harness
+                .query(By::new().role(Role::Label).predicate(|node| {
+                    node.value()
+                        .is_some_and(|value| value.contains(&diagnostic))
+                }))
                 .is_some()
         );
     }
