@@ -24,6 +24,7 @@
 //! ```
 
 // Re-export public API
+pub use boot_time::{BootTime, BootTimeError};
 pub use builder::{
     NavFileBuilder, NavRecord, NavRecorder, SatelliteWarning, collect_satellite_warnings,
 };
@@ -64,6 +65,7 @@ pub use chrono::{DateTime, Duration, Utc};
 
 #[doc(hidden)]
 pub mod __private;
+mod boot_time;
 mod builder;
 mod error;
 mod fixed_width_string;

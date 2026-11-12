@@ -19,6 +19,14 @@ let nav_file = recorder.finish()?;
 nav_file.write_to_file("track.gtd")?;
 ```
 
+## Boot timestamps
+
+Use `.boot_time(BootTime::from_micros(reading_us)?)` for a boot-clock reading paired with the host timestamp.
+Omission means absent, and zero is valid.
+`BootTime::as_micros` preserves the exact integer value.
+The producer determines the clock's origin and suspend behavior.
+See [boot timestamp semantics and encoding](https://github.com/CramBL/geotrace/blob/trunk/docs/sdk/rust.md#boot-timestamps) and the `boot_timestamps` example.
+
 ## Channel units
 
 Use a recognized `Unit` so GeoTrace can dimension-check and convert channel values in queries.

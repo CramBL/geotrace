@@ -4,8 +4,8 @@
 )]
 
 use geotrace_sdk::{
-    Angle, Channel, DateTime, DebugTimeRepair, Duration, EventMarker, MarkerIcon, NavFile,
-    NavFileBuilder, NavFileOpenMode, NavFix, NavFixTime, PositionProvenance, Satellite,
+    Angle, BootTime, Channel, DateTime, DebugTimeRepair, Duration, EventMarker, MarkerIcon,
+    NavFile, NavFileBuilder, NavFileOpenMode, NavFix, NavFixTime, PositionProvenance, Satellite,
     SatelliteReport, SolutionState, Unit, Utc,
 };
 use geotrace_sdk_test_util as test_util;
@@ -78,6 +78,20 @@ fn debug_time_repair_tag_round_trips_through_write_and_read()
 }
 
 fn assert_repaired_timeline(file: &NavFile, t0: DateTime<Utc>) {
+    assert_eq!(
+        file.nav_points()
+            .iter()
+            .map(|point| point.fix.boot_time.map(BootTime::as_micros))
+            .collect::<Vec<_>>(),
+        vec![
+            Some(0),
+            Some(3_000_000),
+            None,
+            Some(9_000_000),
+            Some(9_000_000),
+            Some(1)
+        ]
+    );
     assert_eq!(
         nav_fix_times(file),
         vec![
@@ -182,6 +196,10 @@ fn repeated_time_gtd_bytes(t0: DateTime<Utc>, tag: Option<DebugTimeRepair>) -> V
     }
 
     let mut nav_points = fb.create_group("nav_points");
+    nav_points
+        .create_dataset("boot_time_us")
+        .with_u64_data(&[0, 3_000_000, u64::MAX, 9_000_000, 9_000_000, 1])
+        .with_shape(&shape);
     nav_points
         .create_dataset("time")
         .with_i64_data(&times_us)

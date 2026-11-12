@@ -14,6 +14,7 @@ In [`sdk/rust/geotrace-sdk/examples/`](../../sdk/rust/geotrace-sdk/examples/).
 Run with `cargo run -p geotrace-sdk --example <name>`.
 
 - [`navigation_only`](../../sdk/rust/geotrace-sdk/examples/navigation_only.rs): record available navigation facts and fix loss without satellite reports.
+- [`boot_timestamps`](../../sdk/rust/geotrace-sdk/examples/boot_timestamps.rs): record paired host and boot-clock readings in integer microseconds.
 - [`write_basic`](../../sdk/rust/geotrace-sdk/examples/write_basic.rs): minimal write workflow: add fixes, finish, write to disk.
 - [`read_file`](../../sdk/rust/geotrace-sdk/examples/read_file.rs): open a `.gtd` file and print a content summary.
 - [`with_satellites`](../../sdk/rust/geotrace-sdk/examples/with_satellites.rs): pair each fix with a per-satellite signal report.
@@ -49,6 +50,44 @@ recorder.add(NavFix::status_only(time, SolutionState::NoFix));
 ```
 
 Set optional counts and DOP on the returned `NavFix` when reported.
+
+## Boot timestamps
+
+Set `NavFix::boot_time` with `BootTime::from_micros` when the producer recorded an elapsed boot-clock reading alongside the fix.
+Pair it with the system timestamp from the same device and observation.
+`BootTime::as_micros` returns the exact integer reading.
+Zero, repeated readings and backward steps are valid recorded values.
+`u64::MAX` is reserved for absence and construction rejects it.
+Omitted boot readings and SDK-generated fixes have `None`.
+Receiver-only fixes can retain a boot reading.
+
+The producer determines the clock's origin and suspend behavior.
+The `boot_timestamps` example simulates Linux `CLOCK_BOOTTIME`, which includes suspend time.
+Linux `CLOCK_MONOTONIC` excludes suspend time.
+Record the selected clock in recording metadata.
+
+The system/boot delta uses the first complete system/boot pair in stored recording order as its reference:
+
+```text
+delta_us = (system_us - reference_system_us) - (boot_us - reference_boot_us)
+delta_ms = delta_us as f64 / 1_000.0
+delta_seconds = delta_us as f64 / 1_000_000.0
+```
+
+Use signed `i128` intermediates for both subtractions and convert only the final result.
+Positive values mean the system clock advanced farther than the boot clock since the reference.
+The delta can include clock adjustments, suspend behavior and resets as well as drift.
+A receiver-only fix has no system/boot delta.
+Debug time repair changes system and receiver timestamps while preserving raw boot readings.
+
+The optional version 3 dataset `/nav_points/boot_time_us` contains one unsigned 64-bit integer per navigation point.
+Its units attribute is `microseconds since boot`, and an absent element is `u64::MAX`.
+Writers omit the column when every reading is absent.
+Readers interpret a missing column as absent readings.
+The decoder requires a one-dimensional column with the exact navigation-point count and unsigned 64-bit type.
+Earlier version 3 readers ignore the additional dataset.
+An older SDK that reconstructs and rewrites a recording can drop boot readings.
+New readers continue accepting versions 1, 2 and 3.
 
 ## Navigation metadata encoding
 

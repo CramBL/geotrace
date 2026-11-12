@@ -14,8 +14,8 @@ use crate::error::{
 use crate::fixed_width_string::{self, AnnotationField, IconNameField, MarkerLabelField};
 use crate::provenance;
 use crate::{
-    Angle, PositionProvenance, SatelliteEvidence, SolutionDimension, SolutionMethod, SolutionState,
-    Velocity,
+    Angle, BootTime, PositionProvenance, SatelliteEvidence, SolutionDimension, SolutionMethod,
+    SolutionState, Velocity,
 };
 
 /// Recorded clock timestamps are independent of navigation state.
@@ -161,6 +161,8 @@ impl NavFixTime {
 pub struct NavFix {
     /// Receiver and host timestamps recorded with this epoch.
     pub time: NavFixTime,
+    /// Paired with the host timestamp by the producer, independently of receiver time.
+    pub boot_time: Option<BootTime>,
     /// WGS-84 latitude, expected in \[-90°, 90°].
     pub lat: Angle,
     /// WGS-84 longitude, expected in \[-180°, 180°].
