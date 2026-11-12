@@ -858,6 +858,7 @@ impl RenderedMap {
     /// The pinned point after [`Self::click_at`] `target`.
     pub fn point_pinned_by_a_click_at(&mut self, target: egui::Pos2) -> Option<MapElementRef> {
         self.click_at(target);
+        self.finish_primary_click();
         self.draw_state().highlight.sticky()
     }
 
@@ -874,6 +875,24 @@ impl RenderedMap {
     /// move and one for the click.
     pub fn click_at(&mut self, target: egui::Pos2) {
         self.harness.inner.click_at(target);
+    }
+
+    pub fn finish_primary_click(&mut self) {
+        let now = self.harness.inner.ctx.input(|input| input.time);
+        let delay = self
+            .harness
+            .inner
+            .ctx
+            .options(|options| options.input_options.max_double_click_delay);
+        self.harness.inner.input_mut().time = Some(now + delay);
+        self.harness.step();
+        self.harness.inner.input_mut().time = None;
+    }
+
+    pub fn release_camera_overrides(&mut self) {
+        let state = self.harness.state_mut();
+        state.zoom = None;
+        state.draw.center_request = None;
     }
 
     /// [`Self::click_at`] with the secondary button, which opens the map's

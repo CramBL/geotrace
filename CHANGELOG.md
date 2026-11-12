@@ -28,6 +28,7 @@
 
 ### Fixed
 
+- **Map & Tracks:** Fixed navigation double-clicks changing selection or opening log entries.
 - **Log Viewer:** Fixed dimmed messages and missing service colors for entries without an associated position.
 - **Log Viewer:** Fixed table conditions changing meaning when removing their group.
 - **Log Viewer:** Fixed closing an inactive log changing the active log.

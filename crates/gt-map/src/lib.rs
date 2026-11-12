@@ -1,13 +1,10 @@
-use egui::{Area, Button, Frame, Grid, Label, RichText, Window};
-use egui_phosphor::regular::GLOBE_HEMISPHERE_WEST as ICON_GLOBE_HEMISPHERE_WEST;
-use egui_phosphor::regular::MAP_TRIFOLD as ICON_MAP_TRIFOLD;
-
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use egui::Context;
-
+use egui::{Area, Button, Context, Frame, Grid, Label, PointerButton, RichText, Window};
+use egui_phosphor::regular::GLOBE_HEMISPHERE_WEST as ICON_GLOBE_HEMISPHERE_WEST;
+use egui_phosphor::regular::MAP_TRIFOLD as ICON_MAP_TRIFOLD;
 use gt_filter::GlobalFilter;
 use gt_fmt::UTC_SECOND_FORMAT;
 use gt_jam::dataset::JamDataset;
@@ -15,6 +12,7 @@ use gt_jam::day_selection::{DaySelection, EmptyReason};
 use gt_loaded_files::{LoadedFilesView, RecordingNames};
 use gt_track_builder::SpatialIndex;
 use gt_types::{DataCategory, FileIdx, GeoBounds, LoadedFile, SpatialPoint, TrackRef};
+use gt_ui_types::log_matches::LogMatchScope;
 use gt_ui_types::reference::ReferenceDocument;
 use gt_ui_types::{
     DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, HighlightScope,
@@ -26,6 +24,7 @@ use rstar::PointDistance as _;
 use walkers::sources::OpenStreetMap;
 use walkers::{HttpTiles, Map, MapMemory, MercatorProjection};
 
+use crate::click_gesture::{MapClickGesture, PrimaryClickState, PrimaryMapClick};
 use crate::event_marker_renderer::EventMarkerRenderer;
 use crate::generated_marker_renderer::GeneratedMarkerRenderer;
 use crate::hover_candidates::HoverCandidates;
@@ -49,6 +48,7 @@ pub use viewport::ViewportBounds;
 #[doc(hidden)]
 pub mod benchmark_support;
 
+mod click_gesture;
 mod collision_grid;
 pub mod display_counts;
 mod display_toggle;
@@ -472,9 +472,7 @@ pub struct NavMap {
     /// The log hexagon the renderer found under the cursor, filled while the
     /// plugins draw and handed to the caller at the end of the frame.
     hovered_log_glyph: RefCell<Option<LogMatchGlyph>>,
-    /// The log hexagon the renderer found clicked, filled and handed on the
-    /// same way.
-    clicked_log_glyph: RefCell<Option<LogMatchGlyph>>,
+    primary_click: PrimaryClickState,
     /// How strongly the TEC heatmap is drawn, as the opacity control's
     /// percentage. A persisted preference, seeded from settings via
     /// [`NavMap::set_tec_heatmap_opacity_percent`].
@@ -527,7 +525,7 @@ impl NavMap {
             endpoint_flags: track_endpoint_renderer::PendingEndpointFlags::default(),
             hover_label_stack: HoverLabelStack::default(),
             hovered_log_glyph: RefCell::new(None),
-            clicked_log_glyph: RefCell::new(None),
+            primary_click: PrimaryClickState::default(),
             tec_heatmap_opacity_percent: gt_ui_theme::TEC_OPACITY_PERCENT_DEFAULT,
         }
     }
@@ -636,6 +634,7 @@ impl NavMap {
     /// track deletion) to prevent stale R-tree entries from causing out-of-bounds
     /// panics in the renderers.
     pub fn rebuild_spatial_index(&mut self, files: &[LoadedFile]) {
+        self.primary_click = PrimaryClickState::default();
         self.spatial_index = SpatialIndex::build(files);
         self.last_file_count = files.len();
     }
@@ -688,20 +687,9 @@ impl NavMap {
         let animation = self.tick_animations(ui, &ctx, &highlight, now);
         let map_response = self.show_map(ui, &ctx, &plan, &highlight, animation, popups);
         ctx.log_hover.glyph = self.hovered_log_glyph.take();
-        *ctx.clicked_log_glyph = self.clicked_log_glyph.take();
-
-        if map_response.double_clicked()
-            && let Some(bbox) = ctx.visible_bounding_box()
-        {
-            self.fit_to_bounds(map_response.rect, bbox);
-        }
+        *ctx.clicked_log_glyph = None;
 
         let map_rect = map_response.rect;
-        self.last_viewport_bounds = Some(viewport::compute_viewport_bounds(
-            &self.map_memory,
-            map_rect,
-        ));
-
         // The mask is copied, so the display toggle below changes it only for
         // the next frame.
         let scope = plan.presence();
@@ -710,8 +698,24 @@ impl NavMap {
 
         let reference_document = self.show_overlay_controls(ui, map_rect, &mut ctx);
 
-        let just_opened_disambig = self.apply_click(ui, &map_response, &mut ctx, scope, hover);
-        self.show_disambiguation_popup(ui, &mut ctx, scope, just_opened_disambig);
+        let gesture =
+            self.primary_click
+                .classify(ui, &map_response, hover, ctx.log_hover.glyph.as_ref());
+        let just_opened_disambig = match gesture {
+            MapClickGesture::Double => {
+                if let Some(bbox) = ctx.visible_bounding_box() {
+                    self.fit_to_bounds(map_rect, bbox);
+                }
+                false
+            }
+            MapClickGesture::Single(click) => self.apply_click(click, &mut ctx, &plan),
+            MapClickGesture::None => false,
+        };
+        self.last_viewport_bounds = Some(viewport::compute_viewport_bounds(
+            &self.map_memory,
+            map_rect,
+        ));
+        self.show_disambiguation_popup(ui, &mut ctx, scope, just_opened_disambig, &map_response);
 
         let mut action = self.show_context_menu(&map_response, &ctx, hover.primary());
         if let Some(request) = self.show_pinned_popup(ui, &mut ctx, scope) {
@@ -770,6 +774,7 @@ impl NavMap {
         if ctx.files.files().len() <= self.last_file_count {
             return;
         }
+        self.primary_click = PrimaryClickState::default();
         self.new_file_boundary = self.last_file_count;
         let had_tracks = self.last_file_count > 0;
         self.last_file_count = ctx.files.files().len();
@@ -981,7 +986,6 @@ impl NavMap {
                     .hover_labels(&self.hover_label_stack)
                     .maybe_hovered_row_placement(ctx.log_hover.row_placement)
                     .hovered_glyph(&self.hovered_log_glyph)
-                    .clicked_glyph(&self.clicked_log_glyph)
                     .build(),
             );
         }
@@ -1176,44 +1180,62 @@ impl NavMap {
         )
     }
 
-    /// Apply this frame's primary click: pin the hovered element, unpin it
-    /// when it was already pinned, clear the pin on empty space, or open the
-    /// disambiguation popup when several element types overlap.
-    ///
-    /// Returns whether the popup opened on this very frame.
-    /// [`egui::Response::clicked_elsewhere`] on the popup's area fires on the
-    /// same frame as the click that opened it - the click was on the map, not
-    /// inside the popup - so the caller skips its dismissal check that frame
-    /// and the popup does not flash.
     fn apply_click(
         &mut self,
-        ui: &egui::Ui,
-        map_response: &egui::Response,
+        PrimaryMapClick {
+            position,
+            candidates,
+            log_glyph,
+        }: PrimaryMapClick,
         ctx: &mut MapDrawContext<'_>,
-        scope: MapPresence<'_>,
-        hover: HoverCandidates,
+        plan: &viewport::MapFramePlan<'_>,
     ) -> bool {
-        if !map_response.clicked() {
+        let scope = plan.presence();
+        if let Some(glyph) = log_glyph
+            && ctx.display_mask.is_visible(DisplayCategory::LogMatches)
+        {
+            *ctx.clicked_log_glyph = Self::present_log_glyph(glyph, ctx, plan);
+        }
+        let present = candidates.retaining_present(scope);
+        if candidates.primary().is_some() && present.primary().is_none() {
             return false;
         }
-        let click_pos = ui
-            .ctx()
-            .pointer_latest_pos()
-            .unwrap_or(map_response.rect.center());
-        if hover.is_ambiguous() {
-            self.disambiguation_candidates = hover;
-            self.disambiguation_pos = click_pos;
+        if present.is_ambiguous() {
+            self.disambiguation_candidates = present;
+            self.disambiguation_pos = position;
             return true;
         }
         self.disambiguation_candidates = HoverCandidates::default();
-        if let Some(point_ref) = hover.primary() {
+        if let Some(point_ref) = present.primary() {
             if ctx.highlight.toggle_sticky_if_drawn(scope, point_ref) {
-                self.sticky_pos = click_pos;
+                self.sticky_pos = position;
             }
         } else {
             ctx.highlight.clear_sticky();
         }
         false
+    }
+
+    fn present_log_glyph(
+        mut glyph: LogMatchGlyph,
+        ctx: &MapDrawContext<'_>,
+        plan: &viewport::MapFramePlan<'_>,
+    ) -> Option<LogMatchGlyph> {
+        let scope = LogMatchScope::from_prepared(ctx.files.files(), ctx.filter, |track| {
+            plan.prepared_track(track).map(|prepared| prepared.scope())
+        });
+        let present_entries: BTreeSet<_> = ctx
+            .log_matches
+            .layers()
+            .iter()
+            .filter(|layer| layer.log.id == glyph.log)
+            .flat_map(|layer| scope.matches(layer))
+            .map(|entry| entry.entry_index)
+            .collect();
+        glyph
+            .entry_indices
+            .retain(|entry| present_entries.contains(entry));
+        (!glyph.entry_indices.is_empty()).then_some(glyph)
     }
 
     /// The popup that follows a click landing on several element types at
@@ -1225,6 +1247,7 @@ impl NavMap {
         ctx: &mut MapDrawContext<'_>,
         scope: MapPresence<'_>,
         just_opened: bool,
+        map_response: &egui::Response,
     ) {
         let candidates = self.disambiguation_candidates;
         if candidates.primary().is_none() {
@@ -1256,7 +1279,8 @@ impl NavMap {
             });
         let dismissal = DisambiguationDismissal {
             just_opened,
-            clicked_elsewhere: area_resp.response.clicked_elsewhere(),
+            clicked_elsewhere: area_resp.response.clicked_elsewhere()
+                && !map_response.clicked_by(PointerButton::Primary),
             escape_pressed: ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)),
         };
         if dismissal.closes_popup() {

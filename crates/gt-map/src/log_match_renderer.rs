@@ -67,10 +67,6 @@ pub(crate) struct LogMatchRenderer<'a, 'p> {
 
     /// Where the hexagon under the cursor is published for the viewer.
     hovered_glyph: &'a RefCell<Option<LogMatchGlyph>>,
-
-    /// Where a click on that hexagon is published for the viewer, which opens
-    /// on its log.
-    clicked_glyph: &'a RefCell<Option<LogMatchGlyph>>,
 }
 
 /// The hexagon the cursor is on, once every layer has drawn.
@@ -200,9 +196,6 @@ impl Plugin for LogMatchRenderer<'_, '_> {
                     hexagon.source,
                     &hexagon.glyph.entry_indices,
                 )));
-            if response.clicked() {
-                *self.clicked_glyph.borrow_mut() = Some(hexagon.glyph.clone());
-            }
             *self.hovered_glyph.borrow_mut() = Some(hexagon.glyph);
         }
     }
