@@ -6,10 +6,10 @@ use gt_types::LoadedFile;
 
 use super::*;
 
-struct RenderedMessage(Arc<LayoutJob>);
+pub(super) struct RenderedMessage(Arc<LayoutJob>);
 
 impl RenderedMessage {
-    fn of(harness: &Harness<ViewerState>, message: &str) -> Self {
+    pub(super) fn of(harness: &Harness<ViewerState>, message: &str) -> Self {
         Self(
             harness
                 .output()
@@ -25,7 +25,7 @@ impl RenderedMessage {
         )
     }
 
-    fn color_of(&self, text: &str) -> Color32 {
+    pub(super) fn color_of(&self, text: &str) -> Color32 {
         let offset = self
             .0
             .text

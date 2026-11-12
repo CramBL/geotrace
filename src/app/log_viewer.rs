@@ -24,6 +24,7 @@ use strum::IntoEnumIterator as _;
 
 use association_dialog::LogAssociationRequest;
 use association_window::{AssociationWindowEdit, AssociationWindowUnit};
+use filters::ConditionEdit;
 use inspector::InspectorSection;
 use line_table::{
     FilteredSourceReturn, LineTableCache, LineTableRequests, RowHoverDwell, SourceReveal,
@@ -78,6 +79,7 @@ struct LogViewerState {
     table_reading_anchor: Option<TableReadingAnchor>,
     scroll_to_source_line: Option<TableReadingAnchor>,
     query_pending_since: Option<f64>,
+    condition_edit: Option<ConditionEdit>,
     filter_editor_open: bool,
     filter_editor_focus: bool,
     scroll_to_row: Option<usize>,
