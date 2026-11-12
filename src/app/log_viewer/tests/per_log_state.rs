@@ -13,6 +13,7 @@ fn unresolved_logs_restore_their_unapplied_years_and_details_after_switching() {
         harness.get_by_label(name).click();
         harness.run_steps(2);
         open_date_inspector(&mut harness);
+        select_date_policy(&mut harness, unresolved_years::SET_YEAR_LABEL);
         harness
             .get(
                 By::new().predicate(|node| {

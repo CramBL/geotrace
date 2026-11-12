@@ -212,7 +212,10 @@ impl App {
         let Some(mut log) = self.logs.get_mut_by_id(log_id) else {
             return;
         };
-        if !log.resolve_years_as(year_resolution, &recordings) {
+        let applied = log.resolve_years_as(year_resolution, &recordings);
+        self.log_viewer
+            .record_chronology_apply_result(log_id, applied);
+        if !applied {
             return;
         }
         self.log_viewer
@@ -247,7 +250,7 @@ impl App {
             && !candidates.ranked().is_empty()
         {
             drop(shared);
-            self.open_log_association_dialog(LogAssociationRequest::SelectSource(log_id));
+            self.open_log_association_dialog(LogAssociationRequest::SelectSourceAfterDates(log_id));
             return;
         }
         if let Err(error) = self.logs.select_position_source(

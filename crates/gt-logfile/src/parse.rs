@@ -152,6 +152,19 @@ impl ParsedLog {
         &self.text
     }
 
+    pub fn written_timestamp(&self, entry_index: usize) -> Option<&str> {
+        self.written_timestamps
+            .get(entry_index)
+            .copied()
+            .flatten()?;
+        Some(
+            self.entries
+                .get(entry_index)?
+                .message
+                .trimmed_line_text_before_in(&self.text),
+        )
+    }
+
     pub fn source_line_count(&self) -> usize {
         self.source_line_starts.len()
     }

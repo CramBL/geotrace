@@ -95,6 +95,8 @@ fn physical_line_lookup_preserves_whitespace_and_shared_offsets(
     let text = format!(" \t\n2026-01-01 00:00:00 kernel: α\r\n  τέλος  {suffix}{terminator}");
     let parsed = fixtures::parsed_log(&text);
     assert_eq!(parsed.source_line_count(), 3);
+    assert_eq!(parsed.written_timestamp(0), Some("2026-01-01 00:00:00"));
+    assert_eq!(parsed.written_timestamp(1), None);
     assert_eq!(parsed.source_line(0), None);
     assert_eq!(parsed.source_line(1), Some(" \t"));
     assert_eq!(parsed.source_line(2), Some("2026-01-01 00:00:00 kernel: α"));

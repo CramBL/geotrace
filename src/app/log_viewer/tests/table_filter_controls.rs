@@ -344,6 +344,7 @@ fn changing_inspector_sections_preserves_the_source_reading_position() {
     position.assert_retained(&harness);
     open_date_inspector(&mut harness);
     position.assert_retained(&harness);
+    click_inspector_control(&mut harness, unresolved_years::DETAILS_LABEL);
     harness.get_by_label("Reference date");
     let reference = harness
         .state()

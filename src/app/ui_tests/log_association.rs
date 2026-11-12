@@ -92,7 +92,12 @@ fn confirm(harness: &mut Harness<App>) {
 }
 
 fn cancel(harness: &mut Harness<App>) {
-    harness.get_by_label("Cancel").click();
+    let label = if harness.query_by_label("Later").is_some() {
+        "Later"
+    } else {
+        "Cancel"
+    };
+    harness.get_by_label(label).click();
     harness.run_steps(3);
 }
 
@@ -397,7 +402,12 @@ fn applying_a_year_to_a_log_with_unresolved_years_raises_the_dialog_and_saves_th
     );
     assert!(
         !harness
-            .get(By::new().role(Role::SpinButton))
+            .get(
+                By::new()
+                    .role(Role::SpinButton)
+                    .predicate(|node| node.author_id()
+                        != Some(log_viewer::unresolved_years::LAST_ENTRY_YEAR_ID))
+            )
             .accesskit_node()
             .is_disabled(),
         "the association window is enabled"
@@ -463,6 +473,21 @@ fn a_year_applied_to_a_saved_log_with_unresolved_years_resolves_it_when_it_reope
     );
     assert!(log.parsed().chronology().is_resolved());
     assert!(log.associated_entry_count() > 0);
+    harness
+        .get(
+            By::new()
+                .predicate(|node| node.author_id() == Some(log_viewer::inspector::DATE_STATUS_ID)),
+        )
+        .click();
+    harness.run_steps(3);
+    let year_field = By::new().predicate(|node| {
+        node.author_id() == Some(log_viewer::unresolved_years::LAST_ENTRY_YEAR_ID)
+    });
+    assert_eq!(
+        harness.get(year_field).accesskit_node().numeric_value(),
+        Some(2026.0)
+    );
+    harness.get_by_label("Current policy");
 }
 
 /// A fix every second from 10:59:00 to 12:00:39 on May 20, 2026, the day
@@ -492,12 +517,39 @@ fn recording_alongside_the_unresolved_years_log() -> TestDroppedFile {
 
 /// Enters `year` for the last timestamped line of the shown log and applies it.
 fn apply_the_year_of_the_last_line(harness: &mut Harness<App>, year: i32) {
+    if harness
+        .query(
+            By::new().predicate(|node| {
+                node.author_id() == Some(log_viewer::unresolved_years::POLICY_ID)
+            }),
+        )
+        .is_none()
+    {
+        harness
+            .get(
+                By::new().predicate(|node| {
+                    node.author_id() == Some(log_viewer::inspector::DATE_STATUS_ID)
+                }),
+            )
+            .click();
+        harness.run_steps(3);
+    }
     harness
         .get(
-            By::new()
-                .predicate(|node| node.author_id() == Some(log_viewer::inspector::DATE_STATUS_ID)),
+            By::new().predicate(|node| {
+                node.author_id() == Some(log_viewer::unresolved_years::POLICY_ID)
+            }),
         )
         .click();
+    harness.run_steps(2);
+    harness
+        .get_by_label(log_viewer::unresolved_years::SET_YEAR_LABEL)
+        .click();
+    harness.run_steps(3);
+    let year_field = By::new().predicate(|node| {
+        node.author_id() == Some(log_viewer::unresolved_years::LAST_ENTRY_YEAR_ID)
+    });
+    harness.get(year_field).scroll_to_me();
     harness.run_steps(3);
     harness
         .get(By::new().predicate(|node| {
@@ -517,6 +569,10 @@ fn apply_the_year_of_the_last_line(harness: &mut Harness<App>, year: i32) {
         modifiers: egui::Modifiers::NONE,
     });
     harness.run_steps(2);
+    harness
+        .get_by_label(log_viewer::unresolved_years::APPLY_YEAR_LABEL)
+        .scroll_to_me();
+    harness.run_steps(3);
     harness
         .get_by_label(log_viewer::unresolved_years::APPLY_YEAR_LABEL)
         .click();
@@ -2797,6 +2853,47 @@ fn a_saved_log_loads_separately_from_incompatible_loose_content(
             .attachment
             .settings,
         desired
+    );
+}
+
+#[rstest::rstest]
+#[case::ask(InitialPositionSourcePolicy::Ask)]
+#[case::automatic(InitialPositionSourcePolicy::AutomaticallyUseUnambiguous)]
+fn date_resolution_preserves_applied_dates_when_position_selection_is_deferred(
+    #[case] policy: InitialPositionSourcePolicy,
+) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut harness = app_over_a_history_database(&dir.path().join("history.h5"));
+    harness.state_mut().initial_position_source_policy = policy;
+    test_util::harness::drop_file_and_wait_for_load(
+        &mut harness,
+        recording_alongside_the_unresolved_years_log(),
+    );
+    drop_the_log_with_unresolved_years(&mut harness);
+    apply_the_year_of_the_last_line(&mut harness, 2026);
+    let range = harness.state().first_log().unwrap().entry_time_range();
+    if policy == InitialPositionSourcePolicy::Ask {
+        assert!(dialog_is_open(&harness));
+        harness.get_by_label("Dates applied");
+        harness.get_by_label("Later").click();
+        harness.run_steps(3);
+        assert_eq!(shown_log_target(&harness), None);
+    } else {
+        assert!(shown_log_target(&harness).is_some());
+    }
+    assert!(!dialog_is_open(&harness));
+    assert_eq!(
+        harness.state().first_log().unwrap().entry_time_range(),
+        range
+    );
+    assert_eq!(
+        harness
+            .state()
+            .first_log()
+            .unwrap()
+            .parsed()
+            .year_resolution(),
+        YearResolution::PlaceLastEntryInYear(2026)
     );
 }
 

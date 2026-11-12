@@ -93,7 +93,7 @@ fn the_viewer_outlines_revealed_rows_and_restores_filtered_source_positions(
 }
 
 #[rstest]
-#[case::anchor("Year of line 2", 1)]
+#[case::anchor("Line 2", 1)]
 #[case::conflict("Cannot resolve the year of log line 1", 0)]
 fn chronology_source_buttons_reveal_exact_entries_without_absolute_years(
     #[case] label: &str,
@@ -102,8 +102,11 @@ fn chronology_source_buttons_reveal_exact_entries_without_absolute_years(
     let mut harness = super::harness_of(Vec::new(), &[("unresolved.log", UNRESOLVED_SOURCE)]);
     super::type_into_live_filter(&mut harness, "absent");
     super::open_date_inspector(&mut harness);
+    if entry == 1 {
+        super::select_date_policy(&mut harness, unresolved_years::SET_YEAR_LABEL);
+    }
     if entry == 0 {
-        super::click_inspector_control(&mut harness, "Date diagnostics and help");
+        super::click_inspector_control(&mut harness, unresolved_years::DETAILS_LABEL);
     }
     super::click_inspector_control(&mut harness, label);
     assert!(
