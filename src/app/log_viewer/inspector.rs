@@ -88,6 +88,7 @@ impl LogViewerWindow {
                     }
                     if let Some(id) = self.selected {
                         self.filters_ui(ui, logs, id);
+                        self.find_bar_ui(ui, logs, id);
                     }
                 });
             let Some(id) = self.selected else {

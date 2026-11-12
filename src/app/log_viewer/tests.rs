@@ -4295,6 +4295,7 @@ const PAGE_STEPS_TO_THE_END: usize = 60;
 mod chronology_policies;
 mod condition_editing;
 mod exporter_totals;
+mod find;
 mod inspector_layout;
 mod integration;
 mod map_navigation;
