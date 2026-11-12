@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
 use geotrace_sdk::{
-    Angle, NavFileBuilder, NavFix, NavFixTime, SatelliteCoverage, SatelliteObservationReport,
-    SatelliteScope, SatelliteUsageReport, SolutionState,
+    Angle, BootTime, NavFileBuilder, NavFix, NavFixTime, SatelliteCoverage,
+    SatelliteObservationReport, SatelliteScope, SatelliteUsageReport, SolutionState,
 };
 use geotrace_sdk_units::ChannelUnit;
 use gt_filter::GlobalFilter;
@@ -828,6 +828,47 @@ fn clock_delta_reads_below_zero_for_a_fix_whose_host_clock_is_500_microseconds_a
     );
 
     assert_eq!(drawn_ranges(&session), vec![0..3]);
+}
+
+#[test]
+fn system_boot_query_keeps_the_recording_reference_outside_the_time_filter() {
+    let mut recorder = NavFileBuilder::new().open();
+    let readings = [
+        (NavFixTime::Host(utc_micros(0)), 0),
+        (NavFixTime::Receiver(utc_micros(1_000_000)), 1_000_000),
+        (NavFixTime::Host(utc_micros(2_000_001)), 2_000_000),
+        (NavFixTime::Host(utc_micros(3_000_000)), 3_000_001),
+    ];
+    for (time, boot_micros) in readings {
+        recorder.add_nav_fix(
+            NavFix::builder()
+                .time(time)
+                .lat(Angle::degrees(55.0))
+                .lon(Angle::degrees(12.0))
+                .boot_time(BootTime::from_micros(boot_micros).unwrap())
+                .build(),
+        );
+    }
+    let mut bytes = Vec::new();
+    recorder.finish().unwrap().write(&mut bytes).unwrap();
+    let file = gt_loader::load_bytes(&bytes, "boot.gtd".to_owned()).unwrap();
+    let track = file.tracks.first().unwrap();
+    let provider = TrackProvider::new(&track.points, &[], None);
+    assert_eq!(
+        (0..4)
+            .map(|index| provider.value(QueryMetric::SystemBootDelta, index))
+            .collect::<Vec<_>>(),
+        vec![Some(0.0), None, Some(0.000_001), Some(-0.000_001)]
+    );
+    let mut state = LoadedState::of(file);
+    state.filter = GlobalFilter::default().with_time_bounds(Some(utc_micros(1_000_000)), None);
+    let mut session = QuerySession::new();
+    test_util::run_text(
+        &mut session,
+        &state,
+        "points | where system_boot_delta > 0 s | draw | table system_boot_delta",
+    );
+    assert_eq!(drawn_ranges(&session), vec![2..3]);
 }
 
 /// The Unix second the fixtures start at.

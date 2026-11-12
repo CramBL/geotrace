@@ -8,7 +8,7 @@ use gt_filter::GlobalFilter;
 use gt_query::{ChannelSamples, ChannelTimeline, MetricProvider, Params, QueryMetric, Unit};
 use gt_types::satellites::Constellation;
 use gt_types::time_types::SysTime;
-use gt_types::{Channel, NavPoint, SatelliteQueryScope};
+use gt_types::{Channel, NavPoint, SatelliteQueryScope, SystemBootDelta};
 use gt_ui_types::{GeomagneticPoint, TecPoint};
 use uom::si::angle::degree;
 use uom::si::velocity::meter_per_second;
@@ -426,6 +426,10 @@ impl MetricProvider for TrackProvider<'_> {
             QueryMetric::Hdop => point.navigation.hdop,
             QueryMetric::Vdop => point.navigation.vdop,
             QueryMetric::Pdop => point.navigation.pdop,
+            QueryMetric::SystemBootDelta => point
+                .tpv
+                .system_boot_delta()
+                .map(SystemBootDelta::as_secs_f64),
             QueryMetric::ClockDelta => point
                 .tpv
                 .gps_system_clock_offset()

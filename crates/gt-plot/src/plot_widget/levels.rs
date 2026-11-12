@@ -132,7 +132,8 @@ impl TrackLevelCache {
             MetricKind::Eph => self.eph_m,
             MetricKind::HeadingDeg => self.heading_deg,
             MetricKind::ClockDeltaMs => self.clock_delta_ms,
-            MetricKind::Hdop
+            MetricKind::SystemBootDeltaMs
+            | MetricKind::Hdop
             | MetricKind::Vdop
             | MetricKind::Pdop
             | MetricKind::SatsSeen
@@ -219,7 +220,8 @@ impl TrackSeries {
             MetricKind::Eph => &self.eph_m,
             MetricKind::HeadingDeg => &self.heading_deg,
             MetricKind::ClockDeltaMs => &self.clock_delta_ms,
-            MetricKind::Hdop
+            MetricKind::SystemBootDeltaMs
+            | MetricKind::Hdop
             | MetricKind::Vdop
             | MetricKind::Pdop
             | MetricKind::SatsSeen

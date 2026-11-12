@@ -15,6 +15,9 @@ use uom::si::angle::degree;
 use crate::AnalysisConfig;
 use crate::metric_series::{MetricSampleSource, MetricSeries, TimedMetricSample};
 
+#[cfg(test)]
+mod system_boot_tests;
+
 /// A track's mipmap series together with the index of the file it belongs to,
 /// which the plot learns only once that file joins the loaded-files list.
 #[derive(Debug, Clone)]
@@ -331,6 +334,10 @@ fn build_track_series(
         });
         metrics.insert(kind, build_metric_runs(&track.points, samples));
     }
+    metrics.insert(
+        MetricKind::SystemBootDeltaMs,
+        build_system_boot_delta_series(&track.points),
+    );
     let mut velocity_kmh_pts: Vec<[f64; 2]> = Vec::with_capacity(track.points.len());
     let mut eph_m_pts: Vec<[f64; 2]> = Vec::new();
     let mut heading_deg_pts: Vec<[f64; 2]> = Vec::new();
@@ -394,6 +401,41 @@ fn build_track_series(
         util_anomalies: diagnostics.anomalies,
         channels: track.channels.iter().map(build_channel_series).collect(),
     }
+}
+
+fn build_system_boot_delta_series(points: &[NavPoint]) -> MetricSeries {
+    let mut runs = Vec::new();
+    let mut run = Vec::new();
+    let mut previous_x = None;
+    for (point_index, point) in points.iter().enumerate() {
+        let time = point.tpv.time();
+        let x = time.as_secs_f64_with_subseconds();
+        let delta = point.tpv.system_boot_delta();
+        if !run.is_empty()
+            && (point.tpv.boot_clock_backward_step().is_some()
+                || previous_x.is_some_and(|previous| x <= previous)
+                || delta.is_none())
+        {
+            runs.push(std::mem::take(&mut run));
+        }
+        previous_x = Some(x);
+        if let Some(delta) = delta {
+            run.push(TimedMetricSample {
+                time,
+                value: Some(delta.as_millis_f64()),
+                source: MetricSampleSource {
+                    point_index,
+                    evidence: None,
+                },
+                fix_time: time,
+                report: None,
+            });
+        }
+    }
+    if !run.is_empty() {
+        runs.push(run);
+    }
+    MetricSeries::from_timed_runs(runs)
 }
 
 #[derive(Clone, Copy)]

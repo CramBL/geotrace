@@ -39,6 +39,7 @@ pub enum MetricKind {
     Pdop,
     HeadingDeg,
     ClockDeltaMs,
+    SystemBootDeltaMs,
     /// Satellite utilization rate across all constellations: share of in-view
     /// satellites (above the elevation mask) the receiver used in the fix.
     UtilAll,
@@ -131,6 +132,7 @@ mod tests {
             (MetricKind::Pdop, "pdop"),
             (MetricKind::HeadingDeg, "heading_deg"),
             (MetricKind::ClockDeltaMs, "clock_delta_ms"),
+            (MetricKind::SystemBootDeltaMs, "system_boot_delta_ms"),
             (MetricKind::UtilAll, "util_all"),
             (MetricKind::UtilGps, "util_gps"),
             (MetricKind::UtilGlonass, "util_glonass"),
