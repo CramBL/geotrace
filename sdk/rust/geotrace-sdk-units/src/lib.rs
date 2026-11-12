@@ -68,10 +68,12 @@ use std::{fmt, str::FromStr};
 use uom::si::acceleration::{meter_per_second_squared, standard_gravity};
 use uom::si::f64::Acceleration;
 
+pub use boot_time::{BootTime, BootTimeError};
 pub use conversion_factor::{MPS_PER_KMH, MPS_PER_KNOT};
 
 pub mod snr;
 
+mod boot_time;
 mod conversion_factor;
 
 /// The physical quantity represented by a recognized [`Unit`].

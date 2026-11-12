@@ -1,9 +1,11 @@
-use crate::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
-use crate::time_types::{FixTimestamp, GpsTime, SysTime};
 use chrono::Duration;
 use geo_types::{Coord, Point};
 use uom::si::f64::{Angle, Velocity};
 use uom::si::velocity::kilometer_per_hour;
+
+use crate::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
+use crate::time_types::{FixTimestamp, GpsTime, SysTime};
+use crate::{BootTime, SystemBootTimePair};
 
 pub fn to_linestring(tpvs: &[TimePositionVelocity]) -> geo_types::LineString<f64> {
     tpvs.iter().map(Coord::from).collect()
@@ -35,6 +37,7 @@ pub struct TimePositionVelocity {
     /// Host system-clock timestamp at the time of the fix.
     /// `None` when the host did not record a system timestamp.
     pub(crate) sys_time: Option<SysTime>,
+    pub(crate) boot_time: Option<BootTime>,
     pub(crate) eph_m: Option<f32>,
 }
 
@@ -100,6 +103,17 @@ impl TimePositionVelocity {
         self.sys_time
     }
 
+    pub fn boot_time(&self) -> Option<BootTime> {
+        self.boot_time
+    }
+
+    pub fn system_boot_time_pair(&self) -> Option<SystemBootTimePair> {
+        Some(SystemBootTimePair {
+            system_time: self.sys_time?,
+            boot_time: self.boot_time?,
+        })
+    }
+
     /// Estimated horizontal position accuracy in metres, as reported by the GPS receiver.
     ///
     /// `None` when the receiver did not report an accuracy estimate.
@@ -155,6 +169,60 @@ mod tests {
             .lon(Longitude::new(12.0))
             .maybe_sys_time(sys_time)
             .build()
+    }
+
+    #[rstest]
+    #[case::absent(None, None)]
+    #[case::system_only(Some(SysTime::from_utc(DateTime::UNIX_EPOCH)), None)]
+    #[case::boot_only(None, Some(BootTime::from_micros(0).expect("valid boot time")))]
+    #[case::complete(Some(SysTime::from_utc(DateTime::UNIX_EPOCH)), Some(BootTime::from_micros(0).expect("valid boot time")))]
+    fn system_boot_pair_requires_both_recorded_clocks(
+        #[case] system_time: Option<SysTime>,
+        #[case] boot_time: Option<BootTime>,
+    ) {
+        let point = TimePositionVelocity::builder()
+            .time(GpsTime::from_utc(DateTime::UNIX_EPOCH))
+            .lat(Latitude::new(55.0))
+            .lon(Longitude::new(12.0))
+            .maybe_sys_time(system_time)
+            .maybe_boot_time(boot_time)
+            .build();
+
+        assert_eq!(point.boot_time(), boot_time);
+        assert_eq!(
+            point.system_boot_time_pair(),
+            system_time.zip(boot_time).map(|(system_time, boot_time)| {
+                SystemBootTimePair {
+                    system_time,
+                    boot_time,
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn a_host_only_fix_with_boot_time_has_a_system_boot_pair() {
+        let host = SysTime::from_utc(DateTime::UNIX_EPOCH);
+        let boot = BootTime::from_micros(0).expect("valid boot time");
+        let point = TimePositionVelocity::builder()
+            .time(FixTimestamp::FromHostClock(host))
+            .lat(Latitude::new(55.0))
+            .lon(Longitude::new(12.0))
+            .sys_time(host)
+            .boot_time(boot)
+            .build();
+
+        assert_eq!(
+            point.system_boot_time_pair(),
+            Some(SystemBootTimePair {
+                system_time: host,
+                boot_time: boot,
+            })
+        );
+        assert_eq!(
+            fix(GpsTime::from_utc(DateTime::UNIX_EPOCH).into(), None).boot_time(),
+            None
+        );
     }
 
     /// No offset can be measured from a fix the host clock stamped on its own,

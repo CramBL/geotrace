@@ -24,7 +24,6 @@
 //! ```
 
 // Re-export public API
-pub use boot_time::{BootTime, BootTimeError};
 pub use builder::{
     NavFileBuilder, NavRecord, NavRecorder, SatelliteWarning, collect_satellite_warnings,
 };
@@ -37,7 +36,8 @@ pub use fixed_width_string::{
     MarkerLabelField, VariantPathField,
 };
 pub use geotrace_sdk_units::{
-    ChannelUnit, ChannelUnitKind, CustomUnit, PhysicalQuantity, Unit, UnitParseError,
+    BootTime, BootTimeError, ChannelUnit, ChannelUnitKind, CustomUnit, PhysicalQuantity, Unit,
+    UnitParseError,
 };
 pub use navigation::{PositionProvenance, SolutionDimension, SolutionMethod, SolutionState};
 pub use provenance::{
@@ -65,7 +65,6 @@ pub use chrono::{DateTime, Duration, Utc};
 
 #[doc(hidden)]
 pub mod __private;
-mod boot_time;
 mod builder;
 mod error;
 mod fixed_width_string;

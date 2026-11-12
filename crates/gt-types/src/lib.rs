@@ -10,6 +10,7 @@ pub use coordinates::{
 pub use extent::{DrawnFix, Extent};
 pub use geo_bounds::{GeoBounds, LatRange, LonRange, PoleWinding};
 pub use geo_types::{Coord, Rect};
+pub use geotrace_sdk_units::BootTime;
 pub use highlight::{
     CustomMarkerIdx, CustomMarkerRef, DataCategory, DataCategorySet, EventMarkerIdx,
     EventMarkerRef, FileIdx, FixRef, GeneratedMarkerIdx, GeneratedMarkerRef, PointIdx, TrackIdx,
@@ -40,6 +41,7 @@ pub use satellite_evidence::{
 };
 pub use sky_evidence::{NearbySkyEvidence, SkyCounts, SkyEvidence, SkyGeometry, SkySatellite};
 pub use solar_position::SunlitSide;
+pub use system_boot_clock::{SystemBootDelta, SystemBootTimePair};
 pub use time_types::{FixTimestamp, GpsTime, GpsTimeRange, SysTime};
 pub use tpv::TimePositionVelocity;
 pub use tpv::TimePositionVelocityBuilder;
@@ -74,6 +76,7 @@ mod satellite_evidence;
 pub mod satellites;
 mod sky_evidence;
 pub mod solar_position;
+mod system_boot_clock;
 mod test_util;
 pub mod time_types;
 pub mod tpv;
