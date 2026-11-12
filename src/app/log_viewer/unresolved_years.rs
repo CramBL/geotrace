@@ -4,10 +4,12 @@ use std::ops::RangeInclusive;
 
 use chrono::Datelike as _;
 use egui::{Button, DragValue, Grid, Label, RichText};
+use gt_log_view::LoadedLog;
 use gt_logfile::{BoundComparison, ParsedLog, UnresolvedYear, YearResolution};
 use gt_ui_types::LoadedLogId;
 
 use super::LogViewerWindow;
+use super::line_table::SourceRequest;
 use super::summary_panel::GRID_SPACING;
 
 /// The year the user enters for the last anchored line of one log.
@@ -38,12 +40,25 @@ impl LogViewerWindow {
         &mut self,
         ui: &mut egui::Ui,
         log_id: LoadedLogId,
-        parsed: &ParsedLog,
+        log: &LoadedLog,
         unresolved_year: &UnresolvedYear,
     ) -> Option<YearResolution> {
-        let last_entry_year = self.last_entry_year_ui(ui, log_id, parsed);
+        let parsed = log.parsed();
+        let last_entry_year = self.last_entry_year_ui(ui, log_id, log);
         let ignore_summary_bounds = ignore_summary_bounds_ui(ui, parsed);
         ui.collapsing("Date diagnostics and help", |ui| {
+            self.source_link_ui(
+                ui,
+                log,
+                log_id,
+                SourceRequest::NavigateToLine(unresolved_year.line_number),
+                Button::new(
+                    RichText::new(unresolved_year.headline())
+                        .strong()
+                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                )
+                .wrap(),
+            );
             unresolved_year_ui(ui, unresolved_year);
             ui.add(Label::new(RichText::new(EARLIER_LINES_NOTE).weak()).wrap());
         });
@@ -54,8 +69,9 @@ impl LogViewerWindow {
         &mut self,
         ui: &mut egui::Ui,
         log_id: LoadedLogId,
-        parsed: &ParsedLog,
+        log: &LoadedLog,
     ) -> Option<YearResolution> {
+        let parsed = log.parsed();
         let last_anchored = parsed
             .entries()
             .iter()
@@ -69,7 +85,13 @@ impl LogViewerWindow {
             .unwrap_or_else(|| LastEntryYearDraft::of(log_id, parsed));
         let applied = ui
             .horizontal_wrapped(|ui| {
-                ui.label(format!("Year of line {}", last_anchored.line_number));
+                self.source_link_ui(
+                    ui,
+                    log,
+                    log_id,
+                    SourceRequest::NavigateToLine(last_anchored.line_number),
+                    Button::new(format!("Year of line {}", last_anchored.line_number)),
+                );
                 let year_field = ui.add(DragValue::new(&mut draft.year).range(CHOSEN_YEAR_RANGE));
                 year_field
                     .ctx
@@ -99,16 +121,6 @@ impl LogViewerWindow {
 }
 
 fn unresolved_year_ui(ui: &mut egui::Ui, unresolved_year: &UnresolvedYear) {
-    let amber = gt_ui_theme::warning_amber(ui.visuals().dark_mode);
-    ui.add(
-        Label::new(
-            RichText::new(unresolved_year.headline())
-                .strong()
-                .color(amber),
-        )
-        .selectable(true)
-        .wrap(),
-    );
     Grid::new("log_viewer_unresolved_year")
         .num_columns(2)
         .spacing(GRID_SPACING)

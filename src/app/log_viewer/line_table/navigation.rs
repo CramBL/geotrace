@@ -1,8 +1,10 @@
+use std::fmt::Write as _;
+
 use gt_log_view::LoadedLog;
 use gt_logfile::ParsedLog;
 use gt_ui_types::LoadedLogId;
 
-use super::{LogViewerWindow, TableReadingAnchor, TableRowIdentity};
+use super::{LineTableRow, LogViewerWindow, TableReadingAnchor, TableRowIdentity};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::app::log_viewer) enum SourceRequest {
@@ -118,6 +120,52 @@ impl SourceReveal {
 
     pub(super) fn source(self) -> SourceRow {
         self.target.source
+    }
+
+    pub(in crate::app::log_viewer) fn reason(
+        self,
+        log: &LoadedLog,
+        show_structural: bool,
+    ) -> Option<String> {
+        if !self.target.is_hidden(log, show_structural) {
+            return None;
+        }
+        Some(match self.target.source {
+            SourceRow::ShowEntry(entry) => {
+                let mut reason =
+                    format!("Line {} is outside the table conditions", self.target.line);
+                if log.filters().is_table_query_pending() {
+                    reason.push_str("\nTable conditions are updating");
+                } else {
+                    for condition in log.filters().excluding_table_conditions(entry) {
+                        write!(reason, "\n{} {}", condition.scope(), condition.text()).ok();
+                    }
+                }
+                reason
+            }
+            SourceRow::ShowStructuralLine(_) => format!(
+                "Line {} is hidden while structural source lines are off",
+                self.target.line
+            ),
+        })
+    }
+
+    pub(super) fn row_reason(
+        self,
+        row: LineTableRow,
+        log: &LoadedLog,
+        show_structural: bool,
+    ) -> Option<String> {
+        let source = match row {
+            LineTableRow::Entry { entry_index, .. } => SourceRow::ShowEntry(entry_index),
+            LineTableRow::Structural { structural_index } => {
+                SourceRow::ShowStructuralLine(structural_index)
+            }
+            _ => return None,
+        };
+        (source == self.target.source)
+            .then(|| self.reason(log, show_structural))
+            .flatten()
     }
 }
 

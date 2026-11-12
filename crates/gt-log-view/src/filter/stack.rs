@@ -451,6 +451,32 @@ impl FilterStack {
         &self.groups
     }
 
+    pub fn excluding_table_conditions(&self, entry: usize) -> Vec<&FilterPattern> {
+        if self.table_application != TableFilterApplication::Active || self.is_table_query_pending()
+        {
+            return Vec::new();
+        }
+        self.groups
+            .iter()
+            .flat_map(|group| {
+                let conditions: Vec<_> = self.group_table_conditions(group.id).collect();
+                let excluded = !conditions.is_empty()
+                    && match group.operator {
+                        FilterGroupOperator::All => conditions
+                            .iter()
+                            .any(|filter| !filter.matches().contains(entry)),
+                        FilterGroupOperator::Any => conditions
+                            .iter()
+                            .all(|filter| !filter.matches().contains(entry)),
+                    };
+                conditions
+                    .into_iter()
+                    .filter(move |filter| excluded && !filter.matches().contains(entry))
+                    .map(|filter| &filter.pattern)
+            })
+            .collect()
+    }
+
     pub fn selected_group(&self) -> FilterGroupId {
         self.selected_group
     }
@@ -882,6 +908,21 @@ impl FilterStack {
             )
     }
 
+    fn group_table_conditions(&self, group: FilterGroupId) -> impl Iterator<Item = &LogFilter> {
+        iter::once(&self.live)
+            .filter(move |live| {
+                self.live_effect == FilterEffect::Table
+                    && self.selected_group == group
+                    && live.narrows_visible_set()
+            })
+            .chain(
+                self.chips
+                    .iter()
+                    .filter(move |chip| chip.group == group && chip.narrows_visible_set())
+                    .map(|chip| &chip.filter),
+            )
+    }
+
     fn group_has_table_conditions_or_draft(&self, id: FilterGroupId) -> bool {
         self.chips
             .iter()
@@ -901,18 +942,8 @@ impl FilterStack {
             .iter()
             .filter(|_| self.table_application == TableFilterApplication::Active)
             .filter_map(|group| {
-                let conditions: Vec<&EntryMatches> = iter::once(&self.live)
-                    .filter(|live| {
-                        self.live_effect == FilterEffect::Table
-                            && self.selected_group == group.id
-                            && live.narrows_visible_set()
-                    })
-                    .chain(
-                        self.chips
-                            .iter()
-                            .filter(|chip| chip.group == group.id && chip.narrows_visible_set())
-                            .map(|chip| &chip.filter),
-                    )
+                let conditions: Vec<&EntryMatches> = self
+                    .group_table_conditions(group.id)
                     .map(LogFilter::matches)
                     .collect();
                 group.operator.compose(&conditions)
@@ -1077,6 +1108,36 @@ mod tests {
     fn add_refine_chip(stack: &mut FilterStack, text: &str) -> FilterChipId {
         stack.set_live_filter_text(text);
         stack.add_live_filter_as_chip().expect("valid filter")
+    }
+
+    #[rstest]
+    #[case::all(FilterGroupOperator::All, 0, vec!["second"])]
+    #[case::any_match(FilterGroupOperator::Any, 0, vec![])]
+    #[case::any_missing(FilterGroupOperator::Any, 3, vec!["second", "first"])]
+    fn excluding_conditions_follow_group_composition(
+        #[case] operator: FilterGroupOperator,
+        #[case] entry: usize,
+        #[case] expected: Vec<&str>,
+    ) {
+        let mut stack = FilterStack::new(Arc::new(test_util::parsed_log_of_text(COMPOSITION_LOG)));
+        let group = stack.selected_group();
+        self::add_refine_chip(&mut stack, "first");
+        stack.set_live_filter_text("second");
+        stack.set_group_operator(group, operator);
+        stack.wait_for_queries();
+        assert_eq!(
+            stack
+                .excluding_table_conditions(entry)
+                .into_iter()
+                .map(FilterPattern::text)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        stack.set_table_application(TableFilterApplication::Paused);
+        assert!(stack.excluding_table_conditions(entry).is_empty());
+        stack.set_table_application(TableFilterApplication::Active);
+        stack.set_live_filter_text("new scan");
+        assert!(stack.excluding_table_conditions(entry).is_empty());
     }
 
     #[rstest]

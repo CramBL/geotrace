@@ -43,17 +43,13 @@ impl LogViewerWindow {
             .spacing(GRID_SPACING)
             .show(ui, |ui| {
                 for (session_index, session) in parsed.boot_sessions().iter().enumerate() {
-                    if ui
-                        .add(Button::new(format!("Boot {}", session.boot_number)))
-                        .on_hover_text("Scroll the table to this boot session")
-                        .clicked()
-                    {
-                        self.navigate_to_source(
-                            log,
-                            log_id,
-                            SourceRequest::ShowBootSession(session_index),
-                        );
-                    }
+                    self.source_link_ui(
+                        ui,
+                        log,
+                        log_id,
+                        SourceRequest::ShowBootSession(session_index),
+                        Button::new(format!("Boot {}", session.boot_number)),
+                    );
                     let uptime = chronology.session_uptime(session_index);
                     ui.add(
                         Label::new(chronology.session_bounds(session_index).map_or_else(
@@ -104,20 +100,16 @@ impl LogViewerWindow {
             .spacing(GRID_SPACING)
             .show(ui, |ui| {
                 for anomaly in order_anomalies {
-                    if ui
-                        .add(Button::new(format!(
+                    self.source_link_ui(
+                        ui,
+                        log,
+                        log_id,
+                        SourceRequest::NavigateToLine(anomaly.line_number),
+                        Button::new(format!(
                             "Line {}",
                             gt_fmt::format_count_u64(u64::from(anomaly.line_number))
-                        )))
-                        .on_hover_text("Scroll the table to this line")
-                        .clicked()
-                    {
-                        self.navigate_to_source(
-                            log,
-                            log_id,
-                            SourceRequest::NavigateToLine(anomaly.line_number),
-                        );
-                    }
+                        )),
+                    );
                     ui.add(
                         Label::new(
                             RichText::new(format!(
