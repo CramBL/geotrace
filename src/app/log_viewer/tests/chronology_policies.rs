@@ -12,7 +12,7 @@ impl ViewerState {
     }
 }
 
-fn edit_last_entry_year(harness: &mut Harness<ViewerState>, year: i32) {
+pub(super) fn edit_last_entry_year(harness: &mut Harness<ViewerState>, year: i32) {
     let field =
         By::new().predicate(|node| node.author_id() == Some(unresolved_years::LAST_ENTRY_YEAR_ID));
     harness.get(field.clone()).scroll_to_me();
@@ -182,6 +182,7 @@ fn explicit_dates_disable_inapplicable_choices_and_allow_existing_policy_reset(
         .rect()
         .center();
     harness.hover_at_and_settle(disabled, TOOLTIP_DELAY_FRAMES);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     harness.get_by_label(unresolved_years::EXPLICIT_YEARS_HOVER);
     harness.get(policy).click();
     harness.run_steps(3);

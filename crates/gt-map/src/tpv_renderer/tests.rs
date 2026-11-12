@@ -105,7 +105,7 @@ fn receiver_only_boot_readings_are_exact_in_point_details(
         if let Some(expected) = expected_value {
             assert!(harness.inner.query_by_label(expected).is_some());
             harness.inner.get_by_label("Boot time").hover();
-            harness.inner.run_steps(3);
+            harness.inner.run_steps(4);
             assert!(
                 harness
                     .inner
@@ -2089,7 +2089,7 @@ fn the_minimum_point_window_keeps_details_reachable_with_all_readouts(#[case] da
     files.push(second, FileHistory::None);
     let names = RecordingNames::resolve(files.view(), "{filename}");
     let clicked = test_util::point_ref(DataCategory::Tpv, 1);
-    let window_id = egui::Id::new(("sticky_popup", clicked));
+    let window_id = egui::Id::unique(("sticky_popup", clicked));
     let mut folds = PointWindowFolds::default();
     let mut harness = test_util::harness_builder()
         .size(egui::vec2(
@@ -2181,7 +2181,7 @@ const REPORT_SCROLL_TO_END_POINTS: f32 = 10_000.0;
 
 impl StickyRegion {
     fn rect(self, ctx: &egui::Context) -> egui::Rect {
-        ctx.data(|data| data.get_temp(egui::Id::new(("sticky_region", self))))
+        ctx.data(|data| data.get_temp(egui::Id::unique(("sticky_region", self))))
             .expect("rendered region")
     }
 }

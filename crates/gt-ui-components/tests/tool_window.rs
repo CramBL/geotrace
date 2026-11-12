@@ -18,6 +18,7 @@ struct State {
 
 fn make_harness(viewport_size: egui::Vec2, scale: f32) -> Harness<'static, State> {
     Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_size(viewport_size)
         .with_pixels_per_point(scale)
         .build_ui_state(
@@ -27,7 +28,7 @@ fn make_harness(viewport_size: egui::Vec2, scale: f32) -> Harness<'static, State
                 state.viewport = ui.ctx().content_rect().shrink(10.0);
                 let mut visible = false;
                 let shown = ToolWindow {
-                    id: egui::Id::new(WINDOW_ID),
+                    id: egui::Id::unique(WINDOW_ID),
                     title: state.title,
                     viewport: state.viewport,
                     sizing: WINDOW_SIZING,

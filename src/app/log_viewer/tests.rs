@@ -159,10 +159,9 @@ fn harness_of(
 
 fn harness_from(state: ViewerState) -> Harness<'static, ViewerState> {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_size(VIEWER_SIZE)
         .build_ui_state(viewer_ui, state);
-    // Matches the app's context setup: the clickable rows depend on it.
-    gt_ui_theme::install_app_style(&harness.ctx);
     harness.run_steps(3);
     harness
 }
@@ -989,6 +988,7 @@ fn click_line(harness: &mut Harness<ViewerState>, timestamp: &str) {
 fn hover_line(harness: &mut Harness<ViewerState>, timestamp: &str) {
     let row = harness.get_by_label(timestamp).rect().center();
     harness.hover_at_and_settle(row, TOOLTIP_DELAY_FRAMES);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
 }
 
 /// A recording in the history database, standing in for one this session's
@@ -1227,6 +1227,7 @@ fn the_time_controls_of_a_log_with_unresolved_years_are_disabled_with_their_reas
         );
         let center = node.rect().center();
         harness.hover_at_and_settle(center, TOOLTIP_DELAY_FRAMES);
+        harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
         assert!(
             harness
                 .query_all_by_label(super::UNRESOLVED_YEARS_HOVER)
@@ -1246,7 +1247,11 @@ fn hovering_a_line_of_a_log_with_unresolved_years_states_that_it_takes_no_positi
 
     hover_line(&mut harness, "    --05-20 12:00:00");
 
-    harness.get_by_label(line_table::UNRESOLVED_YEARS_ROW_HOVER);
+    harness.get(
+        By::new()
+            .role(Role::Label)
+            .label(line_table::UNRESOLVED_YEARS_ROW_HOVER),
+    );
 }
 
 #[rstest]
@@ -1297,6 +1302,7 @@ fn ignoring_the_summary_bounds_is_disabled_for_a_log_without_them() {
     let center = button.rect().center();
 
     harness.hover_at_and_settle(center, TOOLTIP_DELAY_FRAMES);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
 
     harness.get_by_label(unresolved_years::NO_SUMMARY_BOUNDS_HOVER);
 }
@@ -1505,7 +1511,7 @@ fn hovering_a_line_shows_its_hover_text_at_the_tooltip_delay(
 
     hover_line(&mut harness, timestamp);
 
-    harness.get_by_label(&expected);
+    harness.get(By::new().role(Role::Label).label(&expected));
 }
 
 #[test]
@@ -1516,14 +1522,23 @@ fn the_hover_text_of_an_associated_line_opens_once_the_pointer_has_rested_on_it(
     harness.hover_at_and_settle(row, TOOLTIP_DELAY_FRAMES);
     assert!(
         harness
-            .query_by_label(line_table::ASSOCIATED_ROW_HOVER)
+            .query(
+                By::new()
+                    .role(Role::Label)
+                    .label(line_table::ASSOCIATED_ROW_HOVER)
+            )
             .is_none(),
         "the table keeps the row's hover text closed past egui's tooltip delay"
     );
 
     harness.run_steps(ASSOCIATED_ROW_DWELL_FRAMES - TOOLTIP_DELAY_FRAMES);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
 
-    harness.get_by_label(line_table::ASSOCIATED_ROW_HOVER);
+    harness.get(
+        By::new()
+            .role(Role::Label)
+            .label(line_table::ASSOCIATED_ROW_HOVER),
+    );
 }
 
 #[test]
@@ -1539,14 +1554,23 @@ fn moving_to_another_line_restarts_the_dwell() {
     harness.hover_at_and_settle(moved_to, TOOLTIP_DELAY_FRAMES);
     assert!(
         harness
-            .query_by_label(line_table::ASSOCIATED_ROW_HOVER)
+            .query(
+                By::new()
+                    .role(Role::Label)
+                    .label(line_table::ASSOCIATED_ROW_HOVER)
+            )
             .is_none(),
         "the table keeps the second line's hover text closed until its own dwell passes"
     );
 
     harness.run_steps(ASSOCIATED_ROW_DWELL_FRAMES - TOOLTIP_DELAY_FRAMES);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
 
-    harness.get_by_label(line_table::ASSOCIATED_ROW_HOVER);
+    harness.get(
+        By::new()
+            .role(Role::Label)
+            .label(line_table::ASSOCIATED_ROW_HOVER),
+    );
 }
 
 #[test]
@@ -2093,6 +2117,7 @@ fn the_footer_takes_no_recording_off_an_attached_log() {
 
     assert!(no_recording.accesskit_node().is_disabled());
     harness.hover_at_and_settle(position, TOOLTIP_DELAY_FRAMES);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     harness.get_by_label_contains(super::association_dialog::OPERATION_UNAVAILABLE_HOVER);
     assert!(
         harness
@@ -2124,6 +2149,7 @@ fn the_attachment_controls_are_grayed_in_a_read_only_session() {
     );
 
     harness.hover_at_and_settle(attach_center, 3);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
 
     harness.get_by_label_contains(READ_ONLY_RECORDING_HISTORY_HOVER);
 }
@@ -2494,6 +2520,7 @@ fn the_unload_hover_says_whether_the_log_stays_attached(
     let unload = harness.get_by_label("Close navsyncd.log").rect().center();
 
     harness.hover_at_and_settle(unload, TOOLTIP_DELAY_FRAMES);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
 
     harness.get_by_label_contains(expected);
 }
@@ -2579,6 +2606,7 @@ fn loading_the_recording_is_grayed_while_no_recordings_database_is_open() {
     assert!(load.accesskit_node().is_disabled());
     let position = load.rect().center();
     harness.hover_at_and_settle(position, TOOLTIP_DELAY_FRAMES);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
 
     harness.get_by_label_contains(super::LOAD_RECORDING_NO_DATABASE_HOVER);
     assert_eq!(harness.state().requests.open_recording, None);
@@ -2606,7 +2634,7 @@ fn run_until_the_scans_land(harness: &mut Harness<ViewerState>) {
 fn type_into_live_filter(harness: &mut Harness<ViewerState>, text: &str) {
     open_live_editor(harness);
     harness.ctx.memory_mut(|memory| {
-        memory.request_focus(egui::Id::new((
+        memory.request_focus(egui::Id::unique((
             filters::LIVE_FILTER_FIELD_ID,
             harness.state().viewer.selected_log().unwrap(),
         )));
@@ -2755,7 +2783,7 @@ fn type_into_map_draft(harness: &mut Harness<ViewerState>, text: &str) {
         harness.run_steps(2);
     }
     harness.ctx.memory_mut(|memory| {
-        memory.request_focus(egui::Id::new((
+        memory.request_focus(egui::Id::unique((
             filters::LIVE_FILTER_FIELD_ID,
             harness.state().viewer.selected_log().unwrap(),
         )));
@@ -3094,7 +3122,8 @@ fn structured_editor_help_describes_exact_field_matching(#[case] scope: &str, #[
     harness.get_by_label(scope).click();
     run_until_the_scans_land(&mut harness);
     harness.hover_and_settle(By::new().role(Role::TextInput), TOOLTIP_DELAY_FRAMES);
-    harness.get_by_label(help);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
+    harness.get(By::new().role(Role::Label).label(help));
 }
 
 #[test]
@@ -3214,6 +3243,7 @@ fn adding_a_filter_preserves_the_visible_entries_and_empties_the_field() {
         By::new().label(filters::ADD_FILTER_LABEL),
         TOOLTIP_DELAY_FRAMES,
     );
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     harness.get_by_label("Add this as a table filter");
     harness.get_by_label(filters::ADD_FILTER_LABEL).click();
     harness.run_steps(2);
@@ -3314,7 +3344,7 @@ fn map_condition_entry_previews_and_commits_without_filtering_table(
         harness.get_by_label(scope.to_string().as_str()).click();
         run_until_the_scans_land(&mut harness);
         harness.ctx.memory_mut(|memory| {
-            memory.request_focus(egui::Id::new((
+            memory.request_focus(egui::Id::unique((
                 filters::LIVE_FILTER_FIELD_ID,
                 harness.state().viewer.selected_log().unwrap(),
             )))
@@ -4036,7 +4066,7 @@ fn a_scrolling_key_leaves_the_table_where_it_is_while_the_live_filter_has_focus(
     open_live_editor(&mut harness);
     let scroll = TableScroll::of(&harness);
     harness.ctx.memory_mut(|memory| {
-        memory.request_focus(egui::Id::new((
+        memory.request_focus(egui::Id::unique((
             filters::LIVE_FILTER_FIELD_ID,
             harness.state().viewer.selected_log().unwrap(),
         )));
@@ -4103,9 +4133,9 @@ fn log_viewer_window_fits_every_viewport(
     }
     stack.wait_for_queries();
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_size(viewport)
         .build_ui_state(viewer_ui, state);
-    gt_ui_theme::install_app_style(&harness.ctx);
     harness.run_steps(8);
 
     harness.assert_window_fits_the_viewport(AuditedWindow::titled(LOG_VIEWER_TITLE));

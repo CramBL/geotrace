@@ -1,9 +1,7 @@
 use std::mem;
 
 use egui::text::{ByteIndex, LayoutJob};
-use egui::{
-    Button, ComboBox, Label, Stroke, StrokeKind, TextEdit, TextFormat, WidgetInfo, WidgetType,
-};
+use egui::{Button, ComboBox, Label, Role, Stroke, StrokeKind, TextEdit, TextFormat, WidgetInfo};
 use egui_phosphor::regular::{
     ARROW_DOWN as ICON_NEXT, ARROW_UP as ICON_PREVIOUS, MAGNIFYING_GLASS as ICON_FIND,
     X as ICON_CLOSE,
@@ -61,14 +59,14 @@ impl LogFind {
         let field = ui
             .add(
                 TextEdit::singleline(&mut self.text)
-                    .id(egui::Id::new((FIND_FIELD_ID, id)))
+                    .id(egui::Id::unique((FIND_FIELD_ID, id)))
                     .hint_text(FIND_LABEL)
                     .desired_width(FIND_FIELD_WIDTH_PX),
             )
             .on_hover_text(
                 "Literal text, ignoring case. Enter selects next. Shift+Enter selects previous.",
             );
-        field.widget_info(|| WidgetInfo::labeled(WidgetType::TextEdit, true, FIND_LABEL));
+        field.widget_info(|| WidgetInfo::labeled(Role::TextInput, true, FIND_LABEL));
         field.ctx.accesskit_node_builder(field.id, |node| {
             node.set_description(
                 "Enter selects next. Shift+Enter selects previous. Escape closes Find.",
@@ -112,7 +110,7 @@ impl LogFind {
         id: LoadedLogId,
         access: KeyboardAccess,
     ) -> Option<FindAction> {
-        let field = egui::Id::new((FIND_FIELD_ID, id));
+        let field = egui::Id::unique((FIND_FIELD_ID, id));
         if !access.field_owns_keyboard(ui, field) {
             return None;
         }
@@ -141,14 +139,14 @@ impl LogFind {
                 .add_enabled(available, Button::new(icon))
                 .on_hover_text(label)
                 .on_disabled_hover_text("No completed Find matches");
-            response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, available, label));
+            response.widget_info(|| WidgetInfo::labeled(Role::Button, available, label));
             if response.clicked() {
                 action = Some(step);
             }
         }
         ui.label(self.status_label());
         let response = ui.button(ICON_CLOSE).on_hover_text(CLOSE_LABEL);
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, CLOSE_LABEL));
+        response.widget_info(|| WidgetInfo::labeled(Role::Button, true, CLOSE_LABEL));
         if response.clicked() {
             action = Some(FindAction::Close);
         }
@@ -185,7 +183,7 @@ impl LogViewerWindow {
         let response = ui
             .add(Button::new(ICON_FIND).selected(open))
             .on_hover_text("Find source text (Ctrl/Cmd+F)");
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, FIND_LABEL));
+        response.widget_info(|| WidgetInfo::labeled(Role::Button, true, FIND_LABEL));
         if response.clicked() {
             self.set_find_open(id, !open);
             self.log_state_mut(id).table_focus_requested = open;
@@ -214,7 +212,9 @@ impl LogViewerWindow {
                 find.search.select_previous();
             }
             Some(FindAction::Close) => {
-                ui.memory_mut(|memory| memory.surrender_focus(egui::Id::new((FIND_FIELD_ID, id))));
+                ui.memory_mut(|memory| {
+                    memory.surrender_focus(egui::Id::unique((FIND_FIELD_ID, id)))
+                });
                 self.set_find_open(id, false);
                 self.log_state_mut(id).table_focus_requested = true;
                 return;

@@ -115,6 +115,7 @@ fn harness_for_saving(
     let mut state = dialog_state(LOG, recordings);
     state.dialog = LogAssociationDialog::for_request(LogAssociationRequest::Save(SHOWN_LOG), None);
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_size(DIALOG_SIZE)
         .build_ui_state(dialog_ui, state);
     harness.run_steps(3);
@@ -126,6 +127,7 @@ pub(in crate::app) fn harness_over_sized(
     viewport: egui::Vec2,
 ) -> Harness<'static, DialogState> {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_size(viewport)
         .build_ui_state(dialog_ui, dialog_state(LOG, recordings));
     harness.run_steps(3);
@@ -323,6 +325,7 @@ fn a_recording_that_missed_the_log_says_why_it_is_grayed() {
 
     harness.get_by_label(super::NO_OVERLAP_LABEL);
     harness.hover_and_settle(By::new().label("elsewhen.gtd"), 3);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
 
     harness.get_by_label_contains("This recording has no overlapping track duration");
 }
@@ -416,6 +419,7 @@ fn saving_is_disabled_in_a_read_only_session() {
     assert!(save.accesskit_node().is_disabled());
     let position = save.rect().center();
     harness.hover_at_and_settle(position, 3);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     harness.get_by_label_contains(READ_ONLY_RECORDING_HISTORY_HOVER);
 }
 
@@ -444,6 +448,7 @@ fn saved_log_save_action_has_the_capability_restriction_hover() {
         .id();
     state.log = logs.remove_by_id(id).unwrap();
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_size(DIALOG_SIZE)
         .build_ui_state(dialog_ui, state);
     harness.run_steps(3);
@@ -451,6 +456,7 @@ fn saved_log_save_action_has_the_capability_restriction_hover() {
     assert!(save.accesskit_node().is_disabled());
     let position = save.rect().center();
     harness.hover_at_and_settle(position, 3);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     harness.get_by_label_contains(super::OPERATION_UNAVAILABLE_HOVER);
 }
 
@@ -636,7 +642,7 @@ fn snapshot_log_save_and_position_source_dialogs(
     let window = harness
         .inner
         .ctx
-        .memory(|memory| memory.area_rect(egui::Id::new(Some(title))))
+        .memory(|memory| memory.area_rect(egui::Id::unique(Some(title))))
         .expect("association dialog");
     assert!(window.width() <= 460.0);
     let confirm = harness.inner.get_by_label(confirm_label).rect();

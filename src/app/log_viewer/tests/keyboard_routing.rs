@@ -151,20 +151,7 @@ fn control_tab_preserves_an_unapplied_year_and_condition_draft() {
     let selected = harness.state().viewer.selected_log();
     open_date_inspector(&mut harness);
     select_date_policy(&mut harness, unresolved_years::SET_YEAR_LABEL);
-    harness
-        .get(
-            By::new()
-                .predicate(|node| node.author_id() == Some(unresolved_years::LAST_ENTRY_YEAR_ID)),
-        )
-        .click();
-    harness.run_steps(2);
-    harness
-        .input_mut()
-        .events
-        .push(egui::Event::Text("2032".into()));
-    harness.run_steps(2);
-    harness.key_press(egui::Key::Enter);
-    harness.run_steps(2);
+    chronology_policies::edit_last_entry_year(&mut harness, 2032);
     harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Tab);
     harness.run_steps(3);
     type_into_live_filter(&mut harness, "unfinished condition");
@@ -246,31 +233,34 @@ fn external_focus_and_modal_input_preserve_the_viewer(
         external: None,
         text: String::new(),
     };
-    let mut harness = Harness::builder().with_size(VIEWER_SIZE).build_ui_state(
-        |ui, state: &mut ExternalWindowFixture| {
-            viewer_ui(ui, &mut state.viewer);
-            let field = |ui: &mut egui::Ui| {
-                let response = ui.add(
-                    TextEdit::singleline(&mut state.text)
-                        .id(egui::Id::new(OTHER_FIELD))
-                        .hint_text(OTHER_FIELD),
-                );
-                if matches!(state.external, Some(ExternalSurface::FocusWindow)) {
-                    response.request_focus();
+    let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
+        .with_size(VIEWER_SIZE)
+        .build_ui_state(
+            |ui, state: &mut ExternalWindowFixture| {
+                viewer_ui(ui, &mut state.viewer);
+                let field = |ui: &mut egui::Ui| {
+                    let response = ui.add(
+                        TextEdit::singleline(&mut state.text)
+                            .id(egui::Id::unique(OTHER_FIELD))
+                            .hint_text(OTHER_FIELD),
+                    );
+                    if matches!(state.external, Some(ExternalSurface::FocusWindow)) {
+                        response.request_focus();
+                    }
+                };
+                match state.external {
+                    Some(ExternalSurface::OpenModal) => {
+                        Modal::new(egui::Id::unique("other_modal")).show(ui.ctx(), field);
+                    }
+                    Some(ExternalSurface::ShowWindow | ExternalSurface::FocusWindow) => {
+                        Window::new("Other window").show(ui.ctx(), field);
+                    }
+                    None => {}
                 }
-            };
-            match state.external {
-                Some(ExternalSurface::OpenModal) => {
-                    Modal::new(egui::Id::new("other_modal")).show(ui.ctx(), field);
-                }
-                Some(ExternalSurface::ShowWindow | ExternalSurface::FocusWindow) => {
-                    Window::new("Other window").show(ui.ctx(), field);
-                }
-                None => {}
-            }
-        },
-        state,
-    );
+            },
+            state,
+        );
     harness.run_steps(3);
     harness
         .state_mut()
@@ -310,7 +300,7 @@ fn external_focus_and_modal_input_preserve_the_viewer(
     }
     harness
         .ctx
-        .memory_mut(|memory| memory.request_focus(egui::Id::new(OTHER_FIELD)));
+        .memory_mut(|memory| memory.request_focus(egui::Id::unique(OTHER_FIELD)));
     harness.run_steps(2);
     let selected = harness.state().viewer.viewer.selected_log();
     let anchor = harness

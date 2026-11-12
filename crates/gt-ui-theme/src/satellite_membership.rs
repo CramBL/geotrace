@@ -50,7 +50,7 @@ impl SatelliteMembershipMark {
         let (rect, response) = ui.allocate_exact_size(Vec2::splat(diameter), egui::Sense::hover());
         self.paint(ui.painter(), rect.center());
         let label = self.label();
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, label));
         response.on_hover_text(label)
     }
 }

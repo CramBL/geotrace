@@ -14,21 +14,7 @@ fn unresolved_logs_restore_their_unapplied_years_and_details_after_switching() {
         harness.run_steps(2);
         open_date_inspector(&mut harness);
         select_date_policy(&mut harness, unresolved_years::SET_YEAR_LABEL);
-        harness
-            .get(
-                By::new().predicate(|node| {
-                    node.author_id() == Some(unresolved_years::LAST_ENTRY_YEAR_ID)
-                }),
-            )
-            .click();
-        harness.run_steps(2);
-        harness
-            .input_mut()
-            .events
-            .push(egui::Event::Text(year.to_string()));
-        harness.run_steps(2);
-        harness.key_press(egui::Key::Enter);
-        harness.run_steps(2);
+        chronology_policies::edit_last_entry_year(&mut harness, year);
     }
     unfold_the_summary_panel(&mut harness);
     for (name, year, details) in [("second.log", 2028.0, false), ("first.log", 2032.0, true)] {

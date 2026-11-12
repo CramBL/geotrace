@@ -496,7 +496,7 @@ impl QueryWindow {
             clear_history = true;
         }
         // A table so the age and remove columns line up across rows.
-        Grid::new(ui.id().with("query_history_grid"))
+        Grid::new(ui.scope_id().with("query_history_grid"))
             .num_columns(4)
             .spacing(egui::vec2(8.0, 4.0))
             .show(ui, |ui| {
@@ -599,7 +599,7 @@ impl QueryWindow {
     }
 
     fn editor_ui(&mut self, ui: &mut egui::Ui, schema: &ChannelSchema) {
-        let editor_id = egui::Id::new(EDITOR_ID_SALT);
+        let editor_id = egui::Id::unique(EDITOR_ID_SALT);
         // Runs before the editor so the open popup can claim its keys, and may
         // edit the text (accepting a candidate) - so re-check after.
         self.apply_autocomplete_input(ui, editor_id);
@@ -1075,7 +1075,7 @@ impl QueryWindow {
         };
         self.hover_doc_span = Some(span);
         // Drawn as an Area so it is anchored to the token under the pointer.
-        Area::new(egui::Id::new("query_hover_doc"))
+        Area::new(egui::Id::unique("query_hover_doc"))
             .order(egui::Order::Tooltip)
             .fixed_pos(pointer + egui::vec2(12.0, 18.0))
             .constrain(true)

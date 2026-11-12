@@ -37,7 +37,7 @@ impl AnchoredDialogKind {
     /// The id every anchored dialog holds its size, its position and its
     /// frozen regions under.
     pub(super) fn window_id(self) -> egui::Id {
-        egui::Id::new(self)
+        egui::Id::unique(self)
     }
 
     fn width(self) -> f32 {
@@ -120,7 +120,7 @@ impl<'a> AnchoredDialog<'a> {
         Self {
             window: AnchoredWindow {
                 layout_id: kind.window_id(),
-                window_id: egui::Id::new(Some(title.as_str())),
+                window_id: egui::Id::unique(Some(title.as_str())),
                 title,
                 sizing: AnchoredWindowSizing {
                     preferred_width: kind.width(),

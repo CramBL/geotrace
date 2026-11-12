@@ -41,6 +41,7 @@ fn push_two_track_file(harness: &mut Harness<'_, App>, name: &str) -> gt_types::
 #[test]
 fn snap_row_views_marks_declared_roadless_modes_unsnappable() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -69,6 +70,7 @@ fn snap_row_views_marks_declared_roadless_modes_unsnappable() {
 #[test]
 fn snap_request_parks_on_consent_and_agree_takes_it() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -79,12 +81,7 @@ fn snap_request_parks_on_consent_and_agree_takes_it() {
     assert_eq!(harness.state().pending_snap.track_refs, vec![track]);
     harness.step();
 
-    // First synthetic click settles the startup map-layer popup (see
-    // `snap_consent_agree_persists_the_server_host`), the second lands.
-    harness
-        .get_by_role_and_label(egui::accesskit::Role::Button, "Agree - snap automatically")
-        .click();
-    harness.run_steps(3);
+    harness.run_steps(2);
     harness
         .get_by_role_and_label(egui::accesskit::Role::Button, "Agree - snap automatically")
         .click();
@@ -102,6 +99,7 @@ fn snap_request_parks_on_consent_and_agree_takes_it() {
 #[test]
 fn snap_request_parked_on_consent_is_dropped_on_decline() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -138,6 +136,7 @@ fn snap_request_parked_on_consent_is_dropped_on_decline() {
 #[test]
 fn snap_error_series_is_stable_across_frames() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -172,6 +171,7 @@ fn snap_error_series_is_stable_across_frames() {
 #[test]
 fn costing_override_beats_the_declared_mode() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -244,6 +244,7 @@ fn costing_override_reaches_the_dispatched_run() {
     use gt_snap::wire::Costing;
 
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -313,6 +314,7 @@ fn costing_override_reaches_the_dispatched_run() {
 /// with the auto choice requested and its dialog on screen.
 fn harness_prompting_to_replace_the_auto_run<'a>() -> (Harness<'a, App>, gt_types::TrackRef) {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -382,6 +384,7 @@ fn confirming_the_replace_prompt_discards_the_cached_run() {
 #[test]
 fn recording_scope_counts_separate_selected_from_all() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -430,6 +433,7 @@ fn recording_scope_counts_separate_selected_from_all() {
 #[case::cancel("Cancel", &[])]
 fn recording_scope_dialog_snaps_the_chosen_scope(#[case] button: &str, #[case] expected: &[usize]) {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -473,6 +477,7 @@ fn recording_scope_dialog_snaps_the_chosen_scope(#[case] button: &str, #[case] e
 #[test]
 fn recording_scope_parks_the_whole_batch_on_one_consent_dialog() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -551,6 +556,7 @@ fn snap_runs_persist_and_restore_through_the_app() {
         test_util::recordings::insert_recording_as_one_whole_file_track(&mut db, "dev", &bytes);
 
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -618,6 +624,7 @@ fn snap_runs_persist_and_restore_through_the_app() {
 #[test]
 fn snapped_tracks_view_respects_toggle_and_tree_visibility() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -748,6 +755,7 @@ fn snapshot_snap_auto_prompt() {
 #[test]
 fn snap_consent_agree_persists_the_server_host() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -755,13 +763,7 @@ fn snap_consent_agree_persists_the_server_host() {
     harness.state_mut().snap_consent_prompt = true;
     harness.step();
 
-    // A fresh app renders the map-layer popup open, and the first synthetic
-    // click is spent dismissing it before the dialog's buttons receive
-    // anything - so click once to settle the popup, then click for real.
-    harness
-        .get_by_role_and_label(egui::accesskit::Role::Button, "Agree - manual only")
-        .click();
-    harness.run_steps(3);
+    harness.run_steps(2);
     harness
         .get_by_role_and_label(egui::accesskit::Role::Button, "Agree - manual only")
         .click();
@@ -782,6 +784,7 @@ fn snap_consent_agree_persists_the_server_host() {
 #[test]
 fn snap_consent_escape_declines_without_persisting() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -817,6 +820,7 @@ fn snap_consent_escape_declines_without_persisting() {
 #[test]
 fn auto_prompt_appears_once_after_earlier_consent() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -857,6 +861,7 @@ fn auto_prompt_appears_once_after_earlier_consent() {
 #[test]
 fn auto_without_consent_prompts_before_anything_is_sent() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -882,6 +887,7 @@ fn auto_without_consent_prompts_before_anything_is_sent() {
 #[test]
 fn auto_sweep_is_paused_offline() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();

@@ -90,7 +90,9 @@ fn opened_urls(harness: &TestHarness<'_, ReferenceWindow>) -> Vec<String> {
         .iter()
         .filter_map(|command| match command {
             egui::OutputCommand::OpenUrl(open_url) => Some(open_url.url.clone()),
-            egui::OutputCommand::CopyText(_) | egui::OutputCommand::CopyImage(_) => None,
+            egui::OutputCommand::CopyText(_)
+            | egui::OutputCommand::CopyImage(_)
+            | egui::OutputCommand::TextSelectionSettled(_) => None,
         })
         .collect()
 }
@@ -239,6 +241,9 @@ fn hovering_an_abbreviation_shows_its_full_form_under_the_help_cursor() {
         .rect()
         .center();
     harness.inner.hover_at_and_settle(first_abbreviation, 3);
+    harness
+        .inner
+        .run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     assert!(
         harness
             .inner
@@ -279,6 +284,9 @@ fn hovering_a_source_shows_its_url() {
     harness
         .inner
         .hover_and_settle(By::new().label(source.name), 3);
+    harness
+        .inner
+        .run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     assert!(
         harness.inner.query_by_label_contains(source.url).is_some(),
         "the hover shows {:?}",

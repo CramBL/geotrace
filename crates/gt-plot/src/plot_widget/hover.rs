@@ -200,7 +200,7 @@ pub(super) fn show_nearest_hover_label(
     Tooltip::always_open(
         ui.ctx().clone(),
         response.layer_id,
-        egui::Id::new("plot_hover_label"),
+        egui::Id::unique("plot_hover_label"),
         egui::PopupAnchor::Pointer,
     )
     .gap(HOVER_LABEL_TOOLTIP_GAP)

@@ -1,4 +1,4 @@
-use egui_kittest::{Harness, SnapshotOptions};
+use egui_kittest::{Harness, OsThreshold, SnapshotOptions};
 
 /// Re-exported so crates using [`TestHarness`] can query widgets, and read the
 /// nodes they match, without each taking a direct `egui_kittest`
@@ -109,6 +109,21 @@ impl<'a, State> TestHarness<'a, State> {
         name: &str,
         region: egui::Rect,
     ) -> Result<(), String> {
+        self.snapshot_region_with_options(
+            name,
+            region,
+            &SnapshotOptions::new()
+                .threshold(CROSS_BACKEND_COLOR_TOLERANCE)
+                .max_failed_pixels(COLOR_TOLERANCE_PIXEL_COUNT_BUDGET),
+        )
+    }
+
+    pub fn snapshot_region_with_options(
+        &mut self,
+        name: &str,
+        region: egui::Rect,
+        options: &SnapshotOptions,
+    ) -> Result<(), String> {
         if on_windows_ci() {
             return Ok(());
         }
@@ -135,14 +150,8 @@ impl<'a, State> TestHarness<'a, State> {
         }
         let cropped =
             image::imageops::crop_imm(&frame, left, top, right - left, bottom - top).to_image();
-        egui_kittest::try_image_snapshot_options(
-            &cropped,
-            snap_name(name),
-            &SnapshotOptions::new()
-                .threshold(CROSS_BACKEND_COLOR_TOLERANCE)
-                .max_failed_pixels(COLOR_TOLERANCE_PIXEL_COUNT_BUDGET),
-        )
-        .map_err(|error| error.to_string())
+        egui_kittest::try_image_snapshot_options(&cropped, snap_name(name), options)
+            .map_err(|error| error.to_string())
     }
 
     /// Compare at [`CROSS_BACKEND_COLOR_TOLERANCE`], admitting
@@ -163,7 +172,7 @@ impl<'a, State> TestHarness<'a, State> {
         &mut self,
         name: &str,
         threshold: f32,
-        max_failed_pixels: usize,
+        max_failed_pixels: impl Into<OsThreshold<usize>>,
     ) {
         if on_windows_ci() {
             return;
@@ -290,6 +299,7 @@ impl<'a> TestHarnessBuilder<'a> {
         let renderer =
             egui_kittest::wgpu::WgpuTestRenderer::from_render_state(render_state.clone());
         let mut builder = Harness::builder()
+            .with_context_setup(gt_ui_theme::install_app_style)
             .with_options(snapshot_options())
             .renderer(renderer);
         if let Some(sz) = self.size {
@@ -299,7 +309,6 @@ impl<'a> TestHarnessBuilder<'a> {
             builder = builder.with_step_dt(dt);
         }
         let mut inner = builder.build_ui(f);
-        gt_ui_theme::install_app_style(&inner.ctx);
         if let Some(hook) = self.render_state_hook {
             hook(&inner.ctx, &render_state);
         }
@@ -323,6 +332,7 @@ impl<'a> TestHarnessBuilder<'a> {
         let renderer =
             egui_kittest::wgpu::WgpuTestRenderer::from_render_state(render_state.clone());
         let mut builder = Harness::builder()
+            .with_context_setup(gt_ui_theme::install_app_style)
             .with_options(snapshot_options())
             .renderer(renderer);
         if let Some(sz) = self.size {
@@ -332,7 +342,6 @@ impl<'a> TestHarnessBuilder<'a> {
             builder = builder.with_step_dt(dt);
         }
         let mut inner = builder.build_ui_state(f, state);
-        gt_ui_theme::install_app_style(&inner.ctx);
         if let Some(hook) = self.render_state_hook {
             hook(&inner.ctx, &render_state);
         }
@@ -358,6 +367,7 @@ impl<'a> TestHarnessBuilder<'a> {
         let config_path_clone = config_path.clone();
 
         let mut builder = Harness::builder()
+            .with_context_setup(gt_ui_theme::install_app_style)
             .with_wait_for_pending_images(false)
             .with_options(snapshot_options());
         if let Some(sz) = self.size {
@@ -387,8 +397,7 @@ const STRICT_PIXEL_COUNT_TOLERANCE: usize = 4;
 /// [`TestHarness::snapshot_with_color_tolerance`] and
 /// [`TestHarness::snapshot_with_mesh_edge_tolerance`], as a squared YIQ
 /// distance. 5.0 admits a difference of three gray levels per channel, whose
-/// distance is 4.55, and stops at four, whose distance is 8.08. Three levels
-/// is the whole spread that two rasterizers put on an anti-aliased edge. The
+/// distance is 4.55, and stops at four, whose distance is 8.08. The
 /// macOS runner left 5 pixels of a 1000x800 History window past 0.6 and none
 /// past 3.0. A hardware Vulkan adapter left one pixel of the flare reference
 /// window past 4.0 and none past 5.0, against baselines that Mesa's llvmpipe
@@ -396,12 +405,10 @@ const STRICT_PIXEL_COUNT_TOLERANCE: usize = 4;
 pub const CROSS_BACKEND_COLOR_TOLERANCE: f32 = 5.0;
 
 /// Differing-pixel budget for [`TestHarness::snapshot_with_color_tolerance`].
-/// Zero, because [`CROSS_BACKEND_COLOR_TOLERANCE`] absorbs the whole spread
-/// that two backends put between them. The suite passes at this budget under
-/// Mesa's llvmpipe (`LIBGL_ALWAYS_SOFTWARE=1 WGPU_BACKEND=gl`, the Linux CI
-/// configuration) and on a hardware Vulkan adapter alike. The budget of 32
-/// that this comparison ran at before held 34 baselines stale, twenty of which
-/// drew a button icon that a merged commit had already replaced.
+/// Zero preserves sensitivity to small widget changes. Snapshots with measured
+/// Metal edge differences specify a macOS budget at the call site. The earlier
+/// budget of 32 left 34 baselines stale, twenty of which showed a button icon
+/// that a merged commit had already replaced.
 const COLOR_TOLERANCE_PIXEL_COUNT_BUDGET: usize = 0;
 
 /// Differing-pixel budget for

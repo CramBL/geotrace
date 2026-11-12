@@ -1,4 +1,4 @@
-use egui::{Label, WidgetInfo, WidgetType};
+use egui::{Label, Role, WidgetInfo};
 
 pub(super) struct SettingsLabel<'a> {
     pub(super) icon: &'a str,
@@ -10,7 +10,7 @@ impl SettingsLabel<'_> {
         let response = ui.add(Label::new(format!("{} {}", self.icon, self.text)).wrap());
         response.widget_info(|| {
             WidgetInfo::labeled(
-                WidgetType::Label,
+                Role::Label,
                 ui.is_enabled(),
                 format!("{} {}", self.icon, self.text.replace('\n', " ")),
             )

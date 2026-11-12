@@ -1,9 +1,7 @@
 use std::path::Path;
 use std::{fmt, io, mem};
 
-use egui::{
-    Button, Label, RichText, ScrollArea, TextEdit, TextStyle, WidgetInfo, WidgetType, Window,
-};
+use egui::{Button, Label, RichText, Role, ScrollArea, TextEdit, TextStyle, WidgetInfo, Window};
 use egui_phosphor::regular::{
     CHECK as ICON_CHECK, CLOCK_COUNTER_CLOCKWISE as ICON_CLOCK, COPY as ICON_COPY,
     WARNING as ICON_WARNING, X as ICON_DISMISS,
@@ -224,7 +222,7 @@ impl LoadFailures {
         let dismiss = ui
             .button(ICON_DISMISS)
             .on_hover_text("Dismiss the selected input");
-        dismiss.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, DISMISS_BUTTON_LABEL));
+        dismiss.widget_info(|| WidgetInfo::labeled(Role::Button, true, DISMISS_BUTTON_LABEL));
         if dismiss.clicked() {
             action = FailureWindowAction::Dismiss;
         }
@@ -242,9 +240,7 @@ impl LoadFailures {
         let copy = ui
             .button(ICON_COPY)
             .on_hover_text("Copy the selected source and full diagnostic");
-        copy.widget_info(|| {
-            WidgetInfo::labeled(WidgetType::Button, true, COPY_DETAILS_BUTTON_LABEL)
-        });
+        copy.widget_info(|| WidgetInfo::labeled(Role::Button, true, COPY_DETAILS_BUTTON_LABEL));
         if copy.clicked() {
             action = FailureWindowAction::CopyDetails;
         }
@@ -431,7 +427,7 @@ impl LoadFailures {
     pub(super) fn handle_keyboard(&mut self, ctx: &egui::Context) {
         let layer = egui::LayerId::new(
             egui::Order::Middle,
-            egui::Id::new(LOAD_FAILURE_WINDOW_ID_SALT),
+            egui::Id::unique(LOAD_FAILURE_WINDOW_ID_SALT),
         );
         let focused = ctx.memory(|memory| memory.focused());
         if self.retained.is_empty()
@@ -472,7 +468,7 @@ impl LoadFailures {
         let mut action = None;
         let viewport = ctx.content_rect();
         let window = Window::new(LOAD_PROBLEMS_TITLE)
-            .id(egui::Id::new(LOAD_FAILURE_WINDOW_ID_SALT))
+            .id(egui::Id::unique(LOAD_FAILURE_WINDOW_ID_SALT))
             .collapsible(false)
             .resizable(true)
             .default_width(LOAD_PROBLEMS_DEFAULT_WIDTH)
@@ -683,7 +679,7 @@ impl LoadRecoveryState {
             let response = ui
                 .add(
                     TextEdit::multiline(text)
-                        .id(egui::Id::new(TEXT_INPUT_ID_SALT).with(*attempt))
+                        .id(egui::Id::unique(TEXT_INPUT_ID_SALT).with(*attempt))
                         .desired_rows(TEXT_INPUT_ROWS)
                         .desired_width(f32::INFINITY),
                 )
@@ -1153,7 +1149,8 @@ mod tests {
         }
         harness.inner.get_by_label("Details").click();
         harness.inner.run_steps(8);
-        let window = AuditedWindow::identified(title, egui::Id::new(LOAD_FAILURE_WINDOW_ID_SALT));
+        let window =
+            AuditedWindow::identified(title, egui::Id::unique(LOAD_FAILURE_WINDOW_ID_SALT));
         harness.inner.assert_window_fits_the_viewport(window);
         if retrying {
             harness
@@ -1277,7 +1274,7 @@ mod tests {
         harness.run();
         let window = AuditedWindow::identified(
             LOAD_PROBLEMS_TITLE,
-            egui::Id::new(LOAD_FAILURE_WINDOW_ID_SALT),
+            egui::Id::unique(LOAD_FAILURE_WINDOW_ID_SALT),
         );
         harness.inner.assert_window_fits_the_viewport(window);
         for control in [

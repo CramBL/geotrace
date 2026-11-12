@@ -323,7 +323,7 @@ fn an_open_menu_blocks_table_navigation_with_a_retained_table_focus() {
     harness.run_steps(2);
     let id = harness.state().viewer.selected_log().unwrap();
     harness.ctx.memory_mut(|memory| {
-        memory.request_focus(egui::Id::new((keyboard_navigation::TABLE_FOCUS_ID, id)))
+        memory.request_focus(egui::Id::unique((keyboard_navigation::TABLE_FOCUS_ID, id)))
     });
     harness.run_steps(2);
     for key in [egui::Key::ArrowDown, egui::Key::PageDown, egui::Key::End] {

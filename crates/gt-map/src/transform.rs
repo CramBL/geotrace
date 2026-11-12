@@ -525,11 +525,34 @@ mod tests {
     use gt_filter::GlobalFilter;
     use gt_track_builder::LOD_CHUNK_POINTS;
     use gt_types::coordinates::Longitude;
+    use gt_types::mercator;
     use gt_types::{LoadedTrack, PlacedPoint, PlacedPoints};
     use rstest::rstest;
+    use walkers::{MapMemory, MercatorProjection, Projector};
 
     use super::{GeometryCull, Latitude, MercTransform};
     use crate::polyline::{self, CULL_MARGIN_PX, MAX_LOD_ERROR_PX, VisiblePath};
+
+    #[rstest]
+    #[case(-80.0)]
+    #[case(0.0)]
+    #[case(80.0)]
+    fn mercator_transform_matches_the_walkers_projection(#[case] latitude: f64) {
+        let rect = egui::Rect::from_min_size(egui::pos2(73.0, 41.0), egui::vec2(640.0, 480.0));
+        let center = walkers::lat_lon(latitude, 12.0);
+        let mut memory = MapMemory::default();
+        memory.center_at(center);
+        memory.set_zoom(4.0).expect("a supported zoom");
+        let projector = Projector::new(rect, &MercatorProjection, &memory, center);
+        let transform = MercTransform::new(&projector, &memory, rect.center());
+        let position = walkers::lat_lon(latitude + 0.5, 12.5);
+        let actual = transform.to_screen(mercator::normalize(
+            Latitude::new(position.y()),
+            Longitude::new(position.x()),
+        ));
+        let expected = projector.project(position);
+        assert!((actual.to_vec2() - expected).length() < 0.001);
+    }
 
     /// The centre-latitude scale inverts `mercator::normalize`'s y exactly:
     /// for a viewport centred at a known latitude, the derived pixels per

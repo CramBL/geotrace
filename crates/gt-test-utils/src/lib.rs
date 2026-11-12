@@ -6,7 +6,7 @@ pub use day_archive::{ColumnName, GroupPath};
 /// them through their dev-dependency on this one.
 pub use gt_types::fixtures;
 #[cfg(feature = "snapshot")]
-pub use interaction::HarnessInteraction;
+pub use interaction::{HarnessInteraction, TOOLTIP_LAYOUT_FRAMES};
 pub use log_fixtures::{
     MULTI_REBOOT_CLOCK_RESET_LOG, SyntheticLogSpec, SyntheticLogTimestamps,
     UNRESOLVED_LEAP_DAYS_LOG, UNRESOLVED_YEARS_LOG, after_the_synthetic_log,

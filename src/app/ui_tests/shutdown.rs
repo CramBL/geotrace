@@ -128,6 +128,7 @@ fn a_settings_flush_that_cannot_replace_the_settings_file_removes_its_temporary(
 /// An app with a write running and no close request yet.
 fn app_with_a_running_write<'a>() -> (Harness<'a, App>, gt_pending_writes::PendingWriteGuard) {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -450,6 +451,7 @@ fn app_holding_the_data_directory_over_a_running_write<'a>(
         .try_begin("Compacting the TEC archive", TEC_COMPACTION)
         .expect("the registry is running");
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(move |cc| {
             test_util::harness::transient_app_with_the_instance_lock(
@@ -542,6 +544,7 @@ fn closing_the_window_hands_the_history_worker_to_its_own_thread() {
         .spawn(move || {
             let dir = tempfile::tempdir().expect("temp dir");
             let mut harness = Harness::builder()
+                .with_context_setup(gt_ui_theme::install_app_style)
                 .with_wait_for_pending_images(false)
                 .build_eframe(test_util::harness::transient_app);
             harness.step();
@@ -591,6 +594,7 @@ fn closing_the_window_hands_the_history_worker_to_its_own_thread() {
 #[test]
 fn the_auto_snap_sweep_is_paused_once_the_close_began() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();

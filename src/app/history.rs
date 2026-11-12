@@ -105,8 +105,9 @@ impl PruneDialog {
             PruneKind::Age => {
                 let prev = self.age_days;
                 ui.horizontal(|ui| {
-                    ui.label("Remove recordings older than");
-                    ui.add(DragValue::new(&mut self.age_days).range(1..=3650));
+                    let label = ui.label("Remove recordings older than");
+                    ui.add(DragValue::new(&mut self.age_days).range(1..=3650))
+                        .labelled_by(label.id);
                     ui.label("days");
                 });
                 self.age_days != prev
@@ -114,8 +115,9 @@ impl PruneDialog {
             PruneKind::TotalSize => {
                 let prev = self.size_limit_mb;
                 ui.horizontal(|ui| {
-                    ui.label("Keep total size under");
-                    ui.add(DragValue::new(&mut self.size_limit_mb).range(1..=100_000));
+                    let label = ui.label("Keep total size under");
+                    ui.add(DragValue::new(&mut self.size_limit_mb).range(1..=100_000))
+                        .labelled_by(label.id);
                     ui.label("MB");
                 });
                 self.size_limit_mb != prev
@@ -123,8 +125,9 @@ impl PruneDialog {
             PruneKind::Count => {
                 let prev = self.keep_count;
                 ui.horizontal(|ui| {
-                    ui.label("Keep at most");
-                    ui.add(DragValue::new(&mut self.keep_count).range(1..=10_000));
+                    let label = ui.label("Keep at most");
+                    ui.add(DragValue::new(&mut self.keep_count).range(1..=10_000))
+                        .labelled_by(label.id);
                     ui.label("recordings per identity");
                 });
                 self.keep_count != prev
@@ -690,7 +693,7 @@ impl HistoryWindow {
         let mut shelf_raised_the_delete: Option<DatabaseRef> = None;
 
         ToolWindow {
-            id: egui::Id::new(Some(HISTORY_WINDOW_TITLE)),
+            id: egui::Id::unique(Some(HISTORY_WINDOW_TITLE)),
             title: HISTORY_WINDOW_TITLE,
             viewport: ctx.content_rect(),
             sizing: HISTORY_WINDOW_SIZING,
@@ -922,7 +925,8 @@ impl HistoryWindow {
                         ui.add(
                             TextEdit::singleline(&mut self.filter_text)
                                 .desired_width(ui.available_width()),
-                        );
+                        )
+                        .accessible_name("Filter recordings");
                     });
                 });
 
@@ -930,9 +934,11 @@ impl HistoryWindow {
                 // second line, keeping the window's width.
                 ui.horizontal_wrapped(|ui| {
                     ui.label("Points ≥");
-                    ui.add(TextEdit::singleline(&mut self.filter_min_points).desired_width(60.0));
+                    ui.add(TextEdit::singleline(&mut self.filter_min_points).desired_width(60.0))
+                        .accessible_name("Minimum point count");
                     ui.label("≤");
-                    ui.add(TextEdit::singleline(&mut self.filter_max_points).desired_width(60.0));
+                    ui.add(TextEdit::singleline(&mut self.filter_max_points).desired_width(60.0))
+                        .accessible_name("Maximum point count");
                     ui.separator();
                     ui.label("Date");
                     ui.add(

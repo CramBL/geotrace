@@ -516,7 +516,7 @@ impl App {
                 .take()
                 .map(|pending| pending.floating_rect(ui.ctx(), viewport));
             let shown = ToolWindow {
-                id: egui::Id::new(TRACK_DATA_WINDOW_ID),
+                id: egui::Id::unique(TRACK_DATA_WINDOW_ID),
                 title: "Track data",
                 viewport,
                 sizing: TRACK_DATA_WINDOW_SIZING,
@@ -556,7 +556,7 @@ impl App {
             });
             surface_event = shown.and_then(|shown| shown.inner.flatten());
             if transfer_drag && is_open {
-                ToolWindow::transfer_pointer_drag(ui.ctx(), egui::Id::new(TRACK_DATA_WINDOW_ID));
+                ToolWindow::transfer_pointer_drag(ui.ctx(), egui::Id::unique(TRACK_DATA_WINDOW_ID));
             }
             if !is_open {
                 self.shared.borrow_mut().tree.detached = false;
@@ -1278,7 +1278,7 @@ fn show_drop_hint_overlay(ctx: &egui::Context) {
         return;
     }
     let window = ctx.content_rect();
-    egui::Area::new(egui::Id::new("drop_hint_overlay"))
+    egui::Area::new(egui::Id::unique("drop_hint_overlay"))
         .order(egui::Order::Foreground)
         .fixed_pos(window.min)
         .show(ctx, |ui| {

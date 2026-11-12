@@ -24,7 +24,7 @@ impl SettingsSearch {
     pub(super) fn show_query_field(&mut self, ui: &mut egui::Ui) {
         ui.add(
             TextEdit::singleline(&mut self.query)
-                .id(egui::Id::new(QUERY_FIELD_ID))
+                .id(egui::Id::unique(QUERY_FIELD_ID))
                 .hint_text(format!("{ICON_MAGNIFYING_GLASS} Search settings"))
                 .desired_width(f32::INFINITY),
         )

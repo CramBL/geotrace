@@ -203,7 +203,7 @@ fn constellation_panel(
         // the wrong panel - or nowhere at all.
         let header = ui.interact(
             header.response.rect,
-            ui.id().with(("constellation_fold", constellation)),
+            ui.scope_id().with(("constellation_fold", constellation)),
             egui::Sense::click(),
         );
         if crate::hover_labels::hover_affordance(ui, header.rect) {

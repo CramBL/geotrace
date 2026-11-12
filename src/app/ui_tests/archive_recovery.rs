@@ -354,6 +354,7 @@ fn an_archive_left_unrecovered_says_why_on_the_controls_that_need_it() {
     harness.state_mut().settings_page = SettingsPage::AircraftInterference;
     harness.run_steps(3);
     harness.hover_and_settle(By::new().label_contains(DOWNLOAD_HISTORY_LABEL), 3);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     harness.get_by_label_contains(
         "The interference archive is unavailable this session: an interrupted delete in it was \
          left unrecovered",
@@ -366,6 +367,7 @@ fn an_archive_left_unrecovered_says_why_on_the_controls_that_need_it() {
         .rect()
         .center();
     harness.hover_at_and_settle(interference_row, 3);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     harness.get_by_label_contains(
         &DeleteBlocker::ArchiveUnavailable(ArchiveUnavailable::InterruptedDeleteLeftUnrecovered)
             .hover_text(),
@@ -415,6 +417,7 @@ fn the_environment_controls_are_grayed_while_the_archives_open() {
     assert!(prune.accesskit_node().is_disabled());
 
     harness.hover_and_settle(By::new().label_contains(PRUNE_BUTTON_LABEL), 3);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     harness.get_by_label_contains(
         &DeleteBlocker::ArchivesUnreachable(ArchivesUnreachable::ArchivesOpening).hover_text(),
     );
@@ -495,6 +498,7 @@ fn the_environment_controls_are_grayed_in_a_read_only_session() {
         "the setting takes no input: a read-only session auto-prunes nothing"
     );
     harness.hover_and_settle(By::new().label_contains(PRUNE_BUTTON_LABEL), 3);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     harness.get_by_label_contains(
         &DeleteBlocker::ArchivesUnreachable(ArchivesUnreachable::ReadOnlySession).hover_text(),
     );
@@ -509,6 +513,7 @@ fn the_environment_controls_are_grayed_in_a_read_only_session() {
             .is_disabled()
     );
     harness.hover_and_settle(By::new().label_contains(DOWNLOAD_HISTORY_LABEL), 3);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     harness.get_by_label_contains("This session is read-only: nothing is downloaded into the");
 }
 
@@ -532,6 +537,7 @@ fn the_recording_storage_controls_are_grayed_in_a_read_only_session() {
             .is_disabled()
     );
     harness.hover_and_settle(By::new().label_contains(AUTO_STORE_LABEL), 3);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     harness.get_by_label_contains(READ_ONLY_RECORDING_HISTORY_HOVER);
 
     for auto_prune in ["Auto-prune when over", "Confirm before pruning"] {
@@ -558,6 +564,7 @@ fn the_download_control_is_grayed_while_the_archive_opens() {
     assert!(download.accesskit_node().is_disabled());
 
     harness.hover_and_settle(By::new().label_contains(DOWNLOAD_HISTORY_LABEL), 3);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     harness.get_by_label_contains("The interference archive is still opening");
 }
 

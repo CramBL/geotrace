@@ -1,5 +1,4 @@
-use egui::accesskit::Role;
-use egui::{EventFilter, FocusDirection, Sense, StrokeKind, WidgetInfo, WidgetType};
+use egui::{EventFilter, FocusDirection, Role, Sense, StrokeKind, WidgetInfo};
 use gt_log_view::LoadedLogs;
 use gt_ui_types::LoadedLogId;
 
@@ -10,7 +9,7 @@ pub(super) struct TableFocusScope(egui::Id);
 
 impl TableFocusScope {
     pub(super) fn for_log(log: LoadedLogId) -> Self {
-        Self(egui::Id::new((TABLE_FOCUS_ID, log)))
+        Self(egui::Id::unique((TABLE_FOCUS_ID, log)))
     }
 
     pub(super) fn register_ui(&self, ui: &egui::Ui) -> egui::Response {
@@ -19,7 +18,7 @@ impl TableFocusScope {
             self.0,
             Sense::focusable_noninteractive(),
         );
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Other, true, TABLE_LABEL));
+        response.widget_info(|| WidgetInfo::labeled(Role::Unknown, true, TABLE_LABEL));
         ui.ctx().accesskit_node_builder(self.0, |node| {
             node.set_role(Role::Table);
             node.set_label(TABLE_LABEL);

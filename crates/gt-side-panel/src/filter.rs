@@ -129,8 +129,10 @@ pub fn render_filter_panel(
         .num_columns(3)
         .spacing([6.0, 4.0])
         .show(ui, |ui| {
-            ui.label(format!("{ICON_ARROWS_OUT_SIMPLE} Min dist"));
-            let dist = ui.add(TextEdit::singleline(&mut state.distance_input).desired_width(60.0));
+            let distance_label = ui.label(format!("{ICON_ARROWS_OUT_SIMPLE} Min dist"));
+            let dist = ui
+                .add(TextEdit::singleline(&mut state.distance_input).desired_width(60.0))
+                .labelled_by(distance_label.id);
             ui.label("km");
             ui.end_row();
 
@@ -143,8 +145,10 @@ pub fn render_filter_panel(
             ui.label(""); // no unit for duration
             ui.end_row();
 
-            ui.label(format!("{ICON_BOUNDING_BOX} Min spread"));
-            let spread = ui.add(TextEdit::singleline(&mut state.spread_input).desired_width(60.0));
+            let spread_label = ui.label(format!("{ICON_BOUNDING_BOX} Min spread"));
+            let spread = ui
+                .add(TextEdit::singleline(&mut state.spread_input).desired_width(60.0))
+                .labelled_by(spread_label.id);
             ui.label("m");
             ui.end_row();
 

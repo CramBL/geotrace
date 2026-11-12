@@ -24,6 +24,7 @@ mod tests {
     #[test]
     fn the_test_harness_opens_no_user_databases() {
         let mut harness = Harness::builder()
+            .with_context_setup(gt_ui_theme::install_app_style)
             .with_wait_for_pending_images(false)
             .build_eframe(test_util::harness::transient_app);
         harness.step();

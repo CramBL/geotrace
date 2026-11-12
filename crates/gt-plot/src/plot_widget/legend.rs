@@ -54,7 +54,7 @@ pub(super) fn show_file_legend_overlay(
 
     let mut redock_requested = false;
     let show_redock_icon = !legend_is_docked(state.file_legend_offset);
-    let legend_id = ui.id().with(LEGEND_AREA_ID_SALT);
+    let legend_id = ui.scope_id().with(LEGEND_AREA_ID_SALT);
     let drag_bg_size = state.file_legend_size;
     let area = Area::new(legend_id)
         // Windows draw at this order too, so a focused window stacks above the
@@ -228,11 +228,11 @@ mod tests {
         let names = RecordingNames::default();
         let mut state = PlotState::default();
         let mut legend_id = None;
-        let window_id = egui::Id::new("test window");
+        let window_id = egui::Id::unique("test window");
 
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             show_file_legend_overlay(ui, &names, &[0, 1], plot_rect_400_by_300(), &mut state);
-            legend_id = Some(ui.id().with(LEGEND_AREA_ID_SALT));
+            legend_id = Some(ui.scope_id().with(LEGEND_AREA_ID_SALT));
             egui::Window::new("Settings")
                 .id(window_id)
                 .show(ui.ctx(), |ui| {

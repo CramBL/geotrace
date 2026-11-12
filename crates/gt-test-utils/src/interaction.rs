@@ -1,6 +1,7 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
+use egui::MouseWheelSource;
 use egui::accesskit::Role;
 use egui_kittest::kittest::{By, NodeT as _, Queryable as _};
 use egui_kittest::{Harness, Node};
@@ -98,7 +99,7 @@ pub trait HarnessInteraction {
 
     /// Screen rect of the [`egui::Window`] titled `title`, `None` while it is
     /// not shown. [`egui::Window::new`] derives the area id from the title as
-    /// `Id::new(Some(title))`.
+    /// `Id::unique(Some(title))`.
     fn window_rect(&self, title: &str) -> Option<egui::Rect>;
 
     /// Runs `settle_frames` frames, then measures the window titled `title`. A
@@ -191,6 +192,7 @@ impl<State> HarnessInteraction for Harness<'_, State> {
         self.step();
         self.input_mut().events.push(egui::Event::MouseWheel {
             unit: egui::MouseWheelUnit::Point,
+            source: MouseWheelSource::Wheel,
             delta: egui::vec2(0.0, delta_points),
             phase: egui::TouchPhase::Move,
             modifiers: egui::Modifiers::NONE,
@@ -200,7 +202,7 @@ impl<State> HarnessInteraction for Harness<'_, State> {
 
     fn label_texts_top_to_bottom(&self, by: By<'_>) -> Vec<String> {
         let mut labels: Vec<(f32, String)> = self
-            .query_all(by)
+            .query_all(by.role(Role::Label))
             .map(|node| {
                 (
                     node.rect().top(),
@@ -244,7 +246,7 @@ impl<State> HarnessInteraction for Harness<'_, State> {
 
     fn window_rect(&self, title: &str) -> Option<egui::Rect> {
         self.ctx
-            .memory(|memory| memory.area_rect(egui::Id::new(Some(title))))
+            .memory(|memory| memory.area_rect(egui::Id::unique(Some(title))))
     }
 
     fn settled_window_size(&mut self, title: &str, settle_frames: usize) -> Option<egui::Vec2> {
@@ -261,10 +263,14 @@ impl<State> HarnessInteraction for Harness<'_, State> {
             .iter()
             .find_map(|command| match command {
                 egui::OutputCommand::CopyText(text) => Some(text.clone()),
-                egui::OutputCommand::OpenUrl(_) | egui::OutputCommand::CopyImage(_) => None,
+                egui::OutputCommand::OpenUrl(_)
+                | egui::OutputCommand::CopyImage(_)
+                | egui::OutputCommand::TextSelectionSettled(_) => None,
             })
     }
 }
+
+pub const TOOLTIP_LAYOUT_FRAMES: usize = 2;
 
 /// How long [`HarnessInteraction::step_until`] runs before giving up. The
 /// deadline is wall clock: the work it waits for runs on a background thread,

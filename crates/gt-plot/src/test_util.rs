@@ -156,7 +156,7 @@ pub fn drawn_plot_in_theme(
         .ui_state(
             move |ui, state: &mut DrawnPlotState| {
                 written_plot_id.set(Some(
-                    ui.make_persistent_id(egui::Id::new(TRACK_PLOT_ID_SALT)),
+                    ui.make_persistent_id(egui::IdSalt::new(TRACK_PLOT_ID_SALT)),
                 ));
                 plot_widget::show_track_plot(
                     ui,

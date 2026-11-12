@@ -49,7 +49,7 @@ pub(crate) fn show_sticky_tpv_content(
     };
     let side_by_side =
         matches!(sky, SkySection::Report(_)) && ui.available_width() >= MIN_SIDE_BY_SIDE_WIDTH_PX;
-    let inspection_id = ui.id().with("point_inspection");
+    let inspection_id = ui.scope_id().with("point_inspection");
     #[cfg(test)]
     ui.ctx().data_mut(|data| {
         for region in [
@@ -57,7 +57,7 @@ pub(crate) fn show_sticky_tpv_content(
             StickyRegion::Sky,
             StickyRegion::Inspection,
         ] {
-            data.remove::<egui::Rect>(egui::Id::new(("sticky_region", region)));
+            data.remove::<egui::Rect>(egui::Id::unique(("sticky_region", region)));
         }
     });
     #[cfg(test)]
@@ -98,7 +98,11 @@ pub(crate) fn show_sticky_tpv_content(
             // Explicit id: `.interact` on the container response reuses an
             // auto-generated id, which collides with identically laid out
             // siblings.
-            let fold = ui.interact(fold_rect, ui.id().with("sky_fold"), egui::Sense::click());
+            let fold = ui.interact(
+                fold_rect,
+                ui.scope_id().with("sky_fold"),
+                egui::Sense::click(),
+            );
             crate::hover_labels::hover_affordance(ui, fold.rect);
             if fold.clicked() {
                 folds.plot_folded = !folds.plot_folded;
@@ -191,7 +195,7 @@ pub(crate) fn show_sticky_tpv_content(
 
 /// The containing window scopes the highlight key so concurrent point surfaces remain independent.
 pub(super) fn sky_table_highlight_id(ui: &egui::Ui) -> egui::Id {
-    ui.id().with("sky_table_highlight")
+    ui.scope_id().with("sky_table_highlight")
 }
 
 fn sticky_inspection_ui(
@@ -248,7 +252,7 @@ fn sticky_inspection_ui(
         let height = (ui.available_height() * DETAILS_HEIGHT_FRACTION)
             .max(DETAILS_MIN_HEIGHT_PX)
             .min(ui.available_height());
-        ui.scope_builder(egui::UiBuilder::new().id(inspection_id), |ui| {
+        ui.scope_builder(egui::UiBuilder::new().scope_id(inspection_id), |ui| {
             let _inspection = ScrollArea::both()
                 .id_salt("evidence_scroll")
                 .max_height(height)
@@ -294,7 +298,7 @@ fn sticky_inspection_ui(
 #[cfg(test)]
 fn sticky_layout_rect(ui: &egui::Ui, region: StickyRegion, rect: egui::Rect) {
     ui.ctx()
-        .data_mut(|data| data.insert_temp(egui::Id::new(("sticky_region", region)), rect));
+        .data_mut(|data| data.insert_temp(egui::Id::unique(("sticky_region", region)), rect));
 }
 
 const DETAILS_HEIGHT_FRACTION: f32 = 0.5;

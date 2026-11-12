@@ -18,7 +18,7 @@ use gt_ui_types::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
-use walkers::MapMemory;
+use walkers::{MapMemory, MercatorProjection};
 
 #[cfg(test)]
 use gt_types::{Latitude, Longitude};
@@ -817,7 +817,7 @@ pub(crate) fn compute_viewport_bounds(
     let center = map_memory
         .detached()
         .unwrap_or_else(|| walkers::lat_lon(0.0, 0.0));
-    let projector = walkers::Projector::new(map_rect, map_memory, center);
+    let projector = walkers::Projector::new(map_rect, &MercatorProjection, map_memory, center);
 
     let corners = [
         map_rect.left_top(),
@@ -1062,7 +1062,7 @@ mod tests {
         let mut map_memory = MapMemory::default();
         map_memory.center_at(center);
         map_memory.set_zoom(zoom).expect("a zoom walkers accepts");
-        let projector = walkers::Projector::new(VIEWPORT, &map_memory, center);
+        let projector = walkers::Projector::new(VIEWPORT, &MercatorProjection, &map_memory, center);
         let transform = MercTransform::new(&projector, &map_memory, VIEWPORT.center());
         let mut visible = VisiblePoints::default();
         collect_visible_points(

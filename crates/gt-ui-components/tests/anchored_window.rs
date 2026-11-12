@@ -21,6 +21,7 @@ struct State {
 
 fn make_harness(viewport: egui::Vec2, scale: f32) -> Harness<'static, State> {
     Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_size(viewport)
         .with_pixels_per_point(scale)
         .build_ui_state(
@@ -31,8 +32,8 @@ fn make_harness(viewport: egui::Vec2, scale: f32) -> Harness<'static, State> {
                     return;
                 }
                 let window = AnchoredWindow {
-                    layout_id: egui::Id::new("held-layout"),
-                    window_id: egui::Id::new("window-area"),
+                    layout_id: egui::Id::unique("held-layout"),
+                    window_id: egui::Id::unique("window-area"),
                     title: "Anchored window".to_owned(),
                     sizing: WINDOW_SIZING,
                 };

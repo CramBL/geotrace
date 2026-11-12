@@ -86,7 +86,7 @@ pub fn tri_checkbox(ui: &mut egui::Ui, state: CheckState) -> egui::Response {
 
 /// Paints a translucent highlight behind `rect` to mark map-hover correspondence.
 pub fn paint_map_hover_bg(ui: &egui::Ui, rect: egui::Rect, color: egui::Color32) {
-    let bg_layer = egui::LayerId::new(egui::Order::Background, egui::Id::new("map_hover_bg"));
+    let bg_layer = egui::LayerId::new(egui::Order::Background, egui::Id::unique("map_hover_bg"));
     let painter = ui
         .ctx()
         .layer_painter(bg_layer)

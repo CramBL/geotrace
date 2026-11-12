@@ -3,15 +3,16 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Duration as StdDuration;
 
+use egui::MissingGlyphPolicy;
 use egui::accesskit::Role;
-use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
+use egui_kittest::{Harness, OsThreshold, SnapshotOptions};
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
 use gt_log_view::{FilterGroupOperator, LoadedLog};
 use gt_store::RecordingsHandle;
 use gt_test_utils::{
-    By, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec, SyntheticLogTimestamps,
-    TestHarness,
+    By, CROSS_BACKEND_COLOR_TOLERANCE, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec,
+    SyntheticLogTimestamps, TestHarness,
 };
 use gt_types::FileIdx;
 
@@ -45,6 +46,7 @@ fn drop_log_and_associate_it(harness: &mut Harness<App>, text: &str, name: &str)
 
 fn app_with_a_log_loaded() -> Harness<'static, App> {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     ui_tests::drop_log_and_wait_for_load(&mut harness, &synthetic_log(64 * 1024), "navsyncd.log");
@@ -118,6 +120,7 @@ fn dropping_a_log_the_session_already_holds_shows_the_loaded_one() {
 #[test]
 fn a_drag_over_the_app_shows_the_hint_naming_every_way_a_log_gets_in() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -130,7 +133,7 @@ fn a_drag_over_the_app_shows_the_hint_naming_every_way_a_log_gets_in() {
         .input_mut()
         .hovered_files
         .push(egui::HoveredFile::default());
-    harness.step();
+    harness.run_steps(2);
 
     harness.get_by_label(log_viewer::LOG_LOAD_HINT);
 }
@@ -154,6 +157,7 @@ fn paste_and_wait_for_load(harness: &mut Harness<App>, text: &str) {
 #[test]
 fn pasting_log_text_loads_it_named_after_its_first_entry() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -177,6 +181,7 @@ fn pasting_log_text_loads_it_named_after_its_first_entry() {
 #[test]
 fn pasting_into_a_focused_field_reaches_the_field_and_loads_no_log() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -203,6 +208,7 @@ fn pasting_into_a_focused_field_reaches_the_field_and_loads_no_log() {
 #[test]
 fn pasting_empty_text_loads_no_log() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -222,8 +228,12 @@ fn pasting_empty_text_loads_no_log() {
 #[test]
 fn dropping_a_log_that_is_not_utf8_states_the_replacement_in_its_summary() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
+    harness
+        .ctx
+        .set_missing_glyph_policy(MissingGlyphPolicy::Tofu);
     test_util::harness::drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(
@@ -263,6 +273,7 @@ fn a_log_loaded_without_a_recording_stays_untargeted_and_raises_no_dialog() {
 #[test]
 fn a_log_with_unresolved_years_opens_the_viewer_on_the_line_and_the_conflict() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     ui_tests::drop_log_and_wait_for_load(
@@ -580,8 +591,15 @@ fn snapshot_log_association_dialog() {
         .get_by_role_and_label(Role::Window, log_viewer::association_dialog::SAVE_TITLE)
         .rect();
     assert!(dialog.center().distance(egui::pos2(640.0, 400.0)) < 0.5);
+    // Metal differs from the baseline at eight pixels under the top shadow.
     harness
-        .snapshot_region_with_color_tolerance("log_association_dialog", dialog.expand(8.0))
+        .snapshot_region_with_options(
+            "log_association_dialog",
+            dialog.expand(8.0),
+            &SnapshotOptions::new()
+                .threshold(CROSS_BACKEND_COLOR_TOLERANCE)
+                .max_failed_pixels(OsThreshold::new(0).macos(8)),
+        )
         .expect("association dialog snapshot");
 }
 
@@ -691,6 +709,7 @@ fn snapshot_app_log_map_hexagons() {
 #[test]
 fn unloading_a_recording_outside_history_unloads_the_logs_anchored_to_it() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -718,6 +737,7 @@ fn unloading_a_recording_outside_history_unloads_the_logs_anchored_to_it() {
 #[test]
 fn choosing_a_target_in_the_footer_associates_the_log_against_it() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -746,10 +766,9 @@ fn choosing_a_target_in_the_footer_associates_the_log_against_it() {
     harness.get_by_label("Positions from");
     harness.get(By::new().value(gt_ui_theme::EM_DASH)).click();
     harness.run_steps(2);
-    // The side panel lists the same recording, so take the row the combo
-    // popup opened at the bottom of the viewer.
     harness
-        .bottommost_matching(By::new().label("walk_b.gtd"))
+        .get_by_role(egui::Role::ListBox)
+        .get_by_label("walk_b.gtd")
         .click();
     harness.run_steps(3);
 
@@ -765,6 +784,7 @@ fn choosing_a_target_in_the_footer_associates_the_log_against_it() {
 #[test]
 fn load_problem_input_and_dismissal_preserve_reading_and_return_table_focus() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     let text: String = (0..200)

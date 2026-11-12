@@ -1,7 +1,7 @@
 use std::mem;
 
 use egui::style::ScrollAnimation;
-use egui::{Button, TextEdit, WidgetInfo, WidgetType};
+use egui::{Button, Role, TextEdit, WidgetInfo};
 use gt_log_view::{InvalidLogJump, LoadedLog, LoadedLogs, LogJumpRequest};
 use gt_ui_types::LoadedLogId;
 use strum::{AsRefStr, EnumIter, IntoEnumIterator as _};
@@ -33,7 +33,7 @@ impl LogJumpEditor {
         access: KeyboardAccess,
     ) -> Option<JumpAction> {
         let mode = self.mode?;
-        let field_id = egui::Id::new((JUMP_FIELD_ID, id, mode));
+        let field_id = egui::Id::unique((JUMP_FIELD_ID, id, mode));
         let mut action = self.keyboard_action(ui, field_id, available, access);
         let reveal_editor = self.focus_requested;
         let row = ui.horizontal_wrapped(|ui| {
@@ -47,7 +47,7 @@ impl LogJumpEditor {
                 action = Some(JumpAction::Submit);
             }
             let close = ui.small_button(super::ICON_X).on_hover_text(CLOSE_LABEL);
-            close.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, CLOSE_LABEL));
+            close.widget_info(|| WidgetInfo::labeled(Role::Button, true, CLOSE_LABEL));
             if close.clicked() {
                 action = Some(JumpAction::Close);
             }
@@ -94,7 +94,7 @@ impl LogJumpEditor {
                 JumpMode::GoToTime => TIME_HELP,
             })
             .on_disabled_hover_text(UNAVAILABLE_TIME_HELP);
-        field.widget_info(|| WidgetInfo::labeled(WidgetType::TextEdit, available, label));
+        field.widget_info(|| WidgetInfo::labeled(Role::TextInput, available, label));
         field.ctx.accesskit_node_builder(field.id, |node| {
             node.set_author_id(JUMP_FIELD_ID);
             node.set_description("Enter goes to the location. Escape closes this editor.");
@@ -185,7 +185,7 @@ impl LogViewerWindow {
                 let state = self.log_state_mut(id);
                 if let Some(mode) = state.jump.mode {
                     ui.memory_mut(|memory| {
-                        memory.surrender_focus(egui::Id::new((JUMP_FIELD_ID, id, mode)))
+                        memory.surrender_focus(egui::Id::unique((JUMP_FIELD_ID, id, mode)))
                     });
                 }
                 state.jump.close();

@@ -1,4 +1,4 @@
-use egui::{Area, Button, Frame, Label, Order, Popup, RichText, WidgetInfo, WidgetType};
+use egui::{Area, Button, Frame, Label, Order, Popup, RichText, Role, WidgetInfo};
 use egui_phosphor::regular::ARROW_U_UP_LEFT as ICON_RETURN;
 use gt_log_view::LoadedLog;
 use gt_ui_types::LoadedLogId;
@@ -41,7 +41,7 @@ impl LogViewerWindow {
         }
         ctx.request_repaint_after_secs(remaining as f32);
         if let SourceFeedbackAnchor::ShowAtMapPosition(position) = feedback.anchor {
-            Area::new(egui::Id::new("unavailable_log_source"))
+            Area::new(egui::Id::unique("unavailable_log_source"))
                 .order(Order::Tooltip)
                 .fixed_pos(position + SOURCE_FEEDBACK_OFFSET_PX)
                 .interactable(false)
@@ -132,7 +132,7 @@ impl LogViewerWindow {
                 let back = ui
                     .add(Button::new(RichText::new(ICON_RETURN)).small())
                     .on_hover_text(RETURN_LABEL);
-                back.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, RETURN_LABEL));
+                back.widget_info(|| WidgetInfo::labeled(Role::Button, true, RETURN_LABEL));
                 if back.clicked() {
                     self.return_to_filtered_results(id);
                     self.source_navigation_feedback = None;

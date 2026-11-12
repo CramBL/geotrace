@@ -230,7 +230,7 @@ pub fn render_row_as_one_surface<T>(
     };
     response.widget_info(|| {
         egui::WidgetInfo::selected(
-            egui::WidgetType::SelectableLabel,
+            egui::Role::Button,
             true,
             is_selected,
             cells.accessibility_label(),

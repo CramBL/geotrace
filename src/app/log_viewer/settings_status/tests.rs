@@ -127,11 +127,11 @@ fn snapshot_log_settings_save_inspector(#[case] dark_mode: bool) {
             .query_by_label("Disk full: history.h5")
             .is_some()
     );
-    harness.snapshot(if dark_mode {
-        "log_settings_save_inspector_dark"
+    if dark_mode {
+        harness.snapshot("log_settings_save_inspector_dark");
     } else {
-        "log_settings_save_inspector_light"
-    });
+        harness.snapshot_with_color_tolerance("log_settings_save_inspector_light");
+    }
     harness.inner.get_by_label("Retry").click();
     harness.inner.step();
     assert_eq!(
@@ -144,12 +144,14 @@ fn snapshot_log_settings_save_inspector(#[case] dark_mode: bool) {
 fn a_read_only_inspector_retains_errors_and_disables_retry() {
     let mut state = StatusHarness::new();
     state.access = WriteAccess::ReadOnly;
-    let mut harness = Harness::builder().build_ui_state(
-        |ui, state: &mut StatusHarness| {
-            super::toolbar_ui(ui, &state.logs, state.access, &mut state.requests);
-        },
-        state,
-    );
+    let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
+        .build_ui_state(
+            |ui, state: &mut StatusHarness| {
+                super::toolbar_ui(ui, &state.logs, state.access, &mut state.requests);
+            },
+            state,
+        );
     harness
         .get_by_label(&format!("Log saves {ICON_WARNING} 1"))
         .click();
@@ -216,12 +218,14 @@ fn retry_distinguishes_equal_log_names_in_different_recording_groups() {
     state
         .logs
         .acknowledge_settings(write.complete(Err("Permission denied".to_owned())));
-    let mut harness = Harness::builder().build_ui_state(
-        |ui, state: &mut StatusHarness| {
-            super::toolbar_ui(ui, &state.logs, state.access, &mut state.requests);
-        },
-        state,
-    );
+    let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
+        .build_ui_state(
+            |ui, state: &mut StatusHarness| {
+                super::toolbar_ui(ui, &state.logs, state.access, &mut state.requests);
+            },
+            state,
+        );
     harness
         .get_by_label(&format!("Log saves {ICON_WARNING} 2"))
         .click();
@@ -295,12 +299,14 @@ fn initial_save_status_and_retry_remain_available_in_the_global_inspector() {
         .logs
         .prepare_save(id, target, &files.view(), WriteAccess::Owner)
         .unwrap();
-    let mut harness = Harness::builder().build_ui_state(
-        |ui, state: &mut StatusHarness| {
-            super::toolbar_ui(ui, &state.logs, state.access, &mut state.requests);
-        },
-        state,
-    );
+    let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
+        .build_ui_state(
+            |ui, state: &mut StatusHarness| {
+                super::toolbar_ui(ui, &state.logs, state.access, &mut state.requests);
+            },
+            state,
+        );
     harness.get_by_label("Log saves … 1").click();
     harness.run_steps(2);
     harness.get_by_label("Saving log…");

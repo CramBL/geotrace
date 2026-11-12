@@ -45,7 +45,7 @@ pub(crate) fn show_space_weather_warning(
     state: &mut SpaceWeatherIndicatorState,
     indicator: SpaceWeatherIndicator<'_>,
 ) -> Option<ReferenceDocument> {
-    let glyph = Area::new(Id::new("map_space_weather_warning"))
+    let glyph = Area::new(Id::unique("map_space_weather_warning"))
         .fixed_pos(egui::pos2(
             map_rect.right() - CORNER_INSET_PX,
             map_rect.top() + CORNER_INSET_PX,
@@ -64,7 +64,7 @@ pub(crate) fn show_space_weather_warning(
     }
 
     let glyph_rect = glyph.response.rect;
-    let popup = Area::new(Id::new("map_space_weather_details"))
+    let popup = Area::new(Id::unique("map_space_weather_details"))
         .fixed_pos(egui::pos2(
             glyph_rect.right(),
             glyph_rect.bottom() + ui.style().spacing.item_spacing.y,

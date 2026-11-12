@@ -53,6 +53,7 @@ fn structural_source_rows_show_exact_text_and_boot_context_in_source_order() {
     assert_eq!(option.accesskit_node().toggled(), Some(Toggled::False));
     let center = option.rect().center();
     harness.hover_at_and_settle(center, TOOLTIP_DELAY_FRAMES);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     harness.get_by_label("Show recognized source lines between log entries");
     harness.get_by_label("View").click();
     harness.run_steps(2);
@@ -667,6 +668,7 @@ fn source_backed_boot_dividers_fit_a_narrow_viewer_and_keep_navigation_on_one_ro
     stack.set_live_filter_text("first");
     stack.wait_for_queries();
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_size(NARROW_VIEWPORT)
         .build_ui_state(viewer_ui, state);
     gt_ui_theme::install_app_style(&harness.ctx);
@@ -680,7 +682,7 @@ fn source_backed_boot_dividers_fit_a_narrow_viewer_and_keep_navigation_on_one_ro
     let entry = harness.get_by_label("navsyncd: second").rect();
     let window = harness
         .ctx
-        .memory(|memory| memory.area_rect(egui::Id::new(Some(LOG_VIEWER_TITLE))))
+        .memory(|memory| memory.area_rect(egui::Id::unique(Some(LOG_VIEWER_TITLE))))
         .unwrap();
     assert!(divider.right() <= window.right() - 7.0);
     assert!(source.right() <= divider.left());
@@ -704,6 +706,7 @@ fn source_backed_boot_dividers_fit_a_narrow_viewer_and_keep_navigation_on_one_ro
         By::new().label("Boot 2 · up 10s · 2 entries"),
         TOOLTIP_DELAY_FRAMES,
     );
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     assert!(
         harness
             .get_all_by_label("Boot 2 · up 10s · 2 entries")

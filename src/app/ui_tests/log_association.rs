@@ -45,6 +45,7 @@ use crate::settings::InitialPositionSourcePolicy;
 /// stored with a recording and read back.
 fn app_over_a_history_database(db_path: &std::path::Path) -> Harness<'static, App> {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -266,6 +267,7 @@ fn cancelling_save_preserves_pending_initial_source_selection() {
 #[test]
 fn several_overlapping_recordings_leave_the_dialog_without_a_preselection() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -294,6 +296,7 @@ fn several_overlapping_recordings_leave_the_dialog_without_a_preselection() {
 #[test]
 fn a_log_with_unresolved_years_raises_no_dialog_and_takes_no_position() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -599,6 +602,7 @@ fn drop_the_log_with_unresolved_years(harness: &mut Harness<App>) {
 #[test]
 fn cancelling_the_dialog_loads_the_log_untargeted() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -624,6 +628,7 @@ fn cancelling_the_dialog_loads_the_log_untargeted() {
 #[test]
 fn escape_cancels_the_dialog_and_leaves_the_viewer_open() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -683,6 +688,7 @@ fn a_changed_attachment_log_has_a_disclosed_hash_diagnostic() {
     );
 
     assert!(harness.step_until(|harness| harness.state().load_failures.iter().count() == 1));
+    harness.run_steps(2);
     harness.get_by_role_and_label(Role::Window, "Load problems");
     harness.get_by_label_contains("Unsupported attachment");
     harness.get_by_label("Details").click_accesskit();
@@ -721,6 +727,7 @@ fn click_settings_row_tickbox(harness: &mut Harness<App>, label: &str) {
 #[test]
 fn enabling_automatic_position_source_in_the_dialog_and_disabling_in_settings_restores_dialogs() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     test_util::harness::drop_file_and_wait_for_load(
@@ -805,6 +812,7 @@ fn enabling_automatic_position_source_in_settings_and_disabling_in_the_dialog(
     #[case] overlaps: usize,
 ) {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     if overlaps == 0 {
@@ -2026,6 +2034,7 @@ fn unreadable_attachment_metadata_has_retained_source_feedback_and_readable_sibl
         .map(|failure| (failure.source.to_string(), failure.cause.to_string()))
         .collect();
     assert_eq!(failures.len(), entries.len() - 1);
+    harness.run_steps(2);
     harness.get_by_role_and_label(Role::Window, "Load problems");
     for (entry, (source, diagnostic)) in entries.iter().skip(1).zip(failures) {
         assert!(source.contains(&recording.to_string()));
@@ -2171,6 +2180,7 @@ fn the_footer_changes_a_saved_logs_recording_only_after_attachment_removal(
     assert!(source.accesskit_node().is_disabled());
     let position = source.rect().center();
     harness.hover_at_and_settle(position, 3);
+    harness.run_steps(gt_test_utils::TOOLTIP_LAYOUT_FRAMES);
     harness.get_by_label_contains(association_dialog::OPERATION_UNAVAILABLE_HOVER);
 
     assert!(

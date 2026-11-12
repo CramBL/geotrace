@@ -5,10 +5,11 @@ use std::borrow::Cow;
 use std::mem;
 use std::num::NonZeroUsize;
 
-use egui::widget_style::{Classes, WidgetState};
+use egui::class::Classes;
+use egui::widget_style::{ButtonStyle, CheckboxStyle, StyleArgs, WidgetState};
 use egui::{
-    Button, Checkbox, Frame, Label, RichText, StrokeKind, TextEdit, TextStyle, TextWrapMode,
-    WidgetInfo, WidgetText, WidgetType,
+    Button, Checkbox, Frame, Label, RichText, Role, StrokeKind, TextEdit, TextStyle, TextWrapMode,
+    WidgetInfo, WidgetText,
 };
 use egui_phosphor::regular::{EYE as ICON_EYE, EYE_SLASH as ICON_EYE_SLASH};
 use gt_log_view::{
@@ -173,7 +174,7 @@ impl LogViewerWindow {
 
         let edit = edit.or_else(|| {
             self.keyboard_access
-                .field_owns_keyboard(ui, egui::Id::new((LIVE_FILTER_FIELD_ID, shown)))
+                .field_owns_keyboard(ui, egui::Id::unique((LIVE_FILTER_FIELD_ID, shown)))
                 .then(|| {
                     ui.input_mut(|input| {
                         input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
@@ -440,7 +441,7 @@ impl LogViewerWindow {
                 let field = ui
                     .add(
                         TextEdit::singleline(&mut text)
-                            .id(egui::Id::new((LIVE_FILTER_FIELD_ID, shown)))
+                            .id(egui::Id::unique((LIVE_FILTER_FIELD_ID, shown)))
                             .hint_text(FilterScopeUi(scope).hint())
                             .desired_width(FIELD_WIDTH_PX),
                     )
@@ -885,9 +886,17 @@ fn chip_ui(
         TextStyle::Button,
     );
     let classes = Classes::default();
-    let checkbox = ui.style().checkbox_style(&classes, WidgetState::default());
-    let button = ui.style().button_style(&classes, WidgetState::default());
-    let checkbox_width = (checkbox.checkbox_size + checkbox.frame.total_margin().sum().x)
+    let style_args = StyleArgs {
+        classes: &classes,
+        ctx: ui.ctx(),
+        stack: ui.stack(),
+        state: WidgetState::default(),
+        style: ui.style(),
+    };
+    let checkbox = ui.ctx().get_widget_style::<CheckboxStyle>(&style_args);
+    let button = ui.ctx().get_widget_style::<ButtonStyle>(&style_args);
+    let checkbox_width = (checkbox.checkbox_size
+        + checkbox.atom_layout.frame.total_margin().sum().x)
         .max(ui.spacing().interact_size.y);
     let swatch_width = map_slot.map_or(0.0, |slot| {
         CHIP_SWATCH_SIZE_PX
@@ -902,7 +911,7 @@ fn chip_ui(
         + scope.size().x
         + overflow.size().x
         + checkbox_width
-        + button.frame.total_margin().sum().x
+        + button.atom_layout.frame.total_margin().sum().x
         + CHIP_INNER_MARGIN.sum().x
         + CHIP_CONTROL_GAPS * ui.spacing().item_spacing.x
         + swatch_width;
@@ -943,7 +952,7 @@ fn chip_ui(
                             });
                         response.widget_info(|| {
                             WidgetInfo::selected(
-                                WidgetType::Checkbox,
+                                Role::CheckBox,
                                 true,
                                 enabled,
                                 "Map highlight visibility",
@@ -980,7 +989,7 @@ fn chip_ui(
                     ));
                 value_response.widget_info(|| {
                     WidgetInfo::selected(
-                        WidgetType::SelectableLabel,
+                        Role::Button,
                         true,
                         filters.selected_chip() == Some(chip.id()),
                         text,

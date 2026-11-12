@@ -12,11 +12,12 @@ struct State {
 
 fn make_harness() -> Harness<'static, State> {
     Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_size(egui::vec2(300.0, 600.0))
         .build_ui_state(
             |ui, state: &mut State| {
                 let shown = FractionalSection {
-                    id: egui::Id::new(("section", state.detached)),
+                    id: egui::Id::unique(("section", state.detached)),
                     sizing: FractionalSectionSizing {
                         preferred_fraction: state.preferred_fraction,
                         minimum_height: 80.0,

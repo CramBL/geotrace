@@ -15,7 +15,7 @@ use egui::{Mesh, Rect, Shape, Stroke};
 use gt_ionex::maps::GlobalIonosphereMaps;
 use gt_jam::dataset::JamDataset;
 use gt_jam::wire::{self, ParseWarningReporter};
-use walkers::{MapMemory, Projector};
+use walkers::{MapMemory, MercatorProjection, Projector};
 
 use crate::tec_renderer::{self, TecHeatmapSnapshot};
 use crate::test_util;
@@ -38,7 +38,12 @@ fn world_memory(zoom: f64) -> MapMemory {
 
 fn world_transform(rect: Rect, zoom: f64) -> MercTransform {
     let map_memory = world_memory(zoom);
-    let projector = Projector::new(rect, &map_memory, walkers::lat_lon(0.0, 0.0));
+    let projector = Projector::new(
+        rect,
+        &MercatorProjection,
+        &map_memory,
+        walkers::lat_lon(0.0, 0.0),
+    );
     MercTransform::new(&projector, &map_memory, rect.center())
 }
 

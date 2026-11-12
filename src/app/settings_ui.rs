@@ -145,7 +145,7 @@ impl App {
         let mut open = self.settings_open;
         let mut apply = false;
         Window::new("Settings")
-            .id(egui::Id::new(WINDOW_ID))
+            .id(egui::Id::unique(WINDOW_ID))
             .open(&mut open)
             .collapsible(false)
             .resizable(true)

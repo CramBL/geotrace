@@ -11,6 +11,7 @@ use crate::app::test_util;
 #[test]
 fn panel_detached_renders_without_panic() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -48,6 +49,7 @@ fn panel_detached_renders_without_panic() {
 #[test]
 fn detached_panel_steps_complete_within_time_budget() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
     harness.step();
@@ -75,6 +77,7 @@ fn detached_panel_steps_complete_within_time_budget() {
 #[test]
 fn visible_section_fraction_and_geometry_survive_dock_detach_dock() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_size(egui::vec2(900.0, 900.0))
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
@@ -85,8 +88,8 @@ fn visible_section_fraction_and_geometry_survive_dock_detach_dock() {
         .tree
         .set_visible_section_fraction(0.5);
     harness.run_steps(4);
-    let docked_id = egui::Id::new(("visible_tracks_section", false));
-    let detached_id = egui::Id::new(("visible_tracks_section", true));
+    let docked_id = egui::Id::unique(("visible_tracks_section", false));
+    let detached_id = egui::Id::unique(("visible_tracks_section", true));
     let docked = harness
         .ctx
         .read_response(docked_id)
@@ -162,6 +165,7 @@ fn drag_detach_applies_the_latest_pointer_and_clamps_the_first_visible_rectangle
     #[case] released_before_floating_frame: bool,
 ) {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_size(egui::vec2(900.0, 700.0))
         .with_pixels_per_point(scale)
         .with_wait_for_pending_images(false)
@@ -175,7 +179,7 @@ fn drag_detach_applies_the_latest_pointer_and_clamps_the_first_visible_rectangle
     harness.run_steps(4);
     let grip = harness
         .ctx
-        .read_response(egui::Id::new((gt_side_panel::TRACK_DATA_GRIP_ID, false)))
+        .read_response(egui::Id::unique((gt_side_panel::TRACK_DATA_GRIP_ID, false)))
         .expect("docked grip")
         .rect
         .center();
@@ -207,7 +211,7 @@ fn drag_detach_applies_the_latest_pointer_and_clamps_the_first_visible_rectangle
         (target - grab_offset).clamp(viewport.min, viewport.max - expected_size);
     let first = harness
         .ctx
-        .memory(|memory| memory.area_rect(egui::Id::new("detached_panel")))
+        .memory(|memory| memory.area_rect(egui::Id::unique("detached_panel")))
         .expect("first floating rectangle");
     assert!(
         (first.min - expected_position).length() < 2.0,
@@ -227,7 +231,7 @@ fn drag_detach_applies_the_latest_pointer_and_clamps_the_first_visible_rectangle
         harness.step();
         let continued = harness
             .ctx
-            .memory(|memory| memory.area_rect(egui::Id::new("detached_panel")))
+            .memory(|memory| memory.area_rect(egui::Id::unique("detached_panel")))
             .expect("continued drag");
         if target == egui::pos2(450.0, 50.0) {
             assert!(
@@ -241,7 +245,7 @@ fn drag_detach_applies_the_latest_pointer_and_clamps_the_first_visible_rectangle
     harness.run_steps(4);
     let settled = harness
         .ctx
-        .memory(|memory| memory.area_rect(egui::Id::new("detached_panel")))
+        .memory(|memory| memory.area_rect(egui::Id::unique("detached_panel")))
         .expect("settled rectangle");
     assert!((settled.min - continued.min).length() < 2.0);
     harness.get_by_label("Dock").click();
@@ -262,6 +266,7 @@ fn drag_detach_applies_the_latest_pointer_and_clamps_the_first_visible_rectangle
 #[test]
 fn button_pop_out_centers_cold_geometry_and_restores_user_geometry_after_docking() {
     let mut harness = Harness::builder()
+        .with_context_setup(gt_ui_theme::install_app_style)
         .with_size(egui::vec2(1000.0, 800.0))
         .with_wait_for_pending_images(false)
         .build_eframe(test_util::harness::transient_app);
@@ -274,7 +279,7 @@ fn button_pop_out_centers_cold_geometry_and_restores_user_geometry_after_docking
         .set_visible_section_fraction(0.25);
     harness.get_by_label(ICON_ARROW_SQUARE_OUT).click();
     harness.run_steps(5);
-    let id = egui::Id::new("detached_panel");
+    let id = egui::Id::unique("detached_panel");
     let initial = harness
         .ctx
         .memory(|memory| memory.area_rect(id))

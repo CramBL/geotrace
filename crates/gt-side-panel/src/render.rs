@@ -279,7 +279,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) -> Option<
         let (rect, _) = ui.allocate_exact_size(TRACK_DATA_GRIP_SIZE, egui::Sense::hover());
         let grip = ui.interact(
             rect,
-            egui::Id::new((TRACK_DATA_GRIP_ID, detached)),
+            egui::Id::unique((TRACK_DATA_GRIP_ID, detached)),
             egui::Sense::drag(),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -493,7 +493,7 @@ fn render_visible_tracks_section(
     let row_pitch =
         VISIBLE_SECTION_INTERACT_HEIGHT + CHECKBOX_PADDING + VISIBLE_SECTION_ROW_SPACING;
     let section = FractionalSection {
-        id: egui::Id::new((VISIBLE_SECTION_ID, detached)),
+        id: egui::Id::unique((VISIBLE_SECTION_ID, detached)),
         sizing: FractionalSectionSizing {
             preferred_fraction: ctx.tree.visible_section_fraction(),
             minimum_height: row_pitch * VISIBLE_SECTION_MIN_ROWS,
@@ -1813,7 +1813,7 @@ fn render_event_markers_section(
         return;
     }
 
-    let header_id = egui::Id::new(("events_section", track_ref));
+    let header_id = egui::Id::unique(("events_section", track_ref));
 
     ui.horizontal(|ui| {
         ui.add_space(16.0);
@@ -1822,7 +1822,7 @@ fn render_event_markers_section(
             TextEdit::singleline(&mut text)
                 .hint_text("Filter…")
                 .desired_width(120.0)
-                .id(egui::Id::new(("event_filter", header_id))),
+                .id(egui::Id::unique(("event_filter", header_id))),
         );
         if resp.changed()
             && let Some(track_node) = ctx.tree.track_node_mut(track_ref)

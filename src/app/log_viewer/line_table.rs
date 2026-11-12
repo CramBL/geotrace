@@ -994,7 +994,7 @@ impl LogViewerWindow {
                 }
                 focus.lock_vertical_arrows(ui);
             }
-            let mut scroll_area = ScrollArea::vertical()
+            let scroll_area = ScrollArea::vertical()
                 .id_salt(("log_viewer_line_table", log_id))
                 .auto_shrink([false, false])
                 // A keyboard step lands on a row boundary and a held key counts
@@ -1004,25 +1004,38 @@ impl LogViewerWindow {
                 // pushes the footer off the bottom. The table takes exactly the
                 // room the window has left.
                 .min_scrolled_height(0.0);
-            if let Some(anchor) = source_anchor {
+            let requested_offset = if let Some(anchor) = source_anchor {
                 let row = rows.row_at_reading_anchor(parsed, anchor);
                 state.scroll_to_row = None;
-                let offset = if reveal.is_some_and(SourceReveal::center_pending) {
+                Some(if reveal.is_some_and(SourceReveal::center_pending) {
                     (row as f32 * row_height
                         - (ui.available_height() - row_height).max(0.0)
                             * CONTEXT_TARGET_VERTICAL_FRACTION)
                         .max(0.0)
                 } else {
                     row as f32 * row_height + anchor.offset_within_row_px
-                };
-                scroll_area = scroll_area.vertical_scroll_offset(offset);
+                })
             } else if filtered_return.is_some() {
                 state.scroll_to_row = None;
-                scroll_area = scroll_area.vertical_scroll_offset(0.0);
-            } else if let Some(row) = state.scroll_to_row.take() {
-                scroll_area = scroll_area.vertical_scroll_offset(row as f32 * row_height);
-            }
+                Some(0.0)
+            } else {
+                state
+                    .scroll_to_row
+                    .take()
+                    .map(|row| row as f32 * row_height)
+            };
             let output = scroll_area.show_rows(ui, row_height, rows.len(), |ui, shown| {
+                if let Some(offset) = requested_offset {
+                    // Request after layout, when egui has the new content bounds.
+                    let top = ui.max_rect().top() - shown.start as f32 * row_height + offset;
+                    ui.scroll_to_rect(
+                        egui::Rect::from_min_size(
+                            egui::pos2(ui.max_rect().left(), top),
+                            egui::Vec2::ZERO,
+                        ),
+                        Some(egui::Align::Min),
+                    );
+                }
                 if keyboard_available && target.has_focus() {
                     KeyboardScrollSteps {
                         row_height_px: row_height,
@@ -1194,13 +1207,14 @@ impl LogViewerWindow {
             });
             focus.draw_focus(ui, output.inner_rect);
             #[expect(clippy::cast_sign_loss, reason = "Scroll offsets are nonnegative")]
-            let first_visible_row = (output.state.offset.y / row_height).floor() as usize;
+            let first_visible_row =
+                (output.state.unclamped_offset().y.max(0.0) / row_height).floor() as usize;
             state.table_reading_anchor = rows.at(first_visible_row).and_then(|row| {
                 Some(TableReadingAnchor {
                     log: log_id,
                     source_line: row.source_line(parsed)?,
                     row: TableRowIdentity::from(row),
-                    offset_within_row_px: output.state.offset.y % row_height,
+                    offset_within_row_px: output.state.unclamped_offset().y.max(0.0) % row_height,
                 })
             });
         });
