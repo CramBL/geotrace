@@ -31,6 +31,7 @@ In [`sdk/python/geotrace-py/examples/`](../../sdk/python/geotrace-py/examples/).
 Run with `python <name>.py`.
 
 - [`navigation_only`](../../sdk/python/geotrace-py/examples/navigation_only.py): record available navigation facts and fix loss without satellite reports.
+- [`boot_time`](../../sdk/python/geotrace-py/examples/boot_time.py): preserve boot readings and calculate system/boot clock divergence.
 - [`write_basic`](../../sdk/python/geotrace-py/examples/write_basic.py): minimal write workflow: add fixes, finish, write to disk.
 - [`read_file`](../../sdk/python/geotrace-py/examples/read_file.py): read a `.gtd` file and print a content summary.
 - [`with_satellites`](../../sdk/python/geotrace-py/examples/with_satellites.py): pair each fix with a satellite visibility report.
@@ -74,6 +75,33 @@ Coordinate properties return NaN on read-back, and coordinate origin is unreport
 All other recorded facts, including associated satellite evidence on `NavPoint`, remain part of equality.
 Malformed NaNs retain ordinary inequality, including two NaNs with the default source-provided origin.
 Comparison preserves the recorded coordinates.
+
+## Boot-clock readings
+
+Pass `boot_time_us` to `NavFix` as an integer from `0` through `2**64 - 2`.
+Omission or `None` means absent, and zero is a valid reading.
+`NavFix.boot_time_us` and decoded `NavPoint.boot_time_us` return the exact integer or `None`.
+Negative or oversized integers raise `OverflowError`, and the reserved value `2**64 - 1` raises `ValueError`.
+A receiver-only fix can retain a boot reading, while a system/boot comparison requires `sys_time`.
+
+Pair system and boot readings from the same device and observation.
+The producer selects the boot clock: Linux `CLOCK_BOOTTIME` includes suspend, while `CLOCK_MONOTONIC` excludes it.
+The [boot-time example](../../sdk/python/geotrace-py/examples/boot_time.py) uses synthetic `CLOCK_BOOTTIME` readings.
+The delta can include suspend behavior, system-clock adjustments and boot-clock resets as well as drift.
+
+Choose the first complete system/boot pair in the full recording's stored order as `(S0, B0)`.
+Calculate with integer microseconds before converting the result:
+
+```text
+delta_us = (system_us - S0_us) - (boot_us - B0_us)
+delta_ms = delta_us / 1_000
+delta_seconds = delta_us / 1_000_000
+```
+
+Positive means system time has advanced farther than boot time since the reference.
+Keep the reference across missing values and boot-clock backward steps.
+GTD v3 stores boot readings in an optional column, which earlier v3 readers ignore.
+An older SDK can discard that column when reconstructing and rewriting a recording.
 
 ## Navigation and independent polling
 

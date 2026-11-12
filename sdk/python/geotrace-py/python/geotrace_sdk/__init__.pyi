@@ -309,6 +309,8 @@ class NavFix:
 
     Raises ``ValueError`` when ``gps_time`` and ``sys_time`` are both ``None``.
     All :class:`datetime.datetime` arguments must be timezone-aware.
+    The reserved ``boot_time_us=2**64 - 1`` raises ``ValueError``.
+    Other out-of-range boot readings raise ``OverflowError``.
 
     The ranges below are data quality expectations, not parse rules.
     The SDK writes every value it is given, NaN included: a recorder that
@@ -330,6 +332,8 @@ class NavFix:
         lon: Longitude in degrees, expected in [-180, 180].
         gps_time: GPS-receiver timestamp, or ``None`` when unreported.
         sys_time: System-clock timestamp recorded alongside this fix.
+        boot_time_us: Integer microseconds from the producer's boot-clock origin,
+            from zero through ``2**64 - 2``, or ``None`` when absent.
         heading: Compass heading in degrees, expected in [0, 360), or ``None``
             if unknown.
         speed_mps: Speed in m/s, expected to be non-negative, or ``None``.
@@ -344,6 +348,7 @@ class NavFix:
         *,
         gps_time: datetime | None = None,
         sys_time: datetime | None = None,
+        boot_time_us: int | None = None,
         heading: float | None = None,
         speed_mps: float | None = None,
         eph_m: float | None = None,
@@ -380,6 +385,13 @@ class NavFix:
     def sys_time(self) -> datetime | None:
         """System-clock timestamp (timezone-aware UTC), or ``None`` when the
         recorder did not supply one.
+        """
+        ...
+
+    @property
+    def boot_time_us(self) -> int | None:
+        """Exact microseconds from the producer's boot-clock origin, or ``None``
+        when absent.
         """
         ...
 
@@ -582,6 +594,13 @@ class NavPoint:
     def sys_time(self) -> datetime | None:
         """System-clock timestamp (timezone-aware UTC), or ``None`` when the
         recorder did not supply one.
+        """
+        ...
+
+    @property
+    def boot_time_us(self) -> int | None:
+        """Exact microseconds from the producer's boot-clock origin, or ``None``
+        when absent.
         """
         ...
 

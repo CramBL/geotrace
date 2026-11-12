@@ -1,5 +1,5 @@
 use chrono::{DateTime, FixedOffset};
-use geotrace_sdk::{Angle, NavFix, Velocity};
+use geotrace_sdk::{Angle, BootTime, NavFix, Velocity};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -12,6 +12,8 @@ use crate::timestamps::{self, TimestampArguments};
 ///
 /// Raises `ValueError` when `gps_time` and `sys_time` are both `None`.
 /// All `datetime` arguments must be timezone-aware.
+/// `boot_time_us` accepts `0..=2**64 - 2`, or `None` for absence.
+/// The reserved `2**64 - 1` raises `ValueError`. Other out-of-range integers raise `OverflowError`.
 /// `lat` is expected in [-90, 90] degrees, `lon` in [-180, 180], `heading` in
 /// [0, 360), `speed_mps` in m/s and `eph_m` in metres, both non-negative.
 /// These are data quality expectations, not parse rules.
@@ -38,12 +40,13 @@ impl PyNavFix {
         reason = "Python exposes optional metadata as keyword arguments"
     )]
     #[new]
-    #[pyo3(signature = (lat, lon, *, gps_time=None, sys_time=None, heading=None, speed_mps=None, eph_m=None, state=None, method=None, dimension=None, used_count=None, hdop=None, vdop=None, pdop=None, position_provenance=Some(PyPositionProvenance::SourceProvided)))]
+    #[pyo3(signature = (lat, lon, *, gps_time=None, sys_time=None, boot_time_us=None, heading=None, speed_mps=None, eph_m=None, state=None, method=None, dimension=None, used_count=None, hdop=None, vdop=None, pdop=None, position_provenance=Some(PyPositionProvenance::SourceProvided)))]
     fn new(
         lat: Option<f64>,
         lon: Option<f64>,
         gps_time: Option<DateTime<FixedOffset>>,
         sys_time: Option<DateTime<FixedOffset>>,
+        boot_time_us: Option<u64>,
         heading: Option<f64>,
         speed_mps: Option<f64>,
         eph_m: Option<f64>,
@@ -77,6 +80,10 @@ impl PyNavFix {
                 ));
             }
         };
+        inner.boot_time = boot_time_us
+            .map(BootTime::from_micros)
+            .transpose()
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
         inner.heading = heading.map(Angle::degrees);
         inner.speed = speed_mps.map(Velocity::meter_per_second);
         inner.eph_m = eph_m;
@@ -113,6 +120,12 @@ impl PyNavFix {
     #[getter]
     fn sys_time(&self) -> Option<DateTime<FixedOffset>> {
         self.inner.sys_time().map(|time| time.fixed_offset())
+    }
+
+    /// Exact microseconds from the producer's boot-clock origin, or `None` when absent.
+    #[getter]
+    fn boot_time_us(&self) -> Option<u64> {
+        self.inner.boot_time.map(BootTime::as_micros)
     }
 
     /// Heading in degrees, expected in [0, 360), or `None` when unreported.
