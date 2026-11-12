@@ -1,5 +1,5 @@
 use chrono::{DateTime, FixedOffset};
-use geotrace_sdk::NavPoint;
+use geotrace_sdk::{BootTime, NavPoint};
 use pyo3::prelude::*;
 
 use crate::nav_fix::PyNavFix;
@@ -49,6 +49,12 @@ impl PyNavPoint {
     #[getter]
     fn sys_time(&self) -> Option<DateTime<FixedOffset>> {
         self.inner.fix.sys_time().map(|time| time.fixed_offset())
+    }
+
+    /// Exact microseconds from the producer's boot-clock origin, or `None` when absent.
+    #[getter]
+    fn boot_time_us(&self) -> Option<u64> {
+        self.inner.fix.boot_time.map(BootTime::as_micros)
     }
 
     /// Heading in degrees, expected in [0, 360), or `None`.

@@ -48,6 +48,13 @@ builder.finish().write_to_file("track.gtd")
 `add()` also accepts satellite reports, map annotations, and event markers.
 A satellite's elevation, azimuth and SNR are stored as 32-bit floats: a value read back can differ from the value written in its eighth significant digit.
 
+`NavFix(..., boot_time_us=0)` records an optional integer boot-clock reading in microseconds.
+Valid values are `0` through `2**64 - 2`, with `None` for absence.
+Input fixes and decoded points expose the exact value as `boot_time_us`.
+Pair the reading with `sys_time` from the same device and observation.
+The producer selects the boot clock and its suspend behavior.
+See the [boot-time example](examples/boot_time.py) and [clock comparison reference](../../../docs/sdk/python.md#boot-clock-readings).
+
 ## Read a file
 
 ```python
